@@ -74,6 +74,33 @@ fn main() -> anyhow::Result<()> {
 
 	let proxy = event_loop.create_proxy();
 	let mut app = App::new(proxy, cli);
+
+	// cicd profiler stage: SILK_PROFILE_OUT set -> sample this run and write a
+	// flamegraph SVG when the app exits (App exits itself after SILK_PROFILE_SECS).
+	#[cfg(feature = "profiling")]
+	let profile_guard = std::env::var("SILK_PROFILE_OUT").ok().map(|_| {
+		pprof::ProfilerGuardBuilder::default()
+			.frequency(199)
+			.blocklist(&["libc", "libpthread", "vdso", "libgcc"])
+			.build()
+			.expect("pprof: failed to start profiler")
+	});
+
 	event_loop.run_app(&mut app)?;
+
+	#[cfg(feature = "profiling")]
+	if let Some(guard) = profile_guard {
+		let out = std::env::var("SILK_PROFILE_OUT").unwrap();
+		let report = guard
+			.report()
+			.build()
+			.expect("pprof: failed to build report");
+		let file = std::fs::File::create(&out).expect("pprof: failed to create SVG");
+		report
+			.flamegraph(file)
+			.expect("pprof: failed to write flamegraph");
+		eprintln!("{}: wrote flamegraph -> {out}", config::APP_NAME);
+	}
+
 	Ok(())
 }
