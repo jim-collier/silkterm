@@ -69,7 +69,7 @@ pub struct Pane {
 	pub title: String,
 	pub read_only: bool, // accept no PTY input/paste; selection + copy still work
 	// launch argv (None = default shell); a split inherits this so a new pane
-	// runs the same shell as the one it forked off (see project.md).
+	// runs the same shell as the one it forked off (see design.md).
 	command: Option<Vec<String>>,
 	last_draw: PaneDraw,
 	last_history: usize,

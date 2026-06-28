@@ -20,14 +20,6 @@
 	- [Output easing new text](#output-easing-new-text)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Environment](#environment)
-- [Todo](#todo)
-	- [First steps](#first-steps)
-	- [Backlog for initial v1.0.0 release](#backlog-for-initial-v100-release)
-		- [Bugs](#bugs)
-		- [New features and enhancements](#new-features-and-enhancements)
-		- [Deferred](#deferred)
-		- [Won't do](#wont-do)
-- [Application name ideas](#application-name-ideas)
 
 <!-- /TOC -->
 

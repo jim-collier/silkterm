@@ -2249,7 +2249,7 @@ impl ApplicationHandler<UserEvent> for App {
 impl State {
 	// Ctrl+Shift chords for pane management. Returns true if consumed.
 	// Only clipboard hotkeys live here now: pane management (split/close/cycle)
-	// is menu-only by design - see the keyboard handler and project.md.
+	// is menu-only by design - see the keyboard handler and design.md.
 	fn handle_hotkey(
 		&mut self,
 		key: &winit::event::KeyEvent,

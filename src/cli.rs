@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Jim Collier
 
 //! Command-line parsing -> a window/tab/pane layout plan. See
-//! design_docs/project.md "Command-line options". Startup-only (not a hot path).
+//! project/design.md "Command-line options". Startup-only (not a hot path).
 //!
 //! Model: window-level options come first, then a hierarchy of tabs and panes
 //! built with the create/select verbs (`--new-tab`/`--tab=`, `--new-pane`/`--pane=`).
