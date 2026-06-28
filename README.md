@@ -222,7 +222,7 @@ afterwards); `cargo build` regenerates `Cargo.lock`.
 
 ## Design
 
-See [project.md](design_docs/project.md) for the general architecture, and initial bugs and features before the first release. (All of which are tracked as [Issues](https://github.com/jim-collier/silkterm/issues) after initial release.)
+See [design.md](project/design.md) for the general architecture, and initial bugs and features before the first release. (All of which are tracked as [Issues](https://github.com/jim-collier/silkterm/issues) after initial release.)
 
 ## Copyright and license
 
