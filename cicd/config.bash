@@ -50,5 +50,9 @@ DOGFOOD_DESTS=(
 	"/usr/local/sbin"
 )
 
-# Stage 6: backup + publish to git (runs from repo root, prompts on its own)
+# Stage 6: backup + publish to git (runs from repo root).
 GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
+# Set a non-empty commit message to publish hands-off (suppresses the script's
+# prompt and supplies the message so `git commit` won't open an editor). Left
+# empty, publish is interactive unless -m/--message or -y is given (see cicd.bash).
+PUBLISH_AUTO_MESSAGE=""
