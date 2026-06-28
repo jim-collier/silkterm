@@ -26,7 +26,7 @@
 # Echo "<epoch> <YYYYmmDD-HHMMSS>" for a file, from its name if it carries a
 # date, else from its mtime.
 _gfs_ts(){
-	local base d="" t="000000" epoch=""
+	local base d="" t="000000" epoch="" canon
 	base="$(basename "$1")"
 	if [[ "$base" =~ (19|20)([0-9]{2})([0-9]{2})([0-9]{2})[-_]?([0-9]{2})([0-9]{2})([0-9]{2}) ]]; then
 		d="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
@@ -34,9 +34,14 @@ _gfs_ts(){
 	elif [[ "$base" =~ (19|20)([0-9]{2})([0-9]{2})([0-9]{2}) ]]; then
 		d="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
 	fi
-	[[ -n "$d" ]] && epoch="$(date -d "${d:0:4}-${d:4:2}-${d:6:2} ${t:0:2}:${t:2:2}:${t:4:2}" +%s 2>/dev/null)"
-	[[ -n "$epoch" ]] || epoch="$(stat -c %Y "$1" 2>/dev/null)"
-	printf '%s %s' "${epoch}" "$(date -d "@${epoch}" +%Y%m%d-%H%M%S)"
+	# The "|| true" guards keep an unparseable name (e.g. an impossible date that
+	# matches the pattern but date rejects) from aborting a caller running set -e.
+	[[ -n "$d" ]] && epoch="$(date -d "${d:0:4}-${d:4:2}-${d:6:2} ${t:0:2}:${t:2:2}:${t:4:2}" +%s 2>/dev/null || true)"
+	[[ -n "$epoch" ]] || epoch="$(stat -c %Y "$1" 2>/dev/null || true)"
+	[[ -n "$epoch" ]] || epoch="$(date +%s)"
+	canon="$(date -d "@${epoch}" +%Y%m%d-%H%M%S 2>/dev/null || true)"
+	[[ -n "$canon" ]] || canon="00000000-000000"
+	printf '%s %s' "${epoch}" "${canon}"
 }
 
 gfs_rotate(){
@@ -46,7 +51,9 @@ gfs_rotate(){
 	      kDay="${GFS_KEEP_DAILY:-5}" kWeek="${GFS_KEEP_WEEKLY:-4}" \
 	      kMonth="${GFS_KEEP_MONTHLY:-4}" kYear="${GFS_KEEP_YEARLY:-2}"
 
-	shopt -s nullglob; local cands=("$dir/${prefix}"_*."$ext"); shopt -u nullglob
+	# Glob with nullglob so no match yields an empty list; restore the caller's setting.
+	local _ng=0; shopt -q nullglob && _ng=1
+	shopt -s nullglob; local cands=("$dir/${prefix}"_*."$ext"); ((_ng)) || shopt -u nullglob
 	((${#cands[@]})) || return 0
 
 	# "epoch<TAB>canon<TAB>path", oldest first.
