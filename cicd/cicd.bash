@@ -4,14 +4,15 @@
 #   cicd/cicd.bash [options]
 #
 # Stages (fail-fast: any error aborts before the next stage):
-#   1. debug build          5. dogfood (copy native release to a local bin dir)
-#   2. regression tests     6. backup + publish to git
-#   3. profiler (flamegraph SVG; non-gating artifact - see failure policy)
-#   4. release builds (native + cross targets)
+#   1. format (cargo fmt)   5. release builds (native + cross targets)
+#   2. debug build          6. dogfood (copy native release to a local bin dir)
+#   3. regression tests     7. backup + publish to git
+#   4. profiler (flamegraph SVG; non-gating artifact - see failure policy)
 #
 # Options:
 #   -y, --yes           run unattended (no confirm prompt)
 #   -m, --message MSG   publish hands-off with this commit message (no editor)
+#   --no-fmt            skip the formatter (cargo fmt) stage
 #   --no-cross          skip cross-target release builds
 #   --no-profile        skip the profiler stage
 #   --no-dogfood        skip installing the native release locally
@@ -30,6 +31,7 @@ root="$(cd "${here}/.." && pwd)"   # the git repo root (cicd/..)
 export PATH="${HOME}/.cargo/bin:${HOME}/.local/bin:${PATH}"
 # shellcheck source=/dev/null
 source "${here}/config.bash"
+declare -p FMT_CMD &>/dev/null || FMT_CMD=()   # tolerate a config without the fmt stage
 cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
@@ -37,13 +39,14 @@ stamp="$(date +%Y%m%d-%H%M%S)"
 assume_yes=0; cli_message=""
 while (($#)); do case "$1" in
 	-y|--yes)         assume_yes=1; shift ;;
+	--no-fmt)         FMT_CMD=(); shift ;;
 	--no-cross)       BUILD_CROSS=0; shift ;;
 	--no-profile)     PROFILE_ENABLE=0; shift ;;
 	--no-dogfood)     DOGFOOD_DESTS=(); shift ;;
 	--no-publish)     GIT_PUBLISH=(); shift ;;
 	--message=*|-m=*) cli_message="${1#*=}"; shift ;;
 	-m|--message)     cli_message="${2-}"; shift; (($#)) && shift ;;
-	-h|--help)        sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	-h|--help)        sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
 	*) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
 esac; done
 
@@ -73,6 +76,7 @@ dogfood_dest=""; for d in "${DOGFOOD_DESTS[@]:-}"; do [[ -d "$d" ]] && { dogfood
 
 printf '\n%s%s local CI/CD%s\n' "${b}" "${APP_NAME}" "${rst}"
 note "Repo root ............: ${root}"
+note "Format ..............: ${FMT_CMD[*]:-(skipped)}"
 note "Debug build .........: ${DEBUG_BUILD_CMD[*]}"
 note "Tests ...............: ${TEST_CMD[*]}"
 if ((PROFILE_ENABLE)); then
@@ -109,17 +113,26 @@ if ((! assume_yes)); then
 	[[ "${reply,,}" == y* ]] || { echo "Aborted by user."; exit 0; }
 fi
 
-#----- 1. debug build ----------------------------------------------------------
-step "1/6  Debug build"
+#----- 1. format ---------------------------------------------------------------
+step "1/7  Format"
+if ((${#FMT_CMD[@]} == 0)); then
+	note "format skipped"
+else
+	"${FMT_CMD[@]}"
+	ok "formatted (${FMT_CMD[*]})"
+fi
+
+#----- 2. debug build ----------------------------------------------------------
+step "2/7  Debug build"
 "${DEBUG_BUILD_CMD[@]}"
 ok "debug build"
 
-#----- 2. regression tests -----------------------------------------------------
-step "2/6  Regression tests"
+#----- 3. regression tests -----------------------------------------------------
+step "3/7  Regression tests"
 "${TEST_CMD[@]}"
 ok "tests passed"
 
-#----- 3. profiler (non-gating artifact; classified failure) -------------------
+#----- 4. profiler (non-gating artifact; classified failure) -------------------
 rotate_profiles(){   # GFS retention: keep first + newest-per-day/month/year + last N
 	local dir="$1"; shopt -s nullglob; local all=("$dir"/flame_*.svg); shopt -u nullglob
 	local -a f=(); local x; for x in "${all[@]}"; do [[ "$x" == *"/flame_latest.svg" ]] || f+=("$x"); done
@@ -163,18 +176,18 @@ run_profiler(){
 	ok "flamegraph: ${out}"
 	note "latest: ${profile_dir}/flame_latest.svg  (open in a browser)"
 }
-step "3/6  Profiler"
+step "4/7  Profiler"
 run_profiler
 
-#----- 4. release builds -------------------------------------------------------
-step "4/6  Release build (native)"
+#----- 5. release builds -------------------------------------------------------
+step "5/7  Release build (native)"
 "${RELEASE_NATIVE_CMD[@]}"
 [[ -f "${RELEASE_NATIVE_BIN}" ]] || die "native release binary missing: ${RELEASE_NATIVE_BIN}"
 ok "native release: ${RELEASE_NATIVE_BIN} ($(du -h "${RELEASE_NATIVE_BIN}" | cut -f1))"
 if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
 	for t in "${CROSS_TARGETS[@]}"; do
 		local_label="${t%%|*}"; rest="${t#*|}"; art="${rest%%|*}"; cmd="${rest#*|}"
-		step "4/6  Release build: ${local_label}"
+		step "5/7  Release build: ${local_label}"
 		# shellcheck disable=2086
 		eval ${cmd}
 		[[ -f "${art}" ]] || die "missing artifact for ${local_label}: ${art}"
@@ -182,8 +195,8 @@ if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
 	done
 fi
 
-#----- 5. dogfood --------------------------------------------------------------
-step "5/6  Dogfood (install native release locally)"
+#----- 6. dogfood --------------------------------------------------------------
+step "6/7  Dogfood (install native release locally)"
 if ((${#DOGFOOD_DESTS[@]} == 0)); then
 	note "dogfood disabled"
 elif [[ -z "${dogfood_dest}" ]]; then
@@ -193,8 +206,8 @@ else
 	ok "installed -> ${dogfood_dest}/${EXE_NAME}"
 fi
 
-#----- 6. backup + publish -----------------------------------------------------
-step "6/6  Backup + publish"
+#----- 7. backup + publish -----------------------------------------------------
+step "7/7  Backup + publish"
 if ((${#GIT_PUBLISH[@]} == 0)); then
 	note "publish disabled"
 elif [[ -n "$publish_msg" ]]; then
