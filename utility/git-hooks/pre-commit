@@ -3,7 +3,7 @@
 # style; intentional data tables carry #[rustfmt::skip]). Formats ONLY the staged
 # files and re-stages them, so unstaged work is left untouched.
 #
-# Activate once per clone:  git config core.hooksPath tools/git-hooks
+# Activate once per clone:  git config core.hooksPath utility/git-hooks
 set -eu
 
 # rustfmt lives in the rustup toolchain; ensure it's reachable.
