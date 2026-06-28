@@ -33,6 +33,15 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 glutin = "0.32"
 glutin-winit = "0.5"
 
+# Profiler stage of the local CI/CD (cicd/). Dev-only: optional + feature-gated,
+# so it never compiles into a normal/release build (zero shipped-binary cost).
+# In-process sampling (SIGPROF) -> flamegraph SVG; sidesteps perf_event_paranoid.
+# Linux-only path (cicd builds with --features profiling on this box).
+pprof = { version = "0.14", features = ["flamegraph"], optional = true }
+
+[features]
+profiling = ["dep:pprof"]
+
 # X11: set _NET_WM_WINDOW_OPACITY for whole-window transparency where the wgpu
 # surface can't expose per-pixel alpha (Vulkan on X11 reports Opaque-only).
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -58,6 +67,14 @@ strip = true         # strip symbols
 # ever need full gdb/lldb. No effect on rebuild speed.
 [profile.dev]
 debug = "line-tables-only"
+
+# Used only by the cicd profiler stage (cargo build --profile profiling
+# --features profiling). Optimized like release so the flamegraph reflects real
+# perf, but keeps symbols + debuginfo (release strips them) so frames are named.
+[profile.profiling]
+inherits = "release"
+strip = false
+debug = true
 
 # windows: detect the system font size (no console window in release is set in main.rs)
 [target.'cfg(windows)'.dependencies]

@@ -42,7 +42,7 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 
 ### Bugs
 
-- [ ] Smooth-scrolling apparently just quits after using the terminal for a while. I've been testing with custom `utility/n8output-random-unicode.py`. It seems to quit, if output is too fast for a while. Maybe it never adjusts back down?
+- [ ] Critical: Smooth-scrolling apparently just quits after using the terminal for a while. It seems to quit, if output is too fast for a while, but that could be a red-herring. Maybe it's just after any particular amount of general use.
 
 - [ ] Mouse wheel doesn't scroll back through the `stdout`/`stderr` buffer. It should do so, smoothly, and in proportion to how fast the mouse wheel is moved. But currently it moves the command history back. (20260626-104542)
 
@@ -184,6 +184,11 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 
 - [✔️] Optimize compiled binaries to balance executable size and speed (slight nod to size), without the risk of triggering antivirus.
 	- Status: Done. `[profile.release]`: `lto = "fat"` (whole-program inlining - smaller and usually faster than thin), `panic = "abort"` (drops unwinding tables - sizable shrink, fine for a GUI app), kept `codegen-units = 1` + `strip = true`, and opt-level stays 3 so renderer/PTY hot paths aren't slowed (the size improvement comes from the free wins, not from `opt-level=s/z`). Deliberately no UPX/packer - packers routinely trip AV heuristics. - Result: Linux binary is ~13% smaller, no runtime-speed tradeoff; verified still runs.
+
+- [✔️] Local CI/CD pipeline, one command, fail-fast, reusable across projects (`cicd/`). (20260628)
+	- Status: Done. `cicd/cicd.bash` (generic engine) + `cicd/config.bash` (per-project settings - the only file to edit when copying `cicd/` into a new project). Stages, fail-fast: (1) debug build, (2) `cargo test`, (3) profiler artifact, (4) release builds (native + 3 cross targets), (5) dogfood the native release to a local bin dir, (6) `cicd/utility/n8git_backup-and-publish`. Preflight prints the plan + resolved paths and prompts (`-y` to skip; `--no-cross/--no-profile/--no-dogfood/--no-publish`).
+	- Profiler (stage 3) is a non-gating artifact, not a pass/fail test. A dev-only, feature-gated `profiling` Cargo feature pulls in `pprof` (in-process SIGPROF sampling - sidesteps `perf_event_paranoid=3`, no sudo, zero shipped-binary cost) plus a `--profile-run` mode (env `SILK_PROFILE_OUT`/`SILK_PROFILE_SECS`) that runs the real app against a heavy unicode workload for N seconds, then writes a flamegraph SVG. Built via `cargo build --profile profiling --features profiling` (the `[profile.profiling]` keeps the symbols/debuginfo that release strips, so frames are named). Output -> `../private/profiling/flame_<stamp>.svg` (+ stable `flame_latest.svg`), GFS-rotated (~30 kept: first + newest-per-day/month/year + last 15). Failure policy: environmental causes (no DISPLAY, missing python3) skip with a warning; a genuine run failure aborts (`PROFILE_STRICT=1` to abort on any). Verified end-to-end: SVG with named frames (`State::render`, `Pane::build`, `TextCtx::fill_glyph`); rotation correct.
+	- Replaced the convert-base templates: `cicd.bash` rewritten for cargo; `test.bash` + `n8lib_test` renamed `*.disabled`; the workload tool moved `utility/ -> cicd/utility/n8output-random-unicode.py`.
 
 - [✔️] Background image:
 	- [✔️] By default unless overridden, look in ~/.config/silkterm/backgrounds/background.* - Status: Done. `resolve_bg_image` now auto-detects `backgrounds/background.{png|jpg|jpeg}` under the config dir (explicit `background_image` paths unchanged). Verified: image in that dir auto-loads.
