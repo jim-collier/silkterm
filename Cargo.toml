@@ -1,0 +1,71 @@
+[package]
+name = "silkterm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Smooth-scrolling GUI terminal emulator with split panes"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/jim-collier/silkterm"
+
+[[bin]]
+name = "silkterm"
+path = "src/main.rs"
+
+[dependencies]
+alacritty_terminal = "0.26"
+wgpu = "29"
+winit = "0.30"
+glyphon = "0.11"
+pollster = "0.4"
+raw-window-handle = "0.6"
+bytemuck = { version = "1", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+toml_edit = "0.22"
+copypasta = "0.10"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# X11 per-pixel transparency: wgpu's GLES surface can't bind the window's ARGB
+# visual, so create a transparent GL context with glutin and run wgpu on it
+# (hal external interop). Cross-platform crate; only used on X11 at runtime.
+glutin = "0.32"
+glutin-winit = "0.5"
+
+# X11: set _NET_WM_WINDOW_OPACITY for whole-window transparency where the wgpu
+# surface can't expose per-pixel alpha (Vulkan on X11 reports Opaque-only).
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+
+# Unix: tcgetpgrp() on the PTY master to read the foreground program for tab titles.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Balance size and runtime speed (slight nod to size). opt-level stays 3 - the
+# owner cares about runtime speed, and the size wins below cost nothing there.
+# NOTE: do NOT pack with UPX/etc - packers routinely trip antivirus heuristics.
+[profile.release]
+opt-level = 3        # keep the renderer/PTY hot paths fast
+lto = "fat"          # whole-program inlining: usually smaller AND faster than thin
+codegen-units = 1    # better cross-module optimization (also a bit smaller)
+panic = "abort"      # drop unwinding tables - sizable shrink, fine for a GUI app
+strip = true         # strip symbols
+
+# Full debuginfo makes the debug binary ~285M and target/debug multi-GB. We debug
+# via panic backtraces + eprintln, not a variable-inspecting debugger, so keep
+# line tables (file:line in backtraces) and drop the rest. Set debug=true if you
+# ever need full gdb/lldb. No effect on rebuild speed.
+[profile.dev]
+debug = "line-tables-only"
+
+# windows: detect the system font size (no console window in release is set in main.rs)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[package.metadata.silkterm]
+note = "see build.md for cross-compile + macOS instructions"

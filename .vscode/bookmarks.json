@@ -1,0 +1,24 @@
+{
+	"files": [
+		{
+			"path": "README.md",
+			"bookmarks": [
+				{
+					"line": 109,
+					"column": 0,
+					"label": ""
+				}
+			]
+		},
+		{
+			"path": "design_docs/project.md",
+			"bookmarks": [
+				{
+					"line": 126,
+					"column": 0,
+					"label": ""
+				}
+			]
+		}
+	]
+}

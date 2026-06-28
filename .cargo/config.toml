@@ -1,0 +1,7 @@
+# Cross-compile to Windows (GNU ABI) from Linux using mingw-w64.
+# Native Linux and native macOS builds need nothing here.
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-ar"
+# statically link the gcc/pthread runtime so the .exe is self-contained
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -1,0 +1,25 @@
+#!/bin/sh
+# Keep staged Rust files rustfmt-clean before every commit (rustfmt.toml governs
+# style; intentional data tables carry #[rustfmt::skip]). Formats ONLY the staged
+# files and re-stages them, so unstaged work is left untouched.
+#
+# Activate once per clone:  git config core.hooksPath tools/git-hooks
+set -eu
+
+# rustfmt lives in the rustup toolchain; ensure it's reachable.
+command -v rustfmt >/dev/null 2>&1 || PATH="$HOME/.cargo/bin:$PATH"
+command -v rustfmt >/dev/null 2>&1 || { echo "pre-commit: rustfmt not found; skipping format" >&2; exit 0; }
+
+files="$(git diff --cached --name-only --diff-filter=ACM -- '*.rs')"
+[ -n "$files" ] || exit 0
+
+oldIFS=$IFS
+IFS='
+'
+for f in $files; do
+	[ -f "$f" ] || continue
+	rustfmt --edition 2024 "$f" || { echo "pre-commit: rustfmt failed on $f" >&2; IFS=$oldIFS; exit 1; }
+	git add -- "$f"
+done
+IFS=$oldIFS
+exit 0
