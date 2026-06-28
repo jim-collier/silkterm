@@ -24,7 +24,7 @@
 
 set -Eeuo pipefail
 
-#----- locate + load -----------------------------------------------------------
+# Find the repo root and load project config.
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${here}/.." && pwd)"   # the git repo root (cicd/..)
 # rustup toolchain (cross targets, edition 2024) + zig must beat system rust.
@@ -35,7 +35,7 @@ declare -p FMT_CMD &>/dev/null || FMT_CMD=()   # tolerate a config without the f
 cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
-#----- options -----------------------------------------------------------------
+# Parse options.
 assume_yes=0; cli_message=""
 while (($#)); do case "$1" in
 	-y|--yes)         assume_yes=1; shift ;;
@@ -59,7 +59,7 @@ elif [[ -n "${PUBLISH_AUTO_MESSAGE:-}" ]]; then publish_msg="$PUBLISH_AUTO_MESSA
 elif ((assume_yes));                       then publish_msg="${APP_NAME} CI/CD ${stamp}"
 fi
 
-#----- output helpers ----------------------------------------------------------
+# Output helpers.
 b=$'\e[1m'; dim=$'\e[2m'; grn=$'\e[32m'; ylw=$'\e[33m'; red=$'\e[31m'; rst=$'\e[0m'
 hr(){ printf '%s\n' "${dim}--------------------------------------------------------------------------${rst}"; }
 step(){ hr; printf '%s[ %s ] %s%s\n' "${b}" "$(date +%H:%M:%S)" "$*" "${rst}"; }
@@ -69,7 +69,7 @@ warn(){ printf '%s  WARN: %s%s\n' "${ylw}" "$*" "${rst}" >&2; }
 die(){  printf '\n%sCICD FAILED: %s%s\n' "${red}" "$*" "${rst}" >&2; exit 1; }
 trap 'rc=$?; printf "\n%sCICD ABORTED (exit %s) at line %s: %s%s\n" "${red}" "$rc" "$LINENO" "$BASH_COMMAND" "${rst}" >&2; exit $rc' ERR
 
-#----- preflight: say what will happen, with resolved paths --------------------
+# Preflight: show the plan with resolved paths, then confirm.
 abs_script="${root}/${PROFILE_WORKLOAD_SCRIPT}"
 profile_dir="$(cd "${root}" && mkdir -p "${PROFILE_OUT_DIR}" 2>/dev/null; cd "${PROFILE_OUT_DIR}" 2>/dev/null && pwd || echo "${root}/${PROFILE_OUT_DIR}")"
 dogfood_dest=""; for d in "${DOGFOOD_DESTS[@]:-}"; do [[ -d "$d" ]] && { dogfood_dest="$d"; break; }; done
@@ -113,7 +113,7 @@ if ((! assume_yes)); then
 	[[ "${reply,,}" == y* ]] || { echo "Aborted by user."; exit 0; }
 fi
 
-#----- 1. format ---------------------------------------------------------------
+# Stage 1: format.
 step "1/7  Format"
 if ((${#FMT_CMD[@]} == 0)); then
 	note "format skipped"
@@ -122,17 +122,17 @@ else
 	ok "formatted (${FMT_CMD[*]})"
 fi
 
-#----- 2. debug build ----------------------------------------------------------
+# Stage 2: debug build.
 step "2/7  Debug build"
 "${DEBUG_BUILD_CMD[@]}"
 ok "debug build"
 
-#----- 3. regression tests -----------------------------------------------------
+# Stage 3: regression tests.
 step "3/7  Regression tests"
 "${TEST_CMD[@]}"
 ok "tests passed"
 
-#----- 4. profiler (non-gating artifact; classified failure) -------------------
+# Stage 4: profiler (non-gating artifact; failures classified below).
 rotate_profiles(){   # GFS retention: keep first + newest-per-day/month/year + last N
 	local dir="$1"; shopt -s nullglob; local all=("$dir"/flame_*.svg); shopt -u nullglob
 	local -a f=(); local x; for x in "${all[@]}"; do [[ "$x" == *"/flame_latest.svg" ]] || f+=("$x"); done
@@ -179,7 +179,7 @@ run_profiler(){
 step "4/7  Profiler"
 run_profiler
 
-#----- 5. release builds -------------------------------------------------------
+# Stage 5: release builds.
 step "5/7  Release build (native)"
 "${RELEASE_NATIVE_CMD[@]}"
 [[ -f "${RELEASE_NATIVE_BIN}" ]] || die "native release binary missing: ${RELEASE_NATIVE_BIN}"
@@ -195,7 +195,7 @@ if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
 	done
 fi
 
-#----- 6. dogfood --------------------------------------------------------------
+# Stage 6: dogfood.
 step "6/7  Dogfood (install native release locally)"
 if ((${#DOGFOOD_DESTS[@]} == 0)); then
 	note "dogfood disabled"
@@ -206,7 +206,7 @@ else
 	ok "installed -> ${dogfood_dest}/${EXE_NAME}"
 fi
 
-#----- 7. backup + publish -----------------------------------------------------
+# Stage 7: backup + publish.
 step "7/7  Backup + publish"
 if ((${#GIT_PUBLISH[@]} == 0)); then
 	note "publish disabled"
