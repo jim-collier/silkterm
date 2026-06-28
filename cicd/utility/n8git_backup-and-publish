@@ -1,0 +1,461 @@
+#!/bin/bash
+#  shellcheck disable=2001  ## 'See if you can use ${variable//search/replace} instead.' Complains about good uses of sed.
+#  shellcheck disable=2016  ## 'Expressions don't expand in single quotes, use double quotes for that.' I know, and I often want an explicit '$'.
+#  shellcheck disable=2034  ## 'variable appears unused.' Complains about valid use of variable indirection (e.g. later use of local -n var=$1)
+#  shellcheck disable=2046  ## 'Quote to prevent word-splitting.' (OK for integers.)
+#  shellcheck disable=2086  ## 'Double quote to prevent globbing and word splitting.' (OK for integers.)
+#  shellcheck disable=2119  ## 'Use foo "$@" if function's $1 should mean script's $1.' Confusing and inapplicable.
+#  shellcheck disable=2120  ## 'Foo references arguments, but none are ever passed.' Valid function argument overloading.
+#  shellcheck disable=2128  ## 'Expanding an array without an index only gives the element in the index 0.' False hits on associative arrays.
+#  shellcheck disable=2155  ## 'Declare and assign separately to avoid masking return values.' Cumbersome and unnecessary. For integers it's sometimes required to even come into existence for counters.
+#  shellcheck disable=2162  ## 'read without -r will mangle backslashes.'
+#  shellcheck disable=2178  ## 'Variable was used as an array but is now assigned a string.' False hits on associative arrays with e.g. 'local -n assocArray=$1'.
+#  shellcheck disable=2181  ## 'Check exit code directly, not indirectly with $?.'
+#  shellcheck disable=2317  ## 'Can't reach.' (I.e. an 'exit' is used for debugging - and makes an unusable visual mess.)
+## shellcheck disable=2002  ## 'Useless use of cat.'
+## shellcheck disable=2004  ## '$/${} is unnecessary on arithmetic variables.' Inappropriate complaining?
+## shellcheck disable=2053  ## 'Quote the right-hand sid of = in [[ ]] to prevent glob matching.' Disable for Yoda Notation.
+## shellcheck disable=2143  ## 'Use grep -q instead of echo | grep'
+
+##	Purpose: See fAbout() below.
+##	History: At bottom of script.
+
+##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Licensed under The MIT License (MIT). Full text at:
+##		https://mit-license.org/
+##	SPDX-License-Identifier: MIT
+
+
+#•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Settings
+[[ -v doQuietly              ]] || declare  -i doQuietly=0                ; [[ "${GIT_BACKUP_AND_PUBLISH_QUIET:-0}" == "1" ]] && doQuietly=1
+[[ -v doPromptToContinue     ]] || declare  -i doPromptToContinue=1
+[[ -v thisVersion            ]] || declare -r  thisVersion="1.0.0-beta3"
+[[ -v thisBuild              ]] || declare -r  thisBuild="1n0rx7c"
+[[ -v thisCopyrightYear      ]] || declare -r  thisCopyrightYear="2026"
+[[ -v thisAuthor             ]] || declare -r  thisAuthor="Jim Collier"
+[[ -v atLeastOneArgRequired  ]] || declare -ri atLeastOneArgRequired=0
+[[ -v skipBackup             ]] || declare  -i skipBackup=0                ; [[ "${GIT_BACKUP_AND_PUBLISH_NOBACKUP:-0}" == "1" ]] && skipBackup=1
+
+#•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Copyright, about, & syntax (minified)
+fCopyright(){ { ((doQuietly)) || ((wasShown_Copyright)); } && return; wasShown_Copyright=1;
+	fEcho_Clean ""
+#	fEcho_Clean "${meName} v${thisVersion} build ${thisBuild},"  ## Don't show version, it may confuse author with version of product being published.
+	fEcho_Clean "${meName}, Copyright © ${thisCopyrightYear} ${thisAuthor}."
+	fEcho_Clean "Licensed under The MIT License (MIT). Full text at:"
+	fEcho_Clean "  https://mit-license.org/"
+	fEcho_Clean "No Warranty."
+	fEcho_Clean "" ;:;}
+
+fAbout(){ { ((doQuietly)) || ((wasShown_About)); } && return; wasShown_About=1;
+	fEcho_Clean ""
+	#           X-------------------------------------------------------------------------------X
+	fEcho_Clean "Backs up a github directory to a versioned archive, and publishes changes, ie:"
+	fEcho_Clean "  • rar {flags} ../versions/{version}.rar  ../*"
+	fEcho_Clean "  • git stash push --include-untracked &&  git pull --no-ff  &&  git stash pop"
+	fEcho_Clean "  • git add --all  &&  git commit"
+	fEcho_Clean "  • git push origin"
+	#           X-------------------------------------------------------------------------------X
+	fEcho_Clean "" ;:;}
+
+fSyntax(){  { ((doQuietly)) || ((wasShown_Syntax)); } && return; wasShown_Syntax=1;
+	fEcho_Clean ""
+	#           X-------------------------------------------------------------------------------X
+	fEcho_Clean "Arguments:"
+	fEcho_Clean "  --quiet [optional]: Be less verbose, and don't prompt user to continue."
+	fEcho_Clean "  --help, --version [or -h, -v]"
+	fEcho_Clean ""
+	fEcho_Clean "Expected folder structure - something like:"
+	fEcho_Clean "    project-name              [REQUIRED, any name, parent folder]"
+	fEcho_Clean "    project-name/github       [REQUIRED, any name, →you should be here←]"
+	fEcho_Clean "    project-name/github/.git  [REQUIRED, exact name, created by git]"
+	fEcho_Clean "    project-name/priv         [0 to ∞ dirs, included in this backup]"
+	fEcho_Clean "    project-name/versions     [REQUIRED, exact name, will be created by this]"
+
+	#           X-------------------------------------------------------------------------------X
+	fEcho_Clean "" ;:;}
+
+
+#••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+fMain(){
+
+	## Settings
+	local baseCmdArgs="a -r0 -ep1 -rr -ol -m3"
+
+	## Generic variables
+	local -i wasShown_Copyright=0; local -i wasShown_About=0; wasShown_Syntax=0
+
+	## Check for need to show help
+	{ ((atLeastOneArgRequired)) && [[ -z "${1:-}${2:-}${3:-}${4:-}" ]]; } && { fCopyright; fAbout; fSyntax; return 1; }
+	case " ${*,,} " in
+		*" -h "*|*" --help "*)                 fCopyright; fAbout; fSyntax; return 0; ;;
+		*" -v "*|*" --ver "*|*" --version "*)  fCopyright;                  return 0; ;;
+		*" -q "*|*" --quiet "*)                doQuiet=1;                             ;;
+	esac
+
+	## Validate dependencies
+	fMustBeInPath rar
+	fMustBeInPath git
+
+	## Arguments
+	local -ri parseArgs_maxPositionalArgCount=1  ## Variable expected by fParseArgs()
+	fParseArgs  "${@}"
+
+	## Settings; relative paths
+	local -r dirPath_GitProj="."
+	local -r dirName_GitProj="$(basename "$(readlink -f "${dirPath_GitProj}")")"
+	local -r dirPath_Top=".."
+	local -r dirName_Top="$(basename "$(readlink -f "${dirPath_Top}")")"
+	local -r dirPath_Rar="${dirPath_Top}/versions"
+	local -r filePath_Rar="${dirPath_Rar}/${dirName_Top}_${serialDT}.rar"
+	baseCmdArgs="${baseCmdArgs} -x'*/${dirName_GitProj}/.git/*' -x'*/versions/*'"
+	local -r cmd_Rar="rar ${baseCmdArgs}  '${filePath_Rar}'  '../.'"
+
+	## Validate
+	[[ -f "${dirPath_GitProj}/.git/HEAD" ]]  ||  { fSyntax; fThrowError "Not in git project base directory."; }
+
+	## Prompt to continue
+	if ((! doQuietly)); then
+		fCopyright
+		fAbout
+		if ((! skipBackup)); then
+			fEcho_Clean "Archive source ...............: ${dirPath_GitProj}"
+			fEcho_Clean "Archive target ...............: ${filePath_Rar}"
+			fEcho_Clean
+			fEcho_Clean "Rar command:"
+			fEcho_Clean "${cmd_Rar}"
+			fEcho_Clean
+		fi
+		fEcho_Clean "Remote info (git remote -v); make sure it's 'git@' and not 'https://':"
+		git remote -v
+		fEcho_Clean
+		fEcho_Clean "Current branch (git branch --show-current):"
+		git branch --show-current
+		fEcho_Clean
+		fEcho_Clean "git user info:"
+		git config user.name
+		git config user.email
+		fEcho_Clean
+		fEcho_Clean "SSH key being used"
+		ssh -Tv git@github.com 2>&1 | grep -iE "offering|successfully authenticated" | sed 's/debug1: //' || true
+		fIntroPromptToContinue  ""
+		fEcho_Clean
+	fi
+
+	## Make backup dir
+	if ((! skipBackup)); then
+		[[ -d "${dirPath_Rar}" ]]  ||  mkdir -p "${dirPath_Rar}"
+
+		fEcho "Creating version backup '${filePath_Rar}' ..."
+		eval "${cmd_Rar}"
+	fi
+
+	## Variables for git actions
+	local -i didStash=0
+	local -i preCount
+	local -i postCount
+
+	## Stash
+	if ! git diff --quiet || ! git diff --cached --quiet; then
+		fEcho; fEcho "git stash push --include-untracked..."
+		preCount=$(git stash list | wc -l)
+		git stash push --include-untracked -m "auto-stash"
+		postCount=$(git stash list | wc -l)
+		didStash=$((postCount > preCount ? 1 : 0))
+	fi
+
+	## Pull with rebase
+	if git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
+		fEcho; fEcho "git pull --no-ff ..."
+		git pull --no-ff
+	fi
+
+	## Stash pop
+	if ((didStash)); then
+		fEcho; fEcho "git stash pop ..."
+		git stash pop
+	fi
+
+	# Stage everything
+	fEcho; fEcho "git add --all ..."
+	git add --all
+
+	if ! git diff --cached --quiet; then
+		fEcho; fEcho "git commit ..."
+		git commit
+	fi
+
+	# Push only if we're ahead of the remote
+	if ! git rev-parse --abbrev-ref @{u} >/dev/null 2>&1; then
+		fEcho; fEcho "git push -u origin HEAD ..."
+		git push -u origin HEAD
+	elif [[ -n "$(git log @{u}.. 2>/dev/null)" ]]; then
+		fEcho; fEcho "git push origin ..."
+		git push origin
+	fi
+
+	## Done
+	((! doQuietly)) && { fEcho_Force; fEcho "${meName}: Done."; }
+}
+
+#••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+fCleanup(){
+	if ((! doQuietly)); then
+		fEcho_Clean
+	fi
+}
+
+
+#•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+fParseArgs(){
+
+	## Look for stars "✶✶✶✶✶✶✶✶" for places to custom-modify unique instances of this function.
+
+	## GENERIC (don't modify): Populate args array and string. (This has been updated in template to just use "${@}" and not a new array. Leave this one be though.)
+	## Note: Args are 1-based index, but the resulting array of args at the end is a normal 0-based index.
+	local -r -i maxPracticalArgCount=50  ## In Bash we have 2MB of args, or somewhere around 10k by count. For readabality and performance, keep it MUCH lower, say ~20-99.
+	local    -i totalArgCount=0
+	local    -i switchCounter=0
+	local -a    allArgsArr=()
+	## Store the highest non-empty argument number.
+	local -i i; i=0
+	for ((i=1; i<=maxPracticalArgCount; i++)); do [[ -n "${!i:-}" ]] && totalArgCount=$i; done
+	local -ri totalArgCount=$totalArgCount
+	## Build args str and array, including empty args - up to the last non-empty arg.
+	local thisStr=""
+	for ((i=1; i<=totalArgCount; i++)); do
+		thisStr="${!i}"
+		thisStr="${thisStr//\"/″}"; thisStr="${thisStr//\'/′}"
+		allArgsArr+=("${thisStr}")
+	done
+
+	## GENERIC: Variables for loop
+	local    tmpStr=""
+	local    currentArg=""
+	local    lastSwitch=""
+	local -i expectingSwitchParamForNextArg=0
+	local -i positionalArgCounter=0
+
+	## Process arguments
+	for currentArg in "${allArgsArr[@]}"; do
+		#fEcho_Clean "Debug: currentArg ........: '${currentArg}'"
+
+		## Test if an option switch or not
+		if [[ -n "$(echo "${currentArg}" | grep -P "^\-(\-?)[^\ \-]" 2>/dev/null || true)" ]]; then
+			## It's an option (either unary or long-option, we don't know yet)
+			#fEcho_Clean "Debug: option ............: '${currentArg}'"
+
+			## Check if this was supposed to NOT be a unary switch (eg expecting a parameter after previous long-option)
+			((expectingSwitchParamForNextArg)) && fThrowError "Expecting a long-option argument for '${lastSwitch}', instead got another option '${currentArg}'."
+			switchCounter=$((switchCounter + 1))
+
+			## Validate switches, and act on unary switches
+			lastSwitchAsPassed="${currentArg}"
+			tmpStr="${currentArg,,}"
+
+			## Strip switch dashes off
+			while [[ "${tmpStr}" == -* ]]; do tmpStr="${tmpStr#-}"; done
+			lastSwitch="${tmpStr}" ## Remember lastSwitch
+
+			case "${tmpStr}" in
+
+			#	## ✶✶✶✶✶✶✶✶ PUT CUSTOM UNARY SWITCH TESTS AND PARENT BOOLEAN VARIABLE ASSIGNMENTS HERE
+			#	"unary-switch")  booleanVariable=1  ;;
+
+			#	## ✶✶✶✶✶✶✶✶ PUT TESTS FOR CUSTOM LONG-OPTION LOGIC THAT EXPECTS AN ARGUMENT TO FOLLOW, HERE
+			#	"long-option-with-arg-to-follow") expectingSwitchParamForNextArg=1 ;;
+
+				## ¯\_(ツ)_/¯
+				*) fThrowError  "Unexpected option in this context: '${currentArg}'."  ;;
+
+			esac
+		else
+			## It's not an option switch; could be a long-option argument, or a positional arg
+
+			if ((expectingSwitchParamForNextArg)); then :
+				## Now we know to expecting an long-option argument
+				#fEcho_Clean "Debug: arg for long-option: '${lastSwitch}': '${currentArg}'"
+
+			#	## ✶✶✶✶✶✶✶✶ PUT CUSTOM LONG-OPTION ARGUMENT TESTS AND PARENT VARIABLE ASSIGNMENTS HERE
+			#	case "${lastSwitch,,}" in
+			#		"long-option-with-arg-to-follow") someParentVariable="${currentArg}" ;;
+			#		*)                                fThrowError "Unkown option: '${lastSwitchAsPassed}', current parameter: '${currentArg}'." ;;  ## A redundant check.
+			#	esac
+			#	expectingSwitchParamForNextArg=0
+
+			else
+				## Well it must be a positional arg then.
+				positionalArgCounter=$((positionalArgCounter + 1))
+				((positionalArgCounter > parseArgs_maxPositionalArgCount))  && fThrowError "Too many positional arguments: ${positionalArgCounter}, for max of ${parseArgs_maxPositionalArgCount}."
+				#fEcho_Clean "Debug: positional arg #${positionalArgCounter}: '${currentArg}'"
+
+				## ✶✶✶✶✶✶✶✶ PUT CUSTOM POSITIONAL ARG LOGIC HERE (only use one of the following methods, delete the other)
+
+				## Assign parent variables; Method 1: argument counter (less flexible but best for simple input)
+				case $positionalArgCounter in
+					1) stringArg="${currentArg}"      ;;
+					2) arg_intArg="${currentArg}" ;;
+					*) fThrowError "Unexpected positional argument # ${positionalArgCounter}: '${currentArg}'." ;;
+				esac
+
+			fi
+		fi
+	done
+	((expectingSwitchParamForNextArg)) && fThrowError "Never received a parameter for switch '--${lastSwitch}'."
+
+:;}  ## 'true' has to be the last thing or this function errors [the joys of the mysterious 'set -e'].
+
+
+
+
+
+
+
+
+
+
+#•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Generic functions
+fDoesDirHaveContents(){
+	[[   -z "${1}" ]]  &&  fThrowError  "No directory specified as arg 1."  "fDoesDirHaveContents"
+	[[ ! -d "${1}" ]]                                     && return 1
+	[[   -z "$(ls -1A "${1%%/}/" 2>/dev/null || true)" ]] && return 1
+	return 0; }
+fBuildQuotedParams(){
+	local -n varName_1mtkp9p=$1 ; shift || true
+	local -i maxIdx=0
+	for i in {1..32}; do [[ -n "${!i}" ]] && maxIdx=$i; done
+	for i in $(seq 1 $maxIdx); do ((i > 1)) && varName_1mtkp9p="${varName_1mtkp9p}  "; varName_1mtkp9p="${varName_1mtkp9p}\"${!i}\""; done; }
+fMustBeInPath(){
+	##	Unit tests passed on: 20250704.
+	local -r programToCheckForInPath="${1:-}"
+	if [[ -z "${programToCheckForInPath}" ]]; then
+		fThrowError "Not program specified."  "${FUNCNAME[0]}"; return 1
+	elif [[ -z "$(which ${programToCheckForInPath} 2>/dev/null || true)" ]]; then
+		fThrowError "Not found in path: ${programToCheckForInPath}"; return 1
+	fi ;:;}
+fIntroPromptToContinue(){
+	{ ((doQuietly)) || ((! doPromptToContinue)); } && return 0
+	local -r extraInfoString="${1:-}"
+	{ fEcho_Clean; fCopyright; fAbout; fEcho_Clean; }
+	[[ -n "${extraInfoString}" ]]  &&  { fEcho_Clean; fEcho_Clean "${extraInfoString}"; }
+	fPromptYN "Continue? (y|n): "  ||  { fEcho "User aborted."; return 1; }; }
+fPromptYN(){
+	((doQuietly)) && return 0
+	local promptStr="${1:-}"
+	[[ -z "${promptStr}" ]] && promptStr="Continue? (y|n): "
+	read -r -p "${promptStr}" userAnswer
+	fEcho_ResetBlankCounter
+	{ [[ "${userAnswer,,}" == "y" ]] && return 0; } || return 1; }
+
+## Echo-related
+declare -i _wasLastEchoBlank=0
+function fEcho_ResetBlankCounter() { _wasLastEchoBlank=0; }
+function fEcho_Clean()             { if [[ -n "${1:-}" ]]; then echo -e "$*"; _wasLastEchoBlank=0; elif [[ $_wasLastEchoBlank -eq 0 ]] && echo; then _wasLastEchoBlank=1; fi; }
+function fEcho()                   { if [[ -n "$*" ]]; then fEcho_Clean "[ $* ]"; else fEcho_Clean ""; fi; }
+function fEcho_Force()             { fEcho_ResetBlankCounter; fEcho "$*";       }
+function fEcho_Clean_Force()       { fEcho_ResetBlankCounter; fEcho_Clean "$*"; }
+
+## Error-handling
+declare -i _wasCleanupRun=0  ## Managed internally by this suite.
+declare -i _doExitOnThrow=0    ## Managed internally by this suite.
+declare -i _ErrVal=0         ## Set by this suite, but managed by calling functions. Think of it as an extended '$?' that doesn't immediately clear.
+_fSingleExitPoint(){
+	local -r signal="${1:-}"
+	local -r lineNum="${2:-}"
+	local -r exitCode="${3:-}"
+	local -r errMsg="${4:-}"
+	local -r errCommand="$BASH_COMMAND"
+	_ErrVal=$exitCode
+	if [[ "${signal}" == "INT" ]]; then
+		fEcho_Force
+		echo "User interrupted." >&2
+		fEcho_ResetBlankCounter
+		fCleanup  ## User cleanup
+		exit 1
+	elif [[ "${exitCode}" != "0" ]] && [[ "${exitCode}" != "1" ]]; then  ## Clunky string compare is less likely to fail than integer
+		fEcho_Clean
+		echo -e "Signal .....: '${signal}'"      >&2
+		echo -e "Err# .......: '${exitCode}'"    >&2
+		echo -e "Message ....: '${errMsg}'"      >&2
+		echo -e "At line# ...: '${lineNum}'"     >&2
+		echo -e "Command# ...: '${errCommand}'"  >&2
+		fEcho_Clean_Force
+		fCleanup  ## User cleanup
+	else
+		fCleanup  ## User cleanup
+	fi ;}
+_fTrap_Exit(){
+	if [[ "${_wasCleanupRun}" == "0" ]]; then  ## String compare is less to fail than integer
+		_wasCleanupRun=1
+		_fSingleExitPoint "${@}"
+	fi ;}
+_fTrap_Error(){
+	if [[ "${_wasCleanupRun}" == "0" ]]; then  ## String compare is less to fail than integer
+		_wasCleanupRun=1
+		fEcho_ResetBlankCounter
+		_fSingleExitPoint "${@}"
+	fi ;}
+_fTrap_Error_Ignore(){ _ErrVal=1; true;  return 0; }
+_fTrap_Error_Soft(){   _ErrVal=1; false; return 1; }
+fThrowError(){
+	local errMsg="${1:-}"         ; [[ -z "${errMsg}"      ]] && errMsg="An error occurred."
+	local meNameLocal="${meName}" ; [[ -n "${meNameLocal}" ]] && errMsg="${meNameLocal}: ${errMsg}"
+	local callStack=""
+	for (( i = 1; i < ${#FUNCNAME[@]}; i++ )); do
+		[[ "${FUNCNAME[i]}" =~ main|source ]] && continue
+		[[ -n "${callStack}" ]] && callStack="${callStack}, "; callStack="${callStack}${FUNCNAME[i]}()"
+	done
+	[[ -n "${callStack}" ]] && callStack="Reverse call stack: ${callStack}"
+	fEcho_Clean; echo -e "${errMsg}\n${callStack}" >&2; fEcho_Clean_Force
+	_ErrVal=1
+	{ ((_doExitOnThrow)) && exit 1; } || return 1; }
+fDefineTrap_Error_Fatal(){        :; _ErrVal=0; _doExitOnThrow=0; trap '_fTrap_Error         ERR    ${LINENO}  $?  $_' ERR; set -e; } ## Standard; exits script on any caught error; but 'set -e' has known inconsistencies catching or ignoring errors.
+fDefineTrap_Error_ExitOnThrow(){  :; _ErrVal=0; _doExitOnThrow=0; trap '_fTrap_Error         ERR    ${LINENO}  $?  $_' ERR; set +e; } ## Only exits script on fThrowError().
+fDefineTrap_Error_Soft(){         :; _ErrVal=0; _doExitOnThrow=0; trap '_fTrap_Error_Soft    ERR    ${LINENO}  $?  $_' ERR; set -e; } ## Returns error code of 1 on error.
+fDefineTrap_Error_Ignore(){       :; _ErrVal=0; _doExitOnThrow=0; trap '_fTrap_Error_Ignore  ERR    ${LINENO}  $?  $_' ERR; set +e; } ## Eats errors and returns true.
+fDefineTrap_Error_Fatal
+trap '_fTrap_Error SIGHUP  ${LINENO} $? $_' SIGHUP
+trap '_fTrap_Error SIGINT  ${LINENO} $? $_' SIGINT    ## CTRL+C
+trap '_fTrap_Error SIGTERM ${LINENO} $? $_' SIGTERM
+trap '_fTrap_Exit  EXIT    ${LINENO} $? $_' EXIT
+trap '_fTrap_Exit  INT     ${LINENO} $? $_' INT
+trap '_fTrap_Exit  TERM    ${LINENO} $? $_' TERM
+
+
+#•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Script entry point
+
+## Bash environment settings (comment out what you don't want)
+ set -u  #..................: Require variable declaration. Stronger than mere linting. But can struggle if functions are in sourced files.
+ set -e  #..................: Exit on errors. This is inconsistent (made a little better with settings below), so eventually may move to 'set +e' (which is more constant work and mental overhead).
+ set -E  #..................: Propagate ERR trap settings into functions, command substitutions, and subshells.
+ set   -o pipefail  #.......: Make sure all stages of piped commands also fail the same.
+ shopt -s inherit_errexit  #: Propagate 'set -e' ........ into functions, command substitutions, and subshells. Will fail on Bash <4.4.
+ shopt -s dotglob  #........: Include usually-hidden 'dotfiles' in '*' glob operations - usually desired.
+ shopt -s globstar  #.......: ** matches more stuff including recursion.
+
+## Check if sourced
+declare -i isSourced; { (return 0 2>/dev/null) && isSourced=1; } || isSourced=0
+
+## Common constants but detect if already set
+[[ -v serialDT          ]] || declare -r serialDT="$(date "+%Y%m%d-%H%M%S")"
+[[ -v mePath            ]] || declare -r mePath="${BASH_SOURCE[0]}"
+[[ -v meName            ]] || declare -r meName="$(basename "${mePath}")"
+[[ -v relaunch_Key_sudo ]] || declare -r relaunch_Key_sudo="${meName}_relaunch_sudo_4KQDYluNbzLQHwMwsWxgdk"  ## This isn't for 'security' or uniqueness. It just needs to be an exceptionally unlikely user argument.
+
+## Invoke main
+fMain  "${@}"
+
+
+##	Script history:
+##		- 20260416 JC: Created.
+##		- 20260425 JC: Update copyright comment.
+##		- 20260519 JC:
+##			- Removed several cruft template functions.
+##			- Changed license from GPL 2, to MIT.
+##		- 20260622 JC:
+##			- Validate SSH key directly, not via git config core.sshCommand, which may not be set.
+##			- Added check of environment variable 'N8GIT_BACKUP_AND_PUBLISH_QUIET'.
+##			- Added check of environment variable 'N8GIT_BACKUP_AND_PUBLISH_NOBACKUP'.

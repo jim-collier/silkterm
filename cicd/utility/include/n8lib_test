@@ -1,0 +1,415 @@
+#!/bin/bash
+
+# shellcheck disable=1090
+# shellcheck disable=1091
+# shellcheck disable=2001  ## Complaining about use of sed istead of bash search & replace.
+# shellcheck disable=2002  ## Useless use of cat. This works well though and I don't want to break it for the sake of syntax purity.
+# shellcheck disable=2004  ## Inappropriate complaining of "$/${} is unnecessary on arithmetic variables."
+# shellcheck disable=2034  ## Unused variables.
+# shellcheck disable=2119  ## Disable confusing and inapplicable warning about function's $1 meaning script's $1.
+# shellcheck disable=2120  ## OK with declaring variables that accept arguments, without calling with arguments (this is 'overloading').
+# shellcheck disable=2143  ## Used grep -q instead of echo | grep
+# shellcheck disable=2154
+# shellcheck disable=2155  ## Disable check to 'Declare and assign separately to avoid masking return values'.
+# shellcheck disable=2162
+# shellcheck disable=2181
+# shellcheck disable=2207
+# shellcheck disable=2317  ## Can't reach
+
+
+##	Purpose: CI/CD-friendly test harness that passes or fails.
+##	History: At bottom of this file. (Note: History for this is maintained outside of [or in addition to] git project.)
+
+##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Licensed under The MIT License (MIT). Full text at:
+##		https://mit-license.org/
+##	SPDX-License-Identifier: MIT
+
+
+#•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+# Generic code
+
+fEntryPoint(){
+
+	## Test if fMain exists in calling script
+	declare -F fMain_Test &> /dev/null ||  { echo -e "\nCalling script must have a function named 'fMain_Test()'.\n"; return 1; }
+
+	local -i count_Tests=0
+	local -i count_Passed=0
+	local -i count_Failed=0
+
+	fMain_Test
+
+	fEcho_Clean; fEcho_Clean "Results:"
+	fEcho_Clean "Total tests .........: ${count_Tests}"
+	fEcho_Clean "Passed ..............: ${count_Passed}"
+	fEcho_Clean "Failed ..............: ${count_Failed}"
+	fEcho_Clean "Expected errors .....: ${count_Errors_Expected}"
+	fEcho_Clean "Unexpected errors ...: ${count_Errors_Unexpected}"
+	fEcho_Clean
+
+	((count_Failed == 0))  ||  return 1
+
+}
+
+declare -i currentPassStreak=0
+declare    __fRunTest_EchoHook1=""
+fRunTest(){
+	## Args
+	local -r  testMode="${1:-}"   ; shift || true   ## 'equal', 'notequal', 'error', 'noerror'.  The latter two do no comparisons and accept any 'expectVal'.
+	local -r  expectVal="${1:-}"  ; shift || true   ## Inherit from parent instead.
+	local -r  cmdStr="${1:-}"     ; shift || true
+
+	## Settings
+	local -ri doConditionalAbortOnFirstError=1
+
+	## Variables
+	local  -i errNum=0
+	local     gotVal=""
+	local -ri prevCount_Passed=${count_Passed}
+	local -ri prevCount_Failed=${count_Failed}
+	local -ri prevCount_Errors_Expected=${count_Errors_Expected}
+	local -ri prevCount_Errors_Unexpected=${count_Errors_Unexpected}
+	local  -i doConditionalAbort=0
+
+	((++count_Tests))
+
+	## Run the test
+	if [[ "${testMode}" ==  'err'* ]]; then
+		isExpectingError=1
+		fEcho; fEcho "Test #${count_Tests} Expecting error, BEGIN ..."
+		set +e
+			gotVal="$(eval "${cmdStr}"  2> >(fPipe_LogOnly >&2))" ; errNum=$? ; true  ## Send error messages to both stderr, and log
+			sleep 0.125  ## Give output time to sync
+		set -e
+		fEcho "Test #${count_Tests} Expecting error, END."; fEcho
+		isExpectingError=0
+	else
+		gotVal="$(eval "${cmdStr}"  2> >(fPipe_LogOnly >&2))" ; errNum=$? ; true  ## Send error messages to both stderr, and log
+	fi
+	fTallyResult  $errNum  "${testMode}"  "${expectVal}"  "${gotVal}"
+
+	if ((count_Errors_Expected > prevCount_Errors_Expected)); then
+		## Action if the test errored as expected
+		currentPassStreak=0
+	fi
+
+	## Show output based on test results
+
+	fEcho_Clean
+
+	if ((count_Passed > prevCount_Passed)); then
+		## Action if the test passed; includes "successful" error caught above.
+	#	{ ((currentPassStreak <= 0)) && fEcho_Clean; echo -n "Test #s passed: ${count_Tests}, "; } || echo -n "${count_Tests}, "; fEcho_IsInRawInlineMode_Set 1
+		currentPassStreak=$count_Passed
+		fEcho_Clean "✅ Passed: Test# ${count_Tests} [Test mode: '${testMode}']"
+	elif ((count_Failed > prevCount_Failed)); then
+		## Action if the test failed
+		currentPassStreak=0
+		fEcho_Clean "⛔ FAILED: Test# ${count_Tests} [Test mode: '${testMode}']"
+		doConditionalAbort=1
+	elif ((count_Errors_Unexpected > prevCount_Errors_Unexpected)); then
+		## Action if the test UN-expectedly errored
+		fEcho_Clean "⚠️ Errored unexpectedly: Test# ${count_Tests} [Test mode: '${testMode}']"
+		doConditionalAbort=1
+	fi
+
+	local exeName=""  exeArgs=""
+	fGetIsolatedExeName  exeName  exeArgs  "${cmdStr}"
+	[[ -n "${__fRunTest_EchoHook1:-}" ]] && { fEcho_Clean "${__fRunTest_EchoHook1:-}"; __fRunTest_EchoHook1=""; }
+	fEcho_Clean "Test command ...: '${exeName}'${exeArgs}"
+	fEcho_Clean "Expected value .: '${expectVal}'"
+	fEcho_Clean "Actual value ...: '${gotVal}'"
+	fEcho_Clean
+
+	if ((doConditionalAbortOnFirstError)) && ((doConditionalAbort)); then
+		fEcho_Clean
+		echo "[ ${meName_t4rge}.${FUNCNAME[0]}(): Exiting on first error as instructed." 1>&2
+		fEcho_Clean_Force
+		trap - ERR
+		set -e
+		return 1
+	fi
+
+:;}
+
+##
+fRunChained_TestLast(){
+	## Args
+	local -r  testMode="${1:-}"   ; shift || true   ## 'equal', 'notequal', 'error', 'noerror'.  The latter two do no comparisons and accept any 'expectVal'.
+	local -r  expectVal="${1:-}"  ; shift || true   ## Inherit from parent instead.
+	local -r  cmdStrs="${1:-}"    ; shift || true   ## >=1 commands with ';' as delimiter.
+	## Variables
+	local -a  cmdArr=()
+	local -a  cmdOutputs=()
+	local     nextCmd=""
+	local     namedcmdOutputs=""
+	local -i  lastNonEmptyIdx=0
+	## Parse commands into array
+	IFS=';' read -ra cmdArr <<< "${cmdStrs}"
+	## Find highest non-empty value
+	for ((i=0; i<${#cmdArr[@]}; i++)); do [[ -n "${cmdArr[i]//[[:space:]]/}" ]]  &&  lastNonEmptyIdx=i; done
+	## Loop to highest non-empty
+	for ((i = 0; i <= lastNonEmptyIdx; i++)); do
+		nextCmd="${cmdArr[i]}"
+		nextCmd="${nextCmd#"${nextCmd%%[![:space:]]*}"}"
+		nextCmd="${nextCmd%"${nextCmd##*[![:space:]]}"}"
+		((i > 0))  &&  nextCmd="${nextCmd//"%CMD${i}_OUTPUT%"/"${cmdOutputs[i-1]:-}"}"  ## '%CMDn_OUTPUT%' is 1-based, array is 0-based.
+		if ((i == lastNonEmptyIdx)); then
+			## It's the last one so test it
+			fRunTest  "${testMode}"  "${expectVal}"  "${nextCmd}"
+		else
+			## Run normally
+			cmdOutputs[i]="$(eval "${nextCmd}")"
+		fi
+	done
+:;}
+
+##
+## Shows piped input  terminal but truncated to terminal width. Also logs the whole line to a date/time-stamped file. Handles wide unicode.
+##
+declare    __fPipe_LogAndShowPartialOutput_LogFile=""
+declare -i __fPipe_Log_isInitialized=0
+fPipe_LogAndShowPartialOutput_InitLogfile(){
+	local filePath_Log="${1:-}" ; shift || true  ## If you want to override the logfile path. Otherwise it's the path of this script+basename, + '.log'.
+	[[ -n "${filePath_Log}" ]]  ||  filePath_Log="${BASH_SOURCE[0]%.*}.log"
+	[[ -d "$(dirname "${filePath_Log}")" ]]  ||  { echo -e "\nError in ${meName_t4rge}.${FUNCNAME[0]}(): Directory for logfile not found: '$(dirname "${filePath_Log}")'.\n" ; return 1; }
+	[[ -f "${filePath_Log}.prev" ]] && rm                    "${filePath_Log}.prev"
+	[[ -f "${filePath_Log}"      ]] && rm                    "${filePath_Log}"
+	__fPipe_LogAndShowPartialOutput_LogFile="${filePath_Log}"
+#	echo "__fPipe_LogAndShowPartialOutput_LogFile: '${__fPipe_LogAndShowPartialOutput_LogFile}'"; exit
+	touch "${__fPipe_LogAndShowPartialOutput_LogFile}"
+	__fPipe_Log_isInitialized=1
+}
+fPipe_LogAndShowPartialOutput() {
+
+	local LC_ALL=C.UTF-8
+	local line now secs frac ms ts cols max_w w cw i len ch cp trunc_idx
+	cols=${COLUMNS:-$(tput cols 2>/dev/null)}; cols=${cols:-80}
+	max_w=$((cols - 4))
+
+	## Alternatives to probing column width
+#	cols=$(tput cols 2>/dev/tty) || cols=80
+#	cols=$(stty size </dev/tty 2>/dev/null | cut -d' ' -f2) || cols=80
+
+	while IFS= read -r line || [[ -n $line ]]; do
+		now="$EPOCHREALTIME"
+		secs="${now%.*}"; frac="${now#*.}"; ms="${frac:0:4}"
+		printf -v ts '[%(%Y%m%d-%H%M%S)T.%s]' "$secs" "$ms"
+		((__fPipe_Log_isInitialized))  &&  printf '%s  %s\n' "$ts" "$line" >> "$__fPipe_LogAndShowPartialOutput_LogFile"
+
+		w=0; trunc_idx=-1; len=${#line}
+		for ((i=0; i<len; i++)); do
+			ch="${line:i:1}"
+			printf -v cp '%d' "'$ch"
+			if (( cp >= 0x1100  && cp <= 0x115F  )) || (( cp >= 0x2E80  && cp <= 0x9FFF  )) || (( cp >= 0xA000  && cp <= 0xA4CF  )) || (( cp >= 0xAC00  && cp <= 0xD7A3  )) || (( cp >= 0xF900  && cp <= 0xFAFF  )) || (( cp >= 0xFE30  && cp <= 0xFE4F  )) || (( cp >= 0xFF00  && cp <= 0xFF60  )) || (( cp >= 0xFFE0  && cp <= 0xFFE6  )) || (( cp >= 0x1F300 && cp <= 0x1FAFF )) || (( cp >= 0x20000 && cp <= 0x3FFFD )); then
+				cw=2
+			else
+				cw=1
+			fi
+			if (( trunc_idx < 0 && w + cw > max_w )); then
+				trunc_idx=$i
+			fi
+			w=$((w + cw))
+			if (( w > cols )); then
+				printf '%s ...\n' "${line:0:trunc_idx}"
+				continue 2
+			fi
+		done
+		printf '%s\n' "$line"
+	done
+}
+fPipe_LogOnly() {
+	((! __fPipe_Log_isInitialized)) && return
+	## Send stderr to this, e.g. somecmd 2> >(fPipe_LogOnly >&2) | fPipe_LogAndShowPartialOutput
+    local LC_ALL=C.UTF-8
+    local line now secs frac ms ts
+    while IFS= read -r line || [[ -n $line ]]; do
+        now="$EPOCHREALTIME"
+        secs="${now%.*}"; frac="${now#*.}"; ms="${frac:0:4}"
+        printf -v ts '[%(%Y%m%d-%H%M%S)T.%s]' "$secs" "$ms"
+        printf '%s  %s\n' "$ts" "$line" >> "$__fPipe_LogAndShowPartialOutput_LogFile"
+        printf '%s\n' "$line"
+    done
+}
+
+fGetIsolatedExeName(){
+	## If called like: fGetIsolatedExeName  executableName  theRestOfCommand  "'/my/path/to/MyExecutable' --arg1 'arg2'", this function will:
+	##	- Set caller's variable $executableName to "MyExecutable".
+	##	- Set caller's variable $theRestOfCommand to " --arg1 'arg2'".
+	local -n  retVarName_CmdName_1myq1b5="${1:-}"   ; shift || true   ## The parent variable to populate with the isolated command 'basename' (no path).
+	local -n  retVarName_TheRest_1myq1b5="${1:-}"   ; shift || true   ## The parent variable to populate with the rest of the command-line after the executable.
+	local -r  commandString="${1:-}"                ; shift || true   ## The full command line
+	retVarName_CmdName_1myq1b5=""
+	retVarName_TheRest_1myq1b5=""
+	local isolatedExeName=""
+	local strAfterThat=""
+	isolatedExeName="$(echo "${commandString}" | grep -oP "\'[^\']*\'" | head -n 1)"
+	strAfterThat=${commandString#*"${isolatedExeName}"}
+	isolatedExeName="$(basename "${isolatedExeName}")"
+	isolatedExeName="${isolatedExeName#\'}"; isolatedExeName="${isolatedExeName%\'}"
+	retVarName_CmdName_1myq1b5="${isolatedExeName}"
+	retVarName_TheRest_1myq1b5="${strAfterThat}"
+}
+
+fScrambleString(){
+
+	## Args
+	local -n  outputVarName_1myn9vt=${1:-}   ; shift || true  ## The parent variable to put the results in. The results should have no spaces, unless a space is one of the inputs as a symbol to randomize. But will still work with spaces.
+	local -r  inputSymbolList="${1:-}"       ; shift || true  ## List of symbols to scramble, as a regular UTF-8 bash string. Will have no spaces or delimiters, unless a space is one of the inputs as a symbol to randomize.
+	local -ri outputLen=${1:-1}              ; shift || true  ## Output scrambled string length
+	local -ri canRepeatChars=${1:-1}         ; shift || true  ## 0: Don't repeat any symbols if possible (i.e. if input len > output len). 1: Try to repeat symbols in the random output.
+
+	## Required for splitting
+	local LC_ALL=C.UTF-8   ## function-scoped; restored on return
+
+	local -i inputLen=${#inputSymbolList}
+	local -i i j take remaining
+	local	tmp result=''
+	local -a chars=() shuffled=()
+
+	## Validate
+	{ [[ -z "${inputSymbolList}" ]] || ((inputLen <= 0)); }  &&  { echo -e "\n[ $(date "+%Y%m%d-%H%M%S.%N") ]  Error in ${meName_t4rge}.${FUNCNAME[0]}(): Input symbol list is empty.\n"; exit 1; }
+
+	## Split UTF-8 input into individual characters (bash string indexing is char-based in a UTF-8 locale).
+	for (( i=0; i<inputLen; i++ )); do
+		chars+=( "${inputSymbolList:i:1}" )
+	done
+
+	if (( canRepeatChars )); then
+		## Pick with replacement.
+		for (( i=0; i<outputLen; i++ )); do
+			result+="${chars[RANDOM % inputLen]}"
+		done
+	else
+		## Fisher-Yates shuffle; re-shuffle each pass if outputLen > inputLen (forced repeats).
+		remaining=outputLen
+		while (( remaining > 0 )); do
+			shuffled=( "${chars[@]}" )
+			for (( i=inputLen-1; i>0; i-- )); do
+				j=$(( RANDOM % (i+1) ))
+				tmp="${shuffled[i]}"; shuffled[i]="${shuffled[j]}"; shuffled[j]="$tmp"
+			done
+			take=$(( remaining < inputLen ? remaining : inputLen ))
+			for (( i=0; i<take; i++ )); do
+				result+="${shuffled[i]}"
+			done
+			remaining=$(( remaining - take ))
+		done
+	fi
+
+	outputVarName_1myn9vt="$result"
+}
+
+fTallyResult(){
+	local -ri errNum=${1:-0}      ; shift || true  ## The integer return value from the command.
+	local -r  testMode="${1:-}"   ; shift || true  ## 'equal', 'notequal', 'error', 'noerror'.  The latter two do no comparisons and accept any 'expectVal'.
+	local -r  expectVal="${1:-}"  ; shift || true  ##
+	local -r  gotVal="${1:-}"     ; shift || true  ##
+	case "${testMode,,}" in
+		'eq'*|'pass'|'='|'==')      { [[ "${expectVal}"  ==  "${gotVal}" ]]  &&  ((++count_Passed)); }  ||  ((++count_Failed))   ;;
+		'noteq'*|'fail'|'!='|'<>')  { [[ "${expectVal}"  !=  "${gotVal}" ]]  &&  ((++count_Passed)); }  ||  ((++count_Failed))   ;;
+		'err'*)                     { ((errNum != 0))                        &&  ((++count_Passed)); }  ||  ((++count_Failed))   ;;
+		'no_err'*|'noerr'*)         { ((errNum == 0))                        &&  ((++count_Passed)); }  ||  ((++count_Failed))   ;;
+		*)                          fEcho_Clean "$(basename "${0}").${FUNCNAME[0]}() - Error: Unexpected second argument. Should be 'equal', 'notequal', or 'error'."; return 1  ;;
+	esac
+:;}
+
+fResolvePath_t4rge(){
+	## First looks at specified raw path. Next, same path but relative to this script. Next, in $PATH for an executable. Next, in this script's path, + /lib, /include, then /includes.
+	local -n parentVarName_ResolvedPath_t4rej=${1:-}  ; shift || true  ## Parent variable to store fully resolved path in.
+	local    nameOrPath="${1:-}"                      ; shift || true  ## File or folder path (relative or absolute). If an executable file, can be just a name to search in $PATH, to fully resolve.
+	[[   -z "${nameOrPath}" ]]  &&  { echo -e "\nError in $(basename "${BASH_SOURCE[0]}")·${FUNCNAME[0]}(): No path specified to resolve.\n"; fEcho_WasLastEchoBlank_Set 1; return 1; }
+	local -r mePath_t4rge_t4rfg="$(dirname "${BASH_SOURCE[0]}")"
+	local -i isNopathObject=0 ; [[ "${nameOrPath}" == "$(basename "${nameOrPath}")" ]] && isNopathObject=1 ; readonly isNopathObject
+	local    testPath="${nameOrPath}"
+	  [[ ! -e "${testPath}"   ]]                           &&  testPath="${mePath_t4rge_t4rfg}/${nameOrPath}"
+	{ [[ ! -e "${testPath}"   ]] && ((isNopathObject)); }  &&  testPath="$(which "${nameOrPath}" 2>/dev/null || true)"
+	{ [[ ! -e "${testPath}"   ]] && ((isNopathObject)); }  &&  testPath="${mePath_t4rge_t4rfg}/lib/${nameOrPath}"
+	{ [[ ! -e "${testPath}"   ]] && ((isNopathObject)); }  &&  testPath="${mePath_t4rge_t4rfg}/include/${nameOrPath}"
+	{ [[ ! -e "${testPath}"   ]] && ((isNopathObject)); }  &&  testPath="${mePath_t4rge_t4rfg}/includes/${nameOrPath}"
+	  [[ ! -e "${testPath}"   ]]                           &&  { echo -e "\nError in $(basename "${BASH_SOURCE[0]}")·${FUNCNAME[0]}(): Could not resolve path '${nameOrPath}' [£ǝŔc].\n"; fEcho_WasLastEchoBlank_Set 1; return 1; }
+	testPath="$(realpath -e "${testPath}" 2>/dev/null || true)"
+	## Last check to fail on
+	{ [[ -n "${testPath}" ]] && [[ -e "${testPath}" ]]; } || { echo -e "\nError in $(basename "${BASH_SOURCE[0]}")·${FUNCNAME[0]}(): Could not resolve path '${nameOrPath}' [£ǝŔs].\n"; fEcho_WasLastEchoBlank_Set 1; return 1; }
+	## Success
+	parentVarName_ResolvedPath_t4rej="${testPath}"
+}
+
+## Echo-related (minified but not obfuscated)
+declare -gi _wasLastEchoBlank=0
+declare -gi _isEchoInRawInlineMode=0
+fEcho_ResetBlankCounter()     { _wasLastEchoBlank=0;      }
+fEcho_WasLastEchoBlank_Set()  { { [[ "${1:-}" == "1" ]] && _wasLastEchoBlank=1; } || _wasLastEchoBlank=0;  }
+fEcho_WasLastEchoBlank_Get()  { { ((_wasLastEchoBlank > 0)) && return 0; } || return 1; }
+fEcho_IsInRawInlineMode_Set() { { [[ "${1:-}" == "1" ]] && _isEchoInRawInlineMode=1; } || { _isEchoInRawInlineMode=0; _wasLastEchoBlank=0; echo; }; }  ## Script it telling fEcho* that something is going to be echoing to the screen in non-linefeed mode without its knowledge. (E.g. "echo -n 'something: '".)
+fEcho_IsInRawInlineMode_Get() { { ((_isEchoInRawInlineMode)) && return 0; } || return 1; }
+fEcho_Clean_byref(){
+	## Validate nameref args:
+	[[ -v 1  ]] || fThrowError "Calling function must pass a nameref to supply the input value to this function, as arg1 (string to echo)."
+	## Gather args
+	local -n ptr_ToEcho_t5jf2=$1
+	## Logic
+	((_isEchoInRawInlineMode)) && fEcho_IsInRawInlineMode_Set 0
+	if [[ -n "${ptr_ToEcho_t5jf2}" ]]; then
+		echo -e "${ptr_ToEcho_t5jf2}"
+		_wasLastEchoBlank=0
+	elif [[ $_wasLastEchoBlank -eq 0 ]]; then
+		echo
+		_wasLastEchoBlank=1
+	fi
+}
+fEcho_Clean()        { local -r toEcho="${1:-}"; fEcho_Clean_byref toEcho; }
+fEcho()              { { [[ -z "${1:-}" ]] && fEcho_Clean ""; } || { local -r toEcho="[ ${1:-} ]"; fEcho_Clean_byref toEcho; }; }
+fEcho_Force()        { _wasLastEchoBlank=0; fEcho "${1:-}"; }
+fEcho_Clean_Force()  { _wasLastEchoBlank=0; local -r toEcho="${1:-}"; fEcho_Clean_byref toEcho; }
+
+## Error-handling
+declare -i isExpectingError=0
+declare -i count_Errors_Unexpected=0
+declare -i count_Errors_Expected=0
+#trap 'printf "(line %s) " "$LINENO" "$?" >&2; echo; { ((isExpectingError))  &&  ((++count_Errors_Expected)); }  ||  ((++count_Errors_Unexpected))' ERR
+trap '{ ((isExpectingError))  &&  ((++count_Errors_Expected)); }  ||  ((++count_Errors_Unexpected))' ERR
+
+
+#•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Script entry point
+
+## Error and exit settings
+ set   -u  ## Require variable declaration. Stronger than mere linting. But can struggle if functions are in sourced files.
+ set   -e  #...................: Exit on errors. This is inconsistent (made a little better with settings below), so eventually may move to 'set +e' (which is more constant work and mental overhead).
+ set   -E  #...................: Propagate ERR trap settings into functions, command substitutions, and subshells.
+ set   -o pipefail  #..........: Make sure all stages of piped commands also fail the same.
+ shopt -s inherit_errexit  #...: Propagate 'set -e' ........ into functions, command substitutions, and subshells. Will fail on Bash <4.4.
+ shopt -s dotglob  #...........: Include usually-hidden 'dotfiles' in '*' glob operations - usually desired.
+ shopt -s globstar  #..........: ** matches more stuff including recursion.
+
+
+## Only allow running 'sourced'.
+declare -i isSourced_t4rhs; { (return 0 2>/dev/null) && isSourced_t4rhs=1; } || isSourced_t4rhs=0
+((! isSourced_t4rhs)) && { echo -e "\nThis script is meant to be 'sourced' from within another script.\n"; exit 1; }
+
+if [[ -z "${meName_t4rge+x}" ]]; then
+	declare -r mePath_t4rge="${BASH_SOURCE[0]}"
+	declare -r meName_t4rge="$(basename "${mePath_t4rge}")"
+	declare -r meDir_t4rge="$(dirname "${mePath_t4rge}")"
+	declare -r serialDT_t4rge="$(date "+%Y%m%d-%H%M%S")"
+fi
+
+## The calling script should do the next two lines, so that the log file goes in the right place without even more convoluted logic:
+#fPipe_LogAndShowPartialOutput_InitLogfile
+#fEntryPoint | fPipe_LogAndShowPartialOutput
+
+
+
+
+##	Script history:
+##		- 20260420 JC: Copied for convert-base-v2.
+##		- 20260421 JC: Added polish.
+##		- 20260423 JC: Added fRunChained_TestLast() to be able to test commands that can't be piped.
+##		- 20260424 JC: Made generic.
+##		- 20260518 JC: Changed calling fMain() to fMain_Test().
+##		- 20260519 JC:
+##			- Updated fEcho_* to template canonical.
+##			- Changed license from GPL 2, to MIT.
+##			- Fixed an egregious regression in fScrambleString() whose fix wasn't pushed upstream, where $inputSymbolList validation was validated literally as `[[ -z "" ]`.
