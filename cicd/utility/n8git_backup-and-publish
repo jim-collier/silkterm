@@ -149,6 +149,12 @@ fMain(){
 
 		fEcho "Creating version backup '${filePath_Rar}' ..."
 		eval "${cmd_Rar}"
+
+		## Prune old backups (GFS): keep ~30 - first + newest-per-
+		## hour/day/week/month/year + the last 10. Also conforms pre-existing
+		## backup names. Tunable via GFS_KEEP_* env (see include/gfs-rotate.bash).
+		fEcho "Rotating version backups (GFS retention) ..."
+		gfs_rotate "${dirPath_Rar}" "${dirName_Top}" rar
 	fi
 
 	## Variables for git actions
@@ -443,6 +449,10 @@ declare -i isSourced; { (return 0 2>/dev/null) && isSourced=1; } || isSourced=0
 [[ -v serialDT          ]] || declare -r serialDT="$(date "+%Y%m%d-%H%M%S")"
 [[ -v mePath            ]] || declare -r mePath="${BASH_SOURCE[0]}"
 [[ -v meName            ]] || declare -r meName="$(basename "${mePath}")"
+[[ -v meDir             ]] || declare -r meDir="$(cd "$(dirname "${mePath}")" && pwd)"
+# Reusable GFS rotation (its own logic, kept separate from the backup logic below).
+# shellcheck source=/dev/null
+source "${meDir}/include/gfs-rotate.bash"
 [[ -v relaunch_Key_sudo ]] || declare -r relaunch_Key_sudo="${meName}_relaunch_sudo_4KQDYluNbzLQHwMwsWxgdk"  ## This isn't for 'security' or uniqueness. It just needs to be an exceptionally unlikely user argument.
 
 ## Invoke main
