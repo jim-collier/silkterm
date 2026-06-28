@@ -9,17 +9,21 @@
 APP_NAME="SilkTerm"
 EXE_NAME="silkterm"
 
-# Stage 1: debug build (fast compile sanity)
+# Stage 1: format the source in place before anything is compiled or tested.
+# Empty it (FMT_CMD=()) when reusing the pipeline in a non-Rust project.
+FMT_CMD=(cargo fmt)
+
+# Stage 2: debug build (fast compile sanity)
 DEBUG_BUILD_CMD=(cargo build)
 
-# Stage 2: regression tests
+# Stage 3: regression tests
 TEST_CMD=(cargo test)
 
-# Stage 4: native release build + its artifact (this is what gets dogfooded)
+# Stage 5: native release build + its artifact (this is what gets dogfooded)
 RELEASE_NATIVE_CMD=(cargo build --release)
 RELEASE_NATIVE_BIN="target/release/${EXE_NAME}"
 
-# Stage 4: cross-release targets. One per line: "label|artifact|command...".
+# Stage 5: cross-release targets. One per line: "label|artifact|command...".
 # Set BUILD_CROSS=0 to skip them for a quick local run.
 BUILD_CROSS=1
 CROSS_TARGETS=(
@@ -28,7 +32,7 @@ CROSS_TARGETS=(
 	"Windows ARM64 (zig)|target/aarch64-pc-windows-gnullvm/release/${EXE_NAME}.exe|cargo zigbuild --release --target aarch64-pc-windows-gnullvm"
 )
 
-# Stage 3: profiler (non-gating artifact, not a pass/fail test). Builds an
+# Stage 4: profiler (non-gating artifact, not a pass/fail test). Builds an
 # optimized+symbols binary (cargo --profile $PROFILE_PROFILE --features
 # $PROFILE_FEATURE), runs the real app under an in-process sampler against a heavy
 # workload for $PROFILE_SECS, and writes a flamegraph SVG. See cicd.bash for the
@@ -44,13 +48,13 @@ PROFILE_OUT_DIR="../private/profiling"  # relative to repo root; created if miss
 PROFILE_KEEP_FREQUENT=15                # GFS retention: also keep first + newest-per-day/month/year
 PROFILE_STRICT=0                        # 1 = any profiler failure aborts the pipeline
 
-# Stage 5: dogfood the native release here (first existing dir wins)
+# Stage 6: dogfood the native release here (first existing dir wins)
 DOGFOOD_DESTS=(
 	"${HOME}/synced/0-0/common/exec/util/linux/bin"
 	"/usr/local/sbin"
 )
 
-# Stage 6: backup + publish to git (runs from repo root).
+# Stage 7: backup + publish to git (runs from repo root).
 GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 # Set a non-empty commit message to publish hands-off (suppresses the script's
 # prompt and supplies the message so `git commit` won't open an editor). Left
