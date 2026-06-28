@@ -31,6 +31,7 @@ root="$(cd "${here}/.." && pwd)"   # the git repo root (cicd/..)
 export PATH="${HOME}/.cargo/bin:${HOME}/.local/bin:${PATH}"
 # shellcheck source=/dev/null
 source "${here}/config.bash"
+source "${here}/utility/include/gfs-rotate.bash"   # gfs_rotate() for the profiler artifacts
 declare -p FMT_CMD &>/dev/null || FMT_CMD=()   # tolerate a config without the fmt stage
 cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
@@ -133,20 +134,6 @@ step "3/7  Regression tests"
 ok "tests passed"
 
 # Stage 4: profiler (non-gating artifact; failures classified below).
-rotate_profiles(){   # GFS retention: keep first + newest-per-day/month/year + last N
-	local dir="$1"; shopt -s nullglob; local all=("$dir"/flame_*.svg); shopt -u nullglob
-	local -a f=(); local x; for x in "${all[@]}"; do [[ "$x" == *"/flame_latest.svg" ]] || f+=("$x"); done
-	local n=${#f[@]}; ((n)) || return 0
-	IFS=$'\n' read -r -d '' -a f < <(printf '%s\n' "${f[@]}" | sort && printf '\0')
-	declare -A keep=(); keep["${f[0]}"]=1
-	local i; for ((i = n>PROFILE_KEEP_FREQUENT ? n-PROFILE_KEEP_FREQUENT : 0; i<n; i++)); do keep["${f[i]}"]=1; done
-	declare -A day mon yr; for x in "${f[@]}"; do
-		local ts; ts="$(basename "$x")"; ts="${ts#flame_}"; ts="${ts%.svg}"; local d="${ts%%-*}"
-		day["$d"]="$x"; mon["${d:0:6}"]="$x"; yr["${d:0:4}"]="$x"
-	done
-	for x in "${day[@]}" "${mon[@]}" "${yr[@]}"; do keep["$x"]=1; done
-	for x in "${f[@]}"; do [[ -n "${keep[$x]:-}" ]] || { rm -f "$x"; note "pruned $(basename "$x")"; }; done
-}
 run_profiler(){
 	((PROFILE_ENABLE)) || { note "profiler disabled"; return 0; }
 	# Mundane/environmental reasons -> skip with a warning (not the app's fault),
@@ -164,17 +151,20 @@ run_profiler(){
 	note "building ${PROFILE_BIN} (cargo --profile ${PROFILE_PROFILE} --features ${PROFILE_FEATURE})"
 	cargo build --profile "${PROFILE_PROFILE}" --features "${PROFILE_FEATURE}" || die "profiler build failed (app problem)"
 	mkdir -p "${profile_dir}"
-	local out="${profile_dir}/flame_${stamp}.svg"
+	# Born canonical (role "frequent") so the shared rotation leaves it until a
+	# period of its own closes. flame-latest uses a dash so it stays out of the
+	# flame_* series the rotation manages.
+	local out="${profile_dir}/flame_${stamp}_frequent.svg"
 	note "running app ${PROFILE_SECS}s under sampler (a window will appear briefly) ..."
 	if ! SILK_PROFILE_OUT="${out}" SILK_PROFILE_SECS="${PROFILE_SECS}" \
 		"${root}/${PROFILE_BIN}" --shell "python3 ${abs_script} ${PROFILE_WORKLOAD_ARGS}"; then
 		die "profiler run failed (non-zero exit - app problem)"
 	fi
 	[[ -s "$out" ]] || die "profiler produced no SVG (app problem): ${out}"
-	cp -f "$out" "${profile_dir}/flame_latest.svg"
-	rotate_profiles "${profile_dir}"
+	cp -f "$out" "${profile_dir}/flame-latest.svg"
+	gfs_rotate "${profile_dir}" flame svg
 	ok "flamegraph: ${out}"
-	note "latest: ${profile_dir}/flame_latest.svg  (open in a browser)"
+	note "latest: ${profile_dir}/flame-latest.svg  (open in a browser)"
 }
 step "4/7  Profiler"
 run_profiler
