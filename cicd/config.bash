@@ -45,8 +45,10 @@ PROFILE_BIN="target/profiling/${EXE_NAME}"
 PROFILE_WORKLOAD_SCRIPT="cicd/utility/n8output-random-unicode.py"
 PROFILE_WORKLOAD_ARGS="600 0"          # <duration_s> <delay_s>; duration >> PROFILE_SECS, no delay = max output
 PROFILE_OUT_DIR="../private/profiling"  # relative to repo root; created if missing (kept out of git)
-PROFILE_KEEP_FREQUENT=15                # GFS retention: also keep first + newest-per-day/month/year
 PROFILE_STRICT=0                        # 1 = any profiler failure aborts the pipeline
+# Old SVGs are pruned by gfs_rotate (cicd/utility/include/gfs-rotate.bash): keeps
+# ~30 - first + newest-per-hour/day/week/month/year + last 10. Tune with the
+# GFS_KEEP_* env vars (GFS_KEEP_FREQUENT, GFS_KEEP_DAILY, ...) if needed.
 
 # Stage 6: dogfood the native release here (first existing dir wins)
 DOGFOOD_DESTS=(
