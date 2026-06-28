@@ -9,6 +9,14 @@
 #   3. profiler (flamegraph SVG; non-gating artifact - see failure policy)
 #   4. release builds (native + cross targets)
 #
+# Options:
+#   -y, --yes           run unattended (no confirm prompt)
+#   -m, --message MSG   publish hands-off with this commit message (no editor)
+#   --no-cross          skip cross-target release builds
+#   --no-profile        skip the profiler stage
+#   --no-dogfood        skip installing the native release locally
+#   --no-publish        skip the git backup + publish stage
+#
 # Reuse: copy the cicd/ directory into another project and edit config.bash.
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
@@ -26,16 +34,27 @@ cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
 #----- options -----------------------------------------------------------------
-assume_yes=0
-for a in "$@"; do case "$a" in
-	-y|--yes)     assume_yes=1 ;;
-	--no-cross)   BUILD_CROSS=0 ;;
-	--no-profile) PROFILE_ENABLE=0 ;;
-	--no-dogfood) DOGFOOD_DESTS=() ;;
-	--no-publish) GIT_PUBLISH=() ;;
-	-h|--help)    sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-	*) echo "unknown option: $a (try --help)" >&2; exit 2 ;;
+assume_yes=0; cli_message=""
+while (($#)); do case "$1" in
+	-y|--yes)         assume_yes=1; shift ;;
+	--no-cross)       BUILD_CROSS=0; shift ;;
+	--no-profile)     PROFILE_ENABLE=0; shift ;;
+	--no-dogfood)     DOGFOOD_DESTS=(); shift ;;
+	--no-publish)     GIT_PUBLISH=(); shift ;;
+	--message=*|-m=*) cli_message="${1#*=}"; shift ;;
+	-m|--message)     cli_message="${2-}"; shift; (($#)) && shift ;;
+	-h|--help)        sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	*) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
 esac; done
+
+# Publish commit message: -m wins, then config, then a default when unattended.
+# Empty -> publish interactively (git commit opens an editor); when interactive
+# we offer to capture a message at the preflight prompt below.
+publish_msg=""
+if   [[ -n "$cli_message" ]];              then publish_msg="$cli_message"
+elif [[ -n "${PUBLISH_AUTO_MESSAGE:-}" ]]; then publish_msg="$PUBLISH_AUTO_MESSAGE"
+elif ((assume_yes));                       then publish_msg="${APP_NAME} CI/CD ${stamp}"
+fi
 
 #----- output helpers ----------------------------------------------------------
 b=$'\e[1m'; dim=$'\e[2m'; grn=$'\e[32m'; ylw=$'\e[33m'; red=$'\e[31m'; rst=$'\e[0m'
@@ -71,10 +90,21 @@ else
 	note "Release (cross) .....: (skipped)"
 fi
 note "Dogfood native to ...: ${dogfood_dest:-<none of: ${DOGFOOD_DESTS[*]:-} - will skip>}"
-note "Publish (last) ......: ${GIT_PUBLISH[*]:-<disabled>}"
+if ((${#GIT_PUBLISH[@]} == 0)); then
+	note "Publish (last) ......: (disabled)"
+elif [[ -n "$publish_msg" ]]; then
+	note "Publish (last) ......: ${GIT_PUBLISH[*]} (hands-off: \"${publish_msg}\")"
+else
+	note "Publish (last) ......: ${GIT_PUBLISH[*]} (will prompt for message; blank = editor)"
+fi
 printf '\n%sFail-fast: any error aborts before the next stage.%s\n\n' "${dim}" "${rst}"
 
 if ((! assume_yes)); then
+	# Capture the commit message up front so the run can finish unattended.
+	if ((${#GIT_PUBLISH[@]})) && [[ -z "$publish_msg" ]]; then
+		read -r -p "Publish commit message (blank = open editor at publish): " m
+		[[ -n "$m" ]] && publish_msg="$m"
+	fi
 	read -r -p "Proceed? [y/N]: " reply
 	[[ "${reply,,}" == y* ]] || { echo "Aborted by user."; exit 0; }
 fi
@@ -167,6 +197,13 @@ fi
 step "6/6  Backup + publish"
 if ((${#GIT_PUBLISH[@]} == 0)); then
 	note "publish disabled"
+elif [[ -n "$publish_msg" ]]; then
+	# Hands-off: quiet env skips the script's continue-prompt; the GIT_EDITOR
+	# helper fills the empty commit message so `git commit` won't open an editor.
+	note "hands-off publish (commit message: \"${publish_msg}\")"
+	GIT_BACKUP_AND_PUBLISH_QUIET=1 GIT_AUTO_MESSAGE="${publish_msg}" \
+		GIT_EDITOR="${here}/utility/git-auto-msg.bash" "${GIT_PUBLISH[@]}"
+	ok "published"
 else
 	"${GIT_PUBLISH[@]}"
 	ok "published"
