@@ -34,6 +34,12 @@ pub struct App {
 	// context, so it can be larger than the main window.
 	dialog: Option<crate::dialog::DialogWin>,
 	dialog_dirty: bool,
+	// cicd profiler stage: when SILK_PROFILE_OUT is set the app runs a workload
+	// (via --shell) for SILK_PROFILE_SECS then exits, so main can dump a flamegraph.
+	#[cfg(feature = "profiling")]
+	profile_secs: u64,
+	#[cfg(feature = "profiling")]
+	profile_deadline: Option<std::time::Instant>,
 }
 
 impl App {
@@ -44,6 +50,13 @@ impl App {
 			cli,
 			dialog: None,
 			dialog_dirty: false,
+			#[cfg(feature = "profiling")]
+			profile_secs: std::env::var("SILK_PROFILE_SECS")
+				.ok()
+				.and_then(|s| s.parse().ok())
+				.unwrap_or(8),
+			#[cfg(feature = "profiling")]
+			profile_deadline: None,
 		}
 	}
 
@@ -2186,6 +2199,20 @@ impl ApplicationHandler<UserEvent> for App {
 	// here: render when something changed or an animation is in flight, and
 	// poll only while animating (otherwise sleep until the next event).
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+		// cicd profiler: in profile mode run for SILK_PROFILE_SECS then exit, so
+		// main can dump the flamegraph (the workload runs in the startup pane).
+		#[cfg(feature = "profiling")]
+		if std::env::var_os("SILK_PROFILE_OUT").is_some() {
+			let now = std::time::Instant::now();
+			let deadline = *self
+				.profile_deadline
+				.get_or_insert_with(|| now + std::time::Duration::from_secs(self.profile_secs));
+			if now >= deadline {
+				event_loop.exit();
+				return;
+			}
+		}
+
 		// Open the About window if requested (window creation needs the event loop,
 		// so State only signals and we act here).
 		let open_about = self
@@ -2241,6 +2268,13 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 		} else {
 			ControlFlow::Wait
+		};
+		// Profiling keeps the loop hot so the workload is continuously exercised.
+		#[cfg(feature = "profiling")]
+		let flow = if std::env::var_os("SILK_PROFILE_OUT").is_some() {
+			ControlFlow::Poll
+		} else {
+			flow
 		};
 		event_loop.set_control_flow(flow);
 	}
