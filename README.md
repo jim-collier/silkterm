@@ -212,7 +212,7 @@ cargo run --release
 The display name lives in one place (`APP_NAME` in `src/config.rs`); the lowercase identifier (`silkterm`) is the cargo package, binary, and config directory. To rename everything at once during development:
 
 ```sh
-tools/rename.sh NewName
+utility/rename.sh NewName
 cargo build
 ```
 

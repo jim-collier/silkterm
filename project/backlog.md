@@ -42,7 +42,7 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 
 ### Bugs
 
-- [ ] Smooth-scrolling apparently just quits after using the terminal for a while. I've been testing with custom `tools/n8output-random-unicode.py`. It seems to quit, if output is too fast for a while. Maybe it never adjusts back down?
+- [ ] Smooth-scrolling apparently just quits after using the terminal for a while. I've been testing with custom `utility/n8output-random-unicode.py`. It seems to quit, if output is too fast for a while. Maybe it never adjusts back down?
 
 - [ ] Mouse wheel doesn't scroll back through the `stdout`/`stderr` buffer. It should do so, smoothly, and in proportion to how fast the mouse wheel is moved. But currently it moves the command history back. (20260626-104542)
 
@@ -537,7 +537,7 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 	- `Gfx::new` requests a GPU adapter, then retries with `force_fallback_adapter` (a CPU/software adapter) if that fails. The renderer (name / backend / device-type) is logged at startup, and the Help/About dialog shows it (Renderer / Backend / Acceleration) from `adapter_info`. Verified: logs "NVIDIA GeForce RTX 3060 Ti [Vulkan / DiscreteGpu]".
 
 - [✔️] Make it easy to change the program name, in project and code files
-	- Display name centralized in `APP_NAME` (`src/config.rs`); `tools/rename.sh NewName` rewrites the name + lowercase id across Cargo.toml, sources, and docs in one shot. Not a runtime/user setting.
+	- Display name centralized in `APP_NAME` (`src/config.rs`); `utility/rename.sh NewName` rewrites the name + lowercase id across Cargo.toml, sources, and docs in one shot. Not a runtime/user setting.
 
 - [✔️] Local config file with tunables, somewhere under ~/.config
 	- `$XDG_CONFIG_HOME/silkterm/config.toml` (-> `~/.config/...`), auto-created with commented defaults on first run. Tunables: font, size, line height, margin, scrollback, scroll feel, colors (`#rrggbb`). Malformed/unknown entries fall back to defaults.
