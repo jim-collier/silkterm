@@ -357,12 +357,26 @@ fn layout_about(
 	};
 	let url = env!("CARGO_PKG_REPOSITORY").to_string();
 	let gap = config::MENU_SEP_H;
+	// build target the binary was compiled for (distinguishes the cross builds)
+	let profile = if cfg!(debug_assertions) {
+		"debug"
+	} else {
+		"release"
+	};
+	let build = format!(
+		"{} / {} ({profile})",
+		std::env::consts::ARCH,
+		std::env::consts::OS
+	);
 	#[rustfmt::skip]
 	let content: Vec<(String, [u8; 3], f32, f32, bool, f32)> = vec![
 		(format!("About {}", config::APP_NAME), menu_fg, 0.0, 0.0, true, 1.5),
 		(format!("version {}", env!("CARGO_PKG_VERSION")), menu_dim, 0.0, 4.0, false, 1.0),
+		("Copyright © 2026 Jim Collier".into(), menu_dim, 0.0, 0.0, false, 1.0),
+		(format!("License: {}", env!("CARGO_PKG_LICENSE")), menu_dim, 0.0, 0.0, false, 1.0),
 		("Info".into(), menu_fg, 0.0, gap, true, 1.0),
-		(format!("Renderer:  {}", info.name), menu_dim, 16.0, 2.0, false, 1.0),
+		(format!("Build:  {build}"), menu_dim, 16.0, 2.0, false, 1.0),
+		(format!("Renderer:  {}", info.name), menu_dim, 16.0, 0.0, false, 1.0),
 		(format!("Backend:  {:?}", info.backend), menu_dim, 16.0, 0.0, false, 1.0),
 		(format!("Acceleration:  {accel}"), menu_dim, 16.0, 0.0, false, 1.0),
 		(url.clone(), menu_link, 0.0, gap, false, 1.0),
