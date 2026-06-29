@@ -45,6 +45,8 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 
 ### Bugs
 
+- [ ] High severity: Typing "exit" in tab, closes the whole application. It should only close that tab. Doesn't do that for panes, only tabs. Closing a tab via menu only closes that one tab.
+
 - [ ] Menu bar and tab fonts: (#1n45bca, 20260629-103822)
 	- [ ] Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect.
 		- [ ] Verify that menu bar height adjusts based on menu font.
@@ -126,14 +128,34 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 
 ### New features and enhancements
 
+- [ ] CI/CD scripts:
+	- [ ] Build alternate targets in parallel, to speed process up.
+
+- [ ] Change the default hotkey for opening a new tab to Ctrl+Shift+T.
+
+- [ ] Config file: Preceed actual comments with double '## '. Commented-out *settings* get a single '# '.
+
+- [ ] New setting: Transparent background blur.
+	- This is independent of background *image* blur, which maintains its independence.
+	- It blurs what's behind the terminal, as if it were made of frosted glass.
+
+- [ ] Change defaults:
+	- [ ] Background image blur: 8 px
+	- [ ] text_glow = true
+	- [ ] text_glow_radius = 5
+	- [ ] text_glow_softness = 0.5
+
+- [ ] Scroll-on-output enhancement: One additional setting:
+	- [ ] In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
+		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
+	- [ ] Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
+
 - [ ] Cursor:
 	- [ ] Smooth-scroll (when moving to the right).
 	- [ ] Blink at the same rate, but "phase" between of and on, not just on or off.
 
-- [ ] CI/CD scripts:
-	- [ ] Build alternate targets in parallel, to speed process up.
-
-- [ ] 
+- [ ] Bell/warning:
+	- Gently and smoothly brighten all text, like the modern Windows Terminal does.
 
 - [◐] Menu bar: (issue #t6thx, 20260626-132615)
 	- [ ] Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect.
