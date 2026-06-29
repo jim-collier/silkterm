@@ -44,7 +44,9 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 
 - [ ] Critical: Smooth-scrolling apparently just quits after using the terminal for a while. It seems to quit, if output is too fast for a while, but that could be a red-herring. Maybe it's just after any particular amount of general use.
 
-- [ ] Mouse wheel doesn't scroll back through the `stdout`/`stderr` buffer. It should do so, smoothly, and in proportion to how fast the mouse wheel is moved. But currently it moves the command history back. (20260626-104542)
+- [✔️] Mouse wheel doesn't scroll back through the `stdout`/`stderr` buffer. It should do so, smoothly, and in proportion to how fast the mouse wheel is moved. But currently it moves the command history back. (20260626-104542)
+	- Cause: `TermMode::ALTERNATE_SCROLL` (DECSET 1007) is default-on in alacritty_terminal, but the wheel handler used `ALT_SCREEN || ALTERNATE_SCROLL` as the cursor-key trigger - so on the *primary* screen the always-on flag made the wheel emit cursor-up/down (shell history recall) instead of scrolling scrollback.
+	- Fix: gate the cursor-key path on `ALT_SCREEN` (now requires alt screen AND alternate-scroll AND no mouse mode). The primary screen always routes to the smooth scrollback (`Scroll::wheel`, already proportional to notches via `wheel_lines` + easing). Alt-screen apps (less/nano/vim) keep their cursor-key wheel. `app.rs` MouseWheel arm. Verified by root-cause + build (runtime wheel injection is unreliable here per xdotool notes).
 
 - [✔️] Severe bug: Trying to open the settings dialog crashes the program. (20260625-150526)
 	- Cause: with always-GL on X11 the main window holds a glutin GL/EGL context, and the pop-out dialog's `Gfx::new` created a second `wgpu::Instance::default()` (all backends, including GL); wgpu-hal's GL init then panicked in EGL teardown (`unmake_current().unwrap()`, "Another window API already has a current context"). Increment A/B tests used a native-Vulkan main (default config), which masked it; the transparent (GL) main hit it every time.
