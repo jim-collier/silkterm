@@ -20,6 +20,33 @@ pub fn monospace() -> &'static Monospace {
 	M.get_or_init(platform::monospace)
 }
 
+/// Cached OS sans-serif (proportional UI) family, best-effort. Used to pin the
+/// chrome font - the generic `Family::SansSerif` is unreliable (fontdb defaults
+/// it to "Arial" and falls through to a serif when that's absent).
+pub fn sans_serif() -> Option<&'static str> {
+	static S: OnceLock<Option<String>> = OnceLock::new();
+	S.get_or_init(sans_serif_detect).as_deref()
+}
+
+#[cfg(target_os = "linux")]
+fn sans_serif_detect() -> Option<String> {
+	// fontconfig's `sans-serif` alias resolves to a real sans face regardless of
+	// the user's (possibly serif) document font.
+	let out = std::process::Command::new("fc-match")
+		.args(["--format=%{family}", "sans-serif"])
+		.output()
+		.ok()?;
+	out.status.success().then_some(())?;
+	let s = String::from_utf8(out.stdout).ok()?;
+	let fam = s.trim().split(',').next().unwrap_or("").trim(); // may be a list
+	(!fam.is_empty()).then(|| fam.to_string())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn sans_serif_detect() -> Option<String> {
+	None // other platforms fall back to the curated list in text::resolve_sans_family
+}
+
 #[cfg(target_os = "linux")]
 mod platform {
 	use super::Monospace;
