@@ -50,10 +50,12 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 	- Fix: `UserEvent::Exit` now finds the pane's owning tab (`position(|pm| pm.panes.contains_key(&id))`) and applies the same cascade - >1 pane in that tab closes the pane; else >1 tab closes that tab (`close_tab_at(idx)`, generalized from `close_tab`); else (last pane of last tab) exits. Handles background-tab exits and keeps `active` pointing at the same tab.
 	- Verified: runtime - launched with a 2nd (active) tab whose shell self-exits after 3s; app stayed alive past the exit (tab closed, window survived) instead of quitting. Builds clean.
 
-- [ ] Menu bar and tab fonts: (#1n45bca, 20260629-103822)
-	- [ ] Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect.
-		- [ ] Verify that menu bar height adjusts based on menu font.
-	- [ ] Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size.
+- [◐] Menu bar and tab fonts: (#1n45bca, 20260629-103822)
+	- [✔️] Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. (20260629)
+		- Cause: chrome used generic `Family::SansSerif`. fontdb's generic-sans default is "Arial"; when that's absent (typical on Linux) the query falls through to whatever matches - here the GNOME *document* font, which is a serif (GentiumAlt). (fontconfig's actual sans-serif on this box is Noto Sans.)
+		- Fix: pin a concrete sans family, mirroring the mono pin - `text::resolve_sans_family` + `pin_sans_family` resolve the OS sans-serif (`sysfont::sans_serif` = `fc-match sans-serif`), else a curated list, validated against the db; `sans_attrs` now uses `Family::Name`. Headless unit test asserts a concrete face resolves (got "Noto Sans"). 29 tests pass.
+		- [✔️] Verify that menu bar height adjusts based on menu font. - Confirmed: `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (`text.cell_h`) + pad, so a larger menu font grows the bars (the height work was done earlier under #t6thx).
+	- [◐] Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. - Bar/tab height already scales with the menu font (cell_h-based). The serif font was the likely cause of the perceived bottom-crowding; with the corrected sans font, nudged tab titles up ~1.5px for more bottom clearance (`top: tby + TAB_BAR_VPAD/2 - 1`). Needs an owner eyeball to confirm/fine-tune - couldn't screenshot here (a live SilkTerm window of the owner's kept matching the capture).
 
 - [✔️] Critical: Smooth-scrolling apparently just quits after using the terminal for a while. It seems to quit, if output is too fast for a while, but that could be a red-herring. Maybe it's just after any particular amount of general use.
 	- Cause: output-easing was triggered off scrollback *growth* (`grid.history_size()` rising). That growth flatlines once the scrollback buffer fills (default 10k lines) - old lines drop off the top as fast as new ones arrive - so after enough output the growth reads 0 every frame and `nudge_output` never fires again. Smooth output scroll dies "after a while", and sooner under fast output (which fills the 10k buffer faster). Manual scrollback (wheel) was unaffected, which is why it looked like only the smooth *output* scroll quit.
@@ -161,7 +163,7 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 	- Gently and smoothly brighten all text, like the modern Windows Terminal does.
 
 - [◐] Menu bar: (issue #t6thx, 20260626-132615)
-	- [ ] Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect.
+	- [✔️] Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. - Fixed under bug #1n45bca: chrome pins a concrete sans family (`resolve_sans_family` / `sysfont::sans_serif`) instead of generic `Family::SansSerif`, which had been falling through to the serif document font.
 	- [✔️] Auto-adjust height based on menu font size.
 		- Done (`app.rs`): the `MENU_BAR_H`/`TAB_BAR_H` consts are gone; bar heights now come from `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (`text.cell_h`) + a small `MENU_BAR_VPAD`/`TAB_BAR_VPAD`, and the title text is centered in the scaled bar. So a larger font grows the bars instead of clipping. All ~13 const usages (layout, render, hit-testing, the resumed-time initial size) were switched. At the default font it's ~1px taller than before (27/29 vs 26/28) - imperceptible; verified it builds clean.
 	- [✔️] Make menu gray, with white text. (For both light and dark themes.)

@@ -38,13 +38,61 @@ pub fn mono_attrs() -> Attrs<'static> {
 	a
 }
 
+// Concrete family behind chrome's `sans_attrs`, pinned alongside the mono family.
+static SANS_FAMILY: RwLock<Option<&'static str>> = RwLock::new(None);
+
+fn sans_family() -> Option<&'static str> {
+	*SANS_FAMILY.read().unwrap()
+}
+
+fn pin_sans_family(fs: &FontSystem) {
+	let name = resolve_sans_family(fs).map(|s| &*Box::leak(s.into_boxed_str()));
+	*SANS_FAMILY.write().unwrap() = name;
+}
+
 // Proportional (sans-serif) attrs for chrome - menus, the menu bar, dialogs -
-// so they read like native UI rather than terminal text. `Family::SansSerif`
-// resolves to the system's default proportional font via fontdb/fontconfig.
+// so they read like native UI rather than terminal text. Uses a pinned concrete
+// family (resolve_sans_family); generic `Family::SansSerif` is unreliable here.
 pub fn sans_attrs() -> Attrs<'static> {
 	let mut a = Attrs::new();
-	a.family = Family::SansSerif;
+	a.family = match sans_family() {
+		Some(name) => Family::Name(name),
+		None => Family::SansSerif,
+	};
 	a
+}
+
+// Resolve a concrete sans-serif family for chrome. `Family::SansSerif` can't be
+// trusted: fontdb's generic sans defaults to "Arial", and when that isn't
+// installed the query falls through to whatever matches - often a serif (e.g. a
+// GNOME serif document font). So pin the OS sans-serif if installed, else a
+// known-good sans, validated against the db so a bad name can't slip through.
+fn resolve_sans_family(fs: &FontSystem) -> Option<String> {
+	let db = fs.db();
+	let installed = |fam: &str| {
+		let q = fontdb::Query {
+			families: &[fontdb::Family::Name(fam)],
+			..Default::default()
+		};
+		db.query(&q)
+			.and_then(|id| db.face(id))
+			.is_some_and(|f| f.families.iter().any(|(n, _)| n.eq_ignore_ascii_case(fam)))
+	};
+	let curated = [
+		"DejaVu Sans",
+		"Noto Sans",
+		"Liberation Sans",
+		"Cantarell",
+		"Ubuntu",
+		"Segoe UI",
+		"Helvetica Neue",
+		"Arial",
+	];
+	crate::sysfont::sans_serif()
+		.map(str::to_string)
+		.into_iter()
+		.chain(curated.iter().map(|s| s.to_string()))
+		.find(|fam| installed(fam))
 }
 
 // Resolve the monospace family to pin for every weight: the user's configured
@@ -113,6 +161,7 @@ impl TextCtx {
 	) -> Self {
 		let mut font_system = FontSystem::new();
 		pin_mono_family(&font_system);
+		pin_sans_family(&font_system);
 
 		let font_size = (config::settings().font_size * scale).round();
 		let line_height = (font_size * config::settings().line_height_scale).round();
@@ -335,4 +384,20 @@ fn measure_cell(fs: &mut FontSystem, metrics: Metrics) -> f32 {
 		.map(|r| r.line_w / N as f32)
 		.unwrap_or(metrics.font_size * 0.6)
 		.max(1.0)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	// Chrome must pin a concrete sans face, never fall back to generic
+	// `Family::SansSerif` (which lands on a serif when fontdb's "Arial" default
+	// is absent). Only needs a FontSystem (no GPU), so it runs headless.
+	#[test]
+	fn sans_resolves_to_concrete_family() {
+		let fs = FontSystem::new();
+		let fam = resolve_sans_family(&fs);
+		eprintln!("resolved chrome sans family: {fam:?}");
+		assert!(fam.is_some(), "no concrete sans family resolved for chrome");
+	}
 }
