@@ -112,6 +112,7 @@ fMain(){
 	local -r dirPath_Rar="${dirPath_Top}/versions"
 	local -r filePath_Rar="${dirPath_Rar}/${dirName_Top}_${serialDT}.rar"
 	baseCmdArgs="${baseCmdArgs} -x'*/${dirName_GitProj}/.git/*' -x'*/versions/*' -x'*/github/target/*' -x'*/private/backgrounds/*'"
+	readonly baseCmdArgs
 	local -r cmd_Rar="rar ${baseCmdArgs}  '${filePath_Rar}'  '../.'"
 
 	## Validate
