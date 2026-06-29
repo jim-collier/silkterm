@@ -168,8 +168,9 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 	- Cause: `apply_new_settings` reloaded the image only when `bg_image_changed` (path/opacity/fit/blur differ). A same-name file swap leaves the path string identical, so it skipped the reload.
 	- Fix: `apply_new_settings` takes a `force_bg` flag; `reload_config` passes `true` so Reload Config always re-reads the image file (the dialog Apply path still reloads only on a real change). `app.rs`.
 
-- [ ] About dialog:
+- [✔️] About dialog:
 	- Include the version, build, copyright, and license.
+	- Done (`dialog.rs` `layout_about`): added a copyright line and a `License: <SPDX>` line (`env!("CARGO_PKG_LICENSE")` -> GPL-2.0-or-later) under the version, and a `Build: <arch> / <os> (debug|release)` line in the Info section (`std::env::consts` + `cfg!(debug_assertions)`, so it names which cross-built target the binary is). The About window is content-sized, so it grows to fit. Builds clean.
 
 - [◐] Menu (part 2):
 	- [✔️] When a menu is open, keyboard arrow should work on them, not on the active terminal pane.
