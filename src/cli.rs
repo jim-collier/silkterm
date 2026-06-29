@@ -477,6 +477,54 @@ fn set_dir(pane: &mut PaneSpec, dir: Dir4, on: bool, flag: &str) -> Result<(), S
 	Ok(())
 }
 
+// Fold window-level CLI style options into `s` (pure). Window-scoped only:
+// per-pane visual style is deferred (it needs a per-pane renderer the single
+// shared TextCtx doesn't have). `--shell` is handled separately (build_layout).
+pub fn fold_window_style(s: &mut config::Settings, st: &Style) {
+	if let Some(f) = &st.font_name {
+		s.font_family = Some(f.clone());
+	}
+	if let Some(sz) = st.font_size {
+		s.font_size = sz;
+	}
+	if let Some(c) = st.bg_color {
+		s.bg = c;
+	}
+	if let Some(c) = st.fg_color {
+		s.fg = c;
+	}
+	if let Some(img) = &st.bg_image {
+		s.background_image = img.as_ref().map(PathBuf::from);
+	}
+	if let Some(fit) = st.bg_fit {
+		s.background_fit = fit;
+	}
+	if let Some(o) = st.bg_opacity {
+		s.background_opacity = o;
+	}
+}
+
+impl WindowOpts {
+	// Apply this window's CLI style to the live settings at startup (no-op if none
+	// set). Call after the theme/OS palette settles so colours aren't clobbered.
+	pub fn apply_style(&self) {
+		let st = &self.style;
+		let any = st.font_name.is_some()
+			|| st.font_size.is_some()
+			|| st.bg_color.is_some()
+			|| st.fg_color.is_some()
+			|| st.bg_image.is_some()
+			|| st.bg_fit.is_some()
+			|| st.bg_opacity.is_some();
+		if !any {
+			return;
+		}
+		let mut s = config::settings().as_ref().clone();
+		fold_window_style(&mut s, st);
+		config::update(s);
+	}
+}
+
 fn ensure_first_tab(cli: &mut Cli) {
 	if cli.tabs.is_empty() {
 		cli.tabs.push(TabSpec::new(None));
@@ -634,5 +682,33 @@ mod tests {
 		let c = p("--new-pane --size=30% --background-color=#102030");
 		assert_eq!(c.tabs[0].panes[1].size, Some(Size::Percent(30.0)));
 		assert_eq!(c.tabs[0].panes[1].style.bg_color, Some([0x10, 0x20, 0x30]));
+	}
+
+	#[test]
+	fn window_style_folds_into_settings() {
+		let c = p(
+			"--font-name=Iosevka --font-size=20 --background-color=#102030 \
+			--foreground-color=#abcdef --background-image=/x.png --background-image-zoom \
+			--background-image-opacity=0.5",
+		);
+		let mut s = config::Settings::default();
+		fold_window_style(&mut s, &c.win.style);
+		assert_eq!(s.font_family.as_deref(), Some("Iosevka"));
+		assert_eq!(s.font_size, 20.0);
+		assert_eq!(s.bg, [0x10, 0x20, 0x30]);
+		assert_eq!(s.fg, [0xab, 0xcd, 0xef]);
+		assert_eq!(s.background_image, Some(PathBuf::from("/x.png")));
+		assert_eq!(s.background_fit, config::Fit::Zoom);
+		assert_eq!(s.background_opacity, 0.5);
+	}
+
+	#[test]
+	fn window_style_noop_leaves_defaults() {
+		// no style flags -> settings untouched
+		let c = p("--columns 80");
+		let mut s = config::Settings::default();
+		let before = (s.font_size, s.bg, s.fg);
+		fold_window_style(&mut s, &c.win.style);
+		assert_eq!((s.font_size, s.bg, s.fg), before);
 	}
 }

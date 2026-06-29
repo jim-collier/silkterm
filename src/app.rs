@@ -1611,6 +1611,11 @@ impl ApplicationHandler<UserEvent> for App {
 		// System theme mode: seed the OS dark/light bit before the first frame so a
 		// system-mode theme resolves to the right palette immediately (no flash).
 		config::reapply_for_os(!matches!(window.theme(), Some(winit::window::Theme::Light)));
+		// Window-level CLI style (--font-name/-size, colours, bg image/fit/opacity)
+		// overrides the loaded settings before text + bg image are built. Applied
+		// after the theme/OS palette settles so it isn't clobbered. Per-pane style
+		// stays deferred (needs a per-pane renderer).
+		w.apply_style();
 		if w.fullscreen.unwrap_or(false) {
 			window.set_fullscreen(Some(Fullscreen::Borderless(None)));
 		}
