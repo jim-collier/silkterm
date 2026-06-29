@@ -1,4 +1,6 @@
 #!/bin/bash
+
+#  shellcheck disable=1091  ## 'source is valid here, but shellcheck doesn't know the path to it.'
 #  shellcheck disable=2001  ## 'See if you can use ${variable//search/replace} instead.' Complains about good uses of sed.
 #  shellcheck disable=2016  ## 'Expressions don't expand in single quotes, use double quotes for that.' I know, and I often want an explicit '$'.
 #  shellcheck disable=2034  ## 'variable appears unused.' Complains about valid use of variable indirection (e.g. later use of local -n var=$1)
@@ -154,7 +156,8 @@ fMain(){
 		## hour/day/week/month/year + the last 10. Also conforms pre-existing
 		## backup names. Tunable via GFS_KEEP_* env (see include/gfs-rotate.bash).
 		fEcho "Rotating version backups (GFS retention) ..."
-		gfs_rotate "${dirPath_Rar}" "${dirName_Top}" rar
+		## Non-fatal: pruning is housekeeping and must never abort a good publish.
+		gfs_rotate "${dirPath_Rar}" "${dirName_Top}" rar || fEcho "WARNING: backup rotation failed (non-fatal); continuing."
 	fi
 
 	## Variables for git actions
@@ -450,10 +453,11 @@ declare -i isSourced; { (return 0 2>/dev/null) && isSourced=1; } || isSourced=0
 [[ -v mePath            ]] || declare -r mePath="${BASH_SOURCE[0]}"
 [[ -v meName            ]] || declare -r meName="$(basename "${mePath}")"
 [[ -v meDir             ]] || declare -r meDir="$(cd "$(dirname "${mePath}")" && pwd)"
+[[ -v relaunch_Key_sudo ]] || declare -r relaunch_Key_sudo="${meName}_relaunch_sudo_4KQDYluNbzLQHwMwsWxgdk"  ## This isn't for 'security' or uniqueness. It just needs to be an exceptionally unlikely user argument.
+
 # Reusable GFS rotation (its own logic, kept separate from the backup logic below).
 # shellcheck source=/dev/null
 source "${meDir}/include/gfs-rotate.bash"
-[[ -v relaunch_Key_sudo ]] || declare -r relaunch_Key_sudo="${meName}_relaunch_sudo_4KQDYluNbzLQHwMwsWxgdk"  ## This isn't for 'security' or uniqueness. It just needs to be an exceptionally unlikely user argument.
 
 ## Invoke main
 fMain  "${@}"
@@ -469,3 +473,5 @@ fMain  "${@}"
 ##			- Validate SSH key directly, not via git config core.sshCommand, which may not be set.
 ##			- Added check of environment variable 'N8GIT_BACKUP_AND_PUBLISH_QUIET'.
 ##			- Added check of environment variable 'N8GIT_BACKUP_AND_PUBLISH_NOBACKUP'.
+##		- 20260628 JC:
+##			- Call gfs-rotate.bash to prune old backups (GFS retention).
