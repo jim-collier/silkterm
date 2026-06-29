@@ -136,7 +136,7 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 - [ ] CI/CD scripts:
 	- [ ] Build alternate targets in parallel, to speed process up.
 
-- [ ] Change the default hotkey for opening a new tab to Ctrl+Shift+T.
+- [✔️] Change the default hotkey for opening a new tab to Ctrl+Shift+T. (20260629) - new-tab is now Ctrl+Shift+T (`app.rs` tab-hotkey block); plain Ctrl+T passes through to the shell (readline transpose-char) instead of opening a tab. Builds clean.
 
 - [ ] Config file: Preceed actual comments with double '## '. Commented-out *settings* get a single '# '.
 
@@ -526,7 +526,7 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 	- [ ] Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
 
 - [✔️] No hotkeys for pane management except. Minimal hotkeys overall, except for window, tab, menu, and clipboard managent.
-	- Done. Removed the pane hotkeys: Ctrl+Shift+R/D (split V/H), Ctrl+Shift+W (close pane), Ctrl+Shift+Tab (cycle focus). Pane management is menu-only now (Panes menu / right-click; focus by clicking). `cycle_focus` deleted. Remaining hotkeys are window (F11), tab (Ctrl+T new, Ctrl+PageUp/Down change, +Shift move), menu (Alt accelerators, Menu key, Ctrl+,), clipboard (Ctrl+Shift+C/V).
+	- Done. Removed the pane hotkeys: Ctrl+Shift+R/D (split V/H), Ctrl+Shift+W (close pane), Ctrl+Shift+Tab (cycle focus). Pane management is menu-only now (Panes menu / right-click; focus by clicking). `cycle_focus` deleted. Remaining hotkeys are window (F11), tab (Ctrl+Shift+T new, Ctrl+PageUp/Down change, +Shift move), menu (Alt accelerators, Menu key, Ctrl+,), clipboard (Ctrl+Shift+C/V).
 
 - [✔️] Changed mind about "close tab" hotkey: none. Use right-click or main menu, or just exit command.
 	- Done. Removed the Ctrl+F4 close-tab hotkey. Close a tab via the Tabs menu ("Close Tab") or by exiting the shell.
