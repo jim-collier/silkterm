@@ -117,6 +117,9 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 	- [ ] Smooth-scroll (to the right) also.
 	- [ ] Blink at the same rate, but "phase" between of and on, not just on or off.
 
+- [ ] CI/CD scripts:
+	- [ ] Build alternate targets in parallel.
+
 - [◐] Menu bar: (issue #t6thx, 20260626-132615)
 	- [ ] Auto-adjust height based on menu font size.
 	- [✔️] Make menu gray, with white text. (For both light and dark themes.)
