@@ -1997,8 +1997,12 @@ impl ApplicationHandler<UserEvent> for App {
 				};
 				if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
 					let m = p.term.mode();
-					let alt_scroll = (m.contains(TermMode::ALT_SCREEN)
-						|| m.contains(TermMode::ALTERNATE_SCROLL))
+					// Alternate-scroll (DECSET 1007) is default-on, so gate the cursor-key
+					// path on actually being in the alt screen. On the primary screen the
+					// wheel must scroll our scrollback; sending cursor keys there recalls
+					// shell history instead (the reported bug).
+					let alt_scroll = m.contains(TermMode::ALT_SCREEN)
+						&& m.contains(TermMode::ALTERNATE_SCROLL)
 						&& !m.intersects(TermMode::MOUSE_MODE);
 					if alt_scroll {
 						// full-screen apps (less, nano, ...) have no scrollback of
