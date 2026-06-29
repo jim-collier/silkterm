@@ -896,9 +896,22 @@ impl State {
 		let menubar_range = if self.menu_bar {
 			let start = instances.len() as u32;
 			instances.push(rect_inst(0.0, 0.0, bw, menu_h, config::TAB_BAR_BG));
+			let layout = self.menubar_layout();
 			if let Some(idx) = self.bar_open {
-				if let Some(&(x, w)) = self.menubar_layout().get(idx) {
+				if let Some(&(x, w)) = layout.get(idx) {
 					instances.push(rect_inst(x, 0.0, w, menu_h, config::MENU_HOVER));
+				}
+			} else if self.mods.alt_key() {
+				// Alt held (no dropdown open): underline each title's accelerator
+				// letter, like the open-dropdown items do (press the letter to open).
+				let acc = crate::text::sans_attrs();
+				let uy = MENU_BAR_VPAD / 2.0 + self.text.cell_h - 2.0;
+				for (i, &(x, _)) in layout.iter().enumerate() {
+					if let Some(c) = MENU_BAR[i].chars().next() {
+						let mut buf = [0u8; 4];
+						let cw = self.text.measure_text(c.encode_utf8(&mut buf), &acc);
+						instances.push(rect_inst(x + MENU_BAR_PAD, uy, cw, 1.0, config::MENU_FG));
+					}
 				}
 			}
 			Some((start, instances.len() as u32))
@@ -1776,7 +1789,11 @@ impl ApplicationHandler<UserEvent> for App {
 				state.dirty = true;
 			}
 
-			WindowEvent::ModifiersChanged(m) => state.mods = m.state(),
+			WindowEvent::ModifiersChanged(m) => {
+				state.mods = m.state();
+				// Alt toggles the menu-bar accelerator underlines, so redraw.
+				state.dirty = true;
+			}
 
 			// OS switched dark/light: a "System" theme follows it live.
 			WindowEvent::ThemeChanged(theme) => {
