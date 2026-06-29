@@ -146,11 +146,11 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 	- This is independent of background *image* blur, which maintains its independence.
 	- It blurs what's behind the terminal, as if it were made of frosted glass.
 
-- [ ] Change defaults:
-	- [ ] Background image blur: 8 px
-	- [ ] text_glow = true
-	- [ ] text_glow_radius = 5
-	- [ ] text_glow_softness = 0.5
+- [✔️] Change defaults: (20260629) - `Settings::default()` updated (the loader's `unwrap_or(default)` makes it the single source of truth); the DEFAULT_CONFIG template's documented example values now match. Headless guard test added; 32 tests pass. Note: glow is now on by default, so the glow render pass runs every frame - owner to confirm the look/feel.
+	- [✔️] Background image blur: 8 px
+	- [✔️] text_glow = true
+	- [✔️] text_glow_radius = 5
+	- [✔️] text_glow_softness = 0.5
 
 - [ ] Scroll-on-output enhancement: One additional setting:
 	- [ ] In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
