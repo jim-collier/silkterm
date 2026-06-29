@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 
-## Purpose: Spits out random lengths of random lines of unicode.
-## History:
-##  - 20260626 JC: Created.
+##	Purpose: Spits out random lengths of random lines of unicode.
+##	History: At bottom of script.
+
+##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Licensed under The MIT License (MIT). Full text at:
+##		https://mit-license.org/
+##	SPDX-License-Identifier: MIT
+
 
 import sys, time, random, unicodedata
 
@@ -126,3 +131,7 @@ while time.monotonic() < end:
 		time.sleep(delay)
 	else:
 		time.sleep(delay * random.uniform(DELAY_JITTER_MIN, DELAY_JITTER_MAX))
+
+
+##	History:
+##		- 20260628 JC: Created.
