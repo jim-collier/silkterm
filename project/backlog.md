@@ -138,7 +138,9 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 
 - [✔️] Change the default hotkey for opening a new tab to Ctrl+Shift+T. (20260629) - new-tab is now Ctrl+Shift+T (`app.rs` tab-hotkey block); plain Ctrl+T passes through to the shell (readline transpose-char) instead of opening a tab. Builds clean.
 
-- [ ] Config file: Preceed actual comments with double '## '. Commented-out *settings* get a single '# '.
+- [✔️] Config file: Preceed actual comments with double '## '. Commented-out *settings* get a single '# '. (20260629)
+	- DEFAULT_CONFIG template rewritten to the convention: explanatory + inline comments use `## `; disabled `# key = value` settings keep a single `# `. The parser already distinguished them (`line_setting_key` strips one `#`, so `## prose` yields no key), and toml_edit round-trips `##` fine. Two unit tests added (valid-TOML/deserialize + style check); 31 tests pass.
+	- Note: only newly-generated configs and newly-backfilled keys get the new style; an existing config's already-present lines aren't reformatted (delete config.toml to regenerate the clean layout).
 
 - [ ] New setting: Transparent background blur.
 	- This is independent of background *image* blur, which maintains its independence.

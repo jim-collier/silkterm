@@ -748,101 +748,144 @@ fn config_path() -> Option<PathBuf> {
 	Some(base.join("silkterm").join("config.toml"))
 }
 
-const DEFAULT_CONFIG: &str = r##"# SilkTerm configuration. Delete this file to regenerate defaults.
+const DEFAULT_CONFIG: &str = r##"## SilkTerm configuration. Delete this file to regenerate defaults.
+## Convention: '## ' starts an explanatory comment; a single '# ' before a
+## `key = value` is a commented-out (disabled) setting you can uncomment.
 
-# Font family by name; leave commented to use the system default monospace.
+## Font family by name; leave commented to use the system default monospace.
 # font_family = "JetBrains Mono"
 
-# Font size in logical pixels. Leave commented to follow the desktop's
-# monospace size; uncomment to pin an explicit size.
+## Font size in logical pixels. Leave commented to follow the desktop's
+## monospace size; uncomment to pin an explicit size.
 # font_size = 17.0
 
-# Line height as a multiple of the font's natural height (1.0 = tight).
+## Line height as a multiple of the font's natural height (1.0 = tight).
 line_height_scale = 1.22
 
-# Pixels between the text and the pane edge.
+## Pixels between the text and the pane edge.
 margin = 8.0
 
-# Transparency: when on, the terminal background (only - never the text, window
-# frame, or menus) becomes see-through, using `opacity` below as its alpha. The
-# code picks the method (per-pixel via a GL surface on X11; native elsewhere).
+## Transparency: when on, the terminal background (only - never the text, window
+## frame, or menus) becomes see-through, using `opacity` below as its alpha. The
+## code picks the method (per-pixel via a GL surface on X11; native elsewhere).
 # transparent_background = true
 
-# Background opacity, 0.0 (fully transparent) to 1.0 (opaque). Only takes effect
-# when `transparent_background` is on.
+## Background opacity, 0.0 (fully transparent) to 1.0 (opaque). Only takes effect
+## when `transparent_background` is on.
 opacity = 0.95
 
-# Background image. Leave commented to auto-detect backgrounds/background.{png,jpg,jpeg}
-# under this directory. Value may be an absolute path or a filename relative here.
+## Background image. Leave commented to auto-detect backgrounds/background.{png,jpg,jpeg}
+## under this directory. Value may be an absolute path or a filename relative here.
 # background_image = "background.png"
 
-# Image visibility relative to the background color (independent of `opacity`
-# above): 0.0 = all background color, 1.0 = all image.
+## Image visibility relative to the background color (independent of `opacity`
+## above): 0.0 = all background color, 1.0 = all image.
 # background_opacity = 0.33
 
-# How the image fits: "stretch" (fill, ignore aspect) or "zoom" (cover, keep aspect).
+## How the image fits: "stretch" (fill, ignore aspect) or "zoom" (cover, keep aspect).
 # background_fit = "stretch"
 
-# Gaussian blur applied to the background image (sigma in pixels; 0 = none).
+## Gaussian blur applied to the background image (sigma in pixels; 0 = none).
 # background_blur = 0.0
 
-# Text readability glow: a blurry background-colored halo behind each glyph, so
-# text stays legible over a light/busy background or near-transparent terminal.
+## Text readability glow: a blurry background-colored halo behind each glyph, so
+## text stays legible over a light/busy background or near-transparent terminal.
 # text_glow = false
-# text_glow_radius = 3.0     # glow blur sigma in pixels
-# text_glow_softness = 0.4   # 0 = hard/solid glow, 1 = soft/faint
+# text_glow_radius = 3.0     ## glow blur sigma in pixels
+# text_glow_softness = 0.4   ## 0 = hard/solid glow, 1 = soft/faint
 
-# Initial window size, in character cells (used when remember_size = false).
+## Initial window size, in character cells (used when remember_size = false).
 columns = 160
 rows = 48
 
-# Launch at the last window size instead of columns/rows. The remembered size is
-# updated automatically whenever you resize the window (kept separate from
-# columns/rows so unchecking reverts to your defined size); not shown in Settings.
+## Launch at the last window size instead of columns/rows. The remembered size is
+## updated automatically whenever you resize the window (kept separate from
+## columns/rows so unchecking reverts to your defined size); not shown in Settings.
 # remember_size = false
 # remembered_columns = 160
 # remembered_rows = 48
 
-# Delimiters that bound a double-click word selection. The default keeps
-# / . - _ ~ as part of a word, so paths stay selected whole. Leave commented
-# for the default; set to your own string of separator characters to override.
+## Delimiters that bound a double-click word selection. The default keeps
+## / . - _ ~ as part of a word, so paths stay selected whole. Leave commented
+## for the default; set to your own string of separator characters to override.
 # word_separators = ",|:\"' ()[]{}<>"
 
-# Pairs whose contents a double-click selects when the click is inside a matched
-# pair (highest precedence first). Leave commented for the default.
+## Pairs whose contents a double-click selects when the click is inside a matched
+## pair (highest precedence first). Leave commented for the default.
 # selection_pairs = "`` \"\" '' {} () [] <>"
 
-# Default shell/command for new windows, tabs, and panes when nothing else is
-# given (CLI --shell and per-pane inheritance take precedence). argv-split, so
-# "bash --norc" works. Leave blank/commented to use the system default shell.
+## Default shell/command for new windows, tabs, and panes when nothing else is
+## given (CLI --shell and per-pane inheritance take precedence). argv-split, so
+## "bash --norc" works. Leave blank/commented to use the system default shell.
 # default_shell = "bash --norc"
 
-# Default command line applied when SilkTerm is launched with no arguments - the
-# same window/tab/pane options the CLI accepts (see --help). Any actual
-# command-line arguments override this entirely. Leave blank/commented for none.
+## Default command line applied when SilkTerm is launched with no arguments - the
+## same window/tab/pane options the CLI accepts (see --help). Any actual
+## command-line arguments override this entirely. Leave blank/commented for none.
 # command_line = "--new-pane --right --size 35%"
 
-# Lines of scrollback history kept per pane.
+## Lines of scrollback history kept per pane.
 scrollback = 10000
 
-# Smooth-scroll feel. This is the *initial* (slow, smooth) easing for sporadic
-# output, shown in Settings as "Initial scroll speed"; lower tau = snappier. Under
-# a fast output burst the scroll automatically ramps faster to keep up, then eases
-# back to this speed once output stops.
-scroll_tau_ms = 230.0      # ms; ~ "Initial scroll speed" 25 on the 1..100 dialog scale
-wheel_lines = 3.0          # lines per wheel notch (smooth scrollback)
-alt_scroll_lines = 3.0     # lines per wheel notch in full-screen apps (less, nano)
-output_ease_lines = 1.0    # how far new output slides in before easing to rest
+## Smooth-scroll feel. This is the *initial* (slow, smooth) easing for sporadic
+## output, shown in Settings as "Initial scroll speed"; lower tau = snappier. Under
+## a fast output burst the scroll automatically ramps faster to keep up, then eases
+## back to this speed once output stops.
+scroll_tau_ms = 230.0      ## ms; ~ "Initial scroll speed" 25 on the 1..100 dialog scale
+wheel_lines = 3.0          ## lines per wheel notch (smooth scrollback)
+alt_scroll_lines = 3.0     ## lines per wheel notch in full-screen apps (less, nano)
+output_ease_lines = 1.0    ## how far new output slides in before easing to rest
 
-# Colour theme. Pick a built-in (SilkTerm, Matrix, Retro Amber) or one you add in
-# a [themes.*] table. theme_mode is "dark", "light", or "system" (follow the OS).
+## Colour theme. Pick a built-in (SilkTerm, Matrix, Retro Amber) or one you add in
+## a [themes.*] table. theme_mode is "dark", "light", or "system" (follow the OS).
 theme = "SilkTerm"
 theme_mode = "dark"
 
-# Per-colour overrides on top of the theme (uncomment any to tweak one colour).
+## Per-colour overrides on top of the theme (uncomment any to tweak one colour).
 [colors]
 # background = "#000000"
 # foreground = "#d2d2da"
 # cursor     = "#7a9ad0"
 # focus      = "#5580c8"
 "##;
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn default_config_is_valid_toml() {
+		assert!(
+			DEFAULT_CONFIG.parse::<toml_edit::DocumentMut>().is_ok(),
+			"DEFAULT_CONFIG is not valid TOML"
+		);
+		// and it deserializes through the real loader path
+		assert!(
+			toml::from_str::<RawConfig>(&lenient_floats(DEFAULT_CONFIG)).is_ok(),
+			"DEFAULT_CONFIG active keys don't deserialize"
+		);
+	}
+
+	// #136 convention: explanatory comments use '## '; commented-out (disabled)
+	// settings use a single '# '.
+	#[test]
+	fn default_config_comment_style() {
+		for line in DEFAULT_CONFIG.lines() {
+			let t = line.trim_start();
+			if !t.starts_with('#') {
+				continue; // active setting / blank / table header
+			}
+			if line_setting_key(line).is_some() {
+				assert!(
+					!t.starts_with("##"),
+					"disabled setting must use a single '# ': {line:?}"
+				);
+			} else {
+				assert!(
+					t.starts_with("##"),
+					"explanatory comment must use '## ': {line:?}"
+				);
+			}
+		}
+	}
+}
