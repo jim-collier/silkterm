@@ -108,10 +108,10 @@ impl Default for Settings {
 			background_image: None,
 			background_opacity: 0.33, // image visibility relative to bg color
 			background_fit: Fit::Stretch,
-			background_blur: 0.0,
-			text_glow: false,
-			text_glow_radius: 3.0,
-			text_glow_softness: 0.4,
+			background_blur: 8.0,
+			text_glow: true,
+			text_glow_radius: 5.0,
+			text_glow_softness: 0.5,
 			columns: 160,
 			rows: 48,
 			remember_size: false,
@@ -786,13 +786,14 @@ opacity = 0.95
 # background_fit = "stretch"
 
 ## Gaussian blur applied to the background image (sigma in pixels; 0 = none).
-# background_blur = 0.0
+# background_blur = 8.0
 
 ## Text readability glow: a blurry background-colored halo behind each glyph, so
 ## text stays legible over a light/busy background or near-transparent terminal.
-# text_glow = false
-# text_glow_radius = 3.0     ## glow blur sigma in pixels
-# text_glow_softness = 0.4   ## 0 = hard/solid glow, 1 = soft/faint
+## On by default; uncomment and set text_glow = false to disable.
+# text_glow = true
+# text_glow_radius = 5.0     ## glow blur sigma in pixels
+# text_glow_softness = 0.5   ## 0 = hard/solid glow, 1 = soft/faint
 
 ## Initial window size, in character cells (used when remember_size = false).
 columns = 160
@@ -887,5 +888,15 @@ mod tests {
 				);
 			}
 		}
+	}
+
+	// #142: the owner-requested default values.
+	#[test]
+	fn changed_defaults() {
+		let d = Settings::default();
+		assert!(d.text_glow, "text_glow should default on");
+		assert_eq!(d.text_glow_radius, 5.0);
+		assert_eq!(d.text_glow_softness, 0.5);
+		assert_eq!(d.background_blur, 8.0);
 	}
 }
