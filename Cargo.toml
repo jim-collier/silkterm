@@ -11,6 +11,15 @@ repository = "https://github.com/jim-collier/silkterm"
 name = "silkterm"
 path = "src/main.rs"
 
+# Dev-only diagnostic (not a usage example): a headless probe that renders glyphon
+# text on a native wgpu-GL device, to bisect GL/transparency text-render regressions.
+# Lives in diagnostics/, not examples/. Wired as a Cargo "example" only because that
+# target type stays out of `cargo build --release` (zero shipped-binary cost) yet runs
+# on demand: `cargo run --example glyphon_gl` (compile-checked by `cargo test`).
+[[example]]
+name = "glyphon_gl"
+path = "diagnostics/glyphon_gl.rs"
+
 [dependencies]
 alacritty_terminal = "0.26"
 wgpu = "29"
