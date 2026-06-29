@@ -218,7 +218,7 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 		- Per-pane `--shell` (argv-exec, cascade pane->split-source->tab->window->config `default_shell`; interactive splits inherit too).
 		- Config `command_line` applied when launched with no args (any real CLI argument overrides it entirely - verified both directions).
 		- Tab `--title` override (`PaneManager::title_override`, shown in the tab bar - verified).
-		- Deferred (queued): per-pane visual style (`--font-name/--font-size/--background-color/--foreground-color/--background-image*`) needs a per-pane renderer that the single-`TextCtx` architecture lacks. Revisited later (using hand-rolled chrome without egui).
+		- Window-level visual style now applied: `--font-name/--font-size/--background-color/--foreground-color/--background-image/--background-image-stretch/-zoom/-opacity` fold into the live settings at startup (`cli::fold_window_style`, called from `resumed` after the theme palette settles via `WindowOpts::apply_style`; 2 unit tests). PER-PANE scope is still deferred: it needs a per-pane renderer the single-`TextCtx` architecture lacks (revisited later, hand-rolled chrome without egui). So these flags are `[◐]` - they work for the whole window but don't yet vary per pane.
 		- `--keep-open` (needs exit-status display in a dead PTY).
 		- Per-pane `--title` (no per-pane title is displayed yet - reserved).
 		- Finer field-level CLI/config negotiation (current rule: presence of any CLI arg ignores the config command line wholesale).
@@ -295,23 +295,23 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 		- [ ] `--keep-open[=| ]bool`
 			- Keep pane|tab|window open after shell command exits, showing exit value.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- [ ] `--font-name[=| ]"string"`
+		- [◐] `--font-name[=| ]"string"` - window-level applied; per-pane deferred
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- [ ] `--font-size[=| ]<n>`
+		- [◐] `--font-size[=| ]<n>` - window-level applied; per-pane deferred
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- [ ] `--background-color[=| ]<hex>`
+		- [◐] `--background-color[=| ]<hex>` - window-level applied; per-pane deferred
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- [ ] `--foreground-color[=| ]<hex>`
+		- [◐] `--foreground-color[=| ]<hex>` - window-level applied; per-pane deferred
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- [ ] `--background-image[=| ]"path"`
+		- [◐] `--background-image[=| ]"path"` - window-level applied; per-pane deferred
 			- No value = no background image.
 			- Option not included = fall back to config value.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- [ ] `--background-image-stretch[[=| ]bool]`
+		- [◐] `--background-image-stretch[[=| ]bool]` - window-level applied; per-pane deferred
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- [ ] `--background-image-zoom[[=| ]bool]`
+		- [◐] `--background-image-zoom[[=| ]bool]` - window-level applied; per-pane deferred
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- [ ] `--background-image-opacity[=| ]<n>`
+		- [◐] `--background-image-opacity[=| ]<n>` - window-level applied; per-pane deferred
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
 
 - [ ] Additional "File" menu option: "Save entire current layout to config".
