@@ -17,7 +17,7 @@ use crate::config;
 // smoothed (ramping up responsively, back down gently) so it never jumps. The
 // ramp applies only while following the bottom - wheel/scrollback navigation
 // keeps the plain configured ease.
-const MAX_BACKLOG: f32 = 16.0; // cap on how far behind the bottom output may lag
+pub const MAX_BACKLOG: f32 = 16.0; // cap on how far behind the bottom output may lag
 const MIN_TAU_MS: f32 = 8.0; // fastest catch-up tau (at full ramp)
 const RAMP_UP_MS: f32 = 90.0; // speeding up is responsive
 const RAMP_DOWN_MS: f32 = 450.0; // returning to the smooth speed is gentle

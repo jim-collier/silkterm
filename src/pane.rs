@@ -73,6 +73,10 @@ pub struct Pane {
 	command: Option<Vec<String>>,
 	last_draw: PaneDraw,
 	last_history: usize,
+	// On-screen row fingerprints from the last build, used only once the
+	// scrollback buffer is full (history_size flatlines) to detect that output
+	// still scrolled the viewport. See the output-easing note in build().
+	last_rows: Vec<u64>,
 	// Fallback glyphs (not in the primary mono font) pulled out of `buffer` and
 	// drawn one-per-cell so their font advance can't shift the row. `glyph_bufs`
 	// is a reused pool; `glyphs` holds (x, y, color, scale) for the first N of
@@ -101,14 +105,42 @@ impl Pane {
 		let cols = self.term.cols;
 		let history = guard.grid().history_size();
 
-		// Output easing: only kick the animation when the screen actually
-		// scrolled (scrollback grew while we're following the bottom). Doing
-		// this per-keystroke is what made the whole view bounce.
+		// Output easing: nudge the smooth offset when the viewport advanced while
+		// following the bottom. Pre-cap, scrollback growth IS the line-advance
+		// count (and an in-place status line that uses no newline doesn't grow it,
+		// so it doesn't bounce). But once the scrollback buffer fills, history_size
+		// flatlines - old lines drop off the top as fast as new ones arrive - so
+		// growth reads 0 even though the screen still scrolls. That silently killed
+		// smooth output scroll "after a while" (sooner under fast output, which
+		// fills the buffer faster). At the cap, fall back to inferring the advance
+		// from how far last frame's on-screen rows reappear shifted up this frame;
+		// an in-place bottom-row change shifts nothing, so it still won't nudge.
 		let grew = history.saturating_sub(self.last_history);
 		self.last_history = history;
 		self.scroll.set_max(history as f32);
-		if grew > 0 && self.scroll.following() {
-			self.scroll.nudge_output(grew as f32);
+		let follow = self.scroll.following();
+		let full = s.scrollback > 0 && history >= s.scrollback;
+		let advanced = if grew > 0 {
+			grew
+		} else if follow && full {
+			let mut rows: Vec<u64> = Vec::with_capacity(lines);
+			let grid = guard.grid();
+			for i in 0..lines as i32 {
+				let row = &grid[Line(i)];
+				let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a over the row's chars
+				for c in 0..cols {
+					h = (h ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
+				}
+				rows.push(h);
+			}
+			let adv = scroll_shift(&rows, &self.last_rows);
+			self.last_rows = rows;
+			adv
+		} else {
+			0
+		};
+		if advanced > 0 && follow {
+			self.scroll.nudge_output(advanced as f32);
 		}
 
 		// snap the integer grid offset to the floor of the smooth position
@@ -662,6 +694,7 @@ fn spawn_pane(
 			cursor: None,
 		},
 		last_history: 0,
+		last_rows: Vec::new(),
 		glyph_bufs: Vec::new(),
 		glyphs: Vec::new(),
 	})
@@ -925,9 +958,35 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
 	*ratio = r.clamp(0.05, 0.95);
 }
 
+// Lines the on-screen content scrolled up between frames, inferred from row
+// fingerprints when scrollback growth can't tell us (the buffer is full). It's
+// the smallest shift k where this frame's top (rows-k) lines equal last frame's
+// bottom (rows-k) lines.
+fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
+	let n = cur.len();
+	if n == 0 || last.len() != n {
+		return 0;
+	}
+	for k in 1..n {
+		if cur[..n - k] == last[k..] {
+			return k;
+		}
+	}
+	// No clean vertical shift matched. Either nothing scrolled - an in-place
+	// change, e.g. a status line redrawn with no newline (don't nudge: that was
+	// the apt-bounce hazard) - or the screen turned over completely in one fast
+	// burst. The top line is the tell: unchanged => nothing scrolled; changed =>
+	// a full-screen burst, so report the backlog cap to ramp to full catch-up.
+	if cur[0] == last[0] {
+		0
+	} else {
+		crate::scroll::MAX_BACKLOG as usize
+	}
+}
+
 #[cfg(test)]
 mod tests {
-	use super::{distinct_pair, pair_inside, same_char_pair};
+	use super::{distinct_pair, pair_inside, same_char_pair, scroll_shift};
 
 	// default pairs in precedence order: backtick, ", ', {}, (), [], <>
 	const PAIRS: &[(char, char)] = &[
@@ -1019,5 +1078,51 @@ mod tests {
 		// click exactly on '[' (index 3): not inside [], but inside () -> () contents
 		let (s, e) = pair_inside(&r, 3, PAIRS).unwrap();
 		assert_eq!(r[s..=e].iter().collect::<String>(), "a [b] c");
+	}
+
+	// scroll_shift: row fingerprints are arbitrary u64s; a shift up by k means the
+	// new top (n-k) rows equal the old bottom (n-k) rows.
+	const CAP: usize = crate::scroll::MAX_BACKLOG as usize;
+
+	#[test]
+	fn shift_none_when_unchanged() {
+		let f = [10, 20, 30, 40, 50];
+		assert_eq!(scroll_shift(&f, &f), 0);
+	}
+
+	#[test]
+	fn shift_in_place_bottom_change_does_not_count() {
+		// only the last row changed (an in-place status line) - no scroll
+		let last = [10, 20, 30, 40, 50];
+		let cur = [10, 20, 30, 40, 99];
+		assert_eq!(scroll_shift(&cur, &last), 0);
+	}
+
+	#[test]
+	fn shift_by_one() {
+		let last = [10, 20, 30, 40, 50];
+		let cur = [20, 30, 40, 50, 60]; // scrolled up one, new line 60 at bottom
+		assert_eq!(scroll_shift(&cur, &last), 1);
+	}
+
+	#[test]
+	fn shift_by_three() {
+		let last = [10, 20, 30, 40, 50];
+		let cur = [40, 50, 60, 70, 80];
+		assert_eq!(scroll_shift(&cur, &last), 3);
+	}
+
+	#[test]
+	fn shift_full_turnover_reports_cap() {
+		// no overlap at all (a fast burst replaced the whole screen)
+		let last = [10, 20, 30, 40, 50];
+		let cur = [60, 70, 80, 90, 100];
+		assert_eq!(scroll_shift(&cur, &last), CAP);
+	}
+
+	#[test]
+	fn shift_empty_or_mismatched_is_zero() {
+		assert_eq!(scroll_shift(&[], &[]), 0);
+		assert_eq!(scroll_shift(&[1, 2, 3], &[1, 2]), 0);
 	}
 }
