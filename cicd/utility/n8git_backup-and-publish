@@ -206,7 +206,9 @@ fMain(){
 	fi
 
 	## Done
-	((! doQuietly)) && { fEcho_Force; fEcho "${meName}: Done."; }
+	## Use 'if' not '((..)) &&': in quiet mode the arithmetic is false, and as fMain's
+	## last statement that '&&' would return 1 - exiting the whole script (and aborting cicd).
+	if ((! doQuietly)); then fEcho_Force; fEcho "${meName}: Done."; fi
 }
 
 #••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
