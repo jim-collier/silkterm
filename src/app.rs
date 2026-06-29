@@ -302,8 +302,10 @@ impl Tabs {
 	}
 }
 
-const TAB_BAR_H: f32 = 28.0;
-const MENU_BAR_H: f32 = 26.0;
+// Menu/tab bars auto-size to the menu (proportional) font: height = the text line
+// height (cell_h) + this vertical padding, so a larger font isn't clipped (#124).
+const MENU_BAR_VPAD: f32 = 6.0;
+const TAB_BAR_VPAD: f32 = 8.0;
 const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
 
@@ -340,14 +342,30 @@ struct State {
 
 impl State {
 	// Pixels reserved at the very top by the menu bar (0 when hidden).
+	// Bar heights track the menu font's line height so they scale with font size.
+	fn menu_bar_h(&self) -> f32 {
+		self.text.cell_h + MENU_BAR_VPAD
+	}
+	fn tab_bar_h(&self) -> f32 {
+		self.text.cell_h + TAB_BAR_VPAD
+	}
 	fn menubar_h(&self) -> f32 {
-		if self.menu_bar { MENU_BAR_H } else { 0.0 }
+		if self.menu_bar {
+			self.menu_bar_h()
+		} else {
+			0.0
+		}
 	}
 
 	fn area(&self) -> Rect {
 		// Panes sit below the menu bar (always when shown) and the tab bar
 		// (only with >1 tab), stacked in that order.
-		let bar = self.menubar_h() + if self.tabs.len() > 1 { TAB_BAR_H } else { 0.0 };
+		let bar = self.menubar_h()
+			+ if self.tabs.len() > 1 {
+				self.tab_bar_h()
+			} else {
+				0.0
+			};
 		Rect {
 			x: 0.0,
 			y: bar,
@@ -500,7 +518,8 @@ impl State {
 		let items = self.bar_menu_items(idx);
 		let x = self.menubar_layout().get(idx).map_or(0.0, |&(x, _)| x);
 		let target = self.tabs.cur().focused;
-		self.popup(target, items, x, MENU_BAR_H);
+		let bar_h = self.menu_bar_h();
+		self.popup(target, items, x, bar_h);
 		self.bar_open = Some(idx);
 	}
 
@@ -655,12 +674,14 @@ impl State {
 	}
 
 	fn new_tab(&mut self, proxy: &EventLoopProxy<UserEvent>) {
-		// area with the bar shown (we're about to have >1 tab)
+		// area with the bar shown (we're about to have >1 tab); relayout_all fixes
+		// the exact rects right after, this is just the new pane's provisional box
+		let bar = self.menubar_h() + self.tab_bar_h();
 		let area = Rect {
 			x: 0.0,
-			y: TAB_BAR_H,
+			y: bar,
 			w: self.gfx.config.width as f32,
-			h: (self.gfx.config.height as f32 - TAB_BAR_H).max(1.0),
+			h: (self.gfx.config.height as f32 - bar).max(1.0),
 		};
 		if let Ok(pm) = PaneManager::new(&mut self.text, proxy, area, config::default_shell_argv())
 		{
@@ -867,15 +888,17 @@ impl State {
 		let ring_end = instances.len() as u32;
 
 		let bw = self.gfx.config.width as f32;
+		let menu_h = self.menu_bar_h();
+		let tab_h = self.tab_bar_h();
 
 		// menu bar (File/Edit/...), drawn in the main pass at the very top; the
 		// open menu's title is highlighted.
 		let menubar_range = if self.menu_bar {
 			let start = instances.len() as u32;
-			instances.push(rect_inst(0.0, 0.0, bw, MENU_BAR_H, config::TAB_BAR_BG));
+			instances.push(rect_inst(0.0, 0.0, bw, menu_h, config::TAB_BAR_BG));
 			if let Some(idx) = self.bar_open {
 				if let Some(&(x, w)) = self.menubar_layout().get(idx) {
-					instances.push(rect_inst(x, 0.0, w, MENU_BAR_H, config::MENU_HOVER));
+					instances.push(rect_inst(x, 0.0, w, menu_h, config::MENU_HOVER));
 				}
 			}
 			Some((start, instances.len() as u32))
@@ -887,7 +910,7 @@ impl State {
 		let tby = self.menubar_h();
 		let tabbar_range = if self.tabs.len() > 1 {
 			let start = instances.len() as u32;
-			instances.push(rect_inst(0.0, tby, bw, TAB_BAR_H, config::TAB_BAR_BG));
+			instances.push(rect_inst(0.0, tby, bw, tab_h, config::TAB_BAR_BG));
 			let n = self.tabs.len();
 			let tw = (bw / n as f32).min(220.0);
 			for i in 0..n {
@@ -897,13 +920,7 @@ impl State {
 				} else {
 					config::TAB_INACTIVE
 				};
-				instances.push(rect_inst(
-					x + 1.0,
-					tby + 2.0,
-					tw - 2.0,
-					TAB_BAR_H - 3.0,
-					col,
-				));
+				instances.push(rect_inst(x + 1.0, tby + 2.0, tw - 2.0, tab_h - 3.0, col));
 			}
 			Some((start, instances.len() as u32))
 		} else {
@@ -992,7 +1009,7 @@ impl State {
 		let mut tab_bufs: Vec<Buffer> = Vec::new();
 		let tab_w = (self.gfx.config.width as f32 / self.tabs.len().max(1) as f32).min(220.0);
 		for title in &tab_titles {
-			let mut b = self.text.new_buffer((tab_w - 16.0).max(8.0), TAB_BAR_H);
+			let mut b = self.text.new_buffer((tab_w - 16.0).max(8.0), tab_h);
 			let mut attrs = crate::text::sans_attrs();
 			attrs.color_opt = Some(menu_fg);
 			b.set_text(
@@ -1009,7 +1026,7 @@ impl State {
 		let mut menubar_bufs: Vec<Buffer> = Vec::new();
 		if self.menu_bar {
 			for t in MENU_BAR {
-				let mut b = self.text.new_buffer(120.0, MENU_BAR_H);
+				let mut b = self.text.new_buffer(120.0, menu_h);
 				let mut attrs = crate::text::sans_attrs();
 				attrs.color_opt = Some(menu_fg);
 				b.set_text(
@@ -1035,13 +1052,13 @@ impl State {
 			areas.push(TextArea {
 				buffer: b,
 				left: x + MENU_BAR_PAD,
-				top: 4.0,
+				top: MENU_BAR_VPAD / 2.0,
 				scale: 1.0,
 				bounds: TextBounds {
 					left: x as i32,
 					top: 0,
 					right: (x + w) as i32,
-					bottom: MENU_BAR_H as i32,
+					bottom: menu_h as i32,
 				},
 				default_color: menu_fg,
 				custom_glyphs: &[],
@@ -1052,13 +1069,14 @@ impl State {
 			areas.push(TextArea {
 				buffer: b,
 				left: x + 8.0,
-				top: tby + 5.0,
+				// centered in the tab button (inset 2px top / 1px bottom in the bar)
+				top: tby + 2.0 + (TAB_BAR_VPAD - 3.0) / 2.0,
 				scale: 1.0,
 				bounds: TextBounds {
 					left: x as i32,
 					top: tby as i32,
 					right: (x + tab_w) as i32,
-					bottom: (tby + TAB_BAR_H) as i32,
+					bottom: (tby + tab_h) as i32,
 				},
 				default_color: menu_fg,
 				custom_glyphs: &[],
@@ -1627,7 +1645,11 @@ impl ApplicationHandler<UserEvent> for App {
 		} else {
 			s.rows
 		});
-		let mb_h = if menu_bar { MENU_BAR_H } else { 0.0 };
+		let mb_h = if menu_bar {
+			text.cell_h + MENU_BAR_VPAD
+		} else {
+			0.0
+		};
 		let want = winit::dpi::PhysicalSize::new(
 			w.pixel_width
 				.unwrap_or_else(|| (cols as f32 * text.cell_w + 2.0 * text.margin).ceil() as u32),
@@ -1648,7 +1670,12 @@ impl ApplicationHandler<UserEvent> for App {
 		} else {
 			1
 		};
-		let top = mb_h + if n_tabs > 1 { TAB_BAR_H } else { 0.0 };
+		let top = mb_h
+			+ if n_tabs > 1 {
+				text.cell_h + TAB_BAR_VPAD
+			} else {
+				0.0
+			};
 		let area = Rect {
 			x: 0.0,
 			y: top,
@@ -1759,7 +1786,7 @@ impl ApplicationHandler<UserEvent> for App {
 				let (x, y) = state.mouse;
 				// hovering a different top-level title with a bar menu open
 				// switches to it (standard menu-bar behaviour)
-				if state.bar_open.is_some() && y < MENU_BAR_H {
+				if state.bar_open.is_some() && y < state.menu_bar_h() {
 					if let Some(i) = state.menubar_hit(x) {
 						if state.bar_open != Some(i) {
 							state.open_bar_menu(i);
@@ -1815,7 +1842,7 @@ impl ApplicationHandler<UserEvent> for App {
 			} => {
 				let (x, y) = state.mouse;
 				// click on the menu bar: toggle/open the top-level menu's dropdown
-				if button == MouseButton::Left && state.menu_bar && y < MENU_BAR_H {
+				if button == MouseButton::Left && state.menu_bar && y < state.menu_bar_h() {
 					match (state.menubar_hit(x), state.bar_open) {
 						(Some(i), Some(o)) if i == o => {
 							state.menu = None;
@@ -1834,7 +1861,7 @@ impl ApplicationHandler<UserEvent> for App {
 				let tby = state.menubar_h();
 				if button == MouseButton::Left
 					&& state.tabs.len() > 1
-					&& y >= tby && y < tby + TAB_BAR_H
+					&& y >= tby && y < tby + state.tab_bar_h()
 				{
 					let tw = (state.gfx.config.width as f32 / state.tabs.len() as f32).min(220.0);
 					let i = (x / tw).floor() as usize;

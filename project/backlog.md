@@ -126,7 +126,8 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 	- [ ] Build alternate targets in parallel.
 
 - [◐] Menu bar: (issue #t6thx, 20260626-132615)
-	- [ ] Auto-adjust height based on menu font size.
+	- [✔️] Auto-adjust height based on menu font size.
+		- Done (`app.rs`): the `MENU_BAR_H`/`TAB_BAR_H` consts are gone; bar heights now come from `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (`text.cell_h`) + a small `MENU_BAR_VPAD`/`TAB_BAR_VPAD`, and the title text is centered in the scaled bar. So a larger font grows the bars instead of clipping. All ~13 const usages (layout, render, hit-testing, the resumed-time initial size) were switched. At the default font it's ~1px taller than before (27/29 vs 26/28) - imperceptible; verified it builds clean.
 	- [✔️] Make menu gray, with white text. (For both light and dark themes.)
 		- The menu / tab-bar / context-menu chrome consts (`MENU_*`, `TAB_*`) are now neutral grays with near-white text, fixed across modes (per #166 default).
 	- [ ] Menu color is user-adjustable, even per-theme. It's just that all themes by default use the same menu colors.
