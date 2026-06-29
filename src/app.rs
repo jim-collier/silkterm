@@ -2223,7 +2223,8 @@ impl ApplicationHandler<UserEvent> for App {
 				if state.mods.control_key() {
 					let shift = state.mods.shift_key();
 					match &key.logical_key {
-						Key::Character(s) if !shift && s.eq_ignore_ascii_case("t") => {
+						// Ctrl+Shift+T: new tab (Shift so plain Ctrl+T reaches the shell)
+						Key::Character(s) if shift && s.eq_ignore_ascii_case("t") => {
 							state.new_tab(&self.proxy);
 							return;
 						}
