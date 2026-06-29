@@ -1091,8 +1091,9 @@ impl State {
 			areas.push(TextArea {
 				buffer: b,
 				left: x + 8.0,
-				// centered in the tab button (inset 2px top / 1px bottom in the bar)
-				top: tby + 2.0 + (TAB_BAR_VPAD - 3.0) / 2.0,
+				// sit a touch high in the bar so descenders get bottom clearance
+				// (bug: "tab font doesn't have enough space on the bottom")
+				top: tby + (TAB_BAR_VPAD / 2.0) - 1.0,
 				scale: 1.0,
 				bounds: TextBounds {
 					left: x as i32,
