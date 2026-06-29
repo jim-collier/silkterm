@@ -694,10 +694,19 @@ impl State {
 	}
 
 	fn close_tab(&mut self) {
+		self.close_tab_at(self.tabs.active);
+	}
+
+	// Close the tab at `idx` (not necessarily the active one - a background tab's
+	// shell can exit). Keeps `active` pointing at the same tab where it can.
+	fn close_tab_at(&mut self, idx: usize) {
 		if self.tabs.list.len() <= 1 {
 			return; // keep at least one tab; close the window to exit
 		}
-		self.tabs.list.remove(self.tabs.active);
+		self.tabs.list.remove(idx);
+		if self.tabs.active > idx {
+			self.tabs.active -= 1; // a tab before the active one went away
+		}
 		if self.tabs.active >= self.tabs.list.len() {
 			self.tabs.active = self.tabs.list.len() - 1;
 		}
@@ -1758,9 +1767,24 @@ impl ApplicationHandler<UserEvent> for App {
 				}
 			}
 			UserEvent::Exit(id) => {
+				// A shell exited: close just its pane, not the whole app. The pane
+				// may live in any tab (a background tab's shell can exit too), so
+				// find its owner. Last pane in that tab -> close the tab; last pane
+				// of the last tab -> quit. Mirrors the Close-Pane menu cascade.
 				let area = state.area();
-				if state.tabs.cur_mut().close(&mut state.text, id, area) {
-					event_loop.exit();
+				if let Some(ti) = state
+					.tabs
+					.list
+					.iter()
+					.position(|pm| pm.panes.contains_key(&id))
+				{
+					if state.tabs.list[ti].panes.len() > 1 {
+						state.tabs.list[ti].close(&mut state.text, id, area);
+					} else if state.tabs.len() > 1 {
+						state.close_tab_at(ti);
+					} else {
+						event_loop.exit();
+					}
 				}
 				state.dirty = true;
 			}
