@@ -13,15 +13,22 @@ This is a product backlog just for pre-v1.0.0 release. After that, bugs, feature
 ## Table of contents
 <!-- TOC -->
 
-- [First steps](#first-steps)
 - [Conventions](#conventions)
+- [First steps](#first-steps)
+- [Backlog](#backlog)
 	- [Bugs](#bugs)
 	- [New features and enhancements](#new-features-and-enhancements)
-	- [Deferred](#deferred)
-	- [Won't do](#wont-do)
+	- [Future and/or deferred](#future-andor-deferred)
+	- [Canceled](#canceled)
 - [Application name ideas](#application-name-ideas)
 
 <!-- /TOC -->
+
+## Conventions
+
+In each section, items are listed approximately from newest to oldest.
+
+Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 
 ## First steps
 
@@ -34,16 +41,17 @@ This is a product backlog just for pre-v1.0.0 release. After that, bugs, feature
 - [✔️] Output-scroll easing.
 - [✔️] Verify smoothness on X11/Compiz.
 
-## Conventions
-
-In each section, items are listed approximately from newest to oldest.
-
-Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
+## Backlog
 
 ### Bugs
 
+- [ ] Menu bar and tab fonts: (#1n45bca, 20260629-103822)
+	- [ ] Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect.
+		- [ ] Verify that menu bar height adjusts based on menu font.
+	- [ ] Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size.
+
 - [✔️] Critical: Smooth-scrolling apparently just quits after using the terminal for a while. It seems to quit, if output is too fast for a while, but that could be a red-herring. Maybe it's just after any particular amount of general use.
-	- Cause (not a red-herring): output-easing was triggered off scrollback *growth* (`grid.history_size()` rising). That growth flatlines once the scrollback buffer fills (default 10k lines) - old lines drop off the top as fast as new ones arrive - so after enough output the growth reads 0 every frame and `nudge_output` never fires again. Smooth output scroll dies "after a while", and sooner under fast output (which fills the 10k buffer faster). Manual scrollback (wheel) was unaffected, which is why it looked like only the smooth *output* scroll quit.
+	- Cause: output-easing was triggered off scrollback *growth* (`grid.history_size()` rising). That growth flatlines once the scrollback buffer fills (default 10k lines) - old lines drop off the top as fast as new ones arrive - so after enough output the growth reads 0 every frame and `nudge_output` never fires again. Smooth output scroll dies "after a while", and sooner under fast output (which fills the 10k buffer faster). Manual scrollback (wheel) was unaffected, which is why it looked like only the smooth *output* scroll quit.
 	- Fix (`pane.rs`): keep growth as the primary signal (unchanged pre-cap, so the verified feel is untouched), and at the cap fall back to inferring the viewport advance from row fingerprints - how far last frame's on-screen rows reappear shifted up this frame (`scroll_shift`). An in-place bottom-row redraw (e.g. apt's status line, no newline) shifts nothing, so it still doesn't nudge (no bounce); a full-screen burst reports the backlog cap so the ease ramps to full catch-up. 6 unit tests cover no-scroll / in-place / shift-by-k / full-turnover / empty.
 	- Verified: 26 unit tests pass; ran past the 10k cap (20k-line flood + drip) with no crash, rendering on the GL backend. Smooth-scroll *feel* past the cap is best eyeballed by the owner.
 
@@ -119,13 +127,16 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 ### New features and enhancements
 
 - [ ] Cursor:
-	- [ ] Smooth-scroll (to the right) also.
+	- [ ] Smooth-scroll (when moving to the right).
 	- [ ] Blink at the same rate, but "phase" between of and on, not just on or off.
 
 - [ ] CI/CD scripts:
-	- [ ] Build alternate targets in parallel.
+	- [ ] Build alternate targets in parallel, to speed process up.
+
+- [ ] 
 
 - [◐] Menu bar: (issue #t6thx, 20260626-132615)
+	- [ ] Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect.
 	- [✔️] Auto-adjust height based on menu font size.
 		- Done (`app.rs`): the `MENU_BAR_H`/`TAB_BAR_H` consts are gone; bar heights now come from `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (`text.cell_h`) + a small `MENU_BAR_VPAD`/`TAB_BAR_VPAD`, and the title text is centered in the scaled bar. So a larger font grows the bars instead of clipping. All ~13 const usages (layout, render, hit-testing, the resumed-time initial size) were switched. At the default font it's ~1px taller than before (27/29 vs 26/28) - imperceptible; verified it builds clean.
 	- [✔️] Make menu gray, with white text. (For both light and dark themes.)
@@ -607,9 +618,9 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 	- [✔️] Render options: Stretch-to-fit, Zoom-to-fit.
 		- Done. `background_fit` = "stretch" | "zoom"; default zoom/cover.
 
-### Deferred
+### Future and/or deferred
 
-### Won't do
+### Canceled
 
 - [🚫] Terse `--layout` DSL as optional sugar over the window/tab/pane CLI model (not a replacement). One compact string for quick splits; lowers to the exact same internal layout the hierarchical flags produce, so it inherits per-pane targeting "for free."
 	- Operators (mnemonic = the divider they draw): `|` side-by-side (vertical divider), `-` stacked (horizontal divider); `(...)` to nest (a group is uniform - mix directions by nesting); `;` separates tabs; `.` = one default pane.
