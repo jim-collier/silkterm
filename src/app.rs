@@ -714,7 +714,7 @@ impl State {
 		if system_font {
 			config::remove_keys(&["font_family", "font_size"]);
 		}
-		self.apply_new_settings(orig, edited);
+		self.apply_new_settings(orig, edited, false);
 	}
 
 	// Re-read config.toml from disk and live-apply it (the "internal command" for
@@ -723,14 +723,22 @@ impl State {
 	fn reload_config(&mut self) {
 		let orig = config::settings().as_ref().clone();
 		let edited = config::reload_from_disk();
-		self.apply_new_settings(&orig, edited);
+		// Force the background image to re-read even when its path is unchanged:
+		// the user may have swapped the file contents under the same name (#167).
+		self.apply_new_settings(&orig, edited, true);
 	}
 
 	// Swap in `edited` and rebuild whatever changed vs `orig` (text metrics,
 	// background image, window opacity). Shared by the dialog and config reload.
-	fn apply_new_settings(&mut self, orig: &config::Settings, edited: config::Settings) {
+	// `force_bg` re-reads the image even if the path string didn't change.
+	fn apply_new_settings(
+		&mut self,
+		orig: &config::Settings,
+		edited: config::Settings,
+		force_bg: bool,
+	) {
 		let rebuild = crate::settings_ui::needs_text_rebuild(orig, &edited);
-		let bg = crate::settings_ui::bg_image_changed(orig, &edited);
+		let bg = force_bg || crate::settings_ui::bg_image_changed(orig, &edited);
 		let resize = edited.columns != orig.columns || edited.rows != orig.rows;
 		config::update(edited);
 

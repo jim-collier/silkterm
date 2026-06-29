@@ -164,7 +164,9 @@ Mark boxes with ✔️, 🚫, or ◐. Empty means not started, or WIP.
 	- [ ] Full keyboard control, e.g. tab order, full text field editing, alt+down for dropdowns, space to toggle booleans, etc.
 	- Note: It might be best to defer some of these, until after (and if) native window controls are implimented.
 
-- [ ] "Reload config" should re-read the background image too. In case user changed the image and kept it the same name. (20260626-102603)
+- [✔️] "Reload config" should re-read the background image too. In case user changed the image and kept it the same name. (20260626-102603)
+	- Cause: `apply_new_settings` reloaded the image only when `bg_image_changed` (path/opacity/fit/blur differ). A same-name file swap leaves the path string identical, so it skipped the reload.
+	- Fix: `apply_new_settings` takes a `force_bg` flag; `reload_config` passes `true` so Reload Config always re-reads the image file (the dialog Apply path still reloads only on a real change). `app.rs`.
 
 - [ ] About dialog:
 	- Include the version, build, copyright, and license.
