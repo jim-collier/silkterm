@@ -1151,7 +1151,16 @@ impl State {
 		self.rects
 			.upload(&self.gfx.device, &self.gfx.queue, &instances);
 		if let Err(e) = self.text.prepare(&self.gfx.device, &self.gfx.queue, areas) {
-			eprintln!("{}: text prepare failed: {e:?}", config::APP_NAME);
+			// Atlas full (after a long session of varied glyphs). The normal per-frame
+			// trim is at the END of render, below this early return - so without
+			// trimming here the atlas never recovers and ALL text goes black for good
+			// (cursor/cell-bg quads use a separate renderer, so they still show). Trim
+			// now to free space; the next frame re-prepares with room and recovers.
+			eprintln!(
+				"{}: text prepare failed; trimming atlas to recover: {e:?}",
+				config::APP_NAME
+			);
+			self.text.trim_atlas();
 			return animating;
 		}
 
