@@ -19,6 +19,11 @@ use crate::scroll::Scroll;
 use crate::term::{PaneId, TermInstance, UserEvent};
 use crate::text::{TextCtx, mono_attrs};
 
+// Cursor animation tunables (internal).
+const CURSOR_MOVE_TAU_MS: f32 = 55.0; // horizontal slide responsiveness (lower = snappier)
+const CURSOR_BLINK_PERIOD_S: f32 = 1.06; // full fade on->off->on cycle (Windows-ish 530ms each)
+const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
+
 #[derive(Clone, Copy, Debug)]
 pub struct Rect {
 	pub x: f32,
@@ -83,10 +88,19 @@ pub struct Pane {
 	// them - `scale` shrinks an over-wide fallback glyph to fit its cell box.
 	glyph_bufs: Vec<Buffer>,
 	glyphs: Vec<(f32, f32, GColor, f32)>,
+	// Cursor animation: `cursor_x` (visual column) eases toward the target column
+	// so the cursor slides as you type; `blink_t` drives a smooth fade-blink while
+	// it sits idle. Snaps on a row change so it doesn't slide diagonally on a newline.
+	cursor_x: f32,
+	cursor_col: f32,
+	cursor_row: i32,
+	cursor_init: bool,
+	blink_t: f32,
+	pub cursor_animating: bool,
 }
 
 impl Pane {
-	pub fn build(&mut self, ctx: &mut TextCtx) -> PaneDraw {
+	pub fn build(&mut self, ctx: &mut TextCtx, dt: f32) -> PaneDraw {
 		let cell_w = ctx.cell_w;
 		let cell_h = ctx.cell_h;
 		let margin = ctx.margin;
@@ -273,18 +287,47 @@ impl Pane {
 		}
 		flush_run!();
 
-		// cursor: hidden when scrolled into history
+		// cursor: hidden when scrolled into history. Slides toward its target column
+		// (smooth while typing) and fade-blinks when idle. Snaps on a row change.
 		let cursor_sr = cursor_pt.line.0 + d;
-		let cursor = if following
+		let cursor_shown = following
 			&& cursor_shape != CursorShape::Hidden
 			&& cursor_sr >= 0
-			&& (cursor_sr as usize) < lines
-		{
+			&& (cursor_sr as usize) < lines;
+		self.cursor_animating = false;
+		let cursor = if cursor_shown {
 			let c = cursor_pt.column.0 as f32;
+			let row_jump = !self.cursor_init || cursor_sr != self.cursor_row;
+			let moved = row_jump || (c - self.cursor_col).abs() > 0.001;
+			if row_jump {
+				self.cursor_x = c; // snap on first sight / newline (no diagonal slide)
+			}
+			if moved {
+				self.blink_t = 0.0; // solid immediately after any move
+			}
+			self.cursor_init = true;
+			self.cursor_row = cursor_sr;
+			self.cursor_col = c;
+			let k = 1.0 - (-dt * 1000.0 / CURSOR_MOVE_TAU_MS).exp();
+			self.cursor_x += (c - self.cursor_x) * k;
+			let easing = (c - self.cursor_x).abs() > 0.01;
+			if !easing {
+				self.cursor_x = c;
+			}
+			self.blink_t += dt;
+			let blink = config::settings().cursor_blink;
+			// solid while sliding; otherwise a smooth cosine fade that starts solid
+			let alpha = if easing || !blink {
+				CURSOR_ALPHA
+			} else {
+				let phase = (self.blink_t / CURSOR_BLINK_PERIOD_S).fract();
+				CURSOR_ALPHA * (0.5 + 0.5 * (phase * std::f32::consts::TAU).cos())
+			};
+			self.cursor_animating = easing || blink;
 			let mut col = config::srgb_f32(s.cursor);
-			col[3] = 0.55;
+			col[3] = alpha;
 			Some(RectInstance {
-				pos: [content_x + c * cell_w, y_of(cursor_sr)],
+				pos: [content_x + self.cursor_x * cell_w, y_of(cursor_sr)],
 				size: [cell_w, cell_h],
 				color: col,
 			})
@@ -697,6 +740,12 @@ fn spawn_pane(
 		last_rows: Vec::new(),
 		glyph_bufs: Vec::new(),
 		glyphs: Vec::new(),
+		cursor_x: 0.0,
+		cursor_col: 0.0,
+		cursor_row: i32::MIN,
+		cursor_init: false,
+		blink_t: 0.0,
+		cursor_animating: false,
 	})
 }
 
