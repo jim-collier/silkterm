@@ -329,6 +329,7 @@ struct State {
 	last_frame: Instant,
 	dirty: bool,
 	bell_flash: f32,    // visual-bell brightness, set to 1.0 on BEL, decays to 0
+	overwrite: bool, // false = Insert (bar cursor, default), true = Overwrite (block); Insert key toggles
 	size_tracked: bool, // false until the first frame, so startup/programmatic resizes don't overwrite remembered_size
 	menu: Option<ContextMenu>,
 	menu_buffer: Buffer,
@@ -834,6 +835,7 @@ impl State {
 			}
 		}
 		let bell = self.bell_flash;
+		let overwrite = self.overwrite;
 
 		// translucent background only when the surface supports it AND the user has
 		// Transparency on - and it only ever affects the bg, never text/chrome.
@@ -860,7 +862,7 @@ impl State {
 		for (id, pane) in self.tabs.cur_mut().panes.iter_mut() {
 			pane.scroll.advance(dt);
 			let rect = pane.rect;
-			let draw = pane.build(&mut self.text, dt, bell, force_rebuild);
+			let draw = pane.build(&mut self.text, dt, bell, force_rebuild, overwrite);
 			if pane.scroll.animating() || pane.cursor_animating {
 				animating = true;
 			}
@@ -1812,6 +1814,7 @@ impl ApplicationHandler<UserEvent> for App {
 			last_frame: Instant::now(),
 			dirty: true,
 			bell_flash: 0.0,
+			overwrite: false,
 			size_tracked: false,
 			menu: None,
 			menu_buffer,
@@ -2341,6 +2344,16 @@ impl ApplicationHandler<UserEvent> for App {
 				if state.handle_hotkey(&key, &self.proxy) {
 					state.dirty = true;
 					return;
+				}
+				// Insert key toggles SilkTerm's Insert(bar)/Overwrite(block) cursor
+				// mode; it still falls through to the shell (readline can follow).
+				if matches!(&key.logical_key, Key::Named(NamedKey::Insert))
+					&& !state.mods.shift_key()
+					&& !state.mods.control_key()
+					&& !state.mods.alt_key()
+				{
+					state.overwrite = !state.overwrite;
+					state.dirty = true;
 				}
 				let focused = state.tabs.cur().focused;
 				let app_cursor = state
