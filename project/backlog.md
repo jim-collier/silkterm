@@ -145,7 +145,7 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Change cursor in default "Insert" mode, to a thinner bar than the block cursor (but thicker than, say, "|").
 	- ✅ Overwrite mode will be the regular block cursor.
 	- Done: the Insert key toggles Insert(bar)/Overwrite(block); default is Insert. App-set Beam/Underline shapes are honoured, and alt-screen apps (vim/less) keep their own cursor; Insert is still forwarded to the shell so readline can follow. Detail in `project/details.md`.
-	- 🔘 Provide options in the config (not dialog) to adjust type for both, and blinking style. Similar to Sublime Text cursor options.
+	- ✅ Provide options in the config (not dialog) to adjust type for both, and blinking style. Similar to Sublime Text cursor options. (20260629) - config keys `cursor_insert_shape` / `cursor_overwrite_shape` (bar|block|underline) and `cursor_blink_style` (phase|blink|solid), replacing the `cursor_blink` bool. Verified: underline shape + solid style render.
 
 - 🔘 CI/CD scripts:
 	- 🔘 Build alternate targets in parallel, to speed process up.
