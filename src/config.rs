@@ -115,7 +115,7 @@ impl Default for Settings {
 			text_glow: true,
 			text_glow_radius: 5.0,
 			text_glow_softness: 0.5,
-			cursor_blink: false, // off by default: blinking redraws continuously (see config note)
+			cursor_blink: true, // cheap now (cursor-only frames reuse the cached text)
 			columns: 160,
 			rows: 48,
 			remember_size: false,
@@ -814,11 +814,9 @@ opacity = 0.95
 # text_glow_radius = 5.0     ## glow blur sigma in pixels
 # text_glow_softness = 0.5   ## 0 = hard/solid glow, 1 = soft/faint
 
-## Fade-blink the block cursor when it sits idle. The cursor always slides
-## smoothly to its new column as you type (that's free); blinking is separate and
-## OFF by default because, while blinking, the view redraws continuously (capped
-## ~30 fps) instead of idling. Set true if you want the fade-blink.
-# cursor_blink = false
+## Fade-blink the cursor when it sits idle (it also slides smoothly to its new
+## column as you type). On by default; set false for a steady, non-blinking cursor.
+# cursor_blink = true
 
 ## Initial window size, in character cells (used when remember_size = false).
 columns = 160

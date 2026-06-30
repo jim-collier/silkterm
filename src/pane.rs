@@ -109,10 +109,20 @@ pub struct Pane {
 	cursor_init: bool,
 	blink_t: f32,
 	pub cursor_animating: bool,
+	// false until the first full build (and reset on a buffer rebuild). When the
+	// frame is a pure cursor animation (no content/scroll/bell change), build skips
+	// the expensive text re-shape and reuses the cached buffer/bg/glyphs.
+	text_built: bool,
 }
 
 impl Pane {
-	pub fn build(&mut self, ctx: &mut TextCtx, dt: f32, bell: f32) -> PaneDraw {
+	pub fn build(
+		&mut self,
+		ctx: &mut TextCtx,
+		dt: f32,
+		bell: f32,
+		force_rebuild: bool,
+	) -> PaneDraw {
 		let cell_w = ctx.cell_w;
 		let cell_h = ctx.cell_h;
 		let margin = ctx.margin;
@@ -185,12 +195,41 @@ impl Pane {
 		let y_of = |sr: i32| self.rect.y + margin + (sr as f32 + frac) * cell_h;
 		let top = y_of(-1);
 
+		// Cursor position/shape as plain values (no lasting borrow of the lock), so
+		// the fast path below can drop the term lock immediately.
+		let cursor_pt = guard.grid().cursor.point;
+		let cursor_shape = guard.cursor_style().shape;
+		let following = desired == 0;
+
+		// Fast path: a pure cursor-animation frame (blink/slide, no content/scroll/
+		// bell change). Reuse the cached buffer + glyphs + bg from the last full
+		// build and recompute only the cursor - skips set_rich_text + shaping, the
+		// expensive part, so a blinking cursor doesn't re-shape text every frame.
+		if !force_rebuild && self.text_built {
+			drop(guard);
+			let cursor = self.cursor_quad(
+				cursor_pt,
+				cursor_shape,
+				d,
+				lines,
+				following,
+				content_x,
+				cell_w,
+				cell_h,
+				margin,
+				frac,
+				dt,
+				s.cursor,
+			);
+			let bg = std::mem::take(&mut self.last_draw.bg);
+			self.last_draw = PaneDraw { top, bg, cursor };
+			return self.last_draw.clone();
+		}
+		self.text_built = true;
+
 		let colors = guard.colors();
 		let sel_range = guard.selection.as_ref().and_then(|s| s.to_range(&*guard));
 		let grid = guard.grid();
-		let cursor_pt = grid.cursor.point;
-		let cursor_shape = guard.cursor_style().shape;
-		let following = desired == 0;
 
 		let mut bg = Vec::new();
 		// fallback glyphs to draw per-cell: (char, fg, bold, italic, col, screen-row, cells)
@@ -302,55 +341,21 @@ impl Pane {
 		}
 		flush_run!();
 
-		// cursor: hidden when scrolled into history. Slides toward its target column
-		// (smooth while typing) and fade-blinks when idle. Snaps on a row change.
-		let cursor_sr = cursor_pt.line.0 + d;
-		let cursor_shown = following
-			&& cursor_shape != CursorShape::Hidden
-			&& cursor_sr >= 0
-			&& (cursor_sr as usize) < lines;
-		self.cursor_animating = false;
-		let cursor = if cursor_shown {
-			let c = cursor_pt.column.0 as f32;
-			let row_jump = !self.cursor_init || cursor_sr != self.cursor_row;
-			let moved = row_jump || (c - self.cursor_col).abs() > 0.001;
-			if row_jump {
-				self.cursor_x = c; // snap on first sight / newline (no diagonal slide)
-			}
-			if moved {
-				self.blink_t = 0.0; // solid immediately after any move
-			}
-			self.cursor_init = true;
-			self.cursor_row = cursor_sr;
-			self.cursor_col = c;
-			let k = 1.0 - (-dt * 1000.0 / CURSOR_MOVE_TAU_MS).exp();
-			self.cursor_x += (c - self.cursor_x) * k;
-			let easing = (c - self.cursor_x).abs() > 0.01;
-			if !easing {
-				self.cursor_x = c;
-			}
-			self.blink_t += dt;
-			let blink = config::settings().cursor_blink;
-			// solid while sliding; otherwise a smooth cosine fade that starts solid
-			let alpha = if easing || !blink {
-				CURSOR_ALPHA
-			} else {
-				let phase = (self.blink_t / CURSOR_BLINK_PERIOD_S).fract();
-				CURSOR_ALPHA * (0.5 + 0.5 * (phase * std::f32::consts::TAU).cos())
-			};
-			self.cursor_animating = easing || blink;
-			let mut col = config::srgb_f32(s.cursor);
-			col[3] = alpha;
-			Some(RectInstance {
-				pos: [content_x + self.cursor_x * cell_w, y_of(cursor_sr)],
-				size: [cell_w, cell_h],
-				color: col,
-			})
-		} else {
-			None
-		};
-
 		drop(guard);
+		let cursor = self.cursor_quad(
+			cursor_pt,
+			cursor_shape,
+			d,
+			lines,
+			following,
+			content_x,
+			cell_w,
+			cell_h,
+			margin,
+			frac,
+			dt,
+			s.cursor,
+		);
 		let span_refs = spans.iter().map(|(s, a)| (s.as_str(), a.clone()));
 		// Advanced (not Basic) so missing glyphs fall back to other fonts
 		// (CJK/emoji/math/RTL) instead of rendering tofu. cosmic-text 0.18.2's
@@ -397,6 +402,73 @@ impl Pane {
 
 		self.last_draw = PaneDraw { top, bg, cursor };
 		self.last_draw.clone()
+	}
+
+	// The cursor quad: visual column eased toward the target (slides as you type,
+	// snaps on a row change), fade-blink alpha when idle, or None when hidden /
+	// scrolled into history. Cheap; called every frame (incl. the cursor-only fast
+	// path). Must run after the term lock is dropped (it takes &mut self).
+	#[allow(clippy::too_many_arguments)]
+	fn cursor_quad(
+		&mut self,
+		cursor_pt: Point,
+		cursor_shape: CursorShape,
+		d: i32,
+		lines: usize,
+		following: bool,
+		content_x: f32,
+		cell_w: f32,
+		cell_h: f32,
+		margin: f32,
+		frac: f32,
+		dt: f32,
+		cursor_rgb: [u8; 3],
+	) -> Option<RectInstance> {
+		let cursor_sr = cursor_pt.line.0 + d;
+		let shown = following
+			&& cursor_shape != CursorShape::Hidden
+			&& cursor_sr >= 0
+			&& (cursor_sr as usize) < lines;
+		self.cursor_animating = false;
+		if !shown {
+			return None;
+		}
+		let c = cursor_pt.column.0 as f32;
+		let row_jump = !self.cursor_init || cursor_sr != self.cursor_row;
+		let moved = row_jump || (c - self.cursor_col).abs() > 0.001;
+		if row_jump {
+			self.cursor_x = c; // snap on first sight / newline (no diagonal slide)
+		}
+		if moved {
+			self.blink_t = 0.0; // solid immediately after any move
+		}
+		self.cursor_init = true;
+		self.cursor_row = cursor_sr;
+		self.cursor_col = c;
+		let k = 1.0 - (-dt * 1000.0 / CURSOR_MOVE_TAU_MS).exp();
+		self.cursor_x += (c - self.cursor_x) * k;
+		let easing = (c - self.cursor_x).abs() > 0.01;
+		if !easing {
+			self.cursor_x = c;
+		}
+		self.blink_t += dt;
+		let blink = config::settings().cursor_blink;
+		// solid while sliding; otherwise a smooth cosine fade that starts solid
+		let alpha = if easing || !blink {
+			CURSOR_ALPHA
+		} else {
+			let phase = (self.blink_t / CURSOR_BLINK_PERIOD_S).fract();
+			CURSOR_ALPHA * (0.5 + 0.5 * (phase * std::f32::consts::TAU).cos())
+		};
+		self.cursor_animating = easing || blink;
+		let mut col = config::srgb_f32(cursor_rgb);
+		col[3] = alpha;
+		let y = self.rect.y + margin + (cursor_sr as f32 + frac) * cell_h;
+		Some(RectInstance {
+			pos: [content_x + self.cursor_x * cell_w, y],
+			size: [cell_w, cell_h],
+			color: col,
+		})
 	}
 
 	pub fn text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
@@ -639,6 +711,7 @@ impl PaneManager {
 	pub fn rebuild_buffers(&mut self, ctx: &mut TextCtx) {
 		for pane in self.panes.values_mut() {
 			pane.buffer = ctx.new_buffer(pane.rect.w.max(1.0), pane.rect.h.max(1.0));
+			pane.text_built = false; // fresh empty buffer: force a full rebuild next frame
 		}
 	}
 
@@ -761,6 +834,7 @@ fn spawn_pane(
 		cursor_init: false,
 		blink_t: 0.0,
 		cursor_animating: false,
+		text_built: false,
 	})
 }
 
