@@ -50,6 +50,17 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- 🔘 Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible.
+
+- 🔘 Scroll-on-output enhancement: One additional setting:
+	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
+		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
+	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
+
+- ✅ Cursor: (20260629)
+	- ✅ Smooth-scroll (when moving to the right). - the cursor slides to its target column as you type (snaps on a newline); idles at 0% CPU.
+	- ✅ Blink at the same rate, but "phase" between of and on, not just on or off. - smooth cosine fade, now default ON: a render refactor skips re-shaping text on cursor-only frames (~70% -> ~21% of a core, debug; far less in release), so blinking no longer pegs the CPU. `cursor_blink` config to disable. Detail in `project/details.md`.
+
 - ✅ Setting dialog: (20260629)
 	- ✅ Setting Bg image fit to "Zoom", then Apply works. But back to "Stretch", then Apply, doesn't. - Cause: the dialog's `orig` baseline was captured at open and never refreshed, so a 2nd Apply diffed against the open-time snapshot; re-selecting the original value read as "no change". Fix: `commit_baseline()` resets orig = edited after each Apply (fixes every setting, not just fit).
 
@@ -147,9 +158,6 @@ In each section, items are listed approximately from newest to oldest.
 	- Done: the Insert key toggles Insert(bar)/Overwrite(block); default is Insert. App-set Beam/Underline shapes are honoured, and alt-screen apps (vim/less) keep their own cursor; Insert is still forwarded to the shell so readline can follow. Detail in `project/details.md`.
 	- ✅ Provide options in the config (not dialog) to adjust type for both, and blinking style. Similar to Sublime Text cursor options. (20260629) - config keys `cursor_insert_shape` / `cursor_overwrite_shape` (bar|block|underline) and `cursor_blink_style` (phase|blink|solid), replacing the `cursor_blink` bool. Verified: underline shape + solid style render.
 
-- 🔘 CI/CD scripts:
-	- 🔘 Build alternate targets in parallel, to speed process up.
-
 - ✅ Change the default hotkey for opening a new tab to Ctrl+Shift+T. (20260629) - new-tab is now Ctrl+Shift+T (`app.rs` tab-hotkey block); plain Ctrl+T passes through to the shell (readline transpose-char) instead of opening a tab. Builds clean.
 
 - ✅ Config file: Preceed actual comments with double '## '. Commented-out *settings* get a single '# '. (20260629)
@@ -166,15 +174,6 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ text_glow = true
 	- ✅ text_glow_radius = 5
 	- ✅ text_glow_softness = 0.5
-
-- 🔘 Scroll-on-output enhancement: One additional setting:
-	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
-		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
-	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
-
-- ✅ Cursor: (20260629)
-	- ✅ Smooth-scroll (when moving to the right). - the cursor slides to its target column as you type (snaps on a newline); idles at 0% CPU.
-	- ✅ Blink at the same rate, but "phase" between of and on, not just on or off. - smooth cosine fade, now default ON: a render refactor skips re-shaping text on cursor-only frames (~70% -> ~21% of a core, debug; far less in release), so blinking no longer pegs the CPU. `cursor_blink` config to disable. Detail in `project/details.md`.
 
 - ✅ Bell/warning: (20260629)
 	- Gently and smoothly brighten all text, like the modern Windows Terminal does. - on BEL the text brightens toward white then fades back (~0.8s); text only (bg/cursor unchanged). Tunable `BELL_BRIGHTEN` if you want it stronger. Detail in `project/details.md`.
@@ -664,6 +663,10 @@ In each section, items are listed approximately from newest to oldest.
 		- Done. `background_fit` = "stretch" | "zoom"; default zoom/cover.
 
 ### Future and/or deferred
+
+- 🚫 CI/CD scripts:
+	- 🚫 Build alternate targets in parallel, to speed process up.
+		- Too fiddly. Possibly revisit in future. This lives in `cicd.bash`, which is pseudo-generic and could be made more so. Maybe it can shell out to a hyper-specific build script, or be updated to handle rust, go, and c++. Or more likely, it's just project-specifig, in spite of being originally [re]architected to call a settings script.
 
 ### Canceled
 
