@@ -770,7 +770,13 @@ impl State {
 		let rebuild = crate::settings_ui::needs_text_rebuild(orig, &edited);
 		let bg = force_bg || crate::settings_ui::bg_image_changed(orig, &edited);
 		let resize = edited.columns != orig.columns || edited.rows != orig.rows;
+		let blur_changed = edited.transparent_background_blur != orig.transparent_background_blur;
 		config::update(edited);
+
+		// Backdrop-blur hint toggled -> set/clear the compositor property live.
+		if blur_changed {
+			set_blur_behind(&self.window, config::settings().transparent_background_blur);
+		}
 
 		// Transparency is per-pixel (terminal background only) - never whole-window.
 		// Nothing to do here; the bg fill picks up the new opacity on the next frame.
@@ -1361,6 +1367,63 @@ fn is_x11(el: &ActiveEventLoop) -> bool {
 		.unwrap_or(false)
 }
 
+// Stable X11 WM_CLASS (+ Wayland app_id) so the window is identifiable to the
+// WM/taskbar and matchable in compositor rules - e.g. Compiz's blur "Blur
+// Windows" = class=SilkTerm. winit's with_name(general, instance) yields
+// WM_CLASS = "instance", "general", so res_class="SilkTerm", res_name="silkterm".
+#[cfg(target_os = "linux")]
+fn with_app_id(attrs: winit::window::WindowAttributes) -> winit::window::WindowAttributes {
+	use winit::platform::wayland::WindowAttributesExtWayland;
+	use winit::platform::x11::WindowAttributesExtX11;
+	let attrs = WindowAttributesExtX11::with_name(attrs, "SilkTerm", "silkterm");
+	WindowAttributesExtWayland::with_name(attrs, "SilkTerm", "silkterm")
+}
+#[cfg(not(target_os = "linux"))]
+fn with_app_id(attrs: winit::window::WindowAttributes) -> winit::window::WindowAttributes {
+	attrs
+}
+
+// Ask a KWin/picom-style compositor to blur the desktop behind the window's
+// translucent regions (frosted glass) via _KDE_NET_WM_BLUR_BEHIND_REGION: a
+// single 0 cardinal = blur the whole window, deleting the property turns it off.
+// X11-only and compositor-dependent - Compiz/GNOME ignore the hint (there the
+// user enables blur in the compositor), and the compositor, not us, owns the
+// blur radius. Opens a throwaway connection; called only at startup / on toggle.
+#[cfg(target_os = "linux")]
+fn set_blur_behind(window: &Window, enable: bool) {
+	use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+	use x11rb::connection::Connection;
+	use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, PropMode};
+	use x11rb::wrapper::ConnectionExt as _;
+
+	let Ok(handle) = window.window_handle() else {
+		return;
+	};
+	let xid = match handle.as_raw() {
+		RawWindowHandle::Xlib(h) => h.window as u32,
+		RawWindowHandle::Xcb(h) => h.window.get(),
+		_ => return, // not X11 (Wayland/other): the hint is X11-only
+	};
+	let Ok((conn, _)) = x11rb::connect(None) else {
+		return;
+	};
+	let Ok(cookie) = conn.intern_atom(false, b"_KDE_NET_WM_BLUR_BEHIND_REGION") else {
+		return;
+	};
+	let Ok(reply) = cookie.reply() else {
+		return;
+	};
+	let atom = reply.atom;
+	if enable {
+		let _ = conn.change_property32(PropMode::REPLACE, xid, atom, AtomEnum::CARDINAL, &[0u32]);
+	} else {
+		let _ = conn.delete_property(xid, atom);
+	}
+	let _ = conn.flush();
+}
+#[cfg(not(target_os = "linux"))]
+fn set_blur_behind(_window: &Window, _enable: bool) {}
+
 pub fn load_icon() -> Option<winit::window::Icon> {
 	let img = image::load_from_memory(include_bytes!("../assets/logo.png")).ok()?;
 	let img = img.thumbnail(64, 64).into_rgba8();
@@ -1612,6 +1675,7 @@ impl ApplicationHandler<UserEvent> for App {
 			.with_decorations(decorated)
 			.with_transparent(true)
 			.with_inner_size(winit::dpi::LogicalSize::new(1000.0, 640.0));
+		let attrs = with_app_id(attrs); // stable WM_CLASS/app_id
 
 		// On X11 the wgpu surface can't do per-pixel alpha, so we ALWAYS take the
 		// glutin GL path there (transparent-capable backend), regardless of the
@@ -1642,6 +1706,9 @@ impl ApplicationHandler<UserEvent> for App {
 		if w.fullscreen.unwrap_or(false) {
 			window.set_fullscreen(Some(Fullscreen::Borderless(None)));
 		}
+		// Request compositor backdrop blur (KWin/picom) if the setting is on; no-op
+		// off-X11 and on compositors that don't honor the hint.
+		set_blur_behind(&window, config::settings().transparent_background_blur);
 
 		// Transparency only ever affects the terminal background (per-pixel), never
 		// the whole window - so there's no compositor whole-window-opacity fallback.
