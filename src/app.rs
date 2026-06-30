@@ -845,11 +845,11 @@ impl State {
 
 		for (id, pane) in self.tabs.cur_mut().panes.iter_mut() {
 			pane.scroll.advance(dt);
-			if pane.scroll.animating() {
+			let rect = pane.rect;
+			let draw = pane.build(&mut self.text, dt);
+			if pane.scroll.animating() || pane.cursor_animating {
 				animating = true;
 			}
-			let rect = pane.rect;
-			let draw = pane.build(&mut self.text);
 			tops.insert(*id, draw.top);
 			let mut bg = config::srgb_f32(config::settings().bg);
 			bg[3] = bg_alpha;
@@ -2407,16 +2407,24 @@ impl ApplicationHandler<UserEvent> for App {
 		let Some(state) = self.state.as_mut() else {
 			return;
 		};
-		let animating = state
+		let scroll_anim = state
 			.tabs
 			.cur()
 			.panes
 			.values()
 			.any(|p| p.scroll.animating());
-		let flow = if state.dirty || animating {
+		let cursor_anim = state.tabs.cur().panes.values().any(|p| p.cursor_animating);
+		let flow = if state.dirty || scroll_anim || cursor_anim {
 			state.dirty = false;
 			if state.render() {
-				ControlFlow::Poll
+				// Scroll (the flagship smooth feature) and fresh content render at
+				// full rate; a lone idle cursor blink is capped to ~30fps so it isn't
+				// re-shaping text every frame just to pulse.
+				if scroll_anim || state.dirty {
+					ControlFlow::Poll
+				} else {
+					ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(33))
+				}
 			} else {
 				ControlFlow::Wait
 			}
