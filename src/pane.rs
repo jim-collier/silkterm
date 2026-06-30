@@ -42,12 +42,25 @@ fn cursor_kind(shape: CursorShape, alt_screen: bool, overwrite: bool) -> CursorK
 		CursorShape::Beam => CursorKind::Bar,
 		CursorShape::Underline => CursorKind::Underline,
 		_ => {
-			if alt_screen || overwrite {
-				CursorKind::Block
+			if alt_screen {
+				CursorKind::Block // alt-screen app owns its (block) cursor
 			} else {
-				CursorKind::Bar
+				let s = config::settings();
+				parse_cursor_shape(if overwrite {
+					&s.cursor_overwrite_shape
+				} else {
+					&s.cursor_insert_shape
+				})
 			}
 		}
+	}
+}
+
+fn parse_cursor_shape(name: &str) -> CursorKind {
+	match name.trim().to_ascii_lowercase().as_str() {
+		"block" => CursorKind::Block,
+		"underline" | "underscore" => CursorKind::Underline,
+		_ => CursorKind::Bar, // "bar" / "beam" / anything unrecognised
 	}
 }
 
@@ -489,15 +502,22 @@ impl Pane {
 			self.cursor_x = c;
 		}
 		self.blink_t += dt;
-		let blink = config::settings().cursor_blink;
-		// solid while sliding; otherwise a smooth cosine fade that starts solid
-		let alpha = if easing || !blink {
+		// blink style: "solid" = steady, "blink" = hard on/off, else "phase" (smooth
+		// cosine fade). Always solid while sliding (it starts solid right after a move).
+		let settings = config::settings();
+		let style = settings.cursor_blink_style.as_str();
+		let blinking = !easing && style != "solid";
+		let alpha = if !blinking {
 			CURSOR_ALPHA
 		} else {
 			let phase = (self.blink_t / CURSOR_BLINK_PERIOD_S).fract();
-			CURSOR_ALPHA * (0.5 + 0.5 * (phase * std::f32::consts::TAU).cos())
+			if style == "blink" {
+				if phase < 0.5 { CURSOR_ALPHA } else { 0.0 } // hard toggle
+			} else {
+				CURSOR_ALPHA * (0.5 + 0.5 * (phase * std::f32::consts::TAU).cos())
+			}
 		};
-		self.cursor_animating = easing || blink;
+		self.cursor_animating = easing || blinking;
 		let mut col = config::srgb_f32(cursor_rgb);
 		col[3] = alpha;
 		let cell_y = self.rect.y + margin + (cursor_sr as f32 + frac) * cell_h;
