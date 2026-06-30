@@ -809,8 +809,10 @@ impl State {
 		self.dirty = true;
 	}
 
-	// returns true while any pane is still animating (caller keeps frames coming)
-	fn render(&mut self) -> bool {
+	// returns true while any pane is still animating (caller keeps frames coming).
+	// `force_rebuild` = the frame changed content/scroll/bell (not a pure cursor
+	// animation), so panes re-shape text; false lets them reuse the cached frame.
+	fn render(&mut self, force_rebuild: bool) -> bool {
 		// once a frame has been drawn, later resizes are user-driven and may update
 		// the remembered window size (startup/programmatic ones happen before this)
 		self.size_tracked = true;
@@ -858,7 +860,7 @@ impl State {
 		for (id, pane) in self.tabs.cur_mut().panes.iter_mut() {
 			pane.scroll.advance(dt);
 			let rect = pane.rect;
-			let draw = pane.build(&mut self.text, dt, bell);
+			let draw = pane.build(&mut self.text, dt, bell, force_rebuild);
 			if pane.scroll.animating() || pane.cursor_animating {
 				animating = true;
 			}
@@ -2360,7 +2362,7 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 
 			WindowEvent::RedrawRequested => {
-				let _ = state.render();
+				let _ = state.render(true);
 			}
 
 			_ => {}
@@ -2434,8 +2436,11 @@ impl ApplicationHandler<UserEvent> for App {
 		let cursor_anim = state.tabs.cur().panes.values().any(|p| p.cursor_animating);
 		let bell_anim = state.bell_flash > 0.0;
 		let flow = if state.dirty || scroll_anim || cursor_anim || bell_anim {
+			// content/scroll/bell changed this frame -> panes re-shape; a pure cursor
+			// animation frame (only cursor_anim) lets them reuse the cached frame.
+			let force = state.dirty || scroll_anim || bell_anim;
 			state.dirty = false;
-			if state.render() {
+			if state.render(force) {
 				// Scroll (the flagship smooth feature), a bell flash, and fresh
 				// content render at full rate; a lone idle cursor blink is capped to
 				// ~30fps so it isn't re-shaping text every frame just to pulse.
