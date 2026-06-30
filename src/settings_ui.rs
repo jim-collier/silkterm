@@ -78,6 +78,7 @@ enum Key {
 	None, // section headers
 	Transparency,
 	Opacity,
+	BackdropBlur,
 	BgOpacity,
 	BgBlur,
 	BgFit,
@@ -155,6 +156,11 @@ fn fields() -> Vec<Spec> {
 				max: 1.0,
 				int: false,
 			},
+		},
+		Spec {
+			label: "Backdrop blur",
+			key: BackdropBlur,
+			kind: Toggle,
 		},
 		Spec {
 			label: "Background image",
@@ -565,6 +571,7 @@ impl SettingsDialog {
 		match key {
 			Key::SystemFont => self.use_system_font,
 			Key::Transparency => self.edited.transparent_background,
+			Key::BackdropBlur => self.edited.transparent_background_blur,
 			Key::TextGlow => self.edited.text_glow,
 			Key::RememberSize => self.edited.remember_size,
 			_ => false,
@@ -574,6 +581,7 @@ impl SettingsDialog {
 		match key {
 			Key::SystemFont => self.set_system_font(on),
 			Key::Transparency => self.edited.transparent_background = on,
+			Key::BackdropBlur => self.edited.transparent_background_blur = on,
 			Key::TextGlow => self.edited.text_glow = on,
 			Key::RememberSize => self.edited.remember_size = on,
 			_ => {}
@@ -601,7 +609,7 @@ impl SettingsDialog {
 	// slider needs Transparency; the glow radius needs Text glow; the explicit
 	// columns/rows are inactive when "Remember last size" is on).
 	fn disabled(&self, key: Key) -> bool {
-		(key == Key::Opacity && !self.edited.transparent_background)
+		(matches!(key, Key::Opacity | Key::BackdropBlur) && !self.edited.transparent_background)
 			|| (matches!(key, Key::GlowRadius | Key::GlowSoftness) && !self.edited.text_glow)
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
 	}
