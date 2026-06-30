@@ -144,6 +144,12 @@ impl App {
 			if let Some(state) = self.state.as_mut() {
 				state.apply_settings_values(&orig, edited, sys);
 			}
+			// The applied values are the new baseline, so a later Apply diffs against
+			// the live state (without this, re-selecting the open-time value - e.g.
+			// Bg fit back to Stretch - reads as "no change" and isn't re-applied).
+			if let Some(d) = self.dialog.as_mut() {
+				d.commit_baseline();
+			}
 			self.dialog_dirty = true;
 		}
 	}
