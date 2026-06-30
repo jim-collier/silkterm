@@ -156,7 +156,7 @@ fMain(){
 		## Prune old backups (GFS): keep ~30 - first + newest-per-
 		## hour/day/week/month/year + the last 10. Also conforms pre-existing
 		## backup names. Tunable via GFS_KEEP_* env (see include/gfs-rotate.bash).
-		fEcho "Rotating version backups (GFS retention) ..."
+		fEcho; fEcho "Rotating version backups (GFS retention) ..."
 		## Non-fatal: pruning is housekeeping and must never abort a good publish.
 		gfs_rotate "${dirPath_Rar}" "${dirName_Top}" rar || fEcho "WARNING: backup rotation failed (non-fatal); continuing."
 	fi
@@ -206,16 +206,14 @@ fMain(){
 	fi
 
 	## Done
-	## Use 'if' not '((..)) &&': in quiet mode the arithmetic is false, and as fMain's
-	## last statement that '&&' would return 1 - exiting the whole script (and aborting cicd).
 	if ((! doQuietly)); then fEcho_Force; fEcho "${meName}: Done."; fi
-}
+:;}
 
 #••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 fCleanup(){
-	if ((! doQuietly)); then
+#	if ((! doQuietly)); then
 		fEcho_Clean
-	fi
+#	fi
 }
 
 
