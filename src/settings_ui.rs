@@ -394,6 +394,12 @@ impl SettingsDialog {
 	pub fn orig(&self) -> &Settings {
 		&self.orig
 	}
+	// After an Apply, make the applied values the new baseline so a later Apply
+	// compares against the live state, not the stale open-time snapshot (otherwise
+	// re-selecting the original value reads as "no change" and isn't applied).
+	pub fn commit_baseline(&mut self) {
+		self.orig = self.edited.clone();
+	}
 	// When set, the app removes font_family/font_size from config so it follows
 	// the OS font again (in addition to the live values already applied here).
 	pub fn use_system_font(&self) -> bool {

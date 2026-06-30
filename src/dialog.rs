@@ -132,6 +132,14 @@ impl DialogWin {
 		}
 	}
 
+	// After an Apply, reset the settings baseline to the applied values so a later
+	// Apply diffs against the live state (see SettingsDialog::commit_baseline).
+	pub fn commit_baseline(&mut self) {
+		if let Content::Settings(d) = &mut self.content {
+			d.commit_baseline();
+		}
+	}
+
 	pub fn set_cursor(&mut self, x: f32, y: f32) {
 		self.mouse = (x, y);
 		if let Content::Settings(d) = &mut self.content {
