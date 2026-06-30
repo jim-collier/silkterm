@@ -25,6 +25,32 @@ const CURSOR_BLINK_PERIOD_S: f32 = 1.06; // full fade on->off->on cycle (Windows
 const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
 const BELL_BRIGHTEN: f32 = 0.6; // max lerp of text toward white at the bell flash peak
 
+// Rendered cursor geometry.
+#[derive(Clone, Copy, PartialEq)]
+enum CursorKind {
+	Bar,       // thin vertical bar at the cell's left edge (Insert mode)
+	Block,     // full cell (Overwrite mode / default app cursor)
+	Underline, // thin strip at the cell's bottom
+}
+
+// Resolve the rendered cursor shape. An app-set Beam/Underline (DECSCUSR) is
+// honoured. For a plain Block the SilkTerm insert(bar)/overwrite(block) mode
+// decides - except on the alt screen, where the app (vim, less, ...) owns its
+// cursor shape, so a Block stays a block.
+fn cursor_kind(shape: CursorShape, alt_screen: bool, overwrite: bool) -> CursorKind {
+	match shape {
+		CursorShape::Beam => CursorKind::Bar,
+		CursorShape::Underline => CursorKind::Underline,
+		_ => {
+			if alt_screen || overwrite {
+				CursorKind::Block
+			} else {
+				CursorKind::Bar
+			}
+		}
+	}
+}
+
 // Lerp a text colour toward white by `t` (0..1) of the BELL_BRIGHTEN ceiling, for
 // the visual-bell flash. Identity at t<=0.
 fn bell_brighten(c: [u8; 3], t: f32) -> [u8; 3] {
@@ -122,6 +148,7 @@ impl Pane {
 		dt: f32,
 		bell: f32,
 		force_rebuild: bool,
+		overwrite: bool,
 	) -> PaneDraw {
 		let cell_w = ctx.cell_w;
 		let cell_h = ctx.cell_h;
@@ -199,6 +226,13 @@ impl Pane {
 		// the fast path below can drop the term lock immediately.
 		let cursor_pt = guard.grid().cursor.point;
 		let cursor_shape = guard.cursor_style().shape;
+		// Alt-screen apps own their cursor shape; on the primary screen the
+		// insert(bar)/overwrite(block) mode applies. See cursor_kind.
+		let ckind = cursor_kind(
+			cursor_shape,
+			guard.mode().contains(TermMode::ALT_SCREEN),
+			overwrite,
+		);
 		let following = desired == 0;
 
 		// Fast path: a pure cursor-animation frame (blink/slide, no content/scroll/
@@ -210,6 +244,7 @@ impl Pane {
 			let cursor = self.cursor_quad(
 				cursor_pt,
 				cursor_shape,
+				ckind,
 				d,
 				lines,
 				following,
@@ -345,6 +380,7 @@ impl Pane {
 		let cursor = self.cursor_quad(
 			cursor_pt,
 			cursor_shape,
+			ckind,
 			d,
 			lines,
 			following,
@@ -413,6 +449,7 @@ impl Pane {
 		&mut self,
 		cursor_pt: Point,
 		cursor_shape: CursorShape,
+		kind: CursorKind,
 		d: i32,
 		lines: usize,
 		following: bool,
@@ -463,10 +500,21 @@ impl Pane {
 		self.cursor_animating = easing || blink;
 		let mut col = config::srgb_f32(cursor_rgb);
 		col[3] = alpha;
-		let y = self.rect.y + margin + (cursor_sr as f32 + frac) * cell_h;
+		let cell_y = self.rect.y + margin + (cursor_sr as f32 + frac) * cell_h;
+		let cell_x = content_x + self.cursor_x * cell_w;
+		// Bar = a thin left-edge bar (a touch thicker than a 1px caret); Underline =
+		// a thin bottom strip; Block = the whole cell.
+		let (pos, size) = match kind {
+			CursorKind::Block => ([cell_x, cell_y], [cell_w, cell_h]),
+			CursorKind::Bar => ([cell_x, cell_y], [(cell_w * 0.16).max(2.0), cell_h]),
+			CursorKind::Underline => {
+				let h = (cell_h * 0.13).max(2.0);
+				([cell_x, cell_y + cell_h - h], [cell_w, h])
+			}
+		};
 		Some(RectInstance {
-			pos: [content_x + self.cursor_x * cell_w, y],
-			size: [cell_w, cell_h],
+			pos,
+			size,
 			color: col,
 		})
 	}
