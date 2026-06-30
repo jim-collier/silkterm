@@ -50,6 +50,9 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- 🔘 Setting dialog:
+	- 🔘 Setting Bg image fit to "Zoom", then Apply works. But back to "Stretch", then Apply, doesn't.
+
 - ✅ High severity: Typing "exit" in tab, closes the whole application. It should only close that tab. Doesn't do that for panes, only tabs. Closing a tab via menu only closes that one tab. (20260629)
 	- Cause: the shell-exit handler (`UserEvent::Exit(id)` in app.rs) just called `tabs.cur_mut().close(id)` and quit the app whenever that returned true. So the last pane of a tab killed the whole app when other tabs existed; worse, a background tab's shell exiting ran `close(id)` on the *active* tab (which doesn't own that pane) -> returns true -> app quit. The Close-Pane menu had the right pane->tab->window cascade; the exit path didn't.
 	- Fix: `UserEvent::Exit` now finds the pane's owning tab (`position(|pm| pm.panes.contains_key(&id))`) and applies the same cascade - >1 pane in that tab closes the pane; else >1 tab closes that tab (`close_tab_at(idx)`, generalized from `close_tab`); else (last pane of last tab) exits. Handles background-tab exits and keeps `active` pointing at the same tab.
@@ -138,6 +141,12 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
+- ✅ Allow toggling from default "Insert" mode, to "Overwrite". (20260629)
+	- ✅ Change cursor in default "Insert" mode, to a thinner bar than the block cursor (but thicker than, say, "|").
+	- ✅ Overwrite mode will be the regular block cursor.
+	- Done: the Insert key toggles Insert(bar)/Overwrite(block); default is Insert. App-set Beam/Underline shapes are honoured, and alt-screen apps (vim/less) keep their own cursor; Insert is still forwarded to the shell so readline can follow. Detail in `.claude/details.md`.
+	- 🔘 Provide options in the config (not dialog) to adjust type for both, and blinking style. Similar to Sublime Text cursor options.
+
 - 🔘 CI/CD scripts:
 	- 🔘 Build alternate targets in parallel, to speed process up.
 
@@ -163,12 +172,12 @@ In each section, items are listed approximately from newest to oldest.
 		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
 	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
 
-- 🔘 Cursor:
-	- 🔘 Smooth-scroll (when moving to the right).
-	- 🔘 Blink at the same rate, but "phase" between of and on, not just on or off.
+- ✅ Cursor: (20260629)
+	- ✅ Smooth-scroll (when moving to the right). - the cursor slides to its target column as you type (snaps on a newline); idles at 0% CPU.
+	- ✅ Blink at the same rate, but "phase" between of and on, not just on or off. - smooth cosine fade, now default ON: a render refactor skips re-shaping text on cursor-only frames (~70% -> ~21% of a core, debug; far less in release), so blinking no longer pegs the CPU. `cursor_blink` config to disable. Detail in `.claude/details.md`.
 
-- 🔘 Bell/warning:
-	- Gently and smoothly brighten all text, like the modern Windows Terminal does.
+- ✅ Bell/warning: (20260629)
+	- Gently and smoothly brighten all text, like the modern Windows Terminal does. - on BEL the text brightens toward white then fades back (~0.8s); text only (bg/cursor unchanged). Tunable `BELL_BRIGHTEN` if you want it stronger. Detail in `.claude/details.md`.
 
 - 🛠️ Menu bar: (issue #t6thx, 20260626-132615)
 	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. - Fixed under bug #1n45bca: chrome pins a concrete sans family (`resolve_sans_family` / `sysfont::sans_serif`) instead of generic `Family::SansSerif`, which had been falling through to the serif document font.
@@ -206,7 +215,8 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Every setting in Settings dialog should have a clickable icon to "Revert to default". This icon should also indicate if the setting is default, and only be clickable if it's not. (20260626-102000)
 		- In the config file, if user clicks "Revert to default" in settings, set the value to default and comment it out.
 	- 🔘 "Use system font" boolean should be visible checked, if using it.
-	- 🔘 Clicking on the font text field, should immediately clear "(system default)". But it should reappear when focus lost, if nothing entered.
+		- 🔘 If checked (setting a config boolean), the other font settings should be disabled. Whatever values they held, should remain.
+		- 🔘 Font family should default to a list with several fallbacks for Linux, Windows, and macOS.
 	- 🔘 Editable fields should have a visible cursor when focused, and respond to standard text-editing key controls.
 	- 🔘 Full keyboard control, e.g. tab order, full text field editing, alt+down for dropdowns, space to toggle booleans, etc.
 	- Note: It might be best to defer some of these, until after (and if) native window controls are implimented.
