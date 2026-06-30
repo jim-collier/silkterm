@@ -50,12 +50,18 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🔘 Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible.
+- 🛠️ High severity: Typing "exit" in tab, closes the whole application. It should only close that tab. Doesn't do that for panes, only tabs. Closing a tab via menu only closes that one tab. (20260629)
+	- Cause: the shell-exit handler (`UserEvent::Exit(id)` in app.rs) just called `tabs.cur_mut().close(id)` and quit the app whenever that returned true. So the last pane of a tab killed the whole app when other tabs existed; worse, a background tab's shell exiting ran `close(id)` on the *active* tab (which doesn't own that pane) -> returns true -> app quit. The Close-Pane menu had the right pane->tab->window cascade; the exit path didn't.
+	- Fix: `UserEvent::Exit` now finds the pane's owning tab (`position(|pm| pm.panes.contains_key(&id))`) and applies the same cascade - >1 pane in that tab closes the pane; else >1 tab closes that tab (`close_tab_at(idx)`, generalized from `close_tab`); else (last pane of last tab) exits. Handles background-tab exits and keeps `active` pointing at the same tab.
+	- Verified: runtime - launched with a 2nd (active) tab whose shell self-exits after 3s; app stayed alive past the exit (tab closed, window survived) instead of quitting. Builds clean.
+	- 🛠️ Re-verified fixed on current main (20260630): the app survives the tab's shell exiting in all 3 tests - CLI active-tab exit, CLI background-tab exit, and typing `exit` interactively in the active tab of a 2-tab window (1 window stays up). If it's still happening for you, the running/dogfood binary predates the fix - rebuild (`cargo run --release`) or re-run cicd to reinstall, then retest.
 
-- 🔘 Scroll-on-output enhancement: One additional setting:
-	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
-		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
-	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
+- 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
+	- Cause (by code analysis): when the glyph atlas fills up (a long session of varied glyphs), text `prepare()` fails and `render` returned early - *above* the per-frame atlas trim - so the atlas never recovered and all text stayed black forever. The cursor and cell backgrounds use a separate rect renderer, so they kept showing (matches the report exactly).
+	- Fix: trim the atlas on the prepare-failure path so the next frame re-prepares with room and recovers. Couldn't force an atlas-full in a short stress run (a 20s unicode flood didn't fill it - the trigger needs a genuinely long session), so this is verified by code analysis, not a live repro. Watch for recurrence.
+
+- 🛠️ Allow toggling from default "Insert" mode, to "Overwrite":
+	- 🔘 The cursor shape toggles thick and thin, but not the behavior. It's always in insert mode.
 
 - ✅ Cursor: (20260629)
 	- ✅ Smooth-scroll (when moving to the right). - the cursor slides to its target column as you type (snaps on a newline); idles at 0% CPU.
@@ -63,11 +69,6 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ Setting dialog: (20260629)
 	- ✅ Setting Bg image fit to "Zoom", then Apply works. But back to "Stretch", then Apply, doesn't. - Cause: the dialog's `orig` baseline was captured at open and never refreshed, so a 2nd Apply diffed against the open-time snapshot; re-selecting the original value read as "no change". Fix: `commit_baseline()` resets orig = edited after each Apply (fixes every setting, not just fit).
-
-- ✅ High severity: Typing "exit" in tab, closes the whole application. It should only close that tab. Doesn't do that for panes, only tabs. Closing a tab via menu only closes that one tab. (20260629)
-	- Cause: the shell-exit handler (`UserEvent::Exit(id)` in app.rs) just called `tabs.cur_mut().close(id)` and quit the app whenever that returned true. So the last pane of a tab killed the whole app when other tabs existed; worse, a background tab's shell exiting ran `close(id)` on the *active* tab (which doesn't own that pane) -> returns true -> app quit. The Close-Pane menu had the right pane->tab->window cascade; the exit path didn't.
-	- Fix: `UserEvent::Exit` now finds the pane's owning tab (`position(|pm| pm.panes.contains_key(&id))`) and applies the same cascade - >1 pane in that tab closes the pane; else >1 tab closes that tab (`close_tab_at(idx)`, generalized from `close_tab`); else (last pane of last tab) exits. Handles background-tab exits and keeps `active` pointing at the same tab.
-	- Verified: runtime - launched with a 2nd (active) tab whose shell self-exits after 3s; app stayed alive past the exit (tab closed, window survived) instead of quitting. Builds clean.
 
 - 🛠️ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
 	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. (20260629)
@@ -152,31 +153,21 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- ✅ Allow toggling from default "Insert" mode, to "Overwrite". (20260629)
+- 🛠️ Allow toggling from default "Insert" mode, to "Overwrite". (20260629)
 	- ✅ Change cursor in default "Insert" mode, to a thinner bar than the block cursor (but thicker than, say, "|").
 	- ✅ Overwrite mode will be the regular block cursor.
 	- Done: the Insert key toggles Insert(bar)/Overwrite(block); default is Insert. App-set Beam/Underline shapes are honoured, and alt-screen apps (vim/less) keep their own cursor; Insert is still forwarded to the shell so readline can follow. Detail in `.claude/details.md`.
 	- ✅ Provide options in the config (not dialog) to adjust type for both, and blinking style. Similar to Sublime Text cursor options. (20260629) - config keys `cursor_insert_shape` / `cursor_overwrite_shape` (bar|block|underline) and `cursor_blink_style` (phase|blink|solid), replacing the `cursor_blink` bool. Verified: underline shape + solid style render.
+	- 🔘 Make the default "thin" cursor a little thicker (50% to 100% more)
+	- 🔘 Change default cursor colors:
+		- Thick: Gray (depending on the theme).
+		- Thin: a fully bright version of the thick one. (E.g. proportionally increase R, G, and B, so that the highest one is FF.) Not as a hardcoded rule, but as a theming default.
+		- Defaults overridden by themes. The default "SilkTerm" theme should use those colors. Update others as appropriate, but the styling rule for "Thin" above should also hold for themes.
 
-- ✅ Change the default hotkey for opening a new tab to Ctrl+Shift+T. (20260629) - new-tab is now Ctrl+Shift+T (`app.rs` tab-hotkey block); plain Ctrl+T passes through to the shell (readline transpose-char) instead of opening a tab. Builds clean.
-
-- ✅ Config file: Preceed actual comments with double '## '. Commented-out *settings* get a single '# '. (20260629)
-	- DEFAULT_CONFIG template rewritten to the convention: explanatory + inline comments use `## `; disabled `# key = value` settings keep a single `# `. The parser already distinguished them (`line_setting_key` strips one `#`, so `## prose` yields no key), and toml_edit round-trips `##` fine. Two unit tests added (valid-TOML/deserialize + style check); 31 tests pass.
-	- Note: only newly-generated configs and newly-backfilled keys get the new style; an existing config's already-present lines aren't reformatted (delete config.toml to regenerate the clean layout).
-
-- ✅ New setting: Transparent background blur. (20260629)
-	- This is independent of background *image* blur, which maintains its independence.
-	- It blurs what's behind the terminal, as if it were made of frosted glass.
-	- Done: compositor-provided. SilkTerm sets a stable WM_CLASS + a "Backdrop blur" toggle (KWin/picom hint); on Compiz, match `class=SilkTerm` in its own Blur plugin. Detail + Compiz recipe in `.claude/details.md`.
-
-- ✅ Change defaults: (20260629) - `Settings::default()` updated (the loader's `unwrap_or(default)` makes it the single source of truth); the DEFAULT_CONFIG template's documented example values now match. Headless guard test added; 32 tests pass. Note: glow is now on by default, so the glow render pass runs every frame - owner to confirm the look/feel.
-	- ✅ Background image blur: 8 px
-	- ✅ text_glow = true
-	- ✅ text_glow_radius = 5
-	- ✅ text_glow_softness = 0.5
-
-- ✅ Bell/warning: (20260629)
-	- Gently and smoothly brighten all text, like the modern Windows Terminal does. - on BEL the text brightens toward white then fades back (~0.8s); text only (bg/cursor unchanged). Tunable `BELL_BRIGHTEN` if you want it stronger. Detail in `.claude/details.md`.
+- 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
+	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
+		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
+	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
 
 - 🛠️ Menu bar: (issue #t6thx, 20260626-132615)
 	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. - Fixed under bug #1n45bca: chrome pins a concrete sans family (`resolve_sans_family` / `sysfont::sans_serif`) instead of generic `Family::SansSerif`, which had been falling through to the serif document font.
@@ -185,6 +176,10 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Make menu gray, with white text. (For both light and dark themes.)
 		- The menu / tab-bar / context-menu chrome consts (`MENU_*`, `TAB_*`) are now neutral grays with near-white text, fixed across modes (per #166 default).
 	- 🔘 Menu color is user-adjustable, even per-theme. It's just that all themes by default use the same menu colors.
+
+- ✅ Window title: Just "SilkTerm", plus the icon in assets/logo.png (for display in alt+tab).
+	- `update_title` now sets the window title to just `APP_NAME` (per-program info stays in the tab titles). The window icon is loaded from `assets/logo.png` (`include_bytes!`, decoded + downscaled to 64x64 via the `image` crate) in `load_icon` and set with `with_window_icon`. Verified: window name = "SilkTerm", `_NET_WM_ICON` is set.
+	- 🔘 Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
 
 - 🛠️ Themes:
 	- Status part 1: Done. (`src/theme.rs`): theme foundation + terminal palette done. A `Palette` (bg/fg/cursor/focus + 16 ANSI) x a `Theme` (dark+light pair); `theme` + `theme_mode` config keys resolve the active palette, which `palette.rs` + the renderer read. The `[colors]` keys still override per-colour. 3 built-ins (SilkTerm, Matrix, Retro Amber), each dark+light.
@@ -219,22 +214,6 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Editable fields should have a visible cursor when focused, and respond to standard text-editing key controls.
 	- 🔘 Full keyboard control, e.g. tab order, full text field editing, alt+down for dropdowns, space to toggle booleans, etc.
 	- Note: It might be best to defer some of these, until after (and if) native window controls are implimented.
-
-- ✅ "Reload config" should re-read the background image too. In case user changed the image and kept it the same name. (20260626-102603)
-	- Cause: `apply_new_settings` reloaded the image only when `bg_image_changed` (path/opacity/fit/blur differ). A same-name file swap leaves the path string identical, so it skipped the reload.
-	- Fix: `apply_new_settings` takes a `force_bg` flag; `reload_config` passes `true` so Reload Config always re-reads the image file (the dialog Apply path still reloads only on a real change). `app.rs`.
-
-- ✅ About dialog:
-	- Include the version, build, copyright, and license.
-	- Done (`dialog.rs` `layout_about`): added a copyright line and a `License: <SPDX>` line (`env!("CARGO_PKG_LICENSE")` -> GPL-2.0-or-later) under the version, and a `Build: <arch> / <os> (debug|release)` line in the Info section (`std::env::consts` + `cfg!(debug_assertions)`, so it names which cross-built target the binary is). The About window is content-sized, so it grows to fit. Builds clean.
-
-- ✅ Menu (part 2):
-	- ✅ When a menu is open, keyboard arrow should work on them, not on the active terminal pane.
-		- Fix: An open menu (context menu or menu-bar dropdown) now captures navigation keys: Up/Down move a highlighted item (`ContextMenu::step`, wraps, skips separators, reuses the `hover` field/render), Enter activates it, Esc closes, Left/Right cycle between menu-bar dropdowns.
-		- Verified: arrows highlight (separators skipped), Enter->New Tab opened a 2nd tab, Esc closed.
-	- ✅ When 'Alt' Pressed, keyboard accelerators should become visible on the menu (traditionally with underscores). - Open dropdowns underline each item's first letter and a letter-press activates the first item starting with it (verified: 'n' -> New Tab). Alt+F/E/V/T/P/H open the bar menus. And now the bar titles themselves underline their accelerator letter while Alt is held.
-		- ✅ Show the underline on the bar titles on Alt-hold (a redraw-on-Alt + char-measure pass). - Done (`app.rs` render): while `self.mods.alt_key()` and no dropdown is open, an underline rect is drawn under each top-level title's first letter (measured via `measure_text`, like the dropdown items); `ModifiersChanged` now sets `dirty` so it appears/disappears live on Alt press/release. Builds clean (cosmetic, owner to eyeball).
-	- Note: the cross-platform-windowing-widget question (the `[🚫]` note under "Setting dialog (part 2)") is now decided - chrome stays hand-rolled (egui declined after a real spike). So the bar-title Alt underline is just a normal hand-rolled task.
 
 - 🛠️ General configuration:
 	- status: the default-shell behavior is done; the named shell list + its selection UI (grid editor + Tab/Pane menus) are now active hand-rolled work - the egui chrome migration was declined (see the `[x]` note under "Setting dialog (part 2)").
@@ -389,6 +368,42 @@ In each section, items are listed approximately from newest to oldest.
 	- Reopened: The first attempt (snap output easing during line bursts) broke smooth scrolling for all normal output and was reverted (see the smooth-scrolling-regression bug above).
 		- Diagnosis still stands: apt reserves the bottom line as a status bar via a scroll region (DECSTBM `0..N-1`); printing each log line scrolls that region. Because the region starts at line 0, alacritty_terminal grows scrollback (`Grid::scroll_up` only calls `increase_scroll_limit` when `region.start == 0`), which fires our output easing - and the ease shifts the whole grid down by up to a cell, dragging the fixed status bar below the viewport = the bounce. A correct fix needs to know a partial scroll region is active so it can suppress easing only then, but `alacritty_terminal` doesn't expose `scroll_region` (private, no getter). Options for later: (a) patch/fork the crate to expose the region; (b) tee the PTY stream and parse DECSTBM ourselves; (c) accept as a known limitation like full-screen apps (`nano`).
 
+- ✅ Change the default hotkey for opening a new tab to Ctrl+Shift+T. (20260629) - new-tab is now Ctrl+Shift+T (`app.rs` tab-hotkey block); plain Ctrl+T passes through to the shell (readline transpose-char) instead of opening a tab. Builds clean.
+
+- ✅ Config file: Preceed actual comments with double '## '. Commented-out *settings* get a single '# '. (20260629)
+	- DEFAULT_CONFIG template rewritten to the convention: explanatory + inline comments use `## `; disabled `# key = value` settings keep a single `# `. The parser already distinguished them (`line_setting_key` strips one `#`, so `## prose` yields no key), and toml_edit round-trips `##` fine. Two unit tests added (valid-TOML/deserialize + style check); 31 tests pass.
+	- Note: only newly-generated configs and newly-backfilled keys get the new style; an existing config's already-present lines aren't reformatted (delete config.toml to regenerate the clean layout).
+
+- ✅ New setting: Transparent background blur. (20260629)
+	- This is independent of background *image* blur, which maintains its independence.
+	- It blurs what's behind the terminal, as if it were made of frosted glass.
+	- Done: compositor-provided. SilkTerm sets a stable WM_CLASS + a "Backdrop blur" toggle (KWin/picom hint); on Compiz, match `class=SilkTerm` in its own Blur plugin. Detail + Compiz recipe in `.claude/details.md`.
+
+- ✅ Change defaults: (20260629) - `Settings::default()` updated (the loader's `unwrap_or(default)` makes it the single source of truth); the DEFAULT_CONFIG template's documented example values now match. Headless guard test added; 32 tests pass. Note: glow is now on by default, so the glow render pass runs every frame - owner to confirm the look/feel.
+	- ✅ Background image blur: 8 px
+	- ✅ text_glow = true
+	- ✅ text_glow_radius = 5
+	- ✅ text_glow_softness = 0.5
+
+- ✅ Bell/warning: (20260629)
+	- Gently and smoothly brighten all text, like the modern Windows Terminal does. - on BEL the text brightens toward white then fades back (~0.8s); text only (bg/cursor unchanged). Tunable `BELL_BRIGHTEN` if you want it stronger. Detail in `.claude/details.md`.
+
+- ✅ "Reload config" should re-read the background image too. In case user changed the image and kept it the same name. (20260626-102603)
+	- Cause: `apply_new_settings` reloaded the image only when `bg_image_changed` (path/opacity/fit/blur differ). A same-name file swap leaves the path string identical, so it skipped the reload.
+	- Fix: `apply_new_settings` takes a `force_bg` flag; `reload_config` passes `true` so Reload Config always re-reads the image file (the dialog Apply path still reloads only on a real change). `app.rs`.
+
+- ✅ About dialog:
+	- Include the version, build, copyright, and license.
+	- Done (`dialog.rs` `layout_about`): added a copyright line and a `License: <SPDX>` line (`env!("CARGO_PKG_LICENSE")` -> GPL-2.0-or-later) under the version, and a `Build: <arch> / <os> (debug|release)` line in the Info section (`std::env::consts` + `cfg!(debug_assertions)`, so it names which cross-built target the binary is). The About window is content-sized, so it grows to fit. Builds clean.
+
+- ✅ Menu (part 2):
+	- ✅ When a menu is open, keyboard arrow should work on them, not on the active terminal pane.
+		- Fix: An open menu (context menu or menu-bar dropdown) now captures navigation keys: Up/Down move a highlighted item (`ContextMenu::step`, wraps, skips separators, reuses the `hover` field/render), Enter activates it, Esc closes, Left/Right cycle between menu-bar dropdowns.
+		- Verified: arrows highlight (separators skipped), Enter->New Tab opened a 2nd tab, Esc closed.
+	- ✅ When 'Alt' Pressed, keyboard accelerators should become visible on the menu (traditionally with underscores). - Open dropdowns underline each item's first letter and a letter-press activates the first item starting with it (verified: 'n' -> New Tab). Alt+F/E/V/T/P/H open the bar menus. And now the bar titles themselves underline their accelerator letter while Alt is held.
+		- ✅ Show the underline on the bar titles on Alt-hold (a redraw-on-Alt + char-measure pass). - Done (`app.rs` render): while `self.mods.alt_key()` and no dropdown is open, an underline rect is drawn under each top-level title's first letter (measured via `measure_text`, like the dropdown items); `ModifiersChanged` now sets `dirty` so it appears/disappears live on Alt press/release. Builds clean (cosmetic, owner to eyeball).
+	- Note: the cross-platform-windowing-widget question (the `[🚫]` note under "Setting dialog (part 2)") is now decided - chrome stays hand-rolled (egui declined after a real spike). So the bar-title Alt underline is just a normal hand-rolled task.
+
 - ✅ Change license from MIT to "GNU General Public License v2.0 or later", SPDX "GPL-2.0-or-later", reference https://spdx.org/licenses/GPL-2.0-or-later.html.
 	- Status: Done. `license.md` now holds the canonical, verbatim GPL-2.0 text from gnu.org, in a markdown fenced block. `Cargo.toml`, `license = "GPL-2.0-or-later"`. README badge -> GPL v2+ and the license blurb updated; every `.rs` file (src + examples, 18) carries an `// SPDX-License-Identifier: GPL-2.0-or-later` + copyright header. Builds + 19 tests pass. The only remaining "MIT" string is in the README's commented-out badge palette, left intact.
 	- The reason it was MIT before, was due to the misunderstanding that derived works have to also be MIT. But that's not the case, MIT allows relicensing derived works.
@@ -537,10 +552,6 @@ In each section, items are listed approximately from newest to oldest.
 	- Implemented:
 		- `TermInstance` captures the PTY master fd + shell pid at spawn (before the event loop takes the pty). `tab_title()` reads the foreground process group via `libc::tcgetpgrp(master_fd)` and its `/proc/<pid>/comm` (executable basename), comparing to the cached shell name: a different program -> "`<shell> [<program>]`" (and remembers it); only the shell -> "`<shell> [last: <program>]`" or just "`<shell>`". Polled when the tab bar is built (renders happen on output). Unix only (`#[cfg(unix)]`); other platforms fall back to the app name. New direct dep `libc` (unix).
 		- Verified: `dash` -> `dash [sleep]` -> `dash [last: sleep]`. Tab titles also use the proportional font now.
-
-- ✅ Window title: Just "SilkTerm", plus the icon in assets/logo.png (for display in alt+tab).
-	- `update_title` now sets the window title to just `APP_NAME` (per-program info stays in the tab titles). The window icon is loaded from `assets/logo.png` (`include_bytes!`, decoded + downscaled to 64x64 via the `image` crate) in `load_icon` and set with `with_window_icon`. Verified: window name = "SilkTerm", `_NET_WM_ICON` is set.
-	- 🔘 Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
 
 - ✅ No hotkeys for pane management except. Minimal hotkeys overall, except for window, tab, menu, and clipboard managent.
 	- Done. Removed the pane hotkeys: Ctrl+Shift+R/D (split V/H), Ctrl+Shift+W (close pane), Ctrl+Shift+Tab (cycle focus). Pane management is menu-only now (Panes menu / right-click; focus by clicking). `cycle_focus` deleted. Remaining hotkeys are window (F11), tab (Ctrl+Shift+T new, Ctrl+PageUp/Down change, +Shift move), menu (Alt accelerators, Menu key, Ctrl+,), clipboard (Ctrl+Shift+C/V).
