@@ -23,6 +23,18 @@ use crate::text::{TextCtx, mono_attrs};
 const CURSOR_MOVE_TAU_MS: f32 = 55.0; // horizontal slide responsiveness (lower = snappier)
 const CURSOR_BLINK_PERIOD_S: f32 = 1.06; // full fade on->off->on cycle (Windows-ish 530ms each)
 const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
+const BELL_BRIGHTEN: f32 = 0.6; // max lerp of text toward white at the bell flash peak
+
+// Lerp a text colour toward white by `t` (0..1) of the BELL_BRIGHTEN ceiling, for
+// the visual-bell flash. Identity at t<=0.
+fn bell_brighten(c: [u8; 3], t: f32) -> [u8; 3] {
+	if t <= 0.0 {
+		return c;
+	}
+	let t = (t * BELL_BRIGHTEN).clamp(0.0, 1.0);
+	let up = |v: u8| (v as f32 + (255.0 - v as f32) * t).round() as u8;
+	[up(c[0]), up(c[1]), up(c[2])]
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Rect {
@@ -100,7 +112,7 @@ pub struct Pane {
 }
 
 impl Pane {
-	pub fn build(&mut self, ctx: &mut TextCtx, dt: f32) -> PaneDraw {
+	pub fn build(&mut self, ctx: &mut TextCtx, dt: f32, bell: f32) -> PaneDraw {
 		let cell_w = ctx.cell_w;
 		let cell_h = ctx.cell_h;
 		let margin = ctx.margin;
@@ -240,6 +252,9 @@ impl Pane {
 						fg[1] / 2 + fg[1] / 4,
 						fg[2] / 2 + fg[2] / 4,
 					];
+				}
+				if bell > 0.0 {
+					fg = bell_brighten(fg, bell); // visual-bell flash
 				}
 
 				let selected =
@@ -1035,7 +1050,7 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 
 #[cfg(test)]
 mod tests {
-	use super::{distinct_pair, pair_inside, same_char_pair, scroll_shift};
+	use super::{bell_brighten, distinct_pair, pair_inside, same_char_pair, scroll_shift};
 
 	// default pairs in precedence order: backtick, ", ', {}, (), [], <>
 	const PAIRS: &[(char, char)] = &[
@@ -1173,5 +1188,14 @@ mod tests {
 	fn shift_empty_or_mismatched_is_zero() {
 		assert_eq!(scroll_shift(&[], &[]), 0);
 		assert_eq!(scroll_shift(&[1, 2, 3], &[1, 2]), 0);
+	}
+
+	#[test]
+	fn bell_brighten_lightens_and_is_identity_at_zero() {
+		let c = [100, 120, 140];
+		assert_eq!(bell_brighten(c, 0.0), c); // no flash -> unchanged
+		let b = bell_brighten(c, 1.0);
+		assert!(b[0] > c[0] && b[1] > c[1] && b[2] > c[2]); // peak flash brightens
+		assert!(b.iter().zip(&c).all(|(&n, &o)| n >= o)); // never darkens
 	}
 }
