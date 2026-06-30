@@ -21,6 +21,8 @@ pub enum UserEvent {
 	// must be written back to the PTY
 	PtyWrite(PaneId, Vec<u8>),
 	Exit(PaneId),
+	// terminal bell (BEL): drives a brief visual flash (text brightens, fades back)
+	Bell,
 }
 
 // bridges alacritty's PTY thread back to the winit loop
@@ -48,7 +50,8 @@ impl EventListener for EventProxy {
 			Event::PtyWrite(text) => self
 				.proxy
 				.send_event(UserEvent::PtyWrite(self.id, text.into_bytes())),
-			Event::Bell | Event::MouseCursorDirty => Ok(()),
+			Event::Bell => self.proxy.send_event(UserEvent::Bell),
+			Event::MouseCursorDirty => Ok(()),
 			_ => Ok(()),
 		};
 	}

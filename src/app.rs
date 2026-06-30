@@ -306,6 +306,7 @@ impl Tabs {
 // height (cell_h) + this vertical padding, so a larger font isn't clipped (#124).
 const MENU_BAR_VPAD: f32 = 6.0;
 const TAB_BAR_VPAD: f32 = 8.0;
+const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to settle)
 const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
 
@@ -327,6 +328,7 @@ struct State {
 	clipboard: Clipboard,
 	last_frame: Instant,
 	dirty: bool,
+	bell_flash: f32,    // visual-bell brightness, set to 1.0 on BEL, decays to 0
 	size_tracked: bool, // false until the first frame, so startup/programmatic resizes don't overwrite remembered_size
 	menu: Option<ContextMenu>,
 	menu_buffer: Buffer,
@@ -821,6 +823,16 @@ impl State {
 		let dt = (now - self.last_frame).as_secs_f32().min(0.1);
 		self.last_frame = now;
 
+		// Visual-bell flash decays toward 0; while >0 the text is brightened (in
+		// build) and we keep rendering so the fade is smooth.
+		if self.bell_flash > 0.0 {
+			self.bell_flash = (self.bell_flash * (-dt / BELL_TAU_S).exp()).max(0.0);
+			if self.bell_flash < 0.01 {
+				self.bell_flash = 0.0;
+			}
+		}
+		let bell = self.bell_flash;
+
 		// translucent background only when the surface supports it AND the user has
 		// Transparency on - and it only ever affects the bg, never text/chrome.
 		let bg_alpha = if self.gfx.transparent && config::settings().transparent_background {
@@ -834,7 +846,7 @@ impl State {
 		// don't bleed into neighbours
 		let mut groups: Vec<(Rect, Vec<RectInstance>)> = Vec::new();
 		let mut tops: HashMap<u64, f32> = HashMap::new();
-		let mut animating = false;
+		let mut animating = bell > 0.0;
 		// text-glow colour map needs each cell's bg (so a glyph's halo takes its
 		// own cell colour, not always the global) - collect them while building
 		let glow_on = {
@@ -846,7 +858,7 @@ impl State {
 		for (id, pane) in self.tabs.cur_mut().panes.iter_mut() {
 			pane.scroll.advance(dt);
 			let rect = pane.rect;
-			let draw = pane.build(&mut self.text, dt);
+			let draw = pane.build(&mut self.text, dt, bell);
 			if pane.scroll.animating() || pane.cursor_animating {
 				animating = true;
 			}
@@ -1797,6 +1809,7 @@ impl ApplicationHandler<UserEvent> for App {
 			clipboard: Clipboard::new(),
 			last_frame: Instant::now(),
 			dirty: true,
+			bell_flash: 0.0,
 			size_tracked: false,
 			menu: None,
 			menu_buffer,
@@ -1854,6 +1867,11 @@ impl ApplicationHandler<UserEvent> for App {
 						event_loop.exit();
 					}
 				}
+				state.dirty = true;
+			}
+			UserEvent::Bell => {
+				// Visual bell: brighten all text, then smoothly fade back (render).
+				state.bell_flash = 1.0;
 				state.dirty = true;
 			}
 		}
@@ -2414,13 +2432,14 @@ impl ApplicationHandler<UserEvent> for App {
 			.values()
 			.any(|p| p.scroll.animating());
 		let cursor_anim = state.tabs.cur().panes.values().any(|p| p.cursor_animating);
-		let flow = if state.dirty || scroll_anim || cursor_anim {
+		let bell_anim = state.bell_flash > 0.0;
+		let flow = if state.dirty || scroll_anim || cursor_anim || bell_anim {
 			state.dirty = false;
 			if state.render() {
-				// Scroll (the flagship smooth feature) and fresh content render at
-				// full rate; a lone idle cursor blink is capped to ~30fps so it isn't
-				// re-shaping text every frame just to pulse.
-				if scroll_anim || state.dirty {
+				// Scroll (the flagship smooth feature), a bell flash, and fresh
+				// content render at full rate; a lone idle cursor blink is capped to
+				// ~30fps so it isn't re-shaping text every frame just to pulse.
+				if scroll_anim || bell_anim || state.dirty {
 					ControlFlow::Poll
 				} else {
 					ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(33))
