@@ -66,8 +66,9 @@ pub struct Settings {
 	pub margin: f32,                       // logical px between content and pane edge
 	pub opacity: f32,                      // background opacity 0..1 (1 = fully opaque)
 	pub transparent_background: bool, // X11: per-pixel bg transparency (text stays opaque) via a GL surface
+	pub transparent_background_blur: bool, // X11: ask a KWin/picom compositor to blur the desktop behind the window
 	pub background_image: Option<PathBuf>, // resolved path, or None
-	pub background_opacity: f32,      // image visibility 0..1
+	pub background_opacity: f32,           // image visibility 0..1
 	pub background_fit: Fit,
 	pub background_blur: f32, // Gaussian blur sigma applied to the image (0 = none)
 	pub text_glow: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
@@ -105,6 +106,7 @@ impl Default for Settings {
 			margin: 8.0,
 			opacity: 0.95,
 			transparent_background: false,
+			transparent_background_blur: false,
 			background_image: None,
 			background_opacity: 0.33, // image visibility relative to bg color
 			background_fit: Fit::Stretch,
@@ -271,6 +273,9 @@ pub fn persist(orig: &Settings, s: &Settings) {
 	if s.transparent_background != orig.transparent_background {
 		doc["transparent_background"] = value(s.transparent_background);
 	}
+	if s.transparent_background_blur != orig.transparent_background_blur {
+		doc["transparent_background_blur"] = value(s.transparent_background_blur);
+	}
 	if s.background_opacity != orig.background_opacity {
 		doc["background_opacity"] = value(r(s.background_opacity));
 	}
@@ -390,6 +395,7 @@ struct RawConfig {
 	margin: Option<f32>,
 	opacity: Option<f32>,
 	transparent_background: Option<bool>,
+	transparent_background_blur: Option<bool>,
 	background_image: Option<String>,
 	background_opacity: Option<f32>,
 	background_fit: Option<String>,
@@ -498,6 +504,9 @@ fn resolve(raw: RawConfig) -> Settings {
 		transparent_background: raw
 			.transparent_background
 			.unwrap_or(d.transparent_background),
+		transparent_background_blur: raw
+			.transparent_background_blur
+			.unwrap_or(d.transparent_background_blur),
 		background_image: resolve_bg_image(raw.background_image),
 		background_opacity: raw
 			.background_opacity
@@ -773,6 +782,12 @@ margin = 8.0
 ## Background opacity, 0.0 (fully transparent) to 1.0 (opaque). Only takes effect
 ## when `transparent_background` is on.
 opacity = 0.95
+
+## Ask the compositor to blur the desktop showing through the translucent
+## background ("frosted glass"); text stays crisp. Only honored by KWin and
+## picom-with-blur; on Compiz/GNOME it does nothing (enable blur in the
+## compositor instead). The compositor, not SilkTerm, controls the blur radius.
+# transparent_background_blur = true
 
 ## Background image. Leave commented to auto-detect backgrounds/background.{png,jpg,jpeg}
 ## under this directory. Value may be an absolute path or a filename relative here.
