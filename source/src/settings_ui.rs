@@ -760,11 +760,9 @@ impl SettingsDialog {
 					self.reparse_edit();
 				}
 			}
-			Kind::Text => {
-				if !c.is_control() && buf.len() < 256 {
-					buf.push(c);
-					self.reparse_edit();
-				}
+			Kind::Text if !c.is_control() && buf.len() < 256 => {
+				buf.push(c);
+				self.reparse_edit();
 			}
 			_ => {}
 		}

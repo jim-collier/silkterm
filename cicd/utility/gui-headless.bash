@@ -31,7 +31,8 @@
 ##		gui-headless.bash status
 ##		gui-headless.bash stop              ## kill only what we started
 ##	Notes:
-##		Display/size is overridable via RPD_HEADLESS_DISPLAY / RPD_HEADLESS_SIZE.
+##		Display/size is overridable via CICD_HEADLESS_DISPLAY / CICD_HEADLESS_SIZE
+##		(legacy RPD_* names still honoured as fallbacks).
 ##	History: At bottom of script.
 
 ##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
@@ -42,10 +43,10 @@
 
 set -euo pipefail
 
-display="${RPD_HEADLESS_DISPLAY:-:99}"
-size="${RPD_HEADLESS_SIZE:-1920x1080x24}"
+display="${CICD_HEADLESS_DISPLAY:-${RPD_HEADLESS_DISPLAY:-:99}}"
+size="${CICD_HEADLESS_SIZE:-${RPD_HEADLESS_SIZE:-1920x1080x24}}"
 num="${display#:}"
-run_dir="/tmp/rpd-gui-headless"
+run_dir="/tmp/cicd-gui-headless-${USER}"
 mkdir -p "$run_dir"
 xvfb_pid="$run_dir/xvfb-${num}.pid"
 wm_pid="$run_dir/wm-${num}.pid"

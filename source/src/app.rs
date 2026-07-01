@@ -2478,7 +2478,7 @@ impl ApplicationHandler<UserEvent> for App {
 		let open_about = self
 			.state
 			.as_mut()
-			.map_or(false, |s| std::mem::take(&mut s.pending_about));
+			.is_some_and(|s| std::mem::take(&mut s.pending_about));
 		if open_about {
 			if let Some(info) = self.state.as_ref().map(|s| s.gfx.adapter_info.clone()) {
 				match crate::dialog::DialogWin::new_about(event_loop, &info) {
@@ -2493,7 +2493,7 @@ impl ApplicationHandler<UserEvent> for App {
 		let open_settings = self
 			.state
 			.as_mut()
-			.map_or(false, |s| std::mem::take(&mut s.pending_settings));
+			.is_some_and(|s| std::mem::take(&mut s.pending_settings));
 		if open_settings {
 			match crate::dialog::DialogWin::new_settings(event_loop) {
 				Ok(d) => {

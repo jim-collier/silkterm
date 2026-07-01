@@ -4,6 +4,15 @@
 members = ["source"]
 resolver = "3"
 
+# Clippy gate (cicd lints stage runs -D warnings). The allows are deliberate
+# house style, not suppressed problems: nested ifs read better than && chains
+# here, and the flagged fns/enums are shaped by wgpu/winit API reality.
+[workspace.lints.clippy]
+collapsible_if = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+large_enum_variant = "allow"
+
 # Profiles only take effect in the workspace root manifest, so they live here,
 # not in source/Cargo.toml.
 

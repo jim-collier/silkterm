@@ -62,7 +62,7 @@ fn main() -> anyhow::Result<()> {
 	if std::env::args().count() <= 1 {
 		let cl = config::settings().command_line.clone();
 		if !cl.trim().is_empty() {
-			match cli::shell_split(&cl).and_then(|toks| cli::parse(toks)) {
+			match cli::shell_split(&cl).and_then(cli::parse) {
 				Ok(c) => cli = c,
 				Err(e) => eprintln!("{}: config command_line: {e}", config::APP_NAME),
 			}
