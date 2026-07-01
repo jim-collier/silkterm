@@ -574,9 +574,9 @@ Layout:
   --size=N | --size=N%        new pane size in the split direction
 
 Per-scope (window/tab/pane; cascades, most-specific wins):
-  --title \"...\"               window/tab title
+  --title \"...\"               window/tab title (pane-level: not wired up yet)
   --shell \"...\"               command to run (argv; e.g. fish, 'bash --norc')
-  --keep-open[=BOOL]          keep the pane after the command exits
+  --keep-open[=BOOL]          keep the pane after the command exits (not implemented yet)
   --font-name \"...\"           font family
   --font-size N               font size
   --background-color #rrggbb
