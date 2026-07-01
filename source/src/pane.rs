@@ -157,6 +157,10 @@ pub struct Pane {
 	// frame is a pure cursor animation (no content/scroll/bell change), build skips
 	// the expensive text re-shape and reuses the cached buffer/bg/glyphs.
 	text_built: bool,
+	// TermMode snapshot from the last build, so per-keystroke/wheel input paths
+	// read it lock-free (at worst one frame stale) instead of taking the term
+	// lock the PTY reader may hold across a whole read cycle.
+	pub mode: TermMode,
 }
 
 impl Pane {
@@ -181,6 +185,7 @@ impl Pane {
 			Some(g) => g,
 			None => return self.last_draw.clone(),
 		};
+		self.mode = *guard.mode();
 
 		let cols = self.term.cols;
 		let history = guard.grid().history_size();
@@ -637,7 +642,7 @@ impl Pane {
 		let sr = ((y - self.rect.y - ctx.margin) / ctx.cell_h)
 			.floor()
 			.clamp(0.0, (lines - 1) as f32) as i32;
-		let d = self.term.term.lock().grid().display_offset() as i32;
+		let d = self.term.term.lock_unfair().grid().display_offset() as i32;
 		Some((Point::new(Line(sr - d), Column(col as usize)), side))
 	}
 
@@ -652,7 +657,7 @@ impl Pane {
 			return None;
 		}
 		let row: Vec<char> = {
-			let t = self.term.term.lock();
+			let t = self.term.term.lock_unfair();
 			let grid = t.grid();
 			(0..cols).map(|c| grid[point.line][Column(c)].c).collect()
 		};
@@ -664,24 +669,24 @@ impl Pane {
 	}
 
 	pub fn begin_selection(&self, point: Point, side: Side, ty: SelectionType) {
-		self.term.term.lock().selection = Some(Selection::new(ty, point, side));
+		self.term.term.lock_unfair().selection = Some(Selection::new(ty, point, side));
 	}
 
 	pub fn update_selection(&self, point: Point, side: Side) {
-		let mut t = self.term.term.lock();
+		let mut t = self.term.term.lock_unfair();
 		if let Some(sel) = t.selection.as_mut() {
 			sel.update(point, side);
 		}
 	}
 
 	pub fn clear_selection(&self) {
-		self.term.term.lock().selection = None;
+		self.term.term.lock_unfair().selection = None;
 	}
 
 	pub fn selection_text(&self) -> Option<String> {
 		self.term
 			.term
-			.lock()
+			.lock_unfair()
 			.selection_to_string()
 			.filter(|s| !s.is_empty())
 	}
@@ -692,7 +697,7 @@ impl Pane {
 		if self.read_only || text.is_empty() {
 			return;
 		}
-		let bracket = self.term.mode().contains(TermMode::BRACKETED_PASTE);
+		let bracket = self.mode.contains(TermMode::BRACKETED_PASTE);
 		let mut bytes = Vec::with_capacity(text.len() + 12);
 		if bracket {
 			bytes.extend_from_slice(b"\x1b[200~");
@@ -944,6 +949,7 @@ fn spawn_pane(
 		blink_t: 0.0,
 		cursor_animating: false,
 		text_built: false,
+		mode: TermMode::empty(),
 	})
 }
 

@@ -224,7 +224,7 @@ impl TermInstance {
 			columns: cols,
 			screen_lines: lines,
 		};
-		self.term.lock().resize(dims);
+		self.term.lock_unfair().resize(dims);
 		let win = WindowSize {
 			num_cols: cols as u16,
 			num_lines: lines as u16,
