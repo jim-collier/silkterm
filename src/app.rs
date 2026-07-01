@@ -858,6 +858,8 @@ impl State {
 		// per-pane (bg cells + cursor), scissored to the pane so overscan rows
 		// don't bleed into neighbours
 		let mut groups: Vec<(Rect, Vec<RectInstance>)> = Vec::new();
+		// cursors are drawn separately (above the glow, so its halo can't obscure them)
+		let mut cursors: Vec<(Rect, RectInstance)> = Vec::new();
 		let mut tops: HashMap<u64, f32> = HashMap::new();
 		let mut animating = bell > 0.0;
 		// text-glow colour map needs each cell's bg (so a glyph's halo takes its
@@ -886,9 +888,10 @@ impl State {
 			if glow_on {
 				glow_cells.extend_from_slice(&draw.bg);
 			}
-			let mut g = draw.bg;
-			g.extend(draw.cursor);
-			groups.push((rect, g));
+			groups.push((rect, draw.bg));
+			if let Some(cq) = draw.cursor {
+				cursors.push((rect, cq));
+			}
 		}
 
 		let under_len = under.len() as u32;
@@ -926,6 +929,14 @@ impl State {
 			}
 		}
 		let ring_end = instances.len() as u32;
+
+		// cursor quads get their own per-pane ranges, drawn after the glow composite
+		let mut cursor_ranges: Vec<(Rect, u32, u32)> = Vec::new();
+		for (rect, cq) in cursors {
+			let start = instances.len() as u32;
+			instances.push(cq);
+			cursor_ranges.push((rect, start, instances.len() as u32));
+		}
 
 		let bw = self.gfx.config.width as f32;
 		let menu_h = self.menu_bar_h();
@@ -1344,6 +1355,16 @@ impl State {
 					.composite(&self.gfx.queue, &mut pass, glow_intensity);
 				pass.set_scissor_rect(0, 0, sw, sh);
 			}
+			// cursor above the glow (halo can't obscure it), still under the crisp text
+			for (rect, start, end) in &cursor_ranges {
+				let (x, y, w, h) = scissor(*rect, sw, sh);
+				if w == 0 || h == 0 {
+					continue;
+				}
+				pass.set_scissor_rect(x, y, w, h);
+				self.rects.draw(&mut pass, *start..*end);
+			}
+			pass.set_scissor_rect(0, 0, sw, sh);
 			if let Err(e) = self.text.render(&mut pass) {
 				eprintln!("{}: text render failed: {e:?}", config::APP_NAME);
 			}
