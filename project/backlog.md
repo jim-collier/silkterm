@@ -50,6 +50,19 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- 🔘 Outer glow should only to terminal text - not tab titles or the menu bar.
+
+- ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
+	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. (20260629)
+		- Cause: chrome used generic `Family::SansSerif`. fontdb's generic-sans default is "Arial"; when that's absent (typical on Linux) the query falls through to whatever matches - here the GNOME *document* font, which is a serif (GentiumAlt). (fontconfig's actual sans-serif on this box is Noto Sans.)
+		- Fix: pin a concrete sans family, mirroring the mono pin - `text::resolve_sans_family` + `pin_sans_family` resolve the OS sans-serif (`sysfont::sans_serif` = `fc-match sans-serif`), else a curated list, validated against the db; `sans_attrs` now uses `Family::Name`. Headless unit test asserts a concrete face resolves (got "Noto Sans"). 29 tests pass.
+		- ✅ Verify that menu bar height adjusts based on menu font. - Confirmed: `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (`text.cell_h`) + pad, so a larger menu font grows the bars (the height work was done earlier under #t6thx).
+	- ✅ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. (20260630) - the bar/tab height scales with the menu font (cell_h-based); the remaining issue was descenders (g/j/p/q/y) sitting tight against the button bottom. The title was already near the button top so it couldn't move up - so bumped TAB_BAR_VPAD 8 -> 11, making the bar a few px taller and giving descenders clearance. Verified via a descender-heavy tab title screenshot (PID-verified capture).
+
+- 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
+	- Cause (by code analysis): when the glyph atlas fills up (a long session of varied glyphs), text `prepare()` fails and `render` returned early - *above* the per-frame atlas trim - so the atlas never recovered and all text stayed black forever. The cursor and cell backgrounds use a separate rect renderer, so they kept showing (matches the report exactly).
+	- Fix: trim the atlas on the prepare-failure path so the next frame re-prepares with room and recovers. Couldn't force an atlas-full in a short stress run (a 20s unicode flood didn't fill it - the trigger needs a genuinely long session), so this is verified by code analysis, not a live repro. Watch for recurrence.
+
 - ✅ High severity: Typing "exit" in tab, closes the whole application. It should only close that tab. Doesn't do that for panes, only tabs. Closing a tab via menu only closes that one tab. (20260629; real cause found + fixed 20260630)
 	- Cause: the shell-exit handler (`UserEvent::Exit(id)` in app.rs) just called `tabs.cur_mut().close(id)` and quit the app whenever that returned true. So the last pane of a tab killed the whole app when other tabs existed; worse, a background tab's shell exiting ran `close(id)` on the *active* tab (which doesn't own that pane) -> returns true -> app quit. The Close-Pane menu had the right pane->tab->window cascade; the exit path didn't.
 	- Fix: `UserEvent::Exit` now finds the pane's owning tab (`position(|pm| pm.panes.contains_key(&id))`) and applies the same cascade - >1 pane in that tab closes the pane; else >1 tab closes that tab (`close_tab_at(idx)`, generalized from `close_tab`); else (last pane of last tab) exits. Handles background-tab exits and keeps `active` pointing at the same tab.
@@ -61,26 +74,12 @@ In each section, items are listed approximately from newest to oldest.
 			- With four tabs open, and type "exit" from the third, closes the first two tabs (and not the third).
 		- ✅ REAL cause (20260630): pane ids collided across tabs. Each tab is a separate PaneManager that assigned ids from its own counter (first pane always id 1), so the shell-exit event (carries only the id) resolved to the WRONG tab - the first one with that id - and closed it; dropping that tab's term fired another Exit -> cascade (closed all but one, sometimes hung), exactly as reported. The earlier fix (find owner tab + cascade) was right in shape but the id lookup was ambiguous. Fix: `alloc_pane_id()` - one global counter, so every pane is unique everywhere. Verified with instrumentation: exit in the 3rd of 4 tabs resolves to tab index 2, exactly one close, no cascade, app alive.
 
-- 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
-	- Cause (by code analysis): when the glyph atlas fills up (a long session of varied glyphs), text `prepare()` fails and `render` returned early - *above* the per-frame atlas trim - so the atlas never recovered and all text stayed black forever. The cursor and cell backgrounds use a separate rect renderer, so they kept showing (matches the report exactly).
-	- Fix: trim the atlas on the prepare-failure path so the next frame re-prepares with room and recovers. Couldn't force an atlas-full in a short stress run (a 20s unicode flood didn't fill it - the trigger needs a genuinely long session), so this is verified by code analysis, not a live repro. Watch for recurrence.
-
-- 🛠️ Allow toggling from default "Insert" mode, to "Overwrite":
-	- 🔘 The cursor shape toggles thick and thin, but not the behavior. It's always in insert mode.
-
 - ✅ Cursor: (20260629)
 	- ✅ Smooth-scroll (when moving to the right). - the cursor slides to its target column as you type (snaps on a newline); idles at 0% CPU.
 	- ✅ Blink at the same rate, but "phase" between of and on, not just on or off. - smooth cosine fade, now default ON: a render refactor skips re-shaping text on cursor-only frames (~70% -> ~21% of a core, debug; far less in release), so blinking no longer pegs the CPU. `cursor_blink` config to disable. Detail in `project/details.md`.
 
 - ✅ Setting dialog: (20260629)
 	- ✅ Setting Bg image fit to "Zoom", then Apply works. But back to "Stretch", then Apply, doesn't. - Cause: the dialog's `orig` baseline was captured at open and never refreshed, so a 2nd Apply diffed against the open-time snapshot; re-selecting the original value read as "no change". Fix: `commit_baseline()` resets orig = edited after each Apply (fixes every setting, not just fit).
-
-- 🛠️ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
-	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. (20260629)
-		- Cause: chrome used generic `Family::SansSerif`. fontdb's generic-sans default is "Arial"; when that's absent (typical on Linux) the query falls through to whatever matches - here the GNOME *document* font, which is a serif (GentiumAlt). (fontconfig's actual sans-serif on this box is Noto Sans.)
-		- Fix: pin a concrete sans family, mirroring the mono pin - `text::resolve_sans_family` + `pin_sans_family` resolve the OS sans-serif (`sysfont::sans_serif` = `fc-match sans-serif`), else a curated list, validated against the db; `sans_attrs` now uses `Family::Name`. Headless unit test asserts a concrete face resolves (got "Noto Sans"). 29 tests pass.
-		- ✅ Verify that menu bar height adjusts based on menu font. - Confirmed: `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (`text.cell_h`) + pad, so a larger menu font grows the bars (the height work was done earlier under #t6thx).
-	- 🛠️ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. - Bar/tab height already scales with the menu font (cell_h-based). The serif font was the likely cause of the perceived bottom-crowding; with the corrected sans font, nudged tab titles up ~1.5px for more bottom clearance (`top: tby + TAB_BAR_VPAD/2 - 1`). Needs an owner eyeball to confirm/fine-tune - couldn't screenshot here (a live SilkTerm window of the owner's kept matching the capture).
 
 - ✅ Critical: Smooth-scrolling apparently just quits after using the terminal for a while. It seems to quit, if output is too fast for a while, but that could be a red-herring. Maybe it's just after any particular amount of general use.
 	- Cause: output-easing was triggered off scrollback *growth* (`grid.history_size()` rising). That growth flatlines once the scrollback buffer fills (default 10k lines) - old lines drop off the top as fast as new ones arrive - so after enough output the growth reads 0 every frame and `nudge_output` never fires again. Smooth output scroll dies "after a while", and sooner under fast output (which fills the 10k buffer faster). Manual scrollback (wheel) was unaffected, which is why it looked like only the smooth *output* scroll quit.
@@ -175,6 +174,10 @@ In each section, items are listed approximately from newest to oldest.
 		- Thick: Gray (depending on the theme).
 		- Thin: a fully bright version of the thick one. (E.g. proportionally increase R, G, and B, so that the highest one is FF.) Not as a hardcoded rule, but as a theming default.
 		- Defaults overridden by themes. The default "SilkTerm" theme should use those colors. Update others as appropriate, but the styling rule for "Thin" above should also hold for themes.
+
+- 🔘 Outer glow enhancements:
+	- 🔘 When outer glow is applied, also add an antialiased 1px outer border around the letters, using the same color rules as outer glow.
+	- 🔘 For bold text, calculate the 
 
 - 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
 	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
@@ -694,6 +697,10 @@ In each section, items are listed approximately from newest to oldest.
 		- Too fiddly. Possibly revisit in future. This lives in `cicd.bash`, which is pseudo-generic and could be made more so. Maybe it can shell out to a hyper-specific build script, or be updated to handle rust, go, and c++. Or more likely, it's just project-specifig, in spite of being originally [re]architected to call a settings script.
 
 ### Canceled
+
+- 🚫 Allow toggling from default "Insert" mode, to "Overwrite":
+	- The cursor shape toggles thick and thin, but not the behavior. It's always in insert mode.
+	- This can't be done without wonky hacks.
 
 - [🚫] Terse `--layout` DSL as optional sugar over the window/tab/pane CLI model (not a replacement). One compact string for quick splits; lowers to the exact same internal layout the hierarchical flags produce, so it inherits per-pane targeting "for free."
 	- Operators (mnemonic = the divider they draw): `|` side-by-side (vertical divider), `-` stacked (horizontal divider); `(...)` to nest (a group is uniform - mix directions by nesting); `;` separates tabs; `.` = one default pane.
