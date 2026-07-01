@@ -349,7 +349,11 @@ pub struct SettingsDialog {
 	specs: Vec<Spec>,
 	drag: Option<usize>,           // slider row being dragged
 	edit: Option<(usize, String)>, // row being typed (hex for Color, path for Text)
-	use_system_font: bool,         // "Use system font" toggle; clears font keys
+	use_system_font: bool,         // "Use system font" toggle
+	// While system font is on, the custom font settings are disabled but their
+	// values are kept here so unchecking restores them (never clobbered).
+	saved_font_family: Option<String>,
+	saved_font_size: f32,
 }
 
 impl SettingsDialog {
@@ -371,6 +375,10 @@ impl SettingsDialog {
 			h,
 		};
 		let s = (*config::settings()).clone();
+		// No family set = already following the OS font, so open with the box checked.
+		let use_system_font = s.font_family.is_none();
+		let saved_font_family = s.font_family.clone();
+		let saved_font_size = s.font_size;
 		Self {
 			orig: s.clone(),
 			edited: s,
@@ -378,7 +386,9 @@ impl SettingsDialog {
 			specs,
 			drag: None,
 			edit: None,
-			use_system_font: false,
+			use_system_font,
+			saved_font_family,
+			saved_font_size,
 		}
 	}
 
@@ -495,6 +505,8 @@ impl SettingsDialog {
 			Key::BgBlur => s.background_blur,
 			Key::GlowRadius => s.text_glow_radius,
 			Key::GlowSoftness => s.text_glow_softness,
+			// while following the OS, the field shows the kept custom size (greyed)
+			Key::FontSize if self.use_system_font => self.saved_font_size,
 			Key::FontSize => s.font_size,
 			Key::LineHeight => s.line_height_scale,
 			Key::Margin => s.margin,
@@ -537,6 +549,10 @@ impl SettingsDialog {
 				.as_ref()
 				.map(|p| p.to_string_lossy().into_owned())
 				.unwrap_or_default(),
+			// while following the OS, show the kept custom family (greyed)
+			Key::FontFamily if self.use_system_font => {
+				self.saved_font_family.clone().unwrap_or_default()
+			}
 			Key::FontFamily => self.edited.font_family.clone().unwrap_or_default(),
 			Key::DefaultShell => self.edited.default_shell.clone(),
 			_ => String::new(),
@@ -566,11 +582,19 @@ impl SettingsDialog {
 		}
 	}
 	fn set_system_font(&mut self, on: bool) {
+		if on == self.use_system_font {
+			return;
+		}
 		self.use_system_font = on;
 		if on {
-			// follow the OS: clear the family and adopt the detected size live
-			self.edited.font_family = None;
+			// follow the OS live, but remember the custom font so unchecking restores
+			// it (the fields are only disabled, their values are kept - #63/#140).
+			self.saved_font_family = self.edited.font_family.take();
+			self.saved_font_size = self.edited.font_size;
 			self.edited.font_size = config::default_font_size();
+		} else {
+			self.edited.font_family = self.saved_font_family.clone();
+			self.edited.font_size = self.saved_font_size;
 		}
 	}
 	fn get_toggle(&self, key: Key) -> bool {
@@ -618,6 +642,7 @@ impl SettingsDialog {
 		(matches!(key, Key::Opacity | Key::BackdropBlur) && !self.edited.transparent_background)
 			|| (matches!(key, Key::GlowRadius | Key::GlowSoftness) && !self.edited.text_glow)
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
+			|| (matches!(key, Key::FontFamily | Key::FontSize) && self.use_system_font)
 	}
 	fn get_col(&self, key: Key) -> [u8; 3] {
 		let s = &self.edited;
