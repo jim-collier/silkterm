@@ -23,7 +23,7 @@
 ##	- Stages (fail-fast, any error aborts before the next stage):
 ##	   1. format (cargo fmt)
 ##	   2. debug build
-##	   3. regression tests
+##	   3. regression tests + lints (clippy gating, cargo-deny advisory)
 ##	   4. profiler (flamegraph SVG; non-gating artifact - see failure policy)
 ##	   5. release build (native + cross targets)
 ##	   6. dogfood (install native release locally)
@@ -73,7 +73,7 @@ while (($#)); do case "$1" in
 	--quick)          BUILD_CROSS=0; PROFILE_ENABLE=0; shift ;;   ## skip the slow stages
 	--message=*|-m=*) cli_message="${1#*=}"; shift ;;
 	-m|--message)     cli_message="${2-}"; shift; (($#)) && shift ;;
-	-h|--help)        sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	-h|--help)        sed -n '/^##	- Purpose:/,/^##	History:/p' "${BASH_SOURCE[0]}" | sed '$d; s/^##	\{0,1\}//'; exit 0 ;;
 	*) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
 esac; done
 
@@ -99,7 +99,7 @@ trap 'rc=$?; printf "\n%sCICD ABORTED (exit %s) at line %s: %s%s\n" "${red}" "$r
 ## Preflight: show the plan with resolved paths, then confirm.
 abs_script="${root}/${PROFILE_WORKLOAD_SCRIPT}"
 profile_dir="$(cd "${root}" && mkdir -p "${PROFILE_OUT_DIR}" 2>/dev/null; cd "${PROFILE_OUT_DIR}" 2>/dev/null && pwd || echo "${root}/${PROFILE_OUT_DIR}")"
-dogfood_dest=""; for d in "${DOGFOOD_DESTS[@]:-}"; do [[ -d "$d" ]] && { dogfood_dest="$d"; break; }; done
+dogfood_dest=""; for d in "${DOGFOOD_DESTS[@]:-}"; do [[ -d "$d" && -w "$d" ]] && { dogfood_dest="$d"; break; }; done
 
 #printf '\n%s%s local CI/CD%s\n'  "${b}"  "${APP_NAME}"  "${rst}"
 printf  '\n%s%s local CI/CD%s\n'   ""      "${APP_NAME}"  ""
@@ -159,6 +159,23 @@ ok "debug build"
 ## Stage 3: regression tests.
 step "3/7  Regression tests"
 "${TEST_CMD[@]}"
+if [[ -n "${LINT_CMD+x}" ]] && ((${#LINT_CMD[@]})); then
+	if "${LINT_PROBE[@]}" >/dev/null 2>&1; then
+		"${LINT_CMD[@]}"
+		ok "lints clean"
+	else
+		warn "lints skipped: ${LINT_PROBE[*]} failed (component not installed?)"
+	fi
+fi
+if [[ -n "${DENY_CMD+x}" ]] && ((${#DENY_CMD[@]})); then
+	if "${DENY_PROBE[@]}" >/dev/null 2>&1; then
+		## Advisory-only for now: report license/advisory/duplicate findings
+		## without failing the pipeline (tighten to gating once tuned).
+		"${DENY_CMD[@]}" || warn "cargo-deny reported findings (non-gating)"
+	else
+		warn "deps check skipped: ${DENY_PROBE[*]} failed (cargo install cargo-deny)"
+	fi
+fi
 ok "tests passed"
 
 ## Stage 4: profiler (non-gating artifact; failures classified below).
@@ -187,8 +204,8 @@ run_profiler(){
 	## user's visible session (renders via software GL / llvmpipe on Xvfb).
 	local headless="${here}/utility/gui-headless.bash"
 	## Not :99 - rapid-photo-downloader-pro uses that display for its own testing.
-	export RPD_HEADLESS_DISPLAY="${RPD_HEADLESS_DISPLAY:-:98}"
-	local hdisp="${RPD_HEADLESS_DISPLAY}"
+	export CICD_HEADLESS_DISPLAY="${CICD_HEADLESS_DISPLAY:-${RPD_HEADLESS_DISPLAY:-:98}}"
+	local hdisp="${CICD_HEADLESS_DISPLAY}"
 	if ! "${headless}" start >/dev/null 2>&1; then
 		((PROFILE_STRICT)) && die "profiler: headless display failed to start"
 		warn "profiler skipped: headless display failed to start"; return 0
@@ -222,7 +239,7 @@ if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
 	for t in "${CROSS_TARGETS[@]}"; do
 		local_label="${t%%|*}"; rest="${t#*|}"; art="${rest%%|*}"; cmd="${rest#*|}"
 		step "5/7  Release build: ${local_label}"
-		eval ${cmd}
+		eval "${cmd}"
 		[[ -f "${art}" ]] || die "missing artifact for ${local_label}: ${art}"
 		ok "${local_label}: ${art} ($(du -h "${art}" | cut -f1))"
 	done

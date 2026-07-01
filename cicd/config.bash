@@ -51,6 +51,17 @@ DEBUG_BUILD_CMD=(cargo build)
 ## Stage 3: regression tests
 TEST_CMD=(cargo test)
 
+## Stage 3 (after tests): lints. Gating; house allows live in the workspace
+## Cargo.toml [workspace.lints.clippy]. PROBE decides tool availability -
+## a failed probe skips the step with a warning instead of aborting.
+LINT_PROBE=(cargo clippy --version)
+LINT_CMD=(cargo clippy --workspace --all-targets -- -D warnings)
+
+## Stage 3 (after lints): dependency police (licenses/advisories/duplicates,
+## policy in deny.toml). Non-gating for now; tighten once the report is tuned.
+DENY_PROBE=(cargo deny --version)
+DENY_CMD=(cargo deny check)
+
 ## Stage 5: native release build + its artifact (this is what gets dogfooded)
 RELEASE_NATIVE_CMD=(cargo build --release)
 RELEASE_NATIVE_BIN="target/release/${EXE_NAME}"
