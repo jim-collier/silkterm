@@ -308,6 +308,13 @@ impl Gfx {
 			)?
 		};
 		let ctx = ctx.make_current(&surface)?;
+		// Frame pacing on this path is swap_buffers blocking on vblank; the driver
+		// default isn't guaranteed (__GL_SYNC_TO_VBLANK=0, PRIME setups), and without
+		// it every scroll animation becomes an unthrottled busy-render loop.
+		let _ = surface.set_swap_interval(
+			&ctx,
+			glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()),
+		);
 
 		// wrap glutin's GL context as a wgpu device (hal external interop)
 		let exposed = unsafe {
