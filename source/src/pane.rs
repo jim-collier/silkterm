@@ -161,6 +161,12 @@ pub struct Pane {
 	// read it lock-free (at worst one frame stale) instead of taking the term
 	// lock the PTY reader may hold across a whole read cycle.
 	pub mode: TermMode,
+	// This pane's PTY produced output since the last successful build. Set by
+	// the Wakeup(id) event, cleared in build() once the term lock is acquired
+	// (a busy-term frame keeps it, so the rebuild retries next frame). Scopes
+	// re-shaping to panes that changed: one busy pane no longer forces its
+	// idle siblings through set_rich_text every frame.
+	pub content_dirty: bool,
 }
 
 impl Pane {
@@ -186,6 +192,7 @@ impl Pane {
 			None => return self.last_draw.clone(),
 		};
 		self.mode = *guard.mode();
+		self.content_dirty = false;
 
 		let cols = self.term.cols;
 		let history = guard.grid().history_size();
@@ -950,6 +957,7 @@ fn spawn_pane(
 		cursor_animating: false,
 		text_built: false,
 		mode: TermMode::empty(),
+		content_dirty: true,
 	})
 }
 

@@ -15,7 +15,8 @@ pub type PaneId = u64;
 
 #[derive(Debug, Clone)]
 pub enum UserEvent {
-	Wakeup,
+	// new output in this pane's terminal (render only what changed)
+	Wakeup(PaneId),
 	Title(PaneId, String),
 	// terminal replies (cursor position report, device attributes, ...) that
 	// must be written back to the PTY
@@ -41,7 +42,7 @@ impl EventProxy {
 impl EventListener for EventProxy {
 	fn send_event(&self, event: Event) {
 		let _ = match event {
-			Event::Wakeup => self.proxy.send_event(UserEvent::Wakeup),
+			Event::Wakeup => self.proxy.send_event(UserEvent::Wakeup(self.id)),
 			Event::Title(t) => self.proxy.send_event(UserEvent::Title(self.id, t)),
 			Event::ResetTitle => self
 				.proxy
