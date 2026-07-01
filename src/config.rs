@@ -442,8 +442,10 @@ fn load() -> Settings {
 		}
 		let _ = std::fs::write(&path, DEFAULT_CONFIG);
 	}
-	// Backfill any keys a (possibly older) config is missing, so new settings
-	// appear documented without clobbering the user's existing file.
+	// Migrate an older config in place (rename/remove changed keys) then backfill
+	// any keys it's missing, so an updated config stays current without clobbering
+	// the user's existing values.
+	migrate_config(&path);
 	backfill_config(&path);
 	let raw: RawConfig = match std::fs::read_to_string(&path) {
 		Ok(text) => parse_lenient(&text, &path),
@@ -698,6 +700,59 @@ fn line_setting_key(line: &str) -> Option<&str> {
 		return None;
 	}
 	t[end..].trim_start().starts_with('=').then_some(key)
+}
+
+// Keys that were renamed across versions (old -> new). A rename copies the value
+// and preserves the comment/active state; if the new key is already present the
+// old one is just dropped.
+const CONFIG_RENAMES: &[(&str, &str)] = &[("cursor_insert_shape", "cursor_shape")];
+// Keys that no longer exist and should be removed from an existing config.
+const CONFIG_REMOVED: &[&str] = &["cursor_overwrite_shape", "cursor_blink"];
+
+// Migrate an existing config in place across program updates: rename keys whose
+// name changed, drop keys that no longer exist. Preserves the user's values,
+// comments, and layout (line-based, like backfill). New keys are added by
+// backfill_config; this only renames/removes, so run it first.
+fn migrate_config(path: &std::path::Path) {
+	let Ok(text) = std::fs::read_to_string(path) else {
+		return;
+	};
+	if let Some(out) = migrate_config_text(&text) {
+		let _ = std::fs::write(path, out);
+	}
+}
+
+// The rename/remove transform, as a pure fn (testable). Returns Some(new text)
+// only if something changed.
+fn migrate_config_text(text: &str) -> Option<String> {
+	// new-key targets already present (active or commented): don't create a dup
+	let have_new: std::collections::HashSet<&str> = text
+		.lines()
+		.filter_map(line_setting_key)
+		.filter(|k| CONFIG_RENAMES.iter().any(|(_, n)| n == k))
+		.collect();
+
+	let mut changed = false;
+	let mut out: Vec<String> = Vec::new();
+	for line in text.lines() {
+		match line_setting_key(line) {
+			Some(k) if CONFIG_REMOVED.contains(&k) => changed = true, // drop
+			Some(k) => match CONFIG_RENAMES.iter().find(|(old, _)| *old == k) {
+				Some((_, new)) if !have_new.contains(new) => {
+					out.push(line.replacen(k, new, 1)); // key is the first token
+					changed = true;
+				}
+				Some(_) => changed = true, // new key already there; drop the old
+				None => out.push(line.to_string()),
+			},
+			None => out.push(line.to_string()),
+		}
+	}
+	changed.then(|| {
+		let mut joined = out.join("\n");
+		joined.push('\n');
+		joined
+	})
 }
 
 // Insert any settings the `DEFAULT_CONFIG` template defines that `path` lacks,
@@ -976,5 +1031,29 @@ mod tests {
 		let raw = parse_lenient(text, std::path::Path::new("test.toml"));
 		assert_eq!(raw.opacity, Some(0.7)); // before the bad line
 		assert_eq!(raw.margin, Some(12.0)); // after the bad line
+	}
+
+	// In-place migration: rename changed keys, drop obsolete ones, keep the rest.
+	#[test]
+	fn migrate_config_renames_and_removes() {
+		let text = "opacity = 0.7\ncursor_insert_shape = \"block\"\ncursor_overwrite_shape = \"bar\"\ncursor_blink = enable\nmargin = 12.0\n";
+		let out = migrate_config_text(text).expect("should change");
+		assert!(
+			out.contains("cursor_shape = \"block\""),
+			"rename value kept: {out:?}"
+		);
+		assert!(!out.contains("cursor_insert_shape"), "old key gone");
+		assert!(!out.contains("cursor_overwrite_shape"), "obsolete removed");
+		assert!(!out.contains("cursor_blink"), "obsolete removed");
+		assert!(
+			out.contains("opacity = 0.7") && out.contains("margin = 12.0"),
+			"kept the rest"
+		);
+	}
+
+	// A config with nothing to migrate is left untouched (no needless rewrite).
+	#[test]
+	fn migrate_config_noop_when_current() {
+		assert!(migrate_config_text("opacity = 0.7\ncursor_shape = \"bar\"\n").is_none());
 	}
 }
