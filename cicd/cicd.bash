@@ -38,6 +38,7 @@
 ##	   --no-profile        skip the profiler stage
 ##	   --no-dogfood        skip installing the native release locally
 ##	   --no-publish        skip the git backup + publish stage
+##	   --quick             skip the slow stages (cross-builds + profiling)
 ## - Reuse: copy the cicd/ directory into another project and edit config.bash.
 
 ##	History: At bottom of script.
@@ -69,6 +70,7 @@ while (($#)); do case "$1" in
 	--no-profile)     PROFILE_ENABLE=0; shift ;;
 	--no-dogfood)     DOGFOOD_DESTS=(); shift ;;
 	--no-publish)     GIT_PUBLISH=(); shift ;;
+	--quick)          BUILD_CROSS=0; PROFILE_ENABLE=0; shift ;;   ## skip the slow stages
 	--message=*|-m=*) cli_message="${1#*=}"; shift ;;
 	-m|--message)     cli_message="${2-}"; shift; (($#)) && shift ;;
 	-h|--help)        sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
