@@ -22,7 +22,7 @@ use crate::clipboard::Clipboard;
 use crate::config;
 use crate::gfx::{Gfx, RectInstance, RectRenderer};
 use crate::input;
-use crate::pane::{Dir, PaneManager, Rect};
+use crate::pane::{Dir, Pane, PaneManager, Rect};
 use crate::term::{PaneId, UserEvent};
 use crate::text::TextCtx;
 
@@ -292,6 +292,14 @@ impl Tabs {
 	fn len(&self) -> usize {
 		self.list.len()
 	}
+	// PaneIds are globally unique; the pane may live in any tab, not just the
+	// active one (background-tab shells reply to ESC[6n etc. too)
+	fn find_pane(&self, id: PaneId) -> Option<&Pane> {
+		self.list.iter().find_map(|pm| pm.panes.get(&id))
+	}
+	fn find_pane_mut(&mut self, id: PaneId) -> Option<&mut Pane> {
+		self.list.iter_mut().find_map(|pm| pm.panes.get_mut(&id))
+	}
 	fn next(&mut self) {
 		let n = self.list.len();
 		self.active = (self.active + 1) % n;
@@ -321,6 +329,7 @@ impl Tabs {
 const MENU_BAR_VPAD: f32 = 6.0;
 const TAB_BAR_VPAD: f32 = 11.0; // enough that tab-title descenders (g/j/p/q/y) clear the button bottom
 const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to settle)
+const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-size settle time before hitting disk
 const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
 
@@ -344,6 +353,8 @@ struct State {
 	dirty: bool,
 	bell_flash: f32,    // visual-bell brightness, set to 1.0 on BEL, decays to 0
 	size_tracked: bool, // false until the first frame, so startup/programmatic resizes don't overwrite remembered_size
+	pending_size: Option<(usize, usize)>, // debounced remember-size: persisted after the size holds, not per resize tick
+	pending_size_at: Instant,
 	menu: Option<ContextMenu>,
 	menu_buffer: Buffer,
 	decorated: bool,           // window frame shown (winit has no getter, so track it)
@@ -678,6 +689,21 @@ impl State {
 		};
 		let cols = inv(w as f32, self.text.cell_w, 0.0);
 		let rows = inv(h as f32, self.text.cell_h, self.menubar_h());
+		// debounce: an interactive drag fires many Resized events; writing
+		// config.toml on each would be dozens of file writes/sec. Persist in
+		// flush_window_size once the size has held (or on exit).
+		self.pending_size = Some((cols, rows));
+		self.pending_size_at = Instant::now();
+	}
+
+	fn flush_window_size(&mut self, force: bool) {
+		let Some((cols, rows)) = self.pending_size else {
+			return;
+		};
+		if !force && self.pending_size_at.elapsed() < SIZE_SAVE_DEBOUNCE {
+			return;
+		}
+		self.pending_size = None;
 		let orig = (*config::settings()).clone();
 		if cols == orig.remembered_columns && rows == orig.remembered_rows {
 			return;
@@ -1501,6 +1527,14 @@ fn build_layout(
 	area: Rect,
 ) -> Vec<PaneManager> {
 	use crate::cli::Size;
+	// A bad --shell / default_shell (typo'd binary, PTY failure) should read
+	// like the CLI parse errors, not a Rust panic + backtrace.
+	let spawn = |text: &mut TextCtx, shell: Option<Vec<String>>| {
+		PaneManager::new(text, proxy, area, shell).unwrap_or_else(|e| {
+			eprintln!("{}: failed to start shell: {e}", config::APP_NAME);
+			std::process::exit(2);
+		})
+	};
 	if !cli.hierarchical {
 		let shell = cli
 			.win
@@ -1508,8 +1542,7 @@ fn build_layout(
 			.shell
 			.clone()
 			.or_else(config::default_shell_argv);
-		let pm = PaneManager::new(text, proxy, area, shell).expect("spawn shell");
-		return vec![pm];
+		return vec![spawn(text, shell)];
 	}
 	let mut out = Vec::new();
 	for tab in &cli.tabs {
@@ -1521,7 +1554,7 @@ fn build_layout(
 			.or_else(|| tab.style.shell.clone())
 			.or_else(|| cli.win.style.shell.clone())
 			.or_else(config::default_shell_argv);
-		let mut pm = PaneManager::new(text, proxy, area, main_shell.clone()).expect("spawn shell");
+		let mut pm = spawn(text, main_shell.clone());
 		let main_id = pm.focused;
 		let mut handles: HashMap<String, PaneId> = HashMap::new();
 		handles.insert("main".into(), main_id);
@@ -1745,17 +1778,27 @@ impl ApplicationHandler<UserEvent> for App {
 		// normal wgpu path is used (Wayland already supports premultiplied alpha).
 		// If the GL context can't be created, fall back to the native wgpu surface.
 		let want_gl = is_x11(event_loop);
-		let (mut gfx, window) = match want_gl
-			.then(|| Gfx::new_gl_transparent(event_loop, attrs.clone()))
-			.and_then(Result::ok)
-		{
-			Some(pair) => pair,
-			None => {
-				let window = Arc::new(event_loop.create_window(attrs).expect("window"));
-				let gfx = Gfx::new(window.clone()).expect("gpu init");
-				(gfx, window)
-			}
-		};
+		let (mut gfx, window) =
+			match want_gl.then(|| Gfx::new_gl_transparent(event_loop, attrs.clone())) {
+				Some(Ok(pair)) => pair,
+				other => {
+					if let Some(Err(e)) = other {
+						eprintln!(
+							"{}: GL backend unavailable ({e}); using native surface (no transparency)",
+							config::APP_NAME
+						);
+					}
+					let window = Arc::new(event_loop.create_window(attrs).unwrap_or_else(|e| {
+						eprintln!("{}: could not create a window: {e}", config::APP_NAME);
+						std::process::exit(2);
+					}));
+					let gfx = Gfx::new(window.clone()).unwrap_or_else(|e| {
+						eprintln!("{}: no usable GPU/renderer: {e}", config::APP_NAME);
+						std::process::exit(2);
+					});
+					(gfx, window)
+				}
+			};
 		// System theme mode: seed the OS dark/light bit before the first frame so a
 		// system-mode theme resolves to the right palette immediately (no flash).
 		config::reapply_for_os(!matches!(window.theme(), Some(winit::window::Theme::Light)));
@@ -1860,6 +1903,8 @@ impl ApplicationHandler<UserEvent> for App {
 			dirty: true,
 			bell_flash: 0.0,
 			size_tracked: false,
+			pending_size: None,
+			pending_size_at: Instant::now(),
 			menu: None,
 			menu_buffer,
 			decorated,
@@ -1884,12 +1929,12 @@ impl ApplicationHandler<UserEvent> for App {
 				state.dirty = true;
 			}
 			UserEvent::PtyWrite(id, bytes) => {
-				if let Some(p) = state.tabs.cur().panes.get(&id) {
+				if let Some(p) = state.tabs.find_pane(id) {
 					p.term.write(bytes);
 				}
 			}
 			UserEvent::Title(id, t) => {
-				if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
+				if let Some(p) = state.tabs.find_pane_mut(id) {
 					p.title = t;
 				}
 				if id == state.tabs.cur().focused {
@@ -2419,6 +2464,13 @@ impl ApplicationHandler<UserEvent> for App {
 	// request_redraw isn't reliable under some compositors, so we drive frames
 	// here: render when something changed or an animation is in flight, and
 	// poll only while animating (otherwise sleep until the next event).
+	fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+		// don't lose a resize done just before quitting
+		if let Some(state) = self.state.as_mut() {
+			state.flush_window_size(true);
+		}
+	}
+
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
 		// cicd profiler: in profile mode run for SILK_PROFILE_SECS then exit, so
 		// main can dump the flamegraph (the workload runs in the startup pane).
@@ -2501,6 +2553,14 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 		} else {
 			ControlFlow::Wait
+		};
+		// Debounced remember-size: persist once the size has held; while one is
+		// pending, make sure the loop wakes up to flush it even when idle.
+		state.flush_window_size(false);
+		let flow = if let (ControlFlow::Wait, Some(_)) = (flow, state.pending_size) {
+			ControlFlow::WaitUntil(state.pending_size_at + SIZE_SAVE_DEBOUNCE)
+		} else {
+			flow
 		};
 		// Profiling keeps the loop hot so the workload is continuously exercised.
 		#[cfg(feature = "profiling")]
