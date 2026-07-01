@@ -1045,6 +1045,9 @@ pub fn needs_text_rebuild(a: &Settings, b: &Settings) -> bool {
 	a.font_size != b.font_size
 		|| a.line_height_scale != b.line_height_scale
 		|| a.font_family != b.font_family
+		// the toggle alone changes the effective family/size (fields keep
+		// their values), so it must force a rebuild too
+		|| a.use_system_font != b.use_system_font
 		|| a.margin != b.margin
 }
 
