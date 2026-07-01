@@ -349,7 +349,12 @@ pub struct SettingsDialog {
 	specs: Vec<Spec>,
 	drag: Option<usize>,           // slider row being dragged
 	edit: Option<(usize, String)>, // row being typed (hex for Color, path for Text)
-	use_system_font: bool,         // "Use system font" toggle; clears font keys
+	use_system_font: bool,         // "Use system font" toggle
+	// While system font is on, the custom font settings are disabled but their
+	// values are kept here so unchecking restores them (never clobbered).
+	saved_font_family: Option<String>,
+	saved_font_size: f32,
+	alt: bool, // Alt held: underline button accelerators (Cancel/Apply/OK)
 }
 
 impl SettingsDialog {
@@ -371,6 +376,10 @@ impl SettingsDialog {
 			h,
 		};
 		let s = (*config::settings()).clone();
+		// No family set = already following the OS font, so open with the box checked.
+		let use_system_font = s.font_family.is_none();
+		let saved_font_family = s.font_family.clone();
+		let saved_font_size = s.font_size;
 		Self {
 			orig: s.clone(),
 			edited: s,
@@ -378,7 +387,27 @@ impl SettingsDialog {
 			specs,
 			drag: None,
 			edit: None,
-			use_system_font: false,
+			use_system_font,
+			saved_font_family,
+			saved_font_size,
+			alt: false,
+		}
+	}
+
+	// Alt-key accelerators: while Alt is held the buttons underline their first
+	// letter (Cancel/Apply/OK), and Alt+that-letter triggers the button.
+	pub fn set_alt(&mut self, on: bool) {
+		self.alt = on;
+	}
+	pub fn alt(&self) -> bool {
+		self.alt
+	}
+	pub fn alt_key(&mut self, c: char) -> Action {
+		match c.to_ascii_lowercase() {
+			'c' => Action::Cancel,
+			'a' => Action::Apply,
+			'o' => Action::Ok,
+			_ => Action::None,
 		}
 	}
 
@@ -495,6 +524,8 @@ impl SettingsDialog {
 			Key::BgBlur => s.background_blur,
 			Key::GlowRadius => s.text_glow_radius,
 			Key::GlowSoftness => s.text_glow_softness,
+			// while following the OS, the field shows the kept custom size (greyed)
+			Key::FontSize if self.use_system_font => self.saved_font_size,
 			Key::FontSize => s.font_size,
 			Key::LineHeight => s.line_height_scale,
 			Key::Margin => s.margin,
@@ -537,6 +568,10 @@ impl SettingsDialog {
 				.as_ref()
 				.map(|p| p.to_string_lossy().into_owned())
 				.unwrap_or_default(),
+			// while following the OS, show the kept custom family (greyed)
+			Key::FontFamily if self.use_system_font => {
+				self.saved_font_family.clone().unwrap_or_default()
+			}
 			Key::FontFamily => self.edited.font_family.clone().unwrap_or_default(),
 			Key::DefaultShell => self.edited.default_shell.clone(),
 			_ => String::new(),
@@ -566,11 +601,19 @@ impl SettingsDialog {
 		}
 	}
 	fn set_system_font(&mut self, on: bool) {
+		if on == self.use_system_font {
+			return;
+		}
 		self.use_system_font = on;
 		if on {
-			// follow the OS: clear the family and adopt the detected size live
-			self.edited.font_family = None;
+			// follow the OS live, but remember the custom font so unchecking restores
+			// it (the fields are only disabled, their values are kept - #63/#140).
+			self.saved_font_family = self.edited.font_family.take();
+			self.saved_font_size = self.edited.font_size;
 			self.edited.font_size = config::default_font_size();
+		} else {
+			self.edited.font_family = self.saved_font_family.clone();
+			self.edited.font_size = self.saved_font_size;
 		}
 	}
 	fn get_toggle(&self, key: Key) -> bool {
@@ -618,6 +661,7 @@ impl SettingsDialog {
 		(matches!(key, Key::Opacity | Key::BackdropBlur) && !self.edited.transparent_background)
 			|| (matches!(key, Key::GlowRadius | Key::GlowSoftness) && !self.edited.text_glow)
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
+			|| (matches!(key, Key::FontFamily | Key::FontSize) && self.use_system_font)
 	}
 	fn get_col(&self, key: Key) -> [u8; 3] {
 		let s = &self.edited;
@@ -805,7 +849,7 @@ impl SettingsDialog {
 		}
 	}
 
-	pub fn rects(&self) -> Vec<RectInstance> {
+	pub fn rects(&self, line_h: f32) -> Vec<RectInstance> {
 		let mut out = Vec::new();
 		let q = |x: f32, y: f32, w: f32, h: f32, c: [u8; 3]| RectInstance {
 			pos: [x, y],
@@ -918,9 +962,17 @@ impl SettingsDialog {
 				}
 			}
 		}
-		for (_, r, _) in self.buttons() {
+		for (_, r, label) in self.buttons() {
 			out.push(q(r.x, r.y, r.w, r.h, dlg().btn_bg));
 			border(&mut out, r, 1.0, dlg().btn_hl);
+			// Alt held: underline the accelerator (the label's first letter). The
+			// label is drawn left-aligned at r.x+14; the cap glyph is ~0.55*line_h
+			// wide, and its baseline sits near the text bottom.
+			if self.alt && !label.is_empty() {
+				let tx = r.x + 14.0;
+				let ty = r.y + (r.h - line_h) / 2.0 + line_h * 0.82;
+				out.push(q(tx, ty, line_h * 0.5, 1.5, dlg().text));
+			}
 		}
 		out
 	}
