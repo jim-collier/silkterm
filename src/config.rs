@@ -80,8 +80,8 @@ pub struct Settings {
 	pub text_glow: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
 	pub text_glow_radius: f32, // glow blur sigma in px
 	pub text_glow_softness: f32, // 0 = hard/solid glow, 1 = soft/faint (maps to the intensity boost)
-	pub cursor_size_vertical: f32, // cursor height, 1..100% of the cell (from the bottom)
-	pub cursor_size_horizontal: f32, // cursor width, 1..100% of the cell (from the left)
+	pub cursor_size_height: f32, // cursor height, 1..100% of the cell (from the bottom)
+	pub cursor_size_width: f32, // cursor width, 1..100% of the cell (from the left)
 	pub cursor_animation: String, // "none" | "phase" | "pulse_vertical" | "pulse_horizontal" | "pulse_both"
 	pub cursor_blink_rate_ms: f32, // one animation cycle (ms)
 	pub columns: usize,           // initial window grid size (used when !remember_size)
@@ -125,13 +125,13 @@ impl Default for Settings {
 			text_glow: true,
 			text_glow_radius: 5.0,
 			text_glow_softness: 0.5,
-			cursor_size_vertical: 100.0,  // full height
-			cursor_size_horizontal: 25.0, // ~quarter-width bar
+			cursor_size_height: 100.0, // full height
+			cursor_size_width: 25.0,   // ~quarter-width bar
 			cursor_animation: "pulse_vertical".to_string(),
 			cursor_blink_rate_ms: 500.0,
 			columns: 160,
 			rows: 48,
-			remember_size: false,
+			remember_size: true,
 			remembered_columns: 160,
 			remembered_rows: 48,
 			// alacritty's default delimiters: keep /.-_~ as word chars so paths
@@ -410,8 +410,8 @@ struct RawConfig {
 	text_glow: Option<bool>,
 	text_glow_radius: Option<f32>,
 	text_glow_softness: Option<f32>,
-	cursor_size_vertical: Option<f32>,
-	cursor_size_horizontal: Option<f32>,
+	cursor_size_height: Option<f32>,
+	cursor_size_width: Option<f32>,
 	cursor_animation: Option<String>,
 	cursor_blink_rate_ms: Option<f32>,
 	columns: Option<usize>,
@@ -577,13 +577,13 @@ fn resolve(raw: RawConfig) -> Settings {
 			.text_glow_softness
 			.unwrap_or(d.text_glow_softness)
 			.clamp(0.0, 1.0),
-		cursor_size_vertical: raw
-			.cursor_size_vertical
-			.unwrap_or(d.cursor_size_vertical)
+		cursor_size_height: raw
+			.cursor_size_height
+			.unwrap_or(d.cursor_size_height)
 			.clamp(1.0, 100.0),
-		cursor_size_horizontal: raw
-			.cursor_size_horizontal
-			.unwrap_or(d.cursor_size_horizontal)
+		cursor_size_width: raw
+			.cursor_size_width
+			.unwrap_or(d.cursor_size_width)
 			.clamp(1.0, 100.0),
 		cursor_animation: raw.cursor_animation.unwrap_or(d.cursor_animation),
 		cursor_blink_rate_ms: raw
@@ -733,7 +733,10 @@ fn line_setting_key(line: &str) -> Option<&str> {
 // Keys that were renamed across versions (old -> new). A rename copies the value
 // and preserves the comment/active state; if the new key is already present the
 // old one is just dropped.
-const CONFIG_RENAMES: &[(&str, &str)] = &[];
+const CONFIG_RENAMES: &[(&str, &str)] = &[
+	("cursor_size_vertical", "cursor_size_height"),
+	("cursor_size_horizontal", "cursor_size_width"),
+];
 // Keys that no longer exist and should be removed from an existing config. The
 // cursor_shape/cursor_blink_style/cursor_insert_shape line was superseded by the
 // cursor_size_*/cursor_animation/cursor_blink_rate_ms geometry+animation model.
@@ -974,12 +977,12 @@ opacity = 0.95
 # text_glow_radius = 5.0     ## glow blur sigma in pixels
 # text_glow_softness = 0.5   ## 0 = hard/solid glow, 1 = soft/faint
 
-## Cursor size, as a percent of the cell. Vertical = height (from the bottom),
-## horizontal = width (from the left). Together they make any shape: a thin bar
-## (100 / 25), an underline (15 / 100), or a block (100 / 100). Used when the app
-## doesn't set its own; alt-screen apps (vim, less) still control theirs.
-# cursor_size_vertical = 100
-# cursor_size_horizontal = 25
+## Cursor size, as a percent of the cell: height grows from the bottom, width from
+## the left. Together they make any shape: a thin bar (height 100 / width 25), an
+## underline (15 / 100), or a block (100 / 100). Used when the app doesn't set its
+## own; alt-screen apps (vim, less) still control theirs.
+# cursor_size_height = 100
+# cursor_size_width = 25
 
 ## Cursor animation: "none" (steady), "phase" (smooth fade), or a pulse that
 ## grows/shrinks each cycle - "pulse_vertical", "pulse_horizontal", "pulse_both".
@@ -993,10 +996,10 @@ opacity = 0.95
 columns = 160
 rows = 48
 
-## Launch at the last window size instead of columns/rows. The remembered size is
-## updated automatically whenever you resize the window (kept separate from
-## columns/rows so unchecking reverts to your defined size); not shown in Settings.
-# remember_size = false
+## Launch at the last window size instead of columns/rows (default on). The
+## remembered size is updated automatically whenever you resize the window (kept
+## separate from columns/rows so unchecking reverts to your defined size).
+# remember_size = true
 # remembered_columns = 160
 # remembered_rows = 48
 
@@ -1115,6 +1118,16 @@ mod tests {
 			out.contains("opacity = 0.7") && out.contains("margin = 12.0"),
 			"kept the rest"
 		);
+	}
+
+	// The vertical/horizontal -> height/width rename preserves the value.
+	#[test]
+	fn migrate_config_renames_cursor_size() {
+		let out = migrate_config_text("cursor_size_vertical = 50\ncursor_size_horizontal = 25\n")
+			.expect("should change");
+		assert!(out.contains("cursor_size_height = 50"), "{out:?}");
+		assert!(out.contains("cursor_size_width = 25"));
+		assert!(!out.contains("cursor_size_vertical") && !out.contains("cursor_size_horizontal"));
 	}
 
 	// A config with nothing to migrate is left untouched (no needless rewrite).

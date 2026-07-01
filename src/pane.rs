@@ -45,8 +45,8 @@ fn cursor_geometry(shape: CursorShape, alt_screen: bool) -> (f32, f32) {
 		_ => {
 			let s = config::settings();
 			(
-				(s.cursor_size_horizontal / 100.0).clamp(0.02, 1.0), // width, from left
-				(s.cursor_size_vertical / 100.0).clamp(0.02, 1.0),   // height, from bottom
+				(s.cursor_size_width / 100.0).clamp(0.02, 1.0), // width, from left
+				(s.cursor_size_height / 100.0).clamp(0.02, 1.0), // height, from bottom
 			)
 		}
 	}
