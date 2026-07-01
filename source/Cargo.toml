@@ -44,6 +44,8 @@ glutin-winit = "0.5"
 
 # Profiler stage of the local CI/CD (cicd/). Dev-only: optional + feature-gated,
 # so it never compiles into a normal/release build (zero shipped-binary cost).
+# LICENSE: pprof pulls inferno (CDDL-1.0, GPL-incompatible) - fine for local dev
+# tooling, but binaries built with --features profiling must never be shipped.
 # In-process sampling (SIGPROF) -> flamegraph SVG; sidesteps perf_event_paranoid.
 # Linux-only path (cicd builds with --features profiling on this box).
 pprof = { version = "0.14", features = ["flamegraph"], optional = true }

@@ -331,6 +331,7 @@ const TAB_BAR_VPAD: f32 = 11.0; // enough that tab-title descenders (g/j/p/q/y) 
 const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to settle)
 const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-size settle time before hitting disk
 const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
+const TAB_MAX_W: f32 = 220.0; // tab button width cap - drawing AND click hit-testing use this
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
 
 struct State {
@@ -356,7 +357,6 @@ struct State {
 	pending_size: Option<(usize, usize)>, // debounced remember-size: persisted after the size holds, not per resize tick
 	pending_size_at: Instant,
 	menu: Option<ContextMenu>,
-	menu_buffer: Buffer,
 	decorated: bool,           // window frame shown (winit has no getter, so track it)
 	menu_bar: bool,            // window menu bar (File/Edit/...) shown
 	bar_open: Option<usize>,   // which top-level menu's dropdown is open, if any
@@ -834,7 +834,6 @@ impl State {
 		if rebuild {
 			let scale = self.window.scale_factor() as f32;
 			self.text = TextCtx::new(&self.gfx.device, &self.gfx.queue, self.gfx.format, scale);
-			self.menu_buffer = self.text.new_buffer(400.0, 400.0);
 			for pm in &mut self.tabs.list {
 				pm.rebuild_buffers(&mut self.text);
 			}
@@ -861,6 +860,7 @@ impl State {
 		let now = Instant::now();
 		let dt = (now - self.last_frame).as_secs_f32().min(0.1);
 		self.last_frame = now;
+		let cfg = config::settings(); // one snapshot per frame, not per use/pane
 
 		// Visual-bell flash decays toward 0; while >0 the text is brightened (in
 		// build) and we keep rendering so the fade is smooth.
@@ -874,7 +874,7 @@ impl State {
 
 		// translucent background only when the surface supports it AND the user has
 		// Transparency on - and it only ever affects the bg, never text/chrome.
-		let bg_alpha = if self.gfx.transparent && config::settings().transparent_background {
+		let bg_alpha = if self.gfx.transparent && cfg.transparent_background {
 			self.opacity()
 		} else {
 			1.0
@@ -890,10 +890,7 @@ impl State {
 		let mut animating = bell > 0.0;
 		// text-glow colour map needs each cell's bg (so a glyph's halo takes its
 		// own cell colour, not always the global) - collect them while building
-		let glow_on = {
-			let s = config::settings();
-			s.text_glow && s.text_glow_radius > 0.0
-		};
+		let glow_on = cfg.text_glow && cfg.text_glow_radius > 0.0;
 		let mut glow_cells: Vec<RectInstance> = Vec::new();
 
 		for (id, pane) in self.tabs.cur_mut().panes.iter_mut() {
@@ -909,7 +906,7 @@ impl State {
 				animating = true;
 			}
 			tops.insert(*id, draw.top);
-			let mut bg = config::srgb_f32(config::settings().bg);
+			let mut bg = config::srgb_f32(cfg.bg);
 			bg[3] = bg_alpha;
 			under.push(RectInstance {
 				pos: [rect.x, rect.y],
@@ -1007,7 +1004,7 @@ impl State {
 			let start = instances.len() as u32;
 			instances.push(rect_inst(0.0, tby, bw, tab_h, config::TAB_BAR_BG));
 			let n = self.tabs.len();
-			let tw = (bw / n as f32).min(220.0);
+			let tw = (bw / n as f32).min(TAB_MAX_W);
 			for i in 0..n {
 				let x = i as f32 * tw;
 				let col = if i == self.tabs.active {
@@ -1102,7 +1099,7 @@ impl State {
 		};
 		// tab titles need transient buffers; build them before `areas` borrows panes
 		let mut tab_bufs: Vec<Buffer> = Vec::new();
-		let tab_w = (self.gfx.config.width as f32 / self.tabs.len().max(1) as f32).min(220.0);
+		let tab_w = (self.gfx.config.width as f32 / self.tabs.len().max(1) as f32).min(TAB_MAX_W);
 		for title in &tab_titles {
 			let mut b = self.text.new_buffer((tab_w - 16.0).max(8.0), tab_h);
 			let mut attrs = crate::text::sans_attrs();
@@ -1286,16 +1283,15 @@ impl State {
 
 		// Text readability glow: build the per-pixel colour map, render the prepared
 		// text to the glow texture, blur it, then composite under the crisp text.
-		let gs = config::settings();
 		// "Softness" 0..1 -> coverage boost: 0 = hard/solid (x10), 1 = soft/faint (x1)
-		let glow_intensity = 10.0 - gs.text_glow_softness.clamp(0.0, 1.0) * 9.0;
+		let glow_intensity = 10.0 - cfg.text_glow_softness.clamp(0.0, 1.0) * 9.0;
 		if glow_on {
 			self.glow.render_bgcolor(
 				&self.gfx.device,
 				&self.gfx.queue,
 				&mut encoder,
 				&glow_cells,
-				config::srgb_f32(gs.bg),
+				config::srgb_f32(cfg.bg),
 			);
 			{
 				let mut p = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1317,7 +1313,7 @@ impl State {
 				let _ = self.text.render(&mut p);
 			}
 			self.glow
-				.blur(&self.gfx.queue, &mut encoder, gs.text_glow_radius);
+				.blur(&self.gfx.queue, &mut encoder, cfg.text_glow_radius);
 		}
 
 		let content_area = self.area(); // for clipping the glow to the terminal region
@@ -1652,23 +1648,6 @@ fn open_url(url: &str) {
 }
 
 // Decode the configured background image and upload it to a texture.
-fn srgb_to_lin(b: u8) -> f32 {
-	let c = b as f32 / 255.0;
-	if c <= 0.04045 {
-		c / 12.92
-	} else {
-		((c + 0.055) / 1.055).powf(2.4)
-	}
-}
-fn lin_to_srgb_u8(c: f32) -> u8 {
-	let c = c.clamp(0.0, 1.0);
-	let s = if c <= 0.0031308 {
-		c * 12.92
-	} else {
-		1.055 * c.powf(1.0 / 2.4) - 0.055
-	};
-	(s * 255.0 + 0.5) as u8
-}
 
 fn load_bg_image(gfx: &Gfx) -> Option<ImageRenderer> {
 	let s = config::settings();
@@ -1693,18 +1672,18 @@ fn load_bg_image(gfx: &Gfx) -> Option<ImageRenderer> {
 		let mut lin: image::ImageBuffer<image::Rgba<f32>, Vec<f32>> = image::ImageBuffer::new(w, h);
 		for (d, srcp) in lin.pixels_mut().zip(img.pixels()) {
 			*d = image::Rgba([
-				srgb_to_lin(srcp[0]),
-				srgb_to_lin(srcp[1]),
-				srgb_to_lin(srcp[2]),
+				config::to_linear(srcp[0]),
+				config::to_linear(srcp[1]),
+				config::to_linear(srcp[2]),
 				srcp[3] as f32 / 255.0,
 			]);
 		}
 		let blurred = image::imageops::blur(&lin, s.background_blur);
 		for (d, srcp) in img.pixels_mut().zip(blurred.pixels()) {
 			*d = image::Rgba([
-				lin_to_srgb_u8(srcp[0]),
-				lin_to_srgb_u8(srcp[1]),
-				lin_to_srgb_u8(srcp[2]),
+				config::from_linear_u8(srcp[0]),
+				config::from_linear_u8(srcp[1]),
+				config::from_linear_u8(srcp[2]),
 				(srcp[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
 			]);
 		}
@@ -1823,7 +1802,6 @@ impl ApplicationHandler<UserEvent> for App {
 		// the whole window - so there's no compositor whole-window-opacity fallback.
 		let scale = window.scale_factor() as f32;
 		let mut text = TextCtx::new(&gfx.device, &gfx.queue, gfx.format, scale);
-		let menu_buffer = text.new_buffer(400.0, 400.0);
 		let rects = RectRenderer::new(&gfx.device, gfx.format);
 		let bg_image = load_bg_image(&gfx);
 		let glow =
@@ -1911,7 +1889,6 @@ impl ApplicationHandler<UserEvent> for App {
 			pending_size: None,
 			pending_size_at: Instant::now(),
 			menu: None,
-			menu_buffer,
 			decorated,
 			menu_bar,
 			bar_open: None,
@@ -2098,7 +2075,8 @@ impl ApplicationHandler<UserEvent> for App {
 					&& state.tabs.len() > 1
 					&& y >= tby && y < tby + state.tab_bar_h()
 				{
-					let tw = (state.gfx.config.width as f32 / state.tabs.len() as f32).min(220.0);
+					let tw =
+						(state.gfx.config.width as f32 / state.tabs.len() as f32).min(TAB_MAX_W);
 					let i = (x / tw).floor() as usize;
 					if i < state.tabs.len() {
 						state.tabs.active = i;
@@ -2439,7 +2417,7 @@ impl ApplicationHandler<UserEvent> for App {
 						_ => {}
 					}
 				}
-				if state.handle_hotkey(&key, &self.proxy) {
+				if state.handle_hotkey(&key) {
 					state.dirty = true;
 					return;
 				}
@@ -2595,11 +2573,7 @@ impl State {
 	// Ctrl+Shift chords for pane management. Returns true if consumed.
 	// Only clipboard hotkeys live here now: pane management (split/close/cycle)
 	// is menu-only by design - see the keyboard handler and design.md.
-	fn handle_hotkey(
-		&mut self,
-		key: &winit::event::KeyEvent,
-		_proxy: &EventLoopProxy<UserEvent>,
-	) -> bool {
+	fn handle_hotkey(&mut self, key: &winit::event::KeyEvent) -> bool {
 		if !(self.mods.control_key() && self.mods.shift_key()) {
 			return false;
 		}

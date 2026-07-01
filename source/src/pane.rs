@@ -337,8 +337,8 @@ impl Pane {
 				if flags.contains(Flags::WIDE_CHAR_SPACER) {
 					continue;
 				}
-				let mut fg = palette::resolve(cell.fg, colors);
-				let mut cell_bg = palette::resolve(cell.bg, colors);
+				let mut fg = palette::resolve(cell.fg, colors, &s);
+				let mut cell_bg = palette::resolve(cell.bg, colors, &s);
 				if flags.contains(Flags::INVERSE) {
 					std::mem::swap(&mut fg, &mut cell_bg);
 				}

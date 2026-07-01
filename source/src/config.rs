@@ -361,7 +361,9 @@ pub fn persist(orig: &Settings, s: &Settings) {
 	set_color("cursor", s.cursor, orig.cursor);
 	set_color("focus", s.focus, orig.focus);
 
-	let _ = std::fs::write(&path, doc.to_string());
+	if let Err(e) = std::fs::write(&path, doc.to_string()) {
+		eprintln!("{APP_NAME}: could not save config {}: {e}", path.display());
+	}
 }
 
 pub fn format_hex(c: [u8; 3]) -> String {
@@ -374,13 +376,25 @@ pub fn srgb_f32(c: [u8; 3]) -> [f32; 4] {
 	[to_linear(c[0]), to_linear(c[1]), to_linear(c[2]), 1.0]
 }
 
-fn to_linear(b: u8) -> f32 {
+pub fn to_linear(b: u8) -> f32 {
 	let c = b as f32 / 255.0;
 	if c <= 0.04045 {
 		c / 12.92
 	} else {
 		((c + 0.055) / 1.055).powf(2.4)
 	}
+}
+
+// Inverse of to_linear: encode a linear value back to an sRGB byte. The one
+// Rust-side copy - the WGSL lin2srgb in gfx.rs/glow.rs is necessarily separate.
+pub fn from_linear_u8(c: f32) -> u8 {
+	let c = c.clamp(0.0, 1.0);
+	let s = if c <= 0.0031308 {
+		c * 12.92
+	} else {
+		1.055 * c.powf(1.0 / 2.4) - 0.055
+	};
+	(s * 255.0 + 0.5) as u8
 }
 
 // config file loading
@@ -443,7 +457,12 @@ fn load() -> Settings {
 		if let Some(dir) = path.parent() {
 			let _ = std::fs::create_dir_all(dir);
 		}
-		let _ = std::fs::write(&path, DEFAULT_CONFIG);
+		if let Err(e) = std::fs::write(&path, DEFAULT_CONFIG) {
+			eprintln!(
+				"{APP_NAME}: could not create config {}: {e}",
+				path.display()
+			);
+		}
 	}
 	// Migrate an older config in place (rename/remove changed keys) then backfill
 	// any keys it's missing, so an updated config stays current without clobbering
@@ -757,7 +776,12 @@ fn migrate_config(path: &std::path::Path) {
 		return;
 	};
 	if let Some(out) = migrate_config_text(&text) {
-		let _ = std::fs::write(path, out);
+		if let Err(e) = std::fs::write(path, out) {
+			eprintln!(
+				"{APP_NAME}: could not migrate config {}: {e}",
+				path.display()
+			);
+		}
 	}
 }
 
@@ -897,7 +921,12 @@ fn backfill_config(path: &std::path::Path) {
 	let mut out = lines.join("\n");
 	out.push('\n');
 	if out != text {
-		let _ = std::fs::write(path, out);
+		if let Err(e) = std::fs::write(path, out) {
+			eprintln!(
+				"{APP_NAME}: could not update config {}: {e}",
+				path.display()
+			);
+		}
 	}
 }
 

@@ -15,6 +15,16 @@ use wgpu::hal::api::Gles;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes};
 
+// COLOR PIPELINE CONTRACT (breaking it reproduces the "everything too dark /
+// SELECTION_BG invisible" bug class): every fragment shader in this app writes
+// LINEAR light (rect srgb_f32, glyphon Accurate, bg-image, glow), and exactly
+// ONE sRGB encode happens per frame, owned by this module - on the native path
+// the sRGB surface format encodes on write; on the GL path the blit's lin2srgb
+// does it into the non-sRGB fbo 0, so the offscreen MUST stay a non-sRGB,
+// high-precision format (Rgba16Float; an sRGB view would decode in the blit's
+// sample and cancel the encode, an 8-bit linear one bands dark gradients).
+// New render features must not add their own encode.
+
 // How a frame reaches the screen. `Native` is the normal wgpu surface (Vulkan/
 // Metal/DX/Wayland - supports premultiplied alpha where the platform does).
 // `Gl` runs wgpu on a glutin-created GL context so X11 can do per-pixel alpha:
@@ -241,7 +251,7 @@ impl Gfx {
 
 	// X11-only per-pixel transparency: glutin creates the window with a 32-bit
 	// ARGB visual + transparent GL context, and wgpu runs on it via hal external
-	// interop (see examples/wgpu_on_glutin.rs). Returns the window it created.
+	// interop (PoCs on branch spike/x11-transparency). Returns the window it created.
 	pub fn new_gl_transparent(
 		el: &ActiveEventLoop,
 		attrs: WindowAttributes,
@@ -555,15 +565,7 @@ impl Gfx {
 			let s = (row * bpr) as usize;
 			for px in data[s..s + unpadded as usize].chunks_exact(8) {
 				let ch = |i: usize| f16_to_f32(u16::from_le_bytes([px[i * 2], px[i * 2 + 1]]));
-				let enc = |c: f32| {
-					let c = c.clamp(0.0, 1.0);
-					let s = if c <= 0.0031308 {
-						c * 12.92
-					} else {
-						1.055 * c.powf(1.0 / 2.4) - 0.055
-					};
-					(s * 255.0 + 0.5) as u8
-				};
+				let enc = crate::config::from_linear_u8;
 				pix.extend_from_slice(&[
 					enc(ch(0)),
 					enc(ch(1)),
@@ -633,6 +635,9 @@ const FB_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 // A wgpu texture aliasing the GL default framebuffer (fbo 0 = glutin's window).
 fn default_fb(device: &wgpu::Device, format: wgpu::TextureFormat, w: u32, h: u32) -> wgpu::Texture {
+	// Safety: aliasing the GL default framebuffer is sound only while every GL
+	// call stays on the winit main thread - rendering here is single-threaded
+	// by construction; don't move GL work onto helper threads.
 	let hal = wgpu::hal::gles::Texture::default_framebuffer(format);
 	unsafe {
 		device.create_texture_from_hal::<Gles>(

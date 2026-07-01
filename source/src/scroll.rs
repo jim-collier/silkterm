@@ -110,3 +110,127 @@ impl Scroll {
 		(self.target - self.visual).abs() > config::SETTLE_EPS
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	// settings() falls back to Settings::default() when no config file is
+	// loaded, so these run against the shipped defaults.
+	fn ease_lines() -> f32 {
+		config::settings().output_ease_lines.max(0.0)
+	}
+
+	#[test]
+	fn starts_following() {
+		let s = Scroll::new();
+		assert!(s.following());
+		assert!(!s.animating());
+		assert_eq!(s.desired_offset(), 0);
+	}
+
+	#[test]
+	fn wheel_clamps_to_history() {
+		let mut s = Scroll::new();
+		s.set_max(10.0);
+		s.wheel(25.0);
+		assert!(!s.following());
+		// target is private; observe via advance converging onto max
+		for _ in 0..2000 {
+			s.advance(0.016);
+		}
+		assert_eq!(s.desired_offset(), 10);
+		s.jump_bottom();
+		for _ in 0..2000 {
+			s.advance(0.016);
+		}
+		assert!(s.following());
+		assert_eq!(s.desired_offset(), 0);
+		assert!(s.frac().abs() < 1e-3);
+	}
+
+	#[test]
+	fn nudge_accumulates_and_caps() {
+		let mut s = Scroll::new();
+		s.set_max(1000.0);
+		s.nudge_output(1.0);
+		let after_one = s.frac() + s.desired_offset() as f32;
+		assert!(after_one >= ease_lines().min(1.0) - 1e-3);
+		// a burst may lag at most MAX_BACKLOG lines
+		for _ in 0..100 {
+			s.nudge_output(5.0);
+		}
+		assert!(s.desired_offset() as f32 + s.frac() <= MAX_BACKLOG + 1e-3);
+	}
+
+	#[test]
+	fn nudge_ignored_when_scrolled_back() {
+		let mut s = Scroll::new();
+		s.set_max(100.0);
+		s.wheel(50.0);
+		let before = s.desired_offset() as f32 + s.frac();
+		s.nudge_output(10.0);
+		let after = s.desired_offset() as f32 + s.frac();
+		assert_eq!(before, after); // no-snap rule: output must not move a reader
+	}
+
+	#[test]
+	fn output_backlog_settles_to_bottom() {
+		let mut s = Scroll::new();
+		s.set_max(1000.0);
+		for _ in 0..10 {
+			s.nudge_output(3.0);
+		}
+		assert!(s.animating());
+		for _ in 0..2000 {
+			s.advance(0.016);
+		}
+		// eased all the way back down to following the live bottom
+		assert!(s.following());
+		assert_eq!(s.desired_offset(), 0);
+		assert!(s.frac().abs() < 1e-3);
+	}
+
+	#[test]
+	fn burst_ramps_faster_than_trickle() {
+		// a deep backlog must converge measurably faster than the plain ease
+		// (the dynamic-speed ramp) - compare lines cleared in the same time
+		let mut burst = Scroll::new();
+		burst.set_max(1000.0);
+		for _ in 0..10 {
+			burst.nudge_output(5.0); // deep backlog -> full ramp
+		}
+		let start_b = burst.desired_offset() as f32 + burst.frac();
+		let mut trickle = Scroll::new();
+		trickle.set_max(1000.0);
+		trickle.nudge_output(0.9); // below the ramp threshold
+		let start_t = trickle.desired_offset() as f32 + trickle.frac();
+		for _ in 0..12 {
+			burst.advance(0.016);
+			trickle.advance(0.016);
+		}
+		let cleared_b = (start_b - (burst.desired_offset() as f32 + burst.frac())) / start_b;
+		let cleared_t = (start_t - (trickle.desired_offset() as f32 + trickle.frac())) / start_t;
+		assert!(
+			cleared_b > cleared_t,
+			"burst {cleared_b} should clear proportionally faster than trickle {cleared_t}"
+		);
+	}
+
+	#[test]
+	fn set_max_clamps_positions() {
+		let mut s = Scroll::new();
+		s.set_max(100.0);
+		s.wheel(80.0);
+		for _ in 0..2000 {
+			s.advance(0.016);
+		}
+		assert_eq!(s.desired_offset(), 80);
+		// history shrank (e.g. clear/reset): both target and visual clamp
+		s.set_max(5.0);
+		for _ in 0..2000 {
+			s.advance(0.016);
+		}
+		assert!(s.desired_offset() <= 5);
+	}
+}

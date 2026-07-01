@@ -4,29 +4,31 @@
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{Color, NamedColor};
 
-use crate::config;
+use crate::config::Settings;
 
 // The 16 ANSI colours come from the active theme (config::settings().ansi),
-// resolved in config from the theme name + mode. See theme.rs.
+// resolved in config from the theme name + mode. See theme.rs. Callers pass
+// their per-frame Settings snapshot: this runs ~2x per cell per rebuilt frame,
+// and settings() is an RwLock read + Arc clone - too hot to take per colour.
 
-pub fn resolve(c: Color, colors: &Colors) -> [u8; 3] {
+pub fn resolve(c: Color, colors: &Colors, s: &Settings) -> [u8; 3] {
 	match c {
 		Color::Spec(rgb) => [rgb.r, rgb.g, rgb.b],
-		Color::Indexed(i) => indexed(i, colors),
-		Color::Named(n) => named(n, colors),
+		Color::Indexed(i) => indexed(i, colors, s),
+		Color::Named(n) => named(n, colors, s),
 	}
 }
 
-fn indexed(i: u8, colors: &Colors) -> [u8; 3] {
+fn indexed(i: u8, colors: &Colors, s: &Settings) -> [u8; 3] {
 	if let Some(rgb) = colors[i as usize] {
 		return [rgb.r, rgb.g, rgb.b];
 	}
-	default_indexed(i)
+	default_indexed(i, s)
 }
 
-fn default_indexed(i: u8) -> [u8; 3] {
+fn default_indexed(i: u8, s: &Settings) -> [u8; 3] {
 	match i {
-		0..=15 => config::settings().ansi[i as usize],
+		0..=15 => s.ansi[i as usize],
 		16..=231 => {
 			// 6x6x6 cube
 			let v = i - 16;
@@ -44,30 +46,30 @@ fn default_indexed(i: u8) -> [u8; 3] {
 	}
 }
 
-fn named(n: NamedColor, colors: &Colors) -> [u8; 3] {
+fn named(n: NamedColor, colors: &Colors, s: &Settings) -> [u8; 3] {
 	if let Some(rgb) = colors[n] {
 		return [rgb.r, rgb.g, rgb.b];
 	}
 	use NamedColor::*;
 	match n {
-		Foreground | DimForeground | BrightForeground => config::settings().fg,
-		Background => config::settings().bg,
-		Cursor => config::settings().cursor,
-		Black | DimBlack => config::settings().ansi[0],
-		Red | DimRed => config::settings().ansi[1],
-		Green | DimGreen => config::settings().ansi[2],
-		Yellow | DimYellow => config::settings().ansi[3],
-		Blue | DimBlue => config::settings().ansi[4],
-		Magenta | DimMagenta => config::settings().ansi[5],
-		Cyan | DimCyan => config::settings().ansi[6],
-		White | DimWhite => config::settings().ansi[7],
-		BrightBlack => config::settings().ansi[8],
-		BrightRed => config::settings().ansi[9],
-		BrightGreen => config::settings().ansi[10],
-		BrightYellow => config::settings().ansi[11],
-		BrightBlue => config::settings().ansi[12],
-		BrightMagenta => config::settings().ansi[13],
-		BrightCyan => config::settings().ansi[14],
-		BrightWhite => config::settings().ansi[15],
+		Foreground | DimForeground | BrightForeground => s.fg,
+		Background => s.bg,
+		Cursor => s.cursor,
+		Black | DimBlack => s.ansi[0],
+		Red | DimRed => s.ansi[1],
+		Green | DimGreen => s.ansi[2],
+		Yellow | DimYellow => s.ansi[3],
+		Blue | DimBlue => s.ansi[4],
+		Magenta | DimMagenta => s.ansi[5],
+		Cyan | DimCyan => s.ansi[6],
+		White | DimWhite => s.ansi[7],
+		BrightBlack => s.ansi[8],
+		BrightRed => s.ansi[9],
+		BrightGreen => s.ansi[10],
+		BrightYellow => s.ansi[11],
+		BrightBlue => s.ansi[12],
+		BrightMagenta => s.ansi[13],
+		BrightCyan => s.ansi[14],
+		BrightWhite => s.ansi[15],
 	}
 }
