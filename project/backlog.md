@@ -67,7 +67,9 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ After the related cursor bug fix above, set default cursor_size_horizontal to 25. - done (with cursor_size_vertical=100 -> a 25%-width bar).
 	- ✅ Default cursor_animation = "pulse_vertical"
 
-- 🔘 Cursor currently renders *behind* outer glow, which sometimes obscures the cursor. As noted in another issue below, the cursor itself should also have an outer glow, if not too computationally expensive with an animated cursor. In that case, the cursor shadow should merge with the text outer glow. And either way, the cursor should appear *above* any outer glow.
+- ◐ Cursor currently renders *behind* outer glow, which sometimes obscures the cursor. As noted in another issue below, the cursor itself should also have an outer glow, if not too computationally expensive with an animated cursor. In that case, the cursor shadow should merge with the text outer glow. And either way, the cursor should appear *above* any outer glow.
+	- ✅ Cursor now renders ABOVE the glow. (20260701) - cursor quads split into their own per-pane ranges drawn after the glow composite (under the crisp text). Verified: a block cursor with a radius-14 glow stays a crisp solid block.
+	- 🔘 Cursor's own glow (merged with the text glow) - evaluated with the glow-enhancements item below (also lists "cursor should have blur"). Investigate-y.
 
 - 🔘 Outer glow enhancements:
 	- 🔘 When outer glow is applied, also add an antialiased 1px outer border around the letters, using the same color rules as outer glow.
