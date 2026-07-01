@@ -60,11 +60,11 @@ In each section, items are listed approximately from newest to oldest.
 
 - ◐ Whenever a program update adds or changes config file settings, update the existing toml file in-place. E.g. reorganize, add/remove/rename items, but preserve existing active user settings and values that remain. (20260701) - `migrate_config` (runs before backfill on load): renames changed keys (value preserved), removes obsolete ones; `backfill_config` adds missing keys. Together: add/remove/rename + preserve, in-place, comments/layout kept. Verified: a config with cursor_insert_shape/cursor_overwrite_shape/cursor_blink migrated correctly (and this auto-cleans the old invalid `cursor_blink = enable`). Deferred: literal reordering to match template order (cosmetic, riskier full-rewrite).
 
-- ◐ Settings dialog:
+- ✅ Settings dialog:
 	- ✅ Alt+hotkeys for "Apply" and "OK", that underline when holding alt. (20260701) - Alt tracked on the dialog window; while held, Cancel/Apply/OK underline their first letter and Alt+C/A/O trigger them. Verified (underlines render; Alt+C closes).
 	- Font settings:
-		- 🔘 Add a sane set of fonts and fallbacks to the default "font family" setting, and make it an active setting in config. - DEFERRED (queued): needs comma-separated fallback support in font resolution + a decision on default mode (system-font vs an active stack). Best-guess later.
-		- ✅ If using the system-defined font, enable the checbox and disable the related font adjustements (but don't clear their values). (20260701) - the box opens checked when on system font; Font family + Font size grey out but keep their values (restored on uncheck). Verified in the dialog.
+		- ✅ Add a sane set of fonts and fallbacks to the default "font family" setting, and make it an active setting in config. (20260701, decision #4) - new `use_system_font` bool (default true) follows the OS monospace, overriding an always-active comma-separated `font_family` fallback stack (first installed wins) + font_size. resolve_mono_family parses the stack; migrate_config pins use_system_font=false for a pre-existing explicit font. Verified: system->Noto Sans Mono; stack skipping a missing first->DejaVu.
+		- ✅ If using the system-defined font, enable the checbox and disable the related font adjustements (but don't clear their values). (20260701) - the box opens checked when on system font; Font family + Font size grey out but keep their values (the stack stays in config). Verified in the dialog.
 			- User can un-check this later (or change the related config setting), to user the defined font settings instead.
 
 - ◐ Cursor settings:
@@ -75,7 +75,7 @@ In each section, items are listed approximately from newest to oldest.
 		- 🔘 phase (the current default)
 		- 🔘 pulse_vertical
 			- Starts with a single-pixel line in the middle, then animate up and down for full-height, pause there for a moment, then back and disappear momentarily, then start animation again.
-			- Should happen in the
+			- Should happen in the same time as a cursor blink cycle. All animations happen in blink_rate.
 		- 🔘 pulse_horizontal (same idea as pulse vertical, but the animation goes left and right rather than up and down).
 		- 🔘 pulse_both (grow and shrink both vertically and horizontally)
 	- 🔘 blink_rate  ## ms, default = desktop settings - DEFERRED with the animation work (intertwined; "desktop default" needs a platform blink-rate API).

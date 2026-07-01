@@ -752,14 +752,11 @@ impl State {
 		&mut self,
 		orig: &config::Settings,
 		edited: config::Settings,
-		system_font: bool,
+		_system_font: bool,
 	) {
+		// use_system_font is now a persisted setting that overrides font_family at
+		// resolve time, so nothing special to strip - persist the diff as usual.
 		config::persist(orig, &edited);
-		// "Use system font" means follow the OS: drop the keys so future launches
-		// re-detect (the live font values were already applied via `edited`).
-		if system_font {
-			config::remove_keys(&["font_family", "font_size"]);
-		}
 		self.apply_new_settings(orig, edited, false);
 	}
 

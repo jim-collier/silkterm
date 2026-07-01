@@ -33,6 +33,11 @@ pub const TAB_INACTIVE: [u8; 3] = [0x36, 0x36, 0x3b];
 // Used only when the system monospace size can't be read (see default_font_size).
 const FALLBACK_FONT_SIZE: f32 = 17.0;
 
+// Cross-platform monospace fallback stack (first installed wins), used when
+// `use_system_font` is off. Ends in the generic "monospace" so something always
+// resolves. Covers common Linux / macOS / Windows faces.
+pub const DEFAULT_FONT_STACK: &str = "JetBrains Mono, Fira Code, Cascadia Code, DejaVu Sans Mono, Menlo, Consolas, Liberation Mono, monospace";
+
 // right-click context menu
 pub const MENU_BG: [u8; 3] = [0x36, 0x36, 0x3b];
 pub const MENU_HOVER: [u8; 3] = [0x4c, 0x4c, 0x55];
@@ -55,7 +60,8 @@ pub enum Fit {
 // Resolved, validated settings used throughout the app.
 #[derive(Clone)]
 pub struct Settings {
-	pub font_family: Option<String>, // None = system default monospace
+	pub use_system_font: bool, // true = OS monospace family+size, overriding font_family/font_size
+	pub font_family: Option<String>, // comma-separated fallback stack (first installed wins)
 	pub font_size: f32,
 	pub line_height_scale: f32,
 	pub scrollback: usize,
@@ -97,7 +103,8 @@ pub struct Settings {
 impl Default for Settings {
 	fn default() -> Self {
 		Self {
-			font_family: None,
+			use_system_font: true,
+			font_family: Some(DEFAULT_FONT_STACK.to_string()),
 			font_size: FALLBACK_FONT_SIZE,
 			line_height_scale: 1.22,
 			scrollback: 10_000,
@@ -242,6 +249,9 @@ pub fn persist(orig: &Settings, s: &Settings) {
 		doc["theme_mode"] = value(s.theme_mode.as_str());
 	}
 
+	if s.use_system_font != orig.use_system_font {
+		doc["use_system_font"] = value(s.use_system_font);
+	}
 	if s.font_family != orig.font_family {
 		if let Some(f) = &s.font_family {
 			doc["font_family"] = value(f);
@@ -350,20 +360,6 @@ pub fn persist(orig: &Settings, s: &Settings) {
 	let _ = std::fs::write(&path, doc.to_string());
 }
 
-// Remove keys from config.toml entirely (e.g. font_family/font_size when the
-// user picks "Use system font", so future launches follow the OS again).
-pub fn remove_keys(keys: &[&str]) {
-	let Some(path) = config_path() else { return };
-	let text = std::fs::read_to_string(&path).unwrap_or_default();
-	let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else {
-		return;
-	};
-	for k in keys {
-		doc.remove(k);
-	}
-	let _ = std::fs::write(&path, doc.to_string());
-}
-
 pub fn format_hex(c: [u8; 3]) -> String {
 	format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
 }
@@ -388,6 +384,7 @@ fn to_linear(b: u8) -> f32 {
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct RawConfig {
+	use_system_font: Option<bool>,
 	font_family: Option<String>,
 	font_size: Option<f32>,
 	line_height_scale: Option<f32>,
@@ -534,6 +531,9 @@ fn resolve(raw: RawConfig) -> Settings {
 	let color =
 		|s: Option<String>, fallback: [u8; 3]| s.as_deref().and_then(parse_hex).unwrap_or(fallback);
 	Settings {
+		// Default enabled, but a config that predates the key and set an explicit
+		// font_family keeps that font (infer off) instead of being overridden.
+		use_system_font: raw.use_system_font.unwrap_or(raw.font_family.is_none()),
 		font_family: raw.font_family.filter(|s| !s.trim().is_empty()),
 		font_size: raw.font_size.unwrap_or_else(default_font_size).max(4.0),
 		line_height_scale: raw
@@ -619,6 +619,17 @@ pub fn default_font_size() -> f32 {
 		.map(|pt| pt * 96.0 / 72.0) // points -> logical px at the 96-DPI reference
 		.filter(|px| *px >= 4.0)
 		.unwrap_or(FALLBACK_FONT_SIZE)
+}
+
+// The size the text is actually rendered at: the OS monospace size while
+// `use_system_font` is on, else the configured `font_size`.
+pub fn effective_font_size() -> f32 {
+	let s = settings();
+	if s.use_system_font {
+		default_font_size()
+	} else {
+		s.font_size
+	}
 }
 
 // Resolve the background image: an explicit path (absolute, or a filename
@@ -732,20 +743,43 @@ fn migrate_config_text(text: &str) -> Option<String> {
 		.filter(|k| CONFIG_RENAMES.iter().any(|(_, n)| n == k))
 		.collect();
 
+	let has_key = |k: &str| text.lines().filter_map(line_setting_key).any(|x| x == k);
+	let active = |l: &str| !l.trim_start().starts_with('#');
+
 	let mut changed = false;
 	let mut out: Vec<String> = Vec::new();
+	let mut active_font_family: Option<usize> = None; // index in `out`, for the boolean migration
 	for line in text.lines() {
-		match line_setting_key(line) {
-			Some(k) if CONFIG_REMOVED.contains(&k) => changed = true, // drop
+		let kept = match line_setting_key(line) {
+			Some(k) if CONFIG_REMOVED.contains(&k) => {
+				changed = true;
+				continue; // drop
+			}
 			Some(k) => match CONFIG_RENAMES.iter().find(|(old, _)| *old == k) {
 				Some((_, new)) if !have_new.contains(new) => {
-					out.push(line.replacen(k, new, 1)); // key is the first token
 					changed = true;
+					line.replacen(k, new, 1) // key is the first token
 				}
-				Some(_) => changed = true, // new key already there; drop the old
-				None => out.push(line.to_string()),
+				Some(_) => {
+					changed = true;
+					continue; // new key already there; drop the old
+				}
+				None => line.to_string(),
 			},
-			None => out.push(line.to_string()),
+			None => line.to_string(),
+		};
+		if line_setting_key(&kept) == Some("font_family") && active(&kept) {
+			active_font_family = Some(out.len());
+		}
+		out.push(kept);
+	}
+	// A config predating `use_system_font` that pinned an explicit font_family keeps
+	// that font: insert use_system_font = false so backfill won't add =true (default)
+	// and silently override it.
+	if let Some(idx) = active_font_family {
+		if !has_key("use_system_font") {
+			out.insert(idx + 1, "use_system_font = false".to_string());
+			changed = true;
 		}
 	}
 	changed.then(|| {
@@ -862,11 +896,15 @@ const DEFAULT_CONFIG: &str = r##"## SilkTerm configuration. Delete this file to 
 ## Convention: '## ' starts an explanatory comment; a single '# ' before a
 ## `key = value` is a commented-out (disabled) setting you can uncomment.
 
-## Font family by name; leave commented to use the system default monospace.
-# font_family = "JetBrains Mono"
+## Use the OS default monospace font (family + size). When true this overrides
+## font_family / font_size below. Turn off to use them instead.
+use_system_font = true
 
-## Font size in logical pixels. Leave commented to follow the desktop's
-## monospace size; uncomment to pin an explicit size.
+## Font family: a comma-separated fallback stack (first installed wins). Used
+## only when use_system_font = false. Ends in the generic "monospace".
+font_family = "JetBrains Mono, Fira Code, Cascadia Code, DejaVu Sans Mono, Menlo, Consolas, Liberation Mono, monospace"
+
+## Font size in logical pixels. Used only when use_system_font = false.
 # font_size = 17.0
 
 ## Line height as a multiple of the font's natural height (1.0 = tight).
@@ -1055,5 +1093,20 @@ mod tests {
 	#[test]
 	fn migrate_config_noop_when_current() {
 		assert!(migrate_config_text("opacity = 0.7\ncursor_shape = \"bar\"\n").is_none());
+	}
+
+	// A pre-boolean config with an explicit font_family keeps it (use_system_font=false
+	// inserted), so the backfilled default (true) can't silently override the font.
+	#[test]
+	fn migrate_config_pins_use_system_font_for_explicit_family() {
+		let out = migrate_config_text("font_family = \"Iosevka\"\n").expect("should change");
+		assert!(out.contains("font_family = \"Iosevka\""));
+		assert!(out.contains("use_system_font = false"), "{out:?}");
+		// but a commented family (following the system) doesn't trigger the insert
+		assert!(migrate_config_text("# font_family = \"Iosevka\"\n").is_none());
+		// and one that already has the key is left alone
+		assert!(
+			migrate_config_text("use_system_font = true\nfont_family = \"Iosevka\"\n").is_none()
+		);
 	}
 }

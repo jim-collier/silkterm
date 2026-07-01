@@ -113,9 +113,24 @@ fn resolve_mono_family(fs: &FontSystem) -> Option<String> {
 			.is_some_and(|f| f.families.iter().any(|(n, _)| n.eq_ignore_ascii_case(fam)))
 	};
 
-	let user = config::settings().font_family.clone();
+	let s = config::settings();
 	let sys = crate::sysfont::monospace().family.clone();
-	for fam in [user, sys].into_iter().flatten() {
+	// Priority: the OS monospace first when following the system font; otherwise
+	// each family in the user's comma-separated fallback stack, then the OS mono.
+	let mut candidates: Vec<String> = Vec::new();
+	if s.use_system_font {
+		candidates.extend(sys.clone());
+	} else {
+		candidates.extend(
+			s.font_family
+				.iter()
+				.flat_map(|f| f.split(','))
+				.map(|f| f.trim().to_string())
+				.filter(|f| !f.is_empty()),
+		);
+		candidates.extend(sys.clone());
+	}
+	for fam in candidates {
 		if installed(&fam) {
 			return Some(fam);
 		}
@@ -163,7 +178,7 @@ impl TextCtx {
 		pin_mono_family(&font_system);
 		pin_sans_family(&font_system);
 
-		let font_size = (config::settings().font_size * scale).round();
+		let font_size = (config::effective_font_size() * scale).round();
 		let line_height = (font_size * config::settings().line_height_scale).round();
 		let metrics = Metrics::new(font_size, line_height);
 
