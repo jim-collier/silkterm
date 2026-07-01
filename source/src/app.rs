@@ -2257,7 +2257,7 @@ impl ApplicationHandler<UserEvent> for App {
 					}
 				};
 				if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
-					let m = p.term.mode();
+					let m = p.mode;
 					// Alternate-scroll (DECSET 1007) is default-on, so gate the cursor-key
 					// path on actually being in the alt screen. On the primary screen the
 					// wheel must scroll our scrollback; sending cursor keys there recalls
@@ -2440,7 +2440,7 @@ impl ApplicationHandler<UserEvent> for App {
 					.cur()
 					.panes
 					.get(&focused)
-					.map(|p| p.term.mode().contains(TermMode::APP_CURSOR))
+					.map(|p| p.mode.contains(TermMode::APP_CURSOR))
 					.unwrap_or(false);
 				if let Some(bytes) = input::encode(&key, state.mods, app_cursor) {
 					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&focused) {
@@ -2540,10 +2540,12 @@ impl ApplicationHandler<UserEvent> for App {
 			let force = state.dirty || scroll_anim || bell_anim;
 			state.dirty = false;
 			if state.render(force) {
-				// Scroll (the flagship smooth feature), a bell flash, and fresh
-				// content render at full rate; a lone idle cursor blink is capped to
-				// ~30fps so it isn't re-shaping text every frame just to pulse.
-				if scroll_anim || bell_anim || state.dirty {
+				// Scroll (the flagship smooth feature) and a bell flash render at
+				// full rate; a lone idle cursor blink is capped to ~30fps so it
+				// isn't re-shaping text every frame just to pulse. (dirty was
+				// cleared above and render() never re-sets it; fresh content
+				// arrives as a new Wakeup, so it has no say here.)
+				if scroll_anim || bell_anim {
 					ControlFlow::Poll
 				} else {
 					ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(33))
