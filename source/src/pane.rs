@@ -761,7 +761,21 @@ impl PaneManager {
 		command: Option<Vec<String>>,
 		area: Rect,
 	) -> Option<PaneId> {
+		// leaves mirror `panes`, so this is also "is id a leaf" - checked up
+		// front so a doomed insert can't spawn (then kill) a shell
+		if !self.panes.contains_key(&id) {
+			return None;
+		}
 		let new_id = alloc_pane_id();
+		// spawn BEFORE touching the tree: a failed spawn must not leave a
+		// phantom leaf that reserves layout space with no pane behind it
+		let pane = match spawn_pane(ctx, proxy, new_id, area, command) {
+			Ok(p) => p,
+			Err(e) => {
+				eprintln!("split: failed to spawn shell: {e}");
+				return None;
+			}
+		};
 		// child-a's ratio: if the new pane is 'a' (before) it takes new_ratio,
 		// else 'a' is the old pane and keeps the remainder.
 		let ratio_a = if before { new_ratio } else { 1.0 - new_ratio };
@@ -775,10 +789,6 @@ impl PaneManager {
 		) {
 			return None;
 		}
-		let pane = match spawn_pane(ctx, proxy, new_id, area, command) {
-			Ok(p) => p,
-			Err(_) => return None,
-		};
 		self.panes.insert(new_id, pane);
 		self.focused = new_id;
 		self.relayout(ctx, area);

@@ -246,23 +246,34 @@ impl Gfx {
 		el: &ActiveEventLoop,
 		attrs: WindowAttributes,
 	) -> anyhow::Result<(Self, Arc<Window>)> {
-		let template = glutin::config::ConfigTemplateBuilder::new()
-			.with_alpha_size(8)
-			.with_transparency(true);
+		// No transparency requirement in the template: the picker closure must
+		// return a Config (can't say "none fit"), and a panic there would abort
+		// past resumed()'s native-backend fallback (panic=abort in release).
+		// So match broadly, prefer transparent+deepest-alpha, validate after.
+		let template = glutin::config::ConfigTemplateBuilder::new();
 		let (window, config) = DisplayBuilder::new()
 			.with_window_attributes(Some(attrs))
 			.build(el, template, |cfgs| {
 				cfgs.reduce(|a, c| {
-					if c.supports_transparency().unwrap_or(false) && c.alpha_size() > a.alpha_size()
-					{
+					let (ta, tc) = (
+						a.supports_transparency().unwrap_or(false),
+						c.supports_transparency().unwrap_or(false),
+					);
+					if (tc, c.alpha_size()) > (ta, a.alpha_size()) {
 						c
 					} else {
 						a
 					}
 				})
-				.expect("a GL config")
+				// unreachable unless GL reports zero framebuffer configs at all
+				.expect("GL reported no framebuffer configs")
 			})
 			.map_err(|e| anyhow::anyhow!("glutin display build: {e}"))?;
+		if !config.supports_transparency().unwrap_or(false) || config.alpha_size() < 8 {
+			return Err(anyhow::anyhow!(
+				"no transparency-capable GL config (no ARGB visual?)"
+			));
+		}
 		let window = Arc::new(window.ok_or_else(|| anyhow::anyhow!("glutin made no window"))?);
 		let raw = window.window_handle()?.as_raw();
 		let gl_display = config.display();
