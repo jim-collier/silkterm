@@ -80,8 +80,8 @@ pub struct Settings {
 	pub text_glow: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
 	pub text_glow_radius: f32, // glow blur sigma in px
 	pub text_glow_softness: f32, // 0 = hard/solid glow, 1 = soft/faint (maps to the intensity boost)
-	pub cursor_size_vertical: f32, // cursor width, 1..100% of the cell (from the left)
-	pub cursor_size_horizontal: f32, // cursor height, 1..100% of the cell (from the bottom)
+	pub cursor_size_vertical: f32, // cursor height, 1..100% of the cell (from the bottom)
+	pub cursor_size_horizontal: f32, // cursor width, 1..100% of the cell (from the left)
 	pub cursor_animation: String, // "none" | "phase" | "pulse_vertical" | "pulse_horizontal" | "pulse_both"
 	pub cursor_blink_rate_ms: f32, // one animation cycle (ms)
 	pub columns: usize,           // initial window grid size (used when !remember_size)
@@ -125,9 +125,9 @@ impl Default for Settings {
 			text_glow: true,
 			text_glow_radius: 5.0,
 			text_glow_softness: 0.5,
-			cursor_size_vertical: 15.0,    // thin bar by default
-			cursor_size_horizontal: 100.0, // full height
-			cursor_animation: "phase".to_string(),
+			cursor_size_vertical: 100.0,  // full height
+			cursor_size_horizontal: 25.0, // ~quarter-width bar
+			cursor_animation: "pulse_vertical".to_string(),
 			cursor_blink_rate_ms: 500.0,
 			columns: 160,
 			rows: 48,
@@ -974,17 +974,17 @@ opacity = 0.95
 # text_glow_radius = 5.0     ## glow blur sigma in pixels
 # text_glow_softness = 0.5   ## 0 = hard/solid glow, 1 = soft/faint
 
-## Cursor size, as a percent of the cell. Vertical = width (from the left),
-## horizontal = height (from the bottom). Together they make any shape: a thin
-## bar (15 / 100), an underline (100 / 15), or a block (100 / 100). Used when the
-## app doesn't set its own; alt-screen apps (vim, less) still control theirs.
-# cursor_size_vertical = 15
-# cursor_size_horizontal = 100
+## Cursor size, as a percent of the cell. Vertical = height (from the bottom),
+## horizontal = width (from the left). Together they make any shape: a thin bar
+## (100 / 25), an underline (15 / 100), or a block (100 / 100). Used when the app
+## doesn't set its own; alt-screen apps (vim, less) still control theirs.
+# cursor_size_vertical = 100
+# cursor_size_horizontal = 25
 
 ## Cursor animation: "none" (steady), "phase" (smooth fade), or a pulse that
 ## grows/shrinks each cycle - "pulse_vertical", "pulse_horizontal", "pulse_both".
 ## The cursor always slides smoothly as you type.
-# cursor_animation = "phase"
+# cursor_animation = "pulse_vertical"
 
 ## Cursor animation cycle length, in milliseconds (blink rate).
 # cursor_blink_rate_ms = 500
