@@ -50,7 +50,7 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🔘 Outer glow should only to terminal text - not tab titles or the menu bar.
+- 🔘 Outer glow should only apply to terminal text - not tab titles or the menu bar.
 
 - ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
 	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. (20260629)
@@ -166,9 +166,8 @@ In each section, items are listed approximately from newest to oldest.
 			- Block
 	- 🚫 Overwrite mode will be the regular block cursor.
 		- Overwrite mode canceled.
-	- Done: the Insert key toggles Insert(bar)/Overwrite(block); default is Insert. App-set Beam/Underline shapes are honoured, and alt-screen apps (vim/less) keep their own cursor; Insert is still forwarded to the shell so readline can follow. Detail in `.claude/details.md`.
-		- 🔘 Back out changing anything with the insert key.
-	- ✅ Provide options in the config (not dialog) to adjust type for both, and blinking style. Similar to Sublime Text cursor options. (20260629) - config keys `cursor_insert_shape` / `cursor_overwrite_shape` (bar|block|underline) and `cursor_blink_style` (phase|blink|solid), replacing the `cursor_blink` bool. Verified: underline shape + solid style render.
+	- ✅ Backed out (20260630): overwrite mode + the Insert-key toggle removed (a terminal can't force the shell's line editor to overwrite). Kept the cursor work - configurable shape, blink, smooth slide. Insert key now just passes through to the shell.
+	- ✅ Provide options in the config (not dialog) to adjust cursor type + blinking style. Similar to Sublime Text cursor options. (20260629) - config keys `cursor_shape` (bar|block|underline; was cursor_insert_shape, overwrite variant dropped) and `cursor_blink_style` (phase|blink|solid). Verified: underline shape + solid style render.
 		- This is mostly done. Refer to above point about options.
 	- 🔘 Change default cursor colors:
 		- Thick: Gray (depending on the theme).
@@ -177,7 +176,8 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 Outer glow enhancements:
 	- 🔘 When outer glow is applied, also add an antialiased 1px outer border around the letters, using the same color rules as outer glow.
-	- 🔘 For bold text, calculate the 
+	- 🔘 For bold text, calculate the blur for the outer glow, based on all non-bold text. (But still render the visible text on top in whatever weight it was meant to.
+	- 🔘 Provide options for different blur fadeoff ramps. E.g. default gaussian, linear, or "S"-shaped.
 
 - 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
 	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
