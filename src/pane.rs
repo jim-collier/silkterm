@@ -43,10 +43,9 @@ enum CursorKind {
 }
 
 // Resolve the rendered cursor shape. An app-set Beam/Underline (DECSCUSR) is
-// honoured. For a plain Block the SilkTerm insert(bar)/overwrite(block) mode
-// decides - except on the alt screen, where the app (vim, less, ...) owns its
-// cursor shape, so a Block stays a block.
-fn cursor_kind(shape: CursorShape, alt_screen: bool, overwrite: bool) -> CursorKind {
+// honoured; a plain Block uses the configured default cursor shape - except on
+// the alt screen, where the app (vim, less, ...) owns its cursor.
+fn cursor_kind(shape: CursorShape, alt_screen: bool) -> CursorKind {
 	match shape {
 		CursorShape::Beam => CursorKind::Bar,
 		CursorShape::Underline => CursorKind::Underline,
@@ -54,12 +53,7 @@ fn cursor_kind(shape: CursorShape, alt_screen: bool, overwrite: bool) -> CursorK
 			if alt_screen {
 				CursorKind::Block // alt-screen app owns its (block) cursor
 			} else {
-				let s = config::settings();
-				parse_cursor_shape(if overwrite {
-					&s.cursor_overwrite_shape
-				} else {
-					&s.cursor_insert_shape
-				})
+				parse_cursor_shape(&config::settings().cursor_shape)
 			}
 		}
 	}
@@ -170,7 +164,6 @@ impl Pane {
 		dt: f32,
 		bell: f32,
 		force_rebuild: bool,
-		overwrite: bool,
 	) -> PaneDraw {
 		let cell_w = ctx.cell_w;
 		let cell_h = ctx.cell_h;
@@ -248,13 +241,9 @@ impl Pane {
 		// the fast path below can drop the term lock immediately.
 		let cursor_pt = guard.grid().cursor.point;
 		let cursor_shape = guard.cursor_style().shape;
-		// Alt-screen apps own their cursor shape; on the primary screen the
-		// insert(bar)/overwrite(block) mode applies. See cursor_kind.
-		let ckind = cursor_kind(
-			cursor_shape,
-			guard.mode().contains(TermMode::ALT_SCREEN),
-			overwrite,
-		);
+		// Alt-screen apps own their cursor shape; on the primary screen it's the
+		// configured default (or the app's DECSCUSR). See cursor_kind.
+		let ckind = cursor_kind(cursor_shape, guard.mode().contains(TermMode::ALT_SCREEN));
 		let following = desired == 0;
 
 		// Fast path: a pure cursor-animation frame (blink/slide, no content/scroll/
