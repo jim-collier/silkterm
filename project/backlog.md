@@ -42,17 +42,14 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- ✅ Cursor:
-	- ✅ `cursor_size_vertical` and `cursor_size_horizontal` are swapped in meaning. (20260701) - now vertical = HEIGHT (from bottom), horizontal = WIDTH (from left); cursor_geometry swaps which field feeds w/h. Verified: (15,100) now renders an underline (was a bar).
-
 - 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
 	- Cause (by code analysis): when the glyph atlas fills up (a long session of varied glyphs), text `prepare()` fails and `render` returned early - *above* the per-frame atlas trim - so the atlas never recovered and all text stayed black forever. The cursor and cell backgrounds use a separate rect renderer, so they kept showing (matches the report exactly).
 	- Fix: trim the atlas on the prepare-failure path so the next frame re-prepares with room and recovers. Couldn't force an atlas-full in a short stress run (a 20s unicode flood didn't fill it - the trigger needs a genuinely long session), so this is verified by code analysis, not a live repro. Watch for recurrence.
 	- 20260701 (headless retest): ran a 50s max-rate random-unicode flood on the private Xvfb (gui-headless.bash) at 120x40 - text stayed visible the whole time (screen brightness ~0.12 throughout), app alive, no black-out, no trim event. Still couldn't force the atlas-full: this box has limited renderable-glyph coverage (no CJK/emoji fonts - a full-screen distinct-CJK flood just renders blank, which is a missing-font effect, NOT the atlas bug and NOT a trim event). So the specific atlas-full trigger remains unreproducible here; the no-black-out-under-load result is a stronger confirmation than code-analysis alone.
 	- Resolution: Leave this issue open until verified with long-running terminals.
 
-- ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
-	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. (20260629)
+- 🛠️ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
+	- 🛠️ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. For example my system proportional font is a Serif font, not sans serif. (20260629)
 		- Cause: chrome used generic `Family::SansSerif`. fontdb's generic-sans default is "Arial"; when that's absent (typical on Linux) the query falls through to whatever matches - here the GNOME *document* font, which is a serif (GentiumAlt). (fontconfig's actual sans-serif on this box is Noto Sans.)
 		- Fix: pin a concrete sans family, mirroring the mono pin - `text::resolve_sans_family` + `pin_sans_family` resolve the OS sans-serif (`sysfont::sans_serif` = `fc-match sans-serif`), else a curated list, validated against the db; `sans_attrs` now uses `Family::Name`. Headless unit test asserts a concrete face resolves (got "Noto Sans"). 29 tests pass.
 			- 🔘 Not fixed: Still using system *sans serif*, rather than just system font generally. (Which on my system is a *serif* font.)
@@ -60,19 +57,16 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- I've added 'silkterm/github/cicd/utility/gui-headless.bash'. It allows running the terminal for testing in a GUI environment that doesn't interfere with current user session, via use of xvfb in the script.
-	- ✅ Update all tests, scripts, and profiling to run in that environment. (20260701) - cicd's `run_profiler` now brings up the private Xvfb (via gui-headless.bash) and runs the app on it (DISPLAY set), so no window pops on the user's :0 session; it skips only if Xvfb/python3/workload are missing (was: skip on "no DISPLAY"). Uses `:98` not `:99` (rapid-photo-downloader-pro owns :99); overridable via RPD_HEADLESS_DISPLAY. Unit tests (`cargo test`) are already headless (pure logic + FontSystem). Verified end-to-end: SilkTerm renders on Xvfb via software GL (llvmpipe), profiler produced a valid flamegraph with real pipeline frames.
+- 🔘 Terminal should support standard terminal editing and/or navigation keys.
+	- 🔘 Research: The only one I can think of that isn't currently supported, is Ctrl + arrow key (to skip whole words - other terminals do this).
+	- 🔘 Are Ctrl+Backspace, Ctrl+Del possible to delete whole words? Is that something some terminals do? XFCE terminal and Terminator don't.
 
-- ✅ Cursor: (20260701)
-	- ✅ After the related cursor bug fix above, set default cursor_size_horizontal to 25. - done (with cursor_size_vertical=100 -> a 25%-width bar).
-	- ✅ Default cursor_animation = "pulse_vertical"
-
-- ◐ Cursor currently renders *behind* outer glow, which sometimes obscures the cursor. As noted in another issue below, the cursor itself should also have an outer glow, if not too computationally expensive with an animated cursor. In that case, the cursor shadow should merge with the text outer glow. And either way, the cursor should appear *above* any outer glow.
+- 🛠️ The cursor [used to] render *behind* outer glow, which sometimes obscures the cursor. As noted in another issue below, the cursor itself should also have an outer glow, if not too computationally expensive with an animated cursor. In that case, the cursor shadow should merge with the text outer glow. And either way, the cursor should appear *above* any outer glow.
 	- ✅ Cursor now renders ABOVE the glow. (20260701) - cursor quads split into their own per-pane ranges drawn after the glow composite (under the crisp text). Verified: a block cursor with a radius-14 glow stays a crisp solid block.
 	- 🔘 Cursor's own glow (merged with the text glow) - evaluated with the glow-enhancements item below (also lists "cursor should have blur"). Investigate-y.
 
 - 🔘 Outer glow enhancements:
-	- 🔘 When outer glow is applied, also add an antialiased 1px outer border around the letters, using the same color rules as outer glow.
+	- 🔘 When outer glow is applied, also add an antialiased (user-definable) 1px outer border around the letters, using the same color rules as outer glow.
 	- 🔘 For bold text, calculate the blur for the outer glow, based on all non-bold text. (But still render the visible text on top in whatever weight it was meant to.
 	- 🔘 Cursor should have blur if possible (investigate - this may not be possible, especially with the phasing).
 	- 🔘 Provide options for different blur fadeoff ramps. E.g. default gaussian, linear, or "S"-shaped.
@@ -314,7 +308,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ Cursor: (20260629)
 	- ✅ Smooth-scroll (when moving to the right). - the cursor slides to its target column as you type (snaps on a newline); idles at 0% CPU.
-	- ✅ Blink at the same rate, but "phase" between of and on, not just on or off. - smooth cosine fade, now default ON: a render refactor skips re-shaping text on cursor-only frames (~70% -> ~21% of a core, debug; far less in release), so blinking no longer pegs the CPU. `cursor_blink` config to disable. Detail in `.claude/details.md`.
+	- ✅ Blink at the same rate, but "phase" between of and on, not just on or off. - smooth cosine fade, now default ON: a render refactor skips re-shaping text on cursor-only frames (~70% -> ~21% of a core, debug; far less in release), so blinking no longer pegs the CPU. `cursor_blink` config to disable. Detail in the private dev notes.
 
 - ✅ Setting dialog: (20260629)
 	- ✅ Setting Bg image fit to "Zoom", then Apply works. But back to "Stretch", then Apply, doesn't. - Cause: the dialog's `orig` baseline was captured at open and never refreshed, so a 2nd Apply diffed against the open-time snapshot; re-selecting the original value read as "no change". Fix: `commit_baseline()` resets orig = edited after each Apply (fixes every setting, not just fit).
@@ -395,6 +389,13 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - new features and enhancements
 
+- I've added 'silkterm/github/cicd/utility/gui-headless.bash'. It allows running the terminal for testing in a GUI environment that doesn't interfere with current user session, via use of xvfb in the script.
+	- ✅ Update all tests, scripts, and profiling to run in that environment. (20260701) - cicd's `run_profiler` now brings up the private Xvfb (via gui-headless.bash) and runs the app on it (DISPLAY set), so no window pops on the user's :0 session; it skips only if Xvfb/python3/workload are missing (was: skip on "no DISPLAY"). Uses `:98` not `:99` (rapid-photo-downloader-pro owns :99); overridable via RPD_HEADLESS_DISPLAY. Unit tests (`cargo test`) are already headless (pure logic + FontSystem). Verified end-to-end: SilkTerm renders on Xvfb via software GL (llvmpipe), profiler produced a valid flamegraph with real pipeline frames.
+
+- ✅ Cursor: (20260701)
+	- ✅ After the related cursor bug fix above, set default cursor_size_horizontal to 25. - done (with cursor_size_vertical=100 -> a 25%-width bar).
+	- ✅ Default cursor_animation = "pulse_vertical"
+
 - ✅ Settings dialog:
 	- ✅ Alt+hotkeys for "Apply" and "OK", that underline when holding alt. (20260701) - Alt tracked on the dialog window; while held, Cancel/Apply/OK underline their first letter and Alt+C/A/O trigger them. Verified (underlines render; Alt+C closes).
 	- Font settings:
@@ -432,7 +433,7 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ New setting: Transparent background blur. (20260629)
 	- This is independent of background *image* blur, which maintains its independence.
 	- It blurs what's behind the terminal, as if it were made of frosted glass.
-	- Done: compositor-provided. SilkTerm sets a stable WM_CLASS + a "Backdrop blur" toggle (KWin/picom hint); on Compiz, match `class=SilkTerm` in its own Blur plugin. Detail + Compiz recipe in `.claude/details.md`.
+	- Done: compositor-provided. SilkTerm sets a stable WM_CLASS + a "Backdrop blur" toggle (KWin/picom hint); on Compiz, match `class=SilkTerm` in its own Blur plugin. Detail + Compiz recipe in the private dev notes.
 
 - ✅ Change defaults: (20260629) - `Settings::default()` updated (the loader's `unwrap_or(default)` makes it the single source of truth); the DEFAULT_CONFIG template's documented example values now match. Headless guard test added; 32 tests pass. Note: glow is now on by default, so the glow render pass runs every frame - owner to confirm the look/feel.
 	- ✅ Background image blur: 8 px
@@ -441,7 +442,7 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ text_glow_softness = 0.5
 
 - ✅ Bell/warning: (20260629)
-	- Gently and smoothly brighten all text, like the modern Windows Terminal does. - on BEL the text brightens toward white then fades back (~0.8s); text only (bg/cursor unchanged). Tunable `BELL_BRIGHTEN` if you want it stronger. Detail in `.claude/details.md`.
+	- Gently and smoothly brighten all text, like the modern Windows Terminal does. - on BEL the text brightens toward white then fades back (~0.8s); text only (bg/cursor unchanged). Tunable `BELL_BRIGHTEN` if you want it stronger. Detail in the private dev notes.
 
 - ✅ "Reload config" should re-read the background image too. In case user changed the image and kept it the same name. (20260626-102603)
 	- Cause: `apply_new_settings` reloaded the image only when `bg_image_changed` (path/opacity/fit/blur differ). A same-name file swap leaves the path string identical, so it skipped the reload.
