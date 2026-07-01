@@ -15,7 +15,7 @@
 - [Architecture](#architecture)
 	- [Language / Stack Decision](#language--stack-decision)
 	- [Logical code organization](#logical-code-organization)
-	- [API alacritty_terminal 0.15.0](#api-alacritty_terminal-0150)
+	- [API alacritty_terminal](#api-alacritty_terminal)
 	- [Smooth-Scroll](#smooth-scroll)
 	- [Output easing new text](#output-easing-new-text)
 	- [Render Loop Sketch](#render-loop-sketch)
@@ -40,7 +40,7 @@ Rust + `alacritty_terminal` crate (not a fork of Alacritty repo).
 
 Rationale:
 
-- `alacritty_terminal` crate (v0.15.0) ships PTY + full VT/ANSI parser + grid state as a standalone library. Inherit the two hardest, correctness-critical pieces.
+- `alacritty_terminal` crate (v0.15.0 at design time; v0.26 as built) ships PTY + full VT/ANSI parser + grid state as a standalone library. Inherit the two hardest, correctness-critical pieces.
 
 - Do not `git fork alacritty` - its renderer is built to snap to cells and maintainers reject smooth scroll by design. Forking = fighting architecture + merge debt. Crate = clean dependency, build only the renderer.
 
@@ -84,7 +84,9 @@ So a window is a list of tabs, a tab is a split tree of panes, a pane wraps one 
 
 Frame loop: A PTY read or a user event marks the app dirty or starts an animation; `about_to_wait` renders when something is dirty or animating, and otherwise waits. A render advances the scroll easing, snaps the grid to the nearest whole line, and redraws each pane from current model state. (Frames are driven from `about_to_wait` rather than redraw requests, because `request_redraw` is unreliable under X11/Compiz here.)
 
-### API (alacritty_terminal 0.15.0)
+### API (alacritty_terminal)
+
+(As designed against 0.15.0; the build tracks the current release - 0.26 as of 2026-07. Signatures below are the stable core that carried over.)
 
 - `Term::scroll_display(Scroll)` - moves viewport by whole lines. `Scroll` enum: `Delta(i32)`, `PageUp`, `PageDown`, `Top`, `Bottom`.
 
@@ -122,6 +124,6 @@ Same mechanism: when new output pushes content up, animate `visual_offset` from 
 
 ### Environment
 
-- Target: Debian, X11. (With or without compositing. Also Windows and macOS - all with x86_64 and ARM64 variants.
+- Target: Debian, X11. (With or without compositing. Also Windows and macOS - all with x86_64 and ARM64 variants.)
 
 - Pixel-precise input: touchpad gives true pixel deltas; notched mouse wheel snaps to lines (clamp/accumulate notch deltas into smooth target).

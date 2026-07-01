@@ -9,7 +9,6 @@
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 ![Lifecycle: Beta](https://img.shields.io/badge/Lifecycle-Beta-yellow)
 ![Support](https://img.shields.io/badge/Support-Maintained-brightgreen)
-![Status: Passing](https://img.shields.io/badge/Status-Passing-brightgreen)
 
 </div>
 <!--
@@ -30,7 +29,6 @@
 ![Coverage](https://img.shields.io/badge/Coverage-50%25-orange)
 ![Coverage](https://img.shields.io/badge/Coverage-75%25-yellow)
 ![Coverage](https://img.shields.io/badge/Coverage-90%25-brightgreen)
-![Status: Passing](https://img.shields.io/badge/Status-Passing-brightgreen)
 ![Status: Failing](https://img.shields.io/badge/Status-Failing-red)
 -->
 
@@ -97,7 +95,7 @@ SilkTerm's smooth-scrolling output is a joy to work with, you really have to try
 
 Generally speaking, "outer-glow" is a readability aid - whereas angled "drop-shadow" is a creative effect. (This isn't a hard-and-fast graphic design "rule" - as there is lots of overlap in both directions.)
 
-If you've ever used a terminal that supports background transparency, and/or background images (both of which SilkTerm offers), that novelty can quickly wear off. You'll notice that the text might be too hard to read, particulary in a long computing session.
+If you've ever used a terminal that supports background transparency, and/or background images (both of which SilkTerm offers), that novelty can quickly wear off. You'll notice that the text might be too hard to read, particularly in a long computing session.
 
 Text can be particularly hard to read, for example when using light text on a normally dark background, and:
 
@@ -119,7 +117,7 @@ Text can be particularly hard to read, for example when using light text on a no
 
 - **Smooth mouse wheel scrolling**. Several other terminals offer this feature.
 
-- **Background tranparency**. The background (with adjustable %) becomes see-through, but not the text.
+- **Background transparency**. The background (with adjustable %) becomes see-through, but not the text.
 
 - **Outer glow behind text**. This optional feature helps keep text readable even over similar-colored backgrounds and/or high transparency. This is the only known terminal to offer it, though there are several terminals that do offer angled *drop-shadow* (which ironically can make text *harder* to read). Outer glow is conceptually similar - but enhances, rather than reduces, readability.
 
@@ -145,13 +143,13 @@ Text can be particularly hard to read, for example when using light text on a no
 
 - **Arbitrary alternate config files possible**, another way to launch SilkTerm with wildly different options, without overwriting the main config file.
 
-- **Written in rust** for minimum executable size, no dependencies, and maximum speed. (Several terminal emulators - such as the revered `terminator` - are written in interpreted Python.)
+- **Written in rust** for minimum executable size, no runtime dependencies, and maximum speed. (Several terminal emulators - such as the revered `terminator` - are written in interpreted Python.)
 
-- **One codebase for Linux + Windows**. The Window and/or ARM versions can be built all at once on x86_64 Linux. *MacOS however requires a native build, but is fully supported*.
+- **One codebase for Linux + Windows**. The Window and/or ARM versions can be built all at once on x86_64 Linux. *MacOS should build natively on a Mac, but is so far untested (no releases target it yet)*.
 
-- **Loosely based on [Alacritty](https://github.com/alacritty/alacritty)** (not a fork) for the basement plumbing, to avoid rewriting the complex but solved problems of terminal emulation. Alacrity is a high-performance terminal written in Rust.
+- **Loosely based on [Alacritty](https://github.com/alacritty/alacritty)** (not a fork) for the basement plumbing, to avoid rewriting the complex but solved problems of terminal emulation. Alacritty is a high-performance terminal written in Rust.
 
-- **GPU-acellerated** with software fallback.
+- **GPU-accelerated** with software fallback.
 
 - **Simple and sane configuration**. No pages of nested tabs representing multiple settings metaphors. (E.g. no separate "Profiles" and "Layouts".) If you want to get fancy with multiple sets of wildly different options - that's easy with alternate config files, and/or scripted launch-time arguments.
 
@@ -165,26 +163,9 @@ Text can be particularly hard to read, for example when using light text on a no
 
 - Some rare hybrid programs write to `stdout` and `stderr`, *and* write to the terminal buffer in raw mode for fixed portions. If that fixed portion is on the last line, it will visibly "bounce" slightly, as text is pushed up the screen. (But at least the bounce is smooth.)
 
-	- It may be possible to work around this someday, but for the forseeable future, it's just a minor niggle to live with, and (arguably) not annoying.
+	- It may be possible to work around this someday, but for the foreseeable future, it's just a minor niggle to live with, and (arguably) not annoying.
 
 	- The only program currently known to exhibit this behavior, is `apt`, with the status bar fixed to the bottom. (If you notice any others, please file an issue)
-
-<!--
-## Default keybindings
-
-| Key | Action |
-| --- | --- |
-| `Ctrl+Shift+R` | Split focused pane vertically (side by side) |
-| `Ctrl+Shift+D` | Split focused pane horizontally (top / bottom) |
-| `Ctrl+Shift+W` | Close focused pane |
-| `Ctrl+Shift+Tab` | Cycle focus to the next pane |
-| Right-click | Open a context menu (Split Vertical / Split Horizontal / Close Pane) |
-| Left-click | Focus the pane under the cursor (or pick a menu item) |
-| `Escape` | Dismiss the context menu |
-| Mouse wheel | Smooth-scroll the pane under the cursor through scrollback |
-
-Typing routes to the focused pane and snaps it back to the bottom.
--->
 
 ## Configuration
 
@@ -197,6 +178,8 @@ $XDG_CONFIG_HOME/silkterm/config.toml   (falls back to ~/.config/...)
 Edit it and restart. Unknown or malformed entries fall back to defaults; delete the file to regenerate it.
 
 ## Installing
+
+Pre-built releases are not published yet - build from source per the Compiling section. Optional: copy the example config tree in [`filesystem/home/`](filesystem/home/) over your own `$HOME` for a starter config and the background image pack.
 
 ## Building from source
 
@@ -212,7 +195,7 @@ cargo run --release
 The display name lives in one place (`APP_NAME` in `source/src/config.rs`); the lowercase identifier (`silkterm`) is the cargo package, binary, and config directory. To rename everything at once during development:
 
 ```sh
-utility/rename.sh NewName
+utility/rename.bash NewName
 cargo build
 ```
 
@@ -222,7 +205,7 @@ afterwards); `cargo build` regenerates `Cargo.lock`.
 
 ## Design
 
-See [design.md](project/design.md) for the general architecture, and initial bugs and features before the first release. (All of which are tracked as [Issues](https://github.com/jim-collier/silkterm/issues) after initial release.)
+See [design.md](project/design.md) for the general architecture and decisions, and [backlog.md](project/backlog.md) for bugs and features before the first release. (All of which are tracked as [Issues](https://github.com/jim-collier/silkterm/issues) after initial release.)
 
 ## Copyright and license
 
