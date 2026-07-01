@@ -899,7 +899,12 @@ impl State {
 		for (id, pane) in self.tabs.cur_mut().panes.iter_mut() {
 			pane.scroll.advance(dt);
 			let rect = pane.rect;
-			let draw = pane.build(&mut self.text, dt, bell, force_rebuild);
+			// scope the expensive re-shape to panes that actually changed: fresh
+			// PTY output (content_dirty), an active scroll ease, or a global
+			// cause (bell flash, chrome/UI change) - idle siblings reuse their
+			// cached frame instead of re-shaping at the busy pane's rate
+			let force = force_rebuild || pane.content_dirty || pane.scroll.animating();
+			let draw = pane.build(&mut self.text, dt, bell, force);
 			if pane.scroll.animating() || pane.cursor_animating {
 				animating = true;
 			}
@@ -1923,10 +1928,14 @@ impl ApplicationHandler<UserEvent> for App {
 			return;
 		};
 		match event {
-			UserEvent::Wakeup => {
+			UserEvent::Wakeup(id) => {
 				// output easing is triggered in Pane::build when the screen
-				// actually scrolls, not on every content change
-				state.dirty = true;
+				// actually scrolls, not on every content change. Only the pane
+				// that produced output is marked; a background tab's flag just
+				// waits until its tab is shown (the switch forces a rebuild).
+				if let Some(p) = state.tabs.find_pane_mut(id) {
+					p.content_dirty = true;
+				}
 			}
 			UserEvent::PtyWrite(id, bytes) => {
 				if let Some(p) = state.tabs.find_pane(id) {
@@ -2533,23 +2542,30 @@ impl ApplicationHandler<UserEvent> for App {
 			.values()
 			.any(|p| p.scroll.animating());
 		let cursor_anim = state.tabs.cur().panes.values().any(|p| p.cursor_animating);
+		let content = state.tabs.cur().panes.values().any(|p| p.content_dirty);
 		let bell_anim = state.bell_flash > 0.0;
-		let flow = if state.dirty || scroll_anim || cursor_anim || bell_anim {
-			// content/scroll/bell changed this frame -> panes re-shape; a pure cursor
-			// animation frame (only cursor_anim) lets them reuse the cached frame.
-			let force = state.dirty || scroll_anim || bell_anim;
+		let flow = if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
+			// UI/chrome changes and the bell force ALL panes to re-shape; fresh
+			// output and scroll eases are scoped per pane inside render (a pure
+			// cursor-animation frame lets every pane reuse its cached frame).
+			let force = state.dirty || bell_anim;
 			state.dirty = false;
-			if state.render(force) {
-				// Scroll (the flagship smooth feature) and a bell flash render at
-				// full rate; a lone idle cursor blink is capped to ~30fps so it
-				// isn't re-shaping text every frame just to pulse. (dirty was
-				// cleared above and render() never re-sets it; fresh content
-				// arrives as a new Wakeup, so it has no say here.)
-				if scroll_anim || bell_anim {
-					ControlFlow::Poll
-				} else {
-					ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(33))
-				}
+			let animating = state.render(force);
+			// a pane whose term was locked kept its content_dirty (rebuild was
+			// skipped) - retry shortly instead of waiting for the next event,
+			// or the last wakeup of a burst could leave a stale frame up
+			let retry = state.tabs.cur().panes.values().any(|p| p.content_dirty);
+			if animating && (scroll_anim || bell_anim) {
+				// scroll (the flagship smooth feature) and the bell flash render
+				// at full rate; fresh content needs no Poll - each PTY read
+				// batch arrives as its own Wakeup
+				ControlFlow::Poll
+			} else if retry {
+				ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(5))
+			} else if animating {
+				// a lone idle cursor blink is capped to ~30fps so it isn't
+				// re-rendering every frame just to pulse
+				ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(33))
 			} else {
 				ControlFlow::Wait
 			}
