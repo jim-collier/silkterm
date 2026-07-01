@@ -74,10 +74,9 @@ pub struct Settings {
 	pub text_glow: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
 	pub text_glow_radius: f32, // glow blur sigma in px
 	pub text_glow_softness: f32, // 0 = hard/solid glow, 1 = soft/faint (maps to the intensity boost)
-	pub cursor_insert_shape: String, // Insert-mode cursor: "bar" | "block" | "underline"
-	pub cursor_overwrite_shape: String, // Overwrite-mode cursor (Insert key toggles)
+	pub cursor_shape: String, // default cursor shape when the app sets none: "bar" | "block" | "underline"
 	pub cursor_blink_style: String, // "phase" (smooth fade) | "blink" (hard) | "solid" (none)
-	pub columns: usize,  // initial window grid size (used when !remember_size)
+	pub columns: usize,       // initial window grid size (used when !remember_size)
 	pub rows: usize,
 	pub remember_size: bool, // launch at the last window size instead of columns/rows
 	pub remembered_columns: usize, // last actual window size (not shown in the dialog)
@@ -117,8 +116,7 @@ impl Default for Settings {
 			text_glow: true,
 			text_glow_radius: 5.0,
 			text_glow_softness: 0.5,
-			cursor_insert_shape: "bar".to_string(),
-			cursor_overwrite_shape: "block".to_string(),
+			cursor_shape: "bar".to_string(),
 			cursor_blink_style: "phase".to_string(),
 			columns: 160,
 			rows: 48,
@@ -411,8 +409,7 @@ struct RawConfig {
 	text_glow: Option<bool>,
 	text_glow_radius: Option<f32>,
 	text_glow_softness: Option<f32>,
-	cursor_insert_shape: Option<String>,
-	cursor_overwrite_shape: Option<String>,
+	cursor_shape: Option<String>,
 	cursor_blink_style: Option<String>,
 	columns: Option<usize>,
 	rows: Option<usize>,
@@ -572,10 +569,7 @@ fn resolve(raw: RawConfig) -> Settings {
 			.text_glow_softness
 			.unwrap_or(d.text_glow_softness)
 			.clamp(0.0, 1.0),
-		cursor_insert_shape: raw.cursor_insert_shape.unwrap_or(d.cursor_insert_shape),
-		cursor_overwrite_shape: raw
-			.cursor_overwrite_shape
-			.unwrap_or(d.cursor_overwrite_shape),
+		cursor_shape: raw.cursor_shape.unwrap_or(d.cursor_shape),
 		cursor_blink_style: raw.cursor_blink_style.unwrap_or(d.cursor_blink_style),
 		background_fit: match raw.background_fit.as_deref() {
 			Some("zoom") => Fit::Zoom,
@@ -862,11 +856,9 @@ opacity = 0.95
 # text_glow_radius = 5.0     ## glow blur sigma in pixels
 # text_glow_softness = 0.5   ## 0 = hard/solid glow, 1 = soft/faint
 
-## Cursor type per mode: "bar" (thin), "block", or "underline". Insert mode (the
-## default) is the slim bar; Overwrite mode (toggled by the Insert key) is the
-## block. Alt-screen apps (vim, less) still set their own cursor shape.
-# cursor_insert_shape = "bar"
-# cursor_overwrite_shape = "block"
+## Default cursor type: "bar" (thin), "block", or "underline". Used when the app
+## doesn't set its own; alt-screen apps (vim, less) still control their cursor.
+# cursor_shape = "bar"
 
 ## Cursor blink style: "phase" (smooth fade in/out), "blink" (hard on/off), or
 ## "solid" (steady, no blink). The cursor always slides smoothly as you type.
