@@ -109,7 +109,7 @@ note "Format ..............: ${FMT_CMD[*]:-(skipped)}"
 note "Debug build .........: ${DEBUG_BUILD_CMD[*]}"
 note "Tests ...............: ${TEST_CMD[*]}"
 if ((PROFILE_ENABLE)); then
-	note "Profiler ............: ${PROFILE_SECS}s run -> flamegraph SVG"
+	note "Profiler ............: ${PROFILE_SECS}s run -> flamegraph SVG (on headless ${RPD_HEADLESS_DISPLAY:-:98})"
 	note "  output dir ........: ${profile_dir}"
 	note "  workload ..........: python3 ${PROFILE_WORKLOAD_SCRIPT} ${PROFILE_WORKLOAD_ARGS}"
 else
@@ -166,12 +166,13 @@ run_profiler(){
 	((PROFILE_ENABLE)) || { note "profiler disabled"; return 0; }
 
 	## Mundane/environmental reasons -> skip with a warning (not the app's fault),
-	## unless PROFILE_STRICT. Genuine run failures below still abort.
+	## unless PROFILE_STRICT. Genuine run failures below still abort. The app runs
+	## on a private Xvfb (gui-headless.bash), so no visible DISPLAY is needed - only
+	## Xvfb + python3 + the workload.
 	local skip=""
-	[[ -n "${DISPLAY:-}" ]]            || skip="no DISPLAY (headless session)"
-	[[ -z "$skip" ]] && ! command -v python3 >/dev/null 2>&1 && skip="python3 not found"
+	command -v python3 >/dev/null 2>&1 || skip="python3 not found"
 	[[ -z "$skip" ]] && [[ ! -f "$abs_script" ]] && skip="workload missing: ${abs_script}"
-	[[ -z "$skip" ]] && command -v xset >/dev/null 2>&1 && ! timeout 3 xset -q >/dev/null 2>&1 && skip="X server not reachable on ${DISPLAY}"
+	[[ -z "$skip" ]] && ! command -v Xvfb >/dev/null 2>&1 && skip="Xvfb not found (headless display unavailable)"
 	if [[ -n "$skip" ]]; then
 		((PROFILE_STRICT)) && die "profiler: ${skip}"
 		warn "profiler skipped: ${skip}"; return 0
@@ -182,13 +183,25 @@ run_profiler(){
 	cargo build --profile "${PROFILE_PROFILE}" --features "${PROFILE_FEATURE}" || die "profiler build failed (app problem)"
 	mkdir -p "${profile_dir}"
 
+	## Bring up a private in-memory display so the profiler window never touches the
+	## user's visible session (renders via software GL / llvmpipe on Xvfb).
+	local headless="${here}/utility/gui-headless.bash"
+	## Not :99 - rapid-photo-downloader-pro uses that display for its own testing.
+	export RPD_HEADLESS_DISPLAY="${RPD_HEADLESS_DISPLAY:-:98}"
+	local hdisp="${RPD_HEADLESS_DISPLAY}"
+	if ! "${headless}" start >/dev/null 2>&1; then
+		((PROFILE_STRICT)) && die "profiler: headless display failed to start"
+		warn "profiler skipped: headless display failed to start"; return 0
+	fi
+
 	## Born canonical (role "frequent"); the rotation retags the newest as "latest".
 	local out="${profile_dir}/flame_${stamp}_frequent.svg"
-	note "running app ${PROFILE_SECS}s under sampler (a window will appear briefly) ..."
-	if ! SILK_PROFILE_OUT="${out}" SILK_PROFILE_SECS="${PROFILE_SECS}" \
-		"${root}/${PROFILE_BIN}" --shell "python3 ${abs_script} ${PROFILE_WORKLOAD_ARGS}"; then
-		die "profiler run failed (non-zero exit - app problem)"
-	fi
+	note "running app ${PROFILE_SECS}s under sampler on headless ${hdisp} ..."
+	local prc=0
+	SILK_PROFILE_OUT="${out}" SILK_PROFILE_SECS="${PROFILE_SECS}" DISPLAY="${hdisp}" \
+		"${root}/${PROFILE_BIN}" --shell "python3 ${abs_script} ${PROFILE_WORKLOAD_ARGS}" || prc=$?
+	"${headless}" stop >/dev/null 2>&1 || true
+	((prc == 0)) || die "profiler run failed (non-zero exit - app problem)"
 	[[ -s "$out" ]] || die "profiler produced no SVG (app problem): ${out}"
 	gfs_rotate "${profile_dir}" flame svg
 	## Rotation renamed this run's file (newest) to the "latest" role.
