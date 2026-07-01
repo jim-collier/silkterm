@@ -153,12 +153,21 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
+-
+
 - 🛠️ Allow toggling from default "Insert" mode, to "Overwrite". (20260629)
-	- ✅ Change cursor in default "Insert" mode, to a thinner bar than the block cursor (but thicker than, say, "|").
-	- ✅ Overwrite mode will be the regular block cursor.
+	- 🚫 Change cursor in default "Insert" mode, to a thinner bar than the block cursor (but thicker than, say, "|").
+		- 🔘 This can't really be done in a terminal that covers all use cases. Rather, allow user to specify cursor shape, among:
+			- Thin bar [default]
+			- Thin bar % of character width (default to about the width of the upstroke of a letter "i").
+			- Underline
+			- Block
+	- 🚫 Overwrite mode will be the regular block cursor.
+		- Overwrite mode canceled.
 	- Done: the Insert key toggles Insert(bar)/Overwrite(block); default is Insert. App-set Beam/Underline shapes are honoured, and alt-screen apps (vim/less) keep their own cursor; Insert is still forwarded to the shell so readline can follow. Detail in `project/details.md`.
+		- 🔘 Back out changing anything with the insert key.
 	- ✅ Provide options in the config (not dialog) to adjust type for both, and blinking style. Similar to Sublime Text cursor options. (20260629) - config keys `cursor_insert_shape` / `cursor_overwrite_shape` (bar|block|underline) and `cursor_blink_style` (phase|blink|solid), replacing the `cursor_blink` bool. Verified: underline shape + solid style render.
-	- 🔘 Make the default "thin" cursor a little thicker (50% to 100% more)
+		- This is mostly done. Refer to above point about options.
 	- 🔘 Change default cursor colors:
 		- Thick: Gray (depending on the theme).
 		- Thin: a fully bright version of the thick one. (E.g. proportionally increase R, G, and B, so that the highest one is FF.) Not as a hardcoded rule, but as a theming default.
