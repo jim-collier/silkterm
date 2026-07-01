@@ -2,6 +2,7 @@
 // Copyright © 2026 Jim Collier
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use alacritty_terminal::grid::{Dimensions, Scroll as GridScroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
@@ -18,6 +19,14 @@ use crate::palette;
 use crate::scroll::Scroll;
 use crate::term::{PaneId, TermInstance, UserEvent};
 use crate::text::{TextCtx, mono_attrs};
+
+// Pane ids must be unique across ALL tabs (each tab is a separate PaneManager),
+// not just within one: the shell-exit event carries only the id, so a collision
+// closes the wrong tab and cascades. Allocate from one global counter.
+static PANE_ID_SEQ: AtomicU64 = AtomicU64::new(1);
+fn alloc_pane_id() -> PaneId {
+	PANE_ID_SEQ.fetch_add(1, Ordering::Relaxed)
+}
 
 // Cursor animation tunables (internal).
 const CURSOR_MOVE_TAU_MS: f32 = 55.0; // horizontal slide responsiveness (lower = snappier)
@@ -675,7 +684,6 @@ pub struct PaneManager {
 	pub panes: HashMap<PaneId, Pane>,
 	root: Node,
 	pub focused: PaneId,
-	next_id: PaneId,
 	// CLI `--title` for this tab; overrides the computed "<shell> [program]".
 	pub title_override: Option<String>,
 }
@@ -687,7 +695,7 @@ impl PaneManager {
 		area: Rect,
 		command: Option<Vec<String>>,
 	) -> anyhow::Result<Self> {
-		let id = 1;
+		let id = alloc_pane_id();
 		let pane = spawn_pane(ctx, proxy, id, area, command)?;
 		let mut panes = HashMap::new();
 		panes.insert(id, pane);
@@ -695,7 +703,6 @@ impl PaneManager {
 			panes,
 			root: Node::Leaf(id),
 			focused: id,
-			next_id: 2,
 			title_override: None,
 		})
 	}
@@ -729,7 +736,7 @@ impl PaneManager {
 		command: Option<Vec<String>>,
 		area: Rect,
 	) -> Option<PaneId> {
-		let new_id = self.next_id;
+		let new_id = alloc_pane_id();
 		// child-a's ratio: if the new pane is 'a' (before) it takes new_ratio,
 		// else 'a' is the old pane and keeps the remainder.
 		let ratio_a = if before { new_ratio } else { 1.0 - new_ratio };
@@ -743,7 +750,6 @@ impl PaneManager {
 		) {
 			return None;
 		}
-		self.next_id += 1;
 		let pane = match spawn_pane(ctx, proxy, new_id, area, command) {
 			Ok(p) => p,
 			Err(_) => return None,
