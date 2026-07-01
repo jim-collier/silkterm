@@ -58,7 +58,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ Add an option to cicd: '--quick'. This excludes the slow processes like profiling and cross-platform building. (20260701) - `--quick` sets BUILD_CROSS=0 + PROFILE_ENABLE=0 (same as `--no-cross --no-profile`).
 
-- 🔘 Whenever a program update adds or changes config file settings, update the existing toml file in-place. E.g. reorganize, add/remove/rename items, but preserve existing active user settings and values that remain.
+- ◐ Whenever a program update adds or changes config file settings, update the existing toml file in-place. E.g. reorganize, add/remove/rename items, but preserve existing active user settings and values that remain. (20260701) - `migrate_config` (runs before backfill on load): renames changed keys (value preserved), removes obsolete ones; `backfill_config` adds missing keys. Together: add/remove/rename + preserve, in-place, comments/layout kept. Verified: a config with cursor_insert_shape/cursor_overwrite_shape/cursor_blink migrated correctly (and this auto-cleans the old invalid `cursor_blink = enable`). Deferred: literal reordering to match template order (cosmetic, riskier full-rewrite).
 
 - 🔘 Settings dialog:
 	- Alt+hotkeys for "Apply" and "OK", that underline when holding alt.
