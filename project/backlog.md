@@ -57,9 +57,9 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- 🔘 Terminal should support standard terminal editing and/or navigation keys.
-	- 🔘 Research: The only one I can think of that isn't currently supported, is Ctrl + arrow key (to skip whole words - other terminals do this).
-	- 🔘 Are Ctrl+Backspace, Ctrl+Del possible to delete whole words? Is that something some terminals do? XFCE terminal and Terminator don't.
+- ✅ Terminal should support standard terminal editing and/or navigation keys. (20260701)
+	- ✅ Research: The only one I can think of that isn't currently supported, is Ctrl + arrow key (to skip whole words - other terminals do this). - input.rs now sends the xterm modified forms (`ESC[1;5C` etc.) for Ctrl/Shift/Alt + arrows/Home/End, so readline and TUIs word-skip as expected. F5-F12 were also missing entirely (htop/mc keys were dead) - added, incl. modified variants. 5 unit tests pin the sequences.
+	- ✅ Are Ctrl+Backspace, Ctrl+Del possible to delete whole words? Is that something some terminals do? XFCE terminal and Terminator don't. - Yes, both send now (xterm convention: Ctrl+Backspace = 0x08, Ctrl+Del = `ESC[3;5~`); whether they delete a word is up to the app - bash needs `bind '"\C-h": backward-kill-word'` / `'"\e[3;5~": kill-word'`, most modern TUIs handle them out of the box.
 
 - 🛠️ The cursor [used to] render *behind* outer glow, which sometimes obscures the cursor. As noted in another issue below, the cursor itself should also have an outer glow, if not too computationally expensive with an animated cursor. In that case, the cursor shadow should merge with the text outer glow. And either way, the cursor should appear *above* any outer glow.
 	- ✅ Cursor now renders ABOVE the glow. (20260701) - cursor quads split into their own per-pane ranges drawn after the glow composite (under the crisp text). Verified: a block cursor with a radius-14 glow stays a crisp solid block.
