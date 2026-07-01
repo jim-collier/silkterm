@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rename the project everywhere (development-time helper).
 #
-#   utility/rename.sh <NewDisplayName>
+#   utility/rename.bash <NewDisplayName>
 #
 # <NewDisplayName> is the human-facing name (e.g. "SilkTerm"). The lowercase
 # identifier used for the cargo package, the binary, and the config directory
@@ -14,7 +14,7 @@ set -euo pipefail
 
 new_display="${1:-}"
 if [[ -z "$new_display" ]]; then
-	echo "usage: utility/rename.sh <NewDisplayName>" >&2
+	echo "usage: utility/rename.bash <NewDisplayName>" >&2
 	exit 1
 fi
 case "$new_display" in
@@ -40,7 +40,7 @@ cd "$root"
 # (covers files mid-move where the index and worktree disagree).
 mapfile -t files < <(
 	{ git ls-files; git ls-files --others --exclude-standard; } \
-		| grep -E '(^(source/)?Cargo\.toml$|\.rs$|\.md$)' | grep -vx 'utility/rename.sh' | sort -u
+		| grep -E '(^(source/)?Cargo\.toml$|\.rs$|\.md$)' | grep -vx 'utility/rename.bash' | sort -u
 )
 
 for f in "${files[@]}"; do

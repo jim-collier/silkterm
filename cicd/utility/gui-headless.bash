@@ -22,7 +22,7 @@
 ##	Purpose:
 ##		Run / screenshot a GUI app on a private Xvfb display, never touching the
 ##		visible :0 session. No desktop environment is involved, so this sidesteps the
-##		XFCE won't run twice per user" limit - Xvfb is a bare in-memory framebuffer,
+##		"XFCE won't run twice per user" limit - Xvfb is a bare in-memory framebuffer,
 ##		not a session. Optional standalone xfwm4 (--wm) only if an app needs a WM.
 ##	Syntax:
 ##		gui-headless.bash start [--wm]      ## bring up Xvfb (+ optional xfwm4)
