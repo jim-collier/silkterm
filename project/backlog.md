@@ -42,8 +42,8 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🔘 Cursor:
-	- 🔘 `cursor_size_vertical` and `cursor_size_horizontal` are swapped in meaning.
+- ✅ Cursor:
+	- ✅ `cursor_size_vertical` and `cursor_size_horizontal` are swapped in meaning. (20260701) - now vertical = HEIGHT (from bottom), horizontal = WIDTH (from left); cursor_geometry swaps which field feeds w/h. Verified: (15,100) now renders an underline (was a bar).
 
 - 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
 	- Cause (by code analysis): when the glyph atlas fills up (a long session of varied glyphs), text `prepare()` fails and `render` returned early - *above* the per-frame atlas trim - so the atlas never recovered and all text stayed black forever. The cursor and cell backgrounds use a separate rect renderer, so they kept showing (matches the report exactly).
@@ -63,9 +63,9 @@ In each section, items are listed approximately from newest to oldest.
 - I've added 'silkterm/github/cicd/utility/gui-headless.bash'. It allows running the terminal for testing in a GUI environment that doesn't interfere with current user session, via use of xvfb in the script.
 	- ✅ Update all tests, scripts, and profiling to run in that environment. (20260701) - cicd's `run_profiler` now brings up the private Xvfb (via gui-headless.bash) and runs the app on it (DISPLAY set), so no window pops on the user's :0 session; it skips only if Xvfb/python3/workload are missing (was: skip on "no DISPLAY"). Uses `:98` not `:99` (rapid-photo-downloader-pro owns :99); overridable via RPD_HEADLESS_DISPLAY. Unit tests (`cargo test`) are already headless (pure logic + FontSystem). Verified end-to-end: SilkTerm renders on Xvfb via software GL (llvmpipe), profiler produced a valid flamegraph with real pipeline frames.
 
-- 🔘 Cursor:
-	- 🔘 After the related cursor bug fix above, set default cursor_size_horizontal to 25.
-	- 🔘 Default cursor_animation = "pulse_vertical"
+- ✅ Cursor: (20260701)
+	- ✅ After the related cursor bug fix above, set default cursor_size_horizontal to 25. - done (with cursor_size_vertical=100 -> a 25%-width bar).
+	- ✅ Default cursor_animation = "pulse_vertical"
 
 - 🔘 Cursor currently renders *behind* outer glow, which sometimes obscures the cursor. As noted in another issue below, the cursor itself should also have an outer glow, if not too computationally expensive with an animated cursor. In that case, the cursor shadow should merge with the text outer glow. And either way, the cursor should appear *above* any outer glow.
 
