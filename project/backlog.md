@@ -60,11 +60,11 @@ In each section, items are listed approximately from newest to oldest.
 
 - ◐ Whenever a program update adds or changes config file settings, update the existing toml file in-place. E.g. reorganize, add/remove/rename items, but preserve existing active user settings and values that remain. (20260701) - `migrate_config` (runs before backfill on load): renames changed keys (value preserved), removes obsolete ones; `backfill_config` adds missing keys. Together: add/remove/rename + preserve, in-place, comments/layout kept. Verified: a config with cursor_insert_shape/cursor_overwrite_shape/cursor_blink migrated correctly (and this auto-cleans the old invalid `cursor_blink = enable`). Deferred: literal reordering to match template order (cosmetic, riskier full-rewrite).
 
-- 🔘 Settings dialog:
-	- Alt+hotkeys for "Apply" and "OK", that underline when holding alt.
+- ◐ Settings dialog:
+	- ✅ Alt+hotkeys for "Apply" and "OK", that underline when holding alt. (20260701) - Alt tracked on the dialog window; while held, Cancel/Apply/OK underline their first letter and Alt+C/A/O trigger them. Verified (underlines render; Alt+C closes).
 	- Font settings:
-		- Add a sane set of fonts and fallbacks to the default "font family" setting, and make it an active setting in config.
-		- If using the system-defined font, enable the checbox and disable the related font adjustements (but don't clear their values).
+		- 🔘 Add a sane set of fonts and fallbacks to the default "font family" setting, and make it an active setting in config. - DEFERRED (queued): needs comma-separated fallback support in font resolution + a decision on default mode (system-font vs an active stack). Best-guess later.
+		- ✅ If using the system-defined font, enable the checbox and disable the related font adjustements (but don't clear their values). (20260701) - the box opens checked when on system font; Font family + Font size grey out but keep their values (restored on uncheck). Verified in the dialog.
 			- User can un-check this later (or change the related config setting), to user the defined font settings instead.
 
 - 🔘 Cursor settings:

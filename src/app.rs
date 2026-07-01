@@ -108,11 +108,19 @@ impl App {
 						Key::Named(NamedKey::Space) => d.char_input(' '),
 						Key::Character(s) => {
 							for c in s.chars() {
-								d.char_input(c);
+								if let Some(a) = d.key_char(c) {
+									act = Some(a);
+								}
 							}
 						}
 						_ => {}
 					}
+					self.dialog_dirty = true;
+				}
+			}
+			WindowEvent::ModifiersChanged(m) => {
+				if let Some(d) = &mut self.dialog {
+					d.set_alt(m.state().alt_key());
 					self.dialog_dirty = true;
 				}
 			}
