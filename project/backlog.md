@@ -42,6 +42,9 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- 🔘 Cursor:
+	- 🔘 `cursor_size_vertical` and `cursor_size_horizontal` are swapped in meaning.
+
 - 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
 	- Cause (by code analysis): when the glyph atlas fills up (a long session of varied glyphs), text `prepare()` fails and `render` returned early - *above* the per-frame atlas trim - so the atlas never recovered and all text stayed black forever. The cursor and cell backgrounds use a separate rect renderer, so they kept showing (matches the report exactly).
 	- Fix: trim the atlas on the prepare-failure path so the next frame re-prepares with room and recovers. Couldn't force an atlas-full in a short stress run (a 20s unicode flood didn't fill it - the trigger needs a genuinely long session), so this is verified by code analysis, not a live repro. Watch for recurrence.
@@ -51,44 +54,46 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. (20260629)
 		- Cause: chrome used generic `Family::SansSerif`. fontdb's generic-sans default is "Arial"; when that's absent (typical on Linux) the query falls through to whatever matches - here the GNOME *document* font, which is a serif (GentiumAlt). (fontconfig's actual sans-serif on this box is Noto Sans.)
 		- Fix: pin a concrete sans family, mirroring the mono pin - `text::resolve_sans_family` + `pin_sans_family` resolve the OS sans-serif (`sysfont::sans_serif` = `fc-match sans-serif`), else a curated list, validated against the db; `sans_attrs` now uses `Family::Name`. Headless unit test asserts a concrete face resolves (got "Noto Sans"). 29 tests pass.
+			- 🔘 Not fixed: Still using system *sans serif*, rather than just system font generally. (Which on my system is a *serif* font.)
 		- ✅ Verify that menu bar height adjusts based on menu font. - Confirmed: `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (`text.cell_h`) + pad, so a larger menu font grows the bars (the height work was done earlier under #t6thx).
-	- ✅ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. (20260630) - the bar/tab height scales with the menu font (cell_h-based); the remaining issue was descenders (g/j/p/q/y) sitting tight against the button bottom. The title was already near the button top so it couldn't move up - so bumped TAB_BAR_VPAD 8 -> 11, making the bar a few px taller and giving descenders clearance. Verified via a descender-heavy tab title screenshot (PID-verified capture).
 
 ### New features and enhancements
 
-- ✅ Add an option to cicd: '--quick'. This excludes the slow processes like profiling and cross-platform building. (20260701) - `--quick` sets BUILD_CROSS=0 + PROFILE_ENABLE=0 (same as `--no-cross --no-profile`).
+- I've added 'silkterm/github/cicd/utility/gui-headless.bash'. It allows running the terminal for testing in a GUI environment that doesn't interfere with current user session, via use of xvfb in the script.
+	- ✅ Update all tests, scripts, and profiling to run in that environment. (20260701) - cicd's `run_profiler` now brings up the private Xvfb (via gui-headless.bash) and runs the app on it (DISPLAY set), so no window pops on the user's :0 session; it skips only if Xvfb/python3/workload are missing (was: skip on "no DISPLAY"). Uses `:98` not `:99` (rapid-photo-downloader-pro owns :99); overridable via RPD_HEADLESS_DISPLAY. Unit tests (`cargo test`) are already headless (pure logic + FontSystem). Verified end-to-end: SilkTerm renders on Xvfb via software GL (llvmpipe), profiler produced a valid flamegraph with real pipeline frames.
 
-- ◐ Whenever a program update adds or changes config file settings, update the existing toml file in-place. E.g. reorganize, add/remove/rename items, but preserve existing active user settings and values that remain. (20260701) - `migrate_config` (runs before backfill on load): renames changed keys (value preserved), removes obsolete ones; `backfill_config` adds missing keys. Together: add/remove/rename + preserve, in-place, comments/layout kept. Verified: a config with cursor_insert_shape/cursor_overwrite_shape/cursor_blink migrated correctly (and this auto-cleans the old invalid `cursor_blink = enable`). Deferred: literal reordering to match template order (cosmetic, riskier full-rewrite).
+- 🔘 Cursor:
+	- 🔘 After the related cursor bug fix above, set default cursor_size_horizontal to 25.
+	- 🔘 Default cursor_animation = "pulse_vertical"
 
-- ✅ Settings dialog:
-	- ✅ Alt+hotkeys for "Apply" and "OK", that underline when holding alt. (20260701) - Alt tracked on the dialog window; while held, Cancel/Apply/OK underline their first letter and Alt+C/A/O trigger them. Verified (underlines render; Alt+C closes).
-	- Font settings:
-		- ✅ Add a sane set of fonts and fallbacks to the default "font family" setting, and make it an active setting in config. (20260701, decision #4) - new `use_system_font` bool (default true) follows the OS monospace, overriding an always-active comma-separated `font_family` fallback stack (first installed wins) + font_size. resolve_mono_family parses the stack; migrate_config pins use_system_font=false for a pre-existing explicit font. Verified: system->Noto Sans Mono; stack skipping a missing first->DejaVu.
-		- ✅ If using the system-defined font, enable the checbox and disable the related font adjustements (but don't clear their values). (20260701) - the box opens checked when on system font; Font family + Font size grey out but keep their values (the stack stays in config). Verified in the dialog.
-			- User can un-check this later (or change the related config setting), to user the defined font settings instead.
-
-- ✅ Cursor settings: (20260701, decisions #1-3)
-	- ✅ size_vertical =  ## 1 to 100%, from left-to-right - `cursor_size_vertical` = cursor width % (from the left). Replaced cursor_shape (decision #1). bar=15, block/underline=100.
-	- ✅ size_horizontal =  ## 1 to 100%, from bottom-up - `cursor_size_horizontal` = cursor height % (from the bottom). block=100, underline=15. Together they make any shape. Verified: bar/block/underline all render.
-	- ✅ animation_style - `cursor_animation`: none/phase/pulse_vertical/pulse_horizontal/pulse_both. All one cycle per blink_rate (decision #2). Pulse grows from the cell centre, holds, shrinks, disappears. Verified pulse_both grows->peaks->shrinks->vanishes over ~1s.
-		- 🔘 none
-		- 🔘 phase (the current default)
-		- 🔘 pulse_vertical
-			- Starts with a single-pixel line in the middle, then animate up and down for full-height, pause there for a moment, then back and disappear momentarily, then start animation again.
-			- Should happen in the same time as a cursor blink cycle. All animations happen in blink_rate.
-		- 🔘 pulse_horizontal (same idea as pulse vertical, but the animation goes left and right rather than up and down).
-		- 🔘 pulse_both (grow and shrink both vertically and horizontally)
-	- ✅ blink_rate  ## ms - `cursor_blink_rate_ms`, default 500 (decision #3). One animation cycle = the rate.
-	- ✅ Change default cursor colors: (20260701) - SilkTerm dark theme fg -> #88ffee, cursor -> #ff88aa (theme.rs SILK_DARK + the config.rs default). Verified: cyan prompt, pink cursor.
-		- Default SilkTerm theme (dark):
-			- Foreground text color: 88ffee
-			- Cursor: ff88aa
+- 🔘 Cursor currently renders *behind* outer glow, which sometimes obscures the cursor. As noted in another issue below, the cursor itself should also have an outer glow, if not too computationally expensive with an animated cursor. In that case, the cursor shadow should merge with the text outer glow. And either way, the cursor should appear *above* any outer glow.
 
 - 🔘 Outer glow enhancements:
 	- 🔘 When outer glow is applied, also add an antialiased 1px outer border around the letters, using the same color rules as outer glow.
 	- 🔘 For bold text, calculate the blur for the outer glow, based on all non-bold text. (But still render the visible text on top in whatever weight it was meant to.
 	- 🔘 Cursor should have blur if possible (investigate - this may not be possible, especially with the phasing).
 	- 🔘 Provide options for different blur fadeoff ramps. E.g. default gaussian, linear, or "S"-shaped.
+
+- 🔘 Settings dialog:
+	- 🔘 Should be "modal" and connected to terminal window.
+	- 🔘 As the number of settings may grow, we need a way to manage increasing length. Can't go beying about 1048 pixels high, including window decorations. (So roughly 1010 pixels total to be safe.) Implement both of these options: (20260626-102933)
+		- 🔘 Make the Settings window shrinkable and then add scrollbars only when necessary, so that it won't render beyond allowable space. By default, always try to open it normal size, unless constrained by display resolution.
+		- 🔘 Group sections into logical "super-sections", and put them into tabs. A tabbled interface for settings.
+	- 🔘 Some more space between sections, so otherwise it seems run together.
+	- 🔘 Every setting in Settings dialog should have a clickable icon to "Revert to default". This icon (an emoji) should also indicate if the setting is default, and only be clickable if it's not. (20260626-102000)
+		- In the config file, if user clicks "Revert to default" in settings, set the value to default and comment it out.
+	- 🔘 "Use system font" boolean should be visible checked, if using it.
+		- 🔘 If checked (setting a config boolean), the other font settings should be disabled. Whatever values they held, should remain.
+		- 🔘 Font family should default to a list with several fallbacks for Linux, Windows, and macOS.
+	- 🔘 Editable fields should have a visible cursor when focused, and respond to standard text-editing key controls.
+	- 🔘 Full keyboard control, e.g. tab order, full text field editing, alt+down for dropdowns, space to toggle booleans, etc.
+	- Note: It might be best to defer some of these, until after (and if) native window controls are implimented.
+
+- 🛠️ Whenever a program update adds or changes config file settings, update the existing toml file in-place. E.g. reorganize, add/remove/rename items, but preserve existing active user settings and values that remain. (20260701)
+	- 🛠️ `migrate_config` (runs before backfill on load): renames changed keys (value preserved), removes obsolete ones; `backfill_config` adds missing keys. Together: add/remove/rename + preserve, in-place, comments/layout kept.
+		- Partially verified: a config with cursor_insert_shape/cursor_overwrite_shape/cursor_blink migrated correctly (and this auto-cleans the old invalid `cursor_blink = enable`).
+	- 🔘 Remaining: literal reordering to match template order (cosmetic, riskier full-rewrite).
+		- 🔘 Also group default ordering in a logical order. Add flowerbox comments and line spacing to denote major sections.
 
 - 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
 	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
@@ -137,21 +142,6 @@ In each section, items are listed approximately from newest to oldest.
 			- Retro amber (Orange on black). Light mode: dark orange on light gray.
 			- Pastel (a pleasing light pastel color, on dark gray background that has a subtle tint of complementary pastel).
 
-- 🔘 Settings dialog:
-	- 🔘 Some more space between sections, so otherwise it seems run together.
-	- 🔘 As the number of settings may grow, we need a way to manage increasing length. Can't go beying about 1048 pixels high, including window decorations. (So roughly 1010 pixels total to be safe.) Options: (20260626-102933)
-		- Make the Settings window shrinkable and then add scrollbars only when necessary, so that it won't render beyond allowable space.
-		- Group sections into logical "super-sections", and put them into tabs.
-		- Better yet, both solutions.
-	- 🔘 Every setting in Settings dialog should have a clickable icon to "Revert to default". This icon should also indicate if the setting is default, and only be clickable if it's not. (20260626-102000)
-		- In the config file, if user clicks "Revert to default" in settings, set the value to default and comment it out.
-	- 🔘 "Use system font" boolean should be visible checked, if using it.
-		- 🔘 If checked (setting a config boolean), the other font settings should be disabled. Whatever values they held, should remain.
-		- 🔘 Font family should default to a list with several fallbacks for Linux, Windows, and macOS.
-	- 🔘 Editable fields should have a visible cursor when focused, and respond to standard text-editing key controls.
-	- 🔘 Full keyboard control, e.g. tab order, full text field editing, alt+down for dropdowns, space to toggle booleans, etc.
-	- Note: It might be best to defer some of these, until after (and if) native window controls are implimented.
-
 - 🛠️ General configuration:
 	- status: the default-shell behavior is done; the named shell list + its selection UI (grid editor + Tab/Pane menus) are now active hand-rolled work - the egui chrome migration was declined (see the `[x]` note under "Setting dialog (part 2)").
 	- 🛠️ Ability to define shells to launch in a new tab or pane.
@@ -165,20 +155,17 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 If bash is available on the system, add a shell option just above "[SilkTerm default]": "bash --norc". - Deferred with the hand-rolled shell menu above.
 
 - 🛠️ Setting dialog (part 2):
-	- ✅ A radio button for background image, to stretch or zoom. - New `Kind::Radio(&[..])` in the settings dialog (reusable N-option control: indicator box per option, fills the selected, click-to-pick); a "Bg image fit" row bound to `background_fit` (Stretch/Zoom). Verified: renders with Stretch selected by default; clicking Zoom switches it; `background_fit` persists + re-fits the image on Apply.
 	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
+	- ✅ A radio button for background image, to stretch or zoom. - New `Kind::Radio(&[..])` in the settings dialog (reusable N-option control: indicator box per option, fills the selected, click-to-pick); a "Bg image fit" row bound to `background_fit` (Stretch/Zoom). Verified: renders with Stretch selected by default; clicking Zoom switches it; `background_fit` persists + re-fits the image on Apply.
 	- ✅ "Default shell": A command line to launch by default for new windows, tabs, and panes, if nothing else specified. Leave blank to use system default. - New "Shell" section in Settings with a "Default shell" text field bound to the existing `default_shell` config (empty shows "(system default)"; argv-split applies to new tabs/panes). Verified the field renders.
 	- ✅ Size: A boolean setting to "Remember last size" - `remember_size` config + dialog toggle; on launch it uses `remembered_columns`/`remembered_rows` instead of columns/rows. The remembered pair is updated on every manual window resize (startup/programmatic resizes are skipped via a `size_tracked` flag set after the first frame, so they don't clobber it) and is not shown in the dialog. Columns/Rows grey out when on. Verified: manual resize -> remembered_columns/rows persisted; relaunch with remember_size=true used the remembered size (712x504, not the 160-col default); dialog shows the toggle checked with Columns/Rows greyed.
 		- Overrides explicit numeric size.
 		- Explicit numeric size fields disabled and grayed out.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
-	- 🔘 Should be able to tab between settings (and dialog buttons - in a loop).
+			- 🔘 "Remembered" values always active, never commented out. Only valid if 'remember_size' is true.
+	- 🔘 Should be able to use tab key to cycle among settings (and dialog buttons - in a loop).
 	- 🔘 All values, including slider numbers, should also have directly editable fields (that are part of the tab order).
 	- ✅ A little more vertical space between the section headings, and the corresponding horizontal line. - Taller heading row (`HEADER_H` 34->42); the heading text is top-aligned and the rule sits near the bottom, leaving a clear ~7px gap (was overlapping). Verified in the dialog.
-	- [🚫] Adopt a cross-platform GUI / windowing widget toolkit (e.g. egui) for Settings, About, the main menu, and the context menu instead of hand-rolling them.
-		- **No**. Results of spike (branch `spike/egui-dialog`): The upside is that egui 0.35 rides our exact wgpu 29 + winit 0.30 (no downgrade, shares our graphics stack) and integrated easily.
-		- Drawbacks to egui: it adds ~32% to the release binary for what is secondary chrome, against the minimal-binary-size priority. Hand-rolling also keeps one unified colour/theme + native-OS-font system across the terminal and the chrome. egui would need a separate egui-`Visuals` theme kept in sync, plus its own bundled fonts).
-		- Decision: Chrome stays hand-rolled.
 
 - 🛠️ Command-line options:
 	- Status part 1 (options engine): Done.
@@ -404,6 +391,32 @@ In each section, items are listed approximately from newest to oldest.
 	- Fix: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
 
 #### Done - new features and enhancements
+
+- ✅ Settings dialog:
+	- ✅ Alt+hotkeys for "Apply" and "OK", that underline when holding alt. (20260701) - Alt tracked on the dialog window; while held, Cancel/Apply/OK underline their first letter and Alt+C/A/O trigger them. Verified (underlines render; Alt+C closes).
+	- Font settings:
+		- ✅ Add a sane set of fonts and fallbacks to the default "font family" setting, and make it an active setting in config. (20260701, decision #4) - new `use_system_font` bool (default true) follows the OS monospace, overriding an always-active comma-separated `font_family` fallback stack (first installed wins) + font_size. resolve_mono_family parses the stack; migrate_config pins use_system_font=false for a pre-existing explicit font. Verified: system->Noto Sans Mono; stack skipping a missing first->DejaVu.
+		- ✅ If using the system-defined font, enable the checbox and disable the related font adjustements (but don't clear their values). (20260701) - the box opens checked when on system font; Font family + Font size grey out but keep their values (the stack stays in config). Verified in the dialog.
+			- User can un-check this later (or change the related config setting), to user the defined font settings instead.
+
+- ✅ Cursor settings: (20260701, decisions #1-3)
+	- ✅ size_vertical =  ## 1 to 100%, from left-to-right - `cursor_size_vertical` = cursor width % (from the left). Replaced cursor_shape (decision #1). bar=15, block/underline=100.
+	- ✅ size_horizontal =  ## 1 to 100%, from bottom-up - `cursor_size_horizontal` = cursor height % (from the bottom). block=100, underline=15. Together they make any shape. Verified: bar/block/underline all render.
+	- ✅ animation_style - `cursor_animation`: none/phase/pulse_vertical/pulse_horizontal/pulse_both. All one cycle per blink_rate (decision #2). Pulse grows from the cell centre, holds, shrinks, disappears. Verified pulse_both grows->peaks->shrinks->vanishes over ~1s.
+		- ✅ none
+		- ✅ phase (the current default)
+		- ✅ pulse_vertical
+			- Starts with a single-pixel line in the middle, then animate up and down for full-height, pause there for a moment, then back and disappear momentarily, then start animation again.
+			- Should happen in the same time as a cursor blink cycle. All animations happen in blink_rate.
+		- ✅ pulse_horizontal (same idea as pulse vertical, but the animation goes left and right rather than up and down).
+		- ✅ pulse_both (grow and shrink both vertically and horizontally)
+	- ✅ blink_rate  ## ms - `cursor_blink_rate_ms`, default 500 (decision #3). One animation cycle = the rate.
+	- ✅ Change default cursor colors: (20260701) - SilkTerm dark theme fg -> #88ffee, cursor -> #ff88aa (theme.rs SILK_DARK + the config.rs default). Verified: cyan prompt, pink cursor.
+		- Default SilkTerm theme (dark):
+			- Foreground text color: 88ffee
+			- Cursor: ff88aa
+
+- ✅ Add an option to cicd: '--quick'. This excludes the slow processes like profiling and cross-platform building. (20260701) - `--quick` sets BUILD_CROSS=0 + PROFILE_ENABLE=0 (same as `--no-cross --no-profile`).
 
 - ✅ Change the default hotkey for opening a new tab to Ctrl+Shift+T. (20260629) - new-tab is now Ctrl+Shift+T (`app.rs` tab-hotkey block); plain Ctrl+T passes through to the shell (readline transpose-char) instead of opening a tab. Builds clean.
 
@@ -719,6 +732,15 @@ In each section, items are listed approximately from newest to oldest.
 		- Too fiddly. Possibly revisit in future. This lives in `cicd.bash`, which is pseudo-generic and could be made more so. Maybe it can shell out to a hyper-specific build script, or be updated to handle rust, go, and c++. Or more likely, it's just project-specifig, in spite of being originally [re]architected to call a settings script.
 
 ### Canceled
+
+- ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
+	- ✅ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. (20260630) - the bar/tab height scales with the menu font (cell_h-based); the remaining issue was descenders (g/j/p/q/y) sitting tight against the button bottom. The title was already near the button top so it couldn't move up - so bumped TAB_BAR_VPAD 8 -> 11, making the bar a few px taller and giving descenders clearance. Verified via a descender-heavy tab title screenshot (PID-verified capture).
+
+- Setting dialog (part 2):
+	- [🚫] Adopt a cross-platform GUI / windowing widget toolkit (e.g. egui) for Settings, About, the main menu, and the context menu instead of hand-rolling them.
+		- **No**. Results of spike (branch `spike/egui-dialog`): The upside is that egui 0.35 rides our exact wgpu 29 + winit 0.30 (no downgrade, shares our graphics stack) and integrated easily.
+		- Drawbacks to egui: it adds ~32% to the release binary for what is secondary chrome, against the minimal-binary-size priority. Hand-rolling also keeps one unified colour/theme + native-OS-font system across the terminal and the chrome. egui would need a separate egui-`Visuals` theme kept in sync, plus its own bundled fonts).
+		- Decision: Chrome stays hand-rolled.
 
 - 🚫 Allow toggling from default "Insert" mode, to "Overwrite". (20260629)
 	- 🚫 Change cursor in default "Insert" mode, to a thinner bar than the block cursor (but thicker than, say, "|").
