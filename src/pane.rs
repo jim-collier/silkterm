@@ -30,40 +30,42 @@ fn alloc_pane_id() -> PaneId {
 
 // Cursor animation tunables (internal).
 const CURSOR_MOVE_TAU_MS: f32 = 55.0; // horizontal slide responsiveness (lower = snappier)
-const CURSOR_BLINK_PERIOD_S: f32 = 1.06; // full fade on->off->on cycle (Windows-ish 530ms each)
 const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
 const BELL_BRIGHTEN: f32 = 0.6; // max lerp of text toward white at the bell flash peak
 
-// Rendered cursor geometry.
-#[derive(Clone, Copy, PartialEq)]
-enum CursorKind {
-	Bar,       // thin vertical bar at the cell's left edge (Insert mode)
-	Block,     // full cell (Overwrite mode / default app cursor)
-	Underline, // thin strip at the cell's bottom
-}
-
-// Resolve the rendered cursor shape. An app-set Beam/Underline (DECSCUSR) is
-// honoured; a plain Block uses the configured default cursor shape - except on
-// the alt screen, where the app (vim, less, ...) owns its cursor.
-fn cursor_kind(shape: CursorShape, alt_screen: bool) -> CursorKind {
+// The rendered cursor geometry as (width, height) fractions of the cell. An
+// app-set Beam/Underline (DECSCUSR) maps to a thin bar / underline; a plain Block
+// uses the configured cursor_size_* - except on the alt screen, where the app
+// (vim, less, ...) owns a full block.
+fn cursor_geometry(shape: CursorShape, alt_screen: bool) -> (f32, f32) {
 	match shape {
-		CursorShape::Beam => CursorKind::Bar,
-		CursorShape::Underline => CursorKind::Underline,
+		CursorShape::Beam => (0.15, 1.0),      // thin vertical bar
+		CursorShape::Underline => (1.0, 0.15), // thin bottom strip
+		_ if alt_screen => (1.0, 1.0),         // alt-screen app owns its block cursor
 		_ => {
-			if alt_screen {
-				CursorKind::Block // alt-screen app owns its (block) cursor
-			} else {
-				parse_cursor_shape(&config::settings().cursor_shape)
-			}
+			let s = config::settings();
+			(
+				(s.cursor_size_vertical / 100.0).clamp(0.02, 1.0), // width, from left
+				(s.cursor_size_horizontal / 100.0).clamp(0.02, 1.0), // height, from bottom
+			)
 		}
 	}
 }
 
-fn parse_cursor_shape(name: &str) -> CursorKind {
-	match name.trim().to_ascii_lowercase().as_str() {
-		"block" => CursorKind::Block,
-		"underline" | "underscore" => CursorKind::Underline,
-		_ => CursorKind::Bar, // "bar" / "beam" / anything unrecognised
+// Pulse envelope over one cycle: grow, hold full, shrink, then a brief disappear.
+fn pulse_env(p: f32) -> f32 {
+	let smooth = |t: f32| {
+		let t = t.clamp(0.0, 1.0);
+		t * t * (3.0 - 2.0 * t)
+	};
+	if p < 0.40 {
+		smooth(p / 0.40) // grow 0 -> 1
+	} else if p < 0.60 {
+		1.0 // hold at full
+	} else if p < 0.90 {
+		1.0 - smooth((p - 0.60) / 0.30) // shrink 1 -> 0
+	} else {
+		0.0 // disappear momentarily
 	}
 }
 
@@ -242,8 +244,8 @@ impl Pane {
 		let cursor_pt = guard.grid().cursor.point;
 		let cursor_shape = guard.cursor_style().shape;
 		// Alt-screen apps own their cursor shape; on the primary screen it's the
-		// configured default (or the app's DECSCUSR). See cursor_kind.
-		let ckind = cursor_kind(cursor_shape, guard.mode().contains(TermMode::ALT_SCREEN));
+		// configured geometry (or the app's DECSCUSR). See cursor_geometry.
+		let cgeom = cursor_geometry(cursor_shape, guard.mode().contains(TermMode::ALT_SCREEN));
 		let following = desired == 0;
 
 		// Fast path: a pure cursor-animation frame (blink/slide, no content/scroll/
@@ -255,7 +257,7 @@ impl Pane {
 			let cursor = self.cursor_quad(
 				cursor_pt,
 				cursor_shape,
-				ckind,
+				cgeom,
 				d,
 				lines,
 				following,
@@ -391,7 +393,7 @@ impl Pane {
 		let cursor = self.cursor_quad(
 			cursor_pt,
 			cursor_shape,
-			ckind,
+			cgeom,
 			d,
 			lines,
 			following,
@@ -460,7 +462,7 @@ impl Pane {
 		&mut self,
 		cursor_pt: Point,
 		cursor_shape: CursorShape,
-		kind: CursorKind,
+		geom: (f32, f32),
 		d: i32,
 		lines: usize,
 		following: bool,
@@ -500,39 +502,73 @@ impl Pane {
 			self.cursor_x = c;
 		}
 		self.blink_t += dt;
-		// blink style: "solid" = steady, "blink" = hard on/off, else "phase" (smooth
-		// cosine fade). Always solid while sliding (it starts solid right after a move).
+		// Animation: "none" = steady; "phase" = smooth cosine fade; "pulse_*" =
+		// grow/shrink a dimension over one cycle. Always solid while sliding (it
+		// starts solid right after a move). One cycle = the blink rate.
 		let settings = config::settings();
-		let style = settings.cursor_blink_style.as_str();
-		let blinking = !easing && style != "solid";
-		let alpha = if !blinking {
-			CURSOR_ALPHA
-		} else {
-			let phase = (self.blink_t / CURSOR_BLINK_PERIOD_S).fract();
-			if style == "blink" {
-				if phase < 0.5 { CURSOR_ALPHA } else { 0.0 } // hard toggle
-			} else {
-				CURSOR_ALPHA * (0.5 + 0.5 * (phase * std::f32::consts::TAU).cos())
+		let anim = settings.cursor_animation.as_str();
+		let period = (settings.cursor_blink_rate_ms / 1000.0 * 2.0).max(0.05); // full on->off->on
+		let animating = !easing && anim != "none";
+		let phase = (self.blink_t / period).fract();
+
+		let (mut w_frac, mut h_frac) = geom;
+		let mut alpha = CURSOR_ALPHA;
+		let (pulsing_w, pulsing_h) = if animating {
+			match anim {
+				"phase" => {
+					alpha = CURSOR_ALPHA * (0.5 + 0.5 * (phase * std::f32::consts::TAU).cos());
+					(false, false)
+				}
+				"pulse_vertical" => {
+					h_frac *= pulse_env(phase);
+					(false, true)
+				}
+				"pulse_horizontal" => {
+					w_frac *= pulse_env(phase);
+					(true, false)
+				}
+				"pulse_both" => {
+					let e = pulse_env(phase);
+					w_frac *= e;
+					h_frac *= e;
+					(true, true)
+				}
+				_ => (false, false),
 			}
+		} else {
+			(false, false)
 		};
-		self.cursor_animating = easing || blinking;
+		self.cursor_animating = easing || animating;
 		let mut col = config::srgb_f32(cursor_rgb);
 		col[3] = alpha;
 		let cell_y = self.rect.y + margin + (cursor_sr as f32 + frac) * cell_h;
 		let cell_x = content_x + self.cursor_x * cell_w;
-		// Bar = a thin left-edge bar (a touch thicker than a 1px caret); Underline =
-		// a thin bottom strip; Block = the whole cell.
-		let (pos, size) = match kind {
-			CursorKind::Block => ([cell_x, cell_y], [cell_w, cell_h]),
-			CursorKind::Bar => ([cell_x, cell_y], [(cell_w * 0.16).max(2.0), cell_h]),
-			CursorKind::Underline => {
-				let h = (cell_h * 0.13).max(2.0);
-				([cell_x, cell_y + cell_h - h], [cell_w, h])
-			}
+		// Width grows from the left, height from the bottom - but a *pulsing*
+		// dimension grows from the cell centre (the "line in the middle") and may
+		// shrink to nothing (the momentary disappear), so it skips the 2px floor.
+		let w = if pulsing_w {
+			cell_w * w_frac
+		} else {
+			(cell_w * w_frac).max(2.0)
+		};
+		let h = if pulsing_h {
+			cell_h * h_frac
+		} else {
+			(cell_h * h_frac).max(2.0)
+		};
+		let x = if pulsing_w {
+			cell_x + (cell_w - w) / 2.0
+		} else {
+			cell_x
+		};
+		let y = if pulsing_h {
+			cell_y + (cell_h - h) / 2.0
+		} else {
+			cell_y + cell_h - h
 		};
 		Some(RectInstance {
-			pos,
-			size,
+			pos: [x, y],
+			size: [w, h],
 			color: col,
 		})
 	}
