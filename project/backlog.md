@@ -14,10 +14,13 @@ This is a product backlog just for pre-v1.0.0 release. After that, bugs, feature
 <!-- TOC -->
 
 - [Conventions](#conventions)
-- [First steps](#first-steps)
 - [Backlog](#backlog)
 	- [Bugs](#bugs)
 	- [New features and enhancements](#new-features-and-enhancements)
+	- [Done](#done)
+		- [First steps](#first-steps)
+		- [Done - Bugs](#done---bugs)
+		- [Done - new features and enhancements](#done---new-features-and-enhancements)
 	- [Future and/or deferred](#future-andor-deferred)
 	- [Canceled](#canceled)
 - [Application name ideas](#application-name-ideas)
@@ -35,22 +38,14 @@ In each section, items are listed approximately from newest to oldest.
 | ✅   | Complete
 | 🚫   | Canceled
 
-## First steps
-
-- ✅ Pick name, create GitHub repo.
-- ✅ Cargo skeleton: `alacritty_terminal` + `wgpu` deps.
-- ✅ Glyph atlas + cell render.
-- ✅ Wheel input -> lerp target.
-- ✅ Boundary-cross sync to `scroll_display`.
-- ✅ Overscan rows for partial-row fill.
-- ✅ Output-scroll easing.
-- ✅ Verify smoothness on X11/Compiz.
-
 ## Backlog
 
 ### Bugs
 
-- ✅ Outer glow should only apply to terminal text - not tab titles or the menu bar. (20260630) - the glow composite covered the whole window, so the halo appeared behind the menu/tab titles too. Now clipped to the content area (below the chrome), so only terminal text glows. Verified via a strong-glow screenshot (chrome text crisp, no halo).
+- 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
+	- Cause (by code analysis): when the glyph atlas fills up (a long session of varied glyphs), text `prepare()` fails and `render` returned early - *above* the per-frame atlas trim - so the atlas never recovered and all text stayed black forever. The cursor and cell backgrounds use a separate rect renderer, so they kept showing (matches the report exactly).
+	- Fix: trim the atlas on the prepare-failure path so the next frame re-prepares with room and recovers. Couldn't force an atlas-full in a short stress run (a 20s unicode flood didn't fill it - the trigger needs a genuinely long session), so this is verified by code analysis, not a live repro. Watch for recurrence.
+	- Resolution: Leave this issue open until verified with long-running terminals.
 
 - ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
 	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. (20260629)
@@ -59,124 +54,40 @@ In each section, items are listed approximately from newest to oldest.
 		- ✅ Verify that menu bar height adjusts based on menu font. - Confirmed: `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (`text.cell_h`) + pad, so a larger menu font grows the bars (the height work was done earlier under #t6thx).
 	- ✅ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. (20260630) - the bar/tab height scales with the menu font (cell_h-based); the remaining issue was descenders (g/j/p/q/y) sitting tight against the button bottom. The title was already near the button top so it couldn't move up - so bumped TAB_BAR_VPAD 8 -> 11, making the bar a few px taller and giving descenders clearance. Verified via a descender-heavy tab title screenshot (PID-verified capture).
 
-- 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
-	- Cause (by code analysis): when the glyph atlas fills up (a long session of varied glyphs), text `prepare()` fails and `render` returned early - *above* the per-frame atlas trim - so the atlas never recovered and all text stayed black forever. The cursor and cell backgrounds use a separate rect renderer, so they kept showing (matches the report exactly).
-	- Fix: trim the atlas on the prepare-failure path so the next frame re-prepares with room and recovers. Couldn't force an atlas-full in a short stress run (a 20s unicode flood didn't fill it - the trigger needs a genuinely long session), so this is verified by code analysis, not a live repro. Watch for recurrence.
-
-- ✅ High severity: Typing "exit" in tab, closes the whole application. It should only close that tab. Doesn't do that for panes, only tabs. Closing a tab via menu only closes that one tab. (20260629; real cause found + fixed 20260630)
-	- Cause: the shell-exit handler (`UserEvent::Exit(id)` in app.rs) just called `tabs.cur_mut().close(id)` and quit the app whenever that returned true. So the last pane of a tab killed the whole app when other tabs existed; worse, a background tab's shell exiting ran `close(id)` on the *active* tab (which doesn't own that pane) -> returns true -> app quit. The Close-Pane menu had the right pane->tab->window cascade; the exit path didn't.
-	- Fix: `UserEvent::Exit` now finds the pane's owning tab (`position(|pm| pm.panes.contains_key(&id))`) and applies the same cascade - >1 pane in that tab closes the pane; else >1 tab closes that tab (`close_tab_at(idx)`, generalized from `close_tab`); else (last pane of last tab) exits. Handles background-tab exits and keeps `active` pointing at the same tab.
-	- Verified: runtime - launched with a 2nd (active) tab whose shell self-exits after 3s; app stayed alive past the exit (tab closed, window survived) instead of quitting. Builds clean.
-	- Re-verified fixed on current main (20260630): the app survives the tab's shell exiting in all 3 tests - CLI active-tab exit, CLI background-tab exit, and typing `exit` interactively in the active tab of a 2-tab window (1 window stays up). If it's still happening for you, the running/dogfood binary predates the fix - rebuild (`cargo run --release`) or re-run cicd to reinstall, then retest.
-		- ✅ Still not fixed. With three tabs open, for example:
-			- Type "exit" in the anything but the last tab, it closes ALL tabs, except for one. Sometimes, the program becomes unresponsive then and has to be killed.
-			- Type "exit" in the last tab, it closes the program.
-			- With four tabs open, and type "exit" from the third, closes the first two tabs (and not the third).
-		- ✅ REAL cause (20260630): pane ids collided across tabs. Each tab is a separate PaneManager that assigned ids from its own counter (first pane always id 1), so the shell-exit event (carries only the id) resolved to the WRONG tab - the first one with that id - and closed it; dropping that tab's term fired another Exit -> cascade (closed all but one, sometimes hung), exactly as reported. The earlier fix (find owner tab + cascade) was right in shape but the id lookup was ambiguous. Fix: `alloc_pane_id()` - one global counter, so every pane is unique everywhere. Verified with instrumentation: exit in the 3rd of 4 tabs resolves to tab index 2, exactly one close, no cascade, app alive.
-
-- ✅ Cursor: (20260629)
-	- ✅ Smooth-scroll (when moving to the right). - the cursor slides to its target column as you type (snaps on a newline); idles at 0% CPU.
-	- ✅ Blink at the same rate, but "phase" between of and on, not just on or off. - smooth cosine fade, now default ON: a render refactor skips re-shaping text on cursor-only frames (~70% -> ~21% of a core, debug; far less in release), so blinking no longer pegs the CPU. `cursor_blink` config to disable. Detail in `.claude/details.md`.
-
-- ✅ Setting dialog: (20260629)
-	- ✅ Setting Bg image fit to "Zoom", then Apply works. But back to "Stretch", then Apply, doesn't. - Cause: the dialog's `orig` baseline was captured at open and never refreshed, so a 2nd Apply diffed against the open-time snapshot; re-selecting the original value read as "no change". Fix: `commit_baseline()` resets orig = edited after each Apply (fixes every setting, not just fit).
-
-- ✅ Critical: Smooth-scrolling apparently just quits after using the terminal for a while. It seems to quit, if output is too fast for a while, but that could be a red-herring. Maybe it's just after any particular amount of general use.
-	- Cause: output-easing was triggered off scrollback *growth* (`grid.history_size()` rising). That growth flatlines once the scrollback buffer fills (default 10k lines) - old lines drop off the top as fast as new ones arrive - so after enough output the growth reads 0 every frame and `nudge_output` never fires again. Smooth output scroll dies "after a while", and sooner under fast output (which fills the 10k buffer faster). Manual scrollback (wheel) was unaffected, which is why it looked like only the smooth *output* scroll quit.
-	- Fix (`pane.rs`): keep growth as the primary signal (unchanged pre-cap, so the verified feel is untouched), and at the cap fall back to inferring the viewport advance from row fingerprints - how far last frame's on-screen rows reappear shifted up this frame (`scroll_shift`). An in-place bottom-row redraw (e.g. apt's status line, no newline) shifts nothing, so it still doesn't nudge (no bounce); a full-screen burst reports the backlog cap so the ease ramps to full catch-up. 6 unit tests cover no-scroll / in-place / shift-by-k / full-turnover / empty.
-	- Verified: 26 unit tests pass; ran past the 10k cap (20k-line flood + drip) with no crash, rendering on the GL backend. Smooth-scroll *feel* past the cap is best eyeballed by the owner.
-
-- ✅ Mouse wheel doesn't scroll back through the `stdout`/`stderr` buffer. It should do so, smoothly, and in proportion to how fast the mouse wheel is moved. But currently it moves the command history back. (20260626-104542)
-	- Cause: `TermMode::ALTERNATE_SCROLL` (DECSET 1007) is default-on in alacritty_terminal, but the wheel handler used `ALT_SCREEN || ALTERNATE_SCROLL` as the cursor-key trigger - so on the *primary* screen the always-on flag made the wheel emit cursor-up/down (shell history recall) instead of scrolling scrollback.
-	- Fix: gate the cursor-key path on `ALT_SCREEN` (now requires alt screen AND alternate-scroll AND no mouse mode). The primary screen always routes to the smooth scrollback (`Scroll::wheel`, already proportional to notches via `wheel_lines` + easing). Alt-screen apps (less/nano/vim) keep their cursor-key wheel. `app.rs` MouseWheel arm. Verified by root-cause + build (runtime wheel injection is unreliable here per xdotool notes).
-
-- ✅ Severe bug: Trying to open the settings dialog crashes the program. (20260625-150526)
-	- Cause: with always-GL on X11 the main window holds a glutin GL/EGL context, and the pop-out dialog's `Gfx::new` created a second `wgpu::Instance::default()` (all backends, including GL); wgpu-hal's GL init then panicked in EGL teardown (`unmake_current().unwrap()`, "Another window API already has a current context"). Increment A/B tests used a native-Vulkan main (default config), which masked it; the transparent (GL) main hit it every time.
-	- Fix: dialogs now create their `Gfx` via `Gfx::with_backends(window, Backends::PRIMARY)` (Vulkan/Metal/DX12, no GL) - opaque dialogs don't need GL, and avoiding it sidesteps the EGL conflict. Verified: Settings + About open over a transparent GL main with no crash; toggle on->Opacity enabled, off->greyed.
-
-- ✅ Mouse text selection, and double-click selection, quit working. (20260625-161509)
-	- Cause: It was actually the selection highlight being invisible (input + copy-to-PRIMARY worked): the GL offscreen was `Rgba8UnormSrgb`, so the blit's `textureSample` decoded sRGB->linear, cancelling the blit's `lin2srgb`, and wgpu's GL backend doesn't sRGB-encode the offscreen write either - so all rect/text colors passed through as raw linear and rendered too dark (text ~64% looked "ok"; the dark `SELECTION_BG` (51,68,102)->(8,15,34) went invisible). Fix: make the GL offscreen plain `Rgba8Unorm` so shaders store their linear output raw and the blit's `lin2srgb` does the one true encode - uniformly for rects, glyphon text, and the bg image. Verified on-screen: SELECTION_BG renders (50,69,102), text is full-brightness (210). This also completes the earlier transparency sRGB fix (text was still ~164, now a true 210).
-
-- ✅ Smooth scrolling is broken. (20260623-194551)
-	- Cause: the fix for the apt "bug". That fix made output easing snap whenever new lines arrived closer than 0.12s apart, to stop apt's status bar bouncing. But a command's output arrives from the PTY in one sub-millisecond burst, so essentially all multi-line output (the core demo) snapped instead of easing - smooth scroll gone. Any burst threshold above a frame breaks the feature.
-	- Fix: Reverted the burst-snap entirely (`Scroll::nudge_output` back to always easing while following; dropped `output_age` / `OUTPUT_BURST_GAP_S`).
-	- Verified: Smooth output scrolling restored. The apt status-line bounce is reopened below as its own item (needs a non-destructive approach).
-
-- ✅ "Close pane" menu items don't work.
-	- Cause: The action itself works with multiple panes (verified: right-click and Panes-menu Close both closed a pane, 3->2->1). The dead case was the last pane: `MenuAction::Close` was gated on `panes.len() > 1`, so on a single pane (the startup state, where you'd first try it) it silently did nothing.
-	- Fix: Now Close Pane on the last pane closes the tab (if >1 tab), else the window.
-	- Verified: single pane + single tab -> Close Pane exits.
-
-- ✅ Text background colors, and the block cursor, appear to be aligned a line below where they should be.
-	- Cause: Regression from the menu bar. Cell backgrounds, the cursor, and the bars are all rect quads in absolute framebuffer pixels (same space as the glyphon text viewport), but `rects.set_resolution` (and the bg-image shader) were being fed the content `area` height, which the menu bar made shorter than the window - so the shader's `px.y / resolution.y` mapping pushed every quad down relative to the text.
-	- Fix: Pass the full window size (`gfx.config.width/height`) to both `set_resolution` calls.
-	- Verified: ANSI bg-color spans sit exactly on their text and the block cursor is on its own row.
-
-- ✅ The text and UI elements in the settings dialog are misaligned. But before fixing it, make sure we're not going with egui.
-	- Cause: the dialog vertically centered text with a baked-in 18px text height, so on fonts whose line height differs the labels/values didn't line up with their controls (and it used the mono font).
-	- Fix (folded into the Settings enhancement): `SettingsDialog::texts(line_h)` now centers every label / value / hex field / button against the actual rendered line height (the app passes `cell_h`), and the app draws them with the proportional `sans_attrs()`.
-	- Verified: labels, sliders, values, swatches, hex fields, and buttons all align. (Also decided, not going with egui.)
-
-- ✅ If the window isn't just the right hight, the last line of text is invisible. Not as in, below the visible line - but actually invisible. If you type, you can see that output happens, it's just not visible. Once it scrolls up even a single line though, it becomes visible. Adjust the hieght of the window just a tad, it "fixes" the problem. But at the default dimensions, the problem is apparent.
-	- Cause: `Pane::build` lays out lines+1 rows into the pane's text buffer (the screen-row -1 overscan row above the viewport, plus rows 0..lines-1), so the bottom row sits at `y = lines*cell_h`. The buffer was sized to the content height (`lines*cell_h`), so when the window height made content an exact multiple of `cell_h` - which the default 152x48 does - that row landed right at the buffer's height limit and cosmic-text dropped it from layout (the cell bg/cursor quads use a separate renderer, so they still showed - hence "type and output happens but is invisible"). Scrolling/resizing shifted it back into range, "fixing" it.
-	- Fix: size the pane buffer to `content_h + 2*cell_h` (overscan slack) in `spawn_pane`/`relayout`; `TextArea` bounds still clip drawing to the pane.
-	- Verified: bottom prompt line renders at the default size.
-
-- ✅ There are weird spacing issues with the cursor. It appears too far after text. There are also weird text background color interactions with `ble`, which I suspect is caused by the spacing issue.
-	- Cause (re-fixed): the earlier two-part fix below was incomplete because `cell_w` was rounded (measured pitch ~10.5px -> 11). Everything grid-positioned (cursor, cell bg, per-cell glyphs) is placed at `col*cell_w`, so a `cell_w` that's bigger than the text's actual advance drifts them right of the text, and the drift accumulates per column. The cursor sat further past the text the longer the line, and fallback glyphs landed on top of the next cell at higher columns (`set_monospace_width` doesn't snap here. Cosmic-text only snaps when the font's `monospace_em_width()` is `Some`, which system fonts often aren't, so text renders at its natural advance).
-	- Fix: `measure_cell` now measures the real rendered pitch (`Shaping::Advanced`, averaged over 40 `M`s) and `cell_w` is not rounded -> it matches the text, residual drift is sub-pixel. Plus per-cell fallback glyphs are now fit to their cell box: `fill_glyph` returns the glyph's true ink width/offset (rasterized; advance != ink for `➡`/emoji) and `build` scales+centers each via `TextArea.scale` so an over-wide fallback can't spill onto its neighbour. Verified at runtime (pixel-measured): cursor sits one cell after `…$ ` with no drift; `A➡B➡C…` and `A😀B…` align at col 0 and col ~40; CJK/emoji = 2 cells; math/box-drawing stay in-buffer and crisp.
-	- (Earlier partial fix, superseded by the above) 1) `set_monospace_width(cell_w)` in `TextCtx::new_buffer`; 2) pulling glyphs the primary mono face lacks out of the main buffer and drawing them per-cell. The extraction [2] is still in place; [1] is kept but is largely inert for system fonts.
-
-- ✅ Opacity should only affect the text rendering area, the actual terminal. Instead, it is also affecting the entire window including window decorations.
-	- Cause: the early build leaned on whole-window opacity, which by definition dims the decorations and text too. What's actually wanted is per-pixel surface alpha, and wgpu can't drive that on X11 directly (its Vulkan swapchain forces an opaque surface; its GL backend won't bind the ARGB visual).
-	- Fix: Done - solved via the glutin + wgpu-hal GL-interop path (see "True transparency" below). Opacity now affects only the terminal background; text, decorations, and chrome stay opaque. The old whole-window opacity route was removed.
-
-- ✅ Config file values don't work without a leading 0.
-	- Cause: `.25` is invalid TOML, so the whole file failed to parse and every value reverted to default (hence "all values").
-	- Fix: `config::lenient_floats` rewrites a bare-decimal value after `=` (`.25` -> `0.25`, `-.5` -> `-0.5`) before parsing.
-	- Verified: `opacity = .25` now applies and other keys still load.
-
-- ✅ The font size is still smaller than the system monospace size.
-	- Causes:
-		1. `config.toml` pinned `font_size = 15.0` (from an older template), overriding the new follow-the-system default.
-			- Fix: Commented it out so detection applies.
-		2. "Use system monospace" had only meant cosmic-text's generic `Family::Monospace`, not the OS-configured family, so even at matching point size the glyphs looked smaller/different.
-			- Fix: Now `sysfont::monospace()` also returns the configured family (Pango/`defaults` parse, style+size stripped) and `resolve_mono_family` pins it when it's actually installed (validated against the font db), else falls back to generic monospace.
-	- Verified: renders Monaspace Argon at 13pt (cell 11x21, window 1680x1016).
-
-- ✅ Text sometimes renders in a different font (e.g. when running `source x9ps1-git; export X9PS1_STANDARD=1`). It seems that some color control codes causes the font change.
-	- Cause: the prompt sets bold (`ESC[01;..m`), and cosmic-text's generic `Family::Monospace` resolves the best face per query, so a bold run landed in a different family than the regular run.
-	- Fix: resolve the concrete monospace family name once at startup (`text::resolve_mono_family`) and pin `Family::Name` for every weight, so bold/italic stay in it.
-
-- ✅ Text size is smaller than system default monospace.
-	- Fix: Default font size now follows the OS's monospace/fixed-pitch size instead of a fixed 15px, via per-platform detection in `src/sysfont.rs`: Linux `gsettings` -> `fc-match`; macOS `defaults read -g NSFixedPitchFontSize`; Windows `SystemParametersInfo` message-font (windows-sys FFI). Points->px at 96 DPI. `font_size` in the config is commented out by default (follow system); set it to pin a size. Falls back to 17px when detection fails.
-	- Verified: Linux at runtime (13pt -> 1528x1016), Windows cross-build compiles; macOS path is std-only subprocess, not run-tested here (no mac target).
-
-- ✅ Native keybindings for `less` don't work.
-	- Fix: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
-
 ### New features and enhancements
 
-- 🛠️ Allow toggling from default "Insert" mode, to "Overwrite". (20260629)
-	- 🚫 Change cursor in default "Insert" mode, to a thinner bar than the block cursor (but thicker than, say, "|").
-		- 🔘 This can't really be done in a terminal that covers all use cases. Rather, allow user to specify cursor shape, among:
-			- Thin bar [default]
-			- Thin bar % of character width (default to about the width of the upstroke of a letter "i").
-			- Underline
-			- Block
-	- 🚫 Overwrite mode will be the regular block cursor.
-		- Overwrite mode canceled.
-	- ✅ Backed out (20260630): overwrite mode + the Insert-key toggle removed (a terminal can't force the shell's line editor to overwrite). Kept the cursor work - configurable shape, blink, smooth slide. Insert key now just passes through to the shell.
-	- ✅ Provide options in the config (not dialog) to adjust cursor type + blinking style. Similar to Sublime Text cursor options. (20260629) - config keys `cursor_shape` (bar|block|underline; was cursor_insert_shape, overwrite variant dropped) and `cursor_blink_style` (phase|blink|solid). Verified: underline shape + solid style render.
-		- This is mostly done. Refer to above point about options.
+- ✅ Add an option to cicd: '--quick'. This excludes the slow processes like profiling and cross-platform building. (20260701) - `--quick` sets BUILD_CROSS=0 + PROFILE_ENABLE=0 (same as `--no-cross --no-profile`).
+
+- 🔘 Whenever a program update adds or changes config file settings, update the existing toml file in-place. E.g. reorganize, add/remove/rename items, but preserve existing active user settings and values that remain.
+
+- 🔘 Settings dialog:
+	- Alt+hotkeys for "Apply" and "OK", that underline when holding alt.
+	- Font settings:
+		- Add a sane set of fonts and fallbacks to the default "font family" setting, and make it an active setting in config.
+		- If using the system-defined font, enable the checbox and disable the related font adjustements (but don't clear their values).
+			- User can un-check this later (or change the related config setting), to user the defined font settings instead.
+
+- 🔘 Cursor settings:
+	- 🔘 size_vertical =  ## 1 to 100%, from left-to-right
+	- 🔘 size_horizontal =  ## 1 to 100%, from bottom-up
+	- 🔘 animation_style
+		- 🔘 none
+		- 🔘 phase (the current default)
+		- 🔘 pulse_vertical
+			- Starts with a single-pixel line in the middle, then animate up and down for full-height, pause there for a moment, then back and disappear momentarily, then start animation again.
+			- Should happen in the
+		- 🔘 pulse_horizontal (same idea as pulse vertical, but the animation goes left and right rather than up and down).
+		- 🔘 pulse_both (grow and shrink both vertically and horizontally)
+	- 🔘 blink_rate  ## ms, default = desktop settings
 	- 🔘 Change default cursor colors:
-		- Thick: Gray (depending on the theme).
-		- Thin: a fully bright version of the thick one. (E.g. proportionally increase R, G, and B, so that the highest one is FF.) Not as a hardcoded rule, but as a theming default.
-		- Defaults overridden by themes. The default "SilkTerm" theme should use those colors. Update others as appropriate, but the styling rule for "Thin" above should also hold for themes.
+		- Default SilkTerm theme (dark):
+			- Foreground text color: 88ffee
+			- Cursor: ff88aa
 
 - 🔘 Outer glow enhancements:
 	- 🔘 When outer glow is applied, also add an antialiased 1px outer border around the letters, using the same color rules as outer glow.
 	- 🔘 For bold text, calculate the blur for the outer glow, based on all non-bold text. (But still render the visible text on top in whatever weight it was meant to.
+	- 🔘 Cursor should have blur if possible (investigate - this may not be possible, especially with the phasing).
 	- 🔘 Provide options for different blur fadeoff ramps. E.g. default gaussian, linear, or "S"-shaped.
 
 - 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
@@ -382,6 +293,117 @@ In each section, items are listed approximately from newest to oldest.
 - 🔘 When running `sudo apt update`, the progress bar at the bottom bounces about halfway below the render area, as lines above it scroll up. This seems to be a side-effect of smooth-scrolling. Is there a way to prevent that from happening, without fundamentally breaking the very concept of smooth scrolling?
 	- Reopened: The first attempt (snap output easing during line bursts) broke smooth scrolling for all normal output and was reverted (see the smooth-scrolling-regression bug above).
 		- Diagnosis still stands: apt reserves the bottom line as a status bar via a scroll region (DECSTBM `0..N-1`); printing each log line scrolls that region. Because the region starts at line 0, alacritty_terminal grows scrollback (`Grid::scroll_up` only calls `increase_scroll_limit` when `region.start == 0`), which fires our output easing - and the ease shifts the whole grid down by up to a cell, dragging the fixed status bar below the viewport = the bounce. A correct fix needs to know a partial scroll region is active so it can suppress easing only then, but `alacritty_terminal` doesn't expose `scroll_region` (private, no getter). Options for later: (a) patch/fork the crate to expose the region; (b) tee the PTY stream and parse DECSTBM ourselves; (c) accept as a known limitation like full-screen apps (`nano`).
+
+### Done
+
+#### First steps
+
+- ✅ Create name and GitHub repo.
+- ✅ Cargo skeleton: `alacritty_terminal` + `wgpu` deps.
+- ✅ Glyph atlas + cell render.
+- ✅ Wheel input -> lerp target.
+- ✅ Boundary-cross sync to `scroll_display`.
+- ✅ Overscan rows for partial-row fill.
+- ✅ Output-scroll easing.
+- ✅ Verify smoothness on X11/Compiz.
+
+#### Done - Bugs
+
+- ✅ Outer glow should only apply to terminal text - not tab titles or the menu bar. (20260630) - the glow composite covered the whole window, so the halo appeared behind the menu/tab titles too. Now clipped to the content area (below the chrome), so only terminal text glows. Verified via a strong-glow screenshot (chrome text crisp, no halo).
+
+- ✅ High severity: Typing "exit" in tab, closes the whole application. It should only close that tab. Doesn't do that for panes, only tabs. Closing a tab via menu only closes that one tab. (20260629; real cause found + fixed 20260630)
+	- Cause: the shell-exit handler (`UserEvent::Exit(id)` in app.rs) just called `tabs.cur_mut().close(id)` and quit the app whenever that returned true. So the last pane of a tab killed the whole app when other tabs existed; worse, a background tab's shell exiting ran `close(id)` on the *active* tab (which doesn't own that pane) -> returns true -> app quit. The Close-Pane menu had the right pane->tab->window cascade; the exit path didn't.
+	- Fix: `UserEvent::Exit` now finds the pane's owning tab (`position(|pm| pm.panes.contains_key(&id))`) and applies the same cascade - >1 pane in that tab closes the pane; else >1 tab closes that tab (`close_tab_at(idx)`, generalized from `close_tab`); else (last pane of last tab) exits. Handles background-tab exits and keeps `active` pointing at the same tab.
+	- Verified: runtime - launched with a 2nd (active) tab whose shell self-exits after 3s; app stayed alive past the exit (tab closed, window survived) instead of quitting. Builds clean.
+	- Re-verified fixed on current main (20260630): the app survives the tab's shell exiting in all 3 tests - CLI active-tab exit, CLI background-tab exit, and typing `exit` interactively in the active tab of a 2-tab window (1 window stays up). If it's still happening for you, the running/dogfood binary predates the fix - rebuild (`cargo run --release`) or re-run cicd to reinstall, then retest.
+		- ✅ Still not fixed. With three tabs open, for example:
+			- Type "exit" in the anything but the last tab, it closes ALL tabs, except for one. Sometimes, the program becomes unresponsive then and has to be killed.
+			- Type "exit" in the last tab, it closes the program.
+			- With four tabs open, and type "exit" from the third, closes the first two tabs (and not the third).
+		- ✅ REAL cause (20260630): pane ids collided across tabs. Each tab is a separate PaneManager that assigned ids from its own counter (first pane always id 1), so the shell-exit event (carries only the id) resolved to the WRONG tab - the first one with that id - and closed it; dropping that tab's term fired another Exit -> cascade (closed all but one, sometimes hung), exactly as reported. The earlier fix (find owner tab + cascade) was right in shape but the id lookup was ambiguous. Fix: `alloc_pane_id()` - one global counter, so every pane is unique everywhere. Verified with instrumentation: exit in the 3rd of 4 tabs resolves to tab index 2, exactly one close, no cascade, app alive.
+
+- ✅ Cursor: (20260629)
+	- ✅ Smooth-scroll (when moving to the right). - the cursor slides to its target column as you type (snaps on a newline); idles at 0% CPU.
+	- ✅ Blink at the same rate, but "phase" between of and on, not just on or off. - smooth cosine fade, now default ON: a render refactor skips re-shaping text on cursor-only frames (~70% -> ~21% of a core, debug; far less in release), so blinking no longer pegs the CPU. `cursor_blink` config to disable. Detail in `.claude/details.md`.
+
+- ✅ Setting dialog: (20260629)
+	- ✅ Setting Bg image fit to "Zoom", then Apply works. But back to "Stretch", then Apply, doesn't. - Cause: the dialog's `orig` baseline was captured at open and never refreshed, so a 2nd Apply diffed against the open-time snapshot; re-selecting the original value read as "no change". Fix: `commit_baseline()` resets orig = edited after each Apply (fixes every setting, not just fit).
+
+- ✅ Critical: Smooth-scrolling apparently just quits after using the terminal for a while. It seems to quit, if output is too fast for a while, but that could be a red-herring. Maybe it's just after any particular amount of general use.
+	- Cause: output-easing was triggered off scrollback *growth* (`grid.history_size()` rising). That growth flatlines once the scrollback buffer fills (default 10k lines) - old lines drop off the top as fast as new ones arrive - so after enough output the growth reads 0 every frame and `nudge_output` never fires again. Smooth output scroll dies "after a while", and sooner under fast output (which fills the 10k buffer faster). Manual scrollback (wheel) was unaffected, which is why it looked like only the smooth *output* scroll quit.
+	- Fix (`pane.rs`): keep growth as the primary signal (unchanged pre-cap, so the verified feel is untouched), and at the cap fall back to inferring the viewport advance from row fingerprints - how far last frame's on-screen rows reappear shifted up this frame (`scroll_shift`). An in-place bottom-row redraw (e.g. apt's status line, no newline) shifts nothing, so it still doesn't nudge (no bounce); a full-screen burst reports the backlog cap so the ease ramps to full catch-up. 6 unit tests cover no-scroll / in-place / shift-by-k / full-turnover / empty.
+	- Verified: 26 unit tests pass; ran past the 10k cap (20k-line flood + drip) with no crash, rendering on the GL backend. Smooth-scroll *feel* past the cap is best eyeballed by the owner.
+
+- ✅ Mouse wheel doesn't scroll back through the `stdout`/`stderr` buffer. It should do so, smoothly, and in proportion to how fast the mouse wheel is moved. But currently it moves the command history back. (20260626-104542)
+	- Cause: `TermMode::ALTERNATE_SCROLL` (DECSET 1007) is default-on in alacritty_terminal, but the wheel handler used `ALT_SCREEN || ALTERNATE_SCROLL` as the cursor-key trigger - so on the *primary* screen the always-on flag made the wheel emit cursor-up/down (shell history recall) instead of scrolling scrollback.
+	- Fix: gate the cursor-key path on `ALT_SCREEN` (now requires alt screen AND alternate-scroll AND no mouse mode). The primary screen always routes to the smooth scrollback (`Scroll::wheel`, already proportional to notches via `wheel_lines` + easing). Alt-screen apps (less/nano/vim) keep their cursor-key wheel. `app.rs` MouseWheel arm. Verified by root-cause + build (runtime wheel injection is unreliable here per xdotool notes).
+
+- ✅ Severe bug: Trying to open the settings dialog crashes the program. (20260625-150526)
+	- Cause: with always-GL on X11 the main window holds a glutin GL/EGL context, and the pop-out dialog's `Gfx::new` created a second `wgpu::Instance::default()` (all backends, including GL); wgpu-hal's GL init then panicked in EGL teardown (`unmake_current().unwrap()`, "Another window API already has a current context"). Increment A/B tests used a native-Vulkan main (default config), which masked it; the transparent (GL) main hit it every time.
+	- Fix: dialogs now create their `Gfx` via `Gfx::with_backends(window, Backends::PRIMARY)` (Vulkan/Metal/DX12, no GL) - opaque dialogs don't need GL, and avoiding it sidesteps the EGL conflict. Verified: Settings + About open over a transparent GL main with no crash; toggle on->Opacity enabled, off->greyed.
+
+- ✅ Mouse text selection, and double-click selection, quit working. (20260625-161509)
+	- Cause: It was actually the selection highlight being invisible (input + copy-to-PRIMARY worked): the GL offscreen was `Rgba8UnormSrgb`, so the blit's `textureSample` decoded sRGB->linear, cancelling the blit's `lin2srgb`, and wgpu's GL backend doesn't sRGB-encode the offscreen write either - so all rect/text colors passed through as raw linear and rendered too dark (text ~64% looked "ok"; the dark `SELECTION_BG` (51,68,102)->(8,15,34) went invisible). Fix: make the GL offscreen plain `Rgba8Unorm` so shaders store their linear output raw and the blit's `lin2srgb` does the one true encode - uniformly for rects, glyphon text, and the bg image. Verified on-screen: SELECTION_BG renders (50,69,102), text is full-brightness (210). This also completes the earlier transparency sRGB fix (text was still ~164, now a true 210).
+
+- ✅ Smooth scrolling is broken. (20260623-194551)
+	- Cause: the fix for the apt "bug". That fix made output easing snap whenever new lines arrived closer than 0.12s apart, to stop apt's status bar bouncing. But a command's output arrives from the PTY in one sub-millisecond burst, so essentially all multi-line output (the core demo) snapped instead of easing - smooth scroll gone. Any burst threshold above a frame breaks the feature.
+	- Fix: Reverted the burst-snap entirely (`Scroll::nudge_output` back to always easing while following; dropped `output_age` / `OUTPUT_BURST_GAP_S`).
+	- Verified: Smooth output scrolling restored. The apt status-line bounce is reopened below as its own item (needs a non-destructive approach).
+
+- ✅ "Close pane" menu items don't work.
+	- Cause: The action itself works with multiple panes (verified: right-click and Panes-menu Close both closed a pane, 3->2->1). The dead case was the last pane: `MenuAction::Close` was gated on `panes.len() > 1`, so on a single pane (the startup state, where you'd first try it) it silently did nothing.
+	- Fix: Now Close Pane on the last pane closes the tab (if >1 tab), else the window.
+	- Verified: single pane + single tab -> Close Pane exits.
+
+- ✅ Text background colors, and the block cursor, appear to be aligned a line below where they should be.
+	- Cause: Regression from the menu bar. Cell backgrounds, the cursor, and the bars are all rect quads in absolute framebuffer pixels (same space as the glyphon text viewport), but `rects.set_resolution` (and the bg-image shader) were being fed the content `area` height, which the menu bar made shorter than the window - so the shader's `px.y / resolution.y` mapping pushed every quad down relative to the text.
+	- Fix: Pass the full window size (`gfx.config.width/height`) to both `set_resolution` calls.
+	- Verified: ANSI bg-color spans sit exactly on their text and the block cursor is on its own row.
+
+- ✅ The text and UI elements in the settings dialog are misaligned. But before fixing it, make sure we're not going with egui.
+	- Cause: the dialog vertically centered text with a baked-in 18px text height, so on fonts whose line height differs the labels/values didn't line up with their controls (and it used the mono font).
+	- Fix (folded into the Settings enhancement): `SettingsDialog::texts(line_h)` now centers every label / value / hex field / button against the actual rendered line height (the app passes `cell_h`), and the app draws them with the proportional `sans_attrs()`.
+	- Verified: labels, sliders, values, swatches, hex fields, and buttons all align. (Also decided, not going with egui.)
+
+- ✅ If the window isn't just the right hight, the last line of text is invisible. Not as in, below the visible line - but actually invisible. If you type, you can see that output happens, it's just not visible. Once it scrolls up even a single line though, it becomes visible. Adjust the hieght of the window just a tad, it "fixes" the problem. But at the default dimensions, the problem is apparent.
+	- Cause: `Pane::build` lays out lines+1 rows into the pane's text buffer (the screen-row -1 overscan row above the viewport, plus rows 0..lines-1), so the bottom row sits at `y = lines*cell_h`. The buffer was sized to the content height (`lines*cell_h`), so when the window height made content an exact multiple of `cell_h` - which the default 152x48 does - that row landed right at the buffer's height limit and cosmic-text dropped it from layout (the cell bg/cursor quads use a separate renderer, so they still showed - hence "type and output happens but is invisible"). Scrolling/resizing shifted it back into range, "fixing" it.
+	- Fix: size the pane buffer to `content_h + 2*cell_h` (overscan slack) in `spawn_pane`/`relayout`; `TextArea` bounds still clip drawing to the pane.
+	- Verified: bottom prompt line renders at the default size.
+
+- ✅ There are weird spacing issues with the cursor. It appears too far after text. There are also weird text background color interactions with `ble`, which I suspect is caused by the spacing issue.
+	- Cause (re-fixed): the earlier two-part fix below was incomplete because `cell_w` was rounded (measured pitch ~10.5px -> 11). Everything grid-positioned (cursor, cell bg, per-cell glyphs) is placed at `col*cell_w`, so a `cell_w` that's bigger than the text's actual advance drifts them right of the text, and the drift accumulates per column. The cursor sat further past the text the longer the line, and fallback glyphs landed on top of the next cell at higher columns (`set_monospace_width` doesn't snap here. Cosmic-text only snaps when the font's `monospace_em_width()` is `Some`, which system fonts often aren't, so text renders at its natural advance).
+	- Fix: `measure_cell` now measures the real rendered pitch (`Shaping::Advanced`, averaged over 40 `M`s) and `cell_w` is not rounded -> it matches the text, residual drift is sub-pixel. Plus per-cell fallback glyphs are now fit to their cell box: `fill_glyph` returns the glyph's true ink width/offset (rasterized; advance != ink for `➡`/emoji) and `build` scales+centers each via `TextArea.scale` so an over-wide fallback can't spill onto its neighbour. Verified at runtime (pixel-measured): cursor sits one cell after `…$ ` with no drift; `A➡B➡C…` and `A😀B…` align at col 0 and col ~40; CJK/emoji = 2 cells; math/box-drawing stay in-buffer and crisp.
+	- (Earlier partial fix, superseded by the above) 1) `set_monospace_width(cell_w)` in `TextCtx::new_buffer`; 2) pulling glyphs the primary mono face lacks out of the main buffer and drawing them per-cell. The extraction [2] is still in place; [1] is kept but is largely inert for system fonts.
+
+- ✅ Opacity should only affect the text rendering area, the actual terminal. Instead, it is also affecting the entire window including window decorations.
+	- Cause: the early build leaned on whole-window opacity, which by definition dims the decorations and text too. What's actually wanted is per-pixel surface alpha, and wgpu can't drive that on X11 directly (its Vulkan swapchain forces an opaque surface; its GL backend won't bind the ARGB visual).
+	- Fix: Done - solved via the glutin + wgpu-hal GL-interop path (see "True transparency" below). Opacity now affects only the terminal background; text, decorations, and chrome stay opaque. The old whole-window opacity route was removed.
+
+- ✅ Config file values don't work without a leading 0.
+	- Cause: `.25` is invalid TOML, so the whole file failed to parse and every value reverted to default (hence "all values").
+	- Fix: `config::lenient_floats` rewrites a bare-decimal value after `=` (`.25` -> `0.25`, `-.5` -> `-0.5`) before parsing.
+	- Verified: `opacity = .25` now applies and other keys still load.
+
+- ✅ The font size is still smaller than the system monospace size.
+	- Causes:
+		1. `config.toml` pinned `font_size = 15.0` (from an older template), overriding the new follow-the-system default.
+			- Fix: Commented it out so detection applies.
+		2. "Use system monospace" had only meant cosmic-text's generic `Family::Monospace`, not the OS-configured family, so even at matching point size the glyphs looked smaller/different.
+			- Fix: Now `sysfont::monospace()` also returns the configured family (Pango/`defaults` parse, style+size stripped) and `resolve_mono_family` pins it when it's actually installed (validated against the font db), else falls back to generic monospace.
+	- Verified: renders Monaspace Argon at 13pt (cell 11x21, window 1680x1016).
+
+- ✅ Text sometimes renders in a different font (e.g. when running `source x9ps1-git; export X9PS1_STANDARD=1`). It seems that some color control codes causes the font change.
+	- Cause: the prompt sets bold (`ESC[01;..m`), and cosmic-text's generic `Family::Monospace` resolves the best face per query, so a bold run landed in a different family than the regular run.
+	- Fix: resolve the concrete monospace family name once at startup (`text::resolve_mono_family`) and pin `Family::Name` for every weight, so bold/italic stay in it.
+
+- ✅ Text size is smaller than system default monospace.
+	- Fix: Default font size now follows the OS's monospace/fixed-pitch size instead of a fixed 15px, via per-platform detection in `src/sysfont.rs`: Linux `gsettings` -> `fc-match`; macOS `defaults read -g NSFixedPitchFontSize`; Windows `SystemParametersInfo` message-font (windows-sys FFI). Points->px at 96 DPI. `font_size` in the config is commented out by default (follow system); set it to pin a size. Falls back to 17px when detection fails.
+	- Verified: Linux at runtime (13pt -> 1528x1016), Windows cross-build compiles; macOS path is std-only subprocess, not run-tested here (no mac target).
+
+- ✅ Native keybindings for `less` don't work.
+	- Fix: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
+
+#### Done - new features and enhancements
 
 - ✅ Change the default hotkey for opening a new tab to Ctrl+Shift+T. (20260629) - new-tab is now Ctrl+Shift+T (`app.rs` tab-hotkey block); plain Ctrl+T passes through to the shell (readline transpose-char) instead of opening a tab. Builds clean.
 
@@ -698,9 +720,14 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Canceled
 
-- 🚫 Allow toggling from default "Insert" mode, to "Overwrite":
-	- The cursor shape toggles thick and thin, but not the behavior. It's always in insert mode.
-	- This can't be done without wonky hacks.
+- 🚫 Allow toggling from default "Insert" mode, to "Overwrite". (20260629)
+	- 🚫 Change cursor in default "Insert" mode, to a thinner bar than the block cursor (but thicker than, say, "|").
+	- 🚫 Overwrite mode will be the regular block cursor.
+		- Overwrite mode canceled.
+	- ✅ Backed out (20260630): overwrite mode + the Insert-key toggle removed (a terminal can't force the shell's line editor to overwrite). Kept the cursor work - configurable shape, blink, smooth slide. Insert key now just passes through to the shell.
+	- ✅ Provide options in the config (not dialog) to adjust cursor type + blinking style. Similar to Sublime Text cursor options. (20260629) - config keys `cursor_shape` (bar|block|underline; was cursor_insert_shape, overwrite variant dropped) and `cursor_blink_style` (phase|blink|solid). Verified: underline shape + solid style render.
+		- This is mostly done. Refer to above point about options.
+	- Resolution: This can't be done without wonky hacks.
 
 - [🚫] Terse `--layout` DSL as optional sugar over the window/tab/pane CLI model (not a replacement). One compact string for quick splits; lowers to the exact same internal layout the hierarchical flags produce, so it inherits per-pane targeting "for free."
 	- Operators (mnemonic = the divider they draw): `|` side-by-side (vertical divider), `-` stacked (horizontal divider); `(...)` to nest (a group is uniform - mix directions by nesting); `;` separates tabs; `.` = one default pane.
