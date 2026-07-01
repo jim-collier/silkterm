@@ -176,6 +176,26 @@ impl DialogWin {
 		}
 	}
 
+	// Alt held (from ModifiersChanged): underline the button accelerators.
+	pub fn set_alt(&mut self, on: bool) {
+		if let Content::Settings(d) = &mut self.content {
+			d.set_alt(on);
+		}
+	}
+
+	// A character key: while Alt is held it's an accelerator (Cancel/Apply/OK),
+	// otherwise it types into the focused field.
+	pub fn key_char(&mut self, c: char) -> Option<DialogAction> {
+		match &mut self.content {
+			Content::Settings(d) if d.alt() => map_action(d.alt_key(c)),
+			Content::Settings(d) => {
+				d.char_input(c);
+				None
+			}
+			_ => None,
+		}
+	}
+
 	pub fn backspace(&mut self) {
 		if let Content::Settings(d) = &mut self.content {
 			d.backspace();
@@ -239,7 +259,7 @@ impl DialogWin {
 			}
 			Content::Settings(d) => {
 				clear = crate::settings_ui::dialog_bg();
-				rect_inst = d.rects();
+				rect_inst = d.rects(self.text.cell_h);
 				for it in d.texts(self.text.cell_h) {
 					let mut a = sans_attrs();
 					a.color_opt = Some(GColor::rgb(it.color[0], it.color[1], it.color[2]));

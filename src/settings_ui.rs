@@ -354,6 +354,7 @@ pub struct SettingsDialog {
 	// values are kept here so unchecking restores them (never clobbered).
 	saved_font_family: Option<String>,
 	saved_font_size: f32,
+	alt: bool, // Alt held: underline button accelerators (Cancel/Apply/OK)
 }
 
 impl SettingsDialog {
@@ -389,6 +390,24 @@ impl SettingsDialog {
 			use_system_font,
 			saved_font_family,
 			saved_font_size,
+			alt: false,
+		}
+	}
+
+	// Alt-key accelerators: while Alt is held the buttons underline their first
+	// letter (Cancel/Apply/OK), and Alt+that-letter triggers the button.
+	pub fn set_alt(&mut self, on: bool) {
+		self.alt = on;
+	}
+	pub fn alt(&self) -> bool {
+		self.alt
+	}
+	pub fn alt_key(&mut self, c: char) -> Action {
+		match c.to_ascii_lowercase() {
+			'c' => Action::Cancel,
+			'a' => Action::Apply,
+			'o' => Action::Ok,
+			_ => Action::None,
 		}
 	}
 
@@ -830,7 +849,7 @@ impl SettingsDialog {
 		}
 	}
 
-	pub fn rects(&self) -> Vec<RectInstance> {
+	pub fn rects(&self, line_h: f32) -> Vec<RectInstance> {
 		let mut out = Vec::new();
 		let q = |x: f32, y: f32, w: f32, h: f32, c: [u8; 3]| RectInstance {
 			pos: [x, y],
@@ -943,9 +962,17 @@ impl SettingsDialog {
 				}
 			}
 		}
-		for (_, r, _) in self.buttons() {
+		for (_, r, label) in self.buttons() {
 			out.push(q(r.x, r.y, r.w, r.h, dlg().btn_bg));
 			border(&mut out, r, 1.0, dlg().btn_hl);
+			// Alt held: underline the accelerator (the label's first letter). The
+			// label is drawn left-aligned at r.x+14; the cap glyph is ~0.55*line_h
+			// wide, and its baseline sits near the text bottom.
+			if self.alt && !label.is_empty() {
+				let tx = r.x + 14.0;
+				let ty = r.y + (r.h - line_h) / 2.0 + line_h * 0.82;
+				out.push(q(tx, ty, line_h * 0.5, 1.5, dlg().text));
+			}
 		}
 		out
 	}
