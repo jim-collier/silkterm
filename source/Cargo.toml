@@ -53,6 +53,9 @@ pprof = { version = "0.14", features = ["flamegraph"], optional = true }
 [features]
 profiling = ["dep:pprof"]
 
+[lints]
+workspace = true
+
 # X11: set _KDE_NET_WM_BLUR_BEHIND_REGION so a KWin/picom compositor blurs the
 # desktop behind the translucent window (transparent_background_blur).
 [target.'cfg(target_os = "linux")'.dependencies]
