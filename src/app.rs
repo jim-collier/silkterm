@@ -1273,6 +1273,7 @@ impl State {
 				.blur(&self.gfx.queue, &mut encoder, gs.text_glow_radius);
 		}
 
+		let content_area = self.area(); // for clipping the glow to the terminal region
 		{
 			let dv = config::srgb_f32(config::DIVIDER);
 			// transparent base when compositing: pane-gap dividers show the
@@ -1328,10 +1329,15 @@ impl State {
 			if let Some((ts, te)) = tabbar_range {
 				self.rects.draw(&mut pass, ts..te);
 			}
-			// glow goes under the crisp text, over the cell backgrounds
+			// glow goes under the crisp text, over the cell backgrounds. Clip it to
+			// the content area so the halo only affects terminal text, never the
+			// menu bar / tab titles above it.
 			if glow_on {
+				let (cx, cy, cw, ch) = scissor(content_area, sw, sh);
+				pass.set_scissor_rect(cx, cy, cw, ch);
 				self.glow
 					.composite(&self.gfx.queue, &mut pass, glow_intensity);
+				pass.set_scissor_rect(0, 0, sw, sh);
 			}
 			if let Err(e) = self.text.render(&mut pass) {
 				eprintln!("{}: text render failed: {e:?}", config::APP_NAME);
