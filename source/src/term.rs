@@ -7,7 +7,7 @@ use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{Config, Term, TermMode};
+use alacritty_terminal::term::{Config, Term};
 use alacritty_terminal::tty;
 use winit::event_loop::EventLoopProxy;
 
@@ -206,11 +206,6 @@ impl TermInstance {
 
 	pub fn write<B: Into<Vec<u8>>>(&self, bytes: B) {
 		let _ = self.sender.send(Msg::Input(bytes.into().into()));
-	}
-
-	// current terminal mode flags (app cursor keys, alt screen, etc.)
-	pub fn mode(&self) -> TermMode {
-		*self.term.lock_unfair().mode()
 	}
 
 	pub fn resize(&mut self, cols: usize, lines: usize, cell_w: u16, cell_h: u16) {

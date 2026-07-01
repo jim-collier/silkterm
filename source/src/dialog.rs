@@ -310,7 +310,15 @@ impl DialogWin {
 				}
 			})
 			.collect();
-		let _ = self.text.prepare(&self.gfx.device, &self.gfx.queue, areas);
+		if let Err(e) = self.text.prepare(&self.gfx.device, &self.gfx.queue, areas) {
+			// same atlas-full recovery as the main window: trim so the next
+			// frame re-prepares with room, instead of dropping the dialog text
+			eprintln!(
+				"{}: dialog text prepare failed; trimming atlas: {e:?}",
+				config::APP_NAME
+			);
+			self.text.trim_atlas();
+		}
 		if !rect_inst.is_empty() {
 			self.rects
 				.set_resolution(&self.gfx.queue, w as f32, h as f32);
