@@ -80,9 +80,11 @@ pub struct Settings {
 	pub text_glow: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
 	pub text_glow_radius: f32, // glow blur sigma in px
 	pub text_glow_softness: f32, // 0 = hard/solid glow, 1 = soft/faint (maps to the intensity boost)
-	pub cursor_shape: String, // default cursor shape when the app sets none: "bar" | "block" | "underline"
-	pub cursor_blink_style: String, // "phase" (smooth fade) | "blink" (hard) | "solid" (none)
-	pub columns: usize,       // initial window grid size (used when !remember_size)
+	pub cursor_size_vertical: f32, // cursor width, 1..100% of the cell (from the left)
+	pub cursor_size_horizontal: f32, // cursor height, 1..100% of the cell (from the bottom)
+	pub cursor_animation: String, // "none" | "phase" | "pulse_vertical" | "pulse_horizontal" | "pulse_both"
+	pub cursor_blink_rate_ms: f32, // one animation cycle (ms)
+	pub columns: usize,           // initial window grid size (used when !remember_size)
 	pub rows: usize,
 	pub remember_size: bool, // launch at the last window size instead of columns/rows
 	pub remembered_columns: usize, // last actual window size (not shown in the dialog)
@@ -123,8 +125,10 @@ impl Default for Settings {
 			text_glow: true,
 			text_glow_radius: 5.0,
 			text_glow_softness: 0.5,
-			cursor_shape: "bar".to_string(),
-			cursor_blink_style: "phase".to_string(),
+			cursor_size_vertical: 15.0,    // thin bar by default
+			cursor_size_horizontal: 100.0, // full height
+			cursor_animation: "phase".to_string(),
+			cursor_blink_rate_ms: 500.0,
 			columns: 160,
 			rows: 48,
 			remember_size: false,
@@ -406,8 +410,10 @@ struct RawConfig {
 	text_glow: Option<bool>,
 	text_glow_radius: Option<f32>,
 	text_glow_softness: Option<f32>,
-	cursor_shape: Option<String>,
-	cursor_blink_style: Option<String>,
+	cursor_size_vertical: Option<f32>,
+	cursor_size_horizontal: Option<f32>,
+	cursor_animation: Option<String>,
+	cursor_blink_rate_ms: Option<f32>,
 	columns: Option<usize>,
 	rows: Option<usize>,
 	remember_size: Option<bool>,
@@ -571,8 +577,19 @@ fn resolve(raw: RawConfig) -> Settings {
 			.text_glow_softness
 			.unwrap_or(d.text_glow_softness)
 			.clamp(0.0, 1.0),
-		cursor_shape: raw.cursor_shape.unwrap_or(d.cursor_shape),
-		cursor_blink_style: raw.cursor_blink_style.unwrap_or(d.cursor_blink_style),
+		cursor_size_vertical: raw
+			.cursor_size_vertical
+			.unwrap_or(d.cursor_size_vertical)
+			.clamp(1.0, 100.0),
+		cursor_size_horizontal: raw
+			.cursor_size_horizontal
+			.unwrap_or(d.cursor_size_horizontal)
+			.clamp(1.0, 100.0),
+		cursor_animation: raw.cursor_animation.unwrap_or(d.cursor_animation),
+		cursor_blink_rate_ms: raw
+			.cursor_blink_rate_ms
+			.unwrap_or(d.cursor_blink_rate_ms)
+			.max(50.0),
 		background_fit: match raw.background_fit.as_deref() {
 			Some("zoom") => Fit::Zoom,
 			_ => Fit::Stretch,
@@ -716,9 +733,17 @@ fn line_setting_key(line: &str) -> Option<&str> {
 // Keys that were renamed across versions (old -> new). A rename copies the value
 // and preserves the comment/active state; if the new key is already present the
 // old one is just dropped.
-const CONFIG_RENAMES: &[(&str, &str)] = &[("cursor_insert_shape", "cursor_shape")];
-// Keys that no longer exist and should be removed from an existing config.
-const CONFIG_REMOVED: &[&str] = &["cursor_overwrite_shape", "cursor_blink"];
+const CONFIG_RENAMES: &[(&str, &str)] = &[];
+// Keys that no longer exist and should be removed from an existing config. The
+// cursor_shape/cursor_blink_style/cursor_insert_shape line was superseded by the
+// cursor_size_*/cursor_animation/cursor_blink_rate_ms geometry+animation model.
+const CONFIG_REMOVED: &[&str] = &[
+	"cursor_overwrite_shape",
+	"cursor_insert_shape",
+	"cursor_blink",
+	"cursor_shape",
+	"cursor_blink_style",
+];
 
 // Migrate an existing config in place across program updates: rename keys whose
 // name changed, drop keys that no longer exist. Preserves the user's values,
@@ -949,13 +974,20 @@ opacity = 0.95
 # text_glow_radius = 5.0     ## glow blur sigma in pixels
 # text_glow_softness = 0.5   ## 0 = hard/solid glow, 1 = soft/faint
 
-## Default cursor type: "bar" (thin), "block", or "underline". Used when the app
-## doesn't set its own; alt-screen apps (vim, less) still control their cursor.
-# cursor_shape = "bar"
+## Cursor size, as a percent of the cell. Vertical = width (from the left),
+## horizontal = height (from the bottom). Together they make any shape: a thin
+## bar (15 / 100), an underline (100 / 15), or a block (100 / 100). Used when the
+## app doesn't set its own; alt-screen apps (vim, less) still control theirs.
+# cursor_size_vertical = 15
+# cursor_size_horizontal = 100
 
-## Cursor blink style: "phase" (smooth fade in/out), "blink" (hard on/off), or
-## "solid" (steady, no blink). The cursor always slides smoothly as you type.
-# cursor_blink_style = "phase"
+## Cursor animation: "none" (steady), "phase" (smooth fade), or a pulse that
+## grows/shrinks each cycle - "pulse_vertical", "pulse_horizontal", "pulse_both".
+## The cursor always slides smoothly as you type.
+# cursor_animation = "phase"
+
+## Cursor animation cycle length, in milliseconds (blink rate).
+# cursor_blink_rate_ms = 500
 
 ## Initial window size, in character cells (used when remember_size = false).
 columns = 160
@@ -1071,18 +1103,14 @@ mod tests {
 		assert_eq!(raw.margin, Some(12.0)); // after the bad line
 	}
 
-	// In-place migration: rename changed keys, drop obsolete ones, keep the rest.
+	// In-place migration: drop obsolete cursor keys, keep the rest.
 	#[test]
 	fn migrate_config_renames_and_removes() {
-		let text = "opacity = 0.7\ncursor_insert_shape = \"block\"\ncursor_overwrite_shape = \"bar\"\ncursor_blink = enable\nmargin = 12.0\n";
+		let text = "opacity = 0.7\ncursor_shape = \"block\"\ncursor_insert_shape = \"bar\"\ncursor_blink_style = \"phase\"\nmargin = 12.0\n";
 		let out = migrate_config_text(text).expect("should change");
-		assert!(
-			out.contains("cursor_shape = \"block\""),
-			"rename value kept: {out:?}"
-		);
-		assert!(!out.contains("cursor_insert_shape"), "old key gone");
-		assert!(!out.contains("cursor_overwrite_shape"), "obsolete removed");
-		assert!(!out.contains("cursor_blink"), "obsolete removed");
+		assert!(!out.contains("cursor_shape"), "obsolete removed: {out:?}");
+		assert!(!out.contains("cursor_insert_shape"), "obsolete removed");
+		assert!(!out.contains("cursor_blink_style"), "obsolete removed");
 		assert!(
 			out.contains("opacity = 0.7") && out.contains("margin = 12.0"),
 			"kept the rest"
@@ -1092,7 +1120,7 @@ mod tests {
 	// A config with nothing to migrate is left untouched (no needless rewrite).
 	#[test]
 	fn migrate_config_noop_when_current() {
-		assert!(migrate_config_text("opacity = 0.7\ncursor_shape = \"bar\"\n").is_none());
+		assert!(migrate_config_text("opacity = 0.7\ncursor_animation = \"phase\"\n").is_none());
 	}
 
 	// A pre-boolean config with an explicit font_family keeps it (use_system_font=false
