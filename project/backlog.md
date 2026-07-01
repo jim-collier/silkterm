@@ -67,10 +67,10 @@ In each section, items are listed approximately from newest to oldest.
 		- ✅ If using the system-defined font, enable the checbox and disable the related font adjustements (but don't clear their values). (20260701) - the box opens checked when on system font; Font family + Font size grey out but keep their values (restored on uncheck). Verified in the dialog.
 			- User can un-check this later (or change the related config setting), to user the defined font settings instead.
 
-- 🔘 Cursor settings:
-	- 🔘 size_vertical =  ## 1 to 100%, from left-to-right
-	- 🔘 size_horizontal =  ## 1 to 100%, from bottom-up
-	- 🔘 animation_style
+- ◐ Cursor settings:
+	- 🔘 size_vertical =  ## 1 to 100%, from left-to-right - DEFERRED (queued): geometry model (width%/height%) is best-guessable but ambiguous re: how it relates to the existing `cursor_shape` (bar/block/underline) - confirm at end of run.
+	- 🔘 size_horizontal =  ## 1 to 100%, from bottom-up - DEFERRED with size_vertical.
+	- 🔘 animation_style - DEFERRED (queued): pulse_* spec is incomplete (line 78 "Should happen in the" is cut off). Needs the owner to finish the spec.
 		- 🔘 none
 		- 🔘 phase (the current default)
 		- 🔘 pulse_vertical
@@ -78,8 +78,8 @@ In each section, items are listed approximately from newest to oldest.
 			- Should happen in the
 		- 🔘 pulse_horizontal (same idea as pulse vertical, but the animation goes left and right rather than up and down).
 		- 🔘 pulse_both (grow and shrink both vertically and horizontally)
-	- 🔘 blink_rate  ## ms, default = desktop settings
-	- 🔘 Change default cursor colors:
+	- 🔘 blink_rate  ## ms, default = desktop settings - DEFERRED with the animation work (intertwined; "desktop default" needs a platform blink-rate API).
+	- ✅ Change default cursor colors: (20260701) - SilkTerm dark theme fg -> #88ffee, cursor -> #ff88aa (theme.rs SILK_DARK + the config.rs default). Verified: cyan prompt, pink cursor.
 		- Default SilkTerm theme (dark):
 			- Foreground text color: 88ffee
 			- Cursor: ff88aa
