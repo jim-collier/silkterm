@@ -55,11 +55,11 @@ In each section, items are listed approximately from newest to oldest.
 	- Fix: `UserEvent::Exit` now finds the pane's owning tab (`position(|pm| pm.panes.contains_key(&id))`) and applies the same cascade - >1 pane in that tab closes the pane; else >1 tab closes that tab (`close_tab_at(idx)`, generalized from `close_tab`); else (last pane of last tab) exits. Handles background-tab exits and keeps `active` pointing at the same tab.
 	- Verified: runtime - launched with a 2nd (active) tab whose shell self-exits after 3s; app stayed alive past the exit (tab closed, window survived) instead of quitting. Builds clean.
 	- Re-verified fixed on current main (20260630): the app survives the tab's shell exiting in all 3 tests - CLI active-tab exit, CLI background-tab exit, and typing `exit` interactively in the active tab of a 2-tab window (1 window stays up). If it's still happening for you, the running/dogfood binary predates the fix - rebuild (`cargo run --release`) or re-run cicd to reinstall, then retest.
-		- 🔘 No, it doesn't. With three tabs open, for example:
-			- If I type "exit" in the anything but the last tab, it closes ALL tabs, except for one. Sometimes, the program becomes unresponsive then and has to be killed.
-			- If I type "exit" in the last tab, it closes the program.
-			- With four tabs open, and I "exit" from the third, closes the first two tabs (and not the third).
-	- ✅ REAL root cause (20260630): pane ids collided ACROSS tabs. Each tab is a separate PaneManager that assigned ids from its own counter (first pane always id 1), so the shell-exit event (carries only the id) resolved to the WRONG tab - the first one with that id - and closed it; dropping that tab's term fired another Exit -> cascade (closed all but one, sometimes hung), exactly as reported. The earlier fix (find owner tab + cascade) was right in shape but the id lookup was ambiguous. Fix: `alloc_pane_id()` - one global counter, so every pane is unique everywhere. Verified with instrumentation: exit in the 3rd of 4 tabs resolves to tab index 2, exactly one close, no cascade, app alive.
+		- ✅ Still not fixed. With three tabs open, for example:
+			- Type "exit" in the anything but the last tab, it closes ALL tabs, except for one. Sometimes, the program becomes unresponsive then and has to be killed.
+			- Type "exit" in the last tab, it closes the program.
+			- With four tabs open, and type "exit" from the third, closes the first two tabs (and not the third).
+		- ✅ REAL cause (20260630): pane ids collided across tabs. Each tab is a separate PaneManager that assigned ids from its own counter (first pane always id 1), so the shell-exit event (carries only the id) resolved to the WRONG tab - the first one with that id - and closed it; dropping that tab's term fired another Exit -> cascade (closed all but one, sometimes hung), exactly as reported. The earlier fix (find owner tab + cascade) was right in shape but the id lookup was ambiguous. Fix: `alloc_pane_id()` - one global counter, so every pane is unique everywhere. Verified with instrumentation: exit in the 3rd of 4 tabs resolves to tab index 2, exactly one close, no cascade, app alive.
 
 - 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
 	- Cause (by code analysis): when the glyph atlas fills up (a long session of varied glyphs), text `prepare()` fails and `render` returned early - *above* the per-frame atlas trim - so the atlas never recovered and all text stayed black forever. The cursor and cell backgrounds use a separate rect renderer, so they kept showing (matches the report exactly).
@@ -158,8 +158,6 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
--
-
 - 🛠️ Allow toggling from default "Insert" mode, to "Overwrite". (20260629)
 	- 🚫 Change cursor in default "Insert" mode, to a thinner bar than the block cursor (but thicker than, say, "|").
 		- 🔘 This can't really be done in a terminal that covers all use cases. Rather, allow user to specify cursor shape, among:
@@ -190,6 +188,17 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Make menu gray, with white text. (For both light and dark themes.)
 		- The menu / tab-bar / context-menu chrome consts (`MENU_*`, `TAB_*`) are now neutral grays with near-white text, fixed across modes (per #166 default).
 	- 🔘 Menu color is user-adjustable, even per-theme. It's just that all themes by default use the same menu colors.
+
+- 🛠️ Tab interface: single-window core done (`Tabs` in app.rs: each tab owns a `PaneManager`; tab bar shown with >1 tab, click to switch; pane area reduced by the bar). Detach/dock deferred (need multi-window). Verified: new tab, switch (content swaps), close (bar hides).
+	- ✅ New tab (CTRL+T by default)
+	- ✅ Close tab (CTRL+w, CTRL+F4)
+		- Notes:
+			- Ctrl+W also shadows shell word-erase; deferred, revisit if necessary.
+			- 🔘 Implement Ctrl+Shift+W instead
+	- ✅ Change tab (CTRL+page up, down)
+	- ✅ Move tab order (Shift+CTRL+Page up, down)
+	- 🔘 Detach tab to new window with mouse (deferred: needs multi-window)
+	- 🔘 Dock tab to different existing window with mouse (deferred: needs multi-window)
 
 - ✅ Window title: Just "SilkTerm", plus the icon in assets/logo.png (for display in alt+tab).
 	- `update_title` now sets the window title to just `APP_NAME` (per-program info stays in the tab titles). The window icon is loaded from `assets/logo.png` (`include_bytes!`, decoded + downscaled to 64x64 via the `image` crate) in `load_icon` and set with `with_window_icon`. Verified: window name = "SilkTerm", `_NET_WM_ICON` is set.
@@ -366,17 +375,6 @@ In each section, items are listed approximately from newest to oldest.
 	- Including window, tab, shell, and pane layout and configurations - everything.
 	- Possibly to make this easier, store non-default per-tab and per-pane configurations as a "command line" in the config, that each override all other config settings.
 	- Emits the create/select form: `--new-tab` / `--new-pane` (with explicit `--splits`, direction, and non-default `--size`) for structure, plus `--tab=<id>` / `--pane=<id>` for per-entity overrides. Always writes explicit directions and sizes (never the "more space" default) so a saved layout reproduces regardless of window size.
-
-- 🛠️ Tab interface: single-window core done (`Tabs` in app.rs: each tab owns a `PaneManager`; tab bar shown with >1 tab, click to switch; pane area reduced by the bar). Detach/dock deferred (need multi-window). Verified: new tab, switch (content swaps), close (bar hides).
-	- ✅ New tab (CTRL+T by default)
-	- ✅ Close tab (CTRL+w, CTRL+F4)
-		- Notes:
-			- Ctrl+W also shadows shell word-erase; deferred, revisit if necessary.
-			- Decided to not have ANY tab close hotkeys for now.
-	- ✅ Change tab (CTRL+page up, down)
-	- ✅ Move tab order (Shift+CTRL+Page up, down)
-	- 🔘 Detach tab to new window with mouse (deferred: needs multi-window)
-	- 🔘 Dock tab to different existing window with mouse (deferred: needs multi-window)
 
 - 🔘 When running `sudo apt update`, the progress bar at the bottom bounces about halfway below the render area, as lines above it scroll up. This seems to be a side-effect of smooth-scrolling. Is there a way to prevent that from happening, without fundamentally breaking the very concept of smooth scrolling?
 	- Reopened: The first attempt (snap output easing during line bursts) broke smooth scrolling for all normal output and was reverted (see the smooth-scrolling-regression bug above).
