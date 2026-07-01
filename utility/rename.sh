@@ -40,7 +40,7 @@ cd "$root"
 # (covers files mid-move where the index and worktree disagree).
 mapfile -t files < <(
 	{ git ls-files; git ls-files --others --exclude-standard; } \
-		| grep -E '(^Cargo\.toml$|\.rs$|\.md$)' | grep -vx 'utility/rename.sh' | sort -u
+		| grep -E '(^(source/)?Cargo\.toml$|\.rs$|\.md$)' | grep -vx 'utility/rename.sh' | sort -u
 )
 
 for f in "${files[@]}"; do

@@ -39,7 +39,7 @@
 
 <table style="border: none; border-collapse: collapse;">
 	<tr style="border: none; border-collapse: collapse;">
-		<td style="border: none; border-collapse: collapse;"><img src="assets/logo.png" alt="Silky" width="320"/></td>
+		<td style="border: none; border-collapse: collapse;"><img src="source/assets/logo.png" alt="Silky" width="320"/></td>
 		<td style="border: none;">SilkTerm is the only known terminal on Earth that smooth-scrolls lines on output, for silky-smooth and less-tiring long terminal sessions. It also has all the other features of modern advanced terminals, and more.</td>
 	</tr style="border: none; border-collapse: collapse;">
 </table>
@@ -209,7 +209,7 @@ cargo run --release
 <!--
 ## Renaming the project
 
-The display name lives in one place (`APP_NAME` in `src/config.rs`); the lowercase identifier (`silkterm`) is the cargo package, binary, and config directory. To rename everything at once during development:
+The display name lives in one place (`APP_NAME` in `source/src/config.rs`); the lowercase identifier (`silkterm`) is the cargo package, binary, and config directory. To rename everything at once during development:
 
 ```sh
 utility/rename.sh NewName
