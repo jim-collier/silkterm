@@ -449,16 +449,54 @@ fn load() -> Settings {
 	// appear documented without clobbering the user's existing file.
 	backfill_config(&path);
 	let raw: RawConfig = match std::fs::read_to_string(&path) {
-		Ok(text) => match toml::from_str(&lenient_floats(&text)) {
-			Ok(raw) => raw,
-			Err(e) => {
-				eprintln!("{APP_NAME}: ignoring config {} ({e})", path.display());
-				RawConfig::default()
-			}
-		},
+		Ok(text) => parse_lenient(&text, &path),
 		Err(_) => RawConfig::default(),
 	};
 	resolve(raw)
+}
+
+// Parse the config into RawConfig, tolerating individually-broken lines: on a
+// parse error, blank the offending line (located via the error span) and retry -
+// so one bad value (e.g. `cursor_blink = enable`) drops just that setting instead
+// of sinking EVERY setting to its default. Bounded so a pathological file can't
+// loop. Unknown-but-valid keys are already ignored by serde; this handles the
+// syntax/type errors that otherwise fail the whole document.
+fn parse_lenient(text: &str, path: &std::path::Path) -> RawConfig {
+	let mut lines: Vec<String> = lenient_floats(text).lines().map(str::to_string).collect();
+	for _ in 0..=lines.len() {
+		let joined = lines.join("\n");
+		match toml::from_str::<RawConfig>(&joined) {
+			Ok(raw) => return raw,
+			Err(e) => {
+				// byte span -> 0-based line index of the error start
+				let li = e.span().map(|s| {
+					joined[..s.start.min(joined.len())]
+						.bytes()
+						.filter(|&b| b == b'\n')
+						.count()
+				});
+				match li {
+					Some(i) if i < lines.len() => {
+						eprintln!(
+							"{APP_NAME}: {} line {}: ignoring invalid setting `{}`",
+							path.display(),
+							i + 1,
+							lines[i].trim()
+						);
+						lines[i].clear(); // drop just this line; keep indices stable for the next error
+					}
+					_ => {
+						eprintln!(
+							"{APP_NAME}: {}: config parse error, using defaults ({e})",
+							path.display()
+						);
+						return RawConfig::default();
+					}
+				}
+			}
+		}
+	}
+	RawConfig::default()
 }
 
 // TOML requires a leading zero on floats (`.25` is a parse error that would sink
@@ -937,5 +975,14 @@ mod tests {
 		assert_eq!(d.text_glow_radius, 5.0);
 		assert_eq!(d.text_glow_softness, 0.5);
 		assert_eq!(d.background_blur, 8.0);
+	}
+
+	// One syntax-broken line must not sink the valid settings around it.
+	#[test]
+	fn parse_lenient_drops_only_the_bad_line() {
+		let text = "opacity = 0.7\ncursor_blink = enable\nmargin = 12.0\n";
+		let raw = parse_lenient(text, std::path::Path::new("test.toml"));
+		assert_eq!(raw.opacity, Some(0.7)); // before the bad line
+		assert_eq!(raw.margin, Some(12.0)); // after the bad line
 	}
 }
