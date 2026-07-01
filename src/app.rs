@@ -311,7 +311,7 @@ impl Tabs {
 // Menu/tab bars auto-size to the menu (proportional) font: height = the text line
 // height (cell_h) + this vertical padding, so a larger font isn't clipped (#124).
 const MENU_BAR_VPAD: f32 = 6.0;
-const TAB_BAR_VPAD: f32 = 8.0;
+const TAB_BAR_VPAD: f32 = 11.0; // enough that tab-title descenders (g/j/p/q/y) clear the button bottom
 const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to settle)
 const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
