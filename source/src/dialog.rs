@@ -7,7 +7,7 @@
 // context and is sized to its content (non-resizable).
 use std::sync::Arc;
 
-use glyphon::{Color as GColor, Shaping, TextArea, TextBounds, Weight};
+use glyphon::{Color as GColor, Shaping, TextArea, TextBounds};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
@@ -250,7 +250,7 @@ impl DialogWin {
 					let mut a = ui_attrs();
 					a.color_opt = Some(GColor::rgb(ln.color[0], ln.color[1], ln.color[2]));
 					if ln.bold {
-						a.weight = Weight::BOLD;
+						a.weight = crate::text::ui_bold_weight();
 					}
 					let mut b = self.text.new_ui_buffer(w as f32, self.text.ui_line_h);
 					b.set_text(
@@ -271,7 +271,7 @@ impl DialogWin {
 					let mut a = ui_attrs();
 					a.color_opt = Some(GColor::rgb(it.color[0], it.color[1], it.color[2]));
 					if it.bold {
-						a.weight = Weight::BOLD;
+						a.weight = crate::text::ui_bold_weight();
 					}
 					let mut b = self
 						.text
