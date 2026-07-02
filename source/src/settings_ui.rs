@@ -85,6 +85,8 @@ enum Key {
 	TextGlow,
 	GlowRadius,
 	GlowSoftness,
+	GlowBorder,
+	GlowRamp,
 	BgImage,
 	SystemFont,
 	FontFamily,
@@ -212,6 +214,20 @@ fn fields() -> Vec<Spec> {
 				max: 1.0,
 				int: false,
 			},
+		},
+		Spec {
+			label: "Glow border",
+			key: GlowBorder,
+			kind: Slider {
+				min: 0.0,
+				max: 4.0,
+				int: false,
+			},
+		},
+		Spec {
+			label: "Glow falloff",
+			key: GlowRamp,
+			kind: Radio(&["Gaussian", "Linear", "S-curve"]),
 		},
 		hdr("Font"),
 		Spec {
@@ -536,6 +552,7 @@ impl SettingsDialog {
 			Key::BgBlur => s.background_blur,
 			Key::GlowRadius => s.text_glow_radius,
 			Key::GlowSoftness => s.text_glow_softness,
+			Key::GlowBorder => s.text_glow_border,
 			Key::FontSize => s.font_size,
 			Key::LineHeight => s.line_height_scale,
 			Key::Margin => s.margin,
@@ -559,6 +576,7 @@ impl SettingsDialog {
 			Key::BgBlur => s.background_blur = v,
 			Key::GlowRadius => s.text_glow_radius = v,
 			Key::GlowSoftness => s.text_glow_softness = v,
+			Key::GlowBorder => s.text_glow_border = v,
 			Key::FontSize => s.font_size = v,
 			Key::LineHeight => s.line_height_scale = v,
 			Key::Margin => s.margin = v,
@@ -632,16 +650,32 @@ impl SettingsDialog {
 				config::Fit::Zoom => 1,
 				_ => 0,
 			},
+			Key::GlowRamp => match self.edited.text_glow_ramp.as_str() {
+				"linear" => 1,
+				"s" => 2,
+				_ => 0,
+			},
 			_ => 0,
 		}
 	}
 	fn set_radio(&mut self, key: Key, idx: usize) {
-		if key == Key::BgFit {
-			self.edited.background_fit = if idx == 1 {
-				config::Fit::Zoom
-			} else {
-				config::Fit::Stretch
-			};
+		match key {
+			Key::BgFit => {
+				self.edited.background_fit = if idx == 1 {
+					config::Fit::Zoom
+				} else {
+					config::Fit::Stretch
+				};
+			}
+			Key::GlowRamp => {
+				self.edited.text_glow_ramp = match idx {
+					1 => "linear",
+					2 => "s",
+					_ => "gaussian",
+				}
+				.to_string();
+			}
+			_ => {}
 		}
 	}
 	// A control greyed out because a prerequisite toggle is off (the opacity
@@ -649,7 +683,10 @@ impl SettingsDialog {
 	// columns/rows are inactive when "Remember last size" is on).
 	fn disabled(&self, key: Key) -> bool {
 		(matches!(key, Key::Opacity | Key::BackdropBlur) && !self.edited.transparent_background)
-			|| (matches!(key, Key::GlowRadius | Key::GlowSoftness) && !self.edited.text_glow)
+			|| (matches!(
+				key,
+				Key::GlowRadius | Key::GlowSoftness | Key::GlowBorder | Key::GlowRamp
+			) && !self.edited.text_glow)
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
 			|| (matches!(key, Key::FontFamily | Key::FontSize) && self.edited.use_system_font)
 	}

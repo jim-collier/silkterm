@@ -144,6 +144,11 @@ pub struct Pane {
 	// them - `scale` shrinks an over-wide fallback glyph to fit its cell box.
 	glyph_bufs: Vec<Buffer>,
 	glyphs: Vec<(f32, f32, GColor, f32)>,
+	// Glow source with bold stripped (text_glow_regular_weight): shaped alongside
+	// the main buffer only on rebuild frames that actually contain bold runs.
+	// `glow_debold` says the buffer is valid for the current content.
+	glow_buf: Option<Buffer>,
+	glow_debold: bool,
 	// Cursor animation: `cursor_x` (visual column) eases toward the target column
 	// so the cursor slides as you type; `blink_t` drives a smooth fade-blink while
 	// it sits idle. Snaps on a row change so it doesn't slide diagonally on a newline.
@@ -304,6 +309,7 @@ impl Pane {
 		let mut run_color = s.fg;
 		let mut run_bold = false;
 		let mut run_italic = false;
+		let mut saw_bold = false;
 
 		macro_rules! flush_run {
 			() => {
@@ -375,6 +381,7 @@ impl Pane {
 
 				let bold = flags.contains(Flags::BOLD);
 				let italic = flags.contains(Flags::ITALIC);
+				saw_bold |= bold;
 				// A glyph the primary mono font lacks renders via a fallback font
 				// whose advance may not equal the grid width, drifting the rest of
 				// the row. Pull it out, draw it per-cell, leave space placeholders.
@@ -430,6 +437,39 @@ impl Pane {
 			None,
 		);
 		self.buffer.shape_until_scroll(&mut ctx.font_system, false);
+
+		// Glow source with uniform weight: bold ink is wider, so its halo reads
+		// heavier than the neighbours'. When text_glow_regular_weight is on and
+		// bold is on screen, shape a parallel buffer with bold stripped for the
+		// glow pass (crisp text on top keeps its real weight). Costs a second
+		// shape only on rebuild frames that contain bold. Per-cell fallback
+		// glyphs keep their weight - rare, and not worth a second glyph pool.
+		self.glow_debold =
+			s.text_glow && s.text_glow_radius > 0.0 && s.text_glow_regular_weight && saw_bold;
+		if self.glow_debold {
+			let (bw, bh) = self.buffer.size();
+			let gb = self.glow_buf.get_or_insert_with(|| {
+				let mut b = Buffer::new(&mut ctx.font_system, ctx.metrics);
+				b.set_wrap(&mut ctx.font_system, glyphon::Wrap::None);
+				b.set_monospace_width(&mut ctx.font_system, Some(cell_w));
+				b
+			});
+			gb.set_metrics(&mut ctx.font_system, ctx.metrics);
+			gb.set_size(&mut ctx.font_system, bw, bh);
+			let despan = spans.iter().map(|(t, a)| {
+				let mut a2 = a.clone();
+				a2.weight = default_attrs.weight;
+				(t.as_str(), a2)
+			});
+			gb.set_rich_text(
+				&mut ctx.font_system,
+				despan,
+				&default_attrs,
+				Shaping::Advanced,
+				None,
+			);
+			gb.shape_until_scroll(&mut ctx.font_system, false);
+		}
 
 		// build the per-cell fallback glyphs (reusing the buffer pool)
 		self.glyphs.clear();
@@ -583,6 +623,19 @@ impl Pane {
 			size: [w, h],
 			color: col,
 		})
+	}
+
+	// Same as `text_area` but for the glow source pass: uses the de-bolded buffer
+	// when it was built this frame (text_glow_regular_weight + bold on screen), so
+	// the halo weight matches non-bold text while the crisp text keeps its weight.
+	pub fn glow_text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
+		let mut area = self.text_area(top, margin);
+		if self.glow_debold {
+			if let Some(gb) = &self.glow_buf {
+				area.buffer = gb;
+			}
+		}
+		area
 	}
 
 	pub fn text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
@@ -949,6 +1002,8 @@ fn spawn_pane(
 		last_rows: Vec::new(),
 		glyph_bufs: Vec::new(),
 		glyphs: Vec::new(),
+		glow_buf: None,
+		glow_debold: false,
 		cursor_x: 0.0,
 		cursor_col: 0.0,
 		cursor_row: i32::MIN,
