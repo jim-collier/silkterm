@@ -5,6 +5,11 @@
 //! colors, and Cancel / Apply / OK. Edits a working copy of `Settings`; the app
 //! reads it back on Apply/OK to live-apply + persist. Renders as flat quads
 //! (rects) + positioned text the app draws in an overlay pass.
+//!
+//! Sections are grouped into tabs (see `TAB_TITLES`/`tab_for_section`) so the
+//! dialog stays well under screen height; if a tab still doesn't fit (huge UI
+//! font / short screen) the rows region scrolls (wheel + draggable thumb) and
+//! the window height is capped instead of clipping the buttons.
 
 use crate::config::{self, Settings};
 use crate::gfx::RectInstance;
@@ -128,6 +133,21 @@ enum Kind {
 
 const RADIO_BOX: f32 = 16.0; // radio indicator square
 const RADIO_PITCH: f32 = 96.0; // px per option (box + label + gap)
+
+// Tabs ("super-sections"); each config section maps to one via tab_for_section.
+pub const TAB_TITLES: [&str; 5] = ["Appearance", "Font", "Colors", "Window", "Scrolling"];
+fn tab_for_section(h: &str) -> usize {
+	match h {
+		"Font" => 1,
+		"Colors" => 2,
+		"Window" | "Shell" => 3,
+		"Scrolling" => 4,
+		_ => 0, // "Appearance"
+	}
+}
+const TAB_GAP: f32 = 6.0; // px between tab buttons
+const HEADER_EXTRA: f32 = 10.0; // extra gap above a section header that follows another section
+const SCROLLBAR_W: f32 = 8.0;
 
 struct Spec {
 	label: &'static str,
@@ -363,6 +383,11 @@ pub struct SettingsDialog {
 	edited: Settings,
 	rect: Rect,
 	specs: Vec<Spec>,
+	spec_tab: Vec<usize>,          // which tab each spec lives on
+	tab: usize,                    // active tab
+	tab_ws: Vec<f32>,              // measured tab-button widths (UI font)
+	scroll: f32,                   // rows-region scroll offset (0 when everything fits)
+	drag_thumb: Option<f32>,       // scrollbar-thumb drag: grab offset within the thumb
 	drag: Option<usize>,           // slider row being dragged
 	edit: Option<(usize, String)>, // row being typed (hex for Color, path for Text)
 	alt: bool,                     // Alt held: underline button accelerators (Cancel/Apply/OK)
@@ -391,18 +416,60 @@ impl SettingsDialog {
 		BTN_H.max(self.line_h + 8.0)
 	}
 
-	// `line_h` is the chrome (UI font) line height; `label_w`/`btn_w` are the
-	// measured widest label/button in that font (see chrome_widths) so nothing
-	// truncates. The dialog widens and its rows grow as needed.
-	pub fn new(screen_w: f32, screen_h: f32, line_h: f32, label_w: f32, btn_w: f32) -> Self {
+	// Natural height of one tab's rows (header gaps included). Static so `new`
+	// can size the window before Self exists; row_y must walk rows the same way.
+	fn tab_content_h(specs: &[Spec], spec_tab: &[usize], tab: usize, line_h: f32) -> f32 {
+		let mut h = 0.0;
+		let mut first = true;
+		for (i, s) in specs.iter().enumerate() {
+			if spec_tab[i] != tab {
+				continue;
+			}
+			if matches!(s.kind, Kind::Header(_)) && !first {
+				h += HEADER_EXTRA;
+			}
+			h += Self::row_h_for(&s.kind, line_h);
+			first = false;
+		}
+		h
+	}
+
+	// `line_h` is the chrome (UI font) line height; `label_w`/`btn_w`/`tab_ws`
+	// are the measured widths in that font (see chrome_widths) so nothing
+	// truncates. `max_h` caps the window height (short screens / huge fonts);
+	// a tab that doesn't fit scrolls instead of clipping the buttons.
+	pub fn new(
+		screen_w: f32,
+		screen_h: f32,
+		line_h: f32,
+		label_w: f32,
+		btn_w: f32,
+		tab_ws: Vec<f32>,
+		max_h: f32,
+	) -> Self {
 		let specs = fields();
+		let mut cur = 0usize;
+		let spec_tab: Vec<usize> = specs
+			.iter()
+			.map(|s| {
+				if let Kind::Header(h) = s.kind {
+					cur = tab_for_section(h);
+				}
+				cur
+			})
+			.collect();
 		let label_w = label_w.max(LABEL_W);
 		let btn_w = btn_w.max(BTN_W);
-		let rows: f32 = specs.iter().map(|s| Self::row_h_for(&s.kind, line_h)).sum();
 		let title_h = TITLE_H.max(line_h * TITLE_SCALE + 10.0);
 		let btn_h = BTN_H.max(line_h + 8.0);
-		let h = PAD + title_h + rows + 14.0 + btn_h + PAD;
-		let w = W + (label_w - LABEL_W) + (btn_w - BTN_W) * 3.0;
+		let tallest = (0..TAB_TITLES.len())
+			.map(|t| Self::tab_content_h(&specs, &spec_tab, t, line_h))
+			.fold(0.0f32, f32::max);
+		let h = (PAD + title_h + btn_h + 10.0 + tallest + 14.0 + btn_h + PAD).min(max_h.max(300.0));
+		let tabs_w = PAD * 2.0
+			+ tab_ws.iter().sum::<f32>()
+			+ TAB_GAP * tab_ws.len().saturating_sub(1) as f32;
+		let w = (W + (label_w - LABEL_W) + (btn_w - BTN_W) * 3.0).max(tabs_w);
 		let rect = Rect {
 			x: ((screen_w - w) / 2.0).max(0.0),
 			y: ((screen_h - h) / 2.0).max(0.0),
@@ -415,6 +482,11 @@ impl SettingsDialog {
 			edited: s,
 			rect,
 			specs,
+			spec_tab,
+			tab: 0,
+			tab_ws,
+			scroll: 0.0,
+			drag_thumb: None,
 			drag: None,
 			edit: None,
 			alt: false,
@@ -422,6 +494,56 @@ impl SettingsDialog {
 			label_w,
 			btn_w,
 		}
+	}
+
+	// Tab-bar / rows-viewport / scrollbar geometry. The rows region sits between
+	// the tab bar and the buttons; only it scrolls (chrome stays put).
+	fn tab_bar_y(&self) -> f32 {
+		self.rect.y + PAD + self.title_h()
+	}
+	fn tab_rect(&self, k: usize) -> Rect {
+		let x = self.rect.x + PAD + self.tab_ws[..k].iter().sum::<f32>() + TAB_GAP * k as f32;
+		Rect {
+			x,
+			y: self.tab_bar_y(),
+			w: self.tab_ws[k],
+			h: self.btn_h(),
+		}
+	}
+	fn rows_y0(&self) -> f32 {
+		self.tab_bar_y() + self.btn_h() + 10.0
+	}
+	pub fn viewport(&self) -> Rect {
+		let y0 = self.rows_y0();
+		Rect {
+			x: self.rect.x,
+			y: y0,
+			w: self.rect.w,
+			h: (self.rect.y + self.rect.h - PAD - self.btn_h() - 14.0 - y0).max(0.0),
+		}
+	}
+	fn content_h(&self) -> f32 {
+		Self::tab_content_h(&self.specs, &self.spec_tab, self.tab, self.line_h)
+	}
+	fn max_scroll(&self) -> f32 {
+		(self.content_h() - self.viewport().h).max(0.0)
+	}
+	pub fn wheel(&mut self, dy_px: f32) {
+		self.scroll = (self.scroll - dy_px).clamp(0.0, self.max_scroll());
+	}
+	fn thumb(&self) -> Option<Rect> {
+		let ms = self.max_scroll();
+		if ms <= 0.0 {
+			return None;
+		}
+		let vp = self.viewport();
+		let th = (vp.h * vp.h / self.content_h()).max(24.0);
+		Some(Rect {
+			x: self.rect.x + self.rect.w - PAD / 2.0 - SCROLLBAR_W,
+			y: vp.y + (self.scroll / ms) * (vp.h - th),
+			w: SCROLLBAR_W,
+			h: th,
+		})
 	}
 
 	// Alt-key accelerators: while Alt is held the buttons underline their first
@@ -463,13 +585,25 @@ impl SettingsDialog {
 		self.edited.use_system_font
 	}
 
+	// Top of row `i` on the active tab (scrolled). Walks visible rows the same
+	// way tab_content_h does so heights and header gaps stay in sync.
 	fn row_y(&self, i: usize) -> f32 {
-		self.rect.y
-			+ PAD + self.title_h()
-			+ self.specs[..i]
-				.iter()
-				.map(|s| self.row_h(&s.kind))
-				.sum::<f32>()
+		let mut y = self.rows_y0() - self.scroll;
+		let mut first = true;
+		for (j, s) in self.specs.iter().enumerate() {
+			if self.spec_tab[j] != self.tab {
+				continue;
+			}
+			if matches!(s.kind, Kind::Header(_)) && !first {
+				y += HEADER_EXTRA;
+			}
+			if j == i {
+				return y;
+			}
+			y += self.row_h(&s.kind);
+			first = false;
+		}
+		y
 	}
 	fn control_x(&self) -> f32 {
 		self.rect.x + PAD + self.label_w
@@ -732,7 +866,40 @@ impl SettingsDialog {
 			return Action::Cancel;
 		}
 		self.commit_edit();
+		// tab bar
+		for k in 0..self.tab_ws.len() {
+			if self.tab_rect(k).contains(x, y) {
+				if k != self.tab {
+					self.tab = k;
+					self.scroll = 0.0;
+					self.drag = None;
+				}
+				return Action::None;
+			}
+		}
+		// scrollbar: drag the thumb, or jump-and-drag from the track
+		if let Some(t) = self.thumb() {
+			if t.contains(x, y) {
+				self.drag_thumb = Some(y - t.y);
+				return Action::None;
+			}
+			let vp = self.viewport();
+			if x >= t.x && x <= t.x + t.w && y >= vp.y && y <= vp.y + vp.h {
+				let frac = ((y - vp.y - t.h / 2.0) / (vp.h - t.h).max(1.0)).clamp(0.0, 1.0);
+				self.scroll = frac * self.max_scroll();
+				self.drag_thumb = Some(t.h / 2.0);
+				return Action::None;
+			}
+		}
+		// rows: only within the (possibly scrolled) viewport, only the active tab
+		let vp = self.viewport();
+		if y < vp.y || y > vp.y + vp.h {
+			return Action::None;
+		}
 		for i in 0..self.specs.len() {
+			if self.spec_tab[i] != self.tab {
+				continue;
+			}
 			match self.specs[i].kind {
 				Kind::Slider { .. } => {
 					if self.disabled(self.specs[i].key) {
@@ -788,13 +955,21 @@ impl SettingsDialog {
 		Action::None
 	}
 
-	pub fn mouse_move(&mut self, x: f32, _y: f32) {
+	pub fn mouse_move(&mut self, x: f32, y: f32) {
+		if let Some(grab) = self.drag_thumb {
+			let vp = self.viewport();
+			let th = self.thumb().map_or(24.0, |t| t.h);
+			let frac = ((y - grab - vp.y) / (vp.h - th).max(1.0)).clamp(0.0, 1.0);
+			self.scroll = frac * self.max_scroll();
+			return;
+		}
 		if self.drag.is_some() {
 			self.drag_to(x);
 		}
 	}
 	pub fn mouse_up(&mut self) {
 		self.drag = None;
+		self.drag_thumb = None;
 	}
 
 	fn drag_to(&mut self, x: f32) {
@@ -874,7 +1049,10 @@ impl SettingsDialog {
 		}
 	}
 
-	pub fn rects(&self, line_h: f32) -> Vec<RectInstance> {
+	// (fixed chrome, scrolled rows): the rows vec is drawn scissored to
+	// `viewport()` so scrolled-out controls can't paint over the chrome.
+	pub fn rects(&self, line_h: f32) -> (Vec<RectInstance>, Vec<RectInstance>) {
+		let mut fixed = Vec::new();
 		let mut out = Vec::new();
 		let q = |x: f32, y: f32, w: f32, h: f32, c: [u8; 3]| RectInstance {
 			pos: [x, y],
@@ -888,16 +1066,41 @@ impl SettingsDialog {
 			out.push(q(r.x + r.w, r.y, t, r.h, c));
 		};
 		// panel
-		out.push(q(
+		fixed.push(q(
 			self.rect.x,
 			self.rect.y,
 			self.rect.w,
 			self.rect.h,
 			dlg().panel_bg,
 		));
-		border(&mut out, self.rect, 1.0, dlg().panel_border);
+		border(&mut fixed, self.rect, 1.0, dlg().panel_border);
+		// tab bar: active tab filled brighter with an accent strip underneath
+		for k in 0..self.tab_ws.len() {
+			let r = self.tab_rect(k);
+			let active = k == self.tab;
+			fixed.push(q(
+				r.x,
+				r.y,
+				r.w,
+				r.h,
+				if active { dlg().btn_hl } else { dlg().btn_bg },
+			));
+			border(&mut fixed, r, 1.0, dlg().panel_border);
+			if active {
+				fixed.push(q(r.x, r.y + r.h, r.w, 2.0, dlg().handle));
+			}
+		}
+		// scrollbar (only when the active tab overflows the viewport)
+		if let Some(t) = self.thumb() {
+			let vp = self.viewport();
+			fixed.push(q(t.x, vp.y, t.w, vp.h, dlg().track));
+			fixed.push(q(t.x, t.y, t.w, t.h, dlg().handle));
+		}
 
 		for i in 0..self.specs.len() {
+			if self.spec_tab[i] != self.tab {
+				continue;
+			}
 			match self.specs[i].kind {
 				Kind::Slider { min, max, int } => {
 					let off = self.disabled(self.specs[i].key);
@@ -988,18 +1191,18 @@ impl SettingsDialog {
 			}
 		}
 		for (_, r, label) in self.buttons() {
-			out.push(q(r.x, r.y, r.w, r.h, dlg().btn_bg));
-			border(&mut out, r, 1.0, dlg().btn_hl);
+			fixed.push(q(r.x, r.y, r.w, r.h, dlg().btn_bg));
+			border(&mut fixed, r, 1.0, dlg().btn_hl);
 			// Alt held: underline the accelerator (the label's first letter). The
 			// label is drawn left-aligned at r.x+14; the cap glyph is ~0.55*line_h
 			// wide, and its baseline sits near the text bottom.
 			if self.alt && !label.is_empty() {
 				let tx = r.x + 14.0;
 				let ty = r.y + (r.h - line_h) / 2.0 + line_h * 0.82;
-				out.push(q(tx, ty, line_h * 0.5, 1.5, dlg().text));
+				fixed.push(q(tx, ty, line_h * 0.5, 1.5, dlg().text));
 			}
 		}
-		out
+		(fixed, out)
 	}
 
 	// `line_h` is the rendered text line height (the app's cell_h); rows, hex
@@ -1023,13 +1226,36 @@ impl SettingsDialog {
 			scale: TITLE_SCALE,
 			..mk("Settings".into(), self.rect.x + PAD, self.rect.y + PAD)
 		});
+		// tab titles
+		for (k, t) in TAB_TITLES.iter().enumerate() {
+			let r = self.tab_rect(k);
+			out.push(mk((*t).into(), r.x + 11.0, row_text_y(r.y, r.h)));
+		}
+		// row text clips to the scroll viewport so it can't ride over the chrome
+		let vp = self.viewport();
+		let isect = |r: Rect| -> Rect {
+			let x0 = r.x.max(vp.x);
+			let y0 = r.y.max(vp.y);
+			let x1 = (r.x + r.w).min(vp.x + vp.w);
+			let y1 = (r.y + r.h).min(vp.y + vp.h);
+			Rect {
+				x: x0,
+				y: y0,
+				w: (x1 - x0).max(0.0),
+				h: (y1 - y0).max(0.0),
+			}
+		};
 		for i in 0..self.specs.len() {
+			if self.spec_tab[i] != self.tab {
+				continue;
+			}
 			let ty = row_text_y(self.row_y(i), ROW_H);
 			if let Kind::Header(h) = self.specs[i].kind {
 				// heading near the top of the row; the rule sits lower (gap between)
 				let hy = self.row_y(i) + 5.0;
 				out.push(TextItem {
 					bold: true,
+					clip: Some(vp),
 					..mk(h.into(), self.rect.x + PAD, hy)
 				});
 				continue;
@@ -1038,6 +1264,7 @@ impl SettingsDialog {
 			let lbl_color = if off { dlg().dim } else { dlg().text };
 			out.push(TextItem {
 				color: lbl_color,
+				clip: Some(vp),
 				..mk(self.specs[i].label.into(), self.rect.x + PAD, ty)
 			});
 			match self.specs[i].kind {
@@ -1045,6 +1272,7 @@ impl SettingsDialog {
 					let vx = self.control_x() + SLIDER_W + 14.0;
 					out.push(TextItem {
 						color: lbl_color,
+						clip: Some(vp),
 						..mk(self.fmt_val(self.specs[i].key, int), vx, ty)
 					});
 				}
@@ -1054,7 +1282,10 @@ impl SettingsDialog {
 						Some((j, buf)) if *j == i => buf.clone(),
 						_ => config::format_hex(self.get_col(self.specs[i].key)),
 					};
-					out.push(mk(txt, hb.x + 6.0, row_text_y(hb.y, hb.h)));
+					out.push(TextItem {
+						clip: Some(vp),
+						..mk(txt, hb.x + 6.0, row_text_y(hb.y, hb.h))
+					});
 				}
 				Kind::Text => {
 					let tb = self.textbox(i);
@@ -1075,7 +1306,7 @@ impl SettingsDialog {
 					};
 					out.push(TextItem {
 						color,
-						clip: Some(tb),
+						clip: Some(isect(tb)),
 						..mk(txt, tb.x + 6.0, row_text_y(tb.y, tb.h))
 					});
 				}
@@ -1086,6 +1317,7 @@ impl SettingsDialog {
 						let b = self.radio_box(i, k);
 						out.push(TextItem {
 							color: c,
+							clip: Some(vp),
 							..mk((*opt).into(), b.x + RADIO_BOX + 6.0, ty)
 						});
 					}
@@ -1100,9 +1332,10 @@ impl SettingsDialog {
 	}
 }
 
-// Widest field label and button caption at the current UI font, so the dialog
-// sizes to the real text (a wide serif or a big desktop size never truncates).
-pub fn chrome_widths(text: &mut crate::text::TextCtx) -> (f32, f32) {
+// Widest field label, button caption, and per-tab title widths at the current
+// UI font, so the dialog sizes to the real text (a wide serif or a big desktop
+// size never truncates).
+pub fn chrome_widths(text: &mut crate::text::TextCtx) -> (f32, f32, Vec<f32>) {
 	let attrs = crate::text::ui_attrs();
 	let label_w = fields()
 		.iter()
@@ -1114,7 +1347,11 @@ pub fn chrome_widths(text: &mut crate::text::TextCtx) -> (f32, f32) {
 		.map(|t| text.measure_ui_text(t, &attrs))
 		.fold(0.0f32, f32::max)
 		+ 24.0;
-	(label_w, btn_w)
+	let tab_ws = TAB_TITLES
+		.iter()
+		.map(|t| text.measure_ui_text(t, &attrs) + 22.0)
+		.collect();
+	(label_w, btn_w, tab_ws)
 }
 
 // Returns true if `a` and `b` differ in any field that needs a text-context
@@ -1139,7 +1376,52 @@ pub fn bg_image_changed(a: &Settings, b: &Settings) -> bool {
 
 #[cfg(test)]
 mod tests {
-	use super::{TAU_MAX, TAU_MIN, speed_to_tau, tau_to_speed};
+	use super::{SettingsDialog, TAB_TITLES, TAU_MAX, TAU_MIN, speed_to_tau, tau_to_speed};
+
+	fn mk_dialog(max_h: f32) -> SettingsDialog {
+		SettingsDialog::new(
+			0.0,
+			0.0,
+			18.0,
+			170.0,
+			80.0,
+			vec![90.0; TAB_TITLES.len()],
+			max_h,
+		)
+	}
+
+	#[test]
+	fn tabs_partition_all_specs() {
+		let d = mk_dialog(2000.0);
+		// every spec lands on a valid tab and no tab is empty
+		assert!(d.spec_tab.iter().all(|&t| t < TAB_TITLES.len()));
+		for t in 0..TAB_TITLES.len() {
+			assert!(d.spec_tab.contains(&t), "tab {t} has no rows");
+		}
+	}
+
+	#[test]
+	fn height_cap_enables_scroll() {
+		// generous cap: natural size, nothing to scroll
+		let d = mk_dialog(2000.0);
+		assert!(d.size().1 < 2000.0);
+		assert_eq!(d.max_scroll(), 0.0);
+		assert!(d.thumb().is_none());
+		// tight cap: window clamps, the (tallest) appearance tab overflows
+		let mut d = mk_dialog(400.0);
+		assert!(d.size().1 <= 400.0);
+		assert!(d.max_scroll() > 0.0);
+		assert!(d.thumb().is_some());
+		// wheel scrolls rows up and clamps at both ends
+		let y_first = d.row_y(1);
+		d.wheel(-120.0);
+		assert!(d.scroll > 0.0 && d.scroll <= d.max_scroll());
+		assert!(d.row_y(1) < y_first);
+		d.wheel(1e9);
+		assert_eq!(d.scroll, 0.0);
+		d.wheel(-1e9);
+		assert_eq!(d.scroll, d.max_scroll());
+	}
 
 	#[test]
 	fn scroll_speed_inverts_tau() {

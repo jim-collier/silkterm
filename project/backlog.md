@@ -60,17 +60,17 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Cursor should have blur if possible (investigate - this may not be possible, especially with the phasing). - Possible, done (see the cursor-glow item above); phasing works because the animation alpha is in the quad colour, which blurs like glyph coverage.
 	- ✅ Provide options for different blur fadeoff ramps. E.g. default gaussian, linear, or "S"-shaped. - The separable-blur kernel weight is now selectable: `text_glow_ramp` = "gaussian" (default) | "linear" (tent) | "s" (smoothstep), all normalized over the same ~3-sigma extent; "Glow falloff" radio in Settings.
 
-- 🔘 Settings dialog:
+- 🛠️ Settings dialog:
 	- 🔘 Should be "modal" and connected to terminal window.
-	- 🔘 As the number of settings may grow, we need a way to manage increasing length. Can't go beying about 1048 pixels high, including window decorations. (So roughly 1010 pixels total to be safe.) Implement both of these options: (20260626-102933)
-		- 🔘 Make the Settings window shrinkable and then add scrollbars only when necessary, so that it won't render beyond allowable space. By default, always try to open it normal size, unless constrained by display resolution.
-		- 🔘 Group sections into logical "super-sections", and put them into tabs. A tabbled interface for settings.
-	- 🔘 Some more space between sections, so otherwise it seems run together.
+	- ✅ As the number of settings may grow, we need a way to manage increasing length. Can't go beying about 1048 pixels high, including window decorations. (So roughly 1010 pixels total to be safe.) Implement both of these options: (20260626-102933)
+		- ✅ Make the Settings window shrinkable and then add scrollbars only when necessary, so that it won't render beyond allowable space. By default, always try to open it normal size, unless constrained by display resolution. - (20260701, branch dlgtabs) window height = natural content size, capped at min(1010, monitor height - decorations headroom); when the active tab still overflows (huge UI font / short screen) the rows region scrolls - wheel + a draggable/clickable thumb - and rows are scissored so they never paint over the title/tabs/buttons. Unit-tested (cap -> scroll -> clamp); no scrollbar appears when everything fits.
+		- ✅ Group sections into logical "super-sections", and put them into tabs. A tabbled interface for settings. - (20260701) 5 tabs: Appearance | Font | Colors | Window (incl. Shell) | Scrolling; measured tab-button widths, active tab highlighted with an accent strip. Dialog is now 540x592 at the default font (was taller than 1080p). Verified on Xvfb: every tab renders its sections, switching works, a slider change + Apply on a non-default tab persists to config.
+	- ✅ Some more space between sections, so otherwise it seems run together. - a second section on the same tab (e.g. Shell under Window) gets an extra gap above its heading (HEADER_EXTRA).
 	- 🔘 Every setting in Settings dialog should have a clickable icon to "Revert to default". This icon (an emoji) should also indicate if the setting is default, and only be clickable if it's not. (20260626-102000)
 		- In the config file, if user clicks "Revert to default" in settings, set the value to default and comment it out.
-	- 🔘 "Use system font" boolean should be visible checked, if using it.
-		- 🔘 If checked (setting a config boolean), the other font settings should be disabled. Whatever values they held, should remain.
-		- 🔘 Font family should default to a list with several fallbacks for Linux, Windows, and macOS.
+	- ✅ "Use system font" boolean should be visible checked, if using it. - was already in place (dialog binds `use_system_font`); re-verified in the new Font tab: box checked, fields greyed.
+		- ✅ If checked (setting a config boolean), the other font settings should be disabled. Whatever values they held, should remain. - existing behavior (Font family / Font size grey out and keep their values); re-verified.
+		- ✅ Font family should default to a list with several fallbacks for Linux, Windows, and macOS. - existing `DEFAULT_FONT_STACK` (JetBrains Mono ... Menlo, Consolas ... monospace); shows in the greyed field.
 	- 🔘 Editable fields should have a visible cursor when focused, and respond to standard text-editing key controls.
 	- 🔘 Full keyboard control, e.g. tab order, full text field editing, alt+down for dropdowns, space to toggle booleans, etc.
 	- Note: It might be best to defer some of these, until after (and if) native window controls are implimented.
