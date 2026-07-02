@@ -106,6 +106,13 @@ impl App {
 						Key::Named(NamedKey::Enter) => act = d.key_enter(),
 						Key::Named(NamedKey::Backspace) => d.backspace(),
 						Key::Named(NamedKey::Space) => d.char_input(' '),
+						Key::Named(
+							k @ (NamedKey::ArrowLeft
+							| NamedKey::ArrowRight
+							| NamedKey::Home
+							| NamedKey::End
+							| NamedKey::Delete),
+						) => d.edit_nav(*k),
 						Key::Character(s) => {
 							for c in s.chars() {
 								if let Some(a) = d.key_char(c) {

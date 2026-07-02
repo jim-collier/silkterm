@@ -192,6 +192,34 @@ struct Spec {
 	kind: Kind,
 }
 
+// In-progress field edit: the row, its text, and the caret (a byte index into
+// `buf`, always on a char boundary).
+struct EditState {
+	row: usize,
+	buf: String,
+	cur: usize,
+}
+fn prev_boundary(s: &str, i: usize) -> usize {
+	let mut j = i.min(s.len());
+	while j > 0 {
+		j -= 1;
+		if s.is_char_boundary(j) {
+			return j;
+		}
+	}
+	0
+}
+fn next_boundary(s: &str, i: usize) -> usize {
+	let mut j = i;
+	while j < s.len() {
+		j += 1;
+		if s.is_char_boundary(j) {
+			return j;
+		}
+	}
+	s.len()
+}
+
 fn fields() -> Vec<Spec> {
 	use Key::*;
 	use Kind::*;
@@ -422,14 +450,14 @@ pub struct SettingsDialog {
 	reverted: Vec<&'static str>, // config keys reverted this session -> comment out on Apply
 	rect: Rect,
 	specs: Vec<Spec>,
-	spec_tab: Vec<usize>,          // which tab each spec lives on
-	tab: usize,                    // active tab
-	tab_ws: Vec<f32>,              // measured tab-button widths (UI font)
-	scroll: f32,                   // rows-region scroll offset (0 when everything fits)
-	drag_thumb: Option<f32>,       // scrollbar-thumb drag: grab offset within the thumb
-	drag: Option<usize>,           // slider row being dragged
-	edit: Option<(usize, String)>, // row being typed (hex for Color, path for Text)
-	alt: bool,                     // Alt held: underline button accelerators (Cancel/Apply/OK)
+	spec_tab: Vec<usize>,    // which tab each spec lives on
+	tab: usize,              // active tab
+	tab_ws: Vec<f32>,        // measured tab-button widths (UI font)
+	scroll: f32,             // rows-region scroll offset (0 when everything fits)
+	drag_thumb: Option<f32>, // scrollbar-thumb drag: grab offset within the thumb
+	drag: Option<usize>,     // slider row being dragged
+	edit: Option<EditState>, // row being typed (hex for Color, path for Text)
+	alt: bool,               // Alt held: underline button accelerators (Cancel/Apply/OK)
 	// UI-font-driven geometry: rows/title/buttons grow with the desktop font so
 	// a large or wide (e.g. bold serif) interface font never truncates. The
 	// consts above are the floor (the classic look at small sizes).
@@ -1086,14 +1114,20 @@ impl SettingsDialog {
 				Kind::Color => {
 					if self.swatch(i).contains(x, y) || self.hexbox(i).contains(x, y) {
 						// start a fresh hex entry (type 6 digits); swatch updates live
-						self.edit = Some((i, "#".to_string()));
+						self.edit = Some(EditState {
+							row: i,
+							buf: "#".to_string(),
+							cur: 1,
+						});
 						return Action::None;
 					}
 				}
 				Kind::Text => {
 					if self.textbox(i).contains(x, y) {
-						// edit the current value (empty when none)
-						self.edit = Some((i, self.get_text(self.specs[i].key)));
+						// edit the current value (empty when none), caret at the end
+						let buf = self.get_text(self.specs[i].key);
+						let cur = buf.len();
+						self.edit = Some(EditState { row: i, buf, cur });
 						return Action::None;
 					}
 				}
@@ -1156,33 +1190,68 @@ impl SettingsDialog {
 	}
 
 	pub fn char_input(&mut self, c: char) {
-		let Some((i, buf)) = &mut self.edit else {
+		let Some(e) = &mut self.edit else {
 			return;
 		};
-		match self.specs[*i].kind {
+		match self.specs[e.row].kind {
 			Kind::Color => {
-				if (c == '#' || c.is_ascii_hexdigit()) && buf.len() < 7 {
-					buf.push(c);
+				if (c == '#' || c.is_ascii_hexdigit()) && e.buf.len() < 7 {
+					e.buf.insert(e.cur, c);
+					e.cur += c.len_utf8();
 					self.reparse_edit();
 				}
 			}
-			Kind::Text if !c.is_control() && buf.len() < 256 => {
-				buf.push(c);
+			Kind::Text if !c.is_control() && e.buf.len() < 256 => {
+				e.buf.insert(e.cur, c);
+				e.cur += c.len_utf8();
 				self.reparse_edit();
 			}
 			_ => {}
 		}
 	}
 	pub fn backspace(&mut self) {
-		if let Some((_, buf)) = &mut self.edit {
-			buf.pop();
-			self.reparse_edit();
+		if let Some(e) = &mut self.edit {
+			if e.cur > 0 {
+				let p = prev_boundary(&e.buf, e.cur);
+				e.buf.replace_range(p..e.cur, "");
+				e.cur = p;
+				self.reparse_edit();
+			}
 		}
 	}
-
+	pub fn delete_forward(&mut self) {
+		if let Some(e) = &mut self.edit {
+			if e.cur < e.buf.len() {
+				let n = next_boundary(&e.buf, e.cur);
+				e.buf.replace_range(e.cur..n, "");
+				self.reparse_edit();
+			}
+		}
+	}
+	// caret movement within the focused field (Left/Right/Home/End)
+	pub fn cursor_left(&mut self) {
+		if let Some(e) = &mut self.edit {
+			e.cur = prev_boundary(&e.buf, e.cur);
+		}
+	}
+	pub fn cursor_right(&mut self) {
+		if let Some(e) = &mut self.edit {
+			e.cur = next_boundary(&e.buf, e.cur);
+		}
+	}
+	pub fn cursor_home(&mut self) {
+		if let Some(e) = &mut self.edit {
+			e.cur = 0;
+		}
+	}
+	pub fn cursor_end(&mut self) {
+		if let Some(e) = &mut self.edit {
+			e.cur = e.buf.len();
+		}
+	}
 	// live-apply the in-progress edit (hex color, or background-image path)
 	fn reparse_edit(&mut self) {
-		let Some((i, buf)) = self.edit.clone() else {
+		let Some((i, buf)) = self.edit.as_ref().map(|e| (e.row, e.buf.clone())) else {
 			return;
 		};
 		match self.specs[i].kind {
@@ -1217,9 +1286,30 @@ impl SettingsDialog {
 		}
 	}
 
+	// caret line inside a focused field, at the measured prefix width
+	fn caret_quad(
+		&self,
+		out: &mut Vec<RectInstance>,
+		field: Rect,
+		measure: &mut impl FnMut(&str) -> f32,
+	) {
+		let Some(e) = &self.edit else { return };
+		let x = (field.x + 6.0 + measure(&e.buf[..e.cur])).min(field.x + field.w - 2.0);
+		out.push(RectInstance {
+			pos: [x, field.y + 2.0],
+			size: [1.5, field.h - 4.0],
+			color: config::srgb_f32(dlg().focus_out),
+		});
+	}
+
 	// (fixed chrome, scrolled rows): the rows vec is drawn scissored to
 	// `viewport()` so scrolled-out controls can't paint over the chrome.
-	pub fn rects(&self, line_h: f32) -> (Vec<RectInstance>, Vec<RectInstance>) {
+	// `measure` gives the rendered width of a string in the UI font (for the caret).
+	pub fn rects(
+		&self,
+		line_h: f32,
+		mut measure: impl FnMut(&str) -> f32,
+	) -> (Vec<RectInstance>, Vec<RectInstance>) {
 		let mut fixed = Vec::new();
 		let mut out = Vec::new();
 		let q = |x: f32, y: f32, w: f32, h: f32, c: [u8; 3]| RectInstance {
@@ -1296,7 +1386,7 @@ impl SettingsDialog {
 					border(&mut out, sw, 1.0, dlg().panel_border);
 					let hb = self.hexbox(i);
 					out.push(q(hb.x, hb.y, hb.w, hb.h, dlg().field_bg));
-					let focused = matches!(self.edit, Some((j, _)) if j == i);
+					let focused = matches!(&self.edit, Some(e) if e.row == i);
 					border(
 						&mut out,
 						hb,
@@ -1307,11 +1397,14 @@ impl SettingsDialog {
 							dlg().panel_border
 						},
 					);
+					if focused {
+						self.caret_quad(&mut out, hb, &mut measure);
+					}
 				}
 				Kind::Text => {
 					let tb = self.textbox(i);
 					out.push(q(tb.x, tb.y, tb.w, tb.h, dlg().field_bg));
-					let focused = matches!(self.edit, Some((j, _)) if j == i);
+					let focused = matches!(&self.edit, Some(e) if e.row == i);
 					border(
 						&mut out,
 						tb,
@@ -1322,6 +1415,9 @@ impl SettingsDialog {
 							dlg().panel_border
 						},
 					);
+					if focused {
+						self.caret_quad(&mut out, tb, &mut measure);
+					}
 				}
 				Kind::Toggle => {
 					let cb = self.checkbox(i);
@@ -1458,7 +1554,7 @@ impl SettingsDialog {
 				Kind::Color => {
 					let hb = self.hexbox(i);
 					let txt = match &self.edit {
-						Some((j, buf)) if *j == i => buf.clone(),
+						Some(e) if e.row == i => e.buf.clone(),
 						_ => config::format_hex(self.get_col(self.specs[i].key)),
 					};
 					out.push(TextItem {
@@ -1469,7 +1565,7 @@ impl SettingsDialog {
 				Kind::Text => {
 					let tb = self.textbox(i);
 					let val = match &self.edit {
-						Some((j, buf)) if *j == i => buf.clone(),
+						Some(e) if e.row == i => e.buf.clone(),
 						_ => self.get_text(self.specs[i].key),
 					};
 					let placeholder =

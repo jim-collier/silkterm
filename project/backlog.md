@@ -72,7 +72,7 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ "Use system font" boolean should be visible checked, if using it. - was already in place (dialog binds `use_system_font`); re-verified in the new Font tab: box checked, fields greyed.
 		- ✅ If checked (setting a config boolean), the other font settings should be disabled. Whatever values they held, should remain. - existing behavior (Font family / Font size grey out and keep their values); re-verified.
 		- ✅ Font family should default to a list with several fallbacks for Linux, Windows, and macOS. - existing `DEFAULT_FONT_STACK` (JetBrains Mono ... Menlo, Consolas ... monospace); shows in the greyed field.
-	- 🔘 Editable fields should have a visible cursor when focused, and respond to standard text-editing key controls.
+	- ✅ Editable fields should have a visible cursor when focused, and respond to standard text-editing key controls. (20260702, branch dlgedit) - the in-progress edit now carries a caret (byte index, char-boundary safe): typing inserts at the caret, Backspace/Delete remove before/at it, Left/Right/Home/End move it, and a thin accent-coloured caret line renders at the measured text position in both hex and text fields. Verified on Xvfb: type "bash", Home, type "/bin/" -> "/bin/bash"; Home + 5x Delete -> "bash" with the caret visibly at position 0. Click still places the caret at the end (click-to-position is queued with the full-keyboard-control item).
 	- 🔘 Full keyboard control, e.g. tab order, full text field editing, alt+down for dropdowns, space to toggle booleans, etc.
 	- Note: It might be best to defer some of these, until after (and if) native window controls are implimented.
 
