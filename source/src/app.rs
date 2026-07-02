@@ -2019,6 +2019,23 @@ impl ApplicationHandler<UserEvent> for App {
 			self.handle_dialog_event(event);
 			return;
 		}
+		// Simulated modality: while a dialog is open the main window takes no
+		// input; a click on it re-raises/focuses the dialog instead.
+		if let Some(d) = &self.dialog {
+			match &event {
+				WindowEvent::KeyboardInput { .. }
+				| WindowEvent::MouseWheel { .. }
+				| WindowEvent::Ime(_) => return,
+				WindowEvent::MouseInput {
+					state: ElementState::Pressed,
+					..
+				} => {
+					d.window.focus_window();
+					return;
+				}
+				_ => {}
+			}
+		}
 		let Some(state) = self.state.as_mut() else {
 			return;
 		};
@@ -2535,9 +2552,15 @@ impl ApplicationHandler<UserEvent> for App {
 			.state
 			.as_mut()
 			.is_some_and(|s| std::mem::take(&mut s.pending_about));
+		// parent handle so the WM ties the dialog to the terminal window
+		// (transient-for / owner)
+		let parent = self.state.as_ref().and_then(|s| {
+			use winit::raw_window_handle::HasWindowHandle;
+			s.window.window_handle().ok().map(|h| h.as_raw())
+		});
 		if open_about {
 			if let Some(info) = self.state.as_ref().map(|s| s.gfx.adapter_info.clone()) {
-				match crate::dialog::DialogWin::new_about(event_loop, &info) {
+				match crate::dialog::DialogWin::new_about(event_loop, &info, parent) {
 					Ok(d) => {
 						self.dialog = Some(d);
 						self.dialog_dirty = true;
@@ -2551,7 +2574,7 @@ impl ApplicationHandler<UserEvent> for App {
 			.as_mut()
 			.is_some_and(|s| std::mem::take(&mut s.pending_settings));
 		if open_settings {
-			match crate::dialog::DialogWin::new_settings(event_loop) {
+			match crate::dialog::DialogWin::new_settings(event_loop, parent) {
 				Ok(d) => {
 					self.dialog = Some(d);
 					self.dialog_dirty = true;
