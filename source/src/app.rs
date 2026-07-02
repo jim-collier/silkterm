@@ -162,6 +162,11 @@ impl App {
 			if let Some(state) = self.state.as_mut() {
 				state.apply_settings_values(&orig, edited, sys);
 			}
+			// Reverted-to-default keys: after persist wrote the diffs, comment
+			// them back out so the file returns to the template's default line.
+			if let Some(reverted) = self.dialog.as_mut().map(|d| d.take_reverted()) {
+				config::revert_keys(&reverted);
+			}
 			// The applied values are the new baseline, so a later Apply diffs against
 			// the live state (without this, re-selecting the open-time value - e.g.
 			// Bg fit back to Stretch - reads as "no change" and isn't re-applied).

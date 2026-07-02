@@ -148,6 +148,43 @@ fn tab_for_section(h: &str) -> usize {
 const TAB_GAP: f32 = 6.0; // px between tab buttons
 const HEADER_EXTRA: f32 = 10.0; // extra gap above a section header that follows another section
 const SCROLLBAR_W: f32 = 8.0;
+const REVERT_W: f32 = 22.0; // right-edge revert-to-default icon column
+const REVERT_ICON: &str = "\u{21ba}"; // anticlockwise open-circle arrow
+
+// Config-file key(s) behind a dialog Key, for revert's comment-out (dotted =
+// the [colors] table). Empty for headers.
+fn cfg_keys(key: Key) -> &'static [&'static str] {
+	match key {
+		Key::Transparency => &["transparent_background"],
+		Key::Opacity => &["opacity"],
+		Key::BackdropBlur => &["transparent_background_blur"],
+		Key::BgOpacity => &["background_opacity"],
+		Key::BgBlur => &["background_blur"],
+		Key::BgFit => &["background_fit"],
+		Key::TextGlow => &["text_glow"],
+		Key::GlowRadius => &["text_glow_radius"],
+		Key::GlowSoftness => &["text_glow_softness"],
+		Key::GlowBorder => &["text_glow_border"],
+		Key::GlowRamp => &["text_glow_ramp"],
+		Key::BgImage => &["background_image"],
+		Key::SystemFont => &["use_system_font"],
+		Key::FontFamily => &["font_family"],
+		Key::DefaultShell => &["default_shell"],
+		Key::FontSize => &["font_size"],
+		Key::LineHeight => &["line_height_scale"],
+		Key::Columns => &["columns"],
+		Key::Rows => &["rows"],
+		Key::RememberSize => &["remember_size"],
+		Key::Margin => &["margin"],
+		Key::ScrollTau => &["scroll_tau_ms"],
+		Key::WheelLines => &["wheel_lines"],
+		Key::ColBg => &["colors.background"],
+		Key::ColFg => &["colors.foreground"],
+		Key::ColCursor => &["colors.cursor"],
+		Key::ColFocus => &["colors.focus"],
+		Key::None => &[],
+	}
+}
 
 struct Spec {
 	label: &'static str,
@@ -381,6 +418,8 @@ pub struct TextItem {
 pub struct SettingsDialog {
 	orig: Settings,
 	edited: Settings,
+	defaults: Settings,          // config defaults, for the revert-to-default buttons
+	reverted: Vec<&'static str>, // config keys reverted this session -> comment out on Apply
 	rect: Rect,
 	specs: Vec<Spec>,
 	spec_tab: Vec<usize>,          // which tab each spec lives on
@@ -480,6 +519,8 @@ impl SettingsDialog {
 		Self {
 			orig: s.clone(),
 			edited: s,
+			defaults: Settings::default(),
+			reverted: Vec::new(),
 			rect,
 			specs,
 			spec_tab,
@@ -632,13 +673,22 @@ impl SettingsDialog {
 			h: SWATCH,
 		}
 	}
-	// wide editable field (background-image path), control_x -> right padding
+	// wide editable field (background-image path), control_x -> the revert column
 	fn textbox(&self, i: usize) -> Rect {
 		let x = self.control_x();
 		Rect {
 			x,
 			y: self.row_y(i) + (ROW_H - SWATCH) / 2.0,
-			w: self.rect.x + self.rect.w - PAD - x,
+			w: self.rect.x + self.rect.w - PAD - REVERT_W - 6.0 - x,
+			h: SWATCH,
+		}
+	}
+	// right-edge revert-to-default icon for row `i`
+	fn revert_box(&self, i: usize) -> Rect {
+		Rect {
+			x: self.rect.x + self.rect.w - PAD - REVERT_W,
+			y: self.row_y(i) + (ROW_H - SWATCH) / 2.0,
+			w: REVERT_W,
 			h: SWATCH,
 		}
 	}
@@ -845,6 +895,116 @@ impl SettingsDialog {
 		}
 	}
 
+	// The active theme's palette - the effective default for the [colors] keys
+	// (commented-out colors fall back to the theme, not to SilkTerm-dark).
+	fn theme_palette(&self) -> crate::theme::Palette {
+		crate::theme::resolve(
+			&self.edited.theme,
+			&self.edited.theme_mode,
+			config::is_dark(),
+		)
+	}
+	fn default_col(&self, key: Key) -> [u8; 3] {
+		let p = self.theme_palette();
+		match key {
+			Key::ColBg => p.bg,
+			Key::ColFg => p.fg,
+			Key::ColCursor => p.cursor,
+			Key::ColFocus => p.focus,
+			_ => [0, 0, 0],
+		}
+	}
+
+	// Is this setting at its config default? Drives the revert icon's state.
+	fn is_default(&self, key: Key) -> bool {
+		let e = &self.edited;
+		let d = &self.defaults;
+		match key {
+			Key::Transparency => e.transparent_background == d.transparent_background,
+			Key::BackdropBlur => e.transparent_background_blur == d.transparent_background_blur,
+			Key::TextGlow => e.text_glow == d.text_glow,
+			Key::SystemFont => e.use_system_font == d.use_system_font,
+			Key::RememberSize => e.remember_size == d.remember_size,
+			Key::BgFit => e.background_fit == d.background_fit,
+			Key::GlowRamp => e.text_glow_ramp == d.text_glow_ramp,
+			Key::BgImage => e.background_image == d.background_image,
+			Key::FontFamily => e.font_family == d.font_family,
+			Key::DefaultShell => e.default_shell == d.default_shell,
+			Key::ColBg | Key::ColFg | Key::ColCursor | Key::ColFocus => {
+				self.get_col(key) == self.default_col(key)
+			}
+			Key::None => true,
+			// the sliders
+			_ => self.get_f32(key) == self.default_f32(key),
+		}
+	}
+	// Default for a slider key, in get_f32's own units (speed for ScrollTau).
+	fn default_f32(&self, key: Key) -> f32 {
+		let d = &self.defaults;
+		match key {
+			Key::Opacity => d.opacity,
+			Key::BgOpacity => d.background_opacity,
+			Key::BgBlur => d.background_blur,
+			Key::GlowRadius => d.text_glow_radius,
+			Key::GlowSoftness => d.text_glow_softness,
+			Key::GlowBorder => d.text_glow_border,
+			Key::FontSize => d.font_size,
+			Key::LineHeight => d.line_height_scale,
+			Key::Margin => d.margin,
+			Key::ScrollTau => tau_to_speed(d.scroll_tau_ms),
+			Key::WheelLines => d.wheel_lines,
+			Key::Columns => d.columns as f32,
+			Key::Rows => d.rows as f32,
+			_ => 0.0,
+		}
+	}
+	// Revert a setting to its default and remember its config key(s), so Apply
+	// can comment them out in config.toml (config::revert_keys).
+	fn revert(&mut self, key: Key) {
+		match key {
+			Key::Transparency
+			| Key::BackdropBlur
+			| Key::TextGlow
+			| Key::SystemFont
+			| Key::RememberSize => {
+				let d = match key {
+					Key::Transparency => self.defaults.transparent_background,
+					Key::BackdropBlur => self.defaults.transparent_background_blur,
+					Key::TextGlow => self.defaults.text_glow,
+					Key::SystemFont => self.defaults.use_system_font,
+					_ => self.defaults.remember_size,
+				};
+				self.set_toggle(key, d);
+			}
+			Key::BgFit => self.edited.background_fit = self.defaults.background_fit,
+			Key::GlowRamp => self.edited.text_glow_ramp = self.defaults.text_glow_ramp.clone(),
+			Key::BgImage => self.edited.background_image = self.defaults.background_image.clone(),
+			Key::FontFamily => self.edited.font_family = self.defaults.font_family.clone(),
+			Key::DefaultShell => self.edited.default_shell = self.defaults.default_shell.clone(),
+			Key::ColBg | Key::ColFg | Key::ColCursor | Key::ColFocus => {
+				let c = self.default_col(key);
+				self.set_col(key, c);
+			}
+			// direct: set_f32 would also clear use_system_font (its "explicit
+			// size" side effect), which a revert must not do
+			Key::FontSize => self.edited.font_size = self.defaults.font_size,
+			Key::None => {}
+			_ => {
+				let v = self.default_f32(key);
+				self.set_f32(key, v);
+			}
+		}
+		for k in cfg_keys(key) {
+			if !self.reverted.contains(k) {
+				self.reverted.push(k);
+			}
+		}
+	}
+	// Config keys reverted since the last Apply (cleared by taking them).
+	pub fn take_reverted(&mut self) -> Vec<&'static str> {
+		std::mem::take(&mut self.reverted)
+	}
+
 	fn fmt_val(&self, key: Key, int: bool) -> String {
 		let v = self.get_f32(key);
 		if int {
@@ -899,6 +1059,14 @@ impl SettingsDialog {
 		for i in 0..self.specs.len() {
 			if self.spec_tab[i] != self.tab {
 				continue;
+			}
+			// revert-to-default icon (any control row; inert when already default)
+			if !matches!(self.specs[i].kind, Kind::Header(_)) && self.revert_box(i).contains(x, y) {
+				let key = self.specs[i].key;
+				if !self.is_default(key) {
+					self.revert(key);
+				}
+				return Action::None;
 			}
 			match self.specs[i].kind {
 				Kind::Slider { .. } => {
@@ -1267,6 +1435,17 @@ impl SettingsDialog {
 				clip: Some(vp),
 				..mk(self.specs[i].label.into(), self.rect.x + PAD, ty)
 			});
+			// revert-to-default icon: bright + clickable when off-default, dim when at it
+			let rb = self.revert_box(i);
+			out.push(TextItem {
+				color: if self.is_default(self.specs[i].key) {
+					dlg().dim
+				} else {
+					dlg().handle
+				},
+				clip: Some(vp),
+				..mk(REVERT_ICON.into(), rb.x + 4.0, ty)
+			});
 			match self.specs[i].kind {
 				Kind::Slider { int, .. } => {
 					let vx = self.control_x() + SLIDER_W + 14.0;
@@ -1398,6 +1577,25 @@ mod tests {
 		for t in 0..TAB_TITLES.len() {
 			assert!(d.spec_tab.contains(&t), "tab {t} has no rows");
 		}
+	}
+
+	#[test]
+	fn revert_restores_default_and_records_key() {
+		let mut d = mk_dialog(2000.0);
+		let def = d.defaults.opacity; // edited may start off-default (loaded config)
+		d.edited.opacity = def + 0.5;
+		assert!(!d.is_default(super::Key::Opacity));
+		d.revert(super::Key::Opacity);
+		assert!(d.is_default(super::Key::Opacity));
+		assert_eq!(d.edited.opacity, def);
+		let rev = d.take_reverted();
+		assert!(rev.contains(&"opacity"));
+		assert!(d.take_reverted().is_empty(), "taking clears the list");
+		// reverting font size must not clear use_system_font (set_f32 side effect)
+		d.edited.use_system_font = true;
+		d.edited.font_size = 99.0;
+		d.revert(super::Key::FontSize);
+		assert!(d.edited.use_system_font);
 	}
 
 	#[test]
