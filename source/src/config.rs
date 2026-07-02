@@ -878,6 +878,37 @@ fn migrate_config_text(text: &str) -> Option<String> {
 	})
 }
 
+// Revert config keys to their defaults: drop the active assignment from
+// config.toml (dotted keys address the [colors] table), then backfill so the
+// key comes back as the template's commented default line. Used by the Settings
+// dialog's revert-to-default buttons.
+pub fn revert_keys(keys: &[&str]) {
+	if keys.is_empty() {
+		return;
+	}
+	let Some(path) = config_path() else { return };
+	let Ok(text) = std::fs::read_to_string(&path) else {
+		return;
+	};
+	let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else {
+		return;
+	};
+	for k in keys {
+		match k.split_once('.') {
+			Some((table, key)) => {
+				if let Some(t) = doc.get_mut(table).and_then(|i| i.as_table_mut()) {
+					t.remove(key);
+				}
+			}
+			None => {
+				doc.remove(k);
+			}
+		}
+	}
+	let _ = std::fs::write(&path, doc.to_string());
+	backfill_config(&path);
+}
+
 // Insert any settings the `DEFAULT_CONFIG` template defines that `path` lacks,
 // using the template's own (commented or active) line so follow-system keys stay
 // absent and behavior is unchanged. Existing values, comments, and formatting are

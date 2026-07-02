@@ -182,6 +182,15 @@ impl DialogWin {
 		}
 	}
 
+	// Config keys the user hit "revert to default" on since the last Apply; the
+	// app comments them out in config.toml (config::revert_keys).
+	pub fn take_reverted(&mut self) -> Vec<&'static str> {
+		match &mut self.content {
+			Content::Settings(d) => d.take_reverted(),
+			_ => Vec::new(),
+		}
+	}
+
 	pub fn set_cursor(&mut self, x: f32, y: f32) {
 		self.mouse = (x, y);
 		if let Content::Settings(d) = &mut self.content {
