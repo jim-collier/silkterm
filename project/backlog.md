@@ -156,8 +156,8 @@ In each section, items are listed approximately from newest to oldest.
 		- Explicit numeric size fields disabled and grayed out.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
 			- 🔘 "Remembered" values always active, never commented out. Only valid if 'remember_size' is true.
-	- 🔘 Should be able to use tab key to cycle among settings (and dialog buttons - in a loop).
-	- 🔘 All values, including slider numbers, should also have directly editable fields (that are part of the tab order).
+	- ✅ Should be able to use tab key to cycle among settings (and dialog buttons - in a loop). (20260702, branch kbdbtn) - the Tab ring now runs the active tab's focusable controls THEN the three footer buttons (Cancel/Apply/OK) and wraps, both directions (Shift+Tab / Up-Down too). A focused button shows the accent ring and is fired by Space or Enter. Built on the dlgkeys focus model (`Focus::Row | Focus::Button`). Unit-tested (walk controls -> Button 0/1/2 -> wrap; Space=Cancel / Enter=OK on a focused button).
+	- 🔘 All values, including slider numbers, should also have directly editable fields (that are part of the tab order). - Remaining keyboard-control refinement: give each slider an editable numeric field (bound to the value, live-clamped) that joins the Tab ring, so numbers can be typed exactly. Reuses the EditState/caret infra; a distinct layout change (deferred from dlgkeys/kbdbtn).
 	- ✅ A little more vertical space between the section headings, and the corresponding horizontal line. - Taller heading row (`HEADER_H` 34->42); the heading text is top-aligned and the rule sits near the bottom, leaving a clear ~7px gap (was overlapping). Verified in the dialog.
 
 - 🛠️ Command-line options:
