@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use glyphon::{Color as GColor, Shaping, TextArea, TextBounds};
 use winit::event_loop::ActiveEventLoop;
+use winit::raw_window_handle::RawWindowHandle;
 use winit::window::{Window, WindowId};
 
 use crate::config;
@@ -62,8 +63,10 @@ impl DialogWin {
 		title: String,
 		w: f32,
 		h: f32,
+		parent: Option<RawWindowHandle>,
 	) -> anyhow::Result<(Arc<Window>, Gfx, TextCtx, RectRenderer)> {
-		let attrs = Window::default_attributes()
+		#[allow(unused_mut)] // reassigned only on windows/macos below
+		let mut attrs = Window::default_attributes()
 			.with_title(title)
 			.with_window_icon(crate::app::load_icon())
 			.with_resizable(false)
@@ -71,7 +74,18 @@ impl DialogWin {
 				w.ceil().max(1.0) as u32,
 				h.ceil().max(1.0) as u32,
 			));
+		// Tie the dialog to the terminal window so the WM keeps it above its
+		// parent and groups them. Windows/macOS: winit's parent_window is owner/
+		// parent semantics - what we want. X11: parent_window means literal X
+		// reparenting (an embedded child, unmanaged by the WM), so DON'T pass it
+		// there; WM_TRANSIENT_FOR is set after creation instead (below).
+		// SAFETY: the handle comes from the live main window on this same thread.
+		#[cfg(any(target_os = "windows", target_os = "macos"))]
+		if parent.is_some() {
+			attrs = unsafe { attrs.with_parent_window(parent) };
+		}
 		let window = Arc::new(el.create_window(attrs)?);
+		set_transient_for(&window, parent.as_ref());
 		// PRIMARY (no GL): the main window may hold a glutin GL/EGL context, and a
 		// second wgpu GL instance would panic in EGL teardown. Dialogs are opaque,
 		// so Vulkan/Metal/DX12 is all they need.
@@ -85,10 +99,19 @@ impl DialogWin {
 		Ok((window, gfx, text, rects))
 	}
 
-	pub fn new_about(el: &ActiveEventLoop, adapter: &wgpu::AdapterInfo) -> anyhow::Result<Self> {
+	pub fn new_about(
+		el: &ActiveEventLoop,
+		adapter: &wgpu::AdapterInfo,
+		parent: Option<RawWindowHandle>,
+	) -> anyhow::Result<Self> {
 		// provisional window so we have a TextCtx to measure with
-		let (window, mut gfx, mut text, rects) =
-			Self::make(el, format!("About {}", config::APP_NAME), 560.0, 360.0)?;
+		let (window, mut gfx, mut text, rects) = Self::make(
+			el,
+			format!("About {}", config::APP_NAME),
+			560.0,
+			360.0,
+			parent,
+		)?;
 		let (lines, link_rect, url, size) = layout_about(&mut text, adapter);
 		let want = winit::dpi::PhysicalSize::new(size.0.ceil() as u32, size.1.ceil() as u32);
 		if let Some(applied) = window.request_inner_size(want) {
@@ -108,10 +131,14 @@ impl DialogWin {
 		})
 	}
 
-	pub fn new_settings(el: &ActiveEventLoop) -> anyhow::Result<Self> {
+	pub fn new_settings(
+		el: &ActiveEventLoop,
+		parent: Option<RawWindowHandle>,
+	) -> anyhow::Result<Self> {
 		// provisional window first: sizing needs a TextCtx to measure labels in
 		// the real UI font (same pattern as About)
-		let (window, mut gfx, mut text, rects) = Self::make(el, "Settings".into(), 560.0, 800.0)?;
+		let (window, mut gfx, mut text, rects) =
+			Self::make(el, "Settings".into(), 560.0, 800.0, parent)?;
 		let (label_w, btn_w, tab_ws) = crate::settings_ui::chrome_widths(&mut text);
 		// cap the window height to the monitor (minus decorations headroom) and to
 		// ~1010px total; a tab that doesn't fit scrolls instead of clipping buttons
@@ -410,6 +437,44 @@ impl DialogWin {
 		self.text.trim_atlas();
 	}
 }
+
+// X11: tie the dialog to the terminal window with WM_TRANSIENT_FOR (winit has
+// no API for it there - its parent_window means literal X reparenting). Same
+// throwaway-connection pattern as app::set_blur_behind. No-op off X11.
+#[cfg(target_os = "linux")]
+fn set_transient_for(window: &Window, parent: Option<&RawWindowHandle>) {
+	use winit::raw_window_handle::HasWindowHandle;
+	use x11rb::connection::Connection;
+	use x11rb::protocol::xproto::{AtomEnum, PropMode};
+	use x11rb::wrapper::ConnectionExt as _;
+
+	let parent_xid = match parent {
+		Some(RawWindowHandle::Xlib(h)) => h.window as u32,
+		Some(RawWindowHandle::Xcb(h)) => h.window.get(),
+		_ => return,
+	};
+	let Ok(handle) = window.window_handle() else {
+		return;
+	};
+	let xid = match handle.as_raw() {
+		RawWindowHandle::Xlib(h) => h.window as u32,
+		RawWindowHandle::Xcb(h) => h.window.get(),
+		_ => return,
+	};
+	let Ok((conn, _)) = x11rb::connect(None) else {
+		return;
+	};
+	let _ = conn.change_property32(
+		PropMode::REPLACE,
+		xid,
+		AtomEnum::WM_TRANSIENT_FOR,
+		AtomEnum::WINDOW,
+		&[parent_xid],
+	);
+	let _ = conn.flush();
+}
+#[cfg(not(target_os = "linux"))]
+fn set_transient_for(_window: &Window, _parent: Option<&RawWindowHandle>) {}
 
 fn map_action(a: Action) -> Option<DialogAction> {
 	match a {
