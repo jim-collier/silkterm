@@ -124,6 +124,16 @@ impl App {
 					self.dialog_dirty = true;
 				}
 			}
+			WindowEvent::MouseWheel { delta, .. } => {
+				if let Some(d) = &mut self.dialog {
+					let dy = match delta {
+						MouseScrollDelta::LineDelta(_, y) => y * 40.0,
+						MouseScrollDelta::PixelDelta(p) => p.y as f32,
+					};
+					d.wheel(dy);
+					self.dialog_dirty = true;
+				}
+			}
 			_ => {}
 		}
 		if let Some(a) = act {

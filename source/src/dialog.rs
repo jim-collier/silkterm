@@ -112,8 +112,16 @@ impl DialogWin {
 		// provisional window first: sizing needs a TextCtx to measure labels in
 		// the real UI font (same pattern as About)
 		let (window, mut gfx, mut text, rects) = Self::make(el, "Settings".into(), 560.0, 800.0)?;
-		let (label_w, btn_w) = crate::settings_ui::chrome_widths(&mut text);
-		let dlg = SettingsDialog::new(0.0, 0.0, text.ui_line_h, label_w, btn_w); // laid out at the origin
+		let (label_w, btn_w, tab_ws) = crate::settings_ui::chrome_widths(&mut text);
+		// cap the window height to the monitor (minus decorations headroom) and to
+		// ~1010px total; a tab that doesn't fit scrolls instead of clipping buttons
+		let max_h = window
+			.current_monitor()
+			.map(|m| m.size().height as f32 - 38.0)
+			.unwrap_or(1010.0)
+			.min(1010.0);
+		// laid out at the origin
+		let dlg = SettingsDialog::new(0.0, 0.0, text.ui_line_h, label_w, btn_w, tab_ws, max_h);
 		let (w, h) = dlg.size();
 		let want = winit::dpi::PhysicalSize::new(w.ceil() as u32, h.ceil() as u32);
 		if let Some(applied) = window.request_inner_size(want) {
@@ -174,6 +182,13 @@ impl DialogWin {
 	pub fn mouse_up(&mut self) {
 		if let Content::Settings(d) = &mut self.content {
 			d.mouse_up();
+		}
+	}
+
+	// wheel scroll for an overflowing settings tab (positive dy = scroll up)
+	pub fn wheel(&mut self, dy_px: f32) {
+		if let Content::Settings(d) = &mut self.content {
+			d.wheel(dy_px);
 		}
 	}
 
@@ -239,6 +254,10 @@ impl DialogWin {
 
 		// gather rects (Settings only) + per-line/-item text buffers
 		let mut rect_inst: Vec<RectInstance> = Vec::new();
+		// Settings rows are drawn scissored to the scroll viewport (rects after
+		// `rect_split`); the chrome before it draws unclipped.
+		let mut rect_split = 0usize;
+		let mut scissor_vp: Option<Rect> = None;
 		// (left, top, scale, color, clip, buffer)
 		let mut bufs: Vec<(f32, f32, f32, [u8; 3], Option<Rect>, glyphon::Buffer)> = Vec::new();
 		let clear: [u8; 3];
@@ -266,7 +285,11 @@ impl DialogWin {
 			}
 			Content::Settings(d) => {
 				clear = crate::settings_ui::dialog_bg();
-				rect_inst = d.rects(self.text.ui_line_h);
+				let (fixed, rows) = d.rects(self.text.ui_line_h);
+				rect_split = fixed.len();
+				scissor_vp = Some(d.viewport());
+				rect_inst = fixed;
+				rect_inst.extend(rows);
 				for it in d.texts(self.text.ui_line_h) {
 					let mut a = ui_attrs();
 					a.color_opt = Some(GColor::rgb(it.color[0], it.color[1], it.color[2]));
@@ -363,7 +386,22 @@ impl DialogWin {
 				multiview_mask: None,
 			});
 			if !rect_inst.is_empty() {
-				self.rects.draw(&mut pass, 0..rect_inst.len() as u32);
+				self.rects.draw(&mut pass, 0..rect_split as u32);
+				// scrolled settings rows, clipped to the viewport
+				if rect_inst.len() > rect_split {
+					if let Some(vp) = scissor_vp {
+						let x = vp.x.max(0.0).min(w as f32) as u32;
+						let y = vp.y.max(0.0).min(h as f32) as u32;
+						let sw = vp.w.max(0.0).min(w as f32 - x as f32) as u32;
+						let sh = vp.h.max(0.0).min(h as f32 - y as f32) as u32;
+						if sw > 0 && sh > 0 {
+							pass.set_scissor_rect(x, y, sw, sh);
+							self.rects
+								.draw(&mut pass, rect_split as u32..rect_inst.len() as u32);
+							pass.set_scissor_rect(0, 0, w, h);
+						}
+					}
+				}
 			}
 			let _ = self.text.render(&mut pass);
 		}
