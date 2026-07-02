@@ -50,6 +50,8 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
+- 🔘 CICD: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path.
+
 - ✅ The cursor [used to] render *behind* outer glow, which sometimes obscures the cursor. As noted in another issue below, the cursor itself should also have an outer glow, if not too computationally expensive with an animated cursor. In that case, the cursor shadow should merge with the text outer glow. And either way, the cursor should appear *above* any outer glow.
 	- ✅ Cursor now renders ABOVE the glow. (20260701) - cursor quads split into their own per-pane ranges drawn after the glow composite (under the crisp text). Verified: a block cursor with a radius-14 glow stays a crisp solid block.
 	- ✅ Cursor's own glow (merged with the text glow). (20260701, branch glow2) - the cursor quads are drawn into the glow source texture before the blur, so its halo IS the text glow (same blur, same per-pixel bg colour) and it costs nothing extra per frame (the blur already runs every frame; the animation alpha carries through). The crisp cursor still draws above the composite. `cursor_glow` config toggle (default on). Verified on Xvfb: with cursor_glow off, the only changed pixels are the cursor's own area.
