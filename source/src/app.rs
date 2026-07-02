@@ -106,7 +106,7 @@ impl App {
 						Key::Named(NamedKey::Enter) => act = d.key_enter(),
 						Key::Named(NamedKey::Tab) => d.key_tab(),
 						Key::Named(NamedKey::Backspace) => d.backspace(),
-						Key::Named(NamedKey::Space) => d.key_space(),
+						Key::Named(NamedKey::Space) => act = d.key_space(),
 						Key::Named(NamedKey::ArrowUp) => d.focus_vertical(false),
 						Key::Named(NamedKey::ArrowDown) => d.focus_vertical(true),
 						Key::Named(NamedKey::ArrowLeft) => d.key_horizontal(-1),

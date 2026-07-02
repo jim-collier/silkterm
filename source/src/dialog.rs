@@ -258,10 +258,12 @@ impl DialogWin {
 			d.key_horizontal(dir);
 		}
 	}
-	// Space: type into an active edit, or activate the focused control.
-	pub fn key_space(&mut self) {
-		if let Content::Settings(d) = &mut self.content {
-			d.key_space();
+	// Space: type into an active edit, activate a focused footer button, or
+	// activate the focused control.
+	pub fn key_space(&mut self) -> Option<DialogAction> {
+		match &mut self.content {
+			Content::Settings(d) => map_action(d.key_space()),
+			_ => None,
 		}
 	}
 
