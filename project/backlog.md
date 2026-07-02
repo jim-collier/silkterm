@@ -48,30 +48,17 @@ In each section, items are listed approximately from newest to oldest.
 	- 20260701 (headless retest): ran a 50s max-rate random-unicode flood on the private Xvfb (gui-headless.bash) at 120x40 - text stayed visible the whole time (screen brightness ~0.12 throughout), app alive, no black-out, no trim event. Still couldn't force the atlas-full: this box has limited renderable-glyph coverage (no CJK/emoji fonts - a full-screen distinct-CJK flood just renders blank, which is a missing-font effect, NOT the atlas bug and NOT a trim event). So the specific atlas-full trigger remains unreproducible here; the no-black-out-under-load result is a stronger confirmation than code-analysis alone.
 	- Resolution: Leave this issue open until verified with long-running terminals.
 
-- ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
-	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. For example my system proportional font is a Serif font, not sans serif. (20260629)
-		- Cause: chrome used generic `Family::SansSerif`. fontdb's generic-sans default is "Arial"; when that's absent (typical on Linux) the query falls through to whatever matches - here the GNOME *document* font, which is a serif (GentiumAlt). (fontconfig's actual sans-serif on this box is Noto Sans.)
-		- Fix (first pass): pin a concrete sans family, mirroring the mono pin - resolved the OS sans-serif (`fc-match sans-serif`), else a curated list, validated against the db. Got "Noto Sans" - still a sans, which missed the point below.
-			- ✅ Not fixed: Still using system *sans serif*, rather than just system font generally. (Which on my system is a *serif* font.) - FIXED PROPERLY (20260701): chrome now follows the *desktop interface font* - family, size, weight, slant - serif or not. `sysfont::interface()` reads it natively per platform (Linux: gsettings `font-name`, else xfconf `/Gtk/FontName`; Windows: `lfMenuFont` incl. weight; macOS: 13pt system convention, family falls back), `text::ui_attrs()` pins it ("GentiumAlt" Bold here; a sans is only the no-desktop-setting fallback), and chrome renders at its own `ui_line_h` metrics independent of the terminal font. Menu bar/tab bar heights, dropdown widths/rows, and the Settings dialog (rows, title, measured label/button widths) all size from the real rendered text, so an oversized or wide font grows the chrome instead of truncating. Verified on the private Xvfb: menu bar + dropdowns + Settings all render bold-serif GentiumAlt 13; terminal text unaffected.
-		- ✅ Verify that menu bar height adjusts based on menu font. - Confirmed: `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (now `text.ui_line_h`, the UI font's own height) + pad, so a larger menu font grows the bars (the height work was done earlier under #t6thx).
-		- ✅ Still sans-serif after the 20260701 fix (owner report: bold + bigger took, family didn't). - Root cause found and FIXED (20260701, branch uiface): cosmic-text only uses the requested family when a face matches the requested weight EXACTLY (its fallback filters `font_weight_diff == 0`), and GentiumAlt ships no Bold face - so asking for `Weight::BOLD` silently ejected the whole family and a *bold sans* rendered instead (which is exactly why bold/size "took" but the family didn't). Fix: pin the db's canonical family spelling (cosmic-text compares names case-sensitively) and snap the requested weight/slant to a face the family really has - family wins over weight; dialog-title "bold" snaps the same way (`ui_bold_weight`). Regression-guarded by a shaping test that asserts every chrome glyph resolves in the pinned family. Verified on Xvfb: menu bar + Settings dialog render serif GentiumAlt (regular weight - the family's closest face to Bold; cosmic-text does not synthesize).
-	- 🔘 Follow-up (pre-existing, more visible now): the Settings dialog's full content is taller than a 1080p screen, so its bottom buttons clip off short displays. Needs scrolling, section tabs, or two columns (fold into the settings-dialog polish item). Keyboard works meanwhile (Esc cancel, Alt+A apply, Alt+O OK).
-
 ### New features and enhancements
 
-- ✅ Terminal should support standard terminal editing and/or navigation keys. (20260701)
-	- ✅ Research: The only one I can think of that isn't currently supported, is Ctrl + arrow key (to skip whole words - other terminals do this). - input.rs now sends the xterm modified forms (`ESC[1;5C` etc.) for Ctrl/Shift/Alt + arrows/Home/End, so readline and TUIs word-skip as expected. F5-F12 were also missing entirely (htop/mc keys were dead) - added, incl. modified variants. 5 unit tests pin the sequences.
-	- ✅ Are Ctrl+Backspace, Ctrl+Del possible to delete whole words? Is that something some terminals do? XFCE terminal and Terminator don't. - Yes, both send now (xterm convention: Ctrl+Backspace = 0x08, Ctrl+Del = `ESC[3;5~`); whether they delete a word is up to the app - bash needs `bind '"\C-h": backward-kill-word'` / `'"\e[3;5~": kill-word'`, most modern TUIs handle them out of the box.
-
-- 🛠️ The cursor [used to] render *behind* outer glow, which sometimes obscures the cursor. As noted in another issue below, the cursor itself should also have an outer glow, if not too computationally expensive with an animated cursor. In that case, the cursor shadow should merge with the text outer glow. And either way, the cursor should appear *above* any outer glow.
+- ✅ The cursor [used to] render *behind* outer glow, which sometimes obscures the cursor. As noted in another issue below, the cursor itself should also have an outer glow, if not too computationally expensive with an animated cursor. In that case, the cursor shadow should merge with the text outer glow. And either way, the cursor should appear *above* any outer glow.
 	- ✅ Cursor now renders ABOVE the glow. (20260701) - cursor quads split into their own per-pane ranges drawn after the glow composite (under the crisp text). Verified: a block cursor with a radius-14 glow stays a crisp solid block.
-	- 🔘 Cursor's own glow (merged with the text glow) - evaluated with the glow-enhancements item below (also lists "cursor should have blur"). Investigate-y.
+	- ✅ Cursor's own glow (merged with the text glow). (20260701, branch glow2) - the cursor quads are drawn into the glow source texture before the blur, so its halo IS the text glow (same blur, same per-pixel bg colour) and it costs nothing extra per frame (the blur already runs every frame; the animation alpha carries through). The crisp cursor still draws above the composite. `cursor_glow` config toggle (default on). Verified on Xvfb: with cursor_glow off, the only changed pixels are the cursor's own area.
 
-- 🔘 Outer glow enhancements:
-	- 🔘 When outer glow is applied, also add an antialiased (user-definable) 1px outer border around the letters, using the same color rules as outer glow.
-	- 🔘 For bold text, calculate the blur for the outer glow, based on all non-bold text. (But still render the visible text on top in whatever weight it was meant to.
-	- 🔘 Cursor should have blur if possible (investigate - this may not be possible, especially with the phasing).
-	- 🔘 Provide options for different blur fadeoff ramps. E.g. default gaussian, linear, or "S"-shaped.
+- ✅ Outer glow enhancements: (20260701, branch glow2 - all four; verified on Xvfb by per-feature pixel diffs over a bright noise background image)
+	- ✅ When outer glow is applied, also add an antialiased (user-definable) 1px outer border around the letters, using the same color rules as outer glow. - The composite shader now also samples the crisp (pre-blur) coverage and dilates it by `text_glow_border` px (8 taps, linear-sampled = antialiased), unioned with the halo and coloured by the same per-cell bg map. Config `text_glow_border` (default 1.0, 0 = off) + a "Glow border" slider in Settings.
+	- ✅ For bold text, calculate the blur for the outer glow, based on all non-bold text. (But still render the visible text on top in whatever weight it was meant to. - The glow source pass got its own renderer; a pane whose viewport contains bold shapes a parallel buffer with bold stripped and feeds THAT to the glow (crisp text keeps its weight). Costs a second shape only on rebuild frames that contain bold. Config `text_glow_regular_weight` (default on). Verified: turning it off changes only pixels under/around bold runs.
+	- ✅ Cursor should have blur if possible (investigate - this may not be possible, especially with the phasing). - Possible, done (see the cursor-glow item above); phasing works because the animation alpha is in the quad colour, which blurs like glyph coverage.
+	- ✅ Provide options for different blur fadeoff ramps. E.g. default gaussian, linear, or "S"-shaped. - The separable-blur kernel weight is now selectable: `text_glow_ramp` = "gaussian" (default) | "linear" (tent) | "s" (smoothstep), all normalized over the same ~3-sigma extent; "Glow falloff" radio in Settings.
 
 - 🔘 Settings dialog:
 	- 🔘 Should be "modal" and connected to terminal window.
@@ -93,6 +80,12 @@ In each section, items are listed approximately from newest to oldest.
 		- Partially verified: a config with cursor_insert_shape/cursor_overwrite_shape/cursor_blink migrated correctly (and this auto-cleans the old invalid `cursor_blink = enable`).
 	- 🔘 Remaining: literal reordering to match template order (cosmetic, riskier full-rewrite).
 		- 🔘 Also group default ordering in a logical order. Add flowerbox comments and line spacing to denote major sections.
+
+- 🔘 Build packages when cicd.bash `--quick` isn't specified:
+	- 🔘 .deb(s), per-architecture
+	- 🔘 Windows installer .exe(s), per-architecture
+	- Future:
+		- macOS appimage, per-architecture
 
 - 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
 	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
@@ -295,6 +288,14 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - Bugs
 
+- ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
+	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. For example my system proportional font is a Serif font, not sans serif. (20260629)
+		- Cause: chrome used generic `Family::SansSerif`. fontdb's generic-sans default is "Arial"; when that's absent (typical on Linux) the query falls through to whatever matches - here the GNOME *document* font, which is a serif (GentiumAlt). (fontconfig's actual sans-serif on this box is Noto Sans.)
+		- Fix (first pass): pin a concrete sans family, mirroring the mono pin - resolved the OS sans-serif (`fc-match sans-serif`), else a curated list, validated against the db. Got "Noto Sans" - still a sans, which missed the point below.
+			- ✅ Not fixed: Still using system *sans serif*, rather than just system font generally. (Which on my system is a *serif* font.) - FIXED PROPERLY (20260701): chrome now follows the *desktop interface font* - family, size, weight, slant - serif or not. `sysfont::interface()` reads it natively per platform (Linux: gsettings `font-name`, else xfconf `/Gtk/FontName`; Windows: `lfMenuFont` incl. weight; macOS: 13pt system convention, family falls back), `text::ui_attrs()` pins it ("GentiumAlt" Bold here; a sans is only the no-desktop-setting fallback), and chrome renders at its own `ui_line_h` metrics independent of the terminal font. Menu bar/tab bar heights, dropdown widths/rows, and the Settings dialog (rows, title, measured label/button widths) all size from the real rendered text, so an oversized or wide font grows the chrome instead of truncating. Verified on the private Xvfb: menu bar + dropdowns + Settings all render bold-serif GentiumAlt 13; terminal text unaffected.
+		- ✅ Verify that menu bar height adjusts based on menu font. - Confirmed: `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (now `text.ui_line_h`, the UI font's own height) + pad, so a larger menu font grows the bars (the height work was done earlier under #t6thx).
+		- ✅ Still sans-serif after the 20260701 fix (owner report: bold + bigger took, family didn't). - Root cause found and FIXED (20260701, branch uiface): cosmic-text only uses the requested family when a face matches the requested weight EXACTLY (its fallback filters `font_weight_diff == 0`), and GentiumAlt ships no Bold face - so asking for `Weight::BOLD` silently ejected the whole family and a *bold sans* rendered instead (which is exactly why bold/size "took" but the family didn't). Fix: pin the db's canonical family spelling (cosmic-text compares names case-sensitively) and snap the requested weight/slant to a face the family really has - family wins over weight; dialog-title "bold" snaps the same way (`ui_bold_weight`). Regression-guarded by a shaping test that asserts every chrome glyph resolves in the pinned family. Verified on Xvfb: menu bar + Settings dialog render serif GentiumAlt (regular weight - the family's closest face to Bold; cosmic-text does not synthesize).
+
 - ✅ Outer glow should only apply to terminal text - not tab titles or the menu bar. (20260630) - the glow composite covered the whole window, so the halo appeared behind the menu/tab titles too. Now clipped to the content area (below the chrome), so only terminal text glows. Verified via a strong-glow screenshot (chrome text crisp, no halo).
 
 - ✅ High severity: Typing "exit" in tab, closes the whole application. It should only close that tab. Doesn't do that for panes, only tabs. Closing a tab via menu only closes that one tab. (20260629; real cause found + fixed 20260630)
@@ -391,7 +392,12 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - new features and enhancements
 
-- I've added 'silkterm/github/cicd/utility/gui-headless.bash'. It allows running the terminal for testing in a GUI environment that doesn't interfere with current user session, via use of xvfb in the script.
+- ✅ Terminal should support standard terminal editing and/or navigation keys. (20260701)
+	- ✅ Research: The only one I can think of that isn't currently supported, is Ctrl + arrow key (to skip whole words - other terminals do this). - input.rs now sends the xterm modified forms (`ESC[1;5C` etc.) for Ctrl/Shift/Alt + arrows/Home/End, so readline and TUIs word-skip as expected. F5-F12 were also missing entirely (htop/mc keys were dead) - added, incl. modified variants. 5 unit tests pin the sequences.
+	- ✅ Are Ctrl+Backspace, Ctrl+Del possible to delete whole words? Is that something some terminals do? XFCE terminal and Terminator don't.
+		- Both send now (xterm convention: Ctrl+Backspace = 0x08, Ctrl+Del = `ESC[3;5~`). Whether they delete a word is up to the app. Bash needs `bind '"\C-h": backward-kill-word'` / `'"\e[3;5~": kill-word'`, most modern TUIs handle them out of the box.
+
+- Added 'silkterm/github/cicd/utility/gui-headless.bash'. It allows running the terminal for testing in a GUI environment that doesn't interfere with current user session, via use of xvfb in the script.
 	- ✅ Update all tests, scripts, and profiling to run in that environment. (20260701) - cicd's `run_profiler` now brings up the private Xvfb (via gui-headless.bash) and runs the app on it (DISPLAY set), so no window pops on the user's :0 session; it skips only if Xvfb/python3/workload are missing (was: skip on "no DISPLAY"). Uses `:98` not `:99` (rapid-photo-downloader-pro owns :99); overridable via RPD_HEADLESS_DISPLAY. Unit tests (`cargo test`) are already headless (pure logic + FontSystem). Verified end-to-end: SilkTerm renders on Xvfb via software GL (llvmpipe), profiler produced a valid flamegraph with real pipeline frames.
 
 - ✅ Cursor: (20260701)

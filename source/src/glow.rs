@@ -8,8 +8,10 @@
 //! `bgcolor` map so a glyph's halo takes ITS cell's bg colour (a glyph on a
 //! one-off colored cell isn't smeared with the global bg colour).
 //!
-//! Ping-pong: tex_a <- text, then H-blur tex_a->tex_b, V-blur tex_b->tex_a; tex_a is
-//! the blurred coverage; the composite multiplies it by `bgcolor`.
+//! tex_t <- crisp text (+ cursor quads when cursor_glow), then H-blur tex_t->tex_b,
+//! V-blur tex_b->tex_a; tex_a is the blurred coverage. The composite multiplies it
+//! by `bgcolor`, and also samples tex_t to add a thin dilated outline around the
+//! crisp coverage (the "border" - solid, same per-pixel colour as the glow).
 
 use crate::gfx::{RectInstance, RectRenderer};
 
@@ -21,19 +23,23 @@ struct BlurU {
 	resolution: [f32; 2],
 	dir: [f32; 2],
 	sigma: f32,
-	_pad: [f32; 3],
+	ramp: f32, // falloff kernel: 0 = gaussian, 1 = linear, 2 = s-curve
+	_pad: [f32; 2],
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct CompU {
+	resolution: [f32; 2],
 	intensity: f32, // coverage boost; the colour comes from the bgcolor texture
-	_pad: [f32; 3],
+	border_px: f32, // dilated outline radius around the crisp coverage (0 = none)
 }
 
 pub struct Glow {
+	tex_t: wgpu::Texture, // crisp text/cursor coverage (kept for the border pass)
 	tex_a: wgpu::Texture,
 	tex_b: wgpu::Texture,
+	view_t: wgpu::TextureView,
 	view_a: wgpu::TextureView,
 	view_b: wgpu::TextureView,
 	sampler: wgpu::Sampler,
@@ -44,17 +50,24 @@ pub struct Glow {
 	// the last-written dir (-> vertical blur twice, no horizontal). Two buffers fix it.
 	blur_u_h: wgpu::Buffer,
 	blur_u_v: wgpu::Buffer,
-	blur_a2b: wgpu::BindGroup, // sample tex_a (uses blur_u_h), write tex_b
+	blur_t2b: wgpu::BindGroup, // sample tex_t (uses blur_u_h), write tex_b
 	blur_b2a: wgpu::BindGroup, // sample tex_b (uses blur_u_v), write tex_a
 	comp_pipe: wgpu::RenderPipeline,
 	comp_bgl: wgpu::BindGroupLayout,
 	comp_u: wgpu::Buffer,
-	comp_bind: wgpu::BindGroup, // sample tex_a (glow alpha) + bgcolor (rgb)
+	comp_bind: wgpu::BindGroup, // sample tex_a (glow alpha) + bgcolor (rgb) + tex_t (border)
 	// per-pixel glow colour: cleared to the global bg, with per-cell bg rects drawn
 	// over it, so a glyph's halo takes ITS cell's bg colour (not always the global).
 	bgcolor: wgpu::Texture,
 	bgcolor_view: wgpu::TextureView,
 	bg_rects: RectRenderer,
+	// cursor quads drawn into tex_t so the cursor's halo merges with the text glow.
+	// Separate renderer: bg_rects' instance buffer is uploaded for the bgcolor map
+	// in the SAME encoder, and a second upload would clobber the first (queue
+	// writes all land before the command buffer runs - same rule as the blur
+	// uniforms above).
+	cursor_rects: RectRenderer,
+	cursor_count: u32,
 	w: u32,
 	h: u32,
 }
@@ -92,7 +105,13 @@ impl Glow {
 
 		let comp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
 			label: Some("glow comp bgl"),
-			entries: &[ubuf_entry(0), tex_entry(1), samp_entry(2), tex_entry(3)],
+			entries: &[
+				ubuf_entry(0),
+				tex_entry(1),
+				samp_entry(2),
+				tex_entry(3),
+				tex_entry(4),
+			],
 		});
 		let comp_u = device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("glow comp u"),
@@ -102,11 +121,12 @@ impl Glow {
 		});
 		let comp_pipe = pipeline_blend(device, &shader, "fs_comp", target, &comp_bgl, "glow comp");
 
-		let (tex_a, tex_b, view_a, view_b) = make_textures(device, w, h);
+		let (tex_t, tex_a, tex_b, view_t, view_a, view_b) = make_textures(device, w, h);
 		let bgcolor = bgcolor_tex(device, w, h);
 		let bgcolor_view = bgcolor.create_view(&Default::default());
 		let bg_rects = RectRenderer::new(device, FMT);
-		let (blur_a2b, blur_b2a, comp_bind) = binds(
+		let cursor_rects = RectRenderer::new(device, FMT);
+		let (blur_t2b, blur_b2a, comp_bind) = binds(
 			device,
 			&blur_bgl,
 			&comp_bgl,
@@ -114,14 +134,17 @@ impl Glow {
 			&blur_u_v,
 			&comp_u,
 			&sampler,
+			&view_t,
 			&view_a,
 			&view_b,
 			&bgcolor_view,
 		);
 
 		Self {
+			tex_t,
 			tex_a,
 			tex_b,
+			view_t,
 			view_a,
 			view_b,
 			sampler,
@@ -129,7 +152,7 @@ impl Glow {
 			blur_bgl,
 			blur_u_h,
 			blur_u_v,
-			blur_a2b,
+			blur_t2b,
 			blur_b2a,
 			comp_pipe,
 			comp_bgl,
@@ -138,6 +161,8 @@ impl Glow {
 			bgcolor,
 			bgcolor_view,
 			bg_rects,
+			cursor_rects,
+			cursor_count: 0,
 			w,
 			h,
 		}
@@ -147,14 +172,16 @@ impl Glow {
 		if w == 0 || h == 0 || (w == self.w && h == self.h) {
 			return;
 		}
-		let (ta, tb, va, vb) = make_textures(device, w, h);
+		let (tt, ta, tb, vt, va, vb) = make_textures(device, w, h);
+		self.tex_t = tt;
 		self.tex_a = ta;
 		self.tex_b = tb;
+		self.view_t = vt;
 		self.view_a = va;
 		self.view_b = vb;
 		self.bgcolor = bgcolor_tex(device, w, h);
 		self.bgcolor_view = self.bgcolor.create_view(&Default::default());
-		let (a2b, b2a, cb) = binds(
+		let (t2b, b2a, cb) = binds(
 			device,
 			&self.blur_bgl,
 			&self.comp_bgl,
@@ -162,11 +189,12 @@ impl Glow {
 			&self.blur_u_v,
 			&self.comp_u,
 			&self.sampler,
+			&self.view_t,
 			&self.view_a,
 			&self.view_b,
 			&self.bgcolor_view,
 		);
-		self.blur_a2b = a2b;
+		self.blur_t2b = t2b;
 		self.blur_b2a = b2a;
 		self.comp_bind = cb;
 		self.w = w;
@@ -211,15 +239,42 @@ impl Glow {
 		self.bg_rects.draw(&mut pass, 0..cells.len() as u32);
 	}
 
-	// The render target for the scene's text (tex_a). Clear it transparent and
+	// The render target for the scene's text (tex_t). Clear it transparent and
 	// render the prepared text into it before calling `blur`.
 	pub fn text_view(&self) -> &wgpu::TextureView {
-		&self.view_a
+		&self.view_t
 	}
 
-	// Two separable passes: H (tex_a->tex_b) then V (tex_b->tex_a). After this tex_a
-	// holds the blurred glow.
-	pub fn blur(&self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, sigma: f32) {
+	// Upload the cursor quads destined for tex_t (so the cursor halo merges with
+	// the text glow). Call before the glow-text pass; draw with `draw_cursors`.
+	pub fn upload_cursors(
+		&mut self,
+		device: &wgpu::Device,
+		queue: &wgpu::Queue,
+		quads: &[RectInstance],
+	) {
+		self.cursor_rects
+			.set_resolution(queue, self.w as f32, self.h as f32);
+		self.cursor_rects.upload(device, queue, quads);
+		self.cursor_count = quads.len() as u32;
+	}
+
+	// Draw the uploaded cursor quads into the current (tex_t) pass.
+	pub fn draw_cursors(&self, pass: &mut wgpu::RenderPass<'_>) {
+		if self.cursor_count > 0 {
+			self.cursor_rects.draw(pass, 0..self.cursor_count);
+		}
+	}
+
+	// Two separable passes: H (tex_t->tex_b) then V (tex_b->tex_a). After this tex_a
+	// holds the blurred glow; tex_t keeps the crisp coverage for the border pass.
+	pub fn blur(
+		&self,
+		queue: &wgpu::Queue,
+		encoder: &mut wgpu::CommandEncoder,
+		sigma: f32,
+		ramp: f32,
+	) {
 		let res = [self.w as f32, self.h as f32];
 		// write both uniforms up front (they target different buffers, so neither
 		// overwrites the other when the queue applies them before the passes run)
@@ -230,7 +285,8 @@ impl Glow {
 				resolution: res,
 				dir: [1.0, 0.0],
 				sigma,
-				_pad: [0.0; 3],
+				ramp,
+				_pad: [0.0; 2],
 			}),
 		);
 		queue.write_buffer(
@@ -240,11 +296,12 @@ impl Glow {
 				resolution: res,
 				dir: [0.0, 1.0],
 				sigma,
-				_pad: [0.0; 3],
+				ramp,
+				_pad: [0.0; 2],
 			}),
 		);
 		for (src_bind, dst) in [
-			(&self.blur_a2b, &self.view_b),
+			(&self.blur_t2b, &self.view_b),
 			(&self.blur_b2a, &self.view_a),
 		] {
 			let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -270,14 +327,22 @@ impl Glow {
 	}
 
 	// Draw the glow into the current pass, under the text: blurred coverage from
-	// tex_a, coloured per-pixel by the bgcolor map.
-	pub fn composite(&self, queue: &wgpu::Queue, pass: &mut wgpu::RenderPass<'_>, intensity: f32) {
+	// tex_a, coloured per-pixel by the bgcolor map, plus a `border_px` dilated
+	// outline of the crisp coverage (tex_t).
+	pub fn composite(
+		&self,
+		queue: &wgpu::Queue,
+		pass: &mut wgpu::RenderPass<'_>,
+		intensity: f32,
+		border_px: f32,
+	) {
 		queue.write_buffer(
 			&self.comp_u,
 			0,
 			bytemuck::bytes_of(&CompU {
+				resolution: [self.w as f32, self.h as f32],
 				intensity,
-				_pad: [0.0; 3],
+				border_px,
 			}),
 		);
 		pass.set_pipeline(&self.comp_pipe);
@@ -286,6 +351,7 @@ impl Glow {
 	}
 }
 
+#[allow(clippy::type_complexity)]
 fn make_textures(
 	device: &wgpu::Device,
 	w: u32,
@@ -293,6 +359,8 @@ fn make_textures(
 ) -> (
 	wgpu::Texture,
 	wgpu::Texture,
+	wgpu::Texture,
+	wgpu::TextureView,
 	wgpu::TextureView,
 	wgpu::TextureView,
 ) {
@@ -310,11 +378,13 @@ fn make_textures(
 		usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
 		view_formats: &[],
 	};
+	let t = device.create_texture(&desc("glow tex t"));
 	let a = device.create_texture(&desc("glow tex a"));
 	let b = device.create_texture(&desc("glow tex b"));
+	let vt = t.create_view(&Default::default());
 	let va = a.create_view(&Default::default());
 	let vb = b.create_view(&Default::default());
-	(a, b, va, vb)
+	(t, a, b, vt, va, vb)
 }
 
 fn bgcolor_tex(device: &wgpu::Device, w: u32, h: u32) -> wgpu::Texture {
@@ -343,6 +413,7 @@ fn binds(
 	blur_u_v: &wgpu::Buffer,
 	comp_u: &wgpu::Buffer,
 	sampler: &wgpu::Sampler,
+	view_t: &wgpu::TextureView,
 	view_a: &wgpu::TextureView,
 	view_b: &wgpu::TextureView,
 	bgcolor_view: &wgpu::TextureView,
@@ -387,10 +458,14 @@ fn binds(
 				binding: 3,
 				resource: wgpu::BindingResource::TextureView(bgcolor_view),
 			},
+			wgpu::BindGroupEntry {
+				binding: 4,
+				resource: wgpu::BindingResource::TextureView(view_t),
+			},
 		],
 	});
-	// a2b: H pass samples tex_a (horizontal uniform); b2a: V pass samples tex_b.
-	(mk_blur(blur_u_h, view_a), mk_blur(blur_u_v, view_b), comp)
+	// t2b: H pass samples tex_t (horizontal uniform); b2a: V pass samples tex_b.
+	(mk_blur(blur_u_h, view_t), mk_blur(blur_u_v, view_b), comp)
 }
 
 fn ubuf_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
@@ -509,24 +584,33 @@ fn vs(@builtin(vertex_index) i: u32) -> VsOut {
     return o;
 }
 
-// three scalar pads (NOT vec3, which would force 16-byte alignment -> 48 bytes
+// scalar pads (NOT vec3, which would force 16-byte alignment -> 48 bytes
 // and mismatch the 32-byte Rust struct)
-struct BlurU { resolution: vec2<f32>, dir: vec2<f32>, sigma: f32, _p0: f32, _p1: f32, _p2: f32 };
+struct BlurU { resolution: vec2<f32>, dir: vec2<f32>, sigma: f32, ramp: f32, _p1: f32, _p2: f32 };
 @group(0) @binding(0) var<uniform> bu: BlurU;
 @group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
 
-// separable Gaussian; fixed 25 taps scaled by sigma so any radius is ~3sigma-covered
+// separable blur; fixed 25 taps scaled by sigma so any radius is ~3sigma-covered.
+// `ramp` picks the falloff kernel: 0 = gaussian, 1 = linear (tent), 2 = s-curve
+// (smoothstep) - the shape of how the halo fades with distance.
 @fragment
 fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
     let texel = 1.0 / bu.resolution;
     let s = max(bu.sigma, 0.0001);
     let spacing = max(1.0, s * 3.0 / 12.0);
+    let ext = s * 3.0; // kernel extent; the linear/s kernels hit zero here
     var sum = vec4<f32>(0.0);
     var wsum = 0.0;
     for (var i = -12; i <= 12; i = i + 1) {
         let off = f32(i) * spacing;
-        let w = exp(-0.5 * off * off / (s * s));
+        var w = exp(-0.5 * off * off / (s * s));
+        if (bu.ramp > 0.5 && bu.ramp < 1.5) {
+            w = max(0.0, 1.0 - abs(off) / ext);
+        } else if (bu.ramp >= 1.5) {
+            let t = clamp(1.0 - abs(off) / ext, 0.0, 1.0);
+            w = t * t * (3.0 - 2.0 * t);
+        }
         let uv = in.uv + bu.dir * (off * texel);
         sum += textureSample(tex, samp, uv) * w;
         wsum += w;
@@ -534,17 +618,36 @@ fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
     return sum / wsum;
 }
 
-struct CompU { intensity: f32, _p0: f32, _p1: f32, _p2: f32 };
+struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32 };
 @group(0) @binding(0) var<uniform> cu: CompU;
 @group(0) @binding(1) var gtex: texture_2d<f32>;   // blurred glyph coverage (alpha)
 @group(0) @binding(2) var gsamp: sampler;
 @group(0) @binding(3) var bgtex: texture_2d<f32>;  // per-pixel glow colour
+@group(0) @binding(4) var ttex: texture_2d<f32>;   // crisp glyph/cursor coverage
 
-// colour the blurred coverage per-pixel by the local bg colour; premultiplied
+// colour the blurred coverage per-pixel by the local bg colour; premultiplied.
+// border: dilate the crisp coverage by border_px (8 taps; linear sampling keeps
+// it antialiased) and take the union with the glow - a solid bg-coloured plate
+// hugging each glyph. The crisp text draws over its interior, so what remains
+// visible is the thin outline around the letterforms.
 @fragment
 fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {
-    let a = clamp(textureSample(gtex, gsamp, in.uv).a * cu.intensity, 0.0, 1.0);
+    let ga = clamp(textureSample(gtex, gsamp, in.uv).a * cu.intensity, 0.0, 1.0);
     let rgb = textureSample(bgtex, gsamp, in.uv).rgb;
+    let texel = 1.0 / cu.resolution;
+    let r = max(cu.border_px, 0.0001);
+    let dg = r * 0.7071; // diagonal taps at the same radius -> round outline
+    var m = 0.0;
+    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>( r, 0.0) * texel).a);
+    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>(-r, 0.0) * texel).a);
+    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>(0.0,  r) * texel).a);
+    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>(0.0, -r) * texel).a);
+    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>( dg,  dg) * texel).a);
+    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>( dg, -dg) * texel).a);
+    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>(-dg,  dg) * texel).a);
+    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>(-dg, -dg) * texel).a);
+    let border = clamp(m, 0.0, 1.0) * step(0.001, cu.border_px);
+    let a = max(ga, border);
     return vec4<f32>(rgb * a, a);
 }
 "#;

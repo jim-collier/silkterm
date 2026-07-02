@@ -958,6 +958,14 @@ impl State {
 		}
 		let ring_end = instances.len() as u32;
 
+		// cursor quads also feed the glow source, so the cursor's halo merges
+		// with the text glow (it still draws crisp ABOVE the composite below)
+		let glow_cursor_quads: Vec<RectInstance> = if glow_on && cfg.cursor_glow {
+			cursors.iter().map(|(_, q)| *q).collect()
+		} else {
+			Vec::new()
+		};
+
 		// cursor quads get their own per-pane ranges, drawn after the glow composite
 		let mut cursor_ranges: Vec<(Rect, u32, u32)> = Vec::new();
 		for (rect, cq) in cursors {
@@ -1207,6 +1215,26 @@ impl State {
 			self.text.trim_atlas();
 			return animating;
 		}
+		// glow source pass has its own prepared set: pane text only (no chrome),
+		// with de-bolded buffers where a pane built one (text_glow_regular_weight)
+		if glow_on {
+			let mut glow_areas: Vec<TextArea> = Vec::new();
+			for p in self.tabs.cur().panes.values() {
+				glow_areas.push(p.glow_text_area(tops[&p.id], margin));
+				glow_areas.extend(p.glyph_areas());
+			}
+			if let Err(e) = self
+				.text
+				.prepare_glow(&self.gfx.device, &self.gfx.queue, glow_areas)
+			{
+				eprintln!(
+					"{}: glow prepare failed; trimming atlas to recover: {e:?}",
+					config::APP_NAME
+				);
+				self.text.trim_atlas();
+				return animating;
+			}
+		}
 
 		// lay out the menu into the overlay renderer: one proportional buffer
 		// per item label (at the gutter), plus a checkmark buffer for checked toggles.
@@ -1287,6 +1315,11 @@ impl State {
 		// text to the glow texture, blur it, then composite under the crisp text.
 		// "Softness" 0..1 -> coverage boost: 0 = hard/solid (x10), 1 = soft/faint (x1)
 		let glow_intensity = 10.0 - cfg.text_glow_softness.clamp(0.0, 1.0) * 9.0;
+		let glow_ramp = match cfg.text_glow_ramp.as_str() {
+			"linear" => 1.0,
+			"s" => 2.0,
+			_ => 0.0,
+		};
 		if glow_on {
 			self.glow.render_bgcolor(
 				&self.gfx.device,
@@ -1295,6 +1328,8 @@ impl State {
 				&glow_cells,
 				config::srgb_f32(cfg.bg),
 			);
+			self.glow
+				.upload_cursors(&self.gfx.device, &self.gfx.queue, &glow_cursor_quads);
 			{
 				let mut p = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 					label: Some("glow text"),
@@ -1312,10 +1347,15 @@ impl State {
 					occlusion_query_set: None,
 					multiview_mask: None,
 				});
-				let _ = self.text.render(&mut p);
+				let _ = self.text.render_glow(&mut p);
+				self.glow.draw_cursors(&mut p);
 			}
-			self.glow
-				.blur(&self.gfx.queue, &mut encoder, cfg.text_glow_radius);
+			self.glow.blur(
+				&self.gfx.queue,
+				&mut encoder,
+				cfg.text_glow_radius,
+				glow_ramp,
+			);
 		}
 
 		let content_area = self.area(); // for clipping the glow to the terminal region
@@ -1380,8 +1420,12 @@ impl State {
 			if glow_on {
 				let (cx, cy, cw, ch) = scissor(content_area, sw, sh);
 				pass.set_scissor_rect(cx, cy, cw, ch);
-				self.glow
-					.composite(&self.gfx.queue, &mut pass, glow_intensity);
+				self.glow.composite(
+					&self.gfx.queue,
+					&mut pass,
+					glow_intensity,
+					cfg.text_glow_border,
+				);
 				pass.set_scissor_rect(0, 0, sw, sh);
 			}
 			// cursor above the glow (halo can't obscure it), still under the crisp text
