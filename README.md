@@ -38,7 +38,7 @@
 <table style="border: none; border-collapse: collapse;">
 	<tr style="border: none; border-collapse: collapse;">
 		<td style="border: none; border-collapse: collapse;"><img src="source/assets/logo.png" alt="Silky" width="320"/></td>
-		<td style="border: none;">SilkTerm is the only known terminal currently in existence, that smooth-scrolls lines on output - for silky-smooth and less-tiring long terminal sessions. It also has smooth cursor options such as phase effect for blinking, and smooth movement.<br /><br />SilkTerm also has detachacble multi-tabs, split-panes, transapency and blur, background image and blur, text outer-glow, and can run without a menu and/or window decorations.<br /><br />Cross-platform. Written in Rust for a small single executable, and blazing speed.</td>
+		<td style="border: none;">SilkTerm is the only known terminal currently in existence, that smooth-scrolls lines on output - for silky-smooth and less-tiring long terminal sessions. It also has smooth cursor options such as phase effect for blinking, and smooth movement.<br /><br />SilkTerm also has detachable multi-tabs, split-panes, transparency and blur, background image and blur, text outer-glow, and can run without a menu and/or window decorations.<br /><br />Cross-platform. Written in Rust for a small single executable, and blazing speed.</td>
 	</tr style="border: none; border-collapse: collapse;">
 </table>
 
@@ -131,7 +131,7 @@ Text can be particularly hard to read, for example when using light text on a no
 
 	- The background image can be dimmed with adjustable %, relative to the background color - and independent of main background transparency.
 
-- **Background image blur**: With an optional gaussian blur radius (without altering the source image), also independent of transparency blur.
+- **Background image blur**: With an optional Gaussian blur radius (without altering the source image), also independent of transparency blur.
 
 - **Split panes**: A native feature to arbitrarily split any pane in either direction. Panes can be freely drag-n-dropped to change locations. Panes split in successive directions are automatically evenly distributed, unless adjusted (with the mouse).
 
@@ -154,6 +154,8 @@ Text can be particularly hard to read, for example when using light text on a no
 - **One codebase for Linux + Windows, both with x86_64 and ARM builds**. The Window and/or ARM versions can be built all at once on x86_64 Linux. *MacOS is built natively on a Mac from the same codebase, but is so far untested (no releases target it yet)*.
 
 - **Loosely based on [Alacritty](https://github.com/alacritty/alacritty)** (not a fork), just for the basement plumbing - to avoid rewriting the complex but solved problems of terminal emulation. Alacritty is also a high-performance, open-source terminal written in Rust.
+
+	- *Fun fact: SilkTerm has more lines of code than Alacritty, especially compared to the subset we use. Which is part of why we chose it for the bare guts without reinventing a thoroughly-and-repeatedly-invented wheel.*
 
 - **GPU-accelerated** with software fallback.
 
@@ -185,10 +187,18 @@ Pre-built releases are not published yet - build from source per the Compiling s
 
 ## Building from source
 
-See [build.md](build.md). Quick start on Linux:
+See [build.md](build.md).
+
+Quick start on Linux:
 
 ```bash
 cargo run --release
+```
+
+Or for the full CI/CD pipeline (lint, debug compile, regression test, profile, release builds, versioned backup, commit to git, push):
+
+```bash
+cicd/cicd.bash [--quick]
 ```
 
 <!--
@@ -211,7 +221,9 @@ See [design.md](project/design.md) for the general architecture and decisions, a
 
 ## Copyrights and licenses
 
-The copyright below applies only to the large volume of work on top of Alacritty. [Alacritty](https://github.com/alacritty/alacritty) itself is dual-licensed under the [Apache License, Version 2.0](https://github.com/alacritty/alacritty/blob/master/LICENSE-APACHE) and [MIT License](https://github.com/alacritty/alacritty/blob/master/LICENSE-MIT). (which are compatible with SilkTerm's [GPL 2.0 or later](https://spdx.org/licenses/GPL-2.0-or-later.html) license.)
+[Alacritty](https://github.com/alacritty/alacritty) is dual-licensed under the [Apache License, Version 2.0](https://github.com/alacritty/alacritty/blob/master/LICENSE-APACHE) and [MIT License](https://github.com/alacritty/alacritty/blob/master/LICENSE-MIT).
+
+SilkTerm's license, although different, is fully compatible with Alacritty's:
 
 > Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)<br />
 > Licensed under the GNU General Public License v2.0 or later ([GPL-2.0-or-later](https://spdx.org/licenses/GPL-2.0-or-later.html)). No warranty.
