@@ -38,7 +38,7 @@
 <table style="border: none; border-collapse: collapse;">
 	<tr style="border: none; border-collapse: collapse;">
 		<td style="border: none; border-collapse: collapse;"><img src="source/assets/logo.png" alt="Silky" width="320"/></td>
-		<td style="border: none;">SilkTerm is the only known terminal on Earth that smooth-scrolls lines on output, for silky-smooth and less-tiring long terminal sessions. It also has all the other features of modern advanced terminals, and more.</td>
+		<td style="border: none;">SilkTerm is the only known terminal currently in existence, that smooth-scrolls lines on output - for silky-smooth and less-tiring long terminal sessions. It also has smooth cursor options such as phase effect for blinking, and smooth movement.<br /><br />SilkTerm also has detachacble multi-tabs, split-panes, transapency and blur, background image and blur, text outer-glow, and can run without a menu and/or window decorations.<br /><br />Cross-platform. Written in Rust for a small single executable, and blazing speed.</td>
 	</tr style="border: none; border-collapse: collapse;">
 </table>
 
@@ -51,12 +51,12 @@
 	- [Why smooth-scrolling output](#why-smooth-scrolling-output)
 	- [Why text outer glow](#why-text-outer-glow)
 - [Features](#features)
-- [Limitations](#limitations)
+	- [One minor limitation inherent to all terminals](#one-minor-limitation-inherent-to-all-terminals)
 - [Configuration](#configuration)
 - [Installing](#installing)
 - [Building from source](#building-from-source)
 - [Design](#design)
-- [Copyright and license](#copyright-and-license)
+- [Copyrights and licenses](#copyrights-and-licenses)
 
 <!-- /TOC -->
 
@@ -64,9 +64,9 @@
 
 ### Why smooth-scrolling output
 
-Literally *all* other terminal emulators in existence at the time this was written, currently snap scrolling output to fixed lines. Nothing ever appears in-between those lines (except when mouse-scrolling on some terminals).
+Literally *all* other terminal emulators in existence at the time this was written, currently snap scrolling output to fixed lines. Nothing can appear in-between those lines (except when mouse-scrolling on some terminals).
 
-For output that can be sporadic - e.g. something scrolling slowly one line-at-a-time sometimes, then jumping several lines at once other times (e.g. while watching a live log file with `tail -f`), [the eye/brain combo can struggle to track the output](https://www.youtube.com/watch?v=yQaC-ZzTf78), and you get "lost" trying to read it.
+For output that can be sporadic - e.g. something scrolling slowly one line-at-a-time sometimes, then jumping several lines at once other times (e.g. while watching a live log file with `tail -f`), [the eye/brain combo can struggle to track the output](https://www.youtube.com/watch?v=yQaC-ZzTf78), and you get "lost" trying to follow it.
 
 One analogy is playing a video game with mouse-look at, say, 3 frames-per-second visual output. It is nearly impossible to keep your bearings, when the world view jumps wildly from frame-to-frame. But at say 240 FPS on a matching Hz monitor, it looks buttery smooth and immersive, and the subtle task of mentally maintaining where you are, becomes trivial.
 
@@ -93,17 +93,17 @@ SilkTerm's smooth-scrolling output is a joy to work with, you really have to try
 
 ### Why text outer glow
 
-Generally speaking, "outer-glow" is a readability aid - whereas angled "drop-shadow" is a creative effect. (This isn't a hard-and-fast graphic design "rule" - as there is lots of overlap in both directions.)
+Generally speaking, "outer-glow" (usually of the opposite luminosity to the text) is a readability aid - whereas angled "drop-shadow" is a creative effect. (Though, this isn't a hard-and-fast graphic design "rule" - as there is lots of overlap in both directions.)
 
 If you've ever used a terminal that supports background transparency, and/or background images (both of which SilkTerm offers), that novelty can quickly wear off. You'll notice that the text might be too hard to read, particularly in a long computing session.
 
 Text can be particularly hard to read, for example when using light text on a normally dark background, and:
 
-- The background is very transparent, and the window is on top of bright and/or visually "busy" content below. And/or,
+- The background is very transparent, and the terminal is on top of bright and/or visually "busy" content below. And/or,
 
 - The background image is bright.
 
-- (Or vice-versa for dark text on a normally light background, with dark elements under the text.)
+(*Or vice-versa for dark text on a normally light background, with dark elements under the text.*)
 
 "Drop-shadow" is a feature available on at least a half-dozen other terminal emulators, but apparently only for novelty effect. Because if you use it for very long, it can make your mental workload subtly higher, and your visual cortex tires faster - or something. (I don't know, I'm not a neuroscientist, why are you asking me.)
 
@@ -117,23 +117,29 @@ Text can be particularly hard to read, for example when using light text on a no
 
 - **Smooth mouse wheel scrolling**. Several other terminals offer this feature.
 
+- **Smooth cursor movement**. This is the cherry on top of "smooth".
+
+- **Outer glow behind text**. This optional feature helps keep text readable even when the text is on top of similar-colored backgrounds and/or when using high background transparency. This is the only known terminal to offer it, though there are several terminals that offer angled *drop-shadow* (which ironically can make text *harder* to read). Outer glow is conceptually similar - but enhances, rather than reduces, readability.
+
+- **Cursor size and animation options**. Phased blinking, or smoothly pulsing in size. (Or just regular.) Adjustable rate.
+
 - **Background transparency**. The background (with adjustable %) becomes see-through, but not the text.
 
-- **Outer glow behind text**. This optional feature helps keep text readable even over similar-colored backgrounds and/or high transparency. This is the only known terminal to offer it, though there are several terminals that do offer angled *drop-shadow* (which ironically can make text *harder* to read). Outer glow is conceptually similar - but enhances, rather than reduces, readability.
+- **Background transparency blur**. If using background transparency and this is enabled, everything behind the terminal is blurred. Supported on most window compositors. (But limited to the compositor's options. SilkTerm just talks to the WM to enable it.)
 
 - **User-selectable background image**. User-selectable, with a few dozen cool offerings included.
 
 	- The background image can be dimmed with adjustable %, relative to the background color - and independent of main background transparency.
 
-- **Background image blur**: With an optional gaussian blur radius (without altering the source image).
+- **Background image blur**: With an optional gaussian blur radius (without altering the source image), also independent of transparency blur.
 
-- **Split panes**: A native feature to arbitrarily split any pane in either direction. Panes can be freely drag-n-dropped to change locations.
+- **Split panes**: A native feature to arbitrarily split any pane in either direction. Panes can be freely drag-n-dropped to change locations. Panes split in successive directions are automatically evenly distributed, unless adjusted (with the mouse).
 
-- **Window decorations and/or menu can be disabled**, for "nothing but terminal". Fullscreen can also be toggled.
+- **Window decorations and/or the menu can be disabled**, for "nothing but terminal". Fullscreen can also be toggled.
 
-- **Unicode and emoji support**, as well as true-color, 256-color, 16-color text; bold & italic.
+- **Robust Unicode and emoji support**. With internal Unicode fallback rendering for the glyphs that the chosen display font can't display.
 
-- **Internal Unicode fallback rendering** for the glyphs that the chosen display font can't display.
+- **True-color, 256-color, and 16-color text support, as well as standard bold & italic**.
 
 - **Read-only output toggle**.
 
@@ -141,31 +147,27 @@ Text can be particularly hard to read, for example when using light text on a no
 
 	- This can be very useful for creating one-line shell scripts that launch custom SilkTerm instances with specific size, background, color, opacity, and unique shells per window, tab, and/or pane. (Without overwriting the main config file.)
 
-- **Arbitrary alternate config files possible**, another way to launch SilkTerm with wildly different options, without overwriting the main config file.
+- **Arbitrary alternate config files**, another way to launch SilkTerm with wildly different options, without overwriting the main config file.
 
-- **Written in rust** for minimum executable size, no runtime dependencies, and maximum speed. (Several terminal emulators - such as the revered `terminator` - are written in interpreted Python.)
+- **Written in Rust** for minimum executable size, no runtime dependencies, and maximum speed. (Several terminal emulators - such as the revered `terminator` - are written in interpreted Python.)
 
-- **One codebase for Linux + Windows**. The Window and/or ARM versions can be built all at once on x86_64 Linux. *MacOS should build natively on a Mac, but is so far untested (no releases target it yet)*.
+- **One codebase for Linux + Windows, both with x86_64 and ARM builds**. The Window and/or ARM versions can be built all at once on x86_64 Linux. *MacOS is built natively on a Mac from the same codebase, but is so far untested (no releases target it yet)*.
 
-- **Loosely based on [Alacritty](https://github.com/alacritty/alacritty)** (not a fork) for the basement plumbing, to avoid rewriting the complex but solved problems of terminal emulation. Alacritty is a high-performance terminal written in Rust.
+- **Loosely based on [Alacritty](https://github.com/alacritty/alacritty)** (not a fork), just for the basement plumbing - to avoid rewriting the complex but solved problems of terminal emulation. Alacritty is also a high-performance, open-source terminal written in Rust.
 
 - **GPU-accelerated** with software fallback.
 
 - **Simple and sane configuration**. No pages of nested tabs representing multiple settings metaphors. (E.g. no separate "Profiles" and "Layouts".) If you want to get fancy with multiple sets of wildly different options - that's easy with alternate config files, and/or scripted launch-time arguments.
 
-## Limitations
+### One minor limitation inherent to all terminals
 
 - SilkTerm can only smooth-scroll text written to `stdout` and `stderr`.
 
 	- This covers the overwhelming majority of Linux terminal tools and programs.
 
-	- However, some TUI programs - such as `nano`, `vim`, `tmux` - manage scrolling themselves, and directly control the terminal buffer in "raw mode". SilkTerm can't handle such output. Scrolling within such programs behaves the same as on any other terminal - snapped to lines, no in-between.
+	- However, some TUI programs - such as `nano`, `vim`, `tmux` - directly control the terminal buffer in "raw mode", and handle everything themselves. Scrolling within such programs behaves the same as on any other terminal - snapped to lines, no in-between.
 
-- Some rare hybrid programs write to `stdout` and `stderr`, *and* write to the terminal buffer in raw mode for fixed portions. If that fixed portion is on the last line, it will visibly "bounce" slightly, as text is pushed up the screen. (But at least the bounce is smooth.)
-
-	- It may be possible to work around this someday, but for the foreseeable future, it's just a minor niggle to live with, and (arguably) not annoying.
-
-	- The only program currently known to exhibit this behavior, is `apt`, with the status bar fixed to the bottom. (If you notice any others, please file an issue)
+		- But the other features still work in that case: smooth-moving and phased cursor, text outer-glow, background options, etc.
 
 ## Configuration
 
@@ -175,7 +177,7 @@ On first run SilkTerm writes a commented config file with all defaults to:
 $XDG_CONFIG_HOME/silkterm/config.toml   (falls back to ~/.config/...)
 ```
 
-Edit it and restart. Unknown or malformed entries fall back to defaults; delete the file to regenerate it.
+If making changes directly (rather than through Settings), you can apply them immediately with the "Reload config" menu item.
 
 ## Installing
 
@@ -205,9 +207,11 @@ afterwards); `cargo build` regenerates `Cargo.lock`.
 
 ## Design
 
-See [design.md](project/design.md) for the general architecture and decisions, and [backlog.md](project/backlog.md) for bugs and features before the first release. (All of which are tracked as [Issues](https://github.com/jim-collier/silkterm/issues) after initial release.)
+See [design.md](project/design.md) for the general architecture and decisions, and [backlog.md](project/backlog.md) for bugs and features tracked before the first release. (Github [Issues](https://github.com/jim-collier/silkterm/issues) are used after the first release.)
 
-## Copyright and license
+## Copyrights and licenses
+
+The copyright below applies only to the large volume of work on top of Alacritty. [Alacritty](https://github.com/alacritty/alacritty) itself is dual-licensed under the [Apache License, Version 2.0](https://github.com/alacritty/alacritty/blob/master/LICENSE-APACHE) and [MIT License](https://github.com/alacritty/alacritty/blob/master/LICENSE-MIT). (which are compatible with SilkTerm's [GPL 2.0 or later](https://spdx.org/licenses/GPL-2.0-or-later.html) license.)
 
 > Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)<br />
 > Licensed under the GNU General Public License v2.0 or later ([GPL-2.0-or-later](https://spdx.org/licenses/GPL-2.0-or-later.html)). No warranty.
