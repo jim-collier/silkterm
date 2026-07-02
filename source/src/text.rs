@@ -38,36 +38,58 @@ pub fn mono_attrs() -> Attrs<'static> {
 	a
 }
 
-// Concrete family behind chrome's `sans_attrs`, pinned alongside the mono family.
-static SANS_FAMILY: RwLock<Option<&'static str>> = RwLock::new(None);
+// Concrete family + style behind chrome's `ui_attrs`, pinned alongside the mono
+// family. Chrome follows the DESKTOP interface font - family, weight and slant -
+// serif or not (the owner's is "GentiumAlt Bold"); a sans is only the fallback
+// when no desktop setting is readable.
+static UI_FAMILY: RwLock<Option<&'static str>> = RwLock::new(None);
+static UI_BOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static UI_ITALIC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-fn sans_family() -> Option<&'static str> {
-	*SANS_FAMILY.read().unwrap()
+fn ui_family() -> Option<&'static str> {
+	*UI_FAMILY.read().unwrap()
 }
 
-fn pin_sans_family(fs: &FontSystem) {
-	let name = resolve_sans_family(fs).map(|s| &*Box::leak(s.into_boxed_str()));
-	*SANS_FAMILY.write().unwrap() = name;
+fn pin_ui_family(fs: &FontSystem) {
+	use std::sync::atomic::Ordering;
+	let sys = crate::sysfont::interface();
+	let name = resolve_ui_family(fs).map(|s| &*Box::leak(s.into_boxed_str()));
+	*UI_FAMILY.write().unwrap() = name;
+	// honour the desktop's weight/slant only when its family actually resolved
+	// (a fallback sans shouldn't inherit "Bold" meant for another face)
+	let using_sys = match (name, &sys.family) {
+		(Some(n), Some(f)) => n.eq_ignore_ascii_case(f),
+		_ => false,
+	};
+	UI_BOLD.store(using_sys && sys.bold, Ordering::Relaxed);
+	UI_ITALIC.store(using_sys && sys.italic, Ordering::Relaxed);
 }
 
-// Proportional (sans-serif) attrs for chrome - menus, the menu bar, dialogs -
-// so they read like native UI rather than terminal text. Uses a pinned concrete
-// family (resolve_sans_family); generic `Family::SansSerif` is unreliable here.
-pub fn sans_attrs() -> Attrs<'static> {
+// Proportional attrs for chrome - menus, the menu bar, dialogs - in the pinned
+// desktop interface font (family/weight/slant), so chrome reads like the rest
+// of the user's desktop rather than terminal text.
+pub fn ui_attrs() -> Attrs<'static> {
+	use std::sync::atomic::Ordering;
 	let mut a = Attrs::new();
-	a.family = match sans_family() {
+	a.family = match ui_family() {
 		Some(name) => Family::Name(name),
 		None => Family::SansSerif,
 	};
+	if UI_BOLD.load(Ordering::Relaxed) {
+		a.weight = glyphon::Weight::BOLD;
+	}
+	if UI_ITALIC.load(Ordering::Relaxed) {
+		a.style = glyphon::Style::Italic;
+	}
 	a
 }
 
-// Resolve a concrete sans-serif family for chrome. `Family::SansSerif` can't be
-// trusted: fontdb's generic sans defaults to "Arial", and when that isn't
-// installed the query falls through to whatever matches - often a serif (e.g. a
-// GNOME serif document font). So pin the OS sans-serif if installed, else a
-// known-good sans, validated against the db so a bad name can't slip through.
-fn resolve_sans_family(fs: &FontSystem) -> Option<String> {
+// Resolve a concrete family for chrome: the desktop interface font first (the
+// whole point - serif or not), else the OS sans-serif, else a known-good sans.
+// Everything is validated against the db so a bad name can't slip through -
+// generic `Family::SansSerif` can't be trusted (fontdb defaults it to "Arial"
+// and falls through to whatever matches when that's absent).
+fn resolve_ui_family(fs: &FontSystem) -> Option<String> {
 	let db = fs.db();
 	let installed = |fam: &str| {
 		let q = fontdb::Query {
@@ -88,9 +110,11 @@ fn resolve_sans_family(fs: &FontSystem) -> Option<String> {
 		"Helvetica Neue",
 		"Arial",
 	];
-	crate::sysfont::sans_serif()
-		.map(str::to_string)
+	crate::sysfont::interface()
+		.family
+		.clone()
 		.into_iter()
+		.chain(crate::sysfont::sans_serif().map(str::to_string))
 		.chain(curated.iter().map(|s| s.to_string()))
 		.find(|fam| installed(fam))
 }
@@ -160,6 +184,10 @@ pub struct TextCtx {
 	// physical-px inset between content and pane edge
 	pub margin: f32,
 	pub metrics: Metrics,
+	// Chrome (menus/tabs/dialogs) renders at the DESKTOP interface font size,
+	// independent of the terminal font size; bars and rows size from this.
+	pub ui_line_h: f32,
+	ui_metrics: Metrics,
 	// primary monospace face + a coverage cache, so the pane can tell which
 	// glyphs fall back to another font (those drift from the cell grid and get
 	// rendered per-cell instead - see Pane::build).
@@ -176,7 +204,7 @@ impl TextCtx {
 	) -> Self {
 		let mut font_system = FontSystem::new();
 		pin_mono_family(&font_system);
-		pin_sans_family(&font_system);
+		pin_ui_family(&font_system);
 
 		let font_size = (config::effective_font_size() * scale).round();
 		let line_height = (font_size * config::settings().line_height_scale).round();
@@ -184,6 +212,18 @@ impl TextCtx {
 
 		let cell_w = measure_cell(&mut font_system, metrics);
 		let cell_h = line_height.max(1.0);
+
+		// Chrome follows the desktop UI font size (pt -> px at the 96-DPI
+		// reference, like the mono path); terminal size is the fallback so the
+		// old chrome look is kept where no desktop setting is readable.
+		let ui_px = crate::sysfont::interface()
+			.size_pt
+			.map(|pt| pt * 96.0 / 72.0)
+			.filter(|px| *px >= 4.0)
+			.unwrap_or_else(config::effective_font_size);
+		let ui_px = (ui_px * scale).round().max(8.0);
+		let ui_line_h = (ui_px * 1.35).round(); // roomy UI leading; descenders must clear buttons
+		let ui_metrics = Metrics::new(ui_px, ui_line_h);
 
 		let mono_face = {
 			let fam = mono_family();
@@ -213,6 +253,8 @@ impl TextCtx {
 			cell_h,
 			margin: (config::settings().margin * scale).round(),
 			metrics,
+			ui_line_h,
+			ui_metrics,
 			mono_face,
 			cover_cache: HashMap::new(),
 		}
@@ -283,15 +325,32 @@ impl TextCtx {
 		}
 	}
 
-	// Width in px of `text` shaped with `attrs` (proportional or mono). Used to
-	// size chrome (menu widths, menu-bar title hit-boxes) to the real text.
-	pub fn measure_text(&mut self, text: &str, attrs: &Attrs) -> f32 {
-		let mut buf = Buffer::new(&mut self.font_system, self.metrics);
+	// Width in px of chrome `text` shaped with `attrs` at the UI font size.
+	// Sizes menus, bar titles, dialog labels to the real rendered text.
+	pub fn measure_ui_text(&mut self, text: &str, attrs: &Attrs) -> f32 {
+		self.measure_at(text, attrs, self.ui_metrics)
+	}
+
+	fn measure_at(&mut self, text: &str, attrs: &Attrs, metrics: Metrics) -> f32 {
+		let mut buf = Buffer::new(&mut self.font_system, metrics);
 		buf.set_wrap(&mut self.font_system, Wrap::None);
 		buf.set_size(&mut self.font_system, None, None);
 		buf.set_text(&mut self.font_system, text, attrs, Shaping::Advanced, None);
 		buf.shape_until_scroll(&mut self.font_system, false);
 		buf.layout_runs().next().map_or(0.0, |r| r.line_w)
+	}
+
+	// Chrome buffer: UI-font metrics, natural (proportional) advances - no
+	// cell-grid snap, chrome has no grid.
+	pub fn new_ui_buffer(&mut self, w_px: f32, h_px: f32) -> Buffer {
+		let mut buf = Buffer::new(&mut self.font_system, self.ui_metrics);
+		buf.set_wrap(&mut self.font_system, Wrap::None);
+		buf.set_size(
+			&mut self.font_system,
+			Some(w_px.max(1.0)),
+			Some(h_px.max(1.0)),
+		);
+		buf
 	}
 
 	pub fn new_buffer(&mut self, w_px: f32, h_px: f32) -> Buffer {
@@ -405,14 +464,14 @@ fn measure_cell(fs: &mut FontSystem, metrics: Metrics) -> f32 {
 mod tests {
 	use super::*;
 
-	// Chrome must pin a concrete sans face, never fall back to generic
+	// Chrome must pin a concrete face, never fall back to generic
 	// `Family::SansSerif` (which lands on a serif when fontdb's "Arial" default
 	// is absent). Only needs a FontSystem (no GPU), so it runs headless.
 	#[test]
-	fn sans_resolves_to_concrete_family() {
+	fn ui_font_resolves_to_concrete_family() {
 		let fs = FontSystem::new();
-		let fam = resolve_sans_family(&fs);
-		eprintln!("resolved chrome sans family: {fam:?}");
-		assert!(fam.is_some(), "no concrete sans family resolved for chrome");
+		let fam = resolve_ui_family(&fs);
+		eprintln!("resolved chrome UI family: {fam:?}");
+		assert!(fam.is_some(), "no concrete UI family resolved for chrome");
 	}
 }

@@ -371,10 +371,10 @@ impl State {
 	// Pixels reserved at the very top by the menu bar (0 when hidden).
 	// Bar heights track the menu font's line height so they scale with font size.
 	fn menu_bar_h(&self) -> f32 {
-		self.text.cell_h + MENU_BAR_VPAD
+		self.text.ui_line_h + MENU_BAR_VPAD
 	}
 	fn tab_bar_h(&self) -> f32 {
-		self.text.cell_h + TAB_BAR_VPAD
+		self.text.ui_line_h + TAB_BAR_VPAD
 	}
 	fn menubar_h(&self) -> f32 {
 		if self.menu_bar {
@@ -463,15 +463,15 @@ impl State {
 	// Build and place a dropdown/context popup, clamped on-screen. Width is the
 	// widest (proportional) label plus the checkmark gutter and padding.
 	fn popup(&mut self, target: PaneId, entries: Vec<Entry>, mx: f32, my: f32) {
-		let attrs = crate::text::sans_attrs();
+		let attrs = crate::text::ui_attrs();
 		let mut textw: f32 = 0.0;
 		for e in &entries {
 			if let Entry::Item { label, .. } = e {
-				textw = textw.max(self.text.measure_text(label, &attrs));
+				textw = textw.max(self.text.measure_ui_text(label, &attrs));
 			}
 		}
 		let w = config::MENU_GUTTER + textw + config::MENU_PAD_X * 2.0;
-		let item_h = self.text.cell_h;
+		let item_h = self.text.ui_line_h;
 		let menu = ContextMenu {
 			x: mx,
 			y: my,
@@ -553,11 +553,11 @@ impl State {
 	// Per-title (x_left, width) layout of the menu bar, used for drawing and
 	// hit-testing so they can't disagree. Titles use the proportional font.
 	fn menubar_layout(&mut self) -> Vec<(f32, f32)> {
-		let attrs = crate::text::sans_attrs();
+		let attrs = crate::text::ui_attrs();
 		let mut x = 0.0;
 		let mut out = Vec::with_capacity(MENU_BAR.len());
 		for t in MENU_BAR {
-			let w = self.text.measure_text(t, &attrs) + MENU_BAR_PAD * 2.0;
+			let w = self.text.measure_ui_text(t, &attrs) + MENU_BAR_PAD * 2.0;
 			out.push((x, w));
 			x += w;
 		}
@@ -983,12 +983,12 @@ impl State {
 			} else if self.mods.alt_key() {
 				// Alt held (no dropdown open): underline each title's accelerator
 				// letter, like the open-dropdown items do (press the letter to open).
-				let acc = crate::text::sans_attrs();
-				let uy = MENU_BAR_VPAD / 2.0 + self.text.cell_h - 2.0;
+				let acc = crate::text::ui_attrs();
+				let uy = MENU_BAR_VPAD / 2.0 + self.text.ui_line_h - 2.0;
 				for (i, &(x, _)) in layout.iter().enumerate() {
 					if let Some(c) = MENU_BAR[i].chars().next() {
 						let mut buf = [0u8; 4];
-						let cw = self.text.measure_text(c.encode_utf8(&mut buf), &acc);
+						let cw = self.text.measure_ui_text(c.encode_utf8(&mut buf), &acc);
 						instances.push(rect_inst(x + MENU_BAR_PAD, uy, cw, 1.0, config::MENU_FG));
 					}
 				}
@@ -1055,14 +1055,16 @@ impl State {
 				}
 			}
 			// accelerator underline under each item's first letter (press it to pick)
-			let acc_attrs = crate::text::sans_attrs();
-			let ch = self.text.cell_h;
+			let acc_attrs = crate::text::ui_attrs();
+			let ch = self.text.ui_line_h;
 			let lx = menu.x + config::MENU_PAD_X + config::MENU_GUTTER;
 			for (i, e) in menu.entries.iter().enumerate() {
 				if let Entry::Item { label, .. } = e {
 					if let Some(c) = label.chars().next() {
 						let mut buf = [0u8; 4];
-						let cw = self.text.measure_text(c.encode_utf8(&mut buf), &acc_attrs);
+						let cw = self
+							.text
+							.measure_ui_text(c.encode_utf8(&mut buf), &acc_attrs);
 						let top = menu.row_top(i) + (menu.item_h - ch) / 2.0;
 						instances.push(rect_inst(lx, top + ch - 3.0, cw, 1.0, config::MENU_FG));
 					}
@@ -1101,8 +1103,8 @@ impl State {
 		let mut tab_bufs: Vec<Buffer> = Vec::new();
 		let tab_w = (self.gfx.config.width as f32 / self.tabs.len().max(1) as f32).min(TAB_MAX_W);
 		for title in &tab_titles {
-			let mut b = self.text.new_buffer((tab_w - 16.0).max(8.0), tab_h);
-			let mut attrs = crate::text::sans_attrs();
+			let mut b = self.text.new_ui_buffer((tab_w - 16.0).max(8.0), tab_h);
+			let mut attrs = crate::text::ui_attrs();
 			attrs.color_opt = Some(menu_fg);
 			b.set_text(
 				&mut self.text.font_system,
@@ -1118,8 +1120,8 @@ impl State {
 		let mut menubar_bufs: Vec<Buffer> = Vec::new();
 		if self.menu_bar {
 			for t in MENU_BAR {
-				let mut b = self.text.new_buffer(120.0, menu_h);
-				let mut attrs = crate::text::sans_attrs();
+				let mut b = self.text.new_ui_buffer(240.0, menu_h);
+				let mut attrs = crate::text::ui_attrs();
 				attrs.color_opt = Some(menu_fg);
 				b.set_text(
 					&mut self.text.font_system,
@@ -1211,7 +1213,7 @@ impl State {
 		if let Some(menu) = &self.menu {
 			// (left, top, buffer) collected first so the borrow of self.text ends
 			let mut specs: Vec<(f32, f32, Buffer)> = Vec::new();
-			let mut attrs = crate::text::sans_attrs();
+			let mut attrs = crate::text::ui_attrs();
 			attrs.color_opt = Some(GColor::rgb(
 				config::MENU_FG[0],
 				config::MENU_FG[1],
@@ -1221,8 +1223,8 @@ impl State {
 				let Entry::Item { label, check, .. } = e else {
 					continue;
 				};
-				let top = menu.row_top(i) + (menu.item_h - self.text.cell_h) / 2.0;
-				let mut b = self.text.new_buffer(menu.w, menu.item_h);
+				let top = menu.row_top(i) + (menu.item_h - self.text.ui_line_h) / 2.0;
+				let mut b = self.text.new_ui_buffer(menu.w, menu.item_h);
 				b.set_text(
 					&mut self.text.font_system,
 					label,
@@ -1233,7 +1235,7 @@ impl State {
 				b.shape_until_scroll(&mut self.text.font_system, false);
 				specs.push((menu.x + config::MENU_PAD_X + config::MENU_GUTTER, top, b));
 				if *check == Some(true) {
-					let mut c = self.text.new_buffer(config::MENU_GUTTER, menu.item_h);
+					let mut c = self.text.new_ui_buffer(config::MENU_GUTTER, menu.item_h);
 					c.set_text(
 						&mut self.text.font_system,
 						"\u{2713}",
@@ -1828,7 +1830,7 @@ impl ApplicationHandler<UserEvent> for App {
 			s.rows
 		});
 		let mb_h = if menu_bar {
-			text.cell_h + MENU_BAR_VPAD
+			text.ui_line_h + MENU_BAR_VPAD
 		} else {
 			0.0
 		};
@@ -1854,7 +1856,7 @@ impl ApplicationHandler<UserEvent> for App {
 		};
 		let top = mb_h
 			+ if n_tabs > 1 {
-				text.cell_h + TAB_BAR_VPAD
+				text.ui_line_h + TAB_BAR_VPAD
 			} else {
 				0.0
 			};

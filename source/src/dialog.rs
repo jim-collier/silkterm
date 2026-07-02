@@ -15,7 +15,7 @@ use crate::config;
 use crate::gfx::{Gfx, RectInstance, RectRenderer};
 use crate::pane::Rect;
 use crate::settings_ui::{Action, SettingsDialog};
-use crate::text::{TextCtx, sans_attrs};
+use crate::text::{TextCtx, ui_attrs};
 
 // A laid-out line of static dialog text (window-relative coords).
 struct Line {
@@ -109,9 +109,16 @@ impl DialogWin {
 	}
 
 	pub fn new_settings(el: &ActiveEventLoop) -> anyhow::Result<Self> {
-		let dlg = SettingsDialog::new(0.0, 0.0); // laid out at the origin
+		// provisional window first: sizing needs a TextCtx to measure labels in
+		// the real UI font (same pattern as About)
+		let (window, mut gfx, mut text, rects) = Self::make(el, "Settings".into(), 560.0, 800.0)?;
+		let (label_w, btn_w) = crate::settings_ui::chrome_widths(&mut text);
+		let dlg = SettingsDialog::new(0.0, 0.0, text.ui_line_h, label_w, btn_w); // laid out at the origin
 		let (w, h) = dlg.size();
-		let (window, gfx, text, rects) = Self::make(el, "Settings".into(), w, h)?;
+		let want = winit::dpi::PhysicalSize::new(w.ceil() as u32, h.ceil() as u32);
+		if let Some(applied) = window.request_inner_size(want) {
+			gfx.resize(applied.width, applied.height);
+		}
 		Ok(Self {
 			window,
 			gfx,
@@ -240,12 +247,12 @@ impl DialogWin {
 			Content::About { lines, .. } => {
 				clear = crate::settings_ui::dialog_bg();
 				for ln in lines {
-					let mut a = sans_attrs();
+					let mut a = ui_attrs();
 					a.color_opt = Some(GColor::rgb(ln.color[0], ln.color[1], ln.color[2]));
 					if ln.bold {
 						a.weight = Weight::BOLD;
 					}
-					let mut b = self.text.new_buffer(w as f32, self.text.cell_h);
+					let mut b = self.text.new_ui_buffer(w as f32, self.text.ui_line_h);
 					b.set_text(
 						&mut self.text.font_system,
 						&ln.text,
@@ -259,16 +266,16 @@ impl DialogWin {
 			}
 			Content::Settings(d) => {
 				clear = crate::settings_ui::dialog_bg();
-				rect_inst = d.rects(self.text.cell_h);
-				for it in d.texts(self.text.cell_h) {
-					let mut a = sans_attrs();
+				rect_inst = d.rects(self.text.ui_line_h);
+				for it in d.texts(self.text.ui_line_h) {
+					let mut a = ui_attrs();
 					a.color_opt = Some(GColor::rgb(it.color[0], it.color[1], it.color[2]));
 					if it.bold {
 						a.weight = Weight::BOLD;
 					}
 					let mut b = self
 						.text
-						.new_buffer(w as f32, self.text.cell_h * it.scale.max(1.0));
+						.new_ui_buffer(w as f32, self.text.ui_line_h * it.scale.max(1.0));
 					b.set_text(
 						&mut self.text.font_system,
 						&it.text,
@@ -419,14 +426,14 @@ fn layout_about(
 		("Click the link to open it  ·  Esc to close".into(), menu_dim, 0.0, gap, false, 1.0),
 	];
 
-	let attrs = sans_attrs();
+	let attrs = ui_attrs();
 	let pad = 20.0;
-	let line_h = text.cell_h;
+	let line_h = text.ui_line_h;
 	let mut content_w: f32 = 0.0;
 	let mut total_h = 0.0;
 	let mut widths = Vec::with_capacity(content.len());
 	for (t, _, indent, gap_before, _, scale) in &content {
-		let wdt = indent + text.measure_text(t, &attrs) * scale;
+		let wdt = indent + text.measure_ui_text(t, &attrs) * scale;
 		widths.push(wdt);
 		content_w = content_w.max(wdt);
 		total_h += gap_before + line_h * scale;
