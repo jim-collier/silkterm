@@ -260,6 +260,21 @@ impl DialogWin {
 		}
 	}
 
+	// caret navigation / forward-delete inside a focused settings field
+	pub fn edit_nav(&mut self, k: winit::keyboard::NamedKey) {
+		use winit::keyboard::NamedKey as N;
+		if let Content::Settings(d) = &mut self.content {
+			match k {
+				N::ArrowLeft => d.cursor_left(),
+				N::ArrowRight => d.cursor_right(),
+				N::Home => d.cursor_home(),
+				N::End => d.cursor_end(),
+				N::Delete => d.delete_forward(),
+				_ => {}
+			}
+		}
+	}
+
 	pub fn key_escape(&mut self) -> Option<DialogAction> {
 		match &mut self.content {
 			Content::About { .. } => Some(DialogAction::Close),
@@ -321,7 +336,12 @@ impl DialogWin {
 			}
 			Content::Settings(d) => {
 				clear = crate::settings_ui::dialog_bg();
-				let (fixed, rows) = d.rects(self.text.ui_line_h);
+				let lh = self.text.ui_line_h;
+				let a = ui_attrs();
+				let (fixed, rows) = {
+					let text = &mut self.text;
+					d.rects(lh, |s| text.measure_ui_text(s, &a))
+				};
 				rect_split = fixed.len();
 				scissor_vp = Some(d.viewport());
 				rect_inst = fixed;
