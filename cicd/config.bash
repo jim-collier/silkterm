@@ -54,8 +54,11 @@ TEST_CMD=(cargo test)
 ## Stage 3 (after tests): lints. Gating; house allows live in the workspace
 ## Cargo.toml [workspace.lints.clippy]. PROBE decides tool availability -
 ## a failed probe skips the step with a warning instead of aborting.
-LINT_PROBE=(cargo clippy --version)
-LINT_CMD=(cargo clippy --workspace --all-targets -- -D warnings)
+## clippy comes from the rustup toolchain while the build stages use the system
+## cargo; the two rustcs sharing one target dir throws E0514 (artifacts from the
+## other compiler), so lint pins the rustup PATH and gets its own target dir.
+LINT_PROBE=(env "PATH=${HOME}/.cargo/bin:${PATH}" cargo clippy --version)
+LINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" CARGO_TARGET_DIR=target/lint cargo clippy --workspace --all-targets -- -D warnings)
 
 ## Stage 3 (after lints): dependency police (licenses/advisories/duplicates,
 ## policy in deny.toml). Non-gating for now; tighten once the report is tuned.

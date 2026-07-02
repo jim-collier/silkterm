@@ -42,12 +42,43 @@ pub fn mono_attrs() -> Attrs<'static> {
 // family. Chrome follows the DESKTOP interface font - family, weight and slant -
 // serif or not (the owner's is "GentiumAlt Bold"); a sans is only the fallback
 // when no desktop setting is readable.
+//
+// The weights are pinned as exact face weights, not the desktop's nominal ones:
+// cosmic-text only uses the requested family when a face matches the requested
+// weight EXACTLY (its fallback filters font_weight_diff == 0), so asking for
+// Bold in a family that ships no bold face silently swaps in a bold fallback
+// sans - the family must win over the weight. It also compares family names
+// case-SENSITIVELY, so the db's own spelling is what gets pinned.
 static UI_FAMILY: RwLock<Option<&'static str>> = RwLock::new(None);
-static UI_BOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static UI_WEIGHT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(400);
+static UI_WEIGHT_BOLD: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(700);
 static UI_ITALIC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn ui_family() -> Option<&'static str> {
 	*UI_FAMILY.read().unwrap()
+}
+
+// Nearest face the family actually has to (weight, slant); None when the family
+// has no faces at all (shouldn't happen for a db-validated name).
+fn nearest_face(
+	db: &fontdb::Database,
+	fam: &str,
+	want_w: u16,
+	want_italic: bool,
+) -> Option<(u16, bool)> {
+	let mut best: Option<(u16, bool)> = None;
+	for f in db.faces() {
+		if !f.families.iter().any(|(n, _)| n == fam) {
+			continue;
+		}
+		let ital = f.style == fontdb::Style::Italic;
+		let cand = (ital != want_italic, f.weight.0.abs_diff(want_w), f.weight.0);
+		let beats = best.is_none_or(|(bw, bi)| cand < (bi != want_italic, bw.abs_diff(want_w), bw));
+		if beats {
+			best = Some((f.weight.0, ital));
+		}
+	}
+	best
 }
 
 fn pin_ui_family(fs: &FontSystem) {
@@ -61,8 +92,30 @@ fn pin_ui_family(fs: &FontSystem) {
 		(Some(n), Some(f)) => n.eq_ignore_ascii_case(f),
 		_ => false,
 	};
-	UI_BOLD.store(using_sys && sys.bold, Ordering::Relaxed);
-	UI_ITALIC.store(using_sys && sys.italic, Ordering::Relaxed);
+	let want_w: u16 = if using_sys && sys.bold { 700 } else { 400 };
+	let want_i = using_sys && sys.italic;
+	let (body_w, body_i, title_w) = match name {
+		Some(n) => {
+			let db = fs.db();
+			let (w, i) = nearest_face(db, n, want_w, want_i).unwrap_or((400, false));
+			// emphasis (dialog titles/headers): the family's boldest-available
+			// take on 700, again snapped so it can't eject the family
+			let tw = nearest_face(db, n, 700, i).map_or(w, |(tw, _)| tw);
+			(w, i && want_i, tw)
+		}
+		None => (400, false, 700),
+	};
+	UI_WEIGHT.store(body_w, Ordering::Relaxed);
+	UI_WEIGHT_BOLD.store(title_w, Ordering::Relaxed);
+	UI_ITALIC.store(body_i, Ordering::Relaxed);
+}
+
+// Emphasis weight for chrome (dialog titles, section headers): the closest
+// weight to Bold the pinned family really ships. Use this instead of a literal
+// `Weight::BOLD`, which kicks the whole family out when no 700 face exists.
+pub fn ui_bold_weight() -> glyphon::Weight {
+	use std::sync::atomic::Ordering;
+	glyphon::Weight(UI_WEIGHT_BOLD.load(Ordering::Relaxed))
 }
 
 // Proportional attrs for chrome - menus, the menu bar, dialogs - in the pinned
@@ -75,9 +128,7 @@ pub fn ui_attrs() -> Attrs<'static> {
 		Some(name) => Family::Name(name),
 		None => Family::SansSerif,
 	};
-	if UI_BOLD.load(Ordering::Relaxed) {
-		a.weight = glyphon::Weight::BOLD;
-	}
+	a.weight = glyphon::Weight(UI_WEIGHT.load(Ordering::Relaxed));
 	if UI_ITALIC.load(Ordering::Relaxed) {
 		a.style = glyphon::Style::Italic;
 	}
@@ -91,14 +142,19 @@ pub fn ui_attrs() -> Attrs<'static> {
 // and falls through to whatever matches when that's absent).
 fn resolve_ui_family(fs: &FontSystem) -> Option<String> {
 	let db = fs.db();
+	// returns the db's canonical spelling of the family (cosmic-text's fallback
+	// compares face family names case-sensitively - the candidate string won't do)
 	let installed = |fam: &str| {
 		let q = fontdb::Query {
 			families: &[fontdb::Family::Name(fam)],
 			..Default::default()
 		};
-		db.query(&q)
-			.and_then(|id| db.face(id))
-			.is_some_and(|f| f.families.iter().any(|(n, _)| n.eq_ignore_ascii_case(fam)))
+		db.query(&q).and_then(|id| db.face(id)).and_then(|f| {
+			f.families
+				.iter()
+				.find(|(n, _)| n.eq_ignore_ascii_case(fam))
+				.map(|(n, _)| n.clone())
+		})
 	};
 	let curated = [
 		"DejaVu Sans",
@@ -116,7 +172,7 @@ fn resolve_ui_family(fs: &FontSystem) -> Option<String> {
 		.into_iter()
 		.chain(crate::sysfont::sans_serif().map(str::to_string))
 		.chain(curated.iter().map(|s| s.to_string()))
-		.find(|fam| installed(fam))
+		.find_map(|fam| installed(&fam))
 }
 
 // Resolve the monospace family to pin for every weight: the user's configured
@@ -473,5 +529,34 @@ mod tests {
 		let fam = resolve_ui_family(&fs);
 		eprintln!("resolved chrome UI family: {fam:?}");
 		assert!(fam.is_some(), "no concrete UI family resolved for chrome");
+	}
+
+	#[test]
+	fn ui_attrs_shape_in_pinned_family() {
+		let mut fs = FontSystem::new();
+		pin_ui_family(&fs);
+		let attrs = ui_attrs();
+		let Family::Name(want) = attrs.family else {
+			eprintln!("no pinned family on this box; skipping");
+			return;
+		};
+		let mut b = Buffer::new(&mut fs, Metrics::new(17.0, 22.0));
+		b.set_size(&mut fs, Some(400.0), Some(30.0));
+		b.set_text(&mut fs, "File Edit", &attrs, Shaping::Advanced, None);
+		b.shape_until_scroll(&mut fs, false);
+		for run in b.layout_runs() {
+			for g in run.glyphs {
+				let fams: Vec<String> = fs
+					.db()
+					.face(g.font_id)
+					.map(|f| f.families.iter().map(|(n, _)| n.clone()).collect())
+					.unwrap_or_default();
+				eprintln!("glyph font: {fams:?} weight_req={:?}", attrs.weight);
+				assert!(
+					fams.iter().any(|n| n == want),
+					"chrome glyph shaped in {fams:?}, not the pinned family {want:?}"
+				);
+			}
+		}
 	}
 }
