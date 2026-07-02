@@ -219,6 +219,27 @@ fn next_boundary(s: &str, i: usize) -> usize {
 	}
 	s.len()
 }
+// Byte index of the caret nearest a click at `rel_x` px into the text (0 = the
+// field's left text edge). Walks char boundaries, picking the one whose measured
+// prefix width is closest to the click.
+fn caret_from_click(s: &str, rel_x: f32, measure: &mut impl FnMut(&str) -> f32) -> usize {
+	if rel_x <= 0.0 {
+		return 0;
+	}
+	let (mut best, mut best_d) = (0usize, f32::MAX);
+	let mut i = 0;
+	loop {
+		let d = (measure(&s[..i]) - rel_x).abs();
+		if d < best_d {
+			best_d = d;
+			best = i;
+		}
+		if i >= s.len() {
+			return best;
+		}
+		i = next_boundary(s, i);
+	}
+}
 
 fn fields() -> Vec<Spec> {
 	use Key::*;
@@ -457,7 +478,10 @@ pub struct SettingsDialog {
 	drag_thumb: Option<f32>, // scrollbar-thumb drag: grab offset within the thumb
 	drag: Option<usize>,     // slider row being dragged
 	edit: Option<EditState>, // row being typed (hex for Color, path for Text)
+	focus: Option<usize>,    // keyboard-focused control row (None = mouse-only)
 	alt: bool,               // Alt held: underline button accelerators (Cancel/Apply/OK)
+	shift: bool,             // Shift held (Shift+Tab walks focus backwards)
+	ctrl: bool,              // Ctrl held (Ctrl+Tab switches tabs)
 	// UI-font-driven geometry: rows/title/buttons grow with the desktop font so
 	// a large or wide (e.g. bold serif) interface font never truncates. The
 	// consts above are the floor (the classic look at small sizes).
@@ -558,7 +582,10 @@ impl SettingsDialog {
 			drag_thumb: None,
 			drag: None,
 			edit: None,
+			focus: None,
 			alt: false,
+			shift: false,
+			ctrl: false,
 			line_h,
 			label_w,
 			btn_w,
@@ -616,9 +643,12 @@ impl SettingsDialog {
 	}
 
 	// Alt-key accelerators: while Alt is held the buttons underline their first
-	// letter (Cancel/Apply/OK), and Alt+that-letter triggers the button.
-	pub fn set_alt(&mut self, on: bool) {
-		self.alt = on;
+	// letter (Cancel/Apply/OK), and Alt+that-letter triggers the button. Shift
+	// (Shift+Tab) and Ctrl (Ctrl+Tab) steer keyboard focus / tab switching.
+	pub fn set_mods(&mut self, alt: bool, shift: bool, ctrl: bool) {
+		self.alt = alt;
+		self.shift = shift;
+		self.ctrl = ctrl;
 	}
 	pub fn alt(&self) -> bool {
 		self.alt
@@ -629,6 +659,146 @@ impl SettingsDialog {
 			'a' => Action::Apply,
 			'o' => Action::Ok,
 			_ => Action::None,
+		}
+	}
+
+	// ---- keyboard focus + control activation ----------------------------------
+
+	// A row that can hold keyboard focus: a real control (not a header) that isn't
+	// greyed out by a prerequisite toggle. Tab order skips both.
+	fn is_focusable(&self, i: usize) -> bool {
+		!matches!(self.specs[i].kind, Kind::Header(_)) && !self.disabled(self.specs[i].key)
+	}
+	// Focusable rows on the active tab, in visual order.
+	fn focusables(&self) -> Vec<usize> {
+		(0..self.specs.len())
+			.filter(|&i| self.spec_tab[i] == self.tab && self.is_focusable(i))
+			.collect()
+	}
+	fn first_focus(&self) -> Option<usize> {
+		self.focusables().first().copied()
+	}
+	// Tab / Shift+Tab (and Down / Up): move focus to the next/prev focusable
+	// control on the active tab, wrapping, and scroll it into view.
+	fn focus_move(&mut self, forward: bool) {
+		self.commit_edit();
+		let on_tab = self.focusables();
+		if on_tab.is_empty() {
+			self.focus = None;
+			return;
+		}
+		let cur = self.focus.and_then(|f| on_tab.iter().position(|&i| i == f));
+		let n = on_tab.len();
+		let next = match cur {
+			Some(p) if forward => (p + 1) % n,
+			Some(p) => (p + n - 1) % n,
+			None if forward => 0,
+			None => n - 1,
+		};
+		self.focus = Some(on_tab[next]);
+		self.scroll_focus_into_view();
+	}
+	// Scroll the rows region so the focused control is fully visible.
+	fn scroll_focus_into_view(&mut self) {
+		let Some(i) = self.focus else { return };
+		let vp = self.viewport();
+		let top = self.row_y(i);
+		let bottom = top + self.row_h(&self.specs[i].kind);
+		if top < vp.y {
+			self.scroll -= vp.y - top; // row above viewport -> scroll it down into view
+		} else if bottom > vp.y + vp.h {
+			self.scroll += bottom - (vp.y + vp.h); // row below -> scroll up
+		}
+		self.scroll = self.scroll.clamp(0.0, self.max_scroll());
+	}
+	// Ctrl+Tab / Ctrl+Shift+Tab: cycle the active tab, focusing its first control.
+	fn tab_switch(&mut self, forward: bool) {
+		self.commit_edit();
+		let n = self.tab_ws.len();
+		if n == 0 {
+			return;
+		}
+		self.tab = if forward {
+			(self.tab + 1) % n
+		} else {
+			(self.tab + n - 1) % n
+		};
+		self.scroll = 0.0;
+		self.drag = None;
+		self.focus = self.first_focus();
+	}
+	// The Tab key: Ctrl switches tabs, otherwise walk control focus (Shift = back).
+	pub fn key_tab(&mut self) {
+		if self.ctrl {
+			self.tab_switch(!self.shift);
+		} else {
+			self.focus_move(!self.shift);
+		}
+	}
+	// Up / Down arrows walk control focus (a peer of Tab).
+	pub fn key_vertical(&mut self, forward: bool) {
+		self.focus_move(forward);
+	}
+	// Left / Right: caret motion while a field is being edited, otherwise adjust
+	// the focused slider (by one step) or move a focused radio's selection.
+	pub fn key_horizontal(&mut self, dir: i32) {
+		if self.edit.is_some() {
+			if dir < 0 {
+				self.cursor_left();
+			} else {
+				self.cursor_right();
+			}
+			return;
+		}
+		let Some(i) = self.focus else { return };
+		let key = self.specs[i].key;
+		if self.disabled(key) {
+			return;
+		}
+		match self.specs[i].kind {
+			Kind::Slider { min, max, int } => {
+				let step = if int { 1.0 } else { (max - min) / 100.0 };
+				let mut v = (self.get_f32(key) + dir as f32 * step).clamp(min, max);
+				if int {
+					v = v.round();
+				}
+				self.set_f32(key, v);
+			}
+			Kind::Radio(options) => {
+				let sel = self.get_radio(key) as i32;
+				let ns = (sel + dir).clamp(0, options.len() as i32 - 1);
+				self.set_radio(key, ns as usize);
+			}
+			_ => {}
+		}
+	}
+	// Space: type a space into an active edit, else activate the focused control -
+	// flip a toggle, or open a text/color field for editing.
+	pub fn key_space(&mut self) {
+		if self.edit.is_some() {
+			self.char_input(' ');
+			return;
+		}
+		let Some(i) = self.focus else { return };
+		let key = self.specs[i].key;
+		if self.disabled(key) {
+			return;
+		}
+		match self.specs[i].kind {
+			Kind::Toggle => self.set_toggle(key, !self.get_toggle(key)),
+			Kind::Text => {
+				let buf = self.get_text(key);
+				let cur = buf.len();
+				self.edit = Some(EditState { row: i, buf, cur });
+			}
+			Kind::Color => {
+				self.edit = Some(EditState {
+					row: i,
+					buf: "#".to_string(),
+					cur: 1,
+				});
+			}
+			_ => {}
 		}
 	}
 
@@ -735,6 +905,16 @@ impl SettingsDialog {
 			y: self.row_y(i) + (ROW_H - RADIO_BOX) / 2.0,
 			w: RADIO_BOX,
 			h: RADIO_BOX,
+		}
+	}
+	// Row-spanning box drawn around the keyboard-focused control.
+	fn focus_rect(&self, i: usize) -> Rect {
+		let y = self.row_y(i);
+		Rect {
+			x: self.rect.x + PAD - 2.0,
+			y: y + 3.0,
+			w: self.rect.w - PAD * 2.0 + 4.0,
+			h: self.row_h(&self.specs[i].kind) - 6.0,
 		}
 	}
 	// Cancel, Apply, OK rects (right-aligned)
@@ -1042,7 +1222,9 @@ impl SettingsDialog {
 		}
 	}
 
-	pub fn mouse_down(&mut self, x: f32, y: f32) -> Action {
+	// `measure` gives a string's rendered width in the UI font (for placing the
+	// caret at the clicked position inside a text field).
+	pub fn mouse_down(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) -> Action {
 		// buttons first
 		for (action, r, _) in self.buttons() {
 			if r.contains(x, y) {
@@ -1061,6 +1243,7 @@ impl SettingsDialog {
 					self.tab = k;
 					self.scroll = 0.0;
 					self.drag = None;
+					self.focus = None; // mouse mode; Tab re-establishes focus
 				}
 				return Action::None;
 			}
@@ -1106,6 +1289,7 @@ impl SettingsDialog {
 						&& x <= t.x + t.w + 8.0
 						&& (y - (t.y + t.h / 2.0)).abs() <= 12.0;
 					if hit {
+						self.focus = Some(i);
 						self.drag = Some(i);
 						self.drag_to(x);
 						return Action::None;
@@ -1114,6 +1298,7 @@ impl SettingsDialog {
 				Kind::Color => {
 					if self.swatch(i).contains(x, y) || self.hexbox(i).contains(x, y) {
 						// start a fresh hex entry (type 6 digits); swatch updates live
+						self.focus = Some(i);
 						self.edit = Some(EditState {
 							row: i,
 							buf: "#".to_string(),
@@ -1123,10 +1308,12 @@ impl SettingsDialog {
 					}
 				}
 				Kind::Text => {
-					if self.textbox(i).contains(x, y) {
-						// edit the current value (empty when none), caret at the end
+					let tb = self.textbox(i);
+					if tb.contains(x, y) {
+						// edit the current value (empty when none); caret at the click
 						let buf = self.get_text(self.specs[i].key);
-						let cur = buf.len();
+						let cur = caret_from_click(&buf, x - (tb.x + 6.0), measure);
+						self.focus = Some(i);
 						self.edit = Some(EditState { row: i, buf, cur });
 						return Action::None;
 					}
@@ -1134,6 +1321,7 @@ impl SettingsDialog {
 				Kind::Toggle => {
 					if self.checkbox(i).contains(x, y) {
 						let key = self.specs[i].key;
+						self.focus = Some(i);
 						self.set_toggle(key, !self.get_toggle(key));
 						return Action::None;
 					}
@@ -1146,6 +1334,7 @@ impl SettingsDialog {
 							&& x <= b.x + RADIO_PITCH - 8.0
 							&& (y - (b.y + b.h / 2.0)).abs() <= RADIO_BOX / 2.0 + 4.0
 						{
+							self.focus = Some(i);
 							self.set_radio(self.specs[i].key, k);
 							return Action::None;
 						}
@@ -1190,6 +1379,25 @@ impl SettingsDialog {
 	}
 
 	pub fn char_input(&mut self, c: char) {
+		// typing into a keyboard-focused (but not-yet-open) text/color field opens it
+		if self.edit.is_none() {
+			let Some(i) = self.focus else { return };
+			match self.specs[i].kind {
+				Kind::Text => {
+					let buf = self.get_text(self.specs[i].key);
+					let cur = buf.len();
+					self.edit = Some(EditState { row: i, buf, cur });
+				}
+				Kind::Color => {
+					self.edit = Some(EditState {
+						row: i,
+						buf: "#".to_string(),
+						cur: 1,
+					});
+				}
+				_ => return,
+			}
+		}
 		let Some(e) = &mut self.edit else {
 			return;
 		};
@@ -1454,6 +1662,12 @@ impl SettingsDialog {
 				}
 			}
 		}
+		// keyboard-focus ring around the active control (scrolls + clips with rows)
+		if let Some(fi) = self.focus {
+			if self.spec_tab[fi] == self.tab && !matches!(self.specs[fi].kind, Kind::Header(_)) {
+				border(&mut out, self.focus_rect(fi), 1.0, dlg().focus_out);
+			}
+		}
 		for (_, r, label) in self.buttons() {
 			fixed.push(q(r.x, r.y, r.w, r.h, dlg().btn_bg));
 			border(&mut fixed, r, 1.0, dlg().btn_hl);
@@ -1715,6 +1929,91 @@ mod tests {
 		assert_eq!(d.scroll, 0.0);
 		d.wheel(-1e9);
 		assert_eq!(d.scroll, d.max_scroll());
+	}
+
+	#[test]
+	fn keyboard_focus_walks_controls() {
+		let mut d = mk_dialog(2000.0);
+		d.tab = 4; // Scrolling: two always-enabled sliders
+		let f = d.focusables();
+		assert_eq!(f.len(), 2, "scrolling tab has two focusable rows");
+		d.set_mods(false, false, false);
+		d.key_tab(); // from nothing -> first
+		assert_eq!(d.focus, Some(f[0]));
+		d.key_tab();
+		assert_eq!(d.focus, Some(f[1]));
+		d.key_tab(); // wraps to first
+		assert_eq!(d.focus, Some(f[0]));
+		d.set_mods(false, true, false); // Shift+Tab walks back (wraps to last)
+		d.key_tab();
+		assert_eq!(d.focus, Some(f[1]));
+	}
+
+	#[test]
+	fn keyboard_skips_headers_and_disabled() {
+		let mut d = mk_dialog(2000.0);
+		d.tab = 0; // Appearance
+		// with transparency + glow off, the opacity/blur/glow rows are disabled
+		d.edited.transparent_background = false;
+		d.edited.text_glow = false;
+		for &i in &d.focusables() {
+			assert!(!matches!(d.specs[i].kind, super::Kind::Header(_)));
+			assert!(!d.disabled(d.specs[i].key), "disabled row in tab order");
+		}
+	}
+
+	#[test]
+	fn space_toggles_focused_boolean() {
+		let mut d = mk_dialog(2000.0);
+		d.tab = 0;
+		d.key_tab(); // first focusable = Transparency (a toggle)
+		let before = d.edited.transparent_background;
+		d.key_space();
+		assert_eq!(d.edited.transparent_background, !before);
+	}
+
+	#[test]
+	fn arrows_adjust_slider_and_radio() {
+		use super::Key;
+		let mut d = mk_dialog(2000.0);
+		// slider: focus the scroll-speed slider, nudge it both ways
+		d.tab = 4;
+		d.key_tab();
+		let base = d.get_f32(Key::ScrollTau);
+		d.key_horizontal(-1);
+		let lower = d.get_f32(Key::ScrollTau);
+		assert!(lower <= base);
+		d.key_horizontal(1);
+		d.key_horizontal(1);
+		assert!(d.get_f32(Key::ScrollTau) >= lower);
+		// radio: focus the (always-enabled) bg-fit radio and move its selection
+		let i = d.specs.iter().position(|s| s.key == Key::BgFit).unwrap();
+		d.tab = d.spec_tab[i];
+		d.focus = Some(i);
+		let before = d.get_radio(Key::BgFit);
+		d.key_horizontal(1);
+		assert!(d.get_radio(Key::BgFit) > before || before == 1);
+		d.key_horizontal(-1);
+		assert_eq!(d.get_radio(Key::BgFit), 0);
+	}
+
+	#[test]
+	fn ctrl_tab_switches_tabs() {
+		let mut d = mk_dialog(2000.0);
+		d.set_mods(false, false, true); // Ctrl held
+		let t0 = d.tab;
+		d.key_tab();
+		assert_ne!(d.tab, t0);
+		assert!(d.focus.is_some(), "tab switch lands focus on a control");
+	}
+
+	#[test]
+	fn caret_from_click_picks_nearest() {
+		let mut m = |s: &str| s.chars().count() as f32; // 1 unit per ascii char
+		assert_eq!(super::caret_from_click("hello", -5.0, &mut m), 0);
+		assert_eq!(super::caret_from_click("hello", 0.0, &mut m), 0);
+		assert_eq!(super::caret_from_click("hello", 2.4, &mut m), 2);
+		assert_eq!(super::caret_from_click("hello", 100.0, &mut m), 5);
 	}
 
 	#[test]

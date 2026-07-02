@@ -104,15 +104,16 @@ impl App {
 					match &ke.logical_key {
 						Key::Named(NamedKey::Escape) => act = d.key_escape(),
 						Key::Named(NamedKey::Enter) => act = d.key_enter(),
+						Key::Named(NamedKey::Tab) => d.key_tab(),
 						Key::Named(NamedKey::Backspace) => d.backspace(),
-						Key::Named(NamedKey::Space) => d.char_input(' '),
-						Key::Named(
-							k @ (NamedKey::ArrowLeft
-							| NamedKey::ArrowRight
-							| NamedKey::Home
-							| NamedKey::End
-							| NamedKey::Delete),
-						) => d.edit_nav(*k),
+						Key::Named(NamedKey::Space) => d.key_space(),
+						Key::Named(NamedKey::ArrowUp) => d.focus_vertical(false),
+						Key::Named(NamedKey::ArrowDown) => d.focus_vertical(true),
+						Key::Named(NamedKey::ArrowLeft) => d.key_horizontal(-1),
+						Key::Named(NamedKey::ArrowRight) => d.key_horizontal(1),
+						Key::Named(k @ (NamedKey::Home | NamedKey::End | NamedKey::Delete)) => {
+							d.edit_nav(*k)
+						}
 						Key::Character(s) => {
 							for c in s.chars() {
 								if let Some(a) = d.key_char(c) {
@@ -127,7 +128,8 @@ impl App {
 			}
 			WindowEvent::ModifiersChanged(m) => {
 				if let Some(d) = &mut self.dialog {
-					d.set_alt(m.state().alt_key());
+					let s = m.state();
+					d.set_mods(s.alt_key(), s.shift_key(), s.control_key());
 					self.dialog_dirty = true;
 				}
 			}

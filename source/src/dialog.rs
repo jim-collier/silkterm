@@ -210,7 +210,11 @@ impl DialogWin {
 				if mx < 0.0 || my < 0.0 || mx > w || my > h {
 					return None;
 				}
-				map_action(d.mouse_down(mx, my))
+				// disjoint field borrow: measure via the text context (click-to-caret)
+				let a = ui_attrs();
+				let text = &mut self.text;
+				let mut measure = |s: &str| text.measure_ui_text(s, &a);
+				map_action(d.mouse_down(mx, my, &mut measure))
 			}
 		}
 	}
@@ -228,16 +232,36 @@ impl DialogWin {
 		}
 	}
 
-	pub fn char_input(&mut self, c: char) {
+	// Modifier state (from ModifiersChanged): Alt underlines button accelerators;
+	// Shift/Ctrl steer Tab-key focus / tab switching.
+	pub fn set_mods(&mut self, alt: bool, shift: bool, ctrl: bool) {
 		if let Content::Settings(d) = &mut self.content {
-			d.char_input(c);
+			d.set_mods(alt, shift, ctrl);
 		}
 	}
 
-	// Alt held (from ModifiersChanged): underline the button accelerators.
-	pub fn set_alt(&mut self, on: bool) {
+	// Tab key: walk control focus (Ctrl = switch tabs, Shift = backwards).
+	pub fn key_tab(&mut self) {
 		if let Content::Settings(d) = &mut self.content {
-			d.set_alt(on);
+			d.key_tab();
+		}
+	}
+	// Up / Down: walk control focus.
+	pub fn focus_vertical(&mut self, forward: bool) {
+		if let Content::Settings(d) = &mut self.content {
+			d.key_vertical(forward);
+		}
+	}
+	// Left / Right: caret motion (editing) or adjust the focused slider/radio.
+	pub fn key_horizontal(&mut self, dir: i32) {
+		if let Content::Settings(d) = &mut self.content {
+			d.key_horizontal(dir);
+		}
+	}
+	// Space: type into an active edit, or activate the focused control.
+	pub fn key_space(&mut self) {
+		if let Content::Settings(d) = &mut self.content {
+			d.key_space();
 		}
 	}
 
@@ -260,13 +284,12 @@ impl DialogWin {
 		}
 	}
 
-	// caret navigation / forward-delete inside a focused settings field
+	// Home / End / Delete inside a focused settings field (Left/Right go through
+	// key_horizontal so they can double as slider/radio adjust when not editing).
 	pub fn edit_nav(&mut self, k: winit::keyboard::NamedKey) {
 		use winit::keyboard::NamedKey as N;
 		if let Content::Settings(d) = &mut self.content {
 			match k {
-				N::ArrowLeft => d.cursor_left(),
-				N::ArrowRight => d.cursor_right(),
 				N::Home => d.cursor_home(),
 				N::End => d.cursor_end(),
 				N::Delete => d.delete_forward(),
