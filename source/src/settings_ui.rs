@@ -350,24 +350,47 @@ pub struct SettingsDialog {
 	drag: Option<usize>,           // slider row being dragged
 	edit: Option<(usize, String)>, // row being typed (hex for Color, path for Text)
 	alt: bool,                     // Alt held: underline button accelerators (Cancel/Apply/OK)
+	// UI-font-driven geometry: rows/title/buttons grow with the desktop font so
+	// a large or wide (e.g. bold serif) interface font never truncates. The
+	// consts above are the floor (the classic look at small sizes).
+	line_h: f32,
+	label_w: f32,
+	btn_w: f32,
 }
 
 impl SettingsDialog {
-	fn row_h(kind: &Kind) -> f32 {
+	fn row_h_for(kind: &Kind, line_h: f32) -> f32 {
 		match kind {
-			Kind::Header(_) => HEADER_H,
-			_ => ROW_H,
+			Kind::Header(_) => HEADER_H.max(line_h + 20.0),
+			_ => ROW_H.max(line_h + 8.0),
 		}
 	}
+	fn row_h(&self, kind: &Kind) -> f32 {
+		Self::row_h_for(kind, self.line_h)
+	}
+	fn title_h(&self) -> f32 {
+		TITLE_H.max(self.line_h * TITLE_SCALE + 10.0)
+	}
+	fn btn_h(&self) -> f32 {
+		BTN_H.max(self.line_h + 8.0)
+	}
 
-	pub fn new(screen_w: f32, screen_h: f32) -> Self {
+	// `line_h` is the chrome (UI font) line height; `label_w`/`btn_w` are the
+	// measured widest label/button in that font (see chrome_widths) so nothing
+	// truncates. The dialog widens and its rows grow as needed.
+	pub fn new(screen_w: f32, screen_h: f32, line_h: f32, label_w: f32, btn_w: f32) -> Self {
 		let specs = fields();
-		let rows: f32 = specs.iter().map(|s| Self::row_h(&s.kind)).sum();
-		let h = PAD + TITLE_H + rows + 14.0 + BTN_H + PAD;
+		let label_w = label_w.max(LABEL_W);
+		let btn_w = btn_w.max(BTN_W);
+		let rows: f32 = specs.iter().map(|s| Self::row_h_for(&s.kind, line_h)).sum();
+		let title_h = TITLE_H.max(line_h * TITLE_SCALE + 10.0);
+		let btn_h = BTN_H.max(line_h + 8.0);
+		let h = PAD + title_h + rows + 14.0 + btn_h + PAD;
+		let w = W + (label_w - LABEL_W) + (btn_w - BTN_W) * 3.0;
 		let rect = Rect {
-			x: ((screen_w - W) / 2.0).max(0.0),
+			x: ((screen_w - w) / 2.0).max(0.0),
 			y: ((screen_h - h) / 2.0).max(0.0),
-			w: W,
+			w,
 			h,
 		};
 		let s = (*config::settings()).clone();
@@ -379,6 +402,9 @@ impl SettingsDialog {
 			drag: None,
 			edit: None,
 			alt: false,
+			line_h,
+			label_w,
+			btn_w,
 		}
 	}
 
@@ -423,14 +449,14 @@ impl SettingsDialog {
 
 	fn row_y(&self, i: usize) -> f32 {
 		self.rect.y
-			+ PAD + TITLE_H
+			+ PAD + self.title_h()
 			+ self.specs[..i]
 				.iter()
-				.map(|s| Self::row_h(&s.kind))
+				.map(|s| self.row_h(&s.kind))
 				.sum::<f32>()
 	}
 	fn control_x(&self) -> f32 {
-		self.rect.x + PAD + LABEL_W
+		self.rect.x + PAD + self.label_w
 	}
 	fn track(&self, i: usize) -> Rect {
 		Rect {
@@ -485,15 +511,15 @@ impl SettingsDialog {
 	}
 	// Cancel, Apply, OK rects (right-aligned)
 	fn buttons(&self) -> [(Action, Rect, &'static str); 3] {
-		let y = self.rect.y + self.rect.h - PAD - BTN_H;
-		let x_ok = self.rect.x + self.rect.w - PAD - BTN_W;
-		let x_apply = x_ok - BTN_GAP - BTN_W;
-		let x_cancel = x_apply - BTN_GAP - BTN_W;
+		let y = self.rect.y + self.rect.h - PAD - self.btn_h();
+		let x_ok = self.rect.x + self.rect.w - PAD - self.btn_w;
+		let x_apply = x_ok - BTN_GAP - self.btn_w;
+		let x_cancel = x_apply - BTN_GAP - self.btn_w;
 		let mk = |x| Rect {
 			x,
 			y,
-			w: BTN_W,
-			h: BTN_H,
+			w: self.btn_w,
+			h: self.btn_h(),
 		};
 		[
 			(Action::Cancel, mk(x_cancel), "Cancel"),
@@ -918,7 +944,7 @@ impl SettingsDialog {
 				Kind::Header(_) => {
 					// faint rule near the bottom of the (tall) heading row, leaving a
 					// clear gap below the heading text above it
-					let y = self.row_y(i) + HEADER_H - 8.0;
+					let y = self.row_y(i) + self.row_h(&Kind::Header("")) - 8.0;
 					let x = self.rect.x + PAD;
 					out.push(q(x, y, self.rect.w - PAD * 2.0, 1.0, dlg().panel_border));
 				}
@@ -1035,6 +1061,23 @@ impl SettingsDialog {
 		}
 		out
 	}
+}
+
+// Widest field label and button caption at the current UI font, so the dialog
+// sizes to the real text (a wide serif or a big desktop size never truncates).
+pub fn chrome_widths(text: &mut crate::text::TextCtx) -> (f32, f32) {
+	let attrs = crate::text::ui_attrs();
+	let label_w = fields()
+		.iter()
+		.map(|f| text.measure_ui_text(f.label, &attrs))
+		.fold(0.0f32, f32::max)
+		+ 14.0;
+	let btn_w = ["Cancel", "Apply", "OK"]
+		.iter()
+		.map(|t| text.measure_ui_text(t, &attrs))
+		.fold(0.0f32, f32::max)
+		+ 24.0;
+	(label_w, btn_w)
 }
 
 // Returns true if `a` and `b` differ in any field that needs a text-context
