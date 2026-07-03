@@ -8,15 +8,22 @@
 #  shellcheck disable=2181  ## 'Check exit code directly, not indirectly with $?.'
 
 ##	Purpose:
-##		Launch the terminal for interactive dogfooding, passing through any script
-##		arguments. By default runs the newest CI/CD dogfood build (fSilkTermDogfood);
-##		edit fMain() to launch a different terminal instead.
+##		- Launch the terminal for interactive dogfooding, passing through any script
+##		  arguments. By default runs the newest CI/CD dogfood build (fSilkTermDogfood).
+##		- Edit fMain() to launch a different terminal instead.
 ##	History: At bottom of script.
 
 ##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
 ##	Licensed under The MIT License (MIT). Full text at:
 ##		https://mit-license.org/
 ##	SPDX-License-Identifier: MIT
+
+
+## Entry point: what this launcher runs. Edit this to launch a different terminal
+## (e.g. `exec /usr/bin/xterm "${@}"`); by default it runs the newest dogfood build.
+fMain(){
+	fSilkTermDogfood  "${@}"
+}
 
 
 ## Run the newest dogfood build with the passed arguments. cicd.bash stage 6
@@ -26,6 +33,7 @@ fSilkTermDogfood(){
 
 	local -r  prefix="slktrmdf"
 	local -ar searchDirs=(
+		"${HOME}/.local/bin"
 		"${HOME}/synced/0-0/common/exec/util/linux/bin"
 		"/usr/local/sbin"
 	)
@@ -46,16 +54,25 @@ fSilkTermDogfood(){
 		done
 	done
 
-	## Run it, replacing this process (or report that none exists).
+	## No match: report and bail.
 	[[ -n "${newestPath}" ]] || { echo -e "\nError in $(basename "${BASH_SOURCE[0]}"): No '${prefix}_*' build found in: ${searchDirs[*]}\n" >&2; return 1; }
-	exec "${newestPath}" "${@}"
-}
 
+	## Prepend a random background image (if the backgrounds dir has any) and a title
+	## tagged with the running build's timestamp, so a dogfood window is visually
+	## distinct and identifiable. Both precede "$@", so a caller can still override.
+	local -r  buildStamp="${newestName#"${prefix}"_}"
+	local -r  bgDir="${HOME}/.config/silkterm/backgrounds"
+	local -a  bgs=()
+	local     bg
+	for bg in "${bgDir}"/*.{png,jpg,jpeg,PNG,JPG,JPEG}; do
+		[[ -f "${bg}" ]] && bgs+=("${bg}")   # non-matching globs stay literal; -f drops them
+	done
+	local -a preArgs=()
+	if ((${#bgs[@]})); then preArgs+=("--background-image=${bgs[RANDOM % ${#bgs[@]}]}"); fi
+	preArgs+=("--title=SilkTerm [dogfood ${buildStamp}]")
 
-## Entry point: what this launcher runs. Edit this to launch a different terminal
-## (e.g. `exec /usr/bin/xterm "${@}"`); by default it runs the newest dogfood build.
-fMain(){
-	fSilkTermDogfood  "${@}"
+	## Run it, replacing this process.
+	exec "${newestPath}" "${preArgs[@]}" "${@}"
 }
 
 
