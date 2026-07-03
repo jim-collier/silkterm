@@ -386,7 +386,8 @@ struct State {
 	bar_open: Option<usize>,   // which top-level menu's dropdown is open, if any
 	quit: bool,                // set by File->Quit; the event handler exits after applying
 	win_opacity: Option<f32>,  // CLI --background-opacity override (this window only)
-	win_title: Option<String>, // CLI --title override (else the app name)
+	win_title: Option<String>, // CLI --title override (else "AppName - <tab title>")
+	last_win_title: String,    // last string set on the window (skip redundant set_title)
 	pending_about: bool, // request to open the About window (App acts on it; needs the event loop)
 	pending_settings: bool, // request to open the Settings window
 }
@@ -432,11 +433,32 @@ impl State {
 		}
 	}
 
-	// The window title (taskbar / alt-tab) is just the app name (or a CLI
-	// --title override); per-program info lives in the tab titles.
-	fn update_title(&self) {
-		self.window
-			.set_title(self.win_title.as_deref().unwrap_or(config::APP_NAME));
+	// The active tab's title ("<shell> [<program>]" or a per-tab --title override).
+	fn active_tab_title(&mut self) -> String {
+		let pm = self.tabs.cur_mut();
+		if let Some(t) = &pm.title_override {
+			return t.clone();
+		}
+		let fid = pm.focused;
+		pm.panes
+			.get_mut(&fid)
+			.map(|p| p.term.tab_title())
+			.unwrap_or_else(|| config::APP_NAME.into())
+	}
+
+	// The window title (taskbar / alt-tab): a CLI --title override verbatim, else
+	// "AppName - <active tab title>" so it tracks the focused tab's program.
+	// Called on tab/focus change and each rendered frame; set_title only fires when
+	// the string actually changed (avoids WM flicker / churn).
+	fn update_title(&mut self) {
+		let title = match &self.win_title {
+			Some(t) => t.clone(),
+			None => format!("{} - {}", config::APP_NAME, self.active_tab_title()),
+		};
+		if title != self.last_win_title {
+			self.window.set_title(&title);
+			self.last_win_title = title;
+		}
 	}
 
 	// Effective window opacity: a CLI --background-opacity override for this
@@ -880,6 +902,9 @@ impl State {
 		if area.w < 1.0 || area.h < 1.0 {
 			return false;
 		}
+		// keep the window title tracking the active tab's foreground program
+		// (deduped inside update_title, so this is cheap when nothing changed)
+		self.update_title();
 
 		let now = Instant::now();
 		let dt = (now - self.last_frame).as_secs_f32().min(0.1);
@@ -1965,6 +1990,7 @@ impl ApplicationHandler<UserEvent> for App {
 			quit: false,
 			win_opacity,
 			win_title,
+			last_win_title: String::new(),
 			pending_about: false,
 			pending_settings: false,
 		});

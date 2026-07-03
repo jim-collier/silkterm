@@ -91,8 +91,8 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Detach tab to new window with mouse (deferred: needs multi-window)
 	- 🔘 Dock tab to different existing window with mouse (deferred: needs multi-window)
 
-- 🔘 Window title:
-	- 🔘 Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
+- ✅ Window title:
+	- ✅ Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab. - `update_title` now sets the CLI `--title` verbatim when given, else "AppName - <active tab title>" (the active tab's `title_override` or its focused pane's `<shell> [<program>]`). Called each rendered frame (deduped via `last_win_title`, so set_title only fires on change) so it tracks the focused tab's foreground program live. Verified headless: window name became "SilkTerm - dash".
 
 - 🛠️ Themes:
 	- Status part 1: Done. (`src/theme.rs`): theme foundation + terminal palette done. A `Palette` (bg/fg/cursor/focus + 16 ANSI) x a `Theme` (dark+light pair); `theme` + `theme_mode` config keys resolve the active palette, which `palette.rs` + the renderer read. The `[colors]` keys still override per-colour. 3 built-ins (SilkTerm, Matrix, Retro Amber), each dark+light.
