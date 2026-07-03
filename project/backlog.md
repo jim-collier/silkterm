@@ -67,6 +67,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Looks for the newest 'slktrmdf_YYYYmmDD-HHMMSS', and runs it with script args "$@".
 		- Done: self-contained bash5 script in the owner's style (no n8mod modules). `fSilkTermDogfood` scans the dogfood dirs, picks the lexically-greatest `slktrmdf_*` basename (timestamp sorts chronologically) and `exec`s it with "$@"; `fMain` calls it (edit there to launch a different terminal). Verified: runs the newest, passes args through, clean error + exit 1 when none exists.
 		- Enhancement (owner): also prepends a randomly-chosen `--background-image=` from `~/.config/silkterm/backgrounds/` (png/jpg/jpeg; skipped if the dir has none) and `--title="SilkTerm [dogfood <build-timestamp>]"` (timestamp from the running build's name), both before "$@" so a caller can still override. Verified.
+		- Enhancement (owner): `fFallbackTerminal` - when no dogfood build is found (or fMain's target isn't installed), falls back to the first installed of terminator, xfce4-terminal, gnome-terminal, konsole, alacritty, kitty, xterm (in order), passing "$@" (SilkTerm-specific opts aren't added for a generic terminal). Soft stderr note on fallback; a real error only when nothing at all is installed. Verified (selection order, soft note, dogfood-present precedence).
 
 - 🔘 Settings dialog:
 	- 🔘 Remove "Settings" heading text, it's redundant with the window title.

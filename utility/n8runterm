@@ -10,6 +10,8 @@
 ##	Purpose:
 ##		- Launch the terminal for interactive dogfooding, passing through any script
 ##		  arguments. By default runs the newest CI/CD dogfood build (fSilkTermDogfood).
+##		- If no dogfood build is found (or fMain's chosen terminal isn't installed),
+##		  falls back to the first available of a known-terminal list (fFallbackTerminal).
 ##		- Edit fMain() to launch a different terminal instead.
 ##	History: At bottom of script.
 
@@ -20,9 +22,10 @@
 
 
 ## Entry point: what this launcher runs. Edit this to launch a different terminal
-## (e.g. `exec /usr/bin/xterm "${@}"`); by default it runs the newest dogfood build.
+## (e.g. `exec /usr/bin/xterm "${@}"`); by default it runs the newest dogfood build,
+## and if that isn't found, falls back to a known installed terminal.
 fMain(){
-	fSilkTermDogfood  "${@}"
+	fSilkTermDogfood  "${@}"  ||  fFallbackTerminal  "${@}"
 }
 
 
@@ -54,8 +57,8 @@ fSilkTermDogfood(){
 		done
 	done
 
-	## No match: report and bail.
-	[[ -n "${newestPath}" ]] || { echo -e "\nError in $(basename "${BASH_SOURCE[0]}"): No '${prefix}_*' build found in: ${searchDirs[*]}\n" >&2; return 1; }
+	## No dogfood build here: return non-zero so fMain falls back to a known terminal.
+	[[ -n "${newestPath}" ]] || return 1
 
 	## Prepend a random background image (if the backgrounds dir has any) and a title
 	## tagged with the running build's timestamp, so a dogfood window is visually
@@ -73,6 +76,31 @@ fSilkTermDogfood(){
 
 	## Run it, replacing this process.
 	exec "${newestPath}" "${preArgs[@]}" "${@}"
+}
+
+
+## Fallback when no dogfood build exists: run the first installed terminal from a
+## known list (in preference order), passing the args through. SilkTerm-specific
+## options aren't added here - a generic terminal wouldn't understand them.
+fFallbackTerminal(){
+	local -ar terminals=(
+		terminator
+		xfce4-terminal
+		gnome-terminal
+		konsole
+		alacritty
+		kitty
+		xterm
+	)
+	local term
+	for term in "${terminals[@]}"; do
+		if command -v "${term}" >/dev/null 2>&1; then
+			echo "$(basename "${BASH_SOURCE[0]}"): no SilkTerm dogfood build found; launching '${term}'." >&2
+			exec "${term}" "${@}"
+		fi
+	done
+	echo -e "\nError in $(basename "${BASH_SOURCE[0]}"): No dogfood build, and no fallback terminal installed (${terminals[*]}).\n" >&2
+	return 1
 }
 
 
