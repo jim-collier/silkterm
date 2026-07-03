@@ -66,7 +66,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ CICD script: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path. - removed the "Proceed? [y/N]" preflight prompt in cicd.bash; the commit-message prompt (common publish path) is now the bail point (Ctrl+C aborts). `-y` still skips prompting entirely.
 
-- 🔘 Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK.
+- ✅ Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK. - verified headless at 2x (`WINIT_X11_SCALE_FACTOR=2`): title/tabs/labels/sliders/value-fields/checkboxes/buttons all scale crisply. Found + fixed a defect: Settings radio option labels collided at 2x (fixed `RADIO_PITCH`/`RADIO_BOX` vs scaling font) - radio geometry now scales with the UI font (`ui_scale` = line_h/BASE_LH) and the panel widens to fit the widest radio row (else the 3rd option overflowed). Menu/tab use the same scaled UI-font path + measured widths; About uses measured widths with no fixed-pitch multi-label rows. Unit test guards the scaling (radio pitch grows, last option stays in-panel at 2x).
 
 - 🔘 Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 
