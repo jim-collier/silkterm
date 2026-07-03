@@ -1,8 +1,95 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright © 2026 Jim Collier
 
+use alacritty_terminal::term::TermMode;
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
+
+// A mouse event to report to the PTY. Wheel notches ride buttons 64/65; `None`
+// is the "no button" code (3) used for bare motion and the X10 release.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MouseBtn {
+	None,
+	Left,
+	Middle,
+	Right,
+	WheelUp,
+	WheelDown,
+}
+
+impl MouseBtn {
+	// xterm button code, before the motion/modifier bits are added
+	fn code(self) -> u8 {
+		match self {
+			MouseBtn::Left => 0,
+			MouseBtn::Middle => 1,
+			MouseBtn::Right => 2,
+			MouseBtn::None => 3,
+			MouseBtn::WheelUp => 64,
+			MouseBtn::WheelDown => 65,
+		}
+	}
+	fn is_wheel(self) -> bool {
+		matches!(self, MouseBtn::WheelUp | MouseBtn::WheelDown)
+	}
+}
+
+// True when the app has any mouse tracking turned on (DECSET 1000/1002/1003).
+pub fn wants_mouse(mode: TermMode) -> bool {
+	mode.intersects(TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION)
+}
+
+// Encode a mouse event as a report for the PTY, honouring the app's tracking
+// mode (SGR 1006 vs the legacy X10 form) and modifier bits. `col`/`row` are
+// 0-based cells within the viewport; `pressed` is press vs release (wheel is
+// press-only); `motion` marks a drag/move report. Returns None when no tracking
+// mode is set.
+pub fn mouse_report(
+	mode: TermMode,
+	btn: MouseBtn,
+	pressed: bool,
+	motion: bool,
+	col: usize,
+	row: usize,
+	mods: ModifiersState,
+) -> Option<Vec<u8>> {
+	if !wants_mouse(mode) {
+		return None;
+	}
+	let mut cb = btn.code();
+	if motion {
+		cb += 32;
+	}
+	// modifier bits: shift 4, alt 8, ctrl 16
+	cb +=
+		(mods.shift_key() as u8) * 4 + (mods.alt_key() as u8) * 8 + (mods.control_key() as u8) * 16;
+
+	let (cx, cy) = (col + 1, row + 1); // 1-based on the wire
+
+	if mode.contains(TermMode::SGR_MOUSE) {
+		// ESC [ < Cb ; Cx ; Cy  (M press/motion/wheel | m release)
+		let end = if pressed || btn.is_wheel() { 'M' } else { 'm' };
+		return Some(format!("\x1b[<{cb};{cx};{cy}{end}").into_bytes());
+	}
+
+	// Legacy X10 form: ESC [ M <Cb+32> <Cx+32> <Cy+32>, one byte each - so a
+	// coordinate past 223 can't be encoded; clamp rather than corrupt. Release
+	// reports button 3 (wheel never releases, so this only hits real buttons).
+	let cb = if pressed || btn.is_wheel() {
+		cb
+	} else {
+		(cb & !0b11) | 3
+	};
+	let enc = |v: usize| (v.min(223) as u8).wrapping_add(32);
+	Some(vec![
+		0x1b,
+		b'[',
+		b'M',
+		cb.wrapping_add(32),
+		enc(cx),
+		enc(cy),
+	])
+}
 
 // Cursor-key sequence. In application-cursor-keys mode (DECCKM, set by full
 // screen apps like `less`/vim) these use the SS3 (`ESC O`) form; otherwise CSI
@@ -218,6 +305,63 @@ mod tests {
 		assert_eq!(
 			enc(NamedKey::Tab, ModifiersState::SHIFT, false).unwrap(),
 			b"\x1b[Z"
+		);
+	}
+
+	#[test]
+	fn mouse_sgr_and_x10() {
+		let sgr = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+		// wheel down at col 5 / row 10 -> button 65, 1-based coords
+		assert_eq!(
+			mouse_report(sgr, MouseBtn::WheelDown, true, false, 5, 10, NONE).unwrap(),
+			b"\x1b[<65;6;11M"
+		);
+		// left press vs release: same Cb, M vs m
+		assert_eq!(
+			mouse_report(sgr, MouseBtn::Left, true, false, 0, 0, NONE).unwrap(),
+			b"\x1b[<0;1;1M"
+		);
+		assert_eq!(
+			mouse_report(sgr, MouseBtn::Left, false, false, 0, 0, NONE).unwrap(),
+			b"\x1b[<0;1;1m"
+		);
+		// ctrl adds 16; a bare motion uses button 3 + motion bit 32 = 35
+		assert_eq!(
+			mouse_report(
+				sgr,
+				MouseBtn::Left,
+				true,
+				false,
+				0,
+				0,
+				ModifiersState::CONTROL
+			)
+			.unwrap(),
+			b"\x1b[<16;1;1M"
+		);
+		assert_eq!(
+			mouse_report(sgr, MouseBtn::None, true, true, 0, 0, NONE).unwrap(),
+			b"\x1b[<35;1;1M"
+		);
+		// legacy X10 form: ESC [ M, then (Cb+32)(Cx+32)(Cy+32)
+		let x10 = TermMode::MOUSE_REPORT_CLICK;
+		assert_eq!(
+			mouse_report(x10, MouseBtn::Left, true, false, 0, 0, NONE).unwrap(),
+			[0x1b, b'[', b'M', 32, 33, 33]
+		);
+		assert_eq!(
+			mouse_report(x10, MouseBtn::WheelUp, true, false, 0, 0, NONE).unwrap(),
+			[0x1b, b'[', b'M', 96, 33, 33]
+		);
+	}
+
+	#[test]
+	fn mouse_report_needs_tracking() {
+		// no tracking mode set -> nothing to report
+		assert!(mouse_report(TermMode::empty(), MouseBtn::Left, true, false, 0, 0, NONE).is_none());
+		// SGR flag alone (no click/drag/motion) is not tracking
+		assert!(
+			mouse_report(TermMode::SGR_MOUSE, MouseBtn::Left, true, false, 0, 0, NONE).is_none()
 		);
 	}
 

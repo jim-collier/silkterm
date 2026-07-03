@@ -746,6 +746,22 @@ impl Pane {
 		(!text.trim().is_empty()).then_some(text)
 	}
 
+	// Map a window pixel to a 0-based on-screen cell (col, row) within this pane's
+	// viewport, for mouse reporting. Clamped to the grid; None if outside the pane.
+	pub fn screen_cell_at(&self, x: f32, y: f32, ctx: &TextCtx) -> Option<(usize, usize)> {
+		if !self.rect.contains(x, y) {
+			return None;
+		}
+		let cols = self.term.cols as i32;
+		let lines = self.term.lines as i32;
+		let rel_x = (x - self.rect.x - ctx.margin).max(0.0);
+		let col = ((rel_x / ctx.cell_w).floor() as i32).clamp(0, cols - 1);
+		let row = ((y - self.rect.y - ctx.margin) / ctx.cell_h)
+			.floor()
+			.clamp(0.0, (lines - 1) as f32) as i32;
+		Some((col as usize, row as usize))
+	}
+
 	// Map a window pixel to a grid point + which half of the cell, for selection.
 	// Returns None if the pixel is outside this pane.
 	pub fn point_at(&self, x: f32, y: f32, ctx: &TextCtx) -> Option<(Point, Side)> {

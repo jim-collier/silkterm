@@ -42,6 +42,11 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- ✅ Mouse-scroll doesn't work in muffer (running inside SilkTerm). (20260703)
+	- Cause: SilkTerm implemented no mouse reporting at all - clicks, motion, and wheel were only handled locally, never encoded to the PTY. So when an app turns on mouse tracking (DECSET 1000/1002/1003, e.g. muffer enabling it to receive wheel events), it got nothing and its scroll did nothing; the wheel just drove SilkTerm's own scrollback.
+	- Done: added standard mouse reporting (`input::mouse_report`, SGR 1006 + legacy X10). When the focused pane has tracking on, wheel reports as button 64/65, and clicks/release/drag/motion report too; Shift is the local-action override (select/paste/menu/scrollback still work). Wheel sends one notch-event per line (capped), de-duped motion per cell.
+	- Verified: unit tests cover the SGR + X10 encodings, wheel, modifiers, and the no-tracking case; live-verify by scrolling in a mouse-tracking app.
+
 - ✅ Now there's too much space below the tab text and top menu text. (Ironic since earlier there was too little.) It should be vertically centered.
 	- ✅ Proper fix: Size both the menu and the tabs according to the font height (plus extra), then *vertically center* the text within that area. If the font was created poorly centered, which may are, then there may be nothing to do about that - but the current font seems properly designed elsewhere.
 		- Done: both bars center the text on its real visible box using the UI face's actual ascent/descent, instead of the old hand-tuned padding that left titles riding high.
