@@ -102,7 +102,7 @@ pub struct Settings {
 	pub text_glow: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
 	pub text_glow_radius: f32, // glow blur sigma in px
 	pub text_glow_softness: f32, // 0 = hard/solid glow, 1 = soft/faint (maps to the intensity boost)
-	pub text_glow_border: f32, // antialiased outline around glyphs, px (0 = none; glow colour rules)
+	pub text_outline: f32, // antialiased outline around glyphs, px (0 = none; glow colour rules)
 	pub text_glow_ramp: String, // halo falloff: "gaussian" | "linear" | "s"
 	pub text_glow_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
 	pub cursor_glow: bool,              // cursor gets the same halo, merged with the text glow
@@ -157,8 +157,8 @@ impl Default for Settings {
 			text_glow: true,
 			text_glow_radius: 5.0,
 			text_glow_softness: 0.5,
-			text_glow_border: 1.0,
-			text_glow_ramp: "gaussian".to_string(),
+			text_outline: 2.0,
+			text_glow_ramp: "s".to_string(),
 			text_glow_regular_weight: true,
 			cursor_glow: true,
 			cursor_size_height: 100.0, // full height
@@ -359,8 +359,8 @@ pub fn persist(orig: &Settings, s: &Settings) {
 	if s.text_glow_softness != orig.text_glow_softness {
 		doc["text_glow_softness"] = value(r(s.text_glow_softness));
 	}
-	if s.text_glow_border != orig.text_glow_border {
-		doc["text_glow_border"] = value(r(s.text_glow_border));
+	if s.text_outline != orig.text_outline {
+		doc["text_outline"] = value(r(s.text_outline));
 	}
 	if s.text_glow_ramp != orig.text_glow_ramp {
 		doc["text_glow_ramp"] = value(&s.text_glow_ramp);
@@ -480,7 +480,7 @@ struct RawConfig {
 	text_glow: Option<bool>,
 	text_glow_radius: Option<f32>,
 	text_glow_softness: Option<f32>,
-	text_glow_border: Option<f32>,
+	text_outline: Option<f32>,
 	text_glow_ramp: Option<String>,
 	text_glow_regular_weight: Option<bool>,
 	cursor_glow: Option<bool>,
@@ -661,14 +661,12 @@ fn resolve(raw: RawConfig) -> Settings {
 			.text_glow_softness
 			.unwrap_or(d.text_glow_softness)
 			.clamp(0.0, 1.0),
-		text_glow_border: raw
-			.text_glow_border
-			.unwrap_or(d.text_glow_border)
-			.clamp(0.0, 8.0),
+		text_outline: raw.text_outline.unwrap_or(d.text_outline).clamp(0.0, 8.0),
 		text_glow_ramp: match raw.text_glow_ramp.as_deref() {
 			Some("linear") => "linear".to_string(),
+			Some("gaussian") => "gaussian".to_string(),
 			Some("s") => "s".to_string(),
-			_ => "gaussian".to_string(),
+			_ => d.text_glow_ramp.clone(), // missing/unknown -> default (S-curve)
 		},
 		text_glow_regular_weight: raw
 			.text_glow_regular_weight
@@ -837,6 +835,7 @@ fn line_setting_key(line: &str) -> Option<&str> {
 const CONFIG_RENAMES: &[(&str, &str)] = &[
 	("cursor_size_vertical", "cursor_size_height"),
 	("cursor_size_horizontal", "cursor_size_width"),
+	("text_glow_border", "text_outline"),
 ];
 // Keys that no longer exist and should be removed from an existing config. The
 // cursor_shape/cursor_blink_style/cursor_insert_shape line was superseded by the
@@ -1326,8 +1325,8 @@ opacity = 0.95
 # text_glow = true
 # text_glow_radius = 5.0     ## glow blur sigma in pixels
 # text_glow_softness = 0.5   ## 0 = hard/solid glow, 1 = soft/faint
-# text_glow_border = 1.0     ## antialiased outline around glyphs, in pixels (0 = none)
-# text_glow_ramp = "gaussian"  ## halo falloff shape: "gaussian", "linear", or "s"
+# text_outline = 2.0         ## antialiased outline around glyphs, in pixels (0 = none)
+# text_glow_ramp = "s"       ## halo falloff shape: "gaussian", "linear", or "s"
 # text_glow_regular_weight = true  ## blur bold text at regular weight so its halo matches non-bold text
 # cursor_glow = true         ## the cursor gets the same halo, merged with the text glow
 
@@ -1464,8 +1463,8 @@ mod tests {
 		assert!(d.text_glow, "text_glow should default on");
 		assert_eq!(d.text_glow_radius, 5.0);
 		assert_eq!(d.text_glow_softness, 0.5);
-		assert_eq!(d.text_glow_border, 1.0);
-		assert_eq!(d.text_glow_ramp, "gaussian");
+		assert_eq!(d.text_outline, 2.0);
+		assert_eq!(d.text_glow_ramp, "s");
 		assert!(d.text_glow_regular_weight);
 		assert!(d.cursor_glow);
 		assert_eq!(d.background_blur, 8.0);
@@ -1495,6 +1494,18 @@ mod tests {
 		assert_eq!(s.menu_bg, [0x12, 0x34, 0x56]);
 		assert_eq!(s.dialog_fg, [0xab, 0xcd, 0xef]);
 		assert_eq!(s.menu_fg, crate::theme::MENU_FG_DEF);
+	}
+
+	#[test]
+	fn migrate_renames_glow_border_to_outline() {
+		// an existing (active) text_glow_border keeps its value under the new name
+		let out =
+			migrate_config_text("text_glow_border = 2.03\nmargin = 8.0\n").expect("should rename");
+		assert!(!out.contains("text_glow_border"), "old name gone: {out:?}");
+		assert!(
+			out.contains("text_outline = 2.03"),
+			"value preserved: {out:?}"
+		);
 	}
 
 	// In-place migration: drop obsolete cursor keys, keep the rest.
