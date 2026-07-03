@@ -25,6 +25,7 @@ const LABEL_W: f32 = 168.0;
 const SLIDER_W: f32 = 220.0;
 const SWATCH: f32 = 20.0;
 const HEX_W: f32 = 92.0;
+const VAL_W: f32 = 56.0; // editable numeric field to the right of a slider
 const BTN_H: f32 = 30.0;
 const BTN_W: f32 = 76.0;
 const BTN_GAP: f32 = 10.0;
@@ -822,6 +823,12 @@ impl SettingsDialog {
 					cur: 1,
 				});
 			}
+			// open the numeric field pre-filled with the current value (edit in place)
+			Kind::Slider { int, .. } => {
+				let buf = self.fmt_val(key, int);
+				let cur = buf.len();
+				self.edit = Some(EditState { row: i, buf, cur });
+			}
 			_ => {}
 		}
 		Action::None
@@ -893,6 +900,15 @@ impl SettingsDialog {
 			x: self.control_x() + SWATCH + 8.0,
 			y: self.row_y(i) + (ROW_H - SWATCH) / 2.0,
 			w: HEX_W,
+			h: SWATCH,
+		}
+	}
+	// editable numeric field to the right of a slider (shows/edits the value)
+	fn valbox(&self, i: usize) -> Rect {
+		Rect {
+			x: self.control_x() + SLIDER_W + 14.0,
+			y: self.row_y(i) + (ROW_H - SWATCH) / 2.0,
+			w: VAL_W,
 			h: SWATCH,
 		}
 	}
@@ -1305,9 +1321,18 @@ impl SettingsDialog {
 				return Action::None;
 			}
 			match self.specs[i].kind {
-				Kind::Slider { .. } => {
+				Kind::Slider { int, .. } => {
 					if self.disabled(self.specs[i].key) {
 						continue; // greyed-out slider ignores clicks
+					}
+					// click the numeric field -> edit the value, caret at the click
+					let vb = self.valbox(i);
+					if vb.contains(x, y) {
+						let buf = self.fmt_val(self.specs[i].key, int);
+						let cur = caret_from_click(&buf, x - (vb.x + 6.0), measure);
+						self.focus = Some(Focus::Row(i));
+						self.edit = Some(EditState { row: i, buf, cur });
+						return Action::None;
 					}
 					let t = self.track(i);
 					let hit = x >= t.x - 8.0
@@ -1422,6 +1447,14 @@ impl SettingsDialog {
 						cur: 1,
 					});
 				}
+				// typing a digit into a focused slider starts a fresh number
+				Kind::Slider { .. } => {
+					self.edit = Some(EditState {
+						row: i,
+						buf: String::new(),
+						cur: 0,
+					});
+				}
 				_ => return,
 			}
 		}
@@ -1440,6 +1473,15 @@ impl SettingsDialog {
 				e.buf.insert(e.cur, c);
 				e.cur += c.len_utf8();
 				self.reparse_edit();
+			}
+			// numeric slider field: digits always; one '.' only for float sliders
+			Kind::Slider { int, .. } => {
+				let dot_ok = !int && c == '.' && !e.buf.contains('.');
+				if (c.is_ascii_digit() || dot_ok) && e.buf.len() < 8 {
+					e.buf.insert(e.cur, c);
+					e.cur += c.len_utf8();
+					self.reparse_edit();
+				}
 			}
 			_ => {}
 		}
@@ -1496,6 +1538,16 @@ impl SettingsDialog {
 				}
 			}
 			Kind::Text => self.set_text(self.specs[i].key, &buf),
+			// a valid partial number applies live, clamped to the slider range
+			Kind::Slider { min, max, int } => {
+				if let Ok(v) = buf.trim().parse::<f32>() {
+					let mut v = v.clamp(min, max);
+					if int {
+						v = v.round();
+					}
+					self.set_f32(self.specs[i].key, v);
+				}
+			}
 			_ => {}
 		}
 	}
@@ -1616,6 +1668,23 @@ impl SettingsDialog {
 							dlg().handle
 						},
 					));
+					// editable numeric field
+					let vb = self.valbox(i);
+					out.push(q(vb.x, vb.y, vb.w, vb.h, dlg().field_bg));
+					let focused = matches!(&self.edit, Some(e) if e.row == i);
+					border(
+						&mut out,
+						vb,
+						1.0,
+						if focused && !off {
+							dlg().focus_out
+						} else {
+							dlg().panel_border
+						},
+					);
+					if focused && !off {
+						self.caret_quad(&mut out, vb, &mut measure);
+					}
 				}
 				Kind::Color => {
 					let sw = self.swatch(i);
@@ -1794,11 +1863,15 @@ impl SettingsDialog {
 			});
 			match self.specs[i].kind {
 				Kind::Slider { int, .. } => {
-					let vx = self.control_x() + SLIDER_W + 14.0;
+					let vb = self.valbox(i);
+					let txt = match &self.edit {
+						Some(e) if e.row == i => e.buf.clone(),
+						_ => self.fmt_val(self.specs[i].key, int),
+					};
 					out.push(TextItem {
 						color: lbl_color,
 						clip: Some(vp),
-						..mk(self.fmt_val(self.specs[i].key, int), vx, ty)
+						..mk(txt, vb.x + 6.0, row_text_y(vb.y, vb.h))
 					});
 				}
 				Kind::Color => {
@@ -2059,6 +2132,57 @@ mod tests {
 		d.key_tab();
 		assert_ne!(d.tab, t0);
 		assert!(d.focus.is_some(), "tab switch lands focus on a control");
+	}
+
+	#[test]
+	fn slider_numeric_field_edits_and_clamps() {
+		use super::{Focus, Key};
+		let mut d = mk_dialog(2000.0);
+		// Font size: an int slider on the Font tab, range 6..40
+		d.edited.use_system_font = false; // else Font size is greyed/disabled
+		let i = d.specs.iter().position(|s| s.key == Key::FontSize).unwrap();
+		d.tab = d.spec_tab[i];
+		d.focus = Some(Focus::Row(i));
+		// Space opens the field pre-filled with the current value
+		d.key_space();
+		assert!(d.edit.is_some());
+		// clear it and type an exact number
+		while d.edit.as_ref().is_some_and(|e| !e.buf.is_empty()) {
+			d.backspace();
+		}
+		d.char_input('2');
+		d.char_input('4');
+		assert_eq!(d.edited.font_size, 24.0);
+		// over-range types clamp to the slider max (40)
+		while d.edit.as_ref().is_some_and(|e| !e.buf.is_empty()) {
+			d.backspace();
+		}
+		d.char_input('9');
+		d.char_input('9');
+		assert_eq!(d.edited.font_size, 40.0);
+		// Enter commits; field closes and shows the clamped value
+		assert_eq!(d.key_enter(), super::Action::None);
+		assert!(d.edit.is_none());
+	}
+
+	#[test]
+	fn slider_field_typing_starts_fresh_and_rejects_letters() {
+		use super::{Focus, Key};
+		let mut d = mk_dialog(2000.0);
+		// Opacity: a float slider on Appearance, range 0..1
+		let i = d.specs.iter().position(|s| s.key == Key::Opacity).unwrap();
+		d.tab = d.spec_tab[i];
+		d.edited.transparent_background = true; // opacity enabled
+		d.focus = Some(Focus::Row(i));
+		// typing a digit into the focused (unopened) slider starts a fresh number
+		d.char_input('0');
+		d.char_input('.');
+		d.char_input('5');
+		assert_eq!(d.edited.opacity, 0.5);
+		// a second '.' and any letter are ignored (buffer stays "0.5")
+		d.char_input('.');
+		d.char_input('x');
+		assert_eq!(d.edit.as_ref().unwrap().buf, "0.5");
 	}
 
 	#[test]
