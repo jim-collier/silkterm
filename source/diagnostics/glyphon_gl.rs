@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright © 2026 Jim Collier
 
-// Isolation test (headless): does glyphon render text on a NATIVE wgpu GL device
+// Isolation test (no window): does glyphon render text on a NATIVE wgpu GL device
 // (no glutin/external context, no surface)? Renders to an offscreen texture and
 // reads it back to PNG. If text shows -> the transparent-path bug is the external
 // context; if not -> glyphon+wgpu-GL is broken generally.
