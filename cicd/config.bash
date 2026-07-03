@@ -103,6 +103,13 @@ DOGFOOD_DESTS=(
 	"/usr/local/sbin"
 )
 
+## Dogfood copy name. Non-empty: install as "<prefix>_<YYYYmmDD-HHMMSS>" so builds
+## coexist (unique paths - an automated test killing one can't hit an unrelated
+## version), and old copies not currently running are pruned each dogfood. The
+## utility/n8runterm launcher finds and runs the newest. Empty: classic single
+## install under EXE_NAME.
+DOGFOOD_PREFIX="slktrmdf"
+
 ## Stage 7: backup + publish to git (runs from repo root).
 GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 

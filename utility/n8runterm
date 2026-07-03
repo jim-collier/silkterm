@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+
+#  shellcheck disable=2001  ## 'See if you can use ${variable//search/replace} instead.' Complains about good uses of sed.
+#  shellcheck disable=2016  ## 'Expressions don't expand in single quotes, use double quotes for that.' I know, and I often want an explicit '$'.
+#  shellcheck disable=2046  ## 'Quote to prevent word-splitting.' (OK for integers.)
+#  shellcheck disable=2086  ## 'Double quote to prevent globbing and word splitting.' (OK for integers.)
+#  shellcheck disable=2155  ## 'Declare and assign separately to avoid masking return values.' Cumbersome and unnecessary.
+#  shellcheck disable=2181  ## 'Check exit code directly, not indirectly with $?.'
+
+##	Purpose:
+##		Launch the terminal for interactive dogfooding, passing through any script
+##		arguments. By default runs the newest CI/CD dogfood build (fSilkTermDogfood);
+##		edit fMain() to launch a different terminal instead.
+##	History: At bottom of script.
+
+##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Licensed under The MIT License (MIT). Full text at:
+##		https://mit-license.org/
+##	SPDX-License-Identifier: MIT
+
+
+## Run the newest dogfood build with the passed arguments. cicd.bash stage 6
+## installs builds as "<prefix>_<YYYYmmDD-HHMMSS>"; the timestamp sorts
+## chronologically, so the lexically-greatest basename is the newest.
+fSilkTermDogfood(){
+
+	local -r  prefix="slktrmdf"
+	local -ar searchDirs=(
+		"${HOME}/synced/0-0/common/exec/util/linux/bin"
+		"/usr/local/sbin"
+	)
+
+	## Find the newest matching build across the search dirs (by embedded timestamp).
+	local newestPath=""
+	local newestName=""
+	local dir cand name
+	for dir in "${searchDirs[@]}"; do
+		[[ -d "${dir}" ]] || continue
+		for cand in "${dir}/${prefix}_"*; do
+			[[ -f "${cand}" && -x "${cand}" ]] || continue   # skip the no-match glob
+			name="$(basename "${cand}")"
+			if [[ -z "${newestName}" || "${name}" > "${newestName}" ]]; then
+				newestName="${name}"
+				newestPath="${cand}"
+			fi
+		done
+	done
+
+	## Run it, replacing this process (or report that none exists).
+	[[ -n "${newestPath}" ]] || { echo -e "\nError in $(basename "${BASH_SOURCE[0]}"): No '${prefix}_*' build found in: ${searchDirs[*]}\n" >&2; return 1; }
+	exec "${newestPath}" "${@}"
+}
+
+
+## Entry point: what this launcher runs. Edit this to launch a different terminal
+## (e.g. `exec /usr/bin/xterm "${@}"`); by default it runs the newest dogfood build.
+fMain(){
+	fSilkTermDogfood  "${@}"
+}
+
+
+#••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+# Script entry point
+
+## Bash environment settings
+ set -u  #..................: Require variable declaration.
+ set -e  #..................: Exit on errors.
+ set -E  #..................: Propagate ERR trap into functions and subshells.
+ set   -o pipefail  #.......: Fail a pipe if any stage fails.
+ shopt -s inherit_errexit  #: Propagate 'set -e' into command substitutions. (Bash >=4.4.)
+
+## This is a launcher, not a library.
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] || { echo -e "\nError in $(basename "${BASH_SOURCE[0]}"): Not meant to be 'sourced'.\n" >&2; return 1; }
+
+## Kick everything off.
+fMain  "${@}"
+
+
+##	History:
+##		- 2026-07-03 JC: Created.

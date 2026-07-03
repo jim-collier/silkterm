@@ -56,6 +56,22 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
+- ✅ CICD dogfood section:
+	- ✅ Copy as a different name every time, in format "slktrmdf_YYYYmmDD-HHMMSS"
+		- So that multiple versions can run, and automated testing won't kill them.
+		- Automatically delete existing older copies that are not in use.
+		- Done: cicd.bash stage 6 installs `${DOGFOOD_PREFIX}_${stamp}` (config `DOGFOOD_PREFIX="slktrmdf"`, `stamp` = date +%Y%m%d-%H%M%S) then prunes older `slktrmdf_*` in the dest, keeping any still running (new `in_use()` helper checks /proc/*/exe by resolved path, not a substring match). Empty DOGFOOD_PREFIX keeps the classic single fixed-name install (engine stays generic). Verified: running copy kept, idle older copy pruned, new copy created.
+
+- ✅ Create a new bash 5 script 'utility/n8runterm':
+	- Can run any terminal along with script args it received (e.g. if user edits it), but by default it runs the function fSilkTermDogfood(), which:
+		- Looks for the newest 'slktrmdf_YYYYmmDD-HHMMSS', and runs it with script args "$@".
+		- Done: self-contained bash5 script in the owner's style (no n8mod modules). `fSilkTermDogfood` scans the dogfood dirs, picks the lexically-greatest `slktrmdf_*` basename (timestamp sorts chronologically) and `exec`s it with "$@"; `fMain` calls it (edit there to launch a different terminal). Verified: runs the newest, passes args through, clean error + exit 1 when none exists.
+
+- 🔘 Settings dialog:
+	- 🔘 Remove "Settings" heading text, it's redundant with the window title.
+	- 🔘 Change the buttons at the top for different pages, to tabs.
+		- 🔘 Can cycle through with Ctrl+PgUp|PgDn.
+
 - ✅ Config:
 	- ✅ "Glow border" -> "Text outline" (change description and config name). Change default value to 2.0. - config key `text_glow_border` renamed to `text_outline` (dialog label "Text outline"), default 2.0; existing configs migrate value-preserving via CONFIG_RENAMES (unit-tested), template + persist + backfill updated.
 	- ✅ Glow falloff: Change default to S-curve. - `text_glow_ramp` default now "s"; resolve maps missing/unknown -> default (S-curve), template shows `# text_glow_ramp = "s"`.
@@ -261,6 +277,9 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Verify smoothness on X11/Compiz.
 
 #### Done - Bugs
+
+- ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
+	- ✅ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. (20260630) - the bar/tab height scales with the menu font (cell_h-based); the remaining issue was descenders (g/j/p/q/y) sitting tight against the button bottom. The title was already near the button top so it couldn't move up - so bumped TAB_BAR_VPAD 8 -> 11, making the bar a few px taller and giving descenders clearance. Verified via a descender-heavy tab title screenshot (PID-verified capture).
 
 - ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
 	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. For example my system proportional font is a Serif font, not sans serif. (20260629)
@@ -771,14 +790,13 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Future and/or deferred
 
-- 🚫 CI/CD scripts:
-	- 🚫 Build alternate targets in parallel, to speed process up.
-		- Too fiddly. Possibly revisit in future. This lives in `cicd.bash`, which is pseudo-generic and could be made more so. Maybe it can shell out to a hyper-specific build script, or be updated to handle rust, go, and c++. Or more likely, it's just project-specifig, in spite of being originally [re]architected to call a settings script.
+- 🔘 Minority Report mode: Borderless, transparent, changes perspective depending on screen location.
 
 ### Canceled
 
-- ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
-	- ✅ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. (20260630) - the bar/tab height scales with the menu font (cell_h-based); the remaining issue was descenders (g/j/p/q/y) sitting tight against the button bottom. The title was already near the button top so it couldn't move up - so bumped TAB_BAR_VPAD 8 -> 11, making the bar a few px taller and giving descenders clearance. Verified via a descender-heavy tab title screenshot (PID-verified capture).
+- 🚫 CI/CD scripts:
+	- 🚫 Build alternate targets in parallel, to speed process up.
+		- Too fiddly. Possibly revisit in future. This lives in `cicd.bash`, which is pseudo-generic and could be made more so. Maybe it can shell out to a hyper-specific build script, or be updated to handle rust, go, and c++. Or more likely, it's just project-specifig, in spite of being originally [re]architected to call a settings script.
 
 - Setting dialog (part 2):
 	- [🚫] Adopt a cross-platform GUI / windowing widget toolkit (e.g. egui) for Settings, About, the main menu, and the context menu instead of hand-rolling them.
