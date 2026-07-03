@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use alacritty_terminal::grid::{Dimensions, Scroll as GridScroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
+use alacritty_terminal::term::Term;
 use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::CursorShape;
@@ -172,6 +173,16 @@ pub struct Pane {
 	// re-shaping to panes that changed: one busy pane no longer forces its
 	// idle siblings through set_rich_text every frame.
 	pub content_dirty: bool,
+	// Copy-output-on-command-finish (see arm_capture / poll_capture). `auto_copy` is
+	// the per-pane opt-in. On Enter at the shell prompt we arm and record `cmd_start`
+	// (the line after the prompt); when the terminal then settles (no new output for
+	// a debounce) back at the prompt, the lines since are copied. `last_output` is
+	// refreshed on every Wakeup so the settle timer measures true idle. This catches
+	// both instant (ls) and long commands without racing the fg-pgid transition.
+	pub auto_copy: bool,
+	capture_armed: bool,
+	cmd_start: usize,
+	last_output: std::time::Instant,
 }
 
 impl Pane {
@@ -683,6 +694,55 @@ impl Pane {
 			.collect()
 	}
 
+	// Copy-output: Enter was pressed at the shell prompt, so a command is (maybe)
+	// about to run. Record where its output will begin (the line after the prompt/
+	// echoed command) and arm the settle-based capture. Only arms at the shell
+	// prompt, so an Enter inside a foreground app (vim, a REPL) doesn't arm.
+	pub fn arm_capture(&mut self) {
+		if !self.term.at_shell_prompt() {
+			return;
+		}
+		if let Some(g) = self.term.term.try_lock_unfair() {
+			let grid = g.grid();
+			self.cmd_start = grid.history_size() + grid.cursor.point.line.0.max(0) as usize + 1;
+			self.capture_armed = true;
+			self.last_output = std::time::Instant::now();
+		}
+	}
+
+	// New PTY output arrived: push the settle deadline out so capture waits for the
+	// command (and its prompt) to finish before copying.
+	pub fn note_output(&mut self) {
+		self.last_output = std::time::Instant::now();
+	}
+
+	// While armed, the instant the settle timer would fire (so the loop can wake to
+	// check) - None when nothing is pending.
+	pub fn capture_deadline(&self, settle: std::time::Duration) -> Option<std::time::Instant> {
+		self.capture_armed.then(|| self.last_output + settle)
+	}
+
+	// If armed and the terminal has settled (no output for `settle`) back at the
+	// shell prompt, return the command's output as plain Unicode text (control/
+	// colour codes are already gone - it's read from the parsed grid) and disarm.
+	// Returns None otherwise, and skips empty output (e.g. a bare Enter or `cd`).
+	pub fn poll_capture(&mut self, settle: std::time::Duration) -> Option<String> {
+		if !self.capture_armed || self.last_output.elapsed() < settle {
+			return None;
+		}
+		if !self.term.at_shell_prompt() {
+			return None; // a foreground app is still running; wait for it to exit
+		}
+		let g = self.term.term.try_lock_unfair()?;
+		self.capture_armed = false;
+		let end = {
+			let grid = g.grid();
+			grid.history_size() + grid.cursor.point.line.0.max(0) as usize
+		};
+		let text = capture_grid_text(&g, self.cmd_start, end);
+		(!text.trim().is_empty()).then_some(text)
+	}
+
 	// Map a window pixel to a grid point + which half of the cell, for selection.
 	// Returns None if the pixel is outside this pane.
 	pub fn point_at(&self, x: f32, y: f32, ctx: &TextCtx) -> Option<(Point, Side)> {
@@ -1013,7 +1073,53 @@ fn spawn_pane(
 		text_built: false,
 		mode: TermMode::empty(),
 		content_dirty: true,
+		auto_copy: false,
+		capture_armed: false,
+		cmd_start: 0,
+		last_output: std::time::Instant::now(),
 	})
+}
+
+// Extract the grid text for absolute line range [start_abs, end_abs) as plain
+// Unicode. Absolute index 0 is the oldest line currently in the buffer; screen
+// row 0 sits at absolute `history_size`. Trailing pad spaces are trimmed and a
+// newline is emitted per grid row, except rows flagged WRAPLINE (a soft-wrapped
+// long line) which join to the next. Lines evicted from scrollback (only when a
+// command's output exceeds the scrollback limit) are skipped.
+fn capture_grid_text(
+	term: &Term<crate::term::EventProxy>,
+	start_abs: usize,
+	end_abs: usize,
+) -> String {
+	let grid = term.grid();
+	let hist = grid.history_size() as i64;
+	let cols = grid.columns();
+	let mut out = String::new();
+	let mut a = start_abs;
+	while a < end_abs {
+		let gl = a as i64 - hist; // screen top is absolute `hist`; history is negative
+		if gl < -hist {
+			a += 1; // scrolled out of the buffer (output longer than scrollback)
+			continue;
+		}
+		let row = &grid[Line(gl as i32)];
+		let mut s = String::new();
+		for c in 0..cols {
+			let cell = &row[Column(c)];
+			if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+				continue; // the trailing half of a wide glyph has no char of its own
+			}
+			s.push(cell.c);
+		}
+		if cols > 0 && row[Column(cols - 1)].flags.contains(Flags::WRAPLINE) {
+			out.push_str(&s); // soft-wrapped: continue the logical line, no newline
+		} else {
+			out.push_str(s.trim_end());
+			out.push('\n');
+		}
+		a += 1;
+	}
+	out
 }
 
 // Inside span (start..=end columns) of the highest-precedence matched pair that

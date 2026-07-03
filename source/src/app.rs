@@ -193,6 +193,7 @@ enum MenuAction {
 	Paste,
 	PasteSelection,
 	ToggleReadOnly,
+	ToggleAutoCopy,
 	NewTab,
 	CloseTab,
 	NextTab,
@@ -354,9 +355,11 @@ const MENU_BAR_VPAD: f32 = 6.0;
 const TAB_BAR_VPAD: f32 = 11.0; // enough that tab-title descenders (g/j/p/q/y) clear the button bottom
 const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to settle)
 const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-size settle time before hitting disk
+const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
 const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
 const TAB_MAX_W: f32 = 220.0; // tab button width cap - drawing AND click hit-testing use this
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
+const COPYBOX_LABEL: &str = "Copy output"; // always-visible auto-copy checkbox on the menu bar
 
 struct State {
 	window: Arc<Window>,
@@ -388,6 +391,7 @@ struct State {
 	win_opacity: Option<f32>,  // CLI --background-opacity override (this window only)
 	win_title: Option<String>, // CLI --title override (else "AppName - <tab title>")
 	last_win_title: String,    // last string set on the window (skip redundant set_title)
+	focused: bool, // window has keyboard focus (gates copy-output: never copy from a background window)
 	pending_about: bool, // request to open the About window (App acts on it; needs the event loop)
 	pending_settings: bool, // request to open the Settings window
 }
@@ -433,6 +437,41 @@ impl State {
 		}
 	}
 
+	// Copy-output: when the focused pane's foreground command finishes, copy its
+	// output text to the desktop clipboard - gated on this window being focused and
+	// the pane's per-pane opt-in, so a background window/pane never exports output.
+	fn poll_output_copy(&mut self) {
+		if !self.focused {
+			return;
+		}
+		let fid = self.tabs.cur().focused;
+		let text = {
+			let Some(pane) = self.tabs.cur_mut().panes.get_mut(&fid) else {
+				return;
+			};
+			if !pane.auto_copy {
+				return;
+			}
+			pane.poll_capture(CAPTURE_SETTLE)
+		};
+		if let Some(text) = text {
+			self.clipboard.set_clipboard(text);
+		}
+	}
+
+	// When the focused pane is armed for copy-output, the instant its settle timer
+	// should fire, so an idle loop wakes to run the capture check.
+	fn capture_wake(&self) -> Option<Instant> {
+		if !self.focused {
+			return None;
+		}
+		let fid = self.tabs.cur().focused;
+		let p = self.tabs.cur().panes.get(&fid)?;
+		p.auto_copy
+			.then(|| p.capture_deadline(CAPTURE_SETTLE))
+			.flatten()
+	}
+
 	// The active tab's title ("<shell> [<program>]" or a per-tab --title override).
 	fn active_tab_title(&mut self) -> String {
 		let pm = self.tabs.cur_mut();
@@ -469,17 +508,15 @@ impl State {
 	}
 
 	fn open_menu(&mut self, target: PaneId, mx: f32, my: f32) {
-		let ro = self
-			.tabs
-			.cur()
-			.panes
-			.get(&target)
-			.is_some_and(|p| p.read_only);
+		let p = self.tabs.cur().panes.get(&target);
+		let ro = p.is_some_and(|p| p.read_only);
+		let ac = p.is_some_and(|p| p.auto_copy);
 		let entries = vec![
 			mi("Copy", MenuAction::Copy),
 			mi("Paste", MenuAction::Paste),
 			mi("Paste Selection", MenuAction::PasteSelection),
 			Entry::Sep,
+			mt(ac, "Auto-copy output", MenuAction::ToggleAutoCopy),
 			mt(ro, "Read-only", MenuAction::ToggleReadOnly),
 			Entry::Sep,
 			mi("New Tab", MenuAction::NewTab),
@@ -536,12 +573,9 @@ impl State {
 
 	// The dropdown entries for top-level menu-bar entry `idx` (File/Edit/...).
 	fn bar_menu_items(&self, idx: usize) -> Vec<Entry> {
-		let ro = self
-			.tabs
-			.cur()
-			.panes
-			.get(&self.tabs.cur().focused)
-			.is_some_and(|p| p.read_only);
+		let p = self.tabs.cur().panes.get(&self.tabs.cur().focused);
+		let ro = p.is_some_and(|p| p.read_only);
+		let ac = p.is_some_and(|p| p.auto_copy);
 		match idx {
 			0 => vec![
 				mi("Reload Config", MenuAction::ReloadConfig),
@@ -554,6 +588,7 @@ impl State {
 				mi("Paste", MenuAction::Paste),
 				mi("Paste Selection", MenuAction::PasteSelection),
 				Entry::Sep,
+				mt(ac, "Auto-copy output", MenuAction::ToggleAutoCopy),
 				mt(ro, "Read-only", MenuAction::ToggleReadOnly),
 			],
 			2 => vec![
@@ -616,6 +651,32 @@ impl State {
 			.position(|&(x, w)| mx >= x && mx < x + w)
 	}
 
+	// Always-visible "Copy output" checkbox on the right of the menu bar (security:
+	// the user can always see when the focused pane is auto-copying output). Returns
+	// the checkbox-square rect, the label's left x, and the label width.
+	fn copybox_layout(&mut self) -> (Rect, f32, f32) {
+		let attrs = crate::text::ui_attrs();
+		let lw = self.text.measure_ui_text(COPYBOX_LABEL, &attrs);
+		let sz = (self.text.ui_line_h * 0.6).round();
+		let menu_h = self.menu_bar_h();
+		let right = self.gfx.config.width as f32 - MENU_BAR_PAD;
+		let label_x = right - lw;
+		let box_x = label_x - 6.0 - sz;
+		let r = Rect {
+			x: box_x,
+			y: (menu_h - sz) / 2.0,
+			w: sz,
+			h: sz,
+		};
+		(r, label_x, lw)
+	}
+
+	// True if a menu-bar click at `mx` hit the copy-output checkbox area.
+	fn copybox_hit(&mut self, mx: f32) -> bool {
+		let (r, label_x, lw) = self.copybox_layout();
+		mx >= r.x && mx <= label_x + lw
+	}
+
 	// Request the About window. App opens it (window creation needs the event
 	// loop); the old in-surface overlay path is no longer used.
 	fn open_about(&mut self) {
@@ -655,6 +716,11 @@ impl State {
 					if let Some(p) = self.tabs.cur().panes.get(&target) {
 						p.paste(&text);
 					}
+				}
+			}
+			MenuAction::ToggleAutoCopy => {
+				if let Some(p) = self.tabs.cur_mut().panes.get_mut(&target) {
+					p.auto_copy = !p.auto_copy;
 				}
 			}
 			MenuAction::ToggleReadOnly => {
@@ -1050,6 +1116,33 @@ impl State {
 					}
 				}
 			}
+			// always-visible copy-output checkbox (right side): outline always, filled
+			// when the focused pane is auto-copying, so the state is never hidden.
+			let auto_copy = self
+				.tabs
+				.cur()
+				.panes
+				.get(&self.tabs.cur().focused)
+				.is_some_and(|p| p.auto_copy);
+			let (cb, _, _) = self.copybox_layout();
+			let brd = config::menu_border();
+			instances.push(rect_inst(
+				cb.x - 1.0,
+				cb.y - 1.0,
+				cb.w + 2.0,
+				cb.h + 2.0,
+				brd,
+			));
+			instances.push(rect_inst(cb.x, cb.y, cb.w, cb.h, config::TAB_BAR_BG));
+			if auto_copy {
+				instances.push(rect_inst(
+					cb.x + 3.0,
+					cb.y + 3.0,
+					cb.w - 6.0,
+					cb.h - 6.0,
+					config::menu_fg(),
+				));
+			}
 			Some((start, instances.len() as u32))
 		} else {
 			None
@@ -1177,10 +1270,11 @@ impl State {
 			b.shape_until_scroll(&mut self.text.font_system, false);
 			tab_bufs.push(b);
 		}
-		// menu-bar title buffers (one per top-level menu), proportional font
+		// menu-bar title buffers (one per top-level menu), proportional font, plus a
+		// trailing "Copy output" label for the always-visible checkbox
 		let mut menubar_bufs: Vec<Buffer> = Vec::new();
 		if self.menu_bar {
-			for t in MENU_BAR {
+			for t in MENU_BAR.iter().chain(std::iter::once(&COPYBOX_LABEL)) {
 				let mut b = self.text.new_ui_buffer(240.0, menu_h);
 				let mut attrs = crate::text::ui_attrs();
 				attrs.color_opt = Some(menu_fg);
@@ -1197,22 +1291,29 @@ impl State {
 		}
 		// compute before borrowing panes for `areas` (menubar_layout takes &mut self)
 		let bar_layout = self.menubar_layout();
+		let (_, copy_label_x, copy_label_w) = self.copybox_layout();
 		let mut areas: Vec<TextArea> = Vec::new();
 		for p in self.tabs.cur().panes.values() {
 			areas.push(p.text_area(tops[&p.id], margin));
 			areas.extend(p.glyph_areas());
 		}
 		for (i, b) in menubar_bufs.iter().enumerate() {
-			let (x, w) = bar_layout[i];
+			// the last buffer is the right-aligned "Copy output" checkbox label
+			let (left, l, r) = if i < bar_layout.len() {
+				let (x, w) = bar_layout[i];
+				(x + MENU_BAR_PAD, x, x + w)
+			} else {
+				(copy_label_x, copy_label_x, copy_label_x + copy_label_w)
+			};
 			areas.push(TextArea {
 				buffer: b,
-				left: x + MENU_BAR_PAD,
+				left,
 				top: MENU_BAR_VPAD / 2.0,
 				scale: 1.0,
 				bounds: TextBounds {
-					left: x as i32,
+					left: l as i32,
 					top: 0,
-					right: (x + w) as i32,
+					right: r as i32,
 					bottom: menu_h as i32,
 				},
 				default_color: menu_fg,
@@ -1995,6 +2096,7 @@ impl ApplicationHandler<UserEvent> for App {
 			win_opacity,
 			win_title,
 			last_win_title: String::new(),
+			focused: true,
 			pending_about: false,
 			pending_settings: false,
 		});
@@ -2012,6 +2114,7 @@ impl ApplicationHandler<UserEvent> for App {
 				// waits until its tab is shown (the switch forces a rebuild).
 				if let Some(p) = state.tabs.find_pane_mut(id) {
 					p.content_dirty = true;
+					p.note_output(); // copy-output: push the settle deadline out
 				}
 			}
 			UserEvent::PtyWrite(id, bytes) => {
@@ -2102,6 +2205,11 @@ impl ApplicationHandler<UserEvent> for App {
 				state.dirty = true;
 			}
 
+			// Window focus gates copy-output: a background window never copies.
+			WindowEvent::Focused(f) => {
+				state.focused = f;
+			}
+
 			// OS switched dark/light: a "System" theme follows it live.
 			WindowEvent::ThemeChanged(theme) => {
 				let dark = !matches!(theme, winit::window::Theme::Light);
@@ -2172,6 +2280,17 @@ impl ApplicationHandler<UserEvent> for App {
 				let (x, y) = state.mouse;
 				// click on the menu bar: toggle/open the top-level menu's dropdown
 				if button == MouseButton::Left && state.menu_bar && y < state.menu_bar_h() {
+					// the always-visible copy-output checkbox toggles the focused pane
+					if state.copybox_hit(x) {
+						let fid = state.tabs.cur().focused;
+						if let Some(p) = state.tabs.cur_mut().panes.get_mut(&fid) {
+							p.auto_copy = !p.auto_copy;
+						}
+						state.menu = None;
+						state.bar_open = None;
+						state.dirty = true;
+						return;
+					}
 					match (state.menubar_hit(x), state.bar_open) {
 						(Some(i), Some(o)) if i == o => {
 							state.menu = None;
@@ -2557,10 +2676,16 @@ impl ApplicationHandler<UserEvent> for App {
 					.map(|p| p.mode.contains(TermMode::APP_CURSOR))
 					.unwrap_or(false);
 				if let Some(bytes) = input::encode(&key, state.mods, app_cursor) {
+					// copy-output: Enter at the shell prompt may launch a command;
+					// arm the capture so its output is copied once the pane settles.
+					let is_enter = matches!(key.logical_key, Key::Named(NamedKey::Enter));
 					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&focused) {
 						if !p.read_only {
 							p.scroll.jump_bottom();
 							p.term.write(bytes);
+							if is_enter && p.auto_copy {
+								p.arm_capture();
+							}
 						}
 					}
 					state.dirty = true;
@@ -2654,6 +2779,8 @@ impl ApplicationHandler<UserEvent> for App {
 			.any(|p| p.scroll.animating());
 		let cursor_anim = state.tabs.cur().panes.values().any(|p| p.cursor_animating);
 		let content = state.tabs.cur().panes.values().any(|p| p.content_dirty);
+		// copy-output: catch the focused pane's command finishing (see method)
+		state.poll_output_copy();
 		let bell_anim = state.bell_flash > 0.0;
 		let flow = if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
 			// UI/chrome changes and the bell force ALL panes to re-shape; fresh
@@ -2690,6 +2817,13 @@ impl ApplicationHandler<UserEvent> for App {
 			ControlFlow::WaitUntil(state.pending_size_at + SIZE_SAVE_DEBOUNCE)
 		} else {
 			flow
+		};
+		// copy-output: while a capture is armed, make sure the loop wakes at its
+		// settle deadline to run the capture check even when otherwise idle.
+		let flow = match (flow, state.capture_wake()) {
+			(ControlFlow::Wait, Some(t)) => ControlFlow::WaitUntil(t),
+			(ControlFlow::WaitUntil(a), Some(t)) => ControlFlow::WaitUntil(a.min(t)),
+			(f, _) => f,
 		};
 		// Profiling keeps the loop hot so the workload is continuously exercised.
 		#[cfg(feature = "profiling")]
