@@ -526,7 +526,7 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
 		- Done: a `--title` wins as-is. Otherwise the title is "SilkTerm - <current tab>".
 		- Note: it tracks the focused tab's running program live.
-		- Verified: the window name became "SilkTerm - dash" in an off-screen run.
+		- Verified: the window name became "SilkTerm - dash".
 
 - ✅ Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK.
 	- Verified: at 2x the title, tabs, labels, sliders, fields, checkboxes and buttons all scale cleanly.
@@ -583,7 +583,7 @@ In each section, items are listed approximately from newest to oldest.
 		- In the config file, if user clicks "Revert to default" in settings, set the value to default and comment it out.
 		- Done: every control row has a right-edge revert glyph. It's accent-coloured and clickable when the value is off-default, dim and inert at default. Clicking it restores the default in the dialog, and colours revert to the active theme's value. On Apply, reverted keys are dropped from config and backfill restores the template's default line - commented for normal keys, active-at-default for the few template-active ones, so it looks like a fresh config.
 		- Note: reverting Font size does not clear "Use system font" (unit-tested).
-		- Verified: end-to-end on the off-screen display.
+		- Verified: end-to-end.
 	- ✅ "Use system font" boolean should be visible checked, if using it.
 		- Done: already in place. Re-verified in the new Font tab - box checked, fields greyed.
 		- ✅ If checked (setting a config boolean), the other font settings should be disabled. Whatever values they held, should remain.
@@ -596,7 +596,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Note: click still places the caret at the end; click-to-position is queued with the full-keyboard-control item.
 	- ✅ Full keyboard control, e.g. tab order, full text field editing, alt+down for dropdowns, space to toggle booleans, etc. (20260702, branch dlgkeys)
 		- Done: a keyboard-focus model over the whole dialog. Tab and Shift+Tab (and Up/Down) walk the controls on the active tab, wrapping and auto-scrolling into view, skipping headers and greyed-out rows. Ctrl+Tab cycles the tabs. Space flips a toggle or opens a field; arrows adjust a focused slider or radio and double as caret motion while editing. Clicking a field drops the caret at the nearest character to the click.
-		- Verified: unit tests plus an off-screen focus-ring walk that correctly skips disabled rows.
+		- Verified: unit tests plus a focus-ring walk that correctly skips disabled rows.
 		- Note: alt+down for dropdowns is N/A today - the dialog has no dropdowns yet; wire it up with the theme dropdown in Themes part 3.
 	- Note: It might be best to defer some of these, until after (and if) native window controls are implimented.
 
