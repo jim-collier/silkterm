@@ -219,9 +219,12 @@ impl DialogWin {
 		}
 	}
 
-	pub fn mouse_up(&mut self) {
+	pub fn mouse_up(&mut self) -> Option<DialogAction> {
+		let (mx, my) = self.mouse;
 		if let Content::Settings(d) = &mut self.content {
-			d.mouse_up();
+			map_action(d.mouse_up(mx, my))
+		} else {
+			None
 		}
 	}
 
@@ -371,7 +374,12 @@ impl DialogWin {
 				scissor_vp = Some(d.viewport());
 				rect_inst = fixed;
 				rect_inst.extend(rows);
-				for it in d.texts(self.text.ui_line_h) {
+				let items = {
+					let text = &mut self.text;
+					let a2 = ui_attrs();
+					d.texts(lh, |s| text.measure_ui_text(s, &a2))
+				};
+				for it in items {
 					let mut a = ui_attrs();
 					a.color_opt = Some(GColor::rgb(it.color[0], it.color[1], it.color[2]));
 					if it.bold {
