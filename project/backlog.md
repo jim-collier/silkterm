@@ -42,72 +42,37 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🔘 At high blur radius and low softness, the blur has boxy artifacts.
+- 🔘 Now there's too much space below the tab text and top menu text. (Ironic since earlier there was too little.) It should be vertically centered.
+	- 🔘 Proper fix: Size both the menu and the tabs according to the font height (plus extra), then *vertically center* the text within that area. If the font was created poorly centered, which may are, then there may be nothing to do about that - but the current font seems properly designed elsewhere.
 
 - 🔘 When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
 
 - 🔘 Modal Bug (with Settings and About): The dialog shows up in the window list. Also when focused is changed elsewhere then the dialog is clicked on, the terminal window doesn't also come to the top - it stays behind whatever got in front of it. In Linux - unlike Windows - the main window can still be moved around when the modal dialog is open, but it *remains an unselected window* - the dialog retains focus. These things aren't a coding trick, it's just the way modals work on Linux, and so should SilkTerm.
 
+- 🔘 At high blur radius and low softness, the blur has boxy artifacts.
+
 - 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
-	- Cause (by code analysis): when the glyph atlas fills up (a long session of varied glyphs), text `prepare()` fails and `render` returned early - *above* the per-frame atlas trim - so the atlas never recovered and all text stayed black forever. The cursor and cell backgrounds use a separate rect renderer, so they kept showing (matches the report exactly).
-	- Fix: trim the atlas on the prepare-failure path so the next frame re-prepares with room and recovers. Couldn't force an atlas-full in a short stress run (a 20s unicode flood didn't fill it - the trigger needs a genuinely long session), so this is verified by code analysis, not a live repro. Watch for recurrence.
-	- 20260701 (headless retest): ran a 50s max-rate random-unicode flood on the private Xvfb (gui-headless.bash) at 120x40 - text stayed visible the whole time (screen brightness ~0.12 throughout), app alive, no black-out, no trim event. Still couldn't force the atlas-full: this box has limited renderable-glyph coverage (no CJK/emoji fonts - a full-screen distinct-CJK flood just renders blank, which is a missing-font effect, NOT the atlas bug and NOT a trim event). So the specific atlas-full trigger remains unreproducible here; the no-black-out-under-load result is a stronger confirmation than code-analysis alone.
-	- Resolution: Leave this issue open until verified with long-running terminals.
+	- Cause: when the glyph atlas fills up during a long, varied session, text prepare() fails and render bailed out before the per-frame atlas trim. The atlas never recovered, so text stayed black. Cursor and per-cell backgrounds use a separate renderer, so they kept showing.
+	- Fixed: trim the atlas on the prepare-failure path, so the next frame re-prepares with room and recovers.
+	- Note: couldn't force an atlas-full for a live repro. A 20s flood didn't fill it; the trigger needs a genuinely long session.
+	- Verified: a 50s max-rate unicode flood on the headless display stayed visible throughout, app alive, no black-out. This box lacks the CJK/emoji coverage to actually fill the atlas, so the exact trigger is still unreproduced here.
+	- Resolution: leave open until confirmed on long-running terminals.
 
 ### New features and enhancements
 
-- ✅ CICD dogfood section:
-	- ✅ Copy as a different name every time, in format "slktrmdf_YYYYmmDD-HHMMSS"
-		- So that multiple versions can run, and automated testing won't kill them.
-		- Automatically delete existing older copies that are not in use.
-		- Done: each build installs under its own timestamped name, so versions coexist.
-		- Done: copies that aren't currently running are pruned automatically.
-		- Done: two installs now - the old fixed name to the synced bin, and the rotating dated copy to ~/.local/bin. The preflight shows both.
-		- Verified: a running copy is kept, an idle older one is removed, and the new copy appears.
+- 🔘 Option to include the cursor in outer-glow. Default to off. Still outline it though.
 
-- ✅ Create a new bash 5 script 'utility/n8runterm':
-	- Can run any terminal along with script args it received (e.g. if user edits it), but by default it runs the function fSilkTermDogfood(), which:
-		- Looks for the newest 'slktrmdf_YYYYmmDD-HHMMSS', and runs it with script args "$@".
-		- Done: wrote the launcher. It finds the newest dogfood build and runs it, passing arguments through. Edit fMain() to launch a different terminal.
-		- Verified: runs the newest build, passes args, and errors cleanly when none exists.
-	- ✅ Also pass a random background image and a build-tagged title:
-		- Done: prepends a random image from `~/.config/silkterm/backgrounds/` and a title tagged with the build's timestamp. Both go before the passed args, so a caller can still override.
-		- Note: skipped quietly when the backgrounds folder has no images.
-		- Verified.
-	- ✅ Fall back to a known terminal when no dogfood build (or fMain's target) is found:
-		- Done: tries terminator, xfce4-terminal, gnome-terminal, konsole, alacritty, kitty, then xterm, and runs the first one installed.
-		- Note: prints a short note before falling back, and a real error only when nothing at all is installed.
-		- Verified: selection order, the fallback note, and that a present dogfood build wins.
+- 🔘 Copy output:
+	- 🔘 Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.
+	- 🔘 The checkbox button and menu item should only be visibly enabled for one pane at a time.
+		- 🔘 If you change tabs or panes, the feature gets turned off. (Visibly and actually.)
+			- 🔘 Changing windows is OK.
+		- 🔘 If you enable the feature on another silkterm window, it gets disabled on other open windows. (Visibly and actually.)
 
 - 🔘 Settings dialog:
 	- 🔘 Remove "Settings" heading text, it's redundant with the window title.
 	- 🔘 Change the buttons at the top for different pages, to tabs.
 		- 🔘 Can cycle through with Ctrl+PgUp|PgDn.
-
-- ✅ Config:
-	- ✅ "Glow border" -> "Text outline" (change description and config name). Change default value to 2.0.
-		- Done: renamed the config key and the dialog label, and set the default to 2.0.
-		- Note: existing configs migrate to the new key without losing their value.
-	- ✅ Glow falloff: Change default to S-curve.
-		- Done: the default falloff is now the S-curve.
-
-- ✅ Buttons:
-	- ✅ Center text.
-		- Done: the Cancel/Apply/OK captions are centered in the button. They were left-aligned before.
-	- ✅ Provide click feedback.
-		- Done: a button highlights while held and fires on release. Dragging off it first cancels.
-		- Verified: unit tests, plus a headless check of the highlight and centering.
-
-- ✅ CICD script: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path.
-	- Done: removed the "Proceed? [y/N]" step. The commit-message prompt is now where you bail out, with Ctrl+C.
-	- Note: `-y` still skips prompting entirely.
-
-- ✅ Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK.
-	- Verified: at 2x the title, tabs, labels, sliders, fields, checkboxes and buttons all scale cleanly.
-	- Reproduced: the Settings radio labels collided at 2x.
-	- Cause: the radio spacing was a fixed pixel value while the text grew with the font.
-	- Fix: radio spacing now scales with the font, and the panel widens so every option fits.
-	- Verified: a unit test guards the scaling.
 
 - ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- Done: a per-pane toggle. When on, the focused pane's output copies to the clipboard as each command finishes.
@@ -142,12 +107,17 @@ In each section, items are listed approximately from newest to oldest.
 		- Note: menu hover, border and separator shades follow the menu colour automatically.
 		- Verified: a custom dialog colour recoloured the Settings panel. Unit-tested.
 
-- 🛠️ Tab interface: single-window core done (`Tabs` in app.rs: each tab owns a `PaneManager`; tab bar shown with >1 tab, click to switch; pane area reduced by the bar). Detach/dock deferred (need multi-window). Verified: new tab, switch (content swaps), close (bar hides).
+- 🛠️ Tab interface:
+	- Done: single-window core. Each tab owns a PaneManager; the tab bar shows once there's more than one tab, click to switch, and the pane area shrinks to make room for the bar.
+	- Verified: new tab, switch (content swaps), close (bar hides).
+	- Note: detach and dock are deferred - they need multi-window.
 	- ✅ Close tab (CTRL+Shift+w, CTRL+F4)
-		- Done: both shortcuts close the current tab, matching the menu's Close Tab.
+		- Done: both shortcuts close the current tab, matching the menu.
 		- Note: keeps at least one tab open. Shift on W leaves plain Ctrl+W for the shell.
-	- 🔘 Detach tab to new window with mouse (deferred: needs multi-window)
-	- 🔘 Dock tab to different existing window with mouse (deferred: needs multi-window)
+	- 🔘 Detach tab to new window with mouse
+		- Note: deferred, needs multi-window.
+	- 🔘 Dock tab to different existing window with mouse
+		- Note: deferred, needs multi-window.
 
 - ✅ Window title:
 	- ✅ Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
@@ -156,11 +126,14 @@ In each section, items are listed approximately from newest to oldest.
 		- Verified: the window name became "SilkTerm - dash" in a headless run.
 
 - 🛠️ Themes:
-	- Status part 1: Done. (`src/theme.rs`): theme foundation + terminal palette done. A `Palette` (bg/fg/cursor/focus + 16 ANSI) x a `Theme` (dark+light pair); `theme` + `theme_mode` config keys resolve the active palette, which `palette.rs` + the renderer read. The `[colors]` keys still override per-colour. 3 built-ins (SilkTerm, Matrix, Retro Amber), each dark+light.
-		- Verified: Matrix = green-on-black incl. green-toned ANSI; SilkTerm light = dark-on-light.
-	- Status part 2: Done: chrome/dialog theming + System mode. Dialogs (Settings + About) adapt via `config::is_dark()` - dark-gray panel/text for dark, light-gray for light (a `Dlg` dark/light set in settings_ui); the menu/tab chrome is a fixed neutral gray (#165). "System" mode follows the OS via winit's `Window::theme()` at startup + `WindowEvent::ThemeChanged` -> `config::reapply_for_os` (falls back to dark where the OS reports no preference, e.g. X11).
-		- Verified: light mode -> light-gray Settings dialog with dark text; menu is gray; system mode launches clean. still TODO: config-defined `[themes.*]`; the Settings theme dropdown + its own tab; clearing per-colour overrides on re-select; per-theme menu colour (#166); more themes (Pastel, Solarized).
-	- 🛠️ Provide a set of about 3 or 4 themes, each that support "Dark" or "Light" mode (or "System"). - 3 built-ins with dark+light done; "System" (OS-follow) + a 4th theme pending.
+	- Done (part 1): theme foundation and terminal palette. A Palette (bg/fg/cursor/focus + 16 ANSI) times a Theme (a dark+light pair); the theme and theme_mode config keys pick the active palette, and the [colors] keys still override per-colour. Three built-ins: SilkTerm, Matrix, Retro Amber, each dark and light.
+		- Verified: Matrix is green-on-black including green-toned ANSI; SilkTerm light is dark-on-light.
+	- Done (part 2): chrome/dialog theming plus System mode. Settings and About adapt to dark/light; the menu and tab chrome stay a fixed neutral gray. System mode follows the OS at startup and on theme-change, falling back to dark where the OS reports no preference (e.g. X11).
+		- Verified: light mode gives a light dialog with dark text; system mode launches clean.
+		- Note: still open - config-defined [themes.*], the Settings theme dropdown and its own tab, clearing per-colour overrides on re-select, per-theme menu colour (#166), more themes (Pastel, Solarized).
+	- 🛠️ Provide a set of about 3 or 4 themes, each that support "Dark" or "Light" mode (or "System").
+		- Done: three built-ins with dark and light.
+		- Note: System (OS-follow) and a 4th theme are still pending.
 		- Dark mode means the background is dark, text light - both for the terminal, and dialogs.
 			- But dialogs have a different color than terminal background. E.g. the existing dark gray for Dark mode, light gray for Light mode.
 		- Light mode means light background, dark text.
@@ -175,20 +148,31 @@ In each section, items are listed approximately from newest to oldest.
 			- Pastel (a pleasing light pastel color, on dark gray background that has a subtle tint of complementary pastel).
 
 - 🛠️ General configuration:
-	- status: the default-shell behavior is done; the named shell list + its selection UI (grid editor + Tab/Pane menus) are now active hand-rolled work - the egui chrome migration was declined (see the `[x]` note under "Setting dialog (part 2)").
+	- Done: the default-shell behavior.
+	- Note: the named shell list and its UI (grid editor, Tab/Pane menus) are still to build by hand. The egui chrome migration was declined - see the note under "Setting dialog (part 2)".
 	- 🛠️ Ability to define shells to launch in a new tab or pane.
-		- ✅ By default, new tab launches the default shell for the window. - `new_tab` + the non-CLI startup pane use `config::default_shell_argv()`.
-			- ✅ By priority: Global command shell override, non-empty shell specified in config file, or system default shell. - resolution order is CLI window `--shell` -> config `default_shell` -> system; per-pane it's pane `--shell` -> the pane it forked -> tab -> window -> `default_shell` -> system. Verified: a `default_shell` in config runs on the startup pane.
-		- ✅ By default, new pane launches same shell as the pane the new one was forked off of. - `Pane` stores its launch argv; interactive splits inherit it (done with the CLI work).
+		- ✅ By default, new tab launches the default shell for the window.
+			- Done: new tabs and the startup pane use the default shell.
+			- ✅ By priority: Global command shell override, non-empty shell specified in config file, or system default shell.
+				- Done: order is the window --shell, then config default_shell, then system. A new pane also inherits from the pane it forked, its tab, then the window first.
+				- Verified: a default_shell in config runs on the startup pane.
+		- ✅ By default, new pane launches same shell as the pane the new one was forked off of.
+			- Done: a pane stores its launch command, and interactive splits inherit it.
 	- 🛠️ The shell configuration is stored in the config file as a simple key:value list of shell names and command lines. Command lines may have spaces, single quotes, and/or double quotes in them.
-		- Done so far: a single `default_shell` string key (argv-split via `cli::shell_split`, handles spaces/quotes). The named key:value `[shells]` list + its consumers (the grid editor + Tab/Pane menus below) are now hand-rolled work (egui declined).
-		- 🔘 In the settings dialog, this is accessed from a button that loads an additional modal dialog on top, with a 2*n grid of values. (That is editable like a typical database or spreadsheet grid.) This editable grid UX should be reusable for other potential future features. - Hand-rolled (egui declined): build it as a dynamic list of name|command rows + add/remove, reusing the dialog's existing text-field editing and the multi-window `DialogWin` infra.
-	- 🔘 The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what). - Hand-rolled (no egui); follows the named-shell list above.
-	- 🔘 If bash is available on the system, add a shell option just above "[SilkTerm default]": "bash --norc". - Deferred with the hand-rolled shell menu above.
+		- Done: a single default_shell string key, argv-split so it handles spaces and quotes.
+		- Note: the named key:value list and its consumers (the grid editor and Tab/Pane menus below) are still hand-rolled work.
+		- 🔘 In the settings dialog, this is accessed from a button that loads an additional modal dialog on top, with a 2*n grid of values. (That is editable like a typical database or spreadsheet grid.) This editable grid UX should be reusable for other potential future features.
+			- Note: hand-rolled. Build it as a dynamic list of name/command rows with add and remove, reusing the dialog's text-field editing.
+		- 🔘 The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
+			- Note: hand-rolled, follows the named-shell list above.
+		- 🔘 If bash is available on the system, add a shell option just above "[SilkTerm default]": "bash --norc".
+			- Note: deferred with the hand-rolled shell menu above.
 
 - 🛠️ Setting dialog (part 2):
 	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
-	- ✅ Size: A boolean setting to "Remember last size" - `remember_size` config + dialog toggle; on launch it uses `remembered_columns`/`remembered_rows` instead of columns/rows. The remembered pair is updated on every manual window resize (startup/programmatic resizes are skipped via a `size_tracked` flag set after the first frame, so they don't clobber it) and is not shown in the dialog. Columns/Rows grey out when on. Verified: manual resize -> remembered_columns/rows persisted; relaunch with remember_size=true used the remembered size (712x504, not the 160-col default); dialog shows the toggle checked with Columns/Rows greyed.
+	- ✅ Size: A boolean setting to "Remember last size".
+		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows grey out when on.
+		- Verified: a manual resize persisted the remembered size, relaunch used it instead of the default, and the dialog shows the toggle checked with Columns and Rows greyed.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
 			- 🔘 "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
 	- ✅ All values, including slider numbers, should also have directly editable fields (that are part of the tab order).
@@ -197,18 +181,17 @@ In each section, items are listed approximately from newest to oldest.
 		- Verified: unit tests for editing and clamping, plus a headless render check.
 
 - 🛠️ Command-line options:
-	- Status part 1 (options engine): Done.
-		- Full parser (create/select model, cascading style, shell-word-split, unit-tested).
-		- `--help`/`--version`/`--syntax`; `--config` alternate file
-		- Window options `--columns/--rows/--pixel-width/--pixel-height/--background-opacity/--hide-windowframe/--hide-menu/--fullscreen/--title` (window-only-after-marker errors).
-		- Layout `--new-tab/--tab=/--new-pane/--pane=/--splits/--down|up|left|right/--size` building real tabs/panes (targeted splits -> arbitrary trees, smart default direction, percent/cell sizes).
-		- Per-pane `--shell` (argv-exec, cascade pane->split-source->tab->window->config `default_shell`; interactive splits inherit too).
-		- Config `command_line` applied when launched with no args (any real CLI argument overrides it entirely - verified both directions).
-		- Tab `--title` override (`PaneManager::title_override`, shown in the tab bar - verified).
-		- Window-level visual style now applied: `--font-name/--font-size/--background-color/--foreground-color/--background-image/--background-image-stretch/-zoom/-opacity` fold into the live settings at startup (`cli::fold_window_style`, called from `resumed` after the theme palette settles via `WindowOpts::apply_style`; 2 unit tests). PER-PANE scope is still deferred: it needs a per-pane renderer the single-`TextCtx` architecture lacks (revisited later, hand-rolled chrome without egui). So these flags are `🛠️` - they work for the whole window but don't yet vary per pane.
-		- `--keep-open` (needs exit-status display in a dead PTY).
-		- Per-pane `--title` (no per-pane title is displayed yet - reserved).
-		- Finer field-level CLI/config negotiation (current rule: presence of any CLI arg ignores the config command line wholesale).
+	- Done (part 1, the options engine):
+		- Full parser: create/select model, cascading style, shell-word-split, unit-tested.
+		- --help / --version / --syntax, and --config for an alternate file.
+		- Window options: columns, rows, pixel-width, pixel-height, background-opacity, hide-windowframe, hide-menu, fullscreen, title. A window option after a tab/pane marker errors.
+		- Layout: --new-tab/--tab=/--new-pane/--pane=/--splits with direction and --size, building real tabs and panes (targeted splits into arbitrary trees, smart default direction, percent or cell sizes).
+		- Per-pane --shell (argv-exec; cascades pane, split-source, tab, window, then config default_shell; interactive splits inherit).
+		- Config command_line applied when launched with no args. Any real CLI argument overrides it entirely (verified both ways).
+		- Tab --title override, shown in the tab bar (verified).
+		- Window-level visual style: font, size, colours, and the background image with its stretch/zoom/opacity fold into the live settings at startup.
+			- Note: per-pane scope is still deferred. It needs a per-pane renderer the single-TextCtx architecture lacks, so these flags apply to the whole window but don't yet vary per pane (hence 🛠️).
+		- Note: still open - --keep-open (needs exit-status in a dead PTY), per-pane --title (reserved, none displayed yet), and finer field-level negotiation (today any CLI arg ignores the config command line wholesale).
 	- General notes:
 		- Command-line options override any config setting, but only while that window is alive.
 		- As suggested in the main enhancement bulletpoint above, a command line can also be specified in the config file (and exposed in "Settings").
@@ -282,23 +265,31 @@ In each section, items are listed approximately from newest to oldest.
 		- 🔘 `--keep-open[=| ]bool`
 			- Keep pane|tab|window open after shell command exits, showing exit value.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--font-name[=| ]"string"` - window-level applied; per-pane deferred
+		- 🛠️ `--font-name[=| ]"string"`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--font-size[=| ]<n>` - window-level applied; per-pane deferred
+		- 🛠️ `--font-size[=| ]<n>`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-color[=| ]<hex>` - window-level applied; per-pane deferred
+		- 🛠️ `--background-color[=| ]<hex>`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--foreground-color[=| ]<hex>` - window-level applied; per-pane deferred
+		- 🛠️ `--foreground-color[=| ]<hex>`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-image[=| ]"path"` - window-level applied; per-pane deferred
+		- 🛠️ `--background-image[=| ]"path"`
+			- Note: window-level applied, per-pane deferred.
 			- No value = no background image.
 			- Option not included = fall back to config value.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-image-stretch[[=| ]bool]` - window-level applied; per-pane deferred
+		- 🛠️ `--background-image-stretch[[=| ]bool]`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-image-zoom[[=| ]bool]` - window-level applied; per-pane deferred
+		- 🛠️ `--background-image-zoom[[=| ]bool]`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-image-opacity[=| ]<n>` - window-level applied; per-pane deferred
+		- 🛠️ `--background-image-opacity[=| ]<n>`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
 
 - 🔘 Additional "File" menu option: "Save entire current layout to config".
@@ -308,7 +299,8 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 When running `sudo apt update`, the progress bar at the bottom bounces about halfway below the render area, as lines above it scroll up. This seems to be a side-effect of smooth-scrolling. Is there a way to prevent that from happening, without fundamentally breaking the very concept of smooth scrolling?
 	- Reopened: The first attempt (snap output easing during line bursts) broke smooth scrolling for all normal output and was reverted (see the smooth-scrolling-regression bug above).
-		- Diagnosis still stands: apt reserves the bottom line as a status bar via a scroll region (DECSTBM `0..N-1`); printing each log line scrolls that region. Because the region starts at line 0, alacritty_terminal grows scrollback (`Grid::scroll_up` only calls `increase_scroll_limit` when `region.start == 0`), which fires our output easing - and the ease shifts the whole grid down by up to a cell, dragging the fixed status bar below the viewport = the bounce. A correct fix needs to know a partial scroll region is active so it can suppress easing only then, but `alacritty_terminal` doesn't expose `scroll_region` (private, no getter). Options for later: (a) patch/fork the crate to expose the region; (b) tee the PTY stream and parse DECSTBM ourselves; (c) accept as a known limitation like full-screen apps (`nano`).
+		- Diagnosis: apt reserves the bottom line as a status bar via a scroll region, and each log line scrolls that region. Since the region starts at line 0, alacritty grows scrollback, which fires our output easing. The ease shifts the whole grid down by up to a cell and drags the fixed status bar below the viewport - that's the bounce.
+		- Note: a proper fix needs to know a partial scroll region is active so it can suppress easing only then, but alacritty_terminal doesn't expose the scroll region. Options for later: patch the crate to expose it, tee and parse DECSTBM ourselves, or accept it like other full-screen apps.
 	- Update: This actually seems to have fixed itself with some other work. Keep on backlog just in case.
 
 ### Done
@@ -327,17 +319,28 @@ In each section, items are listed approximately from newest to oldest.
 #### Done - Bugs
 
 - ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
-	- ✅ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. (20260630) - the bar/tab height scales with the menu font (cell_h-based); the remaining issue was descenders (g/j/p/q/y) sitting tight against the button bottom. The title was already near the button top so it couldn't move up - so bumped TAB_BAR_VPAD 8 -> 11, making the bar a few px taller and giving descenders clearance. Verified via a descender-heavy tab title screenshot (PID-verified capture).
+	- ✅ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. (20260630)
+		- Done: the bar and tab height scale with the menu font. Descenders were sitting tight against the button bottom, so the vertical padding was bumped up a couple px to clear them.
+		- Verified: a descender-heavy tab title screenshot.
 
 - ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
 	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. For example my system proportional font is a Serif font, not sans serif. (20260629)
 		- Cause: chrome used generic `Family::SansSerif`. fontdb's generic-sans default is "Arial"; when that's absent (typical on Linux) the query falls through to whatever matches - here the GNOME *document* font, which is a serif (GentiumAlt). (fontconfig's actual sans-serif on this box is Noto Sans.)
 		- Fix (first pass): pin a concrete sans family, mirroring the mono pin - resolved the OS sans-serif (`fc-match sans-serif`), else a curated list, validated against the db. Got "Noto Sans" - still a sans, which missed the point below.
-			- ✅ Not fixed: Still using system *sans serif*, rather than just system font generally. (Which on my system is a *serif* font.) - FIXED PROPERLY (20260701): chrome now follows the *desktop interface font* - family, size, weight, slant - serif or not. `sysfont::interface()` reads it natively per platform (Linux: gsettings `font-name`, else xfconf `/Gtk/FontName`; Windows: `lfMenuFont` incl. weight; macOS: 13pt system convention, family falls back), `text::ui_attrs()` pins it ("GentiumAlt" Bold here; a sans is only the no-desktop-setting fallback), and chrome renders at its own `ui_line_h` metrics independent of the terminal font. Menu bar/tab bar heights, dropdown widths/rows, and the Settings dialog (rows, title, measured label/button widths) all size from the real rendered text, so an oversized or wide font grows the chrome instead of truncating. Verified on the private Xvfb: menu bar + dropdowns + Settings all render bold-serif GentiumAlt 13; terminal text unaffected.
-		- ✅ Verify that menu bar height adjusts based on menu font. - Confirmed: `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (now `text.ui_line_h`, the UI font's own height) + pad, so a larger menu font grows the bars (the height work was done earlier under #t6thx).
-		- ✅ Still sans-serif after the 20260701 fix (reported: bold + bigger took, family didn't). - Root cause found and FIXED (20260701, branch uiface): cosmic-text only uses the requested family when a face matches the requested weight EXACTLY (its fallback filters `font_weight_diff == 0`), and GentiumAlt ships no Bold face - so asking for `Weight::BOLD` silently ejected the whole family and a *bold sans* rendered instead (which is exactly why bold/size "took" but the family didn't). Fix: pin the db's canonical family spelling (cosmic-text compares names case-sensitively) and snap the requested weight/slant to a face the family really has - family wins over weight; dialog-title "bold" snaps the same way (`ui_bold_weight`). Regression-guarded by a shaping test that asserts every chrome glyph resolves in the pinned family. Verified on Xvfb: menu bar + Settings dialog render serif GentiumAlt (regular weight - the family's closest face to Bold; cosmic-text does not synthesize).
+			- ✅ Not fixed: Still using system *sans serif*, rather than just system font generally. (Which on my system is a *serif* font.)
+				- Fixed: chrome now follows the desktop interface font - family, size, weight, slant, serif or not. It's read natively per platform, and the whole chrome sizes from the real rendered text, so a large or wide font grows the chrome instead of truncating.
+				- Verified: menu bar, dropdowns, and Settings render the desktop's bold serif font; terminal text is unaffected.
+		- ✅ Verify that menu bar height adjusts based on menu font.
+			- Verified: the bar heights equal the menu font's line height plus padding, so a larger menu font grows the bars.
+		- ✅ Still sans-serif after the 20260701 fix (reported: bold + bigger took, family didn't).
+			- Cause: cosmic-text only uses the requested family when a face matches the requested weight exactly, and GentiumAlt ships no Bold face. So asking for bold silently ejected the family and a bold sans rendered instead - which is why bold and size took but the family didn't.
+			- Fixed: pin the font db's canonical family spelling and snap the requested weight and slant to a face the family actually has, so family wins over weight. A shaping test guards it.
+			- Verified: menu bar and Settings render the serif family at its closest weight; cosmic-text doesn't synthesize bold.
 
-- ✅ Outer glow should only apply to terminal text - not tab titles or the menu bar. (20260630) - the glow composite covered the whole window, so the halo appeared behind the menu/tab titles too. Now clipped to the content area (below the chrome), so only terminal text glows. Verified via a strong-glow screenshot (chrome text crisp, no halo).
+- ✅ Outer glow should only apply to terminal text - not tab titles or the menu bar. (20260630)
+	- Cause: the glow composite covered the whole window, so the halo showed behind the menu and tab titles too.
+	- Fixed: clip it to the content area below the chrome, so only terminal text glows.
+	- Verified: a strong-glow screenshot - chrome text crisp, no halo.
 
 - ✅ High severity: Typing "exit" in tab, closes the whole application. It should only close that tab. Doesn't do that for panes, only tabs. Closing a tab via menu only closes that one tab. (20260629; real cause found + fixed 20260630)
 	- Cause: the shell-exit handler (`UserEvent::Exit(id)` in app.rs) just called `tabs.cur_mut().close(id)` and quit the app whenever that returned true. So the last pane of a tab killed the whole app when other tabs existed; worse, a background tab's shell exiting ran `close(id)` on the *active* tab (which doesn't own that pane) -> returns true -> app quit. The Close-Pane menu had the right pane->tab->window cascade; the exit path didn't.
@@ -351,11 +354,15 @@ In each section, items are listed approximately from newest to oldest.
 		- ✅ REAL cause (20260630): pane ids collided across tabs. Each tab is a separate PaneManager that assigned ids from its own counter (first pane always id 1), so the shell-exit event (carries only the id) resolved to the WRONG tab - the first one with that id - and closed it; dropping that tab's term fired another Exit -> cascade (closed all but one, sometimes hung), exactly as reported. The earlier fix (find the owning tab + cascade) was right in shape but the id lookup was ambiguous. Fix: `alloc_pane_id()` - one global counter, so every pane is unique everywhere. Verified with instrumentation: exit in the 3rd of 4 tabs resolves to tab index 2, exactly one close, no cascade, app alive.
 
 - ✅ Cursor: (20260629)
-	- ✅ Smooth-scroll (when moving to the right). - the cursor slides to its target column as you type (snaps on a newline); idles at 0% CPU.
-	- ✅ Blink at the same rate, but "phase" between of and on, not just on or off. - smooth cosine fade, now default ON: a render refactor skips re-shaping text on cursor-only frames (~70% -> ~21% of a core, debug; far less in release), so blinking no longer pegs the CPU. `cursor_blink` config to disable. Detail in the private dev notes.
+	- ✅ Smooth-scroll (when moving to the right).
+		- Done: the cursor slides to its target column as you type, snapping on a newline. Idles at 0% CPU.
+	- ✅ Blink at the same rate, but "phase" between of and on, not just on or off.
+		- Done: a smooth cosine fade, on by default. A render refactor skips re-shaping text on cursor-only frames, so blinking no longer pegs the CPU. The cursor_blink config disables it.
 
 - ✅ Setting dialog: (20260629)
-	- ✅ Setting Bg image fit to "Zoom", then Apply works. But back to "Stretch", then Apply, doesn't. - Cause: the dialog's `orig` baseline was captured at open and never refreshed, so a 2nd Apply diffed against the open-time snapshot; re-selecting the original value read as "no change". Fix: `commit_baseline()` resets orig = edited after each Apply (fixes every setting, not just fit).
+	- ✅ Setting Bg image fit to "Zoom", then Apply works. But back to "Stretch", then Apply, doesn't.
+		- Cause: the dialog's baseline was captured when it opened and never refreshed, so a second Apply diffed against the open-time snapshot and re-selecting the original value read as no change.
+		- Fixed: reset the baseline after each Apply. This fixes every setting, not just fit.
 
 - ✅ Critical: Smooth-scrolling apparently just quits after using the terminal for a while. It seems to quit, if output is too fast for a while, but that could be a red-herring. Maybe it's just after any particular amount of general use.
 	- Cause: output-easing was triggered off scrollback *growth* (`grid.history_size()` rising). That growth flatlines once the scrollback buffer fills (default 10k lines) - old lines drop off the top as fast as new ones arrive - so after enough output the growth reads 0 every frame and `nudge_output` never fires again. Smooth output scroll dies "after a while", and sooner under fast output (which fills the 10k buffer faster). Manual scrollback (wheel) was unaffected, which is why it looked like only the smooth *output* scroll quit.
@@ -433,10 +440,60 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - new features and enhancements
 
+- ✅ Config:
+	- ✅ "Glow border" -> "Text outline" (change description and config name). Change default value to 2.0.
+		- Done: renamed the config key and the dialog label, and set the default to 2.0.
+		- Note: existing configs migrate to the new key without losing their value.
+	- ✅ Glow falloff: Change default to S-curve.
+		- Done: the default falloff is now the S-curve.
+
+- ✅ CICD dogfood section:
+	- ✅ Copy as a different name every time, in format "slktrmdf_YYYYmmDD-HHMMSS"
+		- So that multiple versions can run, and automated testing won't kill them.
+		- Automatically delete existing older copies that are not in use.
+		- Done: each build installs under its own timestamped name, so versions coexist.
+		- Done: copies that aren't currently running are pruned automatically.
+		- Done: two installs now - the old fixed name to the synced bin, and the rotating dated copy to ~/.local/bin. The preflight shows both.
+		- Verified: a running copy is kept, an idle older one is removed, and the new copy appears.
+
+- ✅ Create a new bash 5 script 'utility/n8runterm':
+	- Can run any terminal along with script args it received (e.g. if user edits it), but by default it runs the function fSilkTermDogfood(), which:
+		- Looks for the newest 'slktrmdf_YYYYmmDD-HHMMSS', and runs it with script args "$@".
+		- Done: wrote the launcher. It finds the newest dogfood build and runs it, passing arguments through. Edit fMain() to launch a different terminal.
+		- Verified: runs the newest build, passes args, and errors cleanly when none exists.
+	- ✅ Also pass a random background image and a build-tagged title:
+		- Done: prepends a random image from `~/.config/silkterm/backgrounds/` and a title tagged with the build's timestamp. Both go before the passed args, so a caller can still override.
+		- Note: skipped quietly when the backgrounds folder has no images.
+		- Verified.
+	- ✅ Fall back to a known terminal when no dogfood build (or fMain's target) is found:
+		- Done: tries terminator, xfce4-terminal, gnome-terminal, konsole, alacritty, kitty, then xterm, and runs the first one installed.
+		- Note: prints a short note before falling back, and a real error only when nothing at all is installed.
+		- Verified: selection order, the fallback note, and that a present dogfood build wins.
+
+- ✅ Buttons:
+	- ✅ Center text.
+		- Done: the Cancel/Apply/OK captions are centered in the button. They were left-aligned before.
+	- ✅ Provide click feedback.
+		- Done: a button highlights while held and fires on release. Dragging off it first cancels.
+		- Verified: unit tests, plus a headless check of the highlight and centering.
+
+- ✅ CICD script: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path.
+	- Done: removed the "Proceed? [y/N]" step. The commit-message prompt is now where you bail out, with Ctrl+C.
+	- Note: `-y` still skips prompting entirely.
+
+- ✅ Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK.
+	- Verified: at 2x the title, tabs, labels, sliders, fields, checkboxes and buttons all scale cleanly.
+	- Reproduced: the Settings radio labels collided at 2x.
+	- Cause: the radio spacing was a fixed pixel value while the text grew with the font.
+	- Fix: radio spacing now scales with the font, and the panel widens so every option fits.
+	- Verified: a unit test guards the scaling.
+
 - ✅ Setting dialog (part 2):
 	- ✅ A radio button for background image, to stretch or zoom. - New `Kind::Radio(&[..])` in the settings dialog (reusable N-option control: indicator box per option, fills the selected, click-to-pick); a "Bg image fit" row bound to `background_fit` (Stretch/Zoom). Verified: renders with Stretch selected by default; clicking Zoom switches it; `background_fit` persists + re-fits the image on Apply.
 	- ✅ "Default shell": A command line to launch by default for new windows, tabs, and panes, if nothing else specified. Leave blank to use system default. - New "Shell" section in Settings with a "Default shell" text field bound to the existing `default_shell` config (empty shows "(system default)"; argv-split applies to new tabs/panes). Verified the field renders.
-	- ✅ Size: A boolean setting to "Remember last size" - `remember_size` config + dialog toggle; on launch it uses `remembered_columns`/`remembered_rows` instead of columns/rows. The remembered pair is updated on every manual window resize (startup/programmatic resizes are skipped via a `size_tracked` flag set after the first frame, so they don't clobber it) and is not shown in the dialog. Columns/Rows grey out when on. Verified: manual resize -> remembered_columns/rows persisted; relaunch with remember_size=true used the remembered size (712x504, not the 160-col default); dialog shows the toggle checked with Columns/Rows greyed.
+	- ✅ Size: A boolean setting to "Remember last size".
+		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows grey out when on.
+		- Verified: a manual resize persisted the remembered size, relaunch used it instead of the default, and the dialog shows the toggle checked with Columns and Rows greyed.
 		- Overrides explicit numeric size.
 		- Explicit numeric size fields disabled and grayed out.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
@@ -461,59 +518,102 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Literal reordering to match template order (20260702, branch cfgorder). `reorder_config` (runs on load after migrate + backfill) rewrites an existing config into the template's canonical section order, preserving each setting's value + enabled/commented state while refreshing the section headers and explanatory comments from the current template. Keys the template no longer defines, and any user-added tables (`[themes.*]`), are carried through verbatim so nothing is lost. Pure + idempotent (`reorder_config_text`): a canonical file is never rewritten. Verified on a real drifted config (values incl. remembered_columns=187 preserved, re-parses as valid TOML) + 8 unit tests (order, value/state, unknown table + key, backfill-via-template, idempotency, full on-disk migrate->backfill->reorder pipeline).
 		- ✅ Grouped the template into logical sections (Font, Window, Background and transparency, Text glow, Cursor, Selection, Shell, Scrolling, Theme and colours) with `##===`-ruled section headers and blank-line spacing.
 
-- ✅ Settings dialog: (all sub-items done as of 20260702; last was Full keyboard control, branch dlgkeys)
+- ✅ Settings dialog:
+	- Done: all sub-items complete (last was full keyboard control).
 	- ✅ Should be "modal" and connected to terminal window. (20260702, branch dlgmodal)
-		- Done: The dialog is tied to the terminal window - X11 gets WM_TRANSIENT_FOR (set directly via x11rb; winit's own parent_window on X11 means literal X reparenting, not transient), Windows/macOS get winit's owner/parent. The WM keeps it above the terminal and groups them. Modal (simulated): while a dialog is open the main window swallows keyboard/wheel/IME input, and clicking it re-focuses the dialog. Applies to About too. Verified on Xvfb: xprop shows WM_TRANSIENT_FOR = the terminal window; typing at the terminal changes nothing (only the cursor pulse differs in the dump); a click on the terminal makes the dialog the active window; after Esc closes it, typing renders again.
+		- Done: the dialog is tied to the terminal window. X11 gets a transient-for hint; Windows and macOS use winit's owner/parent. The WM keeps it above the terminal and groups them. Simulated modal: while a dialog is open the main window swallows keyboard, wheel, and IME input, and clicking it re-focuses the dialog. Applies to About too.
+		- Verified: the transient-for hint points at the terminal window; typing at the terminal does nothing while open; clicking the terminal keeps the dialog active; after Esc, typing renders again.
 	- ✅ As the number of settings may grow, we need a way to manage increasing length. Can't go beying about 1048 pixels high, including window decorations. (So roughly 1010 pixels total to be safe.) Implement both of these options: (20260626-102933)
-		- ✅ Make the Settings window shrinkable and then add scrollbars only when necessary, so that it won't render beyond allowable space. By default, always try to open it normal size, unless constrained by display resolution. - (20260701, branch dlgtabs) window height = natural content size, capped at min(1010, monitor height - decorations headroom); when the active tab still overflows (huge UI font / short screen) the rows region scrolls - wheel + a draggable/clickable thumb - and rows are scissored so they never paint over the title/tabs/buttons. Unit-tested (cap -> scroll -> clamp); no scrollbar appears when everything fits.
-		- ✅ Group sections into logical "super-sections", and put them into tabs. A tabbled interface for settings. - (20260701) 5 tabs: Appearance | Font | Colors | Window (incl. Shell) | Scrolling; measured tab-button widths, active tab highlighted with an accent strip. Dialog is now 540x592 at the default font (was taller than 1080p). Verified on Xvfb: every tab renders its sections, switching works, a slider change + Apply on a non-default tab persists to config.
-	- ✅ Some more space between sections, so otherwise it seems run together. - a second section on the same tab (e.g. Shell under Window) gets an extra gap above its heading (HEADER_EXTRA).
+		- ✅ Make the Settings window shrinkable and then add scrollbars only when necessary, so that it won't render beyond allowable space. By default, always try to open it normal size, unless constrained by display resolution.
+			- Done: the window opens at its natural content size, capped to fit the monitor. When a tab still overflows (a huge UI font or short screen) the rows scroll, via wheel or a draggable thumb, and are clipped so they never paint over the title, tabs, or buttons.
+			- Verified: unit-tested; no scrollbar appears when everything fits.
+		- ✅ Group sections into logical "super-sections", and put them into tabs. A tabbled interface for settings.
+			- Done: five tabs (Appearance, Font, Colors, Window incl. Shell, Scrolling), with measured tab widths and the active tab highlighted. The dialog now fits on screen; it was taller than 1080p.
+			- Verified: every tab renders and switches, and a slider change plus Apply on a non-default tab persists.
+	- ✅ Some more space between sections, so otherwise it seems run together.
+		- Done: a second section on the same tab gets an extra gap above its heading.
 	- ✅ Every setting in Settings dialog should have a clickable icon to "Revert to default". This icon (an emoji) should also indicate if the setting is default, and only be clickable if it's not. (20260626-102000; done 20260702, branch dlgrevert)
 		- In the config file, if user clicks "Revert to default" in settings, set the value to default and comment it out.
-		- Done: every control row has a right-edge revert glyph (U+21BA circular arrow) - accent-coloured and clickable when the value is off-default, dim and inert at default. Clicking it restores the default in the dialog (colors revert to the ACTIVE THEME's palette value, since a commented colour falls back to the theme). On Apply, reverted keys are dropped from config.toml and backfill restores the template's default line - commented for normal keys (verified: `remember_size = false` -> `# remember_size = true`); the few template-active keys (columns/rows/theme) come back as the template's active default line, i.e. exactly what a fresh config looks like. Reverting Font size does not clear "Use system font" (unit-tested). Verified end-to-end on Xvfb.
-	- ✅ "Use system font" boolean should be visible checked, if using it. - was already in place (dialog binds `use_system_font`); re-verified in the new Font tab: box checked, fields greyed.
-		- ✅ If checked (setting a config boolean), the other font settings should be disabled. Whatever values they held, should remain. - existing behavior (Font family / Font size grey out and keep their values); re-verified.
-		- ✅ Font family should default to a list with several fallbacks for Linux, Windows, and macOS. - existing `DEFAULT_FONT_STACK` (JetBrains Mono ... Menlo, Consolas ... monospace); shows in the greyed field.
-	- ✅ Editable fields should have a visible cursor when focused, and respond to standard text-editing key controls. (20260702, branch dlgedit) - the in-progress edit now carries a caret (byte index, char-boundary safe): typing inserts at the caret, Backspace/Delete remove before/at it, Left/Right/Home/End move it, and a thin accent-coloured caret line renders at the measured text position in both hex and text fields. Verified on Xvfb: type "bash", Home, type "/bin/" -> "/bin/bash"; Home + 5x Delete -> "bash" with the caret visibly at position 0. Click still places the caret at the end (click-to-position is queued with the full-keyboard-control item).
-	- ✅ Full keyboard control, e.g. tab order, full text field editing, alt+down for dropdowns, space to toggle booleans, etc. (20260702, branch dlgkeys) - a keyboard-focus model over the whole dialog: `focus: Option<usize>` (the focused control row), drawn with an accent focus ring that scrolls + clips with the rows. Tab / Shift+Tab (and Down / Up) walk the focusable controls on the active tab, wrapping and auto-scrolling the focus into view; the walk skips headers and greyed-out (prerequisite-disabled) rows. Ctrl+Tab / Ctrl+Shift+Tab cycle the tabs (focusing the new tab's first control). Space activates the focused control: flips a toggle, or opens a text/color field for editing (and, mid-edit, types a literal space so multi-word values like "JetBrains Mono" work). Left / Right adjust a focused slider by one step or move a focused radio's selection - and double as caret motion while a field is being edited. Typing any printable char into a keyboard-focused (not-yet-open) text/color field opens it. Click-to-position caret: clicking inside a text field now drops the caret at the nearest char boundary to the click (measured in the UI font) instead of at the end; clicking any control also gives it keyboard focus. Modifiers ride the existing ModifiersChanged path (`set_mods` = alt/shift/ctrl). 6 new unit tests (focus walk + wrap, disabled/header skip, space-toggle, arrow slider/radio adjust, Ctrl+Tab, caret-from-click); verified on Xvfb (focus ring visibly steps Transparency -> Background image, correctly skipping the disabled Opacity/Backdrop-blur rows). NOTE: "alt+down for dropdowns" is N/A today - the dialog has no dropdown/combobox controls (mutually-exclusive choices use radios); wire it up alongside the theme dropdown in Themes part 3.
+		- Done: every control row has a right-edge revert glyph. It's accent-coloured and clickable when the value is off-default, dim and inert at default. Clicking it restores the default in the dialog, and colours revert to the active theme's value. On Apply, reverted keys are dropped from config and backfill restores the template's default line - commented for normal keys, active-at-default for the few template-active ones, so it looks like a fresh config.
+		- Note: reverting Font size does not clear "Use system font" (unit-tested).
+		- Verified: end-to-end on the headless display.
+	- ✅ "Use system font" boolean should be visible checked, if using it.
+		- Done: already in place. Re-verified in the new Font tab - box checked, fields greyed.
+		- ✅ If checked (setting a config boolean), the other font settings should be disabled. Whatever values they held, should remain.
+			- Done: existing behavior - Font family and Font size grey out and keep their values. Re-verified.
+		- ✅ Font family should default to a list with several fallbacks for Linux, Windows, and macOS.
+			- Done: an existing default font stack (JetBrains Mono through Menlo, Consolas, monospace) shows in the greyed field.
+	- ✅ Editable fields should have a visible cursor when focused, and respond to standard text-editing key controls. (20260702, branch dlgedit)
+		- Done: the edit carries a caret. Typing inserts at it, Backspace and Delete remove around it, Home/End and arrows move it, and a thin caret line renders at the right spot in both hex and text fields.
+		- Verified: typed and edited a value with the caret visibly tracking position.
+		- Note: click still places the caret at the end; click-to-position is queued with the full-keyboard-control item.
+	- ✅ Full keyboard control, e.g. tab order, full text field editing, alt+down for dropdowns, space to toggle booleans, etc. (20260702, branch dlgkeys)
+		- Done: a keyboard-focus model over the whole dialog. Tab and Shift+Tab (and Up/Down) walk the controls on the active tab, wrapping and auto-scrolling into view, skipping headers and greyed-out rows. Ctrl+Tab cycles the tabs. Space flips a toggle or opens a field; arrows adjust a focused slider or radio and double as caret motion while editing. Clicking a field drops the caret at the nearest character to the click.
+		- Verified: unit tests plus a headless focus-ring walk that correctly skips disabled rows.
+		- Note: alt+down for dropdowns is N/A today - the dialog has no dropdowns yet; wire it up with the theme dropdown in Themes part 3.
 	- Note: It might be best to defer some of these, until after (and if) native window controls are implimented.
 
 - ✅ Window title: Just "SilkTerm", plus the icon in assets/logo.png (for display in alt+tab).
-	- `update_title` now sets the window title to just `APP_NAME` (per-program info stays in the tab titles). The window icon is loaded from `assets/logo.png` (`include_bytes!`, decoded + downscaled to 64x64 via the `image` crate) in `load_icon` and set with `with_window_icon`. Verified: window name = "SilkTerm", `_NET_WM_ICON` is set.
+	- Done: `update_title` now sets the window title to just `APP_NAME` (per-program info stays in the tab titles). The window icon is loaded from `assets/logo.png` (`include_bytes!`, decoded + downscaled to 64x64 via the `image` crate) in `load_icon` and set with `with_window_icon`. Verified: window name = "SilkTerm", `_NET_WM_ICON` is set.
 
 - ✅ The cursor [used to] render *behind* outer glow, which sometimes obscures the cursor. As noted in another issue below, the cursor itself should also have an outer glow, if not too computationally expensive with an animated cursor. In that case, the cursor shadow should merge with the text outer glow. And either way, the cursor should appear *above* any outer glow.
-	- ✅ Cursor now renders ABOVE the glow. (20260701) - cursor quads split into their own per-pane ranges drawn after the glow composite (under the crisp text). Verified: a block cursor with a radius-14 glow stays a crisp solid block.
-	- ✅ Cursor's own glow (merged with the text glow). (20260701, branch glow2) - the cursor quads are drawn into the glow source texture before the blur, so its halo IS the text glow (same blur, same per-pixel bg colour) and it costs nothing extra per frame (the blur already runs every frame; the animation alpha carries through). The crisp cursor still draws above the composite. `cursor_glow` config toggle (default on). Verified on Xvfb: with cursor_glow off, the only changed pixels are the cursor's own area.
+	- ✅ Cursor now renders ABOVE the glow. (20260701)
+		- Done: cursor quads draw after the glow composite, under the crisp text.
+		- Verified: a block cursor with a strong glow stays a crisp solid block.
+	- ✅ Cursor's own glow (merged with the text glow). (20260701, branch glow2)
+		- Done: the cursor draws into the glow source before the blur, so its halo is the text glow at no extra per-frame cost. The crisp cursor still draws on top. A cursor_glow config toggle, default on.
+		- Verified: with cursor_glow off, only the cursor's own area changes.
 
-- ✅ Outer glow enhancements: (20260701, branch glow2 - all four; verified on Xvfb by per-feature pixel diffs over a bright noise background image)
-	- ✅ When outer glow is applied, also add an antialiased (user-definable) 1px outer border around the letters, using the same color rules as outer glow. - The composite shader now also samples the crisp (pre-blur) coverage and dilates it by `text_glow_border` px (8 taps, linear-sampled = antialiased), unioned with the halo and coloured by the same per-cell bg map. Config `text_glow_border` (default 1.0, 0 = off) + a "Glow border" slider in Settings.
-	- ✅ For bold text, calculate the blur for the outer glow, based on all non-bold text. (But still render the visible text on top in whatever weight it was meant to. - The glow source pass got its own renderer; a pane whose viewport contains bold shapes a parallel buffer with bold stripped and feeds THAT to the glow (crisp text keeps its weight). Costs a second shape only on rebuild frames that contain bold. Config `text_glow_regular_weight` (default on). Verified: turning it off changes only pixels under/around bold runs.
-	- ✅ Cursor should have blur if possible (investigate - this may not be possible, especially with the phasing). - Possible, done (see the cursor-glow item above); phasing works because the animation alpha is in the quad colour, which blurs like glyph coverage.
-	- ✅ Provide options for different blur fadeoff ramps. E.g. default gaussian, linear, or "S"-shaped. - The separable-blur kernel weight is now selectable: `text_glow_ramp` = "gaussian" (default) | "linear" (tent) | "s" (smoothstep), all normalized over the same ~3-sigma extent; "Glow falloff" radio in Settings.
+- ✅ Outer glow enhancements:
+	- Verified: all four, by per-feature pixel diffs over a bright noise background.
+	- ✅ When outer glow is applied, also add an antialiased (user-definable) 1px outer border around the letters, using the same color rules as outer glow.
+		- Done: the composite also dilates the crisp coverage by text_glow_border px (antialiased), unioned with the halo and coloured by the same per-cell bg map. Config text_glow_border (default 1.0, 0 = off) plus a Glow border slider.
+	- ✅ For bold text, calculate the blur for the outer glow, based on all non-bold text. (But still render the visible text on top in whatever weight it was meant to.
+		- Done: the glow source has its own renderer. A pane containing bold shapes a parallel bold-stripped buffer and feeds that to the glow, while crisp text keeps its weight. Costs a second shape only on frames with bold. Config text_glow_regular_weight, default on.
+		- Verified: turning it off changes only pixels around bold runs.
+	- ✅ Cursor should have blur if possible (investigate - this may not be possible, especially with the phasing).
+		- Done: possible and done (see the cursor-glow item above). Phasing works because the animation alpha rides the quad colour, which blurs like glyph coverage.
+	- ✅ Provide options for different blur fadeoff ramps. E.g. default gaussian, linear, or "S"-shaped.
+		- Done: the blur falloff is selectable - text_glow_ramp of gaussian (default), linear, or s. A Glow falloff radio in Settings.
 
 - ✅ Terminal should support standard terminal editing and/or navigation keys. (20260701)
-	- ✅ Research: The only one I can think of that isn't currently supported, is Ctrl + arrow key (to skip whole words - other terminals do this). - input.rs now sends the xterm modified forms (`ESC[1;5C` etc.) for Ctrl/Shift/Alt + arrows/Home/End, so readline and TUIs word-skip as expected. F5-F12 were also missing entirely (htop/mc keys were dead) - added, incl. modified variants. 5 unit tests pin the sequences.
+	- ✅ Research: The only one I can think of that isn't currently supported, is Ctrl + arrow key (to skip whole words - other terminals do this).
+		- Done: sends the xterm modified forms for Ctrl/Shift/Alt with arrows, Home, and End, so readline and TUIs word-skip as expected. F5-F12 were also missing entirely and were added, with modified variants. Unit tests pin the sequences.
 	- ✅ Are Ctrl+Backspace, Ctrl+Del possible to delete whole words? Is that something some terminals do? XFCE terminal and Terminator don't.
-		- Both send now (xterm convention: Ctrl+Backspace = 0x08, Ctrl+Del = `ESC[3;5~`). Whether they delete a word is up to the app. Bash needs `bind '"\C-h": backward-kill-word'` / `'"\e[3;5~": kill-word'`, most modern TUIs handle them out of the box.
+		- Done: Both send now (xterm convention: Ctrl+Backspace = 0x08, Ctrl+Del = `ESC[3;5~`). Whether they delete a word is up to the app. Bash needs `bind '"\C-h": backward-kill-word'` / `'"\e[3;5~": kill-word'`, most modern TUIs handle them out of the box.
 
 - Added 'silkterm/github/cicd/utility/gui-headless.bash'. It allows running the terminal for testing in a GUI environment that doesn't interfere with current user session, via use of xvfb in the script.
-	- ✅ Update all tests, scripts, and profiling to run in that environment. (20260701) - cicd's `run_profiler` now brings up the private Xvfb (via gui-headless.bash) and runs the app on it (DISPLAY set), so no window pops on the user's :0 session; it skips only if Xvfb/python3/workload are missing (was: skip on "no DISPLAY"). Uses `:98` not `:99` (rapid-photo-downloader-pro owns :99); overridable via RPD_HEADLESS_DISPLAY. Unit tests (`cargo test`) are already headless (pure logic + FontSystem). Verified end-to-end: SilkTerm renders on Xvfb via software GL (llvmpipe), profiler produced a valid flamegraph with real pipeline frames.
+	- ✅ Update all tests, scripts, and profiling to run in that environment. (20260701)
+		- Done: the profiler stage brings up the private Xvfb and runs the app there, so no window pops on the live session. It skips only if Xvfb, python3, or the workload are missing. Unit tests are already headless.
+		- Verified: the app renders on Xvfb via software GL and the profiler produced a valid flamegraph.
 
 - ✅ Cursor: (20260701)
-	- ✅ After the related cursor bug fix above, set default cursor_size_horizontal to 25. - done (with cursor_size_vertical=100 -> a 25%-width bar).
+	- ✅ After the related cursor bug fix above, set default cursor_size_horizontal to 25.
+		- Done: with cursor_size_vertical at 100, this gives a 25%-width bar.
 	- ✅ Default cursor_animation = "pulse_vertical"
 
 - ✅ Settings dialog:
-	- ✅ Alt+hotkeys for "Apply" and "OK", that underline when holding alt. (20260701) - Alt tracked on the dialog window; while held, Cancel/Apply/OK underline their first letter and Alt+C/A/O trigger them. Verified (underlines render; Alt+C closes).
+	- ✅ Alt+hotkeys for "Apply" and "OK", that underline when holding alt. (20260701)
+		- Done: while Alt is held, Cancel/Apply/OK underline their first letter and Alt+C/A/O trigger them.
+		- Verified: underlines render and Alt+C closes.
 	- Font settings:
-		- ✅ Add a sane set of fonts and fallbacks to the default "font family" setting, and make it an active setting in config. (20260701, decision #4) - new `use_system_font` bool (default true) follows the OS monospace, overriding an always-active comma-separated `font_family` fallback stack (first installed wins) + font_size. resolve_mono_family parses the stack; migrate_config pins use_system_font=false for a pre-existing explicit font. Verified: system->Noto Sans Mono; stack skipping a missing first->DejaVu.
-		- ✅ If using the system-defined font, enable the checbox and disable the related font adjustements (but don't clear their values). (20260701) - the box opens checked when on system font; Font family + Font size grey out but keep their values (the stack stays in config). Verified in the dialog.
+		- ✅ Add a sane set of fonts and fallbacks to the default "font family" setting, and make it an active setting in config. (20260701, decision #4)
+			- Done: a use_system_font bool (default true) follows the OS monospace, overriding an always-active comma-separated font_family fallback stack (first installed wins) plus size. A pre-existing explicit font migrates to use_system_font=false.
+			- Verified: the system font resolved, and the stack correctly skipped a missing first choice.
+		- ✅ If using the system-defined font, enable the checbox and disable the related font adjustements (but don't clear their values). (20260701)
+			- Done: the box opens checked when on the system font; Font family and Font size grey out but keep their values.
+			- Verified: in the dialog.
 			- User can un-check this later (or change the related config setting), to user the defined font settings instead.
 
 - ✅ Cursor settings: (20260701, decisions #1-3)
-	- ✅ size_vertical =  ## 1 to 100%, from left-to-right - `cursor_size_vertical` = cursor width % (from the left). Replaced cursor_shape (decision #1). bar=15, block/underline=100.
-	- ✅ size_horizontal =  ## 1 to 100%, from bottom-up - `cursor_size_horizontal` = cursor height % (from the bottom). block=100, underline=15. Together they make any shape. Verified: bar/block/underline all render.
-	- ✅ animation_style - `cursor_animation`: none/phase/pulse_vertical/pulse_horizontal/pulse_both. All one cycle per blink_rate (decision #2). Pulse grows from the cell centre, holds, shrinks, disappears. Verified pulse_both grows->peaks->shrinks->vanishes over ~1s.
+	- ✅ size_vertical =  ## 1 to 100%, from left-to-right
+		- Done: cursor_size_vertical is the cursor width % from the left, replacing cursor_shape. Bar 15, block and underline 100.
+	- ✅ size_horizontal =  ## 1 to 100%, from bottom-up
+		- Done: cursor_size_horizontal is the cursor height % from the bottom. Together with width they make any shape.
+		- Verified: bar, block, and underline all render.
+	- ✅ animation_style
+		- Done: cursor_animation of none, phase, pulse_vertical, pulse_horizontal, or pulse_both, one cycle per blink_rate. Pulse grows from the cell centre, holds, shrinks, then disappears.
+		- Verified: pulse_both grows, peaks, shrinks, and vanishes over about a second.
 		- ✅ none
 		- ✅ phase (the current default)
 		- ✅ pulse_vertical
@@ -521,20 +621,28 @@ In each section, items are listed approximately from newest to oldest.
 			- Should happen in the same time as a cursor blink cycle. All animations happen in blink_rate.
 		- ✅ pulse_horizontal (same idea as pulse vertical, but the animation goes left and right rather than up and down).
 		- ✅ pulse_both (grow and shrink both vertically and horizontally)
-	- ✅ blink_rate  ## ms - `cursor_blink_rate_ms`, default 500 (decision #3). One animation cycle = the rate.
-	- ✅ Change default cursor colors: (20260701) - SilkTerm dark theme fg -> #88ffee, cursor -> #ff88aa (theme.rs SILK_DARK + the config.rs default). Verified: cyan prompt, pink cursor.
+	- ✅ blink_rate  ## ms
+		- Done: cursor_blink_rate_ms, default 500. One animation cycle equals the rate.
+	- ✅ Change default cursor colors: (20260701)
+		- Done: SilkTerm dark foreground #88ffee, cursor #ff88aa.
+		- Verified: cyan prompt, pink cursor.
 		- Default SilkTerm theme (dark):
 			- Foreground text color: 88ffee
 			- Cursor: ff88aa
 
-- ✅ Add an option to cicd: '--quick'. This excludes the slow processes like profiling and cross-platform building. (20260701) - `--quick` sets BUILD_CROSS=0 + PROFILE_ENABLE=0 (same as `--no-cross --no-profile`).
+- ✅ Add an option to cicd: '--quick'. This excludes the slow processes like profiling and cross-platform building. (20260701)
+	- Done: --quick disables cross-building and profiling (same as --no-cross --no-profile).
 
-- ✅ Change the default hotkey for opening a new tab to Ctrl+Shift+T. (20260629) - new-tab is now Ctrl+Shift+T (`app.rs` tab-hotkey block); plain Ctrl+T passes through to the shell (readline transpose-char) instead of opening a tab. Builds clean.
+- ✅ Change the default hotkey for opening a new tab to Ctrl+Shift+T. (20260629)
+	- Done: new-tab is Ctrl+Shift+T; plain Ctrl+T now passes through to the shell instead of opening a tab.
 
-- ✅ Config file: resilient loading - one broken line must not drop every setting. (20260630) - a single TOML syntax error (e.g. `cursor_blink = enable`) failed the whole document, so the entire config was silently ignored and all settings reverted to default. `parse_lenient` now blanks the offending line (located via the toml error span) and retries, dropping only the bad setting (logged) while the rest load. Unit-tested + runtime-verified (a bad line alongside columns/rows still sized the window).
+- ✅ Config file: resilient loading - one broken line must not drop every setting. (20260630)
+	- Cause: a single TOML syntax error failed the whole document, so the entire config was ignored and everything reverted to default.
+	- Fixed: blank the offending line and retry, dropping only the bad setting while the rest load.
+	- Verified: unit-tested, and a bad line alongside columns/rows still sized the window.
 
 - ✅ Config file: Preceed actual comments with double '## '. Commented-out *settings* get a single '# '. (20260629)
-	- DEFAULT_CONFIG template rewritten to the convention: explanatory + inline comments use `## `; disabled `# key = value` settings keep a single `# `. The parser already distinguished them (`line_setting_key` strips one `#`, so `## prose` yields no key), and toml_edit round-trips `##` fine. Two unit tests added (valid-TOML/deserialize + style check); 31 tests pass.
+	- Done: DEFAULT_CONFIG template rewritten to the convention: explanatory + inline comments use `## `; disabled `# key = value` settings keep a single `# `. The parser already distinguished them (`line_setting_key` strips one `#`, so `## prose` yields no key), and toml_edit round-trips `##` fine. Two unit tests added (valid-TOML/deserialize + style check); 31 tests pass.
 	- Note: only newly-generated configs and newly-backfilled keys get the new style; an existing config's already-present lines aren't reformatted (delete config.toml to regenerate the clean layout).
 
 - ✅ New setting: Transparent background blur. (20260629)
@@ -542,7 +650,9 @@ In each section, items are listed approximately from newest to oldest.
 	- It blurs what's behind the terminal, as if it were made of frosted glass.
 	- Done: compositor-provided. SilkTerm sets a stable WM_CLASS + a "Backdrop blur" toggle (KWin/picom hint); on Compiz, match `class=SilkTerm` in its own Blur plugin. Detail + Compiz recipe in the private dev notes.
 
-- ✅ Change defaults: (20260629) - `Settings::default()` updated (the loader's `unwrap_or(default)` makes it the single source of truth); the DEFAULT_CONFIG template's documented example values now match. Headless guard test added; 32 tests pass. Note: glow is now on by default, so the glow render pass runs every frame - confirm the look/feel by eye.
+- ✅ Change defaults: (20260629)
+	- Done: Settings::default is the single source of truth, and the config template's example values now match. A headless guard test was added.
+	- Note: glow is on by default now, so the glow pass runs every frame - confirm the look and feel by eye.
 	- ✅ Background image blur: 8 px
 	- ✅ text_glow = true
 	- ✅ text_glow_radius = 5
@@ -584,7 +694,9 @@ In each section, items are listed approximately from newest to oldest.
 		- The change in scroll speed should itself be smooth, rather than immediate. But also dynamic, e.g. if needed to not get too far behind and a slow ramp-up to top speed isn't proving to be fast enough.
 	- Example scenario:
 		- Using `tail -f` to monitor the log output of a running background process. Such output can go one line at a time randomly occasionally; then suddenly have a long sustained burst of high-speed output. And everything in-between. Scrolling should dynamically adjust to be smooth at slower output, and fast at faster output.
-	- ✅ Set default "Initial scroll speed" to 25. - `scroll_tau_ms` default is now 230ms (= speed 25 on the 1..100 scale) in `Settings::default` + the config template. Verified: a fresh config + the dialog both show 25.
+	- ✅ Set default "Initial scroll speed" to 25.
+		- Done: the default is now speed 25 on the 1..100 scale, in both the code default and the config template.
+		- Verified: a fresh config and the dialog both show 25.
 
 - ✅ Config file: Separate different grouped setting comments and settings (which are good to keep together), by an empty newline. Keep individual settings and comments together though. (20260625)
 	- The `DEFAULT_CONFIG` template is now grouped consistently (each setting with its own comment; `line_height_scale` no longer rides the font-size group. The three background-image keys split into their own comment groups. `backfill_config` is group-aware: `setting_groups` tags whether each template setting starts a new group (preceded by a blank/table), so a re-inserted key carries its comment block and different groups are blank-separated, while same-group keys (e.g. columns+rows, the scroll-feel keys) stay together. A boundary double-blank is de-duped. Note: only affects freshly-written or newly-backfilled keys - an existing file's already-present bare keys aren't reformatted (regenerate for the clean layout).
@@ -607,8 +719,13 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ Background image:
 	- ✅ By default unless overridden, look in ~/.config/silkterm/backgrounds/background.* - Status: Done. `resolve_bg_image` now auto-detects `backgrounds/background.{png|jpg|jpeg}` under the config dir (explicit `background_image` paths unchanged). Verified: image in that dir auto-loads.
-	- ✅ Change default from "zoom" to "stretch". - `Settings::default` + the load fallback + the config template default are now `stretch`. Verified: auto-detected image fills the window (aspect ignored).
-	- ✅ Add to background settings: Gaussian blur radius. - `background_blur` config (sigma in px, 0 = none; default 0) applied at image load (`image::imageops::blur` in `load_bg_image`), plus a "Bg image blur" slider in Settings (`bg_image_changed` re-loads on change). Verified. Note: blur is applied in source-image space (the shader still does the stretch/zoom fit), so not literally "after fit" - fine for a decorative low-opacity background; a true post-fit blur would need a 2-pass GPU blur (follow-up if wanted).
+	- ✅ Change default from "zoom" to "stretch".
+		- Done: the default and template are now stretch.
+		- Verified: an auto-detected image fills the window, ignoring aspect.
+	- ✅ Add to background settings: Gaussian blur radius.
+		- Done: a background_blur config (sigma in px, default 0) applied at image load, plus a Bg image blur slider in Settings.
+		- Verified: the blur applies.
+		- Note: the blur is in source-image space, before the fit - fine for a decorative low-opacity background. A true post-fit blur would need a 2-pass GPU blur (follow-up if wanted).
 		- ✅ Results in pronounced color banding. Look into higher-quality blur filter, higher bit-depth for intermediate calculation, and/or dithering.
 			- Cause. Mostly bit depth: the GL offscreen was 8-bit linear (`Rgba8Unorm`).
 			- Fixes:
@@ -642,7 +759,9 @@ In each section, items are listed approximately from newest to oldest.
 	- Implied: `Pane::pair_span` + pure `pair_inside`/`distinct_pair`/`same_char_pair` (pane.rs, unit-tested). On a double-click the app first checks `pair_inside`; if the click is inside a matched pair it selects the contents (a `Simple` range), else falls back to the normal `Semantic` word select. Single-line only (multi-line pairs not handled).
 	- ✅ But if the double-click happened outside such consisten parings, then ignore that logic (and the selection might include such characters depending on defined delimiters).
 		- Falls back to `Semantic`.
-	- ✅ The order of pair inclusion precedence: ``, "", '', {}, (), [], <>. - first enclosing pair in that order wins (so inside `()` selects the `()` contents even when `[]` is nested within). Verified by the precedence/quote-beats-paren tests.
+	- ✅ The order of pair inclusion precedence: ``, "", '', {}, (), [], <>.
+		- Done: the first enclosing pair in that order wins, so inside () selects the () contents even when [] is nested within.
+		- Verified: precedence and quote-beats-paren tests.
 	- ✅ List of delimiters should also be read from config file.
 		- Status: Done. `word_separators` (config) feeds alacritty's `semantic_escape_chars`; backfilled if missing.
 	- ✅ The list of selection inclusion pairs should be read from the config file.
@@ -670,9 +789,9 @@ In each section, items are listed approximately from newest to oldest.
 	- [🚫] Use the system menu background and text color if reasonably feasible in a cross-platform way.
 		- Canceled. There's no clean cross-platform API (Windows has `GetSysColor(COLOR_MENU/COLOR_MENUTEXT)`, but Linux/GTK needs CSS-theme parsing and macOS needs `NSColor`/objc). Kept the existing tasteful dark menu palette.
 	- ✅ No indented items.
-		- All labels start at a common x after a fixed checkmark gutter (`MENU_GUTTER`); a `✓` is drawn in the gutter for active toggles, so checkable and plain items align.
+		- Done: All labels start at a common x after a fixed checkmark gutter (`MENU_GUTTER`); a `✓` is drawn in the gutter for active toggles, so checkable and plain items align.
 	- ✅ Group items logically, and use faint horizontal lines and extra space to separate the logical groupings, as has been standard for menus since early Macintosh and Windows.
-		- Menu entries are now `Entry::Item`/`Entry::Sep`; separators render as a faint 1px line (`MENU_SEP`) with row spacing (`MENU_SEP_H`). Right-click groups: clipboard | read-only | tab/split/close | window toggles | config/settings. Verified.
+		- Done: Menu entries are now `Entry::Item`/`Entry::Sep`; separators render as a faint 1px line (`MENU_SEP`) with row spacing (`MENU_SEP_H`). Right-click groups: clipboard | read-only | tab/split/close | window toggles | config/settings. Verified.
 
 - ✅ Format the "Help|About" widget better.
 	- ✅ Use system proportional font.
@@ -713,7 +832,7 @@ In each section, items are listed approximately from newest to oldest.
 			- It seems to hinge on how long the command takes to execute. If the code is doing some kind of frequent sampling to get the program name, and if that could impact performance, then let's get rid of the " [last: <program>]" requirement and just show "shell". Otherwise if there is a more reliable alternate method to always know the last program that was run, that doesn't hurt performance (e.g. by requiring a watcher loop), let's try that.
 	- Just the executable name for both, not the full command-line
 	- Implemented:
-		- `TermInstance` captures the PTY master fd + shell pid at spawn (before the event loop takes the pty). `tab_title()` reads the foreground process group via `libc::tcgetpgrp(master_fd)` and its `/proc/<pid>/comm` (executable basename), comparing to the cached shell name: a different program -> "`<shell> [<program>]`" (and remembers it); only the shell -> "`<shell> [last: <program>]`" or just "`<shell>`". Polled when the tab bar is built (renders happen on output). Unix only (`#[cfg(unix)]`); other platforms fall back to the app name. New direct dep `libc` (unix).
+		- Done: `TermInstance` captures the PTY master fd + shell pid at spawn (before the event loop takes the pty). `tab_title()` reads the foreground process group via `libc::tcgetpgrp(master_fd)` and its `/proc/<pid>/comm` (executable basename), comparing to the cached shell name: a different program -> "`<shell> [<program>]`" (and remembers it); only the shell -> "`<shell> [last: <program>]`" or just "`<shell>`". Polled when the tab bar is built (renders happen on output). Unix only (`#[cfg(unix)]`); other platforms fall back to the app name. New direct dep `libc` (unix).
 		- Verified: `dash` -> `dash [sleep]` -> `dash [last: sleep]`. Tab titles also use the proportional font now.
 
 - ✅ No hotkeys for pane management except. Minimal hotkeys overall, except for window, tab, menu, and clipboard managent.
@@ -786,22 +905,22 @@ In each section, items are listed approximately from newest to oldest.
 	- Done. Double-click (<400ms, same cell) starts an alacritty `SelectionType::Semantic`. New `word_separators` config sets the delimiters; default = alacritty's (keeps /.-_~ as word chars). Verified: double-click selected a whole path.
 
 - ✅ Settings GUI dialog with organized main tunables, with primary buttons: Cancel, Apply, OK. Default=OK.
-	- `src/settings_ui.rs`: modal overlay (second pass, like the context menu) opened via Ctrl+, or right-click "Settings...". Sliders for opacity / bg-image opacity / font size / line height / margin / scroll-tau / wheel-lines, and swatch + hex field for the 4 colors. Cancel / Apply / OK (Enter=OK, Esc=Cancel). Live-apply: opacity re-sets window opacity, colors re-render, font/metrics rebuild the TextCtx + relayout; persisted in place via toml_edit (only changed keys, comments preserved, floats rounded). Foundation: `config::settings()` is now a swappable `Arc<Settings>` (`config::update`/`config::persist`). Verified: slider drag + Apply changed live opacity and persisted; hex typing recolored the swatch live; font-size change rebuilt text live without crashing. Not yet exposed (field table is trivially extensible): font_family, scrollback, alt/output scroll lines, background_fit, columns/rows, word_separators.
+	- Done: `src/settings_ui.rs`: modal overlay (second pass, like the context menu) opened via Ctrl+, or right-click "Settings...". Sliders for opacity / bg-image opacity / font size / line height / margin / scroll-tau / wheel-lines, and swatch + hex field for the 4 colors. Cancel / Apply / OK (Enter=OK, Esc=Cancel). Live-apply: opacity re-sets window opacity, colors re-render, font/metrics rebuild the TextCtx + relayout; persisted in place via toml_edit (only changed keys, comments preserved, floats rounded). Foundation: `config::settings()` is now a swappable `Arc<Settings>` (`config::update`/`config::persist`). Verified: slider drag + Apply changed live opacity and persisted; hex typing recolored the swatch live; font-size change rebuilt text live without crashing. Not yet exposed (field table is trivially extensible): font_family, scrollback, alt/output scroll lines, background_fit, columns/rows, word_separators.
 
 - ✅ If hardware acceleration is not available, use software rendering. Also need a way to tell which the application is using. Maybe in "help/about".
-	- `Gfx::new` requests a GPU adapter, then retries with `force_fallback_adapter` (a CPU/software adapter) if that fails. The renderer (name / backend / device-type) is logged at startup, and the Help/About dialog shows it (Renderer / Backend / Acceleration) from `adapter_info`. Verified: logs "NVIDIA GeForce RTX 3060 Ti [Vulkan / DiscreteGpu]".
+	- Done: `Gfx::new` requests a GPU adapter, then retries with `force_fallback_adapter` (a CPU/software adapter) if that fails. The renderer (name / backend / device-type) is logged at startup, and the Help/About dialog shows it (Renderer / Backend / Acceleration) from `adapter_info`. Verified: logs "NVIDIA GeForce RTX 3060 Ti [Vulkan / DiscreteGpu]".
 
 - ✅ Make it easy to change the program name, in project and code files
 	- Display name centralized in `APP_NAME` (`src/config.rs`); `utility/rename.bash NewName` rewrites the name + lowercase id across Cargo.toml, sources, and docs in one shot. Not a runtime/user setting.
 
 - ✅ Local config file with tunables, somewhere under ~/.config
-	- `$XDG_CONFIG_HOME/silkterm/config.toml` (-> `~/.config/...`), auto-created with commented defaults on first run. Tunables: font, size, line height, margin, scrollback, scroll feel, colors (`#rrggbb`). Malformed/unknown entries fall back to defaults.
+	- Done: `$XDG_CONFIG_HOME/silkterm/config.toml` (-> `~/.config/...`), auto-created with commented defaults on first run. Tunables: font, size, line height, margin, scrollback, scroll feel, colors (`#rrggbb`). Malformed/unknown entries fall back to defaults.
 
 - ✅ Use system monospace font by default
 	- Default font is the OS-configured monospace family (e.g. Monaspace Argon from GNOME settings) when it's installed, else cosmic-text's generic `Family::Monospace`. `font_family` in the config overrides it by name.
 
 - ✅ Slightly More (and user-adjustable) margin between output and window border.
-	- `margin` config option (logical px, default 4), DPI-scaled, inset on all sides of each pane's content.
+	- Done: `margin` config option (logical px, default 4), DPI-scaled, inset on all sides of each pane's content.
 
 - ✅ Default to all black background, and 152 columns by 48 rows
 	- Solution: Default `background` is now `#000000`. New `columns`/`rows` config options (default 152x48) size the initial window: after cell metrics are known the window requests `cols*cell_w + 2*margin` x `rows*cell_h + 2*margin` px, so `content_dims` floors to exactly the requested grid. Existing config files keep their own colors (defaults only apply to freshly generated configs).
@@ -857,7 +976,9 @@ In each section, items are listed approximately from newest to oldest.
 	- 🚫 Overwrite mode will be the regular block cursor.
 		- Overwrite mode canceled.
 	- ✅ Backed out (20260630): overwrite mode + the Insert-key toggle removed (a terminal can't force the shell's line editor to overwrite). Kept the cursor work - configurable shape, blink, smooth slide. Insert key now just passes through to the shell.
-	- ✅ Provide options in the config (not dialog) to adjust cursor type + blinking style. Similar to Sublime Text cursor options. (20260629) - config keys `cursor_shape` (bar|block|underline; was cursor_insert_shape, overwrite variant dropped) and `cursor_blink_style` (phase|blink|solid). Verified: underline shape + solid style render.
+	- ✅ Provide options in the config (not dialog) to adjust cursor type + blinking style. Similar to Sublime Text cursor options. (20260629)
+		- Done: config keys cursor_shape (bar, block, underline) and cursor_blink_style (phase, blink, solid).
+		- Verified: underline shape and solid style render.
 		- This is mostly done. Refer to above point about options.
 	- Resolution: This can't be done without wonky hacks.
 
