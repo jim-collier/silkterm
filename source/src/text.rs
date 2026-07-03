@@ -611,7 +611,7 @@ mod tests {
 
 	// Chrome must pin a concrete face, never fall back to generic
 	// `Family::SansSerif` (which lands on a serif when fontdb's "Arial" default
-	// is absent). Only needs a FontSystem (no GPU), so it runs headless.
+	// is absent). Only needs a FontSystem (no GPU), so it runs with no display.
 	// A chrome line placed by ui_visible_center_top must sit with its visible
 	// (ascender-top..baseline) box centered in the bar, for any bar height and
 	// metrics - so a font/size change stays balanced without hand-tuned padding.

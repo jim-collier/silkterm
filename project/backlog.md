@@ -46,7 +46,7 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Proper fix: Size both the menu and the tabs according to the font height (plus extra), then *vertically center* the text within that area. If the font was created poorly centered, which may are, then there may be nothing to do about that - but the current font seems properly designed elsewhere.
 		- Done: both bars center the text on its real visible box using the UI face's actual ascent/descent, instead of the old hand-tuned padding that left titles riding high.
 		- Note: tab bar padding dropped to match the menu bar now that centering handles descender clearance.
-		- Verified: headless dump - menu and tab ink centers land exactly on their bar centers.
+		- Verified.
 
 - 🔘 When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
 	- Investigated: no obvious code-path desync found. `bg_image_changed` already includes `background_blur`, `needs_text_rebuild` covers font, `load_bg_image` re-reads the fresh blur, and the glow re-shapes each build. Needs a live repro (change font in Settings, OK, watch the blur) to pin which "blur" and the exact trigger - deferred to an interactive pass since dialog driving is flaky here.
@@ -62,7 +62,7 @@ In each section, items are listed approximately from newest to oldest.
 	- Cause: when the glyph atlas fills up during a long, varied session, text prepare() fails and render bailed out before the per-frame atlas trim. The atlas never recovered, so text stayed black. Cursor and per-cell backgrounds use a separate renderer, so they kept showing.
 	- Fixed: trim the atlas on the prepare-failure path, so the next frame re-prepares with room and recovers.
 	- Note: couldn't force an atlas-full for a live repro. A 20s flood didn't fill it; the trigger needs a genuinely long session.
-	- Verified: a 50s max-rate unicode flood on the headless display stayed visible throughout, app alive, no black-out. This box lacks the CJK/emoji coverage to actually fill the atlas, so the exact trigger is still unreproduced here.
+	- Verified: a 50s max-rate unicode flood stayed visible throughout, app alive, no black-out. This box lacks the CJK/emoji coverage to actually fill the atlas, so the exact trigger is still unreproduced here.
 	- Resolution: leave open until confirmed on long-running terminals.
 
 ### New features and enhancements
@@ -195,7 +195,7 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ All values, including slider numbers, should also have directly editable fields (that are part of the tab order).
 		- Done: each slider has a numeric field you can click or type into, with the value clamped to the slider's range.
 		- Note: the field joins the Tab order along with the rest of the dialog.
-		- Verified: unit tests for editing and clamping, plus a headless render check.
+		- Verified: unit tests for editing and clamping, plus a render check.
 
 - 🛠️ Command-line options:
 	- Done (part 1, the options engine):
@@ -471,7 +471,7 @@ In each section, items are listed approximately from newest to oldest.
 	- Note: only the focused pane of the focused window ever copies, so a background window can't leak output.
 	- Note: the text is plain printable Unicode, with colour and control codes removed. A command with no output leaves the clipboard alone.
 	- Done: an always-visible "Copy output" checkbox on the menu bar, plus a toggle in the right-click and Edit menus.
-	- Verified: instant, slow and multi-line commands all captured headlessly. The checkbox reflects and toggles the state.
+	- Verified: instant, slow and multi-line commands all captured. The checkbox reflects and toggles the state.
 	- Note: Unix only.
 
 - ✅ Config:
@@ -509,7 +509,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Done: the Cancel/Apply/OK captions are centered in the button. They were left-aligned before.
 	- ✅ Provide click feedback.
 		- Done: a button highlights while held and fires on release. Dragging off it first cancels.
-		- Verified: unit tests, plus a headless check of the highlight and centering.
+		- Verified: unit tests, plus a check of the highlight and centering.
 
 - ✅ CICD script: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path.
 	- Done: removed the "Proceed? [y/N]" step. The commit-message prompt is now where you bail out, with Ctrl+C.
@@ -526,7 +526,7 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
 		- Done: a `--title` wins as-is. Otherwise the title is "SilkTerm - <current tab>".
 		- Note: it tracks the focused tab's running program live.
-		- Verified: the window name became "SilkTerm - dash" in a headless run.
+		- Verified: the window name became "SilkTerm - dash" in an off-screen run.
 
 - ✅ Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK.
 	- Verified: at 2x the title, tabs, labels, sliders, fields, checkboxes and buttons all scale cleanly.
@@ -583,7 +583,7 @@ In each section, items are listed approximately from newest to oldest.
 		- In the config file, if user clicks "Revert to default" in settings, set the value to default and comment it out.
 		- Done: every control row has a right-edge revert glyph. It's accent-coloured and clickable when the value is off-default, dim and inert at default. Clicking it restores the default in the dialog, and colours revert to the active theme's value. On Apply, reverted keys are dropped from config and backfill restores the template's default line - commented for normal keys, active-at-default for the few template-active ones, so it looks like a fresh config.
 		- Note: reverting Font size does not clear "Use system font" (unit-tested).
-		- Verified: end-to-end on the headless display.
+		- Verified: end-to-end on the off-screen display.
 	- ✅ "Use system font" boolean should be visible checked, if using it.
 		- Done: already in place. Re-verified in the new Font tab - box checked, fields greyed.
 		- ✅ If checked (setting a config boolean), the other font settings should be disabled. Whatever values they held, should remain.
@@ -596,7 +596,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Note: click still places the caret at the end; click-to-position is queued with the full-keyboard-control item.
 	- ✅ Full keyboard control, e.g. tab order, full text field editing, alt+down for dropdowns, space to toggle booleans, etc. (20260702, branch dlgkeys)
 		- Done: a keyboard-focus model over the whole dialog. Tab and Shift+Tab (and Up/Down) walk the controls on the active tab, wrapping and auto-scrolling into view, skipping headers and greyed-out rows. Ctrl+Tab cycles the tabs. Space flips a toggle or opens a field; arrows adjust a focused slider or radio and double as caret motion while editing. Clicking a field drops the caret at the nearest character to the click.
-		- Verified: unit tests plus a headless focus-ring walk that correctly skips disabled rows.
+		- Verified: unit tests plus an off-screen focus-ring walk that correctly skips disabled rows.
 		- Note: alt+down for dropdowns is N/A today - the dialog has no dropdowns yet; wire it up with the theme dropdown in Themes part 3.
 	- Note: It might be best to defer some of these, until after (and if) native window controls are implimented.
 
@@ -631,7 +631,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - Added 'silkterm/github/cicd/utility/gui-headless.bash'. It allows running the terminal for testing in a GUI environment that doesn't interfere with current user session, via use of xvfb in the script.
 	- ✅ Update all tests, scripts, and profiling to run in that environment. (20260701)
-		- Done: the profiler stage brings up the private Xvfb and runs the app there, so no window pops on the live session. It skips only if Xvfb, python3, or the workload are missing. Unit tests are already headless.
+		- Done: the profiler stage brings up the private Xvfb and runs the app there, so no window pops on the live session. It skips only if Xvfb, python3, or the workload are missing. Unit tests need no display anyway.
 		- Verified: the app renders on Xvfb via software GL and the profiler produced a valid flamegraph.
 
 - ✅ Cursor: (20260701)
@@ -698,7 +698,7 @@ In each section, items are listed approximately from newest to oldest.
 	- Done: compositor-provided. SilkTerm sets a stable WM_CLASS + a "Backdrop blur" toggle (KWin/picom hint); on Compiz, match `class=SilkTerm` in its own Blur plugin. Detail + Compiz recipe in the private dev notes.
 
 - ✅ Change defaults: (20260629)
-	- Done: Settings::default is the single source of truth, and the config template's example values now match. A headless guard test was added.
+	- Done: Settings::default is the single source of truth, and the config template's example values now match. A guard test was added.
 	- Note: glow is on by default now, so the glow pass runs every frame - confirm the look and feel by eye.
 	- ✅ Background image blur: 8 px
 	- ✅ text_glow = true
@@ -829,7 +829,7 @@ In each section, items are listed approximately from newest to oldest.
 	- Transparency should not affect the Window decorations, menu, focus, or - critically - terminal text.
 	- Status: Done. Opt-in `transparent_background = true`; `opacity` is the background alpha; text, decorations, and the menu/tab bars stay opaque. Verified on X11/Compiz/NVIDIA, decorated and borderless. Default (`false`) path unchanged (native wgpu).
 	- How: wgpu can't get per-pixel alpha on X11 by itself (its Vulkan swapchain forces an opaque surface; its GL backend won't bind the 32-bit ARGB visual). So on X11 we create the window + a transparent GL context with glutin and run wgpu on top of it via hal interop (`Gfx::new_gl_transparent`), render the scene to an offscreen texture, then blit that into the GL framebuffer. Off X11 (e.g. Wayland) the plain wgpu surface already does premultiplied alpha. `Gfx` is a two-backend enum (native wgpu / GL). No wgpu downgrade, no renderer rewrite.
-	- The hard part (cost ~a day; a web search cracked it - gfx-rs/wgpu #8675 + #8676): on NVIDIA/Linux glyphon renders no text on a GL context below 4.2, because wgpu silently no-ops drawing into a texture view there (that's how glyphon builds its atlas). Fix: request GL 4.6, falling back down to 3.3. Diagnostics: `SILK_DUMP=1` dumps the offscreen to `/tmp/silk_offscreen.png`; `diagnostics/glyphon_gl.rs` is a headless probe.
+	- The hard part (cost ~a day; a web search cracked it - gfx-rs/wgpu #8675 + #8676): on NVIDIA/Linux glyphon renders no text on a GL context below 4.2, because wgpu silently no-ops drawing into a texture view there (that's how glyphon builds its atlas). Fix: request GL 4.6, falling back down to 3.3. Diagnostics: `SILK_DUMP=1` dumps the offscreen to `/tmp/silk_offscreen.png`; `diagnostics/glyphon_gl.rs` is an off-screen probe.
 
 - ✅ Make both the main menu, and the right-click menu appearances more traditional:
 	- ✅ Use the system proportional font, rather than monospace font. - New `text::sans_attrs()` (cosmic-text `Family::SansSerif` -> the system default proportional font); the menu bar titles, dropdowns, and the right-click menu all use it.
