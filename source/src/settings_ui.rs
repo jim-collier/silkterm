@@ -496,6 +496,7 @@ pub struct SettingsDialog {
 	scroll: f32,             // rows-region scroll offset (0 when everything fits)
 	drag_thumb: Option<f32>, // scrollbar-thumb drag: grab offset within the thumb
 	drag: Option<usize>,     // slider row being dragged
+	pressed: Option<usize>,  // footer button held down (fires on release; drawn pressed)
 	edit: Option<EditState>, // row being typed (hex for Color, path for Text)
 	focus: Option<Focus>,    // keyboard-focused control/button (None = mouse-only)
 	alt: bool,               // Alt held: underline button accelerators (Cancel/Apply/OK)
@@ -600,6 +601,7 @@ impl SettingsDialog {
 			scroll: 0.0,
 			drag_thumb: None,
 			drag: None,
+			pressed: None,
 			edit: None,
 			focus: None,
 			alt: false,
@@ -1276,10 +1278,12 @@ impl SettingsDialog {
 	// `measure` gives a string's rendered width in the UI font (for placing the
 	// caret at the clicked position inside a text field).
 	pub fn mouse_down(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) -> Action {
-		// buttons first
-		for (action, r, _) in self.buttons() {
+		// footer buttons arm on press (drawn pressed) and fire on release, so a
+		// press-drag-off cancels - and the user gets click feedback
+		for (bi, (_, r, _)) in self.buttons().into_iter().enumerate() {
 			if r.contains(x, y) {
-				return action;
+				self.pressed = Some(bi);
+				return Action::None;
 			}
 		}
 		// click outside the panel cancels
@@ -1418,9 +1422,18 @@ impl SettingsDialog {
 			self.drag_to(x);
 		}
 	}
-	pub fn mouse_up(&mut self) {
+	// Release: end any slider/thumb drag, and fire an armed button's action only if
+	// the cursor is still over it (a press that drifted off cancels).
+	pub fn mouse_up(&mut self, x: f32, y: f32) -> Action {
 		self.drag = None;
 		self.drag_thumb = None;
+		if let Some(bi) = self.pressed.take() {
+			let (action, r, _) = self.buttons()[bi];
+			if r.contains(x, y) {
+				return action;
+			}
+		}
+		Action::None
 	}
 
 	fn drag_to(&mut self, x: f32) {
@@ -1778,7 +1791,13 @@ impl SettingsDialog {
 			}
 		}
 		for (bi, (_, r, label)) in self.buttons().into_iter().enumerate() {
-			fixed.push(q(r.x, r.y, r.w, r.h, dlg().btn_bg));
+			// pressed button fills with the highlight for click feedback
+			let fill = if self.pressed == Some(bi) {
+				dlg().btn_hl
+			} else {
+				dlg().btn_bg
+			};
+			fixed.push(q(r.x, r.y, r.w, r.h, fill));
 			let ring = self.focus == Some(Focus::Button(bi));
 			border(
 				&mut fixed,
@@ -1790,7 +1809,7 @@ impl SettingsDialog {
 			// label is drawn left-aligned at r.x+14; the cap glyph is ~0.55*line_h
 			// wide, and its baseline sits near the text bottom.
 			if self.alt && !label.is_empty() {
-				let tx = r.x + 14.0;
+				let tx = r.x + (r.w - measure(label)).max(0.0) / 2.0;
 				let ty = r.y + (r.h - line_h) / 2.0 + line_h * 0.82;
 				fixed.push(q(tx, ty, line_h * 0.5, 1.5, dlg().text));
 			}
@@ -1801,7 +1820,7 @@ impl SettingsDialog {
 	// `line_h` is the rendered text line height (the app's cell_h); rows, hex
 	// fields, and buttons center their text vertically against it so alignment
 	// holds for any font/size rather than a baked-in guess.
-	pub fn texts(&self, line_h: f32) -> Vec<TextItem> {
+	pub fn texts(&self, line_h: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<TextItem> {
 		let mut out = Vec::new();
 		let mk = |text: String, x: f32, y: f32| TextItem {
 			text,
@@ -1934,7 +1953,9 @@ impl SettingsDialog {
 			}
 		}
 		for (_, r, label) in self.buttons() {
-			out.push(mk(label.into(), r.x + 14.0, row_text_y(r.y, r.h)));
+			// center the caption within the button
+			let lx = r.x + (r.w - measure(label)).max(0.0) / 2.0;
+			out.push(mk(label.into(), lx, row_text_y(r.y, r.h)));
 		}
 		out
 	}
@@ -2074,6 +2095,26 @@ mod tests {
 		d.set_mods(false, true, false); // Shift+Tab walks back (wraps to last button)
 		d.key_tab();
 		assert_eq!(d.focus, Some(Focus::Button(2)));
+	}
+
+	#[test]
+	fn buttons_fire_on_release_over_button() {
+		use super::Action;
+		let mut d = mk_dialog(2000.0);
+		let (action, r, _) = d.buttons()[1]; // Apply
+		assert_eq!(action, Action::Apply);
+		let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+		let mut m = |_: &str| 10.0;
+		// press arms the button (feedback) without firing
+		assert_eq!(d.mouse_down(cx, cy, &mut m), Action::None);
+		assert_eq!(d.pressed, Some(1));
+		// release over the same button fires its action and disarms
+		assert_eq!(d.mouse_up(cx, cy), Action::Apply);
+		assert_eq!(d.pressed, None);
+		// press then release away from the button cancels (no action)
+		d.mouse_down(cx, cy, &mut m);
+		assert_eq!(d.mouse_up(cx, r.y - 100.0), Action::None);
+		assert_eq!(d.pressed, None);
 	}
 
 	#[test]

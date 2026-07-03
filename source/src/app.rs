@@ -94,7 +94,7 @@ impl App {
 				if let Some(d) = &mut self.dialog {
 					match state {
 						ElementState::Pressed => act = d.mouse_down(),
-						ElementState::Released => d.mouse_up(),
+						ElementState::Released => act = d.mouse_up(),
 					}
 					self.dialog_dirty = true;
 				}

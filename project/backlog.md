@@ -60,9 +60,9 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ "Glow border" -> "Text outline" (change description and config name). Change default value to 2.0. - config key `text_glow_border` renamed to `text_outline` (dialog label "Text outline"), default 2.0; existing configs migrate value-preserving via CONFIG_RENAMES (unit-tested), template + persist + backfill updated.
 	- ✅ Glow falloff: Change default to S-curve. - `text_glow_ramp` default now "s"; resolve maps missing/unknown -> default (S-curve), template shows `# text_glow_ramp = "s"`.
 
-- 🔘 Buttons:
-	- Center text.
-	- Provide click feedback.
+- ✅ Buttons:
+	- ✅ Center text. - dialog Cancel/Apply/OK captions are measured and centered in the button (was left-aligned); the Alt-accelerator underline follows the centered position.
+	- ✅ Provide click feedback. - footer buttons now arm on press (drawn filled with the highlight colour) and fire on release, only if the cursor is still over the button (a press-drag-off cancels). Unit-tested (arm/fire/cancel); verified headless (Apply highlights while held, labels centered).
 
 - 🔘 CICD script: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path.
 
