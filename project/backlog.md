@@ -42,8 +42,11 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🔘 Now there's too much space below the tab text and top menu text. (Ironic since earlier there was too little.) It should be vertically centered.
-	- 🔘 Proper fix: Size both the menu and the tabs according to the font height (plus extra), then *vertically center* the text within that area. If the font was created poorly centered, which may are, then there may be nothing to do about that - but the current font seems properly designed elsewhere.
+- ✅ Now there's too much space below the tab text and top menu text. (Ironic since earlier there was too little.) It should be vertically centered.
+	- ✅ Proper fix: Size both the menu and the tabs according to the font height (plus extra), then *vertically center* the text within that area. If the font was created poorly centered, which may are, then there may be nothing to do about that - but the current font seems properly designed elsewhere.
+		- Done: both bars center the text on its real visible box using the UI face's actual ascent/descent, instead of the old hand-tuned padding that left titles riding high.
+		- Note: tab bar padding dropped to match the menu bar now that centering handles descender clearance.
+		- Verified: headless dump - menu and tab ink centers land exactly on their bar centers.
 
 - 🔘 When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
 
@@ -74,20 +77,38 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Change the buttons at the top for different pages, to tabs.
 		- 🔘 Can cycle through with Ctrl+PgUp|PgDn.
 
-- ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
-	- Done: a per-pane toggle. When on, the focused pane's output copies to the clipboard as each command finishes.
-	- Note: only the focused pane of the focused window ever copies, so a background window can't leak output.
-	- Note: the text is plain printable Unicode, with colour and control codes removed. A command with no output leaves the clipboard alone.
-	- Done: an always-visible "Copy output" checkbox on the menu bar, plus a toggle in the right-click and Edit menus.
-	- Verified: instant, slow and multi-line commands all captured headlessly. The checkbox reflects and toggles the state.
-	- Note: Unix only.
+- 🔘 Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
 
-- ✅ Split pane auto-sizing logic: By default, when panes are split, if more than two are split in the same direction at a time, distribute their sizes equally. (E.g. All 50%, then all 33%, 25%, 20%, and so on.) But if the user breaks that trend by manually adjusting any of those, then from then on, every successive new pane splits 50% (until that sequence of same direction for pane splits stops - e.g. if the user starts splitting a different pane ancestry and/or in a different direction) Specifying pane % on the command-line also short-circuits the even-distribution logic, for that direction and ancestry.
-	- Done: splitting in the same direction redistributes those panes to equal sizes (thirds, quarters, and so on).
-	- Note: once you drag a divider in that run, further splits there stay 50/50 and your sizes are kept.
-	- Note: a split in a different direction or ancestry is treated as its own run.
-	- Note: command-line splits keep their explicit sizing.
-	- Verified: unit tests cover equal thirds and quarters, the manual-drag case, and mixed directions.
+- 🔘 Main menu and right-click menus:
+	- 🔘 Accellerators need to be unique. If running out of memorable word/accelerator keys, remove accellerators from the least-used or least-important items, especially ones that already have hotkeys.
+	- 🔘 List the hotkeys to activate the same function, if they exist. Keep in mind there might be a dynamic hotkey system soon.
+
+- 🔘 New defaults: Background image opacity 10%. Background image blur, 10.
+
+- 🔘 New setting: Background image contrast mask % (100% = half of the longest pixel dimension, 0% = none, auto=based on contrast frequency analysis.)
+
+- 🔘 When reducing background image opacity, also reduce contrast and saturation. Add tunable parameters to the config file:
+	- 🔘 Minimum contrast % (at 0% background image opacity - not useful but establishes the floor). Lets try a default of 50%.
+	- 🔘 Maximum contrast % (at 100% background image opacity). Default 50%.
+	- 🔘 Similar settings and defaults for saturation.
+
+- 🔘 Change wording of "background image opacity" to "background image visibility" (text and setting), to reflect that it's not just opacity. Still directly controls image/background color mix, but ALSO the contrast and saturation.
+
+- 🔘 Need a way to detect maximum and average brightness of background image - or some human hueristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
+	- 🔘 Really what I'm after, is this resulting effect. The implimentation is up to research:
+		- 🔘 At 100% background image visibility, it's just the image as-is.
+		- 🔘 But below that, the opacity % scales with human perception.
+			- 🔘 In other words, at say 90%, it is actually scaled to some average of ([perceived brightness], [brightest pixel]).
+			- 🔘 As an example, 50% for a very bright image, may be significantly darker than 50% for a very dark image.
+		- 🔘 And the inverse, for light-mode themes.
+		- 🔘 Need a config file name and a default value for the resulting strength of this calculation.
+
+- 🔘 Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
+
+- 🔘 Testing:
+	- 🔘 Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
+	- 🔘 Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
+	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
 
 - 🔘 Build packages when cicd.bash `--quick` isn't specified:
 	- 🔘 .deb(s), per-architecture
@@ -100,12 +121,8 @@ In each section, items are listed approximately from newest to oldest.
 		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
 	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
 
-- ✅ Menu bar: (issue #t6thx, 20260626-132615)
-	- ✅ Menu and Dialog background and text color user-adjustable, even per-theme. It's just that all themes by default should use the same menu colors.
-		- Done: menu and dialog colours are part of each theme now, sharing the same neutral defaults across all themes.
-		- Done: config keys let you override the menu and dialog colours.
-		- Note: menu hover, border and separator shades follow the menu colour automatically.
-		- Verified: a custom dialog colour recoloured the Settings panel. Unit-tested.
+- ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
+	- 🔘 Add Windows support.
 
 - 🛠️ Tab interface:
 	- Done: single-window core. Each tab owns a PaneManager; the tab bar shows once there's more than one tab, click to switch, and the pane area shrinks to make room for the bar.
@@ -119,11 +136,7 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Dock tab to different existing window with mouse
 		- Note: deferred, needs multi-window.
 
-- ✅ Window title:
-	- ✅ Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
-		- Done: a `--title` wins as-is. Otherwise the title is "SilkTerm - <current tab>".
-		- Note: it tracks the focused tab's running program live.
-		- Verified: the window name became "SilkTerm - dash" in a headless run.
+- 🔘 Ability to change hotkeys, and/or assign new ones dynamically. Including a "capture" dialog.
 
 - 🛠️ Themes:
 	- Done (part 1): theme foundation and terminal palette. A Palette (bg/fg/cursor/focus + 16 ANSI) times a Theme (a dark+light pair); the theme and theme_mode config keys pick the active palette, and the [colors] keys still override per-colour. Three built-ins: SilkTerm, Matrix, Retro Amber, each dark and light.
@@ -298,6 +311,8 @@ In each section, items are listed approximately from newest to oldest.
 	- Emits the create/select form: `--new-tab` / `--new-pane` (with explicit `--splits`, direction, and non-default `--size`) for structure, plus `--tab=<id>` / `--pane=<id>` for per-entity overrides. Always writes explicit directions and sizes (never the "more space" default) so a saved layout reproduces regardless of window size.
 
 - 🔘 When running `sudo apt update`, the progress bar at the bottom bounces about halfway below the render area, as lines above it scroll up. This seems to be a side-effect of smooth-scrolling. Is there a way to prevent that from happening, without fundamentally breaking the very concept of smooth scrolling?
+	- Opening `nano` can occasionally result in wild vertical jelly-like bouncing around for about a second. (Obviously something to do with smooth-scroll-on-output.) It doesn't seem repeatable though. Usually it opens just fine.
+		- Maybe disable smooth scroll if direct raw access is detected?
 	- Reopened: The first attempt (snap output easing during line bursts) broke smooth scrolling for all normal output and was reverted (see the smooth-scrolling-regression bug above).
 		- Diagnosis: apt reserves the bottom line as a status bar via a scroll region, and each log line scrolls that region. Since the region starts at line 0, alacritty grows scrollback, which fires our output easing. The ease shifts the whole grid down by up to a cell and drags the fixed status bar below the viewport - that's the bounce.
 		- Note: a proper fix needs to know a partial scroll region is active so it can suppress easing only then, but alacritty_terminal doesn't expose the scroll region. Options for later: patch the crate to expose it, tee and parse DECSTBM ourselves, or accept it like other full-screen apps.
@@ -440,6 +455,21 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - new features and enhancements
 
+- ✅ Split pane auto-sizing logic: By default, when panes are split, if more than two are split in the same direction at a time, distribute their sizes equally. (E.g. All 50%, then all 33%, 25%, 20%, and so on.) But if the user breaks that trend by manually adjusting any of those, then from then on, every successive new pane splits 50% (until that sequence of same direction for pane splits stops - e.g. if the user starts splitting a different pane ancestry and/or in a different direction) Specifying pane % on the command-line also short-circuits the even-distribution logic, for that direction and ancestry.
+	- Done: splitting in the same direction redistributes those panes to equal sizes (thirds, quarters, and so on).
+	- Note: once you drag a divider in that run, further splits there stay 50/50 and your sizes are kept.
+	- Note: a split in a different direction or ancestry is treated as its own run.
+	- Note: command-line splits keep their explicit sizing.
+	- Verified: unit tests cover equal thirds and quarters, the manual-drag case, and mixed directions.
+
+- ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
+	- Done: a per-pane toggle. When on, the focused pane's output copies to the clipboard as each command finishes.
+	- Note: only the focused pane of the focused window ever copies, so a background window can't leak output.
+	- Note: the text is plain printable Unicode, with colour and control codes removed. A command with no output leaves the clipboard alone.
+	- Done: an always-visible "Copy output" checkbox on the menu bar, plus a toggle in the right-click and Edit menus.
+	- Verified: instant, slow and multi-line commands all captured headlessly. The checkbox reflects and toggles the state.
+	- Note: Unix only.
+
 - ✅ Config:
 	- ✅ "Glow border" -> "Text outline" (change description and config name). Change default value to 2.0.
 		- Done: renamed the config key and the dialog label, and set the default to 2.0.
@@ -480,6 +510,19 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ CICD script: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path.
 	- Done: removed the "Proceed? [y/N]" step. The commit-message prompt is now where you bail out, with Ctrl+C.
 	- Note: `-y` still skips prompting entirely.
+
+- ✅ Menu bar: (issue #t6thx, 20260626-132615)
+	- ✅ Menu and Dialog background and text color user-adjustable, even per-theme. It's just that all themes by default should use the same menu colors.
+		- Done: menu and dialog colours are part of each theme now, sharing the same neutral defaults across all themes.
+		- Done: config keys let you override the menu and dialog colours.
+		- Note: menu hover, border and separator shades follow the menu colour automatically.
+		- Verified: a custom dialog colour recoloured the Settings panel. Unit-tested.
+
+- ✅ Window title:
+	- ✅ Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
+		- Done: a `--title` wins as-is. Otherwise the title is "SilkTerm - <current tab>".
+		- Note: it tracks the focused tab's running program live.
+		- Verified: the window name became "SilkTerm - dash" in a headless run.
 
 - ✅ Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK.
 	- Verified: at 2x the title, tabs, labels, sliders, fields, checkboxes and buttons all scale cleanly.

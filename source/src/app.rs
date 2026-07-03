@@ -352,7 +352,7 @@ impl Tabs {
 // Menu/tab bars auto-size to the menu (proportional) font: height = the text line
 // height (cell_h) + this vertical padding, so a larger font isn't clipped (#124).
 const MENU_BAR_VPAD: f32 = 6.0;
-const TAB_BAR_VPAD: f32 = 11.0; // enough that tab-title descenders (g/j/p/q/y) clear the button bottom
+const TAB_BAR_VPAD: f32 = 6.0; // text is metric-centered in the bar; descenders clear via that
 const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to settle)
 const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-size settle time before hitting disk
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
@@ -1107,7 +1107,7 @@ impl State {
 				// Alt held (no dropdown open): underline each title's accelerator
 				// letter, like the open-dropdown items do (press the letter to open).
 				let acc = crate::text::ui_attrs();
-				let uy = MENU_BAR_VPAD / 2.0 + self.text.ui_line_h - 2.0;
+				let uy = self.text.ui_baseline(0.0, menu_h) + 1.0;
 				for (i, &(x, _)) in layout.iter().enumerate() {
 					if let Some(c) = MENU_BAR[i].chars().next() {
 						let mut buf = [0u8; 4];
@@ -1308,7 +1308,7 @@ impl State {
 			areas.push(TextArea {
 				buffer: b,
 				left,
-				top: MENU_BAR_VPAD / 2.0,
+				top: self.text.ui_text_top(0.0, menu_h),
 				scale: 1.0,
 				bounds: TextBounds {
 					left: l as i32,
@@ -1325,9 +1325,8 @@ impl State {
 			areas.push(TextArea {
 				buffer: b,
 				left: x + 8.0,
-				// sit a touch high in the bar so descenders get bottom clearance
-				// (bug: "tab font doesn't have enough space on the bottom")
-				top: tby + (TAB_BAR_VPAD / 2.0) - 1.0,
+				// center the visible text box in the tab bar (metric-based)
+				top: self.text.ui_text_top(tby, tab_h),
 				scale: 1.0,
 				bounds: TextBounds {
 					left: x as i32,
