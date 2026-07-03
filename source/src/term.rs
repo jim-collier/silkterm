@@ -204,6 +204,20 @@ impl TermInstance {
 		crate::config::APP_NAME.to_string()
 	}
 
+	// Is the shell itself (not a spawned command) the terminal's foreground
+	// process group? Drives copy-output's command start/end detection: the fg pgid
+	// equals the shell's while at the prompt, and a command's while it runs. Unix
+	// only; elsewhere we can't tell, so report "at prompt" (the feature stays inert).
+	#[cfg(unix)]
+	pub fn at_shell_prompt(&self) -> bool {
+		let pgid = unsafe { libc::tcgetpgrp(self.master_fd) };
+		pgid <= 0 || pgid as u32 == self.shell_pid
+	}
+	#[cfg(not(unix))]
+	pub fn at_shell_prompt(&self) -> bool {
+		true
+	}
+
 	pub fn write<B: Into<Vec<u8>>>(&self, bytes: B) {
 		let _ = self.sender.send(Msg::Input(bytes.into().into()));
 	}
