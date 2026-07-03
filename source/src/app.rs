@@ -2471,14 +2471,24 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 					}
 				}
-				// tab hotkeys (Ctrl based). Close-tab has no hotkey by design
-				// (use the menu / right-click / exit the shell).
+				// tab hotkeys (Ctrl based).
 				if state.mods.control_key() {
 					let shift = state.mods.shift_key();
 					match &key.logical_key {
 						// Ctrl+Shift+T: new tab (Shift so plain Ctrl+T reaches the shell)
 						Key::Character(s) if shift && s.eq_ignore_ascii_case("t") => {
 							state.new_tab(&self.proxy);
+							return;
+						}
+						// Ctrl+Shift+W / Ctrl+F4: close the current tab (keeps >=1 tab;
+						// close the window to exit). Shift on W so plain Ctrl+W reaches
+						// the shell (word-erase).
+						Key::Character(s) if shift && s.eq_ignore_ascii_case("w") => {
+							state.close_tab();
+							return;
+						}
+						Key::Named(NamedKey::F4) => {
+							state.close_tab();
 							return;
 						}
 						Key::Named(NamedKey::PageUp) => {

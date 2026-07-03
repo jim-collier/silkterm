@@ -87,7 +87,7 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Menu and Dialog background and text color user-adjustable, even per-theme. It's just that all themes by default should use the same menu colors.
 
 - 🛠️ Tab interface: single-window core done (`Tabs` in app.rs: each tab owns a `PaneManager`; tab bar shown with >1 tab, click to switch; pane area reduced by the bar). Detach/dock deferred (need multi-window). Verified: new tab, switch (content swaps), close (bar hides).
-	- 🔘 Close tab (CTRL+Shift+w, CTRL+F4)
+	- ✅ Close tab (CTRL+Shift+w, CTRL+F4) - both hotkeys close the current tab (mirror the menu Close Tab: keeps >=1 tab, close the window to exit). Shift on W so plain Ctrl+W still reaches the shell.
 	- 🔘 Detach tab to new window with mouse (deferred: needs multi-window)
 	- 🔘 Dock tab to different existing window with mouse (deferred: needs multi-window)
 
