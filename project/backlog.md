@@ -42,72 +42,37 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🔘 At high blur radius and low softness, the blur has boxy artifacts.
+- 🔘 Now there's too much space below the tab text and top menu text. (Ironic since earlier there was too little.) It should be vertically centered.
+	- 🔘 Proper fix: Size both the menu and the tabs according to the font height (plus extra), then *vertically center* the text within that area. If the font was created poorly centered, which may are, then there may be nothing to do about that - but the current font seems properly designed elsewhere.
 
 - 🔘 When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
 
 - 🔘 Modal Bug (with Settings and About): The dialog shows up in the window list. Also when focused is changed elsewhere then the dialog is clicked on, the terminal window doesn't also come to the top - it stays behind whatever got in front of it. In Linux - unlike Windows - the main window can still be moved around when the modal dialog is open, but it *remains an unselected window* - the dialog retains focus. These things aren't a coding trick, it's just the way modals work on Linux, and so should SilkTerm.
 
+- 🔘 At high blur radius and low softness, the blur has boxy artifacts.
+
 - 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
-	- Cause (by code analysis): when the glyph atlas fills up (a long session of varied glyphs), text `prepare()` fails and `render` returned early - *above* the per-frame atlas trim - so the atlas never recovered and all text stayed black forever. The cursor and cell backgrounds use a separate rect renderer, so they kept showing (matches the report exactly).
-	- Fix: trim the atlas on the prepare-failure path so the next frame re-prepares with room and recovers. Couldn't force an atlas-full in a short stress run (a 20s unicode flood didn't fill it - the trigger needs a genuinely long session), so this is verified by code analysis, not a live repro. Watch for recurrence.
-	- 20260701 (headless retest): ran a 50s max-rate random-unicode flood on the private Xvfb (gui-headless.bash) at 120x40 - text stayed visible the whole time (screen brightness ~0.12 throughout), app alive, no black-out, no trim event. Still couldn't force the atlas-full: this box has limited renderable-glyph coverage (no CJK/emoji fonts - a full-screen distinct-CJK flood just renders blank, which is a missing-font effect, NOT the atlas bug and NOT a trim event). So the specific atlas-full trigger remains unreproducible here; the no-black-out-under-load result is a stronger confirmation than code-analysis alone.
-	- Resolution: Leave this issue open until verified with long-running terminals.
+	- Cause: when the glyph atlas fills up during a long, varied session, text prepare() fails and render bailed out before the per-frame atlas trim. The atlas never recovered, so text stayed black. Cursor and per-cell backgrounds use a separate renderer, so they kept showing.
+	- Fixed: trim the atlas on the prepare-failure path, so the next frame re-prepares with room and recovers.
+	- Note: couldn't force an atlas-full for a live repro. A 20s flood didn't fill it; the trigger needs a genuinely long session.
+	- Verified: a 50s max-rate unicode flood on the headless display stayed visible throughout, app alive, no black-out. This box lacks the CJK/emoji coverage to actually fill the atlas, so the exact trigger is still unreproduced here.
+	- Resolution: leave open until confirmed on long-running terminals.
 
 ### New features and enhancements
 
-- ✅ CICD dogfood section:
-	- ✅ Copy as a different name every time, in format "slktrmdf_YYYYmmDD-HHMMSS"
-		- So that multiple versions can run, and automated testing won't kill them.
-		- Automatically delete existing older copies that are not in use.
-		- Done: each build installs under its own timestamped name, so versions coexist.
-		- Done: copies that aren't currently running are pruned automatically.
-		- Done: two installs now - the old fixed name to the synced bin, and the rotating dated copy to ~/.local/bin. The preflight shows both.
-		- Verified: a running copy is kept, an idle older one is removed, and the new copy appears.
+- 🔘 Option to include the cursor in outer-glow. Default to off. Still outline it though.
 
-- ✅ Create a new bash 5 script 'utility/n8runterm':
-	- Can run any terminal along with script args it received (e.g. if user edits it), but by default it runs the function fSilkTermDogfood(), which:
-		- Looks for the newest 'slktrmdf_YYYYmmDD-HHMMSS', and runs it with script args "$@".
-		- Done: wrote the launcher. It finds the newest dogfood build and runs it, passing arguments through. Edit fMain() to launch a different terminal.
-		- Verified: runs the newest build, passes args, and errors cleanly when none exists.
-	- ✅ Also pass a random background image and a build-tagged title:
-		- Done: prepends a random image from `~/.config/silkterm/backgrounds/` and a title tagged with the build's timestamp. Both go before the passed args, so a caller can still override.
-		- Note: skipped quietly when the backgrounds folder has no images.
-		- Verified.
-	- ✅ Fall back to a known terminal when no dogfood build (or fMain's target) is found:
-		- Done: tries terminator, xfce4-terminal, gnome-terminal, konsole, alacritty, kitty, then xterm, and runs the first one installed.
-		- Note: prints a short note before falling back, and a real error only when nothing at all is installed.
-		- Verified: selection order, the fallback note, and that a present dogfood build wins.
+- 🔘 Copy output:
+	- 🔘 Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.
+	- 🔘 The checkbox button and menu item should only be visibly enabled for one pane at a time.
+		- 🔘 If you change tabs or panes, the feature gets turned off. (Visibly and actually.)
+			- 🔘 Changing windows is OK.
+		- 🔘 If you enable the feature on another silkterm window, it gets disabled on other open windows. (Visibly and actually.)
 
 - 🔘 Settings dialog:
 	- 🔘 Remove "Settings" heading text, it's redundant with the window title.
 	- 🔘 Change the buttons at the top for different pages, to tabs.
 		- 🔘 Can cycle through with Ctrl+PgUp|PgDn.
-
-- ✅ Config:
-	- ✅ "Glow border" -> "Text outline" (change description and config name). Change default value to 2.0.
-		- Done: renamed the config key and the dialog label, and set the default to 2.0.
-		- Note: existing configs migrate to the new key without losing their value.
-	- ✅ Glow falloff: Change default to S-curve.
-		- Done: the default falloff is now the S-curve.
-
-- ✅ Buttons:
-	- ✅ Center text.
-		- Done: the Cancel/Apply/OK captions are centered in the button. They were left-aligned before.
-	- ✅ Provide click feedback.
-		- Done: a button highlights while held and fires on release. Dragging off it first cancels.
-		- Verified: unit tests, plus a headless check of the highlight and centering.
-
-- ✅ CICD script: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path.
-	- Done: removed the "Proceed? [y/N]" step. The commit-message prompt is now where you bail out, with Ctrl+C.
-	- Note: `-y` still skips prompting entirely.
-
-- ✅ Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK.
-	- Verified: at 2x the title, tabs, labels, sliders, fields, checkboxes and buttons all scale cleanly.
-	- Reproduced: the Settings radio labels collided at 2x.
-	- Cause: the radio spacing was a fixed pixel value while the text grew with the font.
-	- Fix: radio spacing now scales with the font, and the panel widens so every option fits.
-	- Verified: a unit test guards the scaling.
 
 - ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- Done: a per-pane toggle. When on, the focused pane's output copies to the clipboard as each command finishes.
@@ -142,12 +107,17 @@ In each section, items are listed approximately from newest to oldest.
 		- Note: menu hover, border and separator shades follow the menu colour automatically.
 		- Verified: a custom dialog colour recoloured the Settings panel. Unit-tested.
 
-- 🛠️ Tab interface: single-window core done (`Tabs` in app.rs: each tab owns a `PaneManager`; tab bar shown with >1 tab, click to switch; pane area reduced by the bar). Detach/dock deferred (need multi-window). Verified: new tab, switch (content swaps), close (bar hides).
+- 🛠️ Tab interface:
+	- Done: single-window core. Each tab owns a PaneManager; the tab bar shows once there's more than one tab, click to switch, and the pane area shrinks to make room for the bar.
+	- Verified: new tab, switch (content swaps), close (bar hides).
+	- Note: detach and dock are deferred - they need multi-window.
 	- ✅ Close tab (CTRL+Shift+w, CTRL+F4)
-		- Done: both shortcuts close the current tab, matching the menu's Close Tab.
+		- Done: both shortcuts close the current tab, matching the menu.
 		- Note: keeps at least one tab open. Shift on W leaves plain Ctrl+W for the shell.
-	- 🔘 Detach tab to new window with mouse (deferred: needs multi-window)
-	- 🔘 Dock tab to different existing window with mouse (deferred: needs multi-window)
+	- 🔘 Detach tab to new window with mouse
+		- Note: deferred, needs multi-window.
+	- 🔘 Dock tab to different existing window with mouse
+		- Note: deferred, needs multi-window.
 
 - ✅ Window title:
 	- ✅ Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
@@ -156,11 +126,14 @@ In each section, items are listed approximately from newest to oldest.
 		- Verified: the window name became "SilkTerm - dash" in a headless run.
 
 - 🛠️ Themes:
-	- Status part 1: Done. (`src/theme.rs`): theme foundation + terminal palette done. A `Palette` (bg/fg/cursor/focus + 16 ANSI) x a `Theme` (dark+light pair); `theme` + `theme_mode` config keys resolve the active palette, which `palette.rs` + the renderer read. The `[colors]` keys still override per-colour. 3 built-ins (SilkTerm, Matrix, Retro Amber), each dark+light.
-		- Verified: Matrix = green-on-black incl. green-toned ANSI; SilkTerm light = dark-on-light.
-	- Status part 2: Done: chrome/dialog theming + System mode. Dialogs (Settings + About) adapt via `config::is_dark()` - dark-gray panel/text for dark, light-gray for light (a `Dlg` dark/light set in settings_ui); the menu/tab chrome is a fixed neutral gray (#165). "System" mode follows the OS via winit's `Window::theme()` at startup + `WindowEvent::ThemeChanged` -> `config::reapply_for_os` (falls back to dark where the OS reports no preference, e.g. X11).
-		- Verified: light mode -> light-gray Settings dialog with dark text; menu is gray; system mode launches clean. still TODO: config-defined `[themes.*]`; the Settings theme dropdown + its own tab; clearing per-colour overrides on re-select; per-theme menu colour (#166); more themes (Pastel, Solarized).
-	- 🛠️ Provide a set of about 3 or 4 themes, each that support "Dark" or "Light" mode (or "System"). - 3 built-ins with dark+light done; "System" (OS-follow) + a 4th theme pending.
+	- Done (part 1): theme foundation and terminal palette. A Palette (bg/fg/cursor/focus + 16 ANSI) times a Theme (a dark+light pair); the theme and theme_mode config keys pick the active palette, and the [colors] keys still override per-colour. Three built-ins: SilkTerm, Matrix, Retro Amber, each dark and light.
+		- Verified: Matrix is green-on-black including green-toned ANSI; SilkTerm light is dark-on-light.
+	- Done (part 2): chrome/dialog theming plus System mode. Settings and About adapt to dark/light; the menu and tab chrome stay a fixed neutral gray. System mode follows the OS at startup and on theme-change, falling back to dark where the OS reports no preference (e.g. X11).
+		- Verified: light mode gives a light dialog with dark text; system mode launches clean.
+		- Note: still open - config-defined [themes.*], the Settings theme dropdown and its own tab, clearing per-colour overrides on re-select, per-theme menu colour (#166), more themes (Pastel, Solarized).
+	- 🛠️ Provide a set of about 3 or 4 themes, each that support "Dark" or "Light" mode (or "System").
+		- Done: three built-ins with dark and light.
+		- Note: System (OS-follow) and a 4th theme are still pending.
 		- Dark mode means the background is dark, text light - both for the terminal, and dialogs.
 			- But dialogs have a different color than terminal background. E.g. the existing dark gray for Dark mode, light gray for Light mode.
 		- Light mode means light background, dark text.
@@ -175,20 +148,31 @@ In each section, items are listed approximately from newest to oldest.
 			- Pastel (a pleasing light pastel color, on dark gray background that has a subtle tint of complementary pastel).
 
 - 🛠️ General configuration:
-	- status: the default-shell behavior is done; the named shell list + its selection UI (grid editor + Tab/Pane menus) are now active hand-rolled work - the egui chrome migration was declined (see the `[x]` note under "Setting dialog (part 2)").
+	- Done: the default-shell behavior.
+	- Note: the named shell list and its UI (grid editor, Tab/Pane menus) are still to build by hand. The egui chrome migration was declined - see the note under "Setting dialog (part 2)".
 	- 🛠️ Ability to define shells to launch in a new tab or pane.
-		- ✅ By default, new tab launches the default shell for the window. - `new_tab` + the non-CLI startup pane use `config::default_shell_argv()`.
-			- ✅ By priority: Global command shell override, non-empty shell specified in config file, or system default shell. - resolution order is CLI window `--shell` -> config `default_shell` -> system; per-pane it's pane `--shell` -> the pane it forked -> tab -> window -> `default_shell` -> system. Verified: a `default_shell` in config runs on the startup pane.
-		- ✅ By default, new pane launches same shell as the pane the new one was forked off of. - `Pane` stores its launch argv; interactive splits inherit it (done with the CLI work).
+		- ✅ By default, new tab launches the default shell for the window.
+			- Done: new tabs and the startup pane use the default shell.
+			- ✅ By priority: Global command shell override, non-empty shell specified in config file, or system default shell.
+				- Done: order is the window --shell, then config default_shell, then system. A new pane also inherits from the pane it forked, its tab, then the window first.
+				- Verified: a default_shell in config runs on the startup pane.
+		- ✅ By default, new pane launches same shell as the pane the new one was forked off of.
+			- Done: a pane stores its launch command, and interactive splits inherit it.
 	- 🛠️ The shell configuration is stored in the config file as a simple key:value list of shell names and command lines. Command lines may have spaces, single quotes, and/or double quotes in them.
-		- Done so far: a single `default_shell` string key (argv-split via `cli::shell_split`, handles spaces/quotes). The named key:value `[shells]` list + its consumers (the grid editor + Tab/Pane menus below) are now hand-rolled work (egui declined).
-		- 🔘 In the settings dialog, this is accessed from a button that loads an additional modal dialog on top, with a 2*n grid of values. (That is editable like a typical database or spreadsheet grid.) This editable grid UX should be reusable for other potential future features. - Hand-rolled (egui declined): build it as a dynamic list of name|command rows + add/remove, reusing the dialog's existing text-field editing and the multi-window `DialogWin` infra.
-	- 🔘 The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what). - Hand-rolled (no egui); follows the named-shell list above.
-	- 🔘 If bash is available on the system, add a shell option just above "[SilkTerm default]": "bash --norc". - Deferred with the hand-rolled shell menu above.
+		- Done: a single default_shell string key, argv-split so it handles spaces and quotes.
+		- Note: the named key:value list and its consumers (the grid editor and Tab/Pane menus below) are still hand-rolled work.
+		- 🔘 In the settings dialog, this is accessed from a button that loads an additional modal dialog on top, with a 2*n grid of values. (That is editable like a typical database or spreadsheet grid.) This editable grid UX should be reusable for other potential future features.
+			- Note: hand-rolled. Build it as a dynamic list of name/command rows with add and remove, reusing the dialog's text-field editing.
+		- 🔘 The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
+			- Note: hand-rolled, follows the named-shell list above.
+		- 🔘 If bash is available on the system, add a shell option just above "[SilkTerm default]": "bash --norc".
+			- Note: deferred with the hand-rolled shell menu above.
 
 - 🛠️ Setting dialog (part 2):
 	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
-	- ✅ Size: A boolean setting to "Remember last size" - `remember_size` config + dialog toggle; on launch it uses `remembered_columns`/`remembered_rows` instead of columns/rows. The remembered pair is updated on every manual window resize (startup/programmatic resizes are skipped via a `size_tracked` flag set after the first frame, so they don't clobber it) and is not shown in the dialog. Columns/Rows grey out when on. Verified: manual resize -> remembered_columns/rows persisted; relaunch with remember_size=true used the remembered size (712x504, not the 160-col default); dialog shows the toggle checked with Columns/Rows greyed.
+	- ✅ Size: A boolean setting to "Remember last size".
+		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows grey out when on.
+		- Verified: a manual resize persisted the remembered size, relaunch used it instead of the default, and the dialog shows the toggle checked with Columns and Rows greyed.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
 			- 🔘 "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
 	- ✅ All values, including slider numbers, should also have directly editable fields (that are part of the tab order).
@@ -197,18 +181,17 @@ In each section, items are listed approximately from newest to oldest.
 		- Verified: unit tests for editing and clamping, plus a headless render check.
 
 - 🛠️ Command-line options:
-	- Status part 1 (options engine): Done.
-		- Full parser (create/select model, cascading style, shell-word-split, unit-tested).
-		- `--help`/`--version`/`--syntax`; `--config` alternate file
-		- Window options `--columns/--rows/--pixel-width/--pixel-height/--background-opacity/--hide-windowframe/--hide-menu/--fullscreen/--title` (window-only-after-marker errors).
-		- Layout `--new-tab/--tab=/--new-pane/--pane=/--splits/--down|up|left|right/--size` building real tabs/panes (targeted splits -> arbitrary trees, smart default direction, percent/cell sizes).
-		- Per-pane `--shell` (argv-exec, cascade pane->split-source->tab->window->config `default_shell`; interactive splits inherit too).
-		- Config `command_line` applied when launched with no args (any real CLI argument overrides it entirely - verified both directions).
-		- Tab `--title` override (`PaneManager::title_override`, shown in the tab bar - verified).
-		- Window-level visual style now applied: `--font-name/--font-size/--background-color/--foreground-color/--background-image/--background-image-stretch/-zoom/-opacity` fold into the live settings at startup (`cli::fold_window_style`, called from `resumed` after the theme palette settles via `WindowOpts::apply_style`; 2 unit tests). PER-PANE scope is still deferred: it needs a per-pane renderer the single-`TextCtx` architecture lacks (revisited later, hand-rolled chrome without egui). So these flags are `🛠️` - they work for the whole window but don't yet vary per pane.
-		- `--keep-open` (needs exit-status display in a dead PTY).
-		- Per-pane `--title` (no per-pane title is displayed yet - reserved).
-		- Finer field-level CLI/config negotiation (current rule: presence of any CLI arg ignores the config command line wholesale).
+	- Done (part 1, the options engine):
+		- Full parser: create/select model, cascading style, shell-word-split, unit-tested.
+		- --help / --version / --syntax, and --config for an alternate file.
+		- Window options: columns, rows, pixel-width, pixel-height, background-opacity, hide-windowframe, hide-menu, fullscreen, title. A window option after a tab/pane marker errors.
+		- Layout: --new-tab/--tab=/--new-pane/--pane=/--splits with direction and --size, building real tabs and panes (targeted splits into arbitrary trees, smart default direction, percent or cell sizes).
+		- Per-pane --shell (argv-exec; cascades pane, split-source, tab, window, then config default_shell; interactive splits inherit).
+		- Config command_line applied when launched with no args. Any real CLI argument overrides it entirely (verified both ways).
+		- Tab --title override, shown in the tab bar (verified).
+		- Window-level visual style: font, size, colours, and the background image with its stretch/zoom/opacity fold into the live settings at startup.
+			- Note: per-pane scope is still deferred. It needs a per-pane renderer the single-TextCtx architecture lacks, so these flags apply to the whole window but don't yet vary per pane (hence 🛠️).
+		- Note: still open - --keep-open (needs exit-status in a dead PTY), per-pane --title (reserved, none displayed yet), and finer field-level negotiation (today any CLI arg ignores the config command line wholesale).
 	- General notes:
 		- Command-line options override any config setting, but only while that window is alive.
 		- As suggested in the main enhancement bulletpoint above, a command line can also be specified in the config file (and exposed in "Settings").
@@ -282,23 +265,31 @@ In each section, items are listed approximately from newest to oldest.
 		- 🔘 `--keep-open[=| ]bool`
 			- Keep pane|tab|window open after shell command exits, showing exit value.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--font-name[=| ]"string"` - window-level applied; per-pane deferred
+		- 🛠️ `--font-name[=| ]"string"`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--font-size[=| ]<n>` - window-level applied; per-pane deferred
+		- 🛠️ `--font-size[=| ]<n>`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-color[=| ]<hex>` - window-level applied; per-pane deferred
+		- 🛠️ `--background-color[=| ]<hex>`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--foreground-color[=| ]<hex>` - window-level applied; per-pane deferred
+		- 🛠️ `--foreground-color[=| ]<hex>`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-image[=| ]"path"` - window-level applied; per-pane deferred
+		- 🛠️ `--background-image[=| ]"path"`
+			- Note: window-level applied, per-pane deferred.
 			- No value = no background image.
 			- Option not included = fall back to config value.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-image-stretch[[=| ]bool]` - window-level applied; per-pane deferred
+		- 🛠️ `--background-image-stretch[[=| ]bool]`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-image-zoom[[=| ]bool]` - window-level applied; per-pane deferred
+		- 🛠️ `--background-image-zoom[[=| ]bool]`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-image-opacity[=| ]<n>` - window-level applied; per-pane deferred
+		- 🛠️ `--background-image-opacity[=| ]<n>`
+			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
 
 - 🔘 Additional "File" menu option: "Save entire current layout to config".
@@ -308,7 +299,8 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 When running `sudo apt update`, the progress bar at the bottom bounces about halfway below the render area, as lines above it scroll up. This seems to be a side-effect of smooth-scrolling. Is there a way to prevent that from happening, without fundamentally breaking the very concept of smooth scrolling?
 	- Reopened: The first attempt (snap output easing during line bursts) broke smooth scrolling for all normal output and was reverted (see the smooth-scrolling-regression bug above).
-		- Diagnosis still stands: apt reserves the bottom line as a status bar via a scroll region (DECSTBM `0..N-1`); printing each log line scrolls that region. Because the region starts at line 0, alacritty_terminal grows scrollback (`Grid::scroll_up` only calls `increase_scroll_limit` when `region.start == 0`), which fires our output easing - and the ease shifts the whole grid down by up to a cell, dragging the fixed status bar below the viewport = the bounce. A correct fix needs to know a partial scroll region is active so it can suppress easing only then, but `alacritty_terminal` doesn't expose `scroll_region` (private, no getter). Options for later: (a) patch/fork the crate to expose the region; (b) tee the PTY stream and parse DECSTBM ourselves; (c) accept as a known limitation like full-screen apps (`nano`).
+		- Diagnosis: apt reserves the bottom line as a status bar via a scroll region, and each log line scrolls that region. Since the region starts at line 0, alacritty grows scrollback, which fires our output easing. The ease shifts the whole grid down by up to a cell and drags the fixed status bar below the viewport - that's the bounce.
+		- Note: a proper fix needs to know a partial scroll region is active so it can suppress easing only then, but alacritty_terminal doesn't expose the scroll region. Options for later: patch the crate to expose it, tee and parse DECSTBM ourselves, or accept it like other full-screen apps.
 	- Update: This actually seems to have fixed itself with some other work. Keep on backlog just in case.
 
 ### Done
@@ -433,10 +425,60 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - new features and enhancements
 
+- ✅ Config:
+	- ✅ "Glow border" -> "Text outline" (change description and config name). Change default value to 2.0.
+		- Done: renamed the config key and the dialog label, and set the default to 2.0.
+		- Note: existing configs migrate to the new key without losing their value.
+	- ✅ Glow falloff: Change default to S-curve.
+		- Done: the default falloff is now the S-curve.
+
+- ✅ CICD dogfood section:
+	- ✅ Copy as a different name every time, in format "slktrmdf_YYYYmmDD-HHMMSS"
+		- So that multiple versions can run, and automated testing won't kill them.
+		- Automatically delete existing older copies that are not in use.
+		- Done: each build installs under its own timestamped name, so versions coexist.
+		- Done: copies that aren't currently running are pruned automatically.
+		- Done: two installs now - the old fixed name to the synced bin, and the rotating dated copy to ~/.local/bin. The preflight shows both.
+		- Verified: a running copy is kept, an idle older one is removed, and the new copy appears.
+
+- ✅ Create a new bash 5 script 'utility/n8runterm':
+	- Can run any terminal along with script args it received (e.g. if user edits it), but by default it runs the function fSilkTermDogfood(), which:
+		- Looks for the newest 'slktrmdf_YYYYmmDD-HHMMSS', and runs it with script args "$@".
+		- Done: wrote the launcher. It finds the newest dogfood build and runs it, passing arguments through. Edit fMain() to launch a different terminal.
+		- Verified: runs the newest build, passes args, and errors cleanly when none exists.
+	- ✅ Also pass a random background image and a build-tagged title:
+		- Done: prepends a random image from `~/.config/silkterm/backgrounds/` and a title tagged with the build's timestamp. Both go before the passed args, so a caller can still override.
+		- Note: skipped quietly when the backgrounds folder has no images.
+		- Verified.
+	- ✅ Fall back to a known terminal when no dogfood build (or fMain's target) is found:
+		- Done: tries terminator, xfce4-terminal, gnome-terminal, konsole, alacritty, kitty, then xterm, and runs the first one installed.
+		- Note: prints a short note before falling back, and a real error only when nothing at all is installed.
+		- Verified: selection order, the fallback note, and that a present dogfood build wins.
+
+- ✅ Buttons:
+	- ✅ Center text.
+		- Done: the Cancel/Apply/OK captions are centered in the button. They were left-aligned before.
+	- ✅ Provide click feedback.
+		- Done: a button highlights while held and fires on release. Dragging off it first cancels.
+		- Verified: unit tests, plus a headless check of the highlight and centering.
+
+- ✅ CICD script: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path.
+	- Done: removed the "Proceed? [y/N]" step. The commit-message prompt is now where you bail out, with Ctrl+C.
+	- Note: `-y` still skips prompting entirely.
+
+- ✅ Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK.
+	- Verified: at 2x the title, tabs, labels, sliders, fields, checkboxes and buttons all scale cleanly.
+	- Reproduced: the Settings radio labels collided at 2x.
+	- Cause: the radio spacing was a fixed pixel value while the text grew with the font.
+	- Fix: radio spacing now scales with the font, and the panel widens so every option fits.
+	- Verified: a unit test guards the scaling.
+
 - ✅ Setting dialog (part 2):
 	- ✅ A radio button for background image, to stretch or zoom. - New `Kind::Radio(&[..])` in the settings dialog (reusable N-option control: indicator box per option, fills the selected, click-to-pick); a "Bg image fit" row bound to `background_fit` (Stretch/Zoom). Verified: renders with Stretch selected by default; clicking Zoom switches it; `background_fit` persists + re-fits the image on Apply.
 	- ✅ "Default shell": A command line to launch by default for new windows, tabs, and panes, if nothing else specified. Leave blank to use system default. - New "Shell" section in Settings with a "Default shell" text field bound to the existing `default_shell` config (empty shows "(system default)"; argv-split applies to new tabs/panes). Verified the field renders.
-	- ✅ Size: A boolean setting to "Remember last size" - `remember_size` config + dialog toggle; on launch it uses `remembered_columns`/`remembered_rows` instead of columns/rows. The remembered pair is updated on every manual window resize (startup/programmatic resizes are skipped via a `size_tracked` flag set after the first frame, so they don't clobber it) and is not shown in the dialog. Columns/Rows grey out when on. Verified: manual resize -> remembered_columns/rows persisted; relaunch with remember_size=true used the remembered size (712x504, not the 160-col default); dialog shows the toggle checked with Columns/Rows greyed.
+	- ✅ Size: A boolean setting to "Remember last size".
+		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows grey out when on.
+		- Verified: a manual resize persisted the remembered size, relaunch used it instead of the default, and the dialog shows the toggle checked with Columns and Rows greyed.
 		- Overrides explicit numeric size.
 		- Explicit numeric size fields disabled and grayed out.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
