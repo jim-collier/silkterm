@@ -60,14 +60,23 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Copy as a different name every time, in format "slktrmdf_YYYYmmDD-HHMMSS"
 		- So that multiple versions can run, and automated testing won't kill them.
 		- Automatically delete existing older copies that are not in use.
-		- Done: cicd.bash stage 6 installs `${DOGFOOD_PREFIX}_${stamp}` (config `DOGFOOD_PREFIX="slktrmdf"`, `stamp` = date +%Y%m%d-%H%M%S) then prunes older `slktrmdf_*` in the dest, keeping any still running (new `in_use()` helper checks /proc/*/exe by resolved path, not a substring match). Empty DOGFOOD_PREFIX keeps the classic single fixed-name install (engine stays generic). Verified: running copy kept, idle older copy pruned, new copy created.
+		- Done: each build installs under its own timestamped name, so versions coexist.
+		- Done: copies that aren't currently running are pruned automatically.
+		- Verified: a running copy is kept, an idle older one is removed, and the new copy appears.
 
 - ✅ Create a new bash 5 script 'utility/n8runterm':
 	- Can run any terminal along with script args it received (e.g. if user edits it), but by default it runs the function fSilkTermDogfood(), which:
 		- Looks for the newest 'slktrmdf_YYYYmmDD-HHMMSS', and runs it with script args "$@".
-		- Done: self-contained bash5 script in the owner's style (no n8mod modules). `fSilkTermDogfood` scans the dogfood dirs, picks the lexically-greatest `slktrmdf_*` basename (timestamp sorts chronologically) and `exec`s it with "$@"; `fMain` calls it (edit there to launch a different terminal). Verified: runs the newest, passes args through, clean error + exit 1 when none exists.
-		- Enhancement (owner): also prepends a randomly-chosen `--background-image=` from `~/.config/silkterm/backgrounds/` (png/jpg/jpeg; skipped if the dir has none) and `--title="SilkTerm [dogfood <build-timestamp>]"` (timestamp from the running build's name), both before "$@" so a caller can still override. Verified.
-		- Enhancement (owner): `fFallbackTerminal` - when no dogfood build is found (or fMain's target isn't installed), falls back to the first installed of terminator, xfce4-terminal, gnome-terminal, konsole, alacritty, kitty, xterm (in order), passing "$@" (SilkTerm-specific opts aren't added for a generic terminal). Soft stderr note on fallback; a real error only when nothing at all is installed. Verified (selection order, soft note, dogfood-present precedence).
+		- Done: wrote the launcher. It finds the newest dogfood build and runs it, passing arguments through. Edit fMain() to launch a different terminal.
+		- Verified: runs the newest build, passes args, and errors cleanly when none exists.
+	- ✅ Also pass a random background image and a build-tagged title:
+		- Done: prepends a random image from `~/.config/silkterm/backgrounds/` and a title tagged with the build's timestamp. Both go before the passed args, so a caller can still override.
+		- Note: skipped quietly when the backgrounds folder has no images.
+		- Verified.
+	- ✅ Fall back to a known terminal when no dogfood build (or fMain's target) is found:
+		- Done: tries terminator, xfce4-terminal, gnome-terminal, konsole, alacritty, kitty, then xterm, and runs the first one installed.
+		- Note: prints a short note before falling back, and a real error only when nothing at all is installed.
+		- Verified: selection order, the fallback note, and that a present dogfood build wins.
 
 - 🔘 Settings dialog:
 	- 🔘 Remove "Settings" heading text, it's redundant with the window title.
@@ -75,20 +84,44 @@ In each section, items are listed approximately from newest to oldest.
 		- 🔘 Can cycle through with Ctrl+PgUp|PgDn.
 
 - ✅ Config:
-	- ✅ "Glow border" -> "Text outline" (change description and config name). Change default value to 2.0. - config key `text_glow_border` renamed to `text_outline` (dialog label "Text outline"), default 2.0; existing configs migrate value-preserving via CONFIG_RENAMES (unit-tested), template + persist + backfill updated.
-	- ✅ Glow falloff: Change default to S-curve. - `text_glow_ramp` default now "s"; resolve maps missing/unknown -> default (S-curve), template shows `# text_glow_ramp = "s"`.
+	- ✅ "Glow border" -> "Text outline" (change description and config name). Change default value to 2.0.
+		- Done: renamed the config key and the dialog label, and set the default to 2.0.
+		- Note: existing configs migrate to the new key without losing their value.
+	- ✅ Glow falloff: Change default to S-curve.
+		- Done: the default falloff is now the S-curve.
 
 - ✅ Buttons:
-	- ✅ Center text. - dialog Cancel/Apply/OK captions are measured and centered in the button (was left-aligned); the Alt-accelerator underline follows the centered position.
-	- ✅ Provide click feedback. - footer buttons now arm on press (drawn filled with the highlight colour) and fire on release, only if the cursor is still over the button (a press-drag-off cancels). Unit-tested (arm/fire/cancel); verified headless (Apply highlights while held, labels centered).
+	- ✅ Center text.
+		- Done: the Cancel/Apply/OK captions are centered in the button. They were left-aligned before.
+	- ✅ Provide click feedback.
+		- Done: a button highlights while held and fires on release. Dragging off it first cancels.
+		- Verified: unit tests, plus a headless check of the highlight and centering.
 
-- ✅ CICD script: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path. - removed the "Proceed? [y/N]" preflight prompt in cicd.bash; the commit-message prompt (common publish path) is now the bail point (Ctrl+C aborts). `-y` still skips prompting entirely.
+- ✅ CICD script: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path.
+	- Done: removed the "Proceed? [y/N]" step. The commit-message prompt is now where you bail out, with Ctrl+C.
+	- Note: `-y` still skips prompting entirely.
 
-- ✅ Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK. - verified headless at 2x (`WINIT_X11_SCALE_FACTOR=2`): title/tabs/labels/sliders/value-fields/checkboxes/buttons all scale crisply. Found + fixed a defect: Settings radio option labels collided at 2x (fixed `RADIO_PITCH`/`RADIO_BOX` vs scaling font) - radio geometry now scales with the UI font (`ui_scale` = line_h/BASE_LH) and the panel widens to fit the widest radio row (else the 3rd option overflowed). Menu/tab use the same scaled UI-font path + measured widths; About uses measured widths with no fixed-pitch multi-label rows. Unit test guards the scaling (radio pitch grows, last option stays in-panel at 2x).
+- ✅ Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK.
+	- Verified: at 2x the title, tabs, labels, sliders, fields, checkboxes and buttons all scale cleanly.
+	- Reproduced: the Settings radio labels collided at 2x.
+	- Cause: the radio spacing was a fixed pixel value while the text grew with the font.
+	- Fix: radio spacing now scales with the font, and the panel widens so every option fits.
+	- Verified: a unit test guards the scaling.
 
-- ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.) - per-pane `auto_copy` opt-in. When on, the focused pane's command output is copied to the desktop clipboard when the command finishes, gated on this window being focused (a background window/pane never exports). Owner decisions: current pane only; plain printable Unicode text (control/colour codes are already gone - read from the parsed grid, wrapped lines rejoined, trailing padding trimmed); copy once per command completion. Detection: Enter at the shell prompt arms a capture; when the terminal then settles (no new output for 120ms) back at the shell prompt (`tcgetpgrp` == shell pgid), the lines since the prompt are copied. This settle approach catches both instant (`ls`, `seq`) and long commands and skips empty output (bare Enter, `cd`). UI: an always-visible "Copy output" checkbox on the right of the menu bar (shows + toggles the focused pane's state) plus an "Auto-copy output" toggle in the right-click and Edit menus. Verified headless end-to-end (instant/slow/multi-line captured; no-output leaves the clipboard untouched; checkbox renders empty/filled and toggles). Unix only (uses fg-pgid); inert elsewhere.
+- ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
+	- Done: a per-pane toggle. When on, the focused pane's output copies to the clipboard as each command finishes.
+	- Note: only the focused pane of the focused window ever copies, so a background window can't leak output.
+	- Note: the text is plain printable Unicode, with colour and control codes removed. A command with no output leaves the clipboard alone.
+	- Done: an always-visible "Copy output" checkbox on the menu bar, plus a toggle in the right-click and Edit menus.
+	- Verified: instant, slow and multi-line commands all captured headlessly. The checkbox reflects and toggles the state.
+	- Note: Unix only.
 
-- ✅ Split pane auto-sizing logic: By default, when panes are split, if more than two are split in the same direction at a time, distribute their sizes equally. (E.g. All 50%, then all 33%, 25%, 20%, and so on.) But if the user breaks that trend by manually adjusting any of those, then from then on, every successive new pane splits 50% (until that sequence of same direction for pane splits stops - e.g. if the user starts splitting a different pane ancestry and/or in a different direction) Specifying pane % on the command-line also short-circuits the even-distribution logic, for that direction and ancestry. - interactive `split()` now calls `equalize_dir_run` after inserting: it finds the maximal same-direction run the new pane joined (in the binary split-tree, bounded by direction changes) and sets each divider's ratio by leaf-count so all members are equal (thirds, quarters, ...). A hand-dragged divider sets `Node::Split.manual = true` (in `set_ratio`); a run containing any manual divider is left alone, so successive splits there stay 50/50 - and a different direction/ancestry is its own run. CLI splits pass `equalize = false` (the CLI layout builder does its own redistribution, so an explicit `--size` short-circuits). 4 unit tests (equal thirds/quarters, manual-break preserves ratios, other-direction split counts as one unit and is untouched).
+- ✅ Split pane auto-sizing logic: By default, when panes are split, if more than two are split in the same direction at a time, distribute their sizes equally. (E.g. All 50%, then all 33%, 25%, 20%, and so on.) But if the user breaks that trend by manually adjusting any of those, then from then on, every successive new pane splits 50% (until that sequence of same direction for pane splits stops - e.g. if the user starts splitting a different pane ancestry and/or in a different direction) Specifying pane % on the command-line also short-circuits the even-distribution logic, for that direction and ancestry.
+	- Done: splitting in the same direction redistributes those panes to equal sizes (thirds, quarters, and so on).
+	- Note: once you drag a divider in that run, further splits there stay 50/50 and your sizes are kept.
+	- Note: a split in a different direction or ancestry is treated as its own run.
+	- Note: command-line splits keep their explicit sizing.
+	- Verified: unit tests cover equal thirds and quarters, the manual-drag case, and mixed directions.
 
 - 🔘 Build packages when cicd.bash `--quick` isn't specified:
 	- 🔘 .deb(s), per-architecture
@@ -102,15 +135,24 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
 
 - ✅ Menu bar: (issue #t6thx, 20260626-132615)
-	- ✅ Menu and Dialog background and text color user-adjustable, even per-theme. It's just that all themes by default should use the same menu colors. - Chrome bg+text are now per-theme `Palette` fields (`menu_bg/menu_fg/dialog_bg/dialog_fg`), with every built-in theme sharing the same neutral defaults (menu identical in both modes; dialog dark-gray/light-gray by mode). `[colors]` keys `menu_background/menu_foreground/dialog_background/dialog_foreground` override per-user (config-file, like the other advanced colours). Menu hover/border/separator derive as luminance-aware shades of `menu_background` so a custom colour stays coherent. Verified headless: a `dialog_background="#802030"` + `dialog_foreground="#ffe0a0"` override recoloured the Settings panel dark-red with amber text; override survived backfill/reorder. Unit-tested (shared defaults across themes; [colors] override wins).
+	- ✅ Menu and Dialog background and text color user-adjustable, even per-theme. It's just that all themes by default should use the same menu colors.
+		- Done: menu and dialog colours are part of each theme now, sharing the same neutral defaults across all themes.
+		- Done: config keys let you override the menu and dialog colours.
+		- Note: menu hover, border and separator shades follow the menu colour automatically.
+		- Verified: a custom dialog colour recoloured the Settings panel. Unit-tested.
 
 - 🛠️ Tab interface: single-window core done (`Tabs` in app.rs: each tab owns a `PaneManager`; tab bar shown with >1 tab, click to switch; pane area reduced by the bar). Detach/dock deferred (need multi-window). Verified: new tab, switch (content swaps), close (bar hides).
-	- ✅ Close tab (CTRL+Shift+w, CTRL+F4) - both hotkeys close the current tab (mirror the menu Close Tab: keeps >=1 tab, close the window to exit). Shift on W so plain Ctrl+W still reaches the shell.
+	- ✅ Close tab (CTRL+Shift+w, CTRL+F4)
+		- Done: both shortcuts close the current tab, matching the menu's Close Tab.
+		- Note: keeps at least one tab open. Shift on W leaves plain Ctrl+W for the shell.
 	- 🔘 Detach tab to new window with mouse (deferred: needs multi-window)
 	- 🔘 Dock tab to different existing window with mouse (deferred: needs multi-window)
 
 - ✅ Window title:
-	- ✅ Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab. - `update_title` now sets the CLI `--title` verbatim when given, else "AppName - <active tab title>" (the active tab's `title_override` or its focused pane's `<shell> [<program>]`). Called each rendered frame (deduped via `last_win_title`, so set_title only fires on change) so it tracks the focused tab's foreground program live. Verified headless: window name became "SilkTerm - dash".
+	- ✅ Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
+		- Done: a `--title` wins as-is. Otherwise the title is "SilkTerm - <current tab>".
+		- Note: it tracks the focused tab's running program live.
+		- Verified: the window name became "SilkTerm - dash" in a headless run.
 
 - 🛠️ Themes:
 	- Status part 1: Done. (`src/theme.rs`): theme foundation + terminal palette done. A `Palette` (bg/fg/cursor/focus + 16 ANSI) x a `Theme` (dark+light pair); `theme` + `theme_mode` config keys resolve the active palette, which `palette.rs` + the renderer read. The `[colors]` keys still override per-colour. 3 built-ins (SilkTerm, Matrix, Retro Amber), each dark+light.
@@ -148,7 +190,10 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Size: A boolean setting to "Remember last size" - `remember_size` config + dialog toggle; on launch it uses `remembered_columns`/`remembered_rows` instead of columns/rows. The remembered pair is updated on every manual window resize (startup/programmatic resizes are skipped via a `size_tracked` flag set after the first frame, so they don't clobber it) and is not shown in the dialog. Columns/Rows grey out when on. Verified: manual resize -> remembered_columns/rows persisted; relaunch with remember_size=true used the remembered size (712x504, not the 160-col default); dialog shows the toggle checked with Columns/Rows greyed.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
 			- 🔘 "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
-	- ✅ All values, including slider numbers, should also have directly editable fields (that are part of the tab order). - Each slider now has a bordered numeric field to its right, reusing the EditState/caret infra. Click it (caret at click), or on the focused row press Space (edit in place) or type a digit (starts fresh); digits plus one '.' for float sliders, live-parsed and clamped to the slider range; Left/Right move the caret while editing (else step the slider), Enter/Esc commit/cancel. The slider row is already in the Tab ring so the field joins it. Verified headless (value boxes render) + unit tests (edit+clamp; fresh-typing rejects letters and a 2nd dot).
+	- ✅ All values, including slider numbers, should also have directly editable fields (that are part of the tab order).
+		- Done: each slider has a numeric field you can click or type into, with the value clamped to the slider's range.
+		- Note: the field joins the Tab order along with the rest of the dialog.
+		- Verified: unit tests for editing and clamping, plus a headless render check.
 
 - 🛠️ Command-line options:
 	- Status part 1 (options engine): Done.
@@ -289,7 +334,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Fix (first pass): pin a concrete sans family, mirroring the mono pin - resolved the OS sans-serif (`fc-match sans-serif`), else a curated list, validated against the db. Got "Noto Sans" - still a sans, which missed the point below.
 			- ✅ Not fixed: Still using system *sans serif*, rather than just system font generally. (Which on my system is a *serif* font.) - FIXED PROPERLY (20260701): chrome now follows the *desktop interface font* - family, size, weight, slant - serif or not. `sysfont::interface()` reads it natively per platform (Linux: gsettings `font-name`, else xfconf `/Gtk/FontName`; Windows: `lfMenuFont` incl. weight; macOS: 13pt system convention, family falls back), `text::ui_attrs()` pins it ("GentiumAlt" Bold here; a sans is only the no-desktop-setting fallback), and chrome renders at its own `ui_line_h` metrics independent of the terminal font. Menu bar/tab bar heights, dropdown widths/rows, and the Settings dialog (rows, title, measured label/button widths) all size from the real rendered text, so an oversized or wide font grows the chrome instead of truncating. Verified on the private Xvfb: menu bar + dropdowns + Settings all render bold-serif GentiumAlt 13; terminal text unaffected.
 		- ✅ Verify that menu bar height adjusts based on menu font. - Confirmed: `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (now `text.ui_line_h`, the UI font's own height) + pad, so a larger menu font grows the bars (the height work was done earlier under #t6thx).
-		- ✅ Still sans-serif after the 20260701 fix (owner report: bold + bigger took, family didn't). - Root cause found and FIXED (20260701, branch uiface): cosmic-text only uses the requested family when a face matches the requested weight EXACTLY (its fallback filters `font_weight_diff == 0`), and GentiumAlt ships no Bold face - so asking for `Weight::BOLD` silently ejected the whole family and a *bold sans* rendered instead (which is exactly why bold/size "took" but the family didn't). Fix: pin the db's canonical family spelling (cosmic-text compares names case-sensitively) and snap the requested weight/slant to a face the family really has - family wins over weight; dialog-title "bold" snaps the same way (`ui_bold_weight`). Regression-guarded by a shaping test that asserts every chrome glyph resolves in the pinned family. Verified on Xvfb: menu bar + Settings dialog render serif GentiumAlt (regular weight - the family's closest face to Bold; cosmic-text does not synthesize).
+		- ✅ Still sans-serif after the 20260701 fix (reported: bold + bigger took, family didn't). - Root cause found and FIXED (20260701, branch uiface): cosmic-text only uses the requested family when a face matches the requested weight EXACTLY (its fallback filters `font_weight_diff == 0`), and GentiumAlt ships no Bold face - so asking for `Weight::BOLD` silently ejected the whole family and a *bold sans* rendered instead (which is exactly why bold/size "took" but the family didn't). Fix: pin the db's canonical family spelling (cosmic-text compares names case-sensitively) and snap the requested weight/slant to a face the family really has - family wins over weight; dialog-title "bold" snaps the same way (`ui_bold_weight`). Regression-guarded by a shaping test that asserts every chrome glyph resolves in the pinned family. Verified on Xvfb: menu bar + Settings dialog render serif GentiumAlt (regular weight - the family's closest face to Bold; cosmic-text does not synthesize).
 
 - ✅ Outer glow should only apply to terminal text - not tab titles or the menu bar. (20260630) - the glow composite covered the whole window, so the halo appeared behind the menu/tab titles too. Now clipped to the content area (below the chrome), so only terminal text glows. Verified via a strong-glow screenshot (chrome text crisp, no halo).
 
@@ -302,7 +347,7 @@ In each section, items are listed approximately from newest to oldest.
 			- Type "exit" in the anything but the last tab, it closes ALL tabs, except for one. Sometimes, the program becomes unresponsive then and has to be killed.
 			- Type "exit" in the last tab, it closes the program.
 			- With four tabs open, and type "exit" from the third, closes the first two tabs (and not the third).
-		- ✅ REAL cause (20260630): pane ids collided across tabs. Each tab is a separate PaneManager that assigned ids from its own counter (first pane always id 1), so the shell-exit event (carries only the id) resolved to the WRONG tab - the first one with that id - and closed it; dropping that tab's term fired another Exit -> cascade (closed all but one, sometimes hung), exactly as reported. The earlier fix (find owner tab + cascade) was right in shape but the id lookup was ambiguous. Fix: `alloc_pane_id()` - one global counter, so every pane is unique everywhere. Verified with instrumentation: exit in the 3rd of 4 tabs resolves to tab index 2, exactly one close, no cascade, app alive.
+		- ✅ REAL cause (20260630): pane ids collided across tabs. Each tab is a separate PaneManager that assigned ids from its own counter (first pane always id 1), so the shell-exit event (carries only the id) resolved to the WRONG tab - the first one with that id - and closed it; dropping that tab's term fired another Exit -> cascade (closed all but one, sometimes hung), exactly as reported. The earlier fix (find the owning tab + cascade) was right in shape but the id lookup was ambiguous. Fix: `alloc_pane_id()` - one global counter, so every pane is unique everywhere. Verified with instrumentation: exit in the 3rd of 4 tabs resolves to tab index 2, exactly one close, no cascade, app alive.
 
 - ✅ Cursor: (20260629)
 	- ✅ Smooth-scroll (when moving to the right). - the cursor slides to its target column as you type (snaps on a newline); idles at 0% CPU.
@@ -314,7 +359,7 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Critical: Smooth-scrolling apparently just quits after using the terminal for a while. It seems to quit, if output is too fast for a while, but that could be a red-herring. Maybe it's just after any particular amount of general use.
 	- Cause: output-easing was triggered off scrollback *growth* (`grid.history_size()` rising). That growth flatlines once the scrollback buffer fills (default 10k lines) - old lines drop off the top as fast as new ones arrive - so after enough output the growth reads 0 every frame and `nudge_output` never fires again. Smooth output scroll dies "after a while", and sooner under fast output (which fills the 10k buffer faster). Manual scrollback (wheel) was unaffected, which is why it looked like only the smooth *output* scroll quit.
 	- Fix (`pane.rs`): keep growth as the primary signal (unchanged pre-cap, so the verified feel is untouched), and at the cap fall back to inferring the viewport advance from row fingerprints - how far last frame's on-screen rows reappear shifted up this frame (`scroll_shift`). An in-place bottom-row redraw (e.g. apt's status line, no newline) shifts nothing, so it still doesn't nudge (no bounce); a full-screen burst reports the backlog cap so the ease ramps to full catch-up. 6 unit tests cover no-scroll / in-place / shift-by-k / full-turnover / empty.
-	- Verified: 26 unit tests pass; ran past the 10k cap (20k-line flood + drip) with no crash, rendering on the GL backend. Smooth-scroll *feel* past the cap is best eyeballed by the owner.
+	- Verified: 26 unit tests pass; ran past the 10k cap (20k-line flood + drip) with no crash, rendering on the GL backend. Smooth-scroll *feel* past the cap is best eyeballed in normal use.
 
 - ✅ Mouse wheel doesn't scroll back through the `stdout`/`stderr` buffer. It should do so, smoothly, and in proportion to how fast the mouse wheel is moved. But currently it moves the command history back. (20260626-104542)
 	- Cause: `TermMode::ALTERNATE_SCROLL` (DECSET 1007) is default-on in alacritty_terminal, but the wheel handler used `ALT_SCREEN || ALTERNATE_SCROLL` as the cursor-key trigger - so on the *primary* screen the always-on flag made the wheel emit cursor-up/down (shell history recall) instead of scrolling scrollback.
@@ -412,7 +457,7 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Whenever a program update adds or changes config file settings, update the existing toml file in-place. E.g. reorganize, add/remove/rename items, but preserve existing active user settings and values that remain. (20260701; reorder 20260702, branch cfgorder)
 	- ✅ `migrate_config` (runs before backfill on load): renames changed keys (value preserved), removes obsolete ones; `backfill_config` adds missing keys. Together: add/remove/rename + preserve, in-place, comments/layout kept.
 		- Partially verified: a config with cursor_insert_shape/cursor_overwrite_shape/cursor_blink migrated correctly (and this auto-cleans the old invalid `cursor_blink = enable`).
-	- ✅ Literal reordering to match template order (20260702, branch cfgorder). `reorder_config` (runs on load after migrate + backfill) rewrites an existing config into the template's canonical section order, preserving each setting's value + enabled/commented state while refreshing the section headers and explanatory comments from the current template. Keys the template no longer defines, and any user-added tables (`[themes.*]`), are carried through verbatim so nothing is lost. Pure + idempotent (`reorder_config_text`): a canonical file is never rewritten. Verified on the owner's own drifted config (values incl. remembered_columns=187 preserved, re-parses as valid TOML) + 8 unit tests (order, value/state, unknown table + key, backfill-via-template, idempotency, full on-disk migrate->backfill->reorder pipeline).
+	- ✅ Literal reordering to match template order (20260702, branch cfgorder). `reorder_config` (runs on load after migrate + backfill) rewrites an existing config into the template's canonical section order, preserving each setting's value + enabled/commented state while refreshing the section headers and explanatory comments from the current template. Keys the template no longer defines, and any user-added tables (`[themes.*]`), are carried through verbatim so nothing is lost. Pure + idempotent (`reorder_config_text`): a canonical file is never rewritten. Verified on a real drifted config (values incl. remembered_columns=187 preserved, re-parses as valid TOML) + 8 unit tests (order, value/state, unknown table + key, backfill-via-template, idempotency, full on-disk migrate->backfill->reorder pipeline).
 		- ✅ Grouped the template into logical sections (Font, Window, Background and transparency, Text glow, Cursor, Selection, Shell, Scrolling, Theme and colours) with `##===`-ruled section headers and blank-line spacing.
 
 - ✅ Settings dialog: (all sub-items done as of 20260702; last was Full keyboard control, branch dlgkeys)
@@ -496,7 +541,7 @@ In each section, items are listed approximately from newest to oldest.
 	- It blurs what's behind the terminal, as if it were made of frosted glass.
 	- Done: compositor-provided. SilkTerm sets a stable WM_CLASS + a "Backdrop blur" toggle (KWin/picom hint); on Compiz, match `class=SilkTerm` in its own Blur plugin. Detail + Compiz recipe in the private dev notes.
 
-- ✅ Change defaults: (20260629) - `Settings::default()` updated (the loader's `unwrap_or(default)` makes it the single source of truth); the DEFAULT_CONFIG template's documented example values now match. Headless guard test added; 32 tests pass. Note: glow is now on by default, so the glow render pass runs every frame - owner to confirm the look/feel.
+- ✅ Change defaults: (20260629) - `Settings::default()` updated (the loader's `unwrap_or(default)` makes it the single source of truth); the DEFAULT_CONFIG template's documented example values now match. Headless guard test added; 32 tests pass. Note: glow is now on by default, so the glow render pass runs every frame - confirm the look/feel by eye.
 	- ✅ Background image blur: 8 px
 	- ✅ text_glow = true
 	- ✅ text_glow_radius = 5
@@ -518,7 +563,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Fix: An open menu (context menu or menu-bar dropdown) now captures navigation keys: Up/Down move a highlighted item (`ContextMenu::step`, wraps, skips separators, reuses the `hover` field/render), Enter activates it, Esc closes, Left/Right cycle between menu-bar dropdowns.
 		- Verified: arrows highlight (separators skipped), Enter->New Tab opened a 2nd tab, Esc closed.
 	- ✅ When 'Alt' Pressed, keyboard accelerators should become visible on the menu (traditionally with underscores). - Open dropdowns underline each item's first letter and a letter-press activates the first item starting with it (verified: 'n' -> New Tab). Alt+F/E/V/T/P/H open the bar menus. And now the bar titles themselves underline their accelerator letter while Alt is held.
-		- ✅ Show the underline on the bar titles on Alt-hold (a redraw-on-Alt + char-measure pass). - Done (`app.rs` render): while `self.mods.alt_key()` and no dropdown is open, an underline rect is drawn under each top-level title's first letter (measured via `measure_text`, like the dropdown items); `ModifiersChanged` now sets `dirty` so it appears/disappears live on Alt press/release. Builds clean (cosmetic, owner to eyeball).
+		- ✅ Show the underline on the bar titles on Alt-hold (a redraw-on-Alt + char-measure pass). - Done (`app.rs` render): while `self.mods.alt_key()` and no dropdown is open, an underline rect is drawn under each top-level title's first letter (measured via `measure_text`, like the dropdown items); `ModifiersChanged` now sets `dirty` so it appears/disappears live on Alt press/release. Builds clean (cosmetic, to eyeball).
 	- Note: the cross-platform-windowing-widget question (the `[🚫]` note under "Setting dialog (part 2)") is now decided - chrome stays hand-rolled (egui declined after a real spike). So the bar-title Alt underline is just a normal hand-rolled task.
 
 - ✅ Change license from MIT to "GNU General Public License v2.0 or later", SPDX "GPL-2.0-or-later", reference https://spdx.org/licenses/GPL-2.0-or-later.html.
