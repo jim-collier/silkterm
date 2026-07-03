@@ -143,7 +143,8 @@ enum Kind {
 }
 
 const RADIO_BOX: f32 = 16.0; // radio indicator square
-const RADIO_PITCH: f32 = 96.0; // px per option (box + label + gap)
+const RADIO_PITCH: f32 = 96.0; // px per option (box + label + gap) at BASE_LH
+const BASE_LH: f32 = 19.0; // UI line height the fixed radio consts were tuned for
 
 // Tabs ("super-sections"); each config section maps to one via tab_for_section.
 pub const TAB_TITLES: [&str; 5] = ["Appearance", "Font", "Colors", "Window", "Scrolling"];
@@ -580,7 +581,21 @@ impl SettingsDialog {
 		let tabs_w = PAD * 2.0
 			+ tab_ws.iter().sum::<f32>()
 			+ TAB_GAP * tab_ws.len().saturating_sub(1) as f32;
-		let w = (W + (label_w - LABEL_W) + (btn_w - BTN_W) * 3.0).max(tabs_w);
+		// widest radio row (scaled pitch at HiDPI / large fonts) must fit the panel,
+		// or the last option overflows the right edge
+		let sc = (line_h / BASE_LH).max(1.0);
+		let max_radio_opts = specs
+			.iter()
+			.filter_map(|s| match s.kind {
+				Kind::Radio(o) => Some(o.len()),
+				_ => None,
+			})
+			.max()
+			.unwrap_or(0) as f32;
+		let radio_w = PAD + label_w + max_radio_opts * RADIO_PITCH * sc + PAD;
+		let w = (W + (label_w - LABEL_W) + (btn_w - BTN_W) * 3.0)
+			.max(tabs_w)
+			.max(radio_w);
 		let rect = Rect {
 			x: ((screen_w - w) / 2.0).max(0.0),
 			y: ((screen_h - h) / 2.0).max(0.0),
@@ -951,13 +966,25 @@ impl SettingsDialog {
 			h: SWATCH,
 		}
 	}
+	// Radio geometry scales with the UI font (HiDPI or a large desktop font), so
+	// multi-option labels don't collide the way fixed 96px pitch does at 2x.
+	fn ui_scale(&self) -> f32 {
+		(self.line_h / BASE_LH).max(1.0)
+	}
+	fn radio_pitch(&self) -> f32 {
+		RADIO_PITCH * self.ui_scale()
+	}
+	fn radio_box_sz(&self) -> f32 {
+		RADIO_BOX * self.ui_scale()
+	}
 	// indicator box for radio option `k` in row `i`
 	fn radio_box(&self, i: usize, k: usize) -> Rect {
+		let sz = self.radio_box_sz();
 		Rect {
-			x: self.control_x() + k as f32 * RADIO_PITCH,
-			y: self.row_y(i) + (ROW_H - RADIO_BOX) / 2.0,
-			w: RADIO_BOX,
-			h: RADIO_BOX,
+			x: self.control_x() + k as f32 * self.radio_pitch(),
+			y: self.row_y(i) + (ROW_H - sz) / 2.0,
+			w: sz,
+			h: sz,
 		}
 	}
 	// Row-spanning box drawn around the keyboard-focused control.
@@ -1395,8 +1422,8 @@ impl SettingsDialog {
 						let b = self.radio_box(i, k);
 						// click the box or its label
 						if x >= b.x
-							&& x <= b.x + RADIO_PITCH - 8.0
-							&& (y - (b.y + b.h / 2.0)).abs() <= RADIO_BOX / 2.0 + 4.0
+							&& x <= b.x + self.radio_pitch() - 8.0
+							&& (y - (b.y + b.h / 2.0)).abs() <= b.h / 2.0 + 4.0
 						{
 							self.focus = Some(Focus::Row(i));
 							self.set_radio(self.specs[i].key, k);
@@ -1945,7 +1972,7 @@ impl SettingsDialog {
 						out.push(TextItem {
 							color: c,
 							clip: Some(vp),
-							..mk((*opt).into(), b.x + RADIO_BOX + 6.0, ty)
+							..mk((*opt).into(), b.x + b.w + 6.0, ty)
 						});
 					}
 				}
@@ -2095,6 +2122,35 @@ mod tests {
 		d.set_mods(false, true, false); // Shift+Tab walks back (wraps to last button)
 		d.key_tab();
 		assert_eq!(d.focus, Some(Focus::Button(2)));
+	}
+
+	#[test]
+	fn hidpi_scales_radio_layout_and_widens_panel() {
+		use super::Kind;
+		// base (1x) vs a 2x UI font (HiDPI or a large desktop font)
+		let base = mk_dialog(4000.0);
+		let big = SettingsDialog::new(
+			0.0,
+			0.0,
+			38.0,
+			340.0,
+			160.0,
+			vec![180.0; TAB_TITLES.len()],
+			4000.0,
+		);
+		// radio pitch tracks the font so multi-option labels don't collide
+		assert!(big.radio_pitch() > base.radio_pitch() * 1.5);
+		// the widest (3-option) radio's last option stays inside the panel
+		let ri = big
+			.specs
+			.iter()
+			.position(|s| matches!(s.kind, Kind::Radio(o) if o.len() == 3))
+			.unwrap();
+		let last = big.radio_box(ri, 2);
+		assert!(
+			last.x + last.w <= big.rect.x + big.rect.w,
+			"last radio option overflows the panel at 2x"
+		);
 	}
 
 	#[test]
