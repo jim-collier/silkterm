@@ -62,6 +62,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Automatically delete existing older copies that are not in use.
 		- Done: each build installs under its own timestamped name, so versions coexist.
 		- Done: copies that aren't currently running are pruned automatically.
+		- Done: two installs now - the old fixed name to the synced bin, and the rotating dated copy to ~/.local/bin. The preflight shows both.
 		- Verified: a running copy is kept, an idle older one is removed, and the new copy appears.
 
 - ✅ Create a new bash 5 script 'utility/n8runterm':

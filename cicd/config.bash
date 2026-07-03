@@ -97,17 +97,19 @@ PROFILE_STRICT=0                        # 1 = any profiler failure aborts the pi
 ## ~30 - first + newest-per-hour/day/week/month/year + last 10. Tune with the
 ## GFS_KEEP_* env vars (GFS_KEEP_FREQUENT, GFS_KEEP_DAILY, ...) if needed.
 
-## Stage 6: dogfood the native release here (first existing dir wins)
-DOGFOOD_DESTS=(
+## Stage 6: dogfood the native release two ways. Empty either list to skip it.
+## Fixed: overwrite EXE_NAME in the first existing dir here (the stable path you run).
+DOGFOOD_FIXED_DESTS=(
 	"${HOME}/synced/0-0/common/exec/util/linux/bin"
 	"/usr/local/sbin"
 )
-
-## Dogfood copy name. Non-empty: install as "<prefix>_<YYYYmmDD-HHMMSS>" so builds
-## coexist (unique paths - an automated test killing one can't hit an unrelated
-## version), and old copies not currently running are pruned each dogfood. The
-## utility/n8runterm launcher finds and runs the newest. Empty: classic single
-## install under EXE_NAME.
+## Rotating: also drop a dated copy "<DOGFOOD_PREFIX>_<YYYYmmDD-HHMMSS>" here (created
+## if missing), so builds coexist under unique paths - an automated test killing one
+## can't hit an unrelated version - pruning older copies that aren't running. Launch
+## the newest via utility/n8runterm. Set DOGFOOD_PREFIX empty to disable the rotating copy.
+DOGFOOD_ROTATING_DESTS=(
+	"${HOME}/.local/bin"
+)
 DOGFOOD_PREFIX="slktrmdf"
 
 ## Stage 7: backup + publish to git (runs from repo root).

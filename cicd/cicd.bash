@@ -68,7 +68,7 @@ while (($#)); do case "$1" in
 	--no-fmt)         FMT_CMD=(); shift ;;
 	--no-cross)       BUILD_CROSS=0; shift ;;
 	--no-profile)     PROFILE_ENABLE=0; shift ;;
-	--no-dogfood)     DOGFOOD_DESTS=(); shift ;;
+	--no-dogfood)     DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); shift ;;
 	--no-publish)     GIT_PUBLISH=(); shift ;;
 	--quick)          BUILD_CROSS=0; PROFILE_ENABLE=0; shift ;;   ## skip the slow stages
 	--message=*|-m=*) cli_message="${1#*=}"; shift ;;
@@ -111,7 +111,9 @@ trap 'rc=$?; printf "\n%sCICD ABORTED (exit %s) at line %s: %s%s\n" "${red}" "$r
 ## Preflight: show the plan with resolved paths, then confirm.
 abs_script="${root}/${PROFILE_WORKLOAD_SCRIPT}"
 profile_dir="$(cd "${root}" && mkdir -p "${PROFILE_OUT_DIR}" 2>/dev/null; cd "${PROFILE_OUT_DIR}" 2>/dev/null && pwd || echo "${root}/${PROFILE_OUT_DIR}")"
-dogfood_dest=""; for d in "${DOGFOOD_DESTS[@]:-}"; do [[ -d "$d" && -w "$d" ]] && { dogfood_dest="$d"; break; }; done
+fixed_dest=""; for d in "${DOGFOOD_FIXED_DESTS[@]:-}"; do [[ -d "$d" && -w "$d" ]] && { fixed_dest="$d"; break; }; done
+rot_dest="";   for d in "${DOGFOOD_ROTATING_DESTS[@]:-}"; do [[ -d "$d" && -w "$d" ]] && { rot_dest="$d"; break; }; done
+rot_target="${rot_dest:-${DOGFOOD_ROTATING_DESTS[0]:-}}"  # created in stage 6 if it doesn't exist yet
 
 #printf '\n%s%s local CI/CD%s\n'  "${b}"  "${APP_NAME}"  "${rst}"
 printf  '\n%s%s local CI/CD%s\n'   ""      "${APP_NAME}"  ""
@@ -134,7 +136,17 @@ if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
 else
 	note "Release (cross) .....: (skipped)"
 fi
-note "Dogfood native to ...: ${dogfood_dest:-<none of: ${DOGFOOD_DESTS[*]:-} - will skip>}"
+if ((${#DOGFOOD_FIXED_DESTS[@]})); then
+	if [[ -n "$fixed_dest" ]]; then note "Dogfood, fixed name .: overwrite ${fixed_dest}/${EXE_NAME}"
+	else note "Dogfood, fixed name .: <none of: ${DOGFOOD_FIXED_DESTS[*]} exists - will skip>"; fi
+else
+	note "Dogfood, fixed name .: (disabled)"
+fi
+if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
+	note "Dogfood, rotating ...: ${rot_target}/${DOGFOOD_PREFIX}_${stamp}  (dated copy; prunes idle ones)"
+else
+	note "Dogfood, rotating ...: (disabled)"
+fi
 if ((${#GIT_PUBLISH[@]} == 0)); then
 	note "Publish (last) ......: (disabled)"
 elif [[ -n "$publish_msg" ]]; then
@@ -257,34 +269,47 @@ if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
 	done
 fi
 
-## Stage 6: dogfood.
+## Stage 6: dogfood. Two independent installs (fixed overwrite + rotating dated copy).
 step "6/7  Dogfood (install native release locally)"
-if ((${#DOGFOOD_DESTS[@]} == 0)); then
-	note "dogfood disabled"
-elif [[ -z "${dogfood_dest}" ]]; then
-	warn "no dogfood destination exists (${DOGFOOD_DESTS[*]}); skipping"
-elif [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
-	## Timestamped copy so builds coexist; prune older ones that aren't running.
-	df_name="${DOGFOOD_PREFIX}_${stamp}"
-	cp -f "${RELEASE_NATIVE_BIN}" "${dogfood_dest}/${df_name}"
-	chmod +x "${dogfood_dest}/${df_name}"
-	ok "installed -> ${dogfood_dest}/${df_name}"
-	pruned=0
-	for old in "${dogfood_dest}/${DOGFOOD_PREFIX}_"*; do
-		[[ -e "$old" ]] || continue                  # no-match glob (nullglob is off)
-		[[ "$(basename "$old")" == "$df_name" ]] && continue
-		if in_use "$old"; then
-			note "kept (running): $(basename "$old")"
-		else
-			rm -f "$old" && pruned=$((pruned + 1))
-		fi
-	done
-	if ((pruned)); then note "pruned ${pruned} old copy(ies) not in use"; fi
-else
-	## Classic single fixed-name install.
-	cp -fv "${RELEASE_NATIVE_BIN}" "${dogfood_dest}/${EXE_NAME}"
-	ok "installed -> ${dogfood_dest}/${EXE_NAME}"
+df_did=0
+
+## 6a. Fixed name: overwrite EXE_NAME (the stable path you launch by hand).
+if ((${#DOGFOOD_FIXED_DESTS[@]})); then
+	if [[ -n "$fixed_dest" ]]; then
+		cp -f "${RELEASE_NATIVE_BIN}" "${fixed_dest}/${EXE_NAME}"
+		ok "installed (fixed) -> ${fixed_dest}/${EXE_NAME}"
+		df_did=1
+	else
+		warn "no fixed dogfood dest exists (${DOGFOOD_FIXED_DESTS[*]}); skipping"
+	fi
 fi
+
+## 6b. Rotating name: dated copy so builds coexist; prune older ones not running.
+if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
+	[[ -z "$rot_dest" && -n "$rot_target" ]] && mkdir -p "$rot_target" 2>/dev/null && rot_dest="$rot_target"
+	if [[ -n "$rot_dest" && -w "$rot_dest" ]]; then
+		df_name="${DOGFOOD_PREFIX}_${stamp}"
+		cp -f "${RELEASE_NATIVE_BIN}" "${rot_dest}/${df_name}"
+		chmod +x "${rot_dest}/${df_name}"
+		ok "installed (rotating) -> ${rot_dest}/${df_name}"
+		pruned=0
+		for old in "${rot_dest}/${DOGFOOD_PREFIX}_"*; do
+			[[ -e "$old" ]] || continue                  # no-match glob (nullglob is off)
+			[[ "$(basename "$old")" == "$df_name" ]] && continue
+			if in_use "$old"; then
+				note "kept (running): $(basename "$old")"
+			else
+				rm -f "$old" && pruned=$((pruned + 1))
+			fi
+		done
+		if ((pruned)); then note "pruned ${pruned} old copy(ies) not in use"; fi
+		df_did=1
+	else
+		warn "no rotating dogfood dest writable (${DOGFOOD_ROTATING_DESTS[*]}); skipping"
+	fi
+fi
+
+if ((! df_did)); then note "dogfood disabled"; fi
 
 ## Stage 7: backup + publish.
 step "7/7  Backup + publish"
