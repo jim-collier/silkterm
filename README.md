@@ -139,13 +139,17 @@ Text can be particularly hard to read, for example when using light text on a no
 
 - **Robust Unicode and emoji support**. With internal Unicode fallback rendering for the glyphs that the chosen display font can't display.
 
+- **Text brightens on "bell"**. (An idea borrowed from Windows Terminal, surely other as well.)
+
 - **True-color, 256-color, and 16-color text support, as well as standard bold & italic**.
 
 - **Read-only output toggle**.
 
-- **Rich command-line syntax** that allows creating multiple tabs and/or complex pane structure(s) at launch time.
+- **Simple and sane configuration**. No pages of nested tabs representing multiple settings metaphors. (E.g. no separate "Profiles" and "Layouts".) If you want to get fancy with multiple sets of wildly different options - that's easy with alternate config files, and/or scripted launch-time arguments.
 
-	- This can be very useful for creating one-line shell scripts that launch custom SilkTerm instances with specific size, background, color, opacity, and unique shells per window, tab, and/or pane. (Without overwriting the main config file.)
+- **Rich command-line syntax**: A simple yet (optionally) insanely powerful CLI syntax, that allows creating multiple tabs and/or complex pane structure(s) at launch time.
+
+	- This can be very useful for creating one-line shell scripts that launch custom SilkTerm instances with specific size, background, color, opacity, text and cursor style, and unique shells per window, tab, and/or pane. (Without overwriting the main config file.)
 
 - **Arbitrary alternate config files**, another way to launch SilkTerm with wildly different options, without overwriting the main config file.
 
@@ -158,8 +162,6 @@ Text can be particularly hard to read, for example when using light text on a no
 	- *Fun fact: SilkTerm has more lines of code than Alacritty, especially compared to the subset we use. Which is part of why we chose it for the bare guts without reinventing a thoroughly-and-repeatedly-invented wheel.*
 
 - **GPU-accelerated** with software fallback.
-
-- **Simple and sane configuration**. No pages of nested tabs representing multiple settings metaphors. (E.g. no separate "Profiles" and "Layouts".) If you want to get fancy with multiple sets of wildly different options - that's easy with alternate config files, and/or scripted launch-time arguments.
 
 ### One minor limitation inherent to all terminals
 
