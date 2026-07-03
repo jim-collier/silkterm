@@ -94,6 +94,18 @@ note(){ printf '  %s\n' "$*"; }
 ok(){   printf '%s  OK: %s%s\n' "${grn}" "$*" "${rst}"; }
 warn(){ printf '%s  WARN: %s%s\n' "${ylw}" "$*" "${rst}" >&2; }
 die(){  printf '\n%sCICD FAILED: %s%s\n' "${red}" "$*" "${rst}" >&2; exit 1; }
+## True if a running process is executing the given binary (its own exe, not a
+## substring match), so an in-use dogfood copy isn't pruned. Checks /proc/*/exe.
+in_use(){
+	local -r bin="$(realpath -e "$1" 2>/dev/null || true)"
+	[[ -n "$bin" ]] || return 1
+	local exe
+	for e in /proc/[0-9]*/exe; do
+		exe="$(realpath -e "$e" 2>/dev/null || true)"
+		[[ "$exe" == "$bin" ]] && return 0
+	done
+	return 1
+}
 trap 'rc=$?; printf "\n%sCICD ABORTED (exit %s) at line %s: %s%s\n" "${red}" "$rc" "$LINENO" "$BASH_COMMAND" "${rst}" >&2; exit $rc' ERR
 
 ## Preflight: show the plan with resolved paths, then confirm.
@@ -251,7 +263,25 @@ if ((${#DOGFOOD_DESTS[@]} == 0)); then
 	note "dogfood disabled"
 elif [[ -z "${dogfood_dest}" ]]; then
 	warn "no dogfood destination exists (${DOGFOOD_DESTS[*]}); skipping"
+elif [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
+	## Timestamped copy so builds coexist; prune older ones that aren't running.
+	df_name="${DOGFOOD_PREFIX}_${stamp}"
+	cp -f "${RELEASE_NATIVE_BIN}" "${dogfood_dest}/${df_name}"
+	chmod +x "${dogfood_dest}/${df_name}"
+	ok "installed -> ${dogfood_dest}/${df_name}"
+	pruned=0
+	for old in "${dogfood_dest}/${DOGFOOD_PREFIX}_"*; do
+		[[ -e "$old" ]] || continue                  # no-match glob (nullglob is off)
+		[[ "$(basename "$old")" == "$df_name" ]] && continue
+		if in_use "$old"; then
+			note "kept (running): $(basename "$old")"
+		else
+			rm -f "$old" && pruned=$((pruned + 1))
+		fi
+	done
+	if ((pruned)); then note "pruned ${pruned} old copy(ies) not in use"; fi
 else
+	## Classic single fixed-name install.
 	cp -fv "${RELEASE_NATIVE_BIN}" "${dogfood_dest}/${EXE_NAME}"
 	ok "installed -> ${dogfood_dest}/${EXE_NAME}"
 fi
