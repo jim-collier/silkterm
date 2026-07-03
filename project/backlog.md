@@ -64,7 +64,7 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Center text. - dialog Cancel/Apply/OK captions are measured and centered in the button (was left-aligned); the Alt-accelerator underline follows the centered position.
 	- ✅ Provide click feedback. - footer buttons now arm on press (drawn filled with the highlight colour) and fire on release, only if the cursor is still over the button (a press-drag-off cancels). Unit-tested (arm/fire/cancel); verified headless (Apply highlights while held, labels centered).
 
-- 🔘 CICD script: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path.
+- ✅ CICD script: Don't prompt Y/N after prompting for commit message. User can just CTRL+C at that point if not wishing to contiue, and reduces friction for the most common path. - removed the "Proceed? [y/N]" preflight prompt in cicd.bash; the commit-message prompt (common publish path) is now the bail point (Ctrl+C aborts). `-y` still skips prompting entirely.
 
 - 🔘 Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK.
 

@@ -133,13 +133,13 @@ fi
 printf '\n%sFail-fast: any error aborts before the next stage.%s\n\n' "${dim}" "${rst}"
 
 if ((! assume_yes)); then
-	# Capture the commit message up front so the run can finish unattended.
+	## Capture the commit message up front so the run can finish unattended. This
+	## is the natural place to bail on the common (publish) path - Ctrl+C here
+	## aborts; there is no separate "Proceed? [y/N]" (removed to cut friction).
 	if ((${#GIT_PUBLISH[@]})) && [[ -z "$publish_msg" ]]; then
-		read -r -p "Publish commit message (blank = open editor at publish): " m
+		read -r -p "Publish commit message (blank = editor; Ctrl+C aborts): " m
 		[[ -n "$m" ]] && publish_msg="$m"
 	fi
-	read -r -p "Proceed? [y/N]: " reply
-	[[ "${reply,,}" == y* ]] || { echo "Aborted by user."; exit 0; }
 fi
 
 ## Stage 1: format.
