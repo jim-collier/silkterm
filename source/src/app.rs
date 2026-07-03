@@ -1801,9 +1801,17 @@ fn build_layout(
 					n as f32 / denom
 				}
 			};
-			if let Some(nid) =
-				pm.split_at(text, proxy, target, dir, before, ratio, shell.clone(), area)
-			{
+			if let Some(nid) = pm.split_at(
+				text,
+				proxy,
+				target,
+				dir,
+				before,
+				ratio,
+				shell.clone(),
+				area,
+				false,
+			) {
 				if let Some(h) = &ps.id {
 					handles.insert(h.clone(), nid);
 				}
