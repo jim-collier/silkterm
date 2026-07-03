@@ -60,11 +60,21 @@ const LIGHT_DLG: Dlg = Dlg {
 	btn_bg: [0xd6, 0xd6, 0xd2], btn_hl: [0x9a, 0xb6, 0xe0],
 	text: [0x22, 0x24, 0x2c], dim: [0x70, 0x70, 0x76],
 };
-fn dlg() -> &'static Dlg {
-	if config::is_dark() {
-		&DARK_DLG
+// The dialog colour set for the active mode, with the panel background + text
+// overridden by the configured dialog colours (theme default or a [colors]
+// dialog_*/menu_* override). The remaining shades (border/track/handle/fields/
+// buttons) stay from the mode preset so contrast holds.
+fn dlg() -> Dlg {
+	let base = if config::is_dark() {
+		DARK_DLG
 	} else {
-		&LIGHT_DLG
+		LIGHT_DLG
+	};
+	let s = config::settings();
+	Dlg {
+		panel_bg: s.dialog_bg,
+		text: s.dialog_fg,
+		..base
 	}
 }
 

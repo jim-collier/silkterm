@@ -39,12 +39,34 @@ const FALLBACK_FONT_SIZE: f32 = 17.0;
 pub const DEFAULT_FONT_STACK: &str = "JetBrains Mono, Fira Code, Cascadia Code, DejaVu Sans Mono, Menlo, Consolas, Liberation Mono, monospace";
 
 // right-click context menu
-pub const MENU_BG: [u8; 3] = [0x36, 0x36, 0x3b];
-pub const MENU_HOVER: [u8; 3] = [0x4c, 0x4c, 0x55];
-pub const MENU_BORDER: [u8; 3] = [0x58, 0x58, 0x60];
-pub const MENU_FG: [u8; 3] = [0xf0, 0xf0, 0xf2];
-pub const MENU_SEP: [u8; 3] = [0x4a, 0x4a, 0x51]; // faint group-separator line
 pub const MENU_LINK: [u8; 3] = [0x6c, 0x9c, 0xff]; // clickable URL
+
+// Menu bar / dropdown colours: bg + text come from the active theme (overridable
+// via [colors] menu_background/menu_foreground); hover, border, and the group
+// separator are derived shades of the bg, so a custom menu colour stays coherent
+// in either a dark or a light direction.
+pub fn menu_bg() -> [u8; 3] {
+	settings().menu_bg
+}
+pub fn menu_fg() -> [u8; 3] {
+	settings().menu_fg
+}
+pub fn menu_hover() -> [u8; 3] {
+	shade(menu_bg(), 22)
+}
+pub fn menu_border() -> [u8; 3] {
+	shade(menu_bg(), 34)
+}
+pub fn menu_sep() -> [u8; 3] {
+	shade(menu_bg(), 20)
+}
+// Nudge a colour toward more contrast: lighten a dark base, darken a light one.
+fn shade(c: [u8; 3], mag: i16) -> [u8; 3] {
+	let lum = (c[0] as i16 * 30 + c[1] as i16 * 59 + c[2] as i16 * 11) / 100;
+	let d = if lum < 128 { mag } else { -mag };
+	let f = |x: u8| (x as i16 + d).clamp(0, 255) as u8;
+	[f(c[0]), f(c[1]), f(c[2])]
+}
 pub const MENU_PAD_X: f32 = 12.0;
 pub const MENU_ITEM_PAD_Y: f32 = 6.0;
 pub const MENU_SEP_H: f32 = 9.0; // height of a separator row (line + spacing)
@@ -101,6 +123,12 @@ pub struct Settings {
 	pub fg: [u8; 3],
 	pub cursor: [u8; 3],
 	pub focus: [u8; 3],
+	// chrome colours (menu bar / dropdowns, and pop-out dialogs), from the theme
+	// palette; [colors] menu_*/dialog_* keys override
+	pub menu_bg: [u8; 3],
+	pub menu_fg: [u8; 3],
+	pub dialog_bg: [u8; 3],
+	pub dialog_fg: [u8; 3],
 	pub ansi: [[u8; 3]; 16], // 16-colour ANSI palette, resolved from the active theme
 	pub theme: String,       // active theme name (see theme.rs)
 	pub theme_mode: String,  // "dark" | "light" | "system"
@@ -152,6 +180,10 @@ impl Default for Settings {
 			fg: [0x88, 0xff, 0xee],
 			cursor: [0xff, 0x88, 0xaa],
 			focus: [0x55, 0x80, 0xc8],
+			menu_bg: crate::theme::MENU_BG_DEF,
+			menu_fg: crate::theme::MENU_FG_DEF,
+			dialog_bg: [0x20, 0x20, 0x2a],
+			dialog_fg: [0xe2, 0xe2, 0xea],
 			ansi: crate::theme::resolve("SilkTerm", "dark", true).ansi,
 			theme: "SilkTerm".to_string(),
 			theme_mode: "dark".to_string(),
@@ -195,6 +227,10 @@ pub fn reapply_for_os(dark: bool) -> bool {
 	new.fg = pal.fg;
 	new.cursor = pal.cursor;
 	new.focus = pal.focus;
+	new.menu_bg = pal.menu_bg;
+	new.menu_fg = pal.menu_fg;
+	new.dialog_bg = pal.dialog_bg;
+	new.dialog_fg = pal.dialog_fg;
 	new.ansi = pal.ansi;
 	update(new);
 	true
@@ -471,6 +507,10 @@ struct RawColors {
 	foreground: Option<String>,
 	cursor: Option<String>,
 	focus: Option<String>,
+	menu_background: Option<String>,
+	menu_foreground: Option<String>,
+	dialog_background: Option<String>,
+	dialog_foreground: Option<String>,
 }
 
 fn load() -> Settings {
@@ -667,6 +707,10 @@ fn resolve(raw: RawConfig) -> Settings {
 		fg: color(raw.colors.foreground, pal.fg),
 		cursor: color(raw.colors.cursor, pal.cursor),
 		focus: color(raw.colors.focus, pal.focus),
+		menu_bg: color(raw.colors.menu_background, pal.menu_bg),
+		menu_fg: color(raw.colors.menu_foreground, pal.menu_fg),
+		dialog_bg: color(raw.colors.dialog_background, pal.dialog_bg),
+		dialog_fg: color(raw.colors.dialog_foreground, pal.dialog_fg),
 		ansi: pal.ansi,
 		theme: theme_name,
 		theme_mode,
@@ -1359,11 +1403,18 @@ theme = "SilkTerm"
 theme_mode = "dark"
 
 ## Per-colour overrides on top of the theme (uncomment any to tweak one colour).
+## The menu_*/dialog_* keys recolour the chrome (menu bar + dropdowns, and the
+## pop-out Settings/About dialogs); by default every theme shares the same neutral
+## chrome. Menu hover/border shades derive from menu_background automatically.
 [colors]
-# background = "#000000"
-# foreground = "#d2d2da"
-# cursor     = "#7a9ad0"
-# focus      = "#5580c8"
+# background        = "#000000"
+# foreground        = "#d2d2da"
+# cursor            = "#7a9ad0"
+# focus             = "#5580c8"
+# menu_background   = "#36363b"
+# menu_foreground   = "#f0f0f2"
+# dialog_background = "#20202a"
+# dialog_foreground = "#e2e2ea"
 "##;
 
 #[cfg(test)]
@@ -1427,6 +1478,23 @@ mod tests {
 		let raw = parse_lenient(text, std::path::Path::new("test.toml"));
 		assert_eq!(raw.opacity, Some(0.7)); // before the bad line
 		assert_eq!(raw.margin, Some(12.0)); // after the bad line
+	}
+
+	#[test]
+	fn chrome_colors_default_and_override() {
+		// theme provides the chrome; the default matches the shared menu colours
+		let d = Settings::default();
+		assert_eq!(d.menu_bg, crate::theme::MENU_BG_DEF);
+		assert_eq!(d.menu_fg, crate::theme::MENU_FG_DEF);
+		// a [colors] override wins; unspecified chrome stays at the theme default
+		let raw = parse_lenient(
+			"[colors]\nmenu_background = \"#123456\"\ndialog_foreground = \"#abcdef\"\n",
+			std::path::Path::new("test.toml"),
+		);
+		let s = resolve(raw);
+		assert_eq!(s.menu_bg, [0x12, 0x34, 0x56]);
+		assert_eq!(s.dialog_fg, [0xab, 0xcd, 0xef]);
+		assert_eq!(s.menu_fg, crate::theme::MENU_FG_DEF);
 	}
 
 	// In-place migration: drop obsolete cursor keys, keep the rest.

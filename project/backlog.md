@@ -83,8 +83,8 @@ In each section, items are listed approximately from newest to oldest.
 		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
 	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
 
-- 🛠️ Menu bar: (issue #t6thx, 20260626-132615)
-	- 🔘 Menu and Dialog background and text color user-adjustable, even per-theme. It's just that all themes by default should use the same menu colors.
+- ✅ Menu bar: (issue #t6thx, 20260626-132615)
+	- ✅ Menu and Dialog background and text color user-adjustable, even per-theme. It's just that all themes by default should use the same menu colors. - Chrome bg+text are now per-theme `Palette` fields (`menu_bg/menu_fg/dialog_bg/dialog_fg`), with every built-in theme sharing the same neutral defaults (menu identical in both modes; dialog dark-gray/light-gray by mode). `[colors]` keys `menu_background/menu_foreground/dialog_background/dialog_foreground` override per-user (config-file, like the other advanced colours). Menu hover/border/separator derive as luminance-aware shades of `menu_background` so a custom colour stays coherent. Verified headless: a `dialog_background="#802030"` + `dialog_foreground="#ffe0a0"` override recoloured the Settings panel dark-red with amber text; override survived backfill/reorder. Unit-tested (shared defaults across themes; [colors] override wins).
 
 - 🛠️ Tab interface: single-window core done (`Tabs` in app.rs: each tab owns a `PaneManager`; tab bar shown with >1 tab, click to switch; pane area reduced by the bar). Detach/dock deferred (need multi-window). Verified: new tab, switch (content swaps), close (bar hides).
 	- ✅ Close tab (CTRL+Shift+w, CTRL+F4) - both hotkeys close the current tab (mirror the menu Close Tab: keeps >=1 tab, close the window to exit). Shift on W so plain Ctrl+W still reaches the shell.

@@ -1035,7 +1035,7 @@ impl State {
 			let layout = self.menubar_layout();
 			if let Some(idx) = self.bar_open {
 				if let Some(&(x, w)) = layout.get(idx) {
-					instances.push(rect_inst(x, 0.0, w, menu_h, config::MENU_HOVER));
+					instances.push(rect_inst(x, 0.0, w, menu_h, config::menu_hover()));
 				}
 			} else if self.mods.alt_key() {
 				// Alt held (no dropdown open): underline each title's accelerator
@@ -1046,7 +1046,7 @@ impl State {
 					if let Some(c) = MENU_BAR[i].chars().next() {
 						let mut buf = [0u8; 4];
 						let cw = self.text.measure_ui_text(c.encode_utf8(&mut buf), &acc);
-						instances.push(rect_inst(x + MENU_BAR_PAD, uy, cw, 1.0, config::MENU_FG));
+						instances.push(rect_inst(x + MENU_BAR_PAD, uy, cw, 1.0, config::menu_fg()));
 					}
 				}
 			}
@@ -1086,16 +1086,16 @@ impl State {
 				menu.y - b,
 				menu.w + 2.0 * b,
 				mh + 2.0 * b,
-				config::MENU_BORDER,
+				config::menu_border(),
 			));
-			instances.push(rect_inst(menu.x, menu.y, menu.w, mh, config::MENU_BG));
+			instances.push(rect_inst(menu.x, menu.y, menu.w, mh, config::menu_bg()));
 			if let Some(i) = menu.hover {
 				instances.push(rect_inst(
 					menu.x,
 					menu.row_top(i),
 					menu.w,
 					menu.item_h,
-					config::MENU_HOVER,
+					config::menu_hover(),
 				));
 			}
 			// faint separator lines between logical groups
@@ -1107,7 +1107,7 @@ impl State {
 						ly,
 						menu.w - config::MENU_PAD_X * 2.0,
 						1.0,
-						config::MENU_SEP,
+						config::menu_sep(),
 					));
 				}
 			}
@@ -1123,7 +1123,7 @@ impl State {
 							.text
 							.measure_ui_text(c.encode_utf8(&mut buf), &acc_attrs);
 						let top = menu.row_top(i) + (menu.item_h - ch) / 2.0;
-						instances.push(rect_inst(lx, top + ch - 3.0, cw, 1.0, config::MENU_FG));
+						instances.push(rect_inst(lx, top + ch - 3.0, cw, 1.0, config::menu_fg()));
 					}
 				}
 			}
@@ -1135,7 +1135,11 @@ impl State {
 		let overlay_range = menu_range;
 
 		let margin = self.text.margin;
-		let menu_fg = GColor::rgb(config::MENU_FG[0], config::MENU_FG[1], config::MENU_FG[2]);
+		let menu_fg = GColor::rgb(
+			config::menu_fg()[0],
+			config::menu_fg()[1],
+			config::menu_fg()[2],
+		);
 		// tab titles ("<shell> [<program>]") - computed first (tab_title is &mut)
 		// before self.text is borrowed for the buffers below
 		let tab_titles: Vec<String> = if self.tabs.len() > 1 {
@@ -1292,9 +1296,9 @@ impl State {
 			let mut specs: Vec<(f32, f32, Buffer)> = Vec::new();
 			let mut attrs = crate::text::ui_attrs();
 			attrs.color_opt = Some(GColor::rgb(
-				config::MENU_FG[0],
-				config::MENU_FG[1],
-				config::MENU_FG[2],
+				config::menu_fg()[0],
+				config::menu_fg()[1],
+				config::menu_fg()[2],
 			));
 			for (i, e) in menu.entries.iter().enumerate() {
 				let Entry::Item { label, check, .. } = e else {
@@ -1325,7 +1329,11 @@ impl State {
 				}
 			}
 			let (sw, sh) = (self.gfx.config.width as i32, self.gfx.config.height as i32);
-			let fg = GColor::rgb(config::MENU_FG[0], config::MENU_FG[1], config::MENU_FG[2]);
+			let fg = GColor::rgb(
+				config::menu_fg()[0],
+				config::menu_fg()[1],
+				config::menu_fg()[2],
+			);
 			let areas: Vec<TextArea> = specs
 				.iter()
 				.map(|(left, top, b)| TextArea {
