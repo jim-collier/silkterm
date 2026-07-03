@@ -108,6 +108,9 @@ enum Node {
 	Split {
 		dir: Dir,
 		ratio: f32,
+		// true once the user has dragged this divider: auto even-distribution stops
+		// for its same-direction run (successive splits there stay 50/50).
+		manual: bool,
 		a: Box<Node>,
 		b: Box<Node>,
 	},
@@ -868,13 +871,17 @@ impl PaneManager {
 		area: Rect,
 	) -> anyhow::Result<()> {
 		let cmd = self.panes.get(&id).and_then(|p| p.command.clone());
-		self.split_at(ctx, proxy, id, dir, false, 0.5, cmd, area);
+		// interactive splits even-distribute the same-direction run (unless a divider
+		// in it was hand-dragged); the CLI drives its own sizing, so it passes false
+		self.split_at(ctx, proxy, id, dir, false, 0.5, cmd, area, true);
 		Ok(())
 	}
 
 	// General split used by the CLI: split `id` along `dir`, the new pane on the
 	// `before` side (a) or after (b), taking `new_ratio` of the split; runs
-	// `command`. Returns the new pane id (None if `id` wasn't a leaf).
+	// `command`. Returns the new pane id (None if `id` wasn't a leaf). `equalize`
+	// re-distributes the same-direction run to equal fractions after inserting
+	// (interactive default); the CLI passes false and sizes explicitly.
 	pub fn split_at(
 		&mut self,
 		ctx: &mut TextCtx,
@@ -885,6 +892,7 @@ impl PaneManager {
 		new_ratio: f32,
 		command: Option<Vec<String>>,
 		area: Rect,
+		equalize: bool,
 	) -> Option<PaneId> {
 		// leaves mirror `panes`, so this is also "is id a leaf" - checked up
 		// front so a doomed insert can't spawn (then kill) a shell
@@ -916,6 +924,11 @@ impl PaneManager {
 		}
 		self.panes.insert(new_id, pane);
 		self.focused = new_id;
+		// even-distribute the same-direction run the new pane joined, unless a
+		// divider in it was hand-dragged (then successive splits stay 50/50)
+		if equalize {
+			equalize_dir_run(&mut self.root, new_id, dir);
+		}
 		self.relayout(ctx, area);
 		Some(new_id)
 	}
@@ -1223,6 +1236,7 @@ fn insert_split_at(
 			*node = Node::Split {
 				dir,
 				ratio: ratio_a,
+				manual: false,
 				a: Box::new(Node::Leaf(a)),
 				b: Box::new(Node::Leaf(b)),
 			};
@@ -1236,17 +1250,134 @@ fn insert_split_at(
 	}
 }
 
+// Path (false = a-child, true = b-child) from `node` down to leaf `id`, if present.
+fn path_to(node: &Node, id: PaneId) -> Option<Vec<bool>> {
+	match node {
+		Node::Leaf(i) => (*i == id).then(Vec::new),
+		Node::Split { a, b, .. } => {
+			if let Some(mut p) = path_to(a, id) {
+				p.insert(0, false);
+				return Some(p);
+			}
+			if let Some(mut p) = path_to(b, id) {
+				p.insert(0, true);
+				return Some(p);
+			}
+			None
+		}
+	}
+}
+
+// Follow `path` from `node` (defensively stops at a leaf).
+fn node_at_mut<'a>(mut node: &'a mut Node, path: &[bool]) -> &'a mut Node {
+	for &b in path {
+		let Node::Split { a, b: bb, .. } = node else {
+			break;
+		};
+		node = if b { bb } else { a };
+	}
+	node
+}
+
+// Is the node at `path` a Split oriented along `dir`?
+fn is_dir_split(root: &Node, path: &[bool], dir: Dir) -> bool {
+	let mut node = root;
+	for &b in path {
+		let Node::Split { a, b: bb, .. } = node else {
+			return false;
+		};
+		node = if b { bb } else { a };
+	}
+	matches!(node, Node::Split { dir: d, .. } if *d == dir)
+}
+
+// Leaves in the same-direction run rooted at `node`: a nested `dir` split counts
+// its members; a leaf or a differently-oriented split counts as one unit (its own
+// internal layout is separate).
+fn group_leaf_count(node: &Node, dir: Dir) -> usize {
+	match node {
+		Node::Split { dir: d, a, b, .. } if *d == dir => {
+			group_leaf_count(a, dir) + group_leaf_count(b, dir)
+		}
+		_ => 1,
+	}
+}
+
+// Has any divider in the same-direction run been hand-dragged?
+fn group_has_manual(node: &Node, dir: Dir) -> bool {
+	match node {
+		Node::Split {
+			dir: d,
+			manual,
+			a,
+			b,
+			..
+		} if *d == dir => *manual || group_has_manual(a, dir) || group_has_manual(b, dir),
+		_ => false,
+	}
+}
+
+// Set every ratio in the same-direction run so all its member leaves are equal:
+// a split gives its a-child a share proportional to the leaves under it.
+fn equalize(node: &mut Node, dir: Dir) {
+	if let Node::Split {
+		dir: d,
+		ratio,
+		a,
+		b,
+		..
+	} = node
+	{
+		if *d == dir {
+			let na = group_leaf_count(a, dir);
+			let nb = group_leaf_count(b, dir);
+			*ratio = na as f32 / (na + nb) as f32;
+			equalize(a, dir);
+			equalize(b, dir);
+		}
+	}
+}
+
+// After splitting to create leaf `id` along `dir`, even-distribute the whole
+// same-direction run it joined - unless a divider in that run was hand-dragged
+// (then the run keeps its sizes and the new 50/50 split stands).
+fn equalize_dir_run(root: &mut Node, id: PaneId, dir: Dir) {
+	let Some(path) = path_to(root, id) else {
+		return;
+	};
+	if path.is_empty() {
+		return; // the tree is a lone leaf
+	}
+	// walk up from the new pane's parent while ancestors stay same-direction; that
+	// topmost same-direction split is the run's root
+	let mut k = path.len() - 1;
+	while k > 0 && is_dir_split(root, &path[..k - 1], dir) {
+		k -= 1;
+	}
+	let top = node_at_mut(root, &path[..k]);
+	if !group_has_manual(top, dir) {
+		equalize(top, dir);
+	}
+}
+
 fn prune(node: Node, id: PaneId) -> Option<Node> {
 	match node {
 		Node::Leaf(i) if i == id => None,
 		Node::Leaf(i) => Some(Node::Leaf(i)),
-		Node::Split { dir, ratio, a, b } => {
+		Node::Split {
+			dir,
+			ratio,
+			manual,
+			a,
+			b,
+		} => {
 			let a2 = prune(*a, id);
 			let b2 = prune(*b, id);
 			match (a2, b2) {
 				(Some(a), Some(b)) => Some(Node::Split {
 					dir,
 					ratio,
+					manual,
 					a: Box::new(a),
 					b: Box::new(b),
 				}),
@@ -1267,7 +1398,9 @@ fn first_leaf(node: &Node) -> PaneId {
 fn layout(node: &Node, area: Rect, out: &mut Vec<(PaneId, Rect)>) {
 	match node {
 		Node::Leaf(id) => out.push((*id, area)),
-		Node::Split { dir, ratio, a, b } => {
+		Node::Split {
+			dir, ratio, a, b, ..
+		} => {
 			let (a_area, b_area) = child_areas(area, *dir, *ratio);
 			layout(a, a_area, out);
 			layout(b, b_area, out);
@@ -1320,7 +1453,10 @@ fn child_areas(area: Rect, dir: Dir, ratio: f32) -> (Rect, Rect) {
 // Returns a path of child choices (false = a, true = b) from the root to that
 // split, plus its orientation (for the resize cursor).
 fn divider_at(node: &Node, area: Rect, x: f32, y: f32, path: &mut Vec<bool>) -> Option<Dir> {
-	let Node::Split { dir, ratio, a, b } = node else {
+	let Node::Split {
+		dir, ratio, a, b, ..
+	} = node
+	else {
 		return None;
 	};
 	let (a_area, b_area) = child_areas(area, *dir, *ratio);
@@ -1360,7 +1496,14 @@ fn divider_at(node: &Node, area: Rect, x: f32, y: f32, path: &mut Vec<bool>) -> 
 
 // Walk `path` to a split node and set its ratio from the mouse position.
 fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
-	let Node::Split { dir, ratio, a, b } = node else {
+	let Node::Split {
+		dir,
+		ratio,
+		manual,
+		a,
+		b,
+	} = node
+	else {
 		return;
 	};
 	if let [first, rest @ ..] = path {
@@ -1378,6 +1521,7 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
 		Dir::Horizontal => (y - area.y) / (area.h - gap),
 	};
 	*ratio = r.clamp(0.05, 0.95);
+	*manual = true; // dragged: stop auto even-distribution for this run
 }
 
 // Lines the on-screen content scrolled up between frames, inferred from row
@@ -1408,7 +1552,117 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 
 #[cfg(test)]
 mod tests {
-	use super::{bell_brighten, distinct_pair, pair_inside, same_char_pair, scroll_shift};
+	use super::{
+		Dir, Node, Rect, bell_brighten, distinct_pair, equalize_dir_run, layout, pair_inside,
+		same_char_pair, scroll_shift,
+	};
+
+	fn leaf(id: u64) -> Node {
+		Node::Leaf(id)
+	}
+	fn split(dir: Dir, ratio: f32, manual: bool, a: Node, b: Node) -> Node {
+		Node::Split {
+			dir,
+			ratio,
+			manual,
+			a: Box::new(a),
+			b: Box::new(b),
+		}
+	}
+	fn widths(root: &Node, w: f32) -> Vec<(u64, f32)> {
+		let mut out = Vec::new();
+		layout(
+			root,
+			Rect {
+				x: 0.0,
+				y: 0.0,
+				w,
+				h: 100.0,
+			},
+			&mut out,
+		);
+		out.sort_by_key(|(id, _)| *id);
+		out.into_iter().map(|(id, r)| (id, r.w)).collect()
+	}
+
+	#[test]
+	fn equalize_three_in_a_row() {
+		// split A vertically then split the new pane again: 50/25/25 -> equalize
+		let mut root = split(
+			Dir::Vertical,
+			0.5,
+			false,
+			leaf(1),
+			split(Dir::Vertical, 0.5, false, leaf(2), leaf(3)),
+		);
+		equalize_dir_run(&mut root, 3, Dir::Vertical);
+		let ws = widths(&root, 900.0);
+		for (_, w) in &ws {
+			assert!((w - 300.0).abs() <= 2.0, "not equal thirds: {ws:?}");
+		}
+	}
+
+	#[test]
+	fn equalize_four_in_a_row() {
+		let mut root = split(
+			Dir::Vertical,
+			0.5,
+			false,
+			leaf(1),
+			split(
+				Dir::Vertical,
+				0.5,
+				false,
+				leaf(2),
+				split(Dir::Vertical, 0.5, false, leaf(3), leaf(4)),
+			),
+		);
+		equalize_dir_run(&mut root, 4, Dir::Vertical);
+		let ws = widths(&root, 1200.0);
+		for (_, w) in &ws {
+			assert!((w - 300.0).abs() <= 3.0, "not equal quarters: {ws:?}");
+		}
+	}
+
+	#[test]
+	fn manual_divider_stops_equalization() {
+		// the outer divider was hand-dragged (manual): a later split must not
+		// re-equalize - the 0.7 ratio is preserved
+		let mut root = split(
+			Dir::Vertical,
+			0.7,
+			true,
+			leaf(1),
+			split(Dir::Vertical, 0.5, false, leaf(2), leaf(3)),
+		);
+		equalize_dir_run(&mut root, 3, Dir::Vertical);
+		let Node::Split { ratio, .. } = &root else {
+			panic!()
+		};
+		assert_eq!(*ratio, 0.7, "manual run must keep its sizes");
+	}
+
+	#[test]
+	fn different_direction_counts_as_one_unit() {
+		// a vertical run whose second member is a horizontal split: 2 units -> 50/50,
+		// and the inner horizontal ratio is left untouched
+		let mut root = split(
+			Dir::Vertical,
+			0.3,
+			false,
+			leaf(1),
+			split(Dir::Horizontal, 0.4, false, leaf(2), leaf(3)),
+		);
+		equalize_dir_run(&mut root, 1, Dir::Vertical);
+		let Node::Split { ratio, b, .. } = &root else {
+			panic!()
+		};
+		assert!((ratio - 0.5).abs() < 0.01, "two units -> half each");
+		let Node::Split { ratio: hr, .. } = b.as_ref() else {
+			panic!()
+		};
+		assert_eq!(*hr, 0.4, "nested other-direction split is untouched");
+	}
 
 	// default pairs in precedence order: backtick, ", ', {}, (), [], <>
 	const PAIRS: &[(char, char)] = &[
