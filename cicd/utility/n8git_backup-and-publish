@@ -175,8 +175,9 @@ fMain(){
 		didStash=$((postCount > preCount ? 1 : 0))
 	fi
 
-	## Pull with rebase
-	if git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
+	## Sync with this branch's upstream if it has one. A brand-new local branch
+	## has nothing to pull; the push below sets its upstream on first publish.
+	if git rev-parse --abbrev-ref @{u} >/dev/null 2>&1; then
 		fEcho; fEcho "git pull --no-ff ..."
 		git pull --no-ff
 	fi
