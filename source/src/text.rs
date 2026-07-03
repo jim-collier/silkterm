@@ -110,6 +110,48 @@ fn pin_ui_family(fs: &FontSystem) {
 	UI_ITALIC.store(body_i, Ordering::Relaxed);
 }
 
+// Chrome ascent/descent scaled to `ui_px`, read the SAME way cosmic-text does
+// (`ui_px * ascent/units_per_em`), so `ui_text_top` predicts the real baseline.
+// A proportional fallback if the pinned face can't be read.
+fn ui_vmetrics(fs: &mut FontSystem, ui_px: f32) -> (f32, f32) {
+	use std::sync::atomic::Ordering;
+	let want_w = fontdb::Weight(UI_WEIGHT.load(Ordering::Relaxed));
+	let id = {
+		let q = fontdb::Query {
+			families: &[ui_family().map_or(fontdb::Family::SansSerif, fontdb::Family::Name)],
+			weight: want_w,
+			..Default::default()
+		};
+		fs.db().query(&q)
+	};
+	let fallback = (ui_px * 0.8, ui_px * 0.2);
+	let Some(font) = id.and_then(|id| fs.get_font(id, want_w)) else {
+		return fallback;
+	};
+	let m = font.as_swash().metrics(&[]);
+	let s = ui_px / f32::from(m.units_per_em).max(1.0);
+	(m.ascent * s, m.descent * s)
+}
+
+// Baseline y within a single-line UI buffer of height `ui_line_h`: cosmic-text
+// centers the ascent+descent box in the line, so the baseline sits at the line
+// center shifted by (ascent-descent)/2. `vm` is (ascent, descent, cap).
+fn ui_baseline_in_buf(ui_line_h: f32, vm: (f32, f32)) -> f32 {
+	let (asc, desc) = vm;
+	ui_line_h / 2.0 + (asc - desc) / 2.0
+}
+
+// Buffer `top` that centers chrome text's visible box in a bar
+// `[bar_top, bar_top+bar_h]`. Chrome titles (File/Edit/tab names) have no
+// descenders but do have ascenders (l/d/h/i), so their visible extent is
+// ascender-top..baseline; centering THAT (not cap..baseline) is what actually
+// looks balanced - cap-centering leaves the empty descent reading as space
+// below. The rare descender then just dips into the natural descent room.
+fn ui_visible_center_top(ui_line_h: f32, vm: (f32, f32), bar_top: f32, bar_h: f32) -> f32 {
+	let (asc, _) = vm;
+	bar_top + bar_h / 2.0 - ui_baseline_in_buf(ui_line_h, vm) + asc / 2.0
+}
+
 // Emphasis weight for chrome (dialog titles, section headers): the closest
 // weight to Bold the pinned family really ships. Use this instead of a literal
 // `Weight::BOLD`, which kicks the whole family out when no 700 face exists.
@@ -247,6 +289,10 @@ pub struct TextCtx {
 	// independent of the terminal font size; bars and rows size from this.
 	pub ui_line_h: f32,
 	ui_metrics: Metrics,
+	// chrome vertical metrics at ui_px (ascent, descent) in the units cosmic-text
+	// lays the line out in, so a bar can center chrome text on its real visible
+	// box (see `ui_text_top`).
+	ui_vmetrics: (f32, f32),
 	// primary monospace face + a coverage cache, so the pane can tell which
 	// glyphs fall back to another font (those drift from the cell grid and get
 	// rendered per-cell instead - see Pane::build).
@@ -283,6 +329,7 @@ impl TextCtx {
 		let ui_px = (ui_px * scale).round().max(8.0);
 		let ui_line_h = (ui_px * 1.35).round(); // roomy UI leading; descenders must clear buttons
 		let ui_metrics = Metrics::new(ui_px, ui_line_h);
+		let ui_vmetrics = ui_vmetrics(&mut font_system, ui_px);
 
 		let mono_face = {
 			let fam = mono_family();
@@ -316,6 +363,7 @@ impl TextCtx {
 			metrics,
 			ui_line_h,
 			ui_metrics,
+			ui_vmetrics,
 			mono_face,
 			cover_cache: HashMap::new(),
 		}
@@ -384,6 +432,21 @@ impl TextCtx {
 			),
 			None => (self.cell_w, 0.0),
 		}
+	}
+
+	// `top` for a chrome text buffer so its VISIBLE box (cap-top to baseline)
+	// centers in a bar of height `bar_h` at `bar_top`. Uses the real font
+	// metrics, so it stays centered across font/size changes - unlike the old
+	// hand-tuned per-bar padding, which left menu titles (no descenders) riding
+	// high with empty descent space below.
+	pub fn ui_text_top(&self, bar_top: f32, bar_h: f32) -> f32 {
+		ui_visible_center_top(self.ui_line_h, self.ui_vmetrics, bar_top, bar_h)
+	}
+
+	// Screen-space baseline of chrome text placed with `ui_text_top` - for the
+	// Alt-accelerator underline.
+	pub fn ui_baseline(&self, bar_top: f32, bar_h: f32) -> f32 {
+		self.ui_text_top(bar_top, bar_h) + ui_baseline_in_buf(self.ui_line_h, self.ui_vmetrics)
 	}
 
 	// Width in px of chrome `text` shaped with `attrs` at the UI font size.
@@ -549,6 +612,25 @@ mod tests {
 	// Chrome must pin a concrete face, never fall back to generic
 	// `Family::SansSerif` (which lands on a serif when fontdb's "Arial" default
 	// is absent). Only needs a FontSystem (no GPU), so it runs headless.
+	// A chrome line placed by ui_visible_center_top must sit with its visible
+	// (ascender-top..baseline) box centered in the bar, for any bar height and
+	// metrics - so a font/size change stays balanced without hand-tuned padding.
+	#[test]
+	fn chrome_text_visible_box_centers_in_bar() {
+		let vm = (13.6f32, 3.4f32); // ascent, descent px
+		let ui_line_h = 23.0;
+		for &(bar_top, bar_h) in &[(0.0f32, 29.0f32), (29.0, 29.0), (10.0, 40.0)] {
+			let top = ui_visible_center_top(ui_line_h, vm, bar_top, bar_h);
+			let baseline = top + ui_baseline_in_buf(ui_line_h, vm);
+			let visible_center = baseline - vm.0 / 2.0; // midpoint of ascender..baseline
+			assert!(
+				(visible_center - (bar_top + bar_h / 2.0)).abs() < 0.01,
+				"visible center {visible_center} != bar center {}",
+				bar_top + bar_h / 2.0
+			);
+		}
+	}
+
 	#[test]
 	fn ui_font_resolves_to_concrete_family() {
 		let fs = FontSystem::new();
