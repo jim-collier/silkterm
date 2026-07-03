@@ -500,21 +500,21 @@ impl DialogWin {
 	}
 }
 
-// X11: tie the dialog to the terminal window with WM_TRANSIENT_FOR (winit has
-// no API for it there - its parent_window means literal X reparenting). Same
-// throwaway-connection pattern as app::set_blur_behind. No-op off X11.
+// X11: make the dialog a proper transient modal of the terminal via WM hints -
+// WM_TRANSIENT_FOR (winit has no API for it there; its parent_window means
+// literal X reparenting), plus the EWMH dialog type and the MODAL / SKIP_TASKBAR
+// states. That gives the standard Linux modal behavior (kept off the taskbar,
+// stacked above and raised with its parent, retains focus) without any input
+// tricks. Same throwaway-connection pattern as app::set_blur_behind. No-op off X11.
 #[cfg(target_os = "linux")]
 fn set_transient_for(window: &Window, parent: Option<&RawWindowHandle>) {
 	use winit::raw_window_handle::HasWindowHandle;
 	use x11rb::connection::Connection;
-	use x11rb::protocol::xproto::{AtomEnum, PropMode};
+	use x11rb::protocol::xproto::{
+		AtomEnum, ClientMessageEvent, ConnectionExt as _, EventMask, PropMode,
+	};
 	use x11rb::wrapper::ConnectionExt as _;
 
-	let parent_xid = match parent {
-		Some(RawWindowHandle::Xlib(h)) => h.window as u32,
-		Some(RawWindowHandle::Xcb(h)) => h.window.get(),
-		_ => return,
-	};
 	let Ok(handle) = window.window_handle() else {
 		return;
 	};
@@ -523,16 +523,60 @@ fn set_transient_for(window: &Window, parent: Option<&RawWindowHandle>) {
 		RawWindowHandle::Xcb(h) => h.window.get(),
 		_ => return,
 	};
-	let Ok((conn, _)) = x11rb::connect(None) else {
+	let Ok((conn, screen)) = x11rb::connect(None) else {
 		return;
 	};
+	let root = conn.setup().roots[screen].root;
+
+	let atom = |name: &[u8]| -> Option<u32> {
+		Some(conn.intern_atom(false, name).ok()?.reply().ok()?.atom)
+	};
+	let (Some(wt), Some(wt_dialog), Some(state), Some(modal), Some(skip)) = (
+		atom(b"_NET_WM_WINDOW_TYPE"),
+		atom(b"_NET_WM_WINDOW_TYPE_DIALOG"),
+		atom(b"_NET_WM_STATE"),
+		atom(b"_NET_WM_STATE_MODAL"),
+		atom(b"_NET_WM_STATE_SKIP_TASKBAR"),
+	) else {
+		return;
+	};
+
+	if let Some(parent_xid) = parent.and_then(|p| match p {
+		RawWindowHandle::Xlib(h) => Some(h.window as u32),
+		RawWindowHandle::Xcb(h) => Some(h.window.get()),
+		_ => None,
+	}) {
+		let _ = conn.change_property32(
+			PropMode::REPLACE,
+			xid,
+			AtomEnum::WM_TRANSIENT_FOR,
+			AtomEnum::WINDOW,
+			&[parent_xid],
+		);
+	}
+	let _ = conn.change_property32(PropMode::REPLACE, xid, wt, AtomEnum::ATOM, &[wt_dialog]);
 	let _ = conn.change_property32(
 		PropMode::REPLACE,
 		xid,
-		AtomEnum::WM_TRANSIENT_FOR,
-		AtomEnum::WINDOW,
-		&[parent_xid],
+		state,
+		AtomEnum::ATOM,
+		&[modal, skip],
 	);
+
+	// the window is already mapped, so also request the states via the EWMH
+	// client message (action ADD=1, source = application=1) for WMs that only
+	// honour a state change that way rather than a bare property write.
+	let add_state = |st: u32| {
+		let ev = ClientMessageEvent::new(32, xid, state, [1, st, 0, 1, 0]);
+		let _ = conn.send_event(
+			false,
+			root,
+			EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+			ev,
+		);
+	};
+	add_state(modal);
+	add_state(skip);
 	let _ = conn.flush();
 }
 #[cfg(not(target_os = "linux"))]
