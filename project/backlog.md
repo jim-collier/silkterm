@@ -56,6 +56,7 @@ In each section, items are listed approximately from newest to oldest.
 	- Verified: xprop on the live dialog shows _NET_WM_WINDOW_TYPE_DIALOG, _NET_WM_STATE_MODAL + _NET_WM_STATE_SKIP_TASKBAR, and WM_TRANSIENT_FOR pointing at the terminal window.
 
 - 🔘 At high blur radius and low softness, the blur has boxy artifacts.
+	- Diagnosed: the glow is a separable blur with a fixed 25-tap kernel truncated at +/-3 sigma (`glow.rs` fs_blur). Two causes: (a) the hard +/-3 sigma cutoff leaves a ~1% edge that low softness (x10 intensity) amplifies into a visible square; (b) the linear/s-curve falloffs aren't true Gaussians, so blurred separably their support is a diamond/box, not a circle - and the default falloff is now s-curve. Fix is a look-vs-perf tradeoff (wider extent + more taps, and/or a windowed kernel) that wants eyeballing - deferred to a visual pass.
 
 - 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
 	- Cause: when the glyph atlas fills up during a long, varied session, text prepare() fails and render bailed out before the per-frame atlas trim. The atlas never recovered, so text stayed black. Cursor and per-cell backgrounds use a separate renderer, so they kept showing.
