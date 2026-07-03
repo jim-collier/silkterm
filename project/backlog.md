@@ -53,7 +53,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ Modal Bug (with Settings and About): The dialog shows up in the window list. Also when focused is changed elsewhere then the dialog is clicked on, the terminal window doesn't also come to the top - it stays behind whatever got in front of it. In Linux - unlike Windows - the main window can still be moved around when the modal dialog is open, but it *remains an unselected window* - the dialog retains focus. These things aren't a coding trick, it's just the way modals work on Linux, and so should SilkTerm.
 	- Done: the dialog now sets the EWMH dialog type plus the MODAL and SKIP_TASKBAR states alongside the existing transient-for, so the WM keeps it off the taskbar, stacks it above and raises it with the terminal, and holds focus - the normal Linux modal behavior via window hints, no input tricks.
-	- Verified: xprop on the live dialog shows _NET_WM_WINDOW_TYPE_DIALOG, _NET_WM_STATE_MODAL + _NET_WM_STATE_SKIP_TASKBAR, and WM_TRANSIENT_FOR pointing at the terminal window.
+	- Verified: the dialog carries _NET_WM_WINDOW_TYPE_DIALOG, _NET_WM_STATE_MODAL + _NET_WM_STATE_SKIP_TASKBAR, and WM_TRANSIENT_FOR points at the terminal window.
 
 - 🔘 At high blur radius and low softness, the blur has boxy artifacts.
 	- Diagnosed: the glow is a separable blur with a fixed 25-tap kernel truncated at +/-3 sigma (`glow.rs` fs_blur). Two causes: (a) the hard +/-3 sigma cutoff leaves a ~1% edge that low softness (x10 intensity) amplifies into a visible square; (b) the linear/s-curve falloffs aren't true Gaussians, so blurred separably their support is a diamond/box, not a circle - and the default falloff is now s-curve. Fix is a look-vs-perf tradeoff (wider extent + more taps, and/or a windowed kernel) that wants eyeballing - deferred to a visual pass.
@@ -340,7 +340,7 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
 	- ✅ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. (20260630)
 		- Done: the bar and tab height scale with the menu font. Descenders were sitting tight against the button bottom, so the vertical padding was bumped up a couple px to clear them.
-		- Verified: a descender-heavy tab title screenshot.
+		- Verified: descender-heavy tab titles clear their descenders.
 
 - ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
 	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. For example my system proportional font is a Serif font, not sans serif. (20260629)
@@ -359,7 +359,7 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Outer glow should only apply to terminal text - not tab titles or the menu bar. (20260630)
 	- Cause: the glow composite covered the whole window, so the halo showed behind the menu and tab titles too.
 	- Fixed: clip it to the content area below the chrome, so only terminal text glows.
-	- Verified: a strong-glow screenshot - chrome text crisp, no halo.
+	- Verified: with strong glow, chrome text stays crisp with no halo.
 
 - ✅ High severity: Typing "exit" in tab, closes the whole application. It should only close that tab. Doesn't do that for panes, only tabs. Closing a tab via menu only closes that one tab. (20260629; real cause found + fixed 20260630)
 	- Cause: the shell-exit handler (`UserEvent::Exit(id)` in app.rs) just called `tabs.cur_mut().close(id)` and quit the app whenever that returned true. So the last pane of a tab killed the whole app when other tabs existed; worse, a background tab's shell exiting ran `close(id)` on the *active* tab (which doesn't own that pane) -> returns true -> app quit. The Close-Pane menu had the right pane->tab->window cascade; the exit path didn't.
@@ -390,14 +390,14 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ Mouse wheel doesn't scroll back through the `stdout`/`stderr` buffer. It should do so, smoothly, and in proportion to how fast the mouse wheel is moved. But currently it moves the command history back. (20260626-104542)
 	- Cause: `TermMode::ALTERNATE_SCROLL` (DECSET 1007) is default-on in alacritty_terminal, but the wheel handler used `ALT_SCREEN || ALTERNATE_SCROLL` as the cursor-key trigger - so on the *primary* screen the always-on flag made the wheel emit cursor-up/down (shell history recall) instead of scrolling scrollback.
-	- Fix: gate the cursor-key path on `ALT_SCREEN` (now requires alt screen AND alternate-scroll AND no mouse mode). The primary screen always routes to the smooth scrollback (`Scroll::wheel`, already proportional to notches via `wheel_lines` + easing). Alt-screen apps (less/nano/vim) keep their cursor-key wheel. `app.rs` MouseWheel arm. Verified by root-cause + build (runtime wheel injection is unreliable here per xdotool notes).
+	- Fix: gate the cursor-key path on `ALT_SCREEN` (now requires alt screen AND alternate-scroll AND no mouse mode). The primary screen always routes to the smooth scrollback (`Scroll::wheel`, already proportional to notches via `wheel_lines` + easing). Alt-screen apps (less/nano/vim) keep their cursor-key wheel. `app.rs` MouseWheel arm. Verified by root-cause + build (runtime wheel injection can't be scripted reliably).
 
 - ✅ Severe bug: Trying to open the settings dialog crashes the program. (20260625-150526)
 	- Cause: with always-GL on X11 the main window holds a glutin GL/EGL context, and the pop-out dialog's `Gfx::new` created a second `wgpu::Instance::default()` (all backends, including GL); wgpu-hal's GL init then panicked in EGL teardown (`unmake_current().unwrap()`, "Another window API already has a current context"). Increment A/B tests used a native-Vulkan main (default config), which masked it; the transparent (GL) main hit it every time.
 	- Fix: dialogs now create their `Gfx` via `Gfx::with_backends(window, Backends::PRIMARY)` (Vulkan/Metal/DX12, no GL) - opaque dialogs don't need GL, and avoiding it sidesteps the EGL conflict. Verified: Settings + About open over a transparent GL main with no crash; toggle on->Opacity enabled, off->greyed.
 
 - ✅ Mouse text selection, and double-click selection, quit working. (20260625-161509)
-	- Cause: It was actually the selection highlight being invisible (input + copy-to-PRIMARY worked): the GL offscreen was `Rgba8UnormSrgb`, so the blit's `textureSample` decoded sRGB->linear, cancelling the blit's `lin2srgb`, and wgpu's GL backend doesn't sRGB-encode the offscreen write either - so all rect/text colors passed through as raw linear and rendered too dark (text ~64% looked "ok"; the dark `SELECTION_BG` (51,68,102)->(8,15,34) went invisible). Fix: make the GL offscreen plain `Rgba8Unorm` so shaders store their linear output raw and the blit's `lin2srgb` does the one true encode - uniformly for rects, glyphon text, and the bg image. Verified on-screen: SELECTION_BG renders (50,69,102), text is full-brightness (210). This also completes the earlier transparency sRGB fix (text was still ~164, now a true 210).
+	- Cause: It was actually the selection highlight being invisible (input + copy-to-PRIMARY worked): the GL offscreen was `Rgba8UnormSrgb`, so the blit's `textureSample` decoded sRGB->linear, cancelling the blit's `lin2srgb`, and wgpu's GL backend doesn't sRGB-encode the offscreen write either - so all rect/text colors passed through as raw linear and rendered too dark (text ~64% looked "ok"; the dark `SELECTION_BG` (51,68,102)->(8,15,34) went invisible). Fix: make the GL offscreen plain `Rgba8Unorm` so shaders store their linear output raw and the blit's `lin2srgb` does the one true encode - uniformly for rects, glyphon text, and the bg image. Verified: SELECTION_BG renders (50,69,102), text is full-brightness (210). This also completes the earlier transparency sRGB fix (text was still ~164, now a true 210).
 
 - ✅ Smooth scrolling is broken. (20260623-194551)
 	- Cause: the fix for the apt "bug". That fix made output easing snap whenever new lines arrived closer than 0.12s apart, to stop apt's status bar bouncing. But a command's output arrives from the PTY in one sub-millisecond burst, so essentially all multi-line output (the core demo) snapped instead of easing - smooth scroll gone. Any burst threshold above a frame breaks the feature.
@@ -426,7 +426,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ There are weird spacing issues with the cursor. It appears too far after text. There are also weird text background color interactions with `ble`, which I suspect is caused by the spacing issue.
 	- Cause (re-fixed): the earlier two-part fix below was incomplete because `cell_w` was rounded (measured pitch ~10.5px -> 11). Everything grid-positioned (cursor, cell bg, per-cell glyphs) is placed at `col*cell_w`, so a `cell_w` that's bigger than the text's actual advance drifts them right of the text, and the drift accumulates per column. The cursor sat further past the text the longer the line, and fallback glyphs landed on top of the next cell at higher columns (`set_monospace_width` doesn't snap here. Cosmic-text only snaps when the font's `monospace_em_width()` is `Some`, which system fonts often aren't, so text renders at its natural advance).
-	- Fix: `measure_cell` now measures the real rendered pitch (`Shaping::Advanced`, averaged over 40 `M`s) and `cell_w` is not rounded -> it matches the text, residual drift is sub-pixel. Plus per-cell fallback glyphs are now fit to their cell box: `fill_glyph` returns the glyph's true ink width/offset (rasterized; advance != ink for `➡`/emoji) and `build` scales+centers each via `TextArea.scale` so an over-wide fallback can't spill onto its neighbour. Verified at runtime (pixel-measured): cursor sits one cell after `…$ ` with no drift; `A➡B➡C…` and `A😀B…` align at col 0 and col ~40; CJK/emoji = 2 cells; math/box-drawing stay in-buffer and crisp.
+	- Fix: `measure_cell` now measures the real rendered pitch (`Shaping::Advanced`, averaged over 40 `M`s) and `cell_w` is not rounded -> it matches the text, residual drift is sub-pixel. Plus per-cell fallback glyphs are now fit to their cell box: `fill_glyph` returns the glyph's true ink width/offset (rasterized; advance != ink for `➡`/emoji) and `build` scales+centers each via `TextArea.scale` so an over-wide fallback can't spill onto its neighbour. Verified at runtime: cursor sits one cell after `…$ ` with no drift; `A➡B➡C…` and `A😀B…` align at col 0 and col ~40; CJK/emoji = 2 cells; math/box-drawing stay in-buffer and crisp.
 	- (Earlier partial fix, superseded by the above) 1) `set_monospace_width(cell_w)` in `TextCtx::new_buffer`; 2) pulling glyphs the primary mono face lacks out of the main buffer and drawing them per-cell. The extraction [2] is still in place; [1] is kept but is largely inert for system fonts.
 
 - ✅ Opacity should only affect the text rendering area, the actual terminal. Instead, it is also affecting the entire window including window decorations.
@@ -612,12 +612,12 @@ In each section, items are listed approximately from newest to oldest.
 		- Verified: with cursor_glow off, only the cursor's own area changes.
 
 - ✅ Outer glow enhancements:
-	- Verified: all four, by per-feature pixel diffs over a bright noise background.
+	- Verified: all four, each showing its expected effect over a bright background.
 	- ✅ When outer glow is applied, also add an antialiased (user-definable) 1px outer border around the letters, using the same color rules as outer glow.
 		- Done: the composite also dilates the crisp coverage by text_glow_border px (antialiased), unioned with the halo and coloured by the same per-cell bg map. Config text_glow_border (default 1.0, 0 = off) plus a Glow border slider.
 	- ✅ For bold text, calculate the blur for the outer glow, based on all non-bold text. (But still render the visible text on top in whatever weight it was meant to.
 		- Done: the glow source has its own renderer. A pane containing bold shapes a parallel bold-stripped buffer and feeds that to the glow, while crisp text keeps its weight. Costs a second shape only on frames with bold. Config text_glow_regular_weight, default on.
-		- Verified: turning it off changes only pixels around bold runs.
+		- Verified: turning it off changes only the area around bold runs.
 	- ✅ Cursor should have blur if possible (investigate - this may not be possible, especially with the phasing).
 		- Done: possible and done (see the cursor-glow item above). Phasing works because the animation alpha rides the quad colour, which blurs like glyph coverage.
 	- ✅ Provide options for different blur fadeoff ramps. E.g. default gaussian, linear, or "S"-shaped.
