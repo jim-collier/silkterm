@@ -1477,12 +1477,8 @@ impl State {
 			if glow_on {
 				let (cx, cy, cw, ch) = scissor(content_area, sw, sh);
 				pass.set_scissor_rect(cx, cy, cw, ch);
-				self.glow.composite(
-					&self.gfx.queue,
-					&mut pass,
-					glow_intensity,
-					cfg.text_glow_border,
-				);
+				self.glow
+					.composite(&self.gfx.queue, &mut pass, glow_intensity, cfg.text_outline);
 				pass.set_scissor_rect(0, 0, sw, sh);
 			}
 			// cursor above the glow (halo can't obscure it), still under the crisp text

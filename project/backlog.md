@@ -56,9 +56,9 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- 🔘 Config:
-	- "Glow border" -> "Text outline" (change description and config name). Change default value to 2.0.
-	- Glow falloff: Change default to S-curve.
+- ✅ Config:
+	- ✅ "Glow border" -> "Text outline" (change description and config name). Change default value to 2.0. - config key `text_glow_border` renamed to `text_outline` (dialog label "Text outline"), default 2.0; existing configs migrate value-preserving via CONFIG_RENAMES (unit-tested), template + persist + backfill updated.
+	- ✅ Glow falloff: Change default to S-curve. - `text_glow_ramp` default now "s"; resolve maps missing/unknown -> default (S-curve), template shows `# text_glow_ramp = "s"`.
 
 - 🔘 Buttons:
 	- Center text.
