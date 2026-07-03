@@ -371,10 +371,12 @@ struct State {
 	tabs: Tabs,
 	mods: ModifiersState,
 	mouse: (f32, f32),
-	selecting: Option<PaneId>, // pane with an in-progress drag-select
+	mouse_btn: Option<input::MouseBtn>, // button held after a reported press (mouse-tracking apps)
+	mouse_cell: Option<(usize, usize)>, // last cell reported, to de-dupe motion
+	selecting: Option<PaneId>,          // pane with an in-progress drag-select
 	last_click: Option<(Instant, f32, f32)>, // for double-click detection
-	resizing: Option<Vec<bool>>, // split-tree path of the divider being dragged
-	dragging_pane: Option<PaneId>, // pane being drag-reordered (Shift+drag)
+	resizing: Option<Vec<bool>>,        // split-tree path of the divider being dragged
+	dragging_pane: Option<PaneId>,      // pane being drag-reordered (Shift+drag)
 	cursor_icon: CursorIcon,
 	clipboard: Clipboard,
 	last_frame: Instant,
@@ -435,6 +437,102 @@ impl State {
 			self.tabs.cur_mut().focused = id;
 			self.update_title();
 		}
+	}
+
+	// Mouse reporting: forward a button press/release to the pane under the cursor
+	// when the app has mouse tracking on. Shift is the local-action override (so the
+	// user can still select/paste/menu). Returns true when the event was reported
+	// (and should not be handled locally). Records the held button for drag + release.
+	fn report_mouse_button(&mut self, button: MouseButton, pressed: bool) -> bool {
+		let btn = match button {
+			MouseButton::Left => input::MouseBtn::Left,
+			MouseButton::Middle => input::MouseBtn::Middle,
+			MouseButton::Right => input::MouseBtn::Right,
+			_ => return false,
+		};
+		let (x, y) = self.mouse;
+		if pressed {
+			if self.mods.shift_key() {
+				return false;
+			}
+			let cur = self.tabs.cur();
+			let Some(id) = cur.pane_at(x, y) else {
+				return false;
+			};
+			let Some(p) = cur.panes.get(&id) else {
+				return false;
+			};
+			if !input::wants_mouse(p.mode) {
+				return false;
+			}
+			let Some((c, r)) = p.screen_cell_at(x, y, &self.text) else {
+				return false;
+			};
+			if let Some(seq) = input::mouse_report(p.mode, btn, true, false, c, r, self.mods) {
+				p.term.write(seq);
+			}
+			self.mouse_btn = Some(btn);
+			self.mouse_cell = Some((c, r));
+			true
+		} else {
+			// only our business if we owned the matching press
+			if self.mouse_btn.take().is_none() {
+				return false;
+			}
+			let cur = self.tabs.cur();
+			if let Some(p) = cur.pane_at(x, y).and_then(|id| cur.panes.get(&id)) {
+				if input::wants_mouse(p.mode) {
+					if let Some((c, r)) = p.screen_cell_at(x, y, &self.text) {
+						if let Some(seq) =
+							input::mouse_report(p.mode, btn, false, false, c, r, self.mods)
+						{
+							p.term.write(seq);
+						}
+					}
+				}
+			}
+			self.mouse_cell = None;
+			true
+		}
+	}
+
+	// Mouse reporting: forward cursor motion when the app requests it - MOUSE_MOTION
+	// (any move) or MOUSE_DRAG (only while a button is held). De-duped per cell so a
+	// pixel jiggle inside one cell doesn't flood the PTY. Returns true when reported.
+	fn report_mouse_motion(&mut self) -> bool {
+		if self.mods.shift_key() {
+			return false;
+		}
+		let (x, y) = self.mouse;
+		let held = self.mouse_btn;
+		let last = self.mouse_cell;
+		let new_cell = {
+			let cur = self.tabs.cur();
+			let Some(id) = cur.pane_at(x, y) else {
+				return false;
+			};
+			let Some(p) = cur.panes.get(&id) else {
+				return false;
+			};
+			let motion = p.mode.contains(TermMode::MOUSE_MOTION);
+			let drag = p.mode.contains(TermMode::MOUSE_DRAG) && held.is_some();
+			if !(motion || drag) {
+				return false;
+			}
+			let Some((c, r)) = p.screen_cell_at(x, y, &self.text) else {
+				return false;
+			};
+			if last == Some((c, r)) {
+				return false;
+			}
+			let btn = held.unwrap_or(input::MouseBtn::None);
+			if let Some(seq) = input::mouse_report(p.mode, btn, true, true, c, r, self.mods) {
+				p.term.write(seq);
+			}
+			(c, r)
+		};
+		self.mouse_cell = Some(new_cell);
+		true
 	}
 
 	// Copy-output: when the focused pane's foreground command finishes, copy its
@@ -2083,6 +2181,8 @@ impl ApplicationHandler<UserEvent> for App {
 			tabs: Tabs { list, active: 0 },
 			mods: ModifiersState::empty(),
 			mouse: (0.0, 0.0),
+			mouse_btn: None,
+			mouse_cell: None,
 			selecting: None,
 			last_click: None,
 			resizing: None,
@@ -2228,6 +2328,12 @@ impl ApplicationHandler<UserEvent> for App {
 			WindowEvent::CursorMoved { position, .. } => {
 				state.mouse = (position.x as f32, position.y as f32);
 				let (x, y) = state.mouse;
+				// mouse-tracking app wants motion/drag reports; when it does, skip our
+				// local hover/selection handling for this move
+				if state.report_mouse_motion() {
+					state.dirty = true;
+					return;
+				}
 				// hovering a different top-level title with a bar menu open
 				// switches to it (standard menu-bar behaviour)
 				if state.bar_open.is_some() && y < state.menu_bar_h() {
@@ -2326,6 +2432,12 @@ impl ApplicationHandler<UserEvent> for App {
 						state.update_title();
 						state.dirty = true;
 					}
+					return;
+				}
+				// mouse-tracking app owns the pointer: report the press, skip local
+				// selection/paste/menu (Shift bypasses to the local action)
+				if state.report_mouse_button(button, true) {
+					state.dirty = true;
 					return;
 				}
 				match button {
@@ -2430,6 +2542,17 @@ impl ApplicationHandler<UserEvent> for App {
 				}
 			}
 
+			// a mouse-tracking app owns the pointer: report the release we opened
+			WindowEvent::MouseInput {
+				state: ElementState::Released,
+				button,
+				..
+			} if state.mouse_btn.is_some() => {
+				if state.report_mouse_button(button, false) {
+					state.dirty = true;
+				}
+			}
+
 			WindowEvent::MouseInput {
 				state: ElementState::Released,
 				button: MouseButton::Left,
@@ -2474,6 +2597,40 @@ impl ApplicationHandler<UserEvent> for App {
 					.pane_at(x, y)
 					.unwrap_or(state.tabs.cur().focused);
 				let cell_h = state.text.cell_h;
+				// A mouse-tracking app (muffer, tmux, vim with mouse on, ...) wants
+				// the wheel as button 64/65 reports, not our scrollback. Shift is the
+				// local-scroll override. Report one notch per line, then stop here.
+				if !state.mods.shift_key() {
+					let (up, notches) = match delta {
+						MouseScrollDelta::LineDelta(_, y) => {
+							(y > 0.0, (y.abs().round() as u32).max(1))
+						}
+						MouseScrollDelta::PixelDelta(p) => (
+							(p.y as f32) > 0.0,
+							((p.y.abs() as f32 / cell_h).round() as u32).max(1),
+						),
+					};
+					if let Some(p) = state.tabs.cur().panes.get(&id) {
+						if input::wants_mouse(p.mode) {
+							if let Some((c, r)) = p.screen_cell_at(x, y, &state.text) {
+								let btn = if up {
+									input::MouseBtn::WheelUp
+								} else {
+									input::MouseBtn::WheelDown
+								};
+								for _ in 0..notches.min(8) {
+									if let Some(seq) = input::mouse_report(
+										p.mode, btn, true, false, c, r, state.mods,
+									) {
+										p.term.write(seq);
+									}
+								}
+							}
+							state.dirty = true;
+							return;
+						}
+					}
+				}
 				// smooth scrollback uses WHEEL_LINES; full-screen apps get their
 				// own (tunable) lines-per-notch via ALT_SCROLL_LINES
 				let (lines, alt_lines) = match delta {
