@@ -123,6 +123,12 @@ pub struct PaneDraw {
 	pub top: f32,
 	pub bg: Vec<RectInstance>,
 	pub cursor: Option<RectInstance>,
+	// Region-aware app-scroll slide: while the scroll region is sliding, a static
+	// bottom status/input band stays put. Some((static_top, split_y)) tells the
+	// renderer to draw the text buffer twice - the scroll region shifted (clipped
+	// above split_y) and the band unshifted at static_top (clipped below). None =
+	// no split (whole pane rendered at `top`, the common case).
+	pub split: Option<(f32, f32)>,
 }
 
 pub struct Pane {
@@ -138,10 +144,13 @@ pub struct Pane {
 	command: Option<Vec<String>>,
 	last_draw: PaneDraw,
 	last_history: usize,
-	// On-screen row fingerprints from the last build, used only once the
-	// scrollback buffer is full (history_size flatlines) to detect that output
-	// still scrolled the viewport. See the output-easing note in build().
+	// On-screen row fingerprints from the last build, used to detect a scrolled
+	// viewport once the scrollback buffer is full (output easing) and to detect an
+	// alt-screen app's repaint-scroll (app-scroll easing). See build().
 	last_rows: Vec<u64>,
+	// Rows of static bottom band (status/input line) that must NOT slide during the
+	// current alt-screen app-scroll ease. Captured when a scroll is detected.
+	slide_static: usize,
 	// Fallback glyphs (not in the primary mono font) pulled out of `buffer` and
 	// drawn one-per-cell so their font advance can't shift the row. `glyph_bufs`
 	// is a reused pool; `glyphs` holds (x, y, color, scale) for the first N of
@@ -274,10 +283,17 @@ impl Pane {
 				rows.push(h);
 			}
 			let sh = scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX);
-			self.last_rows = rows;
 			if sh != 0 {
+				// count the unchanged rows at the bottom - the fixed status/input
+				// band that must not slide with the scrolling region above it
+				let mut sb = 0;
+				while sb < lines && rows[lines - 1 - sb] == self.last_rows[lines - 1 - sb] {
+					sb += 1;
+				}
+				self.slide_static = sb;
 				self.scroll.app_scroll(sh as f32);
 			}
+			self.last_rows = rows;
 		}
 
 		// snap the integer grid offset to the floor of the smooth position
@@ -291,13 +307,39 @@ impl Pane {
 		let frac = self.scroll.frac();
 		// alt-screen slide rides on top of the fractional scrollback offset (which
 		// is 0 on the alt screen); + shifts content down, revealing bg at the top.
-		let voff = frac + self.scroll.app_offset();
+		let app_off = self.scroll.app_offset();
+		let voff = frac + app_off;
+		// Region-aware slide: the scrolling region (top) shifts by voff while a
+		// static bottom band (status/input line) stays at its fractional-only
+		// position. `split_row` is the first screen row of that band; rows at/below
+		// it get `frac` not `voff`. No band (or no active slide) => whole pane at voff.
+		let static_rows = if app_off != 0.0 {
+			self.slide_static.min(lines)
+		} else {
+			0
+		};
+		let split_row = (lines - static_rows) as i32;
+		let voff_of = |sr: i32| {
+			if static_rows > 0 && sr >= split_row {
+				frac
+			} else {
+				voff
+			}
+		};
 		let d = desired as i32;
 		let hist = history as i32;
 		// fractional scroll shifts content DOWN by frac of a cell; we render an
 		// extra row above (screen row -1) so the revealed strip is filled.
-		let y_of = |sr: i32| self.rect.y + margin + (sr as f32 + voff) * cell_h;
+		let y_of = |sr: i32| self.rect.y + margin + (sr as f32 + voff_of(sr)) * cell_h;
 		let top = y_of(-1);
+		// the two-area split (text is one buffer; the band re-draws unshifted)
+		let split = if static_rows > 0 {
+			let static_top = self.rect.y + margin + (-1.0 + frac) * cell_h;
+			let split_y = self.rect.y + margin + (split_row as f32 + frac) * cell_h;
+			Some((static_top, split_y))
+		} else {
+			None
+		};
 
 		// Cursor position/shape as plain values (no lasting borrow of the lock), so
 		// the fast path below can drop the term lock immediately.
@@ -330,7 +372,14 @@ impl Pane {
 				s.cursor,
 			);
 			let bg = std::mem::take(&mut self.last_draw.bg);
-			self.last_draw = PaneDraw { top, bg, cursor };
+			// the fast path is a pure cursor frame - never taken while a slide eases
+			// (that forces a rebuild), so there is never a split here
+			self.last_draw = PaneDraw {
+				top,
+				bg,
+				cursor,
+				split: None,
+			};
 			return self.last_draw.clone();
 		}
 		self.text_built = true;
@@ -463,7 +512,7 @@ impl Pane {
 			cell_w,
 			cell_h,
 			margin,
-			frac,
+			voff_of(cursor_pt.line.0 + d),
 			dt,
 			s.cursor,
 		);
@@ -539,12 +588,18 @@ impl Pane {
 			let scale = if ink_w > target { target / ink_w } else { 1.0 };
 			let cell_x = content_x + c as f32 * cell_w;
 			let x = cell_x + (target - ink_w * scale) / 2.0 - ink_off * scale;
-			let y = rect_y + margin + (sr as f32 + voff) * cell_h + cell_h * (1.0 - scale) / 2.0;
+			let y =
+				rect_y + margin + (sr as f32 + voff_of(sr)) * cell_h + cell_h * (1.0 - scale) / 2.0;
 			self.glyphs
 				.push((x, y, GColor::rgb(color[0], color[1], color[2]), scale));
 		}
 
-		self.last_draw = PaneDraw { top, bg, cursor };
+		self.last_draw = PaneDraw {
+			top,
+			bg,
+			cursor,
+			split,
+		};
 		self.last_draw.clone()
 	}
 
@@ -681,6 +736,20 @@ impl Pane {
 		area
 	}
 
+	// glow_text_area with the band clip of text_area_band (see there).
+	pub fn glow_text_area_band<'a>(
+		&'a self,
+		top: f32,
+		margin: f32,
+		clip_top: f32,
+		clip_bottom: f32,
+	) -> TextArea<'a> {
+		let mut area = self.glow_text_area(top, margin);
+		area.bounds.top = area.bounds.top.max(clip_top as i32);
+		area.bounds.bottom = area.bounds.bottom.min(clip_bottom as i32);
+		area
+	}
+
 	pub fn text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
 		TextArea {
 			buffer: &self.buffer,
@@ -701,6 +770,23 @@ impl Pane {
 			),
 			custom_glyphs: &[],
 		}
+	}
+
+	// Same buffer as text_area, positioned at `top`, but with its vertical clip
+	// narrowed to [clip_top, clip_bottom]. Used by the region-aware app-scroll
+	// slide to draw the buffer twice: the scroll region shifted (clipped above the
+	// split) and the static band unshifted (clipped below it).
+	pub fn text_area_band<'a>(
+		&'a self,
+		top: f32,
+		margin: f32,
+		clip_top: f32,
+		clip_bottom: f32,
+	) -> TextArea<'a> {
+		let mut a = self.text_area(top, margin);
+		a.bounds.top = a.bounds.top.max(clip_top as i32);
+		a.bounds.bottom = a.bounds.bottom.min(clip_bottom as i32);
+		a
 	}
 
 	// Per-cell fallback glyphs, already positioned (see Pane::build). Drawn in
@@ -1115,9 +1201,11 @@ fn spawn_pane(
 			top: rect.y,
 			bg: Vec::new(),
 			cursor: None,
+			split: None,
 		},
 		last_history: 0,
 		last_rows: Vec::new(),
+		slide_static: 0,
 		glyph_bufs: Vec::new(),
 		glyphs: Vec::new(),
 		glow_buf: None,
