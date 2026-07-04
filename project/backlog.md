@@ -74,6 +74,10 @@ In each section, items are listed approximately from newest to oldest.
 	- 🛠️ muffer now scrolls smoothly on output - but still not mouse wheel.
 		- Cause: a wheel notch makes the app repaint a bigger jump than line-by-line output, over the 8-line detection window, so it was seen as "not a clean scroll" and hard-cut. Raised the window/slide cap to 24 (experimental, gated by `smooth_scroll_apps`, revert = the one commit or turn the flag off).
 		- Limit: the slide retains only the single previous frame, so fast wheeling can still lag ~one step (looks like snapping). Smoothing that fully needs retaining more frames - a bigger change. Feel-test the cap first.
+	- 🛠️ Static-top-band fix (nano/muffer wheel = no change; less fine). Dogfood: the cap-24 bump didn't help nano or muffer on the wheel (muffer wheels 1 line/notch, well inside the window - so it was never a cap problem).
+		- Cause: the detector matched a line-shift only as a run anchored at the TOP row, and the renderer slid the whole pane from its top. `less` fills from the top with only a bottom status line, so both worked. `nano`/`muffer` keep a static title bar at the TOP: its unchanging row 0 broke the top-anchored match (detector returned 0 -> hard cut), and even if detected the title would slide/bounce.
+		- Fixed: `scroll_shift_signed` now finds the k where the most rows translate ANYWHERE (tolerates static bands at both ends), guarded by a "rows actually moved" count so a static/blank field can't false-trigger; `build` counts a static TOP band (mirror of the bottom one); the slide renders the scroll region between `top_split_y` and `split_y` with the top title bar redrawn unshifted. No-band apps (less/vim) are byte-identical (top_split_y = f32::MIN). App-scroll is alt-screen-only, so apt is unaffected.
+		- Feel-test on hardware: nano + muffer wheel one notch should ease, not snap; the title bar must stay put (no bounce); less must be unchanged. Still gated by `smooth_scroll_apps`.
 
 - 🔘 Inverted text (e.g. Nano headers) is thin and hard-to-read.
 
@@ -106,6 +110,8 @@ In each section, items are listed approximately from newest to oldest.
 	- Resolution: leave open until confirmed on long-running terminals.
 
 ### New features and enhancements
+
+- 🔘 Ctrl+Shift+N: New window on same directory.
 
 - 🔘 Tabs: Include a subtle 'X' icon in right edge of tab, to close with mouse.
 
@@ -393,8 +399,8 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - Bugs
 
-- ✅ Mouse-scroll doesn't work in muffer (running inside SilkTerm). (20260703)
-	- Cause: SilkTerm implemented no mouse reporting at all - clicks, motion, and wheel were only handled locally, never encoded to the PTY. So when an app turns on mouse tracking (DECSET 1000/1002/1003, e.g. muffer enabling it to receive wheel events), it got nothing and its scroll did nothing; the wheel just drove SilkTerm's own scrollback.
+- ✅ Mouse-scroll doesn't work in Muffer (running inside SilkTerm). (20260703)
+	- Cause: SilkTerm implemented no mouse reporting at all - clicks, motion, and wheel were only handled locally, never encoded to the PTY. So when an app turns on mouse tracking (DECSET 1000/1002/1003, e.g. Muffer enabling it to receive wheel events), it got nothing and its scroll did nothing; the wheel just drove SilkTerm's own scrollback.
 	- Done: added standard mouse reporting (`input::mouse_report`, SGR 1006 + legacy X10). When the focused pane has tracking on, wheel reports as button 64/65, and clicks/release/drag/motion report too; Shift is the local-action override (select/paste/menu/scrollback still work). Wheel sends one notch-event per line (capped), de-duped motion per cell.
 	- Verified: unit tests cover the SGR + X10 encodings, wheel, modifiers, and the no-tracking case; live-verify by scrolling in a mouse-tracking app.
 

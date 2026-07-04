@@ -130,19 +130,22 @@ pub struct PaneDraw {
 }
 
 // One frame of an easing app-scroll slide. The current frame renders at
-// `PaneDraw.top` (the scroll region, clipped above `split_y`); the previous
-// frame renders at `prev_top` clipped to `[prev_clip_t, prev_clip_b]` (just the
-// revealed strip, so its static band can't ghost into the scroll region); and a
-// fixed bottom band (status/input line), when `has_band`, redraws unshifted at
-// `band_top` below `split_y`.
+// `PaneDraw.top`, clipped to the scroll region `[top_split_y, split_y]`; the
+// previous frame renders at `prev_top` clipped to `[prev_clip_t, prev_clip_b]`
+// (just the revealed strip, so its bands can't ghost into the scroll region); and
+// the fixed bands - a bottom status/input line (`has_band`, below `split_y`) and a
+// top title bar (`has_top_band`, above `top_split_y`) - redraw unshifted at
+// `band_top`. `top_split_y` is f32::MIN when there's no top band (open clip).
 #[derive(Clone)]
 pub struct Slide {
 	pub prev_top: f32,
 	pub prev_clip_t: f32,
 	pub prev_clip_b: f32,
+	pub top_split_y: f32,
 	pub split_y: f32,
 	pub band_top: f32,
 	pub has_band: bool,
+	pub has_top_band: bool,
 }
 
 pub struct Pane {
@@ -170,6 +173,9 @@ pub struct Pane {
 	// Rows of static bottom band (status/input line) that must NOT slide during the
 	// current alt-screen app-scroll ease. Captured when a scroll is detected.
 	slide_static: usize,
+	// Rows of static TOP band (title bar - nano, muffer) that must NOT slide, the
+	// mirror of slide_static. The scrolling region is between the two bands.
+	slide_static_top: usize,
 	// Shift (signed lines) of the retained prev_buffer relative to the current
 	// frame, set when a scroll step is detected. Positions prev_buffer for the
 	// slide (prev is at rest when app_off == slide_sh, slid fully out at app_off 0).
@@ -314,7 +320,18 @@ impl Pane {
 				while sb < lines && rows[lines - 1 - sb] == self.last_rows[lines - 1 - sb] {
 					sb += 1;
 				}
+				// and the unchanged rows at the top - a fixed title bar (nano, muffer)
+				let mut st = 0;
+				while st < lines && rows[st] == self.last_rows[st] {
+					st += 1;
+				}
+				// never let the two bands overlap or swallow the whole screen
+				if st + sb >= lines {
+					st = 0;
+					sb = 0;
+				}
 				self.slide_static = sb;
+				self.slide_static_top = st;
 				self.slide_sh = sh as f32;
 				self.scroll.app_scroll(sh as f32);
 				capture_prev = true; // this frame's outgoing content becomes prev_buffer
@@ -335,18 +352,25 @@ impl Pane {
 		// is 0 on the alt screen); + shifts content down, revealing bg at the top.
 		let app_off = self.scroll.app_offset();
 		let voff = frac + app_off;
-		// Region-aware slide: the scrolling region (top) shifts by voff while a
-		// static bottom band (status/input line) stays at its fractional-only
-		// position. `split_row` is the first screen row of that band; rows at/below
-		// it get `frac` not `voff`. No band (or no active slide) => whole pane at voff.
+		// Region-aware slide: only the middle scroll region shifts by voff; a static
+		// bottom band (status/input line) and a static top band (title bar) hold their
+		// fractional-only position. `split_row` is the first row of the bottom band;
+		// `top_split_row` is the first row of the scroll region (just below the title).
+		// No bands (or no active slide) => whole pane at voff.
 		let static_rows = if app_off != 0.0 {
 			self.slide_static.min(lines)
 		} else {
 			0
 		};
+		let static_top = if app_off != 0.0 {
+			self.slide_static_top.min(lines.saturating_sub(static_rows))
+		} else {
+			0
+		};
 		let split_row = (lines - static_rows) as i32;
+		let top_split_row = static_top as i32;
 		let voff_of = |sr: i32| {
-			if static_rows > 0 && sr >= split_row {
+			if (static_top > 0 && sr < top_split_row) || (static_rows > 0 && sr >= split_row) {
 				frac
 			} else {
 				voff
@@ -357,18 +381,26 @@ impl Pane {
 		// fractional scroll shifts content DOWN by frac of a cell; we render an
 		// extra row above (screen row -1) so the revealed strip is filled.
 		let y_of = |sr: i32| self.rect.y + margin + (sr as f32 + voff_of(sr)) * cell_h;
-		let top = y_of(-1);
+		// The scroll-region draw origin is always the SHIFTED position, independent of
+		// the bands (which are redrawn unshifted at band_top); grid elements use y_of.
+		let top = self.rect.y + margin + (-1.0 + voff) * cell_h;
 		// Retained-frame slide geometry (only while app_off is easing). The current
-		// frame draws at `top` (scroll region, clipped above split_y); prev_buffer
-		// fills the strip the shift reveals - above the content when sliding down
-		// (app_off > 0), below it when sliding up. Clip prev to just that strip so
-		// its own static band can't ghost into the scrolling region.
+		// frame draws at `top` (scroll region, clipped to [top_split_y, split_y]);
+		// prev_buffer fills the strip the shift reveals - above the content when
+		// sliding down (app_off > 0), below it when sliding up. Clip prev to just that
+		// strip so its own bands can't ghost into the scrolling region.
 		let slide = if app_off != 0.0 {
-			// split_y bounds the scroll region; a static bottom band (if any) is below
+			// split_y bounds the scroll region below; top_split_y bounds it above (a
+			// static top band sits above it; f32::MIN = no band, so the clip is open).
 			let split_y = if static_rows > 0 {
 				self.rect.y + margin + (split_row as f32 + frac) * cell_h
 			} else {
 				self.rect.y + self.rect.h
+			};
+			let top_split_y = if static_top > 0 {
+				self.rect.y + margin + (top_split_row as f32 + frac) * cell_h
+			} else {
+				f32::MIN
 			};
 			let band_top = self.rect.y + margin + (-1.0 + frac) * cell_h;
 			// prev sits `slide_sh` behind the current frame; at app_off == slide_sh
@@ -376,8 +408,12 @@ impl Pane {
 			let voff_prev = frac + app_off - self.slide_sh;
 			let prev_top = self.rect.y + margin + (-1.0 + voff_prev) * cell_h;
 			let (prev_clip_t, prev_clip_b) = if app_off > 0.0 {
-				// down-slide: strip above the current content's first row (screen 0)
-				(f32::MIN, self.rect.y + margin + voff * cell_h)
+				// down-slide: strip between the top band and the current content's first
+				// scroll row (top_split_row); top_split_y == MIN keeps the no-band case
+				(
+					top_split_y,
+					self.rect.y + margin + (top_split_row as f32 + voff) * cell_h,
+				)
 			} else {
 				// up-slide: strip below the current scroll region's last row
 				(
@@ -389,9 +425,11 @@ impl Pane {
 				prev_top,
 				prev_clip_t,
 				prev_clip_b,
+				top_split_y,
 				split_y,
 				band_top,
 				has_band: static_rows > 0,
+				has_top_band: static_top > 0,
 			})
 		} else {
 			None
@@ -1290,6 +1328,7 @@ fn spawn_pane(
 		last_history: 0,
 		last_rows: Vec::new(),
 		slide_static: 0,
+		slide_static_top: 0,
 		slide_sh: 0.0,
 		glyph_bufs: Vec::new(),
 		glyphs: Vec::new(),
@@ -1749,37 +1788,55 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
 // Signed sibling of scroll_shift for alt-screen app-scroll easing: detect a clean
 // vertical translate between two frames, in either direction, up to `max` lines.
 // +k = scrolled forward (content moved up k rows), -k = scrolled back (down k).
-// Matches only a TOP PREFIX of rows, not the full height: real full-screen apps
-// (less, vim, muffer) keep a static status/input band at the bottom that never
-// scrolls, so a whole-height match would never fire. A shift counts only if a
-// solid majority of rows translate cleanly; otherwise 0 (in-place redraw, content
-// change, or a jump bigger than `max`) and the caller hard-cuts. It never guesses
-// a full turnover the way scroll_shift does - easing a non-scroll looks wrong.
+// Real full-screen apps keep static chrome bands - a status/input line at the
+// BOTTOM (less, vim) and often a title bar at the TOP (nano, muffer) - so the
+// scrolling region is a middle block, not a top prefix. We therefore count, for
+// each candidate k, how many rows translate cleanly ANYWHERE (cur[i]==last[i+k]),
+// and pick the k with the most. A shift counts only if a solid block translates
+// (>= `need`) AND enough of those rows actually MOVED (cur[i]!=last[i], >= MOVED_MIN)
+// - a static or blank field matches positionally but hasn't scrolled, and easing
+// that produces the apt/blank-jitter bounce. Otherwise 0 (in-place redraw, content
+// change, or a jump bigger than `max`) and the caller hard-cuts. 64-bit row
+// fingerprints make a coincidental non-translation match vanishingly unlikely, so
+// no contiguity check is needed. It never guesses a full turnover the way
+// scroll_shift does - easing a non-scroll looks wrong.
+const MOVED_MIN: usize = 3; // a real scroll must move at least this many rows
 fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
 	let n = cur.len();
 	if n == 0 || last.len() != n {
 		return 0;
 	}
-	let need = (n / 2).max(3); // require most of the screen to translate as one block
+	// a quarter of the screen, since static top+bottom bands shrink the middle
+	let need = (n / 4).max(3);
 	let lim = max.min(n - 1);
-	let (mut best, mut best_run) = (0i32, 0usize);
+	let (mut best, mut best_score) = (0i32, 0usize);
 	for k in 1..=lim {
-		// forward: cur[i] == last[i+k] across a run down from the top
-		let mut p = 0;
-		while p < n - k && cur[p] == last[p + k] {
-			p += 1;
+		// forward: content moved up k rows -> cur[i] == last[i+k]
+		let (mut m, mut mv) = (0usize, 0usize);
+		for i in 0..n - k {
+			if cur[i] == last[i + k] {
+				m += 1;
+				if cur[i] != last[i] {
+					mv += 1;
+				}
+			}
 		}
-		if p >= need && p > best_run {
-			best_run = p;
+		if m >= need && mv >= MOVED_MIN && m > best_score {
+			best_score = m;
 			best = k as i32;
 		}
-		// backward: cur[i+k] == last[i] (content slid down)
-		let mut q = 0;
-		while q < n - k && cur[q + k] == last[q] {
-			q += 1;
+		// backward: content moved down k rows -> cur[i+k] == last[i]
+		let (mut m, mut mv) = (0usize, 0usize);
+		for i in 0..n - k {
+			if cur[i + k] == last[i] {
+				m += 1;
+				if cur[i + k] != last[i + k] {
+					mv += 1;
+				}
+			}
 		}
-		if q >= need && q > best_run {
-			best_run = q;
+		if m >= need && mv >= MOVED_MIN && m > best_score {
+			best_score = m;
 			best = -(k as i32);
 		}
 	}
@@ -2075,11 +2132,30 @@ mod tests {
 		assert_eq!(scroll_shift_signed(&[60, 70, 80, 90, 99], &last, 8), 0);
 		// a jump bigger than max is not eased
 		assert_eq!(scroll_shift_signed(&fwd, &last, 1), 0);
-		// real-app shape: the top scrolls but a static status/input band at the
-		// bottom stays put - the prefix still matches, so it's detected
+		// real-app shape: the middle scrolls but a static status/input band at the
+		// bottom stays put - the middle block still translates, so it's detected
 		let last_s = [10u64, 20, 30, 40, 900, 901];
 		let cur_s = [20u64, 30, 40, 50, 900, 901];
 		assert_eq!(scroll_shift_signed(&cur_s, &last_s, 8), 1);
+	}
+
+	#[test]
+	fn signed_shift_tolerates_static_top_band_and_rejects_static_fields() {
+		// nano/muffer shape: a static title bar at the TOP and a status band at the
+		// BOTTOM, with the middle region scrolling up by 1. The old top-anchored
+		// matcher returned 0 here (row 0 never moved); the block matcher detects it.
+		let last = [700u64, 701, 10, 20, 30, 40, 900, 901];
+		let cur = [700u64, 701, 20, 30, 40, 50, 900, 901];
+		assert_eq!(scroll_shift_signed(&cur, &last, 8), 1);
+		// backward (middle slid down 1) with the same static bands
+		let back = [700u64, 701, 5, 10, 20, 30, 900, 901];
+		assert_eq!(scroll_shift_signed(&back, &last, 8), -1);
+		// a large static/blank field matches positionally but hasn't MOVED - must not
+		// be read as a scroll (this is the apt/blank-jitter guard). Here rows 1..6 are
+		// all identical (a blank band); only row 0 changed, in place. No real scroll.
+		let bl_last = [1u64, 5, 5, 5, 5, 5, 5, 9];
+		let bl_cur = [2u64, 5, 5, 5, 5, 5, 5, 9];
+		assert_eq!(scroll_shift_signed(&bl_cur, &bl_last, 8), 0);
 	}
 
 	#[test]

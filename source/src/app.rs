@@ -1401,7 +1401,7 @@ impl State {
 		let mut areas: Vec<TextArea> = Vec::new();
 		for p in self.tabs.cur().panes.values() {
 			// retained-frame slide: fill the revealed strip from the previous frame,
-			// draw the current scroll region over it, then the static band unshifted
+			// draw the current scroll region over it, then the static bands unshifted
 			match &slides[&p.id] {
 				Some(sl) => {
 					areas.push(p.prev_text_area_band(
@@ -1410,7 +1410,10 @@ impl State {
 						sl.prev_clip_t,
 						sl.prev_clip_b,
 					));
-					areas.push(p.text_area_band(tops[&p.id], margin, f32::MIN, sl.split_y));
+					areas.push(p.text_area_band(tops[&p.id], margin, sl.top_split_y, sl.split_y));
+					if sl.has_top_band {
+						areas.push(p.text_area_band(sl.band_top, margin, f32::MIN, sl.top_split_y));
+					}
 					if sl.has_band {
 						areas.push(p.text_area_band(sl.band_top, margin, sl.split_y, f32::MAX));
 					}
@@ -1502,9 +1505,17 @@ impl State {
 						glow_areas.push(p.glow_text_area_band(
 							tops[&p.id],
 							margin,
-							f32::MIN,
+							sl.top_split_y,
 							sl.split_y,
 						));
+						if sl.has_top_band {
+							glow_areas.push(p.glow_text_area_band(
+								sl.band_top,
+								margin,
+								f32::MIN,
+								sl.top_split_y,
+							));
+						}
 						if sl.has_band {
 							glow_areas.push(p.glow_text_area_band(
 								sl.band_top,
