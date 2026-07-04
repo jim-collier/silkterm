@@ -47,12 +47,11 @@
 
 <!-- TOC -->
 
-- [Screenshots](#screenshots)
+- [Features](#features)
 - [Why?](#why)
 	- [Why smooth-scrolling output](#why-smooth-scrolling-output)
 	- [Why text outer glow](#why-text-outer-glow)
-- [Features](#features)
-	- [One minor limitation inherent to all terminals](#one-minor-limitation-inherent-to-all-terminals)
+- [Screenshots](#screenshots)
 - [Configuration](#configuration)
 - [Installing](#installing)
 - [Building from source](#building-from-source)
@@ -61,27 +60,61 @@
 
 <!-- /TOC -->
 
-## Screenshots
+## Features
 
-<div align="center">
+- **Smooth pixel-at-a-time scrolling on terminal output**.
 
-<table style="border: none; border-collapse: collapse;">
-	<tr style="border: none;">
-		<td width="50%" style="border: none;"><a href="assets/screenshots/large/01-shell.png"><img src="assets/screenshots/01-shell.png" width="100%" alt="Smooth-scrolling shell session"/></a><br /><sub>Smooth-scrolling shell session</sub></td>
-		<td width="50%" style="border: none;"><a href="assets/screenshots/large/02-splits.png"><img src="assets/screenshots/02-splits.png" width="100%" alt="Split panes"/></a><br /><sub>Split panes</sub></td>
-	</tr>
-	<tr style="border: none;">
-		<td width="50%" style="border: none;"><a href="assets/screenshots/large/03-glow.png"><img src="assets/screenshots/03-glow.png" width="100%" alt="Transparency, background image and text glow"/></a><br /><sub>Transparency, background image &amp; text glow</sub></td>
-		<td width="50%" style="border: none;"><a href="assets/screenshots/large/04-tabs.png"><img src="assets/screenshots/04-tabs.png" width="100%" alt="Tabs, 24-bit colour and Unicode"/></a><br /><sub>Tabs, 24-bit colour &amp; Unicode</sub></td>
-	</tr>
-	<tr style="border: none;">
-		<td colspan="2" align="center" style="border: none;"><a href="assets/screenshots/large/05-settings.png"><img src="assets/screenshots/05-settings.png" width="50%" alt="Built-in settings dialog"/></a><br /><sub>Built-in settings</sub></td>
-	</tr>
-</table>
+	- Automatically speeds up for fast-scrolling output.
+		- *The lack of this ability is what killed smooth scrolling for remote UNIX terminals in the late-80s/early-90s*.
+	- You *have* to see how gorgeous it looks on a high-refresh rate monitor. No animated gif reproduction can do it justice.
 
-<sub>Click any shot for the full-resolution image.</sub>
+- **Smooth mouse wheel scrolling**. Several other terminals offer this feature.
 
-</div>
+- **Smooth cursor movement**. This is the cherry on top of "smooth".
+
+- **Outer glow behind text**. This optional feature helps keep text readable even when the text is on top of similar-colored backgrounds and/or when using high background transparency. This is the only known terminal to offer it, though there are several terminals that offer angled *drop-shadow* (which ironically can make text *harder* to read). Outer glow is conceptually similar - but enhances, rather than reduces, readability.
+
+- **Cursor size and animation options**. Phased blinking, or smoothly pulsing in size. (Or just regular.) Adjustable rate.
+
+- **Background transparency**. The background (with adjustable %) becomes see-through, but not the text.
+
+- **Background transparency blur**. If using background transparency and this is enabled, everything behind the terminal is blurred. Supported on most window compositors. (But limited to the compositor's options. SilkTerm just talks to the WM to enable it.)
+
+- **User-selectable background image**. User-selectable, with a few dozen cool offerings included.
+
+	- The background image can be dimmed with adjustable %, relative to the background color - and independent of main background transparency.
+
+- **Background image blur**: With an optional Gaussian blur radius (without altering the source image), also independent of transparency blur.
+
+- **Split panes**: A native feature to arbitrarily split any pane in either direction. Panes can be freely drag-n-dropped to change locations. Panes split in successive directions are automatically evenly distributed, unless adjusted (with the mouse).
+
+- **Window decorations and/or the menu can be disabled**, for "nothing but terminal". Fullscreen can also be toggled.
+
+- **Robust Unicode and emoji support**. With internal Unicode fallback rendering for the glyphs that the chosen display font can't display.
+
+- **Text brightens on "bell"**. (An idea borrowed from Windows Terminal, surely other as well.)
+
+- **True-color, 256-color, and 16-color text support, as well as standard bold & italic**.
+
+- **Read-only output toggle**.
+
+- **Simple and sane configuration**. No pages of nested tabs representing multiple settings metaphors. (E.g. no separate "Profiles" and "Layouts".) If you want to get fancy with multiple sets of wildly different options - that's easy with alternate config files, and/or scripted launch-time arguments.
+
+- **Rich command-line syntax**: A simple yet (optionally) insanely powerful CLI syntax, that allows creating multiple tabs and/or complex pane structure(s) at launch time.
+
+	- This can be very useful for creating one-line shell scripts that launch custom SilkTerm instances with specific size, background, color, opacity, text and cursor style, and unique shells per window, tab, and/or pane. (Without overwriting the main config file.)
+
+- **Arbitrary alternate config files**, another way to launch SilkTerm with wildly different options, without overwriting the main config file.
+
+- **Written in Rust** for minimum executable size, no runtime dependencies, and maximum speed. (Several terminal emulators - such as the revered `terminator` - are written in interpreted Python.)
+
+- **One codebase for Linux + Windows, both with x86_64 and ARM builds**. The Window and/or ARM versions can be built all at once on x86_64 Linux. *MacOS is built natively on a Mac from the same codebase, but is so far untested (no releases target it yet)*.
+
+- **Loosely based on [Alacritty](https://github.com/alacritty/alacritty)** (not a fork), just for the basement plumbing - to avoid rewriting the complex but solved problems of terminal emulation. Alacritty is also a high-performance, open-source terminal written in Rust.
+
+	- *Fun fact: SilkTerm has more lines of code than Alacritty, especially compared to the subset we use. Which is part of why we chose it for the bare guts without reinventing a thoroughly-and-repeatedly-invented wheel.*
+
+- **GPU-accelerated** with software fallback.
 
 ## Why?
 
@@ -132,69 +165,27 @@ Text can be particularly hard to read, for example when using light text on a no
 
 "Outer glow" - or similar techniques by other names (and distinctly *not* angled "drop-shadow") - is used often in graphic design and advertising to aid readability on backgrounds of varying brightness and color. (And some closed-captioning systems use it as an alternative to black bars as a background.)
 
-## Features
+## Screenshots
 
-- **Smooth pixel-at-a-time scrolling on terminal output**.
+<div align="center">
 
-	- *You HAVE to see how gorgeous it looks on a high-refresh rate monitor. No animated gif reproduction can do it justice*.
+<table style="border: none; border-collapse: collapse;">
+	<tr style="border: none;">
+		<td width="50%" style="border: none;"><a href="assets/screenshots/large/01-shell.png"><img src="assets/screenshots/01-shell.png" width="100%" alt="Smooth-scrolling shell session"/></a><br /><sub>Smooth-scrolling shell session</sub></td>
+		<td width="50%" style="border: none;"><a href="assets/screenshots/large/02-splits.png"><img src="assets/screenshots/02-splits.png" width="100%" alt="Split panes"/></a><br /><sub>Split panes</sub></td>
+	</tr>
+	<tr style="border: none;">
+		<td width="50%" style="border: none;"><a href="assets/screenshots/large/03-glow.png"><img src="assets/screenshots/03-glow.png" width="100%" alt="Transparency, background image and text glow"/></a><br /><sub>Transparency, background image &amp; text glow</sub></td>
+		<td width="50%" style="border: none;"><a href="assets/screenshots/large/04-tabs.png"><img src="assets/screenshots/04-tabs.png" width="100%" alt="Tabs, 24-bit colour and Unicode"/></a><br /><sub>Tabs, 24-bit colour &amp; Unicode</sub></td>
+	</tr>
+	<tr style="border: none;">
+		<td colspan="2" align="center" style="border: none;"><a href="assets/screenshots/large/05-settings.png"><img src="assets/screenshots/05-settings.png" width="50%" alt="Built-in settings dialog"/></a><br /><sub>Built-in settings</sub></td>
+	</tr>
+</table>
 
-- **Smooth mouse wheel scrolling**. Several other terminals offer this feature.
+<sub>Click any shot for the full-resolution image.</sub>
 
-- **Smooth cursor movement**. This is the cherry on top of "smooth".
-
-- **Outer glow behind text**. This optional feature helps keep text readable even when the text is on top of similar-colored backgrounds and/or when using high background transparency. This is the only known terminal to offer it, though there are several terminals that offer angled *drop-shadow* (which ironically can make text *harder* to read). Outer glow is conceptually similar - but enhances, rather than reduces, readability.
-
-- **Cursor size and animation options**. Phased blinking, or smoothly pulsing in size. (Or just regular.) Adjustable rate.
-
-- **Background transparency**. The background (with adjustable %) becomes see-through, but not the text.
-
-- **Background transparency blur**. If using background transparency and this is enabled, everything behind the terminal is blurred. Supported on most window compositors. (But limited to the compositor's options. SilkTerm just talks to the WM to enable it.)
-
-- **User-selectable background image**. User-selectable, with a few dozen cool offerings included.
-
-	- The background image can be dimmed with adjustable %, relative to the background color - and independent of main background transparency.
-
-- **Background image blur**: With an optional Gaussian blur radius (without altering the source image), also independent of transparency blur.
-
-- **Split panes**: A native feature to arbitrarily split any pane in either direction. Panes can be freely drag-n-dropped to change locations. Panes split in successive directions are automatically evenly distributed, unless adjusted (with the mouse).
-
-- **Window decorations and/or the menu can be disabled**, for "nothing but terminal". Fullscreen can also be toggled.
-
-- **Robust Unicode and emoji support**. With internal Unicode fallback rendering for the glyphs that the chosen display font can't display.
-
-- **Text brightens on "bell"**. (An idea borrowed from Windows Terminal, surely other as well.)
-
-- **True-color, 256-color, and 16-color text support, as well as standard bold & italic**.
-
-- **Read-only output toggle**.
-
-- **Simple and sane configuration**. No pages of nested tabs representing multiple settings metaphors. (E.g. no separate "Profiles" and "Layouts".) If you want to get fancy with multiple sets of wildly different options - that's easy with alternate config files, and/or scripted launch-time arguments.
-
-- **Rich command-line syntax**: A simple yet (optionally) insanely powerful CLI syntax, that allows creating multiple tabs and/or complex pane structure(s) at launch time.
-
-	- This can be very useful for creating one-line shell scripts that launch custom SilkTerm instances with specific size, background, color, opacity, text and cursor style, and unique shells per window, tab, and/or pane. (Without overwriting the main config file.)
-
-- **Arbitrary alternate config files**, another way to launch SilkTerm with wildly different options, without overwriting the main config file.
-
-- **Written in Rust** for minimum executable size, no runtime dependencies, and maximum speed. (Several terminal emulators - such as the revered `terminator` - are written in interpreted Python.)
-
-- **One codebase for Linux + Windows, both with x86_64 and ARM builds**. The Window and/or ARM versions can be built all at once on x86_64 Linux. *MacOS is built natively on a Mac from the same codebase, but is so far untested (no releases target it yet)*.
-
-- **Loosely based on [Alacritty](https://github.com/alacritty/alacritty)** (not a fork), just for the basement plumbing - to avoid rewriting the complex but solved problems of terminal emulation. Alacritty is also a high-performance, open-source terminal written in Rust.
-
-	- *Fun fact: SilkTerm has more lines of code than Alacritty, especially compared to the subset we use. Which is part of why we chose it for the bare guts without reinventing a thoroughly-and-repeatedly-invented wheel.*
-
-- **GPU-accelerated** with software fallback.
-
-### One minor limitation inherent to all terminals
-
-- SilkTerm can only smooth-scroll text written to `stdout` and `stderr`.
-
-	- This covers the overwhelming majority of Linux terminal tools and programs.
-
-	- However, some TUI programs - such as `nano`, `vim`, `tmux` - directly control the terminal buffer in "raw mode", and handle everything themselves. Scrolling within such programs behaves the same as on any other terminal - snapped to lines, no in-between.
-
-		- But the other features still work in that case: smooth-moving and phased cursor, text outer-glow, background options, etc.
+</div>
 
 ## Configuration
 
