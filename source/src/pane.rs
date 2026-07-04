@@ -295,7 +295,7 @@ impl Pane {
 		// and big page-jumps don't, so they hard-cut. Opt-in (experimental).
 		let mut capture_prev = false;
 		if s.smooth_scroll_apps && self.mode.contains(TermMode::ALT_SCREEN) {
-			const APP_SCROLL_MAX: usize = 8;
+			const APP_SCROLL_MAX: usize = 24; // in step with scroll::APP_OFF_CAP
 			let grid = guard.grid();
 			let mut rows: Vec<u64> = Vec::with_capacity(lines);
 			for i in 0..lines as i32 {

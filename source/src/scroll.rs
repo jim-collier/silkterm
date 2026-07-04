@@ -26,8 +26,11 @@ const RAMP_DOWN_MS: f32 = 450.0; // returning to the smooth speed is gentle
 // visual offset (in lines, signed: + shifts content down) set the moment such a
 // repaint is detected, then eased to 0 so the new frame slides into place. The
 // revealed strip is filled from the retained previous frame (see pane.rs), so the
-// cap is the detector's max per-step shift, not a bg-fill budget.
-const APP_OFF_CAP: f32 = 8.0;
+// cap is the detector's max per-step shift, not a bg-fill budget. Kept in step
+// with pane.rs APP_SCROLL_MAX; wheel notches in a mouse-tracking app repaint a
+// bigger jump than line-by-line output, so the window has to be generous or the
+// wheel just hard-cuts.
+const APP_OFF_CAP: f32 = 24.0;
 
 pub struct Scroll {
 	target: f32,
