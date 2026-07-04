@@ -87,6 +87,8 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Change the buttons at the top for different pages, to tabs.
 		- 🔘 Can cycle through with Ctrl+PgUp|PgDn.
 
+- After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
+
 - 🔘 Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
 
 - 🔘 Main menu and right-click menus:
