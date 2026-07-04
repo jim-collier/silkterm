@@ -467,7 +467,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ README screenshots, refreshed after significant visual changes: five anonymized shots (shell session, split panes, transparency + background image + glow, tabs / 24-bit / Unicode, Settings dialog) rendered at 1920x1080 and downsampled to 640x360 thumbnails.
 	- Done: originals in `assets/screenshots/large/`, thumbnails in `assets/screenshots/`, shown as a grid in the README that links each thumbnail to its full-size image.
-	- Note: the renderer is a local hook (kept out of the repo); cicd runs it before publish only if it's present, so regenerated shots get committed with the visual change.
+	- Note: the renderer (`utility/screenshots.bash`) runs in cicd before publish (skipped under `--quick`), so regenerated shots get committed with the visual change.
 
 - ✅ Split pane auto-sizing logic: By default, when panes are split, if more than two are split in the same direction at a time, distribute their sizes equally. (E.g. All 50%, then all 33%, 25%, 20%, and so on.) But if the user breaks that trend by manually adjusting any of those, then from then on, every successive new pane splits 50% (until that sequence of same direction for pane splits stops - e.g. if the user starts splitting a different pane ancestry and/or in a different direction) Specifying pane % on the command-line also short-circuits the even-distribution logic, for that direction and ancestry.
 	- Done: splitting in the same direction redistributes those panes to equal sizes (thirds, quarters, and so on).

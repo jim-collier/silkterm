@@ -62,7 +62,7 @@ cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
 ## Parse options.
-assume_yes=0; cli_message=""
+assume_yes=0; cli_message=""; quick=0
 while (($#)); do case "$1" in
 	-y|--yes)         assume_yes=1; shift ;;
 	--no-fmt)         FMT_CMD=(); shift ;;
@@ -70,7 +70,7 @@ while (($#)); do case "$1" in
 	--no-profile)     PROFILE_ENABLE=0; shift ;;
 	--no-dogfood)     DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); shift ;;
 	--no-publish)     GIT_PUBLISH=(); shift ;;
-	--quick)          BUILD_CROSS=0; PROFILE_ENABLE=0; shift ;;   ## skip the slow stages
+	--quick)          BUILD_CROSS=0; PROFILE_ENABLE=0; quick=1; shift ;;   ## skip the slow stages
 	--message=*|-m=*) cli_message="${1#*=}"; shift ;;
 	-m|--message)     cli_message="${2-}"; shift; (($#)) && shift ;;
 	-h|--help)        sed -n '/^##	- Purpose:/,/^##	History:/p' "${BASH_SOURCE[0]}" | sed '$d; s/^##	\{0,1\}//'; exit 0 ;;
@@ -311,14 +311,13 @@ fi
 
 if ((! df_did)); then note "dogfood disabled"; fi
 
-## Optional: refresh README screenshots via a local hook, if present. Kept out
-## of the repo (machine-specific rendering) and non-fatal - a miss never aborts
-## the pipeline. Runs before publish so any changed images get committed.
-shots_hook=""
-for h in "${root}"/../private/hooks/*/screenshots.bash; do
-	[[ -x "$h" ]] && { shots_hook="$h"; break; }
-done
-if [[ -n "$shots_hook" ]]; then
+## Refresh README screenshots (skipped under --quick; non-fatal - a miss never
+## aborts). Runs before publish so any changed images get committed. Rendering
+## is machine-specific (needs a headless X + magick), so a failure just warns.
+shots_hook="${root}/utility/screenshots.bash"
+if ((quick)); then
+	note "screenshots skipped (--quick)"
+elif [[ -x "$shots_hook" ]]; then
 	step "Screenshots"
 	if SILK_BIN="${root}/target/release/silkterm" "$shots_hook" "${root}"; then
 		ok "screenshots refreshed"
@@ -343,7 +342,7 @@ else
 	ok "published"
 fi
 
-hr; printf '%s%s CI/CD: done.%s\n' "${grn}${b}" "${APP_NAME}" "${rst}"
+hr; printf '%s%s CI/CD: done.%s\n\n' "${grn}${b}" "${APP_NAME}" "${rst}"
 
 
 ##	History:
