@@ -65,7 +65,7 @@ impl DialogWin {
 		h: f32,
 		parent: Option<RawWindowHandle>,
 	) -> anyhow::Result<(Arc<Window>, Gfx, TextCtx, RectRenderer)> {
-		#[allow(unused_mut)] // reassigned only on windows/macos below
+		#[allow(unused_mut)] // reassigned on linux/windows/macos below
 		let mut attrs = Window::default_attributes()
 			.with_title(title)
 			.with_window_icon(crate::app::load_icon())
@@ -83,6 +83,15 @@ impl DialogWin {
 		#[cfg(any(target_os = "windows", target_os = "macos"))]
 		if parent.is_some() {
 			attrs = unsafe { attrs.with_parent_window(parent) };
+		}
+		// X11: create unmapped so WM_TRANSIENT_FOR + the modal/dialog hints are all
+		// set BEFORE the WM maps the window and fixes its stacking group. A post-map
+		// property write is read too late by Compiz et al - that's why re-selecting
+		// the dialog raised it alone and left the parent buried. The caller shows the
+		// window after the final resize (see new_about / new_settings).
+		#[cfg(target_os = "linux")]
+		{
+			attrs = attrs.with_visible(false);
 		}
 		let window = Arc::new(el.create_window(attrs)?);
 		set_transient_for(&window, parent.as_ref());
@@ -117,6 +126,9 @@ impl DialogWin {
 		if let Some(applied) = window.request_inner_size(want) {
 			gfx.resize(applied.width, applied.height);
 		}
+		// mapped last, at the final size, with the transient hints already in place
+		#[cfg(target_os = "linux")]
+		window.set_visible(true);
 		Ok(Self {
 			window,
 			gfx,
@@ -154,6 +166,9 @@ impl DialogWin {
 		if let Some(applied) = window.request_inner_size(want) {
 			gfx.resize(applied.width, applied.height);
 		}
+		// mapped last, at the final size, with the transient hints already in place
+		#[cfg(target_os = "linux")]
+		window.set_visible(true);
 		Ok(Self {
 			window,
 			gfx,
