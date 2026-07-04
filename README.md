@@ -47,6 +47,7 @@
 
 <!-- TOC -->
 
+- [Screenshots](#screenshots)
 - [Why?](#why)
 	- [Why smooth-scrolling output](#why-smooth-scrolling-output)
 	- [Why text outer glow](#why-text-outer-glow)
@@ -59,6 +60,28 @@
 - [Copyrights and licenses](#copyrights-and-licenses)
 
 <!-- /TOC -->
+
+## Screenshots
+
+<div align="center">
+
+<table style="border: none; border-collapse: collapse;">
+	<tr style="border: none;">
+		<td width="50%" style="border: none;"><a href="assets/screenshots/large/01-shell.png"><img src="assets/screenshots/01-shell.png" width="100%" alt="Smooth-scrolling shell session"/></a><br /><sub>Smooth-scrolling shell session</sub></td>
+		<td width="50%" style="border: none;"><a href="assets/screenshots/large/02-splits.png"><img src="assets/screenshots/02-splits.png" width="100%" alt="Split panes"/></a><br /><sub>Split panes</sub></td>
+	</tr>
+	<tr style="border: none;">
+		<td width="50%" style="border: none;"><a href="assets/screenshots/large/03-glow.png"><img src="assets/screenshots/03-glow.png" width="100%" alt="Transparency, background image and text glow"/></a><br /><sub>Transparency, background image &amp; text glow</sub></td>
+		<td width="50%" style="border: none;"><a href="assets/screenshots/large/04-tabs.png"><img src="assets/screenshots/04-tabs.png" width="100%" alt="Tabs, 24-bit colour and Unicode"/></a><br /><sub>Tabs, 24-bit colour &amp; Unicode</sub></td>
+	</tr>
+	<tr style="border: none;">
+		<td colspan="2" align="center" style="border: none;"><a href="assets/screenshots/large/05-settings.png"><img src="assets/screenshots/05-settings.png" width="50%" alt="Built-in settings dialog"/></a><br /><sub>Built-in settings</sub></td>
+	</tr>
+</table>
+
+<sub>Click any shot for the full-resolution image.</sub>
+
+</div>
 
 ## Why?
 

@@ -311,6 +311,22 @@ fi
 
 if ((! df_did)); then note "dogfood disabled"; fi
 
+## Optional: refresh README screenshots via a local hook, if present. Kept out
+## of the repo (machine-specific rendering) and non-fatal - a miss never aborts
+## the pipeline. Runs before publish so any changed images get committed.
+shots_hook=""
+for h in "${root}"/../private/hooks/*/screenshots.bash; do
+	[[ -x "$h" ]] && { shots_hook="$h"; break; }
+done
+if [[ -n "$shots_hook" ]]; then
+	step "Screenshots"
+	if SILK_BIN="${root}/target/release/silkterm" "$shots_hook" "${root}"; then
+		ok "screenshots refreshed"
+	else
+		warn "screenshot hook failed (non-fatal)"
+	fi
+fi
+
 ## Stage 7: backup + publish.
 step "7/7  Backup + publish"
 if ((${#GIT_PUBLISH[@]} == 0)); then
