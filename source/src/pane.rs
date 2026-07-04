@@ -123,12 +123,26 @@ pub struct PaneDraw {
 	pub top: f32,
 	pub bg: Vec<RectInstance>,
 	pub cursor: Option<RectInstance>,
-	// Region-aware app-scroll slide: while the scroll region is sliding, a static
-	// bottom status/input band stays put. Some((static_top, split_y)) tells the
-	// renderer to draw the text buffer twice - the scroll region shifted (clipped
-	// above split_y) and the band unshifted at static_top (clipped below). None =
-	// no split (whole pane rendered at `top`, the common case).
-	pub split: Option<(f32, f32)>,
+	// Retained-frame app-scroll slide (None = common case: whole pane at `top`).
+	// While a full-screen app's scroll eases, the current frame draws shifted at
+	// `top` and the previous frame (pane.prev_buffer) fills the revealed strip.
+	pub slide: Option<Slide>,
+}
+
+// One frame of an easing app-scroll slide. The current frame renders at
+// `PaneDraw.top` (the scroll region, clipped above `split_y`); the previous
+// frame renders at `prev_top` clipped to `[prev_clip_t, prev_clip_b]` (just the
+// revealed strip, so its static band can't ghost into the scroll region); and a
+// fixed bottom band (status/input line), when `has_band`, redraws unshifted at
+// `band_top` below `split_y`.
+#[derive(Clone)]
+pub struct Slide {
+	pub prev_top: f32,
+	pub prev_clip_t: f32,
+	pub prev_clip_b: f32,
+	pub split_y: f32,
+	pub band_top: f32,
+	pub has_band: bool,
 }
 
 pub struct Pane {
@@ -136,6 +150,11 @@ pub struct Pane {
 	pub term: TermInstance,
 	pub scroll: Scroll,
 	pub buffer: Buffer,
+	// Previous frame's shaped text, kept one frame back by swapping with `buffer`
+	// on each detected app-scroll step. Drawn (translated) to fill the strip a
+	// slide reveals - the scrolled-off alt-screen lines are gone from the grid, so
+	// the retained shaped frame is the only source of real content for that strip.
+	prev_buffer: Buffer,
 	pub rect: Rect,
 	pub title: String,
 	pub read_only: bool, // accept no PTY input/paste; selection + copy still work
@@ -151,6 +170,10 @@ pub struct Pane {
 	// Rows of static bottom band (status/input line) that must NOT slide during the
 	// current alt-screen app-scroll ease. Captured when a scroll is detected.
 	slide_static: usize,
+	// Shift (signed lines) of the retained prev_buffer relative to the current
+	// frame, set when a scroll step is detected. Positions prev_buffer for the
+	// slide (prev is at rest when app_off == slide_sh, slid fully out at app_off 0).
+	slide_sh: f32,
 	// Fallback glyphs (not in the primary mono font) pulled out of `buffer` and
 	// drawn one-per-cell so their font advance can't shift the row. `glyph_bufs`
 	// is a reused pool; `glyphs` holds (x, y, color, scale) for the first N of
@@ -266,10 +289,11 @@ impl Pane {
 		// Alt-screen app-scroll easing: a full-screen app owns its screen and scrolls
 		// by repainting whole lines. Detect a clean vertical translate between this
 		// repaint and the last (same row-fingerprints as the output-scroll probe) and
-		// nudge a slide offset so the frame eases into place instead of snapping; the
-		// revealed strip fills with the pane bg. Only clean line-scrolls (up to
-		// APP_SCROLL_MAX rows) match - in-place redraws and big page-jumps don't, so
-		// they hard-cut. Opt-in (experimental).
+		// nudge a slide offset so the frame eases into place instead of snapping. The
+		// revealed strip fills from the retained previous frame (swapped in below).
+		// Only clean line-scrolls (up to APP_SCROLL_MAX rows) match - in-place redraws
+		// and big page-jumps don't, so they hard-cut. Opt-in (experimental).
+		let mut capture_prev = false;
 		if s.smooth_scroll_apps && self.mode.contains(TermMode::ALT_SCREEN) {
 			const APP_SCROLL_MAX: usize = 8;
 			let grid = guard.grid();
@@ -291,7 +315,9 @@ impl Pane {
 					sb += 1;
 				}
 				self.slide_static = sb;
+				self.slide_sh = sh as f32;
 				self.scroll.app_scroll(sh as f32);
+				capture_prev = true; // this frame's outgoing content becomes prev_buffer
 			}
 			self.last_rows = rows;
 		}
@@ -332,11 +358,41 @@ impl Pane {
 		// extra row above (screen row -1) so the revealed strip is filled.
 		let y_of = |sr: i32| self.rect.y + margin + (sr as f32 + voff_of(sr)) * cell_h;
 		let top = y_of(-1);
-		// the two-area split (text is one buffer; the band re-draws unshifted)
-		let split = if static_rows > 0 {
-			let static_top = self.rect.y + margin + (-1.0 + frac) * cell_h;
-			let split_y = self.rect.y + margin + (split_row as f32 + frac) * cell_h;
-			Some((static_top, split_y))
+		// Retained-frame slide geometry (only while app_off is easing). The current
+		// frame draws at `top` (scroll region, clipped above split_y); prev_buffer
+		// fills the strip the shift reveals - above the content when sliding down
+		// (app_off > 0), below it when sliding up. Clip prev to just that strip so
+		// its own static band can't ghost into the scrolling region.
+		let slide = if app_off != 0.0 {
+			// split_y bounds the scroll region; a static bottom band (if any) is below
+			let split_y = if static_rows > 0 {
+				self.rect.y + margin + (split_row as f32 + frac) * cell_h
+			} else {
+				self.rect.y + self.rect.h
+			};
+			let band_top = self.rect.y + margin + (-1.0 + frac) * cell_h;
+			// prev sits `slide_sh` behind the current frame; at app_off == slide_sh
+			// it's at rest, sliding fully out as app_off -> 0
+			let voff_prev = frac + app_off - self.slide_sh;
+			let prev_top = self.rect.y + margin + (-1.0 + voff_prev) * cell_h;
+			let (prev_clip_t, prev_clip_b) = if app_off > 0.0 {
+				// down-slide: strip above the current content's first row (screen 0)
+				(f32::MIN, self.rect.y + margin + voff * cell_h)
+			} else {
+				// up-slide: strip below the current scroll region's last row
+				(
+					self.rect.y + margin + (split_row as f32 + voff) * cell_h,
+					split_y,
+				)
+			};
+			Some(Slide {
+				prev_top,
+				prev_clip_t,
+				prev_clip_b,
+				split_y,
+				band_top,
+				has_band: static_rows > 0,
+			})
 		} else {
 			None
 		};
@@ -373,12 +429,12 @@ impl Pane {
 			);
 			let bg = std::mem::take(&mut self.last_draw.bg);
 			// the fast path is a pure cursor frame - never taken while a slide eases
-			// (that forces a rebuild), so there is never a split here
+			// (that forces a rebuild), so there is never a slide here
 			self.last_draw = PaneDraw {
 				top,
 				bg,
 				cursor,
-				split: None,
+				slide: None,
 			};
 			return self.last_draw.clone();
 		}
@@ -516,6 +572,12 @@ impl Pane {
 			dt,
 			s.cursor,
 		);
+		// A scroll step was detected: the buffer still holds the outgoing frame, so
+		// swap it into prev_buffer before set_rich_text overwrites it. prev_buffer
+		// then fills the strip this slide reveals (see the slide geometry above).
+		if capture_prev {
+			std::mem::swap(&mut self.buffer, &mut self.prev_buffer);
+		}
 		let span_refs = spans.iter().map(|(s, a)| (s.as_str(), a.clone()));
 		// Advanced (not Basic) so missing glyphs fall back to other fonts
 		// (CJK/emoji/math/RTL) instead of rendering tofu. cosmic-text 0.18.2's
@@ -598,7 +660,7 @@ impl Pane {
 			top,
 			bg,
 			cursor,
-			split,
+			slide,
 		};
 		self.last_draw.clone()
 	}
@@ -750,9 +812,9 @@ impl Pane {
 		area
 	}
 
-	pub fn text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
+	fn buf_area<'a>(&'a self, buf: &'a Buffer, top: f32, margin: f32) -> TextArea<'a> {
 		TextArea {
-			buffer: &self.buffer,
+			buffer: buf,
 			left: self.rect.x + margin,
 			top,
 			scale: 1.0,
@@ -772,10 +834,13 @@ impl Pane {
 		}
 	}
 
+	pub fn text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
+		self.buf_area(&self.buffer, top, margin)
+	}
+
 	// Same buffer as text_area, positioned at `top`, but with its vertical clip
-	// narrowed to [clip_top, clip_bottom]. Used by the region-aware app-scroll
-	// slide to draw the buffer twice: the scroll region shifted (clipped above the
-	// split) and the static band unshifted (clipped below it).
+	// narrowed to [clip_top, clip_bottom]. Used by the app-scroll slide to draw the
+	// current buffer clipped to the scroll region and the static band separately.
 	pub fn text_area_band<'a>(
 		&'a self,
 		top: f32,
@@ -784,6 +849,21 @@ impl Pane {
 		clip_bottom: f32,
 	) -> TextArea<'a> {
 		let mut a = self.text_area(top, margin);
+		a.bounds.top = a.bounds.top.max(clip_top as i32);
+		a.bounds.bottom = a.bounds.bottom.min(clip_bottom as i32);
+		a
+	}
+
+	// The retained previous frame (prev_buffer) at `top`, clipped to the strip the
+	// slide reveals. Fills that strip with real outgoing content instead of bg.
+	pub fn prev_text_area_band<'a>(
+		&'a self,
+		top: f32,
+		margin: f32,
+		clip_top: f32,
+		clip_bottom: f32,
+	) -> TextArea<'a> {
+		let mut a = self.buf_area(&self.prev_buffer, top, margin);
 		a.bounds.top = a.bounds.top.max(clip_top as i32);
 		a.bounds.bottom = a.bounds.bottom.min(clip_bottom as i32);
 		a
@@ -1089,6 +1169,7 @@ impl PaneManager {
 	pub fn rebuild_buffers(&mut self, ctx: &mut TextCtx) {
 		for pane in self.panes.values_mut() {
 			pane.buffer = ctx.new_buffer(pane.rect.w.max(1.0), pane.rect.h.max(1.0));
+			pane.prev_buffer = ctx.new_buffer(pane.rect.w.max(1.0), pane.rect.h.max(1.0));
 			pane.text_built = false; // fresh empty buffer: force a full rebuild next frame
 		}
 	}
@@ -1110,6 +1191,7 @@ impl PaneManager {
 				// goes invisible until you scroll/resize. Give it overscan slack;
 				// TextArea bounds still clip drawing to the pane.
 				ctx.resize_buffer(&mut pane.buffer, cw, ch + 2.0 * ctx.cell_h);
+				ctx.resize_buffer(&mut pane.prev_buffer, cw, ch + 2.0 * ctx.cell_h);
 			}
 		}
 	}
@@ -1188,11 +1270,13 @@ fn spawn_pane(
 	)?;
 	// +2 cells of height for the overscan rows build() renders (see relayout).
 	let buffer = ctx.new_buffer(cw, ch + 2.0 * ctx.cell_h);
+	let prev_buffer = ctx.new_buffer(cw, ch + 2.0 * ctx.cell_h);
 	Ok(Pane {
 		id,
 		term,
 		scroll: Scroll::new(),
 		buffer,
+		prev_buffer,
 		rect,
 		title: config::APP_NAME.into(),
 		read_only: false,
@@ -1201,11 +1285,12 @@ fn spawn_pane(
 			top: rect.y,
 			bg: Vec::new(),
 			cursor: None,
-			split: None,
+			slide: None,
 		},
 		last_history: 0,
 		last_rows: Vec::new(),
 		slide_static: 0,
+		slide_sh: 0.0,
 		glyph_bufs: Vec::new(),
 		glyphs: Vec::new(),
 		glow_buf: None,

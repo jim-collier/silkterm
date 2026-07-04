@@ -1100,8 +1100,8 @@ impl State {
 		// cursors are drawn separately (above the glow, so its halo can't obscure them)
 		let mut cursors: Vec<(Rect, RectInstance)> = Vec::new();
 		let mut tops: HashMap<u64, f32> = HashMap::new();
-		// region-aware app-scroll slide: Some((static_top, split_y)) per pane
-		let mut splits: HashMap<u64, Option<(f32, f32)>> = HashMap::new();
+		// retained-frame app-scroll slide geometry per pane (None = no active slide)
+		let mut slides: HashMap<u64, Option<crate::pane::Slide>> = HashMap::new();
 		let mut animating = bell > 0.0;
 		// text-glow colour map needs each cell's bg (so a glyph's halo takes its
 		// own cell colour, not always the global) - collect them while building
@@ -1121,7 +1121,7 @@ impl State {
 				animating = true;
 			}
 			tops.insert(*id, draw.top);
-			splits.insert(*id, draw.split);
+			slides.insert(*id, draw.slide);
 			let mut bg = config::srgb_f32(cfg.bg);
 			bg[3] = bg_alpha;
 			under.push(RectInstance {
@@ -1395,12 +1395,20 @@ impl State {
 		let (_, copy_label_x, copy_label_w) = self.copybox_layout();
 		let mut areas: Vec<TextArea> = Vec::new();
 		for p in self.tabs.cur().panes.values() {
-			// region-aware slide: draw the buffer twice - scroll region shifted
-			// (clipped above the split), static band unshifted (clipped below)
-			match splits[&p.id] {
-				Some((static_top, split_y)) => {
-					areas.push(p.text_area_band(tops[&p.id], margin, f32::MIN, split_y));
-					areas.push(p.text_area_band(static_top, margin, split_y, f32::MAX));
+			// retained-frame slide: fill the revealed strip from the previous frame,
+			// draw the current scroll region over it, then the static band unshifted
+			match &slides[&p.id] {
+				Some(sl) => {
+					areas.push(p.prev_text_area_band(
+						sl.prev_top,
+						margin,
+						sl.prev_clip_t,
+						sl.prev_clip_b,
+					));
+					areas.push(p.text_area_band(tops[&p.id], margin, f32::MIN, sl.split_y));
+					if sl.has_band {
+						areas.push(p.text_area_band(sl.band_top, margin, sl.split_y, f32::MAX));
+					}
 				}
 				None => areas.push(p.text_area(tops[&p.id], margin)),
 			}
@@ -1482,20 +1490,24 @@ impl State {
 		if glow_on {
 			let mut glow_areas: Vec<TextArea> = Vec::new();
 			for p in self.tabs.cur().panes.values() {
-				match splits[&p.id] {
-					Some((static_top, split_y)) => {
+				// glow follows the current frame's slide; the previous frame isn't
+				// glowed (its brief strip fill doesn't need the readability halo)
+				match &slides[&p.id] {
+					Some(sl) => {
 						glow_areas.push(p.glow_text_area_band(
 							tops[&p.id],
 							margin,
 							f32::MIN,
-							split_y,
+							sl.split_y,
 						));
-						glow_areas.push(p.glow_text_area_band(
-							static_top,
-							margin,
-							split_y,
-							f32::MAX,
-						));
+						if sl.has_band {
+							glow_areas.push(p.glow_text_area_band(
+								sl.band_top,
+								margin,
+								sl.split_y,
+								f32::MAX,
+							));
+						}
 					}
 					None => glow_areas.push(p.glow_text_area(tops[&p.id], margin)),
 				}

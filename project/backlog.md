@@ -35,6 +35,7 @@ In each section, items are listed approximately from newest to oldest.
 | :--: | :--
 | 🔘   | Not started
 | 🛠️   | Started, and/or partially complete
+| ✋   | Defer
 | ✅   | Complete
 | 🚫   | Canceled
 
@@ -42,23 +43,30 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- ✅ Mouse-scroll doesn't work in muffer (running inside SilkTerm). (20260703)
-	- Cause: SilkTerm implemented no mouse reporting at all - clicks, motion, and wheel were only handled locally, never encoded to the PTY. So when an app turns on mouse tracking (DECSET 1000/1002/1003, e.g. muffer enabling it to receive wheel events), it got nothing and its scroll did nothing; the wheel just drove SilkTerm's own scrollback.
-	- Done: added standard mouse reporting (`input::mouse_report`, SGR 1006 + legacy X10). When the focused pane has tracking on, wheel reports as button 64/65, and clicks/release/drag/motion report too; Shift is the local-action override (select/paste/menu/scrollback still work). Wheel sends one notch-event per line (capped), de-duped motion per cell.
-	- Verified: unit tests cover the SGR + X10 encodings, wheel, modifiers, and the no-tracking case; live-verify by scrolling in a mouse-tracking app.
+- ✅ Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
+	- Cause: the slide shifted the scroll region by up to several lines but only the one fractional-overscan row was ever drawn, so the revealed strip was bare background - and the scrolled-off alt-screen lines are gone from the grid, so there was nothing real to fill it with.
+	- Fixed: retained-frame slide. The pane keeps the previous frame's shaped text (`prev_buffer`, swapped in on each detected step) and draws it, clipped to just the revealed strip, so the strip fills with the real outgoing content while the current frame slides in over it. The per-step offset is now set (not stacked) since the retained frame is exactly one step back.
+	- Verified: across continuous multi-line slides the content fills top-to-bottom with no blank band (mid-slide frames show partial top/bottom rows and unbroken numbering).
 
-- ✅ Now there's too much space below the tab text and top menu text. (Ironic since earlier there was too little.) It should be vertically centered.
-	- ✅ Proper fix: Size both the menu and the tabs according to the font height (plus extra), then *vertically center* the text within that area. If the font was created poorly centered, which may are, then there may be nothing to do about that - but the current font seems properly designed elsewhere.
-		- Done: both bars center the text on its real visible box using the UI face's actual ascent/descent, instead of the old hand-tuned padding that left titles riding high.
-		- Note: tab bar padding dropped to match the menu bar now that centering handles descender clearance.
-		- Verified.
+- 🔘 Inverted text (e.g. Nano headers) is thin and hard-to-read.
+
+- 🔘 Choosing "Tabs|New Tab" the first time, opens a second tab. Doing it again, changes to the first tab, rather than opening a third tab.
 
 - 🔘 When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
 	- Investigated: no obvious code-path desync found. `bg_image_changed` already includes `background_blur`, `needs_text_rebuild` covers font, `load_bg_image` re-reads the fresh blur, and the glow re-shapes each build. Needs a live repro (change font in Settings, OK, watch the blur) to pin which "blur" and the exact trigger - deferred to an interactive pass since dialog driving is flaky here.
 
-- ✅ Modal Bug (with Settings and About): The dialog shows up in the window list. Also when focused is changed elsewhere then the dialog is clicked on, the terminal window doesn't also come to the top - it stays behind whatever got in front of it. In Linux - unlike Windows - the main window can still be moved around when the modal dialog is open, but it *remains an unselected window* - the dialog retains focus. These things aren't a coding trick, it's just the way modals work on Linux, and so should SilkTerm.
+- 🛠️ Modal Bug (with Settings and About): The dialog shows up in the window list. Also when focused is changed elsewhere then the dialog is clicked on, the terminal window doesn't also come to the top - it stays behind whatever got in front of it. In Linux - unlike Windows - the main window can still be moved around when the modal dialog is open, but it *remains an unselected window* - the dialog retains focus. These things aren't a coding trick, it's just the way modals work on Linux, and so should SilkTerm.
 	- Done: the dialog now sets the EWMH dialog type plus the MODAL and SKIP_TASKBAR states alongside the existing transient-for, so the WM keeps it off the taskbar, stacks it above and raises it with the terminal, and holds focus - the normal Linux modal behavior via window hints, no input tricks.
 	- Verified: the dialog carries _NET_WM_WINDOW_TYPE_DIALOG, _NET_WM_STATE_MODAL + _NET_WM_STATE_SKIP_TASKBAR, and WM_TRANSIENT_FOR points at the terminal window.
+	- 🔘 It still exists.
+		- Steps to reproduce:
+			1. Open "Help|About".
+			2. Select any other window. Say, Mousepad.
+			3. Select the "Help|About" dialog you opened previously.
+			4. Observe: The main SilkTerm window is *behind* Mousepad, while the modal is on top.
+		- Expected behavior.
+			- With all other Linux GUI apps I'm aware of (including Mousepad), step 4 looks like:
+				- Observe: The main window AND the "Help|About" dialog come to the top. There is nothing in between the main window and the "Help|About" modal.
 
 - 🔘 At high blur radius and low softness, the blur has boxy artifacts.
 	- Diagnosed: the glow is a separable blur with a fixed 25-tap kernel truncated at +/-3 sigma (`glow.rs` fs_blur). Two causes: (a) the hard +/-3 sigma cutoff leaves a ~1% edge that low softness (x10 intensity) amplifies into a visible square; (b) the linear/s-curve falloffs aren't true Gaussians, so blurred separably their support is a diamond/box, not a circle - and the default falloff is now s-curve. Fix is a look-vs-perf tradeoff (wider extent + more taps, and/or a windowed kernel) that wants eyeballing - deferred to a visual pass.
@@ -72,7 +80,15 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
+- 🔘 Blur: Naturally doesn't extend diagonally very far. When blurring a rectangle, for example, this is a known effect of, say, Gaussian blur. So either use a different blur that covers the diagonal directions better, or tweak the blur kernel so that it does that.
+
+- 🔘 Cursor animation immediately resets and starts over on keypresses (typing, editing, or moving). That's not very smooth, it shouldn't do that. Add options:
+		- Keep animating.
+		- Wait until the animation reaches full-size, then stop animating. Don't resume animating until some timeout after input stops - maybe 1 second. (Default.)
+
 - 🔘 Option to include the cursor in outer-glow. Default to off. Still outline it though.
+
+- 🔘 Smooth cursor movement should speed up, if it falls too far behind where it actually is.
 
 - 🔘 Copy output:
 	- 🔘 Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.
@@ -91,6 +107,10 @@ In each section, items are listed approximately from newest to oldest.
 - 🔘 Main menu and right-click menus:
 	- 🔘 Accellerators need to be unique. If running out of memorable word/accelerator keys, remove accellerators from the least-used or least-important items, especially ones that already have hotkeys.
 	- 🔘 List the hotkeys to activate the same function, if they exist. Keep in mind there might be a dynamic hotkey system soon.
+
+- 🔘 Hyperlinks:
+	- 🔘 Clickable - e.g. Ctrl+click, or right-click then includes "Copy link" and "Open link".
+	- 🔘 Auto-underline when mouse is underneath.
 
 - 🔘 New defaults: Background image opacity 10%. Background image blur, 10.
 
@@ -130,7 +150,9 @@ In each section, items are listed approximately from newest to oldest.
 		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
 	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
 
-- ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
+- 🔘 After startup, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
+
+- 🛠️ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- 🔘 Add Windows support.
 
 - 🛠️ Tab interface:
@@ -341,6 +363,17 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Verify smoothness on X11/Compiz.
 
 #### Done - Bugs
+
+- ✅ Mouse-scroll doesn't work in muffer (running inside SilkTerm). (20260703)
+	- Cause: SilkTerm implemented no mouse reporting at all - clicks, motion, and wheel were only handled locally, never encoded to the PTY. So when an app turns on mouse tracking (DECSET 1000/1002/1003, e.g. muffer enabling it to receive wheel events), it got nothing and its scroll did nothing; the wheel just drove SilkTerm's own scrollback.
+	- Done: added standard mouse reporting (`input::mouse_report`, SGR 1006 + legacy X10). When the focused pane has tracking on, wheel reports as button 64/65, and clicks/release/drag/motion report too; Shift is the local-action override (select/paste/menu/scrollback still work). Wheel sends one notch-event per line (capped), de-duped motion per cell.
+	- Verified: unit tests cover the SGR + X10 encodings, wheel, modifiers, and the no-tracking case; live-verify by scrolling in a mouse-tracking app.
+
+- ✅ Now there's too much space below the tab text and top menu text. (Ironic since earlier there was too little.) It should be vertically centered.
+	- ✅ Proper fix: Size both the menu and the tabs according to the font height (plus extra), then *vertically center* the text within that area. If the font was created poorly centered, which may are, then there may be nothing to do about that - but the current font seems properly designed elsewhere.
+		- Done: both bars center the text on its real visible box using the UI face's actual ascent/descent, instead of the old hand-tuned padding that left titles riding high.
+		- Note: tab bar padding dropped to match the menu bar now that centering handles descender clearance.
+		- Verified.
 
 - ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
 	- ✅ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. (20260630)

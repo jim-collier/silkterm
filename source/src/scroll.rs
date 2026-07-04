@@ -24,9 +24,10 @@ const RAMP_DOWN_MS: f32 = 450.0; // returning to the smooth speed is gentle
 // Alt-screen app-scroll easing: a full-screen app (less, vim, muffer, ...) owns
 // its screen and scrolls by repainting whole lines. `app_off` is a transient
 // visual offset (in lines, signed: + shifts content down) set the moment such a
-// repaint is detected, then eased to 0 so the new frame slides into place. Capped
-// so a big page-jump doesn't slide the whole screen (those hard-cut instead).
-const APP_OFF_CAP: f32 = 6.0;
+// repaint is detected, then eased to 0 so the new frame slides into place. The
+// revealed strip is filled from the retained previous frame (see pane.rs), so the
+// cap is the detector's max per-step shift, not a bg-fill budget.
+const APP_OFF_CAP: f32 = 8.0;
 
 pub struct Scroll {
 	target: f32,
@@ -47,11 +48,12 @@ impl Scroll {
 		}
 	}
 
-	// An alt-screen app repainted shifted by `lines` (signed). Accumulate into the
-	// slide offset so a fast multi-notch scroll stacks, capped so it can't slide
-	// more than a few rows of bg-fill.
+	// An alt-screen app repainted shifted by `lines` (signed). Sets (not stacks)
+	// the slide offset: the retained previous frame is exactly one repaint back, so
+	// each detected step is its own slide - a fast run just replaces the offset each
+	// frame (content lags ~one step, then settles), always fillable from that frame.
 	pub fn app_scroll(&mut self, lines: f32) {
-		self.app_off = (self.app_off + lines).clamp(-APP_OFF_CAP, APP_OFF_CAP);
+		self.app_off = lines.clamp(-APP_OFF_CAP, APP_OFF_CAP);
 	}
 
 	// Current alt-screen slide offset in lines (added to the render's vertical
@@ -248,16 +250,16 @@ mod tests {
 	}
 
 	#[test]
-	fn app_scroll_accumulates_caps_and_eases_to_rest() {
+	fn app_scroll_sets_caps_and_eases_to_rest() {
 		let mut s = Scroll::new();
 		s.app_scroll(3.0);
 		assert_eq!(s.app_offset(), 3.0);
 		assert!(s.animating());
-		// stacks a fast burst, capped
-		for _ in 0..10 {
-			s.app_scroll(3.0);
-		}
-		assert!(s.app_offset() <= APP_OFF_CAP + 1e-3);
+		// sets (does not stack) the per-step offset; over the cap is clamped
+		s.app_scroll(3.0);
+		assert_eq!(s.app_offset(), 3.0);
+		s.app_scroll(99.0);
+		assert_eq!(s.app_offset(), APP_OFF_CAP);
 		// negative direction too
 		let mut b = Scroll::new();
 		b.app_scroll(-2.0);
