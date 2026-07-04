@@ -141,7 +141,7 @@ fMain(){
 		git config user.email
 		fEcho_Clean
 		fEcho_Clean "SSH key being used"
-		ssh -Tv git@github.com 2>&1 | grep -iE "offering|successfully authenticated" | sed 's/debug1: //' || true
+		ssh -nTv git@github.com 2>&1 | grep -iE "offering|successfully authenticated" | sed 's/debug1: //' || true  ## -n: don't read stdin, else it eats the next prompt's input
 		fIntroPromptToContinue  ""
 		fEcho_Clean
 	fi
