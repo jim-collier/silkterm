@@ -21,12 +21,19 @@ pub const MAX_BACKLOG: f32 = 16.0; // cap on how far behind the bottom output ma
 const MIN_TAU_MS: f32 = 8.0; // fastest catch-up tau (at full ramp)
 const RAMP_UP_MS: f32 = 90.0; // speeding up is responsive
 const RAMP_DOWN_MS: f32 = 450.0; // returning to the smooth speed is gentle
+// Alt-screen app-scroll easing: a full-screen app (less, vim, muffer, ...) owns
+// its screen and scrolls by repainting whole lines. `app_off` is a transient
+// visual offset (in lines, signed: + shifts content down) set the moment such a
+// repaint is detected, then eased to 0 so the new frame slides into place. Capped
+// so a big page-jump doesn't slide the whole screen (those hard-cut instead).
+const APP_OFF_CAP: f32 = 6.0;
 
 pub struct Scroll {
 	target: f32,
 	visual: f32,
 	max: f32,
-	ramp: f32, // 0 = initial/smooth speed, 1 = full fast catch-up (smoothed)
+	ramp: f32,    // 0 = initial/smooth speed, 1 = full fast catch-up (smoothed)
+	app_off: f32, // alt-screen slide offset, eased toward 0 (see APP_OFF_CAP)
 }
 
 impl Scroll {
@@ -36,7 +43,21 @@ impl Scroll {
 			visual: 0.0,
 			max: 0.0,
 			ramp: 0.0,
+			app_off: 0.0,
 		}
+	}
+
+	// An alt-screen app repainted shifted by `lines` (signed). Accumulate into the
+	// slide offset so a fast multi-notch scroll stacks, capped so it can't slide
+	// more than a few rows of bg-fill.
+	pub fn app_scroll(&mut self, lines: f32) {
+		self.app_off = (self.app_off + lines).clamp(-APP_OFF_CAP, APP_OFF_CAP);
+	}
+
+	// Current alt-screen slide offset in lines (added to the render's vertical
+	// offset; 0 except briefly after an app repaint-scroll).
+	pub fn app_offset(&self) -> f32 {
+		self.app_off
 	}
 
 	pub fn set_max(&mut self, history_lines: f32) {
@@ -94,6 +115,15 @@ impl Scroll {
 			self.visual = self.target;
 			self.ramp = 0.0;
 		}
+
+		// ease the alt-screen slide offset back to rest at the smooth speed
+		if self.app_off != 0.0 {
+			let ka = 1.0 - (-dt_s * 1000.0 / init.max(1.0)).exp();
+			self.app_off -= self.app_off * ka;
+			if self.app_off.abs() < config::SETTLE_EPS {
+				self.app_off = 0.0;
+			}
+		}
 	}
 
 	// whole-line scrollback position the grid should snap to
@@ -107,7 +137,7 @@ impl Scroll {
 	}
 
 	pub fn animating(&self) -> bool {
-		(self.target - self.visual).abs() > config::SETTLE_EPS
+		(self.target - self.visual).abs() > config::SETTLE_EPS || self.app_off != 0.0
 	}
 }
 
@@ -215,6 +245,29 @@ mod tests {
 			cleared_b > cleared_t,
 			"burst {cleared_b} should clear proportionally faster than trickle {cleared_t}"
 		);
+	}
+
+	#[test]
+	fn app_scroll_accumulates_caps_and_eases_to_rest() {
+		let mut s = Scroll::new();
+		s.app_scroll(3.0);
+		assert_eq!(s.app_offset(), 3.0);
+		assert!(s.animating());
+		// stacks a fast burst, capped
+		for _ in 0..10 {
+			s.app_scroll(3.0);
+		}
+		assert!(s.app_offset() <= APP_OFF_CAP + 1e-3);
+		// negative direction too
+		let mut b = Scroll::new();
+		b.app_scroll(-2.0);
+		assert_eq!(b.app_offset(), -2.0);
+		// eases back to 0 and stops animating (following the bottom, no output)
+		for _ in 0..2000 {
+			b.advance(0.016);
+		}
+		assert_eq!(b.app_offset(), 0.0);
+		assert!(!b.animating());
 	}
 
 	#[test]

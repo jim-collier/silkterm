@@ -91,8 +91,9 @@ pub struct Settings {
 	pub wheel_lines: f32,
 	pub alt_scroll_lines: f32,
 	pub output_ease_lines: f32,
-	pub margin: f32,                       // logical px between content and pane edge
-	pub opacity: f32,                      // background opacity 0..1 (1 = fully opaque)
+	pub smooth_scroll_apps: bool, // ease the line-jumps of full-screen apps (less/vim/muffer)
+	pub margin: f32,              // logical px between content and pane edge
+	pub opacity: f32,             // background opacity 0..1 (1 = fully opaque)
 	pub transparent_background: bool, // X11: per-pixel bg transparency (text stays opaque) via a GL surface
 	pub transparent_background_blur: bool, // X11: ask a KWin/picom compositor to blur the desktop behind the window
 	pub background_image: Option<PathBuf>, // resolved path, or None
@@ -146,6 +147,7 @@ impl Default for Settings {
 			wheel_lines: 3.0,
 			alt_scroll_lines: 3.0,
 			output_ease_lines: 1.0,
+			smooth_scroll_apps: false,
 			margin: 8.0,
 			opacity: 0.95,
 			transparent_background: false,
@@ -467,6 +469,7 @@ struct RawConfig {
 	wheel_lines: Option<f32>,
 	alt_scroll_lines: Option<f32>,
 	output_ease_lines: Option<f32>,
+	smooth_scroll_apps: Option<bool>,
 	margin: Option<f32>,
 	opacity: Option<f32>,
 	transparent_background: Option<bool>,
@@ -635,6 +638,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		wheel_lines: raw.wheel_lines.unwrap_or(d.wheel_lines),
 		alt_scroll_lines: raw.alt_scroll_lines.unwrap_or(d.alt_scroll_lines),
 		output_ease_lines: raw.output_ease_lines.unwrap_or(d.output_ease_lines),
+		smooth_scroll_apps: raw.smooth_scroll_apps.unwrap_or(d.smooth_scroll_apps),
 		margin: raw.margin.unwrap_or(d.margin).max(0.0),
 		opacity: raw.opacity.unwrap_or(d.opacity).clamp(0.0, 1.0),
 		transparent_background: raw
@@ -1391,6 +1395,12 @@ scroll_tau_ms = 230.0      ## ms; ~ "Initial scroll speed" 25 on the 1..100 dial
 wheel_lines = 3.0          ## lines per wheel notch (smooth scrollback)
 alt_scroll_lines = 3.0     ## lines per wheel notch in full-screen apps (less, nano)
 output_ease_lines = 1.0    ## how far new output slides in before easing to rest
+
+## Ease the whole-line jumps of full-screen apps that own the screen (less, vim,
+## nano, muffer, tmux, ...) so their scrolling slides instead of snapping. The
+## revealed strip fills with the background during the ~quarter-second slide.
+## Experimental; only clean line-scrolls are eased (big page-jumps still snap).
+# smooth_scroll_apps = false
 
 ##=============================================================================
 ## Theme and colours

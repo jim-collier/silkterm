@@ -254,6 +254,32 @@ impl Pane {
 			self.scroll.nudge_output(advanced as f32);
 		}
 
+		// Alt-screen app-scroll easing: a full-screen app owns its screen and scrolls
+		// by repainting whole lines. Detect a clean vertical translate between this
+		// repaint and the last (same row-fingerprints as the output-scroll probe) and
+		// nudge a slide offset so the frame eases into place instead of snapping; the
+		// revealed strip fills with the pane bg. Only clean line-scrolls (up to
+		// APP_SCROLL_MAX rows) match - in-place redraws and big page-jumps don't, so
+		// they hard-cut. Opt-in (experimental).
+		if s.smooth_scroll_apps && self.mode.contains(TermMode::ALT_SCREEN) {
+			const APP_SCROLL_MAX: usize = 8;
+			let grid = guard.grid();
+			let mut rows: Vec<u64> = Vec::with_capacity(lines);
+			for i in 0..lines as i32 {
+				let row = &grid[Line(i)];
+				let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+				for c in 0..cols {
+					h = (h ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
+				}
+				rows.push(h);
+			}
+			let sh = scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX);
+			self.last_rows = rows;
+			if sh != 0 {
+				self.scroll.app_scroll(sh as f32);
+			}
+		}
+
 		// snap the integer grid offset to the floor of the smooth position
 		let desired = self.scroll.desired_offset().min(history);
 		let current = guard.grid().display_offset();
@@ -263,11 +289,14 @@ impl Pane {
 		}
 
 		let frac = self.scroll.frac();
+		// alt-screen slide rides on top of the fractional scrollback offset (which
+		// is 0 on the alt screen); + shifts content down, revealing bg at the top.
+		let voff = frac + self.scroll.app_offset();
 		let d = desired as i32;
 		let hist = history as i32;
 		// fractional scroll shifts content DOWN by frac of a cell; we render an
 		// extra row above (screen row -1) so the revealed strip is filled.
-		let y_of = |sr: i32| self.rect.y + margin + (sr as f32 + frac) * cell_h;
+		let y_of = |sr: i32| self.rect.y + margin + (sr as f32 + voff) * cell_h;
 		let top = y_of(-1);
 
 		// Cursor position/shape as plain values (no lasting borrow of the lock), so
@@ -296,7 +325,7 @@ impl Pane {
 				cell_w,
 				cell_h,
 				margin,
-				frac,
+				voff,
 				dt,
 				s.cursor,
 			);
@@ -510,7 +539,7 @@ impl Pane {
 			let scale = if ink_w > target { target / ink_w } else { 1.0 };
 			let cell_x = content_x + c as f32 * cell_w;
 			let x = cell_x + (target - ink_w * scale) / 2.0 - ink_off * scale;
-			let y = rect_y + margin + (sr as f32 + frac) * cell_h + cell_h * (1.0 - scale) / 2.0;
+			let y = rect_y + margin + (sr as f32 + voff) * cell_h + cell_h * (1.0 - scale) / 2.0;
 			self.glyphs
 				.push((x, y, GColor::rgb(color[0], color[1], color[2]), scale));
 		}
@@ -536,7 +565,7 @@ impl Pane {
 		cell_w: f32,
 		cell_h: f32,
 		margin: f32,
-		frac: f32,
+		voff: f32,
 		dt: f32,
 		cursor_rgb: [u8; 3],
 	) -> Option<RectInstance> {
@@ -607,7 +636,7 @@ impl Pane {
 		self.cursor_animating = easing || animating;
 		let mut col = config::srgb_f32(cursor_rgb);
 		col[3] = alpha;
-		let cell_y = self.rect.y + margin + (cursor_sr as f32 + frac) * cell_h;
+		let cell_y = self.rect.y + margin + (cursor_sr as f32 + voff) * cell_h;
 		let cell_x = content_x + self.cursor_x * cell_w;
 		// Width grows from the left, height from the bottom - but a *pulsing*
 		// dimension grows from the cell centre (the "line in the middle") and may
@@ -1544,6 +1573,46 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
 // fingerprints when scrollback growth can't tell us (the buffer is full). It's
 // the smallest shift k where this frame's top (rows-k) lines equal last frame's
 // bottom (rows-k) lines.
+// Signed sibling of scroll_shift for alt-screen app-scroll easing: detect a clean
+// vertical translate between two frames, in either direction, up to `max` lines.
+// +k = scrolled forward (content moved up k rows), -k = scrolled back (down k).
+// Matches only a TOP PREFIX of rows, not the full height: real full-screen apps
+// (less, vim, muffer) keep a static status/input band at the bottom that never
+// scrolls, so a whole-height match would never fire. A shift counts only if a
+// solid majority of rows translate cleanly; otherwise 0 (in-place redraw, content
+// change, or a jump bigger than `max`) and the caller hard-cuts. It never guesses
+// a full turnover the way scroll_shift does - easing a non-scroll looks wrong.
+fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
+	let n = cur.len();
+	if n == 0 || last.len() != n {
+		return 0;
+	}
+	let need = (n / 2).max(3); // require most of the screen to translate as one block
+	let lim = max.min(n - 1);
+	let (mut best, mut best_run) = (0i32, 0usize);
+	for k in 1..=lim {
+		// forward: cur[i] == last[i+k] across a run down from the top
+		let mut p = 0;
+		while p < n - k && cur[p] == last[p + k] {
+			p += 1;
+		}
+		if p >= need && p > best_run {
+			best_run = p;
+			best = k as i32;
+		}
+		// backward: cur[i+k] == last[i] (content slid down)
+		let mut q = 0;
+		while q < n - k && cur[q + k] == last[q] {
+			q += 1;
+		}
+		if q >= need && q > best_run {
+			best_run = q;
+			best = -(k as i32);
+		}
+	}
+	best
+}
+
 fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 	let n = cur.len();
 	if n == 0 || last.len() != n {
@@ -1570,7 +1639,7 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 mod tests {
 	use super::{
 		Dir, Node, Rect, bell_brighten, distinct_pair, equalize_dir_run, layout, pair_inside,
-		same_char_pair, scroll_shift,
+		same_char_pair, scroll_shift, scroll_shift_signed,
 	};
 
 	fn leaf(id: u64) -> Node {
@@ -1816,6 +1885,28 @@ mod tests {
 	fn shift_empty_or_mismatched_is_zero() {
 		assert_eq!(scroll_shift(&[], &[]), 0);
 		assert_eq!(scroll_shift(&[1, 2, 3], &[1, 2]), 0);
+	}
+
+	#[test]
+	fn signed_shift_detects_both_directions_and_hard_cuts_the_rest() {
+		let last = [10u64, 20, 30, 40, 50];
+		// scrolled forward: content moved up 2 (cur top == last[2..])
+		let fwd = [30, 40, 50, 60, 70];
+		assert_eq!(scroll_shift_signed(&fwd, &last, 8), 2);
+		// scrolled back: content moved down 1 (cur[1..] == last[..n-1])
+		let back = [5, 10, 20, 30, 40];
+		assert_eq!(scroll_shift_signed(&back, &last, 8), -1);
+		// no motion, in-place change, and full turnover all hard-cut (0), never a guess
+		assert_eq!(scroll_shift_signed(&last, &last, 8), 0);
+		assert_eq!(scroll_shift_signed(&[11, 20, 30, 40, 50], &last, 8), 0);
+		assert_eq!(scroll_shift_signed(&[60, 70, 80, 90, 99], &last, 8), 0);
+		// a jump bigger than max is not eased
+		assert_eq!(scroll_shift_signed(&fwd, &last, 1), 0);
+		// real-app shape: the top scrolls but a static status/input band at the
+		// bottom stays put - the prefix still matches, so it's detected
+		let last_s = [10u64, 20, 30, 40, 900, 901];
+		let cur_s = [20u64, 30, 40, 50, 900, 901];
+		assert_eq!(scroll_shift_signed(&cur_s, &last_s, 8), 1);
 	}
 
 	#[test]
