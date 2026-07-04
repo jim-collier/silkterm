@@ -1498,10 +1498,30 @@ impl State {
 		if glow_on {
 			let mut glow_areas: Vec<TextArea> = Vec::new();
 			for p in self.tabs.cur().panes.values() {
-				// glow follows the current frame's slide; the previous frame isn't
-				// glowed (its brief strip fill doesn't need the readability halo)
+				// glow follows the current frame's slide, INCLUDING the reveal strip
+				// filled from the previous frame - without it the strip's text (e.g. the
+				// row just below a static header) loses its readability halo mid-slide
+				// and the halo "pops" when the slide settles, reading as a shadow that
+				// jumps at the band boundary. Mirror the text pass's prev-strip draw, but
+				// only when the band on the strip's furniture side is detected: it clips
+				// the prev frame's header/status out of the glow. Without that band the
+				// clip is open, and prev's own-bg furniture (misaligned with the current
+				// own-bg mask during the slide) would glow dark over the header.
 				match &slides[&p.id] {
 					Some(sl) => {
+						let strip_glow_safe = if sl.strip_at_top {
+							sl.has_top_band
+						} else {
+							sl.has_band
+						};
+						if strip_glow_safe {
+							glow_areas.push(p.prev_text_area_band(
+								sl.prev_top,
+								margin,
+								sl.prev_clip_t,
+								sl.prev_clip_b,
+							));
+						}
 						glow_areas.push(p.glow_text_area_band(
 							tops[&p.id],
 							margin,
