@@ -450,6 +450,11 @@ impl State {
 			MouseButton::Right => input::MouseBtn::Right,
 			_ => return false,
 		};
+		// Right-click is reserved for SilkTerm's own context menu and never
+		// forwarded to a mouse-tracking app (else e.g. muffer pastes on it).
+		if btn == input::MouseBtn::Right {
+			return false;
+		}
 		let (x, y) = self.mouse;
 		if pressed {
 			if self.mods.shift_key() {
@@ -2474,8 +2479,9 @@ impl ApplicationHandler<UserEvent> for App {
 					return;
 				}
 				// mouse-tracking app owns the pointer: report the press, skip local
-				// selection/paste/menu (Shift bypasses to the local action)
-				if state.report_mouse_button(button, true) {
+				// selection/paste/menu (Shift bypasses to the local action). An open
+				// menu must get the click (operate/dismiss it), not the app underneath.
+				if state.menu.is_none() && state.report_mouse_button(button, true) {
 					state.dirty = true;
 					return;
 				}
