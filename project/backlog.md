@@ -43,10 +43,37 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- ✅ Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
+- 🛠️ "Right-click bug" clarification.
+	- Cause: a mouse-tracking app (muffer/vim/tmux) grabs the mouse, so the right-click was forwarded to it (muffer pastes on right-click) instead of opening our menu; and a click meant for an open menu was being reported to the app underneath, so menu items did nothing. `nano`/`less` don't grab the mouse, hence unaffected.
+	- Fixed: right-click is now reserved for our own context menu and never forwarded to the app; and while any menu is open a click operates/dismisses the menu instead of going to the app. Left/middle/wheel still forward, so apps keep normal mouse use.
+	- Verify on hardware: right-click in muffer opens our menu (no paste), and menu items work.
+	- Steps to reproduce:
+		- Open terminal.
+		- Run `muffer`.
+		- Right-click on terminal.
+		- Observe: A *clipboard paste* occurs.
+		- Try to do anything with the menu.
+		- Observe: A menu can open, but nothing else.
+		- Switch to another application, then return.
+		- Observe: Menus work, until you right-click.
+		- Note that you may only to do this once or twice - until menu actions stop working pemanently.
+			- However, CTRL+Shift+T can open a new tab, and everything works fine for that tab.
+		- If you exit `muffer`, some things work and some things don't.
+			- Split vertical works
+			- Split horizontal works
+				- Split vertical then works in both panes.
+	- None of these issues present in `nano` or `less`.
+
+- 🛠️ Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
 	- Cause: the slide shifted the scroll region by up to several lines but only the one fractional-overscan row was ever drawn, so the revealed strip was bare background - and the scrolled-off alt-screen lines are gone from the grid, so there was nothing real to fill it with.
 	- Fixed: retained-frame slide. The pane keeps the previous frame's shaped text (`prev_buffer`, swapped in on each detected step) and draws it, clipped to just the revealed strip, so the strip fills with the real outgoing content while the current frame slides in over it. The per-step offset is now set (not stacked) since the retained frame is exactly one step back.
 	- Verified: across continuous multi-line slides the content fills top-to-bottom with no blank band (mid-slide frames show partial top/bottom rows and unbroken numbering).
+	- Verified:
+		- Works perfectly in `less`.
+		- `nano` exhibits none of the bugs listed above, but it also doesn't scroll smoothly, either with the mouse wheel or via cursor. (In fact, the mouse wheel just moves the cursor up and down. That's standard `nano` behavior, but the note is that scrolling isn't smooth. The cursor vertical movement also isn't smooth (horizontal is). Nano doesn't neeed to have a per-app fix, if it can even be "fixed".
+	- 🛠️ muffer now scrolls smoothly on output - but still not mouse wheel.
+		- Cause: a wheel notch makes the app repaint a bigger jump than line-by-line output, over the 8-line detection window, so it was seen as "not a clean scroll" and hard-cut. Raised the window/slide cap to 24 (experimental, gated by `smooth_scroll_apps`, revert = the one commit or turn the flag off).
+		- Limit: the slide retains only the single previous frame, so fast wheeling can still lag ~one step (looks like snapping). Smoothing that fully needs retaining more frames - a bigger change. Feel-test the cap first.
 
 - 🔘 Inverted text (e.g. Nano headers) is thin and hard-to-read.
 
@@ -79,6 +106,8 @@ In each section, items are listed approximately from newest to oldest.
 	- Resolution: leave open until confirmed on long-running terminals.
 
 ### New features and enhancements
+
+- 🔘 Tabs: Include a subtle 'X' icon in right edge of tab, to close with mouse.
 
 - 🔘 Blur: Naturally doesn't extend diagonally very far. When blurring a rectangle, for example, this is a known effect of, say, Gaussian blur. So either use a different blur that covers the diagonal directions better, or tweak the blur kernel so that it does that.
 
