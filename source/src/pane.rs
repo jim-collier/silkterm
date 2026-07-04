@@ -146,6 +146,11 @@ pub struct Slide {
 	pub band_top: f32,
 	pub has_band: bool,
 	pub has_top_band: bool,
+	// which end the revealed strip is at: true = top (down-slide), false = bottom.
+	// The glow of the strip is only safe to draw when the band on the strip's
+	// furniture side is present (it clips the prev frame's header/status out of the
+	// glow); without it, glowing prev could drag in its own-bg furniture. See app.rs.
+	pub strip_at_top: bool,
 }
 
 pub struct Pane {
@@ -430,6 +435,7 @@ impl Pane {
 				band_top,
 				has_band: static_rows > 0,
 				has_top_band: static_top > 0,
+				strip_at_top: app_off > 0.0,
 			})
 		} else {
 			None
