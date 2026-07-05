@@ -571,7 +571,11 @@ impl Pane {
 					});
 				}
 
-				let bold = flags.contains(Flags::BOLD);
+				// reverse-video (dark-on-light) text renders visually thinner than the
+				// same weight light-on-dark; embolden it so inverse chrome (nano/vim
+				// title+status bars) reads as strongly as normal text.
+				let bold = flags.contains(Flags::BOLD)
+					|| (s.embolden_inverse && flags.contains(Flags::INVERSE));
 				let italic = flags.contains(Flags::ITALIC);
 				saw_bold |= bold;
 				// A glyph the primary mono font lacks renders via a fallback font

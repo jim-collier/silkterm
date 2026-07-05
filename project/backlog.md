@@ -87,7 +87,8 @@ In each section, items are listed approximately from newest to oldest.
 		- Text moving DOWN fast: the bottom two lines jump UP. Likely the SAME un-glowed-strip issue at the bottom edge (up-slide reveal strip above the status line), now also glowed by the same fix when `has_band`. If any residual jump remains after the feel-test, the leftover is band re-detection mid-ease (a new step re-captures band sizes + resets `app_off`); fix would be to hold band sizes stable across an in-progress ease.
 
 - ◐ Inverted text (e.g. Nano headers) is thin and hard-to-read.
-	- Partly addressed: the readability glow used to paint a bg-coloured plate/outline over reverse-video cells, fighting the dark glyphs. The glow is now suppressed on any own-bg cell (see the header-shadow fix above), so it no longer erodes inverse text. The residual thinness is the inherent dark-on-light (irradiation) + anti-aliasing effect of reverse video - a separate, deeper fix (heavier weight or gamma-correct AA on inverse runs) if still wanted after a look.
+	- This turned out to be the owner's ACTUAL nano complaint (the "shadow jump" language was describing this). Dark-on-light (reverse video) renders visually thinner than the same-weight light-on-dark - inherent irradiation + AA, and SilkTerm/xfce-terminal both show it (Terminator renders it bolder). The glow only boosts light-on-dark text (dark halo), so inverse text got no readability help; the earlier own-bg mask removed the eroding bright halo but added no boost.
+	- Fix (embolden): new `embolden_inverse` config bool (default true) - reverse-video runs render at Weight::BOLD so they read as strongly as normal text. `pane.rs` build() ORs INVERSE into the run bold flag. Verified headless: inverse text is visibly thicker with it on (bold face applies; the delta is modest with the default DejaVu mono - a font with a heavier bold shows more). Needs owner feel-test; if too subtle, next step is faux-bold (stroke dilation) for stronger control.
 
 - 🔘 Choosing "Tabs|New Tab" the first time, opens a second tab. Doing it again, changes to the first tab, rather than opening a third tab.
 
@@ -118,6 +119,8 @@ In each section, items are listed approximately from newest to oldest.
 	- Resolution: leave open until confirmed on long-running terminals.
 
 ### New features and enhancements
+
+- 🔘 Triple-click: Select the entire line - even if it's wrapped.
 
 - 🔘 Ctrl+Shift+N: New window on same directory.
 
