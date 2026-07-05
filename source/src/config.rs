@@ -106,9 +106,10 @@ pub struct Settings {
 	pub text_outline: f32, // antialiased outline around glyphs, px (0 = none; glow colour rules)
 	pub text_glow_ramp: String, // halo falloff: "gaussian" | "linear" | "s"
 	pub text_glow_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
-	pub cursor_glow: bool,              // cursor gets the same halo, merged with the text glow
-	pub cursor_size_height: f32,        // cursor height, 1..100% of the cell (from the bottom)
-	pub cursor_size_width: f32,         // cursor width, 1..100% of the cell (from the left)
+	pub embolden_inverse: bool, // render reverse-video (dark-on-light) text bold so it reads as strongly as normal text (the glow only boosts light-on-dark)
+	pub cursor_glow: bool,      // cursor gets the same halo, merged with the text glow
+	pub cursor_size_height: f32, // cursor height, 1..100% of the cell (from the bottom)
+	pub cursor_size_width: f32, // cursor width, 1..100% of the cell (from the left)
 	pub cursor_animation: String, // "none" | "phase" | "pulse_vertical" | "pulse_horizontal" | "pulse_both"
 	pub cursor_blink_rate_ms: f32, // one animation cycle (ms)
 	pub columns: usize,           // initial window grid size (used when !remember_size)
@@ -162,6 +163,7 @@ impl Default for Settings {
 			text_outline: 2.0,
 			text_glow_ramp: "s".to_string(),
 			text_glow_regular_weight: true,
+			embolden_inverse: true,
 			cursor_glow: true,
 			cursor_size_height: 100.0, // full height
 			cursor_size_width: 25.0,   // ~quarter-width bar
@@ -370,6 +372,9 @@ pub fn persist(orig: &Settings, s: &Settings) {
 	if s.text_glow_regular_weight != orig.text_glow_regular_weight {
 		doc["text_glow_regular_weight"] = value(s.text_glow_regular_weight);
 	}
+	if s.embolden_inverse != orig.embolden_inverse {
+		doc["embolden_inverse"] = value(s.embolden_inverse);
+	}
 	if s.cursor_glow != orig.cursor_glow {
 		doc["cursor_glow"] = value(s.cursor_glow);
 	}
@@ -486,6 +491,7 @@ struct RawConfig {
 	text_outline: Option<f32>,
 	text_glow_ramp: Option<String>,
 	text_glow_regular_weight: Option<bool>,
+	embolden_inverse: Option<bool>,
 	cursor_glow: Option<bool>,
 	cursor_size_height: Option<f32>,
 	cursor_size_width: Option<f32>,
@@ -675,6 +681,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		text_glow_regular_weight: raw
 			.text_glow_regular_weight
 			.unwrap_or(d.text_glow_regular_weight),
+		embolden_inverse: raw.embolden_inverse.unwrap_or(d.embolden_inverse),
 		cursor_glow: raw.cursor_glow.unwrap_or(d.cursor_glow),
 		cursor_size_height: raw
 			.cursor_size_height
@@ -1332,6 +1339,7 @@ opacity = 0.95
 # text_outline = 2.0         ## antialiased outline around glyphs, in pixels (0 = none)
 # text_glow_ramp = "s"       ## halo falloff shape: "gaussian", "linear", or "s"
 # text_glow_regular_weight = true  ## blur bold text at regular weight so its halo matches non-bold text
+# embolden_inverse = true    ## render reverse-video (dark-on-light) text bold so it reads as strongly as normal
 # cursor_glow = true         ## the cursor gets the same halo, merged with the text glow
 
 ##=============================================================================
