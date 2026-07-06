@@ -29,6 +29,14 @@ fn alloc_pane_id() -> PaneId {
 	PANE_ID_SEQ.fetch_add(1, Ordering::Relaxed)
 }
 
+// SILK_SCROLLDBG: per-frame app-scroll trace (dev-only, gated by the env var).
+static DBG_FRAME: AtomicU64 = AtomicU64::new(0);
+fn scroll_dbg() -> bool {
+	use std::sync::OnceLock;
+	static ON: OnceLock<bool> = OnceLock::new();
+	*ON.get_or_init(|| std::env::var_os("SILK_SCROLLDBG").is_some())
+}
+
 // Cursor animation tunables (internal).
 const CURSOR_MOVE_TAU_MS: f32 = 55.0; // horizontal slide responsiveness (lower = snappier)
 const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
@@ -337,6 +345,7 @@ impl Pane {
 		// Only clean line-scrolls (up to APP_SCROLL_MAX rows) match - in-place redraws
 		// and big page-jumps don't, so they hard-cut. Opt-in (experimental).
 		let mut capture_prev = false;
+		let mut sh_dbg = 0i32;
 		if s.smooth_scroll_apps && alt && !alt_transition {
 			const APP_SCROLL_MAX: usize = 24; // in step with scroll::APP_OFF_CAP
 			let grid = guard.grid();
@@ -350,6 +359,7 @@ impl Pane {
 				rows.push(h);
 			}
 			let sh = scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX);
+			sh_dbg = sh;
 			if sh != 0 {
 				// Freeze the static-band sizes on the gesture's first step (a clean
 				// settled-vs-scrolled diff); re-measuring per step fluctuates by a row
@@ -359,20 +369,18 @@ impl Pane {
 					self.slide_static = sb;
 					self.slide_static_top = st;
 				}
-				// Accumulate the slide offset so the content position stays continuous
-				// across overlapping steps. Screen row = grid_row + app_off, and the grid
-				// already advanced by sh this frame, so app_off must GROW by sh to hold a
-				// line fixed for that instant; SETting it to sh instead throws away the
-				// un-eased remainder from the last step, and that discarded remainder is
-				// the frame-to-frame "bounce". prev_buffer is captured ONCE at the gesture
-				// start (the pre-scroll frame) with slide_sh accumulating the total shift
-				// since, so prev stays aligned with the current frame and fills the whole
-				// reveal strip - re-captured only when the cumulative shift outgrows the
-				// scroll region (prev has scrolled out of view) or the direction flips.
-				let scroll_rows = lines.saturating_sub(self.slide_static + self.slide_static_top);
-				let (new_sh, cap) = slide_step(gesture_active, self.slide_sh, sh, scroll_rows);
-				self.slide_sh = new_sh;
-				capture_prev = cap; // (re)snapshot the outgoing frame as prev
+				// ACCUMULATE the visual offset so the CURRENT content stays continuous
+				// across overlapping steps: screen row = grid_row + app_off, the grid
+				// already advanced by sh, so app_off must GROW by sh to hold a line fixed
+				// for that instant. SETting it to sh instead discards the un-eased
+				// remainder = the frame-to-frame bounce. RE-SNAPSHOT prev EVERY step
+				// (slide_sh = this step only): one retained frame can fill just a
+				// one-step reveal strip, so it must stay fresh - accumulating slide_sh to
+				// fill a taller strip from a single stale snapshot made the strip (and its
+				// glow) jump by the whole scroll region at each re-capture. scroll.rs's lag
+				// ramp keeps app_off from lagging past what that one frame covers.
+				self.slide_sh = sh as f32;
+				capture_prev = true;
 				self.scroll.app_scroll(self.scroll.app_offset() + sh as f32);
 			}
 			self.last_rows = rows;
@@ -391,6 +399,17 @@ impl Pane {
 		// is 0 on the alt screen); + shifts content down, revealing bg at the top.
 		let app_off = self.scroll.app_offset();
 		let voff = frac + app_off;
+		// Dev trace for the alt-screen slide (SILK_SCROLLDBG). Off = one cached bool
+		// check per frame. The per-frame (sh, app_off, slide_sh, st, sb) sequence is
+		// the deterministic proof that the slide eases smoothly (app_off monotonic, no
+		// bounce) without needing to eyeball a render - see the headless bounce harness.
+		if scroll_dbg() && s.smooth_scroll_apps && alt {
+			let f = DBG_FRAME.fetch_add(1, Ordering::Relaxed);
+			eprintln!(
+				"SCROLLDBG f={f} pane={} sh={sh_dbg} app_off={app_off:.4} slide_sh={:.4} st={} sb={} frac={frac:.4}",
+				self.id, self.slide_sh, self.slide_static_top, self.slide_static,
+			);
+		}
 		// Region-aware slide: only the middle scroll region shifts by voff; a static
 		// bottom band (status/input line) and a static top band (title bar) hold their
 		// fractional-only position. `split_row` is the first row of the bottom band;
@@ -1914,28 +1933,6 @@ fn static_bands(cur: &[u64], last: &[u64]) -> (usize, usize) {
 	if st + sb >= n { (0, 0) } else { (st, sb) }
 }
 
-// Fold a detected scroll step into the ongoing alt-screen slide: returns the new
-// cumulative shift and whether to (re)capture prev_buffer. prev is snapshotted once
-// at a gesture's start (the pre-scroll frame) and slide_sh accumulates the total
-// shift since, so prev stays aligned with the current frame and fills the whole
-// reveal strip. It's re-captured when a gesture wasn't active, the cumulative shift
-// would outgrow the scroll region (prev has scrolled out of view), or the scroll
-// direction flipped (the strip moves to the other end).
-fn slide_step(gesture_active: bool, slide_sh: f32, sh: i32, scroll_rows: usize) -> (f32, bool) {
-	let next = slide_sh + sh as f32;
-	// restart on: gesture start; cumulative shift outgrows the scroll region (prev
-	// scrolled out of view); or a direction flip (the `!gesture_active` clause
-	// already covers the not-in-a-gesture case, so the sign test needn't re-guard it).
-	let restart = !gesture_active
-		|| next.abs() as usize >= scroll_rows.max(1)
-		|| (slide_sh > 0.0) != (sh > 0);
-	if restart {
-		(sh as f32, true)
-	} else {
-		(next, false)
-	}
-}
-
 fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 	let n = cur.len();
 	if n == 0 || last.len() != n {
@@ -1962,7 +1959,7 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 mod tests {
 	use super::{
 		Dir, Node, Rect, bell_brighten, distinct_pair, equalize_dir_run, layout, pair_inside,
-		same_char_pair, scroll_shift, scroll_shift_signed, slide_step, static_bands,
+		same_char_pair, scroll_shift, scroll_shift_signed, static_bands,
 	};
 
 	fn leaf(id: u64) -> Node {
@@ -2265,24 +2262,6 @@ mod tests {
 		assert_eq!(static_bands(&last, &last), (0, 0));
 		// length mismatch is not measurable
 		assert_eq!(static_bands(&a, &last), (0, 0));
-	}
-
-	#[test]
-	fn slide_step_accumulates_and_recaptures() {
-		let rows = 20; // scroll-region rows
-		// gesture start: always (re)capture, cumulative resets to this step
-		assert_eq!(slide_step(false, 0.0, 2, rows), (2.0, true));
-		// continuation same direction: accumulate, do NOT recapture (prev stays put)
-		assert_eq!(slide_step(true, 2.0, 1, rows), (3.0, false));
-		assert_eq!(slide_step(true, 3.0, 2, rows), (5.0, false));
-		// backward gesture accumulates negatively without recapture
-		assert_eq!(slide_step(true, -2.0, -1, rows), (-3.0, false));
-		// cumulative shift outgrows the scroll region -> recapture (prev scrolled off)
-		assert_eq!(slide_step(true, 19.0, 2, rows), (2.0, true));
-		// direction flip mid-gesture -> recapture (reveal strip moves to the other end)
-		assert_eq!(slide_step(true, 4.0, -1, rows), (-1.0, true));
-		// a degenerate zero scroll region never divides by zero (max(1) guard)
-		assert_eq!(slide_step(true, 1.0, 1, 0), (1.0, true));
 	}
 
 	#[test]

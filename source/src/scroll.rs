@@ -31,6 +31,13 @@ const RAMP_DOWN_MS: f32 = 450.0; // returning to the smooth speed is gentle
 // bigger jump than line-by-line output, so the window has to be generous or the
 // wheel just hard-cuts.
 const APP_OFF_CAP: f32 = 24.0;
+// Alt-scroll lag control: below APP_LAG_SOFT lines the slide eases at the smooth
+// configured tau; from there to APP_LAG_HARD the ease ramps toward MIN_APP_TAU so
+// a fast burst can't lag far enough to open a blank reveal strip (one retained
+// frame fills only ~one line back).
+const APP_LAG_SOFT: f32 = 1.2;
+const APP_LAG_HARD: f32 = 4.0;
+const MIN_APP_TAU_MS: f32 = 22.0;
 
 pub struct Scroll {
 	target: f32,
@@ -128,9 +135,18 @@ impl Scroll {
 			self.ramp = 0.0;
 		}
 
-		// ease the alt-screen slide offset back to rest at the smooth speed
+		// Ease the alt-screen slide offset back to rest. The reveal strip is filled
+		// from ONE retained frame (one step back), so the offset must not lag more
+		// than ~a line or the strip under-fills (shows background). Ease at the smooth
+		// configured speed while the lag is small (gentle scroll stays buttery), but
+		// ramp the ease faster as the lag grows past a line, so a fast burst can't
+		// glide far behind and open a blank band. The rate change is smooth (a shorter
+		// tau, not a snap), so the motion never jumps.
 		if self.app_off != 0.0 {
-			let ka = 1.0 - (-dt_s * 1000.0 / init.max(1.0)).exp();
+			let lag = self.app_off.abs();
+			let over = ((lag - APP_LAG_SOFT) / (APP_LAG_HARD - APP_LAG_SOFT)).clamp(0.0, 1.0);
+			let tau_a = (init + (MIN_APP_TAU_MS - init) * over).max(1.0);
+			let ka = 1.0 - (-dt_s * 1000.0 / tau_a).exp();
 			self.app_off -= self.app_off * ka;
 			if self.app_off.abs() < config::SETTLE_EPS {
 				self.app_off = 0.0;
@@ -280,6 +296,25 @@ mod tests {
 		}
 		assert_eq!(b.app_offset(), 0.0);
 		assert!(!b.animating());
+	}
+
+	#[test]
+	fn app_off_lag_ramp_bounds_a_fast_burst() {
+		// The caller accumulates the slide offset (app_off += step) for smooth content;
+		// the ease ramps faster as the lag grows so a fast burst can't glide far behind
+		// and open a blank reveal strip. Simulate a fast continuous scroll and check the
+		// lag stays bounded well under the hard cap.
+		let mut s = Scroll::new();
+		let mut max_lag = 0.0f32;
+		for _ in 0..80 {
+			s.app_scroll(s.app_offset() + 1.0); // one detected line-step
+			max_lag = max_lag.max(s.app_offset().abs());
+			s.advance(0.016);
+			s.advance(0.016);
+			max_lag = max_lag.max(s.app_offset().abs());
+		}
+		assert!(max_lag < APP_LAG_HARD + 3.0, "lag {max_lag} ran away");
+		assert!(max_lag < APP_OFF_CAP, "lag {max_lag} hit the hard cap");
 	}
 
 	#[test]

@@ -43,27 +43,6 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🛠️ "Right-click bug" clarification.
-	- Cause: a mouse-tracking app (muffer/vim/tmux) grabs the mouse, so the right-click was forwarded to it (muffer pastes on right-click) instead of opening our menu; and a click meant for an open menu was being reported to the app underneath, so menu items did nothing. `nano`/`less` don't grab the mouse, hence unaffected.
-	- Fixed: right-click is now reserved for our own context menu and never forwarded to the app; and while any menu is open a click operates/dismisses the menu instead of going to the app. Left/middle/wheel still forward, so apps keep normal mouse use.
-	- Verify on hardware: right-click in muffer opens our menu (no paste), and menu items work.
-	- Steps to reproduce:
-		- Open terminal.
-		- Run `muffer`.
-		- Right-click on terminal.
-		- Observe: A *clipboard paste* occurs.
-		- Try to do anything with the menu.
-		- Observe: A menu can open, but nothing else.
-		- Switch to another application, then return.
-		- Observe: Menus work, until you right-click.
-		- Note that you may only to do this once or twice - until menu actions stop working pemanently.
-			- However, CTRL+Shift+T can open a new tab, and everything works fine for that tab.
-		- If you exit `muffer`, some things work and some things don't.
-			- Split vertical works
-			- Split horizontal works
-				- Split vertical then works in both panes.
-	- None of these issues present in `nano` or `less`.
-
 - 🛠️ Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
 	- Cause: the slide shifted the scroll region by up to several lines but only the one fractional-overscan row was ever drawn, so the revealed strip was bare background - and the scrolled-off alt-screen lines are gone from the grid, so there was nothing real to fill it with.
 	- Fixed: retained-frame slide. The pane keeps the previous frame's shaped text (`prev_buffer`, swapped in on each detected step) and draws it, clipped to just the revealed strip, so the strip fills with the real outgoing content while the current frame slides in over it. The per-step offset is now set (not stacked) since the retained frame is exactly one step back.
@@ -78,7 +57,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Cause: the detector matched a line-shift only as a run anchored at the TOP row, and the renderer slid the whole pane from its top. `less` fills from the top with only a bottom status line, so both worked. `nano`/`muffer` keep a static title bar at the TOP: its unchanging row 0 broke the top-anchored match (detector returned 0 -> hard cut), and even if detected the title would slide/bounce.
 		- Fixed: `scroll_shift_signed` now finds the k where the most rows translate ANYWHERE (tolerates static bands at both ends), guarded by a "rows actually moved" count so a static/blank field can't false-trigger; `build` counts a static TOP band (mirror of the bottom one); the slide renders the scroll region between `top_split_y` and `split_y` with the top title bar redrawn unshifted. No-band apps (less/vim) are byte-identical (top_split_y = f32::MIN). App-scroll is alt-screen-only, so apt is unaffected.
 		- Feel-test on hardware: nano + muffer wheel one notch should ease, not snap; the title bar must stay put (no bounce); less must be unchanged. Still gated by `smooth_scroll_apps`.
-	- ◐ Residual band jitter during a slide (nano; "almost perfect" otherwise). Two symptoms, different causes:
+	- 🛠️ Residual band jitter during a slide (nano; "almost perfect" otherwise). Two symptoms, different causes:
 		- Text moving UP (content scrolls up): the drop-shadow *under* the inverse-video header title jumps DOWN. STILL OPEN (real root cause now known + reproduced).
 			- Partial fix landed (own-bg mask): the glow no longer applies over any cell with its own solid bg (reverse video, coloured bg, selection) - they have full contrast, so the halo there was pure artifact. bgcolor-map alpha is now an own-bg mask; the blur gates each tap by it. Removed the header's STATIC halo (A/B: below a reverse bar over a bright image the halo patch (216,216,225) -> (235,235,245) = the image, all other text glow byte-identical). Shared with the inverse-thin bug below. But this did NOT fix the owner's symptom - it's a MOTION artifact:
 			- Real root cause (reproduced headless, nano-shaped scene over a bright bg image, frozen slide via huge scroll_tau_ms): the retained-frame slide fills the revealed strip from the PREVIOUS frame for the TEXT but does NOT glow that strip (app.rs glow pass skipped prev). So during a down-slide the rows in the strip just below the header lose their dark readability backing, and as the slide settles the backed/unbacked boundary marches down = "the shadow jumps down". Clearly visible: strip rows render faint over the bright image while settled rows below have the dark backing.
@@ -86,34 +65,13 @@ In each section, items are listed approximately from newest to oldest.
 			- Verified headless A/B (redraw scene, `st=1`): header dark-px flat 1459-1580 (0 blobby frames), strip glowed; and the `st=0` DECSTBM edge case no longer blobs (max 3742 -> 574) thanks to the guard. Needs an owner feel-test on REAL nano to confirm the wheel/cursor feel.
 		- Text moving DOWN fast: the bottom two lines jump UP. Likely the SAME un-glowed-strip issue at the bottom edge (up-slide reveal strip above the status line), now also glowed by the same fix when `has_band`. If any residual jump remains after the feel-test, the leftover is band re-detection mid-ease (a new step re-captures band sizes + resets `app_off`); fix would be to hold band sizes stable across an in-progress ease.
 		- Band freeze did NOT help (owner re-tested: "looks the same as before"). Instrumented `static_bands`/`app_off` against REAL nano for ground truth: the bands were already stable (frozen `(1,3)`, no fluctuation) - so band jitter was never the cause of this symptom. The real signal was `app_off` itself oscillating frame-to-frame (`0.57 -> 1.15 -> 0.37 -> 1.72 ...`) - THAT is the bounce.
-		- Real cause + fix (accumulation): `app_scroll` SET `app_off = sh` each step, throwing away the un-eased remainder from the last step; when the next repaint arrives mid-ease (almost always - eases overlap), the content position discontinuously jumps by that discarded remainder = the bounce. Screen row = grid_row + app_off, and the grid already advanced by sh, so app_off must GROW by sh (not be set to it) to hold a line fixed for that instant. Changed to accumulate (`app_off += sh`); the log then shows app_off smooth/monotonic and the per-frame content motion = just the ease decrement (proven on real nano). prev_buffer is now captured ONCE at a gesture's start with `slide_sh` accumulating the total shift since, so it stays aligned with the current frame and fills the whole reveal strip (re-captured only when the cumulative shift outgrows the scroll region or the direction flips - pure `slide_step()` helper, unit-tested); prev is also clipped to its own scroll rows so its title/status band can't bleed into the strip. Needs owner feel-test on real nano over their bg image.
-
-- [✔️] Alt-screen enter/exit animated like a scroll (`smooth_scroll_apps`). Two symptoms: (a) opening nano "jiggles"/jelly-bounces or scrolls in from a few lines down; (b) exiting nano scrolls the previous screen contents back in from the bottom, where a normal terminal just cuts.
-	- Cause: an alt-screen enter/exit is an instant full-screen swap, but the scroll probes diffed frame-to-frame across it. On enter the app-scroll probe matched blank rows between the old and new screens -> bogus slide (jiggle). On exit `history_size` jumps (the alt grid carries no scrollback) -> the output-ease read it as new output and scrolled the restored screen in.
-	- Fixed: track the previous frame's alt-screen state; on a transition hard-cut it - cancel any in-flight slide, skip both probes, suppress the output nudge, and rebaseline the row fingerprints to the new screen.
-	- Confirmed fixed by owner (both symptoms). Residual: a very slight 1-line smooth scroll-up still happens on enter and exit - livable, deferred (see the deferred item below).
-
-- ◐ Inverted text (e.g. Nano headers) is thin and hard-to-read.
-	- This turned out to be the owner's ACTUAL nano complaint (the "shadow jump" language was describing this). Dark-on-light (reverse video) renders visually thinner than the same-weight light-on-dark - inherent irradiation + AA, and SilkTerm/xfce-terminal both show it (Terminator renders it bolder). The glow only boosts light-on-dark text (dark halo), so inverse text got no readability help; the earlier own-bg mask removed the eroding bright halo but added no boost.
-	- Fix (embolden): new `embolden_inverse` config bool (default true) - reverse-video runs render at Weight::BOLD so they read as strongly as normal text. `pane.rs` build() ORs INVERSE into the run bold flag. Verified headless: inverse text is visibly thicker with it on (bold face applies; the delta is modest with the default DejaVu mono - a font with a heavier bold shows more). Needs owner feel-test; if too subtle, next step is faux-bold (stroke dilation) for stronger control.
+		- Accumulation (first attempt) made it WORSE, not better (owner: "jump much farther, with less aggressive scrolling"). Accumulating `app_off` for the CURRENT content was right (content is measurably smooth), but ALSO accumulating `slide_sh` to fill a taller strip from ONE stale prev snapshot was wrong: when the cumulative shift outgrew the scroll region, prev was re-captured and slide_sh reset, jumping the reveal strip (and its glow) by the WHOLE scroll-region height (~28 cells) - a periodic ~screenful jump that scales with accumulation depth = the "farther" bounce.
+		- Real fix (recapture every step + lag ramp): keep `app_off` accumulating (smooth content), but RE-SNAPSHOT prev every step so the strip is always one fresh step back (no more 28-cell re-capture jump). One retained frame only fills a one-step strip, so a fast burst could still lag far enough to open a blank band; a lag ramp on the `app_off` ease (scroll.rs) fixes that - it eases at the smooth configured speed while the lag is under ~1 line (gentle scroll unchanged) and ramps the ease faster as the lag grows, bounding `app_off` to ~1 (gentle) / ~3 (fast) instead of running to ~7. Built a headless bounce HARNESS (deterministic full-redraw nano-shaped scene + `SILK_SCROLLDBG` per-frame trace + a monotonicity analyzer) - measured content bounce 0, band-boundary jumps 0, prev-strip jump <1.6 cells, across gentle/fast/wheel with real top+bottom bands; mid-slide dumps show the blank band shrank from ~7 lines to ~1. Needs owner feel-test on real nano over their bg image.
 
 - 🔘 Choosing "Tabs|New Tab" the first time, opens a second tab. Doing it again, changes to the first tab, rather than opening a third tab.
 
 - 🔘 When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
 	- Investigated: no obvious code-path desync found. `bg_image_changed` already includes `background_blur`, `needs_text_rebuild` covers font, `load_bg_image` re-reads the fresh blur, and the glow re-shapes each build. Needs a live repro (change font in Settings, OK, watch the blur) to pin which "blur" and the exact trigger - deferred to an interactive pass since dialog driving is flaky here.
-
-- 🛠️ Modal Bug (with Settings and About): The dialog shows up in the window list. Also when focused is changed elsewhere then the dialog is clicked on, the terminal window doesn't also come to the top - it stays behind whatever got in front of it. In Linux - unlike Windows - the main window can still be moved around when the modal dialog is open, but it *remains an unselected window* - the dialog retains focus. These things aren't a coding trick, it's just the way modals work on Linux, and so should SilkTerm.
-	- Done: the dialog now sets the EWMH dialog type plus the MODAL and SKIP_TASKBAR states alongside the existing transient-for, so the WM keeps it off the taskbar, stacks it above and raises it with the terminal, and holds focus - the normal Linux modal behavior via window hints, no input tricks.
-	- Verified: the dialog carries _NET_WM_WINDOW_TYPE_DIALOG, _NET_WM_STATE_MODAL + _NET_WM_STATE_SKIP_TASKBAR, and WM_TRANSIENT_FOR points at the terminal window.
-	- 🔘 It still exists.
-		- Steps to reproduce:
-			1. Open "Help|About".
-			2. Select any other window. Say, Mousepad.
-			3. Select the "Help|About" dialog you opened previously.
-			4. Observe: The main SilkTerm window is *behind* Mousepad, while the modal is on top.
-		- Expected behavior.
-			- With all other Linux GUI apps I'm aware of (including Mousepad), step 4 looks like:
-				- Observe: The main window AND the "Help|About" dialog come to the top. There is nothing in between the main window and the "Help|About" modal.
 
 - 🔘 At high blur radius and low softness, the blur has boxy artifacts.
 	- Diagnosed: the glow is a separable blur with a fixed 25-tap kernel truncated at +/-3 sigma (`glow.rs` fs_blur). Two causes: (a) the hard +/-3 sigma cutoff leaves a ~1% edge that low softness (x10 intensity) amplifies into a visible square; (b) the linear/s-curve falloffs aren't true Gaussians, so blurred separably their support is a diamond/box, not a circle - and the default falloff is now s-curve. Fix is a look-vs-perf tradeoff (wider extent + more taps, and/or a windowed kernel) that wants eyeballing - deferred to a visual pass.
@@ -128,6 +86,22 @@ In each section, items are listed approximately from newest to oldest.
 ### New features and enhancements
 
 - 🔘 For screenshots, and videos, use "Monaspace Argon NF Medium".
+
+- 🔘 CICD process (without --quick): Only after quite major changes, record a demo video:
+	- 🔘 Showing a wide variety of synthetic, anonymized content, with varying burst of text output length.
+	- 🔘 Colorized (anonymous) prompt, colorized ls output, etc.
+	- 🔘 Include showing smooth-scrolling in `nano` and `less`.
+	- 🔘 Typing commands etc. should look as if a real human were doing it - a variable ~40 to 100 wpm (avg about 80), with common random mistakes and fixes.
+	- 🔘 Include perfectly-matched keyboard click sounds, that vary realistically "random", except for the same sounds for space, enter, backpsace, etc.
+		- 🔘 Very nice, ASMR-like, luxurious "thocky" keyboard sounds.
+	- 🔘 Mouse click sound for demoing mouse features. (Quiet, nice mouseclick sound, deeper/softer than typical demo mouseclicks.)
+	- 🔘 ~1024x768 terminal area. (Which we might change later.)
+	- 🔘 Adjust some headline features through the Settings dialog.
+	- 🔘 Show a readable banner on the video, briefly naming or describing what is being demo'd (and leave it up for a minumum human-readable time, or longer). Make sure the banner isn't blocking what's being demo'd.
+	- 🔘 Use a codec that compresses this kind of content well.
+	- By default use "background24.jpg" at 10% opacity. No terminal transparency except when demoing it. Background color #222222. Font current system font ("Monaspace Argon NF Medium").
+	- 🔘 Store the videos under `silkterm/private/demo-video/`, using the same naming/rotation strategy as backups.
+	- 🔘 Store a copy of only the most recent video probably under `siklterm/github/source/video/demo.{ext}`. Make sure README.md embeds or references it visibly near the top.
 
 - 🔘 Triple-click: Select the entire line - even if it's wrapped.
 
@@ -418,6 +392,45 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Verify smoothness on X11/Compiz.
 
 #### Done - Bugs
+
+- ✅ Inverted text (e.g. Nano headers) is thin and hard-to-read.
+	- This turned out to be the owner's ACTUAL nano complaint (the "shadow jump" language was describing this). Dark-on-light (reverse video) renders visually thinner than the same-weight light-on-dark - inherent irradiation + AA, and SilkTerm/xfce-terminal both show it (Terminator renders it bolder). The glow only boosts light-on-dark text (dark halo), so inverse text got no readability help; the earlier own-bg mask removed the eroding bright halo but added no boost.
+	- Fix (embolden): new `embolden_inverse` config bool (default true) - reverse-video runs render at Weight::BOLD so they read as strongly as normal text. `pane.rs` build() ORs INVERSE into the run bold flag. Verified headless: inverse text is visibly thicker with it on (bold face applies; the delta is modest with the default DejaVu mono - a font with a heavier bold shows more). Needs owner feel-test; if too subtle, next step is faux-bold (stroke dilation) for stronger control.
+
+- ✅ "Right-click bug" clarification.
+	- Cause: a mouse-tracking app (muffer/vim/tmux) grabs the mouse, so the right-click was forwarded to it (muffer pastes on right-click) instead of opening our menu; and a click meant for an open menu was being reported to the app underneath, so menu items did nothing. `nano`/`less` don't grab the mouse, hence unaffected.
+	- ✅ Fixed: right-click is now reserved for our own context menu and never forwarded to the app; and while any menu is open a click operates/dismisses the menu instead of going to the app. Left/middle/wheel still forward, so apps keep normal mouse use.
+	- Verify on hardware: right-click in muffer opens our menu (no paste), and menu items work.
+	- Steps to reproduce:
+		- Open terminal.
+		- Run `muffer`.
+		- Right-click on terminal.
+		- Observe: A *clipboard paste* occurs.
+		- Try to do anything with the menu.
+		- Observe: A menu can open, but nothing else.
+		- Switch to another application, then return.
+		- Observe: Menus work, until you right-click.
+		- Note that you may only to do this once or twice - until menu actions stop working pemanently.
+			- However, CTRL+Shift+T can open a new tab, and everything works fine for that tab.
+		- If you exit `muffer`, some things work and some things don't.
+			- Split vertical works
+			- Split horizontal works
+				- Split vertical then works in both panes.
+	- None of these issues present in `nano` or `less`.
+
+- ✅ Modal Bug (with Settings and About): The dialog shows up in the window list. Also when focused is changed elsewhere then the dialog is clicked on, the terminal window doesn't also come to the top - it stays behind whatever got in front of it. In Linux - unlike Windows - the main window can still be moved around when the modal dialog is open, but it *remains an unselected window* - the dialog retains focus. These things aren't a coding trick, it's just the way modals work on Linux, and so should SilkTerm.
+	- Done: the dialog now sets the EWMH dialog type plus the MODAL and SKIP_TASKBAR states alongside the existing transient-for, so the WM keeps it off the taskbar, stacks it above and raises it with the terminal, and holds focus - the normal Linux modal behavior via window hints, no input tricks.
+	- Verified: the dialog carries _NET_WM_WINDOW_TYPE_DIALOG, _NET_WM_STATE_MODAL + _NET_WM_STATE_SKIP_TASKBAR, and WM_TRANSIENT_FOR points at the terminal window.
+	- It still exists.
+		- Steps to reproduce:
+			1. Open "Help|About".
+			2. Select any other window. Say, Mousepad.
+			3. Select the "Help|About" dialog you opened previously.
+			4. Observe: The main SilkTerm window is *behind* Mousepad, while the modal is on top.
+		- Expected behavior:
+			- With all other Linux GUI apps I'm aware of (including Mousepad), step 4 looks like:
+				- Observe: The main window AND the "Help|About" dialog come to the top. There is nothing in between the main window and the "Help|About" modal.
+	- ✅ Fixed
 
 - ✅ Mouse-scroll doesn't work in Muffer (running inside SilkTerm). (20260703)
 	- Cause: SilkTerm implemented no mouse reporting at all - clicks, motion, and wheel were only handled locally, never encoded to the PTY. So when an app turns on mouse tracking (DECSET 1000/1002/1003, e.g. Muffer enabling it to receive wheel events), it got nothing and its scroll did nothing; the wheel just drove SilkTerm's own scrollback.
@@ -1096,6 +1109,12 @@ In each section, items are listed approximately from newest to oldest.
 		- Done. `background_fit` = "stretch" | "zoom"; default zoom/cover.
 
 ### Future and/or deferred
+
+- ✋ Alt-screen enter/exit animated like a scroll (`smooth_scroll_apps`). Two symptoms: (a) opening nano "jiggles"/jelly-bounces or scrolls in from a few lines down; (b) exiting nano scrolls the previous screen contents back in from the bottom, where a normal terminal just cuts.
+	- Cause: an alt-screen enter/exit is an instant full-screen swap, but the scroll probes diffed frame-to-frame across it. On enter the app-scroll probe matched blank rows between the old and new screens -> bogus slide (jiggle). On exit `history_size` jumps (the alt grid carries no scrollback) -> the output-ease read it as new output and scrolled the restored screen in.
+	- Fixed: track the previous frame's alt-screen state; on a transition hard-cut it - cancel any in-flight slide, skip both probes, suppress the output nudge, and rebaseline the row fingerprints to the new screen.
+	- Confirmed fixed by owner (both symptoms). Residual: a very slight 1-line smooth scroll-up still happens on enter and exit - livable, deferred (see the deferred item below).
+	- **Verified**: Mostly fixed. Entering and exiting still result in a one-line slow/smooth scroll. Tolerable, but fix someday.
 
 - ✋ Residual 1-line smooth scroll-up on alt-screen enter AND exit (`smooth_scroll_apps`). The enter/exit hard-cut fixed the big jiggle/scroll-in (owner confirmed), but a slight single-line ease still rides the transition. Owner: livable, deferred. Likely the output-ease firing one frame after the transition (the frame after the hard-cut isn't suppressed, and a 1-line history delta on the primary-screen restore nudges it) - a candidate fix is to also rebaseline `last_history` and extend the nudge suppression one frame past the transition.
 
