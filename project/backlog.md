@@ -43,6 +43,8 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- 🔘 Double-click to select (then Ctrl+shift+C) puts the right text into the copy buffer, but the select background is skewed to the left by several characters.
+
 - 🛠️ Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
 	- Cause: the slide shifted the scroll region by up to several lines but only the one fractional-overscan row was ever drawn, so the revealed strip was bare background - and the scrolled-off alt-screen lines are gone from the grid, so there was nothing real to fill it with.
 	- Fixed: retained-frame slide. The pane keeps the previous frame's shaped text (`prev_buffer`, swapped in on each detected step) and draws it, clipped to just the revealed strip, so the strip fills with the real outgoing content while the current frame slides in over it. The per-step offset is now set (not stacked) since the retained frame is exactly one step back.

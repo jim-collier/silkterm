@@ -82,8 +82,8 @@ impl Scroll {
 	pub fn set_max(&mut self, history_lines: f32) {
 		self.max = history_lines.max(0.0);
 		self.target = self.target.clamp(0.0, self.max);
-		let over = config::settings().output_ease_lines.max(MAX_BACKLOG);
-		self.visual = self.visual.clamp(0.0, self.max + over);
+		let overscan = config::settings().output_ease_lines.max(MAX_BACKLOG);
+		self.visual = self.visual.clamp(0.0, self.max + overscan);
 	}
 
 	pub fn following(&self) -> bool {
@@ -110,26 +110,26 @@ impl Scroll {
 	}
 
 	pub fn advance(&mut self, dt_s: f32) {
-		let init = config::settings().scroll_tau_ms;
+		let init_tau_ms = config::settings().scroll_tau_ms;
 		// ramp target from the output backlog (only while following); 0 below the
 		// normal slide distance, 1 at the cap. Wheel/scrollback uses the plain ease.
-		let raw = if self.following() {
-			let lo = config::settings().output_ease_lines.max(0.5);
-			((self.visual - lo) / (MAX_BACKLOG - lo)).clamp(0.0, 1.0)
+		let ramp_target = if self.following() {
+			let ease_floor = config::settings().output_ease_lines.max(0.5);
+			((self.visual - ease_floor) / (MAX_BACKLOG - ease_floor)).clamp(0.0, 1.0)
 		} else {
 			0.0
 		};
-		let ramp_ms = if raw > self.ramp {
+		let ramp_ms = if ramp_target > self.ramp {
 			RAMP_UP_MS
 		} else {
 			RAMP_DOWN_MS
 		};
-		self.ramp += (raw - self.ramp) * (1.0 - (-dt_s * 1000.0 / ramp_ms).exp());
+		self.ramp += (ramp_target - self.ramp) * (1.0 - (-dt_s * 1000.0 / ramp_ms).exp());
 
 		// effective tau: the configured "initial" speed at ramp 0, MIN_TAU at ramp 1
-		let tau = (init + (MIN_TAU_MS - init) * self.ramp).max(1.0);
-		let k = 1.0 - (-dt_s * 1000.0 / tau).exp();
-		self.visual += (self.target - self.visual) * k;
+		let tau = (init_tau_ms + (MIN_TAU_MS - init_tau_ms) * self.ramp).max(1.0);
+		let smoothing = 1.0 - (-dt_s * 1000.0 / tau).exp();
+		self.visual += (self.target - self.visual) * smoothing;
 		if (self.target - self.visual).abs() < config::SETTLE_EPS {
 			self.visual = self.target;
 			self.ramp = 0.0;
@@ -144,10 +144,10 @@ impl Scroll {
 		// tau, not a snap), so the motion never jumps.
 		if self.app_off != 0.0 {
 			let lag = self.app_off.abs();
-			let over = ((lag - APP_LAG_SOFT) / (APP_LAG_HARD - APP_LAG_SOFT)).clamp(0.0, 1.0);
-			let tau_a = (init + (MIN_APP_TAU_MS - init) * over).max(1.0);
-			let ka = 1.0 - (-dt_s * 1000.0 / tau_a).exp();
-			self.app_off -= self.app_off * ka;
+			let lag_ramp = ((lag - APP_LAG_SOFT) / (APP_LAG_HARD - APP_LAG_SOFT)).clamp(0.0, 1.0);
+			let app_tau = (init_tau_ms + (MIN_APP_TAU_MS - init_tau_ms) * lag_ramp).max(1.0);
+			let app_smoothing = 1.0 - (-dt_s * 1000.0 / app_tau).exp();
+			self.app_off -= self.app_off * app_smoothing;
 			if self.app_off.abs() < config::SETTLE_EPS {
 				self.app_off = 0.0;
 			}

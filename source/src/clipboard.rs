@@ -31,8 +31,8 @@ impl Clipboard {
 	/// there's no primary, i.e. non-Linux).
 	pub fn set_primary(&mut self, text: String) {
 		#[cfg(target_os = "linux")]
-		if let Some(p) = self.primary.as_mut() {
-			let _ = p.set_contents(text);
+		if let Some(ctx) = self.primary.as_mut() {
+			let _ = ctx.set_contents(text);
 			return;
 		}
 		self.set_clipboard(text);
@@ -41,15 +41,15 @@ impl Clipboard {
 	/// Read the primary selection (middle-click paste source).
 	pub fn get_primary(&mut self) -> Option<String> {
 		#[cfg(target_os = "linux")]
-		if let Some(p) = self.primary.as_mut() {
-			return p.get_contents().ok().filter(|s| !s.is_empty());
+		if let Some(ctx) = self.primary.as_mut() {
+			return ctx.get_contents().ok().filter(|s| !s.is_empty());
 		}
 		self.get_clipboard()
 	}
 
 	pub fn set_clipboard(&mut self, text: String) {
-		if let Some(c) = self.clipboard.as_mut() {
-			let _ = c.set_contents(text);
+		if let Some(ctx) = self.clipboard.as_mut() {
+			let _ = ctx.set_contents(text);
 		}
 	}
 
