@@ -1405,7 +1405,7 @@ alt_scroll_lines = 3.0     ## lines per wheel notch in full-screen apps (less, n
 output_ease_lines = 1.0    ## how far new output slides in before easing to rest
 
 ## Ease the whole-line jumps of full-screen apps that own the screen (less, vim,
-## nano, muffer, tmux, ...) so their scrolling slides instead of snapping. The
+## nano, htop, tmux, ...) so their scrolling slides instead of snapping. The
 ## revealed strip fills with the background during the ~quarter-second slide.
 ## Experimental; only clean line-scrolls are eased (big page-jumps still snap).
 # smooth_scroll_apps = false
