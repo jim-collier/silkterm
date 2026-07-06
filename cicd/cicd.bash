@@ -32,7 +32,9 @@
 ##	  cicd/cicd.bash [options]
 ##	  Options:
 ##	   -y, --yes           run unattended (no confirm prompt)
+##	   -q, --quiet         quiet + unattended (implies -y); the publish step runs quiet too
 ##	   -m, --message MSG   publish hands-off with this commit message (no editor)
+##	       --msg MSG       alias for --message
 ##	   --no-fmt            skip the formatter (cargo fmt) stage
 ##	   --no-cross          skip cross-target release builds
 ##	   --no-profile        skip the profiler stage
@@ -62,18 +64,19 @@ cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
 ## Parse options.
-assume_yes=0; cli_message=""
+assume_yes=0; quiet=0; cli_message=""
 while (($#)); do case "$1" in
-	-y|--yes)         assume_yes=1; shift ;;
-	--no-fmt)         FMT_CMD=(); shift ;;
-	--no-cross)       BUILD_CROSS=0; shift ;;
-	--no-profile)     PROFILE_ENABLE=0; shift ;;
-	--no-dogfood)     DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); shift ;;
-	--no-publish)     GIT_PUBLISH=(); shift ;;
-	--quick)          BUILD_CROSS=0; PROFILE_ENABLE=0; shift ;;   ## skip the slow stages
-	--message=*|-m=*) cli_message="${1#*=}"; shift ;;
-	-m|--message)     cli_message="${2-}"; shift; (($#)) && shift ;;
-	-h|--help)        sed -n '/^##	- Purpose:/,/^##	History:/p' "${BASH_SOURCE[0]}" | sed '$d; s/^##	\{0,1\}//'; exit 0 ;;
+	-y|--yes)                 assume_yes=1; shift ;;
+	-q|--quiet)               quiet=1; assume_yes=1; shift ;;   ## quiet + unattended; publish runs quiet too
+	--no-fmt)                 FMT_CMD=(); shift ;;
+	--no-cross)               BUILD_CROSS=0; shift ;;
+	--no-profile)             PROFILE_ENABLE=0; shift ;;
+	--no-dogfood)             DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); shift ;;
+	--no-publish)             GIT_PUBLISH=(); shift ;;
+	--quick)                  BUILD_CROSS=0; PROFILE_ENABLE=0; shift ;;   ## skip the slow stages
+	--message=*|--msg=*|-m=*) cli_message="${1#*=}"; shift ;;
+	-m|--message|--msg)       cli_message="${2-}"; shift; (($#)) && shift ;;
+	-h|--help)                sed -n '/^##	- Purpose:/,/^##	History:/p' "${BASH_SOURCE[0]}" | sed '$d; s/^##	\{0,1\}//'; exit 0 ;;
 	*) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
 esac; done
 
@@ -86,14 +89,18 @@ elif [[ -n "${PUBLISH_AUTO_MESSAGE:-}" ]]; then publish_msg="$PUBLISH_AUTO_MESSA
 elif ((assume_yes));                       then publish_msg="${APP_NAME} CI/CD ${stamp}"
 fi
 
-## Output helpers.
-b=$'\e[1m'; dim=$'\e[2m'; grn=$'\e[32m'; ylw=$'\e[33m'; red=$'\e[31m'; rst=$'\e[0m'
-hr(){   echo; printf '%s\n' "${dim}••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••${rst}"; }
-step(){ hr; printf '%s[ %s ] %s%s\n' "${b}" "$(date +%H:%M:%S)" "$*" "${rst}"; }
-note(){ printf '  %s\n' "$*"; }
-ok(){   printf '%s  OK: %s%s\n' "${grn}" "$*" "${rst}"; }
-warn(){ printf '%s  WARN: %s%s\n' "${ylw}" "$*" "${rst}" >&2; }
-die(){  printf '\n%sCICD FAILED: %s%s\n' "${red}" "$*" "${rst}" >&2; exit 1; }
+## Output helpers (owner convention): fEcho / fEcho_Clean, blank-collapsing.
+## fEcho "msg" -> "[ msg ]" status line; fEcho_Clean "msg" -> plain line, and a
+## bare call collapses repeated blanks. fSection draws the leading-blank + rule
+## letterbox before a major stage header; fDie prints a fatal line and exits.
+declare -i _wasLastEchoBlank=0
+fEcho_ResetBlankCounter(){ _wasLastEchoBlank=0; }
+fEcho_Clean(){ if [[ -n "${1:-}" ]]; then echo -e "$*"; _wasLastEchoBlank=0; elif [[ $_wasLastEchoBlank -eq 0 ]] && echo; then _wasLastEchoBlank=1; fi; }
+fEcho(){       if [[ -n "$*"     ]]; then fEcho_Clean "[ $* ]"; else fEcho_Clean ""; fi; }
+fEcho_Force(){ fEcho_ResetBlankCounter; fEcho "$*"; }
+_letterbox="••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••"
+fSection(){ fEcho_Clean; fEcho_Clean "${_letterbox}"; fEcho "$*"; }
+fDie(){ { fEcho_Force "FAILED: $*"; } >&2; exit 1; }
 ## True if a running process is executing the given binary (its own exe, not a
 ## substring match), so an in-use dogfood copy isn't pruned. Checks /proc/*/exe.
 in_use(){
@@ -106,7 +113,7 @@ in_use(){
 	done
 	return 1
 }
-trap 'rc=$?; printf "\n%sCICD ABORTED (exit %s) at line %s: %s%s\n" "${red}" "$rc" "$LINENO" "$BASH_COMMAND" "${rst}" >&2; exit $rc' ERR
+trap 'rc=$?; printf "\n[ CICD ABORTED (exit %s) at line %s: %s ]\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; exit $rc' ERR
 
 ## Preflight: show the plan with resolved paths, then confirm.
 abs_script="${root}/${PROFILE_WORKLOAD_SCRIPT}"
@@ -115,46 +122,48 @@ fixed_dest=""; for d in "${DOGFOOD_FIXED_DESTS[@]:-}"; do [[ -d "$d" && -w "$d" 
 rot_dest="";   for d in "${DOGFOOD_ROTATING_DESTS[@]:-}"; do [[ -d "$d" && -w "$d" ]] && { rot_dest="$d"; break; }; done
 rot_target="${rot_dest:-${DOGFOOD_ROTATING_DESTS[0]:-}}"  # created in stage 6 if it doesn't exist yet
 
-#printf '\n%s%s local CI/CD%s\n'  "${b}"  "${APP_NAME}"  "${rst}"
-printf  '\n%s%s local CI/CD%s\n'   ""      "${APP_NAME}"  ""
-echo
-note "Repo root ...........: ${root}"
-note "Format ..............: ${FMT_CMD[*]:-(skipped)}"
-note "Debug build .........: ${DEBUG_BUILD_CMD[*]}"
-note "Tests ...............: ${TEST_CMD[*]}"
+fEcho_Clean
+fEcho_Clean "${APP_NAME} local CI/CD"
+fEcho_Clean
+fEcho_Clean "Repo root ...........: ${root}"
+fEcho_Clean "Format ..............: ${FMT_CMD[*]:-(skipped)}"
+fEcho_Clean "Debug build .........: ${DEBUG_BUILD_CMD[*]}"
+fEcho_Clean "Tests ...............: ${TEST_CMD[*]}"
 if ((PROFILE_ENABLE)); then
-	note "Profiler ............: ${PROFILE_SECS}s run -> flamegraph SVG (on headless ${RPD_HEADLESS_DISPLAY:-:98})"
-	note "  output dir ........: ${profile_dir}"
-	note "  workload ..........: python3 ${PROFILE_WORKLOAD_SCRIPT} ${PROFILE_WORKLOAD_ARGS}"
+	fEcho_Clean "Profiler ............: ${PROFILE_SECS}s run -> flamegraph SVG (on headless ${RPD_HEADLESS_DISPLAY:-:98})"
+	fEcho_Clean "  output dir ........: ${profile_dir}"
+	fEcho_Clean "  workload ..........: python3 ${PROFILE_WORKLOAD_SCRIPT} ${PROFILE_WORKLOAD_ARGS}"
 else
-	note "Profiler ............: (disabled)"
+	fEcho_Clean "Profiler ............: (disabled)"
 fi
-note "Release (native) ....: ${RELEASE_NATIVE_CMD[*]} -> ${RELEASE_NATIVE_BIN}"
+fEcho_Clean "Release (native) ....: ${RELEASE_NATIVE_CMD[*]} -> ${RELEASE_NATIVE_BIN}"
 if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
-	note "Release (cross) .....:"
-	for t in "${CROSS_TARGETS[@]}"; do note "    - ${t%%|*}"; done
+	fEcho_Clean "Release (cross) .....:"
+	for t in "${CROSS_TARGETS[@]}"; do fEcho_Clean "    - ${t%%|*}"; done
 else
-	note "Release (cross) .....: (skipped)"
+	fEcho_Clean "Release (cross) .....: (skipped)"
 fi
 if ((${#DOGFOOD_FIXED_DESTS[@]})); then
-	if [[ -n "$fixed_dest" ]]; then note "Dogfood, fixed name .: overwrite ${fixed_dest}/${EXE_NAME}"
-	else note "Dogfood, fixed name .: <none of: ${DOGFOOD_FIXED_DESTS[*]} exists - will skip>"; fi
+	if [[ -n "$fixed_dest" ]]; then fEcho_Clean "Dogfood, fixed name .: overwrite ${fixed_dest}/${EXE_NAME}"
+	else fEcho_Clean "Dogfood, fixed name .: <none of: ${DOGFOOD_FIXED_DESTS[*]} exists - will skip>"; fi
 else
-	note "Dogfood, fixed name .: (disabled)"
+	fEcho_Clean "Dogfood, fixed name .: (disabled)"
 fi
 if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
-	note "Dogfood, rotating ...: ${rot_target}/${DOGFOOD_PREFIX}_${stamp}  (dated copy; prunes idle ones)"
+	fEcho_Clean "Dogfood, rotating ...: ${rot_target}/${DOGFOOD_PREFIX}_${stamp}  (dated copy; prunes idle ones)"
 else
-	note "Dogfood, rotating ...: (disabled)"
+	fEcho_Clean "Dogfood, rotating ...: (disabled)"
 fi
 if ((${#GIT_PUBLISH[@]} == 0)); then
-	note "Publish (last) ......: (disabled)"
+	fEcho_Clean "Publish (last) ......: (disabled)"
 elif [[ -n "$publish_msg" ]]; then
-	note "Publish (last) ......: ${GIT_PUBLISH[*]} (hands-off: \"${publish_msg}\")"
+	fEcho_Clean "Publish (last) ......: ${GIT_PUBLISH[*]} (hands-off: \"${publish_msg}\")"
 else
-	note "Publish (last) ......: ${GIT_PUBLISH[*]} (will prompt for message; blank = editor)"
+	fEcho_Clean "Publish (last) ......: ${GIT_PUBLISH[*]} (will prompt for message; blank = editor)"
 fi
-printf '\n%sFail-fast: any error aborts before the next stage.%s\n\n' "${dim}" "${rst}"
+fEcho_Clean
+fEcho_Clean "Fail-fast: any error aborts before the next stage."
+fEcho_Clean
 
 if ((! assume_yes)); then
 	## Capture the commit message up front so the run can finish unattended. This
@@ -162,49 +171,50 @@ if ((! assume_yes)); then
 	## aborts; there is no separate "Proceed? [y/N]" (removed to cut friction).
 	if ((${#GIT_PUBLISH[@]})) && [[ -z "$publish_msg" ]]; then
 		read -r -p "Publish commit message (blank = editor; Ctrl+C aborts): " m
+		fEcho_ResetBlankCounter
 		[[ -n "$m" ]] && publish_msg="$m"
 	fi
 fi
 
 ## Stage 1: format.
-step "1/7  Format"
+fSection "1/7  Format"
 if ((${#FMT_CMD[@]} == 0)); then
-	note "format skipped"
+	fEcho_Clean "format skipped"
 else
 	"${FMT_CMD[@]}"
-	ok "formatted (${FMT_CMD[*]})"
+	fEcho "OK: formatted (${FMT_CMD[*]})"
 fi
 
 ## Stage 2: debug build.
-step "2/7  Debug build"
+fSection "2/7  Debug build"
 "${DEBUG_BUILD_CMD[@]}"
-ok "debug build"
+fEcho "OK: debug build"
 
 ## Stage 3: regression tests.
-step "3/7  Regression tests"
+fSection "3/7  Regression tests"
 "${TEST_CMD[@]}"
 if [[ -n "${LINT_CMD+x}" ]] && ((${#LINT_CMD[@]})); then
 	if "${LINT_PROBE[@]}" >/dev/null 2>&1; then
 		"${LINT_CMD[@]}"
-		ok "lints clean"
+		fEcho "OK: lints clean"
 	else
-		warn "lints skipped: ${LINT_PROBE[*]} failed (component not installed?)"
+		fEcho "WARNING: lints skipped: ${LINT_PROBE[*]} failed (component not installed?)"
 	fi
 fi
 if [[ -n "${DENY_CMD+x}" ]] && ((${#DENY_CMD[@]})); then
 	if "${DENY_PROBE[@]}" >/dev/null 2>&1; then
 		## Advisory-only for now: report license/advisory/duplicate findings
 		## without failing the pipeline (tighten to gating once tuned).
-		"${DENY_CMD[@]}" || warn "cargo-deny reported findings (non-gating)"
+		"${DENY_CMD[@]}" || fEcho "WARNING: cargo-deny reported findings (non-gating)"
 	else
-		warn "deps check skipped: ${DENY_PROBE[*]} failed (cargo install cargo-deny)"
+		fEcho "WARNING: deps check skipped: ${DENY_PROBE[*]} failed (cargo install cargo-deny)"
 	fi
 fi
-ok "tests passed"
+fEcho "OK: tests passed"
 
 ## Stage 4: profiler (non-gating artifact; failures classified below).
 run_profiler(){
-	((PROFILE_ENABLE)) || { note "profiler disabled"; return 0; }
+	((PROFILE_ENABLE)) || { fEcho_Clean "profiler disabled"; return 0; }
 
 	## Mundane/environmental reasons -> skip with a warning (not the app's fault),
 	## unless PROFILE_STRICT. Genuine run failures below still abort. The app runs
@@ -215,13 +225,13 @@ run_profiler(){
 	[[ -z "$skip" ]] && [[ ! -f "$abs_script" ]] && skip="workload missing: ${abs_script}"
 	[[ -z "$skip" ]] && ! command -v Xvfb >/dev/null 2>&1 && skip="Xvfb not found (headless display unavailable)"
 	if [[ -n "$skip" ]]; then
-		((PROFILE_STRICT)) && die "profiler: ${skip}"
-		warn "profiler skipped: ${skip}"; return 0
+		((PROFILE_STRICT)) && fDie "profiler: ${skip}"
+		fEcho "WARNING: profiler skipped: ${skip}"; return 0
 	fi
 
 	## From here, a failure means the app is at fault -> abort.
-	note "building ${PROFILE_BIN} (cargo --profile ${PROFILE_PROFILE} --features ${PROFILE_FEATURE})"
-	cargo build --profile "${PROFILE_PROFILE}" --features "${PROFILE_FEATURE}" || die "profiler build failed (app problem)"
+	fEcho_Clean "building ${PROFILE_BIN} (cargo --profile ${PROFILE_PROFILE} --features ${PROFILE_FEATURE})"
+	cargo build --profile "${PROFILE_PROFILE}" --features "${PROFILE_FEATURE}" || fDie "profiler build failed (app problem)"
 	mkdir -p "${profile_dir}"
 
 	## Bring up a private in-memory display so the profiler window never touches the
@@ -231,56 +241,56 @@ run_profiler(){
 	export CICD_HEADLESS_DISPLAY="${CICD_HEADLESS_DISPLAY:-${RPD_HEADLESS_DISPLAY:-:98}}"
 	local hdisp="${CICD_HEADLESS_DISPLAY}"
 	if ! "${headless}" start >/dev/null 2>&1; then
-		((PROFILE_STRICT)) && die "profiler: headless display failed to start"
-		warn "profiler skipped: headless display failed to start"; return 0
+		((PROFILE_STRICT)) && fDie "profiler: headless display failed to start"
+		fEcho "WARNING: profiler skipped: headless display failed to start"; return 0
 	fi
 
 	## Born canonical (role "frequent"); the rotation retags the newest as "latest".
 	local out="${profile_dir}/flame_${stamp}_frequent.svg"
-	note "running app ${PROFILE_SECS}s under sampler on headless ${hdisp} ..."
+	fEcho_Clean "running app ${PROFILE_SECS}s under sampler on headless ${hdisp} ..."
 	local prc=0
 	SILK_PROFILE_OUT="${out}" SILK_PROFILE_SECS="${PROFILE_SECS}" DISPLAY="${hdisp}" \
 		"${root}/${PROFILE_BIN}" --shell "python3 ${abs_script} ${PROFILE_WORKLOAD_ARGS}" || prc=$?
 	"${headless}" stop >/dev/null 2>&1 || true
-	((prc == 0)) || die "profiler run failed (non-zero exit - app problem)"
-	[[ -s "$out" ]] || die "profiler produced no SVG (app problem): ${out}"
+	((prc == 0)) || fDie "profiler run failed (non-zero exit - app problem)"
+	[[ -s "$out" ]] || fDie "profiler produced no SVG (app problem): ${out}"
 	gfs_rotate "${profile_dir}" flame svg
 	## Rotation renamed this run's file (newest) to the "latest" role.
 	local latest="${profile_dir}/flame_${stamp}_latest.svg"
 	[[ -e "$latest" ]] || latest="$out"
-	ok "flamegraph: ${latest}"
-	note "open: ${latest}  (in a browser)"
+	fEcho "OK: flamegraph: ${latest}"
+	fEcho_Clean "open: ${latest}  (in a browser)"
 }
-step "4/7  Profiler"
+fSection "4/7  Profiler"
 run_profiler
 
 ## Stage 5: release builds.
-step "5/7  Release build (native)"
+fSection "5/7  Release build (native)"
 "${RELEASE_NATIVE_CMD[@]}"
-[[ -f "${RELEASE_NATIVE_BIN}" ]] || die "native release binary missing: ${RELEASE_NATIVE_BIN}"
-ok "native release: ${RELEASE_NATIVE_BIN} ($(du -h "${RELEASE_NATIVE_BIN}" | cut -f1))"
+[[ -f "${RELEASE_NATIVE_BIN}" ]] || fDie "native release binary missing: ${RELEASE_NATIVE_BIN}"
+fEcho "OK: native release: ${RELEASE_NATIVE_BIN} ($(du -h "${RELEASE_NATIVE_BIN}" | cut -f1))"
 if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
 	for t in "${CROSS_TARGETS[@]}"; do
 		local_label="${t%%|*}"; rest="${t#*|}"; art="${rest%%|*}"; cmd="${rest#*|}"
-		step "5/7  Release build: ${local_label}"
+		fSection "5/7  Release build: ${local_label}"
 		eval "${cmd}"
-		[[ -f "${art}" ]] || die "missing artifact for ${local_label}: ${art}"
-		ok "${local_label}: ${art} ($(du -h "${art}" | cut -f1))"
+		[[ -f "${art}" ]] || fDie "missing artifact for ${local_label}: ${art}"
+		fEcho "OK: ${local_label}: ${art} ($(du -h "${art}" | cut -f1))"
 	done
 fi
 
 ## Stage 6: dogfood. Two independent installs (fixed overwrite + rotating dated copy).
-step "6/7  Dogfood (install native release locally)"
+fSection "6/7  Dogfood (install native release locally)"
 df_did=0
 
 ## 6a. Fixed name: overwrite EXE_NAME (the stable path you launch by hand).
 if ((${#DOGFOOD_FIXED_DESTS[@]})); then
 	if [[ -n "$fixed_dest" ]]; then
 		cp -f "${RELEASE_NATIVE_BIN}" "${fixed_dest}/${EXE_NAME}"
-		ok "installed (fixed) -> ${fixed_dest}/${EXE_NAME}"
+		fEcho "OK: installed (fixed) -> ${fixed_dest}/${EXE_NAME}"
 		df_did=1
 	else
-		warn "no fixed dogfood dest exists (${DOGFOOD_FIXED_DESTS[*]}); skipping"
+		fEcho "WARNING: no fixed dogfood dest exists (${DOGFOOD_FIXED_DESTS[*]}); skipping"
 	fi
 fi
 
@@ -291,43 +301,45 @@ if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
 		df_name="${DOGFOOD_PREFIX}_${stamp}"
 		cp -f "${RELEASE_NATIVE_BIN}" "${rot_dest}/${df_name}"
 		chmod +x "${rot_dest}/${df_name}"
-		ok "installed (rotating) -> ${rot_dest}/${df_name}"
+		fEcho "OK: installed (rotating) -> ${rot_dest}/${df_name}"
 		pruned=0
 		for old in "${rot_dest}/${DOGFOOD_PREFIX}_"*; do
 			[[ -e "$old" ]] || continue                  # no-match glob (nullglob is off)
 			[[ "$(basename "$old")" == "$df_name" ]] && continue
 			if in_use "$old"; then
-				note "kept (running): $(basename "$old")"
+				fEcho_Clean "kept (running): $(basename "$old")"
 			else
 				rm -f "$old" && pruned=$((pruned + 1))
 			fi
 		done
-		if ((pruned)); then note "pruned ${pruned} old copy(ies) not in use"; fi
+		if ((pruned)); then fEcho_Clean "pruned ${pruned} old copy(ies) not in use"; fi
 		df_did=1
 	else
-		warn "no rotating dogfood dest writable (${DOGFOOD_ROTATING_DESTS[*]}); skipping"
+		fEcho "WARNING: no rotating dogfood dest writable (${DOGFOOD_ROTATING_DESTS[*]}); skipping"
 	fi
 fi
 
-if ((! df_did)); then note "dogfood disabled"; fi
+if ((! df_did)); then fEcho_Clean "dogfood disabled"; fi
 
 ## Stage 7: backup + publish.
-step "7/7  Backup + publish"
+fSection "7/7  Backup + publish"
+pub_flags=(); ((quiet)) && pub_flags+=(--quiet)   ## flow -q through to the publisher
 if ((${#GIT_PUBLISH[@]} == 0)); then
-	note "publish disabled"
+	fEcho_Clean "publish disabled"
 elif [[ -n "$publish_msg" ]]; then
 	## Hands-off: quiet env skips the script's continue-prompt; the GIT_EDITOR
 	## helper fills the empty commit message so `git commit` won't open an editor.
-	note "hands-off publish (commit message: \"${publish_msg}\")"
+	fEcho_Clean "hands-off publish (commit message: \"${publish_msg}\")"
 	GIT_BACKUP_AND_PUBLISH_QUIET=1 GIT_AUTO_MESSAGE="${publish_msg}" \
-		GIT_EDITOR="${here}/utility/git-auto-msg.bash" "${GIT_PUBLISH[@]}"
-	ok "published"
+		GIT_EDITOR="${here}/utility/git-auto-msg.bash" "${GIT_PUBLISH[@]}" "${pub_flags[@]}"
+	fEcho "OK: published"
 else
-	"${GIT_PUBLISH[@]}"
-	ok "published"
+	"${GIT_PUBLISH[@]}" "${pub_flags[@]}"
+	fEcho "OK: published"
 fi
 
-hr; printf '%s%s CI/CD: done.%s\n' "${grn}${b}" "${APP_NAME}" "${rst}"
+fSection "${APP_NAME} CI/CD: done."
+fEcho_Clean
 
 
 ##	History:
