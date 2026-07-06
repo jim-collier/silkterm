@@ -185,6 +185,9 @@ pub struct Pane {
 	// frame, set when a scroll step is detected. Positions prev_buffer for the
 	// slide (prev is at rest when app_off == slide_sh, slid fully out at app_off 0).
 	slide_sh: f32,
+	// Previous frame's alt-screen state. An enter/exit is an instant screen swap,
+	// not a scroll - detected here to hard-cut it instead of animating the swap.
+	last_alt: bool,
 	// Fallback glyphs (not in the primary mono font) pulled out of `buffer` and
 	// drawn one-per-cell so their font advance can't shift the row. `glyph_bufs`
 	// is a reused pool; `glyphs` holds (x, y, color, scale) for the first N of
@@ -256,6 +259,18 @@ impl Pane {
 		self.mode = *guard.mode();
 		self.content_dirty = false;
 
+		// Alt-screen enter/exit is an instant full-screen swap, not a scroll. Flag the
+		// transition so the scroll probes below hard-cut it: on enter the app-scroll
+		// probe would match blank rows between the old and new screens (nano "jiggles"/
+		// scrolls in on launch); on exit the history_size jump (the alt grid carries no
+		// scrollback) would fire an output-ease that scrolls the restored screen back
+		// in. `gesture_active` (an alt-scroll slide already easing) freezes the band
+		// sizes across a continuous scroll - see the app-scroll block.
+		let alt = self.mode.contains(TermMode::ALT_SCREEN);
+		let alt_transition = alt != self.last_alt;
+		self.last_alt = alt;
+		let gesture_active = self.scroll.app_offset() != 0.0;
+
 		let cols = self.term.cols;
 		let history = guard.grid().history_size();
 
@@ -272,6 +287,23 @@ impl Pane {
 		let grew = history.saturating_sub(self.last_history);
 		self.last_history = history;
 		self.scroll.set_max(history as f32);
+		if alt_transition {
+			// hard-cut the screen swap: drop any in-flight slide and rebaseline the
+			// row fingerprints to the NEW screen, so neither the output-scroll probe
+			// nor the app-scroll probe diffs against the old screen next frame.
+			self.scroll.cancel_app_scroll();
+			let grid = guard.grid();
+			let mut rows: Vec<u64> = Vec::with_capacity(lines);
+			for i in 0..lines as i32 {
+				let row = &grid[Line(i)];
+				let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+				for c in 0..cols {
+					h = (h ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
+				}
+				rows.push(h);
+			}
+			self.last_rows = rows;
+		}
 		let follow = self.scroll.following();
 		let full = s.scrollback > 0 && history >= s.scrollback;
 		let advanced = if grew > 0 {
@@ -293,7 +325,7 @@ impl Pane {
 		} else {
 			0
 		};
-		if advanced > 0 && follow {
+		if advanced > 0 && follow && !alt_transition {
 			self.scroll.nudge_output(advanced as f32);
 		}
 
@@ -305,7 +337,7 @@ impl Pane {
 		// Only clean line-scrolls (up to APP_SCROLL_MAX rows) match - in-place redraws
 		// and big page-jumps don't, so they hard-cut. Opt-in (experimental).
 		let mut capture_prev = false;
-		if s.smooth_scroll_apps && self.mode.contains(TermMode::ALT_SCREEN) {
+		if s.smooth_scroll_apps && alt && !alt_transition {
 			const APP_SCROLL_MAX: usize = 24; // in step with scroll::APP_OFF_CAP
 			let grid = guard.grid();
 			let mut rows: Vec<u64> = Vec::with_capacity(lines);
@@ -319,24 +351,17 @@ impl Pane {
 			}
 			let sh = scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX);
 			if sh != 0 {
-				// count the unchanged rows at the bottom - the fixed status/input
-				// band that must not slide with the scrolling region above it
-				let mut sb = 0;
-				while sb < lines && rows[lines - 1 - sb] == self.last_rows[lines - 1 - sb] {
-					sb += 1;
+				// Freeze the static-band sizes for the duration of a continuous scroll.
+				// Re-measuring per step fluctuates by a row whenever a blank/matching
+				// line sits next to a band, jerking the band boundary (and the glow
+				// pinned to it) a whole cell up or down = the "bouncing shadow". Only
+				// measure on the FIRST step (a clean settled-vs-scrolled diff); while the
+				// slide is still easing (gesture_active) keep the stored bands.
+				if !gesture_active {
+					let (st, sb) = static_bands(&rows, &self.last_rows);
+					self.slide_static = sb;
+					self.slide_static_top = st;
 				}
-				// and the unchanged rows at the top - a fixed title bar (nano, muffer)
-				let mut st = 0;
-				while st < lines && rows[st] == self.last_rows[st] {
-					st += 1;
-				}
-				// never let the two bands overlap or swallow the whole screen
-				if st + sb >= lines {
-					st = 0;
-					sb = 0;
-				}
-				self.slide_static = sb;
-				self.slide_static_top = st;
 				self.slide_sh = sh as f32;
 				self.scroll.app_scroll(sh as f32);
 				capture_prev = true; // this frame's outgoing content becomes prev_buffer
@@ -1340,6 +1365,7 @@ fn spawn_pane(
 		slide_static: 0,
 		slide_static_top: 0,
 		slide_sh: 0.0,
+		last_alt: false,
 		glyph_bufs: Vec::new(),
 		glyphs: Vec::new(),
 		glow_buf: None,
@@ -1853,6 +1879,27 @@ fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
 	best
 }
 
+// Count the static (unchanged) rows at the top and bottom edges between two
+// frames: a fixed title bar (nano/muffer) above and a status/help band below the
+// scrolling region. Returns (top, bottom); zeroed if the two would meet or cover
+// the whole screen (no distinct scroll region). Measured only on a gesture's first
+// step - see build() - so mid-scroll fluctuation can't jitter the band boundary.
+fn static_bands(cur: &[u64], last: &[u64]) -> (usize, usize) {
+	let n = cur.len();
+	if last.len() != n {
+		return (0, 0);
+	}
+	let mut st = 0;
+	while st < n && cur[st] == last[st] {
+		st += 1;
+	}
+	let mut sb = 0;
+	while sb < n && cur[n - 1 - sb] == last[n - 1 - sb] {
+		sb += 1;
+	}
+	if st + sb >= n { (0, 0) } else { (st, sb) }
+}
+
 fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 	let n = cur.len();
 	if n == 0 || last.len() != n {
@@ -1879,7 +1926,7 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 mod tests {
 	use super::{
 		Dir, Node, Rect, bell_brighten, distinct_pair, equalize_dir_run, layout, pair_inside,
-		same_char_pair, scroll_shift, scroll_shift_signed,
+		same_char_pair, scroll_shift, scroll_shift_signed, static_bands,
 	};
 
 	fn leaf(id: u64) -> Node {
@@ -2166,6 +2213,22 @@ mod tests {
 		let bl_last = [1u64, 5, 5, 5, 5, 5, 5, 9];
 		let bl_cur = [2u64, 5, 5, 5, 5, 5, 5, 9];
 		assert_eq!(scroll_shift_signed(&bl_cur, &bl_last, 8), 0);
+	}
+
+	#[test]
+	fn static_bands_measures_title_and_status() {
+		// nano shape: static title (rows 0..2), scroll region (2..6), status band (6..8)
+		let last = [700u64, 701, 10, 20, 30, 40, 900, 901];
+		let cur = [700u64, 701, 20, 30, 40, 50, 900, 901];
+		assert_eq!(static_bands(&cur, &last), (2, 2));
+		// no bands: every row changed
+		let a = [1u64, 2, 3, 4];
+		let b = [5u64, 6, 7, 8];
+		assert_eq!(static_bands(&a, &b), (0, 0));
+		// a fully static frame would have the bands meet -> zeroed (no scroll region)
+		assert_eq!(static_bands(&last, &last), (0, 0));
+		// length mismatch is not measurable
+		assert_eq!(static_bands(&a, &last), (0, 0));
 	}
 
 	#[test]
