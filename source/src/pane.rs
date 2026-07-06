@@ -348,6 +348,13 @@ impl Pane {
 		let mut sh_dbg = 0i32;
 		if s.smooth_scroll_apps && alt && !alt_transition {
 			const APP_SCROLL_MAX: usize = 24; // in step with scroll::APP_OFF_CAP
+			// Full-screen apps with a static TOP band (title bar: nano, muffer) repaint
+			// with small sub-line jumps, and the smooth slide fights that fixed chrome -
+			// the band/glow bounce. Disabled pending a proper fix: they hard-cut (plain
+			// page redraw), as before the top-band work. Apps that fill from the top with
+			// only a bottom status line (less) have no top band and still slide. Flip to
+			// re-enable top-band smooth-scroll.
+			const SLIDE_TOP_BAND_APPS: bool = false;
 			let grid = guard.grid();
 			let mut rows: Vec<u64> = Vec::with_capacity(lines);
 			for i in 0..lines as i32 {
@@ -369,19 +376,22 @@ impl Pane {
 					self.slide_static = sb;
 					self.slide_static_top = st;
 				}
-				// ACCUMULATE the visual offset so the CURRENT content stays continuous
-				// across overlapping steps: screen row = grid_row + app_off, the grid
-				// already advanced by sh, so app_off must GROW by sh to hold a line fixed
-				// for that instant. SETting it to sh instead discards the un-eased
-				// remainder = the frame-to-frame bounce. RE-SNAPSHOT prev EVERY step
-				// (slide_sh = this step only): one retained frame can fill just a
-				// one-step reveal strip, so it must stay fresh - accumulating slide_sh to
-				// fill a taller strip from a single stale snapshot made the strip (and its
-				// glow) jump by the whole scroll region at each re-capture. scroll.rs's lag
-				// ramp keeps app_off from lagging past what that one frame covers.
-				self.slide_sh = sh as f32;
-				capture_prev = true;
-				self.scroll.app_scroll(self.scroll.app_offset() + sh as f32);
+				// A static top band means a title-bar app (nano, muffer); hard-cut it.
+				if SLIDE_TOP_BAND_APPS || self.slide_static_top == 0 {
+					// ACCUMULATE the visual offset so the CURRENT content stays continuous
+					// across overlapping steps: screen row = grid_row + app_off, the grid
+					// already advanced by sh, so app_off must GROW by sh to hold a line fixed
+					// for that instant. SETting it to sh instead discards the un-eased
+					// remainder = the frame-to-frame bounce. RE-SNAPSHOT prev EVERY step
+					// (slide_sh = this step only): one retained frame can fill just a
+					// one-step reveal strip, so it must stay fresh - accumulating slide_sh to
+					// fill a taller strip from a single stale snapshot made the strip (and its
+					// glow) jump by the whole scroll region at each re-capture. scroll.rs's lag
+					// ramp keeps app_off from lagging past what that one frame covers.
+					self.slide_sh = sh as f32;
+					capture_prev = true;
+					self.scroll.app_scroll(self.scroll.app_offset() + sh as f32);
+				}
 			}
 			self.last_rows = rows;
 		}
