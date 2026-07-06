@@ -34,7 +34,7 @@ fn main() -> anyhow::Result<()> {
 	alacritty_terminal::tty::setup_env();
 
 	let mut cli = match cli::parse(std::env::args().skip(1)) {
-		Ok(c) => c,
+		Ok(parsed) => parsed,
 		Err(e) => {
 			eprintln!("{}: {e}\nTry --help.", config::APP_NAME);
 			std::process::exit(2);
@@ -60,10 +60,10 @@ fn main() -> anyhow::Result<()> {
 	// Launched with no arguments? Fall back to a config-defined command line
 	// (real CLI arguments override it entirely).
 	if std::env::args().count() <= 1 {
-		let cl = config::settings().command_line.clone();
-		if !cl.trim().is_empty() {
-			match cli::shell_split(&cl).and_then(cli::parse) {
-				Ok(c) => cli = c,
+		let command_line = config::settings().command_line.clone();
+		if !command_line.trim().is_empty() {
+			match cli::shell_split(&command_line).and_then(cli::parse) {
+				Ok(parsed) => cli = parsed,
 				Err(e) => eprintln!("{}: config command_line: {e}", config::APP_NAME),
 			}
 		}

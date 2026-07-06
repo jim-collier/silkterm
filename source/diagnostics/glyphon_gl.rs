@@ -22,13 +22,13 @@ struct App {
 }
 
 impl ApplicationHandler for App {
-	fn resumed(&mut self, el: &ActiveEventLoop) {
+	fn resumed(&mut self, event_loop: &ActiveEventLoop) {
 		if self.done {
 			return;
 		}
 		self.done = true;
-		run(el);
-		el.exit();
+		run(event_loop);
+		event_loop.exit();
 	}
 	fn window_event(
 		&mut self,
@@ -39,13 +39,13 @@ impl ApplicationHandler for App {
 	}
 }
 
-fn run(el: &ActiveEventLoop) {
+fn run(event_loop: &ActiveEventLoop) {
 	let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
 		backends: wgpu::Backends::GL,
 		flags: wgpu::InstanceFlags::empty(),
 		memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
 		backend_options: wgpu::BackendOptions::default(),
-		display: Some(Box::new(el.owned_display_handle())),
+		display: Some(Box::new(event_loop.owned_display_handle())),
 	});
 	let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
 		power_preference: wgpu::PowerPreference::HighPerformance,
@@ -130,9 +130,9 @@ fn run(el: &ActiveEventLoop) {
 		)
 		.expect("prepare");
 
-	let mut enc = device.create_command_encoder(&Default::default());
+	let mut encoder = device.create_command_encoder(&Default::default());
 	{
-		let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+		let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 			label: None,
 			color_attachments: &[Some(wgpu::RenderPassColorAttachment {
 				view: &view,
@@ -160,15 +160,15 @@ fn run(el: &ActiveEventLoop) {
 
 	// read back to PNG
 	let unpadded = W * 4;
-	let bpr =
+	let bytes_per_row =
 		unpadded.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-	let buf = device.create_buffer(&wgpu::BufferDescriptor {
+	let readback = device.create_buffer(&wgpu::BufferDescriptor {
 		label: Some("read"),
-		size: (bpr * H) as u64,
+		size: (bytes_per_row * H) as u64,
 		usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
 		mapped_at_creation: false,
 	});
-	enc.copy_texture_to_buffer(
+	encoder.copy_texture_to_buffer(
 		wgpu::TexelCopyTextureInfo {
 			texture: &target,
 			mip_level: 0,
@@ -176,10 +176,10 @@ fn run(el: &ActiveEventLoop) {
 			aspect: wgpu::TextureAspect::All,
 		},
 		wgpu::TexelCopyBufferInfo {
-			buffer: &buf,
+			buffer: &readback,
 			layout: wgpu::TexelCopyBufferLayout {
 				offset: 0,
-				bytes_per_row: Some(bpr),
+				bytes_per_row: Some(bytes_per_row),
 				rows_per_image: Some(H),
 			},
 		},
@@ -189,33 +189,33 @@ fn run(el: &ActiveEventLoop) {
 			depth_or_array_layers: 1,
 		},
 	);
-	queue.submit(Some(enc.finish()));
-	buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+	queue.submit(Some(encoder.finish()));
+	readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
 	let _ = device.poll(wgpu::PollType::wait_indefinitely());
-	let data = buf.slice(..).get_mapped_range();
-	let mut pix = Vec::with_capacity((W * H * 4) as usize);
-	let mut bright = 0u32;
+	let data = readback.slice(..).get_mapped_range();
+	let mut pixels = Vec::with_capacity((W * H * 4) as usize);
+	let mut bright_count = 0u32;
 	for row in 0..H {
-		let s = (row * bpr) as usize;
-		let line = &data[s..s + unpadded as usize];
-		pix.extend_from_slice(line);
+		let row_start = (row * bytes_per_row) as usize;
+		let line = &data[row_start..row_start + unpadded as usize];
+		pixels.extend_from_slice(line);
 		for px in line.chunks(4) {
 			// count clearly-bright pixels (the ~230 text on a dark bg)
 			if px[0] as u32 + px[1] as u32 + px[2] as u32 > 360 {
-				bright += 1;
+				bright_count += 1;
 			}
 		}
 	}
 	let _ = image::save_buffer(
 		"/tmp/glyphon_gl.png",
-		&pix,
+		&pixels,
 		W,
 		H,
 		image::ExtendedColorType::Rgba8,
 	);
 	println!(
-		"bright (text) pixels: {bright}  -> {}",
-		if bright > 50 {
+		"bright (text) pixels: {bright_count}  -> {}",
+		if bright_count > 50 {
 			"TEXT RENDERED"
 		} else {
 			"NO TEXT"
@@ -225,6 +225,6 @@ fn run(el: &ActiveEventLoop) {
 
 fn main() {
 	env_logger::init();
-	let el = EventLoop::new().unwrap();
-	el.run_app(&mut App::default()).unwrap();
+	let event_loop = EventLoop::new().unwrap();
+	event_loop.run_app(&mut App::default()).unwrap();
 }

@@ -52,27 +52,27 @@ fn cursor_geometry(shape: CursorShape, alt_screen: bool) -> (f32, f32) {
 		CursorShape::Underline => (1.0, 0.15), // thin bottom strip
 		_ if alt_screen => (1.0, 1.0),         // alt-screen app owns its block cursor
 		_ => {
-			let s = config::settings();
+			let settings = config::settings();
 			(
-				(s.cursor_size_width / 100.0).clamp(0.02, 1.0), // width, from left
-				(s.cursor_size_height / 100.0).clamp(0.02, 1.0), // height, from bottom
+				(settings.cursor_size_width / 100.0).clamp(0.02, 1.0), // width, from left
+				(settings.cursor_size_height / 100.0).clamp(0.02, 1.0), // height, from bottom
 			)
 		}
 	}
 }
 
 // Pulse envelope over one cycle: grow, hold full, shrink, then a brief disappear.
-fn pulse_env(p: f32) -> f32 {
+fn pulse_env(phase: f32) -> f32 {
 	let smooth = |t: f32| {
 		let t = t.clamp(0.0, 1.0);
 		t * t * (3.0 - 2.0 * t)
 	};
-	if p < 0.40 {
-		smooth(p / 0.40) // grow 0 -> 1
-	} else if p < 0.60 {
+	if phase < 0.40 {
+		smooth(phase / 0.40) // grow 0 -> 1
+	} else if phase < 0.60 {
 		1.0 // hold at full
-	} else if p < 0.90 {
-		1.0 - smooth((p - 0.60) / 0.30) // shrink 1 -> 0
+	} else if phase < 0.90 {
+		1.0 - smooth((phase - 0.60) / 0.30) // shrink 1 -> 0
 	} else {
 		0.0 // disappear momentarily
 	}
@@ -80,13 +80,13 @@ fn pulse_env(p: f32) -> f32 {
 
 // Lerp a text colour toward white by `t` (0..1) of the BELL_BRIGHTEN ceiling, for
 // the visual-bell flash. Identity at t<=0.
-fn bell_brighten(c: [u8; 3], t: f32) -> [u8; 3] {
+fn bell_brighten(color: [u8; 3], t: f32) -> [u8; 3] {
 	if t <= 0.0 {
-		return c;
+		return color;
 	}
 	let t = (t * BELL_BRIGHTEN).clamp(0.0, 1.0);
 	let up = |v: u8| (v as f32 + (255.0 - v as f32) * t).round() as u8;
-	[up(c[0]), up(c[1]), up(c[2])]
+	[up(color[0]), up(color[1]), up(color[2])]
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -255,7 +255,7 @@ impl Pane {
 		let margin = ctx.margin;
 		let content_x = self.rect.x + margin;
 		let lines = self.term.lines;
-		let s = config::settings(); // snapshot once, not per cell
+		let settings = config::settings(); // snapshot once, not per cell
 
 		// Never block the render thread: the PTY reader thread can hold the
 		// terminal lock through long bursts (e.g. a chatty shell rc). If it's
@@ -304,16 +304,16 @@ impl Pane {
 			let mut rows: Vec<u64> = Vec::with_capacity(lines);
 			for i in 0..lines as i32 {
 				let row = &grid[Line(i)];
-				let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+				let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
 				for c in 0..cols {
-					h = (h ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
+					hash = (hash ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
 				}
-				rows.push(h);
+				rows.push(hash);
 			}
 			self.last_rows = rows;
 		}
 		let follow = self.scroll.following();
-		let full = s.scrollback > 0 && history >= s.scrollback;
+		let full = settings.scrollback > 0 && history >= settings.scrollback;
 		let advanced = if grew > 0 {
 			grew
 		} else if follow && full {
@@ -321,15 +321,15 @@ impl Pane {
 			let grid = guard.grid();
 			for i in 0..lines as i32 {
 				let row = &grid[Line(i)];
-				let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a over the row's chars
+				let mut hash: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a over the row's chars
 				for c in 0..cols {
-					h = (h ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
+					hash = (hash ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
 				}
-				rows.push(h);
+				rows.push(hash);
 			}
-			let adv = scroll_shift(&rows, &self.last_rows);
+			let inferred_advance = scroll_shift(&rows, &self.last_rows);
 			self.last_rows = rows;
-			adv
+			inferred_advance
 		} else {
 			0
 		};
@@ -345,8 +345,8 @@ impl Pane {
 		// Only clean line-scrolls (up to APP_SCROLL_MAX rows) match - in-place redraws
 		// and big page-jumps don't, so they hard-cut. Opt-in (experimental).
 		let mut capture_prev = false;
-		let mut sh_dbg = 0i32;
-		if s.smooth_scroll_apps && alt && !alt_transition {
+		let mut shift_dbg = 0i32;
+		if settings.smooth_scroll_apps && alt && !alt_transition {
 			const APP_SCROLL_MAX: usize = 24; // in step with scroll::APP_OFF_CAP
 			// Full-screen apps with a static TOP band (title bar: nano, muffer) repaint
 			// with small sub-line jumps, and the smooth slide fights that fixed chrome -
@@ -359,15 +359,15 @@ impl Pane {
 			let mut rows: Vec<u64> = Vec::with_capacity(lines);
 			for i in 0..lines as i32 {
 				let row = &grid[Line(i)];
-				let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+				let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
 				for c in 0..cols {
-					h = (h ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
+					hash = (hash ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
 				}
-				rows.push(h);
+				rows.push(hash);
 			}
-			let sh = scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX);
-			sh_dbg = sh;
-			if sh != 0 {
+			let shift = scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX);
+			shift_dbg = shift;
+			if shift != 0 {
 				// Freeze the static-band sizes on the gesture's first step (a clean
 				// settled-vs-scrolled diff); re-measuring per step fluctuates by a row
 				// whenever a blank/matching line abuts a band. Held while the slide eases.
@@ -380,17 +380,18 @@ impl Pane {
 				if SLIDE_TOP_BAND_APPS || self.slide_static_top == 0 {
 					// ACCUMULATE the visual offset so the CURRENT content stays continuous
 					// across overlapping steps: screen row = grid_row + app_off, the grid
-					// already advanced by sh, so app_off must GROW by sh to hold a line fixed
-					// for that instant. SETting it to sh instead discards the un-eased
+					// already advanced by shift, so app_off must GROW by shift to hold a line fixed
+					// for that instant. SETting it to shift instead discards the un-eased
 					// remainder = the frame-to-frame bounce. RE-SNAPSHOT prev EVERY step
 					// (slide_sh = this step only): one retained frame can fill just a
 					// one-step reveal strip, so it must stay fresh - accumulating slide_sh to
 					// fill a taller strip from a single stale snapshot made the strip (and its
 					// glow) jump by the whole scroll region at each re-capture. scroll.rs's lag
 					// ramp keeps app_off from lagging past what that one frame covers.
-					self.slide_sh = sh as f32;
+					self.slide_sh = shift as f32;
 					capture_prev = true;
-					self.scroll.app_scroll(self.scroll.app_offset() + sh as f32);
+					self.scroll
+						.app_scroll(self.scroll.app_offset() + shift as f32);
 				}
 			}
 			self.last_rows = rows;
@@ -413,10 +414,10 @@ impl Pane {
 		// check per frame. The per-frame (sh, app_off, slide_sh, st, sb) sequence is
 		// the deterministic proof that the slide eases smoothly (app_off monotonic, no
 		// bounce) without needing to eyeball a render - see the headless bounce harness.
-		if scroll_dbg() && s.smooth_scroll_apps && alt {
-			let f = DBG_FRAME.fetch_add(1, Ordering::Relaxed);
+		if scroll_dbg() && settings.smooth_scroll_apps && alt {
+			let frame = DBG_FRAME.fetch_add(1, Ordering::Relaxed);
 			eprintln!(
-				"SCROLLDBG f={f} pane={} sh={sh_dbg} app_off={app_off:.4} slide_sh={:.4} st={} sb={} frac={frac:.4}",
+				"SCROLLDBG f={frame} pane={} sh={shift_dbg} app_off={app_off:.4} slide_sh={:.4} st={} sb={} frac={frac:.4}",
 				self.id, self.slide_sh, self.slide_static_top, self.slide_static,
 			);
 		}
@@ -437,18 +438,22 @@ impl Pane {
 		};
 		let split_row = (lines - static_rows) as i32;
 		let top_split_row = static_top as i32;
-		let voff_of = |sr: i32| {
-			if (static_top > 0 && sr < top_split_row) || (static_rows > 0 && sr >= split_row) {
+		let voff_of = |screen_row: i32| {
+			if (static_top > 0 && screen_row < top_split_row)
+				|| (static_rows > 0 && screen_row >= split_row)
+			{
 				frac
 			} else {
 				voff
 			}
 		};
-		let d = desired as i32;
+		let display_offset = desired as i32;
 		let hist = history as i32;
 		// fractional scroll shifts content DOWN by frac of a cell; we render an
 		// extra row above (screen row -1) so the revealed strip is filled.
-		let y_of = |sr: i32| self.rect.y + margin + (sr as f32 + voff_of(sr)) * cell_h;
+		let y_of = |screen_row: i32| {
+			self.rect.y + margin + (screen_row as f32 + voff_of(screen_row)) * cell_h
+		};
 		// The scroll-region draw origin is always the SHIFTED position, independent of
 		// the bands (which are redrawn unshifted at band_top); grid elements use y_of.
 		let top = self.rect.y + margin + (-1.0 + voff) * cell_h;
@@ -515,7 +520,8 @@ impl Pane {
 		let cursor_shape = guard.cursor_style().shape;
 		// Alt-screen apps own their cursor shape; on the primary screen it's the
 		// configured geometry (or the app's DECSCUSR). See cursor_geometry.
-		let cgeom = cursor_geometry(cursor_shape, guard.mode().contains(TermMode::ALT_SCREEN));
+		let cursor_geom =
+			cursor_geometry(cursor_shape, guard.mode().contains(TermMode::ALT_SCREEN));
 		let following = desired == 0;
 
 		// Fast path: a pure cursor-animation frame (blink/slide, no content/scroll/
@@ -527,8 +533,8 @@ impl Pane {
 			let cursor = self.cursor_quad(
 				cursor_pt,
 				cursor_shape,
-				cgeom,
-				d,
+				cursor_geom,
+				display_offset,
 				lines,
 				following,
 				content_x,
@@ -537,7 +543,7 @@ impl Pane {
 				margin,
 				voff,
 				dt,
-				s.cursor,
+				settings.cursor,
 			);
 			let bg = std::mem::take(&mut self.last_draw.bg);
 			// the fast path is a pure cursor frame - never taken while a slide eases
@@ -566,7 +572,7 @@ impl Pane {
 		// cosmic-text's set_rich_text loop forever.
 		let mut spans: Vec<(String, Attrs)> = Vec::with_capacity(lines + 1);
 		let mut run = String::new();
-		let mut run_color = s.fg;
+		let mut run_color = settings.fg;
 		let mut run_bold = false;
 		let mut run_italic = false;
 		let mut saw_bold = false;
@@ -574,37 +580,37 @@ impl Pane {
 		macro_rules! flush_run {
 			() => {
 				if !run.is_empty() {
-					let mut a = mono_attrs();
-					a.color_opt = Some(GColor::rgb(run_color[0], run_color[1], run_color[2]));
+					let mut attrs = mono_attrs();
+					attrs.color_opt = Some(GColor::rgb(run_color[0], run_color[1], run_color[2]));
 					if run_bold {
-						a.weight = Weight::BOLD;
+						attrs.weight = Weight::BOLD;
 					}
 					if run_italic {
-						a.style = Style::Italic;
+						attrs.style = Style::Italic;
 					}
-					spans.push((std::mem::take(&mut run), a));
+					spans.push((std::mem::take(&mut run), attrs));
 				}
 			};
 		}
 
-		for sr in -1..(lines as i32) {
-			if sr != -1 {
+		for screen_row in -1..(lines as i32) {
+			if screen_row != -1 {
 				run.push('\n');
 			}
-			let gl = sr - d; // grid line for this screen row
-			if gl < -hist || gl > (lines as i32 - 1) {
+			let grid_line = screen_row - display_offset; // grid line for this screen row
+			if grid_line < -hist || grid_line > (lines as i32 - 1) {
 				continue; // off the top/bottom of real content: blank row
 			}
-			let row = &grid[Line(gl)];
-			let y = y_of(sr);
+			let row = &grid[Line(grid_line)];
+			let y = y_of(screen_row);
 			for c in 0..cols {
 				let cell = &row[Column(c)];
 				let flags = cell.flags;
 				if flags.contains(Flags::WIDE_CHAR_SPACER) {
 					continue;
 				}
-				let mut fg = palette::resolve(cell.fg, colors, &s);
-				let mut cell_bg = palette::resolve(cell.bg, colors, &s);
+				let mut fg = palette::resolve(cell.fg, colors, &settings);
+				let mut cell_bg = palette::resolve(cell.bg, colors, &settings);
 				if flags.contains(Flags::INVERSE) {
 					std::mem::swap(&mut fg, &mut cell_bg);
 				}
@@ -623,10 +629,10 @@ impl Pane {
 				}
 
 				let selected =
-					sel_range.is_some_and(|r| r.contains(Point::new(Line(gl), Column(c))));
+					sel_range.is_some_and(|r| r.contains(Point::new(Line(grid_line), Column(c))));
 				let bg_color = if selected {
 					Some(config::SELECTION_BG)
-				} else if cell_bg != s.bg {
+				} else if cell_bg != settings.bg {
 					Some(cell_bg)
 				} else {
 					None
@@ -643,7 +649,7 @@ impl Pane {
 				// same weight light-on-dark; embolden it so inverse chrome (nano/vim
 				// title+status bars) reads as strongly as normal text.
 				let bold = flags.contains(Flags::BOLD)
-					|| (s.embolden_inverse && flags.contains(Flags::INVERSE));
+					|| (settings.embolden_inverse && flags.contains(Flags::INVERSE));
 				let italic = flags.contains(Flags::ITALIC);
 				saw_bold |= bold;
 				// A glyph the primary mono font lacks renders via a fallback font
@@ -658,7 +664,7 @@ impl Pane {
 					for _ in 0..w {
 						run.push(' ');
 					}
-					glyph_specs.push((cell.c, fg, bold, italic, c, sr, w as u8));
+					glyph_specs.push((cell.c, fg, bold, italic, c, screen_row, w as u8));
 				} else {
 					if (fg, bold, italic) != (run_color, run_bold, run_italic) {
 						flush_run!();
@@ -676,17 +682,17 @@ impl Pane {
 		let cursor = self.cursor_quad(
 			cursor_pt,
 			cursor_shape,
-			cgeom,
-			d,
+			cursor_geom,
+			display_offset,
 			lines,
 			following,
 			content_x,
 			cell_w,
 			cell_h,
 			margin,
-			voff_of(cursor_pt.line.0 + d),
+			voff_of(cursor_pt.line.0 + display_offset),
 			dt,
-			s.cursor,
+			settings.cursor,
 		);
 		// A scroll step was detected: the buffer still holds the outgoing frame, so
 		// swap it into prev_buffer before set_rich_text overwrites it. prev_buffer
@@ -714,50 +720,54 @@ impl Pane {
 		// glow pass (crisp text on top keeps its real weight). Costs a second
 		// shape only on rebuild frames that contain bold. Per-cell fallback
 		// glyphs keep their weight - rare, and not worth a second glyph pool.
-		self.glow_debold =
-			s.text_glow && s.text_glow_radius > 0.0 && s.text_glow_regular_weight && saw_bold;
+		self.glow_debold = settings.text_glow
+			&& settings.text_glow_radius > 0.0
+			&& settings.text_glow_regular_weight
+			&& saw_bold;
 		if self.glow_debold {
-			let (bw, bh) = self.buffer.size();
-			let gb = self.glow_buf.get_or_insert_with(|| {
-				let mut b = Buffer::new(&mut ctx.font_system, ctx.metrics);
-				b.set_wrap(&mut ctx.font_system, glyphon::Wrap::None);
-				b.set_monospace_width(&mut ctx.font_system, Some(cell_w));
-				b
+			let (buf_w, buf_h) = self.buffer.size();
+			let glow_buffer = self.glow_buf.get_or_insert_with(|| {
+				let mut buf = Buffer::new(&mut ctx.font_system, ctx.metrics);
+				buf.set_wrap(&mut ctx.font_system, glyphon::Wrap::None);
+				buf.set_monospace_width(&mut ctx.font_system, Some(cell_w));
+				buf
 			});
-			gb.set_metrics(&mut ctx.font_system, ctx.metrics);
-			gb.set_size(&mut ctx.font_system, bw, bh);
-			let despan = spans.iter().map(|(t, a)| {
-				let mut a2 = a.clone();
-				a2.weight = default_attrs.weight;
-				(t.as_str(), a2)
+			glow_buffer.set_metrics(&mut ctx.font_system, ctx.metrics);
+			glow_buffer.set_size(&mut ctx.font_system, buf_w, buf_h);
+			let despan = spans.iter().map(|(text, attrs)| {
+				let mut debold_attrs = attrs.clone();
+				debold_attrs.weight = default_attrs.weight;
+				(text.as_str(), debold_attrs)
 			});
-			gb.set_rich_text(
+			glow_buffer.set_rich_text(
 				&mut ctx.font_system,
 				despan,
 				&default_attrs,
 				Shaping::Advanced,
 				None,
 			);
-			gb.shape_until_scroll(&mut ctx.font_system, false);
+			glow_buffer.shape_until_scroll(&mut ctx.font_system, false);
 		}
 
 		// build the per-cell fallback glyphs (reusing the buffer pool)
 		self.glyphs.clear();
 		let rect_y = self.rect.y;
-		for (i, (ch, color, bold, italic, c, sr, cells)) in glyph_specs.into_iter().enumerate() {
-			let mut a = mono_attrs();
-			a.color_opt = Some(GColor::rgb(color[0], color[1], color[2]));
+		for (i, (ch, color, bold, italic, c, screen_row, cells)) in
+			glyph_specs.into_iter().enumerate()
+		{
+			let mut attrs = mono_attrs();
+			attrs.color_opt = Some(GColor::rgb(color[0], color[1], color[2]));
 			if bold {
-				a.weight = Weight::BOLD;
+				attrs.weight = Weight::BOLD;
 			}
 			if italic {
-				a.style = Style::Italic;
+				attrs.style = Style::Italic;
 			}
 			if i >= self.glyph_bufs.len() {
-				let b = ctx.new_plain_buffer();
-				self.glyph_bufs.push(b);
+				let buf = ctx.new_plain_buffer();
+				self.glyph_bufs.push(buf);
 			}
-			let (ink_w, ink_off) = ctx.fill_glyph(&mut self.glyph_bufs[i], ch, &a);
+			let (ink_w, ink_off) = ctx.fill_glyph(&mut self.glyph_bufs[i], ch, &attrs);
 			// Fit the ink inside its cell box (cells * cell_w wide), only ever
 			// shrinking, and center it there - a fallback face's wider-than-a-cell
 			// ink would otherwise spill over the next cell and collide with its
@@ -766,8 +776,9 @@ impl Pane {
 			let scale = if ink_w > target { target / ink_w } else { 1.0 };
 			let cell_x = content_x + c as f32 * cell_w;
 			let x = cell_x + (target - ink_w * scale) / 2.0 - ink_off * scale;
-			let y =
-				rect_y + margin + (sr as f32 + voff_of(sr)) * cell_h + cell_h * (1.0 - scale) / 2.0;
+			let y = rect_y
+				+ margin + (screen_row as f32 + voff_of(screen_row)) * cell_h
+				+ cell_h * (1.0 - scale) / 2.0;
 			self.glyphs
 				.push((x, y, GColor::rgb(color[0], color[1], color[2]), scale));
 		}
@@ -790,8 +801,8 @@ impl Pane {
 		&mut self,
 		cursor_pt: Point,
 		cursor_shape: CursorShape,
-		geom: (f32, f32),
-		d: i32,
+		cursor_geom: (f32, f32),
+		display_offset: i32,
 		lines: usize,
 		following: bool,
 		content_x: f32,
@@ -802,32 +813,32 @@ impl Pane {
 		dt: f32,
 		cursor_rgb: [u8; 3],
 	) -> Option<RectInstance> {
-		let cursor_sr = cursor_pt.line.0 + d;
+		let cursor_screen_row = cursor_pt.line.0 + display_offset;
 		let shown = following
 			&& cursor_shape != CursorShape::Hidden
-			&& cursor_sr >= 0
-			&& (cursor_sr as usize) < lines;
+			&& cursor_screen_row >= 0
+			&& (cursor_screen_row as usize) < lines;
 		self.cursor_animating = false;
 		if !shown {
 			return None;
 		}
-		let c = cursor_pt.column.0 as f32;
-		let row_jump = !self.cursor_init || cursor_sr != self.cursor_row;
-		let moved = row_jump || (c - self.cursor_col).abs() > 0.001;
+		let target_col = cursor_pt.column.0 as f32;
+		let row_jump = !self.cursor_init || cursor_screen_row != self.cursor_row;
+		let moved = row_jump || (target_col - self.cursor_col).abs() > 0.001;
 		if row_jump {
-			self.cursor_x = c; // snap on first sight / newline (no diagonal slide)
+			self.cursor_x = target_col; // snap on first sight / newline (no diagonal slide)
 		}
 		if moved {
 			self.blink_t = 0.0; // solid immediately after any move
 		}
 		self.cursor_init = true;
-		self.cursor_row = cursor_sr;
-		self.cursor_col = c;
+		self.cursor_row = cursor_screen_row;
+		self.cursor_col = target_col;
 		let k = 1.0 - (-dt * 1000.0 / CURSOR_MOVE_TAU_MS).exp();
-		self.cursor_x += (c - self.cursor_x) * k;
-		let easing = (c - self.cursor_x).abs() > 0.01;
+		self.cursor_x += (target_col - self.cursor_x) * k;
+		let easing = (target_col - self.cursor_x).abs() > 0.01;
 		if !easing {
-			self.cursor_x = c;
+			self.cursor_x = target_col;
 		}
 		self.blink_t += dt;
 		// Animation: "none" = steady; "phase" = smooth cosine fade; "pulse_*" =
@@ -839,7 +850,7 @@ impl Pane {
 		let animating = !easing && anim != "none";
 		let phase = (self.blink_t / period).fract();
 
-		let (mut w_frac, mut h_frac) = geom;
+		let (mut w_frac, mut h_frac) = cursor_geom;
 		let mut alpha = CURSOR_ALPHA;
 		let (pulsing_w, pulsing_h) = if animating {
 			match anim {
@@ -856,9 +867,9 @@ impl Pane {
 					(true, false)
 				}
 				"pulse_both" => {
-					let e = pulse_env(phase);
-					w_frac *= e;
-					h_frac *= e;
+					let envelope = pulse_env(phase);
+					w_frac *= envelope;
+					h_frac *= envelope;
 					(true, true)
 				}
 				_ => (false, false),
@@ -867,9 +878,9 @@ impl Pane {
 			(false, false)
 		};
 		self.cursor_animating = easing || animating;
-		let mut col = config::srgb_f32(cursor_rgb);
-		col[3] = alpha;
-		let cell_y = self.rect.y + margin + (cursor_sr as f32 + voff) * cell_h;
+		let mut cursor_color = config::srgb_f32(cursor_rgb);
+		cursor_color[3] = alpha;
+		let cell_y = self.rect.y + margin + (cursor_screen_row as f32 + voff) * cell_h;
 		let cell_x = content_x + self.cursor_x * cell_w;
 		// Width grows from the left, height from the bottom - but a *pulsing*
 		// dimension grows from the cell centre (the "line in the middle") and may
@@ -897,7 +908,7 @@ impl Pane {
 		Some(RectInstance {
 			pos: [x, y],
 			size: [w, h],
-			color: col,
+			color: cursor_color,
 		})
 	}
 
@@ -907,8 +918,8 @@ impl Pane {
 	pub fn glow_text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
 		let mut area = self.text_area(top, margin);
 		if self.glow_debold {
-			if let Some(gb) = &self.glow_buf {
-				area.buffer = gb;
+			if let Some(glow_buffer) = &self.glow_buf {
+				area.buffer = glow_buffer;
 			}
 		}
 		area
@@ -964,10 +975,10 @@ impl Pane {
 		clip_top: f32,
 		clip_bottom: f32,
 	) -> TextArea<'a> {
-		let mut a = self.text_area(top, margin);
-		a.bounds.top = a.bounds.top.max(clip_top as i32);
-		a.bounds.bottom = a.bounds.bottom.min(clip_bottom as i32);
-		a
+		let mut area = self.text_area(top, margin);
+		area.bounds.top = area.bounds.top.max(clip_top as i32);
+		area.bounds.bottom = area.bounds.bottom.min(clip_bottom as i32);
+		area
 	}
 
 	// The retained previous frame (prev_buffer) at `top`, clipped to the strip the
@@ -979,10 +990,10 @@ impl Pane {
 		clip_top: f32,
 		clip_bottom: f32,
 	) -> TextArea<'a> {
-		let mut a = self.buf_area(&self.prev_buffer, top, margin);
-		a.bounds.top = a.bounds.top.max(clip_top as i32);
-		a.bounds.bottom = a.bounds.bottom.min(clip_bottom as i32);
-		a
+		let mut area = self.buf_area(&self.prev_buffer, top, margin);
+		area.bounds.top = area.bounds.top.max(clip_top as i32);
+		area.bounds.bottom = area.bounds.bottom.min(clip_bottom as i32);
+		area
 	}
 
 	// Per-cell fallback glyphs, already positioned (see Pane::build). Drawn in
@@ -1016,8 +1027,8 @@ impl Pane {
 		if !self.term.at_shell_prompt() {
 			return;
 		}
-		if let Some(g) = self.term.term.try_lock_unfair() {
-			let grid = g.grid();
+		if let Some(guard) = self.term.term.try_lock_unfair() {
+			let grid = guard.grid();
 			self.cmd_start = grid.history_size() + grid.cursor.point.line.0.max(0) as usize + 1;
 			self.capture_armed = true;
 			self.last_output = std::time::Instant::now();
@@ -1047,13 +1058,13 @@ impl Pane {
 		if !self.term.at_shell_prompt() {
 			return None; // a foreground app is still running; wait for it to exit
 		}
-		let g = self.term.term.try_lock_unfair()?;
+		let guard = self.term.term.try_lock_unfair()?;
 		self.capture_armed = false;
 		let end = {
-			let grid = g.grid();
+			let grid = guard.grid();
 			grid.history_size() + grid.cursor.point.line.0.max(0) as usize
 		};
-		let text = capture_grid_text(&g, self.cmd_start, end);
+		let text = capture_grid_text(&guard, self.cmd_start, end);
 		(!text.trim().is_empty()).then_some(text)
 	}
 
@@ -1089,11 +1100,14 @@ impl Pane {
 		} else {
 			Side::Right
 		};
-		let sr = ((y - self.rect.y - ctx.margin) / ctx.cell_h)
+		let screen_row = ((y - self.rect.y - ctx.margin) / ctx.cell_h)
 			.floor()
 			.clamp(0.0, (lines - 1) as f32) as i32;
-		let d = self.term.term.lock_unfair().grid().display_offset() as i32;
-		Some((Point::new(Line(sr - d), Column(col as usize)), side))
+		let display_offset = self.term.term.lock_unfair().grid().display_offset() as i32;
+		Some((
+			Point::new(Line(screen_row - display_offset), Column(col as usize)),
+			side,
+		))
 	}
 
 	// If a double-click `point` sits inside a matched pair on its line, return
@@ -1107,8 +1121,8 @@ impl Pane {
 			return None;
 		}
 		let row: Vec<char> = {
-			let t = self.term.term.lock_unfair();
-			let grid = t.grid();
+			let guard = self.term.term.lock_unfair();
+			let grid = guard.grid();
 			(0..cols).map(|c| grid[point.line][Column(c)].c).collect()
 		};
 		let (start, end) = pair_inside(&row, col, pairs)?;
@@ -1123,8 +1137,8 @@ impl Pane {
 	}
 
 	pub fn update_selection(&self, point: Point, side: Side) {
-		let mut t = self.term.term.lock_unfair();
-		if let Some(sel) = t.selection.as_mut() {
+		let mut guard = self.term.term.lock_unfair();
+		if let Some(sel) = guard.selection.as_mut() {
 			sel.update(point, side);
 		}
 	}
@@ -1351,9 +1365,13 @@ fn swap_leaves(node: &mut Node, a: PaneId, b: PaneId) {
 				*id = a;
 			}
 		}
-		Node::Split { a: l, b: r, .. } => {
-			swap_leaves(l, a, b);
-			swap_leaves(r, a, b);
+		Node::Split {
+			a: child_a,
+			b: child_b,
+			..
+		} => {
+			swap_leaves(child_a, a, b);
+			swap_leaves(child_b, a, b);
 		}
 	}
 }
@@ -1444,29 +1462,29 @@ fn capture_grid_text(
 	let hist = grid.history_size() as i64;
 	let cols = grid.columns();
 	let mut out = String::new();
-	let mut a = start_abs;
-	while a < end_abs {
-		let gl = a as i64 - hist; // screen top is absolute `hist`; history is negative
-		if gl < -hist {
-			a += 1; // scrolled out of the buffer (output longer than scrollback)
+	let mut abs_line = start_abs;
+	while abs_line < end_abs {
+		let grid_line = abs_line as i64 - hist; // screen top is absolute `hist`; history is negative
+		if grid_line < -hist {
+			abs_line += 1; // scrolled out of the buffer (output longer than scrollback)
 			continue;
 		}
-		let row = &grid[Line(gl as i32)];
-		let mut s = String::new();
+		let row = &grid[Line(grid_line as i32)];
+		let mut row_text = String::new();
 		for c in 0..cols {
 			let cell = &row[Column(c)];
 			if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
 				continue; // the trailing half of a wide glyph has no char of its own
 			}
-			s.push(cell.c);
+			row_text.push(cell.c);
 		}
 		if cols > 0 && row[Column(cols - 1)].flags.contains(Flags::WRAPLINE) {
-			out.push_str(&s); // soft-wrapped: continue the logical line, no newline
+			out.push_str(&row_text); // soft-wrapped: continue the logical line, no newline
 		} else {
-			out.push_str(s.trim_end());
+			out.push_str(row_text.trim_end());
 			out.push('\n');
 		}
-		a += 1;
+		abs_line += 1;
 	}
 	out
 }
@@ -1482,22 +1500,22 @@ fn pair_inside(row: &[char], col: usize, pairs: &[(char, char)]) -> Option<(usiz
 		} else {
 			distinct_pair(row, col, open, close)
 		};
-		if let Some((o, c)) = found {
-			if c > o + 1 {
+		if let Some((open_idx, close_idx)) = found {
+			if close_idx > open_idx + 1 {
 				// Exclude runs of spaces directly against the delimiters (keep any
 				// interior spaces): `" Now is the time. "` selects `Now is the time.`.
-				let (mut s, mut e) = (o + 1, c - 1);
-				while s < e && row[s] == ' ' {
-					s += 1;
+				let (mut start, mut end) = (open_idx + 1, close_idx - 1);
+				while start < end && row[start] == ' ' {
+					start += 1;
 				}
-				while e > s && row[e] == ' ' {
-					e -= 1;
+				while end > start && row[end] == ' ' {
+					end -= 1;
 				}
 				// all-spaces inside: fall back to the full inside span
-				return Some(if row[s] == ' ' {
-					(o + 1, c - 1)
+				return Some(if row[start] == ' ' {
+					(open_idx + 1, close_idx - 1)
 				} else {
-					(s, e)
+					(start, end)
 				});
 			}
 		}
@@ -1509,26 +1527,26 @@ fn pair_inside(row: &[char], col: usize, pairs: &[(char, char)]) -> Option<(usiz
 // open/close chars. The char at `col` itself isn't treated as an endpoint.
 fn distinct_pair(row: &[char], col: usize, open: char, close: char) -> Option<(usize, usize)> {
 	let mut depth = 0i32;
-	let mut o = None;
+	let mut open_idx = None;
 	for i in (0..col).rev() {
 		if row[i] == close {
 			depth += 1;
 		} else if row[i] == open {
 			if depth == 0 {
-				o = Some(i);
+				open_idx = Some(i);
 				break;
 			}
 			depth -= 1;
 		}
 	}
-	let o = o?;
+	let open_idx = open_idx?;
 	let mut depth = 0i32;
 	for (i, &ch) in row.iter().enumerate().skip(col + 1) {
 		if ch == open {
 			depth += 1;
 		} else if ch == close {
 			if depth == 0 {
-				return Some((o, i));
+				return Some((open_idx, i));
 			}
 			depth -= 1;
 		}
@@ -1591,13 +1609,13 @@ fn path_to(node: &Node, id: PaneId) -> Option<Vec<bool>> {
 	match node {
 		Node::Leaf(i) => (*i == id).then(Vec::new),
 		Node::Split { a, b, .. } => {
-			if let Some(mut p) = path_to(a, id) {
-				p.insert(0, false);
-				return Some(p);
+			if let Some(mut path) = path_to(a, id) {
+				path.insert(0, false);
+				return Some(path);
 			}
-			if let Some(mut p) = path_to(b, id) {
-				p.insert(0, true);
-				return Some(p);
+			if let Some(mut path) = path_to(b, id) {
+				path.insert(0, true);
+				return Some(path);
 			}
 			None
 		}
@@ -1606,11 +1624,11 @@ fn path_to(node: &Node, id: PaneId) -> Option<Vec<bool>> {
 
 // Follow `path` from `node` (defensively stops at a leaf).
 fn node_at_mut<'a>(mut node: &'a mut Node, path: &[bool]) -> &'a mut Node {
-	for &b in path {
-		let Node::Split { a, b: bb, .. } = node else {
+	for &take_b in path {
+		let Node::Split { a, b, .. } = node else {
 			break;
 		};
-		node = if b { bb } else { a };
+		node = if take_b { b } else { a };
 	}
 	node
 }
@@ -1618,13 +1636,13 @@ fn node_at_mut<'a>(mut node: &'a mut Node, path: &[bool]) -> &'a mut Node {
 // Is the node at `path` a Split oriented along `dir`?
 fn is_dir_split(root: &Node, path: &[bool], dir: Dir) -> bool {
 	let mut node = root;
-	for &b in path {
-		let Node::Split { a, b: bb, .. } = node else {
+	for &take_b in path {
+		let Node::Split { a, b, .. } = node else {
 			return false;
 		};
-		node = if b { bb } else { a };
+		node = if take_b { b } else { a };
 	}
-	matches!(node, Node::Split { dir: d, .. } if *d == dir)
+	matches!(node, Node::Split { dir: node_dir, .. } if *node_dir == dir)
 }
 
 // Leaves in the same-direction run rooted at `node`: a nested `dir` split counts
@@ -1632,9 +1650,12 @@ fn is_dir_split(root: &Node, path: &[bool], dir: Dir) -> bool {
 // internal layout is separate).
 fn group_leaf_count(node: &Node, dir: Dir) -> usize {
 	match node {
-		Node::Split { dir: d, a, b, .. } if *d == dir => {
-			group_leaf_count(a, dir) + group_leaf_count(b, dir)
-		}
+		Node::Split {
+			dir: node_dir,
+			a,
+			b,
+			..
+		} if *node_dir == dir => group_leaf_count(a, dir) + group_leaf_count(b, dir),
 		_ => 1,
 	}
 }
@@ -1643,12 +1664,12 @@ fn group_leaf_count(node: &Node, dir: Dir) -> usize {
 fn group_has_manual(node: &Node, dir: Dir) -> bool {
 	match node {
 		Node::Split {
-			dir: d,
+			dir: node_dir,
 			manual,
 			a,
 			b,
 			..
-		} if *d == dir => *manual || group_has_manual(a, dir) || group_has_manual(b, dir),
+		} if *node_dir == dir => *manual || group_has_manual(a, dir) || group_has_manual(b, dir),
 		_ => false,
 	}
 }
@@ -1657,17 +1678,17 @@ fn group_has_manual(node: &Node, dir: Dir) -> bool {
 // a split gives its a-child a share proportional to the leaves under it.
 fn equalize(node: &mut Node, dir: Dir) {
 	if let Node::Split {
-		dir: d,
+		dir: node_dir,
 		ratio,
 		a,
 		b,
 		..
 	} = node
 	{
-		if *d == dir {
-			let na = group_leaf_count(a, dir);
-			let nb = group_leaf_count(b, dir);
-			*ratio = na as f32 / (na + nb) as f32;
+		if *node_dir == dir {
+			let leaves_a = group_leaf_count(a, dir);
+			let leaves_b = group_leaf_count(b, dir);
+			*ratio = leaves_a as f32 / (leaves_a + leaves_b) as f32;
 			equalize(a, dir);
 			equalize(b, dir);
 		}
@@ -1707,9 +1728,9 @@ fn prune(node: Node, id: PaneId) -> Option<Node> {
 			a,
 			b,
 		} => {
-			let a2 = prune(*a, id);
-			let b2 = prune(*b, id);
-			match (a2, b2) {
+			let pruned_a = prune(*a, id);
+			let pruned_b = prune(*b, id);
+			match (pruned_a, pruned_b) {
 				(Some(a), Some(b)) => Some(Node::Split {
 					dir,
 					ratio,
@@ -1717,7 +1738,7 @@ fn prune(node: Node, id: PaneId) -> Option<Node> {
 					a: Box::new(a),
 					b: Box::new(b),
 				}),
-				(Some(n), None) | (None, Some(n)) => Some(n),
+				(Some(survivor), None) | (None, Some(survivor)) => Some(survivor),
 				(None, None) => None,
 			}
 		}
@@ -1749,36 +1770,36 @@ fn child_areas(area: Rect, dir: Dir, ratio: f32) -> (Rect, Rect) {
 	let gap = config::PANE_GAP_PX;
 	match dir {
 		Dir::Vertical => {
-			let wa = ((area.w - gap) * ratio).floor();
+			let a_width = ((area.w - gap) * ratio).floor();
 			(
 				Rect {
 					x: area.x,
 					y: area.y,
-					w: wa,
+					w: a_width,
 					h: area.h,
 				},
 				Rect {
-					x: area.x + wa + gap,
+					x: area.x + a_width + gap,
 					y: area.y,
-					w: area.w - gap - wa,
+					w: area.w - gap - a_width,
 					h: area.h,
 				},
 			)
 		}
 		Dir::Horizontal => {
-			let ha = ((area.h - gap) * ratio).floor();
+			let a_height = ((area.h - gap) * ratio).floor();
 			(
 				Rect {
 					x: area.x,
 					y: area.y,
 					w: area.w,
-					h: ha,
+					h: a_height,
 				},
 				Rect {
 					x: area.x,
-					y: area.y + ha + gap,
+					y: area.y + a_height + gap,
 					w: area.w,
-					h: area.h - gap - ha,
+					h: area.h - gap - a_height,
 				},
 			)
 		}
@@ -1815,15 +1836,15 @@ fn divider_at(node: &Node, area: Rect, x: f32, y: f32, path: &mut Vec<bool>) -> 
 	}
 	if a_area.contains(x, y) {
 		path.push(false);
-		if let Some(d) = divider_at(a, a_area, x, y, path) {
-			return Some(d);
+		if let Some(found_dir) = divider_at(a, a_area, x, y, path) {
+			return Some(found_dir);
 		}
 		path.pop();
 	}
 	if b_area.contains(x, y) {
 		path.push(true);
-		if let Some(d) = divider_at(b, b_area, x, y, path) {
-			return Some(d);
+		if let Some(found_dir) = divider_at(b, b_area, x, y, path) {
+			return Some(found_dir);
 		}
 		path.pop();
 	}
@@ -1852,11 +1873,11 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
 		return;
 	}
 	let gap = config::PANE_GAP_PX;
-	let r = match dir {
+	let new_ratio = match dir {
 		Dir::Vertical => (x - area.x) / (area.w - gap),
 		Dir::Horizontal => (y - area.y) / (area.h - gap),
 	};
-	*ratio = r.clamp(0.05, 0.95);
+	*ratio = new_ratio.clamp(0.05, 0.95);
 	*manual = true; // dragged: stop auto even-distribution for this run
 }
 
@@ -1887,35 +1908,35 @@ fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
 	}
 	// a quarter of the screen, since static top+bottom bands shrink the middle
 	let need = (n / 4).max(3);
-	let lim = max.min(n - 1);
+	let limit = max.min(n - 1);
 	let (mut best, mut best_score) = (0i32, 0usize);
-	for k in 1..=lim {
+	for k in 1..=limit {
 		// forward: content moved up k rows -> cur[i] == last[i+k]
-		let (mut m, mut mv) = (0usize, 0usize);
+		let (mut matched, mut moved) = (0usize, 0usize);
 		for i in 0..n - k {
 			if cur[i] == last[i + k] {
-				m += 1;
+				matched += 1;
 				if cur[i] != last[i] {
-					mv += 1;
+					moved += 1;
 				}
 			}
 		}
-		if m >= need && mv >= MOVED_MIN && m > best_score {
-			best_score = m;
+		if matched >= need && moved >= MOVED_MIN && matched > best_score {
+			best_score = matched;
 			best = k as i32;
 		}
 		// backward: content moved down k rows -> cur[i+k] == last[i]
-		let (mut m, mut mv) = (0usize, 0usize);
+		let (mut matched, mut moved) = (0usize, 0usize);
 		for i in 0..n - k {
 			if cur[i + k] == last[i] {
-				m += 1;
+				matched += 1;
 				if cur[i + k] != last[i + k] {
-					mv += 1;
+					moved += 1;
 				}
 			}
 		}
-		if m >= need && mv >= MOVED_MIN && m > best_score {
-			best_score = m;
+		if matched >= need && moved >= MOVED_MIN && matched > best_score {
+			best_score = matched;
 			best = -(k as i32);
 		}
 	}

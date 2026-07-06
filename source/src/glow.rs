@@ -92,7 +92,7 @@ impl Glow {
 			// binding 3 = the bgcolor map, whose alpha is an "own-bg" mask (see fs_blur)
 			entries: &[ubuf_entry(0), tex_entry(1), samp_entry(2), tex_entry(3)],
 		});
-		let mku = |label| {
+		let make_uniform_buf = |label| {
 			device.create_buffer(&wgpu::BufferDescriptor {
 				label: Some(label),
 				size: std::mem::size_of::<BlurU>() as u64,
@@ -100,8 +100,8 @@ impl Glow {
 				mapped_at_creation: false,
 			})
 		};
-		let blur_u_h = mku("glow blur u h");
-		let blur_u_v = mku("glow blur u v");
+		let blur_u_h = make_uniform_buf("glow blur u h");
+		let blur_u_v = make_uniform_buf("glow blur u v");
 		let blur_pipe = pipeline(device, &shader, "fs_blur", FMT, &blur_bgl, "glow blur");
 
 		let comp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -173,16 +173,16 @@ impl Glow {
 		if w == 0 || h == 0 || (w == self.w && h == self.h) {
 			return;
 		}
-		let (tt, ta, tb, vt, va, vb) = make_textures(device, w, h);
-		self.tex_t = tt;
-		self.tex_a = ta;
-		self.tex_b = tb;
-		self.view_t = vt;
-		self.view_a = va;
-		self.view_b = vb;
+		let (tex_t, tex_a, tex_b, view_t, view_a, view_b) = make_textures(device, w, h);
+		self.tex_t = tex_t;
+		self.tex_a = tex_a;
+		self.tex_b = tex_b;
+		self.view_t = view_t;
+		self.view_a = view_a;
+		self.view_b = view_b;
 		self.bgcolor = bgcolor_tex(device, w, h);
 		self.bgcolor_view = self.bgcolor.create_view(&Default::default());
-		let (t2b, b2a, cb) = binds(
+		let (blur_t2b, blur_b2a, comp_bind) = binds(
 			device,
 			&self.blur_bgl,
 			&self.comp_bgl,
@@ -195,9 +195,9 @@ impl Glow {
 			&self.view_b,
 			&self.bgcolor_view,
 		);
-		self.blur_t2b = t2b;
-		self.blur_b2a = b2a;
-		self.comp_bind = cb;
+		self.blur_t2b = blur_t2b;
+		self.blur_b2a = blur_b2a;
+		self.comp_bind = comp_bind;
 		self.w = w;
 		self.h = h;
 	}
@@ -383,13 +383,13 @@ fn make_textures(
 		usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
 		view_formats: &[],
 	};
-	let t = device.create_texture(&desc("glow tex t"));
-	let a = device.create_texture(&desc("glow tex a"));
-	let b = device.create_texture(&desc("glow tex b"));
-	let vt = t.create_view(&Default::default());
-	let va = a.create_view(&Default::default());
-	let vb = b.create_view(&Default::default());
-	(t, a, b, vt, va, vb)
+	let tex_t = device.create_texture(&desc("glow tex t"));
+	let tex_a = device.create_texture(&desc("glow tex a"));
+	let tex_b = device.create_texture(&desc("glow tex b"));
+	let view_t = tex_t.create_view(&Default::default());
+	let view_a = tex_a.create_view(&Default::default());
+	let view_b = tex_b.create_view(&Default::default());
+	(tex_t, tex_a, tex_b, view_t, view_a, view_b)
 }
 
 fn bgcolor_tex(device: &wgpu::Device, w: u32, h: u32) -> wgpu::Texture {

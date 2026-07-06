@@ -56,38 +56,38 @@ pub fn mouse_report(
 	if !wants_mouse(mode) {
 		return None;
 	}
-	let mut cb = btn.code();
+	let mut button_code = btn.code();
 	if motion {
-		cb += 32;
+		button_code += 32;
 	}
 	// modifier bits: shift 4, alt 8, ctrl 16
-	cb +=
+	button_code +=
 		(mods.shift_key() as u8) * 4 + (mods.alt_key() as u8) * 8 + (mods.control_key() as u8) * 16;
 
-	let (cx, cy) = (col + 1, row + 1); // 1-based on the wire
+	let (wire_col, wire_row) = (col + 1, row + 1); // 1-based on the wire
 
 	if mode.contains(TermMode::SGR_MOUSE) {
 		// ESC [ < Cb ; Cx ; Cy  (M press/motion/wheel | m release)
 		let end = if pressed || btn.is_wheel() { 'M' } else { 'm' };
-		return Some(format!("\x1b[<{cb};{cx};{cy}{end}").into_bytes());
+		return Some(format!("\x1b[<{button_code};{wire_col};{wire_row}{end}").into_bytes());
 	}
 
 	// Legacy X10 form: ESC [ M <Cb+32> <Cx+32> <Cy+32>, one byte each - so a
 	// coordinate past 223 can't be encoded; clamp rather than corrupt. Release
 	// reports button 3 (wheel never releases, so this only hits real buttons).
-	let cb = if pressed || btn.is_wheel() {
-		cb
+	let button_code = if pressed || btn.is_wheel() {
+		button_code
 	} else {
-		(cb & !0b11) | 3
+		(button_code & !0b11) | 3
 	};
-	let enc = |v: usize| (v.min(223) as u8).wrapping_add(32);
+	let encode_coord = |coord: usize| (coord.min(223) as u8).wrapping_add(32);
 	Some(vec![
 		0x1b,
 		b'[',
 		b'M',
-		cb.wrapping_add(32),
-		enc(cx),
-		enc(cy),
+		button_code.wrapping_add(32),
+		encode_coord(wire_col),
+		encode_coord(wire_row),
 	])
 }
 
@@ -152,13 +152,13 @@ fn encode_key(
 	let alt = mods.alt_key();
 	let shift = mods.shift_key();
 	// xterm modifier parameter: 1 + shift(1) + alt(2) + ctrl(4)
-	let m = 1 + shift as u8 + ((alt as u8) << 1) + ((ctrl as u8) << 2);
+	let mod_param = 1 + shift as u8 + ((alt as u8) << 1) + ((ctrl as u8) << 2);
 
 	let with_alt = |bytes: Vec<u8>| -> Vec<u8> {
 		if alt {
-			let mut v = vec![0x1b];
-			v.extend_from_slice(&bytes);
-			v
+			let mut prefixed = vec![0x1b];
+			prefixed.extend_from_slice(&bytes);
+			prefixed
 		} else {
 			bytes
 		}
@@ -169,16 +169,16 @@ fn encode_key(
 			// Modified navigation/function keys use the xterm `;<m>` forms
 			// (Ctrl+Arrow word-skip, Ctrl+Del, Shift+F<n>, ...). These replace
 			// the ESC prefix for Alt too - apps expect CSI 1;3A, not ESC CSI A.
-			if m > 1 {
+			if mod_param > 1 {
 				if *named == NamedKey::Backspace && ctrl {
 					// xterm/VTE convention; shells bind ^H to a word delete
 					return Some(with_alt(vec![0x08]));
 				}
-				if let Some(l) = letter_final(named) {
-					return Some(format!("\x1b[1;{m}{}", l as char).into_bytes());
+				if let Some(letter) = letter_final(named) {
+					return Some(format!("\x1b[1;{mod_param}{}", letter as char).into_bytes());
 				}
-				if let Some(n) = tilde_num(named) {
-					return Some(format!("\x1b[{n};{m}~").into_bytes());
+				if let Some(tilde_param) = tilde_num(named) {
+					return Some(format!("\x1b[{tilde_param};{mod_param}~").into_bytes());
 				}
 			}
 			let bytes: Vec<u8> = match named {
@@ -204,16 +204,16 @@ fn encode_key(
 				NamedKey::F3 => b"\x1bOR".to_vec(),
 				NamedKey::F4 => b"\x1bOS".to_vec(),
 				_ => match tilde_num(named) {
-					Some(n) => format!("\x1b[{n}~").into_bytes(),
+					Some(tilde_param) => format!("\x1b[{tilde_param}~").into_bytes(),
 					None => return None,
 				},
 			};
 			Some(with_alt(bytes))
 		}
-		Key::Character(s) => {
+		Key::Character(char_str) => {
 			if ctrl {
 				// map ctrl+<char> to its control code
-				let c = s.chars().next()?;
+				let c = char_str.chars().next()?;
 				let lower = c.to_ascii_lowercase();
 				let code = match lower {
 					'a'..='z' => (lower as u8 - b'a') + 1,

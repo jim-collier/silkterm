@@ -182,18 +182,18 @@ impl TermInstance {
 			.get_or_insert_with(|| proc_comm(self.shell_pid).unwrap_or_else(|| "shell".into()))
 			.clone();
 		let pgid = unsafe { libc::tcgetpgrp(self.master_fd) };
-		let fg = if pgid > 0 {
+		let fg_program = if pgid > 0 {
 			proc_comm(pgid as u32)
 		} else {
 			None
 		};
-		match fg {
-			Some(p) if p != shell => {
-				self.last_program = Some(p.clone());
-				format!("{shell} [{p}]")
+		match fg_program {
+			Some(program) if program != shell => {
+				self.last_program = Some(program.clone());
+				format!("{shell} [{program}]")
 			}
 			_ => match &self.last_program {
-				Some(l) => format!("{shell} [last: {l}]"),
+				Some(last_program) => format!("{shell} [last: {last_program}]"),
 				None => shell,
 			},
 		}
@@ -257,11 +257,11 @@ impl Drop for TermInstance {
 // Executable basename of a process from /proc/<pid>/comm (Linux/most Unix).
 #[cfg(unix)]
 fn proc_comm(pid: u32) -> Option<String> {
-	let s = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
-	let s = s.trim();
-	if s.is_empty() {
+	let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+	let comm = comm.trim();
+	if comm.is_empty() {
 		None
 	} else {
-		Some(s.to_string())
+		Some(comm.to_string())
 	}
 }
