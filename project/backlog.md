@@ -85,6 +85,11 @@ In each section, items are listed approximately from newest to oldest.
 			- Fixed (glow the reveal strip): the glow pass now also glows the prev-frame strip (mirrors the text pass), so the revealed rows keep their readability backing and the boundary no longer sweeps. Guarded: only when the band on the strip's furniture side is detected (`has_top_band` for a top strip / `has_band` for a bottom strip) - that band clips the prev frame's header/status out of the glow. The first naive attempt (unconditional) blobbed the header when the top band wasn't detected (`st=0`): the open clip dragged prev's own-bg header in, mis-aligned with the current own-bg mask, glowing it dark. Instrumented the detector to prove it - `st=0` only in a DECSTBM-scroll scene; a full-redraw scene (how nano/curses actually paint) gives `st=1` and the header stays clean.
 			- Verified headless A/B (redraw scene, `st=1`): header dark-px flat 1459-1580 (0 blobby frames), strip glowed; and the `st=0` DECSTBM edge case no longer blobs (max 3742 -> 574) thanks to the guard. Needs an owner feel-test on REAL nano to confirm the wheel/cursor feel.
 		- Text moving DOWN fast: the bottom two lines jump UP. Likely the SAME un-glowed-strip issue at the bottom edge (up-slide reveal strip above the status line), now also glowed by the same fix when `has_band`. If any residual jump remains after the feel-test, the leftover is band re-detection mid-ease (a new step re-captures band sizes + resets `app_off`); fix would be to hold band sizes stable across an in-progress ease.
+		- Fixed (band freeze): the static band sizes (`st`/`sb`) are now measured only on a gesture's FIRST step and held for the rest of a continuous scroll (`gesture_active`). Per-step re-measuring fluctuated by a row whenever a blank/matching line sat next to a band, jumping the band boundary (and the glow pinned to it) a whole cell up/down = the bouncing shadow / bottom lines jumping. Measurement pulled into a pure `static_bands()` helper (unit-tested). Needs owner feel-test on real nano.
+
+- 🛠️ Alt-screen enter/exit animated like a scroll (`smooth_scroll_apps`). Two symptoms: (a) opening nano "jiggles"/jelly-bounces or scrolls in from a few lines down; (b) exiting nano scrolls the previous screen contents back in from the bottom, where a normal terminal just cuts.
+	- Cause: an alt-screen enter/exit is an instant full-screen swap, but the scroll probes diffed frame-to-frame across it. On enter the app-scroll probe matched blank rows between the old and new screens -> bogus slide (jiggle). On exit `history_size` jumps (the alt grid carries no scrollback) -> the output-ease read it as new output and scrolled the restored screen in.
+	- Fixed: track the previous frame's alt-screen state; on a transition hard-cut it - cancel any in-flight slide, skip both probes, suppress the output nudge, and rebaseline the row fingerprints to the new screen. Needs owner feel-test on real nano (launch + exit).
 
 - ◐ Inverted text (e.g. Nano headers) is thin and hard-to-read.
 	- This turned out to be the owner's ACTUAL nano complaint (the "shadow jump" language was describing this). Dark-on-light (reverse video) renders visually thinner than the same-weight light-on-dark - inherent irradiation + AA, and SilkTerm/xfce-terminal both show it (Terminator renders it bolder). The glow only boosts light-on-dark text (dark halo), so inverse text got no readability help; the earlier own-bg mask removed the eroding bright halo but added no boost.
@@ -119,6 +124,8 @@ In each section, items are listed approximately from newest to oldest.
 	- Resolution: leave open until confirmed on long-running terminals.
 
 ### New features and enhancements
+
+- 🔘 For screenshots, and videos, use "Monaspace Argon NF Medium".
 
 - 🔘 Triple-click: Select the entire line - even if it's wrapped.
 

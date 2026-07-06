@@ -59,6 +59,13 @@ impl Scroll {
 		self.app_off = lines.clamp(-APP_OFF_CAP, APP_OFF_CAP);
 	}
 
+	// Hard-cut any in-flight alt-screen slide. An alt-screen enter/exit is an
+	// instant full-screen swap, not a scroll, so a slide left easing across it
+	// would drag the wrong screen's content.
+	pub fn cancel_app_scroll(&mut self) {
+		self.app_off = 0.0;
+	}
+
 	// Current alt-screen slide offset in lines (added to the render's vertical
 	// offset; 0 except briefly after an app repaint-scroll).
 	pub fn app_offset(&self) -> f32 {
@@ -273,6 +280,17 @@ mod tests {
 		}
 		assert_eq!(b.app_offset(), 0.0);
 		assert!(!b.animating());
+	}
+
+	#[test]
+	fn cancel_app_scroll_hard_cuts_the_slide() {
+		// an alt-screen enter/exit must drop any in-flight slide at once (no ease)
+		let mut s = Scroll::new();
+		s.app_scroll(7.0);
+		assert!(s.animating());
+		s.cancel_app_scroll();
+		assert_eq!(s.app_offset(), 0.0);
+		assert!(!s.animating());
 	}
 
 	#[test]
