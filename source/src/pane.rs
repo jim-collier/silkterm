@@ -351,20 +351,29 @@ impl Pane {
 			}
 			let sh = scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX);
 			if sh != 0 {
-				// Freeze the static-band sizes for the duration of a continuous scroll.
-				// Re-measuring per step fluctuates by a row whenever a blank/matching
-				// line sits next to a band, jerking the band boundary (and the glow
-				// pinned to it) a whole cell up or down = the "bouncing shadow". Only
-				// measure on the FIRST step (a clean settled-vs-scrolled diff); while the
-				// slide is still easing (gesture_active) keep the stored bands.
+				// Freeze the static-band sizes on the gesture's first step (a clean
+				// settled-vs-scrolled diff); re-measuring per step fluctuates by a row
+				// whenever a blank/matching line abuts a band. Held while the slide eases.
 				if !gesture_active {
 					let (st, sb) = static_bands(&rows, &self.last_rows);
 					self.slide_static = sb;
 					self.slide_static_top = st;
 				}
-				self.slide_sh = sh as f32;
-				self.scroll.app_scroll(sh as f32);
-				capture_prev = true; // this frame's outgoing content becomes prev_buffer
+				// Accumulate the slide offset so the content position stays continuous
+				// across overlapping steps. Screen row = grid_row + app_off, and the grid
+				// already advanced by sh this frame, so app_off must GROW by sh to hold a
+				// line fixed for that instant; SETting it to sh instead throws away the
+				// un-eased remainder from the last step, and that discarded remainder is
+				// the frame-to-frame "bounce". prev_buffer is captured ONCE at the gesture
+				// start (the pre-scroll frame) with slide_sh accumulating the total shift
+				// since, so prev stays aligned with the current frame and fills the whole
+				// reveal strip - re-captured only when the cumulative shift outgrows the
+				// scroll region (prev has scrolled out of view) or the direction flips.
+				let scroll_rows = lines.saturating_sub(self.slide_static + self.slide_static_top);
+				let (new_sh, cap) = slide_step(gesture_active, self.slide_sh, sh, scroll_rows);
+				self.slide_sh = new_sh;
+				capture_prev = cap; // (re)snapshot the outgoing frame as prev
+				self.scroll.app_scroll(self.scroll.app_offset() + sh as f32);
 			}
 			self.last_rows = rows;
 		}
@@ -439,16 +448,21 @@ impl Pane {
 			let prev_top = self.rect.y + margin + (-1.0 + voff_prev) * cell_h;
 			let (prev_clip_t, prev_clip_b) = if app_off > 0.0 {
 				// down-slide: strip between the top band and the current content's first
-				// scroll row (top_split_row); top_split_y == MIN keeps the no-band case
+				// scroll row (top_split_row); top_split_y == MIN keeps the no-band case.
+				// Clip the top to prev's OWN first scroll row so its title can't bleed in
+				// when prev sits low (voff_prev > 0); when prev fills to the band boundary
+				// this reduces to top_split_y.
 				(
-					top_split_y,
+					top_split_y
+						.max(self.rect.y + margin + (top_split_row as f32 + voff_prev) * cell_h),
 					self.rect.y + margin + (top_split_row as f32 + voff) * cell_h,
 				)
 			} else {
-				// up-slide: strip below the current scroll region's last row
+				// up-slide: strip below the current scroll region's last row, clipped at
+				// prev's own last scroll row so its bottom band can't bleed in
 				(
 					self.rect.y + margin + (split_row as f32 + voff) * cell_h,
-					split_y,
+					split_y.min(self.rect.y + margin + (split_row as f32 + voff_prev) * cell_h),
 				)
 			};
 			Some(Slide {
@@ -1900,6 +1914,28 @@ fn static_bands(cur: &[u64], last: &[u64]) -> (usize, usize) {
 	if st + sb >= n { (0, 0) } else { (st, sb) }
 }
 
+// Fold a detected scroll step into the ongoing alt-screen slide: returns the new
+// cumulative shift and whether to (re)capture prev_buffer. prev is snapshotted once
+// at a gesture's start (the pre-scroll frame) and slide_sh accumulates the total
+// shift since, so prev stays aligned with the current frame and fills the whole
+// reveal strip. It's re-captured when a gesture wasn't active, the cumulative shift
+// would outgrow the scroll region (prev has scrolled out of view), or the scroll
+// direction flipped (the strip moves to the other end).
+fn slide_step(gesture_active: bool, slide_sh: f32, sh: i32, scroll_rows: usize) -> (f32, bool) {
+	let next = slide_sh + sh as f32;
+	// restart on: gesture start; cumulative shift outgrows the scroll region (prev
+	// scrolled out of view); or a direction flip (the `!gesture_active` clause
+	// already covers the not-in-a-gesture case, so the sign test needn't re-guard it).
+	let restart = !gesture_active
+		|| next.abs() as usize >= scroll_rows.max(1)
+		|| (slide_sh > 0.0) != (sh > 0);
+	if restart {
+		(sh as f32, true)
+	} else {
+		(next, false)
+	}
+}
+
 fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 	let n = cur.len();
 	if n == 0 || last.len() != n {
@@ -1926,7 +1962,7 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 mod tests {
 	use super::{
 		Dir, Node, Rect, bell_brighten, distinct_pair, equalize_dir_run, layout, pair_inside,
-		same_char_pair, scroll_shift, scroll_shift_signed, static_bands,
+		same_char_pair, scroll_shift, scroll_shift_signed, slide_step, static_bands,
 	};
 
 	fn leaf(id: u64) -> Node {
@@ -2229,6 +2265,24 @@ mod tests {
 		assert_eq!(static_bands(&last, &last), (0, 0));
 		// length mismatch is not measurable
 		assert_eq!(static_bands(&a, &last), (0, 0));
+	}
+
+	#[test]
+	fn slide_step_accumulates_and_recaptures() {
+		let rows = 20; // scroll-region rows
+		// gesture start: always (re)capture, cumulative resets to this step
+		assert_eq!(slide_step(false, 0.0, 2, rows), (2.0, true));
+		// continuation same direction: accumulate, do NOT recapture (prev stays put)
+		assert_eq!(slide_step(true, 2.0, 1, rows), (3.0, false));
+		assert_eq!(slide_step(true, 3.0, 2, rows), (5.0, false));
+		// backward gesture accumulates negatively without recapture
+		assert_eq!(slide_step(true, -2.0, -1, rows), (-3.0, false));
+		// cumulative shift outgrows the scroll region -> recapture (prev scrolled off)
+		assert_eq!(slide_step(true, 19.0, 2, rows), (2.0, true));
+		// direction flip mid-gesture -> recapture (reveal strip moves to the other end)
+		assert_eq!(slide_step(true, 4.0, -1, rows), (-1.0, true));
+		// a degenerate zero scroll region never divides by zero (max(1) guard)
+		assert_eq!(slide_step(true, 1.0, 1, 0), (1.0, true));
 	}
 
 	#[test]
