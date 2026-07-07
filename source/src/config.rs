@@ -120,7 +120,7 @@ pub struct Settings {
 	pub cursor_size_height: f32, // cursor height, 1..100% of the cell (from the bottom)
 	pub cursor_size_width: f32, // cursor width, 1..100% of the cell (from the left)
 	pub cursor_animation: String, // "none" | "phase" | "pulse_vertical" | "pulse_horizontal" | "pulse_both"
-	pub cursor_animation_input: String, // "pause" (hold solid while typing, resume when idle) | "continuous"
+	pub cursor_animation_input: String, // "continuous" (default) | "pause" (glide to full + hold while typing)
 	pub cursor_blink_rate_ms: f32,      // one animation cycle (ms)
 	pub columns: usize,                 // initial window grid size (used when !remember_size)
 	pub rows: usize,
@@ -178,7 +178,7 @@ impl Default for Settings {
 			cursor_size_height: 100.0, // full height
 			cursor_size_width: 25.0,   // ~quarter-width bar
 			cursor_animation: "pulse_vertical".to_string(),
-			cursor_animation_input: "pause".to_string(),
+			cursor_animation_input: "continuous".to_string(),
 			cursor_blink_rate_ms: 500.0,
 			columns: 160,
 			rows: 48,
@@ -1392,11 +1392,11 @@ opacity = 0.95
 ## The cursor always slides smoothly as you type.
 # cursor_animation = "pulse_vertical"
 
-## What the animation does while you're typing. "pause" (default) holds the
-## cursor solid at full size while there's input, then resumes the animation once
-## input has been idle ~1s - so it doesn't restart on every keystroke.
-## "continuous" keeps animating right through typing.
-# cursor_animation_input = "pause"
+## What the animation does while you're typing. "continuous" (default) keeps
+## animating right through typing. "pause" glides the cursor to full size and
+## holds it while there's input, then resumes the animation once input has been
+## idle briefly - so it doesn't restart on every keystroke.
+# cursor_animation_input = "continuous"
 
 ## Cursor animation cycle length, in milliseconds (blink rate).
 # cursor_blink_rate_ms = 500
