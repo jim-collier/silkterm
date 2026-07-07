@@ -14,7 +14,7 @@ pub const APP_NAME: &str = "SilkTerm";
 // Where Help -> Support SilkTerm sends the browser. Points at DONATE.md (the
 // canonical, owner-controlled list of sponsor options and addresses) rather than
 // a single link baked into the binary. HEAD resolves to the repo default branch.
-pub const SUPPORT_URL: &str = "https://github.com/jim-collier/silkterm/blob/HEAD/DONATE.md";
+pub const DONATE_URL: &str = "https://github.com/jim-collier/silkterm/blob/HEAD/DONATE.md";
 
 // internal, not user-tunable (yet)
 pub const PANE_GAP_PX: f32 = 1.0;

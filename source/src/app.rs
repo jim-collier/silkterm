@@ -20,7 +20,7 @@ use glyphon::{Buffer, Color as GColor, Shaping, TextArea, TextBounds};
 use crate::bgimage::ImageRenderer;
 use crate::clipboard::Clipboard;
 use crate::config;
-use crate::config::SUPPORT_URL;
+use crate::config::DONATE_URL;
 use crate::gfx::{Gfx, RectInstance, RectRenderer};
 use crate::input;
 use crate::pane::{Dir, Pane, PaneManager, Rect};
@@ -887,7 +887,7 @@ impl State {
 			}
 			MenuAction::ReloadConfig => self.reload_config(),
 			MenuAction::Settings => self.open_settings(),
-			MenuAction::Support => open_url(SUPPORT_URL),
+			MenuAction::Support => open_url(DONATE_URL),
 			MenuAction::About => self.open_about(),
 			MenuAction::Quit => self.quit = true,
 		}
