@@ -43,6 +43,46 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- ✅ A bad config value could kill the whole terminal. Setting `output_ease_lines` above 16 aborted on the first scrolling output, every launch. (20260707)
+	- Found: code review, 20260707.
+	- Cause: the value was never range-checked at load. The scroll code uses it as the lower bound of a clamp, and a lower bound above the cap makes that clamp abort.
+	- Fixed: the value is clamped at load. The scroll code also guards itself now.
+	- Verified: reproduced the abort, then re-ran the same setup on the fix. Covered by a unit test.
+
+- ✅ "Copy output" copied the wrong text once scrollback was full. The first lines of a command's output were silently missing from the clipboard. (20260707)
+	- Found: code review, 20260707.
+	- Cause: the capture start was saved as a line index counted from the oldest line in the buffer. At the scrollback cap every new line evicts the oldest, so the index drifts while the command runs.
+	- Fixed: the capture now remembers the prompt line's content and re-finds it when the command settles. The saved index is only a fallback.
+	- Verified: a regression test replays the eviction case and checks the full output comes back.
+
+- ✅ Moving the mouse over a full-screen app that tracks the mouse re-rendered everything. (20260707)
+	- Found: code review, 20260707.
+	- Cause: each motion report also flagged a full redraw, so every pane re-shaped its text once per cell the pointer crossed.
+	- Fixed: motion reports go to the app only. Nothing local changes, so nothing redraws.
+
+- ✅ Menu-bar and tab text was re-shaped from scratch every frame. Constant background work during any animation, even the idle cursor pulse. (20260707)
+	- Found: code review, 20260707.
+	- Fixed: shaped menu titles, tab titles, and the tab close icon are kept between frames. A tab title re-shapes only when it changes. Everything drops on a font change. Measured label widths are cached the same way.
+
+- ✅ `--background-image` with no value swallowed the next option as its path. (20260707)
+	- Found: code review, 20260707.
+	- Fixed: a bare flag now means "no image" and a following option is left alone. Both `=path` and a separate path still work. Covered by a unit test.
+
+- ✅ Launching with only `--config` ignored that config's `command_line`. (20260707)
+	- Found: code review, 20260707.
+	- Cause: any argument at all disabled the fallback. But `--config` picks which config to read, it isn't a layout choice.
+	- Fixed: the fallback still applies when the only arguments are `--config`. Covered by a unit test.
+
+- ✅ "Copy output" could silently skip a command. (20260707)
+	- Found: code review, 20260707.
+	- Cause: arming the capture at Enter gave up if the terminal was briefly busy, with no retry.
+	- Fixed: arming now waits the moment out instead of giving up.
+
+- ✅ Releasing a different mouse button than the one held confused mouse-tracking apps. (20260707)
+	- Found: code review, 20260707.
+	- Cause: any button release was treated as the release of the held one. That cleared its state and sent the app a release it never saw pressed.
+	- Fixed: only the matching button's release is reported. Other buttons keep their normal handling.
+
 - ✅ Bug in double-click to select (then Ctrl+shift+C).
 	- Steps to reproduce: The specific command was `zpool status`. Trying to double-click on a member by label (e.g. "zfs-..."), or "ONLINE", results in something else being selected. It appears to actually select something to the right. But if you can guess correctly on your aim, then hit the copy hotkey, it does correctly copy the text. (Just not the text that's highlighted.)
 	- Cause: `zpool status` indents its config section with a literal tab. The raw tab was passed through to the shaper, which expands it to a full 8-column stop. That shifted the row's visible text several columns right of the grid the selection uses. The highlight and copy stayed correct but no longer lined up with the on-screen text, so clicking a visible word selected a cell several columns away. Only tab-indented output was affected.

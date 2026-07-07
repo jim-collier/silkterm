@@ -57,9 +57,10 @@ fn main() -> anyhow::Result<()> {
 		config::set_config_override(path.clone());
 	}
 
-	// Launched with no arguments? Fall back to a config-defined command line
-	// (real CLI arguments override it entirely).
-	if std::env::args().count() <= 1 {
+	// Launched with no layout arguments? Fall back to a config-defined command
+	// line (real CLI arguments override it entirely). A bare --config still takes
+	// the fallback - it picks WHICH config, so that config's command_line applies.
+	if cli::only_config_args(std::env::args().skip(1)) {
 		let command_line = config::settings().command_line.clone();
 		if !command_line.trim().is_empty() {
 			match cli::shell_split(&command_line).and_then(cli::parse) {

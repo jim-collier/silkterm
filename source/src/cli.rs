@@ -212,6 +212,18 @@ impl Args {
 		self.next_token()
 			.ok_or_else(|| format!("{flag} needs a value"))
 	}
+	// value-optional flag: inline `=value`, else the next token only when it isn't
+	// another option - so a bare flag reads as "no value" instead of eating the
+	// following `--option` as its value.
+	fn optional_value(&mut self, inline: Option<String>) -> Option<String> {
+		if inline.is_some() {
+			return inline.filter(|s| !s.is_empty());
+		}
+		match self.items.get(self.i) {
+			Some(token) if !token.starts_with("--") => self.next_token(),
+			_ => None,
+		}
+	}
 	// optional-bool flag: inline, else a following bool literal, else true.
 	fn bool_value(&mut self, flag: &str, inline: Option<String>) -> Result<bool, String> {
 		if let Some(v) = inline {
@@ -440,9 +452,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 			"background-color" => style.bg_color = Some(parse_hex(name, &a.value(name, inline)?)?),
 			"foreground-color" => style.fg_color = Some(parse_hex(name, &a.value(name, inline)?)?),
 			"background-image" => {
-				// value present -> that path; no value -> explicitly none
-				let v = a.value(name, inline).ok().filter(|s| !s.is_empty());
-				style.bg_image = Some(v);
+				// value present -> that path; no value -> explicitly none. A bare
+				// flag followed by another option must not eat that option as a path.
+				style.bg_image = Some(a.optional_value(inline));
 			}
 			"background-image-stretch" => {
 				if a.bool_value(name, inline)? {
@@ -525,6 +537,21 @@ impl WindowOpts {
 		fold_window_style(&mut settings, style);
 		config::update(settings);
 	}
+}
+
+// True when the arguments amount to "no layout given": empty, or only --config
+// (which picks WHICH config file, not a layout) - the config's own command_line
+// should still apply in that case.
+pub fn only_config_args<I: IntoIterator<Item = String>>(args: I) -> bool {
+	let mut it = args.into_iter();
+	while let Some(arg) = it.next() {
+		if arg == "--config" {
+			let _ = it.next(); // its value
+		} else if !arg.starts_with("--config=") {
+			return false;
+		}
+	}
+	true
 }
 
 fn ensure_first_tab(cli: &mut Cli) {
@@ -681,6 +708,32 @@ mod tests {
 			c.tabs[1].panes[1].style.shell.as_deref(),
 			Some(&["htop".to_string()][..])
 		);
+	}
+
+	#[test]
+	fn background_image_never_eats_the_next_option() {
+		// bare flag followed by another option = explicitly none; the option survives
+		let c = p("--background-image --background-image-zoom");
+		assert_eq!(c.win.style.bg_image, Some(None));
+		assert_eq!(c.win.style.bg_fit, Some(Fit::Zoom));
+		// both value forms still work
+		let c = p("--background-image=/x.png");
+		assert_eq!(c.win.style.bg_image, Some(Some("/x.png".into())));
+		let c = p("--background-image /x.png");
+		assert_eq!(c.win.style.bg_image, Some(Some("/x.png".into())));
+		// trailing bare flag = none
+		let c = p("--background-image");
+		assert_eq!(c.win.style.bg_image, Some(None));
+	}
+
+	#[test]
+	fn only_config_args_detects_layoutless_launches() {
+		let v = |s: &str| -> Vec<String> { s.split_whitespace().map(String::from).collect() };
+		assert!(only_config_args(v("")));
+		assert!(only_config_args(v("--config /tmp/x.toml")));
+		assert!(only_config_args(v("--config=/tmp/x.toml")));
+		assert!(!only_config_args(v("--config /tmp/x.toml --columns 80")));
+		assert!(!only_config_args(v("--new-tab")));
 	}
 
 	#[test]
