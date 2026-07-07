@@ -43,8 +43,11 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🔘 Bug in double-click to select (then Ctrl+shift+C).
+- ✅ Bug in double-click to select (then Ctrl+shift+C).
 	- Steps to reproduce: The specific command was `zpool status`. Trying to double-click on a member by label (e.g. "zfs-..."), or "ONLINE", results in something else being selected. It appears to actually select something to the right. But if you can guess correctly on your aim, then hit the copy hotkey, it does correctly copy the text. (Just not the text that's highlighted.)
+	- Cause: `zpool status` indents its config section with a literal TAB. alacritty leaves the '\t' char in the first tab cell (then fills to the tab stop with spaces), and the renderer pushed that raw '\t' into the shaper - cosmic-text expands a tab to a full 8-col stop, shifting the whole row's visible text 7 cells off the col*cell_w grid. The grid (and thus the selection) stayed correct, so the highlight/copy were right but no longer lined up with the on-screen text - clicking a visible word selected the cell 7 columns away. Only bit tabbed output.
+	- Fixed: render any control char in a cell as a plain 1-cell space (`render_char`), so the tab cell advances one column and the row stays grid-aligned.
+	- Verified headless: on the real `zpool status` output the tabbed rows went from x8=158.1 (7 cells off) to x8=84.3 (exact); double-clicking the visible "ONLINE" column on the config rows now selects "ONLINE". Unit test `render_char_maps_controls_to_space`.
 
 - 🛠️ Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
 	- Cause: the slide shifted the scroll region by up to several lines but only the one fractional-overscan row was ever drawn, so the revealed strip was bare background - and the scrolled-off alt-screen lines are gone from the grid, so there was nothing real to fill it with.
