@@ -399,6 +399,7 @@ const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-siz
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
 const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
 const TAB_MAX_W: f32 = 220.0; // tab button width cap - drawing AND click hit-testing use this
+const TAB_CLOSE_W: f32 = 20.0; // right-edge close-"x" region per tab (draw + hit-test)
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
 const COPYBOX_LABEL: &str = "Copy output"; // always-visible auto-copy checkbox on the menu bar
 
@@ -1441,8 +1442,29 @@ impl State {
 		// tab titles need transient buffers; build them before `areas` borrows panes
 		let mut tab_bufs: Vec<Buffer> = Vec::new();
 		let tab_w = (self.gfx.config.width as f32 / self.tabs.len().max(1) as f32).min(TAB_MAX_W);
+		// subtle close-"x" glyph, dimmed toward the tab bg; one buffer reused per tab
+		let close_fg = {
+			let f = config::menu_fg();
+			let dim = |v: u8| ((v as u16 * 3) / 5) as u8; // ~0.6
+			GColor::rgb(dim(f[0]), dim(f[1]), dim(f[2]))
+		};
+		let mut close_buf = self.text.new_ui_buffer(TAB_CLOSE_W, tab_h);
+		{
+			let mut attrs = crate::text::ui_attrs();
+			attrs.color_opt = Some(close_fg);
+			close_buf.set_text(
+				&mut self.text.font_system,
+				"\u{00d7}",
+				&attrs,
+				Shaping::Advanced,
+				None,
+			);
+			close_buf.shape_until_scroll(&mut self.text.font_system, false);
+		}
 		for title in &tab_titles {
-			let mut buf = self.text.new_ui_buffer((tab_w - 16.0).max(8.0), tab_h);
+			let mut buf = self
+				.text
+				.new_ui_buffer((tab_w - 16.0 - TAB_CLOSE_W).max(8.0), tab_h);
 			let mut attrs = crate::text::ui_attrs();
 			attrs.color_opt = Some(menu_fg);
 			buf.set_text(
@@ -1541,6 +1563,7 @@ impl State {
 		}
 		for (i, buf) in tab_bufs.iter().enumerate() {
 			let x = i as f32 * tab_w;
+			let close_x = x + tab_w - TAB_CLOSE_W;
 			areas.push(TextArea {
 				buffer: buf,
 				left: x + 8.0,
@@ -1550,10 +1573,24 @@ impl State {
 				bounds: TextBounds {
 					left: x as i32,
 					top: tab_bar_y as i32,
-					right: (x + tab_w) as i32,
+					right: close_x as i32, // leave room for the close "x"
 					bottom: (tab_bar_y + tab_h) as i32,
 				},
 				default_color: menu_fg,
+				custom_glyphs: &[],
+			});
+			areas.push(TextArea {
+				buffer: &close_buf,
+				left: close_x + 5.0,
+				top: self.text.ui_text_top(tab_bar_y, tab_h),
+				scale: 1.0,
+				bounds: TextBounds {
+					left: close_x as i32,
+					top: tab_bar_y as i32,
+					right: (x + tab_w) as i32,
+					bottom: (tab_bar_y + tab_h) as i32,
+				},
+				default_color: close_fg,
 				custom_glyphs: &[],
 			});
 		}
@@ -2605,8 +2642,13 @@ impl ApplicationHandler<UserEvent> for App {
 						(state.gfx.config.width as f32 / state.tabs.len() as f32).min(TAB_MAX_W);
 					let i = (x / tab_w).floor() as usize;
 					if i < state.tabs.len() {
-						state.tabs.active = i;
-						state.update_title();
+						// click on the right-edge "x" closes that tab; else select it
+						if x >= (i as f32 + 1.0) * tab_w - TAB_CLOSE_W {
+							state.close_tab_at(i);
+						} else {
+							state.tabs.active = i;
+							state.update_title();
+						}
 						state.dirty = true;
 					}
 					return;

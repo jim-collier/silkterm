@@ -140,7 +140,9 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 Ctrl+Shift+N: New window on same directory.
 
-- 🔘 Tabs: Include a subtle 'X' icon in right edge of tab, to close with mouse.
+- ✅ Tabs: Include a subtle 'X' icon in right edge of tab, to close with mouse.
+	- Done: each tab reserves a right-edge close region (`TAB_CLOSE_W`) with a dimmed "×" glyph; the tab title clips before it. A left click in that region closes the tab (`close_tab_at`), elsewhere selects it.
+	- Verified headless: the × renders subtly at each tab's right edge; clicking it closes that tab, clicking the tab body selects it.
 
 - 🔘 Blur: Naturally doesn't extend diagonally very far. When blurring a rectangle, for example, this is a known effect of, say, Gaussian blur. So either use a different blur that covers the diagonal directions better, or tweak the blur kernel so that it does that.
 
