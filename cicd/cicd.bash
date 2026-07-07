@@ -89,7 +89,7 @@ elif [[ -n "${PUBLISH_AUTO_MESSAGE:-}" ]]; then publish_msg="$PUBLISH_AUTO_MESSA
 elif ((assume_yes));                       then publish_msg="${APP_NAME} CI/CD ${stamp}"
 fi
 
-## Output helpers (owner convention): fEcho / fEcho_Clean, blank-collapsing.
+## Output helpers: fEcho / fEcho_Clean, blank-collapsing.
 ## fEcho "msg" -> "[ msg ]" status line; fEcho_Clean "msg" -> plain line, and a
 ## bare call collapses repeated blanks. fSection draws the leading-blank + rule
 ## letterbox before a major stage header; fDie prints a fatal line and exits.
