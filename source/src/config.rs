@@ -11,6 +11,11 @@ use serde::Deserialize;
 // name lives in Cargo.toml; see README "Renaming the project".
 pub const APP_NAME: &str = "SilkTerm";
 
+// Where Help -> Support SilkTerm sends the browser. Points at the README Support
+// section (always live, lists the current sponsor options) rather than a single
+// link baked into the binary.
+pub const SUPPORT_URL: &str = "https://github.com/jim-collier/silkterm#support";
+
 // internal, not user-tunable (yet)
 pub const PANE_GAP_PX: f32 = 1.0;
 pub const DIVIDER_GRAB_PX: f32 = 5.0; // mouse tolerance for grabbing a pane divider

@@ -89,7 +89,11 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- 🔘 Donation button in Help|About for popup with list of addresses and ULRs. (Not `--donate`.)
+- ◐ Donation button in Help|About for popup with list of addresses and ULRs. (Not `--donate`.)
+	- First step done: Help -> Support SilkTerm opens the README Support section (config `SUPPORT_URL`), a `## Support` README section + top Sponsor badge, and `.github/FUNDING.yml`. Still open: the richer in-app popup listing multiple platforms/addresses.
+	- Strategy (what actually moves donations): reach beats the ask - ~80% effort on visibility (the demo video + a Show HN + r/commandline/r/rust/r/unixporn + awesome-* lists), ~20% on the ask. Money order: recurring individual sponsors > one-time tips > corporate (chase corporate later with a named tier once there's visible adoption).
+	- Ask placement: put it at moments of delight (README, release notes, Help menu, About), never a nag - a recurring in-app popup would be fatal for a terminal. Primary platform = GitHub Sponsors (devs are already logged in, 0% fee); Ko-fi/Liberapay as free-tier secondaries. Skip Patreon/PayPal-only.
+	- Owner action: enable a GitHub Sponsors profile for the Sponsor badge/link to go live (else it 404s); fill in `.github/FUNDING.yml` handles.
 
 - 🔘 For screenshots, and videos, use "Monaspace Argon NF Medium".
 
