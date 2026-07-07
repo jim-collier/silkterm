@@ -146,11 +146,11 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 Blur: Naturally doesn't extend diagonally very far. When blurring a rectangle, for example, this is a known effect of, say, Gaussian blur. So either use a different blur that covers the diagonal directions better, or tweak the blur kernel so that it does that.
 
-- 🛠️ Cursor animation immediately resets and starts over on keypresses (typing, editing, or moving). That's not very smooth, it shouldn't do that. Add options:
+- ✅ Cursor animation immediately resets and starts over on keypresses (typing, editing, or moving). That's not very smooth, it shouldn't do that. Add options:
 		- Keep animating.
-		- Wait until the animation reaches full-size, then stop animating. Don't resume animating until some timeout after input stops - maybe 1 second. (Default.)
-	- Done: new `cursor_animation_input` config key. "pause" (default) holds the cursor solid at its full-size phase while there's recent input (no more shrink-to-zero flicker on every keystroke, which was the old blink_t reset), and resumes the animation once input has been idle ~1s (`CURSOR_INPUT_PAUSE_S`). Freezing at the full phase makes the pulse resume smoothly (full -> shrink -> grow). "continuous" keeps the old always-animating behavior. Predicate `cursor_input_paused` unit-tested; frames keep flowing during the pause so it can resume.
-	- Verified: fresh config backfills the key; runs under the default with no panic. Feel (solid while typing, resume after idle) is an owner feel-test on real typing.
+		- Wait until the animation reaches full-size, then stop animating. Don't resume animating until some timeout after input stops.
+	- Done: `cursor_animation_input` config key. "continuous" (default) keeps animating right through typing. "pause" glides the cursor to its full-size phase and holds it while there's recent input, then resumes once input has been idle ~0.35s (`CURSOR_INPUT_PAUSE_S`). Parking at the full phase makes the pulse resume smoothly (full -> shrink -> grow).
+	- Follow-up (owner feel-test): (1) no longer snaps to full - `glide_to_full` advances the phase to the full-size point then holds, so a keypress lets the current cycle finish to full instead of jumping. (2) Timeout 1.0s -> 0.35s (the old delay felt unresponsive). (3) Default flipped "pause" -> "continuous".
 	- Pending (optional): expose the choice in the Settings dialog (file-only for now).
 
 - 🔘 Option to include the cursor in outer-glow. Default to off. Still outline it though.

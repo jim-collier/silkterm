@@ -40,7 +40,7 @@ fn scroll_dbg() -> bool {
 // Cursor animation tunables (internal).
 const CURSOR_MOVE_TAU_MS: f32 = 55.0; // horizontal slide responsiveness (lower = snappier)
 const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
-const CURSOR_INPUT_PAUSE_S: f32 = 1.0; // idle time before the animation resumes (input-pause mode)
+const CURSOR_INPUT_PAUSE_S: f32 = 0.35; // idle time before the animation resumes (input-pause mode)
 const BELL_BRIGHTEN: f32 = 0.6; // max lerp of text toward white at the bell flash peak
 
 // Alt-screen app-scroll tunables.
@@ -117,6 +117,22 @@ fn render_char(c: char) -> char {
 // never pauses.
 fn cursor_input_paused(mode: &str, idle_t: f32, timeout: f32) -> bool {
 	mode != "continuous" && idle_t < timeout
+}
+
+// While paused, advance the blink phase toward `full_phase` (the point in the
+// cycle where the cursor is full-size), then hold there - so typing lets the
+// animation finish its current cycle to full rather than snapping to full. Once
+// parked it stays parked (prev == now == full_phase re-detects the crossing).
+fn glide_to_full(blink_t: f32, dt: f32, period: f32, full_phase: f32) -> f32 {
+	let prev = (blink_t / period).fract();
+	let next = blink_t + dt;
+	let now = (next / period).fract();
+	let crossed = if prev <= now {
+		prev <= full_phase && full_phase <= now
+	} else {
+		full_phase >= prev || full_phase <= now // wrapped past 1.0 this step
+	};
+	if crossed { full_phase * period } else { next }
 }
 
 // Expand `line` up and down across soft-wrapped rows, clamped to [top, bot].
@@ -891,17 +907,18 @@ impl Pane {
 		let settings = config::settings();
 		let anim = settings.cursor_animation.as_str();
 		let period = (settings.cursor_blink_rate_ms / 1000.0 * 2.0).max(0.05); // full on->off->on
-		// Input-pause (default): hold the cursor solid at its full-size phase while
-		// there's recent input, instead of restarting the animation each keystroke;
-		// resume once input has been idle CURSOR_INPUT_PAUSE_S. Freezing at full lets
-		// the pulse resume smoothly (full -> shrink -> grow).
+		// Input-pause (opt-in): while there's recent input, let the animation glide
+		// to its full-size phase and hold there (no snap), instead of restarting the
+		// pulse each keystroke; resume once input has been idle CURSOR_INPUT_PAUSE_S.
+		// Parking at full lets the pulse resume smoothly (full -> shrink -> grow).
 		let paused = cursor_input_paused(
 			settings.cursor_animation_input.as_str(),
 			self.cursor_idle_t,
 			CURSOR_INPUT_PAUSE_S,
 		);
+		let full_phase = if anim == "phase" { 0.0 } else { 0.5 };
 		if paused {
-			self.blink_t = if anim == "phase" { 0.0 } else { 0.5 * period };
+			self.blink_t = glide_to_full(self.blink_t, dt, period, full_phase);
 		} else {
 			self.blink_t += dt;
 		}
@@ -2069,8 +2086,8 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 mod tests {
 	use super::{
 		APP_SCROLL_MAX, Dir, Node, Rect, SLIDE_TOP_BAND_APPS, bell_brighten, cursor_input_paused,
-		distinct_pair, equalize_dir_run, layout, logical_line_bounds, pair_inside, render_char,
-		same_char_pair, scroll_shift, scroll_shift_signed, static_bands,
+		distinct_pair, equalize_dir_run, glide_to_full, layout, logical_line_bounds, pair_inside,
+		render_char, same_char_pair, scroll_shift, scroll_shift_signed, static_bands,
 	};
 
 	fn leaf(id: u64) -> Node {
@@ -2119,11 +2136,33 @@ mod tests {
 
 	#[test]
 	fn cursor_input_paused_holds_while_typing() {
-		// default "pause": held while input is recent, resumes past the timeout
+		// "pause": held while input is recent, resumes past the timeout
 		assert!(cursor_input_paused("pause", 0.2, 1.0));
 		assert!(!cursor_input_paused("pause", 1.5, 1.0));
 		// "continuous" never pauses
 		assert!(!cursor_input_paused("continuous", 0.0, 1.0));
+	}
+
+	#[test]
+	fn glide_to_full_reaches_and_holds_full() {
+		let period = 1.0;
+		// pulse: full_phase 0.5. Starting mid-shrink (0.7) it advances forward,
+		// wraps, and parks exactly at full once it crosses 0.5 - never snapping.
+		let mut t = 0.7;
+		let mut parked = None;
+		for _ in 0..1000 {
+			t = glide_to_full(t, 0.01, period, 0.5);
+			if ((t / period).fract() - 0.5).abs() < 1e-6 {
+				parked = Some(t);
+				break;
+			}
+		}
+		let t = parked.expect("should reach full");
+		// once parked it stays parked
+		assert!(((glide_to_full(t, 0.01, period, 0.5) / period).fract() - 0.5).abs() < 1e-6);
+		// phase mode: full_phase 0.0 - parks at a whole-period multiple
+		let p = glide_to_full(0.95, 0.1, period, 0.0);
+		assert!((p / period).fract().abs() < 1e-6 || ((p / period).fract() - 1.0).abs() < 1e-6);
 	}
 
 	#[test]
