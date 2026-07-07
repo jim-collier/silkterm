@@ -2588,9 +2588,13 @@ impl ApplicationHandler<UserEvent> for App {
 					state.dirty = true;
 					return;
 				}
-				// click on the tab bar selects a tab
+				// click on the tab bar selects a tab. Skip when a dropdown is open: it
+				// opens flush under the menu bar, so its top item overlaps the tab-bar
+				// band - without this guard the tab bar steals the click and (e.g.)
+				// "Tabs|New Tab" selects a tab instead of firing, once >1 tab exists.
 				let tab_bar_y = state.menubar_h();
 				if button == MouseButton::Left
+					&& state.menu.is_none()
 					&& state.tabs.len() > 1
 					&& y >= tab_bar_y
 					&& y < tab_bar_y + state.tab_bar_h()
