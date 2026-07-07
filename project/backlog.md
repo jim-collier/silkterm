@@ -81,7 +81,8 @@ In each section, items are listed approximately from newest to oldest.
 	- Done: the dialog sets the EWMH dialog type plus the MODAL and SKIP_TASKBAR states alongside transient-for, so the WM keeps it off the taskbar, stacks it above and raises it with the terminal, and holds focus - the normal Linux modal behavior via window hints, no input tricks.
 	- Reopened: the raise-with-parent half still failed (re-selecting the dialog left the terminal buried under whatever was in front). Cause: the hints were written after the window was already mapped, so the WM fixed the stacking group before it saw transient-for. Fix: the dialog is now created unmapped, all hints are set, then it's shown - so the WM reads transient-for at map time (what GTK/Qt do).
 	- Verified: with a spacer window raised above both, activating the dialog brings the terminal AND the dialog to the top together, adjacent, spacer pushed below (checked via _NET_CLIENT_LIST_STACKING under xfwm4). Hints intact on the mapped window: _NET_WM_WINDOW_TYPE_DIALOG, _NET_WM_STATE_MODAL + SKIP_TASKBAR, WM_TRANSIENT_FOR = terminal.
-	- Regressed then restored: the experimental smooth-scroll line (topband) never carried this pre-map fix (it branched before the fix landed), so its builds showed the old behavior again. Consolidating that line back onto main restored the fix. Re-verified on xfwm4: re-selecting the dialog gives stacking [spacer, terminal, dialog] bottom-to-top (terminal + dialog adjacent on top, spacer under both). Owner to confirm on their Compiz desktop (the original problem WM, not drivable headless here).
+	- Regressed then restored: the experimental smooth-scroll line (topband) never carried the pre-map fix (it branched before it landed), so its builds showed the old behavior; consolidating that line back onto main restored it.
+	- Compiz gap found + fixed: the pre-map hints were only ever verified on xfwm4, which raises a transient's parent automatically. Compiz does NOT - so re-selecting the dialog still left the terminal buried. Reproduced by running Compiz headless (not xfwm4) and reading _NET_CLIENT_LIST_STACKING. Fix: when the dialog is focused, it restacks the terminal directly beneath itself via an EWMH _NET_RESTACK_WINDOW message to root (the only stacking path Compiz honors - it reparents clients, so a direct raise on the client is ignored), re-asserted for a few frames to win the race against the WM's own activation restacking. Verified 10/10 on Compiz for About and Settings: activating the dialog gives [spacer, terminal, dialog] with focus on the dialog.
 
 - 🔘 At high blur radius and low softness, the blur has boxy artifacts.
 	- Diagnosed: the glow is a separable blur with a fixed 25-tap kernel truncated at +/-3 sigma (`glow.rs` fs_blur). Two causes: (a) the hard +/-3 sigma cutoff leaves a ~1% edge that low softness (x10 intensity) amplifies into a visible square; (b) the linear/s-curve falloffs aren't true Gaussians, so blurred separably their support is a diamond/box, not a circle - and the default falloff is now s-curve. Fix is a look-vs-perf tradeoff (wider extent + more taps, and/or a windowed kernel) that wants eyeballing - deferred to a visual pass.
@@ -110,6 +111,8 @@ In each section, items are listed approximately from newest to oldest.
 	- FYI to-do:
 		- Enable a GitHub Sponsors profile for the Sponsor badge/link to go live (else it 404s)
 		- fill in `.github/FUNDING.yml` handles.
+
+- 🔘 Settings: "Backdrop blur" -> "Blur-behind"
 
 - 🔘 For screenshots, and videos, use "Monaspace Argon NF Medium".
 
