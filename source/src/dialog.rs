@@ -77,7 +77,18 @@ impl DialogWin {
 	// stay wedged between them - the transient hints alone don't force this on
 	// WMs that don't raise a transient's parent with it (Compiz).
 	pub fn raise_parent(&self) {
-		restack_parent_below(&self.window, self.parent.as_ref());
+		// SILK_MODALDBG=1 traces the restack + the resulting stack order, so a WM
+		// where this misbehaves (e.g. a Compiz profile that ignores the restack)
+		// can be diagnosed from the terminal without a headless rig.
+		let dbg = std::env::var_os("SILK_MODALDBG").is_some();
+		restack_parent_below(&self.window, self.parent.as_ref(), dbg, self.kind());
+	}
+
+	fn kind(&self) -> &'static str {
+		match self.content {
+			Content::About { .. } => "About",
+			Content::Settings(_) => "Settings",
+		}
 	}
 
 	fn make(
@@ -678,10 +689,10 @@ fn set_transient_for(_window: &Window, _parent: Option<&RawWindowHandle>) {}
 // reparents clients into decoration frames, so a direct XConfigureWindow on the
 // client isn't redirected to the WM and does nothing). Focus is untouched.
 #[cfg(target_os = "linux")]
-fn restack_parent_below(dialog: &Window, parent: Option<&RawWindowHandle>) {
+fn restack_parent_below(dialog: &Window, parent: Option<&RawWindowHandle>, dbg: bool, kind: &str) {
 	use winit::raw_window_handle::HasWindowHandle;
 	use x11rb::connection::Connection;
-	use x11rb::protocol::xproto::{ClientMessageEvent, ConnectionExt as _, EventMask};
+	use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt as _, EventMask};
 
 	let xid = |h: &RawWindowHandle| -> Option<u32> {
 		match h {
@@ -703,12 +714,10 @@ fn restack_parent_below(dialog: &Window, parent: Option<&RawWindowHandle>) {
 		return;
 	};
 	let root = conn.setup().roots[screen].root;
-	let Some(restack) = conn
-		.intern_atom(false, b"_NET_RESTACK_WINDOW")
-		.ok()
-		.and_then(|c| c.reply().ok())
-		.map(|r| r.atom)
-	else {
+	let atom = |name: &[u8]| -> Option<u32> {
+		Some(conn.intern_atom(false, name).ok()?.reply().ok()?.atom)
+	};
+	let Some(restack) = atom(b"_NET_RESTACK_WINDOW") else {
 		return;
 	};
 	let mask = EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY;
@@ -717,9 +726,30 @@ fn restack_parent_below(dialog: &Window, parent: Option<&RawWindowHandle>) {
 	let ev = ClientMessageEvent::new(32, parent_xid, restack, [1, dlg_xid, 1, 0, 0]);
 	let _ = conn.send_event(false, root, mask, ev);
 	let _ = conn.flush();
+
+	if dbg {
+		// read back where the WM actually put things (parent should end up right
+		// below dialog). Prints "term below dialog" or the offending gap.
+		let order = atom(b"_NET_CLIENT_LIST_STACKING")
+			.and_then(|prop| {
+				conn.get_property(false, root, prop, AtomEnum::WINDOW, 0, 1024)
+					.ok()?
+					.reply()
+					.ok()
+			})
+			.map(|reply| reply.value32().map(Iterator::collect).unwrap_or_default())
+			.unwrap_or_else(Vec::new);
+		let pos = |w: u32| order.iter().position(|&x| x == w);
+		let (tp, dp) = (pos(parent_xid), pos(dlg_xid));
+		let ok = matches!((tp, dp), (Some(t), Some(d)) if t + 1 == d);
+		eprintln!(
+			"[modal] {kind}: restack term={parent_xid:#x} below dialog={dlg_xid:#x} -> \
+			 term_pos={tp:?} dialog_pos={dp:?} adjacent={ok}"
+		);
+	}
 }
 #[cfg(not(target_os = "linux"))]
-fn restack_parent_below(_dialog: &Window, _parent: Option<&RawWindowHandle>) {}
+fn restack_parent_below(_d: &Window, _p: Option<&RawWindowHandle>, _dbg: bool, _kind: &str) {}
 
 fn map_action(action: Action) -> Option<DialogAction> {
 	match action {

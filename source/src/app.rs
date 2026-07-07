@@ -29,8 +29,12 @@ use crate::text::TextCtx;
 
 // Delayed re-assertions of "terminal stays under the dialog" after the dialog is
 // focused, to win the race against the WM's own activation restacking (Compiz).
-const RAISE_REASSERTS: u8 = 5;
-const RAISE_REASSERT_IVL: Duration = Duration::from_millis(30);
+// The window must outlast the WM's raise/focus animation (Compiz fade/zoom can
+// keep re-stacking for a few hundred ms), so it spans ~1.2s - a too-short window
+// let the animation re-bury the terminal after the last retry (About showed this;
+// Settings happened to settle in time). Each retry is one cheap X message.
+const RAISE_REASSERTS: u8 = 24;
+const RAISE_REASSERT_IVL: Duration = Duration::from_millis(50);
 
 pub struct App {
 	proxy: EventLoopProxy<UserEvent>,
@@ -85,9 +89,14 @@ impl App {
 			}
 			WindowEvent::Focused(true) => {
 				// keep the terminal directly beneath us when we're activated, so
-				// nothing stays wedged between the two (Compiz doesn't do this).
-				// Do it now and arm a few delayed retries - the WM's own raise of
-				// the dialog can land right after and re-bury the terminal.
+				// nothing stays wedged between the two (Compiz doesn't do this). Do
+				// it now and arm delayed retries - the WM's own raise/animation of
+				// the dialog can keep re-stacking for a while and re-bury the
+				// terminal. We don't disarm on focus-out: the restack only positions
+				// the terminal relative to us (never raises us), so retrying after
+				// the user switched away can't pop the pair over another window -
+				// and Compiz's animation briefly drops+restores focus, which would
+				// otherwise kill the retries mid-flight.
 				if let Some(d) = &self.dialog {
 					d.raise_parent();
 				}
