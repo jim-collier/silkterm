@@ -111,9 +111,12 @@ In each section, items are listed approximately from newest to oldest.
 		- Enable a GitHub Sponsors profile for the Sponsor badge/link to go live (else it 404s)
 		- fill in `.github/FUNDING.yml` handles.
 
-- 🔘 Settings: "Backdrop blur" -> "Blur-behind"
+- ✅ Settings: "Backdrop blur" -> "Blur-behind"
+	- Renamed the Settings toggle label (internal `Key::BackdropBlur` / `transparent_background_blur` unchanged).
 
-- 🔘 For screenshots, and videos, use "Monaspace Argon NF Medium".
+- 🛠️ For screenshots, and videos, use "Monaspace Argon NF Medium".
+	- Done: `utility/screenshots.bash` font stack set to "Monaspace Argon NF Medium, Monaspace Argon NF, DejaVu Sans Mono". Note: `font_family` selects a family, not a weight, so it renders the Argon NF family at regular weight (true "Medium" would need a font-weight config). Videos will pick this up when that item is built.
+	- Pending: regenerate the committed screenshot PNGs (heavy visual pass) so they actually show the new font - fold into the next cicd/visual regeneration and eyeball.
 
 - 🔘 CICD process (without --quick): Only after quite major changes, record a demo video:
 	- 🔘 Showing a wide variety of synthetic, anonymized content, with varying burst of text output length.
