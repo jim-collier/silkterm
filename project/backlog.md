@@ -146,13 +146,14 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 Blur: Naturally doesn't extend diagonally very far. When blurring a rectangle, for example, this is a known effect of, say, Gaussian blur. So either use a different blur that covers the diagonal directions better, or tweak the blur kernel so that it does that.
 
-- ✅ Cursor animation immediately resets and starts over on keypresses (typing, editing, or moving). That's not very smooth, it shouldn't do that. Add options:
+- 🛠️ Cursor animation immediately resets and starts over on keypresses (typing, editing, or moving). That's not very smooth, it shouldn't do that. Add options:
 		- Keep animating.
 		- Wait until the animation reaches full-size, then stop animating. Don't resume animating until some timeout after input stops.
-	- Done: `cursor_animation_input` config key. "continuous" (default) keeps animating through typing. "pause" glides the cursor to its full-size point and holds it while there is recent input, then resumes once input has been idle briefly.
-	- Fixed: in "pause" mode the glide toward full was computed but never drawn, so a keypress still jumped the cursor to full-size at once (the snap). The pulse now renders during the pause as well, driven by that gliding phase, so it finishes its current cycle up to full smoothly instead of snapping, then holds. Resume from full is unchanged. The idle timeout was shortened and the default left at "continuous".
-	- Note: a keypress always makes the cursor appear as a solid block for the length of its slide to the new column. That is by design for readability and is the same in both modes.
-	- Pending: a feel-test of the smoothed pause entry. Optionally expose the choice in the Settings dialog (file-only for now).
+	- Done: `cursor_animation_input` config key, "continuous" (default) or "pause".
+	- Fixed: the remaining snap in both modes. A keystroke slides the cursor to its new column, and during that slide it was drawn as a solid full block, overriding the animation - that was the instant jump to full, and the size popping back afterward was the double bounce. The animation now keeps running through the slide, so the size never jumps.
+	- Fixed: "pause" resuming at the wrong size. At slow blink rates the run-out to full takes longer than the idle timeout, and the animation resumed from wherever it happened to be (small). Reworked: input lets the cycle run on at normal speed until it reaches full-size, holds there through the timeout, then resumes the cycle from full - continuous size at every step.
+	- Note: "continuous" now never stops or resets for any reason; "pause" never jumps at entry, hold, or resume.
+	- Pending: feel-test both modes, including at a very slow blink rate. Optionally expose the choice in the Settings dialog (file-only for now).
 
 - 🔘 Option to include the cursor in outer-glow. Default to off. Still outline it though.
 
