@@ -318,6 +318,50 @@ mod tests {
 	}
 
 	#[test]
+	fn output_ease_descends_monotonically() {
+		// After output stops, the visual position must ease straight down to the live
+		// bottom - never rise again. A rise mid-ease is the "page jumps around" /
+		// "scrolls bottom-up" artifact. Assert the position is non-increasing every
+		// frame and reaches the bottom.
+		let mut s = Scroll::new();
+		s.set_max(1000.0);
+		for _ in 0..4 {
+			s.nudge_output(4.0); // build a backlog to ease down from
+		}
+		let mut prev = s.desired_offset() as f32 + s.frac();
+		assert!(prev > 0.0, "backlog should lift the view off the bottom");
+		for _ in 0..3000 {
+			s.advance(0.016);
+			let pos = s.desired_offset() as f32 + s.frac();
+			assert!(pos <= prev + 1e-4, "position rose {prev} -> {pos} (bounce)");
+			prev = pos;
+		}
+		assert!(s.following());
+		assert_eq!(s.desired_offset(), 0);
+	}
+
+	#[test]
+	fn app_slide_eases_monotonically_without_overshoot() {
+		// A single detected app-scroll step must glide to rest in one direction: the
+		// offset magnitude only shrinks and never flips sign (a sign flip = the content
+		// bounces back the other way). Guards the alt-screen slide feel.
+		let mut s = Scroll::new();
+		s.app_scroll(4.0);
+		let mut prev = s.app_offset();
+		for _ in 0..3000 {
+			s.advance(0.016);
+			let off = s.app_offset();
+			assert!(off >= -1e-4, "offset flipped negative: {off} (bounce)");
+			assert!(off <= prev + 1e-4, "offset grew {prev} -> {off}");
+			prev = off;
+			if off == 0.0 {
+				break;
+			}
+		}
+		assert_eq!(s.app_offset(), 0.0);
+	}
+
+	#[test]
 	fn cancel_app_scroll_hard_cuts_the_slide() {
 		// an alt-screen enter/exit must drop any in-flight slide at once (no ease)
 		let mut s = Scroll::new();

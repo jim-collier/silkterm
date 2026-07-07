@@ -43,8 +43,8 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🔘 Double-click to select (then Ctrl+shift+C) puts the right text into the copy buffer, but the select background is skewed to the left by several characters.
-	- The specific command was `zpool status`. Trying to double-click on a member by label (e.g. "zfs-..."), or "ONLINE", results in something else being selected. It appears to actually select something to the right. But if you can guess correctly on your aim, then hit the copy hotkey, it does correctly copy the text. (Just not the text that's highlighted.)
+- 🔘 Bug in double-click to select (then Ctrl+shift+C).
+	- Steps to reproduce: The specific command was `zpool status`. Trying to double-click on a member by label (e.g. "zfs-..."), or "ONLINE", results in something else being selected. It appears to actually select something to the right. But if you can guess correctly on your aim, then hit the copy hotkey, it does correctly copy the text. (Just not the text that's highlighted.)
 
 - 🛠️ Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
 	- Cause: the slide shifted the scroll region by up to several lines but only the one fractional-overscan row was ever drawn, so the revealed strip was bare background - and the scrolled-off alt-screen lines are gone from the grid, so there was nothing real to fill it with.
@@ -88,6 +88,8 @@ In each section, items are listed approximately from newest to oldest.
 	- Resolution: leave open until confirmed on long-running terminals.
 
 ### New features and enhancements
+
+- 🔘 Donation button in Help|About for popup with list of addresses and ULRs. (Not `--donate`.)
 
 - 🔘 For screenshots, and videos, use "Monaspace Argon NF Medium".
 
@@ -169,7 +171,8 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 Testing:
 	- 🔘 Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
-	- 🔘 Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
+	- ◐ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
+		- Scrolling covered: library tests (`cargo test`) encode the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants (add-a-line vs re-list/jump/bottom-up) and easing monotonicity; a headless harness (`cicd/tests/scroll`) drives deterministic full-redraw scenes off the `SILK_SCROLLDBG` trace and runs in cicd stage 3 (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
 	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
 
 - 🔘 Build packages when cicd.bash `--quick` isn't specified:

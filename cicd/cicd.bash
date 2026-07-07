@@ -23,7 +23,7 @@
 ##	- Stages (fail-fast, any error aborts before the next stage):
 ##	   1. format (cargo fmt)
 ##	   2. debug build
-##	   3. regression tests + lints (clippy gating, cargo-deny advisory)
+##	   3. regression tests + lints (clippy gating, cargo-deny advisory, scroll harness)
 ##	   4. profiler (flamegraph SVG; non-gating artifact - see failure policy)
 ##	   5. release build (native + cross targets)
 ##	   6. dogfood (install native release locally)
@@ -64,7 +64,7 @@ cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
 ## Parse options.
-assume_yes=0; quiet=0; cli_message=""
+assume_yes=0; quiet=0; quick=0; cli_message=""
 while (($#)); do case "$1" in
 	-y|--yes)                 assume_yes=1; shift ;;
 	-q|--quiet)               quiet=1; assume_yes=1; shift ;;   ## quiet + unattended; publish runs quiet too
@@ -73,7 +73,7 @@ while (($#)); do case "$1" in
 	--no-profile)             PROFILE_ENABLE=0; shift ;;
 	--no-dogfood)             DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); shift ;;
 	--no-publish)             GIT_PUBLISH=(); shift ;;
-	--quick)                  BUILD_CROSS=0; PROFILE_ENABLE=0; shift ;;   ## skip the slow stages
+	--quick)                  quick=1; BUILD_CROSS=0; PROFILE_ENABLE=0; shift ;;   ## skip the slow stages
 	--message=*|--msg=*|-m=*) cli_message="${1#*=}"; shift ;;
 	-m|--message|--msg)       cli_message="${2-}"; shift; (($#)) && shift ;;
 	-h|--help)                sed -n '/^##	- Purpose:/,/^##	History:/p' "${BASH_SOURCE[0]}" | sed '$d; s/^##	\{0,1\}//'; exit 0 ;;
@@ -209,6 +209,19 @@ if [[ -n "${DENY_CMD+x}" ]] && ((${#DENY_CMD[@]})); then
 	else
 		fEcho "WARNING: deps check skipped: ${DENY_PROBE[*]} failed (cargo install cargo-deny)"
 	fi
+fi
+## Headless scroll regression harness (slow; skipped under --quick). It skips itself
+## on an environment miss (no Xvfb/binary) and exits non-zero only on a measured
+## regression - which aborts here.
+if ((! quick)) && [[ -n "${SCROLL_HARNESS+x}" ]] && ((${#SCROLL_HARNESS[@]})); then
+	fEcho_Clean "scroll regression harness (headless) ..."
+	if "${root}/${SCROLL_HARNESS[0]}" "${SCROLL_HARNESS[@]:1}"; then
+		fEcho "OK: scroll harness"
+	else
+		fDie "scroll regression harness reported a regression"
+	fi
+elif ((quick)); then
+	fEcho_Clean "scroll harness skipped (--quick)"
 fi
 fEcho "OK: tests passed"
 

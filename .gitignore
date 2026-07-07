@@ -22,3 +22,5 @@
 
 # Personal editor state (bookmarks etc.)
 .vscode/
+__pycache__/
+*.pyc

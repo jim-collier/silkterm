@@ -42,6 +42,16 @@ const CURSOR_MOVE_TAU_MS: f32 = 55.0; // horizontal slide responsiveness (lower 
 const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
 const BELL_BRIGHTEN: f32 = 0.6; // max lerp of text toward white at the bell flash peak
 
+// Alt-screen app-scroll tunables.
+const APP_SCROLL_MAX: usize = 24; // max per-step shift the slide detector accepts (in step with scroll::APP_OFF_CAP)
+// Whether the smooth slide engages for full-screen apps that keep a static TOP
+// band (title bar: nano, muffer). Off = they hard-cut (plain page redraw), the
+// pre-top-band behaviour: the smooth slide fought the fixed chrome and produced a
+// band/glow bounce, deferred pending N-frame retention. Apps that fill from the
+// top with only a bottom status line (less, vim) have no top band and slide
+// regardless. Flip to re-enable top-band smooth-scroll. See build().
+const SLIDE_TOP_BAND_APPS: bool = false;
+
 // The rendered cursor geometry as (width, height) fractions of the cell. An
 // app-set Beam/Underline (DECSCUSR) maps to a thin bar / underline; a plain Block
 // uses the configured cursor_size_* - except on the alt screen, where the app
@@ -347,14 +357,10 @@ impl Pane {
 		let mut capture_prev = false;
 		let mut shift_dbg = 0i32;
 		if settings.smooth_scroll_apps && alt && !alt_transition {
-			const APP_SCROLL_MAX: usize = 24; // in step with scroll::APP_OFF_CAP
 			// Full-screen apps with a static TOP band (title bar: nano, muffer) repaint
 			// with small sub-line jumps, and the smooth slide fights that fixed chrome -
-			// the band/glow bounce. Disabled pending a proper fix: they hard-cut (plain
-			// page redraw), as before the top-band work. Apps that fill from the top with
-			// only a bottom status line (less) have no top band and still slide. Flip to
-			// re-enable top-band smooth-scroll.
-			const SLIDE_TOP_BAND_APPS: bool = false;
+			// the band/glow bounce - so they hard-cut (see SLIDE_TOP_BAND_APPS). Apps
+			// that fill from the top with only a bottom status line (less) slide.
 			let grid = guard.grid();
 			let mut rows: Vec<u64> = Vec::with_capacity(lines);
 			for i in 0..lines as i32 {
@@ -1989,8 +1995,9 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Dir, Node, Rect, bell_brighten, distinct_pair, equalize_dir_run, layout, pair_inside,
-		same_char_pair, scroll_shift, scroll_shift_signed, static_bands,
+		APP_SCROLL_MAX, Dir, Node, Rect, SLIDE_TOP_BAND_APPS, bell_brighten, distinct_pair,
+		equalize_dir_run, layout, pair_inside, same_char_pair, scroll_shift, scroll_shift_signed,
+		static_bands,
 	};
 
 	fn leaf(id: u64) -> Node {
@@ -2293,6 +2300,154 @@ mod tests {
 		assert_eq!(static_bands(&last, &last), (0, 0));
 		// length mismatch is not measurable
 		assert_eq!(static_bands(&a, &last), (0, 0));
+	}
+
+	// ---- App-scroll scenario matrix -------------------------------------------
+	// Per-app regression coverage for the alt-screen slide: each real full-screen
+	// app repaints in a characteristic shape, and the (shift, static-band) pair the
+	// detector extracts decides whether the pane slides smoothly or hard-cuts. These
+	// model the shapes so a change to the detector/bands (or the SLIDE_TOP_BAND_APPS
+	// toggle) is caught without a live GL run. The committed headless harness
+	// (cicd/tests/scroll) exercises the same shapes end-to-end via SILK_SCROLLDBG.
+
+	// Build a (last, cur) frame pair modelling a full-screen app whose middle scroll
+	// region moved up by `shift` rows (forward = content scrolls up, newer rows in at
+	// the bottom), with `top` static title rows above and `bot` static status rows
+	// below. Row fingerprints are arbitrary distinct u64s viewing a rolling window, so
+	// a shift reuses neighbouring content rows exactly as a real repaint does.
+	fn app_frames(rows: usize, top: usize, bot: usize, shift: i32) -> (Vec<u64>, Vec<u64>) {
+		let pool: Vec<u64> = (1000u64..1000 + rows as u64 * 4).collect(); // content pool
+		let title: Vec<u64> = (1u64..=top as u64).collect(); // static top band
+		let status: Vec<u64> = (900u64..900 + bot as u64).collect(); // static bottom band
+		let mid = rows - top - bot;
+		let frame = |off: usize| -> Vec<u64> {
+			let mut v = title.clone();
+			v.extend_from_slice(&pool[off..off + mid]);
+			v.extend_from_slice(&status);
+			v
+		};
+		let base = rows; // window origin with room to move either way
+		let last = frame(base);
+		let cur = frame((base as i32 + shift) as usize);
+		(last, cur)
+	}
+
+	// The build() decision: engage the smooth slide only when there's no static top
+	// band, unless the top-band toggle is on. Mirrors the gate in build().
+	fn slide_engages(top_band: usize) -> bool {
+		SLIDE_TOP_BAND_APPS || top_band == 0
+	}
+
+	#[test]
+	fn less_slides_no_top_band() {
+		// less fills from the top and keeps only a bottom status line, so there's no
+		// static top band: the middle scrolls, the detector sees it, and build slides.
+		let (last, cur) = app_frames(24, 0, 1, 1);
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 1);
+		let (st, sb) = static_bands(&cur, &last);
+		assert_eq!(st, 0, "less has no static top band");
+		assert_eq!(sb, 1, "less keeps a single-row status line");
+		assert!(slide_engages(st), "less must slide smoothly");
+	}
+
+	#[test]
+	fn vim_slides_no_top_band() {
+		// vim/vim.tiny paints text from row 0 with a status + command line at the
+		// bottom (two static rows), no title bar: same "no top band -> slide" as less.
+		let (last, cur) = app_frames(24, 0, 2, 2);
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 2);
+		let (st, sb) = static_bands(&cur, &last);
+		assert_eq!(st, 0, "vim has no static top band");
+		assert_eq!(sb, 2, "vim keeps a status + command line");
+		assert!(slide_engages(st), "vim must slide smoothly");
+	}
+
+	#[test]
+	fn nano_hard_cuts_static_top_band() {
+		// nano keeps a title bar at the top and a two-row help band at the bottom, so
+		// the middle scroll region has a static top band. The detector still sees the
+		// shift, but a top-band app hard-cuts (SLIDE_TOP_BAND_APPS off) to avoid the
+		// title/glow bounce. Flipping the toggle re-enables the slide (this expectation
+		// tracks the toggle, but the band detection asserted below is the real surface).
+		let (last, cur) = app_frames(24, 1, 2, 1);
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 1);
+		let (st, sb) = static_bands(&cur, &last);
+		assert_eq!(st, 1, "nano keeps a title bar (static top band)");
+		assert_eq!(sb, 2, "nano keeps a two-row help band");
+		assert_eq!(
+			slide_engages(st),
+			SLIDE_TOP_BAND_APPS,
+			"top-band app hard-cuts unless enabled"
+		);
+	}
+
+	#[test]
+	fn muffer_hard_cuts_static_top_band() {
+		// muffer (the TUI) keeps a static header, so like nano it has a top band and
+		// hard-cuts on the wheel for now. Model a two-row header + one-row footer.
+		let (last, cur) = app_frames(30, 2, 1, 1);
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 1);
+		let (st, _sb) = static_bands(&cur, &last);
+		assert_eq!(st, 2, "muffer keeps a static header (top band)");
+		assert_eq!(
+			slide_engages(st),
+			SLIDE_TOP_BAND_APPS,
+			"top-band app hard-cuts unless enabled"
+		);
+	}
+
+	#[test]
+	fn app_wheel_multi_line_jump_still_detected() {
+		// a wheel notch in a mouse-tracking app repaints a several-line jump, not one
+		// line: it must still be detected as a clean scroll (up to APP_SCROLL_MAX), not
+		// hard-cut as a page turnover. less-shaped so it slides.
+		let (last, cur) = app_frames(40, 0, 1, 6);
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 6);
+		// but a jump past the window is not eased (hard-cut) - it isn't a clean scroll
+		let (last2, cur2) = app_frames(40, 0, 1, (APP_SCROLL_MAX + 5) as i32);
+		assert_eq!(scroll_shift_signed(&cur2, &last2, APP_SCROLL_MAX), 0);
+	}
+
+	// ---- Normal-output (non-alt-screen) scroll scenarios ----------------------
+	// Plain shell output eases via scroll_shift (unsigned) + nudge_output. The bugs to
+	// guard against: the page "re-listing" itself or "jumping around" (over-reporting
+	// a small advance as a full turnover) and not scrolling at all on an in-place
+	// bottom redraw (which would bounce). The desired behaviour for a finishing
+	// command is just adding new lines at the bottom.
+
+	#[test]
+	fn ls_output_adds_lines_at_bottom() {
+		// `ls -lA` finishes and the prompt returns: the viewport advanced by exactly
+		// the lines printed, not a re-list. One new line at the bottom -> advance 1.
+		let last = [10u64, 20, 30, 40, 50, 60];
+		let cur = [20u64, 30, 40, 50, 60, 70];
+		assert_eq!(scroll_shift(&cur, &last), 1);
+		// a short multi-line result advances by exactly that many lines (no re-list)
+		let cur3 = [40u64, 50, 60, 70, 80, 90];
+		assert_eq!(scroll_shift(&cur3, &last), 3);
+	}
+
+	#[test]
+	fn command_on_last_line_in_place_does_not_scroll() {
+		// running a command whose prompt sits on the last row and only the bottom row
+		// changes in place (no newline yet) must not be read as a scroll - nudging here
+		// was the old apt/status-line bounce.
+		let last = [10u64, 20, 30, 40, 50, 60];
+		let cur = [10u64, 20, 30, 40, 50, 99]; // only the last row changed
+		assert_eq!(scroll_shift(&cur, &last), 0);
+	}
+
+	#[test]
+	fn fast_burst_reports_full_backlog_not_a_reversal() {
+		// a fast burst (e.g. `seq 100000`) turns the whole screen over in one frame:
+		// report the backlog cap so the ease ramps to catch up, still moving the
+		// content one way (down as new lines arrive) - never a jump back up.
+		let last = [10u64, 20, 30, 40, 50, 60];
+		let cur = [70u64, 80, 90, 100, 110, 120]; // no overlap
+		assert_eq!(
+			scroll_shift(&cur, &last),
+			crate::scroll::MAX_BACKLOG as usize
+		);
 	}
 
 	#[test]
