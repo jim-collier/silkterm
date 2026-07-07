@@ -318,6 +318,13 @@ pub struct TextCtx {
 	// rendered per-cell instead - see Pane::build).
 	mono_face: Option<fontdb::ID>,
 	cover_cache: HashMap<char, bool>,
+	// Measured chrome-text widths. Keyed by text only: every chrome measurement
+	// uses the base UI attrs (colour varies, which doesn't affect width), and the
+	// font is fixed for this TextCtx's life. Measuring shapes a throwaway buffer,
+	// and the menu bar re-measures its titles every rendered frame - the memo
+	// turns that into a lookup. Bounded (cleared) so dynamic tab titles can't
+	// grow it without limit.
+	ui_measure_cache: HashMap<String, f32>,
 }
 
 impl TextCtx {
@@ -386,6 +393,7 @@ impl TextCtx {
 			ui_vmetrics,
 			mono_face,
 			cover_cache: HashMap::new(),
+			ui_measure_cache: HashMap::new(),
 		}
 	}
 
@@ -471,8 +479,17 @@ impl TextCtx {
 
 	// Width in px of chrome `text` shaped with `attrs` at the UI font size.
 	// Sizes menus, bar titles, dialog labels to the real rendered text.
+	// Memoized by text (see ui_measure_cache).
 	pub fn measure_ui_text(&mut self, text: &str, attrs: &Attrs) -> f32 {
-		self.measure_at(text, attrs, self.ui_metrics)
+		if let Some(&w) = self.ui_measure_cache.get(text) {
+			return w;
+		}
+		let w = self.measure_at(text, attrs, self.ui_metrics);
+		if self.ui_measure_cache.len() >= 512 {
+			self.ui_measure_cache.clear();
+		}
+		self.ui_measure_cache.insert(text.to_string(), w);
+		w
 	}
 
 	fn measure_at(&mut self, text: &str, attrs: &Attrs, metrics: Metrics) -> f32 {

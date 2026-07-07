@@ -100,6 +100,16 @@ fn bell_brighten(color: [u8; 3], t: f32) -> [u8; 3] {
 	[up(color[0]), up(color[1]), up(color[2])]
 }
 
+// FNV-1a over a row's chars: the fingerprint copy-output uses to re-find the
+// arm-time prompt row at capture time (same constants as build()'s inline rows).
+fn fnv_row(chars: impl Iterator<Item = char>) -> u64 {
+	let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+	for c in chars {
+		hash = (hash ^ c as u64).wrapping_mul(0x100_0000_01b3);
+	}
+	hash
+}
+
 // The char to feed the shaper for a grid cell. A cell may hold a literal control
 // char - alacritty leaves the '\t' in the first tab cell and fills to the tab
 // stop with spaces - and cosmic-text shapes a raw tab as a full 8-col stop,
@@ -346,6 +356,11 @@ pub struct Pane {
 	pub auto_copy: bool,
 	capture_armed: bool,
 	cmd_start: usize,
+	// Fingerprint of the arm-time prompt row. cmd_start is "history + row", an
+	// index whose origin MOVES once scrollback is at cap (each pushed line evicts
+	// the oldest), so capture re-finds the prompt row by content instead and only
+	// falls back to cmd_start when it can't (evicted, or redrawn on Enter).
+	cmd_anchor: Option<u64>,
 	last_output: std::time::Instant,
 }
 
@@ -1146,16 +1161,24 @@ impl Pane {
 	// about to run. Record where its output will begin (the line after the prompt/
 	// echoed command) and arm the settle-based capture. Only arms at the shell
 	// prompt, so an Enter inside a foreground app (vim, a REPL) doesn't arm.
+	// Blocking (unfair) lock: a try_lock here silently skipped that command's
+	// copy whenever Enter raced a PTY burst.
 	pub fn arm_capture(&mut self) {
 		if !self.term.at_shell_prompt() {
 			return;
 		}
-		if let Some(guard) = self.term.term.try_lock_unfair() {
-			let grid = guard.grid();
-			self.cmd_start = grid.history_size() + grid.cursor.point.line.0.max(0) as usize + 1;
-			self.capture_armed = true;
-			self.last_output = std::time::Instant::now();
-		}
+		let guard = self.term.term.lock_unfair();
+		let grid = guard.grid();
+		let cursor_line = grid.cursor.point.line;
+		self.cmd_start = grid.history_size() + cursor_line.0.max(0) as usize + 1;
+		// fingerprint the prompt row so capture can re-find it (see cmd_anchor);
+		// an all-blank row is too ambiguous to anchor on (blank output lines match)
+		let cols = grid.columns();
+		let row = &grid[cursor_line];
+		let blank = (0..cols).all(|c| row[Column(c)].c == ' ');
+		self.cmd_anchor = (!blank).then(|| fnv_row((0..cols).map(|c| row[Column(c)].c)));
+		self.capture_armed = true;
+		self.last_output = std::time::Instant::now();
 	}
 
 	// New PTY output arrived: push the settle deadline out so capture waits for the
@@ -1187,7 +1210,8 @@ impl Pane {
 			let grid = guard.grid();
 			grid.history_size() + grid.cursor.point.line.0.max(0) as usize
 		};
-		let text = capture_grid_text(&guard, self.cmd_start, end);
+		let start = capture_start(&guard, self.cmd_start, self.cmd_anchor, end);
+		let text = capture_grid_text(&guard, start, end);
 		(!text.trim().is_empty()).then_some(text)
 	}
 
@@ -1585,8 +1609,40 @@ fn spawn_pane(
 		auto_copy: false,
 		capture_armed: false,
 		cmd_start: 0,
+		cmd_anchor: None,
 		last_output: std::time::Instant::now(),
 	})
+}
+
+// Where the captured output starts, as a capture-time absolute line index.
+// `cmd_start` was recorded at arm time in "history + row" coordinates, but that
+// origin moves once the scrollback is at cap: each pushed line evicts the
+// oldest, shifting every absolute index down, so the stale index lands past the
+// start and the copy silently drops the first lines of the output. Re-find the
+// arm-time prompt row by its content hash instead, scanning back from the end
+// (the nearest match is the arm-time prompt unless the output itself repeats
+// that exact row); the output starts on the next line. Fall back to `cmd_start`
+// when there's no anchor or no match (blank prompt row, the row was evicted, or
+// the shell redrew it on Enter).
+fn capture_start<T: alacritty_terminal::event::EventListener>(
+	term: &Term<T>,
+	cmd_start: usize,
+	anchor: Option<u64>,
+	end_abs: usize,
+) -> usize {
+	let Some(anchor) = anchor else {
+		return cmd_start;
+	};
+	let grid = term.grid();
+	let hist = grid.history_size() as i64;
+	let cols = grid.columns();
+	for abs in (0..end_abs).rev() {
+		let row = &grid[Line((abs as i64 - hist) as i32)];
+		if fnv_row((0..cols).map(|c| row[Column(c)].c)) == anchor {
+			return abs + 1;
+		}
+	}
+	cmd_start
 }
 
 // Extract the grid text for absolute line range [start_abs, end_abs) as plain
@@ -1595,8 +1651,8 @@ fn spawn_pane(
 // newline is emitted per grid row, except rows flagged WRAPLINE (a soft-wrapped
 // long line) which join to the next. Lines evicted from scrollback (only when a
 // command's output exceeds the scrollback limit) are skipped.
-fn capture_grid_text(
-	term: &Term<crate::term::EventProxy>,
+fn capture_grid_text<T: alacritty_terminal::event::EventListener>(
+	term: &Term<T>,
 	start_abs: usize,
 	end_abs: usize,
 ) -> String {
@@ -2132,9 +2188,45 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 mod tests {
 	use super::{
 		APP_SCROLL_MAX, Dir, Node, PauseState, Rect, SLIDE_TOP_BAND_APPS, bell_brighten,
-		distinct_pair, equalize_dir_run, glide_to_full, layout, logical_line_bounds, pair_inside,
-		render_char, same_char_pair, scroll_shift, scroll_shift_signed, static_bands,
+		capture_grid_text, capture_start, distinct_pair, equalize_dir_run, fnv_row, glide_to_full,
+		layout, logical_line_bounds, pair_inside, render_char, same_char_pair, scroll_shift,
+		scroll_shift_signed, static_bands,
 	};
+	use alacritty_terminal::event::{Event, EventListener};
+	use alacritty_terminal::grid::Dimensions;
+	use alacritty_terminal::index::{Column, Line};
+	use alacritty_terminal::term::{Config as TermConfig, Term};
+	use alacritty_terminal::vte::ansi::Processor;
+
+	struct VoidListener;
+	impl EventListener for VoidListener {
+		fn send_event(&self, _e: Event) {}
+	}
+
+	// A small live Term fed via the real parser, for the copy-output tests.
+	fn term_fed(cols: usize, lines: usize, scrollback: usize, input: &str) -> Term<VoidListener> {
+		let cfg = TermConfig {
+			scrolling_history: scrollback,
+			..Default::default()
+		};
+		let dims = crate::term::TermDimensions {
+			columns: cols,
+			screen_lines: lines,
+		};
+		let mut term = Term::new(cfg, &dims, VoidListener);
+		let mut parser: Processor = Processor::new();
+		parser.advance(&mut term, input.as_bytes());
+		term
+	}
+	fn feed(term: &mut Term<VoidListener>, input: &str) {
+		let mut parser: Processor = Processor::new();
+		parser.advance(term, input.as_bytes());
+	}
+	fn row_hash(term: &Term<VoidListener>, line: i32) -> u64 {
+		let grid = term.grid();
+		let cols = grid.columns();
+		fnv_row((0..cols).map(|c| grid[Line(line)][Column(c)].c))
+	}
 
 	fn leaf(id: u64) -> Node {
 		Node::Leaf(id)
@@ -2269,6 +2361,51 @@ mod tests {
 			t = st.advance(t, 0.01, period, 0.5, timeout, false, 0.1);
 		}
 		assert!(st.active && ((t / period).fract() - 0.5).abs() < 1e-6);
+	}
+
+	#[test]
+	fn capture_finds_output_start_at_full_scrollback() {
+		// 3 rows, scrollback cap 4 - the command's output fills the buffer to cap
+		// and evicts old lines, the long-lived-shell case. The arm-time absolute
+		// index goes stale with each eviction; the content anchor must not.
+		let mut term = term_fed(20, 3, 4, "h1\r\nh2\r\nh3\r\nh4\r\nuser$ cmd");
+		// arm at the prompt (before Enter reaches the terminal)
+		let grid = term.grid();
+		let cmd_start = grid.history_size() + grid.cursor.point.line.0.max(0) as usize + 1;
+		let anchor = Some(row_hash(&term, grid.cursor.point.line.0));
+		// the command echoes Enter, prints 4 lines, and a fresh prompt appears
+		feed(&mut term, "\r\nO1\r\nO2\r\nO3\r\nO4\r\nuser$ ");
+		let grid = term.grid();
+		assert_eq!(grid.history_size(), 4, "buffer must have hit the cap");
+		let end = grid.history_size() + grid.cursor.point.line.0.max(0) as usize;
+		// the anchor recovers the true start; the stale index alone drops lines
+		let start = capture_start(&term, cmd_start, anchor, end);
+		assert_eq!(capture_grid_text(&term, start, end), "O1\nO2\nO3\nO4\n");
+		assert_ne!(
+			capture_grid_text(&term, cmd_start, end),
+			"O1\nO2\nO3\nO4\n",
+			"the stale index should demonstrate the bug this guards against"
+		);
+		// no anchor (blank prompt row) or no match (row evicted/redrawn): the
+		// recorded index is the fallback, never a panic
+		assert_eq!(capture_start(&term, cmd_start, None, end), cmd_start);
+		assert_eq!(capture_start(&term, cmd_start, Some(1), end), cmd_start);
+	}
+
+	#[test]
+	fn capture_below_scrollback_cap_matches_either_way() {
+		// plenty of scrollback: no eviction, so the stale-index and anchor paths
+		// agree - the anchor must not regress the common case
+		let mut term = term_fed(20, 3, 100, "user$ cmd");
+		let grid = term.grid();
+		let cmd_start = grid.history_size() + grid.cursor.point.line.0.max(0) as usize + 1;
+		let anchor = Some(row_hash(&term, grid.cursor.point.line.0));
+		feed(&mut term, "\r\nA\r\nB\r\nuser$ ");
+		let grid = term.grid();
+		let end = grid.history_size() + grid.cursor.point.line.0.max(0) as usize;
+		let start = capture_start(&term, cmd_start, anchor, end);
+		assert_eq!(start, cmd_start);
+		assert_eq!(capture_grid_text(&term, start, end), "A\nB\n");
 	}
 
 	#[test]

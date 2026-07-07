@@ -341,6 +341,20 @@ impl ContextMenu {
 	}
 }
 
+// Shaped chrome text, kept frame to frame: menu-bar titles + the copybox label,
+// the tab close-"x", and per-tab title buffers. Re-shaping these every rendered
+// frame was constant background work during any animation (even the idle cursor
+// pulse). Rebuilt when the menu colour changes; a tab entry re-shapes only when
+// its title or the tab width changes; the whole cache is dropped on a
+// text-context rebuild (buffers are tied to the FontSystem they were made with).
+struct ChromeCache {
+	menu_fg: [u8; 3],
+	menubar: Vec<Buffer>, // MENU_BAR titles + trailing "Copy output" label
+	close: Buffer,
+	tab_w: f32,
+	tabs: Vec<(String, Buffer)>,
+}
+
 // Tab strip: each tab owns its own pane split-tree. Detach/dock to other
 // windows is deferred (needs multi-window support).
 struct Tabs {
@@ -429,16 +443,17 @@ struct State {
 	pending_size: Option<(usize, usize)>, // debounced remember-size: persisted after the size holds, not per resize tick
 	pending_size_at: Instant,
 	menu: Option<ContextMenu>,
-	decorated: bool,           // window frame shown (winit has no getter, so track it)
-	menu_bar: bool,            // window menu bar (File/Edit/...) shown
-	bar_open: Option<usize>,   // which top-level menu's dropdown is open, if any
-	quit: bool,                // set by File->Quit; the event handler exits after applying
-	win_opacity: Option<f32>,  // CLI --background-opacity override (this window only)
-	win_title: Option<String>, // CLI --title override (else "AppName - <tab title>")
-	last_win_title: String,    // last string set on the window (skip redundant set_title)
+	decorated: bool,             // window frame shown (winit has no getter, so track it)
+	menu_bar: bool,              // window menu bar (File/Edit/...) shown
+	bar_open: Option<usize>,     // which top-level menu's dropdown is open, if any
+	quit: bool,                  // set by File->Quit; the event handler exits after applying
+	win_opacity: Option<f32>,    // CLI --background-opacity override (this window only)
+	win_title: Option<String>,   // CLI --title override (else "AppName - <tab title>")
+	last_win_title: String,      // last string set on the window (skip redundant set_title)
 	focused: bool, // window has keyboard focus (gates copy-output: never copy from a background window)
 	pending_about: bool, // request to open the About window (App acts on it; needs the event loop)
 	pending_settings: bool, // request to open the Settings window
+	chrome: Option<ChromeCache>, // shaped menu/tab text, reused across frames
 }
 
 impl State {
@@ -487,11 +502,8 @@ impl State {
 	// user can still select/paste/menu). Returns true when the event was reported
 	// (and should not be handled locally). Records the held button for drag + release.
 	fn report_mouse_button(&mut self, button: MouseButton, pressed: bool) -> bool {
-		let btn = match button {
-			MouseButton::Left => input::MouseBtn::Left,
-			MouseButton::Middle => input::MouseBtn::Middle,
-			MouseButton::Right => input::MouseBtn::Right,
-			_ => return false,
+		let Some(btn) = mouse_btn_of(button) else {
+			return false;
 		};
 		// Right-click is reserved for SilkTerm's own context menu and never
 		// forwarded to a mouse-tracking app (else e.g. muffer pastes on it).
@@ -1099,6 +1111,7 @@ impl State {
 		if rebuild {
 			let scale = self.window.scale_factor() as f32;
 			self.text = TextCtx::new(&self.gfx.device, &self.gfx.queue, self.gfx.format, scale);
+			self.chrome = None; // cached chrome buffers are tied to the old FontSystem
 			for pm in &mut self.tabs.list {
 				pm.rebuild_buffers(&mut self.text);
 			}
@@ -1414,11 +1427,17 @@ impl State {
 		let overlay_range = menu_range;
 
 		let margin = self.text.margin;
-		let menu_fg = GColor::rgb(
-			config::menu_fg()[0],
-			config::menu_fg()[1],
-			config::menu_fg()[2],
-		);
+		let menu_fg_rgb = config::menu_fg();
+		let menu_fg = GColor::rgb(menu_fg_rgb[0], menu_fg_rgb[1], menu_fg_rgb[2]);
+		// subtle close-"x" glyph colour, dimmed toward the tab bg (~0.6)
+		let close_fg = {
+			let dim = |v: u8| ((v as u16 * 3) / 5) as u8;
+			GColor::rgb(
+				dim(menu_fg_rgb[0]),
+				dim(menu_fg_rgb[1]),
+				dim(menu_fg_rgb[2]),
+			)
+		};
 		// tab titles ("<shell> [<program>]") - computed first (tab_title is &mut)
 		// before self.text is borrowed for the buffers below
 		let tab_titles: Vec<String> = if self.tabs.len() > 1 {
@@ -1439,50 +1458,55 @@ impl State {
 		} else {
 			Vec::new()
 		};
-		// tab titles need transient buffers; build them before `areas` borrows panes
-		let mut tab_bufs: Vec<Buffer> = Vec::new();
 		let tab_w = (self.gfx.config.width as f32 / self.tabs.len().max(1) as f32).min(TAB_MAX_W);
-		// subtle close-"x" glyph, dimmed toward the tab bg; one buffer reused per tab
-		let close_fg = {
-			let f = config::menu_fg();
-			let dim = |v: u8| ((v as u16 * 3) / 5) as u8; // ~0.6
-			GColor::rgb(dim(f[0]), dim(f[1]), dim(f[2]))
-		};
-		let mut close_buf = self.text.new_ui_buffer(TAB_CLOSE_W, tab_h);
+		// keep the shaped chrome text current (see ChromeCache) - a colour change
+		// rebuilds it all, otherwise only changed tab titles re-shape
+		if self
+			.chrome
+			.as_ref()
+			.is_some_and(|cache| cache.menu_fg != menu_fg_rgb)
 		{
-			let mut attrs = crate::text::ui_attrs();
-			attrs.color_opt = Some(close_fg);
-			close_buf.set_text(
-				&mut self.text.font_system,
-				"\u{00d7}",
-				&attrs,
-				Shaping::Advanced,
-				None,
-			);
-			close_buf.shape_until_scroll(&mut self.text.font_system, false);
+			self.chrome = None;
 		}
-		for title in &tab_titles {
-			let mut buf = self
-				.text
-				.new_ui_buffer((tab_w - 16.0 - TAB_CLOSE_W).max(8.0), tab_h);
-			let mut attrs = crate::text::ui_attrs();
-			attrs.color_opt = Some(menu_fg);
-			buf.set_text(
-				&mut self.text.font_system,
-				title,
-				&attrs,
-				Shaping::Advanced,
-				None,
-			);
-			buf.shape_until_scroll(&mut self.text.font_system, false);
-			tab_bufs.push(buf);
+		if self.chrome.is_none() {
+			let shape_ui = |text: &mut TextCtx, s: &str, w: f32, h: f32, color: GColor| {
+				let mut buf = text.new_ui_buffer(w, h);
+				let mut attrs = crate::text::ui_attrs();
+				attrs.color_opt = Some(color);
+				buf.set_text(&mut text.font_system, s, &attrs, Shaping::Advanced, None);
+				buf.shape_until_scroll(&mut text.font_system, false);
+				buf
+			};
+			// menu-bar titles (one per top-level menu) plus the trailing
+			// "Copy output" label for the always-visible checkbox
+			let menubar = MENU_BAR
+				.iter()
+				.chain(std::iter::once(&COPYBOX_LABEL))
+				.map(|title| shape_ui(&mut self.text, title, 240.0, menu_h, menu_fg))
+				.collect();
+			let close = shape_ui(&mut self.text, "\u{00d7}", TAB_CLOSE_W, tab_h, close_fg);
+			self.chrome = Some(ChromeCache {
+				menu_fg: menu_fg_rgb,
+				menubar,
+				close,
+				tab_w: -1.0, // force the tab pass below to fill in
+				tabs: Vec::new(),
+			});
 		}
-		// menu-bar title buffers (one per top-level menu), proportional font, plus a
-		// trailing "Copy output" label for the always-visible checkbox
-		let mut menubar_bufs: Vec<Buffer> = Vec::new();
-		if self.menu_bar {
-			for title in MENU_BAR.iter().chain(std::iter::once(&COPYBOX_LABEL)) {
-				let mut buf = self.text.new_ui_buffer(240.0, menu_h);
+		{
+			let cache = self.chrome.as_mut().unwrap();
+			if cache.tab_w != tab_w {
+				cache.tab_w = tab_w;
+				cache.tabs.clear(); // width changed: every title buffer re-wraps
+			}
+			cache.tabs.truncate(tab_titles.len());
+			for (i, title) in tab_titles.iter().enumerate() {
+				if cache.tabs.get(i).is_some_and(|(cached, _)| cached == title) {
+					continue; // unchanged title keeps its shaped buffer
+				}
+				let mut buf = self
+					.text
+					.new_ui_buffer((tab_w - 16.0 - TAB_CLOSE_W).max(8.0), tab_h);
 				let mut attrs = crate::text::ui_attrs();
 				attrs.color_opt = Some(menu_fg);
 				buf.set_text(
@@ -1493,12 +1517,17 @@ impl State {
 					None,
 				);
 				buf.shape_until_scroll(&mut self.text.font_system, false);
-				menubar_bufs.push(buf);
+				if i < cache.tabs.len() {
+					cache.tabs[i] = (title.clone(), buf);
+				} else {
+					cache.tabs.push((title.clone(), buf));
+				}
 			}
 		}
 		// compute before borrowing panes for `areas` (menubar_layout takes &mut self)
 		let bar_layout = self.menubar_layout();
 		let (_, copy_label_x, copy_label_w) = self.copybox_layout();
+		let chrome = self.chrome.as_ref().unwrap(); // ensured above
 		let mut areas: Vec<TextArea> = Vec::new();
 		for p in self.tabs.cur().panes.values() {
 			// retained-frame slide: fill the revealed strip from the previous frame,
@@ -1538,30 +1567,32 @@ impl State {
 			}
 			areas.extend(p.glyph_areas());
 		}
-		for (i, buf) in menubar_bufs.iter().enumerate() {
-			// the last buffer is the right-aligned "Copy output" checkbox label
-			let (left, left_bound, right_bound) = if i < bar_layout.len() {
-				let (x, w) = bar_layout[i];
-				(x + MENU_BAR_PAD, x, x + w)
-			} else {
-				(copy_label_x, copy_label_x, copy_label_x + copy_label_w)
-			};
-			areas.push(TextArea {
-				buffer: buf,
-				left,
-				top: self.text.ui_text_top(0.0, menu_h),
-				scale: 1.0,
-				bounds: TextBounds {
-					left: left_bound as i32,
-					top: 0,
-					right: right_bound as i32,
-					bottom: menu_h as i32,
-				},
-				default_color: menu_fg,
-				custom_glyphs: &[],
-			});
+		if self.menu_bar {
+			for (i, buf) in chrome.menubar.iter().enumerate() {
+				// the last buffer is the right-aligned "Copy output" checkbox label
+				let (left, left_bound, right_bound) = if i < bar_layout.len() {
+					let (x, w) = bar_layout[i];
+					(x + MENU_BAR_PAD, x, x + w)
+				} else {
+					(copy_label_x, copy_label_x, copy_label_x + copy_label_w)
+				};
+				areas.push(TextArea {
+					buffer: buf,
+					left,
+					top: self.text.ui_text_top(0.0, menu_h),
+					scale: 1.0,
+					bounds: TextBounds {
+						left: left_bound as i32,
+						top: 0,
+						right: right_bound as i32,
+						bottom: menu_h as i32,
+					},
+					default_color: menu_fg,
+					custom_glyphs: &[],
+				});
+			}
 		}
-		for (i, buf) in tab_bufs.iter().enumerate() {
+		for (i, (_, buf)) in chrome.tabs.iter().enumerate() {
 			let x = i as f32 * tab_w;
 			let close_x = x + tab_w - TAB_CLOSE_W;
 			areas.push(TextArea {
@@ -1580,7 +1611,7 @@ impl State {
 				custom_glyphs: &[],
 			});
 			areas.push(TextArea {
-				buffer: &close_buf,
+				buffer: &chrome.close,
 				left: close_x + 5.0,
 				top: self.text.ui_text_top(tab_bar_y, tab_h),
 				scale: 1.0,
@@ -1930,6 +1961,16 @@ impl State {
 		}
 		self.text.trim_atlas();
 		animating
+	}
+}
+
+// winit button -> the reportable subset (None for Back/Forward/etc.)
+fn mouse_btn_of(button: MouseButton) -> Option<input::MouseBtn> {
+	match button {
+		MouseButton::Left => Some(input::MouseBtn::Left),
+		MouseButton::Middle => Some(input::MouseBtn::Middle),
+		MouseButton::Right => Some(input::MouseBtn::Right),
+		_ => None,
 	}
 }
 
@@ -2415,6 +2456,7 @@ impl ApplicationHandler<UserEvent> for App {
 			focused: true,
 			pending_about: false,
 			pending_settings: false,
+			chrome: None,
 		});
 	}
 
@@ -2538,9 +2580,10 @@ impl ApplicationHandler<UserEvent> for App {
 				state.mouse = (position.x as f32, position.y as f32);
 				let (x, y) = state.mouse;
 				// mouse-tracking app wants motion/drag reports; when it does, skip our
-				// local hover/selection handling for this move
+				// local hover/selection handling for this move. The report is
+				// PTY-bound: nothing local changed, so no redraw - marking dirty here
+				// forced a full re-shape of every pane per cell crossed.
 				if state.report_mouse_motion() {
-					state.dirty = true;
 					return;
 				}
 				// hovering a different top-level title with a bar menu open
@@ -2773,12 +2816,15 @@ impl ApplicationHandler<UserEvent> for App {
 				}
 			}
 
-			// a mouse-tracking app owns the pointer: report the release we opened
+			// a mouse-tracking app owns the pointer: report the release we opened.
+			// Only for the SAME button as the reported press - releasing a different
+			// one must not clear the held state (the app would see an unbalanced
+			// press) nor steal that button's local release handling below.
 			WindowEvent::MouseInput {
 				state: ElementState::Released,
 				button,
 				..
-			} if state.mouse_btn.is_some() => {
+			} if state.mouse_btn.is_some() && state.mouse_btn == mouse_btn_of(button) => {
 				if state.report_mouse_button(button, false) {
 					state.dirty = true;
 				}

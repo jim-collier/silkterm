@@ -656,7 +656,13 @@ fn resolve(raw: RawConfig) -> Settings {
 		scroll_tau_ms: raw.scroll_tau_ms.unwrap_or(d.scroll_tau_ms).max(1.0),
 		wheel_lines: raw.wheel_lines.unwrap_or(d.wheel_lines),
 		alt_scroll_lines: raw.alt_scroll_lines.unwrap_or(d.alt_scroll_lines),
-		output_ease_lines: raw.output_ease_lines.unwrap_or(d.output_ease_lines),
+		// MUST clamp: scroll's backlog clamp uses this as its lower bound, and
+		// f32::clamp panics (aborts, in release) when min > max - an over-range
+		// value here killed the terminal on the first scrolling output.
+		output_ease_lines: raw
+			.output_ease_lines
+			.unwrap_or(d.output_ease_lines)
+			.clamp(0.0, crate::scroll::MAX_BACKLOG),
 		smooth_scroll_apps: raw.smooth_scroll_apps.unwrap_or(d.smooth_scroll_apps),
 		margin: raw.margin.unwrap_or(d.margin).max(0.0),
 		opacity: raw.opacity.unwrap_or(d.opacity).clamp(0.0, 1.0),
@@ -1526,6 +1532,23 @@ mod tests {
 		assert!(d.text_glow_regular_weight);
 		assert!(d.cursor_glow);
 		assert_eq!(d.background_blur, 8.0);
+	}
+
+	// An over-range output_ease_lines must clamp: scroll's backlog clamp uses it
+	// as a lower bound and panics (aborts, in release) when it exceeds the cap.
+	#[test]
+	fn output_ease_lines_clamps_to_backlog_cap() {
+		let raw = parse_lenient(
+			"output_ease_lines = 20.0\n",
+			std::path::Path::new("test.toml"),
+		);
+		let s = resolve(raw);
+		assert!(s.output_ease_lines <= crate::scroll::MAX_BACKLOG);
+		let raw = parse_lenient(
+			"output_ease_lines = -3.0\n",
+			std::path::Path::new("test.toml"),
+		);
+		assert!(resolve(raw).output_ease_lines >= 0.0);
 	}
 
 	// One syntax-broken line must not sink the valid settings around it.

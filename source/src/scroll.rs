@@ -104,7 +104,9 @@ impl Scroll {
 	// eases in at the slow speed.
 	pub fn nudge_output(&mut self, grown: f32) {
 		if self.following() {
-			let floor = config::settings().output_ease_lines.max(0.0);
+			// resolve() clamps the config value, but stay self-defensive: a floor
+			// above MAX_BACKLOG makes this clamp panic (min > max = abort in release)
+			let floor = config::settings().output_ease_lines.clamp(0.0, MAX_BACKLOG);
 			self.visual = (self.visual + grown).clamp(floor, MAX_BACKLOG);
 		}
 	}
@@ -114,7 +116,11 @@ impl Scroll {
 		// ramp target from the output backlog (only while following); 0 below the
 		// normal slide distance, 1 at the cap. Wheel/scrollback uses the plain ease.
 		let ramp_target = if self.following() {
-			let ease_floor = config::settings().output_ease_lines.max(0.5);
+			// upper bound keeps the divisor positive (at the cap it would be 0 -> NaN
+			// propagating into the ramp and the visual position)
+			let ease_floor = config::settings()
+				.output_ease_lines
+				.clamp(0.5, MAX_BACKLOG - 1.0);
 			((self.visual - ease_floor) / (MAX_BACKLOG - ease_floor)).clamp(0.0, 1.0)
 		} else {
 			0.0
