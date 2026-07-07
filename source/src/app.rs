@@ -27,6 +27,11 @@ use crate::pane::{Dir, Pane, PaneManager, Rect};
 use crate::term::{PaneId, UserEvent};
 use crate::text::TextCtx;
 
+// Delayed re-assertions of "terminal stays under the dialog" after the dialog is
+// focused, to win the race against the WM's own activation restacking (Compiz).
+const RAISE_REASSERTS: u8 = 5;
+const RAISE_REASSERT_IVL: Duration = Duration::from_millis(30);
+
 pub struct App {
 	proxy: EventLoopProxy<UserEvent>,
 	state: Option<State>,
@@ -35,6 +40,12 @@ pub struct App {
 	// context, so it can be larger than the main window.
 	dialog: Option<crate::dialog::DialogWin>,
 	dialog_dirty: bool,
+	// after the dialog is focused, re-assert "keep the terminal under me" a few
+	// times: the WM's own activation (raising the dialog) can land just after our
+	// first restack and re-bury the terminal, so a couple of delayed retries
+	// settle it (see handle_dialog_event / about_to_wait).
+	raise_reassert: u8,
+	raise_next: Instant,
 	// cicd profiler stage: when SILK_PROFILE_OUT is set the app runs a workload
 	// (via --shell) for SILK_PROFILE_SECS then exits, so main can dump a flamegraph.
 	#[cfg(feature = "profiling")]
@@ -51,6 +62,8 @@ impl App {
 			cli,
 			dialog: None,
 			dialog_dirty: false,
+			raise_reassert: 0,
+			raise_next: Instant::now(),
 			#[cfg(feature = "profiling")]
 			profile_secs: std::env::var("SILK_PROFILE_SECS")
 				.ok()
@@ -69,6 +82,17 @@ impl App {
 			WindowEvent::CloseRequested => {
 				self.dialog = None;
 				return;
+			}
+			WindowEvent::Focused(true) => {
+				// keep the terminal directly beneath us when we're activated, so
+				// nothing stays wedged between the two (Compiz doesn't do this).
+				// Do it now and arm a few delayed retries - the WM's own raise of
+				// the dialog can land right after and re-bury the terminal.
+				if let Some(d) = &self.dialog {
+					d.raise_parent();
+				}
+				self.raise_reassert = RAISE_REASSERTS;
+				self.raise_next = Instant::now() + RAISE_REASSERT_IVL;
 			}
 			WindowEvent::Resized(size) => {
 				if let Some(d) = &mut self.dialog {
@@ -3083,6 +3107,19 @@ impl ApplicationHandler<UserEvent> for App {
 			self.dialog_dirty = false;
 		}
 
+		// re-assert the dialog->terminal stacking a few times after focus (see the
+		// field comment). Cleared when the dialog closes.
+		if self.dialog.is_none() {
+			self.raise_reassert = 0;
+		} else if self.raise_reassert > 0 && Instant::now() >= self.raise_next {
+			if let Some(d) = &self.dialog {
+				d.raise_parent();
+			}
+			self.raise_reassert -= 1;
+			self.raise_next = Instant::now() + RAISE_REASSERT_IVL;
+		}
+		let raise_wake = (self.raise_reassert > 0).then_some(self.raise_next);
+
 		let Some(state) = self.state.as_mut() else {
 			return;
 		};
@@ -3136,6 +3173,12 @@ impl ApplicationHandler<UserEvent> for App {
 		// copy-output: while a capture is armed, make sure the loop wakes at its
 		// settle deadline to run the capture check even when otherwise idle.
 		let flow = match (flow, state.capture_wake()) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
+		// keep the loop waking while dialog-raise retries are pending
+		let flow = match (flow, raise_wake) {
 			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
