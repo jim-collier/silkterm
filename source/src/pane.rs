@@ -903,14 +903,17 @@ impl Pane {
 			self.cursor_x = target_col;
 		}
 		// Animation: "none" = steady; "phase" = smooth cosine fade; "pulse_*" =
-		// grow/shrink a dimension over one cycle. Always solid while sliding.
+		// grow/shrink a dimension over one cycle. A horizontal slide forces a solid
+		// block so the cursor stays readable while it moves.
 		let settings = config::settings();
 		let anim = settings.cursor_animation.as_str();
 		let period = (settings.cursor_blink_rate_ms / 1000.0 * 2.0).max(0.05); // full on->off->on
-		// Input-pause (opt-in): while there's recent input, let the animation glide
-		// to its full-size phase and hold there (no snap), instead of restarting the
-		// pulse each keystroke; resume once input has been idle CURSOR_INPUT_PAUSE_S.
-		// Parking at full lets the pulse resume smoothly (full -> shrink -> grow).
+		// Input-pause (opt-in): recent input glides the phase forward to the full-size
+		// point and parks it there, so the cursor finishes its current cycle into full
+		// instead of jumping. It resumes past CURSOR_INPUT_PAUSE_S, starting from full.
+		// The envelope below still runs while paused (driven by this gliding phase) -
+		// that's what keeps the entry smooth. Without it the pause path would render
+		// full-size the instant a key is pressed, which reads as a snap.
 		let paused = cursor_input_paused(
 			settings.cursor_animation_input.as_str(),
 			self.cursor_idle_t,
@@ -923,7 +926,7 @@ impl Pane {
 			self.blink_t += dt;
 		}
 		let anim_on = anim != "none";
-		let animating = !easing && anim_on && !paused;
+		let animating = !easing && anim_on;
 		let phase = (self.blink_t / period).fract();
 
 		let (mut w_frac, mut h_frac) = cursor_geom;
