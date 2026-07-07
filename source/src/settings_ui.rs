@@ -295,7 +295,7 @@ fn fields() -> Vec<Spec> {
 			},
 		},
 		Spec {
-			label: "Backdrop blur",
+			label: "Blur-behind",
 			key: BackdropBlur,
 			kind: Toggle,
 		},

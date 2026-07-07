@@ -55,7 +55,9 @@ declare -a launchedPids=()
 
 ## 16:9 virtual screen so the fullscreen dump is a clean 16:9 (no crop needed).
 declare -r screenSize="2560x1440x24"
-declare -r fontName="DejaVu Sans Mono"
+## "Medium" weight isn't separately selectable (font_family picks a family, not a
+## weight), so the stack lands on the Argon NF family, falling back to DejaVu.
+declare -r fontName="Monaspace Argon NF Medium, Monaspace Argon NF, DejaVu Sans Mono"
 declare -ri fontSize=24
 
 fInfo()  { printf '  %s\n' "$*"; }
