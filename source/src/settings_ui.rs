@@ -88,6 +88,15 @@ pub fn dialog_text() -> [u8; 3] {
 pub fn dialog_dim() -> [u8; 3] {
 	dlg().dim
 }
+pub fn dialog_btn() -> [u8; 3] {
+	dlg().btn_bg
+}
+pub fn dialog_btn_hl() -> [u8; 3] {
+	dlg().btn_hl
+}
+pub fn dialog_border() -> [u8; 3] {
+	dlg().panel_border
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Key {

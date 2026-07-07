@@ -2,4 +2,6 @@
 # code owners" to enforce). Last match wins.
 
 # Donation page: owner-only for now (money-adjacent, must not be changed loosely).
-/DONATE.md @jim-collier
+/.github/CODEOWNERS  @jim-collier
+/DONATE.md  @jim-collier
+/.github/FUNDING.yml  @jim-collier
