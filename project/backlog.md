@@ -90,7 +90,7 @@ In each section, items are listed approximately from newest to oldest.
 ### New features and enhancements
 
 - ◐ Donation button in Help|About for popup with list of addresses and ULRs. (Not `--donate`.)
-	- First step done: Help -> Support SilkTerm opens the README Support section (config `SUPPORT_URL`), a `## Support` README section + top Sponsor badge, and `.github/FUNDING.yml`. Still open: the richer in-app popup listing multiple platforms/addresses.
+	- First step done: Help -> Support SilkTerm opens `DONATE.md` (via `SUPPORT_URL`), the owner-controlled donation page (locked with `.github/CODEOWNERS`). Plus a `## Support` README section + top Sponsor badge + `.github/FUNDING.yml`. Still open: the richer in-app popup listing multiple platforms/addresses.
 	- Strategy (what actually moves donations): reach beats the ask - ~80% effort on visibility (the demo video + a Show HN + r/commandline/r/rust/r/unixporn + awesome-* lists), ~20% on the ask. Money order: recurring individual sponsors > one-time tips > corporate (chase corporate later with a named tier once there's visible adoption).
 	- Ask placement: put it at moments of delight (README, release notes, Help menu, About), never a nag - a recurring in-app popup would be fatal for a terminal. Primary platform = GitHub Sponsors (devs are already logged in, 0% fee); Ko-fi/Liberapay as free-tier secondaries. Skip Patreon/PayPal-only.
 	- Owner action: enable a GitHub Sponsors profile for the Sponsor badge/link to go live (else it 404s); fill in `.github/FUNDING.yml` handles.
@@ -1129,7 +1129,16 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✋ Residual 1-line smooth scroll-up on alt-screen enter AND exit (`smooth_scroll_apps`). The enter/exit hard-cut fixed the big jiggle/scroll-in (owner confirmed), but a slight single-line ease still rides the transition. Owner: livable, deferred. Likely the output-ease firing one frame after the transition (the frame after the hard-cut isn't suppressed, and a 1-line history delta on the primary-screen restore nudges it) - a candidate fix is to also rebaseline `last_history` and extend the nudge suppression one frame past the transition.
 
-- 🔘 Minority Report mode: Borderless, transparent, changes perspective depending on screen location.
+- ✋ Minority Report mode: Borderless, transparent, changes perspective depending on screen location.
+
+- ✋ Make signing keys required to edit "about" modal with link to DONATE.md:
+
+	~~~bash
+	project="PROJECT"; mkdir -p private/donation_keys; chmod 700 private/donation_keys
+	ssh-keygen -t ed25519 -C "${PROJECT} donation signing" -f private/donation_keys/donation_ed25519
+	cat private/donation_keys/donation_ed25519.pub | ct
+	cat private/donation_keys/donation_ed25519 | ct
+	~~~
 
 ### Canceled
 
