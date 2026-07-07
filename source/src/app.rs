@@ -212,6 +212,7 @@ enum MenuAction {
 	ToggleMenuBar,
 	ReloadConfig,
 	Settings,
+	Support,
 	About,
 	Quit,
 }
@@ -726,7 +727,11 @@ impl State {
 				Entry::Sep,
 				mi("Close Pane", MenuAction::Close),
 			],
-			_ => vec![mi("About\u{2026}", MenuAction::About)],
+			_ => vec![
+				mi("Support SilkTerm\u{2026}", MenuAction::Support),
+				Entry::Sep,
+				mi("About\u{2026}", MenuAction::About),
+			],
 		}
 	}
 
@@ -881,6 +886,7 @@ impl State {
 			}
 			MenuAction::ReloadConfig => self.reload_config(),
 			MenuAction::Settings => self.open_settings(),
+			MenuAction::Support => open_url(config::SUPPORT_URL),
 			MenuAction::About => self.open_about(),
 			MenuAction::Quit => self.quit = true,
 		}

@@ -9,6 +9,7 @@
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 ![Lifecycle: Beta](https://img.shields.io/badge/Lifecycle-Beta-yellow)
 ![Support](https://img.shields.io/badge/Support-Maintained-brightgreen)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ff69b4)](https://github.com/sponsors/jim-collier)
 
 </div>
 <!--
@@ -54,6 +55,7 @@
 	- [One minor limitation inherent to all terminals](#one-minor-limitation-inherent-to-all-terminals)
 - [Configuration](#configuration)
 - [Installing](#installing)
+- [Support](#support)
 - [Building from source](#building-from-source)
 - [Design](#design)
 - [Copyrights and licenses](#copyrights-and-licenses)
@@ -186,6 +188,14 @@ If making changes directly (rather than through Settings), you can apply them im
 ## Installing
 
 Pre-built releases are not published yet - build from source per the Compiling section. Optional: copy the example config tree in [`filesystem/home/`](filesystem/home/) over your own `$HOME` for a starter config and the background image pack.
+
+## Support
+
+SilkTerm is written by one person in their spare time. If it saves you time or you just like it, sponsoring keeps it moving - even a few dollars a month is real encouragement.
+
+- [GitHub Sponsors](https://github.com/sponsors/jim-collier)
+
+You can also help for free: star the repo, file good bug reports, and tell other terminal nerds it exists. In-app, the same link is under **Help -> Support SilkTerm**.
 
 ## Building from source
 
