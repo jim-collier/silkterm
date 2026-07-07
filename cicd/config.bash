@@ -65,6 +65,11 @@ LINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" CARGO_TARGET_DIR=target/lint car
 DENY_PROBE=(cargo deny --version)
 DENY_CMD=(cargo deny check)
 
+## Stage 3 (last): headless scroll regression harness. Slow (a private Xvfb + GL
+## per scene), so it is skipped under --quick; non-fatal on an environment miss,
+## but a measured scroll regression aborts. Empty () to disable.
+SCROLL_HARNESS=(cicd/tests/scroll/run.bash)
+
 ## Stage 5: native release build + its artifact (this is what gets dogfooded)
 RELEASE_NATIVE_CMD=(cargo build --release)
 RELEASE_NATIVE_BIN="target/release/${EXE_NAME}"
