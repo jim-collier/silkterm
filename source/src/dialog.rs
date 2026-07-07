@@ -62,11 +62,22 @@ pub struct DialogWin {
 	rects: RectRenderer,
 	content: Content,
 	mouse: (f32, f32),
+	// the terminal window this dialog belongs to, so we can restack it beneath
+	// us when we're activated (see raise_parent).
+	parent: Option<RawWindowHandle>,
 }
 
 impl DialogWin {
 	pub fn id(&self) -> WindowId {
 		self.window.id()
+	}
+
+	// Restack the terminal to sit directly beneath this dialog. Called when the
+	// dialog gains focus, so a window that got in front of the terminal can't
+	// stay wedged between them - the transient hints alone don't force this on
+	// WMs that don't raise a transient's parent with it (Compiz).
+	pub fn raise_parent(&self) {
+		restack_parent_below(&self.window, self.parent.as_ref());
 	}
 
 	fn make(
@@ -148,6 +159,7 @@ impl DialogWin {
 			rects,
 			content: Content::About { lines, links },
 			mouse: (0.0, 0.0),
+			parent,
 		})
 	}
 
@@ -184,6 +196,7 @@ impl DialogWin {
 			rects,
 			content: Content::Settings(dialog),
 			mouse: (0.0, 0.0),
+			parent,
 		})
 	}
 
@@ -655,6 +668,58 @@ fn set_transient_for(window: &Window, parent: Option<&RawWindowHandle>) {
 }
 #[cfg(not(target_os = "linux"))]
 fn set_transient_for(_window: &Window, _parent: Option<&RawWindowHandle>) {}
+
+// Keep the parent (terminal) window directly below `dialog` in the stack, via an
+// EWMH _NET_RESTACK_WINDOW client message to the root window. xfwm4/GNOME raise a
+// transient's parent with it automatically; Compiz does not, so when the dialog
+// is re-activated after another window came forward, the terminal stays buried
+// behind that window - this slots it back just beneath the dialog. The message
+// goes to root (the only stacking path Compiz honours for a managed window: it
+// reparents clients into decoration frames, so a direct XConfigureWindow on the
+// client isn't redirected to the WM and does nothing). Focus is untouched.
+#[cfg(target_os = "linux")]
+fn restack_parent_below(dialog: &Window, parent: Option<&RawWindowHandle>) {
+	use winit::raw_window_handle::HasWindowHandle;
+	use x11rb::connection::Connection;
+	use x11rb::protocol::xproto::{ClientMessageEvent, ConnectionExt as _, EventMask};
+
+	let xid = |h: &RawWindowHandle| -> Option<u32> {
+		match h {
+			RawWindowHandle::Xlib(x) => Some(x.window as u32),
+			RawWindowHandle::Xcb(x) => Some(x.window.get()),
+			_ => None,
+		}
+	};
+	let Some(parent_xid) = parent.and_then(xid) else {
+		return;
+	};
+	let Ok(handle) = dialog.window_handle() else {
+		return;
+	};
+	let Some(dlg_xid) = xid(&handle.as_raw()) else {
+		return;
+	};
+	let Ok((conn, screen)) = x11rb::connect(None) else {
+		return;
+	};
+	let root = conn.setup().roots[screen].root;
+	let Some(restack) = conn
+		.intern_atom(false, b"_NET_RESTACK_WINDOW")
+		.ok()
+		.and_then(|c| c.reply().ok())
+		.map(|r| r.atom)
+	else {
+		return;
+	};
+	let mask = EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY;
+	// terminal below the dialog (source = application(1), sibling = dialog,
+	// detail = Below(1)).
+	let ev = ClientMessageEvent::new(32, parent_xid, restack, [1, dlg_xid, 1, 0, 0]);
+	let _ = conn.send_event(false, root, mask, ev);
+	let _ = conn.flush();
+}
+#[cfg(not(target_os = "linux"))]
+fn restack_parent_below(_dialog: &Window, _parent: Option<&RawWindowHandle>) {}
 
 fn map_action(action: Action) -> Option<DialogAction> {
 	match action {
