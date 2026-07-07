@@ -89,11 +89,21 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- ◐ Donation button in Help|About for popup with list of addresses and ULRs. (Not `--donate`.)
-	- First step done: Help -> Support SilkTerm opens `DONATE.md` (via `DONATE_URL`), the owner-controlled donation page (locked with `.github/CODEOWNERS`). Plus a `## Support` README section + top Sponsor badge + `.github/FUNDING.yml`. Still open: the richer in-app popup listing multiple platforms/addresses.
-	- Strategy (what actually moves donations): reach beats the ask - ~80% effort on visibility (the demo video + a Show HN + r/commandline/r/rust/r/unixporn + awesome-* lists), ~20% on the ask. Money order: recurring individual sponsors > one-time tips > corporate (chase corporate later with a named tier once there's visible adoption).
-	- Ask placement: put it at moments of delight (README, release notes, Help menu, About), never a nag - a recurring in-app popup would be fatal for a terminal. Primary platform = GitHub Sponsors (devs are already logged in, 0% fee); Ko-fi/Liberapay as free-tier secondaries. Skip Patreon/PayPal-only.
-	- Owner action: enable a GitHub Sponsors profile for the Sponsor badge/link to go live (else it 404s); fill in `.github/FUNDING.yml` handles.
+- ◐ Donations model:
+	- ✅ "Support SilkTerm!" button in Help|About, with flyover text of URL it's going to open in a web page.
+		- Filled button under the About text, opens `DONATE_URL` (DONATE.md); hovering it flies over the full destination URL. Widens the dialog so the URL isn't clipped.
+	- ✅ `## Support Silkterm` section in README.md
+	- ✅ `DONATE.md`
+	- ✅ `.github/FUNDING.yml`
+	- ✅ Locked with `.github/CODEOWNERS`:
+		- ✅ Help|About dialog
+		- ✅ /.github/CODEOWNERS  @jim-collier
+		- ✅ /DONATE.md  @jim-collier
+		- ✅ /.github/FUNDING.yml  @jim-collier
+	- ✅ Remove ssh signing keys model (for now).
+	- FYI to-do:
+		- Enable a GitHub Sponsors profile for the Sponsor badge/link to go live (else it 404s)
+		- fill in `.github/FUNDING.yml` handles.
 
 - 🔘 For screenshots, and videos, use "Monaspace Argon NF Medium".
 
@@ -175,7 +185,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 Testing:
 	- 🔘 Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
-	- ◐ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
+	- 🛠️ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
 		- Scrolling covered: library tests (`cargo test`) encode the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants (add-a-line vs re-list/jump/bottom-up) and easing monotonicity; a headless harness (`cicd/tests/scroll`) drives deterministic full-redraw scenes off the `SILK_SCROLLDBG` trace and runs in cicd stage 3 (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
 	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
 
@@ -1131,14 +1141,11 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✋ Minority Report mode: Borderless, transparent, changes perspective depending on screen location.
 
-- ✋ Make signing keys required to edit "about" modal with link to DONATE.md (that in turn has CODEOWNER):
-
-	~~~bash
-	project="PROJECT"; mkdir -p private/donation_keys; chmod 700 private/donation_keys
-	ssh-keygen -t ed25519 -C "${PROJECT} donation signing" -f private/donation_keys/donation_ed25519
-	cat private/donation_keys/donation_ed25519.pub | ct
-	cat private/donation_keys/donation_ed25519 | ct
-	~~~
+- ✋ Implement branch protection rules on main:
+	- ✋ Require a pull request before merging (blocks direct pushes), and
+	- ✋ Require review from Code Owners.
+	- ✋ In more distant future: Do not allow bypassing / include administrators
+		- Without this, I (as OG admin) can still merge around it, which is good early on.
 
 ### Canceled
 

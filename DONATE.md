@@ -1,16 +1,22 @@
 # Support SilkTerm
 
-SilkTerm is written by one person in their spare time. If it saves you time or you just like it, sponsoring keeps it moving - even a few dollars a month is real encouragement.
+SilkTerm is written and maintained by one programmer in his spare time. If you like this thing, use it often, and/or it saves you time - sponsoring it keeps it moving!
 
-## Sponsor
+Even a few dollars a month is meaningful. Or just buy me a coffee.
+
+## Direct support
 
 - [GitHub Sponsors](https://github.com/sponsors/jim-collier)
 
-## Free ways to help
+## Indirect support
 
 - Star the repo.
-- File clear, reproducible bug reports.
-- Tell other terminal nerds it exists.
+- File good bug reports and feature requests.
 
-<!-- Additional platforms / addresses go here as they are set up. This file is
-     owner-controlled (see .github/CODEOWNERS). -->
+## Get the word out
+
+Most importantly: Tell other terminal nerds on various socials how this has changed your life:
+
+- [r/commandline](https://www.reddit.com/r/commandline/)
+- [Hacker News](news.ycombinator.com)
+- [r/unixporn](https://www.reddit.com/r/unixporn/)

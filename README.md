@@ -53,11 +53,11 @@
 	- [Why text outer glow](#why-text-outer-glow)
 - [Features](#features)
 	- [One minor limitation inherent to all terminals](#one-minor-limitation-inherent-to-all-terminals)
-- [Configuration](#configuration)
-- [Installing](#installing)
-- [Support](#support)
-- [Building from source](#building-from-source)
-- [Design](#design)
+- [Getting and using](#getting-and-using)
+	- [Installing](#installing)
+	- [Building from source](#building-from-source)
+	- [Configuration](#configuration)
+- [Support SilkTerm](#support-silkterm)
 - [Copyrights and licenses](#copyrights-and-licenses)
 
 <!-- /TOC -->
@@ -175,29 +175,13 @@ Text can be particularly hard to read, for example when using light text on a no
 
 		- But the other features still work in that case: smooth-moving and phased cursor, text outer-glow, background options, etc.
 
-## Configuration
+## Getting and using
 
-On first run SilkTerm writes a commented config file with all defaults to:
-
-```bash
-$XDG_CONFIG_HOME/silkterm/config.toml   (falls back to ~/.config/...)
-```
-
-If making changes directly (rather than through Settings), you can apply them immediately with the "Reload config" menu item.
-
-## Installing
+### Installing
 
 Pre-built releases are not published yet - build from source per the Compiling section. Optional: copy the example config tree in [`filesystem/home/`](filesystem/home/) over your own `$HOME` for a starter config and the background image pack.
 
-## Support
-
-SilkTerm is written by one person in their spare time. If it saves you time or you just like it, sponsoring keeps it moving - even a few dollars a month is real encouragement.
-
-- [GitHub Sponsors](https://github.com/sponsors/jim-collier)
-
-See [DONATE.md](DONATE.md) for the full list of ways to help (it's what **Help -> Support SilkTerm** opens in-app). Free ways too: star the repo, file good bug reports, and tell other terminal nerds it exists.
-
-## Building from source
+### Building from source
 
 See [build.md](build.md).
 
@@ -213,6 +197,16 @@ Or for the full CI/CD pipeline (lint, debug compile, regression test, profile, r
 cicd/cicd.bash [--quick]
 ```
 
+### Configuration
+
+On first run SilkTerm writes a commented config file with all defaults to:
+
+```bash
+$XDG_CONFIG_HOME/silkterm/config.toml   (falls back to ~/.config/...)
+```
+
+If making changes directly (rather than through Settings), you can apply them immediately with the "Reload config" menu item.
+
 <!--
 ## Renaming the project
 
@@ -227,15 +221,34 @@ It rewrites `Cargo.toml`, the Rust sources, and the docs (review `git diff`
 afterwards); `cargo build` regenerates `Cargo.lock`.
 -->
 
-## Design
+## Support SilkTerm
 
-See [design.md](project/design.md) for the general architecture and decisions, and [backlog.md](project/backlog.md) for bugs and features tracked before the first release. (Github [Issues](https://github.com/jim-collier/silkterm/issues) are used after the first release.)
+SilkTerm is written and maintained by one programmer in his spare time. If you like this thing, use it often, and/or it saves you time - sponsoring it keeps it moving!
+
+Even a few dollars a month is meaningful. Or just buy me a coffee.
+
+**Direct support**
+
+- [GitHub Sponsors](https://github.com/sponsors/jim-collier)
+
+**Indirect support**
+
+- Star the repo.
+- File good bug reports and feature requests.
+
+**Get the word out**
+
+Tell other terminal nerds on various socials how this has changed your life!
+
+- [r/commandline](https://www.reddit.com/r/commandline/)
+- [Hacker News](news.ycombinator.com)
+- [r/unixporn](https://www.reddit.com/r/unixporn/)
 
 ## Copyrights and licenses
 
-[Alacritty](https://github.com/alacritty/alacritty) is dual-licensed under the [Apache License, Version 2.0](https://github.com/alacritty/alacritty/blob/master/LICENSE-APACHE) and [MIT License](https://github.com/alacritty/alacritty/blob/master/LICENSE-MIT).
+[Alacritty](https://github.com/alacritty/alacritty) (which provides the basement plumbing) is dual-licensed under the [Apache License, Version 2.0](https://github.com/alacritty/alacritty/blob/master/LICENSE-APACHE) and [MIT License](https://github.com/alacritty/alacritty/blob/master/LICENSE-MIT).
 
-SilkTerm's license, although different, is fully compatible with Alacritty's:
+SilkTerm's license is compatible with Alacritty's:
 
 > Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)<br />
 > Licensed under the GNU General Public License v2.0 or later ([GPL-2.0-or-later](https://spdx.org/licenses/GPL-2.0-or-later.html)). No warranty.
