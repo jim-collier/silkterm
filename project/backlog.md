@@ -45,59 +45,59 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ Bug in double-click to select (then Ctrl+shift+C).
 	- Steps to reproduce: The specific command was `zpool status`. Trying to double-click on a member by label (e.g. "zfs-..."), or "ONLINE", results in something else being selected. It appears to actually select something to the right. But if you can guess correctly on your aim, then hit the copy hotkey, it does correctly copy the text. (Just not the text that's highlighted.)
-	- Cause: `zpool status` indents its config section with a literal TAB. alacritty leaves the '\t' char in the first tab cell (then fills to the tab stop with spaces), and the renderer pushed that raw '\t' into the shaper - cosmic-text expands a tab to a full 8-col stop, shifting the whole row's visible text 7 cells off the col*cell_w grid. The grid (and thus the selection) stayed correct, so the highlight/copy were right but no longer lined up with the on-screen text - clicking a visible word selected the cell 7 columns away. Only bit tabbed output.
-	- Fixed: render any control char in a cell as a plain 1-cell space (`render_char`), so the tab cell advances one column and the row stays grid-aligned.
-	- Verified headless: on the real `zpool status` output the tabbed rows went from x8=158.1 (7 cells off) to x8=84.3 (exact); double-clicking the visible "ONLINE" column on the config rows now selects "ONLINE". Unit test `render_char_maps_controls_to_space`.
+	- Cause: `zpool status` indents its config section with a literal tab. The raw tab was passed through to the shaper, which expands it to a full 8-column stop. That shifted the row's visible text several columns right of the grid the selection uses. The highlight and copy stayed correct but no longer lined up with the on-screen text, so clicking a visible word selected a cell several columns away. Only tab-indented output was affected.
+	- Fixed: render any control character in a cell as a plain one-cell space, so the tab cell advances one column and the row stays grid-aligned.
+	- Verified: on tab-indented output, double-clicking a word now selects that word. Covered by a unit test.
 
 - 🛠️ Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
-	- Cause: the slide shifted the scroll region by up to several lines but only the one fractional-overscan row was ever drawn, so the revealed strip was bare background - and the scrolled-off alt-screen lines are gone from the grid, so there was nothing real to fill it with.
-	- Fixed: retained-frame slide. The pane keeps the previous frame's shaped text (`prev_buffer`, swapped in on each detected step) and draws it, clipped to just the revealed strip, so the strip fills with the real outgoing content while the current frame slides in over it. The per-step offset is now set (not stacked) since the retained frame is exactly one step back.
-	- Verified: across continuous multi-line slides the content fills top-to-bottom with no blank band (mid-slide frames show partial top/bottom rows and unbroken numbering).
+	- Cause: the slide shifted the scroll region by several lines but only one row was ever drawn, so the revealed strip was bare background. The scrolled-off lines are gone from the grid, so there was nothing real to fill it with.
+	- Fixed: retained-frame slide. The pane keeps the previous frame's text and draws it, clipped to the revealed strip, so the strip fills with the real outgoing content while the current frame slides in over it.
+	- Verified: across continuous multi-line slides the content fills top to bottom with no blank band.
 	- Verified:
 		- Works perfectly in `less`.
 		- `nano` exhibits none of the bugs listed above, but it also doesn't scroll smoothly, either with the mouse wheel or via cursor. (In fact, the mouse wheel just moves the cursor up and down. That's standard `nano` behavior, but the note is that scrolling isn't smooth. The cursor vertical movement also isn't smooth (horizontal is). Nano doesn't neeed to have a per-app fix, if it can even be "fixed".
 	- 🛠️ muffer now scrolls smoothly on output - but still not mouse wheel.
-		- Cause: a wheel notch makes the app repaint a bigger jump than line-by-line output, over the 8-line detection window, so it was seen as "not a clean scroll" and hard-cut. Raised the window/slide cap to 24 (experimental, gated by `smooth_scroll_apps`, revert = the one commit or turn the flag off).
-		- Limit: the slide retains only the single previous frame, so fast wheeling can still lag ~one step (looks like snapping). Smoothing that fully needs retaining more frames - a bigger change. Feel-test the cap first.
+		- Cause: a wheel notch makes the app repaint a bigger jump than line-by-line output, past the detection window, so it read as not a clean scroll and hard-cut. Raised the detection cap (gated by `smooth_scroll_apps`).
+		- Note: the slide retains only the single previous frame, so fast wheeling can still lag about one step (looks like snapping). Smoothing that fully needs retaining more frames, a bigger change. Feel-test the cap first.
 	- 🛠️ Static-top-band fix (nano/muffer wheel = no change; less fine). Dogfood: the cap-24 bump didn't help nano or muffer on the wheel (muffer wheels 1 line/notch, well inside the window - so it was never a cap problem).
-		- Cause: the detector matched a line-shift only as a run anchored at the TOP row, and the renderer slid the whole pane from its top. `less` fills from the top with only a bottom status line, so both worked. `nano`/`muffer` keep a static title bar at the TOP: its unchanging row 0 broke the top-anchored match (detector returned 0 -> hard cut), and even if detected the title would slide/bounce.
-		- Fixed: `scroll_shift_signed` now finds the k where the most rows translate ANYWHERE (tolerates static bands at both ends), guarded by a "rows actually moved" count so a static/blank field can't false-trigger; `build` counts a static TOP band (mirror of the bottom one); the slide renders the scroll region between `top_split_y` and `split_y` with the top title bar redrawn unshifted. No-band apps (less/vim) are byte-identical (top_split_y = f32::MIN). App-scroll is alt-screen-only, so apt is unaffected.
-		- Feel-test on hardware: nano + muffer wheel one notch should ease, not snap; the title bar must stay put (no bounce); less must be unchanged. Still gated by `smooth_scroll_apps`.
+		- Cause: the shift detector only matched a run anchored at the top row, and the renderer slid the whole pane from its top. `less` fills from the top with only a bottom status line, so it worked. `nano` and `muffer` keep a static title bar at the top; its unchanging first row broke the top-anchored match, so no slide engaged, and even if it had the title would bounce.
+		- Fixed: the shift detector now matches wherever the most rows translate, tolerating static bands at both ends, guarded so a static or blank screen can't false-trigger. A static top band is detected and its title bar redraws unshifted while the region below it slides. Apps with no top band are unchanged, and app-scroll stays alt-screen only, so apt is unaffected.
+		- Pending: a feel-test - nano and muffer wheel one notch should ease, not snap, the title bar should stay put, and less should be unchanged. Still gated by `smooth_scroll_apps`.
 	- ✋ Residual band jitter during a slide (nano; "almost perfect" otherwise). Two symptoms, different causes:
-		- Text moving UP (content scrolls up): the drop-shadow *under* the inverse-video header title jumps DOWN. STILL OPEN (real root cause now known + reproduced).
-			- Partial fix landed (own-bg mask): the glow no longer applies over any cell with its own solid bg (reverse video, coloured bg, selection) - they have full contrast, so the halo there was pure artifact. bgcolor-map alpha is now an own-bg mask; the blur gates each tap by it. Removed the header's STATIC halo (A/B: below a reverse bar over a bright image the halo patch (216,216,225) -> (235,235,245) = the image, all other text glow byte-identical). Shared with the inverse-thin bug below. But this did NOT fix the owner's symptom - it's a MOTION artifact:
-			- Real root cause (reproduced headless, nano-shaped scene over a bright bg image, frozen slide via huge scroll_tau_ms): the retained-frame slide fills the revealed strip from the PREVIOUS frame for the TEXT but does NOT glow that strip (app.rs glow pass skipped prev). So during a down-slide the rows in the strip just below the header lose their dark readability backing, and as the slide settles the backed/unbacked boundary marches down = "the shadow jumps down". Clearly visible: strip rows render faint over the bright image while settled rows below have the dark backing.
-			- Fixed (glow the reveal strip): the glow pass now also glows the prev-frame strip (mirrors the text pass), so the revealed rows keep their readability backing and the boundary no longer sweeps. Guarded: only when the band on the strip's furniture side is detected (`has_top_band` for a top strip / `has_band` for a bottom strip) - that band clips the prev frame's header/status out of the glow. The first naive attempt (unconditional) blobbed the header when the top band wasn't detected (`st=0`): the open clip dragged prev's own-bg header in, mis-aligned with the current own-bg mask, glowing it dark. Instrumented the detector to prove it - `st=0` only in a DECSTBM-scroll scene; a full-redraw scene (how nano/curses actually paint) gives `st=1` and the header stays clean.
-			- Verified headless A/B (redraw scene, `st=1`): header dark-px flat 1459-1580 (0 blobby frames), strip glowed; and the `st=0` DECSTBM edge case no longer blobs (max 3742 -> 574) thanks to the guard. Needs an owner feel-test on REAL nano to confirm the wheel/cursor feel.
-		- Text moving down fast: the bottom two lines jump UP. Likely the SAME un-glowed-strip issue at the bottom edge (up-slide reveal strip above the status line), now also glowed by the same fix when `has_band`. If any residual jump remains after the feel-test, the leftover is band re-detection mid-ease (a new step re-captures band sizes + resets `app_off`); fix would be to hold band sizes stable across an in-progress ease.
-		- Band freeze did NOT help (owner re-tested: "looks the same as before"). Instrumented `static_bands`/`app_off` against REAL nano for ground truth: the bands were already stable (frozen `(1,3)`, no fluctuation) - so band jitter was never the cause of this symptom. The real signal was `app_off` itself oscillating frame-to-frame (`0.57 -> 1.15 -> 0.37 -> 1.72 ...`) - THAT is the bounce.
-		- Accumulation (first attempt) made it worse, not better (owner: "jump much farther, with less aggressive scrolling"). Accumulating `app_off` for the current content was right (content is measurably smooth), but ALSO accumulating `slide_sh` to fill a taller strip from ONE stale prev snapshot was wrong: when the cumulative shift outgrew the scroll region, prev was re-captured and slide_sh reset, jumping the reveal strip (and its glow) by the WHOLE scroll-region height (~28 cells) - a periodic ~screenful jump that scales with accumulation depth = the "farther" bounce.
-		- Real fix (recapture every step + lag ramp): keep `app_off` accumulating (smooth content), but RE-SNAPSHOT prev every step so the strip is always one fresh step back (no more 28-cell re-capture jump). One retained frame only fills a one-step strip, so a fast burst could still lag far enough to open a blank band; a lag ramp on the `app_off` ease (scroll.rs) fixes that - it eases at the smooth configured speed while the lag is under ~1 line (gentle scroll unchanged) and ramps the ease faster as the lag grows, bounding `app_off` to ~1 (gentle) / ~3 (fast) instead of running to ~7. Built a headless bounce harness (deterministic full-redraw nano-shaped scene + `SILK_SCROLLDBG` per-frame trace + a monotonicity analyzer) - measured content bounce 0, band-boundary jumps 0, prev-strip jump <1.6 cells, across gentle/fast/wheel with real top+bottom bands; mid-slide dumps show the blank band shrank from ~7 lines to ~1. But the residual on real nano over the owner's bg image was still visible ("only as bad as the previous-to-last round").
-		- Deferred: Title-bar apps hard-cut for now (`SLIDE_TOP_BAND_APPS = false` in pane.rs): the smooth slide only engages when there's NO static top band (`st == 0`), so `less` still slides (verified) and nano/muffer just page-redraw, as before the top-band work - no slide means no bounce. The enter/exit hard-cut fixes (no jiggle on launch, no scroll-in on exit) are untouched (they live in the `alt_transition` path). Flip the const to re-enable and resume the bounce work; the proper next step there is N-frame retention so the reveal strip always fills regardless of lag. Verified headless: nano scene (st=1) detects the shift but `app_off` stays 0 (hard cut); less scene (st=0) still eases, bounce 0.
+		- Text moving up (content scrolls up): the drop-shadow under the inverse-video header title jumps down.
+			- Note: a partial fix stopped the glow from applying over any cell with its own solid background (reverse video, coloured background, selection), since those already have full contrast. This removed the header's static halo but did not fix the reported symptom, which is a motion artifact.
+			- Cause: the retained-frame slide fills the revealed strip with the previous frame's text but does not glow that strip. During a down-slide the rows just below the header lose their readability backing, and as the slide settles the backed and unbacked boundary marches down - that is the shadow jumping down.
+			- Fixed: the glow pass now also glows the previous-frame strip, so revealed rows keep their readability backing and the boundary no longer sweeps. Guarded so it only applies when the relevant static band is detected, which clips the previous frame's header and status out of the glow.
+			- Verified: the header stays clean and the strip is glowed, with no blobbing in the edge case. Needs a feel-test on real nano to confirm the wheel and cursor feel.
+		- Text moving down fast: the bottom two lines jump up. Likely the same un-glowed-strip issue at the bottom edge, now covered by the same fix. If any residual jump remains after the feel-test, the leftover is band re-detection mid-ease; the fix would be to hold band sizes stable across an in-progress ease.
+		- Note: freezing the band sizes did not help (re-tested: looks the same as before). The bands were already stable, so band jitter was never the cause. The real signal was the scroll offset itself oscillating frame to frame, which is the bounce.
+		- Note: an accumulation attempt made it worse (re-tested: jumps much farther). Accumulating the offset for the current content was right, but accumulating the strip fill from one stale snapshot was wrong - when the shift outgrew the scroll region the snapshot was re-captured, jumping the reveal strip by a whole screenful. That periodic jump was the farther bounce.
+		- Fixed: keep the offset accumulating for smooth content, but re-snapshot the previous frame every step so the strip is always one fresh step back. One retained frame only fills a one-step strip, so a fast burst could still open a blank band; a lag ramp on the ease bounds that by easing faster as the lag grows. A regression harness measured no content bounce and no band-boundary jumps across gentle, fast, and wheel scrolling, with the blank band shrinking to about one line. But a residual on real nano over a background image was still visible.
+		- Deferred: title-bar apps hard-cut for now - the smooth slide only engages when there is no static top band, so `less` still slides and nano and muffer just page-redraw as before, with no slide and so no bounce. The enter and exit hard-cut fixes are untouched. Re-enabling the slide for title-bar apps needs multi-frame retention so the reveal strip always fills regardless of lag. Verified: title-bar apps hard-cut while `less` still eases smoothly.
 
 - ✅ Choosing "Tabs|New Tab" the first time, opens a second tab. Doing it again, changes to the first tab, rather than opening a third tab.
-	- Cause: a dropdown menu opens flush under the menu bar, so its top item ("New Tab") sits in the tab-bar band. The mouse handler checked the tab-bar hit before the open-menu hit, so once >1 tab exists (tab bar shown) the tab bar stole the click and selected a tab instead of firing the item. The first New Tab worked only because there was no tab bar yet (1 tab).
-	- Fixed: skip the tab-bar click handler while a dropdown is open (`state.menu.is_none()`), so the click reaches the menu.
-	- Verified headless: repeated "Tabs|New Tab" now grows the tab count 2 -> 3 -> 4; with the guard removed the 2nd click reproduced the bug (selected tab 0).
+	- Cause: a dropdown opens flush under the menu bar, so its top item ("New Tab") sits in the tab-bar band. The mouse handler checked the tab-bar hit before the open-menu hit, so once more than one tab existed (tab bar shown) the tab bar stole the click and selected a tab instead of firing the item. The first New Tab worked only because there was no tab bar yet.
+	- Fixed: skip the tab-bar click handler while a dropdown is open, so the click reaches the menu.
+	- Verified: repeated "Tabs|New Tab" now grows the tab count instead of toggling back to the first tab.
 
 - 🔘 When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
-	- Investigated: no obvious code-path desync found. `bg_image_changed` already includes `background_blur`, `needs_text_rebuild` covers font, `load_bg_image` re-reads the fresh blur, and the glow re-shapes each build. Needs a live repro (change font in Settings, OK, watch the blur) to pin which "blur" and the exact trigger - deferred to an interactive pass since dialog driving is flaky here.
+	- Note: no obvious desync found - the blur and font both already rebuild on the relevant changes. Needs a live repro (change font, OK, watch the blur) to pin which blur and the exact trigger. Deferred to an interactive pass.
 
 - 🔘 At high blur radius and low softness, the blur has boxy artifacts.
-	- Diagnosed: the glow is a separable blur with a fixed 25-tap kernel truncated at +/-3 sigma (`glow.rs` fs_blur). Two causes: (a) the hard +/-3 sigma cutoff leaves a ~1% edge that low softness (x10 intensity) amplifies into a visible square; (b) the linear/s-curve falloffs aren't true Gaussians, so blurred separably their support is a diamond/box, not a circle - and the default falloff is now s-curve. Fix is a look-vs-perf tradeoff (wider extent + more taps, and/or a windowed kernel) that wants eyeballing - deferred to a visual pass.
+	- Cause: the glow is a separable blur with a truncated kernel. The hard cutoff leaves a faint edge that low softness amplifies into a visible square, and the linear and s-curve falloffs are not true Gaussians, so their support reads as a diamond or box rather than a circle. The fix is a look-versus-performance tradeoff (wider extent, more taps, or a windowed kernel) that wants eyeballing. Deferred to a visual pass.
 
 - 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
-	- Cause: when the glyph atlas fills up during a long, varied session, text prepare() fails and render bailed out before the per-frame atlas trim. The atlas never recovered, so text stayed black. Cursor and per-cell backgrounds use a separate renderer, so they kept showing.
+	- Cause: when the glyph atlas fills up during a long, varied session, text preparation fails and rendering bailed out before the per-frame atlas trim. The atlas never recovered, so text stayed black. The cursor and per-cell backgrounds use a separate renderer, so they kept showing.
 	- Fixed: trim the atlas on the prepare-failure path, so the next frame re-prepares with room and recovers.
-	- Note: couldn't force an atlas-full for a live repro. A 20s flood didn't fill it; the trigger needs a genuinely long session.
-	- Verified: a 50s max-rate unicode flood stayed visible throughout, app alive, no black-out. This box lacks the CJK/emoji coverage to actually fill the atlas, so the exact trigger is still unreproduced here.
+	- Note: could not force an atlas-full for a live repro; the trigger needs a genuinely long session.
+	- Verified: a sustained high-rate unicode flood stayed visible throughout with no black-out. The exact atlas-full trigger is still unreproduced, since the available fonts can't fill the atlas.
 	- Resolution: leave open until confirmed on long-running terminals.
 
 ### New features and enhancements
 
 - 🛠️ Donations model:
 	- ✅ "Support SilkTerm!" button in Help|About, with flyover text of URL it's going to open in a web page.
-		- Filled button under the About text, opens `DONATE_URL` (DONATE.md); hovering it flies over the full destination URL. Widens the dialog so the URL isn't clipped.
+		- Done: a filled button under the About text opens `DONATE_URL`. Hovering it shows the full destination URL, and the dialog is widened so it isn't clipped.
 	- ✅ `## Support Silkterm` section in README.md
 	- ✅ `DONATE.md`
 	- ✅ `.github/FUNDING.yml`
@@ -112,11 +112,11 @@ In each section, items are listed approximately from newest to oldest.
 		- fill in `.github/FUNDING.yml` handles.
 
 - ✅ Settings: "Backdrop blur" -> "Blur-behind"
-	- Renamed the Settings toggle label (internal `Key::BackdropBlur` / `transparent_background_blur` unchanged).
+	- Done: renamed the Settings toggle label; the internal key is unchanged.
 
 - 🛠️ For screenshots, and videos, use "Monaspace Argon NF Medium".
-	- Done: `utility/screenshots.bash` font stack set to "Monaspace Argon NF Medium, Monaspace Argon NF, DejaVu Sans Mono". Note: `font_family` selects a family, not a weight, so it renders the Argon NF family at regular weight (true "Medium" would need a font-weight config). Videos will pick this up when that item is built.
-	- Pending: regenerate the committed screenshot PNGs (heavy visual pass) so they actually show the new font - fold into the next cicd/visual regeneration and eyeball.
+	- Done: `utility/screenshots.bash` font stack set to the Monaspace Argon NF family with fallbacks. Note: `font_family` selects a family, not a weight, so it renders at regular weight (true Medium would need a font-weight config). Videos will pick this up when that item is built.
+	- Pending: regenerate the committed screenshot PNGs so they show the new font. Fold into the next visual regeneration and eyeball.
 
 - 🔘 CICD process (without --quick): Only after quite major changes, record a demo video:
 	- 🔘 Showing a wide variety of synthetic, anonymized content, with varying burst of text output length.
@@ -135,22 +135,22 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Store a copy of only the most recent video probably under `siklterm/github/source/video/demo.{ext}`. Make sure README.md embeds or references it visibly near the top.
 
 - ✅ Triple-click: Select the entire line - even if it's wrapped.
-	- Done: multi-click counter (1=run, 2=word/pair, 3=line; a 4th wraps back to 1, same 400ms/1-cell window as double-click). Triple selects `Pane::line_span` - the whole logical line, walking soft-wrapped continuation rows via WRAPLINE (`logical_line_bounds`, unit-tested).
-	- Verified headless: triple-clicking a line that wraps across two rows selects the full logical line; double still selects the word, single unchanged.
+	- Done: a multi-click counter (single = run, double = word or pair, triple = line, a fourth wraps back), using the same timing window as double-click. Triple selects the whole logical line, including soft-wrapped continuation rows.
+	- Verified: triple-clicking a line that wraps across two rows selects the full logical line; double still selects the word, single unchanged.
 
 - 🔘 Ctrl+Shift+N: New window on same directory.
 
 - ✅ Tabs: Include a subtle 'X' icon in right edge of tab, to close with mouse.
-	- Done: each tab reserves a right-edge close region (`TAB_CLOSE_W`) with a dimmed "×" glyph; the tab title clips before it. A left click in that region closes the tab (`close_tab_at`), elsewhere selects it.
-	- Verified headless: the × renders subtly at each tab's right edge; clicking it closes that tab, clicking the tab body selects it.
+	- Done: each tab reserves a right-edge close region with a dimmed "x" glyph; the tab title clips before it. A left click in that region closes the tab, elsewhere selects it.
+	- Verified: the close glyph renders subtly at each tab's right edge; clicking it closes that tab, clicking the tab body selects it.
 
 - 🔘 Blur: Naturally doesn't extend diagonally very far. When blurring a rectangle, for example, this is a known effect of, say, Gaussian blur. So either use a different blur that covers the diagonal directions better, or tweak the blur kernel so that it does that.
 
 - ✅ Cursor animation immediately resets and starts over on keypresses (typing, editing, or moving). That's not very smooth, it shouldn't do that. Add options:
 		- Keep animating.
 		- Wait until the animation reaches full-size, then stop animating. Don't resume animating until some timeout after input stops.
-	- Done: `cursor_animation_input` config key. "continuous" (default) keeps animating right through typing. "pause" glides the cursor to its full-size phase and holds it while there's recent input, then resumes once input has been idle ~0.35s (`CURSOR_INPUT_PAUSE_S`). Parking at the full phase makes the pulse resume smoothly (full -> shrink -> grow).
-	- Follow-up (owner feel-test): (1) no longer snaps to full - `glide_to_full` advances the phase to the full-size point then holds, so a keypress lets the current cycle finish to full instead of jumping. (2) Timeout 1.0s -> 0.35s (the old delay felt unresponsive). (3) Default flipped "pause" -> "continuous".
+	- Done: `cursor_animation_input` config key. "continuous" (default) keeps animating through typing. "pause" glides the cursor to its full-size phase and holds it while there is recent input, then resumes once input has been idle briefly. Parking at the full phase makes the pulse resume smoothly.
+	- Follow-up (from a feel-test): it no longer snaps to full - a keypress lets the current cycle finish to full instead of jumping; the idle timeout was shortened because the old delay felt unresponsive; and the default was flipped to "continuous".
 	- Pending (optional): expose the choice in the Settings dialog (file-only for now).
 
 - 🔘 Option to include the cursor in outer-glow. Default to off. Still outline it though.
@@ -206,7 +206,7 @@ In each section, items are listed approximately from newest to oldest.
 - 🔘 Testing:
 	- 🔘 Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
 	- 🛠️ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
-		- Scrolling covered: library tests (`cargo test`) encode the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants (add-a-line vs re-list/jump/bottom-up) and easing monotonicity; a headless harness (`cicd/tests/scroll`) drives deterministic full-redraw scenes off the `SILK_SCROLLDBG` trace and runs in cicd stage 3 (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
+		- Done: scrolling is covered by library tests encoding the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
 	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
 
 - 🔘 Build packages when cicd.bash `--quick` isn't specified:
@@ -435,8 +435,8 @@ In each section, items are listed approximately from newest to oldest.
 #### Done - Bugs
 
 - ✅ Inverted text (e.g. Nano headers) is thin and hard-to-read.
-	- This turned out to be the owner's ACTUAL nano complaint (the "shadow jump" language was describing this). Dark-on-light (reverse video) renders visually thinner than the same-weight light-on-dark - inherent irradiation + AA, and SilkTerm/xfce-terminal both show it (Terminator renders it bolder). The glow only boosts light-on-dark text (dark halo), so inverse text got no readability help; the earlier own-bg mask removed the eroding bright halo but added no boost.
-	- Fix (embolden): new `embolden_inverse` config bool (default true) - reverse-video runs render at Weight::BOLD so they read as strongly as normal text. `pane.rs` build() ORs INVERSE into the run bold flag. Verified headless: inverse text is visibly thicker with it on (bold face applies; the delta is modest with the default DejaVu mono - a font with a heavier bold shows more). Needs owner feel-test; if too subtle, next step is faux-bold (stroke dilation) for stronger control.
+	- Cause: this was the actual nano complaint (the "shadow jump" language was describing it). Reverse video (dark on light) renders visually thinner than the same-weight light-on-dark text, an inherent effect that other terminals also show. The glow only boosts light-on-dark text, so inverse text got no readability help.
+	- Fixed: a new `embolden_inverse` config bool (default true) renders reverse-video runs bold so they read as strongly as normal text. Verified: inverse text is visibly thicker with it on, though the delta is modest with the default font. Needs a feel-test; if too subtle, the next step is faux-bold (stroke dilation).
 
 - ✅ "Right-click bug" clarification.
 	- Cause: a mouse-tracking app (muffer/vim/tmux) grabs the mouse, so the right-click was forwarded to it (muffer pastes on right-click) instead of opening our menu; and a click meant for an open menu was being reported to the app underneath, so menu items did nothing. `nano`/`less` don't grab the mouse, hence unaffected.
@@ -497,13 +497,13 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ High severity: Typing "exit" in tab, closes the whole application. It should only close that tab. Doesn't do that for panes, only tabs. Closing a tab via menu only closes that one tab. (20260629; real cause found + fixed 20260630)
 	- Cause: the shell-exit handler (`UserEvent::Exit(id)` in app.rs) just called `tabs.cur_mut().close(id)` and quit the app whenever that returned true. So the last pane of a tab killed the whole app when other tabs existed; worse, a background tab's shell exiting ran `close(id)` on the *active* tab (which doesn't own that pane) -> returns true -> app quit. The Close-Pane menu had the right pane->tab->window cascade; the exit path didn't.
 	- Fix: `UserEvent::Exit` now finds the pane's owning tab (`position(|pm| pm.panes.contains_key(&id))`) and applies the same cascade - >1 pane in that tab closes the pane; else >1 tab closes that tab (`close_tab_at(idx)`, generalized from `close_tab`); else (last pane of last tab) exits. Handles background-tab exits and keeps `active` pointing at the same tab.
-	- Verified: runtime - launched with a 2nd (active) tab whose shell self-exits after 3s; app stayed alive past the exit (tab closed, window survived) instead of quitting. Builds clean.
-	- Re-verified fixed on current main (20260630): the app survives the tab's shell exiting in all 3 tests - CLI active-tab exit, CLI background-tab exit, and typing `exit` interactively in the active tab of a 2-tab window (1 window stays up). If it's still happening for you, the running/dogfood binary predates the fix - rebuild (`cargo run --release`) or re-run cicd to reinstall, then retest.
+	- Verified: with a second active tab whose shell self-exits, the app stays alive past the exit (the tab closes, the window survives) instead of quitting.
+	- Re-verified fixed on current main (20260630): the app survives the tab's shell exiting in all three cases - active-tab exit, background-tab exit, and typing `exit` interactively in the active tab of a two-tab window. If it still happens, the running build predates the fix; rebuild or reinstall, then retest.
 		- ✅ Still not fixed. With three tabs open, for example:
 			- Type "exit" in the anything but the last tab, it closes ALL tabs, except for one. Sometimes, the program becomes unresponsive then and has to be killed.
 			- Type "exit" in the last tab, it closes the program.
 			- With four tabs open, and type "exit" from the third, closes the first two tabs (and not the third).
-		- ✅ REAL cause (20260630): pane ids collided across tabs. Each tab is a separate PaneManager that assigned ids from its own counter (first pane always id 1), so the shell-exit event (carries only the id) resolved to the WRONG tab - the first one with that id - and closed it; dropping that tab's term fired another Exit -> cascade (closed all but one, sometimes hung), exactly as reported. The earlier fix (find the owning tab + cascade) was right in shape but the id lookup was ambiguous. Fix: `alloc_pane_id()` - one global counter, so every pane is unique everywhere. Verified with instrumentation: exit in the 3rd of 4 tabs resolves to tab index 2, exactly one close, no cascade, app alive.
+		- ✅ REAL cause (20260630): pane ids collided across tabs. Each tab is a separate PaneManager that assigned ids from its own counter (first pane always id 1), so the shell-exit event (carries only the id) resolved to the WRONG tab - the first one with that id - and closed it; dropping that tab's term fired another Exit -> cascade (closed all but one, sometimes hung), exactly as reported. The earlier fix (find the owning tab + cascade) was right in shape but the id lookup was ambiguous. Fix: `alloc_pane_id()` - one global counter, so every pane is unique everywhere. Verified: an exit in a background tab closes exactly that tab, with no cascade and the window staying alive.
 
 - ✅ Cursor: (20260629)
 	- ✅ Smooth-scroll (when moving to the right).
@@ -526,7 +526,7 @@ In each section, items are listed approximately from newest to oldest.
 	- Fix: gate the cursor-key path on `ALT_SCREEN` (now requires alt screen AND alternate-scroll AND no mouse mode). The primary screen always routes to the smooth scrollback (`Scroll::wheel`, already proportional to notches via `wheel_lines` + easing). Alt-screen apps (less/nano/vim) keep their cursor-key wheel. `app.rs` MouseWheel arm. Verified by root-cause + build (runtime wheel injection can't be scripted reliably).
 
 - ✅ Severe bug: Trying to open the settings dialog crashes the program. (20260625-150526)
-	- Cause: with always-GL on X11 the main window holds a glutin GL/EGL context, and the pop-out dialog's `Gfx::new` created a second `wgpu::Instance::default()` (all backends, including GL); wgpu-hal's GL init then panicked in EGL teardown (`unmake_current().unwrap()`, "Another window API already has a current context"). Increment A/B tests used a native-Vulkan main (default config), which masked it; the transparent (GL) main hit it every time.
+	- Cause: on X11 the main window holds a GL context, and the pop-out dialog created a second graphics instance that also tried to init GL, which panicked because a GL context was already current. It only showed with a transparent (GL) main window, so a default-config main masked it.
 	- Fix: dialogs now create their `Gfx` via `Gfx::with_backends(window, Backends::PRIMARY)` (Vulkan/Metal/DX12, no GL) - opaque dialogs don't need GL, and avoiding it sidesteps the EGL conflict. Verified: Settings + About open over a transparent GL main with no crash; toggle on->Opacity enabled, off->greyed.
 
 - ✅ Mouse text selection, and double-click selection, quit working. (20260625-161509)
@@ -543,7 +543,7 @@ In each section, items are listed approximately from newest to oldest.
 	- Verified: single pane + single tab -> Close Pane exits.
 
 - ✅ Text background colors, and the block cursor, appear to be aligned a line below where they should be.
-	- Cause: Regression from the menu bar. Cell backgrounds, the cursor, and the bars are all rect quads in absolute framebuffer pixels (same space as the glyphon text viewport), but `rects.set_resolution` (and the bg-image shader) were being fed the content `area` height, which the menu bar made shorter than the window - so the shader's `px.y / resolution.y` mapping pushed every quad down relative to the text.
+	- Cause: a regression from the menu bar. Cell backgrounds, the cursor, and the bars are positioned in full-window pixels, but the resolution was being fed the shorter content-area height, so every quad was pushed down relative to the text.
 	- Fix: Pass the full window size (`gfx.config.width/height`) to both `set_resolution` calls.
 	- Verified: ANSI bg-color spans sit exactly on their text and the block cursor is on its own row.
 
@@ -559,7 +559,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ There are weird spacing issues with the cursor. It appears too far after text. There are also weird text background color interactions with `ble`, which I suspect is caused by the spacing issue.
 	- Cause (re-fixed): the earlier two-part fix below was incomplete because `cell_w` was rounded (measured pitch ~10.5px -> 11). Everything grid-positioned (cursor, cell bg, per-cell glyphs) is placed at `col*cell_w`, so a `cell_w` that's bigger than the text's actual advance drifts them right of the text, and the drift accumulates per column. The cursor sat further past the text the longer the line, and fallback glyphs landed on top of the next cell at higher columns (`set_monospace_width` doesn't snap here. Cosmic-text only snaps when the font's `monospace_em_width()` is `Some`, which system fonts often aren't, so text renders at its natural advance).
-	- Fix: `measure_cell` now measures the real rendered pitch (`Shaping::Advanced`, averaged over 40 `M`s) and `cell_w` is not rounded -> it matches the text, residual drift is sub-pixel. Plus per-cell fallback glyphs are now fit to their cell box: `fill_glyph` returns the glyph's true ink width/offset (rasterized; advance != ink for `➡`/emoji) and `build` scales+centers each via `TextArea.scale` so an over-wide fallback can't spill onto its neighbour. Verified at runtime: cursor sits one cell after `…$ ` with no drift; `A➡B➡C…` and `A😀B…` align at col 0 and col ~40; CJK/emoji = 2 cells; math/box-drawing stay in-buffer and crisp.
+	- Fix: the cell width now measures the real rendered pitch and is not rounded, so it matches the text and residual drift is sub-pixel. Per-cell fallback glyphs are fit to their cell box, scaled and centered so an over-wide fallback can't spill onto its neighbour. Verified: the cursor sits one cell after the prompt with no drift, and wide glyphs (CJK, emoji) occupy two cells without overlapping.
 	- (Earlier partial fix, superseded by the above) 1) `set_monospace_width(cell_w)` in `TextCtx::new_buffer`; 2) pulling glyphs the primary mono face lacks out of the main buffer and drawing them per-cell. The extraction [2] is still in place; [1] is kept but is largely inert for system fonts.
 
 - ✅ Opacity should only affect the text rendering area, the actual terminal. Instead, it is also affecting the entire window including window decorations.
@@ -585,7 +585,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ Text size is smaller than system default monospace.
 	- Fix: Default font size now follows the OS's monospace/fixed-pitch size instead of a fixed 15px, via per-platform detection in `src/sysfont.rs`: Linux `gsettings` -> `fc-match`; macOS `defaults read -g NSFixedPitchFontSize`; Windows `SystemParametersInfo` message-font (windows-sys FFI). Points->px at 96 DPI. `font_size` in the config is commented out by default (follow system); set it to pin a size. Falls back to 17px when detection fails.
-	- Verified: Linux at runtime (13pt -> 1528x1016), Windows cross-build compiles; macOS path is std-only subprocess, not run-tested here (no mac target).
+	- Verified: renders at the detected size on Linux, and the Windows cross-build compiles. The macOS path is not run-tested (no mac target).
 
 - ✅ Native keybindings for `less` don't work.
 	- Fix: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
@@ -705,7 +705,7 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Settings dialog:
 	- Done: all sub-items complete (last was full keyboard control).
 	- ✅ Should be "modal" and connected to terminal window. (20260702, branch dlgmodal)
-		- Done: the dialog is tied to the terminal window. X11 gets a transient-for hint; Windows and macOS use winit's owner/parent. The WM keeps it above the terminal and groups them. Simulated modal: while a dialog is open the main window swallows keyboard, wheel, and IME input, and clicking it re-focuses the dialog. Applies to About too.
+		- Done: the dialog is tied to the terminal window - X11 gets a transient-for hint, and Windows and macOS use the window-manager parent relationship. The window manager keeps it above the terminal and groups them. While a dialog is open the main window swallows keyboard, wheel, and IME input, and clicking it re-focuses the dialog. Applies to About too.
 		- Verified: the transient-for hint points at the terminal window; typing at the terminal does nothing while open; clicking the terminal keeps the dialog active; after Esc, typing renders again.
 	- ✅ As the number of settings may grow, we need a way to manage increasing length. Can't go beying about 1048 pixels high, including window decorations. (So roughly 1010 pixels total to be safe.) Implement both of these options: (20260626-102933)
 		- ✅ Make the Settings window shrinkable and then add scrollbars only when necessary, so that it won't render beyond allowable space. By default, always try to open it normal size, unless constrained by display resolution.
@@ -766,10 +766,10 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Are Ctrl+Backspace, Ctrl+Del possible to delete whole words? Is that something some terminals do? XFCE terminal and Terminator don't.
 		- Done: Both send now (xterm convention: Ctrl+Backspace = 0x08, Ctrl+Del = `ESC[3;5~`). Whether they delete a word is up to the app. Bash needs `bind '"\C-h": backward-kill-word'` / `'"\e[3;5~": kill-word'`, most modern TUIs handle them out of the box.
 
-- Added 'silkterm/github/cicd/utility/gui-headless.bash'. It allows running the terminal for testing in a GUI environment that doesn't interfere with current user session, via use of xvfb in the script.
+- Added `cicd/utility/gui-headless.bash`, a helper for running the terminal in an isolated GUI environment.
 	- ✅ Update all tests, scripts, and profiling to run in that environment. (20260701)
-		- Done: the profiler stage brings up the private Xvfb and runs the app there, so no window pops on the live session. It skips only if Xvfb, python3, or the workload are missing. Unit tests need no display anyway.
-		- Verified: the app renders on Xvfb via software GL and the profiler produced a valid flamegraph.
+		- Done: the profiler stage runs the app on the private display, so no window pops on the live session. It skips if the display, python3, or the workload are missing. Unit tests need no display anyway.
+		- Verified: the app renders on the private display and the profiler produced a valid flamegraph.
 
 - ✅ Cursor: (20260701)
 	- ✅ After the related cursor bug fix above, set default cursor_size_horizontal to 25.
@@ -916,7 +916,7 @@ In each section, items are listed approximately from newest to oldest.
 				1. Offscreen is now `Rgba16Float`, high-precision linear intermediate; the blit still does the single linear->sRGB encode into the 8-bit fbo 0.
 				2. The blit adds TPDF dither (~1 LSB, per-pixel hash) before the 8-bit write, breaking residual banding scene-wide.
 				3. The blur now runs in linear light (decode sRGB -> blur in f32 -> re-encode) so edges are gamma-correct.
-			- Verified on a dark gradient. Visibly smooth. `dump_offscreen` updated to decode f16.
+			- Verified: the gradient is visibly smooth.
 
 - ✅ Text readability glow:
 	- ✅ When enabled, this setting adds some blurry background color, behind each glyph. In Photoshop, it's called "Outer Glow". - Done via `src/glow.rs` (`Glow`): the scene's text is rendered to a texture, blurred with a 2-pass separable Gaussian (`text_glow_radius` sigma), then composited (tinted the bg colour, `srgb_f32(bg)`) under the crisp text. Ping-pong f16 textures; intensity boost (`GLOW_INTENSITY=6`) so the blurred coverage is solid near glyphs. Gated `config.text_glow` (default off -> render path unchanged). Verified: light text on a light background is unreadable without it, clearly readable with it (dark halo). Implements exactly the suggested approach (render-bg-colour -> blur -> crisp on top), using the glyph alpha as the glow mask so no separate glow-coloured buffers are needed.
@@ -966,7 +966,7 @@ In each section, items are listed approximately from newest to oldest.
 	- Transparency should not affect the Window decorations, menu, focus, or - critically - terminal text.
 	- Status: Done. Opt-in `transparent_background = true`; `opacity` is the background alpha; text, decorations, and the menu/tab bars stay opaque. Verified on X11/Compiz/NVIDIA, decorated and borderless. Default (`false`) path unchanged (native wgpu).
 	- How: wgpu can't get per-pixel alpha on X11 by itself (its Vulkan swapchain forces an opaque surface; its GL backend won't bind the 32-bit ARGB visual). So on X11 we create the window + a transparent GL context with glutin and run wgpu on top of it via hal interop (`Gfx::new_gl_transparent`), render the scene to an offscreen texture, then blit that into the GL framebuffer. Off X11 (e.g. Wayland) the plain wgpu surface already does premultiplied alpha. `Gfx` is a two-backend enum (native wgpu / GL). No wgpu downgrade, no renderer rewrite.
-	- The hard part (cost ~a day; a web search cracked it - gfx-rs/wgpu #8675 + #8676): on NVIDIA/Linux glyphon renders no text on a GL context below 4.2, because wgpu silently no-ops drawing into a texture view there (that's how glyphon builds its atlas). Fix: request GL 4.6, falling back down to 3.3. Diagnostics: `SILK_DUMP=1` dumps the offscreen to `/tmp/silk_offscreen.png`; `diagnostics/glyphon_gl.rs` is an off-screen probe.
+	- Note: the hard part was that on NVIDIA/Linux glyphon renders no text on a GL context below 4.2, because drawing into a texture view silently no-ops there (that is how glyphon builds its atlas). Fix: request a GL 4.6 context, falling back as low as 3.3.
 
 - ✅ Make both the main menu, and the right-click menu appearances more traditional:
 	- ✅ Use the system proportional font, rather than monospace font. - New `text::sans_attrs()` (cosmic-text `Family::SansSerif` -> the system default proportional font); the menu bar titles, dropdowns, and the right-click menu all use it.
@@ -1120,7 +1120,7 @@ In each section, items are listed approximately from newest to oldest.
 	- Solution:  Same path with `SelectionType::Block` when Ctrl is held at press. Verified: Ctrl+drag yields a rectangular block (cols 2-4 across 3 rows), not a span.
 
 - ✅ Copy & paste selected text to current cursor location, via middle mouse button.
-	- Solution: Copy-on-select writes to the primary selection (copypasta `X11ClipboardContext<Primary>`, held for the app's lifetime so ownership persists). Middle-click reads primary and writes it to the pane under the cursor, wrapped in bracketed-paste when the app enabled it. Verified: primary -> middle-click -> bytes reached the shell. `src/clipboard.rs`.
+	- Solution: copy-on-select writes to the primary selection, held for the app's lifetime. Middle-click reads the primary selection and writes it to the pane under the cursor, wrapped in bracketed-paste when the app enabled it. Verified: a middle-click paste reached the shell.
 
 - ✅ Use mouse to resize panes by grabbing on to separater line.
 	- Solution: Each `Split` already carried a `ratio`; `divider_at` hit-tests the gap strip (+/-`DIVIDER_GRAB_PX`) and returns the split-tree path, `drag_divider` walks that path and sets the ratio from the cursor (clamped 0.05-0.95) then relayouts. Left-press on a divider starts a resize instead of a selection; hovering one shows a `ColResize`/`RowResize` cursor.
@@ -1141,17 +1141,17 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Future and/or deferred
 
-- ✋ Modal Bug - About only (almost certainly a Compiz issue): with the About/Settings dialog open, selecting another window then re-selecting the dialog leaves the terminal buried behind whatever got in front, instead of both coming to the top together. Settings now works; About still does this on the owner's real Compiz desktop.
+- ✋ Modal Bug - About only (almost certainly a Compiz issue): with the About/Settings dialog open, selecting another window then re-selecting the dialog leaves the terminal buried behind whatever got in front, instead of both coming to the top together. Settings now works; About still does this on some Compiz desktops.
 	- Almost certainly a Compiz WM issue, not a SilkTerm bug: About and Settings use the exact same dialog code path (window creation, transient-for + EWMH dialog/MODAL/SKIP_TASKBAR hints, and the raise-with-parent restack), so a difference between them is the WM's handling, not our code.
-	- General case is fixed: hints set pre-map, plus - since Compiz won't raise a transient's parent - an _NET_RESTACK_WINDOW that slots the terminal under the dialog on focus, re-asserted ~1.2s to outlast Compiz's animated settle. Verified on headless Compiz for both dialogs; the About-only failure couldn't be reproduced headlessly (both pass on ccp Compiz). SILK_MODALDBG=1 traces the restack + the resulting stack order to stderr if it's revisited.
+	- Note: the general case is fixed - the hints are set before the window maps, and since Compiz won't raise a transient's parent, the terminal is restacked under the dialog on focus and re-asserted briefly to outlast Compiz's animated settle. Verified on Compiz for both dialogs; the About-only failure couldn't be reproduced there.
 
 - ✋ Alt-screen enter/exit animated like a scroll (`smooth_scroll_apps`). Two symptoms: (a) opening nano "jiggles"/jelly-bounces or scrolls in from a few lines down; (b) exiting nano scrolls the previous screen contents back in from the bottom, where a normal terminal just cuts.
 	- Cause: an alt-screen enter/exit is an instant full-screen swap, but the scroll probes diffed frame-to-frame across it. On enter the app-scroll probe matched blank rows between the old and new screens -> bogus slide (jiggle). On exit `history_size` jumps (the alt grid carries no scrollback) -> the output-ease read it as new output and scrolled the restored screen in.
 	- Fixed: track the previous frame's alt-screen state; on a transition hard-cut it - cancel any in-flight slide, skip both probes, suppress the output nudge, and rebaseline the row fingerprints to the new screen.
-	- Confirmed fixed by owner (both symptoms). Residual: a very slight 1-line smooth scroll-up still happens on enter and exit - livable, deferred (see the deferred item below).
-	- **Verified**: Mostly fixed. Entering and exiting still result in a one-line slow/smooth scroll. Tolerable, but fix someday.
+	- Verified: confirmed fixed (both symptoms). Residual: a very slight one-line smooth scroll-up still happens on enter and exit - livable, deferred (see the deferred item below).
+	- Verified: mostly fixed. Entering and exiting still result in a one-line smooth scroll. Tolerable, but fix someday.
 
-- ✋ Residual 1-line smooth scroll-up on alt-screen enter AND exit (`smooth_scroll_apps`). The enter/exit hard-cut fixed the big jiggle/scroll-in (owner confirmed), but a slight single-line ease still rides the transition. Owner: livable, deferred. Likely the output-ease firing one frame after the transition (the frame after the hard-cut isn't suppressed, and a 1-line history delta on the primary-screen restore nudges it) - a candidate fix is to also rebaseline `last_history` and extend the nudge suppression one frame past the transition.
+- ✋ Residual 1-line smooth scroll-up on alt-screen enter AND exit (`smooth_scroll_apps`). The enter/exit hard-cut fixed the big jiggle and scroll-in, but a slight single-line ease still rides the transition. Livable, deferred. Likely the output-ease firing one frame after the transition. A candidate fix is to rebaseline the history baseline and suppress the nudge one frame past the transition.
 
 - ✋ Minority Report mode: Borderless, transparent, changes perspective depending on screen location.
 

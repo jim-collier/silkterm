@@ -12,7 +12,7 @@ use serde::Deserialize;
 pub const APP_NAME: &str = "SilkTerm";
 
 // Where Help -> Support SilkTerm sends the browser. Points at DONATE.md (the
-// canonical, owner-controlled list of sponsor options and addresses) rather than
+// canonical list of sponsor options and addresses) rather than
 // a single link baked into the binary. HEAD resolves to the repo default branch.
 pub const DONATE_URL: &str = "https://github.com/jim-collier/silkterm/blob/HEAD/DONATE.md";
 
@@ -1514,7 +1514,7 @@ mod tests {
 		}
 	}
 
-	// #142: the owner-requested default values.
+	// #142: the default values.
 	#[test]
 	fn changed_defaults() {
 		let d = Settings::default();

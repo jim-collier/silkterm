@@ -40,7 +40,7 @@ pub fn mono_attrs() -> Attrs<'static> {
 
 // Concrete family + style behind chrome's `ui_attrs`, pinned alongside the mono
 // family. Chrome follows the DESKTOP interface font - family, weight and slant -
-// serif or not (the owner's is "GentiumAlt Bold"); a sans is only the fallback
+// serif or not (for example "GentiumAlt Bold"); a sans is only the fallback
 // when no desktop setting is readable.
 //
 // The weights are pinned as exact face weights, not the desktop's nominal ones:

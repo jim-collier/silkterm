@@ -45,7 +45,7 @@ meDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${meDir}/../../.." && pwd)"                     ## repo root (github/)
 headless="${root}/cicd/utility/gui-headless.bash"
 
-## Output helpers (owner convention, borrowed from cicd.bash): fEcho / fEcho_Clean.
+## Output helpers, same as cicd.bash: fEcho / fEcho_Clean.
 declare -i _wasLastEchoBlank=0
 fEcho_Clean(){ if [[ -n "${1:-}" ]]; then echo -e "$*"; _wasLastEchoBlank=0; elif [[ $_wasLastEchoBlank -eq 0 ]] && echo; then _wasLastEchoBlank=1; fi; }
 fEcho(){ if [[ -n "$*" ]]; then fEcho_Clean "[ $* ]"; else fEcho_Clean ""; fi; }

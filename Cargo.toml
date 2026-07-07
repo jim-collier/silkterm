@@ -17,7 +17,7 @@ large_enum_variant = "allow"
 # not in source/Cargo.toml.
 
 # Balance size and runtime speed (slight nod to size). opt-level stays 3 - the
-# owner cares about runtime speed, and the size wins below cost nothing there.
+# runtime speed matters, and the size wins below cost nothing there.
 # NOTE: do NOT pack with UPX/etc - packers routinely trip antivirus heuristics.
 [profile.release]
 opt-level = 3        # keep the renderer/PTY hot paths fast
