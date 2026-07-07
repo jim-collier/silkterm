@@ -171,7 +171,8 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 Testing:
 	- 🔘 Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
-	- 🔘 Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
+	- ◐ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
+		- Scrolling covered: library tests (`cargo test`) encode the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants (add-a-line vs re-list/jump/bottom-up) and easing monotonicity; a headless harness (`cicd/tests/scroll`) drives deterministic full-redraw scenes off the `SILK_SCROLLDBG` trace and runs in cicd stage 3 (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
 	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
 
 - 🔘 Build packages when cicd.bash `--quick` isn't specified:
