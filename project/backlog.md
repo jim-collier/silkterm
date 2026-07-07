@@ -149,9 +149,10 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Cursor animation immediately resets and starts over on keypresses (typing, editing, or moving). That's not very smooth, it shouldn't do that. Add options:
 		- Keep animating.
 		- Wait until the animation reaches full-size, then stop animating. Don't resume animating until some timeout after input stops.
-	- Done: `cursor_animation_input` config key. "continuous" (default) keeps animating through typing. "pause" glides the cursor to its full-size phase and holds it while there is recent input, then resumes once input has been idle briefly. Parking at the full phase makes the pulse resume smoothly.
-	- Follow-up (from a feel-test): it no longer snaps to full - a keypress lets the current cycle finish to full instead of jumping; the idle timeout was shortened because the old delay felt unresponsive; and the default was flipped to "continuous".
-	- Pending (optional): expose the choice in the Settings dialog (file-only for now).
+	- Done: `cursor_animation_input` config key. "continuous" (default) keeps animating through typing. "pause" glides the cursor to its full-size point and holds it while there is recent input, then resumes once input has been idle briefly.
+	- Fixed: in "pause" mode the glide toward full was computed but never drawn, so a keypress still jumped the cursor to full-size at once (the snap). The pulse now renders during the pause as well, driven by that gliding phase, so it finishes its current cycle up to full smoothly instead of snapping, then holds. Resume from full is unchanged. The idle timeout was shortened and the default left at "continuous".
+	- Note: a keypress always makes the cursor appear as a solid block for the length of its slide to the new column. That is by design for readability and is the same in both modes.
+	- Pending: a feel-test of the smoothed pause entry. Optionally expose the choice in the Settings dialog (file-only for now).
 
 - 🔘 Option to include the cursor in outer-glow. Default to off. Still outline it though.
 
