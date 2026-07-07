@@ -40,6 +40,7 @@ fn scroll_dbg() -> bool {
 // Cursor animation tunables (internal).
 const CURSOR_MOVE_TAU_MS: f32 = 55.0; // horizontal slide responsiveness (lower = snappier)
 const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
+const CURSOR_INPUT_PAUSE_S: f32 = 1.0; // idle time before the animation resumes (input-pause mode)
 const BELL_BRIGHTEN: f32 = 0.6; // max lerp of text toward white at the bell flash peak
 
 // Alt-screen app-scroll tunables.
@@ -108,6 +109,14 @@ fn bell_brighten(color: [u8; 3], t: f32) -> [u8; 3] {
 // any control char as a plain 1-cell space.
 fn render_char(c: char) -> char {
 	if c.is_control() { ' ' } else { c }
+}
+
+// Whether the cursor animation is held (solid, full-size) because of recent
+// input. In the default "pause" mode the pulse doesn't restart on every
+// keystroke; it resumes once input has been idle `timeout` seconds. "continuous"
+// never pauses.
+fn cursor_input_paused(mode: &str, idle_t: f32, timeout: f32) -> bool {
+	mode != "continuous" && idle_t < timeout
 }
 
 // Expand `line` up and down across soft-wrapped rows, clamped to [top, bot].
@@ -253,6 +262,7 @@ pub struct Pane {
 	cursor_row: i32,
 	cursor_init: bool,
 	blink_t: f32,
+	cursor_idle_t: f32, // seconds since the cursor last moved (input-pause gating)
 	pub cursor_animating: bool,
 	// false until the first full build (and reset on a buffer rebuild). When the
 	// frame is a pure cursor animation (no content/scroll/bell change), build skips
@@ -863,7 +873,9 @@ impl Pane {
 			self.cursor_x = target_col; // snap on first sight / newline (no diagonal slide)
 		}
 		if moved {
-			self.blink_t = 0.0; // solid immediately after any move
+			self.cursor_idle_t = 0.0; // reset idle timer on any cursor move
+		} else {
+			self.cursor_idle_t += dt;
 		}
 		self.cursor_init = true;
 		self.cursor_row = cursor_screen_row;
@@ -874,14 +886,27 @@ impl Pane {
 		if !easing {
 			self.cursor_x = target_col;
 		}
-		self.blink_t += dt;
 		// Animation: "none" = steady; "phase" = smooth cosine fade; "pulse_*" =
-		// grow/shrink a dimension over one cycle. Always solid while sliding (it
-		// starts solid right after a move). One cycle = the blink rate.
+		// grow/shrink a dimension over one cycle. Always solid while sliding.
 		let settings = config::settings();
 		let anim = settings.cursor_animation.as_str();
 		let period = (settings.cursor_blink_rate_ms / 1000.0 * 2.0).max(0.05); // full on->off->on
-		let animating = !easing && anim != "none";
+		// Input-pause (default): hold the cursor solid at its full-size phase while
+		// there's recent input, instead of restarting the animation each keystroke;
+		// resume once input has been idle CURSOR_INPUT_PAUSE_S. Freezing at full lets
+		// the pulse resume smoothly (full -> shrink -> grow).
+		let paused = cursor_input_paused(
+			settings.cursor_animation_input.as_str(),
+			self.cursor_idle_t,
+			CURSOR_INPUT_PAUSE_S,
+		);
+		if paused {
+			self.blink_t = if anim == "phase" { 0.0 } else { 0.5 * period };
+		} else {
+			self.blink_t += dt;
+		}
+		let anim_on = anim != "none";
+		let animating = !easing && anim_on && !paused;
 		let phase = (self.blink_t / period).fract();
 
 		let (mut w_frac, mut h_frac) = cursor_geom;
@@ -911,7 +936,9 @@ impl Pane {
 		} else {
 			(false, false)
 		};
-		self.cursor_animating = easing || animating;
+		// keep frames flowing while a pulse/phase cursor is shown (even during an
+		// input pause) so the animation can resume once input goes idle
+		self.cursor_animating = easing || anim_on;
 		let mut cursor_color = config::srgb_f32(cursor_rgb);
 		cursor_color[3] = alpha;
 		let cell_y = self.rect.y + margin + (cursor_screen_row as f32 + voff) * cell_h;
@@ -1487,6 +1514,7 @@ fn spawn_pane(
 		cursor_row: i32::MIN,
 		cursor_init: false,
 		blink_t: 0.0,
+		cursor_idle_t: 0.0,
 		cursor_animating: false,
 		text_built: false,
 		mode: TermMode::empty(),
@@ -2040,9 +2068,9 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 #[cfg(test)]
 mod tests {
 	use super::{
-		APP_SCROLL_MAX, Dir, Node, Rect, SLIDE_TOP_BAND_APPS, bell_brighten, distinct_pair,
-		equalize_dir_run, layout, logical_line_bounds, pair_inside, render_char, same_char_pair,
-		scroll_shift, scroll_shift_signed, static_bands,
+		APP_SCROLL_MAX, Dir, Node, Rect, SLIDE_TOP_BAND_APPS, bell_brighten, cursor_input_paused,
+		distinct_pair, equalize_dir_run, layout, logical_line_bounds, pair_inside, render_char,
+		same_char_pair, scroll_shift, scroll_shift_signed, static_bands,
 	};
 
 	fn leaf(id: u64) -> Node {
@@ -2087,6 +2115,15 @@ mod tests {
 		assert_eq!(logical_line_bounds(-100, 0, 9, |_| false), (0, 0));
 		// never walks past top, and walks the full run downward
 		assert_eq!(logical_line_bounds(0, 0, 9, |_| true), (0, 9));
+	}
+
+	#[test]
+	fn cursor_input_paused_holds_while_typing() {
+		// default "pause": held while input is recent, resumes past the timeout
+		assert!(cursor_input_paused("pause", 0.2, 1.0));
+		assert!(!cursor_input_paused("pause", 1.5, 1.0));
+		// "continuous" never pauses
+		assert!(!cursor_input_paused("continuous", 0.0, 1.0));
 	}
 
 	#[test]

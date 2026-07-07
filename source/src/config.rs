@@ -120,8 +120,9 @@ pub struct Settings {
 	pub cursor_size_height: f32, // cursor height, 1..100% of the cell (from the bottom)
 	pub cursor_size_width: f32, // cursor width, 1..100% of the cell (from the left)
 	pub cursor_animation: String, // "none" | "phase" | "pulse_vertical" | "pulse_horizontal" | "pulse_both"
-	pub cursor_blink_rate_ms: f32, // one animation cycle (ms)
-	pub columns: usize,           // initial window grid size (used when !remember_size)
+	pub cursor_animation_input: String, // "pause" (hold solid while typing, resume when idle) | "continuous"
+	pub cursor_blink_rate_ms: f32,      // one animation cycle (ms)
+	pub columns: usize,                 // initial window grid size (used when !remember_size)
 	pub rows: usize,
 	pub remember_size: bool, // launch at the last window size instead of columns/rows
 	pub remembered_columns: usize, // last actual window size (not shown in the dialog)
@@ -177,6 +178,7 @@ impl Default for Settings {
 			cursor_size_height: 100.0, // full height
 			cursor_size_width: 25.0,   // ~quarter-width bar
 			cursor_animation: "pulse_vertical".to_string(),
+			cursor_animation_input: "pause".to_string(),
 			cursor_blink_rate_ms: 500.0,
 			columns: 160,
 			rows: 48,
@@ -505,6 +507,7 @@ struct RawConfig {
 	cursor_size_height: Option<f32>,
 	cursor_size_width: Option<f32>,
 	cursor_animation: Option<String>,
+	cursor_animation_input: Option<String>,
 	cursor_blink_rate_ms: Option<f32>,
 	columns: Option<usize>,
 	rows: Option<usize>,
@@ -702,6 +705,9 @@ fn resolve(raw: RawConfig) -> Settings {
 			.unwrap_or(d.cursor_size_width)
 			.clamp(1.0, 100.0),
 		cursor_animation: raw.cursor_animation.unwrap_or(d.cursor_animation),
+		cursor_animation_input: raw
+			.cursor_animation_input
+			.unwrap_or(d.cursor_animation_input),
 		cursor_blink_rate_ms: raw
 			.cursor_blink_rate_ms
 			.unwrap_or(d.cursor_blink_rate_ms)
@@ -1385,6 +1391,12 @@ opacity = 0.95
 ## grows/shrinks each cycle - "pulse_vertical", "pulse_horizontal", "pulse_both".
 ## The cursor always slides smoothly as you type.
 # cursor_animation = "pulse_vertical"
+
+## What the animation does while you're typing. "pause" (default) holds the
+## cursor solid at full size while there's input, then resumes the animation once
+## input has been idle ~1s - so it doesn't restart on every keystroke.
+## "continuous" keeps animating right through typing.
+# cursor_animation_input = "pause"
 
 ## Cursor animation cycle length, in milliseconds (blink rate).
 # cursor_blink_rate_ms = 500
