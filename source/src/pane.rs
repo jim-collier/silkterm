@@ -110,6 +110,23 @@ fn render_char(c: char) -> char {
 	if c.is_control() { ' ' } else { c }
 }
 
+// Expand `line` up and down across soft-wrapped rows, clamped to [top, bot].
+// `wrapped(l)` is true when grid row l's last cell carries WRAPLINE (the logical
+// line continues into row l+1). Returns the (first, last) grid row of the whole
+// logical line - used for triple-click line selection.
+fn logical_line_bounds(line: i32, top: i32, bot: i32, wrapped: impl Fn(i32) -> bool) -> (i32, i32) {
+	let line = line.clamp(top, bot);
+	let mut start = line;
+	while start > top && wrapped(start - 1) {
+		start -= 1;
+	}
+	let mut end = line;
+	while end < bot && wrapped(end) {
+		end += 1;
+	}
+	(start, end)
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Rect {
 	pub x: f32,
@@ -1149,6 +1166,23 @@ impl Pane {
 		))
 	}
 
+	// The whole logical line containing `point`, spanning soft-wrapped rows, as
+	// (top-row col 0 .. bottom-row last col) - the span a triple-click selects.
+	pub fn line_span(&self, point: Point) -> (Point, Point) {
+		let cols = self.term.cols;
+		let last_col = Column(cols.saturating_sub(1));
+		let guard = self.term.term.lock_unfair();
+		let grid = guard.grid();
+		let top = -(grid.history_size() as i32);
+		let bot = self.term.lines as i32 - 1;
+		let wrapped = |l: i32| cols > 0 && grid[Line(l)][last_col].flags.contains(Flags::WRAPLINE);
+		let (start, end) = logical_line_bounds(point.line.0, top, bot, wrapped);
+		(
+			Point::new(Line(start), Column(0)),
+			Point::new(Line(end), last_col),
+		)
+	}
+
 	pub fn begin_selection(&self, point: Point, side: Side, ty: SelectionType) {
 		self.term.term.lock_unfair().selection = Some(Selection::new(ty, point, side));
 	}
@@ -2007,8 +2041,8 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 mod tests {
 	use super::{
 		APP_SCROLL_MAX, Dir, Node, Rect, SLIDE_TOP_BAND_APPS, bell_brighten, distinct_pair,
-		equalize_dir_run, layout, pair_inside, render_char, same_char_pair, scroll_shift,
-		scroll_shift_signed, static_bands,
+		equalize_dir_run, layout, logical_line_bounds, pair_inside, render_char, same_char_pair,
+		scroll_shift, scroll_shift_signed, static_bands,
 	};
 
 	fn leaf(id: u64) -> Node {
@@ -2037,6 +2071,22 @@ mod tests {
 		);
 		out.sort_by_key(|(id, _)| *id);
 		out.into_iter().map(|(id, r)| (id, r.w)).collect()
+	}
+
+	#[test]
+	fn logical_line_bounds_spans_wrapped_rows() {
+		// rows 2 and 3 each wrap into the next, so 2..=4 is one logical line
+		let w = |l: i32| l == 2 || l == 3;
+		assert_eq!(logical_line_bounds(3, -10, 9, w), (2, 4));
+		assert_eq!(logical_line_bounds(2, -10, 9, w), (2, 4));
+		assert_eq!(logical_line_bounds(4, -10, 9, w), (2, 4));
+		// an unwrapped row is its own line
+		assert_eq!(logical_line_bounds(6, -10, 9, w), (6, 6));
+		// clamps to [top, bot]
+		assert_eq!(logical_line_bounds(100, 0, 9, |_| false), (9, 9));
+		assert_eq!(logical_line_bounds(-100, 0, 9, |_| false), (0, 0));
+		// never walks past top, and walks the full run downward
+		assert_eq!(logical_line_bounds(0, 0, 9, |_| true), (0, 9));
 	}
 
 	#[test]

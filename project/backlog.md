@@ -134,7 +134,9 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Store the videos under `silkterm/private/demo-video/`, using the same naming/rotation strategy as backups.
 	- 🔘 Store a copy of only the most recent video probably under `siklterm/github/source/video/demo.{ext}`. Make sure README.md embeds or references it visibly near the top.
 
-- 🔘 Triple-click: Select the entire line - even if it's wrapped.
+- ✅ Triple-click: Select the entire line - even if it's wrapped.
+	- Done: multi-click counter (1=run, 2=word/pair, 3=line; a 4th wraps back to 1, same 400ms/1-cell window as double-click). Triple selects `Pane::line_span` - the whole logical line, walking soft-wrapped continuation rows via WRAPLINE (`logical_line_bounds`, unit-tested).
+	- Verified headless: triple-clicking a line that wraps across two rows selects the full logical line; double still selects the word, single unchanged.
 
 - 🔘 Ctrl+Shift+N: New window on same directory.
 

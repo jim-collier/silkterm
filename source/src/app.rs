@@ -415,7 +415,8 @@ struct State {
 	mouse_btn: Option<input::MouseBtn>, // button held after a reported press (mouse-tracking apps)
 	mouse_cell: Option<(usize, usize)>, // last cell reported, to de-dupe motion
 	selecting: Option<PaneId>,          // pane with an in-progress drag-select
-	last_click: Option<(Instant, f32, f32)>, // for double-click detection
+	last_click: Option<(Instant, f32, f32)>, // for multi-click detection
+	click_count: u32,                   // consecutive clicks in the same spot (2=double, 3=triple)
 	resizing: Option<Vec<bool>>,        // split-tree path of the divider being dragged
 	dragging_pane: Option<PaneId>,      // pane being drag-reordered (Shift+drag)
 	cursor_icon: CursorIcon,
@@ -2355,6 +2356,7 @@ impl ApplicationHandler<UserEvent> for App {
 			mouse_cell: None,
 			selecting: None,
 			last_click: None,
+			click_count: 0,
 			resizing: None,
 			dragging_pane: None,
 			cursor_icon: CursorIcon::Default,
@@ -2646,17 +2648,21 @@ impl ApplicationHandler<UserEvent> for App {
 							}
 						} else {
 							state.focus_at(x, y);
-							// double-click selects a word, Ctrl a rectangle,
-							// else a plain run
+							// 1 click = plain run (Ctrl = rectangle), 2 = word/pair,
+							// 3 = whole line (wrapped lines included)
 							let now = Instant::now();
 							let (cell_w, cell_h) = (state.text.cell_w, state.text.cell_h);
-							let double =
+							let near =
 								state.last_click.is_some_and(|(last_time, last_x, last_y)| {
 									now.duration_since(last_time) < Duration::from_millis(400)
 										&& (x - last_x).abs() <= cell_w
 										&& (y - last_y).abs() <= cell_h
 								});
+							// count consecutive same-spot clicks; a 4th wraps back to 1
+							state.click_count = if near { (state.click_count % 3) + 1 } else { 1 };
 							state.last_click = Some((now, x, y));
+							let double = state.click_count == 2;
+							let triple = state.click_count == 3;
 							let pairs = if double {
 								config::selection_pairs()
 							} else {
@@ -2666,7 +2672,12 @@ impl ApplicationHandler<UserEvent> for App {
 							let started = state.tabs.cur().pane_at(x, y).and_then(|id| {
 								let p = state.tabs.cur().panes.get(&id)?;
 								let (point, side) = p.point_at(x, y, &state.text)?;
-								if double {
+								if triple {
+									// whole logical line, spanning wrapped continuation rows
+									let (start, end) = p.line_span(point);
+									p.begin_selection(start, Side::Left, SelectionType::Simple);
+									p.update_selection(end, Side::Right);
+								} else if double {
 									// inside a matched pair -> select its contents; else word
 									match p.pair_span(point, &pairs) {
 										Some((start, end)) => {
