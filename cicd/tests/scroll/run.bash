@@ -155,7 +155,21 @@ run_scene(){
 		"$bin" --config "$cfg" --shell "/bin/dash ${meDir}/scenes/scene.bash ${shape}" \
 		>"${work}/${label}.log" 2>"$trace" &
 	local pid=$!
-	sleep "$((settle + capture))"
+
+	## GL warmup under llvmpipe swings widely with machine load (cicd runs this while
+	## the release + cross builds may still be busy), so a fixed sleep can expire before
+	## a single frame renders = a false "0 trace frames" skip. Poll until the scene is
+	## actually producing frames, then stop; bounded by a generous ceiling so a truly
+	## dead binary still exits. The scene self-scrolls forever, so more wall time just
+	## means more frames - never a hang.
+	local want=60 ceiling=$((settle + capture + 60)) frames=0
+	SECONDS=0
+	while ((SECONDS < ceiling)); do
+		kill -0 "$pid" 2>/dev/null || break
+		frames=$(grep -c SCROLLDBG "$trace" 2>/dev/null || true); frames=${frames:-0}
+		((frames >= want)) && break
+		sleep 0.5
+	done
 	kill_ours "$pid" "$bin"
 	wait "$pid" 2>/dev/null || true
 
