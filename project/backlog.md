@@ -77,14 +77,6 @@ In each section, items are listed approximately from newest to oldest.
 - 🔘 When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
 	- Investigated: no obvious code-path desync found. `bg_image_changed` already includes `background_blur`, `needs_text_rebuild` covers font, `load_bg_image` re-reads the fresh blur, and the glow re-shapes each build. Needs a live repro (change font in Settings, OK, watch the blur) to pin which "blur" and the exact trigger - deferred to an interactive pass since dialog driving is flaky here.
 
-- 🛠️ Modal Bug (with Settings and About): The dialog shows up in the window list. Also when focused is changed elsewhere then the dialog is clicked on, the terminal window doesn't also come to the top - it stays behind whatever got in front of it. In Linux - unlike Windows - the main window can still be moved around when the modal dialog is open, but it *remains an unselected window* - the dialog retains focus. These things aren't a coding trick, it's just the way modals work on Linux, and so should SilkTerm.
-	- Done: the dialog sets the EWMH dialog type plus the MODAL and SKIP_TASKBAR states alongside transient-for, so the WM keeps it off the taskbar, stacks it above and raises it with the terminal, and holds focus - the normal Linux modal behavior via window hints, no input tricks.
-	- Reopened: the raise-with-parent half still failed (re-selecting the dialog left the terminal buried under whatever was in front). Cause: the hints were written after the window was already mapped, so the WM fixed the stacking group before it saw transient-for. Fix: the dialog is now created unmapped, all hints are set, then it's shown - so the WM reads transient-for at map time (what GTK/Qt do).
-	- Verified: with a spacer window raised above both, activating the dialog brings the terminal AND the dialog to the top together, adjacent, spacer pushed below (checked via _NET_CLIENT_LIST_STACKING under xfwm4). Hints intact on the mapped window: _NET_WM_WINDOW_TYPE_DIALOG, _NET_WM_STATE_MODAL + SKIP_TASKBAR, WM_TRANSIENT_FOR = terminal.
-	- Regressed then restored: the experimental smooth-scroll line (topband) never carried the pre-map fix (it branched before it landed), so its builds showed the old behavior; consolidating that line back onto main restored it.
-	- Compiz gap found + fixed: the pre-map hints were only ever verified on xfwm4, which raises a transient's parent automatically. Compiz does NOT - so re-selecting the dialog still left the terminal buried. Reproduced by running Compiz headless (not xfwm4) and reading _NET_CLIENT_LIST_STACKING. Fix: when the dialog is focused, it restacks the terminal directly beneath itself via an EWMH _NET_RESTACK_WINDOW message to root (the only stacking path Compiz honors - it reparents clients, so a direct raise on the client is ignored), re-asserted for a few frames to win the race against the WM's own activation restacking. Verified 10/10 on Compiz for About and Settings: activating the dialog gives [spacer, terminal, dialog] with focus on the dialog.
-	- Still open for About only: owner reports Settings now works but About still buries the terminal on the real desktop. Cause looks like a slow settle - Compiz's raise/focus animation keeps re-stacking for a while after focus, past the short retry window - so the retries now span ~1.2s (was ~150ms; Settings happened to settle in time, About didn't). Could NOT reproduce headlessly: both dialogs pass on ccp Compiz (loads compizconfig like the real desktop, 12/12) and the "animation" plugin set isn't representative (it ignores the restack entirely). Added SILK_MODALDBG=1 - traces each restack and the resulting stack order (term_pos/dialog_pos/adjacent) to stderr, so the About failure can be diagnosed from the real machine if the wider window doesn't fix it.
-
 - 🔘 At high blur radius and low softness, the blur has boxy artifacts.
 	- Diagnosed: the glow is a separable blur with a fixed 25-tap kernel truncated at +/-3 sigma (`glow.rs` fs_blur). Two causes: (a) the hard +/-3 sigma cutoff leaves a ~1% edge that low softness (x10 intensity) amplifies into a visible square; (b) the linear/s-curve falloffs aren't true Gaussians, so blurred separably their support is a diamond/box, not a circle - and the default falloff is now s-curve. Fix is a look-vs-perf tradeoff (wider extent + more taps, and/or a windowed kernel) that wants eyeballing - deferred to a visual pass.
 
@@ -450,20 +442,6 @@ In each section, items are listed approximately from newest to oldest.
 			- Split horizontal works
 				- Split vertical then works in both panes.
 	- None of these issues present in `nano` or `less`.
-
-- ✅ Modal Bug (with Settings and About): The dialog shows up in the window list. Also when focused is changed elsewhere then the dialog is clicked on, the terminal window doesn't also come to the top - it stays behind whatever got in front of it. In Linux - unlike Windows - the main window can still be moved around when the modal dialog is open, but it *remains an unselected window* - the dialog retains focus. These things aren't a coding trick, it's just the way modals work on Linux, and so should SilkTerm.
-	- Done: the dialog now sets the EWMH dialog type plus the MODAL and SKIP_TASKBAR states alongside the existing transient-for, so the WM keeps it off the taskbar, stacks it above and raises it with the terminal, and holds focus - the normal Linux modal behavior via window hints, no input tricks.
-	- Verified: the dialog carries _NET_WM_WINDOW_TYPE_DIALOG, _NET_WM_STATE_MODAL + _NET_WM_STATE_SKIP_TASKBAR, and WM_TRANSIENT_FOR points at the terminal window.
-	- It still exists.
-		- Steps to reproduce:
-			1. Open "Help|About".
-			2. Select any other window. Say, Mousepad.
-			3. Select the "Help|About" dialog you opened previously.
-			4. Observe: The main SilkTerm window is *behind* Mousepad, while the modal is on top.
-		- Expected behavior:
-			- With all other Linux GUI apps I'm aware of (including Mousepad), step 4 looks like:
-				- Observe: The main window AND the "Help|About" dialog come to the top. There is nothing in between the main window and the "Help|About" modal.
-	- ✅ Fixed
 
 - ✅ Mouse-scroll doesn't work in Muffer (running inside SilkTerm). (20260703)
 	- Cause: SilkTerm implemented no mouse reporting at all - clicks, motion, and wheel were only handled locally, never encoded to the PTY. So when an app turns on mouse tracking (DECSET 1000/1002/1003, e.g. Muffer enabling it to receive wheel events), it got nothing and its scroll did nothing; the wheel just drove SilkTerm's own scrollback.
@@ -1146,6 +1124,10 @@ In each section, items are listed approximately from newest to oldest.
 		- Done. `background_fit` = "stretch" | "zoom"; default zoom/cover.
 
 ### Future and/or deferred
+
+- ✋ Modal Bug - About only (almost certainly a Compiz issue): with the About/Settings dialog open, selecting another window then re-selecting the dialog leaves the terminal buried behind whatever got in front, instead of both coming to the top together. Settings now works; About still does this on the owner's real Compiz desktop.
+	- Almost certainly a Compiz WM issue, not a SilkTerm bug: About and Settings use the exact same dialog code path (window creation, transient-for + EWMH dialog/MODAL/SKIP_TASKBAR hints, and the raise-with-parent restack), so a difference between them is the WM's handling, not our code.
+	- General case is fixed: hints set pre-map, plus - since Compiz won't raise a transient's parent - an _NET_RESTACK_WINDOW that slots the terminal under the dialog on focus, re-asserted ~1.2s to outlast Compiz's animated settle. Verified on headless Compiz for both dialogs; the About-only failure couldn't be reproduced headlessly (both pass on ccp Compiz). SILK_MODALDBG=1 traces the restack + the resulting stack order to stderr if it's revisited.
 
 - ✋ Alt-screen enter/exit animated like a scroll (`smooth_scroll_apps`). Two symptoms: (a) opening nano "jiggles"/jelly-bounces or scrolls in from a few lines down; (b) exiting nano scrolls the previous screen contents back in from the bottom, where a normal terminal just cuts.
 	- Cause: an alt-screen enter/exit is an instant full-screen swap, but the scroll probes diffed frame-to-frame across it. On enter the app-scroll probe matched blank rows between the old and new screens -> bogus slide (jiggle). On exit `history_size` jumps (the alt grid carries no scrollback) -> the output-ease read it as new output and scrolled the restored screen in.
