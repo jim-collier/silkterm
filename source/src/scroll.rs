@@ -21,12 +21,30 @@ pub const MAX_BACKLOG: f32 = 16.0; // cap on how far behind the bottom output ma
 const MIN_TAU_MS: f32 = 8.0; // fastest catch-up tau (at full ramp)
 const RAMP_UP_MS: f32 = 90.0; // speeding up is responsive
 const RAMP_DOWN_MS: f32 = 450.0; // returning to the smooth speed is gentle
+// Alt-screen app-scroll easing: a full-screen app (less, vim, muffer, ...) owns
+// its screen and scrolls by repainting whole lines. `app_off` is a transient
+// visual offset (in lines, signed: + shifts content down) set the moment such a
+// repaint is detected, then eased to 0 so the new frame slides into place. The
+// revealed strip is filled from the retained previous frame (see pane.rs), so the
+// cap is the detector's max per-step shift, not a bg-fill budget. Kept in step
+// with pane.rs APP_SCROLL_MAX; wheel notches in a mouse-tracking app repaint a
+// bigger jump than line-by-line output, so the window has to be generous or the
+// wheel just hard-cuts.
+const APP_OFF_CAP: f32 = 24.0;
+// Alt-scroll lag control: below APP_LAG_SOFT lines the slide eases at the smooth
+// configured tau; from there to APP_LAG_HARD the ease ramps toward MIN_APP_TAU so
+// a fast burst can't lag far enough to open a blank reveal strip (one retained
+// frame fills only ~one line back).
+const APP_LAG_SOFT: f32 = 1.2;
+const APP_LAG_HARD: f32 = 4.0;
+const MIN_APP_TAU_MS: f32 = 22.0;
 
 pub struct Scroll {
 	target: f32,
 	visual: f32,
 	max: f32,
-	ramp: f32, // 0 = initial/smooth speed, 1 = full fast catch-up (smoothed)
+	ramp: f32,    // 0 = initial/smooth speed, 1 = full fast catch-up (smoothed)
+	app_off: f32, // alt-screen slide offset, eased toward 0 (see APP_OFF_CAP)
 }
 
 impl Scroll {
@@ -36,14 +54,36 @@ impl Scroll {
 			visual: 0.0,
 			max: 0.0,
 			ramp: 0.0,
+			app_off: 0.0,
 		}
+	}
+
+	// An alt-screen app repainted shifted by `lines` (signed). Sets (not stacks)
+	// the slide offset: the retained previous frame is exactly one repaint back, so
+	// each detected step is its own slide - a fast run just replaces the offset each
+	// frame (content lags ~one step, then settles), always fillable from that frame.
+	pub fn app_scroll(&mut self, lines: f32) {
+		self.app_off = lines.clamp(-APP_OFF_CAP, APP_OFF_CAP);
+	}
+
+	// Hard-cut any in-flight alt-screen slide. An alt-screen enter/exit is an
+	// instant full-screen swap, not a scroll, so a slide left easing across it
+	// would drag the wrong screen's content.
+	pub fn cancel_app_scroll(&mut self) {
+		self.app_off = 0.0;
+	}
+
+	// Current alt-screen slide offset in lines (added to the render's vertical
+	// offset; 0 except briefly after an app repaint-scroll).
+	pub fn app_offset(&self) -> f32 {
+		self.app_off
 	}
 
 	pub fn set_max(&mut self, history_lines: f32) {
 		self.max = history_lines.max(0.0);
 		self.target = self.target.clamp(0.0, self.max);
-		let over = config::settings().output_ease_lines.max(MAX_BACKLOG);
-		self.visual = self.visual.clamp(0.0, self.max + over);
+		let overscan = config::settings().output_ease_lines.max(MAX_BACKLOG);
+		self.visual = self.visual.clamp(0.0, self.max + overscan);
 	}
 
 	pub fn following(&self) -> bool {
@@ -70,29 +110,47 @@ impl Scroll {
 	}
 
 	pub fn advance(&mut self, dt_s: f32) {
-		let init = config::settings().scroll_tau_ms;
+		let init_tau_ms = config::settings().scroll_tau_ms;
 		// ramp target from the output backlog (only while following); 0 below the
 		// normal slide distance, 1 at the cap. Wheel/scrollback uses the plain ease.
-		let raw = if self.following() {
-			let lo = config::settings().output_ease_lines.max(0.5);
-			((self.visual - lo) / (MAX_BACKLOG - lo)).clamp(0.0, 1.0)
+		let ramp_target = if self.following() {
+			let ease_floor = config::settings().output_ease_lines.max(0.5);
+			((self.visual - ease_floor) / (MAX_BACKLOG - ease_floor)).clamp(0.0, 1.0)
 		} else {
 			0.0
 		};
-		let ramp_ms = if raw > self.ramp {
+		let ramp_ms = if ramp_target > self.ramp {
 			RAMP_UP_MS
 		} else {
 			RAMP_DOWN_MS
 		};
-		self.ramp += (raw - self.ramp) * (1.0 - (-dt_s * 1000.0 / ramp_ms).exp());
+		self.ramp += (ramp_target - self.ramp) * (1.0 - (-dt_s * 1000.0 / ramp_ms).exp());
 
 		// effective tau: the configured "initial" speed at ramp 0, MIN_TAU at ramp 1
-		let tau = (init + (MIN_TAU_MS - init) * self.ramp).max(1.0);
-		let k = 1.0 - (-dt_s * 1000.0 / tau).exp();
-		self.visual += (self.target - self.visual) * k;
+		let tau = (init_tau_ms + (MIN_TAU_MS - init_tau_ms) * self.ramp).max(1.0);
+		let smoothing = 1.0 - (-dt_s * 1000.0 / tau).exp();
+		self.visual += (self.target - self.visual) * smoothing;
 		if (self.target - self.visual).abs() < config::SETTLE_EPS {
 			self.visual = self.target;
 			self.ramp = 0.0;
+		}
+
+		// Ease the alt-screen slide offset back to rest. The reveal strip is filled
+		// from ONE retained frame (one step back), so the offset must not lag more
+		// than ~a line or the strip under-fills (shows background). Ease at the smooth
+		// configured speed while the lag is small (gentle scroll stays buttery), but
+		// ramp the ease faster as the lag grows past a line, so a fast burst can't
+		// glide far behind and open a blank band. The rate change is smooth (a shorter
+		// tau, not a snap), so the motion never jumps.
+		if self.app_off != 0.0 {
+			let lag = self.app_off.abs();
+			let lag_ramp = ((lag - APP_LAG_SOFT) / (APP_LAG_HARD - APP_LAG_SOFT)).clamp(0.0, 1.0);
+			let app_tau = (init_tau_ms + (MIN_APP_TAU_MS - init_tau_ms) * lag_ramp).max(1.0);
+			let app_smoothing = 1.0 - (-dt_s * 1000.0 / app_tau).exp();
+			self.app_off -= self.app_off * app_smoothing;
+			if self.app_off.abs() < config::SETTLE_EPS {
+				self.app_off = 0.0;
+			}
 		}
 	}
 
@@ -107,7 +165,7 @@ impl Scroll {
 	}
 
 	pub fn animating(&self) -> bool {
-		(self.target - self.visual).abs() > config::SETTLE_EPS
+		(self.target - self.visual).abs() > config::SETTLE_EPS || self.app_off != 0.0
 	}
 }
 
@@ -215,6 +273,103 @@ mod tests {
 			cleared_b > cleared_t,
 			"burst {cleared_b} should clear proportionally faster than trickle {cleared_t}"
 		);
+	}
+
+	#[test]
+	fn app_scroll_sets_caps_and_eases_to_rest() {
+		let mut s = Scroll::new();
+		s.app_scroll(3.0);
+		assert_eq!(s.app_offset(), 3.0);
+		assert!(s.animating());
+		// sets (does not stack) the per-step offset; over the cap is clamped
+		s.app_scroll(3.0);
+		assert_eq!(s.app_offset(), 3.0);
+		s.app_scroll(99.0);
+		assert_eq!(s.app_offset(), APP_OFF_CAP);
+		// negative direction too
+		let mut b = Scroll::new();
+		b.app_scroll(-2.0);
+		assert_eq!(b.app_offset(), -2.0);
+		// eases back to 0 and stops animating (following the bottom, no output)
+		for _ in 0..2000 {
+			b.advance(0.016);
+		}
+		assert_eq!(b.app_offset(), 0.0);
+		assert!(!b.animating());
+	}
+
+	#[test]
+	fn app_off_lag_ramp_bounds_a_fast_burst() {
+		// The caller accumulates the slide offset (app_off += step) for smooth content;
+		// the ease ramps faster as the lag grows so a fast burst can't glide far behind
+		// and open a blank reveal strip. Simulate a fast continuous scroll and check the
+		// lag stays bounded well under the hard cap.
+		let mut s = Scroll::new();
+		let mut max_lag = 0.0f32;
+		for _ in 0..80 {
+			s.app_scroll(s.app_offset() + 1.0); // one detected line-step
+			max_lag = max_lag.max(s.app_offset().abs());
+			s.advance(0.016);
+			s.advance(0.016);
+			max_lag = max_lag.max(s.app_offset().abs());
+		}
+		assert!(max_lag < APP_LAG_HARD + 3.0, "lag {max_lag} ran away");
+		assert!(max_lag < APP_OFF_CAP, "lag {max_lag} hit the hard cap");
+	}
+
+	#[test]
+	fn output_ease_descends_monotonically() {
+		// After output stops, the visual position must ease straight down to the live
+		// bottom - never rise again. A rise mid-ease is the "page jumps around" /
+		// "scrolls bottom-up" artifact. Assert the position is non-increasing every
+		// frame and reaches the bottom.
+		let mut s = Scroll::new();
+		s.set_max(1000.0);
+		for _ in 0..4 {
+			s.nudge_output(4.0); // build a backlog to ease down from
+		}
+		let mut prev = s.desired_offset() as f32 + s.frac();
+		assert!(prev > 0.0, "backlog should lift the view off the bottom");
+		for _ in 0..3000 {
+			s.advance(0.016);
+			let pos = s.desired_offset() as f32 + s.frac();
+			assert!(pos <= prev + 1e-4, "position rose {prev} -> {pos} (bounce)");
+			prev = pos;
+		}
+		assert!(s.following());
+		assert_eq!(s.desired_offset(), 0);
+	}
+
+	#[test]
+	fn app_slide_eases_monotonically_without_overshoot() {
+		// A single detected app-scroll step must glide to rest in one direction: the
+		// offset magnitude only shrinks and never flips sign (a sign flip = the content
+		// bounces back the other way). Guards the alt-screen slide feel.
+		let mut s = Scroll::new();
+		s.app_scroll(4.0);
+		let mut prev = s.app_offset();
+		for _ in 0..3000 {
+			s.advance(0.016);
+			let off = s.app_offset();
+			assert!(off >= -1e-4, "offset flipped negative: {off} (bounce)");
+			assert!(off <= prev + 1e-4, "offset grew {prev} -> {off}");
+			prev = off;
+			if off == 0.0 {
+				break;
+			}
+		}
+		assert_eq!(s.app_offset(), 0.0);
+	}
+
+	#[test]
+	fn cancel_app_scroll_hard_cuts_the_slide() {
+		// an alt-screen enter/exit must drop any in-flight slide at once (no ease)
+		let mut s = Scroll::new();
+		s.app_scroll(7.0);
+		assert!(s.animating());
+		s.cancel_app_scroll();
+		assert_eq!(s.app_offset(), 0.0);
+		assert!(!s.animating());
 	}
 
 	#[test]

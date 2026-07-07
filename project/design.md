@@ -18,6 +18,7 @@
 	- [API alacritty_terminal](#api-alacritty_terminal)
 	- [Smooth-Scroll](#smooth-scroll)
 	- [Output easing new text](#output-easing-new-text)
+	- [Smooth-scroll inside full-screen apps](#smooth-scroll-inside-full-screen-apps)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Environment](#environment)
 
@@ -115,6 +116,22 @@ Crate owns integer "where grid is." Renderer owns fractional overlay.
 ### Output easing (new text)
 
 Same mechanism: when new output pushes content up, animate `visual_offset` from +1 line back to 0 over the easing window instead of snapping. Treat output-scroll as an animated target like wheel-scroll.
+
+### Smooth-scroll inside full-screen apps
+
+Scrollback and output easing (above) both have an easy signal: the wheel turns, or the buffer grows, and we ease a fractional offset. Full-screen ("alt-screen") apps - less, vim, nano, muffer - are the hard case, and no other terminal animates them. They do not scroll a buffer; they own the screen and repaint whole lines in place. When such an app scrolls, the terminal just sees the entire grid change - the same text is suddenly a row or two higher or lower. Nothing tells us a scroll happened, by how much, or which rows were meant to hold still. So the whole feature is reverse-engineered from two successive grid snapshots.
+
+- **Detect the scroll.** Every frame we fingerprint each visible row (a hash of its characters) and compare to last frame's fingerprints. `scroll_shift_signed` finds the vertical shift (up to 24 lines, either direction) that lines up the most rows - and requires a minimum number of rows to have *actually* moved, so an in-place status-line redraw, which lines up positionally but did not move, cannot false-trigger a slide.
+
+- **Detect the fixed furniture.** Real TUIs pin a title bar at the top (nano, muffer) and/or a status/input line at the bottom (less, vim). We count the unchanged rows at each end; only the middle region is allowed to slide, the bands hold still. Handling both bands is what makes nano and muffer work where an earlier top-anchored detector only handled less.
+
+- **Ease it into place.** The grid is already at the post-scroll position, so to animate we push the new content *back* by the detected shift and ease that offset to zero - the frame slides into place instead of snapping.
+
+- **Fill the gap with the previous frame.** The scrolled-off lines are gone from the grid (the app overwrote them), so the strip the slide reveals cannot be redrawn from the model. Each pane keeps its previous fully-shaped frame and draws it clipped to just that strip; the overlap with the current frame is an exact translation of identical content, so there is no seam.
+
+A sliding frame therefore composites as: the previous frame filling the revealed strip, the current middle region sliding over it (clipped between the two bands), the title and status bands redrawn unshifted, and the readability glow following the current frame.
+
+Why it is hard, in one place: there is no scroll event to hook and `alacritty_terminal` does not expose the app's scroll region (DECSTBM), so "a scroll happened, by N lines, with these fixed bands" is inferred heuristically and must reject false positives (an in-place redraw must not bounce - the apt-status-bar hazard); the off-screen content is unrecoverable, so smooth motion needs the retained previous frame tiled pixel-accurately against the current one; the fixed bands mean three regions have to tile with no gap and no overlap; and all of it is sub-line and per-frame, riding the same fractional renderer and glow pass, under a redraw loop that cannot trust X11/Compiz redraw requests. It is opt-in (`smooth_scroll_apps`, default off). Known limit: only the single previous frame is retained, so wheeling faster than one repaint per frame lags about a step (reads as a slight snap) - smoothing that fully needs a deeper frame history.
 
 ### Render Loop Sketch
 

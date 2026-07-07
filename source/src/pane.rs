@@ -29,10 +29,28 @@ fn alloc_pane_id() -> PaneId {
 	PANE_ID_SEQ.fetch_add(1, Ordering::Relaxed)
 }
 
+// SILK_SCROLLDBG: per-frame app-scroll trace (dev-only, gated by the env var).
+static DBG_FRAME: AtomicU64 = AtomicU64::new(0);
+fn scroll_dbg() -> bool {
+	use std::sync::OnceLock;
+	static ON: OnceLock<bool> = OnceLock::new();
+	*ON.get_or_init(|| std::env::var_os("SILK_SCROLLDBG").is_some())
+}
+
 // Cursor animation tunables (internal).
 const CURSOR_MOVE_TAU_MS: f32 = 55.0; // horizontal slide responsiveness (lower = snappier)
 const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
 const BELL_BRIGHTEN: f32 = 0.6; // max lerp of text toward white at the bell flash peak
+
+// Alt-screen app-scroll tunables.
+const APP_SCROLL_MAX: usize = 24; // max per-step shift the slide detector accepts (in step with scroll::APP_OFF_CAP)
+// Whether the smooth slide engages for full-screen apps that keep a static TOP
+// band (title bar: nano, muffer). Off = they hard-cut (plain page redraw), the
+// pre-top-band behaviour: the smooth slide fought the fixed chrome and produced a
+// band/glow bounce, deferred pending N-frame retention. Apps that fill from the
+// top with only a bottom status line (less, vim) have no top band and slide
+// regardless. Flip to re-enable top-band smooth-scroll. See build().
+const SLIDE_TOP_BAND_APPS: bool = false;
 
 // The rendered cursor geometry as (width, height) fractions of the cell. An
 // app-set Beam/Underline (DECSCUSR) maps to a thin bar / underline; a plain Block
@@ -44,27 +62,27 @@ fn cursor_geometry(shape: CursorShape, alt_screen: bool) -> (f32, f32) {
 		CursorShape::Underline => (1.0, 0.15), // thin bottom strip
 		_ if alt_screen => (1.0, 1.0),         // alt-screen app owns its block cursor
 		_ => {
-			let s = config::settings();
+			let settings = config::settings();
 			(
-				(s.cursor_size_width / 100.0).clamp(0.02, 1.0), // width, from left
-				(s.cursor_size_height / 100.0).clamp(0.02, 1.0), // height, from bottom
+				(settings.cursor_size_width / 100.0).clamp(0.02, 1.0), // width, from left
+				(settings.cursor_size_height / 100.0).clamp(0.02, 1.0), // height, from bottom
 			)
 		}
 	}
 }
 
 // Pulse envelope over one cycle: grow, hold full, shrink, then a brief disappear.
-fn pulse_env(p: f32) -> f32 {
+fn pulse_env(phase: f32) -> f32 {
 	let smooth = |t: f32| {
 		let t = t.clamp(0.0, 1.0);
 		t * t * (3.0 - 2.0 * t)
 	};
-	if p < 0.40 {
-		smooth(p / 0.40) // grow 0 -> 1
-	} else if p < 0.60 {
+	if phase < 0.40 {
+		smooth(phase / 0.40) // grow 0 -> 1
+	} else if phase < 0.60 {
 		1.0 // hold at full
-	} else if p < 0.90 {
-		1.0 - smooth((p - 0.60) / 0.30) // shrink 1 -> 0
+	} else if phase < 0.90 {
+		1.0 - smooth((phase - 0.60) / 0.30) // shrink 1 -> 0
 	} else {
 		0.0 // disappear momentarily
 	}
@@ -72,13 +90,13 @@ fn pulse_env(p: f32) -> f32 {
 
 // Lerp a text colour toward white by `t` (0..1) of the BELL_BRIGHTEN ceiling, for
 // the visual-bell flash. Identity at t<=0.
-fn bell_brighten(c: [u8; 3], t: f32) -> [u8; 3] {
+fn bell_brighten(color: [u8; 3], t: f32) -> [u8; 3] {
 	if t <= 0.0 {
-		return c;
+		return color;
 	}
 	let t = (t * BELL_BRIGHTEN).clamp(0.0, 1.0);
 	let up = |v: u8| (v as f32 + (255.0 - v as f32) * t).round() as u8;
-	[up(c[0]), up(c[1]), up(c[2])]
+	[up(color[0]), up(color[1]), up(color[2])]
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -123,6 +141,34 @@ pub struct PaneDraw {
 	pub top: f32,
 	pub bg: Vec<RectInstance>,
 	pub cursor: Option<RectInstance>,
+	// Retained-frame app-scroll slide (None = common case: whole pane at `top`).
+	// While a full-screen app's scroll eases, the current frame draws shifted at
+	// `top` and the previous frame (pane.prev_buffer) fills the revealed strip.
+	pub slide: Option<Slide>,
+}
+
+// One frame of an easing app-scroll slide. The current frame renders at
+// `PaneDraw.top`, clipped to the scroll region `[top_split_y, split_y]`; the
+// previous frame renders at `prev_top` clipped to `[prev_clip_t, prev_clip_b]`
+// (just the revealed strip, so its bands can't ghost into the scroll region); and
+// the fixed bands - a bottom status/input line (`has_band`, below `split_y`) and a
+// top title bar (`has_top_band`, above `top_split_y`) - redraw unshifted at
+// `band_top`. `top_split_y` is f32::MIN when there's no top band (open clip).
+#[derive(Clone)]
+pub struct Slide {
+	pub prev_top: f32,
+	pub prev_clip_t: f32,
+	pub prev_clip_b: f32,
+	pub top_split_y: f32,
+	pub split_y: f32,
+	pub band_top: f32,
+	pub has_band: bool,
+	pub has_top_band: bool,
+	// which end the revealed strip is at: true = top (down-slide), false = bottom.
+	// The glow of the strip is only safe to draw when the band on the strip's
+	// furniture side is present (it clips the prev frame's header/status out of the
+	// glow); without it, glowing prev could drag in its own-bg furniture. See app.rs.
+	pub strip_at_top: bool,
 }
 
 pub struct Pane {
@@ -130,6 +176,11 @@ pub struct Pane {
 	pub term: TermInstance,
 	pub scroll: Scroll,
 	pub buffer: Buffer,
+	// Previous frame's shaped text, kept one frame back by swapping with `buffer`
+	// on each detected app-scroll step. Drawn (translated) to fill the strip a
+	// slide reveals - the scrolled-off alt-screen lines are gone from the grid, so
+	// the retained shaped frame is the only source of real content for that strip.
+	prev_buffer: Buffer,
 	pub rect: Rect,
 	pub title: String,
 	pub read_only: bool, // accept no PTY input/paste; selection + copy still work
@@ -138,10 +189,23 @@ pub struct Pane {
 	command: Option<Vec<String>>,
 	last_draw: PaneDraw,
 	last_history: usize,
-	// On-screen row fingerprints from the last build, used only once the
-	// scrollback buffer is full (history_size flatlines) to detect that output
-	// still scrolled the viewport. See the output-easing note in build().
+	// On-screen row fingerprints from the last build, used to detect a scrolled
+	// viewport once the scrollback buffer is full (output easing) and to detect an
+	// alt-screen app's repaint-scroll (app-scroll easing). See build().
 	last_rows: Vec<u64>,
+	// Rows of static bottom band (status/input line) that must NOT slide during the
+	// current alt-screen app-scroll ease. Captured when a scroll is detected.
+	slide_static: usize,
+	// Rows of static TOP band (title bar - nano, muffer) that must NOT slide, the
+	// mirror of slide_static. The scrolling region is between the two bands.
+	slide_static_top: usize,
+	// Shift (signed lines) of the retained prev_buffer relative to the current
+	// frame, set when a scroll step is detected. Positions prev_buffer for the
+	// slide (prev is at rest when app_off == slide_sh, slid fully out at app_off 0).
+	slide_sh: f32,
+	// Previous frame's alt-screen state. An enter/exit is an instant screen swap,
+	// not a scroll - detected here to hard-cut it instead of animating the swap.
+	last_alt: bool,
 	// Fallback glyphs (not in the primary mono font) pulled out of `buffer` and
 	// drawn one-per-cell so their font advance can't shift the row. `glyph_bufs`
 	// is a reused pool; `glyphs` holds (x, y, color, scale) for the first N of
@@ -201,7 +265,7 @@ impl Pane {
 		let margin = ctx.margin;
 		let content_x = self.rect.x + margin;
 		let lines = self.term.lines;
-		let s = config::settings(); // snapshot once, not per cell
+		let settings = config::settings(); // snapshot once, not per cell
 
 		// Never block the render thread: the PTY reader thread can hold the
 		// terminal lock through long bursts (e.g. a chatty shell rc). If it's
@@ -212,6 +276,18 @@ impl Pane {
 		};
 		self.mode = *guard.mode();
 		self.content_dirty = false;
+
+		// Alt-screen enter/exit is an instant full-screen swap, not a scroll. Flag the
+		// transition so the scroll probes below hard-cut it: on enter the app-scroll
+		// probe would match blank rows between the old and new screens (nano "jiggles"/
+		// scrolls in on launch); on exit the history_size jump (the alt grid carries no
+		// scrollback) would fire an output-ease that scrolls the restored screen back
+		// in. `gesture_active` (an alt-scroll slide already easing) freezes the band
+		// sizes across a continuous scroll - see the app-scroll block.
+		let alt = self.mode.contains(TermMode::ALT_SCREEN);
+		let alt_transition = alt != self.last_alt;
+		self.last_alt = alt;
+		let gesture_active = self.scroll.app_offset() != 0.0;
 
 		let cols = self.term.cols;
 		let history = guard.grid().history_size();
@@ -229,8 +305,25 @@ impl Pane {
 		let grew = history.saturating_sub(self.last_history);
 		self.last_history = history;
 		self.scroll.set_max(history as f32);
+		if alt_transition {
+			// hard-cut the screen swap: drop any in-flight slide and rebaseline the
+			// row fingerprints to the NEW screen, so neither the output-scroll probe
+			// nor the app-scroll probe diffs against the old screen next frame.
+			self.scroll.cancel_app_scroll();
+			let grid = guard.grid();
+			let mut rows: Vec<u64> = Vec::with_capacity(lines);
+			for i in 0..lines as i32 {
+				let row = &grid[Line(i)];
+				let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+				for c in 0..cols {
+					hash = (hash ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
+				}
+				rows.push(hash);
+			}
+			self.last_rows = rows;
+		}
 		let follow = self.scroll.following();
-		let full = s.scrollback > 0 && history >= s.scrollback;
+		let full = settings.scrollback > 0 && history >= settings.scrollback;
 		let advanced = if grew > 0 {
 			grew
 		} else if follow && full {
@@ -238,20 +331,76 @@ impl Pane {
 			let grid = guard.grid();
 			for i in 0..lines as i32 {
 				let row = &grid[Line(i)];
-				let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a over the row's chars
+				let mut hash: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a over the row's chars
 				for c in 0..cols {
-					h = (h ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
+					hash = (hash ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
 				}
-				rows.push(h);
+				rows.push(hash);
 			}
-			let adv = scroll_shift(&rows, &self.last_rows);
+			let inferred_advance = scroll_shift(&rows, &self.last_rows);
 			self.last_rows = rows;
-			adv
+			inferred_advance
 		} else {
 			0
 		};
-		if advanced > 0 && follow {
+		if advanced > 0 && follow && !alt_transition {
 			self.scroll.nudge_output(advanced as f32);
+		}
+
+		// Alt-screen app-scroll easing: a full-screen app owns its screen and scrolls
+		// by repainting whole lines. Detect a clean vertical translate between this
+		// repaint and the last (same row-fingerprints as the output-scroll probe) and
+		// nudge a slide offset so the frame eases into place instead of snapping. The
+		// revealed strip fills from the retained previous frame (swapped in below).
+		// Only clean line-scrolls (up to APP_SCROLL_MAX rows) match - in-place redraws
+		// and big page-jumps don't, so they hard-cut. Opt-in (experimental).
+		let mut capture_prev = false;
+		let mut shift_dbg = 0i32;
+		if settings.smooth_scroll_apps && alt && !alt_transition {
+			// Full-screen apps with a static TOP band (title bar: nano, muffer) repaint
+			// with small sub-line jumps, and the smooth slide fights that fixed chrome -
+			// the band/glow bounce - so they hard-cut (see SLIDE_TOP_BAND_APPS). Apps
+			// that fill from the top with only a bottom status line (less) slide.
+			let grid = guard.grid();
+			let mut rows: Vec<u64> = Vec::with_capacity(lines);
+			for i in 0..lines as i32 {
+				let row = &grid[Line(i)];
+				let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+				for c in 0..cols {
+					hash = (hash ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
+				}
+				rows.push(hash);
+			}
+			let shift = scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX);
+			shift_dbg = shift;
+			if shift != 0 {
+				// Freeze the static-band sizes on the gesture's first step (a clean
+				// settled-vs-scrolled diff); re-measuring per step fluctuates by a row
+				// whenever a blank/matching line abuts a band. Held while the slide eases.
+				if !gesture_active {
+					let (st, sb) = static_bands(&rows, &self.last_rows);
+					self.slide_static = sb;
+					self.slide_static_top = st;
+				}
+				// A static top band means a title-bar app (nano, muffer); hard-cut it.
+				if SLIDE_TOP_BAND_APPS || self.slide_static_top == 0 {
+					// ACCUMULATE the visual offset so the CURRENT content stays continuous
+					// across overlapping steps: screen row = grid_row + app_off, the grid
+					// already advanced by shift, so app_off must GROW by shift to hold a line fixed
+					// for that instant. SETting it to shift instead discards the un-eased
+					// remainder = the frame-to-frame bounce. RE-SNAPSHOT prev EVERY step
+					// (slide_sh = this step only): one retained frame can fill just a
+					// one-step reveal strip, so it must stay fresh - accumulating slide_sh to
+					// fill a taller strip from a single stale snapshot made the strip (and its
+					// glow) jump by the whole scroll region at each re-capture. scroll.rs's lag
+					// ramp keeps app_off from lagging past what that one frame covers.
+					self.slide_sh = shift as f32;
+					capture_prev = true;
+					self.scroll
+						.app_scroll(self.scroll.app_offset() + shift as f32);
+				}
+			}
+			self.last_rows = rows;
 		}
 
 		// snap the integer grid offset to the floor of the smooth position
@@ -263,12 +412,113 @@ impl Pane {
 		}
 
 		let frac = self.scroll.frac();
-		let d = desired as i32;
+		// alt-screen slide rides on top of the fractional scrollback offset (which
+		// is 0 on the alt screen); + shifts content down, revealing bg at the top.
+		let app_off = self.scroll.app_offset();
+		let voff = frac + app_off;
+		// Dev trace for the alt-screen slide (SILK_SCROLLDBG). Off = one cached bool
+		// check per frame. The per-frame (sh, app_off, slide_sh, st, sb) sequence is
+		// the deterministic proof that the slide eases smoothly (app_off monotonic, no
+		// bounce) without needing to eyeball a render - see the headless bounce harness.
+		if scroll_dbg() && settings.smooth_scroll_apps && alt {
+			let frame = DBG_FRAME.fetch_add(1, Ordering::Relaxed);
+			eprintln!(
+				"SCROLLDBG f={frame} pane={} sh={shift_dbg} app_off={app_off:.4} slide_sh={:.4} st={} sb={} frac={frac:.4}",
+				self.id, self.slide_sh, self.slide_static_top, self.slide_static,
+			);
+		}
+		// Region-aware slide: only the middle scroll region shifts by voff; a static
+		// bottom band (status/input line) and a static top band (title bar) hold their
+		// fractional-only position. `split_row` is the first row of the bottom band;
+		// `top_split_row` is the first row of the scroll region (just below the title).
+		// No bands (or no active slide) => whole pane at voff.
+		let static_rows = if app_off != 0.0 {
+			self.slide_static.min(lines)
+		} else {
+			0
+		};
+		let static_top = if app_off != 0.0 {
+			self.slide_static_top.min(lines.saturating_sub(static_rows))
+		} else {
+			0
+		};
+		let split_row = (lines - static_rows) as i32;
+		let top_split_row = static_top as i32;
+		let voff_of = |screen_row: i32| {
+			if (static_top > 0 && screen_row < top_split_row)
+				|| (static_rows > 0 && screen_row >= split_row)
+			{
+				frac
+			} else {
+				voff
+			}
+		};
+		let display_offset = desired as i32;
 		let hist = history as i32;
 		// fractional scroll shifts content DOWN by frac of a cell; we render an
 		// extra row above (screen row -1) so the revealed strip is filled.
-		let y_of = |sr: i32| self.rect.y + margin + (sr as f32 + frac) * cell_h;
-		let top = y_of(-1);
+		let y_of = |screen_row: i32| {
+			self.rect.y + margin + (screen_row as f32 + voff_of(screen_row)) * cell_h
+		};
+		// The scroll-region draw origin is always the SHIFTED position, independent of
+		// the bands (which are redrawn unshifted at band_top); grid elements use y_of.
+		let top = self.rect.y + margin + (-1.0 + voff) * cell_h;
+		// Retained-frame slide geometry (only while app_off is easing). The current
+		// frame draws at `top` (scroll region, clipped to [top_split_y, split_y]);
+		// prev_buffer fills the strip the shift reveals - above the content when
+		// sliding down (app_off > 0), below it when sliding up. Clip prev to just that
+		// strip so its own bands can't ghost into the scrolling region.
+		let slide = if app_off != 0.0 {
+			// split_y bounds the scroll region below; top_split_y bounds it above (a
+			// static top band sits above it; f32::MIN = no band, so the clip is open).
+			let split_y = if static_rows > 0 {
+				self.rect.y + margin + (split_row as f32 + frac) * cell_h
+			} else {
+				self.rect.y + self.rect.h
+			};
+			let top_split_y = if static_top > 0 {
+				self.rect.y + margin + (top_split_row as f32 + frac) * cell_h
+			} else {
+				f32::MIN
+			};
+			let band_top = self.rect.y + margin + (-1.0 + frac) * cell_h;
+			// prev sits `slide_sh` behind the current frame; at app_off == slide_sh
+			// it's at rest, sliding fully out as app_off -> 0
+			let voff_prev = frac + app_off - self.slide_sh;
+			let prev_top = self.rect.y + margin + (-1.0 + voff_prev) * cell_h;
+			let (prev_clip_t, prev_clip_b) = if app_off > 0.0 {
+				// down-slide: strip between the top band and the current content's first
+				// scroll row (top_split_row); top_split_y == MIN keeps the no-band case.
+				// Clip the top to prev's OWN first scroll row so its title can't bleed in
+				// when prev sits low (voff_prev > 0); when prev fills to the band boundary
+				// this reduces to top_split_y.
+				(
+					top_split_y
+						.max(self.rect.y + margin + (top_split_row as f32 + voff_prev) * cell_h),
+					self.rect.y + margin + (top_split_row as f32 + voff) * cell_h,
+				)
+			} else {
+				// up-slide: strip below the current scroll region's last row, clipped at
+				// prev's own last scroll row so its bottom band can't bleed in
+				(
+					self.rect.y + margin + (split_row as f32 + voff) * cell_h,
+					split_y.min(self.rect.y + margin + (split_row as f32 + voff_prev) * cell_h),
+				)
+			};
+			Some(Slide {
+				prev_top,
+				prev_clip_t,
+				prev_clip_b,
+				top_split_y,
+				split_y,
+				band_top,
+				has_band: static_rows > 0,
+				has_top_band: static_top > 0,
+				strip_at_top: app_off > 0.0,
+			})
+		} else {
+			None
+		};
 
 		// Cursor position/shape as plain values (no lasting borrow of the lock), so
 		// the fast path below can drop the term lock immediately.
@@ -276,7 +526,8 @@ impl Pane {
 		let cursor_shape = guard.cursor_style().shape;
 		// Alt-screen apps own their cursor shape; on the primary screen it's the
 		// configured geometry (or the app's DECSCUSR). See cursor_geometry.
-		let cgeom = cursor_geometry(cursor_shape, guard.mode().contains(TermMode::ALT_SCREEN));
+		let cursor_geom =
+			cursor_geometry(cursor_shape, guard.mode().contains(TermMode::ALT_SCREEN));
 		let following = desired == 0;
 
 		// Fast path: a pure cursor-animation frame (blink/slide, no content/scroll/
@@ -288,20 +539,27 @@ impl Pane {
 			let cursor = self.cursor_quad(
 				cursor_pt,
 				cursor_shape,
-				cgeom,
-				d,
+				cursor_geom,
+				display_offset,
 				lines,
 				following,
 				content_x,
 				cell_w,
 				cell_h,
 				margin,
-				frac,
+				voff,
 				dt,
-				s.cursor,
+				settings.cursor,
 			);
 			let bg = std::mem::take(&mut self.last_draw.bg);
-			self.last_draw = PaneDraw { top, bg, cursor };
+			// the fast path is a pure cursor frame - never taken while a slide eases
+			// (that forces a rebuild), so there is never a slide here
+			self.last_draw = PaneDraw {
+				top,
+				bg,
+				cursor,
+				slide: None,
+			};
 			return self.last_draw.clone();
 		}
 		self.text_built = true;
@@ -320,7 +578,7 @@ impl Pane {
 		// cosmic-text's set_rich_text loop forever.
 		let mut spans: Vec<(String, Attrs)> = Vec::with_capacity(lines + 1);
 		let mut run = String::new();
-		let mut run_color = s.fg;
+		let mut run_color = settings.fg;
 		let mut run_bold = false;
 		let mut run_italic = false;
 		let mut saw_bold = false;
@@ -328,37 +586,37 @@ impl Pane {
 		macro_rules! flush_run {
 			() => {
 				if !run.is_empty() {
-					let mut a = mono_attrs();
-					a.color_opt = Some(GColor::rgb(run_color[0], run_color[1], run_color[2]));
+					let mut attrs = mono_attrs();
+					attrs.color_opt = Some(GColor::rgb(run_color[0], run_color[1], run_color[2]));
 					if run_bold {
-						a.weight = Weight::BOLD;
+						attrs.weight = Weight::BOLD;
 					}
 					if run_italic {
-						a.style = Style::Italic;
+						attrs.style = Style::Italic;
 					}
-					spans.push((std::mem::take(&mut run), a));
+					spans.push((std::mem::take(&mut run), attrs));
 				}
 			};
 		}
 
-		for sr in -1..(lines as i32) {
-			if sr != -1 {
+		for screen_row in -1..(lines as i32) {
+			if screen_row != -1 {
 				run.push('\n');
 			}
-			let gl = sr - d; // grid line for this screen row
-			if gl < -hist || gl > (lines as i32 - 1) {
+			let grid_line = screen_row - display_offset; // grid line for this screen row
+			if grid_line < -hist || grid_line > (lines as i32 - 1) {
 				continue; // off the top/bottom of real content: blank row
 			}
-			let row = &grid[Line(gl)];
-			let y = y_of(sr);
+			let row = &grid[Line(grid_line)];
+			let y = y_of(screen_row);
 			for c in 0..cols {
 				let cell = &row[Column(c)];
 				let flags = cell.flags;
 				if flags.contains(Flags::WIDE_CHAR_SPACER) {
 					continue;
 				}
-				let mut fg = palette::resolve(cell.fg, colors, &s);
-				let mut cell_bg = palette::resolve(cell.bg, colors, &s);
+				let mut fg = palette::resolve(cell.fg, colors, &settings);
+				let mut cell_bg = palette::resolve(cell.bg, colors, &settings);
 				if flags.contains(Flags::INVERSE) {
 					std::mem::swap(&mut fg, &mut cell_bg);
 				}
@@ -377,10 +635,10 @@ impl Pane {
 				}
 
 				let selected =
-					sel_range.is_some_and(|r| r.contains(Point::new(Line(gl), Column(c))));
+					sel_range.is_some_and(|r| r.contains(Point::new(Line(grid_line), Column(c))));
 				let bg_color = if selected {
 					Some(config::SELECTION_BG)
-				} else if cell_bg != s.bg {
+				} else if cell_bg != settings.bg {
 					Some(cell_bg)
 				} else {
 					None
@@ -393,7 +651,11 @@ impl Pane {
 					});
 				}
 
-				let bold = flags.contains(Flags::BOLD);
+				// reverse-video (dark-on-light) text renders visually thinner than the
+				// same weight light-on-dark; embolden it so inverse chrome (nano/vim
+				// title+status bars) reads as strongly as normal text.
+				let bold = flags.contains(Flags::BOLD)
+					|| (settings.embolden_inverse && flags.contains(Flags::INVERSE));
 				let italic = flags.contains(Flags::ITALIC);
 				saw_bold |= bold;
 				// A glyph the primary mono font lacks renders via a fallback font
@@ -408,7 +670,7 @@ impl Pane {
 					for _ in 0..w {
 						run.push(' ');
 					}
-					glyph_specs.push((cell.c, fg, bold, italic, c, sr, w as u8));
+					glyph_specs.push((cell.c, fg, bold, italic, c, screen_row, w as u8));
 				} else {
 					if (fg, bold, italic) != (run_color, run_bold, run_italic) {
 						flush_run!();
@@ -426,18 +688,24 @@ impl Pane {
 		let cursor = self.cursor_quad(
 			cursor_pt,
 			cursor_shape,
-			cgeom,
-			d,
+			cursor_geom,
+			display_offset,
 			lines,
 			following,
 			content_x,
 			cell_w,
 			cell_h,
 			margin,
-			frac,
+			voff_of(cursor_pt.line.0 + display_offset),
 			dt,
-			s.cursor,
+			settings.cursor,
 		);
+		// A scroll step was detected: the buffer still holds the outgoing frame, so
+		// swap it into prev_buffer before set_rich_text overwrites it. prev_buffer
+		// then fills the strip this slide reveals (see the slide geometry above).
+		if capture_prev {
+			std::mem::swap(&mut self.buffer, &mut self.prev_buffer);
+		}
 		let span_refs = spans.iter().map(|(s, a)| (s.as_str(), a.clone()));
 		// Advanced (not Basic) so missing glyphs fall back to other fonts
 		// (CJK/emoji/math/RTL) instead of rendering tofu. cosmic-text 0.18.2's
@@ -458,50 +726,54 @@ impl Pane {
 		// glow pass (crisp text on top keeps its real weight). Costs a second
 		// shape only on rebuild frames that contain bold. Per-cell fallback
 		// glyphs keep their weight - rare, and not worth a second glyph pool.
-		self.glow_debold =
-			s.text_glow && s.text_glow_radius > 0.0 && s.text_glow_regular_weight && saw_bold;
+		self.glow_debold = settings.text_glow
+			&& settings.text_glow_radius > 0.0
+			&& settings.text_glow_regular_weight
+			&& saw_bold;
 		if self.glow_debold {
-			let (bw, bh) = self.buffer.size();
-			let gb = self.glow_buf.get_or_insert_with(|| {
-				let mut b = Buffer::new(&mut ctx.font_system, ctx.metrics);
-				b.set_wrap(&mut ctx.font_system, glyphon::Wrap::None);
-				b.set_monospace_width(&mut ctx.font_system, Some(cell_w));
-				b
+			let (buf_w, buf_h) = self.buffer.size();
+			let glow_buffer = self.glow_buf.get_or_insert_with(|| {
+				let mut buf = Buffer::new(&mut ctx.font_system, ctx.metrics);
+				buf.set_wrap(&mut ctx.font_system, glyphon::Wrap::None);
+				buf.set_monospace_width(&mut ctx.font_system, Some(cell_w));
+				buf
 			});
-			gb.set_metrics(&mut ctx.font_system, ctx.metrics);
-			gb.set_size(&mut ctx.font_system, bw, bh);
-			let despan = spans.iter().map(|(t, a)| {
-				let mut a2 = a.clone();
-				a2.weight = default_attrs.weight;
-				(t.as_str(), a2)
+			glow_buffer.set_metrics(&mut ctx.font_system, ctx.metrics);
+			glow_buffer.set_size(&mut ctx.font_system, buf_w, buf_h);
+			let despan = spans.iter().map(|(text, attrs)| {
+				let mut debold_attrs = attrs.clone();
+				debold_attrs.weight = default_attrs.weight;
+				(text.as_str(), debold_attrs)
 			});
-			gb.set_rich_text(
+			glow_buffer.set_rich_text(
 				&mut ctx.font_system,
 				despan,
 				&default_attrs,
 				Shaping::Advanced,
 				None,
 			);
-			gb.shape_until_scroll(&mut ctx.font_system, false);
+			glow_buffer.shape_until_scroll(&mut ctx.font_system, false);
 		}
 
 		// build the per-cell fallback glyphs (reusing the buffer pool)
 		self.glyphs.clear();
 		let rect_y = self.rect.y;
-		for (i, (ch, color, bold, italic, c, sr, cells)) in glyph_specs.into_iter().enumerate() {
-			let mut a = mono_attrs();
-			a.color_opt = Some(GColor::rgb(color[0], color[1], color[2]));
+		for (i, (ch, color, bold, italic, c, screen_row, cells)) in
+			glyph_specs.into_iter().enumerate()
+		{
+			let mut attrs = mono_attrs();
+			attrs.color_opt = Some(GColor::rgb(color[0], color[1], color[2]));
 			if bold {
-				a.weight = Weight::BOLD;
+				attrs.weight = Weight::BOLD;
 			}
 			if italic {
-				a.style = Style::Italic;
+				attrs.style = Style::Italic;
 			}
 			if i >= self.glyph_bufs.len() {
-				let b = ctx.new_plain_buffer();
-				self.glyph_bufs.push(b);
+				let buf = ctx.new_plain_buffer();
+				self.glyph_bufs.push(buf);
 			}
-			let (ink_w, ink_off) = ctx.fill_glyph(&mut self.glyph_bufs[i], ch, &a);
+			let (ink_w, ink_off) = ctx.fill_glyph(&mut self.glyph_bufs[i], ch, &attrs);
 			// Fit the ink inside its cell box (cells * cell_w wide), only ever
 			// shrinking, and center it there - a fallback face's wider-than-a-cell
 			// ink would otherwise spill over the next cell and collide with its
@@ -510,12 +782,19 @@ impl Pane {
 			let scale = if ink_w > target { target / ink_w } else { 1.0 };
 			let cell_x = content_x + c as f32 * cell_w;
 			let x = cell_x + (target - ink_w * scale) / 2.0 - ink_off * scale;
-			let y = rect_y + margin + (sr as f32 + frac) * cell_h + cell_h * (1.0 - scale) / 2.0;
+			let y = rect_y
+				+ margin + (screen_row as f32 + voff_of(screen_row)) * cell_h
+				+ cell_h * (1.0 - scale) / 2.0;
 			self.glyphs
 				.push((x, y, GColor::rgb(color[0], color[1], color[2]), scale));
 		}
 
-		self.last_draw = PaneDraw { top, bg, cursor };
+		self.last_draw = PaneDraw {
+			top,
+			bg,
+			cursor,
+			slide,
+		};
 		self.last_draw.clone()
 	}
 
@@ -528,44 +807,44 @@ impl Pane {
 		&mut self,
 		cursor_pt: Point,
 		cursor_shape: CursorShape,
-		geom: (f32, f32),
-		d: i32,
+		cursor_geom: (f32, f32),
+		display_offset: i32,
 		lines: usize,
 		following: bool,
 		content_x: f32,
 		cell_w: f32,
 		cell_h: f32,
 		margin: f32,
-		frac: f32,
+		voff: f32,
 		dt: f32,
 		cursor_rgb: [u8; 3],
 	) -> Option<RectInstance> {
-		let cursor_sr = cursor_pt.line.0 + d;
+		let cursor_screen_row = cursor_pt.line.0 + display_offset;
 		let shown = following
 			&& cursor_shape != CursorShape::Hidden
-			&& cursor_sr >= 0
-			&& (cursor_sr as usize) < lines;
+			&& cursor_screen_row >= 0
+			&& (cursor_screen_row as usize) < lines;
 		self.cursor_animating = false;
 		if !shown {
 			return None;
 		}
-		let c = cursor_pt.column.0 as f32;
-		let row_jump = !self.cursor_init || cursor_sr != self.cursor_row;
-		let moved = row_jump || (c - self.cursor_col).abs() > 0.001;
+		let target_col = cursor_pt.column.0 as f32;
+		let row_jump = !self.cursor_init || cursor_screen_row != self.cursor_row;
+		let moved = row_jump || (target_col - self.cursor_col).abs() > 0.001;
 		if row_jump {
-			self.cursor_x = c; // snap on first sight / newline (no diagonal slide)
+			self.cursor_x = target_col; // snap on first sight / newline (no diagonal slide)
 		}
 		if moved {
 			self.blink_t = 0.0; // solid immediately after any move
 		}
 		self.cursor_init = true;
-		self.cursor_row = cursor_sr;
-		self.cursor_col = c;
+		self.cursor_row = cursor_screen_row;
+		self.cursor_col = target_col;
 		let k = 1.0 - (-dt * 1000.0 / CURSOR_MOVE_TAU_MS).exp();
-		self.cursor_x += (c - self.cursor_x) * k;
-		let easing = (c - self.cursor_x).abs() > 0.01;
+		self.cursor_x += (target_col - self.cursor_x) * k;
+		let easing = (target_col - self.cursor_x).abs() > 0.01;
 		if !easing {
-			self.cursor_x = c;
+			self.cursor_x = target_col;
 		}
 		self.blink_t += dt;
 		// Animation: "none" = steady; "phase" = smooth cosine fade; "pulse_*" =
@@ -577,7 +856,7 @@ impl Pane {
 		let animating = !easing && anim != "none";
 		let phase = (self.blink_t / period).fract();
 
-		let (mut w_frac, mut h_frac) = geom;
+		let (mut w_frac, mut h_frac) = cursor_geom;
 		let mut alpha = CURSOR_ALPHA;
 		let (pulsing_w, pulsing_h) = if animating {
 			match anim {
@@ -594,9 +873,9 @@ impl Pane {
 					(true, false)
 				}
 				"pulse_both" => {
-					let e = pulse_env(phase);
-					w_frac *= e;
-					h_frac *= e;
+					let envelope = pulse_env(phase);
+					w_frac *= envelope;
+					h_frac *= envelope;
 					(true, true)
 				}
 				_ => (false, false),
@@ -605,9 +884,9 @@ impl Pane {
 			(false, false)
 		};
 		self.cursor_animating = easing || animating;
-		let mut col = config::srgb_f32(cursor_rgb);
-		col[3] = alpha;
-		let cell_y = self.rect.y + margin + (cursor_sr as f32 + frac) * cell_h;
+		let mut cursor_color = config::srgb_f32(cursor_rgb);
+		cursor_color[3] = alpha;
+		let cell_y = self.rect.y + margin + (cursor_screen_row as f32 + voff) * cell_h;
 		let cell_x = content_x + self.cursor_x * cell_w;
 		// Width grows from the left, height from the bottom - but a *pulsing*
 		// dimension grows from the cell centre (the "line in the middle") and may
@@ -635,7 +914,7 @@ impl Pane {
 		Some(RectInstance {
 			pos: [x, y],
 			size: [w, h],
-			color: col,
+			color: cursor_color,
 		})
 	}
 
@@ -645,16 +924,30 @@ impl Pane {
 	pub fn glow_text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
 		let mut area = self.text_area(top, margin);
 		if self.glow_debold {
-			if let Some(gb) = &self.glow_buf {
-				area.buffer = gb;
+			if let Some(glow_buffer) = &self.glow_buf {
+				area.buffer = glow_buffer;
 			}
 		}
 		area
 	}
 
-	pub fn text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
+	// glow_text_area with the band clip of text_area_band (see there).
+	pub fn glow_text_area_band<'a>(
+		&'a self,
+		top: f32,
+		margin: f32,
+		clip_top: f32,
+		clip_bottom: f32,
+	) -> TextArea<'a> {
+		let mut area = self.glow_text_area(top, margin);
+		area.bounds.top = area.bounds.top.max(clip_top as i32);
+		area.bounds.bottom = area.bounds.bottom.min(clip_bottom as i32);
+		area
+	}
+
+	fn buf_area<'a>(&'a self, buf: &'a Buffer, top: f32, margin: f32) -> TextArea<'a> {
 		TextArea {
-			buffer: &self.buffer,
+			buffer: buf,
 			left: self.rect.x + margin,
 			top,
 			scale: 1.0,
@@ -672,6 +965,41 @@ impl Pane {
 			),
 			custom_glyphs: &[],
 		}
+	}
+
+	pub fn text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
+		self.buf_area(&self.buffer, top, margin)
+	}
+
+	// Same buffer as text_area, positioned at `top`, but with its vertical clip
+	// narrowed to [clip_top, clip_bottom]. Used by the app-scroll slide to draw the
+	// current buffer clipped to the scroll region and the static band separately.
+	pub fn text_area_band<'a>(
+		&'a self,
+		top: f32,
+		margin: f32,
+		clip_top: f32,
+		clip_bottom: f32,
+	) -> TextArea<'a> {
+		let mut area = self.text_area(top, margin);
+		area.bounds.top = area.bounds.top.max(clip_top as i32);
+		area.bounds.bottom = area.bounds.bottom.min(clip_bottom as i32);
+		area
+	}
+
+	// The retained previous frame (prev_buffer) at `top`, clipped to the strip the
+	// slide reveals. Fills that strip with real outgoing content instead of bg.
+	pub fn prev_text_area_band<'a>(
+		&'a self,
+		top: f32,
+		margin: f32,
+		clip_top: f32,
+		clip_bottom: f32,
+	) -> TextArea<'a> {
+		let mut area = self.buf_area(&self.prev_buffer, top, margin);
+		area.bounds.top = area.bounds.top.max(clip_top as i32);
+		area.bounds.bottom = area.bounds.bottom.min(clip_bottom as i32);
+		area
 	}
 
 	// Per-cell fallback glyphs, already positioned (see Pane::build). Drawn in
@@ -705,8 +1033,8 @@ impl Pane {
 		if !self.term.at_shell_prompt() {
 			return;
 		}
-		if let Some(g) = self.term.term.try_lock_unfair() {
-			let grid = g.grid();
+		if let Some(guard) = self.term.term.try_lock_unfair() {
+			let grid = guard.grid();
 			self.cmd_start = grid.history_size() + grid.cursor.point.line.0.max(0) as usize + 1;
 			self.capture_armed = true;
 			self.last_output = std::time::Instant::now();
@@ -736,13 +1064,13 @@ impl Pane {
 		if !self.term.at_shell_prompt() {
 			return None; // a foreground app is still running; wait for it to exit
 		}
-		let g = self.term.term.try_lock_unfair()?;
+		let guard = self.term.term.try_lock_unfair()?;
 		self.capture_armed = false;
 		let end = {
-			let grid = g.grid();
+			let grid = guard.grid();
 			grid.history_size() + grid.cursor.point.line.0.max(0) as usize
 		};
-		let text = capture_grid_text(&g, self.cmd_start, end);
+		let text = capture_grid_text(&guard, self.cmd_start, end);
 		(!text.trim().is_empty()).then_some(text)
 	}
 
@@ -778,11 +1106,14 @@ impl Pane {
 		} else {
 			Side::Right
 		};
-		let sr = ((y - self.rect.y - ctx.margin) / ctx.cell_h)
+		let screen_row = ((y - self.rect.y - ctx.margin) / ctx.cell_h)
 			.floor()
 			.clamp(0.0, (lines - 1) as f32) as i32;
-		let d = self.term.term.lock_unfair().grid().display_offset() as i32;
-		Some((Point::new(Line(sr - d), Column(col as usize)), side))
+		let display_offset = self.term.term.lock_unfair().grid().display_offset() as i32;
+		Some((
+			Point::new(Line(screen_row - display_offset), Column(col as usize)),
+			side,
+		))
 	}
 
 	// If a double-click `point` sits inside a matched pair on its line, return
@@ -796,8 +1127,8 @@ impl Pane {
 			return None;
 		}
 		let row: Vec<char> = {
-			let t = self.term.term.lock_unfair();
-			let grid = t.grid();
+			let guard = self.term.term.lock_unfair();
+			let grid = guard.grid();
 			(0..cols).map(|c| grid[point.line][Column(c)].c).collect()
 		};
 		let (start, end) = pair_inside(&row, col, pairs)?;
@@ -812,8 +1143,8 @@ impl Pane {
 	}
 
 	pub fn update_selection(&self, point: Point, side: Side) {
-		let mut t = self.term.term.lock_unfair();
-		if let Some(sel) = t.selection.as_mut() {
+		let mut guard = self.term.term.lock_unfair();
+		if let Some(sel) = guard.selection.as_mut() {
 			sel.update(point, side);
 		}
 	}
@@ -974,6 +1305,7 @@ impl PaneManager {
 	pub fn rebuild_buffers(&mut self, ctx: &mut TextCtx) {
 		for pane in self.panes.values_mut() {
 			pane.buffer = ctx.new_buffer(pane.rect.w.max(1.0), pane.rect.h.max(1.0));
+			pane.prev_buffer = ctx.new_buffer(pane.rect.w.max(1.0), pane.rect.h.max(1.0));
 			pane.text_built = false; // fresh empty buffer: force a full rebuild next frame
 		}
 	}
@@ -995,6 +1327,7 @@ impl PaneManager {
 				// goes invisible until you scroll/resize. Give it overscan slack;
 				// TextArea bounds still clip drawing to the pane.
 				ctx.resize_buffer(&mut pane.buffer, cw, ch + 2.0 * ctx.cell_h);
+				ctx.resize_buffer(&mut pane.prev_buffer, cw, ch + 2.0 * ctx.cell_h);
 			}
 		}
 	}
@@ -1038,9 +1371,13 @@ fn swap_leaves(node: &mut Node, a: PaneId, b: PaneId) {
 				*id = a;
 			}
 		}
-		Node::Split { a: l, b: r, .. } => {
-			swap_leaves(l, a, b);
-			swap_leaves(r, a, b);
+		Node::Split {
+			a: child_a,
+			b: child_b,
+			..
+		} => {
+			swap_leaves(child_a, a, b);
+			swap_leaves(child_b, a, b);
 		}
 	}
 }
@@ -1073,11 +1410,13 @@ fn spawn_pane(
 	)?;
 	// +2 cells of height for the overscan rows build() renders (see relayout).
 	let buffer = ctx.new_buffer(cw, ch + 2.0 * ctx.cell_h);
+	let prev_buffer = ctx.new_buffer(cw, ch + 2.0 * ctx.cell_h);
 	Ok(Pane {
 		id,
 		term,
 		scroll: Scroll::new(),
 		buffer,
+		prev_buffer,
 		rect,
 		title: config::APP_NAME.into(),
 		read_only: false,
@@ -1086,9 +1425,14 @@ fn spawn_pane(
 			top: rect.y,
 			bg: Vec::new(),
 			cursor: None,
+			slide: None,
 		},
 		last_history: 0,
 		last_rows: Vec::new(),
+		slide_static: 0,
+		slide_static_top: 0,
+		slide_sh: 0.0,
+		last_alt: false,
 		glyph_bufs: Vec::new(),
 		glyphs: Vec::new(),
 		glow_buf: None,
@@ -1124,29 +1468,29 @@ fn capture_grid_text(
 	let hist = grid.history_size() as i64;
 	let cols = grid.columns();
 	let mut out = String::new();
-	let mut a = start_abs;
-	while a < end_abs {
-		let gl = a as i64 - hist; // screen top is absolute `hist`; history is negative
-		if gl < -hist {
-			a += 1; // scrolled out of the buffer (output longer than scrollback)
+	let mut abs_line = start_abs;
+	while abs_line < end_abs {
+		let grid_line = abs_line as i64 - hist; // screen top is absolute `hist`; history is negative
+		if grid_line < -hist {
+			abs_line += 1; // scrolled out of the buffer (output longer than scrollback)
 			continue;
 		}
-		let row = &grid[Line(gl as i32)];
-		let mut s = String::new();
+		let row = &grid[Line(grid_line as i32)];
+		let mut row_text = String::new();
 		for c in 0..cols {
 			let cell = &row[Column(c)];
 			if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
 				continue; // the trailing half of a wide glyph has no char of its own
 			}
-			s.push(cell.c);
+			row_text.push(cell.c);
 		}
 		if cols > 0 && row[Column(cols - 1)].flags.contains(Flags::WRAPLINE) {
-			out.push_str(&s); // soft-wrapped: continue the logical line, no newline
+			out.push_str(&row_text); // soft-wrapped: continue the logical line, no newline
 		} else {
-			out.push_str(s.trim_end());
+			out.push_str(row_text.trim_end());
 			out.push('\n');
 		}
-		a += 1;
+		abs_line += 1;
 	}
 	out
 }
@@ -1162,22 +1506,22 @@ fn pair_inside(row: &[char], col: usize, pairs: &[(char, char)]) -> Option<(usiz
 		} else {
 			distinct_pair(row, col, open, close)
 		};
-		if let Some((o, c)) = found {
-			if c > o + 1 {
+		if let Some((open_idx, close_idx)) = found {
+			if close_idx > open_idx + 1 {
 				// Exclude runs of spaces directly against the delimiters (keep any
 				// interior spaces): `" Now is the time. "` selects `Now is the time.`.
-				let (mut s, mut e) = (o + 1, c - 1);
-				while s < e && row[s] == ' ' {
-					s += 1;
+				let (mut start, mut end) = (open_idx + 1, close_idx - 1);
+				while start < end && row[start] == ' ' {
+					start += 1;
 				}
-				while e > s && row[e] == ' ' {
-					e -= 1;
+				while end > start && row[end] == ' ' {
+					end -= 1;
 				}
 				// all-spaces inside: fall back to the full inside span
-				return Some(if row[s] == ' ' {
-					(o + 1, c - 1)
+				return Some(if row[start] == ' ' {
+					(open_idx + 1, close_idx - 1)
 				} else {
-					(s, e)
+					(start, end)
 				});
 			}
 		}
@@ -1189,26 +1533,26 @@ fn pair_inside(row: &[char], col: usize, pairs: &[(char, char)]) -> Option<(usiz
 // open/close chars. The char at `col` itself isn't treated as an endpoint.
 fn distinct_pair(row: &[char], col: usize, open: char, close: char) -> Option<(usize, usize)> {
 	let mut depth = 0i32;
-	let mut o = None;
+	let mut open_idx = None;
 	for i in (0..col).rev() {
 		if row[i] == close {
 			depth += 1;
 		} else if row[i] == open {
 			if depth == 0 {
-				o = Some(i);
+				open_idx = Some(i);
 				break;
 			}
 			depth -= 1;
 		}
 	}
-	let o = o?;
+	let open_idx = open_idx?;
 	let mut depth = 0i32;
 	for (i, &ch) in row.iter().enumerate().skip(col + 1) {
 		if ch == open {
 			depth += 1;
 		} else if ch == close {
 			if depth == 0 {
-				return Some((o, i));
+				return Some((open_idx, i));
 			}
 			depth -= 1;
 		}
@@ -1271,13 +1615,13 @@ fn path_to(node: &Node, id: PaneId) -> Option<Vec<bool>> {
 	match node {
 		Node::Leaf(i) => (*i == id).then(Vec::new),
 		Node::Split { a, b, .. } => {
-			if let Some(mut p) = path_to(a, id) {
-				p.insert(0, false);
-				return Some(p);
+			if let Some(mut path) = path_to(a, id) {
+				path.insert(0, false);
+				return Some(path);
 			}
-			if let Some(mut p) = path_to(b, id) {
-				p.insert(0, true);
-				return Some(p);
+			if let Some(mut path) = path_to(b, id) {
+				path.insert(0, true);
+				return Some(path);
 			}
 			None
 		}
@@ -1286,11 +1630,11 @@ fn path_to(node: &Node, id: PaneId) -> Option<Vec<bool>> {
 
 // Follow `path` from `node` (defensively stops at a leaf).
 fn node_at_mut<'a>(mut node: &'a mut Node, path: &[bool]) -> &'a mut Node {
-	for &b in path {
-		let Node::Split { a, b: bb, .. } = node else {
+	for &take_b in path {
+		let Node::Split { a, b, .. } = node else {
 			break;
 		};
-		node = if b { bb } else { a };
+		node = if take_b { b } else { a };
 	}
 	node
 }
@@ -1298,13 +1642,13 @@ fn node_at_mut<'a>(mut node: &'a mut Node, path: &[bool]) -> &'a mut Node {
 // Is the node at `path` a Split oriented along `dir`?
 fn is_dir_split(root: &Node, path: &[bool], dir: Dir) -> bool {
 	let mut node = root;
-	for &b in path {
-		let Node::Split { a, b: bb, .. } = node else {
+	for &take_b in path {
+		let Node::Split { a, b, .. } = node else {
 			return false;
 		};
-		node = if b { bb } else { a };
+		node = if take_b { b } else { a };
 	}
-	matches!(node, Node::Split { dir: d, .. } if *d == dir)
+	matches!(node, Node::Split { dir: node_dir, .. } if *node_dir == dir)
 }
 
 // Leaves in the same-direction run rooted at `node`: a nested `dir` split counts
@@ -1312,9 +1656,12 @@ fn is_dir_split(root: &Node, path: &[bool], dir: Dir) -> bool {
 // internal layout is separate).
 fn group_leaf_count(node: &Node, dir: Dir) -> usize {
 	match node {
-		Node::Split { dir: d, a, b, .. } if *d == dir => {
-			group_leaf_count(a, dir) + group_leaf_count(b, dir)
-		}
+		Node::Split {
+			dir: node_dir,
+			a,
+			b,
+			..
+		} if *node_dir == dir => group_leaf_count(a, dir) + group_leaf_count(b, dir),
 		_ => 1,
 	}
 }
@@ -1323,12 +1670,12 @@ fn group_leaf_count(node: &Node, dir: Dir) -> usize {
 fn group_has_manual(node: &Node, dir: Dir) -> bool {
 	match node {
 		Node::Split {
-			dir: d,
+			dir: node_dir,
 			manual,
 			a,
 			b,
 			..
-		} if *d == dir => *manual || group_has_manual(a, dir) || group_has_manual(b, dir),
+		} if *node_dir == dir => *manual || group_has_manual(a, dir) || group_has_manual(b, dir),
 		_ => false,
 	}
 }
@@ -1337,17 +1684,17 @@ fn group_has_manual(node: &Node, dir: Dir) -> bool {
 // a split gives its a-child a share proportional to the leaves under it.
 fn equalize(node: &mut Node, dir: Dir) {
 	if let Node::Split {
-		dir: d,
+		dir: node_dir,
 		ratio,
 		a,
 		b,
 		..
 	} = node
 	{
-		if *d == dir {
-			let na = group_leaf_count(a, dir);
-			let nb = group_leaf_count(b, dir);
-			*ratio = na as f32 / (na + nb) as f32;
+		if *node_dir == dir {
+			let leaves_a = group_leaf_count(a, dir);
+			let leaves_b = group_leaf_count(b, dir);
+			*ratio = leaves_a as f32 / (leaves_a + leaves_b) as f32;
 			equalize(a, dir);
 			equalize(b, dir);
 		}
@@ -1387,9 +1734,9 @@ fn prune(node: Node, id: PaneId) -> Option<Node> {
 			a,
 			b,
 		} => {
-			let a2 = prune(*a, id);
-			let b2 = prune(*b, id);
-			match (a2, b2) {
+			let pruned_a = prune(*a, id);
+			let pruned_b = prune(*b, id);
+			match (pruned_a, pruned_b) {
 				(Some(a), Some(b)) => Some(Node::Split {
 					dir,
 					ratio,
@@ -1397,7 +1744,7 @@ fn prune(node: Node, id: PaneId) -> Option<Node> {
 					a: Box::new(a),
 					b: Box::new(b),
 				}),
-				(Some(n), None) | (None, Some(n)) => Some(n),
+				(Some(survivor), None) | (None, Some(survivor)) => Some(survivor),
 				(None, None) => None,
 			}
 		}
@@ -1429,36 +1776,36 @@ fn child_areas(area: Rect, dir: Dir, ratio: f32) -> (Rect, Rect) {
 	let gap = config::PANE_GAP_PX;
 	match dir {
 		Dir::Vertical => {
-			let wa = ((area.w - gap) * ratio).floor();
+			let a_width = ((area.w - gap) * ratio).floor();
 			(
 				Rect {
 					x: area.x,
 					y: area.y,
-					w: wa,
+					w: a_width,
 					h: area.h,
 				},
 				Rect {
-					x: area.x + wa + gap,
+					x: area.x + a_width + gap,
 					y: area.y,
-					w: area.w - gap - wa,
+					w: area.w - gap - a_width,
 					h: area.h,
 				},
 			)
 		}
 		Dir::Horizontal => {
-			let ha = ((area.h - gap) * ratio).floor();
+			let a_height = ((area.h - gap) * ratio).floor();
 			(
 				Rect {
 					x: area.x,
 					y: area.y,
 					w: area.w,
-					h: ha,
+					h: a_height,
 				},
 				Rect {
 					x: area.x,
-					y: area.y + ha + gap,
+					y: area.y + a_height + gap,
 					w: area.w,
-					h: area.h - gap - ha,
+					h: area.h - gap - a_height,
 				},
 			)
 		}
@@ -1495,15 +1842,15 @@ fn divider_at(node: &Node, area: Rect, x: f32, y: f32, path: &mut Vec<bool>) -> 
 	}
 	if a_area.contains(x, y) {
 		path.push(false);
-		if let Some(d) = divider_at(a, a_area, x, y, path) {
-			return Some(d);
+		if let Some(found_dir) = divider_at(a, a_area, x, y, path) {
+			return Some(found_dir);
 		}
 		path.pop();
 	}
 	if b_area.contains(x, y) {
 		path.push(true);
-		if let Some(d) = divider_at(b, b_area, x, y, path) {
-			return Some(d);
+		if let Some(found_dir) = divider_at(b, b_area, x, y, path) {
+			return Some(found_dir);
 		}
 		path.pop();
 	}
@@ -1532,11 +1879,11 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
 		return;
 	}
 	let gap = config::PANE_GAP_PX;
-	let r = match dir {
+	let new_ratio = match dir {
 		Dir::Vertical => (x - area.x) / (area.w - gap),
 		Dir::Horizontal => (y - area.y) / (area.h - gap),
 	};
-	*ratio = r.clamp(0.05, 0.95);
+	*ratio = new_ratio.clamp(0.05, 0.95);
 	*manual = true; // dragged: stop auto even-distribution for this run
 }
 
@@ -1544,6 +1891,85 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
 // fingerprints when scrollback growth can't tell us (the buffer is full). It's
 // the smallest shift k where this frame's top (rows-k) lines equal last frame's
 // bottom (rows-k) lines.
+// Signed sibling of scroll_shift for alt-screen app-scroll easing: detect a clean
+// vertical translate between two frames, in either direction, up to `max` lines.
+// +k = scrolled forward (content moved up k rows), -k = scrolled back (down k).
+// Real full-screen apps keep static chrome bands - a status/input line at the
+// BOTTOM (less, vim) and often a title bar at the TOP (nano, muffer) - so the
+// scrolling region is a middle block, not a top prefix. We therefore count, for
+// each candidate k, how many rows translate cleanly ANYWHERE (cur[i]==last[i+k]),
+// and pick the k with the most. A shift counts only if a solid block translates
+// (>= `need`) AND enough of those rows actually MOVED (cur[i]!=last[i], >= MOVED_MIN)
+// - a static or blank field matches positionally but hasn't scrolled, and easing
+// that produces the apt/blank-jitter bounce. Otherwise 0 (in-place redraw, content
+// change, or a jump bigger than `max`) and the caller hard-cuts. 64-bit row
+// fingerprints make a coincidental non-translation match vanishingly unlikely, so
+// no contiguity check is needed. It never guesses a full turnover the way
+// scroll_shift does - easing a non-scroll looks wrong.
+const MOVED_MIN: usize = 3; // a real scroll must move at least this many rows
+fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
+	let n = cur.len();
+	if n == 0 || last.len() != n {
+		return 0;
+	}
+	// a quarter of the screen, since static top+bottom bands shrink the middle
+	let need = (n / 4).max(3);
+	let limit = max.min(n - 1);
+	let (mut best, mut best_score) = (0i32, 0usize);
+	for k in 1..=limit {
+		// forward: content moved up k rows -> cur[i] == last[i+k]
+		let (mut matched, mut moved) = (0usize, 0usize);
+		for i in 0..n - k {
+			if cur[i] == last[i + k] {
+				matched += 1;
+				if cur[i] != last[i] {
+					moved += 1;
+				}
+			}
+		}
+		if matched >= need && moved >= MOVED_MIN && matched > best_score {
+			best_score = matched;
+			best = k as i32;
+		}
+		// backward: content moved down k rows -> cur[i+k] == last[i]
+		let (mut matched, mut moved) = (0usize, 0usize);
+		for i in 0..n - k {
+			if cur[i + k] == last[i] {
+				matched += 1;
+				if cur[i + k] != last[i + k] {
+					moved += 1;
+				}
+			}
+		}
+		if matched >= need && moved >= MOVED_MIN && matched > best_score {
+			best_score = matched;
+			best = -(k as i32);
+		}
+	}
+	best
+}
+
+// Count the static (unchanged) rows at the top and bottom edges between two
+// frames: a fixed title bar (nano/muffer) above and a status/help band below the
+// scrolling region. Returns (top, bottom); zeroed if the two would meet or cover
+// the whole screen (no distinct scroll region). Measured only on a gesture's first
+// step - see build() - so mid-scroll fluctuation can't jitter the band boundary.
+fn static_bands(cur: &[u64], last: &[u64]) -> (usize, usize) {
+	let n = cur.len();
+	if last.len() != n {
+		return (0, 0);
+	}
+	let mut st = 0;
+	while st < n && cur[st] == last[st] {
+		st += 1;
+	}
+	let mut sb = 0;
+	while sb < n && cur[n - 1 - sb] == last[n - 1 - sb] {
+		sb += 1;
+	}
+	if st + sb >= n { (0, 0) } else { (st, sb) }
+}
+
 fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 	let n = cur.len();
 	if n == 0 || last.len() != n {
@@ -1569,8 +1995,9 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Dir, Node, Rect, bell_brighten, distinct_pair, equalize_dir_run, layout, pair_inside,
-		same_char_pair, scroll_shift,
+		APP_SCROLL_MAX, Dir, Node, Rect, SLIDE_TOP_BAND_APPS, bell_brighten, distinct_pair,
+		equalize_dir_run, layout, pair_inside, same_char_pair, scroll_shift, scroll_shift_signed,
+		static_bands,
 	};
 
 	fn leaf(id: u64) -> Node {
@@ -1816,6 +2243,211 @@ mod tests {
 	fn shift_empty_or_mismatched_is_zero() {
 		assert_eq!(scroll_shift(&[], &[]), 0);
 		assert_eq!(scroll_shift(&[1, 2, 3], &[1, 2]), 0);
+	}
+
+	#[test]
+	fn signed_shift_detects_both_directions_and_hard_cuts_the_rest() {
+		let last = [10u64, 20, 30, 40, 50];
+		// scrolled forward: content moved up 2 (cur top == last[2..])
+		let fwd = [30, 40, 50, 60, 70];
+		assert_eq!(scroll_shift_signed(&fwd, &last, 8), 2);
+		// scrolled back: content moved down 1 (cur[1..] == last[..n-1])
+		let back = [5, 10, 20, 30, 40];
+		assert_eq!(scroll_shift_signed(&back, &last, 8), -1);
+		// no motion, in-place change, and full turnover all hard-cut (0), never a guess
+		assert_eq!(scroll_shift_signed(&last, &last, 8), 0);
+		assert_eq!(scroll_shift_signed(&[11, 20, 30, 40, 50], &last, 8), 0);
+		assert_eq!(scroll_shift_signed(&[60, 70, 80, 90, 99], &last, 8), 0);
+		// a jump bigger than max is not eased
+		assert_eq!(scroll_shift_signed(&fwd, &last, 1), 0);
+		// real-app shape: the middle scrolls but a static status/input band at the
+		// bottom stays put - the middle block still translates, so it's detected
+		let last_s = [10u64, 20, 30, 40, 900, 901];
+		let cur_s = [20u64, 30, 40, 50, 900, 901];
+		assert_eq!(scroll_shift_signed(&cur_s, &last_s, 8), 1);
+	}
+
+	#[test]
+	fn signed_shift_tolerates_static_top_band_and_rejects_static_fields() {
+		// nano/muffer shape: a static title bar at the TOP and a status band at the
+		// BOTTOM, with the middle region scrolling up by 1. The old top-anchored
+		// matcher returned 0 here (row 0 never moved); the block matcher detects it.
+		let last = [700u64, 701, 10, 20, 30, 40, 900, 901];
+		let cur = [700u64, 701, 20, 30, 40, 50, 900, 901];
+		assert_eq!(scroll_shift_signed(&cur, &last, 8), 1);
+		// backward (middle slid down 1) with the same static bands
+		let back = [700u64, 701, 5, 10, 20, 30, 900, 901];
+		assert_eq!(scroll_shift_signed(&back, &last, 8), -1);
+		// a large static/blank field matches positionally but hasn't MOVED - must not
+		// be read as a scroll (this is the apt/blank-jitter guard). Here rows 1..6 are
+		// all identical (a blank band); only row 0 changed, in place. No real scroll.
+		let bl_last = [1u64, 5, 5, 5, 5, 5, 5, 9];
+		let bl_cur = [2u64, 5, 5, 5, 5, 5, 5, 9];
+		assert_eq!(scroll_shift_signed(&bl_cur, &bl_last, 8), 0);
+	}
+
+	#[test]
+	fn static_bands_measures_title_and_status() {
+		// nano shape: static title (rows 0..2), scroll region (2..6), status band (6..8)
+		let last = [700u64, 701, 10, 20, 30, 40, 900, 901];
+		let cur = [700u64, 701, 20, 30, 40, 50, 900, 901];
+		assert_eq!(static_bands(&cur, &last), (2, 2));
+		// no bands: every row changed
+		let a = [1u64, 2, 3, 4];
+		let b = [5u64, 6, 7, 8];
+		assert_eq!(static_bands(&a, &b), (0, 0));
+		// a fully static frame would have the bands meet -> zeroed (no scroll region)
+		assert_eq!(static_bands(&last, &last), (0, 0));
+		// length mismatch is not measurable
+		assert_eq!(static_bands(&a, &last), (0, 0));
+	}
+
+	// ---- App-scroll scenario matrix -------------------------------------------
+	// Per-app regression coverage for the alt-screen slide: each real full-screen
+	// app repaints in a characteristic shape, and the (shift, static-band) pair the
+	// detector extracts decides whether the pane slides smoothly or hard-cuts. These
+	// model the shapes so a change to the detector/bands (or the SLIDE_TOP_BAND_APPS
+	// toggle) is caught without a live GL run. The committed headless harness
+	// (cicd/tests/scroll) exercises the same shapes end-to-end via SILK_SCROLLDBG.
+
+	// Build a (last, cur) frame pair modelling a full-screen app whose middle scroll
+	// region moved up by `shift` rows (forward = content scrolls up, newer rows in at
+	// the bottom), with `top` static title rows above and `bot` static status rows
+	// below. Row fingerprints are arbitrary distinct u64s viewing a rolling window, so
+	// a shift reuses neighbouring content rows exactly as a real repaint does.
+	fn app_frames(rows: usize, top: usize, bot: usize, shift: i32) -> (Vec<u64>, Vec<u64>) {
+		let pool: Vec<u64> = (1000u64..1000 + rows as u64 * 4).collect(); // content pool
+		let title: Vec<u64> = (1u64..=top as u64).collect(); // static top band
+		let status: Vec<u64> = (900u64..900 + bot as u64).collect(); // static bottom band
+		let mid = rows - top - bot;
+		let frame = |off: usize| -> Vec<u64> {
+			let mut v = title.clone();
+			v.extend_from_slice(&pool[off..off + mid]);
+			v.extend_from_slice(&status);
+			v
+		};
+		let base = rows; // window origin with room to move either way
+		let last = frame(base);
+		let cur = frame((base as i32 + shift) as usize);
+		(last, cur)
+	}
+
+	// The build() decision: engage the smooth slide only when there's no static top
+	// band, unless the top-band toggle is on. Mirrors the gate in build().
+	fn slide_engages(top_band: usize) -> bool {
+		SLIDE_TOP_BAND_APPS || top_band == 0
+	}
+
+	#[test]
+	fn less_slides_no_top_band() {
+		// less fills from the top and keeps only a bottom status line, so there's no
+		// static top band: the middle scrolls, the detector sees it, and build slides.
+		let (last, cur) = app_frames(24, 0, 1, 1);
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 1);
+		let (st, sb) = static_bands(&cur, &last);
+		assert_eq!(st, 0, "less has no static top band");
+		assert_eq!(sb, 1, "less keeps a single-row status line");
+		assert!(slide_engages(st), "less must slide smoothly");
+	}
+
+	#[test]
+	fn vim_slides_no_top_band() {
+		// vim/vim.tiny paints text from row 0 with a status + command line at the
+		// bottom (two static rows), no title bar: same "no top band -> slide" as less.
+		let (last, cur) = app_frames(24, 0, 2, 2);
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 2);
+		let (st, sb) = static_bands(&cur, &last);
+		assert_eq!(st, 0, "vim has no static top band");
+		assert_eq!(sb, 2, "vim keeps a status + command line");
+		assert!(slide_engages(st), "vim must slide smoothly");
+	}
+
+	#[test]
+	fn nano_hard_cuts_static_top_band() {
+		// nano keeps a title bar at the top and a two-row help band at the bottom, so
+		// the middle scroll region has a static top band. The detector still sees the
+		// shift, but a top-band app hard-cuts (SLIDE_TOP_BAND_APPS off) to avoid the
+		// title/glow bounce. Flipping the toggle re-enables the slide (this expectation
+		// tracks the toggle, but the band detection asserted below is the real surface).
+		let (last, cur) = app_frames(24, 1, 2, 1);
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 1);
+		let (st, sb) = static_bands(&cur, &last);
+		assert_eq!(st, 1, "nano keeps a title bar (static top band)");
+		assert_eq!(sb, 2, "nano keeps a two-row help band");
+		assert_eq!(
+			slide_engages(st),
+			SLIDE_TOP_BAND_APPS,
+			"top-band app hard-cuts unless enabled"
+		);
+	}
+
+	#[test]
+	fn muffer_hard_cuts_static_top_band() {
+		// muffer (the TUI) keeps a static header, so like nano it has a top band and
+		// hard-cuts on the wheel for now. Model a two-row header + one-row footer.
+		let (last, cur) = app_frames(30, 2, 1, 1);
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 1);
+		let (st, _sb) = static_bands(&cur, &last);
+		assert_eq!(st, 2, "muffer keeps a static header (top band)");
+		assert_eq!(
+			slide_engages(st),
+			SLIDE_TOP_BAND_APPS,
+			"top-band app hard-cuts unless enabled"
+		);
+	}
+
+	#[test]
+	fn app_wheel_multi_line_jump_still_detected() {
+		// a wheel notch in a mouse-tracking app repaints a several-line jump, not one
+		// line: it must still be detected as a clean scroll (up to APP_SCROLL_MAX), not
+		// hard-cut as a page turnover. less-shaped so it slides.
+		let (last, cur) = app_frames(40, 0, 1, 6);
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 6);
+		// but a jump past the window is not eased (hard-cut) - it isn't a clean scroll
+		let (last2, cur2) = app_frames(40, 0, 1, (APP_SCROLL_MAX + 5) as i32);
+		assert_eq!(scroll_shift_signed(&cur2, &last2, APP_SCROLL_MAX), 0);
+	}
+
+	// ---- Normal-output (non-alt-screen) scroll scenarios ----------------------
+	// Plain shell output eases via scroll_shift (unsigned) + nudge_output. The bugs to
+	// guard against: the page "re-listing" itself or "jumping around" (over-reporting
+	// a small advance as a full turnover) and not scrolling at all on an in-place
+	// bottom redraw (which would bounce). The desired behaviour for a finishing
+	// command is just adding new lines at the bottom.
+
+	#[test]
+	fn ls_output_adds_lines_at_bottom() {
+		// `ls -lA` finishes and the prompt returns: the viewport advanced by exactly
+		// the lines printed, not a re-list. One new line at the bottom -> advance 1.
+		let last = [10u64, 20, 30, 40, 50, 60];
+		let cur = [20u64, 30, 40, 50, 60, 70];
+		assert_eq!(scroll_shift(&cur, &last), 1);
+		// a short multi-line result advances by exactly that many lines (no re-list)
+		let cur3 = [40u64, 50, 60, 70, 80, 90];
+		assert_eq!(scroll_shift(&cur3, &last), 3);
+	}
+
+	#[test]
+	fn command_on_last_line_in_place_does_not_scroll() {
+		// running a command whose prompt sits on the last row and only the bottom row
+		// changes in place (no newline yet) must not be read as a scroll - nudging here
+		// was the old apt/status-line bounce.
+		let last = [10u64, 20, 30, 40, 50, 60];
+		let cur = [10u64, 20, 30, 40, 50, 99]; // only the last row changed
+		assert_eq!(scroll_shift(&cur, &last), 0);
+	}
+
+	#[test]
+	fn fast_burst_reports_full_backlog_not_a_reversal() {
+		// a fast burst (e.g. `seq 100000`) turns the whole screen over in one frame:
+		// report the backlog cap so the ease ramps to catch up, still moving the
+		// content one way (down as new lines arrive) - never a jump back up.
+		let last = [10u64, 20, 30, 40, 50, 60];
+		let cur = [70u64, 80, 90, 100, 110, 120]; // no overlap
+		assert_eq!(
+			scroll_shift(&cur, &last),
+			crate::scroll::MAX_BACKLOG as usize
+		);
 	}
 
 	#[test]

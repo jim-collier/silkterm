@@ -93,16 +93,23 @@ fMain(){
 	case " ${*,,} " in
 		*" -h "*|*" --help "*)                 fCopyright; fAbout; fSyntax; return 0; ;;
 		*" -v "*|*" --ver "*|*" --version "*)  fCopyright;                  return 0; ;;
-		*" -q "*|*" --quiet "*)                doQuiet=1;                             ;;
-	esac
+	esac  ## -q/--quiet and -m/--message/--msg are handled in fParseArgs below.
 
 	## Validate dependencies
 	fMustBeInPath rar
 	fMustBeInPath git
 
 	## Arguments
+	local commitMessage=""                       ## may be set by fParseArgs (-m/--message/--msg)
 	local -ri parseArgs_maxPositionalArgCount=1  ## Variable expected by fParseArgs()
 	fParseArgs  "${@}"
+
+	## A -m/--message/--msg drives a hands-off commit: fill git's editor from it
+	## (mirrors how the cicd engine drives us via GIT_AUTO_MESSAGE).
+	if [[ -n "${commitMessage}" ]]; then
+		export GIT_AUTO_MESSAGE="${commitMessage}"
+		[[ -n "${GIT_EDITOR:-}" ]] || export GIT_EDITOR="${meDir}/git-auto-msg.bash"
+	fi
 
 	## Settings; relative paths
 	local -r dirPath_GitProj="."
@@ -141,7 +148,7 @@ fMain(){
 		git config user.email
 		fEcho_Clean
 		fEcho_Clean "SSH key being used"
-		ssh -Tv git@github.com 2>&1 | grep -iE "offering|successfully authenticated" | sed 's/debug1: //' || true
+		ssh -nTv git@github.com 2>&1 | grep -iE "offering|successfully authenticated" | sed 's/debug1: //' || true  ## -n: don't read stdin, else it eats the next prompt's input
 		fIntroPromptToContinue  ""
 		fEcho_Clean
 	fi
@@ -271,11 +278,12 @@ fParseArgs(){
 
 			case "${tmpStr}" in
 
-			#	## ✶✶✶✶✶✶✶✶ PUT CUSTOM UNARY SWITCH TESTS AND PARENT BOOLEAN VARIABLE ASSIGNMENTS HERE
-			#	"unary-switch")  booleanVariable=1  ;;
+			## ✶✶✶✶✶✶✶✶ CUSTOM UNARY SWITCHES
+				"q"|"quiet")                doQuietly=1 ;;
+				"m="*|"message="*|"msg="*)  commitMessage="${currentArg#*=}" ;;  ## -m=MSG / --message=MSG / --msg=MSG (joined)
 
-			#	## ✶✶✶✶✶✶✶✶ PUT TESTS FOR CUSTOM LONG-OPTION LOGIC THAT EXPECTS AN ARGUMENT TO FOLLOW, HERE
-			#	"long-option-with-arg-to-follow") expectingSwitchParamForNextArg=1 ;;
+			## ✶✶✶✶✶✶✶✶ CUSTOM LONG-OPTIONS THAT EXPECT AN ARGUMENT TO FOLLOW
+				"m"|"message"|"msg")        expectingSwitchParamForNextArg=1 ;;   ## -m MSG (spaced; value captured below)
 
 				## ¯\_(ツ)_/¯
 				*) fThrowError  "Unexpected option in this context: '${currentArg}'."  ;;
@@ -284,16 +292,16 @@ fParseArgs(){
 		else
 			## It's not an option switch; could be a long-option argument, or a positional arg
 
-			if ((expectingSwitchParamForNextArg)); then :
-				## Now we know to expecting an long-option argument
+			if ((expectingSwitchParamForNextArg)); then
+				## Now we know we're expecting a long-option argument
 				#fEcho_Clean "Debug: arg for long-option: '${lastSwitch}': '${currentArg}'"
 
-			#	## ✶✶✶✶✶✶✶✶ PUT CUSTOM LONG-OPTION ARGUMENT TESTS AND PARENT VARIABLE ASSIGNMENTS HERE
-			#	case "${lastSwitch,,}" in
-			#		"long-option-with-arg-to-follow") someParentVariable="${currentArg}" ;;
-			#		*)                                fThrowError "Unkown option: '${lastSwitchAsPassed}', current parameter: '${currentArg}'." ;;  ## A redundant check.
-			#	esac
-			#	expectingSwitchParamForNextArg=0
+			## ✶✶✶✶✶✶✶✶ CUSTOM LONG-OPTION ARGUMENT TESTS AND PARENT VARIABLE ASSIGNMENTS
+				case "${lastSwitch,,}" in
+					"m"|"message"|"msg") commitMessage="${currentArg}" ;;
+					*)                   fThrowError "Unknown option: '${lastSwitchAsPassed}', current parameter: '${currentArg}'." ;;
+				esac
+				expectingSwitchParamForNextArg=0
 
 			else
 				## Well it must be a positional arg then.

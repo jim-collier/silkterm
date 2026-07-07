@@ -132,14 +132,14 @@ fn parse_bool(s: &str) -> Option<bool> {
 // `git log --oneline`, `bash --norc`, and `sh -c "a | b"` all argv-split right.
 pub fn shell_split(s: &str) -> Result<Vec<String>, String> {
 	let mut out = Vec::new();
-	let mut cur = String::new();
+	let mut word = String::new();
 	let mut chars = s.chars().peekable();
 	let mut in_word = false;
 	while let Some(c) = chars.next() {
 		match c {
 			' ' | '\t' => {
 				if in_word {
-					out.push(std::mem::take(&mut cur));
+					out.push(std::mem::take(&mut word));
 					in_word = false;
 				}
 			}
@@ -149,7 +149,7 @@ pub fn shell_split(s: &str) -> Result<Vec<String>, String> {
 					if q == '\'' {
 						break;
 					}
-					cur.push(q);
+					word.push(q);
 				}
 			}
 			'"' => {
@@ -158,32 +158,32 @@ pub fn shell_split(s: &str) -> Result<Vec<String>, String> {
 					match q {
 						'"' => break,
 						'\\' => {
-							if let Some(&n) = chars.peek() {
-								if n == '"' || n == '\\' || n == '$' || n == '`' {
-									cur.push(chars.next().unwrap());
+							if let Some(&next) = chars.peek() {
+								if next == '"' || next == '\\' || next == '$' || next == '`' {
+									word.push(chars.next().unwrap());
 									continue;
 								}
 							}
-							cur.push('\\');
+							word.push('\\');
 						}
-						_ => cur.push(q),
+						_ => word.push(q),
 					}
 				}
 			}
 			'\\' => {
 				in_word = true;
-				if let Some(n) = chars.next() {
-					cur.push(n);
+				if let Some(next) = chars.next() {
+					word.push(next);
 				}
 			}
 			_ => {
 				in_word = true;
-				cur.push(c);
+				word.push(c);
 			}
 		}
 	}
 	if in_word {
-		out.push(cur);
+		out.push(word);
 	}
 	if out.is_empty() {
 		return Err("empty command".into());
@@ -198,11 +198,11 @@ struct Args {
 }
 impl Args {
 	fn next_token(&mut self) -> Option<String> {
-		let t = self.items.get(self.i).cloned();
-		if t.is_some() {
+		let token = self.items.get(self.i).cloned();
+		if token.is_some() {
 			self.i += 1;
 		}
-		t
+		token
 	}
 	// value for a flag whose `=value` (if any) is `inline`; else the next token.
 	fn value(&mut self, flag: &str, inline: Option<String>) -> Result<String, String> {
@@ -217,8 +217,8 @@ impl Args {
 		if let Some(v) = inline {
 			return parse_bool(&v).ok_or_else(|| format!("{flag}: not a bool: {v}"));
 		}
-		if let Some(t) = self.items.get(self.i) {
-			if let Some(b) = parse_bool(t) {
+		if let Some(token) = self.items.get(self.i) {
+			if let Some(b) = parse_bool(token) {
 				self.i += 1;
 				return Ok(b);
 			}
@@ -236,9 +236,10 @@ fn parse_f32(flag: &str, v: &str) -> Result<f32, String> {
 }
 
 fn parse_size(v: &str) -> Result<Size, String> {
-	if let Some(p) = v.strip_suffix('%') {
+	if let Some(percent) = v.strip_suffix('%') {
 		Ok(Size::Percent(
-			p.trim()
+			percent
+				.trim()
 				.parse()
 				.map_err(|_| format!("--size: bad percent: {v}"))?,
 		))
@@ -261,13 +262,13 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 	let mut cur_tab: Option<usize> = None;
 	let mut cur_pane: usize = 0;
 
-	while let Some(tok) = a.next_token() {
-		if tok == "-h" {
+	while let Some(token) = a.next_token() {
+		if token == "-h" {
 			cli.help = true;
 			continue;
 		}
-		let Some(body) = tok.strip_prefix("--") else {
-			return Err(format!("unexpected argument: {tok}"));
+		let Some(body) = token.strip_prefix("--") else {
+			return Err(format!("unexpected argument: {token}"));
 		};
 		let (name, inline) = match body.split_once('=') {
 			Some((n, v)) => (n, Some(v.to_string())),
@@ -297,23 +298,23 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 			}
 			"new-pane" => {
 				ensure_first_tab(&mut cli);
-				let t = cur_tab.unwrap_or(0);
+				let tab_idx = cur_tab.unwrap_or(0);
 				// optional handle comes only from `=value` (never eats the next flag)
 				let id = inline.filter(|s| !s.is_empty());
-				cli.tabs[t].panes.push(PaneSpec::new(id, false));
-				cur_pane = cli.tabs[t].panes.len() - 1;
-				cur_tab = Some(t);
+				cli.tabs[tab_idx].panes.push(PaneSpec::new(id, false));
+				cur_pane = cli.tabs[tab_idx].panes.len() - 1;
+				cur_tab = Some(tab_idx);
 				cli.hierarchical = true;
 				continue;
 			}
 			"pane" => {
 				ensure_first_tab(&mut cli);
-				let t = cur_tab.unwrap_or(0);
+				let tab_idx = cur_tab.unwrap_or(0);
 				let id = a.value("--pane", inline)?;
-				let p = find_pane(&cli.tabs[t], &id)
+				let pane_idx = find_pane(&cli.tabs[tab_idx], &id)
 					.ok_or_else(|| format!("--pane: no such pane: {id}"))?;
-				cur_pane = p;
-				cur_tab = Some(t);
+				cur_pane = pane_idx;
+				cur_tab = Some(tab_idx);
 				cli.hierarchical = true;
 				continue;
 			}
@@ -384,8 +385,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 			name,
 			"splits" | "splits-pane" | "down" | "up" | "left" | "right" | "size"
 		) {
-			let t = cur_tab.ok_or_else(|| format!("--{name} only applies to a --new-pane"))?;
-			let pane = &mut cli.tabs[t].panes[cur_pane];
+			let tab_idx =
+				cur_tab.ok_or_else(|| format!("--{name} only applies to a --new-pane"))?;
+			let pane = &mut cli.tabs[tab_idx].panes[cur_pane];
 			if pane.first {
 				return Err(format!(
 					"--{name} can't apply to the first pane (main); use --new-pane"
@@ -405,14 +407,14 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 
 		// title (window / tab / pane by scope)
 		if name == "title" {
-			let v = a.value(name, inline)?;
+			let title = a.value(name, inline)?;
 			match cur_tab {
-				None => cli.win.title = Some(v),
-				Some(t) => {
+				None => cli.win.title = Some(title),
+				Some(tab_idx) => {
 					if cur_pane == 0 {
-						cli.tabs[t].title = Some(v);
+						cli.tabs[tab_idx].title = Some(title);
 					} else {
-						cli.tabs[t].panes[cur_pane].title = Some(v);
+						cli.tabs[tab_idx].panes[cur_pane].title = Some(title);
 					}
 				}
 			}
@@ -422,11 +424,11 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 		// cascading style options (route to the current scope)
 		let style = match cur_tab {
 			None => &mut cli.win.style,
-			Some(t) => {
+			Some(tab_idx) => {
 				if cur_pane == 0 {
-					&mut cli.tabs[t].style
+					&mut cli.tabs[tab_idx].style
 				} else {
-					&mut cli.tabs[t].panes[cur_pane].style
+					&mut cli.tabs[tab_idx].panes[cur_pane].style
 				}
 			}
 		};
@@ -477,30 +479,30 @@ fn set_dir(pane: &mut PaneSpec, dir: Dir4, on: bool, flag: &str) -> Result<(), S
 	Ok(())
 }
 
-// Fold window-level CLI style options into `s` (pure). Window-scoped only:
+// Fold window-level CLI style options into `settings` (pure). Window-scoped only:
 // per-pane visual style is deferred (it needs a per-pane renderer the single
 // shared TextCtx doesn't have). `--shell` is handled separately (build_layout).
-pub fn fold_window_style(s: &mut config::Settings, st: &Style) {
-	if let Some(f) = &st.font_name {
-		s.font_family = Some(f.clone());
+pub fn fold_window_style(settings: &mut config::Settings, style: &Style) {
+	if let Some(font) = &style.font_name {
+		settings.font_family = Some(font.clone());
 	}
-	if let Some(sz) = st.font_size {
-		s.font_size = sz;
+	if let Some(size) = style.font_size {
+		settings.font_size = size;
 	}
-	if let Some(c) = st.bg_color {
-		s.bg = c;
+	if let Some(color) = style.bg_color {
+		settings.bg = color;
 	}
-	if let Some(c) = st.fg_color {
-		s.fg = c;
+	if let Some(color) = style.fg_color {
+		settings.fg = color;
 	}
-	if let Some(img) = &st.bg_image {
-		s.background_image = img.as_ref().map(PathBuf::from);
+	if let Some(img) = &style.bg_image {
+		settings.background_image = img.as_ref().map(PathBuf::from);
 	}
-	if let Some(fit) = st.bg_fit {
-		s.background_fit = fit;
+	if let Some(fit) = style.bg_fit {
+		settings.background_fit = fit;
 	}
-	if let Some(o) = st.bg_opacity {
-		s.background_opacity = o;
+	if let Some(opacity) = style.bg_opacity {
+		settings.background_opacity = opacity;
 	}
 }
 
@@ -508,20 +510,20 @@ impl WindowOpts {
 	// Apply this window's CLI style to the live settings at startup (no-op if none
 	// set). Call after the theme/OS palette settles so colours aren't clobbered.
 	pub fn apply_style(&self) {
-		let st = &self.style;
-		let any = st.font_name.is_some()
-			|| st.font_size.is_some()
-			|| st.bg_color.is_some()
-			|| st.fg_color.is_some()
-			|| st.bg_image.is_some()
-			|| st.bg_fit.is_some()
-			|| st.bg_opacity.is_some();
+		let style = &self.style;
+		let any = style.font_name.is_some()
+			|| style.font_size.is_some()
+			|| style.bg_color.is_some()
+			|| style.fg_color.is_some()
+			|| style.bg_image.is_some()
+			|| style.bg_fit.is_some()
+			|| style.bg_opacity.is_some();
 		if !any {
 			return;
 		}
-		let mut s = config::settings().as_ref().clone();
-		fold_window_style(&mut s, st);
-		config::update(s);
+		let mut settings = config::settings().as_ref().clone();
+		fold_window_style(&mut settings, style);
+		config::update(settings);
 	}
 }
 
@@ -535,14 +537,18 @@ fn find_tab(cli: &Cli, id: &str) -> Option<usize> {
 	if is_first_id(id) {
 		return (!cli.tabs.is_empty()).then_some(0);
 	}
-	cli.tabs.iter().position(|t| t.id.as_deref() == Some(id))
+	cli.tabs
+		.iter()
+		.position(|tab| tab.id.as_deref() == Some(id))
 }
 
 fn find_pane(tab: &TabSpec, id: &str) -> Option<usize> {
 	if is_first_id(id) {
 		return Some(0);
 	}
-	tab.panes.iter().position(|p| p.id.as_deref() == Some(id))
+	tab.panes
+		.iter()
+		.position(|pane| pane.id.as_deref() == Some(id))
 }
 
 // One-line-per-option usage text (shared by --help and --syntax).

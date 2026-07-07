@@ -31,17 +31,17 @@ fn default_indexed(i: u8, s: &Settings) -> [u8; 3] {
 		0..=15 => s.ansi[i as usize],
 		16..=231 => {
 			// 6x6x6 cube
-			let v = i - 16;
-			let r = v / 36;
-			let g = (v % 36) / 6;
-			let b = v % 6;
+			let cube = i - 16;
+			let r = cube / 36;
+			let g = (cube % 36) / 6;
+			let b = cube % 6;
 			let step = |n: u8| if n == 0 { 0u8 } else { 55 + n * 40 };
 			[step(r), step(g), step(b)]
 		}
 		_ => {
 			// grayscale ramp 232..=255
-			let l = 8 + (i - 232) * 10;
-			[l, l, l]
+			let gray = 8 + (i - 232) * 10;
+			[gray, gray, gray]
 		}
 	}
 }

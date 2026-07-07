@@ -54,9 +54,9 @@ fn sans_serif_detect() -> Option<String> {
 		.output()
 		.ok()?;
 	out.status.success().then_some(())?;
-	let s = String::from_utf8(out.stdout).ok()?;
-	let fam = s.trim().split(',').next().unwrap_or("").trim(); // may be a list
-	(!fam.is_empty()).then(|| fam.to_string())
+	let family_list = String::from_utf8(out.stdout).ok()?;
+	let family = family_list.trim().split(',').next().unwrap_or("").trim(); // may be a list
+	(!family.is_empty()).then(|| family.to_string())
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -71,11 +71,11 @@ mod platform {
 
 	pub fn monospace() -> Monospace {
 		if let Some(desc) = gsettings_desc("monospace-font-name") {
-			let u = parse_pango(&desc);
-			if u.family.is_some() || u.size_pt.is_some() {
+			let parsed = parse_pango(&desc);
+			if parsed.family.is_some() || parsed.size_pt.is_some() {
 				return Monospace {
-					family: u.family,
-					size_pt: u.size_pt,
+					family: parsed.family,
+					size_pt: parsed.size_pt,
 				};
 			}
 		}
@@ -92,8 +92,8 @@ mod platform {
 	pub fn interface() -> super::UiFont {
 		gsettings_desc("font-name")
 			.or_else(xfconf_ui_desc)
-			.map(|d| parse_pango(&d))
-			.filter(|u| u.family.is_some() || u.size_pt.is_some())
+			.map(|desc| parse_pango(&desc))
+			.filter(|parsed| parsed.family.is_some() || parsed.size_pt.is_some())
 			.unwrap_or_default()
 	}
 
@@ -134,16 +134,16 @@ mod platform {
 
 		let mut size_pt = None;
 		if let Some(last) = tokens.last() {
-			if let Ok(n) = last.parse::<f32>() {
-				size_pt = Some(n);
+			if let Ok(size) = last.parse::<f32>() {
+				size_pt = Some(size);
 				tokens.pop();
 			}
 		}
 		// Peel trailing weight/style/stretch words so only the family remains.
 		let (mut bold, mut italic) = (false, false);
 		while tokens.last().is_some_and(|t| is_style_word(t)) {
-			let w = tokens.pop().unwrap().to_ascii_lowercase();
-			match w.as_str() {
+			let word = tokens.pop().unwrap().to_ascii_lowercase();
+			match word.as_str() {
 				"bold" | "semibold" | "semi-bold" | "demibold" | "demi-bold" | "extrabold"
 				| "extra-bold" | "ultrabold" | "ultra-bold" | "black" | "heavy" => bold = true,
 				"italic" | "oblique" => italic = true,
@@ -159,7 +159,7 @@ mod platform {
 		}
 	}
 
-	fn is_style_word(w: &str) -> bool {
+	fn is_style_word(word: &str) -> bool {
 		const STYLES: &[&str] = &[
 			"thin",
 			"hairline",
@@ -197,7 +197,7 @@ mod platform {
 			"semi-expanded",
 			"roman",
 		];
-		STYLES.iter().any(|s| s.eq_ignore_ascii_case(w))
+		STYLES.iter().any(|style| style.eq_ignore_ascii_case(word))
 	}
 }
 
@@ -228,9 +228,13 @@ mod platform {
 
 	fn family() -> Option<String> {
 		// Stored as a PostScript name, e.g. "Menlo-Regular"; take the family part.
-		let ps = defaults_global("NSFixedPitchFont")?;
-		let fam = ps.split('-').next().unwrap_or(&ps).trim();
-		(!fam.is_empty()).then(|| fam.to_string())
+		let postscript_name = defaults_global("NSFixedPitchFont")?;
+		let family = postscript_name
+			.split('-')
+			.next()
+			.unwrap_or(&postscript_name)
+			.trim();
+		(!family.is_empty()).then(|| family.to_string())
 	}
 
 	// macOS has no user-set UI font, and the actual one (San Francisco) hides

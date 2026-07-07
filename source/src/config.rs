@@ -11,6 +11,11 @@ use serde::Deserialize;
 // name lives in Cargo.toml; see README "Renaming the project".
 pub const APP_NAME: &str = "SilkTerm";
 
+// Where Help -> Support SilkTerm sends the browser. Points at DONATE.md (the
+// canonical, owner-controlled list of sponsor options and addresses) rather than
+// a single link baked into the binary. HEAD resolves to the repo default branch.
+pub const DONATE_URL: &str = "https://github.com/jim-collier/silkterm/blob/HEAD/DONATE.md";
+
 // internal, not user-tunable (yet)
 pub const PANE_GAP_PX: f32 = 1.0;
 pub const DIVIDER_GRAB_PX: f32 = 5.0; // mouse tolerance for grabbing a pane divider
@@ -61,11 +66,15 @@ pub fn menu_sep() -> [u8; 3] {
 	shade(menu_bg(), 20)
 }
 // Nudge a colour toward more contrast: lighten a dark base, darken a light one.
-fn shade(c: [u8; 3], mag: i16) -> [u8; 3] {
-	let lum = (c[0] as i16 * 30 + c[1] as i16 * 59 + c[2] as i16 * 11) / 100;
-	let d = if lum < 128 { mag } else { -mag };
-	let f = |x: u8| (x as i16 + d).clamp(0, 255) as u8;
-	[f(c[0]), f(c[1]), f(c[2])]
+fn shade(color: [u8; 3], magnitude: i16) -> [u8; 3] {
+	let luminance = (color[0] as i16 * 30 + color[1] as i16 * 59 + color[2] as i16 * 11) / 100;
+	let delta = if luminance < 128 {
+		magnitude
+	} else {
+		-magnitude
+	};
+	let adjust = |channel: u8| (channel as i16 + delta).clamp(0, 255) as u8;
+	[adjust(color[0]), adjust(color[1]), adjust(color[2])]
 }
 pub const MENU_PAD_X: f32 = 12.0;
 pub const MENU_ITEM_PAD_Y: f32 = 6.0;
@@ -91,8 +100,9 @@ pub struct Settings {
 	pub wheel_lines: f32,
 	pub alt_scroll_lines: f32,
 	pub output_ease_lines: f32,
-	pub margin: f32,                       // logical px between content and pane edge
-	pub opacity: f32,                      // background opacity 0..1 (1 = fully opaque)
+	pub smooth_scroll_apps: bool, // ease the line-jumps of full-screen apps (less/vim/muffer)
+	pub margin: f32,              // logical px between content and pane edge
+	pub opacity: f32,             // background opacity 0..1 (1 = fully opaque)
 	pub transparent_background: bool, // X11: per-pixel bg transparency (text stays opaque) via a GL surface
 	pub transparent_background_blur: bool, // X11: ask a KWin/picom compositor to blur the desktop behind the window
 	pub background_image: Option<PathBuf>, // resolved path, or None
@@ -105,9 +115,10 @@ pub struct Settings {
 	pub text_outline: f32, // antialiased outline around glyphs, px (0 = none; glow colour rules)
 	pub text_glow_ramp: String, // halo falloff: "gaussian" | "linear" | "s"
 	pub text_glow_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
-	pub cursor_glow: bool,              // cursor gets the same halo, merged with the text glow
-	pub cursor_size_height: f32,        // cursor height, 1..100% of the cell (from the bottom)
-	pub cursor_size_width: f32,         // cursor width, 1..100% of the cell (from the left)
+	pub embolden_inverse: bool, // render reverse-video (dark-on-light) text bold so it reads as strongly as normal text (the glow only boosts light-on-dark)
+	pub cursor_glow: bool,      // cursor gets the same halo, merged with the text glow
+	pub cursor_size_height: f32, // cursor height, 1..100% of the cell (from the bottom)
+	pub cursor_size_width: f32, // cursor width, 1..100% of the cell (from the left)
 	pub cursor_animation: String, // "none" | "phase" | "pulse_vertical" | "pulse_horizontal" | "pulse_both"
 	pub cursor_blink_rate_ms: f32, // one animation cycle (ms)
 	pub columns: usize,           // initial window grid size (used when !remember_size)
@@ -146,6 +157,7 @@ impl Default for Settings {
 			wheel_lines: 3.0,
 			alt_scroll_lines: 3.0,
 			output_ease_lines: 1.0,
+			smooth_scroll_apps: false,
 			margin: 8.0,
 			opacity: 0.95,
 			transparent_background: false,
@@ -160,6 +172,7 @@ impl Default for Settings {
 			text_outline: 2.0,
 			text_glow_ramp: "s".to_string(),
 			text_glow_regular_weight: true,
+			embolden_inverse: true,
 			cursor_glow: true,
 			cursor_size_height: 100.0, // full height
 			cursor_size_width: 25.0,   // ~quarter-width bar
@@ -217,12 +230,12 @@ pub fn is_dark() -> bool {
 // OS flip; overrides re-apply on the next full config load.
 pub fn reapply_for_os(dark: bool) -> bool {
 	let prev = OS_DARK.swap(dark, Ordering::Relaxed);
-	let s = settings();
-	if prev == dark || s.theme_mode != "system" {
+	let current = settings();
+	if prev == dark || current.theme_mode != "system" {
 		return false;
 	}
-	let pal = crate::theme::resolve(&s.theme, &s.theme_mode, dark);
-	let mut new = (*s).clone();
+	let pal = crate::theme::resolve(&current.theme, &current.theme_mode, dark);
+	let mut new = (*current).clone();
 	new.bg = pal.bg;
 	new.fg = pal.fg;
 	new.cursor = pal.cursor;
@@ -246,11 +259,11 @@ pub const DEFAULT_SELECTION_PAIRS: &str = "`` \"\" '' {} () [] <>";
 
 // argv for the configured default shell, or None to use the system default.
 pub fn default_shell_argv() -> Option<Vec<String>> {
-	let s = settings().default_shell.clone();
-	if s.trim().is_empty() {
+	let shell = settings().default_shell.clone();
+	if shell.trim().is_empty() {
 		return None;
 	}
-	crate::cli::shell_split(&s).ok()
+	crate::cli::shell_split(&shell).ok()
 }
 
 // Parse `selection_pairs` into (open, close) char pairs, in precedence order.
@@ -258,9 +271,9 @@ pub fn selection_pairs() -> Vec<(char, char)> {
 	settings()
 		.selection_pairs
 		.split_whitespace()
-		.filter_map(|t| {
-			let mut c = t.chars();
-			Some((c.next()?, c.next()?))
+		.filter_map(|pair| {
+			let mut chars = pair.chars();
+			Some((chars.next()?, chars.next()?))
 		})
 		.collect()
 }
@@ -368,6 +381,9 @@ pub fn persist(orig: &Settings, s: &Settings) {
 	if s.text_glow_regular_weight != orig.text_glow_regular_weight {
 		doc["text_glow_regular_weight"] = value(s.text_glow_regular_weight);
 	}
+	if s.embolden_inverse != orig.embolden_inverse {
+		doc["embolden_inverse"] = value(s.embolden_inverse);
+	}
 	if s.cursor_glow != orig.cursor_glow {
 		doc["cursor_glow"] = value(s.cursor_glow);
 	}
@@ -407,9 +423,9 @@ pub fn persist(orig: &Settings, s: &Settings) {
 		}
 	}
 
-	let mut set_color = |key: &str, c: [u8; 3], oc: [u8; 3]| {
-		if c != oc {
-			doc["colors"][key] = value(format_hex(c));
+	let mut set_color = |key: &str, color: [u8; 3], orig_color: [u8; 3]| {
+		if color != orig_color {
+			doc["colors"][key] = value(format_hex(color));
 		}
 	};
 	set_color("background", s.bg, orig.bg);
@@ -467,6 +483,7 @@ struct RawConfig {
 	wheel_lines: Option<f32>,
 	alt_scroll_lines: Option<f32>,
 	output_ease_lines: Option<f32>,
+	smooth_scroll_apps: Option<bool>,
 	margin: Option<f32>,
 	opacity: Option<f32>,
 	transparent_background: Option<bool>,
@@ -483,6 +500,7 @@ struct RawConfig {
 	text_outline: Option<f32>,
 	text_glow_ramp: Option<String>,
 	text_glow_regular_weight: Option<bool>,
+	embolden_inverse: Option<bool>,
 	cursor_glow: Option<bool>,
 	cursor_size_height: Option<f32>,
 	cursor_size_width: Option<f32>,
@@ -555,13 +573,13 @@ fn parse_lenient(text: &str, path: &std::path::Path) -> RawConfig {
 			Ok(raw) => return raw,
 			Err(e) => {
 				// byte span -> 0-based line index of the error start
-				let li = e.span().map(|s| {
-					joined[..s.start.min(joined.len())]
+				let line_index = e.span().map(|span| {
+					joined[..span.start.min(joined.len())]
 						.bytes()
 						.filter(|&b| b == b'\n')
 						.count()
 				});
-				match li {
+				match line_index {
 					Some(i) if i < lines.len() => {
 						eprintln!(
 							"{APP_NAME}: {} line {}: ignoring invalid setting `{}`",
@@ -590,16 +608,16 @@ fn parse_lenient(text: &str, path: &std::path::Path) -> RawConfig {
 fn lenient_floats(text: &str) -> String {
 	text.lines()
 		.map(|line| {
-			let Some(eq) = line.find('=') else {
+			let Some(eq_pos) = line.find('=') else {
 				return line.to_string();
 			};
-			let (head, after) = line.split_at(eq + 1);
+			let (head, after) = line.split_at(eq_pos + 1);
 			let val = after.trim_start();
-			let ws = &after[..after.len() - val.len()];
+			let whitespace = &after[..after.len() - val.len()];
 			if let Some(rest) = val.strip_prefix('.').filter(|r| starts_digit(r)) {
-				format!("{head}{ws}0.{rest}")
+				format!("{head}{whitespace}0.{rest}")
 			} else if let Some(rest) = val.strip_prefix("-.").filter(|r| starts_digit(r)) {
-				format!("{head}{ws}-0.{rest}")
+				format!("{head}{whitespace}-0.{rest}")
 			} else {
 				line.to_string()
 			}
@@ -618,8 +636,9 @@ fn resolve(raw: RawConfig) -> Settings {
 	let theme_mode = raw.theme_mode.unwrap_or_else(|| d.theme_mode.clone());
 	// system-mode OS dark/light detection is wired later; default to dark for now
 	let pal = crate::theme::resolve(&theme_name, &theme_mode, OS_DARK.load(Ordering::Relaxed));
-	let color =
-		|s: Option<String>, fallback: [u8; 3]| s.as_deref().and_then(parse_hex).unwrap_or(fallback);
+	let color = |raw: Option<String>, fallback: [u8; 3]| {
+		raw.as_deref().and_then(parse_hex).unwrap_or(fallback)
+	};
 	Settings {
 		// Default enabled, but a config that predates the key and set an explicit
 		// font_family keeps that font (infer off) instead of being overridden.
@@ -635,6 +654,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		wheel_lines: raw.wheel_lines.unwrap_or(d.wheel_lines),
 		alt_scroll_lines: raw.alt_scroll_lines.unwrap_or(d.alt_scroll_lines),
 		output_ease_lines: raw.output_ease_lines.unwrap_or(d.output_ease_lines),
+		smooth_scroll_apps: raw.smooth_scroll_apps.unwrap_or(d.smooth_scroll_apps),
 		margin: raw.margin.unwrap_or(d.margin).max(0.0),
 		opacity: raw.opacity.unwrap_or(d.opacity).clamp(0.0, 1.0),
 		transparent_background: raw
@@ -671,6 +691,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		text_glow_regular_weight: raw
 			.text_glow_regular_weight
 			.unwrap_or(d.text_glow_regular_weight),
+		embolden_inverse: raw.embolden_inverse.unwrap_or(d.embolden_inverse),
 		cursor_glow: raw.cursor_glow.unwrap_or(d.cursor_glow),
 		cursor_size_height: raw
 			.cursor_size_height
@@ -740,11 +761,11 @@ pub fn default_font_size() -> f32 {
 // The size the text is actually rendered at: the OS monospace size while
 // `use_system_font` is on, else the configured `font_size`.
 pub fn effective_font_size() -> f32 {
-	let s = settings();
-	if s.use_system_font {
+	let current = settings();
+	if current.use_system_font {
 		default_font_size()
 	} else {
-		s.font_size
+		current.font_size
 	}
 }
 
@@ -753,16 +774,20 @@ pub fn effective_font_size() -> f32 {
 // under the config dir.
 fn resolve_bg_image(explicit: Option<String>) -> Option<PathBuf> {
 	let dir = config_path()?.parent()?.to_path_buf();
-	if let Some(s) = explicit.filter(|s| !s.trim().is_empty()) {
-		let p = PathBuf::from(&s);
-		let p = if p.is_absolute() { p } else { dir.join(s) };
-		return p.exists().then_some(p);
+	if let Some(given) = explicit.filter(|value| !value.trim().is_empty()) {
+		let path = PathBuf::from(&given);
+		let path = if path.is_absolute() {
+			path
+		} else {
+			dir.join(given)
+		};
+		return path.exists().then_some(path);
 	}
-	let bg = dir.join("backgrounds");
+	let bg_dir = dir.join("backgrounds");
 	["background.png", "background.jpg", "background.jpeg"]
 		.into_iter()
-		.map(|n| bg.join(n))
-		.find(|p| p.exists())
+		.map(|name| bg_dir.join(name))
+		.find(|path| path.exists())
 }
 
 // A config file's settings as (table, key, original-line) - `table` is None for
@@ -772,10 +797,10 @@ fn setting_lines(text: &str) -> Vec<(Option<String>, String, String)> {
 	let mut table: Option<String> = None;
 	let mut out = Vec::new();
 	for line in text.lines() {
-		if let Some(t) = line_table(line) {
-			table = Some(t.to_string());
-		} else if let Some(k) = line_setting_key(line) {
-			out.push((table.clone(), k.to_string(), line.to_string()));
+		if let Some(name) = line_table(line) {
+			table = Some(name.to_string());
+		} else if let Some(key) = line_setting_key(line) {
+			out.push((table.clone(), key.to_string(), line.to_string()));
 		}
 	}
 	out
@@ -792,14 +817,14 @@ fn setting_groups(text: &str) -> Vec<(Option<String>, String, Vec<String>, bool)
 	let mut group_break = true; // the first setting begins a group
 	let mut out = Vec::new();
 	for line in text.lines() {
-		if let Some(t) = line_table(line) {
-			table = Some(t.to_string());
+		if let Some(name) = line_table(line) {
+			table = Some(name.to_string());
 			pending.clear();
 			group_break = true;
-		} else if let Some(k) = line_setting_key(line) {
+		} else if let Some(key) = line_setting_key(line) {
 			let mut block = std::mem::take(&mut pending);
 			block.push(line.to_string());
-			out.push((table.clone(), k.to_string(), block, group_break));
+			out.push((table.clone(), key.to_string(), block, group_break));
 			group_break = false;
 		} else if line.trim().is_empty() {
 			pending.clear();
@@ -814,19 +839,23 @@ fn setting_groups(text: &str) -> Vec<(Option<String>, String, Vec<String>, bool)
 }
 
 fn line_table(line: &str) -> Option<&str> {
-	let t = line.trim();
-	t.strip_prefix('[').and_then(|r| r.strip_suffix(']'))
+	let trimmed = line.trim();
+	trimmed.strip_prefix('[').and_then(|r| r.strip_suffix(']'))
 }
 
 fn line_setting_key(line: &str) -> Option<&str> {
-	let t = line.trim_start();
-	let t = t.strip_prefix('#').map(str::trim_start).unwrap_or(t);
-	let end = t.find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'))?;
-	let key = &t[..end];
+	let trimmed = line.trim_start();
+	let trimmed = trimmed
+		.strip_prefix('#')
+		.map(str::trim_start)
+		.unwrap_or(trimmed);
+	let end =
+		trimmed.find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'))?;
+	let key = &trimmed[..end];
 	if key.is_empty() {
 		return None;
 	}
-	t[end..].trim_start().starts_with('=').then_some(key)
+	trimmed[end..].trim_start().starts_with('=').then_some(key)
 }
 
 // Keys that were renamed across versions (old -> new). A rename copies the value
@@ -873,25 +902,29 @@ fn migrate_config_text(text: &str) -> Option<String> {
 	let have_new: std::collections::HashSet<&str> = text
 		.lines()
 		.filter_map(line_setting_key)
-		.filter(|k| CONFIG_RENAMES.iter().any(|(_, n)| n == k))
+		.filter(|key| CONFIG_RENAMES.iter().any(|(_, new_name)| new_name == key))
 		.collect();
 
-	let has_key = |k: &str| text.lines().filter_map(line_setting_key).any(|x| x == k);
-	let active = |l: &str| !l.trim_start().starts_with('#');
+	let has_key = |key: &str| {
+		text.lines()
+			.filter_map(line_setting_key)
+			.any(|existing| existing == key)
+	};
+	let active = |line: &str| !line.trim_start().starts_with('#');
 
 	let mut changed = false;
 	let mut out: Vec<String> = Vec::new();
 	let mut active_font_family: Option<usize> = None; // index in `out`, for the boolean migration
 	for line in text.lines() {
 		let kept = match line_setting_key(line) {
-			Some(k) if CONFIG_REMOVED.contains(&k) => {
+			Some(key) if CONFIG_REMOVED.contains(&key) => {
 				changed = true;
 				continue; // drop
 			}
-			Some(k) => match CONFIG_RENAMES.iter().find(|(old, _)| *old == k) {
+			Some(key) => match CONFIG_RENAMES.iter().find(|(old, _)| *old == key) {
 				Some((_, new)) if !have_new.contains(new) => {
 					changed = true;
-					line.replacen(k, new, 1) // key is the first token
+					line.replacen(key, new, 1) // key is the first token
 				}
 				Some(_) => {
 					changed = true;
@@ -937,15 +970,15 @@ pub fn revert_keys(keys: &[&str]) {
 	let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else {
 		return;
 	};
-	for k in keys {
-		match k.split_once('.') {
+	for full_key in keys {
+		match full_key.split_once('.') {
 			Some((table, key)) => {
-				if let Some(t) = doc.get_mut(table).and_then(|i| i.as_table_mut()) {
-					t.remove(key);
+				if let Some(tbl) = doc.get_mut(table).and_then(|item| item.as_table_mut()) {
+					tbl.remove(key);
 				}
 			}
 			None => {
-				doc.remove(k);
+				doc.remove(full_key);
 			}
 		}
 	}
@@ -964,7 +997,7 @@ fn backfill_config(path: &std::path::Path) {
 	};
 	let have: std::collections::HashSet<(Option<String>, String)> = setting_lines(&text)
 		.into_iter()
-		.map(|(t, k, _)| (t, k))
+		.map(|(table, key, _)| (table, key))
 		.collect();
 
 	// Each missing top-level key is inserted as its own group: a blank-line
@@ -999,10 +1032,13 @@ fn backfill_config(path: &std::path::Path) {
 
 	let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
 	if !colors.is_empty() {
-		match lines.iter().position(|l| line_table(l) == Some("colors")) {
+		match lines
+			.iter()
+			.position(|line| line_table(line) == Some("colors"))
+		{
 			Some(i) => {
-				for (off, l) in colors.into_iter().enumerate() {
-					lines.insert(i + 1 + off, l);
+				for (offset, line) in colors.into_iter().enumerate() {
+					lines.insert(i + 1 + offset, line);
 				}
 			}
 			None => {
@@ -1014,17 +1050,17 @@ fn backfill_config(path: &std::path::Path) {
 	}
 	if !top.is_empty() {
 		top.push(String::new()); // blank before the following table
-		match lines.iter().position(|l| line_table(l).is_some()) {
+		match lines.iter().position(|line| line_table(line).is_some()) {
 			Some(i) => {
 				// avoid a double blank if the line above the table is already blank
 				if i > 0
 					&& lines[i - 1].trim().is_empty()
-					&& top.first().is_some_and(|l| l.is_empty())
+					&& top.first().is_some_and(|line| line.is_empty())
 				{
 					top.remove(0);
 				}
-				for (off, l) in top.into_iter().enumerate() {
-					lines.insert(i + off, l);
+				for (offset, line) in top.into_iter().enumerate() {
+					lines.insert(i + offset, line);
 				}
 			}
 			None => lines.extend(top),
@@ -1077,20 +1113,20 @@ fn reorder_config_text(text: &str) -> Option<String> {
 
 	let known: HashSet<(Option<String>, String)> = setting_lines(DEFAULT_CONFIG)
 		.into_iter()
-		.map(|(t, k, _)| (t, k))
+		.map(|(table, key, _)| (table, key))
 		.collect();
-	let is_active = |l: &str| !l.trim_start().starts_with('#');
+	let is_active = |line: &str| !line.trim_start().starts_with('#');
 	// store the user's line for a known key, preferring an active line over a
 	// commented duplicate (an odd but possible hand-edit).
-	let keep = |map: &mut HashMap<String, String>, k: &str, line: &str| match map.get(k) {
+	let keep = |map: &mut HashMap<String, String>, key: &str, line: &str| match map.get(key) {
 		Some(existing) if is_active(existing) => {}
 		_ => {
-			map.insert(k.to_string(), line.to_string());
+			map.insert(key.to_string(), line.to_string());
 		}
 	};
 
 	let lines: Vec<&str> = text.lines().collect();
-	let first_table = lines.iter().position(|l| line_table(l).is_some());
+	let first_table = lines.iter().position(|line| line_table(line).is_some());
 	let (top_lines, table_lines) = match first_table {
 		Some(i) => (&lines[..i], &lines[i..]),
 		None => (&lines[..], &lines[lines.len()..]),
@@ -1101,9 +1137,9 @@ fn reorder_config_text(text: &str) -> Option<String> {
 	let mut extra_top: Vec<String> = Vec::new();
 	let mut pending: Vec<String> = Vec::new();
 	for &line in top_lines {
-		if let Some(k) = line_setting_key(line) {
-			if known.contains(&(None, k.to_string())) {
-				keep(&mut user_top, k, line);
+		if let Some(key) = line_setting_key(line) {
+			if known.contains(&(None, key.to_string())) {
+				keep(&mut user_top, key, line);
 			} else {
 				extra_top.append(&mut pending);
 				extra_top.push(line.to_string());
@@ -1122,71 +1158,74 @@ fn reorder_config_text(text: &str) -> Option<String> {
 	// comment block. The first [colors] block feeds the color map; every other
 	// table (and any extra [colors]) is preserved verbatim.
 	let mut blocks: Vec<Vec<String>> = Vec::new();
-	let mut pend: Vec<String> = Vec::new();
+	let mut pending_block: Vec<String> = Vec::new();
 	for &line in table_lines {
 		if line_table(line).is_some() {
-			let mut blk: Vec<String> = std::mem::take(&mut pend);
-			blk.push(line.to_string());
-			blocks.push(blk);
+			let mut block: Vec<String> = std::mem::take(&mut pending_block);
+			block.push(line.to_string());
+			blocks.push(block);
 		} else if line.trim().is_empty() {
-			if let Some(b) = blocks.last_mut() {
-				b.append(&mut pend);
-				b.push(line.to_string());
+			if let Some(last_block) = blocks.last_mut() {
+				last_block.append(&mut pending_block);
+				last_block.push(line.to_string());
 			} else {
-				pend.clear();
+				pending_block.clear();
 			}
 		} else if line.trim_start().starts_with('#') {
-			pend.push(line.to_string());
-		} else if let Some(b) = blocks.last_mut() {
-			b.append(&mut pend);
-			b.push(line.to_string());
+			pending_block.push(line.to_string());
+		} else if let Some(last_block) = blocks.last_mut() {
+			last_block.append(&mut pending_block);
+			last_block.push(line.to_string());
 		} else {
-			pend.clear();
+			pending_block.clear();
 		}
 	}
-	if let Some(b) = blocks.last_mut() {
-		b.append(&mut pend);
+	if let Some(last_block) = blocks.last_mut() {
+		last_block.append(&mut pending_block);
 	}
 
 	let mut user_colors: HashMap<String, String> = HashMap::new();
 	let mut extra_colors: Vec<String> = Vec::new();
 	let mut extra_tables: Vec<String> = Vec::new();
 	let mut took_colors = false;
-	for blk in blocks {
-		let hi = blk.iter().position(|l| line_table(l).is_some()).unwrap();
-		let name = line_table(&blk[hi]).unwrap().to_string();
+	for block in blocks {
+		let header_idx = block
+			.iter()
+			.position(|line| line_table(line).is_some())
+			.unwrap();
+		let name = line_table(&block[header_idx]).unwrap().to_string();
 		if name == "colors" && !took_colors {
 			took_colors = true;
-			for line in &blk[hi + 1..] {
-				if let Some(k) = line_setting_key(line) {
-					if known.contains(&(Some("colors".to_string()), k.to_string())) {
-						keep(&mut user_colors, k, line);
+			for line in &block[header_idx + 1..] {
+				if let Some(key) = line_setting_key(line) {
+					if known.contains(&(Some("colors".to_string()), key.to_string())) {
+						keep(&mut user_colors, key, line);
 					} else {
 						extra_colors.push(line.clone());
 					}
 				}
 			}
 		} else {
-			extra_tables.extend(blk);
+			extra_tables.extend(block);
 		}
 	}
 
 	// --- render: walk the template, substitute the user's line for each key it
 	// set, and splice the preserved extras in TOML-valid positions (unknown
 	// top-level keys before [colors]; extra color keys under it; extra tables last).
-	let tlines: Vec<&str> = DEFAULT_CONFIG.lines().collect();
-	let colors_idx = tlines
+	let template_lines: Vec<&str> = DEFAULT_CONFIG.lines().collect();
+	let colors_idx = template_lines
 		.iter()
-		.position(|l| line_table(l) == Some("colors"))
+		.position(|line| line_table(line) == Some("colors"))
 		.unwrap();
 	let mut intro = colors_idx; // first line of the [colors] intro comment block
-	while intro > 0 && tlines[intro - 1].trim_start().starts_with('#') {
+	while intro > 0 && template_lines[intro - 1].trim_start().starts_with('#') {
 		intro -= 1;
 	}
 
 	let mut out: Vec<String> = Vec::new();
 	let mut table: Option<String> = None;
-	for (i, line) in tlines.iter().enumerate() {
+	for (i, line) in template_lines.iter().enumerate() {
 		if i == intro && !extra_top.is_empty() {
 			if !out.last().is_none_or(String::is_empty) {
 				out.push(String::new());
@@ -1196,16 +1235,16 @@ fn reorder_config_text(text: &str) -> Option<String> {
 			out.extend(extra_top.iter().cloned());
 			out.push(String::new());
 		}
-		if let Some(t) = line_table(line) {
-			table = Some(t.to_string());
+		if let Some(name) = line_table(line) {
+			table = Some(name.to_string());
 			out.push(line.to_string());
-		} else if let Some(k) = line_setting_key(line) {
-			let sub = match table.as_deref() {
-				None => user_top.get(k),
-				Some("colors") => user_colors.get(k),
+		} else if let Some(key) = line_setting_key(line) {
+			let replacement = match table.as_deref() {
+				None => user_top.get(key),
+				Some("colors") => user_colors.get(key),
 				_ => None,
 			};
-			out.push(sub.cloned().unwrap_or_else(|| line.to_string()));
+			out.push(replacement.cloned().unwrap_or_else(|| line.to_string()));
 		} else {
 			out.push(line.to_string());
 		}
@@ -1328,6 +1367,7 @@ opacity = 0.95
 # text_outline = 2.0         ## antialiased outline around glyphs, in pixels (0 = none)
 # text_glow_ramp = "s"       ## halo falloff shape: "gaussian", "linear", or "s"
 # text_glow_regular_weight = true  ## blur bold text at regular weight so its halo matches non-bold text
+# embolden_inverse = true    ## render reverse-video (dark-on-light) text bold so it reads as strongly as normal
 # cursor_glow = true         ## the cursor gets the same halo, merged with the text glow
 
 ##=============================================================================
@@ -1391,6 +1431,12 @@ scroll_tau_ms = 230.0      ## ms; ~ "Initial scroll speed" 25 on the 1..100 dial
 wheel_lines = 3.0          ## lines per wheel notch (smooth scrollback)
 alt_scroll_lines = 3.0     ## lines per wheel notch in full-screen apps (less, nano)
 output_ease_lines = 1.0    ## how far new output slides in before easing to rest
+
+## Ease the whole-line jumps of full-screen apps that own the screen (less, vim,
+## nano, htop, tmux, ...) so their scrolling slides instead of snapping. The
+## revealed strip fills with the background during the ~quarter-second slide.
+## Experimental; only clean line-scrolls are eased (big page-jumps still snap).
+# smooth_scroll_apps = false
 
 ##=============================================================================
 ## Theme and colours

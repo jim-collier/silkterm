@@ -181,14 +181,14 @@ impl ImageRenderer {
 	}
 
 	pub fn set_resolution(&self, queue: &wgpu::Queue, w: f32, h: f32) {
-		let u = Uniform {
+		let uniform_data = Uniform {
 			resolution: [w, h],
 			image_size: self.image_size,
 			opacity: self.opacity,
 			fit: self.fit,
 			_pad: [0.0, 0.0],
 		};
-		queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+		queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform_data));
 	}
 
 	pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {

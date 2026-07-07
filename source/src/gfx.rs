@@ -264,15 +264,16 @@ impl Gfx {
 		let (window, config) = DisplayBuilder::new()
 			.with_window_attributes(Some(attrs))
 			.build(el, template, |cfgs| {
-				cfgs.reduce(|a, c| {
-					let (ta, tc) = (
-						a.supports_transparency().unwrap_or(false),
-						c.supports_transparency().unwrap_or(false),
+				cfgs.reduce(|best, cand| {
+					let (best_transparent, cand_transparent) = (
+						best.supports_transparency().unwrap_or(false),
+						cand.supports_transparency().unwrap_or(false),
 					);
-					if (tc, c.alpha_size()) > (ta, a.alpha_size()) {
-						c
+					if (cand_transparent, cand.alpha_size()) > (best_transparent, best.alpha_size())
+					{
+						cand
 					} else {
-						a
+						best
 					}
 				})
 				// unreachable unless GL reports zero framebuffer configs at all
@@ -294,17 +295,17 @@ impl Gfx {
 		// GL >=4.2 (gfx-rs/wgpu#8675). A 3.3/4.1 context renders no glyphon text.
 		// Try 4.6 down so non-NVIDIA drivers still get a context.
 		let ctx = {
-			let mut made = None;
+			let mut picked = None;
 			for (maj, min) in [(4u8, 6u8), (4, 3), (4, 2), (4, 1), (3, 3)] {
 				let attrs = ContextAttributesBuilder::new()
 					.with_context_api(ContextApi::OpenGl(Some(Version::new(maj, min))))
 					.build(Some(raw));
-				if let Ok(c) = unsafe { gl_display.create_context(&config, &attrs) } {
-					made = Some(c);
+				if let Ok(ctx) = unsafe { gl_display.create_context(&config, &attrs) } {
+					picked = Some(ctx);
 					break;
 				}
 			}
-			made.ok_or_else(|| anyhow::anyhow!("no GL context could be created"))?
+			picked.ok_or_else(|| anyhow::anyhow!("no GL context could be created"))?
 		};
 		let size = window.inner_size();
 		let surface = unsafe {
@@ -331,7 +332,7 @@ impl Gfx {
 			wgpu::hal::gles::Adapter::new_external(
 				|name| {
 					std::ffi::CString::new(name)
-						.map(|c| gl_display.get_proc_address(&c) as *const _)
+						.map(|cstr| gl_display.get_proc_address(&cstr) as *const _)
 						.unwrap_or(std::ptr::null())
 				},
 				wgpu::GlBackendOptions::default(),
@@ -411,7 +412,9 @@ impl Gfx {
 			Backend::Native(surface) => {
 				use wgpu::CurrentSurfaceTexture::*;
 				match surface.get_current_texture() {
-					Success(t) | Suboptimal(t) => Some(Frame::Native(t)),
+					Success(surface_tex) | Suboptimal(surface_tex) => {
+						Some(Frame::Native(surface_tex))
+					}
 					Outdated | Lost => {
 						surface.configure(&self.device, &self.config);
 						None
@@ -425,7 +428,7 @@ impl Gfx {
 
 	pub fn frame_view(&self, frame: &Frame) -> wgpu::TextureView {
 		match (frame, &self.backend) {
-			(Frame::Native(t), _) => t
+			(Frame::Native(surface_tex), _) => surface_tex
 				.texture
 				.create_view(&wgpu::TextureViewDescriptor::default()),
 			// the scene renders to the offscreen texture (normal orientation)
@@ -438,7 +441,7 @@ impl Gfx {
 
 	pub fn end_frame(&self, frame: Frame) {
 		match (frame, &self.backend) {
-			(Frame::Native(t), _) => t.present(),
+			(Frame::Native(surface_tex), _) => surface_tex.present(),
 			(
 				Frame::Gl,
 				Backend::Gl {
@@ -525,10 +528,10 @@ impl Gfx {
 		let (w, h) = (self.config.width, self.config.height);
 		let unpadded = w * 8; // Rgba16Float = 8 bytes/texel
 		let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-		let bpr = unpadded.div_ceil(align) * align;
+		let row_stride = unpadded.div_ceil(align) * align;
 		let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("dump"),
-			size: (bpr * h) as u64,
+			size: (row_stride * h) as u64,
 			usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
 			mapped_at_creation: false,
 		});
@@ -544,7 +547,7 @@ impl Gfx {
 				buffer: &buf,
 				layout: wgpu::TexelCopyBufferLayout {
 					offset: 0,
-					bytes_per_row: Some(bpr),
+					bytes_per_row: Some(row_stride),
 					rows_per_image: Some(h),
 				},
 			},
@@ -560,21 +563,22 @@ impl Gfx {
 		let data = buf.slice(..).get_mapped_range();
 		// offscreen is linear Rgba16Float; decode f16 -> linear -> sRGB -> 8-bit so the
 		// PNG matches what the blit produces on screen.
-		let mut pix = Vec::with_capacity((w * h * 4) as usize);
+		let mut pixels = Vec::with_capacity((w * h * 4) as usize);
 		for row in 0..h {
-			let s = (row * bpr) as usize;
-			for px in data[s..s + unpadded as usize].chunks_exact(8) {
-				let ch = |i: usize| f16_to_f32(u16::from_le_bytes([px[i * 2], px[i * 2 + 1]]));
-				let enc = crate::config::from_linear_u8;
-				pix.extend_from_slice(&[
-					enc(ch(0)),
-					enc(ch(1)),
-					enc(ch(2)),
+			let row_start = (row * row_stride) as usize;
+			for texel in data[row_start..row_start + unpadded as usize].chunks_exact(8) {
+				let ch =
+					|i: usize| f16_to_f32(u16::from_le_bytes([texel[i * 2], texel[i * 2 + 1]]));
+				let to_srgb = crate::config::from_linear_u8;
+				pixels.extend_from_slice(&[
+					to_srgb(ch(0)),
+					to_srgb(ch(1)),
+					to_srgb(ch(2)),
 					(ch(3).clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
 				]);
 			}
 		}
-		let _ = image::save_buffer(path, &pix, w, h, image::ExtendedColorType::Rgba8);
+		let _ = image::save_buffer(path, &pixels, w, h, image::ExtendedColorType::Rgba8);
 	}
 }
 
@@ -583,14 +587,14 @@ fn f16_to_f32(bits: u16) -> f32 {
 	let sign = (bits >> 15) & 1;
 	let exp = (bits >> 10) & 0x1f;
 	let mant = bits & 0x3ff;
-	let v = if exp == 0 {
+	let magnitude = if exp == 0 {
 		(mant as f32) * 2f32.powi(-24)
 	} else if exp == 0x1f {
 		f32::MAX
 	} else {
 		(1.0 + mant as f32 / 1024.0) * 2f32.powi(exp as i32 - 15)
 	};
-	if sign == 1 { -v } else { v }
+	if sign == 1 { -magnitude } else { magnitude }
 }
 
 fn log_renderer(info: &wgpu::AdapterInfo) {
@@ -780,11 +784,11 @@ impl RectRenderer {
 	}
 
 	pub fn set_resolution(&self, queue: &wgpu::Queue, w: f32, h: f32) {
-		let u = Uniform {
+		let uniform_data = Uniform {
 			resolution: [w, h],
 			_pad: [0.0, 0.0],
 		};
-		queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+		queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform_data));
 	}
 
 	pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[RectInstance]) {

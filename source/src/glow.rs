@@ -89,9 +89,10 @@ impl Glow {
 		// blur: uniform + sampled texture + sampler
 		let blur_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
 			label: Some("glow blur bgl"),
-			entries: &[ubuf_entry(0), tex_entry(1), samp_entry(2)],
+			// binding 3 = the bgcolor map, whose alpha is an "own-bg" mask (see fs_blur)
+			entries: &[ubuf_entry(0), tex_entry(1), samp_entry(2), tex_entry(3)],
 		});
-		let mku = |label| {
+		let make_uniform_buf = |label| {
 			device.create_buffer(&wgpu::BufferDescriptor {
 				label: Some(label),
 				size: std::mem::size_of::<BlurU>() as u64,
@@ -99,8 +100,8 @@ impl Glow {
 				mapped_at_creation: false,
 			})
 		};
-		let blur_u_h = mku("glow blur u h");
-		let blur_u_v = mku("glow blur u v");
+		let blur_u_h = make_uniform_buf("glow blur u h");
+		let blur_u_v = make_uniform_buf("glow blur u v");
 		let blur_pipe = pipeline(device, &shader, "fs_blur", FMT, &blur_bgl, "glow blur");
 
 		let comp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -172,16 +173,16 @@ impl Glow {
 		if w == 0 || h == 0 || (w == self.w && h == self.h) {
 			return;
 		}
-		let (tt, ta, tb, vt, va, vb) = make_textures(device, w, h);
-		self.tex_t = tt;
-		self.tex_a = ta;
-		self.tex_b = tb;
-		self.view_t = vt;
-		self.view_a = va;
-		self.view_b = vb;
+		let (tex_t, tex_a, tex_b, view_t, view_a, view_b) = make_textures(device, w, h);
+		self.tex_t = tex_t;
+		self.tex_a = tex_a;
+		self.tex_b = tex_b;
+		self.view_t = view_t;
+		self.view_a = view_a;
+		self.view_b = view_b;
 		self.bgcolor = bgcolor_tex(device, w, h);
 		self.bgcolor_view = self.bgcolor.create_view(&Default::default());
-		let (t2b, b2a, cb) = binds(
+		let (blur_t2b, blur_b2a, comp_bind) = binds(
 			device,
 			&self.blur_bgl,
 			&self.comp_bgl,
@@ -194,16 +195,20 @@ impl Glow {
 			&self.view_b,
 			&self.bgcolor_view,
 		);
-		self.blur_t2b = t2b;
-		self.blur_b2a = b2a;
-		self.comp_bind = cb;
+		self.blur_t2b = blur_t2b;
+		self.blur_b2a = blur_b2a;
+		self.comp_bind = comp_bind;
 		self.w = w;
 		self.h = h;
 	}
 
 	// Build the per-pixel glow-colour map: clear to the global bg colour, then draw
 	// the per-cell bg rects (opaque) over it. A glyph's halo then takes its own
-	// cell's bg colour instead of always the global one.
+	// cell's bg colour instead of always the global one. The alpha channel doubles
+	// as an "own-bg" mask - cleared to 0, the opaque cell rects write 1, so the blur
+	// can drop coverage from cells that already carry a solid bg (reverse video,
+	// coloured bg, selection): they have full contrast, so a halo there is only
+	// artifact (nano's reverse header cast a jumping drop-shadow). See fs_blur.
 	pub fn render_bgcolor(
 		&mut self,
 		device: &wgpu::Device,
@@ -226,7 +231,7 @@ impl Glow {
 						r: global_bg[0] as f64,
 						g: global_bg[1] as f64,
 						b: global_bg[2] as f64,
-						a: 1.0,
+						a: 0.0, // own-bg mask: 0 here, the cell rects write 1 (see fs_blur)
 					}),
 					store: wgpu::StoreOp::Store,
 				},
@@ -378,13 +383,13 @@ fn make_textures(
 		usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
 		view_formats: &[],
 	};
-	let t = device.create_texture(&desc("glow tex t"));
-	let a = device.create_texture(&desc("glow tex a"));
-	let b = device.create_texture(&desc("glow tex b"));
-	let vt = t.create_view(&Default::default());
-	let va = a.create_view(&Default::default());
-	let vb = b.create_view(&Default::default());
-	(t, a, b, vt, va, vb)
+	let tex_t = device.create_texture(&desc("glow tex t"));
+	let tex_a = device.create_texture(&desc("glow tex a"));
+	let tex_b = device.create_texture(&desc("glow tex b"));
+	let view_t = tex_t.create_view(&Default::default());
+	let view_a = tex_a.create_view(&Default::default());
+	let view_b = tex_b.create_view(&Default::default());
+	(tex_t, tex_a, tex_b, view_t, view_a, view_b)
 }
 
 fn bgcolor_tex(device: &wgpu::Device, w: u32, h: u32) -> wgpu::Texture {
@@ -434,6 +439,10 @@ fn binds(
 				wgpu::BindGroupEntry {
 					binding: 2,
 					resource: wgpu::BindingResource::Sampler(sampler),
+				},
+				wgpu::BindGroupEntry {
+					binding: 3,
+					resource: wgpu::BindingResource::TextureView(bgcolor_view),
 				},
 			],
 		})
@@ -590,10 +599,17 @@ struct BlurU { resolution: vec2<f32>, dir: vec2<f32>, sigma: f32, ramp: f32, _p1
 @group(0) @binding(0) var<uniform> bu: BlurU;
 @group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
+@group(0) @binding(3) var bmask: texture_2d<f32>; // bgcolor map; .a = own-bg mask
 
 // separable blur; fixed 25 taps scaled by sigma so any radius is ~3sigma-covered.
 // `ramp` picks the falloff kernel: 0 = gaussian, 1 = linear (tent), 2 = s-curve
 // (smoothstep) - the shape of how the halo fades with distance.
+//
+// Each tap is gated by `keep` = 1 - own-bg mask, so coverage sitting over a cell
+// with its own solid bg (reverse video, coloured bg, selection) contributes to no
+// pixel's halo. Gating the SOURCE coverage (not the final pixel) is what stops a
+// reverse-video header's glyphs from bleeding a halo below the bar - the artifact
+// that read as a drop-shadow jumping with the app-scroll slide.
 @fragment
 fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
     let texel = 1.0 / bu.resolution;
@@ -612,7 +628,8 @@ fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
             w = t * t * (3.0 - 2.0 * t);
         }
         let uv = in.uv + bu.dir * (off * texel);
-        sum += textureSample(tex, samp, uv) * w;
+        let keep = 1.0 - textureSample(bmask, samp, uv).a;
+        sum += textureSample(tex, samp, uv) * (w * keep);
         wsum += w;
     }
     return sum / wsum;
@@ -629,7 +646,12 @@ struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32 };
 // border: dilate the crisp coverage by border_px (8 taps; linear sampling keeps
 // it antialiased) and take the union with the glow - a solid bg-coloured plate
 // hugging each glyph. The crisp text draws over its interior, so what remains
-// visible is the thin outline around the letterforms.
+// visible is the thin outline around the letterforms. Each border tap is gated by
+// the own-bg mask (bgtex.a) too, matching fs_blur, so an own-bg glyph casts no
+// outline (the blurred halo is already masked at its source).
+fn border_tap(uv: vec2<f32>) -> f32 {
+    return textureSample(ttex, gsamp, uv).a * (1.0 - textureSample(bgtex, gsamp, uv).a);
+}
 @fragment
 fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {
     let ga = clamp(textureSample(gtex, gsamp, in.uv).a * cu.intensity, 0.0, 1.0);
@@ -638,14 +660,14 @@ fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {
     let r = max(cu.border_px, 0.0001);
     let dg = r * 0.7071; // diagonal taps at the same radius -> round outline
     var m = 0.0;
-    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>( r, 0.0) * texel).a);
-    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>(-r, 0.0) * texel).a);
-    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>(0.0,  r) * texel).a);
-    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>(0.0, -r) * texel).a);
-    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>( dg,  dg) * texel).a);
-    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>( dg, -dg) * texel).a);
-    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>(-dg,  dg) * texel).a);
-    m = max(m, textureSample(ttex, gsamp, in.uv + vec2<f32>(-dg, -dg) * texel).a);
+    m = max(m, border_tap(in.uv + vec2<f32>( r, 0.0) * texel));
+    m = max(m, border_tap(in.uv + vec2<f32>(-r, 0.0) * texel));
+    m = max(m, border_tap(in.uv + vec2<f32>(0.0,  r) * texel));
+    m = max(m, border_tap(in.uv + vec2<f32>(0.0, -r) * texel));
+    m = max(m, border_tap(in.uv + vec2<f32>( dg,  dg) * texel));
+    m = max(m, border_tap(in.uv + vec2<f32>( dg, -dg) * texel));
+    m = max(m, border_tap(in.uv + vec2<f32>(-dg,  dg) * texel));
+    m = max(m, border_tap(in.uv + vec2<f32>(-dg, -dg) * texel));
     let border = clamp(m, 0.0, 1.0) * step(0.001, cu.border_px);
     let a = max(ga, border);
     return vec4<f32>(rgb * a, a);

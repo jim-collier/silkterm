@@ -25,17 +25,17 @@ fn mono_family() -> Option<&'static str> {
 
 // Re-resolve and pin the monospace family for the current config + font system.
 fn pin_mono_family(fs: &FontSystem) {
-	let name = resolve_mono_family(fs).map(|s| &*Box::leak(s.into_boxed_str()));
+	let name = resolve_mono_family(fs).map(|family| &*Box::leak(family.into_boxed_str()));
 	*MONO_FAMILY.write().unwrap() = name;
 }
 
 pub fn mono_attrs() -> Attrs<'static> {
-	let mut a = Attrs::new();
-	a.family = match mono_family() {
+	let mut attrs = Attrs::new();
+	attrs.family = match mono_family() {
 		Some(name) => Family::Name(name),
 		None => Family::Monospace,
 	};
-	a
+	attrs
 }
 
 // Concrete family + style behind chrome's `ui_attrs`, pinned alongside the mono
@@ -63,19 +63,30 @@ fn ui_family() -> Option<&'static str> {
 fn nearest_face(
 	db: &fontdb::Database,
 	fam: &str,
-	want_w: u16,
+	want_weight: u16,
 	want_italic: bool,
 ) -> Option<(u16, bool)> {
 	let mut best: Option<(u16, bool)> = None;
-	for f in db.faces() {
-		if !f.families.iter().any(|(n, _)| n == fam) {
+	for face in db.faces() {
+		if !face.families.iter().any(|(name, _)| name == fam) {
 			continue;
 		}
-		let ital = f.style == fontdb::Style::Italic;
-		let cand = (ital != want_italic, f.weight.0.abs_diff(want_w), f.weight.0);
-		let beats = best.is_none_or(|(bw, bi)| cand < (bi != want_italic, bw.abs_diff(want_w), bw));
+		let is_italic = face.style == fontdb::Style::Italic;
+		let candidate = (
+			is_italic != want_italic,
+			face.weight.0.abs_diff(want_weight),
+			face.weight.0,
+		);
+		let beats = best.is_none_or(|(best_weight, best_italic)| {
+			candidate
+				< (
+					best_italic != want_italic,
+					best_weight.abs_diff(want_weight),
+					best_weight,
+				)
+		});
 		if beats {
-			best = Some((f.weight.0, ital));
+			best = Some((face.weight.0, is_italic));
 		}
 	}
 	best
@@ -83,31 +94,33 @@ fn nearest_face(
 
 fn pin_ui_family(fs: &FontSystem) {
 	use std::sync::atomic::Ordering;
-	let sys = crate::sysfont::interface();
-	let name = resolve_ui_family(fs).map(|s| &*Box::leak(s.into_boxed_str()));
+	let sys_font = crate::sysfont::interface();
+	let name = resolve_ui_family(fs).map(|family| &*Box::leak(family.into_boxed_str()));
 	*UI_FAMILY.write().unwrap() = name;
 	// honour the desktop's weight/slant only when its family actually resolved
 	// (a fallback sans shouldn't inherit "Bold" meant for another face)
-	let using_sys = match (name, &sys.family) {
-		(Some(n), Some(f)) => n.eq_ignore_ascii_case(f),
+	let using_sys = match (name, &sys_font.family) {
+		(Some(resolved), Some(family)) => resolved.eq_ignore_ascii_case(family),
 		_ => false,
 	};
-	let want_w: u16 = if using_sys && sys.bold { 700 } else { 400 };
-	let want_i = using_sys && sys.italic;
-	let (body_w, body_i, title_w) = match name {
-		Some(n) => {
+	let want_weight: u16 = if using_sys && sys_font.bold { 700 } else { 400 };
+	let want_italic = using_sys && sys_font.italic;
+	let (body_weight, body_italic, title_weight) = match name {
+		Some(family_name) => {
 			let db = fs.db();
-			let (w, i) = nearest_face(db, n, want_w, want_i).unwrap_or((400, false));
+			let (weight, italic) =
+				nearest_face(db, family_name, want_weight, want_italic).unwrap_or((400, false));
 			// emphasis (dialog titles/headers): the family's boldest-available
 			// take on 700, again snapped so it can't eject the family
-			let tw = nearest_face(db, n, 700, i).map_or(w, |(tw, _)| tw);
-			(w, i && want_i, tw)
+			let title_weight = nearest_face(db, family_name, 700, italic)
+				.map_or(weight, |(nearest_weight, _)| nearest_weight);
+			(weight, italic && want_italic, title_weight)
 		}
 		None => (400, false, 700),
 	};
-	UI_WEIGHT.store(body_w, Ordering::Relaxed);
-	UI_WEIGHT_BOLD.store(title_w, Ordering::Relaxed);
-	UI_ITALIC.store(body_i, Ordering::Relaxed);
+	UI_WEIGHT.store(body_weight, Ordering::Relaxed);
+	UI_WEIGHT_BOLD.store(title_weight, Ordering::Relaxed);
+	UI_ITALIC.store(body_italic, Ordering::Relaxed);
 }
 
 // Chrome ascent/descent scaled to `ui_px`, read the SAME way cosmic-text does
@@ -115,30 +128,30 @@ fn pin_ui_family(fs: &FontSystem) {
 // A proportional fallback if the pinned face can't be read.
 fn ui_vmetrics(fs: &mut FontSystem, ui_px: f32) -> (f32, f32) {
 	use std::sync::atomic::Ordering;
-	let want_w = fontdb::Weight(UI_WEIGHT.load(Ordering::Relaxed));
+	let want_weight = fontdb::Weight(UI_WEIGHT.load(Ordering::Relaxed));
 	let id = {
-		let q = fontdb::Query {
+		let query = fontdb::Query {
 			families: &[ui_family().map_or(fontdb::Family::SansSerif, fontdb::Family::Name)],
-			weight: want_w,
+			weight: want_weight,
 			..Default::default()
 		};
-		fs.db().query(&q)
+		fs.db().query(&query)
 	};
 	let fallback = (ui_px * 0.8, ui_px * 0.2);
-	let Some(font) = id.and_then(|id| fs.get_font(id, want_w)) else {
+	let Some(font) = id.and_then(|id| fs.get_font(id, want_weight)) else {
 		return fallback;
 	};
-	let m = font.as_swash().metrics(&[]);
-	let s = ui_px / f32::from(m.units_per_em).max(1.0);
-	(m.ascent * s, m.descent * s)
+	let metrics = font.as_swash().metrics(&[]);
+	let scale = ui_px / f32::from(metrics.units_per_em).max(1.0);
+	(metrics.ascent * scale, metrics.descent * scale)
 }
 
 // Baseline y within a single-line UI buffer of height `ui_line_h`: cosmic-text
 // centers the ascent+descent box in the line, so the baseline sits at the line
-// center shifted by (ascent-descent)/2. `vm` is (ascent, descent, cap).
-fn ui_baseline_in_buf(ui_line_h: f32, vm: (f32, f32)) -> f32 {
-	let (asc, desc) = vm;
-	ui_line_h / 2.0 + (asc - desc) / 2.0
+// center shifted by (ascent-descent)/2. `vmetrics` is (ascent, descent, cap).
+fn ui_baseline_in_buf(ui_line_h: f32, vmetrics: (f32, f32)) -> f32 {
+	let (ascent, descent) = vmetrics;
+	ui_line_h / 2.0 + (ascent - descent) / 2.0
 }
 
 // Buffer `top` that centers chrome text's visible box in a bar
@@ -147,9 +160,9 @@ fn ui_baseline_in_buf(ui_line_h: f32, vm: (f32, f32)) -> f32 {
 // ascender-top..baseline; centering THAT (not cap..baseline) is what actually
 // looks balanced - cap-centering leaves the empty descent reading as space
 // below. The rare descender then just dips into the natural descent room.
-fn ui_visible_center_top(ui_line_h: f32, vm: (f32, f32), bar_top: f32, bar_h: f32) -> f32 {
-	let (asc, _) = vm;
-	bar_top + bar_h / 2.0 - ui_baseline_in_buf(ui_line_h, vm) + asc / 2.0
+fn ui_visible_center_top(ui_line_h: f32, vmetrics: (f32, f32), bar_top: f32, bar_h: f32) -> f32 {
+	let (ascent, _) = vmetrics;
+	bar_top + bar_h / 2.0 - ui_baseline_in_buf(ui_line_h, vmetrics) + ascent / 2.0
 }
 
 // Emphasis weight for chrome (dialog titles, section headers): the closest
@@ -165,16 +178,16 @@ pub fn ui_bold_weight() -> glyphon::Weight {
 // of the user's desktop rather than terminal text.
 pub fn ui_attrs() -> Attrs<'static> {
 	use std::sync::atomic::Ordering;
-	let mut a = Attrs::new();
-	a.family = match ui_family() {
+	let mut attrs = Attrs::new();
+	attrs.family = match ui_family() {
 		Some(name) => Family::Name(name),
 		None => Family::SansSerif,
 	};
-	a.weight = glyphon::Weight(UI_WEIGHT.load(Ordering::Relaxed));
+	attrs.weight = glyphon::Weight(UI_WEIGHT.load(Ordering::Relaxed));
 	if UI_ITALIC.load(Ordering::Relaxed) {
-		a.style = glyphon::Style::Italic;
+		attrs.style = glyphon::Style::Italic;
 	}
-	a
+	attrs
 }
 
 // Resolve a concrete family for chrome: the desktop interface font first (the
@@ -187,16 +200,18 @@ fn resolve_ui_family(fs: &FontSystem) -> Option<String> {
 	// returns the db's canonical spelling of the family (cosmic-text's fallback
 	// compares face family names case-sensitively - the candidate string won't do)
 	let installed = |fam: &str| {
-		let q = fontdb::Query {
+		let query = fontdb::Query {
 			families: &[fontdb::Family::Name(fam)],
 			..Default::default()
 		};
-		db.query(&q).and_then(|id| db.face(id)).and_then(|f| {
-			f.families
-				.iter()
-				.find(|(n, _)| n.eq_ignore_ascii_case(fam))
-				.map(|(n, _)| n.clone())
-		})
+		db.query(&query)
+			.and_then(|id| db.face(id))
+			.and_then(|face| {
+				face.families
+					.iter()
+					.find(|(name, _)| name.eq_ignore_ascii_case(fam))
+					.map(|(name, _)| name.clone())
+			})
 	};
 	let curated = [
 		"DejaVu Sans",
@@ -226,31 +241,36 @@ fn resolve_mono_family(fs: &FontSystem) -> Option<String> {
 	let db = fs.db();
 
 	let installed = |fam: &str| {
-		let q = fontdb::Query {
+		let query = fontdb::Query {
 			families: &[fontdb::Family::Name(fam)],
 			..Default::default()
 		};
-		db.query(&q)
+		db.query(&query)
 			.and_then(|id| db.face(id))
-			.is_some_and(|f| f.families.iter().any(|(n, _)| n.eq_ignore_ascii_case(fam)))
+			.is_some_and(|face| {
+				face.families
+					.iter()
+					.any(|(name, _)| name.eq_ignore_ascii_case(fam))
+			})
 	};
 
-	let s = config::settings();
-	let sys = crate::sysfont::monospace().family.clone();
+	let settings = config::settings();
+	let sys_family = crate::sysfont::monospace().family.clone();
 	// Priority: the OS monospace first when following the system font; otherwise
 	// each family in the user's comma-separated fallback stack, then the OS mono.
 	let mut candidates: Vec<String> = Vec::new();
-	if s.use_system_font {
-		candidates.extend(sys.clone());
+	if settings.use_system_font {
+		candidates.extend(sys_family.clone());
 	} else {
 		candidates.extend(
-			s.font_family
+			settings
+				.font_family
 				.iter()
-				.flat_map(|f| f.split(','))
-				.map(|f| f.trim().to_string())
-				.filter(|f| !f.is_empty()),
+				.flat_map(|list| list.split(','))
+				.map(|name| name.trim().to_string())
+				.filter(|name| !name.is_empty()),
 		);
-		candidates.extend(sys.clone());
+		candidates.extend(sys_family.clone());
 	}
 	for fam in candidates {
 		if installed(&fam) {
@@ -258,11 +278,11 @@ fn resolve_mono_family(fs: &FontSystem) -> Option<String> {
 		}
 	}
 
-	let q = fontdb::Query {
+	let query = fontdb::Query {
 		families: &[fontdb::Family::Monospace],
 		..Default::default()
 	};
-	db.query(&q)
+	db.query(&query)
 		.and_then(|id| db.face(id))?
 		.families
 		.first()
@@ -333,11 +353,11 @@ impl TextCtx {
 
 		let mono_face = {
 			let fam = mono_family();
-			let q = fontdb::Query {
+			let query = fontdb::Query {
 				families: &[fam.map_or(fontdb::Family::Monospace, fontdb::Family::Name)],
 				..Default::default()
 			};
-			font_system.db().query(&q)
+			font_system.db().query(&query)
 		};
 
 		let cache = Cache::new(device);
@@ -375,8 +395,8 @@ impl TextCtx {
 		if ch.is_ascii() {
 			return true;
 		}
-		if let Some(&b) = self.cover_cache.get(&ch) {
-			return b;
+		if let Some(&cached) = self.cover_cache.get(&ch) {
+			return cached;
 		}
 		let covered = self
 			.mono_face
@@ -404,12 +424,12 @@ impl TextCtx {
 	// from the text-area origin. The caller fits this to the cell box - using
 	// the ink box, not the advance, because these fallback symbols routinely
 	// paint wider than they advance and would otherwise overlap the next cell.
-	pub fn fill_glyph(&mut self, buf: &mut Buffer, ch: char, a: &Attrs) -> (f32, f32) {
-		let mut s = [0u8; 4];
+	pub fn fill_glyph(&mut self, buf: &mut Buffer, ch: char, attrs: &Attrs) -> (f32, f32) {
+		let mut utf8_buf = [0u8; 4];
 		buf.set_text(
 			&mut self.font_system,
-			ch.encode_utf8(&mut s),
-			a,
+			ch.encode_utf8(&mut utf8_buf),
+			attrs,
 			Shaping::Advanced,
 			None,
 		);
@@ -417,8 +437,8 @@ impl TextCtx {
 		let phys = buf
 			.layout_runs()
 			.next()
-			.and_then(|r| r.glyphs.first())
-			.map(|g| g.physical((0.0, 0.0), 1.0));
+			.and_then(|run| run.glyphs.first())
+			.map(|glyph| glyph.physical((0.0, 0.0), 1.0));
 		let Some(phys) = phys else {
 			return (self.cell_w, 0.0);
 		};
@@ -426,9 +446,9 @@ impl TextCtx {
 			.swash_cache
 			.get_image(&mut self.font_system, phys.cache_key)
 		{
-			Some(im) => (
-				im.placement.width.max(1) as f32,
-				phys.x as f32 + im.placement.left as f32,
+			Some(image) => (
+				image.placement.width.max(1) as f32,
+				phys.x as f32 + image.placement.left as f32,
 			),
 			None => (self.cell_w, 0.0),
 		}
@@ -461,7 +481,7 @@ impl TextCtx {
 		buf.set_size(&mut self.font_system, None, None);
 		buf.set_text(&mut self.font_system, text, attrs, Shaping::Advanced, None);
 		buf.shape_until_scroll(&mut self.font_system, false);
-		buf.layout_runs().next().map_or(0.0, |r| r.line_w)
+		buf.layout_runs().next().map_or(0.0, |run| run.line_w)
 	}
 
 	// Chrome buffer: UI-font metrics, natural (proportional) advances - no
@@ -600,7 +620,7 @@ fn measure_cell(fs: &mut FontSystem, metrics: Metrics) -> f32 {
 	buf.shape_until_scroll(fs, false);
 	buf.layout_runs()
 		.next()
-		.map(|r| r.line_w / N as f32)
+		.map(|run| run.line_w / N as f32)
 		.unwrap_or(metrics.font_size * 0.6)
 		.max(1.0)
 }
@@ -617,12 +637,12 @@ mod tests {
 	// metrics - so a font/size change stays balanced without hand-tuned padding.
 	#[test]
 	fn chrome_text_visible_box_centers_in_bar() {
-		let vm = (13.6f32, 3.4f32); // ascent, descent px
+		let vmetrics = (13.6f32, 3.4f32); // ascent, descent px
 		let ui_line_h = 23.0;
 		for &(bar_top, bar_h) in &[(0.0f32, 29.0f32), (29.0, 29.0), (10.0, 40.0)] {
-			let top = ui_visible_center_top(ui_line_h, vm, bar_top, bar_h);
-			let baseline = top + ui_baseline_in_buf(ui_line_h, vm);
-			let visible_center = baseline - vm.0 / 2.0; // midpoint of ascender..baseline
+			let top = ui_visible_center_top(ui_line_h, vmetrics, bar_top, bar_h);
+			let baseline = top + ui_baseline_in_buf(ui_line_h, vmetrics);
+			let visible_center = baseline - vmetrics.0 / 2.0; // midpoint of ascender..baseline
 			assert!(
 				(visible_center - (bar_top + bar_h / 2.0)).abs() < 0.01,
 				"visible center {visible_center} != bar center {}",

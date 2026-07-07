@@ -9,6 +9,7 @@
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 ![Lifecycle: Beta](https://img.shields.io/badge/Lifecycle-Beta-yellow)
 ![Support](https://img.shields.io/badge/Support-Maintained-brightgreen)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ff69b4)](https://github.com/sponsors/jim-collier)
 
 </div>
 <!--
@@ -47,74 +48,20 @@
 
 <!-- TOC -->
 
-- [Features](#features)
 - [Why?](#why)
 	- [Why smooth-scrolling output](#why-smooth-scrolling-output)
 	- [Why text outer glow](#why-text-outer-glow)
+- [Features](#features)
+	- [One minor limitation inherent to all terminals](#one-minor-limitation-inherent-to-all-terminals)
 - [Screenshots](#screenshots)
-- [Configuration](#configuration)
-- [Installing](#installing)
-- [Building from source](#building-from-source)
-- [Design](#design)
+- [Getting and using](#getting-and-using)
+	- [Installing](#installing)
+	- [Building from source](#building-from-source)
+	- [Configuration](#configuration)
+- [Support SilkTerm](#support-silkterm)
 - [Copyrights and licenses](#copyrights-and-licenses)
 
 <!-- /TOC -->
-
-## Features
-
-- **Smooth pixel-at-a-time scrolling on terminal output**.
-
-	- Automatically speeds up for fast-scrolling output.
-		- *The lack of this ability is what killed smooth scrolling for remote UNIX terminals in the late-80s/early-90s*.
-	- You *have* to see how gorgeous it looks on a high-refresh rate monitor. No animated gif reproduction can do it justice.
-
-- **Smooth mouse wheel scrolling**. Several other terminals offer this feature.
-
-- **Smooth cursor movement**. This is the cherry on top of "smooth".
-
-- **Outer glow behind text**. This optional feature helps keep text readable even when the text is on top of similar-colored backgrounds and/or when using high background transparency. This is the only known terminal to offer it, though there are several terminals that offer angled *drop-shadow* (which ironically can make text *harder* to read). Outer glow is conceptually similar - but enhances, rather than reduces, readability.
-
-- **Cursor size and animation options**. Phased blinking, or smoothly pulsing in size. (Or just regular.) Adjustable rate.
-
-- **Background transparency**. The background (with adjustable %) becomes see-through, but not the text.
-
-- **Background transparency blur**. If using background transparency and this is enabled, everything behind the terminal is blurred. Supported on most window compositors. (But limited to the compositor's options. SilkTerm just talks to the WM to enable it.)
-
-- **User-selectable background image**. User-selectable, with a few dozen cool offerings included.
-
-	- The background image can be dimmed with adjustable %, relative to the background color - and independent of main background transparency.
-
-- **Background image blur**: With an optional Gaussian blur radius (without altering the source image), also independent of transparency blur.
-
-- **Split panes**: A native feature to arbitrarily split any pane in either direction. Panes can be freely drag-n-dropped to change locations. Panes split in successive directions are automatically evenly distributed, unless adjusted (with the mouse).
-
-- **Window decorations and/or the menu can be disabled**, for "nothing but terminal". Fullscreen can also be toggled.
-
-- **Robust Unicode and emoji support**. With internal Unicode fallback rendering for the glyphs that the chosen display font can't display.
-
-- **Text brightens on "bell"**. (An idea borrowed from Windows Terminal, surely other as well.)
-
-- **True-color, 256-color, and 16-color text support, as well as standard bold & italic**.
-
-- **Read-only output toggle**.
-
-- **Simple and sane configuration**. No pages of nested tabs representing multiple settings metaphors. (E.g. no separate "Profiles" and "Layouts".) If you want to get fancy with multiple sets of wildly different options - that's easy with alternate config files, and/or scripted launch-time arguments.
-
-- **Rich command-line syntax**: A simple yet (optionally) insanely powerful CLI syntax, that allows creating multiple tabs and/or complex pane structure(s) at launch time.
-
-	- This can be very useful for creating one-line shell scripts that launch custom SilkTerm instances with specific size, background, color, opacity, text and cursor style, and unique shells per window, tab, and/or pane. (Without overwriting the main config file.)
-
-- **Arbitrary alternate config files**, another way to launch SilkTerm with wildly different options, without overwriting the main config file.
-
-- **Written in Rust** for minimum executable size, no runtime dependencies, and maximum speed. (Several terminal emulators - such as the revered `terminator` - are written in interpreted Python.)
-
-- **One codebase for Linux + Windows, both with x86_64 and ARM builds**. The Window and/or ARM versions can be built all at once on x86_64 Linux. *MacOS is built natively on a Mac from the same codebase, but is so far untested (no releases target it yet)*.
-
-- **Loosely based on [Alacritty](https://github.com/alacritty/alacritty)** (not a fork), just for the basement plumbing - to avoid rewriting the complex but solved problems of terminal emulation. Alacritty is also a high-performance, open-source terminal written in Rust.
-
-	- *Fun fact: SilkTerm has more lines of code than Alacritty, especially compared to the subset we use. Which is part of why we chose it for the bare guts without reinventing a thoroughly-and-repeatedly-invented wheel.*
-
-- **GPU-accelerated** with software fallback.
 
 ## Why?
 
@@ -165,6 +112,70 @@ Text can be particularly hard to read, for example when using light text on a no
 
 "Outer glow" - or similar techniques by other names (and distinctly *not* angled "drop-shadow") - is used often in graphic design and advertising to aid readability on backgrounds of varying brightness and color. (And some closed-captioning systems use it as an alternative to black bars as a background.)
 
+## Features
+
+- **Smooth pixel-at-a-time scrolling on terminal output**.
+
+	- *You HAVE to see how gorgeous it looks on a high-refresh rate monitor. No animated gif reproduction can do it justice*.
+
+- **Smooth mouse wheel scrolling**. Several other terminals offer this feature.
+
+- **Smooth cursor movement**. This is the cherry on top of "smooth".
+
+- **Outer glow behind text**. This optional feature helps keep text readable even when the text is on top of similar-colored backgrounds and/or when using high background transparency. This is the only known terminal to offer it, though there are several terminals that offer angled *drop-shadow* (which ironically can make text *harder* to read). Outer glow is conceptually similar - but enhances, rather than reduces, readability.
+
+- **Cursor size and animation options**. Phased blinking, or smoothly pulsing in size. (Or just regular.) Adjustable rate.
+
+- **Background transparency**. The background (with adjustable %) becomes see-through, but not the text.
+
+- **Background transparency blur**. If using background transparency and this is enabled, everything behind the terminal is blurred. Supported on most window compositors. (But limited to the compositor's options. SilkTerm just talks to the WM to enable it.)
+
+- **User-selectable background image**. User-selectable, with a few dozen cool offerings included.
+
+	- The background image can be dimmed with adjustable %, relative to the background color - and independent of main background transparency.
+
+- **Background image blur**: With an optional Gaussian blur radius (without altering the source image), also independent of transparency blur.
+
+- **Split panes**: A native feature to arbitrarily split any pane in either direction. Panes can be freely drag-n-dropped to change locations. Panes split in successive directions are automatically evenly distributed, unless adjusted (with the mouse).
+
+- **Window decorations and/or the menu can be disabled**, for "nothing but terminal". Fullscreen can also be toggled.
+
+- **Robust Unicode and emoji support**. With internal Unicode fallback rendering for the glyphs that the chosen display font can't display.
+
+- **Text brightens on "bell"**. (An idea borrowed from Windows Terminal, surely other as well.)
+
+- **True-color, 256-color, and 16-color text support, as well as standard bold & italic**.
+
+- **Read-only output toggle**.
+
+- **Simple and sane configuration**. No pages of nested tabs representing multiple settings metaphors. (E.g. no separate "Profiles" and "Layouts".) If you want to get fancy with multiple sets of wildly different options - that's easy with alternate config files, and/or scripted launch-time arguments.
+
+- **Rich command-line syntax**: A simple yet (optionally) insanely powerful CLI syntax, that allows creating multiple tabs and/or complex pane structure(s) at launch time.
+
+	- This can be very useful for creating one-line shell scripts that launch custom SilkTerm instances with specific size, background, color, opacity, text and cursor style, and unique shells per window, tab, and/or pane. (Without overwriting the main config file.)
+
+- **Arbitrary alternate config files**, another way to launch SilkTerm with wildly different options, without overwriting the main config file.
+
+- **Written in Rust** for minimum executable size, no runtime dependencies, and maximum speed. (Several terminal emulators - such as the revered `terminator` - are written in interpreted Python.)
+
+- **One codebase for Linux + Windows, both with x86_64 and ARM builds**. The Window and/or ARM versions can be built all at once on x86_64 Linux. *MacOS is built natively on a Mac from the same codebase, but is so far untested (no releases target it yet)*.
+
+- **Loosely based on [Alacritty](https://github.com/alacritty/alacritty)** (not a fork), just for the basement plumbing - to avoid rewriting the complex but solved problems of terminal emulation. Alacritty is also a high-performance, open-source terminal written in Rust.
+
+	- *Fun fact: SilkTerm has more lines of code than Alacritty, especially compared to the subset we use. Which is part of why we chose it for the bare guts without reinventing a thoroughly-and-repeatedly-invented wheel.*
+
+- **GPU-accelerated** with software fallback.
+
+### One minor limitation inherent to all terminals
+
+- SilkTerm can only smooth-scroll text written to `stdout` and `stderr`.
+
+	- This covers the overwhelming majority of Linux terminal tools and programs.
+
+	- However, some TUI programs - such as `nano`, `vim`, `tmux` - directly control the terminal buffer in "raw mode", and handle everything themselves. Scrolling within such programs behaves the same as on any other terminal - snapped to lines, no in-between.
+
+		- But the other features still work in that case: smooth-moving and phased cursor, text outer-glow, background options, etc.
+
 ## Screenshots
 
 <div align="center">
@@ -187,21 +198,13 @@ Text can be particularly hard to read, for example when using light text on a no
 
 </div>
 
-## Configuration
+## Getting and using
 
-On first run SilkTerm writes a commented config file with all defaults to:
-
-```bash
-$XDG_CONFIG_HOME/silkterm/config.toml   (falls back to ~/.config/...)
-```
-
-If making changes directly (rather than through Settings), you can apply them immediately with the "Reload config" menu item.
-
-## Installing
+### Installing
 
 Pre-built releases are not published yet - build from source per the Compiling section. Optional: copy the example config tree in [`filesystem/home/`](filesystem/home/) over your own `$HOME` for a starter config and the background image pack.
 
-## Building from source
+### Building from source
 
 See [build.md](build.md).
 
@@ -217,6 +220,16 @@ Or for the full CI/CD pipeline (lint, debug compile, regression test, profile, r
 cicd/cicd.bash [--quick]
 ```
 
+### Configuration
+
+On first run SilkTerm writes a commented config file with all defaults to:
+
+```bash
+$XDG_CONFIG_HOME/silkterm/config.toml   (falls back to ~/.config/...)
+```
+
+If making changes directly (rather than through Settings), you can apply them immediately with the "Reload config" menu item.
+
 <!--
 ## Renaming the project
 
@@ -231,15 +244,34 @@ It rewrites `Cargo.toml`, the Rust sources, and the docs (review `git diff`
 afterwards); `cargo build` regenerates `Cargo.lock`.
 -->
 
-## Design
+## Support SilkTerm
 
-See [design.md](project/design.md) for the general architecture and decisions, and [backlog.md](project/backlog.md) for bugs and features tracked before the first release. (Github [Issues](https://github.com/jim-collier/silkterm/issues) are used after the first release.)
+SilkTerm is written and maintained by one programmer in his spare time. If you like this thing, use it often, and/or it saves you time - sponsoring it keeps it moving!
+
+Even a few dollars a month is meaningful. Or just buy me a coffee.
+
+**Direct support**
+
+- [GitHub Sponsors](https://github.com/sponsors/jim-collier)
+
+**Indirect support**
+
+- Star the repo.
+- File good bug reports and feature requests.
+
+**Get the word out**
+
+Tell other terminal nerds on various socials how this has changed your life!
+
+- [r/commandline](https://www.reddit.com/r/commandline/)
+- [Hacker News](news.ycombinator.com)
+- [r/unixporn](https://www.reddit.com/r/unixporn/)
 
 ## Copyrights and licenses
 
-[Alacritty](https://github.com/alacritty/alacritty) is dual-licensed under the [Apache License, Version 2.0](https://github.com/alacritty/alacritty/blob/master/LICENSE-APACHE) and [MIT License](https://github.com/alacritty/alacritty/blob/master/LICENSE-MIT).
+[Alacritty](https://github.com/alacritty/alacritty) (which provides the basement plumbing) is dual-licensed under the [Apache License, Version 2.0](https://github.com/alacritty/alacritty/blob/master/LICENSE-APACHE) and [MIT License](https://github.com/alacritty/alacritty/blob/master/LICENSE-MIT).
 
-SilkTerm's license, although different, is fully compatible with Alacritty's:
+SilkTerm's license is compatible with Alacritty's:
 
 > Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)<br />
 > Licensed under the GNU General Public License v2.0 or later ([GPL-2.0-or-later](https://spdx.org/licenses/GPL-2.0-or-later.html)). No warranty.

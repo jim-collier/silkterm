@@ -70,10 +70,10 @@ fn dlg() -> Dlg {
 	} else {
 		LIGHT_DLG
 	};
-	let s = config::settings();
+	let settings = config::settings();
 	Dlg {
-		panel_bg: s.dialog_bg,
-		text: s.dialog_fg,
+		panel_bg: settings.dialog_bg,
+		text: settings.dialog_fg,
 		..base
 	}
 }
@@ -87,6 +87,15 @@ pub fn dialog_text() -> [u8; 3] {
 }
 pub fn dialog_dim() -> [u8; 3] {
 	dlg().dim
+}
+pub fn dialog_btn() -> [u8; 3] {
+	dlg().btn_bg
+}
+pub fn dialog_btn_hl() -> [u8; 3] {
+	dlg().btn_hl
+}
+pub fn dialog_border() -> [u8; 3] {
+	dlg().panel_border
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -148,8 +157,8 @@ const BASE_LH: f32 = 19.0; // UI line height the fixed radio consts were tuned f
 
 // Tabs ("super-sections"); each config section maps to one via tab_for_section.
 pub const TAB_TITLES: [&str; 5] = ["Appearance", "Font", "Colors", "Window", "Scrolling"];
-fn tab_for_section(h: &str) -> usize {
-	match h {
+fn tab_for_section(section: &str) -> usize {
+	match section {
 		"Font" => 1,
 		"Colors" => 2,
 		"Window" | "Shell" => 3,
@@ -242,22 +251,22 @@ fn next_boundary(s: &str, i: usize) -> usize {
 // Byte index of the caret nearest a click at `rel_x` px into the text (0 = the
 // field's left text edge). Walks char boundaries, picking the one whose measured
 // prefix width is closest to the click.
-fn caret_from_click(s: &str, rel_x: f32, measure: &mut impl FnMut(&str) -> f32) -> usize {
+fn caret_from_click(text: &str, rel_x: f32, measure: &mut impl FnMut(&str) -> f32) -> usize {
 	if rel_x <= 0.0 {
 		return 0;
 	}
-	let (mut best, mut best_d) = (0usize, f32::MAX);
+	let (mut best_caret, mut best_dist) = (0usize, f32::MAX);
 	let mut i = 0;
 	loop {
-		let d = (measure(&s[..i]) - rel_x).abs();
-		if d < best_d {
-			best_d = d;
-			best = i;
+		let dist = (measure(&text[..i]) - rel_x).abs();
+		if dist < best_dist {
+			best_dist = dist;
+			best_caret = i;
 		}
-		if i >= s.len() {
-			return best;
+		if i >= text.len() {
+			return best_caret;
 		}
-		i = next_boundary(s, i);
+		i = next_boundary(text, i);
 	}
 }
 
@@ -533,14 +542,14 @@ impl SettingsDialog {
 	fn tab_content_h(specs: &[Spec], spec_tab: &[usize], tab: usize, line_h: f32) -> f32 {
 		let mut h = 0.0;
 		let mut first = true;
-		for (i, s) in specs.iter().enumerate() {
+		for (i, spec) in specs.iter().enumerate() {
 			if spec_tab[i] != tab {
 				continue;
 			}
-			if matches!(s.kind, Kind::Header(_)) && !first {
+			if matches!(spec.kind, Kind::Header(_)) && !first {
 				h += HEADER_EXTRA;
 			}
-			h += Self::row_h_for(&s.kind, line_h);
+			h += Self::row_h_for(&spec.kind, line_h);
 			first = false;
 		}
 		h
@@ -560,14 +569,14 @@ impl SettingsDialog {
 		max_h: f32,
 	) -> Self {
 		let specs = fields();
-		let mut cur = 0usize;
+		let mut cur_tab = 0usize;
 		let spec_tab: Vec<usize> = specs
 			.iter()
-			.map(|s| {
-				if let Kind::Header(h) = s.kind {
-					cur = tab_for_section(h);
+			.map(|spec| {
+				if let Kind::Header(section) = spec.kind {
+					cur_tab = tab_for_section(section);
 				}
-				cur
+				cur_tab
 			})
 			.collect();
 		let label_w = label_w.max(LABEL_W);
@@ -583,16 +592,16 @@ impl SettingsDialog {
 			+ TAB_GAP * tab_ws.len().saturating_sub(1) as f32;
 		// widest radio row (scaled pitch at HiDPI / large fonts) must fit the panel,
 		// or the last option overflows the right edge
-		let sc = (line_h / BASE_LH).max(1.0);
+		let scale = (line_h / BASE_LH).max(1.0);
 		let max_radio_opts = specs
 			.iter()
-			.filter_map(|s| match s.kind {
-				Kind::Radio(o) => Some(o.len()),
+			.filter_map(|spec| match spec.kind {
+				Kind::Radio(opts) => Some(opts.len()),
 				_ => None,
 			})
 			.max()
 			.unwrap_or(0) as f32;
-		let radio_w = PAD + label_w + max_radio_opts * RADIO_PITCH * sc + PAD;
+		let radio_w = PAD + label_w + max_radio_opts * RADIO_PITCH * scale + PAD;
 		let w = (W + (label_w - LABEL_W) + (btn_w - BTN_W) * 3.0)
 			.max(tabs_w)
 			.max(radio_w);
@@ -602,10 +611,10 @@ impl SettingsDialog {
 			w,
 			h,
 		};
-		let s = (*config::settings()).clone();
+		let settings = (*config::settings()).clone();
 		Self {
-			orig: s.clone(),
-			edited: s,
+			orig: settings.clone(),
+			edited: settings,
 			defaults: Settings::default(),
 			reverted: Vec::new(),
 			rect,
@@ -664,17 +673,17 @@ impl SettingsDialog {
 		self.scroll = (self.scroll - dy_px).clamp(0.0, self.max_scroll());
 	}
 	fn thumb(&self) -> Option<Rect> {
-		let ms = self.max_scroll();
-		if ms <= 0.0 {
+		let scroll_max = self.max_scroll();
+		if scroll_max <= 0.0 {
 			return None;
 		}
 		let vp = self.viewport();
-		let th = (vp.h * vp.h / self.content_h()).max(24.0);
+		let thumb_h = (vp.h * vp.h / self.content_h()).max(24.0);
 		Some(Rect {
 			x: self.rect.x + self.rect.w - PAD / 2.0 - SCROLLBAR_W,
-			y: vp.y + (self.scroll / ms) * (vp.h - th),
+			y: vp.y + (self.scroll / scroll_max) * (vp.h - thumb_h),
 			w: SCROLLBAR_W,
-			h: th,
+			h: thumb_h,
 		})
 	}
 
@@ -717,9 +726,9 @@ impl SettingsDialog {
 	// The full Tab order for the active tab: focusable control rows, then the
 	// three footer buttons (Cancel / Apply / OK), which are always reachable.
 	fn focus_ring(&self) -> Vec<Focus> {
-		let mut v: Vec<Focus> = self.focusables().into_iter().map(Focus::Row).collect();
-		v.extend((0..3).map(Focus::Button));
-		v
+		let mut ring: Vec<Focus> = self.focusables().into_iter().map(Focus::Row).collect();
+		ring.extend((0..3).map(Focus::Button));
+		ring
 	}
 	// Tab / Shift+Tab (and Down / Up): move focus to the next/prev item in the
 	// ring, wrapping, and scroll a focused row into view.
@@ -806,16 +815,16 @@ impl SettingsDialog {
 		match self.specs[i].kind {
 			Kind::Slider { min, max, int } => {
 				let step = if int { 1.0 } else { (max - min) / 100.0 };
-				let mut v = (self.get_f32(key) + dir as f32 * step).clamp(min, max);
+				let mut value = (self.get_f32(key) + dir as f32 * step).clamp(min, max);
 				if int {
-					v = v.round();
+					value = value.round();
 				}
-				self.set_f32(key, v);
+				self.set_f32(key, value);
 			}
 			Kind::Radio(options) => {
 				let sel = self.get_radio(key) as i32;
-				let ns = (sel + dir).clamp(0, options.len() as i32 - 1);
-				self.set_radio(key, ns as usize);
+				let new_sel = (sel + dir).clamp(0, options.len() as i32 - 1);
+				self.set_radio(key, new_sel as usize);
 			}
 			_ => {}
 		}
@@ -888,17 +897,17 @@ impl SettingsDialog {
 	fn row_y(&self, i: usize) -> f32 {
 		let mut y = self.rows_y0() - self.scroll;
 		let mut first = true;
-		for (j, s) in self.specs.iter().enumerate() {
+		for (j, spec) in self.specs.iter().enumerate() {
 			if self.spec_tab[j] != self.tab {
 				continue;
 			}
-			if matches!(s.kind, Kind::Header(_)) && !first {
+			if matches!(spec.kind, Kind::Header(_)) && !first {
 				y += HEADER_EXTRA;
 			}
 			if j == i {
 				return y;
 			}
-			y += self.row_h(&s.kind);
+			y += self.row_h(&spec.kind);
 			first = false;
 		}
 		y
@@ -979,12 +988,12 @@ impl SettingsDialog {
 	}
 	// indicator box for radio option `k` in row `i`
 	fn radio_box(&self, i: usize, k: usize) -> Rect {
-		let sz = self.radio_box_sz();
+		let size = self.radio_box_sz();
 		Rect {
 			x: self.control_x() + k as f32 * self.radio_pitch(),
-			y: self.row_y(i) + (ROW_H - sz) / 2.0,
-			w: sz,
-			h: sz,
+			y: self.row_y(i) + (ROW_H - size) / 2.0,
+			w: size,
+			h: size,
 		}
 	}
 	// Row-spanning box drawn around the keyboard-focused control.
@@ -1017,45 +1026,45 @@ impl SettingsDialog {
 	}
 
 	fn get_f32(&self, key: Key) -> f32 {
-		let s = &self.edited;
+		let settings = &self.edited;
 		match key {
-			Key::Opacity => s.opacity,
-			Key::BgOpacity => s.background_opacity,
-			Key::BgBlur => s.background_blur,
-			Key::GlowRadius => s.text_glow_radius,
-			Key::GlowSoftness => s.text_glow_softness,
-			Key::GlowBorder => s.text_outline,
-			Key::FontSize => s.font_size,
-			Key::LineHeight => s.line_height_scale,
-			Key::Margin => s.margin,
+			Key::Opacity => settings.opacity,
+			Key::BgOpacity => settings.background_opacity,
+			Key::BgBlur => settings.background_blur,
+			Key::GlowRadius => settings.text_glow_radius,
+			Key::GlowSoftness => settings.text_glow_softness,
+			Key::GlowBorder => settings.text_outline,
+			Key::FontSize => settings.font_size,
+			Key::LineHeight => settings.line_height_scale,
+			Key::Margin => settings.margin,
 			// shown as an intuitive 1..100 speed (higher = faster); stored as tau
-			Key::ScrollTau => tau_to_speed(s.scroll_tau_ms),
-			Key::WheelLines => s.wheel_lines,
-			Key::Columns => s.columns as f32,
-			Key::Rows => s.rows as f32,
+			Key::ScrollTau => tau_to_speed(settings.scroll_tau_ms),
+			Key::WheelLines => settings.wheel_lines,
+			Key::Columns => settings.columns as f32,
+			Key::Rows => settings.rows as f32,
 			_ => 0.0,
 		}
 	}
-	fn set_f32(&mut self, key: Key, v: f32) {
+	fn set_f32(&mut self, key: Key, value: f32) {
 		// adjusting the size explicitly means we're no longer following the OS
 		if key == Key::FontSize {
 			self.edited.use_system_font = false;
 		}
-		let s = &mut self.edited;
+		let settings = &mut self.edited;
 		match key {
-			Key::Opacity => s.opacity = v,
-			Key::BgOpacity => s.background_opacity = v,
-			Key::BgBlur => s.background_blur = v,
-			Key::GlowRadius => s.text_glow_radius = v,
-			Key::GlowSoftness => s.text_glow_softness = v,
-			Key::GlowBorder => s.text_outline = v,
-			Key::FontSize => s.font_size = v,
-			Key::LineHeight => s.line_height_scale = v,
-			Key::Margin => s.margin = v,
-			Key::ScrollTau => s.scroll_tau_ms = speed_to_tau(v),
-			Key::WheelLines => s.wheel_lines = v,
-			Key::Columns => s.columns = v.round().max(1.0) as usize,
-			Key::Rows => s.rows = v.round().max(1.0) as usize,
+			Key::Opacity => settings.opacity = value,
+			Key::BgOpacity => settings.background_opacity = value,
+			Key::BgBlur => settings.background_blur = value,
+			Key::GlowRadius => settings.text_glow_radius = value,
+			Key::GlowSoftness => settings.text_glow_softness = value,
+			Key::GlowBorder => settings.text_outline = value,
+			Key::FontSize => settings.font_size = value,
+			Key::LineHeight => settings.line_height_scale = value,
+			Key::Margin => settings.margin = value,
+			Key::ScrollTau => settings.scroll_tau_ms = speed_to_tau(value),
+			Key::WheelLines => settings.wheel_lines = value,
+			Key::Columns => settings.columns = value.round().max(1.0) as usize,
+			Key::Rows => settings.rows = value.round().max(1.0) as usize,
 			_ => {}
 		}
 	}
@@ -1066,33 +1075,33 @@ impl SettingsDialog {
 				.edited
 				.background_image
 				.as_ref()
-				.map(|p| p.to_string_lossy().into_owned())
+				.map(|path| path.to_string_lossy().into_owned())
 				.unwrap_or_default(),
 			Key::FontFamily => self.edited.font_family.clone().unwrap_or_default(),
 			Key::DefaultShell => self.edited.default_shell.clone(),
 			_ => String::new(),
 		}
 	}
-	fn set_text(&mut self, key: Key, s: &str) {
-		let t = s.trim();
+	fn set_text(&mut self, key: Key, text: &str) {
+		let trimmed = text.trim();
 		match key {
 			Key::BgImage => {
-				self.edited.background_image = if t.is_empty() {
+				self.edited.background_image = if trimmed.is_empty() {
 					None
 				} else {
-					Some(std::path::PathBuf::from(t))
+					Some(std::path::PathBuf::from(trimmed))
 				};
 			}
 			Key::FontFamily => {
 				// an explicit family means we're not following the OS font
 				self.edited.use_system_font = false;
-				self.edited.font_family = if t.is_empty() {
+				self.edited.font_family = if trimmed.is_empty() {
 					None
 				} else {
-					Some(t.to_string())
+					Some(trimmed.to_string())
 				};
 			}
-			Key::DefaultShell => self.edited.default_shell = t.to_string(),
+			Key::DefaultShell => self.edited.default_shell = trimmed.to_string(),
 			_ => {}
 		}
 	}
@@ -1163,22 +1172,22 @@ impl SettingsDialog {
 			|| (matches!(key, Key::FontFamily | Key::FontSize) && self.edited.use_system_font)
 	}
 	fn get_col(&self, key: Key) -> [u8; 3] {
-		let s = &self.edited;
+		let settings = &self.edited;
 		match key {
-			Key::ColBg => s.bg,
-			Key::ColFg => s.fg,
-			Key::ColCursor => s.cursor,
-			Key::ColFocus => s.focus,
+			Key::ColBg => settings.bg,
+			Key::ColFg => settings.fg,
+			Key::ColCursor => settings.cursor,
+			Key::ColFocus => settings.focus,
 			_ => [0, 0, 0],
 		}
 	}
-	fn set_col(&mut self, key: Key, c: [u8; 3]) {
-		let s = &mut self.edited;
+	fn set_col(&mut self, key: Key, color: [u8; 3]) {
+		let settings = &mut self.edited;
 		match key {
-			Key::ColBg => s.bg = c,
-			Key::ColFg => s.fg = c,
-			Key::ColCursor => s.cursor = c,
-			Key::ColFocus => s.focus = c,
+			Key::ColBg => settings.bg = color,
+			Key::ColFg => settings.fg = color,
+			Key::ColCursor => settings.cursor = color,
+			Key::ColFocus => settings.focus = color,
 			_ => {}
 		}
 	}
@@ -1193,31 +1202,33 @@ impl SettingsDialog {
 		)
 	}
 	fn default_col(&self, key: Key) -> [u8; 3] {
-		let p = self.theme_palette();
+		let palette = self.theme_palette();
 		match key {
-			Key::ColBg => p.bg,
-			Key::ColFg => p.fg,
-			Key::ColCursor => p.cursor,
-			Key::ColFocus => p.focus,
+			Key::ColBg => palette.bg,
+			Key::ColFg => palette.fg,
+			Key::ColCursor => palette.cursor,
+			Key::ColFocus => palette.focus,
 			_ => [0, 0, 0],
 		}
 	}
 
 	// Is this setting at its config default? Drives the revert icon's state.
 	fn is_default(&self, key: Key) -> bool {
-		let e = &self.edited;
-		let d = &self.defaults;
+		let edited = &self.edited;
+		let defaults = &self.defaults;
 		match key {
-			Key::Transparency => e.transparent_background == d.transparent_background,
-			Key::BackdropBlur => e.transparent_background_blur == d.transparent_background_blur,
-			Key::TextGlow => e.text_glow == d.text_glow,
-			Key::SystemFont => e.use_system_font == d.use_system_font,
-			Key::RememberSize => e.remember_size == d.remember_size,
-			Key::BgFit => e.background_fit == d.background_fit,
-			Key::GlowRamp => e.text_glow_ramp == d.text_glow_ramp,
-			Key::BgImage => e.background_image == d.background_image,
-			Key::FontFamily => e.font_family == d.font_family,
-			Key::DefaultShell => e.default_shell == d.default_shell,
+			Key::Transparency => edited.transparent_background == defaults.transparent_background,
+			Key::BackdropBlur => {
+				edited.transparent_background_blur == defaults.transparent_background_blur
+			}
+			Key::TextGlow => edited.text_glow == defaults.text_glow,
+			Key::SystemFont => edited.use_system_font == defaults.use_system_font,
+			Key::RememberSize => edited.remember_size == defaults.remember_size,
+			Key::BgFit => edited.background_fit == defaults.background_fit,
+			Key::GlowRamp => edited.text_glow_ramp == defaults.text_glow_ramp,
+			Key::BgImage => edited.background_image == defaults.background_image,
+			Key::FontFamily => edited.font_family == defaults.font_family,
+			Key::DefaultShell => edited.default_shell == defaults.default_shell,
 			Key::ColBg | Key::ColFg | Key::ColCursor | Key::ColFocus => {
 				self.get_col(key) == self.default_col(key)
 			}
@@ -1228,21 +1239,21 @@ impl SettingsDialog {
 	}
 	// Default for a slider key, in get_f32's own units (speed for ScrollTau).
 	fn default_f32(&self, key: Key) -> f32 {
-		let d = &self.defaults;
+		let defaults = &self.defaults;
 		match key {
-			Key::Opacity => d.opacity,
-			Key::BgOpacity => d.background_opacity,
-			Key::BgBlur => d.background_blur,
-			Key::GlowRadius => d.text_glow_radius,
-			Key::GlowSoftness => d.text_glow_softness,
-			Key::GlowBorder => d.text_outline,
-			Key::FontSize => d.font_size,
-			Key::LineHeight => d.line_height_scale,
-			Key::Margin => d.margin,
-			Key::ScrollTau => tau_to_speed(d.scroll_tau_ms),
-			Key::WheelLines => d.wheel_lines,
-			Key::Columns => d.columns as f32,
-			Key::Rows => d.rows as f32,
+			Key::Opacity => defaults.opacity,
+			Key::BgOpacity => defaults.background_opacity,
+			Key::BgBlur => defaults.background_blur,
+			Key::GlowRadius => defaults.text_glow_radius,
+			Key::GlowSoftness => defaults.text_glow_softness,
+			Key::GlowBorder => defaults.text_outline,
+			Key::FontSize => defaults.font_size,
+			Key::LineHeight => defaults.line_height_scale,
+			Key::Margin => defaults.margin,
+			Key::ScrollTau => tau_to_speed(defaults.scroll_tau_ms),
+			Key::WheelLines => defaults.wheel_lines,
+			Key::Columns => defaults.columns as f32,
+			Key::Rows => defaults.rows as f32,
 			_ => 0.0,
 		}
 	}
@@ -1255,14 +1266,14 @@ impl SettingsDialog {
 			| Key::TextGlow
 			| Key::SystemFont
 			| Key::RememberSize => {
-				let d = match key {
+				let default_val = match key {
 					Key::Transparency => self.defaults.transparent_background,
 					Key::BackdropBlur => self.defaults.transparent_background_blur,
 					Key::TextGlow => self.defaults.text_glow,
 					Key::SystemFont => self.defaults.use_system_font,
 					_ => self.defaults.remember_size,
 				};
-				self.set_toggle(key, d);
+				self.set_toggle(key, default_val);
 			}
 			Key::BgFit => self.edited.background_fit = self.defaults.background_fit,
 			Key::GlowRamp => self.edited.text_glow_ramp = self.defaults.text_glow_ramp.clone(),
@@ -1270,21 +1281,21 @@ impl SettingsDialog {
 			Key::FontFamily => self.edited.font_family = self.defaults.font_family.clone(),
 			Key::DefaultShell => self.edited.default_shell = self.defaults.default_shell.clone(),
 			Key::ColBg | Key::ColFg | Key::ColCursor | Key::ColFocus => {
-				let c = self.default_col(key);
-				self.set_col(key, c);
+				let color = self.default_col(key);
+				self.set_col(key, color);
 			}
 			// direct: set_f32 would also clear use_system_font (its "explicit
 			// size" side effect), which a revert must not do
 			Key::FontSize => self.edited.font_size = self.defaults.font_size,
 			Key::None => {}
 			_ => {
-				let v = self.default_f32(key);
-				self.set_f32(key, v);
+				let value = self.default_f32(key);
+				self.set_f32(key, value);
 			}
 		}
-		for k in cfg_keys(key) {
-			if !self.reverted.contains(k) {
-				self.reverted.push(k);
+		for cfg_key in cfg_keys(key) {
+			if !self.reverted.contains(cfg_key) {
+				self.reverted.push(cfg_key);
 			}
 		}
 	}
@@ -1294,11 +1305,11 @@ impl SettingsDialog {
 	}
 
 	fn fmt_val(&self, key: Key, int: bool) -> String {
-		let v = self.get_f32(key);
+		let value = self.get_f32(key);
 		if int {
-			format!("{}", v.round() as i64)
+			format!("{}", value.round() as i64)
 		} else {
-			format!("{v:.2}")
+			format!("{value:.2}")
 		}
 	}
 
@@ -1307,9 +1318,9 @@ impl SettingsDialog {
 	pub fn mouse_down(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) -> Action {
 		// footer buttons arm on press (drawn pressed) and fire on release, so a
 		// press-drag-off cancels - and the user gets click feedback
-		for (bi, (_, r, _)) in self.buttons().into_iter().enumerate() {
+		for (btn_idx, (_, r, _)) in self.buttons().into_iter().enumerate() {
 			if r.contains(x, y) {
-				self.pressed = Some(bi);
+				self.pressed = Some(btn_idx);
 				return Action::None;
 			}
 		}
@@ -1331,16 +1342,16 @@ impl SettingsDialog {
 			}
 		}
 		// scrollbar: drag the thumb, or jump-and-drag from the track
-		if let Some(t) = self.thumb() {
-			if t.contains(x, y) {
-				self.drag_thumb = Some(y - t.y);
+		if let Some(thumb) = self.thumb() {
+			if thumb.contains(x, y) {
+				self.drag_thumb = Some(y - thumb.y);
 				return Action::None;
 			}
 			let vp = self.viewport();
-			if x >= t.x && x <= t.x + t.w && y >= vp.y && y <= vp.y + vp.h {
-				let frac = ((y - vp.y - t.h / 2.0) / (vp.h - t.h).max(1.0)).clamp(0.0, 1.0);
+			if x >= thumb.x && x <= thumb.x + thumb.w && y >= vp.y && y <= vp.y + vp.h {
+				let frac = ((y - vp.y - thumb.h / 2.0) / (vp.h - thumb.h).max(1.0)).clamp(0.0, 1.0);
 				self.scroll = frac * self.max_scroll();
-				self.drag_thumb = Some(t.h / 2.0);
+				self.drag_thumb = Some(thumb.h / 2.0);
 				return Action::None;
 			}
 		}
@@ -1367,18 +1378,18 @@ impl SettingsDialog {
 						continue; // greyed-out slider ignores clicks
 					}
 					// click the numeric field -> edit the value, caret at the click
-					let vb = self.valbox(i);
-					if vb.contains(x, y) {
+					let val_box = self.valbox(i);
+					if val_box.contains(x, y) {
 						let buf = self.fmt_val(self.specs[i].key, int);
-						let cur = caret_from_click(&buf, x - (vb.x + 6.0), measure);
+						let cur = caret_from_click(&buf, x - (val_box.x + 6.0), measure);
 						self.focus = Some(Focus::Row(i));
 						self.edit = Some(EditState { row: i, buf, cur });
 						return Action::None;
 					}
-					let t = self.track(i);
-					let hit = x >= t.x - 8.0
-						&& x <= t.x + t.w + 8.0
-						&& (y - (t.y + t.h / 2.0)).abs() <= 12.0;
+					let track = self.track(i);
+					let hit = x >= track.x - 8.0
+						&& x <= track.x + track.w + 8.0
+						&& (y - (track.y + track.h / 2.0)).abs() <= 12.0;
 					if hit {
 						self.focus = Some(Focus::Row(i));
 						self.drag = Some(i);
@@ -1399,11 +1410,11 @@ impl SettingsDialog {
 					}
 				}
 				Kind::Text => {
-					let tb = self.textbox(i);
-					if tb.contains(x, y) {
+					let text_box = self.textbox(i);
+					if text_box.contains(x, y) {
 						// edit the current value (empty when none); caret at the click
 						let buf = self.get_text(self.specs[i].key);
-						let cur = caret_from_click(&buf, x - (tb.x + 6.0), measure);
+						let cur = caret_from_click(&buf, x - (text_box.x + 6.0), measure);
 						self.focus = Some(Focus::Row(i));
 						self.edit = Some(EditState { row: i, buf, cur });
 						return Action::None;
@@ -1419,11 +1430,12 @@ impl SettingsDialog {
 				}
 				Kind::Radio(options) => {
 					for k in 0..options.len() {
-						let b = self.radio_box(i, k);
+						let radio_rect = self.radio_box(i, k);
 						// click the box or its label
-						if x >= b.x
-							&& x <= b.x + self.radio_pitch() - 8.0
-							&& (y - (b.y + b.h / 2.0)).abs() <= b.h / 2.0 + 4.0
+						if x >= radio_rect.x
+							&& x <= radio_rect.x + self.radio_pitch() - 8.0
+							&& (y - (radio_rect.y + radio_rect.h / 2.0)).abs()
+								<= radio_rect.h / 2.0 + 4.0
 						{
 							self.focus = Some(Focus::Row(i));
 							self.set_radio(self.specs[i].key, k);
@@ -1440,8 +1452,8 @@ impl SettingsDialog {
 	pub fn mouse_move(&mut self, x: f32, y: f32) {
 		if let Some(grab) = self.drag_thumb {
 			let vp = self.viewport();
-			let th = self.thumb().map_or(24.0, |t| t.h);
-			let frac = ((y - grab - vp.y) / (vp.h - th).max(1.0)).clamp(0.0, 1.0);
+			let thumb_h = self.thumb().map_or(24.0, |t| t.h);
+			let frac = ((y - grab - vp.y) / (vp.h - thumb_h).max(1.0)).clamp(0.0, 1.0);
 			self.scroll = frac * self.max_scroll();
 			return;
 		}
@@ -1454,8 +1466,8 @@ impl SettingsDialog {
 	pub fn mouse_up(&mut self, x: f32, y: f32) -> Action {
 		self.drag = None;
 		self.drag_thumb = None;
-		if let Some(bi) = self.pressed.take() {
-			let (action, r, _) = self.buttons()[bi];
+		if let Some(btn_idx) = self.pressed.take() {
+			let (action, r, _) = self.buttons()[btn_idx];
 			if r.contains(x, y) {
 				return action;
 			}
@@ -1468,14 +1480,14 @@ impl SettingsDialog {
 		let Kind::Slider { min, max, int } = self.specs[i].kind else {
 			return;
 		};
-		let t = self.track(i);
-		let frac = ((x - t.x) / t.w).clamp(0.0, 1.0);
-		let mut v = min + frac * (max - min);
+		let track = self.track(i);
+		let frac = ((x - track.x) / track.w).clamp(0.0, 1.0);
+		let mut value = min + frac * (max - min);
 		if int {
-			v = v.round();
+			value = value.round();
 		}
 		let key = self.specs[i].key;
-		self.set_f32(key, v);
+		self.set_f32(key, value);
 	}
 
 	pub fn char_input(&mut self, c: char) {
@@ -1508,28 +1520,28 @@ impl SettingsDialog {
 				_ => return,
 			}
 		}
-		let Some(e) = &mut self.edit else {
+		let Some(edit) = &mut self.edit else {
 			return;
 		};
-		match self.specs[e.row].kind {
+		match self.specs[edit.row].kind {
 			Kind::Color => {
-				if (c == '#' || c.is_ascii_hexdigit()) && e.buf.len() < 7 {
-					e.buf.insert(e.cur, c);
-					e.cur += c.len_utf8();
+				if (c == '#' || c.is_ascii_hexdigit()) && edit.buf.len() < 7 {
+					edit.buf.insert(edit.cur, c);
+					edit.cur += c.len_utf8();
 					self.reparse_edit();
 				}
 			}
-			Kind::Text if !c.is_control() && e.buf.len() < 256 => {
-				e.buf.insert(e.cur, c);
-				e.cur += c.len_utf8();
+			Kind::Text if !c.is_control() && edit.buf.len() < 256 => {
+				edit.buf.insert(edit.cur, c);
+				edit.cur += c.len_utf8();
 				self.reparse_edit();
 			}
 			// numeric slider field: digits always; one '.' only for float sliders
 			Kind::Slider { int, .. } => {
-				let dot_ok = !int && c == '.' && !e.buf.contains('.');
-				if (c.is_ascii_digit() || dot_ok) && e.buf.len() < 8 {
-					e.buf.insert(e.cur, c);
-					e.cur += c.len_utf8();
+				let dot_ok = !int && c == '.' && !edit.buf.contains('.');
+				if (c.is_ascii_digit() || dot_ok) && edit.buf.len() < 8 {
+					edit.buf.insert(edit.cur, c);
+					edit.cur += c.len_utf8();
 					self.reparse_edit();
 				}
 			}
@@ -1537,65 +1549,65 @@ impl SettingsDialog {
 		}
 	}
 	pub fn backspace(&mut self) {
-		if let Some(e) = &mut self.edit {
-			if e.cur > 0 {
-				let p = prev_boundary(&e.buf, e.cur);
-				e.buf.replace_range(p..e.cur, "");
-				e.cur = p;
+		if let Some(edit) = &mut self.edit {
+			if edit.cur > 0 {
+				let prev = prev_boundary(&edit.buf, edit.cur);
+				edit.buf.replace_range(prev..edit.cur, "");
+				edit.cur = prev;
 				self.reparse_edit();
 			}
 		}
 	}
 	pub fn delete_forward(&mut self) {
-		if let Some(e) = &mut self.edit {
-			if e.cur < e.buf.len() {
-				let n = next_boundary(&e.buf, e.cur);
-				e.buf.replace_range(e.cur..n, "");
+		if let Some(edit) = &mut self.edit {
+			if edit.cur < edit.buf.len() {
+				let next = next_boundary(&edit.buf, edit.cur);
+				edit.buf.replace_range(edit.cur..next, "");
 				self.reparse_edit();
 			}
 		}
 	}
 	// caret movement within the focused field (Left/Right/Home/End)
 	pub fn cursor_left(&mut self) {
-		if let Some(e) = &mut self.edit {
-			e.cur = prev_boundary(&e.buf, e.cur);
+		if let Some(edit) = &mut self.edit {
+			edit.cur = prev_boundary(&edit.buf, edit.cur);
 		}
 	}
 	pub fn cursor_right(&mut self) {
-		if let Some(e) = &mut self.edit {
-			e.cur = next_boundary(&e.buf, e.cur);
+		if let Some(edit) = &mut self.edit {
+			edit.cur = next_boundary(&edit.buf, edit.cur);
 		}
 	}
 	pub fn cursor_home(&mut self) {
-		if let Some(e) = &mut self.edit {
-			e.cur = 0;
+		if let Some(edit) = &mut self.edit {
+			edit.cur = 0;
 		}
 	}
 	pub fn cursor_end(&mut self) {
-		if let Some(e) = &mut self.edit {
-			e.cur = e.buf.len();
+		if let Some(edit) = &mut self.edit {
+			edit.cur = edit.buf.len();
 		}
 	}
 	// live-apply the in-progress edit (hex color, or background-image path)
 	fn reparse_edit(&mut self) {
-		let Some((i, buf)) = self.edit.as_ref().map(|e| (e.row, e.buf.clone())) else {
+		let Some((i, buf)) = self.edit.as_ref().map(|edit| (edit.row, edit.buf.clone())) else {
 			return;
 		};
 		match self.specs[i].kind {
 			Kind::Color => {
-				if let Some(c) = config::parse_hex(&buf) {
-					self.set_col(self.specs[i].key, c);
+				if let Some(color) = config::parse_hex(&buf) {
+					self.set_col(self.specs[i].key, color);
 				}
 			}
 			Kind::Text => self.set_text(self.specs[i].key, &buf),
 			// a valid partial number applies live, clamped to the slider range
 			Kind::Slider { min, max, int } => {
-				if let Ok(v) = buf.trim().parse::<f32>() {
-					let mut v = v.clamp(min, max);
+				if let Ok(value) = buf.trim().parse::<f32>() {
+					let mut value = value.clamp(min, max);
 					if int {
-						v = v.round();
+						value = value.round();
 					}
-					self.set_f32(self.specs[i].key, v);
+					self.set_f32(self.specs[i].key, value);
 				}
 			}
 			_ => {}
@@ -1632,8 +1644,8 @@ impl SettingsDialog {
 		field: Rect,
 		measure: &mut impl FnMut(&str) -> f32,
 	) {
-		let Some(e) = &self.edit else { return };
-		let x = (field.x + 6.0 + measure(&e.buf[..e.cur])).min(field.x + field.w - 2.0);
+		let Some(edit) = &self.edit else { return };
+		let x = (field.x + 6.0 + measure(&edit.buf[..edit.cur])).min(field.x + field.w - 2.0);
 		out.push(RectInstance {
 			pos: [x, field.y + 2.0],
 			size: [1.5, field.h - 4.0],
@@ -1651,16 +1663,28 @@ impl SettingsDialog {
 	) -> (Vec<RectInstance>, Vec<RectInstance>) {
 		let mut fixed = Vec::new();
 		let mut out = Vec::new();
-		let q = |x: f32, y: f32, w: f32, h: f32, c: [u8; 3]| RectInstance {
+		let q = |x: f32, y: f32, w: f32, h: f32, color: [u8; 3]| RectInstance {
 			pos: [x, y],
 			size: [w, h],
-			color: config::srgb_f32(c),
+			color: config::srgb_f32(color),
 		};
-		let border = |out: &mut Vec<RectInstance>, r: Rect, t: f32, c: [u8; 3]| {
-			out.push(q(r.x - t, r.y - t, r.w + 2.0 * t, t, c));
-			out.push(q(r.x - t, r.y + r.h, r.w + 2.0 * t, t, c));
-			out.push(q(r.x - t, r.y, t, r.h, c));
-			out.push(q(r.x + r.w, r.y, t, r.h, c));
+		let border = |out: &mut Vec<RectInstance>, r: Rect, thickness: f32, color: [u8; 3]| {
+			out.push(q(
+				r.x - thickness,
+				r.y - thickness,
+				r.w + 2.0 * thickness,
+				thickness,
+				color,
+			));
+			out.push(q(
+				r.x - thickness,
+				r.y + r.h,
+				r.w + 2.0 * thickness,
+				thickness,
+				color,
+			));
+			out.push(q(r.x - thickness, r.y, thickness, r.h, color));
+			out.push(q(r.x + r.w, r.y, thickness, r.h, color));
 		};
 		// panel
 		fixed.push(q(
@@ -1688,10 +1712,10 @@ impl SettingsDialog {
 			}
 		}
 		// scrollbar (only when the active tab overflows the viewport)
-		if let Some(t) = self.thumb() {
+		if let Some(thumb) = self.thumb() {
 			let vp = self.viewport();
-			fixed.push(q(t.x, vp.y, t.w, vp.h, dlg().track));
-			fixed.push(q(t.x, t.y, t.w, t.h, dlg().handle));
+			fixed.push(q(thumb.x, vp.y, thumb.w, vp.h, dlg().track));
+			fixed.push(q(thumb.x, thumb.y, thumb.w, thumb.h, dlg().handle));
 		}
 
 		for i in 0..self.specs.len() {
@@ -1701,17 +1725,17 @@ impl SettingsDialog {
 			match self.specs[i].kind {
 				Kind::Slider { min, max, int } => {
 					let off = self.disabled(self.specs[i].key);
-					let t = self.track(i);
-					out.push(q(t.x, t.y, t.w, t.h, dlg().track));
-					let v = self.get_f32(self.specs[i].key);
-					let frac = ((v - min) / (max - min)).clamp(0.0, 1.0);
-					let hx = t.x + frac * t.w - 5.0;
+					let track = self.track(i);
+					out.push(q(track.x, track.y, track.w, track.h, dlg().track));
+					let value = self.get_f32(self.specs[i].key);
+					let frac = ((value - min) / (max - min)).clamp(0.0, 1.0);
+					let handle_x = track.x + frac * track.w - 5.0;
 					let _ = int;
 					out.push(q(
-						hx,
-						t.y - 6.0,
+						handle_x,
+						track.y - 6.0,
 						10.0,
-						t.h + 12.0,
+						track.h + 12.0,
 						if off {
 							dlg().panel_border
 						} else {
@@ -1719,12 +1743,18 @@ impl SettingsDialog {
 						},
 					));
 					// editable numeric field
-					let vb = self.valbox(i);
-					out.push(q(vb.x, vb.y, vb.w, vb.h, dlg().field_bg));
-					let focused = matches!(&self.edit, Some(e) if e.row == i);
+					let val_box = self.valbox(i);
+					out.push(q(
+						val_box.x,
+						val_box.y,
+						val_box.w,
+						val_box.h,
+						dlg().field_bg,
+					));
+					let focused = matches!(&self.edit, Some(edit) if edit.row == i);
 					border(
 						&mut out,
-						vb,
+						val_box,
 						1.0,
 						if focused && !off {
 							dlg().focus_out
@@ -1733,19 +1763,31 @@ impl SettingsDialog {
 						},
 					);
 					if focused && !off {
-						self.caret_quad(&mut out, vb, &mut measure);
+						self.caret_quad(&mut out, val_box, &mut measure);
 					}
 				}
 				Kind::Color => {
-					let sw = self.swatch(i);
-					out.push(q(sw.x, sw.y, sw.w, sw.h, self.get_col(self.specs[i].key)));
-					border(&mut out, sw, 1.0, dlg().panel_border);
-					let hb = self.hexbox(i);
-					out.push(q(hb.x, hb.y, hb.w, hb.h, dlg().field_bg));
-					let focused = matches!(&self.edit, Some(e) if e.row == i);
+					let swatch = self.swatch(i);
+					out.push(q(
+						swatch.x,
+						swatch.y,
+						swatch.w,
+						swatch.h,
+						self.get_col(self.specs[i].key),
+					));
+					border(&mut out, swatch, 1.0, dlg().panel_border);
+					let hex_box = self.hexbox(i);
+					out.push(q(
+						hex_box.x,
+						hex_box.y,
+						hex_box.w,
+						hex_box.h,
+						dlg().field_bg,
+					));
+					let focused = matches!(&self.edit, Some(edit) if edit.row == i);
 					border(
 						&mut out,
-						hb,
+						hex_box,
 						1.0,
 						if focused {
 							dlg().focus_out
@@ -1754,16 +1796,22 @@ impl SettingsDialog {
 						},
 					);
 					if focused {
-						self.caret_quad(&mut out, hb, &mut measure);
+						self.caret_quad(&mut out, hex_box, &mut measure);
 					}
 				}
 				Kind::Text => {
-					let tb = self.textbox(i);
-					out.push(q(tb.x, tb.y, tb.w, tb.h, dlg().field_bg));
-					let focused = matches!(&self.edit, Some(e) if e.row == i);
+					let text_box = self.textbox(i);
+					out.push(q(
+						text_box.x,
+						text_box.y,
+						text_box.w,
+						text_box.h,
+						dlg().field_bg,
+					));
+					let focused = matches!(&self.edit, Some(edit) if edit.row == i);
 					border(
 						&mut out,
-						tb,
+						text_box,
 						1.0,
 						if focused {
 							dlg().focus_out
@@ -1772,20 +1820,26 @@ impl SettingsDialog {
 						},
 					);
 					if focused {
-						self.caret_quad(&mut out, tb, &mut measure);
+						self.caret_quad(&mut out, text_box, &mut measure);
 					}
 				}
 				Kind::Toggle => {
-					let cb = self.checkbox(i);
-					out.push(q(cb.x, cb.y, cb.w, cb.h, dlg().field_bg));
-					border(&mut out, cb, 1.0, dlg().panel_border);
+					let check_box = self.checkbox(i);
+					out.push(q(
+						check_box.x,
+						check_box.y,
+						check_box.w,
+						check_box.h,
+						dlg().field_bg,
+					));
+					border(&mut out, check_box, 1.0, dlg().panel_border);
 					// filled inner square when on (the checkmark glyph is drawn in texts)
 					if self.get_toggle(self.specs[i].key) {
 						out.push(q(
-							cb.x + 4.0,
-							cb.y + 4.0,
-							cb.w - 8.0,
-							cb.h - 8.0,
+							check_box.x + 4.0,
+							check_box.y + 4.0,
+							check_box.w - 8.0,
+							check_box.h - 8.0,
 							dlg().handle,
 						));
 					}
@@ -1793,11 +1847,23 @@ impl SettingsDialog {
 				Kind::Radio(options) => {
 					let sel = self.get_radio(self.specs[i].key);
 					for k in 0..options.len() {
-						let b = self.radio_box(i, k);
-						out.push(q(b.x, b.y, b.w, b.h, dlg().field_bg));
-						border(&mut out, b, 1.0, dlg().panel_border);
+						let radio_rect = self.radio_box(i, k);
+						out.push(q(
+							radio_rect.x,
+							radio_rect.y,
+							radio_rect.w,
+							radio_rect.h,
+							dlg().field_bg,
+						));
+						border(&mut out, radio_rect, 1.0, dlg().panel_border);
 						if k == sel {
-							out.push(q(b.x + 4.0, b.y + 4.0, b.w - 8.0, b.h - 8.0, dlg().handle));
+							out.push(q(
+								radio_rect.x + 4.0,
+								radio_rect.y + 4.0,
+								radio_rect.w - 8.0,
+								radio_rect.h - 8.0,
+								dlg().handle,
+							));
 						}
 					}
 				}
@@ -1812,20 +1878,22 @@ impl SettingsDialog {
 		}
 		// keyboard-focus ring around the active control row (scrolls + clips with
 		// the rows; a focused button is ringed below, in the fixed chrome).
-		if let Some(Focus::Row(fi)) = self.focus {
-			if self.spec_tab[fi] == self.tab && !matches!(self.specs[fi].kind, Kind::Header(_)) {
-				border(&mut out, self.focus_rect(fi), 1.0, dlg().focus_out);
+		if let Some(Focus::Row(focus_row)) = self.focus {
+			if self.spec_tab[focus_row] == self.tab
+				&& !matches!(self.specs[focus_row].kind, Kind::Header(_))
+			{
+				border(&mut out, self.focus_rect(focus_row), 1.0, dlg().focus_out);
 			}
 		}
-		for (bi, (_, r, label)) in self.buttons().into_iter().enumerate() {
+		for (btn_idx, (_, r, label)) in self.buttons().into_iter().enumerate() {
 			// pressed button fills with the highlight for click feedback
-			let fill = if self.pressed == Some(bi) {
+			let fill = if self.pressed == Some(btn_idx) {
 				dlg().btn_hl
 			} else {
 				dlg().btn_bg
 			};
 			fixed.push(q(r.x, r.y, r.w, r.h, fill));
-			let ring = self.focus == Some(Focus::Button(bi));
+			let ring = self.focus == Some(Focus::Button(btn_idx));
 			border(
 				&mut fixed,
 				r,
@@ -1866,13 +1934,13 @@ impl SettingsDialog {
 			..mk("Settings".into(), self.rect.x + PAD, self.rect.y + PAD)
 		});
 		// tab titles
-		for (k, t) in TAB_TITLES.iter().enumerate() {
+		for (k, title) in TAB_TITLES.iter().enumerate() {
 			let r = self.tab_rect(k);
-			out.push(mk((*t).into(), r.x + 11.0, row_text_y(r.y, r.h)));
+			out.push(mk((*title).into(), r.x + 11.0, row_text_y(r.y, r.h)));
 		}
 		// row text clips to the scroll viewport so it can't ride over the chrome
 		let vp = self.viewport();
-		let isect = |r: Rect| -> Rect {
+		let intersect = |r: Rect| -> Rect {
 			let x0 = r.x.max(vp.x);
 			let y0 = r.y.max(vp.y);
 			let x1 = (r.x + r.w).min(vp.x + vp.w);
@@ -1889,25 +1957,25 @@ impl SettingsDialog {
 				continue;
 			}
 			let ty = row_text_y(self.row_y(i), ROW_H);
-			if let Kind::Header(h) = self.specs[i].kind {
+			if let Kind::Header(section) = self.specs[i].kind {
 				// heading near the top of the row; the rule sits lower (gap between)
 				let hy = self.row_y(i) + 5.0;
 				out.push(TextItem {
 					bold: true,
 					clip: Some(vp),
-					..mk(h.into(), self.rect.x + PAD, hy)
+					..mk(section.into(), self.rect.x + PAD, hy)
 				});
 				continue;
 			}
 			let off = self.disabled(self.specs[i].key);
-			let lbl_color = if off { dlg().dim } else { dlg().text };
+			let label_color = if off { dlg().dim } else { dlg().text };
 			out.push(TextItem {
-				color: lbl_color,
+				color: label_color,
 				clip: Some(vp),
 				..mk(self.specs[i].label.into(), self.rect.x + PAD, ty)
 			});
 			// revert-to-default icon: bright + clickable when off-default, dim when at it
-			let rb = self.revert_box(i);
+			let revert_rect = self.revert_box(i);
 			out.push(TextItem {
 				color: if self.is_default(self.specs[i].key) {
 					dlg().dim
@@ -1915,36 +1983,36 @@ impl SettingsDialog {
 					dlg().handle
 				},
 				clip: Some(vp),
-				..mk(REVERT_ICON.into(), rb.x + 4.0, ty)
+				..mk(REVERT_ICON.into(), revert_rect.x + 4.0, ty)
 			});
 			match self.specs[i].kind {
 				Kind::Slider { int, .. } => {
-					let vb = self.valbox(i);
+					let val_box = self.valbox(i);
 					let txt = match &self.edit {
-						Some(e) if e.row == i => e.buf.clone(),
+						Some(edit) if edit.row == i => edit.buf.clone(),
 						_ => self.fmt_val(self.specs[i].key, int),
 					};
 					out.push(TextItem {
-						color: lbl_color,
+						color: label_color,
 						clip: Some(vp),
-						..mk(txt, vb.x + 6.0, row_text_y(vb.y, vb.h))
+						..mk(txt, val_box.x + 6.0, row_text_y(val_box.y, val_box.h))
 					});
 				}
 				Kind::Color => {
-					let hb = self.hexbox(i);
+					let hex_box = self.hexbox(i);
 					let txt = match &self.edit {
-						Some(e) if e.row == i => e.buf.clone(),
+						Some(edit) if edit.row == i => edit.buf.clone(),
 						_ => config::format_hex(self.get_col(self.specs[i].key)),
 					};
 					out.push(TextItem {
 						clip: Some(vp),
-						..mk(txt, hb.x + 6.0, row_text_y(hb.y, hb.h))
+						..mk(txt, hex_box.x + 6.0, row_text_y(hex_box.y, hex_box.h))
 					});
 				}
 				Kind::Text => {
-					let tb = self.textbox(i);
+					let text_box = self.textbox(i);
 					let val = match &self.edit {
-						Some(e) if e.row == i => e.buf.clone(),
+						Some(edit) if edit.row == i => edit.buf.clone(),
 						_ => self.get_text(self.specs[i].key),
 					};
 					let placeholder =
@@ -1960,19 +2028,19 @@ impl SettingsDialog {
 					};
 					out.push(TextItem {
 						color,
-						clip: Some(isect(tb)),
-						..mk(txt, tb.x + 6.0, row_text_y(tb.y, tb.h))
+						clip: Some(intersect(text_box)),
+						..mk(txt, text_box.x + 6.0, row_text_y(text_box.y, text_box.h))
 					});
 				}
 				Kind::Radio(options) => {
 					let off = self.disabled(self.specs[i].key);
-					let c = if off { dlg().dim } else { dlg().text };
+					let color = if off { dlg().dim } else { dlg().text };
 					for (k, opt) in options.iter().enumerate() {
-						let b = self.radio_box(i, k);
+						let radio_rect = self.radio_box(i, k);
 						out.push(TextItem {
-							color: c,
+							color,
 							clip: Some(vp),
-							..mk((*opt).into(), b.x + b.w + 6.0, ty)
+							..mk((*opt).into(), radio_rect.x + radio_rect.w + 6.0, ty)
 						});
 					}
 				}
@@ -1995,39 +2063,39 @@ pub fn chrome_widths(text: &mut crate::text::TextCtx) -> (f32, f32, Vec<f32>) {
 	let attrs = crate::text::ui_attrs();
 	let label_w = fields()
 		.iter()
-		.map(|f| text.measure_ui_text(f.label, &attrs))
+		.map(|spec| text.measure_ui_text(spec.label, &attrs))
 		.fold(0.0f32, f32::max)
 		+ 14.0;
 	let btn_w = ["Cancel", "Apply", "OK"]
 		.iter()
-		.map(|t| text.measure_ui_text(t, &attrs))
+		.map(|caption| text.measure_ui_text(caption, &attrs))
 		.fold(0.0f32, f32::max)
 		+ 24.0;
 	let tab_ws = TAB_TITLES
 		.iter()
-		.map(|t| text.measure_ui_text(t, &attrs) + 22.0)
+		.map(|title| text.measure_ui_text(title, &attrs) + 22.0)
 		.collect();
 	(label_w, btn_w, tab_ws)
 }
 
-// Returns true if `a` and `b` differ in any field that needs a text-context
+// Returns true if `old` and `new` differ in any field that needs a text-context
 // rebuild (cell metrics change) rather than just a re-render.
-pub fn needs_text_rebuild(a: &Settings, b: &Settings) -> bool {
-	a.font_size != b.font_size
-		|| a.line_height_scale != b.line_height_scale
-		|| a.font_family != b.font_family
+pub fn needs_text_rebuild(old: &Settings, new: &Settings) -> bool {
+	old.font_size != new.font_size
+		|| old.line_height_scale != new.line_height_scale
+		|| old.font_family != new.font_family
 		// the toggle alone changes the effective family/size (fields keep
 		// their values), so it must force a rebuild too
-		|| a.use_system_font != b.use_system_font
-		|| a.margin != b.margin
+		|| old.use_system_font != new.use_system_font
+		|| old.margin != new.margin
 }
 
 // Returns true if a background-image-affecting setting changed.
-pub fn bg_image_changed(a: &Settings, b: &Settings) -> bool {
-	a.background_opacity != b.background_opacity
-		|| a.background_fit != b.background_fit
-		|| a.background_image != b.background_image
-		|| a.background_blur != b.background_blur
+pub fn bg_image_changed(old: &Settings, new: &Settings) -> bool {
+	old.background_opacity != new.background_opacity
+		|| old.background_fit != new.background_fit
+		|| old.background_image != new.background_image
+		|| old.background_blur != new.background_blur
 }
 
 #[cfg(test)]
