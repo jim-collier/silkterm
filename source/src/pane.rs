@@ -99,6 +99,17 @@ fn bell_brighten(color: [u8; 3], t: f32) -> [u8; 3] {
 	[up(color[0]), up(color[1]), up(color[2])]
 }
 
+// The char to feed the shaper for a grid cell. A cell may hold a literal control
+// char - alacritty leaves the '\t' in the first tab cell and fills to the tab
+// stop with spaces - and cosmic-text shapes a raw tab as a full 8-col stop,
+// shifting the rest of the row off the col*cell_w grid so the visible text no
+// longer lines up with the selectable cells (misaligned double-click on tabbed
+// output like `zpool status`). The cell already carries the padding, so render
+// any control char as a plain 1-cell space.
+fn render_char(c: char) -> char {
+	if c.is_control() { ' ' } else { c }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Rect {
 	pub x: f32,
@@ -678,7 +689,7 @@ impl Pane {
 						run_bold = bold;
 						run_italic = italic;
 					}
-					run.push(cell.c);
+					run.push(render_char(cell.c));
 				}
 			}
 		}
@@ -1996,8 +2007,8 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 mod tests {
 	use super::{
 		APP_SCROLL_MAX, Dir, Node, Rect, SLIDE_TOP_BAND_APPS, bell_brighten, distinct_pair,
-		equalize_dir_run, layout, pair_inside, same_char_pair, scroll_shift, scroll_shift_signed,
-		static_bands,
+		equalize_dir_run, layout, pair_inside, render_char, same_char_pair, scroll_shift,
+		scroll_shift_signed, static_bands,
 	};
 
 	fn leaf(id: u64) -> Node {
@@ -2026,6 +2037,18 @@ mod tests {
 		);
 		out.sort_by_key(|(id, _)| *id);
 		out.into_iter().map(|(id, r)| (id, r.w)).collect()
+	}
+
+	#[test]
+	fn render_char_maps_controls_to_space() {
+		// a tab (or any control) left in a cell must shape as a 1-cell space, else
+		// the row shifts off the grid and double-click selection misaligns
+		assert_eq!(render_char('\t'), ' ');
+		assert_eq!(render_char('\0'), ' ');
+		assert_eq!(render_char('\r'), ' ');
+		assert_eq!(render_char('a'), 'a');
+		assert_eq!(render_char(' '), ' ');
+		assert_eq!(render_char('世'), '世');
 	}
 
 	#[test]
