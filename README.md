@@ -195,7 +195,7 @@ SilkTerm is written by one person in their spare time. If it saves you time or y
 
 - [GitHub Sponsors](https://github.com/sponsors/jim-collier)
 
-You can also help for free: star the repo, file good bug reports, and tell other terminal nerds it exists. In-app, the same link is under **Help -> Support SilkTerm**.
+See [DONATE.md](DONATE.md) for the full list of ways to help (it's what **Help -> Support SilkTerm** opens in-app). Free ways too: star the repo, file good bug reports, and tell other terminal nerds it exists.
 
 ## Building from source
 
