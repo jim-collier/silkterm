@@ -43,7 +43,37 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🛠️ The Notorious "Bouncing Shadow in Wobbly Nano" bug [20260707]:
+🔘 Bug #t78br: "The Notorious 'Bouncing Shadow' nano bug" (which we'll call this subset) is still still there. (At least the wobblyness seems to be fixed, which is why this now gets its own issue.):
+	- Steps to reproduce:
+		- Open nano with a long file - say, ~/.config/silkterm/config.toml.
+		- Observe:
+			- A sipgle-line bar at the top, rendered with terminal's text color as the bar's background color, and (apparently) the terminal's background color as the bar's text color. It says "GNU nano 8.7.1" on the left, and the open filename in the center. This bar never moves or scrolls, for as long as nano is open. For reference, we'll call this UI element, 'TIMMY THE TOP BAR'.
+			- Nano has reserved three rows at the bottom of the terminal, for itself as fixed, non-scrolling UI areas. The bottom two rows show the user what hotkeys they can use - both in the same inverse text style as 'TIMMY THE TOP BAR', and also regular terminal text. For reference, we'll call this UI element: 'BILLY THE BOTTOM AREA'
+			- The area that file content is rendered in, and the user can move the cursor around and edit in, we'll call 'THE EDIT AREA' for reference.
+			- The entire terminal, in vertical terms, is composed of - by the definition of our words, from top-to-bottom: 'TIMMY THE TOP BAR', 'THE EDIT AREA', and 'BILLY THE BOTTOM AREA'.
+		- Action:
+			- Now contiuously hold down the 'down arrow' key to move "down" the file contents.
+			- When the cursor get to the bottom edge of 'THE EDIT AREA', keeep holding down 'down arrow'.
+		- Observe:
+			- When nano pushes the content from below its view up into view, what appears to be the dark outer glow + outline effect from the text on 'TIMMY THE TOP BAR', visually "bounces" down from the top, visually into 'THE EDIT AREA'.
+			- For reference, we'll call that text 'TIMMYS TEXT SHADOW',
+			- When you stop scrolling, 'TIMMYS TEXT SHADOW' gradually "settles" back "under" 'TIMMY THE TOP BAR'.
+		- Observe:
+			- You can make the same thing happen when pressing the down-arrow key one at a time, it's just not nearly as pronounced of an effect.
+		- Observe:
+			- You can make the same thing happen when scrolling the text in the same direction by using the mouse wheel quickly (which in nano is rewired to drive just the cursor, not 'THE EDIT AREA' - but with fast enough mouse wheel moves, the effects observed above can be much more dramatic.
+		- Action:
+			- Move all the way to the bottom of the file, so we can test the same thing as above but in reverse.
+			- Now contiuously hold down the 'up arrow' key to move "up" the file contents.
+			- When the cursor get to the bottom edge of 'TIMMY THE TOP BAR', keeep holding down 'up arrow'.
+		- Observe:
+			- The same thing that happened to 'TIMMYS TEXT SHADOW' previously, happens in the reverse vertical direction now only involving the inverse text in 'BILLY THE BOTTOM AREA'. It visually bounces UP into 'THE EDIT AREA'.
+			- At the same time and synchronized with, visually identical copies of the normal text in 'BILLY THE BOTTOM AREA' also bounce up into 'THE EDIT AREA'. Together they seem to exhibit the same movement behavior as 'TIMMYS TEXT SHADOW', except flipped vertically.
+
+- ✅ The Notorious "Bouncing Shadow in Wobbly Nano" bug [20260707]:
+	- **NOTE**:
+		- The "Bouncing Shadow" portion of this has been moved to #t78br, "The Notorious 'Bouncing Shadow' nano bug", to tackle independently.
+		- The "wobbly nano" portion of this is still open, and this also (imperfectly) documents earlier attempts at fixes.
 	- Originally: Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
 	- Cause: the slide shifted the scroll region by several lines but only one row was ever drawn, so the revealed strip was bare background. The scrolled-off lines are gone from the grid, so there was nothing real to fill it with.
 	- Fixed: retained-frame slide. The pane keeps the previous frame's text and draws it, clipped to the revealed strip, so the strip fills with the real outgoing content while the current frame slides in over it.
