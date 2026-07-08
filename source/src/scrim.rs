@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright © 2026 Jim Collier
 
-//! Text readability glow: a blurred, background-coloured halo behind glyphs so
+//! Text readability scrim: a blurred, background-coloured halo behind glyphs so
 //! text stays legible over a light/busy background image or a near-transparent
 //! terminal. The scene's text is rendered to a texture, blurred (2-pass separable
 //! Gaussian), and composited UNDER the crisp text, coloured per-pixel by a
 //! `bgcolor` map so a glyph's halo takes ITS cell's bg colour (a glyph on a
 //! one-off colored cell isn't smeared with the global bg colour).
 //!
-//! tex_t <- crisp text (+ cursor quads when cursor_glow), then H-blur tex_t->tex_b,
+//! tex_t <- crisp text (+ cursor quads when cursor_scrim), then H-blur tex_t->tex_b,
 //! V-blur tex_b->tex_a; tex_a is the blurred coverage. The composite multiplies it
 //! by `bgcolor`, and also samples tex_t to add a thin dilated outline around the
-//! crisp coverage (the "border" - solid, same per-pixel colour as the glow).
+//! crisp coverage (the "border" - solid, same per-pixel colour as the scrim).
 
 use crate::gfx::{RectInstance, RectRenderer};
 
@@ -35,7 +35,7 @@ struct CompU {
 	border_px: f32, // dilated outline radius around the crisp coverage (0 = none)
 }
 
-pub struct Glow {
+pub struct Scrim {
 	tex_t: wgpu::Texture, // crisp text/cursor coverage (kept for the border pass)
 	tex_a: wgpu::Texture,
 	tex_b: wgpu::Texture,
@@ -55,13 +55,13 @@ pub struct Glow {
 	comp_pipe: wgpu::RenderPipeline,
 	comp_bgl: wgpu::BindGroupLayout,
 	comp_u: wgpu::Buffer,
-	comp_bind: wgpu::BindGroup, // sample tex_a (glow alpha) + bgcolor (rgb) + tex_t (border)
-	// per-pixel glow colour: cleared to the global bg, with per-cell bg rects drawn
+	comp_bind: wgpu::BindGroup, // sample tex_a (scrim alpha) + bgcolor (rgb) + tex_t (border)
+	// per-pixel scrim colour: cleared to the global bg, with per-cell bg rects drawn
 	// over it, so a glyph's halo takes ITS cell's bg colour (not always the global).
 	bgcolor: wgpu::Texture,
 	bgcolor_view: wgpu::TextureView,
 	bg_rects: RectRenderer,
-	// cursor quads drawn into tex_t so the cursor's halo merges with the text glow.
+	// cursor quads drawn into tex_t so the cursor's halo merges with the text scrim.
 	// Separate renderer: bg_rects' instance buffer is uploaded for the bgcolor map
 	// in the SAME encoder, and a second upload would clobber the first (queue
 	// writes all land before the command buffer runs - same rule as the blur
@@ -72,14 +72,14 @@ pub struct Glow {
 	h: u32,
 }
 
-impl Glow {
+impl Scrim {
 	pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat, w: u32, h: u32) -> Self {
 		let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-			label: Some("glow shader"),
+			label: Some("scrim shader"),
 			source: wgpu::ShaderSource::Wgsl(WGSL.into()),
 		});
 		let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-			label: Some("glow sampler"),
+			label: Some("scrim sampler"),
 			mag_filter: wgpu::FilterMode::Linear,
 			min_filter: wgpu::FilterMode::Linear,
 			address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -88,7 +88,7 @@ impl Glow {
 		});
 		// blur: uniform + sampled texture + sampler
 		let blur_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-			label: Some("glow blur bgl"),
+			label: Some("scrim blur bgl"),
 			// binding 3 = the bgcolor map, whose alpha is an "own-bg" mask (see fs_blur)
 			entries: &[ubuf_entry(0), tex_entry(1), samp_entry(2), tex_entry(3)],
 		});
@@ -100,12 +100,12 @@ impl Glow {
 				mapped_at_creation: false,
 			})
 		};
-		let blur_u_h = make_uniform_buf("glow blur u h");
-		let blur_u_v = make_uniform_buf("glow blur u v");
-		let blur_pipe = pipeline(device, &shader, "fs_blur", FMT, &blur_bgl, "glow blur");
+		let blur_u_h = make_uniform_buf("scrim blur u h");
+		let blur_u_v = make_uniform_buf("scrim blur u v");
+		let blur_pipe = pipeline(device, &shader, "fs_blur", FMT, &blur_bgl, "scrim blur");
 
 		let comp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-			label: Some("glow comp bgl"),
+			label: Some("scrim comp bgl"),
 			entries: &[
 				ubuf_entry(0),
 				tex_entry(1),
@@ -115,12 +115,12 @@ impl Glow {
 			],
 		});
 		let comp_u = device.create_buffer(&wgpu::BufferDescriptor {
-			label: Some("glow comp u"),
+			label: Some("scrim comp u"),
 			size: std::mem::size_of::<CompU>() as u64,
 			usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
 			mapped_at_creation: false,
 		});
-		let comp_pipe = pipeline_blend(device, &shader, "fs_comp", target, &comp_bgl, "glow comp");
+		let comp_pipe = pipeline_blend(device, &shader, "fs_comp", target, &comp_bgl, "scrim comp");
 
 		let (tex_t, tex_a, tex_b, view_t, view_a, view_b) = make_textures(device, w, h);
 		let bgcolor = bgcolor_tex(device, w, h);
@@ -202,7 +202,7 @@ impl Glow {
 		self.h = h;
 	}
 
-	// Build the per-pixel glow-colour map: clear to the global bg colour, then draw
+	// Build the per-pixel scrim-colour map: clear to the global bg colour, then draw
 	// the per-cell bg rects (opaque) over it. A glyph's halo then takes its own
 	// cell's bg colour instead of always the global one. The alpha channel doubles
 	// as an "own-bg" mask - cleared to 0, the opaque cell rects write 1, so the blur
@@ -221,7 +221,7 @@ impl Glow {
 			.set_resolution(queue, self.w as f32, self.h as f32);
 		self.bg_rects.upload(device, queue, cells);
 		let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-			label: Some("glow bgcolor"),
+			label: Some("scrim bgcolor"),
 			color_attachments: &[Some(wgpu::RenderPassColorAttachment {
 				view: &self.bgcolor_view,
 				resolve_target: None,
@@ -251,7 +251,7 @@ impl Glow {
 	}
 
 	// Upload the cursor quads destined for tex_t (so the cursor halo merges with
-	// the text glow). Call before the glow-text pass; draw with `draw_cursors`.
+	// the text scrim). Call before the scrim-text pass; draw with `draw_cursors`.
 	pub fn upload_cursors(
 		&mut self,
 		device: &wgpu::Device,
@@ -272,7 +272,7 @@ impl Glow {
 	}
 
 	// Two separable passes: H (tex_t->tex_b) then V (tex_b->tex_a). After this tex_a
-	// holds the blurred glow; tex_t keeps the crisp coverage for the border pass.
+	// holds the blurred scrim; tex_t keeps the crisp coverage for the border pass.
 	pub fn blur(
 		&self,
 		queue: &wgpu::Queue,
@@ -310,7 +310,7 @@ impl Glow {
 			(&self.blur_b2a, &self.view_a),
 		] {
 			let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-				label: Some("glow blur pass"),
+				label: Some("scrim blur pass"),
 				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
 					view: dst,
 					resolve_target: None,
@@ -331,7 +331,7 @@ impl Glow {
 		}
 	}
 
-	// Draw the glow into the current pass, under the text: blurred coverage from
+	// Draw the scrim into the current pass, under the text: blurred coverage from
 	// tex_a, coloured per-pixel by the bgcolor map, plus a `border_px` dilated
 	// outline of the crisp coverage (tex_t).
 	pub fn composite(
@@ -383,9 +383,9 @@ fn make_textures(
 		usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
 		view_formats: &[],
 	};
-	let tex_t = device.create_texture(&desc("glow tex t"));
-	let tex_a = device.create_texture(&desc("glow tex a"));
-	let tex_b = device.create_texture(&desc("glow tex b"));
+	let tex_t = device.create_texture(&desc("scrim tex t"));
+	let tex_a = device.create_texture(&desc("scrim tex a"));
+	let tex_b = device.create_texture(&desc("scrim tex b"));
 	let view_t = tex_t.create_view(&Default::default());
 	let view_a = tex_a.create_view(&Default::default());
 	let view_b = tex_b.create_view(&Default::default());
@@ -394,7 +394,7 @@ fn make_textures(
 
 fn bgcolor_tex(device: &wgpu::Device, w: u32, h: u32) -> wgpu::Texture {
 	device.create_texture(&wgpu::TextureDescriptor {
-		label: Some("glow bgcolor"),
+		label: Some("scrim bgcolor"),
 		size: wgpu::Extent3d {
 			width: w.max(1),
 			height: h.max(1),
@@ -425,7 +425,7 @@ fn binds(
 ) -> (wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup) {
 	let mk_blur = |ubuf: &wgpu::Buffer, view| {
 		device.create_bind_group(&wgpu::BindGroupDescriptor {
-			label: Some("glow blur bind"),
+			label: Some("scrim blur bind"),
 			layout: blur_bgl,
 			entries: &[
 				wgpu::BindGroupEntry {
@@ -448,7 +448,7 @@ fn binds(
 		})
 	};
 	let comp = device.create_bind_group(&wgpu::BindGroupDescriptor {
-		label: Some("glow comp bind"),
+		label: Some("scrim comp bind"),
 		layout: comp_bgl,
 		entries: &[
 			wgpu::BindGroupEntry {
@@ -639,12 +639,12 @@ struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32 };
 @group(0) @binding(0) var<uniform> cu: CompU;
 @group(0) @binding(1) var gtex: texture_2d<f32>;   // blurred glyph coverage (alpha)
 @group(0) @binding(2) var gsamp: sampler;
-@group(0) @binding(3) var bgtex: texture_2d<f32>;  // per-pixel glow colour
+@group(0) @binding(3) var bgtex: texture_2d<f32>;  // per-pixel scrim colour
 @group(0) @binding(4) var ttex: texture_2d<f32>;   // crisp glyph/cursor coverage
 
 // colour the blurred coverage per-pixel by the local bg colour; premultiplied.
 // border: dilate the crisp coverage by border_px (8 taps; linear sampling keeps
-// it antialiased) and take the union with the glow - a solid bg-coloured plate
+// it antialiased) and take the union with the scrim - a solid bg-coloured plate
 // hugging each glyph. The crisp text draws over its interior, so what remains
 // visible is the thin outline around the letterforms. Each border tap is gated by
 // the own-bg mask (bgtex.a) too, matching fs_blur, so an own-bg glyph casts no

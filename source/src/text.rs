@@ -297,9 +297,9 @@ pub struct TextCtx {
 	pub renderer: TextRenderer,
 	// separate renderer for the context-menu overlay (second pass, on top)
 	pub overlay: TextRenderer,
-	// separate renderer for the glow source pass: pane text only (no chrome), and
-	// panes may substitute a de-bolded buffer (text_glow_regular_weight)
-	pub glow: TextRenderer,
+	// separate renderer for the scrim source pass: pane text only (no chrome), and
+	// panes may substitute a de-bolded buffer (text_scrim_regular_weight)
+	pub scrim: TextRenderer,
 	pub cell_w: f32,
 	pub cell_h: f32,
 	// physical-px inset between content and pane edge
@@ -374,7 +374,7 @@ impl TextCtx {
 			TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
 		let overlay =
 			TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
-		let glow = TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
+		let scrim = TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
 
 		Self {
 			font_system,
@@ -383,7 +383,7 @@ impl TextCtx {
 			viewport,
 			renderer,
 			overlay,
-			glow,
+			scrim,
 			cell_w,
 			cell_h,
 			margin: (config::settings().margin * scale).round(),
@@ -593,13 +593,13 @@ impl TextCtx {
 		self.overlay.render(&self.atlas, &self.viewport, pass)
 	}
 
-	pub fn prepare_glow(
+	pub fn prepare_scrim(
 		&mut self,
 		device: &wgpu::Device,
 		queue: &wgpu::Queue,
 		areas: Vec<TextArea<'_>>,
 	) -> Result<(), glyphon::PrepareError> {
-		self.glow.prepare(
+		self.scrim.prepare(
 			device,
 			queue,
 			&mut self.font_system,
@@ -610,8 +610,11 @@ impl TextCtx {
 		)
 	}
 
-	pub fn render_glow(&self, pass: &mut wgpu::RenderPass<'_>) -> Result<(), glyphon::RenderError> {
-		self.glow.render(&self.atlas, &self.viewport, pass)
+	pub fn render_scrim(
+		&self,
+		pass: &mut wgpu::RenderPass<'_>,
+	) -> Result<(), glyphon::RenderError> {
+		self.scrim.render(&self.atlas, &self.viewport, pass)
 	}
 
 	pub fn trim_atlas(&mut self) {

@@ -39,7 +39,7 @@
 <table style="border: none; border-collapse: collapse;">
 	<tr style="border: none; border-collapse: collapse;">
 		<td style="border: none; border-collapse: collapse;"><img src="source/assets/logo.png" alt="Silky" width="320"/></td>
-		<td style="border: none;">SilkTerm is the only known terminal currently in existence, that smooth-scrolls lines on output - for silky-smooth and less-tiring long terminal sessions. It also has smooth cursor options such as phase effect for blinking, and smooth movement.<br /><br />SilkTerm also has detachable multi-tabs, split-panes, transparency and blur, background image and blur, text outer-glow, and can run without a menu and/or window decorations.<br /><br />Cross-platform. Written in Rust for a small single executable, and blazing speed.</td>
+		<td style="border: none;">SilkTerm is the only known terminal currently in existence, that smooth-scrolls lines on output - for silky-smooth and less-tiring long terminal sessions. It also has smooth cursor options such as phase effect for blinking, and smooth movement.<br /><br />SilkTerm also has detachable multi-tabs, split-panes, transparency and blur, background image and blur, text scrim, and can run without a menu and/or window decorations.<br /><br />Cross-platform. Written in Rust for a small single executable, and blazing speed.</td>
 	</tr style="border: none; border-collapse: collapse;">
 </table>
 
@@ -50,7 +50,7 @@
 
 - [Why?](#why)
 	- [Why smooth-scrolling output](#why-smooth-scrolling-output)
-	- [Why text outer glow](#why-text-outer-glow)
+	- [Why text scrim](#why-text-scrim)
 - [Features](#features)
 	- [One minor limitation inherent to all terminals](#one-minor-limitation-inherent-to-all-terminals)
 - [Screenshots](#screenshots)
@@ -94,9 +94,9 @@ Video examples of early smooth-scroll displays:
 
 SilkTerm's smooth-scrolling output is a joy to work with, you really have to try it to "get" it. And the faster your monitor display Hz, the more gorgeous it feels.
 
-### Why text outer glow
+### Why text scrim
 
-Generally speaking, "outer-glow" (usually of the opposite luminosity to the text) is a readability aid - whereas angled "drop-shadow" is a creative effect. (Though, this isn't a hard-and-fast graphic design "rule" - as there is lots of overlap in both directions.)
+A text *scrim* is a subtle halo drawn behind each glyph - usually of the opposite luminosity to the text - purely as a readability aid. It's the same technique graphic designers reach for as "outer glow" (and distinctly *not* an angled "drop-shadow", which is a creative effect). SilkTerm calls it a scrim because that's its whole job: keeping text legible, not decoration. (Though this isn't a hard-and-fast graphic design "rule" - there's lots of overlap in both directions.)
 
 If you've ever used a terminal that supports background transparency, and/or background images (both of which SilkTerm offers), that novelty can quickly wear off. You'll notice that the text might be too hard to read, particularly in a long computing session.
 
@@ -110,7 +110,7 @@ Text can be particularly hard to read, for example when using light text on a no
 
 "Drop-shadow" is a feature available on at least a half-dozen other terminal emulators, but apparently only for novelty effect. Because if you use it for very long, it can make your mental workload subtly higher, and your visual cortex tires faster - or something. (I don't know, I'm not a neuroscientist, why are you asking me.)
 
-"Outer glow" - or similar techniques by other names (and distinctly *not* angled "drop-shadow") - is used often in graphic design and advertising to aid readability on backgrounds of varying brightness and color. (And some closed-captioning systems use it as an alternative to black bars as a background.)
+A scrim like this - "outer glow" or similar techniques by other names (and distinctly *not* angled "drop-shadow") - is used often in graphic design and advertising to aid readability on backgrounds of varying brightness and color. (And some closed-captioning systems use it as an alternative to black bars as a background.)
 
 ## Features
 
@@ -122,7 +122,7 @@ Text can be particularly hard to read, for example when using light text on a no
 
 - **Smooth cursor movement**. This is the cherry on top of "smooth".
 
-- **Outer glow behind text**. This optional feature helps keep text readable even when the text is on top of similar-colored backgrounds and/or when using high background transparency. This is the only known terminal to offer it, though there are several terminals that offer angled *drop-shadow* (which ironically can make text *harder* to read). Outer glow is conceptually similar - but enhances, rather than reduces, readability.
+- **Text scrim (readability backing)**. This optional feature helps keep text readable even when the text is on top of similar-colored backgrounds and/or when using high background transparency. This is the only known terminal to offer it, though there are several terminals that offer angled *drop-shadow* (which ironically can make text *harder* to read). A scrim is conceptually similar - but enhances, rather than reduces, readability.
 
 - **Cursor size and animation options**. Phased blinking, or smoothly pulsing in size. (Or just regular.) Adjustable rate.
 
@@ -174,7 +174,7 @@ Text can be particularly hard to read, for example when using light text on a no
 
 	- However, some TUI programs - such as `nano`, `vim`, `tmux` - directly control the terminal buffer in "raw mode", and handle everything themselves. Scrolling within such programs behaves the same as on any other terminal - snapped to lines, no in-between.
 
-		- But the other features still work in that case: smooth-moving and phased cursor, text outer-glow, background options, etc.
+		- But the other features still work in that case: smooth-moving and phased cursor, text scrim, background options, etc.
 
 ## Screenshots
 
@@ -186,7 +186,7 @@ Text can be particularly hard to read, for example when using light text on a no
 		<td width="50%" style="border: none;"><a href="assets/screenshots/large/02-splits.png"><img src="assets/screenshots/02-splits.png" width="100%" alt="Split panes"/></a><br /><sub>Split panes</sub></td>
 	</tr>
 	<tr style="border: none;">
-		<td width="50%" style="border: none;"><a href="assets/screenshots/large/03-glow.png"><img src="assets/screenshots/03-glow.png" width="100%" alt="Transparency, background image and text glow"/></a><br /><sub>Transparency, background image &amp; text glow</sub></td>
+		<td width="50%" style="border: none;"><a href="assets/screenshots/large/03-scrim.png"><img src="assets/screenshots/03-scrim.png" width="100%" alt="Transparency, background image and text scrim"/></a><br /><sub>Transparency, background image &amp; text scrim</sub></td>
 		<td width="50%" style="border: none;"><a href="assets/screenshots/large/04-tabs.png"><img src="assets/screenshots/04-tabs.png" width="100%" alt="Tabs, 24-bit colour and Unicode"/></a><br /><sub>Tabs, 24-bit colour &amp; Unicode</sub></td>
 	</tr>
 	<tr style="border: none;">

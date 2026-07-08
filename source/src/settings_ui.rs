@@ -107,11 +107,11 @@ enum Key {
 	BgOpacity,
 	BgBlur,
 	BgFit,
-	TextGlow,
-	GlowRadius,
-	GlowSoftness,
-	GlowBorder,
-	GlowRamp,
+	TextScrim,
+	ScrimRadius,
+	ScrimSoftness,
+	Outline,
+	ScrimRamp,
 	BgImage,
 	SystemFont,
 	FontFamily,
@@ -182,11 +182,11 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::BgOpacity => &["background_opacity"],
 		Key::BgBlur => &["background_blur"],
 		Key::BgFit => &["background_fit"],
-		Key::TextGlow => &["text_glow"],
-		Key::GlowRadius => &["text_glow_radius"],
-		Key::GlowSoftness => &["text_glow_softness"],
-		Key::GlowBorder => &["text_outline"],
-		Key::GlowRamp => &["text_glow_ramp"],
+		Key::TextScrim => &["text_scrim"],
+		Key::ScrimRadius => &["text_scrim_radius"],
+		Key::ScrimSoftness => &["text_scrim_softness"],
+		Key::Outline => &["text_outline"],
+		Key::ScrimRamp => &["text_scrim_ramp"],
 		Key::BgImage => &["background_image"],
 		Key::SystemFont => &["use_system_font"],
 		Key::FontFamily => &["font_family"],
@@ -328,13 +328,13 @@ fn fields() -> Vec<Spec> {
 			kind: Radio(&["Stretch", "Zoom"]),
 		},
 		Spec {
-			label: "Text glow",
-			key: TextGlow,
+			label: "Text scrim",
+			key: TextScrim,
 			kind: Toggle,
 		},
 		Spec {
-			label: "Glow radius",
-			key: GlowRadius,
+			label: "Scrim radius",
+			key: ScrimRadius,
 			kind: Slider {
 				min: 0.0,
 				max: 20.0,
@@ -343,7 +343,7 @@ fn fields() -> Vec<Spec> {
 		},
 		Spec {
 			label: "Softness",
-			key: GlowSoftness,
+			key: ScrimSoftness,
 			kind: Slider {
 				min: 0.0,
 				max: 1.0,
@@ -352,7 +352,7 @@ fn fields() -> Vec<Spec> {
 		},
 		Spec {
 			label: "Text outline",
-			key: GlowBorder,
+			key: Outline,
 			kind: Slider {
 				min: 0.0,
 				max: 4.0,
@@ -360,8 +360,8 @@ fn fields() -> Vec<Spec> {
 			},
 		},
 		Spec {
-			label: "Glow falloff",
-			key: GlowRamp,
+			label: "Scrim falloff",
+			key: ScrimRamp,
 			kind: Radio(&["Gaussian", "Linear", "S-curve"]),
 		},
 		hdr("Font"),
@@ -1031,9 +1031,9 @@ impl SettingsDialog {
 			Key::Opacity => settings.opacity,
 			Key::BgOpacity => settings.background_opacity,
 			Key::BgBlur => settings.background_blur,
-			Key::GlowRadius => settings.text_glow_radius,
-			Key::GlowSoftness => settings.text_glow_softness,
-			Key::GlowBorder => settings.text_outline,
+			Key::ScrimRadius => settings.text_scrim_radius,
+			Key::ScrimSoftness => settings.text_scrim_softness,
+			Key::Outline => settings.text_outline,
 			Key::FontSize => settings.font_size,
 			Key::LineHeight => settings.line_height_scale,
 			Key::Margin => settings.margin,
@@ -1055,9 +1055,9 @@ impl SettingsDialog {
 			Key::Opacity => settings.opacity = value,
 			Key::BgOpacity => settings.background_opacity = value,
 			Key::BgBlur => settings.background_blur = value,
-			Key::GlowRadius => settings.text_glow_radius = value,
-			Key::GlowSoftness => settings.text_glow_softness = value,
-			Key::GlowBorder => settings.text_outline = value,
+			Key::ScrimRadius => settings.text_scrim_radius = value,
+			Key::ScrimSoftness => settings.text_scrim_softness = value,
+			Key::Outline => settings.text_outline = value,
 			Key::FontSize => settings.font_size = value,
 			Key::LineHeight => settings.line_height_scale = value,
 			Key::Margin => settings.margin = value,
@@ -1110,7 +1110,7 @@ impl SettingsDialog {
 			Key::SystemFont => self.edited.use_system_font,
 			Key::Transparency => self.edited.transparent_background,
 			Key::BackdropBlur => self.edited.transparent_background_blur,
-			Key::TextGlow => self.edited.text_glow,
+			Key::TextScrim => self.edited.text_scrim,
 			Key::RememberSize => self.edited.remember_size,
 			_ => false,
 		}
@@ -1120,7 +1120,7 @@ impl SettingsDialog {
 			Key::SystemFont => self.edited.use_system_font = on,
 			Key::Transparency => self.edited.transparent_background = on,
 			Key::BackdropBlur => self.edited.transparent_background_blur = on,
-			Key::TextGlow => self.edited.text_glow = on,
+			Key::TextScrim => self.edited.text_scrim = on,
 			Key::RememberSize => self.edited.remember_size = on,
 			_ => {}
 		}
@@ -1131,7 +1131,7 @@ impl SettingsDialog {
 				config::Fit::Zoom => 1,
 				_ => 0,
 			},
-			Key::GlowRamp => match self.edited.text_glow_ramp.as_str() {
+			Key::ScrimRamp => match self.edited.text_scrim_ramp.as_str() {
 				"linear" => 1,
 				"s" => 2,
 				_ => 0,
@@ -1148,8 +1148,8 @@ impl SettingsDialog {
 					config::Fit::Stretch
 				};
 			}
-			Key::GlowRamp => {
-				self.edited.text_glow_ramp = match idx {
+			Key::ScrimRamp => {
+				self.edited.text_scrim_ramp = match idx {
 					1 => "linear",
 					2 => "s",
 					_ => "gaussian",
@@ -1160,14 +1160,14 @@ impl SettingsDialog {
 		}
 	}
 	// A control greyed out because a prerequisite toggle is off (the opacity
-	// slider needs Transparency; the glow radius needs Text glow; the explicit
+	// slider needs Transparency; the scrim radius needs Text scrim; the explicit
 	// columns/rows are inactive when "Remember last size" is on).
 	fn disabled(&self, key: Key) -> bool {
 		(matches!(key, Key::Opacity | Key::BackdropBlur) && !self.edited.transparent_background)
 			|| (matches!(
 				key,
-				Key::GlowRadius | Key::GlowSoftness | Key::GlowBorder | Key::GlowRamp
-			) && !self.edited.text_glow)
+				Key::ScrimRadius | Key::ScrimSoftness | Key::Outline | Key::ScrimRamp
+			) && !self.edited.text_scrim)
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
 			|| (matches!(key, Key::FontFamily | Key::FontSize) && self.edited.use_system_font)
 	}
@@ -1221,11 +1221,11 @@ impl SettingsDialog {
 			Key::BackdropBlur => {
 				edited.transparent_background_blur == defaults.transparent_background_blur
 			}
-			Key::TextGlow => edited.text_glow == defaults.text_glow,
+			Key::TextScrim => edited.text_scrim == defaults.text_scrim,
 			Key::SystemFont => edited.use_system_font == defaults.use_system_font,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
 			Key::BgFit => edited.background_fit == defaults.background_fit,
-			Key::GlowRamp => edited.text_glow_ramp == defaults.text_glow_ramp,
+			Key::ScrimRamp => edited.text_scrim_ramp == defaults.text_scrim_ramp,
 			Key::BgImage => edited.background_image == defaults.background_image,
 			Key::FontFamily => edited.font_family == defaults.font_family,
 			Key::DefaultShell => edited.default_shell == defaults.default_shell,
@@ -1244,9 +1244,9 @@ impl SettingsDialog {
 			Key::Opacity => defaults.opacity,
 			Key::BgOpacity => defaults.background_opacity,
 			Key::BgBlur => defaults.background_blur,
-			Key::GlowRadius => defaults.text_glow_radius,
-			Key::GlowSoftness => defaults.text_glow_softness,
-			Key::GlowBorder => defaults.text_outline,
+			Key::ScrimRadius => defaults.text_scrim_radius,
+			Key::ScrimSoftness => defaults.text_scrim_softness,
+			Key::Outline => defaults.text_outline,
 			Key::FontSize => defaults.font_size,
 			Key::LineHeight => defaults.line_height_scale,
 			Key::Margin => defaults.margin,
@@ -1263,20 +1263,20 @@ impl SettingsDialog {
 		match key {
 			Key::Transparency
 			| Key::BackdropBlur
-			| Key::TextGlow
+			| Key::TextScrim
 			| Key::SystemFont
 			| Key::RememberSize => {
 				let default_val = match key {
 					Key::Transparency => self.defaults.transparent_background,
 					Key::BackdropBlur => self.defaults.transparent_background_blur,
-					Key::TextGlow => self.defaults.text_glow,
+					Key::TextScrim => self.defaults.text_scrim,
 					Key::SystemFont => self.defaults.use_system_font,
 					_ => self.defaults.remember_size,
 				};
 				self.set_toggle(key, default_val);
 			}
 			Key::BgFit => self.edited.background_fit = self.defaults.background_fit,
-			Key::GlowRamp => self.edited.text_glow_ramp = self.defaults.text_glow_ramp.clone(),
+			Key::ScrimRamp => self.edited.text_scrim_ramp = self.defaults.text_scrim_ramp.clone(),
 			Key::BgImage => self.edited.background_image = self.defaults.background_image.clone(),
 			Key::FontFamily => self.edited.font_family = self.defaults.font_family.clone(),
 			Key::DefaultShell => self.edited.default_shell = self.defaults.default_shell.clone(),
@@ -2255,9 +2255,9 @@ mod tests {
 	fn keyboard_skips_headers_and_disabled() {
 		let mut d = mk_dialog(2000.0);
 		d.tab = 0; // Appearance
-		// with transparency + glow off, the opacity/blur/glow rows are disabled
+		// with transparency + scrim off, the opacity/blur/scrim rows are disabled
 		d.edited.transparent_background = false;
-		d.edited.text_glow = false;
+		d.edited.text_scrim = false;
 		for &i in &d.focusables() {
 			assert!(!matches!(d.specs[i].kind, super::Kind::Header(_)));
 			assert!(!d.disabled(d.specs[i].key), "disabled row in tab order");

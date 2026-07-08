@@ -423,7 +423,7 @@ struct State {
 	text: TextCtx,
 	rects: RectRenderer,
 	bg_image: Option<ImageRenderer>,
-	glow: crate::glow::Glow, // text readability glow (used only when config.text_glow)
+	scrim: crate::scrim::Scrim, // text readability scrim (used only when config.text_scrim)
 	tabs: Tabs,
 	mods: ModifiersState,
 	mouse: (f32, f32),
@@ -1165,16 +1165,16 @@ impl State {
 		// per-pane (bg cells + cursor), scissored to the pane so overscan rows
 		// don't bleed into neighbours
 		let mut groups: Vec<(Rect, Vec<RectInstance>)> = Vec::new();
-		// cursors are drawn separately (above the glow, so its halo can't obscure them)
+		// cursors are drawn separately (above the scrim, so its halo can't obscure them)
 		let mut cursors: Vec<(Rect, RectInstance)> = Vec::new();
 		let mut tops: HashMap<u64, f32> = HashMap::new();
 		// retained-frame app-scroll slide geometry per pane (None = no active slide)
 		let mut slides: HashMap<u64, Option<crate::pane::Slide>> = HashMap::new();
 		let mut animating = bell > 0.0;
-		// text-glow colour map needs each cell's bg (so a glyph's halo takes its
+		// text-scrim colour map needs each cell's bg (so a glyph's halo takes its
 		// own cell colour, not always the global) - collect them while building
-		let glow_on = cfg.text_glow && cfg.text_glow_radius > 0.0;
-		let mut glow_cells: Vec<RectInstance> = Vec::new();
+		let scrim_on = cfg.text_scrim && cfg.text_scrim_radius > 0.0;
+		let mut scrim_cells: Vec<RectInstance> = Vec::new();
 
 		for (id, pane) in self.tabs.cur_mut().panes.iter_mut() {
 			pane.scroll.advance(dt);
@@ -1197,8 +1197,8 @@ impl State {
 				size: [rect.w, rect.h],
 				color: bg,
 			});
-			if glow_on {
-				glow_cells.extend_from_slice(&draw.bg);
+			if scrim_on {
+				scrim_cells.extend_from_slice(&draw.bg);
 			}
 			groups.push((rect, draw.bg));
 			if let Some(cursor_quad) = draw.cursor {
@@ -1242,15 +1242,15 @@ impl State {
 		}
 		let ring_end = instances.len() as u32;
 
-		// cursor quads also feed the glow source, so the cursor's halo merges
-		// with the text glow (it still draws crisp ABOVE the composite below)
-		let glow_cursor_quads: Vec<RectInstance> = if glow_on && cfg.cursor_glow {
+		// cursor quads also feed the scrim source, so the cursor's halo merges
+		// with the text scrim (it still draws crisp ABOVE the composite below)
+		let scrim_cursor_quads: Vec<RectInstance> = if scrim_on && cfg.cursor_scrim {
 			cursors.iter().map(|(_, q)| *q).collect()
 		} else {
 			Vec::new()
 		};
 
-		// cursor quads get their own per-pane ranges, drawn after the glow composite
+		// cursor quads get their own per-pane ranges, drawn after the scrim composite
 		let mut cursor_ranges: Vec<(Rect, u32, u32)> = Vec::new();
 		for (rect, cursor_quad) in cursors {
 			let start = instances.len() as u32;
@@ -1652,30 +1652,30 @@ impl State {
 			self.text.trim_atlas();
 			return animating;
 		}
-		// glow source pass has its own prepared set: pane text only (no chrome),
-		// with de-bolded buffers where a pane built one (text_glow_regular_weight)
-		if glow_on {
-			let mut glow_areas: Vec<TextArea> = Vec::new();
+		// scrim source pass has its own prepared set: pane text only (no chrome),
+		// with de-bolded buffers where a pane built one (text_scrim_regular_weight)
+		if scrim_on {
+			let mut scrim_areas: Vec<TextArea> = Vec::new();
 			for p in self.tabs.cur().panes.values() {
-				// glow follows the current frame's slide, INCLUDING the scrolled-off
+				// scrim follows the current frame's slide, INCLUDING the scrolled-off
 				// strip filling the reveal gap - without it the strip's text (e.g. the
 				// row just below a static header) loses its readability halo mid-slide
 				// and the halo "pops" when the slide settles, reading as a shadow that
 				// jumps at the band boundary. The strip holds only region rows, so it
-				// is always glow-safe (no furniture to guard out of the glow).
+				// is always scrim-safe (no furniture to guard out of the scrim).
 				match &slides[&p.id] {
 					Some(slide) => {
 						if let Some(strip) = p.strip_text_area(slide, margin) {
-							glow_areas.push(strip);
+							scrim_areas.push(strip);
 						}
-						glow_areas.push(p.glow_text_area_band(
+						scrim_areas.push(p.scrim_text_area_band(
 							tops[&p.id],
 							margin,
 							slide.region_clip_t,
 							slide.region_clip_b,
 						));
 						if slide.has_top_band {
-							glow_areas.push(p.glow_text_area_band(
+							scrim_areas.push(p.scrim_text_area_band(
 								slide.band_top,
 								margin,
 								f32::MIN,
@@ -1683,7 +1683,7 @@ impl State {
 							));
 						}
 						if slide.has_band {
-							glow_areas.push(p.glow_text_area_band(
+							scrim_areas.push(p.scrim_text_area_band(
 								slide.band_top,
 								margin,
 								slide.split_y,
@@ -1691,16 +1691,16 @@ impl State {
 							));
 						}
 					}
-					None => glow_areas.push(p.glow_text_area(tops[&p.id], margin)),
+					None => scrim_areas.push(p.scrim_text_area(tops[&p.id], margin)),
 				}
-				glow_areas.extend(p.glyph_areas());
+				scrim_areas.extend(p.glyph_areas());
 			}
 			if let Err(e) = self
 				.text
-				.prepare_glow(&self.gfx.device, &self.gfx.queue, glow_areas)
+				.prepare_scrim(&self.gfx.device, &self.gfx.queue, scrim_areas)
 			{
 				eprintln!(
-					"{}: glow prepare failed; trimming atlas to recover: {e:?}",
+					"{}: scrim prepare failed; trimming atlas to recover: {e:?}",
 					config::APP_NAME
 				);
 				self.text.trim_atlas();
@@ -1787,30 +1787,30 @@ impl State {
 				label: Some("frame"),
 			});
 
-		// Text readability glow: build the per-pixel colour map, render the prepared
-		// text to the glow texture, blur it, then composite under the crisp text.
+		// Text readability scrim: build the per-pixel colour map, render the prepared
+		// text to the scrim texture, blur it, then composite under the crisp text.
 		// "Softness" 0..1 -> coverage boost: 0 = hard/solid (x10), 1 = soft/faint (x1)
-		let glow_intensity = 10.0 - cfg.text_glow_softness.clamp(0.0, 1.0) * 9.0;
-		let glow_ramp = match cfg.text_glow_ramp.as_str() {
+		let scrim_intensity = 10.0 - cfg.text_scrim_softness.clamp(0.0, 1.0) * 9.0;
+		let scrim_ramp = match cfg.text_scrim_ramp.as_str() {
 			"linear" => 1.0,
 			"s" => 2.0,
 			_ => 0.0,
 		};
-		if glow_on {
-			self.glow.render_bgcolor(
+		if scrim_on {
+			self.scrim.render_bgcolor(
 				&self.gfx.device,
 				&self.gfx.queue,
 				&mut encoder,
-				&glow_cells,
+				&scrim_cells,
 				config::srgb_f32(cfg.bg),
 			);
-			self.glow
-				.upload_cursors(&self.gfx.device, &self.gfx.queue, &glow_cursor_quads);
+			self.scrim
+				.upload_cursors(&self.gfx.device, &self.gfx.queue, &scrim_cursor_quads);
 			{
 				let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-					label: Some("glow text"),
+					label: Some("scrim text"),
 					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-						view: self.glow.text_view(),
+						view: self.scrim.text_view(),
 						resolve_target: None,
 						depth_slice: None,
 						ops: wgpu::Operations {
@@ -1823,18 +1823,18 @@ impl State {
 					occlusion_query_set: None,
 					multiview_mask: None,
 				});
-				let _ = self.text.render_glow(&mut pass);
-				self.glow.draw_cursors(&mut pass);
+				let _ = self.text.render_scrim(&mut pass);
+				self.scrim.draw_cursors(&mut pass);
 			}
-			self.glow.blur(
+			self.scrim.blur(
 				&self.gfx.queue,
 				&mut encoder,
-				cfg.text_glow_radius,
-				glow_ramp,
+				cfg.text_scrim_radius,
+				scrim_ramp,
 			);
 		}
 
-		let content_area = self.area(); // for clipping the glow to the terminal region
+		let content_area = self.area(); // for clipping the scrim to the terminal region
 		{
 			let divider = config::srgb_f32(config::DIVIDER);
 			// transparent base when compositing: pane-gap dividers show the
@@ -1890,17 +1890,21 @@ impl State {
 			if let Some((start, end)) = tabbar_range {
 				self.rects.draw(&mut pass, start..end);
 			}
-			// glow goes under the crisp text, over the cell backgrounds. Clip it to
+			// scrim goes under the crisp text, over the cell backgrounds. Clip it to
 			// the content area so the halo only affects terminal text, never the
 			// menu bar / tab titles above it.
-			if glow_on {
+			if scrim_on {
 				let (cx, cy, cw, ch) = scissor(content_area, sw, sh);
 				pass.set_scissor_rect(cx, cy, cw, ch);
-				self.glow
-					.composite(&self.gfx.queue, &mut pass, glow_intensity, cfg.text_outline);
+				self.scrim.composite(
+					&self.gfx.queue,
+					&mut pass,
+					scrim_intensity,
+					cfg.text_outline,
+				);
 				pass.set_scissor_rect(0, 0, sw, sh);
 			}
-			// cursor above the glow (halo can't obscure it), still under the crisp text
+			// cursor above the scrim (halo can't obscure it), still under the crisp text
 			for (rect, start, end) in &cursor_ranges {
 				let (x, y, w, h) = scissor(*rect, sw, sh);
 				if w == 0 || h == 0 {
@@ -2341,8 +2345,8 @@ impl ApplicationHandler<UserEvent> for App {
 		let mut text = TextCtx::new(&gfx.device, &gfx.queue, gfx.format, scale);
 		let rects = RectRenderer::new(&gfx.device, gfx.format);
 		let bg_image = load_bg_image(&gfx);
-		let glow =
-			crate::glow::Glow::new(&gfx.device, gfx.format, gfx.config.width, gfx.config.height);
+		let scrim =
+			crate::scrim::Scrim::new(&gfx.device, gfx.format, gfx.config.width, gfx.config.height);
 
 		// Resize to the configured initial grid now that cell metrics are known.
 		// cell_w/cell_h/margin are physical px; floor() in content_dims gives the
@@ -2377,10 +2381,10 @@ impl ApplicationHandler<UserEvent> for App {
 				(rows as f32 * text.cell_h + 2.0 * text.margin + menu_bar_h).ceil() as u32
 			}),
 		);
-		let mut glow = glow;
+		let mut scrim = scrim;
 		if let Some(applied) = window.request_inner_size(want) {
 			gfx.resize(applied.width, applied.height);
-			glow.resize(&gfx.device, applied.width, applied.height);
+			scrim.resize(&gfx.device, applied.width, applied.height);
 		}
 
 		// initial content area, inset by the menu bar (when shown) and the tab
@@ -2410,7 +2414,7 @@ impl ApplicationHandler<UserEvent> for App {
 			text,
 			rects,
 			bg_image,
-			glow,
+			scrim,
 			tabs: Tabs { list, active: 0 },
 			mods: ModifiersState::empty(),
 			mouse: (0.0, 0.0),
@@ -2534,7 +2538,7 @@ impl ApplicationHandler<UserEvent> for App {
 			WindowEvent::Resized(size) => {
 				state.gfx.resize(size.width, size.height);
 				state
-					.glow
+					.scrim
 					.resize(&state.gfx.device, size.width, size.height);
 				state.relayout_all();
 				state.save_window_size(size.width, size.height);

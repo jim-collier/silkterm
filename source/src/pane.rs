@@ -49,7 +49,7 @@ const APP_SCROLL_MAX: usize = 24; // max per-step shift the slide detector accep
 // Whether the smooth slide engages for full-screen apps that keep a static TOP
 // band (title bar: nano, muffer). Was off while the reveal strip was filled from
 // a single retained frame: the strip could under-fill by the ease lag and its
-// re-capture repositioned it every step - the band/glow bounce. The scrolled-off
+// re-capture repositioned it every step - the band/scrim bounce. The scrolled-off
 // strip (OffStrip below) fills the gap exactly and never repositions, so the
 // slide is on for top-band apps again. Apps that fill from the top with only a
 // bottom status line (less, vim) have no top band and slide regardless.
@@ -440,7 +440,7 @@ pub struct PaneDraw {
 // The region clip is WELDED to the shifted content's extent, not just the band
 // boundaries: the current-frame draw is the whole buffer translated by voff, so
 // band rows ride into the region during a slide - the title's glyphs (and their
-// glow) land voff below the real title, the status rows land voff above theirs
+// scrim) land voff below the real title, the status rows land voff above theirs
 // - rendering as ghost copies that bounce with the ease. Clipping at the
 // content edge cuts them off; the strip owns the gap on the other side of the
 // weld.
@@ -505,11 +505,11 @@ pub struct Pane {
 	// them - `scale` shrinks an over-wide fallback glyph to fit its cell box.
 	glyph_bufs: Vec<Buffer>,
 	glyphs: Vec<(f32, f32, GColor, f32)>,
-	// Glow source with bold stripped (text_glow_regular_weight): shaped alongside
+	// Scrim source with bold stripped (text_scrim_regular_weight): shaped alongside
 	// the main buffer only on rebuild frames that actually contain bold runs.
-	// `glow_debold` says the buffer is valid for the current content.
-	glow_buf: Option<Buffer>,
-	glow_debold: bool,
+	// `scrim_debold` says the buffer is valid for the current content.
+	scrim_buf: Option<Buffer>,
+	scrim_debold: bool,
 	// Cursor animation: `cursor_x` (visual column) eases toward the target column
 	// so the cursor slides as you type; `blink_t` drives a smooth fade-blink while
 	// it sits idle. Snaps on a row change so it doesn't slide diagonally on a newline.
@@ -1079,39 +1079,39 @@ impl Pane {
 			}
 		}
 
-		// Glow source with uniform weight: bold ink is wider, so its halo reads
-		// heavier than the neighbours'. When text_glow_regular_weight is on and
+		// Scrim source with uniform weight: bold ink is wider, so its halo reads
+		// heavier than the neighbours'. When text_scrim_regular_weight is on and
 		// bold is on screen, shape a parallel buffer with bold stripped for the
-		// glow pass (crisp text on top keeps its real weight). Costs a second
+		// scrim pass (crisp text on top keeps its real weight). Costs a second
 		// shape only on rebuild frames that contain bold. Per-cell fallback
 		// glyphs keep their weight - rare, and not worth a second glyph pool.
-		self.glow_debold = settings.text_glow
-			&& settings.text_glow_radius > 0.0
-			&& settings.text_glow_regular_weight
+		self.scrim_debold = settings.text_scrim
+			&& settings.text_scrim_radius > 0.0
+			&& settings.text_scrim_regular_weight
 			&& saw_bold;
-		if self.glow_debold {
+		if self.scrim_debold {
 			let (buf_w, buf_h) = self.buffer.size();
-			let glow_buffer = self.glow_buf.get_or_insert_with(|| {
+			let scrim_buffer = self.scrim_buf.get_or_insert_with(|| {
 				let mut buf = Buffer::new(&mut ctx.font_system, ctx.metrics);
 				buf.set_wrap(&mut ctx.font_system, glyphon::Wrap::None);
 				buf.set_monospace_width(&mut ctx.font_system, Some(cell_w));
 				buf
 			});
-			glow_buffer.set_metrics(&mut ctx.font_system, ctx.metrics);
-			glow_buffer.set_size(&mut ctx.font_system, buf_w, buf_h);
+			scrim_buffer.set_metrics(&mut ctx.font_system, ctx.metrics);
+			scrim_buffer.set_size(&mut ctx.font_system, buf_w, buf_h);
 			let despan = spans.iter().map(|(text, attrs)| {
 				let mut debold_attrs = attrs.clone();
 				debold_attrs.weight = default_attrs.weight;
 				(text.as_str(), debold_attrs)
 			});
-			glow_buffer.set_rich_text(
+			scrim_buffer.set_rich_text(
 				&mut ctx.font_system,
 				despan,
 				&default_attrs,
 				Shaping::Advanced,
 				None,
 			);
-			glow_buffer.shape_until_scroll(&mut ctx.font_system, false);
+			scrim_buffer.shape_until_scroll(&mut ctx.font_system, false);
 		}
 
 		// build the per-cell fallback glyphs (reusing the buffer pool)
@@ -1297,28 +1297,28 @@ impl Pane {
 		})
 	}
 
-	// Same as `text_area` but for the glow source pass: uses the de-bolded buffer
-	// when it was built this frame (text_glow_regular_weight + bold on screen), so
+	// Same as `text_area` but for the scrim source pass: uses the de-bolded buffer
+	// when it was built this frame (text_scrim_regular_weight + bold on screen), so
 	// the halo weight matches non-bold text while the crisp text keeps its weight.
-	pub fn glow_text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
+	pub fn scrim_text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
 		let mut area = self.text_area(top, margin);
-		if self.glow_debold {
-			if let Some(glow_buffer) = &self.glow_buf {
-				area.buffer = glow_buffer;
+		if self.scrim_debold {
+			if let Some(scrim_buffer) = &self.scrim_buf {
+				area.buffer = scrim_buffer;
 			}
 		}
 		area
 	}
 
-	// glow_text_area with the band clip of text_area_band (see there).
-	pub fn glow_text_area_band<'a>(
+	// scrim_text_area with the band clip of text_area_band (see there).
+	pub fn scrim_text_area_band<'a>(
 		&'a self,
 		top: f32,
 		margin: f32,
 		clip_top: f32,
 		clip_bottom: f32,
 	) -> TextArea<'a> {
-		let mut area = self.glow_text_area(top, margin);
+		let mut area = self.scrim_text_area(top, margin);
 		area.bounds.top = area.bounds.top.max(clip_top as i32);
 		area.bounds.bottom = area.bounds.bottom.min(clip_bottom as i32);
 		area
@@ -1370,7 +1370,7 @@ impl Pane {
 	// exactly like the current content (it holds only region rows, so the bands
 	// need no protection from it; descender spill across the weld matches what
 	// adjacent rows in one buffer do). None while the strip is empty. Serves the
-	// glow pass too - the strip is always glow-safe, unlike the old retained
+	// scrim pass too - the strip is always scrim-safe, unlike the old retained
 	// frame whose own-bg furniture had to be guarded out.
 	pub fn strip_text_area<'a>(&'a self, slide: &Slide, margin: f32) -> Option<TextArea<'a>> {
 		if self.strip.len() == 0 {
@@ -1918,8 +1918,8 @@ fn spawn_pane(
 		last_alt: false,
 		glyph_bufs: Vec::new(),
 		glyphs: Vec::new(),
-		glow_buf: None,
-		glow_debold: false,
+		scrim_buf: None,
+		scrim_debold: false,
 		cursor_x: 0.0,
 		cursor_col: 0.0,
 		cursor_row: i32::MIN,
