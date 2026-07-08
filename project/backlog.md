@@ -129,6 +129,12 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
+- 🔘 Config file: For each feature listed below, allow user to list programs (comma-delimited), that, when running, temporarily disable:
+	- Smooth scrolling. (Comma-delimited.)
+	- Smooth cursor movement and blink. (Comma-delimited.)
+	- Text outer glow and outline
+		- Note: Should not affect existing still-visible text renedered before the program's output, or new output following the output from the affected program that is still visible. (Comma-delimited.)
+
 - 🛠️ Donations model:
 	- ✅ "Support SilkTerm!" button in Help|About, with flyover text of URL it's going to open in a web page.
 		- Done: a filled button under the About text opens `DONATE_URL`. Hovering it shows the full destination URL, and the dialog is widened so it isn't clipped.
@@ -145,12 +151,33 @@ In each section, items are listed approximately from newest to oldest.
 		- Enable a GitHub Sponsors profile for the Sponsor badge/link to go live (else it 404s)
 		- fill in `.github/FUNDING.yml` handles.
 
-- ✅ Settings: "Backdrop blur" -> "Blur-behind"
-	- Done: renamed the Settings toggle label; the internal key is unchanged.
-
 - 🛠️ For screenshots, and videos, use "Monaspace Argon NF Medium".
 	- Done: `utility/screenshots.bash` font stack set to the Monaspace Argon NF family with fallbacks. Note: `font_family` selects a family, not a weight, so it renders at regular weight (true Medium would need a font-weight config). Videos will pick this up when that item is built.
 	- Pending: regenerate the committed screenshot PNGs so they show the new font. Fold into the next visual regeneration and eyeball.
+
+- ✅ Tabs: Include a subtle 'X' icon in right edge of tab, to close with mouse.
+	- Done: each tab reserves a right-edge close region with a dimmed "x" glyph; the tab title clips before it. A left click in that region closes the tab, elsewhere selects it.
+	- Verified: the close glyph renders subtly at each tab's right edge; clicking it closes that tab, clicking the tab body selects it.
+	- 🔘 Improve:
+		- 🔘 Make the 'X' bigger or bolder, and put it inside a button outline nicely balanced within top, right, and bottom margins.
+		- 🔘 Provide brief visual feedback on click - as the tab closes. Maybe the terminal area can close immediately while the tab lingers just enough milliseconds for human perception to notice the click feedback, if that doesn't require rejiggering the whole pipeline.
+
+- 🔘 Standard Gaussian Blur function is a poor fit for text "outer glow", as a legibility aid. Here's why:
+	- **What's wrong**: To illustrate conceptually: If you apply a background glow to a solid square using gaussian blur, as the blur radius increases, the total blur shape looks more and more "round". This means that - effectively - the blur behind the square, doesn't look even at the corners. It looks "too strong" along the middle of the sides of the square, and "pulled-in" at the corners. The corners look naked. Basically it looks like a square sitting on top of a separate round fuzzy thing - rather than something evenly integrated with the square. (Which describes the cursor in block mode perfectly, and also why the outer glow behind some clusters of letters looks "clumpy".)
+	- **What would be better**: Ideally, the blur would also be square-ish - extending evenly from every angle, from every point along the edge of the square. (With corners rounding off with increasing blur radius, but never actually pulling in below the corners.) In other words, if you measured the density fall-off of the blur starting from the corner and moving outwart diagonally, it should fall-off at about the same rate, as if you measured it from the middle of an edge and moved out perpendicularly.
+	- **Note**: "Gaussian" isn't just a blur function, it also describes blur falloff. (The Gaussian function makes the bell-shaped normal distribution, the falloff is half of one side.) So while the Gaussian *blur* function is probably the wrong blur to use, the *falloff* model is fine. Whether the two concepts can be separated in practice, is an open question for now, but seems doable (but also there's no reason for it to be a hard requirement - and isn't).
+	- **Solutions ideas**:
+		- **Distance field blur**. Aka signed distance field blur. This may be the closest match. Compute the signed distance from every pixel to the boundary of the shape, then apply a falloff function (Gaussian, linear, S, etc.) to that distance. Every point one pixel outside the shape has the same opacity regardless of whether it's beside an edge or outside a corner. The corners stay "full" instead of receding.
+		- **Morphological dilation followed by feathering**. This might be the easiest and most practical to implement. Common in graphics applications. First expand the shape (using a square or other structuring element). In this case, each character individually on their center (and they'd grow into each other). Then feather the expanded edge - again with a falloff function. This also avoids the rounded-cloud appearance.
+		- **Distance transform + transfer function**. Common in vector rendering and font rendering. Rather than convolving with a kernel, opacity is a function of distance from the boundary. I'm not really clear on how that works.
+		- **All of them**: Rather than trying to decide which is best in a vaccuum, add an item to the config file (and a dropdown selection box in Settings), to choose among those three, plus the original "Gaussian". And as long as we're doing that, we might as well add a dropdown selection box for 
+
+
+
+
+- 🔘 Option to include the cursor in outer-glow. Default to off. Still outline it though.
+
+- 🔘 Smooth cursor movement should speed up, if it falls too far behind where it actually is.
 
 - 🔘 CICD process (without --quick): Only after quite major changes, record a demo video:
 	- 🔘 Showing a wide variety of synthetic, anonymized content, with varying burst of text output length.
@@ -168,30 +195,7 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Store the videos under `silkterm/private/demo-video/`, using the same naming/rotation strategy as backups.
 	- 🔘 Store a copy of only the most recent video probably under `siklterm/github/source/video/demo.{ext}`. Make sure README.md embeds or references it visibly near the top.
 
-- ✅ Triple-click: Select the entire line - even if it's wrapped.
-	- Done: a multi-click counter (single = run, double = word or pair, triple = line, a fourth wraps back), using the same timing window as double-click. Triple selects the whole logical line, including soft-wrapped continuation rows.
-	- Verified: triple-clicking a line that wraps across two rows selects the full logical line; double still selects the word, single unchanged.
-
 - 🔘 Ctrl+Shift+N: New window on same directory.
-
-- ✅ Tabs: Include a subtle 'X' icon in right edge of tab, to close with mouse.
-	- Done: each tab reserves a right-edge close region with a dimmed "x" glyph; the tab title clips before it. A left click in that region closes the tab, elsewhere selects it.
-	- Verified: the close glyph renders subtly at each tab's right edge; clicking it closes that tab, clicking the tab body selects it.
-
-- 🔘 Blur: Naturally doesn't extend diagonally very far. When blurring a rectangle, for example, this is a known effect of, say, Gaussian blur. So either use a different blur that covers the diagonal directions better, or tweak the blur kernel so that it does that.
-
-- 🛠️ Cursor animation immediately resets and starts over on keypresses (typing, editing, or moving). That's not very smooth, it shouldn't do that. Add options:
-		- Keep animating.
-		- Wait until the animation reaches full-size, then stop animating. Don't resume animating until some timeout after input stops.
-	- Done: `cursor_animation_input` config key, "continuous" (default) or "pause".
-	- Fixed: the remaining snap in both modes. A keystroke slides the cursor to its new column, and during that slide it was drawn as a solid full block, overriding the animation - that was the instant jump to full, and the size popping back afterward was the double bounce. The animation now keeps running through the slide, so the size never jumps.
-	- Fixed: "pause" resuming at the wrong size. At slow blink rates the run-out to full takes longer than the idle timeout, and the animation resumed from wherever it happened to be (small). Reworked: input lets the cycle run on at normal speed until it reaches full-size, holds there through the timeout, then resumes the cycle from full - continuous size at every step.
-	- Note: "continuous" now never stops or resets for any reason; "pause" never jumps at entry, hold, or resume.
-	- Pending: feel-test both modes, including at a very slow blink rate. Optionally expose the choice in the Settings dialog (file-only for now).
-
-- 🔘 Option to include the cursor in outer-glow. Default to off. Still outline it though.
-
-- 🔘 Smooth cursor movement should speed up, if it falls too far behind where it actually is.
 
 - 🔘 Copy output:
 	- 🔘 Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.
@@ -673,6 +677,24 @@ In each section, items are listed approximately from newest to oldest.
 	- Fix: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
 
 #### Done - new features and enhancements
+
+- ✅ Cursor animation immediately resets and starts over on keypresses (typing, editing, or moving). That's not very smooth, it shouldn't do that.
+	- Add options:
+		- Keep animating.
+		- Wait until the animation reaches full-size, then stop animating. Don't resume animating until some timeout after input stops, and then resume animating at the "top" of the cycle.
+	- Done: `cursor_animation_input` config key, "continuous" (default) or "pause".
+	- Fixed: the remaining snap in both modes. A keystroke slides the cursor to its new column, and during that slide it was drawn as a solid full block, overriding the animation - that was the instant jump to full, and the size popping back afterward was the double bounce. The animation now keeps running through the slide, so the size never jumps.
+	- Fixed: "pause" resuming at the wrong size. At slow blink rates the run-out to full takes longer than the idle timeout, and the animation resumed from wherever it happened to be (small). Reworked: input lets the cycle run on at normal speed until it reaches full-size, holds there through the timeout, then resumes the cycle from full - continuous size at every step.
+	- Note: "continuous" now never stops or resets for any reason; "pause" never jumps at entry, hold, or resume.
+	- **Note**: Retrospectively, this was a HUGE pain in the arse. The bug where the cursor kept instantly snapping to the largest point in the animation cycle on any keypress, was really annoying and hard to fix. (I mean that's the opposite of "smooth", right? It was distracting.) Likewise, the bug where resuming the animation after pause, would catch it at a "random" point in the animation cycle, sometimes at the smallest point. Again, and instant warp from largest to smallest. And then worse was when both bugs conspired together on sporadic input, to cause a jarring "superbounce" effect.
+		- But now it works as designed.
+
+- ✅ Triple-click: Select the entire line - even if it's wrapped.
+	- Done: a multi-click counter (single = run, double = word or pair, triple = line, a fourth wraps back), using the same timing window as double-click. Triple selects the whole logical line, including soft-wrapped continuation rows.
+	- Verified: triple-clicking a line that wraps across two rows selects the full logical line; double still selects the word, single unchanged.
+
+- ✅ Settings: "Backdrop blur" -> "Blur-behind"
+	- Done: renamed the Settings toggle label; the internal key is unchanged.
 
 - ✅ README screenshots, refreshed after significant visual changes: five anonymized shots (shell session, split panes, transparency + background image + glow, tabs / 24-bit / Unicode, Settings dialog) rendered at 1920x1080 and downsampled to 640x360 thumbnails.
 	- Done: originals in `assets/screenshots/large/`, thumbnails in `assets/screenshots/`, shown as a grid in the README that links each thumbnail to its full-size image.
@@ -1223,25 +1245,25 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Future and/or deferred
 
-- ✋ Modal Bug - About only (almost certainly a Compiz issue): with the About/Settings dialog open, selecting another window then re-selecting the dialog leaves the terminal buried behind whatever got in front, instead of both coming to the top together. Settings now works; About still does this on some Compiz desktops.
+- ✋ Feature: Minority Report mode: Borderless, transparent, changes perspective depending on screen location.
+
+- ✋ Feature: (Git) Implement branch protection rules on main:
+	- ✋ Require a pull request before merging (blocks direct pushes), and
+	- ✋ Require review from Code Owners.
+	- ✋ In more distant future: Do not allow bypassing / include administrators
+		- Without this, I (as OG admin) can still merge around it, which is good early on.
+
+- ✋ Bug: Modal Bug - About only (almost certainly a Compiz issue): with the About/Settings dialog open, selecting another window then re-selecting the dialog leaves the terminal buried behind whatever got in front, instead of both coming to the top together. Settings now works; About still does this on some Compiz desktops.
 	- Almost certainly a Compiz WM issue, not a SilkTerm bug: About and Settings use the exact same dialog code path (window creation, transient-for + EWMH dialog/MODAL/SKIP_TASKBAR hints, and the raise-with-parent restack), so a difference between them is the WM's handling, not our code.
 	- Note: the general case is fixed - the hints are set before the window maps, and since Compiz won't raise a transient's parent, the terminal is restacked under the dialog on focus and re-asserted briefly to outlast Compiz's animated settle. Verified on Compiz for both dialogs; the About-only failure couldn't be reproduced there.
 
-- ✋ Alt-screen enter/exit animated like a scroll (`smooth_scroll_apps`). Two symptoms: (a) opening nano "jiggles"/jelly-bounces or scrolls in from a few lines down; (b) exiting nano scrolls the previous screen contents back in from the bottom, where a normal terminal just cuts.
+- ✋ Bug: Alt-screen enter/exit animated like a scroll (`smooth_scroll_apps`). Two symptoms: (a) opening nano "jiggles"/jelly-bounces or scrolls in from a few lines down; (b) exiting nano scrolls the previous screen contents back in from the bottom, where a normal terminal just cuts.
 	- Cause: an alt-screen enter/exit is an instant full-screen swap, but the scroll probes diffed frame-to-frame across it. On enter the app-scroll probe matched blank rows between the old and new screens -> bogus slide (jiggle). On exit `history_size` jumps (the alt grid carries no scrollback) -> the output-ease read it as new output and scrolled the restored screen in.
 	- Fixed: track the previous frame's alt-screen state; on a transition hard-cut it - cancel any in-flight slide, skip both probes, suppress the output nudge, and rebaseline the row fingerprints to the new screen.
 	- Verified: confirmed fixed (both symptoms). Residual: a very slight one-line smooth scroll-up still happens on enter and exit - livable, deferred (see the deferred item below).
 	- Verified: mostly fixed. Entering and exiting still result in a one-line smooth scroll. Tolerable, but fix someday.
 
-- ✋ Residual 1-line smooth scroll-up on alt-screen enter AND exit (`smooth_scroll_apps`). The enter/exit hard-cut fixed the big jiggle and scroll-in, but a slight single-line ease still rides the transition. Livable, deferred. Likely the output-ease firing one frame after the transition. A candidate fix is to rebaseline the history baseline and suppress the nudge one frame past the transition.
-
-- ✋ Minority Report mode: Borderless, transparent, changes perspective depending on screen location.
-
-- ✋ Implement branch protection rules on main:
-	- ✋ Require a pull request before merging (blocks direct pushes), and
-	- ✋ Require review from Code Owners.
-	- ✋ In more distant future: Do not allow bypassing / include administrators
-		- Without this, I (as OG admin) can still merge around it, which is good early on.
+- ✋ Bug: Residual 1-line smooth scroll-up on alt-screen enter AND exit (`smooth_scroll_apps`). The enter/exit hard-cut fixed the big jiggle and scroll-in, but a slight single-line ease still rides the transition. Livable, deferred. Likely the output-ease firing one frame after the transition. A candidate fix is to rebaseline the history baseline and suppress the nudge one frame past the transition.
 
 ### Canceled
 
