@@ -15,6 +15,7 @@ This is a product backlog just for pre-v1.0.0 release. After that, bugs, feature
 
 - [Conventions](#conventions)
 - [Backlog](#backlog)
+	- [Non-code to-do](#non-code-to-do)
 	- [Bugs](#bugs)
 	- [New features and enhancements](#new-features-and-enhancements)
 	- [Done](#done)
@@ -41,84 +42,16 @@ In each section, items are listed approximately from newest to oldest.
 
 ## Backlog
 
+### Non-code to-do
+
+- 🔘 Enabling a GitHub Sponsors profile so the Sponsor link goes live.
+
+- 🔘 Fill in the FUNDING.yml handles.
+
 ### Bugs
-
-✅ Bug #t78br: "The Notorious 'Bouncing Shadow' nano bug" (which we'll call this subset) is still still there. (At least the wobblyness seems to be fixed, which is why this now gets its own issue.):
-	- Cause: the sliding draw is the whole frame translated by the eased offset, clipped only at the band boundaries - so the top bar's row translated down (and the bottom area's rows translated up) landed inside the scroll-region clip and rendered as translated text copies riding the ease. Text and its glow only (cell backgrounds are placed per row), which is why it reads as a text shadow at the top and as text copies at the bottom. (20260708)
-	- Fixed: the region clip now welds to the shifted content's own edge; the strip fills the gap on the far side of the weld, and translated band rows can no longer enter. (20260708)
-	- Verified: reproduced the ghost in mid-slide frame dumps before the fix, gone after; scroll harness all four scenes pass; 113 lib tests. Feel-test passed; merged with the parent spike. (20260708)
-	- Steps to reproduce:
-		- Open nano with a long file - say, ~/.config/silkterm/config.toml.
-		- Observe:
-			- A sipgle-line bar at the top, rendered with terminal's text color as the bar's background color, and (apparently) the terminal's background color as the bar's text color. It says "GNU nano 8.7.1" on the left, and the open filename in the center. This bar never moves or scrolls, for as long as nano is open. For reference, we'll call this UI element, 'TIMMY THE TOP BAR'.
-			- Nano has reserved three rows at the bottom of the terminal, for itself as fixed, non-scrolling UI areas. The bottom two rows show the user what hotkeys they can use - both in the same inverse text style as 'TIMMY THE TOP BAR', and also regular terminal text. For reference, we'll call this UI element: 'BILLY THE BOTTOM AREA'
-			- The area that file content is rendered in, and the user can move the cursor around and edit in, we'll call 'THE EDIT AREA' for reference.
-			- The entire terminal, in vertical terms, is composed of - by the definition of our words, from top-to-bottom: 'TIMMY THE TOP BAR', 'THE EDIT AREA', and 'BILLY THE BOTTOM AREA'.
-		- Action:
-			- Now contiuously hold down the 'down arrow' key to move "down" the file contents.
-			- When the cursor get to the bottom edge of 'THE EDIT AREA', keeep holding down 'down arrow'.
-		- Observe:
-			- When nano pushes the content from below its view up into view, what appears to be the dark outer glow + outline effect from the text on 'TIMMY THE TOP BAR', visually "bounces" down from the top, visually into 'THE EDIT AREA'.
-			- For reference, we'll call that text 'TIMMYS TEXT SHADOW',
-			- When you stop scrolling, 'TIMMYS TEXT SHADOW' gradually "settles" back "under" 'TIMMY THE TOP BAR'.
-		- Observe:
-			- You can make the same thing happen when pressing the down-arrow key one at a time, it's just not nearly as pronounced of an effect.
-		- Observe:
-			- You can make the same thing happen when scrolling the text in the same direction by using the mouse wheel quickly (which in nano is rewired to drive just the cursor, not 'THE EDIT AREA' - but with fast enough mouse wheel moves, the effects observed above can be much more dramatic.
-		- Action:
-			- Move all the way to the bottom of the file, so we can test the same thing as above but in reverse.
-			- Now contiuously hold down the 'up arrow' key to move "up" the file contents.
-			- When the cursor get to the bottom edge of 'TIMMY THE TOP BAR', keeep holding down 'up arrow'.
-		- Observe:
-			- The same thing that happened to 'TIMMYS TEXT SHADOW' previously, happens in the reverse vertical direction now only involving the inverse text in 'BILLY THE BOTTOM AREA'. It visually bounces UP into 'THE EDIT AREA'.
-			- At the same time and synchronized with, visually identical copies of the normal text in 'BILLY THE BOTTOM AREA' also bounce up into 'THE EDIT AREA'. Together they seem to exhibit the same movement behavior as 'TIMMYS TEXT SHADOW', except flipped vertically.
-
-- ✅ The Notorious "Bouncing Shadow in Wobbly Nano" bug [20260707]:
-	- **NOTE**:
-		- The "Bouncing Shadow" portion of this has been moved to #t78br, "The Notorious 'Bouncing Shadow' nano bug", to tackle independently.
-		- The "wobbly nano" portion of this is still open, and this also (imperfectly) documents earlier attempts at fixes.
-	- Originally: Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
-	- Cause: the slide shifted the scroll region by several lines but only one row was ever drawn, so the revealed strip was bare background. The scrolled-off lines are gone from the grid, so there was nothing real to fill it with.
-	- Fixed: retained-frame slide. The pane keeps the previous frame's text and draws it, clipped to the revealed strip, so the strip fills with the real outgoing content while the current frame slides in over it.
-	- Verified: across continuous multi-line slides the content fills top to bottom with no blank band.
-	- Verified:
-		- Works perfectly in `less`.
-		- `nano` exhibits none of the bugs listed above, but it also doesn't scroll smoothly, either with the mouse wheel or via cursor. (In fact, the mouse wheel just moves the cursor up and down. That's standard `nano` behavior, but the note is that scrolling isn't smooth. The cursor vertical movement also isn't smooth (horizontal is). Nano doesn't neeed to have a per-app fix, if it can even be "fixed".
-	- 🛠️ muffer now scrolls smoothly on output - but still not mouse wheel.
-		- Cause: a wheel notch makes the app repaint a bigger jump than line-by-line output, past the detection window, so it read as not a clean scroll and hard-cut. Raised the detection cap (gated by `smooth_scroll_apps`).
-		- Note: the slide retains only the single previous frame, so fast wheeling can still lag about one step (looks like snapping). Smoothing that fully needs retaining more frames, a bigger change. Feel-test the cap first.
-	- 🛠️ Static-top-band fix (nano/muffer wheel = no change; less fine). Dogfood: the cap-24 bump didn't help nano or muffer on the wheel (muffer wheels 1 line/notch, well inside the window - so it was never a cap problem).
-		- Cause: the shift detector only matched a run anchored at the top row, and the renderer slid the whole pane from its top. `less` fills from the top with only a bottom status line, so it worked. `nano` and `muffer` keep a static title bar at the top; its unchanging first row broke the top-anchored match, so no slide engaged, and even if it had the title would bounce.
-		- Fixed: the shift detector now matches wherever the most rows translate, tolerating static bands at both ends, guarded so a static or blank screen can't false-trigger. A static top band is detected and its title bar redraws unshifted while the region below it slides. Apps with no top band are unchanged, and app-scroll stays alt-screen only, so apt is unaffected.
-		- Pending: a feel-test - nano and muffer wheel one notch should ease, not snap, the title bar should stay put, and less should be unchanged. Still gated by `smooth_scroll_apps`.
-	- ✋ Residual band jitter during a slide (nano; "almost perfect" otherwise). Two symptoms, different causes:
-		- Text moving up (content scrolls up): the drop-shadow under the inverse-video header title jumps down.
-			- Note: a partial fix stopped the glow from applying over any cell with its own solid background (reverse video, coloured background, selection), since those already have full contrast. This removed the header's static halo but did not fix the reported symptom, which is a motion artifact.
-			- Cause: the retained-frame slide fills the revealed strip with the previous frame's text but does not glow that strip. During a down-slide the rows just below the header lose their readability backing, and as the slide settles the backed and unbacked boundary marches down - that is the shadow jumping down.
-			- Fixed: the glow pass now also glows the previous-frame strip, so revealed rows keep their readability backing and the boundary no longer sweeps. Guarded so it only applies when the relevant static band is detected, which clips the previous frame's header and status out of the glow.
-			- Verified: the header stays clean and the strip is glowed, with no blobbing in the edge case. Needs a feel-test on real nano to confirm the wheel and cursor feel.
-		- Text moving down fast: the bottom two lines jump up. Likely the same un-glowed-strip issue at the bottom edge, now covered by the same fix. If any residual jump remains after the feel-test, the leftover is band re-detection mid-ease; the fix would be to hold band sizes stable across an in-progress ease.
-		- Note: freezing the band sizes did not help (re-tested: looks the same as before). The bands were already stable, so band jitter was never the cause. The real signal was the scroll offset itself oscillating frame to frame, which is the bounce.
-		- Note: an accumulation attempt made it worse (re-tested: jumps much farther). Accumulating the offset for the current content was right, but accumulating the strip fill from one stale snapshot was wrong - when the shift outgrew the scroll region the snapshot was re-captured, jumping the reveal strip by a whole screenful. That periodic jump was the farther bounce.
-		- Fixed: keep the offset accumulating for smooth content, but re-snapshot the previous frame every step so the strip is always one fresh step back. One retained frame only fills a one-step strip, so a fast burst could still open a blank band; a lag ramp on the ease bounds that by easing faster as the lag grows. A regression harness measured no content bounce and no band-boundary jumps across gentle, fast, and wheel scrolling, with the blank band shrinking to about one line. But a residual on real nano over a background image was still visible.
-		- Deferred: title-bar apps hard-cut for now - the smooth slide only engages when there is no static top band, so `less` still slides and nano and muffer just page-redraw as before, with no slide and so no bounce. The enter and exit hard-cut fixes are untouched. Re-enabling the slide for title-bar apps needs multi-frame retention so the reveal strip always fills regardless of lag. Verified: title-bar apps hard-cut while `less` still eases smoothly.
-		- ✅ Re-enabled the slide for title-bar apps, replacing the retained-frame fill with a scrolled-off strip. (20260707)
-			- Cause of the residual: filling the reveal from one retained frame is structural bounce. The fill could trail the ease by a few lines - a bare, un-glowed band whose height varied step to step, the pulsing shadow under the title over a background image - and the fill repositioned at every re-capture.
-			- Fixed: each frame the styled rows are snapshotted, and the rows a detected step pushes out of the region are kept in a small strip, drawn welded to the content edge and riding the same eased offset. The gap is always exactly filled, nothing repositions, and the strip carries its own cell backgrounds and glow. Band bleed is impossible by construction (only region rows are ever captured), so the old glow guards went away.
-			- Fixed alongside: sliding rows' background rects and the cursor now clamp to the scroll region, so an inverse-video or coloured row can't poke into the title/status bands mid-slide.
-			- Verified: headless scroll harness - all four scenes (less, vim, nano, muffer) slide monotone with zero bounces and correct bands; 112 library tests including strip ordering, trimming, direction flip, and row selection.
-			- Feel-test passed after the #t78br band-ghost fix; merged to main. (20260708)
-
-- ✅ Choosing "Tabs|New Tab" the first time, opens a second tab. Doing it again, changes to the first tab, rather than opening a third tab.
-	- Cause: a dropdown opens flush under the menu bar, so its top item ("New Tab") sits in the tab-bar band. The mouse handler checked the tab-bar hit before the open-menu hit, so once more than one tab existed (tab bar shown) the tab bar stole the click and selected a tab instead of firing the item. The first New Tab worked only because there was no tab bar yet.
-	- Fixed: skip the tab-bar click handler while a dropdown is open, so the click reaches the menu.
-	- Verified: repeated "Tabs|New Tab" now grows the tab count instead of toggling back to the first tab.
 
 - 🔘 When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
 	- Note: no obvious desync found - the blur and font both already rebuild on the relevant changes. Needs a live repro (change font, OK, watch the blur) to pin which blur and the exact trigger. Deferred to an interactive pass.
-
-- 🔘 At high blur radius and low softness, the blur has boxy artifacts.
-	- Cause: the glow is a separable blur with a truncated kernel. The hard cutoff leaves a faint edge that low softness amplifies into a visible square, and the linear and s-curve falloffs are not true Gaussians, so their support reads as a diamond or box rather than a circle. The fix is a look-versus-performance tradeoff (wider extent, more taps, or a windowed kernel) that wants eyeballing. Deferred to a visual pass.
 
 - 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
 	- Cause: when the glyph atlas fills up during a long, varied session, text preparation fails and rendering bailed out before the per-frame atlas trim. The atlas never recovered, so text stayed black. The cursor and per-cell backgrounds use a separate renderer, so they kept showing.
@@ -129,27 +62,33 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
+- ✅ Rename "text outer glow" to "text scrim". And all syntactically same variants. In:
+	- Source code
+	- Config file
+	- Settings dialog
+	- README.md
+	- design.md
+	- OPEN bugs and issues in backlog.md (but not any below the "Done" section - need those for historical reference).
+	- Done: config keys `text_glow*`/`cursor_glow` -> `text_scrim*`/`cursor_scrim` (value-preserving migration keeps existing configs); module/struct/idents `glow` -> `scrim`; Settings labels/enums; README, design.md; open backlog items; `03-glow.png` -> `03-scrim.png`. `text_outline` (a sibling, not the scrim) kept its name. (20260708)
+
+- 🔘 Option to include the cursor in the text scrim. Default to off. Still outline it though.
+
+- 🔘 Improve the text scrim
+	- Standard Gaussian Blur function is a poor fit for the text scrim, as a legibility aid. Here's why:
+	- **What's wrong**: To illustrate conceptually: If you apply a background scrim to a solid square using gaussian blur, as the blur radius increases, the total blur shape looks more and more "round". This means that - effectively - the blur behind the square, doesn't look even at the corners. It looks "too strong" along the middle of the sides of the square, and "pulled-in" at the corners. The corners look naked. Basically it looks like a square sitting on top of a separate round fuzzy thing - rather than something evenly integrated with the square. (Which describes the cursor in block mode perfectly, and also why the scrim behind some clusters of letters looks "clumpy".)
+	- **What would be better**: Ideally, the blur would also be square-ish - extending evenly from every angle, from every point along the edge of the square. (With corners rounding off with increasing blur radius, but never actually pulling in below the corners.) In other words, if you measured the density fall-off of the blur starting from the corner and moving outwart diagonally, it should fall-off at about the same rate, as if you measured it from the middle of an edge and moved out perpendicularly.
+	- **Note**: "Gaussian" isn't just a blur function, it also describes blur falloff. (The Gaussian function makes the bell-shaped normal distribution, the falloff is half of one side.) So while the Gaussian *blur* function is probably the wrong blur to use, the *falloff* model is fine. Whether the two concepts can be separated in practice, is an open question for now, but seems doable (but also there's no reason for it to be a hard requirement - and isn't).
+	- **Solutions ideas**:
+		- **Distance field blur**. Aka signed distance field blur. This may be the closest match. Compute the signed distance from every pixel to the boundary of the shape, then apply a falloff function (Gaussian, linear, S, etc.) to that distance. Every point one pixel outside the shape has the same opacity regardless of whether it's beside an edge or outside a corner. The corners stay "full" instead of receding.
+		- **Morphological dilation followed by feathering**. This might be the easiest and most practical to implement. Common in graphics applications. First expand the shape (using a square or other structuring element). In this case, each character individually on their center (and they'd grow into each other). Then feather the expanded edge - again with a falloff function. This also avoids the rounded-cloud appearance.
+		- **Distance transform + transfer function**. Common in vector rendering and font rendering. Rather than convolving with a kernel, opacity is a function of distance from the boundary. I'm not really clear on how that works.
+		- **All of them**: Rather than trying to decide which is best in a vaccuum, add an item to the config file (and a dropdown selection box in Settings) for "Scrim function", to choose among those three - plus the original "Gaussian [ugly]" (at the bottom). And as long as we're doing that, we might as well add a dropdown selection box for "Scrim falloff", including "S-curve, Gaussian, Linear, Logarithmic, Exponential".
+
 - 🔘 Config file: For each feature listed below, allow user to list programs (comma-delimited), that, when running, temporarily disable:
 	- Smooth scrolling. (Comma-delimited.)
 	- Smooth cursor movement and blink. (Comma-delimited.)
-	- Text outer glow and outline
+	- Text scrim and outline
 		- Note: Should not affect existing still-visible text renedered before the program's output, or new output following the output from the affected program that is still visible. (Comma-delimited.)
-
-- 🛠️ Donations model:
-	- ✅ "Support SilkTerm!" button in Help|About, with flyover text of URL it's going to open in a web page.
-		- Done: a filled button under the About text opens `DONATE_URL`. Hovering it shows the full destination URL, and the dialog is widened so it isn't clipped.
-	- ✅ `## Support Silkterm` section in README.md
-	- ✅ `DONATE.md`
-	- ✅ `.github/FUNDING.yml`
-	- ✅ Locked with `.github/CODEOWNERS`:
-		- ✅ Help|About dialog
-		- ✅ /.github/CODEOWNERS  @jim-collier
-		- ✅ /DONATE.md  @jim-collier
-		- ✅ /.github/FUNDING.yml  @jim-collier
-	- ✅ Remove ssh signing keys model (for now).
-	- FYI to-do:
-		- Enable a GitHub Sponsors profile for the Sponsor badge/link to go live (else it 404s)
-		- fill in `.github/FUNDING.yml` handles.
 
 - 🛠️ For screenshots, and videos, use "Monaspace Argon NF Medium".
 	- Done: `utility/screenshots.bash` font stack set to the Monaspace Argon NF family with fallbacks. Note: `font_family` selects a family, not a weight, so it renders at regular weight (true Medium would need a font-weight config). Videos will pick this up when that item is built.
@@ -162,22 +101,33 @@ In each section, items are listed approximately from newest to oldest.
 		- 🔘 Make the 'X' bigger or bolder, and put it inside a button outline nicely balanced within top, right, and bottom margins.
 		- 🔘 Provide brief visual feedback on click - as the tab closes. Maybe the terminal area can close immediately while the tab lingers just enough milliseconds for human perception to notice the click feedback, if that doesn't require rejiggering the whole pipeline.
 
-- 🔘 Standard Gaussian Blur function is a poor fit for text "outer glow", as a legibility aid. Here's why:
-	- **What's wrong**: To illustrate conceptually: If you apply a background glow to a solid square using gaussian blur, as the blur radius increases, the total blur shape looks more and more "round". This means that - effectively - the blur behind the square, doesn't look even at the corners. It looks "too strong" along the middle of the sides of the square, and "pulled-in" at the corners. The corners look naked. Basically it looks like a square sitting on top of a separate round fuzzy thing - rather than something evenly integrated with the square. (Which describes the cursor in block mode perfectly, and also why the outer glow behind some clusters of letters looks "clumpy".)
-	- **What would be better**: Ideally, the blur would also be square-ish - extending evenly from every angle, from every point along the edge of the square. (With corners rounding off with increasing blur radius, but never actually pulling in below the corners.) In other words, if you measured the density fall-off of the blur starting from the corner and moving outwart diagonally, it should fall-off at about the same rate, as if you measured it from the middle of an edge and moved out perpendicularly.
-	- **Note**: "Gaussian" isn't just a blur function, it also describes blur falloff. (The Gaussian function makes the bell-shaped normal distribution, the falloff is half of one side.) So while the Gaussian *blur* function is probably the wrong blur to use, the *falloff* model is fine. Whether the two concepts can be separated in practice, is an open question for now, but seems doable (but also there's no reason for it to be a hard requirement - and isn't).
-	- **Solutions ideas**:
-		- **Distance field blur**. Aka signed distance field blur. This may be the closest match. Compute the signed distance from every pixel to the boundary of the shape, then apply a falloff function (Gaussian, linear, S, etc.) to that distance. Every point one pixel outside the shape has the same opacity regardless of whether it's beside an edge or outside a corner. The corners stay "full" instead of receding.
-		- **Morphological dilation followed by feathering**. This might be the easiest and most practical to implement. Common in graphics applications. First expand the shape (using a square or other structuring element). In this case, each character individually on their center (and they'd grow into each other). Then feather the expanded edge - again with a falloff function. This also avoids the rounded-cloud appearance.
-		- **Distance transform + transfer function**. Common in vector rendering and font rendering. Rather than convolving with a kernel, opacity is a function of distance from the boundary. I'm not really clear on how that works.
-		- **All of them**: Rather than trying to decide which is best in a vaccuum, add an item to the config file (and a dropdown selection box in Settings), to choose among those three, plus the original "Gaussian". And as long as we're doing that, we might as well add a dropdown selection box for 
-
-
-
-
-- 🔘 Option to include the cursor in outer-glow. Default to off. Still outline it though.
-
 - 🔘 Smooth cursor movement should speed up, if it falls too far behind where it actually is.
+
+- 🔘 Ctrl+Shift+N: New window on same directory.
+
+- 🔘 Settings dialog:
+	- 🔘 Remove "Settings" heading text, it's redundant with the window title.
+	- 🔘 Change the buttons at the top for different pages, to tabs.
+		- 🔘 Can cycle through with Ctrl+PgUp|PgDn.
+
+- 🔘 Copy output:
+	- 🔘 Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.
+	- 🔘 The checkbox button and menu item should only be visibly enabled for one pane at a time.
+		- 🔘 If you change tabs or panes, the feature gets turned off. (Visibly and actually.)
+			- 🔘 Changing windows is OK.
+		- 🔘 If you enable the feature on another silkterm window, it gets disabled on other open windows. (Visibly and actually.)
+
+- 🔘 Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
+
+- 🔘 Main menu and right-click menus:
+	- 🔘 Accellerators need to be unique. If running out of memorable word/accelerator keys, remove accellerators from the least-used or least-important items, especially ones that already have hotkeys.
+	- 🔘 List the hotkeys to activate the same function, if they exist. Keep in mind there might be a dynamic hotkey system soon.
+
+- 🔘 New defaults: Background image opacity 10%. Background image blur, 10.
+
+- 🔘 New setting: Background image contrast mask % (100% = half of the longest pixel dimension, 0% = none, auto=based on contrast frequency analysis.)
+
+- 🔘 Change wording of "background image opacity" to "background image visibility" (text and setting), to reflect that it's not just opacity. Still directly controls image/background color mix, but ALSO the contrast and saturation.
 
 - 🔘 CICD process (without --quick): Only after quite major changes, record a demo video:
 	- 🔘 Showing a wide variety of synthetic, anonymized content, with varying burst of text output length.
@@ -195,42 +145,23 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Store the videos under `silkterm/private/demo-video/`, using the same naming/rotation strategy as backups.
 	- 🔘 Store a copy of only the most recent video probably under `siklterm/github/source/video/demo.{ext}`. Make sure README.md embeds or references it visibly near the top.
 
-- 🔘 Ctrl+Shift+N: New window on same directory.
-
-- 🔘 Copy output:
-	- 🔘 Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.
-	- 🔘 The checkbox button and menu item should only be visibly enabled for one pane at a time.
-		- 🔘 If you change tabs or panes, the feature gets turned off. (Visibly and actually.)
-			- 🔘 Changing windows is OK.
-		- 🔘 If you enable the feature on another silkterm window, it gets disabled on other open windows. (Visibly and actually.)
-
-- 🔘 Settings dialog:
-	- 🔘 Remove "Settings" heading text, it's redundant with the window title.
-	- 🔘 Change the buttons at the top for different pages, to tabs.
-		- 🔘 Can cycle through with Ctrl+PgUp|PgDn.
+- 🔘 (Originally filed as bug): At high blur radius and low softness, the blur has boxy artifacts.
+	- Cause: the scrim is a separable blur with a truncated kernel. The hard cutoff leaves a faint edge that low softness amplifies into a visible square, and the linear and s-curve falloffs are not true Gaussians, so their support reads as a diamond or box rather than a circle. The fix is a look-versus-performance tradeoff (wider extent, more taps, or a windowed kernel) that wants eyeballing. Deferred to a visual pass.
+	- 🔘 New feature: Adjustable blur quality in settings:
+		- High: Very high quality, may require a higher-end GPU, no visible artifacts at all.
+		- Medium (default): The current quality.
+		- Low: Trash quality, only looks OK at small blur radii. For VMs or remote sessions with punishing graphics. (In fact maybe this should be auto-detected...)
 
 - After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
-
-- 🔘 Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
-
-- 🔘 Main menu and right-click menus:
-	- 🔘 Accellerators need to be unique. If running out of memorable word/accelerator keys, remove accellerators from the least-used or least-important items, especially ones that already have hotkeys.
-	- 🔘 List the hotkeys to activate the same function, if they exist. Keep in mind there might be a dynamic hotkey system soon.
 
 - 🔘 Hyperlinks:
 	- 🔘 Clickable - e.g. Ctrl+click, or right-click then includes "Copy link" and "Open link".
 	- 🔘 Auto-underline when mouse is underneath.
 
-- 🔘 New defaults: Background image opacity 10%. Background image blur, 10.
-
-- 🔘 New setting: Background image contrast mask % (100% = half of the longest pixel dimension, 0% = none, auto=based on contrast frequency analysis.)
-
 - 🔘 When reducing background image opacity, also reduce contrast and saturation. Add tunable parameters to the config file:
 	- 🔘 Minimum contrast % (at 0% background image opacity - not useful but establishes the floor). Lets try a default of 50%.
 	- 🔘 Maximum contrast % (at 100% background image opacity). Default 50%.
 	- 🔘 Similar settings and defaults for saturation.
-
-- 🔘 Change wording of "background image opacity" to "background image visibility" (text and setting), to reflect that it's not just opacity. Still directly controls image/background color mix, but ALSO the contrast and saturation.
 
 - 🔘 Need a way to detect maximum and average brightness of background image - or some human hueristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
 	- 🔘 Really what I'm after, is this resulting effect. The implimentation is up to research:
@@ -474,6 +405,41 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - Bugs
 
+- ✅ Choosing "Tabs|New Tab" the first time, opens a second tab. Doing it again, changes to the first tab, rather than opening a third tab.
+	- Cause: a dropdown opens flush under the menu bar, so its top item ("New Tab") sits in the tab-bar band. The mouse handler checked the tab-bar hit before the open-menu hit, so once more than one tab existed (tab bar shown) the tab bar stole the click and selected a tab instead of firing the item. The first New Tab worked only because there was no tab bar yet.
+	- Fixed: skip the tab-bar click handler while a dropdown is open, so the click reaches the menu.
+	- Verified: repeated "Tabs|New Tab" now grows the tab count instead of toggling back to the first tab.
+
+- ✅ Bug #t78br: "The Notorious 'Bouncing Shadow' nano bug" (which we'll call this subset) is still still there. (At least the wobblyness seems to be fixed, which is why this now gets its own issue.):
+	- Steps to reproduce:
+		- Open nano with a long file - say, ~/.config/silkterm/config.toml.
+		- Observe:
+			- A sipgle-line bar at the top, rendered with terminal's text color as the bar's background color, and (apparently) the terminal's background color as the bar's text color. It says "GNU nano 8.7.1" on the left, and the open filename in the center. This bar never moves or scrolls, for as long as nano is open. For reference, we'll call this UI element, 'TIMMY THE TOP BAR'.
+			- Nano has reserved three rows at the bottom of the terminal, for itself as fixed, non-scrolling UI areas. The bottom two rows show the user what hotkeys they can use - both in the same inverse text style as 'TIMMY THE TOP BAR', and also regular terminal text. For reference, we'll call this UI element: 'BILLY THE BOTTOM AREA'
+			- The area that file content is rendered in, and the user can move the cursor around and edit in, we'll call 'THE EDIT AREA' for reference.
+			- The entire terminal, in vertical terms, is composed of - by the definition of our words, from top-to-bottom: 'TIMMY THE TOP BAR', 'THE EDIT AREA', and 'BILLY THE BOTTOM AREA'.
+		- Action:
+			- Now contiuously hold down the 'down arrow' key to move "down" the file contents.
+			- When the cursor get to the bottom edge of 'THE EDIT AREA', keeep holding down 'down arrow'.
+		- Observe:
+			- When nano pushes the content from below its view up into view, what appears to be the dark outer glow + outline effect from the text on 'TIMMY THE TOP BAR', visually "bounces" down from the top, visually into 'THE EDIT AREA'.
+			- For reference, we'll call that text 'TIMMYS TEXT SHADOW',
+			- When you stop scrolling, 'TIMMYS TEXT SHADOW' gradually "settles" back "under" 'TIMMY THE TOP BAR'.
+		- Observe:
+			- You can make the same thing happen when pressing the down-arrow key one at a time, it's just not nearly as pronounced of an effect.
+		- Observe:
+			- You can make the same thing happen when scrolling the text in the same direction by using the mouse wheel quickly (which in nano is rewired to drive just the cursor, not 'THE EDIT AREA' - but with fast enough mouse wheel moves, the effects observed above can be much more dramatic.
+		- Action:
+			- Move all the way to the bottom of the file, so we can test the same thing as above but in reverse.
+			- Now contiuously hold down the 'up arrow' key to move "up" the file contents.
+			- When the cursor get to the bottom edge of 'TIMMY THE TOP BAR', keeep holding down 'up arrow'.
+		- Observe:
+			- The same thing that happened to 'TIMMYS TEXT SHADOW' previously, happens in the reverse vertical direction now only involving the inverse text in 'BILLY THE BOTTOM AREA'. It visually bounces UP into 'THE EDIT AREA'.
+			- At the same time and synchronized with, visually identical copies of the normal text in 'BILLY THE BOTTOM AREA' also bounce up into 'THE EDIT AREA'. Together they seem to exhibit the same movement behavior as 'TIMMYS TEXT SHADOW', except flipped vertically.
+	- Cause: the sliding draw is the whole frame translated by the eased offset, clipped only at the band boundaries - so the top bar's row translated down (and the bottom area's rows translated up) landed inside the scroll-region clip and rendered as translated text copies riding the ease. Text and its glow only (cell backgrounds are placed per row), which is why it reads as a text shadow at the top and as text copies at the bottom. (20260708)
+	- Fixed: the region clip now welds to the shifted content's own edge; the strip fills the gap on the far side of the weld, and translated band rows can no longer enter. (20260708)
+	- Verified: reproduced the ghost in mid-slide frame dumps before the fix, gone after; scroll harness all four scenes pass; 113 lib tests. Feel-test passed; merged with the parent spike. (20260708)
+
 - ✅ A bad config value could kill the whole terminal. Setting `output_ease_lines` above 16 aborted on the first scrolling output, every launch. (20260707)
 	- Found: code review, 20260707.
 	- Cause: the value was never range-checked at load. The scroll code uses it as the lower bound of a clamp, and a lower bound above the cap makes that clamp abort.
@@ -523,6 +489,43 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Inverted text (e.g. Nano headers) is thin and hard-to-read.
 	- Cause: this was the actual nano complaint (the "shadow jump" language was describing it). Reverse video (dark on light) renders visually thinner than the same-weight light-on-dark text, an inherent effect that other terminals also show. The glow only boosts light-on-dark text, so inverse text got no readability help.
 	- Fixed: a new `embolden_inverse` config bool (default true) renders reverse-video runs bold so they read as strongly as normal text. Verified: inverse text is visibly thicker with it on, though the delta is modest with the default font. Needs a feel-test; if too subtle, the next step is faux-bold (stroke dilation).
+
+- ✅ The Notorious "Bouncing Shadow in Wobbly Nano" bug [20260707]:
+	- **NOTE**:
+		- The "Bouncing Shadow" portion of this has been moved to #t78br, "The Notorious 'Bouncing Shadow' nano bug", to tackle independently.
+		- The "wobbly nano" portion of is fixed.
+		- **Overall, this was documented with a poor (but growing) understanding of both, so is not the best representation of either. Closing it for good. If regressions occur, they'll get new issues.**
+	- Originally: Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
+	- Cause: the slide shifted the scroll region by several lines but only one row was ever drawn, so the revealed strip was bare background. The scrolled-off lines are gone from the grid, so there was nothing real to fill it with.
+	- Fixed: retained-frame slide. The pane keeps the previous frame's text and draws it, clipped to the revealed strip, so the strip fills with the real outgoing content while the current frame slides in over it.
+	- Verified: across continuous multi-line slides the content fills top to bottom with no blank band.
+	- Verified:
+		- Works perfectly in `less`.
+		- `nano` exhibits none of the bugs listed above, but it also doesn't scroll smoothly, either with the mouse wheel or via cursor. (In fact, the mouse wheel just moves the cursor up and down. That's standard `nano` behavior, but the note is that scrolling isn't smooth. The cursor vertical movement also isn't smooth (horizontal is). Nano doesn't neeed to have a per-app fix, if it can even be "fixed".
+	- 🛠️ muffer now scrolls smoothly on output - but still not mouse wheel.
+		- Cause: a wheel notch makes the app repaint a bigger jump than line-by-line output, past the detection window, so it read as not a clean scroll and hard-cut. Raised the detection cap (gated by `smooth_scroll_apps`).
+		- Note: the slide retains only the single previous frame, so fast wheeling can still lag about one step (looks like snapping). Smoothing that fully needs retaining more frames, a bigger change. Feel-test the cap first.
+	- 🛠️ Static-top-band fix (nano/muffer wheel = no change; less fine). Dogfood: the cap-24 bump didn't help nano or muffer on the wheel (muffer wheels 1 line/notch, well inside the window - so it was never a cap problem).
+		- Cause: the shift detector only matched a run anchored at the top row, and the renderer slid the whole pane from its top. `less` fills from the top with only a bottom status line, so it worked. `nano` and `muffer` keep a static title bar at the top; its unchanging first row broke the top-anchored match, so no slide engaged, and even if it had the title would bounce.
+		- Fixed: the shift detector now matches wherever the most rows translate, tolerating static bands at both ends, guarded so a static or blank screen can't false-trigger. A static top band is detected and its title bar redraws unshifted while the region below it slides. Apps with no top band are unchanged, and app-scroll stays alt-screen only, so apt is unaffected.
+		- Pending: a feel-test - nano and muffer wheel one notch should ease, not snap, the title bar should stay put, and less should be unchanged. Still gated by `smooth_scroll_apps`.
+	- ✋ Residual band jitter during a slide (nano; "almost perfect" otherwise). Two symptoms, different causes:
+		- Text moving up (content scrolls up): the drop-shadow under the inverse-video header title jumps down.
+			- Note: a partial fix stopped the glow from applying over any cell with its own solid background (reverse video, coloured background, selection), since those already have full contrast. This removed the header's static halo but did not fix the reported symptom, which is a motion artifact.
+			- Cause: the retained-frame slide fills the revealed strip with the previous frame's text but does not glow that strip. During a down-slide the rows just below the header lose their readability backing, and as the slide settles the backed and unbacked boundary marches down - that is the shadow jumping down.
+			- Fixed: the glow pass now also glows the previous-frame strip, so revealed rows keep their readability backing and the boundary no longer sweeps. Guarded so it only applies when the relevant static band is detected, which clips the previous frame's header and status out of the glow.
+			- Verified: the header stays clean and the strip is glowed, with no blobbing in the edge case. Needs a feel-test on real nano to confirm the wheel and cursor feel.
+		- Text moving down fast: the bottom two lines jump up. Likely the same un-glowed-strip issue at the bottom edge, now covered by the same fix. If any residual jump remains after the feel-test, the leftover is band re-detection mid-ease; the fix would be to hold band sizes stable across an in-progress ease.
+		- Note: freezing the band sizes did not help (re-tested: looks the same as before). The bands were already stable, so band jitter was never the cause. The real signal was the scroll offset itself oscillating frame to frame, which is the bounce.
+		- Note: an accumulation attempt made it worse (re-tested: jumps much farther). Accumulating the offset for the current content was right, but accumulating the strip fill from one stale snapshot was wrong - when the shift outgrew the scroll region the snapshot was re-captured, jumping the reveal strip by a whole screenful. That periodic jump was the farther bounce.
+		- Fixed: keep the offset accumulating for smooth content, but re-snapshot the previous frame every step so the strip is always one fresh step back. One retained frame only fills a one-step strip, so a fast burst could still open a blank band; a lag ramp on the ease bounds that by easing faster as the lag grows. A regression harness measured no content bounce and no band-boundary jumps across gentle, fast, and wheel scrolling, with the blank band shrinking to about one line. But a residual on real nano over a background image was still visible.
+		- Deferred: title-bar apps hard-cut for now - the smooth slide only engages when there is no static top band, so `less` still slides and nano and muffer just page-redraw as before, with no slide and so no bounce. The enter and exit hard-cut fixes are untouched. Re-enabling the slide for title-bar apps needs multi-frame retention so the reveal strip always fills regardless of lag. Verified: title-bar apps hard-cut while `less` still eases smoothly.
+		- ✅ Re-enabled the slide for title-bar apps, replacing the retained-frame fill with a scrolled-off strip. (20260707)
+			- Cause of the residual: filling the reveal from one retained frame is structural bounce. The fill could trail the ease by a few lines - a bare, un-glowed band whose height varied step to step, the pulsing shadow under the title over a background image - and the fill repositioned at every re-capture.
+			- Fixed: each frame the styled rows are snapshotted, and the rows a detected step pushes out of the region are kept in a small strip, drawn welded to the content edge and riding the same eased offset. The gap is always exactly filled, nothing repositions, and the strip carries its own cell backgrounds and glow. Band bleed is impossible by construction (only region rows are ever captured), so the old glow guards went away.
+			- Fixed alongside: sliding rows' background rects and the cursor now clamp to the scroll region, so an inverse-video or coloured row can't poke into the title/status bands mid-slide.
+			- Verified: headless scroll harness - all four scenes (less, vim, nano, muffer) slide monotone with zero bounces and correct bands; 112 library tests including strip ordering, trimming, direction flip, and row selection.
+			- Feel-test passed after the #t78br band-ghost fix; merged to main. (20260708)
 
 - ✅ "Right-click bug" clarification.
 	- Cause: a mouse-tracking app (muffer/vim/tmux) grabs the mouse, so the right-click was forwarded to it (muffer pastes on right-click) instead of opening our menu; and a click meant for an open menu was being reported to the app underneath, so menu items did nothing. `nano`/`less` don't grab the mouse, hence unaffected.
@@ -677,6 +680,19 @@ In each section, items are listed approximately from newest to oldest.
 	- Fix: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
 
 #### Done - new features and enhancements
+
+- ✅ Donations model:
+	- ✅ "Support SilkTerm!" button in Help|About, with flyover text of URL it's going to open in a web page.
+		- Done: a filled button under the About text opens `DONATE_URL`. Hovering it shows the full destination URL, and the dialog is widened so it isn't clipped.
+	- ✅ `## Support Silkterm` section in README.md
+	- ✅ `DONATE.md`
+	- ✅ `.github/FUNDING.yml`
+	- ✅ Locked with `.github/CODEOWNERS`:
+		- ✅ Help|About dialog
+		- ✅ /.github/CODEOWNERS  @jim-collier
+		- ✅ /DONATE.md  @jim-collier
+		- ✅ /.github/FUNDING.yml  @jim-collier
+	- ✅ Remove ssh signing keys model (for now).
 
 - ✅ Cursor animation immediately resets and starts over on keypresses (typing, editing, or moving). That's not very smooth, it shouldn't do that.
 	- Add options:
