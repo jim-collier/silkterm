@@ -160,7 +160,7 @@ p; printf "git status\n"
 printf "On branch %sfeature/smooth-scroll%s\n" "\$(c '1;36')" "\$(r)"
 printf "Your branch is up to date with 'origin/feature/smooth-scroll'.\n\n"
 printf "Changes not staged for commit:\n"
-printf "  %smodified:   src/render/glow.rs%s\n"   "\$(c 31)" "\$(r)"
+printf "  %smodified:   src/render/scrim.rs%s\n"   "\$(c 31)" "\$(r)"
 printf "  %smodified:   src/render/scroll.rs%s\n" "\$(c 31)" "\$(r)"
 printf "  %smodified:   src/pane.rs%s\n"          "\$(c 31)" "\$(r)"
 printf "Untracked files:\n"
@@ -181,12 +181,12 @@ printf "     %sRunning%s unittests src/main.rs\n\n" "\$(c '1;32')" "\$(r)"
 printf "running 86 tests\n"
 printf "%stest%s scroll::eases_to_rest ... %sok%s\n" "\$(r)" "\$(r)" "\$(c '1;32')" "\$(r)"
 printf "%stest%s pane::split_thirds ... %sok%s\n"    "\$(r)" "\$(r)" "\$(c '1;32')" "\$(r)"
-printf "%stest%s glow::border_dilates ... %sok%s\n\n" "\$(r)" "\$(r)" "\$(c '1;32')" "\$(r)"
+printf "%stest%s scrim::border_dilates ... %sok%s\n\n" "\$(r)" "\$(r)" "\$(c '1;32')" "\$(r)"
 printf "test result: %sok%s. 86 passed; 0 failed; 0 ignored\n\n" "\$(c '1;32')" "\$(r)"
 p; printf "git log --oneline -4\n"
 printf "%s1a8bc3f%s pane: equalize a same-dir split run\n" "\$(c 33)" "\$(r)"
 printf "%sc894ebf%s scroll: ramp ease speed on burst\n"    "\$(c 33)" "\$(r)"
-printf "%se25498e%s glow: dilate outline before composite\n" "\$(c 33)" "\$(r)"
+printf "%se25498e%s scrim: dilate outline before composite\n" "\$(c 33)" "\$(r)"
 printf "%s7c137bc%s themes: SilkTerm / Matrix / Amber\n\n"  "\$(c 33)" "\$(r)"
 p; printf "du -sh target/release/silkterm\n"
 printf "%s12M%s\ttarget/release/silkterm\n\n" "\$(c '1;32')" "\$(r)"
@@ -238,7 +238,7 @@ EOF
 ${sceneHead}
 g(){ printf "%s%s%s " "\$(c '1;33')" "\$1" "\$(r)"; }
 printf "%s*%s %s(%sHEAD -> %sfeature/smooth-scroll%s%s)%s smooth output easing\n" "\$(c 31)" "\$(r)" "\$(c 33)" "\$(c '1;36')" "\$(c '1;32')" "\$(r)" "\$(c 33)" "\$(r)"; g 4a1c8f0
-printf "%s*%s glow: dilate outline before composite\n" "\$(c 31)" "\$(r)"; g 9d2e7b1
+printf "%s*%s scrim: dilate outline before composite\n" "\$(c 31)" "\$(r)"; g 9d2e7b1
 printf "%s*%s pane: equalize a same-dir split run\n" "\$(c 31)" "\$(r)"; g 1a8bc3f
 printf "%s*%s scroll: ramp ease speed on burst\n" "\$(c 31)" "\$(r)"; g c894ebf
 printf "%s*%s config: reorder to template on load\n" "\$(c 31)" "\$(r)"; g e25498e
@@ -246,8 +246,8 @@ printf "%s*%s themes: SilkTerm / Matrix / Amber\n" "\$(c 31)" "\$(r)"; g 7c137bc
 exec sleep 3600
 EOF
 
-	## --- glow / transparency / bg-image flair (neofetch-ish) ---------------
-	cat > "${workDir}/glow.sh" <<EOF
+	## --- scrim / transparency / bg-image flair (neofetch-ish) ---------------
+	cat > "${workDir}/scrim.sh" <<EOF
 ${sceneHead}
 k(){ printf "%s%-9s%s %s\n" "\$(c '1;36')" "\$1" "\$(r)" "\$2"; }
 printf "\n"
@@ -410,13 +410,13 @@ fMainShot() {
 
 fSceneShell() {
 	local -r cfg="${workDir}/shell.toml"
-	fWriteConfig "$cfg" 'text_glow = true' 'text_glow_radius = 3.0' 'text_glow_softness = 0.6' 'text_outline = 1.5'
+	fWriteConfig "$cfg" 'text_scrim = true' 'text_scrim_radius = 3.0' 'text_scrim_softness = 0.6' 'text_outline = 1.5'
 	fMainShot "01-shell" "$cfg" -- --shell "${workDir}/shell.sh"
 }
 
 fSceneSplits() {
 	local -r cfg="${workDir}/splits.toml"
-	fWriteConfig "$cfg" 'text_glow = true' 'text_glow_radius = 2.5' 'text_outline = 1.5'
+	fWriteConfig "$cfg" 'text_scrim = true' 'text_scrim_radius = 2.5' 'text_outline = 1.5'
 	fMainShot "02-splits" "$cfg" -- \
 		--font-size 18 \
 		--shell "${workDir}/split-edit.sh" \
@@ -424,21 +424,21 @@ fSceneSplits() {
 		--new-pane --splits=b --down --size=46% --shell "${workDir}/split-log.sh"
 }
 
-fSceneGlow() {
-	local -r cfg="${workDir}/glow.toml"
+fSceneScrim() {
+	local -r cfg="${workDir}/scrim.toml"
 	local -r bg="${workDir}/bg.png"
 	fMakeBgImage "$bg"
 	fWriteConfig "$cfg" \
 		'transparent_background = true' 'opacity = 0.78' \
 		"background_image = \"${bg}\"" 'background_opacity = 0.55' \
 		'background_fit = "zoom"' 'background_blur = 6.0' \
-		'text_glow = true' 'text_glow_radius = 5.0' 'text_glow_softness = 0.35' 'text_outline = 2.0'
-	fMainShot "03-glow" "$cfg" -- --font-size 26 --hide-menu=yes --shell "${workDir}/glow.sh"
+		'text_scrim = true' 'text_scrim_radius = 5.0' 'text_scrim_softness = 0.35' 'text_outline = 2.0'
+	fMainShot "03-scrim" "$cfg" -- --font-size 26 --hide-menu=yes --shell "${workDir}/scrim.sh"
 }
 
 fSceneTabs() {
 	local -r cfg="${workDir}/tabs.toml"
-	fWriteConfig "$cfg" 'text_glow = true' 'text_glow_radius = 3.0' 'text_outline = 1.5'
+	fWriteConfig "$cfg" 'text_scrim = true' 'text_scrim_radius = 3.0' 'text_outline = 1.5'
 	## main tab (0) runs the showcase; two more tabs make the tab bar visible;
 	## re-select tab 0 so the showcase is the active/front tab in the shot.
 	fMainShot "04-tabs" "$cfg" -- \
@@ -451,7 +451,7 @@ fSceneTabs() {
 fSceneSettings() {
 	fStep "Scene 05-settings"
 	local -r cfg="${workDir}/settings.toml"
-	fWriteConfig "$cfg" 'text_glow = true' 'text_glow_radius = 3.0'
+	fWriteConfig "$cfg" 'text_scrim = true' 'text_scrim_radius = 3.0'
 	## render at 2x so the (small) dialog is crisp and large enough to fill a shot.
 	local pid; pid="$(fLaunch "$cfg" 2 -- --shell "${workDir}/shell.sh")"
 	fWaitDump || true   ## ensures the main window is up before we poke it
@@ -498,7 +498,7 @@ fMain() {
 
 	fSceneShell    || fWarn "01-shell failed"
 	fSceneSplits   || fWarn "02-splits failed"
-	fSceneGlow     || fWarn "03-glow failed"
+	fSceneScrim     || fWarn "03-scrim failed"
 	fSceneTabs     || fWarn "04-tabs failed"
 	fSceneSettings || fWarn "05-settings failed"
 

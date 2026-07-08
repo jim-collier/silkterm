@@ -101,7 +101,7 @@ cat >"$cfg" <<-'TOML'
 	smooth_scroll_apps = true
 	scroll_tau_ms = 120
 	transparent_background = false
-	text_glow = false
+	text_scrim = false
 	background_image = ""
 	columns = 100
 	rows = 34

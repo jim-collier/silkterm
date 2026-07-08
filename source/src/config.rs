@@ -109,14 +109,14 @@ pub struct Settings {
 	pub background_opacity: f32,           // image visibility 0..1
 	pub background_fit: Fit,
 	pub background_blur: f32, // Gaussian blur sigma applied to the image (0 = none)
-	pub text_glow: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
-	pub text_glow_radius: f32, // glow blur sigma in px
-	pub text_glow_softness: f32, // 0 = hard/solid glow, 1 = soft/faint (maps to the intensity boost)
-	pub text_outline: f32, // antialiased outline around glyphs, px (0 = none; glow colour rules)
-	pub text_glow_ramp: String, // halo falloff: "gaussian" | "linear" | "s"
-	pub text_glow_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
-	pub embolden_inverse: bool, // render reverse-video (dark-on-light) text bold so it reads as strongly as normal text (the glow only boosts light-on-dark)
-	pub cursor_glow: bool,      // cursor gets the same halo, merged with the text glow
+	pub text_scrim: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
+	pub text_scrim_radius: f32, // scrim blur sigma in px
+	pub text_scrim_softness: f32, // 0 = hard/solid scrim, 1 = soft/faint (maps to the intensity boost)
+	pub text_outline: f32, // antialiased outline around glyphs, px (0 = none; scrim colour rules)
+	pub text_scrim_ramp: String, // halo falloff: "gaussian" | "linear" | "s"
+	pub text_scrim_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
+	pub embolden_inverse: bool, // render reverse-video (dark-on-light) text bold so it reads as strongly as normal text (the scrim only boosts light-on-dark)
+	pub cursor_scrim: bool,     // cursor gets the same halo, merged with the text scrim
 	pub cursor_size_height: f32, // cursor height, 1..100% of the cell (from the bottom)
 	pub cursor_size_width: f32, // cursor width, 1..100% of the cell (from the left)
 	pub cursor_animation: String, // "none" | "phase" | "pulse_vertical" | "pulse_horizontal" | "pulse_both"
@@ -167,14 +167,14 @@ impl Default for Settings {
 			background_opacity: 0.33, // image visibility relative to bg color
 			background_fit: Fit::Stretch,
 			background_blur: 8.0,
-			text_glow: true,
-			text_glow_radius: 5.0,
-			text_glow_softness: 0.5,
+			text_scrim: true,
+			text_scrim_radius: 5.0,
+			text_scrim_softness: 0.5,
 			text_outline: 2.0,
-			text_glow_ramp: "s".to_string(),
-			text_glow_regular_weight: true,
+			text_scrim_ramp: "s".to_string(),
+			text_scrim_regular_weight: true,
 			embolden_inverse: true,
-			cursor_glow: true,
+			cursor_scrim: true,
 			cursor_size_height: 100.0, // full height
 			cursor_size_width: 25.0,   // ~quarter-width bar
 			cursor_animation: "pulse_vertical".to_string(),
@@ -365,29 +365,29 @@ pub fn persist(orig: &Settings, s: &Settings) {
 	if s.background_blur != orig.background_blur {
 		doc["background_blur"] = value(r(s.background_blur));
 	}
-	if s.text_glow != orig.text_glow {
-		doc["text_glow"] = value(s.text_glow);
+	if s.text_scrim != orig.text_scrim {
+		doc["text_scrim"] = value(s.text_scrim);
 	}
-	if s.text_glow_radius != orig.text_glow_radius {
-		doc["text_glow_radius"] = value(r(s.text_glow_radius));
+	if s.text_scrim_radius != orig.text_scrim_radius {
+		doc["text_scrim_radius"] = value(r(s.text_scrim_radius));
 	}
-	if s.text_glow_softness != orig.text_glow_softness {
-		doc["text_glow_softness"] = value(r(s.text_glow_softness));
+	if s.text_scrim_softness != orig.text_scrim_softness {
+		doc["text_scrim_softness"] = value(r(s.text_scrim_softness));
 	}
 	if s.text_outline != orig.text_outline {
 		doc["text_outline"] = value(r(s.text_outline));
 	}
-	if s.text_glow_ramp != orig.text_glow_ramp {
-		doc["text_glow_ramp"] = value(&s.text_glow_ramp);
+	if s.text_scrim_ramp != orig.text_scrim_ramp {
+		doc["text_scrim_ramp"] = value(&s.text_scrim_ramp);
 	}
-	if s.text_glow_regular_weight != orig.text_glow_regular_weight {
-		doc["text_glow_regular_weight"] = value(s.text_glow_regular_weight);
+	if s.text_scrim_regular_weight != orig.text_scrim_regular_weight {
+		doc["text_scrim_regular_weight"] = value(s.text_scrim_regular_weight);
 	}
 	if s.embolden_inverse != orig.embolden_inverse {
 		doc["embolden_inverse"] = value(s.embolden_inverse);
 	}
-	if s.cursor_glow != orig.cursor_glow {
-		doc["cursor_glow"] = value(s.cursor_glow);
+	if s.cursor_scrim != orig.cursor_scrim {
+		doc["cursor_scrim"] = value(s.cursor_scrim);
 	}
 	if s.columns != orig.columns {
 		doc["columns"] = value(s.columns as i64);
@@ -460,7 +460,7 @@ pub fn to_linear(b: u8) -> f32 {
 }
 
 // Inverse of to_linear: encode a linear value back to an sRGB byte. The one
-// Rust-side copy - the WGSL lin2srgb in gfx.rs/glow.rs is necessarily separate.
+// Rust-side copy - the WGSL lin2srgb in gfx.rs/scrim.rs is necessarily separate.
 pub fn from_linear_u8(c: f32) -> u8 {
 	let c = c.clamp(0.0, 1.0);
 	let s = if c <= 0.0031308 {
@@ -496,14 +496,14 @@ struct RawConfig {
 	background_blur: Option<f32>,
 	theme: Option<String>,
 	theme_mode: Option<String>,
-	text_glow: Option<bool>,
-	text_glow_radius: Option<f32>,
-	text_glow_softness: Option<f32>,
+	text_scrim: Option<bool>,
+	text_scrim_radius: Option<f32>,
+	text_scrim_softness: Option<f32>,
 	text_outline: Option<f32>,
-	text_glow_ramp: Option<String>,
-	text_glow_regular_weight: Option<bool>,
+	text_scrim_ramp: Option<String>,
+	text_scrim_regular_weight: Option<bool>,
 	embolden_inverse: Option<bool>,
-	cursor_glow: Option<bool>,
+	cursor_scrim: Option<bool>,
 	cursor_size_height: Option<f32>,
 	cursor_size_width: Option<f32>,
 	cursor_animation: Option<String>,
@@ -681,27 +681,27 @@ fn resolve(raw: RawConfig) -> Settings {
 			.background_blur
 			.unwrap_or(d.background_blur)
 			.clamp(0.0, 100.0),
-		text_glow: raw.text_glow.unwrap_or(d.text_glow),
-		text_glow_radius: raw
-			.text_glow_radius
-			.unwrap_or(d.text_glow_radius)
+		text_scrim: raw.text_scrim.unwrap_or(d.text_scrim),
+		text_scrim_radius: raw
+			.text_scrim_radius
+			.unwrap_or(d.text_scrim_radius)
 			.clamp(0.0, 50.0),
-		text_glow_softness: raw
-			.text_glow_softness
-			.unwrap_or(d.text_glow_softness)
+		text_scrim_softness: raw
+			.text_scrim_softness
+			.unwrap_or(d.text_scrim_softness)
 			.clamp(0.0, 1.0),
 		text_outline: raw.text_outline.unwrap_or(d.text_outline).clamp(0.0, 8.0),
-		text_glow_ramp: match raw.text_glow_ramp.as_deref() {
+		text_scrim_ramp: match raw.text_scrim_ramp.as_deref() {
 			Some("linear") => "linear".to_string(),
 			Some("gaussian") => "gaussian".to_string(),
 			Some("s") => "s".to_string(),
-			_ => d.text_glow_ramp.clone(), // missing/unknown -> default (S-curve)
+			_ => d.text_scrim_ramp.clone(), // missing/unknown -> default (S-curve)
 		},
-		text_glow_regular_weight: raw
-			.text_glow_regular_weight
-			.unwrap_or(d.text_glow_regular_weight),
+		text_scrim_regular_weight: raw
+			.text_scrim_regular_weight
+			.unwrap_or(d.text_scrim_regular_weight),
 		embolden_inverse: raw.embolden_inverse.unwrap_or(d.embolden_inverse),
-		cursor_glow: raw.cursor_glow.unwrap_or(d.cursor_glow),
+		cursor_scrim: raw.cursor_scrim.unwrap_or(d.cursor_scrim),
 		cursor_size_height: raw
 			.cursor_size_height
 			.unwrap_or(d.cursor_size_height)
@@ -877,6 +877,12 @@ const CONFIG_RENAMES: &[(&str, &str)] = &[
 	("cursor_size_vertical", "cursor_size_height"),
 	("cursor_size_horizontal", "cursor_size_width"),
 	("text_glow_border", "text_outline"),
+	("text_glow", "text_scrim"),
+	("text_glow_radius", "text_scrim_radius"),
+	("text_glow_softness", "text_scrim_softness"),
+	("text_glow_ramp", "text_scrim_ramp"),
+	("text_glow_regular_weight", "text_scrim_regular_weight"),
+	("cursor_glow", "cursor_scrim"),
 ];
 // Keys that no longer exist and should be removed from an existing config. The
 // cursor_shape/cursor_blink_style/cursor_insert_shape line was superseded by the
@@ -1367,20 +1373,20 @@ opacity = 0.95
 # background_blur = 8.0
 
 ##=============================================================================
-## Text glow
+## Text scrim
 ##=============================================================================
 
-## Text readability glow: a blurry background-colored halo behind each glyph, so
+## Text readability scrim: a blurry background-colored halo behind each glyph, so
 ## text stays legible over a light/busy background or near-transparent terminal.
-## On by default; uncomment and set text_glow = false to disable.
-# text_glow = true
-# text_glow_radius = 5.0     ## glow blur sigma in pixels
-# text_glow_softness = 0.5   ## 0 = hard/solid glow, 1 = soft/faint
-# text_outline = 2.0         ## antialiased outline around glyphs, in pixels (0 = none)
-# text_glow_ramp = "s"       ## halo falloff shape: "gaussian", "linear", or "s"
-# text_glow_regular_weight = true  ## blur bold text at regular weight so its halo matches non-bold text
-# embolden_inverse = true    ## render reverse-video (dark-on-light) text bold so it reads as strongly as normal
-# cursor_glow = true         ## the cursor gets the same halo, merged with the text glow
+## On by default; uncomment and set text_scrim = false to disable.
+# text_scrim = true
+# text_scrim_radius = 5.0     ## scrim blur sigma in pixels
+# text_scrim_softness = 0.5   ## 0 = hard/solid scrim, 1 = soft/faint
+# text_outline = 2.0          ## antialiased outline around glyphs, in pixels (0 = none)
+# text_scrim_ramp = "s"       ## halo falloff shape: "gaussian", "linear", or "s"
+# text_scrim_regular_weight = true  ## blur bold text at regular weight so its halo matches non-bold text
+# embolden_inverse = true     ## render reverse-video (dark-on-light) text bold so it reads as strongly as normal
+# cursor_scrim = true         ## the cursor gets the same halo, merged with the text scrim
 
 ##=============================================================================
 ## Cursor
@@ -1524,13 +1530,13 @@ mod tests {
 	#[test]
 	fn changed_defaults() {
 		let d = Settings::default();
-		assert!(d.text_glow, "text_glow should default on");
-		assert_eq!(d.text_glow_radius, 5.0);
-		assert_eq!(d.text_glow_softness, 0.5);
+		assert!(d.text_scrim, "text_scrim should default on");
+		assert_eq!(d.text_scrim_radius, 5.0);
+		assert_eq!(d.text_scrim_softness, 0.5);
 		assert_eq!(d.text_outline, 2.0);
-		assert_eq!(d.text_glow_ramp, "s");
-		assert!(d.text_glow_regular_weight);
-		assert!(d.cursor_glow);
+		assert_eq!(d.text_scrim_ramp, "s");
+		assert!(d.text_scrim_regular_weight);
+		assert!(d.cursor_scrim);
 		assert_eq!(d.background_blur, 8.0);
 	}
 
@@ -1586,6 +1592,32 @@ mod tests {
 		assert!(
 			out.contains("text_outline = 2.03"),
 			"value preserved: {out:?}"
+		);
+	}
+
+	// The text-glow -> text-scrim rename preserves values and active/commented state.
+	#[test]
+	fn migrate_renames_glow_to_scrim() {
+		let out = migrate_config_text(
+			"text_glow = false\ntext_glow_radius = 7.0\n# cursor_glow = false\ntext_glow_ramp = \"linear\"\n",
+		)
+		.expect("should rename");
+		assert!(!out.contains("text_glow"), "old names gone: {out:?}");
+		assert!(
+			out.contains("text_scrim = false"),
+			"value + active kept: {out:?}"
+		);
+		assert!(
+			out.contains("text_scrim_radius = 7.0"),
+			"value kept: {out:?}"
+		);
+		assert!(
+			out.contains("# cursor_scrim = false"),
+			"commented state kept: {out:?}"
+		);
+		assert!(
+			out.contains("text_scrim_ramp = \"linear\""),
+			"string value kept: {out:?}"
 		);
 	}
 

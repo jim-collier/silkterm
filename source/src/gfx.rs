@@ -17,7 +17,7 @@ use winit::window::{Window, WindowAttributes};
 
 // COLOR PIPELINE CONTRACT (breaking it reproduces the "everything too dark /
 // SELECTION_BG invisible" bug class): every fragment shader in this app writes
-// LINEAR light (rect srgb_f32, glyphon Accurate, bg-image, glow), and exactly
+// LINEAR light (rect srgb_f32, glyphon Accurate, bg-image, scrim), and exactly
 // ONE sRGB encode happens per frame, owned by this module - on the native path
 // the sRGB surface format encodes on write; on the GL path the blit's lin2srgb
 // does it into the non-sRGB fbo 0, so the offscreen MUST stay a non-sRGB,
