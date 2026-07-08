@@ -4,12 +4,13 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use alacritty_terminal::grid::{Dimensions, Scroll as GridScroll};
+use alacritty_terminal::grid::{Dimensions, Grid, Scroll as GridScroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::TermMode;
-use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::cell::{Cell, Flags};
+use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::CursorShape;
 use glyphon::{Attrs, Buffer, Color as GColor, Shaping, Style, TextArea, TextBounds, Weight};
 use winit::event_loop::EventLoopProxy;
@@ -46,12 +47,175 @@ const BELL_BRIGHTEN: f32 = 0.6; // max lerp of text toward white at the bell fla
 // Alt-screen app-scroll tunables.
 const APP_SCROLL_MAX: usize = 24; // max per-step shift the slide detector accepts (in step with scroll::APP_OFF_CAP)
 // Whether the smooth slide engages for full-screen apps that keep a static TOP
-// band (title bar: nano, muffer). Off = they hard-cut (plain page redraw), the
-// pre-top-band behaviour: the smooth slide fought the fixed chrome and produced a
-// band/glow bounce, deferred pending N-frame retention. Apps that fill from the
-// top with only a bottom status line (less, vim) have no top band and slide
-// regardless. Flip to re-enable top-band smooth-scroll. See build().
-const SLIDE_TOP_BAND_APPS: bool = false;
+// band (title bar: nano, muffer). Was off while the reveal strip was filled from
+// a single retained frame: the strip could under-fill by the ease lag and its
+// re-capture repositioned it every step - the band/glow bounce. The scrolled-off
+// strip (OffStrip below) fills the gap exactly and never repositions, so the
+// slide is on for top-band apps again. Apps that fill from the top with only a
+// bottom status line (less, vim) have no top band and slide regardless.
+const SLIDE_TOP_BAND_APPS: bool = true;
+
+// One styled cell captured for the scrolled-off strip. Colours are resolved at
+// capture time (the palette/theme can change later; the strip shows what was on
+// screen). `wide` is the cell count: 0 = wide-char spacer (skip), 1, or 2.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct StripCell {
+	c: char,
+	fg: [u8; 3],
+	bg: Option<[u8; 3]>,
+	bold: bool,
+	italic: bool,
+	wide: u8,
+}
+
+// Scrolled-off strip: the rows an alt-screen app's scroll pushed out of its
+// region, retained styled and in visual order (top to bottom) so the slide can
+// draw them in the gap it reveals. The strip is welded to the content edge and
+// grows by exactly each step's shift while app_off grows by the same amount, so
+// the gap is always exactly filled - no under-fill, no re-capture jump, and no
+// furniture bleed (only region rows are ever captured). `dir`: +1 = strip above
+// the content (content moved up), -1 = below.
+struct OffStrip {
+	rows: std::collections::VecDeque<Vec<StripCell>>,
+	dir: i8,
+}
+
+impl OffStrip {
+	// app_off can't lag past scroll::APP_OFF_CAP, so older rows are invisible
+	const CAP: usize = APP_SCROLL_MAX + 2;
+
+	fn new() -> Self {
+		Self {
+			rows: std::collections::VecDeque::new(),
+			dir: 0,
+		}
+	}
+
+	fn len(&self) -> usize {
+		self.rows.len()
+	}
+
+	fn clear(&mut self) {
+		self.rows.clear();
+		self.dir = 0;
+	}
+
+	// Append the rows a step pushed off the region (`chunk` in visual order). A
+	// direction flip discards the old strip - it belongs on the other side.
+	fn push_step(&mut self, dir: i8, chunk: Vec<Vec<StripCell>>) {
+		if self.dir != dir {
+			self.clear();
+			self.dir = dir;
+		}
+		if dir > 0 {
+			// content moved up: rows left off the top of the region, the newest
+			// chunk nearest the content = at the strip's bottom
+			self.rows.extend(chunk);
+			while self.rows.len() > Self::CAP {
+				self.rows.pop_front();
+			}
+		} else {
+			// content moved down: rows left off the bottom, the newest chunk at
+			// the strip's top (nearest the content), keeping its internal order
+			for row in chunk.into_iter().rev() {
+				self.rows.push_front(row);
+			}
+			while self.rows.len() > Self::CAP {
+				self.rows.pop_back();
+			}
+		}
+	}
+}
+
+// The rows a detected step pushed out of the scroll region, as a range into the
+// PREVIOUS frame's rows. shift > 0 = content moved up, rows left off the top of
+// the region (just under any title band); shift < 0 = off the bottom.
+fn vanished_range(shift: i32, st: usize, sb: usize, lines: usize) -> std::ops::Range<usize> {
+	let region_top = st.min(lines);
+	let region_bot = lines.saturating_sub(sb).max(region_top);
+	let k = (shift.unsigned_abs() as usize).min(region_bot - region_top);
+	if shift > 0 {
+		region_top..region_top + k
+	} else {
+		region_bot - k..region_bot
+	}
+}
+
+// Fingerprint every visible row (FNV-1a over the chars) and, when `styled` is
+// given, snapshot the styled cells too - the scrolled-off strip's source data.
+// Colours resolve the same way build()'s cell loop does (minus the transient
+// bell flash and selection, which don't belong in a retained row). Recycles the
+// caller's row allocations. One entry per column; a wide-char spacer stays as a
+// wide=0 placeholder so indexes keep matching columns.
+fn snapshot_rows(
+	grid: &Grid<Cell>,
+	lines: usize,
+	cols: usize,
+	styled: Option<(&Colors, &config::Settings, &mut Vec<Vec<StripCell>>)>,
+) -> Vec<u64> {
+	let mut rows: Vec<u64> = Vec::with_capacity(lines);
+	let mut styled = styled;
+	if let Some((_, _, out)) = &mut styled {
+		out.resize_with(lines, Vec::new);
+	}
+	for i in 0..lines as i32 {
+		let row = &grid[Line(i)];
+		let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+		for c in 0..cols {
+			hash = (hash ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
+		}
+		rows.push(hash);
+		if let Some((colors, settings, out)) = &mut styled {
+			let out_row = &mut out[i as usize];
+			out_row.clear();
+			out_row.reserve(cols);
+			for c in 0..cols {
+				let cell = &row[Column(c)];
+				let flags = cell.flags;
+				if flags.contains(Flags::WIDE_CHAR_SPACER) {
+					out_row.push(StripCell {
+						c: ' ',
+						fg: [0; 3],
+						bg: None,
+						bold: false,
+						italic: false,
+						wide: 0,
+					});
+					continue;
+				}
+				let mut fg = palette::resolve(cell.fg, colors, settings);
+				let mut cell_bg = palette::resolve(cell.bg, colors, settings);
+				if flags.contains(Flags::INVERSE) {
+					std::mem::swap(&mut fg, &mut cell_bg);
+				}
+				if flags.contains(Flags::HIDDEN) {
+					fg = cell_bg;
+				}
+				if flags.contains(Flags::DIM) {
+					fg = [
+						fg[0] / 2 + fg[0] / 4,
+						fg[1] / 2 + fg[1] / 4,
+						fg[2] / 2 + fg[2] / 4,
+					];
+				}
+				out_row.push(StripCell {
+					c: cell.c,
+					fg,
+					bg: (cell_bg != settings.bg).then_some(cell_bg),
+					bold: flags.contains(Flags::BOLD)
+						|| (settings.embolden_inverse && flags.contains(Flags::INVERSE)),
+					italic: flags.contains(Flags::ITALIC),
+					wide: if flags.contains(Flags::WIDE_CHAR) {
+						2
+					} else {
+						1
+					},
+				});
+			}
+		}
+	}
+	rows
+}
 
 // The rendered cursor geometry as (width, height) fractions of the cell. An
 // app-set Beam/Underline (DECSCUSR) maps to a thin bar / underline; a plain Block
@@ -246,34 +410,27 @@ pub struct PaneDraw {
 	pub top: f32,
 	pub bg: Vec<RectInstance>,
 	pub cursor: Option<RectInstance>,
-	// Retained-frame app-scroll slide (None = common case: whole pane at `top`).
-	// While a full-screen app's scroll eases, the current frame draws shifted at
-	// `top` and the previous frame (pane.prev_buffer) fills the revealed strip.
+	// App-scroll slide (None = common case: whole pane at `top`). While a
+	// full-screen app's scroll eases, the current frame draws shifted at `top`
+	// and the scrolled-off strip (pane.strip_buf) fills the revealed gap.
 	pub slide: Option<Slide>,
 }
 
 // One frame of an easing app-scroll slide. The current frame renders at
 // `PaneDraw.top`, clipped to the scroll region `[top_split_y, split_y]`; the
-// previous frame renders at `prev_top` clipped to `[prev_clip_t, prev_clip_b]`
-// (just the revealed strip, so its bands can't ghost into the scroll region); and
-// the fixed bands - a bottom status/input line (`has_band`, below `split_y`) and a
-// top title bar (`has_top_band`, above `top_split_y`) - redraw unshifted at
-// `band_top`. `top_split_y` is f32::MIN when there's no top band (open clip).
+// scrolled-off strip renders at `strip_top` with the SAME region clip (it holds
+// only region rows, so nothing can bleed into the bands); and the fixed bands -
+// a bottom status/input line (`has_band`, below `split_y`) and a top title bar
+// (`has_top_band`, above `top_split_y`) - redraw unshifted at `band_top`.
+// `top_split_y` is f32::MIN when there's no top band (open clip).
 #[derive(Clone)]
 pub struct Slide {
-	pub prev_top: f32,
-	pub prev_clip_t: f32,
-	pub prev_clip_b: f32,
+	pub strip_top: f32,
 	pub top_split_y: f32,
 	pub split_y: f32,
 	pub band_top: f32,
 	pub has_band: bool,
 	pub has_top_band: bool,
-	// which end the revealed strip is at: true = top (down-slide), false = bottom.
-	// The glow of the strip is only safe to draw when the band on the strip's
-	// furniture side is present (it clips the prev frame's header/status out of the
-	// glow); without it, glowing prev could drag in its own-bg furniture. See app.rs.
-	pub strip_at_top: bool,
 }
 
 pub struct Pane {
@@ -281,11 +438,19 @@ pub struct Pane {
 	pub term: TermInstance,
 	pub scroll: Scroll,
 	pub buffer: Buffer,
-	// Previous frame's shaped text, kept one frame back by swapping with `buffer`
-	// on each detected app-scroll step. Drawn (translated) to fill the strip a
-	// slide reveals - the scrolled-off alt-screen lines are gone from the grid, so
-	// the retained shaped frame is the only source of real content for that strip.
-	prev_buffer: Buffer,
+	// Scrolled-off strip (see OffStrip): styled rows the app's scroll pushed out
+	// of its region, shaped into `strip_buf` and drawn welded to the content edge
+	// so the slide's reveal gap is always exactly filled. `strip_dirty` re-shapes
+	// the buffer on the next build (rows changed, or a font rebuild).
+	strip: OffStrip,
+	strip_buf: Buffer,
+	strip_dirty: bool,
+	// Previous frame's styled cells (captured only in alt-screen smooth-scroll
+	// mode): the rows a step pushes off the region are gone from the grid by the
+	// time the step is detected, so they must be captured a frame ahead.
+	// `cells_scratch` recycles the row allocations frame to frame.
+	last_cells: Vec<Vec<StripCell>>,
+	cells_scratch: Vec<Vec<StripCell>>,
 	pub rect: Rect,
 	pub title: String,
 	pub read_only: bool, // accept no PTY input/paste; selection + copy still work
@@ -304,9 +469,9 @@ pub struct Pane {
 	// Rows of static TOP band (title bar - nano, muffer) that must NOT slide, the
 	// mirror of slide_static. The scrolling region is between the two bands.
 	slide_static_top: usize,
-	// Shift (signed lines) of the retained prev_buffer relative to the current
-	// frame, set when a scroll step is detected. Positions prev_buffer for the
-	// slide (prev is at rest when app_off == slide_sh, slid fully out at app_off 0).
+	// Last detected step's shift (signed lines). Only feeds the SILK_SCROLLDBG
+	// trace now - the strip is positioned by app_off alone - but the harness
+	// regex reads the field, so it stays.
 	slide_sh: f32,
 	// Previous frame's alt-screen state. An enter/exit is an instant screen swap,
 	// not a scroll - detected here to hard-cut it instead of animating the swap.
@@ -419,36 +584,31 @@ impl Pane {
 		self.scroll.set_max(history as f32);
 		if alt_transition {
 			// hard-cut the screen swap: drop any in-flight slide and rebaseline the
-			// row fingerprints to the NEW screen, so neither the output-scroll probe
-			// nor the app-scroll probe diffs against the old screen next frame.
+			// row fingerprints (and the styled snapshot the strip captures from) to
+			// the NEW screen, so neither the output-scroll probe nor the app-scroll
+			// probe diffs against the old screen next frame.
 			self.scroll.cancel_app_scroll();
-			let grid = guard.grid();
-			let mut rows: Vec<u64> = Vec::with_capacity(lines);
-			for i in 0..lines as i32 {
-				let row = &grid[Line(i)];
-				let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-				for c in 0..cols {
-					hash = (hash ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
-				}
-				rows.push(hash);
-			}
-			self.last_rows = rows;
+			self.strip.clear();
+			self.last_rows = if settings.smooth_scroll_apps {
+				let mut cur_cells = std::mem::take(&mut self.cells_scratch);
+				let rows = snapshot_rows(
+					guard.grid(),
+					lines,
+					cols,
+					Some((guard.colors(), &settings, &mut cur_cells)),
+				);
+				self.cells_scratch = std::mem::replace(&mut self.last_cells, cur_cells);
+				rows
+			} else {
+				snapshot_rows(guard.grid(), lines, cols, None)
+			};
 		}
 		let follow = self.scroll.following();
 		let full = settings.scrollback > 0 && history >= settings.scrollback;
 		let advanced = if grew > 0 {
 			grew
 		} else if follow && full {
-			let mut rows: Vec<u64> = Vec::with_capacity(lines);
-			let grid = guard.grid();
-			for i in 0..lines as i32 {
-				let row = &grid[Line(i)];
-				let mut hash: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a over the row's chars
-				for c in 0..cols {
-					hash = (hash ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
-				}
-				rows.push(hash);
-			}
+			let rows = snapshot_rows(guard.grid(), lines, cols, None);
 			let inferred_advance = scroll_shift(&rows, &self.last_rows);
 			self.last_rows = rows;
 			inferred_advance
@@ -463,26 +623,25 @@ impl Pane {
 		// by repainting whole lines. Detect a clean vertical translate between this
 		// repaint and the last (same row-fingerprints as the output-scroll probe) and
 		// nudge a slide offset so the frame eases into place instead of snapping. The
-		// revealed strip fills from the retained previous frame (swapped in below).
+		// revealed gap fills from the scrolled-off strip: the styled rows each step
+		// pushes out of the region, captured from the previous frame's snapshot.
 		// Only clean line-scrolls (up to APP_SCROLL_MAX rows) match - in-place redraws
 		// and big page-jumps don't, so they hard-cut. Opt-in (experimental).
-		let mut capture_prev = false;
+		// Skipped on pure cursor-animation frames (the fast path below): a shift can
+		// only appear when the grid content changed, and that always forces a full
+		// build - so the styled snapshot isn't paid per blink frame.
 		let mut shift_dbg = 0i32;
-		if settings.smooth_scroll_apps && alt && !alt_transition {
-			// Full-screen apps with a static TOP band (title bar: nano, muffer) repaint
-			// with small sub-line jumps, and the smooth slide fights that fixed chrome -
-			// the band/glow bounce - so they hard-cut (see SLIDE_TOP_BAND_APPS). Apps
-			// that fill from the top with only a bottom status line (less) slide.
-			let grid = guard.grid();
-			let mut rows: Vec<u64> = Vec::with_capacity(lines);
-			for i in 0..lines as i32 {
-				let row = &grid[Line(i)];
-				let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-				for c in 0..cols {
-					hash = (hash ^ row[Column(c)].c as u64).wrapping_mul(0x100_0000_01b3);
-				}
-				rows.push(hash);
-			}
+		if settings.smooth_scroll_apps
+			&& alt && !alt_transition
+			&& (force_rebuild || !self.text_built)
+		{
+			let mut cur_cells = std::mem::take(&mut self.cells_scratch);
+			let rows = snapshot_rows(
+				guard.grid(),
+				lines,
+				cols,
+				Some((guard.colors(), &settings, &mut cur_cells)),
+			);
 			let shift = scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX);
 			shift_dbg = shift;
 			if shift != 0 {
@@ -494,25 +653,32 @@ impl Pane {
 					self.slide_static = sb;
 					self.slide_static_top = st;
 				}
-				// A static top band means a title-bar app (nano, muffer); hard-cut it.
 				if SLIDE_TOP_BAND_APPS || self.slide_static_top == 0 {
 					// ACCUMULATE the visual offset so the CURRENT content stays continuous
 					// across overlapping steps: screen row = grid_row + app_off, the grid
-					// already advanced by shift, so app_off must GROW by shift to hold a line fixed
-					// for that instant. SETting it to shift instead discards the un-eased
-					// remainder = the frame-to-frame bounce. RE-SNAPSHOT prev EVERY step
-					// (slide_sh = this step only): one retained frame can fill just a
-					// one-step reveal strip, so it must stay fresh - accumulating slide_sh to
-					// fill a taller strip from a single stale snapshot made the strip (and its
-					// glow) jump by the whole scroll region at each re-capture. scroll.rs's lag
-					// ramp keeps app_off from lagging past what that one frame covers.
+					// already advanced by shift, so app_off must GROW by shift to hold a
+					// line fixed for that instant. The strip grows by the same rows the
+					// step pushed off the region (from the frame-old snapshot; a stale or
+					// resized snapshot just skips the fill for this one step), so the gap
+					// the accumulated offset opens is always exactly covered.
 					self.slide_sh = shift as f32;
-					capture_prev = true;
+					if self.last_cells.len() == lines
+						&& self.last_cells.first().is_none_or(|r| r.len() == cols)
+					{
+						let range =
+							vanished_range(shift, self.slide_static_top, self.slide_static, lines);
+						let chunk = self.last_cells[range].to_vec();
+						if !chunk.is_empty() {
+							self.strip.push_step(shift.signum() as i8, chunk);
+							self.strip_dirty = true;
+						}
+					}
 					self.scroll
 						.app_scroll(self.scroll.app_offset() + shift as f32);
 				}
 			}
 			self.last_rows = rows;
+			self.cells_scratch = std::mem::replace(&mut self.last_cells, cur_cells);
 		}
 
 		// snap the integer grid offset to the floor of the smooth position
@@ -575,11 +741,13 @@ impl Pane {
 		// The scroll-region draw origin is always the SHIFTED position, independent of
 		// the bands (which are redrawn unshifted at band_top); grid elements use y_of.
 		let top = self.rect.y + margin + (-1.0 + voff) * cell_h;
-		// Retained-frame slide geometry (only while app_off is easing). The current
-		// frame draws at `top` (scroll region, clipped to [top_split_y, split_y]);
-		// prev_buffer fills the strip the shift reveals - above the content when
-		// sliding down (app_off > 0), below it when sliding up. Clip prev to just that
-		// strip so its own bands can't ghost into the scrolling region.
+		// Slide geometry (only while app_off is easing). The current frame draws at
+		// `top` (scroll region, clipped to [top_split_y, split_y]); the scrolled-off
+		// strip fills the gap the shift opens - above the content when sliding down
+		// (app_off > 0), below it when sliding up. The strip is welded to the content
+		// edge and rides the same eased offset, so it never moves relative to the
+		// content: its last row ends exactly at the region's first row (up-scroll),
+		// or its first row starts one past the region's last (down-scroll).
 		let slide = if app_off != 0.0 {
 			// split_y bounds the scroll region below; top_split_y bounds it above (a
 			// static top band sits above it; f32::MIN = no band, so the clip is open).
@@ -594,43 +762,27 @@ impl Pane {
 				f32::MIN
 			};
 			let band_top = self.rect.y + margin + (-1.0 + frac) * cell_h;
-			// prev sits `slide_sh` behind the current frame; at app_off == slide_sh
-			// it's at rest, sliding fully out as app_off -> 0
-			let voff_prev = frac + app_off - self.slide_sh;
-			let prev_top = self.rect.y + margin + (-1.0 + voff_prev) * cell_h;
-			let (prev_clip_t, prev_clip_b) = if app_off > 0.0 {
-				// down-slide: strip between the top band and the current content's first
-				// scroll row (top_split_row); top_split_y == MIN keeps the no-band case.
-				// Clip the top to prev's OWN first scroll row so its title can't bleed in
-				// when prev sits low (voff_prev > 0); when prev fills to the band boundary
-				// this reduces to top_split_y.
-				(
-					top_split_y
-						.max(self.rect.y + margin + (top_split_row as f32 + voff_prev) * cell_h),
-					self.rect.y + margin + (top_split_row as f32 + voff) * cell_h,
-				)
+			let strip_top = if app_off > 0.0 {
+				self.rect.y
+					+ margin + (top_split_row as f32 + voff - self.strip.len() as f32) * cell_h
 			} else {
-				// up-slide: strip below the current scroll region's last row, clipped at
-				// prev's own last scroll row so its bottom band can't bleed in
-				(
-					self.rect.y + margin + (split_row as f32 + voff) * cell_h,
-					split_y.min(self.rect.y + margin + (split_row as f32 + voff_prev) * cell_h),
-				)
+				self.rect.y + margin + (split_row as f32 + voff) * cell_h
 			};
 			Some(Slide {
-				prev_top,
-				prev_clip_t,
-				prev_clip_b,
+				strip_top,
 				top_split_y,
 				split_y,
 				band_top,
 				has_band: static_rows > 0,
 				has_top_band: static_top > 0,
-				strip_at_top: app_off > 0.0,
 			})
 		} else {
 			None
 		};
+		// gesture over: the revealed gap is gone, drop the strip
+		if slide.is_none() && self.strip.len() > 0 {
+			self.strip.clear();
+		}
 
 		// Cursor position/shape as plain values (no lasting borrow of the lock), so
 		// the fast path below can drop the term lock immediately.
@@ -684,6 +836,25 @@ impl Pane {
 		// fallback glyphs to draw per-cell: (char, fg, bold, italic, col, screen-row, cells)
 		let mut glyph_specs: Vec<(char, [u8; 3], bool, bool, usize, i32, u8)> = Vec::new();
 		let default_attrs = mono_attrs();
+
+		// While a slide eases, region rows shift by voff but rect quads only get the
+		// per-pane scissor (no per-area clip like text) - clamp region-row rects to
+		// the region so an own-bg row (inverse video, a coloured block) can't poke
+		// into the title/status bands mid-slide.
+		let region_rect_clip = slide.as_ref().map(|sl| {
+			(
+				if sl.has_top_band {
+					sl.top_split_y
+				} else {
+					self.rect.y + margin
+				},
+				if sl.has_band {
+					sl.split_y
+				} else {
+					self.rect.y + self.rect.h - margin
+				},
+			)
+		});
 
 		// Build attr-runs spanning the viewport (+1 overscan row). Newlines are
 		// embedded into runs (never empty/standalone spans) - empty spans make
@@ -756,11 +927,20 @@ impl Pane {
 					None
 				};
 				if let Some(col) = bg_color {
-					bg.push(RectInstance {
-						pos: [content_x + c as f32 * cell_w, y],
-						size: [cell_w, cell_h],
-						color: config::srgb_f32(col),
-					});
+					let (mut rect_top, mut rect_bot) = (y, y + cell_h);
+					if let Some((clip_t, clip_b)) = region_rect_clip {
+						if screen_row >= top_split_row && screen_row < split_row {
+							rect_top = rect_top.max(clip_t);
+							rect_bot = rect_bot.min(clip_b);
+						}
+					}
+					if rect_bot > rect_top {
+						bg.push(RectInstance {
+							pos: [content_x + c as f32 * cell_w, rect_top],
+							size: [cell_w, rect_bot - rect_top],
+							color: config::srgb_f32(col),
+						});
+					}
 				}
 
 				// reverse-video (dark-on-light) text renders visually thinner than the
@@ -797,7 +977,7 @@ impl Pane {
 		flush_run!();
 
 		drop(guard);
-		let cursor = self.cursor_quad(
+		let mut cursor = self.cursor_quad(
 			cursor_pt,
 			cursor_shape,
 			cursor_geom,
@@ -812,11 +992,17 @@ impl Pane {
 			dt,
 			settings.cursor,
 		);
-		// A scroll step was detected: the buffer still holds the outgoing frame, so
-		// swap it into prev_buffer before set_rich_text overwrites it. prev_buffer
-		// then fills the strip this slide reveals (see the slide geometry above).
-		if capture_prev {
-			std::mem::swap(&mut self.buffer, &mut self.prev_buffer);
+		// the cursor rides the sliding region too - clamp it like the bg rects
+		// (only when it's a region row; nano parks it in the status band on ^W)
+		if let Some((clip_t, clip_b)) = region_rect_clip {
+			let cursor_row = cursor_pt.line.0 + display_offset;
+			if cursor_row >= top_split_row && cursor_row < split_row {
+				if let Some(q) = &mut cursor {
+					let bot = (q.pos[1] + q.size[1]).min(clip_b);
+					q.pos[1] = q.pos[1].max(clip_t);
+					q.size[1] = (bot - q.pos[1]).max(0.0);
+				}
+			}
 		}
 		let span_refs = spans.iter().map(|(s, a)| (s.as_str(), a.clone()));
 		// Advanced (not Basic) so missing glyphs fall back to other fonts
@@ -831,6 +1017,37 @@ impl Pane {
 			None,
 		);
 		self.buffer.shape_until_scroll(&mut ctx.font_system, false);
+
+		// Re-shape the scrolled-off strip when its rows changed this frame. Cheap:
+		// the strip is at most OffStrip::CAP short rows, and only steps dirty it.
+		if self.strip_dirty {
+			self.strip_dirty = false;
+			self.shape_strip(ctx, &settings);
+		}
+		// Strip cells with their own background (inverse video, coloured bg) keep it
+		// while revealed: emit their rects at the strip's slide position, clamped to
+		// the region clip like the sliding content's rects above.
+		if let (Some(sl), Some((clip_t, clip_b))) = (&slide, region_rect_clip) {
+			for (j, row) in self.strip.rows.iter().enumerate() {
+				let y = sl.strip_top + j as f32 * cell_h;
+				let (rect_top, rect_bot) = (y.max(clip_t), (y + cell_h).min(clip_b));
+				if rect_bot <= rect_top {
+					continue;
+				}
+				for (c, cell) in row.iter().enumerate() {
+					if cell.wide == 0 {
+						continue;
+					}
+					if let Some(col) = cell.bg {
+						bg.push(RectInstance {
+							pos: [content_x + c as f32 * cell_w, rect_top],
+							size: [cell_w, rect_bot - rect_top],
+							color: config::srgb_f32(col),
+						});
+					}
+				}
+			}
+		}
 
 		// Glow source with uniform weight: bold ink is wider, so its halo reads
 		// heavier than the neighbours'. When text_glow_regular_weight is on and
@@ -1119,19 +1336,87 @@ impl Pane {
 		area
 	}
 
-	// The retained previous frame (prev_buffer) at `top`, clipped to the strip the
-	// slide reveals. Fills that strip with real outgoing content instead of bg.
-	pub fn prev_text_area_band<'a>(
-		&'a self,
-		top: f32,
-		margin: f32,
-		clip_top: f32,
-		clip_bottom: f32,
-	) -> TextArea<'a> {
-		let mut area = self.buf_area(&self.prev_buffer, top, margin);
-		area.bounds.top = area.bounds.top.max(clip_top as i32);
-		area.bounds.bottom = area.bounds.bottom.min(clip_bottom as i32);
-		area
+	// The scrolled-off strip at its slide position, clipped to the scroll region
+	// exactly like the current content (it holds only region rows, so the bands
+	// need no protection from it; descender spill across the weld matches what
+	// adjacent rows in one buffer do). None while the strip is empty. Serves the
+	// glow pass too - the strip is always glow-safe, unlike the old retained
+	// frame whose own-bg furniture had to be guarded out.
+	pub fn strip_text_area<'a>(&'a self, slide: &Slide, margin: f32) -> Option<TextArea<'a>> {
+		if self.strip.len() == 0 {
+			return None;
+		}
+		let mut area = self.buf_area(&self.strip_buf, slide.strip_top, margin);
+		area.bounds.top = area.bounds.top.max(slide.top_split_y as i32);
+		area.bounds.bottom = area.bounds.bottom.min(slide.split_y as i32);
+		Some(area)
+	}
+
+	// Re-shape the scrolled-off strip buffer from its captured rows. Same span
+	// rules as build()'s main loop: runs merged by (colour, bold, italic),
+	// newlines embedded into non-empty runs, never empty/standalone spans (they
+	// make set_rich_text loop forever). Glyphs the primary mono face lacks stay
+	// space placeholders - the strip is transient reveal content, not worth a
+	// per-cell fallback pool.
+	fn shape_strip(&mut self, ctx: &mut TextCtx, settings: &config::Settings) {
+		if self.strip.len() == 0 {
+			return;
+		}
+		fn flush(spans: &mut Vec<(String, Attrs)>, run: &mut String, style: ([u8; 3], bool, bool)) {
+			if run.is_empty() {
+				return;
+			}
+			let mut attrs = mono_attrs();
+			attrs.color_opt = Some(GColor::rgb(style.0[0], style.0[1], style.0[2]));
+			if style.1 {
+				attrs.weight = Weight::BOLD;
+			}
+			if style.2 {
+				attrs.style = Style::Italic;
+			}
+			spans.push((std::mem::take(run), attrs));
+		}
+		let mut spans: Vec<(String, Attrs)> = Vec::with_capacity(self.strip.len() + 1);
+		let mut run = String::new();
+		let mut run_style = (settings.fg, false, false);
+		for (j, row) in self.strip.rows.iter().enumerate() {
+			if j != 0 {
+				run.push('\n');
+			}
+			for cell in row {
+				if cell.wide == 0 {
+					continue; // wide-char spacer
+				}
+				if !cell.c.is_ascii() && !ctx.covered(cell.c) {
+					for _ in 0..cell.wide {
+						run.push(' ');
+					}
+					continue;
+				}
+				let style = (cell.fg, cell.bold, cell.italic);
+				if style != run_style {
+					flush(&mut spans, &mut run, run_style);
+					run_style = style;
+				}
+				run.push(render_char(cell.c));
+			}
+		}
+		flush(&mut spans, &mut run, run_style);
+		ctx.resize_buffer(
+			&mut self.strip_buf,
+			self.rect.w.max(1.0),
+			(self.strip.len() as f32 + 1.0) * ctx.cell_h,
+		);
+		let span_refs = spans.iter().map(|(s, a)| (s.as_str(), a.clone()));
+		self.strip_buf.set_rich_text(
+			&mut ctx.font_system,
+			span_refs,
+			&mono_attrs(),
+			Shaping::Advanced,
+			None,
+		);
+		self.strip_buf
+			.shape_until_scroll(&mut ctx.font_system, false);
 	}
 
 	// Per-cell fallback glyphs, already positioned (see Pane::build). Drawn in
@@ -1463,7 +1748,9 @@ impl PaneManager {
 	pub fn rebuild_buffers(&mut self, ctx: &mut TextCtx) {
 		for pane in self.panes.values_mut() {
 			pane.buffer = ctx.new_buffer(pane.rect.w.max(1.0), pane.rect.h.max(1.0));
-			pane.prev_buffer = ctx.new_buffer(pane.rect.w.max(1.0), pane.rect.h.max(1.0));
+			pane.strip_buf = ctx.new_buffer(pane.rect.w.max(1.0), ctx.cell_h);
+			pane.strip.clear(); // metrics changed; a mid-slide strip would misalign
+			pane.strip_dirty = false;
 			pane.text_built = false; // fresh empty buffer: force a full rebuild next frame
 		}
 	}
@@ -1485,7 +1772,11 @@ impl PaneManager {
 				// goes invisible until you scroll/resize. Give it overscan slack;
 				// TextArea bounds still clip drawing to the pane.
 				ctx.resize_buffer(&mut pane.buffer, cw, ch + 2.0 * ctx.cell_h);
-				ctx.resize_buffer(&mut pane.prev_buffer, cw, ch + 2.0 * ctx.cell_h);
+				// a resize invalidates the strip's captured columns and the
+				// frame-old styled snapshot it fills from
+				pane.strip.clear();
+				pane.strip_dirty = false;
+				pane.last_cells.clear();
 			}
 		}
 	}
@@ -1568,13 +1859,17 @@ fn spawn_pane(
 	)?;
 	// +2 cells of height for the overscan rows build() renders (see relayout).
 	let buffer = ctx.new_buffer(cw, ch + 2.0 * ctx.cell_h);
-	let prev_buffer = ctx.new_buffer(cw, ch + 2.0 * ctx.cell_h);
+	let strip_buf = ctx.new_buffer(cw, ctx.cell_h);
 	Ok(Pane {
 		id,
 		term,
 		scroll: Scroll::new(),
 		buffer,
-		prev_buffer,
+		strip: OffStrip::new(),
+		strip_buf,
+		strip_dirty: false,
+		last_cells: Vec::new(),
+		cells_scratch: Vec::new(),
 		rect,
 		title: config::APP_NAME.into(),
 		read_only: false,
@@ -2187,10 +2482,10 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 #[cfg(test)]
 mod tests {
 	use super::{
-		APP_SCROLL_MAX, Dir, Node, PauseState, Rect, SLIDE_TOP_BAND_APPS, bell_brighten,
-		capture_grid_text, capture_start, distinct_pair, equalize_dir_run, fnv_row, glide_to_full,
-		layout, logical_line_bounds, pair_inside, render_char, same_char_pair, scroll_shift,
-		scroll_shift_signed, static_bands,
+		APP_SCROLL_MAX, Dir, Node, OffStrip, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell,
+		bell_brighten, capture_grid_text, capture_start, distinct_pair, equalize_dir_run, fnv_row,
+		glide_to_full, layout, logical_line_bounds, pair_inside, render_char, same_char_pair,
+		scroll_shift, scroll_shift_signed, static_bands, vanished_range,
 	};
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
@@ -2755,12 +3050,12 @@ mod tests {
 	}
 
 	#[test]
-	fn nano_hard_cuts_static_top_band() {
+	fn nano_slides_with_top_band() {
 		// nano keeps a title bar at the top and a two-row help band at the bottom, so
-		// the middle scroll region has a static top band. The detector still sees the
-		// shift, but a top-band app hard-cuts (SLIDE_TOP_BAND_APPS off) to avoid the
-		// title/glow bounce. Flipping the toggle re-enables the slide (this expectation
-		// tracks the toggle, but the band detection asserted below is the real surface).
+		// the middle scroll region has a static top band. With SLIDE_TOP_BAND_APPS on
+		// (the scrolled-off strip fills the reveal gap exactly) the slide engages; the
+		// expectation tracks the toggle, and the band detection asserted below is the
+		// real surface either way.
 		let (last, cur) = app_frames(24, 1, 2, 1);
 		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 1);
 		let (st, sb) = static_bands(&cur, &last);
@@ -2769,14 +3064,14 @@ mod tests {
 		assert_eq!(
 			slide_engages(st),
 			SLIDE_TOP_BAND_APPS,
-			"top-band app hard-cuts unless enabled"
+			"top-band app slides per the toggle"
 		);
 	}
 
 	#[test]
-	fn muffer_hard_cuts_static_top_band() {
+	fn muffer_slides_with_top_band() {
 		// muffer (the TUI) keeps a static header, so like nano it has a top band and
-		// hard-cuts on the wheel for now. Model a two-row header + one-row footer.
+		// follows the toggle. Model a two-row header + one-row footer.
 		let (last, cur) = app_frames(30, 2, 1, 1);
 		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 1);
 		let (st, _sb) = static_bands(&cur, &last);
@@ -2784,7 +3079,7 @@ mod tests {
 		assert_eq!(
 			slide_engages(st),
 			SLIDE_TOP_BAND_APPS,
-			"top-band app hard-cuts unless enabled"
+			"top-band app slides per the toggle"
 		);
 	}
 
@@ -2798,6 +3093,76 @@ mod tests {
 		// but a jump past the window is not eased (hard-cut) - it isn't a clean scroll
 		let (last2, cur2) = app_frames(40, 0, 1, (APP_SCROLL_MAX + 5) as i32);
 		assert_eq!(scroll_shift_signed(&cur2, &last2, APP_SCROLL_MAX), 0);
+	}
+
+	// ---- Scrolled-off strip -----------------------------------------------------
+
+	// a marker row for strip tests: one cell whose char encodes the row identity
+	fn strip_row(tag: char) -> Vec<StripCell> {
+		vec![StripCell {
+			c: tag,
+			fg: [255; 3],
+			bg: None,
+			bold: false,
+			italic: false,
+			wide: 1,
+		}]
+	}
+
+	fn strip_tags(s: &OffStrip) -> String {
+		s.rows.iter().map(|r| r[0].c).collect()
+	}
+
+	#[test]
+	fn vanished_range_picks_the_rows_a_step_pushed_off() {
+		// 10 lines, title 1 row, status 2 rows -> region rows 1..8
+		// content moved up 2: the region's top two rows left off the top
+		assert_eq!(vanished_range(2, 1, 2, 10), 1..3);
+		// content moved down 2: the region's bottom two rows left off the bottom
+		assert_eq!(vanished_range(-2, 1, 2, 10), 6..8);
+		// no bands (less): rows come off the screen edges
+		assert_eq!(vanished_range(1, 0, 0, 10), 0..1);
+		assert_eq!(vanished_range(-1, 0, 0, 10), 9..10);
+		// a shift bigger than the region clamps to it (nothing panics)
+		assert_eq!(vanished_range(50, 1, 2, 10), 1..8);
+		assert_eq!(vanished_range(-50, 1, 2, 10), 1..8);
+	}
+
+	#[test]
+	fn off_strip_accumulates_in_visual_order() {
+		// up-scroll: each step's rows leave off the region's top, newest nearest the
+		// content = at the strip's bottom
+		let mut s = OffStrip::new();
+		s.push_step(1, vec![strip_row('a'), strip_row('b')]);
+		s.push_step(1, vec![strip_row('c')]);
+		assert_eq!(strip_tags(&s), "abc");
+		// down-scroll: rows leave off the bottom, newest at the strip's top,
+		// each chunk keeping its internal order
+		let mut d = OffStrip::new();
+		d.push_step(-1, vec![strip_row('y'), strip_row('z')]);
+		d.push_step(-1, vec![strip_row('w'), strip_row('x')]);
+		assert_eq!(strip_tags(&d), "wxyz");
+	}
+
+	#[test]
+	fn off_strip_direction_flip_discards_and_cap_trims_oldest() {
+		let mut s = OffStrip::new();
+		s.push_step(1, vec![strip_row('a'), strip_row('b')]);
+		// flipping direction discards the old strip (it belongs on the other side)
+		s.push_step(-1, vec![strip_row('c')]);
+		assert_eq!(strip_tags(&s), "c");
+		assert_eq!(s.dir, -1);
+		// the cap trims the rows farthest from the content (oldest)
+		let mut long = OffStrip::new();
+		for i in 0..(OffStrip::CAP + 3) {
+			long.push_step(1, vec![strip_row(char::from(b'a' + (i % 26) as u8))]);
+		}
+		assert_eq!(long.len(), OffStrip::CAP);
+		// the newest row (nearest the content, strip bottom) survives
+		assert_eq!(
+			long.rows.back().unwrap()[0].c,
+			char::from(b'a' + ((OffStrip::CAP + 2) % 26) as u8)
+		);
 	}
 
 	// ---- Normal-output (non-alt-screen) scroll scenarios ----------------------

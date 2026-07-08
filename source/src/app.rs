@@ -1530,16 +1530,13 @@ impl State {
 		let chrome = self.chrome.as_ref().unwrap(); // ensured above
 		let mut areas: Vec<TextArea> = Vec::new();
 		for p in self.tabs.cur().panes.values() {
-			// retained-frame slide: fill the revealed strip from the previous frame,
+			// app-scroll slide: fill the revealed gap from the scrolled-off strip,
 			// draw the current scroll region over it, then the static bands unshifted
 			match &slides[&p.id] {
 				Some(slide) => {
-					areas.push(p.prev_text_area_band(
-						slide.prev_top,
-						margin,
-						slide.prev_clip_t,
-						slide.prev_clip_b,
-					));
+					if let Some(strip) = p.strip_text_area(slide, margin) {
+						areas.push(strip);
+					}
 					areas.push(p.text_area_band(
 						tops[&p.id],
 						margin,
@@ -1660,29 +1657,16 @@ impl State {
 		if glow_on {
 			let mut glow_areas: Vec<TextArea> = Vec::new();
 			for p in self.tabs.cur().panes.values() {
-				// glow follows the current frame's slide, INCLUDING the reveal strip
-				// filled from the previous frame - without it the strip's text (e.g. the
+				// glow follows the current frame's slide, INCLUDING the scrolled-off
+				// strip filling the reveal gap - without it the strip's text (e.g. the
 				// row just below a static header) loses its readability halo mid-slide
 				// and the halo "pops" when the slide settles, reading as a shadow that
-				// jumps at the band boundary. Mirror the text pass's prev-strip draw, but
-				// only when the band on the strip's furniture side is detected: it clips
-				// the prev frame's header/status out of the glow. Without that band the
-				// clip is open, and prev's own-bg furniture (misaligned with the current
-				// own-bg mask during the slide) would glow dark over the header.
+				// jumps at the band boundary. The strip holds only region rows, so it
+				// is always glow-safe (no furniture to guard out of the glow).
 				match &slides[&p.id] {
 					Some(slide) => {
-						let strip_glow_safe = if slide.strip_at_top {
-							slide.has_top_band
-						} else {
-							slide.has_band
-						};
-						if strip_glow_safe {
-							glow_areas.push(p.prev_text_area_band(
-								slide.prev_top,
-								margin,
-								slide.prev_clip_t,
-								slide.prev_clip_b,
-							));
+						if let Some(strip) = p.strip_text_area(slide, margin) {
+							glow_areas.push(strip);
 						}
 						glow_areas.push(p.glow_text_area_band(
 							tops[&p.id],
