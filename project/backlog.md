@@ -43,10 +43,10 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-🛠️ Bug #t78br: "The Notorious 'Bouncing Shadow' nano bug" (which we'll call this subset) is still still there. (At least the wobblyness seems to be fixed, which is why this now gets its own issue.):
+✅ Bug #t78br: "The Notorious 'Bouncing Shadow' nano bug" (which we'll call this subset) is still still there. (At least the wobblyness seems to be fixed, which is why this now gets its own issue.):
 	- Cause: the sliding draw is the whole frame translated by the eased offset, clipped only at the band boundaries - so the top bar's row translated down (and the bottom area's rows translated up) landed inside the scroll-region clip and rendered as translated text copies riding the ease. Text and its glow only (cell backgrounds are placed per row), which is why it reads as a text shadow at the top and as text copies at the bottom. (20260708)
 	- Fixed: the region clip now welds to the shifted content's own edge; the strip fills the gap on the far side of the weld, and translated band rows can no longer enter. (20260708)
-	- Verified: reproduced the ghost in mid-slide frame dumps before the fix, gone after; scroll harness all four scenes pass; 113 lib tests. Pending the same feel-test as the parent spike. (20260708)
+	- Verified: reproduced the ghost in mid-slide frame dumps before the fix, gone after; scroll harness all four scenes pass; 113 lib tests. Feel-test passed; merged with the parent spike. (20260708)
 	- Steps to reproduce:
 		- Open nano with a long file - say, ~/.config/silkterm/config.toml.
 		- Observe:
@@ -102,12 +102,12 @@ In each section, items are listed approximately from newest to oldest.
 		- Note: an accumulation attempt made it worse (re-tested: jumps much farther). Accumulating the offset for the current content was right, but accumulating the strip fill from one stale snapshot was wrong - when the shift outgrew the scroll region the snapshot was re-captured, jumping the reveal strip by a whole screenful. That periodic jump was the farther bounce.
 		- Fixed: keep the offset accumulating for smooth content, but re-snapshot the previous frame every step so the strip is always one fresh step back. One retained frame only fills a one-step strip, so a fast burst could still open a blank band; a lag ramp on the ease bounds that by easing faster as the lag grows. A regression harness measured no content bounce and no band-boundary jumps across gentle, fast, and wheel scrolling, with the blank band shrinking to about one line. But a residual on real nano over a background image was still visible.
 		- Deferred: title-bar apps hard-cut for now - the smooth slide only engages when there is no static top band, so `less` still slides and nano and muffer just page-redraw as before, with no slide and so no bounce. The enter and exit hard-cut fixes are untouched. Re-enabling the slide for title-bar apps needs multi-frame retention so the reveal strip always fills regardless of lag. Verified: title-bar apps hard-cut while `less` still eases smoothly.
-		- 🛠️ Re-enabled the slide for title-bar apps, replacing the retained-frame fill with a scrolled-off strip. (20260707)
+		- ✅ Re-enabled the slide for title-bar apps, replacing the retained-frame fill with a scrolled-off strip. (20260707)
 			- Cause of the residual: filling the reveal from one retained frame is structural bounce. The fill could trail the ease by a few lines - a bare, un-glowed band whose height varied step to step, the pulsing shadow under the title over a background image - and the fill repositioned at every re-capture.
 			- Fixed: each frame the styled rows are snapshotted, and the rows a detected step pushes out of the region are kept in a small strip, drawn welded to the content edge and riding the same eased offset. The gap is always exactly filled, nothing repositions, and the strip carries its own cell backgrounds and glow. Band bleed is impossible by construction (only region rows are ever captured), so the old glow guards went away.
 			- Fixed alongside: sliding rows' background rects and the cursor now clamp to the scroll region, so an inverse-video or coloured row can't poke into the title/status bands mid-slide.
 			- Verified: headless scroll harness - all four scenes (less, vim, nano, muffer) slide monotone with zero bounces and correct bands; 112 library tests including strip ordering, trimming, direction flip, and row selection.
-			- Pending: feel-test on real nano and muffer (wheel + cursor) over a background image with glow on.
+			- Feel-test passed after the #t78br band-ghost fix; merged to main. (20260708)
 
 - ✅ Choosing "Tabs|New Tab" the first time, opens a second tab. Doing it again, changes to the first tab, rather than opening a third tab.
 	- Cause: a dropdown opens flush under the menu bar, so its top item ("New Tab") sits in the tab-bar band. The mouse handler checked the tab-bar hit before the open-menu hit, so once more than one tab existed (tab bar shown) the tab bar stole the click and selected a tab instead of firing the item. The first New Tab worked only because there was no tab bar yet.
