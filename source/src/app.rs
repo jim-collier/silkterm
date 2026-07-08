@@ -1540,8 +1540,8 @@ impl State {
 					areas.push(p.text_area_band(
 						tops[&p.id],
 						margin,
-						slide.top_split_y,
-						slide.split_y,
+						slide.region_clip_t,
+						slide.region_clip_b,
 					));
 					if slide.has_top_band {
 						areas.push(p.text_area_band(
@@ -1671,8 +1671,8 @@ impl State {
 						glow_areas.push(p.glow_text_area_band(
 							tops[&p.id],
 							margin,
-							slide.top_split_y,
-							slide.split_y,
+							slide.region_clip_t,
+							slide.region_clip_b,
 						));
 						if slide.has_top_band {
 							glow_areas.push(p.glow_text_area_band(

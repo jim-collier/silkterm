@@ -43,7 +43,10 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-🔘 Bug #t78br: "The Notorious 'Bouncing Shadow' nano bug" (which we'll call this subset) is still still there. (At least the wobblyness seems to be fixed, which is why this now gets its own issue.):
+🛠️ Bug #t78br: "The Notorious 'Bouncing Shadow' nano bug" (which we'll call this subset) is still still there. (At least the wobblyness seems to be fixed, which is why this now gets its own issue.):
+	- Cause: the sliding draw is the whole frame translated by the eased offset, clipped only at the band boundaries - so the top bar's row translated down (and the bottom area's rows translated up) landed inside the scroll-region clip and rendered as translated text copies riding the ease. Text and its glow only (cell backgrounds are placed per row), which is why it reads as a text shadow at the top and as text copies at the bottom. (20260708)
+	- Fixed: the region clip now welds to the shifted content's own edge; the strip fills the gap on the far side of the weld, and translated band rows can no longer enter. (20260708)
+	- Verified: reproduced the ghost in mid-slide frame dumps before the fix, gone after; scroll harness all four scenes pass; 113 lib tests. Pending the same feel-test as the parent spike. (20260708)
 	- Steps to reproduce:
 		- Open nano with a long file - say, ~/.config/silkterm/config.toml.
 		- Observe:

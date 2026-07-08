@@ -141,6 +141,19 @@ fn vanished_range(shift: i32, st: usize, sb: usize, lines: usize) -> std::ops::R
 	}
 }
 
+// The slide's region clip: band boundaries tightened to the shifted content's
+// extent. The gap between a band and the content edge belongs to the strip;
+// without the weld, band rows translated by voff render inside the band clip
+// as ghost copies (see the Slide doc).
+fn weld_region_clip(
+	top_split_y: f32,
+	split_y: f32,
+	content_top_y: f32,
+	content_bot_y: f32,
+) -> (f32, f32) {
+	(top_split_y.max(content_top_y), split_y.min(content_bot_y))
+}
+
 // Fingerprint every visible row (FNV-1a over the chars) and, when `styled` is
 // given, snapshot the styled cells too - the scrolled-off strip's source data.
 // Colours resolve the same way build()'s cell loop does (minus the transient
@@ -417,17 +430,27 @@ pub struct PaneDraw {
 }
 
 // One frame of an easing app-scroll slide. The current frame renders at
-// `PaneDraw.top`, clipped to the scroll region `[top_split_y, split_y]`; the
-// scrolled-off strip renders at `strip_top` with the SAME region clip (it holds
-// only region rows, so nothing can bleed into the bands); and the fixed bands -
-// a bottom status/input line (`has_band`, below `split_y`) and a top title bar
-// (`has_top_band`, above `top_split_y`) - redraw unshifted at `band_top`.
-// `top_split_y` is f32::MIN when there's no top band (open clip).
+// `PaneDraw.top`, clipped to `[region_clip_t, region_clip_b]`; the scrolled-off
+// strip renders at `strip_top` clipped to the scroll region `[top_split_y,
+// split_y]` (it holds only region rows, so nothing can bleed into the bands);
+// and the fixed bands - a bottom status/input line (`has_band`, below `split_y`)
+// and a top title bar (`has_top_band`, above `top_split_y`) - redraw unshifted
+// at `band_top`. `top_split_y` is f32::MIN when there's no top band (open clip).
+//
+// The region clip is WELDED to the shifted content's extent, not just the band
+// boundaries: the current-frame draw is the whole buffer translated by voff, so
+// band rows ride into the region during a slide - the title's glyphs (and their
+// glow) land voff below the real title, the status rows land voff above theirs
+// - rendering as ghost copies that bounce with the ease. Clipping at the
+// content edge cuts them off; the strip owns the gap on the other side of the
+// weld.
 #[derive(Clone)]
 pub struct Slide {
 	pub strip_top: f32,
 	pub top_split_y: f32,
 	pub split_y: f32,
+	pub region_clip_t: f32,
+	pub region_clip_b: f32,
 	pub band_top: f32,
 	pub has_band: bool,
 	pub has_top_band: bool,
@@ -768,10 +791,17 @@ impl Pane {
 			} else {
 				self.rect.y + margin + (split_row as f32 + voff) * cell_h
 			};
+			// content extent = first/one-past-last region row at the shifted position
+			let content_top_y = self.rect.y + margin + (top_split_row as f32 + voff) * cell_h;
+			let content_bot_y = self.rect.y + margin + (split_row as f32 + voff) * cell_h;
+			let (region_clip_t, region_clip_b) =
+				weld_region_clip(top_split_y, split_y, content_top_y, content_bot_y);
 			Some(Slide {
 				strip_top,
 				top_split_y,
 				split_y,
+				region_clip_t,
+				region_clip_b,
 				band_top,
 				has_band: static_rows > 0,
 				has_top_band: static_top > 0,
@@ -2485,7 +2515,7 @@ mod tests {
 		APP_SCROLL_MAX, Dir, Node, OffStrip, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell,
 		bell_brighten, capture_grid_text, capture_start, distinct_pair, equalize_dir_run, fnv_row,
 		glide_to_full, layout, logical_line_bounds, pair_inside, render_char, same_char_pair,
-		scroll_shift, scroll_shift_signed, static_bands, vanished_range,
+		scroll_shift, scroll_shift_signed, static_bands, vanished_range, weld_region_clip,
 	};
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
@@ -3126,6 +3156,24 @@ mod tests {
 		// a shift bigger than the region clamps to it (nothing panics)
 		assert_eq!(vanished_range(50, 1, 2, 10), 1..8);
 		assert_eq!(vanished_range(-50, 1, 2, 10), 1..8);
+	}
+
+	#[test]
+	fn region_clip_welds_to_the_content_edge() {
+		// down-slide (voff +2 cells, cell_h 20): bands at y=20 (title) / y=160
+		// (status); content starts at 20+40=60. The gap 20..60 belongs to the
+		// strip - the clip must start at the content edge so the title's
+		// translated copy (drawn at 40..60) is cut off. Bottom stays band-bound.
+		assert_eq!(weld_region_clip(20.0, 160.0, 60.0, 200.0), (60.0, 160.0));
+		// up-slide (voff -2): content ends at 160-40=120; the status rows'
+		// translated copies (drawn just above 120) must be cut, gap 120..160 is
+		// the strip's. Top stays band-bound.
+		assert_eq!(weld_region_clip(20.0, 160.0, -20.0, 120.0), (20.0, 120.0));
+		// no top band: f32::MIN stays open until the content edge
+		assert_eq!(
+			weld_region_clip(f32::MIN, 160.0, 40.0, 200.0),
+			(40.0, 160.0)
+		);
 	}
 
 	#[test]
