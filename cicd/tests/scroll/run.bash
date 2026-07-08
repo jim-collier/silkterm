@@ -11,7 +11,7 @@
 ##		full-screen apps repaint, then checks the per-frame trace for the behaviour
 ##		each app is supposed to have:
 ##		   less / vim   - no static top band: the smooth slide engages, monotone (no bounce)
-##		   nano / muffer - static title bar: the slide is disabled, so it hard-cuts
+##		   nano / muffer - static title bar held still, the region under it slides
 ##		Plain shell-output easing is covered by the library tests (cargo test); the
 ##		"jumping / re-listing / bottom-up" symptoms map to those monotonicity checks.
 ##		Scenes self-scroll on a timer - no key injection (unreliable here), so the
@@ -185,10 +185,10 @@ run_scene(){
 }
 
 fSection "Deterministic scenes"
-run_scene less   less   slide   0
-run_scene vim    vim    slide   0
-run_scene nano   nano   hardcut 1
-run_scene muffer muffer hardcut 2
+run_scene less   less   slide 0
+run_scene vim    vim    slide 0
+run_scene nano   nano   slide 1
+run_scene muffer muffer slide 2
 
 ## Best-effort real-app smoke (never fails the suite): prove the real apps render
 ## under SilkTerm (enter alt-screen, no hang) - regresses e.g. the cosmic-text hang

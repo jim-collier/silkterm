@@ -43,53 +43,41 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- ✅ A bad config value could kill the whole terminal. Setting `output_ease_lines` above 16 aborted on the first scrolling output, every launch. (20260707)
-	- Found: code review, 20260707.
-	- Cause: the value was never range-checked at load. The scroll code uses it as the lower bound of a clamp, and a lower bound above the cap makes that clamp abort.
-	- Fixed: the value is clamped at load. The scroll code also guards itself now.
-	- Verified: reproduced the abort, then re-ran the same setup on the fix. Covered by a unit test.
+✅ Bug #t78br: "The Notorious 'Bouncing Shadow' nano bug" (which we'll call this subset) is still still there. (At least the wobblyness seems to be fixed, which is why this now gets its own issue.):
+	- Cause: the sliding draw is the whole frame translated by the eased offset, clipped only at the band boundaries - so the top bar's row translated down (and the bottom area's rows translated up) landed inside the scroll-region clip and rendered as translated text copies riding the ease. Text and its glow only (cell backgrounds are placed per row), which is why it reads as a text shadow at the top and as text copies at the bottom. (20260708)
+	- Fixed: the region clip now welds to the shifted content's own edge; the strip fills the gap on the far side of the weld, and translated band rows can no longer enter. (20260708)
+	- Verified: reproduced the ghost in mid-slide frame dumps before the fix, gone after; scroll harness all four scenes pass; 113 lib tests. Feel-test passed; merged with the parent spike. (20260708)
+	- Steps to reproduce:
+		- Open nano with a long file - say, ~/.config/silkterm/config.toml.
+		- Observe:
+			- A sipgle-line bar at the top, rendered with terminal's text color as the bar's background color, and (apparently) the terminal's background color as the bar's text color. It says "GNU nano 8.7.1" on the left, and the open filename in the center. This bar never moves or scrolls, for as long as nano is open. For reference, we'll call this UI element, 'TIMMY THE TOP BAR'.
+			- Nano has reserved three rows at the bottom of the terminal, for itself as fixed, non-scrolling UI areas. The bottom two rows show the user what hotkeys they can use - both in the same inverse text style as 'TIMMY THE TOP BAR', and also regular terminal text. For reference, we'll call this UI element: 'BILLY THE BOTTOM AREA'
+			- The area that file content is rendered in, and the user can move the cursor around and edit in, we'll call 'THE EDIT AREA' for reference.
+			- The entire terminal, in vertical terms, is composed of - by the definition of our words, from top-to-bottom: 'TIMMY THE TOP BAR', 'THE EDIT AREA', and 'BILLY THE BOTTOM AREA'.
+		- Action:
+			- Now contiuously hold down the 'down arrow' key to move "down" the file contents.
+			- When the cursor get to the bottom edge of 'THE EDIT AREA', keeep holding down 'down arrow'.
+		- Observe:
+			- When nano pushes the content from below its view up into view, what appears to be the dark outer glow + outline effect from the text on 'TIMMY THE TOP BAR', visually "bounces" down from the top, visually into 'THE EDIT AREA'.
+			- For reference, we'll call that text 'TIMMYS TEXT SHADOW',
+			- When you stop scrolling, 'TIMMYS TEXT SHADOW' gradually "settles" back "under" 'TIMMY THE TOP BAR'.
+		- Observe:
+			- You can make the same thing happen when pressing the down-arrow key one at a time, it's just not nearly as pronounced of an effect.
+		- Observe:
+			- You can make the same thing happen when scrolling the text in the same direction by using the mouse wheel quickly (which in nano is rewired to drive just the cursor, not 'THE EDIT AREA' - but with fast enough mouse wheel moves, the effects observed above can be much more dramatic.
+		- Action:
+			- Move all the way to the bottom of the file, so we can test the same thing as above but in reverse.
+			- Now contiuously hold down the 'up arrow' key to move "up" the file contents.
+			- When the cursor get to the bottom edge of 'TIMMY THE TOP BAR', keeep holding down 'up arrow'.
+		- Observe:
+			- The same thing that happened to 'TIMMYS TEXT SHADOW' previously, happens in the reverse vertical direction now only involving the inverse text in 'BILLY THE BOTTOM AREA'. It visually bounces UP into 'THE EDIT AREA'.
+			- At the same time and synchronized with, visually identical copies of the normal text in 'BILLY THE BOTTOM AREA' also bounce up into 'THE EDIT AREA'. Together they seem to exhibit the same movement behavior as 'TIMMYS TEXT SHADOW', except flipped vertically.
 
-- ✅ "Copy output" copied the wrong text once scrollback was full. The first lines of a command's output were silently missing from the clipboard. (20260707)
-	- Found: code review, 20260707.
-	- Cause: the capture start was saved as a line index counted from the oldest line in the buffer. At the scrollback cap every new line evicts the oldest, so the index drifts while the command runs.
-	- Fixed: the capture now remembers the prompt line's content and re-finds it when the command settles. The saved index is only a fallback.
-	- Verified: a regression test replays the eviction case and checks the full output comes back.
-
-- ✅ Moving the mouse over a full-screen app that tracks the mouse re-rendered everything. (20260707)
-	- Found: code review, 20260707.
-	- Cause: each motion report also flagged a full redraw, so every pane re-shaped its text once per cell the pointer crossed.
-	- Fixed: motion reports go to the app only. Nothing local changes, so nothing redraws.
-
-- ✅ Menu-bar and tab text was re-shaped from scratch every frame. Constant background work during any animation, even the idle cursor pulse. (20260707)
-	- Found: code review, 20260707.
-	- Fixed: shaped menu titles, tab titles, and the tab close icon are kept between frames. A tab title re-shapes only when it changes. Everything drops on a font change. Measured label widths are cached the same way.
-
-- ✅ `--background-image` with no value swallowed the next option as its path. (20260707)
-	- Found: code review, 20260707.
-	- Fixed: a bare flag now means "no image" and a following option is left alone. Both `=path` and a separate path still work. Covered by a unit test.
-
-- ✅ Launching with only `--config` ignored that config's `command_line`. (20260707)
-	- Found: code review, 20260707.
-	- Cause: any argument at all disabled the fallback. But `--config` picks which config to read, it isn't a layout choice.
-	- Fixed: the fallback still applies when the only arguments are `--config`. Covered by a unit test.
-
-- ✅ "Copy output" could silently skip a command. (20260707)
-	- Found: code review, 20260707.
-	- Cause: arming the capture at Enter gave up if the terminal was briefly busy, with no retry.
-	- Fixed: arming now waits the moment out instead of giving up.
-
-- ✅ Releasing a different mouse button than the one held confused mouse-tracking apps. (20260707)
-	- Found: code review, 20260707.
-	- Cause: any button release was treated as the release of the held one. That cleared its state and sent the app a release it never saw pressed.
-	- Fixed: only the matching button's release is reported. Other buttons keep their normal handling.
-
-- ✅ Bug in double-click to select (then Ctrl+shift+C).
-	- Steps to reproduce: The specific command was `zpool status`. Trying to double-click on a member by label (e.g. "zfs-..."), or "ONLINE", results in something else being selected. It appears to actually select something to the right. But if you can guess correctly on your aim, then hit the copy hotkey, it does correctly copy the text. (Just not the text that's highlighted.)
-	- Cause: `zpool status` indents its config section with a literal tab. The raw tab was passed through to the shaper, which expands it to a full 8-column stop. That shifted the row's visible text several columns right of the grid the selection uses. The highlight and copy stayed correct but no longer lined up with the on-screen text, so clicking a visible word selected a cell several columns away. Only tab-indented output was affected.
-	- Fixed: render any control character in a cell as a plain one-cell space, so the tab cell advances one column and the row stays grid-aligned.
-	- Verified: on tab-indented output, double-clicking a word now selects that word. Covered by a unit test.
-
-- 🛠️ Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
+- ✅ The Notorious "Bouncing Shadow in Wobbly Nano" bug [20260707]:
+	- **NOTE**:
+		- The "Bouncing Shadow" portion of this has been moved to #t78br, "The Notorious 'Bouncing Shadow' nano bug", to tackle independently.
+		- The "wobbly nano" portion of this is still open, and this also (imperfectly) documents earlier attempts at fixes.
+	- Originally: Smooth app-scroll (`smooth_scroll_apps`) left a blank band above/below the text that grew with scroll speed, and stepped one line at a time before easing. (20260703)
 	- Cause: the slide shifted the scroll region by several lines but only one row was ever drawn, so the revealed strip was bare background. The scrolled-off lines are gone from the grid, so there was nothing real to fill it with.
 	- Fixed: retained-frame slide. The pane keeps the previous frame's text and draws it, clipped to the revealed strip, so the strip fills with the real outgoing content while the current frame slides in over it.
 	- Verified: across continuous multi-line slides the content fills top to bottom with no blank band.
@@ -114,6 +102,12 @@ In each section, items are listed approximately from newest to oldest.
 		- Note: an accumulation attempt made it worse (re-tested: jumps much farther). Accumulating the offset for the current content was right, but accumulating the strip fill from one stale snapshot was wrong - when the shift outgrew the scroll region the snapshot was re-captured, jumping the reveal strip by a whole screenful. That periodic jump was the farther bounce.
 		- Fixed: keep the offset accumulating for smooth content, but re-snapshot the previous frame every step so the strip is always one fresh step back. One retained frame only fills a one-step strip, so a fast burst could still open a blank band; a lag ramp on the ease bounds that by easing faster as the lag grows. A regression harness measured no content bounce and no band-boundary jumps across gentle, fast, and wheel scrolling, with the blank band shrinking to about one line. But a residual on real nano over a background image was still visible.
 		- Deferred: title-bar apps hard-cut for now - the smooth slide only engages when there is no static top band, so `less` still slides and nano and muffer just page-redraw as before, with no slide and so no bounce. The enter and exit hard-cut fixes are untouched. Re-enabling the slide for title-bar apps needs multi-frame retention so the reveal strip always fills regardless of lag. Verified: title-bar apps hard-cut while `less` still eases smoothly.
+		- ✅ Re-enabled the slide for title-bar apps, replacing the retained-frame fill with a scrolled-off strip. (20260707)
+			- Cause of the residual: filling the reveal from one retained frame is structural bounce. The fill could trail the ease by a few lines - a bare, un-glowed band whose height varied step to step, the pulsing shadow under the title over a background image - and the fill repositioned at every re-capture.
+			- Fixed: each frame the styled rows are snapshotted, and the rows a detected step pushes out of the region are kept in a small strip, drawn welded to the content edge and riding the same eased offset. The gap is always exactly filled, nothing repositions, and the strip carries its own cell backgrounds and glow. Band bleed is impossible by construction (only region rows are ever captured), so the old glow guards went away.
+			- Fixed alongside: sliding rows' background rects and the cursor now clamp to the scroll region, so an inverse-video or coloured row can't poke into the title/status bands mid-slide.
+			- Verified: headless scroll harness - all four scenes (less, vim, nano, muffer) slide monotone with zero bounces and correct bands; 112 library tests including strip ordering, trimming, direction flip, and row selection.
+			- Feel-test passed after the #t78br band-ghost fix; merged to main. (20260708)
 
 - ✅ Choosing "Tabs|New Tab" the first time, opens a second tab. Doing it again, changes to the first tab, rather than opening a third tab.
 	- Cause: a dropdown opens flush under the menu bar, so its top item ("New Tab") sits in the tab-bar band. The mouse handler checked the tab-bar hit before the open-menu hit, so once more than one tab existed (tab bar shown) the tab bar stole the click and selected a tab instead of firing the item. The first New Tab worked only because there was no tab bar yet.
@@ -475,6 +469,52 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Verify smoothness on X11/Compiz.
 
 #### Done - Bugs
+
+- ✅ A bad config value could kill the whole terminal. Setting `output_ease_lines` above 16 aborted on the first scrolling output, every launch. (20260707)
+	- Found: code review, 20260707.
+	- Cause: the value was never range-checked at load. The scroll code uses it as the lower bound of a clamp, and a lower bound above the cap makes that clamp abort.
+	- Fixed: the value is clamped at load. The scroll code also guards itself now.
+	- Verified: reproduced the abort, then re-ran the same setup on the fix. Covered by a unit test.
+
+- ✅ "Copy output" copied the wrong text once scrollback was full. The first lines of a command's output were silently missing from the clipboard. (20260707)
+	- Found: code review, 20260707.
+	- Cause: the capture start was saved as a line index counted from the oldest line in the buffer. At the scrollback cap every new line evicts the oldest, so the index drifts while the command runs.
+	- Fixed: the capture now remembers the prompt line's content and re-finds it when the command settles. The saved index is only a fallback.
+	- Verified: a regression test replays the eviction case and checks the full output comes back.
+
+- ✅ Moving the mouse over a full-screen app that tracks the mouse re-rendered everything. (20260707)
+	- Found: code review, 20260707.
+	- Cause: each motion report also flagged a full redraw, so every pane re-shaped its text once per cell the pointer crossed.
+	- Fixed: motion reports go to the app only. Nothing local changes, so nothing redraws.
+
+- ✅ Menu-bar and tab text was re-shaped from scratch every frame. Constant background work during any animation, even the idle cursor pulse. (20260707)
+	- Found: code review, 20260707.
+	- Fixed: shaped menu titles, tab titles, and the tab close icon are kept between frames. A tab title re-shapes only when it changes. Everything drops on a font change. Measured label widths are cached the same way.
+
+- ✅ `--background-image` with no value swallowed the next option as its path. (20260707)
+	- Found: code review, 20260707.
+	- Fixed: a bare flag now means "no image" and a following option is left alone. Both `=path` and a separate path still work. Covered by a unit test.
+
+- ✅ Launching with only `--config` ignored that config's `command_line`. (20260707)
+	- Found: code review, 20260707.
+	- Cause: any argument at all disabled the fallback. But `--config` picks which config to read, it isn't a layout choice.
+	- Fixed: the fallback still applies when the only arguments are `--config`. Covered by a unit test.
+
+- ✅ "Copy output" could silently skip a command. (20260707)
+	- Found: code review, 20260707.
+	- Cause: arming the capture at Enter gave up if the terminal was briefly busy, with no retry.
+	- Fixed: arming now waits the moment out instead of giving up.
+
+- ✅ Releasing a different mouse button than the one held confused mouse-tracking apps. (20260707)
+	- Found: code review, 20260707.
+	- Cause: any button release was treated as the release of the held one. That cleared its state and sent the app a release it never saw pressed.
+	- Fixed: only the matching button's release is reported. Other buttons keep their normal handling.
+
+- ✅ Bug in double-click to select (then Ctrl+shift+C).
+	- Steps to reproduce: The specific command was `zpool status`. Trying to double-click on a member by label (e.g. "zfs-..."), or "ONLINE", results in something else being selected. It appears to actually select something to the right. But if you can guess correctly on your aim, then hit the copy hotkey, it does correctly copy the text. (Just not the text that's highlighted.)
+	- Cause: `zpool status` indents its config section with a literal tab. The raw tab was passed through to the shaper, which expands it to a full 8-column stop. That shifted the row's visible text several columns right of the grid the selection uses. The highlight and copy stayed correct but no longer lined up with the on-screen text, so clicking a visible word selected a cell several columns away. Only tab-indented output was affected.
+	- Fixed: render any control character in a cell as a plain one-cell space, so the tab cell advances one column and the row stays grid-aligned.
+	- Verified: on tab-indented output, double-clicking a word now selects that word. Covered by a unit test.
 
 - ✅ Inverted text (e.g. Nano headers) is thin and hard-to-read.
 	- Cause: this was the actual nano complaint (the "shadow jump" language was describing it). Reverse video (dark on light) renders visually thinner than the same-weight light-on-dark text, an inherent effect that other terminals also show. The glow only boosts light-on-dark text, so inverse text got no readability help.

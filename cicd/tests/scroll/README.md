@@ -25,13 +25,14 @@ deterministic. `analyze.py` reads it and checks:
 |--------|---------------------------|--------------|
 | less   | none top, 1 bottom        | slide, monotone (0 bounces) |
 | vim    | none top, 2 bottom        | slide, monotone (0 bounces) |
-| nano   | 1 top (title), 2 bottom   | hard-cut (app_off stays 0)  |
-| muffer | 2 top (header), 1 bottom  | hard-cut (app_off stays 0)  |
+| nano   | 1 top (title), 2 bottom   | slide, monotone (0 bounces) |
+| muffer | 2 top (header), 1 bottom  | slide, monotone (0 bounces) |
 
-The nano/muffer expectation is **hard-cut on purpose**: title-bar apps are gated off
-by `SLIDE_TOP_BAND_APPS = false` in `pane.rs` (the smooth slide fought the fixed
-chrome). When that toggle is flipped back on to resume the top-band work, change those
-two scenes from `hardcut` to `slide` in `run.bash`.
+Title-bar apps (nano, muffer) slide again: `SLIDE_TOP_BAND_APPS = true` in `pane.rs`,
+with the reveal gap filled by the scrolled-off strip (the styled rows each step pushes
+out of the region), so the fill is exact and nothing repositions. If the toggle is
+ever turned back off, change the nano/muffer scenes from `slide` back to `hardcut` in
+`run.bash`.
 
 Plain shell-output scrolling (`ls -lA`, a command finishing on the last line, a fast
 burst) is covered by the library tests in `cargo test` (`pane.rs`/`scroll.rs`): the
