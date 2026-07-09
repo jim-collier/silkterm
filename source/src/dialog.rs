@@ -299,6 +299,12 @@ impl DialogWin {
 			dialog.key_tab();
 		}
 	}
+	// Ctrl+PageUp / Ctrl+PageDown: cycle tabs (PageDown = next).
+	pub fn key_page(&mut self, forward: bool) {
+		if let Content::Settings(dialog) = &mut self.content {
+			dialog.key_page(forward);
+		}
+	}
 	// Up / Down: walk control focus.
 	pub fn focus_vertical(&mut self, forward: bool) {
 		if let Content::Settings(dialog) = &mut self.content {
