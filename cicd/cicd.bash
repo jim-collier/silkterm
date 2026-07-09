@@ -176,6 +176,13 @@ if ((! assume_yes)); then
 	fi
 fi
 
+## Tee the rest of the run (all stages) to a gitignored log so warnings from any
+## stage can be reviewed after the fact. Rotate the prior (closed) logs first.
+if [[ -n "${LINT_LOG_DIR:-}" ]] && mkdir -p "${root}/${LINT_LOG_DIR}" 2>/dev/null; then
+	gfs_rotate "${root}/${LINT_LOG_DIR}" run log >/dev/null 2>&1 || true
+	exec > >(tee "${root}/${LINT_LOG_DIR}/run_${stamp}.log") 2>&1
+fi
+
 ## Stage 1: format.
 fSection "1/7  Format"
 if ((${#FMT_CMD[@]} == 0)); then

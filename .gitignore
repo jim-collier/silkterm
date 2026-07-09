@@ -24,3 +24,6 @@
 .vscode/
 __pycache__/
 *.pyc
+
+# Local cicd run artifacts (flamegraphs, run logs) - regenerated, never committed
+/cicd/artifacts/
