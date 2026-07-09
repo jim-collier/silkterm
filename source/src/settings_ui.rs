@@ -17,10 +17,8 @@ use crate::pane::Rect;
 
 const W: f32 = 540.0;
 const PAD: f32 = 18.0;
-const TITLE_H: f32 = 38.0; // taller for the prominent (scaled) title
 const ROW_H: f32 = 32.0;
 const HEADER_H: f32 = 42.0; // a section heading row (extra top spacing + gap to its rule)
-const TITLE_SCALE: f32 = 1.4; // dialog title rendered this much larger
 const LABEL_W: f32 = 168.0;
 const SLIDER_W: f32 = 220.0;
 const SWATCH: f32 = 20.0;
@@ -544,9 +542,6 @@ impl SettingsDialog {
 	fn row_h(&self, kind: &Kind) -> f32 {
 		Self::row_h_for(kind, self.line_h)
 	}
-	fn title_h(&self) -> f32 {
-		TITLE_H.max(self.line_h * TITLE_SCALE + 10.0)
-	}
 	fn btn_h(&self) -> f32 {
 		BTN_H.max(self.line_h + 8.0)
 	}
@@ -595,12 +590,11 @@ impl SettingsDialog {
 			.collect();
 		let label_w = label_w.max(LABEL_W);
 		let btn_w = btn_w.max(BTN_W);
-		let title_h = TITLE_H.max(line_h * TITLE_SCALE + 10.0);
 		let btn_h = BTN_H.max(line_h + 8.0);
 		let tallest = (0..TAB_TITLES.len())
 			.map(|t| Self::tab_content_h(&specs, &spec_tab, t, line_h))
 			.fold(0.0f32, f32::max);
-		let h = (PAD + title_h + btn_h + 10.0 + tallest + 14.0 + btn_h + PAD).min(max_h.max(300.0));
+		let h = (PAD + btn_h + 10.0 + tallest + 14.0 + btn_h + PAD).min(max_h.max(300.0));
 		let tabs_w = PAD * 2.0
 			+ tab_ws.iter().sum::<f32>()
 			+ TAB_GAP * tab_ws.len().saturating_sub(1) as f32;
@@ -654,7 +648,7 @@ impl SettingsDialog {
 	// Tab-bar / rows-viewport / scrollbar geometry. The rows region sits between
 	// the tab bar and the buttons; only it scrolls (chrome stays put).
 	fn tab_bar_y(&self) -> f32 {
-		self.rect.y + PAD + self.title_h()
+		self.rect.y + PAD
 	}
 	fn tab_rect(&self, k: usize) -> Rect {
 		let x = self.rect.x + PAD + self.tab_ws[..k].iter().sum::<f32>() + TAB_GAP * k as f32;
@@ -802,6 +796,12 @@ impl SettingsDialog {
 			self.tab_switch(!self.shift);
 		} else {
 			self.focus_move(!self.shift);
+		}
+	}
+	// Ctrl+PageUp / Ctrl+PageDown cycle the active tab (PageDown = next).
+	pub fn key_page(&mut self, forward: bool) {
+		if self.ctrl {
+			self.tab_switch(forward);
 		}
 	}
 	// Up / Down arrows walk control focus (a peer of Tab).
@@ -1956,12 +1956,6 @@ impl SettingsDialog {
 			scale: 1.0,
 		};
 		let row_text_y = |y: f32, h: f32| y + (h - line_h) / 2.0;
-		// prominent title: bold + scaled up
-		out.push(TextItem {
-			bold: true,
-			scale: TITLE_SCALE,
-			..mk("Settings".into(), self.rect.x + PAD, self.rect.y + PAD)
-		});
 		// tab titles
 		for (k, title) in TAB_TITLES.iter().enumerate() {
 			let r = self.tab_rect(k);

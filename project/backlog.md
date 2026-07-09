@@ -53,8 +53,9 @@ In each section, items are listed approximately from newest to oldest.
 - 🔘 When the terminal is completely is full of text, it's slows noticeably even on a high-end gaming rig from 4 years ago. Not sure if unicode fallback is part of that problem, and/or a full buffer, it might be.
 	- Steps to reproduce: `cat /bin/Thunar | convert-base-v2 --from binary --to 256jc1`
 
-- 🔘 CTRL+right arrow should move to the beginning of the next word, not the end of the current. (CTRL+left arrow works as expected.)
+- ✋ CTRL+right arrow should move to the beginning of the next word, not the end of the current. (CTRL+left arrow works as expected.)
 	- And delimit on spaces (only?).
+	- Deferred: not a terminal-side fix. Ctrl+Right already sends the standard `\x1b[1;5C`; whether the cursor lands on the end of the word or the start of the next is decided by the running line editor (bash/readline `forward-word` = word end; zsh = next word start), so the asymmetry with Ctrl+Left is inherent to readline, identical across terminals. Changing the emitted sequence would break the standard every app expects. Achievable per-user via a readline binding, or later via the deferred key-remap system.
 
 - 🔘 When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
 	- Note: no obvious desync found - the blur and font both already rebuild on the relevant changes. Needs a live repro (change font, OK, watch the blur) to pin which blur and the exact trigger. Deferred to an interactive pass.
@@ -112,10 +113,13 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 Ctrl+Shift+N: New window on same directory.
 
-- 🔘 Settings dialog:
-	- 🔘 Remove "Settings" heading text, it's redundant with the window title.
-	- 🔘 Change the buttons at the top for different pages, to tabs.
-		- 🔘 Can cycle through with Ctrl+PgUp|PgDn.
+- ✅ Settings dialog:
+	- ✅ Remove "Settings" heading text, it's redundant with the window title.
+		- Done: dropped the prominent in-dialog title (and its band); the tab bar now sits at the top. The OS window title still reads "Settings".
+	- ✅ Change the buttons at the top for different pages, to tabs.
+		- Done: the top selectors are a real tab bar (Appearance / Font / Colors / Window / Scrolling), the active tab highlighted.
+		- ✅ Can cycle through with Ctrl+PgUp|PgDn.
+			- Done: Ctrl+PageDown = next tab, Ctrl+PageUp = previous, alongside the existing Ctrl+Tab.
 
 - 🔘 Copy output:
 	- 🔘 Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.

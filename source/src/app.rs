@@ -141,6 +141,8 @@ impl App {
 						Key::Named(NamedKey::Escape) => act = d.key_escape(),
 						Key::Named(NamedKey::Enter) => act = d.key_enter(),
 						Key::Named(NamedKey::Tab) => d.key_tab(),
+						Key::Named(NamedKey::PageUp) => d.key_page(false),
+						Key::Named(NamedKey::PageDown) => d.key_page(true),
 						Key::Named(NamedKey::Backspace) => d.backspace(),
 						Key::Named(NamedKey::Space) => act = d.key_space(),
 						Key::Named(NamedKey::ArrowUp) => d.focus_vertical(false),
