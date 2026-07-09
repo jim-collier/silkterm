@@ -1242,9 +1242,11 @@ impl State {
 		}
 		let ring_end = instances.len() as u32;
 
-		// cursor quads also feed the scrim source, so the cursor's halo merges
-		// with the text scrim (it still draws crisp ABOVE the composite below)
-		let scrim_cursor_quads: Vec<RectInstance> = if scrim_on && cfg.cursor_scrim {
+		// cursor quads also feed the scrim's cursor-coverage texture (its own tex,
+		// so cursor_scrim/cursor_outline gate it independently); the cursor still
+		// draws crisp ABOVE the composite below. Collect them whenever the scrim is
+		// on - the shader flags decide whether they reach the halo and/or outline.
+		let scrim_cursor_quads: Vec<RectInstance> = if scrim_on {
 			cursors.iter().map(|(_, q)| *q).collect()
 		} else {
 			Vec::new()
@@ -1824,6 +1826,26 @@ impl State {
 					multiview_mask: None,
 				});
 				let _ = self.text.render_scrim(&mut pass);
+			}
+			// cursor coverage in its own texture (kept apart from the text so the
+			// halo and the outline can each include it independently)
+			{
+				let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+					label: Some("scrim cursor"),
+					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+						view: self.scrim.cursor_view(),
+						resolve_target: None,
+						depth_slice: None,
+						ops: wgpu::Operations {
+							load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+							store: wgpu::StoreOp::Store,
+						},
+					})],
+					depth_stencil_attachment: None,
+					timestamp_writes: None,
+					occlusion_query_set: None,
+					multiview_mask: None,
+				});
 				self.scrim.draw_cursors(&mut pass);
 			}
 			self.scrim.blur(
@@ -1831,6 +1853,7 @@ impl State {
 				&mut encoder,
 				cfg.text_scrim_radius,
 				scrim_ramp,
+				if cfg.cursor_scrim { 1.0 } else { 0.0 },
 			);
 		}
 
@@ -1901,6 +1924,7 @@ impl State {
 					&mut pass,
 					scrim_intensity,
 					cfg.text_outline,
+					if cfg.cursor_outline { 1.0 } else { 0.0 },
 				);
 				pass.set_scissor_rect(0, 0, sw, sh);
 			}

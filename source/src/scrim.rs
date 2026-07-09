@@ -8,10 +8,12 @@
 //! `bgcolor` map so a glyph's halo takes ITS cell's bg colour (a glyph on a
 //! one-off colored cell isn't smeared with the global bg colour).
 //!
-//! tex_t <- crisp text (+ cursor quads when cursor_scrim), then H-blur tex_t->tex_b,
-//! V-blur tex_b->tex_a; tex_a is the blurred coverage. The composite multiplies it
-//! by `bgcolor`, and also samples tex_t to add a thin dilated outline around the
-//! crisp coverage (the "border" - solid, same per-pixel colour as the scrim).
+//! tex_t <- crisp TEXT coverage; tex_cur <- crisp CURSOR coverage (kept apart so
+//! the cursor can join the halo and the outline independently). H-blur folds in
+//! tex_cur (when cursor_scrim) tex_t->tex_b, V-blur tex_b->tex_a; tex_a is the
+//! blurred coverage. The composite multiplies it by `bgcolor`, and samples tex_t
+//! (+ tex_cur when cursor_outline) to add a thin dilated outline around the crisp
+//! coverage (the "border" - solid, same per-pixel colour as the scrim).
 
 use crate::gfx::{RectInstance, RectRenderer};
 
@@ -23,8 +25,9 @@ struct BlurU {
 	resolution: [f32; 2],
 	dir: [f32; 2],
 	sigma: f32,
-	ramp: f32, // falloff kernel: 0 = gaussian, 1 = linear, 2 = s-curve
-	_pad: [f32; 2],
+	ramp: f32,   // falloff kernel: 0 = gaussian, 1 = linear, 2 = s-curve
+	cursor: f32, // 1 = fold the cursor coverage into the halo, 0 = leave it out
+	_pad: f32,
 }
 
 #[repr(C)]
@@ -33,15 +36,22 @@ struct CompU {
 	resolution: [f32; 2],
 	intensity: f32, // coverage boost; the colour comes from the bgcolor texture
 	border_px: f32, // dilated outline radius around the crisp coverage (0 = none)
+	cursor: f32,    // 1 = give the cursor an outline too, 0 = text only
+	_pad: [f32; 3],
 }
 
 pub struct Scrim {
-	tex_t: wgpu::Texture, // crisp text/cursor coverage (kept for the border pass)
+	tex_t: wgpu::Texture, // crisp text coverage (kept for the border pass)
 	tex_a: wgpu::Texture,
 	tex_b: wgpu::Texture,
 	view_t: wgpu::TextureView,
 	view_a: wgpu::TextureView,
 	view_b: wgpu::TextureView,
+	// crisp cursor coverage, separate from the text so cursor_scrim (halo) and
+	// cursor_outline (border) are independent toggles - folded into the halo by
+	// the blur and into the border by the composite, each gated by its own flag.
+	tex_cur: wgpu::Texture,
+	view_cur: wgpu::TextureView,
 	sampler: wgpu::Sampler,
 	blur_pipe: wgpu::RenderPipeline,
 	blur_bgl: wgpu::BindGroupLayout,
@@ -61,11 +71,10 @@ pub struct Scrim {
 	bgcolor: wgpu::Texture,
 	bgcolor_view: wgpu::TextureView,
 	bg_rects: RectRenderer,
-	// cursor quads drawn into tex_t so the cursor's halo merges with the text scrim.
-	// Separate renderer: bg_rects' instance buffer is uploaded for the bgcolor map
-	// in the SAME encoder, and a second upload would clobber the first (queue
-	// writes all land before the command buffer runs - same rule as the blur
-	// uniforms above).
+	// cursor quads drawn into tex_cur (its own coverage texture). Separate renderer:
+	// bg_rects' instance buffer is uploaded for the bgcolor map in the SAME encoder,
+	// and a second upload would clobber the first (queue writes all land before the
+	// command buffer runs - same rule as the blur uniforms above).
 	cursor_rects: RectRenderer,
 	cursor_count: u32,
 	w: u32,
@@ -89,8 +98,15 @@ impl Scrim {
 		// blur: uniform + sampled texture + sampler
 		let blur_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
 			label: Some("scrim blur bgl"),
-			// binding 3 = the bgcolor map, whose alpha is an "own-bg" mask (see fs_blur)
-			entries: &[ubuf_entry(0), tex_entry(1), samp_entry(2), tex_entry(3)],
+			// binding 3 = the bgcolor map, whose alpha is an "own-bg" mask (see fs_blur);
+			// binding 4 = the crisp cursor coverage (folded in when cursor_scrim)
+			entries: &[
+				ubuf_entry(0),
+				tex_entry(1),
+				samp_entry(2),
+				tex_entry(3),
+				tex_entry(4),
+			],
 		});
 		let make_uniform_buf = |label| {
 			device.create_buffer(&wgpu::BufferDescriptor {
@@ -112,6 +128,7 @@ impl Scrim {
 				samp_entry(2),
 				tex_entry(3),
 				tex_entry(4),
+				tex_entry(5),
 			],
 		});
 		let comp_u = device.create_buffer(&wgpu::BufferDescriptor {
@@ -123,6 +140,7 @@ impl Scrim {
 		let comp_pipe = pipeline_blend(device, &shader, "fs_comp", target, &comp_bgl, "scrim comp");
 
 		let (tex_t, tex_a, tex_b, view_t, view_a, view_b) = make_textures(device, w, h);
+		let (tex_cur, view_cur) = cover_tex(device, w, h);
 		let bgcolor = bgcolor_tex(device, w, h);
 		let bgcolor_view = bgcolor.create_view(&Default::default());
 		let bg_rects = RectRenderer::new(device, FMT);
@@ -139,6 +157,7 @@ impl Scrim {
 			&view_a,
 			&view_b,
 			&bgcolor_view,
+			&view_cur,
 		);
 
 		Self {
@@ -148,6 +167,8 @@ impl Scrim {
 			view_t,
 			view_a,
 			view_b,
+			tex_cur,
+			view_cur,
 			sampler,
 			blur_pipe,
 			blur_bgl,
@@ -180,6 +201,9 @@ impl Scrim {
 		self.view_t = view_t;
 		self.view_a = view_a;
 		self.view_b = view_b;
+		let (tex_cur, view_cur) = cover_tex(device, w, h);
+		self.tex_cur = tex_cur;
+		self.view_cur = view_cur;
 		self.bgcolor = bgcolor_tex(device, w, h);
 		self.bgcolor_view = self.bgcolor.create_view(&Default::default());
 		let (blur_t2b, blur_b2a, comp_bind) = binds(
@@ -194,6 +218,7 @@ impl Scrim {
 			&self.view_a,
 			&self.view_b,
 			&self.bgcolor_view,
+			&self.view_cur,
 		);
 		self.blur_t2b = blur_t2b;
 		self.blur_b2a = blur_b2a;
@@ -250,8 +275,15 @@ impl Scrim {
 		&self.view_t
 	}
 
-	// Upload the cursor quads destined for tex_t (so the cursor halo merges with
-	// the text scrim). Call before the scrim-text pass; draw with `draw_cursors`.
+	// The render target for the cursor coverage (tex_cur), separate from the text.
+	// Clear it transparent and draw the cursor quads (`draw_cursors`) into it before
+	// calling `blur`; the flags in `blur`/`composite` decide where it contributes.
+	pub fn cursor_view(&self) -> &wgpu::TextureView {
+		&self.view_cur
+	}
+
+	// Upload the cursor quads destined for tex_cur. Call before the cursor pass;
+	// draw with `draw_cursors`.
 	pub fn upload_cursors(
 		&mut self,
 		device: &wgpu::Device,
@@ -264,7 +296,7 @@ impl Scrim {
 		self.cursor_count = quads.len() as u32;
 	}
 
-	// Draw the uploaded cursor quads into the current (tex_t) pass.
+	// Draw the uploaded cursor quads into the current (tex_cur) pass.
 	pub fn draw_cursors(&self, pass: &mut wgpu::RenderPass<'_>) {
 		if self.cursor_count > 0 {
 			self.cursor_rects.draw(pass, 0..self.cursor_count);
@@ -273,12 +305,15 @@ impl Scrim {
 
 	// Two separable passes: H (tex_t->tex_b) then V (tex_b->tex_a). After this tex_a
 	// holds the blurred scrim; tex_t keeps the crisp coverage for the border pass.
+	// `cursor` (0/1) folds the cursor coverage into the halo - only in the H pass
+	// (the V pass reads tex_b, which already carries it, so its flag stays 0).
 	pub fn blur(
 		&self,
 		queue: &wgpu::Queue,
 		encoder: &mut wgpu::CommandEncoder,
 		sigma: f32,
 		ramp: f32,
+		cursor: f32,
 	) {
 		let res = [self.w as f32, self.h as f32];
 		// write both uniforms up front (they target different buffers, so neither
@@ -291,7 +326,8 @@ impl Scrim {
 				dir: [1.0, 0.0],
 				sigma,
 				ramp,
-				_pad: [0.0; 2],
+				cursor,
+				_pad: 0.0,
 			}),
 		);
 		queue.write_buffer(
@@ -302,7 +338,8 @@ impl Scrim {
 				dir: [0.0, 1.0],
 				sigma,
 				ramp,
-				_pad: [0.0; 2],
+				cursor: 0.0,
+				_pad: 0.0,
 			}),
 		);
 		for (src_bind, dst) in [
@@ -333,13 +370,14 @@ impl Scrim {
 
 	// Draw the scrim into the current pass, under the text: blurred coverage from
 	// tex_a, coloured per-pixel by the bgcolor map, plus a `border_px` dilated
-	// outline of the crisp coverage (tex_t).
+	// outline of the crisp coverage (tex_t, + tex_cur when `cursor` is 1).
 	pub fn composite(
 		&self,
 		queue: &wgpu::Queue,
 		pass: &mut wgpu::RenderPass<'_>,
 		intensity: f32,
 		border_px: f32,
+		cursor: f32,
 	) {
 		queue.write_buffer(
 			&self.comp_u,
@@ -348,6 +386,8 @@ impl Scrim {
 				resolution: [self.w as f32, self.h as f32],
 				intensity,
 				border_px,
+				cursor,
+				_pad: [0.0; 3],
 			}),
 		);
 		pass.set_pipeline(&self.comp_pipe);
@@ -392,6 +432,26 @@ fn make_textures(
 	(tex_t, tex_a, tex_b, view_t, view_a, view_b)
 }
 
+// A single FMT coverage texture + its view (the cursor's crisp coverage).
+fn cover_tex(device: &wgpu::Device, w: u32, h: u32) -> (wgpu::Texture, wgpu::TextureView) {
+	let tex = device.create_texture(&wgpu::TextureDescriptor {
+		label: Some("scrim tex cur"),
+		size: wgpu::Extent3d {
+			width: w.max(1),
+			height: h.max(1),
+			depth_or_array_layers: 1,
+		},
+		mip_level_count: 1,
+		sample_count: 1,
+		dimension: wgpu::TextureDimension::D2,
+		format: FMT,
+		usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+		view_formats: &[],
+	});
+	let view = tex.create_view(&Default::default());
+	(tex, view)
+}
+
 fn bgcolor_tex(device: &wgpu::Device, w: u32, h: u32) -> wgpu::Texture {
 	device.create_texture(&wgpu::TextureDescriptor {
 		label: Some("scrim bgcolor"),
@@ -422,6 +482,7 @@ fn binds(
 	view_a: &wgpu::TextureView,
 	view_b: &wgpu::TextureView,
 	bgcolor_view: &wgpu::TextureView,
+	view_cur: &wgpu::TextureView,
 ) -> (wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup) {
 	let mk_blur = |ubuf: &wgpu::Buffer, view| {
 		device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -443,6 +504,10 @@ fn binds(
 				wgpu::BindGroupEntry {
 					binding: 3,
 					resource: wgpu::BindingResource::TextureView(bgcolor_view),
+				},
+				wgpu::BindGroupEntry {
+					binding: 4,
+					resource: wgpu::BindingResource::TextureView(view_cur),
 				},
 			],
 		})
@@ -470,6 +535,10 @@ fn binds(
 			wgpu::BindGroupEntry {
 				binding: 4,
 				resource: wgpu::BindingResource::TextureView(view_t),
+			},
+			wgpu::BindGroupEntry {
+				binding: 5,
+				resource: wgpu::BindingResource::TextureView(view_cur),
 			},
 		],
 	});
@@ -595,11 +664,12 @@ fn vs(@builtin(vertex_index) i: u32) -> VsOut {
 
 // scalar pads (NOT vec3, which would force 16-byte alignment -> 48 bytes
 // and mismatch the 32-byte Rust struct)
-struct BlurU { resolution: vec2<f32>, dir: vec2<f32>, sigma: f32, ramp: f32, _p1: f32, _p2: f32 };
+struct BlurU { resolution: vec2<f32>, dir: vec2<f32>, sigma: f32, ramp: f32, cursor: f32, _p2: f32 };
 @group(0) @binding(0) var<uniform> bu: BlurU;
 @group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
 @group(0) @binding(3) var bmask: texture_2d<f32>; // bgcolor map; .a = own-bg mask
+@group(0) @binding(4) var bcur: texture_2d<f32>;  // crisp cursor coverage
 
 // separable blur; fixed 25 taps scaled by sigma so any radius is ~3sigma-covered.
 // `ramp` picks the falloff kernel: 0 = gaussian, 1 = linear (tent), 2 = s-curve
@@ -629,18 +699,21 @@ fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
         }
         let uv = in.uv + bu.dir * (off * texel);
         let keep = 1.0 - textureSample(bmask, samp, uv).a;
-        sum += textureSample(tex, samp, uv) * (w * keep);
+        // fold the cursor coverage into the H pass (bu.cursor is 0 in the V pass)
+        let cov = textureSample(tex, samp, uv) + bu.cursor * textureSample(bcur, samp, uv);
+        sum += cov * (w * keep);
         wsum += w;
     }
     return sum / wsum;
 }
 
-struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32 };
+struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32, cursor: f32, _p1: f32, _p2: f32, _p3: f32 };
 @group(0) @binding(0) var<uniform> cu: CompU;
 @group(0) @binding(1) var gtex: texture_2d<f32>;   // blurred glyph coverage (alpha)
 @group(0) @binding(2) var gsamp: sampler;
 @group(0) @binding(3) var bgtex: texture_2d<f32>;  // per-pixel scrim colour
-@group(0) @binding(4) var ttex: texture_2d<f32>;   // crisp glyph/cursor coverage
+@group(0) @binding(4) var ttex: texture_2d<f32>;   // crisp glyph coverage
+@group(0) @binding(5) var ccur: texture_2d<f32>;   // crisp cursor coverage
 
 // colour the blurred coverage per-pixel by the local bg colour; premultiplied.
 // border: dilate the crisp coverage by border_px (8 taps; linear sampling keeps
@@ -648,9 +721,11 @@ struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32 };
 // hugging each glyph. The crisp text draws over its interior, so what remains
 // visible is the thin outline around the letterforms. Each border tap is gated by
 // the own-bg mask (bgtex.a) too, matching fs_blur, so an own-bg glyph casts no
-// outline (the blurred halo is already masked at its source).
+// outline (the blurred halo is already masked at its source). The cursor coverage
+// joins the outline source only when cu.cursor is 1.
 fn border_tap(uv: vec2<f32>) -> f32 {
-    return textureSample(ttex, gsamp, uv).a * (1.0 - textureSample(bgtex, gsamp, uv).a);
+    let cov = max(textureSample(ttex, gsamp, uv).a, cu.cursor * textureSample(ccur, gsamp, uv).a);
+    return cov * (1.0 - textureSample(bgtex, gsamp, uv).a);
 }
 @fragment
 fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {

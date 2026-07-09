@@ -116,7 +116,8 @@ pub struct Settings {
 	pub text_scrim_ramp: String, // halo falloff: "gaussian" | "linear" | "s"
 	pub text_scrim_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
 	pub embolden_inverse: bool, // render reverse-video (dark-on-light) text bold so it reads as strongly as normal text (the scrim only boosts light-on-dark)
-	pub cursor_scrim: bool,     // cursor gets the same halo, merged with the text scrim
+	pub cursor_scrim: bool,     // cursor joins the text scrim halo (default off)
+	pub cursor_outline: bool,   // cursor joins the text outline (default on)
 	pub cursor_size_height: f32, // cursor height, 1..100% of the cell (from the bottom)
 	pub cursor_size_width: f32, // cursor width, 1..100% of the cell (from the left)
 	pub cursor_animation: String, // "none" | "phase" | "pulse_vertical" | "pulse_horizontal" | "pulse_both"
@@ -174,7 +175,8 @@ impl Default for Settings {
 			text_scrim_ramp: "s".to_string(),
 			text_scrim_regular_weight: true,
 			embolden_inverse: true,
-			cursor_scrim: true,
+			cursor_scrim: false,
+			cursor_outline: true,
 			cursor_size_height: 100.0, // full height
 			cursor_size_width: 25.0,   // ~quarter-width bar
 			cursor_animation: "pulse_vertical".to_string(),
@@ -389,6 +391,9 @@ pub fn persist(orig: &Settings, s: &Settings) {
 	if s.cursor_scrim != orig.cursor_scrim {
 		doc["cursor_scrim"] = value(s.cursor_scrim);
 	}
+	if s.cursor_outline != orig.cursor_outline {
+		doc["cursor_outline"] = value(s.cursor_outline);
+	}
 	if s.columns != orig.columns {
 		doc["columns"] = value(s.columns as i64);
 	}
@@ -504,6 +509,7 @@ struct RawConfig {
 	text_scrim_regular_weight: Option<bool>,
 	embolden_inverse: Option<bool>,
 	cursor_scrim: Option<bool>,
+	cursor_outline: Option<bool>,
 	cursor_size_height: Option<f32>,
 	cursor_size_width: Option<f32>,
 	cursor_animation: Option<String>,
@@ -702,6 +708,7 @@ fn resolve(raw: RawConfig) -> Settings {
 			.unwrap_or(d.text_scrim_regular_weight),
 		embolden_inverse: raw.embolden_inverse.unwrap_or(d.embolden_inverse),
 		cursor_scrim: raw.cursor_scrim.unwrap_or(d.cursor_scrim),
+		cursor_outline: raw.cursor_outline.unwrap_or(d.cursor_outline),
 		cursor_size_height: raw
 			.cursor_size_height
 			.unwrap_or(d.cursor_size_height)
@@ -1386,7 +1393,8 @@ opacity = 0.95
 # text_scrim_ramp = "s"       ## halo falloff shape: "gaussian", "linear", or "s"
 # text_scrim_regular_weight = true  ## blur bold text at regular weight so its halo matches non-bold text
 # embolden_inverse = true     ## render reverse-video (dark-on-light) text bold so it reads as strongly as normal
-# cursor_scrim = true         ## the cursor gets the same halo, merged with the text scrim
+# cursor_scrim = false        ## the cursor joins the scrim halo (default off)
+# cursor_outline = true       ## the cursor joins the text outline (default on)
 
 ##=============================================================================
 ## Cursor
@@ -1536,7 +1544,8 @@ mod tests {
 		assert_eq!(d.text_outline, 2.0);
 		assert_eq!(d.text_scrim_ramp, "s");
 		assert!(d.text_scrim_regular_weight);
-		assert!(d.cursor_scrim);
+		assert!(!d.cursor_scrim, "cursor scrim halo defaults off");
+		assert!(d.cursor_outline, "cursor outline defaults on");
 		assert_eq!(d.background_blur, 8.0);
 	}
 
