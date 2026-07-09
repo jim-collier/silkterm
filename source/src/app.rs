@@ -353,6 +353,7 @@ struct ChromeCache {
 	menu_fg: [u8; 3],
 	menubar: Vec<Buffer>, // MENU_BAR titles + trailing "Copy output" label
 	close: Buffer,
+	close_w: f32, // advance of the "x" glyph, for centering it in the button box
 	tab_w: f32,
 	tabs: Vec<(String, Buffer)>,
 }
@@ -415,7 +416,22 @@ const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-siz
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
 const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
 const TAB_MAX_W: f32 = 220.0; // tab button width cap - drawing AND click hit-testing use this
-const TAB_CLOSE_W: f32 = 20.0; // right-edge close-"x" region per tab (draw + hit-test)
+const TAB_CLOSE_W: f32 = 26.0; // right-edge close-button region per tab (title clips before it)
+const TAB_CLOSE_M: f32 = 5.0; // balanced top/right/bottom margin around the close button box
+
+// The close-"x" button box within a tab: a square with equal top/right/bottom
+// margins (the extra room falls to the left, separating it from the title).
+// Shared by the rect draw, the glyph placement, and the click hit-test so they
+// can't drift apart.
+fn tab_close_box(tab_x: f32, tab_w: f32, bar_y: f32, tab_h: f32) -> Rect {
+	let side = (tab_h - 2.0 * TAB_CLOSE_M).max(8.0);
+	Rect {
+		x: tab_x + tab_w - TAB_CLOSE_M - side,
+		y: bar_y + TAB_CLOSE_M,
+		w: side,
+		h: side,
+	}
+}
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
 const COPYBOX_LABEL: &str = "Copy output"; // always-visible auto-copy checkbox on the menu bar
 
@@ -1354,6 +1370,16 @@ impl State {
 					tab_h - 3.0,
 					color,
 				));
+				// close-button box: a 1px outline (border rect + inner tab-bg fill)
+				let cb = tab_close_box(x, tab_w, tab_bar_y, tab_h);
+				instances.push(rect_inst(
+					cb.x - 1.0,
+					cb.y - 1.0,
+					cb.w + 2.0,
+					cb.h + 2.0,
+					config::menu_border(),
+				));
+				instances.push(rect_inst(cb.x, cb.y, cb.w, cb.h, color));
 			}
 			Some((start, instances.len() as u32))
 		} else {
@@ -1488,11 +1514,32 @@ impl State {
 				.chain(std::iter::once(&COPYBOX_LABEL))
 				.map(|title| shape_ui(&mut self.text, title, 240.0, menu_h, menu_fg))
 				.collect();
-			let close = shape_ui(&mut self.text, "\u{00d7}", TAB_CLOSE_W, tab_h, close_fg);
+			// the close "x" is bold so it reads as a button glyph
+			let close = {
+				let mut buf = self.text.new_ui_buffer(TAB_CLOSE_W, tab_h);
+				let mut attrs = crate::text::ui_attrs();
+				attrs.weight = crate::text::ui_bold_weight();
+				attrs.color_opt = Some(close_fg);
+				buf.set_text(
+					&mut self.text.font_system,
+					"\u{00d7}",
+					&attrs,
+					Shaping::Advanced,
+					None,
+				);
+				buf.shape_until_scroll(&mut self.text.font_system, false);
+				buf
+			};
+			let close_w = {
+				let mut attrs = crate::text::ui_attrs();
+				attrs.weight = crate::text::ui_bold_weight();
+				self.text.measure_ui_text("\u{00d7}", &attrs)
+			};
 			self.chrome = Some(ChromeCache {
 				menu_fg: menu_fg_rgb,
 				menubar,
 				close,
+				close_w,
 				tab_w: -1.0, // force the tab pass below to fill in
 				tabs: Vec::new(),
 			});
@@ -1596,6 +1643,7 @@ impl State {
 		for (i, (_, buf)) in chrome.tabs.iter().enumerate() {
 			let x = i as f32 * tab_w;
 			let close_x = x + tab_w - TAB_CLOSE_W;
+			let cb = tab_close_box(x, tab_w, tab_bar_y, tab_h);
 			areas.push(TextArea {
 				buffer: buf,
 				left: x + 8.0,
@@ -1613,14 +1661,14 @@ impl State {
 			});
 			areas.push(TextArea {
 				buffer: &chrome.close,
-				left: close_x + 5.0,
-				top: self.text.ui_text_top(tab_bar_y, tab_h),
+				left: cb.x + (cb.w - chrome.close_w).max(0.0) / 2.0,
+				top: self.text.ui_text_top(cb.y, cb.h),
 				scale: 1.0,
 				bounds: TextBounds {
-					left: close_x as i32,
-					top: tab_bar_y as i32,
-					right: (x + tab_w) as i32,
-					bottom: (tab_bar_y + tab_h) as i32,
+					left: cb.x as i32,
+					top: cb.y as i32,
+					right: (cb.x + cb.w) as i32,
+					bottom: (cb.y + cb.h) as i32,
 				},
 				default_color: close_fg,
 				custom_glyphs: &[],
@@ -2699,8 +2747,10 @@ impl ApplicationHandler<UserEvent> for App {
 						(state.gfx.config.width as f32 / state.tabs.len() as f32).min(TAB_MAX_W);
 					let i = (x / tab_w).floor() as usize;
 					if i < state.tabs.len() {
-						// click on the right-edge "x" closes that tab; else select it
-						if x >= (i as f32 + 1.0) * tab_w - TAB_CLOSE_W {
+						// click in the close-button column closes that tab; else select it
+						let cb =
+							tab_close_box(i as f32 * tab_w, tab_w, tab_bar_y, state.tab_bar_h());
+						if x >= cb.x {
 							state.close_tab_at(i);
 						} else {
 							state.tabs.active = i;
