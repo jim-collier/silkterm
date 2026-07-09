@@ -456,6 +456,17 @@ pub struct Slide {
 	pub has_top_band: bool,
 }
 
+// A shaped fallback glyph, cached per (char, bold, italic). Colour is NOT baked
+// (the TextArea's default_color tints it), so one shaped buffer serves every
+// cell/colour drawing that glyph - the shaping (harfbuzz fallback matching) is
+// the expensive part and only pays once per distinct glyph instead of per cell
+// per frame. `ink_w`/`ink_off` are the rasterized ink box for cell-fit scaling.
+struct FallbackGlyph {
+	buf: Buffer,
+	ink_w: f32,
+	ink_off: f32,
+}
+
 pub struct Pane {
 	pub id: PaneId,
 	pub term: TermInstance,
@@ -500,11 +511,13 @@ pub struct Pane {
 	// not a scroll - detected here to hard-cut it instead of animating the swap.
 	last_alt: bool,
 	// Fallback glyphs (not in the primary mono font) pulled out of `buffer` and
-	// drawn one-per-cell so their font advance can't shift the row. `glyph_bufs`
-	// is a reused pool; `glyphs` holds (x, y, color, scale) for the first N of
-	// them - `scale` shrinks an over-wide fallback glyph to fit its cell box.
-	glyph_bufs: Vec<Buffer>,
-	glyphs: Vec<(f32, f32, GColor, f32)>,
+	// drawn one-per-cell so their font advance can't shift the row. `glyph_cache`
+	// holds each distinct glyph shaped once (keyed by char + bold + italic);
+	// `glyphs` is this frame's placements - (key, x, y, color, scale) - `scale`
+	// shrinks an over-wide fallback glyph to fit its cell box. The cache persists
+	// across frames (dropped on a font/size rebuild, see rebuild_buffers).
+	glyph_cache: HashMap<(char, bool, bool), FallbackGlyph>,
+	glyphs: Vec<((char, bool, bool), f32, f32, GColor, f32)>,
 	// Scrim source with bold stripped (text_scrim_regular_weight): shaped alongside
 	// the main buffer only on rebuild frames that actually contain bold runs.
 	// `scrim_debold` says the buffer is valid for the current content.
@@ -1114,38 +1127,46 @@ impl Pane {
 			scrim_buffer.shape_until_scroll(&mut ctx.font_system, false);
 		}
 
-		// build the per-cell fallback glyphs (reusing the buffer pool)
+		// place the per-cell fallback glyphs. Each distinct glyph is shaped once
+		// (harfbuzz fallback matching is the cost) and cached; every cell/colour
+		// drawing it reuses that buffer, tinted per-cell via TextArea.default_color.
 		self.glyphs.clear();
 		let rect_y = self.rect.y;
-		for (i, (ch, color, bold, italic, c, screen_row, cells)) in
-			glyph_specs.into_iter().enumerate()
-		{
-			let mut attrs = mono_attrs();
-			attrs.color_opt = Some(GColor::rgb(color[0], color[1], color[2]));
-			if bold {
-				attrs.weight = Weight::BOLD;
-			}
-			if italic {
-				attrs.style = Style::Italic;
-			}
-			if i >= self.glyph_bufs.len() {
-				let buf = ctx.new_plain_buffer();
-				self.glyph_bufs.push(buf);
-			}
-			let (ink_w, ink_off) = ctx.fill_glyph(&mut self.glyph_bufs[i], ch, &attrs);
+		for (ch, color, bold, italic, c, screen_row, cells) in glyph_specs {
+			let key = (ch, bold, italic);
+			let glyph = self.glyph_cache.entry(key).or_insert_with(|| {
+				let mut attrs = mono_attrs(); // colour left unset - the TextArea tints it
+				if bold {
+					attrs.weight = Weight::BOLD;
+				}
+				if italic {
+					attrs.style = Style::Italic;
+				}
+				let mut buf = ctx.new_plain_buffer();
+				let (ink_w, ink_off) = ctx.fill_glyph(&mut buf, ch, &attrs);
+				FallbackGlyph {
+					buf,
+					ink_w,
+					ink_off,
+				}
+			});
 			// Fit the ink inside its cell box (cells * cell_w wide), only ever
 			// shrinking, and center it there - a fallback face's wider-than-a-cell
 			// ink would otherwise spill over the next cell and collide with its
 			// text. Back out the ink offset so centering is on the ink, not the pen.
 			let target = cells as f32 * cell_w;
-			let scale = if ink_w > target { target / ink_w } else { 1.0 };
+			let scale = if glyph.ink_w > target {
+				target / glyph.ink_w
+			} else {
+				1.0
+			};
 			let cell_x = content_x + c as f32 * cell_w;
-			let x = cell_x + (target - ink_w * scale) / 2.0 - ink_off * scale;
+			let x = cell_x + (target - glyph.ink_w * scale) / 2.0 - glyph.ink_off * scale;
 			let y = rect_y
 				+ margin + (screen_row as f32 + voff_of(screen_row)) * cell_h
 				+ cell_h * (1.0 - scale) / 2.0;
 			self.glyphs
-				.push((x, y, GColor::rgb(color[0], color[1], color[2]), scale));
+				.push((key, x, y, GColor::rgb(color[0], color[1], color[2]), scale));
 		}
 
 		self.last_draw = PaneDraw {
@@ -1454,9 +1475,8 @@ impl Pane {
 	pub fn glyph_areas(&self) -> Vec<TextArea<'_>> {
 		self.glyphs
 			.iter()
-			.zip(&self.glyph_bufs)
-			.map(|(&(x, y, color, scale), buf)| TextArea {
-				buffer: buf,
+			.map(|&(key, x, y, color, scale)| TextArea {
+				buffer: &self.glyph_cache[&key].buf,
 				left: x,
 				top: y,
 				scale,
@@ -1781,6 +1801,8 @@ impl PaneManager {
 			pane.strip_buf = ctx.new_buffer(pane.rect.w.max(1.0), ctx.cell_h);
 			pane.strip.clear(); // metrics changed; a mid-slide strip would misalign
 			pane.strip_dirty = false;
+			pane.glyph_cache.clear(); // cached glyphs are tied to the old font/metrics
+			pane.scrim_buf = None; // ditto the de-bold scrim buffer
 			pane.text_built = false; // fresh empty buffer: force a full rebuild next frame
 		}
 	}
@@ -1916,7 +1938,7 @@ fn spawn_pane(
 		slide_static_top: 0,
 		slide_sh: 0.0,
 		last_alt: false,
-		glyph_bufs: Vec::new(),
+		glyph_cache: HashMap::new(),
 		glyphs: Vec::new(),
 		scrim_buf: None,
 		scrim_debold: false,
