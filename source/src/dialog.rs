@@ -243,7 +243,7 @@ impl DialogWin {
 	pub fn set_cursor(&mut self, x: f32, y: f32) {
 		self.mouse = (x, y);
 		if let Content::Settings(dialog) = &mut self.content {
-			dialog.mouse_move(x, y); // continues a slider drag
+			dialog.mouse_move(x, y); // slider drag + open-dropdown hover
 		}
 	}
 
@@ -395,6 +395,11 @@ impl DialogWin {
 		let mut scissor_vp: Option<Rect> = None;
 		// (left, top, scale, color, clip, buffer)
 		let mut bufs: Vec<(f32, f32, f32, [u8; 3], Option<Rect>, glyphon::Buffer)> = Vec::new();
+		// end of the scissored settings rows (an open dropdown appends its popup
+		// rects after this; they draw unscissored, on top, in a second pass)
+		let mut rows_end = 0usize;
+		let mut overlay_range: Option<(u32, u32)> = None;
+		let mut ov_bufs: Vec<(f32, f32, f32, [u8; 3], Option<Rect>, glyphon::Buffer)> = Vec::new();
 		let clear: [u8; 3];
 
 		match &self.content {
@@ -502,6 +507,35 @@ impl DialogWin {
 					buf.shape_until_scroll(&mut self.text.font_system, false);
 					bufs.push((item.x, item.y, item.scale, item.color, item.clip, buf));
 				}
+				rows_end = rect_inst.len();
+				// open dropdown popup: rects appended after the rows (drawn on top,
+				// unscissored, in a second pass); its text goes to the overlay renderer
+				if dialog.dropdown_open() {
+					let (ov_rects, ov_texts) = dialog.dropdown_overlay();
+					let start = rect_inst.len() as u32;
+					rect_inst.extend(ov_rects);
+					overlay_range = Some((start, rect_inst.len() as u32));
+					for item in ov_texts {
+						let mut attrs = ui_attrs();
+						attrs.color_opt =
+							Some(GColor::rgb(item.color[0], item.color[1], item.color[2]));
+						if item.bold {
+							attrs.weight = crate::text::ui_bold_weight();
+						}
+						let mut buf = self
+							.text
+							.new_ui_buffer(w as f32, self.text.ui_line_h * item.scale.max(1.0));
+						buf.set_text(
+							&mut self.text.font_system,
+							&item.text,
+							&attrs,
+							Shaping::Advanced,
+							None,
+						);
+						buf.shape_until_scroll(&mut self.text.font_system, false);
+						ov_bufs.push((item.x, item.y, item.scale, item.color, item.clip, buf));
+					}
+				}
 			}
 		}
 
@@ -542,6 +576,47 @@ impl DialogWin {
 			);
 			self.text.trim_atlas();
 		}
+		// open-dropdown popup text prepared into the overlay renderer (second pass)
+		if overlay_range.is_some() {
+			let ov_areas: Vec<TextArea> = ov_bufs
+				.iter()
+				.map(|(x, y, scale, color, clip, buf)| {
+					let bounds = match clip {
+						Some(rect) => TextBounds {
+							left: rect.x as i32,
+							top: rect.y as i32,
+							right: (rect.x + rect.w) as i32,
+							bottom: (rect.y + rect.h) as i32,
+						},
+						None => TextBounds {
+							left: 0,
+							top: 0,
+							right: w as i32,
+							bottom: h as i32,
+						},
+					};
+					TextArea {
+						buffer: buf,
+						left: *x,
+						top: *y,
+						scale: *scale,
+						bounds,
+						default_color: GColor::rgb(color[0], color[1], color[2]),
+						custom_glyphs: &[],
+					}
+				})
+				.collect();
+			if let Err(err) = self
+				.text
+				.prepare_overlay(&self.gfx.device, &self.gfx.queue, ov_areas)
+			{
+				eprintln!(
+					"{}: dialog overlay prepare failed; trimming atlas: {err:?}",
+					config::APP_NAME
+				);
+				self.text.trim_atlas();
+			}
+		}
 		if !rect_inst.is_empty() {
 			self.rects
 				.set_resolution(&self.gfx.queue, w as f32, h as f32);
@@ -581,7 +656,7 @@ impl DialogWin {
 			if !rect_inst.is_empty() {
 				self.rects.draw(&mut pass, 0..rect_split as u32);
 				// scrolled settings rows, clipped to the viewport
-				if rect_inst.len() > rect_split {
+				if rows_end > rect_split {
 					if let Some(vp) = scissor_vp {
 						let x = vp.x.max(0.0).min(w as f32) as u32;
 						let y = vp.y.max(0.0).min(h as f32) as u32;
@@ -590,13 +665,34 @@ impl DialogWin {
 						if sw > 0 && sh > 0 {
 							pass.set_scissor_rect(x, y, sw, sh);
 							self.rects
-								.draw(&mut pass, rect_split as u32..rect_inst.len() as u32);
+								.draw(&mut pass, rect_split as u32..rows_end as u32);
 							pass.set_scissor_rect(0, 0, w, h);
 						}
 					}
 				}
 			}
 			let _ = self.text.render(&mut pass);
+		}
+		// second pass: the open dropdown popup on top (preserves the first pass)
+		if let Some((start, end)) = overlay_range {
+			let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+				label: Some("dialog overlay pass"),
+				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+					view: &view,
+					resolve_target: None,
+					depth_slice: None,
+					ops: wgpu::Operations {
+						load: wgpu::LoadOp::Load,
+						store: wgpu::StoreOp::Store,
+					},
+				})],
+				depth_stencil_attachment: None,
+				timestamp_writes: None,
+				occlusion_query_set: None,
+				multiview_mask: None,
+			});
+			self.rects.draw(&mut pass, start..end);
+			let _ = self.text.render_overlay(&mut pass);
 		}
 		self.gfx.queue.submit(Some(encoder.finish()));
 		self.gfx.end_frame(frame);

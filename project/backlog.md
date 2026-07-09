@@ -57,8 +57,14 @@ In each section, items are listed approximately from newest to oldest.
 			- Note: It's short enough that it's livable (kind of cool even), but it's still a jarring effect for what is supposed to be a highly-polished terminal. (And by "kind of cool", I mean, if it were an opt-in, always happened "Compiz"-like "open-wobbly" effect. But we don't want that. We want stability.)
 	- It's hard to recreate, so I don't know the steps to do it. But once it happens once, it seems easy to repeat. It only seems to start happening after a while - so maybe related to lots of input and/or more likely, output. And/or many switching of modes? Or just time?
 
-
 ### New features and enhancements
+
+- ✅ Use dropdown list boxes for Scrim function, and Scrim falloff.
+	- Done: both are now dropdown list boxes (new `Dropdown` control in the Settings dialog) instead of radios - a collapsed box showing the current value + a down-arrow, opening a popup list on click / Space / Alt+Down. Keyboard: Up/Down move the highlight, Enter/Space pick, Esc closes, Left/Right nudge without opening. The popup draws in a second pass on top so covered rows can't bleed through it; it opens upward when it would spill past the panel bottom. The fuller labels the radios couldn't fit are back.
+	- ✅ Order for Scrim function: SDF, DT, Dilate, Gaussian (default SDF).
+	- ✅ Order for Scrim falloff: Exponential, Gaussian, Log, S-curve, Linear (default Gaussian).
+		- Note: the default falloff changed from S-curve to Gaussian per this item (supersedes the earlier "default to S-curve").
+	- ✅ Bug "Function selection not saving state": the apply path swaps the live settings (`RwLock<Arc<Settings>>`) and the diff writer persists `text_scrim_function`, so a picked function both takes effect live and is written to `config.toml` on Apply/OK - verified end to end.
 
 - ✅ Improve the text scrim
 	- Done: added a "Scrim function" choice (Dilate / SDF / DT / Gaussian [ugly]) and expanded "Scrim falloff" to five curves (S-curve / Gaussian / Linear / Logarithmic / Exponential), both in `config.toml` (`text_scrim_function`, `text_scrim_ramp`) and as Settings radios. The three non-Gaussian functions share one cheap separable Euclidean/Chebyshev distance transform (bounded to the halo radius, two passes, no jump-flood), so corners stay full instead of receding. Default is now SDF (round, full corners); Gaussian is kept as the labelled-ugly baseline. Falloff and function are orthogonal (shape vs fade). Verified all four render on the GL path and read as distinct backings.
