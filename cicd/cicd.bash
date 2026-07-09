@@ -60,6 +60,18 @@ export PATH="${HOME}/.cargo/bin:${HOME}/.local/bin:${PATH}"       ## rustup tool
 source "${here}/config.bash"
 source "${here}/utility/include/gfs-rotate.bash"                  ## gfs_rotate() for the profiler artifacts
 declare -p FMT_CMD &>/dev/null || FMT_CMD=()                      ## tolerate a config without the fmt stage
+
+## Cap compile/test parallelism to at most half the cores so a pipeline run
+## doesn't peg every CPU and leaves the machine usable. cargo's jobserver bounds
+## total rustc + codegen parallelism to CARGO_BUILD_JOBS (covers build, test,
+## clippy, and the zigbuild cross-builds); RUST_TEST_THREADS bounds the test run.
+## A project can override CICD_MAX_JOBS in config.bash.
+cores="$(nproc 2>/dev/null || echo 2)"
+: "${CICD_MAX_JOBS:=$(( cores / 2 ))}"
+(( CICD_MAX_JOBS >= 1 )) || CICD_MAX_JOBS=1
+export CARGO_BUILD_JOBS="${CICD_MAX_JOBS}"
+export RUST_TEST_THREADS="${CICD_MAX_JOBS}"
+
 cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
