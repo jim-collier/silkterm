@@ -345,7 +345,7 @@ if ((! df_did)); then fEcho_Clean "dogfood disabled"; fi
 ## Refresh README screenshots (skipped under --quick; non-fatal - a miss never
 ## aborts). Runs before publish so changed images get committed; rendering needs
 ## a headless X + magick, so a failure just warns.
-shots_hook="${root}/utility/screenshots.bash"
+shots_hook="${root}/cicd/utility/screenshots.bash"
 if ((quick)); then
 	fEcho_Clean "screenshots skipped (--quick)"
 elif [[ -x "$shots_hook" ]]; then
