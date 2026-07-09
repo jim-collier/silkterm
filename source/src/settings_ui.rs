@@ -2,9 +2,11 @@
 // Copyright © 2026 Jim Collier
 
 //! Modal settings dialog: sliders for numeric tunables, swatch + hex field for
-//! colors, and Cancel / Apply / OK. Edits a working copy of `Settings`; the app
-//! reads it back on Apply/OK to live-apply + persist. Renders as flat quads
-//! (rects) + positioned text the app draws in an overlay pass.
+//! colors, toggles, few-option radios, dropdown list boxes for longer enums, and
+//! Cancel / Apply / OK. Edits a working copy of `Settings`; the app reads it back
+//! on Apply/OK to live-apply + persist. Renders as flat quads (rects) + positioned
+//! text; an open dropdown's popup draws in a second (LoadOp::Load) pass on top so
+//! covered rows' text can't bleed through it (see `dropdown_overlay`).
 //!
 //! Sections are grouped into tabs (see `TAB_TITLES`/`tab_for_section`) so the
 //! dialog stays well under screen height; if a tab still doesn't fit (huge UI
@@ -146,15 +148,19 @@ fn speed_to_tau(speed: f32) -> f32 {
 enum Kind {
 	Slider { min: f32, max: f32, int: bool },
 	Color,
-	Text,                           // free-text field (path / font family; empty = default)
-	Toggle,                         // checkbox (e.g. use system font)
-	Radio(&'static [&'static str]), // pick one of N mutually-exclusive options
-	Header(&'static str),           // a section heading, no control
+	Text,                              // free-text field (path / font family; empty = default)
+	Toggle,                            // checkbox (e.g. use system font)
+	Radio(&'static [&'static str]),    // pick one of N mutually-exclusive options
+	Dropdown(&'static [&'static str]), // one-of-N via a collapsed box + popup list
+	Header(&'static str),              // a section heading, no control
 }
 
 const RADIO_BOX: f32 = 16.0; // radio indicator square
 const RADIO_PITCH: f32 = 96.0; // px per option (box + label + gap) at BASE_LH
 const BASE_LH: f32 = 19.0; // UI line height the fixed radio consts were tuned for
+const DD_W: f32 = 208.0; // collapsed dropdown box width at BASE_LH (fits the longest option + arrow)
+const DD_ARROW: &str = "\u{25be}"; // small down-triangle in the collapsed box
+const DD_CHECK: &str = "\u{2713}"; // marks the current value in the open popup
 
 // Tabs ("super-sections"); each config section maps to one via tab_for_section.
 pub const TAB_TITLES: [&str; 5] = ["Appearance", "Font", "Colors", "Window", "Scrolling"];
@@ -366,12 +372,23 @@ fn fields() -> Vec<Spec> {
 		Spec {
 			label: "Scrim function",
 			key: ScrimFunction,
-			kind: Radio(&["Dilate", "SDF", "DT", "Gaussian"]),
+			kind: Dropdown(&[
+				"Distance field",
+				"Distance transform",
+				"Dilate + feather",
+				"Gaussian [ugly]",
+			]),
 		},
 		Spec {
 			label: "Scrim falloff",
 			key: ScrimRamp,
-			kind: Radio(&["S-curve", "Gaussian", "Linear", "Log", "Exp"]),
+			kind: Dropdown(&[
+				"Exponential",
+				"Gaussian",
+				"Logarithmic",
+				"S-curve",
+				"Linear",
+			]),
 		},
 		Spec {
 			label: "Cursor in scrim",
@@ -527,6 +544,8 @@ pub struct SettingsDialog {
 	drag: Option<usize>,     // slider row being dragged
 	pressed: Option<usize>,  // footer button held down (fires on release; drawn pressed)
 	edit: Option<EditState>, // row being typed (hex for Color, path for Text)
+	open: Option<usize>,     // row whose dropdown popup is open (None = all closed)
+	pending: usize,          // highlighted option in the open popup (commits on Enter/click)
 	focus: Option<Focus>,    // keyboard-focused control/button (None = mouse-only)
 	alt: bool,               // Alt held: underline button accelerators (Cancel/Apply/OK)
 	shift: bool,             // Shift held (Shift+Tab walks focus backwards)
@@ -617,9 +636,17 @@ impl SettingsDialog {
 			.max()
 			.unwrap_or(0) as f32;
 		let radio_w = PAD + label_w + max_radio_opts * RADIO_PITCH * scale + PAD;
+		// a dropdown's collapsed box (+ revert column) must fit too
+		let has_dropdown = specs.iter().any(|s| matches!(s.kind, Kind::Dropdown(_)));
+		let dd_w = if has_dropdown {
+			PAD + label_w + DD_W * scale + 6.0 + REVERT_W + PAD
+		} else {
+			0.0
+		};
 		let w = (W + (label_w - LABEL_W) + (btn_w - BTN_W) * 3.0)
 			.max(tabs_w)
-			.max(radio_w);
+			.max(radio_w)
+			.max(dd_w);
 		let rect = Rect {
 			x: ((screen_w - w) / 2.0).max(0.0),
 			y: ((screen_h - h) / 2.0).max(0.0),
@@ -642,6 +669,8 @@ impl SettingsDialog {
 			drag: None,
 			pressed: None,
 			edit: None,
+			open: None,
+			pending: 0,
 			focus: None,
 			alt: false,
 			shift: false,
@@ -722,6 +751,32 @@ impl SettingsDialog {
 		}
 	}
 
+	// ---- dropdown popup (open list; commits on Enter / click) -----------------
+
+	pub fn dropdown_open(&self) -> bool {
+		self.open.is_some()
+	}
+	fn dd_options(&self, i: usize) -> &'static [&'static str] {
+		match self.specs[i].kind {
+			Kind::Dropdown(opts) => opts,
+			_ => &[],
+		}
+	}
+	// Open row `i`'s popup with the current value highlighted.
+	fn dd_open(&mut self, i: usize) {
+		self.commit_edit();
+		self.open = Some(i);
+		self.pending = self.get_radio(self.specs[i].key);
+		self.focus = Some(Focus::Row(i));
+		self.scroll_focus_into_view();
+	}
+	// Apply the highlighted option and close (Enter / Space / click on an option).
+	fn dd_commit(&mut self) {
+		if let Some(i) = self.open.take() {
+			self.set_radio(self.specs[i].key, self.pending);
+		}
+	}
+
 	// ---- keyboard focus + control activation ----------------------------------
 
 	// A row that can hold keyboard focus: a real control (not a header) that isn't
@@ -749,6 +804,7 @@ impl SettingsDialog {
 	// ring, wrapping, and scroll a focused row into view.
 	fn focus_move(&mut self, forward: bool) {
 		self.commit_edit();
+		self.open = None; // Tab/arrow away closes any open popup
 		let ring = self.focus_ring();
 		if ring.is_empty() {
 			self.focus = None;
@@ -784,6 +840,7 @@ impl SettingsDialog {
 	// Ctrl+Tab / Ctrl+Shift+Tab: cycle the active tab, focusing its first control.
 	fn tab_switch(&mut self, forward: bool) {
 		self.commit_edit();
+		self.open = None;
 		let n = self.tab_ws.len();
 		if n == 0 {
 			return;
@@ -811,8 +868,27 @@ impl SettingsDialog {
 			self.tab_switch(forward);
 		}
 	}
-	// Up / Down arrows walk control focus (a peer of Tab).
+	// Up / Down arrows: navigate an open popup, else Alt+Down opens a focused
+	// dropdown, else walk control focus (a peer of Tab).
 	pub fn key_vertical(&mut self, forward: bool) {
+		if let Some(i) = self.open {
+			let n = self.dd_options(i).len();
+			if n > 0 {
+				let step = if forward { 1 } else { -1 };
+				self.pending = (self.pending as i32 + step).rem_euclid(n as i32) as usize;
+			}
+			return;
+		}
+		if forward && self.alt {
+			if let Some(Focus::Row(i)) = self.focus {
+				if matches!(self.specs[i].kind, Kind::Dropdown(_))
+					&& !self.disabled(self.specs[i].key)
+				{
+					self.dd_open(i);
+					return;
+				}
+			}
+		}
 		self.focus_move(forward);
 	}
 	// Left / Right: caret motion while a field is being edited, otherwise adjust
@@ -825,6 +901,9 @@ impl SettingsDialog {
 				self.cursor_right();
 			}
 			return;
+		}
+		if self.open.is_some() {
+			return; // an open popup owns arrow keys (Up/Down navigate it)
 		}
 		let Some(Focus::Row(i)) = self.focus else {
 			return;
@@ -842,7 +921,8 @@ impl SettingsDialog {
 				}
 				self.set_f32(key, value);
 			}
-			Kind::Radio(options) => {
+			// closed dropdown: Left/Right nudge the value without opening (combobox feel)
+			Kind::Radio(options) | Kind::Dropdown(options) => {
 				let sel = self.get_radio(key) as i32;
 				let new_sel = (sel + dir).clamp(0, options.len() as i32 - 1);
 				self.set_radio(key, new_sel as usize);
@@ -853,6 +933,10 @@ impl SettingsDialog {
 	// Space: type into an active edit, activate a focused button, else activate the
 	// focused control - flip a toggle or open a text/color field for editing.
 	pub fn key_space(&mut self) -> Action {
+		if self.open.is_some() {
+			self.dd_commit(); // Space picks the highlighted option
+			return Action::None;
+		}
 		if self.edit.is_some() {
 			self.char_input(' ');
 			return Action::None;
@@ -886,6 +970,7 @@ impl SettingsDialog {
 				let cur = buf.len();
 				self.edit = Some(EditState { row: i, buf, cur });
 			}
+			Kind::Dropdown(_) => self.dd_open(i),
 			_ => {}
 		}
 		Action::None
@@ -1015,6 +1100,50 @@ impl SettingsDialog {
 			y: self.row_y(i) + (ROW_H - size) / 2.0,
 			w: size,
 			h: size,
+		}
+	}
+	// Collapsed dropdown box (the always-visible control): shows the current option
+	// + a down-arrow; clicking it opens the popup list.
+	fn dd_box(&self, i: usize) -> Rect {
+		let h = (self.line_h + 6.0).max(SWATCH);
+		Rect {
+			x: self.control_x(),
+			y: self.row_y(i) + (ROW_H - h) / 2.0,
+			w: DD_W * self.ui_scale(),
+			h,
+		}
+	}
+	// One option row inside the open popup.
+	fn dd_item_h(&self) -> f32 {
+		(self.line_h + 8.0).max(24.0)
+	}
+	// The open popup box. Opens downward from the collapsed box, or upward when that
+	// would spill past the viewport bottom (so a dropdown low in a scrolled tab still
+	// shows all its options).
+	fn dd_popup(&self, i: usize, n: usize) -> Rect {
+		let boxr = self.dd_box(i);
+		let h = n as f32 * self.dd_item_h();
+		let vp = self.viewport();
+		let down_y = boxr.y + boxr.h;
+		let y = if down_y + h <= vp.y + vp.h || boxr.y - h < vp.y {
+			down_y
+		} else {
+			boxr.y - h
+		};
+		Rect {
+			x: boxr.x,
+			y,
+			w: boxr.w,
+			h,
+		}
+	}
+	fn dd_item_rect(&self, i: usize, n: usize, k: usize) -> Rect {
+		let popup = self.dd_popup(i, n);
+		Rect {
+			x: popup.x,
+			y: popup.y + k as f32 * self.dd_item_h(),
+			w: popup.w,
+			h: self.dd_item_h(),
 		}
 	}
 	// Row-spanning box drawn around the keyboard-focused control.
@@ -1156,18 +1285,20 @@ impl SettingsDialog {
 				config::Fit::Zoom => 1,
 				_ => 0,
 			},
+			// display order: SDF, DT, Dilate, Gaussian
 			Key::ScrimFunction => match self.edited.text_scrim_function.as_str() {
-				"dilate" => 0,
-				"dt" => 2,
+				"dt" => 1,
+				"dilate" => 2,
 				"gaussian" => 3,
-				_ => 1, // sdf
+				_ => 0, // sdf
 			},
+			// display order: Exponential, Gaussian, Log, S-curve, Linear
 			Key::ScrimRamp => match self.edited.text_scrim_ramp.as_str() {
 				"gaussian" => 1,
-				"linear" => 2,
-				"log" => 3,
-				"exp" => 4,
-				_ => 0, // s
+				"log" => 2,
+				"s" => 3,
+				"linear" => 4,
+				_ => 0, // exp
 			},
 			_ => 0,
 		}
@@ -1183,8 +1314,8 @@ impl SettingsDialog {
 			}
 			Key::ScrimFunction => {
 				self.edited.text_scrim_function = match idx {
-					0 => "dilate",
-					2 => "dt",
+					1 => "dt",
+					2 => "dilate",
 					3 => "gaussian",
 					_ => "sdf",
 				}
@@ -1193,10 +1324,10 @@ impl SettingsDialog {
 			Key::ScrimRamp => {
 				self.edited.text_scrim_ramp = match idx {
 					1 => "gaussian",
-					2 => "linear",
-					3 => "log",
-					4 => "exp",
-					_ => "s",
+					2 => "log",
+					3 => "s",
+					4 => "linear",
+					_ => "exp",
 				}
 				.to_string();
 			}
@@ -1371,6 +1502,18 @@ impl SettingsDialog {
 	// `measure` gives a string's rendered width in the UI font (for placing the
 	// caret at the clicked position inside a text field).
 	pub fn mouse_down(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) -> Action {
+		// an open dropdown captures the click: on an option -> pick it, anywhere
+		// else -> just close (a click-away dismiss, consumed either way)
+		if let Some(oi) = self.open.take() {
+			let n = self.dd_options(oi).len();
+			for k in 0..n {
+				if self.dd_item_rect(oi, n, k).contains(x, y) {
+					self.set_radio(self.specs[oi].key, k);
+					break;
+				}
+			}
+			return Action::None;
+		}
 		// footer buttons arm on press (drawn pressed) and fire on release, so a
 		// press-drag-off cancels - and the user gets click feedback
 		for (btn_idx, (_, r, _)) in self.buttons().into_iter().enumerate() {
@@ -1498,6 +1641,15 @@ impl SettingsDialog {
 						}
 					}
 				}
+				Kind::Dropdown(_) => {
+					if self.disabled(self.specs[i].key) {
+						continue;
+					}
+					if self.dd_box(i).contains(x, y) {
+						self.dd_open(i);
+						return Action::None;
+					}
+				}
 				Kind::Header(_) => {}
 			}
 		}
@@ -1505,6 +1657,16 @@ impl SettingsDialog {
 	}
 
 	pub fn mouse_move(&mut self, x: f32, y: f32) {
+		if let Some(oi) = self.open {
+			let n = self.dd_options(oi).len();
+			for k in 0..n {
+				if self.dd_item_rect(oi, n, k).contains(x, y) {
+					self.pending = k;
+					break;
+				}
+			}
+			return;
+		}
 		if let Some(grab) = self.drag_thumb {
 			let vp = self.viewport();
 			let thumb_h = self.thumb().map_or(24.0, |t| t.h);
@@ -1674,7 +1836,9 @@ impl SettingsDialog {
 
 	// Esc cancels the dialog; Enter commits an active hex edit (or OK otherwise).
 	pub fn key_escape(&mut self) -> Action {
-		if self.edit.is_some() {
+		if self.open.take().is_some() {
+			Action::None // Esc closes the popup (value unchanged), not the dialog
+		} else if self.edit.is_some() {
 			self.edit = None;
 			Action::None
 		} else {
@@ -1682,7 +1846,10 @@ impl SettingsDialog {
 		}
 	}
 	pub fn key_enter(&mut self) -> Action {
-		if self.edit.is_some() {
+		if self.open.is_some() {
+			self.dd_commit();
+			Action::None
+		} else if self.edit.is_some() {
 			self.commit_edit();
 			Action::None
 		} else if let Some(Focus::Button(b)) = self.focus {
@@ -1922,6 +2089,22 @@ impl SettingsDialog {
 						}
 					}
 				}
+				Kind::Dropdown(_) => {
+					// collapsed box only; the open popup is drawn in the overlay pass
+					let off = self.disabled(self.specs[i].key);
+					let box_r = self.dd_box(i);
+					out.push(q(box_r.x, box_r.y, box_r.w, box_r.h, dlg().field_bg));
+					border(
+						&mut out,
+						box_r,
+						1.0,
+						if self.open == Some(i) && !off {
+							dlg().focus_out
+						} else {
+							dlg().panel_border
+						},
+					);
+				}
 				Kind::Header(_) => {
 					// faint rule near the bottom of the (tall) heading row, leaving a
 					// clear gap below the heading text above it
@@ -2093,6 +2276,27 @@ impl SettingsDialog {
 						});
 					}
 				}
+				Kind::Dropdown(options) => {
+					let off = self.disabled(self.specs[i].key);
+					let color = if off { dlg().dim } else { dlg().text };
+					let box_r = self.dd_box(i);
+					let sel = self.get_radio(self.specs[i].key);
+					let label = options.get(sel).copied().unwrap_or("");
+					out.push(TextItem {
+						color,
+						clip: Some(intersect(box_r)),
+						..mk(label.into(), box_r.x + 8.0, row_text_y(box_r.y, box_r.h))
+					});
+					out.push(TextItem {
+						color,
+						clip: Some(vp),
+						..mk(
+							DD_ARROW.into(),
+							box_r.x + box_r.w - 18.0,
+							row_text_y(box_r.y, box_r.h),
+						)
+					});
+				}
 				Kind::Toggle | Kind::Header(_) => {}
 			}
 		}
@@ -2102,6 +2306,74 @@ impl SettingsDialog {
 			out.push(mk(label.into(), lx, row_text_y(r.y, r.h)));
 		}
 		out
+	}
+
+	// The open dropdown's popup, as (rects, text), for a second (LoadOp::Load) pass
+	// drawn on top of the dialog so the covered rows' text can't bleed through the
+	// opaque box (same reason the context menu uses its own pass). Empty when closed.
+	pub fn dropdown_overlay(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
+		let mut rects = Vec::new();
+		let mut texts = Vec::new();
+		let Some(i) = self.open else {
+			return (rects, texts);
+		};
+		let options = self.dd_options(i);
+		let n = options.len();
+		if n == 0 {
+			return (rects, texts);
+		}
+		let popup = self.dd_popup(i, n);
+		let q = |x: f32, y: f32, w: f32, h: f32, color: [u8; 3]| RectInstance {
+			pos: [x, y],
+			size: [w, h],
+			color: config::srgb_f32(color),
+		};
+		rects.push(q(popup.x, popup.y, popup.w, popup.h, dlg().field_bg));
+		let t = 1.0;
+		rects.push(q(
+			popup.x - t,
+			popup.y - t,
+			popup.w + 2.0 * t,
+			t,
+			dlg().panel_border,
+		));
+		rects.push(q(
+			popup.x - t,
+			popup.y + popup.h,
+			popup.w + 2.0 * t,
+			t,
+			dlg().panel_border,
+		));
+		rects.push(q(popup.x - t, popup.y, t, popup.h, dlg().panel_border));
+		rects.push(q(
+			popup.x + popup.w,
+			popup.y,
+			t,
+			popup.h,
+			dlg().panel_border,
+		));
+		let sel = self.get_radio(self.specs[i].key);
+		let mk = |text: String, x: f32, y: f32| TextItem {
+			text,
+			x,
+			y,
+			color: dlg().text,
+			clip: None,
+			bold: false,
+			scale: 1.0,
+		};
+		for (k, opt) in options.iter().enumerate() {
+			let r = self.dd_item_rect(i, n, k);
+			if k == self.pending {
+				rects.push(q(r.x + 1.0, r.y, r.w - 2.0, r.h, dlg().btn_hl));
+			}
+			let ty = r.y + (r.h - self.line_h) / 2.0;
+			if k == sel {
+				texts.push(mk(DD_CHECK.into(), r.x + r.w - 18.0, ty));
+			}
+			texts.push(mk((*opt).into(), r.x + 10.0, ty));
+		}
+		(rects, texts)
 	}
 }
 
@@ -2273,6 +2545,67 @@ mod tests {
 			last.x + last.w <= big.rect.x + big.rect.w,
 			"last radio option overflows the panel at 2x"
 		);
+	}
+
+	#[test]
+	fn dropdown_open_navigate_commit() {
+		use super::{Action, Focus, Key, Kind};
+		let mut d = mk_dialog(2000.0);
+		d.tab = 0;
+		d.edited.text_scrim = true; // not greyed out
+		let i = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::ScrimFunction)
+			.unwrap();
+		assert!(matches!(d.specs[i].kind, Kind::Dropdown(_)));
+		d.edited.text_scrim_function = "sdf".into(); // option index 0
+		d.focus = Some(Focus::Row(i));
+		// Space opens with the current value highlighted
+		d.key_space();
+		assert_eq!(d.open, Some(i));
+		assert_eq!(d.pending, 0);
+		// Down moves the highlight but does not commit yet
+		d.key_vertical(true);
+		assert_eq!(d.pending, 1);
+		assert_eq!(
+			d.edited.text_scrim_function, "sdf",
+			"not committed until Enter"
+		);
+		// Enter commits + closes
+		assert!(matches!(d.key_enter(), Action::None));
+		assert_eq!(d.open, None);
+		assert_eq!(d.edited.text_scrim_function, "dt"); // index 1
+		// reopen, move, Esc -> closes and discards the highlight
+		d.key_space();
+		d.key_vertical(true);
+		assert_eq!(d.key_escape(), Action::None);
+		assert_eq!(d.open, None);
+		assert_eq!(d.edited.text_scrim_function, "dt");
+	}
+
+	#[test]
+	fn dropdown_mouse_open_and_pick() {
+		use super::Key;
+		let mut d = mk_dialog(2000.0);
+		d.tab = 0;
+		d.edited.text_scrim = true;
+		let i = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::ScrimRamp)
+			.unwrap();
+		let n = d.dd_options(i).len();
+		let mut m = |_: &str| 8.0;
+		// click the collapsed box opens the popup
+		let box_r = d.dd_box(i);
+		d.mouse_down(box_r.x + 4.0, box_r.y + 4.0, &mut m);
+		assert_eq!(d.open, Some(i));
+		// click option 2 ("Logarithmic") selects it and closes
+		let r = d.dd_item_rect(i, n, 2);
+		d.mouse_down(r.x + 4.0, r.y + r.h / 2.0, &mut m);
+		assert_eq!(d.open, None);
+		assert_eq!(d.edited.text_scrim_ramp, "log");
 	}
 
 	#[test]
