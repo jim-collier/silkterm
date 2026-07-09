@@ -112,6 +112,8 @@ enum Key {
 	ScrimSoftness,
 	Outline,
 	ScrimRamp,
+	CursorScrim,
+	CursorOutline,
 	BgImage,
 	SystemFont,
 	FontFamily,
@@ -187,6 +189,8 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::ScrimSoftness => &["text_scrim_softness"],
 		Key::Outline => &["text_outline"],
 		Key::ScrimRamp => &["text_scrim_ramp"],
+		Key::CursorScrim => &["cursor_scrim"],
+		Key::CursorOutline => &["cursor_outline"],
 		Key::BgImage => &["background_image"],
 		Key::SystemFont => &["use_system_font"],
 		Key::FontFamily => &["font_family"],
@@ -363,6 +367,16 @@ fn fields() -> Vec<Spec> {
 			label: "Scrim falloff",
 			key: ScrimRamp,
 			kind: Radio(&["Gaussian", "Linear", "S-curve"]),
+		},
+		Spec {
+			label: "Cursor in scrim",
+			key: CursorScrim,
+			kind: Toggle,
+		},
+		Spec {
+			label: "Cursor in outline",
+			key: CursorOutline,
+			kind: Toggle,
 		},
 		hdr("Font"),
 		Spec {
@@ -1111,6 +1125,8 @@ impl SettingsDialog {
 			Key::Transparency => self.edited.transparent_background,
 			Key::BackdropBlur => self.edited.transparent_background_blur,
 			Key::TextScrim => self.edited.text_scrim,
+			Key::CursorScrim => self.edited.cursor_scrim,
+			Key::CursorOutline => self.edited.cursor_outline,
 			Key::RememberSize => self.edited.remember_size,
 			_ => false,
 		}
@@ -1121,6 +1137,8 @@ impl SettingsDialog {
 			Key::Transparency => self.edited.transparent_background = on,
 			Key::BackdropBlur => self.edited.transparent_background_blur = on,
 			Key::TextScrim => self.edited.text_scrim = on,
+			Key::CursorScrim => self.edited.cursor_scrim = on,
+			Key::CursorOutline => self.edited.cursor_outline = on,
 			Key::RememberSize => self.edited.remember_size = on,
 			_ => {}
 		}
@@ -1166,8 +1184,13 @@ impl SettingsDialog {
 		(matches!(key, Key::Opacity | Key::BackdropBlur) && !self.edited.transparent_background)
 			|| (matches!(
 				key,
-				Key::ScrimRadius | Key::ScrimSoftness | Key::Outline | Key::ScrimRamp
+				Key::ScrimRadius
+					| Key::ScrimSoftness | Key::Outline
+					| Key::ScrimRamp | Key::CursorScrim
+					| Key::CursorOutline
 			) && !self.edited.text_scrim)
+			// the cursor outline needs an outline to join
+			|| (matches!(key, Key::CursorOutline) && self.edited.text_outline <= 0.0)
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
 			|| (matches!(key, Key::FontFamily | Key::FontSize) && self.edited.use_system_font)
 	}
@@ -1222,6 +1245,8 @@ impl SettingsDialog {
 				edited.transparent_background_blur == defaults.transparent_background_blur
 			}
 			Key::TextScrim => edited.text_scrim == defaults.text_scrim,
+			Key::CursorScrim => edited.cursor_scrim == defaults.cursor_scrim,
+			Key::CursorOutline => edited.cursor_outline == defaults.cursor_outline,
 			Key::SystemFont => edited.use_system_font == defaults.use_system_font,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
 			Key::BgFit => edited.background_fit == defaults.background_fit,
@@ -1264,12 +1289,16 @@ impl SettingsDialog {
 			Key::Transparency
 			| Key::BackdropBlur
 			| Key::TextScrim
+			| Key::CursorScrim
+			| Key::CursorOutline
 			| Key::SystemFont
 			| Key::RememberSize => {
 				let default_val = match key {
 					Key::Transparency => self.defaults.transparent_background,
 					Key::BackdropBlur => self.defaults.transparent_background_blur,
 					Key::TextScrim => self.defaults.text_scrim,
+					Key::CursorScrim => self.defaults.cursor_scrim,
+					Key::CursorOutline => self.defaults.cursor_outline,
 					Key::SystemFont => self.defaults.use_system_font,
 					_ => self.defaults.remember_size,
 				};

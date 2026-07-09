@@ -77,7 +77,8 @@ In each section, items are listed approximately from newest to oldest.
 	- OPEN bugs and issues in backlog.md (but not any below the "Done" section - need those for historical reference).
 	- Done: config keys `text_glow*`/`cursor_glow` -> `text_scrim*`/`cursor_scrim` (value-preserving migration keeps existing configs); module/struct/idents `glow` -> `scrim`; Settings labels/enums; README, design.md; open backlog items; `03-glow.png` -> `03-scrim.png`. `text_outline` (a sibling, not the scrim) kept its name. (20260708)
 
-- 🔘 Options to include the cursor in the text scrim, and outline. Default scrim to off, outline to on.
+- ✅ Options to include the cursor in the text scrim, and outline. Default scrim to off, outline to on.
+	- Done: split the cursor coverage into its own texture, separate from the text, so `cursor_scrim` (halo) and `cursor_outline` (border) are independent. Two config keys + Settings toggles ("Cursor in scrim", "Cursor in outline"). Defaults: scrim off, outline on. (20260708)
 
 - 🔘 Improve the text scrim
 	- Standard Gaussian Blur function is a poor fit for the text scrim, as a legibility aid. Here's why:
