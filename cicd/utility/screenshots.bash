@@ -19,7 +19,7 @@
 ##	Syntax:
 ##		screenshots.bash [REPO_DIR]
 ##		  REPO_DIR   the 'github' working tree (default: derived from this script's
-##		             location, ../ - it lives in github/utility). Env overrides:
+##		             location, ../../ - it lives in github/cicd/utility). Env overrides:
 ##		               SILK_BIN            silkterm binary (default REPO/target/release/silkterm)
 ##		               SILK_SHOT_DISPLAY   Xvfb display (default :98)
 ##	Notes:
@@ -78,8 +78,8 @@ fResolvePaths() {
 	meDir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 	repoDir="${1:-}"
 	if [[ -z "$repoDir" ]]; then
-		## github/utility -> github
-		repoDir="$(cd -- "${meDir}/.." 2>/dev/null && pwd || true)"
+		## github/cicd/utility -> github
+		repoDir="$(cd -- "${meDir}/../.." 2>/dev/null && pwd || true)"
 	fi
 	[[ -n "$repoDir" && -d "$repoDir" ]] || { fErr "repo dir not found: ${repoDir:-<unset>}"; return 1; }
 	binPath="${SILK_BIN:-${repoDir}/target/release/silkterm}"
