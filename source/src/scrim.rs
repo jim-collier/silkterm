@@ -24,10 +24,12 @@ const FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 struct BlurU {
 	resolution: [f32; 2],
 	dir: [f32; 2],
-	sigma: f32,
-	ramp: f32,   // falloff kernel: 0 = gaussian, 1 = linear, 2 = s-curve
+	sigma: f32,  // gaussian path: blur sigma in px
+	ramp: f32,   // falloff curve: 0 s-curve, 1 gaussian, 2 linear, 3 log, 4 exp
 	cursor: f32, // 1 = fold the cursor coverage into the halo, 0 = leave it out
-	_pad: f32,
+	radius: f32, // distance path: halo extent in px (also bounds the tap loop)
+	metric: f32, // distance path: 0 = euclidean, 1 = chebyshev (square)
+	_pad: [f32; 3],
 }
 
 #[repr(C)]
@@ -37,7 +39,9 @@ struct CompU {
 	intensity: f32, // coverage boost; the colour comes from the bgcolor texture
 	border_px: f32, // dilated outline radius around the crisp coverage (0 = none)
 	cursor: f32,    // 1 = give the cursor an outline too, 0 = text only
-	_pad: [f32; 3],
+	function: f32,  // 0 dilate, 1 sdf, 2 dt (distance paths), 3 gaussian (legacy blur)
+	ramp: f32,      // falloff curve (distance path transfer)
+	radius: f32,    // distance path: halo extent in px (normalizes the distance)
 }
 
 pub struct Scrim {
@@ -54,6 +58,11 @@ pub struct Scrim {
 	view_cur: wgpu::TextureView,
 	sampler: wgpu::Sampler,
 	blur_pipe: wgpu::RenderPipeline,
+	// distance-field paths (dilate/sdf/dt) reuse the blur bind groups + textures:
+	// pass a = per-column 1D distance (tex_t->tex_b), pass b = row combine into the
+	// final distance (tex_b->tex_a), metric per the selected function.
+	dist_a_pipe: wgpu::RenderPipeline,
+	dist_b_pipe: wgpu::RenderPipeline,
 	blur_bgl: wgpu::BindGroupLayout,
 	// one uniform PER direction: all queue.write_buffer calls are applied before
 	// the command buffer runs, so a single shared buffer would give BOTH passes
@@ -119,6 +128,8 @@ impl Scrim {
 		let blur_u_h = make_uniform_buf("scrim blur u h");
 		let blur_u_v = make_uniform_buf("scrim blur u v");
 		let blur_pipe = pipeline(device, &shader, "fs_blur", FMT, &blur_bgl, "scrim blur");
+		let dist_a_pipe = pipeline(device, &shader, "fs_dist_a", FMT, &blur_bgl, "scrim dist a");
+		let dist_b_pipe = pipeline(device, &shader, "fs_dist_b", FMT, &blur_bgl, "scrim dist b");
 
 		let comp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
 			label: Some("scrim comp bgl"),
@@ -171,6 +182,8 @@ impl Scrim {
 			view_cur,
 			sampler,
 			blur_pipe,
+			dist_a_pipe,
+			dist_b_pipe,
 			blur_bgl,
 			blur_u_h,
 			blur_u_v,
@@ -303,19 +316,27 @@ impl Scrim {
 		}
 	}
 
-	// Two separable passes: H (tex_t->tex_b) then V (tex_b->tex_a). After this tex_a
-	// holds the blurred scrim; tex_t keeps the crisp coverage for the border pass.
-	// `cursor` (0/1) folds the cursor coverage into the halo - only in the H pass
-	// (the V pass reads tex_b, which already carries it, so its flag stays 0).
+	// Two separable passes producing the scrim in tex_a; tex_t keeps the crisp
+	// coverage for the border pass. `function` picks the path: gaussian (3) runs the
+	// legacy sum-blur (H tex_t->tex_b, V tex_b->tex_a) shaped by `ramp`; the distance
+	// paths (dilate 0 / sdf 1 / dt 2) run a separable Euclidean/Chebyshev distance
+	// transform (pass a = per-column 1D distance, pass b = row combine) into tex_a,
+	// bounded to `radius`. `sigma` = gaussian blur sigma; `radius` = distance extent.
+	// `cursor` (0/1) folds the cursor coverage in - only in the first pass (the second
+	// reads tex_b, which already carries it, so its flag stays 0).
 	pub fn blur(
 		&self,
 		queue: &wgpu::Queue,
 		encoder: &mut wgpu::CommandEncoder,
 		sigma: f32,
+		radius: f32,
 		ramp: f32,
 		cursor: f32,
+		function: f32,
 	) {
 		let res = [self.w as f32, self.h as f32];
+		let gaussian = function >= 2.5;
+		let metric = if function < 0.5 { 1.0 } else { 0.0 }; // dilate = chebyshev, else euclid
 		// write both uniforms up front (they target different buffers, so neither
 		// overwrites the other when the queue applies them before the passes run)
 		queue.write_buffer(
@@ -327,7 +348,9 @@ impl Scrim {
 				sigma,
 				ramp,
 				cursor,
-				_pad: 0.0,
+				radius,
+				metric,
+				_pad: [0.0; 3],
 			}),
 		);
 		queue.write_buffer(
@@ -339,12 +362,19 @@ impl Scrim {
 				sigma,
 				ramp,
 				cursor: 0.0,
-				_pad: 0.0,
+				radius,
+				metric,
+				_pad: [0.0; 3],
 			}),
 		);
-		for (src_bind, dst) in [
-			(&self.blur_t2b, &self.view_b),
-			(&self.blur_b2a, &self.view_a),
+		let (pipe_a, pipe_b) = if gaussian {
+			(&self.blur_pipe, &self.blur_pipe)
+		} else {
+			(&self.dist_a_pipe, &self.dist_b_pipe)
+		};
+		for (pipe, src_bind, dst) in [
+			(pipe_a, &self.blur_t2b, &self.view_b),
+			(pipe_b, &self.blur_b2a, &self.view_a),
 		] {
 			let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 				label: Some("scrim blur pass"),
@@ -362,7 +392,7 @@ impl Scrim {
 				occlusion_query_set: None,
 				multiview_mask: None,
 			});
-			pass.set_pipeline(&self.blur_pipe);
+			pass.set_pipeline(pipe);
 			pass.set_bind_group(0, src_bind, &[]);
 			pass.draw(0..3, 0..1);
 		}
@@ -378,6 +408,9 @@ impl Scrim {
 		intensity: f32,
 		border_px: f32,
 		cursor: f32,
+		function: f32,
+		ramp: f32,
+		radius: f32,
 	) {
 		queue.write_buffer(
 			&self.comp_u,
@@ -387,7 +420,9 @@ impl Scrim {
 				intensity,
 				border_px,
 				cursor,
-				_pad: [0.0; 3],
+				function,
+				ramp,
+				radius,
 			}),
 		);
 		pass.set_pipeline(&self.comp_pipe);
@@ -662,18 +697,39 @@ fn vs(@builtin(vertex_index) i: u32) -> VsOut {
     return o;
 }
 
-// scalar pads (NOT vec3, which would force 16-byte alignment -> 48 bytes
-// and mismatch the 32-byte Rust struct)
-struct BlurU { resolution: vec2<f32>, dir: vec2<f32>, sigma: f32, ramp: f32, cursor: f32, _p2: f32 };
+// scalar pads (NOT vec3, which would force 16-byte alignment and mismatch the
+// 48-byte Rust struct)
+struct BlurU { resolution: vec2<f32>, dir: vec2<f32>, sigma: f32, ramp: f32, cursor: f32, radius: f32, metric: f32, _p0: f32, _p1: f32, _p2: f32 };
 @group(0) @binding(0) var<uniform> bu: BlurU;
 @group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
 @group(0) @binding(3) var bmask: texture_2d<f32>; // bgcolor map; .a = own-bg mask
 @group(0) @binding(4) var bcur: texture_2d<f32>;  // crisp cursor coverage
 
-// separable blur; fixed 25 taps scaled by sigma so any radius is ~3sigma-covered.
-// `ramp` picks the falloff kernel: 0 = gaussian, 1 = linear (tent), 2 = s-curve
-// (smoothstep) - the shape of how the halo fades with distance.
+const DIST_MAX: i32 = 40; // hard cap on the distance-transform tap window
+
+// Shared falloff curve, used both as the gaussian blur kernel weight and as the
+// distance-path transfer. `t` is normalized 0 (glyph, full) .. 1 (edge, zero).
+// ramp: 0 s-curve, 1 gaussian, 2 linear, 3 logarithmic, 4 exponential.
+fn falloff(td: f32, ramp: f32) -> f32 {
+    let t = clamp(td, 0.0, 1.0);
+    if (ramp < 0.5) {                 // s-curve (smoothstep on 1-t)
+        let u = 1.0 - t;
+        return u * u * (3.0 - 2.0 * u);
+    } else if (ramp < 1.5) {          // gaussian
+        return exp(-4.5 * t * t);
+    } else if (ramp < 2.5) {          // linear (tent)
+        return 1.0 - t;
+    } else if (ramp < 3.5) {          // logarithmic: drops fast, then slow
+        return clamp(1.0 - log(1.0 + 1.7182818 * t), 0.0, 1.0);
+    } else {                          // exponential: near-full, then drops fast
+        let k = 3.0;
+        return (exp(-k * t) - exp(-k)) / (1.0 - exp(-k));
+    }
+}
+
+// separable gaussian [ugly] blur; fixed 25 taps scaled by sigma so any radius is
+// ~3sigma-covered. Corners recede (a round kernel) - the distance paths fix that.
 //
 // Each tap is gated by `keep` = 1 - own-bg mask, so coverage sitting over a cell
 // with its own solid bg (reverse video, coloured bg, selection) contributes to no
@@ -685,18 +741,12 @@ fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
     let texel = 1.0 / bu.resolution;
     let s = max(bu.sigma, 0.0001);
     let spacing = max(1.0, s * 3.0 / 12.0);
-    let ext = s * 3.0; // kernel extent; the linear/s kernels hit zero here
+    let ext = s * 3.0; // kernel extent; the falloff hits (near) zero here
     var sum = vec4<f32>(0.0);
     var wsum = 0.0;
     for (var i = -12; i <= 12; i = i + 1) {
         let off = f32(i) * spacing;
-        var w = exp(-0.5 * off * off / (s * s));
-        if (bu.ramp > 0.5 && bu.ramp < 1.5) {
-            w = max(0.0, 1.0 - abs(off) / ext);
-        } else if (bu.ramp >= 1.5) {
-            let t = clamp(1.0 - abs(off) / ext, 0.0, 1.0);
-            w = t * t * (3.0 - 2.0 * t);
-        }
+        let w = falloff(abs(off) / ext, bu.ramp);
         let uv = in.uv + bu.dir * (off * texel);
         let keep = 1.0 - textureSample(bmask, samp, uv).a;
         // fold the cursor coverage into the H pass (bu.cursor is 0 in the V pass)
@@ -707,15 +757,57 @@ fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
     return sum / wsum;
 }
 
-struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32, cursor: f32, _p1: f32, _p2: f32, _p3: f32 };
+// Distance transform, pass a: per-column 1D distance to the nearest coverage seed
+// within `radius`, scanning vertically. A seed is coverage (text + folded cursor)
+// that is NOT on an own-bg cell (same gating as fs_blur). Stored in .r; saturates
+// at radius (beyond it the halo is zero anyway, so no bigger value is needed).
+@fragment
+fn fs_dist_a(in: VsOut) -> @location(0) vec4<f32> {
+    let texel = 1.0 / bu.resolution;
+    let R = clamp(bu.radius, 1.0, f32(DIST_MAX));
+    let RI = min(i32(ceil(R)), DIST_MAX);
+    var best = R;
+    for (var k = -RI; k <= RI; k = k + 1) {
+        let uv = in.uv + vec2<f32>(0.0, f32(k)) * texel;
+        let keep = 1.0 - textureSample(bmask, samp, uv).a;
+        let cov = textureSample(tex, samp, uv).a + bu.cursor * textureSample(bcur, samp, uv).a;
+        let seed = step(0.5, cov * keep);
+        best = min(best, mix(R, f32(abs(k)), seed));
+    }
+    return vec4<f32>(best, 0.0, 0.0, 1.0);
+}
+
+// Distance transform, pass b: combine the per-column distances horizontally into
+// the final 2D distance. `metric` picks euclidean (round, corners stay full) or
+// chebyshev (square growth - the dilation look). Bounded to `radius`.
+@fragment
+fn fs_dist_b(in: VsOut) -> @location(0) vec4<f32> {
+    let texel = 1.0 / bu.resolution;
+    let R = clamp(bu.radius, 1.0, f32(DIST_MAX));
+    let RI = min(i32(ceil(R)), DIST_MAX);
+    var best = R;
+    for (var k = -RI; k <= RI; k = k + 1) {
+        let uv = in.uv + vec2<f32>(f32(k), 0.0) * texel;
+        let dv = textureSample(tex, samp, uv).r; // per-column vertical distance
+        let kx = f32(abs(k));
+        var d = sqrt(dv * dv + kx * kx);         // euclidean
+        if (bu.metric >= 0.5) {
+            d = max(dv, kx);                     // chebyshev (square)
+        }
+        best = min(best, d);
+    }
+    return vec4<f32>(best, 0.0, 0.0, 1.0);
+}
+
+struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32, cursor: f32, function: f32, ramp: f32, radius: f32 };
 @group(0) @binding(0) var<uniform> cu: CompU;
-@group(0) @binding(1) var gtex: texture_2d<f32>;   // blurred glyph coverage (alpha)
+@group(0) @binding(1) var gtex: texture_2d<f32>;   // scrim: blurred coverage (.a) or distance (.r)
 @group(0) @binding(2) var gsamp: sampler;
 @group(0) @binding(3) var bgtex: texture_2d<f32>;  // per-pixel scrim colour
 @group(0) @binding(4) var ttex: texture_2d<f32>;   // crisp glyph coverage
 @group(0) @binding(5) var ccur: texture_2d<f32>;   // crisp cursor coverage
 
-// colour the blurred coverage per-pixel by the local bg colour; premultiplied.
+// colour the scrim coverage per-pixel by the local bg colour; premultiplied.
 // border: dilate the crisp coverage by border_px (8 taps; linear sampling keeps
 // it antialiased) and take the union with the scrim - a solid bg-coloured plate
 // hugging each glyph. The crisp text draws over its interior, so what remains
@@ -729,7 +821,20 @@ fn border_tap(uv: vec2<f32>) -> f32 {
 }
 @fragment
 fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {
-    let ga = clamp(textureSample(gtex, gsamp, in.uv).a * cu.intensity, 0.0, 1.0);
+    var ga = 0.0;
+    if (cu.function >= 2.5) {
+        // gaussian [ugly]: blurred coverage alpha, boosted by intensity
+        ga = clamp(textureSample(gtex, gsamp, in.uv).a * cu.intensity, 0.0, 1.0);
+    } else {
+        // distance paths: gtex.r is the distance to the nearest coverage; run it
+        // through the falloff curve. intensity/10 is the peak alpha (softness).
+        let t = textureSample(gtex, gsamp, in.uv).r / max(cu.radius, 0.001);
+        var w = falloff(t, cu.ramp);
+        if (cu.function >= 1.5) {
+            w = smoothstep(0.12, 0.5, w); // dt: harden the soft glow into a solid plate
+        }
+        ga = clamp(w * (cu.intensity / 10.0), 0.0, 1.0);
+    }
     let rgb = textureSample(bgtex, gsamp, in.uv).rgb;
     let texel = 1.0 / cu.resolution;
     let r = max(cu.border_px, 0.0001);

@@ -133,6 +133,19 @@ A sliding frame therefore composites as: the scrolled-off strip filling the reve
 
 Why it is hard, in one place: there is no scroll event to hook and `alacritty_terminal` does not expose the app's scroll region (DECSTBM), so "a scroll happened, by N lines, with these fixed bands" is inferred heuristically and must reject false positives (an in-place redraw must not bounce - the apt-status-bar hazard); the off-screen content is unrecoverable, so it has to be captured styled a frame before it vanishes and tiled pixel-accurately against the current frame; the fixed bands mean three regions have to tile with no gap and no overlap; and all of it is sub-line and per-frame, riding the same fractional renderer and scrim pass, under a redraw loop that cannot trust X11/Compiz redraw requests. It is opt-in (`smooth_scroll_apps`, default off). The strip retains roughly a screenful of scrolled-off rows, so even a fast wheel burst stays filled; the ease's lag ramp bounds how far the content trails reality.
 
+### Text readability scrim
+
+A bg-coloured backing behind glyphs so text stays legible over a busy background image or a near-transparent terminal. The scene's text is rendered to a coverage texture, turned into a halo, and composited under the crisp text, coloured per-pixel so each glyph's backing takes its own cell's bg colour. The cursor is a separate coverage texture so it can join the halo and the outline as independent toggles.
+
+The halo shape is selectable ("Scrim function"), because a plain Gaussian blur is a poor legibility backing: it is a round kernel, so as the radius grows the backing rounds off and the corners of a solid block recede - a square of text reads as sitting on a separate round blob rather than an even plate. Four functions are offered:
+
+- **Dilate** - the backing grows the same distance from every edge as a square (Chebyshev distance), so corners stay full. The most solid/boxy look.
+- **SDF** (default) - the backing grows by true round (Euclidean) distance with full corners: round like the old blur but the corners no longer pull in. This is the described ideal.
+- **DT** (distance transform) - the same Euclidean distance rendered as a solid plate with a crisp feathered lip, rather than a soft glow - a highlighter-style backing.
+- **Gaussian [ugly]** - the legacy separable blur, kept as a baseline to compare against.
+
+The distance functions share one engine: a separable, exactly-Euclidean distance transform bounded to the halo radius (per-column 1D distance, then a row combine), which is cheap (two passes, no jump-flood) and reads either metric off the same field. Independently, a "Scrim falloff" curve shapes how the backing fades with distance - S-curve, Gaussian, Linear, Logarithmic, or Exponential - applied both as the Gaussian kernel weight and as the distance-path transfer. Falloff and function are orthogonal: the function decides the halo's *shape*, the falloff its *fade*.
+
 ### Render Loop Sketch
 
 - Frame: advance lerp -> cross-boundary check -> sync crate offset -> translate render -> draw cells (+overscan rows).

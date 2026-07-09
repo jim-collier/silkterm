@@ -113,7 +113,8 @@ pub struct Settings {
 	pub text_scrim_radius: f32, // scrim blur sigma in px
 	pub text_scrim_softness: f32, // 0 = hard/solid scrim, 1 = soft/faint (maps to the intensity boost)
 	pub text_outline: f32, // antialiased outline around glyphs, px (0 = none; scrim colour rules)
-	pub text_scrim_ramp: String, // halo falloff: "gaussian" | "linear" | "s"
+	pub text_scrim_ramp: String, // halo falloff curve: "s" | "gaussian" | "linear" | "log" | "exp"
+	pub text_scrim_function: String, // halo build: "dilate" | "sdf" | "dt" | "gaussian" (legacy blur)
 	pub text_scrim_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
 	pub embolden_inverse: bool, // render reverse-video (dark-on-light) text bold so it reads as strongly as normal text (the scrim only boosts light-on-dark)
 	pub cursor_scrim: bool,     // cursor joins the text scrim halo (default off)
@@ -173,6 +174,7 @@ impl Default for Settings {
 			text_scrim_softness: 0.5,
 			text_outline: 2.0,
 			text_scrim_ramp: "s".to_string(),
+			text_scrim_function: "sdf".to_string(),
 			text_scrim_regular_weight: true,
 			embolden_inverse: true,
 			cursor_scrim: false,
@@ -382,6 +384,9 @@ pub fn persist(orig: &Settings, s: &Settings) {
 	if s.text_scrim_ramp != orig.text_scrim_ramp {
 		doc["text_scrim_ramp"] = value(&s.text_scrim_ramp);
 	}
+	if s.text_scrim_function != orig.text_scrim_function {
+		doc["text_scrim_function"] = value(&s.text_scrim_function);
+	}
 	if s.text_scrim_regular_weight != orig.text_scrim_regular_weight {
 		doc["text_scrim_regular_weight"] = value(s.text_scrim_regular_weight);
 	}
@@ -506,6 +511,7 @@ struct RawConfig {
 	text_scrim_softness: Option<f32>,
 	text_outline: Option<f32>,
 	text_scrim_ramp: Option<String>,
+	text_scrim_function: Option<String>,
 	text_scrim_regular_weight: Option<bool>,
 	embolden_inverse: Option<bool>,
 	cursor_scrim: Option<bool>,
@@ -701,7 +707,16 @@ fn resolve(raw: RawConfig) -> Settings {
 			Some("linear") => "linear".to_string(),
 			Some("gaussian") => "gaussian".to_string(),
 			Some("s") => "s".to_string(),
+			Some("log") => "log".to_string(),
+			Some("exp") => "exp".to_string(),
 			_ => d.text_scrim_ramp.clone(), // missing/unknown -> default (S-curve)
+		},
+		text_scrim_function: match raw.text_scrim_function.as_deref() {
+			Some("dilate") => "dilate".to_string(),
+			Some("sdf") => "sdf".to_string(),
+			Some("dt") => "dt".to_string(),
+			Some("gaussian") => "gaussian".to_string(),
+			_ => d.text_scrim_function.clone(), // missing/unknown -> default (SDF)
 		},
 		text_scrim_regular_weight: raw
 			.text_scrim_regular_weight
@@ -1387,10 +1402,11 @@ opacity = 0.95
 ## text stays legible over a light/busy background or near-transparent terminal.
 ## On by default; uncomment and set text_scrim = false to disable.
 # text_scrim = true
-# text_scrim_radius = 5.0     ## scrim blur sigma in pixels
+# text_scrim_radius = 5.0     ## scrim halo radius in pixels
 # text_scrim_softness = 0.5   ## 0 = hard/solid scrim, 1 = soft/faint
 # text_outline = 2.0          ## antialiased outline around glyphs, in pixels (0 = none)
-# text_scrim_ramp = "s"       ## halo falloff shape: "gaussian", "linear", or "s"
+# text_scrim_function = "sdf" ## halo shape: "dilate" (square), "sdf" (round, full corners), "dt", or "gaussian" (legacy, corners recede)
+# text_scrim_ramp = "s"       ## halo falloff curve: "s", "gaussian", "linear", "log", or "exp"
 # text_scrim_regular_weight = true  ## blur bold text at regular weight so its halo matches non-bold text
 # embolden_inverse = true     ## render reverse-video (dark-on-light) text bold so it reads as strongly as normal
 # cursor_scrim = false        ## the cursor joins the scrim halo (default off)
@@ -1543,11 +1559,34 @@ mod tests {
 		assert_eq!(d.text_scrim_softness, 0.5);
 		assert_eq!(d.text_outline, 2.0);
 		assert_eq!(d.text_scrim_ramp, "s");
+		assert_eq!(d.text_scrim_function, "sdf");
 		assert!(d.text_scrim_regular_weight);
 		assert!(!d.cursor_scrim, "cursor scrim halo defaults off");
 		assert!(d.cursor_outline, "cursor outline defaults on");
 		assert_eq!(d.background_blur, 10.0);
 		assert_eq!(d.background_opacity, 0.10);
+	}
+
+	// Scrim function + the five falloff curves resolve; unknown values fall to the
+	// defaults (sdf / s-curve).
+	#[test]
+	fn scrim_function_and_ramp_resolve() {
+		let p = std::path::Path::new("test.toml");
+		for f in ["dilate", "sdf", "dt", "gaussian"] {
+			let s = resolve(parse_lenient(
+				&format!("text_scrim_function = \"{f}\"\n"),
+				p,
+			));
+			assert_eq!(s.text_scrim_function, f);
+		}
+		for r in ["s", "gaussian", "linear", "log", "exp"] {
+			let s = resolve(parse_lenient(&format!("text_scrim_ramp = \"{r}\"\n"), p));
+			assert_eq!(s.text_scrim_ramp, r);
+		}
+		let s = resolve(parse_lenient("text_scrim_function = \"bogus\"\n", p));
+		assert_eq!(s.text_scrim_function, "sdf", "unknown -> default");
+		let s = resolve(parse_lenient("text_scrim_ramp = \"bogus\"\n", p));
+		assert_eq!(s.text_scrim_ramp, "s", "unknown -> default");
 	}
 
 	// An over-range output_ease_lines must clamp: scroll's backlog clamp uses it
