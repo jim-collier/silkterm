@@ -273,6 +273,14 @@ run_profiler(){
 	[[ -e "$latest" ]] || latest="$out"
 	fEcho "OK: flamegraph: ${latest}"
 	fEcho_Clean "open: ${latest}  (in a browser)"
+
+	## Hot-spot summary into the log (non-fatal, no marker - the marker is for the
+	## per-session --check gate, not the pipeline).
+	local report="${here}/utility/flame-report.py"
+	if [[ -f "$report" ]]; then
+		fEcho_Clean ""
+		python3 "$report" --dir "${profile_dir}" 2>/dev/null || fEcho_Clean "hot spots: (report unavailable)"
+	fi
 }
 fSection "4/7  Profiler"
 run_profiler
