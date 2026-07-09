@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright © 2026 Jim Collier
 
-//! Text readability scrim: a blurred, background-coloured halo behind glyphs so
-//! text stays legible over a light/busy background image or a near-transparent
-//! terminal. The scene's text is rendered to a texture, blurred (2-pass separable
-//! Gaussian), and composited UNDER the crisp text, coloured per-pixel by a
+//! Text readability scrim: a background-coloured halo behind glyphs so text stays
+//! legible over a light/busy background image or a near-transparent terminal. The
+//! scene's text is rendered to a coverage texture, turned into a halo by one of
+//! four functions, and composited UNDER the crisp text, coloured per-pixel by a
 //! `bgcolor` map so a glyph's halo takes ITS cell's bg colour (a glyph on a
 //! one-off colored cell isn't smeared with the global bg colour).
 //!
+//! Two passes build the halo in tex_a (tex_t stays crisp for the border). Gaussian
+//! (legacy, corners recede) is a separable sum-blur; the distance functions (dilate
+//! / sdf / dt) are a separable, bounded Euclidean/Chebyshev distance transform so
+//! corners stay full - pass a = per-column 1D distance, pass b = row combine. The
+//! composite maps the blurred coverage OR the distance (through a falloff curve) to
+//! the per-pixel bg colour, plus a thin dilated outline of the crisp coverage.
+//!
 //! tex_t <- crisp TEXT coverage; tex_cur <- crisp CURSOR coverage (kept apart so
-//! the cursor can join the halo and the outline independently). H-blur folds in
-//! tex_cur (when cursor_scrim) tex_t->tex_b, V-blur tex_b->tex_a; tex_a is the
-//! blurred coverage. The composite multiplies it by `bgcolor`, and samples tex_t
-//! (+ tex_cur when cursor_outline) to add a thin dilated outline around the crisp
-//! coverage (the "border" - solid, same per-pixel colour as the scrim).
+//! the cursor can join the halo and the outline independently, each by its own
+//! flag; the first pass folds tex_cur in when cursor_scrim, the composite samples
+//! tex_t / tex_cur to add the border when cursor_outline).
 
 use crate::gfx::{RectInstance, RectRenderer};
 
