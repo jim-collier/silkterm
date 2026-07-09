@@ -50,8 +50,12 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🔘 When the terminal is completely is full of text, it's slows noticeably even on a high-end gaming rig from 4 years ago. Not sure if unicode fallback is part of that problem, and/or a full buffer, it might be.
+- 🛠️ When the terminal is completely is full of text, it's slows noticeably even on a high-end gaming rig from 4 years ago. Not sure if unicode fallback is part of that problem, and/or a full buffer, it might be.
 	- Steps to reproduce: `cat /bin/Thunar | convert-base-v2 --from binary --to 256jc1`
+	- Cause: it is the unicode fallback, not the full buffer. Each cell whose glyph the primary mono font lacks was re-shaped from scratch every frame - through the full font-fallback matching path - even though the same character shapes identically each time. A screen filled with mixed-script glyphs meant thousands of redundant per-cell shapes per frame. A flamegraph of the repro put this single step (`fill_glyph`) at ~16% of all CPU, while the main text shape was under 1% (fallback cells are placeholders in the main buffer), ruling out the "full buffer" theory.
+	- Fixed: shape each distinct glyph (keyed by character + bold + italic) once and cache it per pane, tinting per cell at draw time; the cache drops on a font or size change. A re-profile of the same flood dropped `fill_glyph` from ~16% to ~0.2% and the whole build step from ~17% to ~1%.
+	- Verified: pixel-identical output vs the pre-change build on a colored + bold mixed-script scene (no visual change), plus the before/after flamegraphs above.
+	- Pending: owner feel-test on the real machine to confirm it no longer bogs down.
 
 - ✋ CTRL+right arrow should move to the beginning of the next word, not the end of the current. (CTRL+left arrow works as expected.)
 	- And delimit on spaces (only?).
