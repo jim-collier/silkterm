@@ -50,6 +50,12 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- 🔘 When the terminal is completely is full of text, it's slows noticeably even on a high-end gaming rig from 4 years ago. Not sure if unicode fallback is part of that problem, and/or a full buffer, it might be.
+	- Steps to reproduce: `cat /bin/Thunar | convert-base-v2 --from binary --to 256jc1`
+
+- 🔘 CTRL+right arrow should move to the beginning of the next word, not the end of the current. (CTRL+left arrow works as expected.)
+	- And delimit on spaces (only?).
+
 - 🔘 When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
 	- Note: no obvious desync found - the blur and font both already rebuild on the relevant changes. Needs a live repro (change font, OK, watch the blur) to pin which blur and the exact trigger. Deferred to an interactive pass.
 
@@ -71,7 +77,7 @@ In each section, items are listed approximately from newest to oldest.
 	- OPEN bugs and issues in backlog.md (but not any below the "Done" section - need those for historical reference).
 	- Done: config keys `text_glow*`/`cursor_glow` -> `text_scrim*`/`cursor_scrim` (value-preserving migration keeps existing configs); module/struct/idents `glow` -> `scrim`; Settings labels/enums; README, design.md; open backlog items; `03-glow.png` -> `03-scrim.png`. `text_outline` (a sibling, not the scrim) kept its name. (20260708)
 
-- 🔘 Option to include the cursor in the text scrim. Default to off. Still outline it though.
+- 🔘 Options to include the cursor in the text scrim, and outline. Default scrim to off, outline to on.
 
 - 🔘 Improve the text scrim
 	- Standard Gaussian Blur function is a poor fit for the text scrim, as a legibility aid. Here's why:
