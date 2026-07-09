@@ -50,13 +50,6 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🛠️ When the terminal is completely is full of text, it's slows noticeably even on a high-end gaming rig from 4 years ago. Not sure if unicode fallback is part of that problem, and/or a full buffer, it might be.
-	- Steps to reproduce: `cat /bin/Thunar | convert-base-v2 --from binary --to 256jc1`
-	- Cause: it is the unicode fallback, not the full buffer. Each cell whose glyph the primary mono font lacks was re-shaped from scratch every frame - through the full font-fallback matching path - even though the same character shapes identically each time. A screen filled with mixed-script glyphs meant thousands of redundant per-cell shapes per frame. A flamegraph of the repro put this single step (`fill_glyph`) at ~16% of all CPU, while the main text shape was under 1% (fallback cells are placeholders in the main buffer), ruling out the "full buffer" theory.
-	- Fixed: shape each distinct glyph (keyed by character + bold + italic) once and cache it per pane, tinting per cell at draw time; the cache drops on a font or size change. A re-profile of the same flood dropped `fill_glyph` from ~16% to ~0.2% and the whole build step from ~17% to ~1%.
-	- Verified: pixel-identical output vs the pre-change build on a colored + bold mixed-script scene (no visual change), plus the before/after flamegraphs above.
-	- Pending: owner feel-test on the real machine to confirm it no longer bogs down.
-
 - ✋ CTRL+right arrow should move to the beginning of the next word, not the end of the current. (CTRL+left arrow works as expected.)
 	- And delimit on spaces (only?).
 	- Deferred: not a terminal-side fix. Ctrl+Right already sends the standard `\x1b[1;5C`; whether the cursor lands on the end of the word or the start of the next is decided by the running line editor (bash/readline `forward-word` = word end; zsh = next word start), so the asymmetry with Ctrl+Left is inherent to readline, identical across terminals. Changing the emitted sequence would break the standard every app expects. Achievable per-user via a readline binding, or later via the deferred key-remap system.
@@ -72,18 +65,6 @@ In each section, items are listed approximately from newest to oldest.
 	- Resolution: leave open until confirmed on long-running terminals.
 
 ### New features and enhancements
-
-- ✅ Rename "text outer glow" to "text scrim". And all syntactically same variants. In:
-	- Source code
-	- Config file
-	- Settings dialog
-	- README.md
-	- design.md
-	- OPEN bugs and issues in backlog.md (but not any below the "Done" section - need those for historical reference).
-	- Done: config keys `text_glow*`/`cursor_glow` -> `text_scrim*`/`cursor_scrim` (value-preserving migration keeps existing configs); module/struct/idents `glow` -> `scrim`; Settings labels/enums; README, design.md; open backlog items; `03-glow.png` -> `03-scrim.png`. `text_outline` (a sibling, not the scrim) kept its name. (20260708)
-
-- ✅ Options to include the cursor in the text scrim, and outline. Default scrim to off, outline to on.
-	- Done: split the cursor coverage into its own texture, separate from the text, so `cursor_scrim` (halo) and `cursor_outline` (border) are independent. Two config keys + Settings toggles ("Cursor in scrim", "Cursor in outline"). Defaults: scrim off, outline on. (20260708)
 
 - 🔘 Improve the text scrim
 	- Standard Gaussian Blur function is a poor fit for the text scrim, as a legibility aid. Here's why:
@@ -423,6 +404,12 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - Bugs
 
+- ✅ When the terminal is completely is full of text, it's slows noticeably even on a high-end gaming rig from 4 years ago. Not sure if unicode fallback is part of that problem, and/or a full buffer, it might be.
+	- Steps to reproduce: `cat /bin/Thunar | convert-base-v2 --from binary --to 256jc1`
+	- Cause: it is the unicode fallback, not the full buffer. Each cell whose glyph the primary mono font lacks was re-shaped from scratch every frame - through the full font-fallback matching path - even though the same character shapes identically each time. A screen filled with mixed-script glyphs meant thousands of redundant per-cell shapes per frame. A flamegraph of the repro put this single step (`fill_glyph`) at ~16% of all CPU, while the main text shape was under 1% (fallback cells are placeholders in the main buffer), ruling out the "full buffer" theory.
+	- Fixed: shape each distinct glyph (keyed by character + bold + italic) once and cache it per pane, tinting per cell at draw time; the cache drops on a font or size change. A re-profile of the same flood dropped `fill_glyph` from ~16% to ~0.2% and the whole build step from ~17% to ~1%.
+	- Verified: pixel-identical output vs the pre-change build on a colored + bold mixed-script scene (no visual change), plus the before/after flamegraphs above.
+
 - ✅ Choosing "Tabs|New Tab" the first time, opens a second tab. Doing it again, changes to the first tab, rather than opening a third tab.
 	- Cause: a dropdown opens flush under the menu bar, so its top item ("New Tab") sits in the tab-bar band. The mouse handler checked the tab-bar hit before the open-menu hit, so once more than one tab existed (tab bar shown) the tab bar stole the click and selected a tab instead of firing the item. The first New Tab worked only because there was no tab bar yet.
 	- Fixed: skip the tab-bar click handler while a dropdown is open, so the click reaches the menu.
@@ -698,6 +685,18 @@ In each section, items are listed approximately from newest to oldest.
 	- Fix: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
 
 #### Done - new features and enhancements
+
+- ✅ Rename "text outer glow" to "text scrim". And all syntactically same variants. In:
+	- Source code
+	- Config file
+	- Settings dialog
+	- README.md
+	- design.md
+	- Open bugs and issues in backlog.md, but not any below the "Done" section - need those for historical reference.
+	- Done: config keys `text_glow*`/`cursor_glow` -> `text_scrim*`/`cursor_scrim` (value-preserving migration keeps existing configs); module/struct/idents `glow` -> `scrim`; Settings labels/enums; README, design.md; open backlog items; `03-glow.png` -> `03-scrim.png`. `text_outline` (a sibling, not the scrim) kept its name. (20260708)
+
+- ✅ Options to include the cursor in the text scrim, and outline. Default scrim to off, outline to on.
+	- Done: split the cursor coverage into its own texture, separate from the text, so `cursor_scrim` (halo) and `cursor_outline` (border) are independent. Two config keys + Settings toggles ("Cursor in scrim", "Cursor in outline"). Defaults: scrim off, outline on. (20260708)
 
 - ✅ Donations model:
 	- ✅ "Support SilkTerm!" button in Help|About, with flyover text of URL it's going to open in a web page.
