@@ -136,7 +136,8 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Accellerators need to be unique. If running out of memorable word/accelerator keys, remove accellerators from the least-used or least-important items, especially ones that already have hotkeys.
 	- 🔘 List the hotkeys to activate the same function, if they exist. Keep in mind there might be a dynamic hotkey system soon.
 
-- 🔘 New defaults: Background image opacity 10%. Background image blur, 10.
+- ✅ New defaults: Background image opacity 10%. Background image blur, 10.
+	- Done: `background_opacity` default 0.33 -> 0.10, `background_blur` default 8 -> 10 (struct defaults + template + defaults test). Existing configs keep their own values.
 
 - 🔘 New setting: Background image contrast mask % (100% = half of the longest pixel dimension, 0% = none, auto=based on contrast frequency analysis.)
 

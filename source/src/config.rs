@@ -165,9 +165,9 @@ impl Default for Settings {
 			transparent_background: false,
 			transparent_background_blur: false,
 			background_image: None,
-			background_opacity: 0.33, // image visibility relative to bg color
+			background_opacity: 0.10, // image visibility relative to bg color
 			background_fit: Fit::Stretch,
-			background_blur: 8.0,
+			background_blur: 10.0,
 			text_scrim: true,
 			text_scrim_radius: 5.0,
 			text_scrim_softness: 0.5,
@@ -1371,13 +1371,13 @@ opacity = 0.95
 
 ## Image visibility relative to the background color (independent of `opacity`
 ## above): 0.0 = all background color, 1.0 = all image.
-# background_opacity = 0.33
+# background_opacity = 0.10
 
 ## How the image fits: "stretch" (fill, ignore aspect) or "zoom" (cover, keep aspect).
 # background_fit = "stretch"
 
 ## Gaussian blur applied to the background image (sigma in pixels; 0 = none).
-# background_blur = 8.0
+# background_blur = 10.0
 
 ##=============================================================================
 ## Text scrim
@@ -1546,7 +1546,8 @@ mod tests {
 		assert!(d.text_scrim_regular_weight);
 		assert!(!d.cursor_scrim, "cursor scrim halo defaults off");
 		assert!(d.cursor_outline, "cursor outline defaults on");
-		assert_eq!(d.background_blur, 8.0);
+		assert_eq!(d.background_blur, 10.0);
+		assert_eq!(d.background_opacity, 0.10);
 	}
 
 	// An over-range output_ease_lines must clamp: scroll's backlog clamp uses it
