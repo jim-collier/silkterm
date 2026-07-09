@@ -95,8 +95,12 @@ PROFILE_PROFILE="profiling"
 PROFILE_BIN="target/profiling/${EXE_NAME}"
 PROFILE_WORKLOAD_SCRIPT="cicd/utility/n8output-random-unicode.py"
 PROFILE_WORKLOAD_ARGS="600 0"          # <duration_s> <delay_s>; duration >> PROFILE_SECS, no delay = max output
-PROFILE_OUT_DIR="../private/profiling"  # relative to repo root; created if missing (kept out of git)
+PROFILE_OUT_DIR="cicd/artifacts/profiling"  # relative to repo root; created if missing (gitignored)
 PROFILE_STRICT=0                        # 1 = any profiler failure aborts the pipeline
+
+## Full run output is tee'd here (gitignored) so warnings from any stage can be
+## reviewed after the fact. Kept rotated like the flamegraphs.
+LINT_LOG_DIR="cicd/artifacts/lint"      # relative to repo root; created if missing (gitignored)
 
 ## Old SVGs are pruned by gfs_rotate (cicd/utility/include/gfs-rotate.bash): keeps
 ## ~30 - first + newest-per-hour/day/week/month/year + last 10. Tune with the

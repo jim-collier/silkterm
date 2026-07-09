@@ -144,7 +144,7 @@ def fAnalyze(total, frames, top):
 
 def main():
 	here = os.path.dirname(os.path.abspath(__file__))
-	default_dir = os.path.normpath(os.path.join(here, "..", "..", "..", "private", "profiling"))
+	default_dir = os.path.normpath(os.path.join(here, "..", "artifacts", "profiling"))
 
 	ap = argparse.ArgumentParser(description="Summarize the newest SilkTerm profiler flamegraph.")
 	ap.add_argument("--dir", default=default_dir, help="profiling directory (default: %(default)s)")
