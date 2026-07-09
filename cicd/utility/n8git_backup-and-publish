@@ -66,6 +66,7 @@ fSyntax(){  { ((doQuietly)) || ((wasShown_Syntax)); } && return; wasShown_Syntax
 	#           X-------------------------------------------------------------------------------X
 	fEcho_Clean "Arguments:"
 	fEcho_Clean "  --quiet [optional]: Be less verbose, and don't prompt user to continue."
+	fEcho_Clean "  --message MSG [or --msg, -m]: commit message (else git opens an editor)."
 	fEcho_Clean "  --help, --version [or -h, -v]"
 	fEcho_Clean ""
 	fEcho_Clean "Expected folder structure - something like:"

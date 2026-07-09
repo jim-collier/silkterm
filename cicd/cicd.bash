@@ -366,7 +366,9 @@ fi
 
 ## Stage 7: backup + publish.
 fSection "7/7  Backup + publish"
-pub_flags=(); ((quiet)) && pub_flags+=(--quiet)   ## flow -q through to the publisher
+## Always run the publisher quiet: cicd already gave the initial prompt, so skip
+## its redundant continue-prompt. With no message it still lets git open the editor.
+pub_flags=(--quiet)
 if ((${#GIT_PUBLISH[@]} == 0)); then
 	fEcho_Clean "publish disabled"
 elif [[ -n "$publish_msg" ]]; then
