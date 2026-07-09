@@ -1843,11 +1843,24 @@ impl State {
 		// text to the scrim texture, blur it, then composite under the crisp text.
 		// "Softness" 0..1 -> coverage boost: 0 = hard/solid (x10), 1 = soft/faint (x1)
 		let scrim_intensity = 10.0 - cfg.text_scrim_softness.clamp(0.0, 1.0) * 9.0;
+		// falloff curve index: 0 s, 1 gaussian, 2 linear, 3 log, 4 exp
 		let scrim_ramp = match cfg.text_scrim_ramp.as_str() {
-			"linear" => 1.0,
-			"s" => 2.0,
-			_ => 0.0,
+			"gaussian" => 1.0,
+			"linear" => 2.0,
+			"log" => 3.0,
+			"exp" => 4.0,
+			_ => 0.0, // "s"
 		};
+		// build function index: 0 dilate, 1 sdf, 2 dt, 3 gaussian (legacy blur)
+		let scrim_function = match cfg.text_scrim_function.as_str() {
+			"dilate" => 0.0,
+			"dt" => 2.0,
+			"gaussian" => 3.0,
+			_ => 1.0, // "sdf"
+		};
+		// distance paths measure the halo extent in px; keep it a touch wider than
+		// the (sigma-based) gaussian look so switching functions doesn't shrink it.
+		let scrim_ext = cfg.text_scrim_radius * 2.0;
 		if scrim_on {
 			self.scrim.render_bgcolor(
 				&self.gfx.device,
@@ -1902,8 +1915,10 @@ impl State {
 				&self.gfx.queue,
 				&mut encoder,
 				cfg.text_scrim_radius,
+				scrim_ext,
 				scrim_ramp,
 				if cfg.cursor_scrim { 1.0 } else { 0.0 },
+				scrim_function,
 			);
 		}
 
@@ -1975,6 +1990,9 @@ impl State {
 					scrim_intensity,
 					cfg.text_outline,
 					if cfg.cursor_outline { 1.0 } else { 0.0 },
+					scrim_function,
+					scrim_ramp,
+					scrim_ext,
 				);
 				pass.set_scissor_rect(0, 0, sw, sh);
 			}

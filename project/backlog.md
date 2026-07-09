@@ -50,23 +50,18 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- ✋ CTRL+right arrow should move to the beginning of the next word, not the end of the current. (CTRL+left arrow works as expected.)
-	- And delimit on spaces (only?).
-	- Deferred: not a terminal-side fix. Ctrl+Right already sends the standard `\x1b[1;5C`; whether the cursor lands on the end of the word or the start of the next is decided by the running line editor (bash/readline `forward-word` = word end; zsh = next word start), so the asymmetry with Ctrl+Left is inherent to readline, identical across terminals. Changing the emitted sequence would break the standard every app expects. Achievable per-user via a readline binding, or later via the deferred key-remap system.
+- 🔘 The dreaded "Nano Bounce Bug" is back. This will be the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and possibly red-herrings. It obviously must be related in some way to smooth scrolling (the next time it happens I'll try turning it off to make sure). So let's get back to basics of what I know, and don't know:
+	- Steps:
+		- Run nano. On any file, or with no file.
+		- Observe: It "pops" onto the screen, but "wobbles", "violently", for maybe a second or two. If I recall, the wobbling is vertically up and down only - but my memory may be biased by what I believe "should" only be possible given the design and code. But at this point - who knows.
+			- Note: It's short enough that it's livable (kind of cool even), but it's still a jarring effect for what is supposed to be a highly-polished terminal. (And by "kind of cool", I mean, if it were an opt-in, always happened "Compiz"-like "open-wobbly" effect. But we don't want that. We want stability.)
+	- It's hard to recreate, so I don't know the steps to do it. But once it happens once, it seems easy to repeat. It only seems to start happening after a while - so maybe related to lots of input and/or more likely, output. And/or many switching of modes? Or just time?
 
-- 🔘 When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
-	- Note: no obvious desync found - the blur and font both already rebuild on the relevant changes. Needs a live repro (change font, OK, watch the blur) to pin which blur and the exact trigger. Deferred to an interactive pass.
-
-- 🛠️ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
-	- Cause: when the glyph atlas fills up during a long, varied session, text preparation fails and rendering bailed out before the per-frame atlas trim. The atlas never recovered, so text stayed black. The cursor and per-cell backgrounds use a separate renderer, so they kept showing.
-	- Fixed: trim the atlas on the prepare-failure path, so the next frame re-prepares with room and recovers.
-	- Note: could not force an atlas-full for a live repro; the trigger needs a genuinely long session.
-	- Verified: a sustained high-rate unicode flood stayed visible throughout with no black-out. The exact atlas-full trigger is still unreproduced, since the available fonts can't fill the atlas.
-	- Resolution: leave open until confirmed on long-running terminals.
 
 ### New features and enhancements
 
-- 🔘 Improve the text scrim
+- ✅ Improve the text scrim
+	- Done: added a "Scrim function" choice (Dilate / SDF / DT / Gaussian [ugly]) and expanded "Scrim falloff" to five curves (S-curve / Gaussian / Linear / Logarithmic / Exponential), both in `config.toml` (`text_scrim_function`, `text_scrim_ramp`) and as Settings radios. The three non-Gaussian functions share one cheap separable Euclidean/Chebyshev distance transform (bounded to the halo radius, two passes, no jump-flood), so corners stay full instead of receding. Default is now SDF (round, full corners); Gaussian is kept as the labelled-ugly baseline. Falloff and function are orthogonal (shape vs fade). Verified all four render on the GL path and read as distinct backings.
 	- Standard Gaussian Blur function is a poor fit for the text scrim, as a legibility aid. Here's why:
 	- **What's wrong**: To illustrate conceptually: If you apply a background scrim to a solid square using gaussian blur, as the blur radius increases, the total blur shape looks more and more "round". This means that - effectively - the blur behind the square, doesn't look even at the corners. It looks "too strong" along the middle of the sides of the square, and "pulled-in" at the corners. The corners look naked. Basically it looks like a square sitting on top of a separate round fuzzy thing - rather than something evenly integrated with the square. (Which describes the cursor in block mode perfectly, and also why the scrim behind some clusters of letters looks "clumpy".)
 	- **What would be better**: Ideally, the blur would also be square-ish - extending evenly from every angle, from every point along the edge of the square. (With corners rounding off with increasing blur radius, but never actually pulling in below the corners.) In other words, if you measured the density fall-off of the blur starting from the corner and moving outwart diagonally, it should fall-off at about the same rate, as if you measured it from the middle of an edge and moved out perpendicularly.
@@ -403,6 +398,17 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Verify smoothness on X11/Compiz.
 
 #### Done - Bugs
+
+- ✅ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
+	- Cause: when the glyph atlas fills up during a long, varied session, text preparation fails and rendering bailed out before the per-frame atlas trim. The atlas never recovered, so text stayed black. The cursor and per-cell backgrounds use a separate renderer, so they kept showing.
+	- Fixed: trim the atlas on the prepare-failure path, so the next frame re-prepares with room and recovers.
+	- Note: could not force an atlas-full for a live repro; the trigger needs a genuinely long session.
+	- Verified: a sustained high-rate unicode flood stayed visible throughout with no black-out. The exact atlas-full trigger is still unreproduced, since the available fonts can't fill the atlas.
+	- Resolution: leave open until confirmed on long-running terminals.
+	- Verified: Days-long running shells are now fine.
+
+- ✅ When switching fonts then hitting "OK", the font changes but not the blur. An exit and reload is required to sync them up.
+	- Must have been incidentally fixed as part of some other thing, doesn't do this anymore.
 
 - ✅ When the terminal is completely is full of text, it's slows noticeably even on a high-end gaming rig from 4 years ago. Not sure if unicode fallback is part of that problem, and/or a full buffer, it might be.
 	- Steps to reproduce: `cat /bin/Thunar | convert-base-v2 --from binary --to 256jc1`
@@ -1299,6 +1305,10 @@ In each section, items are listed approximately from newest to oldest.
 - ✋ Bug: Residual 1-line smooth scroll-up on alt-screen enter AND exit (`smooth_scroll_apps`). The enter/exit hard-cut fixed the big jiggle and scroll-in, but a slight single-line ease still rides the transition. Livable, deferred. Likely the output-ease firing one frame after the transition. A candidate fix is to rebaseline the history baseline and suppress the nudge one frame past the transition.
 
 ### Canceled
+
+- 🚫 CTRL+right arrow should move to the beginning of the next word, not the end of the current. (CTRL+left arrow works as expected.)
+	- And delimit on spaces (only?).
+	- Closed: After research, not a terminal-side fix. Ctrl+Right already sends the standard `\x1b[1;5C`; whether the cursor lands on the end of the word or the start of the next is decided by the running line editor (bash/readline `forward-word` = word end; zsh = next word start), so the asymmetry with Ctrl+Left is inherent to readline, identical across terminals. Changing the emitted sequence would break the standard every app expects. Achievable per-user via a readline binding, or later via the deferred key-remap system.
 
 - 🚫 CI/CD scripts:
 	- 🚫 Build alternate targets in parallel, to speed process up.

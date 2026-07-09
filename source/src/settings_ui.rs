@@ -109,6 +109,7 @@ enum Key {
 	ScrimRadius,
 	ScrimSoftness,
 	Outline,
+	ScrimFunction,
 	ScrimRamp,
 	CursorScrim,
 	CursorOutline,
@@ -186,6 +187,7 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::ScrimRadius => &["text_scrim_radius"],
 		Key::ScrimSoftness => &["text_scrim_softness"],
 		Key::Outline => &["text_outline"],
+		Key::ScrimFunction => &["text_scrim_function"],
 		Key::ScrimRamp => &["text_scrim_ramp"],
 		Key::CursorScrim => &["cursor_scrim"],
 		Key::CursorOutline => &["cursor_outline"],
@@ -362,9 +364,14 @@ fn fields() -> Vec<Spec> {
 			},
 		},
 		Spec {
+			label: "Scrim function",
+			key: ScrimFunction,
+			kind: Radio(&["Dilate", "SDF", "DT", "Gaussian"]),
+		},
+		Spec {
 			label: "Scrim falloff",
 			key: ScrimRamp,
-			kind: Radio(&["Gaussian", "Linear", "S-curve"]),
+			kind: Radio(&["S-curve", "Gaussian", "Linear", "Log", "Exp"]),
 		},
 		Spec {
 			label: "Cursor in scrim",
@@ -1149,10 +1156,18 @@ impl SettingsDialog {
 				config::Fit::Zoom => 1,
 				_ => 0,
 			},
+			Key::ScrimFunction => match self.edited.text_scrim_function.as_str() {
+				"dilate" => 0,
+				"dt" => 2,
+				"gaussian" => 3,
+				_ => 1, // sdf
+			},
 			Key::ScrimRamp => match self.edited.text_scrim_ramp.as_str() {
-				"linear" => 1,
-				"s" => 2,
-				_ => 0,
+				"gaussian" => 1,
+				"linear" => 2,
+				"log" => 3,
+				"exp" => 4,
+				_ => 0, // s
 			},
 			_ => 0,
 		}
@@ -1166,11 +1181,22 @@ impl SettingsDialog {
 					config::Fit::Stretch
 				};
 			}
+			Key::ScrimFunction => {
+				self.edited.text_scrim_function = match idx {
+					0 => "dilate",
+					2 => "dt",
+					3 => "gaussian",
+					_ => "sdf",
+				}
+				.to_string();
+			}
 			Key::ScrimRamp => {
 				self.edited.text_scrim_ramp = match idx {
-					1 => "linear",
-					2 => "s",
-					_ => "gaussian",
+					1 => "gaussian",
+					2 => "linear",
+					3 => "log",
+					4 => "exp",
+					_ => "s",
 				}
 				.to_string();
 			}
@@ -1186,8 +1212,8 @@ impl SettingsDialog {
 				key,
 				Key::ScrimRadius
 					| Key::ScrimSoftness | Key::Outline
-					| Key::ScrimRamp | Key::CursorScrim
-					| Key::CursorOutline
+					| Key::ScrimFunction | Key::ScrimRamp
+					| Key::CursorScrim | Key::CursorOutline
 			) && !self.edited.text_scrim)
 			// the cursor outline needs an outline to join
 			|| (matches!(key, Key::CursorOutline) && self.edited.text_outline <= 0.0)
@@ -2231,13 +2257,18 @@ mod tests {
 		);
 		// radio pitch tracks the font so multi-option labels don't collide
 		assert!(big.radio_pitch() > base.radio_pitch() * 1.5);
-		// the widest (3-option) radio's last option stays inside the panel
-		let ri = big
+		// the widest radio's last option stays inside the panel
+		let (ri, opts) = big
 			.specs
 			.iter()
-			.position(|s| matches!(s.kind, Kind::Radio(o) if o.len() == 3))
+			.enumerate()
+			.filter_map(|(i, s)| match s.kind {
+				Kind::Radio(o) => Some((i, o.len())),
+				_ => None,
+			})
+			.max_by_key(|(_, n)| *n)
 			.unwrap();
-		let last = big.radio_box(ri, 2);
+		let last = big.radio_box(ri, opts - 1);
 		assert!(
 			last.x + last.w <= big.rect.x + big.rect.w,
 			"last radio option overflows the panel at 2x"
