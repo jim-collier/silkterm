@@ -146,17 +146,28 @@ fn speed_to_tau(speed: f32) -> f32 {
 }
 
 enum Kind {
-	Slider { min: f32, max: f32, int: bool },
+	Slider {
+		min: f32,
+		max: f32,
+		int: bool,
+	},
 	Color,
-	Text,                              // free-text field (path / font family; empty = default)
-	Toggle,                            // checkbox (e.g. use system font)
-	Radio(&'static [&'static str]),    // pick one of N mutually-exclusive options
+	Text,   // free-text field (path / font family; empty = default)
+	Toggle, // checkbox (e.g. use system font)
+	// two labelled checkboxes on one row sharing the row label + revert (e.g.
+	// Cursor: Scrim / Outline); each checkbox is a separate focus stop
+	Dual {
+		keys: [Key; 2],
+		labels: [&'static str; 2],
+	},
+	Radio(&'static [&'static str]), // pick one of N mutually-exclusive options
 	Dropdown(&'static [&'static str]), // one-of-N via a collapsed box + popup list
-	Header(&'static str),              // a section heading, no control
+	Header(&'static str),           // a section heading, no control
 }
 
 const RADIO_BOX: f32 = 16.0; // radio indicator square
 const RADIO_PITCH: f32 = 96.0; // px per option (box + label + gap) at BASE_LH
+const DUAL_PITCH: f32 = 118.0; // px per [checkbox + label] pair on a Dual row at BASE_LH
 const BASE_LH: f32 = 19.0; // UI line height the fixed radio consts were tuned for
 const DD_W: f32 = 208.0; // collapsed dropdown box width at BASE_LH (fits the longest option + arrow)
 const DD_ARROW: &str = "\u{25be}"; // small down-triangle in the collapsed box
@@ -223,11 +234,13 @@ struct Spec {
 	kind: Kind,
 }
 
-// What holds keyboard focus: a control row, or one of the footer buttons (index
-// into `buttons()`: 0 = Cancel, 1 = Apply, 2 = OK). Tab walks rows then buttons.
+// What holds keyboard focus: one control within a row, or a footer button (index
+// into `buttons()`: 0 = Cancel, 1 = Apply, 2 = OK). `Row(i, part)` names a row and
+// which of its focusable sub-controls (part 0 for a plain control; sliders and the
+// combined cursor row expose two parts). Tab walks parts then buttons.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Focus {
-	Row(usize),
+	Row(usize, u8),
 	Button(usize),
 }
 
@@ -391,14 +404,12 @@ fn fields() -> Vec<Spec> {
 			]),
 		},
 		Spec {
-			label: "Cursor in scrim",
-			key: CursorScrim,
-			kind: Toggle,
-		},
-		Spec {
-			label: "Cursor in outline",
-			key: CursorOutline,
-			kind: Toggle,
+			label: "Cursor",
+			key: None,
+			kind: Dual {
+				keys: [CursorScrim, CursorOutline],
+				labels: ["Scrim", "Outline"],
+			},
 		},
 		hdr("Font"),
 		Spec {
@@ -767,7 +778,7 @@ impl SettingsDialog {
 		self.commit_edit();
 		self.open = Some(i);
 		self.pending = self.get_radio(self.specs[i].key);
-		self.focus = Some(Focus::Row(i));
+		self.focus = Some(Focus::Row(i, 0));
 		self.scroll_focus_into_view();
 	}
 	// Apply the highlighted option and close (Enter / Space / click on an option).
@@ -779,24 +790,35 @@ impl SettingsDialog {
 
 	// ---- keyboard focus + control activation ----------------------------------
 
-	// A row that can hold keyboard focus: a real control (not a header) that isn't
-	// greyed out by a prerequisite toggle. Tab order skips both.
-	fn is_focusable(&self, i: usize) -> bool {
-		!matches!(self.specs[i].kind, Kind::Header(_)) && !self.disabled(self.specs[i].key)
-	}
-	// Focusable rows on the active tab, in visual order.
+	// Rows on the active tab with at least one focusable (enabled, non-header)
+	// sub-control, in visual order. (Used by the focus tests.)
+	#[cfg(test)]
 	fn focusables(&self) -> Vec<usize> {
 		(0..self.specs.len())
-			.filter(|&i| self.spec_tab[i] == self.tab && self.is_focusable(i))
+			.filter(|&i| {
+				self.spec_tab[i] == self.tab
+					&& (0..self.parts_of(i)).any(|p| !self.part_disabled(i, p))
+			})
 			.collect()
 	}
 	fn first_focus(&self) -> Option<Focus> {
 		self.focus_ring().first().copied()
 	}
-	// The full Tab order for the active tab: focusable control rows, then the
-	// three footer buttons (Cancel / Apply / OK), which are always reachable.
+	// The full Tab order for the active tab: each enabled sub-control (a slider's
+	// track then its field, a Dual row's two checkboxes, else the single control),
+	// then the three footer buttons (Cancel / Apply / OK), always reachable.
 	fn focus_ring(&self) -> Vec<Focus> {
-		let mut ring: Vec<Focus> = self.focusables().into_iter().map(Focus::Row).collect();
+		let mut ring = Vec::new();
+		for i in 0..self.specs.len() {
+			if self.spec_tab[i] != self.tab {
+				continue;
+			}
+			for p in 0..self.parts_of(i) {
+				if !self.part_disabled(i, p) {
+					ring.push(Focus::Row(i, p));
+				}
+			}
+		}
 		ring.extend((0..3).map(Focus::Button));
 		ring
 	}
@@ -824,7 +846,7 @@ impl SettingsDialog {
 	// Scroll the rows region so a focused control row is fully visible (buttons
 	// are fixed chrome - always visible).
 	fn scroll_focus_into_view(&mut self) {
-		let Some(Focus::Row(i)) = self.focus else {
+		let Some(Focus::Row(i, _)) = self.focus else {
 			return;
 		};
 		let vp = self.viewport();
@@ -880,7 +902,7 @@ impl SettingsDialog {
 			return;
 		}
 		if forward && self.alt {
-			if let Some(Focus::Row(i)) = self.focus {
+			if let Some(Focus::Row(i, _)) = self.focus {
 				if matches!(self.specs[i].kind, Kind::Dropdown(_))
 					&& !self.disabled(self.specs[i].key)
 				{
@@ -905,7 +927,7 @@ impl SettingsDialog {
 		if self.open.is_some() {
 			return; // an open popup owns arrow keys (Up/Down navigate it)
 		}
-		let Some(Focus::Row(i)) = self.focus else {
+		let Some(Focus::Row(i, _)) = self.focus else {
 			return;
 		};
 		let key = self.specs[i].key;
@@ -941,17 +963,19 @@ impl SettingsDialog {
 			self.char_input(' ');
 			return Action::None;
 		}
-		let i = match self.focus {
+		let (i, part) = match self.focus {
 			Some(Focus::Button(b)) => return self.buttons()[b].0,
-			Some(Focus::Row(i)) => i,
+			Some(Focus::Row(i, p)) => (i, p),
 			None => return Action::None,
 		};
-		let key = self.specs[i].key;
+		let key = self.part_key(i, part);
 		if self.disabled(key) {
 			return Action::None;
 		}
 		match self.specs[i].kind {
 			Kind::Toggle => self.set_toggle(key, !self.get_toggle(key)),
+			// flip the focused checkbox (key is that part's key)
+			Kind::Dual { .. } => self.set_toggle(key, !self.get_toggle(key)),
 			Kind::Text => {
 				let buf = self.get_text(key);
 				let cur = buf.len();
@@ -1081,6 +1105,18 @@ impl SettingsDialog {
 			h: SWATCH,
 		}
 	}
+	fn dual_pitch(&self) -> f32 {
+		DUAL_PITCH * self.ui_scale()
+	}
+	// checkbox `p` (0/1) on a Dual row; its label sits just to the right
+	fn dual_box(&self, i: usize, p: u8) -> Rect {
+		Rect {
+			x: self.control_x() + p as f32 * self.dual_pitch(),
+			y: self.row_y(i) + (ROW_H - SWATCH) / 2.0,
+			w: SWATCH,
+			h: SWATCH,
+		}
+	}
 	// Radio geometry scales with the UI font (HiDPI or a large desktop font), so
 	// multi-option labels don't collide the way fixed 96px pitch does at 2x.
 	fn ui_scale(&self) -> f32 {
@@ -1146,14 +1182,96 @@ impl SettingsDialog {
 			h: self.dd_item_h(),
 		}
 	}
-	// Row-spanning box drawn around the keyboard-focused control.
-	fn focus_rect(&self, i: usize) -> Rect {
-		let y = self.row_y(i);
-		Rect {
-			x: self.rect.x + PAD - 2.0,
-			y: y + 3.0,
-			w: self.rect.w - PAD * 2.0 + 4.0,
-			h: self.row_h(&self.specs[i].kind) - 6.0,
+	// Number of focusable sub-controls in row `i` (0 for a header). Sliders and
+	// the Dual (cursor) row expose two; every other control is a single part.
+	fn parts_of(&self, i: usize) -> u8 {
+		match self.specs[i].kind {
+			Kind::Header(_) => 0,
+			Kind::Slider { .. } | Kind::Dual { .. } => 2,
+			_ => 1,
+		}
+	}
+	// The config Key that governs part `p` of row `i` (Dual parts differ; every
+	// other kind uses the row's single key for both the value and its greying).
+	fn part_key(&self, i: usize, p: u8) -> Key {
+		match self.specs[i].kind {
+			Kind::Dual { keys, .. } => keys[p as usize],
+			_ => self.specs[i].key,
+		}
+	}
+	fn part_disabled(&self, i: usize, p: u8) -> bool {
+		self.disabled(self.part_key(i, p))
+	}
+	// Tight box around one focused sub-control (the keyboard-focus ring hugs this,
+	// a couple px out, instead of spanning the whole row).
+	fn focus_ctl_rect(&self, i: usize, p: u8) -> Rect {
+		match self.specs[i].kind {
+			Kind::Slider { .. } => {
+				if p == 0 {
+					let t = self.track(i);
+					Rect {
+						x: t.x,
+						y: t.y - 7.0,
+						w: t.w,
+						h: t.h + 14.0,
+					}
+				} else {
+					self.valbox(i)
+				}
+			}
+			Kind::Dual { .. } => {
+				let bx = self.dual_box(i, p);
+				Rect {
+					x: bx.x,
+					y: bx.y,
+					w: self.dual_pitch() - 12.0,
+					h: bx.h,
+				}
+			}
+			Kind::Toggle => self.checkbox(i),
+			Kind::Text => self.textbox(i),
+			Kind::Color => {
+				let s = self.swatch(i);
+				let h = self.hexbox(i);
+				Rect {
+					x: s.x,
+					y: s.y,
+					w: h.x + h.w - s.x,
+					h: s.h,
+				}
+			}
+			Kind::Radio(opts) => {
+				let first = self.radio_box(i, 0);
+				Rect {
+					x: first.x,
+					y: first.y - 2.0,
+					w: opts.len() as f32 * self.radio_pitch() - 12.0,
+					h: first.h + 4.0,
+				}
+			}
+			Kind::Dropdown(_) => self.dd_box(i),
+			Kind::Header(_) => self.track(i), // unreachable (headers aren't focusable)
+		}
+	}
+	// Is this row at its config default? (drives the revert icon). A Dual row is
+	// "default" only when both its keys are.
+	fn row_is_default(&self, i: usize) -> bool {
+		match self.specs[i].kind {
+			Kind::Dual { keys, .. } => keys.iter().all(|&k| self.is_default(k)),
+			_ => self.is_default(self.specs[i].key),
+		}
+	}
+	// Revert a whole row to defaults (both keys for a Dual row).
+	fn row_revert(&mut self, i: usize) {
+		match self.specs[i].kind {
+			Kind::Dual { keys, .. } => {
+				for k in keys {
+					if !self.is_default(k) {
+						self.revert(k);
+					}
+				}
+			}
+			_ => self.revert(self.specs[i].key),
 		}
 	}
 	// Cancel, Apply, OK rects (right-aligned)
@@ -1564,9 +1682,8 @@ impl SettingsDialog {
 			}
 			// revert-to-default icon (any control row; inert when already default)
 			if !matches!(self.specs[i].kind, Kind::Header(_)) && self.revert_box(i).contains(x, y) {
-				let key = self.specs[i].key;
-				if !self.is_default(key) {
-					self.revert(key);
+				if !self.row_is_default(i) {
+					self.row_revert(i);
 				}
 				return Action::None;
 			}
@@ -1580,7 +1697,7 @@ impl SettingsDialog {
 					if val_box.contains(x, y) {
 						let buf = self.fmt_val(self.specs[i].key, int);
 						let cur = caret_from_click(&buf, x - (val_box.x + 6.0), measure);
-						self.focus = Some(Focus::Row(i));
+						self.focus = Some(Focus::Row(i, 1));
 						self.edit = Some(EditState { row: i, buf, cur });
 						return Action::None;
 					}
@@ -1589,7 +1706,7 @@ impl SettingsDialog {
 						&& x <= track.x + track.w + 8.0
 						&& (y - (track.y + track.h / 2.0)).abs() <= 12.0;
 					if hit {
-						self.focus = Some(Focus::Row(i));
+						self.focus = Some(Focus::Row(i, 0));
 						self.drag = Some(i);
 						self.drag_to(x);
 						return Action::None;
@@ -1598,7 +1715,7 @@ impl SettingsDialog {
 				Kind::Color => {
 					if self.swatch(i).contains(x, y) || self.hexbox(i).contains(x, y) {
 						// start a fresh hex entry (type 6 digits); swatch updates live
-						self.focus = Some(Focus::Row(i));
+						self.focus = Some(Focus::Row(i, 0));
 						self.edit = Some(EditState {
 							row: i,
 							buf: "#".to_string(),
@@ -1613,7 +1730,7 @@ impl SettingsDialog {
 						// edit the current value (empty when none); caret at the click
 						let buf = self.get_text(self.specs[i].key);
 						let cur = caret_from_click(&buf, x - (text_box.x + 6.0), measure);
-						self.focus = Some(Focus::Row(i));
+						self.focus = Some(Focus::Row(i, 0));
 						self.edit = Some(EditState { row: i, buf, cur });
 						return Action::None;
 					}
@@ -1621,9 +1738,27 @@ impl SettingsDialog {
 				Kind::Toggle => {
 					if self.checkbox(i).contains(x, y) {
 						let key = self.specs[i].key;
-						self.focus = Some(Focus::Row(i));
+						self.focus = Some(Focus::Row(i, 0));
 						self.set_toggle(key, !self.get_toggle(key));
 						return Action::None;
+					}
+				}
+				Kind::Dual { keys, .. } => {
+					// hit either checkbox (or its label span, out to the next pitch)
+					for p in 0u8..2 {
+						let bx = self.dual_box(i, p);
+						if x >= bx.x
+							&& x <= bx.x + self.dual_pitch() - 8.0
+							&& (y - (bx.y + bx.h / 2.0)).abs() <= bx.h / 2.0 + 4.0
+						{
+							if self.disabled(keys[p as usize]) {
+								continue; // greyed checkbox ignores clicks
+							}
+							let key = keys[p as usize];
+							self.focus = Some(Focus::Row(i, p));
+							self.set_toggle(key, !self.get_toggle(key));
+							return Action::None;
+						}
 					}
 				}
 				Kind::Radio(options) => {
@@ -1635,7 +1770,7 @@ impl SettingsDialog {
 							&& (y - (radio_rect.y + radio_rect.h / 2.0)).abs()
 								<= radio_rect.h / 2.0 + 4.0
 						{
-							self.focus = Some(Focus::Row(i));
+							self.focus = Some(Focus::Row(i, 0));
 							self.set_radio(self.specs[i].key, k);
 							return Action::None;
 						}
@@ -1710,7 +1845,7 @@ impl SettingsDialog {
 	pub fn char_input(&mut self, c: char) {
 		// typing into a keyboard-focused (but not-yet-open) text/color field opens it
 		if self.edit.is_none() {
-			let Some(Focus::Row(i)) = self.focus else {
+			let Some(Focus::Row(i, _)) = self.focus else {
 				return;
 			};
 			match self.specs[i].kind {
@@ -2066,6 +2201,27 @@ impl SettingsDialog {
 						));
 					}
 				}
+				Kind::Dual { keys, .. } => {
+					for p in 0u8..2 {
+						let off = self.disabled(keys[p as usize]);
+						let bx = self.dual_box(i, p);
+						out.push(q(bx.x, bx.y, bx.w, bx.h, dlg().field_bg));
+						border(&mut out, bx, 1.0, dlg().panel_border);
+						if self.get_toggle(keys[p as usize]) {
+							out.push(q(
+								bx.x + 4.0,
+								bx.y + 4.0,
+								bx.w - 8.0,
+								bx.h - 8.0,
+								if off {
+									dlg().panel_border
+								} else {
+									dlg().handle
+								},
+							));
+						}
+					}
+				}
 				Kind::Radio(options) => {
 					let sel = self.get_radio(self.specs[i].key);
 					for k in 0..options.len() {
@@ -2116,11 +2272,16 @@ impl SettingsDialog {
 		}
 		// keyboard-focus ring around the active control row (scrolls + clips with
 		// the rows; a focused button is ringed below, in the fixed chrome).
-		if let Some(Focus::Row(focus_row)) = self.focus {
-			if self.spec_tab[focus_row] == self.tab
-				&& !matches!(self.specs[focus_row].kind, Kind::Header(_))
-			{
-				border(&mut out, self.focus_rect(focus_row), 1.0, dlg().focus_out);
+		if let Some(Focus::Row(fr, fp)) = self.focus {
+			if self.spec_tab[fr] == self.tab && !matches!(self.specs[fr].kind, Kind::Header(_)) {
+				let r = self.focus_ctl_rect(fr, fp);
+				let ring = Rect {
+					x: r.x - 2.0,
+					y: r.y - 2.0,
+					w: r.w + 4.0,
+					h: r.h + 4.0,
+				};
+				border(&mut out, ring, 1.0, dlg().focus_out);
 			}
 		}
 		for (btn_idx, (_, r, label)) in self.buttons().into_iter().enumerate() {
@@ -2209,7 +2370,7 @@ impl SettingsDialog {
 			// revert-to-default icon: bright + clickable when off-default, dim when at it
 			let revert_rect = self.revert_box(i);
 			out.push(TextItem {
-				color: if self.is_default(self.specs[i].key) {
+				color: if self.row_is_default(i) {
 					dlg().dim
 				} else {
 					dlg().handle
@@ -2263,6 +2424,18 @@ impl SettingsDialog {
 						clip: Some(intersect(text_box)),
 						..mk(txt, text_box.x + 6.0, row_text_y(text_box.y, text_box.h))
 					});
+				}
+				Kind::Dual { keys, labels } => {
+					for p in 0u8..2 {
+						let off = self.disabled(keys[p as usize]);
+						let color = if off { dlg().dim } else { dlg().text };
+						let bx = self.dual_box(i, p);
+						out.push(TextItem {
+							color,
+							clip: Some(vp),
+							..mk(labels[p as usize].into(), bx.x + bx.w + 6.0, ty)
+						});
+					}
 				}
 				Kind::Radio(options) => {
 					let off = self.disabled(self.specs[i].key);
@@ -2495,10 +2668,15 @@ mod tests {
 		let f = d.focusables();
 		assert_eq!(f.len(), 2, "scrolling tab has two focusable rows");
 		d.set_mods(false, false, false);
-		d.key_tab(); // from nothing -> first control
-		assert_eq!(d.focus, Some(Focus::Row(f[0])));
+		// each slider is two focus stops (track, then numeric field)
+		d.key_tab(); // from nothing -> first slider's track
+		assert_eq!(d.focus, Some(Focus::Row(f[0], 0)));
 		d.key_tab();
-		assert_eq!(d.focus, Some(Focus::Row(f[1])));
+		assert_eq!(d.focus, Some(Focus::Row(f[0], 1)));
+		d.key_tab();
+		assert_eq!(d.focus, Some(Focus::Row(f[1], 0)));
+		d.key_tab();
+		assert_eq!(d.focus, Some(Focus::Row(f[1], 1)));
 		// after the last control the ring visits the three footer buttons
 		d.key_tab();
 		assert_eq!(d.focus, Some(Focus::Button(0)));
@@ -2507,10 +2685,49 @@ mod tests {
 		d.key_tab();
 		assert_eq!(d.focus, Some(Focus::Button(2)));
 		d.key_tab(); // wraps back to the first control
-		assert_eq!(d.focus, Some(Focus::Row(f[0])));
+		assert_eq!(d.focus, Some(Focus::Row(f[0], 0)));
 		d.set_mods(false, true, false); // Shift+Tab walks back (wraps to last button)
 		d.key_tab();
 		assert_eq!(d.focus, Some(Focus::Button(2)));
+	}
+
+	#[test]
+	fn dual_cursor_row_two_stops_toggle_and_revert() {
+		use super::{Focus, Kind};
+		let mut d = mk_dialog(2000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| matches!(s.kind, Kind::Dual { .. }))
+			.unwrap();
+		d.tab = d.spec_tab[i];
+		// enabled prerequisites: scrim on, an outline present
+		d.edited.text_scrim = true;
+		d.edited.text_outline = 2.0;
+		assert_eq!(d.parts_of(i), 2);
+		assert!(!d.part_disabled(i, 0) && !d.part_disabled(i, 1));
+		// Space on each part flips its own key
+		let (s0, o0) = (d.edited.cursor_scrim, d.edited.cursor_outline);
+		d.focus = Some(Focus::Row(i, 0));
+		d.key_space();
+		assert_eq!(d.edited.cursor_scrim, !s0);
+		assert_eq!(d.edited.cursor_outline, o0, "part 0 leaves outline alone");
+		d.focus = Some(Focus::Row(i, 1));
+		d.key_space();
+		assert_eq!(d.edited.cursor_outline, !o0);
+		// no outline -> the Outline checkbox (part 1) drops out of the focus ring
+		d.edited.text_outline = 0.0;
+		assert!(d.part_disabled(i, 1) && !d.part_disabled(i, 0));
+		// reverting the row restores both keys
+		d.edited.text_outline = 2.0;
+		d.edited.cursor_scrim = !d.defaults.cursor_scrim;
+		d.edited.cursor_outline = !d.defaults.cursor_outline;
+		assert!(!d.row_is_default(i));
+		d.row_revert(i);
+		assert_eq!(d.edited.cursor_scrim, d.defaults.cursor_scrim);
+		assert_eq!(d.edited.cursor_outline, d.defaults.cursor_outline);
+		assert!(d.row_is_default(i));
+		assert!(d.take_reverted().contains(&"cursor_scrim"));
 	}
 
 	#[test]
@@ -2560,7 +2777,7 @@ mod tests {
 			.unwrap();
 		assert!(matches!(d.specs[i].kind, Kind::Dropdown(_)));
 		d.edited.text_scrim_function = "sdf".into(); // option index 0
-		d.focus = Some(Focus::Row(i));
+		d.focus = Some(Focus::Row(i, 0));
 		// Space opens with the current value highlighted
 		d.key_space();
 		assert_eq!(d.open, Some(i));
@@ -2678,7 +2895,7 @@ mod tests {
 		// radio: focus the (always-enabled) bg-fit radio and move its selection
 		let i = d.specs.iter().position(|s| s.key == Key::BgFit).unwrap();
 		d.tab = d.spec_tab[i];
-		d.focus = Some(super::Focus::Row(i));
+		d.focus = Some(super::Focus::Row(i, 0));
 		let before = d.get_radio(Key::BgFit);
 		d.key_horizontal(1);
 		assert!(d.get_radio(Key::BgFit) > before || before == 1);
@@ -2704,7 +2921,7 @@ mod tests {
 		d.edited.use_system_font = false; // else Font size is greyed/disabled
 		let i = d.specs.iter().position(|s| s.key == Key::FontSize).unwrap();
 		d.tab = d.spec_tab[i];
-		d.focus = Some(Focus::Row(i));
+		d.focus = Some(Focus::Row(i, 0));
 		// Space opens the field pre-filled with the current value
 		d.key_space();
 		assert!(d.edit.is_some());
@@ -2735,7 +2952,7 @@ mod tests {
 		let i = d.specs.iter().position(|s| s.key == Key::Opacity).unwrap();
 		d.tab = d.spec_tab[i];
 		d.edited.transparent_background = true; // opacity enabled
-		d.focus = Some(Focus::Row(i));
+		d.focus = Some(Focus::Row(i, 0));
 		// typing a digit into the focused (unopened) slider starts a fresh number
 		d.char_input('0');
 		d.char_input('.');
