@@ -40,6 +40,7 @@
 ##	   --no-profile        skip the profiler stage
 ##	   --no-dogfood        skip installing the native release locally
 ##	   --no-publish        skip the git backup + publish stage
+##	   --shots             refresh README screenshots (off by default)
 ##	   --quick             skip the slow stages (cross-builds + profiling)
 ##	   --gate              merge gate only: fmt --check + clippy + tests, then exit
 ##	                       (fast local stand-in for hosted CI; the pre-push hook runs it)
@@ -88,6 +89,7 @@ while (($#)); do case "$1" in
 	--no-profile)             PROFILE_ENABLE=0; shift ;;
 	--no-dogfood)             DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); shift ;;
 	--no-publish)             GIT_PUBLISH=(); shift ;;
+	--shots)                  SHOTS_ENABLE=1; shift ;;
 	--quick)                  quick=1; BUILD_CROSS=0; PROFILE_ENABLE=0; shift ;;   ## skip the slow stages
 	--message=*|--msg=*|-m=*) cli_message="${1#*=}"; shift ;;
 	-m|--message|--msg)       cli_message="${2-}"; shift; (($#)) && shift ;;
@@ -429,7 +431,9 @@ if ((! df_did)); then fEcho_Clean "dogfood disabled"; fi
 ## aborts). Runs before publish so changed images get committed; rendering needs
 ## a headless X + magick, so a failure just warns.
 shots_hook="${root}/cicd/utility/screenshots.bash"
-if ((quick)); then
+if ((! SHOTS_ENABLE)); then
+	fEcho_Clean "screenshots disabled"
+elif ((quick)); then
 	fEcho_Clean "screenshots skipped (--quick)"
 elif [[ -x "$shots_hook" ]]; then
 	fEcho_Clean "refreshing README screenshots ..."
