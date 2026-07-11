@@ -1,0 +1,25 @@
+#!/bin/sh
+# Local merge gate: before any push that updates main or dev, run the fast
+# verify pass (cicd.bash --gate: fmt --check + clippy -D warnings + tests).
+# Feature-branch pushes are not gated (they get verified at merge time).
+# Bypass for an emergency: git push --no-verify, or SKIP_GATE=1 git push.
+#
+# Activate once per clone:  git config core.hooksPath utility/git-hooks
+set -eu
+
+[ "${SKIP_GATE:-0}" = "1" ] && exit 0
+
+# stdin: "<local_ref> <local_sha> <remote_ref> <remote_sha>" per ref being pushed.
+gated=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+	case "$remote_ref" in
+		refs/heads/main|refs/heads/dev)
+			# deleting the branch pushes the zero sha - nothing to verify
+			case "$local_sha" in *[!0]*) gated=1 ;; esac
+			;;
+	esac
+done
+[ "$gated" = "1" ] || exit 0
+
+echo "pre-push: gating push to main/dev (cicd.bash --gate; --no-verify skips)" >&2
+exec "$(git rev-parse --show-toplevel)/cicd/cicd.bash" --gate

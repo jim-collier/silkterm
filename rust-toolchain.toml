@@ -1,0 +1,12 @@
+# Pin the toolchain so every build/lint on any box uses the same rustc + clippy
+# (ends the system-1.94 vs rustup-1.96 clippy split). Only rustup honors this;
+# cicd prepends ~/.cargo/bin so its cargo always goes through rustup.
+# Bump deliberately: change the version here, run the full pipeline, commit.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]
+targets = [
+	"x86_64-pc-windows-gnu",
+	"aarch64-unknown-linux-gnu",
+	"aarch64-pc-windows-gnullvm",
+]

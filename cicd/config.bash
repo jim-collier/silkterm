@@ -44,6 +44,17 @@ EXE_NAME="silkterm"
 ## Stage 1: format the source in place before anything is compiled or tested.
 ## Empty it (FMT_CMD=()) when reusing the pipeline in a non-Rust project.
 FMT_CMD=(cargo fmt)
+## Non-mutating variant for the --gate mode (fails on drift instead of rewriting).
+FMT_CHECK_CMD=(cargo fmt --check)
+
+## Pinned versions of the cargo-installed helpers the pipeline probes for; the
+## engine warns (non-gating) when an installed tool has drifted from its pin, so
+## a box update can't silently change results. Format: "name|version|command...".
+## The rustc/clippy toolchain itself is pinned by rust-toolchain.toml at repo root.
+TOOL_PINS=(
+	"cargo-deny|0.19.9|cargo deny --version"
+	"cargo-zigbuild|0.23.0|cargo-zigbuild --version"
+)
 
 ## Stage 2: debug build (fast compile sanity)
 DEBUG_BUILD_CMD=(cargo build)
@@ -54,9 +65,10 @@ TEST_CMD=(cargo test)
 ## Stage 3 (after tests): lints. Gating; house allows live in the workspace
 ## Cargo.toml [workspace.lints.clippy]. PROBE decides tool availability -
 ## a failed probe skips the step with a warning instead of aborting.
-## clippy comes from the rustup toolchain while the build stages use the system
-## cargo; the two rustcs sharing one target dir throws E0514 (artifacts from the
-## other compiler), so lint pins the rustup PATH and gets its own target dir.
+## rust-toolchain.toml pins one toolchain for every rustup-routed cargo, but a
+## shell where system cargo wins PATH can still populate target/ with the other
+## rustc (E0514: artifacts from a different compiler), so lint pins the rustup
+## PATH and keeps its own target dir as insurance.
 LINT_PROBE=(env "PATH=${HOME}/.cargo/bin:${PATH}" cargo clippy --version)
 LINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" CARGO_TARGET_DIR=target/lint cargo clippy --workspace --all-targets -- -D warnings)
 
@@ -73,15 +85,26 @@ SCROLL_HARNESS=(cicd/tests/scroll/run.bash)
 ## Stage 5: native release build + its artifact (this is what gets dogfooded)
 RELEASE_NATIVE_CMD=(cargo build --release)
 RELEASE_NATIVE_BIN="target/release/${EXE_NAME}"
+RELEASE_NATIVE_OSARCH="linux-x86_64"
 
-## Stage 5: cross-release targets. One per line: "label|artifact|command...".
+## Stage 5: cross-release targets. One per line: "label|os-arch|artifact|command...".
+## os-arch feeds the versioned artifact name (<exe>-<version>-<os-arch>[.exe]).
 ## Set BUILD_CROSS=0 to skip them for a quick local run.
 BUILD_CROSS=1
 CROSS_TARGETS=(
-	"Windows x86_64 (mingw)|target/x86_64-pc-windows-gnu/release/${EXE_NAME}.exe|cargo build --release --target x86_64-pc-windows-gnu"
-	"Linux ARM64 (zig)|target/aarch64-unknown-linux-gnu/release/${EXE_NAME}|cargo zigbuild --release --target aarch64-unknown-linux-gnu"
-	"Windows ARM64 (zig)|target/aarch64-pc-windows-gnullvm/release/${EXE_NAME}.exe|cargo zigbuild --release --target aarch64-pc-windows-gnullvm"
+	"Windows x86_64 (mingw)|windows-x86_64|target/x86_64-pc-windows-gnu/release/${EXE_NAME}.exe|cargo build --release --target x86_64-pc-windows-gnu"
+	"Linux ARM64 (zig)|linux-arm64|target/aarch64-unknown-linux-gnu/release/${EXE_NAME}|cargo zigbuild --release --target aarch64-unknown-linux-gnu"
+	"Windows ARM64 (zig)|windows-arm64|target/aarch64-pc-windows-gnullvm/release/${EXE_NAME}.exe|cargo zigbuild --release --target aarch64-pc-windows-gnullvm"
 )
+
+## Stage 5 (after builds): collect the built binaries under versioned names plus
+## a sha256 checksums file, ready to attach to a release as plain uploads.
+## Naming scheme (stable; download links depend on it):
+##   <exe>-<version>-<os-arch>[.exe]   e.g. silkterm-1.0.0-beta1-linux-x86_64
+##   <exe>-<version>-sha256sums.txt
+## Version comes from source/Cargo.toml alone. Empty to disable collection.
+RELEASE_ARTIFACT_DIR="cicd/artifacts/release"   # relative to repo root; gitignored
+VERSION_MANIFEST="source/Cargo.toml"            # the single version source
 
 ## Stage 4: profiler (non-gating artifact, not a pass/fail test). Builds an
 ## optimized+symbols binary (cargo --profile $PROFILE_PROFILE --features

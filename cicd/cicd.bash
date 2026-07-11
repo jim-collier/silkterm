@@ -41,6 +41,8 @@
 ##	   --no-dogfood        skip installing the native release locally
 ##	   --no-publish        skip the git backup + publish stage
 ##	   --quick             skip the slow stages (cross-builds + profiling)
+##	   --gate              merge gate only: fmt --check + clippy + tests, then exit
+##	                       (fast local stand-in for hosted CI; the pre-push hook runs it)
 ## - Reuse: copy the cicd/ directory into another project and edit config.bash.
 
 ##	History: At bottom of script.
@@ -76,10 +78,11 @@ cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
 ## Parse options.
-assume_yes=0; quiet=0; quick=0; cli_message=""
+assume_yes=0; quiet=0; quick=0; gate=0; cli_message=""
 while (($#)); do case "$1" in
 	-y|--yes)                 assume_yes=1; shift ;;
 	-q|--quiet)               quiet=1; assume_yes=1; shift ;;   ## quiet + unattended; publish runs quiet too
+	--gate)                   gate=1; shift ;;                  ## merge gate only, then exit
 	--no-fmt)                 FMT_CMD=(); shift ;;
 	--no-cross)               BUILD_CROSS=0; shift ;;
 	--no-profile)             PROFILE_ENABLE=0; shift ;;
@@ -126,6 +129,47 @@ in_use(){
 	return 1
 }
 trap 'rc=$?; printf "\n[ CICD ABORTED (exit %s) at line %s: %s ]\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; exit $rc' ERR
+
+## Gate mode: the local merge gate (what a bare-bones hosted CI would run).
+## fmt --check + clippy -D warnings + tests, fail-fast, nothing mutated, no
+## artifacts/log-tee/publish. Wired as the pre-push hook for main/dev, so
+## nothing reaches an integration branch unverified even outside a full run.
+if ((gate)); then
+	fSection "Gate 1/3  Format check"
+	if declare -p FMT_CHECK_CMD &>/dev/null && ((${#FMT_CHECK_CMD[@]})); then
+		"${FMT_CHECK_CMD[@]}" || fDie "format check failed (run: ${FMT_CMD[*]:-cargo fmt})"
+		fEcho "OK: formatting clean"
+	else
+		fEcho_Clean "format check skipped (no FMT_CHECK_CMD)"
+	fi
+	fSection "Gate 2/3  Lints"
+	if [[ -n "${LINT_CMD+x}" ]] && ((${#LINT_CMD[@]})) && "${LINT_PROBE[@]}" >/dev/null 2>&1; then
+		"${LINT_CMD[@]}"
+		fEcho "OK: lints clean"
+	else
+		fEcho_Clean "lints skipped (clippy unavailable)"
+	fi
+	fSection "Gate 3/3  Tests"
+	"${TEST_CMD[@]}"
+	fEcho "OK: tests passed"
+	fSection "${APP_NAME} gate: PASSED."
+	fEcho_Clean
+	exit 0
+fi
+
+## Warn (non-gating) when a pinned helper tool has drifted from TOOL_PINS, so a
+## box update can't silently change pipeline results.
+if declare -p TOOL_PINS &>/dev/null; then
+	for pin in "${TOOL_PINS[@]}"; do
+		pin_name="${pin%%|*}"; pin_rest="${pin#*|}"; pin_ver="${pin_rest%%|*}"; pin_cmd="${pin_rest#*|}"
+		have="$(${pin_cmd} 2>/dev/null | head -1 | sed 's/[^0-9.]*\([0-9][0-9.]*\).*/\1/')" || have=""
+		if [[ -z "$have" ]]; then
+			fEcho "WARNING: ${pin_name} not found (pinned ${pin_ver})"
+		elif [[ "$have" != "$pin_ver" ]]; then
+			fEcho "WARNING: ${pin_name} is ${have}, pinned ${pin_ver} (cargo install ${pin_name} --version ${pin_ver} --locked, or update the pin)"
+		fi
+	done
+fi
 
 ## Preflight: show the plan with resolved paths, then confirm.
 abs_script="${root}/${PROFILE_WORKLOAD_SCRIPT}"
@@ -309,14 +353,34 @@ fSection "5/7  Release build (native)"
 "${RELEASE_NATIVE_CMD[@]}"
 [[ -f "${RELEASE_NATIVE_BIN}" ]] || fDie "native release binary missing: ${RELEASE_NATIVE_BIN}"
 fEcho "OK: native release: ${RELEASE_NATIVE_BIN} ($(du -h "${RELEASE_NATIVE_BIN}" | cut -f1))"
+built_arts=("${RELEASE_NATIVE_OSARCH:-native}|${RELEASE_NATIVE_BIN}")
 if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
 	for t in "${CROSS_TARGETS[@]}"; do
-		local_label="${t%%|*}"; rest="${t#*|}"; art="${rest%%|*}"; cmd="${rest#*|}"
+		local_label="${t%%|*}"; rest="${t#*|}"; osarch="${rest%%|*}"; rest="${rest#*|}"; art="${rest%%|*}"; cmd="${rest#*|}"
 		fSection "5/7  Release build: ${local_label}"
 		eval "${cmd}"
 		[[ -f "${art}" ]] || fDie "missing artifact for ${local_label}: ${art}"
 		fEcho "OK: ${local_label}: ${art} ($(du -h "${art}" | cut -f1))"
+		built_arts+=("${osarch}|${art}")
 	done
+fi
+
+## Collect the built binaries under versioned names + a sha256 checksums file,
+## ready to attach to a release as plain uploads. Version = Cargo.toml alone.
+if [[ -n "${RELEASE_ARTIFACT_DIR:-}" ]]; then
+	ver="$(sed -n 's/^version *= *"\(.*\)".*/\1/p' "${root}/${VERSION_MANIFEST}" | head -1)"
+	[[ -n "$ver" ]] || fDie "no version found in ${VERSION_MANIFEST}"
+	art_dir="${root}/${RELEASE_ARTIFACT_DIR}"
+	rm -rf "${art_dir}"; mkdir -p "${art_dir}"
+	sums="${EXE_NAME}-${ver}-sha256sums.txt"
+	for pair in "${built_arts[@]}"; do
+		osarch="${pair%%|*}"; src="${pair#*|}"
+		ext=""; [[ "$src" == *.exe ]] && ext=".exe"
+		cp -f "${src}" "${art_dir}/${EXE_NAME}-${ver}-${osarch}${ext}"
+	done
+	( cd "${art_dir}" && sha256sum "${EXE_NAME}-${ver}-"* > "${sums}" )
+	fEcho "OK: ${#built_arts[@]} release artifact(s) + ${sums} -> ${RELEASE_ARTIFACT_DIR}/"
+	((BUILD_CROSS)) || fEcho_Clean "note: cross targets skipped - artifact set is partial (native only)"
 fi
 
 ## Stage 6: dogfood. Two independent installs (fixed overwrite + rotating dated copy).
