@@ -121,6 +121,10 @@ PROFILE_WORKLOAD_ARGS="600 0"          # <duration_s> <delay_s>; duration >> PRO
 PROFILE_OUT_DIR="cicd/artifacts/profiling"  # relative to repo root; created if missing (gitignored)
 PROFILE_STRICT=0                        # 1 = any profiler failure aborts the pipeline
 
+## Pre-publish README screenshot refresh (cicd/utility/screenshots.bash). Currently
+## off; flip to 1 (or pass --shots) to re-enable. Also skipped under --quick.
+SHOTS_ENABLE=0
+
 ## Full run output is tee'd here (gitignored) so warnings from any stage can be
 ## reviewed after the fact. Kept rotated like the flamegraphs.
 LINT_LOG_DIR="cicd/artifacts/lint"      # relative to repo root; created if missing (gitignored)
