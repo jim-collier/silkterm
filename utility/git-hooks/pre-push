@@ -11,6 +11,8 @@ set -eu
 
 # stdin: "<local_ref> <local_sha> <remote_ref> <remote_sha>" per ref being pushed.
 gated=0
+main_local=""
+main_remote=""
 while read -r local_ref local_sha remote_ref remote_sha; do
 	case "$remote_ref" in
 		refs/heads/main|refs/heads/dev)
@@ -18,7 +20,34 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 			case "$local_sha" in *[!0]*) gated=1 ;; esac
 			;;
 	esac
+	# main is release-only: remember its shas for the version-bump check below
+	case "$remote_ref" in
+		refs/heads/main)
+			case "$local_sha" in *[!0]*) main_local="$local_sha"; main_remote="$remote_sha" ;; esac
+			;;
+	esac
 done
+
+# Release guard: a push to main must carry a version bump. main is where releases
+# are cut, so shipping the same version twice is a mistake - block it here (before
+# the slower gate) so a forgotten Cargo.toml bump can't reach main.
+if [ -n "$main_local" ]; then
+	manifest=source/Cargo.toml
+	read_ver() { git show "$1:$manifest" 2>/dev/null | sed -n 's/^version *= *"\(.*\)".*/\1/p' | head -1; }
+	newv=$(read_ver "$main_local")
+	[ -n "$newv" ] || { echo "pre-push: cannot read version from $manifest on the pushed commit" >&2; exit 1; }
+	# zero remote sha = main does not exist yet (first push), nothing to compare
+	case "$main_remote" in
+		*[!0]*)
+			oldv=$(read_ver "$main_remote")
+			if [ -n "$oldv" ] && [ "$newv" = "$oldv" ]; then
+				echo "pre-push: version $newv already on main - bump $manifest (and the README Release badge) before releasing. (SKIP_GATE=1 or --no-verify to override)" >&2
+				exit 1
+			fi
+			;;
+	esac
+fi
+
 [ "$gated" = "1" ] || exit 0
 
 echo "pre-push: gating push to main/dev (cicd.bash --gate; --no-verify skips)" >&2
