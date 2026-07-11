@@ -163,6 +163,7 @@ The distance functions share one engine: a separable, exactly-Euclidean distance
 Guiding constraint: GitHub is dumb git hosting plus optional release storage, nothing more. No hosted CI, no Actions, as few third-party tools as possible; the whole pipeline runs locally (`cicd/cicd.bash`).
 
 - Merge gate: `cicd.bash --gate` (fmt check, clippy with warnings as errors, tests) runs as the `pre-push` hook for pushes to main or dev. This is the local stand-in for a hosted CI workflow; feature-branch pushes are not gated.
+- Version-bump guard: the same `pre-push` hook blocks a push to main whose `source/Cargo.toml` version matches the version already on main - so a release merge can't ship the same version twice. Skips on the first main push and on branch deletes; overridable with `--no-verify` / `SKIP_GATE=1`.
 - Branch flow: feature branches merge `--no-ff` into `dev` (the integration target). `main` is release-only: merging dev into main cuts a release.
 - Releases: `cicd/utility/release.bash` tags the merge `v<version>` and can push the tag and attach the artifacts to a GitHub Release as plain uploads. The version comes from `source/Cargo.toml` alone - the tag is read from it and the build stamps from it, so they can never disagree. Version and README badge get bumped on dev before the release merge; nothing is ever committed directly on main.
 - Artifact naming (stable; download links depend on it): `<exe>-<version>-<os-arch>[.exe]` plus `<exe>-<version>-sha256sums.txt`, collected by the pipeline into `cicd/artifacts/release/`.
