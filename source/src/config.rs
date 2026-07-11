@@ -1525,6 +1525,11 @@ mod tests {
 	// reverted).
 	#[test]
 	fn persist_survives_bare_decimal_float() {
+		// Memoize settings() BEFORE installing the override: a test on another
+		// thread initializing settings() after the override would load() - an
+		// in-place migrate/reorder REWRITE of our temp file - racing our own
+		// read below (parallel-suite flake: truncated read -> defaults).
+		let _ = settings();
 		let dir = std::env::temp_dir().join(format!("silkterm_cfgsave_{}", std::process::id()));
 		let _ = std::fs::create_dir_all(&dir);
 		let path = dir.join("config.toml");

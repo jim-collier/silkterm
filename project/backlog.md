@@ -63,6 +63,33 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
+- ✅ CI/CD improvements:
+	- Guiding constraints: rely on GitHub as little as possible (dumb git hosting plus optional release storage, nothing more), no cloud-hosted CI/CD, as few third-party tools as possible - but still cover the lightweight local-pipeline best practices for Rust.
+	- ✅ Local merge gate instead of hosted CI
+		- Add a fast `cicd.bash --gate` mode (fmt --check, clippy -D warnings, cargo test) and wire it as a git pre-push hook, so nothing reaches main unverified even outside a full cicd run.
+		- This replaces what a bare-bones GitHub Actions workflow would do; the safety net runs on this box, not in the cloud.
+		- The full pipeline (fuzz, packages, profiling, dogfood, publish) stays unchanged.
+		- Done: `cicd.bash --gate` + `utility/git-hooks/pre-push` (gates pushes to main/dev only; `--no-verify` or `SKIP_GATE=1` bypasses).
+	- ✅ Dev branch + release on main
+		- Adopt a dev branch as the integration target. Feature branches merge to dev; main becomes release-only.
+		- Merging dev to main cuts a release locally: tag the merge, run the packages stage, and optionally push the tag + attach artifacts to a GitHub Release as plain uploads (no Actions).
+		- Version source is `Cargo.toml` alone: the tag is read from it and the build stamps from it, so they can never disagree.
+		- Document the flow where branch conventions live, so day-to-day work knows the merge-back target changed.
+		- Done: `dev` branch created and pushed; flow documented in design.md "Delivery"; `cicd/utility/release.bash` cuts the tag from `Cargo.toml` and can push + attach artifacts via `gh` (packages stage folds in when it lands).
+	- ✅ Release packaging polish
+		- Keep the hand-rolled packages stage (it already covers .deb/.rpm/NSIS across four targets, which cargo-dist does not) - no new packaging tool.
+		- Add a sha256 checksums file next to the artifacts, and fold the release version into artifact names in one stable scheme, decided before the first tagged release so download links never have to change.
+		- Done: scheme is `<exe>-<version>-<os-arch>[.exe]` + `<exe>-<version>-sha256sums.txt`, collected into `cicd/artifacts/release/` after the release builds. The future packages stage inherits the same scheme.
+	- ✅ Pin toolchain and tool versions
+		- Add `rust-toolchain.toml` pinning the rustc/clippy toolchain - this also kills the standing 1.94-vs-1.96 clippy split for good.
+		- Pin the versions of cargo-installed helpers the pipeline probes for (cargo-deny, cargo-zigbuild, and any later additions) in one place cicd reads, so results stop drifting as the box updates.
+		- No dependabot (GitHub-hosted): dependency freshness is a periodic local `cargo update` pass, with cargo-deny advisories already flagging anything urgent in every run.
+		- Done: `rust-toolchain.toml` pins 1.96.0 + clippy/rustfmt + the three cross targets; helper pins live in `TOOL_PINS` in cicd/config.bash (non-gating drift warning).
+	- ✅ README badges
+		- Only the ones that carry signal without hosted CI: latest release tag, license, minimum Rust version. Static shields, one line at the top, matching the existing README style.
+		- No CI badge - there is no hosted workflow to point it at, and a self-reported badge is noise.
+		- Done: Release + minimum-Rust badges added to the existing badge block (license badge was already there). The release badge is static; release.bash refuses to tag until it matches Cargo.toml.
+
 - ✅ Settings dialog:
 	- ✅ Focus control:
 		- ✅ When an item is focused, there shouldn't be a focus box the same size for every row, around the entire group of controls. The focus box should only go around the control being focused.

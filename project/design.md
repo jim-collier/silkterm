@@ -157,3 +157,14 @@ The distance functions share one engine: a separable, exactly-Euclidean distance
 - Target: Debian, X11. (With or without compositing. Also Windows and macOS - all with x86_64 and ARM64 variants.)
 
 - Pixel-precise input: touchpad gives true pixel deltas; notched mouse wheel snaps to lines (clamp/accumulate notch deltas into smooth target).
+
+## Delivery (CI/CD, branches, releases)
+
+Guiding constraint: GitHub is dumb git hosting plus optional release storage, nothing more. No hosted CI, no Actions, as few third-party tools as possible; the whole pipeline runs locally (`cicd/cicd.bash`).
+
+- Merge gate: `cicd.bash --gate` (fmt check, clippy with warnings as errors, tests) runs as the `pre-push` hook for pushes to main or dev. This is the local stand-in for a hosted CI workflow; feature-branch pushes are not gated.
+- Branch flow: feature branches merge `--no-ff` into `dev` (the integration target). `main` is release-only: merging dev into main cuts a release.
+- Releases: `cicd/utility/release.bash` tags the merge `v<version>` and can push the tag and attach the artifacts to a GitHub Release as plain uploads. The version comes from `source/Cargo.toml` alone - the tag is read from it and the build stamps from it, so they can never disagree. Version and README badge get bumped on dev before the release merge; nothing is ever committed directly on main.
+- Artifact naming (stable; download links depend on it): `<exe>-<version>-<os-arch>[.exe]` plus `<exe>-<version>-sha256sums.txt`, collected by the pipeline into `cicd/artifacts/release/`.
+- Pinning: `rust-toolchain.toml` pins rustc/clippy/rustfmt and the cross targets; cargo-installed helpers (cargo-deny, cargo-zigbuild) are pinned in `cicd/config.bash` (`TOOL_PINS`) with a non-gating drift warning. Dependency freshness is a periodic local `cargo update` pass; cargo-deny advisories flag anything urgent in every run.
+- README badges: static shields only (release, license, minimum Rust). No CI badge - there is no hosted workflow to point one at.
