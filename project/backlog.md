@@ -155,22 +155,6 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 Change wording of "background image opacity" to "background image visibility" (text and setting), to reflect that it's not just opacity. Still directly controls image/background color mix, but ALSO the contrast and saturation.
 
-- 🔘 CICD process (without --quick): Only after quite major changes, record a demo video:
-	- 🔘 Showing a wide variety of synthetic, anonymized content, with varying burst of text output length.
-	- 🔘 Colorized (anonymous) prompt, colorized ls output, etc.
-	- 🔘 Include showing smooth-scrolling in `nano` and `less`.
-	- 🔘 Typing commands etc. should look as if a real human were doing it - a variable ~40 to 100 wpm (avg about 80), with common random mistakes and fixes.
-	- 🔘 Include perfectly-matched keyboard click sounds, that vary realistically "random", except for the same sounds for space, enter, backpsace, etc.
-		- 🔘 Very nice, ASMR-like, luxurious "thocky" keyboard sounds.
-	- 🔘 Mouse click sound for demoing mouse features. (Quiet, nice mouseclick sound, deeper/softer than typical demo mouseclicks.)
-	- 🔘 ~1024x768 terminal area. (Which we might change later.)
-	- 🔘 Adjust some headline features through the Settings dialog.
-	- 🔘 Show a readable banner on the video, briefly naming or describing what is being demo'd (and leave it up for a minumum human-readable time, or longer). Make sure the banner isn't blocking what's being demo'd.
-	- 🔘 Use a codec that compresses this kind of content well.
-	- By default use "background24.jpg" at 10% opacity. No terminal transparency except when demoing it. Background color #222222. Font current system font ("Monaspace Argon NF Medium").
-	- 🔘 Store the videos under `silkterm/private/demo-video/`, using the same naming/rotation strategy as backups.
-	- 🔘 Store a copy of only the most recent video probably under `siklterm/github/source/video/demo.{ext}`. Make sure README.md embeds or references it visibly near the top.
-
 - 🔘 (Originally filed as bug): At high blur radius and low softness, the blur has boxy artifacts.
 	- Cause: the scrim is a separable blur with a truncated kernel. The hard cutoff leaves a faint edge that low softness amplifies into a visible square, and the linear and s-curve falloffs are not true Gaussians, so their support reads as a diamond or box rather than a circle. The fix is a look-versus-performance tradeoff (wider extent, more taps, or a windowed kernel) that wants eyeballing. Deferred to a visual pass.
 	- 🔘 New feature: Adjustable blur quality in settings:

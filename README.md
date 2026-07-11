@@ -38,12 +38,24 @@
 <!-- TOC ignore:true -->
 # SilkTerm
 
+SilkTerm is the only known terminal currently in the universe that smooth-scrolls lines on output - for silky-smooth and less-tiring long terminal sessions.
+
+It also has smooth cursor options such as phase effect for blinking, and smooth movement.
+
+The background image and text scrim options are also completely unique and have to be seen.
+
+And of course all the other required features of a modern terminal emulator - but all done to perfection: detachable multi-tabs, native split-panes, transparency and blur, can run without a menu and/or window decorations.
+
+Cross-platform. Written in Rust for a small single executable, and high speed. GPU accelerated if available. (Works great if not.)
+
+<!--
 <table style="border: none; border-collapse: collapse;">
 	<tr style="border: none; border-collapse: collapse;">
 		<td style="border: none; border-collapse: collapse;"><img src="source/assets/logo.png" alt="Silky" width="320"/></td>
 		<td style="border: none;">SilkTerm is the only known terminal currently in existence, that smooth-scrolls lines on output - for silky-smooth and less-tiring long terminal sessions. It also has smooth cursor options such as phase effect for blinking, and smooth movement.<br /><br />SilkTerm also has detachable multi-tabs, split-panes, transparency and blur, background image and blur, text scrim, and can run without a menu and/or window decorations.<br /><br />Cross-platform. Written in Rust for a small single executable, and blazing speed.</td>
 	</tr style="border: none; border-collapse: collapse;">
 </table>
+-->
 
 <!-- TOC ignore:true -->
 ## Table of contents
