@@ -206,6 +206,8 @@ In each section, items are listed approximately from newest to oldest.
 		- Done: scrolling is covered by library tests encoding the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
 	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
 
+- ✋ README screenshot refresh in cicd is off (`SHOTS_ENABLE=0` in `cicd/config.bash`; `--shots` re-enables per run). So the README grid images won't auto-update after visual changes - refresh by hand or flip it back on when ready.
+
 - 🔘 Build packages when cicd.bash `--quick` isn't specified:
 	- 🔘 .deb(s), per-architecture
 	- 🔘 Windows installer .exe(s), per-architecture
