@@ -296,13 +296,21 @@ pub fn reload_from_disk() -> Settings {
 	load()
 }
 
+// Read config.toml as an editable document, tolerating the same bare-decimal
+// floats (`.1`) the loader does. Strict toml_edit rejects a leading-dot float, so
+// without this persist/revert would bail on a file the loader reads fine - and
+// silently save nothing.
+fn read_doc(path: &std::path::Path) -> Option<toml_edit::DocumentMut> {
+	let text = std::fs::read_to_string(path).unwrap_or_default();
+	lenient_floats(&text).parse::<toml_edit::DocumentMut>().ok()
+}
+
 // Write the values that differ from `orig` back into config.toml in place,
 // preserving the user's comments and layout (toml_edit). Untouched settings keep
 // whatever they were (commented / following the system).
 pub fn persist(orig: &Settings, s: &Settings) {
 	let Some(path) = config_path() else { return };
-	let text = std::fs::read_to_string(&path).unwrap_or_default();
-	let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else {
+	let Some(mut doc) = read_doc(&path) else {
 		return;
 	};
 	use toml_edit::value;
@@ -1004,10 +1012,7 @@ pub fn revert_keys(keys: &[&str]) {
 		return;
 	}
 	let Some(path) = config_path() else { return };
-	let Ok(text) = std::fs::read_to_string(&path) else {
-		return;
-	};
-	let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else {
+	let Some(mut doc) = read_doc(&path) else {
 		return;
 	};
 	for full_key in keys {
@@ -1513,6 +1518,37 @@ theme_mode = "dark"
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// A bare-decimal float (`.1`, missing leading zero) that the loader tolerates
+	// must not stop persist from saving. Regressed: persist strict-parsed the raw
+	// file, bailed on `.1`, and silently dropped every dialog change (relaunch
+	// reverted).
+	#[test]
+	fn persist_survives_bare_decimal_float() {
+		let dir = std::env::temp_dir().join(format!("silkterm_cfgsave_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let path = dir.join("config.toml");
+		std::fs::write(&path, "background_opacity = .1\ntext_scrim_ramp = \"s\"\n").unwrap();
+		set_config_override(path.clone());
+
+		let orig = load();
+		assert_eq!(orig.text_scrim_ramp, "s");
+		let mut edited = orig.clone();
+		edited.text_scrim_ramp = "log".to_string();
+		persist(&orig, &edited);
+
+		assert_eq!(
+			load().text_scrim_ramp,
+			"log",
+			"dialog change lost after relaunch"
+		);
+		// and the malformed float is normalized in place, not left to break the next save
+		let saved = std::fs::read_to_string(&path).unwrap();
+		assert!(
+			saved.contains("0.1"),
+			"bare float should be normalized: {saved:?}"
+		);
+	}
 
 	#[test]
 	fn default_config_is_valid_toml() {
