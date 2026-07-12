@@ -110,6 +110,10 @@ pub struct Cli {
 	pub version: bool,
 	pub syntax: bool,
 	pub config: Option<PathBuf>,
+	// control commands for an already-running window (talk, then exit):
+	// `Some(None)` clears the wallpaper, `Some(Some(p))` sets it.
+	pub wallpaper: Option<Option<String>>,
+	pub reload: bool,
 	pub win: WindowOpts,
 	pub tabs: Vec<TabSpec>, // empty -> no hierarchical options given (use defaults)
 	pub hierarchical: bool, // any tab/pane/structure flag was seen
@@ -328,6 +332,21 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 				cur_pane = pane_idx;
 				cur_tab = Some(tab_idx);
 				cli.hierarchical = true;
+				continue;
+			}
+			_ => {}
+		}
+
+		// control commands (act on the running window this shell is inside,
+		// then exit - see ctl.rs; main.rs short-circuits before any layout)
+		match name {
+			"wallpaper" => {
+				// value = new image path; bare flag = clear (mirrors --background-image)
+				cli.wallpaper = Some(a.optional_value(inline));
+				continue;
+			}
+			"reload-settings" => {
+				cli.reload = true;
 				continue;
 			}
 			_ => {}
@@ -597,6 +616,10 @@ Window options (must precede any tab/pane):
   --syntax                    options list only
   --version                   program name + version + build
 
+Control (run from a shell inside a window; acts on that window, then exits):
+  --wallpaper [PATH]          change the background image live (no value = none)
+  --reload-settings           re-read the config file and apply it
+
 Layout:
   --new-tab[=HANDLE]          create a tab (becomes current)
   --tab=ID                    select an existing tab (0/main or a handle)
@@ -724,6 +747,21 @@ mod tests {
 		// trailing bare flag = none
 		let c = p("--background-image");
 		assert_eq!(c.win.style.bg_image, Some(None));
+	}
+
+	#[test]
+	fn control_flags() {
+		let c = p("--wallpaper /x.png");
+		assert_eq!(c.wallpaper, Some(Some("/x.png".into())));
+		assert!(!c.reload);
+		// bare flag = clear; must not eat a following option
+		let c = p("--wallpaper --reload-settings");
+		assert_eq!(c.wallpaper, Some(None));
+		assert!(c.reload);
+		let c = p("--wallpaper=/y.png");
+		assert_eq!(c.wallpaper, Some(Some("/y.png".into())));
+		let c = p("--columns 80");
+		assert_eq!(c.wallpaper, None);
 	}
 
 	#[test]

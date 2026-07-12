@@ -1090,6 +1090,15 @@ impl State {
 		self.apply_new_settings(&orig, edited, true);
 	}
 
+	// Control-socket wallpaper change: live-only and window-scoped, like the
+	// launch-time --background-image - nothing is persisted to config.toml.
+	fn set_wallpaper(&mut self, image: Option<std::path::PathBuf>) {
+		let orig = config::settings().as_ref().clone();
+		let mut edited = orig.clone();
+		edited.background_image = image;
+		self.apply_new_settings(&orig, edited, true);
+	}
+
 	// Swap in `edited` and rebuild whatever changed vs `orig` (text metrics,
 	// background image, window opacity). Shared by the dialog and config reload.
 	// `force_bg` re-reads the image even if the path string didn't change.
@@ -2595,6 +2604,8 @@ impl ApplicationHandler<UserEvent> for App {
 				state.bell_flash = 1.0;
 				state.dirty = true;
 			}
+			UserEvent::SetWallpaper(image) => state.set_wallpaper(image),
+			UserEvent::ReloadSettings => state.reload_config(),
 		}
 	}
 

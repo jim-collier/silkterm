@@ -50,6 +50,17 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- ✅ Two new command-line options:
+	- Change the wallpaper of the current window.
+	- Reload settings for the current window
+	- Done: `--wallpaper [PATH]` (no value = none) and `--reload-settings`, run from a shell inside a window. Each window exports a control socket to its shells (`SILKTERM_SOCKET`); the flags send a command to that window and exit. Wallpaper change is live-only (window-scoped, not saved to config); reload is the same as Menu > Reload config. Linux/Unix only for now (Windows has no such socket; the flags report that).
+
+- 🔘 Config file rewriting is proving problematic.
+	- For example, when user makes a "non-standard" change (e.g. some extra comments), they get removed in the background, and the editor notices the file changed.
+	- Fix: Only *write* to the file when A) Settings updated, or B) New options are added to the program. And in either case, first try to make sure nothing else has the file open for editing. If something else has it open:
+		- If in settings, warn and don't close settings. (Force user to cancel, or abort other editing first.)
+		- If writing new or changed program config settings, abort the write attempt, and output a non-alarming FYI to stderr.
+
 - ✅ Settings dialog changes not remembered after relaunch (surfaced as "Scrim falloff not saving"). The change showed live in the running app, then reverted on the next launch.
 	- Cause: `persist` (and `revert_keys`) parsed config.toml with strict TOML, while the loader tolerates a bare-decimal float (`.1` with no leading zero). Any such value in the file made every save bail early and silently write nothing - so no dialog change stuck. Not falloff-specific.
 	- Fixed: both now read through the same lenient pass the loader uses, so a save no longer aborts on a file the app reads fine. A malformed float is normalized in place on the next save. Regression test added.
@@ -63,27 +74,19 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- ✅ Demo video: after quite-major changes, a full (non-`--quick`) cicd run records a demo video. Should be a reusable program or python script under `cicd/utility/`.
-	- Done: `cicd/utility/demo-video/demo-video.py` records the whole demo end to end - typed commands at a realistic pace with occasional typos-and-fixes, keyboard/mouse sounds synced to the real input timing, per-segment banners, smooth-scroll passes in less and nano, wheel scrollback, mouse word/run/block selection, and a live Settings change (bg image opacity swept up, applied, and reverted on camera).
-	- Done: cicd records it pre-publish when enabled (`--demo` flag or `DEMO_ENABLE=1` in `cicd/config.bash`); off by default and skipped under `--quick`, non-fatal like the screenshots hook.
-	- Done: video GFS-rotates into `private/demo-video/`; README embeds `assets/demo.gif` near the top with the YouTube link below it (commented out until the video is uploaded).
-	- Note: the README gif is a ~26s highlight at 30 fps - a full-length half-size gif measures ~100 MB (unfit to commit), and the gif format itself tops out at 50 fps; the mp4 is the real 60 fps deliverable.
-	- Note: keyboard sounds are the kbsim "topre" pack (MIT), mouse clicks CC0; sources and licenses in `cicd/utility/demo-video/sounds/LICENSES.txt`.
-	- Note: the transparency demo segment is not in yet - on the recording display nothing sits behind the fullscreen window, so transparency would show as plain darkening. Doable later with a synthetic wallpaper window behind the terminal.
-	- Format: 1920x1080, 60 fps; use a codec that compresses this kind of content well.
-	- Text about 25% to 50% larger than normal, to be more visible.
-		- Text color `#88ffee`; text scrim (terminal background) color black.
-		- Shell prompt in standard gray foreground, but with colored (anonymous) host and username - slightly less vibrant than, and complementary to, the foreground color.
-	- Content: a wide variety of synthetic, anonymized output with varying bursts of text output length; colorized `ls` output etc., lots of harmonious colors.
-	- Include smooth-scrolling in `nano` and `less`.
-	- Typing should look as if a real human were doing it: variable ~100 to 200 wpm, with common random mistakes and fixes (mistake ratio about equal to an expert typist).
-	- Perfectly-matched keyboard click sounds that vary realistically "random", except the same sounds for space, enter, backspace, etc. Very nice, ASMR-like, luxurious "thocky" sounds - find an open-source or creative-commons sound library (they exist; may need rigorous web search).
-	- Quiet, nice mouse-click sound for demoing mouse features - deeper/softer than typical harsh/plasticky demo clicks.
-	- Adjust some headline features through the Settings dialog.
-	- Show a readable banner briefly naming or describing what is being demo'd; leave it up at least a minimum human-readable time, and never block what is being demo'd.
-	- Default look: `background24.jpg` at 10% opacity, image blur 10. No terminal transparency except when demoing it. Other settings per the current user's, including font.
-		- Font note: the separate screenshots/videos font item below (Monaspace Argon NF Medium) covers the video font.
-	- Output: store videos under `silkterm/private/demo-video/` using the same naming/rotation strategy as backups. Copy only the most recent to `github/assets/demo.{ext}` and embed or reference it visibly near the top of README.md (if too big, it may need to go on YouTube). Also convert to a 60 fps high-quality gif, downsized 1/2 in both directions.
+- 🔘 Copy on...
+	- 🔘 Update "[ ] Copy on output", to offer two options:
+		- 🔘 "Copy on   [ ] select   [ ] output"
+			- Only one or the other
+		- 🔘 Menu items too
+	- 🔘 Implement "Copy on select"
+	- 🔘 Improvements to copy on output:
+		- 🔘 Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.
+		- 🔘 The checkbox button and menu item should only be visibly enabled for one pane at a time.
+			- 🔘 If you change tabs or panes, the feature gets turned off. (Visibly and actually.)
+				- 🔘 Changing to other non-SilkTerm windows is OK.
+			- 🔘 But if you later enable the feature on a different silkterm window, it gets disabled on other open windows. (Visibly and actually.)
+		- 🔘 Verify that it's not persisted across sessions. (I don't remember wiring this but who knows.)
 
 - ✅ CI/CD improvements:
 	- Guiding constraints: rely on GitHub as little as possible (dumb git hosting plus optional release storage, nothing more), no cloud-hosted CI/CD, as few third-party tools as possible - but still cover the lightweight local-pipeline best practices for Rust.
@@ -156,13 +159,6 @@ In each section, items are listed approximately from newest to oldest.
 		- Done: the top selectors are a real tab bar (Appearance / Font / Colors / Window / Scrolling), the active tab highlighted.
 		- ✅ Can cycle through with Ctrl+PgUp|PgDn.
 			- Done: Ctrl+PageDown = next tab, Ctrl+PageUp = previous, alongside the existing Ctrl+Tab.
-
-- 🔘 Copy output:
-	- 🔘 Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.
-	- 🔘 The checkbox button and menu item should only be visibly enabled for one pane at a time.
-		- 🔘 If you change tabs or panes, the feature gets turned off. (Visibly and actually.)
-			- 🔘 Changing windows is OK.
-		- 🔘 If you enable the feature on another silkterm window, it gets disabled on other open windows. (Visibly and actually.)
 
 - 🔘 Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
 

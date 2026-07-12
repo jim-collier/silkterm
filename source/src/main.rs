@@ -11,6 +11,7 @@ mod bgimage;
 mod cli;
 mod clipboard;
 mod config;
+mod ctl;
 mod dialog;
 mod gfx;
 mod input;
@@ -53,6 +54,36 @@ fn main() -> anyhow::Result<()> {
 		println!("{version}");
 		return Ok(());
 	}
+	// Control commands: talk to the already-running window this shell lives in
+	// (via SILKTERM_SOCKET), then exit - nothing here launches a window. Reload
+	// first so --reload-settings --wallpaper x ends with x applied.
+	if cli.reload || cli.wallpaper.is_some() {
+		let mut cmds: Vec<String> = Vec::new();
+		if cli.reload {
+			cmds.push("reload".into());
+		}
+		if let Some(img) = &cli.wallpaper {
+			cmds.push(match img {
+				// resolve against this shell's cwd; the window's cwd differs
+				Some(p) => match std::fs::canonicalize(p) {
+					Ok(abs) => format!("wallpaper\t{}", abs.display()),
+					Err(e) => {
+						eprintln!("{}: --wallpaper {p}: {e}", config::APP_NAME);
+						std::process::exit(2);
+					}
+				},
+				None => "wallpaper".into(),
+			});
+		}
+		for cmd in &cmds {
+			if let Err(e) = ctl::send(cmd) {
+				eprintln!("{}: {e}", config::APP_NAME);
+				std::process::exit(2);
+			}
+		}
+		return Ok(());
+	}
+
 	if let Some(path) = &cli.config {
 		config::set_config_override(path.clone());
 	}
@@ -74,6 +105,8 @@ fn main() -> anyhow::Result<()> {
 	event_loop.set_control_flow(ControlFlow::Wait);
 
 	let proxy = event_loop.create_proxy();
+	// control socket up before any PTY spawns, so shells inherit SILKTERM_SOCKET
+	let _ctl = ctl::serve(proxy.clone());
 	let mut app = App::new(proxy, cli);
 
 	// cicd profiler stage: SILK_PROFILE_OUT set -> sample this run and write a
