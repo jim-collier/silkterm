@@ -69,6 +69,7 @@ In each section, items are listed approximately from newest to oldest.
 	- Done: video GFS-rotates into `private/demo-video/`; README embeds `assets/demo.gif` near the top with the YouTube link below it (commented out until the video is uploaded).
 	- Note: the README gif is a ~26s highlight at 30 fps - a full-length half-size gif measures ~100 MB (unfit to commit), and the gif format itself tops out at 50 fps; the mp4 is the real 60 fps deliverable.
 	- Note: keyboard sounds are the kbsim "topre" pack (MIT), mouse clicks CC0; sources and licenses in `cicd/utility/demo-video/sounds/LICENSES.txt`.
+	- Note: the transparency demo segment is not in yet - on the recording display nothing sits behind the fullscreen window, so transparency would show as plain darkening. Doable later with a synthetic wallpaper window behind the terminal.
 	- Format: 1920x1080, 60 fps; use a codec that compresses this kind of content well.
 	- Text about 25% to 50% larger than normal, to be more visible.
 		- Text color `#88ffee`; text scrim (terminal background) color black.
