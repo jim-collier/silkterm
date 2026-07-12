@@ -77,6 +77,12 @@ if [ -n "$main_local" ]; then
 			fi
 			;;
 	esac
+	# README release badge must match the pushed version (shields escapes '-' as '--').
+	badge_ver=$(printf '%s' "$newv" | sed 's/-/--/g')
+	if ! git show "$main_local:README.md" 2>/dev/null | grep -qF "Release-${badge_ver}-"; then
+		echo "pre-push: README Release badge does not match version $newv - update it on dev before the release merge. (SKIP_GATE=1 or --no-verify to override)" >&2
+		exit 1
+	fi
 fi
 
 [ "$gated" = "1" ] || exit 0
