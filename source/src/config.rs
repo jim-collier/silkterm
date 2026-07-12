@@ -106,7 +106,8 @@ pub struct Settings {
 	pub transparent_background: bool, // X11: per-pixel bg transparency (text stays opaque) via a GL surface
 	pub transparent_background_blur: bool, // X11: ask a KWin/picom compositor to blur the desktop behind the window
 	pub background_image: Option<PathBuf>, // resolved path, or None
-	pub background_opacity: f32,           // image visibility 0..1
+	pub background_image_raw: String, // the value as configured ("" = auto-detect); what the dialog shows
+	pub background_opacity: f32,      // image visibility 0..1
 	pub background_fit: Fit,
 	pub background_blur: f32, // Gaussian blur sigma applied to the image (0 = none)
 	pub text_scrim: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
@@ -166,6 +167,7 @@ impl Default for Settings {
 			transparent_background: false,
 			transparent_background_blur: false,
 			background_image: None,
+			background_image_raw: String::new(),
 			background_opacity: 0.10, // image visibility relative to bg color
 			background_fit: Fit::Stretch,
 			background_blur: 10.0,
@@ -434,12 +436,14 @@ pub fn persist(orig: &Settings, s: &Settings) {
 	if s.command_line != orig.command_line {
 		doc["command_line"] = value(&s.command_line);
 	}
-	if s.background_image != orig.background_image {
-		match &s.background_image {
-			Some(p) => doc["background_image"] = value(p.to_string_lossy().as_ref()),
-			None => {
-				doc.remove("background_image");
-			}
+	if s.background_image != orig.background_image
+		|| s.background_image_raw != orig.background_image_raw
+	{
+		// the file keeps whatever form the user wrote (bare/relative/absolute)
+		if s.background_image_raw.trim().is_empty() {
+			doc.remove("background_image");
+		} else {
+			doc["background_image"] = value(s.background_image_raw.trim());
 		}
 	}
 
@@ -692,6 +696,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		transparent_background_blur: raw
 			.transparent_background_blur
 			.unwrap_or(d.transparent_background_blur),
+		background_image_raw: raw.background_image.clone().unwrap_or_default(),
 		background_image: resolve_bg_image(raw.background_image),
 		background_opacity: raw
 			.background_opacity
@@ -814,7 +819,7 @@ pub fn effective_font_size() -> f32 {
 // Resolve the background image: an explicit path (absolute, or a filename
 // relative to the config dir), else auto-detect backgrounds/background.{png,jpg,jpeg}
 // under the config dir.
-fn resolve_bg_image(explicit: Option<String>) -> Option<PathBuf> {
+pub fn resolve_bg_image(explicit: Option<String>) -> Option<PathBuf> {
 	let dir = config_path()?.parent()?.to_path_buf();
 	if let Some(given) = explicit.filter(|value| !value.trim().is_empty()) {
 		let path = PathBuf::from(&given);

@@ -527,6 +527,7 @@ pub fn fold_window_style(settings: &mut config::Settings, style: &Style) {
 		settings.fg = color;
 	}
 	if let Some(img) = &style.bg_image {
+		settings.background_image_raw = img.clone().unwrap_or_default();
 		settings.background_image = img.as_ref().map(PathBuf::from);
 	}
 	if let Some(fit) = style.bg_fit {
