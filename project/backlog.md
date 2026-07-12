@@ -63,6 +63,22 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
+- 🔘 Demo video: after quite-major changes, a full (non-`--quick`) cicd run records a demo video. Should be a reusable program or python script under `cicd/utility/`.
+	- Format: 1920x1080, 60 fps; use a codec that compresses this kind of content well.
+	- Text about 25% to 50% larger than normal, to be more visible.
+		- Text color `#88ffee`; text scrim (terminal background) color black.
+		- Shell prompt in standard gray foreground, but with colored (anonymous) host and username - slightly less vibrant than, and complementary to, the foreground color.
+	- Content: a wide variety of synthetic, anonymized output with varying bursts of text output length; colorized `ls` output etc., lots of harmonious colors.
+	- Include smooth-scrolling in `nano` and `less`.
+	- Typing should look as if a real human were doing it: variable ~100 to 200 wpm, with common random mistakes and fixes (mistake ratio about equal to an expert typist).
+	- Perfectly-matched keyboard click sounds that vary realistically "random", except the same sounds for space, enter, backspace, etc. Very nice, ASMR-like, luxurious "thocky" sounds - find an open-source or creative-commons sound library (they exist; may need rigorous web search).
+	- Quiet, nice mouse-click sound for demoing mouse features - deeper/softer than typical harsh/plasticky demo clicks.
+	- Adjust some headline features through the Settings dialog.
+	- Show a readable banner briefly naming or describing what is being demo'd; leave it up at least a minimum human-readable time, and never block what is being demo'd.
+	- Default look: `background24.jpg` at 10% opacity, image blur 10. No terminal transparency except when demoing it. Other settings per the current user's, including font.
+		- Font note: the separate screenshots/videos font item below (Monaspace Argon NF Medium) covers the video font.
+	- Output: store videos under `silkterm/private/demo-video/` using the same naming/rotation strategy as backups. Copy only the most recent to `github/assets/demo.{ext}` and embed or reference it visibly near the top of README.md (if too big, it may need to go on YouTube). Also convert to a 60 fps high-quality gif, downsized 1/2 in both directions.
+
 - ✅ CI/CD improvements:
 	- Guiding constraints: rely on GitHub as little as possible (dumb git hosting plus optional release storage, nothing more), no cloud-hosted CI/CD, as few third-party tools as possible - but still cover the lightweight local-pipeline best practices for Rust.
 	- ✅ Local merge gate instead of hosted CI
