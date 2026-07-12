@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=SilkTerm
+GenericName=Terminal
+Comment=Smooth-scrolling GPU terminal with split panes
+Exec=silkterm
+Icon=utilities-terminal
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;shell;prompt;command;
+StartupNotify=true

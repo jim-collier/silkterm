@@ -192,11 +192,11 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✋ README screenshot refresh in cicd is off (`SHOTS_ENABLE=0` in `cicd/config.bash`; `--shots` re-enables per run). So the README grid images won't auto-update after visual changes - refresh by hand or flip it back on when ready.
 
-- 🔘 Build packages when cicd.bash `--quick` isn't specified:
-	- 🔘 .deb(s), per-architecture
-	- 🔘 Windows installer .exe(s), per-architecture
-	- Future:
-		- macOS appimage, per-architecture
+- ✅ Build packages when cicd.bash `--quick` isn't specified:
+	- ✅ .deb(s) + .rpm(s), per-architecture (cargo-deb / cargo-generate-rpm; metadata in source/Cargo.toml).
+	- ✅ Windows installer .exe(s), per-architecture (single self-contained NSIS setup; upgrades in place). The release binary links only system DLLs, so no runtime is bundled.
+	- Done: new stage 6 (Packages) builds from the stage-5 release binaries (never rebuilt). x86_64 always; ARM64 too unless `--no-arm`. Packages fold into the sha256sums. `--no-package` skips the stage.
+	- ✋ Deferred (no cross toolchain on this Linux box): macOS `.dmg` (needs an Apple SDK / osxcross - license-gated) and BSD packages (needs a FreeBSD sysroot). AppImage/Flatpak also future.
 
 - 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
 	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)

@@ -22,12 +22,13 @@
 ##	- Purpose: Local CI/CD pipeline. Generic engine, per-project settings live in config.bash.
 ##	- Stages (fail-fast, any error aborts before the next stage):
 ##	   1. format (cargo fmt)
-##	   2. debug build
+##	   2. debug build (this is what the tests + profiler run against)
 ##	   3. regression tests + lints (clippy gating, cargo-deny advisory, scroll harness)
 ##	   4. profiler (flamegraph SVG; non-gating artifact - see failure policy)
-##	   5. release build (native + cross targets)
-##	   6. dogfood (install native release locally)
-##	   7. backup + publish to git (runs from repo root)
+##	   5. release build (native + cross targets; optimized, for packaging + dogfood)
+##	   6. packages (.deb/.rpm per Linux arch; NSIS installer .exe per Windows arch)
+##	   7. dogfood (install native release locally)
+##	   8. backup + publish to git (runs from repo root)
 ##	- Syntax:
 ##	  cicd/cicd.bash [options]
 ##	  Options:
@@ -37,11 +38,13 @@
 ##	       --msg MSG       alias for --message
 ##	   --no-fmt            skip the formatter (cargo fmt) stage
 ##	   --no-cross          skip cross-target release builds
+##	   --no-arm            skip the ARM64 release builds + packages (x86_64 only)
+##	   --no-package        skip the packages stage (.deb/.rpm/installer)
 ##	   --no-profile        skip the profiler stage
 ##	   --no-dogfood        skip installing the native release locally
 ##	   --no-publish        skip the git backup + publish stage
 ##	   --shots             refresh README screenshots (off by default)
-##	   --quick             skip the slow stages (cross-builds + profiling)
+##	   --quick             skip the slow stages (cross-builds + packages + profiling)
 ##	   --gate              merge gate only: fmt --check + clippy + tests, then exit
 ##	                       (fast local stand-in for hosted CI; the pre-push hook runs it)
 ## - Reuse: copy the cicd/ directory into another project and edit config.bash.
@@ -79,23 +82,34 @@ cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
 ## Parse options.
-assume_yes=0; quiet=0; quick=0; gate=0; cli_message=""
+assume_yes=0; quiet=0; quick=0; gate=0; no_arm=0; cli_message=""
 while (($#)); do case "$1" in
 	-y|--yes)                 assume_yes=1; shift ;;
 	-q|--quiet)               quiet=1; assume_yes=1; shift ;;   ## quiet + unattended; publish runs quiet too
 	--gate)                   gate=1; shift ;;                  ## merge gate only, then exit
 	--no-fmt)                 FMT_CMD=(); shift ;;
 	--no-cross)               BUILD_CROSS=0; shift ;;
+	--no-arm)                 no_arm=1; shift ;;                ## drop ARM64 builds + packages
+	--no-package)             PACKAGE_ENABLE=0; shift ;;
 	--no-profile)             PROFILE_ENABLE=0; shift ;;
 	--no-dogfood)             DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); shift ;;
 	--no-publish)             GIT_PUBLISH=(); shift ;;
 	--shots)                  SHOTS_ENABLE=1; shift ;;
-	--quick)                  quick=1; BUILD_CROSS=0; PROFILE_ENABLE=0; shift ;;   ## skip the slow stages
+	--quick)                  quick=1; BUILD_CROSS=0; PROFILE_ENABLE=0; PACKAGE_ENABLE=0; shift ;;   ## skip the slow stages
 	--message=*|--msg=*|-m=*) cli_message="${1#*=}"; shift ;;
 	-m|--message|--msg)       cli_message="${2-}"; shift; (($#)) && shift ;;
 	-h|--help)                sed -n '/^##	- Purpose:/,/^##	History:/p' "${BASH_SOURCE[0]}" | sed '$d; s/^##	\{0,1\}//'; exit 0 ;;
 	*) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
 esac; done
+
+## --no-arm: drop the ARM64 cross targets so the run (and its packages) stay
+## x86_64-only. Native x86_64 is untouched; the Windows/Linux x86_64 crosses stay.
+if ((no_arm)) && declare -p CROSS_TARGETS &>/dev/null; then
+	kept=()
+	for t in "${CROSS_TARGETS[@]}"; do case "$t" in *arm64*|*aarch64*) ;; *) kept+=("$t") ;; esac; done
+	CROSS_TARGETS=("${kept[@]}")
+fi
+declare -p PACKAGE_ENABLE &>/dev/null || PACKAGE_ENABLE=0   ## tolerate a config predating the packages stage
 
 ## Publish commit message: -m wins, then config, then a default when unattended.
 ## Empty -> publish interactively (git commit opens an editor); when interactive
@@ -129,6 +143,15 @@ in_use(){
 		[[ "$exe" == "$bin" ]] && return 0
 	done
 	return 1
+}
+## (Re)write the sha256sums file over every artifact in the release dir except the
+## sums file itself. Run after stage 5 (binaries) and again after stage 6 (packages),
+## so the checksums cover the packages too. Uses the script-scope art_dir/ver/sums.
+write_sums(){
+	[[ -n "${art_dir:-}" && -d "${art_dir:-/nonexist}" ]] || return 0
+	( cd "${art_dir}"
+	  files=(); for x in "${EXE_NAME}-${ver}-"*; do [[ "$x" == "$sums" || ! -f "$x" ]] && continue; files+=("$x"); done
+	  ((${#files[@]})) && sha256sum "${files[@]}" > "${sums}" )
 }
 trap 'rc=$?; printf "\n[ CICD ABORTED (exit %s) at line %s: %s ]\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; exit $rc' ERR
 
@@ -196,10 +219,16 @@ else
 fi
 fEcho_Clean "Release (native) ....: ${RELEASE_NATIVE_CMD[*]} -> ${RELEASE_NATIVE_BIN}"
 if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
-	fEcho_Clean "Release (cross) .....:"
+	fEcho_Clean "Release (cross) .....:$( ((no_arm)) && echo ' (x86_64 only, --no-arm)')"
 	for t in "${CROSS_TARGETS[@]}"; do fEcho_Clean "    - ${t%%|*}"; done
 else
 	fEcho_Clean "Release (cross) .....: (skipped)"
+fi
+if ((PACKAGE_ENABLE)) && ((! quick)); then
+	fEcho_Clean "Packages ............: .deb/.rpm (Linux) + NSIS installer .exe (Windows), per built arch"
+	fEcho_Clean "  deferred ..........: macOS (.dmg), BSD - no cross toolchain on this box"
+else
+	fEcho_Clean "Packages ............: $( ((quick)) && echo '(skipped --quick)' || echo '(disabled)')"
 fi
 if ((${#DOGFOOD_FIXED_DESTS[@]})); then
 	if [[ -n "$fixed_dest" ]]; then fEcho_Clean "Dogfood, fixed name .: overwrite ${fixed_dest}/${EXE_NAME}"
@@ -242,7 +271,7 @@ if [[ -n "${LINT_LOG_DIR:-}" ]] && mkdir -p "${root}/${LINT_LOG_DIR}" 2>/dev/nul
 fi
 
 ## Stage 1: format.
-fSection "1/7  Format"
+fSection "1/8  Format"
 if ((${#FMT_CMD[@]} == 0)); then
 	fEcho_Clean "format skipped"
 else
@@ -251,12 +280,12 @@ else
 fi
 
 ## Stage 2: debug build.
-fSection "2/7  Debug build"
+fSection "2/8  Debug build"
 "${DEBUG_BUILD_CMD[@]}"
 fEcho "OK: debug build"
 
 ## Stage 3: regression tests.
-fSection "3/7  Regression tests"
+fSection "3/8  Regression tests"
 "${TEST_CMD[@]}"
 if [[ -n "${LINT_CMD+x}" ]] && ((${#LINT_CMD[@]})); then
 	if "${LINT_PROBE[@]}" >/dev/null 2>&1; then
@@ -347,11 +376,11 @@ run_profiler(){
 		python3 "$report" --dir "${profile_dir}" 2>/dev/null || fEcho_Clean "hot spots: (report unavailable)"
 	fi
 }
-fSection "4/7  Profiler"
+fSection "4/8  Profiler"
 run_profiler
 
 ## Stage 5: release builds.
-fSection "5/7  Release build (native)"
+fSection "5/8  Release build (native)"
 "${RELEASE_NATIVE_CMD[@]}"
 [[ -f "${RELEASE_NATIVE_BIN}" ]] || fDie "native release binary missing: ${RELEASE_NATIVE_BIN}"
 fEcho "OK: native release: ${RELEASE_NATIVE_BIN} ($(du -h "${RELEASE_NATIVE_BIN}" | cut -f1))"
@@ -359,7 +388,7 @@ built_arts=("${RELEASE_NATIVE_OSARCH:-native}|${RELEASE_NATIVE_BIN}")
 if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
 	for t in "${CROSS_TARGETS[@]}"; do
 		local_label="${t%%|*}"; rest="${t#*|}"; osarch="${rest%%|*}"; rest="${rest#*|}"; art="${rest%%|*}"; cmd="${rest#*|}"
-		fSection "5/7  Release build: ${local_label}"
+		fSection "5/8  Release build: ${local_label}"
 		eval "${cmd}"
 		[[ -f "${art}" ]] || fDie "missing artifact for ${local_label}: ${art}"
 		fEcho "OK: ${local_label}: ${art} ($(du -h "${art}" | cut -f1))"
@@ -380,16 +409,81 @@ if [[ -n "${RELEASE_ARTIFACT_DIR:-}" ]]; then
 		ext=""; [[ "$src" == *.exe ]] && ext=".exe"
 		cp -f "${src}" "${art_dir}/${EXE_NAME}-${ver}-${osarch}${ext}"
 	done
-	( cd "${art_dir}" && sha256sum "${EXE_NAME}-${ver}-"* > "${sums}" )
+	write_sums
 	fEcho "OK: ${#built_arts[@]} release artifact(s) + ${sums} -> ${RELEASE_ARTIFACT_DIR}/"
 	((BUILD_CROSS)) || fEcho_Clean "note: cross targets skipped - artifact set is partial (native only)"
 fi
 
-## Stage 6: dogfood. Two independent installs (fixed overwrite + rotating dated copy).
-fSection "6/7  Dogfood (install native release locally)"
+## Stage 6: packages. Build distributables from the stage-5 binaries (never rebuilt).
+## Linux -> .deb + .rpm per built arch (cargo-deb / cargo-generate-rpm, metadata in
+## source/Cargo.toml); Windows -> one self-contained NSIS installer .exe per arch
+## (upgrades in place). macOS (.dmg) + BSD are deferred - no cross toolchain here.
+## Skipped under --quick; a missing tool warns (non-gating) rather than aborting.
+build_packages(){
+	((PACKAGE_ENABLE)) || { fEcho_Clean "packages disabled"; return 0; }
+	[[ -n "${art_dir:-}" ]] || { fEcho "WARNING: packages skipped (no RELEASE_ARTIFACT_DIR)"; return 0; }
+	local pair osarch bin triple out nsi rc made=0
+	local rpmver="${ver//-/\~}"   ## RPM versions forbid '-' (it splits version-release); 1.0.0-beta1 -> 1.0.0~beta1
+	for pair in "${built_arts[@]}"; do
+		osarch="${pair%%|*}"; bin="${pair#*|}"
+		case "$osarch" in
+			linux-x86_64) triple="" ;;
+			linux-arm64)  triple="aarch64-unknown-linux-gnu" ;;
+			windows-*)    triple="" ;;   ## handled below
+			*) continue ;;
+		esac
+
+		## Linux: .deb then .rpm. Both package the existing binary (no rebuild).
+		if [[ "$osarch" == linux-* ]]; then
+			if command -v cargo-deb >/dev/null 2>&1; then
+				local -a da=(deb --no-build --no-strip --manifest-path source/Cargo.toml
+					--output "${art_dir}/${EXE_NAME}-${ver}-${osarch}.deb")
+				[[ -n "$triple" ]] && da+=(--target "$triple")
+				if cargo "${da[@]}" >/dev/null; then fEcho "OK: .deb (${osarch})"; made=$((made+1))
+				else fEcho "WARNING: .deb build failed (${osarch})"; fi
+			else fEcho "WARNING: cargo-deb missing; .deb skipped (${osarch})"; fi
+
+			if command -v cargo-generate-rpm >/dev/null 2>&1; then
+				## -p is the crate DIR (source/), assets resolve from CWD (repo root),
+				## so target/release/silkterm is found; -s overrides the RPM-illegal version.
+				local -a ra=(generate-rpm -p source -s "version = \"${rpmver}\""
+					--output "${art_dir}/${EXE_NAME}-${ver}-${osarch}.rpm")
+				[[ -n "$triple" ]] && ra+=(--target "$triple" --arch aarch64)
+				if cargo "${ra[@]}" >/dev/null; then fEcho "OK: .rpm (${osarch})"; made=$((made+1))
+				else fEcho "WARNING: .rpm build failed (${osarch})"; fi
+			else fEcho "WARNING: cargo-generate-rpm missing; .rpm skipped (${osarch})"; fi
+		fi
+
+		## Windows: one self-contained NSIS installer .exe per arch.
+		if [[ "$osarch" == windows-* ]]; then
+			if command -v makensis >/dev/null 2>&1 && [[ -f "${root}/${NSIS_TEMPLATE}" ]]; then
+				out="${art_dir}/${EXE_NAME}-${ver}-${osarch}-setup.exe"
+				nsi="$(mktemp --suffix=.nsi)"
+				sed -e "s|@VERSION@|${ver}|g" -e "s|@ARCH@|${osarch}|g" \
+					-e "s|@SRCEXE@|${root}/${bin}|g" -e "s|@OUTFILE@|${out}|g" \
+					"${root}/${NSIS_TEMPLATE}" > "${nsi}"
+				rc=0; makensis -V2 "${nsi}" >/dev/null || rc=$?
+				rm -f "${nsi}"
+				if ((rc == 0)) && [[ -f "$out" ]]; then fEcho "OK: installer (${osarch})"; made=$((made+1))
+				else fEcho "WARNING: NSIS installer failed (${osarch})"; fi
+			else fEcho "WARNING: makensis/template missing; installer skipped (${osarch})"; fi
+		fi
+	done
+	write_sums
+	fEcho "OK: ${made} package(s) -> ${RELEASE_ARTIFACT_DIR}/ (macOS/BSD deferred)"
+}
+fSection "6/8  Packages"
+if ((quick)); then
+	fEcho_Clean "packages skipped (--quick)"
+else
+	build_packages
+fi
+
+## Stage 7: dogfood. Two independent installs (fixed overwrite + rotating dated copy).
+fSection "7/8  Dogfood (install native release locally)"
 df_did=0
 
-## 6a. Fixed name: overwrite EXE_NAME (the stable path you launch by hand).
+## 7a. Fixed name: overwrite EXE_NAME (the stable path you launch by hand).
 if ((${#DOGFOOD_FIXED_DESTS[@]})); then
 	if [[ -n "$fixed_dest" ]]; then
 		cp -f "${RELEASE_NATIVE_BIN}" "${fixed_dest}/${EXE_NAME}"
@@ -400,7 +494,7 @@ if ((${#DOGFOOD_FIXED_DESTS[@]})); then
 	fi
 fi
 
-## 6b. Rotating name: dated copy so builds coexist; prune older ones not running.
+## 7b. Rotating name: dated copy so builds coexist; prune older ones not running.
 if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
 	[[ -z "$rot_dest" && -n "$rot_target" ]] && mkdir -p "$rot_target" 2>/dev/null && rot_dest="$rot_target"
 	if [[ -n "$rot_dest" && -w "$rot_dest" ]]; then
@@ -444,8 +538,8 @@ elif [[ -x "$shots_hook" ]]; then
 	fi
 fi
 
-## Stage 7: backup + publish.
-fSection "7/7  Backup + publish"
+## Stage 8: backup + publish.
+fSection "8/8  Backup + publish"
 ## Always run the publisher quiet: cicd already gave the initial prompt, so skip
 ## its redundant continue-prompt. With no message it still lets git open the editor.
 pub_flags=(--quiet)
