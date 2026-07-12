@@ -1,0 +1,22 @@
+Sound asset sources and licenses
+================================
+
+keys/ (press sounds) and keys/release/ (key-up sounds)
+  The kbsim "topre" pack.
+  Source: https://github.com/tplai/kbsim (files under src/assets/audio/topre/)
+  License: MIT, Copyright (c) Thomas Lai (LICENSE.md at repo root)
+  Attribution: "Keyboard sounds from kbsim by Thomas Lai (github.com/tplai/kbsim), MIT license"
+  Format: individual mp3 files. keys/ has GENERIC_R0..R4 (5 distinct per-row
+  key sounds) + SPACE + ENTER + BACKSPACE; keys/release/ has GENERIC + SPACE +
+  ENTER + BACKSPACE key-up sounds.
+
+mouse/click.wav and mouse/click_quiet.wav
+  Single clicks extracted (with edge fades) from "Computer Mouse Clicks -
+  Single, Double and Soft Clicks" by ApeinCave.
+  Source: https://freesound.org/people/ApeinCave/sounds/855467/
+  License: CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/)
+  Attribution: none required (CC0)
+  click.wav       = click at 23.18s of the source (deepest: centroid ~3 kHz, RMS -39 dB)
+  click_quiet.wav = click at 20.55s of the source (quietest: RMS -42.6 dB)
+  Note: extracted from the freesound HQ preview mp3 (128 kbps); the original
+  wav needs a login.

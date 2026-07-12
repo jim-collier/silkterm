@@ -48,6 +48,14 @@ And of course all the other required features of a modern terminal emulator - bu
 
 Cross-platform. Written in Rust for a small single executable, and high speed. GPU accelerated if available. (Works great if not.)
 
+<div align="center">
+
+![SilkTerm demo](assets/demo.gif)
+
+</div>
+
+<!-- Full demo video with sound: [SilkTerm on YouTube](https://www.youtube.com/watch?v=TODO) -->
+
 <!--
 <table style="border: none; border-collapse: collapse;">
 	<tr style="border: none; border-collapse: collapse;">
