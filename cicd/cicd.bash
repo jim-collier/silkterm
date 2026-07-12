@@ -44,6 +44,7 @@
 ##	   --no-dogfood        skip installing the native release locally
 ##	   --no-publish        skip the git backup + publish stage
 ##	   --shots             refresh README screenshots (off by default)
+##	   --demo              re-record the demo video (off by default)
 ##	   --quick             skip the slow stages (cross-builds + packages + profiling)
 ##	   --gate              merge gate only: fmt --check + clippy + tests, then exit
 ##	                       (fast local stand-in for hosted CI; the pre-push hook runs it)
@@ -95,6 +96,7 @@ while (($#)); do case "$1" in
 	--no-dogfood)             DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); shift ;;
 	--no-publish)             GIT_PUBLISH=(); shift ;;
 	--shots)                  SHOTS_ENABLE=1; shift ;;
+	--demo)                   DEMO_ENABLE=1; shift ;;
 	--quick)                  quick=1; BUILD_CROSS=0; PROFILE_ENABLE=0; PACKAGE_ENABLE=0; shift ;;   ## skip the slow stages
 	--message=*|--msg=*|-m=*) cli_message="${1#*=}"; shift ;;
 	-m|--message|--msg)       cli_message="${2-}"; shift; (($#)) && shift ;;
@@ -535,6 +537,23 @@ elif [[ -x "$shots_hook" ]]; then
 		fEcho "OK: screenshots"
 	else
 		fEcho "WARNING: screenshot hook failed (non-fatal)"
+	fi
+fi
+
+## Re-record the demo video (same gating shape as screenshots: off by default,
+## skipped under --quick, never aborts). The video GFS-rotates into
+## ../private/demo-video/; the README highlight gif lands in assets/demo.gif.
+demo_hook="${root}/cicd/utility/demo-video/demo-video.py"
+if ((! ${DEMO_ENABLE:-0})); then
+	fEcho_Clean "demo video disabled"
+elif ((quick)); then
+	fEcho_Clean "demo video skipped (--quick)"
+elif [[ -f "$demo_hook" ]]; then
+	fEcho_Clean "recording demo video ..."
+	if SILK_BIN="${root}/target/release/silkterm" python3 "$demo_hook"; then
+		fEcho "OK: demo video"
+	else
+		fEcho "WARNING: demo video hook failed (non-fatal)"
 	fi
 fi
 

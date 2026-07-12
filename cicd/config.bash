@@ -139,6 +139,12 @@ PROFILE_STRICT=0                        # 1 = any profiler failure aborts the pi
 ## off; flip to 1 (or pass --shots) to re-enable. Also skipped under --quick.
 SHOTS_ENABLE=0
 
+## Demo video re-record (cicd/utility/demo-video/demo-video.py). Off by default -
+## only worth re-recording after major visual/feature changes; flip to 1 or pass
+## --demo for one run. Also skipped under --quick. Video GFS-rotates into
+## ../private/demo-video/; the README highlight gif lands in assets/demo.gif.
+DEMO_ENABLE=0
+
 ## Full run output is tee'd here (gitignored) so warnings from any stage can be
 ## reviewed after the fact. Kept rotated like the flamegraphs.
 LINT_LOG_DIR="cicd/artifacts/lint"      # relative to repo root; created if missing (gitignored)
