@@ -20,6 +20,31 @@ path = "src/main.rs"
 name = "glyphon_gl"
 path = "diagnostics/glyphon_gl.rs"
 
+# Packaging metadata for the cicd packages stage. cargo-deb (.deb) and
+# cargo-generate-rpm (.rpm) read these; both package the already-built release
+# binary (--no-build), per-arch via --target. The binary links only libc + system
+# libs, so no explicit runtime depends are needed. Asset paths are relative to
+# this manifest; the "target/release/" prefix is remapped to the real target dir
+# (and to target/<triple>/release when --target is given).
+[package.metadata.deb]
+maintainer = "Jim Collier <jim-collier@users.noreply.github.com>"
+copyright = "2026, Jim Collier"
+license-file = ["../license.md", "0"]
+extended-description = "GPU-accelerated terminal with smooth scrolling, split panes, tabs, true-color and Unicode, and true per-pixel background transparency."
+section = "utils"
+priority = "optional"
+assets = [
+	["target/release/silkterm", "usr/bin/", "755"],
+	["../cicd/packaging/linux/silkterm.desktop", "usr/share/applications/", "644"],
+]
+
+[package.metadata.generate-rpm]
+summary = "Smooth-scrolling GUI terminal emulator with split panes"
+assets = [
+	{ source = "target/release/silkterm", dest = "/usr/bin/silkterm", mode = "755" },
+	{ source = "../cicd/packaging/linux/silkterm.desktop", dest = "/usr/share/applications/silkterm.desktop", mode = "644" },
+]
+
 [dependencies]
 alacritty_terminal = "0.26"
 wgpu = "29"

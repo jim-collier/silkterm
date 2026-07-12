@@ -54,6 +54,9 @@ FMT_CHECK_CMD=(cargo fmt --check)
 TOOL_PINS=(
 	"cargo-deny|0.19.9|cargo deny --version"
 	"cargo-zigbuild|0.23.0|cargo-zigbuild --version"
+	"cargo-deb|3.7.0|cargo-deb --version"
+	"cargo-generate-rpm|0.21.0|cargo-generate-rpm --version"
+	"makensis|3.11|makensis -VERSION"
 )
 
 ## Stage 2: debug build (fast compile sanity)
@@ -105,6 +108,17 @@ CROSS_TARGETS=(
 ## Version comes from source/Cargo.toml alone. Empty to disable collection.
 RELEASE_ARTIFACT_DIR="cicd/artifacts/release"   # relative to repo root; gitignored
 VERSION_MANIFEST="source/Cargo.toml"            # the single version source
+
+## Stage 6: distributable packages, built from the stage-5 release binaries (never
+## rebuilt) when --quick is NOT passed. Linux -> .deb + .rpm (cargo-deb /
+## cargo-generate-rpm, metadata in source/Cargo.toml). Windows -> a single self-
+## contained NSIS installer .exe per arch (makensis), which upgrades an existing
+## install in place. macOS (.dmg) and BSD are deferred: this box has no Apple SDK
+## / FreeBSD sysroot to cross-build their binaries. ARM64 packages follow the same
+## --no-arm gate as the ARM release builds. Packages land in RELEASE_ARTIFACT_DIR
+## and fold into the sha256sums. Set PACKAGE_ENABLE=0 (or --no-package) to skip.
+PACKAGE_ENABLE=1
+NSIS_TEMPLATE="cicd/packaging/windows/installer.nsi.in"
 
 ## Stage 4: profiler (non-gating artifact, not a pass/fail test). Builds an
 ## optimized+symbols binary (cargo --profile $PROFILE_PROFILE --features
