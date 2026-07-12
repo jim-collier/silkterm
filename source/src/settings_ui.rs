@@ -1339,12 +1339,19 @@ impl SettingsDialog {
 	// Current value of a Text field (background image path / font family).
 	fn get_text(&self, key: Key) -> String {
 		match key {
-			Key::BgImage => self
-				.edited
-				.background_image
-				.as_ref()
-				.map(|path| path.to_string_lossy().into_owned())
-				.unwrap_or_default(),
+			// the configured text, not the resolved path (auto-detect still shows
+			// the path it found, since there is no configured text to show)
+			Key::BgImage => {
+				if self.edited.background_image_raw.is_empty() {
+					self.edited
+						.background_image
+						.as_ref()
+						.map(|path| path.to_string_lossy().into_owned())
+						.unwrap_or_default()
+				} else {
+					self.edited.background_image_raw.clone()
+				}
+			}
 			Key::FontFamily => self.edited.font_family.clone().unwrap_or_default(),
 			Key::DefaultShell => self.edited.default_shell.clone(),
 			_ => String::new(),
@@ -1354,11 +1361,12 @@ impl SettingsDialog {
 		let trimmed = text.trim();
 		match key {
 			Key::BgImage => {
-				self.edited.background_image = if trimmed.is_empty() {
-					None
-				} else {
-					Some(std::path::PathBuf::from(trimmed))
-				};
+				self.edited.background_image_raw = trimmed.to_string();
+				// resolve like the loader does (relative to the config dir),
+				// so a typed relative name live-applies instead of missing
+				self.edited.background_image = crate::config::resolve_bg_image(
+					(!trimmed.is_empty()).then(|| trimmed.to_string()),
+				);
 			}
 			Key::FontFamily => {
 				// an explicit family means we're not following the OS font
@@ -1581,7 +1589,10 @@ impl SettingsDialog {
 			}
 			Key::BgFit => self.edited.background_fit = self.defaults.background_fit,
 			Key::ScrimRamp => self.edited.text_scrim_ramp = self.defaults.text_scrim_ramp.clone(),
-			Key::BgImage => self.edited.background_image = self.defaults.background_image.clone(),
+			Key::BgImage => {
+				self.edited.background_image = self.defaults.background_image.clone();
+				self.edited.background_image_raw = self.defaults.background_image_raw.clone();
+			}
 			Key::FontFamily => self.edited.font_family = self.defaults.font_family.clone(),
 			Key::DefaultShell => self.edited.default_shell = self.defaults.default_shell.clone(),
 			Key::ColBg | Key::ColFg | Key::ColCursor | Key::ColFocus => {

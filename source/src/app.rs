@@ -1095,6 +1095,10 @@ impl State {
 	fn set_wallpaper(&mut self, image: Option<std::path::PathBuf>) {
 		let orig = config::settings().as_ref().clone();
 		let mut edited = orig.clone();
+		edited.background_image_raw = image
+			.as_ref()
+			.map(|path| path.to_string_lossy().into_owned())
+			.unwrap_or_default();
 		edited.background_image = image;
 		self.apply_new_settings(&orig, edited, true);
 	}
