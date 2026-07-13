@@ -1716,19 +1716,26 @@ impl State {
 		}
 		if self.menu_bar {
 			for (i, buf) in chrome.menubar.iter().enumerate() {
-				// the trailing buffers are the right-aligned copy-mode labels
-				let (left, left_bound, right_bound) = if i < bar_layout.len() {
+				// the trailing buffers are the right-aligned copy-mode labels;
+				// their lowercase words center on full ink, not ascent..baseline
+				let (left, left_bound, right_bound, top) = if i < bar_layout.len() {
 					let (x, w) = bar_layout[i];
-					(x + MENU_BAR_PAD, x, x + w)
+					(
+						x + MENU_BAR_PAD,
+						x,
+						x + w,
+						self.text.ui_text_top(0.0, menu_h),
+					)
 				} else {
 					let j = i - bar_layout.len();
 					let x = copyboxes.label_x[j];
-					(x, x, x + copyboxes.label_w[j])
+					let w = copyboxes.label_w[j];
+					(x, x, x + w, self.text.ui_text_top_ink(0.0, menu_h))
 				};
 				areas.push(TextArea {
 					buffer: buf,
 					left,
-					top: self.text.ui_text_top(0.0, menu_h),
+					top,
 					scale: 1.0,
 					bounds: TextBounds {
 						left: left_bound as i32,
