@@ -13,12 +13,14 @@
 ##		llvmpipe the Xvfb caps it near 10fps and the scroll judders, which no
 ##		capture rate or frame-averaging can fix (the frames aren't there to blend).
 ##		On the GPU it paints a true ~60fps, so we grab straight at the delivery
-##		rate. The outro comment goes gray via a prompt flag (no ble.sh - it drops
-##		the odd first keystroke and breaks commands).
-##		The see-through-terminal look is produced with the app's own background
-##		pipeline: a generated DIM dark-mode desktop (vague code editor + file
-##		manager over the wallpaper) is fed as background_image at low opacity + a
-##		blur, standing in for what a compositor would show through the glass.
+##		rate. The window size is passed at LAUNCH (--pixel-width/height), never
+##		resized after: the VGL EGL present latches the surface size at creation
+##		(the app's xcb event connection bypasses VGL's Xlib interposer), so a
+##		post-launch xdotool resize leaves a stale-offset blit (clipped video /
+##		band-at-top gif). The outro comment goes gray via a prompt flag (no
+##		ble.sh - it drops the odd first keystroke and breaks commands).
+##		Both profiles start opaque on a plain black background (no image); the
+##		wallpaper scenes bring the imagery in through the app's own --wallpaper.
 ##	Syntax:
 ##		demo-video.py [--profile video,gif] [--segments a,b,...] [--seed N]
 ##		              [--keep-work] [--no-rotate] [--display :98] [--out-dir DIR]
@@ -77,14 +79,10 @@ PROFILES = {
 	"video": dict(
 		size=(1920, 1080), cap_fps=60, out_fps=60, mono_pt=19.5, ui_pt=11,
 		banner_fs=38, banner_pad=18, audio=True, banner_min=4.0,
-		transparent=True, opacity=0.75,          # starts see-through
-		bg="desktop.png", bg_opacity=0.24, blur=10.0,
 	),
 	"gif": dict(
 		size=(960, 540), cap_fps=50, out_fps=50, mono_pt=13, ui_pt=10,
 		banner_fs=24, banner_pad=12, audio=False, banner_min=3.0,
-		transparent=False, opacity=0.75,         # starts opaque
-		bg="background41.jpg", bg_opacity=0.16, blur=10.0,
 	),
 }
 
@@ -229,8 +227,12 @@ class Rec:
 		# a decorated (non-fullscreen) window: xfwm4 draws the full frame + the
 		# titlebar with buttons, which is the "fake decoration" the shot wants.
 		# Sized to leave a small dark margin so it reads as a floating window.
+		# The client size goes in at LAUNCH (--pixel-width/height) and the window
+		# is never resized after - the VGL EGL present latches the surface size at
+		# creation, so a post-launch xdotool resize breaks the blit (moving is fine).
 		W, H = self.size
 		mx, my = int(W * 0.03), int(H * 0.05)
+		cmd += ["--pixel-width", str(W - 2 * mx), "--pixel-height", str(H - 2 * my - 24)]
 		self.app = subprocess.Popen(cmd, env=e, cwd=str(self.home),
 			stdout=open(self.work / "silk.log", "w"), stderr=subprocess.STDOUT)
 		deadline = time.time() + 60
@@ -243,22 +245,8 @@ class Rec:
 		if not win:
 			raise RuntimeError("silkterm window never appeared (see silk.log)")
 		self.win = win
-		# frame it: size the client so the decoration + a margin fill the screen
-		self.xdo("windowsize", win, str(W - 2 * mx), str(H - 2 * my - 24))
-		time.sleep(0.3)
 		self.xdo("windowmove", win, str(mx), str(my))
-		time.sleep(0.3)
-		while time.time() < deadline:
-			shot = self.work / "probe.png"
-			subprocess.run(["import", "-window", "root", str(shot)],
-				env=self.env(), check=False, capture_output=True)
-			try:
-				mean = float(out_of(["magick", str(shot), "-format", "%[fx:mean]", "info:"]))
-			except Exception:
-				mean = 0.0
-			if mean > 0.01:
-				break
-			time.sleep(0.8)
+		time.sleep(4.0)                           # GPU GL bring-up + first frames
 		self.xdo("windowactivate", win)
 		time.sleep(0.3)
 		self.mouse_park()
@@ -500,27 +488,24 @@ def write_dconf(home, profile):
 	run(["dconf", "compile", str(dst / "user"), str(src)])
 
 def write_config(home, profile):
-	# mirrors the real defined config; only the demo-driven keys differ per
-	# profile. background_image is a BARE filename next to config.toml so the
-	# Settings dialog shows it verbatim (never a temp path).
+	# mirrors the real defined config. Both profiles start opaque on plain black:
+	# no background_image (numbered filenames dodge the auto-detect), image
+	# opacity at the 0.10 default - the wallpaper scenes bring the imagery in.
 	cfgdir = home / ".config" / "silkterm"
 	bgdir = cfgdir / "backgrounds"
 	bgdir.mkdir(parents=True, exist_ok=True)
-	shutil.copy2(BACKGNDS / "background41.jpg", cfgdir / "background41.jpg")
+	shutil.copy2(BACKGNDS / "background41.jpg", bgdir / "background41.jpg")
 	shutil.copy2(BACKGNDS / "background45.jpg", bgdir / "background45.jpg")
-	p = profile
-	(cfgdir / "config.toml").write_text(f'''use_system_font = true
+	(cfgdir / "config.toml").write_text('''use_system_font = true
 line_height_scale = 1.22
 margin = 8.0
 remember_size = false
 columns = 160
 rows = 48
-transparent_background = {str(p["transparent"]).lower()}
-opacity = {p["opacity"]}
-background_image = "{p["bg"]}"
-background_opacity = {p["bg_opacity"]}
+transparent_background = false
+background_opacity = 0.10
 background_fit = "zoom"
-background_blur = {p["blur"]}
+background_blur = 10.0
 text_scrim = true
 text_outline = 2.0
 text_scrim_ramp = "gaussian"
@@ -529,7 +514,7 @@ cursor_size_width = 25
 cursor_animation = "pulse_vertical"
 cursor_animation_input = "continuous"
 cursor_blink_rate_ms = 500
-word_separators = "=,|:\\"' ()[]{{}}<>"
+word_separators = "=,|:\\"' ()[]{}<>"
 scrollback = 10000
 scroll_tau_ms = 230.0
 wheel_lines = 3.0
@@ -539,66 +524,6 @@ smooth_scroll_apps = true
 theme = "SilkTerm"
 theme_mode = "dark"
 ''')
-
-# The dark-mode desktop seen THROUGH the glass. It must not compete with the
-# terminal text: dim, low-contrast, desaturated pastels over the wallpaper, so
-# after the app's blur + low background_opacity it reads as a vague code editor
-# and file manager and nothing you can quite make out. Fixed seed -> same
-# desktop every run.
-def synth_desktop(out_png, size):
-	rng = random.Random(7)
-	W, H = 1920, 1080
-	# muted, desaturated dark-mode syntax pastels (all kept dim)
-	code = ["#5b6b86", "#6f7f6a", "#87796a", "#6a6a86", "#5f7a80", "#70727e"]
-	dim = "#252b34"
-	panel = "#161b22"
-	d = []
-	# editor window (left ~2/3), barely lighter than the desk
-	d += [f"fill #12161c roundrectangle 90,70 1180,940 12,12",
-		f"fill {panel} roundrectangle 90,70 1180,116 12,12",       # title strip
-		f"fill #101216 rectangle 90,116 158,940",                  # activity bar
-		f"fill #12151b rectangle 158,116 208,940"]                 # file tree gutter
-	for i in range(6):                                             # tree entries
-		d.append(f"fill #222833 roundrectangle 172,{140 + i * 48} 198,{164 + i * 48} 4,4")
-	y = 140
-	indent = 0
-	while y < 900:                                                 # code lines
-		indent = max(0, min(5, indent + rng.choice([-2, -1, 0, 0, 1, 1])))
-		x = 236 + indent * 34
-		for _ in range(rng.randint(1, 3)):
-			w = rng.randint(46, 210)
-			d.append(f"fill {rng.choice(code)} roundrectangle {x},{y} {x + w},{y + 9} 4,4")
-			x += w + rng.randint(16, 34)
-			if x > 1090:
-				break
-		y += 20
-	# file manager (right, partly under the terminal's right edge)
-	d += [f"fill #12161c roundrectangle 1240,320 1840,1010 12,12",
-		f"fill {panel} roundrectangle 1240,320 1840,366 12,12",
-		f"fill #12151b rectangle 1240,366 1380,1000"]              # side list
-	for i in range(7):
-		d.append(f"fill #222833 roundrectangle 1256,{384 + i * 44} 1366,{406 + i * 44} 5,5")
-	for row in range(4):                                          # icon grid
-		for col in range(3):
-			x, y = 1420 + col * 138, 400 + row * 138
-			d.append(f"fill {dim} roundrectangle {x},{y} {x + 82},{y + 60} 8,8")
-			d.append(f"fill #20252e roundrectangle {x + 6},{y + 70} {x + 76},{y + 80} 3,3")
-	# a slim, dim dock
-	d.append(f"fill #0e1116 roundrectangle 700,1030 1220,1062 12,12")
-	for i in range(7):
-		x = 728 + i * 66
-		d.append(f"fill {dim} roundrectangle {x},1038 {x + 22},1054 6,6")
-	# render the vague desktop onto a dimmed, blurred background41 wallpaper so
-	# the whole thing sits in one dark scene
-	tmp = out_png.parent / "desk-layer.png"
-	run(["magick", "-size", f"{W}x{H}", "xc:none", "-draw", " ".join(d),
-		"-channel", "A", "-evaluate", "multiply", "0.6", "+channel", str(tmp)])
-	run(["magick", str(BACKGNDS / "background41.jpg"),
-		"-resize", f"{W}x{H}^", "-gravity", "center", "-extent", f"{W}x{H}",
-		"-modulate", "34,42", "-blur", "0x6",                      # dim + desaturate + soften
-		str(tmp), "-composite",
-		"-resize", f"{size[0]}x{size[1]}", str(out_png)])
-	tmp.unlink(missing_ok=True)
 
 RUST_SCROLL = '''// smooth output easing: nudge the visual offset toward rest, never snap
 use crate::grid::Grid;
@@ -730,15 +655,6 @@ def prep_content(rec, rng):
 	write_dconf(rec.home, rec.p)
 	write_config(rec.home, rec.p)
 	write_tree(rec, rng)
-	# the dim desktop lives next to config.toml (bare name in the dialog)
-	synth_desktop(rec.home / ".config" / "silkterm" / "desktop.png", rec.size)
-	# the on-camera wallpaper: background45 toned down (the raw file at the demo's
-	# image opacity buries the text and costs a fortune in gif bytes)
-	W, H = rec.size
-	run(["magick", str(BACKGNDS / "background45.jpg"),
-		"-resize", f"{W}x{H}^", "-gravity", "center", "-extent", f"{W}x{H}",
-		"-modulate", "60,72",
-		str(rec.home / ".config" / "silkterm" / "backgrounds" / "background45.jpg")])
 
 
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -787,7 +703,8 @@ def seg_alias(r, t, m):
 
 def seg_settings(r, t, m):
 	# open Settings, dwell ~4s slowly circling the text-scrim rows, then cancel
-	# with Esc (no trip to a button). The point is readable text over any backdrop.
+	# with Esc - no trip to a button, and NO mouse motion after the dwell (the
+	# park is a single off-frame jump). The point is readable text everywhere.
 	with Banner(r, "Readable text over any background", pos="tl"):
 		dlg = open_settings(r)
 		if not dlg:
@@ -804,15 +721,16 @@ def seg_settings(r, t, m):
 		m.park()
 		time.sleep(1.0)
 
-def seg_wallpaper(r, t, m):
+def seg_wp41(r, t, m):
 	with Banner(r, "Per-window wallpaper, from the shell", pos="top"):
-		t.cmd("silkterm --wallpaper ~/.config/silkterm/backgrounds/background45.jpg",
+		t.cmd("silkterm --wallpaper ~/.config/silkterm/backgrounds/background41.jpg",
 			settle=3.2)
 		time.sleep(1.0)
 
-def seg_wallpaper_clear(r, t, m):
-	# no narration - the image simply vanishing says it
-	t.cmd("silkterm --wallpaper", settle=2.6)
+def seg_wp45(r, t, m):
+	# no narration - the second image change speaks for itself
+	t.cmd("silkterm --wallpaper ~/.config/silkterm/backgrounds/background45.jpg",
+		settle=3.0)
 	time.sleep(0.8)
 
 def seg_ls(r, t, m):
@@ -834,7 +752,7 @@ def seg_less(r, t, m):
 		t.keys("Up", 8, hz=6.0)
 		time.sleep(0.6)
 		# re-assert focus before quitting - a stray focus loss during the arrow
-		# scrolling would leave less open and swallow the outro that follows
+		# scrolling would leave less open and swallow the commands that follow
 		r.xdo("windowactivate", r.win)
 		time.sleep(0.3)
 		t.key("q")
@@ -851,19 +769,19 @@ def seg_outro(r, t, m):
 		time.sleep(0.3)
 		r.xdo("key", "--clearmodifiers", "Return")   # fresh prompt picks up the flag
 		time.sleep(0.7)
-		t.cmd("# smooth. silky. SilkTerm.", settle=0.5, typos=0.0)
+		t.cmd("# Smooth. Silky. ...SilkTerm.", settle=0.5, typos=0.0)
 		time.sleep(3.2)
 
-# one script, both profiles (video and gif differ only in size/fonts/audio/bg)
+# one script, both profiles (video and gif differ only in size/fonts/audio)
 _SCRIPT = [
-	("alias",     seg_alias),
-	("settings",  seg_settings),
-	("wallpaper", seg_wallpaper),
-	("wpclear",   seg_wallpaper_clear),
-	("ls",        seg_ls),
-	("build",     seg_build),
-	("less",      seg_less),
-	("outro",     seg_outro),
+	("alias",    seg_alias),
+	("ls",       seg_ls),
+	("build",    seg_build),
+	("settings", seg_settings),
+	("wp41",     seg_wp41),
+	("less",     seg_less),
+	("wp45",     seg_wp45),
+	("outro",    seg_outro),
 ]
 SEGMENTS = {"video": _SCRIPT, "gif": _SCRIPT}
 
@@ -1247,6 +1165,12 @@ if __name__ == "__main__":
 
 
 ##	Script history:
+##		- 20260713 JC: window size passed at launch (--pixel-width/height), never
+##		  resized after - fixes the clipped video / band-at-top gif (VGL EGL
+##		  latches the surface size at creation); both profiles start opaque on
+##		  black (no bg image, image opacity 0.10); scene order alias-ls-build-
+##		  settings-wp41-less-wp45-outro with two wallpaper scenes; synth desktop
+##		  dropped.
 ##		- 20260712 JC: GPU render via VirtualGL (real ~60fps, the actual judder
 ##		  fix - dropped the high-fps+tmix hack); one unified script for both
 ##		  profiles; gray-# outro via a prompt flag; solid-gray captions with a
