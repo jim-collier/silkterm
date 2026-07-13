@@ -2,6 +2,7 @@
 // Copyright © 2026 Jim Collier
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -495,6 +496,9 @@ struct State {
 	pending_about: bool, // request to open the About window (App acts on it; needs the event loop)
 	pending_settings: bool, // request to open the Settings window
 	chrome: Option<ChromeCache>, // shaped menu/tab text, reused across frames
+	wp_images: Vec<PathBuf>, // wallpaper-rotation folder contents (empty = rotation off)
+	wp_index: usize, // which of wp_images is currently shown
+	wp_next: Option<Instant>, // when to rotate next (None = no timer / startup-only)
 }
 
 impl State {
@@ -1193,6 +1197,56 @@ impl State {
 			.unwrap_or_default();
 		edited.background_image = image;
 		self.apply_new_settings(&orig, edited, true);
+	}
+
+	// Wallpaper rotation: if background_folder is configured, scan it, show the
+	// first (or a random) image now, and arm the timer if an interval is set.
+	fn init_wallpaper_rotation(&mut self) {
+		let settings = config::settings();
+		let Some(dir) = settings.background_folder.clone() else {
+			return;
+		};
+		self.wp_images = list_folder_images(&dir);
+		if self.wp_images.is_empty() {
+			eprintln!(
+				"{}: background_folder {} has no images",
+				config::APP_NAME,
+				dir.display()
+			);
+			return;
+		}
+		self.wp_index = if settings.background_rotate_random {
+			next_wallpaper_index(self.wp_images.len(), 0, true, time_entropy())
+		} else {
+			0
+		};
+		let first = self.wp_images[self.wp_index].clone();
+		self.set_wallpaper(Some(first));
+		let ivl = settings.background_rotate_interval_s;
+		if ivl > 0.0 {
+			self.wp_next = Some(Instant::now() + Duration::from_secs_f32(ivl));
+		}
+	}
+
+	// Rotate to the next image (order or random) and re-arm the timer.
+	fn advance_wallpaper(&mut self) {
+		if self.wp_images.len() < 2 {
+			// one image (or none): nothing to rotate to; keep the timer off
+			self.wp_next = None;
+			return;
+		}
+		let settings = config::settings();
+		self.wp_index = next_wallpaper_index(
+			self.wp_images.len(),
+			self.wp_index,
+			settings.background_rotate_random,
+			time_entropy(),
+		);
+		let next = self.wp_images[self.wp_index].clone();
+		self.set_wallpaper(Some(next));
+		self.dirty = true;
+		let ivl = settings.background_rotate_interval_s;
+		self.wp_next = (ivl > 0.0).then(|| Instant::now() + Duration::from_secs_f32(ivl));
 	}
 
 	// Swap in `edited` and rebuild whatever changed vs `orig` (text metrics,
@@ -2408,6 +2462,51 @@ fn open_url(url: &str) {
 
 // Decode the configured background image and upload it to a texture.
 
+// Files in `dir` that look like images the bg loader can decode, sorted by name
+// (so "in order" rotation is stable and predictable).
+fn list_folder_images(dir: &std::path::Path) -> Vec<PathBuf> {
+	const EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif", "tiff", "tif"];
+	let Ok(entries) = std::fs::read_dir(dir) else {
+		return Vec::new();
+	};
+	let mut images: Vec<PathBuf> = entries
+		.flatten()
+		.map(|e| e.path())
+		.filter(|p| {
+			p.is_file()
+				&& p.extension()
+					.and_then(|e| e.to_str())
+					.is_some_and(|e| EXTS.contains(&e.to_ascii_lowercase().as_str()))
+		})
+		.collect();
+	images.sort();
+	images
+}
+
+// Next image index: wraps in order, or jumps to a different one at random. A
+// non-zero `entropy` picks the random step so consecutive rotations differ.
+fn next_wallpaper_index(len: usize, current: usize, random: bool, entropy: u64) -> usize {
+	if len < 2 {
+		return 0;
+	}
+	if random {
+		// step in [1, len-1] guarantees a different index than `current`
+		let step = 1 + (entropy % (len as u64 - 1)) as usize;
+		(current + step) % len
+	} else {
+		(current + 1) % len
+	}
+}
+
+// Cheap non-crypto entropy for random rotation, from the wall clock. Not used
+// for anything security-sensitive - just to vary which image comes up next.
+fn time_entropy() -> u64 {
+	std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.map(|d| d.as_nanos() as u64)
+		.unwrap_or(0)
+}
+
 fn load_bg_image(gfx: &Gfx) -> Option<ImageRenderer> {
 	let settings = config::settings();
 	let path = settings.background_image.as_ref()?;
@@ -2672,7 +2771,13 @@ impl ApplicationHandler<UserEvent> for App {
 			pending_about: false,
 			pending_settings: false,
 			chrome: None,
+			wp_images: Vec::new(),
+			wp_index: 0,
+			wp_next: None,
 		});
+		if let Some(state) = self.state.as_mut() {
+			state.init_wallpaper_rotation();
+		}
 	}
 
 	fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
@@ -3483,6 +3588,11 @@ impl ApplicationHandler<UserEvent> for App {
 		let content = state.tabs.cur().panes.values().any(|p| p.content_dirty);
 		// copy-output: catch the focused pane's command finishing (see method)
 		state.poll_output_copy();
+		// wallpaper rotation: swap to the next image when its interval elapses
+		// (sets state.dirty so the change renders this cycle)
+		if state.wp_next.is_some_and(|next| Instant::now() >= next) {
+			state.advance_wallpaper();
+		}
 		let bell_anim = state.bell_flash > 0.0;
 		let flow = if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
 			// UI/chrome changes and the bell force ALL panes to re-shape; fresh
@@ -3533,6 +3643,12 @@ impl ApplicationHandler<UserEvent> for App {
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
 		};
+		// wake to rotate the wallpaper when its interval is up, even when idle
+		let flow = match (flow, state.wp_next) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
 		// Profiling keeps the loop hot so the workload is continuously exercised.
 		#[cfg(feature = "profiling")]
 		let flow = if std::env::var_os("SILK_PROFILE_OUT").is_some() {
@@ -3577,5 +3693,52 @@ impl State {
 			}
 			_ => false,
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{list_folder_images, next_wallpaper_index};
+
+	#[test]
+	fn wallpaper_order_wraps() {
+		assert_eq!(next_wallpaper_index(3, 0, false, 0), 1);
+		assert_eq!(next_wallpaper_index(3, 2, false, 0), 0); // wraps
+		assert_eq!(next_wallpaper_index(1, 0, false, 0), 0); // single image: stays put
+		assert_eq!(next_wallpaper_index(0, 0, false, 0), 0); // empty: safe
+	}
+
+	#[test]
+	fn wallpaper_random_always_differs() {
+		// whatever the entropy, a random pick lands on a different index
+		for entropy in 0..100u64 {
+			for current in 0..5usize {
+				let next = next_wallpaper_index(5, current, true, entropy);
+				assert_ne!(
+					next, current,
+					"random rotation must not repeat the same image"
+				);
+				assert!(next < 5);
+			}
+		}
+	}
+
+	#[test]
+	fn folder_scan_filters_and_sorts() {
+		let dir = std::env::temp_dir().join(format!("silkterm_wp_scan_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		for name in ["b.png", "a.JPG", "notes.txt", "c.gif", ".hidden"] {
+			std::fs::write(dir.join(name), b"x").unwrap();
+		}
+		std::fs::create_dir_all(dir.join("d.png")).unwrap(); // a dir named like an image
+		let imgs = list_folder_images(&dir);
+		let names: Vec<String> = imgs
+			.iter()
+			.map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+			.collect();
+		// only image files, case-insensitive ext, sorted; the .txt, the dir, kept out
+		assert_eq!(names, vec!["a.JPG", "b.png", "c.gif"]);
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 }
