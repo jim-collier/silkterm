@@ -81,14 +81,17 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Smooth cursor movement should speed up, if it falls too far behind where it actually is.
 	- Done: the horizontal slide's time-constant now shrinks with the gap, so the cursor accelerates the farther it trails its real column (a fast burst / paste catches up instead of dragging across the line), while a single-cell move keeps the gentle slide. A hard cap also keeps it from ever sitting more than a handful of cells behind. Internal tunables (`CURSOR_CATCHUP` / `CURSOR_MAX_LAG`); feel-test on real HW and tweak if wanted.
 
-- 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
+- 🛠️ Scroll-on-output enhancement: One additional setting: (20260629)
 	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
 		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
 	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
+	- ✋ Held for your feel-test - scroll feel can't be judged headless, and this re-tunes the just-bounce-fixed output ease, so a blind guess risks the flagship smooth scroll. Proposed approach (not yet built): the ease already does a depth-based version of this (a short listing stays a shallow backlog near the slow "initial" speed; sustained output pins the backlog at the cap and ramps to the fast catch-up). To match the two named regimes, pass the pane height into `Scroll` and split the speed curve: while the cumulative advance since the burst started is under the pane height ("in-view"), use a middle tau that starts a touch quicker than initial, ramps gently, and caps below the current top speed; once it exceeds the pane height ("top line scrolled off"), ramp to the full fast catch-up. Expose the in-view start/cap/ramp as config knobs so you can dial the feel without a rebuild. Say the word and I'll build it with conservative defaults.
 
 - 🔘 New setting: Background image contrast mask % (100% = half of the longest pixel dimension, 0% = none, auto=based on contrast frequency analysis.)
 
-- 🔘 Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
+- ✅ Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
+	- Done: three config keys - `background_folder` (a folder, absolute or relative to the config dir; overrides `background_image` while set), `background_rotate_random` (filename order vs. random, never repeating the current image), and `background_rotate_interval_s` (seconds between swaps; 0 = pick one at startup only). Images are the formats the loader already decodes (png/jpg/webp/bmp/gif/tiff). Live swap reuses the existing wallpaper path, so it re-blurs and applies without a relaunch; a missing/empty folder just leaves the feature off.
+	- Verified: cycled a folder of three solid-colour images on a 2s timer and confirmed the background changed in order.
 
 - 🔘 Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
 

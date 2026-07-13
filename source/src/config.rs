@@ -107,7 +107,10 @@ pub struct Settings {
 	pub transparent_background_blur: bool, // X11: ask a KWin/picom compositor to blur the desktop behind the window
 	pub background_image: Option<PathBuf>, // resolved path, or None
 	pub background_image_raw: String, // the value as configured ("" = auto-detect); what the dialog shows
-	pub background_opacity: f32,      // image visibility 0..1
+	pub background_folder: Option<PathBuf>, // rotate the wallpaper through this folder's images (overrides background_image)
+	pub background_rotate_random: bool,     // rotate randomly instead of in filename order
+	pub background_rotate_interval_s: f32,  // seconds between rotations (0 = pick one at startup only)
+	pub background_opacity: f32,            // image visibility 0..1
 	pub background_fit: Fit,
 	pub background_blur: f32, // Gaussian blur sigma applied to the image (0 = none)
 	pub text_scrim: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
@@ -168,6 +171,9 @@ impl Default for Settings {
 			transparent_background_blur: false,
 			background_image: None,
 			background_image_raw: String::new(),
+			background_folder: None,
+			background_rotate_random: false,
+			background_rotate_interval_s: 0.0,
 			background_opacity: 0.10, // image visibility relative to bg color
 			background_fit: Fit::Stretch,
 			background_blur: 10.0,
@@ -523,6 +529,9 @@ struct RawConfig {
 	transparent_background: Option<bool>,
 	transparent_background_blur: Option<bool>,
 	background_image: Option<String>,
+	background_folder: Option<String>,
+	background_rotate_random: Option<bool>,
+	background_rotate_interval_s: Option<f32>,
 	background_opacity: Option<f32>,
 	background_fit: Option<String>,
 	background_blur: Option<f32>,
@@ -711,6 +720,9 @@ fn resolve(raw: RawConfig) -> Settings {
 			.unwrap_or(d.transparent_background_blur),
 		background_image_raw: raw.background_image.clone().unwrap_or_default(),
 		background_image: resolve_bg_image(raw.background_image),
+		background_folder: resolve_bg_folder(raw.background_folder),
+		background_rotate_random: raw.background_rotate_random.unwrap_or(false),
+		background_rotate_interval_s: raw.background_rotate_interval_s.unwrap_or(0.0).max(0.0),
 		background_opacity: raw
 			.background_opacity
 			.unwrap_or(d.background_opacity)
@@ -848,6 +860,20 @@ pub fn resolve_bg_image(explicit: Option<String>) -> Option<PathBuf> {
 		.into_iter()
 		.map(|name| bg_dir.join(name))
 		.find(|path| path.exists())
+}
+
+// The wallpaper-rotation folder: a relative value resolves against the config
+// dir (like the single background_image). Returns it only when it's an existing
+// directory, so a typo just leaves rotation off rather than erroring.
+pub fn resolve_bg_folder(explicit: Option<String>) -> Option<PathBuf> {
+	let given = explicit.filter(|value| !value.trim().is_empty())?;
+	let path = PathBuf::from(given.trim());
+	let path = if path.is_absolute() {
+		path
+	} else {
+		config_path()?.parent()?.join(&path)
+	};
+	path.is_dir().then_some(path)
 }
 
 // A config file's settings as (table, key, original-line) - `table` is None for
@@ -1286,6 +1312,13 @@ opacity = 0.95
 ## Background image. Leave commented to auto-detect backgrounds/background.{png,jpg,jpeg}
 ## under this directory. Value may be an absolute path or a filename relative here.
 # background_image = "background.png"
+
+## Rotate the wallpaper through a folder of images (overrides background_image
+## while set). Path is absolute or relative to this directory. Rotate randomly
+## instead of filename order, and every N seconds (0 = pick one at startup only).
+# background_folder = "backgrounds"
+# background_rotate_random = false
+# background_rotate_interval_s = 0.0
 
 ## Image visibility relative to the background color (independent of `opacity`
 ## above): 0.0 = all background color, 1.0 = all image.
