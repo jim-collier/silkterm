@@ -40,6 +40,11 @@ fn scroll_dbg() -> bool {
 
 // Cursor animation tunables (internal).
 const CURSOR_MOVE_TAU_MS: f32 = 55.0; // horizontal slide responsiveness (lower = snappier)
+// Catch-up: the slide's time-constant shrinks the farther the cursor trails its
+// real column, so a fast burst/paste doesn't leave it lagging across the line
+// (per-cell factor); and it never trails more than CURSOR_MAX_LAG cells.
+const CURSOR_CATCHUP: f32 = 0.45; // tau divisor per cell of lag
+const CURSOR_MAX_LAG: f32 = 8.0; // hard cap on how far behind the slide may sit (cells)
 const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
 const CURSOR_INPUT_PAUSE_S: f32 = 0.35; // idle time before the animation resumes (input-pause mode)
 const BELL_BRIGHTEN: f32 = 0.6; // max lerp of text toward white at the bell flash peak
@@ -307,6 +312,22 @@ fn fnv_row(chars: impl Iterator<Item = char>) -> u64 {
 // any control char as a plain 1-cell space.
 fn render_char(c: char) -> char {
 	if c.is_control() { ' ' } else { c }
+}
+
+// One step of the cursor's horizontal slide toward `target` (visual columns).
+// Exponential easing whose time-constant shrinks with the gap, so the cursor
+// speeds up the farther it trails its real column (a burst/paste catches up
+// instead of dragging across the line) while a single-cell move keeps the gentle
+// slide - plus a hard cap so it never sits more than CURSOR_MAX_LAG cells behind.
+fn cursor_slide_step(cursor_x: f32, target: f32, dt: f32) -> f32 {
+	let gap = (target - cursor_x).abs();
+	let tau = CURSOR_MOVE_TAU_MS / (1.0 + gap * CURSOR_CATCHUP);
+	let mut next = cursor_x + (target - cursor_x) * (1.0 - (-dt * 1000.0 / tau).exp());
+	let lag = target - next;
+	if lag.abs() > CURSOR_MAX_LAG {
+		next = target - CURSOR_MAX_LAG * lag.signum();
+	}
+	next
 }
 
 // Advance the blink phase one frame toward `full_phase` (the point in the cycle
@@ -1241,8 +1262,10 @@ impl Pane {
 		self.cursor_init = true;
 		self.cursor_row = cursor_screen_row;
 		self.cursor_col = target_col;
-		let k = 1.0 - (-dt * 1000.0 / CURSOR_MOVE_TAU_MS).exp();
-		self.cursor_x += (target_col - self.cursor_x) * k;
+		// Ease toward the target column, speeding up the farther behind it is (a
+		// burst catches up fast, a single-cell move keeps the gentle slide), never
+		// trailing more than CURSOR_MAX_LAG cells.
+		self.cursor_x = cursor_slide_step(self.cursor_x, target_col, dt);
 		let easing = (target_col - self.cursor_x).abs() > 0.01;
 		if !easing {
 			self.cursor_x = target_col;
@@ -2634,11 +2657,11 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 #[cfg(test)]
 mod tests {
 	use super::{
-		APP_SCROLL_MAX, Dir, Node, OffStrip, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell,
-		bell_brighten, capture_grid_text, capture_start, distinct_pair, equalize_dir_run, fnv_row,
-		glide_to_full, layout, logical_line_bounds, pair_inside, prompt_strip, render_char,
-		same_char_pair, scroll_shift, scroll_shift_signed, static_bands, vanished_range,
-		weld_region_clip,
+		APP_SCROLL_MAX, CURSOR_MAX_LAG, Dir, Node, OffStrip, PauseState, Rect, SLIDE_TOP_BAND_APPS,
+		StripCell, bell_brighten, capture_grid_text, capture_start, cursor_slide_step,
+		distinct_pair, equalize_dir_run, fnv_row, glide_to_full, layout, logical_line_bounds,
+		pair_inside, prompt_strip, render_char, same_char_pair, scroll_shift, scroll_shift_signed,
+		static_bands, vanished_range, weld_region_clip,
 	};
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
@@ -2649,6 +2672,43 @@ mod tests {
 	struct VoidListener;
 	impl EventListener for VoidListener {
 		fn send_event(&self, _e: Event) {}
+	}
+
+	#[test]
+	fn cursor_slide_catches_up_faster_when_farther() {
+		let dt = 1.0 / 60.0;
+		// one step covers more ground, proportionally, from a big lag than a small one
+		let near = cursor_slide_step(0.0, 1.0, dt) / 1.0; // fraction of a 1-cell move
+		let far = (cursor_slide_step(0.0, 20.0, dt) - 0.0) / 20.0; // fraction of a 20-cell move
+		assert!(
+			far > near,
+			"a farther-behind cursor should close a larger fraction per step: near={near} far={far}"
+		);
+		// monotone approach, never overshoots
+		let next = cursor_slide_step(2.0, 5.0, dt);
+		assert!(
+			next > 2.0 && next < 5.0,
+			"eases toward target without overshoot: {next}"
+		);
+	}
+
+	#[test]
+	fn cursor_slide_never_trails_past_the_cap() {
+		// A tiny dt (high refresh) closes little of a big gap per step, so the clamp
+		// engages: whatever the frame rate, the cursor sits at most CURSOR_MAX_LAG behind.
+		let tiny = 0.001;
+		let next = cursor_slide_step(0.0, 40.0, tiny);
+		assert!(
+			(40.0 - next) <= CURSOR_MAX_LAG + 0.001,
+			"lag capped at {CURSOR_MAX_LAG}, got {}",
+			40.0 - next
+		);
+		// symmetric for a leftward jump
+		let back = cursor_slide_step(40.0, 0.0, tiny);
+		assert!(
+			back <= CURSOR_MAX_LAG + 0.001,
+			"leftward lag capped too: {back}"
+		);
 	}
 
 	// A small live Term fed via the real parser, for the copy-output tests.
