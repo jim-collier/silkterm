@@ -442,7 +442,7 @@ fn tab_close_box(tab_x: f32, tab_w: f32, bar_y: f32, tab_h: f32) -> Rect {
 	}
 }
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
-const COPYBOX_LABELS: [&str; 3] = ["Copy on", "select", "output"]; // menu-bar auto-copy checkboxes
+const COPYBOX_LABELS: [&str; 3] = ["Copy on:", "select", "output"]; // menu-bar auto-copy checkboxes
 
 struct State {
 	window: Arc<Window>,
