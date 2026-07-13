@@ -70,13 +70,16 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- 🔘 Config file: For each feature listed below, allow user to list programs (comma-delimited), that, when running, temporarily disable:
+- ✋ Config file: For each feature listed below, allow user to list programs (comma-delimited), that, when running, temporarily disable:
 	- Smooth scrolling. (Comma-delimited.)
 	- Smooth cursor movement and blink. (Comma-delimited.)
 	- Text scrim and outline
 		- Note: Should not affect existing still-visible text renedered before the program's output, or new output following the output from the affected program that is still visible. (Comma-delimited.)
+	- ✋ Deferred (design intent clarified): the scrim disable is meant to apply *only to that program's own output within a pane* - NOT per-pane / per-tab / per-window - so surrounding text (the prompt above, the resumed prompt below, unrelated scrollback) keeps its scrim. That is the hard part: the scrim is a single window-global pass (all glyphs -> one coverage texture -> blur -> composite), with no per-region concept. Honoring "just this command's output" for a normal-screen command like `ls` needs (a) tracking each command's output boundaries in the byte stream (start when the fg pgid becomes the command, end when it returns to the shell - the copy-on-output machinery), (b) mapping those logical lines onto current grid rows and re-mapping them every frame as things scroll and scrollback evicts, and (c) excluding exactly those cells from the coverage source. Fullscreen apps (vim/nano/less/htop) are the easy sub-case (the whole pane is their output), but the requested normal-screen case is not. Do NOT implement this as per-pane scrim on/off - that is a different, unwanted behavior.
+		- Smooth-scroll and smooth-cursor disable are individually tractable (per-pane, gated on the foreground program) if ever wanted on their own; only the scrim sub-item is the blocker. Kept as one deferred item.
 
-- 🔘 Smooth cursor movement should speed up, if it falls too far behind where it actually is.
+- ✅ Smooth cursor movement should speed up, if it falls too far behind where it actually is.
+	- Done: the horizontal slide's time-constant now shrinks with the gap, so the cursor accelerates the farther it trails its real column (a fast burst / paste catches up instead of dragging across the line), while a single-cell move keeps the gentle slide. A hard cap also keeps it from ever sitting more than a handful of cells behind. Internal tunables (`CURSOR_CATCHUP` / `CURSOR_MAX_LAG`); feel-test on real HW and tweak if wanted.
 
 - 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
 	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
