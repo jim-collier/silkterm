@@ -50,94 +50,25 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- ✅ Some output, like debug output will bounce badly. I'm not sure how to reliably reproduce it on any machine.
-	- Description:
-		- Fast output (that nevertheless changes speed frequently) will scroll up the screen.
-		- Suddenly it will "bounce" very far back down the screen, then scroll back up. Sometimes, the same content will repeat this process repeatedly.
-		- The result is a flickering appearance, especially on fast output.
-	- Cause: once the scrollback buffer is full, the output-ease infers how far the view advanced by matching row fingerprints against the last frame. That matcher demanded a pixel-clean translate of the whole retained region, so a single off cell - a redrawn prompt or spinner, a rewrapped line, or a multi-frame gap when a fast burst held the terminal lock - made it give up and report the full backlog cap instead of the true small advance. The cap snapped the view up about a screenful and eased it back; on fast, speed-varying output it misfired every few frames, so the view bounced far down and scrolled back up over and over.
-	- Fixed: the matcher now tolerates a few off cells and picks the shift that best explains the frame, so a small advance reads as small. In-place redraws and static/blank fields still report no scroll, and a genuine full turnover still ramps to catch up. Regression tests added.
-
-- 🔘 Config file rewriting is proving problematic.
+- ✅ Config file rewriting is proving problematic.
 	- For example, when user makes a "non-standard" change (e.g. some extra comments), they get removed in the background, and the editor notices the file changed.
 	- Fix: Only *write* to the file when A) Settings updated, or B) New options are added to the program. And in either case, first try to make sure nothing else has the file open for editing. If something else has it open:
 		- If in settings, warn and don't close settings. (Force user to cancel, or abort other editing first.)
 		- If writing new or changed program config settings, abort the write attempt, and output a non-alarming FYI to stderr.
+	- Done: dropped the launch-time reorder/comment-refresh pass entirely - that was what stripped hand-added comments and reformatted the file behind your back. Launch now only rewrites for a real reason: a renamed/removed option (migrate) or a genuinely new one (backfill), both of which only add/rename and never touch your other lines. A hand-edited file (extra comments, reordered keys) is now left byte-for-byte alone on relaunch.
+	- Done: before any write (launch-time migrate/backfill, remembered-size auto-save, and Settings save), a best-effort check sees whether another program has the file open (Linux, via /proc). If so: launch-time writes skip with a non-alarming stderr FYI; the Settings dialog leaves itself open on OK instead of closing over an unsaved change (the values still apply live for the session).
+	- 🔘 Follow-up: make the "config is open elsewhere, not saved" signal visible IN the Settings dialog (a small banner), not just a stderr FYI + the dialog staying open.
+	- Note: the open-elsewhere check only catches editors that hold the file descriptor open; an editor that opens/closes per save won't trip it, but in that case a write is harmless (backfill only appends).
 
-- ✅ Settings dialog changes not remembered after relaunch (surfaced as "Scrim falloff not saving"). The change showed live in the running app, then reverted on the next launch.
-	- Cause: `persist` (and `revert_keys`) parsed config.toml with strict TOML, while the loader tolerates a bare-decimal float (`.1` with no leading zero). Any such value in the file made every save bail early and silently write nothing - so no dialog change stuck. Not falloff-specific.
-	- Fixed: both now read through the same lenient pass the loader uses, so a save no longer aborts on a file the app reads fine. A malformed float is normalized in place on the next save. Regression test added.
-
-- 🔘 The dreaded "Nano Bounce Bug" is back. This will be the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and possibly red-herrings. It obviously must be related in some way to smooth scrolling (the next time it happens I'll try turning it off to make sure). So let's get back to basics of what I know, and don't know:
+- ✋ The dreaded "Nano Bounce Bug" is back. This will be the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and possibly red-herrings. It obviously must be related in some way to smooth scrolling (the next time it happens I'll try turning it off to make sure). So let's get back to basics of what I know, and don't know:
 	- Steps:
 		- Run nano. On any file, or with no file.
 		- Observe: It "pops" onto the screen, but "wobbles", "violently", for maybe a second or two. If I recall, the wobbling is vertically up and down only - but my memory may be biased by what I believe "should" only be possible given the design and code. But at this point - who knows.
 			- Note: It's short enough that it's livable (kind of cool even), but it's still a jarring effect for what is supposed to be a highly-polished terminal. (And by "kind of cool", I mean, if it were an opt-in, always happened "Compiz"-like "open-wobbly" effect. But we don't want that. We want stability.)
 	- It's hard to recreate, so I don't know the steps to do it. But once it happens once, it seems easy to repeat. It only seems to start happening after a while - so maybe related to lots of input and/or more likely, output. And/or many switching of modes? Or just time?
+	- ✋ Delay this to see if other fixes, fix this.
 
 ### New features and enhancements
-
-- ✅ Copy on... (20260713)
-	- ✅ Update "[ ] Copy on output", to offer two options:
-		- ✅ "Copy on   [ ] select   [ ] output"
-			- Only one or the other
-			- Done: menu bar now shows both checkboxes; turning one on turns the other off.
-				- ✅ Vertically center text and checkboxes. Currently bottom-aligned. (20260713)
-					- Done: the labels now center on their full ink, descenders included; the boxes were already centered.
-		- ✅ Menu items too
-			- Done: "Copy on select" / "Copy on output" toggles in the Edit menu and the right-click menu.
-	- ✅ Implement "Copy on select"
-		- Done: finishing a selection also puts it on the desktop clipboard (primary selection still set as always).
-	- ✅ Improvements to copy on output:
-		- ✅ Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.
-			- Done: the input line was already excluded; multi-line prompts now handled too - the rows a prompt draws above its input line are recognized from the previous command and dropped from the copy. First command after enable can still include them (nothing learned yet); dynamic prompt rows that change every draw stay in the copy (fail-safe).
-		- ✅ The checkbox button and menu item should only be visibly enabled for one pane at a time.
-			- ✅ If you change tabs or panes, the feature gets turned off. (Visibly and actually.)
-				- ✅ Changing to other non-SilkTerm windows is OK.
-			- ✅ But if you later enable the feature on a different silkterm window, it gets disabled on other open windows. (Visibly and actually.)
-				- Done: enabling notifies other running instances over the control socket; Linux/Unix only for now (same limit as the other socket commands).
-		- ✅ Verify that it's not persisted across sessions. (I don't remember wiring this but who knows.)
-			- Confirmed: no config key exists; the mode always starts off.
-
-- ✅ CI/CD improvements:
-	- Guiding constraints: rely on GitHub as little as possible (dumb git hosting plus optional release storage, nothing more), no cloud-hosted CI/CD, as few third-party tools as possible - but still cover the lightweight local-pipeline best practices for Rust.
-	- ✅ Local merge gate instead of hosted CI
-		- Add a fast `cicd.bash --gate` mode (fmt --check, clippy -D warnings, cargo test) and wire it as a git pre-push hook, so nothing reaches main unverified even outside a full cicd run.
-		- This replaces what a bare-bones GitHub Actions workflow would do; the safety net runs on this box, not in the cloud.
-		- The full pipeline (fuzz, packages, profiling, dogfood, publish) stays unchanged.
-		- Done: `cicd.bash --gate` + `utility/git-hooks/pre-push` (gates pushes to main/dev only; `--no-verify` or `SKIP_GATE=1` bypasses).
-	- ✅ Dev branch + release on main
-		- Adopt a dev branch as the integration target. Feature branches merge to dev; main becomes release-only.
-		- Merging dev to main cuts a release locally: tag the merge, run the packages stage, and optionally push the tag + attach artifacts to a GitHub Release as plain uploads (no Actions).
-		- Version source is `Cargo.toml` alone: the tag is read from it and the build stamps from it, so they can never disagree.
-		- Document the flow where branch conventions live, so day-to-day work knows the merge-back target changed.
-		- Done: `dev` branch created and pushed; flow documented in design.md "Delivery"; `cicd/utility/release.bash` cuts the tag from `Cargo.toml` and can push + attach artifacts via `gh` (packages stage folds in when it lands).
-	- ✅ Release packaging polish
-		- Keep the hand-rolled packages stage (it already covers .deb/.rpm/NSIS across four targets, which cargo-dist does not) - no new packaging tool.
-		- Add a sha256 checksums file next to the artifacts, and fold the release version into artifact names in one stable scheme, decided before the first tagged release so download links never have to change.
-		- Done: scheme is `<exe>-<version>-<os-arch>[.exe]` + `<exe>-<version>-sha256sums.txt`, collected into `cicd/artifacts/release/` after the release builds. The future packages stage inherits the same scheme.
-	- ✅ Pin toolchain and tool versions
-		- Add `rust-toolchain.toml` pinning the rustc/clippy toolchain - this also kills the standing 1.94-vs-1.96 clippy split for good.
-		- Pin the versions of cargo-installed helpers the pipeline probes for (cargo-deny, cargo-zigbuild, and any later additions) in one place cicd reads, so results stop drifting as the box updates.
-		- No dependabot (GitHub-hosted): dependency freshness is a periodic local `cargo update` pass, with cargo-deny advisories already flagging anything urgent in every run.
-		- Done: `rust-toolchain.toml` pins 1.96.0 + clippy/rustfmt + the three cross targets; helper pins live in `TOOL_PINS` in cicd/config.bash (non-gating drift warning).
-	- ✅ README badges
-		- Only the ones that carry signal without hosted CI: latest release tag, license, minimum Rust version. Static shields, one line at the top, matching the existing README style.
-		- No CI badge - there is no hosted workflow to point it at, and a self-reported badge is noise.
-		- Done: Release + minimum-Rust badges added to the existing badge block (license badge was already there). The release badge is static; release.bash refuses to tag until it matches Cargo.toml.
-
-- ✅ Settings dialog:
-	- ✅ Focus control:
-		- ✅ When an item is focused, there shouldn't be a focus box the same size for every row, around the entire group of controls. The focus box should only go around the control being focused.
-			- Done: the keyboard-focus ring now hugs just the focused control (checkbox / dropdown / text field / swatch+hex / whole radio group / slider) a couple px out, instead of spanning the row.
-			- ✅ For slider controls, that should go first to the slider, then the related text box.
-				- Done: a slider is now two Tab stops - the track first, then its numeric field - each ringed on its own.
-			- "Reset" remains a focus-less control (the per-row revert icon stays mouse-only, unchanged).
-	- ✅ Cursor scrim/outline:
-		- ✅ Rather than two lines, just one, like so:
-			Cursor    [ ] Scrim    [ ] Outline                [reset]
-			- Done: the two "Cursor in scrim / outline" toggle rows collapsed into one `Cursor` row with two labelled checkboxes (each its own focus stop; Scrim greys with the scrim off, Outline with no outline).
-		- ✅ The reset resets both of them (the row's revert icon reverts cursor_scrim + cursor_outline together).
 
 - 🔘 Config file: For each feature listed below, allow user to list programs (comma-delimited), that, when running, temporarily disable:
 	- Smooth scrolling. (Comma-delimited.)
@@ -145,42 +76,40 @@ In each section, items are listed approximately from newest to oldest.
 	- Text scrim and outline
 		- Note: Should not affect existing still-visible text renedered before the program's output, or new output following the output from the affected program that is still visible. (Comma-delimited.)
 
-- 🛠️ For screenshots, and videos, use "Monaspace Argon NF Medium".
-	- Done: `cicd/utility/screenshots.bash` font stack set to the Monaspace Argon NF family with fallbacks. Note: `font_family` selects a family, not a weight, so it renders at regular weight (true Medium would need a font-weight config). Videos will pick this up when that item is built.
-	- Pending: regenerate the committed screenshot PNGs so they show the new font. Fold into the next visual regeneration and eyeball.
+- 🔘 Smooth cursor movement should speed up, if it falls too far behind where it actually is.
+
+- 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
+	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
+		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
+	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
+
+- 🔘 New setting: Background image contrast mask % (100% = half of the longest pixel dimension, 0% = none, auto=based on contrast frequency analysis.)
+
+- 🔘 Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
+
+- 🔘 Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
+
+- 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
+
+- 🔘 Hyperlinks:
+	- 🔘 Clickable - e.g. Ctrl+click, or right-click then includes "Copy link" and "Open link".
+	- 🔘 Auto-underline when mouse is underneath.
 
 - ✅ Tabs: Include a subtle 'X' icon in right edge of tab, to close with mouse.
 	- Done: each tab reserves a right-edge close region with a dimmed "x" glyph; the tab title clips before it. A left click in that region closes the tab, elsewhere selects it.
 	- Verified: the close glyph renders subtly at each tab's right edge; clicking it closes that tab, clicking the tab body selects it.
-	- 🛠️ Improve:
-		- ✅ Make the 'X' bigger or bolder, and put it inside a button outline nicely balanced within top, right, and bottom margins.
+	- 🔘 Improve:
+		- 🔘 Make the 'X' bigger or bolder, and put it inside a button outline nicely balanced within top, right, and bottom margins.
 			- Done: the close "x" is now bold and centered inside a 1px outlined square button with equal top/right/bottom margins (the slack falls to the left, separating it from the title). The button box, its glyph, and the click region share one geometry helper so they stay aligned.
-				- 🔘 Center the 'x' better in the box. Use a synthetic x if necessary.
+				- 🔘 X still too small and not centered in the box.
 		- 🔘 Provide brief visual feedback on click - as the tab closes. Maybe the terminal area can close immediately while the tab lingers just enough milliseconds for human perception to notice the click feedback, if that doesn't require rejiggering the whole pipeline.
-			- Note: two candidate approaches - a press-arm highlight (light on the button while pressed, close on release) that fits the existing input path, or the lingering-tab timed close described above (a short animation, more involved and feel-sensitive). Left open pending a preference.
-
-- 🔘 Smooth cursor movement should speed up, if it falls too far behind where it actually is.
+			- Note: two candidate approaches - a press-arm highlight (light on the button while pressed, close on release) that fits the existing input path, or the lingering-tab timed close described above (a short animation, more involved and feel-sensitive). Light on the button while pressed, close on release, is going to be the easiest, that's the winner.
 
 - 🔘 Ctrl+Shift+N: New window on same directory.
-
-- ✅ Settings dialog:
-	- ✅ Remove "Settings" heading text, it's redundant with the window title.
-		- Done: dropped the prominent in-dialog title (and its band); the tab bar now sits at the top. The OS window title still reads "Settings".
-	- ✅ Change the buttons at the top for different pages, to tabs.
-		- Done: the top selectors are a real tab bar (Appearance / Font / Colors / Window / Scrolling), the active tab highlighted.
-		- ✅ Can cycle through with Ctrl+PgUp|PgDn.
-			- Done: Ctrl+PageDown = next tab, Ctrl+PageUp = previous, alongside the existing Ctrl+Tab.
-
-- 🔘 Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
 
 - 🔘 Main menu and right-click menus:
 	- 🔘 Accellerators need to be unique. If running out of memorable word/accelerator keys, remove accellerators from the least-used or least-important items, especially ones that already have hotkeys.
 	- 🔘 List the hotkeys to activate the same function, if they exist. Keep in mind there might be a dynamic hotkey system soon.
-
-- ✅ New defaults: Background image opacity 10%. Background image blur, 10.
-	- Done: `background_opacity` default 0.33 -> 0.10, `background_blur` default 8 -> 10 (struct defaults + template + defaults test). Existing configs keep their own values.
-
-- 🔘 New setting: Background image contrast mask % (100% = half of the longest pixel dimension, 0% = none, auto=based on contrast frequency analysis.)
 
 - 🔘 Change wording of "background image opacity" to "background image visibility" (text and setting), to reflect that it's not just opacity. Still directly controls image/background color mix, but ALSO the contrast and saturation.
 
@@ -190,12 +119,6 @@ In each section, items are listed approximately from newest to oldest.
 		- High: Very high quality, may require a higher-end GPU, no visible artifacts at all.
 		- Medium (default): The current quality.
 		- Low: Trash quality, only looks OK at small blur radii. For VMs or remote sessions with punishing graphics. (In fact maybe this should be auto-detected...)
-
-- After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
-
-- 🔘 Hyperlinks:
-	- 🔘 Clickable - e.g. Ctrl+click, or right-click then includes "Copy link" and "Open link".
-	- 🔘 Auto-underline when mouse is underneath.
 
 - 🔘 When reducing background image opacity, also reduce contrast and saturation. Add tunable parameters to the config file:
 	- 🔘 Minimum contrast % (at 0% background image opacity - not useful but establishes the floor). Lets try a default of 50%.
@@ -211,28 +134,11 @@ In each section, items are listed approximately from newest to oldest.
 		- 🔘 And the inverse, for light-mode themes.
 		- 🔘 Need a config file name and a default value for the resulting strength of this calculation.
 
-- 🔘 Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
-
 - 🔘 Testing:
 	- 🔘 Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
 	- 🛠️ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
 		- Done: scrolling is covered by library tests encoding the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
 	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
-
-- ✋ README screenshot refresh in cicd is off (`SHOTS_ENABLE=0` in `cicd/config.bash`; `--shots` re-enables per run). So the README grid images won't auto-update after visual changes - refresh by hand or flip it back on when ready.
-
-- ✅ Build packages when cicd.bash `--quick` isn't specified:
-	- ✅ .deb(s) + .rpm(s), per-architecture (cargo-deb / cargo-generate-rpm; metadata in source/Cargo.toml).
-	- ✅ Windows installer .exe(s), per-architecture (single self-contained NSIS setup; upgrades in place). The release binary links only system DLLs, so no runtime is bundled.
-	- Done: new stage 6 (Packages) builds from the stage-5 release binaries (never rebuilt). x86_64 always; ARM64 too unless `--no-arm`. Packages fold into the sha256sums. `--no-package` skips the stage.
-	- ✋ Deferred (no cross toolchain on this Linux box): macOS `.dmg` (needs an Apple SDK / osxcross - license-gated) and BSD packages (needs a FreeBSD sysroot). AppImage/Flatpak also future.
-
-- 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
-	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
-		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
-	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
-
-- 🔘 After startup, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
 
 - 🛠️ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- 🔘 Add Windows support.
@@ -431,6 +337,12 @@ In each section, items are listed approximately from newest to oldest.
 		- Note: a proper fix needs to know a partial scroll region is active so it can suppress easing only then, but alacritty_terminal doesn't expose the scroll region. Options for later: patch the crate to expose it, tee and parse DECSTBM ourselves, or accept it like other full-screen apps.
 	- Update: This actually seems to have fixed itself with some other work. Keep on backlog just in case.
 
+- ✅ Build packages when cicd.bash `--quick` isn't specified:
+	- ✅ .deb(s) + .rpm(s), per-architecture (cargo-deb / cargo-generate-rpm; metadata in source/Cargo.toml).
+	- ✅ Windows installer .exe(s), per-architecture (single self-contained NSIS setup; upgrades in place). The release binary links only system DLLs, so no runtime is bundled.
+	- Done: new stage 6 (Packages) builds from the stage-5 release binaries (never rebuilt). x86_64 always; ARM64 too unless `--no-arm`. Packages fold into the sha256sums. `--no-package` skips the stage.
+	- ✋ Deferred (no cross toolchain on this Linux box): macOS `.dmg` (needs an Apple SDK / osxcross - license-gated) and BSD packages (needs a FreeBSD sysroot). AppImage/Flatpak also future.
+
 ### Done
 
 #### First steps
@@ -445,6 +357,18 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Verify smoothness on X11/Compiz.
 
 #### Done - Bugs
+
+- ✅ Settings dialog changes not remembered after relaunch (surfaced as "Scrim falloff not saving"). The change showed live in the running app, then reverted on the next launch.
+	- Cause: `persist` (and `revert_keys`) parsed config.toml with strict TOML, while the loader tolerates a bare-decimal float (`.1` with no leading zero). Any such value in the file made every save bail early and silently write nothing - so no dialog change stuck. Not falloff-specific.
+	- Fixed: both now read through the same lenient pass the loader uses, so a save no longer aborts on a file the app reads fine. A malformed float is normalized in place on the next save. Regression test added.
+
+- ✅ Some output, like debug output will bounce badly. I'm not sure how to reliably reproduce it on any machine.
+	- Description:
+		- Fast output (that nevertheless changes speed frequently) will scroll up the screen.
+		- Suddenly it will "bounce" very far back down the screen, then scroll back up. Sometimes, the same content will repeat this process repeatedly.
+		- The result is a flickering appearance, especially on fast output.
+	- Cause: once the scrollback buffer is full, the output-ease infers how far the view advanced by matching row fingerprints against the last frame. That matcher demanded a pixel-clean translate of the whole retained region, so a single off cell - a redrawn prompt or spinner, a rewrapped line, or a multi-frame gap when a fast burst held the terminal lock - made it give up and report the full backlog cap instead of the true small advance. The cap snapped the view up about a screenful and eased it back; on fast, speed-varying output it misfired every few frames, so the view bounced far down and scrolled back up over and over.
+	- Fixed: the matcher now tolerates a few off cells and picks the shift that best explains the frame, so a small advance reads as small. In-place redraws and static/blank fields still report no scroll, and a genuine full turnover still ramps to catch up. Regression tests added.
 
 - ✅ Two new command-line options:
 	- Change the wallpaper of the current window.
@@ -743,6 +667,82 @@ In each section, items are listed approximately from newest to oldest.
 	- Fix: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
 
 #### Done - new features and enhancements
+
+- ✅ Settings dialog:
+	- ✅ Remove "Settings" heading text, it's redundant with the window title.
+		- Done: dropped the prominent in-dialog title (and its band); the tab bar now sits at the top. The OS window title still reads "Settings".
+	- ✅ Change the buttons at the top for different pages, to tabs.
+		- Done: the top selectors are a real tab bar (Appearance / Font / Colors / Window / Scrolling), the active tab highlighted.
+		- ✅ Can cycle through with Ctrl+PgUp|PgDn.
+			- Done: Ctrl+PageDown = next tab, Ctrl+PageUp = previous, alongside the existing Ctrl+Tab.
+
+- ✅ For screenshots, and videos, use "Monaspace Argon NF Medium".
+	- Done: `cicd/utility/screenshots.bash` font stack set to the Monaspace Argon NF family with fallbacks. Note: `font_family` selects a family, not a weight, so it renders at regular weight (true Medium would need a font-weight config). Videos will pick this up when that item is built.
+	- Pending: regenerate the committed screenshot PNGs so they show the new font. Fold into the next visual regeneration and eyeball.
+
+- ✅ Copy on... (20260713)
+	- ✅ Update "[ ] Copy on output", to offer two options:
+		- ✅ "Copy on   [ ] select   [ ] output"
+			- Only one or the other
+			- Done: menu bar now shows both checkboxes; turning one on turns the other off.
+				- ✅ Vertically center text and checkboxes. Currently bottom-aligned. (20260713)
+					- Done: the labels now center on their full ink, descenders included; the boxes were already centered.
+		- ✅ Menu items too
+			- Done: "Copy on select" / "Copy on output" toggles in the Edit menu and the right-click menu.
+	- ✅ Implement "Copy on select"
+		- Done: finishing a selection also puts it on the desktop clipboard (primary selection still set as always).
+	- ✅ Improvements to copy on output:
+		- ✅ Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.
+			- Done: the input line was already excluded; multi-line prompts now handled too - the rows a prompt draws above its input line are recognized from the previous command and dropped from the copy. First command after enable can still include them (nothing learned yet); dynamic prompt rows that change every draw stay in the copy (fail-safe).
+		- ✅ The checkbox button and menu item should only be visibly enabled for one pane at a time.
+			- ✅ If you change tabs or panes, the feature gets turned off. (Visibly and actually.)
+				- ✅ Changing to other non-SilkTerm windows is OK.
+			- ✅ But if you later enable the feature on a different silkterm window, it gets disabled on other open windows. (Visibly and actually.)
+				- Done: enabling notifies other running instances over the control socket; Linux/Unix only for now (same limit as the other socket commands).
+		- ✅ Verify that it's not persisted across sessions. (I don't remember wiring this but who knows.)
+			- Confirmed: no config key exists; the mode always starts off.
+
+- ✅ New defaults: Background image opacity 10%. Background image blur, 10.
+
+- ✅ CI/CD improvements:
+	- Guiding constraints: rely on GitHub as little as possible (dumb git hosting plus optional release storage, nothing more), no cloud-hosted CI/CD, as few third-party tools as possible - but still cover the lightweight local-pipeline best practices for Rust.
+	- ✅ Local merge gate instead of hosted CI
+		- Add a fast `cicd.bash --gate` mode (fmt --check, clippy -D warnings, cargo test) and wire it as a git pre-push hook, so nothing reaches main unverified even outside a full cicd run.
+		- This replaces what a bare-bones GitHub Actions workflow would do; the safety net runs on this box, not in the cloud.
+		- The full pipeline (fuzz, packages, profiling, dogfood, publish) stays unchanged.
+		- Done: `cicd.bash --gate` + `utility/git-hooks/pre-push` (gates pushes to main/dev only; `--no-verify` or `SKIP_GATE=1` bypasses).
+	- ✅ Dev branch + release on main
+		- Adopt a dev branch as the integration target. Feature branches merge to dev; main becomes release-only.
+		- Merging dev to main cuts a release locally: tag the merge, run the packages stage, and optionally push the tag + attach artifacts to a GitHub Release as plain uploads (no Actions).
+		- Version source is `Cargo.toml` alone: the tag is read from it and the build stamps from it, so they can never disagree.
+		- Document the flow where branch conventions live, so day-to-day work knows the merge-back target changed.
+		- Done: `dev` branch created and pushed; flow documented in design.md "Delivery"; `cicd/utility/release.bash` cuts the tag from `Cargo.toml` and can push + attach artifacts via `gh` (packages stage folds in when it lands).
+	- ✅ Release packaging polish
+		- Keep the hand-rolled packages stage (it already covers .deb/.rpm/NSIS across four targets, which cargo-dist does not) - no new packaging tool.
+		- Add a sha256 checksums file next to the artifacts, and fold the release version into artifact names in one stable scheme, decided before the first tagged release so download links never have to change.
+		- Done: scheme is `<exe>-<version>-<os-arch>[.exe]` + `<exe>-<version>-sha256sums.txt`, collected into `cicd/artifacts/release/` after the release builds. The future packages stage inherits the same scheme.
+	- ✅ Pin toolchain and tool versions
+		- Add `rust-toolchain.toml` pinning the rustc/clippy toolchain - this also kills the standing 1.94-vs-1.96 clippy split for good.
+		- Pin the versions of cargo-installed helpers the pipeline probes for (cargo-deny, cargo-zigbuild, and any later additions) in one place cicd reads, so results stop drifting as the box updates.
+		- No dependabot (GitHub-hosted): dependency freshness is a periodic local `cargo update` pass, with cargo-deny advisories already flagging anything urgent in every run.
+		- Done: `rust-toolchain.toml` pins 1.96.0 + clippy/rustfmt + the three cross targets; helper pins live in `TOOL_PINS` in cicd/config.bash (non-gating drift warning).
+	- ✅ README badges
+		- Only the ones that carry signal without hosted CI: latest release tag, license, minimum Rust version. Static shields, one line at the top, matching the existing README style.
+		- No CI badge - there is no hosted workflow to point it at, and a self-reported badge is noise.
+		- Done: Release + minimum-Rust badges added to the existing badge block (license badge was already there). The release badge is static; release.bash refuses to tag until it matches Cargo.toml.
+
+- ✅ Settings dialog:
+	- ✅ Focus control:
+		- ✅ When an item is focused, there shouldn't be a focus box the same size for every row, around the entire group of controls. The focus box should only go around the control being focused.
+			- Done: the keyboard-focus ring now hugs just the focused control (checkbox / dropdown / text field / swatch+hex / whole radio group / slider) a couple px out, instead of spanning the row.
+			- ✅ For slider controls, that should go first to the slider, then the related text box.
+				- Done: a slider is now two Tab stops - the track first, then its numeric field - each ringed on its own.
+			- "Reset" remains a focus-less control (the per-row revert icon stays mouse-only, unchanged).
+	- ✅ Cursor scrim/outline:
+		- ✅ Rather than two lines, just one, like so:
+			Cursor    [ ] Scrim    [ ] Outline                [reset]
+			- Done: the two "Cursor in scrim / outline" toggle rows collapsed into one `Cursor` row with two labelled checkboxes (each its own focus stop; Scrim greys with the scrim off, Outline with no outline).
+		- ✅ The reset resets both of them (the row's revert icon reverts cursor_scrim + cursor_outline together).
 
 - ✅ Use dropdown list boxes for Scrim function, and Scrim falloff.
 	- Done: both are now dropdown list boxes (new `Dropdown` control in the Settings dialog) instead of radios - a collapsed box showing the current value + a down-arrow, opening a popup list on click / Space / Alt+Down. Keyboard: Up/Down move the highlight, Enter/Space pick, Esc closes, Left/Right nudge without opening. The popup draws in a second pass on top so covered rows can't bleed through it; it opens upward when it would spill past the panel bottom. The fuller labels the radios couldn't fit are back.
@@ -1073,7 +1073,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Verified: arrows highlight (separators skipped), Enter->New Tab opened a 2nd tab, Esc closed.
 	- ✅ When 'Alt' Pressed, keyboard accelerators should become visible on the menu (traditionally with underscores). - Open dropdowns underline each item's first letter and a letter-press activates the first item starting with it (verified: 'n' -> New Tab). Alt+F/E/V/T/P/H open the bar menus. And now the bar titles themselves underline their accelerator letter while Alt is held.
 		- ✅ Show the underline on the bar titles on Alt-hold (a redraw-on-Alt + char-measure pass). - Done (`app.rs` render): while `self.mods.alt_key()` and no dropdown is open, an underline rect is drawn under each top-level title's first letter (measured via `measure_text`, like the dropdown items); `ModifiersChanged` now sets `dirty` so it appears/disappears live on Alt press/release. Builds clean (cosmetic, to eyeball).
-	- Note: the cross-platform-windowing-widget question (the `[🚫]` note under "Setting dialog (part 2)") is now decided - chrome stays hand-rolled (egui declined after a real spike). So the bar-title Alt underline is just a normal hand-rolled task.
+	- Note: the cross-platform-windowing-widget question (the `🚫` note under "Setting dialog (part 2)") is now decided - chrome stays hand-rolled (egui declined after a real spike). So the bar-title Alt underline is just a normal hand-rolled task.
 
 - ✅ Change license from MIT to "GNU General Public License v2.0 or later", SPDX "GPL-2.0-or-later", reference https://spdx.org/licenses/GPL-2.0-or-later.html.
 	- Status: Done. `license.md` now holds the canonical, verbatim GPL-2.0 text from gnu.org, in a markdown fenced block. `Cargo.toml`, `license = "GPL-2.0-or-later"`. README badge -> GPL v2+ and the license blurb updated; every `.rs` file (src + examples, 18) carries an `// SPDX-License-Identifier: GPL-2.0-or-later` + copyright header. Builds + 19 tests pass. The only remaining "MIT" string is in the README's commented-out badge palette, left intact.
@@ -1171,8 +1171,8 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Linux ARM64: `cargo zigbuild --release --target aarch64-unknown-linux-gnu` (cargo-zigbuild + zig 0.13). Built clean; binary is ELF aarch64.
 	- ✅ Windows x86_64: `cargo build --release --target x86_64-pc-windows-gnu` (mingw). PE32+ x86-64.
 	- ✅ Windows ARM64: `cargo zigbuild --release --target aarch64-pc-windows-gnullvm`. Built clean; PE32+ ARM64.
-	- [🚫] macOS ARM64: Deferred. cross-compiling Linux->macOS needs Apple's SDK (osxcross), which is license-gated; do it on a Mac / in CI.
-	- [🚫] macOS x86_64: Deferred. (Same; Mac/CI.)
+	- 🚫 macOS ARM64: Deferred. cross-compiling Linux->macOS needs Apple's SDK (osxcross), which is license-gated; do it on a Mac / in CI.
+	- 🚫 macOS x86_64: Deferred. (Same; Mac/CI.)
 	- Toolchain setup + commands are in `build.md`; one-time: install zig + `cargo install cargo-zigbuild` + `rustup target add aarch64-unknown-linux-gnu aarch64-pc-windows-gnullvm`. No ARM64 system libs needed (X11/EGL dlopen'd at runtime).
 
 - ✅ True transparency:
@@ -1184,7 +1184,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ Make both the main menu, and the right-click menu appearances more traditional:
 	- ✅ Use the system proportional font, rather than monospace font. - New `text::sans_attrs()` (cosmic-text `Family::SansSerif` -> the system default proportional font); the menu bar titles, dropdowns, and the right-click menu all use it.
-	- [🚫] Use the system menu background and text color if reasonably feasible in a cross-platform way.
+	- 🚫 Use the system menu background and text color if reasonably feasible in a cross-platform way.
 		- Canceled. There's no clean cross-platform API (Windows has `GetSysColor(COLOR_MENU/COLOR_MENUTEXT)`, but Linux/GTK needs CSS-theme parsing and macOS needs `NSColor`/objc). Kept the existing tasteful dark menu palette.
 	- ✅ No indented items.
 		- Done: All labels start at a common x after a fixed checkmark gutter (`MENU_GUTTER`); a `✓` is drawn in the gutter for active toggles, so checkable and plain items align.
@@ -1204,7 +1204,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Done. Repo URL (from `CARGO_PKG_REPOSITORY`) drawn in the link color + underline; click within its rect runs `open_url` (xdg-open / open / start). Hit-rect verified; browser-launch not runtime-tested (would pop a browser).
 	- ✅ Separate modal window rather than an embedded widget.
 		- Done. About is now a real pop-out OS window sized to its content (`src/dialog.rs` `DialogWin::new_about`), via the new multi-window foundation (`App.dialog`, event-dispatch by `WindowId`, rendered in `about_to_wait`. Window creation signaled from `State` since it needs the event loop). Esc / window-close dismisses it. The repo link is clickable. The old in-surface overlay path is superseded; its dead code has now been removed (branch `rmoverlay`).
-	- [🚫] Use the system window background and text color if reasonably feasible in a cross-platform way.
+	- 🚫 Use the system window background and text color if reasonably feasible in a cross-platform way.
 		- Canceled. Same as the menus: no clean cross-platform API. Kept the dark palette.
 
 - ✅ Settings dialog:
@@ -1216,7 +1216,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Done. A single "Use system font" checkbox (Kind::Toggle): when on it clears `font_family` and adopts the detected size live, and Apply removes `font_family`/`font_size` from config (`config::remove_keys`) so launches follow the OS; dragging the Font size slider turns it back off (explicit).
 	- ✅ Make settings dialog a separate modal window rather than an embedded widget.
 		- Done. Settings is now a pop-out OS window (`DialogWin::new_settings`, `Content::Settings(SettingsDialog)`), content-sized (~540x800) and non-resizable, so the whole dialog is visible regardless of the main window size (the requirement). Full interaction in-window: sliders (drag/click), text/hex fields (type), color swatches, Cancel/Apply/OK + Esc. Apply/OK live-apply to the main window via `App::apply_dialog_settings` -> `State::apply_settings_values` (config persist + rebuild). Verified: slider->Apply persisted `opacity` to config; OK closes; main survives. (The old in-surface overlay paths have now been removed in a dedicated cleanup, branch `rmoverlay`: `open_about_overlay`/`open_settings_overlay`/`apply_settings`/`handle_dlg_action`, the `AboutBox`/`AboutLine` structs, the `about`/`settings_dlg` fields, and all their render/event branches; ~278 lines. The live pop-out path and menu overlay are untouched.)
-	- [🚫] Use the system window background and text color, if feasible in a cross-platform way.
+	- 🚫 Use the system window background and text color, if feasible in a cross-platform way.
 		- Canceled. No portable API; same as the menus/About.
 
 - ✅ Allow common menu accelerators (e.g. Alt+F for File menu).
@@ -1272,7 +1272,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Done. View -> "Menu bar" (✓) and the right-click menu both toggle `menu_bar` (`MenuAction::ToggleMenuBar`); hidden = content to the top edge, re-show from the right-click menu.
 	- ✅ Hide window frame (toggle with checkmark)
 		- Done. `window.set_decorations`; verified frame extents 39px->0. Also the route to content-only transparency (bug 1).
-	- [🚫] Hide scrollbar (toggle with checkmark)
+	- 🚫 Hide scrollbar (toggle with checkmark)
 		- Canceled. No scrollbar exists for smooth-scroll.
 	- ✅ Fullscreen (toggle with checkmark)
 		- Done. `window.set_fullscreen(Borderless)` + F11. Code path verified called; Compiz on this box doesn't honor the request (env, like the F11 grab), works on a compliant WM.
@@ -1377,6 +1377,9 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Canceled
 
+- 🚫 README screenshot refresh in cicd is off (`SHOTS_ENABLE=0` in `cicd/config.bash`; `--shots` re-enables per run). So the README grid images won't auto-update after visual changes
+	- Moot point.
+
 - 🚫 CTRL+right arrow should move to the beginning of the next word, not the end of the current. (CTRL+left arrow works as expected.)
 	- And delimit on spaces (only?).
 	- Closed: After research, not a terminal-side fix. Ctrl+Right already sends the standard `\x1b[1;5C`; whether the cursor lands on the end of the word or the start of the next is decided by the running line editor (bash/readline `forward-word` = word end; zsh = next word start), so the asymmetry with Ctrl+Left is inherent to readline, identical across terminals. Changing the emitted sequence would break the standard every app expects. Achievable per-user via a readline binding, or later via the deferred key-remap system.
@@ -1386,7 +1389,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Too fiddly. Possibly revisit in future. This lives in `cicd.bash`, which is pseudo-generic and could be made more so. Maybe it can shell out to a hyper-specific build script, or be updated to handle rust, go, and c++. Or more likely, it's just project-specifig, in spite of being originally [re]architected to call a settings script.
 
 - Setting dialog (part 2):
-	- [🚫] Adopt a cross-platform GUI / windowing widget toolkit (e.g. egui) for Settings, About, the main menu, and the context menu instead of hand-rolling them.
+	- 🚫 Adopt a cross-platform GUI / windowing widget toolkit (e.g. egui) for Settings, About, the main menu, and the context menu instead of hand-rolling them.
 		- **No**. Results of spike (branch `spike/egui-dialog`): The upside is that egui 0.35 rides our exact wgpu 29 + winit 0.30 (no downgrade, shares our graphics stack) and integrated easily.
 		- Drawbacks to egui: it adds ~32% to the release binary for what is secondary chrome, against the minimal-binary-size priority. Hand-rolling also keeps one unified colour/theme + native-OS-font system across the terminal and the chrome. egui would need a separate egui-`Visuals` theme kept in sync, plus its own bundled fonts).
 		- Decision: Chrome stays hand-rolled.
@@ -1398,13 +1401,13 @@ In each section, items are listed approximately from newest to oldest.
 	- Backed out (20260630): overwrite mode + the Insert-key toggle removed (a terminal can't force the shell's line editor to overwrite). Kept the cursor work - configurable shape, blink, smooth slide. Insert key now just passes through to the shell.
 	- Resolution: This can't be done without wonky hacks.
 
-- [🚫] Terse `--layout` DSL as optional sugar over the window/tab/pane CLI model (not a replacement). One compact string for quick splits; lowers to the exact same internal layout the hierarchical flags produce, so it inherits per-pane targeting "for free."
+- 🚫 Terse `--layout` DSL as optional sugar over the window/tab/pane CLI model (not a replacement). One compact string for quick splits; lowers to the exact same internal layout the hierarchical flags produce, so it inherits per-pane targeting "for free."
 	- Operators (mnemonic = the divider they draw): `|` side-by-side (vertical divider), `-` stacked (horizontal divider); `(...)` to nest (a group is uniform - mix directions by nesting); `;` separates tabs; `.` = one default pane.
 	- Leaf = `.` (default shell) | command-alias name (from a `[commands]` config table, keeps the string quote-free) | `{raw command}` (opaque span so an inner `|` pipe isn't parsed as a split; `\}` escapes a brace). Optional fixed-order suffixes: `@dir` (cwd), `:weight` (size), `!` (keep-open).
 	- Example: `silkterm --layout '(.|.)-. ; nvim|{git log} ; btop'` -> tab1: two-on-top/one-below; tab2: nvim beside a git-log pane; tab3: btop. Same string is accepted in `layout = "..."` in the config.
 	- Trade-off vs the flags: far terser for hand-typed/quick layouts, but less self-documenting; the flags stay the canonical form (and what "Save layout" emits). DSL is purely a convenience front-end.
 
-- [🚫] In `nano`, scrolling isn't smooth, it jumps line-by-line like traditional terminals. Is that just an artifact of the way `nano` specifically works?
+- 🚫 In `nano`, scrolling isn't smooth, it jumps line-by-line like traditional terminals. Is that just an artifact of the way `nano` specifically works?
 	- Observation: `nano` (like `vim`, `less`, etc.) runs in the alternate screen and repaints the visible region in place; it keeps fixed chrome (title bar, shortcut bar) and rewrites the text rows itself. There is no terminal-level scroll (`display_offset` stays 0, no scrollback growth) for the renderer to ease, so the content snaps. The wheel now at least drives nano's own (line-by-line) scrolling via alternate-scroll. Making full-screen apps scroll smoothly would require the terminal to detect a vertical content shift within the app's scroll region frame-to-frame and animate it - a heuristic, app-fragile feature (nano's fixed bars break a naive whole-grid diff). Left as a future enhancement rather than a fragile hack.
 
 ## Application name ideas

@@ -309,11 +309,20 @@ fn read_doc(path: &std::path::Path) -> Option<toml_edit::DocumentMut> {
 
 // Write the values that differ from `orig` back into config.toml in place,
 // preserving the user's comments and layout (toml_edit). Untouched settings keep
-// whatever they were (commented / following the system).
-pub fn persist(orig: &Settings, s: &Settings) {
-	let Some(path) = config_path() else { return };
+// whatever they were (commented / following the system). Returns false (writing
+// nothing) if the file looks open in another program, so the caller can hold off
+// - e.g. the Settings dialog stays open instead of clobbering an in-flight edit.
+#[must_use]
+pub fn persist(orig: &Settings, s: &Settings) -> bool {
+	let Some(path) = config_path() else {
+		return true;
+	};
+	if config_open_elsewhere(&path) {
+		note_config_busy(&path);
+		return false;
+	}
 	let Some(mut doc) = read_doc(&path) else {
-		return;
+		return true;
 	};
 	use toml_edit::value;
 	// round f32 -> a clean decimal so persisted floats aren't 0.2000000029...
@@ -460,6 +469,7 @@ pub fn persist(orig: &Settings, s: &Settings) {
 	if let Err(e) = std::fs::write(&path, doc.to_string()) {
 		eprintln!("{APP_NAME}: could not save config {}: {e}", path.display());
 	}
+	true
 }
 
 pub fn format_hex(c: [u8; 3]) -> String {
@@ -575,10 +585,13 @@ fn load() -> Settings {
 	}
 	// Migrate an older config in place (rename/remove changed keys) then backfill
 	// any keys it's missing, so an updated config stays current without clobbering
-	// the user's existing values.
+	// the user's existing values. These are the only launch-time writes, and each
+	// runs only when the program's own option set changed (a rename/removal, or a
+	// new option). We deliberately do NOT reorder or refresh comments: the file's
+	// layout and any comments the user added are theirs to keep. Both writes defer
+	// (with an FYI) if the file looks open in another program.
 	migrate_config(&path);
 	backfill_config(&path);
-	reorder_config(&path);
 	let raw: RawConfig = match std::fs::read_to_string(&path) {
 		Ok(text) => parse_lenient(&text, &path),
 		Err(_) => RawConfig::default(),
@@ -939,6 +952,10 @@ fn migrate_config(path: &std::path::Path) {
 		return;
 	};
 	if let Some(out) = migrate_config_text(&text) {
+		if config_open_elsewhere(path) {
+			note_config_busy(path);
+			return;
+		}
 		if let Err(e) = std::fs::write(path, out) {
 			eprintln!(
 				"{APP_NAME}: could not migrate config {}: {e}",
@@ -946,6 +963,55 @@ fn migrate_config(path: &std::path::Path) {
 			);
 		}
 	}
+}
+
+// Best-effort check that some OTHER process has the config file open right now
+// (e.g. the user is editing it). Linux only, via /proc/<pid>/fd; elsewhere we
+// assume it's free. It only catches editors that hold the descriptor open, so a
+// false "not busy" is possible - fine, because the writes we gate on it only add
+// program-driven options and never touch the user's own values or comments.
+#[cfg(target_os = "linux")]
+fn config_open_elsewhere(path: &std::path::Path) -> bool {
+	let Ok(target) = path.canonicalize() else {
+		return false;
+	};
+	let me = std::process::id();
+	let Ok(procs) = std::fs::read_dir("/proc") else {
+		return false;
+	};
+	for proc in procs.flatten() {
+		let Some(pid) = proc
+			.file_name()
+			.to_str()
+			.and_then(|s| s.parse::<u32>().ok())
+		else {
+			continue;
+		};
+		if pid == me {
+			continue;
+		}
+		let Ok(fds) = std::fs::read_dir(proc.path().join("fd")) else {
+			continue; // not ours to read / gone - skip
+		};
+		for fd in fds.flatten() {
+			if std::fs::read_link(fd.path()).is_ok_and(|link| link == target) {
+				return true;
+			}
+		}
+	}
+	false
+}
+
+#[cfg(not(target_os = "linux"))]
+fn config_open_elsewhere(_path: &std::path::Path) -> bool {
+	false
+}
+
+fn note_config_busy(path: &std::path::Path) {
+	eprintln!(
+		"{APP_NAME}: {} looks open in another program; leaving it as-is for now.",
+		path.display()
+	);
 }
 
 // The rename/remove transform, as a pure fn (testable). Returns Some(new text)
@@ -1017,6 +1083,10 @@ pub fn revert_keys(keys: &[&str]) {
 		return;
 	}
 	let Some(path) = config_path() else { return };
+	if config_open_elsewhere(&path) {
+		note_config_busy(&path);
+		return;
+	}
 	let Some(mut doc) = read_doc(&path) else {
 		return;
 	};
@@ -1119,6 +1189,10 @@ fn backfill_config(path: &std::path::Path) {
 	let mut out = lines.join("\n");
 	out.push('\n');
 	if out != text {
+		if config_open_elsewhere(path) {
+			note_config_busy(path);
+			return;
+		}
 		if let Err(e) = std::fs::write(path, out) {
 			eprintln!(
 				"{APP_NAME}: could not update config {}: {e}",
@@ -1126,188 +1200,6 @@ fn backfill_config(path: &std::path::Path) {
 			);
 		}
 	}
-}
-
-// Rewrite an existing config into the template's canonical section order, in
-// place, when it has drifted (e.g. after an update reorders/regroups keys or the
-// user's file predates the current layout). Pure transform in
-// `reorder_config_text`; this just does the IO. Runs after migrate + backfill so
-// every current key is present before it normalizes their order.
-fn reorder_config(path: &std::path::Path) {
-	let Ok(text) = std::fs::read_to_string(path) else {
-		return;
-	};
-	if let Some(out) = reorder_config_text(&text) {
-		if let Err(e) = std::fs::write(path, out) {
-			eprintln!(
-				"{APP_NAME}: could not reorder config {}: {e}",
-				path.display()
-			);
-		}
-	}
-}
-
-// Header shown above unknown (non-template) top-level keys we carry through, so
-// nothing the user added is lost when we regenerate the template's layout.
-const REORDER_EXTRA_HEADER: &str = "## Settings not in the current template (kept as-is).";
-
-// Reorder + regroup an existing config to match `DEFAULT_CONFIG`'s section order,
-// preserving each setting's VALUE and enabled/commented state while refreshing the
-// surrounding explanatory comments and section headers from the template. Keys the
-// template doesn't define, and any user-added tables (e.g. `[themes.*]`), are kept
-// verbatim so nothing is dropped. Pure + idempotent: returns Some only when the
-// result differs from the input (so a canonical file is never rewritten).
-fn reorder_config_text(text: &str) -> Option<String> {
-	use std::collections::HashMap;
-	use std::collections::HashSet;
-
-	let known: HashSet<(Option<String>, String)> = setting_lines(DEFAULT_CONFIG)
-		.into_iter()
-		.map(|(table, key, _)| (table, key))
-		.collect();
-	let is_active = |line: &str| !line.trim_start().starts_with('#');
-	// store the user's line for a known key, preferring an active line over a
-	// commented duplicate (an odd but possible hand-edit).
-	let keep = |map: &mut HashMap<String, String>, key: &str, line: &str| match map.get(key) {
-		Some(existing) if is_active(existing) => {}
-		_ => {
-			map.insert(key.to_string(), line.to_string());
-		}
-	};
-
-	let lines: Vec<&str> = text.lines().collect();
-	let first_table = lines.iter().position(|line| line_table(line).is_some());
-	let (top_lines, table_lines) = match first_table {
-		Some(i) => (&lines[..i], &lines[i..]),
-		None => (&lines[..], &lines[lines.len()..]),
-	};
-
-	// --- top-level region: known keys -> map, unknown keys (+their comment block) kept ---
-	let mut user_top: HashMap<String, String> = HashMap::new();
-	let mut extra_top: Vec<String> = Vec::new();
-	let mut pending: Vec<String> = Vec::new();
-	for &line in top_lines {
-		if let Some(key) = line_setting_key(line) {
-			if known.contains(&(None, key.to_string())) {
-				keep(&mut user_top, key, line);
-			} else {
-				extra_top.append(&mut pending);
-				extra_top.push(line.to_string());
-			}
-			pending.clear();
-		} else if line.trim().is_empty() {
-			pending.clear();
-		} else if line.trim_start().starts_with('#') {
-			pending.push(line.to_string());
-		} else {
-			pending.clear();
-		}
-	}
-
-	// --- table region: split into blocks, each header carrying its preceding
-	// comment block. The first [colors] block feeds the color map; every other
-	// table (and any extra [colors]) is preserved verbatim.
-	let mut blocks: Vec<Vec<String>> = Vec::new();
-	let mut pending_block: Vec<String> = Vec::new();
-	for &line in table_lines {
-		if line_table(line).is_some() {
-			let mut block: Vec<String> = std::mem::take(&mut pending_block);
-			block.push(line.to_string());
-			blocks.push(block);
-		} else if line.trim().is_empty() {
-			if let Some(last_block) = blocks.last_mut() {
-				last_block.append(&mut pending_block);
-				last_block.push(line.to_string());
-			} else {
-				pending_block.clear();
-			}
-		} else if line.trim_start().starts_with('#') {
-			pending_block.push(line.to_string());
-		} else if let Some(last_block) = blocks.last_mut() {
-			last_block.append(&mut pending_block);
-			last_block.push(line.to_string());
-		} else {
-			pending_block.clear();
-		}
-	}
-	if let Some(last_block) = blocks.last_mut() {
-		last_block.append(&mut pending_block);
-	}
-
-	let mut user_colors: HashMap<String, String> = HashMap::new();
-	let mut extra_colors: Vec<String> = Vec::new();
-	let mut extra_tables: Vec<String> = Vec::new();
-	let mut took_colors = false;
-	for block in blocks {
-		let header_idx = block
-			.iter()
-			.position(|line| line_table(line).is_some())
-			.unwrap();
-		let name = line_table(&block[header_idx]).unwrap().to_string();
-		if name == "colors" && !took_colors {
-			took_colors = true;
-			for line in &block[header_idx + 1..] {
-				if let Some(key) = line_setting_key(line) {
-					if known.contains(&(Some("colors".to_string()), key.to_string())) {
-						keep(&mut user_colors, key, line);
-					} else {
-						extra_colors.push(line.clone());
-					}
-				}
-			}
-		} else {
-			extra_tables.extend(block);
-		}
-	}
-
-	// --- render: walk the template, substitute the user's line for each key it
-	// set, and splice the preserved extras in TOML-valid positions (unknown
-	// top-level keys before [colors]; extra color keys under it; extra tables last).
-	let template_lines: Vec<&str> = DEFAULT_CONFIG.lines().collect();
-	let colors_idx = template_lines
-		.iter()
-		.position(|line| line_table(line) == Some("colors"))
-		.unwrap();
-	let mut intro = colors_idx; // first line of the [colors] intro comment block
-	while intro > 0 && template_lines[intro - 1].trim_start().starts_with('#') {
-		intro -= 1;
-	}
-
-	let mut out: Vec<String> = Vec::new();
-	let mut table: Option<String> = None;
-	for (i, line) in template_lines.iter().enumerate() {
-		if i == intro && !extra_top.is_empty() {
-			if !out.last().is_none_or(String::is_empty) {
-				out.push(String::new());
-			}
-			out.push(REORDER_EXTRA_HEADER.to_string());
-			out.push(String::new());
-			out.extend(extra_top.iter().cloned());
-			out.push(String::new());
-		}
-		if let Some(name) = line_table(line) {
-			table = Some(name.to_string());
-			out.push(line.to_string());
-		} else if let Some(key) = line_setting_key(line) {
-			let replacement = match table.as_deref() {
-				None => user_top.get(key),
-				Some("colors") => user_colors.get(key),
-				_ => None,
-			};
-			out.push(replacement.cloned().unwrap_or_else(|| line.to_string()));
-		} else {
-			out.push(line.to_string());
-		}
-	}
-	out.extend(extra_colors); // still inside [colors], the template's last table
-	if !extra_tables.is_empty() {
-		out.push(String::new());
-		out.extend(extra_tables);
-	}
-
-	let mut joined = out.join("\n");
-	joined.push('\n');
-	(joined != text).then_some(joined)
 }
 
 // Set by `--config PATH` before any settings are read; overrides the default
@@ -1332,8 +1224,9 @@ fn config_path() -> Option<PathBuf> {
 const DEFAULT_CONFIG: &str = r##"## SilkTerm configuration. Delete this file to regenerate defaults.
 ## Convention: '## ' starts an explanatory comment; a single '# ' before a
 ## `key = value` is a commented-out (disabled) setting you can uncomment.
-## Sections and key order below are refreshed automatically on launch; your
-## values and which settings are enabled are kept.
+## This file is yours to edit: your values, comments, and layout are left alone.
+## On launch SilkTerm only adds options new to this version (and renames/removes
+## ones that changed) - and even that is skipped if the file looks open elsewhere.
 
 ##=============================================================================
 ## Font
@@ -1532,7 +1425,7 @@ mod tests {
 	fn persist_survives_bare_decimal_float() {
 		// Memoize settings() BEFORE installing the override: a test on another
 		// thread initializing settings() after the override would load() - an
-		// in-place migrate/reorder REWRITE of our temp file - racing our own
+		// in-place migrate/backfill REWRITE of our temp file - racing our own
 		// read below (parallel-suite flake: truncated read -> defaults).
 		let _ = settings();
 		let dir = std::env::temp_dir().join(format!("silkterm_cfgsave_{}", std::process::id()));
@@ -1545,7 +1438,10 @@ mod tests {
 		assert_eq!(orig.text_scrim_ramp, "s");
 		let mut edited = orig.clone();
 		edited.text_scrim_ramp = "log".to_string();
-		persist(&orig, &edited);
+		assert!(
+			persist(&orig, &edited),
+			"persist should write to our temp file"
+		);
 
 		assert_eq!(
 			load().text_scrim_ramp,
@@ -1558,6 +1454,39 @@ mod tests {
 			saved.contains("0.1"),
 			"bare float should be normalized: {saved:?}"
 		);
+	}
+
+	// The /proc-based busy check: a child process holding the file open is seen as
+	// busy; once it exits the file reads as free again. Linux only (the check is a
+	// no-op elsewhere).
+	#[cfg(target_os = "linux")]
+	#[test]
+	fn config_open_elsewhere_sees_a_holder() {
+		let path = std::env::temp_dir().join(format!("silkterm_busy_{}.toml", std::process::id()));
+		std::fs::write(&path, "margin = 8.0\n").unwrap();
+		assert!(!config_open_elsewhere(&path), "nobody holds it yet");
+
+		// A child with the file as its stdin holds the descriptor open until it exits.
+		let hold = std::fs::File::open(&path).unwrap();
+		let mut child = std::process::Command::new("sleep")
+			.arg("30")
+			.stdin(std::process::Stdio::from(hold))
+			.spawn()
+			.unwrap();
+
+		// give the child a moment to exist in /proc, then confirm we see it
+		let mut seen = false;
+		for _ in 0..50 {
+			if config_open_elsewhere(&path) {
+				seen = true;
+				break;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(20));
+		}
+		let _ = child.kill();
+		let _ = child.wait();
+		let _ = std::fs::remove_file(&path);
+		assert!(seen, "a process holding the file open should read as busy");
 	}
 
 	#[test]
@@ -1761,105 +1690,16 @@ mod tests {
 		);
 	}
 
-	// A freshly-written template is already canonical: no rewrite on launch.
+	// The real on-disk load pipeline (migrate -> backfill) on a drifted pre-update
+	// config: obsolete keys dropped, renamed keys carried, user values, comments,
+	// and a custom table preserved, missing keys added, and the chain stable. The
+	// user's own layout/comments are NOT normalized away (that was the old reorder
+	// pass; removed so a hand-edited file isn't rewritten behind the user's back).
 	#[test]
-	fn reorder_noop_on_template() {
-		assert!(
-			reorder_config_text(DEFAULT_CONFIG).is_none(),
-			"template must be its own fixed point"
-		);
-	}
-
-	// Out-of-order keys are moved to template order; the [colors] table stays last.
-	#[test]
-	fn reorder_sorts_to_template_order() {
-		let text = "scrollback = 5000\nmargin = 4.0\nuse_system_font = false\n";
-		let out = reorder_config_text(text).expect("should reorder");
-		let font = out.find("use_system_font").unwrap();
-		let margin = out.find("margin =").unwrap();
-		let scroll = out.find("scrollback =").unwrap();
-		let colors = out.find("[colors]").unwrap();
-		assert!(font < margin && margin < scroll, "template order: {out}");
-		assert!(scroll < colors, "colors table stays last");
-	}
-
-	// Values and enabled/commented state survive the rewrite.
-	#[test]
-	fn reorder_preserves_value_and_state() {
-		let text = "margin = 12.5\n# opacity = 0.5\nfont_size = 20.0\n";
-		let out = reorder_config_text(text).expect("should reorder");
-		assert!(out.contains("margin = 12.5"), "active value kept: {out}");
-		assert!(out.contains("# opacity = 0.5"), "commented state kept");
-		assert!(
-			out.contains("font_size = 20.0"),
-			"activated key kept active"
-		);
-		// a color override is placed under [colors]
-		let with_color = reorder_config_text("[colors]\nbackground = \"#123456\"\n").unwrap();
-		let ci = with_color.find("[colors]").unwrap();
-		let bg = with_color.find("background = \"#123456\"").unwrap();
-		assert!(bg > ci, "color override under the table: {with_color}");
-	}
-
-	// User-added tables (e.g. a [themes.*] table) are carried through verbatim.
-	#[test]
-	fn reorder_preserves_unknown_table() {
-		let text = "margin = 8.0\n\n[themes.mine.dark]\nbackground = \"#010203\"\nforeground = \"#eeeeee\"\n";
-		let out = reorder_config_text(text).expect("should reorder");
-		assert!(
-			out.contains("[themes.mine.dark]"),
-			"kept table header: {out}"
-		);
-		assert!(out.contains("background = \"#010203\""), "kept table body");
-		// and it lands after the managed [colors] table
-		assert!(
-			out.find("[themes.mine.dark]").unwrap() > out.find("[colors]").unwrap(),
-			"extra table placed last"
-		);
-	}
-
-	// An unknown top-level key is preserved under an "extras" header before [colors].
-	#[test]
-	fn reorder_preserves_unknown_top_key() {
-		let out = reorder_config_text("mystery_key = 7\nmargin = 8.0\n").expect("should reorder");
-		assert!(out.contains("mystery_key = 7"), "unknown key kept: {out}");
-		assert!(out.contains(REORDER_EXTRA_HEADER), "extras header present");
-		assert!(
-			out.find("mystery_key").unwrap() < out.find("[colors]").unwrap(),
-			"unknown top key stays a top-level key (before [colors])"
-		);
-	}
-
-	// The rewrite is a fixed point: reordering its own output changes nothing.
-	#[test]
-	fn reorder_is_idempotent() {
-		let text = "scrollback = 5000\n# opacity = 0.5\nmystery_key = 7\n\n[themes.x]\nk = 1\n[colors]\nfocus = \"#abcdef\"\n";
-		let once = reorder_config_text(text).expect("first pass changes");
-		assert!(
-			reorder_config_text(&once).is_none(),
-			"second pass must be a no-op:\n{once}"
-		);
-	}
-
-	// A key the file lacks comes back as the template's default line (backfill via
-	// the template), so reorder alone leaves a current, complete file.
-	#[test]
-	fn reorder_fills_missing_from_template() {
-		let out = reorder_config_text("margin = 8.0\n").expect("should change");
-		assert!(
-			out.contains("use_system_font = true"),
-			"template default added"
-		);
-		assert!(out.contains("[colors]"), "colors section present");
-	}
-
-	// The real on-disk load pipeline (migrate -> backfill -> reorder) on a drifted
-	// pre-update config: obsolete keys dropped, renamed keys carried, user values
-	// and a custom table preserved, layout normalized, and the whole chain stable.
-	#[test]
-	fn pipeline_migrate_backfill_reorder_on_disk() {
-		let path = std::env::temp_dir().join("silkterm_pipeline_reorder_test.toml");
-		let drifted = "scrollback = 5000\n\
+	fn pipeline_migrate_backfill_on_disk() {
+		let path = std::env::temp_dir().join("silkterm_pipeline_migbf_test.toml");
+		let drifted = "## my own note\n\
+			scrollback = 5000\n\
 			cursor_size_vertical = 40\n\
 			cursor_shape = \"block\"\n\
 			margin = 12.0\n\
@@ -1873,7 +1713,6 @@ mod tests {
 		std::fs::write(&path, drifted).unwrap();
 		migrate_config(&path);
 		backfill_config(&path);
-		reorder_config(&path);
 		let out = std::fs::read_to_string(&path).unwrap();
 
 		assert!(
@@ -1891,26 +1730,20 @@ mod tests {
 		assert!(out.contains("scrollback = 5000"), "scrollback value kept");
 		assert!(out.contains("focus = \"#abcdef\""), "color override kept");
 		assert!(out.contains("[themes.mine.dark]"), "custom table kept");
+		assert!(out.contains("## my own note"), "user comment kept");
 		assert!(
 			out.contains("use_system_font = true"),
 			"missing key backfilled"
 		);
-		// canonical order: font section before window before scrolling before colors
-		let (fam, marg, scr, col) = (
-			out.find("use_system_font").unwrap(),
-			out.find("margin =").unwrap(),
-			out.find("scrollback =").unwrap(),
-			out.find("[colors]").unwrap(),
-		);
+		// the user's leading comment + first key stay put (no reorder)
 		assert!(
-			fam < marg && marg < scr && scr < col,
-			"normalized order:\n{out}"
+			out.find("## my own note").unwrap() < out.find("scrollback = 5000").unwrap(),
+			"user layout preserved:\n{out}"
 		);
 
-		// stable: a second full pipeline pass changes nothing.
+		// stable: a second pass changes nothing.
 		migrate_config(&path);
 		backfill_config(&path);
-		reorder_config(&path);
 		assert_eq!(
 			out,
 			std::fs::read_to_string(&path).unwrap(),
