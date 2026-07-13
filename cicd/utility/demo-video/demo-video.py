@@ -2,18 +2,19 @@
 
 ##	Purpose:
 ##		Record the SilkTerm demo video and README gif: drives a real SilkTerm on a
-##		private Xvfb (never :0), types at a realistic pace (variable wpm, occasional
-##		fixed typos), captures with ffmpeg, lays down keyboard/mouse foley synced to
-##		the actual input timestamps, overlays per-segment narration, frames the
-##		window with a thin border, and encodes the deliverables. Two independent
-##		recordings, each maxing out its format:
-##		  video: 1920x1080@60, h265, font 1.5x the defined size, with audio
+##		private Xvfb (never :0) inside a decorated window, types at a realistic pace
+##		(variable wpm, occasional fixed typos), captures at a high frame rate and
+##		motion-blur-downsamples to the delivery rate (so scrolling reads smooth no
+##		matter how the app's own render cadence lands), lays down keyboard/mouse
+##		foley synced to the actual input timestamps, overlays per-segment narration,
+##		and encodes the deliverables. Two independent recordings, each maxing out
+##		its format:
+##		  video: 1920x1080@60 h265, font 1.5x the defined size, with audio
 ##		  gif:   960x540@50 native, defined font size, optimized palette, silent
 ##		The see-through-terminal look is produced with the app's own background
-##		pipeline: a generated dark-desktop image (code editor + file manager) is
-##		swapped in as background_image at the moment OK lands in the Settings scene
-##		(config rewrite + control-socket reload), standing in for the desktop
-##		compositor, whose blur is approximated by background_blur.
+##		pipeline: a generated DIM dark-mode desktop (vague code editor + file
+##		manager over the wallpaper) is fed as background_image at low opacity + a
+##		blur, standing in for what a compositor would show through the glass.
 ##	Syntax:
 ##		demo-video.py [--profile video,gif] [--segments a,b,...] [--seed N]
 ##		              [--keep-work] [--no-rotate] [--display :98] [--out-dir DIR]
@@ -32,6 +33,7 @@
 
 import argparse
 import getpass
+import math
 import os
 import random
 import re
@@ -46,6 +48,7 @@ import wave
 from pathlib import Path
 
 import numpy as np
+from scipy import signal as spsig
 
 ME_DIR   = Path(__file__).resolve().parent
 REPO     = ME_DIR.parents[2]                  # github/cicd/utility/demo-video -> github
@@ -56,25 +59,27 @@ BACKGNDS = REPO / "filesystem/home/.config/silkterm/backgrounds"
 SR         = 48000                            # audio mix rate
 BANNER_TTF = "/usr/share/fonts/truetype/lato/Lato-Semibold.ttf"
 LEAD_S     = 0.8                              # quiet lead-in kept before the first segment
-FOLEY_LAG  = 0.03                             # foley sits this far after the key event: the
-                                              # app paints the glyph a frame or two later, and
-                                              # sound-matching-picture reads tighter than
-                                              # sound-matching-keypress
-FADE_S     = 1.1                              # end-of-video fade to black
+FOLEY_LAG  = 0.03                             # foley sits this far after the key event (the app
+                                              # paints the glyph a frame or two later; sound-to-
+                                              # picture reads tighter than sound-to-keypress)
+FADE_S     = 1.1                              # end fade duration
 
-# One recording per profile; each maxes out its format's frame rate.
+# One recording per profile. cap_fps is captured, then motion-blur-averaged down
+# to out_fps (tmix): 1080p sustains ~180, 540p ~300 here even under a scroll
+# flood, and both divide their delivery rate evenly. The averaging is what kills
+# the app-cadence-vs-grab-rate judder a straight same-rate grab shows.
 PROFILES = {
 	"video": dict(
-		size=(1920, 1080), fps=60, mono_pt=19.5, ui_pt=11,  # 19.5pt = 1.5x the defined 13pt
-		banner_fs=38, banner_pad=18, border=3, audio=True,
-		bg="background41.jpg", bg_opacity=0.10, blur=10.0,
-		transparent=False, opacity=0.95, banner_min=4.0,
+		size=(1920, 1080), cap_fps=180, out_fps=60, mono_pt=19.5, ui_pt=11,
+		banner_fs=38, banner_pad=18, audio=True, banner_min=4.0,
+		transparent=True, opacity=0.75,          # starts see-through
+		bg="desktop.png", bg_opacity=0.22, blur=10.0,
 	),
 	"gif": dict(
-		size=(960, 540), fps=50, mono_pt=13, ui_pt=10,      # the defined size, native 540p
-		banner_fs=24, banner_pad=12, border=2, audio=False,
-		bg="desktop.png", bg_opacity=0.75, blur=5.0,        # starts see-through over the desktop
-		transparent=True, opacity=0.75, banner_min=3.0,
+		size=(960, 540), cap_fps=300, out_fps=50, mono_pt=13, ui_pt=10,
+		banner_fs=24, banner_pad=12, audio=False, banner_min=3.0,
+		transparent=False, opacity=0.75,         # starts opaque
+		bg="background41.jpg", bg_opacity=0.10, blur=10.0,
 	),
 }
 
@@ -95,7 +100,8 @@ class Rec:
 	def __init__(self, args, profile):
 		self.p        = profile
 		self.size     = profile["size"]
-		self.fps      = profile["fps"]
+		self.cap_fps  = profile["cap_fps"]
+		self.out_fps  = profile["out_fps"]
 		self.display  = args.display
 		self.num      = self.display.lstrip(":")
 		self.auth     = f"/tmp/cicd-gui-headless-{os.environ['USER']}/Xauthority-{self.num}"
@@ -109,6 +115,7 @@ class Rec:
 		self.ff       = None
 		self.flash_e  = 0.0     # wall-clock epoch of the white sync flash
 		self.t0_e     = 0.0     # wall-clock epoch where trimmed content starts
+		self.seg_marks = {}     # segment name -> wall-clock epoch it started
 
 	def env(self):
 		e = dict(os.environ)
@@ -120,9 +127,9 @@ class Rec:
 			stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 	def start_display(self):
-		# each profile records at its own resolution, so cycle the display; the
-		# WM is ours (not gui-headless --wm): a dbus session lets xfconf pick a
-		# quiet dark titlebar instead of xfwm4's built-in green
+		# each profile records at its own resolution, so cycle the display; the WM
+		# is ours (not gui-headless --wm) so xfconf can pick a quiet dark titlebar
+		# theme - the window's real decoration is what frames the shot
 		gh = str(REPO / "cicd/utility/gui-headless.bash")
 		e = dict(os.environ, CICD_HEADLESS_DISPLAY=self.display,
 			CICD_HEADLESS_SIZE=f"{self.size[0]}x{self.size[1]}x24")
@@ -131,10 +138,11 @@ class Rec:
 		self.wm = subprocess.Popen(["dbus-run-session", "--", "sh", "-c",
 			'xfconf-query -c xfwm4 -p /general/theme --create -t string -s "Arctodon-Dark"; '
 			'xfconf-query -c xfwm4 -p /general/title_font --create -t string -s "Lato Bold 10"; '
+			'xfconf-query -c xfwm4 -p /general/button_layout --create -t string -s "O|HMC"; '
 			"exec xfwm4 --compositor=off --vblank=off"],
 			env=self.env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 		time.sleep(2.0)
-		subprocess.run(["xsetroot", "-solid", "black"], env=self.env(), check=False)
+		subprocess.run(["xsetroot", "-solid", "#0a0c10"], env=self.env(), check=False)
 
 	def stop_display(self):
 		if getattr(self, "wm", None):
@@ -153,10 +161,10 @@ class Rec:
 		self.ff = subprocess.Popen([
 			"ffmpeg", "-hide_banner", "-loglevel", "error",
 			"-progress", str(self.work / "ffprogress.txt"),
-			"-f", "x11grab", "-framerate", str(self.fps),
+			"-f", "x11grab", "-framerate", str(self.cap_fps),
 			"-video_size", f"{self.size[0]}x{self.size[1]}", "-i", self.display,
-			"-c:v", "libx264", "-preset", "ultrafast", "-crf", "15",
-			"-pix_fmt", "yuv420p", str(self.raw)],
+			"-c:v", "libx264", "-preset", "ultrafast", "-qp", "0",
+			"-pix_fmt", "yuv444p", str(self.raw)],
 			env=self.env(), stdin=subprocess.DEVNULL,
 			stderr=open(self.work / "ffmpeg.log", "w"))
 		# flash only once frames are actually flowing - a slow-opening ffmpeg
@@ -173,37 +181,39 @@ class Rec:
 		subprocess.run(["xsetroot", "-solid", "white"], env=self.env(), check=False)
 		self.flash_e = time.time()
 		time.sleep(0.25)
-		subprocess.run(["xsetroot", "-solid", "black"], env=self.env(), check=False)
+		subprocess.run(["xsetroot", "-solid", "#0a0c10"], env=self.env(), check=False)
 		time.sleep(0.4)
 
 	def stop_capture(self):
 		if self.ff:
 			self.ff.send_signal(signal.SIGINT)
 			try:
-				self.ff.wait(timeout=15)
+				self.ff.wait(timeout=30)
 			except subprocess.TimeoutExpired:
 				self.ff.kill()
 			self.ff = None
 
-	def launch_app(self, shell_cmd, cwd=None):
+	def launch_app(self, shell_cmd):
 		e = self.env()
-		# --norc/--noprofile below skips even Debian's /etc/bash.bashrc (a --rcfile
-		# shell still reads it, and this box's spews real paths); the prompt comes
-		# in via the environment instead. Gray prompt, rose user, sand host.
-		# XDG_CONFIG_HOME lands on the fake home: the app finds config.toml there
-		# AND gsettings reads the compiled dconf db (recording fonts), AND the
-		# typed `nano ~/.config/silkterm/config.toml` edits the live config.
+		# --norc/--noprofile skips even Debian's /etc/bash.bashrc (a --rcfile shell
+		# still reads it, and this box's spews real paths); the prompt comes in via
+		# the environment. Gray prompt, rose user, sand host.
 		e.update(SHELL="/bin/dash", HOME=str(self.home),
 			XDG_CONFIG_HOME=str(self.home / ".config"),
 			PATH=f"{self.home}/bin:{os.environ['PATH']}",
 			PS1="\\[\\e[38;2;224;144;158m\\]juno\\[\\e[38;2;150;156;162m\\]@"
 				"\\[\\e[38;2;222;178;134m\\]vela\\[\\e[38;2;150;156;162m\\]:\\w\\$ \\[\\e[0m\\]",
 			HISTFILE="/dev/null")
+		# a decorated (non-fullscreen) window: xfwm4 draws the full frame + the
+		# titlebar with buttons, which is the "fake decoration" the shot wants.
+		# Sized to leave a small dark margin so it reads as a floating window.
+		W, H = self.size
+		mx, my = int(W * 0.03), int(H * 0.05)
 		self.app = subprocess.Popen(
-			[self.bin, "--fullscreen", "--shell", shell_cmd],
-			env=e, cwd=cwd or str(self.home),
+			[self.bin, "--config", str(self.home / ".config/silkterm/config.toml"),
+				"--shell", shell_cmd],
+			env=e, cwd=str(self.home),
 			stdout=open(self.work / "silk.log", "w"), stderr=subprocess.STDOUT)
-		# ready = window exists AND something painted (llvmpipe compiles pipelines first)
 		deadline = time.time() + 60
 		win = ""
 		while time.time() < deadline and not win:
@@ -214,6 +224,11 @@ class Rec:
 		if not win:
 			raise RuntimeError("silkterm window never appeared (see silk.log)")
 		self.win = win
+		# frame it: size the client so the decoration + a margin fill the screen
+		self.xdo("windowsize", win, str(W - 2 * mx), str(H - 2 * my - 24))
+		time.sleep(0.3)
+		self.xdo("windowmove", win, str(mx), str(my))
+		time.sleep(0.3)
 		while time.time() < deadline:
 			shot = self.work / "probe.png"
 			subprocess.run(["import", "-window", "root", str(shot)],
@@ -222,7 +237,7 @@ class Rec:
 				mean = float(out_of(["magick", str(shot), "-format", "%[fx:mean]", "info:"]))
 			except Exception:
 				mean = 0.0
-			if mean > 0.002:
+			if mean > 0.01:
 				break
 			time.sleep(0.8)
 		self.xdo("windowactivate", win)
@@ -253,7 +268,7 @@ class Rec:
 		self.events.append((time.time(), kind))
 
 	def mouse_park(self):
-		self.xdo("mousemove", str(self.size[0] - 4), str(self.size[1] - 4))
+		self.xdo("mousemove", str(self.size[0] - 6), str(self.size[1] - 6))
 
 	def cleanup(self):
 		self.stop_capture()
@@ -296,13 +311,13 @@ class Typist:
 	def _delay(self):
 		# per-char delay from current wpm, lognormal jitter; wpm drifts as it would
 		self.wpm += self.rng.uniform(-8, 8)
-		self.wpm = max(100.0, min(200.0, self.wpm))
+		self.wpm = max(100.0, min(220.0, self.wpm))
 		d = 12.0 / self.wpm                      # 60 / (5 * wpm)
 		return d * self.rng.lognormvariate(0.0, 0.22)
 
 	def _emit(self, ch):
-		# timestamp AFTER the send: the xdotool spawn latency then never skews the
-		# foley, and the event epoch is the moment X actually got the key
+		# timestamp AFTER the send so the xdotool spawn latency never skews the
+		# foley; the event epoch is the moment X actually got the key
 		if ch == " ":
 			self.rec.xdo("key", "--clearmodifiers", "space")
 			self.rec.ev("key:SPACE")
@@ -319,7 +334,9 @@ class Typist:
 			self.rec.xdo("key", "--clearmodifiers", "BackSpace")
 			self.rec.ev("key:BACKSPACE")
 
-	def type(self, text, typos=0.018):
+	def type(self, text, typos=0.018, wpm=None):
+		if wpm is not None:
+			self.wpm = wpm
 		i = 0
 		while i < len(text):
 			ch = text[i]
@@ -351,9 +368,10 @@ class Typist:
 		self.rec.ev("key:ENTER")
 		self.rec.events.append((time.time() + 0.07, "rel:ENTER"))
 
-	def key(self, keysym, sound="key:GENERIC_R0", hold=None):
+	def key(self, keysym, sound="key:GENERIC_R0"):
 		self.rec.xdo("key", "--clearmodifiers", keysym)
-		self.rec.ev(sound)
+		if sound:
+			self.rec.ev(sound)
 
 	def keys(self, keysym, n, hz=8.0, sound="key:GENERIC_R0"):
 		# repeated taps (arrow scrolling); slight cadence wobble
@@ -361,8 +379,17 @@ class Typist:
 			self.key(keysym, sound)
 			time.sleep(max(0.03, self.rng.uniform(0.8, 1.2) / hz))
 
-	def cmd(self, text, settle=1.0, typos=0.018):
-		self.type(text, typos)
+	def hold(self, keysym, count, hz=55.0, first_sound="key:GENERIC_R0"):
+		# a held key, faked as fast discrete repeats (Xvfb has no autorepeat, so a
+		# real keydown/keyup delivers just one press): one click on the first
+		# press, silence for the rest - reads as press-and-hold
+		if first_sound:
+			self.rec.ev(first_sound)
+		self.rec.xdo("key", "--clearmodifiers", "--repeat", str(count),
+			"--delay", str(int(1000 / hz)), keysym)
+
+	def cmd(self, text, settle=1.0, typos=0.018, wpm=None):
+		self.type(text, typos, wpm)
 		self.enter()
 		time.sleep(settle)
 
@@ -374,10 +401,9 @@ class Mouse:
 	def __init__(self, rec, rng):
 		self.rec = rec
 		self.rng = rng
-		self.pos = (rec.size[0] - 4, rec.size[1] - 4)
+		self.pos = (rec.size[0] - 6, rec.size[1] - 6)
 
 	def move(self, x, y, dur=0.6):
-		# eased path so it reads as a hand, not a teleport
 		x0, y0 = self.pos
 		steps = max(6, int(dur * 40))
 		for i in range(1, steps + 1):
@@ -388,8 +414,6 @@ class Mouse:
 		self.pos = (x, y)
 
 	def circle(self, cx, cy, r, loops=2.0, dur=4.0):
-		# lazy hand-circles (the "look around here" gesture)
-		import math
 		steps = max(30, int(dur * 30))
 		for i in range(steps + 1):
 			a = 2 * math.pi * loops * i / steps - math.pi / 2
@@ -420,7 +444,7 @@ class Mouse:
 
 	def park(self):
 		self.rec.mouse_park()
-		self.pos = (self.rec.size[0] - 4, self.rec.size[1] - 4)
+		self.pos = (self.rec.size[0] - 6, self.rec.size[1] - 6)
 
 	def wheel(self, up, n, hz=7.0):
 		for _ in range(n):
@@ -433,7 +457,7 @@ class Mouse:
 ##	Banner bookkeeping
 
 class Banner:
-	def __init__(self, rec, text, pos="bottom"):
+	def __init__(self, rec, text, pos="tr"):
 		self.rec, self.text, self.pos = rec, text, pos
 
 	def __enter__(self):
@@ -463,9 +487,8 @@ def write_dconf(home, profile):
 
 def write_config(home, profile):
 	# mirrors the real defined config; only the demo-driven keys differ per
-	# profile. background_image is a BARE filename next to config.toml - the
-	# Settings dialog shows the value with any directory part resolved to an
-	# absolute (temp) path, and a bare name is the one form it shows verbatim.
+	# profile. background_image is a BARE filename next to config.toml so the
+	# Settings dialog shows it verbatim (never a temp path).
 	cfgdir = home / ".config" / "silkterm"
 	bgdir = cfgdir / "backgrounds"
 	bgdir.mkdir(parents=True, exist_ok=True)
@@ -504,9 +527,9 @@ theme_mode = "dark"
 ''')
 
 # swap the demo-driven background keys in the live config, then hot-reload the
-# running window through its control socket - this is what makes the Settings
-# scene's OK visibly "apply". The app rewrote the file canonically at launch,
-# so a plain line replace per key is safe.
+# running window through its control socket - so a scene can change what shows
+# behind the glass. The app rewrote the file canonically at launch, so a plain
+# per-key line replace is safe.
 def set_background(rec, image, opacity, blur):
 	cfg = rec.home / ".config" / "silkterm" / "config.toml"
 	text = cfg.read_text()
@@ -518,59 +541,65 @@ def set_background(rec, image, opacity, blur):
 	if reply != "ok":
 		log(f"WARNING: ctl reload replied {reply!r}")
 
-def synth_desktop(work, out_png):
-	# a generic dark-mode desktop (code editor + file manager) rendered from
-	# rects only - it is always seen through background_blur, where colored bars
-	# read exactly like syntax-highlighted code. Fixed seed: same desktop every run.
+# The dark-mode desktop seen THROUGH the glass. It must not compete with the
+# terminal text: dim, low-contrast, desaturated pastels over the wallpaper, so
+# after the app's blur + low background_opacity it reads as a vague code editor
+# and file manager and nothing you can quite make out. Fixed seed -> same
+# desktop every run.
+def synth_desktop(out_png, size):
 	rng = random.Random(7)
-	d = ["fill #1c2129 roundrectangle 70,50 1210,930 10,10",
-		"fill #262c36 roundrectangle 70,50 1210,92 10,10",
-		"fill #e0655a circle 100,71 108,71",
-		"fill #e2b054 circle 130,71 138,71",
-		"fill #69bf65 circle 160,71 168,71",
-		"fill #2c333f roundrectangle 200,58 330,92 6,6",
-		"fill #20252d roundrectangle 336,58 466,92 6,6",
-		"fill #171b22 rectangle 70,92 128,920",
-		"fill #14181e rectangle 128,92 176,920"]
-	for i in range(5):
-		d.append(f"fill #39404d roundrectangle 86,{124 + i * 54} 112,{150 + i * 54} 5,5")
-	palette = ["#7aa2f7", "#9ece6a", "#e0af68", "#bb9af7", "#7dcfff", "#a9b1d6", "#565f89"]
-	y = 122
+	W, H = 1920, 1080
+	# muted, desaturated dark-mode syntax pastels (all kept dim)
+	code = ["#5b6b86", "#6f7f6a", "#87796a", "#6a6a86", "#5f7a80", "#70727e"]
+	dim = "#252b34"
+	panel = "#161b22"
+	d = []
+	# editor window (left ~2/3), barely lighter than the desk
+	d += [f"fill #12161c roundrectangle 90,70 1180,940 12,12",
+		f"fill {panel} roundrectangle 90,70 1180,116 12,12",       # title strip
+		f"fill #101216 rectangle 90,116 158,940",                  # activity bar
+		f"fill #12151b rectangle 158,116 208,940"]                 # file tree gutter
+	for i in range(6):                                             # tree entries
+		d.append(f"fill #222833 roundrectangle 172,{140 + i * 48} 198,{164 + i * 48} 4,4")
+	y = 140
 	indent = 0
-	while y < 900:
+	while y < 900:                                                 # code lines
 		indent = max(0, min(5, indent + rng.choice([-2, -1, 0, 0, 1, 1])))
-		x = 200 + indent * 34
+		x = 236 + indent * 34
 		for _ in range(rng.randint(1, 3)):
-			w = rng.randint(50, 240)
-			c = rng.choice(palette)
-			d.append(f"fill {c} roundrectangle {x},{y} {x + w},{y + 11} 5,5")
-			x += w + rng.randint(14, 30)
-			if x > 1080:
+			w = rng.randint(46, 210)
+			d.append(f"fill {rng.choice(code)} roundrectangle {x},{y} {x + w},{y + 9} 4,4")
+			x += w + rng.randint(16, 34)
+			if x > 1090:
 				break
-		y += 22
-	# file manager, partially tucked behind the terminal's right edge
-	d += ["fill #20252e roundrectangle 1250,330 1858,1010 10,10",
-		"fill #2a303b roundrectangle 1250,330 1858,372 10,10",
-		"fill #e0655a circle 1276,351 1283,351",
-		"fill #e2b054 circle 1302,351 1309,351",
-		"fill #69bf65 circle 1328,351 1335,351",
-		"fill #232933 rectangle 1250,372 1858,410",
-		"fill #1a1f27 rectangle 1250,410 1395,1000"]
-	for i in range(6):
-		d.append(f"fill #242b36 roundrectangle 1262,{428 + i * 44} 1380,{454 + i * 44} 6,6")
-	for row in range(4):
+		y += 20
+	# file manager (right, partly under the terminal's right edge)
+	d += [f"fill #12161c roundrectangle 1240,320 1840,1010 12,12",
+		f"fill {panel} roundrectangle 1240,320 1840,366 12,12",
+		f"fill #12151b rectangle 1240,366 1380,1000"]              # side list
+	for i in range(7):
+		d.append(f"fill #222833 roundrectangle 1256,{384 + i * 44} 1366,{406 + i * 44} 5,5")
+	for row in range(4):                                          # icon grid
 		for col in range(3):
-			x, y = 1430 + col * 140, 444 + row * 136
-			d.append(f"fill #3d4a61 roundrectangle {x},{y} {x + 84},{y + 62} 8,8")
-			d.append(f"fill #2a3140 roundrectangle {x + 6},{y + 72} {x + 78},{y + 82} 3,3")
-	# a small centered dock
-	d.append("fill #10131a roundrectangle 660,1026 1260,1062 14,14")
-	for i, c in enumerate(["#5580c8", "#69bf65", "#e2b054", "#bb9af7", "#7dcfff",
-			"#e0655a", "#9ece6a", "#a9b1d6"]):
-		x = 700 + i * 70
-		d.append(f"fill {c} roundrectangle {x},1034 {x + 22},1056 6,6")
-	run(["magick", "-size", "1920x1080", "gradient:#232c40-#0c0f16",
-		"-draw", " ".join(d), str(out_png)])
+			x, y = 1420 + col * 138, 400 + row * 138
+			d.append(f"fill {dim} roundrectangle {x},{y} {x + 82},{y + 60} 8,8")
+			d.append(f"fill #20252e roundrectangle {x + 6},{y + 70} {x + 76},{y + 80} 3,3")
+	# a slim, dim dock
+	d.append(f"fill #0e1116 roundrectangle 700,1030 1220,1062 12,12")
+	for i in range(7):
+		x = 728 + i * 66
+		d.append(f"fill {dim} roundrectangle {x},1038 {x + 22},1054 6,6")
+	# render the vague desktop onto a dimmed, blurred background41 wallpaper so
+	# the whole thing sits in one dark scene
+	tmp = out_png.parent / "desk-layer.png"
+	run(["magick", "-size", f"{W}x{H}", "xc:none", "-draw", " ".join(d),
+		"-channel", "A", "-evaluate", "multiply", "0.6", "+channel", str(tmp)])
+	run(["magick", str(BACKGNDS / "background41.jpg"),
+		"-resize", f"{W}x{H}^", "-gravity", "center", "-extent", f"{W}x{H}",
+		"-modulate", "34,42", "-blur", "0x6",                      # dim + desaturate + soften
+		str(tmp), "-composite",
+		"-resize", f"{size[0]}x{size[1]}", str(out_png)])
+	tmp.unlink(missing_ok=True)
 
 RUST_SCROLL = '''// smooth output easing: nudge the visual offset toward rest, never snap
 use crate::grid::Grid;
@@ -632,12 +661,10 @@ def write_tree(rec, rng):
 		'[package]\nname = "pulsar"\nversion = "0.4.1"\nedition = "2024"\n')
 	(proj / "README.md").write_text("# pulsar\n\nA tiny GPU particle toy.\n")
 	(proj / "LICENSE").write_text("MIT\n")
-	body = RUST_SCROLL * 5
-	(src / "scroll.rs").write_text(body)
+	(src / "scroll.rs").write_text(RUST_SCROLL * 5)
 	(src / "main.rs").write_text('fn main() {\n\tpulsar::run();\n}\n')
 	(src / "render.rs").write_text(RUST_SCROLL)
 
-	# the fake home `ls ~/` lists: real entries, believable sizes (sparse files)
 	for name in HOME_DIRS:
 		(home / name).mkdir(parents=True, exist_ok=True)
 	for name, size in HOME_DOTFILES + HOME_FILES:
@@ -645,17 +672,16 @@ def write_tree(rec, rng):
 		f.touch()
 		os.truncate(f, size)
 
-	# `ls` wrapper: the on-camera alias resolves here first; the real listing
-	# would print the real username as owner/group, so map it to the fake one
+	# `ls` wrapper: the on-camera alias resolves here first; a real listing would
+	# print the real username as owner/group, so map it to the fake one
 	bind = home / "bin"
 	bind.mkdir(exist_ok=True)
 	user = getpass.getuser()
 	wrapper = bind / "ls"
 	wrapper.write_text(f'#!/bin/dash\n/usr/bin/ls "$@" | sed "s/{user}/juno/g"\n')
 	wrapper.chmod(0o755)
-	# the typed `silkterm --wallpaper ...` client
 	(bind / "silkterm").symlink_to(rec.bin)
-	# pin nano to no-softwrap so the config scene's Down count is line-exact
+	# pin nano to no-softwrap so a config line stays on one screen row
 	(home / ".nanorc").write_text("unset softwrap\nunset breaklonglines\n")
 
 	# build.sh: cargo-flavoured output with varied pacing and burst sizes
@@ -665,7 +691,7 @@ def write_tree(rec, rng):
 		"glam", "bytemuck", "pollster", "image", "rayon", "pulsar"]
 	lines = ["#!/bin/dash", 'g="\\033[1;32m"; y="\\033[1;33m"; b="\\033[1;34m"; r="\\033[0m"']
 	lines.append('printf "   ${g}Compiling${r} pulsar workspace\\n"')
-	for i, c in enumerate(crates):
+	for c in crates:
 		v = f"{rng.randint(0,3)}.{rng.randint(1,30)}.{rng.randint(0,9)}"
 		lines.append(f'printf "   ${{g}}Compiling${{r}} {c} v{v}\\n"')
 		if rng.random() < 0.35:
@@ -679,23 +705,6 @@ def write_tree(rec, rng):
 		'printf "    ${g}Finished${r} release [optimized] in 12.31s\\n"',
 	]
 	sh = proj / "build.sh"
-	sh.write_text("\n".join(lines) + "\n")
-	sh.chmod(0o755)
-
-	# test.sh: one dense instant burst (the fast-ramp case)
-	tests = ["scroll::eases_to_rest", "scroll::burst_ramps", "grid::wraps_wide",
-		"grid::resize_reflows", "render::scrim_corners", "render::srgb_once",
-		"pane::split_thirds", "pane::equalize_run", "input::mod_arrows",
-		"select::word_pairs", "select::block_mode", "theme::dark_light",
-		"config::reorder_stable", "config::lenient_floats", "easing::tau_ramp",
-		"easing::no_overshoot"] * 3
-	lines = ["#!/bin/dash", 'g="\\033[1;32m"; r="\\033[0m"',
-		'printf "    ${g}Finished${r} test [unoptimized] in 4.02s\\n"',
-		f'printf "running {len(tests)} tests\\n"']
-	for t in tests:
-		lines.append(f'printf "test {t} ... ${{g}}ok${{r}}\\n"')
-	lines.append(f'printf "\\ntest result: ${{g}}ok${{r}}. {len(tests)} passed; 0 failed\\n"')
-	sh = proj / "test.sh"
 	sh.write_text("\n".join(lines) + "\n")
 	sh.chmod(0o755)
 
@@ -722,19 +731,13 @@ def prep_content(rec, rng):
 	write_dconf(rec.home, rec.p)
 	write_config(rec.home, rec.p)
 	write_tree(rec, rng)
-	synth_desktop(rec.work, rec.work / "desktop-src.png")
-	dst = rec.home / ".config" / "silkterm" / "desktop.png"
-	if rec.size[0] != 1920:
-		run(["magick", str(rec.work / "desktop-src.png"),
-			"-resize", f"{rec.size[0]}x{rec.size[1]}", str(dst)])
-	else:
-		shutil.copy2(rec.work / "desktop-src.png", dst)
-	# the wallpaper the demo sets on camera: background45 toned down - at the
-	# demo's high image opacity the raw file overwhelms the text (and costs a
-	# fortune in gif bytes); darker + desaturated keeps the wow without the wash
-	w, h = rec.size
+	# the dim desktop lives next to config.toml (bare name in the dialog)
+	synth_desktop(rec.home / ".config" / "silkterm" / "desktop.png", rec.size)
+	# the on-camera wallpaper: background45 toned down (the raw file at the demo's
+	# image opacity buries the text and costs a fortune in gif bytes)
+	W, H = rec.size
 	run(["magick", str(BACKGNDS / "background45.jpg"),
-		"-resize", f"{w}x{h}^", "-gravity", "center", "-extent", f"{w}x{h}",
+		"-resize", f"{W}x{H}^", "-gravity", "center", "-extent", f"{W}x{H}",
 		"-modulate", "60,72",
 		str(rec.home / ".config" / "silkterm" / "backgrounds" / "background45.jpg")])
 
@@ -743,12 +746,15 @@ def prep_content(rec, rng):
 ##	Settings dialog driving
 
 DLG_PAD, DLG_BTN_W = 18, 76      # settings_ui.rs consts (ui scale is 1 on the Xvfb)
+# Transparency checkbox center, measured relative to the dialog's CLIENT origin;
+# identical at both profiles' UI font sizes (label column + first row are fixed).
+CHK_TRANSPARENCY = (196, 116)
 
-def open_settings(rec, t, m):
+def open_settings(rec):
 	rec.ev("key:GENERIC_R0")
 	rec.xdo("key", "--clearmodifiers", "ctrl+comma")
 	time.sleep(2.0)
-	for _ in range(10):
+	for _ in range(12):
 		out = subprocess.run(["xdotool", "search", "--name", "Settings"],
 			env=rec.env(), capture_output=True, text=True).stdout.strip()
 		if out:
@@ -758,16 +764,16 @@ def open_settings(rec, t, m):
 	else:
 		return None
 	# park it right of center so the live change shows on the terminal around it
-	gx = rec.size[0] - 600 if rec.size[0] > 1200 else rec.size[0] - 580
-	gy = 110 if rec.size[1] > 700 else 6
+	gx = rec.size[0] - 600 if rec.size[0] > 1200 else rec.size[0] - 560
+	gy = 150 if rec.size[1] > 700 else 14
 	rec.xdo("windowmove", dlg, str(max(0, gx)), str(gy))
 	rec.xdo("windowactivate", dlg)
 	time.sleep(1.0)
 	return dlg
 
-def dlg_geometry(rec, dlg):
-	# xwininfo reports the CLIENT rect; xdotool's geometry includes the WM
-	# frame, which put the computed OK point on the titlebar's border once
+def dlg_client(rec, dlg):
+	# xwininfo reports the CLIENT rect; xdotool's geometry includes the WM frame,
+	# which once put a computed click on the titlebar border
 	out = subprocess.run(["xwininfo", "-id", dlg], env=rec.env(),
 		capture_output=True, text=True).stdout
 	def grab(pat):
@@ -776,136 +782,108 @@ def dlg_geometry(rec, dlg):
 		grab(r"Width"), grab(r"Height"))
 
 def dlg_button_xy(rec, dlg, which):
-	# Cancel/Apply/OK right-aligned along the bottom (settings_ui::buttons)
-	x, y, w, h = dlg_geometry(rec, dlg)
+	x, y, w, h = dlg_client(rec, dlg)
 	ok_cx = x + w - DLG_PAD - DLG_BTN_W // 2
 	cy = y + h - DLG_PAD - 15
 	off = {"ok": 0, "apply": DLG_BTN_W + 10, "cancel": 2 * (DLG_BTN_W + 10)}[which]
 	return ok_cx - off, cy
 
+def dlg_checkbox_xy(rec, dlg, offset):
+	x, y, _, _ = dlg_client(rec, dlg)
+	return x + offset[0], y + offset[1]
+
 
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-##	Segments
+##	Segments (each takes the recorder, typist, mouse)
 
-def seg_intro(r, t, m):
-	with Banner(r, "SilkTerm - a smooth-scrolling, GPU-accelerated terminal"):
-		time.sleep(1.4)
-		t.cmd('alias ls="ls -lA --color --group-directories-first"', settle=0.9)
-		time.sleep(0.6)
+def seg_alias(r, t, m):
+	with Banner(r, "Aliases, colours, the shell you already know"):
+		t.cmd('alias ls="ls -lA --color --group-directories-first"', settle=1.0,
+			wpm=200, typos=0.0)
+		time.sleep(0.5)
 
 def seg_ls(r, t, m):
 	with Banner(r, "Output never snaps - plain shell output glides"):
 		t.cmd("ls ~/", settle=3.4)
 		time.sleep(1.0)
 
-def seg_settings(r, t, m):
-	# on-camera: Transparency on, Opacity slid to 0.75, a look at the scrim
-	# rows, OK. The moment OK lands, the generated desktop slides in behind
-	# (config rewrite + socket reload) - the compositor's part is played by
-	# background_blur, since a headless X has no compositor to do it live.
-	with Banner(r, "Live Settings - changes apply on the spot"):
-		dlg = open_settings(r, t, m)
-		if not dlg:
-			return
-		t.key("Tab", "key:GENERIC_R0")            # -> Transparency checkbox
-		time.sleep(0.9)
-		t.key("space", "key:SPACE")               # on
-		time.sleep(1.2)
-		t.key("Tab", "key:GENERIC_R0")            # -> Opacity slider track
-		time.sleep(0.7)
-		for _ in range(20):                       # 0.95 -> 0.75, arrow step 0.01
-			t.key("Left", "key:GENERIC_R0")
-			time.sleep(0.10)
-		time.sleep(0.9)
-	with Banner(r, "Text readability enhancements - for background images and transparency"):
-		x, y, w, h = dlg_geometry(r, dlg)
-		m.circle(x + int(w * 0.45), y + int(h * 0.60), int(w * 0.22), loops=1.6, dur=4.4)
-		time.sleep(0.4)
-		bx, by = dlg_button_xy(r, dlg, "ok")
-		m.move(bx, by, 1.0)
-		time.sleep(0.4)
-		m.click()
-		time.sleep(0.7)                           # let the OK persist land first
-		set_background(r, "desktop.png", 0.75, r.p["blur"])
-		r.xdo("windowactivate", r.win)
-		m.park()
-		time.sleep(2.6)                           # linger: the desktop shows through
-
-def seg_settings_gif(r, t, m):
-	# gif starts see-through; here Transparency goes OFF, with a slow hand so
-	# the other settings register, then OK snaps it opaque
-	with Banner(r, "Live Settings - changes apply on the spot"):
-		dlg = open_settings(r, t, m)
-		if not dlg:
-			return
-		t.key("Tab", "key:GENERIC_R0")            # -> Transparency checkbox
+def seg_nano(r, t, m):
+	# hold Down to sail to the bottom (one click, then silence), then quit clean.
+	# cd first: a tilde path reaches nano expanded, and nano's titlebar would
+	# print the whole (temp) expansion on camera
+	cfg = r.home / ".config" / "silkterm" / "config.toml"
+	nlines = len(cfg.read_text().splitlines())
+	with Banner(r, "It is a real terminal - nano, vim, less all glide", pos="bl"):
+		t.cmd("cd ~/.config/silkterm", settle=0.5, typos=0.0)
+		t.cmd("nano config.toml", settle=1.6)
+		t.hold("Down", nlines + 6)                 # sail past the last line
 		time.sleep(1.0)
-		t.key("space", "key:SPACE")               # off
-		time.sleep(1.4)
+		t.key("ctrl+x")                            # nothing changed -> exits clean
+		time.sleep(1.0)
+		t.cmd("cd ~", settle=0.5, typos=0.0)
+
+def seg_settings_off(r, t, m):
+	# turn Transparency OFF with the mouse, dwell on the rest, OK. On OK the
+	# terminal drops to an opaque subtle wallpaper (background41 @ 0.10).
+	with Banner(r, "Live Settings - every change applies on the spot", pos="bl"):
+		dlg = open_settings(r)
+		if not dlg:
+			return
+		cx, cy = dlg_checkbox_xy(r, dlg, CHK_TRANSPARENCY)
+		m.move(cx, cy, 1.1)
+		time.sleep(0.6)
+		m.click()                                 # Transparency off
+		r.ev("key:SPACE")
+		time.sleep(1.6)
+		x, y, w, h = dlg_client(r, dlg)
+		m.move(x + int(w * 0.5), y + int(h * 0.5), 1.4)   # let the eye wander the rows
 		bx, by = dlg_button_xy(r, dlg, "ok")
-		x, y, w, h = dlg_geometry(r, dlg)
-		m.move(x + int(w * 0.5), y + int(h * 0.45), 1.2)
-		m.move(bx, by, 2.4)                       # the slow "taking it in" drift
+		m.move(bx, by, 2.4)                        # slow drift to OK
 		time.sleep(0.5)
 		m.click()
-		time.sleep(0.7)
+		time.sleep(0.6)
 		set_background(r, "background41.jpg", 0.10, r.p["blur"])
 		r.xdo("windowactivate", r.win)
 		m.park()
-		time.sleep(2.0)
+		time.sleep(1.8)
+
+def seg_settings_peek(r, t, m):
+	# gif: open, dwell ~4s circling the scrim rows, Cancel (no change)
+	with Banner(r, "Text readability tuning - for images and transparency", pos="bl"):
+		dlg = open_settings(r)
+		if not dlg:
+			return
+		x, y, w, h = dlg_client(r, dlg)
+		m.circle(x + int(w * 0.45), y + int(h * 0.62), int(w * 0.2), loops=1.4, dur=4.0)
+		bx, by = dlg_button_xy(r, dlg, "cancel")
+		m.move(bx, by, 1.0)
+		time.sleep(0.4)
+		m.click()
+		r.xdo("windowactivate", r.win)
+		m.park()
+		time.sleep(1.2)
 
 def seg_wallpaper(r, t, m):
 	with Banner(r, "Set a per-window wallpaper straight from the shell"):
 		t.cmd("silkterm --wallpaper ~/.config/silkterm/backgrounds/background45.jpg",
 			settle=3.0)
-		time.sleep(1.2)
-
-def seg_nano(r, t, m):
-	# scroll down to transparent_background (nano slides, line by line), flip it
-	# to false, save, quit. The line number is read fresh: the app rewrote the
-	# file canonically at launch and again when OK persisted.
-	cfg = r.home / ".config" / "silkterm" / "config.toml"
-	lineno = next((i + 1 for i, l in enumerate(cfg.read_text().splitlines())
-		if re.match(r"transparent_background\s*=", l)), None)
-	with Banner(r, "The config is plain TOML - and nano glides too", pos="top"):
-		# cd first: a tilde path typed at the prompt reaches nano expanded, and
-		# nano's titlebar would print the whole (temp) expansion on camera
-		t.cmd("cd ~/.config/silkterm", settle=0.5, typos=0.0)
-		t.cmd("nano config.toml", settle=1.8)
-		if lineno:
-			t.keys("Down", lineno - 1, hz=11.0)
-			time.sleep(0.9)
-			t.key("End")
-			time.sleep(0.5)
-			t._backspace(4)                       # true -> (gone)
-			time.sleep(0.4)
-			t.type("false", typos=0.0)
-			time.sleep(1.0)
-			t.key("ctrl+o")
-			time.sleep(0.6)
-			t.enter()
-			time.sleep(0.8)
-		t.key("ctrl+x")
 		time.sleep(1.0)
-		t.cmd("cd ~", settle=0.5, typos=0.0)
+
+def seg_wallpaper_clear(r, t, m):
+	with Banner(r, "...and clear it just as easily"):
+		t.cmd("silkterm --wallpaper", settle=2.4)
+		time.sleep(0.8)
 
 def seg_build(r, t, m):
 	with Banner(r, "Bursts glide into place - never snap - at any size"):
 		t.cmd("cd projects/pulsar", settle=0.6, typos=0.0)
 		t.cmd("./build.sh", settle=7.5)          # covers the script's own runtime
 		time.sleep(1.0)
-		t.cmd("./test.sh", settle=3.0)
-		time.sleep(0.8)
-
-def seg_build_gif(r, t, m):
-	with Banner(r, "Bursts glide into place - never snap"):
-		t.cmd("cd projects/pulsar", settle=0.6, typos=0.0)
-		t.cmd("./build.sh", settle=7.5)
-		time.sleep(0.8)
 
 def seg_wheel(r, t, m):
 	with Banner(r, "Scrollback rides the wheel just as smoothly"):
-		m.move(r.size[0] // 2, r.size[1] // 2, 0.7)
+		W, H = r.size
+		m.move(W // 2, H // 2, 0.7)
 		m.wheel(up=True, n=14, hz=6.5)
 		time.sleep(0.9)
 		m.wheel(up=False, n=18, hz=9.0)
@@ -913,7 +891,7 @@ def seg_wheel(r, t, m):
 		time.sleep(0.8)
 
 def seg_less(r, t, m):
-	with Banner(r, "Full-screen apps slide too: less", pos="top"):
+	with Banner(r, "Full-screen apps slide too: less", pos="bl"):
 		t.cmd("less -R docs/render.log", settle=1.4)
 		t.keys("Down", 16, hz=7.0)
 		time.sleep(0.7)
@@ -922,50 +900,33 @@ def seg_less(r, t, m):
 		t.key("q")
 		time.sleep(0.8)
 
-def seg_select(r, t, m):
-	W, H = r.size
-	with Banner(r, "Mouse selection: word, run, and block"):
-		# fill the screen deterministically so the click targets always hold
-		t.cmd("clear", settle=0.4, typos=0.0)
-		t.cmd("tail -n 40 docs/render.log", settle=1.2)
-		m.move(int(W * 0.22), int(H * 0.76), 0.8)
-		m.double()                               # word
-		time.sleep(1.3)
-		m.drag(int(W * 0.07), int(H * 0.81), int(W * 0.55), int(H * 0.81), 1.0)
-		time.sleep(1.2)
-		r.xdo("keydown", "ctrl")                 # block
-		m.drag(int(W * 0.09), int(H * 0.52), int(W * 0.38), int(H * 0.74), 1.2)
-		r.xdo("keyup", "ctrl")
-		time.sleep(1.4)
-		m.move(int(W * 0.68), int(H * 0.43), 0.5)
-		m.click(quiet=True)
-		m.park()
-		time.sleep(0.8)
-
 def seg_outro(r, t, m):
+	# final sign-off: a quiet comment, then the fade. (A ble.sh-style dim-on-enter
+	# can't be done in plain bash without a visible helper or ble.sh itself, which
+	# mangles the injected typing, so the comment stays its typed colour.)
 	with Banner(r, "github.com/jim-collier/silkterm"):
 		t.cmd("# smooth. silky. SilkTerm.", settle=0.5, typos=0.0)
-		time.sleep(3.4)
+		time.sleep(3.2)
 
 SEGMENTS = {
 	"video": [
-		("intro",     seg_intro),
-		("ls",        seg_ls),
-		("settings",  seg_settings),
-		("wallpaper", seg_wallpaper),
 		("nano",      seg_nano),
+		("settings",  seg_settings_off),
+		("alias",     seg_alias),
+		("ls",        seg_ls),
+		("wallpaper", seg_wallpaper),
 		("build",     seg_build),
 		("wheel",     seg_wheel),
 		("less",      seg_less),
-		("select",    seg_select),
 		("outro",     seg_outro),
 	],
 	"gif": [
-		("intro",     seg_intro),
-		("ls",        seg_ls),
-		("settings",  seg_settings_gif),
+		("alias",     seg_alias),
+		("settings",  seg_settings_peek),
 		("wallpaper", seg_wallpaper),
-		("build",     seg_build_gif),
+		("wpclear",   seg_wallpaper_clear),
+		("ls",        seg_ls),
+		("build",     seg_build),
 		("less",      seg_less),
 		("outro",     seg_outro),
 	],
@@ -973,7 +934,7 @@ SEGMENTS = {
 
 
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-##	Audio: mix the event log into a wav
+##	Audio: process the key bank, mix the event log into a wav
 
 SOUND_FILES = {
 	"key:GENERIC_R0": SOUNDS / "keys/GENERIC_R0.mp3",
@@ -988,10 +949,44 @@ SOUND_FILES = {
 	"rel:ENTER":      SOUNDS / "keys/release/ENTER.mp3",
 	"mouse:CLICK":    SOUNDS / "mouse/click.wav",
 	"mouse:CLICK_Q":  SOUNDS / "mouse/click_quiet.wav",
-	"mouse:WHEEL":    SOUNDS / "mouse/click_quiet.wav",
 }
-GAIN = {"key": 0.85, "rel": 0.30, "mouse:CLICK": 0.55, "mouse:CLICK_Q": 0.40,
-	"mouse:WHEEL": 0.10}
+GAIN = {"key": 0.85, "rel": 0.28, "mouse:CLICK": 0.5, "mouse:CLICK_Q": 0.36,
+	"mouse:WHEEL": 0.5}
+
+# the topre bank is deep + soft and the letter samples sit ~13 dB under
+# space/enter; normalize each family member to a consistent body presence
+# (space/enter a touch prouder) so keys read clearly, then graft a crisp mid
+# click transient so a press sounds like a switch, not a thud.
+KEY_BODY = {"key:SPACE": 0.085, "key:ENTER": 0.085, "key:BACKSPACE": 0.07}
+
+def add_midclick(sig, sr, kind):
+	rms = np.sqrt((sig ** 2).mean()) + 1e-9
+	sig = sig * (KEY_BODY.get(kind, 0.062) / rms)
+	# a short, bright-ish mid click (1.8-5 kHz) grafted on the onset
+	n = int(sr * 0.009)
+	tt = np.arange(n) / sr
+	noise = np.random.default_rng(7).standard_normal(n)
+	sos = spsig.butter(2, [1800, 5000], btype="band", fs=sr, output="sos")
+	click = (spsig.sosfilt(sos, noise) * np.exp(-tt * 380))[:, None]
+	out = sig.copy()
+	out[:n] += np.repeat(click, 2, axis=1) * 0.45
+	peak = np.abs(out).max()
+	if peak > 0.7:                                # keep one loud hit from owning the mix
+		out *= 0.7 / peak
+	return out.astype(np.float32)
+
+def synth_wheel(sr):
+	# a soft scroll-wheel detent: a short muffled tick, much softer and darker
+	# than a mouse click - a hair of noise on a low damped thonk, low-passed
+	n = int(sr * 0.030)
+	tt = np.arange(n) / sr
+	noise = np.random.default_rng(3).standard_normal(n) * np.exp(-tt * 320)
+	body = np.sin(2 * math.pi * 175 * tt) * np.exp(-tt * 150)
+	mix = noise * 0.45 + body * 0.55
+	sos = spsig.butter(2, 1700, btype="low", fs=sr, output="sos")
+	mix = spsig.sosfilt(sos, mix)
+	mix /= np.abs(mix).max() + 1e-9
+	return np.stack([mix, mix], axis=1).astype(np.float32) * 0.28
 
 def load_samples(work):
 	cache = {}
@@ -1001,7 +996,11 @@ def load_samples(work):
 			"-ar", str(SR), "-ac", "2", "-f", "wav", str(wav)])
 		with wave.open(str(wav), "rb") as w:
 			data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
-		cache[kind] = data.astype(np.float32).reshape(-1, 2) / 32768.0
+		s = data.astype(np.float32).reshape(-1, 2) / 32768.0
+		if kind.startswith("key:"):
+			s = add_midclick(s, SR, kind)
+		cache[kind] = s
+	cache["mouse:WHEEL"] = synth_wheel(SR)
 	return cache
 
 def build_audio(rec, work, duration, rng):
@@ -1015,19 +1014,23 @@ def build_audio(rec, work, duration, rng):
 		if s is None:
 			continue
 		gain = GAIN.get(kind, GAIN.get(kind.split(":")[0], 0.8))
-		gain *= rng.uniform(0.82, 1.0)
-		# tiny per-hit pitch wobble keeps repeats from sounding stamped
-		rate = rng.uniform(0.96, 1.05)
+		gain *= rng.uniform(0.78, 1.05)
+		# wider per-hit pitch + a small spectral tilt so no two presses of the
+		# same key sound stamped - the extra variety the deep bank was missing
+		rate = rng.uniform(0.9, 1.12)
 		n = int(len(s) / rate)
 		idx = np.linspace(0, len(s) - 1, n)
 		samp = np.stack([np.interp(idx, np.arange(len(s)), s[:, c]) for c in (0, 1)], axis=1)
+		if kind.startswith("key:") and rng.random() < 0.5:
+			tilt = rng.uniform(-0.3, 0.3)         # gentle darken/brighten
+			b = np.array([1.0 + tilt, -tilt])
+			samp = spsig.lfilter(b, [1.0], samp, axis=0).astype(np.float32)
 		at = int(max(0.0, t_rel) * SR)
 		end = min(at + len(samp), len(mix))
 		mix[at:end] += samp[: end - at] * gain
-	# level toward -8 dBFS peak so the foley reads clearly (bounded boost)
 	peak = np.abs(mix).max()
 	if peak > 0:
-		mix *= min(0.40 / peak, 4.0)
+		mix *= min(0.40 / peak, 4.0)              # ~ -8 dBFS, bounded boost
 	out = work / "audio.wav"
 	with wave.open(str(out), "wb") as w:
 		w.setnchannels(2)
@@ -1038,12 +1041,9 @@ def build_audio(rec, work, duration, rng):
 
 
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-##	Post: sync-flash location, trim, banners, border, fade, encode
+##	Post: sync-flash location, motion-blur downsample, banners, encode
 
 def check_drift(rec, video_end_e):
-	# the grab loop stamps CFR pts, so if the X server ever starves it the
-	# video timeline compresses and every anchored epoch lands early - loud
-	# warning beats silently drifted foley/banners
 	dur = float(out_of(["ffprobe", "-v", "error", "-show_entries", "format=duration",
 		"-of", "csv=p=0", str(rec.raw)]))
 	expect = (video_end_e - rec.flash_e) + rec.flash_vt
@@ -1052,13 +1052,11 @@ def check_drift(rec, video_end_e):
 			"AV sync may be off (X server starved the grab loop?)")
 
 def find_flash(raw, work):
-	# the white root flash is the brightest thing the capture will ever see
 	stats = work / "stats.txt"
-	run(["ffmpeg", "-v", "error", "-t", "6", "-i", str(raw),
+	run(["ffmpeg", "-v", "error", "-t", "8", "-i", str(raw),
 		"-vf", f"signalstats,metadata=print:key=lavfi.signalstats.YAVG:file={stats}",
 		"-f", "null", "-"])
-	best_t, best_y = 0.0, -1.0
-	pts = 0.0
+	best_t, best_y, pts = 0.0, -1.0, 0.0
 	for line in stats.read_text().splitlines():
 		mo = re.search(r"pts_time:([0-9.]+)", line)
 		if mo:
@@ -1075,29 +1073,60 @@ def esc_drawtext(work, i, text):
 	f.write_text(text)
 	return f
 
-def vf_chain(rec, work, trim, dur):
-	# narration overlays (soft fade in/out), then the window frame, then the
-	# closing fade. The frame: 1px near-black outline with a slate face inside -
-	# square, quiet, reads as a window edge and nothing more.
+# banner corner -> (x, y) expressions. Narration lives top-right by default and
+# only moves when the action it explains sits there (nano/less title, the tl/tr
+# dialog); each has a soft fade so it never pops.
+def banner_xy(pos, size):
+	m = int(size[0] * 0.025)
+	# clear the window's titlebar + menu bar (both fixed-height chrome) so a top
+	# banner sits inside the terminal area, not over the menu
+	top = int(size[1] * 0.05) + 58
+	# high enough to clear a two-row nano/less help bar at the window bottom
+	bot = "h-{}".format(int(size[1] * 0.05) + 118)
+	return {
+		"tr": ("w-text_w-{}".format(m), str(top)),
+		"tl": (str(m), str(top)),
+		"br": ("w-text_w-{}".format(m), bot),
+		"bl": (str(m), bot),
+		"bottom": ("(w-text_w)/2", bot),
+	}.get(pos, ("w-text_w-{}".format(m), str(top)))
+
+def vf_chain(rec, work, trim, dur, tail_loop=False):
 	p = rec.p
 	to_vt = lambda epoch: rec.flash_vt + (epoch - rec.flash_e)
-	filters = []
-	for i, (s_e, e_e, text, pos) in enumerate(rec.banners):
+	# motion-blur downsample: average cap/out successive frames into one, so the
+	# app's own render cadence can't beat against the delivery rate
+	blur = rec.cap_fps // rec.out_fps
+	filters = [f"tmix=frames={blur}", f"fps={rec.out_fps}"]
+	# resolve each banner's [s,e]; then clamp every end to the next banner's start
+	# minus a gap, so only ONE banner is ever on screen (consecutive same-corner
+	# banners were crossfading into an overlapping smear)
+	spans = []
+	for s_e, e_e, text, pos in rec.banners:
 		s = max(0.0, to_vt(s_e) - trim)
 		e = max(s + p["banner_min"], to_vt(e_e) - trim)
+		spans.append([s, e, text, pos])
+	spans.sort(key=lambda b: b[0])
+	GAP = 0.4
+	for i in range(len(spans) - 1):
+		spans[i][1] = min(spans[i][1], spans[i + 1][0] - GAP)
+	for i, (s, e, text, pos) in enumerate(spans):
+		if e <= s:
+			continue
 		tf = esc_drawtext(work, i, text)
-		# "top" = upper-right, clear of nano/less title rows and left-aligned text
-		x, y = ("w-text_w-48", "62") if pos == "top" else ("(w-text_w)/2", "h-{}".format(
-			int(rec.size[1] * 0.135)))
-		fade = (f"clip((t-{s:.3f})/0.35,0,1)*clip(({e:.3f}-t)/0.35,0,1)")
+		x, y = banner_xy(pos, rec.size)
+		fade = f"clip((t-{s:.3f})/0.3,0,1)*clip(({e:.3f}-t)/0.3,0,1)"
 		filters.append(
 			f"drawtext=fontfile={BANNER_TTF}:textfile={tf}:fontsize={p['banner_fs']}:"
-			f"fontcolor=0xf2f4f8:box=1:boxcolor=0x0c0e12@0.55:boxborderw={p['banner_pad']}:"
+			f"fontcolor=0xf2f4f8:box=1:boxcolor=0x0c0e12@0.5:boxborderw={p['banner_pad']}:"
 			f"x={x}:y={y}:alpha='{fade}':enable='between(t,{s:.3f},{e:.3f})'")
-	bw = p["border"]
-	filters.append(f"drawbox=x=0:y=0:w=iw:h=ih:t={bw}:color=0x3b4046")
-	filters.append(f"drawbox=x=0:y=0:w=iw:h=ih:t=1:color=0x15171a")
+	# out fade (gif also fades back IN over its first beat, so the loop is seamless)
 	filters.append(f"fade=t=out:st={max(0.0, dur - FADE_S):.3f}:d={FADE_S}")
+	if tail_loop:
+		filters.append(f"fade=t=in:st=0:d={FADE_S}")
+	# drop the alpha tmix/fade introduce: paletteuse would read it as gif
+	# transparency and render the faded (dark) regions as the white canvas
+	filters.append("format=rgb24")
 	return ",".join(filters)
 
 def encode_video(rec, work, out_mp4, video_end_e):
@@ -1114,74 +1143,78 @@ def encode_video(rec, work, out_mp4, video_end_e):
 		"-t", f"{dur:.3f}", "-vf", vf,
 		"-c:v", "libx265", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p",
 		"-tag:v", "hvc1", "-x265-params", "log-level=error",
-		"-r", str(rec.fps), "-c:a", "aac", "-b:a", "160k",
+		"-r", str(rec.out_fps), "-c:a", "aac", "-b:a", "160k",
 		"-af", f"afade=t=out:st={max(0.0, dur - FADE_S):.3f}:d={FADE_S}",
 		"-movflags", "+faststart", str(out_mp4)])
 	return out_mp4
 
 # a full-length 50fps 540p gif of nonstop smooth scrolling runs ~1 MB/s - far
-# past what a README should carry (and what GitHub will render) - so the full
-# gif goes to private/ and a same-fps highlight window is cut for the README
-GIF_HL_START = 1.0
-GIF_HL_DUR   = 20.0
+# past what a README should carry (and what GitHub renders) - so the full gif
+# goes to private/ and a same-fps highlight is cut for the README. The highlight
+# starts where the smooth-scrolling begins (the whole point of the gif), not at
+# the top, and runs through the scroll-heavy scenes.
+GIF_HL_SEG = "ls"       # scene to open the highlight on
+GIF_HL_DUR = 11.0       # ls + build - enough to sell the scroll, small enough for a README
 
 def gif_pass(rec, work, out_gif, trim, dur):
-	vf = vf_chain(rec, work, trim, dur)
+	vf = vf_chain(rec, work, trim, dur, tail_loop=True)
 	pal = work / "pal.png"
 	cut = ["-ss", f"{trim:.3f}", "-t", f"{dur:.3f}"]
+	# ONE global palette (stats_mode=full) applied uniformly: stats_mode=diff +
+	# diff_mode=rectangle mis-handled the big inter-frame jumps of fast scrolling
+	# and left white/ghosted blocks. Ordered bayer stays temporally stable (error
+	# diffusion shimmers and bloats a gif).
 	run(["ffmpeg", "-v", "error", "-y", *cut, "-i", str(rec.raw),
-		"-vf", f"{vf},fps={rec.fps},palettegen=stats_mode=diff:max_colors=128", str(pal)])
+		"-vf", f"{vf},palettegen=stats_mode=full:max_colors=160", str(pal)])
 	run(["ffmpeg", "-v", "error", "-y", *cut, "-i", str(rec.raw), "-i", str(pal),
-		"-lavfi",
-		f"{vf},fps={rec.fps}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle",
+		"-lavfi", f"{vf}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=4",
 		str(out_gif)])
 	return out_gif
 
 def encode_gif(rec, work, out_gif, video_end_e):
-	# native 540p@50 - gif's ceiling - with a palette optimized on the actual
-	# frames; bayer dither + rectangle diff keep the size sane
 	rec.flash_vt = find_flash(rec.raw, work)
 	log(f"sync flash at video t={rec.flash_vt:.3f}s")
 	check_drift(rec, video_end_e)
 	trim = rec.flash_vt + (rec.t0_e - rec.flash_e)
 	dur = video_end_e - rec.t0_e
 	gif_pass(rec, work, out_gif, trim, dur)
+	# open the highlight on the scrolling; fall back to 1s in if the mark is absent
+	mark = rec.seg_marks.get(GIF_HL_SEG)
+	hl_start = (rec.flash_vt + (mark - rec.flash_e) - trim) if mark else 1.0
+	hl_start = max(0.0, min(hl_start, dur - 2.0))
 	hl = work / "demo-hl.gif"
-	gif_pass(rec, work, hl, trim + GIF_HL_START, min(GIF_HL_DUR, dur - GIF_HL_START))
+	gif_pass(rec, work, hl, trim + hl_start, min(GIF_HL_DUR, dur - hl_start))
 	return out_gif, hl
 
 
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-##	Output placement + rotation
+##	Output placement + rotation (video and gif in their own dirs)
+
+GIF_ASSET_MAX_MB = 12
+
+def rotate(out_dir, prefix, ext, no_rotate):
+	if no_rotate:
+		return
+	inc = REPO / "cicd/utility/include/gfs-rotate.bash"
+	subprocess.run(["bash", "-c",
+		f'source "{inc}" && gfs_rotate "{out_dir}" {prefix} {ext}'], check=False)
 
 def place_video(mp4, out_dir, no_rotate):
 	out_dir.mkdir(parents=True, exist_ok=True)
 	stamp = time.strftime("%Y%m%d-%H%M%S")
 	dst = out_dir / f"silkterm-demo_{stamp}.mp4"
 	shutil.copy2(mp4, dst)
-	mb = dst.stat().st_size / (1 << 20)          # before rotation renames it
-	if not no_rotate:
-		inc = REPO / "cicd/utility/include/gfs-rotate.bash"
-		subprocess.run(["bash", "-c",
-			f'source "{inc}" && gfs_rotate "{out_dir}" silkterm-demo mp4'],
-			check=False)
+	mb = dst.stat().st_size / (1 << 20)
+	rotate(out_dir, "silkterm-demo", "mp4", no_rotate)
 	log(f"video: {dst} ({mb:.1f} MiB)")
 
-# above this, GitHub stops inlining the image and the repo carries dead weight
-GIF_ASSET_MAX_MB = 12
-
 def place_gif(full, hl, out_dir, no_rotate):
-	# full recording -> private (rotated); highlight -> the README asset
 	out_dir.mkdir(parents=True, exist_ok=True)
 	stamp = time.strftime("%Y%m%d-%H%M%S")
 	dst = out_dir / f"silkterm-demo_{stamp}.gif"
 	shutil.copy2(full, dst)
 	full_mb = dst.stat().st_size / (1 << 20)
-	if not no_rotate:
-		inc = REPO / "cicd/utility/include/gfs-rotate.bash"
-		subprocess.run(["bash", "-c",
-			f'source "{inc}" && gfs_rotate "{out_dir}" silkterm-demo gif'],
-			check=False)
+	rotate(out_dir, "silkterm-demo", "gif", no_rotate)
 	log(f"gif (full): {dst} ({full_mb:.1f} MiB)")
 	mb = hl.stat().st_size / (1 << 20)
 	if mb <= GIF_ASSET_MAX_MB:
@@ -1215,6 +1248,7 @@ def record(args, name, seed):
 			if want and seg not in want:
 				continue
 			log(f"[{name}] segment: {seg}")
+			rec.seg_marks[seg] = time.time()
 			fn(rec, t, m)
 		time.sleep(1.5)
 		video_end_e = time.time()
@@ -1225,11 +1259,11 @@ def record(args, name, seed):
 		if name == "video":
 			out = rec.work / "demo.mp4"
 			encode_video(rec, rec.work, out, video_end_e)
-			place_video(out, Path(args.out_dir), args.no_rotate)
+			place_video(out, Path(args.out_dir) / "video", args.no_rotate)
 		else:
 			out = rec.work / "demo.gif"
 			full, hl = encode_gif(rec, rec.work, out, video_end_e)
-			place_gif(full, hl, Path(args.out_dir), args.no_rotate)
+			place_gif(full, hl, Path(args.out_dir) / "gif", args.no_rotate)
 		if rec.keep:
 			log(f"[{name}] work dir kept: {rec.work}")
 	finally:
@@ -1258,7 +1292,11 @@ if __name__ == "__main__":
 
 
 ##	Script history:
-##		- 20260712 JC: Two recordings (1080p60 h265 + native 540p50 gif), window
-##		  frame, generated see-through desktop via config+socket reload, new
-##		  scene list (ls/settings/wallpaper/nano), Lato narration, tighter foley.
+##		- 20260712 JC: Real window decoration; high-fps capture + motion-blur
+##		  downsample (judder fix); dim vague dark desktop behind the glass; new
+##		  scene order + mouse toggle/hold-arrow/gray-outro/wallpaper-clear;
+##		  processed key bank (mid-click + variety) + soft wheel; top-right
+##		  narration; video/gif split into their own output dirs.
+##		- 20260712 JC: Two recordings (1080p60 h265 + native 540p50 gif),
+##		  see-through desktop via config+socket reload, Lato narration.
 ##		- 20260711 JC: Created.
