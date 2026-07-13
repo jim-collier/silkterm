@@ -72,6 +72,15 @@ FOLEY_LAG  = 0.03                             # foley sits this far after the ke
                                               # paints the glyph a frame or two later; sound-to-
                                               # picture reads tighter than sound-to-keypress)
 
+# The faux window fills the frame: only a thin black border shows around it. The
+# WM theme has square corners (Xfce-Simple-Dark's top-left corner is opaque, so
+# no rounded/transparent cut). FRAME_* are that theme's decoration extents
+# (left,right,titlebar,bottom in px) - the client is sized so the outer frame
+# lands exactly BORDER px inside each screen edge.
+BORDER   = 4
+WM_THEME = "Material-Black-Pistachio"       # dark, SQUARE corners (opaque top-left)
+FRAME_L, FRAME_R, FRAME_T, FRAME_B = 2, 2, 32, 2
+
 # The app is driven through the GPU (VirtualGL, see launch_app) so it renders a
 # genuine ~60fps on the headless Xvfb - on plain llvmpipe it only manages ~10
 # distinct frames/sec, which no capture rate or frame-averaging can un-judder
@@ -131,6 +140,37 @@ class Rec:
 		subprocess.run(["xdotool", *a], env=self.env(), check=False,
 			stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+	def _frame_extents(self, win):
+		# _NET_FRAME_EXTENTS = left, right, top, bottom (px). Falls back to the
+		# theme's known extents if the WM hasn't set the hint yet.
+		r = subprocess.run(["xprop", "-id", win, "_NET_FRAME_EXTENTS"],
+			env=self.env(), capture_output=True, text=True)
+		m = re.search(r"=\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)", r.stdout)
+		return tuple(map(int, m.groups())) if m else (FRAME_L, FRAME_R, FRAME_T, FRAME_B)
+
+	def _client_xy(self, win):
+		r = subprocess.run(["xwininfo", "-id", win], env=self.env(),
+			capture_output=True, text=True).stdout
+		x = int(re.search(r"Absolute upper-left X:\s*(-?\d+)", r).group(1))
+		y = int(re.search(r"Absolute upper-left Y:\s*(-?\d+)", r).group(1))
+		return x, y
+
+	def place_window(self, win):
+		# nudge the window so its OUTER frame sits exactly BORDER px inside the
+		# top-left screen edge. xdotool's move semantics vs the reparenting frame
+		# are fuzzy, so measure the real frame-outer after each move and correct
+		# by the residual (converges in a step or two).
+		target = [BORDER, BORDER]
+		for _ in range(4):
+			self.xdo("windowmove", win, str(target[0]), str(target[1]))
+			time.sleep(0.25)
+			l, _r, t, _b = self._frame_extents(win)
+			cx, cy = self._client_xy(win)
+			dx, dy = BORDER - (cx - l), BORDER - (cy - t)
+			if abs(dx) <= 1 and abs(dy) <= 1:
+				break
+			target[0] += dx; target[1] += dy
+
 	def start_display(self):
 		# each profile records at its own resolution, so cycle the display; the WM
 		# is ours (not gui-headless --wm) so xfconf can pick a quiet dark titlebar
@@ -141,13 +181,14 @@ class Rec:
 		subprocess.run([gh, "stop"], env=e, capture_output=True)
 		run([gh, "start"], env=e)
 		self.wm = subprocess.Popen(["dbus-run-session", "--", "sh", "-c",
-			'xfconf-query -c xfwm4 -p /general/theme --create -t string -s "Arctodon-Dark"; '
+			f'xfconf-query -c xfwm4 -p /general/theme --create -t string -s "{WM_THEME}"; '
 			'xfconf-query -c xfwm4 -p /general/title_font --create -t string -s "Lato Bold 10"; '
 			'xfconf-query -c xfwm4 -p /general/button_layout --create -t string -s "O|HMC"; '
 			"exec xfwm4 --compositor=off --vblank=off"],
 			env=self.env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 		time.sleep(2.0)
-		subprocess.run(["xsetroot", "-solid", "#0a0c10"], env=self.env(), check=False)
+		# pure black so the thin border framing the window reads as black, not a tint
+		subprocess.run(["xsetroot", "-solid", "#000000"], env=self.env(), check=False)
 
 	def stop_display(self):
 		if getattr(self, "wm", None):
@@ -186,7 +227,7 @@ class Rec:
 		subprocess.run(["xsetroot", "-solid", "white"], env=self.env(), check=False)
 		self.flash_e = time.time()
 		time.sleep(0.25)
-		subprocess.run(["xsetroot", "-solid", "#0a0c10"], env=self.env(), check=False)
+		subprocess.run(["xsetroot", "-solid", "#000000"], env=self.env(), check=False)  # black border behind the window
 		time.sleep(0.4)
 
 	def stop_capture(self):
@@ -228,13 +269,16 @@ class Rec:
 			e["LIBGL_ALWAYS_SOFTWARE"] = "1"
 		# a decorated (non-fullscreen) window: xfwm4 draws the full frame + the
 		# titlebar with buttons, which is the "fake decoration" the shot wants.
-		# Sized to leave a small dark margin so it reads as a floating window.
-		# The client size goes in at LAUNCH (--pixel-width/height) and the window
-		# is never resized after - the VGL EGL present latches the surface size at
-		# creation, so a post-launch xdotool resize breaks the blit (moving is fine).
+		# The window FILLS the view - only a BORDER-px black frame shows around it.
+		# The client is sized so the outer decoration fits W/H minus that border on
+		# every edge. The client size goes in at LAUNCH (--pixel-width/height) and
+		# the window is never resized after - the VGL EGL present latches the
+		# surface size at creation, so a post-launch resize breaks the blit (moving
+		# is fine, which is how place_window nudges it into place).
 		W, H = self.size
-		mx, my = int(W * 0.03), int(H * 0.05)
-		cmd += ["--pixel-width", str(W - 2 * mx), "--pixel-height", str(H - 2 * my - 24)]
+		cw = W - 2 * BORDER - FRAME_L - FRAME_R
+		ch = H - 2 * BORDER - FRAME_T - FRAME_B
+		cmd += ["--pixel-width", str(cw), "--pixel-height", str(ch)]
 		self.app = subprocess.Popen(cmd, env=e, cwd=str(self.home),
 			stdout=open(self.work / "silk.log", "w"), stderr=subprocess.STDOUT)
 		deadline = time.time() + 60
@@ -247,7 +291,7 @@ class Rec:
 		if not win:
 			raise RuntimeError("silkterm window never appeared (see silk.log)")
 		self.win = win
-		self.xdo("windowmove", win, str(mx), str(my))
+		self.place_window(win)
 		time.sleep(4.0)                           # GPU GL bring-up + first frames
 		self.xdo("windowactivate", win)
 		time.sleep(0.3)
@@ -938,8 +982,8 @@ def esc_drawtext(work, i, text):
 # when the action itself is center/right (the Settings dialog).
 def banner_xy(pos, size):
 	m = int(size[0] * 0.025)
-	chrome_y = int(size[1] * 0.05) + 6        # the title/menu strip at the top
-	bot = "h-{}".format(int(size[1] * 0.05) + 118)
+	chrome_y = BORDER + 6                      # into the titlebar/menu strip at the top
+	bot = "h-{}".format(BORDER + 118)
 	return {
 		"top": ("(w-text_w)/2", str(chrome_y)),
 		"tr":  ("w-text_w-{}".format(m), str(chrome_y)),
@@ -1171,6 +1215,12 @@ if __name__ == "__main__":
 
 
 ##	Script history:
+##		- 20260713 JC: the faux window fills the view - only a 4px black border
+##		  around it (was a 3%/5% dark margin); square-cornered dark decoration
+##		  (Material-Black-Pistachio theme); the client is sized + the frame nudged
+##		  so the outer decoration lands 4px inside each edge.
+##		- 20260713 JC: hold the final frame 3s then a 2s black screen at the end
+##		  (tpad at encode; full-length outputs only, not the looping highlight gif).
 ##		- 20260713 JC: per-key sound bank (mechvibes EG Oreo, one slice per
 ##		  physical key) replaces the per-row bank; chars map to their real key's
 ##		  sample, so variety is natural - dropped the pitch-shift/spectral-tilt/
