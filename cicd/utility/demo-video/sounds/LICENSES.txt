@@ -1,14 +1,14 @@
 Sound asset sources and licenses
 ================================
 
-keys/ (press sounds) and keys/release/ (key-up sounds)
-  The kbsim "topre" pack.
-  Source: https://github.com/tplai/kbsim (files under src/assets/audio/topre/)
-  License: MIT, Copyright (c) Thomas Lai (LICENSE.md at repo root)
-  Attribution: "Keyboard sounds from kbsim by Thomas Lai (github.com/tplai/kbsim), MIT license"
-  Format: individual mp3 files. keys/ has GENERIC_R0..R4 (5 distinct per-row
-  key sounds) + SPACE + ENTER + BACKSPACE; keys/release/ has GENERIC + SPACE +
-  ENTER + BACKSPACE key-up sounds.
+keys-oreo/ (per-key press sounds)
+  The Mechvibes "EG Oreo" sound pack, unmodified.
+  Source: https://github.com/hainguyents13/mechvibes (files under src/audio/eg-oreo/)
+  License: MIT (LICENSE at repo root; the pack ships in the repo)
+  Attribution: "Keyboard sounds from the Mechvibes EG Oreo pack (github.com/hainguyents13/mechvibes), MIT license"
+  Format: one recording (oreo.ogg) + config.json mapping each keycode to its
+  [start_ms, duration_ms] slice - 114 keys, each with its own sample, including
+  dedicated SPACE (57), ENTER (28) and BACKSPACE (14).
 
 mouse/click.wav and mouse/click_quiet.wav
   Single clicks extracted (with edge fades) from "Computer Mouse Clicks -

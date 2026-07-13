@@ -39,6 +39,7 @@
 
 import argparse
 import getpass
+import json
 import math
 import os
 import random
@@ -112,7 +113,7 @@ class Rec:
 		self.work     = Path(tempfile.mkdtemp(prefix="silk-demo-"))
 		self.home     = self.work / "home"
 		self.keep     = args.keep_work
-		self.events   = []      # (epoch, kind) kind: key:NAME / rel:NAME / mouse:NAME
+		self.events   = []      # (epoch, kind) kind: key:NAME / mouse:NAME
 		self.banners  = []      # (epoch_start, epoch_end, text, pos)
 		self.app      = None
 		self.ff       = None
@@ -285,19 +286,27 @@ NEIGH = {
 	"o": "ip", "p": "o", "q": "wa", "r": "et", "s": "ad", "t": "ry", "u": "yi",
 	"v": "cb", "w": "qe", "x": "zc", "y": "tu", "z": "x",
 }
-# keyboard row of a char -> which GENERIC_R* sample it thocks with
-ROW1 = set("1234567890-=!@#$%^&*()_+")
-ROW2 = set("qwertyuiop[]{}")
-ROW3 = set("asdfghjkl;:'\"")
-ROW4 = set("zxcvbnm,./<>?")
+# char -> XT scancode: the key bank has one unique slice per physical key, so
+# every key thocks with its own sample; a shifted symbol thocks with its base
+# key, same as a real board
+_SHIFTED = dict(zip('!@#$%^&*()_+{}:"<>?~|', "1234567890-=[];',./`\\"))
+_SCAN = {c: 2 + i for i, c in enumerate("1234567890-=")}
+_SCAN |= {c: 16 + i for i, c in enumerate("qwertyuiop[]")}
+_SCAN |= {c: 30 + i for i, c in enumerate("asdfghjkl;'")}
+_SCAN |= {c: 44 + i for i, c in enumerate("zxcvbnm,./")}
+_SCAN |= {"`": 41, "\\": 43, " ": 57}
+KEY_CODES = {"SPACE": 57, "ENTER": 28, "BACKSPACE": 14, "TAB": 15,
+	"ESC": 1, "ESCAPE": 1, "UP": 57416, "DOWN": 57424, "LEFT": 57419,
+	"RIGHT": 57421, "PGUP": 3657, "PGDN": 3665}
 
 def key_sound(ch):
-	c = ch.lower()
-	if c in ROW2: return "key:GENERIC_R2"
-	if c in ROW3: return "key:GENERIC_R3"
-	if c in ROW4: return "key:GENERIC_R4"
-	if c in ROW1: return "key:GENERIC_R1"
-	return "key:GENERIC_R0"
+	c = _SHIFTED.get(ch, ch.lower())
+	return f"key:{_SCAN.get(c, 30)}"          # unknown lands on 'a'
+
+def keysym_sound(keysym):
+	if len(keysym) == 1:
+		return key_sound(keysym)
+	return f"key:{KEY_CODES.get(keysym.upper(), 30)}"
 
 class Typist:
 	def __init__(self, rec, rng):
@@ -323,7 +332,6 @@ class Typist:
 				env=self.rec.env(), check=False,
 				stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 			self.rec.ev(key_sound(ch))
-		self.rec.events.append((time.time() + self.rng.uniform(0.05, 0.09), "rel:GENERIC"))
 
 	def _backspace(self, n):
 		for _ in range(n):
@@ -368,23 +376,26 @@ class Typist:
 		time.sleep(self.rng.uniform(0.15, 0.4))
 		self.rec.xdo("key", "--clearmodifiers", "Return")
 		self.rec.ev("key:ENTER")
-		self.rec.events.append((time.time() + 0.07, "rel:ENTER"))
 
-	def key(self, keysym, sound="key:GENERIC_R0"):
+	def key(self, keysym, sound=None):
 		self.rec.xdo("key", "--clearmodifiers", keysym)
+		if sound is None:
+			sound = keysym_sound(keysym)
 		if sound:
 			self.rec.ev(sound)
 
-	def keys(self, keysym, n, hz=8.0, sound="key:GENERIC_R0"):
+	def keys(self, keysym, n, hz=8.0, sound=None):
 		# repeated taps (arrow scrolling); slight cadence wobble
 		for _ in range(n):
 			self.key(keysym, sound)
 			time.sleep(max(0.03, self.rng.uniform(0.8, 1.2) / hz))
 
-	def hold(self, keysym, count, hz=55.0, first_sound="key:GENERIC_R0"):
+	def hold(self, keysym, count, hz=55.0, first_sound=None):
 		# a held key, faked as fast discrete repeats (Xvfb has no autorepeat, so a
 		# real keydown/keyup delivers just one press): one click on the first
 		# press, silence for the rest - reads as press-and-hold
+		if first_sound is None:
+			first_sound = keysym_sound(keysym)
 		if first_sound:
 			self.rec.ev(first_sound)
 		self.rec.xdo("key", "--clearmodifiers", "--repeat", str(count),
@@ -661,7 +672,7 @@ def prep_content(rec, rng):
 ##	Settings dialog driving
 
 def open_settings(rec):
-	rec.ev("key:GENERIC_R0")
+	rec.ev(key_sound(","))
 	rec.xdo("key", "--clearmodifiers", "ctrl+comma")
 	time.sleep(2.0)
 	for _ in range(12):
@@ -714,7 +725,7 @@ def seg_settings(r, t, m):
 		# lower half of the Appearance tab
 		m.circle(x + int(w * 0.45), y + int(h * 0.66), int(w * 0.22), loops=1.5, dur=4.0)
 		time.sleep(0.3)
-		r.ev("key:GENERIC_R0")
+		r.ev(keysym_sound("Escape"))
 		r.xdo("key", "--clearmodifiers", "Escape")   # cancel, nothing changed
 		time.sleep(0.5)
 		r.xdo("windowactivate", r.win)
@@ -790,43 +801,47 @@ SEGMENTS = {"video": _SCRIPT, "gif": _SCRIPT}
 ##	Audio: process the key bank, mix the event log into a wav
 
 SOUND_FILES = {
-	"key:GENERIC_R0": SOUNDS / "keys/GENERIC_R0.mp3",
-	"key:GENERIC_R1": SOUNDS / "keys/GENERIC_R1.mp3",
-	"key:GENERIC_R2": SOUNDS / "keys/GENERIC_R2.mp3",
-	"key:GENERIC_R3": SOUNDS / "keys/GENERIC_R3.mp3",
-	"key:GENERIC_R4": SOUNDS / "keys/GENERIC_R4.mp3",
-	"key:SPACE":      SOUNDS / "keys/SPACE.mp3",
-	"key:ENTER":      SOUNDS / "keys/ENTER.mp3",
-	"key:BACKSPACE":  SOUNDS / "keys/BACKSPACE.mp3",
-	"rel:GENERIC":    SOUNDS / "keys/release/GENERIC.mp3",
-	"rel:ENTER":      SOUNDS / "keys/release/ENTER.mp3",
 	"mouse:CLICK":    SOUNDS / "mouse/click.wav",
 	"mouse:CLICK_Q":  SOUNDS / "mouse/click_quiet.wav",
 }
-GAIN = {"key": 0.85, "rel": 0.28, "mouse:CLICK": 0.5, "mouse:CLICK_Q": 0.36,
-	"mouse:WHEEL": 0.5}
+KEYPACK = SOUNDS / "keys-oreo"     # mechvibes "EG Oreo": one recording, one slice per key
+GAIN = {"key": 0.85, "mouse:CLICK": 0.5, "mouse:CLICK_Q": 0.36, "mouse:WHEEL": 0.5}
 
-# the topre bank is deep + soft and the letter samples sit ~13 dB under
-# space/enter; normalize each family member to a consistent body presence
-# (space/enter a touch prouder) so keys read clearly, then graft a crisp mid
-# click transient so a press sounds like a switch, not a thud.
-KEY_BODY = {"key:SPACE": 0.085, "key:ENTER": 0.085, "key:BACKSPACE": 0.07}
+# the bank is quiet and slice loudness wanders ~6 dB; even each slice out to a
+# consistent body presence (space/enter a touch prouder) but keep every key's
+# own transient and timbre - that natural variety is the whole point of a
+# per-key bank
+KEY_BODY = {57: 0.085, 28: 0.085, 14: 0.07}
 
-def add_midclick(sig, sr, kind):
-	rms = np.sqrt((sig ** 2).mean()) + 1e-9
-	sig = sig * (KEY_BODY.get(kind, 0.062) / rms)
-	# a short, bright-ish mid click (1.8-5 kHz) grafted on the onset
-	n = int(sr * 0.009)
-	tt = np.arange(n) / sr
-	noise = np.random.default_rng(7).standard_normal(n)
-	sos = spsig.butter(2, [1800, 5000], btype="band", fs=sr, output="sos")
-	click = (spsig.sosfilt(sos, noise) * np.exp(-tt * 380))[:, None]
-	out = sig.copy()
-	out[:n] += np.repeat(click, 2, axis=1) * 0.45
-	peak = np.abs(out).max()
+def shape_slice(s, code):
+	rms = np.sqrt((s ** 2).mean()) + 1e-9
+	s = s * (KEY_BODY.get(code, 0.062) / rms)
+	n_in, n_out = int(SR * 0.001), int(SR * 0.006)
+	s[:n_in] *= np.linspace(0.0, 1.0, n_in)[:, None]      # slice edges must not click
+	s[-n_out:] *= np.linspace(1.0, 0.0, n_out)[:, None]
+	peak = np.abs(s).max()
 	if peak > 0.7:                                # keep one loud hit from owning the mix
-		out *= 0.7 / peak
-	return out.astype(np.float32)
+		s *= 0.7 / peak
+	return s.astype(np.float32)
+
+def load_keypack(work, cache):
+	cfg = json.loads((KEYPACK / "config.json").read_text())
+	raw = work / "keypack.pcm"
+	run(["ffmpeg", "-v", "error", "-y", "-i", str(KEYPACK / cfg["sound"]),
+		"-ar", str(SR), "-ac", "2", "-f", "s16le", str(raw)])
+	pcm = np.frombuffer(raw.read_bytes(), dtype=np.int16) \
+		.astype(np.float32).reshape(-1, 2) / 32768.0
+	for code, span in cfg["defines"].items():
+		if not span:
+			continue
+		start, dur = span
+		s = pcm[int(start * SR / 1000):int((start + dur) * SR / 1000)].copy()
+		if len(s) < SR // 100:
+			continue
+		cache[f"key:{code}"] = shape_slice(s, int(code))
+	for name, code in KEY_CODES.items():
+		if f"key:{code}" in cache:
+			cache[f"key:{name}"] = cache[f"key:{code}"]
 
 def synth_wheel(sr):
 	# a soft scroll-wheel detent: a short muffled tick, much softer and darker
@@ -850,9 +865,8 @@ def load_samples(work):
 		with wave.open(str(wav), "rb") as w:
 			data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
 		s = data.astype(np.float32).reshape(-1, 2) / 32768.0
-		if kind.startswith("key:"):
-			s = add_midclick(s, SR, kind)
 		cache[kind] = s
+	load_keypack(work, cache)
 	cache["mouse:WHEEL"] = synth_wheel(SR)
 	return cache
 
@@ -867,17 +881,8 @@ def build_audio(rec, work, duration, rng):
 		if s is None:
 			continue
 		gain = GAIN.get(kind, GAIN.get(kind.split(":")[0], 0.8))
-		gain *= rng.uniform(0.78, 1.05)
-		# wider per-hit pitch + a small spectral tilt so no two presses of the
-		# same key sound stamped - the extra variety the deep bank was missing
-		rate = rng.uniform(0.9, 1.12)
-		n = int(len(s) / rate)
-		idx = np.linspace(0, len(s) - 1, n)
-		samp = np.stack([np.interp(idx, np.arange(len(s)), s[:, c]) for c in (0, 1)], axis=1)
-		if kind.startswith("key:") and rng.random() < 0.5:
-			tilt = rng.uniform(-0.3, 0.3)         # gentle darken/brighten
-			b = np.array([1.0 + tilt, -tilt])
-			samp = spsig.lfilter(b, [1.0], samp, axis=0).astype(np.float32)
+		gain *= rng.uniform(0.85, 1.05)           # stroke-force wobble; samples are raw
+		samp = s
 		at = int(max(0.0, t_rel) * SR)
 		end = min(at + len(samp), len(mix))
 		mix[at:end] += samp[: end - at] * gain
@@ -1165,6 +1170,10 @@ if __name__ == "__main__":
 
 
 ##	Script history:
+##		- 20260713 JC: per-key sound bank (mechvibes EG Oreo, one slice per
+##		  physical key) replaces the per-row bank; chars map to their real key's
+##		  sample, so variety is natural - dropped the pitch-shift/spectral-tilt/
+##		  mid-click processing and the separate release sounds.
 ##		- 20260713 JC: window size passed at launch (--pixel-width/height), never
 ##		  resized after - fixes the clipped video / band-at-top gif (VGL EGL
 ##		  latches the surface size at creation); both profiles start opaque on
