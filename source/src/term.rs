@@ -28,6 +28,9 @@ pub enum UserEvent {
 	SetWallpaper(Option<std::path::PathBuf>),
 	// control socket: re-read config.toml and apply it (same as Menu > Reload)
 	ReloadSettings,
+	// control socket: another instance enabled auto-copy; turn ours off
+	// (the feature is exclusive to one window at a time)
+	CopyModeOff,
 }
 
 // bridges alacritty's PTY thread back to the winit loop

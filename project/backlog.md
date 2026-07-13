@@ -74,19 +74,25 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- 🔘 Copy on...
-	- 🔘 Update "[ ] Copy on output", to offer two options:
-		- 🔘 "Copy on   [ ] select   [ ] output"
+- ✅ Copy on... (20260713)
+	- ✅ Update "[ ] Copy on output", to offer two options:
+		- ✅ "Copy on   [ ] select   [ ] output"
 			- Only one or the other
-		- 🔘 Menu items too
-	- 🔘 Implement "Copy on select"
-	- 🔘 Improvements to copy on output:
-		- 🔘 Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.
-		- 🔘 The checkbox button and menu item should only be visibly enabled for one pane at a time.
-			- 🔘 If you change tabs or panes, the feature gets turned off. (Visibly and actually.)
-				- 🔘 Changing to other non-SilkTerm windows is OK.
-			- 🔘 But if you later enable the feature on a different silkterm window, it gets disabled on other open windows. (Visibly and actually.)
-		- 🔘 Verify that it's not persisted across sessions. (I don't remember wiring this but who knows.)
+			- Done: menu bar now shows both checkboxes; turning one on turns the other off.
+		- ✅ Menu items too
+			- Done: "Copy on select" / "Copy on output" toggles in the Edit menu and the right-click menu.
+	- ✅ Implement "Copy on select"
+		- Done: finishing a selection also puts it on the desktop clipboard (primary selection still set as always).
+	- ✅ Improvements to copy on output:
+		- ✅ Should only copy program stdout/stderr, and NOT the terminal prompt that resumes afterward.
+			- Done: the input line was already excluded; multi-line prompts now handled too - the rows a prompt draws above its input line are recognized from the previous command and dropped from the copy. First command after enable can still include them (nothing learned yet); dynamic prompt rows that change every draw stay in the copy (fail-safe).
+		- ✅ The checkbox button and menu item should only be visibly enabled for one pane at a time.
+			- ✅ If you change tabs or panes, the feature gets turned off. (Visibly and actually.)
+				- ✅ Changing to other non-SilkTerm windows is OK.
+			- ✅ But if you later enable the feature on a different silkterm window, it gets disabled on other open windows. (Visibly and actually.)
+				- Done: enabling notifies other running instances over the control socket; Linux/Unix only for now (same limit as the other socket commands).
+		- ✅ Verify that it's not persisted across sessions. (I don't remember wiring this but who knows.)
+			- Confirmed: no config key exists; the mode always starts off.
 
 - ✅ CI/CD improvements:
 	- Guiding constraints: rely on GitHub as little as possible (dumb git hosting plus optional release storage, nothing more), no cloud-hosted CI/CD, as few third-party tools as possible - but still cover the lightweight local-pipeline best practices for Rust.

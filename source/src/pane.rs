@@ -55,6 +55,17 @@ const APP_SCROLL_MAX: usize = 24; // max per-step shift the slide detector accep
 // bottom status line (less, vim) have no top band and slide regardless.
 const SLIDE_TOP_BAND_APPS: bool = true;
 
+const PROMPT_ABOVE_MAX: usize = 4; // rows above the prompt considered for multi-line-prompt learning
+
+// Per-pane auto-copy mode: at most one of the two, session-only (never persisted).
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum CopyOn {
+	#[default]
+	Off,
+	Select,
+	Output,
+}
+
 // One styled cell captured for the scrolled-off strip. Colours are resolved at
 // capture time (the palette/theme can change later; the strip shows what was on
 // screen). `wide` is the cell count: 0 = wide-char spacer (skip), 1, or 2.
@@ -548,13 +559,14 @@ pub struct Pane {
 	// re-shaping to panes that changed: one busy pane no longer forces its
 	// idle siblings through set_rich_text every frame.
 	pub content_dirty: bool,
-	// Copy-output-on-command-finish (see arm_capture / poll_capture). `auto_copy` is
-	// the per-pane opt-in. On Enter at the shell prompt we arm and record `cmd_start`
+	// Copy-output-on-command-finish (see arm_capture / poll_capture). `copy_on` is
+	// the per-pane mode (off / select / output - one at a time, never persisted).
+	// On Enter at the shell prompt we arm and record `cmd_start`
 	// (the line after the prompt); when the terminal then settles (no new output for
 	// a debounce) back at the prompt, the lines since are copied. `last_output` is
 	// refreshed on every Wakeup so the settle timer measures true idle. This catches
 	// both instant (ls) and long commands without racing the fg-pgid transition.
-	pub auto_copy: bool,
+	pub copy_on: CopyOn,
 	capture_armed: bool,
 	cmd_start: usize,
 	// Fingerprint of the arm-time prompt row. cmd_start is "history + row", an
@@ -562,6 +574,13 @@ pub struct Pane {
 	// the oldest), so capture re-finds the prompt row by content instead and only
 	// falls back to cmd_start when it can't (evicted, or redrawn on Enter).
 	cmd_anchor: Option<u64>,
+	// Multi-line prompt learning: the rows a prompt paints ABOVE its input line
+	// repeat verbatim before every command, while output above the prompt changes
+	// run to run. `prompt_above` holds the last arm's above-cursor fingerprints;
+	// the contiguous match against the current arm's becomes `prompt_block`, and
+	// capture strips the same rows off the resumed prompt (see prompt_strip).
+	prompt_above: Vec<u64>,
+	prompt_block: Vec<u64>,
 	last_output: std::time::Instant,
 }
 
@@ -1512,6 +1531,22 @@ impl Pane {
 		let row = &grid[cursor_line];
 		let blank = (0..cols).all(|c| row[Column(c)].c == ' ');
 		self.cmd_anchor = (!blank).then(|| fnv_row((0..cols).map(|c| row[Column(c)].c)));
+		// learn the multi-line prompt block: rows above the input line that were
+		// also there (identical) at the previous arm are prompt, not output
+		let hist = grid.history_size() as i32;
+		let above: Vec<u64> = (1..=PROMPT_ABOVE_MAX as i32)
+			.map_while(|up| {
+				let line = Line(cursor_line.0 - up);
+				(line.0 >= -hist).then(|| fnv_row((0..cols).map(|c| grid[line][Column(c)].c)))
+			})
+			.collect();
+		let confirmed = above
+			.iter()
+			.zip(&self.prompt_above)
+			.take_while(|(cur, prev)| cur == prev)
+			.count();
+		self.prompt_block = above[..confirmed].to_vec();
+		self.prompt_above = above;
 		self.capture_armed = true;
 		self.last_output = std::time::Instant::now();
 	}
@@ -1546,6 +1581,7 @@ impl Pane {
 			grid.history_size() + grid.cursor.point.line.0.max(0) as usize
 		};
 		let start = capture_start(&guard, self.cmd_start, self.cmd_anchor, end);
+		let end = prompt_strip(&guard, start, end, &self.prompt_block);
 		let text = capture_grid_text(&guard, start, end);
 		(!text.trim().is_empty()).then_some(text)
 	}
@@ -1953,7 +1989,9 @@ fn spawn_pane(
 		text_built: false,
 		mode: TermMode::empty(),
 		content_dirty: true,
-		auto_copy: false,
+		copy_on: CopyOn::Off,
+		prompt_above: Vec::new(),
+		prompt_block: Vec::new(),
 		capture_armed: false,
 		cmd_start: 0,
 		cmd_anchor: None,
@@ -1990,6 +2028,35 @@ fn capture_start<T: alacritty_terminal::event::EventListener>(
 		}
 	}
 	cmd_start
+}
+
+// Drop a multi-line prompt's extra rows off the capture end. `end_abs` already
+// excludes the resumed prompt's input line (the cursor row); strip the rows
+// above it that match the learned prompt block (see prompt_block on Pane), so
+// e.g. a two-line prompt's decoration line isn't copied as output. Fail-safe:
+// a row that doesn't match (dynamic prompt content, nothing learned yet) stops
+// the strip and stays in the copy - the current behaviour.
+fn prompt_strip<T: alacritty_terminal::event::EventListener>(
+	term: &Term<T>,
+	start_abs: usize,
+	end_abs: usize,
+	block: &[u64],
+) -> usize {
+	let grid = term.grid();
+	let hist = grid.history_size() as i64;
+	let cols = grid.columns();
+	let mut end = end_abs;
+	for &fingerprint in block {
+		if end <= start_abs {
+			break;
+		}
+		let row = &grid[Line((end as i64 - 1 - hist) as i32)];
+		if fnv_row((0..cols).map(|c| row[Column(c)].c)) != fingerprint {
+			break;
+		}
+		end -= 1;
+	}
+	end
 }
 
 // Extract the grid text for absolute line range [start_abs, end_abs) as plain
@@ -2536,8 +2603,9 @@ mod tests {
 	use super::{
 		APP_SCROLL_MAX, Dir, Node, OffStrip, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell,
 		bell_brighten, capture_grid_text, capture_start, distinct_pair, equalize_dir_run, fnv_row,
-		glide_to_full, layout, logical_line_bounds, pair_inside, render_char, same_char_pair,
-		scroll_shift, scroll_shift_signed, static_bands, vanished_range, weld_region_clip,
+		glide_to_full, layout, logical_line_bounds, pair_inside, prompt_strip, render_char,
+		same_char_pair, scroll_shift, scroll_shift_signed, static_bands, vanished_range,
+		weld_region_clip,
 	};
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
@@ -2737,6 +2805,24 @@ mod tests {
 		// recorded index is the fallback, never a panic
 		assert_eq!(capture_start(&term, cmd_start, None, end), cmd_start);
 		assert_eq!(capture_start(&term, cmd_start, Some(1), end), cmd_start);
+	}
+
+	#[test]
+	fn capture_strips_multiline_prompt_rows() {
+		// two-line prompt: the decoration row the prompt paints above its input
+		// line must not be copied as output once the block is learned
+		let mut term = term_fed(20, 6, 100, "==info==\r\nuser$ cmd");
+		let grid = term.grid();
+		let cmd_start = grid.history_size() + grid.cursor.point.line.0.max(0) as usize + 1;
+		let block = vec![row_hash(&term, grid.cursor.point.line.0 - 1)];
+		feed(&mut term, "\r\nA\r\nB\r\n==info==\r\nuser$ ");
+		let grid = term.grid();
+		let end = grid.history_size() + grid.cursor.point.line.0.max(0) as usize;
+		let stripped = prompt_strip(&term, cmd_start, end, &block);
+		assert_eq!(capture_grid_text(&term, cmd_start, stripped), "A\nB\n");
+		// nothing learned yet, or a non-matching row: strip nothing (fail-safe)
+		assert_eq!(prompt_strip(&term, cmd_start, end, &[]), end);
+		assert_eq!(prompt_strip(&term, cmd_start, end, &[123]), end);
 	}
 
 	#[test]

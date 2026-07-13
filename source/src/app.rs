@@ -23,7 +23,7 @@ use crate::config;
 use crate::config::DONATE_URL;
 use crate::gfx::{Gfx, RectInstance, RectRenderer};
 use crate::input;
-use crate::pane::{Dir, Pane, PaneManager, Rect};
+use crate::pane::{CopyOn, Dir, Pane, PaneManager, Rect};
 use crate::term::{PaneId, UserEvent};
 use crate::text::TextCtx;
 
@@ -235,7 +235,8 @@ enum MenuAction {
 	Paste,
 	PasteSelection,
 	ToggleReadOnly,
-	ToggleAutoCopy,
+	ToggleCopySelect,
+	ToggleCopyOutput,
 	NewTab,
 	CloseTab,
 	NextTab,
@@ -358,6 +359,14 @@ struct ChromeCache {
 	tabs: Vec<(String, Buffer)>,
 }
 
+// The menu bar's right-side copy-mode cluster: "Copy on [ ] select [ ] output".
+// Drawing, label placement, and click hit-testing all read this one layout.
+struct CopyBoxes {
+	boxes: [Rect; 2],  // select, output checkbox squares
+	label_x: [f32; 3], // left edge per COPYBOX_LABELS entry
+	label_w: [f32; 3],
+}
+
 // Tab strip: each tab owns its own pane split-tree. Detach/dock to other
 // windows is deferred (needs multi-window support).
 struct Tabs {
@@ -433,7 +442,7 @@ fn tab_close_box(tab_x: f32, tab_w: f32, bar_y: f32, tab_h: f32) -> Rect {
 	}
 }
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
-const COPYBOX_LABEL: &str = "Copy output"; // always-visible auto-copy checkbox on the menu bar
+const COPYBOX_LABELS: [&str; 3] = ["Copy on", "select", "output"]; // menu-bar auto-copy checkboxes
 
 struct State {
 	window: Arc<Window>,
@@ -448,10 +457,11 @@ struct State {
 	mouse_btn: Option<input::MouseBtn>, // button held after a reported press (mouse-tracking apps)
 	mouse_cell: Option<(usize, usize)>, // last cell reported, to de-dupe motion
 	selecting: Option<PaneId>,          // pane with an in-progress drag-select
+	copy_focus: (usize, PaneId), // (tab, pane) auto-copy focus sweep last saw; a change clears the mode
 	last_click: Option<(Instant, f32, f32)>, // for multi-click detection
-	click_count: u32,                   // consecutive clicks in the same spot (2=double, 3=triple)
-	resizing: Option<Vec<bool>>,        // split-tree path of the divider being dragged
-	dragging_pane: Option<PaneId>,      // pane being drag-reordered (Shift+drag)
+	click_count: u32,            // consecutive clicks in the same spot (2=double, 3=triple)
+	resizing: Option<Vec<bool>>, // split-tree path of the divider being dragged
+	dragging_pane: Option<PaneId>, // pane being drag-reordered (Shift+drag)
 	cursor_icon: CursorIcon,
 	clipboard: Clipboard,
 	last_frame: Instant,
@@ -625,7 +635,7 @@ impl State {
 			let Some(pane) = self.tabs.cur_mut().panes.get_mut(&focused_id) else {
 				return;
 			};
-			if !pane.auto_copy {
+			if pane.copy_on != CopyOn::Output {
 				return;
 			}
 			pane.poll_capture(CAPTURE_SETTLE)
@@ -643,7 +653,7 @@ impl State {
 		}
 		let focused_id = self.tabs.cur().focused;
 		let p = self.tabs.cur().panes.get(&focused_id)?;
-		p.auto_copy
+		(p.copy_on == CopyOn::Output)
 			.then(|| p.capture_deadline(CAPTURE_SETTLE))
 			.flatten()
 	}
@@ -686,13 +696,22 @@ impl State {
 	fn open_menu(&mut self, target: PaneId, mx: f32, my: f32) {
 		let p = self.tabs.cur().panes.get(&target);
 		let read_only = p.is_some_and(|p| p.read_only);
-		let auto_copy = p.is_some_and(|p| p.auto_copy);
+		let copy_on = p.map_or(CopyOn::Off, |p| p.copy_on);
 		let entries = vec![
 			mi("Copy", MenuAction::Copy),
 			mi("Paste", MenuAction::Paste),
 			mi("Paste Selection", MenuAction::PasteSelection),
 			Entry::Sep,
-			mt(auto_copy, "Auto-copy output", MenuAction::ToggleAutoCopy),
+			mt(
+				copy_on == CopyOn::Select,
+				"Copy on select",
+				MenuAction::ToggleCopySelect,
+			),
+			mt(
+				copy_on == CopyOn::Output,
+				"Copy on output",
+				MenuAction::ToggleCopyOutput,
+			),
 			mt(read_only, "Read-only", MenuAction::ToggleReadOnly),
 			Entry::Sep,
 			mi("New Tab", MenuAction::NewTab),
@@ -751,7 +770,7 @@ impl State {
 	fn bar_menu_items(&self, idx: usize) -> Vec<Entry> {
 		let p = self.tabs.cur().panes.get(&self.tabs.cur().focused);
 		let read_only = p.is_some_and(|p| p.read_only);
-		let auto_copy = p.is_some_and(|p| p.auto_copy);
+		let copy_on = p.map_or(CopyOn::Off, |p| p.copy_on);
 		match idx {
 			0 => vec![
 				mi("Reload Config", MenuAction::ReloadConfig),
@@ -764,7 +783,16 @@ impl State {
 				mi("Paste", MenuAction::Paste),
 				mi("Paste Selection", MenuAction::PasteSelection),
 				Entry::Sep,
-				mt(auto_copy, "Auto-copy output", MenuAction::ToggleAutoCopy),
+				mt(
+					copy_on == CopyOn::Select,
+					"Copy on select",
+					MenuAction::ToggleCopySelect,
+				),
+				mt(
+					copy_on == CopyOn::Output,
+					"Copy on output",
+					MenuAction::ToggleCopyOutput,
+				),
 				mt(read_only, "Read-only", MenuAction::ToggleReadOnly),
 			],
 			2 => vec![
@@ -831,30 +859,78 @@ impl State {
 			.position(|&(x, w)| mx >= x && mx < x + w)
 	}
 
-	// Always-visible "Copy output" checkbox on the right of the menu bar (security:
-	// the user can always see when the focused pane is auto-copying output). Returns
-	// the checkbox-square rect, the label's left x, and the label width.
-	fn copybox_layout(&mut self) -> (Rect, f32, f32) {
+	// Always-visible "Copy on [ ] select [ ] output" pair on the right of the
+	// menu bar (security: the user can always see when the focused pane is
+	// auto-copying). label_x/label_w index-match COPYBOX_LABELS.
+	fn copybox_layout(&mut self) -> CopyBoxes {
 		let attrs = crate::text::ui_attrs();
-		let label_w = self.text.measure_ui_text(COPYBOX_LABEL, &attrs);
+		let mut label_w = [0.0f32; 3];
+		for (w, label) in label_w.iter_mut().zip(COPYBOX_LABELS) {
+			*w = self.text.measure_ui_text(label, &attrs);
+		}
 		let box_sz = (self.text.ui_line_h * 0.6).round();
-		let menu_h = self.menu_bar_h();
+		let box_y = (self.menu_bar_h() - box_sz) / 2.0;
 		let right = self.gfx.config.width as f32 - MENU_BAR_PAD;
-		let label_x = right - label_w;
-		let box_x = label_x - 6.0 - box_sz;
-		let rect = Rect {
-			x: box_x,
-			y: (menu_h - box_sz) / 2.0,
+		let out_x = right - label_w[2];
+		let out_box = Rect {
+			x: out_x - 6.0 - box_sz,
+			y: box_y,
 			w: box_sz,
 			h: box_sz,
 		};
-		(rect, label_x, label_w)
+		let sel_x = out_box.x - 14.0 - label_w[1];
+		let sel_box = Rect {
+			x: sel_x - 6.0 - box_sz,
+			y: box_y,
+			w: box_sz,
+			h: box_sz,
+		};
+		let lead_x = sel_box.x - 10.0 - label_w[0];
+		CopyBoxes {
+			boxes: [sel_box, out_box],
+			label_x: [lead_x, sel_x, out_x],
+			label_w,
+		}
 	}
 
-	// True if a menu-bar click at `mx` hit the copy-output checkbox area.
-	fn copybox_hit(&mut self, mx: f32) -> bool {
-		let (rect, label_x, label_w) = self.copybox_layout();
-		mx >= rect.x && mx <= label_x + label_w
+	// Which copy-mode checkbox (the square or its word) a menu-bar click hit.
+	fn copybox_hit(&mut self, mx: f32) -> Option<CopyOn> {
+		let cb = self.copybox_layout();
+		if mx >= cb.boxes[0].x && mx <= cb.label_x[1] + cb.label_w[1] {
+			Some(CopyOn::Select)
+		} else if mx >= cb.boxes[1].x && mx <= cb.label_x[2] + cb.label_w[2] {
+			Some(CopyOn::Output)
+		} else {
+			None
+		}
+	}
+
+	// Toggle a pane's auto-copy mode. The two modes are mutually exclusive and
+	// the feature is exclusive to one pane (and one window): enabling it clears
+	// every other pane and tells other running instances to drop theirs.
+	fn toggle_copy_mode(&mut self, target: PaneId, mode: CopyOn) {
+		let Some(p) = self.tabs.find_pane_mut(target) else {
+			return;
+		};
+		if p.copy_on == mode {
+			p.copy_on = CopyOn::Off;
+			return;
+		}
+		for pm in &mut self.tabs.list {
+			for pane in pm.panes.values_mut() {
+				pane.copy_on = CopyOn::Off;
+			}
+		}
+		if let Some(p) = self.tabs.find_pane_mut(target) {
+			p.copy_on = mode;
+		}
+		// the mode follows the focused pane; enabling from the context menu on
+		// an unfocused pane focuses it (else the focus sweep would clear it)
+		if self.tabs.cur().panes.contains_key(&target) {
+			self.tabs.cur_mut().focused = target;
+		}
+		self.copy_focus = (self.tabs.active, self.tabs.cur().focused);
+		crate::ctl::broadcast_copy_off();
 	}
 
 	// Request the About window. App opens it (window creation needs the event
@@ -898,11 +974,8 @@ impl State {
 					}
 				}
 			}
-			MenuAction::ToggleAutoCopy => {
-				if let Some(p) = self.tabs.cur_mut().panes.get_mut(&target) {
-					p.auto_copy = !p.auto_copy;
-				}
-			}
+			MenuAction::ToggleCopySelect => self.toggle_copy_mode(target, CopyOn::Select),
+			MenuAction::ToggleCopyOutput => self.toggle_copy_mode(target, CopyOn::Output),
 			MenuAction::ToggleReadOnly => {
 				if let Some(p) = self.tabs.cur_mut().panes.get_mut(&target) {
 					p.read_only = !p.read_only;
@@ -1158,6 +1231,17 @@ impl State {
 	// `force_rebuild` = the frame changed content/scroll/bell (not a pure cursor
 	// animation), so panes re-shape text; false lets them reuse the cached frame.
 	fn render(&mut self, force_rebuild: bool) -> bool {
+		// changing tabs or panes turns auto-copy off everywhere (visibly and
+		// actually): the feature is deliberately hard to leave on by accident
+		let focus_now = (self.tabs.active, self.tabs.cur().focused);
+		if focus_now != self.copy_focus {
+			self.copy_focus = focus_now;
+			for pm in &mut self.tabs.list {
+				for pane in pm.panes.values_mut() {
+					pane.copy_on = CopyOn::Off;
+				}
+			}
+		}
 		// once a frame has been drawn, later resizes are user-driven and may update
 		// the remembered window size (startup/programmatic ones happen before this)
 		self.size_tracked = true;
@@ -1324,38 +1408,40 @@ impl State {
 					}
 				}
 			}
-			// always-visible copy-output checkbox (right side): outline always, filled
-			// when the focused pane is auto-copying, so the state is never hidden.
-			let auto_copy = self
+			// always-visible copy-mode checkboxes (right side): outlines always,
+			// filled per the focused pane's mode, so the state is never hidden.
+			let copy_on = self
 				.tabs
 				.cur()
 				.panes
 				.get(&self.tabs.cur().focused)
-				.is_some_and(|p| p.auto_copy);
-			let (checkbox, _, _) = self.copybox_layout();
+				.map_or(CopyOn::Off, |p| p.copy_on);
+			let cb = self.copybox_layout();
 			let border = config::menu_border();
-			instances.push(rect_inst(
-				checkbox.x - 1.0,
-				checkbox.y - 1.0,
-				checkbox.w + 2.0,
-				checkbox.h + 2.0,
-				border,
-			));
-			instances.push(rect_inst(
-				checkbox.x,
-				checkbox.y,
-				checkbox.w,
-				checkbox.h,
-				config::TAB_BAR_BG,
-			));
-			if auto_copy {
+			for (checkbox, mode) in cb.boxes.iter().zip([CopyOn::Select, CopyOn::Output]) {
 				instances.push(rect_inst(
-					checkbox.x + 3.0,
-					checkbox.y + 3.0,
-					checkbox.w - 6.0,
-					checkbox.h - 6.0,
-					config::menu_fg(),
+					checkbox.x - 1.0,
+					checkbox.y - 1.0,
+					checkbox.w + 2.0,
+					checkbox.h + 2.0,
+					border,
 				));
+				instances.push(rect_inst(
+					checkbox.x,
+					checkbox.y,
+					checkbox.w,
+					checkbox.h,
+					config::TAB_BAR_BG,
+				));
+				if copy_on == mode {
+					instances.push(rect_inst(
+						checkbox.x + 3.0,
+						checkbox.y + 3.0,
+						checkbox.w - 6.0,
+						checkbox.h - 6.0,
+						config::menu_fg(),
+					));
+				}
 			}
 			Some((start, instances.len() as u32))
 		} else {
@@ -1521,10 +1607,10 @@ impl State {
 				buf
 			};
 			// menu-bar titles (one per top-level menu) plus the trailing
-			// "Copy output" label for the always-visible checkbox
+			// "Copy on / select / output" labels for the always-visible checkboxes
 			let menubar = MENU_BAR
 				.iter()
-				.chain(std::iter::once(&COPYBOX_LABEL))
+				.chain(COPYBOX_LABELS.iter())
 				.map(|title| shape_ui(&mut self.text, title, 240.0, menu_h, menu_fg))
 				.collect();
 			// the close "x" is bold so it reads as a button glyph
@@ -1590,7 +1676,7 @@ impl State {
 		}
 		// compute before borrowing panes for `areas` (menubar_layout takes &mut self)
 		let bar_layout = self.menubar_layout();
-		let (_, copy_label_x, copy_label_w) = self.copybox_layout();
+		let copyboxes = self.copybox_layout();
 		let chrome = self.chrome.as_ref().unwrap(); // ensured above
 		let mut areas: Vec<TextArea> = Vec::new();
 		for p in self.tabs.cur().panes.values() {
@@ -1630,12 +1716,14 @@ impl State {
 		}
 		if self.menu_bar {
 			for (i, buf) in chrome.menubar.iter().enumerate() {
-				// the last buffer is the right-aligned "Copy output" checkbox label
+				// the trailing buffers are the right-aligned copy-mode labels
 				let (left, left_bound, right_bound) = if i < bar_layout.len() {
 					let (x, w) = bar_layout[i];
 					(x + MENU_BAR_PAD, x, x + w)
 				} else {
-					(copy_label_x, copy_label_x, copy_label_x + copy_label_w)
+					let j = i - bar_layout.len();
+					let x = copyboxes.label_x[j];
+					(x, x, x + copyboxes.label_w[j])
 				};
 				areas.push(TextArea {
 					buffer: buf,
@@ -2533,6 +2621,7 @@ impl ApplicationHandler<UserEvent> for App {
 			mouse_btn: None,
 			mouse_cell: None,
 			selecting: None,
+			copy_focus: (0, 0),
 			last_click: None,
 			click_count: 0,
 			resizing: None,
@@ -2617,6 +2706,14 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 			UserEvent::SetWallpaper(image) => state.set_wallpaper(image),
 			UserEvent::ReloadSettings => state.reload_config(),
+			UserEvent::CopyModeOff => {
+				for pm in &mut state.tabs.list {
+					for pane in pm.panes.values_mut() {
+						pane.copy_on = CopyOn::Off;
+					}
+				}
+				state.dirty = true;
+			}
 		}
 	}
 
@@ -2747,12 +2844,10 @@ impl ApplicationHandler<UserEvent> for App {
 				let (x, y) = state.mouse;
 				// click on the menu bar: toggle/open the top-level menu's dropdown
 				if button == MouseButton::Left && state.menu_bar && y < state.menu_bar_h() {
-					// the always-visible copy-output checkbox toggles the focused pane
-					if state.copybox_hit(x) {
+					// the always-visible copy-mode checkboxes toggle the focused pane
+					if let Some(mode) = state.copybox_hit(x) {
 						let focused_id = state.tabs.cur().focused;
-						if let Some(p) = state.tabs.cur_mut().panes.get_mut(&focused_id) {
-							p.auto_copy = !p.auto_copy;
-						}
+						state.toggle_copy_mode(focused_id, mode);
 						state.menu = None;
 						state.bar_open = None;
 						state.dirty = true;
@@ -2964,7 +3059,20 @@ impl ApplicationHandler<UserEvent> for App {
 						sel_text
 					});
 					match text {
-						Some(sel_text) => state.clipboard.set_primary(sel_text),
+						Some(sel_text) => {
+							// copy-on-select: a finished selection also lands on
+							// the desktop clipboard when the pane opted in
+							if state
+								.tabs
+								.cur()
+								.panes
+								.get(&id)
+								.is_some_and(|p| p.copy_on == CopyOn::Select)
+							{
+								state.clipboard.set_clipboard(sel_text.clone());
+							}
+							state.clipboard.set_primary(sel_text);
+						}
 						None => state.dirty = true,
 					}
 				}
@@ -3230,7 +3338,7 @@ impl ApplicationHandler<UserEvent> for App {
 						if !p.read_only {
 							p.scroll.jump_bottom();
 							p.term.write(bytes);
-							if is_enter && p.auto_copy {
+							if is_enter && p.copy_on == CopyOn::Output {
 								p.arm_capture();
 							}
 						}
