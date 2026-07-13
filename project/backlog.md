@@ -79,6 +79,8 @@ In each section, items are listed approximately from newest to oldest.
 		- ✅ "Copy on   [ ] select   [ ] output"
 			- Only one or the other
 			- Done: menu bar now shows both checkboxes; turning one on turns the other off.
+				- ✅ Vertically center text and checkboxes. Currently bottom-aligned. (20260713)
+					- Done: the labels now center on their full ink, descenders included; the boxes were already centered.
 		- ✅ Menu items too
 			- Done: "Copy on select" / "Copy on output" toggles in the Edit menu and the right-click menu.
 	- ✅ Implement "Copy on select"

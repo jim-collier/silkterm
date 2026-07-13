@@ -471,6 +471,14 @@ impl TextCtx {
 		ui_visible_center_top(self.ui_line_h, self.ui_vmetrics, bar_top, bar_h)
 	}
 
+	// `top` that centers the full ascent..descent ink box instead. Right for
+	// lowercase labels with descenders ("select"/"output"), which read
+	// bottom-heavy under the ascent..baseline centering above. cosmic-text
+	// centers that box in the line, so this is just centering the buffer.
+	pub fn ui_text_top_ink(&self, bar_top: f32, bar_h: f32) -> f32 {
+		bar_top + (bar_h - self.ui_line_h) / 2.0
+	}
+
 	// Screen-space baseline of chrome text placed with `ui_text_top` - for the
 	// Alt-accelerator underline.
 	pub fn ui_baseline(&self, bar_top: f32, bar_h: f32) -> f32 {
