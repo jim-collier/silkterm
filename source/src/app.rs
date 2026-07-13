@@ -2393,12 +2393,19 @@ impl ApplicationHandler<UserEvent> for App {
 		let menu_bar = !cli_win.hide_menu.unwrap_or(false);
 		let win_title = cli_win.title.clone();
 		let win_opacity = cli_win.opacity;
+		// When both pixel dims are given, the window must be BORN at that size, not
+		// resized into it: some EGL presents (VirtualGL's, for one) latch the surface
+		// size at creation and never see later resizes, leaving a stale-offset blit.
+		let initial_size: winit::dpi::Size = match (cli_win.pixel_width, cli_win.pixel_height) {
+			(Some(w), Some(h)) => winit::dpi::PhysicalSize::new(w, h).into(),
+			_ => winit::dpi::LogicalSize::new(1000.0, 640.0).into(),
+		};
 		let attrs = Window::default_attributes()
 			.with_title(win_title.as_deref().unwrap_or(config::APP_NAME))
 			.with_window_icon(load_icon())
 			.with_decorations(decorated)
 			.with_transparent(true)
-			.with_inner_size(winit::dpi::LogicalSize::new(1000.0, 640.0));
+			.with_inner_size(initial_size);
 		let attrs = with_app_id(attrs); // stable WM_CLASS/app_id
 
 		// On X11 the wgpu surface can't do per-pixel alpha, so we ALWAYS take the
