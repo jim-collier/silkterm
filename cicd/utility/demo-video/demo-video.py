@@ -833,16 +833,23 @@ def seg_less(r, t, m):
 		time.sleep(0.7)
 		t.keys("Up", 8, hz=6.0)
 		time.sleep(0.6)
+		# re-assert focus before quitting - a stray focus loss during the arrow
+		# scrolling would leave less open and swallow the outro that follows
+		r.xdo("windowactivate", r.win)
+		time.sleep(0.3)
 		t.key("q")
-		time.sleep(0.8)
+		time.sleep(1.0)
 
 def seg_outro(r, t, m):
-	# drop the flag the prompt watches for, then ctrl+l re-renders the prompt so it
-	# grays whatever is typed next - the comment goes gray from the '#' on, as if
-	# ble.sh were installed, but with plain reliable bash typing
+	# drop the flag the prompt watches for; a plain Return then draws a FRESH prompt
+	# that grays whatever is typed next - so the comment goes gray from the '#' on,
+	# as if ble.sh were installed, but with plain reliable bash typing. (ctrl+l was
+	# avoided - clearing right after less's alt-screen exit could swallow the line.)
 	(r.home / ".silk-gray").touch()
 	with Banner(r, "github.com/jim-collier/silkterm", pos="top"):
-		r.xdo("key", "--clearmodifiers", "ctrl+l")
+		r.xdo("windowactivate", r.win)
+		time.sleep(0.3)
+		r.xdo("key", "--clearmodifiers", "Return")   # fresh prompt picks up the flag
 		time.sleep(0.7)
 		t.cmd("# smooth. silky. SilkTerm.", settle=0.5, typos=0.0)
 		time.sleep(3.2)
