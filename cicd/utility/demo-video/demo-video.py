@@ -68,8 +68,6 @@ LEAD_S     = 0.8                              # quiet lead-in kept before the fi
 FOLEY_LAG  = 0.03                             # foley sits this far after the key event (the app
                                               # paints the glyph a frame or two later; sound-to-
                                               # picture reads tighter than sound-to-keypress)
-FADE_IN_S  = 0.6                              # quick head fade-in
-FADE_S     = 1.1                              # end fade duration
 
 # The app is driven through the GPU (VirtualGL, see launch_app) so it renders a
 # genuine ~60fps on the headless Xvfb - on plain llvmpipe it only manages ~10
@@ -990,12 +988,9 @@ def vf_chain(rec, work, trim, dur):
 			f"drawtext=fontfile={BANNER_TTF}:textfile={tf}:fontsize={p['banner_fs']}:"
 			f"fontcolor=white:box=1:boxcolor=0x333333:boxborderw={p['banner_pad']}:"
 			f"x={x}:y='{y}':alpha='{fade}':enable='between(t,{s:.3f},{e:.3f})'")
-	# quick fade in at the head, fade out at the tail (both to black - for the gif
-	# that also makes the loop seamless, first frame == last == black)
-	filters.append(f"fade=t=in:st=0:d={FADE_IN_S}")
-	filters.append(f"fade=t=out:st={max(0.0, dur - FADE_S):.3f}:d={FADE_S}")
-	# drop the alpha the fade introduces: paletteuse would read it as gif
-	# transparency and render the faded (dark) regions as the white canvas
+	# no head/tail fades: the fade gradient is a fresh frame every step, which
+	# bloats the gif enormously (palette churn + huge inter-frame deltas)
+	# flatten to rgb24 so palettegen/paletteuse never see a stray alpha channel
 	filters.append("format=rgb24")
 	return ",".join(filters)
 
@@ -1014,8 +1009,6 @@ def encode_video(rec, work, out_mp4, video_end_e):
 		"-c:v", "libx265", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p",
 		"-tag:v", "hvc1", "-x265-params", "log-level=error",
 		"-r", str(rec.out_fps), "-c:a", "aac", "-b:a", "160k",
-		"-af", f"afade=t=in:st=0:d={FADE_IN_S},"
-			f"afade=t=out:st={max(0.0, dur - FADE_S):.3f}:d={FADE_S}",
 		"-movflags", "+faststart", str(out_mp4)])
 	return out_mp4
 
