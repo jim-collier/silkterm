@@ -65,6 +65,9 @@ BACKGNDS = REPO / "filesystem/home/.config/silkterm/backgrounds"
 SR         = 48000                            # audio mix rate
 BANNER_TTF = "/usr/share/fonts/truetype/lato/Lato-Semibold.ttf"
 LEAD_S     = 0.8                              # quiet lead-in kept before the first segment
+TAIL_HOLD_S  = 3.0                            # freeze the final frame this long at the end...
+TAIL_BLACK_S = 2.0                            # ...then a fully black screen this long
+TAIL_EXTRA   = TAIL_HOLD_S + TAIL_BLACK_S     # total appended tail (added at encode, not captured)
 FOLEY_LAG  = 0.03                             # foley sits this far after the key event (the app
                                               # paints the glyph a frame or two later; sound-to-
                                               # picture reads tighter than sound-to-keypress)
@@ -957,7 +960,7 @@ def wobble_y(base, s, e, amp):
 		f"+if(between(t,{s:.3f},{s + win:.3f}),{win_in},0)"
 		f"+if(between(t,{e - win:.3f},{e:.3f}),{win_out},0)")
 
-def vf_chain(rec, work, trim, dur):
+def vf_chain(rec, work, trim, dur, tail=False):
 	p = rec.p
 	to_vt = lambda epoch: rec.flash_vt + (epoch - rec.flash_e)
 	# the GPU source is genuinely smooth, so just pin CFR at the delivery rate -
@@ -992,6 +995,11 @@ def vf_chain(rec, work, trim, dur):
 	# bloats the gif enormously (palette churn + huge inter-frame deltas)
 	# flatten to rgb24 so palettegen/paletteuse never see a stray alpha channel
 	filters.append("format=rgb24")
+	# end tail: hold the final frame (no motion) then a fully black screen. Only the
+	# full-length outputs get it - not the looping highlight gif (default tail=False).
+	if tail:
+		filters.append(f"tpad=stop_mode=clone:stop_duration={TAIL_HOLD_S}")
+		filters.append(f"tpad=stop_mode=add:color=black:stop_duration={TAIL_BLACK_S}")
 	return ",".join(filters)
 
 def encode_video(rec, work, out_mp4, video_end_e):
@@ -1000,12 +1008,12 @@ def encode_video(rec, work, out_mp4, video_end_e):
 	check_drift(rec, video_end_e)
 	trim = rec.flash_vt + (rec.t0_e - rec.flash_e)
 	dur = video_end_e - rec.t0_e
-	vf = vf_chain(rec, work, trim, dur)
+	vf = vf_chain(rec, work, trim, dur, tail=True)
 	rng = random.Random(1)
-	audio = build_audio(rec, work, dur, rng)
+	audio = build_audio(rec, work, dur, rng)   # tail is silent (freeze + black)
 	run(["ffmpeg", "-v", "error", "-y",
 		"-ss", f"{trim:.3f}", "-i", str(rec.raw), "-i", str(audio),
-		"-t", f"{dur:.3f}", "-vf", vf,
+		"-t", f"{dur + TAIL_EXTRA:.3f}", "-vf", vf,
 		"-c:v", "libx265", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p",
 		"-tag:v", "hvc1", "-x265-params", "log-level=error",
 		"-r", str(rec.out_fps), "-c:a", "aac", "-b:a", "160k",
@@ -1022,12 +1030,12 @@ GIF_HL_DUR    = 9.0     # ls + build - enough to sell the scroll
 GIF_HL_FPS    = 25      # half the full rate keeps it smooth at ~half the bytes
 GIF_HL_COLORS = 128
 
-def gif_pass(rec, work, out_gif, trim, dur, fps=None, colors=160):
-	vf = vf_chain(rec, work, trim, dur)
+def gif_pass(rec, work, out_gif, trim, dur, fps=None, colors=160, tail=False):
+	vf = vf_chain(rec, work, trim, dur, tail=tail)
 	if fps:                                   # highlight renders at a lighter rate
 		vf = vf.replace(f"fps={rec.out_fps}", f"fps={fps}", 1)
 	pal = work / "pal.png"
-	cut = ["-ss", f"{trim:.3f}", "-t", f"{dur:.3f}"]
+	cut = ["-ss", f"{trim:.3f}", "-t", f"{dur + (TAIL_EXTRA if tail else 0.0):.3f}"]
 	# ONE global palette (stats_mode=full) applied uniformly: stats_mode=diff +
 	# diff_mode=rectangle mis-handled the big inter-frame jumps of fast scrolling
 	# and left white/ghosted blocks. Ordered bayer stays temporally stable (error
@@ -1045,7 +1053,7 @@ def encode_gif(rec, work, out_gif, video_end_e):
 	check_drift(rec, video_end_e)
 	trim = rec.flash_vt + (rec.t0_e - rec.flash_e)
 	dur = video_end_e - rec.t0_e
-	gif_pass(rec, work, out_gif, trim, dur)
+	gif_pass(rec, work, out_gif, trim, dur, tail=True)
 	# open the highlight on the scrolling; fall back to 1s in if the mark is absent
 	mark = rec.seg_marks.get(GIF_HL_SEG)
 	hl_start = (rec.flash_vt + (mark - rec.flash_e) - trim) if mark else 1.0
@@ -1121,7 +1129,7 @@ def record(args, name, seed):
 			log(f"[{name}] segment: {seg}")
 			rec.seg_marks[seg] = time.time()
 			fn(rec, t, m)
-		time.sleep(1.5)
+		time.sleep(0.3)                       # brief settle; the 3s hold is added at encode (tpad)
 		video_end_e = time.time()
 
 		rec.stop_capture()
