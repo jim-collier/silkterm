@@ -13,7 +13,8 @@
 ##		llvmpipe the Xvfb caps it near 10fps and the scroll judders, which no
 ##		capture rate or frame-averaging can fix (the frames aren't there to blend).
 ##		On the GPU it paints a true ~60fps, so we grab straight at the delivery
-##		rate. The shell runs under ble.sh (gray comments + syntax highlighting).
+##		rate. The outro comment goes gray via a prompt flag (no ble.sh - it drops
+##		the odd first keystroke and breaks commands).
 ##		The see-through-terminal look is produced with the app's own background
 ##		pipeline: a generated DIM dark-mode desktop (vague code editor + file
 ##		manager over the wallpaper) is fed as background_image at low opacity + a
@@ -57,7 +58,6 @@ REPO     = ME_DIR.parents[2]                  # github/cicd/utility/demo-video -
 PRIVATE  = REPO.parent / "private" / "demo-video"
 SOUNDS   = ME_DIR / "sounds"
 BACKGNDS = REPO / "filesystem/home/.config/silkterm/backgrounds"
-BLESH    = Path(os.path.expanduser("~/.local/share/blesh/ble.sh"))   # gray-comment outro
 
 SR         = 48000                            # audio mix rate
 BANNER_TTF = "/usr/share/fonts/truetype/lato/Lato-Semibold.ttf"
@@ -203,10 +203,18 @@ class Rec:
 		e.pop("LIBGL_ALWAYS_SOFTWARE", None)      # the app runs on the GPU (vglrun)
 		# the pop-out dialogs (Settings/About) are static wgpu/Vulkan windows; pin
 		# them to lavapipe so they don't chase a GPU Vulkan surface Xvfb can't present
+		# gray prompt, rose user, sand host. The trailing bit grays whatever is TYPED
+		# after the prompt WHEN a flag file exists - that's how the outro comment goes
+		# gray ("as if ble.sh") without ble.sh, which drops the odd first keystroke.
+		gray_flag = ("\\[$(test -f \"$HOME/.silk-gray\" && "
+			"printf '\\033[38;5;245m')\\]")
 		e.update(SHELL="/bin/bash", HOME=str(self.home),
 			XDG_CONFIG_HOME=str(self.home / ".config"),
 			PATH=f"{self.home}/bin:{os.environ['PATH']}",
 			VK_ICD_FILENAMES="/usr/share/vulkan/icd.d/lvp_icd.json",
+			PS1="\\[\\e[38;2;224;144;158m\\]juno\\[\\e[38;2;150;156;162m\\]@"
+				"\\[\\e[38;2;222;178;134m\\]vela\\[\\e[38;2;150;156;162m\\]:\\w\\$ "
+				"\\[\\e[0m\\]" + gray_flag,
 			HISTFILE="/dev/null")
 		# VirtualGL routes the app's GL to the real GPU (EGL backend, no 3D X
 		# server needed) - without it llvmpipe caps the app at ~10fps and the
@@ -338,6 +346,11 @@ class Typist:
 	def type(self, text, typos=0.018, wpm=None):
 		if wpm is not None:
 			self.wpm = wpm
+		# ensure the terminal has focus before the first keystroke: after a dialog
+		# closes the first char can race the focus handoff and drop (which turned
+		# "silkterm" into "ilkterm" and broke the wallpaper command)
+		self.rec.xdo("windowactivate", self.rec.win)
+		time.sleep(0.3)
 		i = 0
 		while i < len(text):
 			ch = text[i]
@@ -485,28 +498,6 @@ def write_dconf(home, profile):
 	dst = home / ".config" / "dconf"
 	dst.mkdir(parents=True, exist_ok=True)
 	run(["dconf", "compile", str(dst / "user"), str(src)])
-
-def write_blerc(home):
-	# the demo shell runs under ble.sh: comments render gray (the "as if ble.sh
-	# were installed" outro the owner wants) and typed commands get light syntax
-	# highlighting. `clear` at the end wipes the system-bashrc startup chatter
-	# before the first captured frame; `unalias -a` drops inherited aliases. The
-	# rose/sand/gray prompt lives here now (ble.sh owns PS1). Plain fallback if
-	# ble.sh is absent - the outro comment then just stays its typed colour.
-	rc = home / ".silk-blerc"
-	lines = []
-	if BLESH.exists():
-		lines += [f"[[ $- == *i* ]] && source {BLESH}",
-			"bleopt exec_errexit_mark= exec_elapsed_mark= complete_auto_complete= 2>/dev/null",
-			# don't let ble.sh rewrite the window title (it leaks '[last: mawk]' etc.)
-			"bleopt prompt_xterm_title= prompt_screen_title= 2>/dev/null",
-			"ble-face -s syntax_comment 'fg=244' 2>/dev/null"]
-	lines += ["unalias -a 2>/dev/null",
-		"PS1='\\[\\e[38;2;224;144;158m\\]juno\\[\\e[38;2;150;156;162m\\]@"
-		"\\[\\e[38;2;222;178;134m\\]vela\\[\\e[38;2;150;156;162m\\]:\\w\\$ \\[\\e[0m\\]'",
-		"clear"]
-	rc.write_text("\n".join(lines) + "\n")
-	return rc
 
 def write_config(home, profile):
 	# mirrors the real defined config; only the demo-driven keys differ per
@@ -738,7 +729,6 @@ def write_tree(rec, rng):
 def prep_content(rec, rng):
 	write_dconf(rec.home, rec.p)
 	write_config(rec.home, rec.p)
-	write_blerc(rec.home)
 	write_tree(rec, rng)
 	# the dim desktop lives next to config.toml (bare name in the dialog)
 	synth_desktop(rec.home / ".config" / "silkterm" / "desktop.png", rec.size)
@@ -843,13 +833,24 @@ def seg_less(r, t, m):
 		time.sleep(0.7)
 		t.keys("Up", 8, hz=6.0)
 		time.sleep(0.6)
+		# re-assert focus before quitting - a stray focus loss during the arrow
+		# scrolling would leave less open and swallow the outro that follows
+		r.xdo("windowactivate", r.win)
+		time.sleep(0.3)
 		t.key("q")
-		time.sleep(0.8)
+		time.sleep(1.0)
 
 def seg_outro(r, t, m):
-	# ble.sh grays the line from the '#' onward (the whole reason the demo shell
-	# runs under ble.sh), then the fade.
+	# drop the flag the prompt watches for; a plain Return then draws a FRESH prompt
+	# that grays whatever is typed next - so the comment goes gray from the '#' on,
+	# as if ble.sh were installed, but with plain reliable bash typing. (ctrl+l was
+	# avoided - clearing right after less's alt-screen exit could swallow the line.)
+	(r.home / ".silk-gray").touch()
 	with Banner(r, "github.com/jim-collier/silkterm", pos="top"):
+		r.xdo("windowactivate", r.win)
+		time.sleep(0.3)
+		r.xdo("key", "--clearmodifiers", "Return")   # fresh prompt picks up the flag
+		time.sleep(0.7)
 		t.cmd("# smooth. silky. SilkTerm.", settle=0.5, typos=0.0)
 		time.sleep(3.2)
 
@@ -1189,7 +1190,9 @@ def record(args, name, seed):
 		rec.start_display()
 		rec.start_capture()
 		log(f"[{name}] capture running; launching app")
-		rec.launch_app(f"/bin/bash --rcfile {rec.home}/.silk-blerc -i")
+		# --norc/--noprofile skips even the system bashrc (which spews real paths on
+		# this box); PS1 comes in via the environment
+		rec.launch_app("/bin/bash --noprofile --norc -i")
 		time.sleep(2.5)
 		rec.t0_e = time.time() - LEAD_S
 
@@ -1246,9 +1249,10 @@ if __name__ == "__main__":
 ##	Script history:
 ##		- 20260712 JC: GPU render via VirtualGL (real ~60fps, the actual judder
 ##		  fix - dropped the high-fps+tmix hack); one unified script for both
-##		  profiles; ble.sh shell (gray-# outro + syntax highlighting); solid-gray
-##		  captions with a wobble pop, moved onto the title/menu chrome; Settings
-##		  scene circles the scrim rows then Esc-cancels.
+##		  profiles; gray-# outro via a prompt flag; solid-gray captions with a
+##		  wobble pop, moved onto the title/menu chrome; Settings scene circles the
+##		  scrim rows then Esc-cancels; focus-settle before typing (fixes a dropped
+##		  first keystroke after the dialog).
 ##		- 20260712 JC: Real window decoration; high-fps capture + motion-blur
 ##		  downsample (judder fix); dim vague dark desktop behind the glass; new
 ##		  scene order + mouse toggle/hold-arrow/gray-outro/wallpaper-clear;
