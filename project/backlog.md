@@ -50,10 +50,13 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- ✅ Two new command-line options:
-	- Change the wallpaper of the current window.
-	- Reload settings for the current window
-	- Done: `--wallpaper [PATH]` (no value = none) and `--reload-settings`, run from a shell inside a window. Each window exports a control socket to its shells (`SILKTERM_SOCKET`); the flags send a command to that window and exit. Wallpaper change is live-only (window-scoped, not saved to config); reload is the same as Menu > Reload config. Linux/Unix only for now (Windows has no such socket; the flags report that).
+- ✅ Some output, like debug output will bounce badly. I'm not sure how to reliably reproduce it on any machine.
+	- Description:
+		- Fast output (that nevertheless changes speed frequently) will scroll up the screen.
+		- Suddenly it will "bounce" very far back down the screen, then scroll back up. Sometimes, the same content will repeat this process repeatedly.
+		- The result is a flickering appearance, especially on fast output.
+	- Cause: once the scrollback buffer is full, the output-ease infers how far the view advanced by matching row fingerprints against the last frame. That matcher demanded a pixel-clean translate of the whole retained region, so a single off cell - a redrawn prompt or spinner, a rewrapped line, or a multi-frame gap when a fast burst held the terminal lock - made it give up and report the full backlog cap instead of the true small advance. The cap snapped the view up about a screenful and eased it back; on fast, speed-varying output it misfired every few frames, so the view bounced far down and scrolled back up over and over.
+	- Fixed: the matcher now tolerates a few off cells and picks the shift that best explains the frame, so a small advance reads as small. In-place redraws and static/blank fields still report no scroll, and a genuine full turnover still ramps to catch up. Regression tests added.
 
 - 🔘 Config file rewriting is proving problematic.
 	- For example, when user makes a "non-standard" change (e.g. some extra comments), they get removed in the background, and the editor notices the file changed.
@@ -442,6 +445,11 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Verify smoothness on X11/Compiz.
 
 #### Done - Bugs
+
+- ✅ Two new command-line options:
+	- Change the wallpaper of the current window.
+	- Reload settings for the current window
+	- Done: `--wallpaper [PATH]` (no value = none) and `--reload-settings`, run from a shell inside a window. Each window exports a control socket to its shells (`SILKTERM_SOCKET`); the flags send a command to that window and exit. Wallpaper change is live-only (window-scoped, not saved to config); reload is the same as Menu > Reload config. Linux/Unix only for now (Windows has no such socket; the flags report that).
 
 - ✅ Terminal is sometimes completely black after coming back from a long session. It responds to input, it just can't be seen - all the input and output is black. In some cases, the cursor, and cells with individually-colored backgrounds, are visible. (20260630)
 	- Cause: when the glyph atlas fills up during a long, varied session, text preparation fails and rendering bailed out before the per-frame atlas trim. The atlas never recovered, so text stayed black. The cursor and per-cell backgrounds use a separate renderer, so they kept showing.

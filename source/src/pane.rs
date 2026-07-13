@@ -2576,15 +2576,48 @@ fn static_bands(cur: &[u64], last: &[u64]) -> (usize, usize) {
 	if st + sb >= n { (0, 0) } else { (st, sb) }
 }
 
+// How many off cells in the retained region a forward-shift may tolerate before
+// it stops counting as a clean translate. A strict full-row equality (what this
+// used) breaks on ONE differing cell - a redrawn prompt, a spinner, a rewrapped
+// line, or just a multi-frame gap when the PTY thread held the term lock across
+// a burst - and then fell through to the turnover guess below, over-reporting a
+// 2-line advance as the full backlog cap. That snapped the view up ~a screenful
+// and eased it back: the "fast output bounces far down then scrolls up" flicker.
+const SHIFT_SLOP: usize = 3;
 fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 	let n = cur.len();
 	if n == 0 || last.len() != n {
 		return 0;
 	}
+	// Pick the forward shift k (content moved up k rows) that best explains the
+	// frame: count rows that translate cleanly (cur[i] == last[i+k]) and that
+	// actually moved (cur[i] != last[i]), and take the k covering the most of the
+	// overlap. Tolerating a few off cells reports the true (small) advance instead
+	// of ballooning it to the cap.
+	let (mut best, mut best_score) = (0usize, 0usize);
 	for k in 1..n {
-		if cur[..n - k] == last[k..] {
-			return k;
+		let overlap = n - k;
+		let (mut matched, mut moved) = (0usize, 0usize);
+		for i in 0..overlap {
+			if cur[i] == last[i + k] {
+				matched += 1;
+				if cur[i] != last[i] {
+					moved += 1;
+				}
+			}
 		}
+		// almost the whole overlap must translate, and enough of it must genuinely
+		// have moved - a static or blank field matches positionally but never
+		// scrolled (easing that was the apt/status-line bounce)
+		let solid = matched + SHIFT_SLOP >= overlap;
+		let real = moved >= MOVED_MIN.min(overlap);
+		if solid && real && matched > best_score {
+			best_score = matched;
+			best = k;
+		}
+	}
+	if best > 0 {
+		return best;
 	}
 	// No clean vertical shift matched. Either nothing scrolled - an in-place
 	// change, e.g. a status line redrawn with no newline (don't nudge: that was
@@ -3348,6 +3381,37 @@ mod tests {
 		let last = [10u64, 20, 30, 40, 50, 60];
 		let cur = [10u64, 20, 30, 40, 50, 99]; // only the last row changed
 		assert_eq!(scroll_shift(&cur, &last), 0);
+	}
+
+	#[test]
+	fn small_advance_with_off_cells_is_not_ballooned_to_cap() {
+		// The bounce bug: a small real advance whose retained region isn't a
+		// pixel-clean translate (a redrawn prompt/spinner mid-screen, or a
+		// multi-frame gap). Strict full-row equality failed and reported the cap,
+		// snapping the view up a screenful. A couple of off cells must still read
+		// as the true small advance.
+		let last = [10u64, 20, 30, 40, 50, 60, 70, 80];
+		// scrolled up 2, but one retained row (was 50) got rewritten to 555
+		let cur = [30u64, 40, 555, 60, 70, 80, 90, 100];
+		assert_eq!(scroll_shift(&cur, &last), 2);
+		// and it must NOT read as the full backlog cap
+		assert_ne!(
+			scroll_shift(&cur, &last),
+			crate::scroll::MAX_BACKLOG as usize
+		);
+	}
+
+	#[test]
+	fn static_blank_field_does_not_read_as_a_scroll() {
+		// a screen padded with blank rows that did not scroll: positions match at
+		// every k (blank == blank) but nothing moved - must report 0, not nudge.
+		let last = [0u64, 0, 0, 0, 0, 0];
+		let cur = [0u64, 0, 0, 0, 0, 0];
+		assert_eq!(scroll_shift(&cur, &last), 0);
+		// blank top, static content below, still no scroll
+		let last2 = [0u64, 0, 0, 11, 22, 33];
+		let cur2 = [0u64, 0, 0, 11, 22, 33];
+		assert_eq!(scroll_shift(&cur2, &last2), 0);
 	}
 
 	#[test]
