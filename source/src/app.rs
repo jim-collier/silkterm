@@ -197,10 +197,16 @@ impl App {
 		match action {
 			DA::OpenUrl(u) => open_url(&u),
 			DA::Close => self.dialog = None,
-			DA::Apply => self.apply_dialog_settings(),
-			DA::ApplyAndClose => {
+			DA::Apply => {
 				self.apply_dialog_settings();
-				self.dialog = None;
+			}
+			DA::ApplyAndClose => {
+				// Only close on OK if the save actually landed; if the file looked
+				// open elsewhere the change applied live but wasn't written, so we
+				// keep the dialog up (the FYI went to stderr).
+				if self.apply_dialog_settings() {
+					self.dialog = None;
+				}
 			}
 		}
 	}
@@ -208,15 +214,21 @@ impl App {
 	// Pull the edited Settings from the dialog window and live-apply them to the
 	// main window (config + persist + rebuild). The dialog has its own surface,
 	// so it's unaffected.
-	fn apply_dialog_settings(&mut self) {
+	// Returns true when the change was written to disk (false = file open elsewhere,
+	// applied live but not saved - OK then leaves the dialog open).
+	fn apply_dialog_settings(&mut self) -> bool {
+		let mut wrote = true;
 		if let Some((orig, edited, sys)) = self.dialog.as_ref().and_then(|d| d.settings_values()) {
 			if let Some(state) = self.state.as_mut() {
-				state.apply_settings_values(&orig, edited, sys);
+				wrote = state.apply_settings_values(&orig, edited, sys);
 			}
 			// Reverted-to-default keys: after persist wrote the diffs, comment
 			// them back out so the file returns to the template's default line.
-			if let Some(reverted) = self.dialog.as_mut().map(|d| d.take_reverted()) {
-				config::revert_keys(&reverted);
+			// Skip when the write was deferred (revert_keys would just no-op busy).
+			if wrote {
+				if let Some(reverted) = self.dialog.as_mut().map(|d| d.take_reverted()) {
+					config::revert_keys(&reverted);
+				}
 			}
 			// The applied values are the new baseline, so a later Apply diffs against
 			// the live state (without this, re-selecting the open-time value - e.g.
@@ -226,6 +238,7 @@ impl App {
 			}
 			self.dialog_dirty = true;
 		}
+		wrote
 	}
 }
 
@@ -1077,7 +1090,9 @@ impl State {
 		let mut new = orig.clone();
 		new.remembered_columns = cols;
 		new.remembered_rows = rows;
-		config::persist(&orig, &new);
+		// If the file's open elsewhere persist skips it (retried on the next resize
+		// or at exit); the live size still updates in memory either way.
+		let _ = config::persist(&orig, &new);
 		config::update(new);
 	}
 
@@ -1140,16 +1155,20 @@ impl State {
 
 	// Live-apply edited settings (from the dialog), persist, and rebuild whatever
 	// the change touched (text metrics, background image, opacity, window size).
+	// Returns false if the config file looked open elsewhere so the write was
+	// skipped - the caller (dialog OK) then keeps the dialog open instead of
+	// closing over an unsaved change. The values still apply live regardless.
 	fn apply_settings_values(
 		&mut self,
 		orig: &config::Settings,
 		edited: config::Settings,
 		_system_font: bool,
-	) {
+	) -> bool {
 		// use_system_font is now a persisted setting that overrides font_family at
 		// resolve time, so nothing special to strip - persist the diff as usual.
-		config::persist(orig, &edited);
+		let wrote = config::persist(orig, &edited);
 		self.apply_new_settings(orig, edited, false);
+		wrote
 	}
 
 	// Re-read config.toml from disk and live-apply it (the "internal command" for
