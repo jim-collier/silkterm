@@ -11,6 +11,7 @@ mod bgimage;
 mod cli;
 mod clipboard;
 mod config;
+mod contrast;
 mod ctl;
 mod dialog;
 mod gfx;
