@@ -44,7 +44,7 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Non-code to-do
 
-- 🔘 Enabling a GitHub Sponsors profile so the Sponsor link goes live.
+- 🔘 Enable GitHub Sponsors profile so the Sponsor link goes live.
 
 - 🔘 Fill in the FUNDING.yml handles.
 
@@ -69,6 +69,21 @@ In each section, items are listed approximately from newest to oldest.
 	- ✋ Delay this to see if other fixes, fix this.
 
 ### New features and enhancements
+
+- Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
+	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
+		- Ideally as packaged plug-ins (think shader kits or something that be traded online and dropped into a directory for auto-discovery).
+		- Reasonably easy for others to write new effect plugins that can be dropped-in, discovered at silkterm startup, loaded, and avaiable as an option.
+		- Security model. Some plugins may need access to screen contents, others may not. If access to contents, make sure it can't do anything else - e.g. write to the filesystem, network, etc. Also, no reading from the filesystem, network, sockets - anything - except own config file.
+	- 🔘 Effect 1: When a "copy on output" or "copy on select" happens, make the relevant checkbox and label gently burst with a glow and tiny fine sparkles for about a second - as if a fairy just blinged it with a magic wand in a movie.
+		- Needs to be subtle and non-annoying over long-run, but definitely noticeable.
+		- Tunable in config.
+		- If it doesn't work well on non-GPU acellerated platforms, just some kind of noticeable blink. But still need visual feedback.
+			- Need to decide what kind of feedback if not practical on non-GPU.
+	- Effect 2: When a command or program returns to the prompt, give a burst of visual feedback, with a strength linearly proportional to the amount of time it took.
+		- With an upper limit of course - say, an hour, config-tunable.
+		- Config-tunable selection of predefined burst effects.
+		- Default (and so far only): A glowing bright gold pulse that the cursor gives off upon landing back at the shell prompt, as if a yellow sun that shed an outer layer of blasma in a burst.
 
 - ✋ Config file: For each feature listed below, allow user to list programs (comma-delimited), that, when running, temporarily disable:
 	- Smooth scrolling. (Comma-delimited.)
