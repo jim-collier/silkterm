@@ -22,7 +22,7 @@
 
 use crate::gfx::{RectInstance, RectRenderer};
 
-const FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub const FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
