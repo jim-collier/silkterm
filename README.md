@@ -13,7 +13,6 @@
 ![Support](https://img.shields.io/badge/Support-Maintained-brightgreen)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ff69b4)](https://github.com/sponsors/jim-collier)
 
-</div>
 <!--
 ![Go](https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white)
 [![!#/bin/bash](https://img.shields.io/badge/-%23!%2Fbin%2Fbash-1f425f.svg?logo=gnu-bash)](https://www.gnu.org/software/bash/)
@@ -38,21 +37,19 @@
 <!-- TOC ignore:true -->
 # SilkTerm
 
-SilkTerm is the only known terminal currently in the universe that smooth-scrolls lines on output - for silky-smooth and less-tiring long terminal sessions.
-
-It also has smooth cursor options such as phase effect for blinking, and smooth movement.
-
-The background image and text scrim options are also completely unique and have to be seen.
-
-And of course all the other required features of a modern terminal emulator - but all done to perfection: detachable multi-tabs, native split-panes, transparency and blur, can run without a menu and/or window decorations.
-
-Cross-platform. Written in Rust for a small single executable, and high speed. GPU accelerated if available. (Works great if not.)
-
-<div align="center">
-
 ![SilkTerm demo](assets/demo.gif)
 
 </div>
+
+SilkTerm is the only (contemporary) terminal emulator in the known universe that smooth-scrolls lines on output - for a silky-smooth UI you have see to believe.
+
+It also has smooth cursor blink animation and movement.
+
+The background image and text scrim options are also completely unique.
+
+It has the other requisite features of a modern terminal emulator: detachable multi-tabs, native split-panes, transparency (with blur!), and can run without a menu and/or window decorations.
+
+Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 
 <!-- Full demo video with sound: [SilkTerm on YouTube](https://www.youtube.com/watch?v=TODO) -->
 
