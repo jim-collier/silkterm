@@ -5,7 +5,7 @@
 <!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
 <div align="center">
 
-[![Release](https://img.shields.io/badge/Release-1.0.0--beta1-blue)](https://github.com/jim-collier/silkterm/releases)
+[![Release](https://img.shields.io/badge/Release-1.0.0--beta2-blue)](https://github.com/jim-collier/silkterm/releases)
 [![made-with-rust](https://img.shields.io/badge/Made%20with-Rust-1f425f.svg)](https://www.rust-lang.org/)
 ![Rust: 1.89+](https://img.shields.io/badge/Rust-1.89%2B-orange)
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
