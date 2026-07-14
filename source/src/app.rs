@@ -2521,11 +2521,12 @@ fn load_bg_image(gfx: &Gfx) -> Option<ImageRenderer> {
 			return None;
 		}
 	};
-	// Gaussian blur, done in LINEAR light (decode sRGB -> blur in f32 -> re-encode)
-	// so transitions are gamma-correct; an sRGB-space blur darkens edges. The f32
-	// intermediate also avoids 8-bit banding inside the blur (final banding is
-	// handled by the high-precision offscreen + the blit's dither).
-	if settings.background_blur > 0.0 {
+	// Blur and contrast-flatten, done in LINEAR light (decode sRGB -> process in
+	// f32 -> re-encode) so transitions are gamma-correct; an sRGB-space blur
+	// darkens edges. The f32 intermediate also avoids 8-bit banding inside the
+	// blur (final banding is handled by the high-precision offscreen + the blit's
+	// dither).
+	if settings.background_blur > 0.0 || settings.background_contrast_mask {
 		let (w, h) = img.dimensions();
 		let mut linear: image::ImageBuffer<image::Rgba<f32>, Vec<f32>> =
 			image::ImageBuffer::new(w, h);
@@ -2537,8 +2538,18 @@ fn load_bg_image(gfx: &Gfx) -> Option<ImageRenderer> {
 				src[3] as f32 / 255.0,
 			]);
 		}
-		let blurred = image::imageops::blur(&linear, settings.background_blur);
-		for (dst, src) in img.pixels_mut().zip(blurred.pixels()) {
+		if settings.background_blur > 0.0 {
+			linear = image::imageops::blur(&linear, settings.background_blur);
+		}
+		if settings.background_contrast_mask {
+			crate::contrast::apply(
+				&mut linear,
+				settings.background_contrast_mask_size,
+				settings.background_contrast_mask_strength,
+				settings.background_contrast_mask_auto,
+			);
+		}
+		for (dst, src) in img.pixels_mut().zip(linear.pixels()) {
 			*dst = image::Rgba([
 				config::from_linear_u8(src[0]),
 				config::from_linear_u8(src[1]),

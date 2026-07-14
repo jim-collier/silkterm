@@ -113,6 +113,10 @@ pub struct Settings {
 	pub background_opacity: f32,            // image visibility 0..1
 	pub background_fit: Fit,
 	pub background_blur: f32, // Gaussian blur sigma applied to the image (0 = none)
+	pub background_contrast_mask: bool, // flatten the image's contrast so it stops competing with text
+	pub background_contrast_mask_size: f32, // flatten scale 0..1 (1 = half the longest pixel dim)
+	pub background_contrast_mask_strength: f32, // how far toward the local mean 0..1
+	pub background_contrast_mask_auto: f32, // blend manual knobs with image-derived auto 0..1 (1 = full auto)
 	pub text_scrim: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
 	pub text_scrim_radius: f32, // scrim blur sigma in px
 	pub text_scrim_softness: f32, // 0 = hard/solid scrim, 1 = soft/faint (maps to the intensity boost)
@@ -177,6 +181,10 @@ impl Default for Settings {
 			background_opacity: 0.10, // image visibility relative to bg color
 			background_fit: Fit::Stretch,
 			background_blur: 10.0,
+			background_contrast_mask: true,
+			background_contrast_mask_size: 0.5,
+			background_contrast_mask_strength: 0.5,
+			background_contrast_mask_auto: 0.5,
 			text_scrim: true,
 			text_scrim_radius: 5.0,
 			text_scrim_softness: 0.5,
@@ -394,6 +402,18 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.background_blur != orig.background_blur {
 		doc["background_blur"] = value(r(s.background_blur));
 	}
+	if s.background_contrast_mask != orig.background_contrast_mask {
+		doc["background_contrast_mask"] = value(s.background_contrast_mask);
+	}
+	if s.background_contrast_mask_size != orig.background_contrast_mask_size {
+		doc["background_contrast_mask_size"] = value(r(s.background_contrast_mask_size));
+	}
+	if s.background_contrast_mask_strength != orig.background_contrast_mask_strength {
+		doc["background_contrast_mask_strength"] = value(r(s.background_contrast_mask_strength));
+	}
+	if s.background_contrast_mask_auto != orig.background_contrast_mask_auto {
+		doc["background_contrast_mask_auto"] = value(r(s.background_contrast_mask_auto));
+	}
 	if s.text_scrim != orig.text_scrim {
 		doc["text_scrim"] = value(s.text_scrim);
 	}
@@ -535,6 +555,10 @@ struct RawConfig {
 	background_opacity: Option<f32>,
 	background_fit: Option<String>,
 	background_blur: Option<f32>,
+	background_contrast_mask: Option<bool>,
+	background_contrast_mask_size: Option<f32>,
+	background_contrast_mask_strength: Option<f32>,
+	background_contrast_mask_auto: Option<f32>,
 	theme: Option<String>,
 	theme_mode: Option<String>,
 	text_scrim: Option<bool>,
@@ -731,6 +755,21 @@ fn resolve(raw: RawConfig) -> Settings {
 			.background_blur
 			.unwrap_or(d.background_blur)
 			.clamp(0.0, 100.0),
+		background_contrast_mask: raw
+			.background_contrast_mask
+			.unwrap_or(d.background_contrast_mask),
+		background_contrast_mask_size: raw
+			.background_contrast_mask_size
+			.unwrap_or(d.background_contrast_mask_size)
+			.clamp(0.0, 1.0),
+		background_contrast_mask_strength: raw
+			.background_contrast_mask_strength
+			.unwrap_or(d.background_contrast_mask_strength)
+			.clamp(0.0, 1.0),
+		background_contrast_mask_auto: raw
+			.background_contrast_mask_auto
+			.unwrap_or(d.background_contrast_mask_auto)
+			.clamp(0.0, 1.0),
 		text_scrim: raw.text_scrim.unwrap_or(d.text_scrim),
 		text_scrim_radius: raw
 			.text_scrim_radius
@@ -1329,6 +1368,17 @@ opacity = 0.95
 
 ## Gaussian blur applied to the background image (sigma in pixels; 0 = none).
 # background_blur = 10.0
+
+## Contrast mask: flatten the background image's contrast so it stops competing
+## with text. `size` is the flatten scale (1.0 = half the longest pixel
+## dimension, so the whole image collapses toward one tone; small = only fine
+## detail flattens). `strength` is how far each pixel is pulled toward that local
+## mean. `auto` blends the two manual knobs with values derived from the image's
+## own busyness (1.0 = full auto override, 0.0 = manual only, 0.5 = average).
+# background_contrast_mask = true
+# background_contrast_mask_size = 0.5
+# background_contrast_mask_strength = 0.5
+# background_contrast_mask_auto = 0.5
 
 ##=============================================================================
 ## Text scrim

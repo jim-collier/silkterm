@@ -107,6 +107,10 @@ enum Key {
 	BgOpacity,
 	BgBlur,
 	BgFit,
+	BgContrastMask,
+	BgContrastSize,
+	BgContrastStrength,
+	BgContrastAuto,
 	TextScrim,
 	ScrimRadius,
 	ScrimSoftness,
@@ -200,6 +204,10 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::BgOpacity => &["background_opacity"],
 		Key::BgBlur => &["background_blur"],
 		Key::BgFit => &["background_fit"],
+		Key::BgContrastMask => &["background_contrast_mask"],
+		Key::BgContrastSize => &["background_contrast_mask_size"],
+		Key::BgContrastStrength => &["background_contrast_mask_strength"],
+		Key::BgContrastAuto => &["background_contrast_mask_auto"],
 		Key::TextScrim => &["text_scrim"],
 		Key::ScrimRadius => &["text_scrim_radius"],
 		Key::ScrimSoftness => &["text_scrim_softness"],
@@ -349,6 +357,38 @@ fn fields() -> Vec<Spec> {
 			label: "Bg image fit",
 			key: BgFit,
 			kind: Radio(&["Stretch", "Zoom"]),
+		},
+		Spec {
+			label: "Contrast mask",
+			key: BgContrastMask,
+			kind: Toggle,
+		},
+		Spec {
+			label: "Mask size",
+			key: BgContrastSize,
+			kind: Slider {
+				min: 0.0,
+				max: 1.0,
+				int: false,
+			},
+		},
+		Spec {
+			label: "Mask strength",
+			key: BgContrastStrength,
+			kind: Slider {
+				min: 0.0,
+				max: 1.0,
+				int: false,
+			},
+		},
+		Spec {
+			label: "Mask auto",
+			key: BgContrastAuto,
+			kind: Slider {
+				min: 0.0,
+				max: 1.0,
+				int: false,
+			},
 		},
 		Spec {
 			label: "Text scrim",
@@ -1299,6 +1339,9 @@ impl SettingsDialog {
 			Key::Opacity => settings.opacity,
 			Key::BgOpacity => settings.background_opacity,
 			Key::BgBlur => settings.background_blur,
+			Key::BgContrastSize => settings.background_contrast_mask_size,
+			Key::BgContrastStrength => settings.background_contrast_mask_strength,
+			Key::BgContrastAuto => settings.background_contrast_mask_auto,
 			Key::ScrimRadius => settings.text_scrim_radius,
 			Key::ScrimSoftness => settings.text_scrim_softness,
 			Key::Outline => settings.text_outline,
@@ -1323,6 +1366,9 @@ impl SettingsDialog {
 			Key::Opacity => settings.opacity = value,
 			Key::BgOpacity => settings.background_opacity = value,
 			Key::BgBlur => settings.background_blur = value,
+			Key::BgContrastSize => settings.background_contrast_mask_size = value,
+			Key::BgContrastStrength => settings.background_contrast_mask_strength = value,
+			Key::BgContrastAuto => settings.background_contrast_mask_auto = value,
 			Key::ScrimRadius => settings.text_scrim_radius = value,
 			Key::ScrimSoftness => settings.text_scrim_softness = value,
 			Key::Outline => settings.text_outline = value,
@@ -1390,6 +1436,7 @@ impl SettingsDialog {
 			Key::CursorScrim => self.edited.cursor_scrim,
 			Key::CursorOutline => self.edited.cursor_outline,
 			Key::RememberSize => self.edited.remember_size,
+			Key::BgContrastMask => self.edited.background_contrast_mask,
 			_ => false,
 		}
 	}
@@ -1402,6 +1449,7 @@ impl SettingsDialog {
 			Key::CursorScrim => self.edited.cursor_scrim = on,
 			Key::CursorOutline => self.edited.cursor_outline = on,
 			Key::RememberSize => self.edited.remember_size = on,
+			Key::BgContrastMask => self.edited.background_contrast_mask = on,
 			_ => {}
 		}
 	}
@@ -1474,6 +1522,10 @@ impl SettingsDialog {
 			) && !self.edited.text_scrim)
 			// the cursor outline needs an outline to join
 			|| (matches!(key, Key::CursorOutline) && self.edited.text_outline <= 0.0)
+			|| (matches!(
+				key,
+				Key::BgContrastSize | Key::BgContrastStrength | Key::BgContrastAuto
+			) && !self.edited.background_contrast_mask)
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
 			|| (matches!(key, Key::FontFamily | Key::FontSize) && self.edited.use_system_font)
 	}
@@ -1530,6 +1582,9 @@ impl SettingsDialog {
 			Key::TextScrim => edited.text_scrim == defaults.text_scrim,
 			Key::CursorScrim => edited.cursor_scrim == defaults.cursor_scrim,
 			Key::CursorOutline => edited.cursor_outline == defaults.cursor_outline,
+			Key::BgContrastMask => {
+				edited.background_contrast_mask == defaults.background_contrast_mask
+			}
 			Key::SystemFont => edited.use_system_font == defaults.use_system_font,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
 			Key::BgFit => edited.background_fit == defaults.background_fit,
@@ -1552,6 +1607,9 @@ impl SettingsDialog {
 			Key::Opacity => defaults.opacity,
 			Key::BgOpacity => defaults.background_opacity,
 			Key::BgBlur => defaults.background_blur,
+			Key::BgContrastSize => defaults.background_contrast_mask_size,
+			Key::BgContrastStrength => defaults.background_contrast_mask_strength,
+			Key::BgContrastAuto => defaults.background_contrast_mask_auto,
 			Key::ScrimRadius => defaults.text_scrim_radius,
 			Key::ScrimSoftness => defaults.text_scrim_softness,
 			Key::Outline => defaults.text_outline,
@@ -1575,7 +1633,8 @@ impl SettingsDialog {
 			| Key::CursorScrim
 			| Key::CursorOutline
 			| Key::SystemFont
-			| Key::RememberSize => {
+			| Key::RememberSize
+			| Key::BgContrastMask => {
 				let default_val = match key {
 					Key::Transparency => self.defaults.transparent_background,
 					Key::BackdropBlur => self.defaults.transparent_background_blur,
@@ -1583,6 +1642,7 @@ impl SettingsDialog {
 					Key::CursorScrim => self.defaults.cursor_scrim,
 					Key::CursorOutline => self.defaults.cursor_outline,
 					Key::SystemFont => self.defaults.use_system_font,
+					Key::BgContrastMask => self.defaults.background_contrast_mask,
 					_ => self.defaults.remember_size,
 				};
 				self.set_toggle(key, default_val);
@@ -2601,6 +2661,10 @@ pub fn bg_image_changed(old: &Settings, new: &Settings) -> bool {
 		|| old.background_fit != new.background_fit
 		|| old.background_image != new.background_image
 		|| old.background_blur != new.background_blur
+		|| old.background_contrast_mask != new.background_contrast_mask
+		|| old.background_contrast_mask_size != new.background_contrast_mask_size
+		|| old.background_contrast_mask_strength != new.background_contrast_mask_strength
+		|| old.background_contrast_mask_auto != new.background_contrast_mask_auto
 }
 
 #[cfg(test)]
