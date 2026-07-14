@@ -293,6 +293,9 @@ pub struct TextCtx {
 	pub font_system: FontSystem,
 	pub swash_cache: SwashCache,
 	pub atlas: TextAtlas,
+	// The scrim renders into an Rgba16Float coverage texture, a different format
+	// than the surface, so its glyphon renderer needs its own same-format atlas.
+	scrim_atlas: TextAtlas,
 	pub viewport: Viewport,
 	pub renderer: TextRenderer,
 	// separate renderer for the context-menu overlay (second pass, on top)
@@ -369,17 +372,27 @@ impl TextCtx {
 
 		let cache = Cache::new(device);
 		let mut atlas = TextAtlas::new(device, queue, &cache, format);
+		// The scrim text pass renders into a separate Rgba16Float coverage texture
+		// (crate::scrim::FMT), so its glyphon renderer must target THAT format. On the
+		// X11 GL path gfx.format is already Rgba16Float and a shared atlas happened to
+		// match; on the native path (Windows, Wayland) gfx.format is an sRGB surface
+		// format, so a shared atlas targets the wrong format - wgpu rejects it as
+		// "incompatible color attachments" on the first scrim frame. One Cache backs
+		// both atlases (it's built to serve multiple target formats).
+		let mut scrim_atlas = TextAtlas::new(device, queue, &cache, crate::scrim::FMT);
 		let viewport = Viewport::new(device, &cache);
 		let renderer =
 			TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
 		let overlay =
 			TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
-		let scrim = TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
+		let scrim =
+			TextRenderer::new(&mut scrim_atlas, device, wgpu::MultisampleState::default(), None);
 
 		Self {
 			font_system,
 			swash_cache: SwashCache::new(),
 			atlas,
+			scrim_atlas,
 			viewport,
 			renderer,
 			overlay,
@@ -611,7 +624,7 @@ impl TextCtx {
 			device,
 			queue,
 			&mut self.font_system,
-			&mut self.atlas,
+			&mut self.scrim_atlas,
 			&self.viewport,
 			areas,
 			&mut self.swash_cache,
@@ -622,11 +635,12 @@ impl TextCtx {
 		&self,
 		pass: &mut wgpu::RenderPass<'_>,
 	) -> Result<(), glyphon::RenderError> {
-		self.scrim.render(&self.atlas, &self.viewport, pass)
+		self.scrim.render(&self.scrim_atlas, &self.viewport, pass)
 	}
 
 	pub fn trim_atlas(&mut self) {
 		self.atlas.trim();
+		self.scrim_atlas.trim();
 	}
 }
 
