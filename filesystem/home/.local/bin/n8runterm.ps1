@@ -1,0 +1,357 @@
+##	Purpose:
+##		- Windows port of the bash 'n8runterm' launcher. Keeps a small pool of
+##		  date-stamped SilkTerm dogfood builds in the local target dir and launches
+##		  one, passing through any arguments.
+##		- Three build sources, each tagged in the copy's name so they coexist:
+##			gnul  the b23 cross-build over SMB   (gnu toolchain, built on Linux)
+##			gnuw  local Windows gnu release      (gnu toolchain, built on Windows)
+##			msvc  local Windows msvc release      (msvc toolchain, built on Windows)
+##		  Copies are named 'slktrmdf_<YYYYMMDD-HHMMSS>_<tag>.exe' where the stamp is
+##		  the build's own mtime, so a given build is copied once and a running copy
+##		  never blocks the copy.
+##		- Each run, in order: delete idle builds over 7 days old; refresh each source
+##		  whose build is newer than what we already hold; then pick one to run.
+##		- Which to run: the newest build by stamp. If that newest came from b23 (gnul)
+##		  run it. Otherwise it's a local Windows build - if the newest gnuw and msvc
+##		  are within 15 min of each other, flip a coin between them, else run the
+##		  newest outright.
+##		- Prepends a random background image and a build-tagged title so a dogfood
+##		  window is visually distinct. Both precede the passed args, so a caller can
+##		  still override them.
+##		- Edit fMain() to launch a different terminal instead.
+##	History: At bottom of script.
+
+##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Licensed under The MIT License (MIT). Full text at:
+##		https://mit-license.org/
+##	SPDX-License-Identifier: MIT
+
+
+#••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+# Configuration
+
+## Source 'gnul': the b23 SilkTerm Windows (x86_64-pc-windows-gnu) release build,
+## reached over SMB. Canonical path with the '0_links' junctions resolved, so it
+## works without the mapped-folder aliases. The original alias was:
+##   C:\0-0\users\collierjr\0_links\b23•collierjr•0_links\projects\dev\zf10…github∙jimcollier\silkterm\github\target\x86_64-pc-windows-gnu\release
+$B23ReleaseDir = "\\b23\home-collierjr\0-0\0_links\projects\dev\zf10…github∙jimcollier\silkterm\github\target\x86_64-pc-windows-gnu\release"
+
+## Sources 'gnuw'/'msvc': the local Windows-native release build dirs (same clone,
+## two target triples).
+$LocalTargetRoot = "C:\opt\0-0\users\collierjr\data\prs\dev\github\jim-collier\silkterm\github\target"
+$GnuwReleaseDir  = Join-Path $LocalTargetRoot "x86_64-pc-windows-gnu\release"
+$MsvcReleaseDir  = Join-Path $LocalTargetRoot "x86_64-pc-windows-msvc\release"
+
+$ExeName = "silkterm.exe"
+
+## Target: where the runnable copies live. Stamped copies accumulate here.
+$TargetDir = "C:\opt\0-0\common\exec\synced\util\mswin\gui\by-self\win64"
+
+## Prefix for the date-stamped copies (matches cicd's dogfood convention).
+$DogfoodPrefix = "slktrmdf"
+
+## Delete idle stamped copies older than this many days.
+$MaxAgeDays = 7
+
+## When the newest gnuw and msvc builds are within this many minutes, flip a coin
+## on which to run instead of always taking whichever finished last.
+$CoinWindowMin = 15
+
+## Stamp format shared by the copy name and every date comparison below.
+$StampFormat = "yyyyMMdd-HHmmss"
+
+
+#••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+# Functions
+
+## Entry point: what this launcher runs. Edit this to launch a different terminal.
+function fMain {
+	param([string[]]$PassArgs)
+
+	if (-not (Test-Path -LiteralPath $TargetDir)) {
+		New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
+	}
+
+	## 1. Delete stale idle copies.
+	fDeleteOldBuilds
+
+	## 2. Refresh each source that has a newer build than we hold.
+	fCopyIfNewer -SourceDir $B23ReleaseDir  -Tag "gnul"
+	fCopyIfNewer -SourceDir $GnuwReleaseDir -Tag "gnuw"
+	fCopyIfNewer -SourceDir $MsvcReleaseDir -Tag "msvc"
+
+	## 3. Pick one and launch it.
+	$exe = fSelectBuildToRun
+	if (-not $exe) {
+		fFail "No SilkTerm dogfood build available (no source reachable and none held)."
+	}
+	fLaunchSilkTerm -Exe $exe -PassArgs $PassArgs
+}
+
+
+## Delete stamped copies whose build is older than $MaxAgeDays, skipping any that
+## are running (a running .exe image is locked, so a delete that throws is also
+## treated as in-use).
+function fDeleteOldBuilds {
+	$cutoff  = (Get-Date).AddDays(-$MaxAgeDays)
+	$running = @(fRunningExePaths)
+	$deleted = 0
+
+	Get-ChildItem -LiteralPath $TargetDir -File -Filter "${DogfoodPrefix}_*.exe" -ErrorAction SilentlyContinue |
+		Where-Object { (fBuildTime $_) -lt $cutoff } |
+		ForEach-Object {
+			if (fRemoveIfIdle -FileInfo $_ -Running $running) { $deleted++ }
+		}
+
+	if ($deleted) { fNote "deleted $deleted build(s) older than $MaxAgeDays days" }
+}
+
+
+## Copy $SourceDir\$ExeName in as 'slktrmdf_<stamp>_<Tag>.exe' when its build is
+## newer than the newest copy of that tag we already hold. No-op if the source is
+## unreachable or we're already current. Each tag is checked independently.
+function fCopyIfNewer {
+	param(
+		[Parameter(Mandatory)][string]$SourceDir,
+		[Parameter(Mandatory)][string]$Tag
+	)
+
+	$src = Join-Path $SourceDir $ExeName
+	if (-not (Test-Path -LiteralPath $src)) {
+		fWarn "$Tag source not reachable: $src"
+		return
+	}
+
+	$stamp     = (Get-Item -LiteralPath $src).LastWriteTime.ToString($StampFormat)
+	$stampTime = fParseStamp $stamp
+	$existing  = fNewestOfTag $Tag
+
+	if ($existing -and $existing.Stamp -ge $stampTime) {
+		fNote "$Tag already current ($($existing.Stamp.ToString($StampFormat)))"
+		return
+	}
+
+	$dst = Join-Path $TargetDir "${DogfoodPrefix}_${stamp}_${Tag}.exe"
+	if (Test-Path -LiteralPath $dst) { return }
+
+	try {
+		Copy-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
+		fNote "copied $Tag -> $(Split-Path $dst -Leaf)"
+	} catch {
+		fWarn "couldn't copy $Tag build ($($_.Exception.Message))"
+	}
+}
+
+
+## Pick the copy to run. Newest by stamp wins; if that newest is a local Windows
+## build (gnuw/msvc) and the newest of each is within $CoinWindowMin of the other,
+## flip a coin between them. Falls back to the newest legacy (untagged) copy if no
+## tagged builds exist. Returns a full path, or $null if the dir is empty.
+function fSelectBuildToRun {
+	$builds = @(fTaggedBuilds)
+
+	if (-not $builds) {
+		$legacy = Get-ChildItem -LiteralPath $TargetDir -File -Filter "${DogfoodPrefix}_*.exe" -ErrorAction SilentlyContinue |
+			Sort-Object Name -Descending | Select-Object -First 1
+		if (-not $legacy) { return $null }
+		fNote "running (untagged): $($legacy.Name)"
+		return $legacy.FullName
+	}
+
+	$latest = $builds | Sort-Object Stamp -Descending | Select-Object -First 1
+
+	if ($latest.Tag -eq "gnul") {
+		fNote "running newest (b23/gnul): $($latest.Name)"
+		return $latest.File.FullName
+	}
+
+	## Newest is a local Windows build - maybe coin-flip gnuw vs msvc.
+	$gnuw = $builds | Where-Object { $_.Tag -eq "gnuw" } | Sort-Object Stamp -Descending | Select-Object -First 1
+	$msvc = $builds | Where-Object { $_.Tag -eq "msvc" } | Sort-Object Stamp -Descending | Select-Object -First 1
+
+	if ($gnuw -and $msvc) {
+		$gapMin = [math]::Abs(($gnuw.Stamp - $msvc.Stamp).TotalMinutes)
+		if ($gapMin -le $CoinWindowMin) {
+			$pick = if ((Get-Random -Minimum 0 -Maximum 2) -eq 0) { $gnuw } else { $msvc }
+			fNote ("coin flip (gnuw/msvc within {0:N1} min) -> {1}: {2}" -f $gapMin, $pick.Tag, $pick.Name)
+			return $pick.File.FullName
+		}
+	}
+
+	fNote "running newest local ($($latest.Tag)): $($latest.Name)"
+	return $latest.File.FullName
+}
+
+
+## All tagged copies as objects { File, Name, Tag, Stamp(DateTime) }.
+function fTaggedBuilds {
+	$rx = "^$([regex]::Escape($DogfoodPrefix))_(?<stamp>\d{8}-\d{6})_(?<tag>gnul|gnuw|msvc)\.exe$"
+	Get-ChildItem -LiteralPath $TargetDir -File -Filter "${DogfoodPrefix}_*.exe" -ErrorAction SilentlyContinue |
+		ForEach-Object {
+			if ($_.Name -match $rx) {
+				[pscustomobject]@{
+					File  = $_
+					Name  = $_.Name
+					Tag   = $Matches.tag
+					Stamp = fParseStamp $Matches.stamp
+				}
+			}
+		}
+}
+
+
+## Newest tagged copy of one tag (object from fTaggedBuilds), or $null.
+function fNewestOfTag {
+	param([Parameter(Mandatory)][string]$Tag)
+	fTaggedBuilds | Where-Object { $_.Tag -eq $Tag } |
+		Sort-Object Stamp -Descending | Select-Object -First 1
+}
+
+
+## A copy's build time: the stamp embedded in its name if present, else its mtime
+## (covers legacy untagged 'slktrmdf_<stamp>.exe' copies too).
+function fBuildTime {
+	param([Parameter(Mandatory)]$FileInfo)
+	if ($FileInfo.Name -match "_(?<stamp>\d{8}-\d{6})(?:_[a-z0-9]+)?\.exe$") {
+		return fParseStamp $Matches.stamp
+	}
+	return $FileInfo.LastWriteTime
+}
+
+
+## Parse a 'yyyyMMdd-HHmmss' stamp to a DateTime.
+function fParseStamp {
+	param([Parameter(Mandatory)][string]$Stamp)
+	return [datetime]::ParseExact($Stamp, $StampFormat, [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+
+## Delete one copy unless it's running or locked. Returns $true if deleted.
+function fRemoveIfIdle {
+	param(
+		[Parameter(Mandatory)]$FileInfo,
+		[string[]]$Running
+	)
+	if ($Running -contains $FileInfo.FullName) {
+		fNote "kept (running): $($FileInfo.Name)"
+		return $false
+	}
+	try {
+		Remove-Item -LiteralPath $FileInfo.FullName -Force -ErrorAction Stop
+		return $true
+	} catch {
+		fNote "kept (locked): $($FileInfo.Name)"
+		return $false
+	}
+}
+
+
+## Full image paths of all currently running processes (best-effort; the analog
+## of the bash launcher's /proc/*/exe scan). Paths we can't read are skipped.
+function fRunningExePaths {
+	Get-Process -ErrorAction SilentlyContinue |
+		ForEach-Object { try { $_.Path } catch { $null } } |
+		Where-Object { $_ }
+}
+
+
+## Launch SilkTerm detached (GUI subsystem, so no console attaches), prepending a
+## random background image (if any) and a title tagged with the build's tag+stamp.
+## Passed args come last so they win.
+function fLaunchSilkTerm {
+	param(
+		[Parameter(Mandatory)][string]$Exe,
+		[string[]]$PassArgs
+	)
+
+	## Human tag from the runnable copy's name.
+	$leaf = [System.IO.Path]::GetFileNameWithoutExtension($Exe)
+	if ($leaf -match "^$([regex]::Escape($DogfoodPrefix))_(?<stamp>\d{8}-\d{6})_(?<tag>[a-z0-9]+)$") {
+		$label = "$($Matches.tag) $($Matches.stamp)"
+	} else {
+		$label = $leaf -replace "^$([regex]::Escape($DogfoodPrefix))_", ""
+	}
+
+	$preArgs = @()
+	$bg = fPickRandomBackground
+	if ($bg) { $preArgs += "--background-image=$bg" }
+	$preArgs += "--title=SilkTerm [dogfood $label]"
+
+	$all = @($preArgs)
+	if ($PassArgs) { $all += $PassArgs }
+
+	## Start-Process joins -ArgumentList with spaces WITHOUT quoting, so an arg
+	## whose value has a space (the title, or a bg path under a spaced folder)
+	## would be split into separate argv entries by the target and rejected.
+	## Quote any such arg ourselves.
+	$quoted = $all | ForEach-Object { fQuoteArg $_ }
+
+	## GUI app: launch in its own process. Return the Process so a caller (e.g. a
+	## test harness) can stop this exact instance by PID - matching on name/pattern
+	## risks hitting another copy the user launched from somewhere else.
+	$proc = Start-Process -FilePath $Exe -ArgumentList $quoted -PassThru
+	fNote "launched pid $($proc.Id): $([System.IO.Path]::GetFileName($Exe))"
+	return $proc
+}
+
+
+## Wrap an argument in double quotes if it contains whitespace, so Start-Process
+## passes it as a single argv entry (see fLaunchSilkTerm).
+function fQuoteArg {
+	param([string]$Arg)
+	if ($Arg -match '\s') { return '"' + $Arg + '"' }
+	return $Arg
+}
+
+
+## Resolve SilkTerm's backgrounds dir the same way the app does:
+## XDG_CONFIG_HOME, else HOME\.config, else APPDATA - then \silkterm\backgrounds.
+function fResolveBackgroundsDir {
+	$base = $null
+	if ($env:XDG_CONFIG_HOME) { $base = $env:XDG_CONFIG_HOME }
+	elseif ($env:HOME)        { $base = Join-Path $env:HOME ".config" }
+	elseif ($env:APPDATA)     { $base = $env:APPDATA }
+	if (-not $base) { return $null }
+	return (Join-Path $base "silkterm\backgrounds")
+}
+
+
+## Pick a random image from the backgrounds dir, or $null if there are none.
+function fPickRandomBackground {
+	$dir = fResolveBackgroundsDir
+	if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return $null }
+	$imgs = Get-ChildItem -LiteralPath $dir -File |
+		Where-Object { $_.Extension -in ".png", ".jpg", ".jpeg" }
+	if (-not $imgs) { return $null }
+	return ($imgs | Get-Random).FullName
+}
+
+
+## Informational note to the host.
+function fNote { param([string]$Msg); Write-Host "n8runterm: $Msg" }
+
+## Non-fatal note to stderr.
+function fWarn { param([string]$Msg); Write-Warning "n8runterm: $Msg" }
+
+## Fatal error to stderr, then stop.
+function fFail { param([string]$Msg); Write-Error "n8runterm: $Msg"; exit 1 }
+
+
+#••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+# Script entry point
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+## Kick everything off, passing through whatever the caller gave us.
+fMain -PassArgs $args
+
+
+##	History:
+##		- 2026-07-15 JC: Reorder copy name to stamp-then-tag (slktrmdf_<stamp>_<tag>).
+##		- 2026-07-15 JC: Three tagged sources (gnul/gnuw/msvc); age-based delete;
+##		  newest-by-stamp run with a gnuw/msvc coin flip when close in time.
+##		- 2026-07-14 JC: Return the launched Process so callers can target it by PID.
+##		- 2026-07-14 JC: Quote args with spaces (title/bg path) so they aren't split.
+##		- 2026-07-14 JC: Rotating stamped copies + prune idle ones (was fixed-name).
+##		- 2026-07-14 JC: Created (Windows port of the bash n8runterm).
