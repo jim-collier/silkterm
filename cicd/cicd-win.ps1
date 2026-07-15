@@ -257,20 +257,25 @@ function fCheckToolPins {
 	foreach ($pin in $ToolPins) {
 		$parts   = $pin -split '\|', 3
 		$name    = $parts[0]; $want = $parts[1]; $cmd = $parts[2]
-		$verLine = $null
+		$found   = $false; $verLine = $null
 		try {
 			if ($cmd -eq "MAKENSIS") {
 				$mk = fFindMakensis
-				if ($mk) { $verLine = (& $mk -VERSION 2>$null | Select-Object -First 1) }
+				if ($mk) { $found = $true; $out = & $mk -VERSION 2>$null; $verLine = $out | Select-Object -First 1 }
 			} else {
 				$exe  = ($cmd -split '\s+')[0]
-				$rest = ($cmd -split '\s+') | Select-Object -Skip 1
+				$rest = @(($cmd -split '\s+') | Select-Object -Skip 1)
 				if (Get-Command $exe -ErrorAction SilentlyContinue) {
-					$verLine = (& $exe @rest 2>$null | Select-Object -First 1)
+					## Collect the whole output FIRST, then take the first line. Piping a
+					## native command straight into `Select-Object -First 1` races: the
+					## early upstream-stop can kill the tool mid-print (exit 101) and drop
+					## its version line, which read as a false "not found".
+					$found = $true; $out = & $exe @rest 2>$null; $verLine = $out | Select-Object -First 1
 				}
 			}
 		} catch { $verLine = $null }
-		if (-not $verLine) { fWarn "$name not found (pinned $want)"; continue }
+		if (-not $found)   { fWarn "$name not found (pinned $want)"; continue }
+		if (-not $verLine) { fWarn "$name present but version unreadable (pinned $want)"; continue }
 		$m = [regex]::Match($verLine, '[0-9]+(\.[0-9]+)+')
 		$have = if ($m.Success) { $m.Value } else { "$verLine".Trim() }
 		if ($have -ne $want) { fWarn "$name is $have, pinned $want (update the pin or the tool)" }
