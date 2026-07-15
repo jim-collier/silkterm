@@ -55,6 +55,14 @@ param(
 	[switch]$Help
 )
 
+## Requires PowerShell 7+ (pwsh): this script uses $IsWindows and PS7 semantics.
+## Windows PowerShell 5.1 has no $IsWindows, so the StrictMode guard below would
+## throw a cryptic error instead. Bail early with a clear pointer.
+if ($PSVersionTable.PSVersion.Major -lt 6) {
+	Write-Error "cicd-win.ps1 needs PowerShell 7+ (pwsh); you're on Windows PowerShell $($PSVersionTable.PSVersion). Run: pwsh -File cicd/cicd-win.ps1"
+	exit 1
+}
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 

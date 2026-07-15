@@ -225,7 +225,7 @@ Pre-built releases are not published yet - build from source per the Compiling s
 
 ### Building from source
 
-See [build.md](build.md).
+Install the per-platform prerequisites first: [prerequisites.md](prerequisites.md). Then see [build.md](build.md) for the build commands.
 
 Quick start on Linux:
 
