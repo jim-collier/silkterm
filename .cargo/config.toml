@@ -5,3 +5,8 @@ linker = "x86_64-w64-mingw32-gcc"
 ar = "x86_64-w64-mingw32-ar"
 # statically link the gcc/pthread runtime so the .exe is self-contained
 rustflags = ["-C", "target-feature=+crt-static"]
+
+# Native Windows (MSVC ABI). Static-CRT folds VCRUNTIME140 + the UCRT into the
+# .exe so it needs no VC++ Redistributable - self-contained like the gnu build.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
