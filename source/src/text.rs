@@ -305,6 +305,12 @@ pub struct TextCtx {
 	pub scrim: TextRenderer,
 	pub cell_w: f32,
 	pub cell_h: f32,
+	// Whether a bold run shapes to the same per-cell advance as regular. When
+	// false (font ignores set_monospace_width and its bold face has a different
+	// advance - common on Windows), the de-bold scrim buffer would drift from the
+	// display buffer along the line, so panes reuse the display buffer for the
+	// scrim instead (see Pane::build, text_scrim_regular_weight).
+	pub debold_safe: bool,
 	// physical-px inset between content and pane edge
 	pub margin: f32,
 	pub metrics: Metrics,
@@ -347,6 +353,7 @@ impl TextCtx {
 
 		let cell_w = measure_cell(&mut font_system, metrics);
 		let cell_h = line_height.max(1.0);
+		let debold_safe = bold_matches_cell(&mut font_system, metrics, cell_w);
 
 		// Chrome follows the desktop UI font size (pt -> px at the 96-DPI
 		// reference, like the mono path); terminal size is the fallback so the
@@ -403,6 +410,7 @@ impl TextCtx {
 			scrim,
 			cell_w,
 			cell_h,
+			debold_safe,
 			margin: (config::settings().margin * scale).round(),
 			metrics,
 			ui_line_h,
@@ -669,6 +677,29 @@ fn measure_cell(fs: &mut FontSystem, metrics: Metrics) -> f32 {
 		.map(|run| run.line_w / N as f32)
 		.unwrap_or(metrics.font_size * 0.6)
 		.max(1.0)
+}
+
+// Does a bold run shape to the same advance as the regular pitch cell_w? Shaped
+// exactly like the render/scrim buffers (monospace_width set, Advanced). True
+// when the mono face honors the snap, or bold and regular naturally share an
+// advance; false when they diverge - then the de-bold scrim buffer drifts from
+// the display buffer and must not be used (see the debold_safe field).
+fn bold_matches_cell(fs: &mut FontSystem, metrics: Metrics, cell_w: f32) -> bool {
+	const N: usize = 40;
+	let mut buf = Buffer::new(fs, metrics);
+	buf.set_wrap(fs, Wrap::None);
+	buf.set_monospace_width(fs, Some(cell_w));
+	buf.set_size(fs, None, None);
+	let mut attrs = mono_attrs();
+	attrs.weight = fontdb::Weight::BOLD;
+	buf.set_text(fs, &"M".repeat(N), &attrs, Shaping::Advanced, None);
+	buf.shape_until_scroll(fs, false);
+	let adv = buf
+		.layout_runs()
+		.next()
+		.map(|run| run.line_w / N as f32)
+		.unwrap_or(cell_w);
+	(adv - cell_w).abs() < 0.1
 }
 
 #[cfg(test)]
