@@ -1249,6 +1249,19 @@ impl State {
 		self.wp_next = (ivl > 0.0).then(|| Instant::now() + Duration::from_secs_f32(ivl));
 	}
 
+	// Rebuild the text context (cell metrics, chrome, pane buffers) for a new
+	// scale factor or font, then relayout. Shared by settings-driven font
+	// rebuilds and DPI scale-factor changes. The surface itself is reconfigured
+	// separately (a Resized event follows a scale change).
+	fn rebuild_text(&mut self, scale: f32) {
+		self.text = TextCtx::new(&self.gfx.device, &self.gfx.queue, self.gfx.format, scale);
+		self.chrome = None; // cached chrome buffers are tied to the old FontSystem
+		for pm in &mut self.tabs.list {
+			pm.rebuild_buffers(&mut self.text);
+		}
+		self.relayout_all();
+	}
+
 	// Swap in `edited` and rebuild whatever changed vs `orig` (text metrics,
 	// background image, window opacity). Shared by the dialog and config reload.
 	// `force_bg` re-reads the image even if the path string didn't change.
@@ -1286,13 +1299,7 @@ impl State {
 			}
 		}
 		if rebuild {
-			let scale = self.window.scale_factor() as f32;
-			self.text = TextCtx::new(&self.gfx.device, &self.gfx.queue, self.gfx.format, scale);
-			self.chrome = None; // cached chrome buffers are tied to the old FontSystem
-			for pm in &mut self.tabs.list {
-				pm.rebuild_buffers(&mut self.text);
-			}
-			self.relayout_all();
+			self.rebuild_text(self.window.scale_factor() as f32);
 		}
 		if bg {
 			self.bg_image = load_bg_image(&self.gfx);
@@ -2895,6 +2902,14 @@ impl ApplicationHandler<UserEvent> for App {
 					.resize(&state.gfx.device, size.width, size.height);
 				state.relayout_all();
 				state.save_window_size(size.width, size.height);
+				state.dirty = true;
+			}
+
+			// DPI/scale changed (monitor move or a live scaling change). Re-scale
+			// cell metrics + chrome for the new factor; winit preserves the logical
+			// size, so a Resized event follows to reconfigure the surface + scrim.
+			WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+				state.rebuild_text(scale_factor as f32);
 				state.dirty = true;
 			}
 
