@@ -1,21 +1,27 @@
 ##	Purpose:
 ##		- Windows-native CI/CD pipeline for SilkTerm. A PowerShell port of the
-##		  Linux cicd.bash, trimmed to what actually runs on Windows: dev + release
-##		  builds, tests, lints, packages, dogfood install, and publish. Does NOT
-##		  touch cicd.bash (that stays the Linux/cross pipeline).
+##		  Linux cicd.bash, doing as much of the same work as Windows allows -
+##		  including the parts cicd.bash farms out to helper scripts (the profiler
+##		  run and the git backup/publish). Does NOT touch cicd.bash (that stays the
+##		  Linux/cross pipeline).
 ##		- Stages (fail-fast; any error aborts before the next stage):
 ##		   1. format         (cargo fmt)
 ##		   2. debug build    (cargo build)
 ##		   3. tests + lints  (cargo test; clippy + cargo-deny are ADVISORY here)
-##		   4. release builds  x86_64 msvc AND gnu (always both), + ARM64 when its
+##		   4. profiler       (flamegraph SVG; best-effort, non-gating - env-skips
+##		                      when python/pprof isn't available, same as Linux)
+##		   5. release builds  x86_64 msvc AND gnu (always both), + ARM64 when its
 ##		                      toolchain is present (auto-detected, else warn-skip)
-##		   5. packages       (NSIS installer .exe per built arch, if makensis found)
-##		   6. dogfood        (copy the best x86_64 build to <dogfood>\SilkTerm.exe)
-##		   7. publish        (git add + commit + push the current branch)
-##		- What Windows can't do (dropped vs cicd.bash): the profiler (Linux SIGPROF
-##		  sampler), the headless scroll harness / screenshots / demo (need Xvfb),
-##		  and .deb/.rpm packages (Linux). clippy is advisory, not gating: the
-##		  Unix-gated ctl code emits dead_code warnings here, so -D warnings can't pass.
+##		   6. packages       (NSIS installer .exe per built arch, if makensis found)
+##		   7. dogfood        (copy the best x86_64 build to <dogfood>\SilkTerm.exe)
+##		   8. publish        (stash -> pull -> add -> commit -> push, current branch)
+##		- What Windows can't do (dropped vs cicd.bash): the headless scroll harness /
+##		  screenshots / demo (need Xvfb), .deb/.rpm packages (Linux), and the rar
+##		  version-archive step of publish (skipped by request). clippy is advisory,
+##		  not gating: the Unix-gated ctl code emits dead_code warnings here, so
+##		  -D warnings can't pass. The profiler is best-effort: pprof samples via a
+##		  Unix SIGPROF path, so on Windows a profiling-build or run failure warns and
+##		  skips instead of aborting.
 ##		- Dogfood pick: prefer the msvc build IF it's self-contained (statically
 ##		  linked, no VCRUNTIME140/MSVCP140 dependency); else the gnu build; else
 ##		  whichever single build exists. Installs the fixed name SilkTerm.exe into
@@ -24,15 +30,17 @@
 ##		- Syntax:
 ##		  pwsh cicd/cicd-win.ps1 [options]
 ##		  Options:
-##		   -Yes            run unattended (no confirm / publish prompt)
-##		   -Quick          skip the slow stages (ARM builds + packages)
+##		   -Yes            run unattended (no confirm / message prompt)
+##		   -Quiet          quiet + unattended (implies -Yes); publish runs quiet too
+##		   -Quick          skip the slow stages (profiler + ARM builds + packages)
 ##		   -Gate           merge gate only: fmt --check + clippy + tests, then exit
 ##		   -NoFmt          skip the formatter stage
+##		   -NoProfile      skip the profiler stage
 ##		   -NoArm          skip the ARM64 release builds + their packages
 ##		   -NoPackage      skip the packages stage (NSIS installers)
 ##		   -NoDogfood      skip the dogfood install
 ##		   -NoPublish      skip the git publish stage
-##		   -Message MSG    publish hands-off with this commit message
+##		   -Message MSG    publish hands-off with this commit message (no editor)
 ##		   -Help           show this help
 ##	History: At bottom of script.
 
@@ -44,9 +52,11 @@
 [CmdletBinding()]
 param(
 	[switch]$Yes,
+	[switch]$Quiet,
 	[switch]$Quick,
 	[switch]$Gate,
 	[switch]$NoFmt,
+	[switch]$NoProfile,
 	[switch]$NoArm,
 	[switch]$NoPackage,
 	[switch]$NoDogfood,
@@ -65,12 +75,22 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+## We drive native tools (git, cargo) by hand and read $LASTEXITCODE - several
+## probes (git diff --quiet, clippy) return non-zero ON PURPOSE. Keep a non-zero
+## native exit from throwing so those reads work regardless of the caller's shell.
+$PSNativeCommandUseErrorActionPreference = $false
 
 if ($Help) {
-	## Print the Purpose/Syntax block and exit (mirrors cicd.bash --help).
-	Get-Content -LiteralPath $PSCommandPath |
-		Where-Object { $_ -match '^##' } |
-		ForEach-Object { $_ -replace '^##\t?', '' }
+	## Print only the leading Purpose..History header block (mirrors cicd.bash's
+	## `sed -n '/Purpose:/,/History:/p'`), not every top-level ## comment.
+	$inBlock = $false
+	foreach ($line in (Get-Content -LiteralPath $PSCommandPath)) {
+		if ($line -match '^##\tPurpose:') { $inBlock = $true }
+		if ($inBlock) {
+			if ($line -match '^##\tHistory:') { break }
+			$line -replace '^##\t?', ''
+		}
+	}
 	exit 0
 }
 
@@ -80,6 +100,9 @@ if (-not $IsWindows) {
 	Write-Error "cicd-win.ps1: this pipeline only runs on Windows (use cicd/cicd.bash on Linux)."
 	exit 1
 }
+
+## -Quiet implies unattended; both suppress the preflight prompt.
+$Unattended = ($Yes -or $Quiet)
 
 
 #••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -95,7 +118,7 @@ $VersionManifest = Join-Path $Root "source\Cargo.toml"
 
 ## Release build matrix. x86_64 msvc + gnu build every run (owner rule: always
 ## build both). ARM64 rows are attempted only when their toolchain is detected
-## (see fArmTargetReady); otherwise they warn-skip. os-arch feeds the artifact
+## (see fArmSkipReason); otherwise they warn-skip. os-arch feeds the artifact
 ## name (<exe>-<version>-<os-arch>.exe).
 $Targets = @(
 	[pscustomobject]@{ Arch="x86_64"; Tk="msvc";    Triple="x86_64-pc-windows-msvc";     OsArch="windows-x86_64-msvc";    Builder="build";    Arm=$false }
@@ -114,11 +137,32 @@ $NsisTemplate = Join-Path $Root "cicd\packaging\windows\installer.nsi.in"
 ## Full-run transcript (gitignored, alongside the Linux lint logs' sibling).
 $LogDir = Join-Path $Root "cicd\artifacts\lint-win"
 
+## Profiler stage (mirrors cicd.bash / config.bash). Builds an optimized+symbols
+## binary and runs the app under pprof's in-process sampler against a heavy python
+## workload, writing a flamegraph SVG. Best-effort on Windows: pprof's SIGPROF
+## sampler is a Unix path, so a profiling-build or run failure here warns + skips.
+## Its own artifact dir so the Linux profiling run can't clobber it (or v.v.).
+$ProfileSecs           = 8
+$ProfileFeature        = "profiling"
+$ProfileProfile        = "profiling"
+$ProfileWorkloadScript = Join-Path $Root "cicd\utility\n8output-random-unicode.py"
+$ProfileWorkloadArgs   = "600 0"      # <duration_s> <delay_s>; duration >> ProfileSecs, no delay = max output
+$ProfileOutDir         = Join-Path $Root "cicd\artifacts\profiling-win"
+
 ## Dogfood: the fixed-name copy for hand-launching. SAME folder n8runterm.ps1
 ## pulls from, so both coexist - n8runterm manages its stamped slktrmdf_* copies
 ## and prunes only those; this SilkTerm.exe is left alone.
 $DogfoodDir      = "C:\opt\0-0\common\exec\synced\util\mswin\gui\by-self\win64"
 $DogfoodFixedExe = "SilkTerm.exe"
+
+## Pinned helper-tool versions (the Windows-relevant subset of config.bash's
+## TOOL_PINS). Warn (non-gating) when an installed tool has drifted, so a box
+## update can't silently change results. "name|version|command args...".
+$ToolPins = @(
+	"cargo-zigbuild|0.23.0|cargo-zigbuild --version"
+	"cargo-deny|0.19.9|cargo-deny --version"
+	"makensis|3.11|MAKENSIS"          # special-cased: resolve via fFindMakensis
+)
 
 ## Cap compile/test parallelism to half the cores so a run stays usable.
 $Cores       = [Environment]::ProcessorCount
@@ -170,6 +214,15 @@ function fVersion {
 	return $line.Matches[0].Groups[1].Value
 }
 
+## Locate a python interpreter as a bare PATH command name (so the app's
+## word-split --shell string stays space-free). $null when none is installed.
+function fFindPython {
+	foreach ($c in @("python3", "python", "py")) {
+		if (Get-Command $c -ErrorAction SilentlyContinue) { return $c }
+	}
+	return $null
+}
+
 ## True if the exe is self-contained: no dynamic dependency on the VC runtime
 ## (VCRUNTIME140 / MSVCP140). Scans the PE for those import names - present only
 ## when msvc links the CRT dynamically (i.e. without +crt-static). The gnu build
@@ -195,6 +248,33 @@ function fFindMakensis {
 		if (Test-Path -LiteralPath $p) { return $p }
 	}
 	return $null
+}
+
+## Warn (non-gating) when a pinned helper tool is missing or has drifted from its
+## pin. Mirrors cicd.bash's TOOL_PINS loop. makensis is special-cased because it
+## isn't on PATH by default (resolved via fFindMakensis).
+function fCheckToolPins {
+	foreach ($pin in $ToolPins) {
+		$parts   = $pin -split '\|', 3
+		$name    = $parts[0]; $want = $parts[1]; $cmd = $parts[2]
+		$verLine = $null
+		try {
+			if ($cmd -eq "MAKENSIS") {
+				$mk = fFindMakensis
+				if ($mk) { $verLine = (& $mk -VERSION 2>$null | Select-Object -First 1) }
+			} else {
+				$exe  = ($cmd -split '\s+')[0]
+				$rest = ($cmd -split '\s+') | Select-Object -Skip 1
+				if (Get-Command $exe -ErrorAction SilentlyContinue) {
+					$verLine = (& $exe @rest 2>$null | Select-Object -First 1)
+				}
+			}
+		} catch { $verLine = $null }
+		if (-not $verLine) { fWarn "$name not found (pinned $want)"; continue }
+		$m = [regex]::Match($verLine, '[0-9]+(\.[0-9]+)+')
+		$have = if ($m.Success) { $m.Value } else { "$verLine".Trim() }
+		if ($have -ne $want) { fWarn "$name is $have, pinned $want (update the pin or the tool)" }
+	}
 }
 
 ## True if a rustup target is installed.
@@ -234,13 +314,13 @@ function fBuildTarget {
 	param([Parameter(Mandatory)]$Target)
 
 	if ($Target.Arm) {
-		if ($NoArm)  { fNote "skip $($Target.OsArch): --NoArm";  return $null }
-		if ($Quick)  { fNote "skip $($Target.OsArch): --Quick";  return $null }
+		if ($NoArm)  { fNote "skip $($Target.OsArch): -NoArm";  return $null }
+		if ($Quick)  { fNote "skip $($Target.OsArch): -Quick";  return $null }
 		$reason = fArmSkipReason $Target
 		if ($reason) { fWarn "$($Target.OsArch) skipped: $reason"; return $null }
 	}
 
-	fSection "4  Release build: $($Target.OsArch)"
+	fSection "5  Release build: $($Target.OsArch)"
 	$exe = Join-Path $Root "target\$($Target.Triple)\release\$ExeName.exe"
 
 	$cargoArgs = if ($Target.Builder -eq "zigbuild") {
@@ -287,6 +367,60 @@ function fWriteSums {
 		Where-Object { $_.Name -ne $sumsName } |
 		ForEach-Object { "{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
 	if ($lines) { Set-Content -LiteralPath $sumsPath -Value $lines -Encoding ascii }
+}
+
+## Profiler stage: build the profiling binary, run the app under the sampler
+## against the python workload, write a flamegraph SVG. Best-effort / non-gating
+## on Windows (env miss or pprof Unix-path failure -> warn + skip, never abort).
+function fRunProfiler {
+	param([Parameter(Mandatory)][string]$Stamp)
+	if ($NoProfile) { fNote "profiler disabled (-NoProfile)"; return }
+	if ($Quick)     { fNote "profiler skipped (-Quick)";     return }
+
+	## Environmental prerequisites (not the app's fault) -> skip with a warning.
+	$py = fFindPython
+	if (-not $py)                                        { fWarn "profiler skipped: python not found";                 return }
+	if (-not (Test-Path -LiteralPath $ProfileWorkloadScript)) { fWarn "profiler skipped: workload missing ($ProfileWorkloadScript)"; return }
+
+	## Build the profiling binary. On Windows this can fail (pprof samples via a
+	## Unix SIGPROF path), so a build failure warns + skips rather than aborting.
+	fNote "building $ProfileProfile/$ExeName (cargo --profile $ProfileProfile --features $ProfileFeature)"
+	& cargo build --profile $ProfileProfile --features $ProfileFeature
+	if ($LASTEXITCODE -ne 0) { fWarn "profiler skipped: profiling build failed (pprof likely unsupported on Windows)"; return }
+	$profExe = Join-Path $Root "target\$ProfileProfile\$ExeName.exe"
+	if (-not (Test-Path -LiteralPath $profExe)) { fWarn "profiler skipped: $profExe not produced"; return }
+
+	New-Item -ItemType Directory -Path $ProfileOutDir -Force | Out-Null
+	$out = Join-Path $ProfileOutDir "flame_$Stamp.svg"
+
+	## The app samples itself and writes the SVG on exit (it quits after
+	## SILK_PROFILE_SECS). Unlike Linux there's no Xvfb, so a real window opens for
+	## the duration. Start-Process -Wait because the GUI-subsystem exe doesn't block
+	## the caller; the --shell value is pre-quoted (Start-Process space-joins
+	## ArgumentList WITHOUT quoting - the n8runterm title-arg gotcha).
+	fNote "running app ${ProfileSecs}s under sampler (a window opens briefly) ..."
+	$env:SILK_PROFILE_OUT  = $out
+	$env:SILK_PROFILE_SECS = "$ProfileSecs"
+	try {
+		$shellVal = "`"$py $ProfileWorkloadScript $ProfileWorkloadArgs`""
+		$p = Start-Process -FilePath $profExe -ArgumentList @("--shell", $shellVal) -Wait -PassThru
+	} finally {
+		Remove-Item Env:\SILK_PROFILE_OUT, Env:\SILK_PROFILE_SECS -ErrorAction SilentlyContinue
+	}
+	if ($p.ExitCode -ne 0) { fWarn "profiler run exited $($p.ExitCode) (non-gating)"; return }
+	if (-not (Test-Path -LiteralPath $out) -or (Get-Item -LiteralPath $out).Length -eq 0) {
+		fWarn "profiler produced no SVG (non-gating)"; return
+	}
+	fEcho "OK: flamegraph: $out"
+
+	## Keep the profiling dir from growing without bound (newest ~15).
+	Get-ChildItem -LiteralPath $ProfileOutDir -Filter 'flame_*.svg' -ErrorAction SilentlyContinue |
+		Sort-Object LastWriteTime -Descending | Select-Object -Skip 15 |
+		Remove-Item -Force -ErrorAction SilentlyContinue
+
+	## Hot-spot summary into the log (non-fatal).
+	$report = Join-Path $Root "cicd\utility\flame-report.py"
+	if (Test-Path -LiteralPath $report) { & $py $report --dir $ProfileOutDir 2>$null }
 }
 
 ## Build a self-contained NSIS installer per built arch (upgrades in place). A
@@ -341,36 +475,74 @@ function fDogfood {
 	fEcho "OK: dogfood ($($pick.Tk); $why) -> $dst"
 }
 
-## Publish: stage everything, commit (message from -Message, else auto when -Yes,
-## else prompt), and push the current branch. Mirrors cicd.bash stage 8.
+## Publish: a native port of n8git_backup-and-publish MINUS the rar archive step.
+## stash (if dirty) -> pull --no-ff (if upstream) -> pop -> add -> commit -> push.
+## $Msg empty means "let git open its editor" (git uses core.editor / EDITOR).
 function fPublish {
-	param([Parameter(Mandatory)][string]$Stamp)
+	param([Parameter(Mandatory)][AllowEmptyString()][string]$Msg)
 	$branch = (& git rev-parse --abbrev-ref HEAD).Trim()
 	fNote "branch: $branch"
 
-	& git add -A
-	if ($LASTEXITCODE -ne 0) { fDie "git add failed" }
+	## Stash local changes (tracked + untracked) before syncing with upstream.
+	& git diff --quiet;        $dirtyTracked = ($LASTEXITCODE -ne 0)
+	& git diff --cached --quiet; $dirtyStaged = ($LASTEXITCODE -ne 0)
+	$untracked = (& git ls-files --others --exclude-standard)
+	$didStash = $false
+	if ($dirtyTracked -or $dirtyStaged -or $untracked) {
+		$before = @(& git stash list).Count
+		fEcho_Clean "git stash push --include-untracked ..."
+		fExec "git stash" "git" @("stash", "push", "--include-untracked", "-m", "auto-stash")
+		$after = @(& git stash list).Count
+		$didStash = ($after -gt $before)
+	}
 
-	## Nothing staged -> still push (branch may be ahead), don't commit an empty.
-	& git diff --cached --quiet
-	$hasChanges = ($LASTEXITCODE -ne 0)
+	## Sync with this branch's upstream if it has one (a brand-new local branch has
+	## nothing to pull; the push below sets its upstream on first publish). --no-edit
+	## keeps an unattended run from blocking on a merge-commit editor.
+	& git rev-parse --abbrev-ref '@{u}' 2>$null | Out-Null
+	$hasUpstream = ($LASTEXITCODE -eq 0)
+	if ($hasUpstream) {
+		fEcho_Clean "git pull --no-ff ..."
+		fExec "git pull" "git" @("pull", "--no-ff", "--no-edit")
+	}
+	if ($didStash) {
+		fEcho_Clean "git stash pop ..."
+		fExec "git stash pop" "git" @("stash", "pop")
+	}
 
-	if ($hasChanges) {
-		$msg = $Message
-		if (-not $msg) {
-			if ($Yes) { $msg = "$AppName CI/CD $Stamp" }
-			else {
-				$msg = Read-Host "Publish commit message (blank = 'auto')"
-				if (-not $msg) { $msg = "$AppName CI/CD $Stamp" }
-			}
+	fEcho_Clean "git add --all ..."
+	fExec "git add" "git" @("add", "--all")
+
+	& git diff --cached --quiet; $hasStaged = ($LASTEXITCODE -ne 0)
+	if ($hasStaged) {
+		if ($Msg) {
+			fExec "git commit" "git" @("commit", "-m", $Msg)
+			fEcho "OK: committed (`"$Msg`")"
+		} else {
+			## No message -> let git open the configured editor (core.editor / EDITOR).
+			& git commit
+			if ($LASTEXITCODE -ne 0) { fDie "git commit failed or was aborted (empty message?)" }
+			fEcho "OK: committed (via editor)"
 		}
-		fExec "git commit" "git" @("commit", "-m", $msg)
-		fEcho "OK: committed (`"$msg`")"
 	} else {
 		fNote "nothing to commit"
 	}
-	fExec "git push" "git" @("push")
-	fEcho "OK: pushed $branch"
+
+	## Push: set upstream on first publish, else push only when ahead.
+	if (-not $hasUpstream) {
+		fEcho_Clean "git push -u origin HEAD ..."
+		fExec "git push" "git" @("push", "-u", "origin", "HEAD")
+		fEcho "OK: pushed $branch (upstream set)"
+	} else {
+		$ahead = (& git log '@{u}..' --oneline)
+		if ($ahead) {
+			fEcho_Clean "git push origin ..."
+			fExec "git push" "git" @("push", "origin")
+			fEcho "OK: pushed $branch"
+		} else {
+			fNote "up to date with upstream; nothing to push"
+		}
+	}
 }
 
 ## Advisory lint pass: clippy can't gate on Windows (Unix-gated ctl code emits
@@ -422,6 +594,16 @@ function fMain {
 		return
 	}
 
+	## Warn (non-gating) on any drifted/missing pinned helper tool.
+	fCheckToolPins
+
+	## Resolve the publish commit message: -Message wins, then an auto stamp when
+	## unattended; interactive runs capture it at the preflight prompt below. An
+	## empty message at commit time means "let git open its editor".
+	$publishMsg = ""
+	if     ($Message)     { $publishMsg = $Message }
+	elseif ($Unattended)  { $publishMsg = "$AppName CI/CD $stamp" }
+
 	## Preflight summary.
 	fEcho_Clean
 	fEcho_Clean "$AppName Windows CI/CD"
@@ -429,11 +611,23 @@ function fMain {
 	fEcho_Clean "Repo root ...: $Root"
 	fEcho_Clean "Jobs ........: $CicdMaxJobs of $Cores cores"
 	fEcho_Clean "Format ......: $(if ($NoFmt) { '(skipped)' } else { 'cargo fmt' })"
+	fEcho_Clean "Profiler ....: $(if ($NoProfile -or $Quick) { '(skipped)' } else { "${ProfileSecs}s run -> flamegraph SVG (best-effort)" })"
 	fEcho_Clean "Release .....: x86_64 msvc + gnu$(if ($NoArm -or $Quick) { '' } else { ' + ARM64 (if toolchain present)' })"
 	fEcho_Clean "Packages ....: $(if ($NoPackage -or $Quick) { '(skipped)' } else { 'NSIS installers (if makensis present)' })"
 	fEcho_Clean "Dogfood .....: $(if ($NoDogfood) { '(skipped)' } else { "$DogfoodDir\$DogfoodFixedExe" })"
-	fEcho_Clean "Publish .....: $(if ($NoPublish) { '(skipped)' } else { 'git commit + push current branch' })"
+	if ($NoPublish)          { fEcho_Clean "Publish .....: (skipped)" }
+	elseif ($publishMsg)     { fEcho_Clean "Publish .....: commit + push current branch (hands-off: `"$publishMsg`")" }
+	else                     { fEcho_Clean "Publish .....: commit + push current branch (will prompt; blank = editor)" }
 	fEcho_Clean
+	fEcho_Clean "Fail-fast: any error aborts before the next stage."
+	fEcho_Clean
+
+	## Capture the commit message up front so the run finishes unattended. This is
+	## the natural place to bail on the common (publish) path - Ctrl+C aborts.
+	if (-not $Unattended -and -not $NoPublish -and -not $publishMsg) {
+		$m = Read-Host "Publish commit message (blank = editor; Ctrl+C aborts)"
+		if ($m) { $publishMsg = $m }
+	}
 
 	## Start the transcript once past the preflight.
 	New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
@@ -455,7 +649,11 @@ function fMain {
 	fEcho "OK: tests passed"
 	fLintAdvisory
 
-	## Stage 4: release builds (x86_64 msvc + gnu always; ARM64 when ready).
+	## Stage 4: profiler (best-effort; env-skips when python/pprof unavailable).
+	fSection "4  Profiler"
+	fRunProfiler -Stamp $stamp
+
+	## Stage 5: release builds (x86_64 msvc + gnu always; ARM64 when ready).
 	$built = @()
 	foreach ($t in $Targets) {
 		$r = fBuildTarget $t
@@ -465,20 +663,20 @@ function fMain {
 	$ver = fVersion
 	fCollectArtifacts -Built $built -Ver $ver
 
-	## Stage 5: packages.
-	fSection "5  Packages"
+	## Stage 6: packages.
+	fSection "6  Packages"
 	if ($NoPackage -or $Quick) { fNote "packages skipped" }
 	else { fBuildPackages -Built $built -Ver $ver }
 
-	## Stage 6: dogfood.
-	fSection "6  Dogfood"
+	## Stage 7: dogfood.
+	fSection "7  Dogfood"
 	if ($NoDogfood) { fNote "dogfood skipped" }
 	else { fDogfood -Built $built }
 
-	## Stage 7: publish.
-	fSection "7  Publish"
+	## Stage 8: publish.
+	fSection "8  Publish"
 	if ($NoPublish) { fNote "publish skipped" }
-	else { fPublish -Stamp $stamp }
+	else { fPublish -Msg $publishMsg }
 
 	fSection "$AppName Windows CI/CD: done."
 	fEcho_Clean
@@ -494,3 +692,6 @@ try {
 ##	History:
 ##		- 2026-07-15 JC: Created (Windows-native port of cicd.bash: build/test/
 ##		  package/dogfood/publish; msvc + gnu always, ARM64 when ready).
+##		- 2026-07-15 JC: Parity pass - profiler stage, full stash/pull/commit/push
+##		  publish (rar skipped), preflight message prompt + -Quiet, -Quick skips
+##		  the profiler, tool-pin drift warnings.
