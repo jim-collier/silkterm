@@ -26,7 +26,10 @@ fn main() {
 
 	// forward slashes so the absolute path needs no backslash escaping, and works
 	// under both rc.exe and windres (incl. windres running on the Linux cross-build)
-	let icon = Path::new(&manifest).join("assets/icon.ico").to_string_lossy().replace('\\', "/");
+	let icon = Path::new(&manifest)
+		.join("assets/icon.ico")
+		.to_string_lossy()
+		.replace('\\', "/");
 
 	let template = fs::read_to_string(Path::new(&manifest).join("assets/silkterm.rc.in")).unwrap();
 	let rc = template
