@@ -1138,9 +1138,13 @@ impl Pane {
 		// scrim pass (crisp text on top keeps its real weight). Costs a second
 		// shape only on rebuild frames that contain bold. Per-cell fallback
 		// glyphs keep their weight - rare, and not worth a second glyph pool.
+		// ctx.debold_safe guards a font (Windows default faces) whose bold advance
+		// differs from cell_w: there the de-bold buffer drifts from the display
+		// buffer along the line, so the scrim would sit wider than the text.
 		self.scrim_debold = settings.text_scrim
 			&& settings.text_scrim_radius > 0.0
 			&& settings.text_scrim_regular_weight
+			&& ctx.debold_safe
 			&& saw_bold;
 		if self.scrim_debold {
 			let (buf_w, buf_h) = self.buffer.size();
