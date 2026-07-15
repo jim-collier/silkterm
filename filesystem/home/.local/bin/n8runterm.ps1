@@ -44,8 +44,11 @@ $MsvcReleaseDir  = Join-Path $LocalTargetRoot "x86_64-pc-windows-msvc\release"
 
 $ExeName = "silkterm.exe"
 
-## Target: where the runnable copies live. Stamped copies accumulate here.
-$TargetDir = "C:\opt\0-0\common\exec\synced\util\mswin\gui\by-self\win64"
+## Target: where the runnable copies live. Stamped copies accumulate here. This
+## is the LOCAL (non-synced) util dir on purpose - dogfood copies churn every
+## build and shouldn't ride a Dropbox sync. (cicd's fixed-name install is what
+## drops a build into the synced dir.)
+$TargetDir = "C:\opt\0-0\common\exec\local\util\mswin\gui\by-self\win64"
 
 ## Prefix for the date-stamped copies (matches cicd's dogfood convention).
 $DogfoodPrefix = "slktrmdf"
@@ -352,6 +355,7 @@ fMain -PassArgs $args
 
 
 ##	History:
+##		- 2026-07-15 JC: Target the local (non-synced) util dir, not the Dropbox one.
 ##		- 2026-07-15 JC: Prune only files matching our own name spec (leave foreign
 ##		  files like cicd-win.ps1's fixed SilkTerm.exe alone).
 ##		- 2026-07-15 JC: Reorder copy name to stamp-then-tag (slktrmdf_<stamp>_<tag>).
