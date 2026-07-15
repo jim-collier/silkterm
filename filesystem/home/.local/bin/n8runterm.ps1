@@ -91,13 +91,17 @@ function fMain {
 
 ## Delete stamped copies whose build is older than $MaxAgeDays, skipping any that
 ## are running (a running .exe image is locked, so a delete that throws is also
-## treated as in-use).
+## treated as in-use). Only ever touches files matching THIS launcher's own name
+## spec ('slktrmdf_<stamp>[_<tag>].exe') - never a foreign file that merely shares
+## the dir, e.g. the fixed 'SilkTerm.exe' that cicd-win.ps1 drops here.
 function fDeleteOldBuilds {
+	$rx      = "^$([regex]::Escape($DogfoodPrefix))_\d{8}-\d{6}(_(gnul|gnuw|msvc))?\.exe$"
 	$cutoff  = (Get-Date).AddDays(-$MaxAgeDays)
 	$running = @(fRunningExePaths)
 	$deleted = 0
 
 	Get-ChildItem -LiteralPath $TargetDir -File -Filter "${DogfoodPrefix}_*.exe" -ErrorAction SilentlyContinue |
+		Where-Object { $_.Name -match $rx } |
 		Where-Object { (fBuildTime $_) -lt $cutoff } |
 		ForEach-Object {
 			if (fRemoveIfIdle -FileInfo $_ -Running $running) { $deleted++ }
@@ -348,6 +352,8 @@ fMain -PassArgs $args
 
 
 ##	History:
+##		- 2026-07-15 JC: Prune only files matching our own name spec (leave foreign
+##		  files like cicd-win.ps1's fixed SilkTerm.exe alone).
 ##		- 2026-07-15 JC: Reorder copy name to stamp-then-tag (slktrmdf_<stamp>_<tag>).
 ##		- 2026-07-15 JC: Three tagged sources (gnul/gnuw/msvc); age-based delete;
 ##		  newest-by-stamp run with a gnuw/msvc coin flip when close in time.
