@@ -385,8 +385,12 @@ impl TextCtx {
 			TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
 		let overlay =
 			TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
-		let scrim =
-			TextRenderer::new(&mut scrim_atlas, device, wgpu::MultisampleState::default(), None);
+		let scrim = TextRenderer::new(
+			&mut scrim_atlas,
+			device,
+			wgpu::MultisampleState::default(),
+			None,
+		);
 
 		Self {
 			font_system,
