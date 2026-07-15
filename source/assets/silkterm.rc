@@ -1,4 +1,0 @@
-// App icon embedded into the Windows PE (see build.rs). ID 1 = the lowest
-// icon id, which Explorer/the shell use as the executable's icon. Path is
-// resolved relative to this .rc file, next to icon.ico.
-1 ICON "icon.ico"
