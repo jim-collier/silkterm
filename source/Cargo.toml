@@ -101,5 +101,12 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+# Embed the Windows icon resource (build.rs). Host-side build tool, so it stays
+# unconditional - a cfg(windows) gate here would be false when cross-compiling to
+# windows from Linux. compile() no-ops on non-windows targets. It locates the
+# resource compiler via the cc crate (reliable msvc SDK + mingw windres lookup).
+[build-dependencies]
+embed-resource = "3"
+
 [package.metadata.silkterm]
 note = "see build.md for cross-compile + macOS instructions"
