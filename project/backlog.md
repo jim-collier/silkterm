@@ -136,10 +136,11 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Tabs: Include a subtle 'X' icon in right edge of tab, to close with mouse.
 	- Done: each tab reserves a right-edge close region with a dimmed "x" glyph; the tab title clips before it. A left click in that region closes the tab, elsewhere selects it.
 	- Verified: the close glyph renders subtly at each tab's right edge; clicking it closes that tab, clicking the tab body selects it.
-	- 🔘 Improve:
-		- 🔘 Make the 'X' bigger or bolder, and put it inside a button outline nicely balanced within top, right, and bottom margins.
+	- 🛠️ Improve:
+		- ✅ Make the 'X' bigger or bolder, and put it inside a button outline nicely balanced within top, right, and bottom margins.
 			- Done: the close "x" is now bold and centered inside a 1px outlined square button with equal top/right/bottom margins (the slack falls to the left, separating it from the title). The button box, its glyph, and the click region share one geometry helper so they stay aligned.
-				- 🔘 X still too small and not centered in the box.
+				- ✅ X still too small and not centered in the box.
+					- Done: the font glyph (a lowercase-style multiplication sign, baseline-positioned, hence never truly centered) is replaced by a drawn X - two diagonal bars with angled ends, centered exactly in the box at any size. The box keeps equal top/right/bottom margins, now slightly larger; the active tab's box fill carries a faint pastel-red tint so the current tab reads at a glance.
 		- 🔘 Provide brief visual feedback on click - as the tab closes. Maybe the terminal area can close immediately while the tab lingers just enough milliseconds for human perception to notice the click feedback, if that doesn't require rejiggering the whole pipeline.
 			- Note: two candidate approaches - a press-arm highlight (light on the button while pressed, close on release) that fits the existing input path, or the lingering-tab timed close described above (a short animation, more involved and feel-sensitive). Light on the button while pressed, close on release, is going to be the easiest, that's the winner.
 

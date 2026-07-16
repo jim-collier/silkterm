@@ -1026,6 +1026,7 @@ impl Pane {
 							pos: [content_x + c as f32 * cell_w, rect_top],
 							size: [cell_w, rect_bot - rect_top],
 							color: config::srgb_f32(col),
+							..Default::default()
 						});
 					}
 				}
@@ -1130,6 +1131,7 @@ impl Pane {
 							pos: [content_x + c as f32 * cell_w, rect_top],
 							size: [cell_w, rect_bot - rect_top],
 							color: config::srgb_f32(col),
+							..Default::default()
 						});
 					}
 				}
@@ -1365,6 +1367,7 @@ impl Pane {
 			pos: [x, y],
 			size: [w, h],
 			color: cursor_color,
+			..Default::default()
 		})
 	}
 

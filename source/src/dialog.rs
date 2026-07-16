@@ -411,6 +411,7 @@ impl DialogWin {
 					pos: [x, y],
 					size: [bw, bh],
 					color: config::srgb_f32(color),
+					..Default::default()
 				};
 				// filled boxes behind button-style links (the Support button),
 				// brightened while hovered

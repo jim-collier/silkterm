@@ -367,8 +367,6 @@ impl ContextMenu {
 struct ChromeCache {
 	menu_fg: [u8; 3],
 	menubar: Vec<Buffer>, // MENU_BAR titles + trailing "Copy output" label
-	close: Buffer,
-	close_w: f32, // advance of the "x" glyph, for centering it in the button box
 	tab_w: f32,
 	tabs: Vec<(String, Buffer)>,
 }
@@ -440,7 +438,7 @@ const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idl
 const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
 const TAB_MAX_W: f32 = 220.0; // tab button width cap - drawing AND click hit-testing use this
 const TAB_CLOSE_W: f32 = 26.0; // right-edge close-button region per tab (title clips before it)
-const TAB_CLOSE_M: f32 = 5.0; // balanced top/right/bottom margin around the close button box
+const TAB_CLOSE_M: f32 = 6.0; // balanced top/right/bottom margin around the close button box
 
 // The close-"x" button box within a tab: a square with equal top/right/bottom
 // margins (the extra room falls to the left, separating it from the title).
@@ -1362,6 +1360,7 @@ impl State {
 				pos: [rect.x, rect.y],
 				size: [rect.w, rect.h],
 				color: bg,
+				..Default::default()
 			});
 			if scrim_on {
 				scrim_cells.extend_from_slice(&draw.bg);
@@ -1401,6 +1400,7 @@ impl State {
 							pos: [p.rect.x, p.rect.y],
 							size: [p.rect.w, p.rect.h],
 							color,
+							..Default::default()
 						});
 					}
 				}
@@ -1522,7 +1522,10 @@ impl State {
 					tab_h - 3.0,
 					color,
 				));
-				// close-button box: a 1px outline (border rect + inner tab-bg fill)
+				// close-button box: a 1px outline (border rect + inner tab-bg fill).
+				// The active tab's box fill leans faintly toward a pastel red - just
+				// past noticeable, so the current tab reads at a glance without a
+				// clashing accent.
 				let cb = tab_close_box(x, tab_w, tab_bar_y, tab_h);
 				instances.push(rect_inst(
 					cb.x - 1.0,
@@ -1531,7 +1534,13 @@ impl State {
 					cb.h + 2.0,
 					config::menu_border(),
 				));
-				instances.push(rect_inst(cb.x, cb.y, cb.w, cb.h, color));
+				let box_fill = if i == self.tabs.active {
+					mix_rgb(color, [0xd0, 0x80, 0x80], 0.12)
+				} else {
+					color
+				};
+				instances.push(rect_inst(cb.x, cb.y, cb.w, cb.h, box_fill));
+				instances.push(close_x_inst(cb, close_x_rgb()));
 			}
 			Some((start, instances.len() as u32))
 		} else {
@@ -1616,15 +1625,6 @@ impl State {
 			let c = copy_dim(menu_fg_rgb, self.focused);
 			GColor::rgb(c[0], c[1], c[2])
 		};
-		// subtle close-"x" glyph colour, dimmed toward the tab bg (~0.6)
-		let close_fg = {
-			let dim = |v: u8| ((v as u16 * 3) / 5) as u8;
-			GColor::rgb(
-				dim(menu_fg_rgb[0]),
-				dim(menu_fg_rgb[1]),
-				dim(menu_fg_rgb[2]),
-			)
-		};
 		// tab titles ("<shell> [<program>]") - computed first (tab_title is &mut)
 		// before self.text is borrowed for the buffers below
 		let tab_titles: Vec<String> = if self.tabs.len() > 1 {
@@ -1671,32 +1671,9 @@ impl State {
 				.chain(COPYBOX_LABELS.iter())
 				.map(|title| shape_ui(&mut self.text, title, 240.0, menu_h, menu_fg))
 				.collect();
-			// the close "x" is bold so it reads as a button glyph
-			let close = {
-				let mut buf = self.text.new_ui_buffer(TAB_CLOSE_W, tab_h);
-				let mut attrs = crate::text::ui_attrs();
-				attrs.weight = crate::text::ui_bold_weight();
-				attrs.color_opt = Some(close_fg);
-				buf.set_text(
-					&mut self.text.font_system,
-					"\u{00d7}",
-					&attrs,
-					Shaping::Advanced,
-					None,
-				);
-				buf.shape_until_scroll(&mut self.text.font_system, false);
-				buf
-			};
-			let close_w = {
-				let mut attrs = crate::text::ui_attrs();
-				attrs.weight = crate::text::ui_bold_weight();
-				self.text.measure_ui_text("\u{00d7}", &attrs)
-			};
 			self.chrome = Some(ChromeCache {
 				menu_fg: menu_fg_rgb,
 				menubar,
-				close,
-				close_w,
 				tab_w: -1.0, // force the tab pass below to fill in
 				tabs: Vec::new(),
 			});
@@ -1815,7 +1792,6 @@ impl State {
 		for (i, (_, buf)) in chrome.tabs.iter().enumerate() {
 			let x = i as f32 * tab_w;
 			let close_x = x + tab_w - TAB_CLOSE_W;
-			let cb = tab_close_box(x, tab_w, tab_bar_y, tab_h);
 			areas.push(TextArea {
 				buffer: buf,
 				left: x + 8.0,
@@ -1825,26 +1801,13 @@ impl State {
 				bounds: TextBounds {
 					left: x as i32,
 					top: tab_bar_y as i32,
-					right: close_x as i32, // leave room for the close "x"
+					right: close_x as i32, // leave room for the close "X"
 					bottom: (tab_bar_y + tab_h) as i32,
 				},
 				default_color: menu_fg,
 				custom_glyphs: &[],
 			});
-			areas.push(TextArea {
-				buffer: &chrome.close,
-				left: cb.x + (cb.w - chrome.close_w).max(0.0) / 2.0,
-				top: self.text.ui_text_top(cb.y, cb.h),
-				scale: 1.0,
-				bounds: TextBounds {
-					left: cb.x as i32,
-					top: cb.y as i32,
-					right: (cb.x + cb.w) as i32,
-					bottom: (cb.y + cb.h) as i32,
-				},
-				default_color: close_fg,
-				custom_glyphs: &[],
-			});
+			// the close "X" itself is a shader-drawn rect instance (tab bar pass)
 		}
 
 		// All rect instances and the bg-image shader work in absolute
@@ -2231,7 +2194,32 @@ fn rect_inst(x: f32, y: f32, w: f32, h: f32, color: [u8; 3]) -> RectInstance {
 		pos: [x, y],
 		size: [w, h],
 		color: config::srgb_f32(color),
+		..Default::default()
 	}
+}
+
+// The close-"X" mark: a shader-drawn quad (mode 1) whose two diagonal bars
+// center exactly in `cb` at any size/DPI. Stroke scales with the box.
+fn close_x_inst(cb: Rect, color: [u8; 3]) -> RectInstance {
+	RectInstance {
+		pos: [cb.x, cb.y],
+		size: [cb.w, cb.h],
+		color: config::srgb_f32(color),
+		params: [1.0, (cb.w * 0.14).max(1.4)],
+	}
+}
+
+// close-"X" stroke colour: menu fg dimmed toward the tab bg (~0.6), so it reads
+// as a quiet button mark rather than a title character
+fn close_x_rgb() -> [u8; 3] {
+	let fg = config::menu_fg();
+	let dim = |v: u8| ((v as u16 * 3) / 5) as u8;
+	[dim(fg[0]), dim(fg[1]), dim(fg[2])]
+}
+
+fn mix_rgb(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
+	let mix = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+	[mix(a[0], b[0]), mix(a[1], b[1]), mix(a[2], b[2])]
 }
 
 // Dim a chrome colour toward the bar background when the window isn't focused;
@@ -2596,21 +2584,25 @@ fn focus_ring(rect: Rect) -> [RectInstance; 4] {
 			pos: [rect.x, rect.y],
 			size: [rect.w, thickness],
 			color,
+			..Default::default()
 		},
 		RectInstance {
 			pos: [rect.x, rect.y + rect.h - thickness],
 			size: [rect.w, thickness],
 			color,
+			..Default::default()
 		},
 		RectInstance {
 			pos: [rect.x, rect.y],
 			size: [thickness, rect.h],
 			color,
+			..Default::default()
 		},
 		RectInstance {
 			pos: [rect.x + rect.w - thickness, rect.y],
 			size: [thickness, rect.h],
 			color,
+			..Default::default()
 		},
 	]
 }

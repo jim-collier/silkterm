@@ -2078,6 +2078,7 @@ impl SettingsDialog {
 			pos: [x, field.y + 2.0],
 			size: [1.5, field.h - 4.0],
 			color: config::srgb_f32(dlg().focus_out),
+			..Default::default()
 		});
 	}
 
@@ -2095,6 +2096,7 @@ impl SettingsDialog {
 			pos: [x, y],
 			size: [w, h],
 			color: config::srgb_f32(color),
+			..Default::default()
 		};
 		let border = |out: &mut Vec<RectInstance>, r: Rect, thickness: f32, color: [u8; 3]| {
 			out.push(q(
@@ -2571,6 +2573,7 @@ impl SettingsDialog {
 			pos: [x, y],
 			size: [w, h],
 			color: config::srgb_f32(color),
+			..Default::default()
 		};
 		rects.push(q(popup.x, popup.y, popup.w, popup.h, dlg().field_bg));
 		let t = 1.0;
