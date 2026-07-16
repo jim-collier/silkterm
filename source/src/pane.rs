@@ -1582,6 +1582,14 @@ impl Pane {
 		self.last_output = std::time::Instant::now();
 	}
 
+	// Cancel a pending capture. Called when the pane stops being the active copy
+	// target (window unfocused, tab switched, focus moved, trigger turned off):
+	// output that finished while the user was elsewhere must not copy late on
+	// refocus - only a command launched after returning copies.
+	pub fn disarm_capture(&mut self) {
+		self.capture_armed = false;
+	}
+
 	// New PTY output arrived: push the settle deadline out so capture waits for the
 	// command (and its prompt) to finish before copying.
 	pub fn note_output(&mut self) {
