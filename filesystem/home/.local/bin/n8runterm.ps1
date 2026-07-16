@@ -18,6 +18,9 @@
 ##		- Prepends a random background image and a build-tagged title so a dogfood
 ##		  window is visually distinct. Both precede the passed args, so a caller can
 ##		  still override them.
+##		- Launches elevated (as administrator) by default ($RunAsAdmin).
+##		- If no dogfood build is held and no source is reachable, falls back in
+##		  order to: silkterm.exe on PATH, Windows Terminal, PyCmd, then cmd.exe.
 ##		- Edit fMain() to launch a different terminal instead.
 ##	History: At bottom of script.
 
@@ -43,6 +46,20 @@ $GnuwReleaseDir  = Join-Path $LocalTargetRoot "x86_64-pc-windows-gnu\release"
 $MsvcReleaseDir  = Join-Path $LocalTargetRoot "x86_64-pc-windows-msvc\release"
 
 $ExeName = "silkterm.exe"
+
+## Launch elevated (as administrator). RunAs pops a UAC consent unless the calling
+## session is already elevated. Set $false to launch in the normal token.
+$RunAsAdmin = $true
+
+## Fallback terminals, tried in order when no dogfood build is held and no source
+## is reachable. First is our own terminal (kept dressed with bg+title); the rest
+## are generic, launched plainly. cmd.exe (always in System32) is the last resort.
+$FallbackTerminals = @(
+	@{ Name = "silkterm (PATH)";   Exe = "silkterm.exe"; Silk = $true  }
+	@{ Name = "Windows Terminal";  Exe = "wt.exe";       Silk = $false }
+	@{ Name = "PyCmd";             Exe = "PyCmd.exe";    Silk = $false }
+	@{ Name = "cmd";               Exe = "cmd.exe";      Silk = $false }
+)
 
 ## Target: where the runnable copies live. Stamped copies accumulate here. This
 ## is the LOCAL (non-synced) util dir on purpose - dogfood copies churn every
@@ -85,10 +102,15 @@ function fMain {
 
 	## 3. Pick one and launch it.
 	$exe = fSelectBuildToRun
-	if (-not $exe) {
-		fFail "No SilkTerm dogfood build available (no source reachable and none held)."
+	if ($exe) {
+		fLaunchSilkTerm -Exe $exe -PassArgs $PassArgs
+		return
 	}
-	fLaunchSilkTerm -Exe $exe -PassArgs $PassArgs
+
+	## 4. Nothing held and no source reachable - fall back to any terminal we can
+	##    find on PATH.
+	fWarn "no SilkTerm dogfood build (no source reachable and none held); trying fallbacks"
+	fLaunchFallbackTerminal -PassArgs $PassArgs
 }
 
 
@@ -271,18 +293,23 @@ function fLaunchSilkTerm {
 		[string[]]$PassArgs
 	)
 
-	## Human tag from the runnable copy's name.
-	$leaf = [System.IO.Path]::GetFileNameWithoutExtension($Exe)
-	if ($leaf -match "^$([regex]::Escape($DogfoodPrefix))_(?<stamp>\d{8}-\d{6})_(?<tag>[a-z0-9]+)$") {
-		$label = "$($Matches.tag) $($Matches.stamp)"
+	## Title: a dogfood tag for a stamped copy, else a plain title (e.g. a silkterm
+	## found on PATH is a real terminal, not a dogfood build).
+	$leaf   = [System.IO.Path]::GetFileNameWithoutExtension($Exe)
+	$prefRx = "^$([regex]::Escape($DogfoodPrefix))_"
+	if ($leaf -match "${prefRx}(?<stamp>\d{8}-\d{6})_(?<tag>[a-z0-9]+)$") {
+		$title = "SilkTerm [dogfood $($Matches.tag) $($Matches.stamp)]"
+	} elseif ($leaf -match $prefRx) {
+		$label = $leaf -replace $prefRx, ""
+		$title = "SilkTerm [dogfood $label]"
 	} else {
-		$label = $leaf -replace "^$([regex]::Escape($DogfoodPrefix))_", ""
+		$title = "SilkTerm"
 	}
 
 	$preArgs = @()
 	$bg = fPickRandomBackground
 	if ($bg) { $preArgs += "--background-image=$bg" }
-	$preArgs += "--title=SilkTerm [dogfood $label]"
+	$preArgs += "--title=$title"
 
 	$all = @($preArgs)
 	if ($PassArgs) { $all += $PassArgs }
@@ -291,13 +318,71 @@ function fLaunchSilkTerm {
 	## whose value has a space (the title, or a bg path under a spaced folder)
 	## would be split into separate argv entries by the target and rejected.
 	## Quote any such arg ourselves.
-	$quoted = $all | ForEach-Object { fQuoteArg $_ }
+	$quoted = @($all | ForEach-Object { fQuoteArg $_ })
 
-	## GUI app: launch in its own process. Return the Process so a caller (e.g. a
-	## test harness) can stop this exact instance by PID - matching on name/pattern
-	## risks hitting another copy the user launched from somewhere else.
-	$proc = Start-Process -FilePath $Exe -ArgumentList $quoted -PassThru
-	fNote "launched pid $($proc.Id): $([System.IO.Path]::GetFileName($Exe))"
+	return fStartTerminal -Exe $Exe -ArgList $quoted
+}
+
+
+## Fall back to whatever terminal is on PATH, in $FallbackTerminals order. Our own
+## silkterm keeps the bg+title dress (via fLaunchSilkTerm); generic terminals are
+## launched plainly - silkterm's --background-image/--title flags don't apply and
+## its pass-through args likely don't either, so they get none. cmd.exe lives in
+## System32 (always on PATH), so this effectively always finds something.
+function fLaunchFallbackTerminal {
+	param([string[]]$PassArgs)
+
+	foreach ($cand in $FallbackTerminals) {
+		$path = fFindOnPath $cand.Exe
+		if (-not $path) { continue }
+
+		if ($cand.Silk) {
+			fNote "falling back to $($cand.Name): $path"
+			return fLaunchSilkTerm -Exe $path -PassArgs $PassArgs
+		}
+
+		fNote "falling back to $($cand.Name): $path"
+		return fStartTerminal -Exe $path -ArgList @()
+	}
+
+	fFail ("no terminal available (no SilkTerm build/source, and none of " +
+		(($FallbackTerminals | ForEach-Object { $_.Exe }) -join ", ") + " on PATH)")
+}
+
+
+## Resolve an executable's full path from PATH, or $null. -CommandType Application
+## keeps it to real .exe's (never a shell function/alias of the same name).
+function fFindOnPath {
+	param([Parameter(Mandatory)][string]$Exe)
+	$cmd = Get-Command $Exe -CommandType Application -ErrorAction SilentlyContinue |
+		Select-Object -First 1
+	if ($cmd) { return $cmd.Source }
+	return $null
+}
+
+
+## Launch a terminal in its own process, elevated when $RunAsAdmin. Returns the
+## Process so a caller (e.g. a test harness) can stop this exact instance by PID -
+## matching on name/pattern risks hitting another copy launched elsewhere.
+function fStartTerminal {
+	param(
+		[Parameter(Mandatory)][string]$Exe,
+		[string[]]$ArgList
+	)
+
+	$sp = @{ FilePath = $Exe; PassThru = $true }
+	if ($ArgList -and $ArgList.Count) { $sp.ArgumentList = $ArgList }
+	if ($RunAsAdmin) { $sp.Verb = "RunAs" }
+
+	try {
+		$proc = Start-Process @sp
+	} catch {
+		## RunAs throws if UAC is declined; surface it plainly.
+		fFail "launch failed for $Exe ($($_.Exception.Message))"
+	}
+
+	$how = if ($RunAsAdmin) { " (as admin)" } else { "" }
+	fNote "launched$how pid $($proc.Id): $([System.IO.Path]::GetFileName($Exe))"
 	return $proc
 }
 
@@ -355,6 +440,8 @@ fMain -PassArgs $args
 
 
 ##	History:
+##		- 2026-07-15 JC: Launch elevated by default; fall back to silkterm on PATH /
+##		  Windows Terminal / PyCmd / cmd.exe when no build or source is available.
 ##		- 2026-07-15 JC: Target the local (non-synced) util dir, not the Dropbox one.
 ##		- 2026-07-15 JC: Prune only files matching our own name spec (leave foreign
 ##		  files like cicd-win.ps1's fixed SilkTerm.exe alone).
