@@ -50,6 +50,10 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- ✅ Windows: clipboard copy reported not working (any method - Ctrl+Shift+C, right-click Copy, copy-on-highlight, the built-in copy-on-select), across panes; works in other terminals.
+	- Finding: the low-level clipboard write is fine on Windows - verified the whole chain end to end (a real drag-select lands the highlighted text on the clipboard, visible to other processes). So the failure was in the copy *gating*, not the clipboard: the auto-copy feature silently turned itself off constantly (it cleared on any tab/pane focus change, enabling it in one pane cleared every other pane, and it broadcast "off" to other windows), so from a multi-pane / multi-window session copy-on-highlight looked permanently broken.
+	- Fix: reworked as the feature refinement below (never auto-disables; per-active-pane). If a manual copy (Ctrl+Shift+C / right-click) still fails on a specific machine after this, it points to the environment (an RDP client-side clipboard sync or a third-party clipboard manager) rather than the app - needs the paste-target details to chase further.
+
 - ✅ Windows: text scrim wider per-line than the text behind it, starting wherever bold appears (not seen on Linux).
 	- Cause: the "blur bold at regular weight" option shapes a parallel de-bolded buffer for the scrim halo. Both it and the display buffer ask for a fixed cell pitch, but some fonts (Windows default faces) ignore that request and shape at their natural advance, where bold and regular differ - so the scrim (regular) and the text (bold) drift apart along the line.
 	- Fix: only de-bold the scrim when a bold run actually shapes to the same pitch as regular for the loaded font; otherwise draw the scrim from the display buffer (perfectly aligned, at the cost of a slightly heavier bold halo). Confirmed the mismatch triggers on this box's mono face.
@@ -176,6 +180,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🛠️ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- 🔘 Add Windows support.
+	- ✅ Refinement: the two auto-copy triggers ("Copy on select" / "Copy on output") never disable themselves any more, and are now independent (both can be on at once). Reversed the earlier "exclusive to one pane / one window" behavior. A new pane inherits its tab's setting; a new tab or window starts off (nothing is remembered/persisted). It stays a per-active-pane behavior: the flags can be left on across many panes/tabs/windows, but only the focused pane of the active tab in the focused window actually copies. When a window loses focus its checkbox + label dim to show the feature is currently inert (it re-activates on refocus). Dropped the cross-instance "turn yours off" broadcast.
 
 - 🛠️ Tab interface:
 	- Done: single-window core. Each tab owns a PaneManager; the tab bar shows once there's more than one tab, click to switch, and the pane area shrinks to make room for the bar.

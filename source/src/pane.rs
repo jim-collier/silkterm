@@ -62,13 +62,13 @@ const SLIDE_TOP_BAND_APPS: bool = true;
 
 const PROMPT_ABOVE_MAX: usize = 4; // rows above the prompt considered for multi-line-prompt learning
 
-// Per-pane auto-copy mode: at most one of the two, session-only (never persisted).
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub enum CopyOn {
-	#[default]
-	Off,
-	Select,
-	Output,
+// The two independent auto-copy triggers a pane can have on (session-only, never
+// persisted). Each is a per-pane bool; the enum just names which one a UI action
+// or menu row refers to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CopyKind {
+	Select, // copy the highlighted selection the moment a select finishes
+	Output, // copy a command's output once the pane settles back at the prompt
 }
 
 // One styled cell captured for the scrolled-off strip. Colours are resolved at
@@ -580,14 +580,18 @@ pub struct Pane {
 	// re-shaping to panes that changed: one busy pane no longer forces its
 	// idle siblings through set_rich_text every frame.
 	pub content_dirty: bool,
-	// Copy-output-on-command-finish (see arm_capture / poll_capture). `copy_on` is
-	// the per-pane mode (off / select / output - one at a time, never persisted).
-	// On Enter at the shell prompt we arm and record `cmd_start`
-	// (the line after the prompt); when the terminal then settles (no new output for
-	// a debounce) back at the prompt, the lines since are copied. `last_output` is
-	// refreshed on every Wakeup so the settle timer measures true idle. This catches
-	// both instant (ls) and long commands without racing the fg-pgid transition.
-	pub copy_on: CopyOn,
+	// Auto-copy triggers, independent and session-only (never persisted). A new
+	// pane inherits both from the pane it split off (see split_at); a new tab or
+	// window starts with both off. Only the focused pane of the active tab in the
+	// focused window actually copies - the flags stay set otherwise (see the copy
+	// gating in app.rs), so leaving them on across background tabs/windows is fine.
+	// copy_output drives the command-output capture (see arm_capture / poll_capture):
+	// on Enter at the shell prompt we arm and record `cmd_start` (the line after the
+	// prompt); when the terminal settles back at the prompt, the lines since are
+	// copied. `last_output` is refreshed on every Wakeup so the settle timer measures
+	// true idle. This catches both instant (ls) and long commands.
+	pub copy_select: bool,
+	pub copy_output: bool,
 	capture_armed: bool,
 	cmd_start: usize,
 	// Fingerprint of the arm-time prompt row. cmd_start is "history + row", an
@@ -1709,6 +1713,20 @@ impl Pane {
 		self.term.term.lock_unfair().selection = None;
 	}
 
+	pub fn copy_enabled(&self, kind: CopyKind) -> bool {
+		match kind {
+			CopyKind::Select => self.copy_select,
+			CopyKind::Output => self.copy_output,
+		}
+	}
+
+	pub fn set_copy(&mut self, kind: CopyKind, on: bool) {
+		match kind {
+			CopyKind::Select => self.copy_select = on,
+			CopyKind::Output => self.copy_output = on,
+		}
+	}
+
 	pub fn selection_text(&self) -> Option<String> {
 		self.term
 			.term
@@ -1803,15 +1821,23 @@ impl PaneManager {
 			return None;
 		}
 		let new_id = alloc_pane_id();
+		// a new pane inherits the auto-copy flags of the pane it split off (the
+		// "tab setting" the user sees); a new tab/window starts off instead
+		let (inherit_select, inherit_output) = self
+			.panes
+			.get(&id)
+			.map_or((false, false), |src| (src.copy_select, src.copy_output));
 		// spawn BEFORE touching the tree: a failed spawn must not leave a
 		// phantom leaf that reserves layout space with no pane behind it
-		let pane = match spawn_pane(ctx, proxy, new_id, area, command) {
+		let mut pane = match spawn_pane(ctx, proxy, new_id, area, command) {
 			Ok(p) => p,
 			Err(e) => {
 				eprintln!("split: failed to spawn shell: {e}");
 				return None;
 			}
 		};
+		pane.copy_select = inherit_select;
+		pane.copy_output = inherit_output;
 		// child-a's ratio: if the new pane is 'a' (before) it takes new_ratio,
 		// else 'a' is the old pane and keeps the remainder.
 		let ratio_a = if before { new_ratio } else { 1.0 - new_ratio };
@@ -2016,7 +2042,8 @@ fn spawn_pane(
 		text_built: false,
 		mode: TermMode::empty(),
 		content_dirty: true,
-		copy_on: CopyOn::Off,
+		copy_select: false,
+		copy_output: false,
 		prompt_above: Vec::new(),
 		prompt_block: Vec::new(),
 		capture_armed: false,
