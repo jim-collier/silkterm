@@ -665,11 +665,15 @@ fn default_fb(device: &wgpu::Device, format: wgpu::TextureFormat, w: u32, h: u32
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct RectInstance {
 	pub pos: [f32; 2],
 	pub size: [f32; 2],
 	pub color: [f32; 4],
+	// params.x = mode (0 solid quad, 1 close-"X" mark), params.y = stroke px.
+	// The X is two 45-degree bars drawn in the fragment shader, so it centers
+	// exactly in the quad (a font glyph never did - baseline metrics vary).
+	pub params: [f32; 2],
 }
 
 #[repr(C)]
@@ -741,7 +745,7 @@ impl RectRenderer {
 				buffers: &[wgpu::VertexBufferLayout {
 					array_stride: std::mem::size_of::<RectInstance>() as u64,
 					step_mode: wgpu::VertexStepMode::Instance,
-					attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4],
+					attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x2],
 				}],
 			},
 			fragment: Some(wgpu::FragmentState {
@@ -826,11 +830,15 @@ struct VsIn {
     @location(0) pos: vec2<f32>,
     @location(1) size: vec2<f32>,
     @location(2) color: vec4<f32>,
+    @location(3) params: vec2<f32>,
     @builtin(vertex_index) vi: u32,
 };
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) local: vec2<f32>,
+    @location(2) size: vec2<f32>,
+    @location(3) params: vec2<f32>,
 };
 
 @vertex
@@ -841,13 +849,38 @@ fn vs(in: VsIn) -> VsOut {
     var out: VsOut;
     out.clip = vec4<f32>(ndc, 0.0, 1.0);
     out.color = in.color;
+    out.local = corner * in.size;
+    out.size = in.size;
+    out.params = in.params;
     return out;
 }
 
+// One 45-degree bar of the X: q is the pixel offset from the quad center in the
+// bar's rotated frame (x along the bar, y across it). Box-SDF with ~1px edges,
+// so the bar ends are square caps perpendicular to the stroke - i.e. cut on the
+// diagonal, not flat like a letter X.
+fn xbar(q: vec2<f32>, half_len: f32, half_th: f32) -> f32 {
+    let d = max(abs(q.x) - half_len, abs(q.y) - half_th);
+    return clamp(0.5 - d, 0.0, 1.0);
+}
+
+// fraction of the quad's short side left as padding around the X mark
+const X_INSET: f32 = 0.26;
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
+    var a = in.color.a;
+    if (in.params.x > 0.5) {
+        let p = in.local - in.size * 0.5;
+        // both diagonals in one rotation: u = 45-deg frame, u.yx = the other bar
+        let q = vec2<f32>(p.x + p.y, p.x - p.y) * 0.7071068;
+        let half_ext = min(in.size.x, in.size.y) * (0.5 - X_INSET);
+        let half_len = half_ext * 1.4142136;
+        let half_th = in.params.y * 0.5;
+        a = a * max(xbar(q, half_len, half_th), xbar(vec2<f32>(q.y, q.x), half_len, half_th));
+    }
     // premultiply: lets translucent backgrounds composite over the desktop
-    return vec4<f32>(in.color.rgb * in.color.a, in.color.a);
+    return vec4<f32>(in.color.rgb * a, a);
 }
 "#;
 
