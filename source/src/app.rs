@@ -640,20 +640,29 @@ impl State {
 	}
 
 	// Copy-output: when the focused pane's foreground command finishes, copy its
-	// output text to the desktop clipboard - gated on this window being focused and
-	// the pane's per-pane opt-in, so a background window/pane never exports output.
+	// output text to the desktop clipboard. A pending capture only survives while
+	// its pane stays the active copy target (window focused, tab active, pane
+	// focused, trigger on) - anything else disarms it, so output that finished
+	// while the user was elsewhere never copies late on refocus; only a command
+	// launched after returning does. Runs every event-loop pass, and every way
+	// eligibility can break is itself an event, so the disarm always lands before
+	// a refocus could re-poll.
 	fn poll_output_copy(&mut self) {
-		if !self.focused {
-			return;
+		let keep = self.focused.then(|| self.tabs.cur().focused);
+		for pm in &mut self.tabs.list {
+			for (id, pane) in pm.panes.iter_mut() {
+				if keep != Some(*id) || !pane.copy_output {
+					pane.disarm_capture();
+				}
+			}
 		}
-		let focused_id = self.tabs.cur().focused;
+		let Some(focused_id) = keep else {
+			return;
+		};
 		let text = {
 			let Some(pane) = self.tabs.cur_mut().panes.get_mut(&focused_id) else {
 				return;
 			};
-			if !pane.copy_output {
-				return;
-			}
 			pane.poll_capture(CAPTURE_SETTLE)
 		};
 		if let Some(text) = text {
