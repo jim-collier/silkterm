@@ -149,11 +149,11 @@ $ProfileWorkloadScript = Join-Path $Root "cicd\utility\n8output-random-unicode.p
 $ProfileWorkloadArgs   = "600 0"      # <duration_s> <delay_s>; duration >> ProfileSecs, no delay = max output
 $ProfileOutDir         = Join-Path $Root "cicd\artifacts\profiling-win"
 
-## Dogfood: the fixed-name copy for hand-launching. SAME folder n8runterm.ps1
-## pulls from - the LOCAL (non-synced) util dir, so the churny dogfood exe never
-## rides Dropbox - so both coexist: n8runterm manages its stamped slktrmdf_* copies
-## and prunes only those; this SilkTerm.exe is left alone.
-$DogfoodDir      = "C:\opt\0-0\common\exec\local\util\mswin\gui\by-self\win64"
+## Dogfood: the fixed-name copy for hand-launching, into the SYNCED util dir so it
+## rides Dropbox and any box can grab it. Deliberately a SEPARATE dir from
+## n8runterm.ps1's LOCAL dir - n8runterm manages its own machine-local stamped
+## slktrmdf_* pool and launches from there; the two never share a folder.
+$DogfoodDir      = "C:\opt\0-0\common\exec\synced\util\mswin\gui\by-self\win64"
 $DogfoodFixedExe = "SilkTerm.exe"
 
 ## Pinned helper-tool versions (the Windows-relevant subset of config.bash's
