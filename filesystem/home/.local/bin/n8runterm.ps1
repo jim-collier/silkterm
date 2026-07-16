@@ -18,7 +18,8 @@
 ##		- Prepends a random background image and a build-tagged title so a dogfood
 ##		  window is visually distinct. Both precede the passed args, so a caller can
 ##		  still override them.
-##		- Launches elevated (as administrator) by default ($RunAsAdmin).
+##		- Launches elevated (as administrator) only when passed '--admin'. That
+##		  flag is consumed here; all other args are still forwarded to the terminal.
 ##		- If no dogfood build is held and no source is reachable, falls back in
 ##		  order to: silkterm.exe on PATH, Windows Terminal, PyCmd, then cmd.exe.
 ##		- Edit fMain() to launch a different terminal instead.
@@ -47,9 +48,10 @@ $MsvcReleaseDir  = Join-Path $LocalTargetRoot "x86_64-pc-windows-msvc\release"
 
 $ExeName = "silkterm.exe"
 
-## Launch elevated (as administrator). RunAs pops a UAC consent unless the calling
-## session is already elevated. Set $false to launch in the normal token.
-$RunAsAdmin = $true
+## Launch elevated (as administrator). Off by default; the '--admin' arg (consumed
+## at the entry point below, never forwarded) flips it on. RunAs pops a UAC consent
+## unless the calling session is already elevated.
+$RunAsAdmin = $false
 
 ## Fallback terminals, tried in order when no dogfood build is held and no source
 ## is reachable. First is our own terminal (kept dressed with bg+title); the rest
@@ -435,11 +437,19 @@ function fFail { param([string]$Msg); Write-Error "n8runterm: $Msg"; exit 1 }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-## Kick everything off, passing through whatever the caller gave us.
-fMain -PassArgs $args
+## Consume '--admin' (elevate the launched terminal); forward everything else.
+$passArgs = @()
+foreach ($arg in $args) {
+	if ($arg -ieq "--admin") { $RunAsAdmin = $true } else { $passArgs += $arg }
+}
+
+## Kick everything off, passing through whatever's left.
+fMain -PassArgs $passArgs
 
 
 ##	History:
+##		- 2026-07-15 JC: Elevate only on '--admin' (consumed, not forwarded); default
+##		  is the normal token.
 ##		- 2026-07-15 JC: Launch elevated by default; fall back to silkterm on PATH /
 ##		  Windows Terminal / PyCmd / cmd.exe when no build or source is available.
 ##		- 2026-07-15 JC: Target the local (non-synced) util dir, not the Dropbox one.
