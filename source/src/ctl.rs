@@ -14,6 +14,7 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::term::UserEvent;
 
+#[cfg_attr(not(unix), allow(dead_code))] // ctl is Unix-only (AF_UNIX)
 pub const ENV_SOCK: &str = "SILKTERM_SOCKET";
 
 // Holds the socket path so the file goes away with the process.
@@ -85,6 +86,7 @@ pub fn serve(_proxy: EventLoopProxy<UserEvent>) -> Option<CtlServer> {
 
 // One command line -> the event the app applies. Tab separates verb from value
 // so paths with spaces survive.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn parse(line: &str) -> Result<UserEvent, String> {
 	let (verb, value) = match line.split_once('\t') {
 		Some((verb, rest)) => (verb, Some(rest)),

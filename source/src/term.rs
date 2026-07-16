@@ -24,12 +24,16 @@ pub enum UserEvent {
 	Exit(PaneId),
 	// terminal bell (BEL): drives a brief visual flash (text brightens, fades back)
 	Bell,
-	// control socket (ctl.rs): change the background image live (None = clear)
+	// control socket (ctl.rs): change the background image live (None = clear).
+	// ctl is Unix-only, so these are never constructed on non-unix.
+	#[cfg_attr(not(unix), allow(dead_code))]
 	SetWallpaper(Option<std::path::PathBuf>),
 	// control socket: re-read config.toml and apply it (same as Menu > Reload)
+	#[cfg_attr(not(unix), allow(dead_code))]
 	ReloadSettings,
 	// control socket: another instance enabled auto-copy; turn ours off
 	// (the feature is exclusive to one window at a time)
+	#[cfg_attr(not(unix), allow(dead_code))]
 	CopyModeOff,
 }
 
