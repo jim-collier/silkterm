@@ -24,7 +24,7 @@ use crate::config;
 use crate::config::DONATE_URL;
 use crate::gfx::{Gfx, RectInstance, RectRenderer};
 use crate::input;
-use crate::pane::{CopyOn, Dir, Pane, PaneManager, Rect};
+use crate::pane::{CopyKind, Dir, Pane, PaneManager, Rect};
 use crate::term::{PaneId, UserEvent};
 use crate::text::TextCtx;
 
@@ -471,11 +471,10 @@ struct State {
 	mouse_btn: Option<input::MouseBtn>, // button held after a reported press (mouse-tracking apps)
 	mouse_cell: Option<(usize, usize)>, // last cell reported, to de-dupe motion
 	selecting: Option<PaneId>,          // pane with an in-progress drag-select
-	copy_focus: (usize, PaneId), // (tab, pane) auto-copy focus sweep last saw; a change clears the mode
 	last_click: Option<(Instant, f32, f32)>, // for multi-click detection
-	click_count: u32,            // consecutive clicks in the same spot (2=double, 3=triple)
-	resizing: Option<Vec<bool>>, // split-tree path of the divider being dragged
-	dragging_pane: Option<PaneId>, // pane being drag-reordered (Shift+drag)
+	click_count: u32,                   // consecutive clicks in the same spot (2=double, 3=triple)
+	resizing: Option<Vec<bool>>,        // split-tree path of the divider being dragged
+	dragging_pane: Option<PaneId>,      // pane being drag-reordered (Shift+drag)
 	cursor_icon: CursorIcon,
 	clipboard: Clipboard,
 	last_frame: Instant,
@@ -652,7 +651,7 @@ impl State {
 			let Some(pane) = self.tabs.cur_mut().panes.get_mut(&focused_id) else {
 				return;
 			};
-			if pane.copy_on != CopyOn::Output {
+			if !pane.copy_output {
 				return;
 			}
 			pane.poll_capture(CAPTURE_SETTLE)
@@ -670,7 +669,7 @@ impl State {
 		}
 		let focused_id = self.tabs.cur().focused;
 		let p = self.tabs.cur().panes.get(&focused_id)?;
-		(p.copy_on == CopyOn::Output)
+		p.copy_output
 			.then(|| p.capture_deadline(CAPTURE_SETTLE))
 			.flatten()
 	}
@@ -713,22 +712,15 @@ impl State {
 	fn open_menu(&mut self, target: PaneId, mx: f32, my: f32) {
 		let p = self.tabs.cur().panes.get(&target);
 		let read_only = p.is_some_and(|p| p.read_only);
-		let copy_on = p.map_or(CopyOn::Off, |p| p.copy_on);
+		let copy_select = p.is_some_and(|p| p.copy_select);
+		let copy_output = p.is_some_and(|p| p.copy_output);
 		let entries = vec![
 			mi("Copy", MenuAction::Copy),
 			mi("Paste", MenuAction::Paste),
 			mi("Paste Selection", MenuAction::PasteSelection),
 			Entry::Sep,
-			mt(
-				copy_on == CopyOn::Select,
-				"Copy on select",
-				MenuAction::ToggleCopySelect,
-			),
-			mt(
-				copy_on == CopyOn::Output,
-				"Copy on output",
-				MenuAction::ToggleCopyOutput,
-			),
+			mt(copy_select, "Copy on select", MenuAction::ToggleCopySelect),
+			mt(copy_output, "Copy on output", MenuAction::ToggleCopyOutput),
 			mt(read_only, "Read-only", MenuAction::ToggleReadOnly),
 			Entry::Sep,
 			mi("New Tab", MenuAction::NewTab),
@@ -787,7 +779,8 @@ impl State {
 	fn bar_menu_items(&self, idx: usize) -> Vec<Entry> {
 		let p = self.tabs.cur().panes.get(&self.tabs.cur().focused);
 		let read_only = p.is_some_and(|p| p.read_only);
-		let copy_on = p.map_or(CopyOn::Off, |p| p.copy_on);
+		let copy_select = p.is_some_and(|p| p.copy_select);
+		let copy_output = p.is_some_and(|p| p.copy_output);
 		match idx {
 			0 => vec![
 				mi("Reload Config", MenuAction::ReloadConfig),
@@ -800,16 +793,8 @@ impl State {
 				mi("Paste", MenuAction::Paste),
 				mi("Paste Selection", MenuAction::PasteSelection),
 				Entry::Sep,
-				mt(
-					copy_on == CopyOn::Select,
-					"Copy on select",
-					MenuAction::ToggleCopySelect,
-				),
-				mt(
-					copy_on == CopyOn::Output,
-					"Copy on output",
-					MenuAction::ToggleCopyOutput,
-				),
+				mt(copy_select, "Copy on select", MenuAction::ToggleCopySelect),
+				mt(copy_output, "Copy on output", MenuAction::ToggleCopyOutput),
 				mt(read_only, "Read-only", MenuAction::ToggleReadOnly),
 			],
 			2 => vec![
@@ -911,43 +896,31 @@ impl State {
 	}
 
 	// Which copy-mode checkbox (the square or its word) a menu-bar click hit.
-	fn copybox_hit(&mut self, mx: f32) -> Option<CopyOn> {
+	fn copybox_hit(&mut self, mx: f32) -> Option<CopyKind> {
 		let cb = self.copybox_layout();
 		if mx >= cb.boxes[0].x && mx <= cb.label_x[1] + cb.label_w[1] {
-			Some(CopyOn::Select)
+			Some(CopyKind::Select)
 		} else if mx >= cb.boxes[1].x && mx <= cb.label_x[2] + cb.label_w[2] {
-			Some(CopyOn::Output)
+			Some(CopyKind::Output)
 		} else {
 			None
 		}
 	}
 
-	// Toggle a pane's auto-copy mode. The two modes are mutually exclusive and
-	// the feature is exclusive to one pane (and one window): enabling it clears
-	// every other pane and tells other running instances to drop theirs.
-	fn toggle_copy_mode(&mut self, target: PaneId, mode: CopyOn) {
+	// Flip one of a pane's two auto-copy triggers. The two are independent and can
+	// both be on; nothing else is touched (other panes/tabs/windows keep theirs -
+	// only the focused pane of the active tab actually copies, gated at copy time).
+	// A toggle from a context menu on an unfocused pane focuses it so the menu-bar
+	// checkboxes reflect the pane just changed.
+	fn toggle_copy(&mut self, target: PaneId, kind: CopyKind) {
 		let Some(p) = self.tabs.find_pane_mut(target) else {
 			return;
 		};
-		if p.copy_on == mode {
-			p.copy_on = CopyOn::Off;
-			return;
-		}
-		for pm in &mut self.tabs.list {
-			for pane in pm.panes.values_mut() {
-				pane.copy_on = CopyOn::Off;
-			}
-		}
-		if let Some(p) = self.tabs.find_pane_mut(target) {
-			p.copy_on = mode;
-		}
-		// the mode follows the focused pane; enabling from the context menu on
-		// an unfocused pane focuses it (else the focus sweep would clear it)
+		let now = !p.copy_enabled(kind);
+		p.set_copy(kind, now);
 		if self.tabs.cur().panes.contains_key(&target) {
 			self.tabs.cur_mut().focused = target;
 		}
-		self.copy_focus = (self.tabs.active, self.tabs.cur().focused);
-		crate::ctl::broadcast_copy_off();
 	}
 
 	// Request the About window. App opens it (window creation needs the event
@@ -991,8 +964,8 @@ impl State {
 					}
 				}
 			}
-			MenuAction::ToggleCopySelect => self.toggle_copy_mode(target, CopyOn::Select),
-			MenuAction::ToggleCopyOutput => self.toggle_copy_mode(target, CopyOn::Output),
+			MenuAction::ToggleCopySelect => self.toggle_copy(target, CopyKind::Select),
+			MenuAction::ToggleCopyOutput => self.toggle_copy(target, CopyKind::Output),
 			MenuAction::ToggleReadOnly => {
 				if let Some(p) = self.tabs.cur_mut().panes.get_mut(&target) {
 					p.read_only = !p.read_only;
@@ -1311,17 +1284,6 @@ impl State {
 	// `force_rebuild` = the frame changed content/scroll/bell (not a pure cursor
 	// animation), so panes re-shape text; false lets them reuse the cached frame.
 	fn render(&mut self, force_rebuild: bool) -> bool {
-		// changing tabs or panes turns auto-copy off everywhere (visibly and
-		// actually): the feature is deliberately hard to leave on by accident
-		let focus_now = (self.tabs.active, self.tabs.cur().focused);
-		if focus_now != self.copy_focus {
-			self.copy_focus = focus_now;
-			for pm in &mut self.tabs.list {
-				for pane in pm.panes.values_mut() {
-					pane.copy_on = CopyOn::Off;
-				}
-			}
-		}
 		// once a frame has been drawn, later resizes are user-driven and may update
 		// the remembered window size (startup/programmatic ones happen before this)
 		self.size_tracked = true;
@@ -1489,16 +1451,18 @@ impl State {
 				}
 			}
 			// always-visible copy-mode checkboxes (right side): outlines always,
-			// filled per the focused pane's mode, so the state is never hidden.
-			let copy_on = self
-				.tabs
-				.cur()
-				.panes
-				.get(&self.tabs.cur().focused)
-				.map_or(CopyOn::Off, |p| p.copy_on);
+			// filled per the focused pane's two independent triggers, so the state
+			// is never hidden. Dimmed when this window isn't focused - the flags
+			// stay set, but nothing copies until it regains focus.
+			let fp = self.tabs.cur().panes.get(&self.tabs.cur().focused);
+			let checked = [
+				fp.is_some_and(|p| p.copy_select),
+				fp.is_some_and(|p| p.copy_output),
+			];
 			let cb = self.copybox_layout();
-			let border = config::menu_border();
-			for (checkbox, mode) in cb.boxes.iter().zip([CopyOn::Select, CopyOn::Output]) {
+			let border = copy_dim(config::menu_border(), self.focused);
+			let fill = copy_dim(config::menu_fg(), self.focused);
+			for (checkbox, on) in cb.boxes.iter().zip(checked) {
 				instances.push(rect_inst(
 					checkbox.x - 1.0,
 					checkbox.y - 1.0,
@@ -1513,13 +1477,13 @@ impl State {
 					checkbox.h,
 					config::TAB_BAR_BG,
 				));
-				if copy_on == mode {
+				if on {
 					instances.push(rect_inst(
 						checkbox.x + 3.0,
 						checkbox.y + 3.0,
 						checkbox.w - 6.0,
 						checkbox.h - 6.0,
-						config::menu_fg(),
+						fill,
 					));
 				}
 			}
@@ -1638,6 +1602,11 @@ impl State {
 		let margin = self.text.margin;
 		let menu_fg_rgb = config::menu_fg();
 		let menu_fg = GColor::rgb(menu_fg_rgb[0], menu_fg_rgb[1], menu_fg_rgb[2]);
+		// copy-mode labels dim with their checkboxes when the window is unfocused
+		let copy_label_fg = {
+			let c = copy_dim(menu_fg_rgb, self.focused);
+			GColor::rgb(c[0], c[1], c[2])
+		};
 		// subtle close-"x" glyph colour, dimmed toward the tab bg (~0.6)
 		let close_fg = {
 			let dim = |v: u8| ((v as u16 * 3) / 5) as u8;
@@ -1812,6 +1781,12 @@ impl State {
 					let w = copyboxes.label_w[j];
 					(x, x, x + w, self.text.ui_text_top_ink(0.0, menu_h))
 				};
+				// trailing buffers are the copy-mode labels - dim them off-focus
+				let color = if i < bar_layout.len() {
+					menu_fg
+				} else {
+					copy_label_fg
+				};
 				areas.push(TextArea {
 					buffer: buf,
 					left,
@@ -1823,7 +1798,7 @@ impl State {
 						right: right_bound as i32,
 						bottom: menu_h as i32,
 					},
-					default_color: menu_fg,
+					default_color: color,
 					custom_glyphs: &[],
 				});
 			}
@@ -2248,6 +2223,23 @@ fn rect_inst(x: f32, y: f32, w: f32, h: f32, color: [u8; 3]) -> RectInstance {
 		size: [w, h],
 		color: config::srgb_f32(color),
 	}
+}
+
+// Dim a chrome colour toward the bar background when the window isn't focused;
+// used on the copy-mode checkboxes + labels to signal auto-copy is inert until
+// the window regains focus (the pane's flags stay set meanwhile). Focused = no
+// change.
+fn copy_dim(color: [u8; 3], focused: bool) -> [u8; 3] {
+	if focused {
+		return color;
+	}
+	let bg = config::TAB_BAR_BG;
+	let mix = |a: u8, b: u8| (a as f32 * 0.4 + b as f32 * 0.6) as u8;
+	[
+		mix(color[0], bg[0]),
+		mix(color[1], bg[1]),
+		mix(color[2], bg[2]),
+	]
 }
 
 // The window/taskbar icon, decoded from the bundled logo (downscaled so the
@@ -2764,7 +2756,6 @@ impl ApplicationHandler<UserEvent> for App {
 			mouse_btn: None,
 			mouse_cell: None,
 			selecting: None,
-			copy_focus: (0, 0),
 			last_click: None,
 			click_count: 0,
 			resizing: None,
@@ -2855,14 +2846,6 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 			UserEvent::SetWallpaper(image) => state.set_wallpaper(image),
 			UserEvent::ReloadSettings => state.reload_config(),
-			UserEvent::CopyModeOff => {
-				for pm in &mut state.tabs.list {
-					for pane in pm.panes.values_mut() {
-						pane.copy_on = CopyOn::Off;
-					}
-				}
-				state.dirty = true;
-			}
 		}
 	}
 
@@ -3002,9 +2985,9 @@ impl ApplicationHandler<UserEvent> for App {
 				// click on the menu bar: toggle/open the top-level menu's dropdown
 				if button == MouseButton::Left && state.menu_bar && y < state.menu_bar_h() {
 					// the always-visible copy-mode checkboxes toggle the focused pane
-					if let Some(mode) = state.copybox_hit(x) {
+					if let Some(kind) = state.copybox_hit(x) {
 						let focused_id = state.tabs.cur().focused;
-						state.toggle_copy_mode(focused_id, mode);
+						state.toggle_copy(focused_id, kind);
 						state.menu = None;
 						state.bar_open = None;
 						state.dirty = true;
@@ -3219,12 +3202,16 @@ impl ApplicationHandler<UserEvent> for App {
 						Some(sel_text) => {
 							// copy-on-select: a finished selection also lands on
 							// the desktop clipboard when the pane opted in
-							if state
-								.tabs
-								.cur()
-								.panes
-								.get(&id)
-								.is_some_and(|p| p.copy_on == CopyOn::Select)
+							// copy-on-select fires only for the focused pane of the
+							// active tab in a focused window (only that pane copies)
+							if state.focused
+								&& id == state.tabs.cur().focused
+								&& state
+									.tabs
+									.cur()
+									.panes
+									.get(&id)
+									.is_some_and(|p| p.copy_select)
 							{
 								state.clipboard.set_clipboard(sel_text.clone());
 							}
@@ -3495,7 +3482,7 @@ impl ApplicationHandler<UserEvent> for App {
 						if !p.read_only {
 							p.scroll.jump_bottom();
 							p.term.write(bytes);
-							if is_enter && p.copy_on == CopyOn::Output {
+							if is_enter && p.copy_output {
 								p.arm_capture();
 							}
 						}

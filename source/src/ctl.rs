@@ -95,47 +95,9 @@ fn parse(line: &str) -> Result<UserEvent, String> {
 	match verb {
 		"reload" => Ok(UserEvent::ReloadSettings),
 		"wallpaper" => Ok(UserEvent::SetWallpaper(value.map(PathBuf::from))),
-		"copyoff" => Ok(UserEvent::CopyModeOff),
 		_ => Err(format!("unknown command: {verb}")),
 	}
 }
-
-// Auto-copy is exclusive to one window: when it's enabled here, tell every
-// other running instance to turn its mode off. Best-effort on a background
-// thread - a stale socket (killed instance) just fails to connect.
-#[cfg(unix)]
-pub fn broadcast_copy_off() {
-	use std::io::Write;
-
-	let own = std::env::var(ENV_SOCK).ok();
-	let dir = std::env::var_os("XDG_RUNTIME_DIR")
-		.map(PathBuf::from)
-		.unwrap_or_else(std::env::temp_dir);
-	std::thread::spawn(move || {
-		let Ok(entries) = std::fs::read_dir(&dir) else {
-			return;
-		};
-		for entry in entries.flatten() {
-			let path = entry.path();
-			let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-				continue;
-			};
-			if !name.starts_with("silkterm-ctl-") || !name.ends_with(".sock") {
-				continue;
-			}
-			if own.as_deref() == path.to_str() {
-				continue;
-			}
-			if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&path) {
-				let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(200)));
-				let _ = stream.write_all(b"copyoff\n");
-			}
-		}
-	});
-}
-
-#[cfg(not(unix))]
-pub fn broadcast_copy_off() {}
 
 // Client side: deliver one command to the window this shell runs inside.
 #[cfg(unix)]
@@ -185,7 +147,6 @@ mod tests {
 			parse("wallpaper"),
 			Ok(UserEvent::SetWallpaper(None))
 		));
-		assert!(matches!(parse("copyoff"), Ok(UserEvent::CopyModeOff)));
 		assert!(parse("bogus").is_err());
 		assert!(parse("").is_err());
 	}

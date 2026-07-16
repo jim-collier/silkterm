@@ -31,10 +31,6 @@ pub enum UserEvent {
 	// control socket: re-read config.toml and apply it (same as Menu > Reload)
 	#[cfg_attr(not(unix), allow(dead_code))]
 	ReloadSettings,
-	// control socket: another instance enabled auto-copy; turn ours off
-	// (the feature is exclusive to one window at a time)
-	#[cfg_attr(not(unix), allow(dead_code))]
-	CopyModeOff,
 }
 
 // bridges alacritty's PTY thread back to the winit loop
