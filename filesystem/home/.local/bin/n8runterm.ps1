@@ -1,4 +1,4 @@
-##	Purpose:
+﻿##	Purpose:
 ##		- Windows port of the bash 'n8runterm' launcher. Keeps a small pool of
 ##		  date-stamped SilkTerm dogfood builds in the local target dir and launches
 ##		  one, passing through any arguments.
