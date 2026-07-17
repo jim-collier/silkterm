@@ -254,7 +254,11 @@ impl DialogWin {
 	pub fn set_cursor(&mut self, x: f32, y: f32) {
 		self.mouse = (x, y);
 		if let Content::Settings(dialog) = &mut self.content {
-			dialog.mouse_move(x, y); // slider drag + open-dropdown hover
+			// slider drag + open-dropdown hover + field drag-selection
+			let attrs = ui_attrs();
+			let text = &mut self.text;
+			let mut measure = |s: &str| text.measure_ui_text(s, &attrs);
+			dialog.mouse_move(x, y, &mut measure);
 		}
 	}
 
@@ -337,11 +341,39 @@ impl DialogWin {
 		}
 	}
 
-	// A character key: while Alt is held it's an accelerator (Cancel/Apply/OK),
+	// A character key: while Alt is held it's an accelerator (Cancel/Apply/OK);
+	// while Ctrl is held it's an edit shortcut (select-all/copy/cut/paste);
 	// otherwise it types into the focused field.
-	pub fn key_char(&mut self, ch: char) -> Option<DialogAction> {
+	pub fn key_char(
+		&mut self,
+		ch: char,
+		clip: Option<&mut crate::clipboard::Clipboard>,
+	) -> Option<DialogAction> {
 		match &mut self.content {
 			Content::Settings(dialog) if dialog.alt() => map_action(dialog.alt_key(ch)),
+			Content::Settings(dialog) if dialog.ctrl() => {
+				match ch.to_ascii_lowercase() {
+					'a' => dialog.select_all(),
+					'c' => {
+						if let (Some(clip), Some(text)) = (clip, dialog.selected_text()) {
+							clip.set_clipboard(text);
+						}
+					}
+					'x' => {
+						if let (Some(clip), Some(text)) = (clip, dialog.selected_text()) {
+							clip.set_clipboard(text);
+							dialog.delete_selection();
+						}
+					}
+					'v' => {
+						if let Some(text) = clip.and_then(|c| c.get_clipboard()) {
+							dialog.insert_str(&text);
+						}
+					}
+					_ => {}
+				}
+				None
+			}
 			Content::Settings(dialog) => {
 				dialog.char_input(ch);
 				None
@@ -356,15 +388,38 @@ impl DialogWin {
 		}
 	}
 
-	// Home / End / Delete inside a focused settings field (Left/Right go through
-	// key_horizontal so they can double as slider/radio adjust when not editing).
-	pub fn edit_nav(&mut self, key: winit::keyboard::NamedKey) {
+	// Home / End / Delete / Insert inside a focused settings field (Left/Right go
+	// through key_horizontal so they can double as slider/radio adjust when not
+	// editing). Shift+Delete = cut, Ctrl+Insert = copy, Shift+Insert = paste.
+	pub fn edit_nav(
+		&mut self,
+		key: winit::keyboard::NamedKey,
+		clip: Option<&mut crate::clipboard::Clipboard>,
+	) {
 		use winit::keyboard::NamedKey as N;
 		if let Content::Settings(dialog) = &mut self.content {
 			match key {
 				N::Home => dialog.cursor_home(),
 				N::End => dialog.cursor_end(),
+				N::Delete if dialog.shift() => {
+					if let (Some(clip), Some(text)) = (clip, dialog.selected_text()) {
+						clip.set_clipboard(text);
+						dialog.delete_selection();
+					} else {
+						dialog.delete_forward();
+					}
+				}
 				N::Delete => dialog.delete_forward(),
+				N::Insert if dialog.shift() => {
+					if let Some(text) = clip.and_then(|c| c.get_clipboard()) {
+						dialog.insert_str(&text);
+					}
+				}
+				N::Insert if dialog.ctrl() => {
+					if let (Some(clip), Some(text)) = (clip, dialog.selected_text()) {
+						clip.set_clipboard(text);
+					}
+				}
 				_ => {}
 			}
 		}

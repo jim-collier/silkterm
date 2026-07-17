@@ -64,6 +64,14 @@ const LIGHT_DLG: Dlg = Dlg {
 // overridden by the configured dialog colours (theme default or a [colors]
 // dialog_*/menu_* override). The remaining shades (border/track/handle/fields/
 // buttons) stay from the mode preset so contrast holds.
+// sRGB-space blend of two colours (selection highlight = field bg toward accent)
+fn mix3(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
+	let mut out = [0u8; 3];
+	for k in 0..3 {
+		out[k] = (a[k] as f32 + (b[k] as f32 - a[k] as f32) * t).round() as u8;
+	}
+	out
+}
 fn dlg() -> Dlg {
 	let base = if config::is_dark() {
 		DARK_DLG
@@ -252,12 +260,35 @@ enum Focus {
 	Button(usize),
 }
 
-// In-progress field edit: the row, its text, and the caret (a byte index into
-// `buf`, always on a char boundary).
+// In-progress field edit: the row, its text, the caret (a byte index into
+// `buf`, always on a char boundary), and an optional selection anchor. The
+// selection spans anchor..caret in either direction; None = no selection.
 struct EditState {
 	row: usize,
 	buf: String,
 	cur: usize,
+	sel: Option<usize>,
+}
+impl EditState {
+	// normalized selection byte range, None when empty/absent
+	fn sel_range(&self) -> Option<(usize, usize)> {
+		let anchor = self.sel?;
+		if anchor == self.cur {
+			return None;
+		}
+		Some((anchor.min(self.cur), anchor.max(self.cur)))
+	}
+	// remove the selected span (caret lands at its start); true if anything went
+	fn remove_selection(&mut self) -> bool {
+		let Some((a, b)) = self.sel_range() else {
+			self.sel = None;
+			return false;
+		};
+		self.buf.replace_range(a..b, "");
+		self.cur = a;
+		self.sel = None;
+		true
+	}
 }
 fn prev_boundary(s: &str, i: usize) -> usize {
 	let mut j = i.min(s.len());
@@ -278,6 +309,65 @@ fn next_boundary(s: &str, i: usize) -> usize {
 		}
 	}
 	s.len()
+}
+// Word motion (Ctrl+Left/Right, Ctrl+Backspace/Delete, double-click): a word is
+// a run of alphanumerics/underscore; everything else is a separator.
+fn is_word_char(c: char) -> bool {
+	c.is_alphanumeric() || c == '_'
+}
+fn word_left(s: &str, i: usize) -> usize {
+	let mut j = i.min(s.len());
+	// skip separators, then the word itself
+	while j > 0 {
+		let p = prev_boundary(s, j);
+		if s[p..].chars().next().is_some_and(is_word_char) {
+			break;
+		}
+		j = p;
+	}
+	while j > 0 {
+		let p = prev_boundary(s, j);
+		if !s[p..].chars().next().is_some_and(is_word_char) {
+			break;
+		}
+		j = p;
+	}
+	j
+}
+fn word_right(s: &str, i: usize) -> usize {
+	let mut j = i.min(s.len());
+	while j < s.len() && !s[j..].chars().next().is_some_and(is_word_char) {
+		j = next_boundary(s, j);
+	}
+	while j < s.len() && s[j..].chars().next().is_some_and(is_word_char) {
+		j = next_boundary(s, j);
+	}
+	j
+}
+// Byte range of the word (or separator run) under byte index `i` (double-click).
+fn word_at(s: &str, i: usize) -> (usize, usize) {
+	if s.is_empty() {
+		return (0, 0);
+	}
+	let i = if i >= s.len() {
+		prev_boundary(s, s.len())
+	} else {
+		i
+	};
+	let wordy = s[i..].chars().next().is_some_and(is_word_char);
+	let mut a = i;
+	while a > 0 {
+		let p = prev_boundary(s, a);
+		if s[p..].chars().next().is_some_and(is_word_char) != wordy {
+			break;
+		}
+		a = p;
+	}
+	let mut b = next_boundary(s, i);
+	while b < s.len() && s[b..].chars().next().is_some_and(is_word_char) == wordy {
+		b = next_boundary(s, b);
+	}
+	(a, b)
 }
 // Byte index of the caret nearest a click at `rel_x` px into the text (0 = the
 // field's left text edge). Walks char boundaries, picking the one whose measured
@@ -587,20 +677,24 @@ pub struct SettingsDialog {
 	reverted: Vec<&'static str>, // config keys reverted this session -> comment out on Apply
 	rect: Rect,
 	specs: Vec<Spec>,
-	spec_tab: Vec<usize>,    // which tab each spec lives on
-	tab: usize,              // active tab
-	tab_ws: Vec<f32>,        // measured tab-button widths (UI font)
-	scroll: f32,             // rows-region scroll offset (0 when everything fits)
-	drag_thumb: Option<f32>, // scrollbar-thumb drag: grab offset within the thumb
-	drag: Option<usize>,     // slider row being dragged
-	pressed: Option<usize>,  // footer button held down (fires on release; drawn pressed)
-	edit: Option<EditState>, // row being typed (hex for Color, path for Text)
-	open: Option<usize>,     // row whose dropdown popup is open (None = all closed)
-	pending: usize,          // highlighted option in the open popup (commits on Enter/click)
-	focus: Option<Focus>,    // keyboard-focused control/button (None = mouse-only)
-	alt: bool,               // Alt held: underline button accelerators (Cancel/Apply/OK)
-	shift: bool,             // Shift held (Shift+Tab walks focus backwards)
-	ctrl: bool,              // Ctrl held (Ctrl+Tab switches tabs)
+	spec_tab: Vec<usize>,     // which tab each spec lives on
+	tab: usize,               // active tab
+	tab_ws: Vec<f32>,         // measured tab-button widths (UI font)
+	scroll: f32,              // rows-region scroll offset (0 when everything fits)
+	drag_thumb: Option<f32>,  // scrollbar-thumb drag: grab offset within the thumb
+	drag: Option<usize>,      // slider row being dragged
+	pressed: Option<usize>,   // footer button held down (fires on release; drawn pressed)
+	edit: Option<EditState>,  // row being typed (hex for Color, path for Text)
+	edit_drag: Option<usize>, // field row being drag-selected with the mouse
+	// multi-click detection (double = select word, triple = select all)
+	last_click: Option<(std::time::Instant, f32, f32)>,
+	click_streak: u8,
+	open: Option<usize>,  // row whose dropdown popup is open (None = all closed)
+	pending: usize,       // highlighted option in the open popup (commits on Enter/click)
+	focus: Option<Focus>, // keyboard-focused control/button (None = mouse-only)
+	alt: bool,            // Alt held: underline button accelerators (Cancel/Apply/OK)
+	shift: bool,          // Shift held (Shift+Tab walks focus backwards)
+	ctrl: bool,           // Ctrl held (Ctrl+Tab switches tabs)
 	// UI-font-driven geometry: rows/title/buttons grow with the desktop font so
 	// a large or wide (e.g. bold serif) interface font never truncates. The
 	// consts above are the floor (the classic look at small sizes).
@@ -720,6 +814,9 @@ impl SettingsDialog {
 			drag: None,
 			pressed: None,
 			edit: None,
+			edit_drag: None,
+			last_click: None,
+			click_streak: 0,
 			open: None,
 			pending: 0,
 			focus: None,
@@ -792,6 +889,12 @@ impl SettingsDialog {
 	}
 	pub fn alt(&self) -> bool {
 		self.alt
+	}
+	pub fn ctrl(&self) -> bool {
+		self.ctrl
+	}
+	pub fn shift(&self) -> bool {
+		self.shift
 	}
 	pub fn alt_key(&mut self, c: char) -> Action {
 		match c.to_ascii_lowercase() {
@@ -1016,28 +1119,39 @@ impl SettingsDialog {
 			Kind::Toggle => self.set_toggle(key, !self.get_toggle(key)),
 			// flip the focused checkbox (key is that part's key)
 			Kind::Dual { .. } => self.set_toggle(key, !self.get_toggle(key)),
-			Kind::Text => {
-				let buf = self.get_text(key);
-				let cur = buf.len();
-				self.edit = Some(EditState { row: i, buf, cur });
-			}
-			Kind::Color => {
-				self.edit = Some(EditState {
-					row: i,
-					buf: "#".to_string(),
-					cur: 1,
-				});
-			}
-			// open the numeric field pre-filled with the current value (edit in place)
-			Kind::Slider { int, .. } => {
-				let buf = self.fmt_val(key, int);
-				let cur = buf.len();
-				self.edit = Some(EditState { row: i, buf, cur });
-			}
+			// open the field pre-filled with the current value, fully selected
+			// (standard field-entry: typing replaces, arrows keep it)
+			Kind::Text | Kind::Color | Kind::Slider { .. } => self.open_edit(i, true),
 			Kind::Dropdown(_) => self.dd_open(i),
 			_ => {}
 		}
 		Action::None
+	}
+
+	// Current value of row i's editable field, as text.
+	fn edit_buf(&self, i: usize) -> String {
+		match self.specs[i].kind {
+			Kind::Text => self.get_text(self.specs[i].key),
+			Kind::Color => {
+				let c = self.get_col(self.specs[i].key);
+				format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+			}
+			Kind::Slider { int, .. } => self.fmt_val(self.specs[i].key, int),
+			_ => String::new(),
+		}
+	}
+	// Open row i's field for editing; select_all puts the whole value under the
+	// selection so the next keystroke replaces it.
+	fn open_edit(&mut self, i: usize, select_all: bool) {
+		let buf = self.edit_buf(i);
+		let cur = buf.len();
+		let sel = (select_all && cur > 0).then_some(0);
+		self.edit = Some(EditState {
+			row: i,
+			buf,
+			cur,
+			sel,
+		});
 	}
 
 	// Panel size (used to size a dedicated dialog window when the panel is laid
@@ -1691,6 +1805,19 @@ impl SettingsDialog {
 	// `measure` gives a string's rendered width in the UI font (for placing the
 	// caret at the clicked position inside a text field).
 	pub fn mouse_down(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) -> Action {
+		// double/triple-click detection (word / whole-value selection in fields)
+		let now = std::time::Instant::now();
+		self.click_streak = match self.last_click {
+			Some((t, lx, ly))
+				if now.duration_since(t).as_millis() < 400
+					&& (x - lx).abs() < 6.0
+					&& (y - ly).abs() < 6.0 =>
+			{
+				self.click_streak.saturating_add(1)
+			}
+			_ => 1,
+		};
+		self.last_click = Some((now, x, y));
 		// an open dropdown captures the click: on an option -> pick it, anywhere
 		// else -> just close (a click-away dismiss, consumed either way)
 		if let Some(oi) = self.open.take() {
@@ -1715,7 +1842,15 @@ impl SettingsDialog {
 		if !self.rect.contains(x, y) {
 			return Action::Cancel;
 		}
-		self.commit_edit();
+		// a click inside the field being edited keeps the edit (caret/selection
+		// handling below); anywhere else commits it
+		let keep_edit = self
+			.edit
+			.as_ref()
+			.is_some_and(|e| self.field_rect(e.row).is_some_and(|r| r.contains(x, y)));
+		if !keep_edit {
+			self.commit_edit();
+		}
 		// tab bar
 		for k in 0..self.tab_ws.len() {
 			if self.tab_rect(k).contains(x, y) {
@@ -1759,17 +1894,14 @@ impl SettingsDialog {
 				return Action::None;
 			}
 			match self.specs[i].kind {
-				Kind::Slider { int, .. } => {
+				Kind::Slider { .. } => {
 					if self.disabled(self.specs[i].key) {
 						continue; // greyed-out slider ignores clicks
 					}
 					// click the numeric field -> edit the value, caret at the click
 					let val_box = self.valbox(i);
 					if val_box.contains(x, y) {
-						let buf = self.fmt_val(self.specs[i].key, int);
-						let cur = caret_from_click(&buf, x - (val_box.x + 6.0), measure);
-						self.focus = Some(Focus::Row(i, 1));
-						self.edit = Some(EditState { row: i, buf, cur });
+						self.field_click(i, 1, val_box, x, measure);
 						return Action::None;
 					}
 					let track = self.track(i);
@@ -1784,25 +1916,23 @@ impl SettingsDialog {
 					}
 				}
 				Kind::Color => {
-					if self.swatch(i).contains(x, y) || self.hexbox(i).contains(x, y) {
-						// start a fresh hex entry (type 6 digits); swatch updates live
+					// swatch click opens the hex with the value selected (type to
+					// replace); hex-box click places the caret
+					if self.swatch(i).contains(x, y) {
 						self.focus = Some(Focus::Row(i, 0));
-						self.edit = Some(EditState {
-							row: i,
-							buf: "#".to_string(),
-							cur: 1,
-						});
+						self.open_edit(i, true);
+						return Action::None;
+					}
+					let hex_box = self.hexbox(i);
+					if hex_box.contains(x, y) {
+						self.field_click(i, 0, hex_box, x, measure);
 						return Action::None;
 					}
 				}
 				Kind::Text => {
 					let text_box = self.textbox(i);
 					if text_box.contains(x, y) {
-						// edit the current value (empty when none); caret at the click
-						let buf = self.get_text(self.specs[i].key);
-						let cur = caret_from_click(&buf, x - (text_box.x + 6.0), measure);
-						self.focus = Some(Focus::Row(i, 0));
-						self.edit = Some(EditState { row: i, buf, cur });
+						self.field_click(i, 0, text_box, x, measure);
 						return Action::None;
 					}
 				}
@@ -1862,7 +1992,75 @@ impl SettingsDialog {
 		Action::None
 	}
 
-	pub fn mouse_move(&mut self, x: f32, y: f32) {
+	// The editable text box of row i, by kind (None for non-field rows).
+	fn field_rect(&self, i: usize) -> Option<Rect> {
+		match self.specs[i].kind {
+			Kind::Slider { .. } => Some(self.valbox(i)),
+			Kind::Color => Some(self.hexbox(i)),
+			Kind::Text => Some(self.textbox(i)),
+			_ => None,
+		}
+	}
+	// Click into an editable field: caret at the click; Shift extends the
+	// selection; double-click selects the word, triple selects all; a plain
+	// click starts a drag-selection.
+	fn field_click(
+		&mut self,
+		i: usize,
+		part: u8,
+		field: Rect,
+		x: f32,
+		measure: &mut impl FnMut(&str) -> f32,
+	) {
+		let same_row = self.edit.as_ref().is_some_and(|e| e.row == i);
+		if !same_row {
+			self.open_edit(i, false);
+		}
+		let (shift, streak) = (self.shift, self.click_streak);
+		self.focus = Some(Focus::Row(i, part));
+		let Some(edit) = &mut self.edit else { return };
+		let cur = caret_from_click(&edit.buf, x - (field.x + 6.0), measure);
+		if shift && same_row {
+			if edit.sel.is_none() {
+				edit.sel = Some(edit.cur);
+			}
+			edit.cur = cur;
+			return;
+		}
+		match streak {
+			2 => {
+				let (a, b) = word_at(&edit.buf, cur);
+				edit.sel = (a != b).then_some(a);
+				edit.cur = b;
+			}
+			n if n >= 3 => {
+				edit.sel = (!edit.buf.is_empty()).then_some(0);
+				edit.cur = edit.buf.len();
+			}
+			_ => {
+				edit.cur = cur;
+				edit.sel = None;
+				self.edit_drag = Some(i);
+			}
+		}
+	}
+
+	pub fn mouse_move(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) {
+		// drag-selection inside an editable field
+		if let Some(row) = self.edit_drag {
+			if let Some(field) = self.field_rect(row) {
+				if let Some(edit) = &mut self.edit {
+					let cur = caret_from_click(&edit.buf, x - (field.x + 6.0), measure);
+					if cur != edit.cur {
+						if edit.sel.is_none() {
+							edit.sel = Some(edit.cur);
+						}
+						edit.cur = cur;
+					}
+				}
+			}
+			return;
+		}
 		if let Some(oi) = self.open {
 			let n = self.dd_options(oi).len();
 			for k in 0..n {
@@ -1889,6 +2087,13 @@ impl SettingsDialog {
 	pub fn mouse_up(&mut self, x: f32, y: f32) -> Action {
 		self.drag = None;
 		self.drag_thumb = None;
+		self.edit_drag = None;
+		// an empty drag-selection collapses back to a plain caret
+		if let Some(edit) = &mut self.edit {
+			if edit.sel == Some(edit.cur) {
+				edit.sel = None;
+			}
+		}
 		if let Some(btn_idx) = self.pressed.take() {
 			let (action, r, _) = self.buttons()[btn_idx];
 			if r.contains(x, y) {
@@ -1914,67 +2119,114 @@ impl SettingsDialog {
 	}
 
 	pub fn char_input(&mut self, c: char) {
-		// typing into a keyboard-focused (but not-yet-open) text/color field opens it
+		if self.ctrl {
+			return; // Ctrl+letter is a shortcut (copy/paste/...), never types
+		}
+		// typing into a keyboard-focused (but not-yet-open) field opens it with
+		// the value selected, so the keystroke replaces it (standard field entry)
 		if self.edit.is_none() {
 			let Some(Focus::Row(i, _)) = self.focus else {
 				return;
 			};
 			match self.specs[i].kind {
-				Kind::Text => {
-					let buf = self.get_text(self.specs[i].key);
-					let cur = buf.len();
-					self.edit = Some(EditState { row: i, buf, cur });
-				}
-				Kind::Color => {
-					self.edit = Some(EditState {
-						row: i,
-						buf: "#".to_string(),
-						cur: 1,
-					});
-				}
-				// typing a digit into a focused slider starts a fresh number
-				Kind::Slider { .. } => {
-					self.edit = Some(EditState {
-						row: i,
-						buf: String::new(),
-						cur: 0,
-					});
-				}
+				Kind::Text | Kind::Color | Kind::Slider { .. } => self.open_edit(i, true),
 				_ => return,
 			}
 		}
+		if self.insert_char(c) {
+			self.reparse_edit();
+		}
+	}
+	// One char through the field's own validation (replacing any selection).
+	// Returns whether the buffer changed; caller reparses.
+	fn insert_char(&mut self, c: char) -> bool {
 		let Some(edit) = &mut self.edit else {
-			return;
+			return false;
 		};
-		match self.specs[edit.row].kind {
+		let sel_len = edit.sel_range().map_or(0, |(a, b)| b - a);
+		// where the char would land once any selection is gone
+		let landing = edit.sel_range().map_or(edit.cur, |(a, _)| a);
+		let ok = match self.specs[edit.row].kind {
 			Kind::Color => {
-				if (c == '#' || c.is_ascii_hexdigit()) && edit.buf.len() < 7 {
-					edit.buf.insert(edit.cur, c);
-					edit.cur += c.len_utf8();
-					self.reparse_edit();
-				}
+				(c == '#' || c.is_ascii_hexdigit())
+					&& edit.buf.len() - sel_len < 7
+					// '#' only makes sense up front
+					&& (c != '#' || landing == 0)
 			}
-			Kind::Text if !c.is_control() && edit.buf.len() < 256 => {
-				edit.buf.insert(edit.cur, c);
-				edit.cur += c.len_utf8();
-				self.reparse_edit();
-			}
+			Kind::Text => !c.is_control() && edit.buf.len() - sel_len < 256,
 			// numeric slider field: digits always; one '.' only for float sliders
 			Kind::Slider { int, .. } => {
-				let dot_ok = !int && c == '.' && !edit.buf.contains('.');
-				if (c.is_ascii_digit() || dot_ok) && edit.buf.len() < 8 {
-					edit.buf.insert(edit.cur, c);
-					edit.cur += c.len_utf8();
-					self.reparse_edit();
+				let kept = match edit.sel_range() {
+					Some((a, b)) => format!("{}{}", &edit.buf[..a], &edit.buf[b..]),
+					None => edit.buf.clone(),
+				};
+				let dot_ok = !int && c == '.' && !kept.contains('.');
+				(c.is_ascii_digit() || dot_ok) && kept.len() < 8
+			}
+			_ => false,
+		};
+		if !ok {
+			return false;
+		}
+		edit.remove_selection();
+		edit.buf.insert(edit.cur, c);
+		edit.cur += c.len_utf8();
+		true
+	}
+	// Paste: run the text through the same per-field validation, one char at a
+	// time (invalid chars are dropped, length caps hold).
+	pub fn insert_str(&mut self, text: &str) {
+		let mut changed = false;
+		for c in text.chars() {
+			changed |= self.insert_char(c);
+		}
+		if changed {
+			self.reparse_edit();
+		}
+	}
+	pub fn select_all(&mut self) {
+		// Ctrl+A on a focused-but-closed field opens it first
+		if self.edit.is_none() {
+			if let Some(Focus::Row(i, _)) = self.focus {
+				if matches!(
+					self.specs[i].kind,
+					Kind::Text | Kind::Color | Kind::Slider { .. }
+				) {
+					self.open_edit(i, true);
 				}
 			}
-			_ => {}
+			return;
+		}
+		if let Some(edit) = &mut self.edit {
+			edit.sel = (!edit.buf.is_empty()).then_some(0);
+			edit.cur = edit.buf.len();
+		}
+	}
+	pub fn selected_text(&self) -> Option<String> {
+		let edit = self.edit.as_ref()?;
+		let (a, b) = edit.sel_range()?;
+		Some(edit.buf[a..b].to_string())
+	}
+	pub fn delete_selection(&mut self) {
+		if let Some(edit) = &mut self.edit {
+			if edit.remove_selection() {
+				self.reparse_edit();
+			}
 		}
 	}
 	pub fn backspace(&mut self) {
+		let ctrl = self.ctrl;
 		if let Some(edit) = &mut self.edit {
+			if edit.remove_selection() {
+				self.reparse_edit();
+				return;
+			}
 			if edit.cur > 0 {
-				let prev = prev_boundary(&edit.buf, edit.cur);
+				let prev = if ctrl {
+					word_left(&edit.buf, edit.cur)
+				} else {
+					prev_boundary(&edit.buf, edit.cur)
+				};
 				edit.buf.replace_range(prev..edit.cur, "");
 				edit.cur = prev;
 				self.reparse_edit();
@@ -1982,34 +2234,83 @@ impl SettingsDialog {
 		}
 	}
 	pub fn delete_forward(&mut self) {
+		let ctrl = self.ctrl;
 		if let Some(edit) = &mut self.edit {
+			if edit.remove_selection() {
+				self.reparse_edit();
+				return;
+			}
 			if edit.cur < edit.buf.len() {
-				let next = next_boundary(&edit.buf, edit.cur);
+				let next = if ctrl {
+					word_right(&edit.buf, edit.cur)
+				} else {
+					next_boundary(&edit.buf, edit.cur)
+				};
 				edit.buf.replace_range(edit.cur..next, "");
 				self.reparse_edit();
 			}
 		}
 	}
-	// caret movement within the focused field (Left/Right/Home/End)
-	pub fn cursor_left(&mut self) {
+	// Caret movement within the focused field (Left/Right/Home/End). Shift
+	// extends the selection; Ctrl jumps by words; a plain move collapses any
+	// selection to its edge (standard).
+	fn move_caret(&mut self, to: usize) {
+		let (shift, _) = (self.shift, self.ctrl);
 		if let Some(edit) = &mut self.edit {
-			edit.cur = prev_boundary(&edit.buf, edit.cur);
+			if shift {
+				if edit.sel.is_none() {
+					edit.sel = Some(edit.cur);
+				}
+			} else {
+				edit.sel = None;
+			}
+			edit.cur = to;
+			// an emptied extension drops the anchor so a lone Shift press is inert
+			if edit.sel == Some(edit.cur) {
+				edit.sel = None;
+			}
 		}
+	}
+	pub fn cursor_left(&mut self) {
+		let Some(edit) = &self.edit else { return };
+		// plain Left with a selection collapses to its start
+		if !self.shift {
+			if let Some((a, _)) = edit.sel_range() {
+				self.move_caret(a);
+				return;
+			}
+		}
+		let to = if self.ctrl {
+			word_left(&edit.buf, edit.cur)
+		} else {
+			prev_boundary(&edit.buf, edit.cur)
+		};
+		self.move_caret(to);
 	}
 	pub fn cursor_right(&mut self) {
-		if let Some(edit) = &mut self.edit {
-			edit.cur = next_boundary(&edit.buf, edit.cur);
+		let Some(edit) = &self.edit else { return };
+		if !self.shift {
+			if let Some((_, b)) = edit.sel_range() {
+				self.move_caret(b);
+				return;
+			}
 		}
+		let to = if self.ctrl {
+			word_right(&edit.buf, edit.cur)
+		} else {
+			next_boundary(&edit.buf, edit.cur)
+		};
+		self.move_caret(to);
 	}
 	pub fn cursor_home(&mut self) {
-		if let Some(edit) = &mut self.edit {
-			edit.cur = 0;
+		if self.edit.is_some() {
+			self.move_caret(0);
 		}
 	}
 	pub fn cursor_end(&mut self) {
-		if let Some(edit) = &mut self.edit {
-			edit.cur = edit.buf.len();
-		}
+		let Some(edit) = &self.edit else { return };
+		let end = edit.buf.len();
+		self.move_caret(end);
 	}
 	// live-apply the in-progress edit (hex color, or background-image path)
 	fn reparse_edit(&mut self) {
@@ -2065,7 +2366,8 @@ impl SettingsDialog {
 		}
 	}
 
-	// caret line inside a focused field, at the measured prefix width
+	// caret line (and selection highlight) inside a focused field, at the
+	// measured prefix widths
 	fn caret_quad(
 		&self,
 		out: &mut Vec<RectInstance>,
@@ -2073,7 +2375,22 @@ impl SettingsDialog {
 		measure: &mut impl FnMut(&str) -> f32,
 	) {
 		let Some(edit) = &self.edit else { return };
-		let x = (field.x + 6.0 + measure(&edit.buf[..edit.cur])).min(field.x + field.w - 2.0);
+		let left = field.x + 6.0;
+		let right = field.x + field.w - 2.0;
+		if let Some((a, b)) = edit.sel_range() {
+			let x1 = (left + measure(&edit.buf[..a])).min(right);
+			let x2 = (left + measure(&edit.buf[..b])).min(right);
+			if x2 > x1 {
+				// the text draws after the rects, so it stays legible on top
+				out.push(RectInstance {
+					pos: [x1, field.y + 2.0],
+					size: [x2 - x1, field.h - 4.0],
+					color: config::srgb_f32(mix3(dlg().field_bg, dlg().focus_out, 0.45)),
+					..Default::default()
+				});
+			}
+		}
+		let x = (left + measure(&edit.buf[..edit.cur])).min(right);
 		out.push(RectInstance {
 			pos: [x, field.y + 2.0],
 			size: [1.5, field.h - 4.0],
@@ -3049,6 +3366,155 @@ mod tests {
 		assert_eq!(super::caret_from_click("hello", 0.0, &mut m), 0);
 		assert_eq!(super::caret_from_click("hello", 2.4, &mut m), 2);
 		assert_eq!(super::caret_from_click("hello", 100.0, &mut m), 5);
+	}
+
+	#[test]
+	fn word_motion_and_word_at() {
+		let s = "foo bar_baz/qux.png";
+		assert_eq!(super::word_left(s, 7), 4); // inside bar_baz -> its start
+		assert_eq!(super::word_left(s, 4), 0); // at bar_baz -> foo start
+		assert_eq!(super::word_right(s, 0), 3); // foo end
+		assert_eq!(super::word_right(s, 3), 11); // past the space, bar_baz end
+		assert_eq!(super::word_at(s, 5), (4, 11)); // bar_baz
+		assert_eq!(super::word_at(s, 3), (3, 4)); // the separator run
+		assert_eq!(super::word_at("", 0), (0, 0));
+		assert_eq!(super::word_at(s, s.len()), (16, 19)); // clamps to last word (png)
+	}
+
+	// open the Background image text field for editing, focused, with a value
+	fn mk_text_edit(value: &str) -> (SettingsDialog, usize) {
+		use super::{Focus, Key};
+		let mut d = mk_dialog(4000.0);
+		let i = d.specs.iter().position(|s| s.key == Key::BgImage).unwrap();
+		d.tab = d.spec_tab[i];
+		d.edited.background_image_raw = value.to_string();
+		d.focus = Some(Focus::Row(i, 0));
+		d.set_mods(false, false, false);
+		d.key_space(); // opens with the value fully selected
+		(d, i)
+	}
+
+	#[test]
+	fn open_selects_all_and_typing_replaces() {
+		let (mut d, _) = mk_text_edit("old.png");
+		assert_eq!(d.selected_text().as_deref(), Some("old.png"));
+		d.char_input('n');
+		assert_eq!(d.edit.as_ref().unwrap().buf, "n");
+		assert_eq!(d.edited.background_image_raw, "n"); // live reparse
+		// plain arrows collapse; shift+arrows extend a fresh selection
+		d.char_input('e');
+		d.char_input('w');
+		d.set_mods(false, true, false);
+		d.cursor_left();
+		d.cursor_left();
+		assert_eq!(d.selected_text().as_deref(), Some("ew"));
+		// backspace removes the selection only
+		d.set_mods(false, false, false);
+		d.backspace();
+		assert_eq!(d.edit.as_ref().unwrap().buf, "n");
+	}
+
+	#[test]
+	fn ctrl_word_nav_and_word_delete() {
+		let (mut d, _) = mk_text_edit("foo bar.png");
+		d.cursor_end(); // also collapses the open-time selection
+		d.set_mods(false, false, true); // Ctrl
+		d.cursor_left(); // to "png" start
+		assert_eq!(d.edit.as_ref().unwrap().cur, 8);
+		d.backspace(); // Ctrl+Backspace eats "bar." ... no - the word left of caret
+		assert_eq!(d.edit.as_ref().unwrap().buf, "foo png");
+		// Ctrl never types (shortcut chars must not land in the buffer)
+		d.char_input('c');
+		assert_eq!(d.edit.as_ref().unwrap().buf, "foo png");
+		// Ctrl+Shift+Right extends by a word
+		d.set_mods(false, true, true);
+		d.cursor_right();
+		assert_eq!(d.selected_text().as_deref(), Some("png"));
+	}
+
+	#[test]
+	fn select_all_cut_paste_roundtrip() {
+		let (mut d, _) = mk_text_edit("keep me");
+		d.cursor_end();
+		d.select_all();
+		assert_eq!(d.selected_text().as_deref(), Some("keep me"));
+		d.delete_selection(); // the "cut" half (clipboard handled a level up)
+		assert_eq!(d.edit.as_ref().unwrap().buf, "");
+		assert_eq!(d.edited.background_image_raw, "");
+		d.insert_str("pasted.png");
+		assert_eq!(d.edited.background_image_raw, "pasted.png");
+		// pasting over a selection replaces it
+		d.select_all();
+		d.insert_str("x");
+		assert_eq!(d.edit.as_ref().unwrap().buf, "x");
+	}
+
+	#[test]
+	fn paste_respects_field_validation() {
+		use super::{Focus, Key, Kind};
+		// color field: hex chars pass, junk drops, '#' only up front
+		let mut d = mk_dialog(4000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| matches!(s.kind, Kind::Color))
+			.unwrap();
+		d.tab = d.spec_tab[i];
+		d.focus = Some(Focus::Row(i, 0));
+		d.key_space();
+		d.select_all();
+		d.insert_str("#a0b1c2");
+		assert_eq!(d.edit.as_ref().unwrap().buf, "#a0b1c2");
+		d.select_all();
+		d.insert_str("zz#12 34-56");
+		assert_eq!(d.edit.as_ref().unwrap().buf, "#123456");
+		// slider field: digits/dot only, single dot
+		let mut d = mk_dialog(4000.0);
+		let i = d.specs.iter().position(|s| s.key == Key::Opacity).unwrap();
+		d.tab = d.spec_tab[i];
+		d.edited.transparent_background = true;
+		d.focus = Some(Focus::Row(i, 0));
+		d.key_space();
+		d.select_all();
+		d.insert_str("0.7.5x");
+		assert_eq!(d.edit.as_ref().unwrap().buf, "0.75");
+	}
+
+	#[test]
+	fn mouse_click_drag_and_multiclick_select() {
+		let (mut d, i) = mk_text_edit("foo bar.png");
+		let field = d.textbox(i);
+		let mut m = |s: &str| s.chars().count() as f32; // 1px per char
+		let at = |k: usize| field.x + 6.0 + k as f32;
+		let y = field.y + field.h / 2.0;
+		// single click: caret there, no selection
+		d.mouse_down(at(2), y, &mut m);
+		assert_eq!(d.edit.as_ref().unwrap().cur, 2);
+		assert!(d.selected_text().is_none());
+		// drag to char 6 selects "o ba"
+		d.mouse_move(at(6), y, &mut m);
+		d.mouse_up(at(6), y);
+		assert_eq!(d.selected_text().as_deref(), Some("o ba"));
+		// double-click on "bar" selects the word (streak reset: the 1-unit-per-
+		// char test metric puts every click inside the multi-click radius)
+		d.last_click = None;
+		d.mouse_down(at(5), y, &mut m);
+		d.mouse_up(at(5), y);
+		d.mouse_down(at(5), y, &mut m);
+		assert_eq!(d.selected_text().as_deref(), Some("bar"));
+		d.mouse_up(at(5), y);
+		// third click in place: the whole value
+		d.mouse_down(at(5), y, &mut m);
+		assert_eq!(d.selected_text().as_deref(), Some("foo bar.png"));
+		d.mouse_up(at(5), y);
+		// shift+click extends from a plain caret
+		d.last_click = None;
+		d.mouse_down(at(0), y, &mut m);
+		d.mouse_up(at(0), y);
+		d.last_click = None;
+		d.set_mods(false, true, false);
+		d.mouse_down(at(3), y, &mut m);
+		assert_eq!(d.selected_text().as_deref(), Some("foo"));
 	}
 
 	#[test]
