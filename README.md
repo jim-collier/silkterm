@@ -175,7 +175,7 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **Arbitrary alternate config files**, another way to launch SilkTerm with wildly different options, without overwriting the main config file.
 
-- **Written in Rust** for minimum executable size, no runtime dependencies, and maximum speed. (Several terminal emulators - such as the revered `terminator` - are written in interpreted Python.)
+- **Written in Rust** as a single self-contained binary - no runtime dependencies - and fast. (Several terminal emulators - such as the revered `terminator` - are written in interpreted Python.) The one binary bundles the entire GPU and text-rendering stack, which is why it's ~10 MiB; [the FAQ explains how that actually compares to a GTK terminal's few-hundred-KiB launcher](FAQ.md).
 
 - **One codebase for Linux + Windows, both with x86_64 and ARM builds**. The Window and/or ARM versions can be built all at once on x86_64 Linux. *MacOS is built natively on a Mac from the same codebase, but is so far untested (no releases target it yet)*.
 
