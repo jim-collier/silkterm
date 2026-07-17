@@ -102,6 +102,9 @@ function fMain {
 	fLog ("=== run: PS {0}, host '{1}', script {2}, user {3} ===" -f `
 		$PSVersionTable.PSVersion, $Host.Name, $PSCommandPath, $env:USERNAME)
 
+	## 0. Strip a synced-on mark-of-the-web so a later click can't be policy-blocked.
+	fSelfHealMotw
+
 	## 1. Delete stale idle copies.
 	fDeleteOldBuilds
 
@@ -466,6 +469,25 @@ function fTrimLog {
 }
 
 
+## Remove any mark-of-the-web this script picked up from the sync layer. An unsigned
+## script that carries MOTW is refused under a RemoteSigned policy - which silently
+## kills a shortcut click (the body never runs, so nothing copies and nothing logs).
+## This only helps the NEXT run; the current one already cleared the policy to be
+## here. Belt-and-suspenders with the launcher's '-ExecutionPolicy Bypass' - either
+## alone is enough. Best-effort; never let it stop a launch.
+function fSelfHealMotw {
+	try {
+		$zone = Get-Content -LiteralPath $PSCommandPath -Stream Zone.Identifier -ErrorAction SilentlyContinue
+		if ($zone) {
+			Unblock-File -LiteralPath $PSCommandPath -ErrorAction Stop
+			fNote "cleared mark-of-the-web on this script (would block a click under RemoteSigned)"
+		}
+	} catch {
+		fWarn "couldn't clear mark-of-the-web on this script ($($_.Exception.Message))"
+	}
+}
+
+
 #••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 # Script entry point
 
@@ -483,6 +505,8 @@ fMain -PassArgs $passArgs
 
 
 ##	History:
+##		- 2026-07-17 JC: Strip a synced-on mark-of-the-web at startup so a later
+##		  click under RemoteSigned isn't silently blocked.
 ##		- 2026-07-17 JC: Log every run's per-source copy decision (and each note/
 ##		  warn) to n8runterm.log in the target dir, trimmed at 256KB.
 ##		- 2026-07-16 JC: Age-prune stamped copies with any tag, not just the known
