@@ -82,6 +82,18 @@ impl App {
 	// Events for the pop-out dialog window (its own surface/input).
 	fn handle_dialog_event(&mut self, event: WindowEvent) {
 		use crate::dialog::DialogAction as DA;
+		if std::env::var_os("SILK_DLGDBG").is_some() {
+			match &event {
+				WindowEvent::KeyboardInput { event: k, .. } => {
+					eprintln!("[dlg] key {:?} {:?}", k.logical_key, k.state);
+				}
+				WindowEvent::Focused(f) => eprintln!("[dlg] focused {f}"),
+				WindowEvent::MouseInput { state, button, .. } => {
+					eprintln!("[dlg] mouse {button:?} {state:?}");
+				}
+				_ => {}
+			}
+		}
 		let mut act: Option<DA> = None;
 		match event {
 			WindowEvent::CloseRequested => {
@@ -128,9 +140,27 @@ impl App {
 			} => {
 				if let Some(d) = &mut self.dialog {
 					match state {
-						ElementState::Pressed => act = d.mouse_down(),
+						ElementState::Pressed => {
+							// clipboard for the field context-menu commands
+							let clip = self.state.as_mut().map(|s| &mut s.clipboard);
+							act = d.mouse_down(clip);
+						}
 						ElementState::Released => act = d.mouse_up(),
 					}
+					self.dialog_dirty = true;
+				}
+			}
+			WindowEvent::MouseInput {
+				state: ElementState::Pressed,
+				button: MouseButton::Right,
+				..
+			} => {
+				if let Some(d) = &mut self.dialog {
+					// grey the menu's Paste when the clipboard holds nothing
+					let paste_ok = self.state.as_mut().is_some_and(|s| {
+						s.clipboard.get_clipboard().is_some_and(|t| !t.is_empty())
+					});
+					d.mouse_right(paste_ok);
 					self.dialog_dirty = true;
 				}
 			}
@@ -140,7 +170,24 @@ impl App {
 				if let Some(d) = &mut self.dialog {
 					match &key_event.logical_key {
 						Key::Named(NamedKey::Escape) => act = d.key_escape(),
-						Key::Named(NamedKey::Enter) => act = d.key_enter(),
+						Key::Named(NamedKey::Enter) => {
+							// clipboard for a context-menu item fired via Enter
+							let clip = self.state.as_mut().map(|s| &mut s.clipboard);
+							act = d.key_enter(clip);
+						}
+						Key::Named(NamedKey::ContextMenu) => {
+							let paste_ok = self.state.as_mut().is_some_and(|s| {
+								s.clipboard.get_clipboard().is_some_and(|t| !t.is_empty())
+							});
+							d.menu_key(paste_ok);
+						}
+						// Shift+F10: the other standard context-menu chord
+						Key::Named(NamedKey::F10) if d.shift_held() => {
+							let paste_ok = self.state.as_mut().is_some_and(|s| {
+								s.clipboard.get_clipboard().is_some_and(|t| !t.is_empty())
+							});
+							d.menu_key(paste_ok);
+						}
 						Key::Named(NamedKey::Tab) => d.key_tab(),
 						Key::Named(NamedKey::PageUp) => d.key_page(false),
 						Key::Named(NamedKey::PageDown) => d.key_page(true),
@@ -3599,12 +3646,26 @@ impl ApplicationHandler<UserEvent> for App {
 				Err(e) => eprintln!("{}: Settings window failed: {e}", config::APP_NAME),
 			}
 		}
+		// a dialog with an animating field edit (view scroll / caret / blink)
+		// keeps re-rendering at the cadence it reports (see dlg_wake below)
+		if self
+			.dialog
+			.as_ref()
+			.is_some_and(|d| d.anim_wake_ms().is_some())
+		{
+			self.dialog_dirty = true;
+		}
 		if self.dialog_dirty {
 			if let Some(d) = &mut self.dialog {
 				d.render();
 			}
 			self.dialog_dirty = false;
 		}
+		let dlg_wake = self
+			.dialog
+			.as_ref()
+			.and_then(|d| d.anim_wake_ms())
+			.map(|ms| Instant::now() + Duration::from_millis(ms));
 
 		// re-assert the dialog->terminal stacking a few times after focus (see the
 		// field comment). Cleared when the dialog closes.
@@ -3677,6 +3738,12 @@ impl ApplicationHandler<UserEvent> for App {
 		// copy-output: while a capture is armed, make sure the loop wakes at its
 		// settle deadline to run the capture check even when otherwise idle.
 		let flow = match (flow, state.capture_wake()) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
+		// keep frames coming while a dialog field edit animates
+		let flow = match (flow, dlg_wake) {
 			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,

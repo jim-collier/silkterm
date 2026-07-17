@@ -15,7 +15,7 @@ use winit::window::{Window, WindowId};
 use crate::config;
 use crate::gfx::{Gfx, RectInstance, RectRenderer};
 use crate::pane::Rect;
-use crate::settings_ui::{Action, SettingsDialog};
+use crate::settings_ui::{Action, EditCmd, SettingsDialog};
 use crate::text::{TextCtx, ui_attrs};
 
 // A laid-out line of static dialog text (window-relative coords).
@@ -62,6 +62,10 @@ pub struct DialogWin {
 	rects: RectRenderer,
 	content: Content,
 	mouse: (f32, f32),
+	// field-edit animation (view scroll / caret ease / blink): frame timing and
+	// the wake cadence the app loop should keep while something animates
+	last_frame: std::time::Instant,
+	anim_wake: Option<u64>,
 	// the terminal window this dialog belongs to, so we can restack it beneath
 	// us when we're activated (see raise_parent).
 	parent: Option<RawWindowHandle>,
@@ -181,6 +185,8 @@ impl DialogWin {
 			rects,
 			content: Content::About { lines, links },
 			mouse: (0.0, 0.0),
+			last_frame: std::time::Instant::now(),
+			anim_wake: None,
 			parent,
 		})
 	}
@@ -218,6 +224,8 @@ impl DialogWin {
 			rects,
 			content: Content::Settings(dialog),
 			mouse: (0.0, 0.0),
+			last_frame: std::time::Instant::now(),
+			anim_wake: None,
 			parent,
 		})
 	}
@@ -262,7 +270,10 @@ impl DialogWin {
 		}
 	}
 
-	pub fn mouse_down(&mut self) -> Option<DialogAction> {
+	pub fn mouse_down(
+		&mut self,
+		clip: Option<&mut crate::clipboard::Clipboard>,
+	) -> Option<DialogAction> {
 		let (mx, my) = self.mouse;
 		match &mut self.content {
 			Content::About { links, .. } => links
@@ -279,8 +290,44 @@ impl DialogWin {
 				let attrs = ui_attrs();
 				let text = &mut self.text;
 				let mut measure = |s: &str| text.measure_ui_text(s, &attrs);
-				map_action(dialog.mouse_down(mx, my, &mut measure))
+				let action = dialog.mouse_down(mx, my, &mut measure);
+				if let Action::Edit(cmd) = action {
+					edit_cmd(dialog, cmd, clip);
+					return None;
+				}
+				map_action(action)
 			}
+		}
+	}
+
+	// Right mouse button: pop the field context menu (Settings only). `paste_ok`
+	// greys the Paste item when the clipboard holds nothing.
+	pub fn mouse_right(&mut self, paste_ok: bool) {
+		let (mx, my) = self.mouse;
+		if let Content::Settings(dialog) = &mut self.content {
+			let attrs = ui_attrs();
+			let text = &mut self.text;
+			let mut measure = |s: &str| text.measure_ui_text(s, &attrs);
+			dialog.mouse_right(mx, my, paste_ok, &mut measure);
+		}
+	}
+
+	// Shift held (from the dialog's own modifier tracking): Shift+F10 opens the
+	// field context menu like the Menu key.
+	pub fn shift_held(&self) -> bool {
+		match &self.content {
+			Content::Settings(dialog) => dialog.shift(),
+			_ => false,
+		}
+	}
+
+	// Keyboard Menu key: context menu at the caret of the active field edit.
+	pub fn menu_key(&mut self, paste_ok: bool) {
+		if let Content::Settings(dialog) = &mut self.content {
+			let attrs = ui_attrs();
+			let text = &mut self.text;
+			let mut measure = |s: &str| text.measure_ui_text(s, &attrs);
+			dialog.menu_key(paste_ok, &mut measure);
 		}
 	}
 
@@ -432,11 +479,27 @@ impl DialogWin {
 		}
 	}
 
-	pub fn key_enter(&mut self) -> Option<DialogAction> {
+	pub fn key_enter(
+		&mut self,
+		clip: Option<&mut crate::clipboard::Clipboard>,
+	) -> Option<DialogAction> {
 		match &mut self.content {
-			Content::Settings(dialog) => map_action(dialog.key_enter()),
+			Content::Settings(dialog) => {
+				let action = dialog.key_enter();
+				if let Action::Edit(cmd) = action {
+					edit_cmd(dialog, cmd, clip);
+					return None;
+				}
+				map_action(action)
+			}
 			_ => None,
 		}
+	}
+
+	// While a field edit animates (view scroll / caret ease / blink), the wake
+	// interval in ms the app loop should keep so frames keep coming.
+	pub fn anim_wake_ms(&self) -> Option<u64> {
+		self.anim_wake
 	}
 
 	pub fn resize(&mut self, w: u32, h: u32) {
@@ -445,6 +508,18 @@ impl DialogWin {
 	}
 
 	pub fn render(&mut self) {
+		// advance the field-edit animation (view scroll ease, caret ease, blink)
+		// with real frame time before anything is laid out
+		let now = std::time::Instant::now();
+		let dt = (now - self.last_frame).as_secs_f32().min(0.1);
+		self.last_frame = now;
+		self.anim_wake = if let Content::Settings(dialog) = &mut self.content {
+			let attrs = ui_attrs();
+			let text = &mut self.text;
+			dialog.animate(dt, &mut |s| text.measure_ui_text(s, &attrs))
+		} else {
+			None
+		};
 		let frame = match self.gfx.begin_frame() {
 			Some(f) => f,
 			None => return,
@@ -575,10 +650,11 @@ impl DialogWin {
 					bufs.push((item.x, item.y, item.scale, item.color, item.clip, buf));
 				}
 				rows_end = rect_inst.len();
-				// open dropdown popup: rects appended after the rows (drawn on top,
-				// unscissored, in a second pass); its text goes to the overlay renderer
-				if dialog.dropdown_open() {
-					let (ov_rects, ov_texts) = dialog.dropdown_overlay();
+				// open dropdown popup / field context menu: rects appended after the
+				// rows (drawn on top, unscissored, in a second pass); text goes to
+				// the overlay renderer
+				if dialog.overlay_open() {
+					let (ov_rects, ov_texts) = dialog.overlay();
 					let start = rect_inst.len() as u32;
 					rect_inst.extend(ov_rects);
 					overlay_range = Some((start, rect_inst.len() as u32));
@@ -920,12 +996,43 @@ fn restack_parent_below(dialog: &Window, parent: Option<&RawWindowHandle>, dbg: 
 #[cfg(not(target_os = "linux"))]
 fn restack_parent_below(_d: &Window, _p: Option<&RawWindowHandle>, _dbg: bool, _kind: &str) {}
 
+// Field context-menu command against the active edit; the clipboard glue lives
+// here (settings_ui stays clipboard-free), mirroring the Ctrl+letter shortcuts.
+fn edit_cmd(
+	dialog: &mut SettingsDialog,
+	cmd: EditCmd,
+	clip: Option<&mut crate::clipboard::Clipboard>,
+) {
+	match cmd {
+		EditCmd::Cut => {
+			if let (Some(clip), Some(text)) = (clip, dialog.selected_text()) {
+				clip.set_clipboard(text);
+				dialog.delete_selection();
+			}
+		}
+		EditCmd::Copy => {
+			if let (Some(clip), Some(text)) = (clip, dialog.selected_text()) {
+				clip.set_clipboard(text);
+			}
+		}
+		EditCmd::Paste => {
+			if let Some(text) = clip.and_then(|c| c.get_clipboard()) {
+				dialog.insert_str(&text);
+			}
+		}
+		EditCmd::Delete => dialog.delete_selection(),
+		EditCmd::SelectAll => dialog.select_all(),
+	}
+}
+
 fn map_action(action: Action) -> Option<DialogAction> {
 	match action {
 		Action::None => None,
 		Action::Apply => Some(DialogAction::Apply),
 		Action::Ok => Some(DialogAction::ApplyAndClose),
 		Action::Cancel => Some(DialogAction::Close),
+		// context-menu commands are handled by edit_cmd before mapping
+		Action::Edit(_) => None,
 	}
 }
 

@@ -182,6 +182,10 @@ const RADIO_PITCH: f32 = 96.0; // px per option (box + label + gap) at BASE_LH
 const DUAL_PITCH: f32 = 118.0; // px per [checkbox + label] pair on a Dual row at BASE_LH
 const BASE_LH: f32 = 19.0; // UI line height the fixed radio consts were tuned for
 const DD_W: f32 = 208.0; // collapsed dropdown box width at BASE_LH (fits the longest option + arrow)
+const FIELD_PAD: f32 = 6.0; // text inset inside an editable field
+const CARET_PAD: f32 = 6.0; // spare px kept visible right of the caret at end-of-text
+const VIEW_AHEAD: f32 = 28.0; // lookahead margin: keep ~a few chars visible past the caret
+const EM_W: f32 = 132.0; // field context-menu width at BASE_LH
 const DD_ARROW: &str = "\u{25be}"; // small down-triangle in the collapsed box
 const DD_CHECK: &str = "\u{2713}"; // marks the current value in the open popup
 
@@ -268,8 +272,29 @@ struct EditState {
 	buf: String,
 	cur: usize,
 	sel: Option<usize>,
+	// Horizontal view: px of text hidden left of the box. `view` is the smoothed
+	// offset actually drawn, easing toward `view_to` (kept caret-in-view with a
+	// lookahead margin by `animate`). Everything that maps px<->byte (clicks,
+	// drags, the caret/selection quads, the drawn text x) offsets by `view`.
+	view: f32,
+	view_to: f32,
+	// smoothed caret x in text-space px; None until first measured (then snaps)
+	caret_vis: Option<f32>,
+	blink_t: f32, // seconds since the last caret/text activity (drives the blink)
+	// (cur, sel, buf.len()) at the last animate pass - a change resets the blink
+	last_sig: (usize, Option<usize>, usize),
 }
 impl EditState {
+	// Smooth blink: solid just after activity, then a soft cosine pulse (never a
+	// hard on/off pop).
+	fn caret_alpha(&self) -> f32 {
+		const HOLD: f32 = 0.55;
+		const PERIOD: f32 = 1.1;
+		if self.blink_t <= HOLD {
+			return 1.0;
+		}
+		0.5 + 0.5 * ((self.blink_t - HOLD) / PERIOD * std::f32::consts::TAU).cos()
+	}
 	// normalized selection byte range, None when empty/absent
 	fn sel_range(&self) -> Option<(usize, usize)> {
 		let anchor = self.sel?;
@@ -658,6 +683,34 @@ pub enum Action {
 	Apply,
 	Ok,
 	Cancel,
+	// a field context-menu command; the clipboard glue lives in dialog.rs
+	Edit(EditCmd),
+}
+
+// Field context-menu commands (right-click / Menu key in an editable field).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum EditCmd {
+	Cut,
+	Copy,
+	Paste,
+	Delete,
+	SelectAll,
+}
+const EDIT_MENU: [(&str, EditCmd); 5] = [
+	("Cut", EditCmd::Cut),
+	("Copy", EditCmd::Copy),
+	("Paste", EditCmd::Paste),
+	("Delete", EditCmd::Delete),
+	("Select all", EditCmd::SelectAll),
+];
+
+// Open field context menu: anchor point, keyboard-highlighted item, and whether
+// the clipboard held text when it opened (greys Paste).
+struct EMenu {
+	x: f32,
+	y: f32,
+	hover: Option<usize>,
+	paste_ok: bool,
 }
 
 pub struct TextItem {
@@ -691,6 +744,8 @@ pub struct SettingsDialog {
 	click_streak: u8,
 	open: Option<usize>,  // row whose dropdown popup is open (None = all closed)
 	pending: usize,       // highlighted option in the open popup (commits on Enter/click)
+	emenu: Option<EMenu>, // open field context menu (right-click / Menu key)
+	mouse: (f32, f32),    // last cursor pos (drag edge-autoscroll replays it)
 	focus: Option<Focus>, // keyboard-focused control/button (None = mouse-only)
 	alt: bool,            // Alt held: underline button accelerators (Cancel/Apply/OK)
 	shift: bool,          // Shift held (Shift+Tab walks focus backwards)
@@ -819,6 +874,8 @@ impl SettingsDialog {
 			click_streak: 0,
 			open: None,
 			pending: 0,
+			emenu: None,
+			mouse: (0.0, 0.0),
 			focus: None,
 			alt: false,
 			shift: false,
@@ -862,6 +919,7 @@ impl SettingsDialog {
 		(self.content_h() - self.viewport().h).max(0.0)
 	}
 	pub fn wheel(&mut self, dy_px: f32) {
+		self.dismiss_menu();
 		self.scroll = (self.scroll - dy_px).clamp(0.0, self.max_scroll());
 	}
 	fn thumb(&self) -> Option<Rect> {
@@ -907,9 +965,6 @@ impl SettingsDialog {
 
 	// ---- dropdown popup (open list; commits on Enter / click) -----------------
 
-	pub fn dropdown_open(&self) -> bool {
-		self.open.is_some()
-	}
 	fn dd_options(&self, i: usize) -> &'static [&'static str] {
 		match self.specs[i].kind {
 			Kind::Dropdown(opts) => opts,
@@ -1021,6 +1076,7 @@ impl SettingsDialog {
 	}
 	// The Tab key: Ctrl switches tabs, otherwise walk control focus (Shift = back).
 	pub fn key_tab(&mut self) {
+		self.dismiss_menu();
 		if self.ctrl {
 			self.tab_switch(!self.shift);
 		} else {
@@ -1036,6 +1092,18 @@ impl SettingsDialog {
 	// Up / Down arrows: navigate an open popup, else Alt+Down opens a focused
 	// dropdown, else walk control focus (a peer of Tab).
 	pub fn key_vertical(&mut self, forward: bool) {
+		if self.emenu.is_some() {
+			// walk the field context-menu items (wraps)
+			let n = EDIT_MENU.len() as i32;
+			if let Some(menu) = &mut self.emenu {
+				let step = if forward { 1 } else { -1 };
+				let cur = menu
+					.hover
+					.map_or(if forward { -1 } else { 0 }, |h| h as i32);
+				menu.hover = Some((cur + step).rem_euclid(n) as usize);
+			}
+			return;
+		}
 		if let Some(i) = self.open {
 			let n = self.dd_options(i).len();
 			if n > 0 {
@@ -1059,6 +1127,7 @@ impl SettingsDialog {
 	// Left / Right: caret motion while a field is being edited, otherwise adjust
 	// the focused slider (by one step) or move a focused radio's selection.
 	pub fn key_horizontal(&mut self, dir: i32) {
+		self.dismiss_menu();
 		if self.edit.is_some() {
 			if dir < 0 {
 				self.cursor_left();
@@ -1151,6 +1220,11 @@ impl SettingsDialog {
 			buf,
 			cur,
 			sel,
+			view: 0.0,
+			view_to: 0.0,
+			caret_vis: None,
+			blink_t: 0.0,
+			last_sig: (usize::MAX, None, usize::MAX),
 		});
 	}
 
@@ -1818,6 +1892,14 @@ impl SettingsDialog {
 			_ => 1,
 		};
 		self.last_click = Some((now, x, y));
+		// an open field context menu captures the click: an enabled item fires its
+		// command (clipboard glue in dialog.rs), anywhere else just dismisses
+		if self.emenu.is_some() {
+			let hit = (0..EDIT_MENU.len()).find(|&k| self.em_item_rect(k).contains(x, y));
+			let cmd = hit.filter(|&k| self.em_enabled(k)).map(|k| EDIT_MENU[k].1);
+			self.emenu = None;
+			return cmd.map_or(Action::None, Action::Edit);
+		}
 		// an open dropdown captures the click: on an option -> pick it, anywhere
 		// else -> just close (a click-away dismiss, consumed either way)
 		if let Some(oi) = self.open.take() {
@@ -2019,7 +2101,7 @@ impl SettingsDialog {
 		let (shift, streak) = (self.shift, self.click_streak);
 		self.focus = Some(Focus::Row(i, part));
 		let Some(edit) = &mut self.edit else { return };
-		let cur = caret_from_click(&edit.buf, x - (field.x + 6.0), measure);
+		let cur = caret_from_click(&edit.buf, x - (field.x + FIELD_PAD) + edit.view, measure);
 		if shift && same_row {
 			if edit.sel.is_none() {
 				edit.sel = Some(edit.cur);
@@ -2045,12 +2127,201 @@ impl SettingsDialog {
 		}
 	}
 
+	// --- field context menu (right-click / Menu key inside an editable field) ---
+	fn em_item_h(&self) -> f32 {
+		self.dd_item_h()
+	}
+	fn em_rect(&self) -> Rect {
+		let Some(menu) = &self.emenu else {
+			return Rect {
+				x: 0.0,
+				y: 0.0,
+				w: 0.0,
+				h: 0.0,
+			};
+		};
+		let w = EM_W * self.ui_scale();
+		let h = EDIT_MENU.len() as f32 * self.em_item_h();
+		// clamp into the panel; flip upward when it would spill past the bottom
+		let x = menu
+			.x
+			.min(self.rect.x + self.rect.w - w - 2.0)
+			.max(self.rect.x);
+		let y = if menu.y + h > self.rect.y + self.rect.h - 2.0 {
+			(menu.y - h).max(self.rect.y)
+		} else {
+			menu.y
+		};
+		Rect { x, y, w, h }
+	}
+	fn em_item_rect(&self, k: usize) -> Rect {
+		let r = self.em_rect();
+		Rect {
+			x: r.x,
+			y: r.y + k as f32 * self.em_item_h(),
+			w: r.w,
+			h: self.em_item_h(),
+		}
+	}
+	fn em_enabled(&self, k: usize) -> bool {
+		let edit = self.edit.as_ref();
+		match EDIT_MENU[k].1 {
+			EditCmd::Cut | EditCmd::Copy | EditCmd::Delete => {
+				edit.is_some_and(|e| e.sel_range().is_some())
+			}
+			EditCmd::Paste => self.emenu.as_ref().is_some_and(|m| m.paste_ok),
+			EditCmd::SelectAll => edit.is_some_and(|e| !e.buf.is_empty()),
+		}
+	}
+	fn dismiss_menu(&mut self) {
+		self.emenu = None;
+	}
+	// Right-click in an editable field: open (or keep) the edit, place the caret
+	// at the click unless it lands inside the selection (standard), pop the menu.
+	pub fn mouse_right(
+		&mut self,
+		x: f32,
+		y: f32,
+		paste_ok: bool,
+		measure: &mut impl FnMut(&str) -> f32,
+	) {
+		self.mouse = (x, y);
+		self.emenu = None;
+		self.open = None;
+		let vp = self.viewport();
+		if y < vp.y || y > vp.y + vp.h {
+			return;
+		}
+		for i in 0..self.specs.len() {
+			if self.spec_tab[i] != self.tab {
+				continue;
+			}
+			let Some(field) = self.field_rect(i) else {
+				continue;
+			};
+			if !field.contains(x, y) {
+				continue;
+			}
+			if self.disabled(self.specs[i].key) {
+				return;
+			}
+			let same_row = self.edit.as_ref().is_some_and(|e| e.row == i);
+			if !same_row {
+				self.commit_edit();
+				self.open_edit(i, false);
+			}
+			let part = if matches!(self.specs[i].kind, Kind::Slider { .. }) {
+				1
+			} else {
+				0
+			};
+			self.focus = Some(Focus::Row(i, part));
+			if let Some(edit) = &mut self.edit {
+				let rel_x = x - (field.x + FIELD_PAD) + edit.view;
+				let cur = caret_from_click(&edit.buf, rel_x, measure);
+				let inside = edit.sel_range().is_some_and(|(a, b)| cur >= a && cur <= b);
+				if !inside {
+					edit.cur = cur;
+					edit.sel = None;
+				}
+			}
+			self.emenu = Some(EMenu {
+				x,
+				y,
+				hover: None,
+				paste_ok,
+			});
+			return;
+		}
+	}
+	// Keyboard Menu key: pop the context menu at the caret of the active edit.
+	pub fn menu_key(&mut self, paste_ok: bool, measure: &mut impl FnMut(&str) -> f32) {
+		let Some(edit) = &self.edit else { return };
+		let Some(field) = self.field_rect(edit.row) else {
+			return;
+		};
+		let cx = (field.x + FIELD_PAD + measure(&edit.buf[..edit.cur]) - edit.view)
+			.clamp(field.x, field.x + field.w);
+		self.emenu = Some(EMenu {
+			x: cx,
+			y: field.y + field.h,
+			hover: Some(0),
+			paste_ok,
+		});
+	}
+
+	// Per-frame upkeep of the active field edit, with real frame time: eases the
+	// horizontal view (caret kept visible with a lookahead margin so several
+	// characters show ahead of travel; CARET_PAD keeps the caret clear of the
+	// right edge at end-of-text), eases the caret x, advances the blink, and
+	// replays a drag past the box edges (edge autoscroll). Returns the wake the
+	// caller should schedule: fast while something moves, blink-rate while an
+	// idle edit pulses, None when there's nothing to animate.
+	pub fn animate(&mut self, dt: f32, measure: &mut impl FnMut(&str) -> f32) -> Option<u64> {
+		if self.edit_drag.is_some() {
+			let (mx, my) = self.mouse;
+			self.mouse_move(mx, my, measure);
+		}
+		let row = self.edit.as_ref().map(|e| e.row)?;
+		let field = self.field_rect(row)?;
+		let inner_w = (field.w - 2.0 * FIELD_PAD).max(1.0);
+		let ahead = (VIEW_AHEAD * self.ui_scale()).min(inner_w / 3.0);
+		let (caret_x, text_w, sig) = {
+			let edit = self.edit.as_ref().unwrap();
+			(
+				measure(&edit.buf[..edit.cur]),
+				measure(&edit.buf),
+				(edit.cur, edit.sel, edit.buf.len()),
+			)
+		};
+		let dragging = self.edit_drag.is_some();
+		let edit = self.edit.as_mut().unwrap();
+		if sig != edit.last_sig {
+			edit.last_sig = sig;
+			edit.blink_t = 0.0; // activity holds the caret solid
+		} else {
+			edit.blink_t += dt;
+		}
+		// target view: keep the caret in sight with the margin; the clamp snaps
+		// the margin away at the true ends so 0 / end-of-text sit flush
+		let max_view = (text_w + CARET_PAD - inner_w).max(0.0);
+		let mut to = edit.view_to;
+		if caret_x < to + ahead {
+			to = caret_x - ahead;
+		}
+		if caret_x > to + inner_w - ahead {
+			to = caret_x - (inner_w - ahead);
+		}
+		edit.view_to = to.clamp(0.0, max_view);
+		// exponential ease toward the targets (same idiom as the pane scroll)
+		edit.view += (edit.view_to - edit.view) * (1.0 - (-dt / 0.05).exp());
+		let cv = edit.caret_vis.get_or_insert(caret_x);
+		*cv += (caret_x - *cv) * (1.0 - (-dt / 0.04).exp());
+		let moving = (edit.view_to - edit.view).abs() > 0.25 || (caret_x - *cv).abs() > 0.25;
+		if !moving {
+			edit.view = edit.view_to;
+			*cv = caret_x;
+		}
+		Some(if moving || dragging { 8 } else { 33 })
+	}
+
 	pub fn mouse_move(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) {
-		// drag-selection inside an editable field
+		self.mouse = (x, y);
+		// open field context menu: track the hovered item
+		if self.emenu.is_some() {
+			let hover = (0..EDIT_MENU.len()).find(|&k| self.em_item_rect(k).contains(x, y));
+			if let Some(menu) = &mut self.emenu {
+				menu.hover = hover.or(menu.hover);
+			}
+			return;
+		}
+		// drag-selection inside an editable field (a drag past the box edges keeps
+		// selecting: `animate` replays this pos while the view crawls)
 		if let Some(row) = self.edit_drag {
 			if let Some(field) = self.field_rect(row) {
 				if let Some(edit) = &mut self.edit {
-					let cur = caret_from_click(&edit.buf, x - (field.x + 6.0), measure);
+					let rel_x = x - (field.x + FIELD_PAD) + edit.view;
+					let cur = caret_from_click(&edit.buf, rel_x, measure);
 					if cur != edit.cur {
 						if edit.sel.is_none() {
 							edit.sel = Some(edit.cur);
@@ -2119,6 +2390,7 @@ impl SettingsDialog {
 	}
 
 	pub fn char_input(&mut self, c: char) {
+		self.dismiss_menu();
 		if self.ctrl {
 			return; // Ctrl+letter is a shortcut (copy/paste/...), never types
 		}
@@ -2215,6 +2487,7 @@ impl SettingsDialog {
 		}
 	}
 	pub fn backspace(&mut self) {
+		self.dismiss_menu();
 		let ctrl = self.ctrl;
 		if let Some(edit) = &mut self.edit {
 			if edit.remove_selection() {
@@ -2234,6 +2507,7 @@ impl SettingsDialog {
 		}
 	}
 	pub fn delete_forward(&mut self) {
+		self.dismiss_menu();
 		let ctrl = self.ctrl;
 		if let Some(edit) = &mut self.edit {
 			if edit.remove_selection() {
@@ -2339,12 +2613,14 @@ impl SettingsDialog {
 	}
 	fn commit_edit(&mut self) {
 		self.edit = None;
+		self.emenu = None;
 	}
 
 	// Esc cancels the dialog; Enter commits an active hex edit (or OK otherwise).
 	pub fn key_escape(&mut self) -> Action {
-		if self.open.take().is_some() {
-			Action::None // Esc closes the popup (value unchanged), not the dialog
+		// Esc closes the field context menu / dropdown popup first, not the dialog
+		if self.emenu.take().is_some() || self.open.take().is_some() {
+			Action::None
 		} else if self.edit.is_some() {
 			self.edit = None;
 			Action::None
@@ -2353,6 +2629,17 @@ impl SettingsDialog {
 		}
 	}
 	pub fn key_enter(&mut self) -> Action {
+		if self.emenu.is_some() {
+			// fire the highlighted (enabled) menu item
+			let cmd = self
+				.emenu
+				.as_ref()
+				.and_then(|m| m.hover)
+				.filter(|&k| self.em_enabled(k))
+				.map(|k| EDIT_MENU[k].1);
+			self.emenu = None;
+			return cmd.map_or(Action::None, Action::Edit);
+		}
 		if self.open.is_some() {
 			self.dd_commit();
 			Action::None
@@ -2375,11 +2662,23 @@ impl SettingsDialog {
 		measure: &mut impl FnMut(&str) -> f32,
 	) {
 		let Some(edit) = &self.edit else { return };
-		let left = field.x + 6.0;
-		let right = field.x + field.w - 2.0;
+		let left = field.x + FIELD_PAD - edit.view;
+		let (lo, hi) = (field.x + 1.0, field.x + field.w - 1.0);
+		// the caret's own x is the eased position (smooth caret travel); other
+		// selection edges are exact
+		let caret_x = edit
+			.caret_vis
+			.unwrap_or_else(|| measure(&edit.buf[..edit.cur]));
 		if let Some((a, b)) = edit.sel_range() {
-			let x1 = (left + measure(&edit.buf[..a])).min(right);
-			let x2 = (left + measure(&edit.buf[..b])).min(right);
+			let edge = |i: usize, measure: &mut dyn FnMut(&str) -> f32| {
+				if i == edit.cur {
+					caret_x
+				} else {
+					measure(&edit.buf[..i])
+				}
+			};
+			let x1 = (left + edge(a, measure)).clamp(lo, hi);
+			let x2 = (left + edge(b, measure)).clamp(lo, hi);
 			if x2 > x1 {
 				// the text draws after the rects, so it stays legible on top
 				out.push(RectInstance {
@@ -2390,11 +2689,13 @@ impl SettingsDialog {
 				});
 			}
 		}
-		let x = (left + measure(&edit.buf[..edit.cur])).min(right);
+		let x = (left + caret_x).clamp(lo, hi - 1.5);
+		// smooth blink: fade the bar toward the field bg instead of a hard on/off
+		let color = mix3(dlg().field_bg, dlg().focus_out, edit.caret_alpha());
 		out.push(RectInstance {
 			pos: [x, field.y + 2.0],
 			size: [1.5, field.h - 4.0],
-			color: config::srgb_f32(dlg().focus_out),
+			color: config::srgb_f32(color),
 			..Default::default()
 		});
 	}
@@ -2768,6 +3069,14 @@ impl SettingsDialog {
 				clip: Some(vp),
 				..mk(REVERT_ICON.into(), revert_rect.x + 4.0, ty)
 			});
+			// horizontal view offset of row i's field while it's being edited (the
+			// text slides left as the view scrolls; the box clip crops the rest)
+			let view = |i: usize| -> f32 {
+				self.edit
+					.as_ref()
+					.filter(|e| e.row == i)
+					.map_or(0.0, |e| e.view)
+			};
 			match self.specs[i].kind {
 				Kind::Slider { int, .. } => {
 					let val_box = self.valbox(i);
@@ -2777,8 +3086,12 @@ impl SettingsDialog {
 					};
 					out.push(TextItem {
 						color: label_color,
-						clip: Some(vp),
-						..mk(txt, val_box.x + 6.0, row_text_y(val_box.y, val_box.h))
+						clip: Some(intersect(val_box)),
+						..mk(
+							txt,
+							val_box.x + FIELD_PAD - view(i),
+							row_text_y(val_box.y, val_box.h),
+						)
 					});
 				}
 				Kind::Color => {
@@ -2788,8 +3101,12 @@ impl SettingsDialog {
 						_ => config::format_hex(self.get_col(self.specs[i].key)),
 					};
 					out.push(TextItem {
-						clip: Some(vp),
-						..mk(txt, hex_box.x + 6.0, row_text_y(hex_box.y, hex_box.h))
+						clip: Some(intersect(hex_box)),
+						..mk(
+							txt,
+							hex_box.x + FIELD_PAD - view(i),
+							row_text_y(hex_box.y, hex_box.h),
+						)
 					});
 				}
 				Kind::Text => {
@@ -2812,7 +3129,11 @@ impl SettingsDialog {
 					out.push(TextItem {
 						color,
 						clip: Some(intersect(text_box)),
-						..mk(txt, text_box.x + 6.0, row_text_y(text_box.y, text_box.h))
+						..mk(
+							txt,
+							text_box.x + FIELD_PAD - view(i),
+							row_text_y(text_box.y, text_box.h),
+						)
 					});
 				}
 				Kind::Dual { keys, labels } => {
@@ -2936,6 +3257,53 @@ impl SettingsDialog {
 				texts.push(mk(DD_CHECK.into(), r.x + r.w - 18.0, ty));
 			}
 			texts.push(mk((*opt).into(), r.x + 10.0, ty));
+		}
+		(rects, texts)
+	}
+
+	// True when anything needs the second (on-top) render pass.
+	pub fn overlay_open(&self) -> bool {
+		self.open.is_some() || self.emenu.is_some()
+	}
+	// Everything for the second pass: the open dropdown popup and/or the field
+	// context menu (only one is ever open at a time in practice).
+	pub fn overlay(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
+		let (mut rects, mut texts) = self.dropdown_overlay();
+		if self.emenu.is_none() {
+			return (rects, texts);
+		}
+		let q = |x: f32, y: f32, w: f32, h: f32, color: [u8; 3]| RectInstance {
+			pos: [x, y],
+			size: [w, h],
+			color: config::srgb_f32(color),
+			..Default::default()
+		};
+		let menu = self.em_rect();
+		let t = 1.0;
+		rects.push(q(
+			menu.x - t,
+			menu.y - t,
+			menu.w + 2.0 * t,
+			menu.h + 2.0 * t,
+			dlg().panel_border,
+		));
+		rects.push(q(menu.x, menu.y, menu.w, menu.h, dlg().field_bg));
+		let hover = self.emenu.as_ref().and_then(|m| m.hover);
+		for (k, (label, _)) in EDIT_MENU.iter().enumerate() {
+			let r = self.em_item_rect(k);
+			let enabled = self.em_enabled(k);
+			if enabled && hover == Some(k) {
+				rects.push(q(r.x + 1.0, r.y, r.w - 2.0, r.h, dlg().btn_hl));
+			}
+			texts.push(TextItem {
+				text: (*label).into(),
+				x: r.x + 10.0,
+				y: r.y + (r.h - self.line_h) / 2.0,
+				color: if enabled { dlg().text } else { dlg().dim },
+				clip: None,
+				bold: false,
+				scale: 1.0,
+			});
 		}
 		(rects, texts)
 	}
@@ -3529,5 +3897,142 @@ mod tests {
 			let rt = speed_to_tau(tau_to_speed(tau));
 			assert!((rt - tau).abs() <= 3.0, "tau {tau} -> {rt}");
 		}
+	}
+
+	// settle the field-edit animation (view/caret eases converge)
+	fn settle(d: &mut SettingsDialog, m: &mut impl FnMut(&str) -> f32) {
+		for _ in 0..200 {
+			d.animate(0.016, m);
+		}
+	}
+
+	#[test]
+	fn long_value_scrolls_to_keep_caret_visible() {
+		use super::{CARET_PAD, FIELD_PAD};
+		let (mut d, i) = mk_text_edit(&"x".repeat(400));
+		let mut m = |s: &str| s.chars().count() as f32; // 1px per char
+		d.cursor_end(); // collapse the open-time selection, caret at char 400
+		settle(&mut d, &mut m);
+		let field = d.textbox(i);
+		let inner = field.w - 2.0 * FIELD_PAD;
+		let e = d.edit.as_ref().unwrap();
+		// scrolled right, caret in view, with the end padding visible after it
+		assert!(e.view_to > 0.0);
+		assert!((400.0 - e.view) <= inner - CARET_PAD + 0.5);
+		assert_eq!(e.view, e.view_to, "ease settles exactly on the target");
+		// moving left keeps the lookahead margin of context before the caret
+		for _ in 0..200 {
+			d.cursor_left();
+		}
+		settle(&mut d, &mut m);
+		let e = d.edit.as_ref().unwrap();
+		assert!(200.0 - e.view_to >= 27.0, "margin ahead of leftward travel");
+		// Home scrolls all the way back
+		d.cursor_home();
+		settle(&mut d, &mut m);
+		assert_eq!(d.edit.as_ref().unwrap().view_to, 0.0);
+	}
+
+	#[test]
+	fn short_value_never_scrolls() {
+		let (mut d, _) = mk_text_edit("short.png");
+		let mut m = |s: &str| s.chars().count() as f32;
+		d.cursor_end();
+		settle(&mut d, &mut m);
+		assert_eq!(d.edit.as_ref().unwrap().view_to, 0.0);
+	}
+
+	#[test]
+	fn click_and_drag_map_through_the_view() {
+		use super::FIELD_PAD;
+		let (mut d, i) = mk_text_edit(&"y".repeat(400));
+		let mut m = |s: &str| s.chars().count() as f32;
+		d.cursor_end();
+		settle(&mut d, &mut m);
+		let view = d.edit.as_ref().unwrap().view;
+		assert!(view > 0.0);
+		let field = d.textbox(i);
+		let y = field.y + field.h / 2.0;
+		// a click 10px into the box lands on the char 10px past the scrolled-off part
+		d.last_click = None;
+		d.mouse_down(field.x + FIELD_PAD + 10.0, y, &mut m);
+		let cur = d.edit.as_ref().unwrap().cur;
+		assert!(
+			(cur as f32 - (view + 10.0)).abs() <= 0.5,
+			"cur {cur} vs view {view}"
+		);
+		d.mouse_up(field.x + FIELD_PAD + 10.0, y);
+		// from the far left, dragging past the right edge keeps selecting while
+		// the view crawls (edge autoscroll)
+		d.cursor_home();
+		settle(&mut d, &mut m);
+		d.last_click = None;
+		d.mouse_down(field.x + FIELD_PAD, y, &mut m);
+		d.mouse_move(field.x + field.w + 40.0, y, &mut m);
+		let cur0 = d.edit.as_ref().unwrap().cur;
+		assert!(cur0 < 400, "the first drag event lands short of the end");
+		settle(&mut d, &mut m);
+		d.mouse_up(field.x + field.w + 40.0, y);
+		let e = d.edit.as_ref().unwrap();
+		assert!(e.cur > cur0, "edge autoscroll extends the selection");
+		assert!(e.view > 0.0, "view followed the drag");
+		assert!(d.selected_text().is_some());
+	}
+
+	#[test]
+	fn context_menu_open_fire_and_gating() {
+		use super::{Action, EditCmd, FIELD_PAD};
+		let (mut d, i) = mk_text_edit("hello world");
+		let mut m = |s: &str| s.chars().count() as f32;
+		let field = d.textbox(i);
+		let y = field.y + field.h / 2.0;
+		// right-click inside the (select-all) selection keeps it; menu opens
+		d.mouse_right(field.x + FIELD_PAD + 3.0, y, true, &mut m);
+		assert!(d.emenu.is_some());
+		assert_eq!(d.selected_text().as_deref(), Some("hello world"));
+		// Copy is enabled; clicking it returns the command for the clipboard glue
+		assert!(d.em_enabled(1));
+		let r = d.em_item_rect(1);
+		d.last_click = None;
+		let act = d.mouse_down(r.x + 2.0, r.y + 2.0, &mut m);
+		assert_eq!(act, Action::Edit(EditCmd::Copy));
+		assert!(d.emenu.is_none());
+		// no selection + empty clipboard: only Select all stays enabled
+		d.cursor_end();
+		d.mouse_right(field.x + FIELD_PAD + 3.0, y, false, &mut m);
+		assert!(
+			d.selected_text().is_none(),
+			"right-click outside sel places caret"
+		);
+		assert!(!d.em_enabled(0) && !d.em_enabled(1) && !d.em_enabled(2) && !d.em_enabled(3));
+		assert!(d.em_enabled(4));
+		// keyboard: walk to Select all, Enter fires it
+		for _ in 0..5 {
+			d.key_vertical(true);
+		}
+		assert_eq!(d.key_enter(), Action::Edit(EditCmd::SelectAll));
+		assert!(d.emenu.is_none());
+		// Esc closes the menu but keeps the edit alive
+		d.mouse_right(field.x + FIELD_PAD + 3.0, y, true, &mut m);
+		assert!(d.emenu.is_some());
+		assert_eq!(d.key_escape(), Action::None);
+		assert!(d.emenu.is_none() && d.edit.is_some());
+		// typing dismisses a stale menu
+		d.mouse_right(field.x + FIELD_PAD + 3.0, y, true, &mut m);
+		d.char_input('a');
+		assert!(d.emenu.is_none());
+	}
+
+	#[test]
+	fn blink_holds_solid_on_activity() {
+		let (mut d, _) = mk_text_edit("abc");
+		let mut m = |s: &str| s.chars().count() as f32;
+		settle(&mut d, &mut m); // ~3.2s idle: blink well past the hold
+		assert!(d.edit.as_ref().unwrap().blink_t > 1.0);
+		d.char_input('z');
+		d.animate(0.016, &mut m);
+		let e = d.edit.as_ref().unwrap();
+		assert!(e.blink_t < 0.1);
+		assert_eq!(e.caret_alpha(), 1.0);
 	}
 }
