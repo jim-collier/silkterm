@@ -122,7 +122,9 @@ function fMain {
 ## spec ('slktrmdf_<stamp>[_<tag>].exe') - never a foreign file that merely shares
 ## the dir, e.g. the fixed 'SilkTerm.exe' that cicd-win.ps1 drops here.
 function fDeleteOldBuilds {
-	$rx      = "^$([regex]::Escape($DogfoodPrefix))_\d{8}-\d{6}(_(gnul|gnuw|msvc))?\.exe$"
+	## Any tag ages out here (incl. one-off hand-dropped tags); only the known
+	## tags are ever SELECTED to run (fTaggedBuilds stays strict).
+	$rx      = "^$([regex]::Escape($DogfoodPrefix))_\d{8}-\d{6}(_[a-z0-9]+)?\.exe$"
 	$cutoff  = (Get-Date).AddDays(-$MaxAgeDays)
 	$running = @(fRunningExePaths)
 	$deleted = 0
@@ -448,6 +450,8 @@ fMain -PassArgs $passArgs
 
 
 ##	History:
+##		- 2026-07-16 JC: Age-prune stamped copies with any tag, not just the known
+##		  three (one-off tags could never be deleted); selection still known-tags-only.
 ##		- 2026-07-15 JC: Elevate only on '--admin' (consumed, not forwarded); default
 ##		  is the normal token.
 ##		- 2026-07-15 JC: Launch elevated by default; fall back to silkterm on PATH /
