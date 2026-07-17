@@ -50,6 +50,13 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- ✅ Windows: the Settings dialog opens *inside* the terminal window instead of as a separate modal dialog - clipped to the terminal, so at higher DPI (dialog bigger than the terminal) some settings are unreachable.
+	- Cause: on Windows the dialog was created as an embedded child window of the terminal (the cross-platform "tie to parent" call means child-of, not owned-by, there). A child window is clipped to its parent's client area and never gets its own keyboard activation.
+	- Fix: create it as an owned top-level window instead - floats above the terminal, sized independently, off the taskbar, closes with it. Also now opens centered over the terminal (Windows gives owned windows no automatic placement).
+
+- ✅ Windows: can't type in the Settings dialog's text fields.
+	- Same root cause as the embedded-dialog bug above: a child window never receives keyboard focus, so no key events reached the dialog at all. Fixed by the owned-window change; keyboard verified end to end (dialog takes focus, keys land in it).
+
 - ✅ Windows: clipboard copy reported not working (any method - Ctrl+Shift+C, right-click Copy, copy-on-highlight, the built-in copy-on-select), across panes; works in other terminals.
 	- Finding: the low-level clipboard write is fine on Windows - verified the whole chain end to end (a real drag-select lands the highlighted text on the clipboard, visible to other processes). So the failure was in the copy *gating*, not the clipboard: the auto-copy feature silently turned itself off constantly (it cleared on any tab/pane focus change, enabling it in one pane cleared every other pane, and it broadcast "off" to other windows), so from a multi-pane / multi-window session copy-on-highlight looked permanently broken.
 	- Fix: reworked as the feature refinement below (never auto-disables; per-active-pane). If a manual copy (Ctrl+Shift+C / right-click) still fails on a specific machine after this, it points to the environment (an RDP client-side clipboard sync or a third-party clipboard manager) rather than the app - needs the paste-target details to chase further.

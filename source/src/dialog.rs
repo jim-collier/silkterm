@@ -108,12 +108,23 @@ impl DialogWin {
 				h.ceil().max(1.0) as u32,
 			));
 		// Tie the dialog to the terminal window so the WM keeps it above its
-		// parent and groups them. Windows/macOS: winit's parent_window is owner/
-		// parent semantics - what we want. X11: parent_window means literal X
-		// reparenting (an embedded child, unmanaged by the WM), so DON'T pass it
-		// there; WM_TRANSIENT_FOR is set after creation instead (below).
+		// parent and groups them. Windows: MUST be owner semantics, not winit's
+		// generic parent_window - that creates a WS_CHILD window there, which
+		// embeds the dialog inside the terminal's client area (clipped when the
+		// dialog is bigger than the terminal) and never gets its own keyboard
+		// activation (text fields dead). An owned popup floats above the owner,
+		// takes focus normally, and stays off the taskbar. macOS: parent_window
+		// is child-window-of semantics, which is what we want there. X11:
+		// parent_window means literal X reparenting (an embedded child, unmanaged
+		// by the WM), so DON'T pass it there; WM_TRANSIENT_FOR is set after
+		// creation instead (below).
+		#[cfg(target_os = "windows")]
+		if let Some(RawWindowHandle::Win32(h)) = parent {
+			use winit::platform::windows::WindowAttributesExtWindows;
+			attrs = attrs.with_owner_window(h.hwnd.get());
+		}
 		// SAFETY: the handle comes from the live main window on this same thread.
-		#[cfg(any(target_os = "windows", target_os = "macos"))]
+		#[cfg(target_os = "macos")]
 		if parent.is_some() {
 			attrs = unsafe { attrs.with_parent_window(parent) };
 		}

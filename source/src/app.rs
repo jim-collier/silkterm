@@ -193,6 +193,27 @@ impl App {
 		}
 	}
 
+	// Windows: an owned popup gets no automatic placement (it lands at the
+	// screen origin), so center a fresh dialog over the terminal window.
+	// Linux WMs place transients themselves.
+	#[cfg(target_os = "windows")]
+	fn center_dialog(&self) {
+		let (Some(state), Some(dialog)) = (self.state.as_ref(), self.dialog.as_ref()) else {
+			return;
+		};
+		if let Ok(pos) = state.window.outer_position() {
+			let win = state.window.outer_size();
+			let dlg = dialog.window.outer_size();
+			let x = pos.x + (win.width as i32 - dlg.width as i32) / 2;
+			let y = pos.y + (win.height as i32 - dlg.height as i32) / 2;
+			dialog
+				.window
+				.set_outer_position(winit::dpi::PhysicalPosition::new(x.max(0), y.max(0)));
+		}
+	}
+	#[cfg(not(target_os = "windows"))]
+	fn center_dialog(&self) {}
+
 	fn apply_dialog_action(&mut self, action: crate::dialog::DialogAction) {
 		use crate::dialog::DialogAction as DA;
 		match action {
@@ -3550,6 +3571,7 @@ impl ApplicationHandler<UserEvent> for App {
 				match crate::dialog::DialogWin::new_about(event_loop, &info, parent) {
 					Ok(d) => {
 						self.dialog = Some(d);
+						self.center_dialog();
 						self.dialog_dirty = true;
 					}
 					Err(e) => eprintln!("{}: About window failed: {e}", config::APP_NAME),
@@ -3564,6 +3586,7 @@ impl ApplicationHandler<UserEvent> for App {
 			match crate::dialog::DialogWin::new_settings(event_loop, parent) {
 				Ok(d) => {
 					self.dialog = Some(d);
+					self.center_dialog();
 					self.dialog_dirty = true;
 				}
 				Err(e) => eprintln!("{}: Settings window failed: {e}", config::APP_NAME),
