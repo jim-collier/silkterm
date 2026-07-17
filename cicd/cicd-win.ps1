@@ -13,9 +13,7 @@
 ##		   5. release builds  x86_64 msvc AND gnu (always both), + ARM64 when its
 ##		                      toolchain is present (auto-detected, else warn-skip)
 ##		   6. packages       (NSIS installer .exe per built arch, if makensis found)
-##		   7. dogfood        (copy the best x86_64 build to <dogfood>\SilkTerm.exe,
-##		                      + stamped copies of each x86_64 build into n8runterm's
-##		                      local pool so its next launch is current)
+##		   7. dogfood        (copy the best x86_64 build to <dogfood>\SilkTerm.exe)
 ##		   8. publish        (stash -> pull -> add -> commit -> push, current branch)
 ##		- What Windows can't do (dropped vs cicd.bash): the headless scroll harness /
 ##		  screenshots / demo (need Xvfb), .deb/.rpm packages (Linux), and the rar
@@ -27,8 +25,8 @@
 ##		- Dogfood pick: prefer the msvc build IF it's self-contained (statically
 ##		  linked, no VCRUNTIME140/MSVCP140 dependency); else the gnu build; else
 ##		  whichever single build exists. The fixed SilkTerm.exe goes to the SYNCED
-##		  util dir; the stamped pool copies go to n8runterm.ps1's LOCAL dir (the
-##		  two stay separate dirs on purpose).
+##		  util dir; n8runterm.ps1 manages its own stamped pool in its LOCAL dir
+##		  (the two stay separate dirs on purpose).
 ##		- Syntax:
 ##		  pwsh cicd/cicd-win.ps1 [options]
 ##		  Options:
@@ -157,13 +155,6 @@ $ProfileOutDir         = Join-Path $Root "cicd\artifacts\profiling-win"
 ## slktrmdf_* pool and launches from there; the two never share a folder.
 $DogfoodDir      = "C:\opt\0-0\common\exec\synced\util\mswin\gui\by-self\win64"
 $DogfoodFixedExe = "SilkTerm.exe"
-
-## Also pre-feed n8runterm's local stamped pool with each fresh x86_64 build, so
-## the pool is current the moment a pipeline run finishes (an n8runterm launched
-## before/during the run would otherwise keep showing a stale build until its own
-## next copy pass). Same name spec n8runterm uses: slktrmdf_<mtime-stamp>_<tag>.exe.
-$DogfoodPoolDir    = "C:\opt\0-0\common\exec\local\util\mswin\gui\by-self\win64"
-$DogfoodPoolPrefix = "slktrmdf"
 
 ## Pinned helper-tool versions (the Windows-relevant subset of config.bash's
 ## TOOL_PINS). Warn (non-gating) when an installed tool has drifted, so a box
@@ -488,31 +479,6 @@ function fDogfood {
 	$dst = Join-Path $DogfoodDir $DogfoodFixedExe
 	Copy-Item -LiteralPath $pick.Exe -Destination $dst -Force
 	fEcho "OK: dogfood ($($pick.Tk); $why) -> $dst"
-
-	fFeedDogfoodPool -X64 $x64
-}
-
-## Drop a stamped copy of each fresh x86_64 build into n8runterm's local pool so
-## its next launch picks today's build even if it never gets to run its own copy
-## pass against these sources. Tags match n8runterm's (gnu built here = gnuw).
-## Stamp = the build's own mtime, so re-runs that didn't relink add nothing.
-function fFeedDogfoodPool {
-	param([Parameter(Mandatory)][array]$X64)
-	if (-not (Test-Path -LiteralPath $DogfoodPoolDir)) {
-		New-Item -ItemType Directory -Path $DogfoodPoolDir -Force | Out-Null
-	}
-	foreach ($b in $X64) {
-		$tag = if ($b.Tk -eq "gnu") { "gnuw" } else { $b.Tk }
-		$stamp = (Get-Item -LiteralPath $b.Exe).LastWriteTime.ToString("yyyyMMdd-HHmmss")
-		$dst = Join-Path $DogfoodPoolDir "${DogfoodPoolPrefix}_${stamp}_${tag}.exe"
-		if (Test-Path -LiteralPath $dst) { continue }
-		try {
-			Copy-Item -LiteralPath $b.Exe -Destination $dst -ErrorAction Stop
-			fEcho "OK: pool ($tag) -> $dst"
-		} catch {
-			fWarn "pool copy failed ($tag): $($_.Exception.Message)"
-		}
-	}
 }
 
 ## Publish: a native port of n8git_backup-and-publish MINUS the rar archive step.
@@ -654,7 +620,7 @@ function fMain {
 	fEcho_Clean "Profiler ....: $(if ($NoProfile -or $Quick) { '(skipped)' } else { "${ProfileSecs}s run -> flamegraph SVG (best-effort)" })"
 	fEcho_Clean "Release .....: x86_64 msvc + gnu$(if ($NoArm -or $Quick) { '' } else { ' + ARM64 (if toolchain present)' })"
 	fEcho_Clean "Packages ....: $(if ($NoPackage -or $Quick) { '(skipped)' } else { 'NSIS installers (if makensis present)' })"
-	fEcho_Clean "Dogfood .....: $(if ($NoDogfood) { '(skipped)' } else { "$DogfoodDir\$DogfoodFixedExe (+ pool: $DogfoodPoolDir)" })"
+	fEcho_Clean "Dogfood .....: $(if ($NoDogfood) { '(skipped)' } else { "$DogfoodDir\$DogfoodFixedExe" })"
 	if ($NoPublish)          { fEcho_Clean "Publish .....: (skipped)" }
 	elseif ($publishMsg)     { fEcho_Clean "Publish .....: commit + push current branch (hands-off: `"$publishMsg`")" }
 	else                     { fEcho_Clean "Publish .....: commit + push current branch (will prompt; blank = editor)" }
