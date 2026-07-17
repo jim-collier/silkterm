@@ -72,6 +72,10 @@ $TargetDir = "C:\opt\0-0\common\exec\local\util\mswin\gui\by-self\win64"
 ## Prefix for the date-stamped copies (matches cicd's dogfood convention).
 $DogfoodPrefix = "slktrmdf"
 
+## Per-run decision log, kept in the target dir. Every note/warn/fail line lands
+## here too, so a closed console can't lose the copy/skip reasons behind a launch.
+$RunLog = Join-Path $TargetDir "n8runterm.log"
+
 ## Delete idle stamped copies older than this many days.
 $MaxAgeDays = 7
 
@@ -93,6 +97,10 @@ function fMain {
 	if (-not (Test-Path -LiteralPath $TargetDir)) {
 		New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
 	}
+
+	fTrimLog
+	fLog ("=== run: PS {0}, host '{1}', script {2}, user {3} ===" -f `
+		$PSVersionTable.PSVersion, $Host.Name, $PSCommandPath, $env:USERNAME)
 
 	## 1. Delete stale idle copies.
 	fDeleteOldBuilds
@@ -160,12 +168,15 @@ function fCopyIfNewer {
 	$existing  = fNewestOfTag $Tag
 
 	if ($existing -and $existing.Stamp -ge $stampTime) {
-		fNote "$Tag already current ($($existing.Stamp.ToString($StampFormat)))"
+		fNote "$Tag already current (held $($existing.Stamp.ToString($StampFormat)), src $stamp)"
 		return
 	}
 
 	$dst = Join-Path $TargetDir "${DogfoodPrefix}_${stamp}_${Tag}.exe"
-	if (Test-Path -LiteralPath $dst) { return }
+	if (Test-Path -LiteralPath $dst) {
+		fNote "$Tag copy already present: $(Split-Path $dst -Leaf)"
+		return
+	}
 
 	try {
 		Copy-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
@@ -423,14 +434,36 @@ function fPickRandomBackground {
 }
 
 
-## Informational note to the host.
-function fNote { param([string]$Msg); Write-Host "n8runterm: $Msg" }
+## Informational note to the host (and the run log).
+function fNote { param([string]$Msg); fLog $Msg; Write-Host "n8runterm: $Msg" }
 
-## Non-fatal note to stderr.
-function fWarn { param([string]$Msg); Write-Warning "n8runterm: $Msg" }
+## Non-fatal note to stderr (and the run log).
+function fWarn { param([string]$Msg); fLog "WARN: $Msg"; Write-Warning "n8runterm: $Msg" }
 
-## Fatal error to stderr, then stop.
-function fFail { param([string]$Msg); Write-Error "n8runterm: $Msg"; exit 1 }
+## Fatal error to stderr (and the run log), then stop.
+function fFail { param([string]$Msg); fLog "FAIL: $Msg"; Write-Error "n8runterm: $Msg"; exit 1 }
+
+
+## Append a timestamped line to the run log. Best-effort: logging must never be
+## the thing that stops a launch.
+function fLog {
+	param([string]$Msg)
+	try {
+		Add-Content -LiteralPath $RunLog -Encoding utf8 -Value `
+			("{0}  {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Msg)
+	} catch { }
+}
+
+
+## Keep the run log from growing without bound.
+function fTrimLog {
+	try {
+		if ((Test-Path -LiteralPath $RunLog) -and (Get-Item -LiteralPath $RunLog).Length -gt 256KB) {
+			$tail = Get-Content -LiteralPath $RunLog -Tail 500
+			Set-Content -LiteralPath $RunLog -Value $tail -Encoding utf8
+		}
+	} catch { }
+}
 
 
 #••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -450,6 +483,8 @@ fMain -PassArgs $passArgs
 
 
 ##	History:
+##		- 2026-07-17 JC: Log every run's per-source copy decision (and each note/
+##		  warn) to n8runterm.log in the target dir, trimmed at 256KB.
 ##		- 2026-07-16 JC: Age-prune stamped copies with any tag, not just the known
 ##		  three (one-off tags could never be deleted); selection still known-tags-only.
 ##		- 2026-07-15 JC: Elevate only on '--admin' (consumed, not forwarded); default
