@@ -56,6 +56,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ Windows: can't type in the Settings dialog's text fields.
 	- Same root cause as the embedded-dialog bug above: a child window never receives keyboard focus, so no key events reached the dialog at all. Fixed by the owned-window change; keyboard verified end to end (dialog takes focus, keys land in it).
+	- Re-checked after a repeat report: on the current build, typed text demonstrably lands in the fields (typed a value, copied it out via the clipboard, saved it to config.toml). If it still fails on a given machine, the running copy predates the fix - refresh/rebuild the installed binary.
 
 - ✅ Windows: clipboard copy reported not working (any method - Ctrl+Shift+C, right-click Copy, copy-on-highlight, the built-in copy-on-select), across panes; works in other terminals.
 	- Finding: the low-level clipboard write is fine on Windows - verified the whole chain end to end (a real drag-select lands the highlighted text on the clipboard, visible to other processes). So the failure was in the copy *gating*, not the clipboard: the auto-copy feature silently turned itself off constantly (it cleared on any tab/pane focus change, enabling it in one pane cleared every other pane, and it broadcast "off" to other windows), so from a multi-pane / multi-window session copy-on-highlight looked permanently broken.
@@ -132,7 +133,10 @@ In each section, items are listed approximately from newest to oldest.
 	- Done: three config keys - `background_folder` (a folder, absolute or relative to the config dir; overrides `background_image` while set), `background_rotate_random` (filename order vs. random, never repeating the current image), and `background_rotate_interval_s` (seconds between swaps; 0 = pick one at startup only). Images are the formats the loader already decodes (png/jpg/webp/bmp/gif/tiff). Live swap reuses the existing wallpaper path, so it re-blurs and applies without a relaunch; a missing/empty folder just leaves the feature off.
 	- Verified: cycled a folder of three solid-colour images on a 2s timer and confirmed the background changed in order.
 
-- 🔘 Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
+- ✅ Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
+	- Done: full selection model in every editable field (text / hex color / numeric), cross-platform. Mouse: click places the caret, drag selects, Shift+click extends, double-click selects the word, triple-click selects all. Keyboard: Shift+arrows/Home/End extend, Ctrl+Left/Right jump by words, Ctrl+A select all, Ctrl+C/X/V copy/cut/paste (also Ctrl+Insert / Shift+Insert / Shift+Delete), Ctrl+Backspace/Delete delete by word. Typing or pasting replaces the selection; paste runs through each field's own validation (hex digits only in color fields, digits/single dot in numeric). Opening a field via keyboard selects its whole value so typing replaces it; the selection draws highlighted behind the text.
+	- Verified live on Windows end to end: typed into the Background image field, Ctrl+A/Ctrl+C landed the text on the system clipboard (read by another process), Ctrl+V replaced it, and OK persisted the pasted value to config.toml.
+	- 🔘 In-field right-click menu (Cut/Copy/Paste) - the hotkeys and mouse selection cover everything functionally; add if wanted.
 
 - 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
 

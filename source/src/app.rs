@@ -151,11 +151,18 @@ impl App {
 						Key::Named(NamedKey::ArrowLeft) => d.key_horizontal(-1),
 						Key::Named(NamedKey::ArrowRight) => d.key_horizontal(1),
 						Key::Named(
-							nav_key @ (NamedKey::Home | NamedKey::End | NamedKey::Delete),
-						) => d.edit_nav(*nav_key),
+							nav_key @ (NamedKey::Home
+							| NamedKey::End
+							| NamedKey::Delete
+							| NamedKey::Insert),
+						) => {
+							let clip = self.state.as_mut().map(|s| &mut s.clipboard);
+							d.edit_nav(*nav_key, clip);
+						}
 						Key::Character(typed) => {
 							for c in typed.chars() {
-								if let Some(action) = d.key_char(c) {
+								let clip = self.state.as_mut().map(|s| &mut s.clipboard);
+								if let Some(action) = d.key_char(c, clip) {
 									act = Some(action);
 								}
 							}
