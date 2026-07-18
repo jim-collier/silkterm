@@ -46,6 +46,7 @@ For reference, SilkTerm's release binary is about **10.3 MiB** (Linux x86_64), a
 
 - One file. No runtime, no "install these 40 packages first."
 - Nothing to break when your distro bumps GTK or VTE out from under you.
+- Not even tied to one display server: the same Linux binary runs native on both X11 and Wayland (chosen at runtime), so it keeps working across the slow industry migration between them.
 - The same story ships on Windows - the build imports only core OS DLLs, no redistributable - where there's no system VTE/GTK to lean on in the first place.
 
 That's the whole trade: the file carries everything, so it's bigger on disk than a glue binary. The program as a whole is not.
