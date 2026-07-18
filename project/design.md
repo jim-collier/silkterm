@@ -154,7 +154,11 @@ The distance functions share one engine: a separable, exactly-Euclidean distance
 
 ### Environment
 
-- Target: Debian, X11. (With or without compositing. Also Windows and macOS - all with x86_64 and ARM64 variants.)
+- Target: Debian. The primary dev/reference environment is X11 (Compiz), but one Linux binary runs native on both X11 and Wayland - winit selects the backend at runtime, and X11/Wayland/GL are all loaded on demand. (Also Windows and macOS - all with x86_64 and ARM64 variants.)
+
+	- The X11 path additionally uses a glutin GL context for per-pixel background transparency (wgpu can't drive an ARGB surface on X11); Wayland uses the plain wgpu surface, which already does premultiplied alpha. Everything else - chrome, text, scrollback slide, background image + blur + scrim - is the shared native path on both.
+
+	- Wayland coverage: the scroll regression harness runs its scenes a second time under a headless `cage` kiosk (`run.bash --wayland`), so the smooth-scroll behaviour is asserted identical on both engines. Per-pixel transparency and dialog stacking on Wayland are not yet exercised (follow-ups).
 
 - Pixel-precise input: touchpad gives true pixel deltas; notched mouse wheel snaps to lines (clamp/accumulate notch deltas into smooth target).
 

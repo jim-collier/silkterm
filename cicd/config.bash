@@ -85,6 +85,11 @@ DENY_CMD=(cargo deny check)
 ## but a measured scroll regression aborts. Empty () to disable.
 SCROLL_HARNESS=(cicd/tests/scroll/run.bash)
 
+## Also run the harness a second time under a headless Wayland compositor (cage), to
+## prove the Wayland backend renders + scrolls the same as X11. Self-skips (non-fatal)
+## where cage is not installed. 0/unset to disable.
+SCROLL_HARNESS_WAYLAND=1
+
 ## Stage 5: native release build + its artifact (this is what gets dogfooded)
 RELEASE_NATIVE_CMD=(cargo build --release)
 RELEASE_NATIVE_BIN="target/release/${EXE_NAME}"
