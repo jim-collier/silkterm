@@ -725,6 +725,11 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - new features and enhancements
 
+- ✅ Verify and cover the Wayland engine (Linux runs native on both X11 and Wayland from one binary).
+	- Done: confirmed the single Linux binary renders the full UI on Wayland via the native wgpu path - menu chrome, scrolling text, background image + blur + text scrim all correct. No separate build: winit selects X11 or Wayland at runtime, and both display libraries are loaded on demand, so a future Wayland-only system needs no X11.
+	- Test harness: the scroll regression harness gained a `--wayland` pass that runs the same deterministic scenes under a headless `cage` kiosk (software compositor + software Vulkan). All four scenes (less/vim/nano/muffer) slide identically to X11. cicd runs both passes when `SCROLL_HARNESS_WAYLAND=1`; the Wayland pass self-skips where `cage` is absent.
+	- Not yet exercised on Wayland: per-pixel background transparency (a separate native-alpha path from the X11 GL one) and the pop-out dialog stacking/modality (the X11 WM hints no-op on Wayland, so it leans on the compositor). Left as follow-ups.
+
 - ✅ Settings dialog:
 	- ✅ Remove "Settings" heading text, it's redundant with the window title.
 		- Done: dropped the prominent in-dialog title (and its band); the tab bar now sits at the top. The OS window title still reads "Settings".

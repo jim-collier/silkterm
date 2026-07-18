@@ -20,6 +20,8 @@
 ##		run.bash [options]
 ##		   --bin PATH      SilkTerm binary (default: target/debug then target/release)
 ##		   --display :N    headless display (default: $CICD_HEADLESS_DISPLAY or :98)
+##		   --wayland       run under a headless Wayland compositor (cage) instead of Xvfb,
+##		                   to prove the Wayland backend scrolls the same as X11
 ##		   --settle SECS   idle before scrolling, past GL warmup (default 13)
 ##		   --capture SECS  scrolling capture window per scene (default 16)
 ##		   --step SECS     seconds between scene repaints (default 0.15)
@@ -56,10 +58,11 @@ trap 'rc=$?; [[ $rc -ne 0 && $rc -ne 1 ]] && printf "\n[ scroll harness ABORTED 
 
 ## Options.
 bin=""; display="${CICD_HEADLESS_DISPLAY:-${RPD_HEADLESS_DISPLAY:-:98}}"
-settle=13; capture=16; step=0.15; do_real=0; keep=0; strict=0; verbose=0
+settle=13; capture=16; step=0.15; do_real=0; keep=0; strict=0; verbose=0; wayland=0
 while (($#)); do case "$1" in
 	--bin)      bin="${2-}"; shift 2 ;;
 	--display)  display="${2-}"; shift 2 ;;
+	--wayland)  wayland=1; shift ;;
 	--settle)   settle="${2-}"; shift 2 ;;
 	--capture)  capture="${2-}"; shift 2 ;;
 	--step)     step="${2-}"; shift 2 ;;
@@ -84,14 +87,22 @@ fi
 skip=""
 [[ -n "$bin" && -x "$bin" ]] || skip="no SilkTerm binary (build it first, or pass --bin)"
 [[ -z "$skip" ]] && ! command -v python3 >/dev/null 2>&1 && skip="python3 not found"
-[[ -z "$skip" ]] && ! command -v Xvfb    >/dev/null 2>&1 && skip="Xvfb not found (no headless display)"
-[[ -z "$skip" ]] && [[ ! -x "$headless" ]] && skip="gui-headless.bash missing: ${headless}"
+if ((wayland)); then
+	[[ -z "$skip" ]] && ! command -v cage >/dev/null 2>&1 && skip="cage not found (no headless Wayland compositor)"
+else
+	[[ -z "$skip" ]] && ! command -v Xvfb    >/dev/null 2>&1 && skip="Xvfb not found (no headless display)"
+	[[ -z "$skip" ]] && [[ ! -x "$headless" ]] && skip="gui-headless.bash missing: ${headless}"
+fi
 if [[ -n "$skip" ]]; then
 	((strict)) && fDie "scroll harness: ${skip}"
 	fEcho "WARNING: skipped: ${skip}"; exit 0
 fi
 fEcho_Clean "binary ....: ${bin}"
-fEcho_Clean "display ...: ${display}   settle ${settle}s  capture ${capture}s  step ${step}s"
+if ((wayland)); then
+	fEcho_Clean "engine ....: Wayland (cage, headless)   settle ${settle}s  capture ${capture}s  step ${step}s"
+else
+	fEcho_Clean "engine ....: X11 (${display})   settle ${settle}s  capture ${capture}s  step ${step}s"
+fi
 
 ## Throwaway config + temp workspace (nothing personal leaks; cleaned on exit).
 work="$(mktemp -d "${TMPDIR:-/tmp}/silk-scroll.XXXXXX")"
@@ -112,9 +123,10 @@ run_dir="/tmp/cicd-gui-headless-${USER}"
 auth="${run_dir}/Xauthority-${display#:}"
 
 ## Bring up the private display (with a WM - winit needs one on bare Xvfb to get
-## the events that drive rendering). Only stop it on exit if we started it.
+## the events that drive rendering). Only stop it on exit if we started it. The
+## Wayland path needs no persistent display - each scene runs its own cage kiosk.
 started_headless=0
-if "$headless" status 2>/dev/null | grep -q 'no Xvfb'; then
+if ! ((wayland)) && "$headless" status 2>/dev/null | grep -q 'no Xvfb'; then
 	if "$headless" start --wm >/dev/null 2>&1; then started_headless=1
 	else
 		((strict)) && fDie "headless display failed to start"
@@ -144,17 +156,50 @@ kill_ours(){
 	fi
 }
 
-pass=0; fail=0; miss=0
+## Spawn SilkTerm for one scene, backgrounded; log -> $2, trace -> $3. Sets $spawned_pid.
+## X11: straight onto $display. Wayland: as the single client of a headless cage kiosk
+## (software pixman compositor + software Vulkan), DISPLAY unset so winit can only pick
+## the Wayland backend. cage inherits the child's stderr, so the same SILK_SCROLLDBG
+## trace comes through either way (cage's own stderr lines don't match the trace regex).
+spawn_silk(){
+	local shellcmd="$1" logf="$2" tracef="$3"
+	if ((wayland)); then
+		WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 WLR_HEADLESS_OUTPUTS=1 \
+		XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" \
+		SILK_SCROLLDBG=1 SILK_SCENE_SETTLE="$settle" SILK_SCENE_STEP="$step" \
+		LIBGL_ALWAYS_SOFTWARE=1 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json SHELL=/bin/dash \
+			cage -- /bin/dash -c 'unset DISPLAY; exec "$0" --config "$1" --shell "$2"' \
+				"$bin" "$cfg" "$shellcmd" >"$logf" 2>"$tracef" &
+	else
+		SILK_SCROLLDBG=1 SILK_SCENE_SETTLE="$settle" SILK_SCENE_STEP="$step" \
+			DISPLAY="$display" XAUTHORITY="$auth" LIBGL_ALWAYS_SOFTWARE=1 SHELL=/bin/dash \
+			"$bin" --config "$cfg" --shell "$shellcmd" >"$logf" 2>"$tracef" &
+	fi
+	spawned_pid=$!
+}
+
+## Stop what spawn_silk started. X11: our SilkTerm PID (exe-path guarded). Wayland: the
+## cage kiosk we launched (exact captured PID, unambiguously ours); killing it takes the
+## SilkTerm child down with it.
+stop_silk(){
+	local pid="$1"
+	if ((wayland)); then
+		kill "$pid" 2>/dev/null || true
+		local i; for i in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+		kill -9 "$pid" 2>/dev/null || true
+	else
+		kill_ours "$pid" "$bin"
+	fi
+}
+
+pass=0; fail=0; miss=0; spawned_pid=0
 
 ## Run one deterministic scene and judge its trace. shape|mode|expect_st.
 run_scene(){
 	local label="$1" shape="$2" mode="$3" est="$4"
 	local trace="${work}/${label}.trace"
-	SILK_SCROLLDBG=1 SILK_SCENE_SETTLE="$settle" SILK_SCENE_STEP="$step" \
-		DISPLAY="$display" XAUTHORITY="$auth" LIBGL_ALWAYS_SOFTWARE=1 SHELL=/bin/dash \
-		"$bin" --config "$cfg" --shell "/bin/dash ${meDir}/scenes/scene.bash ${shape}" \
-		>"${work}/${label}.log" 2>"$trace" &
-	local pid=$!
+	spawn_silk "/bin/dash ${meDir}/scenes/scene.bash ${shape}" "${work}/${label}.log" "$trace"
+	local pid=$spawned_pid
 
 	## GL warmup under llvmpipe swings widely with machine load (cicd runs this while
 	## the release + cross builds may still be busy), so a fixed sleep can expire before
@@ -170,7 +215,7 @@ run_scene(){
 		((frames >= want)) && break
 		sleep 0.5
 	done
-	kill_ours "$pid" "$bin"
+	stop_silk "$pid"
 	wait "$pid" 2>/dev/null || true
 
 	((verbose)) && fEcho_Clean "  ${label}: $(grep -c SCROLLDBG "$trace" 2>/dev/null || echo 0) trace frames"
@@ -200,13 +245,11 @@ real_smoke(){
 	local file="${work}/${app}.txt" launch="${work}/${app}.launch.bash" trace="${work}/${app}.real.trace"
 	seq 1 400 | sed 's/^/line /' >"$file"
 	printf '#!/bin/dash\nexec %s %s\n' "$exe" "$file" >"$launch"
-	SILK_SCROLLDBG=1 DISPLAY="$display" XAUTHORITY="$auth" LIBGL_ALWAYS_SOFTWARE=1 SHELL=/bin/dash \
-		"$bin" --config "$cfg" --shell "/bin/dash ${launch}" \
-		>"${work}/${app}.real.log" 2>"$trace" &
-	local pid=$!
+	spawn_silk "/bin/dash ${launch}" "${work}/${app}.real.log" "$trace"
+	local pid=$spawned_pid
 	sleep "$((settle + 4))"
 	local alive=0; kill -0 "$pid" 2>/dev/null && alive=1
-	kill_ours "$pid" "$bin"
+	stop_silk "$pid"
 	wait "$pid" 2>/dev/null || true
 	## An idle real app only builds on dirty frames, so a handful is expected; the
 	## signal is that it stayed alive (no hang) and rendered the alt screen (frames>0).
@@ -241,3 +284,4 @@ exit 0
 
 ##	History:
 ##		- 20260706 JC: Created.
+##		- 20260718 JC: --wayland pass (cage kiosk) alongside the X11 Xvfb pass.

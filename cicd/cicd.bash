@@ -310,11 +310,19 @@ fi
 ## on an environment miss (no Xvfb/binary) and exits non-zero only on a measured
 ## regression - which aborts here.
 if ((! quick)) && [[ -n "${SCROLL_HARNESS+x}" ]] && ((${#SCROLL_HARNESS[@]})); then
-	fEcho_Clean "scroll regression harness (headless) ..."
+	fEcho_Clean "scroll regression harness (headless, X11) ..."
 	if "${root}/${SCROLL_HARNESS[0]}" "${SCROLL_HARNESS[@]:1}"; then
-		fEcho "OK: scroll harness"
+		fEcho "OK: scroll harness (X11)"
 	else
-		fDie "scroll regression harness reported a regression"
+		fDie "scroll regression harness reported a regression (X11)"
+	fi
+	if [[ "${SCROLL_HARNESS_WAYLAND:-0}" == 1 ]]; then
+		fEcho_Clean "scroll regression harness (headless, Wayland) ..."
+		if "${root}/${SCROLL_HARNESS[0]}" "${SCROLL_HARNESS[@]:1}" --wayland; then
+			fEcho "OK: scroll harness (Wayland)"
+		else
+			fDie "scroll regression harness reported a regression (Wayland)"
+		fi
 	fi
 elif ((quick)); then
 	fEcho_Clean "scroll harness skipped (--quick)"
