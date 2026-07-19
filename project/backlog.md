@@ -50,38 +50,12 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- ✅ Windows: the Settings dialog opens *inside* the terminal window instead of as a separate modal dialog - clipped to the terminal, so at higher DPI (dialog bigger than the terminal) some settings are unreachable.
-	- Cause: on Windows the dialog was created as an embedded child window of the terminal (the cross-platform "tie to parent" call means child-of, not owned-by, there). A child window is clipped to its parent's client area and never gets its own keyboard activation.
-	- Fix: create it as an owned top-level window instead - floats above the terminal, sized independently, off the taskbar, closes with it. Also now opens centered over the terminal (Windows gives owned windows no automatic placement).
-
-- ✅ Windows: can't type in the Settings dialog's text fields.
-	- Same root cause as the embedded-dialog bug above: a child window never receives keyboard focus, so no key events reached the dialog at all. Fixed by the owned-window change; keyboard verified end to end (dialog takes focus, keys land in it).
-	- Re-checked after a repeat report: on the current build, typed text demonstrably lands in the fields (typed a value, copied it out via the clipboard, saved it to config.toml). If it still fails on a given machine, the running copy predates the fix - refresh/rebuild the installed binary.
-
-- ✅ Windows: clipboard copy reported not working (any method - Ctrl+Shift+C, right-click Copy, copy-on-highlight, the built-in copy-on-select), across panes; works in other terminals.
-	- Finding: the low-level clipboard write is fine on Windows - verified the whole chain end to end (a real drag-select lands the highlighted text on the clipboard, visible to other processes). So the failure was in the copy *gating*, not the clipboard: the auto-copy feature silently turned itself off constantly (it cleared on any tab/pane focus change, enabling it in one pane cleared every other pane, and it broadcast "off" to other windows), so from a multi-pane / multi-window session copy-on-highlight looked permanently broken.
-	- Fix: reworked as the feature refinement below (never auto-disables; per-active-pane). If a manual copy (Ctrl+Shift+C / right-click) still fails on a specific machine after this, it points to the environment (an RDP client-side clipboard sync or a third-party clipboard manager) rather than the app - needs the paste-target details to chase further.
-
-- ✅ Windows: text scrim wider per-line than the text behind it, starting wherever bold appears (not seen on Linux).
-	- Cause: the "blur bold at regular weight" option shapes a parallel de-bolded buffer for the scrim halo. Both it and the display buffer ask for a fixed cell pitch, but some fonts (Windows default faces) ignore that request and shape at their natural advance, where bold and regular differ - so the scrim (regular) and the text (bold) drift apart along the line.
-	- Fix: only de-bold the scrim when a bold run actually shapes to the same pitch as regular for the loaded font; otherwise draw the scrim from the display buffer (perfectly aligned, at the cost of a slightly heavier bold halo). Confirmed the mismatch triggers on this box's mono face.
-
 - 🛠️ Windows: doesn't respond to DPI scaling changes.
 	- The app only read the scale factor once, at startup, so moving the window to a differently-scaled monitor (or changing the Windows scaling slider) left the fonts/chrome at the old scale.
 	- Note: not a compiler thing - DPI awareness is a runtime/manifest property, identical between the mingw-gnu and msvc builds. The gnu exe carries no manifest overriding it, and winit already enables per-monitor-v2 awareness at startup.
 	- Fix: added a scale-factor-changed handler that re-scales the text context (cell metrics, chrome, pane buffers) for the new factor and relayouts; the window's follow-up resize reconfigures the surface. Shares the same rebuild path as a Settings font change.
 	- ✅ Static case confirmed: this Windows box is actually at 125% (an earlier "100%" reading was a DPI-unaware shell being fed a virtualized 96 DPI). A dogfood build renders crisply and natively at 125% - measured cell width ~11.3px and row pitch ~23px, both exactly 1.25x their 100% values, with sharp anti-aliasing (not a 100% render upscaled by the compositor). So the app reads and applies the scale correctly.
 	- 🔘 Live scale *change* still unverified: the ScaleFactorChanged handler needs an actual transition (a 2nd monitor at a different scale, or dragging the Windows scaling slider while running), which a single fixed-125% monitor can't produce.
-
-- ✅ Config file rewriting is proving problematic.
-	- For example, when user makes a "non-standard" change (e.g. some extra comments), they get removed in the background, and the editor notices the file changed.
-	- Fix: Only *write* to the file when A) Settings updated, or B) New options are added to the program. And in either case, first try to make sure nothing else has the file open for editing. If something else has it open:
-		- If in settings, warn and don't close settings. (Force user to cancel, or abort other editing first.)
-		- If writing new or changed program config settings, abort the write attempt, and output a non-alarming FYI to stderr.
-	- Done: dropped the launch-time reorder/comment-refresh pass entirely - that was what stripped hand-added comments and reformatted the file behind your back. Launch now only rewrites for a real reason: a renamed/removed option (migrate) or a genuinely new one (backfill), both of which only add/rename and never touch your other lines. A hand-edited file (extra comments, reordered keys) is now left byte-for-byte alone on relaunch.
-	- Done: before any write (launch-time migrate/backfill, remembered-size auto-save, and Settings save), a best-effort check sees whether another program has the file open (Linux, via /proc). If so: launch-time writes skip with a non-alarming stderr FYI; the Settings dialog leaves itself open on OK instead of closing over an unsaved change (the values still apply live for the session).
-	- 🔘 Follow-up: make the "config is open elsewhere, not saved" signal visible IN the Settings dialog (a small banner), not just a stderr FYI + the dialog staying open.
-	- Note: the open-elsewhere check only catches editors that hold the file descriptor open; an editor that opens/closes per save won't trip it, but in that case a write is harmless (backfill only appends).
 
 - ✋ The dreaded "Nano Bounce Bug" is back. This will be the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and possibly red-herrings. It obviously must be related in some way to smooth scrolling (the next time it happens I'll try turning it off to make sure). So let's get back to basics of what I know, and don't know:
 	- Steps:
@@ -93,6 +67,204 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
+- 🔘 Config file:
+	- 🔘 Use sister project "SHCL" for config language and structure, rather than TOML.
+	- 🔘 Convert already implicitly hierarchical config names, to actual nested hierarchical.
+	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
+	- 🔘 Each setting gets it's own newline-delimited (above and below) section, with helpful comments directly above the setting without newlines.
+	- 🔘 Common comment format, use what's appropriate for each setting:
+
+		~~~shcl
+
+		## Setting title   (not a repeat of the setting name)
+		## Brief description
+		## Range of values
+		## Low value means
+		## High value means
+		## Default value
+		# setting = value  ## Default
+		~~~
+
+	- 🔘 Use flowerboxing to divide sections, similar to how Settings dialog is divided (the future version, defined in "Refactor settings dialog" below):
+
+		~~~shcl
+
+		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+		## Section
+		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+		~~~
+
+- 🔘 Bake a default background into the executable, in case user has none.
+	- background53.jpg
+
+- 🔘 Settings dialog:
+	- When entering a text field, select all text by default.
+	- For numeric fields:
+		- Allow up and down arrows to make small (but meaningful) increments
+			- The range of the field will dictate how much each increment is. In this mode, there should be roughly 100 increments across the range.
+		- Shift+up and down arrows make 10x larger (and meaningful within the range) increments.
+			- The range of the field will dictate how much each increment is. In this mode, there should be roughly 10 increments across the range.
+
+- 🔘 Dialogs and menus:
+	- 🔘 Themes should have TWO highlight colors:
+		- 🔘 One color that calls attention to multiple things on the screen at once
+			- Example: Slider controls, default button outline, "OK" button, and clickable "reset" icons.
+			- Existing color is OK for this
+		- 🔘 Second highlight color should be a different, complimentary color that is also more vivid and saturated. That's for the current focus.
+		- 🔘 When text fields have focus highlight, there should only be one visible outline (rather than two - the highlight, AND the textbox outline).
+		- 🔘 The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
+
+- Rename everything that was "background image" or "background" (specifically referring to background image), to "wallpaper", including in:
+	- Source code
+	- Config file setting names and comments
+	- Program arguments
+	- (Defer settings dialog, that's in a separate enhancement.)
+
+- Refactor settings dialog
+	- Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
+		- Including the some of the main buttons:
+			- "Apply": "Apply changes now, without closing Settings."
+			- "OK": "Apply changes and close Settings."
+	- Tabs:
+		- Make buttons shaped more like tabs at the top of the dialog.
+			- Takes up less vertical space.
+			- Closer to the top but not touching.
+		- The tabs should sit on a darker (in dark mode) colored background, and directly on top of a line that separates that background (as a new named themable element), from the rest of the dialog below (like most tabbed interfaces).
+		- No "title" section for each tab, that mirrors the tab name. Just remove it.
+		- The currently selected tab should be a lighter gray, rather than "selected" color.
+		- Tabs navigable via CTRL+[PgUp|PgDn], and CTRL+[Tab|Shift+Tab].
+	- Express all slider values that range from 0.0 to 1.0, as an integer % from 0% to 100%. (But store as original decimal value in config though.)
+	- Tabs and grouping (settings content and tab reorg):
+		- "Groups" are organized, titled sections within a dialog tab page. Differentiated by a title, and with adequate spacing between groups so that they are visually separate.
+		- There is now the concept of "Sub-groups" within groups, distinguished through indentation of the leading text labels (but not the controls themselves).
+			- Sub-groups (and their style) can exist without Groups.
+			- Unlike a Group, a Sub-group begins with an actual control. (Whose text label is NOT indented, while everything below within the Sub-group is.)
+		- Tab: "Background"
+			- Sub-group: "Transparency" checkbox
+				- "Opacity" (%)
+				- "Blur-behind"
+			- Sub-group: File (formerly "Background image") text box.
+				- "Fit" checkboxes
+				- "Visibility" (%; formerly "Bg image opacity", also change config setting name)
+				- "Blur" (formerly "Bg image blur"; %)
+			- Sub-group: "Contrast mask" checkbox
+				- "Size" (Formerly "Mask size". 0% to 100%)
+				- "Strength" (Formerly "Mask strength". 0% to 100%)
+				- "Automask mix" (Formerly "Mask auto". 0% to 100%)
+		- Tab: "Text"
+			- Group "Font"
+				- Existing control order and naming are good. Just put them in group.
+			- Group "Text readability scrim"
+				- Sub-group: "Text scrim" checkbox
+					- "Scrim radius" (existing range and values)
+					- "Softness" (0% to 100%)
+					- "Outline px" (formerly "Text outline"; existing range and values)
+					- Function
+					- Falloff
+					- "Cursor" checkboxes
+		- Tab: "Movement" (formerly "Scrolling")
+		- Tab: "Colors"
+			- Group: "Themes"
+				- "Theme" (drop-down of selectable themes).
+				- Buttons aligned underneath theme dropdown box, arranged in one horizontal row:
+					- [Save]  [Save as ...]  [Rename]  [Delete]
+					- Behavior:
+						- [Save] is only enabled, if the user has unsaved changes to current theme. Even across sessions.
+						- [Save as ...] pops up a small dialog with the text "Enter a new theme name", and below that, an empty textbox. buttons at bottom-right "Cancel|OK" (OK default)
+						- [Rename] pops up a small dialog to edit existing name (all text selected by default), with buttons "Cancel|OK" (OK default).
+						- [Delete] pops up a confirmation Cancel|OK dialog (defaul Yes), and 'Really delete theme "<them name>"?'
+			- Group: "Colors" Update dynamically with theme selection and can be user-overridden and persisted, even if the named them that was tweaked, isn't saved.)
+				- Controls
+					- Sub-group: "Terminal background" (formerly labeled "Background")
+						- "Foreground"
+						- "Cursor"
+					- Sub-group: "Dialog and menu background"
+						- "Gutter" (a new color defining small areas with no interactive elements, e.g. behind the top tabs).
+						- "Highlights" (formerly "Focus ring"; same color but with expanded meaning as noted above)
+						- "Focus" (a new color category that used to be part of "Focus ring", but now applies only to focused element)
+				- Behavior changes
+					- When a hex field textbox gets focus, don't remove the existing value. Just highlight all, as now standard for textboxes.
+					- Make the colored boxes clickable. That pops up a color selection dialog.
+						- Standard photoshop-like dialog:
+							- A colored box on left representing saturation and brightness of a certain color.
+							- Immediately to the right of that, a thinner strip with a vertical slider control, to select the color from a rainbow covering the RGB rainbow.
+							- To the right of that, text boxes:
+								- Red %
+								- Green %
+								- Blue %
+								- Brightness %
+								- Saturation %
+								- Hex value
+							- At bottom right, buttons: "Cancel|OK" (default "OK")
+		- Tab: "Size" (formerly "Window")
+			- Sub-group: "Remember last size" checkbox
+				- Columns
+				- Rows
+			- Margin px
+		- Tab: "Shells"
+			- UI:
+				- A grid:
+					- Header row: "Title", "Shell command", "Active", "Comment"
+						- "Active" is a textbox. If checked, the shell title will show up under the future sub-menu item (to implement later), "Tabs/New tab with shell ... ->", (sub-menu showing a list of shells by title)
+				- Next to each row on the grid, on the right, with icons representing:
+					- "Move up" (disabled at the top)
+					- "Move down" (disabled at the bottom)
+					- "Edit" - Opens a popup dialog with the fields from the row in editable textbox form - and buttons "Cancel|OK".
+					- "Delete" - Opens a popup confirmation, like the "delete theme" confirmation spec from above.
+			- Behavior
+				- At startup - first, the terminal renders. Then launches a background process to search for [initial shells|changes to shell availability].
+					- If a shell exe name already exists in the list of shells, ignore it.
+					- Search for all the common shells for a given platform.
+						- For Linux:
+							- User's default shell goes at the top.
+								- If "Bash", add a second option below that, "bash --norc".
+								- Ditto if such a flag is available for user default shells that aren't bash.
+							- Include search for more obscure third-party shells like YSH, NuShell, Fish, etc.
+							- Include "Powershell 7", if installed.
+							- Include programming shells like "Python 3".
+							- If bash is
+						- For Windows:
+							- Include if exists: "Powershell 7", PyCmd, "Legacy Powershell 5", "Legacy CMD.exe", NuShell, etc.
+							- Also include shells found in WSL1 and WSL2
+								- Without launching them for shell discovery, if possible. (Research.)
+									- May be doable with WSL1, disk image is regular files - but with wonky permissions we may not have enough perms in user mode for.
+									- Probably not doable for WSL2, as the disk image is a .vhx or whatever - a virtual disk image. Would require launching the entire VM - super impractical, costly, and suprising (even a security risk for the user).
+								- Most likely this is not reasonable. So then just add "shell" items for the whole installed WSL1 or 2 distros themselves, without specifying a shell - discoverable without launching anything.
+									- The user can edit the shell item to add flags for specific shells, if they want.
+								- Will require special logic for Windows, to add the commands to launch named WSL1 or 2 distros
+				- If a new shell exe is found that doesn't already exist in the stored list, add it. (User can disable it later.)
+				- If an existing already defined shell exe name isn't found by explicit path, or in the environment path variable, disable it (don't delete it).
+
+- 🔘 Menu enhancements:
+	- All keyboard acellerators within a menu must be unique. (Winner goes to the most important and/or frequently used.)
+	- Remove:
+		- Tabs/Next tab
+		- Tabs/Previous tab
+		- Help/Support SilkTerm (already in "About" dialog)
+	- Add:
+		- View/Hide single tab  (not enabled by default - show tab even when there's only one)
+		- "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
+	- Change:
+		- "Edit/Read-only" -> "View/Read-only"
+
+- 🔘 Begin a detailed UI/UX '[repo]/project/uiux-style-guide.md'
+	1. Reverse engineer using existing work (mostly menus and settings dailog).
+	2. Refine the guide to be self-consistent and for a more user-friendly UI/UX.
+	3. Apply the updates across the project (mostly menus and settings dailog).
+
+- 🔘 Begin a '[repo]/glossary.md' and link to it in README.md:
+	- Defines unusual, technical, and/or highly specific English word terms used in the settings dialog, backlog, design.md, etc.
+	- Even in source code that are referred to or hinted at - frequently not rarely - as English words.
+	- Limit to concrete concepts that are unique to this project, not highly technical, and/or may be unfamiliar to, say, high-school reading level users.
+	- Targeted towards end users, as well as junior developers brand-new to the projecs.
+	- Limit the number of definitions to something like the top 20 to 50 terms most useful to define, in terms of uniqueness and approximate frequency. (E.g. "Scrim", "Contrast mask", and parts of the application UI, UX, settings, or features that are given specific names so that we know what's being referred to. Etc.)
+
+- 🛠️ Scroll-on-output enhancement: One additional setting: (20260629)
+	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
+		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
+	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
+
 - Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
 	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
 		- Ideally as packaged plug-ins (think shader kits or something that be traded online and dropped into a directory for auto-discovery).
@@ -103,45 +275,10 @@ In each section, items are listed approximately from newest to oldest.
 		- Tunable in config.
 		- If it doesn't work well on non-GPU acellerated platforms, just some kind of noticeable blink. But still need visual feedback.
 			- Need to decide what kind of feedback if not practical on non-GPU.
-	- Effect 2: When a command or program returns to the prompt, give a burst of visual feedback, with a strength linearly proportional to the amount of time it took.
+	- 🔘 Effect 2: When a command or program returns to the prompt, give a burst of visual feedback, with a strength linearly proportional to the amount of time it took.
 		- With an upper limit of course - say, an hour, config-tunable.
 		- Config-tunable selection of predefined burst effects.
 		- Default (and so far only): A glowing bright gold pulse that the cursor gives off upon landing back at the shell prompt, as if a yellow sun that shed an outer layer of blasma in a burst.
-
-- ✋ Config file: For each feature listed below, allow user to list programs (comma-delimited), that, when running, temporarily disable:
-	- Smooth scrolling. (Comma-delimited.)
-	- Smooth cursor movement and blink. (Comma-delimited.)
-	- Text scrim and outline
-		- Note: Should not affect existing still-visible text renedered before the program's output, or new output following the output from the affected program that is still visible. (Comma-delimited.)
-	- ✋ Deferred (design intent clarified): the scrim disable is meant to apply *only to that program's own output within a pane* - NOT per-pane / per-tab / per-window - so surrounding text (the prompt above, the resumed prompt below, unrelated scrollback) keeps its scrim. That is the hard part: the scrim is a single window-global pass (all glyphs -> one coverage texture -> blur -> composite), with no per-region concept. Honoring "just this command's output" for a normal-screen command like `ls` needs (a) tracking each command's output boundaries in the byte stream (start when the fg pgid becomes the command, end when it returns to the shell - the copy-on-output machinery), (b) mapping those logical lines onto current grid rows and re-mapping them every frame as things scroll and scrollback evicts, and (c) excluding exactly those cells from the coverage source. Fullscreen apps (vim/nano/less/htop) are the easy sub-case (the whole pane is their output), but the requested normal-screen case is not. Do NOT implement this as per-pane scrim on/off - that is a different, unwanted behavior.
-		- Smooth-scroll and smooth-cursor disable are individually tractable (per-pane, gated on the foreground program) if ever wanted on their own; only the scrim sub-item is the blocker. Kept as one deferred item.
-
-- ✅ Smooth cursor movement should speed up, if it falls too far behind where it actually is.
-	- Done: the horizontal slide's time-constant now shrinks with the gap, so the cursor accelerates the farther it trails its real column (a fast burst / paste catches up instead of dragging across the line), while a single-cell move keeps the gentle slide. A hard cap also keeps it from ever sitting more than a handful of cells behind. Internal tunables (`CURSOR_CATCHUP` / `CURSOR_MAX_LAG`); feel-test on real HW and tweak if wanted.
-
-- 🛠️ Scroll-on-output enhancement: One additional setting: (20260629)
-	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
-		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
-	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
-	- ✋ Held for your feel-test - scroll feel can't be judged headless, and this re-tunes the just-bounce-fixed output ease, so a blind guess risks the flagship smooth scroll. Proposed approach (not yet built): the ease already does a depth-based version of this (a short listing stays a shallow backlog near the slow "initial" speed; sustained output pins the backlog at the cap and ramps to the fast catch-up). To match the two named regimes, pass the pane height into `Scroll` and split the speed curve: while the cumulative advance since the burst started is under the pane height ("in-view"), use a middle tau that starts a touch quicker than initial, ramps gently, and caps below the current top speed; once it exceeds the pane height ("top line scrolled off"), ramp to the full fast catch-up. Expose the in-view start/cap/ramp as config knobs so you can dial the feel without a rebuild. Say the word and I'll build it with conservative defaults.
-
-- ✅ New setting: Background image contrast mask - flatten the image's contrast so it stops competing with text.
-	- Done: applies uniformly across the whole image, baked at load in linear light. A main on/off (default on) plus three 0..1 knobs (default 0.5 each): `size` = the flatten scale, the localMean radius (1.0 = half the longest pixel dimension, so the image collapses toward one tone; small = only fine detail flattens); `strength` = how far each pixel is pulled toward that local mean; `auto` = blends the manual knobs with values derived from the image's own busyness (1.0 = full auto, 0.0 = manual only, 0.5 = average). Config keys `background_contrast_mask` / `_size` / `_strength` / `_auto`; a Settings toggle + three sliders (sliders grey out while the mask is off).
-	- Verified: on a busy wallpaper the mask visibly lowers image contrast while overall brightness stays put (a flatten toward the mean, not a darkening).
-
-- ✅ Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
-	- Done: three config keys - `background_folder` (a folder, absolute or relative to the config dir; overrides `background_image` while set), `background_rotate_random` (filename order vs. random, never repeating the current image), and `background_rotate_interval_s` (seconds between swaps; 0 = pick one at startup only). Images are the formats the loader already decodes (png/jpg/webp/bmp/gif/tiff). Live swap reuses the existing wallpaper path, so it re-blurs and applies without a relaunch; a missing/empty folder just leaves the feature off.
-	- Verified: cycled a folder of three solid-colour images on a 2s timer and confirmed the background changed in order.
-
-- ✅ Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
-	- Done: full selection model in every editable field (text / hex color / numeric), cross-platform. Mouse: click places the caret, drag selects, Shift+click extends, double-click selects the word, triple-click selects all. Keyboard: Shift+arrows/Home/End extend, Ctrl+Left/Right jump by words, Ctrl+A select all, Ctrl+C/X/V copy/cut/paste (also Ctrl+Insert / Shift+Insert / Shift+Delete), Ctrl+Backspace/Delete delete by word. Typing or pasting replaces the selection; paste runs through each field's own validation (hex digits only in color fields, digits/single dot in numeric). Opening a field via keyboard selects its whole value so typing replaces it; the selection draws highlighted behind the text.
-	- Verified live on Windows end to end: typed into the Background image field, Ctrl+A/Ctrl+C landed the text on the system clipboard (read by another process), Ctrl+V replaced it, and OK persisted the pasted value to config.toml.
-	- ✅ In-field right-click menu (Cut/Copy/Paste) - the hotkeys and mouse selection cover everything functionally; add if wanted.
-		- Done: right-click in any editable field pops Cut / Copy / Paste / Delete / Select all (also the Menu key or Shift+F10, opening at the caret). Items grey out when inapplicable (no selection, empty clipboard); Up/Down + Enter drive it from the keyboard, Esc or a click elsewhere dismisses.
-
-- ✅ Settings dialog: text fields longer than the box must scroll with the cursor, like standard GUI textboxes everywhere (arrows, Home/End, typing, selecting, deleting, mouse drag past the edges).
-	- Done: each field keeps a horizontal view offset that follows the caret. Moving or typing toward an edge scrolls preemptively so a few characters stay visible ahead of travel; a little padding past end-of-text keeps the cursor clearly visible there; dragging a selection past either edge auto-scrolls and keeps selecting. Clicks land on the right character through the scrolled view. The scroll and the caret both ease smoothly, and the caret blinks with a soft fade instead of a hard on/off.
-	- Verified live on Windows: typed a 251-char path into the Background image field, travelled it with Home/End and long arrow runs, replaced it via the context menu's Paste, and OK persisted the result to config.toml.
 
 - 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
 
@@ -414,6 +551,32 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Verify smoothness on X11/Compiz.
 
 #### Done - Bugs
+
+- ✅ Config file rewriting is proving problematic.
+	- For example, when user makes a "non-standard" change (e.g. some extra comments), they get removed in the background, and the editor notices the file changed.
+	- Fix: Only *write* to the file when A) Settings updated, or B) New options are added to the program. And in either case, first try to make sure nothing else has the file open for editing. If something else has it open:
+		- If in settings, warn and don't close settings. (Force user to cancel, or abort other editing first.)
+		- If writing new or changed program config settings, abort the write attempt, and output a non-alarming FYI to stderr.
+	- Done: dropped the launch-time reorder/comment-refresh pass entirely.
+	- Done: before any write (launch-time migrate/backfill, remembered-size auto-save, and Settings save), a best-effort check sees whether another program has the file open (Linux, via /proc). If so: launch-time writes skip with a non-alarming stderr FYI; the Settings dialog leaves itself open on OK instead of closing over an unsaved change (the values still apply live for the session).
+	- Follow-up: make the "config is open elsewhere, not saved" signal visible IN the Settings dialog (a small banner), not just a stderr FYI + the dialog staying open.
+	- Note: the open-elsewhere check only catches editors that hold the file descriptor open; an editor that opens/closes per save won't trip it, but in that case a write is harmless (backfill only appends).
+
+- ✅ Windows: the Settings dialog opens *inside* the terminal window instead of as a separate modal dialog - clipped to the terminal, so at higher DPI (dialog bigger than the terminal) some settings are unreachable.
+	- Cause: on Windows the dialog was created as an embedded child window of the terminal (the cross-platform "tie to parent" call means child-of, not owned-by, there). A child window is clipped to its parent's client area and never gets its own keyboard activation.
+	- Fix: create it as an owned top-level window instead - floats above the terminal, sized independently, off the taskbar, closes with it. Also now opens centered over the terminal (Windows gives owned windows no automatic placement).
+
+- ✅ Windows: can't type in the Settings dialog's text fields.
+	- Same root cause as the embedded-dialog bug above: a child window never receives keyboard focus, so no key events reached the dialog at all. Fixed by the owned-window change; keyboard verified end to end (dialog takes focus, keys land in it).
+	- Re-checked after a repeat report: on the current build, typed text demonstrably lands in the fields (typed a value, copied it out via the clipboard, saved it to config.toml). If it still fails on a given machine, the running copy predates the fix - refresh/rebuild the installed binary.
+
+- ✅ Windows: clipboard copy reported not working (any method - Ctrl+Shift+C, right-click Copy, copy-on-highlight, the built-in copy-on-select), across panes; works in other terminals.
+	- Finding: the low-level clipboard write is fine on Windows - verified the whole chain end to end (a real drag-select lands the highlighted text on the clipboard, visible to other processes). So the failure was in the copy *gating*, not the clipboard: the auto-copy feature silently turned itself off constantly (it cleared on any tab/pane focus change, enabling it in one pane cleared every other pane, and it broadcast "off" to other windows), so from a multi-pane / multi-window session copy-on-highlight looked permanently broken.
+	- Fix: reworked as the feature refinement below (never auto-disables; per-active-pane). If a manual copy (Ctrl+Shift+C / right-click) still fails on a specific machine after this, it points to the environment (an RDP client-side clipboard sync or a third-party clipboard manager) rather than the app - needs the paste-target details to chase further.
+
+- ✅ Windows: text scrim wider per-line than the text behind it, starting wherever bold appears (not seen on Linux).
+	- Cause: the "blur bold at regular weight" option shapes a parallel de-bolded buffer for the scrim halo. Both it and the display buffer ask for a fixed cell pitch, but some fonts (Windows default faces) ignore that request and shape at their natural advance, where bold and regular differ - so the scrim (regular) and the text (bold) drift apart along the line.
+	- Fix: only de-bold the scrim when a bold run actually shapes to the same pitch as regular for the loaded font; otherwise draw the scrim from the display buffer (perfectly aligned, at the cost of a slightly heavier bold halo). Confirmed the mismatch triggers on this box's mono face.
 
 - ✅ Settings dialog changes not remembered after relaunch (surfaced as "Scrim falloff not saving"). The change showed live in the running app, then reverted on the next launch.
 	- Cause: `persist` (and `revert_keys`) parsed config.toml with strict TOML, while the loader tolerates a bare-decimal float (`.1` with no leading zero). Any such value in the file made every save bail early and silently write nothing - so no dialog change stuck. Not falloff-specific.
@@ -725,10 +888,32 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - new features and enhancements
 
+- ✅ New setting: Background image contrast mask - flatten the image's contrast so it stops competing with text.
+	- Done: applies uniformly across the whole image, baked at load in linear light. A main on/off (default on) plus three 0..1 knobs (default 0.5 each): `size` = the flatten scale, the localMean radius (1.0 = half the longest pixel dimension, so the image collapses toward one tone; small = only fine detail flattens); `strength` = how far each pixel is pulled toward that local mean; `auto` = blends the manual knobs with values derived from the image's own busyness (1.0 = full auto, 0.0 = manual only, 0.5 = average). Config keys `background_contrast_mask` / `_size` / `_strength` / `_auto`; a Settings toggle + three sliders (sliders grey out while the mask is off).
+	- Verified: on a busy wallpaper the mask visibly lowers image contrast while overall brightness stays put (a flatten toward the mean, not a darkening).
+
+- ✅ Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
+	- Done: three config keys - `background_folder` (a folder, absolute or relative to the config dir; overrides `background_image` while set), `background_rotate_random` (filename order vs. random, never repeating the current image), and `background_rotate_interval_s` (seconds between swaps; 0 = pick one at startup only). Images are the formats the loader already decodes (png/jpg/webp/bmp/gif/tiff). Live swap reuses the existing wallpaper path, so it re-blurs and applies without a relaunch; a missing/empty folder just leaves the feature off.
+	- Verified: cycled a folder of three solid-colour images on a 2s timer and confirmed the background changed in order.
+
+- ✅ Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
+	- Done: full selection model in every editable field (text / hex color / numeric), cross-platform. Mouse: click places the caret, drag selects, Shift+click extends, double-click selects the word, triple-click selects all. Keyboard: Shift+arrows/Home/End extend, Ctrl+Left/Right jump by words, Ctrl+A select all, Ctrl+C/X/V copy/cut/paste (also Ctrl+Insert / Shift+Insert / Shift+Delete), Ctrl+Backspace/Delete delete by word. Typing or pasting replaces the selection; paste runs through each field's own validation (hex digits only in color fields, digits/single dot in numeric). Opening a field via keyboard selects its whole value so typing replaces it; the selection draws highlighted behind the text.
+	- Verified live on Windows end to end: typed into the Background image field, Ctrl+A/Ctrl+C landed the text on the system clipboard (read by another process), Ctrl+V replaced it, and OK persisted the pasted value to config.toml.
+	- ✅ In-field right-click menu (Cut/Copy/Paste) - the hotkeys and mouse selection cover everything functionally; add if wanted.
+		- Done: right-click in any editable field pops Cut / Copy / Paste / Delete / Select all (also the Menu key or Shift+F10, opening at the caret). Items grey out when inapplicable (no selection, empty clipboard); Up/Down + Enter drive it from the keyboard, Esc or a click elsewhere dismisses.
+
+- ✅ Settings dialog: text fields longer than the box must scroll with the cursor, like standard GUI textboxes everywhere (arrows, Home/End, typing, selecting, deleting, mouse drag past the edges).
+	- Done: each field keeps a horizontal view offset that follows the caret. Moving or typing toward an edge scrolls preemptively so a few characters stay visible ahead of travel; a little padding past end-of-text keeps the cursor clearly visible there; dragging a selection past either edge auto-scrolls and keeps selecting. Clicks land on the right character through the scrolled view. The scroll and the caret both ease smoothly, and the caret blinks with a soft fade instead of a hard on/off.
+	- Verified live on Windows: typed a 251-char path into the Background image field, travelled it with Home/End and long arrow runs, replaced it via the context menu's Paste, and OK persisted the result to config.toml.
+
 - ✅ Verify and cover the Wayland engine (Linux runs native on both X11 and Wayland from one binary).
 	- Done: confirmed the single Linux binary renders the full UI on Wayland via the native wgpu path - menu chrome, scrolling text, background image + blur + text scrim all correct. No separate build: winit selects X11 or Wayland at runtime, and both display libraries are loaded on demand, so a future Wayland-only system needs no X11.
 	- Test harness: the scroll regression harness gained a `--wayland` pass that runs the same deterministic scenes under a headless `cage` kiosk (software compositor + software Vulkan). All four scenes (less/vim/nano/muffer) slide identically to X11. cicd runs both passes when `SCROLL_HARNESS_WAYLAND=1`; the Wayland pass self-skips where `cage` is absent.
-	- Not yet exercised on Wayland: per-pixel background transparency (a separate native-alpha path from the X11 GL one) and the pop-out dialog stacking/modality (the X11 WM hints no-op on Wayland, so it leans on the compositor). Left as follow-ups.
+	- Wayland transparency verified (2026-07-18): the native-alpha path works - a translucent terminal background over the compositor with text, chrome and cursor staying opaque, same as X11.
+	- Wayland dialog stacking verified visually (2026-07-18): a pop-out dialog opens as its own toplevel, renders fully, floats above the terminal, and the app-side modality holds; the compositor floats it from the fixed-size hint (the X11 WM hints correctly no-op). Dialog keyboard input could not be judged on the headless test rig - it drops keystrokes to any surface (no persistent seat keyboard), so this needs a real Wayland desktop to confirm; no defect found in the dialog code and X11 is unaffected.
+
+- ✅ Smooth cursor movement should speed up, if it falls too far behind where it actually is.
+	- Done: the horizontal slide's time-constant now shrinks with the gap, so the cursor accelerates the farther it trails its real column (a fast burst / paste catches up instead of dragging across the line), while a single-cell move keeps the gentle slide. A hard cap also keeps it from ever sitting more than a handful of cells behind. Internal tunables (`CURSOR_CATCHUP` / `CURSOR_MAX_LAG`); feel-test on real HW and tweak if wanted.
 
 - ✅ Settings dialog:
 	- ✅ Remove "Settings" heading text, it's redundant with the window title.
@@ -1419,6 +1604,18 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✋ Feature: Minority Report mode: Borderless, transparent, changes perspective depending on screen location.
 
+- ✋ Config file: For each feature listed below, allow user to list programs (comma-delimited), that, when running, temporarily disable:
+	- Smooth scrolling. (Comma-delimited.)
+	- Smooth cursor movement and blink. (Comma-delimited.)
+	- Text scrim and outline
+		- Note: Should not affect existing still-visible text renedered before the program's output, or new output following the output from the affected program that is still visible. (Comma-delimited.)
+	- ✋ Deferred: the scrim disable is meant to apply *only to that program's own output within a pane* - NOT per-pane / per-tab / per-window - so surrounding text (the prompt above, the resumed prompt below, unrelated scrollback) keeps its scrim. That is the hard part: the scrim is a single window-global pass with no per-region concept. Honoring "just this command's output" for a normal-screen command like `ls` needs:
+		- Tracking each command's output boundaries in the byte stream (start when the fg pgid becomes the command, end when it returns to the shell - the copy-on-output machinery),
+		- Mapping those logical lines onto current grid rows and re-mapping them every frame as things scroll and scrollback evicts, and
+		- Excluding exactly those cells from the coverage source. Fullscreen apps (vim/nano/less/htop) are the easy sub-case (the whole pane is their output), but the requested normal-screen case is not.
+		- Do not implement this as per-pane scrim on/off.
+		- Smooth-scroll and smooth-cursor disable are individually tractable (per-pane, gated on the foreground program) if ever wanted on their own; only the scrim sub-item is the blocker. Kept as one deferred item.
+
 - ✋ Feature: (Git) Implement branch protection rules on main:
 	- ✋ Require a pull request before merging (blocks direct pushes), and
 	- ✋ Require review from Code Owners.
@@ -1426,7 +1623,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Without this, I (as OG admin) can still merge around it, which is good early on.
 
 - ✋ Bug: Modal Bug - About only (almost certainly a Compiz issue): with the About/Settings dialog open, selecting another window then re-selecting the dialog leaves the terminal buried behind whatever got in front, instead of both coming to the top together. Settings now works; About still does this on some Compiz desktops.
-	- Almost certainly a Compiz WM issue, not a SilkTerm bug: About and Settings use the exact same dialog code path (window creation, transient-for + EWMH dialog/MODAL/SKIP_TASKBAR hints, and the raise-with-parent restack), so a difference between them is the WM's handling, not our code.
+	- Almost certainly a Compiz WM issue, not a SilkTerm bug. About and Settings use the exact same dialog code path, so a difference between them is the WM's handling.
 	- Note: the general case is fixed - the hints are set before the window maps, and since Compiz won't raise a transient's parent, the terminal is restacked under the dialog on focus and re-asserted briefly to outlast Compiz's animated settle. Verified on Compiz for both dialogs; the About-only failure couldn't be reproduced there.
 
 - ✋ Bug: Alt-screen enter/exit animated like a scroll (`smooth_scroll_apps`). Two symptoms: (a) opening nano "jiggles"/jelly-bounces or scrolls in from a few lines down; (b) exiting nano scrolls the previous screen contents back in from the bottom, where a normal terminal just cuts.

@@ -84,7 +84,7 @@ fSyntax(){  { ((doQuietly)) || ((wasShown_Syntax)); } && return; wasShown_Syntax
 fMain(){
 
 	## Settings
-	local baseCmdArgs="a -r0 -ep1 -rr -ol -m3"
+	local baseCmdArgs="a -r0 -ep1 -rr -m3"
 
 	## Generic variables
 	local -i wasShown_Copyright=0; local -i wasShown_About=0; wasShown_Syntax=0
@@ -149,7 +149,14 @@ fMain(){
 		git config user.email
 		fEcho_Clean
 		fEcho_Clean "SSH key being used"
-		ssh -nTv git@github.com 2>&1 | grep -iE "offering|successfully authenticated" | sed 's/debug1: //' || true  ## -n: don't read stdin, else it eats the next prompt's input
+		## Test the repo's actual remote host, not a hardcoded one, so the
+		## per-repo ssh alias/key is exercised (a generic github.com falls
+		## back to default key resolution and can report the wrong account).
+		## Handle every remote form: ssh:// scheme, scp-style git@host:path,
+		## and a bare alias:path with no user@ (the ssh-config Host supplies
+		## it) - the old '.*@' pattern silently failed on that last one.
+		local sshHost; sshHost="$(git remote get-url origin 2>/dev/null | sed -E 's|^[a-z][a-z0-9+.-]*://||; s|^[^@/]*@||; s|[:/].*$||')"
+		ssh -nTv git@${sshHost:-github.com} 2>&1 | grep -iE "offering|successfully authenticated" | sed 's/debug1: //' || true  ## -n: don't read stdin, else it eats the next prompt's input
 		fIntroPromptToContinue  ""
 		fEcho_Clean
 	fi
