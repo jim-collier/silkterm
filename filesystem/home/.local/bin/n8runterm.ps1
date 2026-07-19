@@ -18,8 +18,14 @@
 ##		- Prepends a random background image and a build-tagged title so a dogfood
 ##		  window is visually distinct. Both precede the passed args, so a caller can
 ##		  still override them.
-##		- Launches elevated (as administrator) only when passed '--admin'. That
-##		  flag is consumed here; all other args are still forwarded to the terminal.
+##		- With '--admin', runs the WHOLE launcher elevated (self-elevates via a UAC
+##		  prompt), so copying a fresh build into the target dir - and the launched
+##		  terminal - both run with admin rights. A shortcut click then behaves like
+##		  running from an elevated shell, instead of silently launching a stale build
+##		  because the medium-integrity click couldn't write the target dir.
+##		- Reports a failure or a skipped build copy in a dialog when launched from a
+##		  shortcut (or with '--gui'), since a click's console just flashes shut.
+##		  '--admin'/'--gui' are consumed here; all other args forward to the terminal.
 ##		- If no dogfood build is held and no source is reachable, falls back in
 ##		  order to: silkterm.exe on PATH, Windows Terminal, PyCmd, then cmd.exe.
 ##		- Edit fMain() to launch a different terminal instead.
@@ -185,7 +191,7 @@ function fCopyIfNewer {
 		Copy-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
 		fNote "copied $Tag -> $(Split-Path $dst -Leaf)"
 	} catch {
-		fWarn "couldn't copy $Tag build ($($_.Exception.Message))"
+		fWarn -Gui "couldn't copy $Tag build ($($_.Exception.Message))"
 	}
 }
 
@@ -440,11 +446,25 @@ function fPickRandomBackground {
 ## Informational note to the host (and the run log).
 function fNote { param([string]$Msg); fLog $Msg; Write-Host "n8runterm: $Msg" }
 
-## Non-fatal note to stderr (and the run log).
-function fWarn { param([string]$Msg); fLog "WARN: $Msg"; Write-Warning "n8runterm: $Msg" }
+## Non-fatal note to stderr (and the run log). Pass -Gui to also surface it in the
+## end-of-run dialog (the shortcut case, where the console flashes shut) - reserved
+## for real problems (a failed copy), not benign skips (an offline source).
+function fWarn {
+	param([string]$Msg, [switch]$Gui)
+	fLog "WARN: $Msg"
+	Write-Warning "n8runterm: $Msg"
+	if ($Gui) { $script:RunWarnings += $Msg }
+}
 
-## Fatal error to stderr (and the run log), then stop.
-function fFail { param([string]$Msg); fLog "FAIL: $Msg"; Write-Error "n8runterm: $Msg"; exit 1 }
+## Fatal error to stderr (and the run log), then stop. Pops a dialog first when GUI
+## feedback is on, so a shortcut click shows WHY instead of a blank flash.
+function fFail {
+	param([string]$Msg)
+	fLog "FAIL: $Msg"
+	if ($script:GuiFeedback) { fGuiShow -Msg $Msg -Icon Error -Title "SilkTerm dogfood - failed" }
+	Write-Error "n8runterm: $Msg"
+	exit 1
+}
 
 
 ## Append a timestamped line to the run log. Best-effort: logging must never be
@@ -488,23 +508,116 @@ function fSelfHealMotw {
 }
 
 
+## True when this process is running elevated (Administrators / high integrity).
+function fIsElevated {
+	$id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+	return (New-Object System.Security.Principal.WindowsPrincipal($id)).IsInRole(
+		[System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+
+## True when we were double-clicked (a .lnk / Explorer launch) rather than started
+## from a shell - Explorer is the parent of a shortcut click, a terminal (pwsh/cmd/
+## wt) is the parent of a command-line run. Used to auto-enable GUI feedback so a
+## flash-and-close shortcut can still report a failure. Best-effort -> $false.
+function fLaunchedFromShortcut {
+	try {
+		$parentId = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop).ParentProcessId
+		$parent   = (Get-Process -Id $parentId -ErrorAction Stop).ProcessName
+		return ($parent -ieq "explorer")
+	} catch { return $false }
+}
+
+
+## Show a modal message box. Never throws - feedback must not be the thing that
+## breaks a launch; a no-op if WinForms can't load.
+function fGuiShow {
+	param(
+		[Parameter(Mandatory)][string]$Msg,
+		[ValidateSet("Error", "Warning", "Information")][string]$Icon = "Information",
+		[string]$Title = "SilkTerm dogfood"
+	)
+	try {
+		Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+		[System.Windows.Forms.MessageBox]::Show(
+			$Msg, $Title,
+			[System.Windows.Forms.MessageBoxButtons]::OK,
+			[System.Windows.Forms.MessageBoxIcon]::$Icon) | Out-Null
+	} catch { }
+}
+
+
 #••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 # Script entry point
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-## Consume '--admin' (elevate the launched terminal); forward everything else.
-$passArgs = @()
+## Problems worth surfacing at the end (failed copies etc.), shown in a dialog when
+## launched from a shortcut. Must exist before any fWarn -Gui / fFail can run.
+$script:RunWarnings = @()
+
+## Consume our own flags; forward everything else to the terminal.
+##   --admin  run the WHOLE launcher elevated (self-elevates below) - copy, log and
+##            the launched terminal all get admin rights.
+##   --gui    force the end-of-run / failure dialog on (auto-on for a shortcut click).
+$wantAdmin = $false
+$forceGui  = $false
+$passArgs  = @()
 foreach ($arg in $args) {
-	if ($arg -ieq "--admin") { $RunAsAdmin = $true } else { $passArgs += $arg }
+	switch -Regex ($arg) {
+		'^--admin$' { $wantAdmin = $true; continue }
+		'^--gui$'   { $forceGui  = $true; continue }
+		default     { $passArgs += $arg }
+	}
 }
+
+$script:GuiFeedback = $forceGui -or (fLaunchedFromShortcut)
+
+## Self-elevate: with '--admin' but not already elevated, relaunch the whole script
+## elevated and hand off. Everything then runs high-integrity, so it no longer
+## matters whether the target dir grants a normal user write - the real fix for
+## "a shortcut click launches a stale build". The relaunch carries the original args
+## plus '--gui' (its parent is the UAC broker, not Explorer, so it can't re-detect
+## the shortcut). If consent is declined we DON'T abort - we fall through and run
+## non-elevated so the user still gets a terminal, with a dialog saying it may be
+## stale (the granted target-dir ACL usually lets even that copy succeed).
+if ($wantAdmin -and -not (fIsElevated)) {
+	$self = (Get-Process -Id $PID).Path      # the pwsh.exe hosting this script
+	$fwd  = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath) + $args + "--gui"
+	$fwd  = @($fwd | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
+	try {
+		Start-Process -FilePath $self -Verb RunAs -ArgumentList $fwd -ErrorAction Stop | Out-Null
+		exit 0
+	} catch {
+		fWarn "elevation declined; running without admin (a newer build may not copy)"
+		if ($script:GuiFeedback) {
+			fGuiShow -Icon Warning -Title "SilkTerm dogfood - not elevated" -Msg (
+				"Administrator access was declined.`n`nRunning without it - a newer " +
+				"build may not copy in, so an older one could launch.")
+		}
+	}
+}
+
+## Elevated (self- or from an elevated shell): also launch the terminal elevated.
+if ($wantAdmin) { $RunAsAdmin = $true }
 
 ## Kick everything off, passing through whatever's left.
 fMain -PassArgs $passArgs
 
+## Surface any real problems (failed copies etc.) for the shortcut case.
+if ($script:GuiFeedback -and $script:RunWarnings.Count) {
+	fGuiShow -Icon Warning -Title "SilkTerm dogfood" -Msg (
+		"Launched, but with issues:`n`n - " + ($script:RunWarnings -join "`n - "))
+}
+
 
 ##	History:
+##		- 2026-07-19 JC: '--admin' now self-elevates the whole launcher (was only the
+##		  launched terminal), so a non-elevated shortcut click copies the fresh build
+##		  instead of silently launching a stale one. Report failures / skipped copies
+##		  in a dialog for the shortcut case (console flashes shut); new '--gui' flag,
+##		  auto-on when double-clicked.
 ##		- 2026-07-17 JC: Strip a synced-on mark-of-the-web at startup so a later
 ##		  click under RemoteSigned isn't silently blocked.
 ##		- 2026-07-17 JC: Log every run's per-source copy decision (and each note/
