@@ -137,7 +137,11 @@ impl DialogWin {
 		// property write is read too late by Compiz et al - that's why re-selecting
 		// the dialog raised it alone and left the parent buried. The caller shows the
 		// window after the final resize (see new_about / new_settings).
-		#[cfg(target_os = "linux")]
+		// Windows: an owned popup gets no auto-placement and lands at the screen
+		// origin, so it must be created hidden, centered over the terminal, drawn
+		// once, then revealed by the caller - otherwise it flashes at (0,0) then
+		// jumps to center.
+		#[cfg(any(target_os = "linux", target_os = "windows"))]
 		{
 			attrs = attrs.with_visible(false);
 		}

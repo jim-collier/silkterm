@@ -66,6 +66,14 @@ In each section, items are listed approximately from newest to oldest.
 	- Cause: the "blur bold at regular weight" option shapes a parallel de-bolded buffer for the scrim halo. Both it and the display buffer ask for a fixed cell pitch, but some fonts (Windows default faces) ignore that request and shape at their natural advance, where bold and regular differ - so the scrim (regular) and the text (bold) drift apart along the line.
 	- Fix: only de-bold the scrim when a bold run actually shapes to the same pitch as regular for the loaded font; otherwise draw the scrim from the display buffer (perfectly aligned, at the cost of a slightly heavier bold halo). Confirmed the mismatch triggers on this box's mono face.
 
+- ✅ Windows: dialogs pop up in one spot then jump to another - visually jarring.
+	- Cause: an owned popup gets no automatic placement on Windows, so it was created (and shown) at the screen origin, then moved to center over the terminal - the move was visible as a jump.
+	- Fix: create the dialog hidden, center it, draw one frame at the final position, then reveal it. It now simply appears centered. Matches the map-last approach already used on Linux.
+
+- ✅ Windows: the main window first appears at a default size with a blank white background, then changes to its remembered size and the rendered terminal.
+	- Cause: the window was born visible at the default size before the remembered size and the first frame were ready, so the intermediate size and the unpainted (white) client were briefly on screen.
+	- Fix: create the window hidden, resize it to the remembered size, and reveal it only after the first frame is on screen - so it just appears at the right size, already rendered, like the Linux version.
+
 - 🛠️ Windows: doesn't respond to DPI scaling changes.
 	- The app only read the scale factor once, at startup, so moving the window to a differently-scaled monitor (or changing the Windows scaling slider) left the fonts/chrome at the old scale.
 	- Note: not a compiler thing - DPI awareness is a runtime/manifest property, identical between the mingw-gnu and msvc builds. The gnu exe carries no manifest overriding it, and winit already enables per-monitor-v2 awareness at startup.
