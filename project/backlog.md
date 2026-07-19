@@ -562,6 +562,14 @@ In each section, items are listed approximately from newest to oldest.
 	- Follow-up: make the "config is open elsewhere, not saved" signal visible IN the Settings dialog (a small banner), not just a stderr FYI + the dialog staying open.
 	- Note: the open-elsewhere check only catches editors that hold the file descriptor open; an editor that opens/closes per save won't trip it, but in that case a write is harmless (backfill only appends).
 
+- ✅ Windows: dialogs pop up in one spot then jump to another - visually jarring.
+	- Cause: an owned popup gets no automatic placement on Windows, so it was created (and shown) at the screen origin, then moved to center over the terminal - the move was visible as a jump.
+	- Fix: create the dialog hidden, center it, draw one frame at the final position, then reveal it. It now simply appears centered. Matches the map-last approach already used on Linux.
+
+- ✅ Windows: the main window first appears at a default size with a blank white background, then changes to its remembered size and the rendered terminal.
+	- Cause: the window was born visible at the default size before the remembered size and the first frame were ready, so the intermediate size and the unpainted (white) client were briefly on screen.
+	- Fix: create the window hidden, resize it to the remembered size, and reveal it only after the first frame is on screen - so it just appears at the right size, already rendered, like the Linux version.
+
 - ✅ Windows: the Settings dialog opens *inside* the terminal window instead of as a separate modal dialog - clipped to the terminal, so at higher DPI (dialog bigger than the terminal) some settings are unreachable.
 	- Cause: on Windows the dialog was created as an embedded child window of the terminal (the cross-platform "tie to parent" call means child-of, not owned-by, there). A child window is clipped to its parent's client area and never gets its own keyboard activation.
 	- Fix: create it as an owned top-level window instead - floats above the terminal, sized independently, off the taskbar, closes with it. Also now opens centered over the terminal (Windows gives owned windows no automatic placement).
