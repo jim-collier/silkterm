@@ -205,9 +205,13 @@ impl Default for Settings {
 			remember_size: true,
 			remembered_columns: 160,
 			remembered_rows: 48,
-			// alacritty's default delimiters: keep /.-_~ as word chars so paths
-			// and similar stay together on a double-click.
-			word_separators: alacritty_terminal::term::SEMANTIC_ESCAPE_CHARS.to_owned(),
+			// alacritty's default delimiters minus ':', so a Windows drive path
+			// (C:\...) stays whole on a double-click - and namespaced idents
+			// (std::vec) and URLs (http://) with it. /.-_~ are already word chars.
+			word_separators: alacritty_terminal::term::SEMANTIC_ESCAPE_CHARS
+				.chars()
+				.filter(|&c| c != ':')
+				.collect(),
 			selection_pairs: DEFAULT_SELECTION_PAIRS.to_owned(),
 			default_shell: String::new(),
 			command_line: String::new(),
@@ -1428,9 +1432,11 @@ opacity = 0.95
 ##=============================================================================
 
 ## Delimiters that bound a double-click word selection. The default keeps
-## / . - _ ~ as part of a word, so paths stay selected whole. Leave commented
-## for the default; set to your own string of separator characters to override.
-# word_separators = ",|:\"' ()[]{}<>"
+## : / . - _ ~ as part of a word, so paths (incl. C:\ drive paths), URLs and
+## namespaced identifiers stay selected whole. Leave commented for the default;
+## set to your own string of separator characters to override (add ':' back to
+## split on it).
+# word_separators = ",|\"' ()[]{}<>"
 
 ## Pairs whose contents a double-click selects when the click is inside a matched
 ## pair (highest precedence first). Leave commented for the default.
@@ -1499,6 +1505,20 @@ theme_mode = "dark"
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// ':' must NOT be a word separator, else a double-click on C:\... drops the
+	// drive prefix (the alacritty default splits on ':'). Regression guard.
+	#[test]
+	fn default_word_separators_keep_drive_colon() {
+		let d = Settings::default();
+		assert!(
+			!d.word_separators.contains(':'),
+			"':' should stay a word char so drive paths select whole"
+		);
+		// still a real separator set (space + comma remain delimiters)
+		assert!(d.word_separators.contains(' '));
+		assert!(d.word_separators.contains(','));
+	}
 
 	// A bare-decimal float (`.1`, missing leading zero) that the loader tolerates
 	// must not stop persist from saving. Regressed: persist strict-parsed the raw
