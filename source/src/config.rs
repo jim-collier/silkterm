@@ -100,7 +100,7 @@ pub struct Settings {
 	pub wheel_lines: f32,
 	pub alt_scroll_lines: f32,
 	pub output_ease_lines: f32,
-	pub smooth_scroll_apps: bool, // ease the line-jumps of full-screen apps (less/vim/muffer)
+	pub smooth_scroll_apps: bool, // ease the line-jumps of full-screen / repaint apps (less/vim/nano; ConPTY TUIs that scroll above a fixed input line)
 	pub margin: f32,              // logical px between content and pane edge
 	pub opacity: f32,             // background opacity 0..1 (1 = fully opaque)
 	pub transparent_background: bool, // X11: per-pixel bg transparency (text stays opaque) via a GL surface
@@ -168,7 +168,7 @@ impl Default for Settings {
 			wheel_lines: 3.0,
 			alt_scroll_lines: 3.0,
 			output_ease_lines: 1.0,
-			smooth_scroll_apps: false,
+			smooth_scroll_apps: true,
 			margin: 8.0,
 			opacity: 0.95,
 			transparent_background: false,
@@ -205,9 +205,13 @@ impl Default for Settings {
 			remember_size: true,
 			remembered_columns: 160,
 			remembered_rows: 48,
-			// alacritty's default delimiters: keep /.-_~ as word chars so paths
-			// and similar stay together on a double-click.
-			word_separators: alacritty_terminal::term::SEMANTIC_ESCAPE_CHARS.to_owned(),
+			// alacritty's default delimiters minus ':', so a Windows drive path
+			// (C:\...) stays whole on a double-click - and namespaced idents
+			// (std::vec) and URLs (http://) with it. /.-_~ are already word chars.
+			word_separators: alacritty_terminal::term::SEMANTIC_ESCAPE_CHARS
+				.chars()
+				.filter(|&c| c != ':')
+				.collect(),
 			selection_pairs: DEFAULT_SELECTION_PAIRS.to_owned(),
 			default_shell: String::new(),
 			command_line: String::new(),
@@ -1428,9 +1432,11 @@ opacity = 0.95
 ##=============================================================================
 
 ## Delimiters that bound a double-click word selection. The default keeps
-## / . - _ ~ as part of a word, so paths stay selected whole. Leave commented
-## for the default; set to your own string of separator characters to override.
-# word_separators = ",|:\"' ()[]{}<>"
+## : / . - _ ~ as part of a word, so paths (incl. C:\ drive paths), URLs and
+## namespaced identifiers stay selected whole. Leave commented for the default;
+## set to your own string of separator characters to override (add ':' back to
+## split on it).
+# word_separators = ",|\"' ()[]{}<>"
 
 ## Pairs whose contents a double-click selects when the click is inside a matched
 ## pair (highest precedence first). Leave commented for the default.
@@ -1466,11 +1472,13 @@ wheel_lines = 3.0          ## lines per wheel notch (smooth scrollback)
 alt_scroll_lines = 3.0     ## lines per wheel notch in full-screen apps (less, nano)
 output_ease_lines = 1.0    ## how far new output slides in before easing to rest
 
-## Ease the whole-line jumps of full-screen apps that own the screen (less, vim,
-## nano, htop, tmux, ...) so their scrolling slides instead of snapping. The
-## revealed strip fills with the background during the ~quarter-second slide.
-## Experimental; only clean line-scrolls are eased (big page-jumps still snap).
-# smooth_scroll_apps = false
+## Ease the whole-line jumps of apps that repaint a scrolling region instead of
+## growing scrollback: full-screen apps that own the screen (less, vim, nano, htop,
+## tmux, ...) and, on Windows, ConPTY-driven TUIs whose output scrolls above a fixed
+## input line. Their scrolling slides instead of snapping; the revealed strip fills
+## with the background during the ~quarter-second slide.
+## Only clean line-scrolls are eased (big page-jumps still snap).
+# smooth_scroll_apps = true
 
 ##=============================================================================
 ## Theme and colours
@@ -1499,6 +1507,20 @@ theme_mode = "dark"
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// ':' must NOT be a word separator, else a double-click on C:\... drops the
+	// drive prefix (the alacritty default splits on ':'). Regression guard.
+	#[test]
+	fn default_word_separators_keep_drive_colon() {
+		let d = Settings::default();
+		assert!(
+			!d.word_separators.contains(':'),
+			"':' should stay a word char so drive paths select whole"
+		);
+		// still a real separator set (space + comma remain delimiters)
+		assert!(d.word_separators.contains(' '));
+		assert!(d.word_separators.contains(','));
+	}
 
 	// A bare-decimal float (`.1`, missing leading zero) that the loader tolerates
 	// must not stop persist from saving. Regressed: persist strict-parsed the raw

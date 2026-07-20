@@ -50,6 +50,12 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- ✅ Windows: no smooth-scrolling in full-screen / scroll-region apps (muffer, nano), though it works on the Linux build.
+	- Scope (owner-confirmed): plain directory listings and mouse-wheel scrollback DO scroll smoothly on Windows; only apps that keep a fixed UI with a scrolling sub-region (muffer's bottom input box, nano's top/bottom bars) failed.
+	- Diagnosed on the Windows box via a per-frame probe reading real muffer + nano. ConPTY re-emits a scroll-region app's scrolling as an in-place repaint, so scrollback never grows: for nano (alt screen) `history` is 0 and the rows still translate cleanly (the signed clean-translate detector reports healthy shifts of 2-14 rows); for muffer (normal screen) `history` is frozen at 1 and `grew` is 0 every frame, so output-easing can never fire and there is no scrollback to ease through - yet the rows translate 1-2 at a time and the signed detector catches them. On a Unix PTY these scrolls arrive as real grid-scrolls, which is why Linux was fine.
+	- Fix: the app-scroll slide (fixed-UI + scrolling-region, no scrollback, synthesized reveal strip) is exactly the right mechanism but was gated to the alt screen only. Extended it to also engage on the normal screen when following with no scrollback growth (`repaint_scroll` in `pane.rs build`); the render side already consumes `app_off` regardless of screen. Plain output (grew>0) still uses output-easing; a static in-place redraw yields no clean shift so it stays put (no bounce). One `smooth_scroll_apps` setting now covers alt-screen apps (nano/vim/less) AND normal-screen repaint apps (muffer on ConPTY).
+	- Made default-on (owner call): `smooth_scroll_apps` now defaults `true` (was false), so nano and muffer both slide out of the box; explicit `= false` still opts out. Feel-test passed on the real display (both "much smoother", no bounce).
+
 - 🛠️ Windows: doesn't respond to DPI scaling changes.
 	- The app only read the scale factor once, at startup, so moving the window to a differently-scaled monitor (or changing the Windows scaling slider) left the fonts/chrome at the old scale.
 	- Note: not a compiler thing - DPI awareness is a runtime/manifest property, identical between the mingw-gnu and msvc builds. The gnu exe carries no manifest overriding it, and winit already enables per-monitor-v2 awareness at startup.
@@ -561,6 +567,14 @@ In each section, items are listed approximately from newest to oldest.
 	- Done: before any write (launch-time migrate/backfill, remembered-size auto-save, and Settings save), a best-effort check sees whether another program has the file open (Linux, via /proc). If so: launch-time writes skip with a non-alarming stderr FYI; the Settings dialog leaves itself open on OK instead of closing over an unsaved change (the values still apply live for the session).
 	- Follow-up: make the "config is open elsewhere, not saved" signal visible IN the Settings dialog (a small banner), not just a stderr FYI + the dialog staying open.
 	- Note: the open-elsewhere check only catches editors that hold the file descriptor open; an editor that opens/closes per save won't trip it, but in that case a write is harmless (backfill only appends).
+
+- ✅ Windows: dialogs pop up in one spot then jump to another - visually jarring.
+	- Cause: an owned popup gets no automatic placement on Windows, so it was created (and shown) at the screen origin, then moved to center over the terminal - the move was visible as a jump.
+	- Fix: create the dialog hidden, center it, draw one frame at the final position, then reveal it. It now simply appears centered. Matches the map-last approach already used on Linux.
+
+- ✅ Windows: the main window first appears at a default size with a blank white background, then changes to its remembered size and the rendered terminal.
+	- Cause: the window was born visible at the default size before the remembered size and the first frame were ready, so the intermediate size and the unpainted (white) client were briefly on screen.
+	- Fix: create the window hidden, resize it to the remembered size, and reveal it only after the first frame is on screen - so it just appears at the right size, already rendered, like the Linux version.
 
 - ✅ Windows: the Settings dialog opens *inside* the terminal window instead of as a separate modal dialog - clipped to the terminal, so at higher DPI (dialog bigger than the terminal) some settings are unreachable.
 	- Cause: on Windows the dialog was created as an embedded child window of the terminal (the cross-platform "tie to parent" call means child-of, not owned-by, there). A child window is clipped to its parent's client area and never gets its own keyboard activation.
@@ -1548,6 +1562,7 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ Double-clicking selects a word up to user-tweakable delimiters (sane defaults; full paths stay whole).
 	- Done. Double-click (<400ms, same cell) starts an alacritty `SelectionType::Semantic`. New `word_separators` config sets the delimiters; default = alacritty's (keeps /.-_~ as word chars). Verified: double-click selected a whole path.
+	- Refined: dropped ':' from the default delimiters, so a Windows drive path (`C:\...`) selects whole (was splitting off the drive); URLs and namespaced idents come along too. Override by adding ':' back to `word_separators`.
 
 - ✅ Settings GUI dialog with organized main tunables, with primary buttons: Cancel, Apply, OK. Default=OK.
 	- Done: `src/settings_ui.rs`: modal overlay (second pass, like the context menu) opened via Ctrl+, or right-click "Settings...". Sliders for opacity / bg-image opacity / font size / line height / margin / scroll-tau / wheel-lines, and swatch + hex field for the 4 colors. Cancel / Apply / OK (Enter=OK, Esc=Cancel). Live-apply: opacity re-sets window opacity, colors re-render, font/metrics rebuild the TextCtx + relayout; persisted in place via toml_edit (only changed keys, comments preserved, floats rounded). Foundation: `config::settings()` is now a swappable `Arc<Settings>` (`config::update`/`config::persist`). Verified: slider drag + Apply changed live opacity and persisted; hex typing recolored the swatch live; font-size change rebuilt text live without crashing. Not yet exposed (field table is trivially extensible): font_family, scrollback, alt/output scroll lines, background_fit, columns/rows, word_separators.

@@ -268,6 +268,19 @@ impl App {
 	#[cfg(not(target_os = "windows"))]
 	fn center_dialog(&self) {}
 
+	// Windows: the dialog is created hidden (see dialog::make), so after centering it
+	// draw one frame at the final position and then show it - no origin flash, no jump.
+	// Elsewhere the dialog is already mapped by new_about / new_settings.
+	#[cfg(target_os = "windows")]
+	fn reveal_dialog(&mut self) {
+		if let Some(d) = self.dialog.as_mut() {
+			d.render();
+			d.window.set_visible(true);
+		}
+	}
+	#[cfg(not(target_os = "windows"))]
+	fn reveal_dialog(&self) {}
+
 	fn apply_dialog_action(&mut self, action: crate::dialog::DialogAction) {
 		use crate::dialog::DialogAction as DA;
 		match action {
@@ -554,6 +567,10 @@ struct State {
 	dirty: bool,
 	bell_flash: f32,    // visual-bell brightness, set to 1.0 on BEL, decays to 0
 	size_tracked: bool, // false until the first frame, so startup/programmatic resizes don't overwrite remembered_size
+	// Windows: the window is born hidden and revealed after its first frame, so it
+	// never flashes the default size / blank-white client before rendering.
+	#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+	revealed: bool,
 	pending_size: Option<(usize, usize)>, // debounced remember-size: persisted after the size holds, not per resize tick
 	pending_size_at: Instant,
 	menu: Option<ContextMenu>,
@@ -2246,6 +2263,13 @@ impl State {
 
 		self.gfx.queue.submit(Some(encoder.finish()));
 		self.gfx.end_frame(frame);
+		// Windows: the window was created hidden; now that a real frame is on screen,
+		// reveal it at its final size and rendered state (no default-size/white flash).
+		#[cfg(target_os = "windows")]
+		if !self.revealed {
+			self.revealed = true;
+			self.window.set_visible(true);
+		}
 		if std::env::var_os("SILK_DUMP").is_some() {
 			self.gfx.dump_offscreen("/tmp/silk_offscreen.png");
 		}
@@ -2706,6 +2730,12 @@ impl ApplicationHandler<UserEvent> for App {
 			.with_transparent(true)
 			.with_inner_size(initial_size);
 		let attrs = with_app_id(attrs); // stable WM_CLASS/app_id
+		// Windows: born hidden, then resized to the remembered size and drawn once
+		// before being shown (revealed after the first frame in render). Otherwise it
+		// flashes the 1000x640 default with a blank-white client, then jumps to the
+		// real size and paints. Linux maps at the right size/state on its own.
+		#[cfg(target_os = "windows")]
+		let attrs = attrs.with_visible(false);
 
 		// On X11 the wgpu surface can't do per-pixel alpha, so we ALWAYS take the
 		// glutin GL path there (transparent-capable backend), regardless of the
@@ -2842,6 +2872,7 @@ impl ApplicationHandler<UserEvent> for App {
 			dirty: true,
 			bell_flash: 0.0,
 			size_tracked: false,
+			revealed: false,
 			pending_size: None,
 			pending_size_at: Instant::now(),
 			menu: None,
@@ -3626,6 +3657,7 @@ impl ApplicationHandler<UserEvent> for App {
 					Ok(d) => {
 						self.dialog = Some(d);
 						self.center_dialog();
+						self.reveal_dialog();
 						self.dialog_dirty = true;
 					}
 					Err(e) => eprintln!("{}: About window failed: {e}", config::APP_NAME),
@@ -3641,6 +3673,7 @@ impl ApplicationHandler<UserEvent> for App {
 				Ok(d) => {
 					self.dialog = Some(d);
 					self.center_dialog();
+					self.reveal_dialog();
 					self.dialog_dirty = true;
 				}
 				Err(e) => eprintln!("{}: Settings window failed: {e}", config::APP_NAME),
