@@ -100,7 +100,7 @@ pub struct Settings {
 	pub wheel_lines: f32,
 	pub alt_scroll_lines: f32,
 	pub output_ease_lines: f32,
-	pub smooth_scroll_apps: bool, // ease the line-jumps of full-screen apps (less/vim/muffer)
+	pub smooth_scroll_apps: bool, // ease the line-jumps of full-screen / repaint apps (less/vim/nano; muffer on ConPTY)
 	pub margin: f32,              // logical px between content and pane edge
 	pub opacity: f32,             // background opacity 0..1 (1 = fully opaque)
 	pub transparent_background: bool, // X11: per-pixel bg transparency (text stays opaque) via a GL surface
@@ -168,7 +168,7 @@ impl Default for Settings {
 			wheel_lines: 3.0,
 			alt_scroll_lines: 3.0,
 			output_ease_lines: 1.0,
-			smooth_scroll_apps: false,
+			smooth_scroll_apps: true,
 			margin: 8.0,
 			opacity: 0.95,
 			transparent_background: false,
@@ -1472,11 +1472,13 @@ wheel_lines = 3.0          ## lines per wheel notch (smooth scrollback)
 alt_scroll_lines = 3.0     ## lines per wheel notch in full-screen apps (less, nano)
 output_ease_lines = 1.0    ## how far new output slides in before easing to rest
 
-## Ease the whole-line jumps of full-screen apps that own the screen (less, vim,
-## nano, htop, tmux, ...) so their scrolling slides instead of snapping. The
+## Ease the whole-line jumps of apps that repaint a scrolling region instead of
+## growing scrollback: full-screen apps that own the screen (less, vim, nano, htop,
+## tmux, ...) and, on Windows, ConPTY-driven apps like muffer (whose output
+## scrolls above a fixed input box). Their scrolling slides instead of snapping; the
 ## revealed strip fills with the background during the ~quarter-second slide.
-## Experimental; only clean line-scrolls are eased (big page-jumps still snap).
-# smooth_scroll_apps = false
+## Only clean line-scrolls are eased (big page-jumps still snap).
+# smooth_scroll_apps = true
 
 ##=============================================================================
 ## Theme and colours
