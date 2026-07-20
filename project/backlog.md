@@ -73,33 +73,7 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- 🔘 Config file:
-	- 🔘 Use sister project "SHCL" for config language and structure, rather than TOML.
-	- 🔘 Convert already implicitly hierarchical config names, to actual nested hierarchical.
-	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
-	- 🔘 Each setting gets it's own newline-delimited (above and below) section, with helpful comments directly above the setting without newlines.
-	- 🔘 Common comment format, use what's appropriate for each setting:
-
-		~~~shcl
-
-		## Setting title   (not a repeat of the setting name)
-		## Brief description
-		## Range of values
-		## Low value means
-		## High value means
-		## Default value
-		# setting = value  ## Default
-		~~~
-
-	- 🔘 Use flowerboxing to divide sections, similar to how Settings dialog is divided (the future version, defined in "Refactor settings dialog" below):
-
-		~~~shcl
-
-		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-		## Section
-		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-
-		~~~
+- 🔘 Linux: On open, when it becomes visible, it should already be at its final size - rather than opening one size then resizing itself. Fixed this on Windows, but I didn't realize at the time that it affects Linux too, presumably just universal.
 
 - 🔘 Bake a default background into the executable, in case user has none.
 	- background53.jpg
@@ -121,13 +95,13 @@ In each section, items are listed approximately from newest to oldest.
 		- 🔘 When text fields have focus highlight, there should only be one visible outline (rather than two - the highlight, AND the textbox outline).
 		- 🔘 The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
 
-- Rename everything that was "background image" or "background" (specifically referring to background image), to "wallpaper", including in:
+- 🔘 Rename everything that was "background image" or "background" (specifically referring to background image), to "wallpaper", including in:
 	- Source code
 	- Config file setting names and comments
 	- Program arguments
 	- (Defer settings dialog, that's in a separate enhancement.)
 
-- Refactor settings dialog
+- 🔘 Refactor settings dialog
 	- Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
 		- Including the some of the main buttons:
 			- "Apply": "Apply changes now, without closing Settings."
@@ -253,6 +227,34 @@ In each section, items are listed approximately from newest to oldest.
 		- "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
 	- Change:
 		- "Edit/Read-only" -> "View/Read-only"
+
+- 🔘 Config file:
+	- 🔘 Use sister project "SHCL" for config language and structure, rather than TOML.
+	- 🔘 Convert already implicitly hierarchical config names, to actual nested hierarchical.
+	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
+	- 🔘 Each setting gets it's own newline-delimited (above and below) section, with helpful comments directly above the setting without newlines.
+	- 🔘 Common comment format, use what's appropriate for each setting:
+
+		~~~shcl
+
+		## Setting title   (not a repeat of the setting name)
+		## Brief description
+		## Range of values
+		## Low value means
+		## High value means
+		## Default value
+		# setting = value  ## Default
+		~~~
+
+	- 🔘 Use flowerboxing to divide sections, similar to how Settings dialog is divided (the future version, defined in "Refactor settings dialog" below):
+
+		~~~shcl
+
+		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+		## Section
+		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+		~~~
 
 - 🔘 Begin a detailed UI/UX '[repo]/project/uiux-style-guide.md'
 	1. Reverse engineer using existing work (mostly menus and settings dailog).
