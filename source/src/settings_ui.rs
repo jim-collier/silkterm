@@ -416,6 +416,14 @@ fn caret_from_click(text: &str, rel_x: f32, measure: &mut impl FnMut(&str) -> f3
 	}
 }
 
+// One arrow-key increment for a slider: ~1/100 of the range normally, ~1/10 with
+// Shift (so ~100 / ~10 steps span it), rounded to a whole unit (>=1) for int fields.
+fn slider_step(min: f32, max: f32, int: bool, shift: bool) -> f32 {
+	let span = (max - min).abs();
+	let raw = if shift { span / 10.0 } else { span / 100.0 };
+	if int { raw.round().max(1.0) } else { raw }
+}
+
 fn fields() -> Vec<Spec> {
 	use Key::*;
 	use Kind::*;
@@ -739,6 +747,7 @@ pub struct SettingsDialog {
 	pressed: Option<usize>,   // footer button held down (fires on release; drawn pressed)
 	edit: Option<EditState>,  // row being typed (hex for Color, path for Text)
 	edit_drag: Option<usize>, // field row being drag-selected with the mouse
+	select_all_on_up: bool, // a fresh single-click field entry: select all on release unless it became a drag
 	// multi-click detection (double = select word, triple = select all)
 	last_click: Option<(std::time::Instant, f32, f32)>,
 	click_streak: u8,
@@ -870,6 +879,7 @@ impl SettingsDialog {
 			pressed: None,
 			edit: None,
 			edit_drag: None,
+			select_all_on_up: false,
 			last_click: None,
 			click_streak: 0,
 			open: None,
@@ -1020,8 +1030,8 @@ impl SettingsDialog {
 		ring.extend((0..3).map(Focus::Button));
 		ring
 	}
-	// Tab / Shift+Tab (and Down / Up): move focus to the next/prev item in the
-	// ring, wrapping, and scroll a focused row into view.
+	// Tab / Shift+Tab (and Down / Up off a non-slider row): move focus to the
+	// next/prev item in the ring, wrapping, and scroll a focused row into view.
 	fn focus_move(&mut self, forward: bool) {
 		self.commit_edit();
 		self.open = None; // Tab/arrow away closes any open popup
@@ -1090,7 +1100,8 @@ impl SettingsDialog {
 		}
 	}
 	// Up / Down arrows: navigate an open popup, else Alt+Down opens a focused
-	// dropdown, else walk control focus (a peer of Tab).
+	// dropdown, else step a focused numeric slider (spinbox feel), else walk control
+	// focus (a peer of Tab).
 	pub fn key_vertical(&mut self, forward: bool) {
 		if self.emenu.is_some() {
 			// walk the field context-menu items (wraps)
@@ -1122,7 +1133,45 @@ impl SettingsDialog {
 				}
 			}
 		}
+		// Up/Down step a focused numeric field (spinbox feel; Shift = 10x). Tab still
+		// walks between controls. Works whether the field is just focused or open.
+		// forward = Down (decrease); !forward = Up (increase).
+		if let Some(Focus::Row(i, _)) = self.focus {
+			if matches!(self.specs[i].kind, Kind::Slider { .. })
+				&& !self.disabled(self.specs[i].key)
+			{
+				self.step_slider(i, if forward { -1 } else { 1 }, self.shift);
+				return;
+			}
+		}
 		self.focus_move(forward);
+	}
+	// Adjust a focused/open slider by one arrow step (dir = +1/-1, Shift = 10x). When
+	// the field is open for editing, its buffer is refreshed to the new value and
+	// fully selected, so continued stepping and a following commit see the number.
+	fn step_slider(&mut self, i: usize, dir: i32, shift: bool) {
+		let Kind::Slider { min, max, int } = self.specs[i].kind else {
+			return;
+		};
+		let key = self.specs[i].key;
+		if self.disabled(key) {
+			return;
+		}
+		let step = slider_step(min, max, int, shift);
+		let mut value = (self.get_f32(key) + dir as f32 * step).clamp(min, max);
+		if int {
+			value = value.round();
+		}
+		self.set_f32(key, value);
+		if self.edit.as_ref().is_some_and(|e| e.row == i) {
+			let buf = self.fmt_val(key, int);
+			if let Some(edit) = &mut self.edit {
+				edit.cur = buf.len();
+				edit.sel = (!buf.is_empty()).then_some(0);
+				edit.buf = buf;
+				edit.view_to = 0.0;
+			}
+		}
 	}
 	// Left / Right: caret motion while a field is being edited, otherwise adjust
 	// the focused slider (by one step) or move a focused radio's selection.
@@ -1147,14 +1196,7 @@ impl SettingsDialog {
 			return;
 		}
 		match self.specs[i].kind {
-			Kind::Slider { min, max, int } => {
-				let step = if int { 1.0 } else { (max - min) / 100.0 };
-				let mut value = (self.get_f32(key) + dir as f32 * step).clamp(min, max);
-				if int {
-					value = value.round();
-				}
-				self.set_f32(key, value);
-			}
+			Kind::Slider { .. } => self.step_slider(i, dir, self.shift),
 			// closed dropdown: Left/Right nudge the value without opening (combobox feel)
 			Kind::Radio(options) | Kind::Dropdown(options) => {
 				let sel = self.get_radio(key) as i32;
@@ -2098,6 +2140,7 @@ impl SettingsDialog {
 		if !same_row {
 			self.open_edit(i, false);
 		}
+		self.select_all_on_up = false;
 		let (shift, streak) = (self.shift, self.click_streak);
 		self.focus = Some(Focus::Row(i, part));
 		let Some(edit) = &mut self.edit else { return };
@@ -2123,6 +2166,9 @@ impl SettingsDialog {
 				edit.cur = cur;
 				edit.sel = None;
 				self.edit_drag = Some(i);
+				// fresh entry (not repositioning a caret in the field already open):
+				// select all on release, unless the click turns into a drag-select
+				self.select_all_on_up = !same_row;
 			}
 		}
 	}
@@ -2319,7 +2365,7 @@ impl SettingsDialog {
 		// selecting: `animate` replays this pos while the view crawls)
 		if let Some(row) = self.edit_drag {
 			if let Some(field) = self.field_rect(row) {
-				if let Some(edit) = &mut self.edit {
+				let moved = if let Some(edit) = &mut self.edit {
 					let rel_x = x - (field.x + FIELD_PAD) + edit.view;
 					let cur = caret_from_click(&edit.buf, rel_x, measure);
 					if cur != edit.cur {
@@ -2327,7 +2373,16 @@ impl SettingsDialog {
 							edit.sel = Some(edit.cur);
 						}
 						edit.cur = cur;
+						true
+					} else {
+						false
 					}
+				} else {
+					false
+				};
+				// a click that turned into a drag keeps the dragged range, not select-all
+				if moved {
+					self.select_all_on_up = false;
 				}
 			}
 			return;
@@ -2363,6 +2418,16 @@ impl SettingsDialog {
 		if let Some(edit) = &mut self.edit {
 			if edit.sel == Some(edit.cur) {
 				edit.sel = None;
+			}
+		}
+		// a fresh single-click field entry that never became a drag selects all, so
+		// the next keystroke replaces the value (standard field entry)
+		if std::mem::take(&mut self.select_all_on_up) {
+			if let Some(edit) = &mut self.edit {
+				if edit.sel.is_none() && !edit.buf.is_empty() {
+					edit.sel = Some(0);
+					edit.cur = edit.buf.len();
+				}
 			}
 		}
 		if let Some(btn_idx) = self.pressed.take() {
@@ -3664,6 +3729,99 @@ mod tests {
 		assert!(d.get_radio(Key::BgFit) > before || before == 1);
 		d.key_horizontal(-1);
 		assert_eq!(d.get_radio(Key::BgFit), 0);
+	}
+
+	#[test]
+	fn slider_step_matches_spec() {
+		use super::slider_step;
+		// float: ~1/100 normally, ~1/10 with Shift
+		assert!((slider_step(0.0, 1.0, false, false) - 0.01).abs() < 1e-6);
+		assert!((slider_step(0.0, 1.0, false, true) - 0.1).abs() < 1e-6);
+		// int: rounded to a whole unit, never below 1
+		assert_eq!(slider_step(6.0, 40.0, true, false), 1.0); // 34/100 -> 0 -> 1
+		assert_eq!(slider_step(20.0, 400.0, true, false), 4.0); // 380/100 -> 4
+		assert_eq!(slider_step(20.0, 400.0, true, true), 38.0); // 380/10 -> 38
+	}
+
+	#[test]
+	fn up_down_step_focused_slider() {
+		use super::Key;
+		let mut d = mk_dialog(2000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::ScrollTau)
+			.unwrap();
+		d.tab = d.spec_tab[i];
+		d.focus = Some(super::Focus::Row(i, 0));
+		d.set_f32(Key::ScrollTau, 50.0);
+		d.key_vertical(false); // Up -> increase by 1 (int step)
+		assert_eq!(d.get_f32(Key::ScrollTau), 51.0);
+		d.key_vertical(true); // Down -> decrease
+		d.key_vertical(true);
+		assert_eq!(d.get_f32(Key::ScrollTau), 49.0);
+		d.set_mods(false, true, false); // Shift held
+		d.key_vertical(false); // Shift+Up -> ~1/10 of the range (10)
+		assert_eq!(d.get_f32(Key::ScrollTau), 59.0);
+	}
+
+	#[test]
+	fn up_down_step_slider_during_edit() {
+		use super::Key;
+		let mut d = mk_dialog(2000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::ScrollTau)
+			.unwrap();
+		d.tab = d.spec_tab[i];
+		d.focus = Some(super::Focus::Row(i, 0));
+		d.set_f32(Key::ScrollTau, 30.0);
+		d.key_space(); // open the field, fully selected
+		assert!(d.edit.is_some());
+		d.key_vertical(false); // Up steps the value and refreshes the buffer
+		assert_eq!(d.get_f32(Key::ScrollTau), 31.0);
+		assert_eq!(d.edit.as_ref().unwrap().buf, "31");
+		assert_eq!(d.selected_text().as_deref(), Some("31")); // stays fully selected
+	}
+
+	#[test]
+	fn fresh_click_selects_all_but_drag_keeps_range() {
+		use super::Key;
+		let i0 = mk_dialog(4000.0)
+			.specs
+			.iter()
+			.position(|s| s.key == Key::BgImage)
+			.unwrap();
+		let mut m = |s: &str| s.chars().count() as f32; // 1px per char
+		// fresh single click into a text field: select all on release
+		let mut d = mk_dialog(4000.0);
+		d.tab = d.spec_tab[i0];
+		d.edited.background_image_raw = "foo bar.png".to_string();
+		let field = d.textbox(i0);
+		let at = |k: usize| field.x + 6.0 + k as f32;
+		let y = field.y + field.h / 2.0;
+		d.mouse_down(at(2), y, &mut m);
+		assert!(d.edit.is_some(), "click opens the field");
+		assert!(d.selected_text().is_none(), "not selected until release");
+		d.mouse_up(at(2), y);
+		assert_eq!(
+			d.selected_text().as_deref(),
+			Some("foo bar.png"),
+			"a no-drag click selects all"
+		);
+		// a click that drags selects the dragged range instead
+		let mut d = mk_dialog(4000.0);
+		d.tab = d.spec_tab[i0];
+		d.edited.background_image_raw = "foo bar.png".to_string();
+		d.mouse_down(at(2), y, &mut m);
+		d.mouse_move(at(6), y, &mut m);
+		d.mouse_up(at(6), y);
+		assert_eq!(
+			d.selected_text().as_deref(),
+			Some("o ba"),
+			"a drag keeps its range"
+		);
 	}
 
 	#[test]
