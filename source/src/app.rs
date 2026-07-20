@@ -2622,19 +2622,30 @@ fn time_entropy() -> u64 {
 		.unwrap_or(0)
 }
 
+// A built-in wallpaper baked into the binary, shown when the user has none
+// configured (background_default). ~100KB - negligible next to the binary.
+const DEFAULT_BACKGROUND: &[u8] = include_bytes!("../assets/default-background.jpg");
+
 fn load_bg_image(gfx: &Gfx) -> Option<ImageRenderer> {
 	let settings = config::settings();
-	let path = settings.background_image.as_ref()?;
-	let mut img = match image::open(path) {
-		Ok(i) => i.to_rgba8(),
-		Err(e) => {
-			eprintln!(
-				"{}: background image {}: {e}",
-				config::APP_NAME,
-				path.display()
-			);
-			return None;
+	let mut img = if let Some(path) = settings.background_image.as_ref() {
+		match image::open(path) {
+			Ok(i) => i.to_rgba8(),
+			Err(e) => {
+				eprintln!(
+					"{}: background image {}: {e}",
+					config::APP_NAME,
+					path.display()
+				);
+				return None;
+			}
 		}
+	} else if settings.background_default && settings.background_folder.is_none() {
+		// No image or rotation folder configured: fall back to the embedded default
+		// so a fresh install still looks the part. Opt out with background_default.
+		image::load_from_memory(DEFAULT_BACKGROUND).ok()?.to_rgba8()
+	} else {
+		return None;
 	};
 	// Blur and contrast-flatten, done in LINEAR light (decode sRGB -> process in
 	// f32 -> re-encode) so transitions are gamma-correct; an sRGB-space blur
