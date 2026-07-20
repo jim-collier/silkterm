@@ -567,10 +567,14 @@ struct State {
 	dirty: bool,
 	bell_flash: f32,    // visual-bell brightness, set to 1.0 on BEL, decays to 0
 	size_tracked: bool, // false until the first frame, so startup/programmatic resizes don't overwrite remembered_size
-	// Windows: the window is born hidden and revealed after its first frame, so it
-	// never flashes the default size / blank-white client before rendering.
-	#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+	// The window is born hidden and revealed once a real frame is on screen at its
+	// final (grid-derived) size, so it never flashes the default size / blank client
+	// before painting. reveal_want is the physical size to wait for when the startup
+	// resize was async (None = reveal on the first frame); reveal_deadline is a hard
+	// fallback so an async or WM-adjusted resize can't strand the window hidden.
 	revealed: bool,
+	reveal_want: Option<winit::dpi::PhysicalSize<u32>>,
+	reveal_deadline: Instant,
 	pending_size: Option<(usize, usize)>, // debounced remember-size: persisted after the size holds, not per resize tick
 	pending_size_at: Instant,
 	menu: Option<ContextMenu>,
@@ -1273,7 +1277,9 @@ impl State {
 
 	// Wallpaper rotation: if background_folder is configured, scan it, show the
 	// first (or a random) image now, and arm the timer if an interval is set.
-	fn init_wallpaper_rotation(&mut self) {
+	// skip_initial keeps a CLI-specified wallpaper on screen at launch (still scans
+	// + arms the timer, so scheduled rotation proceeds once the interval elapses).
+	fn init_wallpaper_rotation(&mut self, skip_initial: bool) {
 		let settings = config::settings();
 		let Some(dir) = settings.background_folder.clone() else {
 			return;
@@ -1285,6 +1291,14 @@ impl State {
 				config::APP_NAME,
 				dir.display()
 			);
+			return;
+		}
+		if skip_initial {
+			// Leave the CLI wallpaper showing; queue the folder so the first timer
+			// tick lands on its natural first image (order) or a random one.
+			self.wp_index = self.wp_images.len() - 1;
+			let ivl = settings.background_rotate_interval_s;
+			self.wp_next = (ivl > 0.0).then(|| Instant::now() + Duration::from_secs_f32(ivl));
 			return;
 		}
 		self.wp_index = if settings.background_rotate_random {
@@ -2263,12 +2277,18 @@ impl State {
 
 		self.gfx.queue.submit(Some(encoder.finish()));
 		self.gfx.end_frame(frame);
-		// Windows: the window was created hidden; now that a real frame is on screen,
-		// reveal it at its final size and rendered state (no default-size/white flash).
-		#[cfg(target_os = "windows")]
+		// The window was created hidden; reveal it once a real frame is on screen at
+		// the final size (no default-size/blank flash). reveal_want (async resize)
+		// holds off until the surface reaches the grid size; the deadline is a hard
+		// fallback so a WM that grants a different size can't leave it stuck hidden.
 		if !self.revealed {
-			self.revealed = true;
-			self.window.set_visible(true);
+			let settled = self.reveal_want.is_none_or(|w| {
+				self.gfx.config.width == w.width && self.gfx.config.height == w.height
+			});
+			if settled || Instant::now() >= self.reveal_deadline {
+				self.revealed = true;
+				self.window.set_visible(true);
+			}
 		}
 		if std::env::var_os("SILK_DUMP").is_some() {
 			self.gfx.dump_offscreen("/tmp/silk_offscreen.png");
@@ -2730,11 +2750,10 @@ impl ApplicationHandler<UserEvent> for App {
 			.with_transparent(true)
 			.with_inner_size(initial_size);
 		let attrs = with_app_id(attrs); // stable WM_CLASS/app_id
-		// Windows: born hidden, then resized to the remembered size and drawn once
-		// before being shown (revealed after the first frame in render). Otherwise it
-		// flashes the 1000x640 default with a blank-white client, then jumps to the
-		// real size and paints. Linux maps at the right size/state on its own.
-		#[cfg(target_os = "windows")]
+		// Born hidden, then resized to the grid-derived size and drawn once before
+		// being shown (revealed after the first correct frame in render). Otherwise it
+		// flashes the 1000x640 default with a blank client, then jumps to the real
+		// size and paints - visible on X11/Wayland as well as Windows.
 		let attrs = attrs.with_visible(false);
 
 		// On X11 the wgpu surface can't do per-pixel alpha, so we ALWAYS take the
@@ -2823,10 +2842,17 @@ impl ApplicationHandler<UserEvent> for App {
 			}),
 		);
 		let mut scrim = scrim;
-		if let Some(applied) = window.request_inner_size(want) {
+		// If the resize applies synchronously (Windows), the first frame is already at
+		// the final size - reveal on it. Otherwise (async X11/Wayland) wait for the
+		// surface to reach `want` before revealing, so the window never maps at the
+		// default size first.
+		let reveal_want = if let Some(applied) = window.request_inner_size(want) {
 			gfx.resize(applied.width, applied.height);
 			scrim.resize(&gfx.device, applied.width, applied.height);
-		}
+			None
+		} else {
+			Some(want)
+		};
 
 		// initial content area, inset by the menu bar (when shown) and the tab
 		// bar (when the CLI makes >1 tab), so panes start correctly sized.
@@ -2873,6 +2899,8 @@ impl ApplicationHandler<UserEvent> for App {
 			bell_flash: 0.0,
 			size_tracked: false,
 			revealed: false,
+			reveal_want,
+			reveal_deadline: Instant::now() + Duration::from_millis(400),
 			pending_size: None,
 			pending_size_at: Instant::now(),
 			menu: None,
@@ -2891,8 +2919,12 @@ impl ApplicationHandler<UserEvent> for App {
 			wp_index: 0,
 			wp_next: None,
 		});
+		// A wallpaper given on the command line (--background-image, incl. an explicit
+		// clear) is an intentional per-session override; don't clobber it with the
+		// startup rotation pick. The timer still runs, so scheduled rotation proceeds.
+		let cli_wallpaper = self.cli.win.style.bg_image.is_some();
 		if let Some(state) = self.state.as_mut() {
-			state.init_wallpaper_rotation();
+			state.init_wallpaper_rotation(cli_wallpaper);
 		}
 	}
 
@@ -3732,6 +3764,13 @@ impl ApplicationHandler<UserEvent> for App {
 			state.advance_wallpaper();
 		}
 		let bell_anim = state.bell_flash > 0.0;
+		// Until revealed (born hidden, shown at final size), keep rendering so the
+		// reveal check runs each cycle; the deadline wake below guarantees it can't
+		// stay hidden if no post-resize frame is otherwise triggered.
+		if !state.revealed {
+			state.dirty = true;
+		}
+		let reveal_wake = (!state.revealed).then_some(state.reveal_deadline);
 		let flow = if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
 			// UI/chrome changes and the bell force ALL panes to re-shape; fresh
 			// output and scroll eases are scoped per pane inside render (a pure
@@ -3789,6 +3828,13 @@ impl ApplicationHandler<UserEvent> for App {
 		};
 		// wake to rotate the wallpaper when its interval is up, even when idle
 		let flow = match (flow, state.wp_next) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
+		// wake at the reveal deadline so a hidden startup window is shown even if no
+		// post-resize frame arrives
+		let flow = match (flow, reveal_wake) {
 			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
