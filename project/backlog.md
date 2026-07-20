@@ -81,8 +81,11 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Skip startup rotation, if a wallpaper was specified on the command line.
 		- Done: a wallpaper given on the command line (--background-image, including an explicit clear) is kept on screen at launch instead of being overwritten by the rotation's startup pick. The folder is still scanned and the timer still armed, so scheduled rotation proceeds once the interval elapses (order mode's first tick lands on the folder's natural first image).
 
-- 🔘 Bake a default background into the executable, in case user has none.
+- ✅ Bake a default background into the executable, in case user has none.
 	- background53.jpg
+	- Done: background53.jpg (~100KB, negligible vs the ~13MB binary) is embedded via include_bytes and decoded as the wallpaper when no image and no rotation folder are configured. It runs through the same blur/contrast/opacity pipeline as a file wallpaper. New config key `background_default` (default true) opts out for a plain background-colored terminal.
+	- Note: this changes the look for anyone running with no wallpaper - fresh installs (and existing configs with no background_image/folder) now show the built-in one until they set `background_default = false`. Config-only for now (not in the Settings dialog, which is due for its big reorg); it backfills into existing configs as a commented default.
+	- Verified headless: with no wallpaper configured the embedded image renders; with `background_default = false` the background is solid.
 
 - 🔘 Settings dialog:
 	- When entering a text field, select all text by default.

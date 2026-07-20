@@ -107,6 +107,7 @@ pub struct Settings {
 	pub transparent_background_blur: bool, // X11: ask a KWin/picom compositor to blur the desktop behind the window
 	pub background_image: Option<PathBuf>, // resolved path, or None
 	pub background_image_raw: String, // the value as configured ("" = auto-detect); what the dialog shows
+	pub background_default: bool, // when no image/folder is configured, show the built-in wallpaper
 	pub background_folder: Option<PathBuf>, // rotate the wallpaper through this folder's images (overrides background_image)
 	pub background_rotate_random: bool,     // rotate randomly instead of in filename order
 	pub background_rotate_interval_s: f32,  // seconds between rotations (0 = pick one at startup only)
@@ -175,6 +176,7 @@ impl Default for Settings {
 			transparent_background_blur: false,
 			background_image: None,
 			background_image_raw: String::new(),
+			background_default: true,
 			background_folder: None,
 			background_rotate_random: false,
 			background_rotate_interval_s: 0.0,
@@ -485,6 +487,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 			doc["background_image"] = value(s.background_image_raw.trim());
 		}
 	}
+	if s.background_default != orig.background_default {
+		doc["background_default"] = value(s.background_default);
+	}
 
 	let mut set_color = |key: &str, color: [u8; 3], orig_color: [u8; 3]| {
 		if color != orig_color {
@@ -553,6 +558,7 @@ struct RawConfig {
 	transparent_background: Option<bool>,
 	transparent_background_blur: Option<bool>,
 	background_image: Option<String>,
+	background_default: Option<bool>,
 	background_folder: Option<String>,
 	background_rotate_random: Option<bool>,
 	background_rotate_interval_s: Option<f32>,
@@ -748,6 +754,7 @@ fn resolve(raw: RawConfig) -> Settings {
 			.unwrap_or(d.transparent_background_blur),
 		background_image_raw: raw.background_image.clone().unwrap_or_default(),
 		background_image: resolve_bg_image(raw.background_image),
+		background_default: raw.background_default.unwrap_or(d.background_default),
 		background_folder: resolve_bg_folder(raw.background_folder),
 		background_rotate_random: raw.background_rotate_random.unwrap_or(false),
 		background_rotate_interval_s: raw.background_rotate_interval_s.unwrap_or(0.0).max(0.0),
@@ -1355,6 +1362,10 @@ opacity = 0.95
 ## Background image. Leave commented to auto-detect backgrounds/background.{png,jpg,jpeg}
 ## under this directory. Value may be an absolute path or a filename relative here.
 # background_image = "background.png"
+
+## Show a built-in wallpaper when none is configured (no background_image found
+## above and no background_folder below). Set false for a plain terminal.
+# background_default = true
 
 ## Rotate the wallpaper through a folder of images (overrides background_image
 ## while set). Path is absolute or relative to this directory. Rotate randomly
