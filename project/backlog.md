@@ -87,9 +87,11 @@ In each section, items are listed approximately from newest to oldest.
 	- Note: this changes the look for anyone running with no wallpaper - fresh installs (and existing configs with no background_image/folder) now show the built-in one until they set `background_default = false`. Config-only for now (not in the Settings dialog, which is due for its big reorg); it backfills into existing configs as a commented default.
 	- Verified headless: with no wallpaper configured the embedded image renders; with `background_default = false` the background is solid.
 
-- 🔘 Settings dialog:
-	- When entering a text field, select all text by default.
-	- For numeric fields:
+- ✅ Settings dialog:
+	- ✅ When entering a text field, select all text by default.
+		- Done: keyboard entry (Space/Enter/first typed char) already selected all; now a fresh single mouse-click into a field also selects all on release. A click that turns into a drag keeps the dragged range instead, and clicking again inside a field you're already editing still repositions the caret.
+	- ✅ For numeric fields:
+		- Done: Up/Down arrows step a focused (or open) numeric field by ~1/100 of its range (roughly 100 steps across it), rounded to a whole unit for integer fields. Shift+Up/Down steps ~1/10 (roughly 10 steps). Left/Right (which already stepped when focused) share the same step sizes and gain Shift for the 10x step too. Tab still walks between controls. During an edit the field's shown value updates and stays fully selected as you step.
 		- Allow up and down arrows to make small (but meaningful) increments
 			- The range of the field will dictate how much each increment is. In this mode, there should be roughly 100 increments across the range.
 		- Shift+up and down arrows make 10x larger (and meaningful within the range) increments.
