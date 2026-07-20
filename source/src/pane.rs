@@ -713,12 +713,12 @@ impl Pane {
 		let mut shift_dbg = 0i32;
 		// The slide handles a full-screen repaint - a fixed UI with a scrolling region,
 		// no scrollback growth. On the alt screen that's nano/vim/less. On Windows, ConPTY
-		// re-emits a normal-screen scroll-region app's scrolling (e.g. muffer's output
-		// above its input box) as an in-place repaint: history never grows (so output-easing
-		// can't fire, and there's no scrollback to ease through) but the rows still translate
-		// cleanly. Detect that - following, no scrollback growth, buffer not full - and slide
-		// it the same way. grew>0 (plain output) still uses output-easing; a static in-place
-		// redraw yields no clean shift, so it stays put (no bounce).
+		// re-emits a normal-screen TUI's region-scroll (output scrolling above a fixed input
+		// line) as an in-place repaint: history never grows (so output-easing can't fire, and
+		// there's no scrollback to ease through) but the rows still translate cleanly. Detect
+		// that - following, no scrollback growth, buffer not full - and slide it the same way.
+		// grew>0 (plain output) still uses output-easing; a static in-place redraw yields no
+		// clean shift, so it stays put (no bounce).
 		let repaint_scroll = !alt && follow && grew == 0 && !full;
 		if settings.smooth_scroll_apps
 			&& (alt || repaint_scroll)
