@@ -73,7 +73,13 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- 🔘 Linux: On open, when it becomes visible, it should already be at its final size - rather than opening one size then resizing itself. Fixed this on Windows, but I didn't realize at the time that it affects Linux too, presumably just universal.
+- ✅ Linux: On open, when it becomes visible, it should already be at its final size - rather than opening one size then resizing itself. Fixed this on Windows, but I didn't realize at the time that it affects Linux too, presumably just universal.
+	- Done: the born-hidden-then-reveal path (already used on Windows) is now universal. The window is created hidden, resized to the grid-derived size, and only shown once a frame has rendered at that size. On X11/Wayland the startup resize is async, so the reveal waits until the surface reaches the target size (with a short deadline fallback so a WM that grants a slightly different size can never leave the window stuck hidden).
+	- Verified headless on both xfwm4 and Compiz: the window is unmapped at the 1000x640 default the whole time it's that size, then reveals directly at the final grid size - never mapped at the default. The pixel-dims (born-at-size) path reveals promptly too.
+
+- Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
+	- ✅ Skip startup rotation, if a wallpaper was specified on the command line.
+		- Done: a wallpaper given on the command line (--background-image, including an explicit clear) is kept on screen at launch instead of being overwritten by the rotation's startup pick. The folder is still scanned and the timer still armed, so scheduled rotation proceeds once the interval elapses (order mode's first tick lands on the folder's natural first image).
 
 - 🔘 Bake a default background into the executable, in case user has none.
 	- background53.jpg
