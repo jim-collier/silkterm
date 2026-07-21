@@ -51,9 +51,13 @@ In each section, items are listed approximately from newest to oldest.
 ### Bugs
 
 - Windows:
-	- Bold font uses a proportional font, which skews space-based alignment output. (E.g. that muffer uses on startup screen.)
-	- Scrolling in muffer, and `less`, is juddery. Up-and-down motion, while making progress in the intended direction.
-	- The whole window stays in place when VirtuaWin swithes virtual workspaces.
+	- 🛠️ Bold font uses a proportional font, which skews space-based alignment output. (E.g. that muffer uses on startup screen.)
+		- This happens on a different Windows host, not this one. But the problem seems to be, need a more reliable font fallback, if either normal or bold is using a proportional font.
+		- Font is auto/unset there; regular is fine, only bold falls proportional. So the pinned mono family isn't guaranteeing a mono *bold* face. Fix defensively (pin a concrete mono family whose bold face is also fixed-pitch); verify on the affected host.
+	- 🛠️ Scrolling in muffer, and `less`, is juddery. Up-and-down motion, while making progress in the intended direction.
+		- Reproduces on this host, and with plain scrolled output too - not just full-screen apps - so it's the frame/output pacing, not the alt-screen slide detector alone.
+	- 🛠️ The whole window stays in place when VirtuaWin switches virtual workspaces.
+		- Likely a window-style/attribute issue: VirtuaWin doesn't recognize/manage the window. Fix best-guess; can't verify here (VirtuaWin not on this host).
 
 - ✋ The dreaded "Nano Bounce Bug" is back. This will be the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and possibly red-herrings. It obviously must be related in some way to smooth scrolling (the next time it happens I'll try turning it off to make sure). So let's get back to basics of what I know, and don't know:
 	- Steps:

@@ -12,7 +12,7 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::CursorShape;
-use glyphon::{Attrs, Buffer, Color as GColor, Shaping, Style, TextArea, TextBounds, Weight};
+use glyphon::{Attrs, Buffer, Color as GColor, Shaping, Style, TextArea, TextBounds};
 use winit::event_loop::EventLoopProxy;
 
 use crate::config;
@@ -968,7 +968,7 @@ impl Pane {
 					let mut attrs = mono_attrs();
 					attrs.color_opt = Some(GColor::rgb(run_color[0], run_color[1], run_color[2]));
 					if run_bold {
-						attrs.weight = Weight::BOLD;
+						attrs.weight = crate::text::mono_bold_weight();
 					}
 					if run_italic {
 						attrs.style = Style::Italic;
@@ -1196,7 +1196,7 @@ impl Pane {
 			let glyph = self.glyph_cache.entry(key).or_insert_with(|| {
 				let mut attrs = mono_attrs(); // colour left unset - the TextArea tints it
 				if bold {
-					attrs.weight = Weight::BOLD;
+					attrs.weight = crate::text::mono_bold_weight();
 				}
 				if italic {
 					attrs.style = Style::Italic;
@@ -1479,7 +1479,7 @@ impl Pane {
 			let mut attrs = mono_attrs();
 			attrs.color_opt = Some(GColor::rgb(style.0[0], style.0[1], style.0[2]));
 			if style.1 {
-				attrs.weight = Weight::BOLD;
+				attrs.weight = crate::text::mono_bold_weight();
 			}
 			if style.2 {
 				attrs.style = Style::Italic;

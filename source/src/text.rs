@@ -18,6 +18,12 @@ use crate::config;
 // than the regular run; pinning one name keeps every weight in it. `Attrs` needs
 // a 'static name, so the resolved string is leaked (rare - only on a font change).
 static MONO_FAMILY: RwLock<Option<&'static str>> = RwLock::new(None);
+// Nearest-to-Bold weight the pinned mono family actually ships. Terminal bold
+// runs request THIS, not a literal 700: a mono family with no bold face would
+// otherwise eject the whole run into a proportional bold fallback, whose
+// advances set_monospace_width can't snap - skewing space-based alignment (the
+// muffer startup screen, box-drawing, etc.). Mirrors chrome's UI_WEIGHT_BOLD.
+static MONO_WEIGHT_BOLD: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(700);
 
 fn mono_family() -> Option<&'static str> {
 	*MONO_FAMILY.read().unwrap()
@@ -25,8 +31,24 @@ fn mono_family() -> Option<&'static str> {
 
 // Re-resolve and pin the monospace family for the current config + font system.
 fn pin_mono_family(fs: &FontSystem) {
+	use std::sync::atomic::Ordering;
 	let name = resolve_mono_family(fs).map(|family| &*Box::leak(family.into_boxed_str()));
 	*MONO_FAMILY.write().unwrap() = name;
+	// Snap "bold" to the family's boldest available face so it can never eject the
+	// family. No pinned name (generic Monospace) -> keep 700, nothing to snap to.
+	let bold = match name {
+		Some(family) => nearest_face(fs.db(), family, 700, false).map_or(700, |(w, _)| w),
+		None => 700,
+	};
+	MONO_WEIGHT_BOLD.store(bold, Ordering::Relaxed);
+}
+
+// Weight a terminal bold cell should request: the closest weight to Bold the
+// pinned mono family really ships. Use instead of a literal Weight::BOLD, which
+// kicks the family out (into a proportional fallback) when it has no bold face.
+pub fn mono_bold_weight() -> glyphon::Weight {
+	use std::sync::atomic::Ordering;
+	glyphon::Weight(MONO_WEIGHT_BOLD.load(Ordering::Relaxed))
 }
 
 pub fn mono_attrs() -> Attrs<'static> {
@@ -690,7 +712,7 @@ fn bold_matches_cell(fs: &mut FontSystem, metrics: Metrics, cell_w: f32) -> bool
 	buf.set_monospace_width(fs, Some(cell_w));
 	buf.set_size(fs, None, None);
 	let mut attrs = mono_attrs();
-	attrs.weight = fontdb::Weight::BOLD;
+	attrs.weight = fontdb::Weight(MONO_WEIGHT_BOLD.load(std::sync::atomic::Ordering::Relaxed));
 	buf.set_text(fs, &"M".repeat(N), &attrs, Shaping::Advanced, None);
 	buf.shape_until_scroll(fs, false);
 	let adv = buf
@@ -758,6 +780,53 @@ mod tests {
 				assert!(
 					fams.iter().any(|n| n == want),
 					"chrome glyph shaped in {fams:?}, not the pinned family {want:?}"
+				);
+			}
+		}
+	}
+
+	// A terminal bold run must stay in the pinned monospace family. A literal
+	// Weight::BOLD in a mono family with no bold face ejects the run into a
+	// proportional bold fallback (advances set_monospace_width can't snap), which
+	// skews space-based alignment. mono_bold_weight() requests the family's
+	// boldest available face instead, so bold never leaves the family.
+	#[test]
+	fn mono_bold_stays_in_pinned_family() {
+		let mut fs = FontSystem::new();
+		pin_mono_family(&fs);
+		let mut attrs = mono_attrs();
+		let Family::Name(want) = attrs.family else {
+			eprintln!("no concrete mono family on this box; skipping");
+			return;
+		};
+		attrs.weight = mono_bold_weight();
+		// the pinned weight must be one the family actually ships
+		let shipped: Vec<u16> = fs
+			.db()
+			.faces()
+			.filter(|f| f.families.iter().any(|(n, _)| n == want))
+			.map(|f| f.weight.0)
+			.collect();
+		assert!(
+			shipped.contains(&mono_bold_weight().0),
+			"bold weight {} not shipped by {want:?} (has {shipped:?})",
+			mono_bold_weight().0
+		);
+		let mut b = Buffer::new(&mut fs, Metrics::new(16.0, 20.0));
+		b.set_monospace_width(&mut fs, Some(9.0));
+		b.set_size(&mut fs, Some(400.0), Some(30.0));
+		b.set_text(&mut fs, "MMMM", &attrs, Shaping::Advanced, None);
+		b.shape_until_scroll(&mut fs, false);
+		for run in b.layout_runs() {
+			for g in run.glyphs {
+				let fams: Vec<String> = fs
+					.db()
+					.face(g.font_id)
+					.map(|f| f.families.iter().map(|(n, _)| n.clone()).collect())
+					.unwrap_or_default();
+				assert!(
+					fams.iter().any(|n| n == want),
+					"bold mono glyph shaped in {fams:?}, not the pinned family {want:?}"
 				);
 			}
 		}
