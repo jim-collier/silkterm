@@ -30,7 +30,7 @@ pub enum Size {
 }
 
 // Cascading look/behaviour options; each level fills what it sets, the rest
-// inherit. `bg_image: Some(None)` means "explicitly no image".
+// inherit. `wallpaper_img: Some(None)` means "explicitly no image".
 #[derive(Debug, Default, Clone)]
 pub struct Style {
 	pub shell: Option<Vec<String>>, // argv (already shell-word-split)
@@ -39,9 +39,9 @@ pub struct Style {
 	pub font_size: Option<f32>,
 	pub bg_color: Option<[u8; 3]>,
 	pub fg_color: Option<[u8; 3]>,
-	pub bg_image: Option<Option<String>>,
-	pub bg_fit: Option<Fit>,
-	pub bg_opacity: Option<f32>,
+	pub wallpaper_img: Option<Option<String>>,
+	pub wallpaper_fit: Option<Fit>,
+	pub wallpaper_opacity: Option<f32>,
 }
 
 // Options that apply to the whole window (only valid before any tab/pane marker).
@@ -342,7 +342,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 		// then exit - see ctl.rs; main.rs short-circuits before any layout)
 		match name {
 			"wallpaper" => {
-				// value = new image path; bare flag = clear (mirrors --background-image)
+				// value = new image path; bare flag = clear (mirrors --wallpaper-file)
 				cli.wallpaper = Some(a.optional_value(inline));
 				continue;
 			}
@@ -471,23 +471,24 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 			"font-size" => style.font_size = Some(parse_f32(name, &a.value(name, inline)?)?),
 			"background-color" => style.bg_color = Some(parse_hex(name, &a.value(name, inline)?)?),
 			"foreground-color" => style.fg_color = Some(parse_hex(name, &a.value(name, inline)?)?),
-			"background-image" => {
+			// --background-image* are kept as aliases for the --wallpaper* names.
+			"wallpaper-file" | "background-image" => {
 				// value present -> that path; no value -> explicitly none. A bare
 				// flag followed by another option must not eat that option as a path.
-				style.bg_image = Some(a.optional_value(inline));
+				style.wallpaper_img = Some(a.optional_value(inline));
 			}
-			"background-image-stretch" => {
+			"wallpaper-stretch" | "background-image-stretch" => {
 				if a.bool_value(name, inline)? {
-					style.bg_fit = Some(Fit::Stretch);
+					style.wallpaper_fit = Some(Fit::Stretch);
 				}
 			}
-			"background-image-zoom" => {
+			"wallpaper-zoom" | "background-image-zoom" => {
 				if a.bool_value(name, inline)? {
-					style.bg_fit = Some(Fit::Zoom);
+					style.wallpaper_fit = Some(Fit::Zoom);
 				}
 			}
-			"background-image-opacity" => {
-				style.bg_opacity = Some(parse_f32(name, &a.value(name, inline)?)?);
+			"wallpaper-opacity" | "background-image-opacity" => {
+				style.wallpaper_opacity = Some(parse_f32(name, &a.value(name, inline)?)?);
 			}
 			_ => return Err(format!("unknown option: --{name}")),
 		}
@@ -527,15 +528,15 @@ pub fn fold_window_style(settings: &mut config::Settings, style: &Style) {
 	if let Some(color) = style.fg_color {
 		settings.fg = color;
 	}
-	if let Some(img) = &style.bg_image {
-		settings.background_image_raw = img.clone().unwrap_or_default();
-		settings.background_image = img.as_ref().map(PathBuf::from);
+	if let Some(img) = &style.wallpaper_img {
+		settings.wallpaper_raw = img.clone().unwrap_or_default();
+		settings.wallpaper = img.as_ref().map(PathBuf::from);
 	}
-	if let Some(fit) = style.bg_fit {
-		settings.background_fit = fit;
+	if let Some(fit) = style.wallpaper_fit {
+		settings.wallpaper_fit = fit;
 	}
-	if let Some(opacity) = style.bg_opacity {
-		settings.background_opacity = opacity;
+	if let Some(opacity) = style.wallpaper_opacity {
+		settings.wallpaper_opacity = opacity;
 	}
 }
 
@@ -548,9 +549,9 @@ impl WindowOpts {
 			|| style.font_size.is_some()
 			|| style.bg_color.is_some()
 			|| style.fg_color.is_some()
-			|| style.bg_image.is_some()
-			|| style.bg_fit.is_some()
-			|| style.bg_opacity.is_some();
+			|| style.wallpaper_img.is_some()
+			|| style.wallpaper_fit.is_some()
+			|| style.wallpaper_opacity.is_some();
 		if !any {
 			return;
 		}
@@ -619,7 +620,7 @@ Window options (must precede any tab/pane):
   --version                   program name + version + build
 
 Control (run from a shell inside a window; acts on that window, then exits):
-  --wallpaper [PATH]          change the background image live (no value = none)
+  --wallpaper [PATH]          change the wallpaper live (no value = none)
   --reload-settings           re-read the config file and apply it
 
 Layout:
@@ -639,10 +640,10 @@ Per-scope (window/tab/pane; cascades, most-specific wins):
   --font-size N               font size
   --background-color #rrggbb
   --foreground-color #rrggbb
-  --background-image \"path\"   (no value = none)
-  --background-image-stretch[=BOOL]
-  --background-image-zoom[=BOOL]
-  --background-image-opacity F
+  --wallpaper-file \"path\"      (no value = none; alias --background-image)
+  --wallpaper-stretch[=BOOL]   (alias --background-image-stretch)
+  --wallpaper-zoom[=BOOL]      (alias --background-image-zoom)
+  --wallpaper-opacity F        (alias --background-image-opacity)
 "
 }
 
@@ -736,19 +737,19 @@ mod tests {
 	}
 
 	#[test]
-	fn background_image_never_eats_the_next_option() {
+	fn wallpaper_never_eats_the_next_option() {
 		// bare flag followed by another option = explicitly none; the option survives
 		let c = p("--background-image --background-image-zoom");
-		assert_eq!(c.win.style.bg_image, Some(None));
-		assert_eq!(c.win.style.bg_fit, Some(Fit::Zoom));
+		assert_eq!(c.win.style.wallpaper_img, Some(None));
+		assert_eq!(c.win.style.wallpaper_fit, Some(Fit::Zoom));
 		// both value forms still work
 		let c = p("--background-image=/x.png");
-		assert_eq!(c.win.style.bg_image, Some(Some("/x.png".into())));
+		assert_eq!(c.win.style.wallpaper_img, Some(Some("/x.png".into())));
 		let c = p("--background-image /x.png");
-		assert_eq!(c.win.style.bg_image, Some(Some("/x.png".into())));
+		assert_eq!(c.win.style.wallpaper_img, Some(Some("/x.png".into())));
 		// trailing bare flag = none
 		let c = p("--background-image");
-		assert_eq!(c.win.style.bg_image, Some(None));
+		assert_eq!(c.win.style.wallpaper_img, Some(None));
 	}
 
 	#[test]
@@ -796,9 +797,9 @@ mod tests {
 		assert_eq!(s.font_size, 20.0);
 		assert_eq!(s.bg, [0x10, 0x20, 0x30]);
 		assert_eq!(s.fg, [0xab, 0xcd, 0xef]);
-		assert_eq!(s.background_image, Some(PathBuf::from("/x.png")));
-		assert_eq!(s.background_fit, config::Fit::Zoom);
-		assert_eq!(s.background_opacity, 0.5);
+		assert_eq!(s.wallpaper, Some(PathBuf::from("/x.png")));
+		assert_eq!(s.wallpaper_fit, config::Fit::Zoom);
+		assert_eq!(s.wallpaper_opacity, 0.5);
 	}
 
 	#[test]

@@ -213,13 +213,13 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::Transparency => &["transparent_background"],
 		Key::Opacity => &["opacity"],
 		Key::BackdropBlur => &["transparent_background_blur"],
-		Key::BgOpacity => &["background_opacity"],
-		Key::BgBlur => &["background_blur"],
-		Key::BgFit => &["background_fit"],
-		Key::BgContrastMask => &["background_contrast_mask"],
-		Key::BgContrastSize => &["background_contrast_mask_size"],
-		Key::BgContrastStrength => &["background_contrast_mask_strength"],
-		Key::BgContrastAuto => &["background_contrast_mask_auto"],
+		Key::BgOpacity => &["wallpaper_opacity"],
+		Key::BgBlur => &["wallpaper_blur"],
+		Key::BgFit => &["wallpaper_fit"],
+		Key::BgContrastMask => &["wallpaper_contrast_mask"],
+		Key::BgContrastSize => &["wallpaper_contrast_mask_size"],
+		Key::BgContrastStrength => &["wallpaper_contrast_mask_strength"],
+		Key::BgContrastAuto => &["wallpaper_contrast_mask_auto"],
 		Key::TextScrim => &["text_scrim"],
 		Key::ScrimRadius => &["text_scrim_radius"],
 		Key::ScrimSoftness => &["text_scrim_softness"],
@@ -228,7 +228,7 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::ScrimRamp => &["text_scrim_ramp"],
 		Key::CursorScrim => &["cursor_scrim"],
 		Key::CursorOutline => &["cursor_outline"],
-		Key::BgImage => &["background_image"],
+		Key::BgImage => &["wallpaper"],
 		Key::SystemFont => &["use_system_font"],
 		Key::FontFamily => &["font_family"],
 		Key::DefaultShell => &["default_shell"],
@@ -1566,11 +1566,11 @@ impl SettingsDialog {
 		let settings = &self.edited;
 		match key {
 			Key::Opacity => settings.opacity,
-			Key::BgOpacity => settings.background_opacity,
-			Key::BgBlur => settings.background_blur,
-			Key::BgContrastSize => settings.background_contrast_mask_size,
-			Key::BgContrastStrength => settings.background_contrast_mask_strength,
-			Key::BgContrastAuto => settings.background_contrast_mask_auto,
+			Key::BgOpacity => settings.wallpaper_opacity,
+			Key::BgBlur => settings.wallpaper_blur,
+			Key::BgContrastSize => settings.wallpaper_contrast_mask_size,
+			Key::BgContrastStrength => settings.wallpaper_contrast_mask_strength,
+			Key::BgContrastAuto => settings.wallpaper_contrast_mask_auto,
 			Key::ScrimRadius => settings.text_scrim_radius,
 			Key::ScrimSoftness => settings.text_scrim_softness,
 			Key::Outline => settings.text_outline,
@@ -1593,11 +1593,11 @@ impl SettingsDialog {
 		let settings = &mut self.edited;
 		match key {
 			Key::Opacity => settings.opacity = value,
-			Key::BgOpacity => settings.background_opacity = value,
-			Key::BgBlur => settings.background_blur = value,
-			Key::BgContrastSize => settings.background_contrast_mask_size = value,
-			Key::BgContrastStrength => settings.background_contrast_mask_strength = value,
-			Key::BgContrastAuto => settings.background_contrast_mask_auto = value,
+			Key::BgOpacity => settings.wallpaper_opacity = value,
+			Key::BgBlur => settings.wallpaper_blur = value,
+			Key::BgContrastSize => settings.wallpaper_contrast_mask_size = value,
+			Key::BgContrastStrength => settings.wallpaper_contrast_mask_strength = value,
+			Key::BgContrastAuto => settings.wallpaper_contrast_mask_auto = value,
 			Key::ScrimRadius => settings.text_scrim_radius = value,
 			Key::ScrimSoftness => settings.text_scrim_softness = value,
 			Key::Outline => settings.text_outline = value,
@@ -1617,14 +1617,14 @@ impl SettingsDialog {
 			// the configured text, not the resolved path (auto-detect still shows
 			// the path it found, since there is no configured text to show)
 			Key::BgImage => {
-				if self.edited.background_image_raw.is_empty() {
+				if self.edited.wallpaper_raw.is_empty() {
 					self.edited
-						.background_image
+						.wallpaper
 						.as_ref()
 						.map(|path| path.to_string_lossy().into_owned())
 						.unwrap_or_default()
 				} else {
-					self.edited.background_image_raw.clone()
+					self.edited.wallpaper_raw.clone()
 				}
 			}
 			Key::FontFamily => self.edited.font_family.clone().unwrap_or_default(),
@@ -1636,10 +1636,10 @@ impl SettingsDialog {
 		let trimmed = text.trim();
 		match key {
 			Key::BgImage => {
-				self.edited.background_image_raw = trimmed.to_string();
+				self.edited.wallpaper_raw = trimmed.to_string();
 				// resolve like the loader does (relative to the config dir),
 				// so a typed relative name live-applies instead of missing
-				self.edited.background_image = crate::config::resolve_bg_image(
+				self.edited.wallpaper = crate::config::resolve_wallpaper(
 					(!trimmed.is_empty()).then(|| trimmed.to_string()),
 				);
 			}
@@ -1665,7 +1665,7 @@ impl SettingsDialog {
 			Key::CursorScrim => self.edited.cursor_scrim,
 			Key::CursorOutline => self.edited.cursor_outline,
 			Key::RememberSize => self.edited.remember_size,
-			Key::BgContrastMask => self.edited.background_contrast_mask,
+			Key::BgContrastMask => self.edited.wallpaper_contrast_mask,
 			_ => false,
 		}
 	}
@@ -1678,13 +1678,13 @@ impl SettingsDialog {
 			Key::CursorScrim => self.edited.cursor_scrim = on,
 			Key::CursorOutline => self.edited.cursor_outline = on,
 			Key::RememberSize => self.edited.remember_size = on,
-			Key::BgContrastMask => self.edited.background_contrast_mask = on,
+			Key::BgContrastMask => self.edited.wallpaper_contrast_mask = on,
 			_ => {}
 		}
 	}
 	fn get_radio(&self, key: Key) -> usize {
 		match key {
-			Key::BgFit => match self.edited.background_fit {
+			Key::BgFit => match self.edited.wallpaper_fit {
 				config::Fit::Zoom => 1,
 				config::Fit::Stretch => 0,
 			},
@@ -1709,7 +1709,7 @@ impl SettingsDialog {
 	fn set_radio(&mut self, key: Key, idx: usize) {
 		match key {
 			Key::BgFit => {
-				self.edited.background_fit = if idx == 1 {
+				self.edited.wallpaper_fit = if idx == 1 {
 					config::Fit::Zoom
 				} else {
 					config::Fit::Stretch
@@ -1754,7 +1754,7 @@ impl SettingsDialog {
 			|| (matches!(
 				key,
 				Key::BgContrastSize | Key::BgContrastStrength | Key::BgContrastAuto
-			) && !self.edited.background_contrast_mask)
+			) && !self.edited.wallpaper_contrast_mask)
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
 			|| (matches!(key, Key::FontFamily | Key::FontSize) && self.edited.use_system_font)
 	}
@@ -1812,13 +1812,13 @@ impl SettingsDialog {
 			Key::CursorScrim => edited.cursor_scrim == defaults.cursor_scrim,
 			Key::CursorOutline => edited.cursor_outline == defaults.cursor_outline,
 			Key::BgContrastMask => {
-				edited.background_contrast_mask == defaults.background_contrast_mask
+				edited.wallpaper_contrast_mask == defaults.wallpaper_contrast_mask
 			}
 			Key::SystemFont => edited.use_system_font == defaults.use_system_font,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
-			Key::BgFit => edited.background_fit == defaults.background_fit,
+			Key::BgFit => edited.wallpaper_fit == defaults.wallpaper_fit,
 			Key::ScrimRamp => edited.text_scrim_ramp == defaults.text_scrim_ramp,
-			Key::BgImage => edited.background_image == defaults.background_image,
+			Key::BgImage => edited.wallpaper == defaults.wallpaper,
 			Key::FontFamily => edited.font_family == defaults.font_family,
 			Key::DefaultShell => edited.default_shell == defaults.default_shell,
 			Key::ColBg | Key::ColFg | Key::ColCursor | Key::ColFocus => {
@@ -1834,11 +1834,11 @@ impl SettingsDialog {
 		let defaults = &self.defaults;
 		match key {
 			Key::Opacity => defaults.opacity,
-			Key::BgOpacity => defaults.background_opacity,
-			Key::BgBlur => defaults.background_blur,
-			Key::BgContrastSize => defaults.background_contrast_mask_size,
-			Key::BgContrastStrength => defaults.background_contrast_mask_strength,
-			Key::BgContrastAuto => defaults.background_contrast_mask_auto,
+			Key::BgOpacity => defaults.wallpaper_opacity,
+			Key::BgBlur => defaults.wallpaper_blur,
+			Key::BgContrastSize => defaults.wallpaper_contrast_mask_size,
+			Key::BgContrastStrength => defaults.wallpaper_contrast_mask_strength,
+			Key::BgContrastAuto => defaults.wallpaper_contrast_mask_auto,
 			Key::ScrimRadius => defaults.text_scrim_radius,
 			Key::ScrimSoftness => defaults.text_scrim_softness,
 			Key::Outline => defaults.text_outline,
@@ -1871,16 +1871,16 @@ impl SettingsDialog {
 					Key::CursorScrim => self.defaults.cursor_scrim,
 					Key::CursorOutline => self.defaults.cursor_outline,
 					Key::SystemFont => self.defaults.use_system_font,
-					Key::BgContrastMask => self.defaults.background_contrast_mask,
+					Key::BgContrastMask => self.defaults.wallpaper_contrast_mask,
 					_ => self.defaults.remember_size,
 				};
 				self.set_toggle(key, default_val);
 			}
-			Key::BgFit => self.edited.background_fit = self.defaults.background_fit,
+			Key::BgFit => self.edited.wallpaper_fit = self.defaults.wallpaper_fit,
 			Key::ScrimRamp => self.edited.text_scrim_ramp = self.defaults.text_scrim_ramp.clone(),
 			Key::BgImage => {
-				self.edited.background_image = self.defaults.background_image.clone();
-				self.edited.background_image_raw = self.defaults.background_image_raw.clone();
+				self.edited.wallpaper = self.defaults.wallpaper.clone();
+				self.edited.wallpaper_raw = self.defaults.wallpaper_raw.clone();
 			}
 			Key::FontFamily => self.edited.font_family = self.defaults.font_family.clone(),
 			Key::DefaultShell => self.edited.default_shell = self.defaults.default_shell.clone(),
@@ -3404,15 +3404,15 @@ pub fn needs_text_rebuild(old: &Settings, new: &Settings) -> bool {
 }
 
 // Returns true if a background-image-affecting setting changed.
-pub fn bg_image_changed(old: &Settings, new: &Settings) -> bool {
-	old.background_opacity != new.background_opacity
-		|| old.background_fit != new.background_fit
-		|| old.background_image != new.background_image
-		|| old.background_blur != new.background_blur
-		|| old.background_contrast_mask != new.background_contrast_mask
-		|| old.background_contrast_mask_size != new.background_contrast_mask_size
-		|| old.background_contrast_mask_strength != new.background_contrast_mask_strength
-		|| old.background_contrast_mask_auto != new.background_contrast_mask_auto
+pub fn wallpaper_changed(old: &Settings, new: &Settings) -> bool {
+	old.wallpaper_opacity != new.wallpaper_opacity
+		|| old.wallpaper_fit != new.wallpaper_fit
+		|| old.wallpaper != new.wallpaper
+		|| old.wallpaper_blur != new.wallpaper_blur
+		|| old.wallpaper_contrast_mask != new.wallpaper_contrast_mask
+		|| old.wallpaper_contrast_mask_size != new.wallpaper_contrast_mask_size
+		|| old.wallpaper_contrast_mask_strength != new.wallpaper_contrast_mask_strength
+		|| old.wallpaper_contrast_mask_auto != new.wallpaper_contrast_mask_auto
 }
 
 #[cfg(test)]
@@ -3792,7 +3792,7 @@ mod tests {
 		// fresh single click into a text field: select all on release
 		let mut d = mk_dialog(4000.0);
 		d.tab = d.spec_tab[i0];
-		d.edited.background_image_raw = "foo bar.png".to_string();
+		d.edited.wallpaper_raw = "foo bar.png".to_string();
 		let field = d.textbox(i0);
 		let at = |k: usize| field.x + 6.0 + k as f32;
 		let y = field.y + field.h / 2.0;
@@ -3808,7 +3808,7 @@ mod tests {
 		// a click that drags selects the dragged range instead
 		let mut d = mk_dialog(4000.0);
 		d.tab = d.spec_tab[i0];
-		d.edited.background_image_raw = "foo bar.png".to_string();
+		d.edited.wallpaper_raw = "foo bar.png".to_string();
 		d.mouse_down(at(2), y, &mut m);
 		d.mouse_move(at(6), y, &mut m);
 		d.mouse_up(at(6), y);
@@ -3908,7 +3908,7 @@ mod tests {
 		let mut d = mk_dialog(4000.0);
 		let i = d.specs.iter().position(|s| s.key == Key::BgImage).unwrap();
 		d.tab = d.spec_tab[i];
-		d.edited.background_image_raw = value.to_string();
+		d.edited.wallpaper_raw = value.to_string();
 		d.focus = Some(Focus::Row(i, 0));
 		d.set_mods(false, false, false);
 		d.key_space(); // opens with the value fully selected
@@ -3921,7 +3921,7 @@ mod tests {
 		assert_eq!(d.selected_text().as_deref(), Some("old.png"));
 		d.char_input('n');
 		assert_eq!(d.edit.as_ref().unwrap().buf, "n");
-		assert_eq!(d.edited.background_image_raw, "n"); // live reparse
+		assert_eq!(d.edited.wallpaper_raw, "n"); // live reparse
 		// plain arrows collapse; shift+arrows extend a fresh selection
 		d.char_input('e');
 		d.char_input('w');
@@ -3961,9 +3961,9 @@ mod tests {
 		assert_eq!(d.selected_text().as_deref(), Some("keep me"));
 		d.delete_selection(); // the "cut" half (clipboard handled a level up)
 		assert_eq!(d.edit.as_ref().unwrap().buf, "");
-		assert_eq!(d.edited.background_image_raw, "");
+		assert_eq!(d.edited.wallpaper_raw, "");
 		d.insert_str("pasted.png");
-		assert_eq!(d.edited.background_image_raw, "pasted.png");
+		assert_eq!(d.edited.wallpaper_raw, "pasted.png");
 		// pasting over a selection replaces it
 		d.select_all();
 		d.insert_str("x");
