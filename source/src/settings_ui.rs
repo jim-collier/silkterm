@@ -2308,7 +2308,7 @@ impl SettingsDialog {
 		let inner_w = (field.w - 2.0 * FIELD_PAD).max(1.0);
 		let ahead = (VIEW_AHEAD * self.ui_scale()).min(inner_w / 3.0);
 		let (caret_x, text_w, sig) = {
-			let edit = self.edit.as_ref().unwrap();
+			let edit = self.edit.as_ref().unwrap(); // Some: row extracted above
 			(
 				measure(&edit.buf[..edit.cur]),
 				measure(&edit.buf),

@@ -1791,7 +1791,7 @@ impl State {
 			});
 		}
 		{
-			let cache = self.chrome.as_mut().unwrap();
+			let cache = self.chrome.as_mut().unwrap(); // ensured above
 			if cache.tab_w != tab_w {
 				cache.tab_w = tab_w;
 				cache.tabs.clear(); // width changed: every title buffer re-wraps

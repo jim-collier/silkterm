@@ -164,7 +164,8 @@ pub fn shell_split(s: &str) -> Result<Vec<String>, String> {
 						'\\' => {
 							if let Some(&next) = chars.peek() {
 								if next == '"' || next == '\\' || next == '$' || next == '`' {
-									word.push(chars.next().unwrap());
+									chars.next();
+									word.push(next);
 									continue;
 								}
 							}
@@ -406,7 +407,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 				"help" => cli.help = true,
 				"version" => cli.version = true,
 				"syntax" => cli.syntax = true,
-				_ => unreachable!(),
+				_ => unreachable!("name in the matches! set above"),
 			}
 			continue;
 		}
@@ -431,7 +432,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 				"left" => set_dir(pane, Dir4::Left, a.bool_value(name, inline)?, name)?,
 				"right" => set_dir(pane, Dir4::Right, a.bool_value(name, inline)?, name)?,
 				"size" => pane.size = Some(parse_size(&a.value(name, inline)?)?),
-				_ => unreachable!(),
+				_ => unreachable!("name in the matches! set above"),
 			}
 			continue;
 		}

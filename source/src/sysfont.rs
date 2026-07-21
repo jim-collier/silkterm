@@ -141,8 +141,12 @@ mod platform {
 		}
 		// Peel trailing weight/style/stretch words so only the family remains.
 		let (mut bold, mut italic) = (false, false);
-		while tokens.last().is_some_and(|t| is_style_word(t)) {
-			let word = tokens.pop().unwrap().to_ascii_lowercase();
+		while let Some(&last) = tokens.last() {
+			if !is_style_word(last) {
+				break;
+			}
+			tokens.pop();
+			let word = last.to_ascii_lowercase();
 			match word.as_str() {
 				"bold" | "semibold" | "semi-bold" | "demibold" | "demi-bold" | "extrabold"
 				| "extra-bold" | "ultrabold" | "ultra-bold" | "black" | "heavy" => bold = true,
