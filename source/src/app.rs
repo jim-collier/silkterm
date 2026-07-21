@@ -2761,11 +2761,20 @@ impl ApplicationHandler<UserEvent> for App {
 			(Some(w), Some(h)) => winit::dpi::PhysicalSize::new(w, h).into(),
 			_ => winit::dpi::LogicalSize::new(1000.0, 640.0).into(),
 		};
+		// On Windows, requesting transparency forces a no-redirection-bitmap
+		// (layered) window that some virtual-desktop managers - VirtuaWin - won't
+		// track, so it sits still across workspace switches. The native surface
+		// there only shows alpha when it reports PreMultiplied (Vulkan/DX swapchains
+		// usually don't), so an always-transparent window buys nothing when
+		// Transparency is off. Ask for it only when it's actually in use; X11/Wayland
+		// always request it so the live toggle works (no such side effect there).
+		let want_transparent =
+			!cfg!(windows) || config::settings().transparent_background || win_opacity.is_some();
 		let attrs = Window::default_attributes()
 			.with_title(win_title.as_deref().unwrap_or(config::APP_NAME))
 			.with_window_icon(load_icon())
 			.with_decorations(decorated)
-			.with_transparent(true)
+			.with_transparent(want_transparent)
 			.with_inner_size(initial_size);
 		let attrs = with_app_id(attrs); // stable WM_CLASS/app_id
 		// Born hidden, then resized to the grid-derived size and drawn once before

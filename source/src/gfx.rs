@@ -233,7 +233,12 @@ impl Gfx {
 			present_mode: wgpu::PresentMode::AutoVsync,
 			alpha_mode,
 			view_formats: vec![],
-			desired_maximum_frame_latency: 2,
+			// Windows: one queued frame, not two. With Fifo + 2-frame DXGI latency
+			// the CPU races ahead then blocks, so the wall-clock dt between frames
+			// alternates short/long and the scroll ease steps unevenly (judder).
+			// One frame paces present to the display -> steady dt -> smooth. The GL
+			// path (below) and other platforms already pace evenly, so leave them.
+			desired_maximum_frame_latency: if cfg!(windows) { 1 } else { 2 },
 		};
 		surface.configure(&device, &config);
 

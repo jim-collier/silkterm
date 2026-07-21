@@ -211,7 +211,9 @@ impl TermInstance {
 		}
 	}
 
+	// self kept for signature parity with the unix version above
 	#[cfg(not(unix))]
+	#[allow(clippy::unused_self)]
 	pub fn tab_title(&mut self) -> String {
 		crate::config::APP_NAME.to_string()
 	}
@@ -226,6 +228,7 @@ impl TermInstance {
 		pgid <= 0 || pgid as u32 == self.shell_pid
 	}
 	#[cfg(not(unix))]
+	#[allow(clippy::unused_self)]
 	pub fn at_shell_prompt(&self) -> bool {
 		true
 	}
