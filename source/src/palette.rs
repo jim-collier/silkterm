@@ -47,10 +47,10 @@ fn default_indexed(i: u8, s: &Settings) -> [u8; 3] {
 }
 
 fn named(n: NamedColor, colors: &Colors, s: &Settings) -> [u8; 3] {
+	use NamedColor::*;
 	if let Some(rgb) = colors[n] {
 		return [rgb.r, rgb.g, rgb.b];
 	}
-	use NamedColor::*;
 	match n {
 		Foreground | DimForeground | BrightForeground => s.fg,
 		Background => s.bg,

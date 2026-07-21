@@ -198,7 +198,7 @@ impl ImageRenderer {
 	}
 }
 
-const BG_WGSL: &str = r#"
+const BG_WGSL: &str = r"
 struct Uniform {
     resolution: vec2<f32>,
     image_size: vec2<f32>,
@@ -232,4 +232,4 @@ fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let a = c.a * u.opacity;
     return vec4<f32>(c.rgb * a, a); // premultiplied
 }
-"#;
+";

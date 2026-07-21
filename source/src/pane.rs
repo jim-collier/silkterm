@@ -627,9 +627,8 @@ impl Pane {
 		// Never block the render thread: the PTY reader thread can hold the
 		// terminal lock through long bursts (e.g. a chatty shell rc). If it's
 		// busy this frame, reuse the last built frame.
-		let mut guard = match self.term.term.try_lock_unfair() {
-			Some(g) => g,
-			None => return self.last_draw.clone(),
+		let Some(mut guard) = self.term.term.try_lock_unfair() else {
+			return self.last_draw.clone();
 		};
 		self.mode = *guard.mode();
 		self.content_dirty = false;
@@ -800,15 +799,15 @@ impl Pane {
 		// fractional-only position. `split_row` is the first row of the bottom band;
 		// `top_split_row` is the first row of the scroll region (just below the title).
 		// No bands (or no active slide) => whole pane at voff.
-		let static_rows = if app_off != 0.0 {
+		let static_rows = if app_off == 0.0 {
+			0
+		} else {
 			self.slide_static.min(lines)
-		} else {
-			0
 		};
-		let static_top = if app_off != 0.0 {
-			self.slide_static_top.min(lines.saturating_sub(static_rows))
-		} else {
+		let static_top = if app_off == 0.0 {
 			0
+		} else {
+			self.slide_static_top.min(lines.saturating_sub(static_rows))
 		};
 		let split_row = (lines - static_rows) as i32;
 		let top_split_row = static_top as i32;
@@ -838,7 +837,9 @@ impl Pane {
 		// edge and rides the same eased offset, so it never moves relative to the
 		// content: its last row ends exactly at the region's first row (up-scroll),
 		// or its first row starts one past the region's last (down-scroll).
-		let slide = if app_off != 0.0 {
+		let slide = if app_off == 0.0 {
+			None
+		} else {
 			// split_y bounds the scroll region below; top_split_y bounds it above (a
 			// static top band sits above it; f32::MIN = no band, so the clip is open).
 			let split_y = if static_rows > 0 {
@@ -873,8 +874,6 @@ impl Pane {
 				has_band: static_rows > 0,
 				has_top_band: static_top > 0,
 			})
-		} else {
-			None
 		};
 		// gesture over: the revealed gap is gone, drop the strip
 		if slide.is_none() && self.strip.len() > 0 {
@@ -1384,7 +1383,7 @@ impl Pane {
 	// Same as `text_area` but for the scrim source pass: uses the de-bolded buffer
 	// when it was built this frame (text_scrim_regular_weight + bold on screen), so
 	// the halo weight matches non-bold text while the crisp text keeps its weight.
-	pub fn scrim_text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
+	pub fn scrim_text_area(&self, top: f32, margin: f32) -> TextArea<'_> {
 		let mut area = self.text_area(top, margin);
 		if self.scrim_debold {
 			if let Some(scrim_buffer) = &self.scrim_buf {
@@ -1395,13 +1394,13 @@ impl Pane {
 	}
 
 	// scrim_text_area with the band clip of text_area_band (see there).
-	pub fn scrim_text_area_band<'a>(
-		&'a self,
+	pub fn scrim_text_area_band(
+		&self,
 		top: f32,
 		margin: f32,
 		clip_top: f32,
 		clip_bottom: f32,
-	) -> TextArea<'a> {
+	) -> TextArea<'_> {
 		let mut area = self.scrim_text_area(top, margin);
 		area.bounds.top = area.bounds.top.max(clip_top as i32);
 		area.bounds.bottom = area.bounds.bottom.min(clip_bottom as i32);
@@ -1430,20 +1429,20 @@ impl Pane {
 		}
 	}
 
-	pub fn text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
+	pub fn text_area(&self, top: f32, margin: f32) -> TextArea<'_> {
 		self.buf_area(&self.buffer, top, margin)
 	}
 
 	// Same buffer as text_area, positioned at `top`, but with its vertical clip
 	// narrowed to [clip_top, clip_bottom]. Used by the app-scroll slide to draw the
 	// current buffer clipped to the scroll region and the static band separately.
-	pub fn text_area_band<'a>(
-		&'a self,
+	pub fn text_area_band(
+		&self,
 		top: f32,
 		margin: f32,
 		clip_top: f32,
 		clip_bottom: f32,
-	) -> TextArea<'a> {
+	) -> TextArea<'_> {
 		let mut area = self.text_area(top, margin);
 		area.bounds.top = area.bounds.top.max(clip_top as i32);
 		area.bounds.bottom = area.bounds.bottom.min(clip_bottom as i32);
@@ -1473,9 +1472,6 @@ impl Pane {
 	// space placeholders - the strip is transient reveal content, not worth a
 	// per-cell fallback pool.
 	fn shape_strip(&mut self, ctx: &mut TextCtx, settings: &config::Settings) {
-		if self.strip.len() == 0 {
-			return;
-		}
 		fn flush(spans: &mut Vec<(String, Attrs)>, run: &mut String, style: ([u8; 3], bool, bool)) {
 			if run.is_empty() {
 				return;
@@ -1489,6 +1485,9 @@ impl Pane {
 				attrs.style = Style::Italic;
 			}
 			spans.push((std::mem::take(run), attrs));
+		}
+		if self.strip.len() == 0 {
+			return;
 		}
 		let mut spans: Vec<(String, Attrs)> = Vec::with_capacity(self.strip.len() + 1);
 		let mut run = String::new();
@@ -1811,12 +1810,11 @@ impl PaneManager {
 		id: PaneId,
 		dir: Dir,
 		area: Rect,
-	) -> anyhow::Result<()> {
+	) {
 		let cmd = self.panes.get(&id).and_then(|p| p.command.clone());
 		// interactive splits even-distribute the same-direction run (unless a divider
 		// in it was hand-dragged); the CLI drives its own sizing, so it passes false
 		self.split_at(ctx, proxy, id, dir, false, 0.5, cmd, area, true);
-		Ok(())
 	}
 
 	// General split used by the CLI: split `id` along `dir`, the new pane on the
@@ -1885,20 +1883,17 @@ impl PaneManager {
 
 	// returns true when the last pane closed (caller should exit)
 	pub fn close(&mut self, ctx: &mut TextCtx, id: PaneId, area: Rect) -> bool {
-		match prune(std::mem::replace(&mut self.root, Node::Leaf(0)), id) {
-			Some(n) => {
-				self.root = n;
-				self.panes.remove(&id);
-				if self.focused == id {
-					self.focused = first_leaf(&self.root);
-				}
-				self.relayout(ctx, area);
-				false
+		if let Some(n) = prune(std::mem::replace(&mut self.root, Node::Leaf(0)), id) {
+			self.root = n;
+			self.panes.remove(&id);
+			if self.focused == id {
+				self.focused = first_leaf(&self.root);
 			}
-			None => {
-				self.panes.remove(&id);
-				true
-			}
+			self.relayout(ctx, area);
+			false
+		} else {
+			self.panes.remove(&id);
+			true
 		}
 	}
 

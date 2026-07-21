@@ -5,7 +5,7 @@
 //! colors, toggles, few-option radios, dropdown list boxes for longer enums, and
 //! Cancel / Apply / OK. Edits a working copy of `Settings`; the app reads it back
 //! on Apply/OK to live-apply + persist. Renders as flat quads (rects) + positioned
-//! text; an open dropdown's popup draws in a second (LoadOp::Load) pass on top so
+//! text; an open dropdown's popup draws in a second (`LoadOp::Load`) pass on top so
 //! covered rows' text can't bleed through it (see `dropdown_overlay`).
 //!
 //! Sections are grouped into tabs (see `TAB_TITLES`/`tab_for_section`) so the
@@ -964,7 +964,7 @@ impl SettingsDialog {
 	pub fn shift(&self) -> bool {
 		self.shift
 	}
-	pub fn alt_key(&mut self, c: char) -> Action {
+	pub fn alt_key(c: char) -> Action {
 		match c.to_ascii_lowercase() {
 			'c' => Action::Cancel,
 			'a' => Action::Apply,
@@ -1227,9 +1227,8 @@ impl SettingsDialog {
 			return Action::None;
 		}
 		match self.specs[i].kind {
-			Kind::Toggle => self.set_toggle(key, !self.get_toggle(key)),
-			// flip the focused checkbox (key is that part's key)
-			Kind::Dual { .. } => self.set_toggle(key, !self.get_toggle(key)),
+			// flip the focused checkbox (for Dual, key is that part's key)
+			Kind::Toggle | Kind::Dual { .. } => self.set_toggle(key, !self.get_toggle(key)),
 			// open the field pre-filled with the current value, fully selected
 			// (standard field-entry: typing replaces, arrows keep it)
 			Kind::Text | Kind::Color | Kind::Slider { .. } => self.open_edit(i, true),
@@ -1687,7 +1686,7 @@ impl SettingsDialog {
 		match key {
 			Key::BgFit => match self.edited.background_fit {
 				config::Fit::Zoom => 1,
-				_ => 0,
+				config::Fit::Stretch => 0,
 			},
 			// display order: SDF, DT, Dilate, Gaussian
 			Key::ScrimFunction => match self.edited.text_scrim_function.as_str() {
@@ -2256,11 +2255,7 @@ impl SettingsDialog {
 				self.commit_edit();
 				self.open_edit(i, false);
 			}
-			let part = if matches!(self.specs[i].kind, Kind::Slider { .. }) {
-				1
-			} else {
-				0
-			};
+			let part = u8::from(matches!(self.specs[i].kind, Kind::Slider { .. }));
 			self.focus = Some(Focus::Row(i, part));
 			if let Some(edit) = &mut self.edit {
 				let rel_x = x - (field.x + FIELD_PAD) + edit.view;
@@ -2322,11 +2317,11 @@ impl SettingsDialog {
 		};
 		let dragging = self.edit_drag.is_some();
 		let edit = self.edit.as_mut().unwrap();
-		if sig != edit.last_sig {
+		if sig == edit.last_sig {
+			edit.blink_t += dt;
+		} else {
 			edit.last_sig = sig;
 			edit.blink_t = 0.0; // activity holds the caret solid
-		} else {
-			edit.blink_t += dt;
 		}
 		// target view: keep the caret in sight with the margin; the clamp snaps
 		// the margin away at the true ends so 0 / end-of-text sit flush
@@ -2368,14 +2363,14 @@ impl SettingsDialog {
 				let moved = if let Some(edit) = &mut self.edit {
 					let rel_x = x - (field.x + FIELD_PAD) + edit.view;
 					let cur = caret_from_click(&edit.buf, rel_x, measure);
-					if cur != edit.cur {
+					if cur == edit.cur {
+						false
+					} else {
 						if edit.sel.is_none() {
 							edit.sel = Some(edit.cur);
 						}
 						edit.cur = cur;
 						true
-					} else {
-						false
 					}
 				} else {
 					false

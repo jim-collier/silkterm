@@ -159,8 +159,7 @@ pub fn resolve(name: &str, mode: &str, system_dark: bool) -> Palette {
 	let theme = THEMES
 		.iter()
 		.find(|(n, _)| n.eq_ignore_ascii_case(name.trim()))
-		.map(|(_, t)| t)
-		.unwrap_or(&THEMES[0].1);
+		.map_or(&THEMES[0].1, |(_, t)| t);
 	let dark = match mode.trim().to_ascii_lowercase().as_str() {
 		"light" => false,
 		"system" => system_dark,

@@ -30,7 +30,7 @@ pub struct UiFont {
 
 /// Cached desktop *interface* (UI/chrome) font: whatever the user picked for
 /// menus and dialogs - serif or not. This is the first choice for chrome text;
-/// sans_serif() below is only the fallback when no desktop setting is readable.
+/// `sans_serif()` below is only the fallback when no desktop setting is readable.
 pub fn interface() -> &'static UiFont {
 	static U: OnceLock<UiFont> = OnceLock::new();
 	U.get_or_init(platform::interface)
