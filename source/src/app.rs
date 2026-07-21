@@ -649,7 +649,7 @@ impl State {
 	// when the app has mouse tracking on. Shift is the local-action override (so the
 	// user can still select/paste/menu). Returns true when the event was reported
 	// (and should not be handled locally). Records the held button for drag + release.
-	fn report_mouse_button(&mut self, button: MouseButton, pressed: bool) -> bool {
+	fn report_mouse_button(&mut self, button: MouseButton, state: ElementState) -> bool {
 		let Some(btn) = mouse_btn_of(button) else {
 			return false;
 		};
@@ -659,7 +659,7 @@ impl State {
 			return false;
 		}
 		let (x, y) = self.mouse;
-		if pressed {
+		if state == ElementState::Pressed {
 			if self.mods.shift_key() {
 				return false;
 			}
@@ -1288,10 +1288,10 @@ impl State {
 	// + arms the timer, so scheduled rotation proceeds once the interval elapses).
 	fn init_wallpaper_rotation(&mut self, skip_initial: bool) {
 		let settings = config::settings();
-		let Some(dir) = settings.background_folder.clone() else {
+		let Some(dir) = &settings.background_folder else {
 			return;
 		};
-		self.wp_images = list_folder_images(&dir);
+		self.wp_images = list_folder_images(dir);
 		if self.wp_images.is_empty() {
 			eprintln!(
 				"{}: background_folder {} has no images",
@@ -1797,8 +1797,12 @@ impl State {
 				cache.tabs.clear(); // width changed: every title buffer re-wraps
 			}
 			cache.tabs.truncate(tab_titles.len());
-			for (i, title) in tab_titles.iter().enumerate() {
-				if cache.tabs.get(i).is_some_and(|(cached, _)| cached == title) {
+			for (i, title) in tab_titles.into_iter().enumerate() {
+				if cache
+					.tabs
+					.get(i)
+					.is_some_and(|(cached, _)| cached == &title)
+				{
 					continue; // unchanged title keeps its shaped buffer
 				}
 				let mut buf = self
@@ -1808,16 +1812,16 @@ impl State {
 				attrs.color_opt = Some(menu_fg);
 				buf.set_text(
 					&mut self.text.font_system,
-					title,
+					&title,
 					&attrs,
 					Shaping::Advanced,
 					None,
 				);
 				buf.shape_until_scroll(&mut self.text.font_system, false);
 				if i < cache.tabs.len() {
-					cache.tabs[i] = (title.clone(), buf);
+					cache.tabs[i] = (title, buf);
 				} else {
-					cache.tabs.push((title.clone(), buf));
+					cache.tabs.push((title, buf));
 				}
 			}
 		}
@@ -3191,7 +3195,8 @@ impl ApplicationHandler<UserEvent> for App {
 				// mouse-tracking app owns the pointer: report the press, skip local
 				// selection/paste/menu (Shift bypasses to the local action). An open
 				// menu must get the click (operate/dismiss it), not the app underneath.
-				if state.menu.is_none() && state.report_mouse_button(button, true) {
+				if state.menu.is_none() && state.report_mouse_button(button, ElementState::Pressed)
+				{
 					state.dirty = true;
 					return;
 				}
@@ -3317,7 +3322,7 @@ impl ApplicationHandler<UserEvent> for App {
 				button,
 				..
 			} if state.mouse_btn.is_some() && state.mouse_btn == mouse_btn_of(button) => {
-				if state.report_mouse_button(button, false) {
+				if state.report_mouse_button(button, ElementState::Released) {
 					state.dirty = true;
 				}
 			}
