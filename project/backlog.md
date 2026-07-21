@@ -50,18 +50,10 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- ✅ Windows: no smooth-scrolling in full-screen / scroll-region apps (muffer, nano), though it works on the Linux build.
-	- Scope (owner-confirmed): plain directory listings and mouse-wheel scrollback DO scroll smoothly on Windows; only apps that keep a fixed UI with a scrolling sub-region (muffer's bottom input box, nano's top/bottom bars) failed.
-	- Diagnosed on the Windows box via a per-frame probe reading real muffer + nano. ConPTY re-emits a scroll-region app's scrolling as an in-place repaint, so scrollback never grows: for nano (alt screen) `history` is 0 and the rows still translate cleanly (the signed clean-translate detector reports healthy shifts of 2-14 rows); for muffer (normal screen) `history` is frozen at 1 and `grew` is 0 every frame, so output-easing can never fire and there is no scrollback to ease through - yet the rows translate 1-2 at a time and the signed detector catches them. On a Unix PTY these scrolls arrive as real grid-scrolls, which is why Linux was fine.
-	- Fix: the app-scroll slide (fixed-UI + scrolling-region, no scrollback, synthesized reveal strip) is exactly the right mechanism but was gated to the alt screen only. Extended it to also engage on the normal screen when following with no scrollback growth (`repaint_scroll` in `pane.rs build`); the render side already consumes `app_off` regardless of screen. Plain output (grew>0) still uses output-easing; a static in-place redraw yields no clean shift so it stays put (no bounce). One `smooth_scroll_apps` setting now covers alt-screen apps (nano/vim/less) AND normal-screen repaint apps (muffer on ConPTY).
-	- Made default-on (owner call): `smooth_scroll_apps` now defaults `true` (was false), so nano and muffer both slide out of the box; explicit `= false` still opts out. Feel-test passed on the real display (both "much smoother", no bounce).
-
-- 🛠️ Windows: doesn't respond to DPI scaling changes.
-	- The app only read the scale factor once, at startup, so moving the window to a differently-scaled monitor (or changing the Windows scaling slider) left the fonts/chrome at the old scale.
-	- Note: not a compiler thing - DPI awareness is a runtime/manifest property, identical between the mingw-gnu and msvc builds. The gnu exe carries no manifest overriding it, and winit already enables per-monitor-v2 awareness at startup.
-	- Fix: added a scale-factor-changed handler that re-scales the text context (cell metrics, chrome, pane buffers) for the new factor and relayouts; the window's follow-up resize reconfigures the surface. Shares the same rebuild path as a Settings font change.
-	- ✅ Static case confirmed: this Windows box is actually at 125% (an earlier "100%" reading was a DPI-unaware shell being fed a virtualized 96 DPI). A dogfood build renders crisply and natively at 125% - measured cell width ~11.3px and row pitch ~23px, both exactly 1.25x their 100% values, with sharp anti-aliasing (not a 100% render upscaled by the compositor). So the app reads and applies the scale correctly.
-	- 🔘 Live scale *change* still unverified: the ScaleFactorChanged handler needs an actual transition (a 2nd monitor at a different scale, or dragging the Windows scaling slider while running), which a single fixed-125% monitor can't produce.
+- Windows:
+	- Bold font uses a proportional font, which skews space-based alignment output. (E.g. that muffer uses on startup screen.)
+	- Scrolling in muffer, and `less`, is juddery. Up-and-down motion, while making progress in the intended direction.
+	- The whole window stays in place when VirtuaWin swithes virtual workspaces.
 
 - ✋ The dreaded "Nano Bounce Bug" is back. This will be the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and possibly red-herrings. It obviously must be related in some way to smooth scrolling (the next time it happens I'll try turning it off to make sure). So let's get back to basics of what I know, and don't know:
 	- Steps:
@@ -71,31 +63,14 @@ In each section, items are listed approximately from newest to oldest.
 	- It's hard to recreate, so I don't know the steps to do it. But once it happens once, it seems easy to repeat. It only seems to start happening after a while - so maybe related to lots of input and/or more likely, output. And/or many switching of modes? Or just time?
 	- ✋ Delay this to see if other fixes, fix this.
 
+- 🛠️ Windows: doesn't respond to DPI scaling changes.
+	- The app only read the scale factor once, at startup, so moving the window to a differently-scaled monitor (or changing the Windows scaling slider) left the fonts/chrome at the old scale.
+	- Note: not a compiler thing - DPI awareness is a runtime/manifest property, identical between the mingw-gnu and msvc builds. The gnu exe carries no manifest overriding it, and winit already enables per-monitor-v2 awareness at startup.
+	- Fix: added a scale-factor-changed handler that re-scales the text context (cell metrics, chrome, pane buffers) for the new factor and relayouts; the window's follow-up resize reconfigures the surface. Shares the same rebuild path as a Settings font change.
+	- ✅ Static case confirmed: this Windows box is actually at 125% (an earlier "100%" reading was a DPI-unaware shell being fed a virtualized 96 DPI). A dogfood build renders crisply and natively at 125% - measured cell width ~11.3px and row pitch ~23px, both exactly 1.25x their 100% values, with sharp anti-aliasing (not a 100% render upscaled by the compositor). So the app reads and applies the scale correctly.
+	- 🔘 Live scale *change* still unverified: the ScaleFactorChanged handler needs an actual transition (a 2nd monitor at a different scale, or dragging the Windows scaling slider while running), which a single fixed-125% monitor can't produce.
+
 ### New features and enhancements
-
-- ✅ Linux: On open, when it becomes visible, it should already be at its final size - rather than opening one size then resizing itself. Fixed this on Windows, but I didn't realize at the time that it affects Linux too, presumably just universal.
-	- Done: the born-hidden-then-reveal path (already used on Windows) is now universal. The window is created hidden, resized to the grid-derived size, and only shown once a frame has rendered at that size. On X11/Wayland the startup resize is async, so the reveal waits until the surface reaches the target size (with a short deadline fallback so a WM that grants a slightly different size can never leave the window stuck hidden).
-	- Verified headless on both xfwm4 and Compiz: the window is unmapped at the 1000x640 default the whole time it's that size, then reveals directly at the final grid size - never mapped at the default. The pixel-dims (born-at-size) path reveals promptly too.
-
-- Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
-	- ✅ Skip startup rotation, if a wallpaper was specified on the command line.
-		- Done: a wallpaper given on the command line (--background-image, including an explicit clear) is kept on screen at launch instead of being overwritten by the rotation's startup pick. The folder is still scanned and the timer still armed, so scheduled rotation proceeds once the interval elapses (order mode's first tick lands on the folder's natural first image).
-
-- ✅ Bake a default background into the executable, in case user has none.
-	- background53.jpg
-	- Done: background53.jpg (~100KB, negligible vs the ~13MB binary) is embedded via include_bytes and decoded as the wallpaper when no image and no rotation folder are configured. It runs through the same blur/contrast/opacity pipeline as a file wallpaper. New config key `background_default` (default true) opts out for a plain background-colored terminal.
-	- Note: this changes the look for anyone running with no wallpaper - fresh installs (and existing configs with no background_image/folder) now show the built-in one until they set `background_default = false`. Config-only for now (not in the Settings dialog, which is due for its big reorg); it backfills into existing configs as a commented default.
-	- Verified headless: with no wallpaper configured the embedded image renders; with `background_default = false` the background is solid.
-
-- ✅ Settings dialog:
-	- ✅ When entering a text field, select all text by default.
-		- Done: keyboard entry (Space/Enter/first typed char) already selected all; now a fresh single mouse-click into a field also selects all on release. A click that turns into a drag keeps the dragged range instead, and clicking again inside a field you're already editing still repositions the caret.
-	- ✅ For numeric fields:
-		- Done: Up/Down arrows step a focused (or open) numeric field by ~1/100 of its range (roughly 100 steps across it), rounded to a whole unit for integer fields. Shift+Up/Down steps ~1/10 (roughly 10 steps). Left/Right (which already stepped when focused) share the same step sizes and gain Shift for the 10x step too. Tab still walks between controls. During an edit the field's shown value updates and stays fully selected as you step.
-		- Allow up and down arrows to make small (but meaningful) increments
-			- The range of the field will dictate how much each increment is. In this mode, there should be roughly 100 increments across the range.
-		- Shift+up and down arrows make 10x larger (and meaningful within the range) increments.
-			- The range of the field will dictate how much each increment is. In this mode, there should be roughly 10 increments across the range.
 
 - 🔘 Dialogs and menus:
 	- 🔘 Themes should have TWO highlight colors:
@@ -239,46 +214,6 @@ In each section, items are listed approximately from newest to oldest.
 	- Change:
 		- "Edit/Read-only" -> "View/Read-only"
 
-- 🔘 Config file:
-	- 🔘 Use sister project "SHCL" for config language and structure, rather than TOML.
-	- 🔘 Convert already implicitly hierarchical config names, to actual nested hierarchical.
-	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
-	- 🔘 Each setting gets it's own newline-delimited (above and below) section, with helpful comments directly above the setting without newlines.
-	- 🔘 Common comment format, use what's appropriate for each setting:
-
-		~~~shcl
-
-		## Setting title   (not a repeat of the setting name)
-		## Brief description
-		## Range of values
-		## Low value means
-		## High value means
-		## Default value
-		# setting = value  ## Default
-		~~~
-
-	- 🔘 Use flowerboxing to divide sections, similar to how Settings dialog is divided (the future version, defined in "Refactor settings dialog" below):
-
-		~~~shcl
-
-		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-		## Section
-		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-
-		~~~
-
-- 🔘 Begin a detailed UI/UX '[repo]/project/uiux-style-guide.md'
-	1. Reverse engineer using existing work (mostly menus and settings dailog).
-	2. Refine the guide to be self-consistent and for a more user-friendly UI/UX.
-	3. Apply the updates across the project (mostly menus and settings dailog).
-
-- 🔘 Begin a '[repo]/glossary.md' and link to it in README.md:
-	- Defines unusual, technical, and/or highly specific English word terms used in the settings dialog, backlog, design.md, etc.
-	- Even in source code that are referred to or hinted at - frequently not rarely - as English words.
-	- Limit to concrete concepts that are unique to this project, not highly technical, and/or may be unfamiliar to, say, high-school reading level users.
-	- Targeted towards end users, as well as junior developers brand-new to the projecs.
-	- Limit the number of definitions to something like the top 20 to 50 terms most useful to define, in terms of uniqueness and approximate frequency. (E.g. "Scrim", "Contrast mask", and parts of the application UI, UX, settings, or features that are given specific names so that we know what's being referred to. Etc.)
-
 - 🛠️ Scroll-on-output enhancement: One additional setting: (20260629)
 	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
 		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
@@ -371,6 +306,7 @@ In each section, items are listed approximately from newest to oldest.
 - 🔘 Ability to change hotkeys, and/or assign new ones dynamically. Including a "capture" dialog.
 
 - 🛠️ Themes:
+	- Note: Any work done in the previous Settings dialog improvements, override potential contradictions here.
 	- Done (part 1): theme foundation and terminal palette. A Palette (bg/fg/cursor/focus + 16 ANSI) times a Theme (a dark+light pair); the theme and theme_mode config keys pick the active palette, and the [colors] keys still override per-colour. Three built-ins: SilkTerm, Matrix, Retro Amber, each dark and light.
 		- Verified: Matrix is green-on-black including green-toned ANSI; SilkTerm light is dark-on-light.
 	- Done (part 2): chrome/dialog theming plus System mode. Settings and About adapt to dark/light; the menu and tab chrome stay a fixed neutral gray. System mode follows the OS at startup and on theme-change, falling back to dark where the OS reports no preference (e.g. X11).
@@ -410,8 +346,6 @@ In each section, items are listed approximately from newest to oldest.
 			- Note: hand-rolled. Build it as a dynamic list of name/command rows with add and remove, reusing the dialog's text-field editing.
 		- 🔘 The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
 			- Note: hand-rolled, follows the named-shell list above.
-		- 🔘 If bash is available on the system, add a shell option just above "[SilkTerm default]": "bash --norc".
-			- Note: deferred with the hand-rolled shell menu above.
 
 - 🛠️ Setting dialog (part 2):
 	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
@@ -424,6 +358,46 @@ In each section, items are listed approximately from newest to oldest.
 		- Done: each slider has a numeric field you can click or type into, with the value clamped to the slider's range.
 		- Note: the field joins the Tab order along with the rest of the dialog.
 		- Verified: unit tests for editing and clamping, plus a render check.
+
+- 🔘 Config file:
+	- 🔘 Use sister project "SHCL" for config language and structure, rather than TOML.
+	- 🔘 Convert already implicitly hierarchical config names, to actual nested hierarchical.
+	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
+	- 🔘 Each setting gets it's own newline-delimited (above and below) section, with helpful comments directly above the setting without newlines.
+	- 🔘 Common comment format, use what's appropriate for each setting:
+
+		~~~shcl
+
+		## Setting title   (not a repeat of the setting name)
+		## Brief description
+		## Range of values
+		## Low value means
+		## High value means
+		## Default value
+		# setting = value  ## Default
+		~~~
+
+	- 🔘 Use flowerboxing to divide sections, similar to how Settings dialog is divided (the future version, defined in "Refactor settings dialog" below):
+
+		~~~shcl
+
+		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+		## Section
+		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+		~~~
+
+- 🔘 Begin a detailed UI/UX '[repo]/project/uiux-style-guide.md'
+	1. Reverse engineer using existing work (mostly menus and settings dailog).
+	2. Refine the guide to be self-consistent and for a more user-friendly UI/UX.
+	3. Apply the updates across the project (mostly menus and settings dailog).
+
+- 🔘 Begin a '[repo]/glossary.md' and link to it in README.md:
+	- Defines unusual, technical, and/or highly specific English word terms used in the settings dialog, backlog, design.md, etc.
+	- Even in source code that are referred to or hinted at - frequently not rarely - as English words.
+	- Limit to concrete concepts that are unique to this project, not highly technical, and/or may be unfamiliar to, say, high-school reading level users.
+	- Targeted towards end users, as well as junior developers brand-new to the projecs.
+	- Limit the number of definitions to something like the top 20 to 50 terms most useful to define, in terms of uniqueness and approximate frequency. (E.g. "Scrim", "Contrast mask", and parts of the application UI, UX, settings, or features that are given specific names so that we know what's being referred to. Etc.)
 
 - 🛠️ Command-line options:
 	- Done (part 1, the options engine):
@@ -570,6 +544,12 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Verify smoothness on X11/Compiz.
 
 #### Done - Bugs
+
+- ✅ Windows: no smooth-scrolling in full-screen / scroll-region apps (muffer, nano), though it works on the Linux build.
+	- Scope (owner-confirmed): plain directory listings and mouse-wheel scrollback DO scroll smoothly on Windows; only apps that keep a fixed UI with a scrolling sub-region (muffer's bottom input box, nano's top/bottom bars) failed.
+	- Diagnosed on the Windows box via a per-frame probe reading real muffer + nano. ConPTY re-emits a scroll-region app's scrolling as an in-place repaint, so scrollback never grows: for nano (alt screen) `history` is 0 and the rows still translate cleanly (the signed clean-translate detector reports healthy shifts of 2-14 rows); for muffer (normal screen) `history` is frozen at 1 and `grew` is 0 every frame, so output-easing can never fire and there is no scrollback to ease through - yet the rows translate 1-2 at a time and the signed detector catches them. On a Unix PTY these scrolls arrive as real grid-scrolls, which is why Linux was fine.
+	- Fix: the app-scroll slide (fixed-UI + scrolling-region, no scrollback, synthesized reveal strip) is exactly the right mechanism but was gated to the alt screen only. Extended it to also engage on the normal screen when following with no scrollback growth (`repaint_scroll` in `pane.rs build`); the render side already consumes `app_off` regardless of screen. Plain output (grew>0) still uses output-easing; a static in-place redraw yields no clean shift so it stays put (no bounce). One `smooth_scroll_apps` setting now covers alt-screen apps (nano/vim/less) AND normal-screen repaint apps (muffer on ConPTY).
+	- Made default-on (owner call): `smooth_scroll_apps` now defaults `true` (was false), so nano and muffer both slide out of the box; explicit `= false` still opts out. Feel-test passed on the real display (both "much smoother", no bounce).
 
 - ✅ Config file rewriting is proving problematic.
 	- For example, when user makes a "non-standard" change (e.g. some extra comments), they get removed in the background, and the editor notices the file changed.
@@ -914,6 +894,30 @@ In each section, items are listed approximately from newest to oldest.
 	- Fix: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
 
 #### Done - new features and enhancements
+
+- ✅ Linux: On open, when it becomes visible, it should already be at its final size - rather than opening one size then resizing itself. Fixed this on Windows, but I didn't realize at the time that it affects Linux too, presumably just universal.
+	- Done: the born-hidden-then-reveal path (already used on Windows) is now universal. The window is created hidden, resized to the grid-derived size, and only shown once a frame has rendered at that size. On X11/Wayland the startup resize is async, so the reveal waits until the surface reaches the target size (with a short deadline fallback so a WM that grants a slightly different size can never leave the window stuck hidden).
+	- Verified headless on both xfwm4 and Compiz: the window is unmapped at the 1000x640 default the whole time it's that size, then reveals directly at the final grid size - never mapped at the default. The pixel-dims (born-at-size) path reveals promptly too.
+
+- Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
+	- ✅ Skip startup rotation, if a wallpaper was specified on the command line.
+		- Done: a wallpaper given on the command line (--background-image, including an explicit clear) is kept on screen at launch instead of being overwritten by the rotation's startup pick. The folder is still scanned and the timer still armed, so scheduled rotation proceeds once the interval elapses (order mode's first tick lands on the folder's natural first image).
+
+- ✅ Bake a default background into the executable, in case user has none.
+	- background53.jpg
+	- Done: background53.jpg (~100KB, negligible vs the ~13MB binary) is embedded via include_bytes and decoded as the wallpaper when no image and no rotation folder are configured. It runs through the same blur/contrast/opacity pipeline as a file wallpaper. New config key `background_default` (default true) opts out for a plain background-colored terminal.
+	- Note: this changes the look for anyone running with no wallpaper - fresh installs (and existing configs with no background_image/folder) now show the built-in one until they set `background_default = false`. Config-only for now (not in the Settings dialog, which is due for its big reorg); it backfills into existing configs as a commented default.
+	- Verified headless: with no wallpaper configured the embedded image renders; with `background_default = false` the background is solid.
+
+- ✅ Settings dialog:
+	- ✅ When entering a text field, select all text by default.
+		- Done: keyboard entry (Space/Enter/first typed char) already selected all; now a fresh single mouse-click into a field also selects all on release. A click that turns into a drag keeps the dragged range instead, and clicking again inside a field you're already editing still repositions the caret.
+	- ✅ For numeric fields:
+		- Done: Up/Down arrows step a focused (or open) numeric field by ~1/100 of its range (roughly 100 steps across it), rounded to a whole unit for integer fields. Shift+Up/Down steps ~1/10 (roughly 10 steps). Left/Right (which already stepped when focused) share the same step sizes and gain Shift for the 10x step too. Tab still walks between controls. During an edit the field's shown value updates and stays fully selected as you step.
+		- Allow up and down arrows to make small (but meaningful) increments
+			- The range of the field will dictate how much each increment is. In this mode, there should be roughly 100 increments across the range.
+		- Shift+up and down arrows make 10x larger (and meaningful within the range) increments.
+			- The range of the field will dictate how much each increment is. In this mode, there should be roughly 10 increments across the range.
 
 - ✅ New setting: Background image contrast mask - flatten the image's contrast so it stops competing with text.
 	- Done: applies uniformly across the whole image, baked at load in linear light. A main on/off (default on) plus three 0..1 knobs (default 0.5 each): `size` = the flatten scale, the localMean radius (1.0 = half the longest pixel dimension, so the image collapses toward one tone; small = only fine detail flattens); `strength` = how far each pixel is pulled toward that local mean; `auto` = blends the manual knobs with values derived from the image's own busyness (1.0 = full auto, 0.0 = manual only, 0.5 = average). Config keys `background_contrast_mask` / `_size` / `_strength` / `_auto`; a Settings toggle + three sliders (sliders grey out while the mask is off).
