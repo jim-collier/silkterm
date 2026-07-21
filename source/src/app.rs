@@ -265,7 +265,9 @@ impl App {
 				.set_outer_position(winit::dpi::PhysicalPosition::new(x.max(0), y.max(0)));
 		}
 	}
+	// self kept for call-site parity with the Windows version above
 	#[cfg(not(target_os = "windows"))]
+	#[allow(clippy::unused_self)]
 	fn center_dialog(&self) {}
 
 	// Windows: the dialog is created hidden (see dialog::make), so after centering it
@@ -278,7 +280,9 @@ impl App {
 			d.window.set_visible(true);
 		}
 	}
+	// self kept for call-site parity with the Windows version above
 	#[cfg(not(target_os = "windows"))]
+	#[allow(clippy::unused_self)]
 	fn reveal_dialog(&self) {}
 
 	fn apply_dialog_action(&mut self, action: crate::dialog::DialogAction) {
@@ -307,7 +311,11 @@ impl App {
 	// applied live but not saved - OK then leaves the dialog open).
 	fn apply_dialog_settings(&mut self) -> bool {
 		let mut wrote = true;
-		if let Some((orig, edited, sys)) = self.dialog.as_ref().and_then(|d| d.settings_values()) {
+		if let Some((orig, edited, sys)) = self
+			.dialog
+			.as_ref()
+			.and_then(super::dialog::DialogWin::settings_values)
+		{
 			if let Some(state) = self.state.as_mut() {
 				wrote = state.apply_settings_values(&orig, edited, sys);
 			}
@@ -315,7 +323,11 @@ impl App {
 			// them back out so the file returns to the template's default line.
 			// Skip when the write was deferred (revert_keys would just no-op busy).
 			if wrote {
-				if let Some(reverted) = self.dialog.as_mut().map(|d| d.take_reverted()) {
+				if let Some(reverted) = self
+					.dialog
+					.as_mut()
+					.map(super::dialog::DialogWin::take_reverted)
+				{
 					config::revert_keys(&reverted);
 				}
 			}
@@ -433,9 +445,7 @@ impl ContextMenu {
 		if n == 0 {
 			return None;
 		}
-		let mut i = from
-			.map(|i| i as i32)
-			.unwrap_or(if dir > 0 { -1 } else { 0 });
+		let mut i = from.map_or(if dir > 0 { -1 } else { 0 }, |i| i as i32);
 		for _ in 0..n {
 			i = (i + dir).rem_euclid(n);
 			if matches!(self.entries[i as usize], Entry::Item { .. }) {
@@ -744,7 +754,7 @@ impl State {
 	fn poll_output_copy(&mut self) {
 		let keep = self.focused.then(|| self.tabs.cur().focused);
 		for pm in &mut self.tabs.list {
-			for (id, pane) in pm.panes.iter_mut() {
+			for (id, pane) in &mut pm.panes {
 				if keep != Some(*id) || !pane.copy_output {
 					pane.disarm_capture();
 				}
@@ -786,8 +796,7 @@ impl State {
 		let focused_id = pm.focused;
 		pm.panes
 			.get_mut(&focused_id)
-			.map(|p| p.term.tab_title())
-			.unwrap_or_else(|| config::APP_NAME.into())
+			.map_or_else(|| config::APP_NAME.into(), |p| p.term.tab_title())
 	}
 
 	// The window title (taskbar / alt-tab): a CLI --title override verbatim, else
@@ -1048,7 +1057,7 @@ impl State {
 					.cur()
 					.panes
 					.get(&target)
-					.and_then(|p| p.selection_text())
+					.and_then(super::pane::Pane::selection_text)
 				{
 					self.clipboard.set_clipboard(text);
 				}
@@ -1075,16 +1084,14 @@ impl State {
 				}
 			}
 			MenuAction::SplitVertical => {
-				let _ =
-					self.tabs
-						.cur_mut()
-						.split(&mut self.text, proxy, target, Dir::Vertical, area);
+				self.tabs
+					.cur_mut()
+					.split(&mut self.text, proxy, target, Dir::Vertical, area);
 			}
 			MenuAction::SplitHorizontal => {
-				let _ =
-					self.tabs
-						.cur_mut()
-						.split(&mut self.text, proxy, target, Dir::Horizontal, area);
+				self.tabs
+					.cur_mut()
+					.split(&mut self.text, proxy, target, Dir::Horizontal, area);
 			}
 			MenuAction::Close => {
 				if self.tabs.cur().panes.len() > 1 {
@@ -1446,7 +1453,7 @@ impl State {
 		let scrim_on = cfg.text_scrim && cfg.text_scrim_radius > 0.0;
 		let mut scrim_cells: Vec<RectInstance> = Vec::new();
 
-		for (id, pane) in self.tabs.cur_mut().panes.iter_mut() {
+		for (id, pane) in &mut self.tabs.cur_mut().panes {
 			pane.scroll.advance(dt);
 			let rect = pane.rect;
 			// scope the expensive re-shape to panes that actually changed: fresh
@@ -1744,8 +1751,7 @@ impl State {
 					let focused_id = pm.focused;
 					pm.panes
 						.get_mut(&focused_id)
-						.map(|p| p.term.tab_title())
-						.unwrap_or_else(|| config::APP_NAME.into())
+						.map_or_else(|| config::APP_NAME.into(), |p| p.term.tab_title())
 				})
 				.collect()
 		} else {
@@ -2068,9 +2074,8 @@ impl State {
 				.prepare_overlay(&self.gfx.device, &self.gfx.queue, areas);
 		}
 
-		let frame = match self.gfx.begin_frame() {
-			Some(frame) => frame,
-			None => return animating,
+		let Some(frame) = self.gfx.begin_frame() else {
+			return animating;
 		};
 		let view = self.gfx.frame_view(&frame);
 		let mut encoder = self
@@ -2366,13 +2371,12 @@ fn is_x11(el: &ActiveEventLoop) -> bool {
 	use raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
 	el.owned_display_handle()
 		.display_handle()
-		.map(|handle| {
+		.is_ok_and(|handle| {
 			matches!(
 				handle.as_raw(),
 				RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)
 			)
 		})
-		.unwrap_or(false)
 }
 
 // Stable X11 WM_CLASS (+ Wayland app_id) so the window is identifiable to the
@@ -2513,7 +2517,7 @@ fn build_layout(
 				None => 0.5,
 				Some(Size::Percent(pct)) => pct / 100.0,
 				Some(Size::Cells(n)) => {
-					let rect = pm.panes.get(&target).map(|p| p.rect).unwrap_or(area);
+					let rect = pm.panes.get(&target).map_or(area, |p| p.rect);
 					let denom = match dir {
 						Dir::Vertical => (rect.w / text.cell_w).max(1.0),
 						Dir::Horizontal => (rect.h / text.cell_h).max(1.0),
@@ -2541,7 +2545,7 @@ fn build_layout(
 		}
 		// focus the tab's first pane, not the last split
 		pm.focused = main_id;
-		pm.title_override = tab.title.clone();
+		pm.title_override.clone_from(&tab.title);
 		out.push(pm);
 	}
 	out
@@ -2618,8 +2622,7 @@ fn next_wallpaper_index(len: usize, current: usize, random: bool, entropy: u64) 
 fn time_entropy() -> u64 {
 	std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
-		.map(|d| d.as_nanos() as u64)
-		.unwrap_or(0)
+		.map_or(0, |d| d.as_nanos() as u64)
 }
 
 // A built-in wallpaper baked into the binary, shown when the user has none
@@ -3263,7 +3266,7 @@ impl ApplicationHandler<UserEvent> for App {
 											p.update_selection(end, Side::Right);
 										}
 										None => {
-											p.begin_selection(point, side, SelectionType::Semantic)
+											p.begin_selection(point, side, SelectionType::Semantic);
 										}
 									}
 								} else {
@@ -3477,7 +3480,7 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 						// Left/Right cycle between menu-bar dropdowns (no-op for a
 						// right-click context menu, which isn't bar-anchored)
-						Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight) => {
+						Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight) => {
 							if let Some(open_idx) = state.bar_open {
 								let n = MENU_BAR.len();
 								let next =
@@ -3591,9 +3594,9 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 						Key::Named(NamedKey::PageUp) => {
 							if shift {
-								state.tabs.move_active(false)
+								state.tabs.move_active(false);
 							} else {
-								state.tabs.prev()
+								state.tabs.prev();
 							}
 							state.update_title();
 							state.dirty = true;
@@ -3601,9 +3604,9 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 						Key::Named(NamedKey::PageDown) => {
 							if shift {
-								state.tabs.move_active(true)
+								state.tabs.move_active(true);
 							} else {
-								state.tabs.next()
+								state.tabs.next();
 							}
 							state.update_title();
 							state.dirty = true;
@@ -3622,8 +3625,7 @@ impl ApplicationHandler<UserEvent> for App {
 					.cur()
 					.panes
 					.get(&focused)
-					.map(|p| p.mode.contains(TermMode::APP_CURSOR))
-					.unwrap_or(false);
+					.is_some_and(|p| p.mode.contains(TermMode::APP_CURSOR));
 				if let Some(bytes) = input::encode(&key, state.mods, app_cursor) {
 					// copy-output: Enter at the shell prompt may launch a command;
 					// arm the capture so its output is copied once the pane settles.
@@ -3740,7 +3742,7 @@ impl ApplicationHandler<UserEvent> for App {
 		let dlg_wake = self
 			.dialog
 			.as_ref()
-			.and_then(|d| d.anim_wake_ms())
+			.and_then(super::dialog::DialogWin::anim_wake_ms)
 			.map(|ms| Instant::now() + Duration::from_millis(ms));
 
 		// re-assert the dialog->terminal stacking a few times after focus (see the
@@ -3878,7 +3880,7 @@ impl State {
 					.cur()
 					.panes
 					.get(&focused)
-					.and_then(|p| p.selection_text())
+					.and_then(super::pane::Pane::selection_text)
 				{
 					self.clipboard.set_clipboard(text);
 				}

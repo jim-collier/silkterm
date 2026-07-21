@@ -8,17 +8,17 @@
 //! `bgcolor` map so a glyph's halo takes ITS cell's bg colour (a glyph on a
 //! one-off colored cell isn't smeared with the global bg colour).
 //!
-//! Two passes build the halo in tex_a (tex_t stays crisp for the border). Gaussian
+//! Two passes build the halo in `tex_a` (`tex_t` stays crisp for the border). Gaussian
 //! (legacy, corners recede) is a separable sum-blur; the distance functions (dilate
 //! / sdf / dt) are a separable, bounded Euclidean/Chebyshev distance transform so
 //! corners stay full - pass a = per-column 1D distance, pass b = row combine. The
 //! composite maps the blurred coverage OR the distance (through a falloff curve) to
 //! the per-pixel bg colour, plus a thin dilated outline of the crisp coverage.
 //!
-//! tex_t <- crisp TEXT coverage; tex_cur <- crisp CURSOR coverage (kept apart so
+//! `tex_t` <- crisp TEXT coverage; `tex_cur` <- crisp CURSOR coverage (kept apart so
 //! the cursor can join the halo and the outline independently, each by its own
-//! flag; the first pass folds tex_cur in when cursor_scrim, the composite samples
-//! tex_t / tex_cur to add the border when cursor_outline).
+//! flag; the first pass folds `tex_cur` in when `cursor_scrim`, the composite samples
+//! `tex_t` / `tex_cur` to add the border when `cursor_outline`).
 
 use crate::gfx::{RectInstance, RectRenderer};
 
@@ -690,7 +690,7 @@ fn make_pipeline(
 	})
 }
 
-const WGSL: &str = r#"
+const WGSL: &str = r"
 struct VsOut { @builtin(position) clip: vec4<f32>, @location(0) uv: vec2<f32> };
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> VsOut {
@@ -857,4 +857,4 @@ fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {
     let a = max(ga, border);
     return vec4<f32>(rgb * a, a);
 }
-"#;
+";

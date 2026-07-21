@@ -59,7 +59,7 @@ impl EventListener for EventProxy {
 				.proxy
 				.send_event(UserEvent::PtyWrite(self.id, text.into_bytes())),
 			Event::Bell => self.proxy.send_event(UserEvent::Bell),
-			Event::MouseCursorDirty => Ok(()),
+			// MouseCursorDirty and any other events: nothing to forward
 			_ => Ok(()),
 		};
 	}
@@ -103,6 +103,9 @@ pub struct TermInstance {
 }
 
 impl TermInstance {
+	// command is owned by the spawned terminal conceptually; the by-value
+	// constructor input threads through split_at/spawn_pane as a move
+	#[allow(clippy::needless_pass_by_value)]
 	pub fn spawn(
 		id: PaneId,
 		cols: usize,
@@ -117,7 +120,9 @@ impl TermInstance {
 
 		let mut config = Config::default();
 		config.scrolling_history = crate::config::settings().scrollback;
-		config.semantic_escape_chars = crate::config::settings().word_separators.clone();
+		config
+			.semantic_escape_chars
+			.clone_from(&crate::config::settings().word_separators);
 
 		let dims = TermDimensions {
 			columns: cols,

@@ -2,11 +2,11 @@
 // Copyright © 2026 Jim Collier
 
 //! Control socket: each running instance listens on a per-process Unix socket
-//! and exports its path to child shells via SILKTERM_SOCKET, so `silkterm
+//! and exports its path to child shells via `SILKTERM_SOCKET`, so `silkterm
 //! --wallpaper`/`--reload-settings` run from a shell inside a window reaches
 //! exactly that window's process. Protocol: one text line per connection
 //! (`reload`, or `wallpaper` + optional tab + path), reply `ok` / `err <msg>`.
-//! Unix only for now (std has no AF_UNIX on Windows).
+//! Unix only for now (std has no `AF_UNIX` on Windows).
 
 use std::path::PathBuf;
 
@@ -40,9 +40,7 @@ pub struct CtlServer;
 pub fn serve(proxy: EventLoopProxy<UserEvent>) -> Option<CtlServer> {
 	use std::io::{BufRead, BufReader, Write};
 
-	let dir = std::env::var_os("XDG_RUNTIME_DIR")
-		.map(PathBuf::from)
-		.unwrap_or_else(std::env::temp_dir);
+	let dir = std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
 	let path = dir.join(format!("silkterm-ctl-{}.sock", std::process::id()));
 	let _ = std::fs::remove_file(&path); // stale leftover from a recycled pid
 	let listener = match std::os::unix::net::UnixListener::bind(&path) {
@@ -110,7 +108,7 @@ pub fn send(cmd: &str) -> Result<(), String> {
 		std::os::unix::net::UnixStream::connect(&sock).map_err(|e| format!("{sock}: {e}"))?;
 	stream
 		.write_all(cmd.as_bytes())
-		.and_then(|_| stream.write_all(b"\n"))
+		.and_then(|()| stream.write_all(b"\n"))
 		.map_err(|e| e.to_string())?;
 	let _ = stream.shutdown(std::net::Shutdown::Write);
 	let mut reply = String::new();
@@ -139,7 +137,7 @@ mod tests {
 		assert!(matches!(parse("reload"), Ok(UserEvent::ReloadSettings)));
 		match parse("wallpaper\t/a dir/pic 1.png") {
 			Ok(UserEvent::SetWallpaper(Some(p))) => {
-				assert_eq!(p, PathBuf::from("/a dir/pic 1.png"))
+				assert_eq!(p, PathBuf::from("/a dir/pic 1.png"));
 			}
 			other => panic!("{other:?}"),
 		}

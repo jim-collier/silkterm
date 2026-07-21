@@ -228,7 +228,7 @@ fn resolve_ui_family(fs: &FontSystem) -> Option<String> {
 		.clone()
 		.into_iter()
 		.chain(crate::sysfont::sans_serif().map(str::to_string))
-		.chain(curated.iter().map(|s| s.to_string()))
+		.chain(curated.iter().map(std::string::ToString::to_string))
 		.find_map(|fam| installed(&fam))
 }
 
@@ -674,8 +674,7 @@ fn measure_cell(fs: &mut FontSystem, metrics: Metrics) -> f32 {
 	buf.shape_until_scroll(fs, false);
 	buf.layout_runs()
 		.next()
-		.map(|run| run.line_w / N as f32)
-		.unwrap_or(metrics.font_size * 0.6)
+		.map_or(metrics.font_size * 0.6, |run| run.line_w / N as f32)
 		.max(1.0)
 }
 
@@ -697,8 +696,7 @@ fn bold_matches_cell(fs: &mut FontSystem, metrics: Metrics, cell_w: f32) -> bool
 	let adv = buf
 		.layout_runs()
 		.next()
-		.map(|run| run.line_w / N as f32)
-		.unwrap_or(cell_w);
+		.map_or(cell_w, |run| run.line_w / N as f32);
 	(adv - cell_w).abs() < 0.1
 }
 

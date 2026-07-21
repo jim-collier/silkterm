@@ -4,14 +4,50 @@
 members = ["source"]
 resolver = "3"
 
-# Clippy gate (cicd lints stage runs -D warnings). The allows are deliberate
-# house style, not suppressed problems: nested ifs read better than && chains
-# here, and the flagged fns/enums are shaped by wgpu/winit API reality.
+# Clippy gate (cicd lints stage runs -D warnings). pedantic is on; the allows
+# below are deliberate house style, not suppressed problems.
 [workspace.lints.clippy]
-collapsible_if = "allow"
+pedantic = { level = "warn", priority = -1 }
+
+# Shaped by wgpu/winit API reality or plain readability here.
+collapsible_if = "allow"        # nested ifs read better than && chains here
 too_many_arguments = "allow"
 type_complexity = "allow"
 large_enum_variant = "allow"
+
+# Pixel/grid/easing math casts and exact sentinel float compares are pervasive
+# and intentional. Rewriting each site (try_from().unwrap(), From, epsilon
+# compares) adds noise, not clarity - where an epsilon is meant, the code uses
+# an explicit one (SETTLE_EPS).
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+float_cmp = "allow"
+
+# Big render/build/layout fns are cohesive; splitting for a line count alone
+# would scatter tightly-coupled state.
+too_many_lines = "allow"
+
+# Config/Settings-style structs legitimately carry many independent toggles.
+struct_excessive_bools = "allow"
+
+# `..Default::default()` in struct-update reads better than naming the type.
+default_trait_access = "allow"
+
+# A function-scoped `use Enum::*` right before an exhaustive match reads better
+# than a 30-variant explicit import list.
+enum_glob_use = "allow"
+
+# Color/geometry math uses the conventional short names (r/g/b, x/y/w/h, sx/sy);
+# spelling them out fights the domain and the project's own naming style.
+similar_names = "allow"
+many_single_char_names = "allow"
+
+# CLI optional-value args are a genuine tri-state: absent / present-empty /
+# present-with-value. Option<Option<T>> models that directly.
+option_option = "allow"
 
 # Profiles only take effect in the workspace root manifest, so they live here,
 # not in source/Cargo.toml.

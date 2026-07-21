@@ -211,7 +211,7 @@ impl Gfx {
 			.formats
 			.iter()
 			.copied()
-			.find(|f| f.is_srgb())
+			.find(wgpu::TextureFormat::is_srgb)
 			.unwrap_or(caps.formats[0]);
 
 		// Prefer a premultiplied-alpha mode so a translucent background shows the
@@ -331,9 +331,9 @@ impl Gfx {
 		let exposed = unsafe {
 			wgpu::hal::gles::Adapter::new_external(
 				|name| {
-					std::ffi::CString::new(name)
-						.map(|cstr| gl_display.get_proc_address(&cstr) as *const _)
-						.unwrap_or(std::ptr::null())
+					std::ffi::CString::new(name).map_or(std::ptr::null(), |cstr| {
+						gl_display.get_proc_address(&cstr).cast()
+					})
 				},
 				wgpu::GlBackendOptions::default(),
 			)
@@ -822,7 +822,7 @@ impl RectRenderer {
 	}
 }
 
-const RECT_WGSL: &str = r#"
+const RECT_WGSL: &str = r"
 struct Uniform { resolution: vec2<f32>, _pad: vec2<f32> };
 @group(0) @binding(0) var<uniform> u: Uniform;
 
@@ -882,7 +882,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // premultiply: lets translucent backgrounds composite over the desktop
     return vec4<f32>(in.color.rgb * a, a);
 }
-"#;
+";
 
 // Fullscreen-triangle flip-blit: samples the offscreen scene and writes it to
 // the GL default framebuffer with V flipped (fbo 0 has a bottom-left origin).

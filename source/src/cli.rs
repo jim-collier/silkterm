@@ -377,27 +377,27 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 						a.value(name, inline)?
 							.parse()
 							.map_err(|_| "bad --columns")?,
-					)
+					);
 				}
 				"rows" => {
-					cli.win.rows = Some(a.value(name, inline)?.parse().map_err(|_| "bad --rows")?)
+					cli.win.rows = Some(a.value(name, inline)?.parse().map_err(|_| "bad --rows")?);
 				}
 				"pixel-width" => {
 					cli.win.pixel_width = Some(
 						a.value(name, inline)?
 							.parse()
 							.map_err(|_| "bad --pixel-width")?,
-					)
+					);
 				}
 				"pixel-height" => {
 					cli.win.pixel_height = Some(
 						a.value(name, inline)?
 							.parse()
 							.map_err(|_| "bad --pixel-height")?,
-					)
+					);
 				}
 				"background-opacity" => {
-					cli.win.opacity = Some(parse_f32(name, &a.value(name, inline)?)?)
+					cli.win.opacity = Some(parse_f32(name, &a.value(name, inline)?)?);
 				}
 				"hide-windowframe" => cli.win.hide_frame = Some(a.bool_value(name, inline)?),
 				"hide-menu" => cli.win.hide_menu = Some(a.bool_value(name, inline)?),
@@ -486,7 +486,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 				}
 			}
 			"background-image-opacity" => {
-				style.bg_opacity = Some(parse_f32(name, &a.value(name, inline)?)?)
+				style.bg_opacity = Some(parse_f32(name, &a.value(name, inline)?)?);
 			}
 			_ => return Err(format!("unknown option: --{name}")),
 		}

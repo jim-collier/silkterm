@@ -334,6 +334,7 @@ fn read_doc(path: &std::path::Path) -> Option<toml_edit::DocumentMut> {
 // - e.g. the Settings dialog stays open instead of clobbering an in-flight edit.
 #[must_use]
 pub fn persist(orig: &Settings, s: &Settings) -> bool {
+	use toml_edit::value;
 	let Some(path) = config_path() else {
 		return true;
 	};
@@ -344,7 +345,6 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	let Some(mut doc) = read_doc(&path) else {
 		return true;
 	};
-	use toml_edit::value;
 	// round f32 -> a clean decimal so persisted floats aren't 0.2000000029...
 	let r = |v: f32| (v as f64 * 1000.0).round() / 1000.0;
 
@@ -530,7 +530,7 @@ pub fn to_linear(b: u8) -> f32 {
 // Rust-side copy - the WGSL lin2srgb in gfx.rs/scrim.rs is necessarily separate.
 pub fn from_linear_u8(c: f32) -> u8 {
 	let c = c.clamp(0.0, 1.0);
-	let s = if c <= 0.0031308 {
+	let s = if c <= 0.003_130_8 {
 		c * 12.92
 	} else {
 		1.055 * c.powf(1.0 / 2.4) - 0.055
@@ -981,10 +981,7 @@ fn line_table(line: &str) -> Option<&str> {
 
 fn line_setting_key(line: &str) -> Option<&str> {
 	let trimmed = line.trim_start();
-	let trimmed = trimmed
-		.strip_prefix('#')
-		.map(str::trim_start)
-		.unwrap_or(trimmed);
+	let trimmed = trimmed.strip_prefix('#').map_or(trimmed, str::trim_start);
 	let end =
 		trimmed.find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'))?;
 	let key = &trimmed[..end];
@@ -1210,16 +1207,15 @@ fn backfill_config(path: &std::path::Path) {
 		if have.contains(&(table.clone(), key)) {
 			continue;
 		}
-		match table.as_deref() {
-			Some("colors") => colors.extend(block),
-			_ => {
-				// a blank line only when this starts a new (visible) group
-				if !group_open {
-					top.push(String::new());
-				}
-				top.extend(block);
-				group_open = true;
+		if let Some("colors") = table.as_deref() {
+			colors.extend(block);
+		} else {
+			// a blank line only when this starts a new (visible) group
+			if !group_open {
+				top.push(String::new());
 			}
+			top.extend(block);
+			group_open = true;
 		}
 	}
 	if top.is_empty() && colors.is_empty() {
@@ -1228,20 +1224,17 @@ fn backfill_config(path: &std::path::Path) {
 
 	let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
 	if !colors.is_empty() {
-		match lines
+		if let Some(i) = lines
 			.iter()
 			.position(|line| line_table(line) == Some("colors"))
 		{
-			Some(i) => {
-				for (offset, line) in colors.into_iter().enumerate() {
-					lines.insert(i + 1 + offset, line);
-				}
+			for (offset, line) in colors.into_iter().enumerate() {
+				lines.insert(i + 1 + offset, line);
 			}
-			None => {
-				lines.push(String::new());
-				lines.push("[colors]".to_string());
-				lines.extend(colors);
-			}
+		} else {
+			lines.push(String::new());
+			lines.push("[colors]".to_string());
+			lines.extend(colors);
 		}
 	}
 	if !top.is_empty() {
@@ -1251,7 +1244,7 @@ fn backfill_config(path: &std::path::Path) {
 				// avoid a double blank if the line above the table is already blank
 				if i > 0
 					&& lines[i - 1].trim().is_empty()
-					&& top.first().is_some_and(|line| line.is_empty())
+					&& top.first().is_some_and(std::string::String::is_empty)
 				{
 					top.remove(0);
 				}

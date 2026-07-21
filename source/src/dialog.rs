@@ -208,8 +208,7 @@ impl DialogWin {
 		// ~1010px total; a tab that doesn't fit scrolls instead of clipping buttons
 		let max_h = window
 			.current_monitor()
-			.map(|monitor| monitor.size().height as f32 - 38.0)
-			.unwrap_or(1010.0)
+			.map_or(1010.0, |monitor| monitor.size().height as f32 - 38.0)
 			.min(1010.0);
 		// laid out at the origin
 		let dialog = SettingsDialog::new(0.0, 0.0, text.ui_line_h, label_w, btn_w, tab_ws, max_h);
@@ -242,7 +241,7 @@ impl DialogWin {
 				dialog.edited().clone(),
 				dialog.use_system_font(),
 			)),
-			_ => None,
+			Content::About { .. } => None,
 		}
 	}
 
@@ -259,7 +258,7 @@ impl DialogWin {
 	pub fn take_reverted(&mut self) -> Vec<&'static str> {
 		match &mut self.content {
 			Content::Settings(dialog) => dialog.take_reverted(),
-			_ => Vec::new(),
+			Content::About { .. } => Vec::new(),
 		}
 	}
 
@@ -321,7 +320,7 @@ impl DialogWin {
 	pub fn shift_held(&self) -> bool {
 		match &self.content {
 			Content::Settings(dialog) => dialog.shift(),
-			_ => false,
+			Content::About { .. } => false,
 		}
 	}
 
@@ -388,7 +387,7 @@ impl DialogWin {
 	pub fn key_space(&mut self) -> Option<DialogAction> {
 		match &mut self.content {
 			Content::Settings(dialog) => map_action(dialog.key_space()),
-			_ => None,
+			Content::About { .. } => None,
 		}
 	}
 
@@ -401,7 +400,7 @@ impl DialogWin {
 		clip: Option<&mut crate::clipboard::Clipboard>,
 	) -> Option<DialogAction> {
 		match &mut self.content {
-			Content::Settings(dialog) if dialog.alt() => map_action(dialog.alt_key(ch)),
+			Content::Settings(dialog) if dialog.alt() => map_action(SettingsDialog::alt_key(ch)),
 			Content::Settings(dialog) if dialog.ctrl() => {
 				match ch.to_ascii_lowercase() {
 					'a' => dialog.select_all(),
@@ -417,7 +416,9 @@ impl DialogWin {
 						}
 					}
 					'v' => {
-						if let Some(text) = clip.and_then(|c| c.get_clipboard()) {
+						if let Some(text) =
+							clip.and_then(super::clipboard::Clipboard::get_clipboard)
+						{
 							dialog.insert_str(&text);
 						}
 					}
@@ -429,7 +430,7 @@ impl DialogWin {
 				dialog.char_input(ch);
 				None
 			}
-			_ => None,
+			Content::About { .. } => None,
 		}
 	}
 
@@ -462,7 +463,7 @@ impl DialogWin {
 				}
 				N::Delete => dialog.delete_forward(),
 				N::Insert if dialog.shift() => {
-					if let Some(text) = clip.and_then(|c| c.get_clipboard()) {
+					if let Some(text) = clip.and_then(super::clipboard::Clipboard::get_clipboard) {
 						dialog.insert_str(&text);
 					}
 				}
@@ -496,7 +497,7 @@ impl DialogWin {
 				}
 				map_action(action)
 			}
-			_ => None,
+			Content::About { .. } => None,
 		}
 	}
 
@@ -524,9 +525,8 @@ impl DialogWin {
 		} else {
 			None
 		};
-		let frame = match self.gfx.begin_frame() {
-			Some(f) => f,
-			None => return,
+		let Some(frame) = self.gfx.begin_frame() else {
+			return;
 		};
 		let view = self.gfx.frame_view(&frame);
 		let (w, h) = (self.gfx.config.width, self.gfx.config.height);
@@ -986,8 +986,9 @@ fn restack_parent_below(dialog: &Window, parent: Option<&RawWindowHandle>, dbg: 
 					.reply()
 					.ok()
 			})
-			.map(|reply| reply.value32().map(Iterator::collect).unwrap_or_default())
-			.unwrap_or_else(Vec::new);
+			.map_or_else(Vec::new, |reply| {
+				reply.value32().map(Iterator::collect).unwrap_or_default()
+			});
 		let pos = |w: u32| order.iter().position(|&x| x == w);
 		let (tp, dp) = (pos(parent_xid), pos(dlg_xid));
 		let ok = matches!((tp, dp), (Some(t), Some(d)) if t + 1 == d);
@@ -1020,7 +1021,7 @@ fn edit_cmd(
 			}
 		}
 		EditCmd::Paste => {
-			if let Some(text) = clip.and_then(|c| c.get_clipboard()) {
+			if let Some(text) = clip.and_then(super::clipboard::Clipboard::get_clipboard) {
 				dialog.insert_str(&text);
 			}
 		}
@@ -1031,12 +1032,11 @@ fn edit_cmd(
 
 fn map_action(action: Action) -> Option<DialogAction> {
 	match action {
-		Action::None => None,
 		Action::Apply => Some(DialogAction::Apply),
 		Action::Ok => Some(DialogAction::ApplyAndClose),
 		Action::Cancel => Some(DialogAction::Close),
-		// context-menu commands are handled by edit_cmd before mapping
-		Action::Edit(_) => None,
+		// None, plus context-menu Edit cmds (handled by edit_cmd before mapping)
+		Action::None | Action::Edit(_) => None,
 	}
 }
 
@@ -1054,7 +1054,7 @@ fn layout_about(
 		wgpu::DeviceType::IntegratedGpu => "Hardware (integrated GPU)",
 		wgpu::DeviceType::DiscreteGpu => "Hardware (discrete GPU)",
 		wgpu::DeviceType::VirtualGpu => "Hardware (virtual GPU)",
-		_ => "Unknown",
+		wgpu::DeviceType::Other => "Unknown",
 	};
 	let repo_url = env!("CARGO_PKG_REPOSITORY").to_string();
 	let gap = config::MENU_SEP_H;

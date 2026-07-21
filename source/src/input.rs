@@ -106,7 +106,7 @@ pub fn encode(ev: &KeyEvent, mods: ModifiersState, app_cursor: bool) -> Option<V
 }
 
 // The tilde-form CSI number for a key, if it has one (`ESC [ <n> ~`).
-fn tilde_num(named: &NamedKey) -> Option<u8> {
+fn tilde_num(named: NamedKey) -> Option<u8> {
 	Some(match named {
 		NamedKey::Insert => 2,
 		NamedKey::Delete => 3,
@@ -126,7 +126,7 @@ fn tilde_num(named: &NamedKey) -> Option<u8> {
 
 // The final byte of the letter-form CSI for a key (`ESC [ 1 ; <m> <letter>`);
 // same finals as the unmodified SS3/CSI forms for cursor keys and F1-F4.
-fn letter_final(named: &NamedKey) -> Option<u8> {
+fn letter_final(named: NamedKey) -> Option<u8> {
 	Some(match named {
 		NamedKey::ArrowUp => b'A',
 		NamedKey::ArrowDown => b'B',
@@ -174,10 +174,10 @@ fn encode_key(
 					// xterm/VTE convention; shells bind ^H to a word delete
 					return Some(with_alt(vec![0x08]));
 				}
-				if let Some(letter) = letter_final(named) {
+				if let Some(letter) = letter_final(*named) {
 					return Some(format!("\x1b[1;{mod_param}{}", letter as char).into_bytes());
 				}
-				if let Some(tilde_param) = tilde_num(named) {
+				if let Some(tilde_param) = tilde_num(*named) {
 					return Some(format!("\x1b[{tilde_param};{mod_param}~").into_bytes());
 				}
 			}
@@ -203,7 +203,7 @@ fn encode_key(
 				NamedKey::F2 => b"\x1bOQ".to_vec(),
 				NamedKey::F3 => b"\x1bOR".to_vec(),
 				NamedKey::F4 => b"\x1bOS".to_vec(),
-				_ => match tilde_num(named) {
+				_ => match tilde_num(*named) {
 					Some(tilde_param) => format!("\x1b[{tilde_param}~").into_bytes(),
 					None => return None,
 				},
@@ -217,13 +217,12 @@ fn encode_key(
 				let lower = c.to_ascii_lowercase();
 				let code = match lower {
 					'a'..='z' => (lower as u8 - b'a') + 1,
-					'@' => 0,
+					'@' | ' ' => 0,
 					'[' => 0x1b,
 					'\\' => 0x1c,
 					']' => 0x1d,
 					'^' => 0x1e,
 					'_' => 0x1f,
-					' ' => 0,
 					_ => return None,
 				};
 				return Some(with_alt(vec![code]));
