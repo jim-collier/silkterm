@@ -77,6 +77,7 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 	- [Installing](#installing)
 	- [Building from source](#building-from-source)
 	- [Configuration](#configuration)
+- [Contributing](#contributing)
 - [Support SilkTerm](#support-silkterm)
 - [Copyrights and licenses](#copyrights-and-licenses)
 
@@ -264,6 +265,10 @@ cargo build
 It rewrites `Cargo.toml`, the Rust sources, and the docs (review `git diff`
 afterwards); `cargo build` regenerates `Cargo.lock`.
 -->
+
+## Contributing
+
+Bug reports, feature ideas, and pull requests are welcome. See [contributing.md](contributing.md) for how to get started, and the [style guide](style-guide.md) for naming, comments, Rust conventions, and formatting.
 
 ## Support SilkTerm
 
