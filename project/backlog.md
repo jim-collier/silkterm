@@ -81,11 +81,12 @@ In each section, items are listed approximately from newest to oldest.
 		- 🔘 When text fields have focus highlight, there should only be one visible outline (rather than two - the highlight, AND the textbox outline).
 		- 🔘 The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
 
-- 🔘 Rename everything that was "background image" or "background" (specifically referring to background image), to "wallpaper", including in:
+- ✅ Rename everything that was "background image" or "background" (specifically referring to background image), to "wallpaper", including in:
 	- Source code
 	- Config file setting names and comments
 	- Program arguments
 	- (Defer settings dialog, that's in a separate enhancement.)
+	- Done: config keys `background_*` (image-specific) -> `wallpaper_*` (bare `background_image` -> `wallpaper`); the Settings fields, `RawConfig`, `persist`, and the default-config template + comments follow. Existing configs migrate in place (values, comments, and commented state preserved) via `CONFIG_RENAMES`, covered by a new test. Left the non-image ones alone: `transparent_background`/`_blur` (window see-through) and the `[colors]` `background`/`menu_background`/`dialog_background`. Internal image helpers renamed too (`load_wallpaper`, `resolve_wallpaper`, `resolve_wallpaper_folder`, `wallpaper_changed`; the decoded-pixels local stays distinct as `wallpaper_img`). CLI adds `--wallpaper-file/-stretch/-zoom/-opacity` with the old `--background-image*` kept as aliases; runtime `--wallpaper` and window `--background-opacity` (see-through, not the image) unchanged. Auto-detect now checks `wallpapers/wallpaper.{png,jpg,jpeg}` first, falling back to the legacy `backgrounds/background.*`. Settings-dialog labels deferred per the note.
 
 - 🔘 Refactor settings dialog
 	- Add a flyover help text system, giving a brief explanation of what non-obvious controls do.

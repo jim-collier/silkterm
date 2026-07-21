@@ -105,19 +105,19 @@ pub struct Settings {
 	pub opacity: f32,             // background opacity 0..1 (1 = fully opaque)
 	pub transparent_background: bool, // X11: per-pixel bg transparency (text stays opaque) via a GL surface
 	pub transparent_background_blur: bool, // X11: ask a KWin/picom compositor to blur the desktop behind the window
-	pub background_image: Option<PathBuf>, // resolved path, or None
-	pub background_image_raw: String, // the value as configured ("" = auto-detect); what the dialog shows
-	pub background_default: bool, // when no image/folder is configured, show the built-in wallpaper
-	pub background_folder: Option<PathBuf>, // rotate the wallpaper through this folder's images (overrides background_image)
-	pub background_rotate_random: bool,     // rotate randomly instead of in filename order
-	pub background_rotate_interval_s: f32,  // seconds between rotations (0 = pick one at startup only)
-	pub background_opacity: f32,            // image visibility 0..1
-	pub background_fit: Fit,
-	pub background_blur: f32, // Gaussian blur sigma applied to the image (0 = none)
-	pub background_contrast_mask: bool, // flatten the image's contrast so it stops competing with text
-	pub background_contrast_mask_size: f32, // flatten scale 0..1 (1 = half the longest pixel dim)
-	pub background_contrast_mask_strength: f32, // how far toward the local mean 0..1
-	pub background_contrast_mask_auto: f32, // blend manual knobs with image-derived auto 0..1 (1 = full auto)
+	pub wallpaper: Option<PathBuf>,        // resolved path, or None
+	pub wallpaper_raw: String, // the value as configured ("" = auto-detect); what the dialog shows
+	pub wallpaper_default: bool, // when no image/folder is configured, show the built-in wallpaper
+	pub wallpaper_folder: Option<PathBuf>, // rotate the wallpaper through this folder's images (overrides wallpaper)
+	pub wallpaper_rotate_random: bool,     // rotate randomly instead of in filename order
+	pub wallpaper_rotate_interval_s: f32,  // seconds between rotations (0 = pick one at startup only)
+	pub wallpaper_opacity: f32,            // image visibility 0..1
+	pub wallpaper_fit: Fit,
+	pub wallpaper_blur: f32, // Gaussian blur sigma applied to the image (0 = none)
+	pub wallpaper_contrast_mask: bool, // flatten the image's contrast so it stops competing with text
+	pub wallpaper_contrast_mask_size: f32, // flatten scale 0..1 (1 = half the longest pixel dim)
+	pub wallpaper_contrast_mask_strength: f32, // how far toward the local mean 0..1
+	pub wallpaper_contrast_mask_auto: f32, // blend manual knobs with image-derived auto 0..1 (1 = full auto)
 	pub text_scrim: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
 	pub text_scrim_radius: f32, // scrim blur sigma in px
 	pub text_scrim_softness: f32, // 0 = hard/solid scrim, 1 = soft/faint (maps to the intensity boost)
@@ -174,19 +174,19 @@ impl Default for Settings {
 			opacity: 0.95,
 			transparent_background: false,
 			transparent_background_blur: false,
-			background_image: None,
-			background_image_raw: String::new(),
-			background_default: true,
-			background_folder: None,
-			background_rotate_random: false,
-			background_rotate_interval_s: 0.0,
-			background_opacity: 0.10, // image visibility relative to bg color
-			background_fit: Fit::Stretch,
-			background_blur: 10.0,
-			background_contrast_mask: true,
-			background_contrast_mask_size: 0.5,
-			background_contrast_mask_strength: 0.5,
-			background_contrast_mask_auto: 0.5,
+			wallpaper: None,
+			wallpaper_raw: String::new(),
+			wallpaper_default: true,
+			wallpaper_folder: None,
+			wallpaper_rotate_random: false,
+			wallpaper_rotate_interval_s: 0.0,
+			wallpaper_opacity: 0.10, // image visibility relative to bg color
+			wallpaper_fit: Fit::Stretch,
+			wallpaper_blur: 10.0,
+			wallpaper_contrast_mask: true,
+			wallpaper_contrast_mask_size: 0.5,
+			wallpaper_contrast_mask_strength: 0.5,
+			wallpaper_contrast_mask_auto: 0.5,
 			text_scrim: true,
 			text_scrim_radius: 5.0,
 			text_scrim_softness: 0.5,
@@ -396,29 +396,29 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.transparent_background_blur != orig.transparent_background_blur {
 		doc["transparent_background_blur"] = value(s.transparent_background_blur);
 	}
-	if s.background_opacity != orig.background_opacity {
-		doc["background_opacity"] = value(r(s.background_opacity));
+	if s.wallpaper_opacity != orig.wallpaper_opacity {
+		doc["wallpaper_opacity"] = value(r(s.wallpaper_opacity));
 	}
-	if s.background_fit != orig.background_fit {
-		doc["background_fit"] = value(match s.background_fit {
+	if s.wallpaper_fit != orig.wallpaper_fit {
+		doc["wallpaper_fit"] = value(match s.wallpaper_fit {
 			Fit::Zoom => "zoom",
 			Fit::Stretch => "stretch",
 		});
 	}
-	if s.background_blur != orig.background_blur {
-		doc["background_blur"] = value(r(s.background_blur));
+	if s.wallpaper_blur != orig.wallpaper_blur {
+		doc["wallpaper_blur"] = value(r(s.wallpaper_blur));
 	}
-	if s.background_contrast_mask != orig.background_contrast_mask {
-		doc["background_contrast_mask"] = value(s.background_contrast_mask);
+	if s.wallpaper_contrast_mask != orig.wallpaper_contrast_mask {
+		doc["wallpaper_contrast_mask"] = value(s.wallpaper_contrast_mask);
 	}
-	if s.background_contrast_mask_size != orig.background_contrast_mask_size {
-		doc["background_contrast_mask_size"] = value(r(s.background_contrast_mask_size));
+	if s.wallpaper_contrast_mask_size != orig.wallpaper_contrast_mask_size {
+		doc["wallpaper_contrast_mask_size"] = value(r(s.wallpaper_contrast_mask_size));
 	}
-	if s.background_contrast_mask_strength != orig.background_contrast_mask_strength {
-		doc["background_contrast_mask_strength"] = value(r(s.background_contrast_mask_strength));
+	if s.wallpaper_contrast_mask_strength != orig.wallpaper_contrast_mask_strength {
+		doc["wallpaper_contrast_mask_strength"] = value(r(s.wallpaper_contrast_mask_strength));
 	}
-	if s.background_contrast_mask_auto != orig.background_contrast_mask_auto {
-		doc["background_contrast_mask_auto"] = value(r(s.background_contrast_mask_auto));
+	if s.wallpaper_contrast_mask_auto != orig.wallpaper_contrast_mask_auto {
+		doc["wallpaper_contrast_mask_auto"] = value(r(s.wallpaper_contrast_mask_auto));
 	}
 	if s.text_scrim != orig.text_scrim {
 		doc["text_scrim"] = value(s.text_scrim);
@@ -477,18 +477,16 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.command_line != orig.command_line {
 		doc["command_line"] = value(&s.command_line);
 	}
-	if s.background_image != orig.background_image
-		|| s.background_image_raw != orig.background_image_raw
-	{
+	if s.wallpaper != orig.wallpaper || s.wallpaper_raw != orig.wallpaper_raw {
 		// the file keeps whatever form the user wrote (bare/relative/absolute)
-		if s.background_image_raw.trim().is_empty() {
-			doc.remove("background_image");
+		if s.wallpaper_raw.trim().is_empty() {
+			doc.remove("wallpaper");
 		} else {
-			doc["background_image"] = value(s.background_image_raw.trim());
+			doc["wallpaper"] = value(s.wallpaper_raw.trim());
 		}
 	}
-	if s.background_default != orig.background_default {
-		doc["background_default"] = value(s.background_default);
+	if s.wallpaper_default != orig.wallpaper_default {
+		doc["wallpaper_default"] = value(s.wallpaper_default);
 	}
 
 	let mut set_color = |key: &str, color: [u8; 3], orig_color: [u8; 3]| {
@@ -557,18 +555,18 @@ struct RawConfig {
 	opacity: Option<f32>,
 	transparent_background: Option<bool>,
 	transparent_background_blur: Option<bool>,
-	background_image: Option<String>,
-	background_default: Option<bool>,
-	background_folder: Option<String>,
-	background_rotate_random: Option<bool>,
-	background_rotate_interval_s: Option<f32>,
-	background_opacity: Option<f32>,
-	background_fit: Option<String>,
-	background_blur: Option<f32>,
-	background_contrast_mask: Option<bool>,
-	background_contrast_mask_size: Option<f32>,
-	background_contrast_mask_strength: Option<f32>,
-	background_contrast_mask_auto: Option<f32>,
+	wallpaper: Option<String>,
+	wallpaper_default: Option<bool>,
+	wallpaper_folder: Option<String>,
+	wallpaper_rotate_random: Option<bool>,
+	wallpaper_rotate_interval_s: Option<f32>,
+	wallpaper_opacity: Option<f32>,
+	wallpaper_fit: Option<String>,
+	wallpaper_blur: Option<f32>,
+	wallpaper_contrast_mask: Option<bool>,
+	wallpaper_contrast_mask_size: Option<f32>,
+	wallpaper_contrast_mask_strength: Option<f32>,
+	wallpaper_contrast_mask_auto: Option<f32>,
 	theme: Option<String>,
 	theme_mode: Option<String>,
 	text_scrim: Option<bool>,
@@ -752,34 +750,34 @@ fn resolve(raw: RawConfig) -> Settings {
 		transparent_background_blur: raw
 			.transparent_background_blur
 			.unwrap_or(d.transparent_background_blur),
-		background_image_raw: raw.background_image.clone().unwrap_or_default(),
-		background_image: resolve_bg_image(raw.background_image),
-		background_default: raw.background_default.unwrap_or(d.background_default),
-		background_folder: resolve_bg_folder(raw.background_folder),
-		background_rotate_random: raw.background_rotate_random.unwrap_or(false),
-		background_rotate_interval_s: raw.background_rotate_interval_s.unwrap_or(0.0).max(0.0),
-		background_opacity: raw
-			.background_opacity
-			.unwrap_or(d.background_opacity)
+		wallpaper_raw: raw.wallpaper.clone().unwrap_or_default(),
+		wallpaper: resolve_wallpaper(raw.wallpaper),
+		wallpaper_default: raw.wallpaper_default.unwrap_or(d.wallpaper_default),
+		wallpaper_folder: resolve_wallpaper_folder(raw.wallpaper_folder),
+		wallpaper_rotate_random: raw.wallpaper_rotate_random.unwrap_or(false),
+		wallpaper_rotate_interval_s: raw.wallpaper_rotate_interval_s.unwrap_or(0.0).max(0.0),
+		wallpaper_opacity: raw
+			.wallpaper_opacity
+			.unwrap_or(d.wallpaper_opacity)
 			.clamp(0.0, 1.0),
-		background_blur: raw
-			.background_blur
-			.unwrap_or(d.background_blur)
+		wallpaper_blur: raw
+			.wallpaper_blur
+			.unwrap_or(d.wallpaper_blur)
 			.clamp(0.0, 100.0),
-		background_contrast_mask: raw
-			.background_contrast_mask
-			.unwrap_or(d.background_contrast_mask),
-		background_contrast_mask_size: raw
-			.background_contrast_mask_size
-			.unwrap_or(d.background_contrast_mask_size)
+		wallpaper_contrast_mask: raw
+			.wallpaper_contrast_mask
+			.unwrap_or(d.wallpaper_contrast_mask),
+		wallpaper_contrast_mask_size: raw
+			.wallpaper_contrast_mask_size
+			.unwrap_or(d.wallpaper_contrast_mask_size)
 			.clamp(0.0, 1.0),
-		background_contrast_mask_strength: raw
-			.background_contrast_mask_strength
-			.unwrap_or(d.background_contrast_mask_strength)
+		wallpaper_contrast_mask_strength: raw
+			.wallpaper_contrast_mask_strength
+			.unwrap_or(d.wallpaper_contrast_mask_strength)
 			.clamp(0.0, 1.0),
-		background_contrast_mask_auto: raw
-			.background_contrast_mask_auto
-			.unwrap_or(d.background_contrast_mask_auto)
+		wallpaper_contrast_mask_auto: raw
+			.wallpaper_contrast_mask_auto
+			.unwrap_or(d.wallpaper_contrast_mask_auto)
 			.clamp(0.0, 1.0),
 		text_scrim: raw.text_scrim.unwrap_or(d.text_scrim),
 		text_scrim_radius: raw
@@ -828,7 +826,7 @@ fn resolve(raw: RawConfig) -> Settings {
 			.cursor_blink_rate_ms
 			.unwrap_or(d.cursor_blink_rate_ms)
 			.max(50.0),
-		background_fit: match raw.background_fit.as_deref() {
+		wallpaper_fit: match raw.wallpaper_fit.as_deref() {
 			Some("zoom") => Fit::Zoom,
 			_ => Fit::Stretch,
 		},
@@ -894,7 +892,7 @@ pub fn effective_font_size() -> f32 {
 // Resolve the background image: an explicit path (absolute, or a filename
 // relative to the config dir), else auto-detect backgrounds/background.{png,jpg,jpeg}
 // under the config dir.
-pub fn resolve_bg_image(explicit: Option<String>) -> Option<PathBuf> {
+pub fn resolve_wallpaper(explicit: Option<String>) -> Option<PathBuf> {
 	let dir = config_path()?.parent()?.to_path_buf();
 	if let Some(given) = explicit.filter(|value| !value.trim().is_empty()) {
 		let path = PathBuf::from(&given);
@@ -905,17 +903,23 @@ pub fn resolve_bg_image(explicit: Option<String>) -> Option<PathBuf> {
 		};
 		return path.exists().then_some(path);
 	}
-	let bg_dir = dir.join("backgrounds");
-	["background.png", "background.jpg", "background.jpeg"]
+	// New convention first (wallpapers/wallpaper.*), then the old one
+	// (backgrounds/background.*) so existing setups keep working.
+	[("wallpapers", "wallpaper"), ("backgrounds", "background")]
 		.into_iter()
-		.map(|name| bg_dir.join(name))
+		.flat_map(|(sub, stem)| {
+			let sub_dir = dir.join(sub);
+			["png", "jpg", "jpeg"]
+				.into_iter()
+				.map(move |ext| sub_dir.join(format!("{stem}.{ext}")))
+		})
 		.find(|path| path.exists())
 }
 
 // The wallpaper-rotation folder: a relative value resolves against the config
-// dir (like the single background_image). Returns it only when it's an existing
+// dir (like the single wallpaper). Returns it only when it's an existing
 // directory, so a typo just leaves rotation off rather than erroring.
-pub fn resolve_bg_folder(explicit: Option<String>) -> Option<PathBuf> {
+pub fn resolve_wallpaper_folder(explicit: Option<String>) -> Option<PathBuf> {
 	let given = explicit.filter(|value| !value.trim().is_empty())?;
 	let path = PathBuf::from(given.trim());
 	let path = if path.is_absolute() {
@@ -1004,6 +1008,30 @@ const CONFIG_RENAMES: &[(&str, &str)] = &[
 	("text_glow_ramp", "text_scrim_ramp"),
 	("text_glow_regular_weight", "text_scrim_regular_weight"),
 	("cursor_glow", "cursor_scrim"),
+	("background_image", "wallpaper"),
+	("background_folder", "wallpaper_folder"),
+	("background_default", "wallpaper_default"),
+	("background_fit", "wallpaper_fit"),
+	("background_blur", "wallpaper_blur"),
+	("background_opacity", "wallpaper_opacity"),
+	("background_rotate_random", "wallpaper_rotate_random"),
+	(
+		"background_rotate_interval_s",
+		"wallpaper_rotate_interval_s",
+	),
+	("background_contrast_mask", "wallpaper_contrast_mask"),
+	(
+		"background_contrast_mask_size",
+		"wallpaper_contrast_mask_size",
+	),
+	(
+		"background_contrast_mask_strength",
+		"wallpaper_contrast_mask_strength",
+	),
+	(
+		"background_contrast_mask_auto",
+		"wallpaper_contrast_mask_auto",
+	),
 ];
 // Keys that no longer exist and should be removed from an existing config. The
 // cursor_shape/cursor_blink_style/cursor_insert_shape line was superseded by the
@@ -1352,41 +1380,42 @@ opacity = 0.95
 ## compositor instead). The compositor, not SilkTerm, controls the blur radius.
 # transparent_background_blur = true
 
-## Background image. Leave commented to auto-detect backgrounds/background.{png,jpg,jpeg}
-## under this directory. Value may be an absolute path or a filename relative here.
-# background_image = "background.png"
+## Wallpaper image. Leave commented to auto-detect wallpapers/wallpaper.{png,jpg,jpeg}
+## (or the legacy backgrounds/background.{png,jpg,jpeg}) under this directory. Value
+## may be an absolute path or a filename relative here.
+# wallpaper = "wallpaper.png"
 
-## Show a built-in wallpaper when none is configured (no background_image found
-## above and no background_folder below). Set false for a plain terminal.
-# background_default = true
+## Show a built-in wallpaper when none is configured (no wallpaper found
+## above and no wallpaper_folder below). Set false for a plain terminal.
+# wallpaper_default = true
 
-## Rotate the wallpaper through a folder of images (overrides background_image
+## Rotate the wallpaper through a folder of images (overrides wallpaper
 ## while set). Path is absolute or relative to this directory. Rotate randomly
 ## instead of filename order, and every N seconds (0 = pick one at startup only).
-# background_folder = "backgrounds"
-# background_rotate_random = false
-# background_rotate_interval_s = 0.0
+# wallpaper_folder = "wallpapers"
+# wallpaper_rotate_random = false
+# wallpaper_rotate_interval_s = 0.0
 
 ## Image visibility relative to the background color (independent of `opacity`
 ## above): 0.0 = all background color, 1.0 = all image.
-# background_opacity = 0.10
+# wallpaper_opacity = 0.10
 
 ## How the image fits: "stretch" (fill, ignore aspect) or "zoom" (cover, keep aspect).
-# background_fit = "stretch"
+# wallpaper_fit = "stretch"
 
-## Gaussian blur applied to the background image (sigma in pixels; 0 = none).
-# background_blur = 10.0
+## Gaussian blur applied to the wallpaper (sigma in pixels; 0 = none).
+# wallpaper_blur = 10.0
 
-## Contrast mask: flatten the background image's contrast so it stops competing
+## Contrast mask: flatten the wallpaper's contrast so it stops competing
 ## with text. `size` is the flatten scale (1.0 = half the longest pixel
 ## dimension, so the whole image collapses toward one tone; small = only fine
 ## detail flattens). `strength` is how far each pixel is pulled toward that local
 ## mean. `auto` blends the two manual knobs with values derived from the image's
 ## own busyness (1.0 = full auto override, 0.0 = manual only, 0.5 = average).
-# background_contrast_mask = true
-# background_contrast_mask_size = 0.5
-# background_contrast_mask_strength = 0.5
-# background_contrast_mask_auto = 0.5
+# wallpaper_contrast_mask = true
+# wallpaper_contrast_mask_size = 0.5
+# wallpaper_contrast_mask_strength = 0.5
+# wallpaper_contrast_mask_auto = 0.5
 
 ##=============================================================================
 ## Text scrim
@@ -1540,7 +1569,7 @@ mod tests {
 		let dir = std::env::temp_dir().join(format!("silkterm_cfgsave_{}", std::process::id()));
 		let _ = std::fs::create_dir_all(&dir);
 		let path = dir.join("config.toml");
-		std::fs::write(&path, "background_opacity = .1\ntext_scrim_ramp = \"s\"\n").unwrap();
+		std::fs::write(&path, "wallpaper_opacity = .1\ntext_scrim_ramp = \"s\"\n").unwrap();
 		set_config_override(path.clone());
 
 		let orig = load();
@@ -1647,8 +1676,8 @@ mod tests {
 		assert!(d.text_scrim_regular_weight);
 		assert!(!d.cursor_scrim, "cursor scrim halo defaults off");
 		assert!(d.cursor_outline, "cursor outline defaults on");
-		assert_eq!(d.background_blur, 10.0);
-		assert_eq!(d.background_opacity, 0.10);
+		assert_eq!(d.wallpaper_blur, 10.0);
+		assert_eq!(d.wallpaper_opacity, 0.10);
 	}
 
 	// Scrim function + the five falloff curves resolve; unknown values fall to the
@@ -1751,6 +1780,31 @@ mod tests {
 		assert!(
 			out.contains("text_scrim_ramp = \"linear\""),
 			"string value kept: {out:?}"
+		);
+	}
+
+	#[test]
+	fn migrate_renames_background_to_wallpaper() {
+		let out = migrate_config_text(
+			"background_image = \"pic.jpg\"\nbackground_opacity = 0.4\n# background_blur = 6.0\nbackground_contrast_mask_size = 0.3\n",
+		)
+		.expect("should rename");
+		assert!(!out.contains("background_"), "old names gone: {out:?}");
+		assert!(
+			out.contains("wallpaper = \"pic.jpg\""),
+			"path value + active kept: {out:?}"
+		);
+		assert!(
+			out.contains("wallpaper_opacity = 0.4"),
+			"value kept: {out:?}"
+		);
+		assert!(
+			out.contains("# wallpaper_blur = 6.0"),
+			"commented state kept: {out:?}"
+		);
+		assert!(
+			out.contains("wallpaper_contrast_mask_size = 0.3"),
+			"longest-name key kept: {out:?}"
 		);
 	}
 

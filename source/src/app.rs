@@ -559,7 +559,7 @@ struct State {
 	gfx: Gfx,
 	text: TextCtx,
 	rects: RectRenderer,
-	bg_image: Option<ImageRenderer>,
+	wallpaper_img: Option<ImageRenderer>,
 	scrim: crate::scrim::Scrim, // text readability scrim (used only when config.text_scrim)
 	tabs: Tabs,
 	mods: ModifiersState,
@@ -1274,27 +1274,27 @@ impl State {
 	fn set_wallpaper(&mut self, image: Option<std::path::PathBuf>) {
 		let orig = config::settings().as_ref().clone();
 		let mut edited = orig.clone();
-		edited.background_image_raw = image
+		edited.wallpaper_raw = image
 			.as_ref()
 			.map(|path| path.to_string_lossy().into_owned())
 			.unwrap_or_default();
-		edited.background_image = image;
+		edited.wallpaper = image;
 		self.apply_new_settings(&orig, edited, true);
 	}
 
-	// Wallpaper rotation: if background_folder is configured, scan it, show the
+	// Wallpaper rotation: if wallpaper_folder is configured, scan it, show the
 	// first (or a random) image now, and arm the timer if an interval is set.
 	// skip_initial keeps a CLI-specified wallpaper on screen at launch (still scans
 	// + arms the timer, so scheduled rotation proceeds once the interval elapses).
 	fn init_wallpaper_rotation(&mut self, skip_initial: bool) {
 		let settings = config::settings();
-		let Some(dir) = &settings.background_folder else {
+		let Some(dir) = &settings.wallpaper_folder else {
 			return;
 		};
 		self.wp_images = list_folder_images(dir);
 		if self.wp_images.is_empty() {
 			eprintln!(
-				"{}: background_folder {} has no images",
+				"{}: wallpaper_folder {} has no images",
 				config::APP_NAME,
 				dir.display()
 			);
@@ -1304,18 +1304,18 @@ impl State {
 			// Leave the CLI wallpaper showing; queue the folder so the first timer
 			// tick lands on its natural first image (order) or a random one.
 			self.wp_index = self.wp_images.len() - 1;
-			let ivl = settings.background_rotate_interval_s;
+			let ivl = settings.wallpaper_rotate_interval_s;
 			self.wp_next = (ivl > 0.0).then(|| Instant::now() + Duration::from_secs_f32(ivl));
 			return;
 		}
-		self.wp_index = if settings.background_rotate_random {
+		self.wp_index = if settings.wallpaper_rotate_random {
 			next_wallpaper_index(self.wp_images.len(), 0, true, time_entropy())
 		} else {
 			0
 		};
 		let first = self.wp_images[self.wp_index].clone();
 		self.set_wallpaper(Some(first));
-		let ivl = settings.background_rotate_interval_s;
+		let ivl = settings.wallpaper_rotate_interval_s;
 		if ivl > 0.0 {
 			self.wp_next = Some(Instant::now() + Duration::from_secs_f32(ivl));
 		}
@@ -1332,13 +1332,13 @@ impl State {
 		self.wp_index = next_wallpaper_index(
 			self.wp_images.len(),
 			self.wp_index,
-			settings.background_rotate_random,
+			settings.wallpaper_rotate_random,
 			time_entropy(),
 		);
 		let next = self.wp_images[self.wp_index].clone();
 		self.set_wallpaper(Some(next));
 		self.dirty = true;
-		let ivl = settings.background_rotate_interval_s;
+		let ivl = settings.wallpaper_rotate_interval_s;
 		self.wp_next = (ivl > 0.0).then(|| Instant::now() + Duration::from_secs_f32(ivl));
 	}
 
@@ -1365,7 +1365,7 @@ impl State {
 		force_bg: bool,
 	) {
 		let rebuild = crate::settings_ui::needs_text_rebuild(orig, &edited);
-		let bg = force_bg || crate::settings_ui::bg_image_changed(orig, &edited);
+		let bg = force_bg || crate::settings_ui::wallpaper_changed(orig, &edited);
 		let resize = edited.columns != orig.columns || edited.rows != orig.rows;
 		let blur_changed = edited.transparent_background_blur != orig.transparent_background_blur;
 		config::update(edited);
@@ -1395,7 +1395,7 @@ impl State {
 			self.rebuild_text(self.window.scale_factor() as f32);
 		}
 		if bg {
-			self.bg_image = load_bg_image(&self.gfx);
+			self.wallpaper_img = load_wallpaper(&self.gfx);
 		}
 		self.dirty = true;
 	}
@@ -1937,7 +1937,7 @@ impl State {
 			self.gfx.config.height,
 		);
 		self.rects.set_resolution(&self.gfx.queue, frame_w, frame_h);
-		if let Some(img) = &self.bg_image {
+		if let Some(img) = &self.wallpaper_img {
 			img.set_resolution(&self.gfx.queue, frame_w, frame_h);
 		}
 		self.rects
@@ -2208,7 +2208,7 @@ impl State {
 			// pane backgrounds (exactly pane-sized, no clip needed)
 			self.rects.draw(&mut pass, 0..under_len);
 			// background image over the pane fill, under cells/text
-			if let Some(img) = &self.bg_image {
+			if let Some(img) = &self.wallpaper_img {
 				img.draw(&mut pass);
 			}
 			// per-pane cell bg + cursor, clipped to the pane
@@ -2630,12 +2630,12 @@ fn time_entropy() -> u64 {
 }
 
 // A built-in wallpaper baked into the binary, shown when the user has none
-// configured (background_default). ~100KB - negligible next to the binary.
+// configured (wallpaper_default). ~100KB - negligible next to the binary.
 const DEFAULT_BACKGROUND: &[u8] = include_bytes!("../assets/default-background.jpg");
 
-fn load_bg_image(gfx: &Gfx) -> Option<ImageRenderer> {
+fn load_wallpaper(gfx: &Gfx) -> Option<ImageRenderer> {
 	let settings = config::settings();
-	let mut img = if let Some(path) = settings.background_image.as_ref() {
+	let mut img = if let Some(path) = settings.wallpaper.as_ref() {
 		match image::open(path) {
 			Ok(i) => i.to_rgba8(),
 			Err(e) => {
@@ -2647,9 +2647,9 @@ fn load_bg_image(gfx: &Gfx) -> Option<ImageRenderer> {
 				return None;
 			}
 		}
-	} else if settings.background_default && settings.background_folder.is_none() {
+	} else if settings.wallpaper_default && settings.wallpaper_folder.is_none() {
 		// No image or rotation folder configured: fall back to the embedded default
-		// so a fresh install still looks the part. Opt out with background_default.
+		// so a fresh install still looks the part. Opt out with wallpaper_default.
 		image::load_from_memory(DEFAULT_BACKGROUND).ok()?.to_rgba8()
 	} else {
 		return None;
@@ -2659,7 +2659,7 @@ fn load_bg_image(gfx: &Gfx) -> Option<ImageRenderer> {
 	// darkens edges. The f32 intermediate also avoids 8-bit banding inside the
 	// blur (final banding is handled by the high-precision offscreen + the blit's
 	// dither).
-	if settings.background_blur > 0.0 || settings.background_contrast_mask {
+	if settings.wallpaper_blur > 0.0 || settings.wallpaper_contrast_mask {
 		let (w, h) = img.dimensions();
 		let mut linear: image::ImageBuffer<image::Rgba<f32>, Vec<f32>> =
 			image::ImageBuffer::new(w, h);
@@ -2671,15 +2671,15 @@ fn load_bg_image(gfx: &Gfx) -> Option<ImageRenderer> {
 				src[3] as f32 / 255.0,
 			]);
 		}
-		if settings.background_blur > 0.0 {
-			linear = image::imageops::blur(&linear, settings.background_blur);
+		if settings.wallpaper_blur > 0.0 {
+			linear = image::imageops::blur(&linear, settings.wallpaper_blur);
 		}
-		if settings.background_contrast_mask {
+		if settings.wallpaper_contrast_mask {
 			crate::contrast::apply(
 				&mut linear,
-				settings.background_contrast_mask_size,
-				settings.background_contrast_mask_strength,
-				settings.background_contrast_mask_auto,
+				settings.wallpaper_contrast_mask_size,
+				settings.wallpaper_contrast_mask_strength,
+				settings.wallpaper_contrast_mask_auto,
 			);
 		}
 		for (dst, src) in img.pixels_mut().zip(linear.pixels()) {
@@ -2699,8 +2699,8 @@ fn load_bg_image(gfx: &Gfx) -> Option<ImageRenderer> {
 		&img,
 		w,
 		h,
-		settings.background_opacity,
-		settings.background_fit,
+		settings.wallpaper_opacity,
+		settings.wallpaper_fit,
 	))
 }
 
@@ -2822,7 +2822,7 @@ impl ApplicationHandler<UserEvent> for App {
 		let scale = window.scale_factor() as f32;
 		let mut text = TextCtx::new(&gfx.device, &gfx.queue, gfx.format, scale);
 		let rects = RectRenderer::new(&gfx.device, gfx.format);
-		let bg_image = load_bg_image(&gfx);
+		let wallpaper_img = load_wallpaper(&gfx);
 		let scrim =
 			crate::scrim::Scrim::new(&gfx.device, gfx.format, gfx.config.width, gfx.config.height);
 
@@ -2898,7 +2898,7 @@ impl ApplicationHandler<UserEvent> for App {
 			gfx,
 			text,
 			rects,
-			bg_image,
+			wallpaper_img,
 			scrim,
 			tabs: Tabs { list, active: 0 },
 			mods: ModifiersState::empty(),
@@ -2940,7 +2940,7 @@ impl ApplicationHandler<UserEvent> for App {
 		// A wallpaper given on the command line (--background-image, incl. an explicit
 		// clear) is an intentional per-session override; don't clobber it with the
 		// startup rotation pick. The timer still runs, so scheduled rotation proceeds.
-		let cli_wallpaper = self.cli.win.style.bg_image.is_some();
+		let cli_wallpaper = self.cli.win.style.wallpaper_img.is_some();
 		if let Some(state) = self.state.as_mut() {
 			state.init_wallpaper_rotation(cli_wallpaper);
 		}
