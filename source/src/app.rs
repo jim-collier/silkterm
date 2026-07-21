@@ -2768,9 +2768,8 @@ impl ApplicationHandler<UserEvent> for App {
 		// usually don't), so an always-transparent window buys nothing when
 		// Transparency is off. Ask for it only when it's actually in use; X11/Wayland
 		// always request it so the live toggle works (no such side effect there).
-		let want_transparent = !cfg!(windows)
-			|| config::settings().transparent_background
-			|| win_opacity.is_some();
+		let want_transparent =
+			!cfg!(windows) || config::settings().transparent_background || win_opacity.is_some();
 		let attrs = Window::default_attributes()
 			.with_title(win_title.as_deref().unwrap_or(config::APP_NAME))
 			.with_window_icon(load_icon())
