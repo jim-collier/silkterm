@@ -159,12 +159,25 @@ pub enum Frame {
 // procedural draws (rects, cursor) still work, but everything sampled from a
 // once-uploaded texture - the glyph atlases (all text) and the wallpaper -
 // reads garbage, which is the "window goes mostly black" bug. No event reports
-// this, so a known-pattern sentinel texture is probed on a slow tick; a
+// this, so known-pattern sentinel textures are probed on a slow tick; a
 // mismatched readback means the uploads are gone and the app rebuilds them
 // (State::recover_gpu). Native-surface backends already get Lost/Outdated from
 // the swapchain and are not affected, so the sentinel exists only on GL.
-const SENTINEL_PX: u32 = 64; // sized like a real texture so it shares their VRAM pool
-const SENTINEL_ROW: u32 = SENTINEL_PX * 4; // Rgba8Unorm; 256 = COPY_BYTES_PER_ROW_ALIGNMENT, so no pad rows
+//
+// TWO witnesses, because the NVIDIA driver restores what it holds a sysmem
+// backing for and purges the rest (NV_robustness_video_memory_purge: resources
+// exclusively in video memory "will be lost"; the driver "attempts to hide"
+// the purge for the ones it can restore). A round-1 single 64px copy-usage
+// sentinel survived a real VT switch that still wiped the atlas, so:
+// - `up_tex`: CPU-uploaded + TEXTURE_BINDING, sized like a glyph atlas -
+//   catches drivers that purge sampled uploads.
+// - `fbo_tex`: seeded only by a GPU-side copy, never from the CPU, so no
+//   driver can re-materialize its contents from a sysmem copy - catches the
+//   documented purge of vidmem-exclusive (rendered/FBO-class) resources.
+//   Seeded by copy, not a render-pass clear: a clear could be tracked as
+//   metadata and re-applied on restore, which would false-negative.
+const SENTINEL_PX: u32 = 256; // atlas-sized, so it shares the real textures' VRAM pool
+const SENTINEL_ROW: u32 = SENTINEL_PX * 4; // Rgba8Unorm; multiple of 256 (COPY_BYTES_PER_ROW_ALIGNMENT), so no pad rows
 const SENTINEL_BYTES: usize = (SENTINEL_ROW * SENTINEL_PX) as usize;
 
 // Odd multiplier = a byte permutation tiled over the texture; neither zeroed
@@ -175,48 +188,76 @@ fn sentinel_pattern() -> Vec<u8> {
 		.collect()
 }
 
+// One probe's verdict (see `vram_check_poll`).
+pub enum VramProbe {
+	Intact,
+	// which witness lost its pattern (true = gone)
+	Lost { uploaded: bool, rendered: bool },
+	// readback map failed - inconclusive, will retry
+	MapFailed,
+}
+
 struct Sentinel {
-	tex: wgpu::Texture,
-	buf: wgpu::Buffer,
+	up_tex: wgpu::Texture,
+	fbo_tex: wgpu::Texture,
+	buf: wgpu::Buffer, // both witnesses read back into one buffer (up at 0, fbo at SENTINEL_BYTES)
 	// probe in flight; the map_async callback stores 1 = mapped ok, 2 = failed
 	inflight: Option<Arc<AtomicU8>>,
 }
 
 impl Sentinel {
 	fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-		let tex = device.create_texture(&wgpu::TextureDescriptor {
-			label: Some("vram sentinel"),
-			size: wgpu::Extent3d {
-				width: SENTINEL_PX,
-				height: SENTINEL_PX,
-				depth_or_array_layers: 1,
-			},
-			mip_level_count: 1,
-			sample_count: 1,
-			dimension: wgpu::TextureDimension::D2,
-			format: wgpu::TextureFormat::Rgba8Unorm,
-			usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
-			view_formats: &[],
-		});
+		let mk_tex = |label: &str, usage: wgpu::TextureUsages| {
+			device.create_texture(&wgpu::TextureDescriptor {
+				label: Some(label),
+				size: wgpu::Extent3d {
+					width: SENTINEL_PX,
+					height: SENTINEL_PX,
+					depth_or_array_layers: 1,
+				},
+				mip_level_count: 1,
+				sample_count: 1,
+				dimension: wgpu::TextureDimension::D2,
+				format: wgpu::TextureFormat::Rgba8Unorm,
+				usage,
+				view_formats: &[],
+			})
+		};
+		let up_tex = mk_tex(
+			"vram sentinel uploaded",
+			wgpu::TextureUsages::TEXTURE_BINDING
+				| wgpu::TextureUsages::COPY_DST
+				| wgpu::TextureUsages::COPY_SRC,
+		);
+		let fbo_tex = mk_tex(
+			"vram sentinel rendered",
+			wgpu::TextureUsages::RENDER_ATTACHMENT
+				| wgpu::TextureUsages::TEXTURE_BINDING
+				| wgpu::TextureUsages::COPY_DST
+				| wgpu::TextureUsages::COPY_SRC,
+		);
 		let buf = device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("vram sentinel read"),
-			size: SENTINEL_BYTES as u64,
+			size: (SENTINEL_BYTES * 2) as u64,
 			usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
 			mapped_at_creation: false,
 		});
 		let sentinel = Self {
-			tex,
+			up_tex,
+			fbo_tex,
 			buf,
 			inflight: None,
 		};
-		sentinel.write(queue, &sentinel_pattern());
+		sentinel.seed(device, queue, &sentinel_pattern());
 		sentinel
 	}
 
-	fn write(&self, queue: &wgpu::Queue, data: &[u8]) {
+	// Upload `data` into up_tex, then GPU-copy it into fbo_tex (write_texture is
+	// ordered before subsequently submitted command buffers, so the copy sees it).
+	fn seed(&self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) {
 		queue.write_texture(
 			wgpu::TexelCopyTextureInfo {
-				texture: &self.tex,
+				texture: &self.up_tex,
 				mip_level: 0,
 				origin: wgpu::Origin3d::ZERO,
 				aspect: wgpu::TextureAspect::All,
@@ -233,6 +274,27 @@ impl Sentinel {
 				depth_or_array_layers: 1,
 			},
 		);
+		let mut enc = device.create_command_encoder(&Default::default());
+		enc.copy_texture_to_texture(
+			wgpu::TexelCopyTextureInfo {
+				texture: &self.up_tex,
+				mip_level: 0,
+				origin: wgpu::Origin3d::ZERO,
+				aspect: wgpu::TextureAspect::All,
+			},
+			wgpu::TexelCopyTextureInfo {
+				texture: &self.fbo_tex,
+				mip_level: 0,
+				origin: wgpu::Origin3d::ZERO,
+				aspect: wgpu::TextureAspect::All,
+			},
+			wgpu::Extent3d {
+				width: SENTINEL_PX,
+				height: SENTINEL_PX,
+				depth_or_array_layers: 1,
+			},
+		);
+		queue.submit(Some(enc.finish()));
 	}
 }
 
@@ -615,8 +677,8 @@ impl Gfx {
 		matches!(self.backend, Backend::Gl { .. })
 	}
 
-	// Start an async sentinel readback. False when there's no sentinel (native
-	// path) or a probe is already in flight.
+	// Start an async sentinel readback (both witnesses into one buffer). False
+	// when there's no sentinel (native path) or a probe is already in flight.
 	pub fn vram_check_start(&mut self) -> bool {
 		let Some(sent) = &mut self.sentinel else {
 			return false;
@@ -625,27 +687,29 @@ impl Gfx {
 			return false;
 		}
 		let mut enc = self.device.create_command_encoder(&Default::default());
-		enc.copy_texture_to_buffer(
-			wgpu::TexelCopyTextureInfo {
-				texture: &sent.tex,
-				mip_level: 0,
-				origin: wgpu::Origin3d::ZERO,
-				aspect: wgpu::TextureAspect::All,
-			},
-			wgpu::TexelCopyBufferInfo {
-				buffer: &sent.buf,
-				layout: wgpu::TexelCopyBufferLayout {
-					offset: 0,
-					bytes_per_row: Some(SENTINEL_ROW),
-					rows_per_image: Some(SENTINEL_PX),
+		for (tex, offset) in [(&sent.up_tex, 0u64), (&sent.fbo_tex, SENTINEL_BYTES as u64)] {
+			enc.copy_texture_to_buffer(
+				wgpu::TexelCopyTextureInfo {
+					texture: tex,
+					mip_level: 0,
+					origin: wgpu::Origin3d::ZERO,
+					aspect: wgpu::TextureAspect::All,
 				},
-			},
-			wgpu::Extent3d {
-				width: SENTINEL_PX,
-				height: SENTINEL_PX,
-				depth_or_array_layers: 1,
-			},
-		);
+				wgpu::TexelCopyBufferInfo {
+					buffer: &sent.buf,
+					layout: wgpu::TexelCopyBufferLayout {
+						offset,
+						bytes_per_row: Some(SENTINEL_ROW),
+						rows_per_image: Some(SENTINEL_PX),
+					},
+				},
+				wgpu::Extent3d {
+					width: SENTINEL_PX,
+					height: SENTINEL_PX,
+					depth_or_array_layers: 1,
+				},
+			);
+		}
 		self.queue.submit(Some(enc.finish()));
 		let flag = Arc::new(AtomicU8::new(0));
 		let done = flag.clone();
@@ -656,10 +720,10 @@ impl Gfx {
 		true
 	}
 
-	// Poll an in-flight probe. Some(true) = contents intact; Some(false) = the
-	// pattern is gone (loss detected; the sentinel is reseeded before returning
-	// so the caller only rebuilds the rest). None = still pending / no probe.
-	pub fn vram_check_poll(&mut self) -> Option<bool> {
+	// Poll an in-flight probe. Some(Lost{..}) = a witness pattern is gone (the
+	// sentinels are reseeded before returning so the caller only rebuilds the
+	// rest). None = still pending / no probe.
+	pub fn vram_check_poll(&mut self) -> Option<VramProbe> {
 		let sent = self.sentinel.as_mut()?;
 		let flag = sent.inflight.as_ref()?.clone();
 		if flag.load(Ordering::Acquire) == 0 {
@@ -669,30 +733,38 @@ impl Gfx {
 		match flag.load(Ordering::Acquire) {
 			0 => None,
 			2 => {
-				// map failed - inconclusive; drop the probe and try again later
 				sent.inflight = None;
-				None
+				Some(VramProbe::MapFailed)
 			}
 			_ => {
 				sent.inflight = None;
-				let intact = {
+				let (up_ok, fbo_ok) = {
 					let data = sent.buf.slice(..).get_mapped_range();
-					data[..] == sentinel_pattern()[..]
+					let pattern = sentinel_pattern();
+					(
+						data[..SENTINEL_BYTES] == pattern[..],
+						data[SENTINEL_BYTES..] == pattern[..],
+					)
 				};
 				sent.buf.unmap();
-				if !intact {
-					sent.write(&self.queue, &sentinel_pattern());
+				if up_ok && fbo_ok {
+					Some(VramProbe::Intact)
+				} else {
+					sent.seed(&self.device, &self.queue, &sentinel_pattern());
+					Some(VramProbe::Lost {
+						uploaded: !up_ok,
+						rendered: !fbo_ok,
+					})
 				}
-				Some(intact)
 			}
 		}
 	}
 
-	// Diagnostic (SILK_VRAMLOSS): zero the sentinel to fake a content loss, so
-	// the detect->rebuild path can be exercised without a real VT switch.
+	// Diagnostic (SILK_VRAMLOSS): zero both sentinels to fake a content loss,
+	// so the detect->rebuild path can be exercised without a real VT switch.
 	pub fn vram_clobber(&self) {
 		if let Some(sent) = &self.sentinel {
-			sent.write(&self.queue, &vec![0u8; SENTINEL_BYTES]);
+			sent.seed(&self.device, &self.queue, &vec![0u8; SENTINEL_BYTES]);
 		}
 	}
 }
@@ -1134,5 +1206,7 @@ mod tests {
 	fn sentinel_row_is_copy_aligned() {
 		// stride == unpadded row, so the readback compares without de-padding
 		assert_eq!(SENTINEL_ROW % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT, 0);
+		// the second witness reads back at this buffer offset
+		assert_eq!(SENTINEL_BYTES as u64 % wgpu::COPY_BUFFER_ALIGNMENT, 0);
 	}
 }
