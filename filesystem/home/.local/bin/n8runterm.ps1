@@ -47,8 +47,15 @@
 $B23ReleaseDir = "\\b23\home-collierjr\0-0\0_links\projects\dev\zf10…github∙jimcollier\silkterm\github\target\x86_64-pc-windows-gnu\release"
 
 ## Sources 'gnuw'/'msvc': the local Windows-native release build dirs (same clone,
-## two target triples).
-$LocalTargetRoot = "C:\opt\0-0\users\collierjr\data\prs\dev\github\jim-collier\silkterm\github\target"
+## two target triples). The clone root differs per host, so try the known
+## candidates and take the first that exists; if none do, keep the first so the
+## per-source copy below warn-skips it like any other unreachable source.
+$LocalTargetRootCandidates = @(
+	"C:\0-0\users\collierjr\data\prs\dev\github.com\jim-collier\silkterm\github\target"
+	"C:\opt\0-0\users\collierjr\data\prs\dev\github\jim-collier\silkterm\github\target"
+)
+$LocalTargetRoot = $LocalTargetRootCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $LocalTargetRoot) { $LocalTargetRoot = $LocalTargetRootCandidates[0] }
 $GnuwReleaseDir  = Join-Path $LocalTargetRoot "x86_64-pc-windows-gnu\release"
 $MsvcReleaseDir  = Join-Path $LocalTargetRoot "x86_64-pc-windows-msvc\release"
 
@@ -613,6 +620,9 @@ if ($script:GuiFeedback -and $script:RunWarnings.Count) {
 
 
 ##	History:
+##		- 2026-07-22 JC: Resolve the local clone root from a per-host candidate
+##		  list (was hardcoded to one host's path, so gnuw/msvc never copied on
+##		  the others).
 ##		- 2026-07-19 JC: '--admin' now self-elevates the whole launcher (was only the
 ##		  launched terminal), so a non-elevated shortcut click copies the fresh build
 ##		  instead of silently launching a stale one. Report failures / skipped copies
