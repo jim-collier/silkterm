@@ -22,7 +22,7 @@ use crate::bgimage::ImageRenderer;
 use crate::clipboard::Clipboard;
 use crate::config;
 use crate::config::DONATE_URL;
-use crate::gfx::{Gfx, RectInstance, RectRenderer};
+use crate::gfx::{Gfx, RectInstance, RectRenderer, VramProbe};
 use crate::input;
 use crate::pane::{CopyKind, Dir, Pane, PaneManager, Rect};
 use crate::term::{PaneId, UserEvent};
@@ -538,6 +538,36 @@ const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
 const TAB_MAX_W: f32 = 220.0; // tab button width cap - drawing AND click hit-testing use this
 const TAB_CLOSE_W: f32 = 26.0; // right-edge close-button region per tab (title clips before it)
 const TAB_CLOSE_M: f32 = 6.0; // balanced top/right/bottom margin around the close button box
+
+// VT-switch field diagnostics: `touch ~/silk_vramdbg.on` (no relaunch needed)
+// makes the sentinel probes append their results to ~/silk_vramdbg.txt, so a
+// desktop repro can show whether loss detection fired. The marker is re-checked
+// per call - probes tick every 2s, so the stat costs nothing.
+fn vramdbg(msg: &str) {
+	use std::io::Write;
+	let Some(home) = std::env::var_os("HOME") else {
+		return;
+	};
+	let home = std::path::PathBuf::from(home);
+	if !home.join("silk_vramdbg.on").exists() {
+		return;
+	}
+	let path = home.join("silk_vramdbg.txt");
+	// a forgotten marker must not grow the log unbounded
+	if std::fs::metadata(&path).is_ok_and(|meta| meta.len() > 4_000_000) {
+		return;
+	}
+	let epoch = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.map_or(0, |d| d.as_secs());
+	if let Ok(mut f) = std::fs::OpenOptions::new()
+		.create(true)
+		.append(true)
+		.open(&path)
+	{
+		let _ = writeln!(f, "{epoch} pid={} {msg}", std::process::id());
+	}
+}
 
 // The close-"x" button box within a tab: a square with equal top/right/bottom
 // margins (the extra room falls to the left, separating it from the title).
@@ -3090,6 +3120,16 @@ impl ApplicationHandler<UserEvent> for App {
 				// switch/suspend - probe the GPU uploads now, not at the slow tick.
 				if focused && state.gfx.is_gl() {
 					state.vram_next = Instant::now();
+					vramdbg("focus regained -> immediate probe");
+				}
+			}
+
+			// Becoming visible again (VT return, compositor remap) - probe now too;
+			// a VT switch doesn't always hand focus straight back.
+			WindowEvent::Occluded(occluded) => {
+				if !occluded && state.gfx.is_gl() {
+					state.vram_next = Instant::now();
+					vramdbg("unoccluded -> immediate probe");
 				}
 			}
 
@@ -3817,16 +3857,23 @@ impl ApplicationHandler<UserEvent> for App {
 			if state.vramloss_test && state.revealed {
 				state.vramloss_test = false;
 				state.gfx.vram_clobber();
+				vramdbg("SILK_VRAMLOSS: sentinels clobbered");
 			}
 			match state.gfx.vram_check_poll() {
-				Some(false) => {
+				Some(VramProbe::Lost { uploaded, rendered }) => {
 					eprintln!(
 						"{}: GPU texture contents lost (VT switch or resume?) - rebuilding",
 						config::APP_NAME
 					);
+					vramdbg(&format!(
+						"probe: LOST uploaded={} rendered={} -> recover_gpu",
+						if uploaded { "gone" } else { "ok" },
+						if rendered { "gone" } else { "ok" }
+					));
 					state.recover_gpu();
 				}
-				Some(true) => {}
+				Some(VramProbe::Intact) => vramdbg("probe: intact"),
+				Some(VramProbe::MapFailed) => vramdbg("probe: readback map FAILED (inconclusive)"),
 				None => {
 					if Instant::now() >= state.vram_next && state.gfx.vram_check_start() {
 						state.vram_next = Instant::now() + VRAM_CHECK_IVL;
