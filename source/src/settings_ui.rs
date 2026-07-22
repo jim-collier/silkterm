@@ -1471,6 +1471,43 @@ impl SettingsDialog {
 	fn part_disabled(&self, i: usize, p: u8) -> bool {
 		self.disabled(self.part_key(i, p))
 	}
+	// Flyover text for a control disabled by the platform rather than by another
+	// setting - explains why it is inert. Only the system-font toggle today.
+	fn disabled_tip(key: Key) -> Option<&'static str> {
+		(cfg!(windows) && matches!(key, Key::SystemFont))
+			.then_some("Windows has no system monospace font")
+	}
+	// The flyover to show while the cursor rests on a control with a
+	// disabled_tip: (text, anchor rect to hang the tip box under).
+	pub fn hover_tip(&self, mx: f32, my: f32) -> Option<(&'static str, Rect)> {
+		let vp = self.viewport();
+		if !vp.contains(mx, my) {
+			return None;
+		}
+		for i in 0..self.specs.len() {
+			if self.spec_tab[i] != self.tab || matches!(self.specs[i].kind, Kind::Header(_)) {
+				continue;
+			}
+			let Some(tip) = Self::disabled_tip(self.specs[i].key) else {
+				continue;
+			};
+			if !self.disabled(self.specs[i].key) {
+				continue;
+			}
+			// hover target: the row's label + control span
+			let ctl = self.checkbox(i);
+			let hit = Rect {
+				x: self.rect.x + PAD,
+				y: self.row_y(i),
+				w: ctl.x + ctl.w - (self.rect.x + PAD),
+				h: self.row_h(&self.specs[i].kind),
+			};
+			if hit.contains(mx, my) {
+				return Some((tip, ctl));
+			}
+		}
+		None
+	}
 	// Tight box around one focused sub-control (the keyboard-focus ring hugs this,
 	// a couple px out, instead of spanning the whole row).
 	fn focus_ctl_rect(&self, i: usize, p: u8) -> Rect {
@@ -1658,7 +1695,9 @@ impl SettingsDialog {
 	}
 	fn get_toggle(&self, key: Key) -> bool {
 		match key {
-			Key::SystemFont => self.edited.use_system_font,
+			// shows the EFFECTIVE state: unchecked on Windows even when the config
+			// value is true, since the toggle is inert there (no OS monospace font)
+			Key::SystemFont => config::system_font_active(&self.edited),
 			Key::Transparency => self.edited.transparent_background,
 			Key::BackdropBlur => self.edited.transparent_background_blur,
 			Key::TextScrim => self.edited.text_scrim,
@@ -1756,7 +1795,10 @@ impl SettingsDialog {
 				Key::BgContrastSize | Key::BgContrastStrength | Key::BgContrastAuto
 			) && !self.edited.wallpaper_contrast_mask)
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
-			|| (matches!(key, Key::FontFamily | Key::FontSize) && self.edited.use_system_font)
+			|| (matches!(key, Key::FontFamily | Key::FontSize)
+				&& config::system_font_active(&self.edited))
+			// Windows has no system monospace font to follow (see disabled_tip)
+			|| (matches!(key, Key::SystemFont) && cfg!(windows))
 	}
 	fn get_col(&self, key: Key) -> [u8; 3] {
 		let settings = &self.edited;
@@ -2061,6 +2103,9 @@ impl SettingsDialog {
 				}
 				Kind::Toggle => {
 					if self.checkbox(i).contains(x, y) {
+						if self.disabled(self.specs[i].key) {
+							continue; // greyed checkbox ignores clicks
+						}
 						let key = self.specs[i].key;
 						self.focus = Some(Focus::Row(i, 0));
 						self.set_toggle(key, !self.get_toggle(key));
@@ -2932,6 +2977,7 @@ impl SettingsDialog {
 					}
 				}
 				Kind::Toggle => {
+					let off = self.disabled(self.specs[i].key);
 					let check_box = self.checkbox(i);
 					out.push(q(
 						check_box.x,
@@ -2948,7 +2994,11 @@ impl SettingsDialog {
 							check_box.y + 4.0,
 							check_box.w - 8.0,
 							check_box.h - 8.0,
-							dlg().handle,
+							if off {
+								dlg().panel_border
+							} else {
+								dlg().handle
+							},
 						));
 					}
 				}
@@ -3551,6 +3601,37 @@ mod tests {
 		assert_eq!(d.edited.cursor_outline, d.defaults.cursor_outline);
 		assert!(d.row_is_default(i));
 		assert!(d.take_reverted().contains(&"cursor_scrim"));
+	}
+
+	#[test]
+	fn system_font_toggle_inert_on_windows() {
+		use super::Key;
+		let mut d = mk_dialog(2000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| matches!(s.key, Key::SystemFont))
+			.unwrap();
+		d.tab = d.spec_tab[i];
+		let bx = d.checkbox(i);
+		if cfg!(windows) {
+			assert!(d.disabled(Key::SystemFont));
+			// checkbox shows the effective (off) state despite the config value
+			d.edited.use_system_font = true;
+			assert!(!d.get_toggle(Key::SystemFont));
+			// clicking the greyed checkbox must not flip the setting
+			let mut measure = |s: &str| s.len() as f32;
+			d.mouse_down(bx.x + 2.0, bx.y + 2.0, &mut measure);
+			assert!(d.edited.use_system_font);
+			// the flyover explains why; only over the row
+			assert!(d.hover_tip(bx.x + 2.0, bx.y + 2.0).is_some());
+			assert!(d.hover_tip(bx.x + 2.0, bx.y - 200.0).is_none());
+			// font family / size stay editable even with use_system_font = true
+			assert!(!d.disabled(Key::FontFamily) && !d.disabled(Key::FontSize));
+		} else {
+			assert!(!d.disabled(Key::SystemFont));
+			assert!(d.hover_tip(bx.x + 2.0, bx.y + 2.0).is_none());
+		}
 	}
 
 	#[test]

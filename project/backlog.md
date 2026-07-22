@@ -62,10 +62,13 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Verify with a real VT switch on the desktop. If it still goes black, `~/silk_vramdbg.txt` shows whether detection fired (and which witness), which pins the next step.
 
 - Windows:
-	- 🛠️ Bold font uses a proportional font, which skews space-based alignment output. (E.g. that muffer uses on startup screen.)
+	- ✅ Bold font uses a proportional font, which skews space-based alignment output. (E.g. that muffer uses on startup screen.)
 		- This happens on a different Windows host, not this one. But the problem seems to be, need a more reliable font fallback, if either normal or bold is using a proportional font.
 		- Font is auto/unset there; regular is fine, only bold falls proportional. So the pinned mono family isn't guaranteeing a mono *bold* face.
 		- Fix: terminal bold now requests the boldest weight the pinned mono family actually ships (like chrome already did), so it can't escape into a proportional bold fallback. New test guards it. Awaiting confirm on the affected host.
+		- Second half: with the font auto/unset, Windows picked the mono family by a font-db lottery (it has no system monospace setting), which could land on a family with no bold at all - then "boldest available" = regular and bold renders flat. Confirmed live on this host; the fallback-stack item below fixes the pick. Both hosts should recheck after it lands.
+	- ✅ Font fallback: one cross-platform stack (Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New) is now the font_family default and the resolver's last resort everywhere. Windows always resolves through it ("use system font" is inert there - no OS monospace setting exists), so the family always carries a real bold face.
+		- The Settings "Use system font" checkbox is disabled and greyed on Windows, with a flyover: "Windows has no system monospace font". Font family/size stay editable there regardless of the config value.
 	- ✅ Scrolling in muffer, and `less`, is juddery. Up-and-down motion, while making progress in the intended direction.
 		- Reproduces on this host, and with plain scrolled output too - not just full-screen apps - so it's the frame/output pacing, not the alt-screen slide detector alone.
 		- Fix: on Windows, one queued present frame instead of two, so the per-frame dt stays steady (two let the CPU race ahead then stall, jittering the ease). Best-guess; needs a visual check on this host - could not measure headlessly (background windows throttle to ~10fps).
@@ -92,6 +95,10 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Live scale *change* still unverified: the ScaleFactorChanged handler needs an actual transition (a 2nd monitor at a different scale, or dragging the Windows scaling slider while running), which a single fixed-125% monitor can't produce.
 
 ### New features and enhancements
+
+- ✅ CICD: check that local can be safely refreshed from remote before building, rather than only pulling at publish time.
+	- Done: new stage 0 "remote sync" in `cicd.bash` and `cicd-win.ps1` - fetch, fast-forward (stash-wrapped) when only behind, abort early when diverged. Offline or no upstream just warns and continues. `--no-sync` / `-NoSync` bypasses.
+	- Why: the publish-stage pull runs after build and tests, so a remote change merged there would get pushed untested. Syncing first means the pipeline validates the refreshed tree. Publish keeps its own pull as a guard.
 
 - ✅ Wallpaper:
 	- ✅ Change the default background baked into the executable: '[repo]/filesystem/home/.config/silkterm/backgrounds/background45.jpg'
