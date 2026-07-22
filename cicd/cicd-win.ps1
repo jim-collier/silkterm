@@ -165,7 +165,7 @@ $DogfoodFixedExe = "SilkTerm.exe"
 $ToolPins = @(
 	"cargo-zigbuild|0.23.0|cargo-zigbuild --version"
 	"cargo-deny|0.19.9|cargo-deny --version"
-	"makensis|3.11|MAKENSIS"          # special-cased: resolve via fFindMakensis
+	"makensis|3.12|MAKENSIS"          # special-cased: resolve via fFindMakensis
 )
 
 ## Cap compile/test parallelism to half the cores so a run stays usable.
