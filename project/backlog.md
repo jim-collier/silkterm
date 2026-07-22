@@ -56,11 +56,13 @@ In each section, items are listed approximately from newest to oldest.
 	- Fix: a small known-pattern sentinel texture is re-read every couple of seconds (plus immediately on window focus); if the pattern is gone, the atlas, chrome, and wallpaper are rebuilt automatically. Recovers within a few seconds of returning, sooner on click.
 	- Needs a real VT switch to confirm end to end - verify on the desktop.
 
-- 🔘 New Linux and Windows judder bug:
+- ✅ New Linux and Windows judder bug:
 	- If the cursor is at the bottom of the screen, the first line of output (even just hitting "enter" to a new prompt line) causes everything above, to momentarily bounce *down* one line (the wrong direction), then back up.
 	- When scrolling down a long list in 'ls', each scroll event (or at least down arrow) results first in the screen contents bouncing *down*, then up.
 	- It seems to go: "everything move one line down (smoothly), then two lines up (smoothly)". The net result is very juddery output.
 	- Mouse scrolling seem unaffected. It's smooth.
+	- Cause: the normal-screen repaint-slide detector (added for ConPTY smooth scroll, default-on) only refreshed its frame snapshot on frames it could slide on. A plain output line lands in a scrollback-growth frame - animated by the output ease - which skipped the refresh, so the prompt redraw one frame later diffed against pre-scroll rows, read the already-eased scroll as a fresh repaint shift, and slid it a second time on top of the ease: down one, up two. A burst (ls) re-slid the whole accumulated shift at once, worse. Wheel scrollback never enters that path, so it stayed smooth.
+	- Fix: the snapshot refreshes on every content frame; only true repaint frames (no scrollback growth) may read the diff as a scroll. Reproduced and confirmed gone in a trace; the same scene now shows only the output ease. Pager slide scenes unaffected (harness green). New tests cover the frame gate and the enter-at-prompt sequence.
 
 - Windows:
 	- 🛠️ Bold font uses a proportional font, which skews space-based alignment output. (E.g. that muffer uses on startup screen.)
@@ -70,6 +72,7 @@ In each section, items are listed approximately from newest to oldest.
 	- 🛠️ Scrolling in muffer, and `less`, is juddery. Up-and-down motion, while making progress in the intended direction.
 		- Reproduces on this host, and with plain scrolled output too - not just full-screen apps - so it's the frame/output pacing, not the alt-screen slide detector alone.
 		- Fix: on Windows, one queued present frame instead of two, so the per-frame dt stays steady (two let the CPU race ahead then stall, jittering the ease). Best-guess; needs a visual check on this host - could not measure headlessly (background windows throttle to ~10fps).
+		- The "plain scrolled output too" part is very likely the judder bug above (stale-snapshot re-slide - plain output grows scrollback on Windows too), now fixed. Recheck here after picking up that fix; the pacing change may matter less than thought.
 	- 🛠️ The whole window stays in place when VirtuaWin switches virtual workspaces.
 		- Likely a window-style/attribute issue: VirtuaWin doesn't recognize/manage the window.
 		- Fix: on Windows, only request a transparent (no-redirection-bitmap/layered) window when Transparency is actually on - that layered style is what virtual-desktop managers skip, and the native surface gives no alpha when off anyway. Awaiting VirtuaWin verify (not on this host).
