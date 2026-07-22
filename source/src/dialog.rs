@@ -683,6 +683,38 @@ impl DialogWin {
 						ov_bufs.push((item.x, item.y, item.scale, item.color, item.clip, buf));
 					}
 				}
+				// flyover on a platform-disabled control (e.g. "Use system font" on
+				// Windows): a small explanatory box under it, drawn in the overlay
+				// pass so it can't bleed with the row text (same as the About URL tip)
+				let (mx, my) = self.mouse;
+				if let Some((tip, anchor)) = dialog.hover_tip(mx, my) {
+					let border_col = crate::settings_ui::dialog_border();
+					let q = |x: f32, y: f32, bw: f32, bh: f32, color: [u8; 3]| RectInstance {
+						pos: [x, y],
+						size: [bw, bh],
+						color: config::srgb_f32(color),
+						..Default::default()
+					};
+					let attrs = ui_attrs();
+					let tip_w = self.text.measure_ui_text(tip, &attrs);
+					let (pad_x, pad_y) = (8.0, 4.0);
+					let box_w = tip_w + pad_x * 2.0;
+					let box_h = line_h + pad_y * 2.0;
+					let bx = (anchor.x + anchor.w * 0.5 - box_w * 0.5)
+						.clamp(4.0, (w as f32 - box_w - 4.0).max(4.0));
+					let by = (anchor.y + anchor.h + 8.0).min((h as f32 - box_h - 4.0).max(4.0));
+					let start = overlay_range.map_or(rect_inst.len() as u32, |(s, _)| s);
+					rect_inst.push(q(bx - 1.0, by - 1.0, box_w + 2.0, box_h + 2.0, border_col));
+					rect_inst.push(q(bx, by, box_w, box_h, crate::settings_ui::dialog_btn()));
+					overlay_range = Some((start, rect_inst.len() as u32));
+					let dim = crate::settings_ui::dialog_dim();
+					let mut a = ui_attrs();
+					a.color_opt = Some(GColor::rgb(dim[0], dim[1], dim[2]));
+					let mut buf = self.text.new_ui_buffer(w as f32, line_h);
+					buf.set_text(&mut self.text.font_system, tip, &a, Shaping::Advanced, None);
+					buf.shape_until_scroll(&mut self.text.font_system, false);
+					ov_bufs.push((bx + pad_x, by + pad_y, 1.0, dim, None, buf));
+				}
 			}
 		}
 

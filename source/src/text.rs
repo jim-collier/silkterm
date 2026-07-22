@@ -255,9 +255,9 @@ fn resolve_ui_family(fs: &FontSystem) -> Option<String> {
 }
 
 // Resolve the monospace family to pin for every weight: the user's configured
-// `font_family` if installed, else the OS monospace family, else whatever
-// `Family::Monospace` maps to. Validated against the db so a bad name doesn't
-// silently fall back to an unrelated font.
+// `font_family` if installed, else the OS monospace family, else the built-in
+// DEFAULT_FONT_STACK, else whatever `Family::Monospace` maps to. Validated
+// against the db so a bad name doesn't silently fall back to an unrelated font.
 fn resolve_mono_family(fs: &FontSystem) -> Option<String> {
 	use glyphon::cosmic_text::fontdb;
 	let db = fs.db();
@@ -278,10 +278,11 @@ fn resolve_mono_family(fs: &FontSystem) -> Option<String> {
 
 	let settings = config::settings();
 	let sys_family = crate::sysfont::monospace().family.clone();
-	// Priority: the OS monospace first when following the system font; otherwise
+	// Priority: the OS monospace first when following the system font (Windows
+	// never counts as following - it has no OS monospace setting); otherwise
 	// each family in the user's comma-separated fallback stack, then the OS mono.
 	let mut candidates: Vec<String> = Vec::new();
-	if settings.use_system_font {
+	if config::system_font_active(&settings) {
 		candidates.extend(sys_family.clone());
 	} else {
 		candidates.extend(
@@ -294,6 +295,16 @@ fn resolve_mono_family(fs: &FontSystem) -> Option<String> {
 		);
 		candidates.extend(sys_family.clone());
 	}
+	// Built-in stack as the last resort on every platform, ahead of the bare
+	// Family::Monospace query below: that query is a db lottery whose winner may
+	// lack a bold face, and cosmic-text only keeps a family when a face matches
+	// the requested weight exactly - so bold runs would silently eject to an
+	// arbitrary (often proportional) fallback. Known-good families avoid that.
+	candidates.extend(
+		config::DEFAULT_FONT_STACK
+			.split(',')
+			.map(|name| name.trim().to_string()),
+	);
 	for fam in candidates {
 		if installed(&fam) {
 			return Some(fam);

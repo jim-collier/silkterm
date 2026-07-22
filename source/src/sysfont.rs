@@ -264,7 +264,9 @@ mod platform {
 
 	// Windows has no dedicated monospace setting; report the message-box font
 	// size (the conventional system size). No reliable system *monospace* family,
-	// so leave family None and let the generic monospace resolution pick one.
+	// so leave family None - the resolver then walks the user's font_family stack
+	// and config::DEFAULT_FONT_STACK (never the bare Family::Monospace db lottery,
+	// whose winner can lack a bold face).
 	pub fn monospace() -> Monospace {
 		Monospace {
 			family: None,
