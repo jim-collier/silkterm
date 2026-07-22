@@ -718,9 +718,14 @@ impl Pane {
 		// that - following, no scrollback growth, buffer not full - and slide it the same way.
 		// grew>0 (plain output) still uses output-easing; a static in-place redraw yields no
 		// clean shift, so it stays put (no bounce).
-		let repaint_scroll = !alt && follow && grew == 0 && !full;
+		// The snapshot refreshes on EVERY content frame of a screen the detector can run
+		// on, not just slide frames: a grew>0 frame is already animated by the output ease
+		// above, and if it left the snapshot stale the next repaint frame would diff across
+		// that eased scroll and slide it AGAIN - a spurious extra down-then-up on every
+		// output line (the shell redraws its prompt right after the scroll).
+		let (snap_frame, slide_frame) = app_scroll_frames(alt, follow, grew, full);
 		if settings.smooth_scroll_apps
-			&& (alt || repaint_scroll)
+			&& snap_frame
 			&& !alt_transition
 			&& (force_rebuild || !self.text_built)
 		{
@@ -731,7 +736,11 @@ impl Pane {
 				cols,
 				Some((guard.colors(), &settings, &mut cur_cells)),
 			);
-			let shift = scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX);
+			let shift = if slide_frame {
+				scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX)
+			} else {
+				0
+			};
 			shift_dbg = shift;
 			if shift != 0 {
 				// Freeze the static-band sizes on the gesture's first step (a clean
@@ -2563,6 +2572,23 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
 	*manual = true; // dragged: stop auto even-distribution for this run
 }
 
+// Which frames take part in the app-scroll slide bookkeeping, per frame state.
+// `snap`: refresh the styled row snapshot. This must cover every content frame
+// of a screen the detector can later run on - grew>0 frames included, even
+// though they animate via the output ease instead. Skipping them (the original
+// normal-screen gate) left the snapshot stale across the eased scroll, so the
+// shell's prompt redraw one frame later diffed against pre-scroll rows, read
+// the whole scroll as a fresh repaint-shift, and slid it a second time: the
+// "down one line, then up two" output judder. A full normal-screen buffer
+// never slides (the full-branch above keeps its own fingerprints), so it
+// skips the styled snapshot cost. `slide`: this frame may interpret the diff
+// as a scroll - the alt screen always, the normal screen only on a repaint
+// frame (following, no growth, not full - the ConPTY case).
+fn app_scroll_frames(alt: bool, follow: bool, grew: usize, full: bool) -> (bool, bool) {
+	let repaint_scroll = !alt && follow && grew == 0 && !full;
+	(alt || !full, alt || repaint_scroll)
+}
+
 // Lines the on-screen content scrolled up between frames, inferred from row
 // fingerprints when scrollback growth can't tell us (the buffer is full). It's
 // the smallest shift k where this frame's top (rows-k) lines equal last frame's
@@ -2705,10 +2731,10 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 mod tests {
 	use super::{
 		APP_SCROLL_MAX, CURSOR_MAX_LAG, Dir, Node, OffStrip, PauseState, Rect, SLIDE_TOP_BAND_APPS,
-		StripCell, bell_brighten, capture_grid_text, capture_start, cursor_slide_step,
-		distinct_pair, equalize_dir_run, fnv_row, glide_to_full, layout, logical_line_bounds,
-		pair_inside, prompt_strip, render_char, same_char_pair, scroll_shift, scroll_shift_signed,
-		static_bands, vanished_range, weld_region_clip,
+		StripCell, app_scroll_frames, bell_brighten, capture_grid_text, capture_start,
+		cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, glide_to_full, layout,
+		logical_line_bounds, pair_inside, prompt_strip, render_char, same_char_pair, scroll_shift,
+		scroll_shift_signed, snapshot_rows, static_bands, vanished_range, weld_region_clip,
 	};
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
@@ -3371,6 +3397,54 @@ mod tests {
 		// but a jump past the window is not eased (hard-cut) - it isn't a clean scroll
 		let (last2, cur2) = app_frames(40, 0, 1, (APP_SCROLL_MAX + 5) as i32);
 		assert_eq!(scroll_shift_signed(&cur2, &last2, APP_SCROLL_MAX), 0);
+	}
+
+	#[test]
+	fn app_scroll_frame_gate_matrix() {
+		// (snap, slide) per frame state: alt always does both; a normal repaint
+		// frame (following, no growth, not full - the ConPTY case) does both; a
+		// grew frame snapshots but must NOT slide (the output ease owns it); a
+		// scrolled-back frame keeps the snapshot current without sliding; a full
+		// normal-screen buffer does neither (the full-branch owns its fingerprints).
+		assert_eq!(app_scroll_frames(true, true, 0, false), (true, true));
+		assert_eq!(app_scroll_frames(true, false, 3, false), (true, true));
+		assert_eq!(app_scroll_frames(false, true, 0, false), (true, true));
+		assert_eq!(app_scroll_frames(false, true, 1, false), (true, false));
+		assert_eq!(app_scroll_frames(false, false, 0, false), (true, false));
+		assert_eq!(app_scroll_frames(false, true, 0, true), (false, false));
+	}
+
+	#[test]
+	fn output_frame_refreshes_snapshot_so_repaint_probe_cannot_reslide() {
+		// One shell "enter", as frames: the scroll lands in a grew=1 frame (animated
+		// by the output ease), the prompt redraw lands one frame later with grew=0 -
+		// a slide frame. A snapshot left stale across the grew frame makes that
+		// slide frame read the eased scroll as a fresh 1-line repaint shift and
+		// slide it a second time - the "down one line, then up two" output judder.
+		// The gate refreshes the snapshot on the grew frame, so the slide frame
+		// diffs only the in-place prompt redraw: no shift.
+		use std::fmt::Write as _;
+		let (cols, lines) = (20usize, 12usize);
+		let mut prime = String::new();
+		for i in 0..lines {
+			let _ = write!(prime, "prime row {i} qz{i}{i}\r\n");
+		}
+		let mut term = term_fed(cols, lines, 1000, &prime);
+		let stale = snapshot_rows(term.grid(), lines, cols, None);
+		// grew frame: a new output line scrolls the screen; snapshot, don't slide
+		feed(&mut term, "output line abcdef\r\n");
+		assert_eq!(app_scroll_frames(false, true, 1, false), (true, false));
+		let fresh = snapshot_rows(term.grid(), lines, cols, None);
+		// slide frame: the prompt redraw, in place
+		feed(&mut term, "$ ");
+		let cur = snapshot_rows(term.grid(), lines, cols, None);
+		let vs_stale = scroll_shift_signed(&cur, &stale, APP_SCROLL_MAX);
+		let vs_fresh = scroll_shift_signed(&cur, &fresh, APP_SCROLL_MAX);
+		assert_eq!(vs_stale, 1, "a stale snapshot re-reads the eased scroll");
+		assert_eq!(
+			vs_fresh, 0,
+			"a fresh snapshot sees only the in-place redraw"
+		);
 	}
 
 	// ---- Scrolled-off strip -----------------------------------------------------
