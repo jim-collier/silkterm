@@ -6,6 +6,8 @@
 //! it composites the same way as the rect pipeline and works with transparency.
 
 use crate::config::Fit;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -17,6 +19,18 @@ struct Uniform {
 	_pad: [f32; 2],
 }
 
+// Wallpaper VRAM-content probe verdict (see `vram_check_poll`).
+pub enum WpProbe {
+	Intact,
+	Lost,
+	MapFailed,
+}
+
+// The probe block edge. 64 keeps bytes_per_row (side*4 = 256) copy-aligned;
+// images smaller than this in either dimension just skip the probe.
+const PROBE_SIDE: u32 = 64;
+const PROBE_BYTES: usize = (PROBE_SIDE * PROBE_SIDE * 4) as usize;
+
 pub struct ImageRenderer {
 	pipeline: wgpu::RenderPipeline,
 	bind_group: wgpu::BindGroup,
@@ -24,6 +38,16 @@ pub struct ImageRenderer {
 	image_size: [f32; 2],
 	opacity: f32,
 	fit: f32,
+	// VT-switch loss probe: this texture is a REAL casualty of a VRAM purge
+	// (it is sampled every frame, so it lives hot in video memory - unlike a
+	// synthetic sentinel, which the driver can keep restorable elsewhere). A
+	// center block of the uploaded pixels is kept CPU-side and read back on the
+	// probe tick; a mismatch means the purge hit us.
+	texture: wgpu::Texture,
+	probe_at: Option<(u32, u32)>, // block origin; None = image too small, probe disabled
+	probe_ref: Vec<u8>,
+	probe_buf: wgpu::Buffer,
+	probe_inflight: Option<Arc<AtomicU8>>,
 }
 
 impl ImageRenderer {
@@ -49,7 +73,9 @@ impl ImageRenderer {
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
 			format: wgpu::TextureFormat::Rgba8UnormSrgb,
-			usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+			usage: wgpu::TextureUsages::TEXTURE_BINDING
+				| wgpu::TextureUsages::COPY_DST
+				| wgpu::TextureUsages::COPY_SRC,
 			view_formats: &[],
 		});
 		queue.write_texture(
@@ -170,6 +196,25 @@ impl ImageRenderer {
 			cache: None,
 		});
 
+		// Reference block from the image center (corners are more likely to be a
+		// flat color a zero-wipe could coincidentally match).
+		let probe_at = (width >= PROBE_SIDE && height >= PROBE_SIDE)
+			.then(|| ((width - PROBE_SIDE) / 2, (height - PROBE_SIDE) / 2));
+		let probe_ref = probe_at.map_or_else(Vec::new, |(bx, by)| {
+			let mut block = Vec::with_capacity(PROBE_BYTES);
+			for row in 0..PROBE_SIDE {
+				let start = (((by + row) * width + bx) * 4) as usize;
+				block.extend_from_slice(&rgba[start..start + (PROBE_SIDE * 4) as usize]);
+			}
+			block
+		});
+		let probe_buf = device.create_buffer(&wgpu::BufferDescriptor {
+			label: Some("bg probe read"),
+			size: PROBE_BYTES as u64,
+			usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+			mapped_at_creation: false,
+		});
+
 		Self {
 			pipeline,
 			bind_group,
@@ -177,6 +222,11 @@ impl ImageRenderer {
 			image_size: [width as f32, height as f32],
 			opacity,
 			fit: if fit == Fit::Zoom { 1.0 } else { 0.0 },
+			texture,
+			probe_at,
+			probe_ref,
+			probe_buf,
+			probe_inflight: None,
 		}
 	}
 
@@ -195,6 +245,105 @@ impl ImageRenderer {
 		pass.set_pipeline(&self.pipeline);
 		pass.set_bind_group(0, &self.bind_group, &[]);
 		pass.draw(0..4, 0..1);
+	}
+
+	// Start an async readback of the probe block. False when the probe is
+	// disabled (tiny image) or one is already in flight.
+	pub fn vram_check_start(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
+		let Some((bx, by)) = self.probe_at else {
+			return false;
+		};
+		if self.probe_inflight.is_some() {
+			return false;
+		}
+		let mut enc = device.create_command_encoder(&Default::default());
+		enc.copy_texture_to_buffer(
+			wgpu::TexelCopyTextureInfo {
+				texture: &self.texture,
+				mip_level: 0,
+				origin: wgpu::Origin3d { x: bx, y: by, z: 0 },
+				aspect: wgpu::TextureAspect::All,
+			},
+			wgpu::TexelCopyBufferInfo {
+				buffer: &self.probe_buf,
+				layout: wgpu::TexelCopyBufferLayout {
+					offset: 0,
+					bytes_per_row: Some(PROBE_SIDE * 4),
+					rows_per_image: Some(PROBE_SIDE),
+				},
+			},
+			wgpu::Extent3d {
+				width: PROBE_SIDE,
+				height: PROBE_SIDE,
+				depth_or_array_layers: 1,
+			},
+		);
+		queue.submit(Some(enc.finish()));
+		let flag = Arc::new(AtomicU8::new(0));
+		let done = flag.clone();
+		self.probe_buf
+			.slice(..)
+			.map_async(wgpu::MapMode::Read, move |r| {
+				done.store(if r.is_ok() { 1 } else { 2 }, Ordering::Release);
+			});
+		self.probe_inflight = Some(flag);
+		true
+	}
+
+	// Poll an in-flight probe. Lost is not reseeded here - on loss the caller
+	// reloads the wallpaper wholesale (recover_gpu), replacing this instance.
+	pub fn vram_check_poll(&mut self, device: &wgpu::Device) -> Option<WpProbe> {
+		let flag = self.probe_inflight.as_ref()?.clone();
+		if flag.load(Ordering::Acquire) == 0 {
+			// non-blocking pump so the map callback can run
+			let _ = device.poll(wgpu::PollType::Poll);
+		}
+		match flag.load(Ordering::Acquire) {
+			0 => None,
+			2 => {
+				self.probe_inflight = None;
+				Some(WpProbe::MapFailed)
+			}
+			_ => {
+				self.probe_inflight = None;
+				let intact = {
+					let data = self.probe_buf.slice(..).get_mapped_range();
+					data[..] == self.probe_ref[..]
+				};
+				self.probe_buf.unmap();
+				Some(if intact {
+					WpProbe::Intact
+				} else {
+					WpProbe::Lost
+				})
+			}
+		}
+	}
+
+	// Diagnostic (SILK_VRAMLOSS): zero the probe block to fake a content loss.
+	pub fn vram_clobber(&self, queue: &wgpu::Queue) {
+		let Some((bx, by)) = self.probe_at else {
+			return;
+		};
+		queue.write_texture(
+			wgpu::TexelCopyTextureInfo {
+				texture: &self.texture,
+				mip_level: 0,
+				origin: wgpu::Origin3d { x: bx, y: by, z: 0 },
+				aspect: wgpu::TextureAspect::All,
+			},
+			&[0u8; PROBE_BYTES],
+			wgpu::TexelCopyBufferLayout {
+				offset: 0,
+				bytes_per_row: Some(PROBE_SIDE * 4),
+				rows_per_image: Some(PROBE_SIDE),
+			},
+			wgpu::Extent3d {
+				width: PROBE_SIDE,
+				height: PROBE_SIDE,
+				depth_or_array_layers: 1,
+			},
+		);
 	}
 }
 

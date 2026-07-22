@@ -18,7 +18,7 @@ use winit::window::{CursorIcon, Fullscreen, Window, WindowId};
 use alacritty_terminal::term::TermMode;
 use glyphon::{Buffer, Color as GColor, Shaping, TextArea, TextBounds};
 
-use crate::bgimage::ImageRenderer;
+use crate::bgimage::{ImageRenderer, WpProbe};
 use crate::clipboard::Clipboard;
 use crate::config;
 use crate::config::DONATE_URL;
@@ -3857,28 +3857,56 @@ impl ApplicationHandler<UserEvent> for App {
 			if state.vramloss_test && state.revealed {
 				state.vramloss_test = false;
 				state.gfx.vram_clobber();
-				vramdbg("SILK_VRAMLOSS: sentinels clobbered");
+				if let Some(wp) = &state.wallpaper_img {
+					wp.vram_clobber(&state.gfx.queue);
+				}
+				vramdbg("SILK_VRAMLOSS: sentinels + wallpaper clobbered");
 			}
+			// Poll both probes; either detecting loss triggers the one rebuild.
+			// The wallpaper block is the authoritative witness: that texture is
+			// sampled every frame, so it lives hot in VRAM like the atlas. The
+			// synthetic sentinels survived a real VT switch that wiped the atlas
+			// (never drawn -> the driver keeps them restorable elsewhere); they
+			// stay as a best-effort fallback for the no-wallpaper case.
+			let mut lost = None;
 			match state.gfx.vram_check_poll() {
 				Some(VramProbe::Lost { uploaded, rendered }) => {
-					eprintln!(
-						"{}: GPU texture contents lost (VT switch or resume?) - rebuilding",
-						config::APP_NAME
-					);
-					vramdbg(&format!(
-						"probe: LOST uploaded={} rendered={} -> recover_gpu",
+					lost = Some(format!(
+						"sentinel uploaded={} rendered={}",
 						if uploaded { "gone" } else { "ok" },
 						if rendered { "gone" } else { "ok" }
 					));
-					state.recover_gpu();
 				}
-				Some(VramProbe::Intact) => vramdbg("probe: intact"),
-				Some(VramProbe::MapFailed) => vramdbg("probe: readback map FAILED (inconclusive)"),
-				None => {
-					if Instant::now() >= state.vram_next && state.gfx.vram_check_start() {
-						state.vram_next = Instant::now() + VRAM_CHECK_IVL;
+				Some(VramProbe::Intact) => vramdbg("probe: sentinels intact"),
+				Some(VramProbe::MapFailed) => {
+					vramdbg("probe: sentinel readback map FAILED (inconclusive)");
+				}
+				None => {}
+			}
+			if let Some(wp) = state.wallpaper_img.as_mut() {
+				match wp.vram_check_poll(&state.gfx.device) {
+					Some(WpProbe::Lost) => lost = Some("wallpaper block gone".into()),
+					Some(WpProbe::Intact) => vramdbg("probe: wallpaper intact"),
+					Some(WpProbe::MapFailed) => {
+						vramdbg("probe: wallpaper readback map FAILED (inconclusive)");
 					}
+					None => {}
 				}
+			}
+			if let Some(what) = lost {
+				eprintln!(
+					"{}: GPU texture contents lost (VT switch or resume?) - rebuilding",
+					config::APP_NAME
+				);
+				vramdbg(&format!("probe: LOST ({what}) -> recover_gpu"));
+				state.recover_gpu();
+			}
+			if Instant::now() >= state.vram_next {
+				state.gfx.vram_check_start();
+				if let Some(wp) = state.wallpaper_img.as_mut() {
+					wp.vram_check_start(&state.gfx.device, &state.gfx.queue);
+				}
+				state.vram_next = Instant::now() + VRAM_CHECK_IVL;
 			}
 		}
 		let bell_anim = state.bell_flash > 0.0;
