@@ -50,6 +50,18 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- 🛠️ Severe: When the linux console swithes to text mode (e.g. user presses CTRL+ALT+F1), then back to graphical X11 (e.g. user presses CTRL+ALT+F7), all SilkTerm windows are mostly black. Only the tabs and blinking cursor or visible, plus some light RGB noise at the top of the terminal render area.
+	- New SilkTerm windows opened after that are OK. But new tabs open on a previously open window, have the same problem.
+	- Cause: the VT switch wipes the contents of uploaded GPU textures (glyph atlas = all text, wallpaper) while the GL context survives, so per-frame shapes (tabs, cursor) still draw. New windows re-upload from scratch; new tabs share the wiped atlas.
+	- Fix: a small known-pattern sentinel texture is re-read every couple of seconds (plus immediately on window focus); if the pattern is gone, the atlas, chrome, and wallpaper are rebuilt automatically. Recovers within a few seconds of returning, sooner on click.
+	- Needs a real VT switch to confirm end to end - verify on the desktop.
+
+- 🔘 New Linux and Windows judder bug:
+	- If the cursor is at the bottom of the screen, the first line of output (even just hitting "enter" to a new prompt line) causes everything above, to momentarily bounce *down* one line (the wrong direction), then back up.
+	- When scrolling down a long list in 'ls', each scroll event (or at least down arrow) results first in the screen contents bouncing *down*, then up.
+	- It seems to go: "everything move one line down (smoothly), then two lines up (smoothly)". The net result is very juddery output.
+	- Mouse scrolling seem unaffected. It's smooth.
+
 - Windows:
 	- 🛠️ Bold font uses a proportional font, which skews space-based alignment output. (E.g. that muffer uses on startup screen.)
 		- This happens on a different Windows host, not this one. But the problem seems to be, need a more reliable font fallback, if either normal or bold is using a proportional font.
@@ -61,6 +73,8 @@ In each section, items are listed approximately from newest to oldest.
 	- 🛠️ The whole window stays in place when VirtuaWin switches virtual workspaces.
 		- Likely a window-style/attribute issue: VirtuaWin doesn't recognize/manage the window.
 		- Fix: on Windows, only request a transparent (no-redirection-bitmap/layered) window when Transparency is actually on - that layered style is what virtual-desktop managers skip, and the native surface gives no alpha when off anyway. Awaiting VirtuaWin verify (not on this host).
+
+- 🔘 Copy on output is still copying the prompt that appears after command output.
 
 - ✋ The dreaded "Nano Bounce Bug" is back. This will be the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and possibly red-herrings. It obviously must be related in some way to smooth scrolling (the next time it happens I'll try turning it off to make sure). So let's get back to basics of what I know, and don't know:
 	- Steps:
@@ -79,6 +93,18 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
+- 🔘 Font size should be able to be increased, even when using system font.
+	- May need to refactor "Use system font [ ]" in settings to:
+		- Use system font    [ ] Face   [ ] Size
+
+- 🔘 Hotkeys to increase/decrease font size
+	- Behavior: Per pane, inherited when split, or new tab with a focused resized pane, but not persisted across launches.
+	- HotKeys (and view menu items that list the hotkeys):
+		- Ctrl+'-' reduces font size.
+		- Ctrl+'+' and Ctrl+'=' increases font size.
+
+- 🔘 New tabs and panes should inherit its path from the one that was previously active.
+
 - 🔘 Dialogs and menus:
 	- 🔘 Themes should have TWO highlight colors:
 		- 🔘 One color that calls attention to multiple things on the screen at once
@@ -94,6 +120,8 @@ In each section, items are listed approximately from newest to oldest.
 	- Program arguments
 	- (Defer settings dialog, that's in a separate enhancement.)
 	- Done: config keys `background_*` (image-specific) -> `wallpaper_*` (bare `background_image` -> `wallpaper`); the Settings fields, `RawConfig`, `persist`, and the default-config template + comments follow. Existing configs migrate in place (values, comments, and commented state preserved) via `CONFIG_RENAMES`, covered by a new test. Left the non-image ones alone: `transparent_background`/`_blur` (window see-through) and the `[colors]` `background`/`menu_background`/`dialog_background`. Internal image helpers renamed too (`load_wallpaper`, `resolve_wallpaper`, `resolve_wallpaper_folder`, `wallpaper_changed`; the decoded-pixels local stays distinct as `wallpaper_img`). CLI adds `--wallpaper-file/-stretch/-zoom/-opacity` with the old `--background-image*` kept as aliases; runtime `--wallpaper` and window `--background-opacity` (see-through, not the image) unchanged. Auto-detect now checks `wallpapers/wallpaper.{png,jpg,jpeg}` first, falling back to the legacy `backgrounds/background.*`. Settings-dialog labels deferred per the note.
+
+- 🔘 If host doesn't TERM=alacritty (including remote SSH hosts), then fallback to `TERM=xterm-256color` + `COLORTERM=truecolor`.
 
 - 🔘 Refactor settings dialog
 	- Add a flyover help text system, giving a brief explanation of what non-obvious controls do.

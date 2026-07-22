@@ -532,6 +532,7 @@ const MENU_BAR_VPAD: f32 = 6.0;
 const TAB_BAR_VPAD: f32 = 6.0; // text is metric-centered in the bar; descenders clear via that
 const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to settle)
 const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-size settle time before hitting disk
+const VRAM_CHECK_IVL: Duration = Duration::from_secs(2); // GL sentinel probe tick (VT-switch texture loss)
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
 const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
 const TAB_MAX_W: f32 = 220.0; // tab button width cap - drawing AND click hit-testing use this
@@ -602,6 +603,8 @@ struct State {
 	wp_images: Vec<PathBuf>, // wallpaper-rotation folder contents (empty = rotation off)
 	wp_index: usize, // which of wp_images is currently shown
 	wp_next: Option<Instant>, // when to rotate next (None = no timer / startup-only)
+	vram_next: Instant, // next GL VRAM sentinel probe (VT-switch content-loss detection)
+	vramloss_test: bool, // SILK_VRAMLOSS one-shot: fake a loss to exercise the rebuild path
 }
 
 impl State {
@@ -1397,6 +1400,16 @@ impl State {
 		if bg {
 			self.wallpaper_img = load_wallpaper(&self.gfx);
 		}
+		self.dirty = true;
+	}
+
+	// GPU texture contents were lost (VT switch / suspend; see the Sentinel note
+	// in gfx.rs). Re-upload everything that was uploaded once: fresh glyph
+	// atlases + chrome via rebuild_text, and the wallpaper. Scrim and offscreen
+	// targets are redrawn every frame, so they heal on their own.
+	fn recover_gpu(&mut self) {
+		self.rebuild_text(self.window.scale_factor() as f32);
+		self.wallpaper_img = load_wallpaper(&self.gfx);
 		self.dirty = true;
 	}
 
@@ -2945,6 +2958,8 @@ impl ApplicationHandler<UserEvent> for App {
 			wp_images: Vec::new(),
 			wp_index: 0,
 			wp_next: None,
+			vram_next: Instant::now() + VRAM_CHECK_IVL,
+			vramloss_test: std::env::var_os("SILK_VRAMLOSS").is_some(),
 		});
 		// A wallpaper given on the command line (--background-image, incl. an explicit
 		// clear) is an intentional per-session override; don't clobber it with the
@@ -3071,6 +3086,11 @@ impl ApplicationHandler<UserEvent> for App {
 			// Window focus gates copy-output: a background window never copies.
 			WindowEvent::Focused(focused) => {
 				state.focused = focused;
+				// Regaining focus is the likely first moment back from a VT
+				// switch/suspend - probe the GPU uploads now, not at the slow tick.
+				if focused && state.gfx.is_gl() {
+					state.vram_next = Instant::now();
+				}
 			}
 
 			// OS switched dark/light: a "System" theme follows it live.
@@ -3790,6 +3810,30 @@ impl ApplicationHandler<UserEvent> for App {
 		if state.wp_next.is_some_and(|next| Instant::now() >= next) {
 			state.advance_wallpaper();
 		}
+		// GL path: probe the VRAM sentinel on a slow tick. A mismatch means a VT
+		// switch/suspend trashed the texture uploads (the mostly-black-window
+		// bug) - reseed + rebuild them. See the Sentinel note in gfx.rs.
+		if state.gfx.is_gl() {
+			if state.vramloss_test && state.revealed {
+				state.vramloss_test = false;
+				state.gfx.vram_clobber();
+			}
+			match state.gfx.vram_check_poll() {
+				Some(false) => {
+					eprintln!(
+						"{}: GPU texture contents lost (VT switch or resume?) - rebuilding",
+						config::APP_NAME
+					);
+					state.recover_gpu();
+				}
+				Some(true) => {}
+				None => {
+					if Instant::now() >= state.vram_next && state.gfx.vram_check_start() {
+						state.vram_next = Instant::now() + VRAM_CHECK_IVL;
+					}
+				}
+			}
+		}
 		let bell_anim = state.bell_flash > 0.0;
 		// Until revealed (born hidden, shown at final size), keep rendering so the
 		// reveal check runs each cycle; the deadline wake below guarantees it can't
@@ -3862,6 +3906,12 @@ impl ApplicationHandler<UserEvent> for App {
 		// wake at the reveal deadline so a hidden startup window is shown even if no
 		// post-resize frame arrives
 		let flow = match (flow, reveal_wake) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
+		// slow-tick wake so the VRAM sentinel probe runs even while fully idle
+		let flow = match (flow, state.gfx.is_gl().then_some(state.vram_next)) {
 			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
