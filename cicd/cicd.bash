@@ -21,6 +21,7 @@
 
 ##	- Purpose: Local CI/CD pipeline. Generic engine, per-project settings live in config.bash.
 ##	- Stages (fail-fast, any error aborts before the next stage):
+##	   0. remote sync (fetch; fast-forward if safely behind; abort if diverged)
 ##	   1. format (cargo fmt)
 ##	   2. debug build (this is what the tests + profiler run against)
 ##	   3. regression tests + lints (clippy gating, cargo-deny advisory, scroll harness)
@@ -43,6 +44,7 @@
 ##	   --no-profile        skip the profiler stage
 ##	   --no-dogfood        skip installing the native release locally
 ##	   --no-publish        skip the git backup + publish stage
+##	   --no-sync           skip the remote sync check (stage 0)
 ##	   --shots             refresh README screenshots (off by default)
 ##	   --demo              re-record the demo video (off by default)
 ##	   --quick             skip the slow stages (cross-builds + packages + profiling)
@@ -83,7 +85,7 @@ cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
 ## Parse options.
-assume_yes=0; quiet=0; quick=0; gate=0; no_arm=0; cli_message=""
+assume_yes=0; quiet=0; quick=0; gate=0; no_arm=0; sync=1; cli_message=""
 while (($#)); do case "$1" in
 	-y|--yes)                 assume_yes=1; shift ;;
 	-q|--quiet)               quiet=1; assume_yes=1; shift ;;   ## quiet + unattended; publish runs quiet too
@@ -95,6 +97,7 @@ while (($#)); do case "$1" in
 	--no-profile)             PROFILE_ENABLE=0; shift ;;
 	--no-dogfood)             DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); shift ;;
 	--no-publish)             GIT_PUBLISH=(); shift ;;
+	--no-sync)                sync=0; shift ;;
 	--shots)                  SHOTS_ENABLE=1; shift ;;
 	--demo)                   DEMO_ENABLE=1; shift ;;
 	--quick)                  quick=1; BUILD_CROSS=0; PROFILE_ENABLE=0; PACKAGE_ENABLE=0; shift ;;   ## skip the slow stages
@@ -209,6 +212,7 @@ fEcho_Clean
 fEcho_Clean "${APP_NAME} local CI/CD"
 fEcho_Clean
 fEcho_Clean "Repo root ...........: ${root}"
+fEcho_Clean "Remote sync .........: $( ((sync)) && echo 'fetch + fast-forward check' || echo '(skipped)')"
 fEcho_Clean "Format ..............: ${FMT_CMD[*]:-(skipped)}"
 fEcho_Clean "Debug build .........: ${DEBUG_BUILD_CMD[*]}"
 fEcho_Clean "Tests ...............: ${TEST_CMD[*]}"
@@ -270,6 +274,51 @@ fi
 if [[ -n "${LINT_LOG_DIR:-}" ]] && mkdir -p "${root}/${LINT_LOG_DIR}" 2>/dev/null; then
 	gfs_rotate "${root}/${LINT_LOG_DIR}" run log >/dev/null 2>&1 || true
 	exec > >(tee "${root}/${LINT_LOG_DIR}/run_${stamp}.log") 2>&1
+fi
+
+## Stage 0: remote sync. Make sure the local branch can be safely refreshed from
+## its upstream BEFORE spending the build: what stage 8 pushes should be what got
+## built and tested here, not an untested post-build merge. Behind-only is safe
+## (fast-forward, stash-wrapped for a dirty tree); diverged aborts now rather
+## than at publish. Offline just warns - a local build shouldn't need the net.
+fSection "0/8  Remote sync"
+if ((! sync)); then
+	fEcho_Clean "remote sync skipped"
+elif ! git rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+	fEcho_Clean "no upstream for $(git rev-parse --abbrev-ref HEAD); nothing to sync"
+elif ! git fetch --quiet 2>/dev/null; then
+	fEcho "WARNING: git fetch failed (offline?); continuing with the local tree"
+else
+	ahead="$(git rev-list --count '@{u}..HEAD')"
+	behind="$(git rev-list --count 'HEAD..@{u}')"
+	if ((behind == 0)); then
+		if ((ahead)); then fEcho "OK: up to date with upstream (${ahead} ahead)"
+		else fEcho "OK: up to date with upstream"; fi
+	elif ((ahead == 0)); then
+		## Behind only: a fast-forward can't lose anything. Same stash dance as
+		## the publisher so a dirty tree can't block the pull.
+		dirty=0
+		git diff --quiet          || dirty=1
+		git diff --cached --quiet || dirty=1
+		[[ -n "$(git ls-files --others --exclude-standard)" ]] && dirty=1
+		didStash=0
+		if ((dirty)); then
+			stashesBefore="$(git stash list | wc -l)"
+			fEcho_Clean "git stash push --include-untracked ..."
+			git stash push --include-untracked -m "auto-stash"
+			stashesAfter="$(git stash list | wc -l)"
+			((stashesAfter > stashesBefore)) && didStash=1
+		fi
+		fEcho_Clean "git pull --ff-only ..."
+		git pull --ff-only
+		if ((didStash)); then
+			fEcho_Clean "git stash pop ..."
+			git stash pop
+		fi
+		fEcho "OK: fast-forwarded ${behind} commit(s) from upstream"
+	else
+		fDie "diverged from upstream (${ahead} ahead, ${behind} behind) - reconcile first, or rerun with --no-sync"
+	fi
 fi
 
 ## Stage 1: format.
@@ -590,3 +639,4 @@ fEcho_Clean
 
 ##	History:
 ##		- 2026-06-05 JC: Created.
+##		- 2026-07-22 JC: Stage 0 remote sync - fetch, fast-forward if safely behind, abort if diverged.

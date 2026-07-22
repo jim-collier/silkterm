@@ -5,6 +5,7 @@
 ##		  run and the git backup/publish). Does NOT touch cicd.bash (that stays the
 ##		  Linux/cross pipeline).
 ##		- Stages (fail-fast; any error aborts before the next stage):
+##		   0. remote sync    (fetch; fast-forward if safely behind; abort if diverged)
 ##		   1. format         (cargo fmt)
 ##		   2. debug build    (cargo build)
 ##		   3. tests + lints  (cargo test; clippy + cargo-deny are ADVISORY here)
@@ -40,6 +41,7 @@
 ##		   -NoPackage      skip the packages stage (NSIS installers)
 ##		   -NoDogfood      skip the dogfood install
 ##		   -NoPublish      skip the git publish stage
+##		   -NoSync         skip the remote sync check (stage 0)
 ##		   -Message MSG    publish hands-off with this commit message (no editor)
 ##		   -Help           show this help
 ##	History: At bottom of script.
@@ -61,6 +63,7 @@ param(
 	[switch]$NoPackage,
 	[switch]$NoDogfood,
 	[switch]$NoPublish,
+	[switch]$NoSync,
 	[string]$Message = "",
 	[switch]$Help
 )
@@ -481,6 +484,50 @@ function fDogfood {
 	fEcho "OK: dogfood ($($pick.Tk); $why) -> $dst"
 }
 
+## Stage 0: make sure the local branch can be safely refreshed from its upstream
+## BEFORE spending the build - what stage 8 pushes should be what got built and
+## tested here, not an untested post-build merge. Behind-only is safe (fast-
+## forward, stash-wrapped for a dirty tree); diverged aborts now rather than at
+## publish. Offline just warns - a local build shouldn't need the net.
+function fRemoteSync {
+	& git rev-parse --abbrev-ref '@{u}' 2>$null | Out-Null
+	if ($LASTEXITCODE -ne 0) {
+		$branch = (& git rev-parse --abbrev-ref HEAD).Trim()
+		fNote "no upstream for ${branch}; nothing to sync"
+		return
+	}
+	& git fetch --quiet 2>$null
+	if ($LASTEXITCODE -ne 0) { fWarn "git fetch failed (offline?); continuing with the local tree"; return }
+	$ahead  = [int](& git rev-list --count '@{u}..HEAD')
+	$behind = [int](& git rev-list --count 'HEAD..@{u}')
+	if ($behind -eq 0) {
+		if ($ahead) { fEcho "OK: up to date with upstream ($ahead ahead)" }
+		else        { fEcho "OK: up to date with upstream" }
+		return
+	}
+	if ($ahead -gt 0) { fDie "diverged from upstream ($ahead ahead, $behind behind) - reconcile first, or rerun with -NoSync" }
+	## Behind only: a fast-forward can't lose anything. Same stash dance as
+	## fPublish so a dirty tree can't block the pull.
+	& git diff --quiet;          $dirtyTracked = ($LASTEXITCODE -ne 0)
+	& git diff --cached --quiet; $dirtyStaged  = ($LASTEXITCODE -ne 0)
+	$untracked = (& git ls-files --others --exclude-standard)
+	$didStash = $false
+	if ($dirtyTracked -or $dirtyStaged -or $untracked) {
+		$before = @(& git stash list).Count
+		fEcho_Clean "git stash push --include-untracked ..."
+		fExec "git stash" "git" @("stash", "push", "--include-untracked", "-m", "auto-stash")
+		$after = @(& git stash list).Count
+		$didStash = ($after -gt $before)
+	}
+	fEcho_Clean "git pull --ff-only ..."
+	fExec "git pull" "git" @("pull", "--ff-only")
+	if ($didStash) {
+		fEcho_Clean "git stash pop ..."
+		fExec "git stash pop" "git" @("stash", "pop")
+	}
+	fEcho "OK: fast-forwarded $behind commit(s) from upstream"
+}
+
 ## Publish: a native port of n8git_backup-and-publish MINUS the rar archive step.
 ## stash (if dirty) -> pull --no-ff (if upstream) -> pop -> add -> commit -> push.
 ## $Msg empty means "let git open its editor" (git uses core.editor / EDITOR).
@@ -616,6 +663,7 @@ function fMain {
 	fEcho_Clean
 	fEcho_Clean "Repo root ...: $Root"
 	fEcho_Clean "Jobs ........: $CicdMaxJobs of $Cores cores"
+	fEcho_Clean "Remote sync .: $(if ($NoSync) { '(skipped)' } else { 'fetch + fast-forward check' })"
 	fEcho_Clean "Format ......: $(if ($NoFmt) { '(skipped)' } else { 'cargo fmt' })"
 	fEcho_Clean "Profiler ....: $(if ($NoProfile -or $Quick) { '(skipped)' } else { "${ProfileSecs}s run -> flamegraph SVG (best-effort)" })"
 	fEcho_Clean "Release .....: x86_64 msvc + gnu$(if ($NoArm -or $Quick) { '' } else { ' + ARM64 (if toolchain present)' })"
@@ -638,6 +686,11 @@ function fMain {
 	## Start the transcript once past the preflight.
 	New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 	try { Start-Transcript -LiteralPath (Join-Path $LogDir "run_$stamp.log") | Out-Null } catch {}
+
+	## Stage 0: remote sync.
+	fSection "0  Remote sync"
+	if ($NoSync) { fNote "remote sync skipped" }
+	else { fRemoteSync }
 
 	## Stage 1: format.
 	fSection "1  Format"
@@ -701,3 +754,5 @@ try {
 ##		- 2026-07-15 JC: Parity pass - profiler stage, full stash/pull/commit/push
 ##		  publish (rar skipped), preflight message prompt + -Quiet, -Quick skips
 ##		  the profiler, tool-pin drift warnings.
+##		- 2026-07-22 JC: Stage 0 remote sync - fetch, fast-forward if safely
+##		  behind, abort if diverged.
