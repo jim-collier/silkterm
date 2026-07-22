@@ -38,10 +38,14 @@ pub const TAB_INACTIVE: [u8; 3] = [0x36, 0x36, 0x3b];
 // Used only when the system monospace size can't be read (see default_font_size).
 const FALLBACK_FONT_SIZE: f32 = 17.0;
 
-// Cross-platform monospace fallback stack (first installed wins), used when
-// `use_system_font` is off. Ends in the generic "monospace" so something always
-// resolves. Covers common Linux / macOS / Windows faces.
-pub const DEFAULT_FONT_STACK: &str = "JetBrains Mono, Fira Code, Cascadia Code, DejaVu Sans Mono, Menlo, Consolas, Liberation Mono, monospace";
+// Cross-platform monospace fallback stack (first installed wins): the
+// font_family default, and the resolver's last resort on every platform when
+// neither the configured family nor the OS monospace resolves. Windows always
+// goes through it (no OS monospace setting exists there), so every entry must
+// carry a real bold face - the bare Family::Monospace db query this replaces
+// could land on a family without one, silently ejecting bold runs to an
+// arbitrary (often proportional) fallback.
+pub const DEFAULT_FONT_STACK: &str = "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New";
 
 // right-click context menu
 pub const MENU_LINK: [u8; 3] = [0x6c, 0x9c, 0xff]; // clickable URL
@@ -878,11 +882,18 @@ pub fn default_font_size() -> f32 {
 		.unwrap_or(FALLBACK_FONT_SIZE)
 }
 
+// Whether "use system font" actually has an OS monospace setting to follow.
+// Windows has none, so the toggle is inert there: family and size resolve from
+// font_family / font_size as if it were off (the Settings checkbox greys out).
+pub fn system_font_active(s: &Settings) -> bool {
+	!cfg!(windows) && s.use_system_font
+}
+
 // The size the text is actually rendered at: the OS monospace size while
-// `use_system_font` is on, else the configured `font_size`.
+// `use_system_font` is on (and the OS has one), else the configured `font_size`.
 pub fn effective_font_size() -> f32 {
 	let current = settings();
-	if current.use_system_font {
+	if system_font_active(&current) {
 		default_font_size()
 	} else {
 		current.font_size
@@ -1330,14 +1341,16 @@ const DEFAULT_CONFIG: &str = r##"## SilkTerm configuration. Delete this file to 
 ##=============================================================================
 
 ## Use the OS default monospace font (family + size). When true this overrides
-## font_family / font_size below. Turn off to use them instead.
+## font_family / font_size below. Turn off to use them instead. Windows has no
+## system monospace font, so this is ignored there.
 use_system_font = true
 
 ## Font family: a comma-separated fallback stack (first installed wins). Used
-## only when use_system_font = false. Ends in the generic "monospace".
-font_family = "JetBrains Mono, Fira Code, Cascadia Code, DejaVu Sans Mono, Menlo, Consolas, Liberation Mono, monospace"
+## only when use_system_font = false (always, on Windows).
+font_family = "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
 
-## Font size in logical pixels. Used only when use_system_font = false.
+## Font size in logical pixels. Used only when use_system_font = false (always,
+## on Windows).
 # font_size = 17.0
 
 ## Line height as a multiple of the font's natural height (1.0 = tight).
