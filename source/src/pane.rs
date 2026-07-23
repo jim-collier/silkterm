@@ -1819,9 +1819,10 @@ impl PaneManager {
 		proxy: &EventLoopProxy<UserEvent>,
 		area: Rect,
 		command: Option<Vec<String>>,
+		cwd: Option<std::path::PathBuf>,
 	) -> anyhow::Result<Self> {
 		let id = alloc_pane_id();
-		let pane = spawn_pane(ctx, proxy, id, area, command)?;
+		let pane = spawn_pane(ctx, proxy, id, area, command, cwd)?;
 		let mut panes = HashMap::new();
 		panes.insert(id, pane);
 		Ok(Self {
@@ -1833,7 +1834,8 @@ impl PaneManager {
 	}
 
 	// Interactive split (menu/keyboard): even ratio, new pane after; inherits the
-	// source pane's command so the new pane runs the same shell it forked off.
+	// source pane's command and current directory, so the new pane runs the same
+	// shell it forked off, starting where that shell is now.
 	pub fn split(
 		&mut self,
 		ctx: &mut TextCtx,
@@ -1843,9 +1845,18 @@ impl PaneManager {
 		area: Rect,
 	) {
 		let cmd = self.panes.get(&id).and_then(|p| p.command.clone());
+		let cwd = self.panes.get(&id).and_then(|p| p.term.cwd());
 		// interactive splits even-distribute the same-direction run (unless a divider
 		// in it was hand-dragged); the CLI drives its own sizing, so it passes false
-		self.split_at(ctx, proxy, id, dir, false, 0.5, cmd, area, true);
+		self.split_at(ctx, proxy, id, dir, false, 0.5, cmd, cwd, area, true);
+	}
+
+	// What a new tab/window spawned "from" the focused pane should inherit:
+	// its launch command (None = default shell) and the shell's current dir.
+	pub fn inherit_spawn(&self) -> (Option<Vec<String>>, Option<std::path::PathBuf>) {
+		self.panes
+			.get(&self.focused)
+			.map_or((None, None), |pane| (pane.command.clone(), pane.term.cwd()))
 	}
 
 	// General split used by the CLI: split `id` along `dir`, the new pane on the
@@ -1862,6 +1873,7 @@ impl PaneManager {
 		before: bool,
 		new_ratio: f32,
 		command: Option<Vec<String>>,
+		cwd: Option<std::path::PathBuf>,
 		area: Rect,
 		equalize: bool,
 	) -> Option<PaneId> {
@@ -1879,7 +1891,7 @@ impl PaneManager {
 			.map_or((false, false), |src| (src.copy_select, src.copy_output));
 		// spawn BEFORE touching the tree: a failed spawn must not leave a
 		// phantom leaf that reserves layout space with no pane behind it
-		let mut pane = match spawn_pane(ctx, proxy, new_id, area, command) {
+		let mut pane = match spawn_pane(ctx, proxy, new_id, area, command, cwd) {
 			Ok(p) => p,
 			Err(e) => {
 				eprintln!("split: failed to spawn shell: {e}");
@@ -2034,6 +2046,7 @@ fn spawn_pane(
 	id: PaneId,
 	rect: Rect,
 	command: Option<Vec<String>>,
+	cwd: Option<std::path::PathBuf>,
 ) -> anyhow::Result<Pane> {
 	let (cw, ch, cols, lines) = content_dims(rect, ctx);
 	let term = TermInstance::spawn(
@@ -2044,6 +2057,7 @@ fn spawn_pane(
 		ctx.cell_h as u16,
 		proxy.clone(),
 		command.clone(),
+		cwd,
 	)?;
 	// +2 cells of height for the overscan rows build() renders (see relayout).
 	let buffer = ctx.new_buffer(cw, ch + 2.0 * ctx.cell_h);

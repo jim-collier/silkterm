@@ -118,6 +118,7 @@ impl TermInstance {
 		cell_h: u16,
 		proxy: EventLoopProxy<UserEvent>,
 		command: Option<Vec<String>>,
+		cwd: Option<std::path::PathBuf>,
 	) -> anyhow::Result<Self> {
 		let cols = cols.max(1);
 		let lines = lines.max(1);
@@ -151,6 +152,8 @@ impl TermInstance {
 		if let Some((prog, args)) = command.as_ref().and_then(|c| c.split_first()) {
 			opts.shell = Some(tty::Shell::new(prog.clone(), args.to_vec()));
 		}
+		// start in an inherited directory (new tab/split follows the source pane)
+		opts.working_directory = cwd;
 		let pty = tty::new(&opts, win, id)?;
 		// Capture the master fd + shell pid before the event loop takes the pty;
 		// they drive the tab title (foreground program). The fd stays valid for
@@ -220,6 +223,22 @@ impl TermInstance {
 	#[allow(clippy::unused_self)]
 	pub fn tab_title(&mut self) -> String {
 		crate::config::APP_NAME.to_string()
+	}
+
+	// The shell's current directory, for a new tab/split to start in. A deleted
+	// dir reads back with a " (deleted)" suffix, so require it to still exist.
+	#[cfg(unix)]
+	pub fn cwd(&self) -> Option<std::path::PathBuf> {
+		std::fs::read_link(format!("/proc/{}/cwd", self.shell_pid))
+			.ok()
+			.filter(|dir| dir.is_dir())
+	}
+
+	// No /proc equivalent wired up off-unix; callers fall back to the default.
+	#[cfg(not(unix))]
+	#[allow(clippy::unused_self)]
+	pub fn cwd(&self) -> Option<std::path::PathBuf> {
+		None
 	}
 
 	// Is the shell itself (not a spawned command) the terminal's foreground

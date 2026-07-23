@@ -86,7 +86,9 @@ In each section, items are listed approximately from newest to oldest.
 	- Done: Ctrl+-/+/= step the size a pixel per press (session-only, never persisted; works on top of the system size too), with matching View menu items. Verified live: row pitch grows and shrinks with the keys.
 	- ✋ Per-pane scoping deferred: all panes in a window share one set of text metrics, so a per-pane size needs the same per-pane renderer the per-pane CLI style options are waiting on. Currently window-wide.
 
-- 🔘 New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
+- ✅ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
+	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Verified live for both.
+	- 🔘 Windows: the new-pane side works, but reading the source shell's current directory isn't wired up there yet - new tabs/panes keep the old start-dir behavior until then. (Needs Windows host.)
 
 - 🔘 Dialogs and menus:
 	- 🔘 Themes should have TWO highlight colors:
