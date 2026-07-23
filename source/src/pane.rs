@@ -303,6 +303,26 @@ fn fnv_row(chars: impl Iterator<Item = char>) -> u64 {
 	hash
 }
 
+// Skeleton fingerprint for prompt learning/stripping: runs of alphanumerics
+// collapse to one marker and runs of spaces to one space, so a prompt row whose
+// content changes per command (cwd, git branch, clock, right-aligned segments)
+// still prints the same while its punctuation/box-drawing structure must match
+// exactly. An exact-content compare here misses every dynamic multi-line
+// prompt, which then gets copied as output.
+fn fnv_row_skel(chars: impl Iterator<Item = char>) -> u64 {
+	let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+	let mut last = '\0';
+	for c in chars {
+		let k = if c.is_alphanumeric() { 'a' } else { c };
+		if (k == 'a' || k == ' ') && k == last {
+			continue;
+		}
+		last = k;
+		hash = (hash ^ k as u64).wrapping_mul(0x100_0000_01b3);
+	}
+	hash
+}
+
 // The char to feed the shaper for a grid cell. A cell may hold a literal control
 // char - alacritty leaves the '\t' in the first tab cell and fills to the tab
 // stop with spaces - and cosmic-text shapes a raw tab as a full 8-col stop,
@@ -600,10 +620,12 @@ pub struct Pane {
 	// falls back to cmd_start when it can't (evicted, or redrawn on Enter).
 	cmd_anchor: Option<u64>,
 	// Multi-line prompt learning: the rows a prompt paints ABOVE its input line
-	// repeat verbatim before every command, while output above the prompt changes
-	// run to run. `prompt_above` holds the last arm's above-cursor fingerprints;
-	// the contiguous match against the current arm's becomes `prompt_block`, and
-	// capture strips the same rows off the resumed prompt (see prompt_strip).
+	// keep their structure before every command, while output above the prompt
+	// changes run to run. Skeleton fingerprints (fnv_row_skel) so dynamic prompt
+	// content still matches. `prompt_above` holds the last arm's above-cursor
+	// fingerprints; the contiguous match against the current arm's becomes
+	// `prompt_block`, and capture strips the same rows off the resumed prompt
+	// (see prompt_strip).
 	prompt_above: Vec<u64>,
 	prompt_block: Vec<u64>,
 	last_output: std::time::Instant,
@@ -1584,12 +1606,12 @@ impl Pane {
 		let blank = (0..cols).all(|c| row[Column(c)].c == ' ');
 		self.cmd_anchor = (!blank).then(|| fnv_row((0..cols).map(|c| row[Column(c)].c)));
 		// learn the multi-line prompt block: rows above the input line that were
-		// also there (identical) at the previous arm are prompt, not output
+		// also there (same skeleton) at the previous arm are prompt, not output
 		let hist = grid.history_size() as i32;
 		let above: Vec<u64> = (1..=PROMPT_ABOVE_MAX as i32)
 			.map_while(|up| {
 				let line = Line(cursor_line.0 - up);
-				(line.0 >= -hist).then(|| fnv_row((0..cols).map(|c| grid[line][Column(c)].c)))
+				(line.0 >= -hist).then(|| fnv_row_skel((0..cols).map(|c| grid[line][Column(c)].c)))
 			})
 			.collect();
 		let confirmed = above
@@ -2111,10 +2133,11 @@ fn capture_start<T: alacritty_terminal::event::EventListener>(
 
 // Drop a multi-line prompt's extra rows off the capture end. `end_abs` already
 // excludes the resumed prompt's input line (the cursor row); strip the rows
-// above it that match the learned prompt block (see prompt_block on Pane), so
-// e.g. a two-line prompt's decoration line isn't copied as output. Fail-safe:
-// a row that doesn't match (dynamic prompt content, nothing learned yet) stops
-// the strip and stays in the copy - the current behaviour.
+// above it whose skeleton matches the learned prompt block (see prompt_block
+// on Pane), so e.g. a two-line prompt's decoration line isn't copied as output
+// even when its content (cwd, clock) changed since the arm. Fail-safe: a row
+// whose structure doesn't match (nothing learned yet, genuinely different row)
+// stops the strip and stays in the copy - the prior behaviour.
 fn prompt_strip<T: alacritty_terminal::event::EventListener>(
 	term: &Term<T>,
 	start_abs: usize,
@@ -2130,7 +2153,7 @@ fn prompt_strip<T: alacritty_terminal::event::EventListener>(
 			break;
 		}
 		let row = &grid[Line((end as i64 - 1 - hist) as i32)];
-		if fnv_row((0..cols).map(|c| row[Column(c)].c)) != fingerprint {
+		if fnv_row_skel((0..cols).map(|c| row[Column(c)].c)) != fingerprint {
 			break;
 		}
 		end -= 1;
@@ -2732,9 +2755,10 @@ mod tests {
 	use super::{
 		APP_SCROLL_MAX, CURSOR_MAX_LAG, Dir, Node, OffStrip, PauseState, Rect, SLIDE_TOP_BAND_APPS,
 		StripCell, app_scroll_frames, bell_brighten, capture_grid_text, capture_start,
-		cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, glide_to_full, layout,
-		logical_line_bounds, pair_inside, prompt_strip, render_char, same_char_pair, scroll_shift,
-		scroll_shift_signed, snapshot_rows, static_bands, vanished_range, weld_region_clip,
+		cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full,
+		layout, logical_line_bounds, pair_inside, prompt_strip, render_char, same_char_pair,
+		scroll_shift, scroll_shift_signed, snapshot_rows, static_bands, vanished_range,
+		weld_region_clip,
 	};
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
@@ -2807,6 +2831,11 @@ mod tests {
 		let grid = term.grid();
 		let cols = grid.columns();
 		fnv_row((0..cols).map(|c| grid[Line(line)][Column(c)].c))
+	}
+	fn row_skel(term: &Term<VoidListener>, line: i32) -> u64 {
+		let grid = term.grid();
+		let cols = grid.columns();
+		fnv_row_skel((0..cols).map(|c| grid[Line(line)][Column(c)].c))
 	}
 
 	fn leaf(id: u64) -> Node {
@@ -2980,7 +3009,7 @@ mod tests {
 		let mut term = term_fed(20, 6, 100, "==info==\r\nuser$ cmd");
 		let grid = term.grid();
 		let cmd_start = grid.history_size() + grid.cursor.point.line.0.max(0) as usize + 1;
-		let block = vec![row_hash(&term, grid.cursor.point.line.0 - 1)];
+		let block = vec![row_skel(&term, grid.cursor.point.line.0 - 1)];
 		feed(&mut term, "\r\nA\r\nB\r\n==info==\r\nuser$ ");
 		let grid = term.grid();
 		let end = grid.history_size() + grid.cursor.point.line.0.max(0) as usize;
@@ -2989,6 +3018,49 @@ mod tests {
 		// nothing learned yet, or a non-matching row: strip nothing (fail-safe)
 		assert_eq!(prompt_strip(&term, cmd_start, end, &[]), end);
 		assert_eq!(prompt_strip(&term, cmd_start, end, &[123]), end);
+	}
+
+	#[test]
+	fn capture_strips_dynamic_prompt_rows() {
+		// the decoration row's content changes per command (cwd, clock) but its
+		// structure doesn't; the skeleton match must still strip it - an exact
+		// compare left every dynamic prompt's rows in the copy (the reported bug)
+		let mut term = term_fed(30, 8, 100, "[~/proj git:main 10:01]\r\nuser$ cmd");
+		let grid = term.grid();
+		let cmd_start = grid.history_size() + grid.cursor.point.line.0.max(0) as usize + 1;
+		let block = vec![row_skel(&term, grid.cursor.point.line.0 - 1)];
+		feed(
+			&mut term,
+			"\r\nA\r\nB\r\n[~/other git:fixup 10:47]\r\nuser$ ",
+		);
+		let grid = term.grid();
+		let end = grid.history_size() + grid.cursor.point.line.0.max(0) as usize;
+		let stripped = prompt_strip(&term, cmd_start, end, &block);
+		assert_eq!(capture_grid_text(&term, cmd_start, stripped), "A\nB\n");
+		// an output row with different structure must NOT match the block
+		assert_ne!(
+			row_skel(&term, grid.cursor.point.line.0 - 2),
+			block[0],
+			"plain output must not skeleton-match the prompt decoration"
+		);
+	}
+
+	#[test]
+	fn skeleton_hash_collapses_dynamic_runs() {
+		// same punctuation structure, different-length words/digits/spacing = same
+		let a = fnv_row_skel("[~/proj git:main 10:01]".chars());
+		let b = fnv_row_skel("[~/another git:x 9:47]".chars());
+		assert_eq!(a, b);
+		// right-aligned segment shifting with left content length = same
+		let c = fnv_row_skel("u@h ~/a          ok".chars());
+		let d = fnv_row_skel("u@h ~/longer   ok".chars());
+		assert_eq!(c, d);
+		// different punctuation structure = different
+		assert_ne!(fnv_row_skel("[a/b]".chars()), fnv_row_skel("(a/b)".chars()));
+		assert_ne!(
+			fnv_row_skel("hello world".chars()),
+			fnv_row_skel("   ".chars())
+		);
 	}
 
 	#[test]
