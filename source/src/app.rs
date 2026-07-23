@@ -1282,8 +1282,15 @@ impl State {
 			w: self.gfx.config.width as f32,
 			h: (self.gfx.config.height as f32 - bar).max(1.0),
 		};
-		if let Ok(pm) = PaneManager::new(&mut self.text, proxy, area, config::default_shell_argv())
-		{
+		// inherit shell + directory from the pane that was active when the tab
+		// was opened; a default-shell pane carries None -> still the default
+		let (cmd, cwd) = self
+			.tabs
+			.list
+			.get(self.tabs.active)
+			.map_or((None, None), PaneManager::inherit_spawn);
+		let cmd = cmd.or_else(config::default_shell_argv);
+		if let Ok(pm) = PaneManager::new(&mut self.text, proxy, area, cmd, cwd) {
 			self.tabs.list.push(pm);
 			self.tabs.active = self.tabs.list.len() - 1;
 			self.relayout_all(); // existing tab(s) shrink for the now-shown bar
@@ -2567,7 +2574,7 @@ fn build_layout(
 	// A bad --shell / default_shell (typo'd binary, PTY failure) should read
 	// like the CLI parse errors, not a Rust panic + backtrace.
 	let spawn = |text: &mut TextCtx, shell: Option<Vec<String>>| {
-		PaneManager::new(text, proxy, area, shell).unwrap_or_else(|e| {
+		PaneManager::new(text, proxy, area, shell, None).unwrap_or_else(|e| {
 			eprintln!("{}: failed to start shell: {e}", config::APP_NAME);
 			std::process::exit(2);
 		})
@@ -2645,6 +2652,7 @@ fn build_layout(
 				before,
 				ratio,
 				shell.clone(),
+				None,
 				area,
 				false,
 			) {
