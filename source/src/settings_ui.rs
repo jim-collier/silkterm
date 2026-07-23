@@ -132,6 +132,7 @@ enum Key {
 	SystemFontSize,
 	FontFamily,
 	DefaultShell,
+	CopyOnSelect,
 	FontSize,
 	LineHeight,
 	Columns,
@@ -234,6 +235,7 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::SystemFontSize => &["use_system_font_size"],
 		Key::FontFamily => &["font_family"],
 		Key::DefaultShell => &["default_shell"],
+		Key::CopyOnSelect => &["copy_on_select"],
 		Key::FontSize => &["font_size"],
 		Key::LineHeight => &["line_height_scale"],
 		Key::Columns => &["columns"],
@@ -665,6 +667,11 @@ fn fields() -> Vec<Spec> {
 			label: "Default shell",
 			key: DefaultShell,
 			kind: Text,
+		},
+		Spec {
+			label: "Copy on select",
+			key: CopyOnSelect,
+			kind: Toggle,
 		},
 		hdr("Colors"),
 		Spec {
@@ -1710,6 +1717,7 @@ impl SettingsDialog {
 			Key::CursorScrim => self.edited.cursor_scrim,
 			Key::CursorOutline => self.edited.cursor_outline,
 			Key::RememberSize => self.edited.remember_size,
+			Key::CopyOnSelect => self.edited.copy_on_select,
 			Key::BgContrastMask => self.edited.wallpaper_contrast_mask,
 			_ => false,
 		}
@@ -1724,6 +1732,7 @@ impl SettingsDialog {
 			Key::CursorScrim => self.edited.cursor_scrim = on,
 			Key::CursorOutline => self.edited.cursor_outline = on,
 			Key::RememberSize => self.edited.remember_size = on,
+			Key::CopyOnSelect => self.edited.copy_on_select = on,
 			Key::BgContrastMask => self.edited.wallpaper_contrast_mask = on,
 			_ => {}
 		}
@@ -1866,6 +1875,7 @@ impl SettingsDialog {
 			Key::SystemFont => edited.use_system_font == defaults.use_system_font,
 			Key::SystemFontSize => edited.use_system_font_size == defaults.use_system_font_size,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
+			Key::CopyOnSelect => edited.copy_on_select == defaults.copy_on_select,
 			Key::BgFit => edited.wallpaper_fit == defaults.wallpaper_fit,
 			Key::ScrimRamp => edited.text_scrim_ramp == defaults.text_scrim_ramp,
 			Key::BgImage => edited.wallpaper == defaults.wallpaper,
@@ -1914,6 +1924,7 @@ impl SettingsDialog {
 			| Key::SystemFont
 			| Key::SystemFontSize
 			| Key::RememberSize
+			| Key::CopyOnSelect
 			| Key::BgContrastMask => {
 				let default_val = match key {
 					Key::Transparency => self.defaults.transparent_background,
@@ -1923,6 +1934,7 @@ impl SettingsDialog {
 					Key::CursorOutline => self.defaults.cursor_outline,
 					Key::SystemFont => self.defaults.use_system_font,
 					Key::SystemFontSize => self.defaults.use_system_font_size,
+					Key::CopyOnSelect => self.defaults.copy_on_select,
 					Key::BgContrastMask => self.defaults.wallpaper_contrast_mask,
 					_ => self.defaults.remember_size,
 				};
