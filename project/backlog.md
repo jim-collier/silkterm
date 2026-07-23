@@ -50,38 +50,9 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- ✅ Severe: When the linux console swithes to text mode (e.g. user presses CTRL+ALT+F1), then back to graphical X11 (e.g. user presses CTRL+ALT+F7), all SilkTerm windows are mostly black. Only the tabs and blinking cursor or visible, plus some light RGB noise at the top of the terminal render area.
-	- New SilkTerm windows opened after that are OK. But new tabs open on a previously open window, have the same problem.
-	- Cause: the VT switch wipes the contents of uploaded GPU textures (glyph atlas = all text, wallpaper) while the GL context survives, so per-frame shapes (tabs, cursor) still draw. New windows re-upload from scratch; new tabs share the wiped atlas.
-	- Fix: a small known-pattern sentinel texture is re-read every couple of seconds (plus immediately on window focus); if the pattern is gone, the atlas, chrome, and wallpaper are rebuilt automatically. Recovers within a few seconds of returning, sooner on click.
-	- Needs a real VT switch to confirm end to end - verify on the desktop.
-	- 🔘 Tested: Problem persists
-		- Cause: the round-1 sentinel was a small copy-only texture. The NVIDIA driver keeps a system-memory backup of textures like that and restores them after the purge, while the big sampled textures (atlas, wallpaper) are lost for good - so the probe read its pattern back fine and never saw the loss. (Matches NV_robustness_video_memory_purge: only resources exclusively in video memory are lost; the driver hides the purge for the rest.)
-	- Fix: two probe witnesses now - an atlas-sized sampled upload, plus one seeded only by a GPU-side copy so no system-memory backup can exist for it; a purge can't be hidden from that one. Probes also fire the moment the window becomes visible again, not just on focus.
-	- Diagnostic: `touch ~/silk_vramdbg.on` (works live, no relaunch), then VT-switch; probe results append to `~/silk_vramdbg.txt`. Remove the marker file to stop logging.
-	- Round 2 tested: still black. The log shows 3776 intact probes and zero losses across the switch - BOTH witnesses got restored. The common thread: the synthetic sentinels are never drawn by any frame, so the driver keeps them somewhere restorable; the textures that actually die (atlas, wallpaper) are the ones sampled every frame, resident hot in video memory.
-	- Round 3: probe the real casualty instead of a proxy. A center block of the wallpaper texture's own uploaded pixels is kept and read back on the probe tick - that texture is sampled every frame and demonstrably gets wiped (the on-screen noise). A mismatch triggers the same full rebuild. The sentinels stay as a fallback for the no-wallpaper case. If the wallpaper block STILL reads intact while the screen is black, texture contents were never lost at all and the problem is context-level - the log discriminates that too.
-		- Round 3 tested: still black, and the log settles it - even the wallpaper's own pixels read back intact (257 probes, zero losses) across a switch that blacked the window. So texture *contents* are never lost as far as readback can see; the driver restores whatever a readback touches while the copies the render path samples stay garbage. Readback detection is a dead end.
-		- Round 4: stop detecting the damage, detect the switch. The active console is directly observable (`/sys/class/tty/tty0/active`); a watcher notes the console the window started on and, when the value returns to it after being elsewhere, rebuilds the sampled textures unconditionally - every window, focused or not, within about half a second of returning. The readback probes stay in the log as evidence.
-	- ✅ Verified with a real VT switch on the desktop: windows recover. Round 4 (watch the console, rebuild on return) is the fix that stuck.
-
-- Windows:
-	- ✅ Bold font uses a proportional font, which skews space-based alignment output. (E.g. that muffer uses on startup screen.)
-		- This happens on a different Windows host, not this one. But the problem seems to be, need a more reliable font fallback, if either normal or bold is using a proportional font.
-		- Font is auto/unset there; regular is fine, only bold falls proportional. So the pinned mono family isn't guaranteeing a mono *bold* face.
-		- Fix: terminal bold now requests the boldest weight the pinned mono family actually ships (like chrome already did), so it can't escape into a proportional bold fallback. New test guards it. Awaiting confirm on the affected host.
-		- Second half: with the font auto/unset, Windows picked the mono family by a font-db lottery (it has no system monospace setting), which could land on a family with no bold at all - then "boldest available" = regular and bold renders flat. Confirmed live on this host; the fallback-stack item below fixes the pick. Both hosts should recheck after it lands.
-	- ✅ Font fallback: one cross-platform stack (Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New) is now the font_family default and the resolver's last resort everywhere. Windows always resolves through it ("use system font" is inert there - no OS monospace setting exists), so the family always carries a real bold face.
-		- The Settings "Use system font" checkbox is disabled and greyed on Windows, with a flyover: "Windows has no system monospace font". Font family/size stay editable there regardless of the config value.
-	- ✅ Scrolling in muffer, and `less`, is juddery. Up-and-down motion, while making progress in the intended direction.
-		- Reproduces on this host, and with plain scrolled output too - not just full-screen apps - so it's the frame/output pacing, not the alt-screen slide detector alone.
-		- Fix: on Windows, one queued present frame instead of two, so the per-frame dt stays steady (two let the CPU race ahead then stall, jittering the ease). Best-guess; needs a visual check on this host - could not measure headlessly (background windows throttle to ~10fps).
-		- The "plain scrolled output too" part is very likely the judder bug above (stale-snapshot re-slide - plain output grows scrollback on Windows too), now fixed. Recheck here after picking up that fix; the pacing change may matter less than thought.
-	- ✅ The whole window stays in place when VirtuaWin switches virtual workspaces.
-		- Likely a window-style/attribute issue: VirtuaWin doesn't recognize/manage the window.
-		- Fix: on Windows, only request a transparent (no-redirection-bitmap/layered) window when Transparency is actually on - that layered style is what virtual-desktop managers skip, and the native surface gives no alpha when off anyway. Awaiting VirtuaWin verify (not on this host).
-
-- 🔘 Copy on output is still copying the prompt that appears after command output.
+- ✅ Copy on output is still copying the prompt that appears after command output.
+	- Cause: the multi-line-prompt strip matched prompt rows by exact content, so any prompt row with dynamic content (cwd, git branch, clock, right-aligned segments) never matched between commands and its rows stayed in the copy.
+	- Fix: prompt rows are now matched by structure - runs of letters/digits and of spaces collapse before hashing, so content can change while the punctuation/box-drawing layout still has to match exactly. Regression tests cover dynamic prompt rows and confirm plain output can't false-match.
 
 - ✋ The dreaded "Nano Bounce Bug" is back. This will be the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and possibly red-herrings. It obviously must be related in some way to smooth scrolling (the next time it happens I'll try turning it off to make sure). So let's get back to basics of what I know, and don't know:
 	- Steps:
@@ -100,13 +71,7 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- ✅ CICD: check that local can be safely refreshed from remote before building, rather than only pulling at publish time.
-	- Done: new stage 0 "remote sync" in `cicd.bash` and `cicd-win.ps1` - fetch, fast-forward (stash-wrapped) when only behind, abort early when diverged. Offline or no upstream just warns and continues. `--no-sync` / `-NoSync` bypasses.
-	- Why: the publish-stage pull runs after build and tests, so a remote change merged there would get pushed untested. Syncing first means the pipeline validates the refreshed tree. Publish keeps its own pull as a guard.
-
-- ✅ Wallpaper:
-	- ✅ Change the default background baked into the executable: '[repo]/filesystem/home/.config/silkterm/backgrounds/background45.jpg'
-	- Done: baked byte-identical (recompressing only saved ~50KB at a quality cost, not worth it). Binary grows ~294KB (the new image is 403KB vs the old 109KB). Renders correctly through the default blur/opacity pipeline.
+- 🔘 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, AND legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
 
 - 🔘 Font size should be able to be increased, even when using system font.
 	- May need to refactor "Use system font [ ]" in settings to:
@@ -118,7 +83,7 @@ In each section, items are listed approximately from newest to oldest.
 		- Ctrl+'-' reduces font size.
 		- Ctrl+'+' and Ctrl+'=' increases font size.
 
-- 🔘 New tabs and panes should inherit its path from the one that was previously active.
+- 🔘 New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
 
 - 🔘 Dialogs and menus:
 	- 🔘 Themes should have TWO highlight colors:
@@ -165,7 +130,13 @@ In each section, items are listed approximately from newest to oldest.
 				- "Automask mix" (Formerly "Mask auto". 0% to 100%)
 		- Tab: "Text"
 			- Group "Font"
-				- Existing control order and naming are good. Just put them in group.
+				- Use system font    [ ] Face   [ ] Size
+					- Disabled on Windows.
+				- Family
+					- Default to: "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
+						- Update my existing user config to match.
+				- Size
+				- Line height
 			- Group "Text readability scrim"
 				- Sub-group: "Text scrim" checkbox
 					- "Scrim radius" (existing range and values)
@@ -590,6 +561,37 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - Bugs
 
+- ✅ Severe - VT bug: When the linux console swithes to text mode (e.g. user presses CTRL+ALT+F1), then back to graphical X11 (e.g. user presses CTRL+ALT+F7), all SilkTerm windows are mostly black. Only the tabs and blinking cursor or visible, plus some light RGB noise at the top of the terminal render area.
+	- New SilkTerm windows opened after that are OK. But new tabs open on a previously open window, have the same problem.
+	- Cause: the VT switch wipes the contents of uploaded GPU textures (glyph atlas = all text, wallpaper) while the GL context survives, so per-frame shapes (tabs, cursor) still draw. New windows re-upload from scratch; new tabs share the wiped atlas.
+	- Fix: a small known-pattern sentinel texture is re-read every couple of seconds (plus immediately on window focus); if the pattern is gone, the atlas, chrome, and wallpaper are rebuilt automatically. Recovers within a few seconds of returning, sooner on click.
+	- Needs a real VT switch to confirm end to end - verify on the desktop.
+	- ✅ Tested: Problem persists
+		- Cause: the round-1 sentinel was a small copy-only texture. The NVIDIA driver keeps a system-memory backup of textures like that and restores them after the purge, while the big sampled textures (atlas, wallpaper) are lost for good - so the probe read its pattern back fine and never saw the loss. (Matches NV_robustness_video_memory_purge: only resources exclusively in video memory are lost; the driver hides the purge for the rest.)
+	- Fix: two probe witnesses now - an atlas-sized sampled upload, plus one seeded only by a GPU-side copy so no system-memory backup can exist for it; a purge can't be hidden from that one. Probes also fire the moment the window becomes visible again, not just on focus.
+	- Diagnostic: `touch ~/silk_vramdbg.on` (works live, no relaunch), then VT-switch; probe results append to `~/silk_vramdbg.txt`. Remove the marker file to stop logging.
+	- Round 2 tested: still black. The log shows 3776 intact probes and zero losses across the switch - BOTH witnesses got restored. The common thread: the synthetic sentinels are never drawn by any frame, so the driver keeps them somewhere restorable; the textures that actually die (atlas, wallpaper) are the ones sampled every frame, resident hot in video memory.
+	- Round 3: probe the real casualty instead of a proxy. A center block of the wallpaper texture's own uploaded pixels is kept and read back on the probe tick - that texture is sampled every frame and demonstrably gets wiped (the on-screen noise). A mismatch triggers the same full rebuild. The sentinels stay as a fallback for the no-wallpaper case. If the wallpaper block STILL reads intact while the screen is black, texture contents were never lost at all and the problem is context-level - the log discriminates that too.
+		- Round 3 tested: still black, and the log settles it - even the wallpaper's own pixels read back intact (257 probes, zero losses) across a switch that blacked the window. So texture *contents* are never lost as far as readback can see; the driver restores whatever a readback touches while the copies the render path samples stay garbage. Readback detection is a dead end.
+		- Round 4: stop detecting the damage, detect the switch. The active console is directly observable (`/sys/class/tty/tty0/active`); a watcher notes the console the window started on and, when the value returns to it after being elsewhere, rebuilds the sampled textures unconditionally - every window, focused or not, within about half a second of returning. The readback probes stay in the log as evidence.
+	- ✅ Verified with a real VT switch on the desktop: windows recover. Round 4 (watch the console, rebuild on return) is the fix that stuck.
+
+- Windows:
+	- ✅ Bold font uses a proportional font, which skews space-based alignment output. (E.g. that muffer uses on startup screen.)
+		- This happens on a different Windows host, not this one. But the problem seems to be, need a more reliable font fallback, if either normal or bold is using a proportional font.
+		- Font is auto/unset there; regular is fine, only bold falls proportional. So the pinned mono family isn't guaranteeing a mono *bold* face.
+		- Fix: terminal bold now requests the boldest weight the pinned mono family actually ships (like chrome already did), so it can't escape into a proportional bold fallback. New test guards it. Awaiting confirm on the affected host.
+		- Second half: with the font auto/unset, Windows picked the mono family by a font-db lottery (it has no system monospace setting), which could land on a family with no bold at all - then "boldest available" = regular and bold renders flat. Confirmed live on this host; the fallback-stack item below fixes the pick. Both hosts should recheck after it lands.
+	- ✅ Font fallback: one cross-platform stack (Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New) is now the font_family default and the resolver's last resort everywhere. Windows always resolves through it ("use system font" is inert there - no OS monospace setting exists), so the family always carries a real bold face.
+		- The Settings "Use system font" checkbox is disabled and greyed on Windows, with a flyover: "Windows has no system monospace font". Font family/size stay editable there regardless of the config value.
+	- ✅ Scrolling in muffer, and `less`, is juddery. Up-and-down motion, while making progress in the intended direction.
+		- Reproduces on this host, and with plain scrolled output too - not just full-screen apps - so it's the frame/output pacing, not the alt-screen slide detector alone.
+		- Fix: on Windows, one queued present frame instead of two, so the per-frame dt stays steady (two let the CPU race ahead then stall, jittering the ease). Best-guess; needs a visual check on this host - could not measure headlessly (background windows throttle to ~10fps).
+		- The "plain scrolled output too" part is very likely the judder bug above (stale-snapshot re-slide - plain output grows scrollback on Windows too), now fixed. Recheck here after picking up that fix; the pacing change may matter less than thought.
+	- ✅ The whole window stays in place when VirtuaWin switches virtual workspaces.
+		- Likely a window-style/attribute issue: VirtuaWin doesn't recognize/manage the window.
+		- Fix: on Windows, only request a transparent (no-redirection-bitmap/layered) window when Transparency is actually on - that layered style is what virtual-desktop managers skip, and the native surface gives no alpha when off anyway. Awaiting VirtuaWin verify (not on this host).
+
 - ✅ New Linux and Windows judder bug:
 	- If the cursor is at the bottom of the screen, the first line of output (even just hitting "enter" to a new prompt line) causes everything above, to momentarily bounce *down* one line (the wrong direction), then back up.
 	- When scrolling down a long list in 'ls', each scroll event (or at least down arrow) results first in the screen contents bouncing *down*, then up.
@@ -947,6 +949,14 @@ In each section, items are listed approximately from newest to oldest.
 	- Fix: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
 
 #### Done - new features and enhancements
+
+- ✅ CICD: check that local can be safely refreshed from remote before building, rather than only pulling at publish time.
+	- Done: new stage 0 "remote sync" in `cicd.bash` and `cicd-win.ps1` - fetch, fast-forward (stash-wrapped) when only behind, abort early when diverged. Offline or no upstream just warns and continues. `--no-sync` / `-NoSync` bypasses.
+	- Why: the publish-stage pull runs after build and tests, so a remote change merged there would get pushed untested. Syncing first means the pipeline validates the refreshed tree. Publish keeps its own pull as a guard.
+
+- ✅ Wallpaper:
+	- ✅ Change the default background baked into the executable: '[repo]/filesystem/home/.config/silkterm/backgrounds/background45.jpg'
+	- Done: baked byte-identical (recompressing only saved ~50KB at a quality cost, not worth it). Binary grows ~294KB (the new image is 403KB vs the old 109KB). Renders correctly through the default blur/opacity pipeline.
 
 - ✅ Rename everything that was "background image" or "background" (specifically referring to background image), to "wallpaper", including in:
 	- Source code
