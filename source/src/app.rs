@@ -1473,6 +1473,15 @@ impl State {
 		let bg = force_bg || crate::settings_ui::wallpaper_changed(orig, &edited);
 		let resize = edited.columns != orig.columns || edited.rows != orig.rows;
 		let blur_changed = edited.transparent_background_blur != orig.transparent_background_blur;
+		// copy_on_select changed -> apply to every existing pane too, so the
+		// dialog toggle takes effect now, not only for panes spawned later
+		if edited.copy_on_select != orig.copy_on_select {
+			for pm in &mut self.tabs.list {
+				for pane in pm.panes.values_mut() {
+					pane.copy_select = edited.copy_on_select;
+				}
+			}
+		}
 		config::update(edited);
 
 		// Backdrop-blur hint toggled -> set/clear the compositor property live.

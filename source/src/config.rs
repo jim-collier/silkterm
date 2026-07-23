@@ -147,6 +147,7 @@ pub struct Settings {
 	pub selection_pairs: String, // matched pairs a double-click selects inside of
 	pub default_shell: String,   // command for new tabs/panes (empty = system shell)
 	pub command_line: String,    // default CLI layout/options when launched with no args
+	pub copy_on_select: bool,    // panes start with copy-on-select enabled
 	pub bg: [u8; 3],
 	pub fg: [u8; 3],
 	pub cursor: [u8; 3],
@@ -223,6 +224,7 @@ impl Default for Settings {
 			selection_pairs: DEFAULT_SELECTION_PAIRS.to_owned(),
 			default_shell: String::new(),
 			command_line: String::new(),
+			copy_on_select: false,
 			bg: [0x00, 0x00, 0x00],
 			fg: [0x88, 0xff, 0xee],
 			cursor: [0xff, 0x88, 0xaa],
@@ -486,6 +488,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.command_line != orig.command_line {
 		doc["command_line"] = value(&s.command_line);
 	}
+	if s.copy_on_select != orig.copy_on_select {
+		doc["copy_on_select"] = value(s.copy_on_select);
+	}
 	if s.wallpaper != orig.wallpaper || s.wallpaper_raw != orig.wallpaper_raw {
 		// the file keeps whatever form the user wrote (bare/relative/absolute)
 		if s.wallpaper_raw.trim().is_empty() {
@@ -603,6 +608,7 @@ struct RawConfig {
 	selection_pairs: Option<String>,
 	default_shell: Option<String>,
 	command_line: Option<String>,
+	copy_on_select: Option<bool>,
 	colors: RawColors,
 }
 
@@ -858,6 +864,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		selection_pairs: raw.selection_pairs.unwrap_or(d.selection_pairs),
 		default_shell: raw.default_shell.unwrap_or(d.default_shell),
 		command_line: raw.command_line.unwrap_or(d.command_line),
+		copy_on_select: raw.copy_on_select.unwrap_or(d.copy_on_select),
 		bg: color(raw.colors.background, pal.bg),
 		fg: color(raw.colors.foreground, pal.fg),
 		cursor: color(raw.colors.cursor, pal.cursor),
@@ -1546,6 +1553,10 @@ opacity = 0.95
 ## command-line arguments override this entirely. Leave blank/commented for none.
 # command_line = "--new-pane --right --size 35%"
 
+## Start every pane with "Copy on select" enabled (selected text goes to the
+## clipboard). The menu-bar checkbox still toggles it live per pane.
+# copy_on_select = false
+
 ##=============================================================================
 ## Scrolling
 ##=============================================================================
@@ -1780,6 +1791,13 @@ mod tests {
 			p,
 		));
 		assert!(s.use_system_font_size, "explicit key beats the inference");
+	}
+
+	#[test]
+	fn copy_on_select_key_parses_and_defaults_off() {
+		let p = std::path::Path::new("test.toml");
+		assert!(!resolve(parse_lenient("", p)).copy_on_select, "default off");
+		assert!(resolve(parse_lenient("copy_on_select = true\n", p)).copy_on_select);
 	}
 
 	// An over-range output_ease_lines must clamp: scroll's backlog clamp uses it

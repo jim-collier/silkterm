@@ -1884,7 +1884,8 @@ impl PaneManager {
 		}
 		let new_id = alloc_pane_id();
 		// a new pane inherits the auto-copy flags of the pane it split off (the
-		// "tab setting" the user sees); a new tab/window starts off instead
+		// "tab setting" the user sees); a new tab/window starts from the
+		// copy_on_select config default (output always off)
 		let (inherit_select, inherit_output) = self
 			.panes
 			.get(&id)
@@ -2103,7 +2104,7 @@ fn spawn_pane(
 		text_built: false,
 		mode: TermMode::empty(),
 		content_dirty: true,
-		copy_select: false,
+		copy_select: config::settings().copy_on_select,
 		copy_output: false,
 		prompt_above: Vec::new(),
 		prompt_block: Vec::new(),
