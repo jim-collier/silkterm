@@ -129,6 +129,7 @@ enum Key {
 	CursorOutline,
 	BgImage,
 	SystemFont,
+	SystemFontSize,
 	FontFamily,
 	DefaultShell,
 	FontSize,
@@ -230,6 +231,7 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::CursorOutline => &["cursor_outline"],
 		Key::BgImage => &["wallpaper"],
 		Key::SystemFont => &["use_system_font"],
+		Key::SystemFontSize => &["use_system_font_size"],
 		Key::FontFamily => &["font_family"],
 		Key::DefaultShell => &["default_shell"],
 		Key::FontSize => &["font_size"],
@@ -578,7 +580,10 @@ fn fields() -> Vec<Spec> {
 		Spec {
 			label: "Use system font",
 			key: SystemFont,
-			kind: Toggle,
+			kind: Dual {
+				keys: [SystemFont, SystemFontSize],
+				labels: ["Face", "Size"],
+			},
 		},
 		Spec {
 			label: "Font family",
@@ -1474,7 +1479,7 @@ impl SettingsDialog {
 	// Flyover text for a control disabled by the platform rather than by another
 	// setting - explains why it is inert. Only the system-font toggle today.
 	fn disabled_tip(key: Key) -> Option<&'static str> {
-		(cfg!(windows) && matches!(key, Key::SystemFont))
+		(cfg!(windows) && matches!(key, Key::SystemFont | Key::SystemFontSize))
 			.then_some("Windows has no system monospace font")
 	}
 	// The flyover to show while the cursor rests on a control with a
@@ -1623,9 +1628,9 @@ impl SettingsDialog {
 		}
 	}
 	fn set_f32(&mut self, key: Key, value: f32) {
-		// adjusting the size explicitly means we're no longer following the OS
+		// adjusting the size explicitly means we're no longer following the OS size
 		if key == Key::FontSize {
-			self.edited.use_system_font = false;
+			self.edited.use_system_font_size = false;
 		}
 		let settings = &mut self.edited;
 		match key {
@@ -1697,7 +1702,8 @@ impl SettingsDialog {
 		match key {
 			// shows the EFFECTIVE state: unchecked on Windows even when the config
 			// value is true, since the toggle is inert there (no OS monospace font)
-			Key::SystemFont => config::system_font_active(&self.edited),
+			Key::SystemFont => config::system_font_face_active(&self.edited),
+			Key::SystemFontSize => config::system_font_size_active(&self.edited),
 			Key::Transparency => self.edited.transparent_background,
 			Key::BackdropBlur => self.edited.transparent_background_blur,
 			Key::TextScrim => self.edited.text_scrim,
@@ -1711,6 +1717,7 @@ impl SettingsDialog {
 	fn set_toggle(&mut self, key: Key, on: bool) {
 		match key {
 			Key::SystemFont => self.edited.use_system_font = on,
+			Key::SystemFontSize => self.edited.use_system_font_size = on,
 			Key::Transparency => self.edited.transparent_background = on,
 			Key::BackdropBlur => self.edited.transparent_background_blur = on,
 			Key::TextScrim => self.edited.text_scrim = on,
@@ -1795,10 +1802,10 @@ impl SettingsDialog {
 				Key::BgContrastSize | Key::BgContrastStrength | Key::BgContrastAuto
 			) && !self.edited.wallpaper_contrast_mask)
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
-			|| (matches!(key, Key::FontFamily | Key::FontSize)
-				&& config::system_font_active(&self.edited))
+			|| (matches!(key, Key::FontFamily) && config::system_font_face_active(&self.edited))
+			|| (matches!(key, Key::FontSize) && config::system_font_size_active(&self.edited))
 			// Windows has no system monospace font to follow (see disabled_tip)
-			|| (matches!(key, Key::SystemFont) && cfg!(windows))
+			|| (matches!(key, Key::SystemFont | Key::SystemFontSize) && cfg!(windows))
 	}
 	fn get_col(&self, key: Key) -> [u8; 3] {
 		let settings = &self.edited;
@@ -1857,6 +1864,7 @@ impl SettingsDialog {
 				edited.wallpaper_contrast_mask == defaults.wallpaper_contrast_mask
 			}
 			Key::SystemFont => edited.use_system_font == defaults.use_system_font,
+			Key::SystemFontSize => edited.use_system_font_size == defaults.use_system_font_size,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
 			Key::BgFit => edited.wallpaper_fit == defaults.wallpaper_fit,
 			Key::ScrimRamp => edited.text_scrim_ramp == defaults.text_scrim_ramp,
@@ -1904,6 +1912,7 @@ impl SettingsDialog {
 			| Key::CursorScrim
 			| Key::CursorOutline
 			| Key::SystemFont
+			| Key::SystemFontSize
 			| Key::RememberSize
 			| Key::BgContrastMask => {
 				let default_val = match key {
@@ -1913,6 +1922,7 @@ impl SettingsDialog {
 					Key::CursorScrim => self.defaults.cursor_scrim,
 					Key::CursorOutline => self.defaults.cursor_outline,
 					Key::SystemFont => self.defaults.use_system_font,
+					Key::SystemFontSize => self.defaults.use_system_font_size,
 					Key::BgContrastMask => self.defaults.wallpaper_contrast_mask,
 					_ => self.defaults.remember_size,
 				};
@@ -1930,7 +1940,7 @@ impl SettingsDialog {
 				let color = self.default_col(key);
 				self.set_col(key, color);
 			}
-			// direct: set_f32 would also clear use_system_font (its "explicit
+			// direct: set_f32 would also clear use_system_font_size (its "explicit
 			// size" side effect), which a revert must not do
 			Key::FontSize => self.edited.font_size = self.defaults.font_size,
 			Key::None => {}
@@ -3450,6 +3460,7 @@ pub fn needs_text_rebuild(old: &Settings, new: &Settings) -> bool {
 		// the toggle alone changes the effective family/size (fields keep
 		// their values), so it must force a rebuild too
 		|| old.use_system_font != new.use_system_font
+		|| old.use_system_font_size != new.use_system_font_size
 		|| old.margin != new.margin
 }
 
@@ -3503,11 +3514,13 @@ mod tests {
 		let rev = d.take_reverted();
 		assert!(rev.contains(&"opacity"));
 		assert!(d.take_reverted().is_empty(), "taking clears the list");
-		// reverting font size must not clear use_system_font (set_f32 side effect)
+		// reverting font size must not clear the system-size follow (set_f32
+		// side effect)
 		d.edited.use_system_font = true;
+		d.edited.use_system_font_size = true;
 		d.edited.font_size = 99.0;
 		d.revert(super::Key::FontSize);
-		assert!(d.edited.use_system_font);
+		assert!(d.edited.use_system_font && d.edited.use_system_font_size);
 	}
 
 	#[test]
@@ -3915,7 +3928,7 @@ mod tests {
 		use super::{Focus, Key};
 		let mut d = mk_dialog(2000.0);
 		// Font size: an int slider on the Font tab, range 6..40
-		d.edited.use_system_font = false; // else Font size is greyed/disabled
+		d.edited.use_system_font_size = false; // else Font size is greyed/disabled
 		let i = d.specs.iter().position(|s| s.key == Key::FontSize).unwrap();
 		d.tab = d.spec_tab[i];
 		d.focus = Some(Focus::Row(i, 0));

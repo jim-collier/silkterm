@@ -2,7 +2,7 @@
 // Copyright © 2026 Jim Collier
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use serde::Deserialize;
@@ -95,7 +95,8 @@ pub enum Fit {
 // Resolved, validated settings used throughout the app.
 #[derive(Clone)]
 pub struct Settings {
-	pub use_system_font: bool, // true = OS monospace family+size, overriding font_family/font_size
+	pub use_system_font: bool, // true = OS monospace FAMILY, overriding font_family
+	pub use_system_font_size: bool, // true = OS monospace SIZE, overriding font_size
 	pub font_family: Option<String>, // comma-separated fallback stack (first installed wins)
 	pub font_size: f32,
 	pub line_height_scale: f32,
@@ -165,6 +166,7 @@ impl Default for Settings {
 	fn default() -> Self {
 		Self {
 			use_system_font: true,
+			use_system_font_size: true,
 			font_family: Some(DEFAULT_FONT_STACK.to_string()),
 			font_size: FALLBACK_FONT_SIZE,
 			line_height_scale: 1.22,
@@ -362,6 +364,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.use_system_font != orig.use_system_font {
 		doc["use_system_font"] = value(s.use_system_font);
 	}
+	if s.use_system_font_size != orig.use_system_font_size {
+		doc["use_system_font_size"] = value(s.use_system_font_size);
+	}
 	if s.font_family != orig.font_family {
 		if let Some(f) = &s.font_family {
 			doc["font_family"] = value(f);
@@ -546,6 +551,7 @@ pub fn from_linear_u8(c: f32) -> u8 {
 #[serde(default)]
 struct RawConfig {
 	use_system_font: Option<bool>,
+	use_system_font_size: Option<bool>,
 	font_family: Option<String>,
 	font_size: Option<f32>,
 	line_height_scale: Option<f32>,
@@ -724,10 +730,16 @@ fn resolve(raw: RawConfig) -> Settings {
 	let color = |raw: Option<String>, fallback: [u8; 3]| {
 		raw.as_deref().and_then(parse_hex).unwrap_or(fallback)
 	};
+	// Default enabled, but a config that predates the key and set an explicit
+	// font_family keeps that font (infer off) instead of being overridden.
+	let use_system_font = raw.use_system_font.unwrap_or(raw.font_family.is_none());
 	Settings {
-		// Default enabled, but a config that predates the key and set an explicit
-		// font_family keeps that font (infer off) instead of being overridden.
-		use_system_font: raw.use_system_font.unwrap_or(raw.font_family.is_none()),
+		use_system_font,
+		// absent = follow the face toggle, so configs predating the split (and an
+		// explicit font_size, which used to imply off) keep their exact behaviour
+		use_system_font_size: raw
+			.use_system_font_size
+			.unwrap_or(use_system_font && raw.font_size.is_none()),
 		font_family: raw.font_family.filter(|s| !s.trim().is_empty()),
 		font_size: raw.font_size.unwrap_or_else(default_font_size).max(4.0),
 		line_height_scale: raw
@@ -883,21 +895,49 @@ pub fn default_font_size() -> f32 {
 }
 
 // Whether "use system font" actually has an OS monospace setting to follow.
-// Windows has none, so the toggle is inert there: family and size resolve from
-// font_family / font_size as if it were off (the Settings checkbox greys out).
-pub fn system_font_active(s: &Settings) -> bool {
+// Windows has none, so both toggles are inert there: family and size resolve
+// from font_family / font_size as if off (the Settings checkboxes grey out).
+// Face and size follow the OS independently (the Settings dual checkboxes).
+pub fn system_font_face_active(s: &Settings) -> bool {
 	!cfg!(windows) && s.use_system_font
 }
+pub fn system_font_size_active(s: &Settings) -> bool {
+	!cfg!(windows) && s.use_system_font_size
+}
 
-// The size the text is actually rendered at: the OS monospace size while
-// `use_system_font` is on (and the OS has one), else the configured `font_size`.
-pub fn effective_font_size() -> f32 {
+// Session-only font zoom (Ctrl+-/+/= hotkeys), in logical px added to the
+// effective size. Never persisted; process-wide is per-window since each
+// window is its own process. Per-pane scoping is deferred - it needs per-pane
+// text metrics the single-TextCtx architecture doesn't have.
+static FONT_ZOOM_PX: AtomicI32 = AtomicI32::new(0);
+pub fn font_zoom_px() -> i32 {
+	FONT_ZOOM_PX.load(Ordering::Relaxed)
+}
+// Step the zoom, clamped so the effective size stays renderable - stepping
+// past the floor must not bank offset the other direction has to pay back.
+pub fn nudge_font_zoom(dir: i32) {
 	let current = settings();
-	if system_font_active(&current) {
+	let base = if system_font_size_active(&current) {
 		default_font_size()
 	} else {
 		current.font_size
-	}
+	};
+	let z = font_zoom_px() + dir;
+	let z = z.clamp((4.0 - base).ceil() as i32, (128.0 - base).floor() as i32);
+	FONT_ZOOM_PX.store(z, Ordering::Relaxed);
+}
+
+// The size the text is actually rendered at: the OS monospace size while
+// `use_system_font_size` is on (and the OS has one), else the configured
+// `font_size`; plus any session zoom, clamped to a renderable range.
+pub fn effective_font_size() -> f32 {
+	let current = settings();
+	let base = if system_font_size_active(&current) {
+		default_font_size()
+	} else {
+		current.font_size
+	};
+	(base + font_zoom_px() as f32).clamp(4.0, 128.0)
 }
 
 // Resolve the background image: an explicit path (absolute, or a filename
@@ -1340,17 +1380,21 @@ const DEFAULT_CONFIG: &str = r##"## SilkTerm configuration. Delete this file to 
 ## Font
 ##=============================================================================
 
-## Use the OS default monospace font (family + size). When true this overrides
-## font_family / font_size below. Turn off to use them instead. Windows has no
-## system monospace font, so this is ignored there.
+## Use the OS default monospace font FAMILY. When true this overrides
+## font_family below. Turn off to use it instead. Windows has no system
+## monospace font, so this is ignored there.
 use_system_font = true
+
+## Use the OS default monospace font SIZE. When true this overrides font_size
+## below. Turn off to size the system font yourself. Ignored on Windows.
+# use_system_font_size = true
 
 ## Font family: a comma-separated fallback stack (first installed wins). Used
 ## only when use_system_font = false (always, on Windows).
 font_family = "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
 
-## Font size in logical pixels. Used only when use_system_font = false (always,
-## on Windows).
+## Font size in logical pixels. Used only when use_system_font_size = false
+## (always, on Windows).
 # font_size = 17.0
 
 ## Line height as a multiple of the font's natural height (1.0 = tight).
@@ -1713,6 +1757,29 @@ mod tests {
 		assert_eq!(s.text_scrim_function, "sdf", "unknown -> default");
 		let s = resolve(parse_lenient("text_scrim_ramp = \"bogus\"\n", p));
 		assert_eq!(s.text_scrim_ramp, "gaussian", "unknown -> default");
+	}
+
+	// The face/size split's inference for configs predating use_system_font_size:
+	// absent = follow the face toggle, except an explicit font_size (which the old
+	// single toggle silently ignored) reads as intent and turns the size follow off.
+	#[test]
+	fn system_font_size_split_inference() {
+		let p = std::path::Path::new("test.toml");
+		let s = resolve(parse_lenient("", p));
+		assert!(s.use_system_font && s.use_system_font_size, "defaults on");
+		let s = resolve(parse_lenient("use_system_font = false\n", p));
+		assert!(!s.use_system_font_size, "size follows the face toggle");
+		let s = resolve(parse_lenient("font_size = 20.0\n", p));
+		assert!(s.use_system_font, "explicit size keeps the system face");
+		assert!(
+			!s.use_system_font_size,
+			"explicit size wins over the OS size"
+		);
+		let s = resolve(parse_lenient(
+			"font_size = 20.0\nuse_system_font_size = true\n",
+			p,
+		));
+		assert!(s.use_system_font_size, "explicit key beats the inference");
 	}
 
 	// An over-range output_ease_lines must clamp: scroll's backlog clamp uses it
