@@ -51,6 +51,8 @@ pub struct App {
 	// settle it (see handle_dialog_event / about_to_wait).
 	raise_reassert: u8,
 	raise_next: Instant,
+	// VT watcher spawned (once per process; GL path only)
+	vt_watch: bool,
 	// cicd profiler stage: when SILK_PROFILE_OUT is set the app runs a workload
 	// (via --shell) for SILK_PROFILE_SECS then exits, so main can dump a flamegraph.
 	#[cfg(feature = "profiling")]
@@ -69,6 +71,7 @@ impl App {
 			dialog_dirty: false,
 			raise_reassert: 0,
 			raise_next: Instant::now(),
+			vt_watch: false,
 			#[cfg(feature = "profiling")]
 			profile_secs: std::env::var("SILK_PROFILE_SECS")
 				.ok()
@@ -567,6 +570,52 @@ fn vramdbg(msg: &str) {
 	{
 		let _ = writeln!(f, "{epoch} pid={} {msg}", std::process::id());
 	}
+}
+
+// Watch the active virtual console (/sys/class/tty/tty0/active). A VT switch
+// away and back breaks sampling of long-lived textures in ways the readback
+// probes cannot see (field logs: every witness read back intact across a switch
+// that blacked the window - the driver restores readback contents while the
+// sampled copies stay garbage). So detect the switch itself: the value at spawn
+// is the console this display lives on; when the file returns to it after being
+// elsewhere, send VtSwitched so the sampled textures are rebuilt. Only returns
+// are signaled - a rebuild done while parked on another console could itself be
+// purged on the way back. SILK_VTFILE overrides the watched path so a headless
+// test can drive the mechanism (Xvfb has no VTs).
+#[cfg(target_os = "linux")]
+fn spawn_vt_watch(proxy: EventLoopProxy<UserEvent>) -> bool {
+	let path = std::env::var_os("SILK_VTFILE").map_or_else(
+		|| std::path::PathBuf::from("/sys/class/tty/tty0/active"),
+		std::path::PathBuf::from,
+	);
+	let read = |p: &std::path::Path| std::fs::read_to_string(p).ok().map(|s| s.trim().to_owned());
+	// unreadable (container, odd kernel) -> no watcher; probes remain as fallback
+	let Some(home_vt) = read(&path) else {
+		return false;
+	};
+	std::thread::spawn(move || {
+		let mut last = home_vt.clone();
+		loop {
+			std::thread::sleep(Duration::from_millis(500));
+			let Some(cur) = read(&path) else {
+				continue;
+			};
+			if cur != last {
+				vramdbg(&format!("vt switch: {last} -> {cur}"));
+				let returned = cur == home_vt && last != home_vt;
+				last = cur;
+				if returned && proxy.send_event(UserEvent::VtSwitched).is_err() {
+					return; // event loop gone - exit with the app
+				}
+			}
+		}
+	});
+	true
+}
+
+#[cfg(not(target_os = "linux"))]
+fn spawn_vt_watch(_proxy: EventLoopProxy<UserEvent>) -> bool {
+	false
 }
 
 // The close-"x" button box within a tab: a square with equal top/right/bottom
@@ -2998,6 +3047,10 @@ impl ApplicationHandler<UserEvent> for App {
 		if let Some(state) = self.state.as_mut() {
 			state.init_wallpaper_rotation(cli_wallpaper);
 		}
+		// GL path only: the native path's swapchain reports loss itself
+		if !self.vt_watch && self.state.as_ref().is_some_and(|s| s.gfx.is_gl()) {
+			self.vt_watch = spawn_vt_watch(self.proxy.clone());
+		}
 	}
 
 	fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
@@ -3057,6 +3110,13 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 			UserEvent::SetWallpaper(image) => state.set_wallpaper(image),
 			UserEvent::ReloadSettings => state.reload_config(),
+			UserEvent::VtSwitched => {
+				// Return to our console (the watcher signals only returns).
+				// Rebuild unconditionally: focus may land on another window or
+				// nowhere, and an unfocused window must heal too.
+				vramdbg("vt return -> recover_gpu");
+				state.recover_gpu();
+			}
 		}
 	}
 
@@ -3850,9 +3910,10 @@ impl ApplicationHandler<UserEvent> for App {
 		if state.wp_next.is_some_and(|next| Instant::now() >= next) {
 			state.advance_wallpaper();
 		}
-		// GL path: probe the VRAM sentinel on a slow tick. A mismatch means a VT
-		// switch/suspend trashed the texture uploads (the mostly-black-window
-		// bug) - reseed + rebuild them. See the Sentinel note in gfx.rs.
+		// GL path: the VT watcher (spawn_vt_watch) is the real loss trigger; the
+		// readback probes below stay as field evidence + a fallback for a missed
+		// switch, since a real purge read back "intact" (driver restores readback
+		// contents while sampled copies stay garbage).
 		if state.gfx.is_gl() {
 			if state.vramloss_test && state.revealed {
 				state.vramloss_test = false;
@@ -3863,11 +3924,10 @@ impl ApplicationHandler<UserEvent> for App {
 				vramdbg("SILK_VRAMLOSS: sentinels + wallpaper clobbered");
 			}
 			// Poll both probes; either detecting loss triggers the one rebuild.
-			// The wallpaper block is the authoritative witness: that texture is
-			// sampled every frame, so it lives hot in VRAM like the atlas. The
-			// synthetic sentinels survived a real VT switch that wiped the atlas
-			// (never drawn -> the driver keeps them restorable elsewhere); they
-			// stay as a best-effort fallback for the no-wallpaper case.
+			// Field logs showed EVERY witness - synthetic sentinels AND the
+			// wallpaper's own uploaded block - reading back intact across a real
+			// purge that blacked the window, so readback cannot be the primary
+			// detector. Kept for the diagnostic trail and as a fallback.
 			let mut lost = None;
 			match state.gfx.vram_check_poll() {
 				Some(VramProbe::Lost { uploaded, rendered }) => {
