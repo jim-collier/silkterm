@@ -2710,14 +2710,6 @@ fn static_bands(cur: &[u64], last: &[u64]) -> (usize, usize) {
 	if st + sb >= n { (0, 0) } else { (st, sb) }
 }
 
-// How many off cells in the retained region a forward-shift may tolerate before
-// it stops counting as a clean translate. A strict full-row equality (what this
-// used) breaks on ONE differing cell - a redrawn prompt, a spinner, a rewrapped
-// line, or just a multi-frame gap when the PTY thread held the term lock across
-// a burst - and then fell through to the turnover guess below, over-reporting a
-// 2-line advance as the full backlog cap. That snapped the view up ~a screenful
-// and eased it back: the "fast output bounces far down then scrolls up" flicker.
-const SHIFT_SLOP: usize = 3;
 fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 	let n = cur.len();
 	if n == 0 || last.len() != n {
@@ -2726,8 +2718,14 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 	// Pick the forward shift k (content moved up k rows) that best explains the
 	// frame: count rows that translate cleanly (cur[i] == last[i+k]) and that
 	// actually moved (cur[i] != last[i]), and take the k covering the most of the
-	// overlap. Tolerating a few off cells reports the true (small) advance instead
-	// of ballooning it to the cap.
+	// overlap. Scoring by best explanation is what keeps this honest - the true
+	// shift always covers the most overlap, and a coincidental match at a larger k
+	// has less overlap to win with. Requiring instead that NEARLY ALL of the
+	// overlap translate broke on any program holding a live region: apt, dnf and
+	// flatpak rewrite a multi-row progress area every tick, so an ordinary
+	// one-line advance under one left too many rows off, fell through to the
+	// turnover guess below, and reported the backlog cap - kicking the view up a
+	// screenful and easing it back on every single line of output.
 	let (mut best, mut best_score) = (0usize, 0usize);
 	for k in 1..n {
 		let overlap = n - k;
@@ -2740,12 +2738,13 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 				}
 			}
 		}
-		// almost the whole overlap must translate, and enough of it must genuinely
-		// have moved - a static or blank field matches positionally but never
-		// scrolled (easing that was the apt/status-line bounce)
-		let solid = matched + SHIFT_SLOP >= overlap;
+		// A solid block must translate, and enough of it must genuinely have moved -
+		// a static or blank field matches positionally but never scrolled (easing
+		// that was the apt/status-line bounce). Same tolerance as the signed sibling,
+		// for the same reason: a live progress area is a static band in all but name.
+		let need = (overlap / 4).max(MOVED_MIN).min(overlap);
 		let real = moved >= MOVED_MIN.min(overlap);
-		if solid && real && matched > best_score {
+		if matched >= need && real && matched > best_score {
 			best_score = matched;
 			best = k;
 		}
@@ -3667,6 +3666,23 @@ mod tests {
 			scroll_shift(&cur, &last),
 			crate::scroll::MAX_BACKLOG as usize
 		);
+	}
+
+	#[test]
+	fn live_progress_area_reports_the_real_advance_not_the_cap() {
+		// flatpak/apt/dnf keep a multi-row live progress area at the bottom and
+		// rewrite all of it every tick. A one-line advance under that redraw leaves
+		// most of the retained region translating cleanly, but not nearly all of it -
+		// which fell through to the turnover guess and reported the backlog cap, so
+		// each output line kicked the view up a screenful and eased it back.
+		let n = 30usize;
+		let live = 6usize; // rows the progress area rewrites each tick
+		let last: Vec<u64> = (1..=n as u64).collect();
+		let mut cur: Vec<u64> = (2..=n as u64 + 1).collect(); // advanced one line
+		for (offset, row) in cur[n - live..].iter_mut().enumerate() {
+			*row = 900 + offset as u64; // the progress area, freshly redrawn
+		}
+		assert_eq!(scroll_shift(&cur, &last), 1);
 	}
 
 	#[test]
