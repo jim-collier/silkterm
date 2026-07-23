@@ -228,16 +228,19 @@ In each section, items are listed approximately from newest to oldest.
 				- If a new shell exe is found that doesn't already exist in the stored list, add it. (User can disable it later.)
 				- If an existing already defined shell exe name isn't found by explicit path, or in the environment path variable, disable it (don't delete it).
 
-- 🔘 Menu enhancements:
-	- All keyboard acellerators within a menu must be unique. (Winner goes to the most important and/or frequently used.)
-	- Remove:
+- 🛠️ Menu enhancements:
+	- ✅ All keyboard acellerators within a menu must be unique. (Winner goes to the most important and/or frequently used.)
+		- Done: each menu item now carries its own accelerator letter (underlined; can sit mid-label, e.g. the S of "Selection"), unique per menu. Low-priority items and ones that already have a hotkey go without one.
+	- ✅ Remove:
 		- Tabs/Next tab
 		- Tabs/Previous tab
 		- Help/Support SilkTerm (already in "About" dialog)
 	- Add:
-		- View/Hide single tab  (not enabled by default - show tab even when there's only one)
-		- "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
-	- Change:
+		- ✅ View/Hide single tab  (not enabled by default - show tab even when there's only one)
+			- Done: new `hide_single_tab` config key (default off, so the tab bar now shows even with one tab); the View menu toggle persists it.
+		- 🔘 "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
+			- Waits on the Settings "Shells" tab (the shell list it draws from).
+	- ✅ Change:
 		- "Edit/Read-only" -> "View/Read-only"
 
 - 🛠️ Scroll-on-output enhancement: One additional setting: (20260629)
@@ -274,14 +277,18 @@ In each section, items are listed approximately from newest to oldest.
 			- Done: the close "x" is now bold and centered inside a 1px outlined square button with equal top/right/bottom margins (the slack falls to the left, separating it from the title). The button box, its glyph, and the click region share one geometry helper so they stay aligned.
 				- ✅ X still too small and not centered in the box.
 					- Done: the font glyph (a lowercase-style multiplication sign, baseline-positioned, hence never truly centered) is replaced by a drawn X - two diagonal bars with angled ends, centered exactly in the box at any size. The box keeps equal top/right/bottom margins, now slightly larger; the active tab's box fill carries a faint pastel-red tint so the current tab reads at a glance.
-		- 🔘 Provide brief visual feedback on click - as the tab closes. Maybe the terminal area can close immediately while the tab lingers just enough milliseconds for human perception to notice the click feedback, if that doesn't require rejiggering the whole pipeline.
+		- ✅ Provide brief visual feedback on click - as the tab closes. Maybe the terminal area can close immediately while the tab lingers just enough milliseconds for human perception to notice the click feedback, if that doesn't require rejiggering the whole pipeline.
 			- Note: two candidate approaches - a press-arm highlight (light on the button while pressed, close on release) that fits the existing input path, or the lingering-tab timed close described above (a short animation, more involved and feel-sensitive). Light on the button while pressed, close on release, is going to be the easiest, that's the winner.
+			- Done: press-arm - the button lights while held, the close fires on release over the same button, and dragging off before releasing cancels (standard button feel). Verified live: lit while held, release closes, drag-off leaves the tab open.
 
-- 🔘 Ctrl+Shift+N: New window on same directory.
+- ✅ Ctrl+Shift+N: New window on same directory.
+	- Done: opens a new window (own process) starting in the focused pane's current directory. Verified live: the new instance lands in the source pane's cwd.
 
-- 🔘 Main menu and right-click menus:
-	- 🔘 Accellerators need to be unique. If running out of memorable word/accelerator keys, remove accellerators from the least-used or least-important items, especially ones that already have hotkeys.
-	- 🔘 List the hotkeys to activate the same function, if they exist. Keep in mind there might be a dynamic hotkey system soon.
+- ✅ Main menu and right-click menus:
+	- ✅ Accellerators need to be unique. If running out of memorable word/accelerator keys, remove accellerators from the least-used or least-important items, especially ones that already have hotkeys.
+		- Done with the menu-enhancements accelerator rework above (per-item letters, unique per menu, dropped where a hotkey already covers it).
+	- ✅ List the hotkeys to activate the same function, if they exist. Keep in mind there might be a dynamic hotkey system soon.
+		- Done: Copy/Paste, New Tab, Close Tab, Settings, and Fullscreen now show their hotkeys in the menu labels (font-size items already did). Labels are plain strings, so a future dynamic hotkey system just changes what gets formatted in.
 
 - 🔘 Change wording of "background image opacity" to "background image visibility" (text and setting), to reflect that it's not just opacity. Still directly controls image/background color mix, but ALSO the contrast and saturation.
 

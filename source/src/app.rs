@@ -21,7 +21,6 @@ use glyphon::{Buffer, Color as GColor, Shaping, TextArea, TextBounds};
 use crate::bgimage::{ImageRenderer, WpProbe};
 use crate::clipboard::Clipboard;
 use crate::config;
-use crate::config::DONATE_URL;
 use crate::gfx::{Gfx, RectInstance, RectRenderer, VramProbe};
 use crate::input;
 use crate::pane::{CopyKind, Dir, Pane, PaneManager, Rect};
@@ -356,8 +355,6 @@ enum MenuAction {
 	ToggleCopyOutput,
 	NewTab,
 	CloseTab,
-	NextTab,
-	PrevTab,
 	SplitVertical,
 	SplitHorizontal,
 	Close,
@@ -366,22 +363,35 @@ enum MenuAction {
 	ToggleFullscreen,
 	ToggleFrame,
 	ToggleMenuBar,
+	ToggleSingleTab,
 	ReloadConfig,
 	Settings,
-	Support,
 	About,
 	Quit,
 }
 
 // One row of a menu: an action item (optionally a checkmark toggle) or a group
 // separator. Separators render as a faint horizontal line, never hover/click.
+// `accel` is the byte offset of the item's accelerator letter in the label
+// (underlined; typing it picks the item); None = no accelerator - accelerators
+// must be unique per menu, so low-priority items (and ones that already have a
+// hotkey) go without.
 enum Entry {
 	Item {
 		label: String,
 		action: MenuAction,
 		check: Option<bool>,
+		accel: Option<usize>,
 	},
 	Sep,
+}
+
+// Byte offset of the accelerator letter: exact-case match first (so 'S' can
+// pick "Selection" in "Paste Selection"), else case-insensitive.
+fn accel_at(label: &str, ch: char) -> Option<usize> {
+	label
+		.find(ch)
+		.or_else(|| label.to_ascii_lowercase().find(ch.to_ascii_lowercase()))
 }
 
 fn mi(label: &str, action: MenuAction) -> Entry {
@@ -389,6 +399,15 @@ fn mi(label: &str, action: MenuAction) -> Entry {
 		label: label.into(),
 		action,
 		check: None,
+		accel: None,
+	}
+}
+fn mia(ch: char, label: &str, action: MenuAction) -> Entry {
+	Entry::Item {
+		label: label.into(),
+		action,
+		check: None,
+		accel: accel_at(label, ch),
 	}
 }
 fn mt(on: bool, label: &str, action: MenuAction) -> Entry {
@@ -396,6 +415,15 @@ fn mt(on: bool, label: &str, action: MenuAction) -> Entry {
 		label: label.into(),
 		action,
 		check: Some(on),
+		accel: None,
+	}
+}
+fn mta(ch: char, on: bool, label: &str, action: MenuAction) -> Entry {
+	Entry::Item {
+		label: label.into(),
+		action,
+		check: Some(on),
+		accel: accel_at(label, ch),
 	}
 }
 
@@ -670,13 +698,14 @@ struct State {
 	pending_size: Option<(usize, usize)>, // debounced remember-size: persisted after the size holds, not per resize tick
 	pending_size_at: Instant,
 	menu: Option<ContextMenu>,
-	decorated: bool,             // window frame shown (winit has no getter, so track it)
-	menu_bar: bool,              // window menu bar (File/Edit/...) shown
-	bar_open: Option<usize>,     // which top-level menu's dropdown is open, if any
-	quit: bool,                  // set by File->Quit; the event handler exits after applying
-	win_opacity: Option<f32>,    // CLI --background-opacity override (this window only)
-	win_title: Option<String>,   // CLI --title override (else "AppName - <tab title>")
-	last_win_title: String,      // last string set on the window (skip redundant set_title)
+	tab_close_arm: Option<usize>, // tab whose close button is held down (closes on release)
+	decorated: bool,              // window frame shown (winit has no getter, so track it)
+	menu_bar: bool,               // window menu bar (File/Edit/...) shown
+	bar_open: Option<usize>,      // which top-level menu's dropdown is open, if any
+	quit: bool,                   // set by File->Quit; the event handler exits after applying
+	win_opacity: Option<f32>,     // CLI --background-opacity override (this window only)
+	win_title: Option<String>,    // CLI --title override (else "AppName - <tab title>")
+	last_win_title: String,       // last string set on the window (skip redundant set_title)
 	focused: bool, // window has keyboard focus (gates copy-output: never copy from a background window)
 	pending_about: bool, // request to open the About window (App acts on it; needs the event loop)
 	pending_settings: bool, // request to open the Settings window
@@ -705,11 +734,17 @@ impl State {
 		}
 	}
 
+	// The tab bar shows for >1 tab always; for a single tab unless the user
+	// opts out (hide_single_tab, View menu / config).
+	fn tab_bar_visible(&self) -> bool {
+		self.tabs.len() > 1 || !config::settings().hide_single_tab
+	}
+
 	fn area(&self) -> Rect {
 		// Panes sit below the menu bar (always when shown) and the tab bar
-		// (only with >1 tab), stacked in that order.
+		// (when visible), stacked in that order.
 		let bar = self.menubar_h()
-			+ if self.tabs.len() > 1 {
+			+ if self.tab_bar_visible() {
 				self.tab_bar_h()
 			} else {
 				0.0
@@ -911,33 +946,35 @@ impl State {
 		let copy_select = p.is_some_and(|p| p.copy_select);
 		let copy_output = p.is_some_and(|p| p.copy_output);
 		let entries = vec![
-			mi("Copy", MenuAction::Copy),
-			mi("Paste", MenuAction::Paste),
-			mi("Paste Selection", MenuAction::PasteSelection),
+			mia('C', "Copy (Ctrl+Shift+C)", MenuAction::Copy),
+			mia('P', "Paste (Ctrl+Shift+V)", MenuAction::Paste),
+			mia('S', "Paste Selection", MenuAction::PasteSelection),
 			Entry::Sep,
 			mt(copy_select, "Copy on select", MenuAction::ToggleCopySelect),
 			mt(copy_output, "Copy on output", MenuAction::ToggleCopyOutput),
-			mt(read_only, "Read-only", MenuAction::ToggleReadOnly),
+			mta('R', read_only, "Read-only", MenuAction::ToggleReadOnly),
 			Entry::Sep,
-			mi("New Tab", MenuAction::NewTab),
-			mi("Split Vertical", MenuAction::SplitVertical),
-			mi("Split Horizontal", MenuAction::SplitHorizontal),
+			mia('N', "New Tab (Ctrl+Shift+T)", MenuAction::NewTab),
+			mia('V', "Split Vertical", MenuAction::SplitVertical),
+			mia('H', "Split Horizontal", MenuAction::SplitHorizontal),
 			mi("Close Pane", MenuAction::Close),
 			Entry::Sep,
-			mt(
+			mta(
+				'F',
 				self.window.fullscreen().is_some(),
-				"Fullscreen",
+				"Fullscreen (F11)",
 				MenuAction::ToggleFullscreen,
 			),
-			mt(
+			mta(
+				'w',
 				!self.decorated,
 				"Hide window frame",
 				MenuAction::ToggleFrame,
 			),
-			mt(self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
+			mta('M', self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
 			Entry::Sep,
 			mi("Reload Config", MenuAction::ReloadConfig),
-			mi("Settings\u{2026}", MenuAction::Settings),
+			mi("Settings\u{2026} (Ctrl+,)", MenuAction::Settings),
 		];
 		self.bar_open = None;
 		self.popup(target, entries, mx, my);
@@ -979,54 +1016,57 @@ impl State {
 		let copy_output = p.is_some_and(|p| p.copy_output);
 		match idx {
 			0 => vec![
-				mi("Reload Config", MenuAction::ReloadConfig),
-				mi("Settings\u{2026}", MenuAction::Settings),
+				mia('R', "Reload Config", MenuAction::ReloadConfig),
+				mia('S', "Settings\u{2026} (Ctrl+,)", MenuAction::Settings),
 				Entry::Sep,
-				mi("Quit", MenuAction::Quit),
+				mia('Q', "Quit", MenuAction::Quit),
 			],
 			1 => vec![
-				mi("Copy", MenuAction::Copy),
-				mi("Paste", MenuAction::Paste),
-				mi("Paste Selection", MenuAction::PasteSelection),
+				mia('C', "Copy (Ctrl+Shift+C)", MenuAction::Copy),
+				mia('P', "Paste (Ctrl+Shift+V)", MenuAction::Paste),
+				mia('S', "Paste Selection", MenuAction::PasteSelection),
 				Entry::Sep,
 				mt(copy_select, "Copy on select", MenuAction::ToggleCopySelect),
 				mt(copy_output, "Copy on output", MenuAction::ToggleCopyOutput),
-				mt(read_only, "Read-only", MenuAction::ToggleReadOnly),
 			],
 			2 => vec![
-				mi("Increase Font Size (Ctrl +)", MenuAction::FontBigger),
-				mi("Decrease Font Size (Ctrl -)", MenuAction::FontSmaller),
+				mia('I', "Increase Font Size (Ctrl +)", MenuAction::FontBigger),
+				mia('D', "Decrease Font Size (Ctrl -)", MenuAction::FontSmaller),
 				Entry::Sep,
-				mt(
+				mta('R', read_only, "Read-only", MenuAction::ToggleReadOnly),
+				Entry::Sep,
+				mta(
+					'F',
 					self.window.fullscreen().is_some(),
-					"Fullscreen",
+					"Fullscreen (F11)",
 					MenuAction::ToggleFullscreen,
 				),
-				mt(
+				mta(
+					'w',
 					!self.decorated,
 					"Hide window frame",
 					MenuAction::ToggleFrame,
 				),
-				mt(self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
+				mta('M', self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
+				mta(
+					's',
+					config::settings().hide_single_tab,
+					"Hide single tab",
+					MenuAction::ToggleSingleTab,
+				),
 			],
 			3 => vec![
-				mi("New Tab", MenuAction::NewTab),
-				mi("Next Tab", MenuAction::NextTab),
-				mi("Previous Tab", MenuAction::PrevTab),
+				mia('N', "New Tab (Ctrl+Shift+T)", MenuAction::NewTab),
 				Entry::Sep,
-				mi("Close Tab", MenuAction::CloseTab),
+				mia('C', "Close Tab (Ctrl+Shift+W)", MenuAction::CloseTab),
 			],
 			4 => vec![
-				mi("Split Vertical", MenuAction::SplitVertical),
-				mi("Split Horizontal", MenuAction::SplitHorizontal),
+				mia('V', "Split Vertical", MenuAction::SplitVertical),
+				mia('H', "Split Horizontal", MenuAction::SplitHorizontal),
 				Entry::Sep,
-				mi("Close Pane", MenuAction::Close),
+				mia('C', "Close Pane", MenuAction::Close),
 			],
-			_ => vec![
-				mi("Support SilkTerm\u{2026}", MenuAction::Support),
-				Entry::Sep,
-				mi("About\u{2026}", MenuAction::About),
-			],
+			_ => vec![mia('A', "About\u{2026}", MenuAction::About)],
 		}
 	}
 
@@ -1193,14 +1233,6 @@ impl State {
 			}
 			MenuAction::NewTab => self.new_tab(proxy),
 			MenuAction::CloseTab => self.close_tab(),
-			MenuAction::NextTab => {
-				self.tabs.next();
-				self.relayout_all();
-			}
-			MenuAction::PrevTab => {
-				self.tabs.prev();
-				self.relayout_all();
-			}
 			MenuAction::FontBigger => self.font_zoom(1),
 			MenuAction::FontSmaller => self.font_zoom(-1),
 			MenuAction::ToggleFullscreen => self.toggle_fullscreen(),
@@ -1212,9 +1244,17 @@ impl State {
 				self.menu_bar = !self.menu_bar;
 				self.relayout_all();
 			}
+			MenuAction::ToggleSingleTab => {
+				let orig = (*config::settings()).clone();
+				let mut new = orig.clone();
+				new.hide_single_tab = !new.hide_single_tab;
+				// config open elsewhere -> persist skips; the session keeps the value
+				let _ = config::persist(&orig, &new);
+				config::update(new);
+				self.relayout_all();
+			}
 			MenuAction::ReloadConfig => self.reload_config(),
 			MenuAction::Settings => self.open_settings(),
-			MenuAction::Support => open_url(DONATE_URL),
 			MenuAction::About => self.open_about(),
 			MenuAction::Quit => self.quit = true,
 		}
@@ -1296,6 +1336,38 @@ impl State {
 			self.relayout_all(); // existing tab(s) shrink for the now-shown bar
 			self.update_title();
 			self.dirty = true;
+		}
+	}
+
+	// New window = a fresh process (each window is its own process), started in
+	// the focused pane's current directory so it picks up where you are. The
+	// child sets up its own ctl socket/env at startup; a reaper thread waits on
+	// it so a closed window can't linger as a zombie.
+	fn new_window(&mut self) {
+		let cwd = self
+			.tabs
+			.cur()
+			.panes
+			.get(&self.tabs.cur().focused)
+			.and_then(|p| p.term.cwd());
+		let exe = match std::env::current_exe() {
+			Ok(p) => p,
+			Err(e) => {
+				eprintln!("new window: {e}");
+				return;
+			}
+		};
+		let mut cmd = std::process::Command::new(exe);
+		if let Some(dir) = cwd {
+			cmd.current_dir(dir);
+		}
+		match cmd.spawn() {
+			Ok(mut child) => {
+				std::thread::spawn(move || {
+					let _ = child.wait();
+				});
+			}
+			Err(e) => eprintln!("new window: {e}"),
 		}
 	}
 
@@ -1740,7 +1812,7 @@ impl State {
 
 		// tab bar (only with >1 tab), drawn just below the menu bar
 		let tab_bar_y = self.menubar_h();
-		let tabbar_range = if self.tabs.len() > 1 {
+		let tabbar_range = if self.tab_bar_visible() {
 			let start = instances.len() as u32;
 			instances.push(rect_inst(0.0, tab_bar_y, win_w, tab_h, config::TAB_BAR_BG));
 			let n = self.tabs.len();
@@ -1771,7 +1843,10 @@ impl State {
 					cb.h + 2.0,
 					config::menu_border(),
 				));
-				let box_fill = if i == self.tabs.active {
+				let box_fill = if self.tab_close_arm == Some(i) {
+					// held down: light the button (press feedback; closes on release)
+					mix_rgb(color, [0xff, 0xff, 0xff], 0.28)
+				} else if i == self.tabs.active {
 					mix_rgb(color, [0xd0, 0x80, 0x80], 0.12)
 				} else {
 					color
@@ -1825,20 +1900,27 @@ impl State {
 					));
 				}
 			}
-			// accelerator underline under each item's first letter (press it to pick)
+			// accelerator underline under each item's accelerator letter (press it
+			// to pick); items without one draw no underline
 			let acc_attrs = crate::text::ui_attrs();
 			let line_h = self.text.ui_line_h;
 			let acc_x = menu.x + config::MENU_PAD_X + config::MENU_GUTTER;
 			for (i, entry) in menu.entries.iter().enumerate() {
-				if let Entry::Item { label, .. } = entry {
-					if let Some(c) = label.chars().next() {
+				if let Entry::Item {
+					label,
+					accel: Some(pos),
+					..
+				} = entry
+				{
+					if let Some(c) = label[*pos..].chars().next() {
+						let prefix_w = self.text.measure_ui_text(&label[..*pos], &acc_attrs);
 						let mut buf = [0u8; 4];
 						let letter_w = self
 							.text
 							.measure_ui_text(c.encode_utf8(&mut buf), &acc_attrs);
 						let top = menu.row_top(i) + (menu.item_h - line_h) / 2.0;
 						instances.push(rect_inst(
-							acc_x,
+							acc_x + prefix_w,
 							top + line_h - 3.0,
 							letter_w,
 							1.0,
@@ -1864,7 +1946,7 @@ impl State {
 		};
 		// tab titles ("<shell> [<program>]") - computed first (tab_title is &mut)
 		// before self.text is borrowed for the buffers below
-		let tab_titles: Vec<String> = if self.tabs.len() > 1 {
+		let tab_titles: Vec<String> = if self.tab_bar_visible() {
 			self.tabs
 				.list
 				.iter_mut()
@@ -3056,6 +3138,7 @@ impl ApplicationHandler<UserEvent> for App {
 			pending_size: None,
 			pending_size_at: Instant::now(),
 			menu: None,
+			tab_close_arm: None,
 			decorated,
 			menu_bar,
 			bar_open: None,
@@ -3333,7 +3416,7 @@ impl ApplicationHandler<UserEvent> for App {
 				let tab_bar_y = state.menubar_h();
 				if button == MouseButton::Left
 					&& state.menu.is_none()
-					&& state.tabs.len() > 1
+					&& state.tab_bar_visible()
 					&& y >= tab_bar_y
 					&& y < tab_bar_y + state.tab_bar_h()
 				{
@@ -3341,11 +3424,14 @@ impl ApplicationHandler<UserEvent> for App {
 						(state.gfx.config.width as f32 / state.tabs.len() as f32).min(TAB_MAX_W);
 					let i = (x / tab_w).floor() as usize;
 					if i < state.tabs.len() {
-						// click in the close-button column closes that tab; else select it
+						// press in the close-button column only ARMS the close (the
+						// button lights up); the close itself fires on release over
+						// the same box, so a slipped press can be dragged off to
+						// cancel - standard button feel. Elsewhere selects the tab.
 						let cb =
 							tab_close_box(i as f32 * tab_w, tab_w, tab_bar_y, state.tab_bar_h());
 						if x >= cb.x {
-							state.close_tab_at(i);
+							state.tab_close_arm = Some(i);
 						} else {
 							state.tabs.active = i;
 							state.update_title();
@@ -3495,6 +3581,21 @@ impl ApplicationHandler<UserEvent> for App {
 				..
 			} => {
 				state.resizing = None;
+				// armed tab close: fire only if the release is still on the same box
+				if let Some(i) = state.tab_close_arm.take() {
+					let (x, y) = state.mouse;
+					let tab_bar_y = state.menubar_h();
+					if i < state.tabs.len() && y >= tab_bar_y && y < tab_bar_y + state.tab_bar_h() {
+						let tab_w = (state.gfx.config.width as f32 / state.tabs.len() as f32)
+							.min(TAB_MAX_W);
+						let cb =
+							tab_close_box(i as f32 * tab_w, tab_w, tab_bar_y, state.tab_bar_h());
+						if (x / tab_w).floor() as usize == i && x >= cb.x {
+							state.close_tab_at(i);
+						}
+					}
+					state.dirty = true;
+				}
 				// drop a dragged pane onto the pane under the cursor (swap)
 				if let Some(src) = state.dragging_pane.take() {
 					let (x, y) = state.mouse;
@@ -3673,14 +3774,15 @@ impl ApplicationHandler<UserEvent> for App {
 								}
 							}
 						}
-						// accelerator: a letter activates the first item starting with it
+						// accelerator: a letter activates the item carrying it (the
+						// underlined letter; unique per menu, some items have none)
 						Key::Character(typed) => {
 							let ch = typed.chars().next().map(|c| c.to_ascii_lowercase());
 							let hit = ch.and_then(|ch| {
 								state.menu.as_ref().and_then(|menu| {
 									menu.entries.iter().position(|entry| {
-										matches!(entry, Entry::Item { label, .. }
-											if label.chars().next().map(|c| c.to_ascii_lowercase()) == Some(ch))
+										matches!(entry, Entry::Item { label, accel: Some(pos), .. }
+											if label[*pos..].chars().next().map(|c| c.to_ascii_lowercase()) == Some(ch))
 									})
 								})
 							});
@@ -3757,6 +3859,12 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 						Key::Named(NamedKey::F4) => {
 							state.close_tab();
+							return;
+						}
+						// Ctrl+Shift+N: new window, starting in the focused pane's
+						// current directory
+						Key::Character(typed) if shift && typed.eq_ignore_ascii_case("n") => {
+							state.new_window();
 							return;
 						}
 						// Ctrl+- / Ctrl+= / Ctrl++: session font zoom ("+" is
@@ -4143,7 +4251,16 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-	use super::{list_folder_images, next_wallpaper_index};
+	use super::{accel_at, list_folder_images, next_wallpaper_index};
+
+	#[test]
+	fn accel_prefers_exact_case_then_falls_back() {
+		// 'S' must land on "Selection", not the 's' in "Paste"
+		assert_eq!(accel_at("Paste Selection", 'S'), Some(6));
+		// no capital 's' -> case-insensitive fallback finds "single"
+		assert_eq!(accel_at("Hide single tab", 's'), Some(5));
+		assert_eq!(accel_at("Quit", 'x'), None);
+	}
 
 	#[test]
 	fn wallpaper_order_wraps() {
