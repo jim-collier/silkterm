@@ -50,7 +50,7 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🛠️ Severe: When the linux console swithes to text mode (e.g. user presses CTRL+ALT+F1), then back to graphical X11 (e.g. user presses CTRL+ALT+F7), all SilkTerm windows are mostly black. Only the tabs and blinking cursor or visible, plus some light RGB noise at the top of the terminal render area.
+- ✅ Severe: When the linux console swithes to text mode (e.g. user presses CTRL+ALT+F1), then back to graphical X11 (e.g. user presses CTRL+ALT+F7), all SilkTerm windows are mostly black. Only the tabs and blinking cursor or visible, plus some light RGB noise at the top of the terminal render area.
 	- New SilkTerm windows opened after that are OK. But new tabs open on a previously open window, have the same problem.
 	- Cause: the VT switch wipes the contents of uploaded GPU textures (glyph atlas = all text, wallpaper) while the GL context survives, so per-frame shapes (tabs, cursor) still draw. New windows re-upload from scratch; new tabs share the wiped atlas.
 	- Fix: a small known-pattern sentinel texture is re-read every couple of seconds (plus immediately on window focus); if the pattern is gone, the atlas, chrome, and wallpaper are rebuilt automatically. Recovers within a few seconds of returning, sooner on click.
@@ -63,7 +63,7 @@ In each section, items are listed approximately from newest to oldest.
 	- Round 3: probe the real casualty instead of a proxy. A center block of the wallpaper texture's own uploaded pixels is kept and read back on the probe tick - that texture is sampled every frame and demonstrably gets wiped (the on-screen noise). A mismatch triggers the same full rebuild. The sentinels stay as a fallback for the no-wallpaper case. If the wallpaper block STILL reads intact while the screen is black, texture contents were never lost at all and the problem is context-level - the log discriminates that too.
 		- Round 3 tested: still black, and the log settles it - even the wallpaper's own pixels read back intact (257 probes, zero losses) across a switch that blacked the window. So texture *contents* are never lost as far as readback can see; the driver restores whatever a readback touches while the copies the render path samples stay garbage. Readback detection is a dead end.
 		- Round 4: stop detecting the damage, detect the switch. The active console is directly observable (`/sys/class/tty/tty0/active`); a watcher notes the console the window started on and, when the value returns to it after being elsewhere, rebuilds the sampled textures unconditionally - every window, focused or not, within about half a second of returning. The readback probes stay in the log as evidence.
-	- 🔘 Verify with a real VT switch on the desktop (same marker file; expect "vt switch" + "vt return -> recover_gpu" lines in `~/silk_vramdbg.txt`). If the rebuild runs and the window is STILL black, the remaining suspect is the GL context itself and the next step is recreating it wholesale.
+	- ✅ Verified with a real VT switch on the desktop: windows recover. Round 4 (watch the console, rebuild on return) is the fix that stuck.
 
 - Windows:
 	- ✅ Bold font uses a proportional font, which skews space-based alignment output. (E.g. that muffer uses on startup screen.)
