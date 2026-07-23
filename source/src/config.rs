@@ -141,6 +141,7 @@ pub struct Settings {
 	pub columns: usize,                 // initial window grid size (used when !remember_size)
 	pub rows: usize,
 	pub remember_size: bool, // launch at the last window size instead of columns/rows
+	pub hide_single_tab: bool, // hide the tab bar while only one tab is open
 	pub remembered_columns: usize, // last actual window size (not shown in the dialog)
 	pub remembered_rows: usize,
 	pub word_separators: String, // delimiters for double-click word selection
@@ -212,6 +213,7 @@ impl Default for Settings {
 			columns: 160,
 			rows: 48,
 			remember_size: true,
+			hide_single_tab: false,
 			remembered_columns: 160,
 			remembered_rows: 48,
 			// alacritty's default delimiters minus ':', so a Windows drive path
@@ -470,6 +472,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.remember_size != orig.remember_size {
 		doc["remember_size"] = value(s.remember_size);
 	}
+	if s.hide_single_tab != orig.hide_single_tab {
+		doc["hide_single_tab"] = value(s.hide_single_tab);
+	}
 	if s.remembered_columns != orig.remembered_columns {
 		doc["remembered_columns"] = value(s.remembered_columns as i64);
 	}
@@ -602,6 +607,7 @@ struct RawConfig {
 	columns: Option<usize>,
 	rows: Option<usize>,
 	remember_size: Option<bool>,
+	hide_single_tab: Option<bool>,
 	remembered_columns: Option<usize>,
 	remembered_rows: Option<usize>,
 	word_separators: Option<String>,
@@ -855,6 +861,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		columns: raw.columns.unwrap_or(d.columns).max(1),
 		rows: raw.rows.unwrap_or(d.rows).max(1),
 		remember_size: raw.remember_size.unwrap_or(d.remember_size),
+		hide_single_tab: raw.hide_single_tab.unwrap_or(d.hide_single_tab),
 		remembered_columns: raw
 			.remembered_columns
 			.unwrap_or(d.remembered_columns)
@@ -1424,6 +1431,9 @@ rows = 48
 # remember_size = true
 # remembered_columns = 160
 # remembered_rows = 48
+
+## Hide the tab bar while only one tab is open (also in the View menu).
+# hide_single_tab = false
 
 ##=============================================================================
 ## Background and transparency
