@@ -31,6 +31,10 @@ pub enum UserEvent {
 	// control socket: re-read config.toml and apply it (same as Menu > Reload)
 	#[cfg_attr(not(unix), allow(dead_code))]
 	ReloadSettings,
+	// VT watcher thread (app.rs spawn_vt_watch): the active console changed.
+	// Linux GL path only; never constructed elsewhere.
+	#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+	VtSwitched,
 }
 
 // bridges alacritty's PTY thread back to the winit loop
