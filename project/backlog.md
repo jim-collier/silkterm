@@ -73,15 +73,18 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, AND legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
 
-- 🔘 Font size should be able to be increased, even when using system font.
+- ✅ Font size should be able to be increased, even when using system font.
 	- May need to refactor "Use system font [ ]" in settings to:
 		- Use system font    [ ] Face   [ ] Size
+	- Done: the single toggle is now a dual-checkbox row (Face / Size), each following the OS independently, with matching config keys. Face governs font_family, Size governs font_size; each greys its own field. A config predating the split keeps its exact behavior (absent size follows the face toggle), except an explicit font_size - previously silently ignored - now wins over the OS size, since it reads as intent. Both checkboxes stay disabled on Windows.
 
-- 🔘 Hotkeys to increase/decrease font size
+- ✅ Hotkeys to increase/decrease font size
 	- Behavior: Per pane, inherited when split, or new tab with a focused resized pane, but not persisted across launches.
 	- HotKeys (and view menu items that list the hotkeys):
 		- Ctrl+'-' reduces font size.
 		- Ctrl+'+' and Ctrl+'=' increases font size.
+	- Done: Ctrl+-/+/= step the size a pixel per press (session-only, never persisted; works on top of the system size too), with matching View menu items. Verified live: row pitch grows and shrinks with the keys.
+	- ✋ Per-pane scoping deferred: all panes in a window share one set of text metrics, so a per-pane size needs the same per-pane renderer the per-pane CLI style options are waiting on. Currently window-wide.
 
 - 🔘 New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
 

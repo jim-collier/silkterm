@@ -282,7 +282,7 @@ fn resolve_mono_family(fs: &FontSystem) -> Option<String> {
 	// never counts as following - it has no OS monospace setting); otherwise
 	// each family in the user's comma-separated fallback stack, then the OS mono.
 	let mut candidates: Vec<String> = Vec::new();
-	if config::system_font_active(&settings) {
+	if config::system_font_face_active(&settings) {
 		candidates.extend(sys_family.clone());
 	} else {
 		candidates.extend(

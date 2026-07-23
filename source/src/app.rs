@@ -361,6 +361,8 @@ enum MenuAction {
 	SplitVertical,
 	SplitHorizontal,
 	Close,
+	FontBigger,
+	FontSmaller,
 	ToggleFullscreen,
 	ToggleFrame,
 	ToggleMenuBar,
@@ -992,6 +994,9 @@ impl State {
 				mt(read_only, "Read-only", MenuAction::ToggleReadOnly),
 			],
 			2 => vec![
+				mi("Increase Font Size (Ctrl +)", MenuAction::FontBigger),
+				mi("Decrease Font Size (Ctrl -)", MenuAction::FontSmaller),
+				Entry::Sep,
 				mt(
 					self.window.fullscreen().is_some(),
 					"Fullscreen",
@@ -1196,6 +1201,8 @@ impl State {
 				self.tabs.prev();
 				self.relayout_all();
 			}
+			MenuAction::FontBigger => self.font_zoom(1),
+			MenuAction::FontSmaller => self.font_zoom(-1),
 			MenuAction::ToggleFullscreen => self.toggle_fullscreen(),
 			MenuAction::ToggleFrame => {
 				self.decorated = !self.decorated;
@@ -1428,6 +1435,15 @@ impl State {
 	// scale factor or font, then relayout. Shared by settings-driven font
 	// rebuilds and DPI scale-factor changes. The surface itself is reconfigured
 	// separately (a Resized event follows a scale change).
+	// Session font zoom (hotkeys / View menu): step the zoom offset and rebuild
+	// the text context at the new effective size. Window-wide, never persisted.
+	fn font_zoom(&mut self, dir: i32) {
+		config::nudge_font_zoom(dir);
+		let scale = self.window.scale_factor() as f32;
+		self.rebuild_text(scale);
+		self.dirty = true;
+	}
+
 	fn rebuild_text(&mut self, scale: f32) {
 		self.text = TextCtx::new(&self.gfx.device, &self.gfx.queue, self.gfx.format, scale);
 		self.chrome = None; // cached chrome buffers are tied to the old FontSystem
@@ -3724,6 +3740,16 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 						Key::Named(NamedKey::F4) => {
 							state.close_tab();
+							return;
+						}
+						// Ctrl+- / Ctrl+= / Ctrl++: session font zoom ("+" is
+						// Shift+"=" on most layouts, so both spellings count)
+						Key::Character(typed) if typed == "-" => {
+							state.font_zoom(-1);
+							return;
+						}
+						Key::Character(typed) if typed == "=" || typed == "+" => {
+							state.font_zoom(1);
 							return;
 						}
 						Key::Named(NamedKey::PageUp) => {
