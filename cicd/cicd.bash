@@ -271,9 +271,23 @@ fi
 
 ## Tee the rest of the run (all stages) to a gitignored log so warnings from any
 ## stage can be reviewed after the fact. Rotate the prior (closed) logs first.
+## The awk pass normalizes section spacing on the way through: exactly one blank
+## line before every letterbox rule. The blank-collapse counter can't do this -
+## raw tool output (cargo, git, rar) never touches it, so a section's leading
+## blank gets swallowed or doubled depending on what a tool printed last. Skip
+## the insert on the stream's first line: the preflight already ends with a
+## blank on the tty, which this pipe never sees.
 if [[ -n "${LINT_LOG_DIR:-}" ]] && mkdir -p "${root}/${LINT_LOG_DIR}" 2>/dev/null; then
 	gfs_rotate "${root}/${LINT_LOG_DIR}" run log >/dev/null 2>&1 || true
-	exec > >(tee "${root}/${LINT_LOG_DIR}/run_${stamp}.log") 2>&1
+	exec > >(awk -v rule="${_letterbox}" '
+		$0 == "" { blanks++; next }
+		{
+			if (index($0, rule) == 1) { if (NR > 1) print "" }
+			else { for (; blanks > 0; blanks--) print "" }
+			blanks = 0; print; fflush()
+		}
+		END { for (; blanks > 0; blanks--) print "" }
+	' | tee "${root}/${LINT_LOG_DIR}/run_${stamp}.log") 2>&1
 fi
 
 ## Stage 0: remote sync. Make sure the local branch can be safely refreshed from
@@ -640,3 +654,4 @@ fEcho_Clean
 ##	History:
 ##		- 2026-06-05 JC: Created.
 ##		- 2026-07-22 JC: Stage 0 remote sync - fetch, fast-forward if safely behind, abort if diverged.
+##		- 2026-07-22 JC: Normalize section spacing (exactly one blank before each rule).
