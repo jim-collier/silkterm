@@ -50,6 +50,10 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- 🔘 Severe bug: `flatpack update` output bounces wildly.
+	- It seems like every update to the update bar at the bottom, causes about a screen's worth of text to back-up a "page" (text moves down), then immediately smooth-scroll back "up", so that the bottom (update bar) is visible again. While the "Nano Bounce Bug" is just a slightly annoying but tolerable inconveience, this one is a breaking issue.
+	- But only if the text filling the terminal is from flatpak. If it's from other programs and flatpak only adds a few lines, there's no problem.
+
 - ✅ Copy on output is still copying the prompt that appears after command output.
 	- Cause: the multi-line-prompt strip matched prompt rows by exact content, so any prompt row with dynamic content (cwd, git branch, clock, right-aligned segments) never matched between commands and its rows stayed in the copy.
 	- Fix: prompt rows are now matched by structure - runs of letters/digits and of spaces collapse before hashing, so content can change while the punctuation/box-drawing layout still has to match exactly. Regression tests cover dynamic prompt rows and confirm plain output can't false-match.
@@ -70,6 +74,40 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Live scale *change* still unverified: the ScaleFactorChanged handler needs an actual transition (a 2nd monitor at a different scale, or dragging the Windows scaling slider while running), which a single fixed-125% monitor can't produce.
 
 ### New features and enhancements
+
+- 🔘 Installer script(s):
+
+	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
+
+	- Bash installer (Linux, BSD, macOS, WSL)
+
+		~~~bash
+		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
+		~~~
+
+	- PowerShell installer (Windows, Linux, macOS)
+
+		~~~powershell
+		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
+		~~~
+
+	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Single exe or symlink        | (or) User install path              | ￩ Single exe or symlink
+		| :---    | :---                    | :---                           | :---                                | :---
+		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
+		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
+
+	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Launcher                                                    | (or) User install path        | ￩ Launcher
+		| :---    | :---                    | :---                                                          | :---                          | :---
+		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
+		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
 
 - ✅ Add an option in settings, to persist "Copy on select". (Which overrides my earlier direction.)
 	- Done: new `copy_on_select` config key plus a "Copy on select" checkbox in Settings (Window tab, Shell section). When on, every pane starts with copy-on-select enabled; applying the toggle also flips all existing panes. The menu-bar checkbox still toggles it live per pane for the session, without writing back to the config.
