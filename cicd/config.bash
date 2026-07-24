@@ -167,7 +167,7 @@ DOGFOOD_FIXED_DESTS=(
 ## Rotating: also drop a dated copy "<DOGFOOD_PREFIX>_<YYYYmmDD-HHMMSS>" here (created
 ## if missing), so builds coexist under unique paths - an automated test killing one
 ## can't hit an unrelated version - pruning older copies that aren't running. Launch
-## the newest via utility/n8runterm. Set DOGFOOD_PREFIX empty to disable the rotating copy.
+## the newest via utility/n8runterm.bash. Set DOGFOOD_PREFIX empty to disable the rotating copy.
 DOGFOOD_ROTATING_DESTS=(
 	"${HOME}/.local/bin"
 )
