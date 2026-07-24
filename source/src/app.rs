@@ -2391,7 +2391,6 @@ impl State {
 			);
 		}
 
-		let content_area = self.area(); // for clipping the scrim to the terminal region
 		{
 			let divider = config::srgb_f32(config::DIVIDER);
 			// transparent base when compositing: pane-gap dividers show the
@@ -2451,18 +2450,37 @@ impl State {
 			// the content area so the halo only affects terminal text, never the
 			// menu bar / tab titles above it.
 			if scrim_on {
-				let (cx, cy, cw, ch) = scissor(content_area, sw, sh);
-				pass.set_scissor_rect(cx, cy, cw, ch);
-				self.scrim.composite(
-					&self.gfx.queue,
-					&mut pass,
-					scrim_intensity,
-					cfg.text_outline,
-					if cfg.cursor_outline { 1.0 } else { 0.0 },
-					scrim_function,
-					scrim_ramp,
-					scrim_ext,
-				);
+				// Clip the scrim per-pane to that pane's CONTENT rect (its rect inset
+				// by the margin), not the whole content area: a full-frame blur spreads
+				// each glyph's halo ~scrim_ext px in every direction, so an edge glyph
+				// would otherwise bleed across the 1px divider and fill the inter-pane
+				// margins - the "garbage around split lines". The gutter (margin + gap +
+				// margin) is wider than the halo reach, so no pane's halo reaches a
+				// neighbour's content region and the gutter stays clean. The margin inset
+				// also keeps the halo off the menu/tab bars, as the old content-area clip did.
+				for (rect, _, _) in &group_ranges {
+					let content = Rect {
+						x: rect.x + margin,
+						y: rect.y + margin,
+						w: (rect.w - 2.0 * margin).max(0.0),
+						h: (rect.h - 2.0 * margin).max(0.0),
+					};
+					let (cx, cy, cw, ch) = scissor(content, sw, sh);
+					if cw == 0 || ch == 0 {
+						continue;
+					}
+					pass.set_scissor_rect(cx, cy, cw, ch);
+					self.scrim.composite(
+						&self.gfx.queue,
+						&mut pass,
+						scrim_intensity,
+						cfg.text_outline,
+						if cfg.cursor_outline { 1.0 } else { 0.0 },
+						scrim_function,
+						scrim_ramp,
+						scrim_ext,
+					);
+				}
 				pass.set_scissor_rect(0, 0, sw, sh);
 			}
 			// cursor above the scrim (halo can't obscure it), still under the crisp text
