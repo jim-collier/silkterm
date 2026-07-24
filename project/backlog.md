@@ -55,8 +55,8 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- 🔘 Hotkeys to increase/decrease font size feature:
-	- Also need CTRL+0 to be able to reset to whatever the config says.
+- ✅ Hotkeys to increase/decrease font size feature:
+	- Done: Ctrl+= / Ctrl+- step the session zoom; Ctrl+0 resets to the configured (or system) size. View menu has Increase/Decrease/Reset items.
 
 - 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
 	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)

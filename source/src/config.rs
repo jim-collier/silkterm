@@ -940,6 +940,10 @@ pub fn nudge_font_zoom(dir: i32) {
 	let z = z.clamp((4.0 - base).ceil() as i32, (128.0 - base).floor() as i32);
 	FONT_ZOOM_PX.store(z, Ordering::Relaxed);
 }
+// Drop the session zoom, back to the configured (or system) size.
+pub fn reset_font_zoom() {
+	FONT_ZOOM_PX.store(0, Ordering::Relaxed);
+}
 
 // The size the text is actually rendered at: the OS monospace size while
 // `use_system_font_size` is on (and the OS has one), else the configured

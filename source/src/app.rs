@@ -360,6 +360,7 @@ enum MenuAction {
 	Close,
 	FontBigger,
 	FontSmaller,
+	FontReset,
 	ToggleFullscreen,
 	ToggleFrame,
 	ToggleMenuBar,
@@ -1032,6 +1033,7 @@ impl State {
 			2 => vec![
 				mia('I', "Increase Font Size (Ctrl +)", MenuAction::FontBigger),
 				mia('D', "Decrease Font Size (Ctrl -)", MenuAction::FontSmaller),
+				mia('e', "Reset Font Size (Ctrl 0)", MenuAction::FontReset),
 				Entry::Sep,
 				mta('R', read_only, "Read-only", MenuAction::ToggleReadOnly),
 				Entry::Sep,
@@ -1235,6 +1237,7 @@ impl State {
 			MenuAction::CloseTab => self.close_tab(),
 			MenuAction::FontBigger => self.font_zoom(1),
 			MenuAction::FontSmaller => self.font_zoom(-1),
+			MenuAction::FontReset => self.font_zoom_reset(),
 			MenuAction::ToggleFullscreen => self.toggle_fullscreen(),
 			MenuAction::ToggleFrame => {
 				self.decorated = !self.decorated;
@@ -1518,6 +1521,16 @@ impl State {
 	// the text context at the new effective size. Window-wide, never persisted.
 	fn font_zoom(&mut self, dir: i32) {
 		config::nudge_font_zoom(dir);
+		let scale = self.window.scale_factor() as f32;
+		self.rebuild_text(scale);
+		self.dirty = true;
+	}
+
+	fn font_zoom_reset(&mut self) {
+		if config::font_zoom_px() == 0 {
+			return; // already at the configured size
+		}
+		config::reset_font_zoom();
 		let scale = self.window.scale_factor() as f32;
 		self.rebuild_text(scale);
 		self.dirty = true;
@@ -3875,6 +3888,11 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 						Key::Character(typed) if typed == "=" || typed == "+" => {
 							state.font_zoom(1);
+							return;
+						}
+						// Ctrl+0: reset the session font zoom to the configured size
+						Key::Character(typed) if typed == "0" => {
+							state.font_zoom_reset();
 							return;
 						}
 						Key::Named(NamedKey::PageUp) => {
