@@ -41,10 +41,9 @@
 # Configuration
 
 ## Source 'gnul': the b23 SilkTerm Windows (x86_64-pc-windows-gnu) release build,
-## reached over SMB. Canonical path with the '0_links' junctions resolved, so it
-## works without the mapped-folder aliases. The original alias was:
-##   C:\0-0\users\collierjr\0_links\b23•collierjr•0_links\projects\dev\zf10…github∙jimcollier\silkterm\github\target\x86_64-pc-windows-gnu\release
-$B23ReleaseDir = "\\b23\home-collierjr\0-0\0_links\projects\dev\zf10…github∙jimcollier\silkterm\github\target\x86_64-pc-windows-gnu\release"
+## reached over SMB.
+# $B23ReleaseDir = "\\b23\home-collierjr\0-0\0_links\projects\dev\zf10…github∙jimcollier\silkterm\github\target\x86_64-pc-windows-gnu\release"
+$B23ReleaseDir = "\\b23\zfs\zf10\0-0\users\collierjr\data\prs\dev\github.com\jim-collier\silkterm\github\target\x86_64-pc-windows-gnu\release"
 
 ## Sources 'gnuw'/'msvc': the local Windows-native release build dirs (same clone,
 ## two target triples). The clone root differs per host, so try the known
@@ -53,6 +52,7 @@ $B23ReleaseDir = "\\b23\home-collierjr\0-0\0_links\projects\dev\zf10…github∙
 $LocalTargetRootCandidates = @(
 	"C:\0-0\users\collierjr\data\prs\dev\github.com\jim-collier\silkterm\github\target"
 	"C:\opt\0-0\users\collierjr\data\prs\dev\github\jim-collier\silkterm\github\target"
+	"C:\opt\0-0\users\collierjr\data\prs\dev\github.com\jim-collier\silkterm\github\target"
 )
 $LocalTargetRoot = $LocalTargetRootCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $LocalTargetRoot) { $LocalTargetRoot = $LocalTargetRootCandidates[0] }
