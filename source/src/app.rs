@@ -2450,22 +2450,45 @@ impl State {
 			// the content area so the halo only affects terminal text, never the
 			// menu bar / tab titles above it.
 			if scrim_on {
-				// Clip the scrim per-pane to that pane's CONTENT rect (its rect inset
-				// by the margin), not the whole content area: a full-frame blur spreads
-				// each glyph's halo ~scrim_ext px in every direction, so an edge glyph
-				// would otherwise bleed across the 1px divider and fill the inter-pane
-				// margins - the "garbage around split lines". The gutter (margin + gap +
-				// margin) is wider than the halo reach, so no pane's halo reaches a
-				// neighbour's content region and the gutter stays clean. The margin inset
-				// also keeps the halo off the menu/tab bars, as the old content-area clip did.
+				// The scrim is a full-frame blur - each glyph's halo spreads ~scrim_ext
+				// px every direction. Composite it PER-PANE, clipped per-side: an edge that
+				// borders ANOTHER pane (internal divider) clips at the content edge (rect
+				// inset by the margin) so the halo can't reach the inter-pane gutter - the
+				// "garbage around split lines"; an edge at the WINDOW border clips at the rect
+				// edge so the outer halo still fills the window margin. The gutter (margin +
+				// gap + margin) is wider than the halo reach, so no pane's halo touches a
+				// neighbour's content region.
+				let area = self.area();
 				for (rect, _, _) in &group_ranges {
-					let content = Rect {
-						x: rect.x + margin,
-						y: rect.y + margin,
-						w: (rect.w - 2.0 * margin).max(0.0),
-						h: (rect.h - 2.0 * margin).max(0.0),
+					// external = sits on the content-area boundary (window edge); otherwise it
+					// borders a gap/another pane -> pull the clip in by the margin.
+					let l = if rect.x <= area.x + 0.5 {
+						rect.x
+					} else {
+						rect.x + margin
 					};
-					let (cx, cy, cw, ch) = scissor(content, sw, sh);
+					let t = if rect.y <= area.y + 0.5 {
+						rect.y
+					} else {
+						rect.y + margin
+					};
+					let r = if rect.x + rect.w >= area.x + area.w - 0.5 {
+						rect.x + rect.w
+					} else {
+						rect.x + rect.w - margin
+					};
+					let b = if rect.y + rect.h >= area.y + area.h - 0.5 {
+						rect.y + rect.h
+					} else {
+						rect.y + rect.h - margin
+					};
+					let clip = Rect {
+						x: l,
+						y: t,
+						w: (r - l).max(0.0),
+						h: (b - t).max(0.0),
+					};
+					let (cx, cy, cw, ch) = scissor(clip, sw, sh);
 					if cw == 0 || ch == 0 {
 						continue;
 					}
