@@ -77,43 +77,6 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- ✅ Installer script(s):
-	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
-	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
-	- 🔘 Live-verify the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host; the Linux paths of both scripts are verified end to end.
-
-	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
-
-	- Bash installer (Linux, BSD, macOS, WSL)
-
-		~~~bash
-		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
-		~~~
-
-	- PowerShell installer (Windows, Linux, macOS)
-
-		~~~powershell
-		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
-		~~~
-
-	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
-
-		| OS      | System multi-file path  | ￩ Single exe or symlink        | (or) User install path              | ￩ Single exe or symlink
-		| :---    | :---                    | :---                           | :---                                | :---
-		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
-		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
-		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
-		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
-
-	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
-
-		| OS      | System multi-file path  | ￩ Launcher                                                    | (or) User install path        | ￩ Launcher
-		| :---    | :---                    | :---                                                          | :---                          | :---
-		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
-		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
-		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
-		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
-
 - ✅ Add an option in settings, to persist "Copy on select". (Which overrides my earlier direction.)
 	- Done: new `copy_on_select` config key plus a "Copy on select" checkbox in Settings (Window tab, Shell section). When on, every pane starts with copy-on-select enabled; applying the toggle also flips all existing panes. The menu-bar checkbox still toggles it live per pane for the session, without writing back to the config.
 
@@ -1008,7 +971,377 @@ In each section, items are listed approximately from newest to oldest.
 - ✅ Native keybindings for `less` don't work.
 	- Fix: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
 
+- ✅ Installer script(s):
+	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
+	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
+	- Need to verify the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host; the Linux paths of both scripts are verified end to end.
+
+	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
+
+	- Bash installer (Linux, BSD, macOS, WSL)
+
+		~~~bash
+		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
+		~~~
+
+	- PowerShell installer (Windows, Linux, macOS)
+
+		~~~powershell
+		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
+		~~~
+
+	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Single exe or symlink        | (or) User install path              | ￩ Single exe or symlink
+		| :---    | :---                    | :---                           | :---                                | :---
+		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
+		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
+
+	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Launcher                                                    | (or) User install path        | ￩ Launcher
+		| :---    | :---                    | :---                                                          | :---                          | :---
+		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
+		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
+
+- ✅ Installer script(s):
+	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
+	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
+	- Need to verify the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host; the Linux paths of both scripts are verified end to end.
+
+	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
+
+	- Bash installer (Linux, BSD, macOS, WSL)
+
+		~~~bash
+		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
+		~~~
+
+	- PowerShell installer (Windows, Linux, macOS)
+
+		~~~powershell
+		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
+		~~~
+
+	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Single exe or symlink        | (or) User install path              | ￩ Single exe or symlink
+		| :---    | :---                    | :---                           | :---                                | :---
+		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
+		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
+
+	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Launcher                                                    | (or) User install path        | ￩ Launcher
+		| :---    | :---                    | :---                                                          | :---                          | :---
+		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
+		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
+
+- ✅ Installer script(s):
+	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
+	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
+	- Need to verify the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host; the Linux paths of both scripts are verified end to end.
+
+	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
+
+	- Bash installer (Linux, BSD, macOS, WSL)
+
+		~~~bash
+		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
+		~~~
+
+	- PowerShell installer (Windows, Linux, macOS)
+
+		~~~powershell
+		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
+		~~~
+
+	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Single exe or symlink        | (or) User install path              | ￩ Single exe or symlink
+		| :---    | :---                    | :---                           | :---                                | :---
+		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
+		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
+
+	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Launcher                                                    | (or) User install path        | ￩ Launcher
+		| :---    | :---                    | :---                                                          | :---                          | :---
+		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
+		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
+
+- ✅ Installer script(s):
+	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
+	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
+	- Need to verify the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host; the Linux paths of both scripts are verified end to end.
+
+	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
+
+	- Bash installer (Linux, BSD, macOS, WSL)
+
+		~~~bash
+		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
+		~~~
+
+	- PowerShell installer (Windows, Linux, macOS)
+
+		~~~powershell
+		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
+		~~~
+
+	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Single exe or symlink        | (or) User install path              | ￩ Single exe or symlink
+		| :---    | :---                    | :---                           | :---                                | :---
+		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
+		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
+
+	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Launcher                                                    | (or) User install path        | ￩ Launcher
+		| :---    | :---                    | :---                                                          | :---                          | :---
+		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
+		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
+
+- ✅ Installer script(s):
+	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
+	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
+	- Need to verify the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host; the Linux paths of both scripts are verified end to end.
+
+	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
+
+	- Bash installer (Linux, BSD, macOS, WSL)
+
+		~~~bash
+		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
+		~~~
+
+	- PowerShell installer (Windows, Linux, macOS)
+
+		~~~powershell
+		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
+		~~~
+
+	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Single exe or symlink        | (or) User install path              | ￩ Single exe or symlink
+		| :---    | :---                    | :---                           | :---                                | :---
+		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
+		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
+
+	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Launcher                                                    | (or) User install path        | ￩ Launcher
+		| :---    | :---                    | :---                                                          | :---                          | :---
+		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
+		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
+
+- ✅ Installer script(s):
+	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
+	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
+	- Need to verify the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host; the Linux paths of both scripts are verified end to end.
+
+	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
+
+	- Bash installer (Linux, BSD, macOS, WSL)
+
+		~~~bash
+		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
+		~~~
+
+	- PowerShell installer (Windows, Linux, macOS)
+
+		~~~powershell
+		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
+		~~~
+
+	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Single exe or symlink        | (or) User install path              | ￩ Single exe or symlink
+		| :---    | :---                    | :---                           | :---                                | :---
+		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
+		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
+
+	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Launcher                                                    | (or) User install path        | ￩ Launcher
+		| :---    | :---                    | :---                                                          | :---                          | :---
+		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
+		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
+
+- ✅ Installer script(s):
+	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
+	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
+	- Need to verify the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host; the Linux paths of both scripts are verified end to end.
+
+	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
+
+	- Bash installer (Linux, BSD, macOS, WSL)
+
+		~~~bash
+		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
+		~~~
+
+	- PowerShell installer (Windows, Linux, macOS)
+
+		~~~powershell
+		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
+		~~~
+
+	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Single exe or symlink        | (or) User install path              | ￩ Single exe or symlink
+		| :---    | :---                    | :---                           | :---                                | :---
+		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
+		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
+
+	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Launcher                                                    | (or) User install path        | ￩ Launcher
+		| :---    | :---                    | :---                                                          | :---                          | :---
+		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
+		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
+
+- ✅ Installer script(s):
+	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
+	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
+	- Need to verify the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host; the Linux paths of both scripts are verified end to end.
+
+	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
+
+	- Bash installer (Linux, BSD, macOS, WSL)
+
+		~~~bash
+		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
+		~~~
+
+	- PowerShell installer (Windows, Linux, macOS)
+
+		~~~powershell
+		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
+		~~~
+
+	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Single exe or symlink        | (or) User install path              | ￩ Single exe or symlink
+		| :---    | :---                    | :---                           | :---                                | :---
+		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
+		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
+
+	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Launcher                                                    | (or) User install path        | ￩ Launcher
+		| :---    | :---                    | :---                                                          | :---                          | :---
+		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
+		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
+
+- ✅ Installer script(s):
+	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
+	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
+	- Need to verify the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host; the Linux paths of both scripts are verified end to end.
+
+	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
+
+	- Bash installer (Linux, BSD, macOS, WSL)
+
+		~~~bash
+		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
+		~~~
+
+	- PowerShell installer (Windows, Linux, macOS)
+
+		~~~powershell
+		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
+		~~~
+
+	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Single exe or symlink        | (or) User install path              | ￩ Single exe or symlink
+		| :---    | :---                    | :---                           | :---                                | :---
+		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
+		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
+
+	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Launcher                                                    | (or) User install path        | ￩ Launcher
+		| :---    | :---                    | :---                                                          | :---                          | :---
+		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
+		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
+
 #### Done - new features and enhancements
+
+- ✅ Installer script(s):
+	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
+	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
+	- Need to verify the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host; the Linux paths of both scripts are verified end to end.
+
+	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
+
+	- Bash installer (Linux, BSD, macOS, WSL)
+
+		~~~bash
+		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
+		~~~
+
+	- PowerShell installer (Windows, Linux, macOS)
+
+		~~~powershell
+		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
+		~~~
+
+	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Single exe or symlink        | (or) User install path              | ￩ Single exe or symlink
+		| :---    | :---                    | :---                           | :---                                | :---
+		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
+		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
+
+	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
+
+		| OS      | System multi-file path  | ￩ Launcher                                                    | (or) User install path        | ￩ Launcher
+		| :---    | :---                    | :---                                                          | :---                          | :---
+		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
+		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
 
 - ✅ CICD: check that local can be safely refreshed from remote before building, rather than only pulling at publish time.
 	- Done: new stage 0 "remote sync" in `cicd.bash` and `cicd-win.ps1` - fetch, fast-forward (stash-wrapped) when only behind, abort early when diverged. Offline or no upstream just warns and continues. `--no-sync` / `-NoSync` bypasses.
