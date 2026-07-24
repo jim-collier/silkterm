@@ -224,7 +224,32 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 ### Installing
 
-Pre-built releases are not published yet - build from source per the Compiling section. Optional: copy the example config tree in [`filesystem/home/`](filesystem/home/) over your own `$HOME` for a starter config and the background image pack.
+The primary install is a native package from the [releases page](https://github.com/jim-collier/silkterm/releases): `.deb` / `.rpm` on Linux, or the NSIS setup `.exe` on Windows. (No releases published yet? Build from source per the section below.) Optional either way: copy the example config tree in [`filesystem/home/`](filesystem/home/) over your own `$HOME` for a starter config and the background image pack.
+
+#### Direct
+
+Prefer a plain binary? These one-liners download the latest release, verify its sha256, and install it. Each states its plan and asks before touching anything, and does nothing if you're already current.
+
+Bash >= 3.2 (Linux, WSL):
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/jim-collier/silkterm/main/install.bash)  [--release stable|dev]  [--target user|system]  [--arch x64|arm64]
+```
+
+PowerShell 7+ (Windows, Linux):
+
+```powershell
+& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/jim-collier/silkterm/main/install.ps1')))  [-Release stable|dev]  [-Target user|system]  [-Arch x64|arm64]
+```
+
+Install locations:
+
+| OS      | User install (default)                    | ￩ Launcher                                                      | (or) System install       | ￩ Launcher
+| :---    | :---                                      | :---                                                            | :---                      | :---
+| Linux   | `~/.local/bin/silkterm`                   | `~/.local/share/applications/silkterm.desktop`                  | `/usr/local/bin/silkterm` | `/usr/local/share/applications/silkterm.desktop`
+| Windows | `%LOCALAPPDATA%\Programs\SilkTerm\`       | Start Menu shortcut, and the install dir is added to `%PATH%`   | `C:\Program Files\SilkTerm\` | Common Start Menu shortcut (needs an elevated shell)
+
+macOS and BSD builds aren't published yet - build from source below.
 
 ### Building from source
 
