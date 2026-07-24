@@ -77,7 +77,10 @@ In each section, items are listed approximately from newest to oldest.
 
 ### New features and enhancements
 
-- 🔘 Installer script(s):
+- ✅ Installer script(s):
+	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
+	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
+	- 🔘 Live-verify the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host; the Linux paths of both scripts are verified end to end.
 
 	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
 
