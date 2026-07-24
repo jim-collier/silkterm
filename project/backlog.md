@@ -109,8 +109,14 @@ In each section, items are listed approximately from newest to oldest.
 				- "Opacity" (%)
 				- "Blur-behind"
 			- Sub-group: Wallpaper [ ]  (new boolean to turn wallpaper on or off)
-				- "File" (formerly "Background image") text box.
+				- "File or folder" (formerly "Background image") text box.
 				- "Fit" checkboxes
+				- "Randomize" checkbox
+					- [ ] New window
+					- [ ] New tab
+					- [ ] New pane (defer to when this is technically possible)
+					- [ ] Interval
+						- Slider 1 second to 1 week
 				- "Visibility" (%; formerly "Bg image opacity", also change config setting name)
 				- "Blur" (formerly "Bg image blur"; %)
 				- Minimum contrast %
@@ -139,14 +145,23 @@ In each section, items are listed approximately from newest to oldest.
 						- Update my existing user config to match.
 				- Size
 				- Line height
-			- Group "Text readability scrim"
+			- Group "Text readability"
 				- Sub-group: "Text scrim" checkbox
 					- "Scrim radius" (existing range and values)
 					- "Softness" (0% to 100%)
 					- "Outline px" (formerly "Text outline"; existing range and values)
 					- Function
 					- Falloff
-					- "Cursor" checkboxes
+		- Tab: "Cursor"
+			- "Blink rate" slider
+			- "Shape"
+			- "Animation"
+			- "Animation pauses on ..."
+				- [ ] Loss of window focus
+				- [ ] Loss of pane activity
+				- [ ] Input inactivity
+				- "Inactivity timer" 100 ms to 1m
+			- "Visibility"    [ ] Scrim   [ ] Outline
 		- Tab: "Movement" (formerly "Scrolling")
 		- Tab: "Colors"
 			- Group: "Themes"
@@ -226,6 +241,8 @@ In each section, items are listed approximately from newest to oldest.
 
 - 🔘 Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- 🔘 Add Windows support.
+
+- 🔘 Address high CPU usage
 
 - 🛠️ Tab interface:
 	- Done: single-window core. Each tab owns a PaneManager; the tab bar shows once there's more than one tab, click to switch, and the pane area shrinks to make room for the bar.
