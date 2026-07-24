@@ -19,9 +19,9 @@ This is a product backlog just for pre-v1.0.0 release. After that, bugs, feature
 	- [Bugs](#bugs)
 	- [New features and enhancements](#new-features-and-enhancements)
 	- [Done](#done)
-		- [First steps](#first-steps)
 		- [Done - Bugs](#done---bugs)
-		- [Done - new features and enhancements](#done---new-features-and-enhancements)
+		- [Done - New features and enhancements](#done---new-features-and-enhancements)
+		- [First steps](#first-steps)
 	- [Future and/or deferred](#future-andor-deferred)
 	- [Canceled](#canceled)
 - [Application name ideas](#application-name-ideas)
@@ -50,50 +50,26 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- ✅ Severe bug: `flatpak update` output bounces wildly.
-	- It seems like every update to the update bar at the bottom, causes about a screen's worth of text to back-up a "page" (text moves down), then immediately smooth-scroll back "up", so that the bottom (update bar) is visible again. While the "Nano Bounce Bug" is just a slightly annoying but tolerable inconveience, this one is a breaking issue.
-	- But only if the text filling the terminal is from flatpak. If it's from other programs and flatpak only adds a few lines, there's no problem.
-	- Cause: once a pane's scrollback is full, how far the view is behind can no longer be read from scrollback growth, so it is inferred by matching this frame's rows against the last frame's. That match demanded that nearly the whole retained region line up exactly - at most three rows off. flatpak keeps a multi-row live progress area pinned at the bottom and rewrites all of it every tick, so an ordinary one-line advance always left more than three rows differing, no shift matched, and the inference fell through to its last-resort guess: assume the screen turned over completely and report the maximum catch-up distance. Every line of output therefore kicked the view up the full backlog cap and eased it back down. That also explains why it only showed when flatpak's own output filled the screen - a few flatpak lines among other text leave the progress area too small to break the tolerance.
-	- Fix: the inference now scores every candidate shift by how much of the retained region it explains and takes the best one, instead of insisting nearly all of it lines up. The true shift always explains the most, and a coincidental match further down has less overlap to win with, so the real one-line advance is reported even while a large live region churns. The guard that a static or blank field must not read as a scroll is unchanged, and a genuine full-screen turnover still reports the catch-up distance. Same tolerance the alt-screen detector has used all along - a live progress area is a static band in all but name.
-
-- ✅ Copy on output is still copying the prompt that appears after command output.
-	- Cause: the multi-line-prompt strip matched prompt rows by exact content, so any prompt row with dynamic content (cwd, git branch, clock, right-aligned segments) never matched between commands and its rows stayed in the copy.
-	- Fix: prompt rows are now matched by structure - runs of letters/digits and of spaces collapse before hashing, so content can change while the punctuation/box-drawing layout still has to match exactly. Regression tests cover dynamic prompt rows and confirm plain output can't false-match.
-
-- ✋ The dreaded "Nano Bounce Bug" is back. This will be the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and possibly red-herrings. It obviously must be related in some way to smooth scrolling (the next time it happens I'll try turning it off to make sure). So let's get back to basics of what I know, and don't know:
-	- Steps:
-		- Run nano. On any file, or with no file.
-		- Observe: It "pops" onto the screen, but "wobbles", "violently", for maybe a second or two. If I recall, the wobbling is vertically up and down only - but my memory may be biased by what I believe "should" only be possible given the design and code. But at this point - who knows.
-			- Note: It's short enough that it's livable (kind of cool even), but it's still a jarring effect for what is supposed to be a highly-polished terminal. (And by "kind of cool", I mean, if it were an opt-in, always happened "Compiz"-like "open-wobbly" effect. But we don't want that. We want stability.)
-	- It's hard to recreate, so I don't know the steps to do it. But once it happens once, it seems easy to repeat. It only seems to start happening after a while - so maybe related to lots of input and/or more likely, output. And/or many switching of modes? Or just time?
-	- ✋ Delay this to see if other fixes, fix this.
-
-- 🛠️ Windows: doesn't respond to DPI scaling changes.
-	- The app only read the scale factor once, at startup, so moving the window to a differently-scaled monitor (or changing the Windows scaling slider) left the fonts/chrome at the old scale.
-	- Note: not a compiler thing - DPI awareness is a runtime/manifest property, identical between the mingw-gnu and msvc builds. The gnu exe carries no manifest overriding it, and winit already enables per-monitor-v2 awareness at startup.
-	- Fix: added a scale-factor-changed handler that re-scales the text context (cell metrics, chrome, pane buffers) for the new factor and relayouts; the window's follow-up resize reconfigures the surface. Shares the same rebuild path as a Settings font change.
-	- ✅ Static case confirmed: this Windows box is actually at 125% (an earlier "100%" reading was a DPI-unaware shell being fed a virtualized 96 DPI). A dogfood build renders crisply and natively at 125% - measured cell width ~11.3px and row pitch ~23px, both exactly 1.25x their 100% values, with sharp anti-aliasing (not a 100% render upscaled by the compositor). So the app reads and applies the scale correctly.
-	- 🔘 Live scale *change* still unverified: the ScaleFactorChanged handler needs an actual transition (a 2nd monitor at a different scale, or dragging the Windows scaling slider while running), which a single fixed-125% monitor can't produce.
+- 🔘 When splitting panes, there is "visual garbage" in the pixels immediately surrounding the split lines.
+	- It seems like one pixel above, below, or on (for horizontal split), or one pixel to the left, right, or on for vertical splits.
 
 ### New features and enhancements
 
-- ✅ Add an option in settings, to persist "Copy on select". (Which overrides my earlier direction.)
-	- Done: new `copy_on_select` config key plus a "Copy on select" checkbox in Settings (Window tab, Shell section). When on, every pane starts with copy-on-select enabled; applying the toggle also flips all existing panes. The menu-bar checkbox still toggles it live per pane for the session, without writing back to the config.
+- 🔘 Hotkeys to increase/decrease font size feature:
+	- Also need CTRL+0 to be able to reset to whatever the config says.
+
+- 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
+	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
+		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
+	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
 
 - 🔘 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, AND legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
 
-- ✅ Font size should be able to be increased, even when using system font.
-	- May need to refactor "Use system font [ ]" in settings to:
-		- Use system font    [ ] Face   [ ] Size
-	- Done: the single toggle is now a dual-checkbox row (Face / Size), each following the OS independently, with matching config keys. Face governs font_family, Size governs font_size; each greys its own field. A config predating the split keeps its exact behavior (absent size follows the face toggle), except an explicit font_size - previously silently ignored - now wins over the OS size, since it reads as intent. Both checkboxes stay disabled on Windows.
+- 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
 
-- ✅ Hotkeys to increase/decrease font size
-	- Behavior: Per pane, inherited when split, or new tab with a focused resized pane, but not persisted across launches.
-	- HotKeys (and view menu items that list the hotkeys):
-		- Ctrl+'-' reduces font size.
-		- Ctrl+'+' and Ctrl+'=' increases font size.
-	- Done: Ctrl+-/+/= step the size a pixel per press (session-only, never persisted; works on top of the system size too), with matching View menu items. Verified live: row pitch grows and shrinks with the keys.
-	- ✋ Per-pane scoping deferred: all panes in a window share one set of text metrics, so a per-pane size needs the same per-pane renderer the per-pane CLI style options are waiting on. Currently window-wide.
+- 🔘 Hyperlinks:
+	- 🔘 Clickable - e.g. Ctrl+click, or right-click then includes "Copy link" and "Open link".
+	- 🔘 Auto-underline when mouse is underneath.
 
 - ✅ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
 	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Verified live for both.
@@ -107,10 +83,6 @@ In each section, items are listed approximately from newest to oldest.
 		- 🔘 Second highlight color should be a different, complimentary color that is also more vivid and saturated. That's for the current focus.
 		- 🔘 When text fields have focus highlight, there should only be one visible outline (rather than two - the highlight, AND the textbox outline).
 		- 🔘 The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
-
-- ✅ If host doesn't TERM=alacritty (including remote SSH hosts), then fallback to `TERM=xterm-256color` + `COLORTERM=truecolor`.
-	- Done (was already in place, now verified): startup checks the local terminfo database - `TERM=alacritty` only when the alacritty entry exists, else `TERM=xterm-256color`; `COLORTERM=truecolor` always. Confirmed in a spawned shell's environment.
-	- Remote SSH hosts can't be covered from this side: ssh forwards TERM as-is, and the remote's terminfo database isn't visible to the terminal. Remote fix is installing the alacritty terminfo there, or overriding TERM in the remote shell rc. A config key to force `xterm-256color` locally could be added later if wanted.
 
 - 🔘 Refactor settings dialog
 	- Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
@@ -140,6 +112,18 @@ In each section, items are listed approximately from newest to oldest.
 				- "Fit" checkboxes
 				- "Visibility" (%; formerly "Bg image opacity", also change config setting name)
 				- "Blur" (formerly "Bg image blur"; %)
+				- Minimum contrast %
+					- (At 0% background image visibility - not useful but establishes the floor.)
+					- Default 50%
+				- Maximum contrast %
+					- (At 100% background image visibility.)
+					- Default 50%.
+				- Minimum saturation %
+					- (At 0% background image visibility - not useful but establishes the floor.)
+					- Default 50%
+				- Maximum saturation %
+					- (At 100% background image visibility.)
+					- Default 50%.
 			- Sub-group: "Contrast mask" checkbox
 				- "Size" (Formerly "Mask size". 0% to 100%)
 				- "Strength" (Formerly "Mask strength". 0% to 100%)
@@ -150,6 +134,7 @@ In each section, items are listed approximately from newest to oldest.
 					- Disabled on Windows.
 				- Family
 					- Default to: "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
+						- On all platforms.
 						- Update my existing user config to match.
 				- Size
 				- Line height
@@ -234,101 +219,12 @@ In each section, items are listed approximately from newest to oldest.
 				- If a new shell exe is found that doesn't already exist in the stored list, add it. (User can disable it later.)
 				- If an existing already defined shell exe name isn't found by explicit path, or in the environment path variable, disable it (don't delete it).
 
-- 🛠️ Menu enhancements:
-	- ✅ All keyboard acellerators within a menu must be unique. (Winner goes to the most important and/or frequently used.)
-		- Done: each menu item now carries its own accelerator letter (underlined; can sit mid-label, e.g. the S of "Selection"), unique per menu. Low-priority items and ones that already have a hotkey go without one.
-	- ✅ Remove:
-		- Tabs/Next tab
-		- Tabs/Previous tab
-		- Help/Support SilkTerm (already in "About" dialog)
-	- Add:
-		- ✅ View/Hide single tab  (not enabled by default - show tab even when there's only one)
-			- Done: new `hide_single_tab` config key (default off, so the tab bar now shows even with one tab); the View menu toggle persists it.
-		- 🔘 "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
-			- Waits on the Settings "Shells" tab (the shell list it draws from).
-	- ✅ Change:
-		- "Edit/Read-only" -> "View/Read-only"
+- 🔘 Menu enhancements:
+	- 🔘 "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
+		- Waits on the Settings "Shells" tab (the shell list it draws from).
 
-- 🛠️ Scroll-on-output enhancement: One additional setting: (20260629)
-	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
-		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
-	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
-
-- Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
-	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
-		- Ideally as packaged plug-ins (think shader kits or something that be traded online and dropped into a directory for auto-discovery).
-		- Reasonably easy for others to write new effect plugins that can be dropped-in, discovered at silkterm startup, loaded, and avaiable as an option.
-		- Security model. Some plugins may need access to screen contents, others may not. If access to contents, make sure it can't do anything else - e.g. write to the filesystem, network, etc. Also, no reading from the filesystem, network, sockets - anything - except own config file.
-	- 🔘 Effect 1: When a "copy on output" or "copy on select" happens, make the relevant checkbox and label gently burst with a glow and tiny fine sparkles for about a second - as if a fairy just blinged it with a magic wand in a movie.
-		- Needs to be subtle and non-annoying over long-run, but definitely noticeable.
-		- Tunable in config.
-		- If it doesn't work well on non-GPU acellerated platforms, just some kind of noticeable blink. But still need visual feedback.
-			- Need to decide what kind of feedback if not practical on non-GPU.
-	- 🔘 Effect 2: When a command or program returns to the prompt, give a burst of visual feedback, with a strength linearly proportional to the amount of time it took.
-		- With an upper limit of course - say, an hour, config-tunable.
-		- Config-tunable selection of predefined burst effects.
-		- Default (and so far only): A glowing bright gold pulse that the cursor gives off upon landing back at the shell prompt, as if a yellow sun that shed an outer layer of blasma in a burst.
-
-- 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
-
-- 🔘 Hyperlinks:
-	- 🔘 Clickable - e.g. Ctrl+click, or right-click then includes "Copy link" and "Open link".
-	- 🔘 Auto-underline when mouse is underneath.
-
-- ✅ Tabs: Include a subtle 'X' icon in right edge of tab, to close with mouse.
-	- Done: each tab reserves a right-edge close region with a dimmed "x" glyph; the tab title clips before it. A left click in that region closes the tab, elsewhere selects it.
-	- Verified: the close glyph renders subtly at each tab's right edge; clicking it closes that tab, clicking the tab body selects it.
-	- 🛠️ Improve:
-		- ✅ Make the 'X' bigger or bolder, and put it inside a button outline nicely balanced within top, right, and bottom margins.
-			- Done: the close "x" is now bold and centered inside a 1px outlined square button with equal top/right/bottom margins (the slack falls to the left, separating it from the title). The button box, its glyph, and the click region share one geometry helper so they stay aligned.
-				- ✅ X still too small and not centered in the box.
-					- Done: the font glyph (a lowercase-style multiplication sign, baseline-positioned, hence never truly centered) is replaced by a drawn X - two diagonal bars with angled ends, centered exactly in the box at any size. The box keeps equal top/right/bottom margins, now slightly larger; the active tab's box fill carries a faint pastel-red tint so the current tab reads at a glance.
-		- ✅ Provide brief visual feedback on click - as the tab closes. Maybe the terminal area can close immediately while the tab lingers just enough milliseconds for human perception to notice the click feedback, if that doesn't require rejiggering the whole pipeline.
-			- Note: two candidate approaches - a press-arm highlight (light on the button while pressed, close on release) that fits the existing input path, or the lingering-tab timed close described above (a short animation, more involved and feel-sensitive). Light on the button while pressed, close on release, is going to be the easiest, that's the winner.
-			- Done: press-arm - the button lights while held, the close fires on release over the same button, and dragging off before releasing cancels (standard button feel). Verified live: lit while held, release closes, drag-off leaves the tab open.
-
-- ✅ Ctrl+Shift+N: New window on same directory.
-	- Done: opens a new window (own process) starting in the focused pane's current directory. Verified live: the new instance lands in the source pane's cwd.
-
-- ✅ Main menu and right-click menus:
-	- ✅ Accellerators need to be unique. If running out of memorable word/accelerator keys, remove accellerators from the least-used or least-important items, especially ones that already have hotkeys.
-		- Done with the menu-enhancements accelerator rework above (per-item letters, unique per menu, dropped where a hotkey already covers it).
-	- ✅ List the hotkeys to activate the same function, if they exist. Keep in mind there might be a dynamic hotkey system soon.
-		- Done: Copy/Paste, New Tab, Close Tab, Settings, and Fullscreen now show their hotkeys in the menu labels (font-size items already did). Labels are plain strings, so a future dynamic hotkey system just changes what gets formatted in.
-
-- 🔘 Change wording of "background image opacity" to "background image visibility" (text and setting), to reflect that it's not just opacity. Still directly controls image/background color mix, but ALSO the contrast and saturation.
-
-- 🔘 (Originally filed as bug): At high blur radius and low softness, the blur has boxy artifacts.
-	- Cause: the scrim is a separable blur with a truncated kernel. The hard cutoff leaves a faint edge that low softness amplifies into a visible square, and the linear and s-curve falloffs are not true Gaussians, so their support reads as a diamond or box rather than a circle. The fix is a look-versus-performance tradeoff (wider extent, more taps, or a windowed kernel) that wants eyeballing. Deferred to a visual pass.
-	- 🔘 New feature: Adjustable blur quality in settings:
-		- High: Very high quality, may require a higher-end GPU, no visible artifacts at all.
-		- Medium (default): The current quality.
-		- Low: Trash quality, only looks OK at small blur radii. For VMs or remote sessions with punishing graphics. (In fact maybe this should be auto-detected...)
-
-- 🔘 When reducing background image opacity, also reduce contrast and saturation. Add tunable parameters to the config file:
-	- 🔘 Minimum contrast % (at 0% background image opacity - not useful but establishes the floor). Lets try a default of 50%.
-	- 🔘 Maximum contrast % (at 100% background image opacity). Default 50%.
-	- 🔘 Similar settings and defaults for saturation.
-
-- 🔘 Need a way to detect maximum and average brightness of background image - or some human hueristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
-	- 🔘 Really what I'm after, is this resulting effect. The implimentation is up to research:
-		- 🔘 At 100% background image visibility, it's just the image as-is.
-		- 🔘 But below that, the opacity % scales with human perception.
-			- 🔘 In other words, at say 90%, it is actually scaled to some average of ([perceived brightness], [brightest pixel]).
-			- 🔘 As an example, 50% for a very bright image, may be significantly darker than 50% for a very dark image.
-		- 🔘 And the inverse, for light-mode themes.
-		- 🔘 Need a config file name and a default value for the resulting strength of this calculation.
-
-- 🔘 Testing:
-	- 🔘 Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
-	- 🛠️ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
-		- Done: scrolling is covered by library tests encoding the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
-	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
-
-- 🛠️ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
+- 🔘 Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- 🔘 Add Windows support.
-	- ✅ Refinement: the two auto-copy triggers ("Copy on select" / "Copy on output") never disable themselves any more, and are now independent (both can be on at once). Reversed the earlier "exclusive to one pane / one window" behavior. A new pane inherits its tab's setting; a new tab or window starts off (nothing is remembered/persisted). It stays a per-active-pane behavior: the flags can be left on across many panes/tabs/windows, but only the focused pane of the active tab in the focused window actually copies. When a window loses focus its checkbox + label dim to show the feature is currently inert (it re-activates on refocus). Dropped the cross-instance "turn yours off" broadcast.
-	- ✅ Follow-up: a copy-on-output capture pending when the window/tab/pane loses its active status is now cancelled, instead of firing the moment focus returns. Otherwise output that finished while you were elsewhere would land on the clipboard on alt-tab-back, clobbering whatever you copied in between. Only a command launched after returning copies. Same cancel when the checkbox is turned off mid-command (re-enabling later could previously copy several old commands' worth of output).
 
 - 🛠️ Tab interface:
 	- Done: single-window core. Each tab owns a PaneManager; the tab bar shows once there's more than one tab, click to switch, and the pane area shrinks to make room for the bar.
@@ -342,50 +238,6 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Dock tab to different existing window with mouse
 		- Note: deferred, needs multi-window.
 
-- 🔘 Ability to change hotkeys, and/or assign new ones dynamically. Including a "capture" dialog.
-
-- 🛠️ Themes:
-	- Note: Any work done in the previous Settings dialog improvements, override potential contradictions here.
-	- Done (part 1): theme foundation and terminal palette. A Palette (bg/fg/cursor/focus + 16 ANSI) times a Theme (a dark+light pair); the theme and theme_mode config keys pick the active palette, and the [colors] keys still override per-colour. Three built-ins: SilkTerm, Matrix, Retro Amber, each dark and light.
-		- Verified: Matrix is green-on-black including green-toned ANSI; SilkTerm light is dark-on-light.
-	- Done (part 2): chrome/dialog theming plus System mode. Settings and About adapt to dark/light; the menu and tab chrome stay a fixed neutral gray. System mode follows the OS at startup and on theme-change, falling back to dark where the OS reports no preference (e.g. X11).
-		- Verified: light mode gives a light dialog with dark text; system mode launches clean.
-		- Note: still open - config-defined [themes.*], the Settings theme dropdown and its own tab, clearing per-colour overrides on re-select, per-theme menu colour (#166), more themes (Pastel, Solarized).
-	- 🛠️ Provide a set of about 3 or 4 themes, each that support "Dark" or "Light" mode (or "System").
-		- Done: three built-ins with dark and light.
-		- Note: System (OS-follow) and a 4th theme are still pending.
-		- Dark mode means the background is dark, text light - both for the terminal, and dialogs.
-			- But dialogs have a different color than terminal background. E.g. the existing dark gray for Dark mode, light gray for Light mode.
-		- Light mode means light background, dark text.
-		- "System" means whatever mode the system is using.
-		- Theme definitions should be put in the default config file.
-		- Selecting a theme overrides custom color settings, but those can then be individually tweaked as overrides (until a theme is chosen again and tweaks overwritten).
-		- Themes and colors should probably go on their own settings tab.
-		- User can add themes in the config file. Theme dropdown in Settings UI pulls from those updates.
-		- Example themes:
-			- Matrix (bright green on black). Light mode: dark green on light gray.
-			- Retro amber (Orange on black). Light mode: dark orange on light gray.
-			- Pastel (a pleasing light pastel color, on dark gray background that has a subtle tint of complementary pastel).
-
-- 🛠️ General configuration:
-	- Done: the default-shell behavior.
-	- Note: the named shell list and its UI (grid editor, Tab/Pane menus) are still to build by hand. The egui chrome migration was declined - see the note under "Setting dialog (part 2)".
-	- 🛠️ Ability to define shells to launch in a new tab or pane.
-		- ✅ By default, new tab launches the default shell for the window.
-			- Done: new tabs and the startup pane use the default shell.
-			- ✅ By priority: Global command shell override, non-empty shell specified in config file, or system default shell.
-				- Done: order is the window --shell, then config default_shell, then system. A new pane also inherits from the pane it forked, its tab, then the window first.
-				- Verified: a default_shell in config runs on the startup pane.
-		- ✅ By default, new pane launches same shell as the pane the new one was forked off of.
-			- Done: a pane stores its launch command, and interactive splits inherit it.
-	- 🛠️ The shell configuration is stored in the config file as a simple key:value list of shell names and command lines. Command lines may have spaces, single quotes, and/or double quotes in them.
-		- Done: a single default_shell string key, argv-split so it handles spaces and quotes.
-		- Note: the named key:value list and its consumers (the grid editor and Tab/Pane menus below) are still hand-rolled work.
-		- 🔘 In the settings dialog, this is accessed from a button that loads an additional modal dialog on top, with a 2*n grid of values. (That is editable like a typical database or spreadsheet grid.) This editable grid UX should be reusable for other potential future features.
-			- Note: hand-rolled. Build it as a dynamic list of name/command rows with add and remove, reusing the dialog's text-field editing.
-		- 🔘 The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
-			- Note: hand-rolled, follows the named-shell list above.
-
 - 🛠️ Setting dialog (part 2):
 	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
 	- ✅ Size: A boolean setting to "Remember last size".
@@ -393,13 +245,9 @@ In each section, items are listed approximately from newest to oldest.
 		- Verified: a manual resize persisted the remembered size, relaunch used it instead of the default, and the dialog shows the toggle checked with Columns and Rows greyed.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
 			- 🔘 "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
-	- ✅ All values, including slider numbers, should also have directly editable fields (that are part of the tab order).
-		- Done: each slider has a numeric field you can click or type into, with the value clamped to the slider's range.
-		- Note: the field joins the Tab order along with the rest of the dialog.
-		- Verified: unit tests for editing and clamping, plus a render check.
 
 - 🔘 Config file:
-	- 🔘 Use sister project "SHCL" for config language and structure, rather than TOML.
+	- 🔘 Use sister project "SHCL" for config language and structure, rather than TOML. (When shcl v1.0.0 stable is released.)
 	- 🔘 Convert already implicitly hierarchical config names, to actual nested hierarchical.
 	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
 	- 🔘 Each setting gets it's own newline-delimited (above and below) section, with helpful comments directly above the setting without newlines.
@@ -437,6 +285,89 @@ In each section, items are listed approximately from newest to oldest.
 	- Limit to concrete concepts that are unique to this project, not highly technical, and/or may be unfamiliar to, say, high-school reading level users.
 	- Targeted towards end users, as well as junior developers brand-new to the projecs.
 	- Limit the number of definitions to something like the top 20 to 50 terms most useful to define, in terms of uniqueness and approximate frequency. (E.g. "Scrim", "Contrast mask", and parts of the application UI, UX, settings, or features that are given specific names so that we know what's being referred to. Etc.)
+
+- 🔘 Prepare for code review
+
+- 🔘 Stable release!
+
+- 🔘 Wallpaper: Need a way to detect maximum and average brightness of background image - or some human hueristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
+	- 🔘 Really what I'm after, is this resulting effect. The implimentation is up to research:
+		- 🔘 At 100% background image visibility, it's just the image as-is.
+		- 🔘 But below that, the opacity % scales with human perception.
+			- 🔘 In other words, at say 90%, it is actually scaled to some average of ([perceived brightness], [brightest pixel]).
+			- 🔘 As an example, 50% for a very bright image, may be significantly darker than 50% for a very dark image.
+		- 🔘 And the inverse, for light-mode themes.
+		- 🔘 Need a config file name and a default value for the resulting strength of this calculation.
+
+- Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
+	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
+		- Ideally as packaged plug-ins (think shader kits or something that be traded online and dropped into a directory for auto-discovery).
+		- Reasonably easy for others to write new effect plugins that can be dropped-in, discovered at silkterm startup, loaded, and avaiable as an option.
+		- Security model. Some plugins may need access to screen contents, others may not. If access to contents, make sure it can't do anything else - e.g. write to the filesystem, network, etc. Also, no reading from the filesystem, network, sockets - anything - except own config file.
+	- 🔘 Effect 1: When a "copy on output" or "copy on select" happens, make the relevant checkbox and label gently burst with a glow and tiny fine sparkles for about a second - as if a fairy just blinged it with a magic wand in a movie.
+		- Needs to be subtle and non-annoying over long-run, but definitely noticeable.
+		- Tunable in config.
+		- If it doesn't work well on non-GPU acellerated platforms, just some kind of noticeable blink. But still need visual feedback.
+			- Need to decide what kind of feedback if not practical on non-GPU.
+	- 🔘 Effect 2: When a command or program returns to the prompt, give a burst of visual feedback, with a strength linearly proportional to the amount of time it took.
+		- With an upper limit of course - say, an hour, config-tunable.
+		- Config-tunable selection of predefined burst effects.
+		- Default (and so far only): A glowing bright gold pulse that the cursor gives off upon landing back at the shell prompt, as if a yellow sun that shed an outer layer of blasma in a burst.
+
+- 🔘 (Originally filed as bug but is really a refinement): At high blur radius and low softness, the blur has boxy artifacts.
+	- Cause: the scrim is a separable blur with a truncated kernel. The hard cutoff leaves a faint edge that low softness amplifies into a visible square, and the linear and s-curve falloffs are not true Gaussians, so their support reads as a diamond or box rather than a circle. The fix is a look-versus-performance tradeoff (wider extent, more taps, or a windowed kernel) that wants eyeballing. Deferred to a visual pass.
+	- 🔘 New feature: Adjustable blur quality in settings:
+		- High: Very high quality, may require a higher-end GPU, no visible artifacts at all.
+		- Medium (default): The current quality.
+		- Low: Trash quality, only looks OK at small blur radii. For VMs or remote sessions with punishing graphics. (In fact maybe this should be auto-detected...)
+
+- 🔘 Testing:
+	- 🔘 Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
+	- 🛠️ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
+		- Done: scrolling is covered by library tests encoding the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
+	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
+
+- 🔘 Ability to change hotkeys, and/or assign new ones dynamically. Including a "capture" dialog.
+
+- 🛠️ Themes:
+	- Note: Any work done in the previous Settings dialog improvements work, override potential contradictions here.
+	- Done (part 1): theme foundation and terminal palette. A Palette (bg/fg/cursor/focus + 16 ANSI) times a Theme (a dark+light pair); the theme and theme_mode config keys pick the active palette, and the [colors] keys still override per-colour. Three built-ins: SilkTerm, Matrix, Retro Amber, each dark and light.
+		- Verified: Matrix is green-on-black including green-toned ANSI; SilkTerm light is dark-on-light.
+	- Done (part 2): chrome/dialog theming plus System mode. Settings and About adapt to dark/light; the menu and tab chrome stay a fixed neutral gray. System mode follows the OS at startup and on theme-change, falling back to dark where the OS reports no preference (e.g. X11).
+		- Verified: light mode gives a light dialog with dark text; system mode launches clean.
+		- Note: still open - config-defined [themes.*], the Settings theme dropdown and its own tab, clearing per-colour overrides on re-select, per-theme menu colour (#166), more themes (Pastel, Solarized).
+	- 🛠️ Provide a set of about 3 or 4 themes, each that support "Dark" or "Light" mode (or "System").
+		- Done: three built-ins with dark and light.
+		- Note: System (OS-follow) and a 4th theme are still pending.
+		- Dark mode means the background is dark, text light - both for the terminal, and dialogs.
+			- But dialogs have a different color than terminal background. E.g. the existing dark gray for Dark mode, light gray for Light mode.
+		- Light mode means light background, dark text.
+		- "System" means whatever mode the system is using.
+		- Theme definitions should be put in the default config file.
+		- Selecting a theme overrides custom color settings, but those can then be individually tweaked as overrides (until a theme is chosen again and tweaks overwritten).
+		- Themes and colors should probably go on their own settings tab.
+		- User can add themes in the config file. Theme dropdown in Settings UI pulls from those updates.
+		- Example themes:
+			- Matrix (bright green on black). Light mode: dark green on light gray.
+			- Retro amber (Orange on black). Light mode: dark orange on light gray.
+			- Pastel (a pleasing light pastel color, on dark gray background that has a subtle tint of complementary pastel).
+
+- 🛠️ General configuration:
+	- Done: the default-shell behavior.
+	- Note: the named shell list and its UI (grid editor, Tab/Pane menus) are still to build by hand.
+	- 🛠️ Ability to define shells to launch in a new tab or pane.
+		- ✅ By default, new tab launches the default shell for the window.
+			- Done: new tabs and the startup pane use the default shell.
+			- ✅ By priority: Global command shell override, non-empty shell specified in config file, or system default shell.
+				- Done: order is the window --shell, then config default_shell, then system. A new pane also inherits from the pane it forked, its tab, then the window first.
+				- Verified: a default_shell in config runs on the startup pane.
+		- ✅ By default, new pane launches same shell as the pane the new one was forked off of.
+			- Done: a pane stores its launch command, and interactive splits inherit it.
+	- 🛠️ The shell configuration is stored in the config file as a simple key:value list of shell names and command lines. Command lines may have spaces, single quotes, and/or double quotes in them.
+		- Done: a single default_shell string key, argv-split so it handles spaces and quotes.
+		- Note: the named key:value list and its consumers (the grid editor and Tab/Pane menus below) are still hand-rolled work.
+		- 🔘 The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
+			- Note: hand-rolled, follows the named-shell list above.
 
 - 🛠️ Command-line options:
 	- Done (part 1, the options engine):
@@ -555,34 +486,19 @@ In each section, items are listed approximately from newest to oldest.
 	- Possibly to make this easier, store non-default per-tab and per-pane configurations as a "command line" in the config, that each override all other config settings.
 	- Emits the create/select form: `--new-tab` / `--new-pane` (with explicit `--splits`, direction, and non-default `--size`) for structure, plus `--tab=<id>` / `--pane=<id>` for per-entity overrides. Always writes explicit directions and sizes (never the "more space" default) so a saved layout reproduces regardless of window size.
 
-- 🔘 When running `sudo apt update`, the progress bar at the bottom bounces about halfway below the render area, as lines above it scroll up. This seems to be a side-effect of smooth-scrolling. Is there a way to prevent that from happening, without fundamentally breaking the very concept of smooth scrolling?
-	- Opening `nano` can occasionally result in wild vertical jelly-like bouncing around for about a second. (Obviously something to do with smooth-scroll-on-output.) It doesn't seem repeatable though. Usually it opens just fine.
-		- Maybe disable smooth scroll if direct raw access is detected?
-	- Reopened: The first attempt (snap output easing during line bursts) broke smooth scrolling for all normal output and was reverted (see the smooth-scrolling-regression bug above).
-		- Diagnosis: apt reserves the bottom line as a status bar via a scroll region, and each log line scrolls that region. Since the region starts at line 0, alacritty grows scrollback, which fires our output easing. The ease shifts the whole grid down by up to a cell and drags the fixed status bar below the viewport - that's the bounce.
-		- Note: a proper fix needs to know a partial scroll region is active so it can suppress easing only then, but alacritty_terminal doesn't expose the scroll region. Options for later: patch the crate to expose it, tee and parse DECSTBM ourselves, or accept it like other full-screen apps.
-	- Update: This actually seems to have fixed itself with some other work. Keep on backlog just in case.
-
-- ✅ Build packages when cicd.bash `--quick` isn't specified:
-	- ✅ .deb(s) + .rpm(s), per-architecture (cargo-deb / cargo-generate-rpm; metadata in source/Cargo.toml).
-	- ✅ Windows installer .exe(s), per-architecture (single self-contained NSIS setup; upgrades in place). The release binary links only system DLLs, so no runtime is bundled.
-	- Done: new stage 6 (Packages) builds from the stage-5 release binaries (never rebuilt). x86_64 always; ARM64 too unless `--no-arm`. Packages fold into the sha256sums. `--no-package` skips the stage.
-	- ✋ Deferred (no cross toolchain on this Linux box): macOS `.dmg` (needs an Apple SDK / osxcross - license-gated) and BSD packages (needs a FreeBSD sysroot). AppImage/Flatpak also future.
-
 ### Done
 
-#### First steps
-
-- ✅ Create name and GitHub repo.
-- ✅ Cargo skeleton: `alacritty_terminal` + `wgpu` deps.
-- ✅ Glyph atlas + cell render.
-- ✅ Wheel input -> lerp target.
-- ✅ Boundary-cross sync to `scroll_display`.
-- ✅ Overscan rows for partial-row fill.
-- ✅ Output-scroll easing.
-- ✅ Verify smoothness on X11/Compiz.
-
 #### Done - Bugs
+
+- ✅ Severe bug: `flatpak update` output bounces wildly.
+	- It seems like every update to the update bar at the bottom, causes about a screen's worth of text to back-up a "page" (text moves down), then immediately smooth-scroll back "up", so that the bottom (update bar) is visible again. While the "Nano Bounce Bug" is just a slightly annoying but tolerable inconveience, this one is a breaking issue.
+	- But only if the text filling the terminal is from flatpak. If it's from other programs and flatpak only adds a few lines, there's no problem.
+	- Cause: once a pane's scrollback is full, how far the view is behind can no longer be read from scrollback growth, so it is inferred by matching this frame's rows against the last frame's. That match demanded that nearly the whole retained region line up exactly - at most three rows off. flatpak keeps a multi-row live progress area pinned at the bottom and rewrites all of it every tick, so an ordinary one-line advance always left more than three rows differing, no shift matched, and the inference fell through to its last-resort guess: assume the screen turned over completely and report the maximum catch-up distance. Every line of output therefore kicked the view up the full backlog cap and eased it back down. That also explains why it only showed when flatpak's own output filled the screen - a few flatpak lines among other text leave the progress area too small to break the tolerance.
+	- Fix: the inference now scores every candidate shift by how much of the retained region it explains and takes the best one, instead of insisting nearly all of it lines up. The true shift always explains the most, and a coincidental match further down has less overlap to win with, so the real one-line advance is reported even while a large live region churns. The guard that a static or blank field must not read as a scroll is unchanged, and a genuine full-screen turnover still reports the catch-up distance. Same tolerance the alt-screen detector has used all along - a live progress area is a static band in all but name.
+
+- ✅ Copy on output is still copying the prompt that appears after command output.
+	- Cause: the multi-line-prompt strip matched prompt rows by exact content, so any prompt row with dynamic content (cwd, git branch, clock, right-aligned segments) never matched between commands and its rows stayed in the copy.
+	- Fix: prompt rows are now matched by structure - runs of letters/digits and of spaces collapse before hashing, so content can change while the punctuation/box-drawing layout still has to match exactly. Regression tests cover dynamic prompt rows and confirm plain output can't false-match.
 
 - ✅ Severe - VT bug: When the linux console swithes to text mode (e.g. user presses CTRL+ALT+F1), then back to graphical X11 (e.g. user presses CTRL+ALT+F7), all SilkTerm windows are mostly black. Only the tabs and blinking cursor or visible, plus some light RGB noise at the top of the terminal render area.
 	- New SilkTerm windows opened after that are OK. But new tabs open on a previously open window, have the same problem.
@@ -622,6 +538,12 @@ In each section, items are listed approximately from newest to oldest.
 	- Mouse scrolling seem unaffected. It's smooth.
 	- Cause: the normal-screen repaint-slide detector (added for ConPTY smooth scroll, default-on) only refreshed its frame snapshot on frames it could slide on. A plain output line lands in a scrollback-growth frame - animated by the output ease - which skipped the refresh, so the prompt redraw one frame later diffed against pre-scroll rows, read the already-eased scroll as a fresh repaint shift, and slid it a second time on top of the ease: down one, up two. A burst (ls) re-slid the whole accumulated shift at once, worse. Wheel scrollback never enters that path, so it stayed smooth.
 	- Fix: the snapshot refreshes on every content frame; only true repaint frames (no scrollback growth) may read the diff as a scroll. Reproduced and confirmed gone in a trace; the same scene now shows only the output ease. Pager slide scenes unaffected (harness green). New tests cover the frame gate and the enter-at-prompt sequence.
+
+- ✅ Windows: doesn't respond to DPI scaling changes.
+	- The app only read the scale factor once, at startup, so moving the window to a differently-scaled monitor (or changing the Windows scaling slider) left the fonts/chrome at the old scale.
+	- Note: not a compiler thing - DPI awareness is a runtime/manifest property, identical between the mingw-gnu and msvc builds. The gnu exe carries no manifest overriding it, and winit already enables per-monitor-v2 awareness at startup.
+	- Fix: added a scale-factor-changed handler that re-scales the text context (cell metrics, chrome, pane buffers) for the new factor and relayouts; the window's follow-up resize reconfigures the surface. Shares the same rebuild path as a Settings font change.
+	- ✅ Static case confirmed: this Windows box is actually at 125% (an earlier "100%" reading was a DPI-unaware shell being fed a virtualized 96 DPI). A dogfood build renders crisply and natively at 125% - measured cell width ~11.3px and row pitch ~23px, both exactly 1.25x their 100% values, with sharp anti-aliasing (not a 100% render upscaled by the compositor). So the app reads and applies the scale correctly.
 
 - ✅ Windows: no smooth-scrolling in full-screen / scroll-region apps (muffer, nano), though it works on the Linux build.
 	- Scope (owner-confirmed): plain directory listings and mouse-wheel scrollback DO scroll smoothly on Windows; only apps that keep a fixed UI with a scrolling sub-region (muffer's bottom input box, nano's top/bottom bars) failed.
@@ -1304,7 +1226,84 @@ In each section, items are listed approximately from newest to oldest.
 		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
 		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
 
-#### Done - new features and enhancements
+#### Done - New features and enhancements
+
+- ✅ Build packages when cicd.bash `--quick` isn't specified:
+	- ✅ .deb(s) + .rpm(s), per-architecture (cargo-deb / cargo-generate-rpm; metadata in source/Cargo.toml).
+	- ✅ Windows installer .exe(s), per-architecture (single self-contained NSIS setup; upgrades in place). The release binary links only system DLLs, so no runtime is bundled.
+	- Done: new stage 6 (Packages) builds from the stage-5 release binaries (never rebuilt). x86_64 always; ARM64 too unless `--no-arm`. Packages fold into the sha256sums. `--no-package` skips the stage.
+
+- ✅ When running `sudo apt update`, the progress bar at the bottom bounces about halfway below the render area, as lines above it scroll up. This seems to be a side-effect of smooth-scrolling. Is there a way to prevent that from happening, without fundamentally breaking the very concept of smooth scrolling?
+	- Opening `nano` can occasionally result in wild vertical jelly-like bouncing around for about a second. (Obviously something to do with smooth-scroll-on-output.) It doesn't seem repeatable though. Usually it opens just fine.
+		- Maybe disable smooth scroll if direct raw access is detected?
+	- Reopened: The first attempt (snap output easing during line bursts) broke smooth scrolling for all normal output and was reverted (see the smooth-scrolling-regression bug above).
+		- Diagnosis: apt reserves the bottom line as a status bar via a scroll region, and each log line scrolls that region. Since the region starts at line 0, alacritty grows scrollback, which fires our output easing. The ease shifts the whole grid down by up to a cell and drags the fixed status bar below the viewport - that's the bounce.
+		- Note: a proper fix needs to know a partial scroll region is active so it can suppress easing only then, but alacritty_terminal doesn't expose the scroll region. Options for later: patch the crate to expose it, tee and parse DECSTBM ourselves, or accept it like other full-screen apps.
+	- Update: This actually seems to have fixed itself with some other work. Keep on backlog just in case.
+
+- ✅ Setting dialog (part 2):
+	- ✅ All values, including slider numbers, should also have directly editable fields (that are part of the tab order).
+		- Done: each slider has a numeric field you can click or type into, with the value clamped to the slider's range.
+		- Note: the field joins the Tab order along with the rest of the dialog.
+		- Verified: unit tests for editing and clamping, plus a render check.
+
+- ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
+	- ✅ Refinement: the two auto-copy triggers ("Copy on select" / "Copy on output") never disable themselves any more, and are now independent (both can be on at once). Reversed the earlier "exclusive to one pane / one window" behavior. A new pane inherits its tab's setting; a new tab or window starts off (nothing is remembered/persisted). It stays a per-active-pane behavior: the flags can be left on across many panes/tabs/windows, but only the focused pane of the active tab in the focused window actually copies. When a window loses focus its checkbox + label dim to show the feature is currently inert (it re-activates on refocus). Dropped the cross-instance "turn yours off" broadcast.
+	- ✅ Follow-up: a copy-on-output capture pending when the window/tab/pane loses its active status is now cancelled, instead of firing the moment focus returns. Otherwise output that finished while you were elsewhere would land on the clipboard on alt-tab-back, clobbering whatever you copied in between. Only a command launched after returning copies. Same cancel when the checkbox is turned off mid-command (re-enabling later could previously copy several old commands' worth of output).
+
+- ✅ Ctrl+Shift+N: New window on same directory.
+	- Done: opens a new window (own process) starting in the focused pane's current directory. Verified live: the new instance lands in the source pane's cwd.
+
+- ✅ Main menu and right-click menus:
+	- ✅ Accellerators need to be unique. If running out of memorable word/accelerator keys, remove accellerators from the least-used or least-important items, especially ones that already have hotkeys.
+		- Done with the menu-enhancements accelerator rework above (per-item letters, unique per menu, dropped where a hotkey already covers it).
+	- ✅ List the hotkeys to activate the same function, if they exist. Keep in mind there might be a dynamic hotkey system soon.
+		- Done: Copy/Paste, New Tab, Close Tab, Settings, and Fullscreen now show their hotkeys in the menu labels (font-size items already did). Labels are plain strings, so a future dynamic hotkey system just changes what gets formatted in.
+
+- ✅ Tabs: Include a subtle 'X' icon in right edge of tab, to close with mouse.
+	- Done: each tab reserves a right-edge close region with a dimmed "x" glyph; the tab title clips before it. A left click in that region closes the tab, elsewhere selects it.
+	- Verified: the close glyph renders subtly at each tab's right edge; clicking it closes that tab, clicking the tab body selects it.
+	- ✅ Improve:
+		- ✅ Make the 'X' bigger or bolder, and put it inside a button outline nicely balanced within top, right, and bottom margins.
+			- Done: the close "x" is now bold and centered inside a 1px outlined square button with equal top/right/bottom margins (the slack falls to the left, separating it from the title). The button box, its glyph, and the click region share one geometry helper so they stay aligned.
+				- ✅ X still too small and not centered in the box.
+					- Done: the font glyph (a lowercase-style multiplication sign, baseline-positioned, hence never truly centered) is replaced by a drawn X - two diagonal bars with angled ends, centered exactly in the box at any size. The box keeps equal top/right/bottom margins, now slightly larger; the active tab's box fill carries a faint pastel-red tint so the current tab reads at a glance.
+		- ✅ Provide brief visual feedback on click - as the tab closes. Maybe the terminal area can close immediately while the tab lingers just enough milliseconds for human perception to notice the click feedback, if that doesn't require rejiggering the whole pipeline.
+			- Note: two candidate approaches - a press-arm highlight (light on the button while pressed, close on release) that fits the existing input path, or the lingering-tab timed close described above (a short animation, more involved and feel-sensitive). Light on the button while pressed, close on release, is going to be the easiest, that's the winner.
+			- Done: press-arm - the button lights while held, the close fires on release over the same button, and dragging off before releasing cancels (standard button feel). Verified live: lit while held, release closes, drag-off leaves the tab open.
+
+- ✅ Menu enhancements:
+	- ✅ All keyboard acellerators within a menu must be unique. (Winner goes to the most important and/or frequently used.)
+		- Done: each menu item now carries its own accelerator letter (underlined; can sit mid-label, e.g. the S of "Selection"), unique per menu. Low-priority items and ones that already have a hotkey go without one.
+	- ✅ Remove:
+		- Tabs/Next tab
+		- Tabs/Previous tab
+		- Help/Support SilkTerm (already in "About" dialog)
+	- Add:
+		- ✅ View/Hide single tab  (not enabled by default - show tab even when there's only one)
+			- Done: new `hide_single_tab` config key (default off, so the tab bar now shows even with one tab); the View menu toggle persists it.
+	- ✅ Change:
+		- "Edit/Read-only" -> "View/Read-only"
+
+- ✅ If host doesn't TERM=alacritty (including remote SSH hosts), then fallback to `TERM=xterm-256color` + `COLORTERM=truecolor`.
+	- Done (was already in place, now verified): startup checks the local terminfo database - `TERM=alacritty` only when the alacritty entry exists, else `TERM=xterm-256color`; `COLORTERM=truecolor` always. Confirmed in a spawned shell's environment.
+	- Remote SSH hosts can't be covered from this side: ssh forwards TERM as-is, and the remote's terminfo database isn't visible to the terminal. Remote fix is installing the alacritty terminfo there, or overriding TERM in the remote shell rc. A config key to force `xterm-256color` locally could be added later if wanted.
+
+- ✅ Hotkeys to increase/decrease font size
+	- Behavior: Per pane, inherited when split, or new tab with a focused resized pane, but not persisted across launches.
+	- HotKeys (and view menu items that list the hotkeys):
+		- Ctrl+'-' reduces font size.
+		- Ctrl+'+' and Ctrl+'=' increases font size.
+	- Done: Ctrl+-/+/= step the size a pixel per press (session-only, never persisted; works on top of the system size too), with matching View menu items. Verified live: row pitch grows and shrinks with the keys.
+	- ✋ Per-pane scoping deferred: all panes in a window share one set of text metrics, so a per-pane size needs the same per-pane renderer the per-pane CLI style options are waiting on. Currently window-wide.
+
+- ✅ Font size should be able to be increased, even when using system font.
+	- May need to refactor "Use system font [ ]" in settings to:
+		- Use system font    [ ] Face   [ ] Size
+	- Done: the single toggle is now a dual-checkbox row (Face / Size), each following the OS independently, with matching config keys. Face governs font_family, Size governs font_size; each greys its own field. A config predating the split keeps its exact behavior (absent size follows the face toggle), except an explicit font_size - previously silently ignored - now wins over the OS size, since it reads as intent. Both checkboxes stay disabled on Windows.
+
+- ✅ Add an option in settings, to persist "Copy on select". (Which overrides my earlier direction.)
+	- Done: new `copy_on_select` config key plus a "Copy on select" checkbox in Settings (Window tab, Shell section). When on, every pane starts with copy-on-select enabled; applying the toggle also flips all existing panes. The menu-bar checkbox still toggles it live per pane for the session, without writing back to the config.
 
 - ✅ Installer script(s):
 	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
@@ -2095,7 +2094,21 @@ In each section, items are listed approximately from newest to oldest.
 	- ✅ Render options: Stretch-to-fit, Zoom-to-fit.
 		- Done. `background_fit` = "stretch" | "zoom"; default zoom/cover.
 
+#### First steps
+
+- ✅ Create name and GitHub repo.
+- ✅ Cargo skeleton: `alacritty_terminal` + `wgpu` deps.
+- ✅ Glyph atlas + cell render.
+- ✅ Wheel input -> lerp target.
+- ✅ Boundary-cross sync to `scroll_display`.
+- ✅ Overscan rows for partial-row fill.
+- ✅ Output-scroll easing.
+- ✅ Verify smoothness on X11/Compiz.
+
 ### Future and/or deferred
+
+- ✋ Build packages when cicd.bash `--quick` isn't specified:
+	- ✋ Deferred (no cross toolchain on this Linux box): macOS `.dmg` (needs an Apple SDK / osxcross - license-gated) and BSD packages (needs a FreeBSD sysroot). AppImage/Flatpak also future.
 
 - ✋ Feature: Minority Report mode: Borderless, transparent, changes perspective depending on screen location.
 
@@ -2120,14 +2133,24 @@ In each section, items are listed approximately from newest to oldest.
 - ✋ Bug: Modal Bug - About only (almost certainly a Compiz issue): with the About/Settings dialog open, selecting another window then re-selecting the dialog leaves the terminal buried behind whatever got in front, instead of both coming to the top together. Settings now works; About still does this on some Compiz desktops.
 	- Almost certainly a Compiz WM issue, not a SilkTerm bug. About and Settings use the exact same dialog code path, so a difference between them is the WM's handling.
 	- Note: the general case is fixed - the hints are set before the window maps, and since Compiz won't raise a transient's parent, the terminal is restacked under the dialog on focus and re-asserted briefly to outlast Compiz's animated settle. Verified on Compiz for both dialogs; the About-only failure couldn't be reproduced there.
+	- 🔘 Is probably fixed. Test on non-compiz WM.
 
 - ✋ Bug: Alt-screen enter/exit animated like a scroll (`smooth_scroll_apps`). Two symptoms: (a) opening nano "jiggles"/jelly-bounces or scrolls in from a few lines down; (b) exiting nano scrolls the previous screen contents back in from the bottom, where a normal terminal just cuts.
 	- Cause: an alt-screen enter/exit is an instant full-screen swap, but the scroll probes diffed frame-to-frame across it. On enter the app-scroll probe matched blank rows between the old and new screens -> bogus slide (jiggle). On exit `history_size` jumps (the alt grid carries no scrollback) -> the output-ease read it as new output and scrolled the restored screen in.
 	- Fixed: track the previous frame's alt-screen state; on a transition hard-cut it - cancel any in-flight slide, skip both probes, suppress the output nudge, and rebaseline the row fingerprints to the new screen.
 	- Verified: confirmed fixed (both symptoms). Residual: a very slight one-line smooth scroll-up still happens on enter and exit - livable, deferred (see the deferred item below).
-	- Verified: mostly fixed. Entering and exiting still result in a one-line smooth scroll. Tolerable, but fix someday.
+	- Verified: **mostly fixed**. Entering and exiting still result in a one-line smooth scroll. Very tolerable, but fix someday.
+		- This has its own bug entry.
 
 - ✋ Bug: Residual 1-line smooth scroll-up on alt-screen enter AND exit (`smooth_scroll_apps`). The enter/exit hard-cut fixed the big jiggle and scroll-in, but a slight single-line ease still rides the transition. Livable, deferred. Likely the output-ease firing one frame after the transition. A candidate fix is to rebaseline the history baseline and suppress the nudge one frame past the transition.
+
+- ✋ The dreaded "Nano Bounce Bug" is back. This will be the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and possibly red-herrings. It obviously must be related in some way to smooth scrolling (the next time it happens I'll try turning it off to make sure). So let's get back to basics of what I know, and don't know:
+	- Steps:
+		- Run nano. On any file, or with no file.
+		- Observe: It "pops" onto the screen, but "wobbles", "violently", for maybe a second or two. If I recall, the wobbling is vertically up and down only - but my memory may be biased by what I believe "should" only be possible given the design and code. But at this point - who knows.
+			- Note: It's short enough that it's livable (kind of cool even), but it's still a jarring effect for what is supposed to be a highly-polished terminal. (And by "kind of cool", I mean, if it were an opt-in, always happened "Compiz"-like "open-wobbly" effect. But we don't want that. We want stability.)
+	- It's hard to recreate, so I don't know the steps to do it. But once it happens once, it seems easy to repeat. It only seems to start happening after a while - so maybe related to lots of input and/or more likely, output. And/or many switching of modes? Or just time?
+	- ✋ Delay this to see if other fixes, fix this.
 
 ### Canceled
 
