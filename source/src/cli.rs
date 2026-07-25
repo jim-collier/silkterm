@@ -134,6 +134,8 @@ fn parse_bool(s: &str) -> Option<bool> {
 
 // Minimal POSIX-ish word split honouring single/double quotes and backslash, so
 // `git log --oneline`, `bash --norc`, and `sh -c "a | b"` all argv-split right.
+// Outside quotes a backslash only escapes whitespace and quotes, so Windows paths
+// can be written plainly; inside double quotes the usual POSIX escapes apply.
 pub fn shell_split(s: &str) -> Result<Vec<String>, String> {
 	let mut out = Vec::new();
 	let mut word = String::new();
@@ -175,10 +177,18 @@ pub fn shell_split(s: &str) -> Result<Vec<String>, String> {
 					}
 				}
 			}
+			// Only whitespace and quotes are worth escaping outside quotes. A backslash
+			// before anything else stays put, so a Windows path survives unquoted -
+			// consuming it turned `C:\windows\system32\cmd.exe` into
+			// `C:windowssystem32cmd.exe`, and `\\host\share` into `\host\share`.
 			'\\' => {
 				in_word = true;
-				if let Some(next) = chars.next() {
-					word.push(next);
+				match chars.peek() {
+					Some(&next) if matches!(next, ' ' | '\t' | '\'' | '"') => {
+						chars.next();
+						word.push(next);
+					}
+					_ => word.push('\\'),
 				}
 			}
 			_ => {
@@ -717,6 +727,29 @@ mod tests {
 			["bash", "-c", "a | b"]
 		);
 		assert_eq!(shell_split("'a b' c").unwrap(), ["a b", "c"]);
+	}
+
+	#[test]
+	fn shell_keeps_unquoted_backslashes() {
+		// A Windows path written plainly must arrive intact, quoted or not.
+		assert_eq!(
+			shell_split(r"C:\windows\system32\cmd.exe").unwrap(),
+			[r"C:\windows\system32\cmd.exe"]
+		);
+		assert_eq!(
+			shell_split(r"\\host\share\app.exe -x").unwrap(),
+			[r"\\host\share\app.exe", "-x"]
+		);
+		assert_eq!(
+			shell_split(r#""C:\windows\system32\cmd.exe""#).unwrap(),
+			[r"C:\windows\system32\cmd.exe"]
+		);
+	}
+
+	#[test]
+	fn shell_still_escapes_whitespace_and_quotes() {
+		assert_eq!(shell_split(r"/opt/my\ app/sh").unwrap(), ["/opt/my app/sh"]);
+		assert_eq!(shell_split(r"it\'s fine").unwrap(), ["it's", "fine"]);
 	}
 
 	#[test]

@@ -50,10 +50,10 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
-- 🔘 `--shell` eats backslashes, so a Windows path cannot be passed unquoted.
-	- The shell string is split with POSIX rules, where an unquoted `\` escapes the next character - so `--shell C:\windows\system32\cmd.exe` arrives as `C:windowssystem32cmd.exe` and the spawn fails with "File not found".
-	- Only bites on Windows, where backslash paths are the normal way to name a program. Quoting (`--shell "C:\\windows\\..."`) works, but nobody expects to have to.
-	- Same parser serves `command_line` in the config, so that has the same trap.
+- ✅ `--shell` eats backslashes, so a Windows path cannot be passed unquoted.
+	- The shell string was split with POSIX rules, where an unquoted `\` escapes the next character - so `--shell C:\windows\system32\cmd.exe` arrived as `C:windowssystem32cmd.exe` and the spawn failed with "File not found". `\\host\share` lost a leading slash the same way.
+	- Outside quotes a backslash now only escapes whitespace and quotes, and is kept as-is before anything else, so plain Windows and UNC paths survive. Escaping a space or a quote still works, and inside double quotes the usual escapes are unchanged (that path already handled Windows paths correctly).
+	- Same parser serves `default_shell` and `command_line` in the config, so those are fixed too.
 	- Found while getting the Windows build to run under wine.
 
 - ✅ When splitting panes, there is "visual garbage" in the pixels immediately surrounding the split lines.
