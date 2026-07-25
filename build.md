@@ -58,6 +58,16 @@ What this does and does not buy you:
 - `ResizePseudoConsole` is a stub returning `E_NOTIMPL`, and the terminal backend asserts that it returns `S_OK` - so the app would die on its first resize. The script builds a tiny `conpty.dll` (the backend prefers any loadable `conpty.dll` over kernel32) that passes create/close through to kernel32 and answers resize with `S_OK`. Microsoft's own `conpty.dll`/`OpenConsole.exe` fail earlier under wine, so there is nothing better to drop in.
 - Only the x86_64 build runs; wine on x86_64 cannot execute the ARM64 exe.
 
+A newer wine does not help, so there is no reason to chase one. Measured against wine 11.14 (staging): the shell is still dead - the pty pipe gets zero bytes and the child's output escapes to the parent, exactly as on 10.0. The one thing that does change is `ResizePseudoConsole`, which fakes success from wine 11.2 onward (still a stub, it resizes nothing) and so merely makes the shim above redundant. Wine 11.0 stable is not enough - it still returns `E_NOTIMPL`.
+
+To try a different wine anyway, put it first on `PATH`: the script calls `wine`/`wineboot` unqualified, so nothing else is needed. Give it its own prefix, since wine upgrades a prefix in place and an older wine will not take it back:
+
+```sh
+PATH=/path/to/other-wine/bin:$PATH ./utility/run-windows-build-via-wine.bash --restage
+```
+
+WineHQ ships Debian packages rather than tarballs, but they install self-contained under `/opt/wine-*`, so `dpkg -x wine-staging-amd64_*.deb <dir>` gives a runnable tree without touching the system wine.
+
 ## ARM64 (Linux & Windows, cross-compile via cargo-zigbuild)
 
 `cargo-zigbuild` uses `zig` as a universal cross-linker, so ARM64 Linux and Windows build from an x86_64 Linux host with no per-target gcc/SDK.

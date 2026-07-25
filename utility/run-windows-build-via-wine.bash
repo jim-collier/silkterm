@@ -47,6 +47,10 @@
 ##		  better implementation to drop in, and dropping one in would be worse: the
 ##		  backend prefers any loadable conpty.dll over kernel32 and does not fall back
 ##		  when it fails.
+##		- A newer wine does not help either. Measured on 11.14: the pty pipe still gets
+##		  zero bytes. Only ResizePseudoConsole changes - it fakes success from 11.2 on,
+##		  which just makes the shim redundant. To try another wine put it first on PATH
+##		  (wine/wineboot are called unqualified) and pass --restage for its own prefix.
 ##		- Only the x86_64 build runs; wine on x86_64 cannot execute the ARM64 exe.
 ##	Syntax:
 ##		run-windows-build-via-wine.bash [OPTIONS] [-- ARGS...]
