@@ -39,6 +39,25 @@ cargo build --release --target x86_64-pc-windows-gnu
 
 The linker and a static-CRT flag are wired up in `.cargo/config.toml`, so the resulting `.exe` is self-contained (depends only on stock Windows system DLLs) and is a GUI binary (no console window in release builds).
 
+### Running the Windows build on Linux, under wine
+
+`utility/run-windows-build-via-wine.bash` runs that `.exe` here, so the Windows build can be looked at without a Windows machine:
+
+```sh
+./utility/run-windows-build-via-wine.bash              # newest build, on the current display
+./utility/run-windows-build-via-wine.bash --restage    # rebuild the wineprefix first
+./utility/run-windows-build-via-wine.bash --attach     # foreground, output on this terminal
+```
+
+It stages a private wineprefix, the exe, and its own `config.toml` under `cicd/artifacts/win-run/` (gitignored), so `~/.wine` and the real `~/.config/silkterm` are untouched. Needs `wine`; mingw is used for a small shim (see below) and is already a prerequisite for the cross-build.
+
+What this does and does not buy you:
+
+- Rendering, fonts, menus, tabs, dialogs, wallpaper and the scrim all work, on the real GPU (wgpu reaches the card through winevulkan). That covers most of what a Windows check is for.
+- The shell does not work. Wine's ConPTY is only half implemented: `CreatePseudoConsole` succeeds and the initial grid size is honoured, but a child started with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` never attaches to it, so no output reaches the grid. Expect a correctly drawn, empty terminal.
+- `ResizePseudoConsole` is a stub returning `E_NOTIMPL`, and the terminal backend asserts that it returns `S_OK` - so the app would die on its first resize. The script builds a tiny `conpty.dll` (the backend prefers any loadable `conpty.dll` over kernel32) that passes create/close through to kernel32 and answers resize with `S_OK`. Microsoft's own `conpty.dll`/`OpenConsole.exe` fail earlier under wine, so there is nothing better to drop in.
+- Only the x86_64 build runs; wine on x86_64 cannot execute the ARM64 exe.
+
 ## ARM64 (Linux & Windows, cross-compile via cargo-zigbuild)
 
 `cargo-zigbuild` uses `zig` as a universal cross-linker, so ARM64 Linux and Windows build from an x86_64 Linux host with no per-target gcc/SDK.
