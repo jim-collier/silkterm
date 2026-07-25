@@ -52,7 +52,9 @@ In each section, items are listed approximately from newest to oldest.
 
 - ✅ When splitting panes, there is "visual garbage" in the pixels immediately surrounding the split lines.
 	- It seems like one pixel above, below, or on (for horizontal split), or one pixel to the left, right, or on for vertical splits.
-	- Cause: the text scrim (readability halo) was a full-frame blur clipped only to the whole terminal area, so an edge glyph's halo spilled across the divider into the inter-pane margins. Now each pane's scrim is clipped to its own content rect, so the gutter between panes stays clean. Side effect: the outer window margin no longer shows a faint halo either.
+	- Two causes, both fixed. First: the text scrim (readability halo) was a full-frame blur clipped only to the whole terminal area, so an edge glyph's halo spilled across the divider into the inter-pane margins; each pane's scrim is now clipped per-side (content edge at internal dividers, pane edge at the window border, so the outer margin keeps its halo).
+	- Second (the persistent sliver): a pixel-delta wheel (touchpad, hi-res wheel) accumulates fractional scroll amounts, and the ease settled wherever the target landed - a pane could rest BETWEEN lines forever. Every row then rendered shifted by a sub-cell fraction and the top scanlines of the first clipped row peeked out at the pane's content bottom, right against the divider - on any scrolled pane, focused or not. The scroll now glides to the nearest whole line at rest. Regression: fractional_wheel_rests_on_a_whole_line.
+	- Also: per-cell fallback glyphs clipped to the pane rect instead of the content rect, so an edge row's glyph could paint into the margin; now clipped like all other text.
 
 ### New features and enhancements
 

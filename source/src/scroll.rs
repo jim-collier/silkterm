@@ -137,8 +137,19 @@ impl Scroll {
 		let smoothing = 1.0 - (-dt_s * 1000.0 / tau).exp();
 		self.visual += (self.target - self.visual) * smoothing;
 		if (self.target - self.visual).abs() < config::SETTLE_EPS {
-			self.visual = self.target;
-			self.ramp = 0.0;
+			// Rest on a whole line: a pixel-delta wheel (touchpad, hi-res wheel)
+			// accumulates a fractional target, and parking there renders every row
+			// shifted by a sub-cell fraction - the top scanlines of the first
+			// clipped row peek out at the pane's content bottom, which reads as
+			// garbage hugging the divider. Glide to the nearest line instead.
+			let detent = self.target.round().clamp(0.0, self.max);
+			if (self.visual - detent).abs() < config::SETTLE_EPS {
+				self.target = detent;
+				self.visual = detent;
+				self.ramp = 0.0;
+			} else {
+				self.target = detent; // still a fraction away: keep easing to the detent
+			}
 		}
 
 		// Ease the alt-screen slide offset back to rest. The reveal strip is filled
@@ -211,6 +222,33 @@ mod tests {
 		assert!(s.following());
 		assert_eq!(s.desired_offset(), 0);
 		assert!(s.frac().abs() < 1e-3);
+	}
+
+	#[test]
+	fn fractional_wheel_rests_on_a_whole_line() {
+		// pixel-delta wheels (touchpad, hi-res) send fractional line amounts; the
+		// rest position must still be a whole line or every row renders sub-cell
+		// shifted and the first clipped row's top peeks out at the content bottom
+		let mut s = Scroll::new();
+		s.set_max(100.0);
+		s.wheel(2.6);
+		for _ in 0..2000 {
+			s.advance(0.016);
+		}
+		assert!(!s.animating());
+		assert_eq!(s.desired_offset(), 3); // detent at round(2.6)
+		assert!(s.frac().abs() < 1e-6, "frac {} at rest", s.frac());
+		// accumulating many small fractional notches also lands on a line
+		let mut t = Scroll::new();
+		t.set_max(100.0);
+		for _ in 0..7 {
+			t.wheel(0.3);
+		}
+		for _ in 0..2000 {
+			t.advance(0.016);
+		}
+		assert_eq!(t.desired_offset(), 2); // round(2.1)
+		assert!(t.frac().abs() < 1e-6);
 	}
 
 	#[test]

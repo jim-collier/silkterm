@@ -2082,7 +2082,7 @@ impl State {
 				}
 				None => areas.push(p.text_area(tops[&p.id], margin)),
 			}
-			areas.extend(p.glyph_areas());
+			areas.extend(p.glyph_areas(margin));
 		}
 		if self.menu_bar {
 			for (i, buf) in chrome.menubar.iter().enumerate() {
@@ -2215,7 +2215,7 @@ impl State {
 					}
 					None => scrim_areas.push(p.scrim_text_area(tops[&p.id], margin)),
 				}
-				scrim_areas.extend(p.glyph_areas());
+				scrim_areas.extend(p.glyph_areas(margin));
 			}
 			if let Err(e) = self
 				.text

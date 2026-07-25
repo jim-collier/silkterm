@@ -1565,7 +1565,7 @@ impl Pane {
 
 	// Per-cell fallback glyphs, already positioned (see Pane::build). Drawn in
 	// the same text pass as `text_area`, on top of their space placeholders.
-	pub fn glyph_areas(&self) -> Vec<TextArea<'_>> {
+	pub fn glyph_areas(&self, margin: f32) -> Vec<TextArea<'_>> {
 		self.glyphs
 			.iter()
 			.map(|&(key, x, y, color, scale)| TextArea {
@@ -1573,11 +1573,14 @@ impl Pane {
 				left: x,
 				top: y,
 				scale,
+				// content clip, same as buf_area: an edge row's fallback glyph (ink
+				// taller than its cell, or shifted by a scroll fraction) must not
+				// paint the margin - the main buffer's text never can
 				bounds: TextBounds {
-					left: self.rect.x as i32,
-					top: self.rect.y as i32,
-					right: (self.rect.x + self.rect.w) as i32,
-					bottom: (self.rect.y + self.rect.h) as i32,
+					left: (self.rect.x + margin) as i32,
+					top: (self.rect.y + margin) as i32,
+					right: (self.rect.x + self.rect.w - margin) as i32,
+					bottom: (self.rect.y + self.rect.h - margin) as i32,
 				},
 				default_color: color,
 				custom_glyphs: &[],
