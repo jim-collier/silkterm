@@ -267,8 +267,18 @@ fBuildConptyShim(){
 ## any other wine app and is deliberately left alone.
 fStagedExePattern(){ printf '%s' "${stagedExe}" | sed 's/[][\\.^$*+?(){}|]/\\&/g; s#/#.#g'; }
 
+## The keep-alive child outlives the app: it never attached to the pseudoconsole, so
+## nothing tears it down when its parent goes, and one would leak per run. Matched on
+## the whole command line, anchored - so it can only ever match the exact keep-alive
+## started here, never some other ping the user is running.
+fKillOrphanedKeepAlive(){
+	local -r exact="^$(printf '%s' "${keepAliveShell}" | sed 's/[][\\.^$*+?(){}|]/\\&/g')$"
+	pkill -f "${exact}" 2>/dev/null || true
+}
+
 fKillPrevious(){
 	pkill -f "$(fStagedExePattern)" 2>/dev/null || true
+	fKillOrphanedKeepAlive
 }
 
 ## Did it survive startup? A command that ends straight away takes the window with
