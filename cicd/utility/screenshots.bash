@@ -31,7 +31,7 @@
 ##		Non-fatal: any single scene failing just warns and moves on.
 ##	History: at bottom.
 
-##	Copyright © 2026 Jim Collier
+##	Copyright © 2026 Bubbles (ID: XଌฅრX۳ᛟԃლፀƅꓩหδლც)
 ##	Licensed under The MIT License (MIT). Full text at:
 ##		https://mit-license.org/
 ##	SPDX-License-Identifier: MIT
@@ -515,4 +515,4 @@ fi
 
 
 ##	Script history:
-##		- 20260704 JC: Created.
+##		- 20260704: Created.
