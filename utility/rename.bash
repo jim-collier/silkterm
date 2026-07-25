@@ -10,6 +10,11 @@
 # Replaces the display name (SilkTerm) and the id (silkterm) across Cargo.toml,
 # all Rust sources, and the Markdown docs. Cargo.lock is left for `cargo build`
 # to regenerate. Review `git diff` afterwards.
+
+##	Copyright © 2026 Bubbles (ID: XଌฅრX۳ᛟԃლፀƅꓩหδლც)
+##	Licensed under The MIT License (MIT). Full text at:
+##		https://mit-license.org/
+##	SPDX-License-Identifier: MIT
 set -euo pipefail
 
 new_display="${1:-}"

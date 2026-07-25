@@ -15,7 +15,7 @@
 ##		- Edit fMain() to launch a different terminal instead.
 ##	History: At bottom of script.
 
-##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Copyright © 2026 Bubbles (ID: XଌฅრX۳ᛟԃლፀƅꓩหδლც)
 ##	Licensed under The MIT License (MIT). Full text at:
 ##		https://mit-license.org/
 ##	SPDX-License-Identifier: MIT
@@ -122,4 +122,4 @@ fMain  "${@}"
 
 
 ##	History:
-##		- 2026-07-03 JC: Created.
+##		- 2026-07-03: Created.

@@ -31,7 +31,7 @@
 ##		- Edit fMain() to launch a different terminal instead.
 ##	History: At bottom of script.
 
-##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Copyright © 2026 Bubbles (ID: XଌฅრX۳ᛟԃლፀƅꓩหδლც)
 ##	Licensed under The MIT License (MIT). Full text at:
 ##		https://mit-license.org/
 ##	SPDX-License-Identifier: MIT
@@ -620,31 +620,31 @@ if ($script:GuiFeedback -and $script:RunWarnings.Count) {
 
 
 ##	History:
-##		- 2026-07-22 JC: Resolve the local clone root from a per-host candidate
+##		- 2026-07-22: Resolve the local clone root from a per-host candidate
 ##		  list (was hardcoded to one host's path, so gnuw/msvc never copied on
 ##		  the others).
-##		- 2026-07-19 JC: '--admin' now self-elevates the whole launcher (was only the
+##		- 2026-07-19: '--admin' now self-elevates the whole launcher (was only the
 ##		  launched terminal), so a non-elevated shortcut click copies the fresh build
 ##		  instead of silently launching a stale one. Report failures / skipped copies
 ##		  in a dialog for the shortcut case (console flashes shut); new '--gui' flag,
 ##		  auto-on when double-clicked.
-##		- 2026-07-17 JC: Strip a synced-on mark-of-the-web at startup so a later
+##		- 2026-07-17: Strip a synced-on mark-of-the-web at startup so a later
 ##		  click under RemoteSigned isn't silently blocked.
-##		- 2026-07-17 JC: Log every run's per-source copy decision (and each note/
+##		- 2026-07-17: Log every run's per-source copy decision (and each note/
 ##		  warn) to n8runterm.log in the target dir, trimmed at 256KB.
-##		- 2026-07-16 JC: Age-prune stamped copies with any tag, not just the known
+##		- 2026-07-16: Age-prune stamped copies with any tag, not just the known
 ##		  three (one-off tags could never be deleted); selection still known-tags-only.
-##		- 2026-07-15 JC: Elevate only on '--admin' (consumed, not forwarded); default
+##		- 2026-07-15: Elevate only on '--admin' (consumed, not forwarded); default
 ##		  is the normal token.
-##		- 2026-07-15 JC: Launch elevated by default; fall back to silkterm on PATH /
+##		- 2026-07-15: Launch elevated by default; fall back to silkterm on PATH /
 ##		  Windows Terminal / PyCmd / cmd.exe when no build or source is available.
-##		- 2026-07-15 JC: Target the local (non-synced) util dir, not the Dropbox one.
-##		- 2026-07-15 JC: Prune only files matching our own name spec (leave foreign
+##		- 2026-07-15: Target the local (non-synced) util dir, not the Dropbox one.
+##		- 2026-07-15: Prune only files matching our own name spec (leave foreign
 ##		  files like cicd-win.ps1's fixed SilkTerm.exe alone).
-##		- 2026-07-15 JC: Reorder copy name to stamp-then-tag (slktrmdf_<stamp>_<tag>).
-##		- 2026-07-15 JC: Three tagged sources (gnul/gnuw/msvc); age-based delete;
+##		- 2026-07-15: Reorder copy name to stamp-then-tag (slktrmdf_<stamp>_<tag>).
+##		- 2026-07-15: Three tagged sources (gnul/gnuw/msvc); age-based delete;
 ##		  newest-by-stamp run with a gnuw/msvc coin flip when close in time.
-##		- 2026-07-14 JC: Return the launched Process so callers can target it by PID.
-##		- 2026-07-14 JC: Quote args with spaces (title/bg path) so they aren't split.
-##		- 2026-07-14 JC: Rotating stamped copies + prune idle ones (was fixed-name).
-##		- 2026-07-14 JC: Created (Windows port of the bash n8runterm).
+##		- 2026-07-14: Return the launched Process so callers can target it by PID.
+##		- 2026-07-14: Quote args with spaces (title/bg path) so they aren't split.
+##		- 2026-07-14: Rotating stamped copies + prune idle ones (was fixed-name).
+##		- 2026-07-14: Created (Windows port of the bash n8runterm).

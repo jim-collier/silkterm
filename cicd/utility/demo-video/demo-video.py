@@ -32,7 +32,7 @@
 ##		time exactly. Sound assets + licenses live in ./sounds/ (see LICENSES.txt).
 ##	History: at bottom.
 
-##	Copyright © 2026 Jim Collier
+##	Copyright © 2026 Bubbles (ID: XଌฅრX۳ᛟԃლፀƅꓩหδლც)
 ##	Licensed under The MIT License (MIT). Full text at:
 ##		https://mit-license.org/
 ##	SPDX-License-Identifier: MIT
@@ -1215,33 +1215,33 @@ if __name__ == "__main__":
 
 
 ##	Script history:
-##		- 20260713 JC: the faux window fills the view - only a 4px black border
+##		- 20260713: the faux window fills the view - only a 4px black border
 ##		  around it (was a 3%/5% dark margin); square-cornered dark decoration
 ##		  (Material-Black-Pistachio theme); the client is sized + the frame nudged
 ##		  so the outer decoration lands 4px inside each edge.
-##		- 20260713 JC: hold the final frame 3s then a 2s black screen at the end
+##		- 20260713: hold the final frame 3s then a 2s black screen at the end
 ##		  (tpad at encode; full-length outputs only, not the looping highlight gif).
-##		- 20260713 JC: per-key sound bank (mechvibes EG Oreo, one slice per
+##		- 20260713: per-key sound bank (mechvibes EG Oreo, one slice per
 ##		  physical key) replaces the per-row bank; chars map to their real key's
 ##		  sample, so variety is natural - dropped the pitch-shift/spectral-tilt/
 ##		  mid-click processing and the separate release sounds.
-##		- 20260713 JC: window size passed at launch (--pixel-width/height), never
+##		- 20260713: window size passed at launch (--pixel-width/height), never
 ##		  resized after - fixes the clipped video / band-at-top gif (VGL EGL
 ##		  latches the surface size at creation); both profiles start opaque on
 ##		  black (no bg image, image opacity 0.10); scene order alias-ls-build-
 ##		  settings-wp41-less-wp45-outro with two wallpaper scenes; synth desktop
 ##		  dropped.
-##		- 20260712 JC: GPU render via VirtualGL (real ~60fps, the actual judder
+##		- 20260712: GPU render via VirtualGL (real ~60fps, the actual judder
 ##		  fix - dropped the high-fps+tmix hack); one unified script for both
 ##		  profiles; gray-# outro via a prompt flag; solid-gray captions with a
 ##		  wobble pop, moved onto the title/menu chrome; Settings scene circles the
 ##		  scrim rows then Esc-cancels; focus-settle before typing (fixes a dropped
 ##		  first keystroke after the dialog).
-##		- 20260712 JC: Real window decoration; high-fps capture + motion-blur
+##		- 20260712: Real window decoration; high-fps capture + motion-blur
 ##		  downsample (judder fix); dim vague dark desktop behind the glass; new
 ##		  scene order + mouse toggle/hold-arrow/gray-outro/wallpaper-clear;
 ##		  processed key bank (mid-click + variety) + soft wheel; top-right
 ##		  narration; video/gif split into their own output dirs.
-##		- 20260712 JC: Two recordings (1080p60 h265 + native 540p50 gif),
+##		- 20260712: Two recordings (1080p60 h265 + native 540p50 gif),
 ##		  see-through desktop via config+socket reload, Lato narration.
-##		- 20260711 JC: Created.
+##		- 20260711: Created.

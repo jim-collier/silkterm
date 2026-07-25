@@ -4,6 +4,11 @@
 # files and re-stages them, so unstaged work is left untouched.
 #
 # Activate once per clone:  git config core.hooksPath utility/git-hooks
+
+##	Copyright © 2026 Bubbles (ID: XଌฅრX۳ᛟԃლፀƅꓩหδლც)
+##	Licensed under The MIT License (MIT). Full text at:
+##		https://mit-license.org/
+##	SPDX-License-Identifier: MIT
 set -eu
 
 # rustfmt lives in the rustup toolchain; ensure it's reachable.
