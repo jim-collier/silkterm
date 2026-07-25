@@ -119,7 +119,13 @@ fMain(){
 	local -r dirName_Top="$(basename "$(readlink -f "${dirPath_Top}")")"
 	local -r dirPath_Rar="${dirPath_Top}/versions"
 	local -r filePath_Rar="${dirPath_Rar}/${dirName_Top}_${serialDT}.rar"
-	baseCmdArgs="${baseCmdArgs} -x'*/${dirName_GitProj}/.git/*' -x'*/versions/*' -x'*/${dirName_GitProj}/target/*' -x'*/private/backgrounds/*'"
+	baseCmdArgs="${baseCmdArgs} -x'*/${dirName_GitProj}/.git/*' -x'*/versions/*' -x'*/private/backgrounds/*'"
+	## Cargo target dir: keep final release binaries; drop debug builds and dev profiles ...
+	baseCmdArgs="${baseCmdArgs} -x'*/target/debug/*' -x'*/target/*/debug/*' -x'*/target/lint/*' -x'*/target/profiling/*'"
+	## ... and intermediates under any profile (rar '*' spans '/', so this covers cross-target trees too)
+	baseCmdArgs="${baseCmdArgs} -x'*/target/*/deps/*' -x'*/target/*/build/*' -x'*/target/*/incremental/*' -x'*/target/*/.fingerprint/*' -x'*/target/*/examples/*'"
+	## GFS-rotated demo renders; the latest gif ships in the repo's assets/ and stays in the backup
+	baseCmdArgs="${baseCmdArgs} -x'*/private/demo-video/*'"
 	readonly baseCmdArgs
 	local -r cmd_Rar="rar ${baseCmdArgs}  '${filePath_Rar}'  '../.'"
 
@@ -493,3 +499,4 @@ fMain  "${@}"
 ##			- Added check of environment variable 'N8GIT_BACKUP_AND_PUBLISH_NOBACKUP'.
 ##		- 20260628 JC:
 ##			- Call gfs-rotate.bash to prune old backups (GFS retention).
+##		- 20260725 JC: Backup excludes: debug builds, build intermediates, GFS-rotated demo renders (release binaries and assets/ kept).
