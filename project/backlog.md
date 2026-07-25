@@ -50,6 +50,12 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- 🔘 `--shell` eats backslashes, so a Windows path cannot be passed unquoted.
+	- The shell string is split with POSIX rules, where an unquoted `\` escapes the next character - so `--shell C:\windows\system32\cmd.exe` arrives as `C:windowssystem32cmd.exe` and the spawn fails with "File not found".
+	- Only bites on Windows, where backslash paths are the normal way to name a program. Quoting (`--shell "C:\\windows\\..."`) works, but nobody expects to have to.
+	- Same parser serves `command_line` in the config, so that has the same trap.
+	- Found while getting the Windows build to run under wine.
+
 - ✅ When splitting panes, there is "visual garbage" in the pixels immediately surrounding the split lines.
 	- It seems like one pixel above, below, or on (for horizontal split), or one pixel to the left, right, or on for vertical splits.
 	- Two causes, both fixed. First: the text scrim (readability halo) was a full-frame blur clipped only to the whole terminal area, so an edge glyph's halo spilled across the divider into the inter-pane margins; each pane's scrim is now clipped per-side (content edge at internal dividers, pane edge at the window border, so the outer margin keeps its halo).
