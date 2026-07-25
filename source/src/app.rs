@@ -2393,9 +2393,13 @@ impl State {
 
 		{
 			let divider = config::srgb_f32(config::DIVIDER);
-			// transparent base when compositing: pane-gap dividers show the
-			// desktop through; opaque divider color otherwise (premultiplied)
-			let clear = if self.gfx.transparent {
+			// transparent base only when the background is actually see-through
+			// (same gate as bg_alpha): pane-gap dividers then show the desktop.
+			// Otherwise the clear must be opaque - the X11 window is always an
+			// ARGB visual, so any alpha<1 pixel (the 1px divider slits, AA edges
+			// of fractional pane rects) lets the compositor blend the desktop
+			// through as bright speckles along the split lines.
+			let clear = if self.gfx.transparent && cfg.transparent_background {
 				wgpu::Color::TRANSPARENT
 			} else {
 				wgpu::Color {
