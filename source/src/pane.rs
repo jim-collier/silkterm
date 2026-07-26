@@ -545,6 +545,11 @@ pub struct Pane {
 	command: Option<Vec<String>>,
 	last_draw: PaneDraw,
 	last_history: usize,
+	// Fingerprint of the row just above the viewport - the line that most recently
+	// scrolled off. Once the scrollback is capped history_size() is pinned, so it
+	// can no longer say whether anything scrolled; this still can. None while
+	// scrolled back (the row means something else there), which reads as "unknown".
+	last_offscreen: Option<u64>,
 	// On-screen row fingerprints from the last build, used to detect a scrolled
 	// viewport once the scrollback buffer is full (output easing) and to detect an
 	// alt-screen app's repaint-scroll (app-scroll easing). See build().
@@ -706,11 +711,23 @@ impl Pane {
 		}
 		let follow = self.scroll.following();
 		let full = settings.scrollback > 0 && history >= settings.scrollback;
+		// Did anything actually scroll off into history since last frame? At the cap
+		// the line count is pinned, so only the CONTENT above the viewport can tell.
+		// A full-screen app that repaints in place (top) never pushes a line up, so
+		// this stays put - which is what stops its refresh reading as a turnover.
+		let offscreen = if follow && history > 0 {
+			let row = &guard.grid()[Line(-1)];
+			Some(fnv_row((0..cols).map(|c| row[Column(c)].c)))
+		} else {
+			None // scrolled back: that row isn't the scroll-off point, so don't judge
+		};
+		let scrolled_off = matches!((offscreen, self.last_offscreen), (Some(a), Some(b)) if a != b);
+		self.last_offscreen = offscreen;
 		let advanced = if grew > 0 {
 			grew
 		} else if follow && full {
 			let rows = snapshot_rows(guard.grid(), lines, cols, None);
-			let inferred_advance = scroll_shift(&rows, &self.last_rows);
+			let inferred_advance = scroll_shift(&rows, &self.last_rows, scrolled_off);
 			self.last_rows = rows;
 			inferred_advance
 		} else {
@@ -2087,6 +2104,7 @@ fn spawn_pane(
 			slide: None,
 		},
 		last_history: 0,
+		last_offscreen: None,
 		last_rows: Vec::new(),
 		slide_static: 0,
 		slide_static_top: 0,
@@ -2713,7 +2731,7 @@ fn static_bands(cur: &[u64], last: &[u64]) -> (usize, usize) {
 	if st + sb >= n { (0, 0) } else { (st, sb) }
 }
 
-fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
+fn scroll_shift(cur: &[u64], last: &[u64], scrolled_off: bool) -> usize {
 	let n = cur.len();
 	if n == 0 || last.len() != n {
 		return 0;
@@ -2758,9 +2776,13 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 	// No clean vertical shift matched. Either nothing scrolled - an in-place
 	// change, e.g. a status line redrawn with no newline (don't nudge: that was
 	// the apt-bounce hazard) - or the screen turned over completely in one fast
-	// burst. The top line is the tell: unchanged => nothing scrolled; changed =>
-	// a full-screen burst, so report the backlog cap to ramp to full catch-up.
-	if cur[0] == last[0] {
+	// burst, where reporting the backlog cap ramps the ease to full catch-up.
+	// A changed top line alone can't tell those apart: a whole-screen app that
+	// repaints in place keeps a live clock up there (top), so it read as a
+	// turnover every refresh and kicked the view up a screenful each time.
+	// Requiring that a line genuinely scrolled off settles it - a repaint in
+	// place pushes nothing into history, a real burst pushes plenty.
+	if !scrolled_off || cur[0] == last[0] {
 		0
 	} else {
 		crate::scroll::MAX_BACKLOG as usize
@@ -3286,7 +3308,7 @@ mod tests {
 	#[test]
 	fn shift_none_when_unchanged() {
 		let f = [10, 20, 30, 40, 50];
-		assert_eq!(scroll_shift(&f, &f), 0);
+		assert_eq!(scroll_shift(&f, &f, true), 0);
 	}
 
 	#[test]
@@ -3294,21 +3316,21 @@ mod tests {
 		// only the last row changed (an in-place status line) - no scroll
 		let last = [10, 20, 30, 40, 50];
 		let cur = [10, 20, 30, 40, 99];
-		assert_eq!(scroll_shift(&cur, &last), 0);
+		assert_eq!(scroll_shift(&cur, &last, true), 0);
 	}
 
 	#[test]
 	fn shift_by_one() {
 		let last = [10, 20, 30, 40, 50];
 		let cur = [20, 30, 40, 50, 60]; // scrolled up one, new line 60 at bottom
-		assert_eq!(scroll_shift(&cur, &last), 1);
+		assert_eq!(scroll_shift(&cur, &last, true), 1);
 	}
 
 	#[test]
 	fn shift_by_three() {
 		let last = [10, 20, 30, 40, 50];
 		let cur = [40, 50, 60, 70, 80];
-		assert_eq!(scroll_shift(&cur, &last), 3);
+		assert_eq!(scroll_shift(&cur, &last, true), 3);
 	}
 
 	#[test]
@@ -3316,13 +3338,13 @@ mod tests {
 		// no overlap at all (a fast burst replaced the whole screen)
 		let last = [10, 20, 30, 40, 50];
 		let cur = [60, 70, 80, 90, 100];
-		assert_eq!(scroll_shift(&cur, &last), CAP);
+		assert_eq!(scroll_shift(&cur, &last, true), CAP);
 	}
 
 	#[test]
 	fn shift_empty_or_mismatched_is_zero() {
-		assert_eq!(scroll_shift(&[], &[]), 0);
-		assert_eq!(scroll_shift(&[1, 2, 3], &[1, 2]), 0);
+		assert_eq!(scroll_shift(&[], &[], true), 0);
+		assert_eq!(scroll_shift(&[1, 2, 3], &[1, 2], true), 0);
 	}
 
 	#[test]
@@ -3637,10 +3659,10 @@ mod tests {
 		// the lines printed, not a re-list. One new line at the bottom -> advance 1.
 		let last = [10u64, 20, 30, 40, 50, 60];
 		let cur = [20u64, 30, 40, 50, 60, 70];
-		assert_eq!(scroll_shift(&cur, &last), 1);
+		assert_eq!(scroll_shift(&cur, &last, true), 1);
 		// a short multi-line result advances by exactly that many lines (no re-list)
 		let cur3 = [40u64, 50, 60, 70, 80, 90];
-		assert_eq!(scroll_shift(&cur3, &last), 3);
+		assert_eq!(scroll_shift(&cur3, &last, true), 3);
 	}
 
 	#[test]
@@ -3650,7 +3672,7 @@ mod tests {
 		// was the old apt/status-line bounce.
 		let last = [10u64, 20, 30, 40, 50, 60];
 		let cur = [10u64, 20, 30, 40, 50, 99]; // only the last row changed
-		assert_eq!(scroll_shift(&cur, &last), 0);
+		assert_eq!(scroll_shift(&cur, &last, true), 0);
 	}
 
 	#[test]
@@ -3663,10 +3685,10 @@ mod tests {
 		let last = [10u64, 20, 30, 40, 50, 60, 70, 80];
 		// scrolled up 2, but one retained row (was 50) got rewritten to 555
 		let cur = [30u64, 40, 555, 60, 70, 80, 90, 100];
-		assert_eq!(scroll_shift(&cur, &last), 2);
+		assert_eq!(scroll_shift(&cur, &last, true), 2);
 		// and it must NOT read as the full backlog cap
 		assert_ne!(
-			scroll_shift(&cur, &last),
+			scroll_shift(&cur, &last, true),
 			crate::scroll::MAX_BACKLOG as usize
 		);
 	}
@@ -3685,7 +3707,7 @@ mod tests {
 		for (offset, row) in cur[n - live..].iter_mut().enumerate() {
 			*row = 900 + offset as u64; // the progress area, freshly redrawn
 		}
-		assert_eq!(scroll_shift(&cur, &last), 1);
+		assert_eq!(scroll_shift(&cur, &last, true), 1);
 	}
 
 	#[test]
@@ -3694,11 +3716,30 @@ mod tests {
 		// every k (blank == blank) but nothing moved - must report 0, not nudge.
 		let last = [0u64, 0, 0, 0, 0, 0];
 		let cur = [0u64, 0, 0, 0, 0, 0];
-		assert_eq!(scroll_shift(&cur, &last), 0);
+		assert_eq!(scroll_shift(&cur, &last, true), 0);
 		// blank top, static content below, still no scroll
 		let last2 = [0u64, 0, 0, 11, 22, 33];
 		let cur2 = [0u64, 0, 0, 11, 22, 33];
-		assert_eq!(scroll_shift(&cur2, &last2), 0);
+		assert_eq!(scroll_shift(&cur2, &last2, true), 0);
+	}
+
+	#[test]
+	fn in_place_full_screen_repaint_is_not_a_turnover() {
+		// `top` repaints its whole screen every refresh without scrolling: nearly
+		// every row changes (cpu figures, re-sorted process list) so no shift
+		// matches, and row 0 is a live clock so it always differs. That looked
+		// exactly like a full-screen burst and reported the backlog cap, kicking
+		// the view up a screenful and easing it back once per refresh. Nothing
+		// scrolled off, so it must report no advance.
+		let last = [10u64, 20, 30, 40, 50, 60];
+		let cur = [11u64, 21, 31, 41, 51, 61]; // whole screen rewritten in place
+		assert_eq!(scroll_shift(&cur, &last, false), 0);
+		// the identical frames still read as a burst when a line really did scroll
+		// off, so genuine fast output is unaffected
+		assert_eq!(
+			scroll_shift(&cur, &last, true),
+			crate::scroll::MAX_BACKLOG as usize
+		);
 	}
 
 	#[test]
@@ -3709,7 +3750,7 @@ mod tests {
 		let last = [10u64, 20, 30, 40, 50, 60];
 		let cur = [70u64, 80, 90, 100, 110, 120]; // no overlap
 		assert_eq!(
-			scroll_shift(&cur, &last),
+			scroll_shift(&cur, &last, true),
 			crate::scroll::MAX_BACKLOG as usize
 		);
 	}
