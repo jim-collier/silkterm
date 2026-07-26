@@ -19,11 +19,19 @@
 ##		post-launch xdotool resize leaves a stale-offset blit (clipped video /
 ##		band-at-top gif). The outro comment goes gray via a prompt flag (no
 ##		ble.sh - it drops the odd first keystroke and breaks commands).
+##		Narration lives in a black band above the window (BAND px of bare root,
+##		the window is placed below it) - plain yellow text, no box, so nothing
+##		ever covers the terminal. The band is static, which costs a gif almost
+##		nothing (the encoder only stores what changes between frames).
 ##		Both profiles start opaque on a plain black background (no image); the
-##		wallpaper scenes bring the imagery in through the app's own --wallpaper.
+##		closing scenes bring the built-in wallpaper in via the app's --wallpaper.
+##		Screens are cleared between scenes except where the next command is meant
+##		to push the previous output up - a cleared screen means the typing that
+##		follows changes few pixels, which is most of what keeps the gif small.
 ##	Syntax:
 ##		demo-video.py [--profile video,gif] [--segments a,b,...] [--seed N]
-##		              [--keep-work] [--no-rotate] [--display :98] [--out-dir DIR]
+##		              [--keep-work] [--no-rotate] [--no-asset] [--display :98]
+##		              [--out-dir DIR]
 ##		Env: SILK_BIN overrides the binary (default REPO/target/release/silkterm).
 ##	Notes:
 ##		AV sync needs no calibration: before the app launches, the bare root is
@@ -60,23 +68,24 @@ ME_DIR   = Path(__file__).resolve().parent
 REPO     = ME_DIR.parents[2]                  # github/cicd/utility/demo-video -> github
 PRIVATE  = REPO.parent / "private" / "demo-video"
 SOUNDS   = ME_DIR / "sounds"
-BACKGNDS = REPO / "filesystem/home/.config/silkterm/backgrounds"
 
 SR         = 48000                            # audio mix rate
 BANNER_TTF = "/usr/share/fonts/truetype/lato/Lato-Semibold.ttf"
+BANNER_FG  = "0xFFD866"                       # warm yellow, on the black band above the window
 LEAD_S     = 0.8                              # quiet lead-in kept before the first segment
-TAIL_HOLD_S  = 3.0                            # freeze the final frame this long at the end...
+TAIL_HOLD_S  = 4.5                            # freeze the final frame this long at the end...
 TAIL_BLACK_S = 2.0                            # ...then a fully black screen this long
 TAIL_EXTRA   = TAIL_HOLD_S + TAIL_BLACK_S     # total appended tail (added at encode, not captured)
 FOLEY_LAG  = 0.03                             # foley sits this far after the key event (the app
                                               # paints the glyph a frame or two later; sound-to-
                                               # picture reads tighter than sound-to-keypress)
 
-# The faux window fills the frame: only a thin black border shows around it. The
-# WM theme has square corners (Xfce-Simple-Dark's top-left corner is opaque, so
-# no rounded/transparent cut). FRAME_* are that theme's decoration extents
+# The faux window fills the frame below the narration band: a thin black border
+# shows around it, and BAND px of bare root above it carry the captions. The WM
+# theme has square corners (Xfce-Simple-Dark's top-left corner is opaque, so no
+# rounded/transparent cut). FRAME_* are that theme's decoration extents
 # (left,right,titlebar,bottom in px) - the client is sized so the outer frame
-# lands exactly BORDER px inside each screen edge.
+# lands BORDER px inside the left/right/bottom edges and BAND px below the top.
 BORDER   = 4
 WM_THEME = "Material-Black-Pistachio"       # dark, SQUARE corners (opaque top-left)
 FRAME_L, FRAME_R, FRAME_T, FRAME_B = 2, 2, 32, 2
@@ -89,11 +98,11 @@ FRAME_L, FRAME_R, FRAME_T, FRAME_B = 2, 2, 32, 2
 PROFILES = {
 	"video": dict(
 		size=(1920, 1080), cap_fps=60, out_fps=60, mono_pt=19.5, ui_pt=11,
-		banner_fs=38, banner_pad=18, audio=True, banner_min=4.0,
+		banner_fs=38, band=112, audio=True, banner_min=4.0,
 	),
 	"gif": dict(
 		size=(960, 540), cap_fps=50, out_fps=50, mono_pt=13, ui_pt=10,
-		banner_fs=24, banner_pad=12, audio=False, banner_min=3.0,
+		banner_fs=24, band=60, audio=False, banner_min=3.0,
 	),
 }
 
@@ -114,6 +123,7 @@ class Rec:
 	def __init__(self, args, profile):
 		self.p        = profile
 		self.size     = profile["size"]
+		self.band     = profile["band"]         # black narration strip above the window
 		self.cap_fps  = profile["cap_fps"]
 		self.out_fps  = profile["out_fps"]
 		self.display  = args.display
@@ -124,7 +134,7 @@ class Rec:
 		self.home     = self.work / "home"
 		self.keep     = args.keep_work
 		self.events   = []      # (epoch, kind) kind: key:NAME / mouse:NAME
-		self.banners  = []      # (epoch_start, epoch_end, text, pos)
+		self.banners  = []      # (epoch_start, epoch_end, text)
 		self.app      = None
 		self.ff       = None
 		self.flash_e  = 0.0     # wall-clock epoch of the white sync flash
@@ -156,17 +166,18 @@ class Rec:
 		return x, y
 
 	def place_window(self, win):
-		# nudge the window so its OUTER frame sits exactly BORDER px inside the
-		# top-left screen edge. xdotool's move semantics vs the reparenting frame
-		# are fuzzy, so measure the real frame-outer after each move and correct
-		# by the residual (converges in a step or two).
-		target = [BORDER, BORDER]
+		# nudge the window so its OUTER frame sits BORDER px inside the left edge
+		# and just under the narration band. xdotool's move semantics vs the
+		# reparenting frame are fuzzy, so measure the real frame-outer after each
+		# move and correct by the residual (converges in a step or two).
+		want_y = BORDER + self.band
+		target = [BORDER, want_y]
 		for _ in range(4):
 			self.xdo("windowmove", win, str(target[0]), str(target[1]))
 			time.sleep(0.25)
 			l, _r, t, _b = self._frame_extents(win)
 			cx, cy = self._client_xy(win)
-			dx, dy = BORDER - (cx - l), BORDER - (cy - t)
+			dx, dy = BORDER - (cx - l), want_y - (cy - t)
 			if abs(dx) <= 1 and abs(dy) <= 1:
 				break
 			target[0] += dx; target[1] += dy
@@ -269,15 +280,15 @@ class Rec:
 			e["LIBGL_ALWAYS_SOFTWARE"] = "1"
 		# a decorated (non-fullscreen) window: xfwm4 draws the full frame + the
 		# titlebar with buttons, which is the "fake decoration" the shot wants.
-		# The window FILLS the view - only a BORDER-px black frame shows around it.
-		# The client is sized so the outer decoration fits W/H minus that border on
-		# every edge. The client size goes in at LAUNCH (--pixel-width/height) and
-		# the window is never resized after - the VGL EGL present latches the
-		# surface size at creation, so a post-launch resize breaks the blit (moving
-		# is fine, which is how place_window nudges it into place).
+		# The window fills the view below the narration band - a BORDER-px black
+		# frame around it, BAND px of black above. The client is sized so the outer
+		# decoration fits what is left. That size goes in at LAUNCH (--pixel-width/
+		# height) and the window is never resized after - the VGL EGL present
+		# latches the surface size at creation, so a post-launch resize breaks the
+		# blit (moving is fine, which is how place_window nudges it into place).
 		W, H = self.size
 		cw = W - 2 * BORDER - FRAME_L - FRAME_R
-		ch = H - 2 * BORDER - FRAME_T - FRAME_B
+		ch = H - 2 * BORDER - self.band - FRAME_T - FRAME_B
 		cmd += ["--pixel-width", str(cw), "--pixel-height", str(ch)]
 		self.app = subprocess.Popen(cmd, env=e, cwd=str(self.home),
 			stdout=open(self.work / "silk.log", "w"), stderr=subprocess.STDOUT)
@@ -515,15 +526,17 @@ class Mouse:
 ##	Banner bookkeeping
 
 class Banner:
-	def __init__(self, rec, text, pos="tr"):
-		self.rec, self.text, self.pos = rec, text, pos
+	# every caption lands in the band above the window, so there is no position to
+	# choose any more - only the text and the span it covers
+	def __init__(self, rec, text):
+		self.rec, self.text = rec, text
 
 	def __enter__(self):
 		self.start = time.time()
 		return self
 
 	def __exit__(self, *exc):
-		self.rec.banners.append((self.start, time.time(), self.text, self.pos))
+		self.rec.banners.append((self.start, time.time(), self.text))
 
 
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -544,14 +557,16 @@ def write_dconf(home, profile):
 	run(["dconf", "compile", str(dst / "user"), str(src)])
 
 def write_config(home, profile):
-	# mirrors the real defined config. Both profiles start opaque on plain black:
-	# no background_image (numbered filenames dodge the auto-detect), image
-	# opacity at the 0.10 default - the wallpaper scenes bring the imagery in.
+	# mirrors the real defined config. Both profiles start opaque on plain black,
+	# which needs wallpaper_default OFF - it defaults on, and while it is on there
+	# is no "no wallpaper" state to start from (an unset image IS what shows the
+	# built-in one). Image opacity stays at the 0.10 default.
 	cfgdir = home / ".config" / "silkterm"
-	bgdir = cfgdir / "backgrounds"
-	bgdir.mkdir(parents=True, exist_ok=True)
-	shutil.copy2(BACKGNDS / "background41.jpg", bgdir / "background41.jpg")
-	shutil.copy2(BACKGNDS / "background45.jpg", bgdir / "background45.jpg")
+	wpdir = cfgdir / "wallpapers"
+	wpdir.mkdir(parents=True, exist_ok=True)
+	# the app's own baked-in wallpaper, so the closing scene shows exactly the
+	# out-of-the-box look (and can never drift from it)
+	shutil.copy2(REPO / "source/assets/default-background.jpg", wpdir / "default.jpg")
 	(cfgdir / "config.toml").write_text('''use_system_font = true
 line_height_scale = 1.22
 margin = 8.0
@@ -559,9 +574,10 @@ remember_size = false
 columns = 160
 rows = 48
 transparent_background = false
-background_opacity = 0.10
-background_fit = "zoom"
-background_blur = 10.0
+wallpaper_default = false
+wallpaper_opacity = 0.10
+wallpaper_fit = "zoom"
+wallpaper_blur = 10.0
 text_scrim = true
 text_outline = 2.0
 text_scrim_ramp = "gaussian"
@@ -664,6 +680,26 @@ def write_tree(rec, rng):
 	# pin nano to no-softwrap so a config line stays on one screen row
 	(home / ".nanorc").write_text("unset softwrap\nunset breaklonglines\n")
 
+	# the closing scene over the wallpaper: true colour, attributes, scripts and
+	# symbols in a handful of short lines (a dense screenful would cost the gif
+	# far more than it says). No emoji: only three fonts on the recording box
+	# carry them and they come out blank, which reads as a rendering fault
+	show = bind / "showcase"
+	show.write_text('''#!/bin/dash
+printf '\\n'
+i=0
+while [ $i -lt 36 ]; do
+	printf '\\033[48;2;%d;%d;%dm  ' $(( 40 + i * 5 )) $(( 90 + i * 3 )) $(( 230 - i * 5 ))
+	i=$(( i + 1 ))
+done
+printf '\\033[0m\\n\\n'
+printf '  \\033[1m24-bit colour\\033[0m    \\033[3mitalic\\033[0m    '
+printf '\\033[1;38;2;255;216;102mbold colour\\033[0m    \\033[7m reverse \\033[0m\\n\\n'
+printf '  日本語  Ελληνικά  العربية  Кириллица   ★ ◆ ✓ → ≈ ∞   '
+printf '┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅▆▇█\\n\\n'
+''')
+	show.chmod(0o755)
+
 	# build.sh: cargo-flavoured output with varied pacing and burst sizes
 	crates = ["proc-macro2", "quote", "syn", "libc", "bitflags", "smallvec",
 		"cfg-if", "log", "parking_lot", "raw-window-handle", "wayland-client",
@@ -688,7 +724,9 @@ def write_tree(rec, rng):
 	sh.write_text("\n".join(lines) + "\n")
 	sh.chmod(0o755)
 
-	# a long colourised log for the `less` scene
+	# a long colourised log for the `less` scene. Deliberately SHORT lines: a
+	# full-screen scroll costs the gif roughly what the ink on the moving rows
+	# costs, so wordy log messages are the single most expensive thing here
 	lvl = [("32", "info"), ("33", "warn"), ("36", "dbug")]
 	rows = []
 	t = 91250.114
@@ -696,13 +734,13 @@ def write_tree(rec, rng):
 		c, name = lvl[0] if rng.random() < 0.75 else rng.choice(lvl[1:])
 		t += rng.uniform(0.002, 0.4)
 		msg = rng.choice([
-			"frame presented in %.1fms" % rng.uniform(0.8, 6.0),
-			"atlas grew to %dx%d" % (512 * rng.randint(1, 4), 512 * rng.randint(1, 4)),
-			"pipeline cache hit (%d entries)" % rng.randint(4, 96),
-			"pty read %d bytes" % rng.randint(24, 4096),
-			"ease settled after %dms" % rng.randint(80, 420),
-			"resized grid to %dx%d" % (rng.randint(80, 200), rng.randint(24, 60)),
-			"scrollback trimmed to %d lines" % rng.randint(5000, 10000),
+			"frame %.1fms" % rng.uniform(0.8, 6.0),
+			"atlas %dx%d" % (512 * rng.randint(1, 4), 512 * rng.randint(1, 4)),
+			"cache hit %d" % rng.randint(4, 96),
+			"pty %d B" % rng.randint(24, 4096),
+			"ease %dms" % rng.randint(80, 420),
+			"grid %dx%d" % (rng.randint(80, 200), rng.randint(24, 60)),
+			"trim %d" % rng.randint(5000, 10000),
 		])
 		rows.append(f"\033[90m{t:10.3f}\033[0m \033[{c}m[{name}]\033[0m {msg}")
 	(proj / "docs" / "render.log").write_text("\n".join(rows) + "\n")
@@ -729,9 +767,10 @@ def open_settings(rec):
 		time.sleep(0.5)
 	else:
 		return None
-	# park it right of center so the live change shows on the terminal around it
+	# park it right of center so the live change shows on the terminal around it,
+	# and below the narration band (it must never cover a caption)
 	gx = rec.size[0] - 600 if rec.size[0] > 1200 else rec.size[0] - 560
-	gy = 150 if rec.size[1] > 700 else 14
+	gy = rec.band + (90 if rec.size[1] > 700 else 10)
 	rec.xdo("windowmove", dlg, str(max(0, gx)), str(gy))
 	rec.xdo("windowactivate", dlg)
 	time.sleep(1.0)
@@ -751,17 +790,86 @@ def dlg_client(rec, dlg):
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ##	Segments (each takes the recorder, typist, mouse)
 
+def wipe(r, t, settle=0.8):
+	# clear the screen between scenes: typing over an empty screen changes far
+	# fewer pixels than typing over a full one, and that is most of what keeps the
+	# gif down. Skipped where the next command is meant to push the old output up.
+	r.xdo("windowactivate", r.win)
+	time.sleep(0.25)
+	t.key("ctrl+l", sound=key_sound("l"))
+	time.sleep(settle)
+
 def seg_alias(r, t, m):
 	# no narration - it is a plain shell alias, nothing to explain
-	t.cmd('alias ls="ls -lA --color --group-directories-first"', settle=1.2,
+	t.cmd('alias ls="ls -lA --color --group-directories-first"', settle=1.0,
 		wpm=200, typos=0.0)
-	time.sleep(0.6)
+	wipe(r, t)
+
+def seg_ls(r, t, m):
+	with Banner(r, "Silky-smooth output scrolling"):
+		t.cmd("ls ~/", settle=3.4)
+		time.sleep(0.8)
+	# no wipe: the build output is meant to push this listing up
+
+def seg_build(r, t, m):
+	with Banner(r, "Smooth cursor. Smooth scroll."):
+		t.cmd("cd projects/pulsar", settle=0.6, typos=0.0)
+		t.cmd("./build.sh", settle=7.5)          # covers the script's own runtime
+		time.sleep(0.8)
+	# no wipe: the wheel scene scrolls back up through all of this
+
+def seg_wheel(r, t, m):
+	# scrollback under the wheel - the same easing as the output scroll, driven
+	# by hand. xdotool sends two wheel events per click here (winit fires on the
+	# legacy button press AND release), so a few clicks cover a lot of lines.
+	with Banner(r, "Scroll back just as smoothly"):
+		m.move(r.size[0] // 2, r.band + (r.size[1] - r.band) // 2, dur=0.5)
+		m.wheel(True, 5, hz=3.2)
+		time.sleep(1.1)
+		m.wheel(False, 5, hz=3.2)
+		time.sleep(0.7)
+		m.park()
+	wipe(r, t)
+
+def seg_panes(r, t, m):
+	# split panes straight off the menu bar: Alt+P opens Panes, then the item's
+	# own accelerator letter picks it (V split, C close) - all keyboard, so there
+	# are no menu coordinates to guess at
+	with Banner(r, "Split panes, from the menu"):
+		r.xdo("windowactivate", r.win)
+		time.sleep(0.3)
+		t.key("alt+p", sound=key_sound("p"))
+		time.sleep(1.1)
+		t.key("v", sound=key_sound("v"))
+		time.sleep(1.6)
+		t.cmd("wc -l src/*.rs", settle=1.8)      # the new pane inherits shell + cwd
+		time.sleep(1.0)
+		t.key("alt+p", sound=key_sound("p"))
+		time.sleep(0.9)
+		t.key("c", sound=key_sound("c"))
+		time.sleep(1.2)
+	wipe(r, t)
+
+def seg_tabs(r, t, m):
+	with Banner(r, "Tabs, with the path you were in"):
+		r.xdo("windowactivate", r.win)
+		time.sleep(0.3)
+		t.key("ctrl+shift+t", sound=key_sound("t"))
+		time.sleep(1.5)
+		t.cmd("cat Cargo.toml", settle=1.8)
+		time.sleep(1.0)
+		t.key("ctrl+shift+w", sound=key_sound("w"))
+		time.sleep(1.2)
+	# no wipe: less restores this screen on exit, and the Settings scene wants
+	# something behind the dialog
 
 def seg_settings(r, t, m):
-	# open Settings, dwell ~4s slowly circling the text-scrim rows, then cancel
+	# open Settings, dwell ~4s slowly circling the appearance rows, then cancel
 	# with Esc - no trip to a button, and NO mouse motion after the dwell (the
-	# park is a single off-frame jump). The point is readable text everywhere.
-	with Banner(r, "Readable text over any background", pos="tl"):
+	# park is a single off-frame jump). Deliberately BEFORE the wallpaper scene:
+	# a live wallpaper set from the CLI shows up in the dialog as its resolved
+	# absolute path, which would put the throwaway home dir on camera.
+	with Banner(r, "Every setting, live"):
 		dlg = open_settings(r)
 		if not dlg:
 			return
@@ -775,37 +883,15 @@ def seg_settings(r, t, m):
 		time.sleep(0.5)
 		r.xdo("windowactivate", r.win)
 		m.park()
-		time.sleep(1.0)
-
-def seg_wp41(r, t, m):
-	with Banner(r, "Per-window wallpaper, from the shell", pos="top"):
-		t.cmd("silkterm --wallpaper ~/.config/silkterm/backgrounds/background41.jpg",
-			settle=3.2)
-		time.sleep(1.0)
-
-def seg_wp45(r, t, m):
-	# no narration - the second image change speaks for itself
-	t.cmd("silkterm --wallpaper ~/.config/silkterm/backgrounds/background45.jpg",
-		settle=3.0)
-	time.sleep(0.8)
-
-def seg_ls(r, t, m):
-	with Banner(r, "...smooth output scroll...", pos="top"):
-		t.cmd("ls ~/", settle=3.6)
-		time.sleep(1.0)
-
-def seg_build(r, t, m):
-	with Banner(r, "Smooth cursor. Smooth scroll.", pos="top"):
-		t.cmd("cd projects/pulsar", settle=0.6, typos=0.0)
-		t.cmd("./build.sh", settle=7.5)          # covers the script's own runtime
-		time.sleep(1.0)
+		time.sleep(0.8)
+	wipe(r, t)
 
 def seg_less(r, t, m):
-	with Banner(r, "Full-screen apps glide too", pos="top"):
+	with Banner(r, "Full-screen apps glide too"):
 		t.cmd("less -R docs/render.log", settle=1.4)
-		t.keys("Down", 16, hz=7.0)
+		t.keys("Down", 12, hz=7.0)
 		time.sleep(0.7)
-		t.keys("Up", 8, hz=6.0)
+		t.keys("Up", 6, hz=6.0)
 		time.sleep(0.6)
 		# re-assert focus before quitting - a stray focus loss during the arrow
 		# scrolling would leave less open and swallow the commands that follow
@@ -814,30 +900,52 @@ def seg_less(r, t, m):
 		t.key("q")
 		time.sleep(1.0)
 
+def seg_wallpaper(r, t, m):
+	# the image is the app's own baked-in default, copied into the fake config
+	# dir - so this lands on exactly the out-of-the-box look, live, no restart.
+	# `cd` first: at the project prompt the path spills onto a second row.
+	with Banner(r, "The built-in wallpaper, live"):
+		t.cmd("cd", settle=0.6, typos=0.0)
+		t.cmd("silkterm --wallpaper ~/.config/silkterm/wallpapers/default.jpg",
+			settle=3.4)
+		time.sleep(1.0)
+	# no wipe from here on: the closing scenes build up the frame that the demo
+	# ends on - wallpaper, colour, then the sign-off
+
+def seg_showcase(r, t, m):
+	with Banner(r, "24-bit colour. Unicode. Over anything."):
+		t.cmd("showcase", settle=2.6)
+		time.sleep(0.8)
+
 def seg_outro(r, t, m):
 	# drop the flag the prompt watches for; a plain Return then draws a FRESH prompt
 	# that grays whatever is typed next - so the comment goes gray from the '#' on,
 	# as if ble.sh were installed, but with plain reliable bash typing. (ctrl+l was
 	# avoided - clearing right after less's alt-screen exit could swallow the line.)
 	(r.home / ".silk-gray").touch()
-	with Banner(r, "github.com/jim-collier/silkterm", pos="top"):
+	with Banner(r, "github.com/jim-collier/silkterm"):
 		r.xdo("windowactivate", r.win)
 		time.sleep(0.3)
 		r.xdo("key", "--clearmodifiers", "Return")   # fresh prompt picks up the flag
 		time.sleep(0.7)
 		t.cmd("# Smooth. Silky. ...SilkTerm.", settle=0.5, typos=0.0)
-		time.sleep(3.2)
+		time.sleep(3.0)
+	# the rest of the linger is the encoder's freeze (TAIL_HOLD_S), which costs a
+	# gif nothing - it stores a held frame as a no-change
 
 # one script, both profiles (video and gif differ only in size/fonts/audio)
 _SCRIPT = [
-	("alias",    seg_alias),
-	("ls",       seg_ls),
-	("build",    seg_build),
-	("settings", seg_settings),
-	("wp41",     seg_wp41),
-	("less",     seg_less),
-	("wp45",     seg_wp45),
-	("outro",    seg_outro),
+	("alias",     seg_alias),
+	("ls",        seg_ls),
+	("build",     seg_build),
+	("wheel",     seg_wheel),
+	("panes",     seg_panes),
+	("tabs",      seg_tabs),
+	("less",      seg_less),
+	("settings",  seg_settings),
+	("wallpaper", seg_wallpaper),
+	("showcase",  seg_showcase),
+	("outro",     seg_outro),
 ]
 SEGMENTS = {"video": _SCRIPT, "gif": _SCRIPT}
 
@@ -976,21 +1084,10 @@ def esc_drawtext(work, i, text):
 	f.write_text(text)
 	return f
 
-# banner -> (x, y) expressions. The caption sits over the window's titlebar/menu
-# chrome (out of the way of the terminal text - the owner would rather it cover
-# the title bar than the content). `top` is centered there; tl/bl are corners for
-# when the action itself is center/right (the Settings dialog).
-def banner_xy(pos, size):
-	m = int(size[0] * 0.025)
-	chrome_y = BORDER + 6                      # into the titlebar/menu strip at the top
-	bot = "h-{}".format(BORDER + 118)
-	return {
-		"top": ("(w-text_w)/2", str(chrome_y)),
-		"tr":  ("w-text_w-{}".format(m), str(chrome_y)),
-		"tl":  (str(m), str(chrome_y)),
-		"bl":  (str(m), bot),
-		"br":  ("w-text_w-{}".format(m), bot),
-	}.get(pos, ("(w-text_w)/2", str(chrome_y)))
+# caption placement: centered in the black band above the window, so it never
+# covers the terminal and needs no box behind it to stay readable
+def banner_xy(rec):
+	return "(w-text_w)/2", f"({rec.band}-text_h)/2"
 
 # a quick damped-spring vertical bounce for the pop-in / pop-out (~0.6s each): the
 # caption springs in from just below its rest line, rings down, and springs back
@@ -1014,26 +1111,26 @@ def vf_chain(rec, work, trim, dur, tail=False):
 	# minus a gap, so only ONE banner is ever on screen (consecutive banners were
 	# crossfading into an overlapping smear)
 	spans = []
-	for s_e, e_e, text, pos in rec.banners:
+	for s_e, e_e, text in rec.banners:
 		s = max(0.0, to_vt(s_e) - trim)
 		e = max(s + p["banner_min"], to_vt(e_e) - trim)
-		spans.append([s, e, text, pos])
+		spans.append([s, e, text])
 	spans.sort(key=lambda b: b[0])
 	GAP = 0.4
 	for i in range(len(spans) - 1):
 		spans[i][1] = min(spans[i][1], spans[i + 1][0] - GAP)
-	amp = int(rec.size[1] * 0.018)            # bounce height ~19px @1080p
-	for i, (s, e, text, pos) in enumerate(spans):
+	amp = max(4, int(rec.band * 0.18))         # bounce stays inside the band
+	x, base_y = banner_xy(rec)
+	for i, (s, e, text) in enumerate(spans):
 		if e <= s:
 			continue
 		tf = esc_drawtext(work, i, text)
-		x, base_y = banner_xy(pos, rec.size)
 		y = wobble_y(base_y, s, e, amp)
 		# quick alpha pop (~0.15s) - the bounce carries the motion
 		fade = f"clip((t-{s:.3f})/0.15,0,1)*clip(({e:.3f}-t)/0.15,0,1)"
 		filters.append(
 			f"drawtext=fontfile={BANNER_TTF}:textfile={tf}:fontsize={p['banner_fs']}:"
-			f"fontcolor=white:box=1:boxcolor=0x333333:boxborderw={p['banner_pad']}:"
+			f"fontcolor={BANNER_FG}:"
 			f"x={x}:y='{y}':alpha='{fade}':enable='between(t,{s:.3f},{e:.3f})'")
 	# no head/tail fades: the fade gradient is a fresh frame every step, which
 	# bloats the gif enormously (palette churn + huge inter-frame deltas)
@@ -1064,20 +1161,15 @@ def encode_video(rec, work, out_mp4, video_end_e):
 		"-movflags", "+faststart", str(out_mp4)])
 	return out_mp4
 
-# the full 50fps 540p gif of nonstop SMOOTH scrolling is dense (~0.7 MB/s - denser
-# than the old juddery one, since every frame now differs) - far past what a README
-# should carry, so it goes to private/ and a lighter highlight is cut for the README:
-# fewer fps + colors + a shorter window, still plainly smooth, small enough to inline.
-# It opens where the smooth scrolling begins (the whole point), not at the top.
-GIF_HL_SEG    = "ls"    # scene to open the highlight on
-GIF_HL_DUR    = 9.0     # ls + build - enough to sell the scroll
-GIF_HL_FPS    = 25      # half the full rate keeps it smooth at ~half the bytes
-GIF_HL_COLORS = 128
+GIF_COLORS = 160        # one global palette; the wallpaper finale wants the headroom
+# gifsicle's lossy LZW threshold. OFF on purpose: it only bought ~10%, and what it
+# spends that on is ghost bars of the previous screen left in flat black areas -
+# which in a terminal demo reads as the terminal itself misdrawing. Raise it only
+# if a future scene list pushes the gif past what the README can carry.
+GIF_LOSSY  = 0
 
-def gif_pass(rec, work, out_gif, trim, dur, fps=None, colors=160, tail=False):
+def gif_pass(rec, work, out_gif, trim, dur, colors=GIF_COLORS, tail=False):
 	vf = vf_chain(rec, work, trim, dur, tail=tail)
-	if fps:                                   # highlight renders at a lighter rate
-		vf = vf.replace(f"fps={rec.out_fps}", f"fps={fps}", 1)
 	pal = work / "pal.png"
 	cut = ["-ss", f"{trim:.3f}", "-t", f"{dur + (TAIL_EXTRA if tail else 0.0):.3f}"]
 	# ONE global palette (stats_mode=full) applied uniformly: stats_mode=diff +
@@ -1091,6 +1183,23 @@ def gif_pass(rec, work, out_gif, trim, dur, fps=None, colors=160, tail=False):
 		str(out_gif)])
 	return out_gif
 
+def gif_optimize(gif):
+	# gifsicle squeezes the encoder's output further: -O3 re-cuts every frame to
+	# the smallest changed rectangle, so the static band above the window and the
+	# held tail frames cost near nothing. Skipped, with a note, when absent.
+	if not shutil.which("gifsicle"):
+		log("WARNING: gifsicle not found - gif left unoptimized")
+		return gif
+	before = gif.stat().st_size / (1 << 20)
+	opt = gif.with_name(gif.stem + "-opt.gif")
+	cmd = ["gifsicle", "-O3", "--no-warnings", "-o", str(opt), str(gif)]
+	if GIF_LOSSY:
+		cmd.insert(2, f"--lossy={GIF_LOSSY}")
+	run(cmd)
+	after = opt.stat().st_size / (1 << 20)
+	log(f"gifsicle: {before:.1f} -> {after:.1f} MiB (lossy={GIF_LOSSY})")
+	return opt
+
 def encode_gif(rec, work, out_gif, video_end_e):
 	rec.flash_vt = find_flash(rec.raw, work)
 	log(f"sync flash at video t={rec.flash_vt:.3f}s")
@@ -1098,20 +1207,16 @@ def encode_gif(rec, work, out_gif, video_end_e):
 	trim = rec.flash_vt + (rec.t0_e - rec.flash_e)
 	dur = video_end_e - rec.t0_e
 	gif_pass(rec, work, out_gif, trim, dur, tail=True)
-	# open the highlight on the scrolling; fall back to 1s in if the mark is absent
-	mark = rec.seg_marks.get(GIF_HL_SEG)
-	hl_start = (rec.flash_vt + (mark - rec.flash_e) - trim) if mark else 1.0
-	hl_start = max(0.0, min(hl_start, dur - 2.0))
-	hl = work / "demo-hl.gif"
-	gif_pass(rec, work, hl, trim + hl_start, min(GIF_HL_DUR, dur - hl_start),
-		fps=GIF_HL_FPS, colors=GIF_HL_COLORS)
-	return out_gif, hl
+	return gif_optimize(out_gif)
 
 
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ##	Output placement + rotation (video and gif in their own dirs)
 
-GIF_ASSET_MAX_MB = 12
+# The README carries the whole demo now (it ends on the wallpaper + the black
+# tail, which a cut-down highlight could never show), so the ceiling is what a
+# full ~80s 50fps gif can honestly reach after gifsicle - not what a 9s clip did.
+GIF_ASSET_MAX_MB = 28
 
 def rotate(out_dir, prefix, ext, no_rotate):
 	if no_rotate:
@@ -1129,22 +1234,23 @@ def place_video(mp4, out_dir, no_rotate):
 	rotate(out_dir, "silkterm-demo", "mp4", no_rotate)
 	log(f"video: {dst} ({mb:.1f} MiB)")
 
-def place_gif(full, hl, out_dir, no_rotate):
+def place_gif(gif, out_dir, no_rotate, no_asset=False):
 	out_dir.mkdir(parents=True, exist_ok=True)
 	stamp = time.strftime("%Y%m%d-%H%M%S")
 	dst = out_dir / f"silkterm-demo_{stamp}.gif"
-	shutil.copy2(full, dst)
-	full_mb = dst.stat().st_size / (1 << 20)
+	shutil.copy2(gif, dst)
+	mb = dst.stat().st_size / (1 << 20)
 	rotate(out_dir, "silkterm-demo", "gif", no_rotate)
-	log(f"gif (full): {dst} ({full_mb:.1f} MiB)")
-	mb = hl.stat().st_size / (1 << 20)
-	if mb <= GIF_ASSET_MAX_MB:
+	log(f"gif: {dst} ({mb:.1f} MiB)")
+	if no_asset:                              # partial/tuning runs must not clobber it
+		log("gif (README): skipped (--no-asset)")
+	elif mb <= GIF_ASSET_MAX_MB:
 		asset = REPO / "assets" / "demo.gif"
-		shutil.copy2(hl, asset)
-		log(f"gif (README highlight): {asset} ({mb:.1f} MiB)")
+		shutil.copy2(gif, asset)
+		log(f"gif (README): {asset} ({mb:.1f} MiB)")
 	else:
-		log(f"WARNING: highlight gif is {mb:.1f} MiB (> {GIF_ASSET_MAX_MB}); "
-			"assets/demo.gif left untouched - trim GIF_HL_DUR")
+		log(f"WARNING: gif is {mb:.1f} MiB (> {GIF_ASSET_MAX_MB}); assets/demo.gif "
+			"left untouched - trim scenes or raise GIF_LOSSY")
 
 
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -1185,8 +1291,8 @@ def record(args, name, seed):
 			place_video(out, Path(args.out_dir) / "video", args.no_rotate)
 		else:
 			out = rec.work / "demo.gif"
-			full, hl = encode_gif(rec, rec.work, out, video_end_e)
-			place_gif(full, hl, Path(args.out_dir) / "gif", args.no_rotate)
+			gif = encode_gif(rec, rec.work, out, video_end_e)
+			place_gif(gif, Path(args.out_dir) / "gif", args.no_rotate, args.no_asset)
 		if rec.keep:
 			log(f"[{name}] work dir kept: {rec.work}")
 	finally:
@@ -1200,6 +1306,8 @@ def main():
 	ap.add_argument("--seed", type=int, default=None)
 	ap.add_argument("--keep-work", action="store_true")
 	ap.add_argument("--no-rotate", action="store_true")
+	ap.add_argument("--no-asset", action="store_true",
+		help="do not overwrite assets/demo.gif (for partial/tuning runs)")
 	ap.add_argument("--out-dir", default=str(PRIVATE))
 	args = ap.parse_args()
 
@@ -1215,6 +1323,11 @@ if __name__ == "__main__":
 
 
 ##	Script history:
+##		- 20260726: narration moved into a black band above the window (plain
+##		  yellow, no box, same wobble pop); longer scene list (wheel scrollback,
+##		  split panes, tabs) closing on the built-in wallpaper + a colour/unicode
+##		  showcase; screens cleared between scenes; the README gif is now the whole
+##		  demo (the highlight cut is gone) and runs through gifsicle.
 ##		- 20260713: the faux window fills the view - only a 4px black border
 ##		  around it (was a 3%/5% dark margin); square-cornered dark decoration
 ##		  (Material-Black-Pistachio theme); the client is sized + the frame nudged
