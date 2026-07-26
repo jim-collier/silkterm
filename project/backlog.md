@@ -50,6 +50,11 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- ✅ Running `top` results in a scrolling bounce on each refresh.
+	- Only happened once the scrollback was full, which is the steady state for a terminal that has been open a while. Past that point the line count stops growing, so the advance has to be inferred from how the on-screen rows moved.
+	- `top` repaints its whole screen in place without scrolling, and almost every row changes each refresh, so no shift matched. The remaining test was whether the top line changed - and `top` keeps a clock up there, so it always had. That read as "the screen turned over in one fast burst" and reported the largest possible advance, kicking the view up a screenful and easing it back once per refresh.
+	- Inferring the advance now also requires that a line genuinely scrolled off. A repaint in place pushes nothing into the scrollback, while a real burst pushes plenty, which separates the two cases at the mechanism rather than by guessing from the content. Fast output at a full scrollback still eases exactly as before.
+
 - ✅ `--shell` eats backslashes, so a Windows path cannot be passed unquoted.
 	- The shell string was split with POSIX rules, where an unquoted `\` escapes the next character - so `--shell C:\windows\system32\cmd.exe` arrived as `C:windowssystem32cmd.exe` and the spawn failed with "File not found". `\\host\share` lost a leading slash the same way.
 	- Outside quotes a backslash now only escapes whitespace and quotes, and is kept as-is before anything else, so plain Windows and UNC paths survive. Escaping a space or a quote still works, and inside double quotes the usual escapes are unchanged (that path already handled Windows paths correctly).
