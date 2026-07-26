@@ -176,6 +176,15 @@ DOGFOOD_PREFIX="slktrmdf"
 ## Stage 7: backup + publish to git (runs from repo root).
 GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 
+## Extra backup excludes for this project. cicd/artifacts is per-run scratch: the
+## release binaries there are copies of ones already kept from target/, and the
+## rest is logs and staging. Excluding it is also load-bearing, not just tidy -
+## the wine staging tree holds a wineprefix whose dosdevices map Z: to '/' (plus
+## raw /dev nodes), so a backup that walks in climbs out of the repo and into the
+## whole filesystem. Exclude the dir as well as its contents, or rar still
+## descends to test each entry. Quoted so eval hands rar the glob, not a match.
+export GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES="-x'*/cicd/artifacts' -x'*/cicd/artifacts/*'"
+
 ## Set a non-empty commit message to publish hands-off (suppresses the script's
 ## prompt and supplies the message so `git commit` won't open an editor). Left
 ## empty, publish is interactive unless -m/--message or -y is given (see cicd.bash).
