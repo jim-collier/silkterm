@@ -491,33 +491,21 @@ impl TextCtx {
 	// the ink box, not the advance, because these fallback symbols routinely
 	// paint wider than they advance and would otherwise overlap the next cell.
 	pub fn fill_glyph(&mut self, buf: &mut Buffer, ch: char, attrs: &Attrs) -> (f32, f32) {
-		let mut utf8_buf = [0u8; 4];
-		buf.set_text(
-			&mut self.font_system,
-			ch.encode_utf8(&mut utf8_buf),
-			attrs,
-			Shaping::Advanced,
-			None,
-		);
-		buf.shape_until_scroll(&mut self.font_system, false);
-		let phys = buf
-			.layout_runs()
-			.next()
-			.and_then(|run| run.glyphs.first())
-			.map(|glyph| glyph.physical((0.0, 0.0), 1.0));
-		let Some(phys) = phys else {
-			return (self.cell_w, 0.0);
-		};
-		match self
-			.swash_cache
-			.get_image(&mut self.font_system, phys.cache_key)
-		{
-			Some(image) => (
-				image.placement.width.max(1) as f32,
-				phys.x as f32 + image.placement.left as f32,
-			),
-			None => (self.cell_w, 0.0),
+		if let Some(ink) = self.shape_ink(buf, ch, attrs) {
+			return ink;
 		}
+		// The face the pinned family fell back to rasterizes nothing - a colour
+		// emoji font (Noto Color Emoji here) hands swash a strike it can't scale, so
+		// every emoji came out as a blank cell. Reshape through the generic
+		// monospace chain, which lands on a face that does raster.
+		let mut generic = attrs.clone();
+		generic.family = Family::Monospace;
+		self.shape_ink(buf, ch, &generic)
+			.unwrap_or((self.cell_w, 0.0))
+	}
+
+	fn shape_ink(&mut self, buf: &mut Buffer, ch: char, attrs: &Attrs) -> Option<(f32, f32)> {
+		shaped_ink(&mut self.font_system, &mut self.swash_cache, buf, ch, attrs)
 	}
 
 	// `top` for a chrome text buffer so its VISIBLE box (cap-top to baseline)
@@ -733,9 +721,61 @@ fn bold_matches_cell(fs: &mut FontSystem, metrics: Metrics, cell_w: f32) -> bool
 	(adv - cell_w).abs() < 0.1
 }
 
+// Shape `ch` into `buf` and measure its rasterized ink as `(width_px, left_px)`.
+// None when the face draws nothing - no glyph for it, or a glyph that rasterizes
+// empty (which is what a colour-bitmap emoji face does through swash here).
+fn shaped_ink(
+	fs: &mut FontSystem,
+	swash: &mut SwashCache,
+	buf: &mut Buffer,
+	ch: char,
+	attrs: &Attrs,
+) -> Option<(f32, f32)> {
+	let mut utf8_buf = [0u8; 4];
+	buf.set_text(
+		fs,
+		ch.encode_utf8(&mut utf8_buf),
+		attrs,
+		Shaping::Advanced,
+		None,
+	);
+	buf.shape_until_scroll(fs, false);
+	let phys = buf
+		.layout_runs()
+		.next()
+		.and_then(|run| run.glyphs.first())
+		.map(|glyph| glyph.physical((0.0, 0.0), 1.0))?;
+	let image = swash.get_image(fs, phys.cache_key).as_ref()?;
+	if image.placement.width == 0 || image.placement.height == 0 {
+		return None;
+	}
+	Some((
+		image.placement.width as f32,
+		phys.x as f32 + image.placement.left as f32,
+	))
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// A pinned mono family falls back to a colour emoji face that rasterizes to
+	// nothing, which drew every emoji as an empty cell. The generic-monospace
+	// retry must find a face that actually paints.
+	#[test]
+	fn emoji_falls_back_to_a_face_that_rasterizes() {
+		let mut fs = FontSystem::new();
+		let mut swash = SwashCache::new();
+		let mut buf = Buffer::new(&mut fs, Metrics::new(18.0, 22.0));
+		let mut generic = mono_attrs();
+		generic.family = Family::Monospace;
+		for ch in ['\u{1F680}', '\u{1F525}', '\u{1F49A}'] {
+			assert!(
+				shaped_ink(&mut fs, &mut swash, &mut buf, ch, &generic).is_some(),
+				"no ink for {ch:?}"
+			);
+		}
+	}
 
 	// Chrome must pin a concrete face, never fall back to generic
 	// `Family::SansSerif` (which lands on a serif when fontdb's "Arial" default
