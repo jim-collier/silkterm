@@ -50,6 +50,19 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- ✅ Graphical emoji render as monochrome outlines instead of colour.
+	- Not a regression. No build renders these in colour: the text stack has only ever read the older colour-glyph table format (COLR v0), and every current colour emoji font ships the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
+	- Other terminals show the same fonts in colour because their text rasterizer reads COLRv1.
+	- Fix: colour glyphs are now painted directly - the paint graph is walked and rendered through a small 2D back end (transforms, clip and layer stacks, solid/linear/radial/sweep fills, Porter-Duff and blend compositing), then handed to the renderer's colour atlas as a per-cell image fitted to the cell box. Chars with no colour glyph are untouched and still take the monochrome fallback path.
+	- `color_emoji` (default true) turns it off, which restores the monochrome outlines.
+	- 🔘 Palette entry 0xFFFF ("use the text colour") resolves to white, because a raster is cached independently of the cell colour. No emoji font relies on it; a foreground-tinted colour glyph would need the cell colour in the cache key.
+	- 🔘 The HSL blend modes fall back to ordinary source-over. Unused by any font seen so far.
+
+- 🔘 The font fallback stack is only partly implemented, and resolves differently per platform for the same build.
+	- The stack should be identical on every platform, varying only where a platform genuinely requires it, and should be listed whether or not the fonts are installed.
+	- Today the built-in stack is one cross-platform list, but the order it is consulted in is not: following the system font is defined as "not Windows, and the setting is on", so on Linux and macOS with that setting on the configured `font_family` list is skipped entirely and only the OS monospace family plus the built-in stack are tried. On Windows the same file consults `font_family` first. Same build, same config, two different results.
+	- Existing configs also keep whatever `font_family` they were first written with - a new key is appended but an existing one is never rewritten - so a config created before the stack changed still carries the old list.
+
 - ✅ Running `top` results in a scrolling bounce on each refresh.
 	- Only happened once the scrollback was full, which is the steady state for a terminal that has been open a while. Past that point the line count stops growing, so the advance has to be inferred from how the on-screen rows moved.
 	- `top` repaints its whole screen in place without scrolling, and almost every row changes each refresh, so no shift matched. The remaining test was whether the top line changed - and `top` keeps a clock up there, so it always had. That read as "the screen turned over in one fast burst" and reported the largest possible advance, kicking the view up a screenful and easing it back once per refresh.

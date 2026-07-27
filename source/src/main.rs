@@ -10,6 +10,7 @@ mod app;
 mod bgimage;
 mod cli;
 mod clipboard;
+mod coloremoji;
 mod config;
 mod contrast;
 mod ctl;

@@ -2460,12 +2460,14 @@ dependencies = [
  "pprof",
  "raw-window-handle",
  "serde",
+ "skrifa 0.42.1",
  "toml",
  "toml_edit",
  "wgpu",
  "windows-sys 0.59.0",
  "winit",
  "x11rb",
+ "zeno",
 ]
 
 [[package]]

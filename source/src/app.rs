@@ -2083,6 +2083,7 @@ impl State {
 				None => areas.push(p.text_area(tops[&p.id], margin)),
 			}
 			areas.extend(p.glyph_areas(margin));
+			areas.extend(p.emoji_area(margin));
 		}
 		if self.menu_bar {
 			for (i, buf) in chrome.menubar.iter().enumerate() {
@@ -2216,6 +2217,7 @@ impl State {
 					None => scrim_areas.push(p.scrim_text_area(tops[&p.id], margin)),
 				}
 				scrim_areas.extend(p.glyph_areas(margin));
+				scrim_areas.extend(p.emoji_area(margin));
 			}
 			if let Err(e) = self
 				.text
