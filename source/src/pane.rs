@@ -12,7 +12,7 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::CursorShape;
-use glyphon::{Attrs, Buffer, Color as GColor, Shaping, Style, TextArea, TextBounds};
+use glyphon::{Attrs, Buffer, Color as GColor, CustomGlyph, Shaping, Style, TextArea, TextBounds};
 use winit::event_loop::EventLoopProxy;
 
 use crate::config;
@@ -575,6 +575,11 @@ pub struct Pane {
 	// across frames (dropped on a font/size rebuild, see rebuild_buffers).
 	glyph_cache: HashMap<(char, bool, bool), FallbackGlyph>,
 	glyphs: Vec<((char, bool, bool), f32, f32, GColor, f32)>,
+	// Colour (COLRv1) glyphs this frame, placed in absolute screen px and drawn
+	// through glyphon's colour atlas - see coloremoji.rs. They ride a TextArea
+	// that carries no text of its own, hence `empty_buf`.
+	emoji: Vec<CustomGlyph>,
+	empty_buf: Buffer,
 	// Scrim source with bold stripped (text_scrim_regular_weight): shaped alongside
 	// the main buffer only on rebuild frames that actually contain bold runs.
 	// `scrim_debold` says the buffer is valid for the current content.
@@ -1238,8 +1243,41 @@ impl Pane {
 		// (harfbuzz fallback matching is the cost) and cached; every cell/colour
 		// drawing it reuses that buffer, tinted per-cell via TextArea.default_color.
 		self.glyphs.clear();
+		self.emoji.clear();
 		let rect_y = self.rect.y;
 		for (ch, color, bold, italic, c, screen_row, cells) in glyph_specs {
+			let cell_x = content_x + c as f32 * cell_w;
+			let row_y = rect_y + margin + (screen_row as f32 + voff_of(screen_row)) * cell_h;
+			// A colour glyph is a self-contained image, so it goes to the colour
+			// atlas whole rather than through the monochrome fallback face below.
+			let color_glyph = if settings.color_emoji {
+				ctx.color_metrics(ch)
+			} else {
+				None
+			};
+			if let Some(metrics) = color_glyph {
+				// Fit the design box inside the cell box, keeping its aspect, and
+				// centre it there. Colour glyphs are drawn, not typeset - fitting the
+				// cell reads better than sitting them on the text baseline.
+				let target_w = cells as f32 * cell_w;
+				let fit = (target_w / metrics.box_w).min(cell_h / metrics.box_h);
+				let w = (metrics.box_w * fit).round().max(1.0);
+				let h = (metrics.box_h * fit).round().max(1.0);
+				ctx.color_warm(metrics.id, w as u16, h as u16);
+				self.emoji.push(CustomGlyph {
+					id: metrics.id,
+					left: cell_x + (target_w - w) / 2.0,
+					top: row_y + (cell_h - h) / 2.0,
+					width: w,
+					height: h,
+					color: None,
+					// An image wants whole pixels; this also keeps one raster per
+					// size instead of one per subpixel bin.
+					snap_to_physical_pixel: true,
+					metadata: 0,
+				});
+				continue;
+			}
 			let key = (ch, bold, italic);
 			let glyph = self.glyph_cache.entry(key).or_insert_with(|| {
 				let mut attrs = mono_attrs(); // colour left unset - the TextArea tints it
@@ -1267,11 +1305,8 @@ impl Pane {
 			} else {
 				1.0
 			};
-			let cell_x = content_x + c as f32 * cell_w;
 			let x = cell_x + (target - glyph.ink_w * scale) / 2.0 - glyph.ink_off * scale;
-			let y = rect_y
-				+ margin + (screen_row as f32 + voff_of(screen_row)) * cell_h
-				+ cell_h * (1.0 - scale) / 2.0;
+			let y = row_y + cell_h * (1.0 - scale) / 2.0;
 			self.glyphs
 				.push((key, x, y, GColor::rgb(color[0], color[1], color[2]), scale));
 		}
@@ -1603,6 +1638,31 @@ impl Pane {
 				custom_glyphs: &[],
 			})
 			.collect()
+	}
+
+	// This frame's colour glyphs (see Pane::build). One text area carries them all:
+	// their coordinates are absolute, so it sits at the origin with an empty
+	// buffer and exists only to hand glyphon the custom-glyph list.
+	pub fn emoji_area(&self, margin: f32) -> Option<TextArea<'_>> {
+		if self.emoji.is_empty() {
+			return None;
+		}
+		Some(TextArea {
+			buffer: &self.empty_buf,
+			left: 0.0,
+			top: 0.0,
+			scale: 1.0,
+			// content clip, same as glyph_areas
+			bounds: TextBounds {
+				left: (self.rect.x + margin) as i32,
+				top: (self.rect.y + margin) as i32,
+				right: (self.rect.x + self.rect.w - margin) as i32,
+				bottom: (self.rect.y + self.rect.h - margin) as i32,
+			},
+			// unused: a colour glyph carries its own pixels
+			default_color: GColor::rgb(255, 255, 255),
+			custom_glyphs: &self.emoji,
+		})
 	}
 
 	// Copy-output: Enter was pressed at the shell prompt, so a command is (maybe)
@@ -2083,6 +2143,7 @@ fn spawn_pane(
 	// +2 cells of height for the overscan rows build() renders (see relayout).
 	let buffer = ctx.new_buffer(cw, ch + 2.0 * ctx.cell_h);
 	let strip_buf = ctx.new_buffer(cw, ctx.cell_h);
+	let empty_buf = ctx.new_plain_buffer(); // never given text - see emoji_area
 	Ok(Pane {
 		id,
 		term,
@@ -2112,6 +2173,8 @@ fn spawn_pane(
 		last_alt: false,
 		glyph_cache: HashMap::new(),
 		glyphs: Vec::new(),
+		emoji: Vec::new(),
+		empty_buf,
 		scrim_buf: None,
 		scrim_debold: false,
 		cursor_x: 0.0,

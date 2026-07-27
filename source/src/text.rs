@@ -10,6 +10,7 @@ use glyphon::{
 	TextAtlas, TextRenderer, Viewport, Wrap,
 };
 
+use crate::coloremoji::{ColorGlyphs, ColorMetrics};
 use crate::config;
 
 // Concrete family name behind `Family::Monospace`, re-resolved on each TextCtx
@@ -360,6 +361,9 @@ pub struct TextCtx {
 	// rendered per-cell instead - see Pane::build).
 	mono_face: Option<fontdb::ID>,
 	cover_cache: HashMap<char, bool>,
+	// COLRv1 colour glyphs, which swash can't rasterize (see coloremoji.rs). Panes
+	// route an emoji cell here instead of to a monochrome fallback face.
+	color_glyphs: ColorGlyphs,
 	// Measured chrome-text widths. Keyed by text only: every chrome measurement
 	// uses the base UI attrs (colour varies, which doesn't affect width), and the
 	// font is fixed for this TextCtx's life. Measuring shapes a throwaway buffer,
@@ -451,6 +455,7 @@ impl TextCtx {
 			ui_vmetrics,
 			mono_face,
 			cover_cache: HashMap::new(),
+			color_glyphs: ColorGlyphs::new(),
 			ui_measure_cache: HashMap::new(),
 		}
 	}
@@ -470,6 +475,19 @@ impl TextCtx {
 			.is_some_and(|font| font.as_swash().charmap().map(ch) != 0);
 		self.cover_cache.insert(ch, covered);
 		covered
+	}
+
+	// Colour glyph for `ch`, with the design box a caller fits to the cell. None
+	// for anything no installed colour font paints - i.e. almost everything.
+	// Gated by the caller (`color_emoji`), which already holds the settings.
+	pub fn color_metrics(&mut self, ch: char) -> Option<ColorMetrics> {
+		self.color_glyphs.metrics(self.font_system.db(), ch)
+	}
+
+	// Build the raster for a placed colour glyph. Done here, during the frame
+	// build, because `prepare` holds the FontSystem (the font bytes) mutably.
+	pub fn color_warm(&mut self, id: u16, w: u16, h: u16) {
+		self.color_glyphs.warm(self.font_system.db(), id, w, h);
 	}
 
 	// Buffer for a single fallback glyph: no monospace snapping (render at its
@@ -608,14 +626,26 @@ impl TextCtx {
 		queue: &wgpu::Queue,
 		areas: Vec<TextArea<'_>>,
 	) -> Result<(), glyphon::PrepareError> {
-		self.renderer.prepare(
+		// Destructured so the colour-glyph lookup can borrow alongside the renderer
+		// and font system (disjoint fields of the same struct).
+		let Self {
+			renderer,
+			font_system,
+			atlas,
+			viewport,
+			swash_cache,
+			color_glyphs,
+			..
+		} = self;
+		renderer.prepare_with_custom(
 			device,
 			queue,
-			&mut self.font_system,
-			&mut self.atlas,
-			&self.viewport,
+			font_system,
+			atlas,
+			viewport,
 			areas,
-			&mut self.swash_cache,
+			swash_cache,
+			|req| color_glyphs.raster(req),
 		)
 	}
 
@@ -653,14 +683,24 @@ impl TextCtx {
 		queue: &wgpu::Queue,
 		areas: Vec<TextArea<'_>>,
 	) -> Result<(), glyphon::PrepareError> {
-		self.scrim.prepare(
+		let Self {
+			scrim,
+			font_system,
+			scrim_atlas,
+			viewport,
+			swash_cache,
+			color_glyphs,
+			..
+		} = self;
+		scrim.prepare_with_custom(
 			device,
 			queue,
-			&mut self.font_system,
-			&mut self.scrim_atlas,
-			&self.viewport,
+			font_system,
+			scrim_atlas,
+			viewport,
 			areas,
-			&mut self.swash_cache,
+			swash_cache,
+			|req| color_glyphs.raster(req),
 		)
 	}
 

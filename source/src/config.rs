@@ -130,6 +130,7 @@ pub struct Settings {
 	pub text_scrim_ramp: String, // halo falloff curve: "s" | "gaussian" | "linear" | "log" | "exp"
 	pub text_scrim_function: String, // halo build: "dilate" | "sdf" | "dt" | "gaussian" (legacy blur)
 	pub text_scrim_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
+	pub color_emoji: bool, // paint COLRv1 colour glyphs (emoji) instead of falling back to a monochrome face
 	pub embolden_inverse: bool, // render reverse-video (dark-on-light) text bold so it reads as strongly as normal text (the scrim only boosts light-on-dark)
 	pub cursor_scrim: bool,     // cursor joins the text scrim halo (default off)
 	pub cursor_outline: bool,   // cursor joins the text outline (default on)
@@ -202,6 +203,7 @@ impl Default for Settings {
 			text_scrim_ramp: "gaussian".to_string(),
 			text_scrim_function: "sdf".to_string(),
 			text_scrim_regular_weight: true,
+			color_emoji: true,
 			embolden_inverse: true,
 			cursor_scrim: false,
 			cursor_outline: true,
@@ -454,6 +456,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.text_scrim_regular_weight != orig.text_scrim_regular_weight {
 		doc["text_scrim_regular_weight"] = value(s.text_scrim_regular_weight);
 	}
+	if s.color_emoji != orig.color_emoji {
+		doc["color_emoji"] = value(s.color_emoji);
+	}
 	if s.embolden_inverse != orig.embolden_inverse {
 		doc["embolden_inverse"] = value(s.embolden_inverse);
 	}
@@ -596,6 +601,7 @@ struct RawConfig {
 	text_scrim_ramp: Option<String>,
 	text_scrim_function: Option<String>,
 	text_scrim_regular_weight: Option<bool>,
+	color_emoji: Option<bool>,
 	embolden_inverse: Option<bool>,
 	cursor_scrim: Option<bool>,
 	cursor_outline: Option<bool>,
@@ -835,6 +841,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		text_scrim_regular_weight: raw
 			.text_scrim_regular_weight
 			.unwrap_or(d.text_scrim_regular_weight),
+		color_emoji: raw.color_emoji.unwrap_or(d.color_emoji),
 		embolden_inverse: raw.embolden_inverse.unwrap_or(d.embolden_inverse),
 		cursor_scrim: raw.cursor_scrim.unwrap_or(d.cursor_scrim),
 		cursor_outline: raw.cursor_outline.unwrap_or(d.cursor_outline),
@@ -1509,6 +1516,7 @@ opacity = 0.95
 # text_scrim_function = "sdf" ## halo shape: "sdf" (round, full corners), "dt", "dilate" (square), or "gaussian" (legacy, corners recede)
 # text_scrim_ramp = "gaussian" ## halo falloff curve: "exp", "gaussian", "log", "s", or "linear"
 # text_scrim_regular_weight = true  ## blur bold text at regular weight so its halo matches non-bold text
+# color_emoji = true          ## paint colour emoji (COLRv1); false renders them as monochrome outlines
 # embolden_inverse = true     ## render reverse-video (dark-on-light) text bold so it reads as strongly as normal
 # cursor_scrim = false        ## the cursor joins the scrim halo (default off)
 # cursor_outline = true       ## the cursor joins the text outline (default on)

@@ -50,6 +50,11 @@ alacritty_terminal = "0.26"
 wgpu = "29"
 winit = "0.30"
 glyphon = "0.11"
+# COLRv1 colour glyphs (see coloremoji.rs). Both already link via swash; the
+# feature sets below match what swash resolves, so this adds no new crate and no
+# feature churn - only the paint-graph + rasterizer code we actually call.
+skrifa = { version = "0.42", default-features = false, features = ["std"] }
+zeno = { version = "0.3", default-features = false, features = ["std", "eval"] }
 pollster = "0.4"
 raw-window-handle = "0.6"
 bytemuck = { version = "1", features = ["derive"] }
