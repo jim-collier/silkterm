@@ -47,6 +47,15 @@ const FALLBACK_FONT_SIZE: f32 = 17.0;
 // arbitrary (often proportional) fallback.
 pub const DEFAULT_FONT_STACK: &str = "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New";
 
+// Stacks that shipped as the font_family default in an earlier version. Backfill
+// only ever adds a missing key, so a config written back then still carries its
+// stack forever; migration rewrites one to the current default. Matched whole
+// and exactly, so anything the user has actually edited is left alone. Append
+// the outgoing value here whenever DEFAULT_FONT_STACK changes.
+const SUPERSEDED_FONT_STACKS: &[&str] = &[
+	"JetBrains Mono, Fira Code, Cascadia Code, DejaVu Sans Mono, Menlo, Consolas, Liberation Mono, monospace",
+];
+
 // right-click context menu
 pub const MENU_LINK: [u8; 3] = [0x6c, 0x9c, 0xff]; // clickable URL
 
@@ -916,14 +925,17 @@ pub fn default_font_size() -> f32 {
 }
 
 // Whether "use system font" actually has an OS monospace setting to follow.
-// Windows has none, so both toggles are inert there: family and size resolve
-// from font_family / font_size as if off (the Settings checkboxes grey out).
-// Face and size follow the OS independently (the Settings dual checkboxes).
+// Face and size follow the OS independently (the Settings dual checkboxes), and
+// each is inert unless the OS really reports that half: Windows has a system
+// font SIZE (the message-box font) but no monospace FAMILY, and a Linux desktop
+// with no readable font setting reports neither. Keying on what was detected
+// rather than on the platform keeps one rule everywhere - a toggle with nothing
+// to follow resolves from font_family / font_size as if off, and greys out.
 pub fn system_font_face_active(s: &Settings) -> bool {
-	!cfg!(windows) && s.use_system_font
+	s.use_system_font && crate::sysfont::monospace().family.is_some()
 }
 pub fn system_font_size_active(s: &Settings) -> bool {
-	!cfg!(windows) && s.use_system_font_size
+	s.use_system_font_size && crate::sysfont::monospace().size_pt.is_some()
 }
 
 // Session-only font zoom (Ctrl+-/+/= hotkeys), in logical px added to the
@@ -1191,6 +1203,17 @@ fn note_config_busy(path: &std::path::Path) {
 	);
 }
 
+// Bring a font_family line still carrying a superseded default stack up to the
+// current one. Only a bare, exactly-matching quoted value migrates, so an edited
+// stack - or one trailing a comment - is left exactly as the user wrote it.
+fn refresh_font_stack(line: &str) -> Option<String> {
+	let (head, value) = line.split_once('=')?;
+	let inner = value.trim().strip_prefix('"')?.strip_suffix('"')?;
+	SUPERSEDED_FONT_STACKS
+		.contains(&inner)
+		.then(|| format!("{head}= \"{DEFAULT_FONT_STACK}\""))
+}
+
 // The rename/remove transform, as a pure fn (testable). Returns Some(new text)
 // only if something changed.
 fn migrate_config_text(text: &str) -> Option<String> {
@@ -1212,7 +1235,7 @@ fn migrate_config_text(text: &str) -> Option<String> {
 	let mut out: Vec<String> = Vec::new();
 	let mut active_font_family: Option<usize> = None; // index in `out`, for the boolean migration
 	for line in text.lines() {
-		let kept = match line_setting_key(line) {
+		let mut kept = match line_setting_key(line) {
 			Some(key) if CONFIG_REMOVED.contains(&key) => {
 				changed = true;
 				continue; // drop
@@ -1231,6 +1254,10 @@ fn migrate_config_text(text: &str) -> Option<String> {
 			None => line.to_string(),
 		};
 		if line_setting_key(&kept) == Some("font_family") && active(&kept) {
+			if let Some(refreshed) = refresh_font_stack(&kept) {
+				kept = refreshed;
+				changed = true;
+			}
 			active_font_family = Some(out.len());
 		}
 		out.push(kept);
@@ -1405,21 +1432,22 @@ const DEFAULT_CONFIG: &str = r##"## SilkTerm configuration. Delete this file to 
 ## Font
 ##=============================================================================
 
-## Use the OS default monospace font FAMILY. When true this overrides
-## font_family below. Turn off to use it instead. Windows has no system
-## monospace font, so this is ignored there.
+## Use the OS default monospace font FAMILY: put it at the head of the
+## font_family stack below. Turn off to start at font_family instead. Ignored
+## where the OS has no monospace setting to read (Windows has none).
 use_system_font = true
 
-## Use the OS default monospace font SIZE. When true this overrides font_size
-## below. Turn off to size the system font yourself. Ignored on Windows.
+## Use the OS default monospace font SIZE, overriding font_size below. Turn off
+## to size the font yourself. Ignored where the OS reports no size.
 # use_system_font_size = true
 
-## Font family: a comma-separated fallback stack (first installed wins). Used
-## only when use_system_font = false (always, on Windows).
+## Font family: a comma-separated fallback stack, first installed one wins. The
+## same list is consulted on every platform; use_system_font above only decides
+## whether the OS font is tried ahead of it. Anything not installed is skipped,
+## and a built-in stack backs the whole list up.
 font_family = "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
 
-## Font size in logical pixels. Used only when use_system_font_size = false
-## (always, on Windows).
+## Font size in logical pixels. Used when use_system_font_size = false.
 # font_size = 17.0
 
 ## Line height as a multiple of the font's natural height (1.0 = tight).
@@ -1971,6 +1999,31 @@ mod tests {
 		assert!(
 			migrate_config_text("use_system_font = true\nfont_family = \"Iosevka\"\n").is_none()
 		);
+	}
+
+	// Backfill only ever adds a missing key, so a config written when an older
+	// stack was the default kept that stack forever. Migration refreshes exactly
+	// the shipped defaults and nothing the user chose themselves.
+	#[test]
+	fn migrate_refreshes_a_superseded_default_font_stack() {
+		let stale = SUPERSEDED_FONT_STACKS[0];
+		let out = migrate_config_text(&format!(
+			"use_system_font = true\nfont_family = \"{stale}\"\n"
+		))
+		.expect("stale default should be refreshed");
+		assert!(
+			out.contains(&format!("font_family = \"{DEFAULT_FONT_STACK}\"")),
+			"{out:?}"
+		);
+		assert!(!out.contains(stale));
+
+		// the current value is already right, so nothing to do
+		let current = format!("use_system_font = true\nfont_family = \"{DEFAULT_FONT_STACK}\"\n");
+		assert!(migrate_config_text(&current).is_none());
+		// a stack the user edited, or one they commented out, is theirs - leave it
+		let edited = format!("use_system_font = true\nfont_family = \"Iosevka, {stale}\"\n");
+		assert!(migrate_config_text(&edited).is_none());
+		assert!(migrate_config_text(&format!("# font_family = \"{stale}\"\n")).is_none());
 	}
 
 	// The real on-disk load pipeline (migrate -> backfill) on a drifted pre-update

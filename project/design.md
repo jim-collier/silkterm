@@ -19,8 +19,11 @@
 	- [Smooth-Scroll](#smooth-scroll)
 	- [Output easing new text](#output-easing-new-text)
 	- [Smooth-scroll inside full-screen apps](#smooth-scroll-inside-full-screen-apps)
+	- [Text readability scrim](#text-readability-scrim)
+	- [Font fallback stack](#font-fallback-stack)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Environment](#environment)
+- [Delivery (CI/CD, branches, releases)](#delivery-cicd-branches-releases)
 
 <!-- /TOC -->
 
@@ -145,6 +148,24 @@ The halo shape is selectable ("Scrim function"), because a plain Gaussian blur i
 - **Gaussian [ugly]** - the legacy separable blur, kept as a baseline to compare against.
 
 The distance functions share one engine: a separable, exactly-Euclidean distance transform bounded to the halo radius (per-column 1D distance, then a row combine), which is cheap (two passes, no jump-flood) and reads either metric off the same field. Independently, a "Scrim falloff" curve shapes how the backing fades with distance - S-curve, Gaussian, Linear, Logarithmic, or Exponential - applied both as the Gaussian kernel weight and as the distance-path transfer. Falloff and function are orthogonal: the function decides the halo's *shape*, the falloff its *fade*.
+
+### Font fallback stack
+
+One monospace family is pinned for every weight, because the shaper picks the best face per query and would otherwise let a bold run land in a different family than the regular run beside it.
+
+Which family that is comes from a single search order, the same on every platform:
+
+- the OS monospace family, when "use system font" is on
+- then the configured `font_family`, a comma-separated stack
+- then the OS monospace family, when "use system font" is off
+- then a built-in stack, which is also what a fresh config is written with
+- then, only if none of the above is installed, whatever the generic monospace name resolves to
+
+We decided the setting should only *reorder* that list, never truncate it. An earlier version dropped `font_family` entirely while following the OS font, which meant the same build and the same config resolved differently depending on the platform, and a configured stack could be silently ignored. Every list is now always walked, so a family that is not installed simply falls through to the next one, and the configured stack still has effect as a fallback.
+
+Platforms differ only in what they report, not in the rules applied to it: Windows has a system font *size* but no monospace *family*, so following the family there is a no-op and resolution starts at `font_family` without a special case. A toggle with nothing behind it reads as inert - the Settings checkbox greys out and says why. The same holds for a desktop with no font setting configured at all, which is why the check asks what was detected rather than which platform is running.
+
+The built-in stack is last for a reason: the generic monospace query below it is effectively a lottery over installed fonts, and its winner may ship no bold face - which ejects bold runs into an arbitrary, often proportional, fallback whose advances can't be snapped to the cell grid. Every entry in the built-in stack carries a real bold face. When that stack changes, the outgoing value is recorded so an existing config still carrying it verbatim is refreshed on the next launch; a stack the user edited is theirs and is left alone.
 
 ### Render Loop Sketch
 

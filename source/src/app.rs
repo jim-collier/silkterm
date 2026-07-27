@@ -1422,7 +1422,7 @@ impl State {
 		edited: config::Settings,
 		_system_font: bool,
 	) -> bool {
-		// use_system_font is now a persisted setting that overrides font_family at
+		// use_system_font is a persisted setting that only reorders font_family at
 		// resolve time, so nothing special to strip - persist the diff as usual.
 		let wrote = config::persist(orig, &edited);
 		self.apply_new_settings(orig, edited, false);

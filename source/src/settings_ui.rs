@@ -1483,11 +1483,17 @@ impl SettingsDialog {
 	fn part_disabled(&self, i: usize, p: u8) -> bool {
 		self.disabled(self.part_key(i, p))
 	}
-	// Flyover text for a control disabled by the platform rather than by another
-	// setting - explains why it is inert. Only the system-font toggle today.
+	// Flyover text for a control the environment disables rather than another
+	// setting - explains why it is inert. Only the system-font toggles today,
+	// and only when the OS reports no such setting to follow: Windows has a
+	// system font size but no monospace family, a bare desktop may have neither.
 	fn disabled_tip(key: Key) -> Option<&'static str> {
-		(cfg!(windows) && matches!(key, Key::SystemFont | Key::SystemFontSize))
-			.then_some("Windows has no system monospace font")
+		let os = crate::sysfont::monospace();
+		match key {
+			Key::SystemFont if os.family.is_none() => Some("No system monospace font to follow"),
+			Key::SystemFontSize if os.size_pt.is_none() => Some("No system font size to follow"),
+			_ => None,
+		}
 	}
 	// The flyover to show while the cursor rests on a control with a
 	// disabled_tip: (text, anchor rect to hang the tip box under).
@@ -1813,8 +1819,8 @@ impl SettingsDialog {
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
 			|| (matches!(key, Key::FontFamily) && config::system_font_face_active(&self.edited))
 			|| (matches!(key, Key::FontSize) && config::system_font_size_active(&self.edited))
-			// Windows has no system monospace font to follow (see disabled_tip)
-			|| (matches!(key, Key::SystemFont | Key::SystemFontSize) && cfg!(windows))
+			// nothing for a system-font toggle to follow (the tip says so)
+			|| Self::disabled_tip(key).is_some()
 	}
 	fn get_col(&self, key: Key) -> [u8; 3] {
 		let settings = &self.edited;
@@ -3628,8 +3634,12 @@ mod tests {
 		assert!(d.take_reverted().contains(&"cursor_scrim"));
 	}
 
+	// The "use system font" face toggle is inert wherever the OS reports no
+	// monospace family - always on Windows, and on a desktop with none set. That
+	// is a property of the environment, not of the platform, so the test asks the
+	// same question the code does.
 	#[test]
-	fn system_font_toggle_inert_on_windows() {
+	fn system_font_toggle_inert_without_an_os_family() {
 		use super::Key;
 		let mut d = mk_dialog(2000.0);
 		let i = d
@@ -3639,7 +3649,7 @@ mod tests {
 			.unwrap();
 		d.tab = d.spec_tab[i];
 		let bx = d.checkbox(i);
-		if cfg!(windows) {
+		if crate::sysfont::monospace().family.is_none() {
 			assert!(d.disabled(Key::SystemFont));
 			// checkbox shows the effective (off) state despite the config value
 			d.edited.use_system_font = true;
@@ -3651,11 +3661,16 @@ mod tests {
 			// the flyover explains why; only over the row
 			assert!(d.hover_tip(bx.x + 2.0, bx.y + 2.0).is_some());
 			assert!(d.hover_tip(bx.x + 2.0, bx.y - 200.0).is_none());
-			// font family / size stay editable even with use_system_font = true
-			assert!(!d.disabled(Key::FontFamily) && !d.disabled(Key::FontSize));
+			// the family field stays editable, since it is what actually resolves
+			assert!(!d.disabled(Key::FontFamily));
 		} else {
 			assert!(!d.disabled(Key::SystemFont));
 			assert!(d.hover_tip(bx.x + 2.0, bx.y + 2.0).is_none());
+			// following the OS greys the field it overrides
+			d.edited.use_system_font = true;
+			assert!(d.disabled(Key::FontFamily));
+			d.edited.use_system_font = false;
+			assert!(!d.disabled(Key::FontFamily));
 		}
 	}
 
