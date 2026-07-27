@@ -255,10 +255,47 @@ fn resolve_ui_family(fs: &FontSystem) -> Option<String> {
 		.find_map(|fam| installed(&fam))
 }
 
-// Resolve the monospace family to pin for every weight: the user's configured
-// `font_family` if installed, else the OS monospace family, else the built-in
-// DEFAULT_FONT_STACK, else whatever `Family::Monospace` maps to. Validated
-// against the db so a bad name doesn't silently fall back to an unrelated font.
+// The family search order, in full, whether or not any of it is installed. Same
+// on every platform: the OS monospace leads while `use_system_font` is on and
+// trails the configured stack otherwise, and the built-in stack is always last.
+// A platform only shows through in what it reports - Windows has no monospace
+// setting, so it passes None and resolution simply starts at `font_family`
+// there, with no special case for it. Kept pure so the order can be tested
+// without a font db.
+fn mono_candidates(
+	os_family: Option<&str>,
+	configured: Option<&str>,
+	follow_os: bool,
+) -> Vec<String> {
+	let split = |list: Option<&str>| {
+		list.into_iter()
+			.flat_map(|l| l.split(','))
+			.map(|name| name.trim().to_string())
+			.filter(|name| !name.is_empty())
+			.collect::<Vec<_>>()
+	};
+	let os = os_family.map(str::to_string);
+	let mut candidates = Vec::new();
+	if follow_os {
+		candidates.extend(os.clone());
+	}
+	candidates.extend(split(configured));
+	if !follow_os {
+		candidates.extend(os);
+	}
+	// Built-in stack as the last resort everywhere, ahead of the bare
+	// Family::Monospace query: that query is a db lottery whose winner may lack a
+	// bold face, and cosmic-text only keeps a family when a face matches the
+	// requested weight exactly - so bold runs would silently eject to an
+	// arbitrary (often proportional) fallback. Known-good families avoid that.
+	candidates.extend(split(Some(config::DEFAULT_FONT_STACK)));
+	candidates
+}
+
+// Resolve the monospace family to pin for every weight: the first family from
+// `mono_candidates` that is actually installed, else whatever `Family::Monospace`
+// maps to. Validated against the db so a bad name doesn't silently fall back to
+// an unrelated font.
 fn resolve_mono_family(fs: &FontSystem) -> Option<String> {
 	use glyphon::cosmic_text::fontdb;
 	let db = fs.db();
@@ -278,35 +315,11 @@ fn resolve_mono_family(fs: &FontSystem) -> Option<String> {
 	};
 
 	let settings = config::settings();
-	let sys_family = crate::sysfont::monospace().family.clone();
-	// Priority: the OS monospace first when following the system font (Windows
-	// never counts as following - it has no OS monospace setting); otherwise
-	// each family in the user's comma-separated fallback stack, then the OS mono.
-	let mut candidates: Vec<String> = Vec::new();
-	if config::system_font_face_active(&settings) {
-		candidates.extend(sys_family.clone());
-	} else {
-		candidates.extend(
-			settings
-				.font_family
-				.iter()
-				.flat_map(|list| list.split(','))
-				.map(|name| name.trim().to_string())
-				.filter(|name| !name.is_empty()),
-		);
-		candidates.extend(sys_family.clone());
-	}
-	// Built-in stack as the last resort on every platform, ahead of the bare
-	// Family::Monospace query below: that query is a db lottery whose winner may
-	// lack a bold face, and cosmic-text only keeps a family when a face matches
-	// the requested weight exactly - so bold runs would silently eject to an
-	// arbitrary (often proportional) fallback. Known-good families avoid that.
-	candidates.extend(
-		config::DEFAULT_FONT_STACK
-			.split(',')
-			.map(|name| name.trim().to_string()),
-	);
-	for fam in candidates {
+	for fam in mono_candidates(
+		crate::sysfont::monospace().family.as_deref(),
+		settings.font_family.as_deref(),
+		config::system_font_face_active(&settings),
+	) {
 		if installed(&fam) {
 			return Some(fam);
 		}
@@ -798,6 +811,42 @@ fn shaped_ink(
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// The search order is one list on every platform. `use_system_font` only
+	// decides where the OS family sits in it - it must never drop the configured
+	// stack, which is what made Linux and Windows resolve the same config
+	// differently, and the built-in stack always backs both up.
+	#[test]
+	fn mono_candidates_keep_one_order_on_every_platform() {
+		let configured = Some("Alpha, Beta");
+		let builtin: Vec<String> = config::DEFAULT_FONT_STACK
+			.split(',')
+			.map(|name| name.trim().to_string())
+			.collect();
+
+		let following = mono_candidates(Some("OS Mono"), configured, true);
+		assert_eq!(following[..3], ["OS Mono", "Alpha", "Beta"]);
+		let not_following = mono_candidates(Some("OS Mono"), configured, false);
+		assert_eq!(not_following[..3], ["Alpha", "Beta", "OS Mono"]);
+		for order in [&following, &not_following] {
+			assert!(order.ends_with(&builtin), "built-in stack must back it up");
+		}
+
+		// Windows reports no OS family, so following it is a no-op there: the
+		// order collapses onto the same list every other platform ends up with.
+		assert_eq!(
+			mono_candidates(None, configured, true),
+			mono_candidates(None, configured, false)
+		);
+		assert_eq!(
+			mono_candidates(None, configured, true)[..2],
+			["Alpha", "Beta"]
+		);
+
+		// An empty or absent stack leaves no blank entries behind.
+		assert_eq!(mono_candidates(None, Some(" , ,"), false), builtin);
+		assert_eq!(mono_candidates(None, None, true), builtin);
+	}
 
 	// A pinned mono family falls back to a colour emoji face that rasterizes to
 	// nothing, which drew every emoji as an empty cell. The generic-monospace

@@ -58,10 +58,14 @@ In each section, items are listed approximately from newest to oldest.
 	- 🔘 Palette entry 0xFFFF ("use the text colour") resolves to white, because a raster is cached independently of the cell colour. No emoji font relies on it; a foreground-tinted colour glyph would need the cell colour in the cache key.
 	- 🔘 The HSL blend modes fall back to ordinary source-over. Unused by any font seen so far.
 
-- 🔘 The font fallback stack is only partly implemented, and resolves differently per platform for the same build.
+- ✅ The font fallback stack is only partly implemented, and resolves differently per platform for the same build.
 	- The stack should be identical on every platform, varying only where a platform genuinely requires it, and should be listed whether or not the fonts are installed.
-	- Today the built-in stack is one cross-platform list, but the order it is consulted in is not: following the system font is defined as "not Windows, and the setting is on", so on Linux and macOS with that setting on the configured `font_family` list is skipped entirely and only the OS monospace family plus the built-in stack are tried. On Windows the same file consults `font_family` first. Same build, same config, two different results.
-	- Existing configs also keep whatever `font_family` they were first written with - a new key is appended but an existing one is never rewritten - so a config created before the stack changed still carries the old list.
+	- The order was decided by asking which platform was running rather than what it had to offer, so "follow the system font" meant "and skip the configured stack" on Linux and macOS while Windows started at that stack. Same build, same config, two different results - and a configured stack could be discarded outright.
+	- Fixed: one search order everywhere. The setting only decides whether the OS family is tried ahead of `font_family` or behind it; every list is still walked, so an absent family falls through to the next instead of skipping the rest. The built-in stack always backs both up.
+	- Platforms now show through only in what they report. Windows has a system font size but no monospace family, so following the family is simply a no-op there and resolution starts at `font_family` with no special case. Wherever there is nothing to follow the checkbox greys out and the flyover says which half is missing - that also covers a desktop with no font setting at all, which used to claim it was following a font that did not exist.
+	- Also fixed: the size half was inert on Windows even though Windows does report a system font size, so that checkbox is now live there too. A config with no explicit `font_size` is unaffected, since that value was already seeded from the same OS size.
+	- Existing configs kept whatever `font_family` they were first written with, because backfill only ever adds a missing key. A stack that still matches a superseded default exactly is now refreshed on launch; anything edited, or commented out, is left as written.
+	- 🔘 Confirm on Windows: the size checkbox is now live there and can't be exercised from this box.
 
 - ✅ Running `top` results in a scrolling bounce on each refresh.
 	- Only happened once the scrollback was full, which is the steady state for a terminal that has been open a while. Past that point the line count stops growing, so the advance has to be inferred from how the on-screen rows moved.
@@ -567,7 +571,8 @@ In each section, items are listed approximately from newest to oldest.
 		- Fix: terminal bold now requests the boldest weight the pinned mono family actually ships (like chrome already did), so it can't escape into a proportional bold fallback. New test guards it. Awaiting confirm on the affected host.
 		- Second half: with the font auto/unset, Windows picked the mono family by a font-db lottery (it has no system monospace setting), which could land on a family with no bold at all - then "boldest available" = regular and bold renders flat. Confirmed live on this host; the fallback-stack item below fixes the pick. Both hosts should recheck after it lands.
 	- ✅ Font fallback: one cross-platform stack (Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New) is now the font_family default and the resolver's last resort everywhere. Windows always resolves through it ("use system font" is inert there - no OS monospace setting exists), so the family always carries a real bold face.
-		- The Settings "Use system font" checkbox is disabled and greyed on Windows, with a flyover: "Windows has no system monospace font". Font family/size stay editable there regardless of the config value.
+		- The Settings "Use system font" checkbox is disabled and greyed on Windows, with a flyover explaining why. Font family/size stay editable there regardless of the config value.
+		- Superseded by the per-platform divergence fix in Bugs: the order is now one list everywhere and the greying keys on what the OS actually reports, so only the family half is inert on Windows - the size half is live there.
 	- ✅ Scrolling in muffer, and `less`, is juddery. Up-and-down motion, while making progress in the intended direction.
 		- Reproduces on this host, and with plain scrolled output too - not just full-screen apps - so it's the frame/output pacing, not the alt-screen slide detector alone.
 		- Fix: on Windows, one queued present frame instead of two, so the per-frame dt stays steady (two let the CPU race ahead then stall, jittering the ease). Best-guess; needs a visual check on this host - could not measure headlessly (background windows throttle to ~10fps).
@@ -1725,7 +1730,7 @@ In each section, items are listed approximately from newest to oldest.
 		- ✅ If checked (setting a config boolean), the other font settings should be disabled. Whatever values they held, should remain.
 			- Done: existing behavior - Font family and Font size grey out and keep their values. Re-verified.
 		- ✅ Font family should default to a list with several fallbacks for Linux, Windows, and macOS.
-			- Done: an existing default font stack (JetBrains Mono through Menlo, Consolas, monospace) shows in the greyed field.
+			- Done: a default font stack shows in the greyed field. The stack itself has been replaced twice since; the current one is in the Bugs entry on the fallback stack, and a config still carrying a superseded one is refreshed on launch.
 	- ✅ Editable fields should have a visible cursor when focused, and respond to standard text-editing key controls. (20260702, branch dlgedit)
 		- Done: the edit carries a caret. Typing inserts at it, Backspace and Delete remove around it, Home/End and arrows move it, and a thin caret line renders at the right spot in both hex and text fields.
 		- Verified: typed and edited a value with the caret visibly tracking position.
