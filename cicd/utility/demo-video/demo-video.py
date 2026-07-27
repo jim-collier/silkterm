@@ -22,7 +22,12 @@
 ##		Narration lives in a black band above the window (BAND px of bare root,
 ##		the window is placed below it) - plain yellow text, no box, so nothing
 ##		ever covers the terminal. The band is static, which costs a gif almost
-##		nothing (the encoder only stores what changes between frames).
+##		nothing (the encoder only stores what changes between frames). The window
+##		decoration is generated at record time (a square-cornered dark theme
+##		recoloured slate blue-gray) so it reads as chrome against both the black
+##		band and the terminal's own colours.
+##		Settings changes shown mid-run (the cursor switch) go through the app's
+##		control socket, so they land live with nothing typed on camera.
 ##		Both profiles start opaque on a plain black background (no image); the
 ##		closing scenes bring the built-in wallpaper in via the app's --wallpaper.
 ##		Screens are cleared between scenes except where the next command is meant
@@ -54,6 +59,7 @@ import random
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -80,15 +86,25 @@ FOLEY_LAG  = 0.03                             # foley sits this far after the ke
                                               # paints the glyph a frame or two later; sound-to-
                                               # picture reads tighter than sound-to-keypress)
 
-# The faux window fills the frame below the narration band: a thin black border
-# shows around it, and BAND px of bare root above it carry the captions. The WM
-# theme has square corners (Xfce-Simple-Dark's top-left corner is opaque, so no
-# rounded/transparent cut). FRAME_* are that theme's decoration extents
-# (left,right,titlebar,bottom in px) - the client is sized so the outer frame
-# lands BORDER px inside the left/right/bottom edges and BAND px below the top.
-BORDER   = 4
-WM_THEME = "Material-Black-Pistachio"       # dark, SQUARE corners (opaque top-left)
+# The faux window fills the frame below the narration band: a black border shows
+# around it, and BAND px of bare root above it carry the captions. FRAME_* are the
+# decoration extents (left,right,titlebar,bottom in px) - the client is sized so
+# the outer frame lands BORDER px inside the left/right/bottom edges and BAND px
+# below the top.
+BORDER   = 8
 FRAME_L, FRAME_R, FRAME_T, FRAME_B = 2, 2, 32, 2
+
+# The decoration is built at record time from a square-cornered dark theme (its
+# parts are flat one-colour SVGs, so a colour swap is the whole job) and dropped
+# in the WM's own throwaway HOME - nothing is installed system-wide. Slate
+# blue-gray: it has to read as chrome next to mint terminal text and warm yellow
+# captions, while separating the window from the black border and black band.
+WM_BASE_THEME = "Material-Black-Pistachio"  # SQUARE corners (opaque top-left)
+WM_THEME      = "SilkDemo"
+DECO_BG       = "#5c6a8a"                   # active titlebar + frame
+DECO_BG_OFF   = "#3c4557"                   # inactive
+DECO_GLYPH    = "#e8eefa"                   # button glyphs
+DECO_TEXT     = "#eef3fb"                   # title text
 
 # The app is driven through the GPU (VirtualGL, see launch_app) so it renders a
 # genuine ~60fps on the headless Xvfb - on plain llvmpipe it only manages ~10
@@ -132,6 +148,7 @@ class Rec:
 		self.bin      = os.environ.get("SILK_BIN", str(REPO / "target/release/silkterm"))
 		self.work     = Path(tempfile.mkdtemp(prefix="silk-demo-"))
 		self.home     = self.work / "home"
+		self.wmhome   = self.work / "wmhome"    # the WM's HOME: theme + its own xfconf
 		self.keep     = args.keep_work
 		self.events   = []      # (epoch, kind) kind: key:NAME / mouse:NAME
 		self.banners  = []      # (epoch_start, epoch_end, text)
@@ -182,21 +199,44 @@ class Rec:
 				break
 			target[0] += dx; target[1] += dy
 
+	def make_theme(self):
+		# Recolour the base theme into the demo's slate decoration, into the WM's
+		# own HOME. Every frame part is a flat <rect fill="..."> so the swap is a
+		# string replace; the button glyphs are separate files and keep their shape.
+		base = Path("/usr/share/themes") / WM_BASE_THEME / "xfwm4"
+		if not base.is_dir():
+			log(f"WARNING: theme {WM_BASE_THEME} not installed - using the WM default")
+			return "Default"
+		dst = self.wmhome / ".themes" / WM_THEME / "xfwm4"
+		dst.parent.mkdir(parents=True, exist_ok=True)
+		shutil.copytree(base, dst, dirs_exist_ok=True)
+		for svg in dst.rglob("*.svg"):
+			text = svg.read_text()
+			svg.write_text(text.replace("#09090a", DECO_BG)
+				.replace("#1a1c1e", DECO_BG_OFF).replace("#a3a3a3", DECO_GLYPH))
+		rc = dst / "themerc"
+		rc.write_text(re.sub(r"(?m)^(active_text(_shadow)?_color)=.*",
+			rf"\1={DECO_TEXT}", rc.read_text()))
+		return WM_THEME
+
 	def start_display(self):
 		# each profile records at its own resolution, so cycle the display; the WM
-		# is ours (not gui-headless --wm) so xfconf can pick a quiet dark titlebar
+		# is ours (not gui-headless --wm) so xfconf can point it at the generated
 		# theme - the window's real decoration is what frames the shot
 		gh = str(REPO / "cicd/utility/gui-headless.bash")
 		e = dict(os.environ, CICD_HEADLESS_DISPLAY=self.display,
 			CICD_HEADLESS_SIZE=f"{self.size[0]}x{self.size[1]}x24")
 		subprocess.run([gh, "stop"], env=e, capture_output=True)
 		run([gh, "start"], env=e)
+		theme = self.make_theme()
+		wm_env = self.env()
+		wm_env["HOME"] = str(self.wmhome)     # finds the theme, keeps its xfconf here
 		self.wm = subprocess.Popen(["dbus-run-session", "--", "sh", "-c",
-			f'xfconf-query -c xfwm4 -p /general/theme --create -t string -s "{WM_THEME}"; '
+			f'xfconf-query -c xfwm4 -p /general/theme --create -t string -s "{theme}"; '
 			'xfconf-query -c xfwm4 -p /general/title_font --create -t string -s "Lato Bold 10"; '
 			'xfconf-query -c xfwm4 -p /general/button_layout --create -t string -s "O|HMC"; '
 			"exec xfwm4 --compositor=off --vblank=off"],
-			env=self.env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+			env=wm_env, stdout=open(self.work / "wm.log", "w"), stderr=subprocess.STDOUT)
 		time.sleep(2.0)
 		# pure black so the thin border framing the window reads as black, not a tint
 		subprocess.run(["xsetroot", "-solid", "#000000"], env=self.env(), check=False)
@@ -239,6 +279,7 @@ class Rec:
 		self.flash_e = time.time()
 		time.sleep(0.25)
 		subprocess.run(["xsetroot", "-solid", "#000000"], env=self.env(), check=False)  # black border behind the window
+		self.mouse_park()       # X parks the pointer mid-screen; get it out of frame
 		time.sleep(0.4)
 
 	def stop_capture(self):
@@ -290,6 +331,7 @@ class Rec:
 		cw = W - 2 * BORDER - FRAME_L - FRAME_R
 		ch = H - 2 * BORDER - self.band - FRAME_T - FRAME_B
 		cmd += ["--pixel-width", str(cw), "--pixel-height", str(ch)]
+		self.launch_e = time.time()
 		self.app = subprocess.Popen(cmd, env=e, cwd=str(self.home),
 			stdout=open(self.work / "silk.log", "w"), stderr=subprocess.STDOUT)
 		deadline = time.time() + 60
@@ -322,7 +364,9 @@ class Rec:
 		self.events.append((time.time(), kind))
 
 	def mouse_park(self):
-		self.xdo("mousemove", str(self.size[0] - 6), str(self.size[1] - 6))
+		# the very bottom-right pixel: the arrow's hotspot is its tip, so the whole
+		# glyph draws past the screen edge and no pointer is left in frame
+		self.xdo("mousemove", str(self.size[0] - 1), str(self.size[1] - 1))
 
 	def cleanup(self):
 		self.stop_capture()
@@ -470,7 +514,7 @@ class Mouse:
 	def __init__(self, rec, rng):
 		self.rec = rec
 		self.rng = rng
-		self.pos = (rec.size[0] - 6, rec.size[1] - 6)
+		self.pos = (rec.size[0] - 1, rec.size[1] - 1)
 
 	def move(self, x, y, dur=0.6):
 		x0, y0 = self.pos
@@ -481,15 +525,6 @@ class Mouse:
 			self.rec.xdo("mousemove", str(int(x0 + (x - x0) * t)), str(int(y0 + (y - y0) * t)))
 			time.sleep(dur / steps)
 		self.pos = (x, y)
-
-	def circle(self, cx, cy, r, loops=2.0, dur=4.0):
-		steps = max(30, int(dur * 30))
-		for i in range(steps + 1):
-			a = 2 * math.pi * loops * i / steps - math.pi / 2
-			self.rec.xdo("mousemove",
-				str(int(cx + r * math.cos(a))), str(int(cy + r * 0.7 * math.sin(a))))
-			time.sleep(dur / steps)
-		self.pos = (cx, cy - r)
 
 	def click(self, quiet=False):
 		self.rec.xdo("click", "1")
@@ -513,7 +548,7 @@ class Mouse:
 
 	def park(self):
 		self.rec.mouse_park()
-		self.pos = (self.rec.size[0] - 6, self.rec.size[1] - 6)
+		self.pos = (self.rec.size[0] - 1, self.rec.size[1] - 1)
 
 	def wheel(self, up, n, hz=7.0):
 		for _ in range(n):
@@ -680,13 +715,11 @@ def write_tree(rec, rng):
 	# pin nano to no-softwrap so a config line stays on one screen row
 	(home / ".nanorc").write_text("unset softwrap\nunset breaklonglines\n")
 
-	# the closing scene over the wallpaper: true colour, attributes, scripts and
-	# symbols in a handful of short lines (a dense screenful would cost the gif
-	# far more than it says). No emoji: only three fonts on the recording box
-	# carry them and they come out blank, which reads as a rendering fault
+	# the closing scene over the wallpaper: true colour, attributes, scripts,
+	# double-width kanji, emoji and symbols in a handful of short lines (a dense
+	# screenful would cost the gif far more than it says)
 	show = bind / "showcase"
 	show.write_text('''#!/bin/dash
-printf '\\n'
 i=0
 while [ $i -lt 36 ]; do
 	printf '\\033[48;2;%d;%d;%dm  ' $(( 40 + i * 5 )) $(( 90 + i * 3 )) $(( 230 - i * 5 ))
@@ -695,8 +728,8 @@ done
 printf '\\033[0m\\n\\n'
 printf '  \\033[1m24-bit colour\\033[0m    \\033[3mitalic\\033[0m    '
 printf '\\033[1;38;2;255;216;102mbold colour\\033[0m    \\033[7m reverse \\033[0m\\n\\n'
-printf '  日本語  Ελληνικά  العربية  Кириллица   ★ ◆ ✓ → ≈ ∞   '
-printf '┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅▆▇█\\n\\n'
+printf '  日本語 忍者 桜 猫   Ελληνικά  Кириллица  العربية\\n'
+printf '  ★ ◆ ✓ → ≈ ∞   🚀 🐧 🦀 🌙 💎   ┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅▆▇█\\n'
 ''')
 	show.chmod(0o755)
 
@@ -752,39 +785,42 @@ def prep_content(rec, rng):
 
 
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-##	Settings dialog driving
+##	Talking to the running app (its control socket)
 
-def open_settings(rec):
-	rec.ev(key_sound(","))
-	rec.xdo("key", "--clearmodifiers", "ctrl+comma")
-	time.sleep(2.0)
-	for _ in range(12):
-		out = subprocess.run(["xdotool", "search", "--name", "Settings"],
-			env=rec.env(), capture_output=True, text=True).stdout.strip()
-		if out:
-			dlg = out.split()[0]
-			break
-		time.sleep(0.5)
-	else:
-		return None
-	# park it right of center so the live change shows on the terminal around it,
-	# and below the narration band (it must never cover a caption)
-	gx = rec.size[0] - 600 if rec.size[0] > 1200 else rec.size[0] - 560
-	gy = rec.band + (90 if rec.size[1] > 700 else 10)
-	rec.xdo("windowmove", dlg, str(max(0, gx)), str(gy))
-	rec.xdo("windowactivate", dlg)
-	time.sleep(1.0)
-	return dlg
+def ctl_socket(rec):
+	# the socket a running instance listens on - the same channel `silkterm
+	# --reload-settings` uses from a shell inside the window. Named by pid; if the
+	# launcher put a wrapper in between, take the one that appeared with this run
+	# (an unrelated instance's socket is older).
+	run_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+	exact = run_dir / f"silkterm-ctl-{rec.app.pid}.sock"
+	if exact.exists():
+		return exact
+	fresh = [p for p in run_dir.glob("silkterm-ctl-*.sock")
+		if p.stat().st_mtime >= rec.launch_e - 2]
+	return fresh[0] if len(fresh) == 1 else None
 
-def dlg_client(rec, dlg):
-	# xwininfo reports the CLIENT rect; xdotool's geometry includes the WM frame,
-	# which once put a computed click on the titlebar border
-	out = subprocess.run(["xwininfo", "-id", dlg], env=rec.env(),
-		capture_output=True, text=True).stdout
-	def grab(pat):
-		return int(re.search(pat + r":\s+(-?\d+)", out).group(1))
-	return (grab(r"Absolute upper-left X"), grab(r"Absolute upper-left Y"),
-		grab(r"Width"), grab(r"Height"))
+def ctl(rec, line):
+	sock = ctl_socket(rec)
+	if not sock:
+		log("WARNING: control socket not found - live settings change skipped")
+		return False
+	try:
+		with socket.socket(socket.AF_UNIX) as s:
+			s.connect(str(sock))
+			s.sendall(line.encode() + b"\n")
+			return s.recv(64).startswith(b"ok")
+	except OSError as e:
+		log(f"WARNING: control socket: {e}")
+		return False
+
+def set_cursor_block(rec):
+	# a settings change, applied the way a settings change applies: rewrite the
+	# key and reload. Live, and nothing has to be typed on camera.
+	cfg = rec.home / ".config/silkterm/config.toml"
+	cfg.write_text(cfg.read_text().replace(
+		"cursor_size_width = 25", "cursor_size_width = 100"))
+	ctl(rec, "reload")
 
 
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -831,59 +867,34 @@ def seg_wheel(r, t, m):
 		m.park()
 	wipe(r, t)
 
+def seg_cursor(r, t, m):
+	# the cursor is a setting, so switch it the way a setting switches - live,
+	# through the control socket, with nothing typed on camera. Its animation
+	# carries straight over from the bar to the block.
+	with Banner(r, "Cursor shape and animation, your pick"):
+		r.xdo("windowactivate", r.win)
+		time.sleep(1.4)
+		set_cursor_block(r)
+		time.sleep(2.6)
+
 def seg_panes(r, t, m):
-	# split panes straight off the menu bar: Alt+P opens Panes, then the item's
-	# own accelerator letter picks it (V split, C close) - all keyboard, so there
-	# are no menu coordinates to guess at
-	with Banner(r, "Split panes, from the menu"):
+	# two splits straight off the menu bar (Alt+P opens Panes, then the item's own
+	# accelerator letter: V vertical, H horizontal) - all keyboard, no menu
+	# coordinates to guess at. Splitting twice is what shows the auto-sizing; each
+	# new pane is a shell like any other, so `exit` is what closes it.
+	with Banner(r, "Split panes, sized for you"):
 		r.xdo("windowactivate", r.win)
 		time.sleep(0.3)
 		t.key("alt+p", sound=key_sound("p"))
 		time.sleep(1.1)
 		t.key("v", sound=key_sound("v"))
-		time.sleep(1.6)
-		t.cmd("wc -l src/*.rs", settle=1.8)      # the new pane inherits shell + cwd
-		time.sleep(1.0)
+		time.sleep(1.8)
 		t.key("alt+p", sound=key_sound("p"))
-		time.sleep(0.9)
-		t.key("c", sound=key_sound("c"))
-		time.sleep(1.2)
-	wipe(r, t)
-
-def seg_tabs(r, t, m):
-	with Banner(r, "Tabs, with the path you were in"):
-		r.xdo("windowactivate", r.win)
-		time.sleep(0.3)
-		t.key("ctrl+shift+t", sound=key_sound("t"))
-		time.sleep(1.5)
-		t.cmd("cat Cargo.toml", settle=1.8)
 		time.sleep(1.0)
-		t.key("ctrl+shift+w", sound=key_sound("w"))
-		time.sleep(1.2)
-	# no wipe: less restores this screen on exit, and the Settings scene wants
-	# something behind the dialog
-
-def seg_settings(r, t, m):
-	# open Settings, dwell ~4s slowly circling the appearance rows, then cancel
-	# with Esc - no trip to a button, and NO mouse motion after the dwell (the
-	# park is a single off-frame jump). Deliberately BEFORE the wallpaper scene:
-	# a live wallpaper set from the CLI shows up in the dialog as its resolved
-	# absolute path, which would put the throwaway home dir on camera.
-	with Banner(r, "Every setting, live"):
-		dlg = open_settings(r)
-		if not dlg:
-			return
-		x, y, w, h = dlg_client(r, dlg)
-		# the scrim controls (radius/softness/outline/function/falloff) sit in the
-		# lower half of the Appearance tab
-		m.circle(x + int(w * 0.45), y + int(h * 0.66), int(w * 0.22), loops=1.5, dur=4.0)
-		time.sleep(0.3)
-		r.ev(keysym_sound("Escape"))
-		r.xdo("key", "--clearmodifiers", "Escape")   # cancel, nothing changed
-		time.sleep(0.5)
-		r.xdo("windowactivate", r.win)
-		m.park()
-		time.sleep(0.8)
+		t.key("h", sound=key_sound("h"))
+		time.sleep(2.0)
+		t.cmd("exit", settle=1.6, typos=0.0)
+		t.cmd("exit", settle=1.6, typos=0.0)
 	wipe(r, t)
 
 def seg_less(r, t, m):
@@ -902,32 +913,32 @@ def seg_less(r, t, m):
 
 def seg_wallpaper(r, t, m):
 	# the image is the app's own baked-in default, copied into the fake config
-	# dir - so this lands on exactly the out-of-the-box look, live, no restart.
-	# `cd` first: at the project prompt the path spills onto a second row.
+	# dir - so this lands on exactly the out-of-the-box look, live, no restart
 	with Banner(r, "The built-in wallpaper, live"):
-		t.cmd("cd", settle=0.6, typos=0.0)
 		t.cmd("silkterm --wallpaper ~/.config/silkterm/wallpapers/default.jpg",
 			settle=3.4)
-		time.sleep(1.0)
+		time.sleep(0.6)
+	with Banner(r, "Text stays legible over any of it"):
+		time.sleep(2.8)
 	# no wipe from here on: the closing scenes build up the frame that the demo
 	# ends on - wallpaper, colour, then the sign-off
 
 def seg_showcase(r, t, m):
+	# drop the flag the prompt watches for BEFORE this command runs, so the prompt
+	# it returns to is already the gray one and the outro can type straight into
+	# it - no bare Return just to draw a fresh prompt.
+	(r.home / ".silk-gray").touch()
 	with Banner(r, "24-bit colour. Unicode. Over anything."):
 		t.cmd("showcase", settle=2.6)
 		time.sleep(0.8)
 
 def seg_outro(r, t, m):
-	# drop the flag the prompt watches for; a plain Return then draws a FRESH prompt
-	# that grays whatever is typed next - so the comment goes gray from the '#' on,
-	# as if ble.sh were installed, but with plain reliable bash typing. (ctrl+l was
-	# avoided - clearing right after less's alt-screen exit could swallow the line.)
-	(r.home / ".silk-gray").touch()
+	# the prompt grays whatever is typed after it while the flag file exists, so
+	# the comment goes gray from the '#' on, as if ble.sh were installed - but with
+	# plain reliable bash typing.
 	with Banner(r, "github.com/jim-collier/silkterm"):
 		r.xdo("windowactivate", r.win)
-		time.sleep(0.3)
-		r.xdo("key", "--clearmodifiers", "Return")   # fresh prompt picks up the flag
-		time.sleep(0.7)
+		time.sleep(0.5)
 		t.cmd("# Smooth. Silky. ...SilkTerm.", settle=0.5, typos=0.0)
 		time.sleep(3.0)
 	# the rest of the linger is the encoder's freeze (TAIL_HOLD_S), which costs a
@@ -939,10 +950,9 @@ _SCRIPT = [
 	("ls",        seg_ls),
 	("build",     seg_build),
 	("wheel",     seg_wheel),
+	("cursor",    seg_cursor),
 	("panes",     seg_panes),
-	("tabs",      seg_tabs),
 	("less",      seg_less),
-	("settings",  seg_settings),
 	("wallpaper", seg_wallpaper),
 	("showcase",  seg_showcase),
 	("outro",     seg_outro),
@@ -1323,6 +1333,10 @@ if __name__ == "__main__":
 
 
 ##	Script history:
+##		- 20260726: 8px black border; slate blue-gray decoration generated at
+##		  record time; the cursor switches to a block mid-run through the control
+##		  socket; two extra panes closed with `exit`; Settings and tabs scenes
+##		  dropped; emoji and kanji in the closing showcase.
 ##		- 20260726: narration moved into a black band above the window (plain
 ##		  yellow, no box, same wobble pop); longer scene list (wheel scrollback,
 ##		  split panes, tabs) closing on the built-in wallpaper + a colour/unicode
