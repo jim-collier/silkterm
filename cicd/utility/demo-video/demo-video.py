@@ -26,13 +26,19 @@
 ##		decoration is generated at record time (a square-cornered dark theme
 ##		recoloured slate blue-gray) so it reads as chrome against both the black
 ##		band and the terminal's own colours.
-##		Settings changes shown mid-run (the cursor switch) go through the app's
+##		Settings changes shown mid-run (the cursor ones) go through the app's
 ##		control socket, so they land live with nothing typed on camera.
 ##		Both profiles start opaque on a plain black background (no image); the
 ##		closing scenes bring the built-in wallpaper in via the app's --wallpaper.
 ##		Screens are cleared between scenes except where the next command is meant
 ##		to push the previous output up - a cleared screen means the typing that
 ##		follows changes few pixels, which is most of what keeps the gif small.
+##		Gif size is set almost entirely by the scrolling scenes: measured per 5s
+##		window, scrolling ran 20-40x the byte cost of everything else, so their
+##		LENGTH and the WIDTH of the rows in motion are the only real levers (palette
+##		size, dither and lossy were all measured and are not worth their artifacts).
+##		Hence: short listings with narrow columns, a brief build, one direction of
+##		wheel, and no full-screen-app scene at all.
 ##	Syntax:
 ##		demo-video.py [--profile video,gif] [--segments a,b,...] [--seed N]
 ##		              [--keep-work] [--no-rotate] [--no-asset] [--display :98]
@@ -51,6 +57,7 @@
 ##	SPDX-License-Identifier: MIT
 
 import argparse
+import colorsys
 import getpass
 import json
 import math
@@ -439,7 +446,7 @@ class Typist:
 			self.rec.xdo("key", "--clearmodifiers", "BackSpace")
 			self.rec.ev("key:BACKSPACE")
 
-	def type(self, text, typos=0.018, wpm=None):
+	def type(self, text, typos=0.006, wpm=None):
 		if wpm is not None:
 			self.wpm = wpm
 		# ensure the terminal has focus before the first keystroke: after a dialog
@@ -501,7 +508,7 @@ class Typist:
 		self.rec.xdo("key", "--clearmodifiers", "--repeat", str(count),
 			"--delay", str(int(1000 / hz)), keysym)
 
-	def cmd(self, text, settle=1.0, typos=0.018, wpm=None):
+	def cmd(self, text, settle=1.0, typos=0.006, wpm=None):
 		self.type(text, typos, wpm)
 		self.enter()
 		time.sleep(settle)
@@ -668,13 +675,12 @@ impl Scroll {
 '''
 
 # a believable generic home: enough entries that `ls -lA` runs past the bottom
-HOME_DIRS = ["Desktop", "Documents", "Downloads", "Music", "Pictures", "Public",
-	"Templates", "Videos", "bin", "projects",
-	".cache", ".config", ".gnupg", ".local", ".mozilla", ".npm", ".ssh",
-	".thunderbird", ".vim"]
+HOME_DIRS = ["Desktop", "Documents", "Downloads", "Music", "Pictures", "Videos",
+	"bin", "projects",
+	".cache", ".config", ".gnupg", ".local", ".mozilla", ".ssh", ".vim"]
 HOME_DOTFILES = [(".bash_aliases", 361), (".bash_logout", 220), (".bashrc", 3526),
-	(".curlrc", 74), (".dircolors", 4291), (".gitconfig", 412), (".gtkrc-2.0", 156),
-	(".inputrc", 289), (".profile", 807), (".selected_editor", 66),
+	(".curlrc", 74), (".dircolors", 4291), (".gitconfig", 412),
+	(".inputrc", 289), (".profile", 807),
 	(".tmux.conf", 1184), (".vimrc", 1204), (".wgetrc", 118), (".Xresources", 688)]
 HOME_FILES = [("backup-2025.tar.gz", 1483477621), ("notes.md", 8412),
 	("photo-kyoto.jpg", 3318554), ("pulsar-flame.svg", 96214),
@@ -703,47 +709,67 @@ def write_tree(rec, rng):
 		f.touch()
 		os.truncate(f, size)
 
-	# `ls` wrapper: the on-camera alias resolves here first; a real listing would
-	# print the real username as owner/group, so map it to the fake one
+	# `ls` wrapper: the listing flags live here rather than in an alias typed on
+	# camera - everyone has their ls aliased, so showing it being set says nothing.
+	# Owner and group are omitted (-gG) and the timestamp is bare: every column a
+	# row carries is width the gif pays for on each scrolled line, and none of them
+	# are what the scene is about. A real listing would also print the real
+	# username, so map it to the fake one.
 	bind = home / "bin"
 	bind.mkdir(exist_ok=True)
 	user = getpass.getuser()
 	wrapper = bind / "ls"
-	wrapper.write_text(f'#!/bin/dash\n/usr/bin/ls "$@" | sed "s/{user}/juno/g"\n')
+	wrapper.write_text("#!/bin/dash\n/usr/bin/ls -lAgG --color"
+		" --group-directories-first --time-style=+%H:%M"
+		f' "$@" | sed "s/{user}/juno/g"\n')
 	wrapper.chmod(0o755)
 	(bind / "silkterm").symlink_to(rec.bin)
 	# pin nano to no-softwrap so a config line stays on one screen row
 	(home / ".nanorc").write_text("unset softwrap\nunset breaklonglines\n")
+	# ctrl+l clears the SCROLLBACK too, not just the screen (readline's
+	# clear-display sends ESC[3J on top of the usual clear). Plain clear-screen
+	# leaves the old output in history, and splitting a pane rewraps it straight
+	# back into view - the panes scene opened onto the build log it had just
+	# cleared. readline reads this file regardless of bash's --norc.
+	(home / ".inputrc").write_text('"\\C-l": clear-display\n')
 
 	# the closing scene over the wallpaper: true colour, attributes, scripts,
-	# double-width kanji, emoji and symbols in a handful of short lines (a dense
-	# screenful would cost the gif far more than it says)
+	# double-width kanji and katakana, emoji and box drawing in a handful of short
+	# lines (a dense screenful would cost the gif far more than it says).
+	# The bar sweeps the whole hue circle the short way round - dark purple, up
+	# through the bright middle, down to dark red - so it reads as a rainbow rather
+	# than the single-axis ramp it used to be. Computed here, not in dash: integer
+	# shell arithmetic cannot do a hue sweep, and the stops never vary anyway.
+	stops = []
+	for i in range(36):
+		f = i / 35
+		red, green, blue = colorsys.hsv_to_rgb(
+			285.0 * (1.0 - f) / 360.0,             # purple -> blue -> green -> red
+			1.0,
+			0.35 + 0.65 * math.sin(math.pi * f))   # dark at both ends, bright between
+		stops.append("'%d;%d;%d'" % (round(red * 255), round(green * 255), round(blue * 255)))
 	show = bind / "showcase"
-	show.write_text('''#!/bin/dash
-i=0
-while [ $i -lt 36 ]; do
-	printf '\\033[48;2;%d;%d;%dm  ' $(( 40 + i * 5 )) $(( 90 + i * 3 )) $(( 230 - i * 5 ))
-	i=$(( i + 1 ))
-done
+	show.write_text(f'''#!/bin/dash
+for c in {" ".join(stops)}; do printf '\\033[48;2;%sm  ' "$c"; done
 printf '\\033[0m\\n\\n'
 printf '  \\033[1m24-bit colour\\033[0m    \\033[3mitalic\\033[0m    '
 printf '\\033[1;38;2;255;216;102mbold colour\\033[0m    \\033[7m reverse \\033[0m\\n\\n'
-printf '  日本語 忍者 桜 猫   Ελληνικά  Кириллица  العربية\\n'
-printf '  ★ ◆ ✓ → ≈ ∞   🚀 🐧 🦀 🌙 💎   ┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅▆▇█\\n'
+printf '  日本語 忍者 桜 猫   タ ッ ネ ホ   Ελληνικά  Кириллица  العربية\\n'
+printf '  🤔 🍰 🎉 😀   ┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅▆▇█\\n'
 ''')
 	show.chmod(0o755)
 
-	# build.sh: cargo-flavoured output with varied pacing and burst sizes
+	# build.sh: cargo-flavoured output with varied pacing and burst sizes. The crate
+	# list is deliberately short - this is the second-costliest scene in the gif and
+	# a scroll says everything it has to say in a few seconds.
 	crates = ["proc-macro2", "quote", "syn", "libc", "bitflags", "smallvec",
-		"cfg-if", "log", "parking_lot", "raw-window-handle", "wayland-client",
-		"x11-dl", "ash", "naga", "wgpu-hal", "wgpu-core", "wgpu", "winit",
-		"glam", "bytemuck", "pollster", "image", "rayon", "pulsar"]
+		"log", "wgpu-hal", "wgpu", "winit", "glam"]
 	lines = ["#!/bin/dash", 'g="\\033[1;32m"; y="\\033[1;33m"; b="\\033[1;34m"; r="\\033[0m"']
 	lines.append('printf "   ${g}Compiling${r} pulsar workspace\\n"')
 	for c in crates:
 		v = f"{rng.randint(0,3)}.{rng.randint(1,30)}.{rng.randint(0,9)}"
 		lines.append(f'printf "   ${{g}}Compiling${{r}} {c} v{v}\\n"')
-		if rng.random() < 0.35:
+		if rng.random() < 0.25:
 			lines.append(f"sleep 0.{rng.randint(15, 45):02d}")
 	lines += [
 		'printf "${y}warning${r}: unused variable: ${b}lift${r}\\n"',
@@ -756,27 +782,6 @@ printf '  ★ ◆ ✓ → ≈ ∞   🚀 🐧 🦀 🌙 💎   ┌─┬─┐ �
 	sh = proj / "build.sh"
 	sh.write_text("\n".join(lines) + "\n")
 	sh.chmod(0o755)
-
-	# a long colourised log for the `less` scene. Deliberately SHORT lines: a
-	# full-screen scroll costs the gif roughly what the ink on the moving rows
-	# costs, so wordy log messages are the single most expensive thing here
-	lvl = [("32", "info"), ("33", "warn"), ("36", "dbug")]
-	rows = []
-	t = 91250.114
-	for i in range(420):
-		c, name = lvl[0] if rng.random() < 0.75 else rng.choice(lvl[1:])
-		t += rng.uniform(0.002, 0.4)
-		msg = rng.choice([
-			"frame %.1fms" % rng.uniform(0.8, 6.0),
-			"atlas %dx%d" % (512 * rng.randint(1, 4), 512 * rng.randint(1, 4)),
-			"cache hit %d" % rng.randint(4, 96),
-			"pty %d B" % rng.randint(24, 4096),
-			"ease %dms" % rng.randint(80, 420),
-			"grid %dx%d" % (rng.randint(80, 200), rng.randint(24, 60)),
-			"trim %d" % rng.randint(5000, 10000),
-		])
-		rows.append(f"\033[90m{t:10.3f}\033[0m \033[{c}m[{name}]\033[0m {msg}")
-	(proj / "docs" / "render.log").write_text("\n".join(rows) + "\n")
 
 def prep_content(rec, rng):
 	write_dconf(rec.home, rec.p)
@@ -814,13 +819,17 @@ def ctl(rec, line):
 		log(f"WARNING: control socket: {e}")
 		return False
 
-def set_cursor_block(rec):
+def set_cfg(rec, **keys):
 	# a settings change, applied the way a settings change applies: rewrite the
-	# key and reload. Live, and nothing has to be typed on camera.
+	# keys and reload. Live, and nothing has to be typed on camera. Strings are
+	# quoted the way TOML wants them, numbers left bare.
 	cfg = rec.home / ".config/silkterm/config.toml"
-	cfg.write_text(cfg.read_text().replace(
-		"cursor_size_width = 25", "cursor_size_width = 100"))
-	ctl(rec, "reload")
+	text = cfg.read_text()
+	for key, val in keys.items():
+		line = f'{key} = "{val}"' if isinstance(val, str) else f"{key} = {val}"
+		text = re.sub(rf"^{key} = .*$", lambda _m, s=line: s, text, flags=re.M)
+	cfg.write_text(text)
+	return ctl(rec, "reload")
 
 
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -835,81 +844,65 @@ def wipe(r, t, settle=0.8):
 	t.key("ctrl+l", sound=key_sound("l"))
 	time.sleep(settle)
 
-def seg_alias(r, t, m):
-	# no narration - it is a plain shell alias, nothing to explain
-	t.cmd('alias ls="ls -lA --color --group-directories-first"', settle=1.0,
-		wpm=200, typos=0.0)
-	wipe(r, t)
-
 def seg_ls(r, t, m):
+	# opens straight on the listing: the ls flags are baked into the wrapper rather
+	# than aliased on camera, because watching someone set an alias sells nothing
 	with Banner(r, "Silky-smooth output scrolling"):
-		t.cmd("ls ~/", settle=3.4)
-		time.sleep(0.8)
+		t.cmd("ls ~/", settle=3.0)
+		time.sleep(0.7)
 	# no wipe: the build output is meant to push this listing up
 
 def seg_build(r, t, m):
 	with Banner(r, "Smooth cursor. Smooth scroll."):
 		t.cmd("cd projects/pulsar", settle=0.6, typos=0.0)
-		t.cmd("./build.sh", settle=7.5)          # covers the script's own runtime
-		time.sleep(0.8)
+		t.cmd("./build.sh", settle=4.0)          # covers the script's own runtime
+		time.sleep(0.7)
 	# no wipe: the wheel scene scrolls back up through all of this
 
 def seg_wheel(r, t, m):
 	# scrollback under the wheel - the same easing as the output scroll, driven
 	# by hand. xdotool sends two wheel events per click here (winit fires on the
-	# legacy button press AND release), so a few clicks cover a lot of lines.
+	# legacy button press AND release), so a few clicks cover a lot of lines. One
+	# direction only: coming back down says nothing going up has not already said,
+	# and a full-width listing in motion is the costliest thing in the gif. The
+	# screen is then just cleared, with no remark - the scene is over at the top.
 	with Banner(r, "Scroll back just as smoothly"):
 		m.move(r.size[0] // 2, r.band + (r.size[1] - r.band) // 2, dur=0.5)
-		m.wheel(True, 5, hz=3.2)
-		time.sleep(1.1)
-		m.wheel(False, 5, hz=3.2)
-		time.sleep(0.7)
+		m.wheel(True, 3, hz=3.2)
+		time.sleep(0.9)
 		m.park()
+	wipe(r, t)
+
+def seg_panes(r, t, m):
+	# still the cursor first, silently: three panes each pulsing their own cursor
+	# pull the eye off the split, and every pulse is motion the gif pays for.
+	# Two splits straight off the menu bar (Alt+P opens Panes, then the item's own
+	# accelerator letter - V for vertical), all keyboard, no menu coordinates to
+	# guess at. Splitting twice is what shows the auto-sizing; each new pane is a
+	# shell like any other, so `exit` is what leaves it - nothing else is typed.
+	set_cfg(r, cursor_animation="none")
+	with Banner(r, "Split panes, sized for you"):
+		r.xdo("windowactivate", r.win)
+		time.sleep(0.3)
+		for _ in range(2):
+			t.key("alt+p", sound=key_sound("p"))
+			time.sleep(0.55)
+			t.key("v", sound=key_sound("v"))
+			time.sleep(1.1)
+		t.cmd("exit", settle=1.2, typos=0.0)
+		t.cmd("exit", settle=1.2, typos=0.0)
 	wipe(r, t)
 
 def seg_cursor(r, t, m):
 	# the cursor is a setting, so switch it the way a setting switches - live,
-	# through the control socket, with nothing typed on camera. Its animation
-	# carries straight over from the bar to the block.
+	# through the control socket, with nothing typed on camera. Back to pulsing
+	# after the panes scene stilled it, and a full block instead of the bar it
+	# started as. An empty screen: the cursor is the only thing moving on it.
 	with Banner(r, "Cursor shape and animation, your pick"):
 		r.xdo("windowactivate", r.win)
-		time.sleep(1.4)
-		set_cursor_block(r)
+		time.sleep(1.2)
+		set_cfg(r, cursor_size_width=100, cursor_animation="pulse_vertical")
 		time.sleep(2.6)
-
-def seg_panes(r, t, m):
-	# two splits straight off the menu bar (Alt+P opens Panes, then the item's own
-	# accelerator letter: V vertical, H horizontal) - all keyboard, no menu
-	# coordinates to guess at. Splitting twice is what shows the auto-sizing; each
-	# new pane is a shell like any other, so `exit` is what closes it.
-	with Banner(r, "Split panes, sized for you"):
-		r.xdo("windowactivate", r.win)
-		time.sleep(0.3)
-		t.key("alt+p", sound=key_sound("p"))
-		time.sleep(1.1)
-		t.key("v", sound=key_sound("v"))
-		time.sleep(1.8)
-		t.key("alt+p", sound=key_sound("p"))
-		time.sleep(1.0)
-		t.key("h", sound=key_sound("h"))
-		time.sleep(2.0)
-		t.cmd("exit", settle=1.6, typos=0.0)
-		t.cmd("exit", settle=1.6, typos=0.0)
-	wipe(r, t)
-
-def seg_less(r, t, m):
-	with Banner(r, "Full-screen apps glide too"):
-		t.cmd("less -R docs/render.log", settle=1.4)
-		t.keys("Down", 12, hz=7.0)
-		time.sleep(0.7)
-		t.keys("Up", 6, hz=6.0)
-		time.sleep(0.6)
-		# re-assert focus before quitting - a stray focus loss during the arrow
-		# scrolling would leave less open and swallow the commands that follow
-		r.xdo("windowactivate", r.win)
-		time.sleep(0.3)
-		t.key("q")
-		time.sleep(1.0)
 
 def seg_wallpaper(r, t, m):
 	# the image is the app's own baked-in default, copied into the fake config
@@ -939,6 +932,10 @@ def seg_outro(r, t, m):
 	with Banner(r, "github.com/jim-collier/silkterm"):
 		r.xdo("windowactivate", r.win)
 		time.sleep(0.5)
+		# a bare prompt above the sign-off and another below it (the one the Return
+		# at the end of the comment leaves), so it sits on its own
+		t.enter()
+		time.sleep(0.6)
 		t.cmd("# Smooth. Silky. ...SilkTerm.", settle=0.5, typos=0.0)
 		time.sleep(3.0)
 	# the rest of the linger is the encoder's freeze (TAIL_HOLD_S), which costs a
@@ -946,13 +943,11 @@ def seg_outro(r, t, m):
 
 # one script, both profiles (video and gif differ only in size/fonts/audio)
 _SCRIPT = [
-	("alias",     seg_alias),
 	("ls",        seg_ls),
 	("build",     seg_build),
 	("wheel",     seg_wheel),
-	("cursor",    seg_cursor),
 	("panes",     seg_panes),
-	("less",      seg_less),
+	("cursor",    seg_cursor),
 	("wallpaper", seg_wallpaper),
 	("showcase",  seg_showcase),
 	("outro",     seg_outro),
@@ -1333,6 +1328,14 @@ if __name__ == "__main__":
 
 
 ##	Script history:
+##		- 20260726: gif cut under 10 MiB - the `less` scene dropped, the wheel one
+##		  direction only, the build scroll halved, the listing narrowed (no owner
+##		  or group columns, bare time) and fewer typos. Alias scene gone (the flags
+##		  live in the ls wrapper). Panes: two vertical splits, cursor stilled first,
+##		  and the block-cursor switch moved to after them (back to pulsing, full
+##		  block). Showcase bar sweeps the full hue circle, dark purple to dark red;
+##		  katakana and emoji replace the dingbats; the sign-off sits between two
+##		  bare prompts.
 ##		- 20260726: 8px black border; slate blue-gray decoration generated at
 ##		  record time; the cursor switches to a block mid-run through the control
 ##		  socket; two extra panes closed with `exit`; Settings and tabs scenes
