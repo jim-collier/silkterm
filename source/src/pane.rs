@@ -66,6 +66,11 @@ const SLIDE_TOP_BAND_APPS: bool = true;
 
 const PROMPT_ABOVE_MAX: usize = 4; // rows above the prompt considered for multi-line-prompt learning
 
+// Consecutive frames that may reuse the last built frame before build() stops
+// trying and waits for the terminal (see the lock in build). 2 keeps the pane
+// under ~3 frames stale while costing nothing when nothing is contending.
+const LOCK_WAIT_AFTER: u32 = 2;
+
 // The two independent auto-copy triggers a pane can have on (session-only, never
 // persisted). Each is a per-pane bool; the enum just names which one a UI action
 // or menu row refers to.
@@ -583,6 +588,8 @@ pub struct Pane {
 	// runs the same shell as the one it forked off (see design.md).
 	command: Option<Vec<String>>,
 	last_draw: PaneDraw,
+	// Frames in a row that reused last_draw because the terminal was busy.
+	lock_misses: u32,
 	last_history: usize,
 	// Fingerprint of the row just above the viewport - the line that most recently
 	// scrolled off. Once the scrollback is capped history_size() is pinned, so it
@@ -699,12 +706,24 @@ impl Pane {
 		let lines = self.term.lines;
 		let settings = config::settings(); // snapshot once, not per cell
 
-		// Never block the render thread: the PTY reader thread can hold the
-		// terminal lock through long bursts (e.g. a chatty shell rc). If it's
-		// busy this frame, reuse the last built frame.
-		let Some(mut guard) = self.term.term.try_lock_unfair() else {
+		// Don't block the render thread while the PTY reader is mid-burst: it holds
+		// the terminal across a whole read cycle, so reuse the last built frame and
+		// come back next frame. But an unfair try can lose that race forever (the
+		// reader re-acquires the instant it lets go), so after LOCK_WAIT_AFTER misses
+		// take the FAIR lock instead: it queues on the lease, which puts us in at the
+		// end of the current read cycle and makes the reader's next cycle wait behind
+		// us. That caps the stale-frame run - without it a heavy `cat` freezes the
+		// pane for seconds - at the cost of blocking for one cycle (measured under
+		// 5ms). See design.md.
+		let mut guard = if self.lock_misses >= LOCK_WAIT_AFTER {
+			self.term.term.lock()
+		} else if let Some(guard) = self.term.term.try_lock_unfair() {
+			guard
+		} else {
+			self.lock_misses += 1;
 			return self.last_draw.clone();
 		};
+		self.lock_misses = 0;
 		self.mode = *guard.mode();
 		self.content_dirty = false;
 
@@ -2232,6 +2251,7 @@ fn spawn_pane(
 			cursor: None,
 			slide: None,
 		},
+		lock_misses: 0,
 		last_history: 0,
 		last_offscreen: None,
 		last_rows: Vec::new(),
