@@ -503,6 +503,12 @@ impl TextCtx {
 		self.color_glyphs.warm(self.font_system.db(), id, w, h);
 	}
 
+	// Open a frame's colour-glyph warming, so the raster cache knows which of
+	// its entries this frame is about to depend on.
+	pub fn color_frame(&mut self) {
+		self.color_glyphs.begin_frame();
+	}
+
 	// Buffer for a single fallback glyph: no monospace snapping (render at its
 	// natural width), positioned per-cell by the caller.
 	pub fn new_plain_buffer(&mut self) -> Buffer {

@@ -1683,6 +1683,7 @@ impl State {
 		let scrim_on = cfg.text_scrim && cfg.text_scrim_radius > 0.0;
 		let mut scrim_cells: Vec<RectInstance> = Vec::new();
 
+		self.text.color_frame();
 		for (id, pane) in &mut self.tabs.cur_mut().panes {
 			pane.scroll.advance(dt);
 			let rect = pane.rect;

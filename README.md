@@ -73,6 +73,7 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 - [Features](#features)
 	- [One minor limitation inherent to all terminals](#one-minor-limitation-inherent-to-all-terminals)
 - [Screenshots](#screenshots)
+- [Speed](#speed)
 - [Getting and using](#getting-and-using)
 	- [Installing](#installing)
 	- [Building from source](#building-from-source)
@@ -219,6 +220,24 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 <sub>Click any shot for the full-resolution image.</sub>
 
 </div>
+
+## Speed
+
+Smooth scrolling is worth nothing if the terminal falls behind the moment something dumps a lot of text, so throughput is measured rather than asserted. Each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it.
+
+<!-- termbench:begin -->
+
+| Terminal | Version | Grid | 1-byte | 2-byte | 3-byte | 4-byte | Mixed | Score |
+| --- | --- | :-: | ---: | ---: | ---: | ---: | ---: | ---: |
+| SilkTerm | 1.0.0-beta2+20260728-072224 | 160x42 | 93.2 | 130.7 | 108.1 | 137.6 | 91.8 | **75.1** |
+| xfce4-terminal | 1.2.0 | 160x42 | 103.3 | 79.9 | 60.9 | 70.0 | 59.6 | **58.5** |
+| XTerm | 407 | 160x42 | 29.2 | 39.1 | 39.3 | 49.8 | 33.5 | **24.5** |
+
+<sub>Throughput in MB/s by UTF-8 width class, higher is better; score is millions of cells per second, a weighted geometric mean so no single class dominates it. This is how fast a terminal swallows output and keeps up, not a glyph rasterization rate - only a screenful is ever visible, so most of the stream is parsed, stored and scrolled past. Every terminal is fed byte-identical deterministic payloads and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it. Only rows measured at the same grid size are comparable. Reproduce with <code>utility/termbench.py</code>.</sub>
+
+<!-- termbench:end -->
+
+Run it yourself with [`utility/termbench.py`](utility/termbench.py) (`--quick` for a thirty-second version). It needs only Python 3 and a terminal, works on any emulator on any OS, and appends to this table as more terminals are measured.
 
 ## Getting and using
 
