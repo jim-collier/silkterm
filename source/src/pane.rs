@@ -12,7 +12,11 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::CursorShape;
-use glyphon::{Attrs, Buffer, Color as GColor, CustomGlyph, Shaping, Style, TextArea, TextBounds};
+use glyphon::cosmic_text::{LineEnding, Scroll as TextScroll};
+use glyphon::{
+	Attrs, AttrsList, Buffer, BufferLine, Color as GColor, CustomGlyph, Shaping, Style, TextArea,
+	TextBounds, Weight,
+};
 use winit::event_loop::EventLoopProxy;
 
 use crate::config;
@@ -334,6 +338,41 @@ fn render_char(c: char) -> char {
 	if c.is_control() { ' ' } else { c }
 }
 
+// Same spans at a single weight - what the scrim's de-bolded buffer wants. Derived
+// on demand rather than built alongside the real list, so a screen with no bold on
+// it pays nothing.
+fn debold_attrs(src: &AttrsList, weight: Weight) -> AttrsList {
+	let mut out = AttrsList::new(&src.defaults());
+	for (range, attrs) in src.spans_iter() {
+		let mut plain = attrs.as_attrs();
+		plain.weight = weight;
+		out.add_span(range.clone(), &plain);
+	}
+	out
+}
+
+// Assign one built row per buffer line. `set_text` compares against what the line
+// already holds and only drops its cached shaping when something differs, so an
+// unchanged row costs a string compare instead of a re-shape. Mirrors what
+// set_rich_text does around the lines themselves (reset scroll, no alignment).
+fn set_buffer_rows(buf: &mut Buffer, rows: Vec<(String, AttrsList)>) {
+	let count = rows.len();
+	for (i, (text, attrs)) in rows.into_iter().enumerate() {
+		if let Some(line) = buf.lines.get_mut(i) {
+			line.set_text(text, LineEnding::default(), attrs);
+		} else {
+			buf.lines.push(BufferLine::new(
+				text,
+				LineEnding::default(),
+				attrs,
+				Shaping::Advanced,
+			));
+		}
+	}
+	buf.lines.truncate(count);
+	buf.set_scroll(TextScroll::default());
+}
+
 // One step of the cursor's horizontal slide toward `target` (visual columns).
 // Exponential easing whose time-constant shrinks with the gap, so the cursor
 // speeds up the farther it trails its real column (a burst/paste catches up
@@ -600,6 +639,10 @@ pub struct Pane {
 	// frame is a pure cursor animation (no content/scroll/bell change), build skips
 	// the expensive text re-shape and reuses the cached buffer/bg/glyphs.
 	text_built: bool,
+	// Bumped on every full re-shape, so the renderer can tell "this pane's text
+	// is byte-for-byte the frame before" without inspecting the buffers. Drives
+	// the prepare/scrim skip in app.rs.
+	pub shape_rev: u64,
 	// TermMode snapshot from the last build, so per-keystroke/wheel input paths
 	// read it lock-free (at worst one frame stale) instead of taking the term
 	// lock the PTY reader may hold across a whole read cycle.
@@ -976,6 +1019,7 @@ impl Pane {
 			return self.last_draw.clone();
 		}
 		self.text_built = true;
+		self.shape_rev = self.shape_rev.wrapping_add(1);
 
 		let colors = guard.colors();
 		let sel_range = guard.selection.as_ref().and_then(|s| s.to_range(&*guard));
@@ -1005,10 +1049,14 @@ impl Pane {
 			)
 		});
 
-		// Build attr-runs spanning the viewport (+1 overscan row). Newlines are
-		// embedded into runs (never empty/standalone spans) - empty spans make
-		// cosmic-text's set_rich_text loop forever.
-		let mut spans: Vec<(String, Attrs)> = Vec::with_capacity(lines + 1);
+		// Build attr-runs, but keep them grouped BY ROW (viewport + 1 overscan row)
+		// rather than as one newline-joined blob. Handing cosmic-text the rows one
+		// at a time lets it compare each against what that line already holds and
+		// re-shape only the ones that really changed - a keystroke touches one row,
+		// not a screenful. See the buffer update after this loop.
+		let mut rows_out: Vec<(String, AttrsList)> = Vec::with_capacity(lines + 1);
+		let mut line_text = String::new();
+		let mut line_attrs = AttrsList::new(&default_attrs);
 		let mut run = String::new();
 		let mut run_color = settings.fg;
 		let mut run_bold = false;
@@ -1026,18 +1074,36 @@ impl Pane {
 					if run_italic {
 						attrs.style = Style::Italic;
 					}
-					spans.push((std::mem::take(&mut run), attrs));
+					let start = line_text.len();
+					line_text.push_str(&run);
+					run.clear();
+					// same rule cosmic-text uses: a run matching the defaults needs no span
+					if attrs != default_attrs {
+						line_attrs.add_span(start..line_text.len(), &attrs);
+					}
 				}
+			};
+		}
+		// End the current row and start a fresh one. Run state (colour/bold/italic)
+		// deliberately carries over: `run` is empty here, so an unchanged attribute
+		// at the start of the next row just keeps appending.
+		macro_rules! flush_row {
+			() => {
+				flush_run!();
+				rows_out.push((
+					std::mem::take(&mut line_text),
+					std::mem::replace(&mut line_attrs, AttrsList::new(&default_attrs)),
+				));
 			};
 		}
 
 		for screen_row in -1..(lines as i32) {
-			if screen_row != -1 {
-				run.push('\n');
-			}
 			let grid_line = screen_row - display_offset; // grid line for this screen row
+			// off the top/bottom of real content: blank row (still emitted, so the
+			// row count always matches the buffer's line count)
 			if grid_line < -hist || grid_line > (lines as i32 - 1) {
-				continue; // off the top/bottom of real content: blank row
+				flush_row!();
+				continue;
 			}
 			let row = &grid[Line(grid_line)];
 			let y = y_of(screen_row);
@@ -1123,8 +1189,8 @@ impl Pane {
 					run.push(render_char(cell.c));
 				}
 			}
+			flush_row!();
 		}
-		flush_run!();
 
 		drop(guard);
 		let mut cursor = self.cursor_quad(
@@ -1154,18 +1220,50 @@ impl Pane {
 				}
 			}
 		}
-		let span_refs = spans.iter().map(|(s, a)| (s.as_str(), a.clone()));
+		// Update the buffer a line at a time instead of through set_rich_text.
+		// set_rich_text rebuilds every line unconditionally, which drops each one's
+		// cached shaping - so a single changed cell used to re-shape the whole
+		// screen. Per-line assignment compares text and attributes first and only
+		// invalidates lines that actually differ; shape_until_scroll then re-shapes
+		// just those. Shaping is the expensive half of a frame.
 		// Advanced (not Basic) so missing glyphs fall back to other fonts
 		// (CJK/emoji/math/RTL) instead of rendering tofu. cosmic-text 0.18.2's
 		// fallback loop is bounded and keeps monospace alignment; earlier 0.18
 		// could hang here (see git history) but no longer does (stress-tested).
-		self.buffer.set_rich_text(
-			&mut ctx.font_system,
-			span_refs,
-			&default_attrs,
-			Shaping::Advanced,
-			None,
-		);
+		//
+		// Scrim source with uniform weight: bold ink is wider, so its halo reads
+		// heavier than the neighbours'. When text_scrim_regular_weight is on and
+		// bold is on screen, shape a parallel buffer with bold stripped for the
+		// scrim pass (crisp text on top keeps its real weight). Costs a second
+		// shape only on rebuild frames that contain bold. Per-cell fallback
+		// glyphs keep their weight - rare, and not worth a second glyph pool.
+		// ctx.debold_safe guards a font (Windows default faces) whose bold advance
+		// differs from cell_w: there the de-bold buffer drifts from the display
+		// buffer along the line, so the scrim would sit wider than the text.
+		// Runs first because it reads the rows the display buffer then consumes.
+		self.scrim_debold = settings.text_scrim
+			&& settings.text_scrim_radius > 0.0
+			&& settings.text_scrim_regular_weight
+			&& ctx.debold_safe
+			&& saw_bold;
+		if self.scrim_debold {
+			let (buf_w, buf_h) = self.buffer.size();
+			let plain_rows: Vec<(String, AttrsList)> = rows_out
+				.iter()
+				.map(|(text, attrs)| (text.clone(), debold_attrs(attrs, default_attrs.weight)))
+				.collect();
+			let scrim_buffer = self.scrim_buf.get_or_insert_with(|| {
+				let mut buf = Buffer::new(&mut ctx.font_system, ctx.metrics);
+				buf.set_wrap(&mut ctx.font_system, glyphon::Wrap::None);
+				buf.set_monospace_width(&mut ctx.font_system, Some(cell_w));
+				buf
+			});
+			scrim_buffer.set_metrics(&mut ctx.font_system, ctx.metrics);
+			scrim_buffer.set_size(&mut ctx.font_system, buf_w, buf_h);
+			set_buffer_rows(scrim_buffer, plain_rows);
+			scrim_buffer.shape_until_scroll(&mut ctx.font_system, false);
+		}
+		set_buffer_rows(&mut self.buffer, rows_out);
 		self.buffer.shape_until_scroll(&mut ctx.font_system, false);
 
 		// Re-shape the scrolled-off strip when its rows changed this frame. Cheap:
@@ -1209,36 +1307,6 @@ impl Pane {
 		// ctx.debold_safe guards a font (Windows default faces) whose bold advance
 		// differs from cell_w: there the de-bold buffer drifts from the display
 		// buffer along the line, so the scrim would sit wider than the text.
-		self.scrim_debold = settings.text_scrim
-			&& settings.text_scrim_radius > 0.0
-			&& settings.text_scrim_regular_weight
-			&& ctx.debold_safe
-			&& saw_bold;
-		if self.scrim_debold {
-			let (buf_w, buf_h) = self.buffer.size();
-			let scrim_buffer = self.scrim_buf.get_or_insert_with(|| {
-				let mut buf = Buffer::new(&mut ctx.font_system, ctx.metrics);
-				buf.set_wrap(&mut ctx.font_system, glyphon::Wrap::None);
-				buf.set_monospace_width(&mut ctx.font_system, Some(cell_w));
-				buf
-			});
-			scrim_buffer.set_metrics(&mut ctx.font_system, ctx.metrics);
-			scrim_buffer.set_size(&mut ctx.font_system, buf_w, buf_h);
-			let despan = spans.iter().map(|(text, attrs)| {
-				let mut debold_attrs = attrs.clone();
-				debold_attrs.weight = default_attrs.weight;
-				(text.as_str(), debold_attrs)
-			});
-			scrim_buffer.set_rich_text(
-				&mut ctx.font_system,
-				despan,
-				&default_attrs,
-				Shaping::Advanced,
-				None,
-			);
-			scrim_buffer.shape_until_scroll(&mut ctx.font_system, false);
-		}
-
 		// place the per-cell fallback glyphs. Each distinct glyph is shaped once
 		// (harfbuzz fallback matching is the cost) and cached; every cell/colour
 		// drawing it reuses that buffer, tinted per-cell via TextArea.default_color.
@@ -2186,6 +2254,7 @@ fn spawn_pane(
 		cursor_pause: PauseState::default(),
 		cursor_animating: false,
 		text_built: false,
+		shape_rev: 0,
 		mode: TermMode::empty(),
 		content_dirty: true,
 		copy_select: config::settings().copy_on_select,
