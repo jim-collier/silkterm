@@ -102,6 +102,8 @@ Frame loop: A PTY read or a user event marks the app dirty or starts an animatio
 
 Critical constraint: crate's `display_offset` is integer lines. No fractional scroll in crate. Smooth scroll lives entirely in the renderer.
 
+Sharing the terminal with the reader thread: the reader holds the terminal across a whole read cycle, so the renderer cannot simply take it every frame without stalling. It also cannot merely try and give up, because the reader reclaims it immediately and an impatient try can lose forever - which showed up as a pane frozen for seconds during heavy output. The rule adopted: try first, and after a couple of frames of getting nowhere, wait properly. Waiting is bounded because it reserves the terminal ahead of the reader's next cycle; trying is not bounded at all.
+
 ### Smooth-Scroll
 
 Crate owns integer "where grid is." Renderer owns fractional overlay.
