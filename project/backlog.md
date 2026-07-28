@@ -273,7 +273,25 @@ In each section, items are listed approximately from newest to oldest.
 - 🛠️ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- 🔘 Add Windows support.
 
-- 🔘 Get idle CPU usage WAY down.
+- 🛠️ Epic 1n6fydv: Reduce CPU and GPU resource usage
+	- Supersedes the old "get idle CPU usage way down" item.
+	- Where it started: one idle window with nothing running costs roughly a tenth of a CPU core and a fifth of a mid-range GPU. A pulsing cursor keeps a 30fps loop alive, and every one of those frames rebuilds the entire scene - two full text-shaping passes plus the whole scrim pipeline - just to move one small rectangle.
+	- Tier 1 - stop doing the work. Biggest win, smallest change.
+		- ✅ 1.1 Skip the text prepare passes when the text hasn't changed. The renderer keeps its prepared buffers, so a frame with identical text can go straight to drawing. Worth over half the per-frame cost, and it helps every frame, not just idle ones.
+			- Done: a per-frame signature over everything that feeds the prepared text. When it repeats, both prepares and the atlas trim are skipped. Anything the signature misses costs an extra prepare, never a stale frame.
+		- ✅ 1.2 Cache the scrim halo. With the cursor left out of the scrim (the default), the halo depends only on the text - so a cursor-only frame can reuse it and skip the coverage and blur passes entirely. That is most of the GPU cost.
+			- Done: same signature gates the colour map, the text-coverage pass and the blur. The cursor keeps its own coverage pass, so the outline still tracks it. Scrim's share of idle cost fell from 14.7 points to 1.3.
+		- ✅ 1.3 Together those give a real cursor-only frame: one rectangle, one small coverage pass, one composite, one main pass. Should take idle down to low single digits.
+			- Done: idle went from 26.6% of a core to 5.9% on the test rig, most of the remainder being the rig's own frame readback. Verified pixel-identical against the previous build across a static screen, a post-idle content update, and split panes with two tabs.
+	- Tier 2 - need fewer frames.
+		- ✋ 2.1 Stop animating when the window is unfocused. Deferred - a broader change in this area is coming, and this would be folded into it.
+		- ✅ 2.2 Stop rendering while the window is occluded. The signal is already available and currently only used for the video-memory probe.
+			- Done: a fully hidden window waits instead of drawing, and catches up in one frame when it comes back. Not every window manager reports this, so nothing else depends on it.
+		- 🚫 2.3 Lower the idle cursor frame rate. Canceled - 30fps stays.
+	- Tier 3 - the non-idle path.
+		- 🔘 3.1 Use the terminal's damage tracking. It reports which lines actually changed, and we ignore it - every content frame re-shapes the whole grid. This is the lever for typing and scrolling cost; it will not touch idle.
+		- 🔘 3.2 Batch fallback glyphs. Each one is drawn as its own text area today, so an emoji or CJK heavy screen means hundreds of them.
+	- Not doing: hard-forking the terminal engine for performance. It costs nothing at idle, and a fork would mean owning the escape-sequence parser, grid reflow and the Windows console layer - the riskiest code with the least bearing on speed. If it ever needs changing, a narrow local patch for the render-thread lock contention is the better trade.
 
 - 🛠️ Tab interface:
 	- Done: single-window core. Each tab owns a PaneManager; the tab bar shows once there's more than one tab, click to switch, and the pane area shrinks to make room for the bar.

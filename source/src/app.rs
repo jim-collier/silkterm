@@ -711,6 +711,17 @@ struct State {
 	pending_about: bool, // request to open the About window (App acts on it; needs the event loop)
 	pending_settings: bool, // request to open the Settings window
 	chrome: Option<ChromeCache>, // shaped menu/tab text, reused across frames
+	chrome_rev: u64, // bumped whenever a chrome buffer is (re)shaped
+	// Signature of everything feeding the prepared text set, from the last frame
+	// that actually prepared. A pure cursor frame matches it, and then both
+	// glyphon prepares (the bulk of per-frame CPU) and the atlas trim are skipped
+	// - the retained vertex buffers are still correct. None = must prepare.
+	text_sig: Option<u64>,
+	// The scrim's blurred source is valid for this signature. The halo depends on
+	// the text alone (the cursor has its own coverage texture), so a cursor-only
+	// frame reuses it instead of re-rendering and re-blurring the whole window.
+	scrim_sig: Option<u64>,
+	occluded: bool, // window fully hidden: skip rendering entirely until it comes back
 	wp_images: Vec<PathBuf>, // wallpaper-rotation folder contents (empty = rotation off)
 	wp_index: usize, // which of wp_images is currently shown
 	wp_next: Option<Instant>, // when to rotate next (None = no timer / startup-only)
@@ -1536,9 +1547,18 @@ impl State {
 		self.dirty = true;
 	}
 
+	// Force the next frame through a full prepare + scrim build. Call whenever
+	// something outside the signature's reach makes the retained GPU state stale
+	// (new atlases, recreated textures, lost VRAM).
+	fn invalidate_prepared(&mut self) {
+		self.text_sig = None;
+		self.scrim_sig = None;
+	}
+
 	fn rebuild_text(&mut self, scale: f32) {
 		self.text = TextCtx::new(&self.gfx.device, &self.gfx.queue, self.gfx.format, scale);
 		self.chrome = None; // cached chrome buffers are tied to the old FontSystem
+		self.invalidate_prepared(); // fresh atlases hold nothing to reuse
 		for pm in &mut self.tabs.list {
 			pm.rebuild_buffers(&mut self.text);
 		}
@@ -1601,8 +1621,9 @@ impl State {
 
 	// GPU texture contents were lost (VT switch / suspend; see the Sentinel note
 	// in gfx.rs). Re-upload everything that was uploaded once: fresh glyph
-	// atlases + chrome via rebuild_text, and the wallpaper. Scrim and offscreen
-	// targets are redrawn every frame, so they heal on their own.
+	// atlases + chrome via rebuild_text, and the wallpaper. rebuild_text also drops
+	// the prepared/scrim signatures, so the next frame rebuilds the scrim source
+	// instead of reusing a texture that no longer holds anything.
 	fn recover_gpu(&mut self) {
 		self.rebuild_text(self.window.scale_factor() as f32);
 		self.wallpaper_img = load_wallpaper(&self.gfx);
@@ -2008,12 +2029,18 @@ impl State {
 				tab_w: -1.0, // force the tab pass below to fill in
 				tabs: Vec::new(),
 			});
+			self.chrome_rev = self.chrome_rev.wrapping_add(1);
 		}
 		{
+			let mut reshaped = false;
 			let cache = self.chrome.as_mut().unwrap(); // ensured above
 			if cache.tab_w != tab_w {
 				cache.tab_w = tab_w;
 				cache.tabs.clear(); // width changed: every title buffer re-wraps
+				reshaped = true;
+			}
+			if cache.tabs.len() > tab_titles.len() {
+				reshaped = true;
 			}
 			cache.tabs.truncate(tab_titles.len());
 			for (i, title) in tab_titles.into_iter().enumerate() {
@@ -2024,6 +2051,7 @@ impl State {
 				{
 					continue; // unchanged title keeps its shaped buffer
 				}
+				reshaped = true;
 				let mut buf = self
 					.text
 					.new_ui_buffer((tab_w - 16.0 - TAB_CLOSE_W).max(8.0), tab_h);
@@ -2043,10 +2071,63 @@ impl State {
 					cache.tabs.push((title, buf));
 				}
 			}
+			if reshaped {
+				self.chrome_rev = self.chrome_rev.wrapping_add(1);
+			}
 		}
 		// compute before borrowing panes for `areas` (menubar_layout takes &mut self)
 		let bar_layout = self.menubar_layout();
 		let copyboxes = self.copybox_layout();
+
+		// Fingerprint every input to the prepared text set. A pure cursor frame
+		// reproduces it exactly, which is the signal that glyphon's retained
+		// buffers are still correct and both prepares can be skipped. Anything
+		// missed here shows up as an extra prepare, never as stale text - so err
+		// toward including a value rather than reasoning that it can't change.
+		let text_sig = {
+			use std::hash::{Hash, Hasher};
+			let mut h = std::collections::hash_map::DefaultHasher::new();
+			self.chrome_rev.hash(&mut h);
+			self.gfx.config.width.hash(&mut h);
+			self.gfx.config.height.hash(&mut h);
+			margin.to_bits().hash(&mut h);
+			tab_w.to_bits().hash(&mut h);
+			self.menu_bar.hash(&mut h);
+			self.tab_bar_visible().hash(&mut h);
+			self.tabs.active.hash(&mut h);
+			self.focused.hash(&mut h); // dims the copy-mode labels
+			scrim_on.hash(&mut h);
+			// one pointer covers every setting: a change swaps the whole snapshot
+			(std::sync::Arc::as_ptr(&cfg) as usize).hash(&mut h);
+			for (id, p) in &self.tabs.cur().panes {
+				id.hash(&mut h);
+				p.shape_rev.hash(&mut h); // bumped by every full re-shape
+				tops[id].to_bits().hash(&mut h);
+				for v in [p.rect.x, p.rect.y, p.rect.w, p.rect.h] {
+					v.to_bits().hash(&mut h);
+				}
+				match &slides[id] {
+					None => 0u8.hash(&mut h),
+					Some(s) => {
+						1u8.hash(&mut h);
+						s.has_band.hash(&mut h);
+						s.has_top_band.hash(&mut h);
+						for v in [
+							s.band_top,
+							s.split_y,
+							s.top_split_y,
+							s.region_clip_t,
+							s.region_clip_b,
+						] {
+							v.to_bits().hash(&mut h);
+						}
+					}
+				}
+			}
+			h.finish()
+		};
+		let text_same = self.text_sig == Some(text_sig);
+
 		let chrome = self.chrome.as_ref().unwrap(); // ensured above
 		let mut areas: Vec<TextArea> = Vec::new();
 		for p in self.tabs.cur().panes.values() {
@@ -2162,7 +2243,14 @@ impl State {
 		}
 		self.rects
 			.upload(&self.gfx.device, &self.gfx.queue, &instances);
-		if let Err(e) = self.text.prepare(&self.gfx.device, &self.gfx.queue, areas) {
+		// Nothing that feeds the text changed, so glyphon's prepared buffers from
+		// the last frame still describe this one exactly. Skipping both prepares
+		// is the whole point of the signature: shaping and glyph-cache lookups
+		// are over half the per-frame cost, and an idle cursor pulse repeats them
+		// 30x a second for no visual difference.
+		if text_same {
+			drop(areas);
+		} else if let Err(e) = self.text.prepare(&self.gfx.device, &self.gfx.queue, areas) {
 			// Atlas full (after a long session of varied glyphs). The normal per-frame
 			// trim is at the END of render, below this early return - so without
 			// trimming here the atlas never recovers and ALL text goes black for good
@@ -2173,11 +2261,13 @@ impl State {
 				config::APP_NAME
 			);
 			self.text.trim_atlas();
+			self.text_sig = None;
+			self.scrim_sig = None;
 			return animating;
 		}
 		// scrim source pass has its own prepared set: pane text only (no chrome),
 		// with de-bolded buffers where a pane built one (text_scrim_regular_weight)
-		if scrim_on {
+		if scrim_on && !text_same {
 			let mut scrim_areas: Vec<TextArea> = Vec::new();
 			for p in self.tabs.cur().panes.values() {
 				// scrim follows the current frame's slide, INCLUDING the scrolled-off
@@ -2228,9 +2318,12 @@ impl State {
 					config::APP_NAME
 				);
 				self.text.trim_atlas();
+				self.text_sig = None;
+				self.scrim_sig = None;
 				return animating;
 			}
 		}
+		self.text_sig = Some(text_sig);
 
 		// lay out the menu into the overlay renderer: one proportional buffer
 		// per item label (at the gutter), plus a checkmark buffer for checked toggles.
@@ -2332,17 +2425,27 @@ impl State {
 		// distance paths measure the halo extent in px; keep it a touch wider than
 		// the (sigma-based) gaussian look so switching functions doesn't shrink it.
 		let scrim_ext = cfg.text_scrim_radius * 2.0;
+		// The halo is built from the text alone - the cursor lives in its own
+		// coverage texture and only joins at the blur (cursor_scrim) or the
+		// composite (cursor_outline). So when the text is unchanged the colour map,
+		// the text-coverage pass and the blur can all be reused from last frame;
+		// every scrim texture is stored, not transient. That is most of the idle
+		// GPU cost. The blur still has to re-run if the cursor feeds it.
+		let scrim_cached = scrim_on && text_same && self.scrim_sig == Some(text_sig);
+		let blur_cached = scrim_cached && !cfg.cursor_scrim;
 		if scrim_on {
-			self.scrim.render_bgcolor(
-				&self.gfx.device,
-				&self.gfx.queue,
-				&mut encoder,
-				&scrim_cells,
-				config::srgb_f32(cfg.bg),
-			);
+			if !scrim_cached {
+				self.scrim.render_bgcolor(
+					&self.gfx.device,
+					&self.gfx.queue,
+					&mut encoder,
+					&scrim_cells,
+					config::srgb_f32(cfg.bg),
+				);
+			}
 			self.scrim
 				.upload_cursors(&self.gfx.device, &self.gfx.queue, &scrim_cursor_quads);
-			{
+			if !scrim_cached {
 				let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 					label: Some("scrim text"),
 					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2382,15 +2485,20 @@ impl State {
 				});
 				self.scrim.draw_cursors(&mut pass);
 			}
-			self.scrim.blur(
-				&self.gfx.queue,
-				&mut encoder,
-				cfg.text_scrim_radius,
-				scrim_ext,
-				scrim_ramp,
-				if cfg.cursor_scrim { 1.0 } else { 0.0 },
-				scrim_function,
-			);
+			if !blur_cached {
+				self.scrim.blur(
+					&self.gfx.queue,
+					&mut encoder,
+					cfg.text_scrim_radius,
+					scrim_ext,
+					scrim_ramp,
+					if cfg.cursor_scrim { 1.0 } else { 0.0 },
+					scrim_function,
+				);
+			}
+			self.scrim_sig = Some(text_sig);
+		} else {
+			self.scrim_sig = None;
 		}
 
 		{
@@ -2568,7 +2676,13 @@ impl State {
 		if std::env::var_os("SILK_DUMP").is_some() {
 			self.gfx.dump_offscreen("/tmp/silk_offscreen.png");
 		}
-		self.text.trim_atlas();
+		// Trim only on a frame that prepared. The trim clears glyphon's in-use set,
+		// and a later allocation evicts whatever isn't in it - so trimming after a
+		// skipped prepare would let the atlas drop glyphs the retained buffers are
+		// still pointing at.
+		if !text_same {
+			self.text.trim_atlas();
+		}
 		animating
 	}
 }
@@ -3210,6 +3324,10 @@ impl ApplicationHandler<UserEvent> for App {
 			pending_about: false,
 			pending_settings: false,
 			chrome: None,
+			chrome_rev: 0,
+			text_sig: None,
+			scrim_sig: None,
+			occluded: false,
 			wp_images: Vec::new(),
 			wp_index: 0,
 			wp_next: None,
@@ -3332,6 +3450,7 @@ impl ApplicationHandler<UserEvent> for App {
 					.resize(&state.gfx.device, size.width, size.height);
 				state.relayout_all();
 				state.save_window_size(size.width, size.height);
+				state.invalidate_prepared(); // scrim textures were just recreated
 				state.dirty = true;
 			}
 
@@ -3363,9 +3482,14 @@ impl ApplicationHandler<UserEvent> for App {
 			// Becoming visible again (VT return, compositor remap) - probe now too;
 			// a VT switch doesn't always hand focus straight back.
 			WindowEvent::Occluded(occluded) => {
-				if !occluded && state.gfx.is_gl() {
-					state.vram_next = Instant::now();
-					vramdbg("unoccluded -> immediate probe");
+				state.occluded = occluded;
+				if !occluded {
+					// nothing was drawn while hidden, so catch up in one frame
+					state.dirty = true;
+					if state.gfx.is_gl() {
+						state.vram_next = Instant::now();
+						vramdbg("unoccluded -> immediate probe");
+					}
 				}
 			}
 
@@ -4193,7 +4317,13 @@ impl ApplicationHandler<UserEvent> for App {
 			state.dirty = true;
 		}
 		let reveal_wake = (!state.revealed).then_some(state.reveal_deadline);
-		let flow = if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
+		// Fully hidden window: nobody can see the frame, so don't build one. PTY
+		// output still lands in the grid and `dirty` is set on unocclude, so the
+		// catch-up is one frame. Not every WM reports this - it's a bonus, not a
+		// mechanism anything else depends on.
+		let flow = if state.occluded && state.revealed {
+			ControlFlow::Wait
+		} else if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
 			// UI/chrome changes and the bell force ALL panes to re-shape; fresh
 			// output and scroll eases are scoped per pane inside render (a pure
 			// cursor-animation frame lets every pane reuse its cached frame).

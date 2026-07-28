@@ -600,6 +600,10 @@ pub struct Pane {
 	// frame is a pure cursor animation (no content/scroll/bell change), build skips
 	// the expensive text re-shape and reuses the cached buffer/bg/glyphs.
 	text_built: bool,
+	// Bumped on every full re-shape, so the renderer can tell "this pane's text
+	// is byte-for-byte the frame before" without inspecting the buffers. Drives
+	// the prepare/scrim skip in app.rs.
+	pub shape_rev: u64,
 	// TermMode snapshot from the last build, so per-keystroke/wheel input paths
 	// read it lock-free (at worst one frame stale) instead of taking the term
 	// lock the PTY reader may hold across a whole read cycle.
@@ -976,6 +980,7 @@ impl Pane {
 			return self.last_draw.clone();
 		}
 		self.text_built = true;
+		self.shape_rev = self.shape_rev.wrapping_add(1);
 
 		let colors = guard.colors();
 		let sel_range = guard.selection.as_ref().and_then(|s| s.to_range(&*guard));
@@ -2186,6 +2191,7 @@ fn spawn_pane(
 		cursor_pause: PauseState::default(),
 		cursor_animating: false,
 		text_built: false,
+		shape_rev: 0,
 		mode: TermMode::empty(),
 		content_dirty: true,
 		copy_select: config::settings().copy_on_select,
