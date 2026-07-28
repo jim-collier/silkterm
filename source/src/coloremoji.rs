@@ -33,9 +33,15 @@ const RAMP_LEN: usize = 256;
 // Layer nesting cap. skrifa's decycler stops paint-graph cycles; this bounds the
 // scratch a pathological (or hostile) font can make us allocate.
 const MAX_LAYERS: usize = 24;
-// Raster cache cap (distinct glyph + pixel size). Emoji are few and sizes change
-// only on a font/zoom change, so this is never reached in normal use.
-const MAX_RASTERS: usize = 512;
+// Raster cache cap (distinct glyph + pixel size). A screen of nothing but
+// distinct emoji is the worst case: cells/2 of them, so this has to clear a
+// large grid comfortably or the sweep below runs every frame.
+const MAX_RASTERS: usize = 4096;
+// Frames a raster is pinned for once warmed. glyphon re-requests a glyph when
+// its atlas entry is evicted and trimmed, which can be a frame or two after we
+// last warmed it, and answering None to something we previously answered Some
+// is a panic inside glyphon - so the sweep only ever drops older stamps.
+const RASTER_PIN_FRAMES: u64 = 2;
 
 // A colour glyph resolved for one char: which face holds it, and the design box
 // the raster covers (font units) so the caller can fit it to a cell.
@@ -67,7 +73,10 @@ pub struct ColorGlyphs {
 	// handed out per char and never reused.
 	ids: HashMap<char, u16>,
 	chars: Vec<char>,
-	rasters: HashMap<(u16, u16, u16), Vec<u8>>,
+	// Value carries the frame it was last warmed on, so the overflow sweep can
+	// tell a raster this frame still needs from one nothing references.
+	rasters: HashMap<(u16, u16, u16), (u64, Vec<u8>)>,
+	frame: u64,
 }
 
 impl ColorGlyphs {
@@ -78,6 +87,7 @@ impl ColorGlyphs {
 			ids: HashMap::new(),
 			chars: Vec::new(),
 			rasters: HashMap::new(),
+			frame: 0,
 		}
 	}
 
@@ -152,10 +162,22 @@ impl ColorGlyphs {
 		None
 	}
 
+	// Start of a frame's warming. Rasters warmed from here on are pinned against
+	// the overflow sweep until they are RASTER_PIN_FRAMES old.
+	pub fn begin_frame(&mut self) {
+		self.frame = self.frame.wrapping_add(1);
+	}
+
 	// Build the raster for `id` at exactly `w`x`h` px if it isn't cached. Called
 	// from the frame build, so `prepare`'s callback only ever does a lookup.
 	pub fn warm(&mut self, db: &fontdb::Database, id: u16, w: u16, h: u16) {
-		if w == 0 || h == 0 || self.rasters.contains_key(&(id, w, h)) {
+		if w == 0 || h == 0 {
+			return;
+		}
+		// A hit still has to re-stamp: an emoji on screen every frame must not
+		// age out from under the atlas just because it was cached long ago.
+		if let Some(entry) = self.rasters.get_mut(&(id, w, h)) {
+			entry.0 = self.frame;
 			return;
 		}
 		let Some(&ch) = self.chars.get(id as usize) else {
@@ -168,11 +190,22 @@ impl ColorGlyphs {
 			.with_face_data(res.face, |data, index| paint(data, index, &res, w, h))
 			.flatten();
 		if let Some(rgba) = rgba {
-			if self.rasters.len() >= MAX_RASTERS {
-				self.rasters.clear();
-			}
-			self.rasters.insert((id, w, h), rgba);
+			self.sweep();
+			self.rasters.insert((id, w, h), (self.frame, rgba));
 		}
+	}
+
+	// Drop only what has aged out. Clearing wholesale is what made a screenful
+	// of distinct emoji abort: the sweep landed mid-frame, between glyphon
+	// rasterizing a glyph and asking for it again. If everything is still
+	// pinned the cache simply grows - bounded by what fits on screen, which is
+	// a great deal cheaper than a crash.
+	fn sweep(&mut self) {
+		if self.rasters.len() < MAX_RASTERS {
+			return;
+		}
+		let cutoff = self.frame.saturating_sub(RASTER_PIN_FRAMES);
+		self.rasters.retain(|_, (stamp, _)| *stamp > cutoff);
 	}
 
 	// glyphon's rasterize callback: a pure lookup (see `warm`). A miss just drops
@@ -180,7 +213,7 @@ impl ColorGlyphs {
 	pub fn raster(&self, req: RasterizeCustomGlyphRequest) -> Option<RasterizedCustomGlyph> {
 		self.rasters
 			.get(&(req.id, req.width, req.height))
-			.map(|data| RasterizedCustomGlyph {
+			.map(|(_, data)| RasterizedCustomGlyph {
 				data: data.clone(),
 				content_type: ContentType::Color,
 			})
@@ -894,6 +927,53 @@ fn soft_light(cb: f32, cs: f32) -> f32 {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	fn stamped(cg: &mut ColorGlyphs, count: u16, frame: u64) {
+		for i in 0..count {
+			cg.rasters.insert((i, 20, 20), (frame, vec![0u8; 4]));
+		}
+	}
+
+	// A screen of nothing but distinct emoji overflows the cache inside a single
+	// frame. Anything warmed for that frame has to survive: glyphon panics if the
+	// rasterize callback answers None where it previously answered Some, which is
+	// exactly what a wholesale clear caused.
+	#[test]
+	fn overflow_keeps_every_raster_the_current_frame_warmed() {
+		let mut cg = ColorGlyphs::new();
+		cg.begin_frame();
+		let want = MAX_RASTERS as u16 + 64;
+		let now = cg.frame;
+		stamped(&mut cg, want, now);
+		cg.sweep();
+		assert_eq!(cg.rasters.len(), want as usize);
+	}
+
+	// The cache must still shed genuinely dead entries, or a long session at a
+	// changing font size would grow without limit.
+	#[test]
+	fn overflow_drops_rasters_no_recent_frame_touched() {
+		let mut cg = ColorGlyphs::new();
+		stamped(&mut cg, MAX_RASTERS as u16, 1);
+		cg.frame = 1 + RASTER_PIN_FRAMES + 1;
+		cg.sweep();
+		assert!(cg.rasters.is_empty());
+	}
+
+	// An emoji that stays on screen is warmed every frame but inserted only once;
+	// the hit path has to re-stamp it or it ages out from under the atlas.
+	#[test]
+	fn a_cache_hit_repins_the_raster() {
+		let mut cg = ColorGlyphs::new();
+		stamped(&mut cg, 1, 1);
+		cg.frame = 50;
+		// Same path warm() takes on a hit.
+		if let Some(entry) = cg.rasters.get_mut(&(0, 20, 20)) {
+			entry.0 = cg.frame;
+		}
+		cg.sweep();
+		assert_eq!(cg.rasters.get(&(0, 20, 20)).map(|e| e.0), Some(50));
+	}
 
 	// The whole point of the module: a COLRv1-only emoji font must produce actual
 	// colour pixels, where swash hands back an empty image. Skipped where the box

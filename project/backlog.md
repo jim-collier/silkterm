@@ -50,6 +50,11 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Bugs
 
+- ✅ Crash: a screen filled with distinct emoji aborts the terminal.
+	- Colour glyph images are cached per glyph and pixel size, and that cache emptied itself completely whenever it filled up. A screenful of emoji is far more distinct glyphs than it held, so the moment it filled part-way through drawing a frame it threw away images that frame was still using, and the renderer stops dead when an image it was promised goes missing.
+	- Only reachable with a lot of *different* emoji on screen at once. Repeating the same few never fills the cache, which is why ordinary use never ran into it.
+	- Fixed: the cache now only discards images that no recent frame has touched, and holds far more before it tries. If everything in it is still in use it simply grows, which is bounded by what fits on screen.
+
 - ✅ Graphical emoji render as monochrome outlines instead of colour.
 	- Not a regression. No build renders these in colour: the text stack has only ever read the older colour-glyph table format (COLR v0), and every current colour emoji font ships the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
 	- Other terminals show the same fonts in colour because their text rasterizer reads COLRv1.
@@ -86,6 +91,17 @@ In each section, items are listed approximately from newest to oldest.
 	- Third cause (the one that survived the first two fixes): with transparency off, the 1px divider gap was still see-through - the frame cleared fully transparent whenever the see-through-capable backend was in use, regardless of the setting, and only the wallpaper's low opacity landed on the gap pixels. The window always has an alpha channel on X11, so the compositor blended the desktop through the divider slits: whatever was behind the window showed as bright speckles along the split lines. Never visible on any test rig that reads the frame directly, since blending with the desktop only happens on a live compositor. The clear is now opaque unless transparency is actually enabled; with it on, the gap still shows the desktop as intended.
 
 ### New features and enhancements
+
+- ✅ Terminal throughput benchmark, for comparing against other terminals and against earlier builds.
+	- `utility/termbench.py`. Runs on any terminal on any OS, and needs only Python 3.
+	- Feeds repeatable, byte-identical streams of one character width at a time - plain ASCII, then 2-, 3- and 4-byte characters, then a mix of all four with colour and attribute changes - so two terminals are always compared on exactly the same work.
+	- Each run is timed to a reply the terminal can only send once it has genuinely consumed the stream. Timing a plain write instead would measure the pipe rather than the terminal, and a terminal that reads greedily would look infinitely fast.
+	- ASCII is measured four times as often as the wide classes and 2-byte twice, so the overall score leans the way real output does. The score counts cells per second rather than bytes, because bytes flatter whichever class is widest - 2-byte text measured faster than ASCII per byte while being slower per character.
+	- Averages many runs per class and reports the spread, so a result carries its own confidence.
+	- Keeps a history per terminal name and version under the user's data directory, newest five builds of each, and refreshes the results table in the README.
+	- `--quick` gives a thirty-second version; a full run is about two minutes.
+	- Measures throughput under flood - how fast a terminal swallows output and keeps up - not glyph drawing rate. Only a screenful is ever visible, so most of a stream is consumed and scrolled past without being drawn. That is the shape of the "why does it bog down when something dumps a lot of text" question.
+	- At 160x42: SilkTerm 75.1, xfce4-terminal 58.5, XTerm 24.5 million cells/s. SilkTerm leads every width class except plain ASCII, where xfce4-terminal is about a tenth faster.
 
 - ✅ Hotkeys to increase/decrease font size feature:
 	- Done: Ctrl+= / Ctrl+- step the session zoom; Ctrl+0 resets to the configured (or system) size. View menu has Increase/Decrease/Reset items.
