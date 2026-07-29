@@ -72,7 +72,6 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 	- [Why text scrim](#why-text-scrim)
 - [Features](#features)
 	- [One minor limitation inherent to all terminals](#one-minor-limitation-inherent-to-all-terminals)
-- [Screenshots](#screenshots)
 - [Speed](#speed)
 - [Size](#size)
 - [Getting and using](#getting-and-using)
@@ -200,28 +199,6 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 		- But the other features still work in that case: smooth-moving and phased cursor, text scrim, background options, etc.
 
-## Screenshots
-
-<div align="center">
-
-<table style="border: none; border-collapse: collapse;">
-	<tr style="border: none;">
-		<td width="50%" style="border: none;"><a href="assets/screenshots/large/01-shell.png"><img src="assets/screenshots/01-shell.png" width="100%" alt="Smooth-scrolling shell session"/></a><br /><sub>Smooth-scrolling shell session</sub></td>
-		<td width="50%" style="border: none;"><a href="assets/screenshots/large/02-splits.png"><img src="assets/screenshots/02-splits.png" width="100%" alt="Split panes"/></a><br /><sub>Split panes</sub></td>
-	</tr>
-	<tr style="border: none;">
-		<td width="50%" style="border: none;"><a href="assets/screenshots/large/03-scrim.png"><img src="assets/screenshots/03-scrim.png" width="100%" alt="Transparency, background image and text scrim"/></a><br /><sub>Transparency, background image &amp; text scrim</sub></td>
-		<td width="50%" style="border: none;"><a href="assets/screenshots/large/04-tabs.png"><img src="assets/screenshots/04-tabs.png" width="100%" alt="Tabs, 24-bit colour and Unicode"/></a><br /><sub>Tabs, 24-bit colour &amp; Unicode</sub></td>
-	</tr>
-	<tr style="border: none;">
-		<td colspan="2" align="center" style="border: none;"><a href="assets/screenshots/large/05-settings.png"><img src="assets/screenshots/05-settings.png" width="50%" alt="Built-in settings dialog"/></a><br /><sub>Built-in settings</sub></td>
-	</tr>
-</table>
-
-<sub>Click any shot for the full-resolution image.</sub>
-
-</div>
-
 ## Speed
 
 Smooth scrolling is worth nothing if the terminal falls behind the moment something dumps a lot of text, so throughput is measured rather than asserted. Each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it.
@@ -244,7 +221,7 @@ Run it yourself with [`utility/termbench.py`](utility/termbench.py) (`--quick` f
 
 A terminal is the program that is always open, usually several times over, so what it costs while doing nothing is worth knowing. Sorted by what it takes to install: the executable plus everything else it needs beyond a base OS.
 
-| Platform | Terminal | Bin+deps<sup>1</sup> (MiB) | Raw bin<sup>2</sup> (MiB) | Memory<sup>1</sup> (MiB) | Largest dependencies (MiB) |
+| Platform | Terminal | Bin+deps<sup>1</sup> (MiB) | Raw bin<sup>2</sup> (MiB) | Memory<sup>1</sup> (MiB) | Largest dependencies |
 | --- | --- | ---: | ---: | ---: | --- |
 | Linux | xterm | 6.0 | 0.9 | 11.5 | libX11 1.3, FreeType 0.8, Xaw 0.5 |
 | Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm}}$ | **23.5** | **13.2** | **127.0** | libstdc++ 2.4, libxml2 1.7, libX11 1.3 |
