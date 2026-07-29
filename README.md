@@ -242,33 +242,38 @@ Run it yourself with [`utility/termbench.py`](utility/termbench.py) (`--quick` f
 
 ## Size
 
-A terminal is the program that is always open, usually several times over, so what it costs while doing nothing is worth knowing. Four things are compared: what it holds in RAM shortly after launch, the executable as shipped, that executable plus everything else it needs on disk beyond a base OS, and where the bulk actually comes from.
+A terminal is the program that is always open, usually several times over, so what it costs while doing nothing is worth knowing. Sorted by what it takes to install: the executable plus everything else it needs beyond a base OS.
 
-| Platform | Terminal | Memory\* | Binary | With dependencies | Largest dependencies |
+| Platform | Terminal | Bin+deps<sup>1</sup> (MiB) | Raw bin<sup>2</sup> (MiB) | Memory<sup>1</sup> (MiB) | Largest dependencies (MiB) |
 | --- | --- | ---: | ---: | ---: | --- |
-| Cross-platform | **SilkTerm** | **127.0 MB** | **13.2 MB** | **23.5 MB** | libstdc++ 2.4, libxml2 1.7, libX11 1.3 |
-| Cross-platform | kitty | 130.3 MB | 0.2 MB | 119.4 MB | bundled Python 6.5, libcrypto 7.1, HarfBuzz 1.7 |
-| Cross-platform | Ghostty | - | 32.0 MB† | - | - |
-| Cross-platform | WezTerm | 86.2 MB | 70.5 MB | 134.8 MB | libcrypto 2.9, libstdc++ 2.4, libxml2 1.7 |
-| Cross-platform | Hyper | 308.8 MB | 147.8 MB | 299.9 MB | Chromium, GTK 3 8.0, GLESv2 6.2 |
-| Cross-platform | Tabby | 478.8 MB | 192.1 MB | 455.2 MB | Chromium, GTK 3 8.0, GLESv2 6.1 |
-| Cross-platform | Windows Terminal | - | 11.1 MB† | - | - |
-| Linux | GNOME Terminal | 28.5 MB | 0.4 MB | 73.9 MB | ICU 32.5, GTK 3 8.0, GnuTLS 2.1 |
-| Linux | Konsole | - | 7.3 MB† | - | KDE Frameworks 6, Qt 6 |
-| Linux | XFCE4 Terminal | 51.4 MB | 0.3 MB | 84.1 MB | ICU 32.5, GTK 3 8.0, librsvg 5.9 |
-| Linux | xterm | 11.5 MB | 0.9 MB | 6.0 MB | libX11 1.3, FreeType 0.8, Xaw 0.5 |
-| Linux | Terminator | 85.0 MB | script | 92.6 MB | ICU 32.5, GTK 3 8.0, libcrypto 6.2 |
-| Linux | Guake | - | 1.7 MB† | - | Python 3, GTK 3, VTE |
+| Linux | xterm | 6.0 | 0.9 | 11.5 | libX11 1.3, FreeType 0.8, Xaw 0.5 |
+| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm}}$ | **23.5** | **13.2** | **127.0** | libstdc++ 2.4, libxml2 1.7, libX11 1.3 |
+| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm (plain)}}$<sup>3</sup> | **23.5** | **13.2** | **90.6** | libstdc++ 2.4, libxml2 1.7, libX11 1.3 |
+| Linux | GNOME Terminal | 73.9 | 0.4 | 28.5 | ICU 32.5, GTK 8.0, GnuTLS 2.1 |
+| Linux | XFCE4 Terminal | 84.1 | 0.3 | 51.4 | ICU 32.5, GTK 8.0, librsvg 5.9 |
+| Linux | Terminator | 92.6 | script | 85.0 | ICU 32.5, GTK 8.0, libcrypto 6.2 |
+| Cross-platform | kitty | 119.4 | 0.2 | 130.3 | libcrypto 7.1, Python 6.5, HarfBuzz 1.7 |
+| Cross-platform | WezTerm | 134.8 | 70.5 | 86.2 | libcrypto 2.9, libstdc++ 2.4, libxml2 1.7 |
+| Cross-platform | Hyper | 299.9 | 147.8 | 308.8 | Chromium, GTK 8.0, GLESv2 6.2 |
+| Cross-platform | Tabby | 455.2 | 192.1 | 478.8 | Chromium, GTK 8.0, GLESv2 6.1 |
+| Windows | PuTTY | - | 1.6<sup>4</sup> | - | - |
+| Linux | Guake | - | 1.7<sup>4</sup> | - | Python, GTK, VTE |
+| Linux | Konsole | - | 7.3<sup>4</sup> | - | KDE Frameworks, Qt |
+| Cross-platform | Windows Terminal | - | 11.1<sup>4</sup> | - | - |
+| Cross-platform | Ghostty | - | 32.0<sup>4</sup> | - | - |
+| macOS | iTerm2 | - | 43.0<sup>4</sup> | - | - |
+| Windows | MobaXterm | - | 43.4<sup>4</sup> | - | - |
 | Windows | conhost.exe | - | - | - | - |
-| Windows | MobaXterm | - | 43.4 MB† | - | - |
-| Windows | PuTTY | - | 1.6 MB† | - | - |
 | macOS | Terminal.app | - | - | - | - |
-| macOS | iTerm2 | - | 43.0 MB† | - | - |
 | macOS | Warp | - | - | - | - |
 
-<sub>\* Unmarked figures were measured on one Linux x86_64 machine, each terminal launched at a 100x30 grid with its own default settings. Memory is the unique resident footprint of the whole process tree - private pages plus each shared mapping counted once - so a multi-process design is not charged repeatedly for the libraries its processes share, and the number does not drift with whatever else happens to be running. GPU-accelerated terminals additionally map the system graphics driver, which is excluded here because it is shared with the compositor and every other accelerated application; it came to 105.1 MB for SilkTerm, 102.2 for WezTerm, 70.0 for kitty, 46.3 for Tabby and 1.0 for Hyper. "With dependencies" is the self-contained payload plus the system libraries actually mapped at run time, excluding the C runtime, counting bundled libraries once. Sizes are binary megabytes. SilkTerm links nothing but the C runtime and opens X11 and EGL on demand, which is why its dependency figure is small; about 36 MB of its memory is the wallpaper and text scrim it renders by default, features the others do not have. Terminals are compared as they ship, not tuned to match.</sub>
+<sub><sup>1</sup> Measured on one Linux x86_64 machine, each terminal at a 100x30 grid with its own defaults. Memory is the unique resident footprint of the whole process tree - private pages plus each shared mapping counted once. Excludes the system graphics driver, which accelerated terminals also map and share with the compositor: 105 SilkTerm, 102 WezTerm, 70 kitty, 46 Tabby, 1 Hyper.</sub>
 
-<sub>† Published figure taken from the vendor's own released artifact rather than measured here, so it is not directly comparable with the measured columns: Ghostty and iTerm2 are macOS bundles, Windows Terminal and MobaXterm and PuTTY are Windows downloads, Konsole and Guake are Debian package sizes. Blank cells could not be established: conhost.exe and Terminal.app ship as operating-system components with no separate distribution, Warp publishes no size, and nothing in the Windows or macOS rows could be run on the measuring machine.</sub>
+<sub><sup>2</sup> Near-meaningless alone. A small executable usually means the code sits in shared libraries instead, and those are held in memory once however many programs map them - so anything built on a stack the desktop already loads costs less than its Bin+deps implies. SilkTerm links nothing but the C runtime, so its binary is the whole of it.</sub>
+
+<sub><sup>3</sup> Wallpaper, scrim, outline, cursor animation, smooth app scrolling, transparency and colour emoji all off.</sub>
+
+<sub><sup>4</sup> Vendor's released artifact, not measured here, so not comparable with the measured columns. Blank: conhost.exe and Terminal.app ship inside the OS, Warp publishes no size, and nothing in the Windows or macOS rows runs on the measuring machine.</sub>
 
 ## Getting and using
 
