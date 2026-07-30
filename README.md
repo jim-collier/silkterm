@@ -201,7 +201,7 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 | OS<sup>9</sup> | Terminal | Ver | 1-byte<sup>1</sup> | 4-byte<sup>1</sup> | Speed score<sup>2</sup> | File size<sup>3</sup> (MiB) | File+ deps<sup>4</sup> (MiB) | Mem<sup>4</sup> (MiB) |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | \[multi\] | $\textcolor{limegreen}{SilkTerm}$ plain<sup>6</sup> | 1.0.0 | 86.9 | 129.3 | **71.1** | **13.2** | **17.4** | **76.1** |
-| \[multi\] | Alacritty<sup>8</sup> | 0.15.1 | 79.8 | 129.1 | **68.4** | 8.5 | - | - |
+| \[multi\] | Alacritty<sup>8</sup> | 0.15.1 | 79.8 | 129.1 | **68.4** | 8.5 | 12.7 | 50.4 |
 | \[multi\] | $\textcolor{limegreen}{SilkTerm}$ +candy<sup>5</sup> | 1.0.0 | 77.4 | 135.1 | **67.6** | **13.2** | **17.4** | **121.4** |
 | Linux | GNOME Terminal | 3.58.1 | 100.2 | 62.6 | **55.3** | 0.4 | 84.0 | 53.6 |
 | Linux | XFCE4 Terminal | 1.2.0 | 94.2 | 65.0 | **54.0** | 0.3 | 84.1 | 48.6 |
@@ -230,7 +230,7 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 
 <sub><sup>3</sup> This number is near-meaningless alone. A small executable usually means the code sits in shared libraries instead. But they are loaded only once however many programs map them - so anything built on a stack the desktop already loads costs less than its File+deps implies. SilkTerm links nothing but the C runtime (for maximum portability and long-term stability without "bitrot"), so its binary is the whole of it.</sub>
 
-<sub><sup>4</sup> File+deps is the executable plus everything else it needs beyond a base OS. Memory is the unique resident footprint of the whole process tree - private pages, plus each shared mapping counted once. Self-contained bundles count their extracted payload plus the system libraries they still borrow. Both columns leave out the graphics stack and what it pulls in, because accelerated terminals share it with the compositor and every other accelerated program: 108 SilkTerm, 105 WezTerm, 73 kitty, 48 Tabby, 1 Hyper. Expect a few MiB of drift between runs, since libraries load on demand.</sub>
+<sub><sup>4</sup> File+deps is the executable plus everything else it needs beyond a base OS. Memory is the unique resident footprint of the whole process tree - private pages, plus each shared mapping counted once. Self-contained bundles count their extracted payload plus the system libraries they still borrow. Both columns leave out the graphics stack and what it pulls in, because accelerated terminals share it with the compositor and every other accelerated program: 108 SilkTerm, 105 WezTerm, 73 kitty and Alacritty, 48 Tabby, 1 Hyper. Expect a few MiB of drift between runs, since libraries load on demand.</sub>
 
 <sub><sup>5</sup> SilkTerm as it ships, with the eye candy on: wallpaper, text scrim and outline, animated cursor, smooth application scrolling and colour emoji. Every one of them is a setting, and the row below is the same binary with the lot switched off.</sub>
 
@@ -238,7 +238,7 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 
 <sub><sup>7</sup> Vendor's released artifact, not measured here, so not comparable with the measured columns. Blank: conhost.exe and Terminal.app ship inside the OS, Warp publishes no size, and nothing in the Windows or macOS rows runs on the measuring machine.</sub>
 
-<sub><sup>8</sup> SilkTerm uses Alacritty's terminal-emulation core, so the two share the parsing and grid work that this benchmark mostly measures - which is why they are within a few percent of each other, and why both sit so far ahead of terminals that parse their own way. The size and memory cells are not filled in because they need a separate measuring pass.</sub>
+<sub><sup>8</sup> SilkTerm uses Alacritty's terminal-emulation core, so the two share the parsing and grid work that this benchmark mostly measures - which is why they are within a few percent of each other, and why both sit so far ahead of terminals that parse their own way. It is the lighter of the two to run, which is what the eye candy costs: SilkTerm with everything switched off is 26 MiB above it, and as it ships, 71.</sub>
 
 <sub><sup>9</sup> Every measured row comes from one machine, because the measuring rig is not neutral: rendering through software OpenGL roughly halves SilkTerm's throughput and going through VirtualGL still costs it about 14%, while terminals that draw on the CPU do not move at all. A table built from mixed rigs can therefore rank the wrong terminal first. These figures were taken on a headless Wayland compositor driving a discrete GPU (Linux, Ryzen host, GeForce RTX 3060 Ti), so nothing on the desktop competes for the card. Windows rows, when they are filled in, will come from a virtual machine on that same host with half the cores, less memory, some virtualization overhead and a lower-specification passed-through GPU (RTX 2060) - so they will not be directly comparable until they are calibrated against the terminals that run on both platforms.</sub>
 

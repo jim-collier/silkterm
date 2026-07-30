@@ -72,6 +72,8 @@ Do not correct that with a guessed multiplier. Calibrate it: SilkTerm, Alacritty
 
 ## Files
 
+The table's last two columns - File+deps and Mem - come from a separate rig at `../sizebench/`, measured at a different grid and not refreshed by this one.
+
 | File | What it is |
 | :--- | :--- |
 | `run.bash` | the rig: compositor bring-up, terminal launch, grid fit, teardown |
