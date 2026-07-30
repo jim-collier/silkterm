@@ -48,8 +48,9 @@
 ##		Results append to a data file under the user's data directory and build a
 ##		history table: every terminal that has ever been benchmarked here, by name
 ##		and version, newest five builds each. Where the tool sits in a SilkTerm
-##		checkout it also refreshes the results table in the README, latest build
-##		per terminal only.
+##		checkout it also refreshes the speed columns of the shootout table in the
+##		README, latest build per terminal only, leaving the size and memory
+##		columns beside them untouched.
 ##
 ##		Deliberately not tested: combining marks, ZWJ emoji sequences, variation
 ##		selectors and RTL. All four make the cell count ambiguous, and an
@@ -896,44 +897,96 @@ def readme_path():
 	return guess if os.path.isfile(guess) else ""
 
 
-def readme_table(rows, mode):
-	"""One row per terminal, newest build only. History stays in the tool."""
-	best = {}
+def _plain(cell):
+	"""A table cell reduced to comparable text: no markup, no footnote marks."""
+	text = re.sub(r"<sup>.*?</sup>", "", cell)
+	text = re.sub(r"\$\\textcolor\{[^{}]*\}\{\\textbf\{([^{}]*)\}\}\$", r"\1", text)
+	return text.replace("**", "").strip()
+
+
+def _key(name):
+	"""Terminal names differ between the tool and the table (xfce4-terminal vs
+	XFCE4 Terminal), so match on letters and digits alone."""
+	return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def _split_table(block):
+	"""(header, alignment, data rows) of the first markdown table in the block."""
+	lines = [ln.strip() for ln in block.splitlines() if ln.strip().startswith("|")]
+	if len(lines) < 2:
+		return None
+	grid = [[c.strip() for c in ln.strip("|").split("|")] for ln in lines]
+	return grid[0], grid[1], grid[2:]
+
+
+def _score_of(cells, at):
+	try:
+		return float(_plain(cells[at]))
+	except (ValueError, IndexError):
+		return None
+
+
+def readme_table(existing, rows):
+	"""
+	Refresh the speed columns of the table already in the README, leaving every
+	other column - platform, sizes, memory - exactly as written there. Newest
+	build per terminal only; the history stays in the tool.
+
+	Scored rows are re-sorted into the slots scored rows already occupy, so a
+	row with no speed figure (a variant of another entry, say) keeps its place
+	instead of being shuffled off by rows it cannot be compared with.
+	"""
+	parsed = _split_table(existing)
+	if not parsed:
+		return ""
+	head, align, data = parsed
+	col = {}
+	for i, cell in enumerate(head):
+		col[_plain(cell).split(" (")[0]] = i
+	if not all(k in col for k in ("Terminal", "Ver", "Weighted speed score")):
+		return ""
+	scene_col = {s.name: col[s.label] for s in SCENES if s.label in col}
+
+	newest = {}
 	for row in sorted(rows, key=lambda r: r["when"]):
-		best[row["terminal"]] = row
-	ordered = sorted(best.values(), key=lambda r: r["score"], reverse=True)
+		newest[row["terminal"]] = row
+
+	at = col["Weighted speed score"]
+	seen = {_key(_plain(cells[col["Terminal"]])): cells for cells in data}
+	fresh = []
+	for name, row in newest.items():
+		cells = seen.get(_key(name))
+		if cells is None:
+			cells = ["-"] * len(head)
+			cells[col["Terminal"]] = name
+			fresh.append(cells)
+			seen[_key(name)] = cells
+		cells[col["Ver"]] = row["build"].split("+", 1)[0] or "-"
+		for scene, place in scene_col.items():
+			rec = row["per"].get(scene)
+			cells[place] = "%.1f" % rec["mbs"] if rec else "-"
+		cells[at] = "**%.1f**" % (row["score"] / 1000.0)
+
+	# A terminal measured for the first time joins the scored block rather than
+	# landing under the unscored tail, where the ranking below could not reach it.
+	scored = [i for i, cells in enumerate(data) if _score_of(cells, at) is not None]
+	cut = max(scored) + 1 if scored else len(data)
+	data[cut:cut] = fresh
+
+	slots = [i for i, cells in enumerate(data) if _score_of(cells, at) is not None]
+	ranked = sorted((data[i] for i in slots), key=lambda c: _score_of(c, at), reverse=True)
+	for i, cells in zip(slots, ranked):
+		data[i] = cells
 
 	out = [README_BEGIN, ""]
-	out.append("| Terminal | Version | Grid | "
-	           + " | ".join(s.label.capitalize() for s in SCENES)
-	           + " | Score |")
-	out.append("| --- | --- | :-: | " + " | ".join("---:" for _ in SCENES) + " | ---: |")
-	for row in ordered:
-		cells = []
-		for scene in SCENES:
-			rec = row["per"].get(scene.name)
-			cells.append("%.1f" % rec["mbs"] if rec else "-")
-		out.append("| %s | %s | %s | %s | **%.1f** |"
-		           % (row["terminal"], row["build"], row["grid"],
-		              " | ".join(cells), row["score"] / 1000.0))
-	out.append("")
-	out.append("<sub>Throughput in MB/s by UTF-8 width class, higher is better; "
-	           "score is millions of cells per second, a weighted geometric mean so "
-	           "no single class dominates it. This is how fast a terminal swallows "
-	           "output and keeps up, not a glyph rasterization rate - only a "
-	           "screenful is ever visible, so most of the stream is parsed, stored "
-	           "and scrolled past. Every terminal is fed byte-identical deterministic "
-	           "payloads and timed to a device-attributes reply, so the clock stops "
-	           "when the terminal has genuinely consumed the stream rather than when "
-	           "the pipe accepted it. Only rows measured at the same grid size are "
-	           "comparable. Reproduce with <code>utility/termbench.py</code>%s.</sub>"
-	           % ("" if mode == "full" else " --" + mode))
+	for cells in [head, align] + data:
+		out.append("| " + " | ".join(cells) + " |")
 	out.append("")
 	out.append(README_END)
 	return "\n".join(out)
 
 
-def update_readme(path, rows, mode):
+def update_readme(path, rows):
 	try:
 		with open(path, "r", encoding="utf-8") as fh:
 			text = fh.read()
@@ -942,9 +995,12 @@ def update_readme(path, rows, mode):
 	if README_BEGIN not in text or README_END not in text:
 		return ""
 	head, rest = text.split(README_BEGIN, 1)
-	_, tail = rest.split(README_END, 1)
+	existing, tail = rest.split(README_END, 1)
+	table = readme_table(existing, rows)
+	if not table:
+		return ""
 	with open(path, "w", encoding="utf-8") as fh:
-		fh.write(head + readme_table(rows, mode) + tail)
+		fh.write(head + table + tail)
 	return path
 
 
@@ -989,7 +1045,7 @@ def main(argv):
 			return 0
 		print(history_table(rows))
 		readme = readme_path()
-		if not args.no_readme and readme and update_readme(readme, rows, mode):
+		if not args.no_readme and readme and update_readme(readme, rows):
 			print("\nREADME.md results table updated")
 		return 0
 
@@ -1062,7 +1118,7 @@ def main(argv):
 
 	if not args.no_readme and not args.no_save:
 		readme = readme_path()
-		if readme and rows and update_readme(readme, rows, mode):
+		if readme and rows and update_readme(readme, rows):
 			out.append("\nREADME.md results table updated")
 
 	if not synced_all:

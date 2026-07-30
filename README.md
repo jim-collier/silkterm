@@ -72,8 +72,7 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 	- [Why text scrim](#why-text-scrim)
 - [Features](#features)
 	- [One minor limitation inherent to all terminals](#one-minor-limitation-inherent-to-all-terminals)
-- [Speed](#speed)
-- [Size](#size)
+- [Terminal shootout - speed and size](#terminal-shootout---speed-and-size)
 - [Getting and using](#getting-and-using)
 	- [Installing](#installing)
 		- [Direct](#direct)
@@ -200,60 +199,54 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 		- But the other features still work in that case: smooth-moving and phased cursor, text scrim, background options, etc.
 
-## Speed
+## Terminal shootout - speed and size
 
-Smooth scrolling is worth nothing if the terminal falls behind the moment something dumps a lot of text, so throughput is measured rather than asserted. Each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it.
+Smooth scrolling is worth nothing if the terminal falls behind the moment something dumps a lot of text, so throughput is measured rather than asserted. In testing, each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it. Speed is measured at a 160x42 grid.
+
+A terminal is also the program that is always open, usually several times over, so what it costs while doing nothing is worth knowing. Size and memory are measured separately, with each terminal at a 100x30 grid and its own defaults.
+
+Sorted by speed. Terminals not yet measured for speed follow, ordered by what it takes to install them.
 
 <!-- termbench:begin -->
 
-| Terminal | Version | Grid | 1-byte | 2-byte | 3-byte | 4-byte | Mixed | Score |
-| --- | --- | :-: | ---: | ---: | ---: | ---: | ---: | ---: |
-| SilkTerm | 1.0.0-beta2+20260728-072224 | 160x42 | 93.2 | 130.7 | 108.1 | 137.6 | 91.8 | **75.1** |
-| xfce4-terminal | 1.2.0 | 160x42 | 103.3 | 79.9 | 60.9 | 70.0 | 59.6 | **58.5** |
-| XTerm | 407 | 160x42 | 29.2 | 39.1 | 39.3 | 49.8 | 33.5 | **24.5** |
-
-<sub>Throughput in MB/s by UTF-8 width class, higher is better; score is millions of cells per second, a weighted geometric mean so no single class dominates it. This is how fast a terminal swallows output and keeps up, not a glyph rasterization rate - only a screenful is ever visible, so most of the stream is parsed, stored and scrolled past. Every terminal is fed byte-identical deterministic payloads and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it. Only rows measured at the same grid size are comparable. Reproduce with <code>utility/termbench.py</code>.</sub>
+| Platform | Terminal | Ver | 1-byte<sup>1</sup> | 4-byte<sup>1</sup> | Weighted speed score<sup>2</sup> | Raw file size<sup>3</sup> (MiB) | File+deps<sup>4</sup> (MiB) | Memory<sup>4</sup> (MiB) |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm}}$ | 1.0.0-beta2 | 93.2 | 137.6 | **75.1** | **13.2** | **17.4** | **121.4** |
+| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm (plain)}}$<sup>5</sup> | 1.0.0-beta2 | - | - | - | **13.2** | **17.4** | **76.1** |
+| Linux | XFCE4 Terminal | 1.2.0 | 103.3 | 70.0 | **58.5** | 0.3 | 84.1 | 48.6 |
+| Linux | XTerm | 407 | 29.2 | 49.8 | **24.5** | 0.9 | 6.0 | 9.4 |
+| Linux | GNOME Terminal | - | - | - | - | 0.4 | 84.0 | 53.6 |
+| Linux | Terminator | - | - | - | - | script | 92.6 | 82.2 |
+| Cross-platform | kitty | - | - | - | - | 0.2 | 115.0 | 140.8 |
+| Cross-platform | WezTerm | - | - | - | - | 70.5 | 129.9 | 84.8 |
+| Cross-platform | Hyper | - | - | - | - | 147.8 | 300.9 | 309.4 |
+| Cross-platform | Tabby | - | - | - | - | 192.1 | 454.2 | 473.4 |
+| Windows | PuTTY | - | - | - | - | 1.6<sup>6</sup> | - | - |
+| Linux | Guake | - | - | - | - | 1.7<sup>6</sup> | - | - |
+| Linux | Konsole | - | - | - | - | 7.3<sup>6</sup> | - | - |
+| Cross-platform | Windows Terminal | - | - | - | - | 11.1<sup>6</sup> | - | - |
+| Cross-platform | Ghostty | - | - | - | - | 32.0<sup>6</sup> | - | - |
+| macOS | iTerm2 | - | - | - | - | 43.0<sup>6</sup> | - | - |
+| Windows | MobaXterm | - | - | - | - | 43.4<sup>6</sup> | - | - |
+| Windows | conhost.exe | - | - | - | - | - | - | - |
+| macOS | Terminal.app | - | - | - | - | - | - | - |
+| macOS | Warp | - | - | - | - | - | - | - |
 
 <!-- termbench:end -->
 
-Run it yourself with [`utility/termbench.py`](utility/termbench.py) (`--quick` for a thirty-second version). It needs only Python 3 and a terminal, works on any emulator on any OS, and appends to this table as more terminals are measured.
+<sub><sup>1</sup> Throughput in MB/s, higher is better, on a stream made entirely of characters of that UTF-8 width - 1-byte is plain ASCII, 4-byte is emoji. Two more width classes and a mixed stream are measured as well and count towards the score; the tool prints all five. Only rows measured at the same grid size are comparable.</sub>
 
-## Size
+<sub><sup>2</sup> Millions of cells per second - the weighted geometric mean of all five classes, leaning towards plain ASCII since that is most of what a terminal ever sees, and geometric so no single class can dominate. Counted in cells rather than bytes, because a wide-character stream moves far more bytes for the same amount of screen. It says how fast a terminal swallows output and keeps up, not how fast it rasterizes glyphs - only a screenful is ever visible, so most of a large stream is parsed, stored and scrolled past.</sub>
 
-A terminal is the program that is always open, usually several times over, so what it costs while doing nothing is worth knowing. Sorted by what it takes to install: the executable plus everything else it needs beyond a base OS.
+<sub><sup>3</sup> This number is near-meaningless alone. A small executable usually means the code sits in shared libraries instead. But they are loaded only once however many programs map them - so anything built on a stack the desktop already loads costs less than its File+deps implies. SilkTerm links nothing but the C runtime (for maximum portability and long-term stability without "bitrot"), so its binary is the whole of it.</sub>
 
-| Platform | Terminal | Bin+deps<sup>1</sup> (MiB) | Raw bin<sup>2</sup> (MiB) | Memory<sup>1</sup> (MiB) | Largest dependencies<sup>3</sup> |
-| --- | --- | ---: | ---: | ---: | --- |
-| Linux | xterm | 6.0 | 0.9 | 9.4 | libX11, FreeType, libXaw |
-| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm}}$ | **17.4** | **13.2** | **121.4** | libX11, libsystemd, libdbus |
-| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm (plain)}}$<sup>4</sup> | **17.4** | **13.2** | **76.1** | libX11, libsystemd, libdbus |
-| Linux | GNOME Terminal | 84.0 | 0.4 | 53.6 | ICU, GTK, librsvg |
-| Linux | XFCE4 Terminal | 84.1 | 0.3 | 48.6 | ICU, GTK, librsvg |
-| Linux | Terminator | 92.6 | script | 82.2 | ICU, GTK, libcrypto |
-| Cross-platform | kitty | 115.0 | 0.2 | 140.8 | libcrypto, libpython, HarfBuzz |
-| Cross-platform | WezTerm | 129.9 | 70.5 | 84.8 | libcrypto, libX11, FreeType |
-| Cross-platform | Hyper | 300.9 | 147.8 | 309.4 | GTK, libGLESv2, libvulkan |
-| Cross-platform | Tabby | 454.2 | 192.1 | 473.4 | GTK, libGLESv2, SwiftShader |
-| Windows | PuTTY | - | 1.6<sup>5</sup> | - | - |
-| Linux | Guake | - | 1.7<sup>5</sup> | - | - |
-| Linux | Konsole | - | 7.3<sup>5</sup> | - | - |
-| Cross-platform | Windows Terminal | - | 11.1<sup>5</sup> | - | - |
-| Cross-platform | Ghostty | - | 32.0<sup>5</sup> | - | - |
-| macOS | iTerm2 | - | 43.0<sup>5</sup> | - | - |
-| Windows | MobaXterm | - | 43.4<sup>5</sup> | - | - |
-| Windows | conhost.exe | - | - | - | - |
-| macOS | Terminal.app | - | - | - | - |
-| macOS | Warp | - | - | - | - |
+<sub><sup>4</sup> File+deps is the executable plus everything else it needs beyond a base OS. Memory is the unique resident footprint of the whole process tree - private pages, plus each shared mapping counted once. Self-contained bundles count their extracted payload plus the system libraries they still borrow. Both columns leave out the graphics stack and what it pulls in, because accelerated terminals share it with the compositor and every other accelerated program: 108 SilkTerm, 105 WezTerm, 73 kitty, 48 Tabby, 1 Hyper. Expect a few MiB of drift between runs, since libraries load on demand.</sub>
 
-<sub><sup>1</sup> Measured on one Linux x86_64 machine, each terminal at a 100x30 grid with its own defaults. Memory is the unique resident footprint of the whole process tree - private pages, plus each shared mapping counted once. Self-contained bundles count their extracted payload plus the system libraries they still borrow. Both columns leave out the graphics stack, and anything only it pulls in, because accelerated terminals share it with the compositor and every other accelerated program: 108 SilkTerm, 105 WezTerm, 73 kitty, 48 Tabby, 1 Hyper. Expect a few MiB of drift between runs, since libraries load on demand.</sub>
+<sub><sup>5</sup> Wallpaper, scrim, outline, cursor animation, smooth app scrolling, transparency and colour emoji all off.</sub>
 
-<sub><sup>2</sup> Near-meaningless alone. A small executable usually means the code sits in shared libraries instead, and those are held in memory once however many programs map them - so anything built on a stack the desktop already loads costs less than its Bin+deps implies. SilkTerm links nothing but the C runtime, so its binary is the whole of it.</sub>
+<sub><sup>6</sup> Vendor's released artifact, not measured here, so not comparable with the measured columns. Blank: conhost.exe and Terminal.app ship inside the OS, Warp publishes no size, and nothing in the Windows or macOS rows runs on the measuring machine.</sub>
 
-<sub><sup>3</sup> Shared libraries only, largest first. Whatever is linked into the executable lands in Raw bin instead - which is where the Electron terminals keep Chromium.</sub>
-
-<sub><sup>4</sup> Wallpaper, scrim, outline, cursor animation, smooth app scrolling, transparency and colour emoji all off.</sub>
-
-<sub><sup>5</sup> Vendor's released artifact, not measured here, so not comparable with the measured columns. Blank: conhost.exe and Terminal.app ship inside the OS, Warp publishes no size, and nothing in the Windows or macOS rows runs on the measuring machine.</sub>
+Run it yourself with [`utility/termbench.py`](utility/termbench.py) (`--quick` for a thirty-second version). It needs only Python 3 and a terminal, works on any emulator on any OS, and refreshes the speed columns above as more terminals are measured.
 
 ## Getting and using
 
