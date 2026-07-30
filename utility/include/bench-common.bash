@@ -6,8 +6,9 @@
 #  shellcheck disable=2086  ## Integer pids need no quoting.
 
 ##	- Purpose:
-##		Shared helpers for the two shootout rigs (termbench-run.bash, sizebench-run.bash)
-##		and the update-showdown.bash wrapper. Sourced, never run.
+##		Shared helpers for the two shootout rigs (termbench-run.bash, sizebench-run.bash).
+##		Sourced, never run. The wrapper above them is Python and carries its own copy of
+##		the same output style.
 ##
 ##		Output matches the house style used by cicd.bash: fEcho prints a bracketed status
 ##		line, fEcho_Clean prints plain and collapses repeat blanks, so the blank-line

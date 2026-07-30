@@ -86,7 +86,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 ### New features and enhancements
 
 - ✅ Terminal throughput benchmark, for comparing against other terminals and against earlier builds.
-	- `utility/termbench.py`. Runs on any terminal on any OS, and needs only Python 3.
+	- `utility/update-showdown.py`. Runs on any terminal on any OS, and needs only Python 3.
 	- Feeds repeatable, byte-identical streams of one character width at a time - plain ASCII, then 2-, 3- and 4-byte characters, then a mix of all four with colour and attribute changes - so two terminals are always compared on exactly the same work.
 	- Each run is timed to a reply the terminal can only send once it has genuinely consumed the stream. Timing a plain write instead would measure the pipe rather than the terminal, and a terminal that reads greedily would look infinitely fast.
 	- ASCII is measured four times as often as the wide classes and 2-byte twice, so the overall score leans the way real output does. The score counts cells per second rather than bytes, because bytes flatter whichever class is widest - 2-byte text measured faster than ASCII per byte while being slower per character.

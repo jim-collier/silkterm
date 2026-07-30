@@ -1,12 +1,13 @@
 # Terminal showdown rigs
 
-Everything behind the README's "Terminal showdown" table. Two rigs measure different things and one wrapper drives both:
+Everything behind the README's "Terminal showdown" table. One entry point, `utility/update-showdown.py`, over two rigs that measure different things:
 
 ```sh
-utility/update-showdown.bash --list
-utility/update-showdown.bash --term alacritty            # both rigs, writes the table
-utility/update-showdown.bash --term kitty --size-only
-utility/update-showdown.bash --all --no-readme           # measure everything, write nothing
+utility/update-showdown.py                               # measure this terminal, any OS
+utility/update-showdown.py --list
+utility/update-showdown.py --term alacritty              # both rigs, writes the table
+utility/update-showdown.py --term kitty --size-only
+utility/update-showdown.py --all --no-readme             # measure everything, write nothing
 ```
 
 | | Rig | Grid | Display | Columns it owns |
@@ -14,11 +15,13 @@ utility/update-showdown.bash --all --no-readme           # measure everything, w
 | speed | `termbench-run.bash` | 160x42 | headless sway on the real GPU | the width classes and the score |
 | size | `sizebench-run.bash` | 100x30 | private Xvfb | File+deps and Mem |
 
+Naming no terminal takes the third path, which needs no rig at all: run the throughput tool inside whatever terminal you are sitting in. That is the only way to measure a terminal that exists solely on Windows or macOS, and the only mode that works off Linux.
+
 **The two grids differ deliberately and must not be unified.** Speed wants a realistic working grid. Memory scales with the surface - the same SilkTerm binary reads 38 MiB heavier at its default geometry than at 100x30 - so the size rows are taken small and identical.
 
 Neither rig is wired into cicd. They take minutes, need a GPU, and republishing numbers on every build would churn the README. Run them by hand when a row needs adding or refreshing.
 
-The two writers own disjoint columns and key on the terminal name, so they never fight: `utility/termbench.py` refreshes the speed cells, `showdown-readme.py` the size cells, and everything else in the table stays exactly as written by hand.
+The two writers own disjoint columns and key on the terminal name, so they never fight: `termbench.py` refreshes the speed cells, `showdown-readme.py` the size cells, and everything else in the table stays exactly as written by hand.
 
 ## Speed: what the number means
 
@@ -103,11 +106,13 @@ dpkg -x alacritty_*.deb cicd/artifacts/sizebench/terms/..    # gives terms/usr/b
 
 ## Measuring on Windows
 
-There is no compositor rig on Windows, and no wrapper. Run `utility/termbench.py` directly inside each terminal under test, sized to the same grid:
+There is no compositor rig on Windows, so no terminal can be named on the command line. Open each terminal under test, size it to the same grid by hand, and run the entry point inside it:
 
 ```sh
-python utility\termbench.py --reps 6 --label "Windows Terminal"
+python utility\update-showdown.py --reps 6 --label "Windows Terminal"
 ```
+
+That measures the speed columns and writes the row. **The size and memory columns have no Windows backend**, and porting one is not a translation of the shell: the accounting reads `/proc/<pid>/smaps` for private and shared pages, and splits the graphics stack out by walking `ldd` closures. The equivalents are `QueryWorkingSetEx` and the PE import table, which is a rewrite of `sizebench-classify.py` rather than a port of `sizebench-run.bash`. Until that exists, Windows rows carry speed figures only.
 
 Windows figures are **not** directly comparable with the Linux rows, because the Windows host is a virtual machine on the same box with half the cores, less memory, virtualization overhead and a lower-specification passed-through GPU.
 
@@ -117,8 +122,8 @@ Do not correct that with a guessed multiplier. Calibrate it: SilkTerm, Alacritty
 
 | File | What it is |
 | :--- | :--- |
-| `../update-showdown.bash` | the entry point: drives both rigs, writes the table |
-| `../termbench.py` | the throughput tool itself; runs standalone on any terminal, any OS |
+| `../update-showdown.py` | the entry point: measures here or drives the rigs, writes the table |
+| `termbench.py` | the throughput tool itself; runs standalone on any terminal, any OS |
 | `bench-common.bash` | output helpers and pid-safe teardown, sourced by both rigs |
 | `termbench-run.bash` | speed rig: compositor bring-up, terminal launch, grid fit, teardown |
 | `termbench-scene.sh` | runs inside the terminal; reports its grid, then runs the benchmark |
@@ -126,3 +131,5 @@ Do not correct that with a guessed multiplier. Calibrate it: SilkTerm, Alacritty
 | `sizebench-run.bash` | size rig: display bring-up, launch, grid sizing, process-tree collection |
 | `sizebench-classify.py` | the closure classifier and the smaps accounting |
 | `showdown-readme.py` | writes the File+deps and Mem cells for one row |
+
+The entry point is Python and the rigs are shell, which is the right split: the rigs drive a Linux display and are Linux-only by nature, while the entry point has to run wherever a terminal does. It is deliberately one file rather than a shell copy plus a PowerShell copy. Two copies of one program drift, and a fix then lands in whichever copy was to hand rather than the one being run - which has happened here before, to `n8git_backup-and-publish`.
