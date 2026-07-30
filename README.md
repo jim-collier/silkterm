@@ -198,26 +198,26 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 
 <!-- termbench:begin -->
 
-| Platform | Terminal | Ver | 1-byte<sup>1</sup> | 4-byte<sup>1</sup> | Weighted speed score<sup>2</sup> | Raw file size<sup>3</sup> (MiB) | File+deps<sup>4</sup> (MiB) | Memory<sup>4</sup> (MiB) |
+| OS | Terminal | Ver | 1-byte<sup>1</sup> | 4-byte<sup>1</sup> | Speed score<sup>2</sup> | File size<sup>3</sup> (MiB) | File+ deps<sup>4</sup> (MiB) | Mem<sup>4</sup> (MiB) |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm}}$ | 1.0.0-beta2 | 93.2 | 137.6 | **75.1** | **13.2** | **17.4** | **121.4** |
-| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm (plain)}}$<sup>5</sup> | 1.0.0-beta2 | - | - | - | **13.2** | **17.4** | **76.1** |
+| \[multi\] | $\textcolor{limegreen}{\textbf{SilkTerm +candy}}$ | 1.0.0-beta2 | 93.2 | 137.6 | **75.1** | **13.2** | **17.4** | **121.4** |
+| \[multi\] | $\textcolor{limegreen}{\textbf{SilkTerm}}$<sup>5</sup> | 1.0.0-beta2 | - | - | - | **13.2** | **17.4** | **76.1** |
 | Linux | XFCE4 Terminal | 1.2.0 | 103.3 | 70.0 | **58.5** | 0.3 | 84.1 | 48.6 |
 | Linux | XTerm | 407 | 29.2 | 49.8 | **24.5** | 0.9 | 6.0 | 9.4 |
 | Linux | GNOME Terminal | - | - | - | - | 0.4 | 84.0 | 53.6 |
 | Linux | Terminator | - | - | - | - | script | 92.6 | 82.2 |
-| Cross-platform | kitty | - | - | - | - | 0.2 | 115.0 | 140.8 |
-| Cross-platform | WezTerm | - | - | - | - | 70.5 | 129.9 | 84.8 |
-| Cross-platform | Hyper | - | - | - | - | 147.8 | 300.9 | 309.4 |
-| Cross-platform | Tabby | - | - | - | - | 192.1 | 454.2 | 473.4 |
-| Windows | PuTTY | - | - | - | - | 1.6<sup>6</sup> | - | - |
+| \[multi\] | kitty | - | - | - | - | 0.2 | 115.0 | 140.8 |
+| \[multi\] | WezTerm | - | - | - | - | 70.5 | 129.9 | 84.8 |
+| \[multi\] | Hyper | - | - | - | - | 147.8 | 300.9 | 309.4 |
+| \[multi\] | Tabby | - | - | - | - | 192.1 | 454.2 | 473.4 |
+| Win | PuTTY | - | - | - | - | 1.6<sup>6</sup> | - | - |
 | Linux | Guake | - | - | - | - | 1.7<sup>6</sup> | - | - |
 | Linux | Konsole | - | - | - | - | 7.3<sup>6</sup> | - | - |
-| Cross-platform | Windows Terminal | - | - | - | - | 11.1<sup>6</sup> | - | - |
-| Cross-platform | Ghostty | - | - | - | - | 32.0<sup>6</sup> | - | - |
+| \[multi\] | Windows Terminal | - | - | - | - | 11.1<sup>6</sup> | - | - |
+| \[multi\] | Ghostty | - | - | - | - | 32.0<sup>6</sup> | - | - |
 | macOS | iTerm2 | - | - | - | - | 43.0<sup>6</sup> | - | - |
-| Windows | MobaXterm | - | - | - | - | 43.4<sup>6</sup> | - | - |
-| Windows | conhost.exe | - | - | - | - | - | - | - |
+| Win | MobaXterm | - | - | - | - | 43.4<sup>6</sup> | - | - |
+| Win | conhost.exe | - | - | - | - | - | - | - |
 | macOS | Terminal.app | - | - | - | - | - | - | - |
 | macOS | Warp | - | - | - | - | - | - | - |
 
