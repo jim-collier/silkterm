@@ -223,16 +223,16 @@ A terminal is the program that is always open, usually several times over, so wh
 
 | Platform | Terminal | Bin+deps<sup>1</sup> (MiB) | Raw bin<sup>2</sup> (MiB) | Memory<sup>1</sup> (MiB) | Largest dependencies |
 | --- | --- | ---: | ---: | ---: | --- |
-| Linux | xterm | 6.0 | 0.9 | 11.5 | libX11 1.3, FreeType 0.8, Xaw 0.5 |
-| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm}}$ | **23.5** | **13.2** | **127.0** | libstdc++ 2.4, libxml2 1.7, libX11 1.3 |
-| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm (plain)}}$<sup>3</sup> | **23.5** | **13.2** | **90.6** | libstdc++ 2.4, libxml2 1.7, libX11 1.3 |
-| Linux | GNOME Terminal | 73.9 | 0.4 | 28.5 | ICU 32.5, GTK 8.0, GnuTLS 2.1 |
-| Linux | XFCE4 Terminal | 84.1 | 0.3 | 51.4 | ICU 32.5, GTK 8.0, librsvg 5.9 |
-| Linux | Terminator | 92.6 | script | 85.0 | ICU 32.5, GTK 8.0, libcrypto 6.2 |
-| Cross-platform | kitty | 119.4 | 0.2 | 130.3 | libcrypto 7.1, Python 6.5, HarfBuzz 1.7 |
-| Cross-platform | WezTerm | 134.8 | 70.5 | 86.2 | libcrypto 2.9, libstdc++ 2.4, libxml2 1.7 |
-| Cross-platform | Hyper | 299.9 | 147.8 | 308.8 | Chromium, GTK 8.0, GLESv2 6.2 |
-| Cross-platform | Tabby | 455.2 | 192.1 | 478.8 | Chromium, GTK 8.0, GLESv2 6.1 |
+| Linux | xterm | 6.0 | 0.9 | 11.5 | libX11, FreeType, Xaw |
+| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm}}$ | **23.5** | **13.2** | **127.0** | libstdc++, libxml2, libX11 |
+| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm (plain)}}$<sup>3</sup> | **23.5** | **13.2** | **90.6** | libstdc++, libxml2, libX11 |
+| Linux | GNOME Terminal | 73.9 | 0.4 | 28.5 | ICU, GTK, GnuTLS |
+| Linux | XFCE4 Terminal | 84.1 | 0.3 | 51.4 | ICU, GTK, librsvg |
+| Linux | Terminator | 92.6 | script | 85.0 | ICU, GTK, libcrypto |
+| Cross-platform | kitty | 119.4 | 0.2 | 130.3 | libcrypto, Python, HarfBuzz |
+| Cross-platform | WezTerm | 134.8 | 70.5 | 86.2 | libcrypto, libstdc++, libxml2 |
+| Cross-platform | Hyper | 299.9 | 147.8 | 308.8 | Chromium, GTK, GLESv2 |
+| Cross-platform | Tabby | 455.2 | 192.1 | 478.8 | Chromium, GTK, GLESv2 |
 | Windows | PuTTY | - | 1.6<sup>4</sup> | - | - |
 | Linux | Guake | - | 1.7<sup>4</sup> | - | Python, GTK, VTE |
 | Linux | Konsole | - | 7.3<sup>4</sup> | - | KDE Frameworks, Qt |
