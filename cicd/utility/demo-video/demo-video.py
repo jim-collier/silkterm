@@ -755,7 +755,7 @@ printf '\\033[0m\\n\\n'
 printf '  \\033[1m24-bit colour\\033[0m    \\033[3mitalic\\033[0m    '
 printf '\\033[1;38;2;255;216;102mbold colour\\033[0m    \\033[7m reverse \\033[0m\\n\\n'
 printf '  日本語 忍者 桜 猫   タ ッ ネ ホ   Ελληνικά  Кириллица  العربية\\n'
-printf '  🤔 🍰 🎉 😀   ┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅▆▇█\\n'
+printf '  🤔 🍰 🎉 😀   ┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅▆▇█\\n\\n'
 ''')
 	show.chmod(0o755)
 
@@ -1328,6 +1328,8 @@ if __name__ == "__main__":
 
 
 ##	Script history:
+##		- 20260729: a blank line closes the showcase output, so the sign-off block
+##		  sits clear of the unicode row.
 ##		- 20260726: gif cut under 10 MiB - the `less` scene dropped, the wheel one
 ##		  direction only, the build scroll halved, the listing narrowed (no owner
 ##		  or group columns, bare time) and fewer typos. Alias scene gone (the flags
