@@ -71,7 +71,7 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 	- [Why smooth-scrolling output](#why-smooth-scrolling-output)
 	- [Why text scrim](#why-text-scrim)
 - [Features](#features)
-- [Terminal shootout - speed and size](#terminal-shootout---speed-and-size)
+- [Terminal showdown - speed and size](#terminal-showdown---speed-and-size)
 - [Getting and using](#getting-and-using)
 	- [Installing](#installing)
 		- [Direct](#direct)
@@ -188,7 +188,7 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **GPU-accelerated** with software fallback.
 
-## Terminal shootout - speed and size
+## Terminal showdown - speed and size
 
 Smooth scrolling is worth nothing if the terminal falls behind the moment something dumps a lot of text, so throughput is measured rather than asserted. In testing, each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it. Speed is measured at a 160x42 grid.
 
@@ -200,8 +200,8 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 
 | OS | Terminal | Ver | 1-byte<sup>1</sup> | 4-byte<sup>1</sup> | Speed score<sup>2</sup> | File size<sup>3</sup> (MiB) | File+ deps<sup>4</sup> (MiB) | Mem<sup>4</sup> (MiB) |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| \[multi\] | $\textcolor{limegreen}{\textbf{SilkTerm +candy}}$ | 1.0.0-beta2 | 93.2 | 137.6 | **75.1** | **13.2** | **17.4** | **121.4** |
-| \[multi\] | $\textcolor{limegreen}{\textbf{SilkTerm}}$<sup>5</sup> | 1.0.0-beta2 | - | - | - | **13.2** | **17.4** | **76.1** |
+| \[multi\] | $\textcolor{limegreen}{SilkTerm}$ +candy | 1.0.0 | 93.2 | 137.6 | **75.1** | **13.2** | **17.4** | **121.4** |
+| \[multi\] | $\textcolor{limegreen}{SilkTerm}$ plain<sup>5</sup> | 1.0.0 | - | - | - | **13.2** | **17.4** | **76.1** |
 | Linux | XFCE4 Terminal | 1.2.0 | 103.3 | 70.0 | **58.5** | 0.3 | 84.1 | 48.6 |
 | Linux | XTerm | 407 | 29.2 | 49.8 | **24.5** | 0.9 | 6.0 | 9.4 |
 | Linux | GNOME Terminal | - | - | - | - | 0.4 | 84.0 | 53.6 |
