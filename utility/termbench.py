@@ -821,6 +821,9 @@ def aggregate(records, mode, line_cells):
 			per[name] = recs[0]
 		row["per"] = per
 		row["score"] = score_of(per)
+		# Without the device-attributes barrier a scene only timed how fast the
+		# terminal accepted bytes, which is not the same measurement as the rest.
+		row["synced"] = all(r.get("synced") for r in per.values())
 		out.append(row)
 	return out, skipped
 
@@ -900,14 +903,42 @@ def readme_path():
 def _plain(cell):
 	"""A table cell reduced to comparable text: no markup, no footnote marks."""
 	text = re.sub(r"<sup>.*?</sup>", "", cell)
-	text = re.sub(r"\$\\textcolor\{[^{}]*\}\{\\textbf\{([^{}]*)\}\}\$", r"\1", text)
-	return text.replace("**", "").strip()
+	# The highlighted row is coloured through GitHub's maths renderer, with or
+	# without a weight around the name, so unwrap the weight first.
+	text = re.sub(r"\\text(?:bf|it)\{([^{}]*)\}", r"\1", text)
+	text = re.sub(r"\$\\textcolor\{[^{}]*\}\{([^{}]*)\}\$", r"\1", text)
+	return text.replace("**", "").replace("\\", "").strip()
 
 
 def _key(name):
 	"""Terminal names differ between the tool and the table (xfce4-terminal vs
 	XFCE4 Terminal), so match on letters and digits alone."""
 	return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+# A run inside SilkTerm as shipped belongs on the row for SilkTerm as shipped;
+# the stripped-down build is a different row and has to name itself with --label.
+ROW_ALIASES = {"silkterm": "silktermcandy"}
+
+
+def _row_key(name):
+	key = _key(name)
+	return ROW_ALIASES.get(key, key)
+
+
+def _head_key(cell):
+	"""A header reduced to its name alone: no markup, no footnote, no unit."""
+	return _plain(cell).split(" (")[0].strip().lower()
+
+
+def _short_version(build):
+	"""
+	The Ver column is narrow and shares its width with everything else, so it
+	carries the release number only. The build stamp and prerelease tag matter
+	when comparing one dev build against another, which is what the tool's own
+	history table is for.
+	"""
+	return build.split("+", 1)[0].split("-", 1)[0] or "-"
 
 
 def _split_table(block):
@@ -942,26 +973,34 @@ def readme_table(existing, rows):
 	head, align, data = parsed
 	col = {}
 	for i, cell in enumerate(head):
-		col[_plain(cell).split(" (")[0]] = i
-	if not all(k in col for k in ("Terminal", "Ver", "Weighted speed score")):
-		return ""
-	scene_col = {s.name: col[s.label] for s in SCENES if s.label in col}
+		col[_head_key(cell)] = i
 
+	# Headers get reworded to keep the table inside a readable width, so the
+	# score column is found by its tail rather than one exact spelling.
+	name_at, ver_at = col.get("terminal"), col.get("ver", col.get("version"))
+	at = next((i for k, i in col.items() if k.endswith("speed score")), None)
+	if name_at is None or ver_at is None or at is None:
+		return ""
+	scene_col = {s.name: col[s.label.lower()]
+	             for s in SCENES if s.label.lower() in col}
+
+	# A terminal that never answered the barrier stays out of the table: its
+	# times are an upper bound, not the throughput every other row reports.
 	newest = {}
 	for row in sorted(rows, key=lambda r: r["when"]):
-		newest[row["terminal"]] = row
+		if row.get("synced", True):
+			newest[_row_key(row["terminal"])] = row
 
-	at = col["Weighted speed score"]
-	seen = {_key(_plain(cells[col["Terminal"]])): cells for cells in data}
+	seen = {_row_key(_plain(cells[name_at])): cells for cells in data}
 	fresh = []
-	for name, row in newest.items():
-		cells = seen.get(_key(name))
+	for key, row in newest.items():
+		cells = seen.get(key)
 		if cells is None:
 			cells = ["-"] * len(head)
-			cells[col["Terminal"]] = name
+			cells[name_at] = row["terminal"]
 			fresh.append(cells)
-			seen[_key(name)] = cells
-		cells[col["Ver"]] = row["build"].split("+", 1)[0] or "-"
+			seen[key] = cells
+		cells[ver_at] = _short_version(row["build"])
 		for scene, place in scene_col.items():
 			rec = row["per"].get(scene)
 			cells[place] = "%.1f" % rec["mbs"] if rec else "-"
@@ -1022,7 +1061,8 @@ def parse_args(argv):
 	ap.add_argument("--line-cells", type=int, default=80,
 	                help="logical line width in cells (default 80)")
 	ap.add_argument("--label", default="",
-	                help="override detection, as 'name' or 'name/build'")
+	                help="name this run's row, as 'name' or 'name/build'; a bare "
+	                     "name keeps the detected build")
 	ap.add_argument("--history", action="store_true", help="print the table and exit")
 	ap.add_argument("--out", default="",
 	                help="also write the report to this file (stdout is the tty)")
@@ -1069,8 +1109,14 @@ def main(argv):
 
 	with Console() as console:
 		if args.label:
-			name, _, build = args.label.partition("/")
-			term, build, exe = name.strip(), (build.strip() or "unknown"), ""
+			# Two configurations of one program look identical to detection, so
+			# a name on its own only renames the row and keeps the real build.
+			name, _, tag = args.label.partition("/")
+			term = name.strip()
+			if tag.strip():
+				build, exe = tag.strip(), ""
+			else:
+				_, build, exe = identify(console)
 		else:
 			term, build, exe = identify(console)
 

@@ -200,23 +200,23 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 
 | OS | Terminal | Ver | 1-byte<sup>1</sup> | 4-byte<sup>1</sup> | Speed score<sup>2</sup> | File size<sup>3</sup> (MiB) | File+ deps<sup>4</sup> (MiB) | Mem<sup>4</sup> (MiB) |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| \[multi\] | $\textcolor{limegreen}{SilkTerm}$ +candy | 1.0.0 | 93.2 | 137.6 | **75.1** | **13.2** | **17.4** | **121.4** |
-| \[multi\] | $\textcolor{limegreen}{SilkTerm}$ plain<sup>5</sup> | 1.0.0 | - | - | - | **13.2** | **17.4** | **76.1** |
-| Linux | XFCE4 Terminal | 1.2.0 | 103.3 | 70.0 | **58.5** | 0.3 | 84.1 | 48.6 |
-| Linux | XTerm | 407 | 29.2 | 49.8 | **24.5** | 0.9 | 6.0 | 9.4 |
-| Linux | GNOME Terminal | - | - | - | - | 0.4 | 84.0 | 53.6 |
-| Linux | Terminator | - | - | - | - | script | 92.6 | 82.2 |
-| \[multi\] | kitty | - | - | - | - | 0.2 | 115.0 | 140.8 |
-| \[multi\] | WezTerm | - | - | - | - | 70.5 | 129.9 | 84.8 |
+| \[multi\] | $\textcolor{limegreen}{SilkTerm}$ plain<sup>6</sup> | 1.0.0 | 86.9 | 129.3 | **71.1** | **13.2** | **17.4** | **76.1** |
+| \[multi\] | $\textcolor{limegreen}{SilkTerm}$ +candy<sup>5</sup> | 1.0.0 | 77.4 | 135.1 | **67.6** | **13.2** | **17.4** | **121.4** |
+| Linux | GNOME Terminal | 3.58.1 | 100.2 | 62.6 | **55.3** | 0.4 | 84.0 | 53.6 |
+| Linux | XFCE4 Terminal | 1.2.0 | 94.2 | 65.0 | **54.0** | 0.3 | 84.1 | 48.6 |
+| Linux | Terminator | 3.13.5 | 87.8 | 67.3 | **51.8** | script | 92.6 | 82.2 |
+| Linux | XTerm | 407 | 28.3 | 48.5 | **23.9** | 0.9 | 6.0 | 9.4 |
+| \[multi\] | kitty | 0.48.1 | 24.2 | 59.6 | **22.6** | 0.2 | 115.0 | 140.8 |
+| \[multi\] | WezTerm | 20240203 | 15.6 | 22.2 | **10.4** | 70.5 | 129.9 | 84.8 |
 | \[multi\] | Hyper | - | - | - | - | 147.8 | 300.9 | 309.4 |
-| \[multi\] | Tabby | - | - | - | - | 192.1 | 454.2 | 473.4 |
-| Win | PuTTY | - | - | - | - | 1.6<sup>6</sup> | - | - |
-| Linux | Guake | - | - | - | - | 1.7<sup>6</sup> | - | - |
-| Linux | Konsole | - | - | - | - | 7.3<sup>6</sup> | - | - |
-| \[multi\] | Windows Terminal | - | - | - | - | 11.1<sup>6</sup> | - | - |
-| \[multi\] | Ghostty | - | - | - | - | 32.0<sup>6</sup> | - | - |
-| macOS | iTerm2 | - | - | - | - | 43.0<sup>6</sup> | - | - |
-| Win | MobaXterm | - | - | - | - | 43.4<sup>6</sup> | - | - |
+| \[multi\] | Tabby | 1.0.235 | 8.5 | 9.0 | **5.7** | 192.1 | 454.2 | 473.4 |
+| Win | PuTTY | - | - | - | - | 1.6<sup>7</sup> | - | - |
+| Linux | Guake | - | - | - | - | 1.7<sup>7</sup> | - | - |
+| Linux | Konsole | - | - | - | - | 7.3<sup>7</sup> | - | - |
+| \[multi\] | Windows Terminal | - | - | - | - | 11.1<sup>7</sup> | - | - |
+| \[multi\] | Ghostty | - | - | - | - | 32.0<sup>7</sup> | - | - |
+| macOS | iTerm2 | - | - | - | - | 43.0<sup>7</sup> | - | - |
+| Win | MobaXterm | - | - | - | - | 43.4<sup>7</sup> | - | - |
 | Win | conhost.exe | - | - | - | - | - | - | - |
 | macOS | Terminal.app | - | - | - | - | - | - | - |
 | macOS | Warp | - | - | - | - | - | - | - |
@@ -225,15 +225,17 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 
 <sub><sup>1</sup> Throughput in MB/s, higher is better, on a stream made entirely of characters of that UTF-8 width - 1-byte is plain ASCII, 4-byte is emoji. Two more width classes and a mixed stream are measured as well and count towards the score; the tool prints all five. Only rows measured at the same grid size are comparable.</sub>
 
-<sub><sup>2</sup> Millions of cells per second - the weighted geometric mean of all five classes, leaning towards plain ASCII since that is most of what a terminal ever sees, and geometric so no single class can dominate. Counted in cells rather than bytes, because a wide-character stream moves far more bytes for the same amount of screen. It says how fast a terminal swallows output and keeps up, not how fast it rasterizes glyphs - only a screenful is ever visible, so most of a large stream is parsed, stored and scrolled past.</sub>
+<sub><sup>2</sup> Millions of cells per second - the weighted geometric mean of all five classes, leaning towards plain ASCII since that is most of what a terminal ever sees, and geometric so no single class can dominate. Counted in cells rather than bytes, because a wide-character stream moves far more bytes for the same amount of screen. It says how fast a terminal swallows output and keeps up, not how fast it rasterizes glyphs - only a screenful is ever visible, so most of a large stream is parsed, stored and scrolled past. The clock stops when the terminal answers a query that it can only answer once it has worked through everything queued, so a terminal that never answers cannot be timed this way and its speed cells stay blank. A slow terminal gets fewer repetitions of the same payloads, which makes its figures noisier but no less comparable.</sub>
 
 <sub><sup>3</sup> This number is near-meaningless alone. A small executable usually means the code sits in shared libraries instead. But they are loaded only once however many programs map them - so anything built on a stack the desktop already loads costs less than its File+deps implies. SilkTerm links nothing but the C runtime (for maximum portability and long-term stability without "bitrot"), so its binary is the whole of it.</sub>
 
 <sub><sup>4</sup> File+deps is the executable plus everything else it needs beyond a base OS. Memory is the unique resident footprint of the whole process tree - private pages, plus each shared mapping counted once. Self-contained bundles count their extracted payload plus the system libraries they still borrow. Both columns leave out the graphics stack and what it pulls in, because accelerated terminals share it with the compositor and every other accelerated program: 108 SilkTerm, 105 WezTerm, 73 kitty, 48 Tabby, 1 Hyper. Expect a few MiB of drift between runs, since libraries load on demand.</sub>
 
-<sub><sup>5</sup> Wallpaper, scrim, outline, cursor animation, smooth app scrolling, transparency and colour emoji all off.</sub>
+<sub><sup>5</sup> SilkTerm as it ships, with the eye candy on: wallpaper, text scrim and outline, animated cursor, smooth application scrolling and colour emoji. Every one of them is a setting, and the row below is the same binary with the lot switched off.</sub>
 
-<sub><sup>6</sup> Vendor's released artifact, not measured here, so not comparable with the measured columns. Blank: conhost.exe and Terminal.app ship inside the OS, Warp publishes no size, and nothing in the Windows or macOS rows runs on the measuring machine.</sub>
+<sub><sup>6</sup> Wallpaper, scrim, outline, cursor animation, smooth app scrolling, transparency and colour emoji all off.</sub>
+
+<sub><sup>7</sup> Vendor's released artifact, not measured here, so not comparable with the measured columns. Blank: conhost.exe and Terminal.app ship inside the OS, Warp publishes no size, and nothing in the Windows or macOS rows runs on the measuring machine.</sub>
 
 Run it yourself with [`utility/termbench.py`](utility/termbench.py) (`--quick` for a thirty-second version). It needs only Python 3 and a terminal, works on any emulator on any OS, and refreshes the speed columns above as more terminals are measured.
 
