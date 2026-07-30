@@ -5,6 +5,7 @@
 #  shellcheck disable=2181  ## 'Check exit code directly, not indirectly with $?.'
 #  shellcheck disable=2329  ## 'This function is never invoked.' cleanup() runs from the trap.
 #  shellcheck disable=2012  ## 'Use find instead of ls.' The wayland socket names are known-safe.
+#  shellcheck disable=1091  ## 'Not following.' bench-common.bash is beside this script.
 
 ##	- Purpose:
 ##		Repeatable rig for the README terminal shootout. Brings up a private headless
@@ -16,7 +17,7 @@
 ##		CPU-rendered terminals do not move at all. A table built from mixed rigs can
 ##		therefore rank the wrong terminal first. Every published row comes from one rig.
 ##	- Syntax:
-##		run.bash --term KEY [options]
+##		termbench-run.bash --term KEY [options]
 ##		   --term KEY      terminal to measure (--list for the known keys)
 ##		   --reps N        runs per scene (default 6; --reps is the only safe way to
 ##		                   shorten a run - see the note below)
@@ -41,24 +42,17 @@
 set -Eeuo pipefail
 
 declare -r _here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-declare -r _repo="$(cd "${_here}/../../.." && pwd)"
+declare -r _repo="$(cd "${_here}/../.." && pwd)"
 declare -r _work="$(mktemp -d -t termbench-XXXXXX)"
-declare -r _letterbox="$(printf '%.0s-' {1..78})"
 
-declare -i _wasLastEchoBlank=0
-fEcho_Clean(){ if [[ -n "${1:-}" ]]; then echo -e "$*"; _wasLastEchoBlank=0; elif [[ $_wasLastEchoBlank -eq 0 ]] && echo; then _wasLastEchoBlank=1; fi; }
-fEcho(){ if [[ -n "$*" ]]; then fEcho_Clean "[ $* ]"; else fEcho_Clean ""; fi; }
-fSection(){ fEcho_Clean; fEcho_Clean "${_letterbox}"; fEcho "$*"; }
-fDie(){ { fEcho_Clean; fEcho "FAILED: $*"; } >&2; exit 1; }
+source "${_here}/bench-common.bash"                                ## fEcho, fKillPids
 
-## Only ever kill what this script started, by pid. A pattern kill here would match
-## the harness's own command line, and has already taken out a session mid-run.
 declare -i _swayPid=0 _termPid=0
 declare -i _keepRig=0
 
 cleanup(){
 	local -i rc=$?
-	if ((_termPid)); then kill ${_termPid} 2>/dev/null || true; fi
+	if ((_termPid)); then fKillPids ${_termPid}; fi
 	if ((_swayPid)) && ((!_keepRig)); then kill ${_swayPid} 2>/dev/null || true; fi
 	if ((!_keepRig)); then rm -rf "${_work}" 2>/dev/null || true; fi
 	exit ${rc}
@@ -72,16 +66,16 @@ trap cleanup EXIT INT TERM
 
 ##	Every entry launches its terminal with SCENE as the shell/command, unstyled and
 ##	against a throwaway config so nothing personal reaches a published run. Keys marked
-##	awkward need a hook the terminal does not offer directly - see README.md.
+##	awkward need a hook the terminal does not offer directly - see showdown-README.md.
 list_terms(){
 	fEcho_Clean "  silkterm    this tree's release build, as shipped"
 	fEcho_Clean "  silkplain   same binary, every optional effect off"
 	fEcho_Clean "  alacritty   the VT core SilkTerm builds on, as its own terminal"
-	fEcho_Clean "  kitty       needs terms/bin/kitty       (see README)"
-	fEcho_Clean "  wezterm     needs the AppImage extracted (see README)"
+	fEcho_Clean "  kitty       needs terms/bin/kitty       (see showdown-README.md)"
+	fEcho_Clean "  wezterm     needs the AppImage extracted (see showdown-README.md)"
 	fEcho_Clean "  xfce4 gnome terminator                  (distro packages)"
-	fEcho_Clean "  xterm       X11 only - runs via Xwayland, see README"
-	fEcho_Clean "  hyper tabby awkward, see README"
+	fEcho_Clean "  xterm       X11 only - runs via Xwayland, see showdown-README.md"
+	fEcho_Clean "  hyper tabby awkward, see showdown-README.md"
 }
 
 ##	Resolve a terminal binary: PATH first, then the kept artifact dir, so a re-run does
@@ -109,7 +103,7 @@ write_alacritty_config(){
 ##	SilkTerm with every optional effect off. Only the overrides are written; the loader
 ##	backfills the rest, so this cannot go stale as new settings are added.
 write_plain_config(){
-	cp "${_here}/plain.toml" "${_work}/plain.toml"
+	cp "${_here}/termbench-plain.toml" "${_work}/plain.toml"
 }
 
 
@@ -121,7 +115,7 @@ write_plain_config(){
 ##	whatever is on the actual desktop, while still handing the client a native Vulkan
 ##	context on the discrete GPU - which is the whole point over Xvfb software GL.
 start_rig(){
-	command -v sway >/dev/null 2>&1 || fDie "sway is not installed - see README.md"
+	command -v sway >/dev/null 2>&1 || fDie "sway is not installed - see showdown-README.md"
 	printf 'default_border none\ndefault_floating_border none\ngaps inner 0\ngaps outer 0\n' > "${_work}/sway.cfg"
 
 	local runtimeDir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
@@ -241,7 +235,7 @@ start_rig
 ## can settle the size before a single byte is measured.
 export REPO_DIR="${_repo}" BENCH_ARGS="${benchArgs}" LABEL="${label}" \
        OUT_FILE="${outFile}" SIZE_FILE="${sizeFile}" GO_FILE="${goFile}"
-declare -r sceneCmd="/bin/dash ${_here}/scene.sh"
+declare -r sceneCmd="/bin/dash ${_here}/termbench-scene.sh"
 
 case "${termKey}" in
 	silkterm)
@@ -251,12 +245,12 @@ case "${termKey}" in
 		"${_repo}/target/release/silkterm" --config "${_work}/plain.toml" --shell "${sceneCmd}" > "${_work}/term.log" 2>&1 & ;;
 	alacritty)
 		write_alacritty_config
-		"$(find_bin alacritty || fDie "alacritty not found - see README.md")" \
+		"$(find_bin alacritty || fDie "alacritty not found - see showdown-README.md")" \
 			--config-file "${_work}/alacritty.toml" -e ${sceneCmd} > "${_work}/term.log" 2>&1 & ;;
 	kitty)
-		"$(find_bin kitty || fDie "kitty not found - see README.md")" ${sceneCmd} > "${_work}/term.log" 2>&1 & ;;
+		"$(find_bin kitty || fDie "kitty not found - see showdown-README.md")" ${sceneCmd} > "${_work}/term.log" 2>&1 & ;;
 	wezterm)
-		"$(find_bin wezterm || fDie "wezterm not found - see README.md")" \
+		"$(find_bin wezterm || fDie "wezterm not found - see showdown-README.md")" \
 			--config enable_wayland=true start --always-new-process -- ${sceneCmd} > "${_work}/term.log" 2>&1 & ;;
 	xfce4)
 		xfce4-terminal --disable-server -x ${sceneCmd} > "${_work}/term.log" 2>&1 & ;;

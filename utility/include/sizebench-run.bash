@@ -2,11 +2,12 @@
 
 #  shellcheck disable=2155  ## 'Declare and assign separately to avoid masking return values.'
 #  shellcheck disable=2329  ## 'This function is never invoked.' fCleanup() runs from the trap.
+#  shellcheck disable=1091  ## 'Not following.' bench-common.bash is beside this script.
 
 ##	- Purpose:
 ##		Measure one terminal's install size and resident memory for the README shootout
 ##		table. Sizes it to the same grid as every other row on a private display, lets it
-##		settle, then hands the whole process tree to classify.py.
+##		settle, then hands the whole process tree to sizebench-classify.py.
 ##
 ##		Reproduce a published row before trusting a new one. This rig reproduced
 ##		SilkTerm's memory within 1.3% and its excluded-driver figure within 0.4% of the
@@ -14,7 +15,7 @@
 ##		with them. Window size is the trap - the same binary reads 38 MiB heavier at its
 ##		default geometry than at the table's 100x30 grid.
 ##	- Syntax:
-##		run.bash --term KEY [options]
+##		sizebench-run.bash --term KEY [options]
 ##		   --term KEY      terminal to measure (--list for the known keys)
 ##		   --grid CxR      grid every terminal is fitted to (default 100x30)
 ##		   --settle N      seconds to let it finish starting (default 22)
@@ -26,7 +27,7 @@ set -Eeuo pipefail
 shopt -s inherit_errexit
 
 declare -r scriptDir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-declare -r repoDir="$(cd -- "${scriptDir}/../../.." && pwd -P)"
+declare -r repoDir="$(cd -- "${scriptDir}/../.." && pwd -P)"
 declare -r termsDir="${repoDir}/cicd/artifacts/sizebench/terms"
 
 declare -r display=":98"
@@ -37,30 +38,14 @@ declare _work=""
 declare -i _xvfbPid=0
 declare -ai _termPids=()
 
-#•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-##  Output
-#•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-
-fEcho_Clean() { printf '%s\n' "${1:-}"; }
-fEcho()       { printf '[ %s ]\n' "${1:-}"; }
-fSection()    { fEcho_Clean ""; fEcho "${1:-}"; }
-fDie()        { printf '[ ERROR: %s ]\n' "${1:-}" >&2; exit 1; }
+source "${scriptDir}/bench-common.bash"                            ## fEcho, fKillPids, fCollectTree
 
 #•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ##  Teardown
 #•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## Kill only what this script launched, by pid. A pattern kill would match the harness's
-## own command line, and any copy already open and in use; that has bitten before.
 fCleanup() {
-	local -i pid=0
-	for pid in "${_termPids[@]:-}"; do
-		((pid > 0)) && kill "${pid}" 2>/dev/null || true
-	done
-	sleep 1
-	for pid in "${_termPids[@]:-}"; do
-		((pid > 0)) && kill -9 "${pid}" 2>/dev/null || true
-	done
+	fKillPids "${_termPids[@]:-0}"
 	((_xvfbPid > 0)) && kill "${_xvfbPid}" 2>/dev/null || true
 	if [[ -n "${_work}" && -z "${optKeep:-}" && "${_work}" == /tmp/* ]]; then
 		rm -rf "${_work}" || true
@@ -103,7 +88,7 @@ fLaunch() {
 	case "${key}" in
 		silkplain)
 			mkdir -p "${XDG_CONFIG_HOME}/silkterm"
-			cp "${repoDir}/cicd/tests/termbench/plain.toml" \
+			cp "${scriptDir}/termbench-plain.toml" \
 			   "${XDG_CONFIG_HOME}/silkterm/config.toml"
 			"${bin}" --columns "${cols}" --rows "${rows}" --shell "${keepAlive}" \
 				>"${_work}/term.log" 2>&1 &
@@ -136,33 +121,11 @@ fLaunch() {
 }
 
 #•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-##  Process discovery
-#•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-
-## Take the launched pid and everything under it. Diffing the system-wide process list
-## instead would sweep in whatever else the desktop started meanwhile, and a name match
-## would find copies that were already running.
-fCollectTree() {
-	local -i root="$1"
-	local -a out=("${root}")
-	local -a queue=("${root}")
-	local -i pid=0 kid=0
-	while ((${#queue[@]} > 0)); do
-		pid="${queue[0]}"; queue=("${queue[@]:1}")
-		while read -r kid; do
-			[[ -z "${kid}" ]] && continue
-			out+=("${kid}"); queue+=("${kid}")
-		done < <(pgrep -P "${pid}" 2>/dev/null || true)
-	done
-	printf '%s\n' "${out[@]}"
-}
-
-#•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ##  Main
 #•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
 fUsage() {
-	sed -n '/- Purpose:/,/^##$/p' "${BASH_SOURCE[0]}" | sed 's/^##[[:space:]]\{0,2\}//'
+	awk '/- Purpose:/{f=1} f&&!/^##/{exit} f' "${BASH_SOURCE[0]}" | sed 's/^##[[:space:]]\{0,2\}//'
 }
 
 fMain() {
@@ -213,7 +176,7 @@ fMain() {
 	fSection "Measurement"
 	local -a extra=()
 	[[ -n "${optVerbose}" ]] && extra+=(--verbose)
-	python3 "${scriptDir}/classify.py" "${_termPids[@]}" --exe "${bin}" ${extra[@]+"${extra[@]}"}
+	python3 "${scriptDir}/sizebench-classify.py" "${_termPids[@]}" --exe "${bin}" --summary ${extra[@]+"${extra[@]}"}
 
 	fEcho_Clean ""
 	return 0

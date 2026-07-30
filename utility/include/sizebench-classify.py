@@ -247,6 +247,8 @@ def main():
 	ap.add_argument("--payload", help="extracted bundle dir, counted instead of the executable")
 	ap.add_argument("--verbose", action="store_true", help="itemize both library sets")
 	ap.add_argument("--json", action="store_true")
+	ap.add_argument("--summary", action="store_true",
+	                help="also print one RESULT line, for the wrapper to read")
 	args = ap.parse_args()
 
 	exes = [os.path.realpath(e) for e in args.exe]
@@ -291,6 +293,9 @@ def main():
 		print("\n  billed to the driver:")
 		for size, path in res["driver_libs"][:20]:
 			print(f"    {size:7.2f}  {path}")
+	if args.summary:
+		print(f"RESULT file={res['exe_mib']:.1f} filedeps={res['file_deps_mib']:.1f} "
+		      f"mem={res['mem_mib']:.1f} driver={res['driver_mem_mib']:.1f}")
 	return 0
 
 
