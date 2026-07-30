@@ -71,7 +71,6 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 	- [Why smooth-scrolling output](#why-smooth-scrolling-output)
 	- [Why text scrim](#why-text-scrim)
 - [Features](#features)
-	- [One minor limitation inherent to all terminals](#one-minor-limitation-inherent-to-all-terminals)
 - [Terminal shootout - speed and size](#terminal-shootout---speed-and-size)
 - [Getting and using](#getting-and-using)
 	- [Installing](#installing)
@@ -188,16 +187,6 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 	- *Fun fact: SilkTerm has more lines of code than Alacritty, especially compared to the subset we use. Which is part of why we chose it for the bare guts without reinventing a thoroughly-and-repeatedly-invented wheel.*
 
 - **GPU-accelerated** with software fallback.
-
-### One minor limitation inherent to all terminals
-
-- SilkTerm can only smooth-scroll text written to `stdout` and `stderr`.
-
-	- This covers the overwhelming majority of Linux terminal tools and programs.
-
-	- However, some TUI programs - such as `nano`, `vim`, `tmux` - directly control the terminal buffer in "raw mode", and handle everything themselves. Scrolling within such programs behaves the same as on any other terminal - snapped to lines, no in-between.
-
-		- But the other features still work in that case: smooth-moving and phased cursor, text scrim, background options, etc.
 
 ## Terminal shootout - speed and size
 
