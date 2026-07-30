@@ -821,6 +821,9 @@ def aggregate(records, mode, line_cells):
 			per[name] = recs[0]
 		row["per"] = per
 		row["score"] = score_of(per)
+		# Without the device-attributes barrier a scene only timed how fast the
+		# terminal accepted bytes, which is not the same measurement as the rest.
+		row["synced"] = all(r.get("synced") for r in per.values())
 		out.append(row)
 	return out, skipped
 
@@ -981,9 +984,12 @@ def readme_table(existing, rows):
 	scene_col = {s.name: col[s.label.lower()]
 	             for s in SCENES if s.label.lower() in col}
 
+	# A terminal that never answered the barrier stays out of the table: its
+	# times are an upper bound, not the throughput every other row reports.
 	newest = {}
 	for row in sorted(rows, key=lambda r: r["when"]):
-		newest[_row_key(row["terminal"])] = row
+		if row.get("synced", True):
+			newest[_row_key(row["terminal"])] = row
 
 	seen = {_row_key(_plain(cells[name_at])): cells for cells in data}
 	fresh = []

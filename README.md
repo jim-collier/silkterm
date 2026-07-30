@@ -209,7 +209,7 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 | \[multi\] | kitty | 0.48.1 | 24.2 | 59.6 | **22.6** | 0.2 | 115.0 | 140.8 |
 | \[multi\] | WezTerm | 20240203 | 15.6 | 22.2 | **10.4** | 70.5 | 129.9 | 84.8 |
 | \[multi\] | Hyper | - | - | - | - | 147.8 | 300.9 | 309.4 |
-| \[multi\] | Tabby | - | - | - | - | 192.1 | 454.2 | 473.4 |
+| \[multi\] | Tabby | 1.0.235 | 8.5 | 9.0 | **5.7** | 192.1 | 454.2 | 473.4 |
 | Win | PuTTY | - | - | - | - | 1.6<sup>7</sup> | - | - |
 | Linux | Guake | - | - | - | - | 1.7<sup>7</sup> | - | - |
 | Linux | Konsole | - | - | - | - | 7.3<sup>7</sup> | - | - |
@@ -225,7 +225,7 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 
 <sub><sup>1</sup> Throughput in MB/s, higher is better, on a stream made entirely of characters of that UTF-8 width - 1-byte is plain ASCII, 4-byte is emoji. Two more width classes and a mixed stream are measured as well and count towards the score; the tool prints all five. Only rows measured at the same grid size are comparable.</sub>
 
-<sub><sup>2</sup> Millions of cells per second - the weighted geometric mean of all five classes, leaning towards plain ASCII since that is most of what a terminal ever sees, and geometric so no single class can dominate. Counted in cells rather than bytes, because a wide-character stream moves far more bytes for the same amount of screen. It says how fast a terminal swallows output and keeps up, not how fast it rasterizes glyphs - only a screenful is ever visible, so most of a large stream is parsed, stored and scrolled past.</sub>
+<sub><sup>2</sup> Millions of cells per second - the weighted geometric mean of all five classes, leaning towards plain ASCII since that is most of what a terminal ever sees, and geometric so no single class can dominate. Counted in cells rather than bytes, because a wide-character stream moves far more bytes for the same amount of screen. It says how fast a terminal swallows output and keeps up, not how fast it rasterizes glyphs - only a screenful is ever visible, so most of a large stream is parsed, stored and scrolled past. The clock stops when the terminal answers a query that it can only answer once it has worked through everything queued, so a terminal that never answers cannot be timed this way and its speed cells stay blank. A slow terminal gets fewer repetitions of the same payloads, which makes its figures noisier but no less comparable.</sub>
 
 <sub><sup>3</sup> This number is near-meaningless alone. A small executable usually means the code sits in shared libraries instead. But they are loaded only once however many programs map them - so anything built on a stack the desktop already loads costs less than its File+deps implies. SilkTerm links nothing but the C runtime (for maximum portability and long-term stability without "bitrot"), so its binary is the whole of it.</sub>
 
