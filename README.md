@@ -242,7 +242,7 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 
 <sub><sup>9</sup> Every measured row comes from one machine, because the measuring rig is not neutral: rendering through software OpenGL roughly halves SilkTerm's throughput and going through VirtualGL still costs it about 14%, while terminals that draw on the CPU do not move at all. A table built from mixed rigs can therefore rank the wrong terminal first. These figures were taken on a headless Wayland compositor driving a discrete GPU (Linux, Ryzen host, GeForce RTX 3060 Ti), so nothing on the desktop competes for the card. Windows rows, when they are filled in, will come from a virtual machine on that same host with half the cores, less memory, some virtualization overhead and a lower-specification passed-through GPU (RTX 2060) - so they will not be directly comparable until they are calibrated against the terminals that run on both platforms.</sub>
 
-Run it yourself with [`utility/termbench.py`](utility/termbench.py) (`--quick` for a thirty-second version). It needs only Python 3 and a terminal, works on any emulator on any OS, and refreshes the speed columns above as more terminals are measured.
+Run it yourself with [`utility/update-showdown.py`](utility/update-showdown.py) (`--quick` for a thirty-second version). It needs only Python 3 and a terminal, works on any emulator on any OS, and refreshes the speed columns above as more terminals are measured.
 
 ## Getting and using
 

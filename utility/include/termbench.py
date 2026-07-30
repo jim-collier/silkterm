@@ -57,13 +57,17 @@
 ##		ambiguous denominator is worse than a missing scene.
 ##
 ##	Usage:
-##		utility/termbench.py                 full run, about two minutes
-##		utility/termbench.py --quick         about thirty seconds
-##		utility/termbench.py --history       print the table, measure nothing
-##		utility/termbench.py --label 'name/build'
+##		Normally reached through utility/update-showdown.py, which runs this in the
+##		terminal you are sitting in and then writes the row. Standalone:
+##
+##		utility/include/termbench.py                 full run, about two minutes
+##		utility/include/termbench.py --quick         about thirty seconds
+##		utility/include/termbench.py --history       print the table, measure nothing
+##		utility/include/termbench.py --label 'name/build'
 ##
 ##	History:
 ##		20260728 Initial.
+##		20260730 Moved under utility/include/, behind update-showdown.py.
 
 import argparse
 import array
@@ -895,9 +899,21 @@ def report(term, build, grid, mode, scale, per, synced, ceiling, elapsed):
 #•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
 def readme_path():
+	"""The checkout's README, if this is running from inside one.
+
+	Walks up rather than assuming a depth: the tool has lived at utility/ and now at
+	utility/include/, and a fixed one-level guess silently stops refreshing the table
+	the moment it moves - no error, just a column that quietly goes stale.
+	"""
 	here = os.path.dirname(os.path.abspath(__file__))
-	guess = os.path.join(os.path.dirname(here), "README.md")
-	return guess if os.path.isfile(guess) else ""
+	for _ in range(4):
+		here = os.path.dirname(here)
+		if not here:
+			break
+		guess = os.path.join(here, "README.md")
+		if os.path.isfile(guess):
+			return guess
+	return ""
 
 
 def _plain(cell):

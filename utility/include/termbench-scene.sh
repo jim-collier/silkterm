@@ -17,5 +17,5 @@ done
 
 # stdout has to stay on the tty: the tool stops its clock on the terminal's own reply,
 # so redirecting it would measure a pipe instead. The report goes out via --out.
-python3 utility/termbench.py $BENCH_ARGS --label "$LABEL" --out "$OUT_FILE" 2>"$OUT_FILE.err"
+python3 utility/include/termbench.py $BENCH_ARGS --label "$LABEL" --out "$OUT_FILE" 2>"$OUT_FILE.err"
 echo "exit=$?" > "$OUT_FILE.done"

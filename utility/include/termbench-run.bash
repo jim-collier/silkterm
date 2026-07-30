@@ -10,7 +10,7 @@
 ##	- Purpose:
 ##		Repeatable rig for the README terminal shootout. Brings up a private headless
 ##		Wayland compositor on the real GPU, launches one terminal as its only client,
-##		fits every terminal to the same grid, and runs utility/termbench.py inside it.
+##		fits every terminal to the same grid, and runs termbench.py inside it.
 ##
 ##		The rig matters more than it looks. Measured 20260730: software GL halves
 ##		SilkTerm (45 vs 88 MB/s on ascii) and VirtualGL still costs ~14%, while
