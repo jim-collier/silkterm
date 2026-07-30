@@ -221,36 +221,38 @@ Run it yourself with [`utility/termbench.py`](utility/termbench.py) (`--quick` f
 
 A terminal is the program that is always open, usually several times over, so what it costs while doing nothing is worth knowing. Sorted by what it takes to install: the executable plus everything else it needs beyond a base OS.
 
-| Platform | Terminal | Bin+deps<sup>1</sup> (MiB) | Raw bin<sup>2</sup> (MiB) | Memory<sup>1</sup> (MiB) | Largest dependencies |
+| Platform | Terminal | Bin+deps<sup>1</sup> (MiB) | Raw bin<sup>2</sup> (MiB) | Memory<sup>1</sup> (MiB) | Largest dependencies<sup>3</sup> |
 | --- | --- | ---: | ---: | ---: | --- |
-| Linux | xterm | 6.0 | 0.9 | 11.5 | libX11, FreeType, Xaw |
-| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm}}$ | **23.5** | **13.2** | **127.0** | libstdc++, libxml2, libX11 |
-| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm (plain)}}$<sup>3</sup> | **23.5** | **13.2** | **90.6** | libstdc++, libxml2, libX11 |
-| Linux | GNOME Terminal | 73.9 | 0.4 | 28.5 | ICU, GTK, GnuTLS |
-| Linux | XFCE4 Terminal | 84.1 | 0.3 | 51.4 | ICU, GTK, librsvg |
-| Linux | Terminator | 92.6 | script | 85.0 | ICU, GTK, libcrypto |
-| Cross-platform | kitty | 119.4 | 0.2 | 130.3 | libcrypto, Python, HarfBuzz |
-| Cross-platform | WezTerm | 134.8 | 70.5 | 86.2 | libcrypto, libstdc++, libxml2 |
-| Cross-platform | Hyper | 299.9 | 147.8 | 308.8 | Chromium, GTK, GLESv2 |
-| Cross-platform | Tabby | 455.2 | 192.1 | 478.8 | Chromium, GTK, GLESv2 |
-| Windows | PuTTY | - | 1.6<sup>4</sup> | - | - |
-| Linux | Guake | - | 1.7<sup>4</sup> | - | Python, GTK, VTE |
-| Linux | Konsole | - | 7.3<sup>4</sup> | - | KDE Frameworks, Qt |
-| Cross-platform | Windows Terminal | - | 11.1<sup>4</sup> | - | - |
-| Cross-platform | Ghostty | - | 32.0<sup>4</sup> | - | - |
-| macOS | iTerm2 | - | 43.0<sup>4</sup> | - | - |
-| Windows | MobaXterm | - | 43.4<sup>4</sup> | - | - |
+| Linux | xterm | 6.0 | 0.9 | 9.4 | libX11, FreeType, libXaw |
+| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm}}$ | **17.4** | **13.2** | **121.4** | libX11, libsystemd, libdbus |
+| Cross-platform | $\textcolor{limegreen}{\textbf{SilkTerm (plain)}}$<sup>4</sup> | **17.4** | **13.2** | **76.1** | libX11, libsystemd, libdbus |
+| Linux | GNOME Terminal | 84.0 | 0.4 | 53.6 | ICU, GTK, librsvg |
+| Linux | XFCE4 Terminal | 84.1 | 0.3 | 48.6 | ICU, GTK, librsvg |
+| Linux | Terminator | 92.6 | script | 82.2 | ICU, GTK, libcrypto |
+| Cross-platform | kitty | 115.0 | 0.2 | 140.8 | libcrypto, libpython, HarfBuzz |
+| Cross-platform | WezTerm | 129.9 | 70.5 | 84.8 | libcrypto, libX11, FreeType |
+| Cross-platform | Hyper | 300.9 | 147.8 | 309.4 | GTK, libGLESv2, libvulkan |
+| Cross-platform | Tabby | 454.2 | 192.1 | 473.4 | GTK, libGLESv2, SwiftShader |
+| Windows | PuTTY | - | 1.6<sup>5</sup> | - | - |
+| Linux | Guake | - | 1.7<sup>5</sup> | - | - |
+| Linux | Konsole | - | 7.3<sup>5</sup> | - | - |
+| Cross-platform | Windows Terminal | - | 11.1<sup>5</sup> | - | - |
+| Cross-platform | Ghostty | - | 32.0<sup>5</sup> | - | - |
+| macOS | iTerm2 | - | 43.0<sup>5</sup> | - | - |
+| Windows | MobaXterm | - | 43.4<sup>5</sup> | - | - |
 | Windows | conhost.exe | - | - | - | - |
 | macOS | Terminal.app | - | - | - | - |
 | macOS | Warp | - | - | - | - |
 
-<sub><sup>1</sup> Measured on one Linux x86_64 machine, each terminal at a 100x30 grid with its own defaults. Memory is the unique resident footprint of the whole process tree - private pages plus each shared mapping counted once. Excludes the system graphics driver, which accelerated terminals also map and share with the compositor: 105 SilkTerm, 102 WezTerm, 70 kitty, 46 Tabby, 1 Hyper.</sub>
+<sub><sup>1</sup> Measured on one Linux x86_64 machine, each terminal at a 100x30 grid with its own defaults. Memory is the unique resident footprint of the whole process tree - private pages, plus each shared mapping counted once. Self-contained bundles count their extracted payload plus the system libraries they still borrow. Both columns leave out the graphics stack, and anything only it pulls in, because accelerated terminals share it with the compositor and every other accelerated program: 108 SilkTerm, 105 WezTerm, 73 kitty, 48 Tabby, 1 Hyper. Expect a few MiB of drift between runs, since libraries load on demand.</sub>
 
 <sub><sup>2</sup> Near-meaningless alone. A small executable usually means the code sits in shared libraries instead, and those are held in memory once however many programs map them - so anything built on a stack the desktop already loads costs less than its Bin+deps implies. SilkTerm links nothing but the C runtime, so its binary is the whole of it.</sub>
 
-<sub><sup>3</sup> Wallpaper, scrim, outline, cursor animation, smooth app scrolling, transparency and colour emoji all off.</sub>
+<sub><sup>3</sup> Shared libraries only, largest first. Whatever is linked into the executable lands in Raw bin instead - which is where the Electron terminals keep Chromium.</sub>
 
-<sub><sup>4</sup> Vendor's released artifact, not measured here, so not comparable with the measured columns. Blank: conhost.exe and Terminal.app ship inside the OS, Warp publishes no size, and nothing in the Windows or macOS rows runs on the measuring machine.</sub>
+<sub><sup>4</sup> Wallpaper, scrim, outline, cursor animation, smooth app scrolling, transparency and colour emoji all off.</sub>
+
+<sub><sup>5</sup> Vendor's released artifact, not measured here, so not comparable with the measured columns. Blank: conhost.exe and Terminal.app ship inside the OS, Warp publishes no size, and nothing in the Windows or macOS rows runs on the measuring machine.</sub>
 
 ## Getting and using
 
