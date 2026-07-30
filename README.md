@@ -41,7 +41,7 @@
 
 </div>
 
-SilkTerm is the only (contemporary) terminal emulator in the known universe that smooth-scrolls lines on output - for a silky-smooth UI you have see to believe.
+SilkTerm™ is the only (contemporary) terminal emulator in the known universe that smooth-scrolls lines on output - for a silky-smooth UI you have see to believe.
 
 It also has smooth cursor blink animation and movement.
 
@@ -76,11 +76,12 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 - [Size](#size)
 - [Getting and using](#getting-and-using)
 	- [Installing](#installing)
+		- [Direct](#direct)
 	- [Building from source](#building-from-source)
 	- [Configuration](#configuration)
 - [Contributing](#contributing)
 - [Support SilkTerm](#support-silkterm)
-- [Copyrights and licenses](#copyrights-and-licenses)
+- [Legal stuff](#legal-stuff)
 
 <!-- /TOC -->
 
@@ -352,11 +353,13 @@ Tell other terminal nerds on various socials how this has changed your life!
 - [Hacker News](news.ycombinator.com)
 - [r/unixporn](https://www.reddit.com/r/unixporn/)
 
-## Copyrights and licenses
+## Legal stuff
 
-[Alacritty](https://github.com/alacritty/alacritty) (which provides the basement plumbing) is dual-licensed under the [Apache License, Version 2.0](https://github.com/alacritty/alacritty/blob/master/LICENSE-APACHE) and [MIT License](https://github.com/alacritty/alacritty/blob/master/LICENSE-MIT).
+SilkTerm is build on the basic plumbing of [Alacritty](https://github.com/alacritty/alacritty), which is dual-licensed under the [Apache License, Version 2.0](https://github.com/alacritty/alacritty/blob/master/LICENSE-APACHE) and [MIT License](https://github.com/alacritty/alacritty/blob/master/LICENSE-MIT).
 
-SilkTerm's license is compatible with Alacritty's:
+SilkTerm's license is specifically compatible with Alacritty's:
 
-> Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)<br />
-> Licensed under the GNU General Public License v2.0 or later ([GPL-2.0-or-later](https://spdx.org/licenses/GPL-2.0-or-later.html)). No warranty.
+> Copyright © 2026 Jim Collier (CryptogID: ѳ6ᴚ℈𐀘𐇦ɛ𐊁¥Mﾏb϶Δ𐌞)<br />
+> Licensed under the [GNU General Public License v2.0 or later](https://spdx.org/licenses/GPL-2.0-or-later.html)<br /> SPDX-License-Identifier: `GPL-2.0-or-later` <br />
+> No warranty.<br />
+> SilkTerm™ is a [trademark](trademark.md) of Jim Collier.

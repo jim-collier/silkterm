@@ -5,9 +5,9 @@
 <!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
 
 <!-- TOC ignore:true -->
-# Smooth-scrolling terminal - Backlog
+# SilkTerm backlog
 
-This is a product backlog just for pre-v1.0.0 release. After that, bugs, features, and enhancements will be mananged in Github Issues, and/or [todo.md](todo.md)
+This is backlog just for pre-v1.0.0 release. After that, bugs, features, and enhancements will be mananged in Github Issues, and also probably an issue tracker defined in nano-git-db.
 
 <!-- TOC ignore:true -->
 ## Table of contents
@@ -15,7 +15,6 @@ This is a product backlog just for pre-v1.0.0 release. After that, bugs, feature
 
 - [Conventions](#conventions)
 - [Backlog](#backlog)
-	- [Non-code to-do](#non-code-to-do)
 	- [Bugs](#bugs)
 	- [New features and enhancements](#new-features-and-enhancements)
 	- [Done](#done)
@@ -30,7 +29,7 @@ This is a product backlog just for pre-v1.0.0 release. After that, bugs, feature
 
 ## Conventions
 
-In each section, items are listed approximately from newest to oldest.
+In each section, items are listed approximately from newest to oldest. Use a clipboard or macro manager to make inserting these emojis easier.
 
 | Icon | Status
 | :--: | :--
@@ -41,12 +40,6 @@ In each section, items are listed approximately from newest to oldest.
 | 🚫   | Canceled
 
 ## Backlog
-
-### Non-code to-do
-
-- 🔘 Enable GitHub Sponsors profile so the Sponsor link goes live.
-
-- 🔘 Fill in the FUNDING.yml handles.
 
 ### Bugs
 
@@ -1323,6 +1316,10 @@ In each section, items are listed approximately from newest to oldest.
 
 #### Done - New features and enhancements
 
+- ✅ Enable GitHub Sponsors profile so the Sponsor link goes live.
+
+- ✅ Fill in the FUNDING.yml handles.
+
 - ✅ Build packages when cicd.bash `--quick` isn't specified:
 	- ✅ .deb(s) + .rpm(s), per-architecture (cargo-deb / cargo-generate-rpm; metadata in source/Cargo.toml).
 	- ✅ Windows installer .exe(s), per-architecture (single self-contained NSIS setup; upgrades in place). The release binary links only system DLLs, so no runtime is bundled.
@@ -2202,17 +2199,19 @@ In each section, items are listed approximately from newest to oldest.
 
 ### Future and/or deferred
 
-- ✋ Build packages when cicd.bash `--quick` isn't specified:
-	- ✋ Deferred (no cross toolchain on this Linux box): macOS `.dmg` (needs an Apple SDK / osxcross - license-gated) and BSD packages (needs a FreeBSD sysroot). AppImage/Flatpak also future.
-
 - ✋ Feature: Minority Report mode: Borderless, transparent, changes perspective depending on screen location.
+	- Top feature once the backlog is mostly worked through. Nothing remotely like this exists.
+	- It would be highly impractical for actual long terminal sessions. But I'm pretty sure Alacritty's underlying plumbing doesn't prevent this. (Or, can be patched to do it.)
+
+- ✋ Build packages when cicd.bash `--quick` isn't specified:
+	- ✋ Deferred (no cross toolchain): macOS `.dmg` (needs an Apple SDK / osxcross - license-gated) and BSD packages (needs a FreeBSD sysroot). AppImage/Flatpak also future.
 
 - ✋ Config file: For each feature listed below, allow user to list programs (comma-delimited), that, when running, temporarily disable:
 	- Smooth scrolling. (Comma-delimited.)
 	- Smooth cursor movement and blink. (Comma-delimited.)
 	- Text scrim and outline
 		- Note: Should not affect existing still-visible text renedered before the program's output, or new output following the output from the affected program that is still visible. (Comma-delimited.)
-	- ✋ Deferred: the scrim disable is meant to apply *only to that program's own output within a pane* - NOT per-pane / per-tab / per-window - so surrounding text (the prompt above, the resumed prompt below, unrelated scrollback) keeps its scrim. That is the hard part: the scrim is a single window-global pass with no per-region concept. Honoring "just this command's output" for a normal-screen command like `ls` needs:
+	- ✋ Deferred: the scrim disable is meant to apply only to that program's own output within a pane, not per-pane / per-tab / per-window - so surrounding text (the prompt above, the resumed prompt below, unrelated scrollback) keeps its scrim. That is the hard part: the scrim is a single window-global pass with no per-region concept. Honoring "just this command's output" for a normal-screen command like `ls` needs:
 		- Tracking each command's output boundaries in the byte stream (start when the fg pgid becomes the command, end when it returns to the shell - the copy-on-output machinery),
 		- Mapping those logical lines onto current grid rows and re-mapping them every frame as things scroll and scrollback evicts, and
 		- Excluding exactly those cells from the coverage source. Fullscreen apps (vim/nano/less/htop) are the easy sub-case (the whole pane is their output), but the requested normal-screen case is not.
@@ -2284,14 +2283,27 @@ In each section, items are listed approximately from newest to oldest.
 
 ## Application name ideas
 
-- SilkTerm ["silk" is saturated but otherwise as a whole pretty unique, no world-language problems]
-- FlowTerm [already an existing terminal]
-- Velumi [many existing brands and .com]
-- FluxTerm ["flux" is very crowded]
-- GissaTerm [first actual project name but doesn't flow off the tongue well]
-- Glissando [sounds like music software]
-- Glidra [sounds like something on a drug store shelf]
-- Velumux
-- Velora, Seluvo, Movia, Eluvo, Sorilo, Volira, Lunavo, Novelo, Orivo, Silora, Avelo, Rovio, Meluvo, Zelio, Scrollo, Veloterm, Paneva, Tabelo, Fluxio, Termio, Velio, Siloterm, VelumiX, VelumiTab, VelumiPane, Velumux, Termumi, Termilo, Termora, Lumiterm, Termelo, Gliderm, Scrollio, Scrolumi, Veloflow, Glidia, Movira, Avelio, Levumi, Rivio, Aroyo, Fluvio, Lumora, Cursora, Paneo, Tabio
+Brainstorm and follow-on critiques:
 
-Decided: "SilkTerm". (Started as "GlissaTerm".)
+- SilkTerm
+	- "silk" is common but otherwise as a whole pretty unique. No apparent world-language problems according to Google.
+- FlowTerm
+	- Already an existing terminal
+- Velumi
+	- Many existing brands and .com
+- FluxTerm
+	- "Flux" is very crowded.
+- GissaTerm
+	- This project's first actual brand name, but doesn't flow off the tongue well. And sounds like some kind of incurable disease.
+- Glissando
+	- Sounds like music software. Probably is, being a real musical term.
+- Glidra
+	- Sounds like something on a drug store shelf, or an enemy of Godzilla.
+- Velumux
+	- Meh. Doesn't seem memorable.
+- Scrollo
+	- Kind of cool. Sounds like Bender's evil cousin.
+- Terminal Bro
+	- Just...no.
+
+**Decided: "SilkTerm"**. (Started as "GlissaTerm".)

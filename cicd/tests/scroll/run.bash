@@ -35,7 +35,7 @@
 ##		binary it launched (PID + /proc/PID/exe path checked), never by name.
 ##	History: At bottom of script.
 
-##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Copyright © 2026 Jim Collier (CryptogID: ѳ6ᴚ℈𐀘𐇦ɛ𐊁¥Mﾏb϶Δ𐌞)
 ##	Licensed under The MIT License (MIT). Full text at:
 ##		https://mit-license.org/
 ##	SPDX-License-Identifier: MIT
