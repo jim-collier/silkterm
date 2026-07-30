@@ -198,9 +198,10 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 
 <!-- termbench:begin -->
 
-| OS | Terminal | Ver | 1-byte<sup>1</sup> | 4-byte<sup>1</sup> | Speed score<sup>2</sup> | File size<sup>3</sup> (MiB) | File+ deps<sup>4</sup> (MiB) | Mem<sup>4</sup> (MiB) |
+| OS<sup>9</sup> | Terminal | Ver | 1-byte<sup>1</sup> | 4-byte<sup>1</sup> | Speed score<sup>2</sup> | File size<sup>3</sup> (MiB) | File+ deps<sup>4</sup> (MiB) | Mem<sup>4</sup> (MiB) |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | \[multi\] | $\textcolor{limegreen}{SilkTerm}$ plain<sup>6</sup> | 1.0.0 | 86.9 | 129.3 | **71.1** | **13.2** | **17.4** | **76.1** |
+| \[multi\] | Alacritty<sup>8</sup> | 0.15.1 | 79.8 | 129.1 | **68.4** | 8.5 | - | - |
 | \[multi\] | $\textcolor{limegreen}{SilkTerm}$ +candy<sup>5</sup> | 1.0.0 | 77.4 | 135.1 | **67.6** | **13.2** | **17.4** | **121.4** |
 | Linux | GNOME Terminal | 3.58.1 | 100.2 | 62.6 | **55.3** | 0.4 | 84.0 | 53.6 |
 | Linux | XFCE4 Terminal | 1.2.0 | 94.2 | 65.0 | **54.0** | 0.3 | 84.1 | 48.6 |
@@ -208,7 +209,6 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 | Linux | XTerm | 407 | 28.3 | 48.5 | **23.9** | 0.9 | 6.0 | 9.4 |
 | \[multi\] | kitty | 0.48.1 | 24.2 | 59.6 | **22.6** | 0.2 | 115.0 | 140.8 |
 | \[multi\] | WezTerm | 20240203 | 15.6 | 22.2 | **10.4** | 70.5 | 129.9 | 84.8 |
-| \[multi\] | Hyper | - | - | - | - | 147.8 | 300.9 | 309.4 |
 | \[multi\] | Tabby | 1.0.235 | 8.5 | 9.0 | **5.7** | 192.1 | 454.2 | 473.4 |
 | Win | PuTTY | - | - | - | - | 1.6<sup>7</sup> | - | - |
 | Linux | Guake | - | - | - | - | 1.7<sup>7</sup> | - | - |
@@ -217,6 +217,7 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 | \[multi\] | Ghostty | - | - | - | - | 32.0<sup>7</sup> | - | - |
 | macOS | iTerm2 | - | - | - | - | 43.0<sup>7</sup> | - | - |
 | Win | MobaXterm | - | - | - | - | 43.4<sup>7</sup> | - | - |
+| \[multi\] | Hyper | - | - | - | - | 147.8 | 300.9 | 309.4 |
 | Win | conhost.exe | - | - | - | - | - | - | - |
 | macOS | Terminal.app | - | - | - | - | - | - | - |
 | macOS | Warp | - | - | - | - | - | - | - |
@@ -236,6 +237,10 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 <sub><sup>6</sup> Wallpaper, scrim, outline, cursor animation, smooth app scrolling, transparency and colour emoji all off.</sub>
 
 <sub><sup>7</sup> Vendor's released artifact, not measured here, so not comparable with the measured columns. Blank: conhost.exe and Terminal.app ship inside the OS, Warp publishes no size, and nothing in the Windows or macOS rows runs on the measuring machine.</sub>
+
+<sub><sup>8</sup> SilkTerm uses Alacritty's terminal-emulation core, so the two share the parsing and grid work that this benchmark mostly measures - which is the honest explanation for why they land within a few percent of each other, and why both sit so far ahead of terminals that parse their own way. The size and memory cells are not filled in because they need a separate measuring pass.</sub>
+
+<sub><sup>9</sup> Every measured row comes from one machine, because the measuring rig is not neutral: rendering through software OpenGL roughly halves SilkTerm's throughput and going through VirtualGL still costs it about 14%, while terminals that draw on the CPU do not move at all. A table built from mixed rigs can therefore rank the wrong terminal first. These figures were taken on a headless Wayland compositor driving a discrete GPU (Linux, Ryzen host, GeForce RTX 3060 Ti), so nothing on the desktop competes for the card. Windows rows, when they are filled in, will come from a virtual machine on that same host with half the cores, less memory, some virtualization overhead and a lower-specification passed-through GPU (RTX 2060) - so they will not be directly comparable until they are calibrated against the terminals that run on both platforms.</sub>
 
 Run it yourself with [`utility/termbench.py`](utility/termbench.py) (`--quick` for a thirty-second version). It needs only Python 3 and a terminal, works on any emulator on any OS, and refreshes the speed columns above as more terminals are measured.
 
