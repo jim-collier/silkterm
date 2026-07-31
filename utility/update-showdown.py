@@ -7,10 +7,12 @@
 ##
 ##		Two ways in:
 ##
-##		THIS TERMINAL, any OS. Runs the throughput tool inside whatever terminal you
-##		are sitting in and writes its speed row. Needs nothing but Python 3 and a tty,
-##		so it is the only way to measure the terminals that exist solely on Windows or
-##		macOS. This is what you get if you name no terminal.
+##		THIS TERMINAL, any OS. Measures whatever terminal you are sitting in - speed,
+##		then size and memory - and writes its row. Needs nothing but Python 3 and a
+##		tty, so it is the only way to measure the terminals that exist solely on
+##		Windows or macOS. This is what you get if you name no terminal. Size the window
+##		to 100x30 first, or the size half will refuse; pass --label with the table's
+##		row name, or it will measure but not write.
 ##
 ##		THE RIGS, Linux only. Bring up a display, launch a named terminal into it, fit
 ##		it to a fixed grid, measure, tear down. Two of them:
@@ -31,7 +33,9 @@
 ##
 ##	Usage:
 ##		utility/update-showdown.py                      measure this terminal
-##		utility/update-showdown.py --label 'name'       ... naming it yourself
+##		utility/update-showdown.py --label 'MobaXterm'  ... and write that row
+##		utility/update-showdown.py --speed-only         ... speed alone, no 100x30 needed
+##		utility/update-showdown.py --any-size           ... size anyway, NOT comparable
 ##		utility/update-showdown.py --term alacritty     drive both rigs (Linux)
 ##		utility/update-showdown.py --all
 ##		utility/update-showdown.py --term kitty --size-only
@@ -68,6 +72,13 @@ TERMS = [
 ]
 
 LETTERBOX = "-" * 78
+
+#	The grids the two halves of the table are measured at. They differ on purpose - speed
+#	wants a realistic working grid, memory has to be pinned small and identical - so one
+#	window cannot serve both, and measuring at the wrong one quietly produces a figure that
+#	does not belong in the column.
+SPEED_GRID = (160, 42)
+SIZE_GRID = (100, 30)
 
 
 #•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -144,6 +155,37 @@ def run_capturing(cmd):
 	return lines
 
 
+def terminal_grid():
+	"""(columns, rows) of this window, or None."""
+	for stream in (sys.__stdout__, sys.__stderr__, sys.__stdin__):
+		try:
+			size = os.get_terminal_size(stream.fileno())
+			return (size.columns, size.lines)
+		except (OSError, ValueError, AttributeError):
+			continue
+	return None
+
+
+def speed_grid_ok(any_size):
+	"""The throughput tool measures whatever window it is given, so check here.
+
+	The rig fits every terminal to the same grid before measuring; on this path there is no
+	rig to do it, and a run at another size records a figure that looks fine and is not
+	comparable with the rows beside it.
+	"""
+	got = terminal_grid()
+	if got == SPEED_GRID:
+		return True
+	shown = "%dx%d" % got if got else "unknown"
+	msg = ("speed rows are measured at %dx%d and this window is %s"
+	       % (SPEED_GRID[0], SPEED_GRID[1], shown))
+	if any_size:
+		echo("WARNING: %s - the figure will not be comparable" % msg)
+		return True
+	echo("SKIPPED: %s - resize and run again" % msg)
+	return False
+
+
 def measure_here(reps, quick, label, write_readme):
 	"""Measure the terminal this is running inside."""
 	cmd = [sys.executable, os.path.join(INCLUDE, "termbench.py")]
@@ -159,6 +201,49 @@ def measure_here(reps, quick, label, write_readme):
 	return run_plain(cmd)
 
 
+def read_result(lines):
+	"""The rig's RESULT line as a dict of floats, or None."""
+	line = next((l for l in lines if l.startswith("RESULT ")), "")
+	if not line:
+		return None
+	got = dict(re.findall(r"(\w+)=([0-9.]+)", line))
+	if "filedeps" not in got or "mem" not in got:
+		return None
+	return {k: float(v) for k, v in got.items()}
+
+
+def write_size_row(row, file_deps, mem):
+	wrote = run_plain([sys.executable, os.path.join(INCLUDE, "showdown-readme.py"),
+	                   "--readme", README, "--terminal", row,
+	                   "--file-deps", "%.1f" % file_deps, "--mem", "%.1f" % mem])
+	if not wrote:
+		echo("WARNING: could not write the %s row" % row)
+	return wrote
+
+
+def size_here(label, write_readme, any_size):
+	"""Size and memory of the terminal this is running inside.
+
+	The row has to be named to be written. Guessing it from the executable would quietly
+	put a figure in the wrong row on the terminals that share a family name, and a wrong
+	row is worse than a missing one.
+	"""
+	cmd = [sys.executable, os.path.join(INCLUDE, "sizebench-classify.py"),
+	       "--here", "--summary"]
+	if any_size:
+		cmd.append("--any-size")
+	got = read_result(run_capturing(cmd))
+	if not got:
+		echo("WARNING: no size measurement came back")
+		return False
+	if not write_readme:
+		return True
+	if not label:
+		echo("NOTE: pass --label with the table's row name to write these into the README")
+		return True
+	return write_size_row(label, got["filedeps"], got["mem"])
+
+
 def measure_speed(key, row, reps, write_readme):
 	cmd = [os.path.join(INCLUDE, "termbench-run.bash"),
 	       "--term", key, "--reps", str(reps), "--label", row]
@@ -170,25 +255,14 @@ def measure_speed(key, row, reps, write_readme):
 
 def measure_size(key, row, write_readme):
 	"""File+deps and Mem in MiB, or None if the rig could not say."""
-	lines = run_capturing([os.path.join(INCLUDE, "sizebench-run.bash"), "--term", key])
-	result = next((l for l in lines if l.startswith("RESULT ")), "")
-	if not result:
-		echo("WARNING: no result from the size rig for %s" % key)
+	got = read_result(run_capturing(
+		[os.path.join(INCLUDE, "sizebench-run.bash"), "--term", key]))
+	if not got:
+		echo("WARNING: no usable result from the size rig for %s" % key)
 		return None
-
-	got = dict(re.findall(r"(\w+)=([0-9.]+)", result))
-	if "filedeps" not in got or "mem" not in got:
-		echo("WARNING: could not read the result line for %s" % key)
-		return None
-
-	file_deps, mem = float(got["filedeps"]), float(got["mem"])
 	if write_readme:
-		wrote = run_plain([sys.executable, os.path.join(INCLUDE, "showdown-readme.py"),
-		                   "--readme", README, "--terminal", row,
-		                   "--file-deps", "%.1f" % file_deps, "--mem", "%.1f" % mem])
-		if not wrote:
-			echo("WARNING: could not write the %s row" % row)
-	return file_deps, mem
+		write_size_row(row, got["filedeps"], got["mem"])
+	return got["filedeps"], got["mem"]
 
 
 #•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -227,6 +301,7 @@ def main(argv):
 	ap.add_argument("--size-only", action="store_true")
 	ap.add_argument("--reps", type=int, default=6, metavar="N")
 	ap.add_argument("--quick", action="store_true")
+	ap.add_argument("--any-size", action="store_true")
 	ap.add_argument("--label", default="", metavar="NAME")
 	ap.add_argument("--no-readme", action="store_true")
 	ap.add_argument("--list", action="store_true")
@@ -246,15 +321,36 @@ def main(argv):
 
 	write_readme = not args.no_readme
 
-	#	Naming no terminal means the one measurement that needs no rig, which is also the
-	#	only one available off Linux.
+	#	Naming no terminal means the measurements that need no rig, which are also the only
+	#	ones available off Linux.
 	if not keys:
-		if args.size_only:
-			die("size and memory need a named terminal and a rig")
-		if args.quick:
-			echo("NOTE: a quick run is aggregated separately and never reaches the table")
-		section("Speed: this terminal")
-		ok = measure_here(args.reps, args.quick, args.label, write_readme)
+		do_speed = not args.size_only
+		do_size = not args.speed_only
+
+		#	One window cannot be both grids, so asking for both means doing whichever this
+		#	window is already set up for rather than silently taking one of them wrong.
+		if do_speed and do_size and not args.any_size:
+			got = terminal_grid()
+			if got == SPEED_GRID:
+				do_size = False
+			elif got == SIZE_GRID:
+				do_speed = False
+			else:
+				die("this window is %s. Speed is measured at %dx%d and size and memory at "
+				    "%dx%d, so set it to one of those and run again"
+				    % ("%dx%d" % got if got else "not a terminal",
+				       SPEED_GRID[0], SPEED_GRID[1], SIZE_GRID[0], SIZE_GRID[1]))
+
+		ok = True
+		if do_speed:
+			if args.quick:
+				echo("NOTE: a quick run is aggregated separately and never reaches the table")
+			section("Speed: this terminal")
+			ok = speed_grid_ok(args.any_size) and measure_here(
+				args.reps, args.quick, args.label, write_readme)
+		if do_size:
+			section("Size and memory: this terminal")
+			ok = size_here(args.label, write_readme, args.any_size) and ok
 		echo_clean()
 		echo("README updated - check the diff before committing"
 		     if write_readme and ok else "nothing written")
