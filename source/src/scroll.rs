@@ -73,6 +73,15 @@ impl Scroll {
 		self.app_off = 0.0;
 	}
 
+	// Freeze catch-up (hidden tab shown, minimized window restored): land at rest
+	// instantly. Anything left easing was invisible while frozen, and the pending
+	// backlog must not ease in - that is the bounce class.
+	pub fn snap(&mut self) {
+		self.visual = self.target;
+		self.ramp = 0.0;
+		self.app_off = 0.0;
+	}
+
 	// Current alt-screen slide offset in lines (added to the render's vertical
 	// offset; 0 except briefly after an app repaint-scroll).
 	pub fn app_offset(&self) -> f32 {
@@ -414,6 +423,25 @@ mod tests {
 		s.cancel_app_scroll();
 		assert_eq!(s.app_offset(), 0.0);
 		assert!(!s.animating());
+	}
+
+	#[test]
+	fn snap_lands_at_rest_instantly() {
+		// unfreeze catch-up: pending output backlog and any slide drop at once
+		let mut s = Scroll::new();
+		s.set_max(50.0);
+		s.nudge_output(12.0);
+		s.app_scroll(4.0);
+		assert!(s.animating());
+		s.snap();
+		assert!(!s.animating());
+		assert_eq!(s.app_offset(), 0.0);
+		assert_eq!(s.desired_offset(), 0);
+		// scrolled back: snap holds the position, kills only the motion
+		s.wheel(20.0);
+		s.snap();
+		assert!(!s.animating());
+		assert_eq!(s.desired_offset(), 20);
 	}
 
 	#[test]
