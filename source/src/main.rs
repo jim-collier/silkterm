@@ -90,6 +90,20 @@ fn main() -> anyhow::Result<()> {
 		config::set_config_override(path.clone());
 	}
 
+	// Start over from the shipped defaults: move the current config aside before
+	// anything reads it, so the load below writes a fresh one. Runs after --config
+	// so the two combine (reset THAT file).
+	if cli.reset_config {
+		match config::reset_config() {
+			Some(backup) => println!(
+				"{}: previous config saved as {}",
+				config::APP_NAME,
+				backup.display()
+			),
+			None => println!("{}: no config to reset", config::APP_NAME),
+		}
+	}
+
 	// Launched with no layout arguments? Fall back to a config-defined command
 	// line (real CLI arguments override it entirely). A bare --config still takes
 	// the fallback - it picks WHICH config, so that config's command_line applies.

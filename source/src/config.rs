@@ -195,7 +195,7 @@ impl Default for Settings {
 			wallpaper_raw: String::new(),
 			wallpaper_default: true,
 			wallpaper_folder: None,
-			wallpaper_rotate_random: false,
+			wallpaper_rotate_random: true,
 			wallpaper_rotate_interval_s: 0.0,
 			wallpaper_opacity: 0.10, // image visibility relative to bg color
 			wallpaper_fit: Fit::Stretch,
@@ -216,7 +216,7 @@ impl Default for Settings {
 			cursor_scrim: false,
 			cursor_outline: true,
 			cursor_size_height: 100.0, // full height
-			cursor_size_width: 25.0,   // ~quarter-width bar
+			cursor_size_width: 100.0,  // full width - a block
 			cursor_animation: "pulse_vertical".to_string(),
 			cursor_animation_resume_s: 2.0,
 			cursor_animation_idle_stop_s: 60.0,
@@ -886,6 +886,14 @@ fn resolve(raw: RawConfig) -> Settings {
 	// Default enabled, but a config that predates the key and set an explicit
 	// font_family keeps that font (infer off) instead of being overridden.
 	let use_system_font = raw.use_system_font.unwrap_or(raw.font_family.is_none());
+	// A pinned wallpaper is a deliberate choice, so it suppresses the auto-detected
+	// rotation folder; without one, a stocked wallpapers/ dir rotates by itself.
+	let pinned_wallpaper = raw
+		.wallpaper
+		.as_deref()
+		.is_some_and(|value| !value.trim().is_empty());
+	let folder = resolve_wallpaper_folder(raw.wallpaper_folder)
+		.or_else(|| (!pinned_wallpaper).then(default_wallpaper_folder).flatten());
 	Settings {
 		use_system_font,
 		// absent = follow the face toggle, so configs predating the split (and an
@@ -922,9 +930,14 @@ fn resolve(raw: RawConfig) -> Settings {
 		wallpaper_raw: raw.wallpaper.clone().unwrap_or_default(),
 		wallpaper: resolve_wallpaper(raw.wallpaper),
 		wallpaper_default: raw.wallpaper_default.unwrap_or(d.wallpaper_default),
-		wallpaper_folder: resolve_wallpaper_folder(raw.wallpaper_folder),
-		wallpaper_rotate_random: raw.wallpaper_rotate_random.unwrap_or(false),
-		wallpaper_rotate_interval_s: raw.wallpaper_rotate_interval_s.unwrap_or(0.0).max(0.0),
+		wallpaper_folder: folder,
+		wallpaper_rotate_random: raw
+			.wallpaper_rotate_random
+			.unwrap_or(d.wallpaper_rotate_random),
+		wallpaper_rotate_interval_s: raw
+			.wallpaper_rotate_interval_s
+			.unwrap_or(d.wallpaper_rotate_interval_s)
+			.max(0.0),
 		wallpaper_opacity: raw
 			.wallpaper_opacity
 			.unwrap_or(d.wallpaper_opacity)
@@ -1149,6 +1162,77 @@ pub fn resolve_wallpaper_folder(explicit: Option<String>) -> Option<PathBuf> {
 	path.is_dir().then_some(path)
 }
 
+// Enough kept resets that nobody hits the ceiling in practice, low enough that a
+// script looping on --reset-config stops piling up files instead of forever.
+const BACKUPS_MAX: u32 = 99;
+
+// Move the config aside so the next load writes a fresh one from the template.
+// The old file is kept, not deleted, under the first free `.bak` name - so
+// resetting twice never overwrites the copy from the first time. Returns where
+// it went, or None if there was nothing to move.
+pub fn reset_config() -> Option<PathBuf> {
+	let path = config_path()?;
+	if !path.exists() {
+		return None;
+	}
+	let name = path.file_name()?.to_string_lossy().into_owned();
+	let backup = (1u32..=BACKUPS_MAX)
+		.map(|n| match n {
+			1 => path.with_file_name(format!("{name}.bak")),
+			_ => path.with_file_name(format!("{name}.bak{n}")),
+		})
+		.find(|candidate| !candidate.exists());
+	let Some(backup) = backup else {
+		eprintln!(
+			"{APP_NAME}: {BACKUPS_MAX} config backups already in {}; clear some out first",
+			path.display()
+		);
+		return None;
+	};
+	match std::fs::rename(&path, &backup) {
+		Ok(()) => Some(backup),
+		Err(e) => {
+			eprintln!("{APP_NAME}: could not reset {}: {e}", path.display());
+			None
+		}
+	}
+}
+
+// Where the wallpaper shuffle keeps its recently-shown list. Beside the config,
+// so a --config override gets its own history instead of sharing one.
+pub fn wallpaper_history_path() -> Option<PathBuf> {
+	Some(config_path()?.parent()?.join(".wallpaper-history"))
+}
+
+// Image files we're willing to load as a wallpaper. One list, so the folder
+// auto-detect below and the rotation scan can't disagree about what counts.
+pub fn is_image_file(path: &std::path::Path) -> bool {
+	path.extension()
+		.and_then(|ext| ext.to_str())
+		.is_some_and(|ext| {
+			matches!(
+				ext.to_ascii_lowercase().as_str(),
+				"png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif" | "tiff" | "tif"
+			)
+		})
+}
+
+// The rotation folder to use when none is configured: the conventional
+// wallpapers/ dir (or the legacy backgrounds/) under the config dir, but only
+// once it actually holds an image - an absent or empty dir just means no
+// rotation, silently, since the user never asked for one.
+fn default_wallpaper_folder() -> Option<PathBuf> {
+	let dir = config_path()?.parent()?.to_path_buf();
+	["wallpapers", "backgrounds"]
+		.into_iter()
+		.map(|sub| dir.join(sub))
+		.find(|sub| {
+			std::fs::read_dir(sub).is_ok_and(|mut entries| {
+				entries.any(|entry| entry.is_ok_and(|e| is_image_file(&e.path())))
+			})
+		})
+}
+
 // A config file's settings as (key, original-line). Nested settings are written
 // in dotted form, so a key like "colors.focus" needs no table context.
 // Recognizes both active (`k: ...`) and commented (`# k: ...`) lines.
@@ -1254,6 +1338,18 @@ const CONFIG_REMOVED: &[&str] = &[
 	"cursor_animation_input",
 ];
 
+// Defaults that changed, as (key, the value that used to be the default). An
+// existing config carries the template's commented lines verbatim, so after a
+// default changes those lines quietly describe the old behaviour - a line
+// reading `# cursor_size_width: 25` next to a cursor that is now a block. A
+// commented line matching the outgoing default is refreshed to the current one.
+// An ACTIVE line is never touched: that value is the user's own choice, and it
+// keeps working exactly as they set it.
+const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
+	("cursor_size_width", "25"),
+	("wallpaper_rotate_random", "false"),
+];
+
 // Migrate an existing config in place across program updates: rename keys whose
 // name changed, drop keys that no longer exist. Preserves the user's values,
 // comments, and layout (line-based, like backfill). New keys are added by
@@ -1336,6 +1432,34 @@ fn refresh_font_stack(line: &str) -> Option<String> {
 		.then(|| format!("{head}: \"{DEFAULT_FONT_STACK}\""))
 }
 
+// Everything after a settings line's first colon, trimmed - a trailing `##`
+// comment included, deliberately, so the exact-match test below refuses any line
+// the user has written a note on.
+fn line_setting_value(line: &str) -> Option<&str> {
+	Some(line.split_once(':')?.1.trim())
+}
+
+// Bring a commented line still echoing a superseded default up to the template's
+// current line for that key. Only a bare, exactly-matching value migrates, so an
+// edited value - or one trailing a note - stays as the user wrote it.
+fn refresh_superseded_default(line: &str) -> Option<String> {
+	if !line.trim_start().starts_with('#') {
+		return None; // active: the user's own value, leave it alone
+	}
+	let key = line_setting_key(line)?;
+	let old = SUPERSEDED_DEFAULTS
+		.iter()
+		.find_map(|(name, old)| (*name == key).then_some(*old))?;
+	if line_setting_value(line)? != old {
+		return None;
+	}
+	setting_lines(DEFAULT_CONFIG)
+		.into_iter()
+		.find(|(name, _)| name == key)
+		.map(|(_, template)| template)
+		.filter(|template| template != line)
+}
+
 // The rename/remove transform, as a pure fn (testable). Returns Some(new text)
 // only if something changed.
 fn migrate_config_text(text: &str) -> Option<String> {
@@ -1375,6 +1499,10 @@ fn migrate_config_text(text: &str) -> Option<String> {
 			},
 			None => line.to_string(),
 		};
+		if let Some(refreshed) = refresh_superseded_default(&kept) {
+			kept = refreshed;
+			changed = true;
+		}
 		if line_setting_key(&kept) == Some("font_family") && active(&kept) {
 			if let Some(refreshed) = refresh_font_stack(&kept) {
 				kept = refreshed;
@@ -1596,11 +1724,14 @@ opacity: 0.95
 ## above and no wallpaper_folder below). Set false for a plain terminal.
 # wallpaper_default: true
 
-## Rotate the wallpaper through a folder of images (overrides wallpaper
-## while set). Path is absolute or relative to this directory. Rotate randomly
-## instead of filename order, and every N seconds (0 = pick one at startup only).
+## Rotate the wallpaper through a folder of images (overrides wallpaper while
+## set). Path is absolute or relative to this directory. Left commented, a
+## wallpapers/ dir here with images in it rotates on its own - unless `wallpaper`
+## above pins one, or one is given on the command line for that run.
+## Random picks avoid whatever came up recently, so runs feel varied rather than
+## repeating; set false for plain filename order. Interval 0 = one per launch.
 # wallpaper_folder: "wallpapers"
-# wallpaper_rotate_random: false
+# wallpaper_rotate_random: true
 # wallpaper_rotate_interval_s: 0.0
 
 ## Image visibility relative to the background color (independent of `opacity`
@@ -1648,11 +1779,11 @@ opacity: 0.95
 ##=============================================================================
 
 ## Cursor size, as a percent of the cell: height grows from the bottom, width from
-## the left. Together they make any shape: a thin bar (height 100 / width 25), an
-## underline (15 / 100), or a block (100 / 100). Used when the app doesn't set its
+## the left. Together they make any shape: a block (100 / 100), a thin bar
+## (100 / 25), or an underline (15 / 100). Used when the app doesn't set its
 ## own; alt-screen apps (vim, less) still control theirs.
 # cursor_size_height: 100
-# cursor_size_width: 25
+# cursor_size_width: 100
 
 ## Cursor animation: "none" (steady), "phase" (smooth fade), or a pulse that
 ## grows/shrinks each cycle - "pulse_vertical", "pulse_horizontal", "pulse_both".
@@ -1933,6 +2064,11 @@ mod tests {
 		assert!(d.cursor_outline, "cursor outline defaults on");
 		assert_eq!(d.wallpaper_blur, 10.0);
 		assert_eq!(d.wallpaper_opacity, 0.10);
+		// a block cursor: full height AND full width
+		assert_eq!(d.cursor_size_height, 100.0);
+		assert_eq!(d.cursor_size_width, 100.0);
+		// rotation, when a folder turns up, varies instead of pinning image one
+		assert!(d.wallpaper_rotate_random, "rotation defaults to shuffled");
 	}
 
 	// Scrim function + the five falloff curves resolve; unknown values fall to the
@@ -2084,6 +2220,33 @@ mod tests {
 		assert!(
 			out.contains("wallpaper_contrast_mask_size: 0.3"),
 			"longest-name key kept: {out:?}"
+		);
+	}
+
+	// A commented line still carrying a superseded default is a stale echo of an
+	// older template, so it gets refreshed. An ACTIVE line with the same value is
+	// the user's own choice and must survive untouched - that distinction is the
+	// whole point, since refreshing it would silently change their terminal.
+	#[test]
+	fn stale_commented_defaults_refresh_active_ones_do_not() {
+		let out =
+			migrate_config_text("# cursor_size_width: 25\n# wallpaper_rotate_random: false\n")
+				.expect("stale commented defaults should refresh");
+		assert!(
+			out.contains("# cursor_size_width: 100"),
+			"cursor default refreshed: {out:?}"
+		);
+		assert!(
+			out.contains("# wallpaper_rotate_random: true"),
+			"rotation default refreshed: {out:?}"
+		);
+
+		// active = deliberate; and an edited commented value is a note, not an echo
+		let text = "cursor_size_width: 25\n# wallpaper_rotate_random: false ## mine\n";
+		assert!(
+			migrate_config_text(text).is_none_or(|out| out.contains("cursor_size_width: 25")
+				&& out.contains("# wallpaper_rotate_random: false")),
+			"an active or edited value must be left alone"
 		);
 	}
 

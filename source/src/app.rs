@@ -736,6 +736,8 @@ struct State {
 	wp_images: Vec<PathBuf>, // wallpaper-rotation folder contents (empty = rotation off)
 	wp_index: usize,         // which of wp_images is currently shown
 	wp_next: Option<Instant>, // when to rotate next (None = no timer / startup-only)
+	wp_recent: Vec<String>,  // filenames the shuffle won't repeat yet, newest first
+	wp_locked: bool,         // a command-line wallpaper owns this session; don't rotate
 	vram_next: Instant,      // next GL VRAM sentinel probe (VT-switch content-loss detection)
 	vramloss_test: bool,     // SILK_VRAMLOSS one-shot: fake a loss to exercise the rebuild path
 }
@@ -1493,11 +1495,15 @@ impl State {
 		self.apply_new_settings(&orig, edited, true);
 	}
 
-	// Wallpaper rotation: if wallpaper_folder is configured, scan it, show the
-	// first (or a random) image now, and arm the timer if an interval is set.
-	// skip_initial keeps a CLI-specified wallpaper on screen at launch (still scans
-	// + arms the timer, so scheduled rotation proceeds once the interval elapses).
-	fn init_wallpaper_rotation(&mut self, skip_initial: bool) {
+	// Wallpaper rotation: if a wallpaper folder is set (or auto-detected), scan it,
+	// show one now, and arm the timer if an interval is set. `lock` means a
+	// wallpaper came in on the command line - that is a deliberate choice for this
+	// session, so rotation is left out of it entirely.
+	fn init_wallpaper_rotation(&mut self, lock: bool) {
+		if lock {
+			self.wp_locked = true;
+			return;
+		}
 		let settings = config::settings();
 		let Some(dir) = &settings.wallpaper_folder else {
 			return;
@@ -1511,20 +1517,10 @@ impl State {
 			);
 			return;
 		}
-		if skip_initial {
-			// Leave the CLI wallpaper showing; queue the folder so the first timer
-			// tick lands on its natural first image (order) or a random one.
-			self.wp_index = self.wp_images.len() - 1;
-			let ivl = settings.wallpaper_rotate_interval_s;
-			self.wp_next = (ivl > 0.0).then(|| Instant::now() + Duration::from_secs_f32(ivl));
-			return;
-		}
-		self.wp_index = if settings.wallpaper_rotate_random {
-			next_wallpaper_index(self.wp_images.len(), 0, true, time_entropy())
-		} else {
-			0
-		};
+		self.wp_recent = load_wallpaper_history();
+		self.wp_index = self.pick_wallpaper(0);
 		let first = self.wp_images[self.wp_index].clone();
+		self.remember_wallpaper(self.wp_index);
 		self.set_wallpaper(Some(first));
 		let ivl = settings.wallpaper_rotate_interval_s;
 		if ivl > 0.0 {
@@ -1532,25 +1528,68 @@ impl State {
 		}
 	}
 
-	// Rotate to the next image (order or random) and re-arm the timer.
+	// Which image to show next: shuffled, or the one after `current` in filename
+	// order. Recent picks are matched by name, so the history survives the folder
+	// gaining or losing files between launches.
+	fn pick_wallpaper(&self, current: usize) -> usize {
+		if !config::settings().wallpaper_rotate_random {
+			return next_wallpaper_index(self.wp_images.len(), current);
+		}
+		let recent: Vec<usize> = self
+			.wp_recent
+			.iter()
+			.filter_map(|name| {
+				self.wp_images
+					.iter()
+					.position(|path| path.file_name().is_some_and(|f| f == name.as_str()))
+			})
+			.collect();
+		shuffle_pick(self.wp_images.len(), &recent, time_entropy())
+	}
+
+	// Record a pick as the newest entry and flush the list, so the next launch
+	// shuffles around it too.
+	fn remember_wallpaper(&mut self, index: usize) {
+		let Some(name) = self
+			.wp_images
+			.get(index)
+			.and_then(|path| path.file_name())
+			.map(|name| name.to_string_lossy().into_owned())
+		else {
+			return;
+		};
+		self.wp_recent.retain(|seen| *seen != name);
+		self.wp_recent.insert(0, name);
+		self.wp_recent.truncate(WP_AVOID_MAX);
+		if let Some(path) = config::wallpaper_history_path() {
+			let mut text = self.wp_recent.join("\n");
+			text.push('\n');
+			let _ = std::fs::write(path, text);
+		}
+	}
+
+	// Rotate to the next image and re-arm the timer.
 	fn advance_wallpaper(&mut self) {
-		if self.wp_images.len() < 2 {
-			// one image (or none): nothing to rotate to; keep the timer off
+		if self.wp_locked || self.wp_images.len() < 2 {
+			// locked, or one image (or none): nothing to rotate to; drop the timer
 			self.wp_next = None;
 			return;
 		}
-		let settings = config::settings();
-		self.wp_index = next_wallpaper_index(
-			self.wp_images.len(),
-			self.wp_index,
-			settings.wallpaper_rotate_random,
-			time_entropy(),
-		);
+		self.wp_index = self.pick_wallpaper(self.wp_index);
 		let next = self.wp_images[self.wp_index].clone();
+		self.remember_wallpaper(self.wp_index);
 		self.set_wallpaper(Some(next));
 		self.dirty = true;
-		let ivl = settings.wallpaper_rotate_interval_s;
+		let ivl = config::settings().wallpaper_rotate_interval_s;
 		self.wp_next = (ivl > 0.0).then(|| Instant::now() + Duration::from_secs_f32(ivl));
+	}
+
+	// A wallpaper set from the command line while running: honour it for the rest
+	// of the session and stop rotating, without touching the stored settings.
+	fn lock_wallpaper(&mut self, image: Option<std::path::PathBuf>) {
+		self.wp_locked = true;
+		self.wp_next = None;
+		self.set_wallpaper(image);
 	}
 
 	// Rebuild the text context (cell metrics, chrome, pane buffers) for a new
@@ -3019,37 +3058,60 @@ fn open_url(url: &str) {
 // Files in `dir` that look like images the bg loader can decode, sorted by name
 // (so "in order" rotation is stable and predictable).
 fn list_folder_images(dir: &std::path::Path) -> Vec<PathBuf> {
-	const EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif", "tiff", "tif"];
 	let Ok(entries) = std::fs::read_dir(dir) else {
 		return Vec::new();
 	};
 	let mut images: Vec<PathBuf> = entries
 		.flatten()
 		.map(|e| e.path())
-		.filter(|p| {
-			p.is_file()
-				&& p.extension()
-					.and_then(|e| e.to_str())
-					.is_some_and(|e| EXTS.contains(&e.to_ascii_lowercase().as_str()))
-		})
+		.filter(|p| p.is_file() && config::is_image_file(p))
 		.collect();
 	images.sort();
 	images
 }
 
-// Next image index: wraps in order, or jumps to a different one at random. A
-// non-zero `entropy` picks the random step so consecutive rotations differ.
-fn next_wallpaper_index(len: usize, current: usize, random: bool, entropy: u64) -> usize {
+// Next image index in filename order, wrapping.
+fn next_wallpaper_index(len: usize, current: usize) -> usize {
 	if len < 2 {
 		return 0;
 	}
-	if random {
-		// step in [1, len-1] guarantees a different index than `current`
-		let step = 1 + (entropy % (len as u64 - 1)) as usize;
-		(current + step) % len
-	} else {
-		(current + 1) % len
+	(current + 1) % len
+}
+
+// How many recently-shown images the shuffle holds back at most.
+const WP_AVOID_MAX: usize = 32;
+
+// Pick the next image the way a music player shuffles: at random, but never one
+// of the last few shown. Straight uniform draws repeat often enough that people
+// read them as broken, so holding back roughly half the folder (capped) buys the
+// feel of randomness while staying a shuffle rather than a fixed cycle.
+// `recent` is newest-first; entries past the hold-back window are ignored.
+fn shuffle_pick(len: usize, recent: &[usize], entropy: u64) -> usize {
+	if len < 2 {
+		return 0;
 	}
+	let hold = (len / 2).clamp(1, WP_AVOID_MAX).min(len - 1);
+	let avoid = &recent[..recent.len().min(hold)];
+	// hold <= len-1, so at least one index always survives
+	let candidates: Vec<usize> = (0..len).filter(|i| !avoid.contains(i)).collect();
+	candidates[(entropy % candidates.len() as u64) as usize]
+}
+
+// The recently-shown list, newest first. Stored as filenames, not indices, so
+// adding or removing images doesn't shift what "recent" means.
+fn load_wallpaper_history() -> Vec<String> {
+	let Some(path) = config::wallpaper_history_path() else {
+		return Vec::new();
+	};
+	let Ok(text) = std::fs::read_to_string(path) else {
+		return Vec::new();
+	};
+	text.lines()
+		.map(str::trim)
+		.filter(|line| !line.is_empty())
+		.map(String::from)
+		.take(WP_AVOID_MAX)
+		.collect()
 }
 
 // Cheap non-crypto entropy for random rotation, from the wall clock. Not used
@@ -3383,12 +3445,14 @@ impl ApplicationHandler<UserEvent> for App {
 			wp_images: Vec::new(),
 			wp_index: 0,
 			wp_next: None,
+			wp_recent: Vec::new(),
+			wp_locked: false,
 			vram_next: Instant::now() + VRAM_CHECK_IVL,
 			vramloss_test: std::env::var_os("SILK_VRAMLOSS").is_some(),
 		});
-		// A wallpaper given on the command line (--background-image, incl. an explicit
-		// clear) is an intentional per-session override; don't clobber it with the
-		// startup rotation pick. The timer still runs, so scheduled rotation proceeds.
+		// A wallpaper given on the command line (--wallpaper-file, incl. an explicit
+		// clear) owns this session: rotation is skipped entirely, whatever the config
+		// says, and the stored rotation settings are left untouched.
 		let cli_wallpaper = self.cli.win.style.wallpaper_img.is_some();
 		if let Some(state) = self.state.as_mut() {
 			state.init_wallpaper_rotation(cli_wallpaper);
@@ -3454,7 +3518,7 @@ impl ApplicationHandler<UserEvent> for App {
 				state.bell_flash = 1.0;
 				state.dirty = true;
 			}
-			UserEvent::SetWallpaper(image) => state.set_wallpaper(image),
+			UserEvent::SetWallpaper(image) => state.lock_wallpaper(image),
 			UserEvent::ReloadSettings => state.reload_config(),
 			UserEvent::VtSwitched => {
 				// Return to our console (the watcher signals only returns).
@@ -4536,7 +4600,7 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-	use super::{accel_at, list_folder_images, next_wallpaper_index};
+	use super::{accel_at, list_folder_images, next_wallpaper_index, shuffle_pick};
 
 	#[test]
 	fn accel_prefers_exact_case_then_falls_back() {
@@ -4549,25 +4613,55 @@ mod tests {
 
 	#[test]
 	fn wallpaper_order_wraps() {
-		assert_eq!(next_wallpaper_index(3, 0, false, 0), 1);
-		assert_eq!(next_wallpaper_index(3, 2, false, 0), 0); // wraps
-		assert_eq!(next_wallpaper_index(1, 0, false, 0), 0); // single image: stays put
-		assert_eq!(next_wallpaper_index(0, 0, false, 0), 0); // empty: safe
+		assert_eq!(next_wallpaper_index(3, 0), 1);
+		assert_eq!(next_wallpaper_index(3, 2), 0); // wraps
+		assert_eq!(next_wallpaper_index(1, 0), 0); // single image: stays put
+		assert_eq!(next_wallpaper_index(0, 0), 0); // empty: safe
 	}
 
 	#[test]
-	fn wallpaper_random_always_differs() {
-		// whatever the entropy, a random pick lands on a different index
-		for entropy in 0..100u64 {
-			for current in 0..5usize {
-				let next = next_wallpaper_index(5, current, true, entropy);
-				assert_ne!(
-					next, current,
-					"random rotation must not repeat the same image"
-				);
+	fn shuffle_never_repeats_a_recent_image() {
+		// whatever the entropy, the pick avoids the held-back window and stays in range
+		for entropy in 0..200u64 {
+			for recent in [
+				vec![],
+				vec![0],
+				vec![3, 1],
+				vec![4, 2, 0], // deeper than the window: extra entries are ignored
+			] {
+				let next = shuffle_pick(5, &recent, entropy);
 				assert!(next < 5);
+				// 5 images hold back 2, so the two newest must not come back
+				for held in recent.iter().take(2) {
+					assert_ne!(next, *held, "shuffle repeated a recent image");
+				}
 			}
 		}
+	}
+
+	#[test]
+	fn shuffle_survives_tiny_folders() {
+		// two images alternate; one (or none) has nowhere else to go
+		for entropy in 0..20u64 {
+			assert_eq!(shuffle_pick(2, &[0], entropy), 1);
+			assert_eq!(shuffle_pick(2, &[1], entropy), 0);
+			assert_eq!(shuffle_pick(1, &[0], entropy), 0);
+			assert_eq!(shuffle_pick(0, &[], entropy), 0);
+		}
+	}
+
+	#[test]
+	fn shuffle_still_reaches_every_image() {
+		// holding back recent picks must not strand any image permanently
+		let mut seen = std::collections::HashSet::new();
+		let mut recent: Vec<usize> = Vec::new();
+		for entropy in 0..500u64 {
+			let next = shuffle_pick(6, &recent, entropy);
+			seen.insert(next);
+			recent.insert(0, next);
+			recent.truncate(super::WP_AVOID_MAX);
+		}
+		assert_eq!(seen.len(), 6, "some image was never picked");
 	}
 
 	#[test]

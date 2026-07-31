@@ -103,6 +103,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ Hotkeys to increase/decrease font size feature:
 	- Done: Ctrl+= / Ctrl+- step the session zoom; Ctrl+0 resets to the configured (or system) size. View menu has Increase/Decrease/Reset items.
 
+- 🔘 Need scrollbars. (Disable in Settings.) And thicker than many modern desktops.
+
 - 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
 	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
 		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
@@ -1346,6 +1348,20 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
 
 #### Done - New features and enhancements
+
+- ✅ New defaults:
+	- ✅ Block cursor, without disturbing the existing cursor animation defaults.
+		- Done: the cursor is now full-cell, height and width both 100%. Animation is untouched - it still pulses and slides exactly as before.
+	- ✅ Rotate wallpapers at each launch when the default folder has images in it.
+		- Done: with nothing configured, a `wallpapers` folder beside the config (or the legacy `backgrounds`) rotates on its own once it holds at least one image. An absent or empty folder quietly means no rotation, and nothing is ever written into the config.
+		- Picks are shuffled the way a music player shuffles - random, but never one of the recently shown - so a run of launches feels varied instead of repeating itself. The recent list sits in `.wallpaper-history` beside the config. Set `wallpaper_rotate_random: false` for plain filename order.
+		- A wallpaper pinned with `wallpaper:` still wins; the folder only steps in when nothing is pinned.
+	- ✅ A wallpaper named on the command line ignores rotation entirely, for that session only - whether given at launch or live.
+		- Done: `--wallpaper-file` at launch, or `--wallpaper` sent to a running window, owns the wallpaper for the rest of that session and stops rotation there. The stored rotation settings are left as they are, so the next ordinary launch rotates again.
+	- ✅ `--reset-config` flag.
+		- Done: moves the config aside so it can't load, and a fresh one is written from the template on the way up. The old file is kept as `config.shcl.bak` (`.bak2`, `.bak3` and so on when repeated), never deleted. Combines with `--config`, which picks which file gets reset.
+	- Changing a default leaves an existing config describing the old behavior, so a commented line still carrying a superseded default is now brought up to date - `# cursor_size_width: 25` becomes `# cursor_size_width: 100`. A value you uncommented and set yourself is never touched, nor is one you left a note beside.
+	- Verified: the cursor draws as a full cell (a quarter-width bar when set back to 25); six launches running landed on differing images with recent ones held back; a command-line wallpaper left the history untouched; resetting twice kept both earlier files.
 
 - ✅ Enable GitHub Sponsors profile so the Sponsor link goes live.
 
