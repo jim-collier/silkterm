@@ -1349,6 +1349,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
+- ✅ The cursor animation pause is for typing, not for a command's output.
+	- ✅ Output holds the cursor still only while it is actually writing. The moment it stops - the prompt coming back - the animation picks up again, with none of the delay that follows typing.
+	- ✅ Typing is unchanged: the cursor still settles for the configured second after the last keystroke.
+		- Told apart by timing: a cursor move that lands right after a keystroke is that keystroke's echo, anything later is the program's own doing. Pressing Enter no longer keeps a whole build's worth of output classed as "you typing".
+	- Verified: with the delay deliberately set to eight seconds, output stopping leaves the cursor drawing without a break, while typing in the same window goes quiet for seven straight seconds and then resumes.
+
 - ✅ Cursor animation pause: one second, and no wait at all on refocus.
 	- ✅ The pause after typing stops now lasts a second, instead of two.
 	- ✅ Getting the window focus back - or moving to another tab or pane - resumes the animation straight away, from the top of the cycle, rather than sitting out that second.

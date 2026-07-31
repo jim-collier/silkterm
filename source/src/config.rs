@@ -144,7 +144,7 @@ pub struct Settings {
 	pub cursor_size_height: f32, // cursor height, 1..100% of the cell (from the bottom)
 	pub cursor_size_width: f32, // cursor width, 1..100% of the cell (from the left)
 	pub cursor_animation: String, // "none" | "phase" | "pulse_vertical" | "pulse_horizontal" | "pulse_both"
-	pub cursor_animation_resume_s: f32, // idle seconds after typing before the animation resumes
+	pub cursor_animation_resume_s: f32, // idle seconds after typing before the animation resumes (output does not wait this out)
 	pub cursor_animation_idle_stop_s: f32, // idle seconds until the animation stops (parked at full); 0 = never
 	pub cursor_blink_rate_ms: f32,         // one animation cycle (ms)
 	pub columns: usize,                    // initial window grid size (used when !remember_size)
@@ -1793,8 +1793,10 @@ opacity: 0.95
 
 ## While you type, the animation glides to the cursor's full size and holds
 ## there; it resumes this many seconds after input goes idle. Pausing and
-## resuming always happen at full size, so the cursor never jumps. Refocusing
-## the window, tab, or pane resumes at once, without this delay.
+## resuming always happen at full size, so the cursor never jumps. This delay is
+## for typing only - a command's output holds the cursor still while it writes,
+## then hands it straight back when the prompt returns. Refocusing the window,
+## tab, or pane also resumes at once.
 # cursor_animation_resume_s: 1
 
 ## After this many seconds with no input the animation stops entirely, parked at
