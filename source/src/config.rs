@@ -218,7 +218,7 @@ impl Default for Settings {
 			cursor_size_height: 100.0, // full height
 			cursor_size_width: 100.0,  // full width - a block
 			cursor_animation: "pulse_vertical".to_string(),
-			cursor_animation_resume_s: 2.0,
+			cursor_animation_resume_s: 1.0,
 			cursor_animation_idle_stop_s: 60.0,
 			cursor_blink_rate_ms: 500.0,
 			columns: 160,
@@ -1348,6 +1348,7 @@ const CONFIG_REMOVED: &[&str] = &[
 const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	("cursor_size_width", "25"),
 	("wallpaper_rotate_random", "false"),
+	("cursor_animation_resume_s", "2"),
 ];
 
 // Migrate an existing config in place across program updates: rename keys whose
@@ -1792,8 +1793,9 @@ opacity: 0.95
 
 ## While you type, the animation glides to the cursor's full size and holds
 ## there; it resumes this many seconds after input goes idle. Pausing and
-## resuming always happen at full size, so the cursor never jumps.
-# cursor_animation_resume_s: 2
+## resuming always happen at full size, so the cursor never jumps. Refocusing
+## the window, tab, or pane resumes at once, without this delay.
+# cursor_animation_resume_s: 1
 
 ## After this many seconds with no input the animation stops entirely, parked at
 ## full size, so an idle window costs nothing. Typing - or refocusing the
@@ -2069,6 +2071,7 @@ mod tests {
 		assert_eq!(d.cursor_size_width, 100.0);
 		// rotation, when a folder turns up, varies instead of pinning image one
 		assert!(d.wallpaper_rotate_random, "rotation defaults to shuffled");
+		assert_eq!(d.cursor_animation_resume_s, 1.0);
 	}
 
 	// Scrim function + the five falloff curves resolve; unknown values fall to the

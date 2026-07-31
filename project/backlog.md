@@ -1349,6 +1349,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
+- ✅ Cursor animation pause: one second, and no wait at all on refocus.
+	- ✅ The pause after typing stops now lasts a second, instead of two.
+	- ✅ Getting the window focus back - or moving to another tab or pane - resumes the animation straight away, from the top of the cycle, rather than sitting out that second.
+		- The pause still parks the cursor at its full size and the resume still starts there, so nothing about the size jumps either way.
+	- Verified: with the delay deliberately set long, typing goes quiet for the whole delay and then resumes, while refocusing in the same window is drawing again within half a second. An old config carrying the previous two-second default is brought up to date, unless the line was uncommented or annotated.
+
 - ✅ New defaults:
 	- ✅ Block cursor, without disturbing the existing cursor animation defaults.
 		- Done: the cursor is now full-cell, height and width both 100%. Animation is untouched - it still pulses and slides exactly as before.

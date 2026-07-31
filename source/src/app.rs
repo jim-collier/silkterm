@@ -1718,9 +1718,9 @@ impl State {
 		self.last_frame = now;
 		let cfg = config::settings(); // one snapshot per frame, not per use/pane
 
-		// Refocus counts as cursor activity: regaining the window, switching tab,
-		// or moving pane focus pokes the focused pane so a long-idle-parked
-		// cursor animation resumes (from full, after the resume delay).
+		// Regaining the window, switching tab, or moving pane focus pokes the
+		// focused pane: its cursor animation resumes immediately, from the top of
+		// the cycle - no resume delay, that one is for input.
 		let focus_sig = (self.tabs.active, self.tabs.cur().focused, self.focused);
 		if self.focused && self.cursor_focus_sig != Some(focus_sig) {
 			let id = self.tabs.cur().focused;
