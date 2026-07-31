@@ -103,7 +103,7 @@ write_alacritty_config(){
 ##	SilkTerm with every optional effect off. Only the overrides are written; the loader
 ##	backfills the rest, so this cannot go stale as new settings are added.
 write_plain_config(){
-	cp "${_here}/termbench-plain.toml" "${_work}/plain.toml"
+	cp "${_here}/termbench-plain.shcl" "${_work}/plain.shcl"
 }
 
 
@@ -242,7 +242,7 @@ case "${termKey}" in
 		"${_repo}/target/release/silkterm" --shell "${sceneCmd}" > "${_work}/term.log" 2>&1 & ;;
 	silkplain)
 		write_plain_config
-		"${_repo}/target/release/silkterm" --config "${_work}/plain.toml" --shell "${sceneCmd}" > "${_work}/term.log" 2>&1 & ;;
+		"${_repo}/target/release/silkterm" --config "${_work}/plain.shcl" --shell "${sceneCmd}" > "${_work}/term.log" 2>&1 & ;;
 	alacritty)
 		write_alacritty_config
 		"$(find_bin alacritty || fDie "alacritty not found - see showdown-README.md")" \

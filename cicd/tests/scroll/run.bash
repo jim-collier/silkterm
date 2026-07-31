@@ -106,18 +106,18 @@ fi
 
 ## Throwaway config + temp workspace (nothing personal leaks; cleaned on exit).
 work="$(mktemp -d "${TMPDIR:-/tmp}/silk-scroll.XXXXXX")"
-cfg="${work}/config.toml"
-cat >"$cfg" <<-'TOML'
+cfg="${work}/config.shcl"
+cat >"$cfg" <<-'SHCL'
 	## Throwaway config for the scroll harness - not a user config.
-	smooth_scroll_apps = true
-	scroll_tau_ms = 120
-	transparent_background = false
-	text_scrim = false
-	background_image = ""
-	columns = 100
-	rows = 34
-	cursor_animation = "none"
-TOML
+	smooth_scroll_apps: true
+	scroll_tau_ms: 120
+	transparent_background: false
+	text_scrim: false
+	wallpaper_default: false
+	columns: 100
+	rows: 34
+	cursor_animation: none
+SHCL
 
 run_dir="/tmp/cicd-gui-headless-${USER}"
 auth="${run_dir}/Xauthority-${display#:}"
