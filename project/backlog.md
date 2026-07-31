@@ -286,7 +286,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - 🛠️ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- 🔘 Add Windows support.
 
-- 🛠️ Epic 1n6fydv: Reduce CPU and GPU resource usage
+- ✅ Epic 1n6fydv: Reduce CPU and GPU resource usage
+	- All six tiers landed (3.2 measured and deferred as not worth it). End state: an idle focused window costs a fraction of a percent once the cursor parks; unfocused, minimized, and hidden surfaces cost nothing.
 	- Supersedes the old "get idle CPU usage way down" item.
 	- Where it started: one idle window with nothing running costs roughly a tenth of a CPU core and a fifth of a mid-range GPU. A pulsing cursor keeps a 30fps loop alive, and every one of those frames rebuilds the entire scene - two full text-shaping passes plus the whole scrim pipeline - just to move one small rectangle.
 	- Tier 1 - stop doing the work. Biggest win, smallest change.
@@ -297,7 +298,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- ✅ 1.3 Together those give a real cursor-only frame: one rectangle, one small coverage pass, one composite, one main pass. Should take idle down to low single digits.
 			- Done: idle went from 26.4% of a core to 14.5% at the same frame rate, and most of what remains is the test rig's own frame readback rather than anything the program does. Verified pixel-identical against the previous build across a static screen, a post-idle content update, and split panes with two tabs.
 	- Tier 2 - need fewer frames.
-		- ✋ 2.1 Stop animating when the window is unfocused. Deferred - a broader change in this area is coming, and this would be folded into it.
+		- ✅ 2.1 Stop animating when the window is unfocused. Done by 6.2 - an unfocused window's panes all park, so no frames flow.
 		- ✅ 2.2 Stop rendering while the window is occluded. The signal is already available and currently only used for the video-memory probe.
 			- Done: a fully hidden window waits instead of drawing, and catches up in one frame when it comes back. Not every window manager reports this, so nothing else depends on it.
 		- 🚫 2.3 Lower the idle cursor frame rate. Canceled - 30fps stays.
@@ -325,13 +326,16 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- ✅ 5.4 A parked cursor draws NO frames. Before this, "pause" still ran 30fps just to show a static cursor.
 			- Measured: parked idle ~0.2% of a core, vs ~14% with the pulse running.
 		- IMPORTANT, never regress this: pausing always waits for the cursor's largest point in the cycle, and resuming always starts from that same point. Took many hard iterations to get right. The machine is PauseState in pane.rs, unit-tested.
-	- Tier 6 - freeze what can't be seen. 🔘 Not started. Wants a fresh context + /effort high.
-		- 🔘 6.1 Freeze rendering (never PTY reading) of minimized windows and hidden tabs. Catch up instantly on switch.
-			- Unfreeze must hard-cut (rebaseline the scroll detectors), never ease - or the bounce class comes back.
-		- 🔘 6.2 Pause cursor blinking in every pane except the focused pane of the active window.
-			- Same largest-point pause/resume rules as Tier 5.
-		- 🔘 6.3 Idle panes should touch no memory per frame, so the OS can page them out. Mostly falls out of 6.1/6.2.
-		- Put each freeze behind its own source const, so a surprise side-effect rolls back one line.
+	- Tier 6 - freeze what can't be seen.
+		- ✅ 6.1 Freeze rendering (never PTY reading) of minimized windows and hidden tabs. Catch up instantly on switch.
+			- Minimized: no frames at all. Measured with busy output: ~83% of a core visible, ~0% minimized, full rate again on restore.
+			- Hidden tabs were already frozen by design; the missing half was the catch-up.
+			- Unfreeze hard-cuts (rebaselines the scroll detectors), never eases - or the bounce class comes back. Verified: 2000 lines into a hidden tab, switch lands at the bottom with zero motion.
+		- ✅ 6.2 Pause cursor blinking in every pane except the focused pane of the active window.
+			- Same largest-point pause/resume rules as Tier 5, through the same machinery.
+			- Measured: idle pulse ~6% of a core focused, ~0% unfocused; resumes after the usual delay on refocus.
+		- ✅ 6.3 Idle panes touch no memory per frame, so the OS can page them out. Fell out of 6.1/6.2 - frozen and parked panes run zero frames.
+		- Each freeze is behind its own source const (FREEZE_MINIMIZED in app.rs, FREEZE_UNFOCUSED_BLINK in pane.rs), so a surprise side-effect rolls back one line.
 		- Dropped: "freeze inactive windows unless they have active output" - folded into 6.2; a visible window with output should keep drawing.
 	- Not doing: hard-forking the terminal engine for performance. It costs nothing at idle, and a fork would mean owning the escape-sequence parser, grid reflow and the Windows console layer - the riskiest code with the least bearing on speed. The one contention problem worth fixing turned out to need no changes to it at all (4.1).
 

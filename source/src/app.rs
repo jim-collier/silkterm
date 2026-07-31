@@ -565,6 +565,10 @@ impl Tabs {
 const MENU_BAR_VPAD: f32 = 6.0;
 const TAB_BAR_VPAD: f32 = 6.0; // text is metric-centered in the bar; descenders clear via that
 const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to settle)
+// Freeze knob (one line rolls it back): a minimized window builds no frames -
+// PTY reading never stops - and catches up in one hard-cut frame on restore.
+// Covers WMs that never report Occluded for an iconified window.
+const FREEZE_MINIMIZED: bool = true;
 const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-size settle time before hitting disk
 const VRAM_CHECK_IVL: Duration = Duration::from_secs(2); // GL sentinel probe tick (VT-switch texture loss)
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
@@ -726,11 +730,14 @@ struct State {
 	// frame reuses it instead of re-rendering and re-blurring the whole window.
 	scrim_sig: Option<u64>,
 	occluded: bool, // window fully hidden: skip rendering entirely until it comes back
+	// last cycle's frozen state (occluded or minimized); the false edge is the
+	// unfreeze - one dirty catch-up frame, hard-cut for panes with pending output
+	was_hidden: bool,
 	wp_images: Vec<PathBuf>, // wallpaper-rotation folder contents (empty = rotation off)
-	wp_index: usize, // which of wp_images is currently shown
+	wp_index: usize,         // which of wp_images is currently shown
 	wp_next: Option<Instant>, // when to rotate next (None = no timer / startup-only)
-	vram_next: Instant, // next GL VRAM sentinel probe (VT-switch content-loss detection)
-	vramloss_test: bool, // SILK_VRAMLOSS one-shot: fake a loss to exercise the rebuild path
+	vram_next: Instant,      // next GL VRAM sentinel probe (VT-switch content-loss detection)
+	vramloss_test: bool,     // SILK_VRAMLOSS one-shot: fake a loss to exercise the rebuild path
 }
 
 impl State {
@@ -1399,6 +1406,7 @@ impl State {
 		if self.tabs.list.len() <= 1 {
 			return; // keep at least one tab; close the window to exit
 		}
+		let showed = idx == self.tabs.active;
 		self.tabs.list.remove(idx);
 		if self.tabs.active > idx {
 			self.tabs.active -= 1; // a tab before the active one went away
@@ -1406,8 +1414,25 @@ impl State {
 		if self.tabs.active >= self.tabs.list.len() {
 			self.tabs.active = self.tabs.list.len() - 1;
 		}
+		if showed {
+			self.freeze_catchup(); // closing the shown tab reveals a frozen one
+		}
 		self.relayout_all(); // if back to 1 tab, the bar hides and panes grow
 		self.update_title();
+		self.dirty = true;
+	}
+
+	// A frozen surface coming back on screen: hidden tabs never build, and a
+	// minimized/occluded window builds nothing - so the reveal is one dirty
+	// catch-up frame, hard-cut for any pane with output pending (easing the
+	// buffered backlog in is the bounce class). Panes with nothing pending keep
+	// their state untouched.
+	fn freeze_catchup(&mut self) {
+		for pane in self.tabs.cur_mut().panes.values_mut() {
+			if pane.content_dirty {
+				pane.hard_cut();
+			}
+		}
 		self.dirty = true;
 	}
 
@@ -1700,6 +1725,8 @@ impl State {
 		let mut scrim_cells: Vec<RectInstance> = Vec::new();
 
 		self.text.color_frame();
+		let win_focused = self.focused;
+		let active_pane = self.tabs.cur().focused;
 		for (id, pane) in &mut self.tabs.cur_mut().panes {
 			pane.scroll.advance(dt);
 			let rect = pane.rect;
@@ -1708,7 +1735,13 @@ impl State {
 			// cause (bell flash, chrome/UI change) - idle siblings reuse their
 			// cached frame instead of re-shaping at the busy pane's rate
 			let force = force_rebuild || pane.content_dirty || pane.scroll.animating();
-			let draw = pane.build(&mut self.text, dt, bell, force);
+			let draw = pane.build(
+				&mut self.text,
+				dt,
+				bell,
+				force,
+				win_focused && *id == active_pane,
+			);
 			if pane.scroll.animating() || pane.cursor_animating {
 				animating = true;
 			}
@@ -3346,6 +3379,7 @@ impl ApplicationHandler<UserEvent> for App {
 			text_sig: None,
 			scrim_sig: None,
 			occluded: false,
+			was_hidden: false,
 			wp_images: Vec::new(),
 			wp_index: 0,
 			wp_next: None,
@@ -3638,7 +3672,10 @@ impl ApplicationHandler<UserEvent> for App {
 						if x >= cb.x {
 							state.tab_close_arm = Some(i);
 						} else {
-							state.tabs.active = i;
+							if state.tabs.active != i {
+								state.tabs.active = i;
+								state.freeze_catchup();
+							}
 							state.update_title();
 						}
 						state.dirty = true;
@@ -4089,9 +4126,10 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 						Key::Named(NamedKey::PageUp) => {
 							if shift {
-								state.tabs.move_active(false);
+								state.tabs.move_active(false); // same tab follows - nothing was frozen
 							} else {
 								state.tabs.prev();
+								state.freeze_catchup();
 							}
 							state.update_title();
 							state.dirty = true;
@@ -4102,6 +4140,7 @@ impl ApplicationHandler<UserEvent> for App {
 								state.tabs.move_active(true);
 							} else {
 								state.tabs.next();
+								state.freeze_catchup();
 							}
 							state.update_title();
 							state.dirty = true;
@@ -4355,10 +4394,18 @@ impl ApplicationHandler<UserEvent> for App {
 		}
 		let reveal_wake = (!state.revealed).then_some(state.reveal_deadline);
 		// Fully hidden window: nobody can see the frame, so don't build one. PTY
-		// output still lands in the grid and `dirty` is set on unocclude, so the
-		// catch-up is one frame. Not every WM reports this - it's a bonus, not a
-		// mechanism anything else depends on.
-		let flow = if state.occluded && state.revealed {
+		// reading never stops - output lands in the grid and the panes' flags wait.
+		// Occluded covers WMs that report it; is_minimized() covers iconified
+		// windows where they don't. The unfreeze edge is one dirty catch-up frame,
+		// hard-cut for panes with output pending (never eased in - bounce class).
+		let minimized =
+			FREEZE_MINIMIZED && state.revealed && state.window.is_minimized().unwrap_or(false);
+		let hidden = (state.occluded || minimized) && state.revealed;
+		if state.was_hidden && !hidden {
+			state.freeze_catchup();
+		}
+		state.was_hidden = hidden;
+		let flow = if hidden {
 			ControlFlow::Wait
 		} else if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
 			// UI/chrome changes and the bell force ALL panes to re-shape; fresh

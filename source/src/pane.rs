@@ -53,6 +53,10 @@ const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
 // Escape hatch: true restores the old always-running animation (the removed
 // cursor_animation_input = "continuous"), bypassing the pause/park machinery.
 const CURSOR_ANIM_CONTINUOUS: bool = false;
+// Freeze knob (one line rolls it back): only the focused pane of the focused
+// window animates its cursor; every other pane parks at full size (same
+// glide-to-full / resume-from-full machinery, so the size stays continuous).
+const FREEZE_UNFOCUSED_BLINK: bool = true;
 const BELL_BRIGHTEN: f32 = 0.6; // max lerp of text toward white at the bell flash peak
 
 // Alt-screen app-scroll tunables.
@@ -441,11 +445,15 @@ impl PauseState {
 		idle_stop_s: f32,
 		moved: bool,
 		idle_t: f32,
+		blocked: bool,
 	) -> f32 {
 		// past the long-idle threshold the animation stops outright: park (via
-		// the same glide, so it stops at full) and stay parked until activity
+		// the same glide, so it stops at full) and stay parked until activity.
+		// A blocked pane (not the focused pane of the focused window) parks the
+		// same way and holds until it is active again - nothing times it out.
 		let idle_stopped = idle_stop_s > 0.0 && idle_t >= idle_stop_s;
-		if (moved || idle_stopped) && !self.active {
+		let held = idle_stopped || blocked;
+		if (moved || held) && !self.active {
 			self.active = true;
 			self.parked = false;
 			self.hold_t = 0.0;
@@ -463,7 +471,7 @@ impl PauseState {
 		// activity - a cursor move, or a window/tab/pane refocus poke - resets
 		// idle_t, so a long-idle park resumes the resume delay after it.
 		self.hold_t += wall_dt;
-		if !idle_stopped && self.hold_t >= resume_s && idle_t >= resume_s {
+		if !held && self.hold_t >= resume_s && idle_t >= resume_s {
 			self.active = false;
 			return full_phase * period + dt; // resume the cycle from full
 		}
@@ -624,6 +632,10 @@ pub struct Pane {
 	// Previous frame's alt-screen state. An enter/exit is an instant screen swap,
 	// not a scroll - detected here to hard-cut it instead of animating the swap.
 	last_alt: bool,
+	// Set by hard_cut() when this pane comes back from a freeze (hidden tab,
+	// minimized window): the next build treats the gap like an alt-screen swap -
+	// rebaseline the scroll detectors, suppress the nudge, land instantly.
+	pending_cut: bool,
 	// Fallback glyphs (not in the primary mono font) pulled out of `buffer` and
 	// drawn one-per-cell so their font advance can't shift the row. `glyph_cache`
 	// holds each distinct glyph shaped once (keyed by char + bold + italic);
@@ -715,6 +727,7 @@ impl Pane {
 		dt: f32,
 		bell: f32,
 		force_rebuild: bool,
+		active: bool, // the focused pane of the focused window (cursor animates only there)
 	) -> PaneDraw {
 		let cell_w = ctx.cell_w;
 		let cell_h = ctx.cell_h;
@@ -752,7 +765,10 @@ impl Pane {
 		// in. `gesture_active` (an alt-scroll slide already easing) freezes the band
 		// sizes across a continuous scroll - see the app-scroll block.
 		let alt = self.mode.contains(TermMode::ALT_SCREEN);
-		let alt_transition = alt != self.last_alt;
+		// a freeze catch-up (pending_cut) is the same shape as the screen swap:
+		// the grid moved arbitrarily far while nothing was built, so every
+		// detector must rebaseline and nothing may ease
+		let cut = alt != self.last_alt || std::mem::take(&mut self.pending_cut);
 		self.last_alt = alt;
 		let gesture_active = self.scroll.app_offset() != 0.0;
 
@@ -772,11 +788,11 @@ impl Pane {
 		let grew = history.saturating_sub(self.last_history);
 		self.last_history = history;
 		self.scroll.set_max(history as f32);
-		if alt_transition {
-			// hard-cut the screen swap: drop any in-flight slide and rebaseline the
-			// row fingerprints (and the styled snapshot the strip captures from) to
-			// the NEW screen, so neither the output-scroll probe nor the app-scroll
-			// probe diffs against the old screen next frame.
+		if cut {
+			// hard-cut the screen swap (or freeze catch-up): drop any in-flight
+			// slide and rebaseline the row fingerprints (and the styled snapshot
+			// the strip captures from) to the NEW screen, so neither the
+			// output-scroll probe nor the app-scroll probe diffs across the gap.
 			self.scroll.cancel_app_scroll();
 			self.strip.clear();
 			self.last_rows = if settings.smooth_scroll_apps {
@@ -817,7 +833,7 @@ impl Pane {
 		} else {
 			0
 		};
-		if advanced > 0 && follow && !alt_transition {
+		if advanced > 0 && follow && !cut {
 			self.scroll.nudge_output(advanced as f32);
 		}
 
@@ -847,10 +863,7 @@ impl Pane {
 		// that eased scroll and slide it AGAIN - a spurious extra down-then-up on every
 		// output line (the shell redraws its prompt right after the scroll).
 		let (snap_frame, slide_frame) = app_scroll_frames(alt, follow, grew, full);
-		if settings.smooth_scroll_apps
-			&& snap_frame
-			&& !alt_transition
-			&& (force_rebuild || !self.text_built)
+		if settings.smooth_scroll_apps && snap_frame && !cut && (force_rebuild || !self.text_built)
 		{
 			let mut cur_cells = std::mem::take(&mut self.cells_scratch);
 			let rows = snapshot_rows(
@@ -1042,6 +1055,7 @@ impl Pane {
 				voff,
 				dt,
 				settings.cursor,
+				active,
 			);
 			let bg = std::mem::take(&mut self.last_draw.bg);
 			// the fast path is a pure cursor frame - never taken while a slide eases
@@ -1243,6 +1257,7 @@ impl Pane {
 			voff_of(cursor_pt.line.0 + display_offset),
 			dt,
 			settings.cursor,
+			active,
 		);
 		// the cursor rides the sliding region too - clamp it like the bg rects
 		// (only when it's a region row; nano parks it in the status band on ^W)
@@ -1432,6 +1447,15 @@ impl Pane {
 		self.cursor_step_at = Some(std::time::Instant::now());
 	}
 
+	// Coming back from a freeze (hidden tab shown, minimized window restored):
+	// everything that happened meanwhile lands as one instant cut. Snap any
+	// leftover motion now and flag the next build to rebaseline its scroll
+	// detectors instead of easing across the gap - that ease is the bounce class.
+	pub fn hard_cut(&mut self) {
+		self.pending_cut = true;
+		self.scroll.snap();
+	}
+
 	// The cursor quad: visual column eased toward the target (slides as you type,
 	// snaps on a row change), fade-blink alpha when idle, or None when hidden /
 	// scrolled into history. Cheap; called every frame (incl. the cursor-only fast
@@ -1452,6 +1476,7 @@ impl Pane {
 		voff: f32,
 		dt: f32,
 		cursor_rgb: [u8; 3],
+		active: bool,
 	) -> Option<RectInstance> {
 		let cursor_screen_row = cursor_pt.line.0 + display_offset;
 		let shown = following
@@ -1510,6 +1535,9 @@ impl Pane {
 		if anim_on && !CURSOR_ANIM_CONTINUOUS {
 			let resume_s = settings.cursor_animation_resume_s;
 			let idle_stop_s = settings.cursor_animation_idle_stop_s;
+			// only the focused pane of the focused window animates; everyone else
+			// parks at full and holds until they're the active pane again
+			let blocked = FREEZE_UNFOCUSED_BLINK && !active;
 			self.blink_t = self.cursor_pause.advance(
 				self.blink_t,
 				dt,
@@ -1520,12 +1548,14 @@ impl Pane {
 				idle_stop_s,
 				moved,
 				self.cursor_idle_t,
+				blocked,
 			);
 			parked = self.cursor_pause.active && self.cursor_pause.parked;
 			let idle_stopped = idle_stop_s > 0.0 && self.cursor_idle_t >= idle_stop_s;
-			if parked && !idle_stopped {
+			if parked && !idle_stopped && !blocked {
 				// input pause: schedule the wake that resumes the cycle (a
-				// long-idle stop has no timed resume - activity ends it)
+				// long-idle stop or a blocked pane has no timed resume -
+				// activity / becoming active again ends it)
 				let wait = (resume_s - self.cursor_idle_t)
 					.max(resume_s - self.cursor_pause.hold_t)
 					.max(0.0);
@@ -2312,6 +2342,7 @@ fn spawn_pane(
 		slide_static_top: 0,
 		slide_sh: 0.0,
 		last_alt: false,
+		pending_cut: false,
 		glyph_cache: HashMap::new(),
 		glyphs: Vec::new(),
 		emoji: Vec::new(),
@@ -3163,14 +3194,14 @@ mod tests {
 		let mut st = PauseState::default();
 		// input mid-shrink: the cycle keeps running forward at normal speed - the
 		// very next frame is a plain +dt, not a jump to full
-		let mut t = st.advance(0.7, 0.01, 0.01, period, 0.5, timeout, 0.0, true, 0.0);
+		let mut t = st.advance(0.7, 0.01, 0.01, period, 0.5, timeout, 0.0, true, 0.0, false);
 		assert!((t - 0.71).abs() < 1e-6);
 		assert!(st.active && !st.parked);
 		// runs on around the cycle and parks exactly at the full-size phase, even
 		// though the idle timeout expires long before it gets there
 		let mut idle = 0.01;
 		for _ in 0..200 {
-			t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, idle);
+			t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, idle, false);
 			idle += 0.01;
 			if st.parked {
 				break;
@@ -3179,14 +3210,14 @@ mod tests {
 		assert!(st.parked);
 		assert!(((t / period).fract() - 0.5).abs() < 1e-6);
 		// typing while parked keeps it parked at full
-		t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, true, 0.0);
+		t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, true, 0.0, false);
 		assert!(st.parked && ((t / period).fract() - 0.5).abs() < 1e-6);
 		// holds through the timeout after the last input, then resumes from full:
 		// the first resumed frame is full_phase + dt, so the size is continuous
 		idle = 0.01;
 		let mut resumed = None;
 		for _ in 0..200 {
-			t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, idle);
+			t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, idle, false);
 			idle += 0.01;
 			if !st.active {
 				resumed = Some(t);
@@ -3196,7 +3227,7 @@ mod tests {
 		let t = resumed.expect("should resume");
 		assert!((t - (0.5 * period + 0.01)).abs() < 1e-6);
 		// and once resumed it just accumulates
-		let t2 = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, 1.0);
+		let t2 = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, 1.0, false);
 		assert!((t2 - (t + 0.01)).abs() < 1e-6);
 	}
 
@@ -3206,15 +3237,17 @@ mod tests {
 		let timeout = 0.35;
 		let mut st = PauseState::default();
 		// start already near full so it parks on the first step
-		let mut t = st.advance(0.49, 0.02, 0.02, period, 0.5, timeout, 0.0, true, 0.0);
+		let mut t = st.advance(
+			0.49, 0.02, 0.02, period, 0.5, timeout, 0.0, true, 0.0, false,
+		);
 		assert!(st.parked);
 		// idle long past the timeout, but the hold itself must also last it: a
 		// glide that ate the idle window still gets a real pause at full
-		t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, 10.0);
+		t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, 10.0, false);
 		assert!(st.active && ((t / period).fract() - 0.5).abs() < 1e-6);
 		// conversely, held long enough but input still recent keeps it parked
 		for _ in 0..100 {
-			t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, 0.1);
+			t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, 0.1, false);
 		}
 		assert!(st.active && ((t / period).fract() - 0.5).abs() < 1e-6);
 	}
@@ -3226,11 +3259,13 @@ mod tests {
 		let mut st = PauseState::default();
 		// running free, idle crosses the stop threshold with no input: an episode
 		// starts anyway and the glide carries it to the full-size phase
-		let mut t = st.advance(0.7, 0.01, 0.01, period, 0.5, resume, stop, false, stop);
+		let mut t = st.advance(
+			0.7, 0.01, 0.01, period, 0.5, resume, stop, false, stop, false,
+		);
 		assert!(st.active && !st.parked);
 		let mut idle = stop;
 		for _ in 0..200 {
-			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, idle);
+			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, idle, false);
 			idle += 0.01;
 			if st.parked {
 				break;
@@ -3249,16 +3284,17 @@ mod tests {
 			stop,
 			false,
 			idle + 300.0,
+			false,
 		);
 		assert!(st.active && ((t / period).fract() - 0.5).abs() < 1e-6);
 		// activity (keystroke or refocus poke) resets idle_t: still parked for
 		// the resume delay, then the cycle resumes from full - never mid-cycle
-		t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, 0.0);
+		t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, 0.0, false);
 		assert!(st.active && ((t / period).fract() - 0.5).abs() < 1e-6);
 		let mut idle = 0.01;
 		let mut resumed = None;
 		for _ in 0..200 {
-			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, idle);
+			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, idle, false);
 			idle += 0.01;
 			if !st.active {
 				resumed = Some(t);
@@ -3266,6 +3302,44 @@ mod tests {
 			}
 		}
 		let t = resumed.expect("should resume after the delay");
+		assert!((t - (0.5 * period + 0.01)).abs() < 1e-6);
+	}
+
+	#[test]
+	fn pause_state_blocked_parks_at_full_until_unblocked() {
+		let period = 1.0;
+		let (resume, stop) = (0.35, 60.0);
+		let mut st = PauseState::default();
+		// pane loses active status mid-cycle: an episode starts with no input and
+		// the glide carries it to the full-size phase (never a snap)
+		let mut t = st.advance(0.7, 0.01, 0.01, period, 0.5, resume, stop, false, 0.0, true);
+		assert!(st.active && !st.parked);
+		for _ in 0..200 {
+			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, 0.0, true);
+			if st.parked {
+				break;
+			}
+		}
+		assert!(st.parked && ((t / period).fract() - 0.5).abs() < 1e-6);
+		// held indefinitely while blocked: output moving the cursor (moved) and
+		// long holds satisfy nothing - only becoming active again can end it
+		for _ in 0..300 {
+			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, true, 5.0, true);
+		}
+		assert!(st.active && st.parked && ((t / period).fract() - 0.5).abs() < 1e-6);
+		// unblocked (focused again, poke reset idle_t): parked through the resume
+		// delay, then the cycle resumes from full - size continuous throughout
+		let mut idle = 0.0;
+		let mut resumed = None;
+		for _ in 0..200 {
+			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, idle, false);
+			idle += 0.01;
+			if !st.active {
+				resumed = Some(t);
+				break;
+			}
+		}
+		let t = resumed.expect("should resume once unblocked");
 		assert!((t - (0.5 * period + 0.01)).abs() < 1e-6);
 	}
 
