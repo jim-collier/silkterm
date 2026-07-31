@@ -110,6 +110,7 @@ pub struct Cli {
 	pub version: bool,
 	pub syntax: bool,
 	pub config: Option<PathBuf>,
+	pub reset_config: bool,
 	// control commands for an already-running window (talk, then exit):
 	// `Some(None)` clears the wallpaper, `Some(Some(p))` sets it.
 	pub wallpaper: Option<Option<String>>,
@@ -373,8 +374,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 				| "hide-windowframe"
 				| "hide-menu"
 				| "fullscreen"
-				| "config" | "help"
-				| "version" | "syntax"
+				| "config" | "reset-config"
+				| "help" | "version"
+				| "syntax"
 		);
 		if window_only {
 			if cur_tab.is_some() {
@@ -414,6 +416,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 				"hide-menu" => cli.win.hide_menu = Some(a.bool_value(name, inline)?),
 				"fullscreen" => cli.win.fullscreen = Some(a.bool_value(name, inline)?),
 				"config" => cli.config = Some(PathBuf::from(a.value(name, inline)?)),
+				"reset-config" => cli.reset_config = true,
 				"help" => cli.help = true,
 				"version" => cli.version = true,
 				"syntax" => cli.syntax = true,
@@ -625,6 +628,7 @@ Window options (must precede any tab/pane):
   --hide-menu[=BOOL]          start with the menu bar hidden
   --fullscreen[=BOOL]         start fullscreen
   --config PATH               use an alternate config file
+  --reset-config              rename the config aside and start from defaults
   --help, -h                  this help
   --syntax                    options list only
   --version                   program name + version + build

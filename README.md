@@ -301,6 +301,10 @@ $XDG_CONFIG_HOME/silkterm/config.shcl   (falls back to ~/.config/...)
 
 If making changes directly (rather than through Settings), you can apply them immediately with the "Reload config" menu item.
 
+To start over from the shipped defaults, run `silkterm --reset-config`. The old file is kept alongside as `config.shcl.bak` rather than deleted.
+
+Drop a few images into a `wallpapers` folder next to the config and SilkTerm picks one each launch, favouring whatever it hasn't shown lately. Naming a wallpaper in the config, or passing one on the command line, takes precedence.
+
 <!--
 ## Renaming the project
 

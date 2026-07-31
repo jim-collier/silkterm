@@ -200,6 +200,12 @@ The built-in stack is last for a reason: the generic monospace query below it is
 
 - No migration from the old TOML configs: a fresh file is generated with defaults.
 
+- A config carries the commented default lines it was first given, so when a default changes those lines start describing the old behavior. It was decided that such a line is refreshed to the current default, on the principle that the file may be corrected about what the program does on its own, but never about what the user chose. A line the user activated, or annotated, is therefore left alone.
+
+- Starting over is a rename rather than a delete. `--reset-config` moves the file aside and lets the next launch write a fresh one, so the previous settings stay recoverable.
+
+- Some defaults are better inferred from the config directory than stated in the file. A folder of wallpapers sitting in the expected place is taken as wanting them rotated, without a setting to turn it on and without writing anything back. The inference yields to anything explicit: a wallpaper named in the config, or one given on the command line for a single run.
+
 ## Delivery (CI/CD, branches, releases)
 
 Guiding constraint: GitHub is dumb git hosting plus optional release storage, nothing more. No hosted CI, no Actions, as few third-party tools as possible; the whole pipeline runs locally (`cicd/cicd.bash`).
