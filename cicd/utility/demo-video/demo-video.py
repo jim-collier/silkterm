@@ -319,7 +319,7 @@ class Rec:
 		# VirtualGL routes the app's GL to the real GPU (EGL backend, no 3D X
 		# server needed) - without it llvmpipe caps the app at ~10fps and the
 		# scroll judders. Fall back to software if vgl is missing.
-		cmd = [self.bin, "--config", str(self.home / ".config/silkterm/config.toml"),
+		cmd = [self.bin, "--config", str(self.home / ".config/silkterm/config.shcl"),
 			"--shell", shell_cmd]
 		if shutil.which("vglrun"):
 			cmd = ["vglrun", "-d", "egl", *cmd]
@@ -609,34 +609,34 @@ def write_config(home, profile):
 	# the app's own baked-in wallpaper, so the closing scene shows exactly the
 	# out-of-the-box look (and can never drift from it)
 	shutil.copy2(REPO / "source/assets/default-background.jpg", wpdir / "default.jpg")
-	(cfgdir / "config.toml").write_text('''use_system_font = true
-line_height_scale = 1.22
-margin = 8.0
-remember_size = false
-columns = 160
-rows = 48
-transparent_background = false
-wallpaper_default = false
-wallpaper_opacity = 0.10
-wallpaper_fit = "zoom"
-wallpaper_blur = 10.0
-text_scrim = true
-text_outline = 2.0
-text_scrim_ramp = "gaussian"
-cursor_size_height = 100
-cursor_size_width = 25
-cursor_animation = "pulse_vertical"
-cursor_animation_resume_s = 1
-cursor_blink_rate_ms = 500
-word_separators = "=,|:\\"' ()[]{}<>"
-scrollback = 10000
-scroll_tau_ms = 230.0
-wheel_lines = 3.0
-alt_scroll_lines = 3.0
-output_ease_lines = 1.0
-smooth_scroll_apps = true
-theme = "SilkTerm"
-theme_mode = "dark"
+	(cfgdir / "config.shcl").write_text('''use_system_font: true
+line_height_scale: 1.22
+margin: 8.0
+remember_size: false
+columns: 160
+rows: 48
+transparent_background: false
+wallpaper_default: false
+wallpaper_opacity: 0.10
+wallpaper_fit: zoom
+wallpaper_blur: 10.0
+text_scrim: true
+text_outline: 2.0
+text_scrim_ramp: gaussian
+cursor_size_height: 100
+cursor_size_width: 25
+cursor_animation: pulse_vertical
+cursor_animation_resume_s: 1
+cursor_blink_rate_ms: 500
+word_separators: "=,|:\\"' ()[]{}<>"
+scrollback: 10000
+scroll_tau_ms: 230.0
+wheel_lines: 3.0
+alt_scroll_lines: 3.0
+output_ease_lines: 1.0
+smooth_scroll_apps: true
+theme: SilkTerm
+theme_mode: dark
 ''')
 
 RUST_SCROLL = '''// smooth output easing: nudge the visual offset toward rest, never snap
@@ -822,12 +822,12 @@ def ctl(rec, line):
 def set_cfg(rec, **keys):
 	# a settings change, applied the way a settings change applies: rewrite the
 	# keys and reload. Live, and nothing has to be typed on camera. Strings are
-	# quoted the way TOML wants them, numbers left bare.
-	cfg = rec.home / ".config/silkterm/config.toml"
+	# quoted so a value can never read as a comment or a bare word like none.
+	cfg = rec.home / ".config/silkterm/config.shcl"
 	text = cfg.read_text()
 	for key, val in keys.items():
-		line = f'{key} = "{val}"' if isinstance(val, str) else f"{key} = {val}"
-		text = re.sub(rf"^{key} = .*$", lambda _m, s=line: s, text, flags=re.M)
+		line = f'{key}: "{val}"' if isinstance(val, str) else f"{key}: {val}"
+		text = re.sub(rf"^{key}: .*$", lambda _m, s=line: s, text, flags=re.M)
 	cfg.write_text(text)
 	return ctl(rec, "reload")
 
