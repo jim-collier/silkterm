@@ -95,6 +95,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- `--quick` gives a thirty-second version; a full run is about two minutes.
 	- Measures throughput under flood - how fast a terminal swallows output and keeps up - not glyph drawing rate. Only a screenful is ever visible, so most of a stream is consumed and scrolled past without being drawn. That is the shape of the "why does it bog down when something dumps a lot of text" question.
 	- At 160x42: SilkTerm 75.1, xfce4-terminal 58.5, XTerm 24.5 million cells/s. SilkTerm leads every width class except plain ASCII, where xfce4-terminal is about a tenth faster.
+	- Install size and memory are measured too, by a second rig at a smaller fixed grid, with the graphics driver split out so the table measures the terminal rather than the stack every accelerated program shares.
+	- Both halves now run on Windows as well, measured from inside the terminal under test, which is the only way to reach the terminals that exist nowhere else. Each half checks the window is at its own fixed size first and refuses otherwise, since measuring at the wrong one produces a figure that looks fine and belongs in no column.
+		- 🔘 Fill in the Windows rows: conhost, Windows Terminal and MobaXterm need running on a Windows machine.
+		- Windows figures answer a slightly different question and are not directly comparable, which the table's notes say: a base OS includes far more there, and the machine differs.
 
 - ✅ Hotkeys to increase/decrease font size feature:
 	- Done: Ctrl+= / Ctrl+- step the session zoom; Ctrl+0 resets to the configured (or system) size. View menu has Increase/Decrease/Reset items.
