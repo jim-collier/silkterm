@@ -296,7 +296,7 @@ cicd/cicd.bash [--quick]
 On first run SilkTerm writes a commented config file with all defaults to:
 
 ```bash
-$XDG_CONFIG_HOME/silkterm/config.toml   (falls back to ~/.config/...)
+$XDG_CONFIG_HOME/silkterm/config.shcl   (falls back to ~/.config/...)
 ```
 
 If making changes directly (rather than through Settings), you can apply them immediately with the "Reload config" menu item.

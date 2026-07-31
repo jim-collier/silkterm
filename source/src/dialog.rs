@@ -254,7 +254,7 @@ impl DialogWin {
 	}
 
 	// Config keys the user hit "revert to default" on since the last Apply; the
-	// app comments them out in config.toml (config::revert_keys).
+	// app comments them out in config.shcl (config::revert_keys).
 	pub fn take_reverted(&mut self) -> Vec<&'static str> {
 		match &mut self.content {
 			Content::Settings(dialog) => dialog.take_reverted(),

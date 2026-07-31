@@ -1299,7 +1299,7 @@ impl State {
 		let cols = px_to_cells(w as f32, self.text.cell_w, 0.0);
 		let rows = px_to_cells(h as f32, self.text.cell_h, self.menubar_h());
 		// debounce: an interactive drag fires many Resized events; writing
-		// config.toml on each would be dozens of file writes/sec. Persist in
+		// config.shcl on each would be dozens of file writes/sec. Persist in
 		// flush_window_size once the size has held (or on exit).
 		self.pending_size = Some((cols, rows));
 		self.pending_size_at = Instant::now();
@@ -1440,7 +1440,7 @@ impl State {
 		wrote
 	}
 
-	// Re-read config.toml from disk and live-apply it (the "internal command" for
+	// Re-read config.shcl from disk and live-apply it (the "internal command" for
 	// picking up hand-edits without a file watcher). The file is the source here,
 	// so nothing is persisted back.
 	fn reload_config(&mut self) {
@@ -1452,7 +1452,7 @@ impl State {
 	}
 
 	// Control-socket wallpaper change: live-only and window-scoped, like the
-	// launch-time --background-image - nothing is persisted to config.toml.
+	// launch-time --background-image - nothing is persisted to config.shcl.
 	fn set_wallpaper(&mut self, image: Option<std::path::PathBuf>) {
 		let orig = config::settings().as_ref().clone();
 		let mut edited = orig.clone();

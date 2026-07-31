@@ -28,7 +28,7 @@ pub enum UserEvent {
 	// ctl is Unix-only, so these are never constructed on non-unix.
 	#[cfg_attr(not(unix), allow(dead_code))]
 	SetWallpaper(Option<std::path::PathBuf>),
-	// control socket: re-read config.toml and apply it (same as Menu > Reload)
+	// control socket: re-read config.shcl and apply it (same as Menu > Reload)
 	#[cfg_attr(not(unix), allow(dead_code))]
 	ReloadSettings,
 	// VT watcher thread (app.rs spawn_vt_watch): the active console changed.

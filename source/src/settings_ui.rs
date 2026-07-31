@@ -61,7 +61,7 @@ const LIGHT_DLG: Dlg = Dlg {
 	text: [0x22, 0x24, 0x2c], dim: [0x70, 0x70, 0x76],
 };
 // The dialog colour set for the active mode, with the panel background + text
-// overridden by the configured dialog colours (theme default or a [colors]
+// overridden by the configured dialog colours (theme default or a colours
 // dialog_*/menu_* override). The remaining shades (border/track/handle/fields/
 // buttons) stay from the mode preset so contrast holds.
 // sRGB-space blend of two colours (selection highlight = field bg toward accent)
@@ -209,7 +209,7 @@ const REVERT_W: f32 = 22.0; // right-edge revert-to-default icon column
 const REVERT_ICON: &str = "\u{21ba}"; // anticlockwise open-circle arrow
 
 // Config-file key(s) behind a dialog Key, for revert's comment-out (dotted =
-// the [colors] table). Empty for headers.
+// the colors.* keys). Empty for headers.
 fn cfg_keys(key: Key) -> &'static [&'static str] {
 	match key {
 		Key::Transparency => &["transparent_background"],
@@ -1843,7 +1843,7 @@ impl SettingsDialog {
 		}
 	}
 
-	// The active theme's palette - the effective default for the [colors] keys
+	// The active theme's palette - the effective default for the colors.* keys
 	// (commented-out colors fall back to the theme, not to SilkTerm-dark).
 	fn theme_palette(&self) -> crate::theme::Palette {
 		crate::theme::resolve(
@@ -1919,7 +1919,7 @@ impl SettingsDialog {
 		}
 	}
 	// Revert a setting to its default and remember its config key(s), so Apply
-	// can comment them out in config.toml (config::revert_keys).
+	// can comment them out in config.shcl (config::revert_keys).
 	fn revert(&mut self, key: Key) {
 		match key {
 			Key::Transparency
