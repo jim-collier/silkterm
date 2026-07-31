@@ -15,7 +15,7 @@ utility/update-showdown.py --all --no-readme             # measure everything, w
 | speed | `termbench-run.bash` | 160x42 | headless sway on the real GPU | the width classes and the score |
 | size | `sizebench-run.bash` | 100x30 | private Xvfb | File+deps and Mem |
 
-Naming no terminal takes the third path, which needs no rig at all: run the throughput tool inside whatever terminal you are sitting in. That is the only way to measure a terminal that exists solely on Windows or macOS, and the only mode that works off Linux.
+Naming no terminal takes the third path, which needs no rig at all: measure whatever terminal you are sitting in, from inside it. That is the only way to measure a terminal that exists solely on Windows or macOS, and the only mode that works off Linux. Both halves are available that way, but only one at a time, since the two want different window sizes.
 
 **The two grids differ deliberately and must not be unified.** Speed wants a realistic working grid. Memory scales with the surface - the same SilkTerm binary reads 38 MiB heavier at its default geometry than at 100x30 - so the size rows are taken small and identical.
 
@@ -106,13 +106,32 @@ dpkg -x alacritty_*.deb cicd/artifacts/sizebench/terms/..    # gives terms/usr/b
 
 ## Measuring on Windows
 
-There is no compositor rig on Windows, so no terminal can be named on the command line. Open each terminal under test, size it to the same grid by hand, and run the entry point inside it:
+There is no compositor rig on Windows, so no terminal can be named on the command line and nothing resizes the window for you. Both halves are measured from inside the terminal under test, and **each has its own grid**, so it takes two passes with a resize between them. Set the window size by hand, then:
 
 ```sh
-python utility\update-showdown.py --reps 6 --label "Windows Terminal"
+rem  speed: size the window to 160 x 42 first
+python utility\update-showdown.py --speed-only --reps 6 --label "Windows Terminal"
+
+rem  size and memory: now size it to 100 x 30
+python utility\update-showdown.py --size-only --label "Windows Terminal"
 ```
 
-That measures the speed columns and writes the row. **The size and memory columns have no Windows backend**, and porting one is not a translation of the shell: the accounting reads `/proc/<pid>/smaps` for private and shared pages, and splits the graphics stack out by walking `ldd` closures. The equivalents are `QueryWorkingSetEx` and the PE import table, which is a rewrite of `sizebench-classify.py` rather than a port of `sizebench-run.bash`. Until that exists, Windows rows carry speed figures only.
+The grid is checked rather than trusted: at the wrong size each half says so and does nothing, because memory scales with the surface and throughput scales with how much of the stream is drawn. `--any-size` overrides that and marks nothing, so only use it to explore. Naming no terminal at all runs whichever half the current window is already sized for.
+
+`--label` is the table's row name, and both halves need it - one writes the speed cells, the other File+deps and Mem. Without it the numbers are printed and nothing is written, since putting a figure in the wrong row is worse than leaving the row empty.
+
+The three Windows-only rows have to be measured this way or not at all. Two of them need care:
+
+- **conhost** is not an ancestor of the shell - it is attached to it as a child - so the console window is asked which process owns it. That also picks the right thing under Windows Terminal, where a console host sits between the shell and the window process that is the real terminal.
+- **MobaXterm** runs its local shell under Cygwin, so the ancestor walk finds it normally.
+
+### What the Windows accounting does differently
+
+The two collectors take the same measurement by different routes: the module list stands in for the mapped library set, mapped regions plus their resident pages for `smaps`, and PE imports for `DT_NEEDED`. The self-check (`sizebench-classify.py --selftest`) measures the running process both ways and compares, which stands in for the reproduce gate - there is no published Windows row to reproduce yet.
+
+One difference is real and deliberate. "Beyond a base OS" means only the C runtime on Linux, because a desktop library there is something you installed; on Windows everything under System32 ships with the machine, so it is excluded by path. A Win32 terminal therefore shows a much smaller File+deps than a GTK one, and that is true rather than an artifact - but it means the two platforms' File+deps answer slightly different questions, on top of everything below.
+
+A managed assembly contributes no closure edges, because the runtime resolves its references rather than the loader. That can only ever leave a driver-side library billed to the terminal, never the reverse, so it is the safe direction to be wrong in.
 
 Windows figures are **not** directly comparable with the Linux rows, because the Windows host is a virtual machine on the same box with half the cores, less memory, virtualization overhead and a lower-specification passed-through GPU.
 
@@ -129,7 +148,7 @@ Do not correct that with a guessed multiplier. Calibrate it: SilkTerm, Alacritty
 | `termbench-scene.sh` | runs inside the terminal; reports its grid, then runs the benchmark |
 | `termbench-plain.toml` | SilkTerm with every optional effect off, for the "plain" rows |
 | `sizebench-run.bash` | size rig: display bring-up, launch, grid sizing, process-tree collection |
-| `sizebench-classify.py` | the closure classifier and the smaps accounting |
+| `sizebench-classify.py` | the closure classifier and the accounting, plus a collector for each platform |
 | `showdown-readme.py` | writes the File+deps and Mem cells for one row |
 
 The entry point is Python and the rigs are shell, which is the right split: the rigs drive a Linux display and are Linux-only by nature, while the entry point has to run wherever a terminal does. It is deliberately one file rather than a shell copy plus a PowerShell copy. Two copies of one program drift, and a fix then lands in whichever copy was to hand rather than the one being run - which has happened here before, to `n8git_backup-and-publish`.
