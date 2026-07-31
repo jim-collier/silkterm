@@ -626,7 +626,7 @@ text_scrim_ramp = "gaussian"
 cursor_size_height = 100
 cursor_size_width = 25
 cursor_animation = "pulse_vertical"
-cursor_animation_input = "continuous"
+cursor_animation_resume_s = 1
 cursor_blink_rate_ms = 500
 word_separators = "=,|:\\"' ()[]{}<>"
 scrollback = 10000
