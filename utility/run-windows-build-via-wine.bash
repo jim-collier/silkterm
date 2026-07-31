@@ -14,7 +14,7 @@
 ##		  nemo-anywhere launcher there is no GTK runtime to stage out of a container -
 ##		  only fonts and a private wineprefix, both handled here.
 ##		- Everything lands in cicd/artifacts/win-run/ (gitignored): the wineprefix, a
-##		  copy of the exe, its own config.toml, and the run log. The real ~/.wine and
+##		  copy of the exe, its own config.shcl, and the run log. The real ~/.wine and
 ##		  ~/.config/silkterm are never touched, so a Windows-side config rewrite cannot
 ##		  disturb the Linux build's settings.
 ##		- The exe is re-copied every run, so a fresh cross-build is picked up
@@ -298,7 +298,7 @@ fReportOutcome(){
 }
 
 fLaunch(){
-	local -r configFile="${stageDir}/config/config.toml"
+	local -r configFile="${stageDir}/config/config.shcl"
 	mkdir -p "$(dirname "${configFile}")"
 
 	export WINEPREFIX="${winePrefix}"

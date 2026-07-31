@@ -125,17 +125,17 @@ trap fCleanup EXIT
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ##	Assets: throwaway configs, scene scripts, a synthetic background image
 
-## Write a per-scene config. Args: file, then extra 'key = value' lines.
+## Write a per-scene config. Args: file, then extra 'key: value' lines.
 fWriteConfig() {
 	local -r file="$1"; shift
 	{
-		printf 'use_system_font = false\n'
-		printf 'font_family = "%s"\n' "$fontName"
-		printf 'font_size = %s\n' "$fontSize"
-		printf 'remember_size = false\n'
-		printf 'theme = "SilkTerm"\n'
-		printf 'theme_mode = "dark"\n'
-		printf 'cursor_animation = "none"\n'   ## static cursor -> byte-stable shots run-to-run
+		printf 'use_system_font: false\n'
+		printf 'font_family: "%s"\n' "$fontName"
+		printf 'font_size: %s\n' "$fontSize"
+		printf 'remember_size: false\n'
+		printf 'theme: SilkTerm\n'
+		printf 'theme_mode: dark\n'
+		printf 'cursor_animation: none\n'   ## static cursor -> byte-stable shots run-to-run
 		local kv
 		for kv in "$@"; do printf '%s\n' "$kv"; done
 	} > "$file"
@@ -409,14 +409,14 @@ fMainShot() {
 ##	Scenes
 
 fSceneShell() {
-	local -r cfg="${workDir}/shell.toml"
-	fWriteConfig "$cfg" 'text_scrim = true' 'text_scrim_radius = 3.0' 'text_scrim_softness = 0.6' 'text_outline = 1.5'
+	local -r cfg="${workDir}/shell.shcl"
+	fWriteConfig "$cfg" 'text_scrim: true' 'text_scrim_radius: 3.0' 'text_scrim_softness: 0.6' 'text_outline: 1.5'
 	fMainShot "01-shell" "$cfg" -- --shell "${workDir}/shell.sh"
 }
 
 fSceneSplits() {
-	local -r cfg="${workDir}/splits.toml"
-	fWriteConfig "$cfg" 'text_scrim = true' 'text_scrim_radius = 2.5' 'text_outline = 1.5'
+	local -r cfg="${workDir}/splits.shcl"
+	fWriteConfig "$cfg" 'text_scrim: true' 'text_scrim_radius: 2.5' 'text_outline: 1.5'
 	fMainShot "02-splits" "$cfg" -- \
 		--font-size 18 \
 		--shell "${workDir}/split-edit.sh" \
@@ -425,20 +425,20 @@ fSceneSplits() {
 }
 
 fSceneScrim() {
-	local -r cfg="${workDir}/scrim.toml"
+	local -r cfg="${workDir}/scrim.shcl"
 	local -r bg="${workDir}/bg.png"
 	fMakeBgImage "$bg"
 	fWriteConfig "$cfg" \
-		'transparent_background = true' 'opacity = 0.78' \
-		"background_image = \"${bg}\"" 'background_opacity = 0.55' \
-		'background_fit = "zoom"' 'background_blur = 6.0' \
-		'text_scrim = true' 'text_scrim_radius = 5.0' 'text_scrim_softness = 0.35' 'text_outline = 2.0'
+		'transparent_background: true' 'opacity: 0.78' \
+		"wallpaper: \"${bg}\"" 'wallpaper_opacity: 0.55' \
+		'wallpaper_fit: zoom' 'wallpaper_blur: 6.0' \
+		'text_scrim: true' 'text_scrim_radius: 5.0' 'text_scrim_softness: 0.35' 'text_outline: 2.0'
 	fMainShot "03-scrim" "$cfg" -- --font-size 26 --hide-menu=yes --shell "${workDir}/scrim.sh"
 }
 
 fSceneTabs() {
-	local -r cfg="${workDir}/tabs.toml"
-	fWriteConfig "$cfg" 'text_scrim = true' 'text_scrim_radius = 3.0' 'text_outline = 1.5'
+	local -r cfg="${workDir}/tabs.shcl"
+	fWriteConfig "$cfg" 'text_scrim: true' 'text_scrim_radius: 3.0' 'text_outline: 1.5'
 	## main tab (0) runs the showcase; two more tabs make the tab bar visible;
 	## re-select tab 0 so the showcase is the active/front tab in the shot.
 	fMainShot "04-tabs" "$cfg" -- \
@@ -450,8 +450,8 @@ fSceneTabs() {
 
 fSceneSettings() {
 	fStep "Scene 05-settings"
-	local -r cfg="${workDir}/settings.toml"
-	fWriteConfig "$cfg" 'text_scrim = true' 'text_scrim_radius = 3.0'
+	local -r cfg="${workDir}/settings.shcl"
+	fWriteConfig "$cfg" 'text_scrim: true' 'text_scrim_radius: 3.0'
 	## render at 2x so the (small) dialog is crisp and large enough to fill a shot.
 	local pid; pid="$(fLaunch "$cfg" 2 -- --shell "${workDir}/shell.sh")"
 	fWaitDump || true   ## ensures the main window is up before we poke it

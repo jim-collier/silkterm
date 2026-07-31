@@ -88,8 +88,8 @@ fLaunch() {
 	case "${key}" in
 		silkplain)
 			mkdir -p "${XDG_CONFIG_HOME}/silkterm"
-			cp "${scriptDir}/termbench-plain.toml" \
-			   "${XDG_CONFIG_HOME}/silkterm/config.toml"
+			cp "${scriptDir}/termbench-plain.shcl" \
+			   "${XDG_CONFIG_HOME}/silkterm/config.shcl"
 			"${bin}" --columns "${cols}" --rows "${rows}" --shell "${keepAlive}" \
 				>"${_work}/term.log" 2>&1 &
 			;;
