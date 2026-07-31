@@ -315,6 +315,24 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- Cause: to avoid stalling the display we only ever *tried* for the terminal and gave up immediately if the reader had it. But the reader holds it across a whole read cycle and grabs it again the instant it lets go, so that polite try could lose forever. Measured on a large `cat`: 98% of frames showed a stale picture, the worst run lasting 2.1 seconds.
 			- Fix: still try first, but after two frames in a row of getting nowhere, wait properly. Waiting takes a numbered ticket, which lands us at the end of the current read cycle and makes the reader queue behind us - so the wait is bounded (measured under 5ms) where the polite try was not.
 			- Measured: worst stale run 2083ms -> 52ms, unchanged frame rate. Sampling the window every 400ms during a flood: before, 0 of 12 samples had changed; after, 12 of 12. Idle and ordinary output cost are unchanged - this only engages when something is actually contending.
+	- Tier 5 - cursor animation: pause is the only mode, and it really stops now.
+		- ✅ 5.1 Removed the 'cursor_animation_input' option. Behavior is always "pause".
+			- A source const (CURSOR_ANIM_CONTINUOUS, pane.rs) brings the old always-on mode back if ever wanted.
+			- The old key is stripped from existing configs automatically.
+		- ✅ 5.2 Longer wait before the animation resumes after typing. New setting 'cursor_animation_resume_s', default 2.
+		- ✅ 5.3 After 60s with no input the animation stops entirely, parked at full size. New setting 'cursor_animation_idle_stop_s', 0 = never.
+			- Typing, or refocusing the window, tab, or pane, brings it back.
+		- ✅ 5.4 A parked cursor draws NO frames. Before this, "pause" still ran 30fps just to show a static cursor.
+			- Measured: parked idle ~0.2% of a core, vs ~14% with the pulse running.
+		- IMPORTANT, never regress this: pausing always waits for the cursor's largest point in the cycle, and resuming always starts from that same point. Took many hard iterations to get right. The machine is PauseState in pane.rs, unit-tested.
+	- Tier 6 - freeze what can't be seen. 🔘 Not started. Wants a fresh context + /effort high.
+		- 🔘 6.1 Freeze rendering (never PTY reading) of minimized windows and hidden tabs. Catch up instantly on switch.
+			- Unfreeze must hard-cut (rebaseline the scroll detectors), never ease - or the bounce class comes back.
+		- 🔘 6.2 Pause cursor blinking in every pane except the focused pane of the active window.
+			- Same largest-point pause/resume rules as Tier 5.
+		- 🔘 6.3 Idle panes should touch no memory per frame, so the OS can page them out. Mostly falls out of 6.1/6.2.
+		- Put each freeze behind its own source const, so a surprise side-effect rolls back one line.
+		- Dropped: "freeze inactive windows unless they have active output" - folded into 6.2; a visible window with output should keep drawing.
 	- Not doing: hard-forking the terminal engine for performance. It costs nothing at idle, and a fork would mean owning the escape-sequence parser, grid reflow and the Windows console layer - the riskiest code with the least bearing on speed. The one contention problem worth fixing turned out to need no changes to it at all (4.1).
 
 - 🛠️ Tab interface:
