@@ -53,6 +53,14 @@ const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
 // Escape hatch: true restores the old always-running animation (the removed
 // cursor_animation_input = "continuous"), bypassing the pause/park machinery.
 const CURSOR_ANIM_CONTINUOUS: bool = false;
+// A cursor move this soon after the user sent input is that input's echo; a
+// later move is the program's own output. Only echoed input carries the full
+// resume delay - see resume_delay.
+const TYPED_ECHO_S: f32 = 0.2;
+// Resume delay for a pause that output caused: just enough stillness that a
+// gap between two writes cannot unpark it, short enough to read as "the moment
+// the prompt came back". The configured delay is for typing, not for output.
+const OUTPUT_RESUME_S: f32 = 0.05;
 // Freeze knob (one line rolls it back): only the focused pane of the focused
 // window animates its cursor; every other pane parks at full size (same
 // glide-to-full / resume-from-full machinery, so the size stays continuous).
@@ -430,6 +438,25 @@ fn cursor_cycle(anim: &str, blink_rate_ms: f32) -> (f32, f32) {
 	(period, full_phase)
 }
 
+// Was a cursor move the echo of user input, or the program's own output? The
+// echo of a keystroke lands within a frame or two of the write; anything later
+// belongs to whatever is running.
+fn move_is_input(typed_at: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+	typed_at.is_some_and(|at| now.saturating_duration_since(at).as_secs_f32() < TYPED_ECHO_S)
+}
+
+// How long a pause holds at full size before the cycle resumes. Typing gets the
+// configured delay, so the cursor stays still between keystrokes. Output gets
+// almost none: a command scrolling the screen is not the user doing something,
+// so once it stops - the prompt is back - the cursor comes straight back to life.
+fn resume_delay(by_input: bool, configured_s: f32) -> f32 {
+	if by_input {
+		configured_s
+	} else {
+		OUTPUT_RESUME_S
+	}
+}
+
 // Cursor animation pause. On input (or long idle) the cycle keeps running at
 // its normal speed until it next reaches the full-size phase, parks there,
 // then resumes the cycle from that same point - so the size is continuous at
@@ -686,6 +713,11 @@ pub struct Pane {
 	// wall clock behind cursor_idle_t/hold_t: a parked cursor renders no frames,
 	// so frame-dt accumulation would freeze the timers across the sleep
 	cursor_step_at: Option<std::time::Instant>,
+	// when the user last sent input here (keys, paste), and whether the cursor's
+	// last move was that input's echo rather than program output - the two get
+	// different resume delays
+	typed_at: Option<std::time::Instant>,
+	cursor_by_input: bool,
 	cursor_pause: PauseState,
 	pub cursor_animating: bool,
 	// parked cursor: when the loop must wake to resume the cycle (no frames flow
@@ -1459,6 +1491,12 @@ impl Pane {
 		self.last_draw.clone()
 	}
 
+	// The user sent input here (a keystroke, a paste). Stamps the moment so the
+	// cursor move it echoes is told apart from a program's own output.
+	pub fn note_typed(&mut self) {
+		self.typed_at = Some(std::time::Instant::now());
+	}
+
 	// A window/tab/pane refocus resumes the cursor animation AT ONCE - no resume
 	// delay, unlike a keystroke - starting from the top of the cycle, which is
 	// the same full-size point a pause always parks at.
@@ -1528,6 +1566,10 @@ impl Pane {
 		}
 		if moved {
 			self.cursor_idle_t = 0.0; // reset idle timer on any cursor move
+			// Classify only on a move, so the verdict holds while the cursor sits
+			// still - re-testing every frame would expire the echo window mid-pause
+			// and cut typing's delay short.
+			self.cursor_by_input = move_is_input(self.typed_at, step_now);
 		} else {
 			self.cursor_idle_t += wall_dt;
 		}
@@ -1548,7 +1590,9 @@ impl Pane {
 		// jumps on a keystroke. PauseState parks the cycle at full size while
 		// typing (resuming cursor_animation_resume_s after input goes idle) and
 		// again after cursor_animation_idle_stop_s of nothing, indefinitely; both
-		// pause AND resume happen at the cursor's full size, always. A parked
+		// pause AND resume happen at the cursor's full size, always. Output parks
+		// it the same way, but carries no delay of its own (resume_delay), so the
+		// cursor is alive again as soon as a command stops writing. A parked
 		// cursor renders no frames - the timed resume comes from cursor_wake, and
 		// a refocus ends the park outright (poke_cursor).
 		let settings = config::settings();
@@ -1558,7 +1602,7 @@ impl Pane {
 		let mut parked = false;
 		self.cursor_wake = None;
 		if anim_on && !CURSOR_ANIM_CONTINUOUS {
-			let resume_s = settings.cursor_animation_resume_s;
+			let resume_s = resume_delay(self.cursor_by_input, settings.cursor_animation_resume_s);
 			let idle_stop_s = settings.cursor_animation_idle_stop_s;
 			// only the focused pane of the focused window animates; everyone else
 			// parks at full and holds until they're the active pane again
@@ -2063,7 +2107,7 @@ impl Pane {
 
 	// Write pasted text to the PTY (wrapped in bracketed paste when the app
 	// enabled it). No-op when the pane is read-only.
-	pub fn paste(&self, text: &str) {
+	pub fn paste(&mut self, text: &str) {
 		if self.read_only || text.is_empty() {
 			return;
 		}
@@ -2077,6 +2121,7 @@ impl Pane {
 			bytes.extend_from_slice(b"\x1b[201~");
 		}
 		self.term.write(bytes);
+		self.note_typed();
 	}
 }
 
@@ -2381,6 +2426,8 @@ fn spawn_pane(
 		blink_t: 0.0,
 		cursor_idle_t: 0.0,
 		cursor_step_at: None,
+		typed_at: None,
+		cursor_by_input: false,
 		cursor_pause: PauseState::default(),
 		cursor_wake: None,
 		cursor_animating: false,
@@ -3058,9 +3105,9 @@ mod tests {
 		APP_SCROLL_MAX, CURSOR_MAX_LAG, Dir, Node, OffStrip, PauseState, Rect, SLIDE_TOP_BAND_APPS,
 		StripCell, app_scroll_frames, bell_brighten, capture_grid_text, capture_start,
 		cursor_cycle, cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, fnv_row_skel,
-		glide_to_full, layout, logical_line_bounds, pair_inside, prompt_strip, render_char,
-		same_char_pair, scroll_shift, scroll_shift_signed, snapshot_rows, static_bands,
-		vanished_range, weld_region_clip,
+		glide_to_full, layout, logical_line_bounds, move_is_input, pair_inside, prompt_strip,
+		render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed,
+		snapshot_rows, static_bands, vanished_range, weld_region_clip,
 	};
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
@@ -3419,6 +3466,57 @@ mod tests {
 		assert_eq!(cursor_cycle("phase", 500.0), (1.0, 0.0));
 		assert_eq!(cursor_cycle("pulse_both", 250.0).0, 0.5);
 		assert_eq!(cursor_cycle("phase", 0.0).0, 0.05); // period never reaches zero
+	}
+
+	#[test]
+	fn only_a_keystrokes_echo_counts_as_input() {
+		use std::time::{Duration, Instant};
+		let now = Instant::now();
+		let ago = |ms| now.checked_sub(Duration::from_millis(ms)).unwrap();
+		assert!(!move_is_input(None, now), "nothing typed yet");
+		assert!(move_is_input(Some(ago(30)), now));
+		// a command's output starts within a frame or two of Enter but keeps
+		// coming long after it - that later stretch is the program, not the user
+		assert!(!move_is_input(Some(ago(800)), now));
+	}
+
+	#[test]
+	fn output_gives_the_cursor_straight_back() {
+		// typing holds the configured delay; output holds only long enough not to
+		// unpark between two writes, so the prompt returning revives the cursor
+		assert_eq!(resume_delay(true, 1.0), 1.0);
+		assert!(resume_delay(false, 1.0) < 0.1);
+
+		// drive the park itself: same state machine, output's delay
+		let (period, full) = cursor_cycle("pulse_vertical", 500.0);
+		let delay = resume_delay(false, 1.0);
+		let mut st = PauseState::default();
+		let mut blink = 0.2;
+		let dt = 1.0 / 60.0;
+		// a command writing: the cursor keeps moving, so the cycle glides to full
+		// and stays parked there for as long as the output lasts
+		for _ in 0..300 {
+			blink = st.advance(blink, dt, dt, period, full, delay, 0.0, true, 0.0, false);
+		}
+		assert!(st.parked, "output parks the cursor at full size");
+		assert!((blink - full * period).abs() < 1e-6);
+		// output stops (the prompt is back): no more moves, and the cycle picks up
+		let mut idle = 0.0;
+		let mut frames = 0;
+		while st.active && frames < 60 {
+			idle += dt;
+			blink = st.advance(blink, dt, dt, period, full, delay, 0.0, false, idle, false);
+			frames += 1;
+		}
+		assert!(!st.active, "the animation resumed");
+		assert!(
+			idle < 0.2,
+			"resumed at once, not after the typing delay: {idle}"
+		);
+		assert!(
+			(blink - (full * period + dt)).abs() < 1e-6,
+			"resumed from full size"
+		);
 	}
 
 	#[test]

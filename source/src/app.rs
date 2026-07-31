@@ -1217,14 +1217,14 @@ impl State {
 			}
 			MenuAction::Paste => {
 				if let Some(text) = self.clipboard.get_clipboard() {
-					if let Some(p) = self.tabs.cur().panes.get(&target) {
+					if let Some(p) = self.tabs.cur_mut().panes.get_mut(&target) {
 						p.paste(&text);
 					}
 				}
 			}
 			MenuAction::PasteSelection => {
 				if let Some(text) = self.clipboard.get_primary() {
-					if let Some(p) = self.tabs.cur().panes.get(&target) {
+					if let Some(p) = self.tabs.cur_mut().panes.get_mut(&target) {
 						p.paste(&text);
 					}
 				}
@@ -3852,7 +3852,7 @@ impl ApplicationHandler<UserEvent> for App {
 								.cur()
 								.pane_at(x, y)
 								.unwrap_or(state.tabs.cur().focused);
-							if let Some(p) = state.tabs.cur().panes.get(&id) {
+							if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
 								p.paste(&text);
 							}
 						}
@@ -4232,6 +4232,7 @@ impl ApplicationHandler<UserEvent> for App {
 						if !p.read_only {
 							p.scroll.jump_bottom();
 							p.term.write(bytes);
+							p.note_typed();
 							if is_enter && p.copy_output {
 								p.arm_capture();
 							}
@@ -4587,7 +4588,7 @@ impl State {
 			}
 			Key::Character(typed) if typed.eq_ignore_ascii_case("v") => {
 				if let Some(text) = self.clipboard.get_clipboard() {
-					if let Some(p) = self.tabs.cur().panes.get(&focused) {
+					if let Some(p) = self.tabs.cur_mut().panes.get_mut(&focused) {
 						p.paste(&text);
 					}
 				}
