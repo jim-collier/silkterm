@@ -23,6 +23,7 @@
 	- [Font fallback stack](#font-fallback-stack)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Environment](#environment)
+	- [Configuration format](#configuration-format)
 - [Delivery (CI/CD, branches, releases)](#delivery-cicd-branches-releases)
 
 <!-- /TOC -->
@@ -184,6 +185,20 @@ The built-in stack is last for a reason: the generic monospace query below it is
 	- Wayland coverage: the scroll regression harness runs its scenes a second time under a headless `cage` kiosk (`run.bash --wayland`), so the smooth-scroll behaviour is asserted identical on both engines. Per-pixel transparency and dialog stacking on Wayland are not yet exercised (follow-ups).
 
 - Pixel-precise input: touchpad gives true pixel deltas; notched mouse wheel snaps to lines (clamp/accumulate notch deltas into smooth target).
+
+### Configuration format
+
+- Among the options it was decided to use SHCL (the sister project) for the user config, replacing TOML. The file is `config.shcl`; the reference parser is a single zero-dependency crate, so dropping `toml`, `toml_edit` and `serde` made the shipped binary smaller rather than larger.
+
+- The deciding property is forgiveness. A malformed line yields a diagnostic and is skipped, so one bad value costs only its own setting - where strict TOML could fail the whole document and sink every setting to its default. That let two workarounds be deleted outright: a retry loop that blanked offending lines and reparsed, and a rewrite pass for leading-dot floats, which are valid here.
+
+- Values are typed by the reader, not the file, so there is nothing to get wrong in the syntax and a value is stored back exactly as written.
+
+- The contract on saving is that a user's comments and blank-line grouping survive. Layout may be tidied - indentation, and quotes that are not needed - but a value is never rewritten. The shipped template is deliberately spelled the way a save would spell it, so the first save is a no-op rather than a reflow of the file we just wrote.
+
+- Settings are written one per line, nested keys in dotted form (`colors.foreground`). That keeps the whole config addressable by simple line edits, which is what the in-place migrate/backfill/revert passes rely on.
+
+- No migration from the old TOML configs: a fresh file is generated with defaults.
 
 ## Delivery (CI/CD, branches, releases)
 

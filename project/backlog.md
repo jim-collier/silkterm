@@ -337,8 +337,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
 			- 🔘 "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
 
-- 🔘 Config file:
-	- 🔘 Use sister project "SHCL" for config language and structure, rather than TOML. (When shcl v1.0.0 stable is released.)
+- 🛠️ Config file:
+	- ✅ Use sister project "SHCL" for config language and structure, rather than TOML. (When shcl v1.0.0 stable is released.)
+		- Done: the config is now `config.shcl`, read and written by the `shcl` crate (v1.0.0). `toml`, `toml_edit` and `serde` are gone, which took ~158KB off the release binary - SHCL has no dependencies of its own.
+		- Its parser is forgiving, so a malformed line now costs only its own setting instead of sinking the file. That removed the hand-rolled retry loop and the bare-decimal float rewrite: `.1` is simply valid, and is stored back exactly as written.
+		- No migration path: existing `config.toml` files are not read. A fresh `config.shcl` is written with defaults, so any customised settings need re-entering once.
+		- Saving keeps comments and blank-line grouping. It may tidy layout - indentation, and quotes it does not need - but never rewrites a value.
+		- Colours have to be quoted now (`colors.foreground: "#88fff0"`), since `#` starts a comment.
 	- 🔘 Convert already implicitly hierarchical config names, to actual nested hierarchical.
 	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
 	- 🔘 Each setting gets it's own newline-delimited (above and below) section, with helpful comments directly above the setting without newlines.
@@ -352,7 +357,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		## Low value means
 		## High value means
 		## Default value
-		# setting = value  ## Default
+		# setting: value  ## Default
 		~~~
 
 	- 🔘 Use flowerboxing to divide sections, similar to how Settings dialog is divided (the future version, defined in "Refactor settings dialog" below):

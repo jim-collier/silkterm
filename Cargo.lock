@@ -2415,6 +2415,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "shcl"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc8017c63ab9cbf1a6930f174d8031949b94b7ba89f6f5fca6a284dc469fb777"
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2459,10 +2465,8 @@ dependencies = [
  "pollster",
  "pprof",
  "raw-window-handle",
- "serde",
+ "shcl",
  "skrifa 0.42.1",
- "toml",
- "toml_edit",
  "wgpu",
  "windows-sys 0.59.0",
  "winit",
@@ -2842,7 +2846,6 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
- "toml_writer",
  "winnow",
 ]
 

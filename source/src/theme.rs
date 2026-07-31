@@ -4,7 +4,7 @@
 //! Colour themes: each theme is a (dark, light) pair of `Palette`s. The active
 //! theme name + mode (Dark / Light / System) resolve to one `Palette` - the
 //! terminal bg/fg/cursor/focus plus the 16 ANSI colours - which `config` folds
-//! into `Settings` and `palette.rs` reads. The `[colors]` keys still override on
+//! into `Settings` and `palette.rs` reads. The `colors.*` keys still override on
 //! top (a per-colour tweak). Chrome/dialog theming, config-defined themes, and
 //! the Settings dropdown build on this foundation.
 
@@ -17,7 +17,7 @@ pub struct Palette {
 	// Chrome: menu bar / dropdowns (menu_*) and pop-out dialogs (dialog_*). Every
 	// built-in theme uses the SAME neutral defaults below (menu identical in both
 	// modes, dialog lighter in Light mode) - a theme MAY override, and the
-	// [colors] menu_*/dialog_* keys tweak them per-user.
+	// colors.menu_*/dialog_* keys tweak them per-user.
 	pub menu_bg: [u8; 3],
 	pub menu_fg: [u8; 3],
 	pub dialog_bg: [u8; 3],
