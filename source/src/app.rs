@@ -680,8 +680,12 @@ struct State {
 	selecting: Option<PaneId>,          // pane with an in-progress drag-select
 	last_click: Option<(Instant, f32, f32)>, // for multi-click detection
 	click_count: u32,                   // consecutive clicks in the same spot (2=double, 3=triple)
-	resizing: Option<Vec<bool>>,        // split-tree path of the divider being dragged
-	dragging_pane: Option<PaneId>,      // pane being drag-reordered (Shift+drag)
+	// (active tab, focused pane, window focused) at the last frame - a change
+	// while focused pokes the focused pane's cursor, so a long-idle-parked
+	// animation resumes on any window/tab/pane refocus
+	cursor_focus_sig: Option<(usize, PaneId, bool)>,
+	resizing: Option<Vec<bool>>, // split-tree path of the divider being dragged
+	dragging_pane: Option<PaneId>, // pane being drag-reordered (Shift+drag)
 	cursor_icon: CursorIcon,
 	clipboard: Clipboard,
 	last_frame: Instant,
@@ -1649,6 +1653,18 @@ impl State {
 		let dt = (now - self.last_frame).as_secs_f32().min(0.1);
 		self.last_frame = now;
 		let cfg = config::settings(); // one snapshot per frame, not per use/pane
+
+		// Refocus counts as cursor activity: regaining the window, switching tab,
+		// or moving pane focus pokes the focused pane so a long-idle-parked
+		// cursor animation resumes (from full, after the resume delay).
+		let focus_sig = (self.tabs.active, self.tabs.cur().focused, self.focused);
+		if self.focused && self.cursor_focus_sig != Some(focus_sig) {
+			let id = self.tabs.cur().focused;
+			if let Some(pane) = self.tabs.cur_mut().panes.get_mut(&id) {
+				pane.poke_cursor();
+			}
+		}
+		self.cursor_focus_sig = Some(focus_sig);
 
 		// Visual-bell flash decays toward 0; while >0 the text is brightened (in
 		// build) and we keep rendering so the fade is smooth.
@@ -3299,6 +3315,7 @@ impl ApplicationHandler<UserEvent> for App {
 			selecting: None,
 			last_click: None,
 			click_count: 0,
+			cursor_focus_sig: None,
 			resizing: None,
 			dragging_pane: None,
 			cursor_icon: CursorIcon::Default,
@@ -3472,6 +3489,9 @@ impl ApplicationHandler<UserEvent> for App {
 			// Window focus gates copy-output: a background window never copies.
 			WindowEvent::Focused(focused) => {
 				state.focused = focused;
+				// repaint: focus-dependent chrome (copybox dim) and the refocus
+				// poke that resumes a long-idle-parked cursor both live in render
+				state.dirty = true;
 				// Regaining focus is the likely first moment back from a VT
 				// switch/suspend - probe the GPU uploads now, not at the slow tick.
 				if focused && state.gfx.is_gl() {
@@ -4244,6 +4264,22 @@ impl ApplicationHandler<UserEvent> for App {
 			.any(|p| p.scroll.animating());
 		let cursor_anim = state.tabs.cur().panes.values().any(|p| p.cursor_animating);
 		let content = state.tabs.cur().panes.values().any(|p| p.content_dirty);
+		// Parked-cursor resume: no frames flow while a cursor is parked at full,
+		// so consume any due wake (render one catch-up frame - the pause state
+		// sees the timeouts met and resumes the cycle) and keep the earliest
+		// pending one to fold into the control flow below.
+		let mut cursor_wake: Option<Instant> = None;
+		let wake_now = Instant::now();
+		for pane in state.tabs.cur_mut().panes.values_mut() {
+			if let Some(wake) = pane.cursor_wake {
+				if wake_now >= wake {
+					pane.cursor_wake = None; // consumed - or an occluded window would spin on it
+					state.dirty = true;
+				} else {
+					cursor_wake = Some(cursor_wake.map_or(wake, |w| w.min(wake)));
+				}
+			}
+		}
 		// copy-output: catch the focused pane's command finishing (see method)
 		state.poll_output_copy();
 		// wallpaper rotation: swap to the next image when its interval elapses
@@ -4375,6 +4411,12 @@ impl ApplicationHandler<UserEvent> for App {
 		};
 		// keep the loop waking while dialog-raise retries are pending
 		let flow = match (flow, raise_wake) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
+		// wake a parked cursor at its scheduled resume time, even when idle
+		let flow = match (flow, cursor_wake) {
 			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,

@@ -144,9 +144,10 @@ pub struct Settings {
 	pub cursor_size_height: f32, // cursor height, 1..100% of the cell (from the bottom)
 	pub cursor_size_width: f32, // cursor width, 1..100% of the cell (from the left)
 	pub cursor_animation: String, // "none" | "phase" | "pulse_vertical" | "pulse_horizontal" | "pulse_both"
-	pub cursor_animation_input: String, // "continuous" (default) | "pause" (glide to full + hold while typing)
-	pub cursor_blink_rate_ms: f32,      // one animation cycle (ms)
-	pub columns: usize,                 // initial window grid size (used when !remember_size)
+	pub cursor_animation_resume_s: f32, // idle seconds after typing before the animation resumes
+	pub cursor_animation_idle_stop_s: f32, // idle seconds until the animation stops (parked at full); 0 = never
+	pub cursor_blink_rate_ms: f32,         // one animation cycle (ms)
+	pub columns: usize,                    // initial window grid size (used when !remember_size)
 	pub rows: usize,
 	pub remember_size: bool, // launch at the last window size instead of columns/rows
 	pub hide_single_tab: bool, // hide the tab bar while only one tab is open
@@ -217,7 +218,8 @@ impl Default for Settings {
 			cursor_size_height: 100.0, // full height
 			cursor_size_width: 25.0,   // ~quarter-width bar
 			cursor_animation: "pulse_vertical".to_string(),
-			cursor_animation_input: "continuous".to_string(),
+			cursor_animation_resume_s: 2.0,
+			cursor_animation_idle_stop_s: 60.0,
 			cursor_blink_rate_ms: 500.0,
 			columns: 160,
 			rows: 48,
@@ -685,7 +687,8 @@ struct RawConfig {
 	cursor_size_height: Option<f32>,
 	cursor_size_width: Option<f32>,
 	cursor_animation: Option<String>,
-	cursor_animation_input: Option<String>,
+	cursor_animation_resume_s: Option<f32>,
+	cursor_animation_idle_stop_s: Option<f32>,
 	cursor_blink_rate_ms: Option<f32>,
 	columns: Option<usize>,
 	rows: Option<usize>,
@@ -844,7 +847,8 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		cursor_size_height: r.f("cursor_size_height"),
 		cursor_size_width: r.f("cursor_size_width"),
 		cursor_animation: r.s("cursor_animation"),
-		cursor_animation_input: r.s("cursor_animation_input"),
+		cursor_animation_resume_s: r.f("cursor_animation_resume_s"),
+		cursor_animation_idle_stop_s: r.f("cursor_animation_idle_stop_s"),
 		cursor_blink_rate_ms: r.f("cursor_blink_rate_ms"),
 		columns: r.u("columns"),
 		rows: r.u("rows"),
@@ -985,9 +989,14 @@ fn resolve(raw: RawConfig) -> Settings {
 			.unwrap_or(d.cursor_size_width)
 			.clamp(1.0, 100.0),
 		cursor_animation: raw.cursor_animation.unwrap_or(d.cursor_animation),
-		cursor_animation_input: raw
-			.cursor_animation_input
-			.unwrap_or(d.cursor_animation_input),
+		cursor_animation_resume_s: raw
+			.cursor_animation_resume_s
+			.unwrap_or(d.cursor_animation_resume_s)
+			.clamp(0.05, 3600.0),
+		cursor_animation_idle_stop_s: raw
+			.cursor_animation_idle_stop_s
+			.unwrap_or(d.cursor_animation_idle_stop_s)
+			.clamp(0.0, 86400.0),
 		cursor_blink_rate_ms: raw
 			.cursor_blink_rate_ms
 			.unwrap_or(d.cursor_blink_rate_ms)
@@ -1240,6 +1249,9 @@ const CONFIG_REMOVED: &[&str] = &[
 	"cursor_blink",
 	"cursor_shape",
 	"cursor_blink_style",
+	// superseded by cursor_animation_resume_s/_idle_stop_s: the animation now
+	// always pauses on input ("continuous" is a source-level escape hatch only)
+	"cursor_animation_input",
 ];
 
 // Migrate an existing config in place across program updates: rename keys whose
@@ -1647,11 +1659,15 @@ opacity: 0.95
 ## The cursor always slides smoothly as you type.
 # cursor_animation: "pulse_vertical"
 
-## What the animation does while you're typing. "continuous" (default) keeps
-## animating right through typing. "pause" glides the cursor to full size and
-## holds it while there's input, then resumes the animation once input has been
-## idle briefly - so it doesn't restart on every keystroke.
-# cursor_animation_input: "continuous"
+## While you type, the animation glides to the cursor's full size and holds
+## there; it resumes this many seconds after input goes idle. Pausing and
+## resuming always happen at full size, so the cursor never jumps.
+# cursor_animation_resume_s: 2
+
+## After this many seconds with no input the animation stops entirely, parked at
+## full size, so an idle window costs nothing. Typing - or refocusing the
+## window, tab, or pane - brings it back. 0 = never stop.
+# cursor_animation_idle_stop_s: 60
 
 ## Cursor animation cycle length, in milliseconds (blink rate).
 # cursor_blink_rate_ms: 500
@@ -2099,6 +2115,17 @@ mod tests {
 	#[test]
 	fn migrate_config_noop_when_current() {
 		assert!(migrate_config_text("opacity: 0.7\ncursor_animation: \"phase\"\n").is_none());
+	}
+
+	#[test]
+	fn migrate_drops_cursor_animation_input() {
+		// removed key goes whether active or the stale commented template line
+		let out = migrate_config_text(
+			"# cursor_animation_input: \"continuous\"\ncursor_animation_input: \"pause\"\nmargin: 12.0\n",
+		)
+		.expect("should change");
+		assert!(!out.contains("cursor_animation_input"));
+		assert!(out.contains("margin: 12.0"));
 	}
 
 	// A pre-boolean config with an explicit font_family keeps it (use_system_font=false
