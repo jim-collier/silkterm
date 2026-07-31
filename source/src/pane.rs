@@ -419,6 +419,17 @@ fn glide_to_full(blink_t: f32, dt: f32, period: f32, full_phase: f32) -> (f32, b
 	}
 }
 
+// One animation cycle: (period seconds, the phase where the cursor is at its
+// largest). That full-size phase is the only point a pause ever parks at and
+// the only point a resume ever starts from - "phase" fades from full at 0, the
+// pulses peak mid-cycle. Both the pause and the refocus resume read it here so
+// they cannot drift apart.
+fn cursor_cycle(anim: &str, blink_rate_ms: f32) -> (f32, f32) {
+	let period = (blink_rate_ms / 1000.0 * 2.0).max(0.05); // full on->off->on
+	let full_phase = if anim == "phase" { 0.0 } else { 0.5 };
+	(period, full_phase)
+}
+
 // Cursor animation pause. On input (or long idle) the cycle keeps running at
 // its normal speed until it next reaches the full-size phase, parks there,
 // then resumes the cycle from that same point - so the size is continuous at
@@ -467,15 +478,24 @@ impl PauseState {
 			return next;
 		}
 		// parked: hold at full until input has been idle AND the hold has lasted
-		// the resume delay (a long glide can eat the whole idle window). Any
-		// activity - a cursor move, or a window/tab/pane refocus poke - resets
-		// idle_t, so a long-idle park resumes the resume delay after it.
+		// the resume delay (a long glide can eat the whole idle window). A cursor
+		// move resets idle_t, so a long-idle park then resumes the resume delay
+		// after it; a refocus skips the wait entirely via resume().
 		self.hold_t += wall_dt;
 		if !held && self.hold_t >= resume_s && idle_t >= resume_s {
 			self.active = false;
 			return full_phase * period + dt; // resume the cycle from full
 		}
 		full_phase * period
+	}
+
+	// End the episode now instead of waiting out the resume delay. Only for a
+	// refocus, where the caller also parks blink_t at the full-size phase - so
+	// this still resumes from full, like every other resume.
+	fn resume(&mut self) {
+		self.active = false;
+		self.parked = false;
+		self.hold_t = 0.0;
 	}
 }
 
@@ -1439,12 +1459,17 @@ impl Pane {
 		self.last_draw.clone()
 	}
 
-	// A window/tab/pane refocus counts as cursor activity: reset the idle clock
-	// so a long-idle-parked animation resumes - from full, after the resume
-	// delay, exactly like a keystroke.
+	// A window/tab/pane refocus resumes the cursor animation AT ONCE - no resume
+	// delay, unlike a keystroke - starting from the top of the cycle, which is
+	// the same full-size point a pause always parks at.
 	pub fn poke_cursor(&mut self) {
 		self.cursor_idle_t = 0.0;
 		self.cursor_step_at = Some(std::time::Instant::now());
+		let settings = config::settings();
+		let (period, full_phase) =
+			cursor_cycle(&settings.cursor_animation, settings.cursor_blink_rate_ms);
+		self.blink_t = full_phase * period;
+		self.cursor_pause.resume();
 	}
 
 	// Coming back from a freeze (hidden tab shown, minimized window restored):
@@ -1524,12 +1549,12 @@ impl Pane {
 		// typing (resuming cursor_animation_resume_s after input goes idle) and
 		// again after cursor_animation_idle_stop_s of nothing, indefinitely; both
 		// pause AND resume happen at the cursor's full size, always. A parked
-		// cursor renders no frames - the timed resume comes from cursor_wake.
+		// cursor renders no frames - the timed resume comes from cursor_wake, and
+		// a refocus ends the park outright (poke_cursor).
 		let settings = config::settings();
 		let anim = settings.cursor_animation.as_str();
-		let period = (settings.cursor_blink_rate_ms / 1000.0 * 2.0).max(0.05); // full on->off->on
+		let (period, full_phase) = cursor_cycle(anim, settings.cursor_blink_rate_ms);
 		let anim_on = anim != "none";
-		let full_phase = if anim == "phase" { 0.0 } else { 0.5 };
 		let mut parked = false;
 		self.cursor_wake = None;
 		if anim_on && !CURSOR_ANIM_CONTINUOUS {
@@ -3032,10 +3057,10 @@ mod tests {
 	use super::{
 		APP_SCROLL_MAX, CURSOR_MAX_LAG, Dir, Node, OffStrip, PauseState, Rect, SLIDE_TOP_BAND_APPS,
 		StripCell, app_scroll_frames, bell_brighten, capture_grid_text, capture_start,
-		cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full,
-		layout, logical_line_bounds, pair_inside, prompt_strip, render_char, same_char_pair,
-		scroll_shift, scroll_shift_signed, snapshot_rows, static_bands, vanished_range,
-		weld_region_clip,
+		cursor_cycle, cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, fnv_row_skel,
+		glide_to_full, layout, logical_line_bounds, pair_inside, prompt_strip, render_char,
+		same_char_pair, scroll_shift, scroll_shift_signed, snapshot_rows, static_bands,
+		vanished_range, weld_region_clip,
 	};
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
@@ -3327,8 +3352,9 @@ mod tests {
 			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, true, 5.0, true);
 		}
 		assert!(st.active && st.parked && ((t / period).fract() - 0.5).abs() < 1e-6);
-		// unblocked (focused again, poke reset idle_t): parked through the resume
-		// delay, then the cycle resumes from full - size continuous throughout
+		// unblocked with only idle_t reset: holds out the resume delay, then the
+		// cycle resumes from full - size continuous throughout. (In the app a
+		// refocus also calls resume(), which skips this wait - see below.)
 		let mut idle = 0.0;
 		let mut resumed = None;
 		for _ in 0..200 {
@@ -3341,6 +3367,58 @@ mod tests {
 		}
 		let t = resumed.expect("should resume once unblocked");
 		assert!((t - (0.5 * period + 0.01)).abs() < 1e-6);
+	}
+
+	// A refocus ends the park at once - it must not sit out the resume delay the
+	// way input does - and still resumes from the cursor's full size.
+	#[test]
+	fn pause_state_resume_skips_the_delay() {
+		let period = 1.0;
+		let (resume_s, stop) = (1.0, 60.0);
+		let mut st = PauseState::default();
+		let mut t = st.advance(
+			0.7, 0.01, 0.01, period, 0.5, resume_s, stop, true, 0.0, false,
+		);
+		for _ in 0..200 {
+			t = st.advance(
+				t, 0.01, 0.01, period, 0.5, resume_s, stop, false, 0.0, false,
+			);
+			if st.parked {
+				break;
+			}
+		}
+		assert!(st.parked, "typing should park the cycle at full");
+		// a fraction of the delay in, the timed path is still holding
+		st.advance(
+			t, 0.01, 0.01, period, 0.5, resume_s, stop, false, 0.1, false,
+		);
+		assert!(st.active && st.parked);
+		st.resume();
+		assert!(!st.active && !st.parked);
+		// poke_cursor puts blink_t at the full-size phase; the cycle runs on from there
+		let t = st.advance(
+			0.5 * period,
+			0.01,
+			0.01,
+			period,
+			0.5,
+			resume_s,
+			stop,
+			false,
+			0.0,
+			false,
+		);
+		assert!((t - (0.5 * period + 0.01)).abs() < 1e-6);
+	}
+
+	// The pause and the refocus resume must agree on where "full size" is: mid
+	// cycle for the pulses, phase 0 for the fade.
+	#[test]
+	fn cursor_cycle_full_phase_matches_the_animation() {
+		assert_eq!(cursor_cycle("pulse_vertical", 500.0), (1.0, 0.5));
+		assert_eq!(cursor_cycle("phase", 500.0), (1.0, 0.0));
+		assert_eq!(cursor_cycle("pulse_both", 250.0).0, 0.5);
+		assert_eq!(cursor_cycle("phase", 0.0).0, 0.05); // period never reaches zero
 	}
 
 	#[test]
