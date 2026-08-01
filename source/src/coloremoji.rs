@@ -54,6 +54,8 @@ pub struct ColorMetrics {
 
 #[derive(Clone, Copy)]
 struct Resolved {
+	// glyphon custom-glyph id, assigned on first resolve (chars index)
+	id: u16,
 	face: fontdb::ID,
 	gid: GlyphId,
 	box_x: f32,
@@ -67,11 +69,9 @@ pub struct ColorGlyphs {
 	// a colour candidate actually appears on screen).
 	faces: Option<Vec<fontdb::ID>>,
 	// Per-char resolution, including the misses - a char with no colour glyph is
-	// looked up on every cell of every frame otherwise.
+	// looked up on every cell of every frame otherwise. A hit carries its
+	// glyphon custom-glyph id (u16, handed out per char, never reused).
 	lookup: HashMap<char, Option<Resolved>>,
-	// Custom-glyph id registry. glyphon keys its atlas on a u16 id, so ids are
-	// handed out per char and never reused.
-	ids: HashMap<char, u16>,
 	chars: Vec<char>,
 	// Value carries the frame it was last warmed on, so the overflow sweep can
 	// tell a raster this frame still needs from one nothing references.
@@ -84,7 +84,6 @@ impl ColorGlyphs {
 		Self {
 			faces: None,
 			lookup: HashMap::new(),
-			ids: HashMap::new(),
 			chars: Vec::new(),
 			rasters: HashMap::new(),
 			frame: 0,
@@ -97,21 +96,22 @@ impl ColorGlyphs {
 		if let Some(hit) = self.lookup.get(&ch) {
 			let hit = (*hit)?;
 			return Some(ColorMetrics {
-				id: self.ids[&ch],
+				id: hit.id,
 				box_w: hit.box_w,
 				box_h: hit.box_h,
 			});
 		}
-		let found = self.resolve(db, ch);
+		// u16 ids: 65k distinct colour glyphs is far past any real font's coverage,
+		// but refuse (cache as a miss) rather than wrap onto a live id.
+		let found = self.resolve(db, ch).and_then(|mut hit| {
+			hit.id = u16::try_from(self.chars.len()).ok()?;
+			self.chars.push(ch);
+			Some(hit)
+		});
 		self.lookup.insert(ch, found);
 		let found = found?;
-		// u16 ids: 65k distinct colour glyphs is far past any real font's coverage,
-		// but refuse rather than wrap onto a live id.
-		let next = u16::try_from(self.chars.len()).ok()?;
-		self.ids.insert(ch, next);
-		self.chars.push(ch);
 		Some(ColorMetrics {
-			id: next,
+			id: found.id,
 			box_w: found.box_w,
 			box_h: found.box_h,
 		})
@@ -147,6 +147,7 @@ impl ColorGlyphs {
 						}
 					};
 				Some(Resolved {
+					id: 0, // assigned by metrics() on first sight
 					face,
 					gid,
 					box_x: x,

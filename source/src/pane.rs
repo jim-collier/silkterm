@@ -374,9 +374,12 @@ fn debold_attrs(src: &AttrsList, weight: Weight) -> AttrsList {
 // already holds and only drops its cached shaping when something differs, so an
 // unchanged row costs a string compare instead of a re-shape. Mirrors what
 // set_rich_text does around the lines themselves (reset scroll, no alignment).
-fn set_buffer_rows(buf: &mut Buffer, rows: Vec<(String, AttrsList)>) {
+fn set_buffer_rows<'a>(
+	buf: &mut Buffer,
+	rows: impl ExactSizeIterator<Item = (&'a str, AttrsList)>,
+) {
 	let count = rows.len();
-	for (i, (text, attrs)) in rows.into_iter().enumerate() {
+	for (i, (text, attrs)) in rows.enumerate() {
 		if let Some(line) = buf.lines.get_mut(i) {
 			line.set_text(text, LineEnding::default(), attrs);
 		} else {
@@ -647,6 +650,9 @@ pub struct Pane {
 	// `cells_scratch` recycles the row allocations frame to frame.
 	last_cells: Vec<Vec<StripCell>>,
 	cells_scratch: Vec<Vec<StripCell>>,
+	// Recycles the per-row Strings the build's attr-run assembler fills each
+	// rebuilt frame (set_text copies out of them, so fresh ones were pure churn).
+	rows_scratch: Vec<(String, AttrsList)>,
 	pub rect: Rect,
 	pub title: String,
 	pub read_only: bool, // accept no PTY input/paste; selection + copy still work
@@ -780,7 +786,9 @@ impl Pane {
 		bell: f32,
 		force_rebuild: bool,
 		active: bool, // the focused pane of the focused window (cursor animates only there)
-	) -> PaneDraw {
+	) {
+		// Result lands in self.last_draw (read via draw()) - returning it by value
+		// cloned the whole bg-quad Vec per pane per frame.
 		let cell_w = ctx.cell_w;
 		let cell_h = ctx.cell_h;
 		let margin = ctx.margin;
@@ -803,7 +811,7 @@ impl Pane {
 			guard
 		} else {
 			self.lock_misses += 1;
-			return self.last_draw.clone();
+			return;
 		};
 		self.lock_misses = 0;
 		self.mode = *guard.mode();
@@ -953,7 +961,12 @@ impl Pane {
 					{
 						let range =
 							vanished_range(shift, self.slide_static_top, self.slide_static, lines);
-						let chunk = self.last_cells[range].to_vec();
+						// move the rows out, don't clone: last_cells is replaced wholesale
+						// below, and snapshot_rows recycles emptied slots next capture
+						let chunk: Vec<Vec<StripCell>> = self.last_cells[range]
+							.iter_mut()
+							.map(std::mem::take)
+							.collect();
 						if !chunk.is_empty() {
 							self.strip.push_step(shift.signum() as i8, chunk);
 							self.strip_dirty = true;
@@ -1109,16 +1122,12 @@ impl Pane {
 				settings.cursor,
 				active,
 			);
-			let bg = std::mem::take(&mut self.last_draw.bg);
 			// the fast path is a pure cursor frame - never taken while a slide eases
 			// (that forces a rebuild), so there is never a slide here
-			self.last_draw = PaneDraw {
-				top,
-				bg,
-				cursor,
-				slide: None,
-			};
-			return self.last_draw.clone();
+			self.last_draw.top = top;
+			self.last_draw.cursor = cursor;
+			self.last_draw.slide = None;
+			return;
 		}
 		self.text_built = true;
 		self.shape_rev = self.shape_rev.wrapping_add(1);
@@ -1156,7 +1165,9 @@ impl Pane {
 		// at a time lets it compare each against what that line already holds and
 		// re-shape only the ones that really changed - a keystroke touches one row,
 		// not a screenful. See the buffer update after this loop.
-		let mut rows_out: Vec<(String, AttrsList)> = Vec::with_capacity(lines + 1);
+		let mut rows_out = std::mem::take(&mut self.rows_scratch);
+		rows_out.reserve(lines + 1);
+		let mut rows_used = 0usize;
 		let mut line_text = String::new();
 		let mut line_attrs = AttrsList::new(&default_attrs);
 		let mut run = String::new();
@@ -1164,14 +1175,16 @@ impl Pane {
 		let mut run_bold = false;
 		let mut run_italic = false;
 		let mut saw_bold = false;
+		// hoisted: mono_attrs() takes an RwLock read, too hot per attribute run
+		let bold_weight = crate::text::mono_bold_weight();
 
 		macro_rules! flush_run {
 			() => {
 				if !run.is_empty() {
-					let mut attrs = mono_attrs();
+					let mut attrs = default_attrs.clone();
 					attrs.color_opt = Some(GColor::rgb(run_color[0], run_color[1], run_color[2]));
 					if run_bold {
-						attrs.weight = crate::text::mono_bold_weight();
+						attrs.weight = bold_weight;
 					}
 					if run_italic {
 						attrs.style = Style::Italic;
@@ -1188,14 +1201,21 @@ impl Pane {
 		}
 		// End the current row and start a fresh one. Run state (colour/bold/italic)
 		// deliberately carries over: `run` is empty here, so an unchanged attribute
-		// at the start of the next row just keeps appending.
+		// at the start of the next row just keeps appending. Rows land in recycled
+		// scratch slots so their String capacity survives across frames.
 		macro_rules! flush_row {
 			() => {
 				flush_run!();
-				rows_out.push((
-					std::mem::take(&mut line_text),
-					std::mem::replace(&mut line_attrs, AttrsList::new(&default_attrs)),
-				));
+				let attrs = std::mem::replace(&mut line_attrs, AttrsList::new(&default_attrs));
+				if rows_used < rows_out.len() {
+					let slot = &mut rows_out[rows_used];
+					std::mem::swap(&mut slot.0, &mut line_text);
+					slot.1 = attrs;
+					line_text.clear(); // recycled slot String, capacity kept
+				} else {
+					rows_out.push((std::mem::take(&mut line_text), attrs));
+				}
+				rows_used += 1;
 			};
 		}
 
@@ -1293,6 +1313,7 @@ impl Pane {
 			}
 			flush_row!();
 		}
+		rows_out.truncate(rows_used); // drop stale slots from a taller prior frame
 
 		drop(guard);
 		let mut cursor = self.cursor_quad(
@@ -1351,10 +1372,6 @@ impl Pane {
 			&& saw_bold;
 		if self.scrim_debold {
 			let (buf_w, buf_h) = self.buffer.size();
-			let plain_rows: Vec<(String, AttrsList)> = rows_out
-				.iter()
-				.map(|(text, attrs)| (text.clone(), debold_attrs(attrs, default_attrs.weight)))
-				.collect();
 			let scrim_buffer = self.scrim_buf.get_or_insert_with(|| {
 				let mut buf = Buffer::new(&mut ctx.font_system, ctx.metrics);
 				buf.set_wrap(&mut ctx.font_system, glyphon::Wrap::None);
@@ -1363,11 +1380,26 @@ impl Pane {
 			});
 			scrim_buffer.set_metrics(&mut ctx.font_system, ctx.metrics);
 			scrim_buffer.set_size(&mut ctx.font_system, buf_w, buf_h);
-			set_buffer_rows(scrim_buffer, plain_rows);
+			// borrow the row text; only the attrs differ (bold stripped)
+			set_buffer_rows(
+				scrim_buffer,
+				rows_out.iter().map(|(text, attrs)| {
+					(text.as_str(), debold_attrs(attrs, default_attrs.weight))
+				}),
+			);
 			scrim_buffer.shape_until_scroll(&mut ctx.font_system, false);
 		}
-		set_buffer_rows(&mut self.buffer, rows_out);
+		set_buffer_rows(
+			&mut self.buffer,
+			rows_out.iter_mut().map(|(text, attrs)| {
+				(
+					text.as_str(),
+					std::mem::replace(attrs, AttrsList::new(&default_attrs)),
+				)
+			}),
+		);
 		self.buffer.shape_until_scroll(&mut ctx.font_system, false);
+		self.rows_scratch = rows_out; // keep the row Strings for the next frame
 
 		// Re-shape the scrolled-off strip when its rows changed this frame. Cheap:
 		// the strip is at most OffStrip::CAP short rows, and only steps dirty it.
@@ -1488,7 +1520,11 @@ impl Pane {
 			cursor,
 			slide,
 		};
-		self.last_draw.clone()
+	}
+
+	// The frame build() just produced (or the retained one on a lock miss).
+	pub fn draw(&self) -> &PaneDraw {
+		&self.last_draw
 	}
 
 	// The user sent input here (a keystroke, a paste). Stamps the moment so the
@@ -1742,11 +1778,11 @@ impl Pane {
 				right: (self.rect.x + self.rect.w - margin) as i32,
 				bottom: (self.rect.y + self.rect.h - margin) as i32,
 			},
-			default_color: GColor::rgb(
-				config::settings().fg[0],
-				config::settings().fg[1],
-				config::settings().fg[2],
-			),
+			default_color: {
+				// one settings() (RwLock read + Arc clone), not three
+				let fg = config::settings().fg;
+				GColor::rgb(fg[0], fg[1], fg[2])
+			},
 			custom_glyphs: &[],
 		}
 	}
@@ -1856,27 +1892,29 @@ impl Pane {
 
 	// Per-cell fallback glyphs, already positioned (see Pane::build). Drawn in
 	// the same text pass as `text_area`, on top of their space placeholders.
-	pub fn glyph_areas(&self, margin: f32) -> Vec<TextArea<'_>> {
+	// Iterator, not a Vec: both callers extend() into their own area list, so a
+	// materialized intermediate was two throwaway allocations per frame.
+	pub fn glyph_areas(&self, margin: f32) -> impl Iterator<Item = TextArea<'_>> {
+		// content clip, same as buf_area: an edge row's fallback glyph (ink
+		// taller than its cell, or shifted by a scroll fraction) must not
+		// paint the margin - the main buffer's text never can
+		let bounds = TextBounds {
+			left: (self.rect.x + margin) as i32,
+			top: (self.rect.y + margin) as i32,
+			right: (self.rect.x + self.rect.w - margin) as i32,
+			bottom: (self.rect.y + self.rect.h - margin) as i32,
+		};
 		self.glyphs
 			.iter()
-			.map(|&(key, x, y, color, scale)| TextArea {
+			.map(move |&(key, x, y, color, scale)| TextArea {
 				buffer: &self.glyph_cache[&key].buf,
 				left: x,
 				top: y,
 				scale,
-				// content clip, same as buf_area: an edge row's fallback glyph (ink
-				// taller than its cell, or shifted by a scroll fraction) must not
-				// paint the margin - the main buffer's text never can
-				bounds: TextBounds {
-					left: (self.rect.x + margin) as i32,
-					top: (self.rect.y + margin) as i32,
-					right: (self.rect.x + self.rect.w - margin) as i32,
-					bottom: (self.rect.y + self.rect.h - margin) as i32,
-				},
+				bounds,
 				default_color: color,
 				custom_glyphs: &[],
 			})
-			.collect()
 	}
 
 	// This frame's colour glyphs (see Pane::build). One text area carries them all:
@@ -2394,6 +2432,7 @@ fn spawn_pane(
 		strip_dirty: false,
 		last_cells: Vec::new(),
 		cells_scratch: Vec::new(),
+		rows_scratch: Vec::new(),
 		rect,
 		title: config::APP_NAME.into(),
 		read_only: false,

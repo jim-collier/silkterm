@@ -84,7 +84,7 @@ impl App {
 	// Events for the pop-out dialog window (its own surface/input).
 	fn handle_dialog_event(&mut self, event: WindowEvent) {
 		use crate::dialog::DialogAction as DA;
-		if std::env::var_os("SILK_DLGDBG").is_some() {
+		if env_flag("SILK_DLGDBG") {
 			match &event {
 				WindowEvent::KeyboardInput { event: k, .. } => {
 					eprintln!("[dlg] key {:?} {:?}", k.logical_key, k.state);
@@ -577,6 +577,20 @@ const TAB_MAX_W: f32 = 220.0; // tab button width cap - drawing AND click hit-te
 const TAB_CLOSE_W: f32 = 26.0; // right-edge close-button region per tab (title clips before it)
 const TAB_CLOSE_M: f32 = 6.0; // balanced top/right/bottom margin around the close button box
 
+// SILK_DUMP / SILK_DLGDBG are consulted per frame / per event; read the env
+// once (var_os takes the env lock and scans environ every call). Same pattern
+// as pane.rs scroll_dbg.
+fn env_flag(name: &str) -> bool {
+	use std::sync::OnceLock;
+	static DUMP: OnceLock<bool> = OnceLock::new();
+	static DLGDBG: OnceLock<bool> = OnceLock::new();
+	let cell = match name {
+		"SILK_DUMP" => &DUMP,
+		_ => &DLGDBG,
+	};
+	*cell.get_or_init(|| std::env::var_os(name).is_some())
+}
+
 // VT-switch field diagnostics: `touch ~/silk_vramdbg.on` (no relaunch needed)
 // makes the sentinel probes append their results to ~/silk_vramdbg.txt, so a
 // desktop repro can show whether loss detection fired. The marker is re-checked
@@ -725,6 +739,8 @@ struct State {
 	// glyphon prepares (the bulk of per-frame CPU) and the atlas trim are skipped
 	// - the retained vertex buffers are still correct. None = must prepare.
 	text_sig: Option<u64>,
+	// same idea for the context-menu overlay (skip re-shaping an open menu)
+	overlay_sig: Option<u64>,
 	// The scrim's blurred source is valid for this signature. The halo depends on
 	// the text alone (the cursor has its own coverage texture), so a cursor-only
 	// frame reuses it instead of re-rendering and re-blurring the whole window.
@@ -1749,9 +1765,6 @@ impl State {
 		};
 
 		let mut under: Vec<RectInstance> = Vec::new();
-		// per-pane (bg cells + cursor), scissored to the pane so overscan rows
-		// don't bleed into neighbours
-		let mut groups: Vec<(Rect, Vec<RectInstance>)> = Vec::new();
 		// cursors are drawn separately (above the scrim, so its halo can't obscure them)
 		let mut cursors: Vec<(Rect, RectInstance)> = Vec::new();
 		let mut tops: HashMap<u64, f32> = HashMap::new();
@@ -1766,6 +1779,12 @@ impl State {
 		self.text.color_frame();
 		let win_focused = self.focused;
 		let active_pane = self.tabs.cur().focused;
+		// pane fill color is loop-invariant
+		let pane_bg = {
+			let mut c = config::srgb_f32(cfg.bg);
+			c[3] = bg_alpha;
+			c
+		};
 		for (id, pane) in &mut self.tabs.cur_mut().panes {
 			pane.scroll.advance(dt);
 			let rect = pane.rect;
@@ -1774,7 +1793,7 @@ impl State {
 			// cause (bell flash, chrome/UI change) - idle siblings reuse their
 			// cached frame instead of re-shaping at the busy pane's rate
 			let force = force_rebuild || pane.content_dirty || pane.scroll.animating();
-			let draw = pane.build(
+			pane.build(
 				&mut self.text,
 				dt,
 				bell,
@@ -1784,20 +1803,15 @@ impl State {
 			if pane.scroll.animating() || pane.cursor_animating {
 				animating = true;
 			}
+			let draw = pane.draw();
 			tops.insert(*id, draw.top);
-			slides.insert(*id, draw.slide);
-			let mut bg = config::srgb_f32(cfg.bg);
-			bg[3] = bg_alpha;
+			slides.insert(*id, draw.slide.clone());
 			under.push(RectInstance {
 				pos: [rect.x, rect.y],
 				size: [rect.w, rect.h],
-				color: bg,
+				color: pane_bg,
 				..Default::default()
 			});
-			if scrim_on {
-				scrim_cells.extend_from_slice(&draw.bg);
-			}
-			groups.push((rect, draw.bg));
 			if let Some(cursor_quad) = draw.cursor {
 				cursors.push((rect, cursor_quad));
 			}
@@ -1805,11 +1819,17 @@ impl State {
 
 		let under_len = under.len() as u32;
 		let mut instances = under;
+		// per-pane bg quads (scissored to the pane so overscan rows don't bleed
+		// into neighbours), copied once from each pane's retained frame
 		let mut group_ranges: Vec<(Rect, u32, u32)> = Vec::new();
-		for (rect, bg_quads) in groups {
+		for p in self.tabs.cur().panes.values() {
+			let bg_quads = &p.draw().bg;
 			let start = instances.len() as u32;
-			instances.extend(bg_quads);
-			group_ranges.push((rect, start, instances.len() as u32));
+			instances.extend_from_slice(bg_quads);
+			group_ranges.push((p.rect, start, instances.len() as u32));
+			if scrim_on {
+				scrim_cells.extend_from_slice(bg_quads);
+			}
 		}
 
 		let ring_start = instances.len() as u32;
@@ -1940,6 +1960,9 @@ impl State {
 			instances.push(rect_inst(0.0, tab_bar_y, win_w, tab_h, config::TAB_BAR_BG));
 			let n = self.tabs.len();
 			let tab_w = (win_w / n as f32).min(TAB_MAX_W);
+			// per-tab loop invariants (each config accessor is an RwLock read)
+			let box_border = config::menu_border();
+			let x_rgb = close_x_rgb();
 			for i in 0..n {
 				let x = i as f32 * tab_w;
 				let color = if i == self.tabs.active {
@@ -1964,7 +1987,7 @@ impl State {
 					cb.y - 1.0,
 					cb.w + 2.0,
 					cb.h + 2.0,
-					config::menu_border(),
+					box_border,
 				));
 				let box_fill = if self.tab_close_arm == Some(i) {
 					// held down: light the button (press feedback; closes on release)
@@ -1975,7 +1998,7 @@ impl State {
 					color
 				};
 				instances.push(rect_inst(cb.x, cb.y, cb.w, cb.h, box_fill));
-				instances.push(close_x_inst(cb, close_x_rgb()));
+				instances.push(close_x_inst(cb, x_rgb));
 			}
 			Some((start, instances.len() as u32))
 		} else {
@@ -2217,105 +2240,6 @@ impl State {
 		};
 		let text_same = self.text_sig == Some(text_sig);
 
-		let chrome = self.chrome.as_ref().unwrap(); // ensured above
-		let mut areas: Vec<TextArea> = Vec::new();
-		for p in self.tabs.cur().panes.values() {
-			// app-scroll slide: fill the revealed gap from the scrolled-off strip,
-			// draw the current scroll region over it, then the static bands unshifted
-			match &slides[&p.id] {
-				Some(slide) => {
-					if let Some(strip) = p.strip_text_area(slide, margin) {
-						areas.push(strip);
-					}
-					areas.push(p.text_area_band(
-						tops[&p.id],
-						margin,
-						slide.region_clip_t,
-						slide.region_clip_b,
-					));
-					if slide.has_top_band {
-						areas.push(p.text_area_band(
-							slide.band_top,
-							margin,
-							f32::MIN,
-							slide.top_split_y,
-						));
-					}
-					if slide.has_band {
-						areas.push(p.text_area_band(
-							slide.band_top,
-							margin,
-							slide.split_y,
-							f32::MAX,
-						));
-					}
-				}
-				None => areas.push(p.text_area(tops[&p.id], margin)),
-			}
-			areas.extend(p.glyph_areas(margin));
-			areas.extend(p.emoji_area(margin));
-		}
-		if self.menu_bar {
-			for (i, buf) in chrome.menubar.iter().enumerate() {
-				// the trailing buffers are the right-aligned copy-mode labels;
-				// their lowercase words center on full ink, not ascent..baseline
-				let (left, left_bound, right_bound, top) = if i < bar_layout.len() {
-					let (x, w) = bar_layout[i];
-					(
-						x + MENU_BAR_PAD,
-						x,
-						x + w,
-						self.text.ui_text_top(0.0, menu_h),
-					)
-				} else {
-					let j = i - bar_layout.len();
-					let x = copyboxes.label_x[j];
-					let w = copyboxes.label_w[j];
-					(x, x, x + w, self.text.ui_text_top_ink(0.0, menu_h))
-				};
-				// trailing buffers are the copy-mode labels - dim them off-focus
-				let color = if i < bar_layout.len() {
-					menu_fg
-				} else {
-					copy_label_fg
-				};
-				areas.push(TextArea {
-					buffer: buf,
-					left,
-					top,
-					scale: 1.0,
-					bounds: TextBounds {
-						left: left_bound as i32,
-						top: 0,
-						right: right_bound as i32,
-						bottom: menu_h as i32,
-					},
-					default_color: color,
-					custom_glyphs: &[],
-				});
-			}
-		}
-		for (i, (_, buf)) in chrome.tabs.iter().enumerate() {
-			let x = i as f32 * tab_w;
-			let close_x = x + tab_w - TAB_CLOSE_W;
-			areas.push(TextArea {
-				buffer: buf,
-				left: x + 8.0,
-				// center the visible text box in the tab bar (metric-based)
-				top: self.text.ui_text_top(tab_bar_y, tab_h),
-				scale: 1.0,
-				bounds: TextBounds {
-					left: x as i32,
-					top: tab_bar_y as i32,
-					right: close_x as i32, // leave room for the close "X"
-					bottom: (tab_bar_y + tab_h) as i32,
-				},
-				default_color: menu_fg,
-				custom_glyphs: &[],
-			});
-			// the close "X" itself is a shader-drawn rect instance (tab bar pass)
-		}
-
 		// All rect instances and the bg-image shader work in absolute
 		// framebuffer pixels (matching the glyphon viewport), so the resolution
 		// is the whole window - NOT the content `area`, which is shorter by the
@@ -2332,52 +2256,31 @@ impl State {
 		}
 		self.rects
 			.upload(&self.gfx.device, &self.gfx.queue, &instances);
+
 		// Nothing that feeds the text changed, so glyphon's prepared buffers from
-		// the last frame still describe this one exactly. Skipping both prepares
-		// is the whole point of the signature: shaping and glyph-cache lookups
-		// are over half the per-frame cost, and an idle cursor pulse repeats them
-		// 30x a second for no visual difference.
-		if text_same {
-			drop(areas);
-		} else if let Err(e) = self.text.prepare(&self.gfx.device, &self.gfx.queue, areas) {
-			// Atlas full (after a long session of varied glyphs). The normal per-frame
-			// trim is at the END of render, below this early return - so without
-			// trimming here the atlas never recovers and ALL text goes black for good
-			// (cursor/cell-bg quads use a separate renderer, so they still show). Trim
-			// now to free space; the next frame re-prepares with room and recovers.
-			eprintln!(
-				"{}: text prepare failed; trimming atlas to recover: {e:?}",
-				config::APP_NAME
-			);
-			self.text.trim_atlas();
-			self.text_sig = None;
-			self.scrim_sig = None;
-			return animating;
-		}
-		// scrim source pass has its own prepared set: pane text only (no chrome),
-		// with de-bolded buffers where a pane built one (text_scrim_regular_weight)
-		if scrim_on && !text_same {
-			let mut scrim_areas: Vec<TextArea> = Vec::new();
+		// the last frame still describe this one exactly. Skipping the whole area
+		// build + both prepares is the point of the signature: shaping and
+		// glyph-cache lookups are over half the per-frame cost, and an idle cursor
+		// pulse repeats them 30x a second for no visual difference.
+		if !text_same {
+			let chrome = self.chrome.as_ref().unwrap(); // ensured above
+			let mut areas: Vec<TextArea> = Vec::new();
 			for p in self.tabs.cur().panes.values() {
-				// scrim follows the current frame's slide, INCLUDING the scrolled-off
-				// strip filling the reveal gap - without it the strip's text (e.g. the
-				// row just below a static header) loses its readability halo mid-slide
-				// and the halo "pops" when the slide settles, reading as a shadow that
-				// jumps at the band boundary. The strip holds only region rows, so it
-				// is always scrim-safe (no furniture to guard out of the scrim).
+				// app-scroll slide: fill the revealed gap from the scrolled-off strip,
+				// draw the current scroll region over it, then the static bands unshifted
 				match &slides[&p.id] {
 					Some(slide) => {
 						if let Some(strip) = p.strip_text_area(slide, margin) {
-							scrim_areas.push(strip);
+							areas.push(strip);
 						}
-						scrim_areas.push(p.scrim_text_area_band(
+						areas.push(p.text_area_band(
 							tops[&p.id],
 							margin,
 							slide.region_clip_t,
 							slide.region_clip_b,
 						));
 						if slide.has_top_band {
-							scrim_areas.push(p.scrim_text_area_band(
+							areas.push(p.text_area_band(
 								slide.band_top,
 								margin,
 								f32::MIN,
@@ -2385,7 +2288,7 @@ impl State {
 							));
 						}
 						if slide.has_band {
-							scrim_areas.push(p.scrim_text_area_band(
+							areas.push(p.text_area_band(
 								slide.band_top,
 								margin,
 								slide.split_y,
@@ -2393,17 +2296,80 @@ impl State {
 							));
 						}
 					}
-					None => scrim_areas.push(p.scrim_text_area(tops[&p.id], margin)),
+					None => areas.push(p.text_area(tops[&p.id], margin)),
 				}
-				scrim_areas.extend(p.glyph_areas(margin));
-				scrim_areas.extend(p.emoji_area(margin));
+				areas.extend(p.glyph_areas(margin));
+				areas.extend(p.emoji_area(margin));
 			}
-			if let Err(e) = self
-				.text
-				.prepare_scrim(&self.gfx.device, &self.gfx.queue, scrim_areas)
-			{
+			if self.menu_bar {
+				for (i, buf) in chrome.menubar.iter().enumerate() {
+					// the trailing buffers are the right-aligned copy-mode labels;
+					// their lowercase words center on full ink, not ascent..baseline
+					let (left, left_bound, right_bound, top) = if i < bar_layout.len() {
+						let (x, w) = bar_layout[i];
+						(
+							x + MENU_BAR_PAD,
+							x,
+							x + w,
+							self.text.ui_text_top(0.0, menu_h),
+						)
+					} else {
+						let j = i - bar_layout.len();
+						let x = copyboxes.label_x[j];
+						let w = copyboxes.label_w[j];
+						(x, x, x + w, self.text.ui_text_top_ink(0.0, menu_h))
+					};
+					// trailing buffers are the copy-mode labels - dim them off-focus
+					let color = if i < bar_layout.len() {
+						menu_fg
+					} else {
+						copy_label_fg
+					};
+					areas.push(TextArea {
+						buffer: buf,
+						left,
+						top,
+						scale: 1.0,
+						bounds: TextBounds {
+							left: left_bound as i32,
+							top: 0,
+							right: right_bound as i32,
+							bottom: menu_h as i32,
+						},
+						default_color: color,
+						custom_glyphs: &[],
+					});
+				}
+			}
+			for (i, (_, buf)) in chrome.tabs.iter().enumerate() {
+				let x = i as f32 * tab_w;
+				let close_x = x + tab_w - TAB_CLOSE_W;
+				areas.push(TextArea {
+					buffer: buf,
+					left: x + 8.0,
+					// center the visible text box in the tab bar (metric-based)
+					top: self.text.ui_text_top(tab_bar_y, tab_h),
+					scale: 1.0,
+					bounds: TextBounds {
+						left: x as i32,
+						top: tab_bar_y as i32,
+						right: close_x as i32, // leave room for the close "X"
+						bottom: (tab_bar_y + tab_h) as i32,
+					},
+					default_color: menu_fg,
+					custom_glyphs: &[],
+				});
+				// the close "X" itself is a shader-drawn rect instance (tab bar pass)
+			}
+
+			if let Err(e) = self.text.prepare(&self.gfx.device, &self.gfx.queue, areas) {
+				// Atlas full (after a long session of varied glyphs). The normal per-frame
+				// trim is at the END of render, below this early return - so without
+				// trimming here the atlas never recovers and ALL text goes black for good
+				// (cursor/cell-bg quads use a separate renderer, so they still show). Trim
+				// now to free space; the next frame re-prepares with room and recovers.
 				eprintln!(
-					"{}: scrim prepare failed; trimming atlas to recover: {e:?}",
+					"{}: text prepare failed; trimming atlas to recover: {e:?}",
 					config::APP_NAME
 				);
 				self.text.trim_atlas();
@@ -2411,74 +2377,154 @@ impl State {
 				self.scrim_sig = None;
 				return animating;
 			}
-		}
+			// scrim source pass has its own prepared set: pane text only (no chrome),
+			// with de-bolded buffers where a pane built one (text_scrim_regular_weight)
+			if scrim_on {
+				let mut scrim_areas: Vec<TextArea> = Vec::new();
+				for p in self.tabs.cur().panes.values() {
+					// scrim follows the current frame's slide, INCLUDING the scrolled-off
+					// strip filling the reveal gap - without it the strip's text (e.g. the
+					// row just below a static header) loses its readability halo mid-slide
+					// and the halo "pops" when the slide settles, reading as a shadow that
+					// jumps at the band boundary. The strip holds only region rows, so it
+					// is always scrim-safe (no furniture to guard out of the scrim).
+					match &slides[&p.id] {
+						Some(slide) => {
+							if let Some(strip) = p.strip_text_area(slide, margin) {
+								scrim_areas.push(strip);
+							}
+							scrim_areas.push(p.scrim_text_area_band(
+								tops[&p.id],
+								margin,
+								slide.region_clip_t,
+								slide.region_clip_b,
+							));
+							if slide.has_top_band {
+								scrim_areas.push(p.scrim_text_area_band(
+									slide.band_top,
+									margin,
+									f32::MIN,
+									slide.top_split_y,
+								));
+							}
+							if slide.has_band {
+								scrim_areas.push(p.scrim_text_area_band(
+									slide.band_top,
+									margin,
+									slide.split_y,
+									f32::MAX,
+								));
+							}
+						}
+						None => scrim_areas.push(p.scrim_text_area(tops[&p.id], margin)),
+					}
+					scrim_areas.extend(p.glyph_areas(margin));
+					scrim_areas.extend(p.emoji_area(margin));
+				}
+				if let Err(e) =
+					self.text
+						.prepare_scrim(&self.gfx.device, &self.gfx.queue, scrim_areas)
+				{
+					eprintln!(
+						"{}: scrim prepare failed; trimming atlas to recover: {e:?}",
+						config::APP_NAME
+					);
+					self.text.trim_atlas();
+					self.text_sig = None;
+					self.scrim_sig = None;
+					return animating;
+				}
+			}
+		} // !text_same
 		self.text_sig = Some(text_sig);
 
 		// lay out the menu into the overlay renderer: one proportional buffer
 		// per item label (at the gutter), plus a checkmark buffer for checked toggles.
+		// Re-shaping every frame while a menu sits open (the cursor blink keeps
+		// frames coming) is skippable: the overlay text only depends on the menu's
+		// geometry/labels/colour. Only skip alongside text_same - the end-of-frame
+		// atlas trim (which runs when !text_same) drops glyphs the retained overlay
+		// vertex buffers still reference, so a trim frame must re-prepare.
 		if let Some(menu) = &self.menu {
-			// (left, top, buffer) collected first so the borrow of self.text ends
-			let mut specs: Vec<(f32, f32, Buffer)> = Vec::new();
-			let mut attrs = crate::text::ui_attrs();
-			attrs.color_opt = Some(GColor::rgb(
-				config::menu_fg()[0],
-				config::menu_fg()[1],
-				config::menu_fg()[2],
-			));
-			for (i, entry) in menu.entries.iter().enumerate() {
-				let Entry::Item { label, check, .. } = entry else {
-					continue;
-				};
-				let top = menu.row_top(i) + (menu.item_h - self.text.ui_line_h) / 2.0;
-				let mut buf = self.text.new_ui_buffer(menu.w, menu.item_h);
-				buf.set_text(
-					&mut self.text.font_system,
-					label,
-					&attrs,
-					Shaping::Advanced,
-					None,
-				);
-				buf.shape_until_scroll(&mut self.text.font_system, false);
-				specs.push((menu.x + config::MENU_PAD_X + config::MENU_GUTTER, top, buf));
-				if *check == Some(true) {
-					let mut check_buf = self.text.new_ui_buffer(config::MENU_GUTTER, menu.item_h);
-					check_buf.set_text(
+			let overlay_sig = {
+				use std::hash::{Hash, Hasher};
+				let mut h = std::collections::hash_map::DefaultHasher::new();
+				menu.x.to_bits().hash(&mut h);
+				menu.y.to_bits().hash(&mut h);
+				menu.w.to_bits().hash(&mut h);
+				menu.item_h.to_bits().hash(&mut h);
+				self.gfx.config.width.hash(&mut h);
+				self.gfx.config.height.hash(&mut h);
+				self.chrome_rev.hash(&mut h); // covers a menu colour change
+				for entry in &menu.entries {
+					if let Entry::Item { label, check, .. } = entry {
+						label.hash(&mut h);
+						check.hash(&mut h);
+					}
+				}
+				h.finish()
+			};
+			if text_same && self.overlay_sig == Some(overlay_sig) {
+				// prepared overlay from the last frame still matches
+			} else {
+				self.overlay_sig = Some(overlay_sig);
+				// (left, top, buffer) collected first so the borrow of self.text ends
+				let mut specs: Vec<(f32, f32, Buffer)> = Vec::new();
+				let mut attrs = crate::text::ui_attrs();
+				let fg = config::menu_fg();
+				attrs.color_opt = Some(GColor::rgb(fg[0], fg[1], fg[2]));
+				for (i, entry) in menu.entries.iter().enumerate() {
+					let Entry::Item { label, check, .. } = entry else {
+						continue;
+					};
+					let top = menu.row_top(i) + (menu.item_h - self.text.ui_line_h) / 2.0;
+					let mut buf = self.text.new_ui_buffer(menu.w, menu.item_h);
+					buf.set_text(
 						&mut self.text.font_system,
-						"\u{2713}",
+						label,
 						&attrs,
 						Shaping::Advanced,
 						None,
 					);
-					check_buf.shape_until_scroll(&mut self.text.font_system, false);
-					specs.push((menu.x + config::MENU_PAD_X, top, check_buf));
+					buf.shape_until_scroll(&mut self.text.font_system, false);
+					specs.push((menu.x + config::MENU_PAD_X + config::MENU_GUTTER, top, buf));
+					if *check == Some(true) {
+						let mut check_buf =
+							self.text.new_ui_buffer(config::MENU_GUTTER, menu.item_h);
+						check_buf.set_text(
+							&mut self.text.font_system,
+							"\u{2713}",
+							&attrs,
+							Shaping::Advanced,
+							None,
+						);
+						check_buf.shape_until_scroll(&mut self.text.font_system, false);
+						specs.push((menu.x + config::MENU_PAD_X, top, check_buf));
+					}
 				}
+				let (sw, sh) = (self.gfx.config.width as i32, self.gfx.config.height as i32);
+				let menu_color = GColor::rgb(fg[0], fg[1], fg[2]);
+				let areas: Vec<TextArea> = specs
+					.iter()
+					.map(|(left, top, buf)| TextArea {
+						buffer: buf,
+						left: *left,
+						top: *top,
+						scale: 1.0,
+						bounds: TextBounds {
+							left: 0,
+							top: 0,
+							right: sw,
+							bottom: sh,
+						},
+						default_color: menu_color,
+						custom_glyphs: &[],
+					})
+					.collect();
+				let _ = self
+					.text
+					.prepare_overlay(&self.gfx.device, &self.gfx.queue, areas);
 			}
-			let (sw, sh) = (self.gfx.config.width as i32, self.gfx.config.height as i32);
-			let menu_color = GColor::rgb(
-				config::menu_fg()[0],
-				config::menu_fg()[1],
-				config::menu_fg()[2],
-			);
-			let areas: Vec<TextArea> = specs
-				.iter()
-				.map(|(left, top, buf)| TextArea {
-					buffer: buf,
-					left: *left,
-					top: *top,
-					scale: 1.0,
-					bounds: TextBounds {
-						left: 0,
-						top: 0,
-						right: sw,
-						bottom: sh,
-					},
-					default_color: menu_color,
-					custom_glyphs: &[],
-				})
-				.collect();
-			let _ = self
-				.text
-				.prepare_overlay(&self.gfx.device, &self.gfx.queue, areas);
 		}
 
 		let Some(frame) = self.gfx.begin_frame() else {
@@ -2532,8 +2578,10 @@ impl State {
 					config::srgb_f32(cfg.bg),
 				);
 			}
-			self.scrim
-				.upload_cursors(&self.gfx.device, &self.gfx.queue, &scrim_cursor_quads);
+			if cfg.cursor_scrim || cfg.cursor_outline {
+				self.scrim
+					.upload_cursors(&self.gfx.device, &self.gfx.queue, &scrim_cursor_quads);
+			}
 			if !scrim_cached {
 				let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 					label: Some("scrim text"),
@@ -2554,8 +2602,9 @@ impl State {
 				let _ = self.text.render_scrim(&mut pass);
 			}
 			// cursor coverage in its own texture (kept apart from the text so the
-			// halo and the outline can each include it independently)
-			{
+			// halo and the outline can each include it independently). Skipped -
+			// full-res clear included - when neither flag samples it.
+			if cfg.cursor_scrim || cfg.cursor_outline {
 				let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 					label: Some("scrim cursor"),
 					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2653,6 +2702,16 @@ impl State {
 			// the content area so the halo only affects terminal text, never the
 			// menu bar / tab titles above it.
 			if scrim_on {
+				// frame-invariant composite args: upload the uniform once, not per pane
+				self.scrim.write_comp_uniform(
+					&self.gfx.queue,
+					scrim_intensity,
+					cfg.text_outline,
+					if cfg.cursor_outline { 1.0 } else { 0.0 },
+					scrim_function,
+					scrim_ramp,
+					scrim_ext,
+				);
 				// The scrim is a full-frame blur - each glyph's halo spreads ~scrim_ext
 				// px every direction. Composite it PER-PANE, clipped per-side: an edge that
 				// borders ANOTHER pane (internal divider) clips at the content edge (rect
@@ -2696,16 +2755,7 @@ impl State {
 						continue;
 					}
 					pass.set_scissor_rect(cx, cy, cw, ch);
-					self.scrim.composite(
-						&self.gfx.queue,
-						&mut pass,
-						scrim_intensity,
-						cfg.text_outline,
-						if cfg.cursor_outline { 1.0 } else { 0.0 },
-						scrim_function,
-						scrim_ramp,
-						scrim_ext,
-					);
+					self.scrim.composite(&mut pass);
 				}
 				pass.set_scissor_rect(0, 0, sw, sh);
 			}
@@ -2762,7 +2812,7 @@ impl State {
 				self.window.set_visible(true);
 			}
 		}
-		if std::env::var_os("SILK_DUMP").is_some() {
+		if env_flag("SILK_DUMP") {
 			self.gfx.dump_offscreen("/tmp/silk_offscreen.png");
 		}
 		// Trim only on a frame that prepared. The trim clears glyphon's in-use set,
@@ -3439,6 +3489,7 @@ impl ApplicationHandler<UserEvent> for App {
 			chrome: None,
 			chrome_rev: 0,
 			text_sig: None,
+			overlay_sig: None,
 			scrim_sig: None,
 			occluded: false,
 			was_hidden: false,

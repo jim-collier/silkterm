@@ -1363,6 +1363,14 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
+- ✅ Performance pass: smaller binary, less per-frame work.
+	- ✅ Release opt-level 3 -> "s": measured speed parity on ingest throughput and slightly lower CPU under sustained output, at 22% smaller (13.65 -> 10.68 MB). "z" was also measured and rejected - it halves throughput. The numbers live in the root Cargo.toml comment.
+	- ✅ sRGB-to-linear is now a 256-entry table (was three powf calls per coloured cell per rebuilt frame).
+	- ✅ Frames with unchanged text skip the whole text-area build (it used to be built and then thrown away); an open context menu no longer re-shapes its labels on every blink frame; resolution uniforms re-upload only on resize; the cursor-coverage pass is skipped when neither cursor scrim nor outline samples it.
+	- ✅ Allocation churn: per-row strings and each pane's bg-quad list are recycled across frames instead of reallocated and copied out; the scrim's de-bold pass no longer clones every row's text; the scrolled-off strip moves rows out of the retired snapshot instead of cloning them.
+	- ✅ Fewer lock and syscall round trips per frame: attribute runs, scroll easing, and text areas read one settings snapshot each; the tab-title probe (two syscalls per tab per frame, even idle) polls at 4 Hz instead.
+	- ✅ GL path: framebuffer/offscreen views are created once per resize, not twice per frame.
+
 - ✅ The cursor animation pause is for typing, not for a command's output.
 	- ✅ Output holds the cursor still only while it is actually writing. The moment it stops - the prompt coming back - the animation picks up again, with none of the delay that follows typing.
 	- ✅ Typing is unchanged: the cursor still settles for the configured second after the last keystroke.

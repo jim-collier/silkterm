@@ -41,7 +41,11 @@ enum Backend {
 		ctx: PossiblyCurrentContext,
 		surface: GlWindowSurface<WindowSurface>,
 		fb: wgpu::Texture,
+		// views of fb/offscreen, rebuilt on resize only (both textures are
+		// persistent, so creating fresh views per frame was waste)
+		fb_view: wgpu::TextureView,
 		offscreen: wgpu::Texture,
+		offscreen_view: wgpu::TextureView,
 		blit: Blit,
 	},
 }
@@ -528,12 +532,10 @@ impl Gfx {
 			desired_maximum_frame_latency: 2,
 		};
 		let fb = default_fb(&device, FB_FORMAT, config.width, config.height);
+		let fb_view = fb.create_view(&Default::default());
 		let offscreen = offscreen_tex(&device, format, config.width, config.height);
-		let blit = Blit::new(
-			&device,
-			FB_FORMAT,
-			&offscreen.create_view(&Default::default()),
-		);
+		let offscreen_view = offscreen.create_view(&Default::default());
+		let blit = Blit::new(&device, FB_FORMAT, &offscreen_view);
 
 		let sentinel = Some(Sentinel::new(&device, &queue));
 		Ok((
@@ -548,7 +550,9 @@ impl Gfx {
 					ctx,
 					surface,
 					fb,
+					fb_view,
 					offscreen,
+					offscreen_view,
 					blit,
 				},
 				sentinel,
@@ -584,9 +588,7 @@ impl Gfx {
 				.texture
 				.create_view(&wgpu::TextureViewDescriptor::default()),
 			// the scene renders to the offscreen texture (normal orientation)
-			(Frame::Gl, Backend::Gl { offscreen, .. }) => {
-				offscreen.create_view(&wgpu::TextureViewDescriptor::default())
-			}
+			(Frame::Gl, Backend::Gl { offscreen_view, .. }) => offscreen_view.clone(),
 			_ => unreachable!("frame/backend mismatch"),
 		}
 	}
@@ -599,13 +601,12 @@ impl Gfx {
 				Backend::Gl {
 					ctx,
 					surface,
-					fb,
+					fb_view,
 					blit,
 					..
 				},
 			) => {
 				// flip-blit the offscreen scene into the GL default framebuffer
-				let target = fb.create_view(&wgpu::TextureViewDescriptor::default());
 				let mut enc = self
 					.device
 					.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -615,7 +616,7 @@ impl Gfx {
 					let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
 						label: Some("blit pass"),
 						color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-							view: &target,
+							view: fb_view,
 							resolve_target: None,
 							depth_slice: None,
 							ops: wgpu::Operations {
@@ -651,7 +652,9 @@ impl Gfx {
 				surface,
 				ctx,
 				fb,
+				fb_view,
 				offscreen,
+				offscreen_view,
 				blit,
 			} => {
 				surface.resize(
@@ -660,11 +663,10 @@ impl Gfx {
 					NonZeroU32::new(h).unwrap(),
 				);
 				*fb = default_fb(&self.device, FB_FORMAT, w, h);
+				*fb_view = fb.create_view(&wgpu::TextureViewDescriptor::default());
 				*offscreen = offscreen_tex(&self.device, self.format, w, h);
-				blit.rebind(
-					&self.device,
-					&offscreen.create_view(&wgpu::TextureViewDescriptor::default()),
-				);
+				*offscreen_view = offscreen.create_view(&wgpu::TextureViewDescriptor::default());
+				blit.rebind(&self.device, offscreen_view);
 			}
 		}
 	}
@@ -941,6 +943,8 @@ pub struct RectRenderer {
 	capacity: u64,
 	uniform: wgpu::Buffer,
 	bind_group: wgpu::BindGroup,
+	// last resolution written to the uniform (skip the per-frame re-write)
+	last_res: std::cell::Cell<(f32, f32)>,
 }
 
 impl RectRenderer {
@@ -1035,10 +1039,16 @@ impl RectRenderer {
 			capacity,
 			uniform,
 			bind_group,
+			last_res: std::cell::Cell::new((0.0, 0.0)),
 		}
 	}
 
 	pub fn set_resolution(&self, queue: &wgpu::Queue, w: f32, h: f32) {
+		// called per frame; the uniform only changes on resize
+		if self.last_res.get() == (w, h) {
+			return;
+		}
+		self.last_res.set((w, h));
 		let uniform_data = Uniform {
 			resolution: [w, h],
 			_pad: [0.0, 0.0],

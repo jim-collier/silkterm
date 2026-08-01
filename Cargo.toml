@@ -52,11 +52,13 @@ option_option = "allow"
 # Profiles only take effect in the workspace root manifest, so they live here,
 # not in source/Cargo.toml.
 
-# Balance size and runtime speed (slight nod to size). opt-level stays 3 - the
-# runtime speed matters, and the size wins below cost nothing there.
+# Balance size and runtime speed. Measured 2026-07-31 (termbench ingest score /
+# paced-output CPU / binary size): "3" = 65.3 / 28.5k jiffies / 13.65MB,
+# "s" = 65.2 / 27.3k / 10.68MB, "z" = 35.4 / - / 10.06MB. "s" ties "3" on speed
+# (slightly cheaper CPU - icache) and is 22% smaller; "z" halves throughput.
 # NOTE: do NOT pack with UPX/etc - packers routinely trip antivirus heuristics.
 [profile.release]
-opt-level = 3        # keep the renderer/PTY hot paths fast
+opt-level = "s"      # speed-parity with 3 here, 22% smaller (see above)
 lto = "fat"          # whole-program inlining: usually smaller AND faster than thin
 codegen-units = 1    # better cross-module optimization (also a bit smaller)
 panic = "abort"      # drop unwinding tables - sizable shrink, fine for a GUI app
