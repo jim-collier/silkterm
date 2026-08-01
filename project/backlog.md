@@ -43,6 +43,20 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### Bugs
 
+- ✅ Harsh visual bug:
+	- Description: New output from repeated commands that doesn't need to scroll (e.g. hasn't reached the bottom), scrolls "down" out of an imaginary line just below the previous prompt, and settles where it should be. It might actually be a pleasing effect if that was the UX design, but it's not. It feels jarring and unexpected, in spite of being kind of cool. Once such repeated commands do reach the bottom, then everything scrolls up as expected.
+	- Fixed: the smooth-slide detector read the repeated listing as a downward scroll - the second copy matched the first one's rows shifted down, and the blank space below matched itself, so brand-new output got animated as if it had moved. A row now only counts as scrolled if the content also left its old position; a re-printed copy no longer qualifies, so fresh output materializes in place. Real scrolling (full screens, pagers, editors) is unaffected.
+	- Expected behavior: If output hasn't reached the bottom of the terminal yet, new lines of output should materialize as normal.
+	- Steps to reproduce:
+		- Clear the terminal.
+		- Run ls on a small directory listing, such as `ls -lA $TMP9`.
+			- Observe: The first time behaves as expected: the output happens quickly, then the next shell prompt appears below it almost immediately.
+		- Run e.g. `ls -lA $TMP9` again (without clearing).
+			- Observe: Things happen seemingly out of expected order:
+				- The new shell prompt materializes several blank lines down.
+				- The ls listing smooth-scrolls apparently "out from underneath" the shell prompt above, *down*, then decelerates and settles, finally where it should be.
+			- Conclusion: The final result is visually correct, but how it got there is very wrong.
+
 - ✅ Crash: a screen filled with distinct emoji aborts the terminal.
 	- Colour glyph images are cached per glyph and pixel size, and that cache emptied itself completely whenever it filled up. A screenful of emoji is far more distinct glyphs than it held, so the moment it filled part-way through drawing a frame it threw away images that frame was still using, and the renderer stops dead when an image it was promised goes missing.
 	- Only reachable with a lot of *different* emoji on screen at once. Repeating the same few never fills the cache, which is why ordinary use never ran into it.
