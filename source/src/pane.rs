@@ -3017,11 +3017,18 @@ fn app_scroll_frames(alt: bool, follow: bool, grew: usize, full: bool) -> (bool,
 // command's output on a half-empty screen re-prints the previous listing lower
 // down, which reads as a perfect downward translate (the blank field supplies the
 // positional matches, the repeat supplies the changed targets) and slid brand-new
-// output down out from under the prompt. Otherwise 0 (in-place redraw, content
-// change, or a jump bigger than `max`) and the caller hard-cuts. 64-bit row
-// fingerprints make a coincidental non-translation match vanishingly unlikely, so
-// no contiguity check is needed. It never guesses a full turnover the way
-// scroll_shift does - easing a non-scroll looks wrong.
+// output down out from under the prompt. A shift must also EXPLAIN the frame: at
+// least two thirds of the changed rows beyond the k it reveals must be rows the
+// translation moved. An option-list TUI that swaps in a taller/shorter block for
+// the highlighted entry only pushes the short footer under it - the rewritten
+// block and marker rows above sit unexplained, so that relayout (which passes
+// both moved tests: the footer really moves and really vacates) is rejected,
+// while a real scroll accounts for nearly everything that changed (a couple of
+// live status/spinner rows fit inside the third). Otherwise 0 (in-place redraw,
+// content change, or a jump bigger than `max`) and the caller hard-cuts. 64-bit
+// row fingerprints make a coincidental non-translation match vanishingly
+// unlikely, so no contiguity check is needed. It never guesses a full turnover
+// the way scroll_shift does - easing a non-scroll looks wrong.
 const MOVED_MIN: usize = 3; // a real scroll must move at least this many rows
 fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
 	let n = cur.len();
@@ -3030,6 +3037,8 @@ fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
 	}
 	// a quarter of the screen, since static top+bottom bands shrink the middle
 	let need = (n / 4).max(3);
+	let changed = cur.iter().zip(last).filter(|(a, b)| a != b).count();
+	let explains = |moved: usize, k: usize| moved * 3 >= changed.saturating_sub(k) * 2;
 	let limit = max.min(n - 1);
 	let (mut best, mut best_score) = (0i32, 0usize);
 	for k in 1..=limit {
@@ -3044,7 +3053,7 @@ fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
 				}
 			}
 		}
-		if matched >= need && moved >= MOVED_MIN && matched > best_score {
+		if matched >= need && moved >= MOVED_MIN && explains(moved, k) && matched > best_score {
 			best_score = matched;
 			best = k as i32;
 		}
@@ -3059,7 +3068,7 @@ fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
 				}
 			}
 		}
-		if matched >= need && moved >= MOVED_MIN && matched > best_score {
+		if matched >= need && moved >= MOVED_MIN && explains(moved, k) && matched > best_score {
 			best_score = matched;
 			best = -(k as i32);
 		}
@@ -3104,6 +3113,7 @@ fn scroll_shift(cur: &[u64], last: &[u64], scrolled_off: bool) -> usize {
 	// one-line advance under one left too many rows off, fell through to the
 	// turnover guess below, and reported the backlog cap - kicking the view up a
 	// screenful and easing it back on every single line of output.
+	let changed = cur.iter().zip(last).filter(|(a, b)| a != b).count();
 	let (mut best, mut best_score) = (0usize, 0usize);
 	for k in 1..n {
 		let overlap = n - k;
@@ -3111,18 +3121,24 @@ fn scroll_shift(cur: &[u64], last: &[u64], scrolled_off: bool) -> usize {
 		for i in 0..overlap {
 			if cur[i] == last[i + k] {
 				matched += 1;
-				if cur[i] != last[i] {
+				// moved = changed at the new position AND vacated the old one,
+				// like the signed sibling - a copy left in place is not a move
+				if cur[i] != last[i] && cur[i + k] != last[i + k] {
 					moved += 1;
 				}
 			}
 		}
-		// A solid block must translate, and enough of it must genuinely have moved -
+		// A solid block must translate, enough of it must genuinely have moved -
 		// a static or blank field matches positionally but never scrolled (easing
-		// that was the apt/status-line bounce). Same tolerance as the signed sibling,
-		// for the same reason: a live progress area is a static band in all but name.
+		// that was the apt/status-line bounce; same tolerance as the signed sibling,
+		// a live progress area is a static band in all but name) - and the shift
+		// must explain most of the frame's change (the signed sibling's relayout
+		// gate: an option list swapping in a taller description only pushes the
+		// short footer below it, which is a redraw to hard-cut, not a scroll).
 		let need = (overlap / 4).max(MOVED_MIN).min(overlap);
 		let real = moved >= MOVED_MIN.min(overlap);
-		if matched >= need && real && matched > best_score {
+		let explains = moved * 3 >= changed.saturating_sub(k) * 2;
+		if matched >= need && real && explains && matched > best_score {
 			best_score = matched;
 			best = k;
 		}
@@ -3966,6 +3982,45 @@ mod tests {
 		cur.push(p2); // fresh prompt, same text as the last one
 		cur.resize(n, B);
 		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 0);
+	}
+
+	// An option list (a question/select TUI): moving the highlight swaps in a
+	// description block of a DIFFERENT height, so the short footer below it (hint
+	// line, rule, key help) genuinely translates a row - and vacates its sources,
+	// so the vacated-move test passes - while the rewritten description and the
+	// two marker rows sit above it unexplained. Blank rows supply the positional
+	// matches. A real scroll explains nearly all of a frame's change; this
+	// explains about half, so the explanation gate rejects it in both detectors.
+	fn list_relayout_frames() -> (Vec<u64>, Vec<u64>) {
+		const B: u64 = 9; // blank rows all share one fingerprint
+		let conv: Vec<u64> = (2000..2015).collect(); // static conversation above
+		let mut small = conv.clone(); // highlight on option 1, two desc lines
+		small.extend_from_slice(&[100, 110, B, 300, 301, B, 400, B, 500, 501, 502]);
+		small.resize(30, B);
+		let mut big = conv; // highlight on option 2, three desc lines
+		big.extend_from_slice(&[101, 111, B, 310, 311, 312, B, 400, B, 500, 501, 502]);
+		big.resize(30, B);
+		(small, big)
+	}
+
+	#[test]
+	fn list_relayout_description_height_change_is_not_a_scroll() {
+		let (small, big) = list_relayout_frames();
+		// grow: the footer slid DOWN one row; shrink: back UP one. Neither is a
+		// scroll - the pane must hard-cut, not glide the list around.
+		assert_eq!(scroll_shift_signed(&big, &small, APP_SCROLL_MAX), 0);
+		assert_eq!(scroll_shift_signed(&small, &big, APP_SCROLL_MAX), 0);
+	}
+
+	#[test]
+	fn list_relayout_at_full_scrollback_is_not_an_advance() {
+		// same shape on a full buffer: the advance inference must not read the
+		// footer sliding back up as a one-line scroll (that nudge is a bounce).
+		let (small, big) = list_relayout_frames();
+		assert_eq!(scroll_shift(&small, &big, false), 0);
+		// even mid-output (a line really did scroll off around the redraw), the
+		// static conversation keeps the turnover guess quiet too
+		assert_eq!(scroll_shift(&small, &big, true), 0);
 	}
 
 	#[test]
