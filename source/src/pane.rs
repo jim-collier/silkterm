@@ -2970,9 +2970,15 @@ fn app_scroll_frames(alt: bool, follow: bool, grew: usize, full: bool) -> (bool,
 // scrolling region is a middle block, not a top prefix. We therefore count, for
 // each candidate k, how many rows translate cleanly ANYWHERE (cur[i]==last[i+k]),
 // and pick the k with the most. A shift counts only if a solid block translates
-// (>= `need`) AND enough of those rows actually MOVED (cur[i]!=last[i], >= MOVED_MIN)
-// - a static or blank field matches positionally but hasn't scrolled, and easing
-// that produces the apt/blank-jitter bounce. Otherwise 0 (in-place redraw, content
+// (>= `need`) AND enough of those rows actually MOVED (>= MOVED_MIN) - where a row
+// only counts as moved when the content appeared at its new position AND left its
+// old one. Both halves matter: a static or blank field matches positionally but
+// hasn't scrolled (easing that produces the apt/blank-jitter bounce), and a row
+// whose source still holds the old content is a COPY, not a move - a repeated
+// command's output on a half-empty screen re-prints the previous listing lower
+// down, which reads as a perfect downward translate (the blank field supplies the
+// positional matches, the repeat supplies the changed targets) and slid brand-new
+// output down out from under the prompt. Otherwise 0 (in-place redraw, content
 // change, or a jump bigger than `max`) and the caller hard-cuts. 64-bit row
 // fingerprints make a coincidental non-translation match vanishingly unlikely, so
 // no contiguity check is needed. It never guesses a full turnover the way
@@ -2988,12 +2994,13 @@ fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
 	let limit = max.min(n - 1);
 	let (mut best, mut best_score) = (0i32, 0usize);
 	for k in 1..=limit {
-		// forward: content moved up k rows -> cur[i] == last[i+k]
+		// forward: content moved up k rows -> cur[i] == last[i+k]. Moved = the row
+		// changed at its new position (i) and vacated its old one (i+k).
 		let (mut matched, mut moved) = (0usize, 0usize);
 		for i in 0..n - k {
 			if cur[i] == last[i + k] {
 				matched += 1;
-				if cur[i] != last[i] {
+				if cur[i] != last[i] && cur[i + k] != last[i + k] {
 					moved += 1;
 				}
 			}
@@ -3002,12 +3009,13 @@ fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
 			best_score = matched;
 			best = k as i32;
 		}
-		// backward: content moved down k rows -> cur[i+k] == last[i]
+		// backward: content moved down k rows -> cur[i+k] == last[i]. Moved = changed
+		// at the new position (i+k) and vacated the old one (i).
 		let (mut matched, mut moved) = (0usize, 0usize);
 		for i in 0..n - k {
 			if cur[i + k] == last[i] {
 				matched += 1;
-				if cur[i + k] != last[i + k] {
+				if cur[i + k] != last[i + k] && cur[i] != last[i] {
 					moved += 1;
 				}
 			}
@@ -3893,6 +3901,32 @@ mod tests {
 		let bl_last = [1u64, 5, 5, 5, 5, 5, 5, 9];
 		let bl_cur = [2u64, 5, 5, 5, 5, 5, 5, 9];
 		assert_eq!(scroll_shift_signed(&bl_cur, &bl_last, 8), 0);
+	}
+
+	#[test]
+	fn repeated_output_on_a_half_empty_screen_is_not_a_scroll() {
+		// A cleared screen, then the same short command run twice: the second
+		// listing re-prints the first one's rows lower down while the originals
+		// stay put. That's a COPY, not a translate - the blank field below
+		// supplies enough positional matches to clear `need`, and the repeated
+		// rows land on formerly-blank targets, so the old moved test passed and
+		// the brand-new output slid down out from under the prompt. The vacated
+		// half of the moved test rejects it: the sources never left.
+		const B: u64 = 77; // blank row fingerprint (identical for every blank row)
+		let listing = [101u64, 102, 103, 104, 105, 106];
+		let (p1, p2, p2c) = (200u64, 201, 202); // prompts; p2c = p2 + typed command
+		let n = 24;
+		let mut last = vec![p1];
+		last.extend_from_slice(&listing);
+		last.push(p2);
+		last.resize(n, B);
+		let mut cur = vec![p1];
+		cur.extend_from_slice(&listing);
+		cur.push(p2c);
+		cur.extend_from_slice(&listing);
+		cur.push(p2); // fresh prompt, same text as the last one
+		cur.resize(n, B);
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 0);
 	}
 
 	#[test]
