@@ -344,6 +344,8 @@ pub struct TextCtx {
 	// than the surface, so its glyphon renderer needs its own same-format atlas.
 	scrim_atlas: TextAtlas,
 	pub viewport: Viewport,
+	// last resolution given to the viewport (skip the per-frame re-write)
+	viewport_size: (u32, u32),
 	pub renderer: TextRenderer,
 	// separate renderer for the context-menu overlay (second pass, on top)
 	pub overlay: TextRenderer,
@@ -455,6 +457,7 @@ impl TextCtx {
 			atlas,
 			scrim_atlas,
 			viewport,
+			viewport_size: (0, 0),
 			renderer,
 			overlay,
 			scrim,
@@ -630,6 +633,11 @@ impl TextCtx {
 	}
 
 	pub fn update_viewport(&mut self, queue: &wgpu::Queue, w: u32, h: u32) {
+		// called per frame; only changes on resize
+		if self.viewport_size == (w, h) {
+			return;
+		}
+		self.viewport_size = (w, h);
 		self.viewport.update(
 			queue,
 			Resolution {

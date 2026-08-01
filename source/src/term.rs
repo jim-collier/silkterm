@@ -104,6 +104,9 @@ pub struct TermInstance {
 	shell_name: Option<String>,
 	#[cfg(unix)]
 	last_program: Option<String>,
+	// throttles the per-frame title probe (see tab_title)
+	#[cfg(unix)]
+	title_cache: Option<(std::time::Instant, String)>,
 }
 
 impl TermInstance {
@@ -187,6 +190,8 @@ impl TermInstance {
 			shell_name: None,
 			#[cfg(unix)]
 			last_program: None,
+			#[cfg(unix)]
+			title_cache: None,
 		})
 	}
 
@@ -194,8 +199,24 @@ impl TermInstance {
 	// "<shell> [last: <program>]" / "<shell>" when only the shell is at the
 	// prompt. Names are executable basenames (from /proc comm), not full
 	// command lines. Unix only; elsewhere falls back to the app name.
+	// The probe (tcgetpgrp + a /proc read) is throttled: render asks per tab
+	// per frame, and paying syscalls on every idle blink frame added up.
 	#[cfg(unix)]
 	pub fn tab_title(&mut self) -> String {
+		const PROBE_IVL: std::time::Duration = std::time::Duration::from_millis(250);
+		let now = std::time::Instant::now();
+		if let Some((at, title)) = &self.title_cache {
+			if now.duration_since(*at) < PROBE_IVL {
+				return title.clone();
+			}
+		}
+		let title = self.probe_title();
+		self.title_cache = Some((now, title.clone()));
+		title
+	}
+
+	#[cfg(unix)]
+	fn probe_title(&mut self) -> String {
 		let shell = self
 			.shell_name
 			.get_or_insert_with(|| proc_comm(self.shell_pid).unwrap_or_else(|| "shell".into()))

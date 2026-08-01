@@ -619,8 +619,15 @@ pub fn srgb_f32(c: [u8; 3]) -> [f32; 4] {
 	[to_linear(c[0]), to_linear(c[1]), to_linear(c[2]), 1.0]
 }
 
+// LUT: this runs per background cell per rebuilt frame (thousands of powf
+// calls otherwise - see pane.rs build).
 pub fn to_linear(b: u8) -> f32 {
-	let c = b as f32 / 255.0;
+	static LUT: std::sync::OnceLock<[f32; 256]> = std::sync::OnceLock::new();
+	LUT.get_or_init(|| std::array::from_fn(|i| linear_of(i as u8)))[b as usize]
+}
+
+fn linear_of(b: u8) -> f32 {
+	let c = f32::from(b) / 255.0;
 	if c <= 0.04045 {
 		c / 12.92
 	} else {

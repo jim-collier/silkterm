@@ -403,13 +403,12 @@ impl Scrim {
 		}
 	}
 
-	// Draw the scrim into the current pass, under the text: blurred coverage from
-	// tex_a, coloured per-pixel by the bgcolor map, plus a `border_px` dilated
-	// outline of the crisp coverage (tex_t, + tex_cur when `cursor` is 1).
-	pub fn composite(
+	// Upload the composite uniform. Split from composite(): the draw runs once
+	// per pane (scissored), but the args are frame-invariant, so the render loop
+	// writes this once instead of staging an identical write per pane.
+	pub fn write_comp_uniform(
 		&self,
 		queue: &wgpu::Queue,
-		pass: &mut wgpu::RenderPass<'_>,
 		intensity: f32,
 		border_px: f32,
 		cursor: f32,
@@ -430,6 +429,13 @@ impl Scrim {
 				radius,
 			}),
 		);
+	}
+
+	// Draw the scrim into the current pass, under the text: blurred coverage from
+	// tex_a, coloured per-pixel by the bgcolor map, plus a `border_px` dilated
+	// outline of the crisp coverage (tex_t, + tex_cur when `cursor` is 1).
+	// write_comp_uniform must have run this frame.
+	pub fn composite(&self, pass: &mut wgpu::RenderPass<'_>) {
 		pass.set_pipeline(&self.comp_pipe);
 		pass.set_bind_group(0, &self.comp_bind, &[]);
 		pass.draw(0..3, 0..1);

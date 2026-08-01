@@ -38,6 +38,8 @@ pub struct ImageRenderer {
 	image_size: [f32; 2],
 	opacity: f32,
 	fit: f32,
+	// last resolution written to the uniform (skip the per-frame re-write)
+	last_res: std::cell::Cell<(f32, f32)>,
 	// VT-switch loss probe: this texture is a REAL casualty of a VRAM purge
 	// (it is sampled every frame, so it lives hot in video memory - unlike a
 	// synthetic sentinel, which the driver can keep restorable elsewhere). A
@@ -227,10 +229,17 @@ impl ImageRenderer {
 			probe_ref,
 			probe_buf,
 			probe_inflight: None,
+			last_res: std::cell::Cell::new((0.0, 0.0)),
 		}
 	}
 
 	pub fn set_resolution(&self, queue: &wgpu::Queue, w: f32, h: f32) {
+		// called per frame; opacity/fit are fixed at construction, so the
+		// uniform only changes on resize
+		if self.last_res.get() == (w, h) {
+			return;
+		}
+		self.last_res.set((w, h));
 		let uniform_data = Uniform {
 			resolution: [w, h],
 			image_size: self.image_size,

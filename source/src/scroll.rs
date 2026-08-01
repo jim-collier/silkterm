@@ -121,15 +121,15 @@ impl Scroll {
 	}
 
 	pub fn advance(&mut self, dt_s: f32) {
-		let init_tau_ms = config::settings().scroll_tau_ms;
+		// one settings() snapshot per call - this runs per pane per frame
+		let cfg = config::settings();
+		let init_tau_ms = cfg.scroll_tau_ms;
 		// ramp target from the output backlog (only while following); 0 below the
 		// normal slide distance, 1 at the cap. Wheel/scrollback uses the plain ease.
 		let ramp_target = if self.following() {
 			// upper bound keeps the divisor positive (at the cap it would be 0 -> NaN
 			// propagating into the ramp and the visual position)
-			let ease_floor = config::settings()
-				.output_ease_lines
-				.clamp(0.5, MAX_BACKLOG - 1.0);
+			let ease_floor = cfg.output_ease_lines.clamp(0.5, MAX_BACKLOG - 1.0);
 			((self.visual - ease_floor) / (MAX_BACKLOG - ease_floor)).clamp(0.0, 1.0)
 		} else {
 			0.0
