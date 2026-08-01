@@ -2,19 +2,20 @@
 ##		- Windows port of the bash 'n8runterm' launcher. Keeps a small pool of
 ##		  date-stamped SilkTerm dogfood builds in the local target dir and launches
 ##		  one, passing through any arguments.
-##		- Three build sources, each tagged in the copy's name so they coexist:
-##			gnul  the b23 cross-build over SMB   (gnu toolchain, built on Linux)
-##			gnuw  local Windows gnu release      (gnu toolchain, built on Windows)
-##			msvc  local Windows msvc release      (msvc toolchain, built on Windows)
+##		- Three build sources, each tagged in the copy's name so they coexist. A tag
+##		  is '<toolchain: gnu|msvc><built on: l|m|b|w><target: l|m|b|w><arch: i|a>':
+##			gnulwi   the b23 cross-build over SMB  (gnu, built on Linux, x86_64)
+##			gnuwwi   local Windows gnu release     (gnu, built on Windows, x86_64)
+##			msvcwwi  local Windows msvc release    (msvc, built on Windows, x86_64)
 ##		  Copies are named 'slktrmdf_<YYYYMMDD-HHMMSS>_<tag>.exe' where the stamp is
 ##		  the build's own mtime, so a given build is copied once and a running copy
 ##		  never blocks the copy.
 ##		- Each run, in order: delete idle builds over 7 days old; refresh each source
 ##		  whose build is newer than what we already hold; then pick one to run.
-##		- Which to run: the newest build by stamp. If that newest came from b23 (gnul)
-##		  run it. Otherwise it's a local Windows build - if the newest gnuw and msvc
-##		  are within 15 min of each other, flip a coin between them, else run the
-##		  newest outright.
+##		- Which to run: the newest build by stamp. If that newest came from b23
+##		  (gnulwi) run it. Otherwise it's a local Windows build - if the newest gnuwwi
+##		  and msvcwwi are within 15 min of each other, flip a coin between them, else
+##		  run the newest outright.
 ##		- Prepends a random background image and a build-tagged title so a dogfood
 ##		  window is visually distinct. Both precede the passed args, so a caller can
 ##		  still override them.
@@ -40,13 +41,13 @@
 #••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 # Configuration
 
-## Source 'gnul': the b23 SilkTerm Windows (x86_64-pc-windows-gnu) release build,
+## Source 'gnulwi': the b23 SilkTerm Windows (x86_64-pc-windows-gnu) release build,
 ## reached over SMB.
 # $B23ReleaseDir = "\\b23\home-collierjr\0-0\0_links\projects\dev\zf10…github∙jimcollier\silkterm\github\target\x86_64-pc-windows-gnu\release"
 $B23ReleaseDir = "\\b23\zfs\zf10\0-0\users\collierjr\data\prs\dev\github.com\jim-collier\silkterm\github\target\x86_64-pc-windows-gnu\release"
 
-## Sources 'gnuw'/'msvc': the local Windows-native release build dirs (same clone,
-## two target triples). The clone root differs per host, so try the known
+## Sources 'gnuwwi'/'msvcwwi': the local Windows-native release build dirs (same
+## clone, two target triples). The clone root differs per host, so try the known
 ## candidates and take the first that exists; if none do, keep the first so the
 ## per-source copy below warn-skips it like any other unreachable source.
 $LocalTargetRootCandidates = @(
@@ -56,8 +57,15 @@ $LocalTargetRootCandidates = @(
 )
 $LocalTargetRoot = $LocalTargetRootCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $LocalTargetRoot) { $LocalTargetRoot = $LocalTargetRootCandidates[0] }
-$GnuwReleaseDir  = Join-Path $LocalTargetRoot "x86_64-pc-windows-gnu\release"
-$MsvcReleaseDir  = Join-Path $LocalTargetRoot "x86_64-pc-windows-msvc\release"
+$LocalGnuReleaseDir  = Join-Path $LocalTargetRoot "x86_64-pc-windows-gnu\release"
+$LocalMsvcReleaseDir = Join-Path $LocalTargetRoot "x86_64-pc-windows-msvc\release"
+
+## The tag each source's copies carry, spelled once so the copy, the selection and
+## the window title can't drift apart. Same convention the Linux pipeline uses:
+## '<toolchain: gnu|msvc><built on: l|m|b|w><target: l|m|b|w><arch: i|a>'.
+$TagB23       = "gnulwi"
+$TagLocalGnu  = "gnuwwi"
+$TagLocalMsvc = "msvcwwi"
 
 $ExeName = "silkterm.exe"
 
@@ -122,9 +130,9 @@ function fMain {
 	fDeleteOldBuilds
 
 	## 2. Refresh each source that has a newer build than we hold.
-	fCopyIfNewer -SourceDir $B23ReleaseDir  -Tag "gnul"
-	fCopyIfNewer -SourceDir $GnuwReleaseDir -Tag "gnuw"
-	fCopyIfNewer -SourceDir $MsvcReleaseDir -Tag "msvc"
+	fCopyIfNewer -SourceDir $B23ReleaseDir       -Tag $TagB23
+	fCopyIfNewer -SourceDir $LocalGnuReleaseDir  -Tag $TagLocalGnu
+	fCopyIfNewer -SourceDir $LocalMsvcReleaseDir -Tag $TagLocalMsvc
 
 	## 3. Pick one and launch it.
 	$exe = fSelectBuildToRun
@@ -204,7 +212,7 @@ function fCopyIfNewer {
 
 
 ## Pick the copy to run. Newest by stamp wins; if that newest is a local Windows
-## build (gnuw/msvc) and the newest of each is within $CoinWindowMin of the other,
+## build and the newest of each toolchain is within $CoinWindowMin of the other,
 ## flip a coin between them. Falls back to the newest legacy (untagged) copy if no
 ## tagged builds exist. Returns a full path, or $null if the dir is empty.
 function fSelectBuildToRun {
@@ -220,20 +228,20 @@ function fSelectBuildToRun {
 
 	$latest = $builds | Sort-Object Stamp -Descending | Select-Object -First 1
 
-	if ($latest.Tag -eq "gnul") {
-		fNote "running newest (b23/gnul): $($latest.Name)"
+	if ($latest.Tag -eq $TagB23) {
+		fNote "running newest (b23/$TagB23): $($latest.Name)"
 		return $latest.File.FullName
 	}
 
-	## Newest is a local Windows build - maybe coin-flip gnuw vs msvc.
-	$gnuw = $builds | Where-Object { $_.Tag -eq "gnuw" } | Sort-Object Stamp -Descending | Select-Object -First 1
-	$msvc = $builds | Where-Object { $_.Tag -eq "msvc" } | Sort-Object Stamp -Descending | Select-Object -First 1
+	## Newest is a local Windows build - maybe coin-flip gnu vs msvc.
+	$gnu  = $builds | Where-Object { $_.Tag -eq $TagLocalGnu }  | Sort-Object Stamp -Descending | Select-Object -First 1
+	$msvc = $builds | Where-Object { $_.Tag -eq $TagLocalMsvc } | Sort-Object Stamp -Descending | Select-Object -First 1
 
-	if ($gnuw -and $msvc) {
-		$gapMin = [math]::Abs(($gnuw.Stamp - $msvc.Stamp).TotalMinutes)
+	if ($gnu -and $msvc) {
+		$gapMin = [math]::Abs(($gnu.Stamp - $msvc.Stamp).TotalMinutes)
 		if ($gapMin -le $CoinWindowMin) {
-			$pick = if ((Get-Random -Minimum 0 -Maximum 2) -eq 0) { $gnuw } else { $msvc }
-			fNote ("coin flip (gnuw/msvc within {0:N1} min) -> {1}: {2}" -f $gapMin, $pick.Tag, $pick.Name)
+			$pick = if ((Get-Random -Minimum 0 -Maximum 2) -eq 0) { $gnu } else { $msvc }
+			fNote ("coin flip ($TagLocalGnu/$TagLocalMsvc within {0:N1} min) -> {1}: {2}" -f $gapMin, $pick.Tag, $pick.Name)
 			return $pick.File.FullName
 		}
 	}
@@ -243,9 +251,12 @@ function fSelectBuildToRun {
 }
 
 
-## All tagged copies as objects { File, Name, Tag, Stamp(DateTime) }.
+## All tagged copies as objects { File, Name, Tag, Stamp(DateTime) }. Only our own
+## three tags match, so a copy for some other target can never be selected to run
+## here; adding a source means adding its tag above, nothing else.
 function fTaggedBuilds {
-	$rx = "^$([regex]::Escape($DogfoodPrefix))_(?<stamp>\d{8}-\d{6})_(?<tag>gnul|gnuw|msvc)\.exe$"
+	$known = ($TagB23, $TagLocalGnu, $TagLocalMsvc | ForEach-Object { [regex]::Escape($_) }) -join "|"
+	$rx    = "^$([regex]::Escape($DogfoodPrefix))_(?<stamp>\d{8}-\d{6})_(?<tag>$known)\.exe$"
 	Get-ChildItem -LiteralPath $TargetDir -File -Filter "${DogfoodPrefix}_*.exe" -ErrorAction SilentlyContinue |
 		ForEach-Object {
 			if ($_.Name -match $rx) {
@@ -620,6 +631,9 @@ if ($script:GuiFeedback -and $script:RunWarnings.Count) {
 
 
 ##	History:
+##		- 2026-08-01: Retag copies '<toolchain><built on><target><arch>', so a tag
+##		  says what the binary IS: gnul -> gnulwi, gnuw -> gnuwwi, msvc -> msvcwwi.
+##		  Each source re-copies once under its new name; old ones age out.
 ##		- 2026-07-22: Resolve the local clone root from a per-host candidate
 ##		  list (was hardcoded to one host's path, so gnuw/msvc never copied on
 ##		  the others).

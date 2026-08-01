@@ -164,14 +164,19 @@ DOGFOOD_FIXED_DESTS=(
 	"${HOME}/synced/0-0/common/exec/util/linux/bin"
 	"/usr/local/sbin"
 )
-## Rotating: also drop a dated copy "<DOGFOOD_PREFIX>_<YYYYmmDD-HHMMSS>" here (created
-## if missing), so builds coexist under unique paths - an automated test killing one
-## can't hit an unrelated version - pruning older copies that aren't running. Launch
-## the newest via utility/n8runterm.bash. Set DOGFOOD_PREFIX empty to disable the rotating copy.
+## Rotating: also drop a dated copy "<DOGFOOD_PREFIX>_<YYYYmmDD-HHMMSS>_<tag>" here
+## (created if missing), so builds coexist under unique paths - an automated test
+## killing one can't hit an unrelated version - pruning older copies that aren't
+## running. Launch the newest via utility/n8runterm.bash. Set DOGFOOD_PREFIX empty to
+## disable the rotating copy.
 DOGFOOD_ROTATING_DESTS=(
 	"${HOME}/.local/bin"
 )
 DOGFOOD_PREFIX="slktrmdf"
+## Which build a copy holds: "<toolchain: gnu|msvc><built on: l|m|b|w><target: l|m|b|w><arch: i|a>"
+## - so a pool of copies from several hosts stays readable (n8runterm.ps1 keeps three
+## on Windows). Left unset it's derived from this host; set it to pin, empty to drop.
+# DOGFOOD_TAG="gnulli"
 
 ## Stage 7: backup + publish to git (runs from repo root).
 GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
