@@ -30,8 +30,9 @@ fMain(){
 
 
 ## Run the newest dogfood build with the passed arguments. cicd.bash stage 6
-## installs builds as "<prefix>_<YYYYmmDD-HHMMSS>"; the timestamp sorts
-## chronologically, so the lexically-greatest basename is the newest.
+## installs builds as "<prefix>_<YYYYmmDD-HHMMSS>_<tag>" (tag = toolchain, build
+## host, target and arch; older copies carry no tag). The fixed-width timestamp
+## leads, so the lexically-greatest basename is still the newest either way.
 fSilkTermDogfood(){
 
 	local -r  prefix="slktrmdf"
@@ -63,7 +64,11 @@ fSilkTermDogfood(){
 	## Prepend a random background image (if the backgrounds dir has any) and a title
 	## tagged with the running build's timestamp, so a dogfood window is visually
 	## distinct and identifiable. Both precede "$@", so a caller can still override.
-	local -r  buildStamp="${newestName#"${prefix}"_}"
+	local -r  suffix="${newestName#"${prefix}"_}"
+	local -r  buildStamp="${suffix%%_*}"
+	local     buildTag="${suffix#*_}"
+	[[ "${buildTag}" == "${suffix}" ]] && buildTag=""   # untagged (pre-2026-08) copy
+	local -r  buildLabel="${buildTag:+${buildTag} }${buildStamp}"
 	local -r  bgDir="${HOME}/.config/silkterm/backgrounds"
 	local -a  bgs=()
 	local     bg
@@ -72,7 +77,7 @@ fSilkTermDogfood(){
 	done
 	local -a preArgs=()
 	if ((${#bgs[@]})); then preArgs+=("--background-image=${bgs[RANDOM % ${#bgs[@]}]}"); fi
-	preArgs+=("--title=SilkTerm [dogfood ${buildStamp}]")
+	preArgs+=("--title=SilkTerm [dogfood ${buildLabel}]")
 
 	## Run it, replacing this process.
 	exec "${newestPath}" "${preArgs[@]}" "${@}"
@@ -122,4 +127,6 @@ fMain  "${@}"
 
 
 ##	History:
+##		- 2026-08-01: Show the build tag in the title, now that copies are named
+##		              "<prefix>_<stamp>_<tag>". Untagged copies still work.
 ##		- 2026-07-03: Created.

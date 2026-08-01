@@ -1363,6 +1363,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
+- ✅ Dogfood build copies are named for what they hold.
+	- ✅ A copy's tag is now `<toolchain: gnu|msvc><built on: l|m|b|w><target: l|m|b|w><arch: i|a>`, so `gnulwi` is a gnu-toolchain Windows x86_64 binary cross-built on Linux, and `gnulli` is the Linux one.
+	- ✅ The Windows pool keeps three builds side by side and used to tag them by where they were built, so a Windows binary read `gnul`. Retagged `gnul` -> `gnulwi`, `gnuw` -> `gnuwwi`, `msvc` -> `msvcwwi`; each source copies itself once more under its new name and the old copies age out as usual.
+	- ✅ Linux copies carry a tag too now, derived from the host, and the launcher shows it in the window title next to the build time. Copies made before this still run.
+	- Verified: only the three known tags are ever picked to run, a copy built for another target is ignored, and untagged copies still launch.
+
 - ✅ Performance pass: smaller binary, less per-frame work.
 	- ✅ Release opt-level 3 -> "s": measured speed parity on ingest throughput and slightly lower CPU under sustained output, at 22% smaller (13.65 -> 10.68 MB). "z" was also measured and rejected - it halves throughput. The numbers live in the root Cargo.toml comment.
 	- ✅ sRGB-to-linear is now a 256-entry table (was three powf calls per coloured cell per rebuilt frame).
@@ -1753,6 +1759,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Done: copies that aren't currently running are pruned automatically.
 		- Done: two installs now - the old fixed name to the synced bin, and the rotating dated copy to ~/.local/bin. The preflight shows both.
 		- Verified: a running copy is kept, an idle older one is removed, and the new copy appears.
+		- Superseded: the name now ends in a build tag, "slktrmdf_YYYYmmDD-HHMMSS_<tag>".
 
 - ✅ Create a new bash 5 script 'utility/n8runterm':
 	- Can run any terminal along with script args it received (e.g. if user edits it), but by default it runs the function fSilkTermDogfood(), which:

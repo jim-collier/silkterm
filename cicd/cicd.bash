@@ -149,6 +149,25 @@ in_use(){
 	done
 	return 1
 }
+## Tag for a build copy: '<toolchain: gnu|msvc><built on: l|m|b|w><target: l|m|b|w><arch: i|a>'.
+## The rotating copy is always the NATIVE release, so built-on and target are this host.
+## Prints nothing on an unrecognised host - no tag beats a wrong one.
+build_tag(){
+	local os arch
+	case "$(uname -s)" in
+		Linux)                os=l ;;
+		Darwin)               os=m ;;
+		*BSD|DragonFly)       os=b ;;
+		MINGW*|MSYS*|CYGWIN*) os=w ;;
+		*)                    return 0 ;;
+	esac
+	case "$(uname -m)" in
+		x86_64|amd64)  arch=i ;;
+		aarch64|arm64) arch=a ;;
+		*)             return 0 ;;
+	esac
+	printf 'gnu%s%s%s' "$os" "$os" "$arch"
+}
 ## (Re)write the sha256sums file over every artifact in the release dir except the
 ## sums file itself. Run after stage 5 (binaries) and again after stage 6 (packages),
 ## so the checksums cover the packages too. Uses the script-scope art_dir/ver/sums.
@@ -207,6 +226,8 @@ profile_dir="$(cd "${root}" && mkdir -p "${PROFILE_OUT_DIR}" 2>/dev/null; cd "${
 fixed_dest=""; for d in "${DOGFOOD_FIXED_DESTS[@]:-}"; do [[ -d "$d" && -w "$d" ]] && { fixed_dest="$d"; break; }; done
 rot_dest="";   for d in "${DOGFOOD_ROTATING_DESTS[@]:-}"; do [[ -d "$d" && -w "$d" ]] && { rot_dest="$d"; break; }; done
 rot_target="${rot_dest:-${DOGFOOD_ROTATING_DESTS[0]:-}}"  # created in stage 6 if it doesn't exist yet
+: "${DOGFOOD_TAG:=$(build_tag)}"                          # config.bash may pin it; empty = untagged
+df_name="${DOGFOOD_PREFIX:-}_${stamp}${DOGFOOD_TAG:+_${DOGFOOD_TAG}}"
 
 fEcho_Clean
 fEcho_Clean "${APP_NAME} local CI/CD"
@@ -243,7 +264,7 @@ else
 	fEcho_Clean "Dogfood, fixed name .: (disabled)"
 fi
 if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
-	fEcho_Clean "Dogfood, rotating ...: ${rot_target}/${DOGFOOD_PREFIX}_${stamp}  (dated copy; prunes idle ones)"
+	fEcho_Clean "Dogfood, rotating ...: ${rot_target}/${df_name}  (dated copy; prunes idle ones)"
 else
 	fEcho_Clean "Dogfood, rotating ...: (disabled)"
 fi
@@ -571,7 +592,6 @@ fi
 if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
 	[[ -z "$rot_dest" && -n "$rot_target" ]] && mkdir -p "$rot_target" 2>/dev/null && rot_dest="$rot_target"
 	if [[ -n "$rot_dest" && -w "$rot_dest" ]]; then
-		df_name="${DOGFOOD_PREFIX}_${stamp}"
 		cp -f "${RELEASE_NATIVE_BIN}" "${rot_dest}/${df_name}"
 		chmod +x "${rot_dest}/${df_name}"
 		fEcho "OK: installed (rotating) -> ${rot_dest}/${df_name}"
