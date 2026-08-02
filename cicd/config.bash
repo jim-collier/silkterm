@@ -140,10 +140,6 @@ PROFILE_WORKLOAD_ARGS="600 0"          # <duration_s> <delay_s>; duration >> PRO
 PROFILE_OUT_DIR="cicd/artifacts/profiling"  # relative to repo root; created if missing (gitignored)
 PROFILE_STRICT=0                        # 1 = any profiler failure aborts the pipeline
 
-## Pre-publish README screenshot refresh (cicd/utility/screenshots.bash). Currently
-## off; flip to 1 (or pass --shots) to re-enable. Also skipped under --quick.
-SHOTS_ENABLE=0
-
 ## Demo video re-record (cicd/utility/demo-video/demo-video.py). Off by default -
 ## only worth re-recording after major visual/feature changes; flip to 1 or pass
 ## --demo for one run. Also skipped under --quick. Video GFS-rotates into

@@ -45,7 +45,6 @@
 ##	   --no-dogfood        skip installing the native release locally
 ##	   --no-publish        skip the git backup + publish stage
 ##	   --no-sync           skip the remote sync check (stage 0)
-##	   --shots             refresh README screenshots (off by default)
 ##	   --demo              re-record the demo video (off by default)
 ##	   --quick             skip the slow stages (cross-builds + packages + profiling)
 ##	   --gate              merge gate only: fmt --check + clippy + tests, then exit
@@ -98,7 +97,6 @@ while (($#)); do case "$1" in
 	--no-dogfood)             DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); shift ;;
 	--no-publish)             GIT_PUBLISH=(); shift ;;
 	--no-sync)                sync=0; shift ;;
-	--shots)                  SHOTS_ENABLE=1; shift ;;
 	--demo)                   DEMO_ENABLE=1; shift ;;
 	--quick)                  quick=1; BUILD_CROSS=0; PROFILE_ENABLE=0; PACKAGE_ENABLE=0; shift ;;   ## skip the slow stages
 	--message=*|--msg=*|-m=*) cli_message="${1#*=}"; shift ;;
@@ -614,25 +612,8 @@ fi
 
 if ((! df_did)); then fEcho_Clean "dogfood disabled"; fi
 
-## Refresh README screenshots (skipped under --quick; non-fatal - a miss never
-## aborts). Runs before publish so changed images get committed; rendering needs
-## a headless X + magick, so a failure just warns.
-shots_hook="${root}/cicd/utility/screenshots.bash"
-if ((! SHOTS_ENABLE)); then
-	fEcho_Clean "screenshots disabled"
-elif ((quick)); then
-	fEcho_Clean "screenshots skipped (--quick)"
-elif [[ -x "$shots_hook" ]]; then
-	fEcho_Clean "refreshing README screenshots ..."
-	if SILK_BIN="${root}/target/release/silkterm" "$shots_hook" "${root}"; then
-		fEcho "OK: screenshots"
-	else
-		fEcho "WARNING: screenshot hook failed (non-fatal)"
-	fi
-fi
-
-## Re-record the demo video (same gating shape as screenshots: off by default,
-## skipped under --quick, never aborts). The video GFS-rotates into
+## Re-record the demo video (off by default, skipped under --quick, never
+## aborts). The video GFS-rotates into
 ## ../private/demo-video/; the README highlight gif lands in assets/demo.gif.
 demo_hook="${root}/cicd/utility/demo-video/demo-video.py"
 if ((! ${DEMO_ENABLE:-0})); then
