@@ -50,30 +50,16 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- 🔘 UAT
 	- Verified: a trailing marker after such an emoji used to sit exactly one column left of the same marker on an all-text row, and now lines up. A control screen of CJK, box drawing, fullwidth Latin and single-width symbols renders identically to before.
 
+- 🛠️ Terminal throughput benchmark (Windows):
+	- Both halves now run on Windows as well, measured from inside the terminal under test, which is the only way to reach the terminals that exist nowhere else. Each half checks the window is at its own fixed size first and refuses otherwise, since measuring at the wrong one produces a figure that looks fine and belongs in no column.
+		- 🔘 Fill in the Windows rows: conhost, Windows Terminal and MobaXterm need running on a Windows machine.
+		- Windows figures answer a slightly different question and are not directly comparable, which the table's notes say: a base OS includes far more there, and the machine differs.
+
 ## Backlog
 
 ### Bugs
 
 ### New features and enhancements
-
-- 🔘 Terminal throughput benchmark (Windows):
-	- Both halves now run on Windows as well, measured from inside the terminal under test, which is the only way to reach the terminals that exist nowhere else. Each half checks the window is at its own fixed size first and refuses otherwise, since measuring at the wrong one produces a figure that looks fine and belongs in no column.
-		- 🔘 Fill in the Windows rows: conhost, Windows Terminal and MobaXterm need running on a Windows machine.
-		- Windows figures answer a slightly different question and are not directly comparable, which the table's notes say: a base OS includes far more there, and the machine differs.
-
-- ✅ Need scrollbars. (Disable in Settings.) And thicker than many modern desktops.
-	- Done: a scrollbar over each pane's right edge, 16px wide by default - noticeably chunkier than the 8-12px most desktops use, and adjustable from 4 to 64.
-	- It floats over the text rather than reserving a column, so turning it on or off, or changing its width, never changes the grid or reflows anything.
-	- Fades out while the view sits idle at the bottom and comes back on a scroll, or when the pointer nears it. It also stays up the whole time the view is parked up in the scrollback, where knowing the position is the point. Always-visible is a setting.
-	- Drag the handle to scroll, or click the track above or below it to page that way. A dragged handle follows the pointer exactly while the text eases in behind it, so the grab never drifts.
-	- Full-screen apps (less, vim) keep no scrollback of their own, so they get no scrollbar - one pinned full-height could only report a fiction.
-	- Settings carries the on/off switch, the width, and the hide-when-idle switch; the handle and track colours are there too, defaulting to a neutral grey in every theme the way the rest of the chrome does. The dependent rows stay listed but grey out while the scrollbar is off.
-	- Verified: the handle sits at the bottom while following output, moves a third of the way up the track after scrolling a third of the way back, and tracks a drag to the pixel. Fading, the full-screen-app case, and the off switch all confirmed against rendered frames.
-
-- 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
-	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
-		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
-	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
 
 - 🔘 Refactor settings dialog
 	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory. Reconcile by what makes the most sense given the obvious design direction this is going, with what has changed before.
@@ -154,7 +140,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 				- "Inactivity timer" 100 ms to 1m
 			- "Visibility"    [ ] Scrim   [ ] Outline
 		- Tab: "Movement" (formerly "Scrolling")
-		- Tab: "Colors"
+			- Sub-groups:
+				- Scrolling
+				- Cursor
+		- Tab: "Themes"
 			- Group: "Themes"
 				- "Theme" (drop-down of selectable themes).
 				- Buttons aligned underneath theme dropdown box, arranged in one horizontal row:
@@ -187,7 +176,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 								- Saturation %
 								- Hex value
 							- At bottom right, buttons: "Cancel|OK" (default "OK")
-		- Tab: "Size" (formerly "Window")
+		- Tab: "Window":
 			- Sub-group: "Remember last size" checkbox
 				- Columns
 				- Rows
@@ -1301,6 +1290,24 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
 
 #### Done - New features and enhancements
+
+- ✅ Scroll-on-output enhancement: One additional setting: (20260629)
+	- ✅ In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
+		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
+	- ✅ Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
+	- Done: output easing now picks a speed profile per burst. While a burst's own first line is still on screen (a short listing), catch-up tops out at the new "In-view output speed" - faster than the initial speed, but building more slowly and never reaching the full chase. Once a burst has scrolled a screenful, the full ramp takes over exactly as before. A burst ends when the view settles at the bottom, so sporadic output keeps the plain initial ease.
+	- The one setting is `scroll.inview_tau_ms` (default 60 ms), with an "In-view output speed" slider next to "Initial scroll speed" in Settings on the same 1..100 scale.
+	- A burst that starts high on a fresh screen (right after a clear) counts as in-view up to a screenful longer than strictly needed - the switch assumes the burst began at the bottom row. The error direction is gentle, never bouncy.
+	- 🔘 UAT
+
+- ✅ Need scrollbars. (Disable in Settings.) And thicker than many modern desktops.
+	- Done: a scrollbar over each pane's right edge, 16px wide by default - noticeably chunkier than the 8-12px most desktops use, and adjustable from 4 to 64.
+	- It floats over the text rather than reserving a column, so turning it on or off, or changing its width, never changes the grid or reflows anything.
+	- Fades out while the view sits idle at the bottom and comes back on a scroll, or when the pointer nears it. It also stays up the whole time the view is parked up in the scrollback, where knowing the position is the point. Always-visible is a setting.
+	- Drag the handle to scroll, or click the track above or below it to page that way. A dragged handle follows the pointer exactly while the text eases in behind it, so the grab never drifts.
+	- Full-screen apps (less, vim) keep no scrollback of their own, so they get no scrollbar - one pinned full-height could only report a fiction.
+	- Settings carries the on/off switch, the width, and the hide-when-idle switch; the handle and track colours are there too, defaulting to a neutral grey in every theme the way the rest of the chrome does. The dependent rows stay listed but grey out while the scrollbar is off.
+	- Verified: the handle sits at the bottom while following output, moves a third of the way up the track after scrolling a third of the way back, and tracks a drag to the pixel. Fading, the full-screen-app case, and the off switch all confirmed against rendered frames.
 
 - ✅ Epic 1n6fydv: Reduce CPU and GPU resource usage
 	- All six tiers landed (3.2 measured and deferred as not worth it). End state: an idle focused window costs a fraction of a percent once the cursor parks; unfocused, minimized, and hidden surfaces cost nothing.

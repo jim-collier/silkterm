@@ -12,15 +12,23 @@ use crate::config;
 //
 // Dynamic-speed output scroll: `scroll_tau_ms` ("Initial scroll speed") is the
 // slow, smooth ease used for sporadic output. When output bursts, the visual
-// backlog grows; the ease then ramps faster (down to MIN_TAU_MS) so it keeps up,
-// and eases back to the slow speed once output stops. The speed change is itself
-// smoothed (ramping up responsively, back down gently) so it never jumps. The
-// ramp applies only while following the bottom - wheel/scrollback navigation
-// keeps the plain configured ease.
+// backlog grows and the ease ramps faster so it keeps up, easing back to the
+// slow speed once output stops. The speed change is itself smoothed (ramping up
+// responsively, back down gently) so it never jumps. The ramp applies only
+// while following the bottom - wheel/scrollback navigation keeps the plain
+// configured ease. The ramp's top speed depends on the burst: while its first
+// line is still on screen (a short listing) it tops out at the gentler
+// `scroll_inview_tau_ms` and builds slowly; once that line has scrolled off the
+// top, full catch-up (down to MIN_TAU_MS).
 pub const MAX_BACKLOG: f32 = 16.0; // cap on how far behind the bottom output may lag
 const MIN_TAU_MS: f32 = 8.0; // fastest catch-up tau (at full ramp)
 const RAMP_UP_MS: f32 = 90.0; // speeding up is responsive
 const RAMP_DOWN_MS: f32 = 450.0; // returning to the smooth speed is gentle
+// While a burst's own first line is still on screen (a short listing), catch-up
+// tops out at the gentler configured inview tau and the ramp builds more slowly -
+// brisk, but never the full-throttle chase. Once the burst has scrolled its top
+// line off (advanced a screenful), the profile above takes over and keeps up.
+const INVIEW_RAMP_UP_MS: f32 = 260.0;
 // Alt-screen app-scroll easing: a full-screen app (less, vim, muffer, ...) owns
 // its screen and scrolls by repainting whole lines. `app_off` is a transient
 // visual offset (in lines, signed: + shifts content down) set the moment such a
@@ -43,8 +51,10 @@ pub struct Scroll {
 	target: f32,
 	visual: f32,
 	max: f32,
-	ramp: f32,    // 0 = initial/smooth speed, 1 = full fast catch-up (smoothed)
-	app_off: f32, // alt-screen slide offset, eased toward 0 (see APP_OFF_CAP)
+	ramp: f32,      // 0 = initial/smooth speed, 1 = full fast catch-up (smoothed)
+	app_off: f32,   // alt-screen slide offset, eased toward 0 (see APP_OFF_CAP)
+	burst: f32,     // lines this output burst has advanced (resets once settled at rest)
+	overflow: bool, // burst topped a screenful: its first line is off - full catch-up
 }
 
 impl Scroll {
@@ -55,6 +65,8 @@ impl Scroll {
 			max: 0.0,
 			ramp: 0.0,
 			app_off: 0.0,
+			burst: 0.0,
+			overflow: false,
 		}
 	}
 
@@ -80,6 +92,8 @@ impl Scroll {
 		self.visual = self.target;
 		self.ramp = 0.0;
 		self.app_off = 0.0;
+		self.burst = 0.0;
+		self.overflow = false;
 	}
 
 	// Current alt-screen slide offset in lines (added to the render's vertical
@@ -134,9 +148,16 @@ impl Scroll {
 	// New output grew the scrollback by `grown` lines while following the bottom:
 	// accumulate it into the visual backlog (capped) so a fast burst lags and the
 	// ramp scrolls through it. Sporadic output stays at ~output_ease_lines and
-	// eases in at the slow speed.
-	pub fn nudge_output(&mut self, grown: f32) {
+	// eases in at the slow speed. `view_rows` is the pane's screen height: once a
+	// burst has advanced that far, its first line has provably scrolled off the
+	// top (it printed at most a screen above the bottom), which switches the ease
+	// from the gentle in-view profile to full catch-up.
+	pub fn nudge_output(&mut self, grown: f32, view_rows: f32) {
 		if self.following() {
+			self.burst += grown;
+			if view_rows > 0.0 && self.burst >= view_rows {
+				self.overflow = true;
+			}
 			// resolve() clamps the config value, but stay self-defensive: a floor
 			// above MAX_BACKLOG makes this clamp panic (min > max = abort in release)
 			let floor = config::settings().output_ease_lines.clamp(0.0, MAX_BACKLOG);
@@ -158,15 +179,27 @@ impl Scroll {
 		} else {
 			0.0
 		};
+		// Profile: an overflowed burst chases at full throttle; one still wholly on
+		// screen ramps more slowly toward the gentler configured in-view tau (never
+		// slower than the initial speed itself, if the user inverts the two).
+		let (top_tau, ramp_up_ms) = if self.overflow {
+			(MIN_TAU_MS, RAMP_UP_MS)
+		} else {
+			let inview = cfg
+				.scroll_inview_tau_ms
+				.clamp(MIN_TAU_MS, init_tau_ms.max(MIN_TAU_MS));
+			(inview, INVIEW_RAMP_UP_MS)
+		};
 		let ramp_ms = if ramp_target > self.ramp {
-			RAMP_UP_MS
+			ramp_up_ms
 		} else {
 			RAMP_DOWN_MS
 		};
 		self.ramp += (ramp_target - self.ramp) * (1.0 - (-dt_s * 1000.0 / ramp_ms).exp());
 
-		// effective tau: the configured "initial" speed at ramp 0, MIN_TAU at ramp 1
-		let tau = (init_tau_ms + (MIN_TAU_MS - init_tau_ms) * self.ramp).max(1.0);
+		// effective tau: the configured "initial" speed at ramp 0, the profile's
+		// top speed at ramp 1
+		let tau = (init_tau_ms + (top_tau - init_tau_ms) * self.ramp).max(1.0);
 		let smoothing = 1.0 - (-dt_s * 1000.0 / tau).exp();
 		self.visual += (self.target - self.visual) * smoothing;
 		if (self.target - self.visual).abs() < config::SETTLE_EPS {
@@ -180,6 +213,9 @@ impl Scroll {
 				self.target = detent;
 				self.visual = detent;
 				self.ramp = 0.0;
+				// at rest the burst is over; the next output starts a fresh one
+				self.burst = 0.0;
+				self.overflow = false;
 			} else {
 				self.target = detent; // still a fraction away: keep easing to the detent
 			}
@@ -288,12 +324,12 @@ mod tests {
 	fn nudge_accumulates_and_caps() {
 		let mut s = Scroll::new();
 		s.set_max(1000.0);
-		s.nudge_output(1.0);
+		s.nudge_output(1.0, 40.0);
 		let after_one = s.frac() + s.desired_offset() as f32;
 		assert!(after_one >= ease_lines().min(1.0) - 1e-3);
 		// a burst may lag at most MAX_BACKLOG lines
 		for _ in 0..100 {
-			s.nudge_output(5.0);
+			s.nudge_output(5.0, 40.0);
 		}
 		assert!(s.desired_offset() as f32 + s.frac() <= MAX_BACKLOG + 1e-3);
 	}
@@ -304,7 +340,7 @@ mod tests {
 		s.set_max(100.0);
 		s.wheel(50.0);
 		let before = s.desired_offset() as f32 + s.frac();
-		s.nudge_output(10.0);
+		s.nudge_output(10.0, 40.0);
 		let after = s.desired_offset() as f32 + s.frac();
 		assert_eq!(before, after); // no-snap rule: output must not move a reader
 	}
@@ -314,7 +350,7 @@ mod tests {
 		let mut s = Scroll::new();
 		s.set_max(1000.0);
 		for _ in 0..10 {
-			s.nudge_output(3.0);
+			s.nudge_output(3.0, 40.0);
 		}
 		assert!(s.animating());
 		for _ in 0..2000 {
@@ -333,12 +369,12 @@ mod tests {
 		let mut burst = Scroll::new();
 		burst.set_max(1000.0);
 		for _ in 0..10 {
-			burst.nudge_output(5.0); // deep backlog -> full ramp
+			burst.nudge_output(5.0, 24.0); // deep backlog, overflows -> full ramp
 		}
 		let start_b = burst.desired_offset() as f32 + burst.frac();
 		let mut trickle = Scroll::new();
 		trickle.set_max(1000.0);
-		trickle.nudge_output(0.9); // below the ramp threshold
+		trickle.nudge_output(0.9, 24.0); // below the ramp threshold
 		let start_t = trickle.desired_offset() as f32 + trickle.frac();
 		for _ in 0..12 {
 			burst.advance(0.016);
@@ -399,22 +435,85 @@ mod tests {
 		// After output stops, the visual position must ease straight down to the live
 		// bottom - never rise again. A rise mid-ease is the "page jumps around" /
 		// "scrolls bottom-up" artifact. Assert the position is non-increasing every
-		// frame and reaches the bottom.
+		// frame and reaches the bottom - in BOTH speed profiles (in-view and
+		// overflowed).
+		for rows in [40.0f32, 8.0] {
+			let mut s = Scroll::new();
+			s.set_max(1000.0);
+			for _ in 0..4 {
+				s.nudge_output(4.0, rows); // build a backlog to ease down from
+			}
+			let mut prev = s.desired_offset() as f32 + s.frac();
+			assert!(prev > 0.0, "backlog should lift the view off the bottom");
+			for _ in 0..3000 {
+				s.advance(0.016);
+				let pos = s.desired_offset() as f32 + s.frac();
+				assert!(pos <= prev + 1e-4, "position rose {prev} -> {pos} (bounce)");
+				prev = pos;
+			}
+			assert!(s.following());
+			assert_eq!(s.desired_offset(), 0);
+		}
+	}
+
+	#[test]
+	fn an_inview_burst_eases_gentler_than_an_overflowed_one() {
+		// Same backlog, two screen heights: the burst that stays wholly on screen
+		// (a short listing) must clear measurably slower than one whose first line
+		// has scrolled off the top - that is the whole two-profile point.
+		let mut inview = Scroll::new();
+		inview.set_max(1000.0);
+		let mut over = Scroll::new();
+		over.set_max(1000.0);
+		for _ in 0..6 {
+			inview.nudge_output(2.0, 40.0); // 12 lines on a 40-row pane: in view
+			over.nudge_output(2.0, 10.0); // same lines on 10 rows: top scrolled off
+		}
+		let start = inview.desired_offset() as f32 + inview.frac();
+		assert_eq!(start, over.desired_offset() as f32 + over.frac());
+		for _ in 0..30 {
+			inview.advance(0.016);
+			over.advance(0.016);
+		}
+		let left_i = inview.desired_offset() as f32 + inview.frac();
+		let left_o = over.desired_offset() as f32 + over.frac();
+		assert!(
+			left_o < left_i,
+			"overflowed burst ({left_o} left) should outrun the in-view one ({left_i} left)"
+		);
+	}
+
+	#[test]
+	fn a_burst_ends_at_rest_and_the_next_starts_in_view() {
+		// Overflow must not outlive its burst: once the ease has settled at the
+		// bottom, fresh output is a new burst and gets the gentle profile again.
+		// A settled-then-nudged scroll must track a never-overflowed twin exactly.
 		let mut s = Scroll::new();
 		s.set_max(1000.0);
-		for _ in 0..4 {
-			s.nudge_output(4.0); // build a backlog to ease down from
-		}
-		let mut prev = s.desired_offset() as f32 + s.frac();
-		assert!(prev > 0.0, "backlog should lift the view off the bottom");
+		s.nudge_output(12.0, 5.0); // overflows a 5-row pane at once
 		for _ in 0..3000 {
 			s.advance(0.016);
-			let pos = s.desired_offset() as f32 + s.frac();
-			assert!(pos <= prev + 1e-4, "position rose {prev} -> {pos} (bounce)");
-			prev = pos;
 		}
-		assert!(s.following());
-		assert_eq!(s.desired_offset(), 0);
+		assert!(
+			!s.animating(),
+			"must be fully settled before the second burst"
+		);
+		let mut fresh = Scroll::new();
+		fresh.set_max(1000.0);
+		for _ in 0..4 {
+			s.nudge_output(2.0, 40.0);
+			fresh.nudge_output(2.0, 40.0);
+			for _ in 0..3 {
+				s.advance(0.016);
+				fresh.advance(0.016);
+			}
+		}
+		let pos_s = s.desired_offset() as f32 + s.frac();
+		let pos_f = fresh.desired_offset() as f32 + fresh.frac();
+		assert!(
+			(pos_s - pos_f).abs() < 1e-4,
+			"stale overflow leaked into the next burst: {pos_s} vs fresh {pos_f}"
+		);
 	}
 
 	#[test]
@@ -454,7 +553,7 @@ mod tests {
 		// unfreeze catch-up: pending output backlog and any slide drop at once
 		let mut s = Scroll::new();
 		s.set_max(50.0);
-		s.nudge_output(12.0);
+		s.nudge_output(12.0, 40.0);
 		s.app_scroll(4.0);
 		assert!(s.animating());
 		s.snap();

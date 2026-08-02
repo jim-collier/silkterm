@@ -123,6 +123,8 @@ Crate owns integer "where grid is." Renderer owns fractional overlay.
 
 Same mechanism: when new output pushes content up, animate `visual_offset` from +1 line back to 0 over the easing window instead of snapping. Treat output-scroll as an animated target like wheel-scroll.
 
+Catch-up speed is per burst, in two profiles. A burst whose own first line is still on screen (a short listing) tops out at the configured in-view speed - faster than the initial ease, slower-building and gentler than the full chase. Once a burst has scrolled a screenful, its first line is provably off the top and the ease ramps as fast as needed to keep up. A burst ends when the view settles at the bottom, so sporadic single lines keep the plain initial ease.
+
 ### Smooth-scroll inside full-screen apps
 
 Scrollback and output easing (above) both have an easy signal: the wheel turns, or the buffer grows, and we ease a fractional offset. Full-screen ("alt-screen") apps - less, vim, nano, muffer - are the hard case, and no other terminal animates them. They do not scroll a buffer; they own the screen and repaint whole lines in place. When such an app scrolls, the terminal just sees the entire grid change - the same text is suddenly a row or two higher or lower. Nothing tells us a scroll happened, by how much, or which rows were meant to hold still. So the whole feature is reverse-engineered from two successive grid snapshots.
