@@ -16,9 +16,9 @@
 ##		  (gnulwi) run it. Otherwise it's a local Windows build - if the newest gnuwwi
 ##		  and msvcwwi are within 15 min of each other, flip a coin between them, else
 ##		  run the newest outright.
-##		- Prepends a random background image and a build-tagged title so a dogfood
-##		  window is visually distinct. Both precede the passed args, so a caller can
-##		  still override them.
+##		- Prepends a build-tagged title so a dogfood window is visually distinct. It
+##		  precedes the passed args, so a caller can still override it. (Picking a
+##		  wallpaper here is disabled - the terminal rotates its own.)
 ##		- With '--admin', runs the WHOLE launcher elevated (self-elevates via a UAC
 ##		  prompt), so copying a fresh build into the target dir - and the launched
 ##		  terminal - both run with admin rights. A shortcut click then behaves like
@@ -327,8 +327,7 @@ function fRunningExePaths {
 
 
 ## Launch SilkTerm detached (GUI subsystem, so no console attaches), prepending a
-## random background image (if any) and a title tagged with the build's tag+stamp.
-## Passed args come last so they win.
+## title tagged with the build's tag+stamp. Passed args come last so they win.
 function fLaunchSilkTerm {
 	param(
 		[Parameter(Mandatory)][string]$Exe,
@@ -348,18 +347,22 @@ function fLaunchSilkTerm {
 		$title = "SilkTerm"
 	}
 
+	## Picking a wallpaper here is disabled: the terminal rotates its own now, and a
+	## wallpaper named on the command line pins it for the session - which would hide
+	## exactly what we want to see. Uncomment (with fPickRandomWallpaper below) to go
+	## back to choosing one here.
 	$preArgs = @()
-	$bg = fPickRandomBackground
-	if ($bg) { $preArgs += "--background-image=$bg" }
+	#$wp = fPickRandomWallpaper
+	#if ($wp) { $preArgs += "--wallpaper-file=$wp" }
 	$preArgs += "--title=$title"
 
 	$all = @($preArgs)
 	if ($PassArgs) { $all += $PassArgs }
 
 	## Start-Process joins -ArgumentList with spaces WITHOUT quoting, so an arg
-	## whose value has a space (the title, or a bg path under a spaced folder)
-	## would be split into separate argv entries by the target and rejected.
-	## Quote any such arg ourselves.
+	## whose value has a space (the title, or a path under a spaced folder) would
+	## be split into separate argv entries by the target and rejected. Quote any
+	## such arg ourselves.
 	$quoted = @($all | ForEach-Object { fQuoteArg $_ })
 
 	return fStartTerminal -Exe $Exe -ArgList $quoted
@@ -367,10 +370,10 @@ function fLaunchSilkTerm {
 
 
 ## Fall back to whatever terminal is on PATH, in $FallbackTerminals order. Our own
-## silkterm keeps the bg+title dress (via fLaunchSilkTerm); generic terminals are
-## launched plainly - silkterm's --background-image/--title flags don't apply and
-## its pass-through args likely don't either, so they get none. cmd.exe lives in
-## System32 (always on PATH), so this effectively always finds something.
+## silkterm keeps the tagged title (via fLaunchSilkTerm); generic terminals are
+## launched plainly - silkterm's --title flag doesn't apply and its pass-through
+## args likely don't either, so they get none. cmd.exe lives in System32 (always
+## on PATH), so this effectively always finds something.
 function fLaunchFallbackTerminal {
 	param([string[]]$PassArgs)
 
@@ -438,21 +441,23 @@ function fQuoteArg {
 }
 
 
-## Resolve SilkTerm's backgrounds dir the same way the app does:
-## XDG_CONFIG_HOME, else HOME\.config, else APPDATA - then \silkterm\backgrounds.
-function fResolveBackgroundsDir {
+## Resolve SilkTerm's wallpaper dir the same way the app does: XDG_CONFIG_HOME,
+## else HOME\.config, else APPDATA - then \silkterm\wallpaper. Unused while the
+## pick in fLaunchSilkTerm is commented out; kept so re-enabling stays one line.
+function fResolveWallpaperDir {
 	$base = $null
 	if ($env:XDG_CONFIG_HOME) { $base = $env:XDG_CONFIG_HOME }
 	elseif ($env:HOME)        { $base = Join-Path $env:HOME ".config" }
 	elseif ($env:APPDATA)     { $base = $env:APPDATA }
 	if (-not $base) { return $null }
-	return (Join-Path $base "silkterm\backgrounds")
+	return (Join-Path $base "silkterm\wallpaper")
 }
 
 
-## Pick a random image from the backgrounds dir, or $null if there are none.
-function fPickRandomBackground {
-	$dir = fResolveBackgroundsDir
+## Pick a random image from the wallpaper dir, or $null if there are none. Unused;
+## see fResolveWallpaperDir.
+function fPickRandomWallpaper {
+	$dir = fResolveWallpaperDir
 	if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return $null }
 	$imgs = Get-ChildItem -LiteralPath $dir -File |
 		Where-Object { $_.Extension -in ".png", ".jpg", ".jpeg" }
@@ -631,6 +636,7 @@ if ($script:GuiFeedback -and $script:RunWarnings.Count) {
 
 
 ##	History:
+##		- 2026-08-02: Stop picking a wallpaper; the terminal rotates its own.
 ##		- 2026-08-01: Retag copies '<toolchain><built on><target><arch>', so a tag
 ##		  says what the binary IS: gnul -> gnulwi, gnuw -> gnuwwi, msvc -> msvcwwi.
 ##		  Each source re-copies once under its new name; old ones age out.
