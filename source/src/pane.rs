@@ -978,7 +978,7 @@ impl Pane {
 			0
 		};
 		if advanced > 0 && follow && !cut {
-			self.scroll.nudge_output(advanced as f32);
+			self.scroll.nudge_output(advanced as f32, lines as f32);
 		}
 
 		// Alt-screen app-scroll easing: a full-screen app owns its screen and scrolls

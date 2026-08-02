@@ -121,6 +121,7 @@ pub struct Settings {
 	pub line_height_scale: f32,
 	pub scrollback: usize,
 	pub scroll_tau_ms: f32,
+	pub scroll_inview_tau_ms: f32, // burst catch-up ceiling while the burst is still wholly on screen
 	pub wheel_lines: f32,
 	pub alt_scroll_lines: f32,
 	pub output_ease_lines: f32,
@@ -218,6 +219,7 @@ impl Default for Settings {
 			line_height_scale: 1.22,
 			scrollback: 10_000,
 			scroll_tau_ms: 230.0, // ~ "Initial scroll speed" 25 (slow/smooth; ramps up under bursts)
+			scroll_inview_tau_ms: 60.0, // ~ "In-view output speed" 83 (brisk; the in-view burst ceiling)
 			wheel_lines: 3.0,
 			alt_scroll_lines: 3.0,
 			output_ease_lines: 1.0,
@@ -657,6 +659,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.scroll_tau_ms != orig.scroll_tau_ms {
 		doc.set_float("scroll.tau_ms", r(s.scroll_tau_ms));
 	}
+	if s.scroll_inview_tau_ms != orig.scroll_inview_tau_ms {
+		doc.set_float("scroll.inview_tau_ms", r(s.scroll_inview_tau_ms));
+	}
 	if s.wheel_lines != orig.wheel_lines {
 		doc.set_float("scroll.wheel_lines", r(s.wheel_lines));
 	}
@@ -873,6 +878,7 @@ struct RawConfig {
 	line_height_scale: Option<f32>,
 	scrollback: Option<usize>,
 	scroll_tau_ms: Option<f32>,
+	scroll_inview_tau_ms: Option<f32>,
 	wheel_lines: Option<f32>,
 	alt_scroll_lines: Option<f32>,
 	output_ease_lines: Option<f32>,
@@ -1043,6 +1049,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		line_height_scale: r.f("font.line_height_scale"),
 		scrollback: r.u("scroll.scrollback"),
 		scroll_tau_ms: r.f("scroll.tau_ms"),
+		scroll_inview_tau_ms: r.f("scroll.inview_tau_ms"),
 		wheel_lines: r.f("scroll.wheel_lines"),
 		alt_scroll_lines: r.f("scroll.alt_scroll_lines"),
 		output_ease_lines: r.f("scroll.output_ease_lines"),
@@ -1149,6 +1156,10 @@ fn resolve(raw: RawConfig) -> Settings {
 			.max(0.5),
 		scrollback: raw.scrollback.unwrap_or(d.scrollback),
 		scroll_tau_ms: raw.scroll_tau_ms.unwrap_or(d.scroll_tau_ms).max(1.0),
+		scroll_inview_tau_ms: raw
+			.scroll_inview_tau_ms
+			.unwrap_or(d.scroll_inview_tau_ms)
+			.max(1.0),
 		wheel_lines: raw.wheel_lines.unwrap_or(d.wheel_lines),
 		alt_scroll_lines: raw.alt_scroll_lines.unwrap_or(d.alt_scroll_lines),
 		// MUST clamp: scroll's backlog clamp uses this as its lower bound, and
@@ -2581,6 +2592,15 @@ scroll:
 	## output stops. 230 ms is about 25 on the 1..100 dialog scale.
 	## Range: 1.0 and up (milliseconds) - lower is snappier
 	tau_ms: 230.0
+
+	## In-view output speed
+	## Top catch-up speed for an output burst whose own first line is still on
+	## screen (a short directory listing, say). Faster than the initial speed
+	## but gentler than the full chase; once a burst has scrolled its first
+	## line off the top, the scroll ramps as fast as needed to keep up
+	## regardless. 60 ms is about 83 on the 1..100 dialog scale.
+	## Range: 1.0 and up (milliseconds) - lower is snappier
+	inview_tau_ms: 60.0
 
 	## Wheel lines
 	## Lines per wheel notch (smooth scrollback).

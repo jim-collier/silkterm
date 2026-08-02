@@ -143,6 +143,7 @@ enum Key {
 	RememberSize,
 	Margin,
 	ScrollTau,
+	InviewTau,
 	WheelLines,
 	Scrollbar,
 	ScrollbarThickness,
@@ -254,6 +255,7 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::RememberSize => &["window.remember_size"],
 		Key::Margin => &["window.margin"],
 		Key::ScrollTau => &["scroll.tau_ms"],
+		Key::InviewTau => &["scroll.inview_tau_ms"],
 		Key::WheelLines => &["scroll.wheel_lines"],
 		Key::Scrollbar => &["scroll.scrollbar.enabled"],
 		Key::ScrollbarThickness => &["scroll.scrollbar.thickness"],
@@ -678,6 +680,15 @@ fn fields() -> Vec<Spec> {
 		Spec {
 			label: "Initial scroll speed",
 			key: ScrollTau,
+			kind: Slider {
+				min: 1.0,
+				max: 100.0,
+				int: true,
+			},
+		},
+		Spec {
+			label: "In-view output speed",
+			key: InviewTau,
 			kind: Slider {
 				min: 1.0,
 				max: 100.0,
@@ -1694,6 +1705,7 @@ impl SettingsDialog {
 			Key::Margin => settings.margin,
 			// shown as an intuitive 1..100 speed (higher = faster); stored as tau
 			Key::ScrollTau => tau_to_speed(settings.scroll_tau_ms),
+			Key::InviewTau => tau_to_speed(settings.scroll_inview_tau_ms),
 			Key::WheelLines => settings.wheel_lines,
 			Key::ScrollbarThickness => settings.scrollbar_thickness,
 			Key::Columns => settings.columns as f32,
@@ -1721,6 +1733,7 @@ impl SettingsDialog {
 			Key::LineHeight => settings.line_height_scale = value,
 			Key::Margin => settings.margin = value,
 			Key::ScrollTau => settings.scroll_tau_ms = speed_to_tau(value),
+			Key::InviewTau => settings.scroll_inview_tau_ms = speed_to_tau(value),
 			Key::WheelLines => settings.wheel_lines = value,
 			Key::ScrollbarThickness => settings.scrollbar_thickness = value,
 			Key::Columns => settings.columns = value.round().max(1.0) as usize,
@@ -2017,6 +2030,7 @@ impl SettingsDialog {
 			Key::LineHeight => defaults.line_height_scale,
 			Key::Margin => defaults.margin,
 			Key::ScrollTau => tau_to_speed(defaults.scroll_tau_ms),
+			Key::InviewTau => tau_to_speed(defaults.scroll_inview_tau_ms),
 			Key::WheelLines => defaults.wheel_lines,
 			Key::ScrollbarThickness => defaults.scrollbar_thickness,
 			Key::Columns => defaults.columns as f32,
