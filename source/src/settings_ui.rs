@@ -218,7 +218,7 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::BackdropBlur => &["transparent_background_blur"],
 		Key::BgOpacity => &["wallpaper_opacity"],
 		Key::BgBlur => &["wallpaper_blur"],
-		Key::BgFit => &["wallpaper_fit"],
+		Key::BgFit => &["wallpaper_default_fit"],
 		Key::BgHonorXmp => &["wallpaper_honor_xmp"],
 		Key::BgContrastMask => &["wallpaper_contrast_mask"],
 		Key::BgContrastSize => &["wallpaper_contrast_mask_size"],
@@ -488,7 +488,7 @@ fn fields() -> Vec<Spec> {
 			kind: Radio(&["Stretch", "Zoom"]),
 		},
 		Spec {
-			label: "Honor XMP tags 'Fit' and 'Anchor'",
+			label: "Honor tags",
 			key: BgHonorXmp,
 			kind: Toggle,
 		},
@@ -1754,7 +1754,7 @@ impl SettingsDialog {
 	}
 	fn get_radio(&self, key: Key) -> usize {
 		match key {
-			Key::BgFit => match self.edited.wallpaper_fit {
+			Key::BgFit => match self.edited.wallpaper_default_fit {
 				config::Fit::Zoom => 1,
 				config::Fit::Stretch => 0,
 			},
@@ -1779,7 +1779,7 @@ impl SettingsDialog {
 	fn set_radio(&mut self, key: Key, idx: usize) {
 		match key {
 			Key::BgFit => {
-				self.edited.wallpaper_fit = if idx == 1 {
+				self.edited.wallpaper_default_fit = if idx == 1 {
 					config::Fit::Zoom
 				} else {
 					config::Fit::Stretch
@@ -1891,7 +1891,7 @@ impl SettingsDialog {
 			Key::SystemFontSize => edited.use_system_font_size == defaults.use_system_font_size,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
 			Key::CopyOnSelect => edited.copy_on_select == defaults.copy_on_select,
-			Key::BgFit => edited.wallpaper_fit == defaults.wallpaper_fit,
+			Key::BgFit => edited.wallpaper_default_fit == defaults.wallpaper_default_fit,
 			Key::BgHonorXmp => edited.wallpaper_honor_xmp == defaults.wallpaper_honor_xmp,
 			Key::ScrimRamp => edited.text_scrim_ramp == defaults.text_scrim_ramp,
 			Key::BgImage => edited.wallpaper == defaults.wallpaper,
@@ -1958,7 +1958,7 @@ impl SettingsDialog {
 				};
 				self.set_toggle(key, default_val);
 			}
-			Key::BgFit => self.edited.wallpaper_fit = self.defaults.wallpaper_fit,
+			Key::BgFit => self.edited.wallpaper_default_fit = self.defaults.wallpaper_default_fit,
 			Key::ScrimRamp => self.edited.text_scrim_ramp = self.defaults.text_scrim_ramp.clone(),
 			Key::BgImage => {
 				self.edited.wallpaper = self.defaults.wallpaper.clone();
@@ -3496,8 +3496,9 @@ pub fn needs_text_rebuild(old: &Settings, new: &Settings) -> bool {
 
 // Returns true if a background-image-affecting setting changed.
 pub fn wallpaper_changed(old: &Settings, new: &Settings) -> bool {
-	old.wallpaper_opacity != new.wallpaper_opacity
-		|| old.wallpaper_fit != new.wallpaper_fit
+	old.wallpaper_enabled != new.wallpaper_enabled
+		|| old.wallpaper_opacity != new.wallpaper_opacity
+		|| old.wallpaper_default_fit != new.wallpaper_default_fit
 		|| old.wallpaper_honor_xmp != new.wallpaper_honor_xmp
 		|| old.wallpaper != new.wallpaper
 		|| old.wallpaper_blur != new.wallpaper_blur
