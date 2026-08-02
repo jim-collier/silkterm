@@ -600,7 +600,7 @@ def write_dconf(home, profile):
 
 def write_config(home, profile):
 	# mirrors the real defined config. Both profiles start opaque on plain black,
-	# which needs wallpaper_default OFF - it defaults on, and while it is on there
+	# which needs wallpaper.fallback_builtin OFF - it defaults on, and while it is on there
 	# is no "no wallpaper" state to start from (an unset image IS what shows the
 	# built-in one). Image opacity stays at the 0.10 default.
 	cfgdir = home / ".config" / "silkterm"
@@ -609,32 +609,32 @@ def write_config(home, profile):
 	# the app's own baked-in wallpaper, so the closing scene shows exactly the
 	# out-of-the-box look (and can never drift from it)
 	shutil.copy2(REPO / "source/assets/default-background.jpg", wpdir / "default.jpg")
-	(cfgdir / "config.shcl").write_text('''use_system_font: true
-line_height_scale: 1.22
-margin: 8.0
-remember_size: false
-columns: 160
-rows: 48
-transparent_background: false
-wallpaper_default: false
-wallpaper_opacity: 0.10
-wallpaper_fit: zoom
-wallpaper_blur: 10.0
-text_scrim: true
-text_outline: 2.0
-text_scrim_ramp: gaussian
-cursor_size_height: 100
-cursor_size_width: 25
-cursor_animation: pulse_vertical
-cursor_animation_resume_s: 1
-cursor_blink_rate_ms: 500
-word_separators: "=,|:\\"' ()[]{}<>"
-scrollback: 10000
-scroll_tau_ms: 230.0
-wheel_lines: 3.0
-alt_scroll_lines: 3.0
-output_ease_lines: 1.0
-smooth_scroll_apps: true
+	(cfgdir / "config.shcl").write_text('''font.use_system_family: true
+font.line_height_scale: 1.22
+window.margin: 8.0
+window.remember_size: false
+window.columns: 160
+window.rows: 48
+transparency.enabled: false
+wallpaper.fallback_builtin: false
+wallpaper.opacity: 0.10
+wallpaper.default_fit: zoom
+wallpaper.blur: 10.0
+text.scrim.enabled: true
+text.outline: 2.0
+text.scrim.ramp: gaussian
+cursor.size.height: 100
+cursor.size.width: 25
+cursor.animation: pulse_vertical
+cursor.animation_resume_s: 1
+cursor.blink_rate_ms: 500
+selection.word_separators: "=,|:\\"' ()[]{}<>"
+scroll.scrollback: 10000
+scroll.tau_ms: 230.0
+scroll.wheel_lines: 3.0
+scroll.alt_scroll_lines: 3.0
+scroll.output_ease_lines: 1.0
+scroll.smooth_apps: true
 theme: SilkTerm
 theme_mode: dark
 ''')
@@ -819,15 +819,17 @@ def ctl(rec, line):
 		log(f"WARNING: control socket: {e}")
 		return False
 
-def set_cfg(rec, **keys):
+def set_cfg(rec, keys):
 	# a settings change, applied the way a settings change applies: rewrite the
 	# keys and reload. Live, and nothing has to be typed on camera. Strings are
 	# quoted so a value can never read as a comment or a bare word like none.
+	# Keys are dotted config paths, matched only on the top-level dotted lines
+	# write_config wrote (the escaped dot can't wander into nested lines).
 	cfg = rec.home / ".config/silkterm/config.shcl"
 	text = cfg.read_text()
 	for key, val in keys.items():
 		line = f'{key}: "{val}"' if isinstance(val, str) else f"{key}: {val}"
-		text = re.sub(rf"^{key}: .*$", lambda _m, s=line: s, text, flags=re.M)
+		text = re.sub(rf"^{re.escape(key)}: .*$", lambda _m, s=line: s, text, flags=re.M)
 	cfg.write_text(text)
 	return ctl(rec, "reload")
 
@@ -880,7 +882,7 @@ def seg_panes(r, t, m):
 	# accelerator letter - V for vertical), all keyboard, no menu coordinates to
 	# guess at. Splitting twice is what shows the auto-sizing; each new pane is a
 	# shell like any other, so `exit` is what leaves it - nothing else is typed.
-	set_cfg(r, cursor_animation="none")
+	set_cfg(r, {"cursor.animation": "none"})
 	with Banner(r, "Split panes, sized for you"):
 		r.xdo("windowactivate", r.win)
 		time.sleep(0.3)
@@ -901,7 +903,7 @@ def seg_cursor(r, t, m):
 	with Banner(r, "Cursor shape and animation, your pick"):
 		r.xdo("windowactivate", r.win)
 		time.sleep(1.2)
-		set_cfg(r, cursor_size_width=100, cursor_animation="pulse_vertical")
+		set_cfg(r, {"cursor.size.width": 100, "cursor.animation": "pulse_vertical"})
 		time.sleep(2.6)
 
 def seg_wallpaper(r, t, m):

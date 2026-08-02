@@ -196,9 +196,13 @@ The built-in stack is last for a reason: the generic monospace query below it is
 
 - The contract on saving is that a user's comments and blank-line grouping survive. Layout may be tidied - indentation, and quotes that are not needed - but a value is never rewritten. The shipped template is deliberately spelled the way a save would spell it, so the first save is a no-op rather than a reflow of the file we just wrote.
 
-- Settings are written one per line, nested keys in dotted form (`colors.foreground`). That keeps the whole config addressable by simple line edits, which is what the in-place migrate/backfill/revert passes rely on.
+- The file is organized as nested blocks, tab-indented, mirroring how the settings relate: `wallpaper` holds its children, with `rotate` and `contrast_mask` nested inside it. A setting can also be written as a single dotted line (`wallpaper.opacity: 0.1`) and reads identically - the block form is just the canonical spelling.
+	- Each setting stands in its own blank-line-delimited section, comments directly above it: a short title, a description, and a range line where one applies. A commented-out line shows the built-in default and carries a `## Default` marker.
+	- The in-place add/refresh passes stay line-oriented; they resolve each line's full path from the indentation around it, so a new setting is inserted inside the right block, beside its siblings.
 
 - No migration from the old TOML configs: a fresh file is generated with defaults.
+
+- When the flat naming gave way to nested blocks, it was decided that an old config converts wholesale rather than being rewritten in place: the old file is kept alongside as a backup, a fresh current-format file is written, and every value the user had set carries over to its new place. Rewriting flat lines into blocks would have shredded the old file's comments; this way settings survive and the file's documentation is current.
 
 - A config carries the commented default lines it was first given, so when a default changes those lines start describing the old behavior. It was decided that such a line is refreshed to the current default, on the principle that the file may be corrected about what the program does on its own, but never about what the user chose. A line the user activated, or annotated, is therefore left alone.
 

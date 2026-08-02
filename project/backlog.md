@@ -74,7 +74,11 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- 🔘 Fill in the Windows rows: conhost, Windows Terminal and MobaXterm need running on a Windows machine.
 		- Windows figures answer a slightly different question and are not directly comparable, which the table's notes say: a base OS includes far more there, and the machine differs.
 
-- 🔘 Take advantage of shcl's hierarchical capabilities, by nesting the config sections, rather than using 'parent_child: value' TOML style. Keep using empty lines for clarity. Comments for nested settings can follow the nesting. For example, rather than a bunch of 'wallpaper_*' settings, 'wallpaper' gets nested children. Tabs for nesting. You can erase and my own personal config for recreation at next post-compile start.
+- ✅ Take advantage of shcl's hierarchical capabilities, by nesting the config sections, rather than using 'parent_child: value' TOML style. Keep using empty lines for clarity. Comments for nested settings can follow the nesting. For example, rather than a bunch of 'wallpaper_*' settings, 'wallpaper' gets nested children. Tabs for nesting. You can erase and my own personal config for recreation at next post-compile start.
+	- Done: the whole config is nested blocks now - font, window, transparency, wallpaper (with rotate and contrast_mask children), text (with scrim), cursor (with size), selection, shell, scroll, colors. Tabs for nesting, blank lines kept, comments indented with their settings. Each setting carries a title line, a description, and a range line where one applies, with a "## Default" marker on the commented default lines; sections divide with the bullet-rule style.
+	- An old flat-style config converts in one launch: the file moves aside to config.shcl.bak and a fresh nested file is written with every active value carried to its new place, so settings survive. A setting can also still be written as a single dotted line ('wallpaper.opacity: 0.1') and reads the same.
+	- Saving keeps the nested layout intact: comments keep their indentation and the blank-line grouping survives a settings save.
+	- Verified: a fresh file matches the shipped template byte for byte and relaunch never rewrites it; the previous personal config converted with all values carried; scroll regression scenes all pass on the new-style throwaway config.
 
 - 🔘 Need scrollbars. (Disable in Settings.) And thicker than many modern desktops.
 
@@ -341,10 +345,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- No migration path: existing `config.toml` files are not read. A fresh `config.shcl` is written with defaults, so any customised settings need re-entering once.
 		- Saving keeps comments and blank-line grouping. It may tidy layout - indentation, and quotes it does not need - but never rewrites a value.
 		- Colours have to be quoted now (`colors.foreground: "#88fff0"`), since `#` starts a comment.
-	- 🔘 Convert already implicitly hierarchical config names, to actual nested hierarchical.
+	- ✅ Convert already implicitly hierarchical config names, to actual nested hierarchical.
+		- Done as part of the nesting item above.
 	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
-	- 🔘 Each setting gets it's own newline-delimited (above and below) section, with helpful comments directly above the setting without newlines.
-	- 🔘 Common comment format, use what's appropriate for each setting:
+		- The nesting pass kept the existing section order; the reorganization waits on the Settings dialog refactor it mirrors.
+	- ✅ Each setting gets it's own newline-delimited (above and below) section, with helpful comments directly above the setting without newlines.
+	- ✅ Common comment format, use what's appropriate for each setting:
 
 		~~~shcl
 
@@ -357,7 +363,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		# setting: value  ## Default
 		~~~
 
-	- 🔘 Use flowerboxing to divide sections, similar to how Settings dialog is divided (the future version, defined in "Refactor settings dialog" below):
+	- ✅ Use flowerboxing to divide sections, similar to how Settings dialog is divided (the future version, defined in "Refactor settings dialog" below):
+		- The bullet-rule style is in; section names still follow the current dialog until the dialog refactor lands.
 
 		~~~shcl
 

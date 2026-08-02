@@ -211,45 +211,45 @@ const SCROLLBAR_W: f32 = 8.0;
 const REVERT_W: f32 = 22.0; // right-edge revert-to-default icon column
 const REVERT_ICON: &str = "\u{21ba}"; // anticlockwise open-circle arrow
 
-// Config-file key(s) behind a dialog Key, for revert's comment-out (dotted =
-// the colors.* keys). Empty for headers.
+// Config-file path(s) behind a dialog Key, for revert's comment-out. Dotted
+// paths address the nested layout. Empty for headers.
 fn cfg_keys(key: Key) -> &'static [&'static str] {
 	match key {
-		Key::Transparency => &["transparent_background"],
-		Key::Opacity => &["opacity"],
-		Key::BackdropBlur => &["transparent_background_blur"],
-		Key::BgEnabled => &["wallpaper_enabled"],
-		Key::BgRotate => &["wallpaper_rotate_enabled"],
-		Key::BgOpacity => &["wallpaper_opacity"],
-		Key::BgBlur => &["wallpaper_blur"],
-		Key::BgFit => &["wallpaper_default_fit"],
-		Key::BgHonorXmp => &["wallpaper_honor_xmp"],
-		Key::BgContrastMask => &["wallpaper_contrast_mask"],
-		Key::BgContrastSize => &["wallpaper_contrast_mask_size"],
-		Key::BgContrastStrength => &["wallpaper_contrast_mask_strength"],
-		Key::BgContrastAuto => &["wallpaper_contrast_mask_auto"],
-		Key::TextScrim => &["text_scrim"],
-		Key::ScrimRadius => &["text_scrim_radius"],
-		Key::ScrimSoftness => &["text_scrim_softness"],
-		Key::Outline => &["text_outline"],
-		Key::ScrimFunction => &["text_scrim_function"],
-		Key::ScrimRamp => &["text_scrim_ramp"],
-		Key::CursorScrim => &["cursor_scrim"],
-		Key::CursorOutline => &["cursor_outline"],
-		Key::BgImage => &["wallpaper"],
-		Key::SystemFont => &["use_system_font"],
-		Key::SystemFontSize => &["use_system_font_size"],
-		Key::FontFamily => &["font_family"],
-		Key::DefaultShell => &["default_shell"],
-		Key::CopyOnSelect => &["copy_on_select"],
-		Key::FontSize => &["font_size"],
-		Key::LineHeight => &["line_height_scale"],
-		Key::Columns => &["columns"],
-		Key::Rows => &["rows"],
-		Key::RememberSize => &["remember_size"],
-		Key::Margin => &["margin"],
-		Key::ScrollTau => &["scroll_tau_ms"],
-		Key::WheelLines => &["wheel_lines"],
+		Key::Transparency => &["transparency.enabled"],
+		Key::Opacity => &["transparency.opacity"],
+		Key::BackdropBlur => &["transparency.blur_behind"],
+		Key::BgEnabled => &["wallpaper.enabled"],
+		Key::BgRotate => &["wallpaper.rotate.enabled"],
+		Key::BgOpacity => &["wallpaper.opacity"],
+		Key::BgBlur => &["wallpaper.blur"],
+		Key::BgFit => &["wallpaper.default_fit"],
+		Key::BgHonorXmp => &["wallpaper.honor_xmp"],
+		Key::BgContrastMask => &["wallpaper.contrast_mask.enabled"],
+		Key::BgContrastSize => &["wallpaper.contrast_mask.size"],
+		Key::BgContrastStrength => &["wallpaper.contrast_mask.strength"],
+		Key::BgContrastAuto => &["wallpaper.contrast_mask.auto"],
+		Key::TextScrim => &["text.scrim.enabled"],
+		Key::ScrimRadius => &["text.scrim.radius"],
+		Key::ScrimSoftness => &["text.scrim.softness"],
+		Key::Outline => &["text.outline"],
+		Key::ScrimFunction => &["text.scrim.function"],
+		Key::ScrimRamp => &["text.scrim.ramp"],
+		Key::CursorScrim => &["cursor.scrim"],
+		Key::CursorOutline => &["cursor.outline"],
+		Key::BgImage => &["wallpaper.image"],
+		Key::SystemFont => &["font.use_system_family"],
+		Key::SystemFontSize => &["font.use_system_size"],
+		Key::FontFamily => &["font.family"],
+		Key::DefaultShell => &["shell.default"],
+		Key::CopyOnSelect => &["shell.copy_on_select"],
+		Key::FontSize => &["font.size"],
+		Key::LineHeight => &["font.line_height_scale"],
+		Key::Columns => &["window.columns"],
+		Key::Rows => &["window.rows"],
+		Key::RememberSize => &["window.remember_size"],
+		Key::Margin => &["window.margin"],
+		Key::ScrollTau => &["scroll.tau_ms"],
+		Key::WheelLines => &["scroll.wheel_lines"],
 		Key::ColBg => &["colors.background"],
 		Key::ColFg => &["colors.foreground"],
 		Key::ColCursor => &["colors.cursor"],
@@ -3579,7 +3579,7 @@ mod tests {
 		assert!(d.is_default(super::Key::Opacity));
 		assert_eq!(d.edited.opacity, def);
 		let rev = d.take_reverted();
-		assert!(rev.contains(&"opacity"));
+		assert!(rev.contains(&"transparency.opacity"));
 		assert!(d.take_reverted().is_empty(), "taking clears the list");
 		// reverting font size must not clear the system-size follow (set_f32
 		// side effect)
@@ -3680,7 +3680,7 @@ mod tests {
 		assert_eq!(d.edited.cursor_scrim, d.defaults.cursor_scrim);
 		assert_eq!(d.edited.cursor_outline, d.defaults.cursor_outline);
 		assert!(d.row_is_default(i));
-		assert!(d.take_reverted().contains(&"cursor_scrim"));
+		assert!(d.take_reverted().contains(&"cursor.scrim"));
 	}
 
 	// The "use system font" face toggle is inert wherever the OS reports no
