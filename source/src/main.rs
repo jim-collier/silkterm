@@ -26,6 +26,7 @@ mod sysfont;
 mod term;
 mod text;
 mod theme;
+mod xmp;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 

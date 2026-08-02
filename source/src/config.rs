@@ -125,7 +125,8 @@ pub struct Settings {
 	pub wallpaper_rotate_interval_s: f32,  // seconds between rotations (0 = pick one at startup only)
 	pub wallpaper_opacity: f32,            // image visibility 0..1
 	pub wallpaper_fit: Fit,
-	pub wallpaper_blur: f32, // Gaussian blur sigma applied to the image (0 = none)
+	pub wallpaper_honor_xmp: bool, // let a wallpaper's own Fit/Anchor tags override wallpaper_fit
+	pub wallpaper_blur: f32,       // Gaussian blur sigma applied to the image (0 = none)
 	pub wallpaper_contrast_mask: bool, // flatten the image's contrast so it stops competing with text
 	pub wallpaper_contrast_mask_size: f32, // flatten scale 0..1 (1 = half the longest pixel dim)
 	pub wallpaper_contrast_mask_strength: f32, // how far toward the local mean 0..1
@@ -199,6 +200,7 @@ impl Default for Settings {
 			wallpaper_rotate_interval_s: 0.0,
 			wallpaper_opacity: 0.10, // image visibility relative to bg color
 			wallpaper_fit: Fit::Stretch,
+			wallpaper_honor_xmp: true,
 			wallpaper_blur: 10.0,
 			wallpaper_contrast_mask: true,
 			wallpaper_contrast_mask_size: 0.5,
@@ -493,6 +495,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 			},
 		);
 	}
+	if s.wallpaper_honor_xmp != orig.wallpaper_honor_xmp {
+		doc.set_bool("wallpaper_honor_xmp", s.wallpaper_honor_xmp);
+	}
 	if s.wallpaper_blur != orig.wallpaper_blur {
 		doc.set_float("wallpaper_blur", r(s.wallpaper_blur));
 	}
@@ -673,6 +678,7 @@ struct RawConfig {
 	wallpaper_rotate_interval_s: Option<f32>,
 	wallpaper_opacity: Option<f32>,
 	wallpaper_fit: Option<String>,
+	wallpaper_honor_xmp: Option<bool>,
 	wallpaper_blur: Option<f32>,
 	wallpaper_contrast_mask: Option<bool>,
 	wallpaper_contrast_mask_size: Option<f32>,
@@ -833,6 +839,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		wallpaper_rotate_interval_s: r.f("wallpaper_rotate_interval_s"),
 		wallpaper_opacity: r.f("wallpaper_opacity"),
 		wallpaper_fit: r.s("wallpaper_fit"),
+		wallpaper_honor_xmp: r.b("wallpaper_honor_xmp"),
 		wallpaper_blur: r.f("wallpaper_blur"),
 		wallpaper_contrast_mask: r.b("wallpaper_contrast_mask"),
 		wallpaper_contrast_mask_size: r.f("wallpaper_contrast_mask_size"),
@@ -1025,6 +1032,7 @@ fn resolve(raw: RawConfig) -> Settings {
 			Some("zoom") => Fit::Zoom,
 			_ => Fit::Stretch,
 		},
+		wallpaper_honor_xmp: raw.wallpaper_honor_xmp.unwrap_or(d.wallpaper_honor_xmp),
 		columns: raw.columns.unwrap_or(d.columns).max(1),
 		rows: raw.rows.unwrap_or(d.rows).max(1),
 		remember_size: raw.remember_size.unwrap_or(d.remember_size),
@@ -1744,8 +1752,16 @@ opacity: 0.95
 ## above): 0.0 = all background color, 1.0 = all image.
 # wallpaper_opacity: 0.10
 
-## How the image fits: "stretch" (fill, ignore aspect) or "zoom" (cover, keep aspect).
+## How the image fits when it has nothing to say for itself: "stretch" (fill,
+## ignore aspect) or "zoom" (cover, keep aspect, crop the overhang).
 # wallpaper_fit: "stretch"
+
+## Let a wallpaper carry its own layout in its XMP metadata, overriding the
+## default above per image. `wallpaper:Fit` is "stretch" or "zoom";
+## `wallpaper:Anchor` is "<horizontal>%, <vertical>%" (0% is left/top, 100% is
+## right/bottom) and picks which part of the image a zoom crop keeps. A photo
+## can then refuse to be squashed while a gradient still fills the window.
+# wallpaper_honor_xmp: true
 
 ## Gaussian blur applied to the wallpaper (sigma in pixels; 0 = none).
 # wallpaper_blur: 10.0

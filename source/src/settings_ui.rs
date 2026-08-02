@@ -115,6 +115,7 @@ enum Key {
 	BgOpacity,
 	BgBlur,
 	BgFit,
+	BgHonorXmp,
 	BgContrastMask,
 	BgContrastSize,
 	BgContrastStrength,
@@ -218,6 +219,7 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::BgOpacity => &["wallpaper_opacity"],
 		Key::BgBlur => &["wallpaper_blur"],
 		Key::BgFit => &["wallpaper_fit"],
+		Key::BgHonorXmp => &["wallpaper_honor_xmp"],
 		Key::BgContrastMask => &["wallpaper_contrast_mask"],
 		Key::BgContrastSize => &["wallpaper_contrast_mask_size"],
 		Key::BgContrastStrength => &["wallpaper_contrast_mask_strength"],
@@ -481,9 +483,14 @@ fn fields() -> Vec<Spec> {
 			},
 		},
 		Spec {
-			label: "Bg image fit",
+			label: "Default fit",
 			key: BgFit,
 			kind: Radio(&["Stretch", "Zoom"]),
+		},
+		Spec {
+			label: "Honor XMP tags 'Fit' and 'Anchor'",
+			key: BgHonorXmp,
+			kind: Toggle,
 		},
 		Spec {
 			label: "Contrast mask",
@@ -1725,6 +1732,7 @@ impl SettingsDialog {
 			Key::RememberSize => self.edited.remember_size,
 			Key::CopyOnSelect => self.edited.copy_on_select,
 			Key::BgContrastMask => self.edited.wallpaper_contrast_mask,
+			Key::BgHonorXmp => self.edited.wallpaper_honor_xmp,
 			_ => false,
 		}
 	}
@@ -1740,6 +1748,7 @@ impl SettingsDialog {
 			Key::RememberSize => self.edited.remember_size = on,
 			Key::CopyOnSelect => self.edited.copy_on_select = on,
 			Key::BgContrastMask => self.edited.wallpaper_contrast_mask = on,
+			Key::BgHonorXmp => self.edited.wallpaper_honor_xmp = on,
 			_ => {}
 		}
 	}
@@ -1883,6 +1892,7 @@ impl SettingsDialog {
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
 			Key::CopyOnSelect => edited.copy_on_select == defaults.copy_on_select,
 			Key::BgFit => edited.wallpaper_fit == defaults.wallpaper_fit,
+			Key::BgHonorXmp => edited.wallpaper_honor_xmp == defaults.wallpaper_honor_xmp,
 			Key::ScrimRamp => edited.text_scrim_ramp == defaults.text_scrim_ramp,
 			Key::BgImage => edited.wallpaper == defaults.wallpaper,
 			Key::FontFamily => edited.font_family == defaults.font_family,
@@ -1931,6 +1941,7 @@ impl SettingsDialog {
 			| Key::SystemFontSize
 			| Key::RememberSize
 			| Key::CopyOnSelect
+			| Key::BgHonorXmp
 			| Key::BgContrastMask => {
 				let default_val = match key {
 					Key::Transparency => self.defaults.transparent_background,
@@ -1942,6 +1953,7 @@ impl SettingsDialog {
 					Key::SystemFontSize => self.defaults.use_system_font_size,
 					Key::CopyOnSelect => self.defaults.copy_on_select,
 					Key::BgContrastMask => self.defaults.wallpaper_contrast_mask,
+					Key::BgHonorXmp => self.defaults.wallpaper_honor_xmp,
 					_ => self.defaults.remember_size,
 				};
 				self.set_toggle(key, default_val);
@@ -3486,6 +3498,7 @@ pub fn needs_text_rebuild(old: &Settings, new: &Settings) -> bool {
 pub fn wallpaper_changed(old: &Settings, new: &Settings) -> bool {
 	old.wallpaper_opacity != new.wallpaper_opacity
 		|| old.wallpaper_fit != new.wallpaper_fit
+		|| old.wallpaper_honor_xmp != new.wallpaper_honor_xmp
 		|| old.wallpaper != new.wallpaper
 		|| old.wallpaper_blur != new.wallpaper_blur
 		|| old.wallpaper_contrast_mask != new.wallpaper_contrast_mask

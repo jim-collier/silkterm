@@ -15,8 +15,8 @@ struct Uniform {
 	resolution: [f32; 2],
 	image_size: [f32; 2],
 	opacity: f32,
-	fit: f32, // 0 = stretch, 1 = zoom (cover)
-	_pad: [f32; 2],
+	fit: f32,         // 0 = stretch, 1 = zoom (cover)
+	anchor: [f32; 2], // which part of the image survives a zoom crop; 0.5 = centre
 }
 
 // Wallpaper VRAM-content probe verdict (see `vram_check_poll`).
@@ -38,6 +38,7 @@ pub struct ImageRenderer {
 	image_size: [f32; 2],
 	opacity: f32,
 	fit: f32,
+	anchor: [f32; 2],
 	// last resolution written to the uniform (skip the per-frame re-write)
 	last_res: std::cell::Cell<(f32, f32)>,
 	// VT-switch loss probe: this texture is a REAL casualty of a VRAM purge
@@ -62,6 +63,7 @@ impl ImageRenderer {
 		height: u32,
 		opacity: f32,
 		fit: Fit,
+		anchor: [f32; 2],
 	) -> Self {
 		let size = wgpu::Extent3d {
 			width,
@@ -224,6 +226,7 @@ impl ImageRenderer {
 			image_size: [width as f32, height as f32],
 			opacity,
 			fit: if fit == Fit::Zoom { 1.0 } else { 0.0 },
+			anchor: [anchor[0].clamp(0.0, 1.0), anchor[1].clamp(0.0, 1.0)],
 			texture,
 			probe_at,
 			probe_ref,
@@ -234,7 +237,7 @@ impl ImageRenderer {
 	}
 
 	pub fn set_resolution(&self, queue: &wgpu::Queue, w: f32, h: f32) {
-		// called per frame; opacity/fit are fixed at construction, so the
+		// called per frame; opacity/fit/anchor are fixed at construction, so the
 		// uniform only changes on resize
 		if self.last_res.get() == (w, h) {
 			return;
@@ -245,7 +248,7 @@ impl ImageRenderer {
 			image_size: self.image_size,
 			opacity: self.opacity,
 			fit: self.fit,
-			_pad: [0.0, 0.0],
+			anchor: self.anchor,
 		};
 		queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform_data));
 	}
@@ -362,7 +365,7 @@ struct Uniform {
     image_size: vec2<f32>,
     opacity: f32,
     fit: f32,
-    _pad: vec2<f32>,
+    anchor: vec2<f32>,
 };
 @group(0) @binding(0) var<uniform> u: Uniform;
 @group(0) @binding(1) var tex: texture_2d<f32>;
@@ -381,10 +384,11 @@ fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     if (u.fit < 0.5) {
         uv = p / u.resolution; // stretch
     } else {
-        // zoom / cover: fill while preserving aspect, center-crop
+        // zoom / cover: fill while preserving aspect, crop about the anchor
+        // (0 keeps the left/top edge, 1 the right/bottom, 0.5 centers)
         let scale = max(u.resolution.x / u.image_size.x, u.resolution.y / u.image_size.y);
         let disp = u.image_size * scale;
-        uv = (p + (disp - u.resolution) * 0.5) / disp;
+        uv = (p + (disp - u.resolution) * u.anchor) / disp;
     }
     let c = textureSample(tex, samp, uv);
     let a = c.a * u.opacity;
