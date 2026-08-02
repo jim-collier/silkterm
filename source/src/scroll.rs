@@ -14,36 +14,36 @@ use crate::config;
 // cap (`chase`, lines/s) that starts SLOW and grows. `scroll_tau_ms` ("Initial
 // scroll speed") sets the starting speed - one line per tau, i.e. 1000/tau
 // lines/s - and while the backlog stays deep the cap doubles every
-// CHASE_DOUBLE_S, so a dump is caught at "as fast as necessary" within a couple
-// of seconds while its first moments still read as motion, not a jump. While a
-// burst's own first line is still on screen (a short listing) the cap tops out
-// at the gentler 1000/`scroll_inview_tau_ms`; once that line has scrolled off
-// the top, growth is unbounded. The backlog itself is NOT capped in lines (a
-// hard cap forces the view to ride the output rate the instant it fills, which
-// is exactly the "jumps immediately to blazing speed" bug) - the exponential
-// cap growth is what bounds the lag, in time instead of lines. The chase
-// applies only to output while following the bottom - wheel/scrollback
-// navigation keeps the plain configured ease, and a user jump back to the
-// bottom sweeps at full ease speed (`sweep`).
+// `scroll_ramp_up_ms` ("Ramp-up"), so a dump is caught at "as fast as
+// necessary" within a couple of seconds while its first moments still read as
+// motion, not a jump. While a burst's own first line is still on screen (a
+// short listing) the cap tops out at the gentler
+// 1000/`scroll_single_screen_tau_ms` ("Single-screen speed"); once that line
+// has scrolled off the top, growth is unbounded. A shallow backlog relaxes the
+// cap back toward the initial speed over `scroll_ramp_down_ms` ("Ramp-down").
+// The backlog itself is NOT capped in lines (a hard cap forces the view to ride
+// the output rate the instant it fills, which is exactly the "jumps immediately
+// to blazing speed" bug) - the exponential cap growth is what bounds the lag, in
+// time instead of lines. The chase applies only to output while following the
+// bottom - wheel/scrollback navigation keeps the plain configured ease, and a
+// user jump back to the bottom sweeps at full ease speed (`sweep`).
 //
-// The ease itself is asymmetric: motion builds from rest (a two-stage cascade -
-// `visual` chases a leading `mid` stage, so the first frames are gentle instead
-// of jumping straight to peak speed), and the stop is sharpened by a minimum
-// closing speed inside STOP_BAND (a bare exponential would crawl the last few
-// pixels in over a second).
+// The ease itself is asymmetric, and the two ends are the "Ease-in"/"Ease-out"
+// settings: motion builds from rest (a two-stage cascade - `visual` chases a
+// leading `mid` stage over `scroll_ease_in` of the tau, so the first frames are
+// gentle instead of jumping straight to peak speed), and the stop is sharpened
+// by a minimum closing speed inside STOP_BAND (a bare exponential would crawl
+// the last few pixels in over a second). The two are presented as one pair, so
+// BOTH read "higher = gentler" in the dialog - which is why ease-out is stored
+// as the tail's DURATION and the closing speed is derived from it, rather than
+// stored as the speed itself (that would invert against its own partner).
 pub const MAX_BACKLOG: f32 = 16.0; // reference depth for output_ease_lines' clamp + set_max overscan
-const CHASE_DOUBLE_S: f32 = 0.3; // chase speed doubles this often while the backlog is deep
 const CHASE_GROW_MIN: f32 = 2.0; // backlog depth (lines) that counts as "deep" (a trickle never ramps)
-const CHASE_DECAY_MS: f32 = 450.0; // easing the chase back down to the initial speed is gentle
-// Ease-in: `visual` chases the leading `mid` stage over this fraction of the
-// effective tau, so a fresh motion builds from zero speed instead of spiking on
-// its first frame. Scales with tau, so full-throttle catch-up stays fast.
-const ATTACK_FRACT: f32 = 0.35;
 // Sharper stop: within this many lines of the target the exponential tail is
-// replaced by a glide of at least STOP_MIN_LPS lines/s, so the last few pixels
-// sweep in instead of crawling. Above the band the ease-out is untouched.
+// replaced by a glide that covers the band in `scroll_ease_out_ms`, so the last
+// few pixels sweep in instead of crawling. Above the band the ease-out is
+// untouched.
 const STOP_BAND: f32 = 0.4;
-const STOP_MIN_LPS: f32 = 3.0;
 // Alt-screen app-scroll easing: a full-screen app (less, vim, muffer, ...) owns
 // its screen and scrolls by repainting whole lines. `app_off` is a transient
 // visual offset (in lines, signed: + shifts content down) set the moment such a
@@ -216,24 +216,25 @@ impl Scroll {
 		}
 		let init_tau_ms = cfg.scroll_tau_ms.max(1.0);
 		// The output chase: while a burst's backlog is deep the speed cap grows
-		// exponentially (doubling per CHASE_DOUBLE_S) - capped at the in-view
+		// exponentially (doubling per "Ramp-up") - capped at the single-screen
 		// ceiling while the burst's first line is still on screen, unbounded once
 		// it has scrolled off. A shallow backlog decays the cap back toward the
-		// initial speed so a resumed burst starts gently again.
+		// initial speed over "Ramp-down", so a resumed burst starts gently again.
 		let chase_v0 = 1000.0 / init_tau_ms;
 		let chasing = self.burst > 0.0 && self.following() && !self.sweep;
 		if chasing {
 			self.chase = self.chase.max(chase_v0);
 			if self.visual - self.target > CHASE_GROW_MIN {
-				self.chase *= (dt_s / CHASE_DOUBLE_S).exp2();
+				let double_s = cfg.scroll_ramp_up_ms.max(1.0) / 1000.0;
+				self.chase *= (dt_s / double_s).exp2();
 				if !self.overflow {
-					// in-view ceiling; never below the initial speed itself (a user
-					// may invert the two settings)
-					let inview_v = 1000.0 / cfg.scroll_inview_tau_ms.max(1.0);
-					self.chase = self.chase.min(inview_v.max(chase_v0));
+					// single-screen ceiling; never below the initial speed itself
+					// (a user may invert the two settings)
+					let onscreen_v = 1000.0 / cfg.scroll_single_screen_tau_ms.max(1.0);
+					self.chase = self.chase.min(onscreen_v.max(chase_v0));
 				}
 			} else {
-				let decay = 1.0 - (-dt_s * 1000.0 / CHASE_DECAY_MS).exp();
+				let decay = 1.0 - (-dt_s * 1000.0 / cfg.scroll_ramp_down_ms.max(1.0)).exp();
 				self.chase += (chase_v0 - self.chase) * decay;
 			}
 		}
@@ -245,7 +246,7 @@ impl Scroll {
 		// so the cascade cannot overshoot.
 		let smoothing = 1.0 - (-dt_s * 1000.0 / tau).exp();
 		self.mid += (self.target - self.mid) * smoothing;
-		let attack_tau = (tau * ATTACK_FRACT).max(1.0);
+		let attack_tau = (tau * cfg.scroll_ease_in).max(1.0);
 		let attack = 1.0 - (-dt_s * 1000.0 / attack_tau).exp();
 		let before = self.visual;
 		self.visual += (self.mid - self.visual) * attack;
@@ -258,14 +259,17 @@ impl Scroll {
 		if self.sweep && self.visual - self.target < CHASE_GROW_MIN {
 			self.sweep = false; // caught up: output easing owns the view again
 		}
-		// Sharper stop: inside the band, close on the target by at least
-		// STOP_MIN_LPS (never past it) so the tail sweeps in instead of crawling.
+		// Sharper stop: inside the band, close on the target fast enough to cover
+		// the whole band within "Ease-out" (never past it) so the tail sweeps in
+		// instead of crawling. Storing the duration rather than the speed is what
+		// lets the setting read the same direction as its Ease-in partner.
+		let stop_min_lps = STOP_BAND * 1000.0 / cfg.scroll_ease_out_ms.max(1.0);
 		let gap = self.target - before;
 		if gap.abs() < STOP_BAND {
 			let floored = if gap >= 0.0 {
-				(before + STOP_MIN_LPS * dt_s).min(self.target)
+				(before + stop_min_lps * dt_s).min(self.target)
 			} else {
-				(before - STOP_MIN_LPS * dt_s).max(self.target)
+				(before - stop_min_lps * dt_s).max(self.target)
 			};
 			if (self.target - floored).abs() < (self.target - self.visual).abs() {
 				self.visual = floored;
@@ -581,7 +585,7 @@ mod tests {
 	}
 
 	#[test]
-	fn an_inview_burst_eases_gentler_than_an_overflowed_one() {
+	fn a_single_screen_burst_eases_gentler_than_an_overflowed_one() {
 		let _g = pin();
 		// Same backlog, two screen heights: the burst that stays wholly on screen
 		// (a short listing) must clear measurably slower than one whose first line
@@ -801,6 +805,145 @@ mod tests {
 		assert!(
 			band_s < 0.35,
 			"tail took {band_s}s inside the stop band (crawl)"
+		);
+	}
+
+	// The four feel knobs each have to MOVE something: this whole settings line
+	// exists because two speed sliders shipped as no-ops, and a knob that reads
+	// as inert is worse than no knob. Each test drives the two extremes of one
+	// setting and asserts they diverge.
+	fn with(cfg: config::Settings) {
+		config::update(cfg);
+	}
+
+	#[test]
+	fn ease_in_sets_how_gently_motion_leaves_rest() {
+		let _g = pin();
+		let travelled = |ease_in: f32| {
+			with(config::Settings {
+				scroll_ease_in: ease_in,
+				..config::Settings::default()
+			});
+			let mut s = Scroll::new();
+			s.set_max(100.0);
+			s.wheel(20.0);
+			for _ in 0..4 {
+				s.advance(0.016);
+			}
+			s.visual
+		};
+		let abrupt = travelled(0.0);
+		let gentle = travelled(1.0);
+		with(config::Settings::default()); // other modules read this same store
+		assert!(
+			abrupt > gentle * 1.5,
+			"leaving rest at ease-in 0 ({abrupt}) should far outpace ease-in 1 ({gentle})"
+		);
+	}
+
+	#[test]
+	fn ramp_up_sets_how_fast_catch_up_accelerates() {
+		let _g = pin();
+		let left = |ramp_up_ms: f32| {
+			with(config::Settings {
+				scroll_ramp_up_ms: ramp_up_ms,
+				..config::Settings::default()
+			});
+			let mut s = Scroll::new();
+			s.set_max(1000.0);
+			s.nudge_output(300.0, 24.0); // deep and instantly overflowed: uncapped
+			for _ in 0..60 {
+				s.advance(0.016); // ~1s of ramping
+			}
+			s.visual
+		};
+		let hard = left(50.0);
+		let soft = left(1500.0);
+		with(config::Settings::default());
+		assert!(
+			hard < soft * 0.5,
+			"a hard ramp ({hard} lines left) should outrun a soft one ({soft} left)"
+		);
+	}
+
+	#[test]
+	fn ramp_down_sets_how_long_catch_up_speed_is_retained() {
+		let _g = pin();
+		// Two phases. While the backlog is deep the ramp-down setting is not in
+		// play at all, so both arms must sit in exactly the same place; once the
+		// view has caught up, a shallow trickle keeps the burst alive (so the
+		// settle never resets it) and the surviving speed is the measurement.
+		let held = |ramp_down_ms: f32| {
+			with(config::Settings {
+				scroll_ramp_down_ms: ramp_down_ms,
+				..config::Settings::default()
+			});
+			let mut s = Scroll::new();
+			s.set_max(2000.0);
+			s.nudge_output(300.0, 24.0);
+			for _ in 0..40 {
+				s.nudge_output(0.1, 24.0); // never settles, so the burst persists
+				s.advance(0.016);
+			}
+			let deep = s.visual;
+			for _ in 0..400 {
+				if s.visual - s.target <= CHASE_GROW_MIN {
+					break;
+				}
+				s.nudge_output(0.1, 24.0);
+				s.advance(0.016);
+			}
+			for _ in 0..60 {
+				s.nudge_output(0.1, 24.0);
+				s.advance(0.016);
+			}
+			(deep, s.chase)
+		};
+		let (quick_deep, quick) = held(60.0);
+		let (slow_deep, slow) = held(3000.0);
+		with(config::Settings::default());
+		assert!(
+			(quick_deep - slow_deep).abs() < 0.001,
+			"ramp-down must not touch the growth phase ({quick_deep} vs {slow_deep})"
+		);
+		assert!(
+			slow > quick * 2.0,
+			"a slow relax should retain more speed ({slow}) than a quick one ({quick})"
+		);
+	}
+
+	#[test]
+	fn ease_out_sets_how_gently_the_tail_lands() {
+		let _g = pin();
+		// Frames spent inside the stop band - the tail, and nothing else: the
+		// approach above the band is identical either way.
+		let band_frames = |ease_out_ms: f32| {
+			with(config::Settings {
+				scroll_ease_out_ms: ease_out_ms,
+				..config::Settings::default()
+			});
+			let mut s = Scroll::new();
+			s.set_max(100.0);
+			s.wheel(6.0);
+			let mut in_band = 0;
+			for _ in 0..3000 {
+				s.advance(0.016);
+				if !s.animating() {
+					break;
+				}
+				if (6.0 - s.visual).abs() < STOP_BAND {
+					in_band += 1;
+				}
+			}
+			assert!(!s.animating(), "never settled at ease-out {ease_out_ms}");
+			in_band
+		};
+		let crisp = band_frames(20.0);
+		let soft = band_frames(800.0);
+		with(config::Settings::default());
+		assert!(
+			soft > crisp,
+			"a soft ease-out should linger in the tail ({soft} frames) longer than a crisp one ({crisp})"
 		);
 	}
 
