@@ -20,6 +20,12 @@ use crate::config;
 // line is still on screen (a short listing) it tops out at the gentler
 // `scroll_inview_tau_ms` and builds slowly; once that line has scrolled off the
 // top, full catch-up (down to MIN_TAU_MS).
+//
+// The ease itself is asymmetric: motion builds from rest (a two-stage cascade -
+// `visual` chases a leading `mid` stage, so the first frames are gentle instead
+// of jumping straight to peak speed), and the stop is sharpened by a minimum
+// closing speed inside STOP_BAND (a bare exponential would crawl the last few
+// pixels in over a second).
 pub const MAX_BACKLOG: f32 = 16.0; // cap on how far behind the bottom output may lag
 const MIN_TAU_MS: f32 = 8.0; // fastest catch-up tau (at full ramp)
 const RAMP_UP_MS: f32 = 90.0; // speeding up is responsive
@@ -29,6 +35,15 @@ const RAMP_DOWN_MS: f32 = 450.0; // returning to the smooth speed is gentle
 // brisk, but never the full-throttle chase. Once the burst has scrolled its top
 // line off (advanced a screenful), the profile above takes over and keeps up.
 const INVIEW_RAMP_UP_MS: f32 = 260.0;
+// Ease-in: `visual` chases the leading `mid` stage over this fraction of the
+// effective tau, so a fresh motion builds from zero speed instead of spiking on
+// its first frame. Scales with tau, so full-throttle catch-up stays fast.
+const ATTACK_FRACT: f32 = 0.35;
+// Sharper stop: within this many lines of the target the exponential tail is
+// replaced by a glide of at least STOP_MIN_LPS lines/s, so the last few pixels
+// sweep in instead of crawling. Above the band the ease-out is untouched.
+const STOP_BAND: f32 = 0.4;
+const STOP_MIN_LPS: f32 = 3.0;
 // Alt-screen app-scroll easing: a full-screen app (less, vim, muffer, ...) owns
 // its screen and scrolls by repainting whole lines. `app_off` is a transient
 // visual offset (in lines, signed: + shifts content down) set the moment such a
@@ -50,6 +65,7 @@ const MIN_APP_TAU_MS: f32 = 22.0;
 pub struct Scroll {
 	target: f32,
 	visual: f32,
+	mid: f32, // cascade stage between target and visual: gives the ease its ease-in
 	max: f32,
 	ramp: f32,      // 0 = initial/smooth speed, 1 = full fast catch-up (smoothed)
 	app_off: f32,   // alt-screen slide offset, eased toward 0 (see APP_OFF_CAP)
@@ -62,6 +78,7 @@ impl Scroll {
 		Self {
 			target: 0.0,
 			visual: 0.0,
+			mid: 0.0,
 			max: 0.0,
 			ramp: 0.0,
 			app_off: 0.0,
@@ -90,6 +107,7 @@ impl Scroll {
 	// backlog must not ease in - that is the bounce class.
 	pub fn snap(&mut self) {
 		self.visual = self.target;
+		self.mid = self.target;
 		self.ramp = 0.0;
 		self.app_off = 0.0;
 		self.burst = 0.0;
@@ -107,6 +125,7 @@ impl Scroll {
 		self.target = self.target.clamp(0.0, self.max);
 		let overscan = config::settings().output_ease_lines.max(MAX_BACKLOG);
 		self.visual = self.visual.clamp(0.0, self.max + overscan);
+		self.mid = self.mid.clamp(0.0, self.max + overscan);
 	}
 
 	pub fn following(&self) -> bool {
@@ -161,7 +180,12 @@ impl Scroll {
 			// resolve() clamps the config value, but stay self-defensive: a floor
 			// above MAX_BACKLOG makes this clamp panic (min > max = abort in release)
 			let floor = config::settings().output_ease_lines.clamp(0.0, MAX_BACKLOG);
+			let before = self.visual;
 			self.visual = (self.visual + grown).clamp(floor, MAX_BACKLOG);
+			// the nudge is a coordinate shift (content moved under the view), so the
+			// cascade stage rides along - shifting it keeps its lead over `visual`
+			// intact, which is what preserves the eased speed across a burst
+			self.mid = (self.mid + (self.visual - before)).clamp(0.0, self.visual);
 		}
 	}
 
@@ -200,8 +224,34 @@ impl Scroll {
 		// effective tau: the configured "initial" speed at ramp 0, the profile's
 		// top speed at ramp 1
 		let tau = (init_tau_ms + (top_tau - init_tau_ms) * self.ramp).max(1.0);
+		// Two-stage ease: `mid` chases the target at the effective tau and `visual`
+		// chases `mid` over ATTACK_FRACT of it, so motion builds from rest instead
+		// of spiking on the first frame. Neither stage can pass its input, so the
+		// cascade cannot overshoot.
 		let smoothing = 1.0 - (-dt_s * 1000.0 / tau).exp();
-		self.visual += (self.target - self.visual) * smoothing;
+		self.mid += (self.target - self.mid) * smoothing;
+		let attack_tau = (tau * ATTACK_FRACT).max(1.0);
+		let attack = 1.0 - (-dt_s * 1000.0 / attack_tau).exp();
+		let before = self.visual;
+		self.visual += (self.mid - self.visual) * attack;
+		// Sharper stop: inside the band, close on the target by at least
+		// STOP_MIN_LPS (never past it) so the tail sweeps in instead of crawling.
+		let gap = self.target - before;
+		if gap.abs() < STOP_BAND {
+			let floored = if gap >= 0.0 {
+				(before + STOP_MIN_LPS * dt_s).min(self.target)
+			} else {
+				(before - STOP_MIN_LPS * dt_s).max(self.target)
+			};
+			if (self.target - floored).abs() < (self.target - self.visual).abs() {
+				self.visual = floored;
+			}
+			// keep the leading stage at least as close to the target as `visual`,
+			// or the cascade would pull the glide back
+			if (self.target - self.mid).abs() > (self.target - self.visual).abs() {
+				self.mid = self.visual;
+			}
+		}
 		if (self.target - self.visual).abs() < config::SETTLE_EPS {
 			// Rest on a whole line: a pixel-delta wheel (touchpad, hi-res wheel)
 			// accumulates a fractional target, and parking there renders every row
@@ -212,6 +262,7 @@ impl Scroll {
 			if (self.visual - detent).abs() < config::SETTLE_EPS {
 				self.target = detent;
 				self.visual = detent;
+				self.mid = detent;
 				self.ramp = 0.0;
 				// at rest the burst is over; the next output starts a fresh one
 				self.burst = 0.0;
@@ -565,6 +616,59 @@ mod tests {
 		s.snap();
 		assert!(!s.animating());
 		assert_eq!(s.desired_offset(), 20);
+	}
+
+	#[test]
+	fn a_fresh_motion_builds_speed_instead_of_spiking() {
+		// The first frame of a new scroll must be gentler than the motion a few
+		// frames in - the ease-in half of the asymmetric curve. A bare exponential
+		// fails this: its very first frame is the fastest of the whole ease.
+		let mut s = Scroll::new();
+		s.set_max(100.0);
+		s.wheel(8.0);
+		let dt = 0.016;
+		let mut prev = 0.0f32;
+		let mut steps = Vec::new();
+		for _ in 0..8 {
+			s.advance(dt);
+			let pos = s.desired_offset() as f32 + s.frac();
+			steps.push(pos - prev);
+			prev = pos;
+		}
+		let first = steps[0];
+		let peak = steps.iter().copied().fold(0.0f32, f32::max);
+		assert!(
+			first < peak * 0.6,
+			"first frame moved {first} of peak {peak}: no ease-in"
+		);
+	}
+
+	#[test]
+	fn the_tail_sweeps_in_instead_of_crawling() {
+		// Once within STOP_BAND of the target the remainder must land in well
+		// under half a second - the sharpened stop. The bare exponential took
+		// over a second to close the same distance at the default tau.
+		let mut s = Scroll::new();
+		s.set_max(100.0);
+		s.wheel(6.0);
+		let dt = 0.016;
+		let mut in_band = 0;
+		for _ in 0..3000 {
+			s.advance(dt);
+			if !s.animating() {
+				break;
+			}
+			let pos = s.desired_offset() as f32 + s.frac();
+			if (6.0 - pos).abs() < STOP_BAND {
+				in_band += 1;
+			}
+		}
+		assert!(!s.animating(), "never settled");
+		let band_s = in_band as f32 * dt;
+		assert!(
+			band_s < 0.35,
+			"tail took {band_s}s inside the stop band (crawl)"
+		);
 	}
 
 	#[test]
