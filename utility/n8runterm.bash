@@ -61,22 +61,27 @@ fSilkTermDogfood(){
 	## No dogfood build here: return non-zero so fMain falls back to a known terminal.
 	[[ -n "${newestPath}" ]] || return 1
 
-	## Prepend a random background image (if the backgrounds dir has any) and a title
-	## tagged with the running build's timestamp, so a dogfood window is visually
-	## distinct and identifiable. Both precede "$@", so a caller can still override.
+	## Prepend a title tagged with the running build's timestamp, so a dogfood window
+	## is visually distinct and identifiable. It precedes "$@", so a caller can still
+	## override it.
 	local -r  suffix="${newestName#"${prefix}"_}"
 	local -r  buildStamp="${suffix%%_*}"
 	local     buildTag="${suffix#*_}"
 	[[ "${buildTag}" == "${suffix}" ]] && buildTag=""   # untagged (pre-2026-08) copy
 	local -r  buildLabel="${buildTag:+${buildTag} }${buildStamp}"
-	local -r  bgDir="${HOME}/.config/silkterm/backgrounds"
-	local -a  bgs=()
-	local     bg
-	for bg in "${bgDir}"/*.{png,jpg,jpeg,PNG,JPG,JPEG}; do
-		[[ -f "${bg}" ]] && bgs+=("${bg}")   # non-matching globs stay literal; -f drops them
-	done
-	local -a preArgs=()
-	if ((${#bgs[@]})); then preArgs+=("--background-image=${bgs[RANDOM % ${#bgs[@]}]}"); fi
+	local -a  preArgs=()
+
+	## Picking a wallpaper here is disabled: the terminal rotates its own now, and a
+	## wallpaper named on the command line pins it for the session - which would hide
+	## exactly what we want to see. Uncomment to go back to choosing one here.
+	#local -r  bgDir="${HOME}/.config/silkterm/wallpaper"
+	#local -a  bgs=()
+	#local     bg
+	#for bg in "${bgDir}"/*.{png,jpg,jpeg,PNG,JPG,JPEG}; do
+	#	[[ -f "${bg}" ]] && bgs+=("${bg}")   # non-matching globs stay literal; -f drops them
+	#done
+	#if ((${#bgs[@]})); then preArgs+=("--wallpaper-file=${bgs[RANDOM % ${#bgs[@]}]}"); fi
+
 	preArgs+=("--title=SilkTerm [dogfood ${buildLabel}]")
 
 	## Run it, replacing this process.
@@ -127,6 +132,7 @@ fMain  "${@}"
 
 
 ##	History:
+##		- 2026-08-02: Stop picking a wallpaper; the terminal rotates its own.
 ##		- 2026-08-01: Show the build tag in the title, now that copies are named
 ##		              "<prefix>_<stamp>_<tag>". Untagged copies still work.
 ##		- 2026-07-03: Created.
