@@ -119,6 +119,8 @@ Crate owns integer "where grid is." Renderer owns fractional overlay.
 
 1. Draw one extra row at top + bottom so partial rows fill viewport edges during fractional offset.
 
+The ease curve is deliberately asymmetric. A single exponential lerp starts at peak speed on its first frame and crawls its last pixels in over a second - both read wrong. So motion builds from rest through a two-stage cascade (the visual position chases a leading stage, which chases the target), and the stop is sharpened by a minimum closing speed over the final fraction of a line. Ease-out above that band is unchanged, and neither stage can overshoot, so the curve cannot bounce.
+
 ### Output easing (new text)
 
 Same mechanism: when new output pushes content up, animate `visual_offset` from +1 line back to 0 over the easing window instead of snapping. Treat output-scroll as an animated target like wheel-scroll.

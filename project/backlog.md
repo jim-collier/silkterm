@@ -1291,6 +1291,15 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
+- ✅ Smooth scrolling feel: start slower, stop sharper. (20260802)
+	- ✅ Should start slower. (Possibly it just ramps up too quickly?)
+	- ✅ Once scrolling settles, it should come to a stop faster. The ease-in and ease-out aren't necessarily symmetric.
+		- ✅ Easing to a stop should still be a thing. Maybe the curve should be sharper, so that the last few pixels don't just slowly crawl in.
+	- Done: not reachable through settings - the old ease was a single exponential, which starts at peak speed on its first frame (no ease-in exists to slow down) and crawls the last pixels in for over a second; its one knob moves both ends together. The curve itself changed: motion now builds from rest through a two-stage cascade, and once within about half a line of the target the remainder glides in at a minimum speed instead of the exponential tail. Ease-out above that band is unchanged, and neither stage can overshoot, so no bounce is possible.
+	- Applies to wheel, scrollbar, and output scrolling alike; the ease-in scales with the current speed, so full-throttle burst catch-up is not slowed. Alt-screen app slides are untouched.
+	- Tuning lives in three source constants (attack fraction, stop band, stop speed) - no new settings.
+	- 🔘 UAT
+
 - ✅ Scroll-on-output enhancement: One additional setting: (20260629)
 	- ✅ In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
 		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
