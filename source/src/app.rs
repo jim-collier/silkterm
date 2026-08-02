@@ -3234,6 +3234,22 @@ fn load_wallpaper(gfx: &Gfx) -> Option<ImageRenderer> {
 			]);
 		}
 	}
+	// An image can carry its own layout, so a photo isn't squashed by a default
+	// that suits gradients. Read straight from the file - the embedded default
+	// wallpaper has no path, and falls through to the configured fit.
+	let mut fit = settings.wallpaper_fit;
+	let mut anchor = [0.5, 0.5];
+	if settings.wallpaper_honor_xmp {
+		if let Some(path) = settings.wallpaper.as_ref() {
+			let tags = crate::xmp::read(path);
+			if let Some(tagged) = tags.fit {
+				fit = tagged;
+			}
+			if let Some(tagged) = tags.anchor {
+				anchor = tagged;
+			}
+		}
+	}
 	let (w, h) = img.dimensions();
 	Some(ImageRenderer::new(
 		&gfx.device,
@@ -3243,7 +3259,8 @@ fn load_wallpaper(gfx: &Gfx) -> Option<ImageRenderer> {
 		w,
 		h,
 		settings.wallpaper_opacity,
-		settings.wallpaper_fit,
+		fit,
+		anchor,
 	))
 }
 

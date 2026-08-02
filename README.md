@@ -156,6 +156,12 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **Background image blur**: With an optional Gaussian blur radius (without altering the source image), also independent of transparency blur.
 
+- **Background image contrast mask**: Flattens the image's local contrast so it stops competing with the text on top of it, again without altering the source image. The flatten scale and strength are adjustable, and can be blended with values derived from the image itself.
+
+- **Background image fit**: Stretch to fill the window, or zoom to cover it while keeping the aspect ratio.
+
+	- An image can also carry its own fit in its XMP metadata (`wallpaper:Fit`, plus a `wallpaper:Anchor` that picks which part of it a zoom crop keeps), overriding the default per image - so a photo isn't squashed while a gradient still fills the window. Read straight from the image file, and switchable off.
+
 - **Split panes**: A native feature to arbitrarily split any pane in either direction. Panes can be freely drag-n-dropped to change locations. Panes split in successive directions are automatically evenly distributed, unless adjusted (with the mouse).
 
 - **Window decorations and/or the menu can be disabled**, for "nothing but terminal". Fullscreen can also be toggled.
