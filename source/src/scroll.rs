@@ -103,6 +103,30 @@ impl Scroll {
 		self.target = (self.target + lines).clamp(0.0, self.max);
 	}
 
+	// Scrollback extent in lines (0 = nothing to scroll).
+	pub fn max_lines(&self) -> f32 {
+		self.max
+	}
+
+	// Where the view actually sits right now, mid-ease. The scrollbar thumb rides
+	// this so it tracks the content rather than the pending destination.
+	pub fn visual_lines(&self) -> f32 {
+		self.visual
+	}
+
+	// Where the view is headed. A thumb being DRAGGED rides this instead: the
+	// handle must follow the pointer exactly (direct manipulation), while the
+	// content eases in behind it.
+	pub fn target_lines(&self) -> f32 {
+		self.target
+	}
+
+	// Scroll to an absolute position (lines from the bottom) - scrollbar drags
+	// and track clicks. Eases like every other scroll.
+	pub fn scroll_to(&mut self, lines: f32) {
+		self.target = lines.clamp(0.0, self.max);
+	}
+
 	pub fn jump_bottom(&mut self) {
 		self.target = 0.0;
 	}

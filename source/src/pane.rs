@@ -568,6 +568,82 @@ pub enum Dir {
 	Horizontal,
 }
 
+// ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+// Scrollbar
+// ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+// Seconds the bar stays up after the last user scroll before it starts fading.
+const BAR_HOLD_S: f32 = 1.1;
+// Fade time constants: appearing is quick, leaving is unhurried.
+const BAR_IN_TAU_S: f32 = 0.06;
+const BAR_OUT_TAU_S: f32 = 0.22;
+// Below this the bar is treated as fully gone: no quads, and no hit-testing (so
+// a faded-out bar never steals a click meant for the text under it).
+const BAR_VISIBLE_EPS: f32 = 0.02;
+// Shortest thumb, as a multiple of the bar's thickness. A huge scrollback would
+// otherwise grind the thumb down to a sliver nobody can grab.
+const BAR_MIN_THUMB: f32 = 1.6;
+// How far outside the bar the pointer still counts as "near" it, so the bar
+// fades in slightly before you get there rather than under the cursor.
+const BAR_HOVER_SLOP: f32 = 6.0;
+
+// Where a press landed on the scrollbar.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BarHit {
+	// on the handle: `f32` is the grab offset from the thumb's top edge
+	Thumb,
+	// on the track above/below the thumb: pages toward the click
+	TrackUp,
+	TrackDown,
+}
+
+// A pane's scrollbar geometry for this frame, in absolute window px.
+#[derive(Clone, Copy, Debug)]
+pub struct Bar {
+	pub track: Rect,
+	pub thumb: Rect,
+}
+
+// Is a scrollbar meaningful for a pane in this state? A full-screen app owns its
+// screen and keeps no scrollback of its own, so there is nothing a bar could
+// report - and one pinned full-height would only be a lie. Nothing to scroll,
+// same answer. Free fn so the rule is testable without a live PTY.
+fn bar_applies_to(cfg: &config::Settings, alt: bool, max_lines: f32) -> bool {
+	cfg.scrollbar && !alt && max_lines > 0.0
+}
+
+// Thumb length and position for a scroll state. Split out from the pane so the
+// mapping (and its inverse, `bar_pos_to_lines`) can be tested directly.
+//
+// `pos` runs 0 at the bottom (following new output) to 1 at the oldest line, so
+// it matches the scroll model's "lines back from the bottom" rather than the
+// screen's y axis - the caller flips it.
+fn bar_thumb_span(track_h: f32, thickness: f32, rows: f32, max: f32, pos_lines: f32) -> (f32, f32) {
+	// the viewport's share of everything there is to look at
+	let visible = (rows / (rows + max)).clamp(0.0, 1.0);
+	let thumb_h = (track_h * visible)
+		.max(thickness * BAR_MIN_THUMB)
+		.min(track_h);
+	let pos = if max > 0.0 {
+		(pos_lines / max).clamp(0.0, 1.0)
+	} else {
+		0.0
+	};
+	// y is measured down the track, so pos 1 (oldest) sits at the top
+	let y = (track_h - thumb_h) * (1.0 - pos);
+	(y, thumb_h)
+}
+
+// Inverse of `bar_thumb_span`: a thumb-top offset down the track, back to a
+// scroll position in lines. Used while dragging.
+fn bar_pos_to_lines(track_h: f32, thumb_h: f32, max: f32, thumb_y: f32) -> f32 {
+	let span = track_h - thumb_h;
+	if span <= 0.0 {
+		return 0.0;
+	}
+	(1.0 - (thumb_y / span).clamp(0.0, 1.0)) * max
+}
+
 enum Node {
 	Leaf(PaneId),
 	Split {
@@ -729,6 +805,14 @@ pub struct Pane {
 	// parked cursor: when the loop must wake to resume the cycle (no frames flow
 	// while parked). None while animating, or when parked with no timed resume.
 	pub cursor_wake: Option<std::time::Instant>,
+	// Scrollbar fade: `bar_alpha` eases toward 0 or 1, `bar_hold` keeps it up for
+	// a moment after the last user scroll. `bar_drag` is the grab offset from the
+	// thumb's top edge while the handle is being dragged (Some = dragging).
+	bar_alpha: f32,
+	bar_hold: f32,
+	pub bar_hover: bool,
+	pub bar_drag: Option<f32>,
+	pub bar_animating: bool,
 	// false until the first full build (and reset on a buffer rebuild). When the
 	// frame is a pure cursor animation (no content/scroll/bell change), build skips
 	// the expensive text re-shape and reuses the cached buffer/bg/glyphs.
@@ -1547,6 +1631,174 @@ impl Pane {
 			cursor_cycle(&settings.cursor_animation, settings.cursor_blink_rate_ms);
 		self.blink_t = full_phase * period;
 		self.cursor_pause.resume();
+	}
+
+	// ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+	// Scrollbar
+	// ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+	fn bar_applies(&self, cfg: &config::Settings) -> bool {
+		bar_applies_to(
+			cfg,
+			self.mode.contains(TermMode::ALT_SCREEN),
+			self.scroll.max_lines(),
+		)
+	}
+
+	// The user scrolled this pane: show the bar, and hold it up briefly afterwards
+	// so a flick of the wheel doesn't leave it flickering. Deliberately NOT called
+	// for output-driven scrolling - that happens constantly and would pin the bar
+	// on-screen for the life of any busy pane.
+	pub fn poke_scrollbar(&mut self) {
+		self.bar_hold = BAR_HOLD_S;
+	}
+
+	// Advance the fade. Runs once per pane per frame, before the geometry is asked
+	// for, and sets `bar_animating` so the event loop keeps rendering while it
+	// moves (a bar resting at full or fully gone costs no frames).
+	pub fn scrollbar_tick(&mut self, dt: f32, cfg: &config::Settings) {
+		self.bar_hold = (self.bar_hold - dt).max(0.0);
+		// Held up while: dragged, hovered, just scrolled, or parked in the
+		// scrollback - up there, where you are IS the thing you want to see.
+		let want = if !self.bar_applies(cfg) {
+			0.0
+		} else if !cfg.scrollbar_auto_hide
+			|| self.bar_drag.is_some()
+			|| self.bar_hover
+			|| self.bar_hold > 0.0
+			|| !self.scroll.following()
+		{
+			1.0
+		} else {
+			0.0
+		};
+		let tau = if want > self.bar_alpha {
+			BAR_IN_TAU_S
+		} else {
+			BAR_OUT_TAU_S
+		};
+		self.bar_alpha += (want - self.bar_alpha) * (1.0 - (-dt / tau).exp());
+		if (want - self.bar_alpha).abs() < BAR_VISIBLE_EPS {
+			self.bar_alpha = want;
+		}
+		self.bar_animating = self.bar_alpha != want || self.bar_hold > 0.0;
+	}
+
+	// This frame's fade level, 0..1. Zero means the bar is not drawn AND not
+	// clickable - the two must agree, or an invisible bar eats selection clicks.
+	pub fn bar_fade(&self) -> f32 {
+		self.bar_alpha
+	}
+
+	// Track and thumb in absolute window px, or None when there's nothing to show.
+	// The bar hugs the pane's right edge (overlay, so it costs the grid no columns)
+	// and runs the height of the content area.
+	pub fn scrollbar(&self, ctx: &TextCtx, cfg: &config::Settings) -> Option<Bar> {
+		if !self.bar_applies(cfg) || self.bar_alpha <= 0.0 {
+			return None;
+		}
+		let (_, _, _, rows) = content_dims(self.rect, ctx);
+		let thickness = cfg.scrollbar_thickness.min(self.rect.w);
+		let track = Rect {
+			x: self.rect.x + self.rect.w - thickness,
+			y: self.rect.y + ctx.margin,
+			w: thickness,
+			h: (self.rect.h - 2.0 * ctx.margin).max(0.0),
+		};
+		if track.h <= 0.0 || track.w <= 0.0 {
+			return None;
+		}
+		// A dragged thumb rides `target` so the handle tracks the pointer exactly;
+		// otherwise it rides `visual` so it moves with the content it describes.
+		let pos_lines = if self.bar_drag.is_some() {
+			self.scroll.target_lines()
+		} else {
+			self.scroll.visual_lines()
+		};
+		let (thumb_y, thumb_h) = bar_thumb_span(
+			track.h,
+			thickness,
+			rows as f32,
+			self.scroll.max_lines(),
+			pos_lines,
+		);
+		Some(Bar {
+			track,
+			thumb: Rect {
+				x: track.x,
+				y: track.y + thumb_y,
+				w: track.w,
+				h: thumb_h,
+			},
+		})
+	}
+
+	// Would a press at (x, y) land on the bar, and where? None when the bar is
+	// faded out, so clicks fall through to selection exactly when it's invisible.
+	pub fn bar_hit(&self, x: f32, y: f32, ctx: &TextCtx, cfg: &config::Settings) -> Option<BarHit> {
+		let bar = self.scrollbar(ctx, cfg)?;
+		if self.bar_alpha < BAR_VISIBLE_EPS || !bar.track.contains(x, y) {
+			return None;
+		}
+		if bar.thumb.contains(x, y) {
+			Some(BarHit::Thumb)
+		} else if y < bar.thumb.y {
+			Some(BarHit::TrackUp)
+		} else {
+			Some(BarHit::TrackDown)
+		}
+	}
+
+	// Is the pointer on (or just beside) the bar's strip? Drives the fade-in, so
+	// it uses the strip rather than a hit: with auto-hide on there is no bar to
+	// hit until this has already brought one back.
+	pub fn bar_near(&self, x: f32, y: f32, cfg: &config::Settings) -> bool {
+		if !self.bar_applies(cfg) {
+			return false;
+		}
+		let thickness = cfg.scrollbar_thickness.min(self.rect.w);
+		let strip = Rect {
+			x: self.rect.x + self.rect.w - thickness - BAR_HOVER_SLOP,
+			y: self.rect.y,
+			w: thickness + BAR_HOVER_SLOP,
+			h: self.rect.h,
+		};
+		strip.contains(x, y)
+	}
+
+	// Start a thumb drag, remembering where inside the handle it was grabbed so
+	// the thumb doesn't jump under the pointer.
+	pub fn bar_grab(&mut self, y: f32, ctx: &TextCtx, cfg: &config::Settings) {
+		if let Some(bar) = self.scrollbar(ctx, cfg) {
+			self.bar_drag = Some(y - bar.thumb.y);
+			self.poke_scrollbar();
+		}
+	}
+
+	// Continue a thumb drag: put the thumb's top where the pointer says, and map
+	// that back to a scroll position.
+	pub fn bar_drag_to(&mut self, y: f32, ctx: &TextCtx, cfg: &config::Settings) {
+		let Some(grab) = self.bar_drag else { return };
+		let Some(bar) = self.scrollbar(ctx, cfg) else {
+			return;
+		};
+		let lines = bar_pos_to_lines(
+			bar.track.h,
+			bar.thumb.h,
+			self.scroll.max_lines(),
+			y - grab - bar.track.y,
+		);
+		self.scroll.scroll_to(lines);
+		self.poke_scrollbar();
+	}
+
+	// Click on the track above/below the thumb: page that way, like every other
+	// scrollbar. A page is the viewport less one line of overlap.
+	pub fn bar_page(&mut self, up: bool, ctx: &TextCtx) {
+		let (_, _, _, rows) = content_dims(self.rect, ctx);
+		let page = (rows as f32 - 1.0).max(1.0);
+		self.scroll.wheel(if up { page } else { -page });
+		self.poke_scrollbar();
 	}
 
 	// Coming back from a freeze (hidden tab shown, minimized window restored):
@@ -2472,6 +2724,11 @@ fn spawn_pane(
 		cursor_by_input: false,
 		cursor_pause: PauseState::default(),
 		cursor_wake: None,
+		bar_alpha: 0.0,
+		bar_hold: 0.0,
+		bar_hover: false,
+		bar_drag: None,
+		bar_animating: false,
 		cursor_animating: false,
 		text_built: false,
 		shape_rev: 0,
@@ -3168,12 +3425,13 @@ fn scroll_shift(cur: &[u64], last: &[u64], scrolled_off: bool) -> usize {
 #[cfg(test)]
 mod tests {
 	use super::{
-		APP_SCROLL_MAX, CURSOR_MAX_LAG, Dir, Node, OffStrip, PauseState, Rect, SLIDE_TOP_BAND_APPS,
-		StripCell, app_scroll_frames, bell_brighten, capture_grid_text, capture_start,
-		cursor_cycle, cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, fnv_row_skel,
-		glide_to_full, layout, logical_line_bounds, move_is_input, pair_inside, prompt_strip,
-		render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed,
-		snapshot_rows, static_bands, vanished_range, weld_region_clip,
+		APP_SCROLL_MAX, BAR_MIN_THUMB, CURSOR_MAX_LAG, Dir, Node, OffStrip, PauseState, Rect,
+		SLIDE_TOP_BAND_APPS, StripCell, app_scroll_frames, bar_applies_to, bar_pos_to_lines,
+		bar_thumb_span, bell_brighten, capture_grid_text, capture_start, cursor_cycle,
+		cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full,
+		layout, logical_line_bounds, move_is_input, pair_inside, prompt_strip, render_char,
+		resume_delay, same_char_pair, scroll_shift, scroll_shift_signed, snapshot_rows,
+		static_bands, vanished_range, weld_region_clip,
 	};
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
@@ -3184,6 +3442,59 @@ mod tests {
 	struct VoidListener;
 	impl EventListener for VoidListener {
 		fn send_event(&self, _e: Event) {}
+	}
+
+	// A full-screen app has no scrollback of its own, so a bar there could only
+	// report a fiction. Same answer when there is simply nothing to scroll.
+	#[test]
+	fn no_scrollbar_without_scrollback_or_on_the_alt_screen() {
+		let mut cfg = crate::config::Settings {
+			scrollbar: true,
+			..Default::default()
+		};
+		assert!(
+			bar_applies_to(&cfg, false, 500.0),
+			"normal screen with history"
+		);
+		assert!(
+			!bar_applies_to(&cfg, true, 500.0),
+			"alt screen owns its screen"
+		);
+		assert!(!bar_applies_to(&cfg, false, 0.0), "nothing to scroll");
+		cfg.scrollbar = false;
+		assert!(!bar_applies_to(&cfg, false, 500.0), "turned off");
+	}
+
+	// Dragging maps thumb position -> scroll position; the two must be inverses,
+	// or the thumb creeps away from the pointer over a long drag.
+	#[test]
+	fn thumb_position_round_trips_through_a_drag() {
+		let (track_h, thickness, rows, max) = (400.0, 16.0, 40.0, 1000.0);
+		for lines in [0.0, 1.0, 250.0, 999.0, 1000.0] {
+			let (y, thumb_h) = bar_thumb_span(track_h, thickness, rows, max, lines);
+			let back = bar_pos_to_lines(track_h, thumb_h, max, y);
+			assert!(
+				(back - lines).abs() < 0.01,
+				"{lines} lines -> y {y} -> {back} lines"
+			);
+		}
+		// bottom of the track is the bottom of the scrollback, top is the oldest line
+		let (bottom, _) = bar_thumb_span(track_h, thickness, rows, max, 0.0);
+		let (top, _) = bar_thumb_span(track_h, thickness, rows, max, max);
+		assert!(top < bottom, "the oldest line sits at the top of the track");
+		assert_eq!(top, 0.0);
+	}
+
+	// A huge scrollback would grind the thumb down to an ungrabbable sliver.
+	#[test]
+	fn thumb_never_shrinks_below_the_grab_minimum() {
+		let thickness = 16.0;
+		let (_, thumb_h) = bar_thumb_span(400.0, thickness, 40.0, 500_000.0, 0.0);
+		assert!(thumb_h >= thickness * BAR_MIN_THUMB, "thumb_h={thumb_h}");
+		// ... but it can never outgrow the track it rides in
+		let (y, tall) = bar_thumb_span(20.0, thickness, 40.0, 1.0, 0.0);
+		assert!(tall <= 20.0, "thumb_h={tall}");
+		assert!(y >= 0.0);
 	}
 
 	#[test]

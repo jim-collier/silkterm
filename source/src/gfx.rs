@@ -923,7 +923,8 @@ pub struct RectInstance {
 	pub pos: [f32; 2],
 	pub size: [f32; 2],
 	pub color: [f32; 4],
-	// params.x = mode (0 solid quad, 1 close-"X" mark), params.y = stroke px.
+	// params.x = mode (0 solid quad, 1 close-"X" mark, 2 rounded quad),
+	// params.y = stroke px for the X, corner radius for the rounded quad.
 	// The X is two 45-degree bars drawn in the fragment shader, so it centers
 	// exactly in the quad (a font glyph never did - baseline metrics vary).
 	pub params: [f32; 2],
@@ -1128,10 +1129,22 @@ fn xbar(q: vec2<f32>, half_len: f32, half_th: f32) -> f32 {
 // fraction of the quad's short side left as padding around the X mark
 const X_INSET: f32 = 0.26;
 
+// Signed distance to a rounded box, negative inside. p is the offset from the
+// quad center, half the quad's extent, r the corner radius.
+fn round_box(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
+    let q = abs(p) - (half - vec2<f32>(r, r));
+    return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     var a = in.color.a;
-    if (in.params.x > 0.5) {
+    if (in.params.x > 1.5) {
+        let half = in.size * 0.5;
+        let r = min(in.params.y, min(half.x, half.y));
+        // ~1px linear edge, same convention as the X bars
+        a = a * clamp(0.5 - round_box(in.local - half, half, r), 0.0, 1.0);
+    } else if (in.params.x > 0.5) {
         let p = in.local - in.size * 0.5;
         // both diagonals in one rotation: u = 45-deg frame, u.yx = the other bar
         let q = vec2<f32>(p.x + p.y, p.x - p.y) * 0.7071068;

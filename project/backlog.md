@@ -43,44 +43,28 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### Bugs
 
-- ✅ Bug: Editing a line at any point on the prompt, that has one or more emojis in it, results in apparently random left-right shifting of other characters, at apparently random points unrelated to the cursor position. (But probably not really "random".) The actual content that moves doesn't actually change in the buffer, but it looks like it does and makes it visually unreliable and confusing.
+- 🛠️ Bug: Editing a line at any point on the prompt, that has one or more emojis in it, results in apparently random left-right shifting of other characters, at apparently random points unrelated to the cursor position. (But probably not really "random".) The actual content that moves doesn't actually change in the buffer, but it looks like it does and makes it visually unreliable and confusing.
 	- Not random: it happened on exactly the rows holding one of a small set of characters. A terminal gives a double-width character two columns. A monospace font is free to carry that same character at its ordinary single-column width, and the default font does so for 53 of them - several common emoji among them, plus fullwidth punctuation. The row was laid out from the font, so one of those characters consumed one column where the grid had allotted two, and everything after it on that row drew a column to the left of where its own background, the cursor and any separately-drawn character still sat. Editing moved such a character around the line, so the misalignment appeared to wander.
 	- Fix: a character now rides the shared row layout only when the font's own width for it agrees with the number of columns the terminal gave it. Anything that disagrees is drawn on its own, fitted to its real box - the same path characters missing from the font already took.
 	- Side effect, and an improvement: those emoji now render in colour rather than as small monochrome outlines, since they reach the colour path for the first time. Single-width symbols (arrows, checkmarks, stars, box drawing) are unaffected and stay monochrome, which is what a terminal wants.
+	- 🔘 UAT
 	- Verified: a trailing marker after such an emoji used to sit exactly one column left of the same marker on an all-text row, and now lines up. A control screen of CJK, box drawing, fullwidth Latin and single-width symbols renders identically to before.
-
-- ✅ Graphical emoji render as monochrome outlines instead of colour.
-	- Not a regression. No build renders these in colour: the text stack has only ever read the older colour-glyph table format (COLR v0), and every current colour emoji font ships the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
-	- Other terminals show the same fonts in colour because their text rasterizer reads COLRv1.
-	- Fix: colour glyphs are now painted directly - the paint graph is walked and rendered through a small 2D back end (transforms, clip and layer stacks, solid/linear/radial/sweep fills, Porter-Duff and blend compositing), then handed to the renderer's colour atlas as a per-cell image fitted to the cell box. Chars with no colour glyph are untouched and still take the monochrome fallback path.
-	- `color_emoji` (default true) turns it off, which restores the monochrome outlines.
-	- 🔘 Palette entry 0xFFFF ("use the text colour") resolves to white, because a raster is cached independently of the cell colour. No emoji font relies on it; a foreground-tinted colour glyph would need the cell colour in the cache key.
-	- 🔘 The HSL blend modes fall back to ordinary source-over. Unused by any font seen so far.
 
 ### New features and enhancements
 
-- ✅ Terminal throughput benchmark, for comparing against other terminals and against earlier builds.
-	- `utility/update-showdown.py`. Runs on any terminal on any OS, and needs only Python 3.
-	- Feeds repeatable, byte-identical streams of one character width at a time - plain ASCII, then 2-, 3- and 4-byte characters, then a mix of all four with colour and attribute changes - so two terminals are always compared on exactly the same work.
-	- Each run is timed to a reply the terminal can only send once it has genuinely consumed the stream. Timing a plain write instead would measure the pipe rather than the terminal, and a terminal that reads greedily would look infinitely fast.
-	- ASCII is measured four times as often as the wide classes and 2-byte twice, so the overall score leans the way real output does. The score counts cells per second rather than bytes, because bytes flatter whichever class is widest - 2-byte text measured faster than ASCII per byte while being slower per character.
-	- Averages many runs per class and reports the spread, so a result carries its own confidence.
-	- Keeps a history per terminal name and version under the user's data directory, newest five builds of each, and refreshes the results table in the README.
-	- `--quick` gives a thirty-second version; a full run is about two minutes.
-	- Measures throughput under flood - how fast a terminal swallows output and keeps up - not glyph drawing rate. Only a screenful is ever visible, so most of a stream is consumed and scrolled past without being drawn. That is the shape of the "why does it bog down when something dumps a lot of text" question.
-	- At 160x42: SilkTerm 75.1, xfce4-terminal 58.5, XTerm 24.5 million cells/s. SilkTerm leads every width class except plain ASCII, where xfce4-terminal is about a tenth faster.
-	- Install size and memory are measured too, by a second rig at a smaller fixed grid, with the graphics driver split out so the table measures the terminal rather than the stack every accelerated program shares.
+- 🔘 Terminal throughput benchmark (Windows):
 	- Both halves now run on Windows as well, measured from inside the terminal under test, which is the only way to reach the terminals that exist nowhere else. Each half checks the window is at its own fixed size first and refuses otherwise, since measuring at the wrong one produces a figure that looks fine and belongs in no column.
 		- 🔘 Fill in the Windows rows: conhost, Windows Terminal and MobaXterm need running on a Windows machine.
 		- Windows figures answer a slightly different question and are not directly comparable, which the table's notes say: a base OS includes far more there, and the machine differs.
 
-- ✅ Take advantage of shcl's hierarchical capabilities, by nesting the config sections, rather than using 'parent_child: value' TOML style. Keep using empty lines for clarity. Comments for nested settings can follow the nesting. For example, rather than a bunch of 'wallpaper_*' settings, 'wallpaper' gets nested children. Tabs for nesting. You can erase and my own personal config for recreation at next post-compile start.
-	- Done: the whole config is nested blocks now - font, window, transparency, wallpaper (with rotate and contrast_mask children), text (with scrim), cursor (with size), selection, shell, scroll, colors. Tabs for nesting, blank lines kept, comments indented with their settings. Each setting carries a title line, a description, and a range line where one applies, with a "## Default" marker on the commented default lines; sections divide with the bullet-rule style.
-	- An old flat-style config converts in one launch: the file moves aside to config.shcl.bak and a fresh nested file is written with every active value carried to its new place, so settings survive. A setting can also still be written as a single dotted line ('wallpaper.opacity: 0.1') and reads the same.
-	- Saving keeps the nested layout intact: comments keep their indentation and the blank-line grouping survives a settings save.
-	- Verified: a fresh file matches the shipped template byte for byte and relaunch never rewrites it; the previous personal config converted with all values carried; scroll regression scenes all pass on the new-style throwaway config.
-
-- 🔘 Need scrollbars. (Disable in Settings.) And thicker than many modern desktops.
+- ✅ Need scrollbars. (Disable in Settings.) And thicker than many modern desktops.
+	- Done: a scrollbar over each pane's right edge, 16px wide by default - noticeably chunkier than the 8-12px most desktops use, and adjustable from 4 to 64.
+	- It floats over the text rather than reserving a column, so turning it on or off, or changing its width, never changes the grid or reflows anything.
+	- Fades out while the view sits idle at the bottom and comes back on a scroll, or when the pointer nears it. It also stays up the whole time the view is parked up in the scrollback, where knowing the position is the point. Always-visible is a setting.
+	- Drag the handle to scroll, or click the track above or below it to page that way. A dragged handle follows the pointer exactly while the text eases in behind it, so the grab never drifts.
+	- Full-screen apps (less, vim) keep no scrollback of their own, so they get no scrollbar - one pinned full-height could only report a fiction.
+	- Settings carries the on/off switch, the width, and the hide-when-idle switch; the handle and track colours are there too, defaulting to a neutral grey in every theme the way the rest of the chrome does. The dependent rows stay listed but grey out while the scrollbar is off.
+	- Verified: the handle sits at the bottom while following output, moves a third of the way up the track after scrolling a third of the way back, and tracks a drag to the pixel. Fading, the full-screen-app case, and the off switch all confirmed against rendered frames.
 
 - 🔘 Scroll-on-output enhancement: One additional setting: (20260629)
 	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
@@ -95,7 +79,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- 🔘 Clickable - e.g. Ctrl+click, or right-click then includes "Copy link" and "Open link".
 	- 🔘 Auto-underline when mouse is underneath.
 
-- ✅ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
+- 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
 	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Verified live for both.
 	- 🔘 Windows: the new-pane side works, but reading the source shell's current directory isn't wired up there yet - new tabs/panes keep the old start-dir behavior until then. (Needs Windows host.)
 
@@ -109,6 +93,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- 🔘 The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
 
 - 🔘 Refactor settings dialog
+	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory. Reconcile by what makes the most sense given the obvious design direction this is going, with what has changed before.
 	- Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
 		- Including the some of the main buttons:
 			- "Apply": "Apply changes now, without closing Settings."
@@ -258,6 +243,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 				- If a new shell exe is found that doesn't already exist in the stored list, add it. (User can disable it later.)
 				- If an existing already defined shell exe name isn't found by explicit path, or in the environment path variable, disable it (don't delete it).
 
+- 🔘 Config file:
+	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
+		- The nesting pass kept the existing section order; the reorganization waits on the Settings dialog refactor it mirrors.
+
 - 🔘 Menu enhancements:
 	- 🔘 "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
 		- Waits on the Settings "Shells" tab (the shell list it draws from).
@@ -265,58 +254,17 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - 🛠️ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- 🔘 Add Windows support.
 
-- ✅ Epic 1n6fydv: Reduce CPU and GPU resource usage
-	- All six tiers landed (3.2 measured and deferred as not worth it). End state: an idle focused window costs a fraction of a percent once the cursor parks; unfocused, minimized, and hidden surfaces cost nothing.
-	- Supersedes the old "get idle CPU usage way down" item.
-	- Where it started: one idle window with nothing running costs roughly a tenth of a CPU core and a fifth of a mid-range GPU. A pulsing cursor keeps a 30fps loop alive, and every one of those frames rebuilds the entire scene - two full text-shaping passes plus the whole scrim pipeline - just to move one small rectangle.
-	- Tier 1 - stop doing the work. Biggest win, smallest change.
-		- ✅ 1.1 Skip the text prepare passes when the text hasn't changed. The renderer keeps its prepared buffers, so a frame with identical text can go straight to drawing. Worth over half the per-frame cost, and it helps every frame, not just idle ones.
-			- Done: a per-frame signature over everything that feeds the prepared text. When it repeats, both prepares and the atlas trim are skipped. Anything the signature misses costs an extra prepare, never a stale frame.
-		- ✅ 1.2 Cache the scrim halo. With the cursor left out of the scrim (the default), the halo depends only on the text - so a cursor-only frame can reuse it and skip the coverage and blur passes entirely. That is most of the GPU cost.
-			- Done: same signature gates the colour map, the text-coverage pass and the blur. The cursor keeps its own coverage pass, so the outline still tracks it. Scrim's share of idle cost fell from 14.7 points to 1.3.
-		- ✅ 1.3 Together those give a real cursor-only frame: one rectangle, one small coverage pass, one composite, one main pass. Should take idle down to low single digits.
-			- Done: idle went from 26.4% of a core to 14.5% at the same frame rate, and most of what remains is the test rig's own frame readback rather than anything the program does. Verified pixel-identical against the previous build across a static screen, a post-idle content update, and split panes with two tabs.
-	- Tier 2 - need fewer frames.
-		- ✅ 2.1 Stop animating when the window is unfocused. Done by 6.2 - an unfocused window's panes all park, so no frames flow.
-		- ✅ 2.2 Stop rendering while the window is occluded. The signal is already available and currently only used for the video-memory probe.
-			- Done: a fully hidden window waits instead of drawing, and catches up in one frame when it comes back. Not every window manager reports this, so nothing else depends on it.
-		- 🚫 2.3 Lower the idle cursor frame rate. Canceled - 30fps stays.
-	- Tier 3 - the non-idle path.
-		- ✅ 3.1 Use the terminal's damage tracking. It reports which lines actually changed, and we ignore it - every content frame re-shapes the whole grid. This is the lever for typing and scrolling cost; it will not touch idle.
-			- Done, by comparing content rather than reading the terminal's damage report. The text was being handed over as one newline-joined blob, which threw away every line's cached shaping even when the line was untouched. Feeding it row by row lets each one be compared first, so only rows that really changed re-shape.
-			- Chosen over the damage report because it also catches a line rewritten with identical content - which shells do constantly - and can't drift out of step with our own rendering the way separate damage bookkeeping can.
-			- Measured: a full screen with one line updating went from 29.2% of a core to 24.7%; all-new content every frame from 74.9% to 69.6%.
-			- The remaining half of the original idea - using damage to skip even reading unchanged rows - was measured and dropped: the whole grid read is under 2% of a frame, well below the risk of getting damage bookkeeping wrong.
-		- ✋ 3.2 Batch fallback glyphs. Each one is drawn as its own text area today, so an emoji or CJK heavy screen means hundreds of them.
-			- Measured before building it, and the premise doesn't hold: a screen filled entirely with fallback symbols is *cheaper* than ordinary text (10.9% of a core vs 24.7%), because each one leaves a blank placeholder that costs nothing to lay out. Assembling their text areas is 1.6% of a frame at that extreme.
-			- Batching them would mean rasterizing the glyphs ourselves and placing them as images, which is exactly the code that took several rounds to get right for size, centring and colour. Not worth 1.6%. Reopen if a real workload ever says otherwise.
-	- Tier 4 - the pane froze under heavy output. Found while checking whether the lock contention above was worth acting on.
-		- ✅ 4.1 A pane could stop redrawing for seconds during a flood of output. Not a speed problem - the frames were being drawn, they just kept showing the same stale picture.
-			- Cause: to avoid stalling the display we only ever *tried* for the terminal and gave up immediately if the reader had it. But the reader holds it across a whole read cycle and grabs it again the instant it lets go, so that polite try could lose forever. Measured on a large `cat`: 98% of frames showed a stale picture, the worst run lasting 2.1 seconds.
-			- Fix: still try first, but after two frames in a row of getting nowhere, wait properly. Waiting takes a numbered ticket, which lands us at the end of the current read cycle and makes the reader queue behind us - so the wait is bounded (measured under 5ms) where the polite try was not.
-			- Measured: worst stale run 2083ms -> 52ms, unchanged frame rate. Sampling the window every 400ms during a flood: before, 0 of 12 samples had changed; after, 12 of 12. Idle and ordinary output cost are unchanged - this only engages when something is actually contending.
-	- Tier 5 - cursor animation: pause is the only mode, and it really stops now.
-		- ✅ 5.1 Removed the 'cursor_animation_input' option. Behavior is always "pause".
-			- A source const (CURSOR_ANIM_CONTINUOUS, pane.rs) brings the old always-on mode back if ever wanted.
-			- The old key is stripped from existing configs automatically.
-		- ✅ 5.2 Longer wait before the animation resumes after typing. New setting 'cursor_animation_resume_s', default 2.
-		- ✅ 5.3 After 60s with no input the animation stops entirely, parked at full size. New setting 'cursor_animation_idle_stop_s', 0 = never.
-			- Typing, or refocusing the window, tab, or pane, brings it back.
-		- ✅ 5.4 A parked cursor draws NO frames. Before this, "pause" still ran 30fps just to show a static cursor.
-			- Measured: parked idle ~0.2% of a core, vs ~14% with the pulse running.
-		- IMPORTANT, never regress this: pausing always waits for the cursor's largest point in the cycle, and resuming always starts from that same point. Took many hard iterations to get right. The machine is PauseState in pane.rs, unit-tested.
-	- Tier 6 - freeze what can't be seen.
-		- ✅ 6.1 Freeze rendering (never PTY reading) of minimized windows and hidden tabs. Catch up instantly on switch.
-			- Minimized: no frames at all. Measured with busy output: ~83% of a core visible, ~0% minimized, full rate again on restore.
-			- Hidden tabs were already frozen by design; the missing half was the catch-up.
-			- Unfreeze hard-cuts (rebaselines the scroll detectors), never eases - or the bounce class comes back. Verified: 2000 lines into a hidden tab, switch lands at the bottom with zero motion.
-		- ✅ 6.2 Pause cursor blinking in every pane except the focused pane of the active window.
-			- Same largest-point pause/resume rules as Tier 5, through the same machinery.
-			- Measured: idle pulse ~6% of a core focused, ~0% unfocused; resumes after the usual delay on refocus.
-		- ✅ 6.3 Idle panes touch no memory per frame, so the OS can page them out. Fell out of 6.1/6.2 - frozen and parked panes run zero frames.
-		- Each freeze is behind its own source const (FREEZE_MINIMIZED in app.rs, FREEZE_UNFOCUSED_BLINK in pane.rs), so a surprise side-effect rolls back one line.
-		- Dropped: "freeze inactive windows unless they have active output" - folded into 6.2; a visible window with output should keep drawing.
-	- Not doing: hard-forking the terminal engine for performance. It costs nothing at idle, and a fork would mean owning the escape-sequence parser, grid reflow and the Windows console layer - the riskiest code with the least bearing on speed. The one contention problem worth fixing turned out to need no changes to it at all (4.1).
+
+- 🔘 Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
+	- Looks and behaves not too differently than some modern text editors.
+	- When disabled, has no effect on performance - truly skipped code paths.
+	- It has it's own area within the render area, it doesn't sit on top of it.
+	- When enabled:
+		- The visible section is highlighted and is smoothly draggable, scrollable (when mouse is over it).
+		- The scrollbar to the right of it, acts on the the scroll-buffer, and is synced pixel-perfect with the highlight area over the preview. In other words, the preview AND the scrollbar, are essentially one-and-the-same.
+		- If the previously implemented "regular" scrollbar is *also* enabled, that scrollbar sits between the terimal area on the left, and the preview area on the right.
+			- This is a departure from other implementations, that only have one scrollbar on the far right that behaves the same way whether there is a preview area or not. But I want to visually indicate that the *terminal* scrollbar, is for the *terminal*, not the preview.
+	- Need a name for the feature.
 
 - 🛠️ Tab interface:
 	- Done: single-window core. Each tab owns a PaneManager; the tab bar shows once there's more than one tab, click to switch, and the pane area shrinks to make room for the bar.
@@ -337,42 +285,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Verified: a manual resize persisted the remembered size, relaunch used it instead of the default, and the dialog shows the toggle checked with Columns and Rows greyed.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
 			- 🔘 "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
-
-- 🛠️ Config file:
-	- ✅ Use sister project "SHCL" for config language and structure, rather than TOML. (When shcl v1.0.0 stable is released.)
-		- Done: the config is now `config.shcl`, read and written by the `shcl` crate (v1.0.0). `toml`, `toml_edit` and `serde` are gone, which took ~158KB off the release binary - SHCL has no dependencies of its own.
-		- Its parser is forgiving, so a malformed line now costs only its own setting instead of sinking the file. That removed the hand-rolled retry loop and the bare-decimal float rewrite: `.1` is simply valid, and is stored back exactly as written.
-		- No migration path: existing `config.toml` files are not read. A fresh `config.shcl` is written with defaults, so any customised settings need re-entering once.
-		- Saving keeps comments and blank-line grouping. It may tidy layout - indentation, and quotes it does not need - but never rewrites a value.
-		- Colours have to be quoted now (`colors.foreground: "#88fff0"`), since `#` starts a comment.
-	- ✅ Convert already implicitly hierarchical config names, to actual nested hierarchical.
-		- Done as part of the nesting item above.
-	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
-		- The nesting pass kept the existing section order; the reorganization waits on the Settings dialog refactor it mirrors.
-	- ✅ Each setting gets it's own newline-delimited (above and below) section, with helpful comments directly above the setting without newlines.
-	- ✅ Common comment format, use what's appropriate for each setting:
-
-		~~~shcl
-
-		## Setting title   (not a repeat of the setting name)
-		## Brief description
-		## Range of values
-		## Low value means
-		## High value means
-		## Default value
-		# setting: value  ## Default
-		~~~
-
-	- ✅ Use flowerboxing to divide sections, similar to how Settings dialog is divided (the future version, defined in "Refactor settings dialog" below):
-		- The bullet-rule style is in; section names still follow the current dialog until the dialog refactor lands.
-
-		~~~shcl
-
-		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-		## Section
-		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-
-		~~~
 
 - 🔘 Begin a detailed UI/UX '[repo]/project/uiux-style-guide.md'
 	1. Reverse engineer using existing work (mostly menus and settings dailog).
@@ -589,6 +501,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 ### Done
 
 #### Done - Bugs
+
+- ✅ Graphical emoji render as monochrome outlines instead of colour.
+	- Not a regression. No build renders these in colour: the text stack has only ever read the older colour-glyph table format (COLR v0), and every current colour emoji font ships the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
+	- Other terminals show the same fonts in colour because their text rasterizer reads COLRv1.
+	- Fix: colour glyphs are now painted directly - the paint graph is walked and rendered through a small 2D back end (transforms, clip and layer stacks, solid/linear/radial/sweep fills, Porter-Duff and blend compositing), then handed to the renderer's colour atlas as a per-cell image fitted to the cell box. Chars with no colour glyph are untouched and still take the monochrome fallback path.
+	- `color_emoji` (default true) turns it off, which restores the monochrome outlines.
 
 - ✅ Wallpaper scan accepts formats that can't be loaded:
 	- Description: the folder scan counts `webp`, `bmp`, `gif`, `tiff` and `tif` as wallpapers, but only PNG and JPEG can actually be decoded. A file in one of the other formats passes the scan, gets picked by rotation, and then fails to load.
@@ -1381,11 +1299,120 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
+- ✅ Epic 1n6fydv: Reduce CPU and GPU resource usage
+	- All six tiers landed (3.2 measured and deferred as not worth it). End state: an idle focused window costs a fraction of a percent once the cursor parks; unfocused, minimized, and hidden surfaces cost nothing.
+	- Supersedes the old "get idle CPU usage way down" item.
+	- Where it started: one idle window with nothing running costs roughly a tenth of a CPU core and a fifth of a mid-range GPU. A pulsing cursor keeps a 30fps loop alive, and every one of those frames rebuilds the entire scene - two full text-shaping passes plus the whole scrim pipeline - just to move one small rectangle.
+	- Tier 1 - stop doing the work. Biggest win, smallest change.
+		- ✅ 1.1 Skip the text prepare passes when the text hasn't changed. The renderer keeps its prepared buffers, so a frame with identical text can go straight to drawing. Worth over half the per-frame cost, and it helps every frame, not just idle ones.
+			- Done: a per-frame signature over everything that feeds the prepared text. When it repeats, both prepares and the atlas trim are skipped. Anything the signature misses costs an extra prepare, never a stale frame.
+		- ✅ 1.2 Cache the scrim halo. With the cursor left out of the scrim (the default), the halo depends only on the text - so a cursor-only frame can reuse it and skip the coverage and blur passes entirely. That is most of the GPU cost.
+			- Done: same signature gates the colour map, the text-coverage pass and the blur. The cursor keeps its own coverage pass, so the outline still tracks it. Scrim's share of idle cost fell from 14.7 points to 1.3.
+		- ✅ 1.3 Together those give a real cursor-only frame: one rectangle, one small coverage pass, one composite, one main pass. Should take idle down to low single digits.
+			- Done: idle went from 26.4% of a core to 14.5% at the same frame rate, and most of what remains is the test rig's own frame readback rather than anything the program does. Verified pixel-identical against the previous build across a static screen, a post-idle content update, and split panes with two tabs.
+	- Tier 2 - need fewer frames.
+		- ✅ 2.1 Stop animating when the window is unfocused. Done by 6.2 - an unfocused window's panes all park, so no frames flow.
+		- ✅ 2.2 Stop rendering while the window is occluded. The signal is already available and currently only used for the video-memory probe.
+			- Done: a fully hidden window waits instead of drawing, and catches up in one frame when it comes back. Not every window manager reports this, so nothing else depends on it.
+		- 🚫 2.3 Lower the idle cursor frame rate. No - 30fps is the smoothness floor.
+	- Tier 3 - the non-idle path.
+		- ✅ 3.1 Use the terminal's damage tracking. It reports which lines actually changed, and we ignore it - every content frame re-shapes the whole grid. This is the lever for typing and scrolling cost; it will not touch idle.
+			- Done, by comparing content rather than reading the terminal's damage report. The text was being handed over as one newline-joined blob, which threw away every line's cached shaping even when the line was untouched. Feeding it row by row lets each one be compared first, so only rows that really changed re-shape.
+			- Chosen over the damage report because it also catches a line rewritten with identical content - which shells do constantly - and can't drift out of step with our own rendering the way separate damage bookkeeping can.
+			- Measured: a full screen with one line updating went from 29.2% of a core to 24.7%; all-new content every frame from 74.9% to 69.6%.
+			- The remaining half of the original idea - using damage to skip even reading unchanged rows - was measured and dropped: the whole grid read is under 2% of a frame, well below the risk of getting damage bookkeeping wrong.
+		- ✋ 3.2 Batch fallback glyphs. Each one is drawn as its own text area today, so an emoji or CJK heavy screen means hundreds of them.
+			- Measured before building it, and the premise doesn't hold: a screen filled entirely with fallback symbols is *cheaper* than ordinary text (10.9% of a core vs 24.7%), because each one leaves a blank placeholder that costs nothing to lay out. Assembling their text areas is 1.6% of a frame at that extreme.
+			- Batching them would mean rasterizing the glyphs ourselves and placing them as images, which is exactly the code that took several rounds to get right for size, centring and colour. Not worth 1.6%. Reopen if a real workload ever says otherwise.
+	- Tier 4 - the pane froze under heavy output. Found while checking whether the lock contention above was worth acting on.
+		- ✅ 4.1 A pane could stop redrawing for seconds during a flood of output. Not a speed problem - the frames were being drawn, they just kept showing the same stale picture.
+			- Cause: to avoid stalling the display we only ever *tried* for the terminal and gave up immediately if the reader had it. But the reader holds it across a whole read cycle and grabs it again the instant it lets go, so that polite try could lose forever. Measured on a large `cat`: 98% of frames showed a stale picture, the worst run lasting 2.1 seconds.
+			- Fix: still try first, but after two frames in a row of getting nowhere, wait properly. Waiting takes a numbered ticket, which lands us at the end of the current read cycle and makes the reader queue behind us - so the wait is bounded (measured under 5ms) where the polite try was not.
+			- Measured: worst stale run 2083ms -> 52ms, unchanged frame rate. Sampling the window every 400ms during a flood: before, 0 of 12 samples had changed; after, 12 of 12. Idle and ordinary output cost are unchanged - this only engages when something is actually contending.
+	- Tier 5 - cursor animation: pause is the only mode, and it really stops now.
+		- ✅ 5.1 Removed the 'cursor_animation_input' option. Behavior is always "pause".
+			- A source const (CURSOR_ANIM_CONTINUOUS, pane.rs) brings the old always-on mode back if ever wanted.
+			- The old key is stripped from existing configs automatically.
+		- ✅ 5.2 Longer wait before the animation resumes after typing. New setting 'cursor_animation_resume_s', default 2.
+		- ✅ 5.3 After 60s with no input the animation stops entirely, parked at full size. New setting 'cursor_animation_idle_stop_s', 0 = never.
+			- Typing, or refocusing the window, tab, or pane, brings it back.
+		- ✅ 5.4 A parked cursor draws NO frames. Before this, "pause" still ran 30fps just to show a static cursor.
+			- Measured: parked idle ~0.2% of a core, vs ~14% with the pulse running.
+		- IMPORTANT regression potential to keep an eye on: Pausing must always waits for the cursor's largest point in the cycle, and resuming always starts from that same point.
+			- This took forever to get right.
+			- The machine is PauseState in pane.rs, unit-tested.
+	- Tier 6 - freeze what can't be seen.
+		- ✅ 6.1 Freeze rendering (never PTY reading) of minimized windows and hidden tabs. Catch up instantly on switch.
+			- Minimized: no frames at all. Measured with busy output: ~83% of a core visible, ~0% minimized, full rate again on restore.
+			- Hidden tabs were already frozen by design; the missing half was the catch-up.
+			- Unfreeze hard-cuts (rebaselines the scroll detectors), never eases - or the bounce class comes back. Verified: 2000 lines into a hidden tab, switch lands at the bottom with zero motion.
+		- ✅ 6.2 Pause cursor blinking in every pane except the focused pane of the active window.
+			- Same largest-point pause/resume rules as Tier 5, through the same machinery.
+			- Measured: idle pulse ~6% of a core focused, ~0% unfocused; resumes after the usual delay on refocus.
+		- ✅ 6.3 Idle panes touch no memory per frame, so the OS can page them out. Fell out of 6.1/6.2 - frozen and parked panes run zero frames.
+		- Each freeze is behind its own source const (FREEZE_MINIMIZED in app.rs, FREEZE_UNFOCUSED_BLINK in pane.rs), so a surprise side-effect rolls back one line.
+		- Dropped: "freeze inactive windows unless they have active output" - folded into 6.2; a visible window with output should keep drawing.
+	- 🚫 Not doing: hard-forking the terminal engine for performance.
+		- Costs nothing at idle
+		- A hard fork would mean owning the escape-sequence parser, grid reflow and the Windows console layer - the riskiest code with the least bearing on speed.
+
+- ✅ Take advantage of shcl's hierarchical capabilities, by nesting the config sections, rather than using 'parent_child: value' TOML style. Keep using empty lines for clarity. Comments for nested settings can follow the nesting. For example, rather than a bunch of 'wallpaper_*' settings, 'wallpaper' gets nested children. Tabs for nesting. You can erase and my own personal config for recreation at next post-compile start.
+	- Done: the whole config is nested blocks now - font, window, transparency, wallpaper (with rotate and contrast_mask children), text (with scrim), cursor (with size), selection, shell, scroll, colors. Tabs for nesting, blank lines kept, comments indented with their settings. Each setting carries a title line, a description, and a range line where one applies, with a "## Default" marker on the commented default lines; sections divide with the bullet-rule style.
+	- An old flat-style config converts in one launch: the file moves aside to config.shcl.bak and a fresh nested file is written with every active value carried to its new place, so settings survive. A setting can also still be written as a single dotted line ('wallpaper.opacity: 0.1') and reads the same.
+	- Saving keeps the nested layout intact: comments keep their indentation and the blank-line grouping survives a settings save.
+	- Verified: a fresh file matches the shipped template byte for byte and relaunch never rewrites it; the previous personal config converted with all values carried; scroll regression scenes all pass on the new-style throwaway config.
+
+- ✅ Terminal throughput benchmark, for comparing against other terminals and against earlier builds.
+	- `utility/update-showdown.py`. Runs on any terminal on any OS, and needs only Python 3.
+	- Feeds repeatable, byte-identical streams of one character width at a time - plain ASCII, then 2-, 3- and 4-byte characters, then a mix of all four with colour and attribute changes - so two terminals are always compared on exactly the same work.
+	- Each run is timed to a reply the terminal can only send once it has genuinely consumed the stream. Timing a plain write instead would measure the pipe rather than the terminal, and a terminal that reads greedily would look infinitely fast.
+	- ASCII is measured four times as often as the wide classes and 2-byte twice, so the overall score leans the way real output does. The score counts cells per second rather than bytes, because bytes flatter whichever class is widest - 2-byte text measured faster than ASCII per byte while being slower per character.
+	- Averages many runs per class and reports the spread, so a result carries its own confidence.
+	- Keeps a history per terminal name and version under the user's data directory, newest five builds of each, and refreshes the results table in the README.
+	- `--quick` gives a thirty-second version; a full run is about two minutes.
+	- Measures throughput under flood - how fast a terminal swallows output and keeps up - not glyph drawing rate. Only a screenful is ever visible, so most of a stream is consumed and scrolled past without being drawn. That is the shape of the "why does it bog down when something dumps a lot of text" question.
+	- At 160x42: SilkTerm 75.1, xfce4-terminal 58.5, XTerm 24.5 million cells/s. SilkTerm leads every width class except plain ASCII, where xfce4-terminal is about a tenth faster.
+	- Install size and memory are measured too, by a second rig at a smaller fixed grid, with the graphics driver split out so the table measures the terminal rather than the stack every accelerated program shares.
+
 - ✅ Wallpaper attribution catalogued.
 	- ✅ Every image in the collection was evaluated and recorded in `wallpaper-attribution.md`, with a source and a confidence for each.
 	- ✅ For ambiguous files, attempts were made to backtrack from the copy on hand to an original source.
 	- ✅ Reverse image lookups mostly surface reposts, and many of the earliest hits are now dead links - so some rows record the best source still reachable rather than the original.
 	- ✅ A small number of images were removed from the collection over questionable legal status.
+
+- ✅ Config file:
+	- ✅ Use sister project "SHCL" for config language and structure, rather than TOML. (When shcl v1.0.0 stable is released.)
+		- Done: the config is now `config.shcl`, read and written by the `shcl` crate (v1.0.0). `toml`, `toml_edit` and `serde` are gone, which took ~158KB off the release binary - SHCL has no dependencies of its own.
+		- Its parser is forgiving, so a malformed line now costs only its own setting instead of sinking the file. That removed the hand-rolled retry loop and the bare-decimal float rewrite: `.1` is simply valid, and is stored back exactly as written.
+		- No migration path: existing `config.toml` files are not read. A fresh `config.shcl` is written with defaults, so any customised settings need re-entering once.
+		- Saving keeps comments and blank-line grouping. It may tidy layout - indentation, and quotes it does not need - but never rewrites a value.
+		- Colours have to be quoted now (`colors.foreground: "#88fff0"`), since `#` starts a comment.
+	- ✅ Convert already implicitly hierarchical config names, to actual nested hierarchical.
+		- Done as part of the nesting item above.
+	- ✅ Each setting gets it's own newline-delimited (above and below) section, with helpful comments directly above the setting without newlines.
+	- ✅ Common comment format, use what's appropriate for each setting:
+
+		~~~shcl
+
+		## Setting title   (not a repeat of the setting name)
+		## Brief description
+		## Range of values
+		## Low value means
+		## High value means
+		## Default value
+		# setting: value  ## Default
+		~~~
+
+	- ✅ Use flowerboxing to divide sections, similar to how Settings dialog is divided (the future version, defined in "Refactor settings dialog" below):
+		- The bullet-rule style is in; section names still follow the current dialog until the dialog refactor lands.
+
+		~~~shcl
+
+		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+		## Section
+		## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+		~~~
 
 - ✅ Hotkeys to increase/decrease font size feature:
 	- Done: Ctrl+= / Ctrl+- step the session zoom; Ctrl+0 resets to the configured (or system) size. View menu has Increase/Decrease/Reset items.

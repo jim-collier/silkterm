@@ -28,6 +28,18 @@ pub const SELECTION_BG: [u8; 3] = [0x33, 0x44, 0x66];
 // drag-and-drop pane reorder: drop-target tint
 pub const DROP_TARGET: [u8; 3] = [0x55, 0x80, 0xc8];
 
+// Scrollbar. Neutral mid-grey in every theme rather than a palette colour: desktop
+// scrollbars read as chrome, not as part of the terminal's own colour scheme. There
+// is no portable way to ask the OS for its actual value (GTK only names a theme),
+// so this is the shade those themes converge on. colors.scrollbar_* overrides.
+pub const SCROLLBAR_THUMB_DEF: [u8; 3] = [0x8a, 0x8a, 0x92];
+pub const SCROLLBAR_TROUGH_DEF: [u8; 3] = [0x2e, 0x2e, 0x36];
+// Opacity the bar settles at, and what it rises to while hovered or dragged.
+pub const SCROLLBAR_IDLE_A: f32 = 0.55;
+pub const SCROLLBAR_ACTIVE_A: f32 = 0.95;
+// The trough is a faint backing strip, well under the thumb.
+pub const SCROLLBAR_TROUGH_A: f32 = 0.34;
+
 // tab bar
 pub const TAB_BAR_BG: [u8; 3] = [0x2c, 0x2c, 0x31];
 pub const TAB_ACTIVE: [u8; 3] = [0x47, 0x47, 0x4f];
@@ -113,6 +125,9 @@ pub struct Settings {
 	pub alt_scroll_lines: f32,
 	pub output_ease_lines: f32,
 	pub smooth_scroll_apps: bool, // ease the line-jumps of full-screen / repaint apps (less/vim/nano; ConPTY TUIs that scroll above a fixed input line)
+	pub scrollbar: bool,          // draw a scrollbar over each pane's right edge
+	pub scrollbar_thickness: f32, // scrollbar width in logical px
+	pub scrollbar_auto_hide: bool, // fade the scrollbar out while idle at the bottom
 	pub margin: f32,              // logical px between content and pane edge
 	pub opacity: f32,             // background opacity 0..1 (1 = fully opaque)
 	pub transparent_background: bool, // X11: per-pixel bg transparency (text stays opaque) via a GL surface
@@ -171,6 +186,10 @@ pub struct Settings {
 	pub menu_fg: [u8; 3],
 	pub dialog_bg: [u8; 3],
 	pub dialog_fg: [u8; 3],
+	// scrollbar, neutral in every theme (see SCROLLBAR_THUMB_DEF); the
+	// colors.scrollbar_* keys override
+	pub scrollbar_thumb: [u8; 3],
+	pub scrollbar_trough: [u8; 3],
 	pub ansi: [[u8; 3]; 16], // 16-colour ANSI palette, resolved from the active theme
 	pub theme: String,       // active theme name (see theme.rs)
 	pub theme_mode: String,  // "dark" | "light" | "system"
@@ -203,6 +222,9 @@ impl Default for Settings {
 			alt_scroll_lines: 3.0,
 			output_ease_lines: 1.0,
 			smooth_scroll_apps: true,
+			scrollbar: true,
+			scrollbar_thickness: 16.0,
+			scrollbar_auto_hide: true,
 			margin: 8.0,
 			opacity: 0.95,
 			transparent_background: false,
@@ -265,6 +287,8 @@ impl Default for Settings {
 			menu_fg: crate::theme::MENU_FG_DEF,
 			dialog_bg: [0x20, 0x20, 0x2a],
 			dialog_fg: [0xe2, 0xe2, 0xea],
+			scrollbar_thumb: SCROLLBAR_THUMB_DEF,
+			scrollbar_trough: SCROLLBAR_TROUGH_DEF,
 			ansi: crate::theme::resolve("SilkTerm", "dark", true).ansi,
 			theme: "SilkTerm".to_string(),
 			theme_mode: "dark".to_string(),
@@ -642,6 +666,15 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.output_ease_lines != orig.output_ease_lines {
 		doc.set_float("scroll.output_ease_lines", r(s.output_ease_lines));
 	}
+	if s.scrollbar != orig.scrollbar {
+		doc.set_bool("scroll.scrollbar.enabled", s.scrollbar);
+	}
+	if s.scrollbar_thickness != orig.scrollbar_thickness {
+		doc.set_float("scroll.scrollbar.thickness", r(s.scrollbar_thickness));
+	}
+	if s.scrollbar_auto_hide != orig.scrollbar_auto_hide {
+		doc.set_bool("scroll.scrollbar.auto_hide", s.scrollbar_auto_hide);
+	}
 	if s.margin != orig.margin {
 		doc.set_float("window.margin", r(s.margin));
 	}
@@ -844,6 +877,9 @@ struct RawConfig {
 	alt_scroll_lines: Option<f32>,
 	output_ease_lines: Option<f32>,
 	smooth_scroll_apps: Option<bool>,
+	scrollbar: Option<bool>,
+	scrollbar_thickness: Option<f32>,
+	scrollbar_auto_hide: Option<bool>,
 	margin: Option<f32>,
 	opacity: Option<f32>,
 	transparent_background: Option<bool>,
@@ -906,6 +942,8 @@ struct RawColors {
 	menu_foreground: Option<String>,
 	dialog_background: Option<String>,
 	dialog_foreground: Option<String>,
+	scrollbar_thumb: Option<String>,
+	scrollbar_trough: Option<String>,
 }
 
 fn load() -> Settings {
@@ -1009,6 +1047,9 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		alt_scroll_lines: r.f("scroll.alt_scroll_lines"),
 		output_ease_lines: r.f("scroll.output_ease_lines"),
 		smooth_scroll_apps: r.b("scroll.smooth_apps"),
+		scrollbar: r.b("scroll.scrollbar.enabled"),
+		scrollbar_thickness: r.f("scroll.scrollbar.thickness"),
+		scrollbar_auto_hide: r.b("scroll.scrollbar.auto_hide"),
 		margin: r.f("window.margin"),
 		opacity: r.f("transparency.opacity"),
 		transparent_background: r.b("transparency.enabled"),
@@ -1067,6 +1108,8 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 			menu_foreground: r.s("colors.menu_foreground"),
 			dialog_background: r.s("colors.dialog_background"),
 			dialog_foreground: r.s("colors.dialog_foreground"),
+			scrollbar_thumb: r.s("colors.scrollbar_thumb"),
+			scrollbar_trough: r.s("colors.scrollbar_trough"),
 		},
 	}
 }
@@ -1116,6 +1159,13 @@ fn resolve(raw: RawConfig) -> Settings {
 			.unwrap_or(d.output_ease_lines)
 			.clamp(0.0, crate::scroll::MAX_BACKLOG),
 		smooth_scroll_apps: raw.smooth_scroll_apps.unwrap_or(d.smooth_scroll_apps),
+		scrollbar: raw.scrollbar.unwrap_or(d.scrollbar),
+		// floor keeps it grabbable; ceiling keeps it from swallowing a narrow pane
+		scrollbar_thickness: raw
+			.scrollbar_thickness
+			.unwrap_or(d.scrollbar_thickness)
+			.clamp(4.0, 64.0),
+		scrollbar_auto_hide: raw.scrollbar_auto_hide.unwrap_or(d.scrollbar_auto_hide),
 		margin: raw.margin.unwrap_or(d.margin).max(0.0),
 		opacity: raw.opacity.unwrap_or(d.opacity).clamp(0.0, 1.0),
 		transparent_background: raw
@@ -1244,6 +1294,8 @@ fn resolve(raw: RawConfig) -> Settings {
 		menu_fg: color(raw.colors.menu_foreground, pal.menu_fg),
 		dialog_bg: color(raw.colors.dialog_background, pal.dialog_bg),
 		dialog_fg: color(raw.colors.dialog_foreground, pal.dialog_fg),
+		scrollbar_thumb: color(raw.colors.scrollbar_thumb, SCROLLBAR_THUMB_DEF),
+		scrollbar_trough: color(raw.colors.scrollbar_trough, SCROLLBAR_TROUGH_DEF),
 		ansi: pal.ansi,
 		theme: theme_name,
 		theme_mode,
@@ -2552,6 +2604,27 @@ scroll:
 	## still snap).
 	# smooth_apps: true  ## Default
 
+	## Scrollbar
+	## A scrollbar over each pane's right edge, showing where the view sits in
+	## the scrollback. It floats over the text rather than taking a column, so
+	## turning it on or off never changes the grid. Full-screen apps (less, vim)
+	## keep their own screen and get no scrollbar. Drag the thumb to scroll;
+	## click the track to page.
+	scrollbar:
+
+		## Enabled
+		# enabled: true  ## Default
+
+		## Thickness
+		## Width in pixels.
+		## Range: 4 to 64
+		# thickness: 16.0  ## Default
+
+		## Auto-hide
+		## Fade the scrollbar out while the view sits idle at the bottom, and back
+		## in on scroll or when the pointer nears it. Off keeps it always visible.
+		# auto_hide: true  ## Default
+
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Theme and colours
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -2564,10 +2637,10 @@ theme_mode: dark
 
 ## Colour overrides
 ## Per-colour overrides on top of the theme (uncomment any to tweak one colour).
-## The menu_*/dialog_* keys recolour the chrome (menu bar + dropdowns, and the
-## pop-out Settings/About dialogs); by default every theme shares the same
-## neutral chrome. Menu hover/border shades derive from menu_background
-## automatically.
+## The menu_*/dialog_*/scrollbar_* keys recolour the chrome (menu bar + dropdowns,
+## the pop-out Settings/About dialogs, and the scrollbar); by default every theme
+## shares the same neutral chrome. Menu hover/border shades derive from
+## menu_background automatically.
 colors:
 	# background: "#000000"  ## Default
 	# foreground: "#d2d2da"  ## Default
@@ -2577,6 +2650,8 @@ colors:
 	# menu_foreground: "#f0f0f2"  ## Default
 	# dialog_background: "#20202a"  ## Default
 	# dialog_foreground: "#e2e2ea"  ## Default
+	# scrollbar_thumb: "#8a8a92"  ## Default
+	# scrollbar_trough: "#2e2e36"  ## Default
 "##;
 
 #[cfg(test)]

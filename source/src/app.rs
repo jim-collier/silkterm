@@ -23,7 +23,7 @@ use crate::clipboard::Clipboard;
 use crate::config;
 use crate::gfx::{Gfx, RectInstance, RectRenderer, VramProbe};
 use crate::input;
-use crate::pane::{CopyKind, Dir, Pane, PaneManager, Rect};
+use crate::pane::{BarHit, CopyKind, Dir, Pane, PaneManager, Rect};
 use crate::term::{PaneId, UserEvent};
 use crate::text::TextCtx;
 
@@ -704,6 +704,7 @@ struct State {
 	cursor_focus_sig: Option<(usize, PaneId, bool)>,
 	resizing: Option<Vec<bool>>, // split-tree path of the divider being dragged
 	dragging_pane: Option<PaneId>, // pane being drag-reordered (Shift+drag)
+	bar_dragging: Option<PaneId>, // pane whose scrollbar thumb is being dragged
 	cursor_icon: CursorIcon,
 	clipboard: Clipboard,
 	last_frame: Instant,
@@ -802,6 +803,29 @@ impl State {
 		if let Some(id) = self.tabs.cur().pane_at(x, y) {
 			self.tabs.cur_mut().focused = id;
 			self.update_title();
+		}
+	}
+
+	// Refresh every pane's scrollbar-hover flag from the pointer. Only the pane the
+	// pointer is actually over can be hovered, so this also clears the one it just
+	// left. Marks dirty only on a change - the fade is what needs the frames, and
+	// this runs on every mouse move.
+	fn update_bar_hover(&mut self, x: f32, y: f32) {
+		let cfg = config::settings();
+		if !cfg.scrollbar {
+			return;
+		}
+		let over = self.tabs.cur().pane_at(x, y);
+		let mut changed = false;
+		for (id, p) in &mut self.tabs.cur_mut().panes {
+			let near = over == Some(*id) && p.bar_near(x, y, &cfg);
+			if p.bar_hover != near {
+				p.bar_hover = near;
+				changed = true;
+			}
+		}
+		if changed {
+			self.dirty = true;
 		}
 	}
 
@@ -1791,6 +1815,10 @@ impl State {
 		};
 		for (id, pane) in &mut self.tabs.cur_mut().panes {
 			pane.scroll.advance(dt);
+			pane.scrollbar_tick(dt, &cfg);
+			if pane.bar_animating {
+				animating = true;
+			}
 			let rect = pane.rect;
 			// scope the expensive re-shape to panes that actually changed: fresh
 			// PTY output (content_dirty), an active scroll ease, or a global
@@ -1837,6 +1865,14 @@ impl State {
 		}
 
 		let ring_start = instances.len() as u32;
+		// Scrollbars, drawn with the ring (after the text, so they overlay it) but
+		// pushed first so the focus ring stays on top where they meet at the corner.
+		for p in self.tabs.cur().panes.values() {
+			if let Some(bar) = p.scrollbar(&self.text, &cfg) {
+				let active = p.bar_drag.is_some() || p.bar_hover;
+				instances.extend(scrollbar_insts(&bar, p.bar_fade(), active));
+			}
+		}
 		// Focus ring only distinguishes panes when there's more than one; with a
 		// single pane it's just an unwanted border line around the whole content
 		// (the user wants background all the way to the edge), so skip it.
@@ -2860,6 +2896,38 @@ fn close_x_inst(cb: Rect, color: [u8; 3]) -> RectInstance {
 	}
 }
 
+// One scrollbar piece: a rounded quad (mode 2) with the pill radius its short
+// side implies, at `alpha` (the pane's fade times the piece's own weight).
+fn bar_inst(r: Rect, color: [u8; 3], alpha: f32) -> RectInstance {
+	let mut c = config::srgb_f32(color);
+	c[3] = alpha;
+	RectInstance {
+		pos: [r.x, r.y],
+		size: [r.w, r.h],
+		color: c,
+		params: [2.0, r.w.min(r.h) * 0.5],
+	}
+}
+
+// The scrollbar's quads for one pane: a faint track with the handle on it. The
+// thumb brightens while hovered or dragged, the usual affordance.
+fn scrollbar_insts(bar: &crate::pane::Bar, fade: f32, active: bool) -> [RectInstance; 2] {
+	let cfg = config::settings();
+	let thumb_a = if active {
+		config::SCROLLBAR_ACTIVE_A
+	} else {
+		config::SCROLLBAR_IDLE_A
+	};
+	[
+		bar_inst(
+			bar.track,
+			cfg.scrollbar_trough,
+			fade * config::SCROLLBAR_TROUGH_A,
+		),
+		bar_inst(bar.thumb, cfg.scrollbar_thumb, fade * thumb_a),
+	]
+}
+
 // close-"X" stroke colour: menu fg dimmed toward the tab bg (~0.6), so it reads
 // as a quiet button mark rather than a title character
 fn close_x_rgb() -> [u8; 3] {
@@ -3487,6 +3555,7 @@ impl ApplicationHandler<UserEvent> for App {
 			cursor_focus_sig: None,
 			resizing: None,
 			dragging_pane: None,
+			bar_dragging: None,
 			cursor_icon: CursorIcon::Default,
 			clipboard: Clipboard::new(),
 			last_frame: Instant::now(),
@@ -3698,6 +3767,16 @@ impl ApplicationHandler<UserEvent> for App {
 			WindowEvent::CursorMoved { position, .. } => {
 				state.mouse = (position.x as f32, position.y as f32);
 				let (x, y) = state.mouse;
+				// A thumb drag in progress owns the pointer - before the mouse-report
+				// path, so a tracking app can't swallow the drag half way down.
+				if let Some(id) = state.bar_dragging {
+					let cfg = config::settings();
+					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
+						p.bar_drag_to(y, &state.text, &cfg);
+					}
+					state.dirty = true;
+					return;
+				}
 				// mouse-tracking app wants motion/drag reports; when it does, skip our
 				// local hover/selection handling for this move. The report is
 				// PTY-bound: nothing local changed, so no redraw - marking dirty here
@@ -3705,6 +3784,7 @@ impl ApplicationHandler<UserEvent> for App {
 				if state.report_mouse_motion() {
 					return;
 				}
+				state.update_bar_hover(x, y);
 				// hovering a different top-level title with a bar menu open
 				// switches to it (standard menu-bar behaviour)
 				if state.bar_open.is_some() && y < state.menu_bar_h() {
@@ -3820,6 +3900,32 @@ impl ApplicationHandler<UserEvent> for App {
 						state.dirty = true;
 					}
 					return;
+				}
+				// A visible scrollbar takes the click before anything else - including a
+				// mouse-tracking app, the same way the right-click menu does. `bar_hit`
+				// answers None whenever the bar is faded out, so an invisible bar never
+				// steals a click that belonged to the text under it.
+				if button == MouseButton::Left && state.menu.is_none() {
+					let cfg = config::settings();
+					let hit = state.tabs.cur().pane_at(x, y).and_then(|id| {
+						let p = state.tabs.cur().panes.get(&id)?;
+						Some((id, p.bar_hit(x, y, &state.text, &cfg)?))
+					});
+					if let Some((id, hit)) = hit {
+						state.focus_at(x, y);
+						if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
+							match hit {
+								BarHit::Thumb => p.bar_grab(y, &state.text, &cfg),
+								BarHit::TrackUp => p.bar_page(true, &state.text),
+								BarHit::TrackDown => p.bar_page(false, &state.text),
+							}
+						}
+						if hit == BarHit::Thumb {
+							state.bar_dragging = Some(id);
+						}
+						state.dirty = true;
+						return;
+					}
 				}
 				// mouse-tracking app owns the pointer: report the press, skip local
 				// selection/paste/menu (Shift bypasses to the local action). An open
@@ -3962,6 +4068,14 @@ impl ApplicationHandler<UserEvent> for App {
 				..
 			} => {
 				state.resizing = None;
+				// end a thumb drag; the hold keeps the bar up for a moment afterwards
+				if let Some(id) = state.bar_dragging.take() {
+					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
+						p.bar_drag = None;
+						p.poke_scrollbar();
+					}
+					state.dirty = true;
+				}
 				// armed tab close: fire only if the release is still on the same box
 				if let Some(i) = state.tab_close_arm.take() {
 					let (x, y) = state.mouse;
@@ -4103,6 +4217,9 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 					} else {
 						p.scroll.wheel(lines);
+						// user-driven scroll, so the bar comes up; output-driven
+						// scrolling deliberately doesn't (it never stops)
+						p.poke_scrollbar();
 					}
 				}
 				state.dirty = true;

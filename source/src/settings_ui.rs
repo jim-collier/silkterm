@@ -144,6 +144,11 @@ enum Key {
 	Margin,
 	ScrollTau,
 	WheelLines,
+	Scrollbar,
+	ScrollbarThickness,
+	ScrollbarAutoHide,
+	ColScrollbarThumb,
+	ColScrollbarTrough,
 	ColBg,
 	ColFg,
 	ColCursor,
@@ -250,6 +255,11 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::Margin => &["window.margin"],
 		Key::ScrollTau => &["scroll.tau_ms"],
 		Key::WheelLines => &["scroll.wheel_lines"],
+		Key::Scrollbar => &["scroll.scrollbar.enabled"],
+		Key::ScrollbarThickness => &["scroll.scrollbar.thickness"],
+		Key::ScrollbarAutoHide => &["scroll.scrollbar.auto_hide"],
+		Key::ColScrollbarThumb => &["colors.scrollbar_thumb"],
+		Key::ColScrollbarTrough => &["colors.scrollbar_trough"],
 		Key::ColBg => &["colors.background"],
 		Key::ColFg => &["colors.foreground"],
 		Key::ColCursor => &["colors.cursor"],
@@ -682,6 +692,35 @@ fn fields() -> Vec<Spec> {
 				max: 10.0,
 				int: true,
 			},
+		},
+		Spec {
+			label: "Scrollbar",
+			key: Scrollbar,
+			kind: Toggle,
+		},
+		Spec {
+			label: "Scrollbar width",
+			key: ScrollbarThickness,
+			kind: Slider {
+				min: 4.0,
+				max: 64.0,
+				int: true,
+			},
+		},
+		Spec {
+			label: "Hide when idle",
+			key: ScrollbarAutoHide,
+			kind: Toggle,
+		},
+		Spec {
+			label: "Scrollbar handle",
+			key: ColScrollbarThumb,
+			kind: Color,
+		},
+		Spec {
+			label: "Scrollbar track",
+			key: ColScrollbarTrough,
+			kind: Color,
 		},
 		hdr("Shell"),
 		Spec {
@@ -1656,6 +1695,7 @@ impl SettingsDialog {
 			// shown as an intuitive 1..100 speed (higher = faster); stored as tau
 			Key::ScrollTau => tau_to_speed(settings.scroll_tau_ms),
 			Key::WheelLines => settings.wheel_lines,
+			Key::ScrollbarThickness => settings.scrollbar_thickness,
 			Key::Columns => settings.columns as f32,
 			Key::Rows => settings.rows as f32,
 			_ => 0.0,
@@ -1682,6 +1722,7 @@ impl SettingsDialog {
 			Key::Margin => settings.margin = value,
 			Key::ScrollTau => settings.scroll_tau_ms = speed_to_tau(value),
 			Key::WheelLines => settings.wheel_lines = value,
+			Key::ScrollbarThickness => settings.scrollbar_thickness = value,
 			Key::Columns => settings.columns = value.round().max(1.0) as usize,
 			Key::Rows => settings.rows = value.round().max(1.0) as usize,
 			_ => {}
@@ -1749,6 +1790,8 @@ impl SettingsDialog {
 			Key::BgEnabled => self.edited.wallpaper_enabled,
 			Key::BgRotate => self.edited.wallpaper_rotate_enabled,
 			Key::BgHonorXmp => self.edited.wallpaper_honor_xmp,
+			Key::Scrollbar => self.edited.scrollbar,
+			Key::ScrollbarAutoHide => self.edited.scrollbar_auto_hide,
 			_ => false,
 		}
 	}
@@ -1767,6 +1810,8 @@ impl SettingsDialog {
 			Key::BgEnabled => self.edited.wallpaper_enabled = on,
 			Key::BgRotate => self.edited.wallpaper_rotate_enabled = on,
 			Key::BgHonorXmp => self.edited.wallpaper_honor_xmp = on,
+			Key::Scrollbar => self.edited.scrollbar = on,
+			Key::ScrollbarAutoHide => self.edited.scrollbar_auto_hide = on,
 			_ => {}
 		}
 	}
@@ -1853,6 +1898,14 @@ impl SettingsDialog {
 					| Key::BgContrastSize | Key::BgContrastStrength
 					| Key::BgContrastAuto
 			) && !self.edited.wallpaper_enabled)
+			// the scrollbar's own settings stay listed with it off, just inert
+			|| (matches!(
+				key,
+				Key::ScrollbarThickness
+					| Key::ScrollbarAutoHide
+					| Key::ColScrollbarThumb
+					| Key::ColScrollbarTrough
+			) && !self.edited.scrollbar)
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
 			|| (matches!(key, Key::FontFamily) && config::system_font_face_active(&self.edited))
 			|| (matches!(key, Key::FontSize) && config::system_font_size_active(&self.edited))
@@ -1866,6 +1919,8 @@ impl SettingsDialog {
 			Key::ColFg => settings.fg,
 			Key::ColCursor => settings.cursor,
 			Key::ColFocus => settings.focus,
+			Key::ColScrollbarThumb => settings.scrollbar_thumb,
+			Key::ColScrollbarTrough => settings.scrollbar_trough,
 			_ => [0, 0, 0],
 		}
 	}
@@ -1876,6 +1931,8 @@ impl SettingsDialog {
 			Key::ColFg => settings.fg = color,
 			Key::ColCursor => settings.cursor = color,
 			Key::ColFocus => settings.focus = color,
+			Key::ColScrollbarThumb => settings.scrollbar_thumb = color,
+			Key::ColScrollbarTrough => settings.scrollbar_trough = color,
 			_ => {}
 		}
 	}
@@ -1896,6 +1953,9 @@ impl SettingsDialog {
 			Key::ColFg => palette.fg,
 			Key::ColCursor => palette.cursor,
 			Key::ColFocus => palette.focus,
+			// chrome, not a palette colour - the same neutral under every theme
+			Key::ColScrollbarThumb => config::SCROLLBAR_THUMB_DEF,
+			Key::ColScrollbarTrough => config::SCROLLBAR_TROUGH_DEF,
 			_ => [0, 0, 0],
 		}
 	}
@@ -1919,6 +1979,8 @@ impl SettingsDialog {
 			Key::SystemFontSize => edited.use_system_font_size == defaults.use_system_font_size,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
 			Key::CopyOnSelect => edited.copy_on_select == defaults.copy_on_select,
+			Key::Scrollbar => edited.scrollbar == defaults.scrollbar,
+			Key::ScrollbarAutoHide => edited.scrollbar_auto_hide == defaults.scrollbar_auto_hide,
 			Key::BgFit => edited.wallpaper_default_fit == defaults.wallpaper_default_fit,
 			Key::BgEnabled => edited.wallpaper_enabled == defaults.wallpaper_enabled,
 			Key::BgRotate => edited.wallpaper_rotate_enabled == defaults.wallpaper_rotate_enabled,
@@ -1927,9 +1989,12 @@ impl SettingsDialog {
 			Key::BgImage => edited.wallpaper == defaults.wallpaper,
 			Key::FontFamily => edited.font_family == defaults.font_family,
 			Key::DefaultShell => edited.default_shell == defaults.default_shell,
-			Key::ColBg | Key::ColFg | Key::ColCursor | Key::ColFocus => {
-				self.get_col(key) == self.default_col(key)
-			}
+			Key::ColBg
+			| Key::ColFg
+			| Key::ColCursor
+			| Key::ColFocus
+			| Key::ColScrollbarThumb
+			| Key::ColScrollbarTrough => self.get_col(key) == self.default_col(key),
 			Key::None => true,
 			// the sliders
 			_ => self.get_f32(key) == self.default_f32(key),
@@ -1953,6 +2018,7 @@ impl SettingsDialog {
 			Key::Margin => defaults.margin,
 			Key::ScrollTau => tau_to_speed(defaults.scroll_tau_ms),
 			Key::WheelLines => defaults.wheel_lines,
+			Key::ScrollbarThickness => defaults.scrollbar_thickness,
 			Key::Columns => defaults.columns as f32,
 			Key::Rows => defaults.rows as f32,
 			_ => 0.0,
@@ -1974,6 +2040,8 @@ impl SettingsDialog {
 			| Key::BgEnabled
 			| Key::BgRotate
 			| Key::BgHonorXmp
+			| Key::Scrollbar
+			| Key::ScrollbarAutoHide
 			| Key::BgContrastMask => {
 				let default_val = match key {
 					Key::Transparency => self.defaults.transparent_background,
@@ -1988,6 +2056,8 @@ impl SettingsDialog {
 					Key::BgEnabled => self.defaults.wallpaper_enabled,
 					Key::BgRotate => self.defaults.wallpaper_rotate_enabled,
 					Key::BgHonorXmp => self.defaults.wallpaper_honor_xmp,
+					Key::Scrollbar => self.defaults.scrollbar,
+					Key::ScrollbarAutoHide => self.defaults.scrollbar_auto_hide,
 					_ => self.defaults.remember_size,
 				};
 				self.set_toggle(key, default_val);
@@ -2000,7 +2070,12 @@ impl SettingsDialog {
 			}
 			Key::FontFamily => self.edited.font_family = self.defaults.font_family.clone(),
 			Key::DefaultShell => self.edited.default_shell = self.defaults.default_shell.clone(),
-			Key::ColBg | Key::ColFg | Key::ColCursor | Key::ColFocus => {
+			Key::ColBg
+			| Key::ColFg
+			| Key::ColCursor
+			| Key::ColFocus
+			| Key::ColScrollbarThumb
+			| Key::ColScrollbarTrough => {
 				let color = self.default_col(key);
 				self.set_col(key, color);
 			}
@@ -3617,9 +3692,9 @@ mod tests {
 	fn keyboard_focus_walks_controls_then_buttons() {
 		use super::Focus;
 		let mut d = mk_dialog(2000.0);
-		d.tab = 4; // Scrolling: two always-enabled sliders
+		d.tab = 4; // Scrolling: opens on two always-enabled sliders
 		let f = d.focusables();
-		assert_eq!(f.len(), 2, "scrolling tab has two focusable rows");
+		assert!(f.len() >= 2, "scrolling tab has focusable rows");
 		d.set_mods(false, false, false);
 		// each slider is two focus stops (track, then numeric field)
 		d.key_tab(); // from nothing -> first slider's track
@@ -3630,7 +3705,9 @@ mod tests {
 		assert_eq!(d.focus, Some(Focus::Row(f[1], 0)));
 		d.key_tab();
 		assert_eq!(d.focus, Some(Focus::Row(f[1], 1)));
-		// after the last control the ring visits the three footer buttons
+		// after the LAST control the ring visits the three footer buttons
+		let last = *f.last().unwrap();
+		d.focus = Some(Focus::Row(last, d.parts_of(last) - 1));
 		d.key_tab();
 		assert_eq!(d.focus, Some(Focus::Button(0)));
 		d.key_tab();
