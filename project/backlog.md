@@ -43,8 +43,9 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### Bugs
 
-- 🔘 Wallpaper scan accepts formats that can't be loaded:
+- ✅ Wallpaper scan accepts formats that can't be loaded:
 	- Description: the folder scan counts `webp`, `bmp`, `gif`, `tiff` and `tif` as wallpapers, but only PNG and JPEG can actually be decoded. A file in one of the other formats passes the scan, gets picked by rotation, and then fails to load.
+	- Fixed: the scan now accepts only the formats that decode. Adding the other decoders was the alternative, but each one grows the binary for a format nothing in the collection uses.
 	- Expected behavior: either narrow the accepted extensions to the ones that load, or add the missing decoders. Extra decoders grow the binary, so narrowing the list is the cheaper fix unless those formats are wanted.
 	- Steps to reproduce: put a `.webp` in the wallpaper folder and let rotation reach it.
 
@@ -1571,6 +1572,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - ✅ Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
 	- Done: three config keys - `background_folder` (a folder, absolute or relative to the config dir; overrides `background_image` while set), `background_rotate_random` (filename order vs. random, never repeating the current image), and `background_rotate_interval_s` (seconds between swaps; 0 = pick one at startup only). Images are the formats the loader already decodes (png/jpg/webp/bmp/gif/tiff). Live swap reuses the existing wallpaper path, so it re-blurs and applies without a relaunch; a missing/empty folder just leaves the feature off.
+	- Correction: the loader never decoded webp/bmp/gif/tiff - only png and jpeg. The wider list was the bug fixed above; the scan now matches what actually loads.
 	- Verified: cycled a folder of three solid-colour images on a 2s timer and confirmed the background changed in order.
 
 - ✅ Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)

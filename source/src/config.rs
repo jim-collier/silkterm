@@ -1213,15 +1213,13 @@ pub fn wallpaper_history_path() -> Option<PathBuf> {
 
 // Image files we're willing to load as a wallpaper. One list, so the folder
 // auto-detect below and the rotation scan can't disagree about what counts.
+// Must track the `image` crate's enabled features (png + jpeg) - it is built
+// with default-features off to keep the binary small, so listing anything else
+// here just picks a file that then fails to decode.
 pub fn is_image_file(path: &std::path::Path) -> bool {
 	path.extension()
 		.and_then(|ext| ext.to_str())
-		.is_some_and(|ext| {
-			matches!(
-				ext.to_ascii_lowercase().as_str(),
-				"png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif" | "tiff" | "tif"
-			)
-		})
+		.is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg"))
 }
 
 // The rotation folder to use when none is configured: the conventional
@@ -2405,5 +2403,21 @@ mod tests {
 			"pipeline not idempotent"
 		);
 		let _ = std::fs::remove_file(&path);
+	}
+
+	// The scan must not offer the loader a file it can't decode: `image` is built
+	// with only png + jpeg, so a wider list picks a wallpaper that then fails.
+	#[test]
+	fn image_scan_only_accepts_what_the_decoder_has() {
+		use std::path::Path;
+		for ok in ["a.png", "a.jpg", "a.jpeg", "a.JPG", "a.PNG"] {
+			assert!(is_image_file(Path::new(ok)), "{ok} should be scanned");
+		}
+		for no in ["a.webp", "a.bmp", "a.gif", "a.tiff", "a.tif", "a.txt", "a"] {
+			assert!(
+				!is_image_file(Path::new(no)),
+				"{no} has no decoder - scanning it picks an unloadable wallpaper"
+			);
+		}
 	}
 }

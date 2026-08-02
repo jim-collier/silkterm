@@ -4721,7 +4721,7 @@ mod tests {
 		let dir = std::env::temp_dir().join(format!("silkterm_wp_scan_{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).unwrap();
-		for name in ["b.png", "a.JPG", "notes.txt", "c.gif", ".hidden"] {
+		for name in ["b.png", "a.JPG", "c.jpeg", "notes.txt", "c.gif", ".hidden"] {
 			std::fs::write(dir.join(name), b"x").unwrap();
 		}
 		std::fs::create_dir_all(dir.join("d.png")).unwrap(); // a dir named like an image
@@ -4730,8 +4730,9 @@ mod tests {
 			.iter()
 			.map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
 			.collect();
-		// only image files, case-insensitive ext, sorted; the .txt, the dir, kept out
-		assert_eq!(names, vec!["a.JPG", "b.png", "c.gif"]);
+		// only decodable image files, case-insensitive ext, sorted; the .txt, the dir
+		// and the .gif (no decoder for it) all kept out
+		assert_eq!(names, vec!["a.JPG", "b.png", "c.jpeg"]);
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 }
