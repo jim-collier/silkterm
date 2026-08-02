@@ -1291,16 +1291,19 @@ impl Pane {
 				// A glyph the primary mono font lacks renders via a fallback font
 				// whose advance may not equal the grid width, drifting the rest of
 				// the row. Pull it out, draw it per-cell, leave space placeholders.
-				if !cell.c.is_ascii() && !ctx.covered(cell.c) {
-					let w = if flags.contains(Flags::WIDE_CHAR) {
-						2
-					} else {
-						1
-					};
+				// Same for one the font does carry but advances by the wrong number
+				// of cells - a mono face routinely holds a double-width char at its
+				// ordinary single advance.
+				let w = if flags.contains(Flags::WIDE_CHAR) {
+					2
+				} else {
+					1
+				};
+				if !cell.c.is_ascii() && !ctx.covered_at(cell.c, w) {
 					for _ in 0..w {
 						run.push(' ');
 					}
-					glyph_specs.push((cell.c, fg, bold, italic, c, screen_row, w as u8));
+					glyph_specs.push((cell.c, fg, bold, italic, c, screen_row, w));
 				} else {
 					if (fg, bold, italic) != (run_color, run_bold, run_italic) {
 						flush_run!();
@@ -1858,7 +1861,7 @@ impl Pane {
 				if cell.wide == 0 {
 					continue; // wide-char spacer
 				}
-				if !cell.c.is_ascii() && !ctx.covered(cell.c) {
+				if !cell.c.is_ascii() && !ctx.covered_at(cell.c, cell.wide) {
 					for _ in 0..cell.wide {
 						run.push(' ');
 					}
