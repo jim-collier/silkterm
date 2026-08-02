@@ -120,6 +120,7 @@ pub struct Settings {
 	pub font_size: f32,
 	pub line_height_scale: f32,
 	pub scrollback: usize,
+	pub scroll_smooth: bool, // master switch: false = every scroll (wheel, output, app slide) lands instantly
 	pub scroll_tau_ms: f32,
 	pub scroll_inview_tau_ms: f32, // burst catch-up ceiling while the burst is still wholly on screen
 	pub wheel_lines: f32,
@@ -207,6 +208,13 @@ impl Settings {
 			.then_some(self.wallpaper_folder.as_ref())
 			.flatten()
 	}
+
+	// The app-slide gate, derived for the same reason: the smooth-scroll master
+	// covers every scroll animation, so every smooth_scroll_apps consumer reads
+	// this instead of the raw flag and cannot miss the master.
+	pub fn smooth_apps(&self) -> bool {
+		self.scroll_smooth && self.smooth_scroll_apps
+	}
 }
 
 impl Default for Settings {
@@ -218,8 +226,9 @@ impl Default for Settings {
 			font_size: FALLBACK_FONT_SIZE,
 			line_height_scale: 1.22,
 			scrollback: 10_000,
-			scroll_tau_ms: 230.0, // ~ "Initial scroll speed" 25 (slow/smooth; ramps up under bursts)
-			scroll_inview_tau_ms: 60.0, // ~ "In-view output speed" 83 (brisk; the in-view burst ceiling)
+			scroll_smooth: true,
+			scroll_tau_ms: 230.0, // ~ "Initial scroll speed" 33 (slow start: ~4 lines/s; bursts ramp up from here)
+			scroll_inview_tau_ms: 60.0, // ~ "In-view output speed" 61 (in-view burst speed ceiling: ~17 lines/s)
 			wheel_lines: 3.0,
 			alt_scroll_lines: 3.0,
 			output_ease_lines: 1.0,
@@ -656,6 +665,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.scrollback != orig.scrollback {
 		doc.set_int("scroll.scrollback", s.scrollback as i64);
 	}
+	if s.scroll_smooth != orig.scroll_smooth {
+		doc.set_bool("scroll.smooth", s.scroll_smooth);
+	}
 	if s.scroll_tau_ms != orig.scroll_tau_ms {
 		doc.set_float("scroll.tau_ms", r(s.scroll_tau_ms));
 	}
@@ -877,6 +889,7 @@ struct RawConfig {
 	font_size: Option<f32>,
 	line_height_scale: Option<f32>,
 	scrollback: Option<usize>,
+	scroll_smooth: Option<bool>,
 	scroll_tau_ms: Option<f32>,
 	scroll_inview_tau_ms: Option<f32>,
 	wheel_lines: Option<f32>,
@@ -1048,6 +1061,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		font_size: r.f("font.size"),
 		line_height_scale: r.f("font.line_height_scale"),
 		scrollback: r.u("scroll.scrollback"),
+		scroll_smooth: r.b("scroll.smooth"),
 		scroll_tau_ms: r.f("scroll.tau_ms"),
 		scroll_inview_tau_ms: r.f("scroll.inview_tau_ms"),
 		wheel_lines: r.f("scroll.wheel_lines"),
@@ -1155,6 +1169,7 @@ fn resolve(raw: RawConfig) -> Settings {
 			.unwrap_or(d.line_height_scale)
 			.max(0.5),
 		scrollback: raw.scrollback.unwrap_or(d.scrollback),
+		scroll_smooth: raw.scroll_smooth.unwrap_or(d.scroll_smooth),
 		scroll_tau_ms: raw.scroll_tau_ms.unwrap_or(d.scroll_tau_ms).max(1.0),
 		scroll_inview_tau_ms: raw
 			.scroll_inview_tau_ms
@@ -2585,21 +2600,29 @@ scroll:
 	## Lines of scrollback history kept per pane.
 	scrollback: 10000
 
+	## Smooth scrolling
+	## Master switch for all scroll animation: eased wheel scrolling, eased
+	## output scrolling, and the sliding of full-screen apps. Off = every
+	## scroll lands instantly; the speed settings below then have no effect.
+	# smooth: true  ## Default
+
 	## Initial scroll speed
-	## The initial (slow, smooth) easing for sporadic output, shown in Settings
-	## as "Initial scroll speed". Under a fast output burst the scroll
-	## automatically ramps faster to keep up, then eases back to this speed once
-	## output stops. 230 ms is about 25 on the 1..100 dialog scale.
-	## Range: 1.0 and up (milliseconds) - lower is snappier
+	## The speed output starts scrolling at, shown in Settings as "Initial
+	## scroll speed": one line per this many milliseconds. A sustained burst
+	## ramps up from here - the speed doubles every third of a second while
+	## output stays ahead - and eases back once output stops. 230 ms (~4
+	## lines/s) is about 33 on the 1..100 dialog scale.
+	## Range: 1.0 and up (milliseconds) - lower is faster
 	tau_ms: 230.0
 
 	## In-view output speed
-	## Top catch-up speed for an output burst whose own first line is still on
-	## screen (a short directory listing, say). Faster than the initial speed
-	## but gentler than the full chase; once a burst has scrolled its first
-	## line off the top, the scroll ramps as fast as needed to keep up
-	## regardless. 60 ms is about 83 on the 1..100 dialog scale.
-	## Range: 1.0 and up (milliseconds) - lower is snappier
+	## Top scrolling speed for an output burst whose own first line is still on
+	## screen (a short directory listing, say): one line per this many
+	## milliseconds. Faster than the initial speed but gentler than the full
+	## chase; once a burst has scrolled its first line off the top, the ramp-up
+	## is unlimited and reaches whatever speed keeps up. 60 ms (~17 lines/s) is
+	## about 61 on the 1..100 dialog scale.
+	## Range: 1.0 and up (milliseconds) - lower is faster
 	inview_tau_ms: 60.0
 
 	## Wheel lines

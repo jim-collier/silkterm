@@ -125,7 +125,11 @@ The ease curve is deliberately asymmetric. A single exponential lerp starts at p
 
 Same mechanism: when new output pushes content up, animate `visual_offset` from +1 line back to 0 over the easing window instead of snapping. Treat output-scroll as an animated target like wheel-scroll.
 
-Catch-up speed is per burst, in two profiles. A burst whose own first line is still on screen (a short listing) tops out at the configured in-view speed - faster than the initial ease, slower-building and gentler than the full chase. Once a burst has scrolled a screenful, its first line is provably off the top and the ease ramps as fast as needed to keep up. A burst ends when the view settles at the bottom, so sporadic single lines keep the plain initial ease.
+Catch-up speed is per burst: an explicit chase speed that starts at the configured initial speed (one line per its milliseconds) and doubles about three times a second while the backlog stays deep - a visible slow start that ramps to whatever keeps up. A burst whose own first line is still on screen (a short listing) tops out at the configured in-view speed; once a burst has scrolled a screenful, its first line is provably off the top and the ramp is unlimited. A burst ends when the view settles at the bottom, so sporadic single lines keep the plain initial speed.
+
+The backlog is deliberately not capped in lines. An earlier design capped it at 16 and drove speed from backlog depth; any real burst filled the cap in about a tenth of a second, after which the view rode the raw output rate and the speed settings had no perceivable effect. The exponential ramp bounds the lag in time (a couple of seconds worst case) instead, which is what makes the slow start physically possible. User navigation is exempt from the chase: wheel and scrollbar keep the plain ease, and a jump back to the bottom sweeps home at full ease speed.
+
+A single "Smooth scrolling" master switch (`scroll.smooth`) turns all scroll animation off at once - wheel ease, output ease, and the full-screen-app slide - without touching the individual settings; their dialog controls grey out while it is off. Every effect group in Settings follows the same master-switch pattern (transparency, wallpaper, contrast mask, text scrim, scrollbar).
 
 ### Smooth-scroll inside full-screen apps
 

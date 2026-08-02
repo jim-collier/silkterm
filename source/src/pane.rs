@@ -939,7 +939,7 @@ impl Pane {
 			// output-scroll probe nor the app-scroll probe diffs across the gap.
 			self.scroll.cancel_app_scroll();
 			self.strip.clear();
-			self.last_rows = if settings.smooth_scroll_apps {
+			self.last_rows = if settings.smooth_apps() {
 				let mut cur_cells = std::mem::take(&mut self.cells_scratch);
 				let rows = snapshot_rows(
 					guard.grid(),
@@ -1007,8 +1007,7 @@ impl Pane {
 		// that eased scroll and slide it AGAIN - a spurious extra down-then-up on every
 		// output line (the shell redraws its prompt right after the scroll).
 		let (snap_frame, slide_frame) = app_scroll_frames(alt, follow, grew, full);
-		if settings.smooth_scroll_apps && snap_frame && !cut && (force_rebuild || !self.text_built)
-		{
+		if settings.smooth_apps() && snap_frame && !cut && (force_rebuild || !self.text_built) {
 			let mut cur_cells = std::mem::take(&mut self.cells_scratch);
 			let rows = snapshot_rows(
 				guard.grid(),
@@ -1081,7 +1080,7 @@ impl Pane {
 		// check per frame. The per-frame (sh, app_off, slide_sh, st, sb) sequence is
 		// the deterministic proof that the slide eases smoothly (app_off monotonic, no
 		// bounce) without needing to eyeball a render - see the headless bounce harness.
-		if scroll_dbg() && settings.smooth_scroll_apps && alt {
+		if scroll_dbg() && settings.smooth_apps() && alt {
 			let frame = DBG_FRAME.fetch_add(1, Ordering::Relaxed);
 			eprintln!(
 				"SCROLLDBG f={frame} pane={} sh={shift_dbg} app_off={app_off:.4} slide_sh={:.4} st={} sb={} frac={frac:.4}",

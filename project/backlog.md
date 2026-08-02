@@ -494,6 +494,14 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - Bugs
 
+- ✅ The "Initial scroll speed" and "In-view output speed" settings don't seem to do anything, even at their lowest settings - text jumps immediately to blazing speed. Default speeds should start scrolling almost immediately but slowly, then ramp up (up to infinitely fast to catch up with a buffer dump). (20260802)
+	- Cause was structural, not a tuning problem: catch-up speed was driven by how deep the visual backlog was, and the backlog was capped at 16 lines. Any real burst filled that cap in about a tenth of a second, after which the view simply rode the raw output rate - neither setting could influence that phase, and the slow end of the slider only reached a third slower than the default anyway.
+	- Output is now chased at an explicit speed that starts at the configured initial speed (one line per its milliseconds; default ~4 lines/s) and doubles about three times a second while output stays ahead - a visible slow start, then as fast as needed. "In-view output speed" is the ceiling for a burst still wholly on screen (default ~17 lines/s); a burst whose first line has scrolled off the top ramps without limit. The backlog line-cap is gone - the ramp bounds the lag in time (a couple of seconds worst case) instead of lines, which is what makes a slow start physically possible.
+	- The speed sliders are now logarithmic over a much wider range (slowest = 1 line/s), so both ends are clearly perceivable. Stored values are unchanged; the displayed 1..100 number for a given stored value shifts (defaults now read 33 and 61).
+	- Wheel and scrollbar navigation keep the plain configured ease, and jumping back to the bottom from deep scrollback sweeps at full ease speed rather than the output chase.
+	- Note: this machine's config still holds both speeds at their fastest (10 ms) from earlier experimenting - revert both sliders to feel the new defaults.
+	- 🔘 UAT
+
 - ✅ Graphical emoji render as monochrome outlines instead of colour.
 	- Not a regression. No build renders these in colour: the text stack has only ever read the older colour-glyph table format (COLR v0), and every current colour emoji font ships the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
 	- Other terminals show the same fonts in colour because their text rasterizer reads COLRv1.
@@ -1290,6 +1298,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
 
 #### Done - New features and enhancements
+
+- ✅ A single boolean option to disable/enable smooth scrolling, without changing other settings (but disabling their controls). (20260802)
+	- New "Smooth scrolling" switch at the top of the Scrolling tab (config: `scroll.smooth`, default on). Off = wheel, output and full-screen-app scrolling all land instantly, and the two speed sliders grey out. Wheel lines, scrollbar and the rest stay active since they apply either way.
+	- 🔘 UAT
+
+- ✅ All such feature groups should have a master on/off switch like the above (some already do, e.g. the recent wallpaper switch). (20260802)
+	- Audited the whole Settings dialog: Transparency, Wallpaper, Contrast mask, Text scrim and Scrollbar already have masters that grey their dependent rows; Scrolling was the only group without one, fixed above. Text outline is a slider whose zero is "off", which is its own master.
 
 - ✅ Smooth scrolling feel: start slower, stop sharper. (20260802)
 	- ✅ Should start slower. (Possibly it just ramps up too quickly?)

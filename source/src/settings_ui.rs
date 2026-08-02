@@ -142,6 +142,7 @@ enum Key {
 	Rows,
 	RememberSize,
 	Margin,
+	SmoothScroll,
 	ScrollTau,
 	InviewTau,
 	WheelLines,
@@ -157,15 +158,20 @@ enum Key {
 }
 
 // "Initial scroll speed" is shown as a friendly 1..100 (higher = faster) but
-// stored as the easing time constant `scroll_tau_ms` (higher = slower), so the
-// slider is the inverse of tau over [TAU_MIN, TAU_MAX].
+// stored as the time-per-line `scroll_tau_ms` (higher = slower), so the slider
+// is the inverse of tau over [TAU_MIN, TAU_MAX]. Logarithmic: a time constant
+// is felt by ratio, and a linear map wastes most of the travel on speeds that
+// look identical (the old 300ms floor was why the slow end read as a no-op -
+// barely below the 230ms default). 1 = one line/s, 100 = a hundred lines/s.
 const TAU_MIN: f32 = 10.0;
-const TAU_MAX: f32 = 300.0;
+const TAU_MAX: f32 = 1000.0;
 fn tau_to_speed(tau: f32) -> f32 {
-	(1.0 + (TAU_MAX - tau.clamp(TAU_MIN, TAU_MAX)) / (TAU_MAX - TAU_MIN) * 99.0).round()
+	let t = tau.clamp(TAU_MIN, TAU_MAX);
+	(1.0 + (TAU_MAX / t).ln() / (TAU_MAX / TAU_MIN).ln() * 99.0).round()
 }
 fn speed_to_tau(speed: f32) -> f32 {
-	TAU_MAX - (speed.clamp(1.0, 100.0) - 1.0) / 99.0 * (TAU_MAX - TAU_MIN)
+	let s = (speed.clamp(1.0, 100.0) - 1.0) / 99.0;
+	TAU_MAX * (TAU_MIN / TAU_MAX).powf(s)
 }
 
 enum Kind {
@@ -254,6 +260,7 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::Rows => &["window.rows"],
 		Key::RememberSize => &["window.remember_size"],
 		Key::Margin => &["window.margin"],
+		Key::SmoothScroll => &["scroll.smooth"],
 		Key::ScrollTau => &["scroll.tau_ms"],
 		Key::InviewTau => &["scroll.inview_tau_ms"],
 		Key::WheelLines => &["scroll.wheel_lines"],
@@ -677,6 +684,11 @@ fn fields() -> Vec<Spec> {
 			},
 		},
 		hdr("Scrolling"),
+		Spec {
+			label: "Smooth scrolling",
+			key: SmoothScroll,
+			kind: Toggle,
+		},
 		Spec {
 			label: "Initial scroll speed",
 			key: ScrollTau,
@@ -1803,6 +1815,7 @@ impl SettingsDialog {
 			Key::BgEnabled => self.edited.wallpaper_enabled,
 			Key::BgRotate => self.edited.wallpaper_rotate_enabled,
 			Key::BgHonorXmp => self.edited.wallpaper_honor_xmp,
+			Key::SmoothScroll => self.edited.scroll_smooth,
 			Key::Scrollbar => self.edited.scrollbar,
 			Key::ScrollbarAutoHide => self.edited.scrollbar_auto_hide,
 			_ => false,
@@ -1823,6 +1836,7 @@ impl SettingsDialog {
 			Key::BgEnabled => self.edited.wallpaper_enabled = on,
 			Key::BgRotate => self.edited.wallpaper_rotate_enabled = on,
 			Key::BgHonorXmp => self.edited.wallpaper_honor_xmp = on,
+			Key::SmoothScroll => self.edited.scroll_smooth = on,
 			Key::Scrollbar => self.edited.scrollbar = on,
 			Key::ScrollbarAutoHide => self.edited.scrollbar_auto_hide = on,
 			_ => {}
@@ -1911,6 +1925,8 @@ impl SettingsDialog {
 					| Key::BgContrastSize | Key::BgContrastStrength
 					| Key::BgContrastAuto
 			) && !self.edited.wallpaper_enabled)
+			// the speed sliders shape an animation the master has turned off
+			|| (matches!(key, Key::ScrollTau | Key::InviewTau) && !self.edited.scroll_smooth)
 			// the scrollbar's own settings stay listed with it off, just inert
 			|| (matches!(
 				key,
@@ -1992,6 +2008,7 @@ impl SettingsDialog {
 			Key::SystemFontSize => edited.use_system_font_size == defaults.use_system_font_size,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
 			Key::CopyOnSelect => edited.copy_on_select == defaults.copy_on_select,
+			Key::SmoothScroll => edited.scroll_smooth == defaults.scroll_smooth,
 			Key::Scrollbar => edited.scrollbar == defaults.scrollbar,
 			Key::ScrollbarAutoHide => edited.scrollbar_auto_hide == defaults.scrollbar_auto_hide,
 			Key::BgFit => edited.wallpaper_default_fit == defaults.wallpaper_default_fit,
@@ -2070,6 +2087,7 @@ impl SettingsDialog {
 					Key::BgEnabled => self.defaults.wallpaper_enabled,
 					Key::BgRotate => self.defaults.wallpaper_rotate_enabled,
 					Key::BgHonorXmp => self.defaults.wallpaper_honor_xmp,
+					Key::SmoothScroll => self.defaults.scroll_smooth,
 					Key::Scrollbar => self.defaults.scrollbar,
 					Key::ScrollbarAutoHide => self.defaults.scrollbar_auto_hide,
 					_ => self.defaults.remember_size,
@@ -3706,19 +3724,19 @@ mod tests {
 	fn keyboard_focus_walks_controls_then_buttons() {
 		use super::Focus;
 		let mut d = mk_dialog(2000.0);
-		d.tab = 4; // Scrolling: opens on two always-enabled sliders
+		d.tab = 4; // Scrolling: the smooth-scroll master toggle, then two sliders
 		let f = d.focusables();
-		assert!(f.len() >= 2, "scrolling tab has focusable rows");
+		assert!(f.len() >= 3, "scrolling tab has focusable rows");
 		d.set_mods(false, false, false);
-		// each slider is two focus stops (track, then numeric field)
-		d.key_tab(); // from nothing -> first slider's track
+		d.key_tab(); // from nothing -> the master toggle (a single stop)
 		assert_eq!(d.focus, Some(Focus::Row(f[0], 0)));
-		d.key_tab();
-		assert_eq!(d.focus, Some(Focus::Row(f[0], 1)));
+		// each slider is two focus stops (track, then numeric field)
 		d.key_tab();
 		assert_eq!(d.focus, Some(Focus::Row(f[1], 0)));
 		d.key_tab();
 		assert_eq!(d.focus, Some(Focus::Row(f[1], 1)));
+		d.key_tab();
+		assert_eq!(d.focus, Some(Focus::Row(f[2], 0)));
 		// after the LAST control the ring visits the three footer buttons
 		let last = *f.last().unwrap();
 		d.focus = Some(Focus::Row(last, d.parts_of(last) - 1));
@@ -4306,10 +4324,10 @@ mod tests {
 		assert_eq!(tau_to_speed(TAU_MIN), 100.0);
 		// higher speed -> lower tau (faster)
 		assert!(speed_to_tau(100.0) < speed_to_tau(1.0));
-		// round-trips within slider rounding
-		for tau in [10.0, 75.0, 150.0, 300.0] {
+		// round-trips within slider rounding (log scale: error is proportional)
+		for tau in [10.0f32, 75.0, 150.0, 300.0, 1000.0] {
 			let rt = speed_to_tau(tau_to_speed(tau));
-			assert!((rt - tau).abs() <= 3.0, "tau {tau} -> {rt}");
+			assert!((rt - tau).abs() <= tau * 0.03, "tau {tau} -> {rt}");
 		}
 	}
 
