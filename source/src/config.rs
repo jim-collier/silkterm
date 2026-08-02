@@ -3052,7 +3052,10 @@ mod tests {
 	// to expand. `~user` has nothing to resolve against and stays literal.
 	#[test]
 	fn tilde_expands_to_home_but_only_for_this_user() {
-		let home = std::env::var("HOME").expect("HOME");
+		// Resolve home the same way expand_tilde does - Windows has no HOME, only USERPROFILE.
+		let home = std::env::var_os("HOME")
+			.or_else(|| std::env::var_os("USERPROFILE"))
+			.expect("HOME or USERPROFILE");
 		assert_eq!(expand_tilde("~/pics"), PathBuf::from(&home).join("pics"));
 		assert_eq!(expand_tilde("~"), PathBuf::from(&home));
 		for literal in ["~someone/pics", "/abs/pics", "rel/pics", "wallpaper/"] {
