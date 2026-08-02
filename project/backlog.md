@@ -43,6 +43,11 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### Bugs
 
+- 🔘 Wallpaper scan accepts formats that can't be loaded:
+	- Description: the folder scan counts `webp`, `bmp`, `gif`, `tiff` and `tif` as wallpapers, but only PNG and JPEG can actually be decoded. A file in one of the other formats passes the scan, gets picked by rotation, and then fails to load.
+	- Expected behavior: either narrow the accepted extensions to the ones that load, or add the missing decoders. Extra decoders grow the binary, so narrowing the list is the cheaper fix unless those formats are wanted.
+	- Steps to reproduce: put a `.webp` in the wallpaper folder and let rotation reach it.
+
 - ✅ Harsh visual bug:
 	- Description: New output from repeated commands that doesn't need to scroll (e.g. hasn't reached the bottom), scrolls "down" out of an imaginary line just below the previous prompt, and settles where it should be. It might actually be a pleasing effect if that was the UX design, but it's not. It feels jarring and unexpected, in spite of being kind of cool. Once such repeated commands do reach the bottom, then everything scrolls up as expected.
 	- Fixed: the smooth-slide detector read the repeated listing as a downward scroll - the second copy matched the first one's rows shifted down, and the blank space below matched itself, so brand-new output got animated as if it had moved. A row now only counts as scrolled if the content also left its old position; a re-printed copy no longer qualifies, so fresh output materializes in place. Real scrolling (full screens, pagers, editors) is unaffected.
