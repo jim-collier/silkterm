@@ -366,58 +366,212 @@ fn read_doc(path: &std::path::Path) -> Option<shcl::Document> {
 	Some(shcl::Document::parse(&text))
 }
 
+// One classified line of a config text, with its full nested path resolved from
+// the indentation context (an `enabled:` two levels deep under `wallpaper:` /
+// `rotate:` is "wallpaper.rotate.enabled"). Comment lines that spell a setting
+// (`# enabled: true`) get a path too - the machinery treats them as that
+// setting's disabled default. Lines inside a raw fence are passed through as
+// `Fence`; blank lines as `Blank`; anything else as `Other`.
+enum WalkLine {
+	Setting {
+		index: usize,
+		path: String,
+		active: bool,
+		header: bool,
+	},
+	Fence(usize),
+	Blank,
+	Other(usize),
+}
+
+// Walk a config text line by line, resolving each setting line's full path from
+// the enclosing active (or commented) block headers. Indentation is compared by
+// leading-whitespace length, matching how the template is written (tabs); a
+// line's own key may itself be dotted, which simply extends the path.
+fn walk_settings(text: &str) -> Vec<WalkLine> {
+	let mut out = Vec::new();
+	// (indent, name) of each enclosing block header
+	let mut stack: Vec<(usize, String)> = Vec::new();
+	let mut fence: Option<(char, usize)> = None;
+	for (index, line) in text.lines().enumerate() {
+		if let Some((ch, len)) = fence {
+			out.push(WalkLine::Fence(index));
+			let t = line.trim();
+			if t.chars().all(|c| c == ch) && t.len() >= len {
+				fence = None; // closing fence
+			}
+			continue;
+		}
+		if let Some(open) = fence_run(line) {
+			out.push(WalkLine::Fence(index));
+			fence = Some(open);
+			continue;
+		}
+		if line.trim().is_empty() {
+			out.push(WalkLine::Blank);
+			continue;
+		}
+		let Some(key) = line_setting_key(line) else {
+			out.push(WalkLine::Other(index));
+			continue;
+		};
+		let trimmed = line.trim_start();
+		let active = !trimmed.starts_with('#');
+		let indent = line.len() - trimmed.len();
+		while stack.last().is_some_and(|(col, _)| indent <= *col) {
+			stack.pop();
+		}
+		let path = stack
+			.iter()
+			.map(|(_, name)| name.as_str())
+			.chain(std::iter::once(key))
+			.collect::<Vec<_>>()
+			.join(".");
+		let header = line_setting_value(line).is_some_and(|v| {
+			let v = v.trim();
+			v.is_empty() || v.starts_with('#')
+		});
+		if header {
+			stack.push((indent, key.to_string()));
+		}
+		out.push(WalkLine::Setting {
+			index,
+			path,
+			active,
+			header,
+		});
+	}
+	out
+}
+
+// A raw-block fence opener: a non-comment line whose content (after an optional
+// `key:`) starts a run of 3+ backticks or tildes. Returns the char and length.
+fn fence_run(line: &str) -> Option<(char, usize)> {
+	if line.trim_start().starts_with('#') {
+		return None;
+	}
+	let after = line
+		.split_once(':')
+		.map_or(line.trim(), |(_, rest)| rest.trim());
+	let ch = after.chars().next()?;
+	if ch != '`' && ch != '~' {
+		return None;
+	}
+	let len = after.chars().take_while(|c| *c == ch).count();
+	(len >= 3).then_some((ch, len))
+}
+
 // Serialize a document back to disk text.
 //
-// `to_canonical` keeps comments and never rewrites a scalar, but it drops blank
-// lines between comment-only regions - and a config whose settings are mostly
-// commented-out defaults is exactly that, so a raw canonical write would collapse
-// the whole file into one dense block. Restore the user's grouping: any line that
-// had a blank line above it in `before` gets one again.
+// `to_canonical` keeps comments and never rewrites a scalar, but it re-lays-out
+// the document: blank lines between comment-only regions are dropped, and a
+// comment run that trails the last child of a block re-attaches to the NEXT
+// node and takes that node's indentation. Both would wreck a config whose
+// settings are mostly commented-out defaults. Canonical does preserve line
+// ORDER, so both are repaired positionally against `before`: every line that
+// had a blank above it gets one back, and a comment line is re-emitted exactly
+// as the user last had it (indentation included).
 fn to_text(doc: &shcl::Document, before: &str) -> String {
-	// Match lines positionally, not by text: a repeated line (the '##====' rules
-	// between sections) must only regain the blank line the *matching* one had.
-	let mut prior: Vec<(String, bool)> = Vec::new();
+	// (identity, verbatim line, blank above) for every non-blank line of `before`.
+	let before_lines: Vec<&str> = before.lines().collect();
+	let mut prior: Vec<(String, &str, bool)> = Vec::new();
 	let mut blank_above = false;
-	for line in before.lines() {
-		if line.trim().is_empty() {
-			blank_above = true;
-		} else {
-			prior.push((line_identity(line), blank_above));
-			blank_above = false;
+	for w in walk_settings(before) {
+		match w {
+			WalkLine::Blank => blank_above = true,
+			WalkLine::Fence(i) | WalkLine::Other(i) => {
+				prior.push((
+					line_identity_at(before_lines[i], None),
+					before_lines[i],
+					blank_above,
+				));
+				blank_above = false;
+			}
+			WalkLine::Setting { index, path, .. } => {
+				prior.push((
+					line_identity_at(before_lines[index], Some(&path)),
+					before_lines[index],
+					blank_above,
+				));
+				blank_above = false;
+			}
 		}
 	}
 
 	let canonical = doc.to_canonical();
+	let canon_lines: Vec<&str> = canonical.lines().collect();
 	let mut out = String::new();
 	let mut at = 0; // how far through `prior` we've matched
 	let mut prev_blank = true; // suppress a leading blank at the top of the file
-	for line in canonical.lines() {
-		if line.trim().is_empty() {
-			if !prev_blank {
+	for w in walk_settings(&canonical) {
+		let (index, id, comment) = match w {
+			// canonical's own blank placement is a relayout artifact; the
+			// prior file's blanks are restored below instead
+			WalkLine::Blank => continue,
+			// raw-fence content is verbatim by definition - emit as-is (blank
+			// content lines included), consuming its prior twin positionally
+			WalkLine::Fence(i) => {
+				let line = canon_lines[i];
+				if let Some(offset) = prior[at..]
+					.iter()
+					.position(|(pid, _, _)| *pid == line.trim_start())
+				{
+					at += offset + 1;
+				}
+				out.push_str(line);
+				out.push('\n');
+				prev_blank = false;
+				continue;
+			}
+			WalkLine::Other(i) => {
+				let line = canon_lines[i];
+				(
+					i,
+					line_identity_at(line, None),
+					line.trim_start().starts_with('#'),
+				)
+			}
+			WalkLine::Setting {
+				index,
+				ref path,
+				active,
+				..
+			} => {
+				let line = canon_lines[index];
+				(index, line_identity_at(line, Some(path)), !active)
+			}
+		};
+		let mut emit: &str = canon_lines[index];
+		if let Some(offset) = prior[at..].iter().position(|(pid, _, _)| *pid == id) {
+			let (_, verbatim, had_blank) = prior[at + offset];
+			if had_blank && !prev_blank {
 				out.push('\n');
 			}
-			prev_blank = true;
-			continue;
-		}
-		let id = line_identity(line);
-		if let Some(offset) = prior[at..].iter().position(|(pid, _)| *pid == id) {
-			if prior[at + offset].1 && !prev_blank {
-				out.push('\n');
+			// a comment's indentation is the user's own; canonical re-pads it
+			// to whatever node it re-attached to, so put theirs back
+			if comment {
+				emit = verbatim;
 			}
 			at += offset + 1;
 		}
-		out.push_str(line);
+		out.push_str(emit);
 		out.push('\n');
 		prev_blank = false;
 	}
 	out
 }
 
-// What makes two lines "the same line" across a rewrite. A setting is its key
-// (so re-quoting or respacing a value still matches, commented or not);
-// anything else is its trimmed text.
-fn line_identity(line: &str) -> String {
-	line_setting_key(line).map_or_else(|| line.trim().to_string(), |key| format!("\0{key}"))
+// What makes two lines "the same line" across a rewrite. An active setting is
+// its full path (so re-quoting or respacing a value still matches); a commented
+// setting or plain comment is its trimmed text; anything else likewise.
+fn line_identity_at(line: &str, path: Option<&str>) -> String {
+	let trimmed = line.trim_start();
+	if let Some(path) = path {
+		if !trimmed.starts_with('#') {
+			return format!("\0{path}");
+		}
+	}
+	trimmed.to_string()
 }
 
 // Write `doc` back to `path`, restoring the blank-line grouping of what was there.
@@ -457,61 +611,61 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	}
 
 	if s.use_system_font != orig.use_system_font {
-		doc.set_bool("use_system_font", s.use_system_font);
+		doc.set_bool("font.use_system_family", s.use_system_font);
 	}
 	if s.use_system_font_size != orig.use_system_font_size {
-		doc.set_bool("use_system_font_size", s.use_system_font_size);
+		doc.set_bool("font.use_system_size", s.use_system_font_size);
 	}
 	if s.font_family != orig.font_family {
 		if let Some(f) = &s.font_family {
-			doc.set_string("font_family", f);
+			doc.set_string("font.family", f);
 		}
 	}
 	if s.font_size != orig.font_size {
-		doc.set_float("font_size", r(s.font_size));
+		doc.set_float("font.size", r(s.font_size));
 	}
 	if s.line_height_scale != orig.line_height_scale {
-		doc.set_float("line_height_scale", r(s.line_height_scale));
+		doc.set_float("font.line_height_scale", r(s.line_height_scale));
 	}
 	if s.scrollback != orig.scrollback {
-		doc.set_int("scrollback", s.scrollback as i64);
+		doc.set_int("scroll.scrollback", s.scrollback as i64);
 	}
 	if s.scroll_tau_ms != orig.scroll_tau_ms {
-		doc.set_float("scroll_tau_ms", r(s.scroll_tau_ms));
+		doc.set_float("scroll.tau_ms", r(s.scroll_tau_ms));
 	}
 	if s.wheel_lines != orig.wheel_lines {
-		doc.set_float("wheel_lines", r(s.wheel_lines));
+		doc.set_float("scroll.wheel_lines", r(s.wheel_lines));
 	}
 	if s.alt_scroll_lines != orig.alt_scroll_lines {
-		doc.set_float("alt_scroll_lines", r(s.alt_scroll_lines));
+		doc.set_float("scroll.alt_scroll_lines", r(s.alt_scroll_lines));
 	}
 	if s.output_ease_lines != orig.output_ease_lines {
-		doc.set_float("output_ease_lines", r(s.output_ease_lines));
+		doc.set_float("scroll.output_ease_lines", r(s.output_ease_lines));
 	}
 	if s.margin != orig.margin {
-		doc.set_float("margin", r(s.margin));
+		doc.set_float("window.margin", r(s.margin));
 	}
 	if s.opacity != orig.opacity {
-		doc.set_float("opacity", r(s.opacity));
+		doc.set_float("transparency.opacity", r(s.opacity));
 	}
 	if s.transparent_background != orig.transparent_background {
-		doc.set_bool("transparent_background", s.transparent_background);
+		doc.set_bool("transparency.enabled", s.transparent_background);
 	}
 	if s.transparent_background_blur != orig.transparent_background_blur {
-		doc.set_bool("transparent_background_blur", s.transparent_background_blur);
+		doc.set_bool("transparency.blur_behind", s.transparent_background_blur);
 	}
 	if s.wallpaper_opacity != orig.wallpaper_opacity {
-		doc.set_float("wallpaper_opacity", r(s.wallpaper_opacity));
+		doc.set_float("wallpaper.opacity", r(s.wallpaper_opacity));
 	}
 	if s.wallpaper_enabled != orig.wallpaper_enabled {
-		doc.set_bool("wallpaper_enabled", s.wallpaper_enabled);
+		doc.set_bool("wallpaper.enabled", s.wallpaper_enabled);
 	}
 	if s.wallpaper_rotate_enabled != orig.wallpaper_rotate_enabled {
-		doc.set_bool("wallpaper_rotate_enabled", s.wallpaper_rotate_enabled);
+		doc.set_bool("wallpaper.rotate.enabled", s.wallpaper_rotate_enabled);
 	}
 	if s.wallpaper_default_fit != orig.wallpaper_default_fit {
 		doc.set_string(
-			"wallpaper_default_fit",
+			"wallpaper.default_fit",
 			match s.wallpaper_default_fit {
 				Fit::Zoom => "zoom",
 				Fit::Stretch => "stretch",
@@ -519,108 +673,108 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 		);
 	}
 	if s.wallpaper_honor_xmp != orig.wallpaper_honor_xmp {
-		doc.set_bool("wallpaper_honor_xmp", s.wallpaper_honor_xmp);
+		doc.set_bool("wallpaper.honor_xmp", s.wallpaper_honor_xmp);
 	}
 	if s.wallpaper_blur != orig.wallpaper_blur {
-		doc.set_float("wallpaper_blur", r(s.wallpaper_blur));
+		doc.set_float("wallpaper.blur", r(s.wallpaper_blur));
 	}
 	if s.wallpaper_contrast_mask != orig.wallpaper_contrast_mask {
-		doc.set_bool("wallpaper_contrast_mask", s.wallpaper_contrast_mask);
+		doc.set_bool("wallpaper.contrast_mask.enabled", s.wallpaper_contrast_mask);
 	}
 	if s.wallpaper_contrast_mask_size != orig.wallpaper_contrast_mask_size {
 		doc.set_float(
-			"wallpaper_contrast_mask_size",
+			"wallpaper.contrast_mask.size",
 			r(s.wallpaper_contrast_mask_size),
 		);
 	}
 	if s.wallpaper_contrast_mask_strength != orig.wallpaper_contrast_mask_strength {
 		doc.set_float(
-			"wallpaper_contrast_mask_strength",
+			"wallpaper.contrast_mask.strength",
 			r(s.wallpaper_contrast_mask_strength),
 		);
 	}
 	if s.wallpaper_contrast_mask_auto != orig.wallpaper_contrast_mask_auto {
 		doc.set_float(
-			"wallpaper_contrast_mask_auto",
+			"wallpaper.contrast_mask.auto",
 			r(s.wallpaper_contrast_mask_auto),
 		);
 	}
 	if s.text_scrim != orig.text_scrim {
-		doc.set_bool("text_scrim", s.text_scrim);
+		doc.set_bool("text.scrim.enabled", s.text_scrim);
 	}
 	if s.text_scrim_radius != orig.text_scrim_radius {
-		doc.set_float("text_scrim_radius", r(s.text_scrim_radius));
+		doc.set_float("text.scrim.radius", r(s.text_scrim_radius));
 	}
 	if s.text_scrim_softness != orig.text_scrim_softness {
-		doc.set_float("text_scrim_softness", r(s.text_scrim_softness));
+		doc.set_float("text.scrim.softness", r(s.text_scrim_softness));
 	}
 	if s.text_outline != orig.text_outline {
-		doc.set_float("text_outline", r(s.text_outline));
+		doc.set_float("text.outline", r(s.text_outline));
 	}
 	if s.text_scrim_ramp != orig.text_scrim_ramp {
-		doc.set_string("text_scrim_ramp", &s.text_scrim_ramp);
+		doc.set_string("text.scrim.ramp", &s.text_scrim_ramp);
 	}
 	if s.text_scrim_function != orig.text_scrim_function {
-		doc.set_string("text_scrim_function", &s.text_scrim_function);
+		doc.set_string("text.scrim.function", &s.text_scrim_function);
 	}
 	if s.text_scrim_regular_weight != orig.text_scrim_regular_weight {
-		doc.set_bool("text_scrim_regular_weight", s.text_scrim_regular_weight);
+		doc.set_bool("text.scrim.regular_weight", s.text_scrim_regular_weight);
 	}
 	if s.color_emoji != orig.color_emoji {
-		doc.set_bool("color_emoji", s.color_emoji);
+		doc.set_bool("text.color_emoji", s.color_emoji);
 	}
 	if s.embolden_inverse != orig.embolden_inverse {
-		doc.set_bool("embolden_inverse", s.embolden_inverse);
+		doc.set_bool("text.embolden_inverse", s.embolden_inverse);
 	}
 	if s.cursor_scrim != orig.cursor_scrim {
-		doc.set_bool("cursor_scrim", s.cursor_scrim);
+		doc.set_bool("cursor.scrim", s.cursor_scrim);
 	}
 	if s.cursor_outline != orig.cursor_outline {
-		doc.set_bool("cursor_outline", s.cursor_outline);
+		doc.set_bool("cursor.outline", s.cursor_outline);
 	}
 	if s.columns != orig.columns {
-		doc.set_int("columns", s.columns as i64);
+		doc.set_int("window.columns", s.columns as i64);
 	}
 	if s.rows != orig.rows {
-		doc.set_int("rows", s.rows as i64);
+		doc.set_int("window.rows", s.rows as i64);
 	}
 	if s.remember_size != orig.remember_size {
-		doc.set_bool("remember_size", s.remember_size);
+		doc.set_bool("window.remember_size", s.remember_size);
 	}
 	if s.hide_single_tab != orig.hide_single_tab {
-		doc.set_bool("hide_single_tab", s.hide_single_tab);
+		doc.set_bool("window.hide_single_tab", s.hide_single_tab);
 	}
 	if s.remembered_columns != orig.remembered_columns {
-		doc.set_int("remembered_columns", s.remembered_columns as i64);
+		doc.set_int("window.remembered_columns", s.remembered_columns as i64);
 	}
 	if s.remembered_rows != orig.remembered_rows {
-		doc.set_int("remembered_rows", s.remembered_rows as i64);
+		doc.set_int("window.remembered_rows", s.remembered_rows as i64);
 	}
 	if s.word_separators != orig.word_separators {
-		doc.set_string("word_separators", &s.word_separators);
+		doc.set_string("selection.word_separators", &s.word_separators);
 	}
 	if s.selection_pairs != orig.selection_pairs {
-		doc.set_string("selection_pairs", &s.selection_pairs);
+		doc.set_string("selection.pairs", &s.selection_pairs);
 	}
 	if s.default_shell != orig.default_shell {
-		doc.set_string("default_shell", &s.default_shell);
+		doc.set_string("shell.default", &s.default_shell);
 	}
 	if s.command_line != orig.command_line {
-		doc.set_string("command_line", &s.command_line);
+		doc.set_string("shell.command_line", &s.command_line);
 	}
 	if s.copy_on_select != orig.copy_on_select {
-		doc.set_bool("copy_on_select", s.copy_on_select);
+		doc.set_bool("shell.copy_on_select", s.copy_on_select);
 	}
 	if s.wallpaper != orig.wallpaper || s.wallpaper_raw != orig.wallpaper_raw {
 		// the file keeps whatever form the user wrote (bare/relative/absolute)
 		if s.wallpaper_raw.trim().is_empty() {
-			doc.remove("wallpaper");
+			doc.remove("wallpaper.image");
 		} else {
-			doc.set_string("wallpaper", s.wallpaper_raw.trim());
+			doc.set_string("wallpaper.image", s.wallpaper_raw.trim());
 		}
 	}
 	if s.wallpaper_fallback_builtin != orig.wallpaper_fallback_builtin {
-		doc.set_bool("wallpaper_fallback_builtin", s.wallpaper_fallback_builtin);
+		doc.set_bool("wallpaper.fallback_builtin", s.wallpaper_fallback_builtin);
 	}
 
 	let mut set_color = |key: &str, color: [u8; 3], orig_color: [u8; 3]| {
@@ -769,12 +923,14 @@ fn load() -> Settings {
 			);
 		}
 	}
-	// Migrate an older config in place (rename/remove changed keys) then backfill
-	// any keys it's missing, so an updated config stays current without clobbering
-	// the user's existing values. These are the only launch-time writes, and each
-	// runs only when the program's own option set changed (a rename/removal, or a
-	// new option). Both writes defer (with an FYI) if the file looks open in
-	// another program.
+	// A pre-nesting config converts wholesale first (backed up to .bak, active
+	// values carried over). Then migrate an existing config in place
+	// (rename/remove changed keys) and backfill any keys it's missing, so an
+	// updated config stays current without clobbering the user's existing
+	// values. These are the only launch-time writes, and each runs only when
+	// the program's own option set changed. The in-place writes defer (with an
+	// FYI) if the file looks open in another program.
+	convert_legacy_config(&path);
 	migrate_config(&path);
 	backfill_config(&path);
 	let raw = match std::fs::read_to_string(&path) {
@@ -842,66 +998,66 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 	}
 	let r = Reader { doc, path };
 	RawConfig {
-		use_system_font: r.b("use_system_font"),
-		use_system_font_size: r.b("use_system_font_size"),
-		font_family: r.s("font_family"),
-		font_size: r.f("font_size"),
-		line_height_scale: r.f("line_height_scale"),
-		scrollback: r.u("scrollback"),
-		scroll_tau_ms: r.f("scroll_tau_ms"),
-		wheel_lines: r.f("wheel_lines"),
-		alt_scroll_lines: r.f("alt_scroll_lines"),
-		output_ease_lines: r.f("output_ease_lines"),
-		smooth_scroll_apps: r.b("smooth_scroll_apps"),
-		margin: r.f("margin"),
-		opacity: r.f("opacity"),
-		transparent_background: r.b("transparent_background"),
-		transparent_background_blur: r.b("transparent_background_blur"),
-		wallpaper_enabled: r.b("wallpaper_enabled"),
-		wallpaper: r.s("wallpaper"),
-		wallpaper_fallback_builtin: r.b("wallpaper_fallback_builtin"),
-		wallpaper_rotate_enabled: r.b("wallpaper_rotate_enabled"),
-		wallpaper_folder: r.s("wallpaper_folder"),
-		wallpaper_rotate_random: r.b("wallpaper_rotate_random"),
-		wallpaper_rotate_interval_s: r.f("wallpaper_rotate_interval_s"),
-		wallpaper_opacity: r.f("wallpaper_opacity"),
-		wallpaper_default_fit: r.s("wallpaper_default_fit"),
-		wallpaper_honor_xmp: r.b("wallpaper_honor_xmp"),
-		wallpaper_blur: r.f("wallpaper_blur"),
-		wallpaper_contrast_mask: r.b("wallpaper_contrast_mask"),
-		wallpaper_contrast_mask_size: r.f("wallpaper_contrast_mask_size"),
-		wallpaper_contrast_mask_strength: r.f("wallpaper_contrast_mask_strength"),
-		wallpaper_contrast_mask_auto: r.f("wallpaper_contrast_mask_auto"),
+		use_system_font: r.b("font.use_system_family"),
+		use_system_font_size: r.b("font.use_system_size"),
+		font_family: r.s("font.family"),
+		font_size: r.f("font.size"),
+		line_height_scale: r.f("font.line_height_scale"),
+		scrollback: r.u("scroll.scrollback"),
+		scroll_tau_ms: r.f("scroll.tau_ms"),
+		wheel_lines: r.f("scroll.wheel_lines"),
+		alt_scroll_lines: r.f("scroll.alt_scroll_lines"),
+		output_ease_lines: r.f("scroll.output_ease_lines"),
+		smooth_scroll_apps: r.b("scroll.smooth_apps"),
+		margin: r.f("window.margin"),
+		opacity: r.f("transparency.opacity"),
+		transparent_background: r.b("transparency.enabled"),
+		transparent_background_blur: r.b("transparency.blur_behind"),
+		wallpaper_enabled: r.b("wallpaper.enabled"),
+		wallpaper: r.s("wallpaper.image"),
+		wallpaper_fallback_builtin: r.b("wallpaper.fallback_builtin"),
+		wallpaper_rotate_enabled: r.b("wallpaper.rotate.enabled"),
+		wallpaper_folder: r.s("wallpaper.rotate.folder"),
+		wallpaper_rotate_random: r.b("wallpaper.rotate.random"),
+		wallpaper_rotate_interval_s: r.f("wallpaper.rotate.interval_s"),
+		wallpaper_opacity: r.f("wallpaper.opacity"),
+		wallpaper_default_fit: r.s("wallpaper.default_fit"),
+		wallpaper_honor_xmp: r.b("wallpaper.honor_xmp"),
+		wallpaper_blur: r.f("wallpaper.blur"),
+		wallpaper_contrast_mask: r.b("wallpaper.contrast_mask.enabled"),
+		wallpaper_contrast_mask_size: r.f("wallpaper.contrast_mask.size"),
+		wallpaper_contrast_mask_strength: r.f("wallpaper.contrast_mask.strength"),
+		wallpaper_contrast_mask_auto: r.f("wallpaper.contrast_mask.auto"),
 		theme: r.s("theme"),
 		theme_mode: r.s("theme_mode"),
-		text_scrim: r.b("text_scrim"),
-		text_scrim_radius: r.f("text_scrim_radius"),
-		text_scrim_softness: r.f("text_scrim_softness"),
-		text_outline: r.f("text_outline"),
-		text_scrim_ramp: r.s("text_scrim_ramp"),
-		text_scrim_function: r.s("text_scrim_function"),
-		text_scrim_regular_weight: r.b("text_scrim_regular_weight"),
-		color_emoji: r.b("color_emoji"),
-		embolden_inverse: r.b("embolden_inverse"),
-		cursor_scrim: r.b("cursor_scrim"),
-		cursor_outline: r.b("cursor_outline"),
-		cursor_size_height: r.f("cursor_size_height"),
-		cursor_size_width: r.f("cursor_size_width"),
-		cursor_animation: r.s("cursor_animation"),
-		cursor_animation_resume_s: r.f("cursor_animation_resume_s"),
-		cursor_animation_idle_stop_s: r.f("cursor_animation_idle_stop_s"),
-		cursor_blink_rate_ms: r.f("cursor_blink_rate_ms"),
-		columns: r.u("columns"),
-		rows: r.u("rows"),
-		remember_size: r.b("remember_size"),
-		hide_single_tab: r.b("hide_single_tab"),
-		remembered_columns: r.u("remembered_columns"),
-		remembered_rows: r.u("remembered_rows"),
-		word_separators: r.s("word_separators"),
-		selection_pairs: r.s("selection_pairs"),
-		default_shell: r.s("default_shell"),
-		command_line: r.s("command_line"),
-		copy_on_select: r.b("copy_on_select"),
+		text_scrim: r.b("text.scrim.enabled"),
+		text_scrim_radius: r.f("text.scrim.radius"),
+		text_scrim_softness: r.f("text.scrim.softness"),
+		text_outline: r.f("text.outline"),
+		text_scrim_ramp: r.s("text.scrim.ramp"),
+		text_scrim_function: r.s("text.scrim.function"),
+		text_scrim_regular_weight: r.b("text.scrim.regular_weight"),
+		color_emoji: r.b("text.color_emoji"),
+		embolden_inverse: r.b("text.embolden_inverse"),
+		cursor_scrim: r.b("cursor.scrim"),
+		cursor_outline: r.b("cursor.outline"),
+		cursor_size_height: r.f("cursor.size.height"),
+		cursor_size_width: r.f("cursor.size.width"),
+		cursor_animation: r.s("cursor.animation"),
+		cursor_animation_resume_s: r.f("cursor.animation_resume_s"),
+		cursor_animation_idle_stop_s: r.f("cursor.animation_idle_stop_s"),
+		cursor_blink_rate_ms: r.f("cursor.blink_rate_ms"),
+		columns: r.u("window.columns"),
+		rows: r.u("window.rows"),
+		remember_size: r.b("window.remember_size"),
+		hide_single_tab: r.b("window.hide_single_tab"),
+		remembered_columns: r.u("window.remembered_columns"),
+		remembered_rows: r.u("window.remembered_rows"),
+		word_separators: r.s("selection.word_separators"),
+		selection_pairs: r.s("selection.pairs"),
+		default_shell: r.s("shell.default"),
+		command_line: r.s("shell.command_line"),
+		copy_on_select: r.b("shell.copy_on_select"),
 		colors: RawColors {
 			background: r.s("colors.background"),
 			foreground: r.s("colors.foreground"),
@@ -1236,15 +1392,9 @@ pub fn resolve_wallpaper_folder(explicit: Option<String>) -> Option<PathBuf> {
 // script looping on --reset-config stops piling up files instead of forever.
 const BACKUPS_MAX: u32 = 99;
 
-// Move the config aside so the next load writes a fresh one from the template.
-// The old file is kept, not deleted, under the first free `.bak` name - so
-// resetting twice never overwrites the copy from the first time. Returns where
-// it went, or None if there was nothing to move.
-pub fn reset_config() -> Option<PathBuf> {
-	let path = config_path()?;
-	if !path.exists() {
-		return None;
-	}
+// Move a config aside to the first free `.bak` name - so doing it twice never
+// overwrites the copy from the first time. Returns where it went.
+fn backup_aside(path: &std::path::Path) -> Option<PathBuf> {
 	let name = path.file_name()?.to_string_lossy().into_owned();
 	let backup = (1u32..=BACKUPS_MAX)
 		.map(|n| match n {
@@ -1259,13 +1409,24 @@ pub fn reset_config() -> Option<PathBuf> {
 		);
 		return None;
 	};
-	match std::fs::rename(&path, &backup) {
+	match std::fs::rename(path, &backup) {
 		Ok(()) => Some(backup),
 		Err(e) => {
-			eprintln!("{APP_NAME}: could not reset {}: {e}", path.display());
+			eprintln!("{APP_NAME}: could not move {} aside: {e}", path.display());
 			None
 		}
 	}
+}
+
+// Move the config aside so the next load writes a fresh one from the template.
+// The old file is kept, not deleted. Returns where it went, or None if there
+// was nothing to move.
+pub fn reset_config() -> Option<PathBuf> {
+	let path = config_path()?;
+	if !path.exists() {
+		return None;
+	}
+	backup_aside(&path)
 }
 
 // Where the wallpaper shuffle keeps its recently-shown list. Beside the config,
@@ -1304,14 +1465,18 @@ fn default_wallpaper_folder() -> Option<PathBuf> {
 // A config file's settings as (key, original-line). Nested settings are written
 // in dotted form, so a key like "colors.focus" needs no table context.
 // Recognizes both active (`k: ...`) and commented (`# k: ...`) lines.
+// Every setting line of `text` as (full path, verbatim line), commented ones
+// included - the walker resolves nesting, so a `# height: 100` two levels down
+// comes back as "cursor.size.height".
 fn setting_lines(text: &str) -> Vec<(String, String)> {
-	let mut out = Vec::new();
-	for line in text.lines() {
-		if let Some(key) = line_setting_key(line) {
-			out.push((key.to_string(), line.to_string()));
-		}
-	}
-	out
+	let lines: Vec<&str> = text.lines().collect();
+	walk_settings(text)
+		.into_iter()
+		.filter_map(|w| match w {
+			WalkLine::Setting { index, path, .. } => Some((path, lines[index].to_string())),
+			_ => None,
+		})
+		.collect()
 }
 
 // Like `setting_lines`, but each setting carries the contiguous comment lines
@@ -1319,29 +1484,34 @@ fn setting_lines(text: &str) -> Vec<(String, String)> {
 // precedes it in the template. Backfill uses this to keep a template group's
 // settings together (no internal blank) while separating groups by a blank line.
 fn setting_groups(text: &str) -> Vec<(String, Vec<String>, bool)> {
+	let lines: Vec<&str> = text.lines().collect();
 	let mut pending: Vec<String> = Vec::new();
 	let mut group_break = true; // the first setting begins a group
 	let mut out = Vec::new();
-	for line in text.lines() {
-		if let Some(key) = line_setting_key(line) {
-			let mut block = std::mem::take(&mut pending);
-			block.push(line.to_string());
-			out.push((key.to_string(), block, group_break));
-			group_break = false;
-		} else if line.trim().is_empty() {
-			pending.clear();
-			group_break = true;
-		} else if line.trim_start().starts_with('#') {
-			pending.push(line.to_string());
-		} else {
-			pending.clear();
+	for w in walk_settings(text) {
+		match w {
+			WalkLine::Setting { index, path, .. } => {
+				let mut block = std::mem::take(&mut pending);
+				block.push(lines[index].to_string());
+				out.push((path, block, group_break));
+				group_break = false;
+			}
+			WalkLine::Blank => {
+				pending.clear();
+				group_break = true;
+			}
+			WalkLine::Other(index) if lines[index].trim_start().starts_with('#') => {
+				pending.push(lines[index].to_string());
+			}
+			_ => pending.clear(),
 		}
 	}
 	out
 }
 
 // The key of a settings line, active or commented-out. Dots are part of the key
-// ("colors.foreground"), so a nested setting stays one self-contained line.
+// ("colors.foreground"), so a dotted setting stays one self-contained line; the
+// walker supplies the enclosing-block context for truly nested ones.
 fn line_setting_key(line: &str) -> Option<&str> {
 	let trimmed = line.trim_start();
 	let trimmed = trimmed.strip_prefix('#').map_or(trimmed, str::trim_start);
@@ -1354,73 +1524,283 @@ fn line_setting_key(line: &str) -> Option<&str> {
 	trimmed[end..].trim_start().starts_with(':').then_some(key)
 }
 
-// Keys that were renamed across versions (old -> new). A rename copies the value
-// and preserves the comment/active state; if the new key is already present the
-// old one is just dropped.
-const CONFIG_RENAMES: &[(&str, &str)] = &[
-	("cursor_size_vertical", "cursor_size_height"),
-	("cursor_size_horizontal", "cursor_size_width"),
-	("text_glow_border", "text_outline"),
-	("text_glow", "text_scrim"),
-	("text_glow_radius", "text_scrim_radius"),
-	("text_glow_softness", "text_scrim_softness"),
-	("text_glow_ramp", "text_scrim_ramp"),
-	("text_glow_regular_weight", "text_scrim_regular_weight"),
-	("cursor_glow", "cursor_scrim"),
-	("background_image", "wallpaper"),
-	("background_folder", "wallpaper_folder"),
-	("background_default", "wallpaper_fallback_builtin"),
-	("background_fit", "wallpaper_default_fit"),
-	("background_blur", "wallpaper_blur"),
-	("background_opacity", "wallpaper_opacity"),
-	("background_rotate_random", "wallpaper_rotate_random"),
-	(
-		"background_rotate_interval_s",
-		"wallpaper_rotate_interval_s",
-	),
-	("wallpaper_default", "wallpaper_fallback_builtin"),
-	("wallpaper_fit", "wallpaper_default_fit"),
-	("background_contrast_mask", "wallpaper_contrast_mask"),
-	(
-		"background_contrast_mask_size",
-		"wallpaper_contrast_mask_size",
-	),
-	(
-		"background_contrast_mask_strength",
-		"wallpaper_contrast_mask_strength",
-	),
-	(
-		"background_contrast_mask_auto",
-		"wallpaper_contrast_mask_auto",
-	),
-];
-// Keys that no longer exist and should be removed from an existing config. The
-// cursor_shape/cursor_blink_style/cursor_insert_shape line was superseded by the
-// cursor_size_*/cursor_animation/cursor_blink_rate_ms geometry+animation model.
-const CONFIG_REMOVED: &[&str] = &[
-	"cursor_overwrite_shape",
-	"cursor_insert_shape",
-	"cursor_blink",
-	"cursor_shape",
-	"cursor_blink_style",
-	// superseded by cursor_animation_resume_s/_idle_stop_s: the animation now
-	// always pauses on input ("continuous" is a source-level escape hatch only)
-	"cursor_animation_input",
+// Paths that were renamed across versions (old -> new). A rename rewrites the
+// key on its line, preserving the comment/active state; if the new path is
+// already present the old one is just dropped. Renames must stay within the
+// same parent block - the machinery rewrites the line in place, it does not
+// move lines between blocks. (The whole pre-nesting flat namespace is handled
+// separately by `convert_legacy_config`, not here.)
+const CONFIG_RENAMES: &[(&str, &str)] = &[];
+// Paths that no longer exist and should be removed from an existing config.
+const CONFIG_REMOVED: &[&str] = &[];
+
+// Defaults that changed, as (path, the value that used to be the default). An
+// existing config carries the template's commented lines verbatim, so after a
+// default changes those lines quietly describe the old behaviour. A commented
+// line matching the outgoing default is refreshed to the current template line.
+// An ACTIVE line is never touched: that value is the user's own choice, and it
+// keeps working exactly as they set it. NOTE: the stored value is the raw
+// post-colon text, trailing `## Default` marker included.
+const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[];
+
+// The whole pre-nesting flat namespace, old key -> new nested path. Primary
+// (most recent flat) names first; still-older aliases after, so when a config
+// somehow carries both spellings the newer one wins. `colors.*` map to
+// themselves - the path didn't change, but active overrides still carry over.
+#[rustfmt::skip]
+const LEGACY_KEYS: &[(&str, &str)] = &[
+	("use_system_font", "font.use_system_family"),
+	("use_system_font_size", "font.use_system_size"),
+	("font_family", "font.family"),
+	("font_size", "font.size"),
+	("line_height_scale", "font.line_height_scale"),
+	("margin", "window.margin"),
+	("columns", "window.columns"),
+	("rows", "window.rows"),
+	("remember_size", "window.remember_size"),
+	("remembered_columns", "window.remembered_columns"),
+	("remembered_rows", "window.remembered_rows"),
+	("hide_single_tab", "window.hide_single_tab"),
+	("transparent_background", "transparency.enabled"),
+	("opacity", "transparency.opacity"),
+	("transparent_background_blur", "transparency.blur_behind"),
+	("wallpaper_enabled", "wallpaper.enabled"),
+	("wallpaper", "wallpaper.image"),
+	("wallpaper_fallback_builtin", "wallpaper.fallback_builtin"),
+	("wallpaper_rotate_enabled", "wallpaper.rotate.enabled"),
+	("wallpaper_folder", "wallpaper.rotate.folder"),
+	("wallpaper_rotate_interval_s", "wallpaper.rotate.interval_s"),
+	("wallpaper_rotate_random", "wallpaper.rotate.random"),
+	("wallpaper_opacity", "wallpaper.opacity"),
+	("wallpaper_default_fit", "wallpaper.default_fit"),
+	("wallpaper_honor_xmp", "wallpaper.honor_xmp"),
+	("wallpaper_blur", "wallpaper.blur"),
+	("wallpaper_contrast_mask", "wallpaper.contrast_mask.enabled"),
+	("wallpaper_contrast_mask_size", "wallpaper.contrast_mask.size"),
+	("wallpaper_contrast_mask_strength", "wallpaper.contrast_mask.strength"),
+	("wallpaper_contrast_mask_auto", "wallpaper.contrast_mask.auto"),
+	("text_scrim", "text.scrim.enabled"),
+	("text_scrim_radius", "text.scrim.radius"),
+	("text_scrim_softness", "text.scrim.softness"),
+	("text_scrim_function", "text.scrim.function"),
+	("text_scrim_ramp", "text.scrim.ramp"),
+	("text_scrim_regular_weight", "text.scrim.regular_weight"),
+	("text_outline", "text.outline"),
+	("color_emoji", "text.color_emoji"),
+	("embolden_inverse", "text.embolden_inverse"),
+	("cursor_scrim", "cursor.scrim"),
+	("cursor_outline", "cursor.outline"),
+	("cursor_size_height", "cursor.size.height"),
+	("cursor_size_width", "cursor.size.width"),
+	("cursor_animation", "cursor.animation"),
+	("cursor_animation_resume_s", "cursor.animation_resume_s"),
+	("cursor_animation_idle_stop_s", "cursor.animation_idle_stop_s"),
+	("cursor_blink_rate_ms", "cursor.blink_rate_ms"),
+	("word_separators", "selection.word_separators"),
+	("selection_pairs", "selection.pairs"),
+	("default_shell", "shell.default"),
+	("command_line", "shell.command_line"),
+	("copy_on_select", "shell.copy_on_select"),
+	("scrollback", "scroll.scrollback"),
+	("scroll_tau_ms", "scroll.tau_ms"),
+	("wheel_lines", "scroll.wheel_lines"),
+	("alt_scroll_lines", "scroll.alt_scroll_lines"),
+	("output_ease_lines", "scroll.output_ease_lines"),
+	("smooth_scroll_apps", "scroll.smooth_apps"),
+	// still-older spellings (pre-rename vintages), lowest precedence
+	("cursor_size_vertical", "cursor.size.height"),
+	("cursor_size_horizontal", "cursor.size.width"),
+	("text_glow", "text.scrim.enabled"),
+	("text_glow_radius", "text.scrim.radius"),
+	("text_glow_softness", "text.scrim.softness"),
+	("text_glow_ramp", "text.scrim.ramp"),
+	("text_glow_regular_weight", "text.scrim.regular_weight"),
+	("text_glow_border", "text.outline"),
+	("cursor_glow", "cursor.scrim"),
+	("background_image", "wallpaper.image"),
+	("background_folder", "wallpaper.rotate.folder"),
+	("background_default", "wallpaper.fallback_builtin"),
+	("wallpaper_default", "wallpaper.fallback_builtin"),
+	("background_fit", "wallpaper.default_fit"),
+	("wallpaper_fit", "wallpaper.default_fit"),
+	("background_blur", "wallpaper.blur"),
+	("background_opacity", "wallpaper.opacity"),
+	("background_rotate_random", "wallpaper.rotate.random"),
+	("background_rotate_interval_s", "wallpaper.rotate.interval_s"),
+	("background_contrast_mask", "wallpaper.contrast_mask.enabled"),
+	("background_contrast_mask_size", "wallpaper.contrast_mask.size"),
+	("background_contrast_mask_strength", "wallpaper.contrast_mask.strength"),
+	("background_contrast_mask_auto", "wallpaper.contrast_mask.auto"),
 ];
 
-// Defaults that changed, as (key, the value that used to be the default). An
-// existing config carries the template's commented lines verbatim, so after a
-// default changes those lines quietly describe the old behaviour - a line
-// reading `# cursor_size_width: 25` next to a cursor that is now a block. A
-// commented line matching the outgoing default is refreshed to the current one.
-// An ACTIVE line is never touched: that value is the user's own choice, and it
-// keeps working exactly as they set it.
-const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
-	("cursor_size_width", "25"),
-	("wallpaper_rotate_random", "false"),
-	("cursor_animation_resume_s", "2"),
-	("wallpaper_folder", "\"wallpapers\""),
-];
+// A carried value keeps its exact spelling but not an old trailing comment -
+// the new template's comments describe the setting already. `#` inside a
+// quoted value (every colour) survives.
+fn strip_trailing_comment(value: &str) -> &str {
+	let mut quote: Option<char> = None;
+	let mut escaped = false;
+	for (at, c) in value.char_indices() {
+		if escaped {
+			escaped = false;
+			continue;
+		}
+		match c {
+			'\\' => escaped = true,
+			'"' | '\'' => match quote {
+				Some(q) if q == c => quote = None,
+				None => quote = Some(c),
+				_ => {}
+			},
+			'#' if quote.is_none() => return value[..at].trim_end(),
+			_ => {}
+		}
+	}
+	value
+}
+
+// Rewrite the template line for `path` as an active assignment of `value`,
+// keeping the template's own indentation and key spelling.
+fn activate_line(lines: &mut [String], path: &str, value: &str) -> bool {
+	let text = lines.join("\n");
+	for w in walk_settings(&text) {
+		if let WalkLine::Setting { index, path: p, .. } = w {
+			if p == path {
+				let line = &lines[index];
+				let trimmed = line.trim_start();
+				let indent = &line[..line.len() - trimmed.len()];
+				let Some(key) = line_setting_key(line) else {
+					return false;
+				};
+				lines[index] = format!("{indent}{key}: {value}");
+				return true;
+			}
+		}
+	}
+	false
+}
+
+// One-time conversion of a pre-nesting config: the flat `wallpaper_*`-style
+// namespace became nested blocks, and rewriting that in place would shred the
+// old file's comments and grouping. Instead the old file is moved aside to a
+// `.bak` and a fresh template is written with every ACTIVE old value carried
+// over to its new path - settings survive, and the file's documentation is
+// current instead of half-old. Unknown `themes.*` subtrees (user data for a
+// future feature) are carried verbatim in dotted form.
+fn convert_legacy_config(path: &std::path::Path) {
+	let Ok(text) = std::fs::read_to_string(path) else {
+		return;
+	};
+	let lines: Vec<&str> = text.lines().collect();
+	let walked = walk_settings(&text);
+	// Only an ACTIVE flat key marks a file as legacy: any real old config has
+	// several (the template shipped with them), while a comment that merely
+	// spells an old name - e.g. one a relayouted save left at column 0 - must
+	// never nuke a current-format file.
+	let legacy = walked.iter().any(|w| {
+		matches!(w, WalkLine::Setting { path: p, header: false, active: true, .. }
+			if !p.contains('.') && LEGACY_KEYS.iter().any(|(old, _)| old == p))
+	});
+	if !legacy {
+		return;
+	}
+
+	// active values: current-format paths carry as themselves (a mixed file
+	// loses nothing), old spellings map through the table, best (lowest table
+	// index) spelling winning per new path
+	let known_new: std::collections::HashSet<String> = setting_lines(DEFAULT_CONFIG)
+		.into_iter()
+		.map(|(p, _)| p)
+		.collect();
+	let mut carry: std::collections::HashMap<String, (usize, String)> =
+		std::collections::HashMap::new();
+	let mut extras: Vec<String> = Vec::new();
+	let mut had_font_family = false;
+	let mut had_use_system = false;
+	for w in &walked {
+		let WalkLine::Setting {
+			index,
+			path: p,
+			active,
+			header,
+		} = w
+		else {
+			continue;
+		};
+		if !active || *header {
+			continue;
+		}
+		let Some(value) = line_setting_value(lines[*index]) else {
+			continue;
+		};
+		let value = strip_trailing_comment(value).trim();
+		if value.is_empty() {
+			continue;
+		}
+		if p == "use_system_font" {
+			had_use_system = true;
+		}
+		if p == "font_family" {
+			had_font_family = true;
+		}
+		let target = if known_new.contains(p) {
+			Some((0, p.clone()))
+		} else {
+			LEGACY_KEYS
+				.iter()
+				.position(|(old, _)| old == p)
+				.map(|rank| (rank + 1, LEGACY_KEYS[rank].1.to_string()))
+		};
+		if let Some((rank, new)) = target {
+			let slot = carry.entry(new).or_insert((rank, value.to_string()));
+			if rank < slot.0 {
+				*slot = (rank, value.to_string());
+			}
+		} else if p.starts_with("themes.") {
+			extras.push(format!("{p}: {value}"));
+		}
+		// anything else: dropped from the new file, still in the .bak
+	}
+	// Old semantics: no use_system_font line + an explicit font_family meant
+	// "use that font" - keep meaning that, not the new template's default.
+	if had_font_family && !had_use_system {
+		carry
+			.entry("font.use_system_family".to_string())
+			.or_insert((usize::MAX, "false".to_string()));
+	}
+
+	if config_open_elsewhere(path) {
+		note_config_busy(path);
+		return;
+	}
+	let Some(backup) = backup_aside(path) else {
+		return;
+	};
+	let mut out: Vec<String> = DEFAULT_CONFIG.lines().map(str::to_string).collect();
+	for (new_path, (_, value)) in &carry {
+		if !activate_line(&mut out, new_path, value) {
+			// no template line (shouldn't happen) - keep it as a dotted line
+			extras.push(format!("{new_path}: {value}"));
+		}
+	}
+	if !extras.is_empty() {
+		out.push(String::new());
+		extras.sort();
+		out.extend(extras);
+	}
+	let mut joined = out.join("\n");
+	joined.push('\n');
+	if let Err(e) = std::fs::write(path, joined) {
+		eprintln!(
+			"{APP_NAME}: could not convert config {}: {e}",
+			path.display()
+		);
+		return;
+	}
+	eprintln!(
+		"{APP_NAME}: config converted to the new nested layout; the old file is kept at {}",
+		backup.display()
+	);
+}
 
 // Migrate an existing config in place across program updates: rename keys whose
 // name changed, drop keys that no longer exist. Preserves the user's values,
@@ -1512,86 +1892,79 @@ fn line_setting_value(line: &str) -> Option<&str> {
 }
 
 // Bring a commented line still echoing a superseded default up to the template's
-// current line for that key. Only a bare, exactly-matching value migrates, so an
+// current line for that path. Only a bare, exactly-matching value migrates, so an
 // edited value - or one trailing a note - stays as the user wrote it.
-fn refresh_superseded_default(line: &str) -> Option<String> {
+fn refresh_superseded_default(line: &str, path: &str) -> Option<String> {
 	if !line.trim_start().starts_with('#') {
 		return None; // active: the user's own value, leave it alone
 	}
-	let key = line_setting_key(line)?;
 	let old = SUPERSEDED_DEFAULTS
 		.iter()
-		.find_map(|(name, old)| (*name == key).then_some(*old))?;
+		.find_map(|(name, old)| (*name == path).then_some(*old))?;
 	if line_setting_value(line)? != old {
 		return None;
 	}
 	setting_lines(DEFAULT_CONFIG)
 		.into_iter()
-		.find(|(name, _)| name == key)
+		.find(|(name, _)| name == path)
 		.map(|(_, template)| template)
 		.filter(|template| template != line)
 }
 
-// The rename/remove transform, as a pure fn (testable). Returns Some(new text)
-// only if something changed.
+// The rename/remove/refresh transform, as a pure fn (testable). Returns
+// Some(new text) only if something changed.
 fn migrate_config_text(text: &str) -> Option<String> {
-	// new-key targets already present (active or commented): don't create a dup
-	let have_new: std::collections::HashSet<&str> = text
-		.lines()
-		.filter_map(line_setting_key)
-		.filter(|key| CONFIG_RENAMES.iter().any(|(_, new_name)| new_name == key))
-		.collect();
-
-	let has_key = |key: &str| {
-		text.lines()
-			.filter_map(line_setting_key)
-			.any(|existing| existing == key)
-	};
-	let active = |line: &str| !line.trim_start().starts_with('#');
+	let lines: Vec<&str> = text.lines().collect();
+	// full path per line index, for the lines that are settings
+	let mut path_of: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+	for w in walk_settings(text) {
+		if let WalkLine::Setting { index, path, .. } = w {
+			path_of.insert(index, path);
+		}
+	}
+	// rename targets already present (active or commented): don't create a dup
+	let have: std::collections::HashSet<&str> = path_of.values().map(String::as_str).collect();
 
 	let mut changed = false;
 	let mut out: Vec<String> = Vec::new();
-	let mut active_font_family: Option<usize> = None; // index in `out`, for the boolean migration
-	for line in text.lines() {
-		let mut kept = match line_setting_key(line) {
-			Some(key) if CONFIG_REMOVED.contains(&key) => {
+	for (index, line) in lines.iter().enumerate() {
+		let mut kept = match path_of.get(&index) {
+			Some(path) if CONFIG_REMOVED.contains(&path.as_str()) => {
 				changed = true;
 				continue; // drop
 			}
-			Some(key) => match CONFIG_RENAMES.iter().find(|(old, _)| *old == key) {
-				Some((_, new)) if !have_new.contains(new) => {
+			Some(path) => match CONFIG_RENAMES.iter().find(|(old, _)| old == path) {
+				Some((_, new)) if !have.contains(*new) => {
 					changed = true;
-					line.replacen(key, new, 1) // key is the first token
+					// the line spells the leaf (nested) or the full path
+					// (dotted); rewrite whichever token is actually there
+					let old_leaf = path.rsplit('.').next().unwrap_or(path);
+					let new_leaf = new.rsplit('.').next().unwrap_or(new);
+					let key = line_setting_key(line).unwrap_or(old_leaf);
+					let target = if key == *path { new } else { new_leaf };
+					line.replacen(key, target, 1)
 				}
 				Some(_) => {
 					changed = true;
-					continue; // new key already there; drop the old
+					continue; // new path already there; drop the old
 				}
-				None => line.to_string(),
+				None => (*line).to_string(),
 			},
-			None => line.to_string(),
+			None => (*line).to_string(),
 		};
-		if let Some(refreshed) = refresh_superseded_default(&kept) {
-			kept = refreshed;
-			changed = true;
-		}
-		if line_setting_key(&kept) == Some("font_family") && active(&kept) {
-			if let Some(refreshed) = refresh_font_stack(&kept) {
+		if let Some(path) = path_of.get(&index) {
+			if let Some(refreshed) = refresh_superseded_default(&kept, path) {
 				kept = refreshed;
 				changed = true;
 			}
-			active_font_family = Some(out.len());
+			if path == "font.family" && !kept.trim_start().starts_with('#') {
+				if let Some(refreshed) = refresh_font_stack(&kept) {
+					kept = refreshed;
+					changed = true;
+				}
+			}
 		}
 		out.push(kept);
-	}
-	// A config predating `use_system_font` that pinned an explicit font_family keeps
-	// that font: insert use_system_font: false so backfill won't add true (the
-	// default) and silently override it.
-	if let Some(idx) = active_font_family {
-		if !has_key("use_system_font") {
-			out.insert(idx + 1, "use_system_font: false".to_string());
-			changed = true;
-		}
 	}
 	changed.then(|| {
 		let mut joined = out.join("\n");
@@ -1642,66 +2015,75 @@ fn backfill_config(path: &std::path::Path) {
 	let Ok(text) = std::fs::read_to_string(path) else {
 		return;
 	};
-	let at: std::collections::HashMap<&str, usize> = text
-		.lines()
-		.enumerate()
-		.filter_map(|(index, line)| line_setting_key(line).map(|key| (key, index)))
-		.collect();
+	let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
 
 	let mut groups: Vec<Vec<(String, Vec<String>)>> = Vec::new();
-	for (key, block, new_group) in setting_groups(DEFAULT_CONFIG) {
+	for (p, block, new_group) in setting_groups(DEFAULT_CONFIG) {
 		if new_group || groups.is_empty() {
 			groups.push(Vec::new());
 		}
 		if let Some(group) = groups.last_mut() {
-			group.push((key, block));
+			group.push((p, block));
 		}
 	}
+	// template order of every path, for sibling anchoring across group bounds
+	let order: Vec<String> = groups.iter().flatten().map(|(p, _)| p.clone()).collect();
 
-	let mut add: Vec<String> = Vec::new(); // wholly-new groups, appended at the end
-	let mut put: Vec<(usize, usize, String)> = Vec::new(); // (line, slot, straggler)
+	let mut changed = false;
 	for group in &groups {
-		let present: Vec<usize> = (0..group.len())
-			.filter(|slot| at.contains_key(group[*slot].0.as_str()))
-			.collect();
-		if present.len() == group.len() {
+		// fresh view after any earlier insertion
+		let at = paths_at(&lines);
+		let present = group.iter().filter(|(p, _)| at.contains_key(p)).count();
+		if present == group.len() {
 			continue;
 		}
-		if present.is_empty() {
-			add.push(String::new()); // blank-line separator between groups
-			for (_, block) in group {
-				add.extend(block.iter().cloned());
+		if present == 0 {
+			// wholly-new group: comments and all, in template position
+			let block: Vec<String> = group.iter().flat_map(|(_, b)| b.iter().cloned()).collect();
+			match anchor_for(&group[0].0, &order, &at, &lines, true) {
+				Anchor::Before(index) => {
+					// separate from the next group's comment block below
+					lines.insert(index, String::new());
+					for (offset, line) in block.into_iter().enumerate() {
+						lines.insert(index + offset, line);
+					}
+				}
+				Anchor::After(index) => {
+					let mut insert = vec![String::new()];
+					insert.extend(block);
+					for (offset, line) in insert.into_iter().enumerate() {
+						lines.insert(index + 1 + offset, line);
+					}
+				}
+				Anchor::Append => {
+					lines.push(String::new());
+					lines.extend(block);
+				}
 			}
+			changed = true;
 			continue;
 		}
-		for (slot, (key, block)) in group.iter().enumerate() {
-			if at.contains_key(key.as_str()) {
+		// part-present group: the comments are already in the file next to the
+		// siblings, so re-appending them would duplicate the paragraph - put
+		// each straggler back beside its siblings, line only, template order
+		for (p, block) in group {
+			let at = paths_at(&lines);
+			if at.contains_key(p) {
 				continue;
 			}
 			let Some(line) = block.last() else { continue };
-			// hold the template's order among the siblings: before the next one
-			// present, or after the last one when this is the group's tail
-			let index = present.iter().find(|other| **other > slot).map_or_else(
-				|| present.last().map(|other| at[group[*other].0.as_str()] + 1),
-				|other| Some(at[group[*other].0.as_str()]),
-			);
-			if let Some(index) = index {
-				put.push((index, slot, line.clone()));
+			match anchor_for(p, &order, &at, &lines, false) {
+				Anchor::Before(index) => lines.insert(index, line.clone()),
+				Anchor::After(index) => lines.insert(index + 1, line.clone()),
+				Anchor::Append => lines.push(line.clone()),
 			}
+			changed = true;
 		}
 	}
-	if add.is_empty() && put.is_empty() {
+	if !changed {
 		return;
 	}
 
-	let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-	// back to front so the earlier line numbers stay valid; same-line stragglers
-	// go in reverse template order, which leaves them in template order
-	put.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-	for (index, _, line) in put {
-		lines.insert(index, line);
-	}
-	lines.extend(add);
 	let mut out = lines.join("\n");
 	out.push('\n');
 	if out != text {
@@ -1716,6 +2098,88 @@ fn backfill_config(path: &std::path::Path) {
 			);
 		}
 	}
+}
+
+// Path -> line index for the current file lines.
+fn paths_at(lines: &[String]) -> std::collections::HashMap<String, usize> {
+	let text = lines.join("\n");
+	walk_settings(&text)
+		.into_iter()
+		.filter_map(|w| match w {
+			WalkLine::Setting { index, path, .. } => Some((path, index)),
+			_ => None,
+		})
+		.collect()
+}
+
+enum Anchor {
+	Before(usize), // insert at this line index
+	After(usize),  // insert just after this line index
+	Append,        // end of file
+}
+
+// Where a missing template path belongs in the file: before the next present
+// template sibling (same parent), after the last present earlier sibling's
+// subtree, after the parent block header, or appended at the end. Whole-group
+// inserts back up over the next sibling's comment block so the new group lands
+// above it rather than splitting the comments from their setting.
+fn anchor_for(
+	p: &str,
+	order: &[String],
+	at: &std::collections::HashMap<String, usize>,
+	lines: &[String],
+	whole_group: bool,
+) -> Anchor {
+	let parent = p.rsplit_once('.').map_or("", |(head, _)| head);
+	let my_pos = order.iter().position(|o| o == p);
+	let siblings: Vec<&String> = order
+		.iter()
+		.filter(|o| o.as_str() != p && o.rsplit_once('.').map_or("", |(head, _)| head) == parent)
+		.collect();
+	if let Some(my_pos) = my_pos {
+		// next sibling in template order that the file has
+		let next = siblings.iter().find(|s| {
+			order
+				.iter()
+				.position(|o| o == **s)
+				.is_some_and(|pos| pos > my_pos)
+				&& at.contains_key(**s)
+		});
+		if let Some(next) = next {
+			let mut index = at[*next];
+			if whole_group {
+				// land above the sibling's own comment block, not inside it
+				while index > 0 && lines[index - 1].trim_start().starts_with('#') {
+					index -= 1;
+				}
+			}
+			return Anchor::Before(index);
+		}
+		// last earlier sibling present: insert after its whole subtree
+		let prev = siblings.iter().rev().find(|s| {
+			order
+				.iter()
+				.position(|o| o == **s)
+				.is_some_and(|pos| pos < my_pos)
+				&& at.contains_key(**s)
+		});
+		if let Some(prev) = prev {
+			let prefix = format!("{prev}.");
+			let end = at
+				.iter()
+				.filter(|(path, _)| *path == *prev || path.starts_with(&prefix))
+				.map(|(_, index)| *index)
+				.max()
+				.unwrap_or(at[*prev]);
+			return Anchor::After(end);
+		}
+	}
+	if !parent.is_empty() {
+		if let Some(index) = at.get(parent) {
+			return Anchor::After(*index);
+		}
+	}
+	Anchor::Append
 }
 
 // Set by `--config PATH` before any settings are read; overrides the default
@@ -1753,261 +2217,366 @@ const DEFAULT_CONFIG: &str = r##"# SilkTerm configuration file.
 #
 ## Delete this file to regenerate defaults.
 ## Convention: '## ' starts an explanatory comment; a single '# ' before a
-## `key: value` is a commented-out (disabled) setting you can uncomment.
-## This file is yours to edit: your values and comments are kept. Saving may
-## tidy layout (indentation, grouping), but never rewrites what you wrote.
-## A malformed line is skipped on its own rather than sinking the whole file.
-## On launch SilkTerm only adds options new to this version (and renames/removes
-## ones that changed) - and even that is skipped if the file looks open elsewhere.
+## `key: value` is a commented-out (disabled) setting you can uncomment - it
+## shows the built-in default. This file is yours to edit: your values and
+## comments are kept. Saving may tidy layout (indentation, grouping), but never
+## rewrites what you wrote. A malformed line is skipped on its own rather than
+## sinking the whole file. On launch SilkTerm only adds options new to this
+## version (and renames/removes ones that changed) - and even that is skipped
+## if the file looks open elsewhere.
 
-##=============================================================================
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Font
-##=============================================================================
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## Use the OS default monospace font FAMILY: put it at the head of the
-## font_family stack below. Turn off to start at font_family instead. Ignored
-## where the OS has no monospace setting to read (Windows has none).
-use_system_font: true
+font:
 
-## Use the OS default monospace font SIZE, overriding font_size below. Turn off
-## to size the font yourself. Ignored where the OS reports no size.
-# use_system_font_size: true
+	## System font face
+	## Use the OS default monospace font FAMILY: put it at the head of the family
+	## stack below. Turn off to start at family instead. Ignored where the OS has
+	## no monospace setting to read (Windows has none).
+	use_system_family: true
 
-## Font family: a comma-separated fallback stack, first installed one wins. The
-## same list is consulted on every platform; use_system_font above only decides
-## whether the OS font is tried ahead of it. Anything not installed is skipped,
-## and a built-in stack backs the whole list up.
-font_family: "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
+	## System font size
+	## Use the OS default monospace font SIZE, overriding size below. Turn off to
+	## size the font yourself. Ignored where the OS reports no size.
+	# use_system_size: true  ## Default
 
-## Font size in logical pixels. Used when use_system_font_size = false.
-# font_size: 17.0
+	## Font family
+	## A comma-separated fallback stack, first installed one wins. The same list
+	## is consulted on every platform; use_system_family above only decides
+	## whether the OS font is tried ahead of it. Anything not installed is
+	## skipped, and a built-in stack backs the whole list up.
+	family: "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
 
-## Line height as a multiple of the font's natural height (1.0 = tight).
-line_height_scale: 1.22
+	## Font size
+	## In logical pixels. Used when use_system_size is off.
+	## Range: 4.0 and up
+	# size: 17.0  ## Default
 
-##=============================================================================
+	## Line height
+	## As a multiple of the font's natural height.
+	## Range: 0.5 and up - 1.0 is tight, higher is airier
+	line_height_scale: 1.22
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Window
-##=============================================================================
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## Pixels between the text and the pane edge.
-margin: 8.0
+window:
 
-## Initial window size, in character cells (used when remember_size = false).
-columns: 160
-rows: 48
+	## Margin
+	## Pixels between the text and the pane edge.
+	margin: 8.0
 
-## Launch at the last window size instead of columns/rows (default on). The
-## remembered size is updated automatically whenever you resize the window (kept
-## separate from columns/rows so unchecking reverts to your defined size).
-# remember_size: true
-# remembered_columns: 160
-# remembered_rows: 48
+	## Initial window size
+	## In character cells. Used when remember_size is off.
+	columns: 160
+	rows: 48
 
-## Hide the tab bar while only one tab is open (also in the View menu).
-# hide_single_tab: false
+	## Remember last size
+	## Launch at the last window size instead of columns/rows. The remembered
+	## size updates automatically whenever you resize the window (kept separate
+	## from columns/rows so unchecking reverts to your defined size).
+	# remember_size: true  ## Default
+	# remembered_columns: 160  ## Default
+	# remembered_rows: 48  ## Default
 
-##=============================================================================
+	## Hide single tab
+	## Hide the tab bar while only one tab is open (also in the View menu).
+	# hide_single_tab: false  ## Default
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Background and transparency
-##=============================================================================
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## Transparency: when on, the terminal background (only - never the text, window
-## frame, or menus) becomes see-through, using `opacity` below as its alpha. The
-## code picks the method (per-pixel via a GL surface on X11; native elsewhere).
-# transparent_background: true
+transparency:
 
-## Background opacity, 0.0 (fully transparent) to 1.0 (opaque). Only takes effect
-## when `transparent_background` is on.
-opacity: 0.95
+	## Transparency
+	## When on, the terminal background (only - never the text, window frame, or
+	## menus) becomes see-through, using opacity below as its alpha. The code
+	## picks the method (per-pixel via a GL surface on X11; native elsewhere).
+	# enabled: true  ## Default
 
-## Ask the compositor to blur the desktop showing through the translucent
-## background ("frosted glass"); text stays crisp. Only honored by KWin and
-## picom-with-blur; on Compiz/GNOME it does nothing (enable blur in the
-## compositor instead). The compositor, not SilkTerm, controls the blur radius.
-# transparent_background_blur: true
+	## Background opacity
+	## Only takes effect when enabled above is on.
+	## Range: 0.0 to 1.0 - 0.0 is fully transparent, 1.0 is opaque
+	opacity: 0.95
 
-## Enable wallpaper - master override.
-# wallpaper_enabled: true
+	## Blur-behind
+	## Ask the compositor to blur the desktop showing through the translucent
+	## background ("frosted glass"); text stays crisp. Only honored by KWin and
+	## picom-with-blur; on Compiz/GNOME it does nothing (enable blur in the
+	## compositor instead). The compositor controls the blur radius.
+	# blur_behind: true  ## Default
 
-## Singular wallpaper image.
-## Leave commented to auto-detect wallpaper/wallpaper.{png,jpg,jpeg}
-## Value may be an absolute path or a filename relative here.
-# wallpaper: "wallpaper.png"
+wallpaper:
 
-## Show a built-in wallpaper when none is configured (no wallpaper found
-## above and no wallpaper_folder below).
-# wallpaper_fallback_builtin: true
+	## Wallpaper
+	## Master switch for the wallpaper image.
+	# enabled: true  ## Default
 
-## Rotate the wallpaper through a folder of images (overrides wallpaper while
-## set). Path is absolute or relative to this directory. Left commented, a
-## wallpaper/ dir here with images in it rotates on its own - unless `wallpaper`
-## above pins one, or one is given on the command line for that run.
-## Random picks avoid whatever came up recently, so runs feel varied rather than
-## repeating; set false for plain filename order. Interval 0 = only at launch.
-# wallpaper_rotate_enabled: true
-# wallpaper_folder: "wallpaper/"
-# wallpaper_rotate_interval_s: 0.0
-# wallpaper_rotate_random: true
+	## Wallpaper image
+	## A single pinned image. Leave commented to auto-detect
+	## wallpaper/wallpaper.{png,jpg,jpeg}. The value may be an absolute path or
+	## a filename relative to this directory.
+	# image: "wallpaper.png"  ## Default
 
-## Image visibility relative to the background color (independent of `opacity`
-## above): 0.0 = all background color, 1.0 = all image.
-# wallpaper_opacity: 0.10
+	## Built-in fallback
+	## Show a built-in wallpaper when none is configured (no image found above
+	## and no rotation folder below).
+	# fallback_builtin: true  ## Default
 
-## How the image fits when it has nothing to say for itself: "stretch" (fill,
-## ignore aspect) or "zoom" (cover, keep aspect, crop the overhang).
-# wallpaper_default_fit: "stretch"
+	## Rotation
+	## Rotate the wallpaper through a folder of images (overrides image while
+	## set). The folder is absolute or relative to this directory. Left
+	## commented, a wallpaper/ dir here with images in it rotates on its own -
+	## unless image above pins one, or one is given on the command line for that
+	## run. Random picks avoid whatever came up recently, so runs feel varied
+	## rather than repeating; set random false for plain filename order.
+	## Interval 0 means only at launch.
+	rotate:
+		# enabled: true  ## Default
+		# folder: "wallpaper/"  ## Default
+		# interval_s: 0.0  ## Default
+		# random: true  ## Default
 
-## Let a wallpaper carry its own layout in its XMP metadata, overriding the
-## default above per image. `wallpaper:Fit` is "stretch" or "zoom";
-## `wallpaper:Anchor` is "<horizontal>%, <vertical>%" (0% is left/top, 100% is
-## right/bottom) and picks which part of the image a zoom crop keeps. A photo
-## can then refuse to be squashed while a gradient still fills the window.
-# wallpaper_honor_xmp: true
+	## Image visibility
+	## How visible the image is against the background color (independent of the
+	## transparency opacity above).
+	## Range: 0.0 to 1.0 - 0.0 is all background color, 1.0 is all image
+	# opacity: 0.10  ## Default
 
-## Gaussian blur applied to the wallpaper (sigma in pixels; 0 = none).
-# wallpaper_blur: 10.0
+	## Default fit
+	## How the image fits when it has nothing to say for itself: "stretch"
+	## (fill, ignore aspect) or "zoom" (cover, keep aspect, crop the overhang).
+	# default_fit: "stretch"  ## Default
 
-## Contrast mask: flatten the wallpaper's contrast so it stops competing
-## with text. `size` is the flatten scale (1.0 = half the longest pixel
-## dimension, so the whole image collapses toward one tone; small = only fine
-## detail flattens). `strength` is how far each pixel is pulled toward that local
-## mean. `auto` blends the two manual knobs with values derived from the image's
-## own busyness (1.0 = full auto override, 0.0 = manual only, 0.5 = average).
-# wallpaper_contrast_mask: true
-# wallpaper_contrast_mask_size: 0.5
-# wallpaper_contrast_mask_strength: 0.5
-# wallpaper_contrast_mask_auto: 0.5
+	## Honor tags
+	## Let a wallpaper carry its own layout in its XMP metadata, overriding the
+	## default above per image. `wallpaper:Fit` is "stretch" or "zoom";
+	## `wallpaper:Anchor` is "<horizontal>%, <vertical>%" (0% is left/top, 100%
+	## is right/bottom) and picks which part of the image a zoom crop keeps. A
+	## photo can then refuse to be squashed while a gradient still fills the
+	## window.
+	# honor_xmp: true  ## Default
 
-##=============================================================================
-## Text scrim
-##=============================================================================
+	## Wallpaper blur
+	## Gaussian blur applied to the wallpaper (sigma in pixels; 0 = none).
+	## Range: 0.0 to 100.0
+	# blur: 10.0  ## Default
 
-## Text readability scrim: a blurry background-colored halo behind each glyph, so
-## text stays legible over a light/busy background or near-transparent terminal.
-## On by default; uncomment and set text_scrim = false to disable.
-# text_scrim: true
-# text_scrim_radius: 5.0     ## scrim halo radius in pixels
-# text_scrim_softness: 0.5   ## 0 = hard/solid scrim, 1 = soft/faint
-# text_outline: 2.0          ## antialiased outline around glyphs, in pixels (0 = none)
-# text_scrim_function: "sdf" ## halo shape: "sdf" (round, full corners), "dt", "dilate" (square), or "gaussian" (legacy, corners recede)
-# text_scrim_ramp: "gaussian" ## halo falloff curve: "exp", "gaussian", "log", "s", or "linear"
-# text_scrim_regular_weight: true  ## blur bold text at regular weight so its halo matches non-bold text
-# color_emoji: true          ## paint colour emoji (COLRv1); false renders them as monochrome outlines
-# embolden_inverse: true     ## render reverse-video (dark-on-light) text bold so it reads as strongly as normal
-# cursor_scrim: false        ## the cursor joins the scrim halo (default off)
-# cursor_outline: true       ## the cursor joins the text outline (default on)
+	## Contrast mask
+	## Flatten the wallpaper's contrast so it stops competing with text. size is
+	## the flatten scale (1.0 = half the longest pixel dimension, so the whole
+	## image collapses toward one tone; small = only fine detail flattens).
+	## strength is how far each pixel is pulled toward that local mean. auto
+	## blends the two manual knobs with values derived from the image's own
+	## busyness (1.0 = full auto override, 0.0 = manual only, 0.5 = average).
+	contrast_mask:
+		# enabled: true  ## Default
+		# size: 0.5  ## Default
+		# strength: 0.5  ## Default
+		# auto: 0.5  ## Default
 
-##=============================================================================
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Text
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+text:
+
+	## Text scrim
+	## A blurry background-colored halo behind each glyph, so text stays legible
+	## over a light/busy background or a near-transparent terminal. On by
+	## default; uncomment enabled and set it false to disable.
+	scrim:
+		# enabled: true  ## Default
+		## Halo radius in pixels.
+		# radius: 5.0  ## Default
+		## Range: 0.0 to 1.0 - 0.0 is hard/solid, 1.0 is soft/faint
+		# softness: 0.5  ## Default
+		## Halo shape: "sdf" (round, full corners), "dt", "dilate" (square), or
+		## "gaussian" (legacy, corners recede).
+		# function: "sdf"  ## Default
+		## Halo falloff curve: "exp", "gaussian", "log", "s", or "linear".
+		# ramp: "gaussian"  ## Default
+		## Blur bold text at regular weight so its halo matches non-bold text.
+		# regular_weight: true  ## Default
+
+	## Text outline
+	## Antialiased outline around glyphs, in pixels (0 = none).
+	## Range: 0.0 to 8.0
+	# outline: 2.0  ## Default
+
+	## Colour emoji
+	## Paint colour emoji (COLRv1); false renders them as monochrome outlines.
+	# color_emoji: true  ## Default
+
+	## Embolden inverse
+	## Render reverse-video (dark-on-light) text bold so it reads as strongly as
+	## normal text.
+	# embolden_inverse: true  ## Default
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Cursor
-##=============================================================================
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## Cursor size, as a percent of the cell: height grows from the bottom, width from
-## the left. Together they make any shape: a block (100 / 100), a thin bar
-## (100 / 25), or an underline (15 / 100). Used when the app doesn't set its
-## own; alt-screen apps (vim, less) still control theirs.
-# cursor_size_height: 100
-# cursor_size_width: 100
+cursor:
 
-## Cursor animation: "none" (steady), "phase" (smooth fade), or a pulse that
-## grows/shrinks each cycle - "pulse_vertical", "pulse_horizontal", "pulse_both".
-## The cursor always slides smoothly as you type.
-# cursor_animation: "pulse_vertical"
+	## Cursor size
+	## As a percent of the cell: height grows from the bottom, width from the
+	## left. Together they make any shape: a block (100 / 100), a thin bar
+	## (100 / 25), or an underline (15 / 100). Used when the app doesn't set its
+	## own; alt-screen apps (vim, less) still control theirs.
+	## Range: 1 to 100
+	size:
+		# height: 100  ## Default
+		# width: 100  ## Default
 
-## While you type, the animation glides to the cursor's full size and holds
-## there; it resumes this many seconds after input goes idle. Pausing and
-## resuming always happen at full size, so the cursor never jumps. This delay is
-## for typing only - a command's output holds the cursor still while it writes,
-## then hands it straight back when the prompt returns. Refocusing the window,
-## tab, or pane also resumes at once.
-# cursor_animation_resume_s: 1
+	## Cursor animation
+	## "none" (steady), "phase" (smooth fade), or a pulse that grows/shrinks
+	## each cycle - "pulse_vertical", "pulse_horizontal", "pulse_both". The
+	## cursor always slides smoothly as you type.
+	# animation: "pulse_vertical"  ## Default
 
-## After this many seconds with no input the animation stops entirely, parked at
-## full size, so an idle window costs nothing. Typing - or refocusing the
-## window, tab, or pane - brings it back. 0 = never stop.
-# cursor_animation_idle_stop_s: 60
+	## Animation resume delay
+	## While you type, the animation glides to the cursor's full size and holds
+	## there; it resumes this many seconds after input goes idle. Pausing and
+	## resuming always happen at full size, so the cursor never jumps. This
+	## delay is for typing only - a command's output holds the cursor still
+	## while it writes, then hands it straight back when the prompt returns.
+	## Refocusing the window, tab, or pane also resumes at once.
+	## Range: 0.05 to 3600.0 (seconds)
+	# animation_resume_s: 1  ## Default
 
-## Cursor animation cycle length, in milliseconds (blink rate).
-# cursor_blink_rate_ms: 500
+	## Animation idle stop
+	## After this many seconds with no input the animation stops entirely,
+	## parked at full size, so an idle window costs nothing. Typing - or
+	## refocusing the window, tab, or pane - brings it back. 0 = never stop.
+	## Range: 0.0 to 86400.0 (seconds)
+	# animation_idle_stop_s: 60  ## Default
 
-##=============================================================================
+	## Blink rate
+	## Cursor animation cycle length, in milliseconds.
+	## Range: 50.0 and up
+	# blink_rate_ms: 500  ## Default
+
+	## Cursor scrim
+	## The cursor joins the scrim halo.
+	# scrim: false  ## Default
+
+	## Cursor outline
+	## The cursor joins the text outline.
+	# outline: true  ## Default
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Selection
-##=============================================================================
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## Delimiters that bound a double-click word selection. The default keeps
-## : / . - _ ~ as part of a word, so paths (incl. C:\ drive paths), URLs and
-## namespaced identifiers stay selected whole. Leave commented for the default;
-## set to your own string of separator characters to override (add ':' back to
-## split on it).
-# word_separators: ",|\"' ()[]{}<>"
+selection:
 
-## Pairs whose contents a double-click selects when the click is inside a matched
-## pair (highest precedence first). Leave commented for the default.
-# selection_pairs: "`` \"\" '' {} () [] <>"
+	## Word separators
+	## Delimiters that bound a double-click word selection. The default keeps
+	## : / . - _ ~ as part of a word, so paths (incl. C:\ drive paths), URLs and
+	## namespaced identifiers stay selected whole. Leave commented for the
+	## default; set to your own string of separator characters to override (add
+	## ':' back to split on it).
+	# word_separators: ",|\"' ()[]{}<>"  ## Default
 
-##=============================================================================
+	## Selection pairs
+	## Pairs whose contents a double-click selects when the click is inside a
+	## matched pair (highest precedence first). Leave commented for the default.
+	# pairs: "`` \"\" '' {} () [] <>"  ## Default
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Shell
-##=============================================================================
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## Default shell/command for new windows, tabs, and panes when nothing else is
-## given (CLI --shell and per-pane inheritance take precedence). argv-split, so
-## "bash --norc" works. Leave blank/commented to use the system default shell.
-# default_shell: "bash --norc"
+shell:
 
-## Default command line applied when SilkTerm is launched with no arguments - the
-## same window/tab/pane options the CLI accepts (see --help). Any actual
-## command-line arguments override this entirely. Leave blank/commented for none.
-# command_line: "--new-pane --right --size 35%"
+	## Default shell
+	## Shell/command for new windows, tabs, and panes when nothing else is given
+	## (CLI --shell and per-pane inheritance take precedence). argv-split, so
+	## "bash --norc" works. Leave blank/commented for the system default shell.
+	# default: "bash --norc"  ## Default
 
-## Start every pane with "Copy on select" enabled (selected text goes to the
-## clipboard). The menu-bar checkbox still toggles it live per pane.
-# copy_on_select: false
+	## Default command line
+	## Applied when SilkTerm is launched with no arguments - the same
+	## window/tab/pane options the CLI accepts (see --help). Any actual
+	## command-line arguments override this entirely. Leave blank/commented for
+	## none.
+	# command_line: "--new-pane --right --size 35%"  ## Default
 
-##=============================================================================
+	## Copy on select
+	## Start every pane with "Copy on select" enabled (selected text goes to the
+	## clipboard). The menu-bar checkbox still toggles it live per pane.
+	# copy_on_select: false  ## Default
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Scrolling
-##=============================================================================
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## Lines of scrollback history kept per pane.
-scrollback: 10000
+scroll:
 
-## Smooth-scroll feel. This is the *initial* (slow, smooth) easing for sporadic
-## output, shown in Settings as "Initial scroll speed"; lower tau = snappier. Under
-## a fast output burst the scroll automatically ramps faster to keep up, then eases
-## back to this speed once output stops.
-scroll_tau_ms: 230.0  ## ms; ~ "Initial scroll speed" 25 on the 1..100 dialog scale
-wheel_lines: 3.0  ## lines per wheel notch (smooth scrollback)
-alt_scroll_lines: 3.0  ## lines per wheel notch in full-screen apps (less, nano)
-output_ease_lines: 1.0  ## how far new output slides in before easing to rest
+	## Scrollback
+	## Lines of scrollback history kept per pane.
+	scrollback: 10000
 
-## Ease the whole-line jumps of apps that repaint a scrolling region instead of
-## growing scrollback: full-screen apps that own the screen (less, vim, nano, htop,
-## tmux, ...) and, on Windows, ConPTY-driven TUIs whose output scrolls above a fixed
-## input line. Their scrolling slides instead of snapping; the revealed strip fills
-## with the background during the ~quarter-second slide.
-## Only clean line-scrolls are eased (big page-jumps still snap).
-# smooth_scroll_apps: true
+	## Initial scroll speed
+	## The initial (slow, smooth) easing for sporadic output, shown in Settings
+	## as "Initial scroll speed". Under a fast output burst the scroll
+	## automatically ramps faster to keep up, then eases back to this speed once
+	## output stops. 230 ms is about 25 on the 1..100 dialog scale.
+	## Range: 1.0 and up (milliseconds) - lower is snappier
+	tau_ms: 230.0
 
-##=============================================================================
+	## Wheel lines
+	## Lines per wheel notch (smooth scrollback).
+	wheel_lines: 3.0
+
+	## Alt-screen wheel lines
+	## Lines per wheel notch in full-screen apps (less, nano).
+	alt_scroll_lines: 3.0
+
+	## Output ease distance
+	## How far new output slides in before easing to rest, in lines.
+	output_ease_lines: 1.0
+
+	## Smooth-scroll apps
+	## Ease the whole-line jumps of apps that repaint a scrolling region instead
+	## of growing scrollback: full-screen apps that own the screen (less, vim,
+	## nano, htop, tmux, ...) and, on Windows, ConPTY-driven TUIs whose output
+	## scrolls above a fixed input line. Their scrolling slides instead of
+	## snapping; the revealed strip fills with the background during the
+	## ~quarter-second slide. Only clean line-scrolls are eased (big page-jumps
+	## still snap).
+	# smooth_apps: true  ## Default
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Theme and colours
-##=============================================================================
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## Colour theme. Pick a built-in (SilkTerm, Matrix, Retro Amber) or one you add in
-## a themes.* entry. theme_mode is "dark", "light", or "system" (follow the OS).
+## Colour theme
+## Pick a built-in (SilkTerm, Matrix, Retro Amber) or one you add in a themes.*
+## entry. theme_mode is "dark", "light", or "system" (follow the OS).
 theme: SilkTerm
 theme_mode: dark
 
+## Colour overrides
 ## Per-colour overrides on top of the theme (uncomment any to tweak one colour).
 ## The menu_*/dialog_* keys recolour the chrome (menu bar + dropdowns, and the
-## pop-out Settings/About dialogs); by default every theme shares the same neutral
-## chrome. Menu hover/border shades derive from menu_background automatically.
-## Dotted form ('colors.foreground') and an indented 'colors:' block mean the
-## same thing; uncomment a line here and SilkTerm tidies it into a block on save.
-# colors.background: "#000000"
-# colors.foreground: "#d2d2da"
-# colors.cursor: "#7a9ad0"
-# colors.focus: "#5580c8"
-# colors.menu_background: "#36363b"
-# colors.menu_foreground: "#f0f0f2"
-# colors.dialog_background: "#20202a"
-# colors.dialog_foreground: "#e2e2ea"
+## pop-out Settings/About dialogs); by default every theme shares the same
+## neutral chrome. Menu hover/border shades derive from menu_background
+## automatically.
+colors:
+	# background: "#000000"  ## Default
+	# foreground: "#d2d2da"  ## Default
+	# cursor: "#7a9ad0"  ## Default
+	# focus: "#5580c8"  ## Default
+	# menu_background: "#36363b"  ## Default
+	# menu_foreground: "#f0f0f2"  ## Default
+	# dialog_background: "#20202a"  ## Default
+	# dialog_foreground: "#e2e2ea"  ## Default
 "##;
 
 #[cfg(test)]
@@ -2043,7 +2612,7 @@ mod tests {
 		let dir = std::env::temp_dir().join(format!("silkterm_cfgsave_{}", std::process::id()));
 		let _ = std::fs::create_dir_all(&dir);
 		let path = dir.join("config.shcl");
-		std::fs::write(&path, "wallpaper_opacity: .1\ntext_scrim_ramp: \"s\"\n").unwrap();
+		std::fs::write(&path, "wallpaper.opacity: .1\ntext.scrim.ramp: \"s\"\n").unwrap();
 		set_config_override(path.clone());
 
 		let orig = load();
@@ -2063,7 +2632,7 @@ mod tests {
 		// and the value is still spelled the way the user wrote it
 		let saved = std::fs::read_to_string(&path).unwrap();
 		assert!(
-			saved.contains("wallpaper_opacity: .1"),
+			saved.contains("opacity: .1"),
 			"scalar should be left verbatim: {saved:?}"
 		);
 		assert_eq!(load().wallpaper_opacity, 0.1);
@@ -2109,7 +2678,7 @@ mod tests {
 	fn a_bad_line_drops_only_its_own_setting() {
 		let p = std::path::Path::new("test.shcl");
 		let s = resolve(read_raw(
-			"scrollback: 4242\nmargin: not-a-number\ncolors.focus: \"#abcdef\"\n",
+			"scroll.scrollback: 4242\nwindow.margin: not-a-number\ncolors.focus: \"#abcdef\"\n",
 			p,
 		));
 		assert_eq!(s.scrollback, 4242, "settings before the bad line survive");
@@ -2201,18 +2770,18 @@ mod tests {
 	// defaults (sdf / s-curve).
 	#[test]
 	fn scrim_function_and_ramp_resolve() {
-		let p = std::path::Path::new("test.toml");
+		let p = std::path::Path::new("test.shcl");
 		for f in ["dilate", "sdf", "dt", "gaussian"] {
-			let s = resolve(read_raw(&format!("text_scrim_function: \"{f}\"\n"), p));
+			let s = resolve(read_raw(&format!("text.scrim.function: \"{f}\"\n"), p));
 			assert_eq!(s.text_scrim_function, f);
 		}
 		for r in ["s", "gaussian", "linear", "log", "exp"] {
-			let s = resolve(read_raw(&format!("text_scrim_ramp: \"{r}\"\n"), p));
+			let s = resolve(read_raw(&format!("text.scrim.ramp: \"{r}\"\n"), p));
 			assert_eq!(s.text_scrim_ramp, r);
 		}
-		let s = resolve(read_raw("text_scrim_function: \"bogus\"\n", p));
+		let s = resolve(read_raw("text.scrim.function: \"bogus\"\n", p));
 		assert_eq!(s.text_scrim_function, "sdf", "unknown -> default");
-		let s = resolve(read_raw("text_scrim_ramp: \"bogus\"\n", p));
+		let s = resolve(read_raw("text.scrim.ramp: \"bogus\"\n", p));
 		assert_eq!(s.text_scrim_ramp, "gaussian", "unknown -> default");
 	}
 
@@ -2221,26 +2790,26 @@ mod tests {
 	// single toggle silently ignored) reads as intent and turns the size follow off.
 	#[test]
 	fn system_font_size_split_inference() {
-		let p = std::path::Path::new("test.toml");
+		let p = std::path::Path::new("test.shcl");
 		let s = resolve(read_raw("", p));
 		assert!(s.use_system_font && s.use_system_font_size, "defaults on");
-		let s = resolve(read_raw("use_system_font: false\n", p));
+		let s = resolve(read_raw("font.use_system_family: false\n", p));
 		assert!(!s.use_system_font_size, "size follows the face toggle");
-		let s = resolve(read_raw("font_size: 20.0\n", p));
+		let s = resolve(read_raw("font.size: 20.0\n", p));
 		assert!(s.use_system_font, "explicit size keeps the system face");
 		assert!(
 			!s.use_system_font_size,
 			"explicit size wins over the OS size"
 		);
-		let s = resolve(read_raw("font_size: 20.0\nuse_system_font_size: true\n", p));
+		let s = resolve(read_raw("font.size: 20.0\nfont.use_system_size: true\n", p));
 		assert!(s.use_system_font_size, "explicit key beats the inference");
 	}
 
 	#[test]
 	fn copy_on_select_key_parses_and_defaults_off() {
-		let p = std::path::Path::new("test.toml");
+		let p = std::path::Path::new("test.shcl");
 		assert!(!resolve(read_raw("", p)).copy_on_select, "default off");
-		assert!(resolve(read_raw("copy_on_select: true\n", p)).copy_on_select);
+		assert!(resolve(read_raw("shell.copy_on_select: true\n", p)).copy_on_select);
 	}
 
 	// An over-range output_ease_lines must clamp: scroll's backlog clamp uses it
@@ -2248,14 +2817,15 @@ mod tests {
 	#[test]
 	fn output_ease_lines_clamps_to_backlog_cap() {
 		let raw = read_raw(
-			"output_ease_lines: 20.0\n",
-			std::path::Path::new("test.toml"),
+			"scroll.output_ease_lines: 20.0\n",
+			std::path::Path::new("test.shcl"),
 		);
 		let s = resolve(raw);
+		assert!(s.output_ease_lines < 20.0, "over-range value must clamp");
 		assert!(s.output_ease_lines <= crate::scroll::MAX_BACKLOG);
 		let raw = read_raw(
-			"output_ease_lines: -3.0\n",
-			std::path::Path::new("test.toml"),
+			"scroll.output_ease_lines: -3.0\n",
+			std::path::Path::new("test.shcl"),
 		);
 		assert!(resolve(raw).output_ease_lines >= 0.0);
 	}
@@ -2263,8 +2833,8 @@ mod tests {
 	// One syntax-broken line must not sink the valid settings around it.
 	#[test]
 	fn parse_lenient_drops_only_the_bad_line() {
-		let text = "opacity: 0.7\ncursor_blink: enable\nmargin: 12.0\n";
-		let raw = read_raw(text, std::path::Path::new("test.toml"));
+		let text = "transparency.opacity: 0.7\ncursor_blink: enable\nwindow.margin: 12.0\n";
+		let raw = read_raw(text, std::path::Path::new("test.shcl"));
 		assert_eq!(raw.opacity, Some(0.7)); // before the bad line
 		assert_eq!(raw.margin, Some(12.0)); // after the bad line
 	}
@@ -2286,35 +2856,101 @@ mod tests {
 		assert_eq!(s.menu_fg, crate::theme::MENU_FG_DEF);
 	}
 
-	// Both wallpaper renames are the SECOND hop of a chain that starts at the old
-	// background_* names, and the transform applies at most one rename per line
-	// per run - so the background_* entries have to point at the FINAL key or a
-	// pre-rename config would need two launches to land.
+	// A pre-nesting config converts wholesale: every ACTIVE value lands at its
+	// new nested path (oldest alias spellings included), obsolete keys drop,
+	// themes.* user data survives, and the original file is kept as a .bak.
+	// When both an old alias and its newer flat spelling are present, the newer
+	// one wins.
 	#[test]
-	fn wallpaper_rename_chains_land_in_one_pass() {
-		let out = migrate_config_text(
-			"background_fit: \"zoom\"\nbackground_default: false\n# wallpaper_fit: \"stretch\"\nwallpaper_default: true\n",
-		)
-		.expect("should rename");
+	fn legacy_config_converts_with_values_carried() {
+		let dir = std::env::temp_dir().join(format!("silkterm_convert_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let path = dir.join("config.shcl");
+		let legacy = "## my own note\n\
+			scrollback: 5000\n\
+			cursor_size_vertical: 40\n\
+			cursor_shape: \"block\"\n\
+			background_fit: \"zoom\"\n\
+			wallpaper_opacity: 0.4\n\
+			background_opacity: 0.9\n\
+			opacity: 0.8\n\
+			scroll_tau_ms: 120.0  ## an old trailing note\n\
+			# margin: 8.0\n\
+			font_family: \"Iosevka\"\n\
+			themes.mine.dark.background: \"#010203\"\n\
+			colors.focus: \"#abcdef\"\n\
+			theme: Matrix\n";
+		std::fs::write(&path, legacy).unwrap();
+		convert_legacy_config(&path);
+		let out = std::fs::read_to_string(&path).unwrap();
+
+		assert!(out.contains("\tscrollback: 5000"), "value carried:\n{out}");
 		assert!(
-			!out.contains("background_fit")
-				&& !out.contains("wallpaper_fit:")
-				&& !out.contains("wallpaper_default:"),
-			"no intermediate name survives: {out:?}"
+			out.contains("\t\theight: 40"),
+			"oldest alias lands at the nested path:\n{out}"
+		);
+		assert!(!out.contains("cursor_shape"), "obsolete key dropped");
+		assert!(
+			out.contains("\tdefault_fit: \"zoom\""),
+			"background_* alias carried:\n{out}"
 		);
 		assert!(
-			out.contains("wallpaper_default_fit: \"zoom\""),
-			"value + active kept: {out:?}"
+			out.contains("\topacity: 0.4") && !out.contains("\topacity: 0.9"),
+			"the newer flat spelling wins over its alias:\n{out}"
 		);
 		assert!(
-			out.contains("# wallpaper_default_fit: \"stretch\""),
-			"commented state kept: {out:?}"
+			out.contains("\topacity: 0.8"),
+			"old bare opacity is the transparency one:\n{out}"
 		);
 		assert!(
-			out.contains("wallpaper_fallback_builtin: false")
-				&& out.contains("wallpaper_fallback_builtin: true"),
-			"both hops of the fallback chain: {out:?}"
+			out.contains("\ttau_ms: 120.0\n"),
+			"value carried without its stale trailing note:\n{out}"
 		);
+		assert!(
+			out.contains("\tmargin: 8.0"),
+			"a commented old line just leaves the fresh default in place:\n{out}"
+		);
+		assert!(
+			out.contains("\tfamily: \"Iosevka\"") && out.contains("\tuse_system_family: false"),
+			"an explicit font pins the system toggle off, as it always meant:\n{out}"
+		);
+		assert!(
+			out.contains("themes.mine.dark.background: \"#010203\""),
+			"future-feature user data carried:\n{out}"
+		);
+		assert!(
+			out.contains("\tfocus: \"#abcdef\""),
+			"colour override carried"
+		);
+		assert!(out.contains("theme: Matrix"), "theme choice carried");
+		assert!(
+			!out.contains("## my own note"),
+			"old comments live in the .bak, not the fresh template"
+		);
+		let bak = std::fs::read_to_string(dir.join("config.shcl.bak")).unwrap();
+		assert_eq!(bak, legacy, "the original file survives untouched as .bak");
+
+		// the converted file is current-format: converting again is a no-op
+		convert_legacy_config(&path);
+		assert_eq!(out, std::fs::read_to_string(&path).unwrap());
+		let _ = std::fs::remove_file(&path);
+		let _ = std::fs::remove_file(dir.join("config.shcl.bak"));
+	}
+
+	// The shipped template itself must never read as legacy.
+	#[test]
+	fn a_new_format_config_never_converts() {
+		let dir = std::env::temp_dir().join(format!("silkterm_noconvert_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let path = dir.join("config.shcl");
+		std::fs::write(&path, DEFAULT_CONFIG).unwrap();
+		convert_legacy_config(&path);
+		assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_CONFIG);
+		assert!(
+			!dir.join("config.shcl.bak").exists(),
+			"no backup for a current-format file"
+		);
+		let _ = std::fs::remove_file(&path);
 	}
 
 	// A hand-edited config is where a home-relative path gets typed, so `~` has
@@ -2333,187 +2969,122 @@ mod tests {
 		}
 	}
 
-	#[test]
-	fn migrate_renames_glow_border_to_outline() {
-		// an existing (active) text_glow_border keeps its value under the new name
-		let out =
-			migrate_config_text("text_glow_border: 2.03\nmargin: 8.0\n").expect("should rename");
-		assert!(!out.contains("text_glow_border"), "old name gone: {out:?}");
-		assert!(
-			out.contains("text_outline: 2.03"),
-			"value preserved: {out:?}"
-		);
-	}
-
-	// The text-glow -> text-scrim rename preserves values and active/commented state.
-	#[test]
-	fn migrate_renames_glow_to_scrim() {
-		let out = migrate_config_text(
-			"text_glow: false\ntext_glow_radius: 7.0\n# cursor_glow: false\ntext_glow_ramp: \"linear\"\n",
-		)
-		.expect("should rename");
-		assert!(!out.contains("text_glow"), "old names gone: {out:?}");
-		assert!(
-			out.contains("text_scrim: false"),
-			"value + active kept: {out:?}"
-		);
-		assert!(
-			out.contains("text_scrim_radius: 7.0"),
-			"value kept: {out:?}"
-		);
-		assert!(
-			out.contains("# cursor_scrim: false"),
-			"commented state kept: {out:?}"
-		);
-		assert!(
-			out.contains("text_scrim_ramp: \"linear\""),
-			"string value kept: {out:?}"
-		);
-	}
-
-	#[test]
-	fn migrate_renames_background_to_wallpaper() {
-		let out = migrate_config_text(
-			"background_image: \"pic.jpg\"\nbackground_opacity: 0.4\n# background_blur: 6.0\nbackground_contrast_mask_size: 0.3\n",
-		)
-		.expect("should rename");
-		assert!(!out.contains("background_"), "old names gone: {out:?}");
-		assert!(
-			out.contains("wallpaper: \"pic.jpg\""),
-			"path value + active kept: {out:?}"
-		);
-		assert!(
-			out.contains("wallpaper_opacity: 0.4"),
-			"value kept: {out:?}"
-		);
-		assert!(
-			out.contains("# wallpaper_blur: 6.0"),
-			"commented state kept: {out:?}"
-		);
-		assert!(
-			out.contains("wallpaper_contrast_mask_size: 0.3"),
-			"longest-name key kept: {out:?}"
-		);
-	}
-
-	// A commented line still carrying a superseded default is a stale echo of an
-	// older template, so it gets refreshed. An ACTIVE line with the same value is
-	// the user's own choice and must survive untouched - that distinction is the
-	// whole point, since refreshing it would silently change their terminal.
-	#[test]
-	fn stale_commented_defaults_refresh_active_ones_do_not() {
-		let out =
-			migrate_config_text("# cursor_size_width: 25\n# wallpaper_rotate_random: false\n")
-				.expect("stale commented defaults should refresh");
-		assert!(
-			out.contains("# cursor_size_width: 100"),
-			"cursor default refreshed: {out:?}"
-		);
-		assert!(
-			out.contains("# wallpaper_rotate_random: true"),
-			"rotation default refreshed: {out:?}"
-		);
-
-		// active = deliberate; and an edited commented value is a note, not an echo
-		let text = "cursor_size_width: 25\n# wallpaper_rotate_random: false ## mine\n";
-		assert!(
-			migrate_config_text(text).is_none_or(|out| out.contains("cursor_size_width: 25")
-				&& out.contains("# wallpaper_rotate_random: false")),
-			"an active or edited value must be left alone"
-		);
-	}
-
-	// In-place migration: drop obsolete cursor keys, keep the rest.
-	#[test]
-	fn migrate_config_renames_and_removes() {
-		let text = "opacity: 0.7\ncursor_shape: \"block\"\ncursor_insert_shape: \"bar\"\ncursor_blink_style: \"phase\"\nmargin: 12.0\n";
-		let out = migrate_config_text(text).expect("should change");
-		assert!(!out.contains("cursor_shape"), "obsolete removed: {out:?}");
-		assert!(!out.contains("cursor_insert_shape"), "obsolete removed");
-		assert!(!out.contains("cursor_blink_style"), "obsolete removed");
-		assert!(
-			out.contains("opacity: 0.7") && out.contains("margin: 12.0"),
-			"kept the rest"
-		);
-	}
-
-	// The vertical/horizontal -> height/width rename preserves the value.
-	#[test]
-	fn migrate_config_renames_cursor_size() {
-		let out = migrate_config_text("cursor_size_vertical: 50\ncursor_size_horizontal: 25\n")
-			.expect("should change");
-		assert!(out.contains("cursor_size_height: 50"), "{out:?}");
-		assert!(out.contains("cursor_size_width: 25"));
-		assert!(!out.contains("cursor_size_vertical") && !out.contains("cursor_size_horizontal"));
-	}
-
 	// A config with nothing to migrate is left untouched (no needless rewrite).
 	#[test]
 	fn migrate_config_noop_when_current() {
-		assert!(migrate_config_text("opacity: 0.7\ncursor_animation: \"phase\"\n").is_none());
-	}
-
-	#[test]
-	fn migrate_drops_cursor_animation_input() {
-		// removed key goes whether active or the stale commented template line
-		let out = migrate_config_text(
-			"# cursor_animation_input: \"continuous\"\ncursor_animation_input: \"pause\"\nmargin: 12.0\n",
-		)
-		.expect("should change");
-		assert!(!out.contains("cursor_animation_input"));
-		assert!(out.contains("margin: 12.0"));
-	}
-
-	// A pre-boolean config with an explicit font_family keeps it (use_system_font=false
-	// inserted), so the backfilled default (true) can't silently override the font.
-	#[test]
-	fn migrate_config_pins_use_system_font_for_explicit_family() {
-		let out = migrate_config_text("font_family: \"Iosevka\"\n").expect("should change");
-		assert!(out.contains("font_family: \"Iosevka\""));
-		assert!(out.contains("use_system_font: false"), "{out:?}");
-		// but a commented family (following the system) doesn't trigger the insert
-		assert!(migrate_config_text("# font_family: \"Iosevka\"\n").is_none());
-		// and one that already has the key is left alone
-		assert!(migrate_config_text("use_system_font: true\nfont_family: \"Iosevka\"\n").is_none());
+		assert!(
+			migrate_config_text("transparency.opacity: 0.7\ncursor.animation: \"phase\"\n")
+				.is_none()
+		);
+		assert!(migrate_config_text(DEFAULT_CONFIG).is_none());
 	}
 
 	// Backfill only ever adds a missing key, so a config written when an older
 	// stack was the default kept that stack forever. Migration refreshes exactly
-	// the shipped defaults and nothing the user chose themselves.
+	// the shipped defaults and nothing the user chose themselves - now keyed on
+	// the nested font.family path.
 	#[test]
 	fn migrate_refreshes_a_superseded_default_font_stack() {
 		let stale = SUPERSEDED_FONT_STACKS[0];
 		let out = migrate_config_text(&format!(
-			"use_system_font: true\nfont_family: \"{stale}\"\n"
+			"font:\n\tuse_system_family: true\n\tfamily: \"{stale}\"\n"
 		))
 		.expect("stale default should be refreshed");
 		assert!(
-			out.contains(&format!("font_family: \"{DEFAULT_FONT_STACK}\"")),
+			out.contains(&format!("\tfamily: \"{DEFAULT_FONT_STACK}\"")),
 			"{out:?}"
 		);
 		assert!(!out.contains(stale));
 
 		// the current value is already right, so nothing to do
-		let current = format!("use_system_font: true\nfont_family: \"{DEFAULT_FONT_STACK}\"\n");
+		let current = format!("font:\n\tfamily: \"{DEFAULT_FONT_STACK}\"\n");
 		assert!(migrate_config_text(&current).is_none());
 		// a stack the user edited, or one they commented out, is theirs - leave it
-		let edited = format!("use_system_font: true\nfont_family: \"Iosevka, {stale}\"\n");
+		let edited = format!("font:\n\tfamily: \"Iosevka, {stale}\"\n");
 		assert!(migrate_config_text(&edited).is_none());
-		assert!(migrate_config_text(&format!("# font_family: \"{stale}\"\n")).is_none());
+		assert!(migrate_config_text(&format!("font:\n\t# family: \"{stale}\"\n")).is_none());
+		// a top-level dotted spelling refreshes too
+		assert!(migrate_config_text(&format!("font.family: \"{stale}\"\n")).is_some());
 	}
 
-	// A new key added to a group the file already has PART of must land beside its
-	// siblings, NOT be appended with a second copy of the group's comment block -
-	// that paragraph is already in the file, attached to the siblings.
+	// The walker is what gives every line its full nested path - the whole
+	// line-oriented machinery keys on it.
+	#[test]
+	fn walker_resolves_nested_paths() {
+		let text = "top: 1\nwallpaper:\n\t# enabled: true\n\trotate:\n\t\t# folder: \"x\"\n\t\tinterval_s: 2.0\n\t# opacity: 0.5\ncolors.focus: \"#123456\"\n";
+		let got: Vec<(String, bool)> = walk_settings(text)
+			.into_iter()
+			.filter_map(|w| match w {
+				WalkLine::Setting { path, active, .. } => Some((path, active)),
+				_ => None,
+			})
+			.collect();
+		let want = [
+			("top", true),
+			("wallpaper", true),
+			("wallpaper.enabled", false),
+			("wallpaper.rotate", true),
+			("wallpaper.rotate.folder", false),
+			("wallpaper.rotate.interval_s", true),
+			("wallpaper.opacity", false),
+			("colors.focus", true),
+		];
+		let want: Vec<(String, bool)> = want.iter().map(|(p, a)| ((*p).to_string(), *a)).collect();
+		assert_eq!(got, want);
+	}
+
+	// A dialog save on a fresh nested config: the new active value lands inside
+	// its block, and the commented defaults around it keep their indentation and
+	// blank-line grouping (canonical would de-indent trailing comment runs).
+	#[test]
+	fn a_save_keeps_nested_comment_layout() {
+		let mut doc = shcl::Document::parse(DEFAULT_CONFIG);
+		doc.set_float("wallpaper.opacity", 0.5);
+		doc.set_bool("text.scrim.enabled", false);
+		let out = to_text(&doc, DEFAULT_CONFIG);
+
+		assert!(
+			out.contains("\topacity: 0.5"),
+			"new value lands in the wallpaper block:\n{out}"
+		);
+		assert!(
+			out.contains("\t\tenabled: false"),
+			"new value lands in the scrim block:\n{out}"
+		);
+		assert!(
+			out.contains("\t\t# random: true  ## Default"),
+			"commented defaults keep their nesting depth:\n{out}"
+		);
+		assert!(
+			out.contains("\t# blur: 10.0  ## Default"),
+			"comment runs after the change point keep depth too:\n{out}"
+		);
+		assert!(
+			out.contains("\n\n## •"),
+			"blank lines before section rules survive:\n{out}"
+		);
+		assert!(
+			out.contains("\t# dialog_foreground: \"#e2e2ea\"  ## Default"),
+			"the trailing colors block keeps its indentation:\n{out}"
+		);
+	}
+
+	// A new key added to a group the file already has PART of must land beside
+	// its siblings INSIDE their block, at the right depth, NOT be appended with
+	// a second copy of the group's comment block - that paragraph is already in
+	// the file, attached to the siblings.
 	#[test]
 	fn a_straggler_lands_beside_its_siblings_not_with_a_second_paragraph() {
 		let path = std::env::temp_dir().join("silkterm_backfill_straggler_test.shcl");
-		// wallpaper_rotate_enabled is the group's first key and carries its comment
-		// block; the other three are already here under a paragraph of their own.
-		let drifted = "## Rotate the wallpaper through a folder of images.\n\
-			# wallpaper_folder: \"wallpaper/\"\n\
-			# wallpaper_rotate_interval_s: 0.0\n\
-			# wallpaper_rotate_random: true\n";
+		// interval_s is missing from an otherwise-present rotation block
+		let drifted = "wallpaper:\n\
+			\n\
+			\t## Rotation\n\
+			\t## Rotate the wallpaper through a folder of images.\n\
+			\trotate:\n\
+			\t\t# enabled: true  ## Default\n\
+			\t\t# folder: \"wallpaper/\"  ## Default\n\
+			\t\t# random: true  ## Default\n";
 		std::fs::write(&path, drifted).unwrap();
 		backfill_config(&path);
 		let out = std::fs::read_to_string(&path).unwrap();
@@ -2521,20 +3092,24 @@ mod tests {
 		let paragraphs = out.matches("Rotate the wallpaper through a folder").count();
 		assert_eq!(paragraphs, 1, "comment block duplicated:\n{out}");
 		let straggler = out
-			.find("# wallpaper_rotate_enabled:")
-			.expect("straggler backfilled");
-		let sibling = out
-			.find("# wallpaper_folder:")
-			.expect("sibling still there");
+			.find("\t\t# interval_s: 0.0")
+			.expect("straggler backfilled at depth");
+		let folder = out.find("\t\t# folder:").expect("sibling still there");
+		let random = out.find("\t\t# random:").expect("sibling still there");
 		assert!(
-			straggler < sibling,
+			folder < straggler && straggler < random,
 			"template order among siblings not kept:\n{out}"
 		);
 		// a group the file has never seen still arrives whole, comments and all
 		assert!(
-			out.contains("## Enable wallpaper - master override.")
-				&& out.contains("# wallpaper_enabled: true"),
+			out.contains("## Master switch for the wallpaper image.")
+				&& out.contains("# enabled: true  ## Default"),
 			"new group needs its comments:\n{out}"
+		);
+		// and a wholly-missing top-level section arrives as a block
+		assert!(
+			out.contains("font:") && out.contains("\tuse_system_family: true"),
+			"missing sections backfilled whole:\n{out}"
 		);
 
 		backfill_config(&path);
@@ -2546,16 +3121,15 @@ mod tests {
 		let _ = std::fs::remove_file(&path);
 	}
 
-	// The real on-disk load pipeline (migrate -> backfill) on a drifted pre-update
-	// config: obsolete keys dropped, renamed keys carried, user values, comments,
-	// and a custom table preserved, missing keys added, and the chain stable. The
-	// user's own layout/comments are NOT normalized away (that was the old reorder
-	// pass; removed so a hand-edited file isn't rewritten behind the user's back).
+	// The real on-disk load pipeline (convert -> migrate -> backfill) on a
+	// pre-nesting config: values land at their nested paths, the original file
+	// is kept as .bak, missing keys arrive, and the chain is stable.
 	#[test]
-	fn pipeline_migrate_backfill_on_disk() {
-		let path = std::env::temp_dir().join("silkterm_pipeline_migbf_test.shcl");
-		let drifted = "## my own note\n\
-			scrollback: 5000\n\
+	fn pipeline_convert_migrate_backfill_on_disk() {
+		let dir = std::env::temp_dir().join(format!("silkterm_pipeline_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let path = dir.join("config.shcl");
+		let drifted = "scrollback: 5000\n\
 			cursor_size_vertical: 40\n\
 			cursor_shape: \"block\"\n\
 			margin: 12.0\n\
@@ -2565,6 +3139,7 @@ mod tests {
 			\n\
 			colors.focus: \"#abcdef\"\n";
 		std::fs::write(&path, drifted).unwrap();
+		convert_legacy_config(&path);
 		migrate_config(&path);
 		backfill_config(&path);
 		let out = std::fs::read_to_string(&path).unwrap();
@@ -2574,34 +3149,26 @@ mod tests {
 			"obsolete key dropped:\n{out}"
 		);
 		assert!(
-			out.contains("cursor_size_height: 40"),
-			"renamed key kept its value"
+			out.contains("\t\theight: 40"),
+			"renamed key kept its value:\n{out}"
 		);
 		assert!(
-			out.contains("margin: 12.0") && out.contains("opacity: 0.8"),
-			"values kept"
+			out.contains("\tmargin: 12.0") && out.contains("\topacity: 0.8"),
+			"values landed nested:\n{out}"
 		);
-		assert!(out.contains("scrollback: 5000"), "scrollback value kept");
-		assert!(
-			out.contains("colors.focus: \"#abcdef\""),
-			"color override kept"
-		);
+		assert!(out.contains("\tscrollback: 5000"), "scrollback value kept");
+		assert!(out.contains("\tfocus: \"#abcdef\""), "color override kept");
 		assert!(
 			out.contains("themes.mine.dark.background"),
 			"unknown key kept"
 		);
-		assert!(out.contains("## my own note"), "user comment kept");
 		assert!(
-			out.contains("use_system_font: true"),
-			"missing key backfilled"
-		);
-		// the user's leading comment + first key stay put (no reorder)
-		assert!(
-			out.find("## my own note").unwrap() < out.find("scrollback: 5000").unwrap(),
-			"user layout preserved:\n{out}"
+			out.contains("\tuse_system_family: true"),
+			"missing key present with its default"
 		);
 
 		// stable: a second pass changes nothing.
+		convert_legacy_config(&path);
 		migrate_config(&path);
 		backfill_config(&path);
 		assert_eq!(
@@ -2610,6 +3177,7 @@ mod tests {
 			"pipeline not idempotent"
 		);
 		let _ = std::fs::remove_file(&path);
+		let _ = std::fs::remove_file(dir.join("config.shcl.bak"));
 	}
 
 	// The scan must not offer the loader a file it can't decode: `image` is built

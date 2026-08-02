@@ -109,14 +109,14 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/silk-scroll.XXXXXX")"
 cfg="${work}/config.shcl"
 cat >"$cfg" <<-'SHCL'
 	## Throwaway config for the scroll harness - not a user config.
-	smooth_scroll_apps: true
-	scroll_tau_ms: 120
-	transparent_background: false
-	text_scrim: false
-	wallpaper_default: false
-	columns: 100
-	rows: 34
-	cursor_animation: none
+	scroll.smooth_apps: true
+	scroll.tau_ms: 120
+	transparency.enabled: false
+	text.scrim.enabled: false
+	wallpaper.fallback_builtin: false
+	window.columns: 100
+	window.rows: 34
+	cursor.animation: none
 SHCL
 
 run_dir="/tmp/cicd-gui-headless-${USER}"

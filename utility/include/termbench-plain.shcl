@@ -2,12 +2,12 @@
 ## Only the overrides are listed - the loader backfills every other key from its own
 ## defaults, so this file cannot go stale as new settings are added.
 
-wallpaper_default: false
-text_scrim: false
-text_outline: 0.0
-cursor_scrim: false
-cursor_outline: false
-cursor_animation: none
-smooth_scroll_apps: false
-transparent_background: false
-color_emoji: false
+wallpaper.fallback_builtin: false
+text.scrim.enabled: false
+text.outline: 0.0
+cursor.scrim: false
+cursor.outline: false
+cursor.animation: none
+scroll.smooth_apps: false
+transparency.enabled: false
+text.color_emoji: false
