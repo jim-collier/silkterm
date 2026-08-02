@@ -43,7 +43,11 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### Bugs
 
-- 🔘 Bug: Editing a line at any point on the prompt, that has one or more emojis in it, results in apparently random left-right shifting of other characters, at apparently random points . The actual content that moves doesn't actually change, but it looks like it does and makes it visually unreliable.
+- ✅ Bug: Editing a line at any point on the prompt, that has one or more emojis in it, results in apparently random left-right shifting of other characters, at apparently random points unrelated to the cursor position. (But probably not really "random".) The actual content that moves doesn't actually change in the buffer, but it looks like it does and makes it visually unreliable and confusing.
+	- Not random: it happened on exactly the rows holding one of a small set of characters. A terminal gives a double-width character two columns. A monospace font is free to carry that same character at its ordinary single-column width, and the default font does so for 53 of them - several common emoji among them, plus fullwidth punctuation. The row was laid out from the font, so one of those characters consumed one column where the grid had allotted two, and everything after it on that row drew a column to the left of where its own background, the cursor and any separately-drawn character still sat. Editing moved such a character around the line, so the misalignment appeared to wander.
+	- Fix: a character now rides the shared row layout only when the font's own width for it agrees with the number of columns the terminal gave it. Anything that disagrees is drawn on its own, fitted to its real box - the same path characters missing from the font already took.
+	- Side effect, and an improvement: those emoji now render in colour rather than as small monochrome outlines, since they reach the colour path for the first time. Single-width symbols (arrows, checkmarks, stars, box drawing) are unaffected and stay monochrome, which is what a terminal wants.
+	- Verified: a trailing marker after such an emoji used to sit exactly one column left of the same marker on an all-text row, and now lines up. A control screen of CJK, box drawing, fullwidth Latin and single-width symbols renders identically to before.
 
 - ✅ Graphical emoji render as monochrome outlines instead of colour.
 	- Not a regression. No build renders these in colour: the text stack has only ever read the older colour-glyph table format (COLR v0), and every current colour emoji font ships the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
@@ -1369,6 +1373,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
 
 #### Done - New features and enhancements
+
+- ✅ Wallpaper attribution catalogued.
+	- ✅ Every image in the collection was evaluated and recorded in `wallpaper-attribution.md`, with a source and a confidence for each.
+	- ✅ For ambiguous files, attempts were made to backtrack from the copy on hand to an original source.
+	- ✅ Reverse image lookups mostly surface reposts, and many of the earliest hits are now dead links - so some rows record the best source still reachable rather than the original.
+	- ✅ A small number of images were removed from the collection over questionable legal status.
 
 - ✅ Hotkeys to increase/decrease font size feature:
 	- Done: Ctrl+= / Ctrl+- step the session zoom; Ctrl+0 resets to the configured (or system) size. View menu has Increase/Decrease/Reset items.

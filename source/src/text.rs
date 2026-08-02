@@ -373,9 +373,10 @@ pub struct TextCtx {
 	ui_vmetrics: (f32, f32),
 	// primary monospace face + a coverage cache, so the pane can tell which
 	// glyphs fall back to another font (those drift from the cell grid and get
-	// rendered per-cell instead - see Pane::build).
+	// rendered per-cell instead - see Pane::build). The cached value is how many
+	// grid cells the face's own advance for that char spans, 0 for "no glyph".
 	mono_face: Option<fontdb::ID>,
-	cover_cache: HashMap<char, bool>,
+	cover_cache: HashMap<char, u8>,
 	// COLRv1 colour glyphs, which swash can't rasterize (see coloremoji.rs). Panes
 	// route an emoji cell here instead of to a monochrome fallback face.
 	color_glyphs: ColorGlyphs,
@@ -386,6 +387,16 @@ pub struct TextCtx {
 	// turns that into a lookup. Bounded (cleared) so dynamic tab titles can't
 	// grow it without limit.
 	ui_measure_cache: HashMap<String, f32>,
+}
+
+// Round a glyph's advance to whole cells, `unit` being the face's own advance
+// for an ASCII cell. A face that reports nothing usable answers 1, so an
+// unmeasurable font behaves the way it always did.
+fn advance_cells(advance: f32, unit: f32) -> u8 {
+	if unit <= 0.0 {
+		return 1;
+	}
+	(advance / unit).round().clamp(0.0, 8.0) as u8
 }
 
 impl TextCtx {
@@ -476,21 +487,43 @@ impl TextCtx {
 		}
 	}
 
-	// Does the primary monospace face have a glyph for `ch`? ASCII is always
-	// assumed covered. Cached because it's hit per visible cell per frame.
-	pub fn covered(&mut self, ch: char) -> bool {
+	// Can `ch` ride the shared row buffer, given the grid puts it in `cells`
+	// columns? ASCII always can. Coverage alone isn't enough: a monospace face
+	// can carry a double-width char (emoji, fullwidth punctuation) at its
+	// ordinary single advance, and then one glyph eats one column of layout
+	// where the grid gave it two - every later glyph
+	// on the row lands a cell left of the grid position its background, cursor
+	// and any per-cell glyph still use. Demanding the advance match the grid
+	// sends those to the per-cell path, which fits them to their real box.
+	pub fn covered_at(&mut self, ch: char, cells: u8) -> bool {
+		self.face_cells(ch) == cells
+	}
+
+	// Cells the primary face's own advance for `ch` spans, 0 when it has no
+	// glyph. Measured against the face's ASCII advance so no pixel size is
+	// involved; an unmeasurable face reports 1, keeping the old fast path.
+	fn face_cells(&mut self, ch: char) -> u8 {
 		if ch.is_ascii() {
-			return true;
+			return 1;
 		}
 		if let Some(&cached) = self.cover_cache.get(&ch) {
 			return cached;
 		}
-		let covered = self
+		let cells = self
 			.mono_face
 			.and_then(|id| self.font_system.get_font(id, fontdb::Weight::NORMAL))
-			.is_some_and(|font| font.as_swash().charmap().map(ch) != 0);
-		self.cover_cache.insert(ch, covered);
-		covered
+			.map_or(0, |font| {
+				let face = font.as_swash();
+				let glyph = face.charmap().map(ch);
+				if glyph == 0 {
+					return 0;
+				}
+				let metrics = face.glyph_metrics(&[]);
+				let unit = metrics.advance_width(face.charmap().map('M'));
+				advance_cells(metrics.advance_width(glyph), unit)
+			});
+		self.cover_cache.insert(ch, cells);
+		cells
 	}
 
 	// Colour glyph for `ch`, with the design box a caller fits to the cell. None
@@ -825,6 +858,25 @@ fn shaped_ink(
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// A monospace face routinely carries a double-width char at its ordinary
+	// single advance (Monaspace Argon does it for 53 of them, emoji included).
+	// Whole cells is what the row buffer lays out in, so the rounding has to
+	// report that honestly rather than call anything close enough.
+	#[test]
+	fn a_single_advance_never_reads_as_two_cells() {
+		let unit = 1240.0; // Monaspace Argon's own ASCII advance, in font units
+		assert_eq!(advance_cells(unit, unit), 1);
+		assert_eq!(advance_cells(unit * 2.0, unit), 2);
+		assert_eq!(
+			advance_cells(unit * 1.02, unit),
+			1,
+			"hinting slack is not a cell"
+		);
+		assert_eq!(advance_cells(0.0, unit), 0);
+		// A face that reports no usable advance keeps the shared-buffer path.
+		assert_eq!(advance_cells(0.0, 0.0), 1);
+	}
 
 	// The search order is one list on every platform. `use_system_font` only
 	// decides where the OS family sits in it - it must never drop the configured
