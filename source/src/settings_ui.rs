@@ -143,8 +143,12 @@ enum Key {
 	RememberSize,
 	Margin,
 	SmoothScroll,
+	ScrollEaseIn,
 	ScrollTau,
-	InviewTau,
+	ScrollRampUp,
+	SingleScreenTau,
+	ScrollRampDown,
+	ScrollEaseOut,
 	WheelLines,
 	Scrollbar,
 	ScrollbarThickness,
@@ -157,22 +161,55 @@ enum Key {
 	ColFocus,
 }
 
-// "Initial scroll speed" is shown as a friendly 1..100 (higher = faster) but
-// stored as the time-per-line `scroll_tau_ms` (higher = slower), so the slider
-// is the inverse of tau over [TAU_MIN, TAU_MAX]. Logarithmic: a time constant
-// is felt by ratio, and a linear map wastes most of the travel on speeds that
-// look identical (the old 300ms floor was why the slow end read as a no-op -
-// barely below the 230ms default). 1 = one line/s, 100 = a hundred lines/s.
+// The Scrolling tab's time constants are all shown as a friendly 1..100 but
+// stored as milliseconds. Logarithmic: a time constant is felt by ratio, and a
+// linear map wastes most of the travel on values that look identical (the old
+// 300ms floor was why the slow end read as a no-op - barely below the 230ms
+// default). Each range brackets its default by a decade either way, so every
+// default sits mid-scale.
+fn log_pos(v: f32, min: f32, max: f32) -> f32 {
+	(v.clamp(min, max) / min).ln() / (max / min).ln()
+}
+fn log_val(pos: f32, min: f32, max: f32) -> f32 {
+	min * (max / min).powf(pos.clamp(0.0, 1.0))
+}
+// Sliders where a HIGHER number means a SMALLER stored value: the speeds
+// ("Initial scroll speed", "Single-screen speed" - stored as time per line) and
+// the ramps ("Ramp-up", "Ramp-down" - stored as the doubling/decay period, so a
+// harder ramp is a shorter one).
+fn falling_slider(v: f32, min: f32, max: f32) -> f32 {
+	(100.0 - log_pos(v, min, max) * 99.0).round()
+}
+fn falling_value(slider: f32, min: f32, max: f32) -> f32 {
+	log_val((100.0 - slider.clamp(1.0, 100.0)) / 99.0, min, max)
+}
+// "Ease-out" is the odd one: it rises, because it is stored as the tail's
+// duration so that it reads the same direction as its Ease-in partner (both
+// "higher = gentler"). See scroll.rs.
+fn rising_slider(v: f32, min: f32, max: f32) -> f32 {
+	(1.0 + log_pos(v, min, max) * 99.0).round()
+}
+fn rising_value(slider: f32, min: f32, max: f32) -> f32 {
+	log_val((slider.clamp(1.0, 100.0) - 1.0) / 99.0, min, max)
+}
+// 1 = one line/s, 100 = a hundred lines/s.
 const TAU_MIN: f32 = 10.0;
 const TAU_MAX: f32 = 1000.0;
 fn tau_to_speed(tau: f32) -> f32 {
-	let t = tau.clamp(TAU_MIN, TAU_MAX);
-	(1.0 + (TAU_MAX / t).ln() / (TAU_MAX / TAU_MIN).ln() * 99.0).round()
+	falling_slider(tau, TAU_MIN, TAU_MAX)
 }
 fn speed_to_tau(speed: f32) -> f32 {
-	let s = (speed.clamp(1.0, 100.0) - 1.0) / 99.0;
-	TAU_MAX * (TAU_MIN / TAU_MAX).powf(s)
+	falling_value(speed, TAU_MIN, TAU_MAX)
 }
+// Chase doubling period: 30ms is a near-instant ramp, 3s barely ramps at all.
+const RAMP_UP_MIN: f32 = 30.0;
+const RAMP_UP_MAX: f32 = 3000.0;
+// Chase relax time constant, bracketing the 450ms default the same way.
+const RAMP_DOWN_MIN: f32 = 45.0;
+const RAMP_DOWN_MAX: f32 = 4500.0;
+// Tail duration, bracketing the 133ms default.
+const EASE_OUT_MIN: f32 = 13.0;
+const EASE_OUT_MAX: f32 = 1300.0;
 
 enum Kind {
 	Slider {
@@ -261,8 +298,12 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::RememberSize => &["window.remember_size"],
 		Key::Margin => &["window.margin"],
 		Key::SmoothScroll => &["scroll.smooth"],
+		Key::ScrollEaseIn => &["scroll.ease_in"],
 		Key::ScrollTau => &["scroll.tau_ms"],
-		Key::InviewTau => &["scroll.inview_tau_ms"],
+		Key::ScrollRampUp => &["scroll.ramp_up_ms"],
+		Key::SingleScreenTau => &["scroll.single_screen_tau_ms"],
+		Key::ScrollRampDown => &["scroll.ramp_down_ms"],
+		Key::ScrollEaseOut => &["scroll.ease_out_ms"],
 		Key::WheelLines => &["scroll.wheel_lines"],
 		Key::Scrollbar => &["scroll.scrollbar.enabled"],
 		Key::ScrollbarThickness => &["scroll.scrollbar.thickness"],
@@ -689,6 +730,18 @@ fn fields() -> Vec<Spec> {
 			key: SmoothScroll,
 			kind: Toggle,
 		},
+		// Ordered as one output burst unfolds: leaves rest, settles at the
+		// initial speed, accelerates, tops out, relaxes, lands. Ease-in/Ease-out
+		// and Ramp-up/Ramp-down are each a matched pair reading one direction.
+		Spec {
+			label: "Ease-in",
+			key: ScrollEaseIn,
+			kind: Slider {
+				min: 0.0,
+				max: 100.0,
+				int: true,
+			},
+		},
 		Spec {
 			label: "Initial scroll speed",
 			key: ScrollTau,
@@ -699,8 +752,35 @@ fn fields() -> Vec<Spec> {
 			},
 		},
 		Spec {
-			label: "In-view output speed",
-			key: InviewTau,
+			label: "Ramp-up",
+			key: ScrollRampUp,
+			kind: Slider {
+				min: 1.0,
+				max: 100.0,
+				int: true,
+			},
+		},
+		Spec {
+			label: "Single-screen speed",
+			key: SingleScreenTau,
+			kind: Slider {
+				min: 1.0,
+				max: 100.0,
+				int: true,
+			},
+		},
+		Spec {
+			label: "Ramp-down",
+			key: ScrollRampDown,
+			kind: Slider {
+				min: 1.0,
+				max: 100.0,
+				int: true,
+			},
+		},
+		Spec {
+			label: "Ease-out",
+			key: ScrollEaseOut,
 			kind: Slider {
 				min: 1.0,
 				max: 100.0,
@@ -1716,8 +1796,18 @@ impl SettingsDialog {
 			Key::LineHeight => settings.line_height_scale,
 			Key::Margin => settings.margin,
 			// shown as an intuitive 1..100 speed (higher = faster); stored as tau
+			Key::ScrollEaseIn => (settings.scroll_ease_in * 100.0).round(),
 			Key::ScrollTau => tau_to_speed(settings.scroll_tau_ms),
-			Key::InviewTau => tau_to_speed(settings.scroll_inview_tau_ms),
+			Key::ScrollRampUp => {
+				falling_slider(settings.scroll_ramp_up_ms, RAMP_UP_MIN, RAMP_UP_MAX)
+			}
+			Key::SingleScreenTau => tau_to_speed(settings.scroll_single_screen_tau_ms),
+			Key::ScrollRampDown => {
+				falling_slider(settings.scroll_ramp_down_ms, RAMP_DOWN_MIN, RAMP_DOWN_MAX)
+			}
+			Key::ScrollEaseOut => {
+				rising_slider(settings.scroll_ease_out_ms, EASE_OUT_MIN, EASE_OUT_MAX)
+			}
 			Key::WheelLines => settings.wheel_lines,
 			Key::ScrollbarThickness => settings.scrollbar_thickness,
 			Key::Columns => settings.columns as f32,
@@ -1744,8 +1834,18 @@ impl SettingsDialog {
 			Key::FontSize => settings.font_size = value,
 			Key::LineHeight => settings.line_height_scale = value,
 			Key::Margin => settings.margin = value,
+			Key::ScrollEaseIn => settings.scroll_ease_in = value / 100.0,
 			Key::ScrollTau => settings.scroll_tau_ms = speed_to_tau(value),
-			Key::InviewTau => settings.scroll_inview_tau_ms = speed_to_tau(value),
+			Key::ScrollRampUp => {
+				settings.scroll_ramp_up_ms = falling_value(value, RAMP_UP_MIN, RAMP_UP_MAX);
+			}
+			Key::SingleScreenTau => settings.scroll_single_screen_tau_ms = speed_to_tau(value),
+			Key::ScrollRampDown => {
+				settings.scroll_ramp_down_ms = falling_value(value, RAMP_DOWN_MIN, RAMP_DOWN_MAX);
+			}
+			Key::ScrollEaseOut => {
+				settings.scroll_ease_out_ms = rising_value(value, EASE_OUT_MIN, EASE_OUT_MAX);
+			}
 			Key::WheelLines => settings.wheel_lines = value,
 			Key::ScrollbarThickness => settings.scrollbar_thickness = value,
 			Key::Columns => settings.columns = value.round().max(1.0) as usize,
@@ -1926,7 +2026,14 @@ impl SettingsDialog {
 					| Key::BgContrastAuto
 			) && !self.edited.wallpaper_enabled)
 			// the speed sliders shape an animation the master has turned off
-			|| (matches!(key, Key::ScrollTau | Key::InviewTau) && !self.edited.scroll_smooth)
+			|| (matches!(
+				key,
+				Key::ScrollEaseIn
+					| Key::ScrollTau | Key::ScrollRampUp
+					| Key::SingleScreenTau
+					| Key::ScrollRampDown
+					| Key::ScrollEaseOut
+			) && !self.edited.scroll_smooth)
 			// the scrollbar's own settings stay listed with it off, just inert
 			|| (matches!(
 				key,
@@ -2046,8 +2153,18 @@ impl SettingsDialog {
 			Key::FontSize => defaults.font_size,
 			Key::LineHeight => defaults.line_height_scale,
 			Key::Margin => defaults.margin,
+			Key::ScrollEaseIn => (defaults.scroll_ease_in * 100.0).round(),
 			Key::ScrollTau => tau_to_speed(defaults.scroll_tau_ms),
-			Key::InviewTau => tau_to_speed(defaults.scroll_inview_tau_ms),
+			Key::ScrollRampUp => {
+				falling_slider(defaults.scroll_ramp_up_ms, RAMP_UP_MIN, RAMP_UP_MAX)
+			}
+			Key::SingleScreenTau => tau_to_speed(defaults.scroll_single_screen_tau_ms),
+			Key::ScrollRampDown => {
+				falling_slider(defaults.scroll_ramp_down_ms, RAMP_DOWN_MIN, RAMP_DOWN_MAX)
+			}
+			Key::ScrollEaseOut => {
+				rising_slider(defaults.scroll_ease_out_ms, EASE_OUT_MIN, EASE_OUT_MAX)
+			}
 			Key::WheelLines => defaults.wheel_lines,
 			Key::ScrollbarThickness => defaults.scrollbar_thickness,
 			Key::Columns => defaults.columns as f32,
@@ -3652,7 +3769,12 @@ pub fn wallpaper_changed(old: &Settings, new: &Settings) -> bool {
 
 #[cfg(test)]
 mod tests {
-	use super::{SettingsDialog, TAB_TITLES, TAU_MAX, TAU_MIN, speed_to_tau, tau_to_speed};
+	use super::{
+		EASE_OUT_MAX, EASE_OUT_MIN, Key, RAMP_DOWN_MAX, RAMP_DOWN_MIN, RAMP_UP_MAX, RAMP_UP_MIN,
+		SettingsDialog, TAB_TITLES, TAU_MAX, TAU_MIN, falling_slider, rising_slider, speed_to_tau,
+		tau_to_speed,
+	};
+	use crate::config;
 
 	fn mk_dialog(max_h: f32) -> SettingsDialog {
 		SettingsDialog::new(
@@ -3925,6 +4047,80 @@ mod tests {
 		d.mouse_down(r.x + 4.0, r.y + r.h / 2.0, &mut m);
 		assert_eq!(d.open, None);
 		assert_eq!(d.edited.text_scrim_ramp, "log");
+	}
+
+	#[test]
+	fn the_scrolling_feel_sliders_read_where_their_defaults_claim() {
+		// Every one of these is documented in the config template as landing on a
+		// particular number, and the ranges were picked to put each default
+		// mid-scale. A range edited without its comment would drift silently.
+		let d = config::Settings::default();
+		assert_eq!(tau_to_speed(d.scroll_tau_ms), 33.0);
+		assert_eq!(tau_to_speed(d.scroll_single_screen_tau_ms), 61.0);
+		assert_eq!((d.scroll_ease_in * 100.0).round(), 35.0);
+		for (got, what) in [
+			(
+				falling_slider(d.scroll_ramp_up_ms, RAMP_UP_MIN, RAMP_UP_MAX),
+				"ramp-up",
+			),
+			(
+				falling_slider(d.scroll_ramp_down_ms, RAMP_DOWN_MIN, RAMP_DOWN_MAX),
+				"ramp-down",
+			),
+			(
+				rising_slider(d.scroll_ease_out_ms, EASE_OUT_MIN, EASE_OUT_MAX),
+				"ease-out",
+			),
+		] {
+			assert_eq!(got, 51.0, "{what} default should sit mid-scale");
+		}
+	}
+
+	#[test]
+	fn the_scrolling_feel_sliders_round_trip_and_run_the_right_way() {
+		// A slider that reads back as something else is the "setting does
+		// nothing" bug in its quietest form. Also pins the DIRECTION of each
+		// pair: Ease-in/Ease-out both mean "gentler", Ramp-up/Ramp-down both
+		// mean "harder", whichever way each is stored underneath.
+		let mut d = mk_dialog(4000.0);
+		for (key, label) in [
+			(Key::ScrollEaseIn, "Ease-in"),
+			(Key::ScrollTau, "Initial scroll speed"),
+			(Key::ScrollRampUp, "Ramp-up"),
+			(Key::SingleScreenTau, "Single-screen speed"),
+			(Key::ScrollRampDown, "Ramp-down"),
+			(Key::ScrollEaseOut, "Ease-out"),
+		] {
+			for want in [1.0, 25.0, 50.0, 75.0, 100.0] {
+				d.set_f32(key, want);
+				let got = d.get_f32(key);
+				assert!(
+					(got - want).abs() < 1.5,
+					"{label} set to {want} read back as {got}"
+				);
+			}
+		}
+		// higher = gentler on both ends of the ease
+		d.set_f32(Key::ScrollEaseIn, 80.0);
+		let gentle_in = d.edited.scroll_ease_in;
+		d.set_f32(Key::ScrollEaseIn, 20.0);
+		assert!(gentle_in > d.edited.scroll_ease_in);
+		d.set_f32(Key::ScrollEaseOut, 80.0);
+		let gentle_out = d.edited.scroll_ease_out_ms;
+		d.set_f32(Key::ScrollEaseOut, 20.0);
+		assert!(
+			gentle_out > d.edited.scroll_ease_out_ms,
+			"a higher Ease-out must be a LONGER tail, matching its Ease-in partner"
+		);
+		// higher = harder on both ramps (stored as a shorter period)
+		d.set_f32(Key::ScrollRampUp, 80.0);
+		let hard_up = d.edited.scroll_ramp_up_ms;
+		d.set_f32(Key::ScrollRampUp, 20.0);
+		assert!(hard_up < d.edited.scroll_ramp_up_ms);
+		d.set_f32(Key::ScrollRampDown, 80.0);
+		let hard_down = d.edited.scroll_ramp_down_ms;
+		d.set_f32(Key::ScrollRampDown, 20.0);
+		assert!(hard_down < d.edited.scroll_ramp_down_ms);
 	}
 
 	#[test]

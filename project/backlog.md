@@ -500,6 +500,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- The speed sliders are now logarithmic over a much wider range (slowest = 1 line/s), so both ends are clearly perceivable. Stored values are unchanged; the displayed 1..100 number for a given stored value shifts (defaults now read 33 and 61).
 	- Wheel and scrollbar navigation keep the plain configured ease, and jumping back to the bottom from deep scrollback sweeps at full ease speed rather than the output chase.
 	- Note: this machine's config still holds both speeds at their fastest (10 ms) from earlier experimenting - revert both sliders to feel the new defaults.
+	- Superseded: "In-view output speed" is now called "Single-screen speed" (config `scroll.single_screen_tau_ms`), and the ramp described here has its own two sliders. See the Scrolling Settings entry below.
 	- 🔘 UAT
 
 - ✅ Graphical emoji render as monochrome outlines instead of colour.
@@ -1298,6 +1299,15 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
 
 #### Done - New features and enhancements
+
+- ✅ Scrolling Settings: ramp-up and ramp-down each need a slider. (20260802)
+	- The Scrolling tab now reads in the order a burst is actually watched: Ease-in, Initial scroll speed, Ramp-up, Single-screen speed, Ramp-down, Ease-out. Leaves rest, settles at the slow start, accelerates, tops out, relaxes, lands.
+	- Ramp-up is how quickly catch-up accelerates once output runs ahead (the speed doubles every so often); Ramp-down is how quickly it relaxes back to the initial speed once output stops leading. Both were fixed internal values before.
+	- Ease-in and Ease-out came along as the matching pair for the two ends of the movement itself - how gently it leaves rest and how gently it settles onto the final line. Also fixed values before.
+	- Each pair reads one direction: higher Ease-in and Ease-out are gentler, higher Ramp-up and Ramp-down are harder. Ease-out is stored as how long the landing takes so that it runs the same way as its partner rather than against it.
+	- "In-view output speed" renamed to "Single-screen speed". An existing config carries its value across on first launch.
+	- Every default is unchanged, so nothing feels different until a slider is moved. Each default sits mid-scale, and each slider is tested against being inert - that was the fault behind this whole line of work.
+	- 🔘 UAT
 
 - ✅ A single boolean option to disable/enable smooth scrolling, without changing other settings (but disabling their controls). (20260802)
 	- New "Smooth scrolling" switch at the top of the Scrolling tab (config: `scroll.smooth`, default on). Off = wheel, output and full-screen-app scrolling all land instantly, and the two speed sliders grey out. Wheel lines, scrollbar and the rest stay active since they apply either way.

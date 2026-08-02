@@ -121,8 +121,14 @@ pub struct Settings {
 	pub line_height_scale: f32,
 	pub scrollback: usize,
 	pub scroll_smooth: bool, // master switch: false = every scroll (wheel, output, app slide) lands instantly
+	// The five knobs below read, in order, as one burst unfolds: leave rest,
+	// settle at the initial speed, accelerate, top out, relax, land.
+	pub scroll_ease_in: f32, // how gradually motion builds from rest, as a fraction of the main ease
 	pub scroll_tau_ms: f32,
-	pub scroll_inview_tau_ms: f32, // burst catch-up ceiling while the burst is still wholly on screen
+	pub scroll_ramp_up_ms: f32, // catch-up speed doubles this often while output stays ahead
+	pub scroll_single_screen_tau_ms: f32, // burst catch-up ceiling while the burst is still wholly on screen
+	pub scroll_ramp_down_ms: f32,         // catch-up relaxes back to the initial speed over this
+	pub scroll_ease_out_ms: f32,          // how long the last STOP_BAND of a line takes to land
 	pub wheel_lines: f32,
 	pub alt_scroll_lines: f32,
 	pub output_ease_lines: f32,
@@ -227,8 +233,12 @@ impl Default for Settings {
 			line_height_scale: 1.22,
 			scrollback: 10_000,
 			scroll_smooth: true,
+			scroll_ease_in: 0.35, // ~ "Ease-in" 35 (motion builds over ~a third of the ease)
 			scroll_tau_ms: 230.0, // ~ "Initial scroll speed" 33 (slow start: ~4 lines/s; bursts ramp up from here)
-			scroll_inview_tau_ms: 60.0, // ~ "In-view output speed" 61 (in-view burst speed ceiling: ~17 lines/s)
+			scroll_ramp_up_ms: 300.0, // ~ "Ramp-up" 51 (catch-up speed doubles ~3x a second)
+			scroll_single_screen_tau_ms: 60.0, // ~ "Single-screen speed" 61 (on-screen burst ceiling: ~17 lines/s)
+			scroll_ramp_down_ms: 450.0,        // ~ "Ramp-down" 51 (gentle relax back to the initial speed)
+			scroll_ease_out_ms: 133.0,         // ~ "Ease-out" 51 (the tail lands in ~an eighth of a second)
 			wheel_lines: 3.0,
 			alt_scroll_lines: 3.0,
 			output_ease_lines: 1.0,
@@ -668,11 +678,26 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.scroll_smooth != orig.scroll_smooth {
 		doc.set_bool("scroll.smooth", s.scroll_smooth);
 	}
+	if s.scroll_ease_in != orig.scroll_ease_in {
+		doc.set_float("scroll.ease_in", r(s.scroll_ease_in));
+	}
 	if s.scroll_tau_ms != orig.scroll_tau_ms {
 		doc.set_float("scroll.tau_ms", r(s.scroll_tau_ms));
 	}
-	if s.scroll_inview_tau_ms != orig.scroll_inview_tau_ms {
-		doc.set_float("scroll.inview_tau_ms", r(s.scroll_inview_tau_ms));
+	if s.scroll_ramp_up_ms != orig.scroll_ramp_up_ms {
+		doc.set_float("scroll.ramp_up_ms", r(s.scroll_ramp_up_ms));
+	}
+	if s.scroll_single_screen_tau_ms != orig.scroll_single_screen_tau_ms {
+		doc.set_float(
+			"scroll.single_screen_tau_ms",
+			r(s.scroll_single_screen_tau_ms),
+		);
+	}
+	if s.scroll_ramp_down_ms != orig.scroll_ramp_down_ms {
+		doc.set_float("scroll.ramp_down_ms", r(s.scroll_ramp_down_ms));
+	}
+	if s.scroll_ease_out_ms != orig.scroll_ease_out_ms {
+		doc.set_float("scroll.ease_out_ms", r(s.scroll_ease_out_ms));
 	}
 	if s.wheel_lines != orig.wheel_lines {
 		doc.set_float("scroll.wheel_lines", r(s.wheel_lines));
@@ -890,8 +915,12 @@ struct RawConfig {
 	line_height_scale: Option<f32>,
 	scrollback: Option<usize>,
 	scroll_smooth: Option<bool>,
+	scroll_ease_in: Option<f32>,
 	scroll_tau_ms: Option<f32>,
-	scroll_inview_tau_ms: Option<f32>,
+	scroll_ramp_up_ms: Option<f32>,
+	scroll_single_screen_tau_ms: Option<f32>,
+	scroll_ramp_down_ms: Option<f32>,
+	scroll_ease_out_ms: Option<f32>,
 	wheel_lines: Option<f32>,
 	alt_scroll_lines: Option<f32>,
 	output_ease_lines: Option<f32>,
@@ -1062,8 +1091,12 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		line_height_scale: r.f("font.line_height_scale"),
 		scrollback: r.u("scroll.scrollback"),
 		scroll_smooth: r.b("scroll.smooth"),
+		scroll_ease_in: r.f("scroll.ease_in"),
 		scroll_tau_ms: r.f("scroll.tau_ms"),
-		scroll_inview_tau_ms: r.f("scroll.inview_tau_ms"),
+		scroll_ramp_up_ms: r.f("scroll.ramp_up_ms"),
+		scroll_single_screen_tau_ms: r.f("scroll.single_screen_tau_ms"),
+		scroll_ramp_down_ms: r.f("scroll.ramp_down_ms"),
+		scroll_ease_out_ms: r.f("scroll.ease_out_ms"),
 		wheel_lines: r.f("scroll.wheel_lines"),
 		alt_scroll_lines: r.f("scroll.alt_scroll_lines"),
 		output_ease_lines: r.f("scroll.output_ease_lines"),
@@ -1170,10 +1203,29 @@ fn resolve(raw: RawConfig) -> Settings {
 			.max(0.5),
 		scrollback: raw.scrollback.unwrap_or(d.scrollback),
 		scroll_smooth: raw.scroll_smooth.unwrap_or(d.scroll_smooth),
+		// 0 = no ease-in at all (the old bare exponential); 1 = as gradual as
+		// the main ease itself. Past 1 the cascade still can't overshoot, but
+		// it just reads as a slower scroll, so the dialog range is the range.
+		scroll_ease_in: raw
+			.scroll_ease_in
+			.unwrap_or(d.scroll_ease_in)
+			.clamp(0.0, 1.0),
 		scroll_tau_ms: raw.scroll_tau_ms.unwrap_or(d.scroll_tau_ms).max(1.0),
-		scroll_inview_tau_ms: raw
-			.scroll_inview_tau_ms
-			.unwrap_or(d.scroll_inview_tau_ms)
+		scroll_ramp_up_ms: raw
+			.scroll_ramp_up_ms
+			.unwrap_or(d.scroll_ramp_up_ms)
+			.max(1.0),
+		scroll_single_screen_tau_ms: raw
+			.scroll_single_screen_tau_ms
+			.unwrap_or(d.scroll_single_screen_tau_ms)
+			.max(1.0),
+		scroll_ramp_down_ms: raw
+			.scroll_ramp_down_ms
+			.unwrap_or(d.scroll_ramp_down_ms)
+			.max(1.0),
+		scroll_ease_out_ms: raw
+			.scroll_ease_out_ms
+			.unwrap_or(d.scroll_ease_out_ms)
 			.max(1.0),
 		wheel_lines: raw.wheel_lines.unwrap_or(d.wheel_lines),
 		alt_scroll_lines: raw.alt_scroll_lines.unwrap_or(d.alt_scroll_lines),
@@ -1608,7 +1660,7 @@ fn line_setting_key(line: &str) -> Option<&str> {
 // same parent block - the machinery rewrites the line in place, it does not
 // move lines between blocks. (The whole pre-nesting flat namespace is handled
 // separately by `convert_legacy_config`, not here.)
-const CONFIG_RENAMES: &[(&str, &str)] = &[];
+const CONFIG_RENAMES: &[(&str, &str)] = &[("scroll.inview_tau_ms", "scroll.single_screen_tau_ms")];
 // Paths that no longer exist and should be removed from an existing config.
 const CONFIG_REMOVED: &[&str] = &[];
 
@@ -2606,16 +2658,33 @@ scroll:
 	## scroll lands instantly; the speed settings below then have no effect.
 	# smooth: true  ## Default
 
+	## Ease-in
+	## How gradually the view builds speed when it starts moving from rest, as
+	## a fraction of the main ease below. 0 leaves at full speed on the first
+	## frame; 1 builds as gradually as the ease itself settles. Scales with the
+	## speed settings, so a full-throttle catch-up stays immediate. 0.35 is 35
+	## on the 0..100 dialog scale.
+	## Range: 0.0 to 1.0 - higher is gentler
+	ease_in: 0.35
+
 	## Initial scroll speed
 	## The speed output starts scrolling at, shown in Settings as "Initial
 	## scroll speed": one line per this many milliseconds. A sustained burst
-	## ramps up from here - the speed doubles every third of a second while
-	## output stays ahead - and eases back once output stops. 230 ms (~4
-	## lines/s) is about 33 on the 1..100 dialog scale.
+	## ramps up from here (see Ramp-up) and eases back once output stops. 230 ms
+	## (~4 lines/s) is about 33 on the 1..100 dialog scale.
 	## Range: 1.0 and up (milliseconds) - lower is faster
 	tau_ms: 230.0
 
-	## In-view output speed
+	## Ramp-up
+	## How quickly a burst accelerates once output runs ahead of the view: the
+	## catch-up speed doubles every this many milliseconds. Lower ramps harder,
+	## so a buffer dump is caught sooner at the cost of a briefer slow start.
+	## 300 ms (about three doublings a second) is around 51 on the 1..100
+	## dialog scale, where higher means a harder ramp.
+	## Range: 1.0 and up (milliseconds) - lower ramps harder
+	ramp_up_ms: 300.0
+
+	## Single-screen speed
 	## Top scrolling speed for an output burst whose own first line is still on
 	## screen (a short directory listing, say): one line per this many
 	## milliseconds. Faster than the initial speed but gentler than the full
@@ -2623,7 +2692,24 @@ scroll:
 	## is unlimited and reaches whatever speed keeps up. 60 ms (~17 lines/s) is
 	## about 61 on the 1..100 dialog scale.
 	## Range: 1.0 and up (milliseconds) - lower is faster
-	inview_tau_ms: 60.0
+	single_screen_tau_ms: 60.0
+
+	## Ramp-down
+	## How quickly the catch-up speed relaxes back to the initial speed once
+	## output stops running ahead, as a time constant. Higher lets a burst stay
+	## fast through a brief pause; lower makes every lull start gently again.
+	## 450 ms is around 51 on the 1..100 dialog scale, where higher means a
+	## quicker relax.
+	## Range: 1.0 and up (milliseconds) - lower relaxes quicker
+	ramp_down_ms: 450.0
+
+	## Ease-out
+	## How gradually the view settles onto its final line. The last fraction of
+	## a line is given at least this long, so the tail sweeps in instead of
+	## crawling to a halt. Higher is a softer, longer landing; lower is crisper.
+	## 133 ms is about 51 on the 1..100 dialog scale.
+	## Range: 1.0 and up (milliseconds) - higher is gentler
+	ease_out_ms: 133.0
 
 	## Wheel lines
 	## Lines per wheel notch (smooth scrollback).
@@ -3088,6 +3174,32 @@ mod tests {
 				"{literal} should stay literal"
 			);
 		}
+	}
+
+	// The first path-level rename since the config went nested. A rename rewrites
+	// the key on its own line and must keep everything else about it: the value,
+	// the active/commented state, and the indentation that says which block it
+	// belongs to. Renames may not cross blocks - the machinery rewrites lines, it
+	// does not move them - so this one stays inside `scroll:`.
+	#[test]
+	fn a_renamed_setting_keeps_its_value_and_its_block() {
+		let out = migrate_config_text("scroll:\n\tinview_tau_ms: 45.0\n").expect("should migrate");
+		assert_eq!(out, "scroll:\n\tsingle_screen_tau_ms: 45.0\n");
+		// the value has to survive the trip through the loader, not just the text
+		let s = resolve(read_raw(&out, std::path::Path::new("test.shcl")));
+		assert!((s.scroll_single_screen_tau_ms - 45.0).abs() < f32::EPSILON);
+		// the dotted spelling reads and rewrites the same way
+		assert_eq!(
+			migrate_config_text("scroll.inview_tau_ms: 45.0\n").as_deref(),
+			Some("scroll.single_screen_tau_ms: 45.0\n")
+		);
+		// a commented line is renamed too, so the file keeps documenting itself
+		assert_eq!(
+			migrate_config_text("scroll:\n\t# inview_tau_ms: 60.0  ## Default\n").as_deref(),
+			Some("scroll:\n\t# single_screen_tau_ms: 60.0  ## Default\n")
+		);
+		// and a config that already carries the new spelling is left alone
+		assert!(migrate_config_text("scroll:\n\tsingle_screen_tau_ms: 45.0\n").is_none());
 	}
 
 	// A config with nothing to migrate is left untouched (no needless rewrite).
