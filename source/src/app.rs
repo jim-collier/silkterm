@@ -1521,7 +1521,7 @@ impl State {
 			return;
 		}
 		let settings = config::settings();
-		let Some(dir) = &settings.wallpaper_folder else {
+		let Some(dir) = settings.rotation_folder() else {
 			return;
 		};
 		self.wp_images = list_folder_images(dir);
@@ -1586,8 +1586,12 @@ impl State {
 
 	// Rotate to the next image and re-arm the timer.
 	fn advance_wallpaper(&mut self) {
-		if self.wp_locked || self.wp_images.len() < 2 {
-			// locked, or one image (or none): nothing to rotate to; drop the timer
+		// locked, switched off since the timer was armed, or one image (or none):
+		// nothing to rotate to, so drop the timer
+		if self.wp_locked
+			|| self.wp_images.len() < 2
+			|| config::settings().rotation_folder().is_none()
+		{
 			self.wp_next = None;
 			return;
 		}
@@ -3193,7 +3197,7 @@ fn load_wallpaper(gfx: &Gfx) -> Option<ImageRenderer> {
 				return None;
 			}
 		}
-	} else if settings.wallpaper_fallback_builtin && settings.wallpaper_folder.is_none() {
+	} else if settings.wallpaper_fallback_builtin && settings.rotation_folder().is_none() {
 		// No image or rotation folder configured: fall back to the embedded default
 		// so a fresh install still looks the part. Opt out with wallpaper_fallback_builtin.
 		image::load_from_memory(DEFAULT_BACKGROUND).ok()?.to_rgba8()

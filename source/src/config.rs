@@ -176,6 +176,19 @@ pub struct Settings {
 	pub theme_mode: String,  // "dark" | "light" | "system"
 }
 
+impl Settings {
+	// The rotation folder, or None when either master switch is off. Both callers
+	// (arming rotation, and the built-in fallback's "nothing is configured" test)
+	// go through this so they cannot disagree - and it is derived rather than
+	// folded into `wallpaper_folder` at load, because the Settings dialog edits a
+	// Settings struct directly and never re-runs `resolve`.
+	pub fn rotation_folder(&self) -> Option<&PathBuf> {
+		(self.wallpaper_enabled && self.wallpaper_rotate_enabled)
+			.then_some(self.wallpaper_folder.as_ref())
+			.flatten()
+	}
+}
+
 impl Default for Settings {
 	fn default() -> Self {
 		Self {
@@ -920,19 +933,8 @@ fn resolve(raw: RawConfig) -> Settings {
 		.wallpaper
 		.as_deref()
 		.is_some_and(|value| !value.trim().is_empty());
-	// Both master switches fold into the folder here rather than gating each
-	// consumer: with no folder, rotation has nothing to do and the built-in
-	// fallback's "nothing is configured" test comes out right on its own.
-	let rotating = raw.wallpaper_enabled.unwrap_or(d.wallpaper_enabled)
-		&& raw
-			.wallpaper_rotate_enabled
-			.unwrap_or(d.wallpaper_rotate_enabled);
-	let folder = rotating
-		.then(|| {
-			resolve_wallpaper_folder(raw.wallpaper_folder)
-				.or_else(|| (!pinned_wallpaper).then(default_wallpaper_folder).flatten())
-		})
-		.flatten();
+	let folder = resolve_wallpaper_folder(raw.wallpaper_folder)
+		.or_else(|| (!pinned_wallpaper).then(default_wallpaper_folder).flatten());
 	Settings {
 		use_system_font,
 		// absent = follow the face toggle, so configs predating the split (and an
@@ -1626,41 +1628,79 @@ pub fn revert_keys(keys: &[&str]) {
 // Insert any settings the `DEFAULT_CONFIG` template defines that `path` lacks,
 // using the template's own (commented or active) line so follow-system keys stay
 // absent and behavior is unchanged. Existing values, comments, and formatting are
-// preserved (we only append). Every setting is one self-contained line - nested
-// keys are written in dotted form - so there is no table header to insert under.
+// preserved (nothing already in the file is rewritten). Every setting is one
+// self-contained line - nested keys are written in dotted form - so there is no
+// table header to insert under.
+//
+// A template group is one comment block plus the settings it introduces, and the
+// block belongs to the group's FIRST setting. A group the file has never seen is
+// appended whole, comments and all - but a group the file already has PART of
+// already carries those comments, and re-appending them would duplicate the whole
+// paragraph at the end of the file. Stragglers from a part-present group are put
+// back beside the siblings that explain them instead.
 fn backfill_config(path: &std::path::Path) {
 	let Ok(text) = std::fs::read_to_string(path) else {
 		return;
 	};
-	let have: std::collections::HashSet<String> = setting_lines(&text)
-		.into_iter()
-		.map(|(key, _)| key)
+	let at: std::collections::HashMap<&str, usize> = text
+		.lines()
+		.enumerate()
+		.filter_map(|(index, line)| line_setting_key(line).map(|key| (key, index)))
 		.collect();
 
-	// Each missing key is inserted as its own group: a blank-line separator, the
-	// template's comment lines, then the setting (comment + setting stay together;
-	// different groups are blank-line separated).
-	let mut add: Vec<String> = Vec::new();
-	let mut group_open = false; // have we emitted a setting in the current template group?
+	let mut groups: Vec<Vec<(String, Vec<String>)>> = Vec::new();
 	for (key, block, new_group) in setting_groups(DEFAULT_CONFIG) {
-		if new_group {
-			group_open = false;
+		if new_group || groups.is_empty() {
+			groups.push(Vec::new());
 		}
-		if have.contains(&key) {
+		if let Some(group) = groups.last_mut() {
+			group.push((key, block));
+		}
+	}
+
+	let mut add: Vec<String> = Vec::new(); // wholly-new groups, appended at the end
+	let mut put: Vec<(usize, usize, String)> = Vec::new(); // (line, slot, straggler)
+	for group in &groups {
+		let present: Vec<usize> = (0..group.len())
+			.filter(|slot| at.contains_key(group[*slot].0.as_str()))
+			.collect();
+		if present.len() == group.len() {
 			continue;
 		}
-		// a blank line only when this starts a new (visible) group
-		if !group_open {
-			add.push(String::new());
+		if present.is_empty() {
+			add.push(String::new()); // blank-line separator between groups
+			for (_, block) in group {
+				add.extend(block.iter().cloned());
+			}
+			continue;
 		}
-		add.extend(block);
-		group_open = true;
+		for (slot, (key, block)) in group.iter().enumerate() {
+			if at.contains_key(key.as_str()) {
+				continue;
+			}
+			let Some(line) = block.last() else { continue };
+			// hold the template's order among the siblings: before the next one
+			// present, or after the last one when this is the group's tail
+			let index = present.iter().find(|other| **other > slot).map_or_else(
+				|| present.last().map(|other| at[group[*other].0.as_str()] + 1),
+				|other| Some(at[group[*other].0.as_str()]),
+			);
+			if let Some(index) = index {
+				put.push((index, slot, line.clone()));
+			}
+		}
 	}
-	if add.is_empty() {
+	if add.is_empty() && put.is_empty() {
 		return;
 	}
 
 	let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+	// back to front so the earlier line numbers stay valid; same-line stragglers
+	// go in reverse template order, which leaves them in template order
+	put.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+	for (index, _, line) in put {
+		lines.insert(index, line);
+	}
 	lines.extend(add);
 	let mut out = lines.join("\n");
 	out.push('\n');
@@ -2460,6 +2500,50 @@ mod tests {
 		let edited = format!("use_system_font: true\nfont_family: \"Iosevka, {stale}\"\n");
 		assert!(migrate_config_text(&edited).is_none());
 		assert!(migrate_config_text(&format!("# font_family: \"{stale}\"\n")).is_none());
+	}
+
+	// A new key added to a group the file already has PART of must land beside its
+	// siblings, NOT be appended with a second copy of the group's comment block -
+	// that paragraph is already in the file, attached to the siblings.
+	#[test]
+	fn a_straggler_lands_beside_its_siblings_not_with_a_second_paragraph() {
+		let path = std::env::temp_dir().join("silkterm_backfill_straggler_test.shcl");
+		// wallpaper_rotate_enabled is the group's first key and carries its comment
+		// block; the other three are already here under a paragraph of their own.
+		let drifted = "## Rotate the wallpaper through a folder of images.\n\
+			# wallpaper_folder: \"wallpaper/\"\n\
+			# wallpaper_rotate_interval_s: 0.0\n\
+			# wallpaper_rotate_random: true\n";
+		std::fs::write(&path, drifted).unwrap();
+		backfill_config(&path);
+		let out = std::fs::read_to_string(&path).unwrap();
+
+		let paragraphs = out.matches("Rotate the wallpaper through a folder").count();
+		assert_eq!(paragraphs, 1, "comment block duplicated:\n{out}");
+		let straggler = out
+			.find("# wallpaper_rotate_enabled:")
+			.expect("straggler backfilled");
+		let sibling = out
+			.find("# wallpaper_folder:")
+			.expect("sibling still there");
+		assert!(
+			straggler < sibling,
+			"template order among siblings not kept:\n{out}"
+		);
+		// a group the file has never seen still arrives whole, comments and all
+		assert!(
+			out.contains("## Enable wallpaper - master override.")
+				&& out.contains("# wallpaper_enabled: true"),
+			"new group needs its comments:\n{out}"
+		);
+
+		backfill_config(&path);
+		assert_eq!(
+			out,
+			std::fs::read_to_string(&path).unwrap(),
+			"backfill not idempotent"
+		);
+		let _ = std::fs::remove_file(&path);
 	}
 
 	// The real on-disk load pipeline (migrate -> backfill) on a drifted pre-update

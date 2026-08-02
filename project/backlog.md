@@ -1369,8 +1369,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
+- ✅ A new setting no longer duplicates its neighbours' comment block.
+	- Description: adding a setting to a group that an existing config already had part of appended the group's whole comment paragraph a second time at the end of the file, alongside the one already in place.
+	- Fixed: a setting whose group is already partly present is put back beside its siblings, in the order the template lists them, with no comment block - those comments are already there. A group the file has never seen still arrives whole.
+
 - ✅ Wallpaper settings renamed, and given two master switches.
-	- ✅ `wallpaper_enabled` turns the whole feature off in one line; `wallpaper_rotate_enabled` turns folder rotation off without disturbing the folder. Both default on.
+	- ✅ `wallpaper_enabled` turns the whole feature off in one line; `wallpaper_rotate_enabled` turns folder rotation off without disturbing the folder. Both default on, both in Settings as "Wallpaper" and "Rotate folder".
+	- ✅ Switching the master off greys out every wallpaper row under it, the way the contrast-mask rows already followed their own checkbox.
 	- ✅ `wallpaper_default` is now `wallpaper_fallback_builtin` and `wallpaper_fit` is now `wallpaper_default_fit`, matching what the Settings dialog calls them. Existing configs are renamed on the next launch.
 	- ✅ The wallpaper folder is `wallpaper/` beside the config now, not `wallpapers/`. The older spellings still work.
 	- ✅ A path in the config can start with `~`.
