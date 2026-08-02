@@ -117,16 +117,18 @@ pub struct Settings {
 	pub opacity: f32,             // background opacity 0..1 (1 = fully opaque)
 	pub transparent_background: bool, // X11: per-pixel bg transparency (text stays opaque) via a GL surface
 	pub transparent_background_blur: bool, // X11: ask a KWin/picom compositor to blur the desktop behind the window
+	pub wallpaper_enabled: bool,           // master switch: false = no wallpaper at all
 	pub wallpaper: Option<PathBuf>,        // resolved path, or None
 	pub wallpaper_raw: String, // the value as configured ("" = auto-detect); what the dialog shows
-	pub wallpaper_default: bool, // when no image/folder is configured, show the built-in wallpaper
+	pub wallpaper_fallback_builtin: bool, // no image/folder configured: show the built-in one
+	pub wallpaper_rotate_enabled: bool, // master switch for folder rotation
 	pub wallpaper_folder: Option<PathBuf>, // rotate the wallpaper through this folder's images (overrides wallpaper)
 	pub wallpaper_rotate_random: bool,     // rotate randomly instead of in filename order
 	pub wallpaper_rotate_interval_s: f32,  // seconds between rotations (0 = pick one at startup only)
 	pub wallpaper_opacity: f32,            // image visibility 0..1
-	pub wallpaper_fit: Fit,
-	pub wallpaper_honor_xmp: bool, // let a wallpaper's own Fit/Anchor tags override wallpaper_fit
-	pub wallpaper_blur: f32,       // Gaussian blur sigma applied to the image (0 = none)
+	pub wallpaper_default_fit: Fit,        // used unless the image's own tags say otherwise
+	pub wallpaper_honor_xmp: bool,         // let a wallpaper's own Fit/Anchor tags win
+	pub wallpaper_blur: f32,               // Gaussian blur sigma applied to the image (0 = none)
 	pub wallpaper_contrast_mask: bool, // flatten the image's contrast so it stops competing with text
 	pub wallpaper_contrast_mask_size: f32, // flatten scale 0..1 (1 = half the longest pixel dim)
 	pub wallpaper_contrast_mask_strength: f32, // how far toward the local mean 0..1
@@ -193,13 +195,15 @@ impl Default for Settings {
 			transparent_background: false,
 			transparent_background_blur: false,
 			wallpaper: None,
+			wallpaper_enabled: true,
 			wallpaper_raw: String::new(),
-			wallpaper_default: true,
+			wallpaper_fallback_builtin: true,
+			wallpaper_rotate_enabled: true,
 			wallpaper_folder: None,
 			wallpaper_rotate_random: true,
 			wallpaper_rotate_interval_s: 0.0,
 			wallpaper_opacity: 0.10, // image visibility relative to bg color
-			wallpaper_fit: Fit::Stretch,
+			wallpaper_default_fit: Fit::Stretch,
 			wallpaper_honor_xmp: true,
 			wallpaper_blur: 10.0,
 			wallpaper_contrast_mask: true,
@@ -486,10 +490,16 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.wallpaper_opacity != orig.wallpaper_opacity {
 		doc.set_float("wallpaper_opacity", r(s.wallpaper_opacity));
 	}
-	if s.wallpaper_fit != orig.wallpaper_fit {
+	if s.wallpaper_enabled != orig.wallpaper_enabled {
+		doc.set_bool("wallpaper_enabled", s.wallpaper_enabled);
+	}
+	if s.wallpaper_rotate_enabled != orig.wallpaper_rotate_enabled {
+		doc.set_bool("wallpaper_rotate_enabled", s.wallpaper_rotate_enabled);
+	}
+	if s.wallpaper_default_fit != orig.wallpaper_default_fit {
 		doc.set_string(
-			"wallpaper_fit",
-			match s.wallpaper_fit {
+			"wallpaper_default_fit",
+			match s.wallpaper_default_fit {
 				Fit::Zoom => "zoom",
 				Fit::Stretch => "stretch",
 			},
@@ -596,8 +606,8 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 			doc.set_string("wallpaper", s.wallpaper_raw.trim());
 		}
 	}
-	if s.wallpaper_default != orig.wallpaper_default {
-		doc.set_bool("wallpaper_default", s.wallpaper_default);
+	if s.wallpaper_fallback_builtin != orig.wallpaper_fallback_builtin {
+		doc.set_bool("wallpaper_fallback_builtin", s.wallpaper_fallback_builtin);
 	}
 
 	let mut set_color = |key: &str, color: [u8; 3], orig_color: [u8; 3]| {
@@ -671,13 +681,15 @@ struct RawConfig {
 	opacity: Option<f32>,
 	transparent_background: Option<bool>,
 	transparent_background_blur: Option<bool>,
+	wallpaper_enabled: Option<bool>,
 	wallpaper: Option<String>,
-	wallpaper_default: Option<bool>,
+	wallpaper_fallback_builtin: Option<bool>,
+	wallpaper_rotate_enabled: Option<bool>,
 	wallpaper_folder: Option<String>,
 	wallpaper_rotate_random: Option<bool>,
 	wallpaper_rotate_interval_s: Option<f32>,
 	wallpaper_opacity: Option<f32>,
-	wallpaper_fit: Option<String>,
+	wallpaper_default_fit: Option<String>,
 	wallpaper_honor_xmp: Option<bool>,
 	wallpaper_blur: Option<f32>,
 	wallpaper_contrast_mask: Option<bool>,
@@ -832,13 +844,15 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		opacity: r.f("opacity"),
 		transparent_background: r.b("transparent_background"),
 		transparent_background_blur: r.b("transparent_background_blur"),
+		wallpaper_enabled: r.b("wallpaper_enabled"),
 		wallpaper: r.s("wallpaper"),
-		wallpaper_default: r.b("wallpaper_default"),
+		wallpaper_fallback_builtin: r.b("wallpaper_fallback_builtin"),
+		wallpaper_rotate_enabled: r.b("wallpaper_rotate_enabled"),
 		wallpaper_folder: r.s("wallpaper_folder"),
 		wallpaper_rotate_random: r.b("wallpaper_rotate_random"),
 		wallpaper_rotate_interval_s: r.f("wallpaper_rotate_interval_s"),
 		wallpaper_opacity: r.f("wallpaper_opacity"),
-		wallpaper_fit: r.s("wallpaper_fit"),
+		wallpaper_default_fit: r.s("wallpaper_default_fit"),
 		wallpaper_honor_xmp: r.b("wallpaper_honor_xmp"),
 		wallpaper_blur: r.f("wallpaper_blur"),
 		wallpaper_contrast_mask: r.b("wallpaper_contrast_mask"),
@@ -906,8 +920,19 @@ fn resolve(raw: RawConfig) -> Settings {
 		.wallpaper
 		.as_deref()
 		.is_some_and(|value| !value.trim().is_empty());
-	let folder = resolve_wallpaper_folder(raw.wallpaper_folder)
-		.or_else(|| (!pinned_wallpaper).then(default_wallpaper_folder).flatten());
+	// Both master switches fold into the folder here rather than gating each
+	// consumer: with no folder, rotation has nothing to do and the built-in
+	// fallback's "nothing is configured" test comes out right on its own.
+	let rotating = raw.wallpaper_enabled.unwrap_or(d.wallpaper_enabled)
+		&& raw
+			.wallpaper_rotate_enabled
+			.unwrap_or(d.wallpaper_rotate_enabled);
+	let folder = rotating
+		.then(|| {
+			resolve_wallpaper_folder(raw.wallpaper_folder)
+				.or_else(|| (!pinned_wallpaper).then(default_wallpaper_folder).flatten())
+		})
+		.flatten();
 	Settings {
 		use_system_font,
 		// absent = follow the face toggle, so configs predating the split (and an
@@ -941,9 +966,15 @@ fn resolve(raw: RawConfig) -> Settings {
 		transparent_background_blur: raw
 			.transparent_background_blur
 			.unwrap_or(d.transparent_background_blur),
+		wallpaper_enabled: raw.wallpaper_enabled.unwrap_or(d.wallpaper_enabled),
 		wallpaper_raw: raw.wallpaper.clone().unwrap_or_default(),
 		wallpaper: resolve_wallpaper(raw.wallpaper),
-		wallpaper_default: raw.wallpaper_default.unwrap_or(d.wallpaper_default),
+		wallpaper_fallback_builtin: raw
+			.wallpaper_fallback_builtin
+			.unwrap_or(d.wallpaper_fallback_builtin),
+		wallpaper_rotate_enabled: raw
+			.wallpaper_rotate_enabled
+			.unwrap_or(d.wallpaper_rotate_enabled),
 		wallpaper_folder: folder,
 		wallpaper_rotate_random: raw
 			.wallpaper_rotate_random
@@ -1028,7 +1059,7 @@ fn resolve(raw: RawConfig) -> Settings {
 			.cursor_blink_rate_ms
 			.unwrap_or(d.cursor_blink_rate_ms)
 			.max(50.0),
-		wallpaper_fit: match raw.wallpaper_fit.as_deref() {
+		wallpaper_default_fit: match raw.wallpaper_default_fit.as_deref() {
 			Some("zoom") => Fit::Zoom,
 			_ => Fit::Stretch,
 		},
@@ -1139,28 +1170,50 @@ pub fn effective_font_size() -> f32 {
 // Resolve the background image: an explicit path (absolute, or a filename
 // relative to the config dir), else auto-detect backgrounds/background.{png,jpg,jpeg}
 // under the config dir.
+// `~` and `~/...` expand to $HOME (USERPROFILE on Windows). A config is text a
+// person edits by hand, and that is how they write a home-relative path. `~user`
+// is left literal - there is nothing to resolve it against.
+fn expand_tilde(value: &str) -> PathBuf {
+	let rest = match value.strip_prefix('~') {
+		Some("") => "",
+		Some(rest) if rest.starts_with('/') || rest.starts_with('\\') => &rest[1..],
+		_ => return PathBuf::from(value),
+	};
+	std::env::var_os("HOME")
+		.or_else(|| std::env::var_os("USERPROFILE"))
+		.filter(|home| !home.is_empty())
+		.map_or_else(
+			|| PathBuf::from(value),
+			|home| PathBuf::from(home).join(rest),
+		)
+}
+
 pub fn resolve_wallpaper(explicit: Option<String>) -> Option<PathBuf> {
 	let dir = config_path()?.parent()?.to_path_buf();
 	if let Some(given) = explicit.filter(|value| !value.trim().is_empty()) {
-		let path = PathBuf::from(&given);
+		let path = expand_tilde(given.trim());
 		let path = if path.is_absolute() {
 			path
 		} else {
-			dir.join(given)
+			dir.join(path)
 		};
 		return path.exists().then_some(path);
 	}
-	// New convention first (wallpapers/wallpaper.*), then the old one
-	// (backgrounds/background.*) so existing setups keep working.
-	[("wallpapers", "wallpaper"), ("backgrounds", "background")]
-		.into_iter()
-		.flat_map(|(sub, stem)| {
-			let sub_dir = dir.join(sub);
-			["png", "jpg", "jpeg"]
-				.into_iter()
-				.map(move |ext| sub_dir.join(format!("{stem}.{ext}")))
-		})
-		.find(|path| path.exists())
+	// Current convention first (wallpaper/wallpaper.*), then the older spellings
+	// so existing setups keep working.
+	[
+		("wallpaper", "wallpaper"),
+		("wallpapers", "wallpaper"),
+		("backgrounds", "background"),
+	]
+	.into_iter()
+	.flat_map(|(sub, stem)| {
+		let sub_dir = dir.join(sub);
+		["png", "jpg", "jpeg"]
+			.into_iter()
+			.map(move |ext| sub_dir.join(format!("{stem}.{ext}")))
+	})
+	.find(|path| path.exists())
 }
 
 // The wallpaper-rotation folder: a relative value resolves against the config
@@ -1168,7 +1221,7 @@ pub fn resolve_wallpaper(explicit: Option<String>) -> Option<PathBuf> {
 // directory, so a typo just leaves rotation off rather than erroring.
 pub fn resolve_wallpaper_folder(explicit: Option<String>) -> Option<PathBuf> {
 	let given = explicit.filter(|value| !value.trim().is_empty())?;
-	let path = PathBuf::from(given.trim());
+	let path = expand_tilde(given.trim());
 	let path = if path.is_absolute() {
 		path
 	} else {
@@ -1236,7 +1289,7 @@ pub fn is_image_file(path: &std::path::Path) -> bool {
 // rotation, silently, since the user never asked for one.
 fn default_wallpaper_folder() -> Option<PathBuf> {
 	let dir = config_path()?.parent()?.to_path_buf();
-	["wallpapers", "backgrounds"]
+	["wallpaper", "wallpapers", "backgrounds"]
 		.into_iter()
 		.map(|sub| dir.join(sub))
 		.find(|sub| {
@@ -1314,8 +1367,8 @@ const CONFIG_RENAMES: &[(&str, &str)] = &[
 	("cursor_glow", "cursor_scrim"),
 	("background_image", "wallpaper"),
 	("background_folder", "wallpaper_folder"),
-	("background_default", "wallpaper_default"),
-	("background_fit", "wallpaper_fit"),
+	("background_default", "wallpaper_fallback_builtin"),
+	("background_fit", "wallpaper_default_fit"),
 	("background_blur", "wallpaper_blur"),
 	("background_opacity", "wallpaper_opacity"),
 	("background_rotate_random", "wallpaper_rotate_random"),
@@ -1323,6 +1376,8 @@ const CONFIG_RENAMES: &[(&str, &str)] = &[
 		"background_rotate_interval_s",
 		"wallpaper_rotate_interval_s",
 	),
+	("wallpaper_default", "wallpaper_fallback_builtin"),
+	("wallpaper_fit", "wallpaper_default_fit"),
 	("background_contrast_mask", "wallpaper_contrast_mask"),
 	(
 		"background_contrast_mask_size",
@@ -1362,6 +1417,7 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	("cursor_size_width", "25"),
 	("wallpaper_rotate_random", "false"),
 	("cursor_animation_resume_s", "2"),
+	("wallpaper_folder", "\"wallpapers\""),
 ];
 
 // Migrate an existing config in place across program updates: rename keys whose
@@ -1729,24 +1785,28 @@ opacity: 0.95
 ## compositor instead). The compositor, not SilkTerm, controls the blur radius.
 # transparent_background_blur: true
 
-## Wallpaper image. Leave commented to auto-detect wallpapers/wallpaper.{png,jpg,jpeg}
-## (or the legacy backgrounds/background.{png,jpg,jpeg}) under this directory. Value
-## may be an absolute path or a filename relative here.
+## Enable wallpaper - master override.
+# wallpaper_enabled: true
+
+## Singular wallpaper image.
+## Leave commented to auto-detect wallpaper/wallpaper.{png,jpg,jpeg}
+## Value may be an absolute path or a filename relative here.
 # wallpaper: "wallpaper.png"
 
 ## Show a built-in wallpaper when none is configured (no wallpaper found
-## above and no wallpaper_folder below). Set false for a plain terminal.
-# wallpaper_default: true
+## above and no wallpaper_folder below).
+# wallpaper_fallback_builtin: true
 
 ## Rotate the wallpaper through a folder of images (overrides wallpaper while
 ## set). Path is absolute or relative to this directory. Left commented, a
-## wallpapers/ dir here with images in it rotates on its own - unless `wallpaper`
+## wallpaper/ dir here with images in it rotates on its own - unless `wallpaper`
 ## above pins one, or one is given on the command line for that run.
 ## Random picks avoid whatever came up recently, so runs feel varied rather than
-## repeating; set false for plain filename order. Interval 0 = one per launch.
-# wallpaper_folder: "wallpapers"
-# wallpaper_rotate_random: true
+## repeating; set false for plain filename order. Interval 0 = only at launch.
+# wallpaper_rotate_enabled: true
+# wallpaper_folder: "wallpaper/"
 # wallpaper_rotate_interval_s: 0.0
+# wallpaper_rotate_random: true
 
 ## Image visibility relative to the background color (independent of `opacity`
 ## above): 0.0 = all background color, 1.0 = all image.
@@ -1754,7 +1814,7 @@ opacity: 0.95
 
 ## How the image fits when it has nothing to say for itself: "stretch" (fill,
 ## ignore aspect) or "zoom" (cover, keep aspect, crop the overhang).
-# wallpaper_fit: "stretch"
+# wallpaper_default_fit: "stretch"
 
 ## Let a wallpaper carry its own layout in its XMP metadata, overriding the
 ## default above per image. `wallpaper:Fit` is "stretch" or "zoom";
@@ -2184,6 +2244,53 @@ mod tests {
 		assert_eq!(s.menu_bg, [0x12, 0x34, 0x56]);
 		assert_eq!(s.dialog_fg, [0xab, 0xcd, 0xef]);
 		assert_eq!(s.menu_fg, crate::theme::MENU_FG_DEF);
+	}
+
+	// Both wallpaper renames are the SECOND hop of a chain that starts at the old
+	// background_* names, and the transform applies at most one rename per line
+	// per run - so the background_* entries have to point at the FINAL key or a
+	// pre-rename config would need two launches to land.
+	#[test]
+	fn wallpaper_rename_chains_land_in_one_pass() {
+		let out = migrate_config_text(
+			"background_fit: \"zoom\"\nbackground_default: false\n# wallpaper_fit: \"stretch\"\nwallpaper_default: true\n",
+		)
+		.expect("should rename");
+		assert!(
+			!out.contains("background_fit")
+				&& !out.contains("wallpaper_fit:")
+				&& !out.contains("wallpaper_default:"),
+			"no intermediate name survives: {out:?}"
+		);
+		assert!(
+			out.contains("wallpaper_default_fit: \"zoom\""),
+			"value + active kept: {out:?}"
+		);
+		assert!(
+			out.contains("# wallpaper_default_fit: \"stretch\""),
+			"commented state kept: {out:?}"
+		);
+		assert!(
+			out.contains("wallpaper_fallback_builtin: false")
+				&& out.contains("wallpaper_fallback_builtin: true"),
+			"both hops of the fallback chain: {out:?}"
+		);
+	}
+
+	// A hand-edited config is where a home-relative path gets typed, so `~` has
+	// to expand. `~user` has nothing to resolve against and stays literal.
+	#[test]
+	fn tilde_expands_to_home_but_only_for_this_user() {
+		let home = std::env::var("HOME").expect("HOME");
+		assert_eq!(expand_tilde("~/pics"), PathBuf::from(&home).join("pics"));
+		assert_eq!(expand_tilde("~"), PathBuf::from(&home));
+		for literal in ["~someone/pics", "/abs/pics", "rel/pics", "wallpaper/"] {
+			assert_eq!(
+				expand_tilde(literal),
+				PathBuf::from(literal),
+				"{literal} should stay literal"
+			);
+		}
 	}
 
 	#[test]

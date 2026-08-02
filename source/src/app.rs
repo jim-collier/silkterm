@@ -3173,11 +3173,14 @@ fn time_entropy() -> u64 {
 }
 
 // A built-in wallpaper baked into the binary, shown when the user has none
-// configured (wallpaper_default). ~100KB - negligible next to the binary.
+// configured (wallpaper_fallback_builtin). ~100KB - negligible next to the binary.
 const DEFAULT_BACKGROUND: &[u8] = include_bytes!("../assets/default-background.jpg");
 
 fn load_wallpaper(gfx: &Gfx) -> Option<ImageRenderer> {
 	let settings = config::settings();
+	if !settings.wallpaper_enabled {
+		return None;
+	}
 	let mut img = if let Some(path) = settings.wallpaper.as_ref() {
 		match image::open(path) {
 			Ok(i) => i.to_rgba8(),
@@ -3190,9 +3193,9 @@ fn load_wallpaper(gfx: &Gfx) -> Option<ImageRenderer> {
 				return None;
 			}
 		}
-	} else if settings.wallpaper_default && settings.wallpaper_folder.is_none() {
+	} else if settings.wallpaper_fallback_builtin && settings.wallpaper_folder.is_none() {
 		// No image or rotation folder configured: fall back to the embedded default
-		// so a fresh install still looks the part. Opt out with wallpaper_default.
+		// so a fresh install still looks the part. Opt out with wallpaper_fallback_builtin.
 		image::load_from_memory(DEFAULT_BACKGROUND).ok()?.to_rgba8()
 	} else {
 		return None;
@@ -3237,7 +3240,7 @@ fn load_wallpaper(gfx: &Gfx) -> Option<ImageRenderer> {
 	// An image can carry its own layout, so a photo isn't squashed by a default
 	// that suits gradients. Read straight from the file - the embedded default
 	// wallpaper has no path, and falls through to the configured fit.
-	let mut fit = settings.wallpaper_fit;
+	let mut fit = settings.wallpaper_default_fit;
 	let mut anchor = [0.5, 0.5];
 	if settings.wallpaper_honor_xmp {
 		if let Some(path) = settings.wallpaper.as_ref() {

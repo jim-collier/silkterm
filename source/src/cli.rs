@@ -40,7 +40,7 @@ pub struct Style {
 	pub bg_color: Option<[u8; 3]>,
 	pub fg_color: Option<[u8; 3]>,
 	pub wallpaper_img: Option<Option<String>>,
-	pub wallpaper_fit: Option<Fit>,
+	pub wallpaper_default_fit: Option<Fit>,
 	pub wallpaper_opacity: Option<f32>,
 }
 
@@ -492,12 +492,12 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 			}
 			"wallpaper-stretch" | "background-image-stretch" => {
 				if a.bool_value(name, inline)? {
-					style.wallpaper_fit = Some(Fit::Stretch);
+					style.wallpaper_default_fit = Some(Fit::Stretch);
 				}
 			}
 			"wallpaper-zoom" | "background-image-zoom" => {
 				if a.bool_value(name, inline)? {
-					style.wallpaper_fit = Some(Fit::Zoom);
+					style.wallpaper_default_fit = Some(Fit::Zoom);
 				}
 			}
 			"wallpaper-opacity" | "background-image-opacity" => {
@@ -544,9 +544,12 @@ pub fn fold_window_style(settings: &mut config::Settings, style: &Style) {
 	if let Some(img) = &style.wallpaper_img {
 		settings.wallpaper_raw = img.clone().unwrap_or_default();
 		settings.wallpaper = img.as_ref().map(PathBuf::from);
+		// naming one is a deliberate choice for this run; don't let a config that
+		// has wallpaper switched off swallow it
+		settings.wallpaper_enabled |= img.is_some();
 	}
-	if let Some(fit) = style.wallpaper_fit {
-		settings.wallpaper_fit = fit;
+	if let Some(fit) = style.wallpaper_default_fit {
+		settings.wallpaper_default_fit = fit;
 	}
 	if let Some(opacity) = style.wallpaper_opacity {
 		settings.wallpaper_opacity = opacity;
@@ -563,7 +566,7 @@ impl WindowOpts {
 			|| style.bg_color.is_some()
 			|| style.fg_color.is_some()
 			|| style.wallpaper_img.is_some()
-			|| style.wallpaper_fit.is_some()
+			|| style.wallpaper_default_fit.is_some()
 			|| style.wallpaper_opacity.is_some();
 		if !any {
 			return;
@@ -778,7 +781,7 @@ mod tests {
 		// bare flag followed by another option = explicitly none; the option survives
 		let c = p("--background-image --background-image-zoom");
 		assert_eq!(c.win.style.wallpaper_img, Some(None));
-		assert_eq!(c.win.style.wallpaper_fit, Some(Fit::Zoom));
+		assert_eq!(c.win.style.wallpaper_default_fit, Some(Fit::Zoom));
 		// both value forms still work
 		let c = p("--background-image=/x.png");
 		assert_eq!(c.win.style.wallpaper_img, Some(Some("/x.png".into())));
@@ -835,7 +838,7 @@ mod tests {
 		assert_eq!(s.bg, [0x10, 0x20, 0x30]);
 		assert_eq!(s.fg, [0xab, 0xcd, 0xef]);
 		assert_eq!(s.wallpaper, Some(PathBuf::from("/x.png")));
-		assert_eq!(s.wallpaper_fit, config::Fit::Zoom);
+		assert_eq!(s.wallpaper_default_fit, config::Fit::Zoom);
 		assert_eq!(s.wallpaper_opacity, 0.5);
 	}
 

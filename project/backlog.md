@@ -1369,10 +1369,18 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
+- ✅ Wallpaper settings renamed, and given two master switches.
+	- ✅ `wallpaper_enabled` turns the whole feature off in one line; `wallpaper_rotate_enabled` turns folder rotation off without disturbing the folder. Both default on.
+	- ✅ `wallpaper_default` is now `wallpaper_fallback_builtin` and `wallpaper_fit` is now `wallpaper_default_fit`, matching what the Settings dialog calls them. Existing configs are renamed on the next launch.
+	- ✅ The wallpaper folder is `wallpaper/` beside the config now, not `wallpapers/`. The older spellings still work.
+	- ✅ A path in the config can start with `~`.
+	- ✅ A wallpaper named on the command line still shows even when the config has the feature switched off - naming one is a choice for that run.
+	- Verified: an existing config renames in one launch and keeps every value; a folder under `~` rotates; each switch changes what renders.
+
 - ✅ A wallpaper can say how it wants to be laid out.
 	- ✅ Two XMP fields, read straight from the image file: `wallpaper:Fit` (`stretch` or `zoom`) and `wallpaper:Anchor` (`"<horizontal>%, <vertical>%"`, which part of the image a zoom crop keeps). They override the global default per image, so a photo isn't squashed while a gradient still fills the window.
 	- ✅ The namespace is named for what the tags describe rather than for this program, so other tools can write and read them too.
-	- ✅ Settings: "Bg image fit" is now "Default fit", with "Honor XMP tags 'Fit' and 'Anchor'" under it (on by default). Turning it off puts every image back on the default.
+	- ✅ Settings: "Bg image fit" is now "Default fit", with "Honor tags" under it (on by default). Turning it off puts every image back on the default.
 	- ✅ A zoom crop is no longer always centred - the anchor picks the part that survives.
 	- ✅ Missing, unreadable or unrecognised tags leave the image on the default; nothing fails to load over metadata.
 	- Verified: both container formats read end to end against real tagged files, and the collection is tagged - photos, logos and anything with circles zoom, gradients and blurs stretch.
