@@ -14,13 +14,15 @@ This is backlog just for pre-v1.0.0 release. After that, bugs, features, and enh
 <!-- TOC -->
 
 - [Conventions](#conventions)
+- [To-do](#to-do)
 - [Backlog](#backlog)
 	- [Bugs](#bugs)
 	- [New features and enhancements](#new-features-and-enhancements)
 	- [Done](#done)
 		- [Done - Bugs](#done---bugs)
 		- [Done - New features and enhancements](#done---new-features-and-enhancements)
-		- [First steps](#first-steps)
+		- [Done - First steps](#done---first-steps)
+		- [Done - To-do](#done---to-do)
 	- [Future and/or deferred](#future-andor-deferred)
 	- [Canceled](#canceled)
 - [Application name ideas](#application-name-ideas)
@@ -39,9 +41,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 | ✅   | Complete
 | 🚫   | Canceled
 
-## Backlog
-
-### Bugs
+## To-do
 
 - 🛠️ Bug: Editing a line at any point on the prompt, that has one or more emojis in it, results in apparently random left-right shifting of other characters, at apparently random points unrelated to the cursor position. (But probably not really "random".) The actual content that moves doesn't actually change in the buffer, but it looks like it does and makes it visually unreliable and confusing.
 	- Not random: it happened on exactly the rows holding one of a small set of characters. A terminal gives a double-width character two columns. A monospace font is free to carry that same character at its ordinary single-column width, and the default font does so for 53 of them - several common emoji among them, plus fullwidth punctuation. The row was laid out from the font, so one of those characters consumed one column where the grid had allotted two, and everything after it on that row drew a column to the left of where its own background, the cursor and any separately-drawn character still sat. Editing moved such a character around the line, so the misalignment appeared to wander.
@@ -49,6 +49,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Side effect, and an improvement: those emoji now render in colour rather than as small monochrome outlines, since they reach the colour path for the first time. Single-width symbols (arrows, checkmarks, stars, box drawing) are unaffected and stay monochrome, which is what a terminal wants.
 	- 🔘 UAT
 	- Verified: a trailing marker after such an emoji used to sit exactly one column left of the same marker on an all-text row, and now lines up. A control screen of CJK, box drawing, fullwidth Latin and single-width symbols renders identically to before.
+
+## Backlog
+
+### Bugs
 
 ### New features and enhancements
 
@@ -70,27 +74,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- 🔘 In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
 		- Faster than initial scroll speed, but ramps up slower, and top speed is slower than current.
 	- 🔘 Once the top line of new output scrolls above and off the screen, then scroll speed ramps up as fast as necessary to fully keep up.
-
-- 🔘 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, AND legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
-
-- 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
-
-- 🔘 Hyperlinks:
-	- 🔘 Clickable - e.g. Ctrl+click, or right-click then includes "Copy link" and "Open link".
-	- 🔘 Auto-underline when mouse is underneath.
-
-- 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
-	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Verified live for both.
-	- 🔘 Windows: the new-pane side works, but reading the source shell's current directory isn't wired up there yet - new tabs/panes keep the old start-dir behavior until then. (Needs Windows host.)
-
-- 🔘 Dialogs and menus:
-	- 🔘 Themes should have TWO highlight colors:
-		- 🔘 One color that calls attention to multiple things on the screen at once
-			- Example: Slider controls, default button outline, "OK" button, and clickable "reset" icons.
-			- Existing color is OK for this
-		- 🔘 Second highlight color should be a different, complimentary color that is also more vivid and saturated. That's for the current focus.
-		- 🔘 When text fields have focus highlight, there should only be one visible outline (rather than two - the highlight, AND the textbox outline).
-		- 🔘 The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
 
 - 🔘 Refactor settings dialog
 	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory. Reconcile by what makes the most sense given the obvious design direction this is going, with what has changed before.
@@ -243,9 +226,30 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 				- If a new shell exe is found that doesn't already exist in the stored list, add it. (User can disable it later.)
 				- If an existing already defined shell exe name isn't found by explicit path, or in the environment path variable, disable it (don't delete it).
 
+- 🔘 Dialogs and menus:
+	- 🔘 Themes should have TWO highlight colors:
+		- 🔘 One color that calls attention to multiple things on the screen at once
+			- Example: Slider controls, default button outline, "OK" button, and clickable "reset" icons.
+			- Existing color is OK for this
+		- 🔘 Second highlight color should be a different, complimentary color that is also more vivid and saturated. That's for the current focus.
+		- 🔘 When text fields have focus highlight, there should only be one visible outline (rather than two - the highlight, AND the textbox outline).
+		- 🔘 The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
+
 - 🔘 Config file:
 	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
 		- The nesting pass kept the existing section order; the reorganization waits on the Settings dialog refactor it mirrors.
+
+- 🔘 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, AND legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
+
+- 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
+
+- 🔘 Hyperlinks:
+	- 🔘 Clickable - e.g. Ctrl+click, or right-click then includes "Copy link" and "Open link".
+	- 🔘 Auto-underline when mouse is underneath.
+
+- 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
+	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Verified live for both.
+	- 🔘 Windows: the new-pane side works, but reading the source shell's current directory isn't wired up there yet - new tabs/panes keep the old start-dir behavior until then. (Needs Windows host.)
 
 - 🔘 Menu enhancements:
 	- 🔘 "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
@@ -255,7 +259,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- 🔘 Add Windows support.
 
 
-- 🔘 Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
+- 🔘 "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
 	- Looks and behaves not too differently than some modern text editors.
 	- When disabled, has no effect on performance - truly skipped code paths.
 	- It has it's own area within the render area, it doesn't sit on top of it.
@@ -264,7 +268,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- The scrollbar to the right of it, acts on the the scroll-buffer, and is synced pixel-perfect with the highlight area over the preview. In other words, the preview AND the scrollbar, are essentially one-and-the-same.
 		- If the previously implemented "regular" scrollbar is *also* enabled, that scrollbar sits between the terimal area on the left, and the preview area on the right.
 			- This is a departure from other implementations, that only have one scrollbar on the far right that behaves the same way whether there is a preview area or not. But I want to visually indicate that the *terminal* scrollbar, is for the *terminal*, not the preview.
-	- Need a name for the feature.
 
 - 🛠️ Tab interface:
 	- Done: single-window core. Each tab owns a PaneManager; the tab bar shows once there's more than one tab, click to switch, and the pane area shrinks to make room for the bar.
@@ -2355,7 +2358,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✅ Render options: Stretch-to-fit, Zoom-to-fit.
 		- Done. `background_fit` = "stretch" | "zoom"; default zoom/cover.
 
-#### First steps
+#### Done - First steps
 
 - ✅ Create name and GitHub repo.
 - ✅ Cargo skeleton: `alacritty_terminal` + `wgpu` deps.
@@ -2365,6 +2368,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ Overscan rows for partial-row fill.
 - ✅ Output-scroll easing.
 - ✅ Verify smoothness on X11/Compiz.
+
+#### Done - To-do
 
 ### Future and/or deferred
 
