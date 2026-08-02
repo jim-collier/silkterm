@@ -428,9 +428,21 @@ run_profiler(){
 		fEcho "WARNING: profiler skipped: ${skip}"; return 0
 	fi
 
-	## From here, a failure means the app is at fault -> abort.
+	## From here a failure is the app's fault and aborts - with one exception. This
+	## profile is the only one combining fat LTO with full debuginfo, and rustc has
+	## been seen to die in LLVM's assembler (SIGILL) part way through it, then build
+	## the identical source clean straight after. So retry once; failing twice is
+	## real. Stage 2 already compiled everything bar the feature-gated hooks, so a
+	## genuine error here surfaces in seconds and the retry costs nothing.
 	fEcho_Clean "building ${PROFILE_BIN} (cargo --profile ${PROFILE_PROFILE} --features ${PROFILE_FEATURE})"
-	cargo build --profile "${PROFILE_PROFILE}" --features "${PROFILE_FEATURE}" || fDie "profiler build failed (app problem)"
+	local brc=0
+	cargo build --profile "${PROFILE_PROFILE}" --features "${PROFILE_FEATURE}" || brc=$?
+	if ((brc)); then
+		fEcho "WARNING: profiler build failed - retrying once (a compiler crash here is a toolchain flake)"
+		brc=0
+		cargo build --profile "${PROFILE_PROFILE}" --features "${PROFILE_FEATURE}" || brc=$?
+	fi
+	((brc == 0)) || fDie "profiler build failed twice (app problem)"
 	mkdir -p "${profile_dir}"
 
 	## Bring up a private in-memory display so the profiler window never touches the
