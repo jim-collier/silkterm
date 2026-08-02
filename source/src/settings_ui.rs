@@ -112,6 +112,8 @@ enum Key {
 	Transparency,
 	Opacity,
 	BackdropBlur,
+	BgEnabled,
+	BgRotate,
 	BgOpacity,
 	BgBlur,
 	BgFit,
@@ -216,6 +218,8 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::Transparency => &["transparent_background"],
 		Key::Opacity => &["opacity"],
 		Key::BackdropBlur => &["transparent_background_blur"],
+		Key::BgEnabled => &["wallpaper_enabled"],
+		Key::BgRotate => &["wallpaper_rotate_enabled"],
 		Key::BgOpacity => &["wallpaper_opacity"],
 		Key::BgBlur => &["wallpaper_blur"],
 		Key::BgFit => &["wallpaper_default_fit"],
@@ -460,9 +464,19 @@ fn fields() -> Vec<Spec> {
 			kind: Toggle,
 		},
 		Spec {
+			label: "Wallpaper",
+			key: BgEnabled,
+			kind: Toggle,
+		},
+		Spec {
 			label: "Background image",
 			key: BgImage,
 			kind: Text,
+		},
+		Spec {
+			label: "Rotate folder",
+			key: BgRotate,
+			kind: Toggle,
 		},
 		Spec {
 			label: "Bg image opacity",
@@ -1732,6 +1746,8 @@ impl SettingsDialog {
 			Key::RememberSize => self.edited.remember_size,
 			Key::CopyOnSelect => self.edited.copy_on_select,
 			Key::BgContrastMask => self.edited.wallpaper_contrast_mask,
+			Key::BgEnabled => self.edited.wallpaper_enabled,
+			Key::BgRotate => self.edited.wallpaper_rotate_enabled,
 			Key::BgHonorXmp => self.edited.wallpaper_honor_xmp,
 			_ => false,
 		}
@@ -1748,6 +1764,8 @@ impl SettingsDialog {
 			Key::RememberSize => self.edited.remember_size = on,
 			Key::CopyOnSelect => self.edited.copy_on_select = on,
 			Key::BgContrastMask => self.edited.wallpaper_contrast_mask = on,
+			Key::BgEnabled => self.edited.wallpaper_enabled = on,
+			Key::BgRotate => self.edited.wallpaper_rotate_enabled = on,
 			Key::BgHonorXmp => self.edited.wallpaper_honor_xmp = on,
 			_ => {}
 		}
@@ -1825,6 +1843,16 @@ impl SettingsDialog {
 				key,
 				Key::BgContrastSize | Key::BgContrastStrength | Key::BgContrastAuto
 			) && !self.edited.wallpaper_contrast_mask)
+			// everything below the master switch is moot while it is off
+			|| (matches!(
+				key,
+				Key::BgImage
+					| Key::BgRotate | Key::BgOpacity
+					| Key::BgBlur | Key::BgFit
+					| Key::BgHonorXmp | Key::BgContrastMask
+					| Key::BgContrastSize | Key::BgContrastStrength
+					| Key::BgContrastAuto
+			) && !self.edited.wallpaper_enabled)
 			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
 			|| (matches!(key, Key::FontFamily) && config::system_font_face_active(&self.edited))
 			|| (matches!(key, Key::FontSize) && config::system_font_size_active(&self.edited))
@@ -1892,6 +1920,8 @@ impl SettingsDialog {
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
 			Key::CopyOnSelect => edited.copy_on_select == defaults.copy_on_select,
 			Key::BgFit => edited.wallpaper_default_fit == defaults.wallpaper_default_fit,
+			Key::BgEnabled => edited.wallpaper_enabled == defaults.wallpaper_enabled,
+			Key::BgRotate => edited.wallpaper_rotate_enabled == defaults.wallpaper_rotate_enabled,
 			Key::BgHonorXmp => edited.wallpaper_honor_xmp == defaults.wallpaper_honor_xmp,
 			Key::ScrimRamp => edited.text_scrim_ramp == defaults.text_scrim_ramp,
 			Key::BgImage => edited.wallpaper == defaults.wallpaper,
@@ -1941,6 +1971,8 @@ impl SettingsDialog {
 			| Key::SystemFontSize
 			| Key::RememberSize
 			| Key::CopyOnSelect
+			| Key::BgEnabled
+			| Key::BgRotate
 			| Key::BgHonorXmp
 			| Key::BgContrastMask => {
 				let default_val = match key {
@@ -1953,6 +1985,8 @@ impl SettingsDialog {
 					Key::SystemFontSize => self.defaults.use_system_font_size,
 					Key::CopyOnSelect => self.defaults.copy_on_select,
 					Key::BgContrastMask => self.defaults.wallpaper_contrast_mask,
+					Key::BgEnabled => self.defaults.wallpaper_enabled,
+					Key::BgRotate => self.defaults.wallpaper_rotate_enabled,
 					Key::BgHonorXmp => self.defaults.wallpaper_honor_xmp,
 					_ => self.defaults.remember_size,
 				};
@@ -3497,6 +3531,7 @@ pub fn needs_text_rebuild(old: &Settings, new: &Settings) -> bool {
 // Returns true if a background-image-affecting setting changed.
 pub fn wallpaper_changed(old: &Settings, new: &Settings) -> bool {
 	old.wallpaper_enabled != new.wallpaper_enabled
+		|| old.wallpaper_rotate_enabled != new.wallpaper_rotate_enabled
 		|| old.wallpaper_opacity != new.wallpaper_opacity
 		|| old.wallpaper_default_fit != new.wallpaper_default_fit
 		|| old.wallpaper_honor_xmp != new.wallpaper_honor_xmp
