@@ -43,30 +43,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### Bugs
 
-- ✅ Wallpaper scan accepts formats that can't be loaded:
-	- Description: the folder scan counts `webp`, `bmp`, `gif`, `tiff` and `tif` as wallpapers, but only PNG and JPEG can actually be decoded. A file in one of the other formats passes the scan, gets picked by rotation, and then fails to load.
-	- Fixed: the scan now accepts only the formats that decode. Adding the other decoders was the alternative, but each one grows the binary for a format nothing in the collection uses.
-	- Expected behavior: either narrow the accepted extensions to the ones that load, or add the missing decoders. Extra decoders grow the binary, so narrowing the list is the cheaper fix unless those formats are wanted.
-	- Steps to reproduce: put a `.webp` in the wallpaper folder and let rotation reach it.
-
-- ✅ Harsh visual bug:
-	- Description: New output from repeated commands that doesn't need to scroll (e.g. hasn't reached the bottom), scrolls "down" out of an imaginary line just below the previous prompt, and settles where it should be. It might actually be a pleasing effect if that was the UX design, but it's not. It feels jarring and unexpected, in spite of being kind of cool. Once such repeated commands do reach the bottom, then everything scrolls up as expected.
-	- Fixed: the smooth-slide detector read the repeated listing as a downward scroll - the second copy matched the first one's rows shifted down, and the blank space below matched itself, so brand-new output got animated as if it had moved. A row now only counts as scrolled if the content also left its old position; a re-printed copy no longer qualifies, so fresh output materializes in place. Real scrolling (full screens, pagers, editors) is unaffected.
-	- Expected behavior: If output hasn't reached the bottom of the terminal yet, new lines of output should materialize as normal.
-	- Steps to reproduce:
-		- Clear the terminal.
-		- Run ls on a small directory listing, such as `ls -lA $TMP9`.
-			- Observe: The first time behaves as expected: the output happens quickly, then the next shell prompt appears below it almost immediately.
-		- Run e.g. `ls -lA $TMP9` again (without clearing).
-			- Observe: Things happen seemingly out of expected order:
-				- The new shell prompt materializes several blank lines down.
-				- The ls listing smooth-scrolls apparently "out from underneath" the shell prompt above, *down*, then decelerates and settles, finally where it should be.
-			- Conclusion: The final result is visually correct, but how it got there is very wrong.
-
-- ✅ Crash: a screen filled with distinct emoji aborts the terminal.
-	- Colour glyph images are cached per glyph and pixel size, and that cache emptied itself completely whenever it filled up. A screenful of emoji is far more distinct glyphs than it held, so the moment it filled part-way through drawing a frame it threw away images that frame was still using, and the renderer stops dead when an image it was promised goes missing.
-	- Only reachable with a lot of *different* emoji on screen at once. Repeating the same few never fills the cache, which is why ordinary use never ran into it.
-	- Fixed: the cache now only discards images that no recent frame has touched, and holds far more before it tries. If everything in it is still in use it simply grows, which is bounded by what fits on screen.
+- 🔘 Bug: Editing a line at any point on the prompt, that has one or more emojis in it, results in apparently random left-right shifting of other characters, at apparently random points . The actual content that moves doesn't actually change, but it looks like it does and makes it visually unreliable.
 
 - ✅ Graphical emoji render as monochrome outlines instead of colour.
 	- Not a regression. No build renders these in colour: the text stack has only ever read the older colour-glyph table format (COLR v0), and every current colour emoji font ships the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
@@ -75,33 +52,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- `color_emoji` (default true) turns it off, which restores the monochrome outlines.
 	- 🔘 Palette entry 0xFFFF ("use the text colour") resolves to white, because a raster is cached independently of the cell colour. No emoji font relies on it; a foreground-tinted colour glyph would need the cell colour in the cache key.
 	- 🔘 The HSL blend modes fall back to ordinary source-over. Unused by any font seen so far.
-
-- ✅ The font fallback stack is only partly implemented, and resolves differently per platform for the same build.
-	- The stack should be identical on every platform, varying only where a platform genuinely requires it, and should be listed whether or not the fonts are installed.
-	- The order was decided by asking which platform was running rather than what it had to offer, so "follow the system font" meant "and skip the configured stack" on Linux and macOS while Windows started at that stack. Same build, same config, two different results - and a configured stack could be discarded outright.
-	- Fixed: one search order everywhere. The setting only decides whether the OS family is tried ahead of `font_family` or behind it; every list is still walked, so an absent family falls through to the next instead of skipping the rest. The built-in stack always backs both up.
-	- Platforms now show through only in what they report. Windows has a system font size but no monospace family, so following the family is simply a no-op there and resolution starts at `font_family` with no special case. Wherever there is nothing to follow the checkbox greys out and the flyover says which half is missing - that also covers a desktop with no font setting at all, which used to claim it was following a font that did not exist.
-	- Also fixed: the size half was inert on Windows even though Windows does report a system font size, so that checkbox is now live there too. A config with no explicit `font_size` is unaffected, since that value was already seeded from the same OS size.
-	- Existing configs kept whatever `font_family` they were first written with, because backfill only ever adds a missing key. A stack that still matches a superseded default exactly is now refreshed on launch; anything edited, or commented out, is left as written.
-	- 🔘 Confirm on Windows: the size checkbox is now live there and can't be exercised from this box.
-
-- ✅ Running `top` results in a scrolling bounce on each refresh.
-	- Only happened once the scrollback was full, which is the steady state for a terminal that has been open a while. Past that point the line count stops growing, so the advance has to be inferred from how the on-screen rows moved.
-	- `top` repaints its whole screen in place without scrolling, and almost every row changes each refresh, so no shift matched. The remaining test was whether the top line changed - and `top` keeps a clock up there, so it always had. That read as "the screen turned over in one fast burst" and reported the largest possible advance, kicking the view up a screenful and easing it back once per refresh.
-	- Inferring the advance now also requires that a line genuinely scrolled off. A repaint in place pushes nothing into the scrollback, while a real burst pushes plenty, which separates the two cases at the mechanism rather than by guessing from the content. Fast output at a full scrollback still eases exactly as before.
-
-- ✅ `--shell` eats backslashes, so a Windows path cannot be passed unquoted.
-	- The shell string was split with POSIX rules, where an unquoted `\` escapes the next character - so `--shell C:\windows\system32\cmd.exe` arrived as `C:windowssystem32cmd.exe` and the spawn failed with "File not found". `\\host\share` lost a leading slash the same way.
-	- Outside quotes a backslash now only escapes whitespace and quotes, and is kept as-is before anything else, so plain Windows and UNC paths survive. Escaping a space or a quote still works, and inside double quotes the usual escapes are unchanged (that path already handled Windows paths correctly).
-	- Same parser serves `default_shell` and `command_line` in the config, so those are fixed too.
-	- Found while getting the Windows build to run under wine.
-
-- ✅ When splitting panes, there is "visual garbage" in the pixels immediately surrounding the split lines.
-	- It seems like one pixel above, below, or on (for horizontal split), or one pixel to the left, right, or on for vertical splits.
-	- Two causes, both fixed. First: the text scrim (readability halo) was a full-frame blur clipped only to the whole terminal area, so an edge glyph's halo spilled across the divider into the inter-pane margins; each pane's scrim is now clipped per-side (content edge at internal dividers, pane edge at the window border, so the outer margin keeps its halo).
-	- Second (the persistent sliver): a pixel-delta wheel (touchpad, hi-res wheel) accumulates fractional scroll amounts, and the ease settled wherever the target landed - a pane could rest BETWEEN lines forever. Every row then rendered shifted by a sub-cell fraction and the top scanlines of the first clipped row peeked out at the pane's content bottom, right against the divider - on any scrolled pane, focused or not. The scroll now glides to the nearest whole line at rest. Regression: fractional_wheel_rests_on_a_whole_line.
-	- Also: per-cell fallback glyphs clipped to the pane rect instead of the content rect, so an edge row's glyph could paint into the margin; now clipped like all other text.
-	- Third cause (the one that survived the first two fixes): with transparency off, the 1px divider gap was still see-through - the frame cleared fully transparent whenever the see-through-capable backend was in use, regardless of the setting, and only the wallpaper's low opacity landed on the gap pixels. The window always has an alpha channel on X11, so the compositor blended the desktop through the divider slits: whatever was behind the window showed as bright speckles along the split lines. Never visible on any test rig that reads the frame directly, since blending with the desktop only happens on a live compositor. The clear is now opaque unless transparency is actually enabled; with it on, the gap still shows the desktop as intended.
 
 ### New features and enhancements
 
@@ -120,8 +70,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- 🔘 Fill in the Windows rows: conhost, Windows Terminal and MobaXterm need running on a Windows machine.
 		- Windows figures answer a slightly different question and are not directly comparable, which the table's notes say: a base OS includes far more there, and the machine differs.
 
-- ✅ Hotkeys to increase/decrease font size feature:
-	- Done: Ctrl+= / Ctrl+- step the session zoom; Ctrl+0 resets to the configured (or system) size. View menu has Increase/Decrease/Reset items.
+- 🔘 Take advantage of shcl's hierarchical capabilities, by nesting the config sections, rather than using 'parent_child: value' TOML style. Keep using empty lines for clarity. Comments for nested settings can follow the nesting. For example, rather than a bunch of 'wallpaper_*' settings, 'wallpaper' gets nested children. Tabs for nesting. You can erase and my own personal config for recreation at next post-compile start.
 
 - 🔘 Need scrollbars. (Disable in Settings.) And thicker than many modern desktops.
 
@@ -629,6 +578,58 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 ### Done
 
 #### Done - Bugs
+
+- ✅ Wallpaper scan accepts formats that can't be loaded:
+	- Description: the folder scan counts `webp`, `bmp`, `gif`, `tiff` and `tif` as wallpapers, but only PNG and JPEG can actually be decoded. A file in one of the other formats passes the scan, gets picked by rotation, and then fails to load.
+	- Fixed: the scan now accepts only the formats that decode. Adding the other decoders was the alternative, but each one grows the binary for a format nothing in the collection uses.
+	- Expected behavior: either narrow the accepted extensions to the ones that load, or add the missing decoders. Extra decoders grow the binary, so narrowing the list is the cheaper fix unless those formats are wanted.
+	- Steps to reproduce: put a `.webp` in the wallpaper folder and let rotation reach it.
+
+- ✅ Harsh visual bug:
+	- Description: New output from repeated commands that doesn't need to scroll (e.g. hasn't reached the bottom), scrolls "down" out of an imaginary line just below the previous prompt, and settles where it should be. It might actually be a pleasing effect if that was the UX design, but it's not. It feels jarring and unexpected, in spite of being kind of cool. Once such repeated commands do reach the bottom, then everything scrolls up as expected.
+	- Fixed: the smooth-slide detector read the repeated listing as a downward scroll - the second copy matched the first one's rows shifted down, and the blank space below matched itself, so brand-new output got animated as if it had moved. A row now only counts as scrolled if the content also left its old position; a re-printed copy no longer qualifies, so fresh output materializes in place. Real scrolling (full screens, pagers, editors) is unaffected.
+	- Expected behavior: If output hasn't reached the bottom of the terminal yet, new lines of output should materialize as normal.
+	- Steps to reproduce:
+		- Clear the terminal.
+		- Run ls on a small directory listing, such as `ls -lA $TMP9`.
+			- Observe: The first time behaves as expected: the output happens quickly, then the next shell prompt appears below it almost immediately.
+		- Run e.g. `ls -lA $TMP9` again (without clearing).
+			- Observe: Things happen seemingly out of expected order:
+				- The new shell prompt materializes several blank lines down.
+				- The ls listing smooth-scrolls apparently "out from underneath" the shell prompt above, *down*, then decelerates and settles, finally where it should be.
+			- Conclusion: The final result is visually correct, but how it got there is very wrong.
+
+- ✅ The font fallback stack is only partly implemented, and resolves differently per platform for the same build.
+	- The stack should be identical on every platform, varying only where a platform genuinely requires it, and should be listed whether or not the fonts are installed.
+	- The order was decided by asking which platform was running rather than what it had to offer, so "follow the system font" meant "and skip the configured stack" on Linux and macOS while Windows started at that stack. Same build, same config, two different results - and a configured stack could be discarded outright.
+	- Fixed: one search order everywhere. The setting only decides whether the OS family is tried ahead of `font_family` or behind it; every list is still walked, so an absent family falls through to the next instead of skipping the rest. The built-in stack always backs both up.
+	- Platforms now show through only in what they report. Windows has a system font size but no monospace family, so following the family is simply a no-op there and resolution starts at `font_family` with no special case. Wherever there is nothing to follow the checkbox greys out and the flyover says which half is missing - that also covers a desktop with no font setting at all, which used to claim it was following a font that did not exist.
+	- Also fixed: the size half was inert on Windows even though Windows does report a system font size, so that checkbox is now live there too. A config with no explicit `font_size` is unaffected, since that value was already seeded from the same OS size.
+	- Existing configs kept whatever `font_family` they were first written with, because backfill only ever adds a missing key. A stack that still matches a superseded default exactly is now refreshed on launch; anything edited, or commented out, is left as written.
+	- 🔘 Confirm on Windows: the size checkbox is now live there and can't be exercised from this box.
+
+- ✅ Running `top` results in a scrolling bounce on each refresh.
+	- Only happened once the scrollback was full, which is the steady state for a terminal that has been open a while. Past that point the line count stops growing, so the advance has to be inferred from how the on-screen rows moved.
+	- `top` repaints its whole screen in place without scrolling, and almost every row changes each refresh, so no shift matched. The remaining test was whether the top line changed - and `top` keeps a clock up there, so it always had. That read as "the screen turned over in one fast burst" and reported the largest possible advance, kicking the view up a screenful and easing it back once per refresh.
+	- Inferring the advance now also requires that a line genuinely scrolled off. A repaint in place pushes nothing into the scrollback, while a real burst pushes plenty, which separates the two cases at the mechanism rather than by guessing from the content. Fast output at a full scrollback still eases exactly as before.
+
+- ✅ `--shell` eats backslashes, so a Windows path cannot be passed unquoted.
+	- The shell string was split with POSIX rules, where an unquoted `\` escapes the next character - so `--shell C:\windows\system32\cmd.exe` arrived as `C:windowssystem32cmd.exe` and the spawn failed with "File not found". `\\host\share` lost a leading slash the same way.
+	- Outside quotes a backslash now only escapes whitespace and quotes, and is kept as-is before anything else, so plain Windows and UNC paths survive. Escaping a space or a quote still works, and inside double quotes the usual escapes are unchanged (that path already handled Windows paths correctly).
+	- Same parser serves `default_shell` and `command_line` in the config, so those are fixed too.
+	- Found while getting the Windows build to run under wine.
+
+- ✅ When splitting panes, there is "visual garbage" in the pixels immediately surrounding the split lines.
+	- It seems like one pixel above, below, or on (for horizontal split), or one pixel to the left, right, or on for vertical splits.
+	- Two causes, both fixed. First: the text scrim (readability halo) was a full-frame blur clipped only to the whole terminal area, so an edge glyph's halo spilled across the divider into the inter-pane margins; each pane's scrim is now clipped per-side (content edge at internal dividers, pane edge at the window border, so the outer margin keeps its halo).
+	- Second (the persistent sliver): a pixel-delta wheel (touchpad, hi-res wheel) accumulates fractional scroll amounts, and the ease settled wherever the target landed - a pane could rest BETWEEN lines forever. Every row then rendered shifted by a sub-cell fraction and the top scanlines of the first clipped row peeked out at the pane's content bottom, right against the divider - on any scrolled pane, focused or not. The scroll now glides to the nearest whole line at rest. Regression: fractional_wheel_rests_on_a_whole_line.
+	- Also: per-cell fallback glyphs clipped to the pane rect instead of the content rect, so an edge row's glyph could paint into the margin; now clipped like all other text.
+	- Third cause (the one that survived the first two fixes): with transparency off, the 1px divider gap was still see-through - the frame cleared fully transparent whenever the see-through-capable backend was in use, regardless of the setting, and only the wallpaper's low opacity landed on the gap pixels. The window always has an alpha channel on X11, so the compositor blended the desktop through the divider slits: whatever was behind the window showed as bright speckles along the split lines. Never visible on any test rig that reads the frame directly, since blending with the desktop only happens on a live compositor. The clear is now opaque unless transparency is actually enabled; with it on, the gap still shows the desktop as intended.
+
+- ✅ Crash: a screen filled with distinct emoji aborts the terminal.
+	- Colour glyph images are cached per glyph and pixel size, and that cache emptied itself completely whenever it filled up. A screenful of emoji is far more distinct glyphs than it held, so the moment it filled part-way through drawing a frame it threw away images that frame was still using, and the renderer stops dead when an image it was promised goes missing.
+	- Only reachable with a lot of *different* emoji on screen at once. Repeating the same few never fills the cache, which is why ordinary use never ran into it.
+	- Fixed: the cache now only discards images that no recent frame has touched, and holds far more before it tries. If everything in it is still in use it simply grows, which is bounded by what fits on screen.
 
 - ✅ Severe bug: `flatpak update` output bounces wildly.
 	- It seems like every update to the update bar at the bottom, causes about a screen's worth of text to back-up a "page" (text moves down), then immediately smooth-scroll back "up", so that the bottom (update bar) is visible again. While the "Nano Bounce Bug" is just a slightly annoying but tolerable inconveience, this one is a breaking issue.
@@ -1369,6 +1370,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
+- ✅ Hotkeys to increase/decrease font size feature:
+	- Done: Ctrl+= / Ctrl+- step the session zoom; Ctrl+0 resets to the configured (or system) size. View menu has Increase/Decrease/Reset items.
+
+- ✅ README screenshots are no longer generated.
+	- Done: the renderer, its cicd stage, the `--shots` flag and the `SHOTS_ENABLE` setting are gone. The README grid and its images had already been retired, so the stage was rendering into a folder nothing referenced.
+	- The demo gif is unaffected - it is still a live README artifact and still re-recorded on request.
+
 - ✅ A new setting no longer duplicates its neighbours' comment block.
 	- Description: adding a setting to a group that an existing config already had part of appended the group's whole comment paragraph a second time at the end of the file, alongside the one already in place.
 	- Fixed: a setting whose group is already partly present is put back beside its siblings, in the order the template lists them, with no comment block - those comments are already there. A group the file has never seen still arrives whole.
@@ -1756,6 +1764,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ README screenshots, refreshed after significant visual changes: five anonymized shots (shell session, split panes, transparency + background image + glow, tabs / 24-bit / Unicode, Settings dialog) rendered at 1920x1080 and downsampled to 640x360 thumbnails.
 	- Done: originals in `assets/screenshots/large/`, thumbnails in `assets/screenshots/`, shown as a grid in the README that links each thumbnail to its full-size image.
 	- Note: the renderer (`cicd/utility/screenshots.bash`) runs in cicd before publish (skipped under `--quick`), so regenerated shots get committed with the visual change.
+	- Superseded: the grid was dropped from the README and the images archived out of the repo; the renderer and its cicd stage have since been removed too. See the entry below.
 
 - ✅ Split pane auto-sizing logic: By default, when panes are split, if more than two are split in the same direction at a time, distribute their sizes equally. (E.g. All 50%, then all 33%, 25%, 20%, and so on.) But if the user breaks that trend by manually adjusting any of those, then from then on, every successive new pane splits 50% (until that sequence of same direction for pane splits stops - e.g. if the user starts splitting a different pane ancestry and/or in a different direction) Specifying pane % on the command-line also short-circuits the even-distribution logic, for that direction and ancestry.
 	- Done: splitting in the same direction redistributes those panes to equal sizes (thirds, quarters, and so on).

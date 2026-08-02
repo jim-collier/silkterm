@@ -16,7 +16,7 @@
 ##		   7. publish        (stash -> pull -> add -> commit -> push, current branch)
 ##		- What Windows can't do (dropped vs cicd.bash): the profiler (pprof's
 ##		  SIGPROF sampler is Unix-only - the profiling feature can't even compile
-##		  for a Windows target), the headless scroll harness / screenshots / demo
+##		  for a Windows target), the headless scroll harness / demo
 ##		  (need Xvfb), .deb/.rpm packages (Linux), and the rar version-archive step
 ##		  of publish (skipped by request). clippy is advisory, not gating: the
 ##		  Unix-gated ctl code emits dead_code warnings here, so -D warnings can't
