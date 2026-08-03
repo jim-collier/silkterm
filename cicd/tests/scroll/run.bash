@@ -110,7 +110,6 @@ cfg="${work}/config.shcl"
 cat >"$cfg" <<-'SHCL'
 	## Throwaway config for the scroll harness - not a user config.
 	scroll.smooth_apps: true
-	scroll.tau_ms: 120
 	transparency.enabled: false
 	text.scrim.enabled: false
 	wallpaper.fallback_builtin: false

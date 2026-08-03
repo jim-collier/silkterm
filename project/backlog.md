@@ -59,7 +59,101 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### Bugs
 
+- 🔘 Bug: Repeated `clear; ls -lA ~/` results in the second having seemingly no output, because it didn't smooth-scroll like the first time. So the output appears instantyl. Similar to how regular terminals behave, but SilkTerm is supposed to be different. I realize that fixing this, might risk regressing other scroll anomolies that were fixed previously, so tackle with great caution.
+
 ### New features and enhancements
+
+- ✅ Clarified scroll speed functions. (Probably need some refactoring):
+	- Done (20260802). The chase speed now traverses the named segments exactly as described: Ease-in (linear lift from rest, its own duration), Ramp-up (doubling per its period toward whichever top applies, re-entered through a second Ease-in when the single-screen cap lifts), Single-screen speed / unbounded, Ramp-down (a braking curve traced backwards from Ease-out, applied continuously - which is also the at-speed reserve), Ease-out (lands at zero). Of the curve models, went with straight/exponential segments adjusted by time (option 2a); the unbounded ramp accelerates exponentially until it keeps up, as the spec allowed.
+	- "Initial scroll speed" is gone (it fed four mechanisms at once and fought the rest); its config key is removed from existing files. Ease-in is now a duration (`scroll.ease_in_ms`), replacing the old fraction. Wheel/scrollback navigation keeps a fixed internal ease, unchanged feel.
+	- Ramp-down now visibly owns every stop from speed - traced on a 400-line dump: lift to the knee, doubling to ~350 lines/s, then a smooth halving descent into the landing band. Settings shows the five sliders in watch order, defaults mid-scale.
+	- 🔘 UAT
+	- General description:
+		- Think of each setting as a specific segment of a graph on an X and Y axis.
+		- The X-axis is time, the Y-axis is scroll speed.
+			- The X-axis may be infinite (or at least unbounded) - say, running `cat /dev/random` then going on vacation.
+			- The Y-axis may be infinite (or at least not strictly bounded) - with the same example as above, spitting out lines as fast as the CPU can run the kernel code.
+		- The beginning and end of the curve necessarily sit at Y=0. Scrolling starts from stillness, and ends at stillness.
+		- The some segment of "curve" may be perfectly flat on the Y axis, and quite finite (i.e. capped at Y=[max single-screen speed]).
+			- Possibly the whole curve, if output fits into a single screen.
+		- We don't care about defining or modelling the overall "curve" - only the named segments within it.
+		- **Each output-scroll-related setting define a completely separate "function" (conceptually if not literally), that have extremely limited and precisely-defined influence over the next**.
+			- With only one few exceptions, the one and only influence each setting has on the next, is that the *end* X/Y point of the previous function, determines exactly where the START point of the next is located. Those exceptions are documented in the "Parameters" section below.
+		- At some point, the middle of the overall "curve" could turn from flat, to quickly ramp up to some nondeterministic, unbounded, virtual Y speed (i.e. when scrolling that was within a single screen, reaches the top of the terminal and must start speeding up to keep up with unlimited output). In that case:
+			- The ease-in function takes over again, starting at that X and Y point. Except in this case, Y won't be 0.
+	- Parameters (all just defined segments of the/a "curve") - each one hands of complete control of scroll speed variability to the next, in this exact order:
+		- "Ease-in":
+			- This first "function" starts at Y=0 the first time, and describes how fast the speed initially jumps.
+		- "Ramp-up"
+			- Starts at exactly whatever X/Y "Ease-in" ended at. Can't be <=0, must be a positive slope.
+			- Typically - but not necessarily - steeper than "ease-in". (But either way, it can't be <=0, so scroll speed WILL increase.)
+			- This is a rare exception where the exact X/Y end point is not within its control. As mentioned earlier, the Y is defined by the next function in the chain, [max speed], which coupd be either [max single-screen speed], or [unbounded].
+					- The X/Y starting point is defined by the previous function, and the Y ending point is defined by the *next* function. So it does not have full control over either 1) it's duration, *or* 2) the length of its own line.
+		- [Max speed]: A flat horizontal line in principle (and exactly horizontal when == [max single-screen scroll speed]).
+			- [Max single-screen scroll speed] adjustment is in effect for as long as the top of the new output hasn't hit the top of the terminal yet.
+			- [Unbounded]: as fast as the output needs to render, to keep up with output.
+		- **Note**: The first two functions may or may not be invoked exactly and only one more time - *if* [max speed] was == [max single-screen scroll speed], *and* output now needs to accelerate to any speed faster than [max single-screen scroll speed]:
+			- Second invocation of "Ease-in":
+				- The second time starts not at Y=0 like the first time, but at Y=[Max single-screen scroll speed]. And again, still describes how fast the speed initially jumps from what it was before.
+			- Second invocation of "Ramp-up":
+				- Exact same formula, definition, constraints, and unique attribute as first invocation: Starts at exactly whatever X/Y the previous "Ease-in" ended at, and ends at the unbounded Y.
+					- How does it know wher "unbounded Y" is? Maybe it guesses a sane value, maybe it can see the rate of incoming data, or maybe it just punts and acellerates exponentially until it's reached.
+		- "Ramp-down":
+			- Once output ceases yet hasn't all rendered (because SilkTerm will hold a reserve buffer of at least 1 screen when running at top speed), the speed function hands off to "Ramp-down".
+			- This starts at the precisely known X and Y handoff point on our time/speed curve.
+			- It's almost the inverse of "Ramp-up", *except*:
+				- Not only does it know it's starting X, it also knows it's exact starting Y.
+				- It can't end arbitrily on its own terms, but its end point *is* deterministic. It has to trace "Ease-out" *backwards* (can be pre-computed and stored in memory whenever "Ease-out" setting changes), to know exactly what Y value to end at and hand-off to "Ease-out".
+				- This adjustment, although not an exact mirror in calculation, "feels" just like the inverse of "Ramp-up".
+		- "Ease-out":
+			- Almost the inverse of 'Ease-in', at least visually - except that:
+				- It's individually adjustable.
+				- It must calculate backwards its starting X point, based on the inrushing known end of buffered content.
+				- It's end point is *always* Y=0, and it's X value can be calculated in real-time ahead of time. From there it can work backwards and tell (or be queried by) "Ramp-down", it's own *exact starting* X and Y ahead of time, so that "Ramp-down" will know it's own ending X/Y.
+				- This adjustment, although not an exact mirror in calculation, "feels" just like the inverse of "Ease-in".
+	- Different potential "curve" models - to choose from. (Or maybe a tunable with three options governing all parameters curve shapes):
+		- Option 1: Smooth curves for all parameters (with their individual "scale" sliders):
+			- One curve type for all adjustments: e.g. Sigmoid, half-normal, exponential, and/or logarithmic curves depending on where in the graph a function sits and how it connects to the previous and next.
+			- The shape definitions per function don't change with adjustment, they just grow or shrink (in proportional size) depending on the scale of each individual setting.
+				- In other words, the curve grows along both the x-axis AND Y-axis. Getting sharper (smaller) or gentler (larger).
+			- Computationally expensive?
+		- Option 2: Each scroll speed parameter is defined by a straight line. This may not be as jarring as it sounds, as these kind of linear + angular graphs work fine in audio and video production, which are all about human perception.
+			- The linear slope of each line is variable based on the height (Y) and time (X).
+			- The end of each adjustable line must touch the beginning of the next - but the transition may be an abrupt angle.
+			- Option 2a: Adjustment is time, length and height auto-adjust.
+			- Option 2b: Adjustment is height, length and time auto-adjust.
+			- Option 2c: Adjustement is length, height and time auto adjust.
+	- Common behavior:
+		- Typical scroll flow can take these routes - which don't/shouldn't need individual code paths, just for illustration:
+			- Scenario 1: <1 screen of text, from the top:
+				- "Instant" output.
+			- Scenario 2: >1 screen of text, from the top:
+				- First screen's worth of output appears "instantly". But once it needs to start scrolling up, then...
+				- Ease-in has full control of speed. Then hands off to the ramp-up function. Then to unbounded speed. At some arbitrary point depenting on output, the ramp-down function takes over, and finally ease-out.
+			- Scenario 3: <1 screen of text, from the bottom (with a screen full of text above):
+				- Ease-in begins with full control of speed from the start.
+				- Then hands off to the ramp-up function.
+				- Then to [maximum single-screen] speed.
+				- At some arbitrary point when output ends, the ramp-down function takes over
+				- Finally the ease-out function.
+			- Scenario 4: >1 screen of text, from the bottom (with a screen full of text above):
+				- Ease-in begins with full control of speed from the start.
+				- Then hands off to the ramp-up function.
+				- Then to unbounded speed.
+				- At some arbitrary point when output ends, the ramp-down function takes over.
+				- Finally the ease-out function.
+			- Other scenarious (e.g. output starts in the middle of the screen) can be inferred from those 4 scenarios.
+
+- 🔘 Scrim functions:
+	- Rename:
+		- S-curve -> Sigmoid
+		- Gassian -> Half-normal
+	- New adjustment:
+		- Below Radius and Softness: "Strength"
+			- How many times the result is multiplied *2 for a bolder effect. From 0 (no strengthening) to 10. But as a %.
+
+- 🔘 Consolidate UI (e.g. settings) declarations into one or more source shcl file(s) that get compiled or transpiled into code.
+	- Measurements specified in CSS px or DIP that renders "correctly" at any DPI.
 
 - 🔘 Refactor settings dialog
 	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory. Reconcile by what makes the most sense given the obvious design direction this is going, with what has changed before.

@@ -121,14 +121,15 @@ pub struct Settings {
 	pub line_height_scale: f32,
 	pub scrollback: usize,
 	pub scroll_smooth: bool, // master switch: false = every scroll (wheel, output, app slide) lands instantly
-	// The five knobs below read, in order, as one burst unfolds: leave rest,
-	// settle at the initial speed, accelerate, top out, relax, land.
-	pub scroll_ease_in: f32, // how gradually motion builds from rest, as a fraction of the main ease
-	pub scroll_tau_ms: f32,
+	// The five knobs below are the named segments of the output-scroll speed
+	// curve, in the order one burst traverses them: leave rest, accelerate,
+	// top out, wind down, land. Each hands its end point to the next and has
+	// no other influence on it (scroll.rs holds the model).
+	pub scroll_ease_in_ms: f32, // how long the lift from rest to the ramp handoff takes
 	pub scroll_ramp_up_ms: f32, // catch-up speed doubles this often while output stays ahead
-	pub scroll_single_screen_tau_ms: f32, // burst catch-up ceiling while the burst is still wholly on screen
-	pub scroll_ramp_down_ms: f32,         // catch-up relaxes back to the initial speed over this
-	pub scroll_ease_out_ms: f32,          // how long the last STOP_BAND of a line takes to land
+	pub scroll_single_screen_tau_ms: f32, // burst speed ceiling while the burst is still wholly on screen
+	pub scroll_ramp_down_ms: f32, // catch-up speed halves this often winding down to the landing
+	pub scroll_ease_out_ms: f32,  // how long the last STOP_BAND of a line takes to land
 	pub wheel_lines: f32,
 	pub alt_scroll_lines: f32,
 	pub output_ease_lines: f32,
@@ -233,12 +234,11 @@ impl Default for Settings {
 			line_height_scale: 1.22,
 			scrollback: 10_000,
 			scroll_smooth: true,
-			scroll_ease_in: 0.35, // ~ "Ease-in" 35 (motion builds over ~a third of the ease)
-			scroll_tau_ms: 230.0, // ~ "Initial scroll speed" 33 (slow start: ~4 lines/s; bursts ramp up from here)
+			scroll_ease_in_ms: 80.0, // ~ "Ease-in" 51 (motion builds over the first ~tenth of a second)
 			scroll_ramp_up_ms: 300.0, // ~ "Ramp-up" 51 (catch-up speed doubles ~3x a second)
 			scroll_single_screen_tau_ms: 60.0, // ~ "Single-screen speed" 61 (on-screen burst ceiling: ~17 lines/s)
-			scroll_ramp_down_ms: 450.0,        // ~ "Ramp-down" 51 (gentle relax back to the initial speed)
-			scroll_ease_out_ms: 133.0,         // ~ "Ease-out" 51 (the tail lands in ~an eighth of a second)
+			scroll_ramp_down_ms: 450.0, // ~ "Ramp-down" 51 (catch-up winds down by halving ~2x a second)
+			scroll_ease_out_ms: 133.0,  // ~ "Ease-out" 51 (the tail lands in ~an eighth of a second)
 			wheel_lines: 3.0,
 			alt_scroll_lines: 3.0,
 			output_ease_lines: 1.0,
@@ -678,11 +678,8 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.scroll_smooth != orig.scroll_smooth {
 		doc.set_bool("scroll.smooth", s.scroll_smooth);
 	}
-	if s.scroll_ease_in != orig.scroll_ease_in {
-		doc.set_float("scroll.ease_in", r(s.scroll_ease_in));
-	}
-	if s.scroll_tau_ms != orig.scroll_tau_ms {
-		doc.set_float("scroll.tau_ms", r(s.scroll_tau_ms));
+	if s.scroll_ease_in_ms != orig.scroll_ease_in_ms {
+		doc.set_float("scroll.ease_in_ms", r(s.scroll_ease_in_ms));
 	}
 	if s.scroll_ramp_up_ms != orig.scroll_ramp_up_ms {
 		doc.set_float("scroll.ramp_up_ms", r(s.scroll_ramp_up_ms));
@@ -915,8 +912,7 @@ struct RawConfig {
 	line_height_scale: Option<f32>,
 	scrollback: Option<usize>,
 	scroll_smooth: Option<bool>,
-	scroll_ease_in: Option<f32>,
-	scroll_tau_ms: Option<f32>,
+	scroll_ease_in_ms: Option<f32>,
 	scroll_ramp_up_ms: Option<f32>,
 	scroll_single_screen_tau_ms: Option<f32>,
 	scroll_ramp_down_ms: Option<f32>,
@@ -1091,8 +1087,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		line_height_scale: r.f("font.line_height_scale"),
 		scrollback: r.u("scroll.scrollback"),
 		scroll_smooth: r.b("scroll.smooth"),
-		scroll_ease_in: r.f("scroll.ease_in"),
-		scroll_tau_ms: r.f("scroll.tau_ms"),
+		scroll_ease_in_ms: r.f("scroll.ease_in_ms"),
 		scroll_ramp_up_ms: r.f("scroll.ramp_up_ms"),
 		scroll_single_screen_tau_ms: r.f("scroll.single_screen_tau_ms"),
 		scroll_ramp_down_ms: r.f("scroll.ramp_down_ms"),
@@ -1203,14 +1198,10 @@ fn resolve(raw: RawConfig) -> Settings {
 			.max(0.5),
 		scrollback: raw.scrollback.unwrap_or(d.scrollback),
 		scroll_smooth: raw.scroll_smooth.unwrap_or(d.scroll_smooth),
-		// 0 = no ease-in at all (the old bare exponential); 1 = as gradual as
-		// the main ease itself. Past 1 the cascade still can't overshoot, but
-		// it just reads as a slower scroll, so the dialog range is the range.
-		scroll_ease_in: raw
-			.scroll_ease_in
-			.unwrap_or(d.scroll_ease_in)
-			.clamp(0.0, 1.0),
-		scroll_tau_ms: raw.scroll_tau_ms.unwrap_or(d.scroll_tau_ms).max(1.0),
+		scroll_ease_in_ms: raw
+			.scroll_ease_in_ms
+			.unwrap_or(d.scroll_ease_in_ms)
+			.max(1.0),
 		scroll_ramp_up_ms: raw
 			.scroll_ramp_up_ms
 			.unwrap_or(d.scroll_ramp_up_ms)
@@ -1662,7 +1653,11 @@ fn line_setting_key(line: &str) -> Option<&str> {
 // separately by `convert_legacy_config`, not here.)
 const CONFIG_RENAMES: &[(&str, &str)] = &[("scroll.inview_tau_ms", "scroll.single_screen_tau_ms")];
 // Paths that no longer exist and should be removed from an existing config.
-const CONFIG_REMOVED: &[&str] = &[];
+// scroll.tau_ms ("Initial scroll speed") has no successor: the speed curve now
+// leaves rest through Ease-in and the one knob that fed four mechanisms is
+// gone. scroll.ease_in was a unitless fraction; its replacement is a duration
+// (scroll.ease_in_ms), so the old value cannot be carried by a rename.
+const CONFIG_REMOVED: &[&str] = &["scroll.tau_ms", "scroll.ease_in"];
 
 // Defaults that changed, as (path, the value that used to be the default). An
 // existing config carries the template's commented lines verbatim, so after a
@@ -1881,9 +1876,13 @@ fn convert_legacy_config(path: &std::path::Path) {
 				.map(|rank| (rank + 1, LEGACY_KEYS[rank].1.to_string()))
 		};
 		if let Some((rank, new)) = target {
-			let slot = carry.entry(new).or_insert((rank, value.to_string()));
-			if rank < slot.0 {
-				*slot = (rank, value.to_string());
+			// a mapped path that has since been retired stays retired - the
+			// old value is still in the .bak, but never resurrects here
+			if !CONFIG_REMOVED.contains(&new.as_str()) {
+				let slot = carry.entry(new).or_insert((rank, value.to_string()));
+				if rank < slot.0 {
+					*slot = (rank, value.to_string());
+				}
 			}
 		} else if p.starts_with("themes.") {
 			extras.push(format!("{p}: {value}"));
@@ -2658,49 +2657,47 @@ scroll:
 	## scroll lands instantly; the speed settings below then have no effect.
 	# smooth: true  ## Default
 
-	## Ease-in
-	## How gradually the view builds speed when it starts moving from rest, as
-	## a fraction of the main ease below. 0 leaves at full speed on the first
-	## frame; 1 builds as gradually as the ease itself settles. Scales with the
-	## speed settings, so a full-throttle catch-up stays immediate. 0.35 is 35
-	## on the 0..100 dialog scale.
-	## Range: 0.0 to 1.0 - higher is gentler
-	ease_in: 0.35
+	## The five settings below are the named segments of the output-scroll
+	## speed curve, in the order one burst traverses them: Ease-in lifts the
+	## speed from rest, Ramp-up accelerates it toward the top, Single-screen
+	## speed is the top while the burst still fits on screen (unbounded once it
+	## has scrolled off), Ramp-down winds the speed back down when output
+	## ceases, and Ease-out lands the last fraction of a line. Each segment
+	## hands its end point to the next and controls nothing else.
 
-	## Initial scroll speed
-	## The speed output starts scrolling at, shown in Settings as "Initial
-	## scroll speed": one line per this many milliseconds. A sustained burst
-	## ramps up from here (see Ramp-up) and eases back once output stops. 230 ms
-	## (~4 lines/s) is about 33 on the 1..100 dialog scale.
-	## Range: 1.0 and up (milliseconds) - lower is faster
-	tau_ms: 230.0
+	## Ease-in
+	## How long the view takes to build speed when it starts moving from rest:
+	## the first few lines per second arrive over this many milliseconds
+	## (wheel scrolling eases in over the same time). 80 ms is about 51 on the
+	## 1..100 dialog scale.
+	## Range: 1.0 and up (milliseconds) - higher is gentler
+	ease_in_ms: 80.0
 
 	## Ramp-up
-	## How quickly a burst accelerates once output runs ahead of the view: the
-	## catch-up speed doubles every this many milliseconds. Lower ramps harder,
-	## so a buffer dump is caught sooner at the cost of a briefer slow start.
-	## 300 ms (about three doublings a second) is around 51 on the 1..100
-	## dialog scale, where higher means a harder ramp.
+	## How quickly a burst accelerates once past the ease-in: the catch-up
+	## speed doubles every this many milliseconds until it reaches the top
+	## speed that applies. Lower ramps harder, so a buffer dump is caught
+	## sooner. 300 ms (about three doublings a second) is around 51 on the
+	## 1..100 dialog scale, where higher means a harder ramp.
 	## Range: 1.0 and up (milliseconds) - lower ramps harder
 	ramp_up_ms: 300.0
 
 	## Single-screen speed
 	## Top scrolling speed for an output burst whose own first line is still on
 	## screen (a short directory listing, say): one line per this many
-	## milliseconds. Faster than the initial speed but gentler than the full
-	## chase; once a burst has scrolled its first line off the top, the ramp-up
-	## is unlimited and reaches whatever speed keeps up. 60 ms (~17 lines/s) is
-	## about 61 on the 1..100 dialog scale.
+	## milliseconds. Once a burst has scrolled its first line off the top, the
+	## ramp-up is unlimited and reaches whatever speed keeps up. 60 ms (~17
+	## lines/s) is about 61 on the 1..100 dialog scale.
 	## Range: 1.0 and up (milliseconds) - lower is faster
 	single_screen_tau_ms: 60.0
 
 	## Ramp-down
-	## How quickly the catch-up speed relaxes back to the initial speed once
-	## output stops running ahead, as a time constant. Higher lets a burst stay
-	## fast through a brief pause; lower makes every lull start gently again.
-	## 450 ms is around 51 on the 1..100 dialog scale, where higher means a
-	## quicker relax.
-	## Range: 1.0 and up (milliseconds) - lower relaxes quicker
+	## How gradually the speed winds down once output ceases with lines still
+	## to render: the catch-up speed halves every this many milliseconds on the
+	## way to the landing. The view keeps that wind-down's distance in reserve
+	## behind a fast burst, so the stop is a descent, never a cliff. 450 ms is
+	## around 51 on the 1..100 dialog scale, where higher means a harder stop.
+	## Range: 1.0 and up (milliseconds) - lower stops harder
 	ramp_down_ms: 450.0
 
 	## Ease-out
@@ -3078,7 +3075,8 @@ mod tests {
 			wallpaper_opacity: 0.4\n\
 			background_opacity: 0.9\n\
 			opacity: 0.8\n\
-			scroll_tau_ms: 120.0  ## an old trailing note\n\
+			scroll_tau_ms: 120.0\n\
+			wheel_lines: 4  ## an old trailing note\n\
 			# margin: 8.0\n\
 			font_family: \"Iosevka\"\n\
 			themes.mine.dark.background: \"#010203\"\n\
@@ -3107,7 +3105,11 @@ mod tests {
 			"old bare opacity is the transparency one:\n{out}"
 		);
 		assert!(
-			out.contains("\ttau_ms: 120.0\n"),
+			!out.contains("tau_ms: 120.0"),
+			"a since-retired setting must not resurrect through conversion:\n{out}"
+		);
+		assert!(
+			out.contains("\twheel_lines: 4\n"),
 			"value carried without its stale trailing note:\n{out}"
 		);
 		assert!(
@@ -3200,6 +3202,23 @@ mod tests {
 		);
 		// and a config that already carries the new spelling is left alone
 		assert!(migrate_config_text("scroll:\n\tsingle_screen_tau_ms: 45.0\n").is_none());
+	}
+
+	// The retired speed knobs leave existing configs entirely: tau_ms has no
+	// successor, and ease_in changed units (fraction -> milliseconds), so its
+	// old value must not be carried into the new key. Active and stale
+	// commented lines both go; the settings around them stay put.
+	#[test]
+	fn retired_scroll_knobs_are_removed_not_carried() {
+		let out = migrate_config_text(
+			"scroll:\n\ttau_ms: 120.0\n\tease_in: 0.5\n\tramp_up_ms: 200.0\n\t# tau_ms: 230.0  ## Default\n",
+		)
+		.expect("should migrate");
+		assert_eq!(out, "scroll:\n\tramp_up_ms: 200.0\n");
+		let s = resolve(read_raw(&out, std::path::Path::new("test.shcl")));
+		assert!((s.scroll_ramp_up_ms - 200.0).abs() < f32::EPSILON);
+		// the old fraction never leaks into the new duration
+		assert!((s.scroll_ease_in_ms - Settings::default().scroll_ease_in_ms).abs() < f32::EPSILON);
 	}
 
 	// A config with nothing to migrate is left untouched (no needless rewrite).
