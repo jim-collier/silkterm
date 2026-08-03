@@ -53,9 +53,10 @@ use crate::config;
 // instead of jumping straight to peak speed), and the stop is sharpened by a
 // minimum closing speed inside STOP_BAND (a bare exponential would crawl the
 // last few pixels in over a second). The two are presented as one pair, so
-// BOTH read "higher = gentler" in the dialog - which is why ease-out is stored
-// as the tail's DURATION and the closing speed is derived from it, rather than
-// stored as the speed itself (that would invert against its own partner).
+// BOTH read "higher = crisper" in the dialog (matching every other feel
+// slider) - which is why ease-out is stored as the tail's DURATION and the
+// closing speed is derived from it, rather than stored as the speed itself
+// (that would invert against its own partner).
 pub const MAX_BACKLOG: f32 = 16.0; // reference depth for output_ease_lines' clamp + set_max overscan
 const CHASE_GROW_MIN: f32 = 2.0; // gap (lines) under which a user sweep counts as caught up
 // Where Ease-in hands off to Ramp-up (lines/s). An exponential ramp cannot
