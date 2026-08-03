@@ -166,6 +166,23 @@ build_tag(){
 	esac
 	printf 'gnu%s%s%s' "$os" "$os" "$arch"
 }
+## Run a build command, retrying it once before calling it a failure. Every profile
+## that reaches here uses fat LTO, and rustc has been seen to die inside LLVM's
+## assembler (SIGILL) part way through one, then compile the identical source clean
+## straight after. Two crashes in a row is a real error, or a hardware question.
+## Stage 2 has already compiled everything bar the feature-gated profiler hooks, so
+## a genuine error surfaces in seconds here and the retry costs nothing.
+retry_build(){
+	local -r what="$1"; shift
+	local rc=0
+	"$@" || rc=$?
+	if ((rc)); then
+		fEcho "WARNING: ${what} build failed - retrying once (a compiler crash here is a toolchain flake)"
+		rc=0
+		"$@" || rc=$?
+	fi
+	if ((rc)); then fDie "${what} build failed twice (app problem)"; fi
+}
 ## (Re)write the sha256sums file over every artifact in the release dir except the
 ## sums file itself. Run after stage 5 (binaries) and again after stage 6 (packages),
 ## so the checksums cover the packages too. Uses the script-scope art_dir/ver/sums.
@@ -428,21 +445,9 @@ run_profiler(){
 		fEcho "WARNING: profiler skipped: ${skip}"; return 0
 	fi
 
-	## From here a failure is the app's fault and aborts - with one exception. This
-	## profile is the only one combining fat LTO with full debuginfo, and rustc has
-	## been seen to die in LLVM's assembler (SIGILL) part way through it, then build
-	## the identical source clean straight after. So retry once; failing twice is
-	## real. Stage 2 already compiled everything bar the feature-gated hooks, so a
-	## genuine error here surfaces in seconds and the retry costs nothing.
+	## From here a failure is the app's fault and aborts, bar the retry retry_build owns.
 	fEcho_Clean "building ${PROFILE_BIN} (cargo --profile ${PROFILE_PROFILE} --features ${PROFILE_FEATURE})"
-	local brc=0
-	cargo build --profile "${PROFILE_PROFILE}" --features "${PROFILE_FEATURE}" || brc=$?
-	if ((brc)); then
-		fEcho "WARNING: profiler build failed - retrying once (a compiler crash here is a toolchain flake)"
-		brc=0
-		cargo build --profile "${PROFILE_PROFILE}" --features "${PROFILE_FEATURE}" || brc=$?
-	fi
-	((brc == 0)) || fDie "profiler build failed twice (app problem)"
+	retry_build profiler cargo build --profile "${PROFILE_PROFILE}" --features "${PROFILE_FEATURE}"
 	mkdir -p "${profile_dir}"
 
 	## Bring up a private in-memory display so the profiler window never touches the
@@ -485,7 +490,7 @@ run_profiler
 
 ## Stage 5: release builds.
 fSection "5/8  Release build (native)"
-"${RELEASE_NATIVE_CMD[@]}"
+retry_build "native release" "${RELEASE_NATIVE_CMD[@]}"
 [[ -f "${RELEASE_NATIVE_BIN}" ]] || fDie "native release binary missing: ${RELEASE_NATIVE_BIN}"
 fEcho "OK: native release: ${RELEASE_NATIVE_BIN} ($(du -h "${RELEASE_NATIVE_BIN}" | cut -f1))"
 built_arts=("${RELEASE_NATIVE_OSARCH:-native}|${RELEASE_NATIVE_BIN}")
@@ -493,7 +498,7 @@ if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
 	for t in "${CROSS_TARGETS[@]}"; do
 		local_label="${t%%|*}"; rest="${t#*|}"; osarch="${rest%%|*}"; rest="${rest#*|}"; art="${rest%%|*}"; cmd="${rest#*|}"
 		fSection "5/8  Release build: ${local_label}"
-		eval "${cmd}"
+		retry_build "${local_label}" eval "${cmd}"
 		[[ -f "${art}" ]] || fDie "missing artifact for ${local_label}: ${art}"
 		fEcho "OK: ${local_label}: ${art} ($(du -h "${art}" | cut -f1))"
 		built_arts+=("${osarch}|${art}")
