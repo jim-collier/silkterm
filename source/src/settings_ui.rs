@@ -164,8 +164,9 @@ enum Key {
 // stored as milliseconds. Logarithmic: a time constant is felt by ratio, and a
 // linear map wastes most of the travel on values that look identical (the old
 // 300ms floor was why the slow end read as a no-op - barely below the 230ms
-// default). Each range brackets its default by a decade either way, so every
-// default sits mid-scale.
+// default). Each range spans two decades around the value its segment was
+// first tuned to, so a default landing anywhere in it still leaves room to
+// move either way.
 fn log_pos(v: f32, min: f32, max: f32) -> f32 {
 	(v.clamp(min, max) / min).ln() / (max / min).ln()
 }
@@ -191,16 +192,16 @@ fn tau_to_speed(tau: f32) -> f32 {
 fn speed_to_tau(speed: f32) -> f32 {
 	falling_value(speed, TAU_MIN, TAU_MAX)
 }
-// Leave-from-rest duration, bracketing the 80ms default.
+// Leave-from-rest duration: 8ms is instant, 800ms a long slow lift.
 const EASE_IN_MIN: f32 = 8.0;
 const EASE_IN_MAX: f32 = 800.0;
 // Chase doubling period: 30ms is a near-instant ramp, 3s barely ramps at all.
 const RAMP_UP_MIN: f32 = 30.0;
 const RAMP_UP_MAX: f32 = 3000.0;
-// Wind-down halving period, bracketing the 450ms default the same way.
+// Wind-down halving period, the same two-decade span as the ramp up.
 const RAMP_DOWN_MIN: f32 = 45.0;
 const RAMP_DOWN_MAX: f32 = 4500.0;
-// Tail duration, bracketing the 133ms default.
+// Tail duration: 13ms is an abrupt landing, 1.3s a long float-in.
 const EASE_OUT_MIN: f32 = 13.0;
 const EASE_OUT_MAX: f32 = 1300.0;
 
@@ -4038,33 +4039,33 @@ mod tests {
 	#[test]
 	fn the_scrolling_feel_sliders_read_where_their_defaults_claim() {
 		// Every one of these is documented in the config template as landing on a
-		// particular number, and the ranges were picked to put each default
-		// mid-scale. A range edited without its comment would drift silently.
+		// particular number, and each stored default was picked to land there. A
+		// range or a default edited without its comment would drift silently.
 		let d = config::Settings::default();
-		assert_eq!(tau_to_speed(d.scroll_single_screen_tau_ms), 61.0);
+		assert_eq!(tau_to_speed(d.scroll_single_screen_tau_ms), 75.0);
 		for (got, want, what) in [
 			(
 				falling_slider(d.scroll_ease_in_ms, EASE_IN_MIN, EASE_IN_MAX),
-				51.0,
+				50.0,
 				"ease-in",
 			),
 			(
 				falling_slider(d.scroll_ramp_up_ms, RAMP_UP_MIN, RAMP_UP_MAX),
-				51.0,
+				75.0,
 				"ramp-up",
 			),
 			(
 				falling_slider(d.scroll_ramp_down_ms, RAMP_DOWN_MIN, RAMP_DOWN_MAX),
-				51.0,
+				75.0,
 				"ramp-down",
 			),
 			(
 				falling_slider(d.scroll_ease_out_ms, EASE_OUT_MIN, EASE_OUT_MAX),
-				50.0,
+				40.0,
 				"ease-out",
 			),
 		] {
-			assert_eq!(got, want, "{what} default should sit mid-scale");
+			assert_eq!(got, want, "{what} default should read where it claims");
 		}
 	}
 
