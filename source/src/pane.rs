@@ -166,6 +166,19 @@ impl OffStrip {
 	}
 }
 
+// Lines that entered the scrollback between two depth samples. A DROP can only
+// mean the buffer was cleared (`clear`'s E3), and everything left in it arrived
+// after that, so the whole of it is new; anything else is ordinary growth. The
+// count alone can't distinguish a clear-and-refill that lands on the same depth,
+// which is why this is sampled per PTY read cycle rather than per frame.
+fn pushed_since(history: usize, baseline: usize) -> usize {
+	if history < baseline {
+		history
+	} else {
+		history - baseline
+	}
+}
+
 // The rows a detected step pushed out of the scroll region, as a range into the
 // PREVIOUS frame's rows. shift > 0 = content moved up, rows left off the top of
 // the region (just under any title band); shift < 0 = off the bottom.
@@ -739,6 +752,10 @@ pub struct Pane {
 	// Frames in a row that reused last_draw because the terminal was busy.
 	lock_misses: u32,
 	last_history: usize,
+	// Lines pushed into scrollback since the last build, accumulated per PTY
+	// wakeup rather than measured between frames - see `note_history`.
+	wake_pushed: usize,
+	wake_hist: usize,
 	// Fingerprint of the row just above the viewport - the line that most recently
 	// scrolled off. Once the scrollback is capped history_size() is pinned, so it
 	// can no longer say whether anything scrolled; this still can. None while
@@ -929,10 +946,30 @@ impl Pane {
 		// fills the buffer faster). At the cap, fall back to inferring the advance
 		// from how far last frame's on-screen rows reappear shifted up this frame;
 		// an in-place bottom-row change shifts nothing, so it still won't nudge.
-		let grew = history.saturating_sub(self.last_history);
+		// The per-wakeup accumulator is the authority when it has anything, since
+		// it alone survives a scrollback truncation (see `note_history`). It stays
+		// 0 whenever every sample this frame lost the lock race, so fall back to
+		// the between-frames difference and behave exactly as before.
+		let grew = if self.wake_pushed > 0 {
+			std::mem::take(&mut self.wake_pushed)
+		} else {
+			history.saturating_sub(self.last_history)
+		};
 		self.last_history = history;
+		// Deliberately NOT touching `wake_hist`: the sampler owns it. A build sees
+		// the post-clear depth before that cycle's wakeup is delivered, so writing
+		// the baseline here erases the pre-clear value the drop is measured
+		// against and the truncation goes undetected all over again.
 		self.scroll.set_max(history as f32);
 		if cut {
+			// Rebaseline the wakeup sampler too. The alt grid carries no
+			// scrollback, so entering and leaving swings the depth by the whole
+			// history; a wakeup delivered AFTER this frame would otherwise bank
+			// that swing and ease it on the next ordinary frame. Safe to write the
+			// baseline here precisely because a cut means "rebaseline everything" -
+			// an ordinary frame must not (see the note by `last_history`).
+			self.wake_pushed = 0;
+			self.wake_hist = history;
 			// hard-cut the screen swap (or freeze catch-up): drop any in-flight
 			// slide and rebaseline the row fingerprints (and the styled snapshot
 			// the strip captures from) to the NEW screen, so neither the
@@ -1809,6 +1846,36 @@ impl Pane {
 		self.scroll.snap();
 	}
 
+	// Sample the scrollback depth for this PTY read cycle. `history_size()` is a
+	// COUNT, and `clear` (E3) TRUNCATES it, so growth measured between two frames
+	// reads zero across a clear-and-refill that pushed a whole screenful past -
+	// repeating `clear; ls -lA ~/` eased the first time and snapped every time
+	// after, because the identical listing refilled the buffer to the identical
+	// depth. A build never sees the dip (the clear and the output land in one
+	// parse cycle), but a wakeup does, so accumulate here instead: a DROP can only
+	// mean the scrollback was cleared, and everything left in it arrived after
+	// that, so the whole of it is new. `try_lock_unfair` and give up on a miss -
+	// this must never contend with the reader; `wake_hist` only advances on a
+	// successful sample, so the next one spans the cycles that were missed and
+	// nothing is lost.
+	// After a reflow the depth can change with nothing having scrolled, so
+	// re-baseline rather than let the next sample read that as a clear. Resizes
+	// are rare and this is bounded (one read cycle), so take the fair lock.
+	pub fn rebaseline_history(&mut self) {
+		self.wake_pushed = 0;
+		self.wake_hist = self.term.term.lock().grid().history_size();
+	}
+
+	pub fn note_history(&mut self) {
+		let Some(guard) = self.term.term.try_lock_unfair() else {
+			return;
+		};
+		let history = guard.grid().history_size();
+		drop(guard);
+		self.wake_pushed += pushed_since(history, self.wake_hist);
+		self.wake_hist = history;
+	}
+
 	// The cursor quad: visual column eased toward the target (slides as you type,
 	// snaps on a row change), fade-blink alpha when idle, or None when hidden /
 	// scrolled into history. Cheap; called every frame (incl. the cursor-only fast
@@ -2588,6 +2655,9 @@ impl PaneManager {
 				// a resize invalidates the strip's captured columns and the
 				// frame-old styled snapshot it fills from
 				pane.strip.clear();
+				// a reflow can shrink history with nothing scrolled, which would
+				// otherwise read as a scrollback clear
+				pane.rebaseline_history();
 				pane.strip_dirty = false;
 				pane.last_cells.clear();
 			}
@@ -2699,6 +2769,8 @@ fn spawn_pane(
 		},
 		lock_misses: 0,
 		last_history: 0,
+		wake_pushed: 0,
+		wake_hist: 0,
 		last_offscreen: None,
 		last_rows: Vec::new(),
 		slide_static: 0,
@@ -3494,8 +3566,8 @@ mod tests {
 		SLIDE_TOP_BAND_APPS, StripCell, app_scroll_frames, bar_applies_to, bar_pos_to_lines,
 		bar_thumb_span, bell_brighten, capture_grid_text, capture_start, cursor_cycle,
 		cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full,
-		layout, logical_line_bounds, move_is_input, pair_inside, prompt_strip, render_char,
-		resume_delay, same_char_pair, scroll_shift, scroll_shift_signed, slide_bands,
+		layout, logical_line_bounds, move_is_input, pair_inside, prompt_strip, pushed_since,
+		render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed, slide_bands,
 		snapshot_rows, static_bands, translate_span, vanished_range, weld_region_clip,
 	};
 	use alacritty_terminal::event::{Event, EventListener};
@@ -4416,6 +4488,42 @@ mod tests {
 		assert_eq!(static_bands(&last, &last), (0, 0));
 		// length mismatch is not measurable
 		assert_eq!(static_bands(&a, &last), (0, 0));
+	}
+
+	#[test]
+	fn a_scrollback_clear_reads_as_everything_that_refilled_it() {
+		// ordinary growth
+		assert_eq!(pushed_since(75, 0), 75);
+		assert_eq!(pushed_since(76, 75), 1);
+		assert_eq!(pushed_since(75, 75), 0);
+		// `clear` truncates, then the same listing refills to the SAME depth. The
+		// per-frame difference reads 0 here, which is the whole bug; sampled per
+		// read cycle the pre-clear depth is still 76, and the drop says all 75
+		// lines now in the buffer arrived after the clear.
+		assert_eq!(pushed_since(75, 76), 75);
+		// a bare `clear` with no output that follows must not arm anything
+		assert_eq!(pushed_since(0, 76), 0);
+		// entering the alt screen drops the depth to zero the same way
+		assert_eq!(pushed_since(0, 500), 0);
+	}
+
+	#[test]
+	fn missed_samples_are_recovered_not_lost() {
+		// The sampler gives up rather than contend with the reader, so a busy pane
+		// skips cycles. The baseline only advances on a successful sample, so the
+		// next one spans everything that was missed.
+		let (mut pushed, mut baseline) = (0usize, 10usize);
+		for depth in [12usize, 15, 20] {
+			// pretend the samples between these were all lock misses
+			pushed += pushed_since(depth, baseline);
+			baseline = depth;
+		}
+		assert_eq!(pushed, 10, "20 - 10, however many samples were dropped");
+		// and a truncation inside the gap still lands in full
+		let mut pushed = 0usize;
+		pushed += pushed_since(30, 20); // grew
+		pushed += pushed_since(8, 30); // cleared, refilled to 8
+		assert_eq!(pushed, 18);
 	}
 
 	// A live overlay pinned to the bottom edge of a scrolling viewport, composited

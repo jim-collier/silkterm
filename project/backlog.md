@@ -59,8 +59,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### Bugs
 
-- 🔘 Bug: Repeated `clear; ls -lA ~/` results in the second having seemingly no output, because it didn't smooth-scroll like the first time. So the output appears instantyl. Similar to how regular terminals behave, but SilkTerm is supposed to be different. I realize that fixing this, might risk regressing other scroll anomolies that were fixed previously, so tackle with great caution.
-
 ### New features and enhancements
 
 - ✅ Clarified scroll speed functions. (Probably need some refactoring):
@@ -590,6 +588,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 ### Done
 
 #### Done - Bugs
+
+- ✅ Bug: repeated `clear; ls -lA ~/` scrolled smoothly the first time and appeared instantly every time after. (20260803)
+	- Cause: the smooth output scroll arms itself from how much the scrollback grew between two drawn frames. `clear` empties the scrollback, and re-running the same command refills it to exactly the same depth - both inside a single read of the program's output - so the measured growth was zero and nothing was armed, even though a screenful of lines had gone past. The end state carries no trace of it either: the screen and the scrollback both look exactly as they did before, so nothing about the finished picture can tell that anything happened.
+	- Fixed: the depth is now sampled once per read of the program's output rather than once per drawn frame, which is the only point where the emptying is still visible, and a drop is read for what it can only mean - the scrollback was cleared, so everything left in it arrived afterwards and is new. Repeats now scroll exactly like the first run.
+	- Sampling gives up immediately rather than wait its turn, so it can never hold up output; a skipped sample is picked up by the next one, and if every sample is skipped the previous behaviour applies unchanged. Switching a full-screen program in or out, and resizing the window, both reset the measurement, since each moves the depth without anything having scrolled.
+	- 🔘 UAT
+	- Verified: the first run and every repeat now arm the same amount and glide through it identically, where before only the first did and later runs did no work at all - measurable as roughly seven times the drawing effort across three repeats, in both orderings. Heavy output drains no slower than before. The four scrolling scenes covered by the regression suite still slide smoothly with no bounce.
 
 - ✅ Bug: scrolling back in muffer with the mouse wheel made its "1 new message" indicator smear and bounce - the same shape as #t78br, "The Notorious 'Bouncing Shadow' nano bug". (20260803)
 	- Steps to reproduce: open muffer, let the conversation grow past one screen, then wheel back. The indicator that appears at the bottom of the transcript ("1 new message", or "Jump to bottom" when nothing new has arrived) is drawn twice and rides the scroll instead of holding still.
