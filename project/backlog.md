@@ -1,4 +1,4 @@
-<!-- markdownlint-disable MD007 -- Unordered list indentation -->
+<!-- markdownlint-disable MD007 -- Indent count -->
 <!-- markdownlint-disable MD010 -- No hard tabs -->
 <!-- markdownlint-disable MD033 -- No inline html -->
 <!-- markdownlint-disable MD055 -- Table pipe style [Expected: leading_and_trailing; Actual: leading_only; Missing trailing pipe] -->
@@ -590,6 +590,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 ### Done
 
 #### Done - Bugs
+
+- ✅ Bug: scrolling back in muffer with the mouse wheel made its "1 new message" indicator smear and bounce - the same shape as #t78br, "The Notorious 'Bouncing Shadow' nano bug". (20260803)
+	- Steps to reproduce: open muffer, let the conversation grow past one screen, then wheel back. The indicator that appears at the bottom of the transcript ("1 new message", or "Jump to bottom" when nothing new has arrived) is drawn twice and rides the scroll instead of holding still.
+	- Cause: a smooth slide keeps the fixed parts of an application's screen still and moves only the scrolling middle, and it worked out which rows were fixed by asking which ones had not changed. That misses a fixed element whose text changes while it sits still. The indicator is painted over the last row of the transcript rather than below it, so that row differs on every step, the search for unchanging rows stopped short of it, and the indicator was treated as scrolling content - the same class of fault as the title bar that used to ghost in nano.
+	- Fixed: the fixed rows are now also derived from what the detected scroll itself accounts for. A row a real scroll owns either moves cleanly or is one of the rows the step newly reveals; anything else is fixed furniture and is held still. The two measures are combined by taking whichever holds more rows still, so the previous behaviour is a floor and no row that used to move can start behaving differently. Because the span is anchored on the rows that genuinely moved, it can only ever be widened outward, so an element stranded in the middle of the scrolling area can never hand the rows past it to the fixed set.
+	- 🔘 UAT
+	- Verified: the indicator used to render as two copies, about four rows apart, with the pair shifting between two positions as the scroll eased; it now renders as a single copy that holds one position for every frame of the gesture. The rows a step retires into the fill strip no longer include the indicator's row, so it is not redrawn a second time inside the revealed gap. The four scrolling scenes covered by the regression suite (`less`, `vim`, `nano`, muffer) still slide smoothly with no bounce, and the fixed-row counts they produce are unchanged.
 
 - ✅ A pipeline run aborted at the profiler stage and reported an application problem, when the compiler itself had crashed. (20260802)
 	- The crash was inside the compiler's own code generation, not in any project source. The identical build succeeded straight afterwards, and the same stage had completed cleanly five times earlier the same day. The profiler build is the only one pairing whole-program optimization with full debug information, which is the combination it died on.
