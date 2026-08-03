@@ -172,24 +172,15 @@ fn log_pos(v: f32, min: f32, max: f32) -> f32 {
 fn log_val(pos: f32, min: f32, max: f32) -> f32 {
 	min * (max / min).powf(pos.clamp(0.0, 1.0))
 }
-// Sliders where a HIGHER number means a SMALLER stored value: the speed
-// ("Single-screen speed" - stored as time per line) and the ramps ("Ramp-up",
-// "Ramp-down" - stored as the doubling/halving period, so a harder ramp is a
-// shorter one).
+// Every feel slider falls: a HIGHER number means a SMALLER stored value,
+// because each is stored as a time (per-line tau, doubling/halving period,
+// ease duration) and a shorter time is a faster/harder/crisper feel. One
+// direction across the whole tab - higher = faster.
 fn falling_slider(v: f32, min: f32, max: f32) -> f32 {
 	(100.0 - log_pos(v, min, max) * 99.0).round()
 }
 fn falling_value(slider: f32, min: f32, max: f32) -> f32 {
 	log_val((100.0 - slider.clamp(1.0, 100.0)) / 99.0, min, max)
-}
-// "Ease-out" is the odd one: it rises, because it is stored as the tail's
-// duration so that it reads the same direction as its Ease-in partner (both
-// "higher = gentler"). See scroll.rs.
-fn rising_slider(v: f32, min: f32, max: f32) -> f32 {
-	(1.0 + log_pos(v, min, max) * 99.0).round()
-}
-fn rising_value(slider: f32, min: f32, max: f32) -> f32 {
-	log_val((slider.clamp(1.0, 100.0) - 1.0) / 99.0, min, max)
 }
 // 1 = one line/s, 100 = a hundred lines/s.
 const TAU_MIN: f32 = 10.0;
@@ -732,8 +723,8 @@ fn fields() -> Vec<Spec> {
 			kind: Toggle,
 		},
 		// Ordered as one output burst unfolds: leaves rest, settles at the
-		// initial speed, accelerates, tops out, relaxes, lands. Ease-in/Ease-out
-		// and Ramp-up/Ramp-down are each a matched pair reading one direction.
+		// initial speed, accelerates, tops out, relaxes, lands. All five read
+		// the same direction: higher = faster.
 		Spec {
 			label: "Ease-in",
 			key: ScrollEaseIn,
@@ -1789,7 +1780,7 @@ impl SettingsDialog {
 			Key::Margin => settings.margin,
 			// shown as an intuitive 1..100 speed (higher = faster); stored as tau
 			Key::ScrollEaseIn => {
-				rising_slider(settings.scroll_ease_in_ms, EASE_IN_MIN, EASE_IN_MAX)
+				falling_slider(settings.scroll_ease_in_ms, EASE_IN_MIN, EASE_IN_MAX)
 			}
 			Key::ScrollRampUp => {
 				falling_slider(settings.scroll_ramp_up_ms, RAMP_UP_MIN, RAMP_UP_MAX)
@@ -1799,7 +1790,7 @@ impl SettingsDialog {
 				falling_slider(settings.scroll_ramp_down_ms, RAMP_DOWN_MIN, RAMP_DOWN_MAX)
 			}
 			Key::ScrollEaseOut => {
-				rising_slider(settings.scroll_ease_out_ms, EASE_OUT_MIN, EASE_OUT_MAX)
+				falling_slider(settings.scroll_ease_out_ms, EASE_OUT_MIN, EASE_OUT_MAX)
 			}
 			Key::WheelLines => settings.wheel_lines,
 			Key::ScrollbarThickness => settings.scrollbar_thickness,
@@ -1828,7 +1819,7 @@ impl SettingsDialog {
 			Key::LineHeight => settings.line_height_scale = value,
 			Key::Margin => settings.margin = value,
 			Key::ScrollEaseIn => {
-				settings.scroll_ease_in_ms = rising_value(value, EASE_IN_MIN, EASE_IN_MAX);
+				settings.scroll_ease_in_ms = falling_value(value, EASE_IN_MIN, EASE_IN_MAX);
 			}
 			Key::ScrollRampUp => {
 				settings.scroll_ramp_up_ms = falling_value(value, RAMP_UP_MIN, RAMP_UP_MAX);
@@ -1838,7 +1829,7 @@ impl SettingsDialog {
 				settings.scroll_ramp_down_ms = falling_value(value, RAMP_DOWN_MIN, RAMP_DOWN_MAX);
 			}
 			Key::ScrollEaseOut => {
-				settings.scroll_ease_out_ms = rising_value(value, EASE_OUT_MIN, EASE_OUT_MAX);
+				settings.scroll_ease_out_ms = falling_value(value, EASE_OUT_MIN, EASE_OUT_MAX);
 			}
 			Key::WheelLines => settings.wheel_lines = value,
 			Key::ScrollbarThickness => settings.scrollbar_thickness = value,
@@ -2148,7 +2139,7 @@ impl SettingsDialog {
 			Key::LineHeight => defaults.line_height_scale,
 			Key::Margin => defaults.margin,
 			Key::ScrollEaseIn => {
-				rising_slider(defaults.scroll_ease_in_ms, EASE_IN_MIN, EASE_IN_MAX)
+				falling_slider(defaults.scroll_ease_in_ms, EASE_IN_MIN, EASE_IN_MAX)
 			}
 			Key::ScrollRampUp => {
 				falling_slider(defaults.scroll_ramp_up_ms, RAMP_UP_MIN, RAMP_UP_MAX)
@@ -2158,7 +2149,7 @@ impl SettingsDialog {
 				falling_slider(defaults.scroll_ramp_down_ms, RAMP_DOWN_MIN, RAMP_DOWN_MAX)
 			}
 			Key::ScrollEaseOut => {
-				rising_slider(defaults.scroll_ease_out_ms, EASE_OUT_MIN, EASE_OUT_MAX)
+				falling_slider(defaults.scroll_ease_out_ms, EASE_OUT_MIN, EASE_OUT_MAX)
 			}
 			Key::WheelLines => defaults.wheel_lines,
 			Key::ScrollbarThickness => defaults.scrollbar_thickness,
@@ -3767,7 +3758,7 @@ mod tests {
 	use super::{
 		EASE_IN_MAX, EASE_IN_MIN, EASE_OUT_MAX, EASE_OUT_MIN, Key, RAMP_DOWN_MAX, RAMP_DOWN_MIN,
 		RAMP_UP_MAX, RAMP_UP_MIN, SettingsDialog, TAB_TITLES, TAU_MAX, TAU_MIN, falling_slider,
-		rising_slider, speed_to_tau, tau_to_speed,
+		speed_to_tau, tau_to_speed,
 	};
 	use crate::config;
 
@@ -4051,34 +4042,38 @@ mod tests {
 		// mid-scale. A range edited without its comment would drift silently.
 		let d = config::Settings::default();
 		assert_eq!(tau_to_speed(d.scroll_single_screen_tau_ms), 61.0);
-		for (got, what) in [
+		for (got, want, what) in [
 			(
-				rising_slider(d.scroll_ease_in_ms, EASE_IN_MIN, EASE_IN_MAX),
+				falling_slider(d.scroll_ease_in_ms, EASE_IN_MIN, EASE_IN_MAX),
+				51.0,
 				"ease-in",
 			),
 			(
 				falling_slider(d.scroll_ramp_up_ms, RAMP_UP_MIN, RAMP_UP_MAX),
+				51.0,
 				"ramp-up",
 			),
 			(
 				falling_slider(d.scroll_ramp_down_ms, RAMP_DOWN_MIN, RAMP_DOWN_MAX),
+				51.0,
 				"ramp-down",
 			),
 			(
-				rising_slider(d.scroll_ease_out_ms, EASE_OUT_MIN, EASE_OUT_MAX),
+				falling_slider(d.scroll_ease_out_ms, EASE_OUT_MIN, EASE_OUT_MAX),
+				50.0,
 				"ease-out",
 			),
 		] {
-			assert_eq!(got, 51.0, "{what} default should sit mid-scale");
+			assert_eq!(got, want, "{what} default should sit mid-scale");
 		}
 	}
 
 	#[test]
 	fn the_scrolling_feel_sliders_round_trip_and_run_the_right_way() {
 		// A slider that reads back as something else is the "setting does
-		// nothing" bug in its quietest form. Also pins the DIRECTION of each
-		// pair: Ease-in/Ease-out both mean "gentler", Ramp-up/Ramp-down both
-		// mean "harder", whichever way each is stored underneath.
+		// nothing" bug in its quietest form. Also pins the DIRECTION of every
+		// feel slider: higher = faster, whichever way each is stored
+		// underneath.
 		let mut d = mk_dialog(4000.0);
 		for (key, label) in [
 			(Key::ScrollEaseIn, "Ease-in"),
@@ -4096,17 +4091,17 @@ mod tests {
 				);
 			}
 		}
-		// higher = gentler on both ends of the ease
+		// higher = crisper on both ends of the ease (stored as a shorter duration)
 		d.set_f32(Key::ScrollEaseIn, 80.0);
-		let gentle_in = d.edited.scroll_ease_in_ms;
+		let crisp_in = d.edited.scroll_ease_in_ms;
 		d.set_f32(Key::ScrollEaseIn, 20.0);
-		assert!(gentle_in > d.edited.scroll_ease_in_ms);
+		assert!(crisp_in < d.edited.scroll_ease_in_ms);
 		d.set_f32(Key::ScrollEaseOut, 80.0);
-		let gentle_out = d.edited.scroll_ease_out_ms;
+		let crisp_out = d.edited.scroll_ease_out_ms;
 		d.set_f32(Key::ScrollEaseOut, 20.0);
 		assert!(
-			gentle_out > d.edited.scroll_ease_out_ms,
-			"a higher Ease-out must be a LONGER tail, matching its Ease-in partner"
+			crisp_out < d.edited.scroll_ease_out_ms,
+			"a higher Ease-out must be a SHORTER tail, matching its Ease-in partner"
 		);
 		// higher = harder on both ramps (stored as a shorter period)
 		d.set_f32(Key::ScrollRampUp, 80.0);

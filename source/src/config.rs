@@ -238,7 +238,7 @@ impl Default for Settings {
 			scroll_ramp_up_ms: 300.0, // ~ "Ramp-up" 51 (catch-up speed doubles ~3x a second)
 			scroll_single_screen_tau_ms: 60.0, // ~ "Single-screen speed" 61 (on-screen burst ceiling: ~17 lines/s)
 			scroll_ramp_down_ms: 450.0, // ~ "Ramp-down" 51 (catch-up winds down by halving ~2x a second)
-			scroll_ease_out_ms: 133.0,  // ~ "Ease-out" 51 (the tail lands in ~an eighth of a second)
+			scroll_ease_out_ms: 133.0,  // ~ "Ease-out" 50 (the tail lands in ~an eighth of a second)
 			wheel_lines: 3.0,
 			alt_scroll_lines: 3.0,
 			output_ease_lines: 1.0,
@@ -2669,7 +2669,7 @@ scroll:
 	## How long the view takes to build speed when it starts moving from rest:
 	## the first few lines per second arrive over this many milliseconds
 	## (wheel scrolling eases in over the same time). 80 ms is about 51 on the
-	## 1..100 dialog scale.
+	## 1..100 dialog scale, where higher means a crisper start.
 	## Range: 1.0 and up (milliseconds) - higher is gentler
 	ease_in_ms: 80.0
 
@@ -2704,7 +2704,8 @@ scroll:
 	## How gradually the view settles onto its final line. The last fraction of
 	## a line is given at least this long, so the tail sweeps in instead of
 	## crawling to a halt. Higher is a softer, longer landing; lower is crisper.
-	## 133 ms is about 51 on the 1..100 dialog scale.
+	## 133 ms is about 50 on the 1..100 dialog scale, where higher means a
+	## crisper landing.
 	## Range: 1.0 and up (milliseconds) - higher is gentler
 	ease_out_ms: 133.0
 
