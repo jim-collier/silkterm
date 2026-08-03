@@ -3620,6 +3620,9 @@ impl ApplicationHandler<UserEvent> for App {
 				if let Some(p) = state.tabs.find_pane_mut(id) {
 					p.content_dirty = true;
 					p.note_output(); // copy-output: push the settle deadline out
+					// scrollback depth, sampled per read cycle - the only
+					// granularity that sees a `clear` truncate it
+					p.note_history();
 				}
 			}
 			UserEvent::PtyWrite(id, bytes) => {
