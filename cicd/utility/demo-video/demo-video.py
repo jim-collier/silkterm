@@ -630,7 +630,6 @@ cursor.animation_resume_s: 1
 cursor.blink_rate_ms: 500
 selection.word_separators: "=,|:\\"' ()[]{}<>"
 scroll.scrollback: 10000
-scroll.tau_ms: 230.0
 scroll.wheel_lines: 3.0
 scroll.alt_scroll_lines: 3.0
 scroll.output_ease_lines: 1.0

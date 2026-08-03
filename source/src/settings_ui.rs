@@ -144,7 +144,6 @@ enum Key {
 	Margin,
 	SmoothScroll,
 	ScrollEaseIn,
-	ScrollTau,
 	ScrollRampUp,
 	SingleScreenTau,
 	ScrollRampDown,
@@ -173,10 +172,10 @@ fn log_pos(v: f32, min: f32, max: f32) -> f32 {
 fn log_val(pos: f32, min: f32, max: f32) -> f32 {
 	min * (max / min).powf(pos.clamp(0.0, 1.0))
 }
-// Sliders where a HIGHER number means a SMALLER stored value: the speeds
-// ("Initial scroll speed", "Single-screen speed" - stored as time per line) and
-// the ramps ("Ramp-up", "Ramp-down" - stored as the doubling/decay period, so a
-// harder ramp is a shorter one).
+// Sliders where a HIGHER number means a SMALLER stored value: the speed
+// ("Single-screen speed" - stored as time per line) and the ramps ("Ramp-up",
+// "Ramp-down" - stored as the doubling/halving period, so a harder ramp is a
+// shorter one).
 fn falling_slider(v: f32, min: f32, max: f32) -> f32 {
 	(100.0 - log_pos(v, min, max) * 99.0).round()
 }
@@ -201,10 +200,13 @@ fn tau_to_speed(tau: f32) -> f32 {
 fn speed_to_tau(speed: f32) -> f32 {
 	falling_value(speed, TAU_MIN, TAU_MAX)
 }
+// Leave-from-rest duration, bracketing the 80ms default.
+const EASE_IN_MIN: f32 = 8.0;
+const EASE_IN_MAX: f32 = 800.0;
 // Chase doubling period: 30ms is a near-instant ramp, 3s barely ramps at all.
 const RAMP_UP_MIN: f32 = 30.0;
 const RAMP_UP_MAX: f32 = 3000.0;
-// Chase relax time constant, bracketing the 450ms default the same way.
+// Wind-down halving period, bracketing the 450ms default the same way.
 const RAMP_DOWN_MIN: f32 = 45.0;
 const RAMP_DOWN_MAX: f32 = 4500.0;
 // Tail duration, bracketing the 133ms default.
@@ -298,8 +300,7 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::RememberSize => &["window.remember_size"],
 		Key::Margin => &["window.margin"],
 		Key::SmoothScroll => &["scroll.smooth"],
-		Key::ScrollEaseIn => &["scroll.ease_in"],
-		Key::ScrollTau => &["scroll.tau_ms"],
+		Key::ScrollEaseIn => &["scroll.ease_in_ms"],
 		Key::ScrollRampUp => &["scroll.ramp_up_ms"],
 		Key::SingleScreenTau => &["scroll.single_screen_tau_ms"],
 		Key::ScrollRampDown => &["scroll.ramp_down_ms"],
@@ -736,15 +737,6 @@ fn fields() -> Vec<Spec> {
 		Spec {
 			label: "Ease-in",
 			key: ScrollEaseIn,
-			kind: Slider {
-				min: 0.0,
-				max: 100.0,
-				int: true,
-			},
-		},
-		Spec {
-			label: "Initial scroll speed",
-			key: ScrollTau,
 			kind: Slider {
 				min: 1.0,
 				max: 100.0,
@@ -1796,8 +1788,9 @@ impl SettingsDialog {
 			Key::LineHeight => settings.line_height_scale,
 			Key::Margin => settings.margin,
 			// shown as an intuitive 1..100 speed (higher = faster); stored as tau
-			Key::ScrollEaseIn => (settings.scroll_ease_in * 100.0).round(),
-			Key::ScrollTau => tau_to_speed(settings.scroll_tau_ms),
+			Key::ScrollEaseIn => {
+				rising_slider(settings.scroll_ease_in_ms, EASE_IN_MIN, EASE_IN_MAX)
+			}
 			Key::ScrollRampUp => {
 				falling_slider(settings.scroll_ramp_up_ms, RAMP_UP_MIN, RAMP_UP_MAX)
 			}
@@ -1834,8 +1827,9 @@ impl SettingsDialog {
 			Key::FontSize => settings.font_size = value,
 			Key::LineHeight => settings.line_height_scale = value,
 			Key::Margin => settings.margin = value,
-			Key::ScrollEaseIn => settings.scroll_ease_in = value / 100.0,
-			Key::ScrollTau => settings.scroll_tau_ms = speed_to_tau(value),
+			Key::ScrollEaseIn => {
+				settings.scroll_ease_in_ms = rising_value(value, EASE_IN_MIN, EASE_IN_MAX);
+			}
 			Key::ScrollRampUp => {
 				settings.scroll_ramp_up_ms = falling_value(value, RAMP_UP_MIN, RAMP_UP_MAX);
 			}
@@ -2029,7 +2023,7 @@ impl SettingsDialog {
 			|| (matches!(
 				key,
 				Key::ScrollEaseIn
-					| Key::ScrollTau | Key::ScrollRampUp
+					| Key::ScrollRampUp
 					| Key::SingleScreenTau
 					| Key::ScrollRampDown
 					| Key::ScrollEaseOut
@@ -2137,7 +2131,7 @@ impl SettingsDialog {
 			_ => self.get_f32(key) == self.default_f32(key),
 		}
 	}
-	// Default for a slider key, in get_f32's own units (speed for ScrollTau).
+	// Default for a slider key, in get_f32's own units (speed for SingleScreenTau).
 	fn default_f32(&self, key: Key) -> f32 {
 		let defaults = &self.defaults;
 		match key {
@@ -2153,8 +2147,9 @@ impl SettingsDialog {
 			Key::FontSize => defaults.font_size,
 			Key::LineHeight => defaults.line_height_scale,
 			Key::Margin => defaults.margin,
-			Key::ScrollEaseIn => (defaults.scroll_ease_in * 100.0).round(),
-			Key::ScrollTau => tau_to_speed(defaults.scroll_tau_ms),
+			Key::ScrollEaseIn => {
+				rising_slider(defaults.scroll_ease_in_ms, EASE_IN_MIN, EASE_IN_MAX)
+			}
 			Key::ScrollRampUp => {
 				falling_slider(defaults.scroll_ramp_up_ms, RAMP_UP_MIN, RAMP_UP_MAX)
 			}
@@ -3770,9 +3765,9 @@ pub fn wallpaper_changed(old: &Settings, new: &Settings) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::{
-		EASE_OUT_MAX, EASE_OUT_MIN, Key, RAMP_DOWN_MAX, RAMP_DOWN_MIN, RAMP_UP_MAX, RAMP_UP_MIN,
-		SettingsDialog, TAB_TITLES, TAU_MAX, TAU_MIN, falling_slider, rising_slider, speed_to_tau,
-		tau_to_speed,
+		EASE_IN_MAX, EASE_IN_MIN, EASE_OUT_MAX, EASE_OUT_MIN, Key, RAMP_DOWN_MAX, RAMP_DOWN_MIN,
+		RAMP_UP_MAX, RAMP_UP_MIN, SettingsDialog, TAB_TITLES, TAU_MAX, TAU_MIN, falling_slider,
+		rising_slider, speed_to_tau, tau_to_speed,
 	};
 	use crate::config;
 
@@ -4055,10 +4050,12 @@ mod tests {
 		// particular number, and the ranges were picked to put each default
 		// mid-scale. A range edited without its comment would drift silently.
 		let d = config::Settings::default();
-		assert_eq!(tau_to_speed(d.scroll_tau_ms), 33.0);
 		assert_eq!(tau_to_speed(d.scroll_single_screen_tau_ms), 61.0);
-		assert_eq!((d.scroll_ease_in * 100.0).round(), 35.0);
 		for (got, what) in [
+			(
+				rising_slider(d.scroll_ease_in_ms, EASE_IN_MIN, EASE_IN_MAX),
+				"ease-in",
+			),
 			(
 				falling_slider(d.scroll_ramp_up_ms, RAMP_UP_MIN, RAMP_UP_MAX),
 				"ramp-up",
@@ -4085,7 +4082,6 @@ mod tests {
 		let mut d = mk_dialog(4000.0);
 		for (key, label) in [
 			(Key::ScrollEaseIn, "Ease-in"),
-			(Key::ScrollTau, "Initial scroll speed"),
 			(Key::ScrollRampUp, "Ramp-up"),
 			(Key::SingleScreenTau, "Single-screen speed"),
 			(Key::ScrollRampDown, "Ramp-down"),
@@ -4102,9 +4098,9 @@ mod tests {
 		}
 		// higher = gentler on both ends of the ease
 		d.set_f32(Key::ScrollEaseIn, 80.0);
-		let gentle_in = d.edited.scroll_ease_in;
+		let gentle_in = d.edited.scroll_ease_in_ms;
 		d.set_f32(Key::ScrollEaseIn, 20.0);
-		assert!(gentle_in > d.edited.scroll_ease_in);
+		assert!(gentle_in > d.edited.scroll_ease_in_ms);
 		d.set_f32(Key::ScrollEaseOut, 80.0);
 		let gentle_out = d.edited.scroll_ease_out_ms;
 		d.set_f32(Key::ScrollEaseOut, 20.0);
@@ -4183,13 +4179,13 @@ mod tests {
 		// slider: focus the scroll-speed slider, nudge it both ways
 		d.tab = 4;
 		d.key_tab();
-		let base = d.get_f32(Key::ScrollTau);
+		let base = d.get_f32(Key::SingleScreenTau);
 		d.key_horizontal(-1);
-		let lower = d.get_f32(Key::ScrollTau);
+		let lower = d.get_f32(Key::SingleScreenTau);
 		assert!(lower <= base);
 		d.key_horizontal(1);
 		d.key_horizontal(1);
-		assert!(d.get_f32(Key::ScrollTau) >= lower);
+		assert!(d.get_f32(Key::SingleScreenTau) >= lower);
 		// radio: focus the (always-enabled) bg-fit radio and move its selection
 		let i = d.specs.iter().position(|s| s.key == Key::BgFit).unwrap();
 		d.tab = d.spec_tab[i];
@@ -4220,19 +4216,19 @@ mod tests {
 		let i = d
 			.specs
 			.iter()
-			.position(|s| s.key == Key::ScrollTau)
+			.position(|s| s.key == Key::SingleScreenTau)
 			.unwrap();
 		d.tab = d.spec_tab[i];
 		d.focus = Some(super::Focus::Row(i, 0));
-		d.set_f32(Key::ScrollTau, 50.0);
+		d.set_f32(Key::SingleScreenTau, 50.0);
 		d.key_vertical(false); // Up -> increase by 1 (int step)
-		assert_eq!(d.get_f32(Key::ScrollTau), 51.0);
+		assert_eq!(d.get_f32(Key::SingleScreenTau), 51.0);
 		d.key_vertical(true); // Down -> decrease
 		d.key_vertical(true);
-		assert_eq!(d.get_f32(Key::ScrollTau), 49.0);
+		assert_eq!(d.get_f32(Key::SingleScreenTau), 49.0);
 		d.set_mods(false, true, false); // Shift held
 		d.key_vertical(false); // Shift+Up -> ~1/10 of the range (10)
-		assert_eq!(d.get_f32(Key::ScrollTau), 59.0);
+		assert_eq!(d.get_f32(Key::SingleScreenTau), 59.0);
 	}
 
 	#[test]
@@ -4242,15 +4238,15 @@ mod tests {
 		let i = d
 			.specs
 			.iter()
-			.position(|s| s.key == Key::ScrollTau)
+			.position(|s| s.key == Key::SingleScreenTau)
 			.unwrap();
 		d.tab = d.spec_tab[i];
 		d.focus = Some(super::Focus::Row(i, 0));
-		d.set_f32(Key::ScrollTau, 30.0);
+		d.set_f32(Key::SingleScreenTau, 30.0);
 		d.key_space(); // open the field, fully selected
 		assert!(d.edit.is_some());
 		d.key_vertical(false); // Up steps the value and refreshes the buffer
-		assert_eq!(d.get_f32(Key::ScrollTau), 31.0);
+		assert_eq!(d.get_f32(Key::SingleScreenTau), 31.0);
 		assert_eq!(d.edit.as_ref().unwrap().buf, "31");
 		assert_eq!(d.selected_text().as_deref(), Some("31")); // stays fully selected
 	}
