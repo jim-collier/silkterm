@@ -198,6 +198,18 @@ The built-in stack is last for a reason: the generic monospace query below it is
 
 - Pixel-precise input: touchpad gives true pixel deltas; notched mouse wheel snaps to lines (clamp/accumulate notch deltas into smooth target).
 
+### Startup and slow external resources
+
+- It was decided that nothing on the path from launch to the first frame may read an external resource that isn't needed to draw that frame. A wallpaper folder can be a network share, a synced collection or anything else that answers slowly or times out, and a terminal that waits for it is a terminal that hasn't opened yet.
+
+- The wallpaper is the whole of that category today: scanning the rotation folder, reading the shuffle history, decoding the image, blurring and contrast-flattening it, and reading its layout tags. All of it runs on a worker thread; the window opens and the shell starts immediately, and the wallpaper appears when it is ready. That visible gap is an accepted trade - the alternative is a window that may never open at all.
+
+- Each request gets its own thread rather than sharing a long-lived worker. A request stuck on a dead mount can never be cancelled, so a shared worker would leave every later request stuck behind it; an abandoned thread costs almost nothing, and a stale result is discarded on arrival.
+
+- The config file itself is a deliberate exception. Window size, font metrics and theme all come from it, and the window is held hidden until it can open at its final size, so reading it later would only trade a small local read for a visible resize flash.
+
+- The same shape is intended for shell discovery when that lands: draw first, scan for installed shells afterwards, fold in what was found.
+
 ### Configuration format
 
 - Among the options it was decided to use SHCL (the sister project) for the user config, replacing TOML. The file is `config.shcl`; the reference parser is a single zero-dependency crate, so dropping `toml`, `toml_edit` and `serde` made the shipped binary smaller rather than larger.
