@@ -688,6 +688,8 @@ struct State {
 	gfx: Gfx,
 	text: TextCtx,
 	rects: RectRenderer,
+	// posts worker results (wallpaper) back into this event loop
+	proxy: EventLoopProxy<UserEvent>,
 	wallpaper_img: Option<ImageRenderer>,
 	scrim: crate::scrim::Scrim, // text readability scrim (used only when config.text_scrim)
 	tabs: Tabs,
@@ -750,13 +752,16 @@ struct State {
 	// last cycle's frozen state (occluded or minimized); the false edge is the
 	// unfreeze - one dirty catch-up frame, hard-cut for panes with pending output
 	was_hidden: bool,
-	wp_images: Vec<PathBuf>, // wallpaper-rotation folder contents (empty = rotation off)
-	wp_index: usize,         // which of wp_images is currently shown
+	// Rotation state as of the last scan; the folder itself, the shuffle history
+	// and the picking all live in the worker (wallpaper.rs), so nothing here reads
+	// the filesystem.
+	wp_count: usize, // images the last scan found (<2 = nothing to rotate to)
+	wp_current: Option<PathBuf>, // image showing now, so order mode advances from it
 	wp_next: Option<Instant>, // when to rotate next (None = no timer / startup-only)
-	wp_recent: Vec<String>,  // filenames the shuffle won't repeat yet, newest first
-	wp_locked: bool,         // a command-line wallpaper owns this session; don't rotate
-	vram_next: Instant,      // next GL VRAM sentinel probe (VT-switch content-loss detection)
-	vramloss_test: bool,     // SILK_VRAMLOSS one-shot: fake a loss to exercise the rebuild path
+	wp_locked: bool, // a command-line wallpaper owns this session; don't rotate
+	wp_seq: u64,     // request stamp; a worker result with an older one is stale
+	vram_next: Instant, // next GL VRAM sentinel probe (VT-switch content-loss detection)
+	vramloss_test: bool, // SILK_VRAMLOSS one-shot: fake a loss to exercise the rebuild path
 }
 
 impl State {
@@ -1535,97 +1540,86 @@ impl State {
 		self.apply_new_settings(&orig, edited, true);
 	}
 
-	// Wallpaper rotation: if a wallpaper folder is set (or auto-detected), scan it,
-	// show one now, and arm the timer if an interval is set. `lock` means a
-	// wallpaper came in on the command line - that is a deliberate choice for this
-	// session, so rotation is left out of it entirely.
-	fn init_wallpaper_rotation(&mut self, lock: bool) {
-		if lock {
-			self.wp_locked = true;
-			return;
-		}
-		let settings = config::settings();
-		let Some(dir) = settings.rotation_folder() else {
-			return;
-		};
-		self.wp_images = list_folder_images(dir);
-		if self.wp_images.is_empty() {
-			eprintln!(
-				"{}: wallpaper_folder {} has no images",
-				config::APP_NAME,
-				dir.display()
-			);
-			return;
-		}
-		self.wp_recent = load_wallpaper_history();
-		self.wp_index = self.pick_wallpaper(0);
-		let first = self.wp_images[self.wp_index].clone();
-		self.remember_wallpaper(self.wp_index);
-		self.set_wallpaper(Some(first));
-		let ivl = settings.wallpaper_rotate_interval_s;
-		if ivl > 0.0 {
-			self.wp_next = Some(Instant::now() + Duration::from_secs_f32(ivl));
-		}
+	// Hand the wallpaper to a worker thread and carry on drawing. `scan` also
+	// (re)reads the rotation folder and picks from it. Nothing here waits: the
+	// folder, the image and its tags can all live on a share that answers slowly,
+	// which is precisely why none of it runs on this thread.
+	fn request_wallpaper(&mut self, scan: bool) {
+		// retires anything already in flight - a result landing after a newer
+		// request (a rotation tick overtaken by a settings change) is dropped
+		self.wp_seq = self.wp_seq.wrapping_add(1);
+		crate::wallpaper::spawn(
+			&self.proxy,
+			crate::wallpaper::Request {
+				seq: self.wp_seq,
+				settings: config::settings(),
+				scan,
+				current: self.wp_current.clone(),
+			},
+		);
 	}
 
-	// Which image to show next: shuffled, or the one after `current` in filename
-	// order. Recent picks are matched by name, so the history survives the folder
-	// gaining or losing files between launches.
-	fn pick_wallpaper(&self, current: usize) -> usize {
-		if !config::settings().wallpaper_rotate_random {
-			return next_wallpaper_index(self.wp_images.len(), current);
-		}
-		let recent: Vec<usize> = self
-			.wp_recent
-			.iter()
-			.filter_map(|name| {
-				self.wp_images
-					.iter()
-					.position(|path| path.file_name().is_some_and(|f| f == name.as_str()))
-			})
-			.collect();
-		shuffle_pick(self.wp_images.len(), &recent, time_entropy())
+	// Wallpaper rotation: unless a wallpaper came in on the command line (a
+	// deliberate choice for this session, which leaves rotation out of it
+	// entirely), scan the folder and pick one. The timer arms when the scan
+	// answers - only then do we know whether there is anything to rotate through.
+	fn init_wallpaper(&mut self, lock: bool) {
+		self.wp_locked = lock;
+		self.request_wallpaper(!lock);
 	}
 
-	// Record a pick as the newest entry and flush the list, so the next launch
-	// shuffles around it too.
-	fn remember_wallpaper(&mut self, index: usize) {
-		let Some(name) = self
-			.wp_images
-			.get(index)
-			.and_then(|path| path.file_name())
-			.map(|name| name.to_string_lossy().into_owned())
-		else {
-			return;
-		};
-		self.wp_recent.retain(|seen| *seen != name);
-		self.wp_recent.insert(0, name);
-		self.wp_recent.truncate(WP_AVOID_MAX);
-		if let Some(path) = config::wallpaper_history_path() {
-			let mut text = self.wp_recent.join("\n");
-			text.push('\n');
-			let _ = std::fs::write(path, text);
-		}
-	}
-
-	// Rotate to the next image and re-arm the timer.
+	// Rotate to the next image. The worker re-scans, so images added to or removed
+	// from the folder since launch are picked up.
 	fn advance_wallpaper(&mut self) {
 		// locked, switched off since the timer was armed, or one image (or none):
 		// nothing to rotate to, so drop the timer
-		if self.wp_locked
-			|| self.wp_images.len() < 2
-			|| config::settings().rotation_folder().is_none()
-		{
+		if self.wp_locked || self.wp_count < 2 || config::settings().rotation_folder().is_none() {
 			self.wp_next = None;
 			return;
 		}
-		self.wp_index = self.pick_wallpaper(self.wp_index);
-		let next = self.wp_images[self.wp_index].clone();
-		self.remember_wallpaper(self.wp_index);
-		self.set_wallpaper(Some(next));
+		self.request_wallpaper(true);
+	}
+
+	// A worker finished; uploading the pixels is all that was left for this thread.
+	fn wallpaper_ready(&mut self, loaded: crate::wallpaper::Loaded) {
+		if loaded.seq != self.wp_seq {
+			return; // superseded while it was working
+		}
+		if loaded.scanned {
+			// a scan is authoritative about rotation: no pick means the folder holds
+			// nothing (or went away), so the timer goes with it
+			self.wp_count = 0;
+			self.wp_current = None;
+			self.wp_next = None;
+			if let Some(rot) = &loaded.rotation {
+				self.wp_count = rot.count;
+				self.wp_current = Some(rot.current.clone());
+				// live-only, like a --wallpaper-file: the dialog shows what is on
+				// screen, and nothing about the pick reaches config.shcl
+				let mut settings = config::settings().as_ref().clone();
+				settings.wallpaper_raw = rot.current.to_string_lossy().into_owned();
+				settings.wallpaper = Some(rot.current.clone());
+				config::update(settings);
+				let ivl = config::settings().wallpaper_rotate_interval_s;
+				self.wp_next = (ivl > 0.0 && rot.count > 1)
+					.then(|| Instant::now() + Duration::from_secs_f32(ivl));
+			}
+		}
+		self.wallpaper_img = loaded.image.map(|img| {
+			let (w, h) = img.rgba.dimensions();
+			ImageRenderer::new(
+				&self.gfx.device,
+				&self.gfx.queue,
+				self.gfx.format,
+				&img.rgba,
+				w,
+				h,
+				img.opacity,
+				img.fit,
+				img.anchor,
+			)
+		});
 		self.dirty = true;
-		let ivl = config::settings().wallpaper_rotate_interval_s;
-		self.wp_next = (ivl > 0.0).then(|| Instant::now() + Duration::from_secs_f32(ivl));
 	}
 
 	// A wallpaper set from the command line while running: honour it for the rest
@@ -1633,6 +1627,9 @@ impl State {
 	fn lock_wallpaper(&mut self, image: Option<std::path::PathBuf>) {
 		self.wp_locked = true;
 		self.wp_next = None;
+		// rotation is done for this session, so drop what it was showing - otherwise
+		// an explicit clear would fall back to it instead of clearing
+		self.wp_current = None;
 		self.set_wallpaper(image);
 	}
 
@@ -1726,7 +1723,7 @@ impl State {
 			self.rebuild_text(self.window.scale_factor() as f32);
 		}
 		if bg {
-			self.wallpaper_img = load_wallpaper(&self.gfx);
+			self.request_wallpaper(false);
 		}
 		self.dirty = true;
 	}
@@ -1738,7 +1735,9 @@ impl State {
 	// instead of reusing a texture that no longer holds anything.
 	fn recover_gpu(&mut self) {
 		self.rebuild_text(self.window.scale_factor() as f32);
-		self.wallpaper_img = load_wallpaper(&self.gfx);
+		// re-decoded rather than kept resident: a large wallpaper is tens of MB, and
+		// a VT switch is rare enough not to trade that for a moment without one
+		self.request_wallpaper(false);
 		self.dirty = true;
 	}
 
@@ -3177,168 +3176,6 @@ fn open_url(url: &str) {
 
 // Decode the configured background image and upload it to a texture.
 
-// Files in `dir` that look like images the bg loader can decode, sorted by name
-// (so "in order" rotation is stable and predictable).
-fn list_folder_images(dir: &std::path::Path) -> Vec<PathBuf> {
-	let Ok(entries) = std::fs::read_dir(dir) else {
-		return Vec::new();
-	};
-	let mut images: Vec<PathBuf> = entries
-		.flatten()
-		.map(|e| e.path())
-		.filter(|p| p.is_file() && config::is_image_file(p))
-		.collect();
-	images.sort();
-	images
-}
-
-// Next image index in filename order, wrapping.
-fn next_wallpaper_index(len: usize, current: usize) -> usize {
-	if len < 2 {
-		return 0;
-	}
-	(current + 1) % len
-}
-
-// How many recently-shown images the shuffle holds back at most.
-const WP_AVOID_MAX: usize = 32;
-
-// Pick the next image the way a music player shuffles: at random, but never one
-// of the last few shown. Straight uniform draws repeat often enough that people
-// read them as broken, so holding back roughly half the folder (capped) buys the
-// feel of randomness while staying a shuffle rather than a fixed cycle.
-// `recent` is newest-first; entries past the hold-back window are ignored.
-fn shuffle_pick(len: usize, recent: &[usize], entropy: u64) -> usize {
-	if len < 2 {
-		return 0;
-	}
-	let hold = (len / 2).clamp(1, WP_AVOID_MAX).min(len - 1);
-	let avoid = &recent[..recent.len().min(hold)];
-	// hold <= len-1, so at least one index always survives
-	let candidates: Vec<usize> = (0..len).filter(|i| !avoid.contains(i)).collect();
-	candidates[(entropy % candidates.len() as u64) as usize]
-}
-
-// The recently-shown list, newest first. Stored as filenames, not indices, so
-// adding or removing images doesn't shift what "recent" means.
-fn load_wallpaper_history() -> Vec<String> {
-	let Some(path) = config::wallpaper_history_path() else {
-		return Vec::new();
-	};
-	let Ok(text) = std::fs::read_to_string(path) else {
-		return Vec::new();
-	};
-	text.lines()
-		.map(str::trim)
-		.filter(|line| !line.is_empty())
-		.map(String::from)
-		.take(WP_AVOID_MAX)
-		.collect()
-}
-
-// Cheap non-crypto entropy for random rotation, from the wall clock. Not used
-// for anything security-sensitive - just to vary which image comes up next.
-fn time_entropy() -> u64 {
-	std::time::SystemTime::now()
-		.duration_since(std::time::UNIX_EPOCH)
-		.map_or(0, |d| d.as_nanos() as u64)
-}
-
-// A built-in wallpaper baked into the binary, shown when the user has none
-// configured (wallpaper_fallback_builtin). ~100KB - negligible next to the binary.
-const DEFAULT_BACKGROUND: &[u8] = include_bytes!("../assets/default-background.jpg");
-
-fn load_wallpaper(gfx: &Gfx) -> Option<ImageRenderer> {
-	let settings = config::settings();
-	if !settings.wallpaper_enabled {
-		return None;
-	}
-	let mut img = if let Some(path) = settings.wallpaper.as_ref() {
-		match image::open(path) {
-			Ok(i) => i.to_rgba8(),
-			Err(e) => {
-				eprintln!(
-					"{}: background image {}: {e}",
-					config::APP_NAME,
-					path.display()
-				);
-				return None;
-			}
-		}
-	} else if settings.wallpaper_fallback_builtin && settings.rotation_folder().is_none() {
-		// No image or rotation folder configured: fall back to the embedded default
-		// so a fresh install still looks the part. Opt out with wallpaper_fallback_builtin.
-		image::load_from_memory(DEFAULT_BACKGROUND).ok()?.to_rgba8()
-	} else {
-		return None;
-	};
-	// Blur and contrast-flatten, done in LINEAR light (decode sRGB -> process in
-	// f32 -> re-encode) so transitions are gamma-correct; an sRGB-space blur
-	// darkens edges. The f32 intermediate also avoids 8-bit banding inside the
-	// blur (final banding is handled by the high-precision offscreen + the blit's
-	// dither).
-	if settings.wallpaper_blur > 0.0 || settings.wallpaper_contrast_mask {
-		let (w, h) = img.dimensions();
-		let mut linear: image::ImageBuffer<image::Rgba<f32>, Vec<f32>> =
-			image::ImageBuffer::new(w, h);
-		for (dst, src) in linear.pixels_mut().zip(img.pixels()) {
-			*dst = image::Rgba([
-				config::to_linear(src[0]),
-				config::to_linear(src[1]),
-				config::to_linear(src[2]),
-				src[3] as f32 / 255.0,
-			]);
-		}
-		if settings.wallpaper_blur > 0.0 {
-			linear = image::imageops::blur(&linear, settings.wallpaper_blur);
-		}
-		if settings.wallpaper_contrast_mask {
-			crate::contrast::apply(
-				&mut linear,
-				settings.wallpaper_contrast_mask_size,
-				settings.wallpaper_contrast_mask_strength,
-				settings.wallpaper_contrast_mask_auto,
-			);
-		}
-		for (dst, src) in img.pixels_mut().zip(linear.pixels()) {
-			*dst = image::Rgba([
-				config::from_linear_u8(src[0]),
-				config::from_linear_u8(src[1]),
-				config::from_linear_u8(src[2]),
-				(src[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
-			]);
-		}
-	}
-	// An image can carry its own layout, so a photo isn't squashed by a default
-	// that suits gradients. Read straight from the file - the embedded default
-	// wallpaper has no path, and falls through to the configured fit.
-	let mut fit = settings.wallpaper_default_fit;
-	let mut anchor = [0.5, 0.5];
-	if settings.wallpaper_honor_xmp {
-		if let Some(path) = settings.wallpaper.as_ref() {
-			let tags = crate::xmp::read(path);
-			if let Some(tagged) = tags.fit {
-				fit = tagged;
-			}
-			if let Some(tagged) = tags.anchor {
-				anchor = tagged;
-			}
-		}
-	}
-	let (w, h) = img.dimensions();
-	Some(ImageRenderer::new(
-		&gfx.device,
-		&gfx.queue,
-		gfx.format,
-		&img,
-		w,
-		h,
-		settings.wallpaper_opacity,
-		fit,
-		anchor,
-	))
-}
-
 // clamp a pane rect to an integer scissor box inside the surface
 fn scissor(rect: Rect, sw: u32, sh: u32) -> (u32, u32, u32, u32) {
 	let x = rect.x.max(0.0).min(sw as f32) as u32;
@@ -3466,7 +3303,6 @@ impl ApplicationHandler<UserEvent> for App {
 		let scale = window.scale_factor() as f32;
 		let mut text = TextCtx::new(&gfx.device, &gfx.queue, gfx.format, scale);
 		let rects = RectRenderer::new(&gfx.device, gfx.format);
-		let wallpaper_img = load_wallpaper(&gfx);
 		let scrim =
 			crate::scrim::Scrim::new(&gfx.device, gfx.format, gfx.config.width, gfx.config.height);
 
@@ -3542,7 +3378,9 @@ impl ApplicationHandler<UserEvent> for App {
 			gfx,
 			text,
 			rects,
-			wallpaper_img,
+			proxy: self.proxy.clone(),
+			// filled in when the worker answers; the window is not held up for it
+			wallpaper_img: None,
 			scrim,
 			tabs: Tabs { list, active: 0 },
 			mods: ModifiersState::empty(),
@@ -3586,11 +3424,11 @@ impl ApplicationHandler<UserEvent> for App {
 			scrim_sig: None,
 			occluded: false,
 			was_hidden: false,
-			wp_images: Vec::new(),
-			wp_index: 0,
+			wp_count: 0,
+			wp_current: None,
 			wp_next: None,
-			wp_recent: Vec::new(),
 			wp_locked: false,
+			wp_seq: 0,
 			vram_next: Instant::now() + VRAM_CHECK_IVL,
 			vramloss_test: std::env::var_os("SILK_VRAMLOSS").is_some(),
 		});
@@ -3599,7 +3437,7 @@ impl ApplicationHandler<UserEvent> for App {
 		// says, and the stored rotation settings are left untouched.
 		let cli_wallpaper = self.cli.win.style.wallpaper_img.is_some();
 		if let Some(state) = self.state.as_mut() {
-			state.init_wallpaper_rotation(cli_wallpaper);
+			state.init_wallpaper(cli_wallpaper);
 		}
 		// GL path only: the native path's swapchain reports loss itself
 		if !self.vt_watch && self.state.as_ref().is_some_and(|s| s.gfx.is_gl()) {
@@ -3612,6 +3450,7 @@ impl ApplicationHandler<UserEvent> for App {
 			return;
 		};
 		match event {
+			UserEvent::WallpaperReady(loaded) => state.wallpaper_ready(*loaded),
 			UserEvent::Wakeup(id) => {
 				// output easing is triggered in Pane::build when the screen
 				// actually scrolls, not on every content change. Only the pane
@@ -4796,7 +4635,7 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-	use super::{accel_at, list_folder_images, next_wallpaper_index, shuffle_pick};
+	use super::accel_at;
 
 	#[test]
 	fn accel_prefers_exact_case_then_falls_back() {
@@ -4805,78 +4644,5 @@ mod tests {
 		// no capital 's' -> case-insensitive fallback finds "single"
 		assert_eq!(accel_at("Hide single tab", 's'), Some(5));
 		assert_eq!(accel_at("Quit", 'x'), None);
-	}
-
-	#[test]
-	fn wallpaper_order_wraps() {
-		assert_eq!(next_wallpaper_index(3, 0), 1);
-		assert_eq!(next_wallpaper_index(3, 2), 0); // wraps
-		assert_eq!(next_wallpaper_index(1, 0), 0); // single image: stays put
-		assert_eq!(next_wallpaper_index(0, 0), 0); // empty: safe
-	}
-
-	#[test]
-	fn shuffle_never_repeats_a_recent_image() {
-		// whatever the entropy, the pick avoids the held-back window and stays in range
-		for entropy in 0..200u64 {
-			for recent in [
-				vec![],
-				vec![0],
-				vec![3, 1],
-				vec![4, 2, 0], // deeper than the window: extra entries are ignored
-			] {
-				let next = shuffle_pick(5, &recent, entropy);
-				assert!(next < 5);
-				// 5 images hold back 2, so the two newest must not come back
-				for held in recent.iter().take(2) {
-					assert_ne!(next, *held, "shuffle repeated a recent image");
-				}
-			}
-		}
-	}
-
-	#[test]
-	fn shuffle_survives_tiny_folders() {
-		// two images alternate; one (or none) has nowhere else to go
-		for entropy in 0..20u64 {
-			assert_eq!(shuffle_pick(2, &[0], entropy), 1);
-			assert_eq!(shuffle_pick(2, &[1], entropy), 0);
-			assert_eq!(shuffle_pick(1, &[0], entropy), 0);
-			assert_eq!(shuffle_pick(0, &[], entropy), 0);
-		}
-	}
-
-	#[test]
-	fn shuffle_still_reaches_every_image() {
-		// holding back recent picks must not strand any image permanently
-		let mut seen = std::collections::HashSet::new();
-		let mut recent: Vec<usize> = Vec::new();
-		for entropy in 0..500u64 {
-			let next = shuffle_pick(6, &recent, entropy);
-			seen.insert(next);
-			recent.insert(0, next);
-			recent.truncate(super::WP_AVOID_MAX);
-		}
-		assert_eq!(seen.len(), 6, "some image was never picked");
-	}
-
-	#[test]
-	fn folder_scan_filters_and_sorts() {
-		let dir = std::env::temp_dir().join(format!("silkterm_wp_scan_{}", std::process::id()));
-		let _ = std::fs::remove_dir_all(&dir);
-		std::fs::create_dir_all(&dir).unwrap();
-		for name in ["b.png", "a.JPG", "c.jpeg", "notes.txt", "c.gif", ".hidden"] {
-			std::fs::write(dir.join(name), b"x").unwrap();
-		}
-		std::fs::create_dir_all(dir.join("d.png")).unwrap(); // a dir named like an image
-		let imgs = list_folder_images(&dir);
-		let names: Vec<String> = imgs
-			.iter()
-			.map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
-			.collect();
-		// only decodable image files, case-insensitive ext, sorted; the .txt, the dir
-		// and the .gif (no decoder for it) all kept out
-		assert_eq!(names, vec!["a.JPG", "b.png", "c.jpeg"]);
-		let _ = std::fs::remove_dir_all(&dir);
 	}
 }

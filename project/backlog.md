@@ -61,6 +61,17 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### New features and enhancements
 
+- ✅ Read external resources in the background so nothing delays the window opening.
+	- Done (20260803). The whole wallpaper pipeline - scanning the rotation folder, reading the shuffle history, decoding the image, blur and contrast mask, reading its layout tags - now runs on a worker thread. The window opens and the shell starts straight away; the wallpaper appears a moment later, which is the accepted trade.
+	- With a wallpaper path that never answers, the previous build never opened a window at all and never started a shell. It now opens normally and reports the unreadable path.
+	- With a 4K wallpaper at the default blur, time from launch to a visible window went from about 2.5 seconds to about 0.3.
+	- Also moved off the startup path: the folder scan that used to run while the config was being read, and the checks on wallpaper paths that may themselves be the slow mount.
+	- Rotation re-scans its folder on each change, so images added or removed are picked up without a relaunch.
+	- Two side effects worth knowing: an empty rotation folder now falls back to the built-in wallpaper instead of leaving the background blank, and a wallpaper file that can't be opened is reported rather than silently ignored.
+	- Reloading settings while rotating used to blank the wallpaper until the next rotation; it now keeps what is on screen.
+	- The config file itself still loads up front - window size, font and theme all come from it, and the window waits to open at its final size.
+	- 🔘 UAT
+
 - ✅ Clarified scroll speed functions. (Probably need some refactoring):
 	- Done (20260802). The chase speed now traverses the named segments exactly as described: Ease-in (linear lift from rest, its own duration), Ramp-up (doubling per its period toward whichever top applies, re-entered through a second Ease-in when the single-screen cap lifts), Single-screen speed / unbounded, Ramp-down (a braking curve traced backwards from Ease-out, applied continuously - which is also the at-speed reserve), Ease-out (lands at zero). Of the curve models, went with straight/exponential segments adjusted by time (option 2a); the unbounded ramp accelerates exponentially until it keeps up, as the spec allowed.
 	- "Initial scroll speed" is gone (it fed four mechanisms at once and fought the rest); its config key is removed from existing files. Ease-in is now a duration (`scroll.ease_in_ms`), replacing the old fraction. Wheel/scrollback navigation keeps a fixed internal ease, unchanged feel.
@@ -326,6 +337,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - 🔘 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, AND legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
 
 - 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
+	- The background-work pattern this needs is in place (see the wallpaper item under Done): a worker thread posts its result back to the window, which folds it in. Reuse it rather than building a second one.
 
 - 🔘 Hyperlinks:
 	- 🔘 Clickable - e.g. Ctrl+click, or right-click then includes "Copy link" and "Open link".

@@ -147,6 +147,7 @@ pub struct Settings {
 	pub wallpaper_fallback_builtin: bool, // no image/folder configured: show the built-in one
 	pub wallpaper_rotate_enabled: bool, // master switch for folder rotation
 	pub wallpaper_folder: Option<PathBuf>, // rotate the wallpaper through this folder's images (overrides wallpaper)
+	pub wallpaper_folder_auto: bool,       // the folder above was found by convention, not configured
 	pub wallpaper_rotate_random: bool,     // rotate randomly instead of in filename order
 	pub wallpaper_rotate_interval_s: f32,  // seconds between rotations (0 = pick one at startup only)
 	pub wallpaper_opacity: f32,            // image visibility 0..1
@@ -256,6 +257,7 @@ impl Default for Settings {
 			wallpaper_fallback_builtin: true,
 			wallpaper_rotate_enabled: true,
 			wallpaper_folder: None,
+			wallpaper_folder_auto: false,
 			wallpaper_rotate_random: true,
 			wallpaper_rotate_interval_s: 0.0,
 			wallpaper_opacity: 0.10, // image visibility relative to bg color
@@ -1181,9 +1183,25 @@ fn resolve(raw: RawConfig) -> Settings {
 		.wallpaper
 		.as_deref()
 		.is_some_and(|value| !value.trim().is_empty());
-	let folder = resolve_wallpaper_folder(raw.wallpaper_folder)
+	let configured_folder = resolve_wallpaper_folder(raw.wallpaper_folder);
+	let folder = configured_folder
+		.clone()
 		.or_else(|| (!pinned_wallpaper).then(default_wallpaper_folder).flatten());
+	let wallpaper_enabled = raw.wallpaper_enabled.unwrap_or(d.wallpaper_enabled);
+	let wallpaper_rotate_enabled = raw
+		.wallpaper_rotate_enabled
+		.unwrap_or(d.wallpaper_rotate_enabled);
+	// With rotation live, don't also hunt for a conventional wallpaper file: that
+	// is a run of stats on paths which may be a slow mount, and the first rotation
+	// pick replaces whatever it found anyway.
+	let rotating = wallpaper_enabled && wallpaper_rotate_enabled && folder.is_some();
+	let wallpaper = (pinned_wallpaper || !rotating)
+		.then(|| resolve_wallpaper(raw.wallpaper.clone()))
+		.flatten();
 	Settings {
+		// only the convention folder is "auto"; whether it holds anything is the
+		// scan's business, and the scan runs off this thread
+		wallpaper_folder_auto: configured_folder.is_none(),
 		use_system_font,
 		// absent = follow the face toggle, so configs predating the split (and an
 		// explicit font_size, which used to imply off) keep their exact behaviour
@@ -1243,15 +1261,13 @@ fn resolve(raw: RawConfig) -> Settings {
 		transparent_background_blur: raw
 			.transparent_background_blur
 			.unwrap_or(d.transparent_background_blur),
-		wallpaper_enabled: raw.wallpaper_enabled.unwrap_or(d.wallpaper_enabled),
+		wallpaper_enabled,
 		wallpaper_raw: raw.wallpaper.clone().unwrap_or_default(),
-		wallpaper: resolve_wallpaper(raw.wallpaper),
+		wallpaper,
 		wallpaper_fallback_builtin: raw
 			.wallpaper_fallback_builtin
 			.unwrap_or(d.wallpaper_fallback_builtin),
-		wallpaper_rotate_enabled: raw
-			.wallpaper_rotate_enabled
-			.unwrap_or(d.wallpaper_rotate_enabled),
+		wallpaper_rotate_enabled,
 		wallpaper_folder: folder,
 		wallpaper_rotate_random: raw
 			.wallpaper_rotate_random
@@ -1471,12 +1487,14 @@ pub fn resolve_wallpaper(explicit: Option<String>) -> Option<PathBuf> {
 	let dir = config_path()?.parent()?.to_path_buf();
 	if let Some(given) = explicit.filter(|value| !value.trim().is_empty()) {
 		let path = expand_tilde(given.trim());
-		let path = if path.is_absolute() {
+		// Handed back unchecked: the loader opens it on its own thread and says so
+		// if it can't, which keeps a wallpaper the user explicitly named from
+		// costing a stat here - it may be the very mount that answers slowly.
+		return Some(if path.is_absolute() {
 			path
 		} else {
 			dir.join(path)
-		};
-		return path.exists().then_some(path);
+		});
 	}
 	// Current convention first (wallpaper/wallpaper.*), then the older spellings
 	// so existing setups keep working.
@@ -1496,17 +1514,16 @@ pub fn resolve_wallpaper(explicit: Option<String>) -> Option<PathBuf> {
 }
 
 // The wallpaper-rotation folder: a relative value resolves against the config
-// dir (like the single wallpaper). Returns it only when it's an existing
-// directory, so a typo just leaves rotation off rather than erroring.
+// dir (like the single wallpaper). Not checked for existence here - the scan
+// runs off the startup thread and reports an unreadable folder itself, so a typo
+// still just leaves rotation off.
 pub fn resolve_wallpaper_folder(explicit: Option<String>) -> Option<PathBuf> {
 	let given = explicit.filter(|value| !value.trim().is_empty())?;
 	let path = expand_tilde(given.trim());
-	let path = if path.is_absolute() {
-		path
-	} else {
-		config_path()?.parent()?.join(&path)
-	};
-	path.is_dir().then_some(path)
+	if path.is_absolute() {
+		return Some(path);
+	}
+	Some(config_path()?.parent()?.join(&path))
 }
 
 // Enough kept resets that nobody hits the ceiling in practice, low enough that a
@@ -1568,19 +1585,16 @@ pub fn is_image_file(path: &std::path::Path) -> bool {
 }
 
 // The rotation folder to use when none is configured: the conventional
-// wallpapers/ dir (or the legacy backgrounds/) under the config dir, but only
-// once it actually holds an image - an absent or empty dir just means no
-// rotation, silently, since the user never asked for one.
+// wallpaper/ dir (or the legacy spellings) under the config dir. Only its
+// existence is tested - reading it to see whether it holds an image is the
+// scan's job, off the startup thread, and an empty one still means no rotation
+// and no diagnostic, since the user never asked for one.
 fn default_wallpaper_folder() -> Option<PathBuf> {
 	let dir = config_path()?.parent()?.to_path_buf();
 	["wallpaper", "wallpapers", "backgrounds"]
 		.into_iter()
 		.map(|sub| dir.join(sub))
-		.find(|sub| {
-			std::fs::read_dir(sub).is_ok_and(|mut entries| {
-				entries.any(|entry| entry.is_ok_and(|e| is_image_file(&e.path())))
-			})
-		})
+		.find(|sub| sub.is_dir())
 }
 
 // A config file's settings as (key, original-line). Nested settings are written

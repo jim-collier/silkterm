@@ -31,6 +31,9 @@ pub enum UserEvent {
 	// control socket: re-read config.shcl and apply it (same as Menu > Reload)
 	#[cfg_attr(not(unix), allow(dead_code))]
 	ReloadSettings,
+	// wallpaper worker (wallpaper.rs): decoded pixels, ready to upload. Boxed -
+	// it carries a whole image, and every other variant is small.
+	WallpaperReady(Box<crate::wallpaper::Loaded>),
 	// VT watcher thread (app.rs spawn_vt_watch): the active console changed.
 	// Linux GL path only; never constructed elsewhere.
 	#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
