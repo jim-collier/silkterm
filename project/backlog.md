@@ -66,8 +66,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ Clarified scroll speed functions. (Probably need some refactoring):
 	- Done (20260802). The chase speed now traverses the named segments exactly as described: Ease-in (linear lift from rest, its own duration), Ramp-up (doubling per its period toward whichever top applies, re-entered through a second Ease-in when the single-screen cap lifts), Single-screen speed / unbounded, Ramp-down (a braking curve traced backwards from Ease-out, applied continuously - which is also the at-speed reserve), Ease-out (lands at zero). Of the curve models, went with straight/exponential segments adjusted by time (option 2a); the unbounded ramp accelerates exponentially until it keeps up, as the spec allowed.
 	- "Initial scroll speed" is gone (it fed four mechanisms at once and fought the rest); its config key is removed from existing files. Ease-in is now a duration (`scroll.ease_in_ms`), replacing the old fraction. Wheel/scrollback navigation keeps a fixed internal ease, unchanged feel.
-	- Ramp-down now visibly owns every stop from speed - traced on a 400-line dump: lift to the knee, doubling to ~350 lines/s, then a smooth halving descent into the landing band. Settings shows the five sliders in watch order, defaults mid-scale.
+	- Ramp-down now visibly owns every stop from speed - traced on a 400-line dump: lift to the knee, doubling to ~350 lines/s, then a smooth halving descent into the landing band. Settings shows the five sliders in watch order.
 	- ✅ Slider direction (20260803): Ease-in and Ease-out ran opposite to the other three (higher = slower). Flipped so all five sliders read higher = faster. Stored config values unchanged (milliseconds); Ease-out's default now reads 50 on the dialog scale instead of 51.
+	- ✅ New speed defaults (20260803): the five now default to 50 / 75 / 75 / 75 / 40 in watch order - a much harder ramp-up, roughly double the single-screen top speed, a quicker wind-down, and a gentler landing. Ease-in is unchanged in feel.
+		- An existing config carries these five as its own values, so it keeps the old ones until those lines are edited or the config is reset. Only a new config picks the new defaults up.
 	- 🔘 UAT
 	- General description:
 		- Think of each setting as a specific segment of a graph on an X and Y axis.

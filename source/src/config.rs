@@ -234,11 +234,11 @@ impl Default for Settings {
 			line_height_scale: 1.22,
 			scrollback: 10_000,
 			scroll_smooth: true,
-			scroll_ease_in_ms: 80.0, // ~ "Ease-in" 51 (motion builds over the first ~tenth of a second)
-			scroll_ramp_up_ms: 300.0, // ~ "Ramp-up" 51 (catch-up speed doubles ~3x a second)
-			scroll_single_screen_tau_ms: 60.0, // ~ "Single-screen speed" 61 (on-screen burst ceiling: ~17 lines/s)
-			scroll_ramp_down_ms: 450.0, // ~ "Ramp-down" 51 (catch-up winds down by halving ~2x a second)
-			scroll_ease_out_ms: 133.0,  // ~ "Ease-out" 50 (the tail lands in ~an eighth of a second)
+			scroll_ease_in_ms: 82.0, // ~ "Ease-in" 50 (motion builds over the first ~tenth of a second)
+			scroll_ramp_up_ms: 96.0, // ~ "Ramp-up" 75 (catch-up speed doubles ~10x a second)
+			scroll_single_screen_tau_ms: 32.0, // ~ "Single-screen speed" 75 (on-screen burst ceiling: ~31 lines/s)
+			scroll_ramp_down_ms: 144.0, // ~ "Ramp-down" 75 (catch-up winds down by halving ~7x a second)
+			scroll_ease_out_ms: 212.0,  // ~ "Ease-out" 40 (the tail lands in ~a fifth of a second)
 			wheel_lines: 3.0,
 			alt_scroll_lines: 3.0,
 			output_ease_lines: 1.0,
@@ -2668,46 +2668,46 @@ scroll:
 	## Ease-in
 	## How long the view takes to build speed when it starts moving from rest:
 	## the first few lines per second arrive over this many milliseconds
-	## (wheel scrolling eases in over the same time). 80 ms is about 51 on the
+	## (wheel scrolling eases in over the same time). 82 ms is about 50 on the
 	## 1..100 dialog scale, where higher means a crisper start.
 	## Range: 1.0 and up (milliseconds) - higher is gentler
-	ease_in_ms: 80.0
+	ease_in_ms: 82.0
 
 	## Ramp-up
 	## How quickly a burst accelerates once past the ease-in: the catch-up
 	## speed doubles every this many milliseconds until it reaches the top
 	## speed that applies. Lower ramps harder, so a buffer dump is caught
-	## sooner. 300 ms (about three doublings a second) is around 51 on the
+	## sooner. 96 ms (about ten doublings a second) is around 75 on the
 	## 1..100 dialog scale, where higher means a harder ramp.
 	## Range: 1.0 and up (milliseconds) - lower ramps harder
-	ramp_up_ms: 300.0
+	ramp_up_ms: 96.0
 
 	## Single-screen speed
 	## Top scrolling speed for an output burst whose own first line is still on
 	## screen (a short directory listing, say): one line per this many
 	## milliseconds. Once a burst has scrolled its first line off the top, the
-	## ramp-up is unlimited and reaches whatever speed keeps up. 60 ms (~17
-	## lines/s) is about 61 on the 1..100 dialog scale.
+	## ramp-up is unlimited and reaches whatever speed keeps up. 32 ms (~31
+	## lines/s) is about 75 on the 1..100 dialog scale.
 	## Range: 1.0 and up (milliseconds) - lower is faster
-	single_screen_tau_ms: 60.0
+	single_screen_tau_ms: 32.0
 
 	## Ramp-down
 	## How gradually the speed winds down once output ceases with lines still
 	## to render: the catch-up speed halves every this many milliseconds on the
 	## way to the landing. The view keeps that wind-down's distance in reserve
-	## behind a fast burst, so the stop is a descent, never a cliff. 450 ms is
-	## around 51 on the 1..100 dialog scale, where higher means a harder stop.
+	## behind a fast burst, so the stop is a descent, never a cliff. 144 ms is
+	## around 75 on the 1..100 dialog scale, where higher means a harder stop.
 	## Range: 1.0 and up (milliseconds) - lower stops harder
-	ramp_down_ms: 450.0
+	ramp_down_ms: 144.0
 
 	## Ease-out
 	## How gradually the view settles onto its final line. The last fraction of
 	## a line is given at least this long, so the tail sweeps in instead of
 	## crawling to a halt. Higher is a softer, longer landing; lower is crisper.
-	## 133 ms is about 50 on the 1..100 dialog scale, where higher means a
+	## 212 ms is about 40 on the 1..100 dialog scale, where higher means a
 	## crisper landing.
 	## Range: 1.0 and up (milliseconds) - higher is gentler
-	ease_out_ms: 133.0
+	ease_out_ms: 212.0
 
 	## Wheel lines
 	## Lines per wheel notch (smooth scrollback).
