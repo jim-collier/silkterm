@@ -1,6 +1,8 @@
-# Source attribution - `010_origs`
+# Source attribution
 
-Provenance for every image in this folder. Sorted by match confidence, highest first, so settled entries lead and open ones collect at the bottom.
+Provenance for every image in the collection. Sorted by match confidence, highest first, so settled entries lead and open ones collect at the bottom.
+
+Most of these sit in `010_origs`. The newest ones are staged in `005_new/master` until the next pass moves them across; they are listed here all the same, since the provenance travels with the file rather than the folder.
 
 This was three lists until now - the folder itself, the `@jc` set and the `@tt` set, each in its own subfolder. The images and their tables are merged here. The `@jc` rows were built from the files' own metadata, since that set never had a table of its own.
 
@@ -24,11 +26,11 @@ Each image also carries this information in its own metadata:
 
 - `Instructions` for the provenance trail (original URL, original source filename, original filesystem name, licensed yes/no, match confidence, legal status, and the copyright and rating values that were there before this pass)
 
-- `silkterm:Fit` and `silkterm:Anchor` for how the image wants to be laid out - see below
+- `wallpaper:Fit` and `wallpaper:Anchor` for how the image wants to be laid out - see below
 
 ## Layout tags
 
-Two XMP fields tell a wallpaper how it should fill a screen that is not its own shape. They live in a `silkterm` namespace (`https://github.com/jim-collier/silkterm/xmp/1.0/`), so nothing else reads or overwrites them.
+Two XMP fields tell a wallpaper how it should fill a screen that is not its own shape. They live in a `wallpaper` namespace (`https://github.com/jim-collier/xmp/wallpaper/1.0/`), named for what they describe rather than for any one program, so other tools can read and write them too.
 
 - `Fit` is `zoom` or `stretch`. `zoom` fills the screen while keeping the aspect ratio and crops the overhang; `stretch` distorts to fit exactly and never crops.
 
@@ -109,9 +111,13 @@ Most of the non-'@' branded images are 2 stars. For the majority of these files 
 | 95 | 4 (75%) | @tt; art; bliss; animal clouds.jpg | @t00mietum; art; orig; Blissy Bliss 4; 3YiK614; 12k; v1-1-1.jpg | 2020-08-11 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Own illustration evoking the XP Bliss photograph, not a copy of it. Credit embedded before this pass. |
 | 95 | 4 (75%) | @tt; art; bliss; apocalypse.jpg | @t00mietum; art; orig; Blissy Bliss Apocalypse; 3YiK8Z7; 12k; v1-1-1.jpg | 2020-08-11 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Own illustration, not a copy of the Bliss photograph. Credit embedded before this pass. |
 | 95 | 4 (75%) | @tt; art; bliss; dinosaurs.jpg | @t00mietum; art; orig; Blissy Bliss 3 w animals; 3YiK60t; 12k; v1-1-1.jpg | 2020-08-11 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Own illustration, not a copy of the Bliss photograph. Credit embedded before this pass. |
+| 95 | 4 (75%) | @tt; art; GNOME 1998.png | - | 2026-08-03 | - | Copyright © 2026 @t00mietum [13x4sv] | CC0 1.0 | Y | Y | Y | zoom | Same background as `@tt; art; GNOME.png`, with the 1998-era foot logo and spaced wordmark. The CC0 grant covers this composition, not the GNOME Foundation mark it carries or the untraced wallpaper the background came from. |
+| 95 | 4 (75%) | @tt; art; GNOME.png | - | 2026-08-03 | - | Copyright © 2026 @t00mietum [13x4sv] | CC0 1.0 | Y | Y | Y | zoom | Remake of `GNOME; logo on warm streaks.jpg`, which it replaces: that file's background rebuilt and upscaled, logo and wordmark redrawn. The CC0 grant covers this composition, not the GNOME Foundation mark or the untraced base. |
+| 95 | 5 (99%) | @tt; art; Rainbow Paper.png | - | 2026-08-03 | - | Copyright © 2026 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | stretch | Own composition, upscaled. No third-party content. |
+| 95 | 4 (75%) | @tt; art; Trail to Africa.png | - | 2026-08-03 | - | Copyright © 2026 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Generated from a written brief, then upscaled. Reimagines the scene of `unknown; nature; coastal headland to Africa.jpg`, which it replaces, rather than editing it. Carries a visible copyright mark. |
 | 95 | 4 (75%) | @tt; win; 2015; 10; dark teal.jpg | @t00mietum; sw; os; win; 2015; 10; orig; 2k7etcgt; 8k; v1-1-1.jpg | 2020-05-21 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Credit embedded before this pass, but it read all rights reserved - which the CC BY-SA stamp overrides. Carries the Windows 10 logo. |
 | 93 | 4 (85%) | DeviantArt; LunarPixel; Lonery.jpg | lonery_by_lunarpixel_d69d5db.jpg | 2013-06-17 | <https://www.deviantart.com/lunarpixel/art/Lonery-378527087> | (c) 2013 LunarPixel | CC BY-NC-ND 3.0 | Y | N | N | stretch | Deviation ID resolves exactly. Published at this size, so unmodified. |
-| 92 | 5 (95%) | NOIRLab; N A Sharp; High Resolution Solar Spectrum.jpg | noao-sun.jpg | - | <https://noirlab.edu/public/images/noao-sun/> | (c) N.A. Sharp, NOAO/NSO/Kitt Peak FTS/AURA/NSF | CC BY 4.0 | Y | N | N | stretch | The canonical solar spectrum plate, from the Kitt Peak FTS. Needs the full credit line. |
+| 92 | 5 (95%) | NOIRLab; N A Sharp; High Resolution Solar Spectrum.png | noao-sun.jpg | - | <https://noirlab.edu/public/images/noao-sun/> | (c) N.A. Sharp, NOAO/NSO/Kitt Peak FTS/AURA/NSF | CC BY 4.0 | Y | N | N | stretch | The canonical solar spectrum plate, from the Kitt Peak FTS. Needs the full credit line. Cleaned up, border removed and upscaled; replaces the earlier JPEG copy, whose metadata the edit did not carry over. |
 | 90 | 4 (75%) | @tt; art; abstract; color streaks.jpg | @t00mietum; art; abstract; by unknown; color stripey; 2k7j128g; 8k.jpg | 2020-09-21 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | stretch | Own metadata carries a dual credit - the base image is by an unknown author, upscaled and cleaned up by t00mietum. |
 | 90 | 2 (50%) | DeviantArt; daelly; Star Map.jpg | - | 2012-06-19 | <https://www.deviantart.com/daelly/art/Star-Map-309268243> | (c) 2012 daelly | All rights reserved (DeviantArt default); download enabled, artist requests a link back | N | N | N | zoom | Apophysis fractal flame; Daily Deviation 2012-06-26. Published at 1920x1200, so this 2880x1800 copy is upscaled. |
 | 88 | 5 (95%) | ESO; M Kornmesser; Mars Four Billion Years Ago.jpg | eso1509b.jpg | 2015-03-05 | <https://www.eso.org/public/images/eso1509b/> | (c) ESO/M. Kornmesser | CC BY 4.0 | Y | N | N | zoom | Matches ESO release eso1509. Aggregator filename, so the exact variant is unverified. |
@@ -134,7 +140,6 @@ Most of the non-'@' branded images are 2 stars. For the majority of these files 
 | 85 | 4 (75%) | @tt; win; 1999; 98 SE; color blocks.jpg | @t00mietum; sw; os; win; 1999; 98 SE; b; v1-1-1.jpg | 2022-04-18 | - | Copyright © 2022 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Carries the Windows 98 wordmark. |
 | 85 | 4 (75%) | @tt; win; 2001; XP; grass at dusk.jpg | @t00mietum; sw; os; win; 2001; XP; 040; v1-1-1.jpg | 2022-04-18 | - | Copyright © 2022 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Carries the Windows XP logo. |
 | 85 | 4 (75%) | @tt; win; 2001; XP; grass at night.jpg | @t00mietum; sw; os; win; 2001; XP; 050; v1-1-1.jpg | 2022-04-18 | - | Copyright © 2022 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Carries the Windows XP logo. |
-| 85 | 2 (35%) | Razer; Rainbow Spectrum.jpg | razer_rainbow_spectrum_background-wallpaper-3554x1999.jpg | - | <https://www.razer.com/wallpapers> | (c) Razer Inc. | Brand wallpaper; no redistribution licence | N | N | N | zoom | Carries a WALLPAPERSWIDE.COM watermark, so it came via that aggregator. A clean original is on razer.com. |
 | 85 | 5 (95%) | Unsplash; Daniele Levis Pelusi; Rainbow_1.jpg | daniele-levis-pelusi-UUjxTEET0c0-unsplash.jpg | 2017-07-14 | <https://unsplash.com/photos/multicolored-rainbow-artwork-UUjxTEET0c0> | (c) Daniele Levis Pelusi | Unsplash License | Y | Y | N | stretch | Wallpaperscraft carried the photographer's name, which led to the Unsplash original. Cropped by the aggregator. |
 | 80 | 2 (40%) | Ubuntu; 8.04 Hardy Heron; r3mix.jpg | - | 2008-04-24 | <https://wiki.ubuntu.com/Artwork/Incoming/Hardy> | (c) Canonical Ltd / respective Ubuntu artwork contributors | Ubuntu artwork is generally CC BY-SA 3.0 (not confirmed for this file) | ? | N | N | zoom | Recognisably Hardy Heron artwork, but a third-party remix then rescaled, so the licence chain is unverified. |
 | 80 | 2 (35%) | vivo; V9; gradient abstract.jpg | - | 2018-04-25 | - | (c) vivo Communication Technology Co., Ltd. | Bundled device wallpaper; no redistribution licence | N | N | N | stretch | EXIF date sits at the V9 launch window. Vendor wallpapers carry no redistribution licence. |
@@ -150,7 +155,6 @@ Most of the non-'@' branded images are 2 stars. For the majority of these files 
 | 20 | 2 (35%) | Alphacoders; 1038370; vivid spectrum.jpg | - | 2020 | <https://wall.alphacoders.com/big.php?i=1038370> | - | Alphacoders states 'free for private, personal use'; no original artist credited | N | N | N | stretch | Same limitation as the other Alphacoders entries. |
 | 20 | 2 (35%) | Alphacoders; 898450; rainbow waves.jpg | - | 2018 | <https://wall.alphacoders.com/big.php?i=898450> | - | Alphacoders states 'free for private, personal use'; no original artist credited | N | N | N | stretch | Same limitation as the other Alphacoders entries. |
 | 20 | 2 (35%) | GNOME; 3D foot logo.jpg | - | - | - | - | - | ? | ? | N | zoom | The GNOME foot is a Foundation mark; this render's author was not found. |
-| 20 | 2 (35%) | GNOME; logo on warm streaks.jpg | - | - | - | - | - | ? | ? | N | zoom | Community wallpaper; author not found. |
 | 15 | 2 (35%) | unknown; linux; Ubuntu smooth chocolate.jpg | ubuntu-smooth-chocolate524.jpg | - | - | - | - | ? | ? | N | stretch | Pre-2010 'human' theme style. Community-made, not located. |
 | 10 | 2 (25%) | @jc; art; rainbow gradient.jpg | 0053.jpg | - | - | (c) 2026 @jc | CC BY 4.0 | ? | ? | N | stretch | Carried no metadata, and the name matches the numbered unattributed batch here - the authorship on it may be wrong. |
 | 10 | 2 (35%) | unknown; abstract; blurred colour field, State of iOS.png | - | 2016-03-11 | - | - | - | ? | ? | N | stretch | Saved with Adobe ImageReady, so older than the file date. Name suggests a report graphic, not a wallpaper. |
@@ -185,7 +189,6 @@ Most of the non-'@' branded images are 2 stars. For the majority of these files 
 | 0 | 2 (35%) | unknown; gradient; purple.jpg | - | - | - | - | - | ? | ? | N | stretch | Plain two-tone gradient. Not attributable, and likely not copyrightable. |
 | 0 | 2 (35%) | unknown; light streaks.jpg | 20191019-154453-044.jpg | 2019-10-19 | - | - | - | ? | ? | N | stretch | Authorship not established; an earlier own-work claim was withdrawn. The original filename carries a capture stamp and an iPhone 7. |
 | 0 | 2 (35%) | unknown; linux; Linux wordmark on slate.jpg | - | - | - | - | - | ? | ? | N | zoom | Common community wallpaper style; no specific original found. |
-| 0 | 2 (35%) | unknown; nature; coastal headland to Africa.jpg | - | - | - | - | - | ? | ? | N | zoom | May be a render rather than a photo. No provenance recovered. |
 
 ## Least usable
 
