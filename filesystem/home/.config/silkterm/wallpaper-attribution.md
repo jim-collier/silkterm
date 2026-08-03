@@ -40,7 +40,7 @@ Two XMP fields tell a wallpaper how it should fill a screen that is not its own 
 
 ## Legend
 
-1. **%**: confidence that the match to the named original source is correct. 90+ means an identifier in the filename resolved directly to a source page, or the file is own work carrying its own provenance. 50-89 means strong corroboration (a watermark, a signature, a credit carried by an intermediary) but no single decisive link. Below 50 is informed inference. 0 means no source was found and the row records only what the image is.
+1. **%**: confidence that the match to the named original source is correct. 90+ means an identifier in the filename resolved directly to a source page, or the file is original work carrying its own provenance. 50-89 means strong corroboration (a watermark, a signature, a credit carried by an intermediary) but no single decisive link. Below 50 is informed inference. 0 means no source was found and the row records only what the image is.
 
 2. **Stars**: the star rating written into each file, with the legality confidence it came from in brackets. See below.
 
@@ -48,7 +48,7 @@ Two XMP fields tell a wallpaper how it should fill a screen that is not its own 
 
 4. **Free free?**: explicitly free to use with or without attribution.
 
-5. **Licensed?**: a licence for non-commercial use has been obtained. This is `N` for everything not already public domain or own work; nothing was purchased or requested as part of this pass.
+5. **Licensed?**: a licence for non-commercial use has been obtained. This is `N` for everything not already public domain or original work; nothing was purchased or requested as part of this pass.
 
 6. **Fit**: the layout tag written into the file. See above.
 
@@ -62,15 +62,15 @@ The scale is anchored at 25% for 1 star and 100% for 5 stars. Values here run 25
 
 | Stars | Meaning |
 |:-:|---|
-| 5 | Free licence, public domain, or own work - use and redistribution permitted |
+| 5 | Free licence, public domain, original work with permissive license - use and redistribution permitted |
 | 4 | Free licence with conditions (non-commercial, share-alike) - use permitted |
 | 3 | Published as a downloadable wallpaper by a named rights holder; personal use reasonable, redistribution not granted |
 | 2 | Terms not established, or a vendor/brand asset carrying no licence grant |
 | 1 | Explicitly prohibited, paid-only, or third-party character IP |
 
-The two artist sets behave differently from the rest. Their licence is granted rather than guessed at, so what varies is how firmly each file is tied to its author and what third-party material sits inside the artwork - a licence from an artist covers that artist's own composition and cannot grant anyone else's rights. The `@jc` files that drop to 2 stars are the ones built over someone else's material (a screensaver, a stock background, game assets), not files with a weak attribution.
+The two artist sets behave differently from the rest. Their licence is granted rather than guessed at, so what varies is how firmly each file is tied to its author and what third-party material sits inside the artwork - a licence from an artist covers that artist's own composition and cannot grant anyone else's rights. The `@jc` files that drop to 2 stars are the ones built over someone else's material (a screensaver, a stock background, virtual panoramas created from in-game screenshots), not files with a weak attribution.
 
-Most of the non-'@' branded images are 2 stars. For the majority of these files the terms were never established in spite of a good deal of effort made, often due to dead URLs from reverse image searches. The earliest *live* hits are almost always wallpaper aggregators with lenient terms.
+Most of the non-'@' branded images are 2 stars. For the majority of these files the terms were never established in spite of a good deal of effort made, often due to dead URLs from reverse image searches. The earliest *live* hits are almost always wallpaper aggregators with permissive license terms.
 
 ## Images
 
@@ -99,26 +99,26 @@ Most of the non-'@' branded images are 2 stars. For the majority of these files 
 | 95 | 2 (25%) | @jc; game; Doom; overgrown city ruins.jpg | @jc; photo-virtual; Doom; 070; Eternal TAG2; 0030; 8k.jpg | 2021-10-25 | - | (c) 2021 @jc | CC BY 4.0 | Y | N | N | zoom | Virtual photography: the framing and the stitch are @jc's, the scene and its assets are the game publisher's. |
 | 95 | 2 (25%) | @jc; game; Doom; overgrown village.jpg | @jc; photo-virtual; Doom; 070; Eternal TAG2; 0020; 9k.jpg | 2021-10-18 | - | (c) 2021 @jc | CC BY 4.0 | Y | N | N | zoom | Virtual photography: the framing and the stitch are @jc's, the scene and its assets are the game publisher's. |
 | 95 | 2 (25%) | @jc; game; Doom; red rock canyon.jpg | @jc; photo-virtual; Doom; 040; 2016; 01a; 3194x1796.jpg | 2020-05-19 | - | (c) 2020 @jc | CC BY 4.0 | Y | N | N | zoom | Virtual photography: the framing and the stitch are @jc's, the scene and its assets are the game publisher's. |
-| 95 | 5 (99%) | @jc; photo; Grand Canyon 1a.jpg | @jc; photo; 20050323-155914_JCDR_5871_CR; v1-1; TGArt 5k.jpg | 2005-03-23 | - | (c) 2005 @jc | CC BY 4.0 | Y | N | Y | zoom | Own photograph, cleaned up and upscaled. |
+| 95 | 5 (99%) | @jc; photo; Grand Canyon 1a.jpg | @jc; photo; 20050323-155914_JCDR_5871_CR; v1-1; TGArt 5k.jpg | 2005-03-23 | - | (c) 2005 @jc | CC BY 4.0 | Y | N | Y | zoom | Author photograph, cleaned up and upscaled. |
 | 95 | 5 (99%) | @jc; photo; Grand Canyon 1b.jpg | @jc; photo; 20050323-155914_JCDR_5871_CR-1-1; TGArt upscaled; v1-1.jpg | 2005-03-23 | - | (c) 2005 @jc | CC BY 4.0 | Y | N | Y | zoom | Cropped from the same frame as 1a, then upscaled. |
-| 95 | 5 (99%) | @jc; photo; Grand Canyon 2.jpg | @jc; photo; 20050323-150251_JCDR_5813; v1-1; TGArt 5k.jpg | 2005-03-23 | - | (c) 2005 @jc | CC BY 4.0 | Y | N | Y | zoom | Own photograph, cleaned up and upscaled. |
-| 95 | 5 (99%) | @jc; photo; lake lillies.jpg | @jc; photo; 20040821-172029_300D_0546; v1-1; TGArt 5k.jpg | 2004-08-21 | - | (c) 2004 @jc | CC BY 4.0 | Y | N | Y | zoom | Own photograph, cleaned up and upscaled. |
-| 95 | 5 (99%) | @jc; photo; milky way over fog river.jpg | @jc; photo; 20050827-223520_JCDR_1690; v1-1; v1-1; TGArt 5k.jpg | 2005-08-27 | - | (c) 2005 @jc | CC BY 4.0 | Y | N | Y | zoom | Own photograph, cleaned up and upscaled. |
-| 95 | 5 (99%) | @jc; photo; Pacific Ocean.jpg | JC; 20051031_173555_JCDR_3406; edit1-1-1; TGArt 5k.jpg | 2005-10-31 | - | (c) 2005 @jc | CC BY 4.0 | Y | N | Y | zoom | Own photograph, cleaned up and upscaled. |
-| 95 | 5 (99%) | @jc; photo; storm clouds, golden.jpg | @jc; photo; bubblesnet; Orange-Clouds2; v1-2; TGArt 8k.jpg | 2006 | - | (c) 2006 @jc | CC BY 4.0 | Y | N | Y | zoom | Own photograph, upscaled to 8k. Year comes from the copyright line; no capture date survived. |
-| 95 | 5 (99%) | @jc; photo; sunset clouds, pink and grey.jpg | @jc; photo; bubblesnet; DSCF0557-2; v1-1; TGArt 5k.jpg | 2006 | - | (c) 2006 @jc | CC BY 4.0 | Y | N | Y | zoom | Own photograph, cleaned up and upscaled. Year is a best guess from the surrounding set. |
-| 95 | 5 (99%) | @jc; photo; Washington.jpg | @jc; photo; 20070517-062451_JCR1_04873; v1-1; TGArt 5k.jpg | 2007-05-17 | - | (c) 2007 @jc | CC BY 4.0 | Y | N | Y | zoom | Own photograph, cleaned up and upscaled. |
-| 95 | 4 (75%) | @tt; art; bliss; animal clouds.jpg | @t00mietum; art; orig; Blissy Bliss 4; 3YiK614; 12k; v1-1-1.jpg | 2020-08-11 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Own illustration evoking the XP Bliss photograph, not a copy of it. Credit embedded before this pass. |
-| 95 | 4 (75%) | @tt; art; bliss; apocalypse.jpg | @t00mietum; art; orig; Blissy Bliss Apocalypse; 3YiK8Z7; 12k; v1-1-1.jpg | 2020-08-11 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Own illustration, not a copy of the Bliss photograph. Credit embedded before this pass. |
-| 95 | 4 (75%) | @tt; art; bliss; dinosaurs.jpg | @t00mietum; art; orig; Blissy Bliss 3 w animals; 3YiK60t; 12k; v1-1-1.jpg | 2020-08-11 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Own illustration, not a copy of the Bliss photograph. Credit embedded before this pass. |
+| 95 | 5 (99%) | @jc; photo; Grand Canyon 2.jpg | @jc; photo; 20050323-150251_JCDR_5813; v1-1; TGArt 5k.jpg | 2005-03-23 | - | (c) 2005 @jc | CC BY 4.0 | Y | N | Y | zoom | Author photograph, cleaned up and upscaled. |
+| 95 | 5 (99%) | @jc; photo; lake lillies.jpg | @jc; photo; 20040821-172029_300D_0546; v1-1; TGArt 5k.jpg | 2004-08-21 | - | (c) 2004 @jc | CC BY 4.0 | Y | N | Y | zoom | Author photograph, cleaned up and upscaled. |
+| 95 | 5 (99%) | @jc; photo; milky way over fog river.jpg | @jc; photo; 20050827-223520_JCDR_1690; v1-1; v1-1; TGArt 5k.jpg | 2005-08-27 | - | (c) 2005 @jc | CC BY 4.0 | Y | N | Y | zoom | Author photograph, cleaned up and upscaled. |
+| 95 | 5 (99%) | @jc; photo; Pacific Ocean.jpg | JC; 20051031_173555_JCDR_3406; edit1-1-1; TGArt 5k.jpg | 2005-10-31 | - | (c) 2005 @jc | CC BY 4.0 | Y | N | Y | zoom | Author photograph, cleaned up and upscaled. |
+| 95 | 5 (99%) | @jc; photo; storm clouds, golden.jpg | @jc; photo; bubblesnet; Orange-Clouds2; v1-2; TGArt 8k.jpg | 2006 | - | (c) 2006 @jc | CC BY 4.0 | Y | N | Y | zoom | Author photograph, upscaled to 8k. Year comes from the copyright line; no capture date survived. |
+| 95 | 5 (99%) | @jc; photo; sunset clouds, pink and grey.jpg | @jc; photo; bubblesnet; DSCF0557-2; v1-1; TGArt 5k.jpg | 2006 | - | (c) 2006 @jc | CC BY 4.0 | Y | N | Y | zoom | Author photograph, cleaned up and upscaled. Year is a best guess from the surrounding set. |
+| 95 | 5 (99%) | @jc; photo; Washington.jpg | @jc; photo; 20070517-062451_JCR1_04873; v1-1; TGArt 5k.jpg | 2007-05-17 | - | (c) 2007 @jc | CC BY 4.0 | Y | N | Y | zoom | Author photograph, cleaned up and upscaled. |
+| 95 | 4 (75%) | @tt; art; bliss; animal clouds.jpg | @t00mietum; art; orig; Blissy Bliss 4; 3YiK614; 12k; v1-1-1.jpg | 2020-08-11 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Author illustration evoking the XP Bliss photograph, not a copy of it. Credit embedded before this pass. |
+| 95 | 4 (75%) | @tt; art; bliss; apocalypse.jpg | @t00mietum; art; orig; Blissy Bliss Apocalypse; 3YiK8Z7; 12k; v1-1-1.jpg | 2020-08-11 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Author illustration, not a copy of the Bliss photograph. Credit embedded before this pass. |
+| 95 | 4 (75%) | @tt; art; bliss; dinosaurs.jpg | @t00mietum; art; orig; Blissy Bliss 3 w animals; 3YiK60t; 12k; v1-1-1.jpg | 2020-08-11 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Author illustration, not a copy of the Bliss photograph. Credit embedded before this pass. |
 | 95 | 4 (75%) | @tt; art; GNOME 1998.png | - | 2026-08-03 | - | Copyright © 2026 @t00mietum [13x4sv] | CC0 1.0 | Y | Y | Y | zoom | Same background as `@tt; art; GNOME.png`, with the 1998-era foot logo and spaced wordmark. The CC0 grant covers this composition, not the GNOME Foundation mark it carries or the untraced wallpaper the background came from. |
 | 95 | 4 (75%) | @tt; art; GNOME.png | - | 2026-08-03 | - | Copyright © 2026 @t00mietum [13x4sv] | CC0 1.0 | Y | Y | Y | zoom | Remake of `GNOME; logo on warm streaks.jpg`, which it replaces: that file's background rebuilt and upscaled, logo and wordmark redrawn. The CC0 grant covers this composition, not the GNOME Foundation mark or the untraced base. |
-| 95 | 5 (99%) | @tt; art; Rainbow Paper.png | - | 2026-08-03 | - | Copyright © 2026 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | stretch | Own composition, upscaled. No third-party content. |
-| 95 | 4 (75%) | @tt; art; Trail to Africa.png | - | 2026-08-03 | - | Copyright © 2026 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Generated from a written brief, then upscaled. Reimagines the scene of `unknown; nature; coastal headland to Africa.jpg`, which it replaces, rather than editing it. Carries a visible copyright mark. |
+| 95 | 5 (99%) | @tt; art; Rainbow Paper.png | - | 2026-08-03 | - | Copyright © 2026 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | stretch | Original composition, upscaled. No third-party content. |
+| 95 | 4 (75%) | @tt; art; Trail to Africa.png | - | 2026-08-03 | - | Copyright © 2026 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Original composition, partially inspired by a low-res image that used to exist on wallpaper sites. Carries a visible copyright mark. |
 | 95 | 4 (75%) | @tt; win; 2015; 10; dark teal.jpg | @t00mietum; sw; os; win; 2015; 10; orig; 2k7etcgt; 8k; v1-1-1.jpg | 2020-05-21 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | zoom | Credit embedded before this pass, but it read all rights reserved - which the CC BY-SA stamp overrides. Carries the Windows 10 logo. |
 | 93 | 4 (85%) | DeviantArt; LunarPixel; Lonery.jpg | lonery_by_lunarpixel_d69d5db.jpg | 2013-06-17 | <https://www.deviantart.com/lunarpixel/art/Lonery-378527087> | (c) 2013 LunarPixel | CC BY-NC-ND 3.0 | Y | N | N | stretch | Deviation ID resolves exactly. Published at this size, so unmodified. |
 | 92 | 5 (95%) | NOIRLab; N A Sharp; High Resolution Solar Spectrum.png | noao-sun.jpg | - | <https://noirlab.edu/public/images/noao-sun/> | (c) N.A. Sharp, NOAO/NSO/Kitt Peak FTS/AURA/NSF | CC BY 4.0 | Y | N | N | stretch | The canonical solar spectrum plate, from the Kitt Peak FTS. Needs the full credit line. Cleaned up, border removed and upscaled; replaces the earlier JPEG copy, whose metadata the edit did not carry over. |
-| 90 | 4 (75%) | @tt; art; abstract; color streaks.jpg | @t00mietum; art; abstract; by unknown; color stripey; 2k7j128g; 8k.jpg | 2020-09-21 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | stretch | Own metadata carries a dual credit - the base image is by an unknown author, upscaled and cleaned up by t00mietum. |
+| 90 | 4 (75%) | @tt; art; abstract; color streaks.jpg | @t00mietum; art; abstract; by unknown; color stripey; 2k7j128g; 8k.jpg | 2020-09-21 | - | Copyright © 2020 @t00mietum [13x4sv] | CC BY-SA 4.0 | Y | N | N | stretch | Author's metadata carries a dual credit - the base image is by an unknown author, upscaled and cleaned up by t00mietum. |
 | 90 | 2 (50%) | DeviantArt; daelly; Star Map.jpg | - | 2012-06-19 | <https://www.deviantart.com/daelly/art/Star-Map-309268243> | (c) 2012 daelly | All rights reserved (DeviantArt default); download enabled, artist requests a link back | N | N | N | zoom | Apophysis fractal flame; Daily Deviation 2012-06-26. Published at 1920x1200, so this 2880x1800 copy is upscaled. |
 | 88 | 5 (95%) | ESO; M Kornmesser; Mars Four Billion Years Ago.jpg | eso1509b.jpg | 2015-03-05 | <https://www.eso.org/public/images/eso1509b/> | (c) ESO/M. Kornmesser | CC BY 4.0 | Y | N | N | zoom | Matches ESO release eso1509. Aggregator filename, so the exact variant is unverified. |
 | 85 | 5 (99%) | @tt; art; animals; two cattle dogs.png | 20251019-133454_00127.png | 2025-10-19 | - | Copyright © 2025 @t00mietum [13x4sv] | CC0 1.0 | Y | Y | Y | zoom | Generated. No third-party content. |
@@ -196,11 +196,11 @@ No 1-star files remain here - all four have been moved out. The floor is 2 stars
 
 Vendor and brand assets (Razer, vivo, Xiaomi) sit at 2 stars rather than 1: the scale reserves 1 star for material that is explicitly prohibited or carries a third-party mark, while an unlicensed vendor asset is only unestablished. That distinction is what kept them here.
 
-The 2-star `@jc` files are a different case again - the composition is own work and the licence is real, but each is built over material someone else owns, so the grant does not reach the whole image.
+The 2-star `@jc` files are a different case again - the composition is Author's work and the licence is real, but each is built over material someone else owns, so the grant does not reach the whole image.
 
 ## Most usable
 
-5 stars - free licence, public domain, or own work. Thirty files:
+5 stars - free licence, public domain, or original work. Thirty files:
 
 - The eighteen `@jc` originals - seven photographs and two POV-Ray renders under CC BY 4.0, plus six generated images and a 2013 composite. Six of the generated ones are CC0.
 
@@ -240,7 +240,7 @@ The 2-star `@jc` files are a different case again - the composition is own work 
 
 - `Razer; Rainbow Spectrum` carries a `WALLPAPERSWIDE.COM` watermark, so this copy came through that aggregator. A clean original is on razer.com/wallpapers, which would settle both the watermark and the provenance.
 
-- `unknown; light streaks` - authorship is unresolved. The original filename carried a capture stamp and an iPhone 7, which reads like own work, but it's not. Unknown.
+- `unknown; light streaks` - authorship is unresolved. The original filename carried a capture stamp and an iPhone 7, which reads like original work, but it's not. Unknown.
 
 - `@jc; art; rainbow gradient` carries an own-work claim but no metadata came with the file, and its original name (`0053.jpg`) belongs to the numbered unattributed batch here. The claim may be wrong.
 
@@ -252,7 +252,7 @@ The 2-star `@jc` files are a different case again - the composition is own work 
 
 - Fifteen `@tt` files carry no credit inside them; the attribution rests on the filename prefix plus a confirmation. That is the same class of evidence that misattributed a Microsoft wallpaper here, so it is recorded as 85% rather than treated as settled.
 
-- `@tt; win; 2015; 10; dark teal` carried `all rights reserved` in its own pre-pass metadata. The CC BY-SA stamp overrides it, but the artist's own recorded wish differed.
+- `@tt; win; 2015; 10; dark teal` carried `all rights reserved` in its own pre-pass metadata.
 
 - `@tt; art; abstract; color streaks` has an unknown author under it. The CC BY-SA grant covers the compositing work, not the base image.
 

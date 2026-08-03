@@ -1022,11 +1022,11 @@ impl Pane {
 			};
 			shift_dbg = shift;
 			if shift != 0 {
-				// Freeze the static-band sizes on the gesture's first step (a clean
+				// Freeze the band sizes on the gesture's first step (a clean
 				// settled-vs-scrolled diff); re-measuring per step fluctuates by a row
 				// whenever a blank/matching line abuts a band. Held while the slide eases.
 				if !gesture_active {
-					let (st, sb) = static_bands(&rows, &self.last_rows);
+					let (st, sb) = slide_bands(&rows, &self.last_rows, shift);
 					self.slide_static = sb;
 					self.slide_static_top = st;
 				}
@@ -3356,6 +3356,72 @@ fn static_bands(cur: &[u64], last: &[u64]) -> (usize, usize) {
 	if st + sb >= n { (0, 0) } else { (st, sb) }
 }
 
+// The span a detected shift actually covers, as inclusive screen rows, or None if
+// the shift explains nothing. A row a real scroll owns either translates cleanly
+// or is one of the k rows the step reveals at the far edge; the span is the moved
+// rows (widened outward through rows that merely match, since a blank line inside
+// the region translates without ever counting as moved) plus that reveal.
+fn translate_span(cur: &[u64], last: &[u64], shift: i32) -> Option<(usize, usize)> {
+	let n = cur.len();
+	let k = shift.unsigned_abs() as usize;
+	if n == 0 || last.len() != n || k == 0 || k >= n {
+		return None;
+	}
+	// Destination row of the pair anchored at i, and the two tests, in destination
+	// space: forward (shift > 0) moves content up, so dest == i; backward moves it
+	// down, so dest == i + k.
+	let matches = |dest: usize| {
+		if shift > 0 {
+			dest < n - k && cur[dest] == last[dest + k]
+		} else {
+			dest >= k && cur[dest] == last[dest - k]
+		}
+	};
+	let (mut lo, mut hi) = (usize::MAX, 0usize);
+	for i in 0..n - k {
+		let (dest, src) = if shift > 0 { (i, i + k) } else { (i + k, i) };
+		// moved = arrived at the new row AND vacated the old one, as the detectors
+		// count it: a copy left in place never established a scroll region
+		if matches(dest) && cur[dest] != last[dest] && cur[src] != last[src] {
+			lo = lo.min(dest);
+			hi = hi.max(dest);
+		}
+	}
+	if lo == usize::MAX {
+		return None;
+	}
+	while lo > 0 && matches(lo - 1) {
+		lo -= 1;
+	}
+	while hi + 1 < n && matches(hi + 1) {
+		hi += 1;
+	}
+	if shift > 0 {
+		Some((lo, (hi + k).min(n - 1)))
+	} else {
+		Some((lo.saturating_sub(k), hi))
+	}
+}
+
+// The rows a slide must NOT translate. `static_bands` finds them by "didn't
+// change", which misses fixed-position chrome that CHANGES while it sits still:
+// muffer paints a "N new messages"/"Jump to bottom" pill at the bottom edge of its
+// transcript, composited OVER the last region row, so that row differs every step,
+// the unchanged-suffix walk stops below it, and the pill rode the ease - the same
+// ghost the title bar used to produce. So also pin whatever the shift's own extent
+// leaves out. Combined by MAX, which is what makes this safe: a band can only grow,
+// so no row that slid before starts sliding differently, and since the span always
+// contains every moved row a band can never swallow one that genuinely scrolled.
+fn slide_bands(cur: &[u64], last: &[u64], shift: i32) -> (usize, usize) {
+	let n = cur.len();
+	let (mut st, mut sb) = static_bands(cur, last);
+	if let Some((top, bot)) = translate_span(cur, last, shift) {
+		st = st.max(top);
+		sb = sb.max(n - 1 - bot);
+	}
+	if st + sb >= n { (0, 0) } else { (st, sb) }
+}
+
 fn scroll_shift(cur: &[u64], last: &[u64], scrolled_off: bool) -> usize {
 	let n = cur.len();
 	if n == 0 || last.len() != n {
@@ -3429,8 +3495,8 @@ mod tests {
 		bar_thumb_span, bell_brighten, capture_grid_text, capture_start, cursor_cycle,
 		cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full,
 		layout, logical_line_bounds, move_is_input, pair_inside, prompt_strip, render_char,
-		resume_delay, same_char_pair, scroll_shift, scroll_shift_signed, snapshot_rows,
-		static_bands, vanished_range, weld_region_clip,
+		resume_delay, same_char_pair, scroll_shift, scroll_shift_signed, slide_bands,
+		snapshot_rows, static_bands, translate_span, vanished_range, weld_region_clip,
 	};
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
@@ -4350,6 +4416,103 @@ mod tests {
 		assert_eq!(static_bands(&last, &last), (0, 0));
 		// length mismatch is not measurable
 		assert_eq!(static_bands(&a, &last), (0, 0));
+	}
+
+	// A live overlay pinned to the bottom edge of a scrolling viewport, composited
+	// OVER the last region row so that row changes on every step - muffer's "N new
+	// messages"/"Jump to bottom" pill, captured from a real session: 30 rows, the
+	// transcript sliding down one row per wheel notch, the pill at row 24, and five
+	// rows of input box and hints below it. The unchanged-suffix walk stops below
+	// the pill, so it used to sit inside the sliding region and ghost.
+	fn muffer_pill_frames(pill_last: u64, pill_cur: u64) -> ([u64; 30], [u64; 30]) {
+		let mut last = [0u64; 30];
+		let mut cur = [0u64; 30];
+		for row in 0..24 {
+			last[row] = 100 + row as u64;
+			// content moved DOWN one row (wheel up): row 0 is freshly revealed
+			cur[row] = if row == 0 { 99 } else { 100 + row as u64 - 1 };
+		}
+		last[24] = pill_last;
+		cur[24] = pill_cur;
+		for row in 25..30 {
+			last[row] = 900 + row as u64; // input box + hint rows, unchanged
+			cur[row] = 900 + row as u64;
+		}
+		(cur, last)
+	}
+
+	#[test]
+	fn a_live_bottom_overlay_is_pinned_not_slid() {
+		// the pill's text changes every step (it is composited over scrolling content)
+		let (cur, last) = muffer_pill_frames(700, 701);
+		let shift = scroll_shift_signed(&cur, &last, APP_SCROLL_MAX);
+		assert_eq!(
+			shift, -1,
+			"a wheel notch back is still a clean one-row scroll"
+		);
+		// what the old unchanged-suffix walk saw: the pill row inside the region
+		assert_eq!(static_bands(&cur, &last), (0, 5));
+		// the shift's own extent stops at row 23, so the pill row is band
+		assert_eq!(translate_span(&cur, &last, shift), Some((0, 23)));
+		assert_eq!(slide_bands(&cur, &last, shift), (0, 6));
+	}
+
+	#[test]
+	fn pinning_the_overlay_keeps_it_out_of_the_strip() {
+		// the rows a step retires must come from the region, never from the pinned
+		// overlay - a strip row holding the pill would redraw it inside the reveal
+		let (cur, last) = muffer_pill_frames(700, 701);
+		let (st, sb) = slide_bands(&cur, &last, -1);
+		let range = vanished_range(-1, st, sb, 30);
+		assert_eq!(
+			range,
+			23..24,
+			"the region's own last row leaves, not the pill's"
+		);
+		assert!(!range.contains(&24));
+		// with the unchanged-suffix walk alone the pill's own row was retired into
+		// the strip, which is what drew it a second time inside the reveal
+		let (ost, osb) = static_bands(&cur, &last);
+		assert!(vanished_range(-1, ost, osb, 30).contains(&24));
+	}
+
+	#[test]
+	fn a_band_never_swallows_a_row_that_scrolled() {
+		// the safety property: an overlay stranded MID-region (muffer also floats a
+		// dim scroll-hint arrow inside the viewport) must not hand every row past it
+		// to the band - the span is anchored on the moved rows, so it can only be
+		// widened outward, never pulled in across one.
+		let (mut cur, mut last) = muffer_pill_frames(700, 701);
+		last[12] = 555; // a live one-row overlay floating mid-transcript
+		cur[12] = 556;
+		let shift = scroll_shift_signed(&cur, &last, APP_SCROLL_MAX);
+		assert_eq!(shift, -1);
+		let (st, sb) = slide_bands(&cur, &last, shift);
+		assert_eq!(
+			(st, sb),
+			(0, 6),
+			"the mid-region overlay does not collapse the region"
+		);
+		assert!(30 - sb > 13, "rows below the stranded overlay still slide");
+	}
+
+	#[test]
+	fn bands_only_ever_grow_against_the_unchanged_walk() {
+		// combining by MAX is what keeps this from regressing the settled shapes: for
+		// every app in the matrix the pinned rows must be at least what they were.
+		for (top, bot) in [(0usize, 1usize), (0, 2), (1, 2), (2, 2), (0, 0)] {
+			for shift in [1i32, 2, -1, -2] {
+				let (last, cur) = app_frames(24, top, bot, shift);
+				let (sst, ssb) = static_bands(&cur, &last);
+				let (st, sb) = slide_bands(&cur, &last, shift);
+				assert!(
+					st >= sst && sb >= ssb,
+					"top={top} bot={bot} shift={shift}: bands shrank {sst},{ssb} -> {st},{sb}"
+				);
+				// and the settled app shapes are unchanged by the addition
+				assert_eq!((st, sb), (top, bot), "top={top} bot={bot} shift={shift}");
+			}
+		}
 	}
 
 	// ---- App-scroll scenario matrix -------------------------------------------
