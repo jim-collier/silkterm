@@ -55,10 +55,16 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### New features and enhancements
 
+- ✅ Scrim strength ships at 20 rather than 30. (20260804)
+	- One doubling of the halo's opacity instead of one and a half - a lighter backing, still clearly there.
+	- Reaches an existing config file only where its line is still the shipped commented one, and a file carrying either of the two earlier values lands on this one.
+	- Verified on disk: a fresh file writes 20, a file still holding the old shipped line is brought forward, and a value written or annotated there is left as it stands.
+	- 🔘 UAT
+
 - ✅ Scrim strength: moved to the top of the group, given half the range, and turned on by default. (20260804)
 	- "Strength" now sits directly under the Text scrim switch, above Radius and Softness - it is the first thing to reach for once the scrim is on.
 	- The scale is halved: the top of the slider is what 50 used to be, so each 20% is a doubling and 100% is five of them. The extreme end was never usable, and the whole slider is now spent on the part that is.
-	- Default 30, which on the new scale is exactly what 15 was on the old one - a visible backing hugging each glyph rather than a halo that has to be found and switched on.
+	- Default 30, which on the new scale is exactly what 15 was on the old one - a visible backing hugging each glyph rather than a halo that has to be found and switched on. Superseded by the entry above: it ships at 20 now.
 	- Default falloff curve is now Exponential, replacing Half-normal.
 	- Both changed defaults reach an existing config file only where its line is still the shipped commented one; a value written or edited there is left alone. A file that has been through both curve changes lands on the current one either way.
 	- Verified: over the same wallpaper, the same lines of text darken step by step at 0, 30 and 100, and at the top of the slider the backing is a solid band around each line that still stops at the radius, with the background showing between lines - what 50 used to do, not what 100 used to. The dialog shows the row in its new place reading 30, and the falloff reading Exponential.
