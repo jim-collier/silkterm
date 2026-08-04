@@ -272,7 +272,7 @@ impl Default for Settings {
 			text_scrim: true,
 			text_scrim_radius: 5.0,
 			text_scrim_softness: 0.5,
-			text_scrim_strength: 30.0,
+			text_scrim_strength: 20.0,
 			text_outline: 2.0,
 			text_scrim_ramp: "exp".to_string(),
 			text_scrim_function: "sdf".to_string(),
@@ -1699,8 +1699,10 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// and the shipped curve moved on again to the exponential
 	("text.scrim.ramp", "\"gaussian\"  ## Default"),
 	("text.scrim.ramp", "\"half_normal\"  ## Default"),
-	// the halo used to ship exactly as built, before the scale halved
+	// the halo used to ship exactly as built, before the scale halved, and the
+	// first tuned value on the new scale was a shade heavier
 	("text.scrim.strength", "0  ## Default"),
+	("text.scrim.strength", "30  ## Default"),
 ];
 
 // The whole pre-nesting flat namespace, old key -> new nested path. Primary
@@ -2562,7 +2564,7 @@ text:
 		## its opacity (100% = five doublings), so a faint halo turns into a solid
 		## plate. 0 leaves it exactly as built.
 		## Range: 0 to 100
-		# strength: 30  ## Default
+		# strength: 20  ## Default
 		## Halo radius in pixels.
 		# radius: 5.0  ## Default
 		## Range: 0.0 to 1.0 - 0.0 is hard/solid, 1.0 is soft/faint
@@ -2995,8 +2997,8 @@ mod tests {
 		assert!(d.text_scrim, "text_scrim should default on");
 		assert_eq!(d.text_scrim_radius, 5.0);
 		assert_eq!(d.text_scrim_softness, 0.5);
-		// 30% = 1.5 doublings on the 20%-per-doubling scale
-		assert_eq!(d.text_scrim_strength, 30.0);
+		// 20% = one doubling on the 20%-per-doubling scale
+		assert_eq!(d.text_scrim_strength, 20.0);
 		assert_eq!(d.text_outline, 2.0);
 		assert_eq!(d.text_scrim_ramp, "exp");
 		assert_eq!(d.text_scrim_function, "sdf");
