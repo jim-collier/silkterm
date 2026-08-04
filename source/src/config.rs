@@ -161,7 +161,7 @@ pub struct Settings {
 	pub text_scrim: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
 	pub text_scrim_radius: f32, // scrim blur sigma in px
 	pub text_scrim_softness: f32, // 0 = hard/solid scrim, 1 = soft/faint (maps to the intensity boost)
-	pub text_scrim_strength: f32, // 0..100% -> 0..10 doublings of the halo alpha (0 = as built)
+	pub text_scrim_strength: f32, // 0..100% -> 0..5 doublings of the halo alpha (0 = as built)
 	pub text_outline: f32, // antialiased outline around glyphs, px (0 = none; scrim colour rules)
 	pub text_scrim_ramp: String, // halo falloff curve: "sigmoid" | "half_normal" | "linear" | "log" | "exp"
 	pub text_scrim_function: String, // halo build: "dilate" | "sdf" | "dt" | "gaussian" (legacy blur)
@@ -272,9 +272,9 @@ impl Default for Settings {
 			text_scrim: true,
 			text_scrim_radius: 5.0,
 			text_scrim_softness: 0.5,
-			text_scrim_strength: 0.0,
+			text_scrim_strength: 30.0,
 			text_outline: 2.0,
-			text_scrim_ramp: "half_normal".to_string(),
+			text_scrim_ramp: "exp".to_string(),
 			text_scrim_function: "sdf".to_string(),
 			text_scrim_regular_weight: true,
 			color_emoji: true,
@@ -1329,7 +1329,7 @@ fn resolve(raw: RawConfig) -> Settings {
 			Some("sigmoid" | "s") => "sigmoid".to_string(),
 			Some("log") => "log".to_string(),
 			Some("exp") => "exp".to_string(),
-			_ => d.text_scrim_ramp.clone(), // missing/unknown -> default (half-normal)
+			_ => d.text_scrim_ramp.clone(), // missing/unknown -> default (exponential)
 		},
 		text_scrim_function: match raw.text_scrim_function.as_deref() {
 			Some("dilate") => "dilate".to_string(),
@@ -1695,8 +1695,12 @@ const CONFIG_REMOVED: &[&str] = &["scroll.tau_ms", "scroll.ease_in"];
 // keeps working exactly as they set it. NOTE: the stored value is the raw
 // post-colon text, trailing `## Default` marker included.
 const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
-	// the falloff's "gaussian" is spelled "half_normal" now (both still parse)
+	// the falloff's "gaussian" is spelled "half_normal" now (both still parse),
+	// and the shipped curve moved on again to the exponential
 	("text.scrim.ramp", "\"gaussian\"  ## Default"),
+	("text.scrim.ramp", "\"half_normal\"  ## Default"),
+	// the halo used to ship exactly as built, before the scale halved
+	("text.scrim.strength", "0  ## Default"),
 ];
 
 // The whole pre-nesting flat namespace, old key -> new nested path. Primary
@@ -2058,10 +2062,13 @@ fn refresh_superseded_default(line: &str, path: &str) -> Option<String> {
 	if !line.trim_start().starts_with('#') {
 		return None; // active: the user's own value, leave it alone
 	}
-	let old = SUPERSEDED_DEFAULTS
+	// a path can carry several superseded values (a default retuned more than
+	// once), so every entry for it is a candidate - not just the first
+	let value = line_setting_value(line)?;
+	if !SUPERSEDED_DEFAULTS
 		.iter()
-		.find_map(|(name, old)| (*name == path).then_some(*old))?;
-	if line_setting_value(line)? != old {
+		.any(|(name, old)| *name == path && *old == value)
+	{
 		return None;
 	}
 	setting_lines(DEFAULT_CONFIG)
@@ -2551,20 +2558,20 @@ text:
 	## default; uncomment enabled and set it false to disable.
 	scrim:
 		# enabled: true  ## Default
+		## How much bolder to make the finished halo, as a percent: each 20% doubles
+		## its opacity (100% = five doublings), so a faint halo turns into a solid
+		## plate. 0 leaves it exactly as built.
+		## Range: 0 to 100
+		# strength: 30  ## Default
 		## Halo radius in pixels.
 		# radius: 5.0  ## Default
 		## Range: 0.0 to 1.0 - 0.0 is hard/solid, 1.0 is soft/faint
 		# softness: 0.5  ## Default
-		## How much bolder to make the finished halo, as a percent: each 10% doubles
-		## its opacity (100% = ten doublings), so a faint halo turns into a solid
-		## plate. 0 leaves it exactly as built.
-		## Range: 0 to 100
-		# strength: 0  ## Default
 		## Halo shape: "sdf" (round, full corners), "dt", "dilate" (square), or
 		## "gaussian" (legacy, corners recede).
 		# function: "sdf"  ## Default
 		## Halo falloff curve: "exp", "half_normal", "log", "sigmoid", or "linear".
-		# ramp: "half_normal"  ## Default
+		# ramp: "exp"  ## Default
 		## Blur bold text at regular weight so its halo matches non-bold text.
 		# regular_weight: true  ## Default
 
@@ -2988,9 +2995,10 @@ mod tests {
 		assert!(d.text_scrim, "text_scrim should default on");
 		assert_eq!(d.text_scrim_radius, 5.0);
 		assert_eq!(d.text_scrim_softness, 0.5);
-		assert_eq!(d.text_scrim_strength, 0.0, "the halo ships as built");
+		// 30% = 1.5 doublings on the 20%-per-doubling scale
+		assert_eq!(d.text_scrim_strength, 30.0);
 		assert_eq!(d.text_outline, 2.0);
-		assert_eq!(d.text_scrim_ramp, "half_normal");
+		assert_eq!(d.text_scrim_ramp, "exp");
 		assert_eq!(d.text_scrim_function, "sdf");
 		assert!(d.text_scrim_regular_weight);
 		assert!(!d.cursor_scrim, "cursor scrim halo defaults off");
@@ -3006,7 +3014,7 @@ mod tests {
 	}
 
 	// Scrim function + the five falloff curves resolve; unknown values fall to the
-	// defaults (sdf / half-normal). The falloff's two renamed curves keep parsing
+	// defaults (sdf / exponential). The falloff's two renamed curves keep parsing
 	// under their old spellings, so a config written before the rename still reads
 	// as the same curve rather than silently falling back to the default.
 	#[test]
@@ -3027,7 +3035,7 @@ mod tests {
 		let s = resolve(read_raw("text.scrim.function: \"bogus\"\n", p));
 		assert_eq!(s.text_scrim_function, "sdf", "unknown -> default");
 		let s = resolve(read_raw("text.scrim.ramp: \"bogus\"\n", p));
-		assert_eq!(s.text_scrim_ramp, "half_normal", "unknown -> default");
+		assert_eq!(s.text_scrim_ramp, "exp", "unknown -> default");
 	}
 
 	// The face/size split's inference for configs predating use_system_font_size:
@@ -3305,19 +3313,36 @@ mod tests {
 
 	// A commented line still echoing an outgoing default is brought up to the
 	// template's current one; an active line, or one the user annotated, is theirs.
+	// Every entry refreshes, including a second one for a path whose default has
+	// been retuned twice - the lookup must not stop at the first match.
 	#[test]
 	fn migrate_refreshes_a_superseded_commented_default() {
-		let (path, stale) = SUPERSEDED_DEFAULTS[0];
-		let leaf = path.rsplit('.').next().unwrap();
-		let out = migrate_config_text(&format!("text:\n\tscrim:\n\t\t# {leaf}: {stale}\n"))
-			.expect("stale commented default should be refreshed");
-		assert!(out.contains("half_normal"), "{out:?}");
-		assert!(!out.contains("\"gaussian\""), "{out:?}");
-		// their own choice, either way they made it
-		let active = format!("text:\n\tscrim:\n\t\t{leaf}: {stale}\n");
-		assert!(migrate_config_text(&active).is_none());
-		let noted = format!("text:\n\tscrim:\n\t\t# {leaf}: \"gaussian\"  ## mine\n");
-		assert!(migrate_config_text(&noted).is_none());
+		// the path's blocks, one indent level each, with the leaf last
+		let nest = |path: &str, line: &str| {
+			let parts: Vec<&str> = path.split('.').collect();
+			let leaf_depth = parts.len() - 1;
+			let mut out: Vec<String> = parts[..leaf_depth]
+				.iter()
+				.enumerate()
+				.map(|(depth, block)| "\t".repeat(depth) + block + ":")
+				.collect();
+			out.push("\t".repeat(leaf_depth) + line);
+			out.join("\n") + "\n"
+		};
+		for (path, stale) in SUPERSEDED_DEFAULTS {
+			let leaf = path.rsplit('.').next().unwrap();
+			let current = setting_lines(DEFAULT_CONFIG)
+				.into_iter()
+				.find_map(|(name, line)| (name == *path).then_some(line))
+				.unwrap_or_else(|| panic!("{path} has no template line"));
+			let out = migrate_config_text(&nest(path, &format!("# {leaf}: {stale}")))
+				.unwrap_or_else(|| panic!("{path}: stale default should be refreshed"));
+			assert!(out.lines().any(|l| l == current), "{path}: {out:?}");
+			// their own choice, either way they made it
+			assert!(migrate_config_text(&nest(path, &format!("{leaf}: {stale}"))).is_none());
+			let noted = nest(path, &format!("# {leaf}: {stale}  ## mine"));
+			assert!(migrate_config_text(&noted).is_none(), "{path}");
+		}
 	}
 
 	// The walker is what gives every line its full nested path - the whole
