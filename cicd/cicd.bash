@@ -166,22 +166,28 @@ build_tag(){
 	esac
 	printf 'gnu%s%s%s' "$os" "$os" "$arch"
 }
-## Run a build command, retrying it once before calling it a failure. Every profile
-## that reaches here uses fat LTO, and rustc has been seen to die inside LLVM's
-## assembler (SIGILL) part way through one, then compile the identical source clean
-## straight after. Two crashes in a row is a real error, or a hardware question.
-## Stage 2 has already compiled everything bar the feature-gated profiler hooks, so
-## a genuine error surfaces in seconds here and the retry costs nothing.
+## Run a build command, retrying it a few times before calling it a failure. Every
+## profile that reaches here uses fat LTO, and rustc has repeatedly died part way
+## through one inside LLVM - a different pass and a different signal each time
+## (SIGILL, SIGSEGV, SIGBUS) - then compiled the identical source clean on the next
+## try. It has crashed twice in a row, so one retry is not enough. Stage 2 has
+## already compiled everything bar the feature-gated profiler hooks, so a genuine
+## error surfaces in seconds here and the extra tries cost nothing on that path.
 retry_build(){
 	local -r what="$1"; shift
-	local rc=0
-	"$@" || rc=$?
-	if ((rc)); then
-		fEcho "WARNING: ${what} build failed - retrying once (a compiler crash here is a toolchain flake)"
+	local -i tries="${BUILD_ATTEMPTS:-3}"
+	((tries >= 1)) || tries=1
+	local -i n=0 rc=0
+	while ((n < tries)); do
+		n+=1
 		rc=0
 		"$@" || rc=$?
-	fi
-	if ((rc)); then fDie "${what} build failed twice (app problem)"; fi
+		((rc)) || return 0
+		if ((n < tries)); then
+			fEcho "WARNING: ${what} build failed (attempt ${n} of ${tries}) - retrying, since a compiler crash here has been a toolchain flake"
+		fi
+	done
+	fDie "${what} build failed ${tries}x - a real error, or the fat-LTO crash is no longer occasional"
 }
 ## (Re)write the sha256sums file over every artifact in the release dir except the
 ## sums file itself. Run after stage 5 (binaries) and again after stage 6 (packages),

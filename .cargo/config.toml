@@ -1,3 +1,11 @@
+# Give rustc a bigger working stack than its 8MiB default. This is the compiler's
+# own suggestion when it dies with SIGSEGV, which it does now and then part way
+# through a fat-LTO build here; LLVM recurses deeply over one big merged module.
+# Reserved address space only, so it costs nothing and changes no output - but it is
+# an unproven guess at the cause, not a fix (cicd retries the build regardless).
+[env]
+RUST_MIN_STACK = "16777216"
+
 # Cross-compile to Windows (GNU ABI) from Linux using mingw-w64.
 # Native Linux and native macOS builds need nothing here.
 [target.x86_64-pc-windows-gnu]

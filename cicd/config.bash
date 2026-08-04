@@ -90,6 +90,11 @@ SCROLL_HARNESS=(cicd/tests/scroll/run.bash)
 ## where cage is not installed. 0/unset to disable.
 SCROLL_HARNESS_WAYLAND=1
 
+## Stages 4 + 5: how many times a fat-LTO build may be attempted before the pipeline
+## calls it a failure. rustc crashes inside LLVM here every so often and compiles the
+## same source clean on the next try; 1 disables retrying.
+BUILD_ATTEMPTS=3
+
 ## Stage 5: native release build + its artifact (this is what gets dogfooded)
 RELEASE_NATIVE_CMD=(cargo build --release)
 RELEASE_NATIVE_BIN="target/release/${EXE_NAME}"
