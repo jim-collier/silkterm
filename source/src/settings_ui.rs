@@ -125,6 +125,7 @@ enum Key {
 	TextScrim,
 	ScrimRadius,
 	ScrimSoftness,
+	ScrimStrength,
 	Outline,
 	ScrimFunction,
 	ScrimRamp,
@@ -274,6 +275,7 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::TextScrim => &["text.scrim.enabled"],
 		Key::ScrimRadius => &["text.scrim.radius"],
 		Key::ScrimSoftness => &["text.scrim.softness"],
+		Key::ScrimStrength => &["text.scrim.strength"],
 		Key::Outline => &["text.outline"],
 		Key::ScrimFunction => &["text.scrim.function"],
 		Key::ScrimRamp => &["text.scrim.ramp"],
@@ -623,6 +625,16 @@ fn fields() -> Vec<Spec> {
 				int: false,
 			},
 		},
+		// percent, where each 10% is one doubling of the finished halo's opacity
+		Spec {
+			label: "Strength",
+			key: ScrimStrength,
+			kind: Slider {
+				min: 0.0,
+				max: 100.0,
+				int: true,
+			},
+		},
 		Spec {
 			label: "Text outline",
 			key: Outline,
@@ -647,9 +659,9 @@ fn fields() -> Vec<Spec> {
 			key: ScrimRamp,
 			kind: Dropdown(&[
 				"Exponential",
-				"Gaussian",
+				"Half-normal",
 				"Logarithmic",
-				"S-curve",
+				"Sigmoid",
 				"Linear",
 			]),
 		},
@@ -1800,6 +1812,7 @@ impl SettingsDialog {
 			Key::BgContrastAuto => settings.wallpaper_contrast_mask_auto,
 			Key::ScrimRadius => settings.text_scrim_radius,
 			Key::ScrimSoftness => settings.text_scrim_softness,
+			Key::ScrimStrength => settings.text_scrim_strength,
 			Key::Outline => settings.text_outline,
 			Key::FontSize => settings.font_size,
 			Key::LineHeight => settings.line_height_scale,
@@ -1840,6 +1853,7 @@ impl SettingsDialog {
 			Key::BgContrastAuto => settings.wallpaper_contrast_mask_auto = value,
 			Key::ScrimRadius => settings.text_scrim_radius = value,
 			Key::ScrimSoftness => settings.text_scrim_softness = value,
+			Key::ScrimStrength => settings.text_scrim_strength = value,
 			Key::Outline => settings.text_outline = value,
 			Key::FontSize => settings.font_size = value,
 			Key::LineHeight => settings.line_height_scale = value,
@@ -1966,11 +1980,11 @@ impl SettingsDialog {
 				"gaussian" => 3,
 				_ => 0, // sdf
 			},
-			// display order: Exponential, Gaussian, Log, S-curve, Linear
+			// display order: Exponential, Half-normal, Log, Sigmoid, Linear
 			Key::ScrimRamp => match self.edited.text_scrim_ramp.as_str() {
-				"gaussian" => 1,
+				"half_normal" => 1,
 				"log" => 2,
-				"s" => 3,
+				"sigmoid" => 3,
 				"linear" => 4,
 				_ => 0, // exp
 			},
@@ -1997,9 +2011,9 @@ impl SettingsDialog {
 			}
 			Key::ScrimRamp => {
 				self.edited.text_scrim_ramp = match idx {
-					1 => "gaussian",
+					1 => "half_normal",
 					2 => "log",
-					3 => "s",
+					3 => "sigmoid",
 					4 => "linear",
 					_ => "exp",
 				}
@@ -2016,9 +2030,11 @@ impl SettingsDialog {
 			|| (matches!(
 				key,
 				Key::ScrimRadius
-					| Key::ScrimSoftness | Key::Outline
-					| Key::ScrimFunction | Key::ScrimRamp
-					| Key::CursorScrim | Key::CursorOutline
+					| Key::ScrimSoftness
+					| Key::ScrimStrength
+					| Key::Outline | Key::ScrimFunction
+					| Key::ScrimRamp | Key::CursorScrim
+					| Key::CursorOutline
 			) && !self.edited.text_scrim)
 			// the cursor outline needs an outline to join
 			|| (matches!(key, Key::CursorOutline) && self.edited.text_outline <= 0.0)
@@ -2160,6 +2176,7 @@ impl SettingsDialog {
 			Key::BgContrastAuto => defaults.wallpaper_contrast_mask_auto,
 			Key::ScrimRadius => defaults.text_scrim_radius,
 			Key::ScrimSoftness => defaults.text_scrim_softness,
+			Key::ScrimStrength => defaults.text_scrim_strength,
 			Key::Outline => defaults.text_outline,
 			Key::FontSize => defaults.font_size,
 			Key::LineHeight => defaults.line_height_scale,

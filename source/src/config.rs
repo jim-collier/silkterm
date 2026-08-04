@@ -161,8 +161,9 @@ pub struct Settings {
 	pub text_scrim: bool, // bg-colored blurry halo behind glyphs (readability over busy/transparent bg)
 	pub text_scrim_radius: f32, // scrim blur sigma in px
 	pub text_scrim_softness: f32, // 0 = hard/solid scrim, 1 = soft/faint (maps to the intensity boost)
+	pub text_scrim_strength: f32, // 0..100% -> 0..10 doublings of the halo alpha (0 = as built)
 	pub text_outline: f32, // antialiased outline around glyphs, px (0 = none; scrim colour rules)
-	pub text_scrim_ramp: String, // halo falloff curve: "s" | "gaussian" | "linear" | "log" | "exp"
+	pub text_scrim_ramp: String, // halo falloff curve: "sigmoid" | "half_normal" | "linear" | "log" | "exp"
 	pub text_scrim_function: String, // halo build: "dilate" | "sdf" | "dt" | "gaussian" (legacy blur)
 	pub text_scrim_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
 	pub color_emoji: bool, // paint COLRv1 colour glyphs (emoji) instead of falling back to a monochrome face
@@ -271,8 +272,9 @@ impl Default for Settings {
 			text_scrim: true,
 			text_scrim_radius: 5.0,
 			text_scrim_softness: 0.5,
+			text_scrim_strength: 0.0,
 			text_outline: 2.0,
-			text_scrim_ramp: "gaussian".to_string(),
+			text_scrim_ramp: "half_normal".to_string(),
 			text_scrim_function: "sdf".to_string(),
 			text_scrim_regular_weight: true,
 			color_emoji: true,
@@ -782,6 +784,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.text_scrim_softness != orig.text_scrim_softness {
 		doc.set_float("text.scrim.softness", r(s.text_scrim_softness));
 	}
+	if s.text_scrim_strength != orig.text_scrim_strength {
+		doc.set_float("text.scrim.strength", r(s.text_scrim_strength));
+	}
 	if s.text_outline != orig.text_outline {
 		doc.set_float("text.outline", r(s.text_outline));
 	}
@@ -950,6 +955,7 @@ struct RawConfig {
 	text_scrim: Option<bool>,
 	text_scrim_radius: Option<f32>,
 	text_scrim_softness: Option<f32>,
+	text_scrim_strength: Option<f32>,
 	text_outline: Option<f32>,
 	text_scrim_ramp: Option<String>,
 	text_scrim_function: Option<String>,
@@ -1125,6 +1131,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		text_scrim: r.b("text.scrim.enabled"),
 		text_scrim_radius: r.f("text.scrim.radius"),
 		text_scrim_softness: r.f("text.scrim.softness"),
+		text_scrim_strength: r.f("text.scrim.strength"),
 		text_outline: r.f("text.outline"),
 		text_scrim_ramp: r.s("text.scrim.ramp"),
 		text_scrim_function: r.s("text.scrim.function"),
@@ -1308,14 +1315,21 @@ fn resolve(raw: RawConfig) -> Settings {
 			.text_scrim_softness
 			.unwrap_or(d.text_scrim_softness)
 			.clamp(0.0, 1.0),
+		text_scrim_strength: raw
+			.text_scrim_strength
+			.unwrap_or(d.text_scrim_strength)
+			.clamp(0.0, 100.0),
 		text_outline: raw.text_outline.unwrap_or(d.text_outline).clamp(0.0, 8.0),
+		// the older spellings still parse: "s" was renamed to "sigmoid" (which is
+		// what a smoothstep is), and the falloff's "gaussian" to "half_normal" so
+		// it stops reading like the gaussian BLUR the function list also offers.
 		text_scrim_ramp: match raw.text_scrim_ramp.as_deref() {
 			Some("linear") => "linear".to_string(),
-			Some("gaussian") => "gaussian".to_string(),
-			Some("s") => "s".to_string(),
+			Some("half_normal" | "gaussian") => "half_normal".to_string(),
+			Some("sigmoid" | "s") => "sigmoid".to_string(),
 			Some("log") => "log".to_string(),
 			Some("exp") => "exp".to_string(),
-			_ => d.text_scrim_ramp.clone(), // missing/unknown -> default (Gaussian)
+			_ => d.text_scrim_ramp.clone(), // missing/unknown -> default (half-normal)
 		},
 		text_scrim_function: match raw.text_scrim_function.as_deref() {
 			Some("dilate") => "dilate".to_string(),
@@ -1680,7 +1694,10 @@ const CONFIG_REMOVED: &[&str] = &["scroll.tau_ms", "scroll.ease_in"];
 // An ACTIVE line is never touched: that value is the user's own choice, and it
 // keeps working exactly as they set it. NOTE: the stored value is the raw
 // post-colon text, trailing `## Default` marker included.
-const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[];
+const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
+	// the falloff's "gaussian" is spelled "half_normal" now (both still parse)
+	("text.scrim.ramp", "\"gaussian\"  ## Default"),
+];
 
 // The whole pre-nesting flat namespace, old key -> new nested path. Primary
 // (most recent flat) names first; still-older aliases after, so when a config
@@ -2538,11 +2555,16 @@ text:
 		# radius: 5.0  ## Default
 		## Range: 0.0 to 1.0 - 0.0 is hard/solid, 1.0 is soft/faint
 		# softness: 0.5  ## Default
+		## How much bolder to make the finished halo, as a percent: each 10% doubles
+		## its opacity (100% = ten doublings), so a faint halo turns into a solid
+		## plate. 0 leaves it exactly as built.
+		## Range: 0 to 100
+		# strength: 0  ## Default
 		## Halo shape: "sdf" (round, full corners), "dt", "dilate" (square), or
 		## "gaussian" (legacy, corners recede).
 		# function: "sdf"  ## Default
-		## Halo falloff curve: "exp", "gaussian", "log", "s", or "linear".
-		# ramp: "gaussian"  ## Default
+		## Halo falloff curve: "exp", "half_normal", "log", "sigmoid", or "linear".
+		# ramp: "half_normal"  ## Default
 		## Blur bold text at regular weight so its halo matches non-bold text.
 		# regular_weight: true  ## Default
 
@@ -2832,7 +2854,7 @@ mod tests {
 		set_config_override(path.clone());
 
 		let orig = load();
-		assert_eq!(orig.text_scrim_ramp, "s");
+		assert_eq!(orig.text_scrim_ramp, "sigmoid"); // the file's older spelling
 		let mut edited = orig.clone();
 		edited.text_scrim_ramp = "log".to_string();
 		assert!(
@@ -2966,8 +2988,9 @@ mod tests {
 		assert!(d.text_scrim, "text_scrim should default on");
 		assert_eq!(d.text_scrim_radius, 5.0);
 		assert_eq!(d.text_scrim_softness, 0.5);
+		assert_eq!(d.text_scrim_strength, 0.0, "the halo ships as built");
 		assert_eq!(d.text_outline, 2.0);
-		assert_eq!(d.text_scrim_ramp, "gaussian");
+		assert_eq!(d.text_scrim_ramp, "half_normal");
 		assert_eq!(d.text_scrim_function, "sdf");
 		assert!(d.text_scrim_regular_weight);
 		assert!(!d.cursor_scrim, "cursor scrim halo defaults off");
@@ -2983,7 +3006,9 @@ mod tests {
 	}
 
 	// Scrim function + the five falloff curves resolve; unknown values fall to the
-	// defaults (sdf / s-curve).
+	// defaults (sdf / half-normal). The falloff's two renamed curves keep parsing
+	// under their old spellings, so a config written before the rename still reads
+	// as the same curve rather than silently falling back to the default.
 	#[test]
 	fn scrim_function_and_ramp_resolve() {
 		let p = std::path::Path::new("test.shcl");
@@ -2991,14 +3016,18 @@ mod tests {
 			let s = resolve(read_raw(&format!("text.scrim.function: \"{f}\"\n"), p));
 			assert_eq!(s.text_scrim_function, f);
 		}
-		for r in ["s", "gaussian", "linear", "log", "exp"] {
+		for r in ["sigmoid", "half_normal", "linear", "log", "exp"] {
 			let s = resolve(read_raw(&format!("text.scrim.ramp: \"{r}\"\n"), p));
 			assert_eq!(s.text_scrim_ramp, r);
+		}
+		for (old, new) in [("s", "sigmoid"), ("gaussian", "half_normal")] {
+			let s = resolve(read_raw(&format!("text.scrim.ramp: \"{old}\"\n"), p));
+			assert_eq!(s.text_scrim_ramp, new, "{old} should still parse");
 		}
 		let s = resolve(read_raw("text.scrim.function: \"bogus\"\n", p));
 		assert_eq!(s.text_scrim_function, "sdf", "unknown -> default");
 		let s = resolve(read_raw("text.scrim.ramp: \"bogus\"\n", p));
-		assert_eq!(s.text_scrim_ramp, "gaussian", "unknown -> default");
+		assert_eq!(s.text_scrim_ramp, "half_normal", "unknown -> default");
 	}
 
 	// The face/size split's inference for configs predating use_system_font_size:
@@ -3272,6 +3301,23 @@ mod tests {
 		assert!(migrate_config_text(&format!("font:\n\t# family: \"{stale}\"\n")).is_none());
 		// a top-level dotted spelling refreshes too
 		assert!(migrate_config_text(&format!("font.family: \"{stale}\"\n")).is_some());
+	}
+
+	// A commented line still echoing an outgoing default is brought up to the
+	// template's current one; an active line, or one the user annotated, is theirs.
+	#[test]
+	fn migrate_refreshes_a_superseded_commented_default() {
+		let (path, stale) = SUPERSEDED_DEFAULTS[0];
+		let leaf = path.rsplit('.').next().unwrap();
+		let out = migrate_config_text(&format!("text:\n\tscrim:\n\t\t# {leaf}: {stale}\n"))
+			.expect("stale commented default should be refreshed");
+		assert!(out.contains("half_normal"), "{out:?}");
+		assert!(!out.contains("\"gaussian\""), "{out:?}");
+		// their own choice, either way they made it
+		let active = format!("text:\n\tscrim:\n\t\t{leaf}: {stale}\n");
+		assert!(migrate_config_text(&active).is_none());
+		let noted = format!("text:\n\tscrim:\n\t\t# {leaf}: \"gaussian\"  ## mine\n");
+		assert!(migrate_config_text(&noted).is_none());
 	}
 
 	// The walker is what gives every line its full nested path - the whole

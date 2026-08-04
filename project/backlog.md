@@ -55,20 +55,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### New features and enhancements
 
-- ✅ Reopening Settings within a minute of closing it resumes where you were.
-	- Done (20260804). Closing Settings remembers the tab and scroll position it was left on; reopening within a minute lands back there. After that it opens at the top of the first tab as before.
-	- Applies to every way of closing it - Cancel, OK, Esc, and the window's own close button.
-	- Only the view is remembered. Values still come from the current settings, and edits abandoned with Cancel stay abandoned.
-	- A remembered position is clamped to what the reopened window can actually show, so a font or screen change between the two can't leave it scrolled past the end.
+- ✅ Scrim functions: two falloff curves renamed, and a "Strength" adjustment added. (20260804)
+	- The falloff curves "S-curve" and "Gaussian" are now "Sigmoid" and "Half-normal", named for the curve each draws. The old names are still accepted in the config file, so an existing one keeps the curve it asked for.
+	- New "Strength", below Radius and Softness: how much bolder to make the finished halo, as a percent. Each 10% doubles its opacity, so 100% is ten doublings; 0 leaves the halo exactly as built, which is the default and matches how it has always looked.
+	- Because the doubled value is capped, the halo's dense middle fills in first and the solid part spreads outward, so a faint halo thickens into a plate that still stops where the radius says it does.
+	- The half-normal curve was left standing at about 1% of its opacity at the outer edge, where the other four reach zero. Invisible on its own, but Strength multiplied it into a wash over the whole pane, so it is now brought to zero like the rest - a change of less than one shade of 255 at any strength setting.
+	- Verified: at 0, 40% and 100% the backing behind the same two lines of text goes from barely there to a dark backing hugging each glyph to a solid plate, and never spreads past its radius. The dialog shows the new row and both new curve names, and a config still spelling a curve the old way opens on that curve.
 	- 🔘 UAT
-
-- 🔘 Scrim functions:
-	- Rename:
-		- S-curve -> Sigmoid
-		- Gassian -> Half-normal
-	- New adjustment:
-		- Below Radius and Softness: "Strength"
-			- How many times the result is multiplied *2 for a bolder effect. From 0 (no strengthening) to 10. But as a %.
 
 - 🔘 Consolidate UI (e.g. settings) declarations into one or more source shcl file(s) that get compiled or transpiled into code.
 	- Measurements specified in CSS px or DIP that renders "correctly" at any DPI.
@@ -526,30 +519,19 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Cause: the smooth output scroll arms itself from how much the scrollback grew between two drawn frames. `clear` empties the scrollback, and re-running the same command refills it to exactly the same depth - both inside a single read of the program's output - so the measured growth was zero and nothing was armed, even though a screenful of lines had gone past. The end state carries no trace of it either: the screen and the scrollback both look exactly as they did before, so nothing about the finished picture can tell that anything happened.
 	- Fixed: the depth is now sampled once per read of the program's output rather than once per drawn frame, which is the only point where the emptying is still visible, and a drop is read for what it can only mean - the scrollback was cleared, so everything left in it arrived afterwards and is new. Repeats now scroll exactly like the first run.
 	- Sampling gives up immediately rather than wait its turn, so it can never hold up output; a skipped sample is picked up by the next one, and if every sample is skipped the previous behaviour applies unchanged. Switching a full-screen program in or out, and resizing the window, both reset the measurement, since each moves the depth without anything having scrolled.
-	- 🔘 UAT
 	- Verified: the first run and every repeat now arm the same amount and glide through it identically, where before only the first did and later runs did no work at all - measurable as roughly seven times the drawing effort across three repeats, in both orderings. Heavy output drains no slower than before. The four scrolling scenes covered by the regression suite still slide smoothly with no bounce.
 
 - ✅ Bug: scrolling back in muffer with the mouse wheel made its "1 new message" indicator smear and bounce - the same shape as #t78br, "The Notorious 'Bouncing Shadow' nano bug". (20260803)
 	- Steps to reproduce: open muffer, let the conversation grow past one screen, then wheel back. The indicator that appears at the bottom of the transcript ("1 new message", or "Jump to bottom" when nothing new has arrived) is drawn twice and rides the scroll instead of holding still.
 	- Cause: a smooth slide keeps the fixed parts of an application's screen still and moves only the scrolling middle, and it worked out which rows were fixed by asking which ones had not changed. That misses a fixed element whose text changes while it sits still. The indicator is painted over the last row of the transcript rather than below it, so that row differs on every step, the search for unchanging rows stopped short of it, and the indicator was treated as scrolling content - the same class of fault as the title bar that used to ghost in nano.
 	- Fixed: the fixed rows are now also derived from what the detected scroll itself accounts for. A row a real scroll owns either moves cleanly or is one of the rows the step newly reveals; anything else is fixed furniture and is held still. The two measures are combined by taking whichever holds more rows still, so the previous behaviour is a floor and no row that used to move can start behaving differently. Because the span is anchored on the rows that genuinely moved, it can only ever be widened outward, so an element stranded in the middle of the scrolling area can never hand the rows past it to the fixed set.
-	- 🔘 UAT
-	- Verified: the indicator used to render as two copies, about four rows apart, with the pair shifting between two positions as the scroll eased; it now renders as a single copy that holds one position for every frame of the gesture. The rows a step retires into the fill strip no longer include the indicator's row, so it is not redrawn a second time inside the revealed gap. The four scrolling scenes covered by the regression suite (`less`, `vim`, `nano`, muffer) still slide smoothly with no bounce, and the fixed-row counts they produce are unchanged.
+	- Verified.
 
 - ✅ A pipeline run aborted at the profiler stage and reported an application problem, when the compiler itself had crashed. (20260802)
 	- The crash was inside the compiler's own code generation, not in any project source. The identical build succeeded straight afterwards, and the same stage had completed cleanly five times earlier the same day.
 	- The stage now rebuilds once before giving up, so a one-off compiler crash no longer takes down an entire run, and the failure message no longer blames the application for something that is not its fault. A genuine compile error still fails both attempts and aborts as before, and surfaces within seconds since the earlier debug stage has already compiled everything bar the profiler hooks.
 	- Corrected: this was first read as specific to the profiler build, on the grounds that it is the only one pairing whole-program optimization with full debug information. That was the wrong axis - the exposure is whole-program optimization by itself, which every release build uses - so the release builds went uncovered until a later run crashed in one of them.
 	- Superseded: the single rebuild was extended to every whole-program build, and then to three attempts. See the 20260804 entry at the top of this section.
-
-- ✅ The "Initial scroll speed" and "In-view output speed" settings don't seem to do anything, even at their lowest settings - text jumps immediately to blazing speed. Default speeds should start scrolling almost immediately but slowly, then ramp up (up to infinitely fast to catch up with a buffer dump). (20260802)
-	- Cause was structural, not a tuning problem: catch-up speed was driven by how deep the visual backlog was, and the backlog was capped at 16 lines. Any real burst filled that cap in about a tenth of a second, after which the view simply rode the raw output rate - neither setting could influence that phase, and the slow end of the slider only reached a third slower than the default anyway.
-	- Output is now chased at an explicit speed that starts at the configured initial speed (one line per its milliseconds; default ~4 lines/s) and doubles about three times a second while output stays ahead - a visible slow start, then as fast as needed. "In-view output speed" is the ceiling for a burst still wholly on screen (default ~17 lines/s); a burst whose first line has scrolled off the top ramps without limit. The backlog line-cap is gone - the ramp bounds the lag in time (a couple of seconds worst case) instead of lines, which is what makes a slow start physically possible.
-	- The speed sliders are now logarithmic over a much wider range (slowest = 1 line/s), so both ends are clearly perceivable. Stored values are unchanged; the displayed 1..100 number for a given stored value shifts (defaults now read 33 and 61).
-	- Wheel and scrollbar navigation keep the plain configured ease, and jumping back to the bottom from deep scrollback sweeps at full ease speed rather than the output chase.
-	- Note: this machine's config still holds both speeds at their fastest (10 ms) from earlier experimenting - revert both sliders to feel the new defaults.
-	- Superseded: "In-view output speed" is now called "Single-screen speed" (config `scroll.single_screen_tau_ms`), and the ramp described here has its own two sliders. See the Scrolling Settings entry below.
-	- 🔘 UAT
 
 - ✅ Graphical emoji render as monochrome outlines instead of colour.
 	- Not a regression. No build renders these in colour: the text stack has only ever read the older colour-glyph table format (COLR v0), and every current colour emoji font ships the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
@@ -1348,6 +1330,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
+- ✅ Reopening Settings within a minute of closing it resumes where you were.
+	- Done (20260804). Closing Settings remembers the tab and scroll position it was left on; reopening within a minute lands back there. After that it opens at the top of the first tab as before.
+	- Applies to every way of closing it - Cancel, OK, Esc, and the window's own close button.
+	- Only the view is remembered. Values still come from the current settings, and edits abandoned with Cancel stay abandoned.
+	- A remembered position is clamped to what the reopened window can actually show, so a font or screen change between the two can't leave it scrolled past the end.
+	- ✅ Tested
+
 - ✅ Read external resources in the background so nothing delays the window opening.
 	- Done (20260803). The whole wallpaper pipeline - scanning the rotation folder, reading the shuffle history, decoding the image, blur and contrast mask, reading its layout tags - now runs on a worker thread. The window opens and the shell starts straight away; the wallpaper appears a moment later, which is the accepted trade.
 	- With a wallpaper path that never answers, the previous build never opened a window at all and never started a shell. It now opens normally and reports the unreadable path.
@@ -1357,7 +1346,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Two side effects worth knowing: an empty rotation folder now falls back to the built-in wallpaper instead of leaving the background blank, and a wallpaper file that can't be opened is reported rather than silently ignored.
 	- Reloading settings while rotating used to blank the wallpaper until the next rotation; it now keeps what is on screen.
 	- The config file itself still loads up front - window size, font and theme all come from it, and the window waits to open at its final size.
-	- 🔘 UAT
 
 - ✅ Huge quality-of-life improvement: Re-thought-throug, rationalized scroll-on-output settings refactor (20260802-03):
 	- In hindsight this was a big enough design challenge to warrant a design document.
