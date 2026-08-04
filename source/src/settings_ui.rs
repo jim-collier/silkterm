@@ -327,6 +327,15 @@ enum Focus {
 	Button(usize),
 }
 
+// Where the user was looking when the dialog closed, so reopening it shortly
+// after lands on the same tab and scroll position instead of the top of
+// Appearance. Only the view - edits are discarded on close as before.
+#[derive(Clone, Copy)]
+pub struct View {
+	tab: usize,
+	scroll: f32,
+}
+
 // In-progress field edit: the row, its text, the caret (a byte index into
 // `buf`, always on a char boundary), and an optional selection anchor. The
 // selection spans anchor..caret in either direction; None = no selection.
@@ -1090,6 +1099,22 @@ impl SettingsDialog {
 	pub fn wheel(&mut self, dy_px: f32) {
 		self.dismiss_menu();
 		self.scroll = (self.scroll - dy_px).clamp(0.0, self.max_scroll());
+	}
+	pub fn view(&self) -> View {
+		View {
+			tab: self.tab,
+			scroll: self.scroll,
+		}
+	}
+	// A restored view comes from a dialog that no longer exists, so nothing about
+	// its geometry can be assumed: the UI font, screen height or field set may all
+	// have changed since. Clamp rather than trust.
+	pub fn restore(&mut self, view: View) {
+		if view.tab >= TAB_TITLES.len() {
+			return;
+		}
+		self.tab = view.tab;
+		self.scroll = view.scroll.clamp(0.0, self.max_scroll());
 	}
 	fn thumb(&self) -> Option<Rect> {
 		let scroll_max = self.max_scroll();
@@ -3827,6 +3852,33 @@ mod tests {
 		assert_eq!(d.scroll, 0.0);
 		d.wheel(-1e9);
 		assert_eq!(d.scroll, d.max_scroll());
+	}
+
+	#[test]
+	fn a_restored_view_never_outruns_the_new_dialog() {
+		// scrolled to the bottom of the last tab, as if the user had just closed it
+		let mut d = mk_dialog(400.0);
+		d.tab = TAB_TITLES.len() - 1;
+		d.wheel(-1e9);
+		let view = d.view();
+		assert!(view.scroll > 0.0);
+		let mut same = mk_dialog(400.0);
+		same.restore(view);
+		assert_eq!(same.tab, view.tab);
+		assert_eq!(same.scroll, view.scroll);
+		// a roomier window has nothing to scroll, so the offset must not survive
+		let mut roomy = mk_dialog(2000.0);
+		roomy.restore(view);
+		assert_eq!(roomy.tab, view.tab);
+		assert_eq!(roomy.scroll, 0.0);
+		// a tab that no longer exists leaves the fresh dialog alone
+		let mut d = mk_dialog(400.0);
+		d.restore(super::View {
+			tab: TAB_TITLES.len(),
+			scroll: 50.0,
+		});
+		assert_eq!(d.tab, 0);
+		assert_eq!(d.scroll, 0.0);
 	}
 
 	#[test]

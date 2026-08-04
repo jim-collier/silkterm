@@ -36,6 +36,11 @@ use crate::text::TextCtx;
 const RAISE_REASSERTS: u8 = 24;
 const RAISE_REASSERT_IVL: Duration = Duration::from_millis(50);
 
+// Reopening Settings this soon after closing it resumes the tab and scroll it
+// was left on - long enough to cover "closed it, went to look at the result,
+// came back", short enough that a later visit still starts from the top.
+const SETTINGS_RESUME: Duration = Duration::from_secs(60);
+
 pub struct App {
 	proxy: EventLoopProxy<UserEvent>,
 	state: Option<State>,
@@ -44,6 +49,8 @@ pub struct App {
 	// context, so it can be larger than the main window.
 	dialog: Option<crate::dialog::DialogWin>,
 	dialog_dirty: bool,
+	// where the Settings dialog was when it last closed, and when that was
+	settings_view: Option<(Instant, crate::settings_ui::View)>,
 	// after the dialog is focused, re-assert "keep the terminal under me" a few
 	// times: the WM's own activation (raising the dialog) can land just after our
 	// first restack and re-bury the terminal, so a couple of delayed retries
@@ -68,6 +75,7 @@ impl App {
 			cli,
 			dialog: None,
 			dialog_dirty: false,
+			settings_view: None,
 			raise_reassert: 0,
 			raise_next: Instant::now(),
 			vt_watch: false,
@@ -99,7 +107,7 @@ impl App {
 		let mut act: Option<DA> = None;
 		match event {
 			WindowEvent::CloseRequested => {
-				self.dialog = None;
+				self.close_dialog();
 				return;
 			}
 			WindowEvent::Focused(true) => {
@@ -287,11 +295,25 @@ impl App {
 	#[allow(clippy::unused_self)]
 	fn reveal_dialog(&self) {}
 
+	// Drop the dialog window, remembering a Settings view on the way out so a
+	// reopen within SETTINGS_RESUME picks up where it left off. Every close goes
+	// through here - Cancel, OK, Esc and the window's own close button alike.
+	fn close_dialog(&mut self) {
+		if let Some(view) = self
+			.dialog
+			.as_ref()
+			.and_then(super::dialog::DialogWin::settings_view)
+		{
+			self.settings_view = Some((Instant::now(), view));
+		}
+		self.dialog = None;
+	}
+
 	fn apply_dialog_action(&mut self, action: crate::dialog::DialogAction) {
 		use crate::dialog::DialogAction as DA;
 		match action {
 			DA::OpenUrl(u) => open_url(&u),
-			DA::Close => self.dialog = None,
+			DA::Close => self.close_dialog(),
 			DA::Apply => {
 				self.apply_dialog_settings();
 			}
@@ -300,7 +322,7 @@ impl App {
 				// open elsewhere the change applied live but wasn't written, so we
 				// keep the dialog up (the FYI went to stderr).
 				if self.apply_dialog_settings() {
-					self.dialog = None;
+					self.close_dialog();
 				}
 			}
 		}
@@ -4347,7 +4369,14 @@ impl ApplicationHandler<UserEvent> for App {
 			.as_mut()
 			.is_some_and(|state| std::mem::take(&mut state.pending_settings));
 		if open_settings {
-			match crate::dialog::DialogWin::new_settings(event_loop, parent) {
+			// a view older than the resume window is dead either way, so take it
+			// unconditionally and discard it if it has expired
+			let resume = self
+				.settings_view
+				.take()
+				.filter(|(closed, _)| closed.elapsed() <= SETTINGS_RESUME)
+				.map(|(_, view)| view);
+			match crate::dialog::DialogWin::new_settings(event_loop, parent, resume) {
 				Ok(d) => {
 					self.dialog = Some(d);
 					self.center_dialog();

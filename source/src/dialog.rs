@@ -15,7 +15,7 @@ use winit::window::{Window, WindowId};
 use crate::config;
 use crate::gfx::{Gfx, RectInstance, RectRenderer};
 use crate::pane::Rect;
-use crate::settings_ui::{Action, EditCmd, SettingsDialog};
+use crate::settings_ui::{Action, EditCmd, SettingsDialog, View};
 use crate::text::{TextCtx, ui_attrs};
 
 // A laid-out line of static dialog text (window-relative coords).
@@ -195,9 +195,12 @@ impl DialogWin {
 		})
 	}
 
+	// `resume` is the view a recently closed Settings window was left on (see
+	// App::settings_view); None opens at the top of the first tab.
 	pub fn new_settings(
 		el: &ActiveEventLoop,
 		parent: Option<RawWindowHandle>,
+		resume: Option<View>,
 	) -> anyhow::Result<Self> {
 		// provisional window first: sizing needs a TextCtx to measure labels in
 		// the real UI font (same pattern as About)
@@ -211,7 +214,11 @@ impl DialogWin {
 			.map_or(1010.0, |monitor| monitor.size().height as f32 - 38.0)
 			.min(1010.0);
 		// laid out at the origin
-		let dialog = SettingsDialog::new(0.0, 0.0, text.ui_line_h, label_w, btn_w, tab_ws, max_h);
+		let mut dialog =
+			SettingsDialog::new(0.0, 0.0, text.ui_line_h, label_w, btn_w, tab_ws, max_h);
+		if let Some(view) = resume {
+			dialog.restore(view);
+		}
 		let (w, h) = dialog.size();
 		let requested_size = winit::dpi::PhysicalSize::new(w.ceil() as u32, h.ceil() as u32);
 		if let Some(applied) = window.request_inner_size(requested_size) {
@@ -241,6 +248,14 @@ impl DialogWin {
 				dialog.edited().clone(),
 				dialog.use_system_font(),
 			)),
+			Content::About { .. } => None,
+		}
+	}
+
+	// The tab + scroll this dialog is sitting on, for a later reopen to resume.
+	pub fn settings_view(&self) -> Option<View> {
+		match &self.content {
+			Content::Settings(dialog) => Some(dialog.view()),
 			Content::About { .. } => None,
 		}
 	}
