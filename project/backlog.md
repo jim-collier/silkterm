@@ -55,29 +55,9 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### New features and enhancements
 
-- ✅ Scrim strength ships at 20 rather than 30. (20260804)
-	- One doubling of the halo's opacity instead of one and a half - a lighter backing, still clearly there.
-	- Reaches an existing config file only where its line is still the shipped commented one, and a file carrying either of the two earlier values lands on this one.
-	- Verified on disk: a fresh file writes 20, a file still holding the old shipped line is brought forward, and a value written or annotated there is left as it stands.
-	- 🔘 UAT
-
-- ✅ Scrim strength: moved to the top of the group, given half the range, and turned on by default. (20260804)
-	- "Strength" now sits directly under the Text scrim switch, above Radius and Softness - it is the first thing to reach for once the scrim is on.
-	- The scale is halved: the top of the slider is what 50 used to be, so each 20% is a doubling and 100% is five of them. The extreme end was never usable, and the whole slider is now spent on the part that is.
-	- Default 30, which on the new scale is exactly what 15 was on the old one - a visible backing hugging each glyph rather than a halo that has to be found and switched on. Superseded by the entry above: it ships at 20 now.
-	- Default falloff curve is now Exponential, replacing Half-normal.
-	- Both changed defaults reach an existing config file only where its line is still the shipped commented one; a value written or edited there is left alone. A file that has been through both curve changes lands on the current one either way.
-	- Verified: over the same wallpaper, the same lines of text darken step by step at 0, 30 and 100, and at the top of the slider the backing is a solid band around each line that still stops at the radius, with the background showing between lines - what 50 used to do, not what 100 used to. The dialog shows the row in its new place reading 30, and the falloff reading Exponential.
-	- 🔘 UAT
-
-- ✅ Scrim functions: two falloff curves renamed, and a "Strength" adjustment added. (20260804)
-	- The falloff curves "S-curve" and "Gaussian" are now "Sigmoid" and "Half-normal", named for the curve each draws. The old names are still accepted in the config file, so an existing one keeps the curve it asked for.
-	- New "Strength", below Radius and Softness: how much bolder to make the finished halo, as a percent. Each 10% doubles its opacity, so 100% is ten doublings; 0 leaves the halo exactly as built, which is the default and matches how it has always looked.
-		- Superseded by the entry above: the row moved to the top of the group, each 20% is now a doubling, and it ships at 30 rather than 0.
-	- Because the doubled value is capped, the halo's dense middle fills in first and the solid part spreads outward, so a faint halo thickens into a plate that still stops where the radius says it does.
-	- The half-normal curve was left standing at about 1% of its opacity at the outer edge, where the other four reach zero. Invisible on its own, but Strength multiplied it into a wash over the whole pane, so it is now brought to zero like the rest - a change of less than one shade of 255 at any strength setting.
-	- Verified: at 0, 40% and 100% the backing behind the same two lines of text goes from barely there to a dark backing hugging each glyph to a solid plate, and never spreads past its radius. The dialog shows the new row and both new curve names, and a config still spelling a curve the old way opens on that curve.
-	- 🔘 UAT
+- 🔘 Config file:
+	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
+		- The nesting pass kept the existing section order; the reorganization waits on the Settings dialog refactor it mirrors.
 
 - 🔘 Consolidate UI (e.g. settings) declarations into one or more source shcl file(s) that get compiled or transpiled into code.
 	- Measurements specified in CSS px or DIP that renders "correctly" at any DPI.
@@ -245,10 +225,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- 🔘 When text fields have focus highlight, there should only be one visible outline (rather than two - the highlight, AND the textbox outline).
 		- 🔘 The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
 
-- 🔘 Config file:
-	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
-		- The nesting pass kept the existing section order; the reorganization waits on the Settings dialog refactor it mirrors.
-
 - 🔘 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, AND legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
 
 - 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
@@ -357,11 +333,11 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - 🛠️ Themes:
 	- Note: Any work done in the previous Settings dialog improvements work, override potential contradictions here.
-	- Done (part 1): theme foundation and terminal palette. A Palette (bg/fg/cursor/focus + 16 ANSI) times a Theme (a dark+light pair); the theme and theme_mode config keys pick the active palette, and the [colors] keys still override per-colour. Three built-ins: SilkTerm, Matrix, Retro Amber, each dark and light.
+	- Done (part 1): theme foundation and terminal palette. A Palette (bg/fg/cursor/focus + 16 ANSI) times a Theme (a dark+light pair); the theme and theme_mode config keys pick the active palette, and the [colors] keys still override per-color. Three built-ins: SilkTerm, Matrix, Retro Amber, each dark and light.
 		- Verified: Matrix is green-on-black including green-toned ANSI; SilkTerm light is dark-on-light.
 	- Done (part 2): chrome/dialog theming plus System mode. Settings and About adapt to dark/light; the menu and tab chrome stay a fixed neutral gray. System mode follows the OS at startup and on theme-change, falling back to dark where the OS reports no preference (e.g. X11).
 		- Verified: light mode gives a light dialog with dark text; system mode launches clean.
-		- Note: still open - config-defined [themes.*], the Settings theme dropdown and its own tab, clearing per-colour overrides on re-select, per-theme menu colour (#166), more themes (Pastel, Solarized).
+		- Note: still open - config-defined [themes.*], the Settings theme dropdown and its own tab, clearing per-color overrides on re-select, per-theme menu color (#166), more themes (Pastel, Solarized).
 	- 🛠️ Provide a set of about 3 or 4 themes, each that support "Dark" or "Light" mode (or "System").
 		- Done: three built-ins with dark and light.
 		- Note: System (OS-follow) and a 4th theme are still pending.
@@ -404,7 +380,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Per-pane --shell (argv-exec; cascades pane, split-source, tab, window, then config default_shell; interactive splits inherit).
 		- Config command_line applied when launched with no args. Any real CLI argument overrides it entirely (verified both ways).
 		- Tab --title override, shown in the tab bar (verified).
-		- Window-level visual style: font, size, colours, and the background image with its stretch/zoom/opacity fold into the live settings at startup.
+		- Window-level visual style: font, size, colors, and the background image with its stretch/zoom/opacity fold into the live settings at startup.
 			- Note: per-pane scope is still deferred. It needs a per-pane renderer the single-TextCtx architecture lacks, so these flags apply to the whole window but don't yet vary per pane (hence 🛠️).
 		- Note: still open - --keep-open (needs exit-status in a dead PTY), per-pane --title (reserved, none displayed yet), and finer field-level negotiation (today any CLI arg ignores the config command line wholesale).
 	- General notes:
@@ -519,7 +495,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ Bug: Editing a line at any point on the prompt, that has one or more emojis in it, results in apparently random left-right shifting of other characters, at apparently random points unrelated to the cursor position. (But probably not really "random".) The actual content that moves doesn't actually change in the buffer, but it looks like it does and makes it visually unreliable and confusing.
 	- Not random: it happened on exactly the rows holding one of a small set of characters. A terminal gives a double-width character two columns. A monospace font is free to carry that same character at its ordinary single-column width, and the default font does so for 53 of them - several common emoji among them, plus fullwidth punctuation. The row was laid out from the font, so one of those characters consumed one column where the grid had allotted two, and everything after it on that row drew a column to the left of where its own background, the cursor and any separately-drawn character still sat. Editing moved such a character around the line, so the misalignment appeared to wander.
 	- Fix: a character now rides the shared row layout only when the font's own width for it agrees with the number of columns the terminal gave it. Anything that disagrees is drawn on its own, fitted to its real box - the same path characters missing from the font already took.
-	- Side effect, and an improvement: those emoji now render in colour rather than as small monochrome outlines, since they reach the colour path for the first time. Single-width symbols (arrows, checkmarks, stars, box drawing) are unaffected and stay monochrome, which is what a terminal wants.
+	- Side effect, and an improvement: those emoji now render in color rather than as small monochrome outlines, since they reach the color path for the first time. Single-width symbols (arrows, checkmarks, stars, box drawing) are unaffected and stay monochrome, which is what a terminal wants.
 	- ✅ Tested and verified: a trailing marker after such an emoji used to sit exactly one column left of the same marker on an all-text row, and now lines up. A control screen of CJK, box drawing, fullwidth Latin and single-width symbols renders identically to before.
 
 - ✅ A pipeline run aborted at the release stage and reported an application problem, when the compiler had crashed twice in a row. (20260804)
@@ -549,10 +525,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Corrected: this was first read as specific to the profiler build, on the grounds that it is the only one pairing whole-program optimization with full debug information. That was the wrong axis - the exposure is whole-program optimization by itself, which every release build uses - so the release builds went uncovered until a later run crashed in one of them.
 	- Superseded: the single rebuild was extended to every whole-program build, and then to three attempts. See the 20260804 entry at the top of this section.
 
-- ✅ Graphical emoji render as monochrome outlines instead of colour.
-	- Not a regression. No build renders these in colour: the text stack has only ever read the older colour-glyph table format (COLR v0), and every current colour emoji font ships the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
-	- Other terminals show the same fonts in colour because their text rasterizer reads COLRv1.
-	- Fix: colour glyphs are now painted directly - the paint graph is walked and rendered through a small 2D back end (transforms, clip and layer stacks, solid/linear/radial/sweep fills, Porter-Duff and blend compositing), then handed to the renderer's colour atlas as a per-cell image fitted to the cell box. Chars with no colour glyph are untouched and still take the monochrome fallback path.
+- ✅ Graphical emoji render as monochrome outlines instead of color.
+	- Not a regression. No build renders these in color: the text stack has only ever read the older color-glyph table format (COLR v0), and every current color emoji font ships the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
+	- Other terminals show the same fonts in color because their text rasterizer reads COLRv1.
+	- Fix: color glyphs are now painted directly - the paint graph is walked and rendered through a small 2D back end (transforms, clip and layer stacks, solid/linear/radial/sweep fills, Porter-Duff and blend compositing), then handed to the renderer's color atlas as a per-cell image fitted to the cell box. Chars with no color glyph are untouched and still take the monochrome fallback path.
 	- `color_emoji` (default true) turns it off, which restores the monochrome outlines.
 
 - ✅ Wallpaper scan accepts formats that can't be loaded:
@@ -603,7 +579,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Third cause (the one that survived the first two fixes): with transparency off, the 1px divider gap was still see-through - the frame cleared fully transparent whenever the see-through-capable backend was in use, regardless of the setting, and only the wallpaper's low opacity landed on the gap pixels. The window always has an alpha channel on X11, so the compositor blended the desktop through the divider slits: whatever was behind the window showed as bright speckles along the split lines. Never visible on any test rig that reads the frame directly, since blending with the desktop only happens on a live compositor. The clear is now opaque unless transparency is actually enabled; with it on, the gap still shows the desktop as intended.
 
 - ✅ Crash: a screen filled with distinct emoji aborts the terminal.
-	- Colour glyph images are cached per glyph and pixel size, and that cache emptied itself completely whenever it filled up. A screenful of emoji is far more distinct glyphs than it held, so the moment it filled part-way through drawing a frame it threw away images that frame was still using, and the renderer stops dead when an image it was promised goes missing.
+	- color glyph images are cached per glyph and pixel size, and that cache emptied itself completely whenever it filled up. A screenful of emoji is far more distinct glyphs than it held, so the moment it filled part-way through drawing a frame it threw away images that frame was still using, and the renderer stops dead when an image it was promised goes missing.
 	- Only reachable with a lot of *different* emoji on screen at once. Repeating the same few never fills the cache, which is why ordinary use never ran into it.
 	- Fixed: the cache now only discards images that no recent frame has touched, and holds far more before it tries. If everything in it is still in use it simply grows, which is bounded by what fits on screen.
 
@@ -843,7 +819,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Pending: a feel-test - nano and muffer wheel one notch should ease, not snap, the title bar should stay put, and less should be unchanged. Still gated by `smooth_scroll_apps`.
 	- ✋ Residual band jitter during a slide (nano; "almost perfect" otherwise). Two symptoms, different causes:
 		- Text moving up (content scrolls up): the drop-shadow under the inverse-video header title jumps down.
-			- Note: a partial fix stopped the glow from applying over any cell with its own solid background (reverse video, coloured background, selection), since those already have full contrast. This removed the header's static halo but did not fix the reported symptom, which is a motion artifact.
+			- Note: a partial fix stopped the glow from applying over any cell with its own solid background (reverse video, colored background, selection), since those already have full contrast. This removed the header's static halo but did not fix the reported symptom, which is a motion artifact.
 			- Cause: the retained-frame slide fills the revealed strip with the previous frame's text but does not glow that strip. During a down-slide the rows just below the header lose their readability backing, and as the slide settles the backed and unbacked boundary marches down - that is the shadow jumping down.
 			- Fixed: the glow pass now also glows the previous-frame strip, so revealed rows keep their readability backing and the boundary no longer sweeps. Guarded so it only applies when the relevant static band is detected, which clips the previous frame's header and status out of the glow.
 			- Verified: the header stays clean and the strip is glowed, with no blobbing in the edge case. Needs a feel-test on real nano to confirm the wheel and cursor feel.
@@ -855,7 +831,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- ✅ Re-enabled the slide for title-bar apps, replacing the retained-frame fill with a scrolled-off strip. (20260707)
 			- Cause of the residual: filling the reveal from one retained frame is structural bounce. The fill could trail the ease by a few lines - a bare, un-glowed band whose height varied step to step, the pulsing shadow under the title over a background image - and the fill repositioned at every re-capture.
 			- Fixed: each frame the styled rows are snapshotted, and the rows a detected step pushes out of the region are kept in a small strip, drawn welded to the content edge and riding the same eased offset. The gap is always exactly filled, nothing repositions, and the strip carries its own cell backgrounds and glow. Band bleed is impossible by construction (only region rows are ever captured), so the old glow guards went away.
-			- Fixed alongside: sliding rows' background rects and the cursor now clamp to the scroll region, so an inverse-video or coloured row can't poke into the title/status bands mid-slide.
+			- Fixed alongside: sliding rows' background rects and the cursor now clamp to the scroll region, so an inverse-video or colored row can't poke into the title/status bands mid-slide.
 			- Verified: headless scroll harness - all four scenes (less, vim, nano, muffer) slide monotone with zero bounces and correct bands; 112 library tests including strip ordering, trimming, direction flip, and row selection.
 			- Feel-test passed after the #t78br band-ghost fix; merged to main. (20260708)
 
@@ -1346,6 +1322,33 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
+- ✅ New default text and cursor colours. (20260804)
+	- Foreground is #88eecc, a slightly greener mint than the cyan it replaces.
+	- Cursor is #cc88ee, a soft violet. It is the same three channel values as the foreground in a different order, which makes the two an exact colour triad - equal saturation, equal brightness, a third of the wheel apart. That is as far from the text as a colour can sit without landing on the pink-red side, and it reads softer than the pink it replaces rather than louder.
+	- The two commented lines in the config file that name these colours had never tracked the theme - they carried a grey and a steel blue from before themes existed. They now show the real defaults, and an existing file is brought forward.
+	- Verified on screen: text renders at exactly the new colour and the cursor block is violet. On disk: a fresh file writes both, a file still holding the old lines is brought forward, and a value written or annotated there is left as it stands.
+
+- ✅ Scrim strength ships at 20 rather than 30. (20260804)
+	- One doubling of the halo's opacity instead of one and a half - a lighter backing, still clearly there.
+	- Reaches an existing config file only where its line is still the shipped commented one, and a file carrying either of the two earlier values lands on this one.
+	- Verified on disk: a fresh file writes 20, a file still holding the old shipped line is brought forward, and a value written or annotated there is left as it stands.
+
+- ✅ Scrim strength: moved to the top of the group, given half the range, and turned on by default. (20260804)
+	- "Strength" now sits directly under the Text scrim switch, above Radius and Softness - it is the first thing to reach for once the scrim is on.
+	- The scale is halved: the top of the slider is what 50 used to be, so each 20% is a doubling and 100% is five of them. The extreme end was never usable, and the whole slider is now spent on the part that is.
+	- Default 30, which on the new scale is exactly what 15 was on the old one - a visible backing hugging each glyph rather than a halo that has to be found and switched on. Superseded by the entry above: it ships at 20 now.
+	- Default falloff curve is now Exponential, replacing Half-normal.
+	- Both changed defaults reach an existing config file only where its line is still the shipped commented one; a value written or edited there is left alone. A file that has been through both curve changes lands on the current one either way.
+	- Verified: over the same wallpaper, the same lines of text darken step by step at 0, 30 and 100, and at the top of the slider the backing is a solid band around each line that still stops at the radius, with the background showing between lines - what 50 used to do, not what 100 used to. The dialog shows the row in its new place reading 30, and the falloff reading Exponential.
+
+- ✅ Scrim functions: two falloff curves renamed, and a "Strength" adjustment added. (20260804)
+	- The falloff curves "S-curve" and "Gaussian" are now "Sigmoid" and "Half-normal", named for the curve each draws. The old names are still accepted in the config file, so an existing one keeps the curve it asked for.
+	- New "Strength", below Radius and Softness: how much bolder to make the finished halo, as a percent. Each 10% doubles its opacity, so 100% is ten doublings; 0 leaves the halo exactly as built, which is the default and matches how it has always looked.
+		- Superseded by the entry above: the row moved to the top of the group, each 20% is now a doubling, and it ships at 30 rather than 0.
+	- Because the doubled value is capped, the halo's dense middle fills in first and the solid part spreads outward, so a faint halo thickens into a plate that still stops where the radius says it does.
+	- The half-normal curve was left standing at about 1% of its opacity at the outer edge, where the other four reach zero. Invisible on its own, but Strength multiplied it into a wash over the whole pane, so it is now brought to zero like the rest - a change of less than one shade of 255 at any strength setting.
+	- Verified: at 0, 40% and 100% the backing behind the same two lines of text goes from barely there to a dark backing hugging each glyph to a solid plate, and never spreads past its radius. The dialog shows the new row and both new curve names, and a config still spelling a curve the old way opens on that curve.
+
 - ✅ Reopening Settings within a minute of closing it resumes where you were.
 	- Done (20260804). Closing Settings remembers the tab and scroll position it was left on; reopening within a minute lands back there. After that it opens at the top of the first tab as before.
 	- Applies to every way of closing it - Cancel, OK, Esc, and the window's own close button.
@@ -1468,7 +1471,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Fades out while the view sits idle at the bottom and comes back on a scroll, or when the pointer nears it. It also stays up the whole time the view is parked up in the scrollback, where knowing the position is the point. Always-visible is a setting.
 	- Drag the handle to scroll, or click the track above or below it to page that way. A dragged handle follows the pointer exactly while the text eases in behind it, so the grab never drifts.
 	- Full-screen apps (less, vim) keep no scrollback of their own, so they get no scrollbar - one pinned full-height could only report a fiction.
-	- Settings carries the on/off switch, the width, and the hide-when-idle switch; the handle and track colours are there too, defaulting to a neutral grey in every theme the way the rest of the chrome does. The dependent rows stay listed but grey out while the scrollbar is off.
+	- Settings carries the on/off switch, the width, and the hide-when-idle switch; the handle and track colors are there too, defaulting to a neutral grey in every theme the way the rest of the chrome does. The dependent rows stay listed but grey out while the scrollbar is off.
 	- Verified: the handle sits at the bottom while following output, moves a third of the way up the track after scrolling a third of the way back, and tracks a drag to the pixel. Fading, the full-screen-app case, and the off switch all confirmed against rendered frames.
 
 - ✅ Epic 1n6fydv: Reduce CPU and GPU resource usage
@@ -1479,7 +1482,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- ✅ 1.1 Skip the text prepare passes when the text hasn't changed. The renderer keeps its prepared buffers, so a frame with identical text can go straight to drawing. Worth over half the per-frame cost, and it helps every frame, not just idle ones.
 			- Done: a per-frame signature over everything that feeds the prepared text. When it repeats, both prepares and the atlas trim are skipped. Anything the signature misses costs an extra prepare, never a stale frame.
 		- ✅ 1.2 Cache the scrim halo. With the cursor left out of the scrim (the default), the halo depends only on the text - so a cursor-only frame can reuse it and skip the coverage and blur passes entirely. That is most of the GPU cost.
-			- Done: same signature gates the colour map, the text-coverage pass and the blur. The cursor keeps its own coverage pass, so the outline still tracks it. Scrim's share of idle cost fell from 14.7 points to 1.3.
+			- Done: same signature gates the color map, the text-coverage pass and the blur. The cursor keeps its own coverage pass, so the outline still tracks it. Scrim's share of idle cost fell from 14.7 points to 1.3.
 		- ✅ 1.3 Together those give a real cursor-only frame: one rectangle, one small coverage pass, one composite, one main pass. Should take idle down to low single digits.
 			- Done: idle went from 26.4% of a core to 14.5% at the same frame rate, and most of what remains is the test rig's own frame readback rather than anything the program does. Verified pixel-identical against the previous build across a static screen, a post-idle content update, and split panes with two tabs.
 	- Tier 2 - need fewer frames.
@@ -1495,7 +1498,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- The remaining half of the original idea - using damage to skip even reading unchanged rows - was measured and dropped: the whole grid read is under 2% of a frame, well below the risk of getting damage bookkeeping wrong.
 		- ✋ 3.2 Batch fallback glyphs. Each one is drawn as its own text area today, so an emoji or CJK heavy screen means hundreds of them.
 			- Measured before building it, and the premise doesn't hold: a screen filled entirely with fallback symbols is *cheaper* than ordinary text (10.9% of a core vs 24.7%), because each one leaves a blank placeholder that costs nothing to lay out. Assembling their text areas is 1.6% of a frame at that extreme.
-			- Batching them would mean rasterizing the glyphs ourselves and placing them as images, which is exactly the code that took several rounds to get right for size, centring and colour. Not worth 1.6%. Reopen if a real workload ever says otherwise.
+			- Batching them would mean rasterizing the glyphs ourselves and placing them as images, which is exactly the code that took several rounds to get right for size, centring and color. Not worth 1.6%. Reopen if a real workload ever says otherwise.
 	- Tier 4 - the pane froze under heavy output. Found while checking whether the lock contention above was worth acting on.
 		- ✅ 4.1 A pane could stop redrawing for seconds during a flood of output. Not a speed problem - the frames were being drawn, they just kept showing the same stale picture.
 			- Cause: to avoid stalling the display we only ever *tried* for the terminal and gave up immediately if the reader had it. But the reader holds it across a whole read cycle and grabs it again the instant it lets go, so that polite try could lose forever. Measured on a large `cat`: 98% of frames showed a stale picture, the worst run lasting 2.1 seconds.
@@ -1536,7 +1539,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - ✅ Terminal throughput benchmark, for comparing against other terminals and against earlier builds.
 	- `utility/update-showdown.py`. Runs on any terminal on any OS, and needs only Python 3.
-	- Feeds repeatable, byte-identical streams of one character width at a time - plain ASCII, then 2-, 3- and 4-byte characters, then a mix of all four with colour and attribute changes - so two terminals are always compared on exactly the same work.
+	- Feeds repeatable, byte-identical streams of one character width at a time - plain ASCII, then 2-, 3- and 4-byte characters, then a mix of all four with color and attribute changes - so two terminals are always compared on exactly the same work.
 	- Each run is timed to a reply the terminal can only send once it has genuinely consumed the stream. Timing a plain write instead would measure the pipe rather than the terminal, and a terminal that reads greedily would look infinitely fast.
 	- ASCII is measured four times as often as the wide classes and 2-byte twice, so the overall score leans the way real output does. The score counts cells per second rather than bytes, because bytes flatter whichever class is widest - 2-byte text measured faster than ASCII per byte while being slower per character.
 	- Averages many runs per class and reports the spread, so a result carries its own confidence.
@@ -1558,7 +1561,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Its parser is forgiving, so a malformed line now costs only its own setting instead of sinking the file. That removed the hand-rolled retry loop and the bare-decimal float rewrite: `.1` is simply valid, and is stored back exactly as written.
 		- No migration path: existing `config.toml` files are not read. A fresh `config.shcl` is written with defaults, so any customised settings need re-entering once.
 		- Saving keeps comments and blank-line grouping. It may tidy layout - indentation, and quotes it does not need - but never rewrites a value.
-		- Colours have to be quoted now (`colors.foreground: "#88fff0"`), since `#` starts a comment.
+		- colors have to be quoted now (`colors.foreground: "#88fff0"`), since `#` starts a comment.
 	- ✅ Convert already implicitly hierarchical config names, to actual nested hierarchical.
 		- Done as part of the nesting item above.
 	- ✅ Each setting gets it's own newline-delimited (above and below) section, with helpful comments directly above the setting without newlines.
@@ -1622,7 +1625,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - ✅ Performance pass: smaller binary, less per-frame work.
 	- ✅ Release opt-level 3 -> "s": measured speed parity on ingest throughput and slightly lower CPU under sustained output, at 22% smaller (13.65 -> 10.68 MB). "z" was also measured and rejected - it halves throughput. The numbers live in the root Cargo.toml comment.
-	- ✅ sRGB-to-linear is now a 256-entry table (was three powf calls per coloured cell per rebuilt frame).
+	- ✅ sRGB-to-linear is now a 256-entry table (was three powf calls per colored cell per rebuilt frame).
 	- ✅ Frames with unchanged text skip the whole text-area build (it used to be built and then thrown away); an open context menu no longer re-shapes its labels on every blink frame; resolution uniforms re-upload only on resize; the cursor-coverage pass is skipped when neither cursor scrim nor outline samples it.
 	- ✅ Allocation churn: per-row strings and each pane's bg-quad list are recycled across frames instead of reallocated and copied out; the scrim's de-bold pass no longer clones every row's text; the scrolled-off strip moves rows out of the retired snapshot instead of cloning them.
 	- ✅ Fewer lock and syscall round trips per frame: attribute runs, scroll easing, and text areas read one settings snapshot each; the tab-title probe (two syscalls per tab per frame, even idle) polls at 4 Hz instead.
@@ -1818,7 +1821,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
 	- Done: three config keys - `background_folder` (a folder, absolute or relative to the config dir; overrides `background_image` while set), `background_rotate_random` (filename order vs. random, never repeating the current image), and `background_rotate_interval_s` (seconds between swaps; 0 = pick one at startup only). Images are the formats the loader already decodes (png/jpg/webp/bmp/gif/tiff). Live swap reuses the existing wallpaper path, so it re-blurs and applies without a relaunch; a missing/empty folder just leaves the feature off.
 	- Correction: the loader never decoded webp/bmp/gif/tiff - only png and jpeg. The wider list was the bug fixed above; the scan now matches what actually loads.
-	- Verified: cycled a folder of three solid-colour images on a 2s timer and confirmed the background changed in order.
+	- Verified: cycled a folder of three solid-color images on a 2s timer and confirmed the background changed in order.
 
 - ✅ Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
 	- Done: full selection model in every editable field (text / hex color / numeric), cross-platform. Mouse: click places the caret, drag selects, Shift+click extends, double-click selects the word, triple-click selects all. Keyboard: Shift+arrows/Home/End extend, Ctrl+Left/Right jump by words, Ctrl+A select all, Ctrl+C/X/V copy/cut/paste (also Ctrl+Insert / Shift+Insert / Shift+Delete), Ctrl+Backspace/Delete delete by word. Typing or pasting replaces the selection; paste runs through each field's own validation (hex digits only in color fields, digits/single dot in numeric). Opening a field via keyboard selects its whole value so typing replaces it; the selection draws highlighted behind the text.
@@ -1992,7 +1995,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- Done: a per-pane toggle. When on, the focused pane's output copies to the clipboard as each command finishes.
 	- Note: only the focused pane of the focused window ever copies, so a background window can't leak output.
-	- Note: the text is plain printable Unicode, with colour and control codes removed. A command with no output leaves the clipboard alone.
+	- Note: the text is plain printable Unicode, with color and control codes removed. A command with no output leaves the clipboard alone.
 	- Done: an always-visible "Copy output" checkbox on the menu bar, plus a toggle in the right-click and Edit menus.
 	- Verified: instant, slow and multi-line commands all captured. The checkbox reflects and toggles the state.
 	- Note: Unix only.
@@ -2041,10 +2044,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - ✅ Menu bar: (issue #t6thx, 20260626-132615)
 	- ✅ Menu and Dialog background and text color user-adjustable, even per-theme. It's just that all themes by default should use the same menu colors.
-		- Done: menu and dialog colours are part of each theme now, sharing the same neutral defaults across all themes.
-		- Done: config keys let you override the menu and dialog colours.
-		- Note: menu hover, border and separator shades follow the menu colour automatically.
-		- Verified: a custom dialog colour recoloured the Settings panel. Unit-tested.
+		- Done: menu and dialog colors are part of each theme now, sharing the same neutral defaults across all themes.
+		- Done: config keys let you override the menu and dialog colors.
+		- Note: menu hover, border and separator shades follow the menu color automatically.
+		- Verified: a custom dialog color recolored the Settings panel. Unit-tested.
 
 - ✅ Window title:
 	- ✅ Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
@@ -2087,7 +2090,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✅ `migrate_config` (runs before backfill on load): renames changed keys (value preserved), removes obsolete ones; `backfill_config` adds missing keys. Together: add/remove/rename + preserve, in-place, comments/layout kept.
 		- Partially verified: a config with cursor_insert_shape/cursor_overwrite_shape/cursor_blink migrated correctly (and this auto-cleans the old invalid `cursor_blink = enable`).
 	- ✅ Literal reordering to match template order (20260702, branch cfgorder). `reorder_config` (runs on load after migrate + backfill) rewrites an existing config into the template's canonical section order, preserving each setting's value + enabled/commented state while refreshing the section headers and explanatory comments from the current template. Keys the template no longer defines, and any user-added tables (`[themes.*]`), are carried through verbatim so nothing is lost. Pure + idempotent (`reorder_config_text`): a canonical file is never rewritten. Verified on a real drifted config (values incl. remembered_columns=187 preserved, re-parses as valid TOML) + 8 unit tests (order, value/state, unknown table + key, backfill-via-template, idempotency, full on-disk migrate->backfill->reorder pipeline).
-		- ✅ Grouped the template into logical sections (Font, Window, Background and transparency, Text glow, Cursor, Selection, Shell, Scrolling, Theme and colours) with `##===`-ruled section headers and blank-line spacing.
+		- ✅ Grouped the template into logical sections (Font, Window, Background and transparency, Text glow, Cursor, Selection, Shell, Scrolling, Theme and colors) with `##===`-ruled section headers and blank-line spacing.
 
 - ✅ Settings dialog:
 	- Done: all sub-items complete (last was full keyboard control).
@@ -2105,7 +2108,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Done: a second section on the same tab gets an extra gap above its heading.
 	- ✅ Every setting in Settings dialog should have a clickable icon to "Revert to default". This icon (an emoji) should also indicate if the setting is default, and only be clickable if it's not. (20260626-102000; done 20260702, branch dlgrevert)
 		- In the config file, if user clicks "Revert to default" in settings, set the value to default and comment it out.
-		- Done: every control row has a right-edge revert glyph. It's accent-coloured and clickable when the value is off-default, dim and inert at default. Clicking it restores the default in the dialog, and colours revert to the active theme's value. On Apply, reverted keys are dropped from config and backfill restores the template's default line - commented for normal keys, active-at-default for the few template-active ones, so it looks like a fresh config.
+		- Done: every control row has a right-edge revert glyph. It's accent-colored and clickable when the value is off-default, dim and inert at default. Clicking it restores the default in the dialog, and colors revert to the active theme's value. On Apply, reverted keys are dropped from config and backfill restores the template's default line - commented for normal keys, active-at-default for the few template-active ones, so it looks like a fresh config.
 		- Note: reverting Font size does not clear "Use system font" (unit-tested).
 		- Verified: end-to-end.
 	- ✅ "Use system font" boolean should be visible checked, if using it.
@@ -2138,12 +2141,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ Outer glow enhancements:
 	- Verified: all four, each showing its expected effect over a bright background.
 	- ✅ When outer glow is applied, also add an antialiased (user-definable) 1px outer border around the letters, using the same color rules as outer glow.
-		- Done: the composite also dilates the crisp coverage by text_glow_border px (antialiased), unioned with the halo and coloured by the same per-cell bg map. Config text_glow_border (default 1.0, 0 = off) plus a Glow border slider.
+		- Done: the composite also dilates the crisp coverage by text_glow_border px (antialiased), unioned with the halo and colored by the same per-cell bg map. Config text_glow_border (default 1.0, 0 = off) plus a Glow border slider.
 	- ✅ For bold text, calculate the blur for the outer glow, based on all non-bold text. (But still render the visible text on top in whatever weight it was meant to.
 		- Done: the glow source has its own renderer. A pane containing bold shapes a parallel bold-stripped buffer and feeds that to the glow, while crisp text keeps its weight. Costs a second shape only on frames with bold. Config text_glow_regular_weight, default on.
 		- Verified: turning it off changes only the area around bold runs.
 	- ✅ Cursor should have blur if possible (investigate - this may not be possible, especially with the phasing).
-		- Done: possible and done (see the cursor-glow item above). Phasing works because the animation alpha rides the quad colour, which blurs like glyph coverage.
+		- Done: possible and done (see the cursor-glow item above). Phasing works because the animation alpha rides the quad color, which blurs like glyph coverage.
 	- ✅ Provide options for different blur fadeoff ramps. E.g. default gaussian, linear, or "S"-shaped.
 		- Done: the blur falloff is selectable - text_glow_ramp of gaussian (default), linear, or s. A Glow falloff radio in Settings.
 
@@ -2306,7 +2309,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- Verified: the gradient is visibly smooth.
 
 - ✅ Text readability glow:
-	- ✅ When enabled, this setting adds some blurry background color, behind each glyph. In Photoshop, it's called "Outer Glow". - Done via `src/glow.rs` (`Glow`): the scene's text is rendered to a texture, blurred with a 2-pass separable Gaussian (`text_glow_radius` sigma), then composited (tinted the bg colour, `srgb_f32(bg)`) under the crisp text. Ping-pong f16 textures; intensity boost (`GLOW_INTENSITY=6`) so the blurred coverage is solid near glyphs. Gated `config.text_glow` (default off -> render path unchanged). Verified: light text on a light background is unreadable without it, clearly readable with it (dark halo). Implements exactly the suggested approach (render-bg-colour -> blur -> crisp on top), using the glyph alpha as the glow mask so no separate glow-coloured buffers are needed.
+	- ✅ When enabled, this setting adds some blurry background color, behind each glyph. In Photoshop, it's called "Outer Glow". - Done via `src/glow.rs` (`Glow`): the scene's text is rendered to a texture, blurred with a 2-pass separable Gaussian (`text_glow_radius` sigma), then composited (tinted the bg color, `srgb_f32(bg)`) under the crisp text. Ping-pong f16 textures; intensity boost (`GLOW_INTENSITY=6`) so the blurred coverage is solid near glyphs. Gated `config.text_glow` (default off -> render path unchanged). Verified: light text on a light background is unreadable without it, clearly readable with it (dark halo). Implements exactly the suggested approach (render-bg-color -> blur -> crisp on top), using the glyph alpha as the glow mask so no separate glow-colored buffers are needed.
 	- One possible way to do this - and there may be other, better ways:
 		- Render the text exactly as normal, except in the background color. (As if background were 100% opaque.) On a fully transparent temporary canvas (at least conceptually - not necessarily literally).
 		- Blur that rendered text with a gaussian blur, according to the specified blur radius in settings.
@@ -2320,7 +2323,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- "Text glow" toggle + "Glow radius" slider in Settings -> Appearance; the radius is greyed out/inert when the toggle is off (same `disabled()` mechanism as the Opacity slider). Verified in the dialog. (Editable numeric field is part of the deferred dialog-part-2 work.)
 		- ✅ Softness/intensity control. Maybe "Softness" as the name. - New `text_glow_softness` (0..1, default 0.4) + a "Softness" slider in Settings (greyed when Text glow is off). Maps to the glow's coverage boost: 0 = hard/solid/strong halo (x10), 1 = soft/faint (x1). Verified: softness 0.1 = bold dark halo, 0.9 = gentle faint glow. (If the high=softer direction reads backwards, it's a one-line flip.)
 	- ✅ Visual bug: When background glow is applied to characters that have a per-character(s)-box different background, and the foreground color is similar to the global background for that character(s), then the character is a blurry mess. (E.g. the global background is dark, but some characters are rendered one-off with dark text and light background, then it's not readable.)
-		- ✅ The solution is, if a character has a different background color than global, use that one-off background color as the glow color for that character. - Done: the glow is now coloured by a per-pixel "bgcolor" texture (cleared to the global bg, with the per-cell bg rects drawn over it) instead of a single global tint; the composite multiplies the blurred glyph coverage by that local colour. So a glyph on a colored cell gets a halo matching its own cell bg (harmless), while global-bg cells keep their readability halo. Verified: dark text on a light cell over a dark global bg renders clean (no dark blur), global-bg text keeps its glow.
+		- ✅ The solution is, if a character has a different background color than global, use that one-off background color as the glow color for that character. - Done: the glow is now colored by a per-pixel "bgcolor" texture (cleared to the global bg, with the per-cell bg rects drawn over it) instead of a single global tint; the composite multiplies the blurred glyph coverage by that local color. So a glyph on a colored cell gets a halo matching its own cell bg (harmless), while global-bg cells keep their readability halo. Verified: dark text on a light cell over a dark global bg renders clean (no dark blur), global-bg text keeps its glow.
 
 - ✅ Config file: When reading a value from the config file, if the entry doesn't exist, insert the setting into the file using hard-coded defaults, in an approprite section. (While not overwriting other existing values, comments, space formatting, etc.) Make this a reusable feature.
 	- Status: Done. `config::backfill_config` (run in `load` after the file exists) inserts any setting the `DEFAULT_CONFIG` template defines that the user's file lacks, using the template's own line - so follow-system keys (font_size, font_family, background_*) stay commented (behavior unchanged) and active keys get their default value. Top-level keys go before the first table; `[colors]` keys under that header. Existing values/comments/formatting are preserved (insert-only). Reusable helpers: `setting_lines`/`line_table`/`line_setting_key`.
@@ -2605,7 +2608,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - Setting dialog (part 2):
 	- 🚫 Adopt a cross-platform GUI / windowing widget toolkit (e.g. egui) for Settings, About, the main menu, and the context menu instead of hand-rolling them.
 		- **No**. Results of spike (branch `spike/egui-dialog`): The upside is that egui 0.35 rides our exact wgpu 29 + winit 0.30 (no downgrade, shares our graphics stack) and integrated easily.
-		- Drawbacks to egui: it adds ~32% to the release binary for what is secondary chrome, against the minimal-binary-size priority. Hand-rolling also keeps one unified colour/theme + native-OS-font system across the terminal and the chrome. egui would need a separate egui-`Visuals` theme kept in sync, plus its own bundled fonts).
+		- Drawbacks to egui: it adds ~32% to the release binary for what is secondary chrome, against the minimal-binary-size priority. Hand-rolling also keeps one unified color/theme + native-OS-font system across the terminal and the chrome. egui would need a separate egui-`Visuals` theme kept in sync, plus its own bundled fonts).
 		- Decision: Chrome stays hand-rolled.
 
 - 🚫 Allow toggling from default "Insert" mode, to "Overwrite". (20260629)
