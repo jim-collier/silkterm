@@ -55,9 +55,19 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### New features and enhancements
 
+- ✅ Scrim strength: moved to the top of the group, given half the range, and turned on by default. (20260804)
+	- "Strength" now sits directly under the Text scrim switch, above Radius and Softness - it is the first thing to reach for once the scrim is on.
+	- The scale is halved: the top of the slider is what 50 used to be, so each 20% is a doubling and 100% is five of them. The extreme end was never usable, and the whole slider is now spent on the part that is.
+	- Default 30, which on the new scale is exactly what 15 was on the old one - a visible backing hugging each glyph rather than a halo that has to be found and switched on.
+	- Default falloff curve is now Exponential, replacing Half-normal.
+	- Both changed defaults reach an existing config file only where its line is still the shipped commented one; a value written or edited there is left alone. A file that has been through both curve changes lands on the current one either way.
+	- Verified: over the same wallpaper, the same lines of text darken step by step at 0, 30 and 100, and at the top of the slider the backing is a solid band around each line that still stops at the radius, with the background showing between lines - what 50 used to do, not what 100 used to. The dialog shows the row in its new place reading 30, and the falloff reading Exponential.
+	- 🔘 UAT
+
 - ✅ Scrim functions: two falloff curves renamed, and a "Strength" adjustment added. (20260804)
 	- The falloff curves "S-curve" and "Gaussian" are now "Sigmoid" and "Half-normal", named for the curve each draws. The old names are still accepted in the config file, so an existing one keeps the curve it asked for.
 	- New "Strength", below Radius and Softness: how much bolder to make the finished halo, as a percent. Each 10% doubles its opacity, so 100% is ten doublings; 0 leaves the halo exactly as built, which is the default and matches how it has always looked.
+		- Superseded by the entry above: the row moved to the top of the group, each 20% is now a doubling, and it ships at 30 rather than 0.
 	- Because the doubled value is capped, the halo's dense middle fills in first and the solid part spreads outward, so a faint halo thickens into a plate that still stops where the radius says it does.
 	- The half-normal curve was left standing at about 1% of its opacity at the outer edge, where the other four reach zero. Invisible on its own, but Strength multiplied it into a wash over the whole pane, so it is now brought to zero like the rest - a change of less than one shade of 255 at any strength setting.
 	- Verified: at 0, 40% and 100% the backing behind the same two lines of text goes from barely there to a dark backing hugging each glyph to a solid plate, and never spreads past its radius. The dialog shows the new row and both new curve names, and a config still spelling a curve the old way opens on that curve.

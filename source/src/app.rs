@@ -2611,8 +2611,9 @@ impl State {
 			"exp" => 4.0,
 			_ => 0.0, // "sigmoid"
 		};
-		// "Strength" 0..100% -> doublings of the finished halo alpha (0 = as built)
-		let scrim_strength = cfg.text_scrim_strength.clamp(0.0, 100.0) / 10.0;
+		// "Strength" 0..100% -> doublings of the finished halo alpha (0 = as built),
+		// each 20% one doubling, so the top of the slider is x32
+		let scrim_strength = cfg.text_scrim_strength.clamp(0.0, 100.0) / 20.0;
 		// build function index: 0 dilate, 1 sdf, 2 dt, 3 gaussian (legacy blur)
 		let scrim_function = match cfg.text_scrim_function.as_str() {
 			"dilate" => 0.0,

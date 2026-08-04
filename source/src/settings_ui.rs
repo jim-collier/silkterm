@@ -607,6 +607,16 @@ fn fields() -> Vec<Spec> {
 			key: TextScrim,
 			kind: Toggle,
 		},
+		// percent, where each 20% is one doubling of the finished halo's opacity
+		Spec {
+			label: "Strength",
+			key: ScrimStrength,
+			kind: Slider {
+				min: 0.0,
+				max: 100.0,
+				int: true,
+			},
+		},
 		Spec {
 			label: "Scrim radius",
 			key: ScrimRadius,
@@ -623,16 +633,6 @@ fn fields() -> Vec<Spec> {
 				min: 0.0,
 				max: 1.0,
 				int: false,
-			},
-		},
-		// percent, where each 10% is one doubling of the finished halo's opacity
-		Spec {
-			label: "Strength",
-			key: ScrimStrength,
-			kind: Slider {
-				min: 0.0,
-				max: 100.0,
-				int: true,
 			},
 		},
 		Spec {
