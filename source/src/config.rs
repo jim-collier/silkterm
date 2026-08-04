@@ -512,37 +512,28 @@ fn fence_run(line: &str) -> Option<(char, usize)> {
 
 // Serialize a document back to disk text.
 //
-// `to_canonical` keeps comments and never rewrites a scalar, but it re-lays-out
-// the document: blank lines between comment-only regions are dropped, and a
-// comment run that trails the last child of a block re-attaches to the NEXT
-// node and takes that node's indentation. Both would wreck a config whose
-// settings are mostly commented-out defaults. Canonical does preserve line
-// ORDER, so both are repaired positionally against `before`: every line that
-// had a blank above it gets one back, and a comment line is re-emitted exactly
-// as the user last had it (indentation included).
+// `to_canonical` keeps comments, blank-line grouping and line order, and never
+// rewrites a scalar. The one thing it still re-lays-out is INDENTATION of a
+// comment run with no active sibling to anchor it: under a block header whose
+// children are all commented-out defaults (most of this template), the run
+// comes back at the header's own depth instead of the children's. Canonical
+// preserves order, so that is repaired positionally against `before` - a
+// comment line is re-emitted exactly as the user last had it.
 fn to_text(doc: &shcl::Document, before: &str) -> String {
-	// (identity, verbatim line, blank above) for every non-blank line of `before`.
+	// (identity, verbatim line) for every non-blank line of `before`.
 	let before_lines: Vec<&str> = before.lines().collect();
-	let mut prior: Vec<(String, &str, bool)> = Vec::new();
-	let mut blank_above = false;
+	let mut prior: Vec<(String, &str)> = Vec::new();
 	for w in walk_settings(before) {
 		match w {
-			WalkLine::Blank => blank_above = true,
+			WalkLine::Blank => {}
 			WalkLine::Fence(i) | WalkLine::Other(i) => {
-				prior.push((
-					line_identity_at(before_lines[i], None),
-					before_lines[i],
-					blank_above,
-				));
-				blank_above = false;
+				prior.push((line_identity_at(before_lines[i], None), before_lines[i]));
 			}
 			WalkLine::Setting { index, path, .. } => {
 				prior.push((
 					line_identity_at(before_lines[index], Some(&path)),
 					before_lines[index],
-					blank_above,
 				));
-				blank_above = false;
 			}
 		}
 	}
@@ -551,25 +542,24 @@ fn to_text(doc: &shcl::Document, before: &str) -> String {
 	let canon_lines: Vec<&str> = canonical.lines().collect();
 	let mut out = String::new();
 	let mut at = 0; // how far through `prior` we've matched
-	let mut prev_blank = true; // suppress a leading blank at the top of the file
 	for w in walk_settings(&canonical) {
 		let (index, id, comment) = match w {
-			// canonical's own blank placement is a relayout artifact; the
-			// prior file's blanks are restored below instead
-			WalkLine::Blank => continue,
+			WalkLine::Blank => {
+				out.push('\n');
+				continue;
+			}
 			// raw-fence content is verbatim by definition - emit as-is (blank
 			// content lines included), consuming its prior twin positionally
 			WalkLine::Fence(i) => {
 				let line = canon_lines[i];
 				if let Some(offset) = prior[at..]
 					.iter()
-					.position(|(pid, _, _)| *pid == line.trim_start())
+					.position(|(pid, _)| *pid == line.trim_start())
 				{
 					at += offset + 1;
 				}
 				out.push_str(line);
 				out.push('\n');
-				prev_blank = false;
 				continue;
 			}
 			WalkLine::Other(i) => {
@@ -591,21 +581,16 @@ fn to_text(doc: &shcl::Document, before: &str) -> String {
 			}
 		};
 		let mut emit: &str = canon_lines[index];
-		if let Some(offset) = prior[at..].iter().position(|(pid, _, _)| *pid == id) {
-			let (_, verbatim, had_blank) = prior[at + offset];
-			if had_blank && !prev_blank {
-				out.push('\n');
-			}
-			// a comment's indentation is the user's own; canonical re-pads it
-			// to whatever node it re-attached to, so put theirs back
+		if let Some(offset) = prior[at..].iter().position(|(pid, _)| *pid == id) {
+			// a comment's indentation is the user's own; canonical re-pads an
+			// unanchored run to its parent's depth, so put theirs back
 			if comment {
-				emit = verbatim;
+				emit = prior[at + offset].1;
 			}
 			at += offset + 1;
 		}
 		out.push_str(emit);
 		out.push('\n');
-		prev_blank = false;
 	}
 	out
 }
@@ -1045,8 +1030,14 @@ impl Reader<'_> {
 		match got {
 			Ok(v) => Some(v),
 			Err(shcl::Status::BadType) => {
+				// cite the line so the user can find it; 0 means the path did
+				// not resolve to one binding, and then there is nothing to cite
+				let at = match self.doc.line(key) {
+					0 => String::new(),
+					n => format!(" line {n}"),
+				};
 				eprintln!(
-					"{APP_NAME}: {}: ignoring invalid value for `{key}`",
+					"{APP_NAME}: {}{at}: ignoring invalid value for `{key}`",
 					self.path.display()
 				);
 				None
@@ -2957,9 +2948,9 @@ mod tests {
 	}
 
 	// The shipped template must already be what a save would produce, or the very
-	// first save would reflow the file we just wrote. Canonical output drops blank
-	// lines between comment-only regions (nearly every line here), so this is the
-	// guard on `to_text` putting that grouping back.
+	// first save would reflow the file we just wrote. Nearly every setting here is
+	// a commented default with no active sibling, so this is the guard on `to_text`
+	// putting their indentation back after canonical re-pads them.
 	#[test]
 	fn default_config_survives_a_save_unchanged() {
 		let doc = shcl::Document::parse(DEFAULT_CONFIG);
