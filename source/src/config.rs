@@ -306,8 +306,8 @@ impl Default for Settings {
 			copy_on_select: false,
 			bg: [0x00, 0x00, 0x00],
 			fg: [0x88, 0xee, 0xcc],
-			cursor: [0xcc, 0x88, 0xee],
-			focus: [0x55, 0x80, 0xc8],
+			cursor: [0xee, 0xcc, 0x88],
+			focus: [0xc8, 0xa0, 0x5a],
 			menu_bg: crate::theme::MENU_BG_DEF,
 			menu_fg: crate::theme::MENU_FG_DEF,
 			dialog_bg: [0x20, 0x20, 0x2a],
@@ -1707,6 +1707,10 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// steel blue from before themes existed, so every config in the wild has them
 	("colors.foreground", "\"#d2d2da\"  ## Default"),
 	("colors.cursor", "\"#7a9ad0\"  ## Default"),
+	// the cursor briefly shipped as the cool third of the same triad
+	("colors.cursor", "\"#cc88ee\"  ## Default"),
+	// the focus ring was a cold blue, picked for the palette before this one
+	("colors.focus", "\"#5580c8\"  ## Default"),
 ];
 
 // The whole pre-nesting flat namespace, old key -> new nested path. Primary
@@ -2820,8 +2824,8 @@ theme_mode: dark
 colors:
 	# background: "#000000"  ## Default
 	# foreground: "#88eecc"  ## Default
-	# cursor: "#cc88ee"  ## Default
-	# focus: "#5580c8"  ## Default
+	# cursor: "#eecc88"  ## Default
+	# focus: "#c8a05a"  ## Default
 	# menu_background: "#36363b"  ## Default
 	# menu_foreground: "#f0f0f2"  ## Default
 	# dialog_background: "#20202a"  ## Default
