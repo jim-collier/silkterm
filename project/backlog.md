@@ -43,12 +43,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ## To-do
 
-- 🛠️ Bug: Editing a line at any point on the prompt, that has one or more emojis in it, results in apparently random left-right shifting of other characters, at apparently random points unrelated to the cursor position. (But probably not really "random".) The actual content that moves doesn't actually change in the buffer, but it looks like it does and makes it visually unreliable and confusing.
-	- Not random: it happened on exactly the rows holding one of a small set of characters. A terminal gives a double-width character two columns. A monospace font is free to carry that same character at its ordinary single-column width, and the default font does so for 53 of them - several common emoji among them, plus fullwidth punctuation. The row was laid out from the font, so one of those characters consumed one column where the grid had allotted two, and everything after it on that row drew a column to the left of where its own background, the cursor and any separately-drawn character still sat. Editing moved such a character around the line, so the misalignment appeared to wander.
-	- Fix: a character now rides the shared row layout only when the font's own width for it agrees with the number of columns the terminal gave it. Anything that disagrees is drawn on its own, fitted to its real box - the same path characters missing from the font already took.
-	- Side effect, and an improvement: those emoji now render in colour rather than as small monochrome outlines, since they reach the colour path for the first time. Single-width symbols (arrows, checkmarks, stars, box drawing) are unaffected and stay monochrome, which is what a terminal wants.
-	- 🔘 UAT
-	- Verified: a trailing marker after such an emoji used to sit exactly one column left of the same marker on an all-text row, and now lines up. A control screen of CJK, box drawing, fullwidth Latin and single-width symbols renders identically to before.
 
 - 🛠️ Terminal throughput benchmark (Windows):
 	- Both halves now run on Windows as well, measured from inside the terminal under test, which is the only way to reach the terminals that exist nowhere else. Each half checks the window is at its own fixed size first and refuses otherwise, since measuring at the wrong one produces a figure that looks fine and belongs in no column.
@@ -61,100 +55,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### New features and enhancements
 
-- ✅ Read external resources in the background so nothing delays the window opening.
-	- Done (20260803). The whole wallpaper pipeline - scanning the rotation folder, reading the shuffle history, decoding the image, blur and contrast mask, reading its layout tags - now runs on a worker thread. The window opens and the shell starts straight away; the wallpaper appears a moment later, which is the accepted trade.
-	- With a wallpaper path that never answers, the previous build never opened a window at all and never started a shell. It now opens normally and reports the unreadable path.
-	- With a 4K wallpaper at the default blur, time from launch to a visible window went from about 2.5 seconds to about 0.3.
-	- Also moved off the startup path: the folder scan that used to run while the config was being read, and the checks on wallpaper paths that may themselves be the slow mount.
-	- Rotation re-scans its folder on each change, so images added or removed are picked up without a relaunch.
-	- Two side effects worth knowing: an empty rotation folder now falls back to the built-in wallpaper instead of leaving the background blank, and a wallpaper file that can't be opened is reported rather than silently ignored.
-	- Reloading settings while rotating used to blank the wallpaper until the next rotation; it now keeps what is on screen.
-	- The config file itself still loads up front - window size, font and theme all come from it, and the window waits to open at its final size.
+- ✅ Reopening Settings within a minute of closing it resumes where you were.
+	- Done (20260804). Closing Settings remembers the tab and scroll position it was left on; reopening within a minute lands back there. After that it opens at the top of the first tab as before.
+	- Applies to every way of closing it - Cancel, OK, Esc, and the window's own close button.
+	- Only the view is remembered. Values still come from the current settings, and edits abandoned with Cancel stay abandoned.
+	- A remembered position is clamped to what the reopened window can actually show, so a font or screen change between the two can't leave it scrolled past the end.
 	- 🔘 UAT
-
-- ✅ Clarified scroll speed functions. (Probably need some refactoring):
-	- Done (20260802). The chase speed now traverses the named segments exactly as described: Ease-in (linear lift from rest, its own duration), Ramp-up (doubling per its period toward whichever top applies, re-entered through a second Ease-in when the single-screen cap lifts), Single-screen speed / unbounded, Ramp-down (a braking curve traced backwards from Ease-out, applied continuously - which is also the at-speed reserve), Ease-out (lands at zero). Of the curve models, went with straight/exponential segments adjusted by time (option 2a); the unbounded ramp accelerates exponentially until it keeps up, as the spec allowed.
-	- "Initial scroll speed" is gone (it fed four mechanisms at once and fought the rest); its config key is removed from existing files. Ease-in is now a duration (`scroll.ease_in_ms`), replacing the old fraction. Wheel/scrollback navigation keeps a fixed internal ease, unchanged feel.
-	- Ramp-down now visibly owns every stop from speed - traced on a 400-line dump: lift to the knee, doubling to ~350 lines/s, then a smooth halving descent into the landing band. Settings shows the five sliders in watch order.
-	- ✅ Slider direction (20260803): Ease-in and Ease-out ran opposite to the other three (higher = slower). Flipped so all five sliders read higher = faster. Stored config values unchanged (milliseconds); Ease-out's default now reads 50 on the dialog scale instead of 51.
-	- ✅ New speed defaults (20260803): the five now default to 50 / 75 / 75 / 75 / 40 in watch order - a much harder ramp-up, roughly double the single-screen top speed, a quicker wind-down, and a gentler landing. Ease-in is unchanged in feel.
-		- An existing config carries these five as its own values, so it keeps the old ones until those lines are edited or the config is reset. Only a new config picks the new defaults up.
-	- 🔘 UAT
-	- General description:
-		- Think of each setting as a specific segment of a graph on an X and Y axis.
-		- The X-axis is time, the Y-axis is scroll speed.
-			- The X-axis may be infinite (or at least unbounded) - say, running `cat /dev/random` then going on vacation.
-			- The Y-axis may be infinite (or at least not strictly bounded) - with the same example as above, spitting out lines as fast as the CPU can run the kernel code.
-		- The beginning and end of the curve necessarily sit at Y=0. Scrolling starts from stillness, and ends at stillness.
-		- The some segment of "curve" may be perfectly flat on the Y axis, and quite finite (i.e. capped at Y=[max single-screen speed]).
-			- Possibly the whole curve, if output fits into a single screen.
-		- We don't care about defining or modelling the overall "curve" - only the named segments within it.
-		- **Each output-scroll-related setting define a completely separate "function" (conceptually if not literally), that have extremely limited and precisely-defined influence over the next**.
-			- With only one few exceptions, the one and only influence each setting has on the next, is that the *end* X/Y point of the previous function, determines exactly where the START point of the next is located. Those exceptions are documented in the "Parameters" section below.
-		- At some point, the middle of the overall "curve" could turn from flat, to quickly ramp up to some nondeterministic, unbounded, virtual Y speed (i.e. when scrolling that was within a single screen, reaches the top of the terminal and must start speeding up to keep up with unlimited output). In that case:
-			- The ease-in function takes over again, starting at that X and Y point. Except in this case, Y won't be 0.
-	- Parameters (all just defined segments of the/a "curve") - each one hands of complete control of scroll speed variability to the next, in this exact order:
-		- "Ease-in":
-			- This first "function" starts at Y=0 the first time, and describes how fast the speed initially jumps.
-		- "Ramp-up"
-			- Starts at exactly whatever X/Y "Ease-in" ended at. Can't be <=0, must be a positive slope.
-			- Typically - but not necessarily - steeper than "ease-in". (But either way, it can't be <=0, so scroll speed WILL increase.)
-			- This is a rare exception where the exact X/Y end point is not within its control. As mentioned earlier, the Y is defined by the next function in the chain, [max speed], which coupd be either [max single-screen speed], or [unbounded].
-					- The X/Y starting point is defined by the previous function, and the Y ending point is defined by the *next* function. So it does not have full control over either 1) it's duration, *or* 2) the length of its own line.
-		- [Max speed]: A flat horizontal line in principle (and exactly horizontal when == [max single-screen scroll speed]).
-			- [Max single-screen scroll speed] adjustment is in effect for as long as the top of the new output hasn't hit the top of the terminal yet.
-			- [Unbounded]: as fast as the output needs to render, to keep up with output.
-		- **Note**: The first two functions may or may not be invoked exactly and only one more time - *if* [max speed] was == [max single-screen scroll speed], *and* output now needs to accelerate to any speed faster than [max single-screen scroll speed]:
-			- Second invocation of "Ease-in":
-				- The second time starts not at Y=0 like the first time, but at Y=[Max single-screen scroll speed]. And again, still describes how fast the speed initially jumps from what it was before.
-			- Second invocation of "Ramp-up":
-				- Exact same formula, definition, constraints, and unique attribute as first invocation: Starts at exactly whatever X/Y the previous "Ease-in" ended at, and ends at the unbounded Y.
-					- How does it know wher "unbounded Y" is? Maybe it guesses a sane value, maybe it can see the rate of incoming data, or maybe it just punts and acellerates exponentially until it's reached.
-		- "Ramp-down":
-			- Once output ceases yet hasn't all rendered (because SilkTerm will hold a reserve buffer of at least 1 screen when running at top speed), the speed function hands off to "Ramp-down".
-			- This starts at the precisely known X and Y handoff point on our time/speed curve.
-			- It's almost the inverse of "Ramp-up", *except*:
-				- Not only does it know it's starting X, it also knows it's exact starting Y.
-				- It can't end arbitrily on its own terms, but its end point *is* deterministic. It has to trace "Ease-out" *backwards* (can be pre-computed and stored in memory whenever "Ease-out" setting changes), to know exactly what Y value to end at and hand-off to "Ease-out".
-				- This adjustment, although not an exact mirror in calculation, "feels" just like the inverse of "Ramp-up".
-		- "Ease-out":
-			- Almost the inverse of 'Ease-in', at least visually - except that:
-				- It's individually adjustable.
-				- It must calculate backwards its starting X point, based on the inrushing known end of buffered content.
-				- It's end point is *always* Y=0, and it's X value can be calculated in real-time ahead of time. From there it can work backwards and tell (or be queried by) "Ramp-down", it's own *exact starting* X and Y ahead of time, so that "Ramp-down" will know it's own ending X/Y.
-				- This adjustment, although not an exact mirror in calculation, "feels" just like the inverse of "Ease-in".
-	- Different potential "curve" models - to choose from. (Or maybe a tunable with three options governing all parameters curve shapes):
-		- Option 1: Smooth curves for all parameters (with their individual "scale" sliders):
-			- One curve type for all adjustments: e.g. Sigmoid, half-normal, exponential, and/or logarithmic curves depending on where in the graph a function sits and how it connects to the previous and next.
-			- The shape definitions per function don't change with adjustment, they just grow or shrink (in proportional size) depending on the scale of each individual setting.
-				- In other words, the curve grows along both the x-axis AND Y-axis. Getting sharper (smaller) or gentler (larger).
-			- Computationally expensive?
-		- Option 2: Each scroll speed parameter is defined by a straight line. This may not be as jarring as it sounds, as these kind of linear + angular graphs work fine in audio and video production, which are all about human perception.
-			- The linear slope of each line is variable based on the height (Y) and time (X).
-			- The end of each adjustable line must touch the beginning of the next - but the transition may be an abrupt angle.
-			- Option 2a: Adjustment is time, length and height auto-adjust.
-			- Option 2b: Adjustment is height, length and time auto-adjust.
-			- Option 2c: Adjustement is length, height and time auto adjust.
-	- Common behavior:
-		- Typical scroll flow can take these routes - which don't/shouldn't need individual code paths, just for illustration:
-			- Scenario 1: <1 screen of text, from the top:
-				- "Instant" output.
-			- Scenario 2: >1 screen of text, from the top:
-				- First screen's worth of output appears "instantly". But once it needs to start scrolling up, then...
-				- Ease-in has full control of speed. Then hands off to the ramp-up function. Then to unbounded speed. At some arbitrary point depenting on output, the ramp-down function takes over, and finally ease-out.
-			- Scenario 3: <1 screen of text, from the bottom (with a screen full of text above):
-				- Ease-in begins with full control of speed from the start.
-				- Then hands off to the ramp-up function.
-				- Then to [maximum single-screen] speed.
-				- At some arbitrary point when output ends, the ramp-down function takes over
-				- Finally the ease-out function.
-			- Scenario 4: >1 screen of text, from the bottom (with a screen full of text above):
-				- Ease-in begins with full control of speed from the start.
-				- Then hands off to the ramp-up function.
-				- Then to unbounded speed.
-				- At some arbitrary point when output ends, the ramp-down function takes over.
-				- Finally the ease-out function.
-			- Other scenarious (e.g. output starts in the middle of the screen) can be inferred from those 4 scenarios.
 
 - 🔘 Scrim functions:
 	- Rename:
@@ -600,6 +506,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 ### Done
 
 #### Done - Bugs
+
+- ✅ Bug: Editing a line at any point on the prompt, that has one or more emojis in it, results in apparently random left-right shifting of other characters, at apparently random points unrelated to the cursor position. (But probably not really "random".) The actual content that moves doesn't actually change in the buffer, but it looks like it does and makes it visually unreliable and confusing.
+	- Not random: it happened on exactly the rows holding one of a small set of characters. A terminal gives a double-width character two columns. A monospace font is free to carry that same character at its ordinary single-column width, and the default font does so for 53 of them - several common emoji among them, plus fullwidth punctuation. The row was laid out from the font, so one of those characters consumed one column where the grid had allotted two, and everything after it on that row drew a column to the left of where its own background, the cursor and any separately-drawn character still sat. Editing moved such a character around the line, so the misalignment appeared to wander.
+	- Fix: a character now rides the shared row layout only when the font's own width for it agrees with the number of columns the terminal gave it. Anything that disagrees is drawn on its own, fitted to its real box - the same path characters missing from the font already took.
+	- Side effect, and an improvement: those emoji now render in colour rather than as small monochrome outlines, since they reach the colour path for the first time. Single-width symbols (arrows, checkmarks, stars, box drawing) are unaffected and stay monochrome, which is what a terminal wants.
+	- ✅ Tested and verified: a trailing marker after such an emoji used to sit exactly one column left of the same marker on an all-text row, and now lines up. A control screen of CJK, box drawing, fullwidth Latin and single-width symbols renders identically to before.
 
 - ✅ A pipeline run aborted at the release stage and reported an application problem, when the compiler had crashed twice in a row. (20260804)
 	- Same fault as the profiler-stage abort further down, which was already covered by a single rebuild. It has now crashed on two consecutive attempts, so the one retry ran out and the run was blamed on the application again.
@@ -1436,30 +1348,107 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
-- ✅ Scrolling Settings: ramp-up and ramp-down each need a slider. (20260802)
-	- The Scrolling tab now reads in the order a burst is actually watched: Ease-in, Initial scroll speed, Ramp-up, Single-screen speed, Ramp-down, Ease-out. Leaves rest, settles at the slow start, accelerates, tops out, relaxes, lands.
-	- Ramp-up is how quickly catch-up accelerates once output runs ahead (the speed doubles every so often); Ramp-down is how quickly it relaxes back to the initial speed once output stops leading. Both were fixed internal values before.
-	- Ease-in and Ease-out came along as the matching pair for the two ends of the movement itself - how gently it leaves rest and how gently it settles onto the final line. Also fixed values before.
-	- Each pair reads one direction: higher Ease-in and Ease-out are gentler, higher Ramp-up and Ramp-down are harder. Ease-out is stored as how long the landing takes so that it runs the same way as its partner rather than against it.
-	- "In-view output speed" renamed to "Single-screen speed". An existing config carries its value across on first launch.
-	- Every default is unchanged, so nothing feels different until a slider is moved. Each default sits mid-scale, and each slider is tested against being inert - that was the fault behind this whole line of work.
+- ✅ Read external resources in the background so nothing delays the window opening.
+	- Done (20260803). The whole wallpaper pipeline - scanning the rotation folder, reading the shuffle history, decoding the image, blur and contrast mask, reading its layout tags - now runs on a worker thread. The window opens and the shell starts straight away; the wallpaper appears a moment later, which is the accepted trade.
+	- With a wallpaper path that never answers, the previous build never opened a window at all and never started a shell. It now opens normally and reports the unreadable path.
+	- With a 4K wallpaper at the default blur, time from launch to a visible window went from about 2.5 seconds to about 0.3.
+	- Also moved off the startup path: the folder scan that used to run while the config was being read, and the checks on wallpaper paths that may themselves be the slow mount.
+	- Rotation re-scans its folder on each change, so images added or removed are picked up without a relaunch.
+	- Two side effects worth knowing: an empty rotation folder now falls back to the built-in wallpaper instead of leaving the background blank, and a wallpaper file that can't be opened is reported rather than silently ignored.
+	- Reloading settings while rotating used to blank the wallpaper until the next rotation; it now keeps what is on screen.
+	- The config file itself still loads up front - window size, font and theme all come from it, and the window waits to open at its final size.
 	- 🔘 UAT
+
+- ✅ Huge quality-of-life improvement: Re-thought-throug, rationalized scroll-on-output settings refactor (20260802-03):
+	- In hindsight this was a big enough design challenge to warrant a design document.
+	- Done (20260802). The chase speed now traverses the named segments exactly as described: Ease-in (linear lift from rest, its own duration), Ramp-up (doubling per its period toward whichever top applies, re-entered through a second Ease-in when the single-screen cap lifts), Single-screen speed / unbounded, Ramp-down (a braking curve traced backwards from Ease-out, applied continuously - which is also the at-speed reserve), Ease-out (lands at zero). Of the curve models, went with straight/exponential segments adjusted by time (option 2a); the unbounded ramp accelerates exponentially until it keeps up, as the spec allowed.
+	- "Initial scroll speed" is gone (it fed four mechanisms at once and fought the rest); its config key is removed from existing files. Ease-in is now a duration (`scroll.ease_in_ms`), replacing the old fraction. Wheel/scrollback navigation keeps a fixed internal ease, unchanged feel.
+	- ✅ Slider direction (20260803): Ease-in and Ease-out ran opposite to the other three (higher = slower). Flipped so all five sliders read higher = faster. Stored config values unchanged (milliseconds); Ease-out's default now reads 50 on the dialog scale instead of 51.
+	- ✅ New speed defaults (20260803): the five now default to 50 / 75 / 75 / 75 / 40 in watch order - a much harder ramp-up, roughly double the single-screen top speed, a quicker wind-down, and a gentler landing. Ease-in is unchanged in feel.
+		- An existing config carries these five as its own values, so it keeps the old ones until those lines are edited or the config is reset. Only a new config picks the new defaults up.
+	- ✅ Rigorous "feel testing".
+	- The design (what should - in hindsight - have been its own design doc):
+		- General description:
+			- Think of each setting as a specific segment of a graph on an X and Y axis.
+			- The X-axis is time, the Y-axis is scroll speed.
+				- The X-axis may be infinite (or at least unbounded) - say, running `cat /dev/random` then going on vacation.
+				- The Y-axis may be infinite (or at least not strictly bounded) - with the same example as above, spitting out lines as fast as the CPU can run the kernel code.
+			- The beginning and end of the curve necessarily sit at Y=0. Scrolling starts from stillness, and ends at stillness.
+			- The some segment of "curve" may be perfectly flat on the Y axis, and quite finite (i.e. capped at Y=[max single-screen speed]).
+				- Possibly the whole curve, if output fits into a single screen.
+			- We don't care about defining or modelling the overall "curve" - only the named segments within it.
+			- **Each output-scroll-related setting define a completely separate "function" (conceptually if not literally), that have extremely limited and precisely-defined influence over the next**.
+				- With only one few exceptions, the one and only influence each setting has on the next, is that the *end* X/Y point of the previous function, determines exactly where the START point of the next is located. Those exceptions are documented in the "Parameters" section below.
+			- At some point, the middle of the overall "curve" could turn from flat, to quickly ramp up to some nondeterministic, unbounded, virtual Y speed (i.e. when scrolling that was within a single screen, reaches the top of the terminal and must start speeding up to keep up with unlimited output). In that case:
+				- The ease-in function takes over again, starting at that X and Y point. Except in this case, Y won't be 0.
+		- Parameters (all just defined segments of the/a "curve") - each one hands of complete control of scroll speed variability to the next, in this exact order:
+			- "Ease-in":
+				- This first "function" starts at Y=0 the first time, and describes how fast the speed initially jumps.
+			- "Ramp-up"
+				- Starts at exactly whatever X/Y "Ease-in" ended at. Can't be <=0, must be a positive slope.
+				- Typically - but not necessarily - steeper than "ease-in". (But either way, it can't be <=0, so scroll speed WILL increase.)
+				- This is a rare exception where the exact X/Y end point is not within its control. As mentioned earlier, the Y is defined by the next function in the chain, [max speed], which coupd be either [max single-screen speed], or [unbounded].
+						- The X/Y starting point is defined by the previous function, and the Y ending point is defined by the *next* function. So it does not have full control over either 1) it's duration, *or* 2) the length of its own line.
+			- [Max speed]: A flat horizontal line in principle (and exactly horizontal when == [max single-screen scroll speed]).
+				- [Max single-screen scroll speed] adjustment is in effect for as long as the top of the new output hasn't hit the top of the terminal yet.
+				- [Unbounded]: as fast as the output needs to render, to keep up with output.
+			- **Note**: The first two functions may or may not be invoked exactly and only one more time - *if* [max speed] was == [max single-screen scroll speed], *and* output now needs to accelerate to any speed faster than [max single-screen scroll speed]:
+				- Second invocation of "Ease-in":
+					- The second time starts not at Y=0 like the first time, but at Y=[Max single-screen scroll speed]. And again, still describes how fast the speed initially jumps from what it was before.
+				- Second invocation of "Ramp-up":
+					- Exact same formula, definition, constraints, and unique attribute as first invocation: Starts at exactly whatever X/Y the previous "Ease-in" ended at, and ends at the unbounded Y.
+						- How does it know wher "unbounded Y" is? Maybe it guesses a sane value, maybe it can see the rate of incoming data, or maybe it just punts and acellerates exponentially until it's reached.
+			- "Ramp-down":
+				- Once output ceases yet hasn't all rendered (because SilkTerm will hold a reserve buffer of at least 1 screen when running at top speed), the speed function hands off to "Ramp-down".
+				- This starts at the precisely known X and Y handoff point on our time/speed curve.
+				- It's almost the inverse of "Ramp-up", *except*:
+					- Not only does it know it's starting X, it also knows it's exact starting Y.
+					- It can't end arbitrily on its own terms, but its end point *is* deterministic. It has to trace "Ease-out" *backwards* (can be pre-computed and stored in memory whenever "Ease-out" setting changes), to know exactly what Y value to end at and hand-off to "Ease-out".
+					- This adjustment, although not an exact mirror in calculation, "feels" just like the inverse of "Ramp-up".
+			- "Ease-out":
+				- Almost the inverse of 'Ease-in', at least visually - except that:
+					- It's individually adjustable.
+					- It must calculate backwards its starting X point, based on the inrushing known end of buffered content.
+					- It's end point is *always* Y=0, and it's X value can be calculated in real-time ahead of time. From there it can work backwards and tell (or be queried by) "Ramp-down", it's own *exact starting* X and Y ahead of time, so that "Ramp-down" will know it's own ending X/Y.
+					- This adjustment, although not an exact mirror in calculation, "feels" just like the inverse of "Ease-in".
+		- Different potential "curve" models - to choose from. (Or maybe a tunable with three options governing all parameters curve shapes):
+			- Option 1: Smooth curves for all parameters (with their individual "scale" sliders):
+				- One curve type for all adjustments: e.g. Sigmoid, half-normal, exponential, and/or logarithmic curves depending on where in the graph a function sits and how it connects to the previous and next.
+				- The shape definitions per function don't change with adjustment, they just grow or shrink (in proportional size) depending on the scale of each individual setting.
+					- In other words, the curve grows along both the x-axis AND Y-axis. Getting sharper (smaller) or gentler (larger).
+				- Computationally expensive?
+			- Option 2: Each scroll speed parameter is defined by a straight line. This may not be as jarring as it sounds, as these kind of linear + angular graphs work fine in audio and video production, which are all about human perception.
+				- The linear slope of each line is variable based on the height (Y) and time (X).
+				- The end of each adjustable line must touch the beginning of the next - but the transition may be an abrupt angle.
+				- Option 2a: Adjustment is time, length and height auto-adjust.
+				- Option 2b: Adjustment is height, length and time auto-adjust.
+				- Option 2c: Adjustement is length, height and time auto adjust.
+		- Common behavior:
+			- Typical scroll flow can take these routes - which don't/shouldn't need individual code paths, just for illustration:
+				- Scenario 1: <1 screen of text, from the top:
+					- "Instant" output.
+				- Scenario 2: >1 screen of text, from the top:
+					- First screen's worth of output appears "instantly". But once it needs to start scrolling up, then...
+					- Ease-in has full control of speed. Then hands off to the ramp-up function. Then to unbounded speed. At some arbitrary point depenting on output, the ramp-down function takes over, and finally ease-out.
+				- Scenario 3: <1 screen of text, from the bottom (with a screen full of text above):
+					- Ease-in begins with full control of speed from the start.
+					- Then hands off to the ramp-up function.
+					- Then to [maximum single-screen] speed.
+					- At some arbitrary point when output ends, the ramp-down function takes over
+					- Finally the ease-out function.
+				- Scenario 4: >1 screen of text, from the bottom (with a screen full of text above):
+					- Ease-in begins with full control of speed from the start.
+					- Then hands off to the ramp-up function.
+					- Then to unbounded speed.
+					- At some arbitrary point when output ends, the ramp-down function takes over.
+					- Finally the ease-out function.
+				- Other scenarious (e.g. output starts in the middle of the screen) can be inferred from those 4 scenarios.
 
 - ✅ A single boolean option to disable/enable smooth scrolling, without changing other settings (but disabling their controls). (20260802)
 	- New "Smooth scrolling" switch at the top of the Scrolling tab (config: `scroll.smooth`, default on). Off = wheel, output and full-screen-app scrolling all land instantly, and the two speed sliders grey out. Wheel lines, scrollbar and the rest stay active since they apply either way.
-	- 🔘 UAT
 
 - ✅ All such feature groups should have a master on/off switch like the above (some already do, e.g. the recent wallpaper switch). (20260802)
 	- Audited the whole Settings dialog: Transparency, Wallpaper, Contrast mask, Text scrim and Scrollbar already have masters that grey their dependent rows; Scrolling was the only group without one, fixed above. Text outline is a slider whose zero is "off", which is its own master.
-
-- ✅ Smooth scrolling feel: start slower, stop sharper. (20260802)
-	- ✅ Should start slower. (Possibly it just ramps up too quickly?)
-	- ✅ Once scrolling settles, it should come to a stop faster. The ease-in and ease-out aren't necessarily symmetric.
-		- ✅ Easing to a stop should still be a thing. Maybe the curve should be sharper, so that the last few pixels don't just slowly crawl in.
-	- Done: not reachable through settings - the old ease was a single exponential, which starts at peak speed on its first frame (no ease-in exists to slow down) and crawls the last pixels in for over a second; its one knob moves both ends together. The curve itself changed: motion now builds from rest through a two-stage cascade, and once within about half a line of the target the remainder glides in at a minimum speed instead of the exponential tail. Ease-out above that band is unchanged, and neither stage can overshoot, so no bounce is possible.
-	- Applies to wheel, scrollbar, and output scrolling alike; the ease-in scales with the current speed, so full-throttle burst catch-up is not slowed. Alt-screen app slides are untouched.
-	- Tuning lives in three source constants (attack fraction, stop band, stop speed) - no new settings.
-	- 🔘 UAT
 
 - ✅ Scroll-on-output enhancement: One additional setting: (20260629)
 	- ✅ In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
@@ -1468,7 +1457,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Done: output easing now picks a speed profile per burst. While a burst's own first line is still on screen (a short listing), catch-up tops out at the new "In-view output speed" - faster than the initial speed, but building more slowly and never reaching the full chase. Once a burst has scrolled a screenful, the full ramp takes over exactly as before. A burst ends when the view settles at the bottom, so sporadic output keeps the plain initial ease.
 	- The one setting is `scroll.inview_tau_ms` (default 60 ms), with an "In-view output speed" slider next to "Initial scroll speed" in Settings on the same 1..100 scale.
 	- A burst that starts high on a fresh screen (right after a clear) counts as in-view up to a screenful longer than strictly needed - the switch assumes the burst began at the bottom row. The error direction is gentle, never bouncy.
-	- 🔘 UAT
 
 - ✅ Need scrollbars. (Disable in Settings.) And thicker than many modern desktops.
 	- Done: a scrollbar over each pane's right edge, 16px wide by default - noticeably chunkier than the 8-12px most desktops use, and adjustable from 4 to 64.
