@@ -137,6 +137,8 @@ enum Key {
 	FontFamily,
 	DefaultShell,
 	CopyOnSelect,
+	Hyperlinks,
+	LinkOpenCommand,
 	FontSize,
 	LineHeight,
 	Columns,
@@ -244,7 +246,7 @@ fn tab_for_section(section: &str) -> usize {
 	match section {
 		"Font" => 1,
 		"Colors" => 2,
-		"Window" | "Shell" => 3,
+		"Window" | "Shell" | "Hyperlinks" => 3,
 		"Scrolling" => 4,
 		_ => 0, // "Appearance"
 	}
@@ -287,6 +289,8 @@ fn cfg_keys(key: Key) -> &'static [&'static str] {
 		Key::FontFamily => &["font.family"],
 		Key::DefaultShell => &["shell.default"],
 		Key::CopyOnSelect => &["shell.copy_on_select"],
+		Key::Hyperlinks => &["hyperlinks.enabled"],
+		Key::LinkOpenCommand => &["hyperlinks.open_command"],
 		Key::FontSize => &["font.size"],
 		Key::LineHeight => &["font.line_height_scale"],
 		Key::Columns => &["window.columns"],
@@ -840,6 +844,17 @@ fn fields() -> Vec<Spec> {
 			label: "Copy on select",
 			key: CopyOnSelect,
 			kind: Toggle,
+		},
+		hdr("Hyperlinks"),
+		Spec {
+			label: "Hyperlinks",
+			key: Hyperlinks,
+			kind: Toggle,
+		},
+		Spec {
+			label: "Open command",
+			key: LinkOpenCommand,
+			kind: Text,
 		},
 		hdr("Colors"),
 		Spec {
@@ -1896,6 +1911,7 @@ impl SettingsDialog {
 			}
 			Key::FontFamily => self.edited.font_family.clone().unwrap_or_default(),
 			Key::DefaultShell => self.edited.default_shell.clone(),
+			Key::LinkOpenCommand => self.edited.hyperlink_open_command.clone(),
 			_ => String::new(),
 		}
 	}
@@ -1920,6 +1936,7 @@ impl SettingsDialog {
 				};
 			}
 			Key::DefaultShell => self.edited.default_shell = trimmed.to_string(),
+			Key::LinkOpenCommand => self.edited.hyperlink_open_command = trimmed.to_string(),
 			_ => {}
 		}
 	}
@@ -1936,6 +1953,7 @@ impl SettingsDialog {
 			Key::CursorOutline => self.edited.cursor_outline,
 			Key::RememberSize => self.edited.remember_size,
 			Key::CopyOnSelect => self.edited.copy_on_select,
+			Key::Hyperlinks => self.edited.hyperlinks,
 			Key::BgContrastMask => self.edited.wallpaper_contrast_mask,
 			Key::BgEnabled => self.edited.wallpaper_enabled,
 			Key::BgRotate => self.edited.wallpaper_rotate_enabled,
@@ -1957,6 +1975,7 @@ impl SettingsDialog {
 			Key::CursorOutline => self.edited.cursor_outline = on,
 			Key::RememberSize => self.edited.remember_size = on,
 			Key::CopyOnSelect => self.edited.copy_on_select = on,
+			Key::Hyperlinks => self.edited.hyperlinks = on,
 			Key::BgContrastMask => self.edited.wallpaper_contrast_mask = on,
 			Key::BgEnabled => self.edited.wallpaper_enabled = on,
 			Key::BgRotate => self.edited.wallpaper_rotate_enabled = on,
@@ -2142,6 +2161,7 @@ impl SettingsDialog {
 			Key::SystemFontSize => edited.use_system_font_size == defaults.use_system_font_size,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
 			Key::CopyOnSelect => edited.copy_on_select == defaults.copy_on_select,
+			Key::Hyperlinks => edited.hyperlinks == defaults.hyperlinks,
 			Key::SmoothScroll => edited.scroll_smooth == defaults.scroll_smooth,
 			Key::Scrollbar => edited.scrollbar == defaults.scrollbar,
 			Key::ScrollbarAutoHide => edited.scrollbar_auto_hide == defaults.scrollbar_auto_hide,
@@ -2153,6 +2173,9 @@ impl SettingsDialog {
 			Key::BgImage => edited.wallpaper == defaults.wallpaper,
 			Key::FontFamily => edited.font_family == defaults.font_family,
 			Key::DefaultShell => edited.default_shell == defaults.default_shell,
+			Key::LinkOpenCommand => {
+				edited.hyperlink_open_command == defaults.hyperlink_open_command
+			}
 			Key::ColBg
 			| Key::ColFg
 			| Key::ColCursor
@@ -2214,6 +2237,7 @@ impl SettingsDialog {
 			| Key::SystemFontSize
 			| Key::RememberSize
 			| Key::CopyOnSelect
+			| Key::Hyperlinks
 			| Key::BgEnabled
 			| Key::BgRotate
 			| Key::BgHonorXmp
@@ -2229,6 +2253,7 @@ impl SettingsDialog {
 					Key::SystemFont => self.defaults.use_system_font,
 					Key::SystemFontSize => self.defaults.use_system_font_size,
 					Key::CopyOnSelect => self.defaults.copy_on_select,
+					Key::Hyperlinks => self.defaults.hyperlinks,
 					Key::BgContrastMask => self.defaults.wallpaper_contrast_mask,
 					Key::BgEnabled => self.defaults.wallpaper_enabled,
 					Key::BgRotate => self.defaults.wallpaper_rotate_enabled,
@@ -2248,6 +2273,9 @@ impl SettingsDialog {
 			}
 			Key::FontFamily => self.edited.font_family = self.defaults.font_family.clone(),
 			Key::DefaultShell => self.edited.default_shell = self.defaults.default_shell.clone(),
+			Key::LinkOpenCommand => {
+				self.edited.hyperlink_open_command = self.defaults.hyperlink_open_command.clone();
+			}
 			Key::ColBg
 			| Key::ColFg
 			| Key::ColCursor

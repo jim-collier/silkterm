@@ -369,6 +369,8 @@ impl App {
 
 #[derive(Clone, Copy)]
 enum MenuAction {
+	OpenLink,
+	CopyLink,
 	Copy,
 	Paste,
 	PasteSelection,
@@ -479,6 +481,11 @@ impl ContextMenu {
 				.iter()
 				.map(|entry| self.entry_h(entry))
 				.sum::<f32>()
+	}
+	// Anywhere on the popup, separators and padding included - a click that lands
+	// on the menu belongs to the menu, whatever chrome it happens to cover.
+	fn hit(&self, mx: f32, my: f32) -> bool {
+		mx >= self.x && mx < self.x + self.w && my >= self.y && my < self.y + self.height()
 	}
 	fn item_at(&self, mx: f32, my: f32) -> Option<usize> {
 		if mx < self.x || mx >= self.x + self.w {
@@ -729,6 +736,12 @@ struct State {
 	resizing: Option<Vec<bool>>, // split-tree path of the divider being dragged
 	dragging_pane: Option<PaneId>, // pane being drag-reordered (Shift+drag)
 	bar_dragging: Option<PaneId>, // pane whose scrollbar thumb is being dragged
+	// A Ctrl+press landed on a hyperlink: the release over the same link opens it,
+	// a release anywhere else drops it (drag off to cancel, like the tab close
+	// button). The URL is captured at press time - output can scroll it away in
+	// between - and `menu_link` is the same for the right-click menu's two items.
+	link_arm: Option<(PaneId, String)>,
+	menu_link: Option<String>,
 	cursor_icon: CursorIcon,
 	clipboard: Clipboard,
 	last_frame: Instant,
@@ -830,6 +843,86 @@ impl State {
 		if let Some(id) = self.tabs.cur().pane_at(x, y) {
 			self.tabs.cur_mut().focused = id;
 			self.update_title();
+		}
+	}
+
+	// Point every pane at the pointer (only the one under it gets a position), so
+	// the next build can look for a hyperlink there. Marking dirty on a pending
+	// probe is what makes the underline appear at all - the frame that scans is
+	// also the frame that draws the result - and it costs at most one frame per
+	// cell crossed, never one per pixel.
+	fn update_link_hover(&mut self, at: Option<(f32, f32)>) {
+		if !config::settings().hyperlinks {
+			return;
+		}
+		// An app watching the pointer owns it: no underline flickering through a
+		// TUI that uses the mouse itself. This has to key on the app's MODE, not on
+		// whether this particular event was reported - the report is throttled to
+		// cell changes, so a pointer that settles inside one cell would slip
+		// through and underline anyway. Shift is the local-action bypass, the same
+		// one that already lets a selection through a tracking app.
+		let shift = self.mods.shift_key();
+		let over = at
+			.and_then(|(x, y)| self.tabs.cur().pane_at(x, y))
+			.filter(|id| {
+				shift
+					|| !self.tabs.cur().panes.get(id).is_some_and(|p| {
+						p.mode
+							.intersects(TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG)
+					})
+			});
+		let text = &self.text;
+		let mut probing = false;
+		for (id, p) in &mut self.tabs.cur_mut().panes {
+			p.set_hover(at.filter(|_| over == Some(*id)), text);
+			probing |= p.link_probing();
+		}
+		self.dirty |= probing;
+	}
+
+	// Whether the pointer is over an underlined link - the pane's own hover state,
+	// so this is only the pointer shape's question. Anything that ACTS on a link
+	// re-scans through link_at_pointer instead of trusting a frame-old answer.
+	fn hovering_link(&self) -> bool {
+		let (x, y) = self.mouse;
+		self.tabs
+			.cur()
+			.pane_at(x, y)
+			.and_then(|id| self.tabs.cur().panes.get(&id))
+			.is_some_and(|p| p.link_hover.is_some())
+	}
+
+	// Fresh scan for the link under the pointer, with the pane it belongs to.
+	fn link_at_pointer(&self) -> Option<(PaneId, crate::pane::LinkHit)> {
+		let (x, y) = self.mouse;
+		let id = self.tabs.cur().pane_at(x, y)?;
+		let hit = self
+			.tabs
+			.cur()
+			.panes
+			.get(&id)?
+			.link_at_px(x, y, &self.text)?;
+		Some((id, hit))
+	}
+
+	// One owner for the pointer shape: a drag beats a divider, a divider beats a
+	// link. Called from the pointer move AND from the frame, since a link found
+	// under a pointer that has stopped moving still has to change the cursor.
+	fn sync_cursor_icon(&mut self) {
+		let (x, y) = self.mouse;
+		let icon = if self.dragging_pane.is_some() {
+			CursorIcon::Grabbing
+		} else {
+			match self.tabs.cur().divider_at(x, y, self.area()) {
+				Some((_, Dir::Vertical)) => CursorIcon::ColResize,
+				Some((_, Dir::Horizontal)) => CursorIcon::RowResize,
+				None if self.hovering_link() => CursorIcon::Pointer,
+				None => CursorIcon::Default,
+			}
+		};
+		if icon != self.cursor_icon {
+			self.window.set_cursor(icon);
+			self.cursor_icon = icon;
 		}
 	}
 
@@ -1037,7 +1130,18 @@ impl State {
 		let read_only = p.is_some_and(|p| p.read_only);
 		let copy_select = p.is_some_and(|p| p.copy_select);
 		let copy_output = p.is_some_and(|p| p.copy_output);
-		let entries = vec![
+		// A link under the click gets its two items at the top, and only then -
+		// they'd be dead weight on every other right-click.
+		self.menu_link = self.link_at_pointer().map(|(_, link)| link.url);
+		let mut entries = Vec::new();
+		if self.menu_link.is_some() {
+			entries.extend([
+				mia('O', "Open link", MenuAction::OpenLink),
+				mia('L', "Copy link", MenuAction::CopyLink),
+				Entry::Sep,
+			]);
+		}
+		entries.extend([
 			mia('C', "Copy (Ctrl+Shift+C)", MenuAction::Copy),
 			mia('P', "Paste (Ctrl+Shift+V)", MenuAction::Paste),
 			mia('S', "Paste Selection", MenuAction::PasteSelection),
@@ -1067,7 +1171,7 @@ impl State {
 			Entry::Sep,
 			mi("Reload Config", MenuAction::ReloadConfig),
 			mi("Settings\u{2026} (Ctrl+,)", MenuAction::Settings),
-		];
+		]);
 		self.bar_open = None;
 		self.popup(target, entries, mx, my);
 	}
@@ -1271,6 +1375,18 @@ impl State {
 	) {
 		let area = self.area();
 		match action {
+			// the URL was captured when the menu opened - the output under it may
+			// have scrolled away since
+			MenuAction::OpenLink => {
+				if let Some(url) = self.menu_link.clone() {
+					open_link(&url);
+				}
+			}
+			MenuAction::CopyLink => {
+				if let Some(url) = self.menu_link.clone() {
+					self.clipboard.set_clipboard(url);
+				}
+			}
 			MenuAction::Copy => {
 				if let Some(text) = self
 					.tabs
@@ -1870,6 +1986,11 @@ impl State {
 			}
 		}
 
+		// The builds above are where a hyperlink hover is resolved, so the pointer
+		// shape can only be settled after them - a link found under a pointer that
+		// has stopped moving gets no further pointer event to react to.
+		self.sync_cursor_icon();
+
 		let under_len = under.len() as u32;
 		let mut instances = under;
 		// per-pane bg quads (scissored to the pane so overscan rows don't bleed
@@ -1879,10 +2000,13 @@ impl State {
 			let bg_quads = &p.draw().bg;
 			let start = instances.len() as u32;
 			instances.extend_from_slice(bg_quads);
-			group_ranges.push((p.rect, start, instances.len() as u32));
 			if scrim_on {
 				scrim_cells.extend_from_slice(bg_quads);
 			}
+			// hyperlink underline: in the pane's scissor group with the cell
+			// backgrounds, but never in the scrim's coverage map
+			instances.extend_from_slice(&p.draw().links);
+			group_ranges.push((p.rect, start, instances.len() as u32));
 		}
 
 		let ring_start = instances.len() as u32;
@@ -3202,6 +3326,15 @@ fn open_url(url: &str) {
 
 // Decode the configured background image and upload it to a texture.
 
+// Hand a clicked link to the desktop. A failure is the opener's (no xdg-open, a
+// bad open_command) and is worth saying out loud once, not worth an alert.
+fn open_link(url: &str) {
+	let cfg = config::settings();
+	if let Err(e) = crate::links::open(url, &cfg.hyperlink_open_command) {
+		eprintln!("{}: could not open {url}: {e}", config::APP_NAME);
+	}
+}
+
 // clamp a pane rect to an integer scissor box inside the surface
 fn scissor(rect: Rect, sw: u32, sh: u32) -> (u32, u32, u32, u32) {
 	let x = rect.x.max(0.0).min(sw as f32) as u32;
@@ -3420,6 +3553,8 @@ impl ApplicationHandler<UserEvent> for App {
 			resizing: None,
 			dragging_pane: None,
 			bar_dragging: None,
+			link_arm: None,
+			menu_link: None,
 			cursor_icon: CursorIcon::Default,
 			clipboard: Clipboard::new(),
 			last_frame: Instant::now(),
@@ -3632,6 +3767,11 @@ impl ApplicationHandler<UserEvent> for App {
 				}
 			}
 
+			WindowEvent::CursorLeft { .. } => {
+				// no pointer, no hover underline
+				state.update_link_hover(None);
+			}
+
 			WindowEvent::CursorMoved { position, .. } => {
 				state.mouse = (position.x as f32, position.y as f32);
 				let (x, y) = state.mouse;
@@ -3650,9 +3790,12 @@ impl ApplicationHandler<UserEvent> for App {
 				// PTY-bound: nothing local changed, so no redraw - marking dirty here
 				// forced a full re-shape of every pane per cell crossed.
 				if state.report_mouse_motion() {
+					// the app owns the pointer, so nothing of ours is hovering it
+					state.update_link_hover(None);
 					return;
 				}
 				state.update_bar_hover(x, y);
+				state.update_link_hover(Some((x, y)));
 				// hovering a different top-level title with a bar menu open
 				// switches to it (standard menu-bar behaviour)
 				if state.bar_open.is_some() && y < state.menu_bar_h() {
@@ -3690,17 +3833,8 @@ impl ApplicationHandler<UserEvent> for App {
 					// redraw the drop-target highlight as the cursor moves
 					state.dirty = true;
 				} else {
-					// show a resize cursor when hovering a divider
-					let area = state.area();
-					let icon = match state.tabs.cur().divider_at(x, y, area) {
-						Some((_, Dir::Vertical)) => CursorIcon::ColResize,
-						Some((_, Dir::Horizontal)) => CursorIcon::RowResize,
-						None => CursorIcon::Default,
-					};
-					if icon != state.cursor_icon {
-						state.window.set_cursor(icon);
-						state.cursor_icon = icon;
-					}
+					// resize cursor over a divider, hand over a link
+					state.sync_cursor_icon();
 				}
 			}
 
@@ -3710,8 +3844,16 @@ impl ApplicationHandler<UserEvent> for App {
 				..
 			} => {
 				let (x, y) = state.mouse;
+				// A popup tall enough to be clamped to the top of the window covers
+				// the menu bar, and the click belongs to whatever is drawn on top -
+				// otherwise its first item is unreachable. Same reason the tab-bar
+				// branch below stands aside for an open menu.
+				let on_popup = state.menu.as_ref().is_some_and(|m| m.hit(x, y));
 				// click on the menu bar: toggle/open the top-level menu's dropdown
-				if button == MouseButton::Left && state.menu_bar && y < state.menu_bar_h() {
+				if button == MouseButton::Left
+					&& state.menu_bar
+					&& !on_popup && y < state.menu_bar_h()
+				{
 					// the always-visible copy-mode checkboxes toggle the focused pane
 					if let Some(kind) = state.copybox_hit(x) {
 						let focused_id = state.tabs.cur().focused;
@@ -3831,6 +3973,18 @@ impl ApplicationHandler<UserEvent> for App {
 								state.window.set_cursor(CursorIcon::Grabbing);
 								state.cursor_icon = CursorIcon::Grabbing;
 							}
+						} else if let Some((id, link)) = state
+							.mods
+							.control_key()
+							.then(|| state.link_at_pointer())
+							.flatten()
+						{
+							// Ctrl+click a link: arm here, open on the release over the
+							// same link, so a slipped press can be dragged off to
+							// cancel. Ctrl elsewhere still starts a block selection -
+							// only a press ON a link is taken.
+							state.focus_at(x, y);
+							state.link_arm = Some((id, link.url));
 						} else {
 							state.focus_at(x, y);
 							// 1 click = plain run (Ctrl = rectangle), 2 = word/pair,
@@ -3936,6 +4090,15 @@ impl ApplicationHandler<UserEvent> for App {
 				..
 			} => {
 				state.resizing = None;
+				// armed link: open only if the release is still on the same one
+				if let Some((armed_id, url)) = state.link_arm.take() {
+					let same = state
+						.link_at_pointer()
+						.is_some_and(|(id, link)| id == armed_id && link.url == url);
+					if same {
+						open_link(&url);
+					}
+				}
 				// end a thumb drag; the hold keeps the bar up for a moment afterwards
 				if let Some(id) = state.bar_dragging.take() {
 					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {

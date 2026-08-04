@@ -226,16 +226,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- 🔘 The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
 
 - 🔘 Option: Dynamic theme based on wallpaper
-	- 🔘 
-
-- 🔘 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, AND legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
+	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
 
 - 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
 	- The background-work pattern this needs is in place (see the wallpaper item under Done): a worker thread posts its result back to the window, which folds it in. Reuse it rather than building a second one.
 
-- 🔘 Hyperlinks:
-	- 🔘 Clickable - e.g. Ctrl+click, or right-click then includes "Copy link" and "Open link".
-	- 🔘 Auto-underline when mouse is underneath.
+- 🔘 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, AND legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
 
 - 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
 	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Verified live for both.
@@ -1324,6 +1320,17 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
 
 #### Done - New features and enhancements
+
+- ✅ Hyperlinks. (20260804)
+	- A URL in the output underlines while the pointer is over it, in its own colour, and the pointer turns into a hand. Ctrl+click opens it in the desktop's handler; a right-click on one adds "Open link" and "Copy link" to the top of the menu.
+	- Only these schemes count as a link, and nothing outside the list can be opened: http, https, ftp, ftps, sftp, ssh, file, mailto. A word with a colon in it (a drive path, an aspect ratio, a namespaced identifier) is not a link.
+	- Trailing sentence punctuation and a bracket the URL sits inside are left out; a bracket the URL itself opened is kept. A URL that wraps across rows is one link, from either half.
+	- Ctrl+press arms and the release over the same link opens it, so a slipped press can be dragged off to cancel.
+	- An app that is watching the mouse itself owns the pointer: no underline over it, and holding Shift still gets one. The right-click menu wins there as it always has.
+	- Two settings under a new Hyperlinks group on the Window tab: the feature on or off, and a program to open links with (blank = the desktop's own).
+	- Verified on screen: the underline covers exactly the URL and nothing either side of it; hovering ordinary text or another line draws none; Ctrl+click and both menu items hand over the exact URL; a plain click, a Ctrl+click off a link, and a press dragged off all hand over nothing; with the feature off there is no underline, no menu items and no opening.
+	- Found and fixed alongside: a right-click menu too tall to fit opens against the top of the window, where the menu bar was taking the clicks meant for its first items.
+	- 🔘 UAT
 
 - ✅ Config language moved to SHCL 1.1. (20260804)
 	- Two of the three layout quirks the config writer worked around are fixed at the source. Blank-line grouping now survives a save on its own, and a comment block sitting after the last setting of a section keeps its indentation instead of drifting into whatever comes next. Both workarounds are gone.

@@ -21,8 +21,10 @@
 	- [Smooth-scroll inside full-screen apps](#smooth-scroll-inside-full-screen-apps)
 	- [Text readability scrim](#text-readability-scrim)
 	- [Font fallback stack](#font-fallback-stack)
+	- [Hyperlinks](#hyperlinks)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Environment](#environment)
+	- [Startup and slow external resources](#startup-and-slow-external-resources)
 	- [Configuration format](#configuration-format)
 - [Delivery (CI/CD, branches, releases)](#delivery-cicd-branches-releases)
 
@@ -183,6 +185,18 @@ We decided the setting should only *reorder* that list, never truncate it. An ea
 Platforms differ only in what they report, not in the rules applied to it: Windows has a system font *size* but no monospace *family*, so following the family there is a no-op and resolution starts at `font_family` without a special case. A toggle with nothing behind it reads as inert - the Settings checkbox greys out and says why. The same holds for a desktop with no font setting configured at all, which is why the check asks what was detected rather than which platform is running.
 
 The built-in stack is last for a reason: the generic monospace query below it is effectively a lottery over installed fonts, and its winner may ship no bold face - which ejects bold runs into an arbitrary, often proportional, fallback whose advances can't be snapped to the cell grid. Every entry in the built-in stack carries a real bold face. When that stack changes, the outgoing value is recorded so an existing config still carrying it verbatim is refreshed on the next launch; a stack the user edited is theirs and is left alone.
+
+### Hyperlinks
+
+- URLs in the output are clickable. Among the ways to decide what counts as one, it was decided that a link must carry a scheme from a fixed list - http, https, ftp, ftps, sftp, ssh, file, mailto - rather than being guessed from shape. That keeps false positives near zero (output is full of words with colons and slashes in them) and, more importantly, it is the whole of the security story: a scheme outside the list is not a link, so it can never be handed to the desktop. Bare `www.` prefixes and bare file paths were considered and left out for the same reason.
+
+- Punctuation is trimmed the way a reader would: a full stop or comma after a URL belongs to the sentence, and so does a closing bracket the URL is sitting inside - but one the URL itself opened is part of it. A URL that wraps across rows is one link, found from either half.
+
+- Hovering underlines, Ctrl+click opens. The underline appears on a plain hover with no modifier, since a link the user cannot see is a link they will not try. Opening needs Ctrl so it can never be confused with selecting; the press arms and the release opens, so a slipped press can be dragged off to cancel. A right-click on a link puts "Open link" and "Copy link" at the top of the menu, and only there.
+
+- An app that is watching the mouse itself owns the pointer, so nothing underlines over it - holding Shift asks for the local behaviour instead, the same bypass selection already uses. The right-click menu continues to win over such an app, as all our chrome does.
+
+- Links open through the desktop's own handler by default, with a configurable program to override it. Deciding what a URL means is the desktop's job, not a terminal's.
 
 ### Render Loop Sketch
 

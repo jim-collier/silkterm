@@ -187,6 +187,8 @@ pub struct Settings {
 	pub default_shell: String,   // command for new tabs/panes (empty = system shell)
 	pub command_line: String,    // default CLI layout/options when launched with no args
 	pub copy_on_select: bool,    // panes start with copy-on-select enabled
+	pub hyperlinks: bool,        // underline URLs in output on hover; Ctrl+click opens them
+	pub hyperlink_open_command: String, // opener for a clicked link (empty = the desktop's own)
 	pub bg: [u8; 3],
 	pub fg: [u8; 3],
 	pub cursor: [u8; 3],
@@ -304,6 +306,8 @@ impl Default for Settings {
 			default_shell: String::new(),
 			command_line: String::new(),
 			copy_on_select: false,
+			hyperlinks: true,
+			hyperlink_open_command: String::new(),
 			bg: [0x00, 0x00, 0x00],
 			fg: [0x88, 0xee, 0xcc],
 			cursor: [0xee, 0xcc, 0x88],
@@ -829,6 +833,12 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.copy_on_select != orig.copy_on_select {
 		doc.set_bool("shell.copy_on_select", s.copy_on_select);
 	}
+	if s.hyperlinks != orig.hyperlinks {
+		doc.set_bool("hyperlinks.enabled", s.hyperlinks);
+	}
+	if s.hyperlink_open_command != orig.hyperlink_open_command {
+		doc.set_string("hyperlinks.open_command", &s.hyperlink_open_command);
+	}
 	if s.wallpaper != orig.wallpaper || s.wallpaper_raw != orig.wallpaper_raw {
 		// the file keeps whatever form the user wrote (bare/relative/absolute)
 		if s.wallpaper_raw.trim().is_empty() {
@@ -966,6 +976,8 @@ struct RawConfig {
 	default_shell: Option<String>,
 	command_line: Option<String>,
 	copy_on_select: Option<bool>,
+	hyperlinks: Option<bool>,
+	hyperlink_open_command: Option<String>,
 	colors: RawColors,
 }
 
@@ -1148,6 +1160,8 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		default_shell: r.s("shell.default"),
 		command_line: r.s("shell.command_line"),
 		copy_on_select: r.b("shell.copy_on_select"),
+		hyperlinks: r.b("hyperlinks.enabled"),
+		hyperlink_open_command: r.s("hyperlinks.open_command"),
 		colors: RawColors {
 			background: r.s("colors.background"),
 			foreground: r.s("colors.foreground"),
@@ -1376,6 +1390,10 @@ fn resolve(raw: RawConfig) -> Settings {
 		default_shell: raw.default_shell.unwrap_or(d.default_shell),
 		command_line: raw.command_line.unwrap_or(d.command_line),
 		copy_on_select: raw.copy_on_select.unwrap_or(d.copy_on_select),
+		hyperlinks: raw.hyperlinks.unwrap_or(d.hyperlinks),
+		hyperlink_open_command: raw
+			.hyperlink_open_command
+			.unwrap_or(d.hyperlink_open_command),
 		bg: color(raw.colors.background, pal.bg),
 		fg: color(raw.colors.foreground, pal.fg),
 		cursor: color(raw.colors.cursor, pal.cursor),
@@ -2686,6 +2704,25 @@ shell:
 	# copy_on_select: false  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Hyperlinks
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+hyperlinks:
+
+	## Hyperlinks
+	## Underline a URL in the output while the pointer is over it; Ctrl+click
+	## opens it, and a right-click there offers "Open link" and "Copy link".
+	## Only these schemes are recognized, and nothing else can be opened:
+	## http, https, ftp, ftps, sftp, ssh, file, mailto.
+	# enabled: true  ## Default
+
+	## Open command
+	## Program that opens a clicked link, argv-split, with the URL appended as
+	## its last argument. Leave blank/commented to use the desktop's own handler
+	## (xdg-open, or start on Windows).
+	# open_command: "firefox --new-tab"  ## Default
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Scrolling
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
@@ -3064,6 +3101,23 @@ mod tests {
 		let p = std::path::Path::new("test.shcl");
 		assert!(!resolve(read_raw("", p)).copy_on_select, "default off");
 		assert!(resolve(read_raw("shell.copy_on_select: true\n", p)).copy_on_select);
+	}
+
+	#[test]
+	fn hyperlink_keys_parse_in_their_block() {
+		let p = std::path::Path::new("test.shcl");
+		let d = resolve(read_raw("", p));
+		assert!(d.hyperlinks, "on by default");
+		assert!(
+			d.hyperlink_open_command.is_empty(),
+			"opener is the desktop's"
+		);
+		let s = resolve(read_raw(
+			"hyperlinks:\n\tenabled: false\n\topen_command: \"firefox --new-tab\"\n",
+			p,
+		));
+		assert!(!s.hyperlinks);
+		assert_eq!(s.hyperlink_open_command, "firefox --new-tab");
 	}
 
 	// An over-range output_ease_lines must clamp: scroll's backlog clamp uses it
