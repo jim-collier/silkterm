@@ -225,6 +225,9 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- 🔘 When text fields have focus highlight, there should only be one visible outline (rather than two - the highlight, AND the textbox outline).
 		- 🔘 The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
 
+- 🔘 Option: Dynamic theme based on wallpaper
+	- 🔘 
+
 - 🔘 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, AND legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
 
 - 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
@@ -1321,6 +1324,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
 
 #### Done - New features and enhancements
+
+- ✅ Config language moved to SHCL 1.1. (20260804)
+	- Two of the three layout quirks the config writer worked around are fixed at the source. Blank-line grouping now survives a save on its own, and a comment block sitting after the last setting of a section keeps its indentation instead of drifting into whatever comes next. Both workarounds are gone.
+	- One is left, and it is narrower than it was: under a section whose settings are all commented-out defaults - which is most of this file - a comment run comes back at the section's own indentation rather than its settings'. The writer still puts that back, so nothing changes on disk.
+	- A section written as single dotted lines still becomes a real nested section when saved, but it now stays where it is instead of moving to the top of the file and dragging the file's header comments in with it.
+	- A complaint about a setting whose value can't be used now names the line it is on.
+	- Verified: an existing config file, the shipped template, and a save that changes a value all come back byte-identical apart from what actually changed.
 
 - ✅ New default colour scheme. (20260804)
 	- Foreground is #88eecc, a slightly greener mint than the cyan it replaces.
