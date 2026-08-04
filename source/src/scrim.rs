@@ -30,7 +30,7 @@ struct BlurU {
 	resolution: [f32; 2],
 	dir: [f32; 2],
 	sigma: f32,  // gaussian path: blur sigma in px
-	ramp: f32,   // falloff curve: 0 s-curve, 1 gaussian, 2 linear, 3 log, 4 exp
+	ramp: f32,   // falloff curve: 0 sigmoid, 1 half-normal, 2 linear, 3 log, 4 exp
 	cursor: f32, // 1 = fold the cursor coverage into the halo, 0 = leave it out
 	radius: f32, // distance path: halo extent in px (also bounds the tap loop)
 	metric: f32, // distance path: 0 = euclidean, 1 = chebyshev (square)
@@ -47,6 +47,10 @@ struct CompU {
 	function: f32,  // 0 dilate, 1 sdf, 2 dt (distance paths), 3 gaussian (legacy blur)
 	ramp: f32,      // falloff curve (distance path transfer)
 	radius: f32,    // distance path: halo extent in px (normalizes the distance)
+	strength: f32,  // doublings of the finished halo alpha, 0..10 (0 = as built)
+	// scalar pad: the WGSL struct rounds up to its 8-byte alignment (40), so
+	// without this the Rust side would be 36 and the binding would undershoot.
+	_pad: f32,
 }
 
 pub struct Scrim {
@@ -415,6 +419,7 @@ impl Scrim {
 		function: f32,
 		ramp: f32,
 		radius: f32,
+		strength: f32,
 	) {
 		queue.write_buffer(
 			&self.comp_u,
@@ -427,6 +432,8 @@ impl Scrim {
 				function,
 				ramp,
 				radius,
+				strength,
+				_pad: 0.0,
 			}),
 		);
 	}
@@ -721,14 +728,18 @@ const DIST_MAX: i32 = 40; // hard cap on the distance-transform tap window
 
 // Shared falloff curve, used both as the gaussian blur kernel weight and as the
 // distance-path transfer. `t` is normalized 0 (glyph, full) .. 1 (edge, zero).
-// ramp: 0 s-curve, 1 gaussian, 2 linear, 3 logarithmic, 4 exponential.
+// ramp: 0 sigmoid, 1 half-normal, 2 linear, 3 logarithmic, 4 exponential.
 fn falloff(td: f32, ramp: f32) -> f32 {
     let t = clamp(td, 0.0, 1.0);
-    if (ramp < 0.5) {                 // s-curve (smoothstep on 1-t)
+    if (ramp < 0.5) {                 // sigmoid (smoothstep on 1-t)
         let u = 1.0 - t;
         return u * u * (3.0 - 2.0 * u);
-    } else if (ramp < 1.5) {          // gaussian
-        return exp(-4.5 * t * t);
+    } else if (ramp < 1.5) {          // half-normal
+        // normalized to reach 0 at the edge, the way the exponential below is:
+        // a bell alone still stands at ~1.1% there, and Strength multiplies that
+        // floor into a solid wash over the whole pane. Costs ~1% of peak alpha.
+        let e = exp(-4.5);
+        return (exp(-4.5 * t * t) - e) / (1.0 - e);
     } else if (ramp < 2.5) {          // linear (tent)
         return 1.0 - t;
     } else if (ramp < 3.5) {          // logarithmic: drops fast, then slow
@@ -810,7 +821,7 @@ fn fs_dist_b(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(best, 0.0, 0.0, 1.0);
 }
 
-struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32, cursor: f32, function: f32, ramp: f32, radius: f32 };
+struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32, cursor: f32, function: f32, ramp: f32, radius: f32, strength: f32, _p0: f32 };
 @group(0) @binding(0) var<uniform> cu: CompU;
 @group(0) @binding(1) var gtex: texture_2d<f32>;   // scrim: blurred coverage (.a) or distance (.r)
 @group(0) @binding(2) var gsamp: sampler;
@@ -846,6 +857,12 @@ fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {
         }
         ga = clamp(w * (cu.intensity / 10.0), 0.0, 1.0);
     }
+    // Strength: double the halo alpha cu.strength times over (0 = leave it as
+    // built). Clamping after the multiply is what makes it read as bolder rather
+    // than merely brighter - the core saturates first and the solid part grows
+    // outward along the falloff, so the plate thickens instead of the edge moving.
+    // (No double quotes anywhere in here - the whole shader is one raw literal.)
+    ga = clamp(ga * exp2(cu.strength), 0.0, 1.0);
     let rgb = textureSample(bgtex, gsamp, in.uv).rgb;
     let texel = 1.0 / cu.resolution;
     let r = max(cu.border_px, 0.0001);

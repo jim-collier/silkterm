@@ -2603,14 +2603,16 @@ impl State {
 		// text to the scrim texture, blur it, then composite under the crisp text.
 		// "Softness" 0..1 -> coverage boost: 0 = hard/solid (x10), 1 = soft/faint (x1)
 		let scrim_intensity = 10.0 - cfg.text_scrim_softness.clamp(0.0, 1.0) * 9.0;
-		// falloff curve index: 0 s, 1 gaussian, 2 linear, 3 log, 4 exp
+		// falloff curve index: 0 sigmoid, 1 half-normal, 2 linear, 3 log, 4 exp
 		let scrim_ramp = match cfg.text_scrim_ramp.as_str() {
-			"gaussian" => 1.0,
+			"half_normal" => 1.0,
 			"linear" => 2.0,
 			"log" => 3.0,
 			"exp" => 4.0,
-			_ => 0.0, // "s"
+			_ => 0.0, // "sigmoid"
 		};
+		// "Strength" 0..100% -> doublings of the finished halo alpha (0 = as built)
+		let scrim_strength = cfg.text_scrim_strength.clamp(0.0, 100.0) / 10.0;
 		// build function index: 0 dilate, 1 sdf, 2 dt, 3 gaussian (legacy blur)
 		let scrim_function = match cfg.text_scrim_function.as_str() {
 			"dilate" => 0.0,
@@ -2772,6 +2774,7 @@ impl State {
 					scrim_function,
 					scrim_ramp,
 					scrim_ext,
+					scrim_strength,
 				);
 				// The scrim is a full-frame blur - each glyph's halo spreads ~scrim_ext
 				// px every direction. Composite it PER-PANE, clipped per-side: an edge that
