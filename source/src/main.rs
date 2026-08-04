@@ -17,6 +17,7 @@ mod ctl;
 mod dialog;
 mod gfx;
 mod input;
+mod links;
 mod palette;
 mod pane;
 mod scrim;

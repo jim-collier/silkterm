@@ -370,6 +370,82 @@ fn render_char(c: char) -> char {
 	if c.is_control() { ' ' } else { c }
 }
 
+// Rows a hyperlink may span. A logical line can be the entire scrollback (one
+// `cat` of a huge line wraps forever) and this scan runs per pointer move, so
+// the wrap walk is capped instead of following the line to its real ends.
+const LINK_WRAP_ROWS: i32 = 4;
+
+// The link under window pixel (px, py), as a grid span. `display_offset` and the
+// grid come from the frame being built, so the answer can't disagree with what
+// is on screen. Strict bounds, unlike point_at's clamping: the pointer sitting
+// in the margin is over no cell at all, not over the first one.
+#[allow(clippy::too_many_arguments)]
+fn link_at(
+	grid: &Grid<Cell>,
+	colors: &Colors,
+	settings: &config::Settings,
+	rect: Rect,
+	px: f32,
+	py: f32,
+	metrics: (f32, f32, f32), // cell_w, cell_h, margin
+	dims: (usize, usize),     // cols, lines
+	display_offset: i32,
+) -> Option<LinkHit> {
+	let (cell_w, cell_h, margin) = metrics;
+	let (cols, lines) = dims;
+	if cols == 0 || lines == 0 || cell_w <= 0.0 || cell_h <= 0.0 {
+		return None;
+	}
+	let (rel_x, rel_y) = (px - rect.x - margin, py - rect.y - margin);
+	if rel_x < 0.0 || rel_y < 0.0 {
+		return None;
+	}
+	let col = (rel_x / cell_w).floor() as usize;
+	let screen_row = (rel_y / cell_h).floor() as i32;
+	if col >= cols || screen_row < 0 || screen_row >= lines as i32 {
+		return None;
+	}
+	let line = screen_row - display_offset;
+	let (top, bot) = (-(grid.history_size() as i32), lines as i32 - 1);
+	if line < top || line > bot {
+		return None;
+	}
+	// A soft-wrapped URL is one logical line, so the scan spans the wrap.
+	let end_col = Column(cols - 1);
+	let wraps = |l: i32| grid[Line(l)][end_col].flags.contains(Flags::WRAPLINE);
+	let mut first_line = line;
+	while first_line > top && line - first_line < LINK_WRAP_ROWS && wraps(first_line - 1) {
+		first_line -= 1;
+	}
+	let mut last_line = line;
+	while last_line < bot && last_line - line < LINK_WRAP_ROWS && wraps(last_line) {
+		last_line += 1;
+	}
+	let rows = (last_line - first_line + 1) as usize;
+	let mut text = Vec::with_capacity(rows * cols);
+	for l in first_line..=last_line {
+		let row = &grid[Line(l)];
+		text.extend((0..cols).map(|c| render_char(row[Column(c)].c)));
+	}
+	let hit = (line - first_line) as usize * cols + col;
+	let (start, end, url) = crate::links::find_at(&text, hit)?;
+	let point_of = |i: usize| Point::new(Line(first_line + (i / cols) as i32), Column(i % cols));
+	let start_pt = point_of(start);
+	let cell = &grid[start_pt.line][start_pt.column];
+	// Underline in the link's own colour, so a coloured URL keeps its identity.
+	let fg = if cell.flags.contains(Flags::INVERSE) {
+		palette::resolve(cell.bg, colors, settings)
+	} else {
+		palette::resolve(cell.fg, colors, settings)
+	};
+	Some(LinkHit {
+		url,
+		start: start_pt,
+		end: point_of(end - 1),
+		fg,
+	})
+}
+
 // Same spans at a single weight - what the scrim's de-bolded buffer wants. Derived
 // on demand rather than built alongside the real list, so a screen with no bold on
 // it pays nothing.
@@ -676,6 +752,11 @@ enum Node {
 pub struct PaneDraw {
 	pub top: f32,
 	pub bg: Vec<RectInstance>,
+	// Underline quads for the hovered hyperlink. Kept out of `bg` deliberately:
+	// those double as the scrim's "this cell paints its own background" mask, and
+	// an underline is not a cell background - filing it there would punch the
+	// readability halo out of every line holding a link.
+	pub links: Vec<RectInstance>,
 	pub cursor: Option<RectInstance>,
 	// App-scroll slide (None = common case: whole pane at `top`). While a
 	// full-screen app's scroll eases, the current frame draws shifted at `top`
@@ -719,6 +800,16 @@ struct FallbackGlyph {
 	buf: Buffer,
 	ink_w: f32,
 	ink_off: f32,
+}
+
+// The hyperlink under the pointer: the URL, and the grid span it occupies so the
+// underline can be drawn (inclusive, absolute grid lines - negative in history).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LinkHit {
+	pub url: String,
+	pub start: Point,
+	pub end: Point,
+	pub fg: [u8; 3],
 }
 
 pub struct Pane {
@@ -830,6 +921,14 @@ pub struct Pane {
 	pub bar_hover: bool,
 	pub bar_drag: Option<f32>,
 	pub bar_animating: bool,
+	// Hyperlink hover: the pointer in window px (None = not over this pane), the
+	// link it landed on, and a request to re-scan. The scan needs the grid, so it
+	// runs in build() where the term lock is already held - on the frame the
+	// pointer changed cell, and on any frame that re-shaped text (output moves the
+	// span out from under a pointer that never moved).
+	hover_px: Option<(f32, f32)>,
+	link_probe: bool,
+	pub link_hover: Option<LinkHit>,
 	// false until the first full build (and reset on a buffer rebuild). When the
 	// frame is a pure cursor animation (no content/scroll/bell change), build skips
 	// the expensive text re-shape and reuses the cached buffer/bg/glyphs.
@@ -1210,6 +1309,73 @@ impl Pane {
 			self.strip.clear();
 		}
 
+		// Hyperlink under the pointer. The scan wants the grid, which is locked
+		// right here - so it runs on the frame the pointer changed cell, and on
+		// every frame that re-shapes text (output slides the span out from under a
+		// pointer that never moved). A missed lock leaves the probe pending.
+		if self.link_probe || force_rebuild || !self.text_built {
+			self.link_probe = false;
+			let hit = if settings.hyperlinks {
+				self.hover_px.and_then(|(px, py)| {
+					link_at(
+						guard.grid(),
+						guard.colors(),
+						&settings,
+						self.rect,
+						px,
+						py,
+						(cell_w, cell_h, margin),
+						(cols, lines),
+						display_offset,
+					)
+				})
+			} else {
+				None
+			};
+			if hit != self.link_hover {
+				self.link_hover = hit;
+			}
+		}
+		// Underline quads, rebuilt every frame: they ride the eased scroll offset
+		// through y_of, so a cached set would lag the text it belongs to.
+		let mut link_rects = Vec::new();
+		if let Some(link) = &self.link_hover {
+			// A link underline wants to sit just under the baseline; the mono
+			// baseline isn't published, so it's placed off the cell box instead -
+			// close enough for a 1px rule, and it scales with the font.
+			let thick = (cell_h * 0.06).round().max(1.0);
+			let gap = (cell_h * 0.10).round();
+			let color = config::srgb_f32(link.fg);
+			for grid_line in link.start.line.0..=link.end.line.0 {
+				let screen_row = grid_line + display_offset;
+				if screen_row < 0 || screen_row >= lines as i32 {
+					continue;
+				}
+				let first_col = if grid_line == link.start.line.0 {
+					link.start.column.0
+				} else {
+					0
+				};
+				let last_col = if grid_line == link.end.line.0 {
+					link.end.column.0
+				} else {
+					cols.saturating_sub(1)
+				};
+				if last_col < first_col {
+					continue;
+				}
+				link_rects.push(RectInstance {
+					pos: [
+						content_x + first_col as f32 * cell_w,
+						y_of(screen_row) + cell_h - thick - gap,
+					],
+					size: [(last_col - first_col + 1) as f32 * cell_w, thick],
+					color,
+					..Default::default()
+				});
+			}
+		}
+
 		// Cursor position/shape as plain values (no lasting borrow of the lock), so
 		// the fast path below can drop the term lock immediately.
 		let cursor_pt = guard.grid().cursor.point;
@@ -1246,6 +1412,7 @@ impl Pane {
 			// (that forces a rebuild), so there is never a slide here
 			self.last_draw.top = top;
 			self.last_draw.cursor = cursor;
+			self.last_draw.links = link_rects;
 			self.last_draw.slide = None;
 			return;
 		}
@@ -1640,6 +1807,7 @@ impl Pane {
 		self.last_draw = PaneDraw {
 			top,
 			bg,
+			links: link_rects,
 			cursor,
 			slide,
 		};
@@ -1648,6 +1816,56 @@ impl Pane {
 	// The frame build() just produced (or the retained one on a lock miss).
 	pub fn draw(&self) -> &PaneDraw {
 		&self.last_draw
+	}
+
+	// Where the pointer sits over this pane (None = elsewhere). Only asks for a
+	// re-scan when the CELL changed, so sweeping across a row costs one scan per
+	// cell rather than one per pixel; the scan itself happens in build().
+	pub fn set_hover(&mut self, px: Option<(f32, f32)>, ctx: &TextCtx) {
+		let cell_of = |(x, y): (f32, f32)| {
+			(
+				((x - self.rect.x - ctx.margin) / ctx.cell_w).floor() as i32,
+				((y - self.rect.y - ctx.margin) / ctx.cell_h).floor() as i32,
+			)
+		};
+		if self.hover_px.map(cell_of) != px.map(cell_of) {
+			self.link_probe = true;
+		}
+		self.hover_px = px;
+		if px.is_none() {
+			self.link_hover = None;
+		}
+	}
+
+	// A re-scan is pending, so the frame it lands on must actually be drawn.
+	pub fn link_probing(&self) -> bool {
+		self.link_probe
+	}
+
+	// The link at window pixel (x, y) as of RIGHT NOW - its own scan under the
+	// term lock. `link_hover` is a frame behind the pointer (it is filled in by
+	// build), which is fine for an underline and not fine for a click: the paths
+	// that act on a link ask here instead, so they work even where hover never
+	// ran (a mouse-tracking app owns the pointer, but our menu still wins the
+	// right-click).
+	pub fn link_at_px(&self, x: f32, y: f32, ctx: &TextCtx) -> Option<LinkHit> {
+		let settings = config::settings();
+		if !settings.hyperlinks || !self.rect.contains(x, y) {
+			return None;
+		}
+		let guard = self.term.term.lock_unfair();
+		let display_offset = guard.grid().display_offset() as i32;
+		link_at(
+			guard.grid(),
+			guard.colors(),
+			&settings,
+			self.rect,
+			x,
+			y,
+			(ctx.cell_w, ctx.cell_h, ctx.margin),
+			(self.term.cols, self.term.lines),
+			display_offset,
+		)
 	}
 
 	// The user sent input here (a keystroke, a paste). Stamps the moment so the
@@ -2764,6 +2982,7 @@ fn spawn_pane(
 		last_draw: PaneDraw {
 			top: rect.y,
 			bg: Vec::new(),
+			links: Vec::new(),
 			cursor: None,
 			slide: None,
 		},
@@ -2800,6 +3019,9 @@ fn spawn_pane(
 		bar_hover: false,
 		bar_drag: None,
 		bar_animating: false,
+		hover_px: None,
+		link_probe: false,
+		link_hover: None,
 		cursor_animating: false,
 		text_built: false,
 		shape_rev: 0,
@@ -3562,17 +3784,18 @@ fn scroll_shift(cur: &[u64], last: &[u64], scrolled_off: bool) -> usize {
 #[cfg(test)]
 mod tests {
 	use super::{
-		APP_SCROLL_MAX, BAR_MIN_THUMB, CURSOR_MAX_LAG, Dir, Node, OffStrip, PauseState, Rect,
-		SLIDE_TOP_BAND_APPS, StripCell, app_scroll_frames, bar_applies_to, bar_pos_to_lines,
+		APP_SCROLL_MAX, BAR_MIN_THUMB, CURSOR_MAX_LAG, Dir, LinkHit, Node, OffStrip, PauseState,
+		Rect, SLIDE_TOP_BAND_APPS, StripCell, app_scroll_frames, bar_applies_to, bar_pos_to_lines,
 		bar_thumb_span, bell_brighten, capture_grid_text, capture_start, cursor_cycle,
 		cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full,
-		layout, logical_line_bounds, move_is_input, pair_inside, prompt_strip, pushed_since,
-		render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed, slide_bands,
-		snapshot_rows, static_bands, translate_span, vanished_range, weld_region_clip,
+		layout, link_at, logical_line_bounds, move_is_input, pair_inside, prompt_strip,
+		pushed_since, render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed,
+		slide_bands, snapshot_rows, static_bands, translate_span, vanished_range, weld_region_clip,
 	};
+	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
-	use alacritty_terminal::index::{Column, Line};
+	use alacritty_terminal::index::{Column, Line, Point};
 	use alacritty_terminal::term::{Config as TermConfig, Term};
 	use alacritty_terminal::vte::ansi::Processor;
 
@@ -4971,6 +5194,110 @@ mod tests {
 		assert_eq!(
 			scroll_shift(&cur, &last, true),
 			crate::scroll::MAX_BACKLOG as usize
+		);
+	}
+
+	// (cell_w, cell_h, margin) for the link tests - round numbers so a pixel
+	// coordinate reads as a cell without arithmetic.
+	const LINK_METRICS: (f32, f32, f32) = (10.0, 20.0, 5.0);
+
+	// Pointer at the centre of grid cell (row, col), in window pixels.
+	fn cell_px(row: i32, col: usize) -> (f32, f32) {
+		let (cw, ch, margin) = LINK_METRICS;
+		(
+			margin + col as f32 * cw + cw / 2.0,
+			margin + row as f32 * ch + ch / 2.0,
+		)
+	}
+
+	fn link_probe(
+		term: &Term<VoidListener>,
+		cols: usize,
+		lines: usize,
+		row: i32,
+		col: usize,
+	) -> Option<LinkHit> {
+		let settings = config::Settings::default();
+		let rect = Rect {
+			x: 0.0,
+			y: 0.0,
+			w: 400.0,
+			h: 200.0,
+		};
+		let (px, py) = cell_px(row, col);
+		link_at(
+			term.grid(),
+			term.colors(),
+			&settings,
+			rect,
+			px,
+			py,
+			LINK_METRICS,
+			(cols, lines),
+			0,
+		)
+	}
+
+	#[test]
+	fn a_url_in_the_grid_maps_back_to_the_cells_it_occupies() {
+		let term = term_fed(40, 4, 100, "see http://example.com/x now");
+		let hit = link_probe(&term, 40, 4, 0, 8).expect("link under the pointer");
+		assert_eq!(hit.url, "http://example.com/x");
+		assert_eq!(hit.start, Point::new(Line(0), Column(4)));
+		assert_eq!(hit.end, Point::new(Line(0), Column(23)));
+		// the words either side are not the link
+		assert!(link_probe(&term, 40, 4, 0, 1).is_none(), "before");
+		assert!(link_probe(&term, 40, 4, 0, 25).is_none(), "after");
+		// nor is a blank row below it
+		assert!(link_probe(&term, 40, 4, 1, 8).is_none(), "next row");
+	}
+
+	// A URL that runs past the right edge is ONE logical line, so the scan has to
+	// span the wrap - otherwise hovering the tail half finds a fragment, or
+	// nothing, depending on where the break landed.
+	#[test]
+	fn a_wrapped_url_is_found_whole_from_either_half() {
+		let cols = 20;
+		let term = term_fed(cols, 4, 100, "https://example.com/ab");
+		let head = link_probe(&term, cols, 4, 0, 3).expect("first row");
+		let tail = link_probe(&term, cols, 4, 1, 1).expect("second row");
+		assert_eq!(head.url, "https://example.com/ab");
+		assert_eq!(head, tail, "both halves report the same link");
+		assert_eq!(head.start, Point::new(Line(0), Column(0)));
+		assert_eq!(head.end, Point::new(Line(1), Column(1)));
+	}
+
+	// point_at CLAMPS a stray pixel onto the nearest cell, which is right for
+	// dragging a selection and wrong here: the margin is over no cell at all, and
+	// clamping there would underline a link the pointer is not on.
+	#[test]
+	fn the_margin_is_over_no_link() {
+		let term = term_fed(40, 4, 100, "http://example.com/x");
+		let settings = config::Settings::default();
+		let rect = Rect {
+			x: 0.0,
+			y: 0.0,
+			w: 400.0,
+			h: 200.0,
+		};
+		let probe = |px, py| {
+			link_at(
+				term.grid(),
+				term.colors(),
+				&settings,
+				rect,
+				px,
+				py,
+				LINK_METRICS,
+				(40, 4),
+				0,
+			)
+		};
+		assert!(probe(2.0, 12.0).is_none(), "left margin");
+		assert!(probe(12.0, 2.0).is_none(), "top margin");
+		assert!(
+			probe(12.0, 12.0).is_some(),
+			"and the cell itself still hits"
 		);
 	}
 
