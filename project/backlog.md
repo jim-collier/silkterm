@@ -1322,11 +1322,14 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
-- ✅ New default text and cursor colours. (20260804)
+- ✅ New default colour scheme. (20260804)
 	- Foreground is #88eecc, a slightly greener mint than the cyan it replaces.
-	- Cursor is #cc88ee, a soft violet. It is the same three channel values as the foreground in a different order, which makes the two an exact colour triad - equal saturation, equal brightness, a third of the wheel apart. That is as far from the text as a colour can sit without landing on the pink-red side, and it reads softer than the pink it replaces rather than louder.
-	- The two commented lines in the config file that name these colours had never tracked the theme - they carried a grey and a steel blue from before themes existed. They now show the real defaults, and an existing file is brought forward.
-	- Verified on screen: text renders at exactly the new colour and the cursor block is violet. On disk: a fresh file writes both, a file still holding the old lines is brought forward, and a value written or annotated there is left as it stands.
+	- Cursor is #eecc88, a soft gold. It is the same three channel values as the foreground in a different order, which makes the two an exact colour triad - equal saturation, equal brightness, a third of the wheel apart, so neither can clash with the other.
+	- The sixteen program colours were reworked around that pair. Each hue still sits where its name says and was warmed toward the pair; saturation is at the pastel end to match. Every colour's brightness was carried over from the palette it replaces, hue by hue, so contrast and legibility are unchanged and only the family moved. The greys carry a faint warm cast for the same reason.
+	- The focus ring around the active pane was a cold blue chosen for the old palette. It is now a muted amber, a few stops below the cursor - warm is what "this one is live" looks like in this scheme.
+	- The commented lines in the config file that name the foreground and cursor had never tracked the theme; they carried a grey and a steel blue from before themes existed. They now show the real defaults, and an existing file is brought forward for those and for the focus ring.
+	- Verified on screen: all sixteen colours, both as text and as backgrounds, plus a file listing, a diff, a warning and an error line - each still reads as the colour it names. The focus ring renders at exactly the new value. On disk: a fresh file writes the new lines, a file still holding an old one is brought forward, and a value written or annotated there is left as it stands.
+	- The light variant of the theme is untouched; its foreground is a near-black and the request was about the default dark scheme.
 
 - ✅ Scrim strength ships at 20 rather than 30. (20260804)
 	- One doubling of the halo's opacity instead of one and a half - a lighter backing, still clearly there.
