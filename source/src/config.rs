@@ -305,8 +305,8 @@ impl Default for Settings {
 			command_line: String::new(),
 			copy_on_select: false,
 			bg: [0x00, 0x00, 0x00],
-			fg: [0x88, 0xff, 0xee],
-			cursor: [0xff, 0x88, 0xaa],
+			fg: [0x88, 0xee, 0xcc],
+			cursor: [0xcc, 0x88, 0xee],
 			focus: [0x55, 0x80, 0xc8],
 			menu_bg: crate::theme::MENU_BG_DEF,
 			menu_fg: crate::theme::MENU_FG_DEF,
@@ -1703,6 +1703,10 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// first tuned value on the new scale was a shade heavier
 	("text.scrim.strength", "0  ## Default"),
 	("text.scrim.strength", "30  ## Default"),
+	// these two never tracked the theme they document - they carried a grey and a
+	// steel blue from before themes existed, so every config in the wild has them
+	("colors.foreground", "\"#d2d2da\"  ## Default"),
+	("colors.cursor", "\"#7a9ad0\"  ## Default"),
 ];
 
 // The whole pre-nesting flat namespace, old key -> new nested path. Primary
@@ -2815,8 +2819,8 @@ theme_mode: dark
 ## menu_background automatically.
 colors:
 	# background: "#000000"  ## Default
-	# foreground: "#d2d2da"  ## Default
-	# cursor: "#7a9ad0"  ## Default
+	# foreground: "#88eecc"  ## Default
+	# cursor: "#cc88ee"  ## Default
 	# focus: "#5580c8"  ## Default
 	# menu_background: "#36363b"  ## Default
 	# menu_foreground: "#f0f0f2"  ## Default

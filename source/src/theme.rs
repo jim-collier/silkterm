@@ -44,8 +44,10 @@ pub struct Theme {
 #[rustfmt::skip]
 const SILK_DARK: Palette = Palette {
 	bg: [0x00, 0x00, 0x00],
-	fg: [0x88, 0xff, 0xee],
-	cursor: [0xff, 0x88, 0xaa],
+	// fg and cursor are the same three channel values permuted - an exact triad,
+	// so they share a saturation and a brightness and can't clash.
+	fg: [0x88, 0xee, 0xcc],
+	cursor: [0xcc, 0x88, 0xee],
 	focus: [0x55, 0x80, 0xc8],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_DARK, dialog_fg: DLG_FG_DARK,
