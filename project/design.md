@@ -70,7 +70,7 @@ SilkTerm implements an event-loop-driven renderer over a retained terminal model
 
 - Model (the only source of truth). Each pane embeds an `alacritty_terminal::Term`: the integer character grid, scrollback, cursor, and the full VT/ANSI parser. A per-pane background thread reads the child process's PTY, feeds the bytes into that `Term`, and wakes the UI thread. Global tunables live in one swappable `Settings` (an atomic `Arc`) that every layer reads. Nothing else caches grid contents.
 
-- View (rebuilt every frame, pulled - never pushed). There is no retained widget tree. Each frame every visible pane snapshots its grid into draw data - styled text runs for the glyph renderer, plus solid quads for cell backgrounds, the cursor, and the selection - and the GPU renderers draw it. Smooth scroll is a view-only idea layered on top: the model only knows whole lines, the renderer interpolates a fractional offset between them. Chrome (menu bar, tab bar, context menus, dialogs) is drawn the same immediate-mode way.
+- View (rebuilt every frame, pulled - never pushed). There is no retained widget tree. Each frame every visible pane snapshots its grid into draw data: styled text runs for the glyph renderer, plus solid quads for cell backgrounds, the cursor, and the selection. The GPU renderers draw that. Smooth scroll is a view-only idea layered on top: the model only knows whole lines, the renderer interpolates a fractional offset between them. Chrome (menu bar, tab bar, context menus, dialogs) is drawn the same immediate-mode way.
 
 - Controller (event routing). winit delivers all input to one `ApplicationHandler`. Keystrokes become PTY bytes for the focused pane (or drive an open menu/dialog instead); the mouse drives selection, focus, divider-drag, pane reorder, and menus. Input never edits the grid directly - it goes to the child, the child replies, and the model updates on the next PTY read.
 
@@ -92,7 +92,7 @@ App  (winit ApplicationHandler)
 
 So a window is a list of tabs, a tab is a split tree of panes, a pane wraps one terminal; pop-out dialogs are independent sibling windows.
 
-Frame loop: A PTY read or a user event marks the app dirty or starts an animation; `about_to_wait` renders when something is dirty or animating, and otherwise waits. A render advances the scroll easing, snaps the grid to the nearest whole line, and redraws each pane from current model state. (Frames are driven from `about_to_wait` rather than redraw requests, because `request_redraw` is unreliable under X11/Compiz here.)
+Frame loop: a PTY read or a user event marks the app dirty or starts an animation. `about_to_wait` renders when something is dirty or animating, and otherwise waits. A render advances the scroll easing, snaps the grid to the nearest whole line, and redraws each pane from current model state. Frames are driven from `about_to_wait` rather than redraw requests, because `request_redraw` is unreliable under X11/Compiz here.
 
 ### API (alacritty_terminal)
 
@@ -108,7 +108,7 @@ Frame loop: A PTY read or a user event marks the app dirty or starts an animatio
 
 Critical constraint: crate's `display_offset` is integer lines. No fractional scroll in crate. Smooth scroll lives entirely in the renderer.
 
-Sharing the terminal with the reader thread: the reader holds the terminal across a whole read cycle, so the renderer cannot simply take it every frame without stalling. It also cannot merely try and give up, because the reader reclaims it immediately and an impatient try can lose forever - which showed up as a pane frozen for seconds during heavy output. The rule adopted: try first, and after a couple of frames of getting nowhere, wait properly. Waiting is bounded because it reserves the terminal ahead of the reader's next cycle; trying is not bounded at all.
+Sharing the terminal with the reader thread: the reader holds the terminal across a whole read cycle, so the renderer cannot simply take it every frame without stalling. It also cannot merely try and give up. The reader reclaims it immediately, and an impatient try can lose forever, which showed up as a pane frozen for seconds during heavy output. The rule is to try first, and after a couple of frames of getting nowhere, wait properly. Waiting is bounded, because it reserves the terminal ahead of the reader's next cycle. Trying is not bounded at all.
 
 ### Smooth-Scroll
 
@@ -124,52 +124,97 @@ Crate owns integer "where grid is." Renderer owns fractional overlay.
 
 1. Draw one extra row at top + bottom so partial rows fill viewport edges during fractional offset.
 
-The ease curve is deliberately asymmetric. A single exponential lerp starts at peak speed on its first frame and crawls its last pixels in over a second - both read wrong. So motion builds from rest through a two-stage cascade (the visual position chases a leading stage, which chases the target), and the stop is sharpened by a minimum closing speed over the final fraction of a line. Ease-out above that band is unchanged, and neither stage can overshoot, so the curve cannot bounce.
+The ease curve is deliberately asymmetric. A single exponential lerp starts at peak speed on its first frame and crawls its last pixels in over a second. Both read wrong. Motion instead builds from rest through a two-stage cascade: the visual position chases a leading stage, which chases the target. The stop is sharpened by a minimum closing speed over the final fraction of a line. Ease-out above that band is unchanged. Neither stage can overshoot, so the curve cannot bounce.
 
 ### Output easing (new text)
 
 Same mechanism: when new output pushes content up, animate `visual_offset` from +1 line back to 0 over the easing window instead of snapping. Treat output-scroll as an animated target like wheel-scroll.
 
-Catch-up speed is modeled as one curve on a time/speed graph, and each setting is a named segment of it - nothing more. The curve starts and ends at zero, and each segment hands exactly one thing to the next: the point where it ended. In order: Ease-in lifts the speed from rest over its duration (the only segment that can leave zero); Ramp-up doubles the speed every one of its periods, toward whichever top applies; the top is either the single-screen speed (while the burst's own first line is still on screen - a short listing never races) or unbounded (once a screenful has scrolled past, the ramp reaches whatever keeps up); when the cap lifts mid-burst, Ease-in runs once more from the speed it found itself at, then Ramp-up resumes. Among the curve-shape options considered (one smooth sigmoid-family curve per segment, versus straight speed segments with the adjustment being time), we went with the linear/exponential segments adjusted by time - the same shape language audio and video production use, cheap to compute, and each knob stays a plain duration.
+Catch-up speed is modeled as one curve on a time/speed graph, and each setting is a named segment of it. The curve starts and ends at zero. Each segment hands exactly one thing to the next: the point where it ended. In order:
 
-Winding down is the same curve traced backwards. Ramp-down is a braking curve computed from Ease-out's landing point: at any moment the speed may not exceed what could still be wound down (halving per the Ramp-down period) within the lines left to render. Applied continuously, that one rule is both the reserve - at speed, the view deliberately trails the live output by a braking distance - and the deceleration: the moment output ceases, the speed rides the curve down and hands off to Ease-out exactly at the landing band. An earlier design only relaxed the speed during a lull, which in practice never fired; the ramp-down knob read as inert, and stops from speed were cliffs.
+- Ease-in lifts the speed from rest over its duration. It is the only segment that can leave zero.
 
-The backlog is deliberately not capped in lines. An earlier design capped it at 16 and drove speed from backlog depth; any real burst filled the cap in about a tenth of a second, after which the view rode the raw output rate and the speed settings had no perceivable effect. The ramps bound the lag in time (about one ramp-down period at a steady rate) instead, which is what makes the slow start physically possible. User navigation is exempt from the chase: wheel and scrollbar keep a plain fixed ease, and a jump back to the bottom sweeps home at full ease speed.
+- Ramp-up doubles the speed every one of its periods, toward whichever top applies.
 
-The five settings that shape all of this are presented in the order they are watched, rather than grouped by mechanism: how gently the view leaves rest (Ease-in), how hard it accelerates (Ramp-up), the ceiling while the burst still fits on screen (Single-screen speed), how gradually it winds down (Ramp-down), and how gently it lands (Ease-out). A sixth, the initial scroll speed, was removed: it fed four separate mechanisms at once, which made every slider appear to influence every other, and the curve's own Ease-in now owns leaving rest. Two of the five are matched pairs, and it was decided that each pair must run one direction - higher Ease-in and Ease-out are gentler, higher Ramp-up and Ramp-down are harder. That constraint decides how a value is stored rather than the other way round: both ends of the ease are stored as how long they take, not how fast they move, purely so each slider runs with its partner instead of against it. Storing the mechanism directly would have made one half of each pair read backwards.
+- The top is either the single-screen speed or unbounded. Single-screen applies while the burst's own first line is still on screen, so a short listing never races. Once a screenful has scrolled past, the ramp reaches whatever keeps up.
+
+- When the cap lifts mid-burst, Ease-in runs once more from the speed it found itself at, and then Ramp-up resumes.
+
+The segments are straight lines and exponentials adjusted by time, rather than one smooth sigmoid-family curve per segment. That is the shape language audio and video production use, it is cheap to compute, and each knob stays a plain duration.
+
+Winding down is the same curve traced backwards. Ramp-down is a braking curve computed from Ease-out's landing point: at any moment the speed may not exceed what could still be wound down, halving per the Ramp-down period, within the lines left to render. Applied continuously, that one rule is both the reserve and the deceleration. At speed, the view deliberately trails the live output by a braking distance. The moment output ceases, the speed rides the curve down and hands off to Ease-out exactly at the landing band. An earlier design only relaxed the speed during a lull, which in practice never fired. The ramp-down knob read as inert, and stops from speed were cliffs.
+
+The backlog is deliberately not capped in lines. An earlier design capped it at 16 and drove speed from backlog depth. Any real burst filled the cap in about a tenth of a second, after which the view rode the raw output rate and the speed settings had no perceivable effect. The ramps bound the lag in time instead: about one ramp-down period at a steady rate. That is what makes the slow start physically possible. User navigation is exempt from the chase. Wheel and scrollbar keep a plain fixed ease, and a jump back to the bottom sweeps home at full ease speed.
+
+The five settings that shape all of this are presented in the order they are watched, rather than grouped by mechanism:
+
+- Ease-in: how gently the view leaves rest.
+
+- Ramp-up: how hard it accelerates.
+
+- Single-screen speed: the ceiling while the burst still fits on screen.
+
+- Ramp-down: how gradually it winds down.
+
+- Ease-out: how gently it lands.
+
+A sixth, the initial scroll speed, was removed. It fed four separate mechanisms at once, which made every slider appear to influence every other, and the curve's own Ease-in now owns leaving rest.
+
+Two of the five are matched pairs, and each pair runs one direction: higher Ease-in and Ease-out are gentler, higher Ramp-up and Ramp-down are harder. That constraint decides how a value is stored rather than the other way round. Both ends of the ease are stored as how long they take, not how fast they move, purely so each slider runs with its partner instead of against it. Storing the mechanism directly would have made one half of each pair read backwards.
 
 A single "Smooth scrolling" master switch (`scroll.smooth`) turns all scroll animation off at once - wheel ease, output ease, and the full-screen-app slide - without touching the individual settings; their dialog controls gray out while it is off. Every effect group in Settings follows the same master-switch pattern (transparency, wallpaper, contrast mask, text scrim, scrollbar).
 
 ### Smooth-scroll inside full-screen apps
 
-Scrollback and output easing (above) both have an easy signal: the wheel turns, or the buffer grows, and we ease a fractional offset. Full-screen ("alt-screen") apps - less, vim, nano, muffer - are the hard case, and no other terminal animates them. They do not scroll a buffer; they own the screen and repaint whole lines in place. When such an app scrolls, the terminal just sees the entire grid change - the same text is suddenly a row or two higher or lower. Nothing tells us a scroll happened, by how much, or which rows were meant to hold still. So the whole feature is reverse-engineered from two successive grid snapshots.
+Scrollback and output easing (above) both have an easy signal: the wheel turns, or the buffer grows, and we ease a fractional offset. Full-screen ("alt-screen") apps - less, vim, nano, muffer - are the hard case, and no other terminal animates them. They do not scroll a buffer. They own the screen and repaint whole lines in place. When such an app scrolls, the terminal just sees the entire grid change. The same text is suddenly a row or two higher or lower. Nothing tells us a scroll happened, by how much, or which rows were meant to hold still. So the whole feature is reverse-engineered from two successive grid snapshots.
 
-- **Detect the scroll.** Every frame we fingerprint each visible row (a hash of its characters) and compare to last frame's fingerprints. `scroll_shift_signed` finds the vertical shift (up to 24 lines, either direction) that lines up the most rows - and requires a minimum number of rows to have *actually* moved, so an in-place status-line redraw, which lines up positionally but did not move, cannot false-trigger a slide.
+- **Detect the scroll.** Every frame we fingerprint each visible row (a hash of its characters) and compare to last frame's fingerprints. `scroll_shift_signed` finds the vertical shift, up to 24 lines in either direction, that lines up the most rows. It also requires a minimum number of rows to have really moved. An in-place status-line redraw lines up positionally but did not move, so it cannot false-trigger a slide.
 
 - **Detect the fixed furniture.** Real TUIs pin a title bar at the top (nano, muffer) and/or a status/input line at the bottom (less, vim). We count the unchanged rows at each end; only the middle region is allowed to slide, the bands hold still. Handling both bands is what makes nano and muffer work where an earlier top-anchored detector only handled less.
 
-- **Ease it into place.** The grid is already at the post-scroll position, so to animate we push the new content *back* by the detected shift and ease that offset to zero - the frame slides into place instead of snapping.
+- **Ease it into place.** The grid is already at the post-scroll position, so to animate we push the new content back by the detected shift and ease that offset to zero. The frame slides into place instead of snapping.
 
-- **Fill the gap with the scrolled-off rows.** The scrolled-off lines are gone from the grid (the app overwrote them), so the gap the slide reveals cannot be redrawn from the model. Each frame the styled rows are snapshotted, and the moment a step is detected, the rows it pushed out of the region are moved into a small retained strip. The strip draws welded to the sliding content's edge and rides the same eased offset, so the gap is always exactly filled with real outgoing content - complete with its own cell backgrounds and readability scrim - and nothing ever moves relative to anything else. (An earlier design retained the whole previous shaped frame instead; its fill could trail the ease by a few lines and it repositioned at every re-capture, which read as a pulsing shadow under a title bar - the reason title-bar apps were temporarily gated to hard-cut.)
+- **Fill the gap with the scrolled-off rows.** The scrolled-off lines are gone from the grid (the app overwrote them), so the gap the slide reveals cannot be redrawn from the model. Each frame the styled rows are snapshotted, and the moment a step is detected, the rows it pushed out of the region are moved into a small retained strip. The strip draws welded to the sliding content's edge and rides the same eased offset. So the gap is always exactly filled with real outgoing content, complete with its own cell backgrounds and readability scrim, and nothing ever moves relative to anything else. An earlier design retained the whole previous shaped frame instead. Its fill could trail the ease by a few lines and it repositioned at every re-capture, which read as a pulsing shadow under a title bar, and that is why title-bar apps were temporarily gated to hard-cut.
 
-A sliding frame therefore composites as: the scrolled-off strip filling the revealed gap, the current middle region sliding over it (clipped between the two bands), the title and status bands redrawn unshifted, and the readability scrim following the whole thing, strip included.
+A sliding frame therefore composites as four parts:
 
-Why it is hard, in one place: there is no scroll event to hook and `alacritty_terminal` does not expose the app's scroll region (DECSTBM), so "a scroll happened, by N lines, with these fixed bands" is inferred heuristically and must reject false positives (an in-place redraw must not bounce - the apt-status-bar hazard); the off-screen content is unrecoverable, so it has to be captured styled a frame before it vanishes and tiled pixel-accurately against the current frame; the fixed bands mean three regions have to tile with no gap and no overlap; and all of it is sub-line and per-frame, riding the same fractional renderer and scrim pass, under a redraw loop that cannot trust X11/Compiz redraw requests. It is opt-in (`smooth_scroll_apps`, default off). The strip retains roughly a screenful of scrolled-off rows, so even a fast wheel burst stays filled; the ease's lag ramp bounds how far the content trails reality.
+- The scrolled-off strip, filling the revealed gap.
+
+- The current middle region, sliding over it, clipped between the two bands.
+
+- The title and status bands, redrawn unshifted.
+
+- The readability scrim, following the whole thing, strip included.
+
+What makes this hard:
+
+- There is no scroll event to hook, and `alacritty_terminal` does not expose the app's scroll region (DECSTBM). So "a scroll happened, by N lines, with these fixed bands" is inferred heuristically, and it must reject false positives: an in-place redraw must not bounce, the apt-status-bar hazard.
+
+- The off-screen content is unrecoverable. It has to be captured styled a frame before it vanishes, then tiled pixel-accurately against the current frame.
+
+- The fixed bands mean three regions have to tile with no gap and no overlap.
+
+- All of it is sub-line and per-frame, riding the same fractional renderer and scrim pass, under a redraw loop that cannot trust X11/Compiz redraw requests.
+
+It is opt-in (`smooth_scroll_apps`, default off). The strip retains roughly a screenful of scrolled-off rows, so even a fast wheel burst stays filled. The ease's lag ramp bounds how far the content trails reality.
 
 ### Text readability scrim
 
 A bg-colored backing behind glyphs so text stays legible over a busy background image or a near-transparent terminal. The scene's text is rendered to a coverage texture, turned into a halo, and composited under the crisp text, colored per-pixel so each glyph's backing takes its own cell's bg color. The cursor is a separate coverage texture so it can join the halo and the outline as independent toggles.
 
-The halo shape is selectable ("Scrim function"), because a plain Gaussian blur is a poor legibility backing: it is a round kernel, so as the radius grows the backing rounds off and the corners of a solid block recede - a square of text reads as sitting on a separate round blob rather than an even plate. Four functions are offered:
+The halo shape is selectable ("Scrim function"), because a plain Gaussian blur is a poor legibility backing. It is a round kernel, so as the radius grows the backing rounds off and the corners of a solid block recede. A square of text then reads as sitting on a separate round blob rather than an even plate. Four functions are offered:
 
-- **Dilate** - the backing grows the same distance from every edge as a square (Chebyshev distance), so corners stay full. The most solid/boxy look.
-- **SDF** (default) - the backing grows by true round (Euclidean) distance with full corners: round like the old blur but the corners no longer pull in. This is the described ideal.
-- **DT** (distance transform) - the same Euclidean distance rendered as a solid plate with a crisp feathered lip, rather than a soft glow - a highlighter-style backing.
-- **Gaussian [ugly]** - the legacy separable blur, kept as a baseline to compare against.
+- **Dilate**. The backing grows the same distance from every edge as a square (Chebyshev distance), so corners stay full. The most solid/boxy look.
 
-The distance functions share one engine: a separable, exactly-Euclidean distance transform bounded to the halo radius (per-column 1D distance, then a row combine), which is cheap (two passes, no jump-flood) and reads either metric off the same field. Independently, a "Scrim falloff" curve shapes how the backing fades with distance - Sigmoid, Half-normal, Linear, Logarithmic, or Exponential - applied both as the blur kernel weight and as the distance-path transfer. Falloff and function are orthogonal: the function decides the halo's *shape*, the falloff its *fade*. The falloff is named for the curve it draws rather than for a blur, since the same word otherwise names both a shape and a fade: a bell curve's outer half is a half-normal, and a smoothstep is a sigmoid. Every curve is normalized to reach zero at the halo's outer edge, so a halo ends where its radius says it does.
+- **SDF** (default). The backing grows by true round (Euclidean) distance with full corners: round like the old blur, but the corners no longer pull in. This is the described ideal.
 
-A third knob, "Strength", decides how bold the finished halo is: each 10% doubles its opacity, up to ten doublings at 100%. Because the doubled value is clamped, the halo's core saturates first and the solid part grows outward along the falloff - so the backing thickens into a plate rather than merely brightening, and it still stops at the radius. At 0 the halo is exactly as the function and falloff built it, which is what ships.
+- **DT** (distance transform). The same Euclidean distance rendered as a solid plate with a crisp feathered lip, rather than a soft glow. A highlighter-style backing.
+
+- **Gaussian [ugly]**. The legacy separable blur, kept as a baseline to compare against.
+
+The distance functions share one engine: a separable, exactly-Euclidean distance transform bounded to the halo radius. It takes a per-column 1D distance, then a row combine. That is cheap - two passes, no jump-flood - and reads either metric off the same field. Independently, a "Scrim falloff" curve shapes how the backing fades with distance: Sigmoid, Half-normal, Linear, Logarithmic, or Exponential. It applies both as the blur kernel weight and as the distance-path transfer. Falloff and function are orthogonal: the function decides the halo's shape, the falloff its fade. The falloff is named for the curve it draws rather than for a blur, since the same word otherwise names both a shape and a fade. A bell curve's outer half is a half-normal, and a smoothstep is a sigmoid. Every curve is normalized to reach zero at the halo's outer edge, so a halo ends where its radius says it does.
+
+A third knob, "Strength", decides how bold the finished halo is: each 10% doubles its opacity, up to ten doublings at 100%. Because the doubled value is clamped, the halo's core saturates first and the solid part grows outward along the falloff. So the backing thickens into a plate rather than merely brightening, and it still stops at the radius. At 0 the halo is exactly as the function and falloff built it, which is what ships.
 
 ### Font fallback stack
 
@@ -183,19 +228,19 @@ Which family that is comes from a single search order, the same on every platfor
 - then a built-in stack, which is also what a fresh config is written with
 - then, only if none of the above is installed, whatever the generic monospace name resolves to
 
-We decided the setting should only *reorder* that list, never truncate it. An earlier version dropped `font_family` entirely while following the OS font, which meant the same build and the same config resolved differently depending on the platform, and a configured stack could be silently ignored. Every list is now always walked, so a family that is not installed simply falls through to the next one, and the configured stack still has effect as a fallback.
+The setting only reorders that list; it never truncates it. An earlier version dropped `font_family` entirely while following the OS font. The same build and the same config then resolved differently depending on the platform, and a configured stack could be silently ignored. Every list is now always walked. A family that is not installed simply falls through to the next one, and the configured stack still has effect as a fallback.
 
-Platforms differ only in what they report, not in the rules applied to it: Windows has a system font *size* but no monospace *family*, so following the family there is a no-op and resolution starts at `font_family` without a special case. A toggle with nothing behind it reads as inert - the Settings checkbox grays out and says why. The same holds for a desktop with no font setting configured at all, which is why the check asks what was detected rather than which platform is running.
+Platforms differ only in what they report, not in the rules applied to it. Windows has a system font size but no monospace family, so following the family there is a no-op and resolution starts at `font_family` without a special case. A toggle with nothing behind it reads as inert, so the Settings checkbox grays out and says why. The same holds for a desktop with no font setting configured at all, which is why the check asks what was detected rather than which platform is running.
 
-The built-in stack is last for a reason: the generic monospace query below it is effectively a lottery over installed fonts, and its winner may ship no bold face - which ejects bold runs into an arbitrary, often proportional, fallback whose advances can't be snapped to the cell grid. Every entry in the built-in stack carries a real bold face. When that stack changes, the outgoing value is recorded so an existing config still carrying it verbatim is refreshed on the next launch; a stack the user edited is theirs and is left alone.
+The built-in stack is last for a reason. The generic monospace query below it is effectively a lottery over installed fonts, and its winner may ship no bold face. That ejects bold runs into an arbitrary, often proportional, fallback whose advances can't be snapped to the cell grid. Every entry in the built-in stack carries a real bold face. When that stack changes, the outgoing value is recorded, so an existing config still carrying it verbatim is refreshed on the next launch. A stack the user edited is theirs and is left alone.
 
 ### Hyperlinks
 
-- URLs in the output are clickable. Among the ways to decide what counts as one, it was decided that a link must carry a scheme from a fixed list - http, https, ftp, ftps, sftp, ssh, file, mailto - rather than being guessed from shape. That keeps false positives near zero (output is full of words with colons and slashes in them) and, more importantly, it is the whole of the security story: a scheme outside the list is not a link, so it can never be handed to the desktop. Bare `www.` prefixes and bare file paths were considered and left out for the same reason.
+- URLs in the output are clickable. A link must carry a scheme from a fixed list - http, https, ftp, ftps, sftp, ssh, file, mailto - rather than being guessed from shape. That keeps false positives near zero, since output is full of words with colons and slashes in them. It is also the whole of the security story: a scheme outside the list is not a link, so it can never be handed to the desktop. Bare `www.` prefixes and bare file paths were considered and left out for the same reason.
 
-- Punctuation is trimmed the way a reader would: a full stop or comma after a URL belongs to the sentence, and so does a closing bracket the URL is sitting inside - but one the URL itself opened is part of it. A URL that wraps across rows is one link, found from either half.
+- Punctuation is trimmed the way a reader would. A full stop or comma after a URL belongs to the sentence, and so does a closing bracket the URL is sitting inside. One the URL itself opened is part of it. A URL that wraps across rows is one link, found from either half.
 
-- Hovering underlines, Ctrl+click opens. The underline appears on a plain hover with no modifier, since a link the user cannot see is a link they will not try. Opening needs Ctrl so it can never be confused with selecting; the press arms and the release opens, so a slipped press can be dragged off to cancel. A right-click on a link puts "Open link" and "Copy link" at the top of the menu, and only there.
+- Hovering underlines, Ctrl+click opens. The underline appears on a plain hover with no modifier, since a link the user cannot see is a link they will not try. Opening needs Ctrl so it can never be confused with selecting. The press arms and the release opens, so a slipped press can be dragged off to cancel. A right-click on a link puts "Open link" and "Copy link" at the top of the menu, and only there.
 
 - An app that is watching the mouse itself owns the pointer, so nothing underlines over it - holding Shift asks for the local behavior instead, the same bypass selection already uses. The right-click menu continues to win over such an app, as all our chrome does.
 
@@ -203,33 +248,39 @@ The built-in stack is last for a reason: the generic monospace query below it is
 
 ### Attention colors and dialog chrome
 
-- A theme carries two attention colors rather than one, because they answer different questions. **Highlights** marks several things at once - the live pane's ring, slider handles, revert arrows, the default button - so it stays calm enough to appear many times on a screen. **Focus** marks the single control the keyboard is on, so it is the more vivid of the pair and sits well away from its partner in hue. A test holds every theme's two apart, since a theme that let them converge would draw "look at this" and "you are here" in the same color.
+- A theme carries two attention colors rather than one, because they answer different questions. **Highlights** marks several things at once: the live pane's ring, slider handles, revert arrows, the default button. It therefore stays calm enough to appear many times on a screen. **Focus** marks the single control the keyboard is on, so it is the more vivid of the pair and sits well away from its partner in hue. Every theme keeps its two well apart, because a theme that let them converge would draw "look at this" and "you are here" in the same color.
 
-- The dialog's own accents follow the theme now. They used to be a fixed blue while the theme's attention color was something else entirely, so the panel could not agree with the terminal it belonged to. The pressed-button fill is that color mixed back toward the panel, which is what makes a pressed button read as pressed rather than as the focused one.
+- The dialog's own accents follow the theme. They used to be a fixed blue while the theme's attention color was something else entirely, so the panel could not agree with the terminal it belonged to. The pressed-button fill is that color mixed back toward the panel, which is what makes a pressed button read as pressed rather than as the focused one.
 
-- A focused field shows one outline, not two. The ring lands exactly on the box's own outline and the box stands its border down; where the ring genuinely spans more than one control - a color chip and its hex field - it stays a little outside instead, and only the field's border gives way.
+- A focused field shows one outline, not two. The ring lands exactly on the box's own outline and the box stands its border down. Where the ring genuinely spans more than one control, such as a color chip and its hex field, it stays a little outside instead, and only the field's border gives way.
 
-- Tabs sit on a recessed **Gutter** strip and stand on the rule that closes it off, the way tabbed interfaces generally read. The current tab is a lighter gray rather than an accent: "you are here" is not the same job as "look at this". Above the rows there is no heading repeating the tab's own name - the strip has said it already.
+- Tabs sit on a recessed **Gutter** strip and stand on the rule that closes it off, the way tabbed interfaces generally read. The current tab is a lighter gray rather than an accent: "you are here" is not the same job as "look at this". Above the rows there is no heading repeating the tab's own name, since the strip has said it already.
 
-- Controls whose label does not explain them carry a line of flyover help, and one that is grayed out explains why instead, that being the more urgent question at the time. The text wraps to the panel rather than being clamped to its edge, so neither a longer sentence nor a larger interface font can push it out of view.
+- Controls whose label does not explain them carry a line of flyover help. One that is grayed out explains why instead, that being the more urgent question at the time. The text wraps to the panel rather than being clamped to its edge, so neither a longer sentence nor a larger interface font can push it out of view.
 
 ### Groups and sub-groups in the Settings dialog
 
-- Settings are organized two ways. A **group** is a titled section with a rule under it and clear space above. A **sub-group** has no title of its own: it is a control followed by the controls that depend on it, whose labels step right so the run reads as belonging to the leader. A master switch and the things it governs is the shape this exists for.
+- Settings are organized two ways. A **group** is a titled section with a rule under it and clear space above. A **sub-group** has no title of its own. It is a control followed by the controls that depend on it, whose labels step right so the run reads as belonging to the leader. A master switch and the things it governs is the shape this exists for.
 
-- Only labels move. Every control keeps the one column it shares with every other row, because a settings list is scanned down that column and a control that wandered with its label would break it. A sub-group is therefore free of any bookkeeping: it is read off the indentation rather than declared a second time, so the leader and its members cannot disagree about who belongs to what.
+- Only labels move. Every control keeps the one column it shares with every other row, because a settings list is scanned down that column and a control that wandered with its label would break it. A sub-group is therefore free of any bookkeeping. It is read off the indentation rather than declared a second time, so the leader and its members cannot disagree about who belongs to what.
 
-- It was decided that a fraction stored as a decimal is shown as a whole percent. Nobody thinks in 0.35, and the file is a different audience from the dialog - the decimal is what the renderer wants and what a hand-edited config should keep. The two directions are exact inverses, so reverting one lands on its own default rather than a hair off it.
+- A fraction stored as a decimal is shown as a whole percent. Nobody thinks in 0.35, and the file is a different audience from the dialog. The decimal is what the renderer wants and what a hand-edited config should keep. The two directions are exact inverses, so reverting one lands on its own default rather than a hair off it.
 
-- The tabs follow what a person is looking at rather than what the code calls it: Background, Text, Cursor, Movement, Themes, Window. Settings that describe one subject sit together even when they are implemented in different places - the cursor's shape, its animation and whether it joins the text halo are all "cursor" to the person changing them.
+- The tabs follow what a person is looking at rather than what the code calls it: Background, Text, Cursor, Movement, Themes, Window. Settings that describe one subject sit together even when they are implemented in different places. The cursor's shape, its animation and whether it joins the text halo are all "cursor" to the person changing them.
 
 ### Saved themes
 
-- A theme the user saves is stored **whole** - both variants, the ten palette colors and the sixteen ANSI colors - rather than as a base theme plus the differences. Among the options that was decided on three grounds: saving, renaming and deleting all become one operation on one config subtree; a stale color cannot survive under a name that no longer sets it; and a saved theme is self-contained enough to hand to someone else.
+- A theme the user saves is stored **whole**: both variants, the ten palette colors and the sixteen ANSI colors, rather than as a base theme plus the differences.
+
+	- Saving, renaming and deleting all become one operation on one config subtree.
+
+	- A stale color cannot survive under a name that no longer sets it.
+
+	- A saved theme is self-contained enough to hand to someone else.
 
 - What identifies a saved theme in the file is a slug that never changes, with the display name stored beside it. A rename therefore rewrites one line instead of moving a subtree, and the `theme` setting keeps holding a name a person would recognize.
 
-- **Nothing records "this theme has unsaved changes".** A per-color override that disagrees with the theme is that record, and it already lives in the config file - so the Save button is right after a restart with no flag to keep in step. Saving folds the overrides into the theme and drops them, which is also what makes the button go quiet again.
+- **Nothing records "this theme has unsaved changes".** A per-color override that disagrees with the theme is that record, and it already lives in the config file. So the Save button is right after a restart, with no flag to keep in step. Saving folds the overrides into the theme and drops them, which is also what makes the button go quiet again.
 
 - A saved theme may take a built-in's name and stand in for it. That gives "customize a built-in" an obvious home, and deleting the saved copy puts the built-in back rather than leaving the name pointing at nothing. Built-ins themselves cannot be renamed or deleted.
 
@@ -243,45 +294,47 @@ The built-in stack is last for a reason: the generic monospace query below it is
 
 ### Environment
 
-- Target: Debian. The primary dev/reference environment is X11 (Compiz), but one Linux binary runs native on both X11 and Wayland - winit selects the backend at runtime, and X11/Wayland/GL are all loaded on demand. (Also Windows and macOS - all with x86_64 and ARM64 variants.)
+- Target: Debian. The primary dev/reference environment is X11 (Compiz), but one Linux binary runs native on both X11 and Wayland. winit selects the backend at runtime, and X11/Wayland/GL are all loaded on demand. Windows and macOS are targets too, all with x86_64 and ARM64 variants.
 
-	- The X11 path additionally uses a glutin GL context for per-pixel background transparency (wgpu can't drive an ARGB surface on X11); Wayland uses the plain wgpu surface, which already does premultiplied alpha. Everything else - chrome, text, scrollback slide, background image + blur + scrim - is the shared native path on both.
+	- The X11 path additionally uses a glutin GL context for per-pixel background transparency, because wgpu can't drive an ARGB surface on X11. Wayland uses the plain wgpu surface, which already does premultiplied alpha. Everything else - chrome, text, scrollback slide, background image + blur + scrim - is the shared native path on both.
 
-	- Wayland coverage: the scroll regression harness runs its scenes a second time under a headless `cage` kiosk (`run.bash --wayland`), so the smooth-scroll behavior is asserted identical on both engines. Per-pixel transparency and dialog stacking on Wayland are not yet exercised (follow-ups).
+	- Wayland coverage: smooth scrolling is identical on both engines. The scroll regression harness runs its scenes a second time under a headless `cage` kiosk (`run.bash --wayland`). Per-pixel transparency and dialog stacking on Wayland are not yet exercised (follow-ups).
 
 - Pixel-precise input: touchpad gives true pixel deltas; notched mouse wheel snaps to lines (clamp/accumulate notch deltas into smooth target).
 
 ### Startup and slow external resources
 
-- It was decided that nothing on the path from launch to the first frame may read an external resource that isn't needed to draw that frame. A wallpaper folder can be a network share, a synced collection or anything else that answers slowly or times out, and a terminal that waits for it is a terminal that hasn't opened yet.
+- Nothing on the path from launch to the first frame may read an external resource that isn't needed to draw that frame. A wallpaper folder can be a network share, a synced collection or anything else that answers slowly or times out, and a terminal that waits for it is a terminal that hasn't opened yet.
 
-- The wallpaper is the whole of that category today: scanning the rotation folder, reading the shuffle history, decoding the image, blurring and contrast-flattening it, and reading its layout tags. All of it runs on a worker thread; the window opens and the shell starts immediately, and the wallpaper appears when it is ready. That visible gap is an accepted trade - the alternative is a window that may never open at all.
+- The wallpaper is the whole of that category today: scanning the rotation folder, reading the shuffle history, decoding the image, blurring and contrast-flattening it, and reading its layout tags. All of it runs on a worker thread. The window opens and the shell starts immediately, and the wallpaper appears when it is ready. That visible gap is an accepted trade, since the alternative is a window that may never open at all.
 
-- Each request gets its own thread rather than sharing a long-lived worker. A request stuck on a dead mount can never be canceled, so a shared worker would leave every later request stuck behind it; an abandoned thread costs almost nothing, and a stale result is discarded on arrival.
+- Each request gets its own thread rather than sharing a long-lived worker. A request stuck on a dead mount can never be canceled, so a shared worker would leave every later request stuck behind it. An abandoned thread costs almost nothing, and a stale result is discarded on arrival.
 
-- The config file itself is a deliberate exception. Window size, font metrics and theme all come from it, and the window is held hidden until it can open at its final size, so reading it later would only trade a small local read for a visible resize flash.
+- The config file itself is a deliberate exception. Window size, font metrics and theme all come from it, and the window is held hidden until it can open at its final size. Reading it later would only trade a small local read for a visible resize flash.
 
 - The same shape is intended for shell discovery when that lands: draw first, scan for installed shells afterwards, fold in what was found.
 
 ### Configuration format
 
-- Among the options it was decided to use SHCL (the sister project) for the user config, replacing TOML. The file is `config.shcl`; the reference parser is a single zero-dependency crate, so dropping `toml`, `toml_edit` and `serde` made the shipped binary smaller rather than larger.
+- The user config uses SHCL (the sister project), replacing TOML. The file is `config.shcl`. The reference parser is a single zero-dependency crate, so dropping `toml`, `toml_edit` and `serde` made the shipped binary smaller rather than larger.
 
-- The deciding property is forgiveness. A malformed line yields a diagnostic and is skipped, so one bad value costs only its own setting - where strict TOML could fail the whole document and sink every setting to its default. That let two workarounds be deleted outright: a retry loop that blanked offending lines and reparsed, and a rewrite pass for leading-dot floats, which are valid here.
+- The deciding property is forgiveness. A malformed line yields a diagnostic and is skipped, so one bad value costs only its own setting. Strict TOML could instead fail the whole document and sink every setting to its default. Forgiveness let two workarounds be deleted outright: a retry loop that blanked offending lines and reparsed, and a rewrite pass for leading-dot floats, which are valid here.
 
 - Values are typed by the reader, not the file, so there is nothing to get wrong in the syntax and a value is stored back exactly as written.
 
-- The contract on saving is that a user's comments and blank-line grouping survive. Layout may be tidied - indentation, and quotes that are not needed - but a value is never rewritten. The shipped template is deliberately spelled the way a save would spell it, so the first save is a no-op rather than a reflow of the file we just wrote.
+- The contract on saving is that a user's comments and blank-line grouping survive. Layout may be tidied, meaning indentation and quotes that are not needed, but a value is never rewritten. The shipped template is deliberately spelled the way a save would spell it, so the first save is a no-op rather than a reflow of the file we just wrote.
 
-- The file is organized as nested blocks, tab-indented, mirroring how the settings relate: `wallpaper` holds its children, with `rotate` and `contrast_mask` nested inside it. A setting can also be written as a single dotted line (`wallpaper.opacity: 0.1`) and reads identically - the block form is just the canonical spelling.
+- The file is organized as nested blocks, tab-indented, mirroring how the settings relate: `wallpaper` holds its children, with `rotate` and `contrast_mask` nested inside it. A setting can also be written as a single dotted line (`wallpaper.opacity: 0.1`) and reads identically. The block form is just the canonical spelling.
+
 	- Each setting stands in its own blank-line-delimited section, comments directly above it: a short title, a description, and a range line where one applies. A commented-out line shows the built-in default and carries a `## Default` marker.
-	- The in-place add/refresh passes stay line-oriented; they resolve each line's full path from the indentation around it, so a new setting is inserted inside the right block, beside its siblings.
+
+	- The in-place add/refresh passes stay line-oriented. They resolve each line's full path from the indentation around it, so a new setting is inserted inside the right block, beside its siblings.
 
 - No migration from the old TOML configs: a fresh file is generated with defaults.
 
-- When the flat naming gave way to nested blocks, it was decided that an old config converts wholesale rather than being rewritten in place: the old file is kept alongside as a backup, a fresh current-format file is written, and every value the user had set carries over to its new place. Rewriting flat lines into blocks would have shredded the old file's comments; this way settings survive and the file's documentation is current.
+- When the flat naming gave way to nested blocks, an old config converts wholesale rather than being rewritten in place. The old file is kept alongside as a backup, a fresh current-format file is written, and every value the user had set carries over to its new place. Rewriting flat lines into blocks would have shredded the old file's comments. This way settings survive and the file's documentation is current.
 
-- A config carries the commented default lines it was first given, so when a default changes those lines start describing the old behavior. It was decided that such a line is refreshed to the current default, on the principle that the file may be corrected about what the program does on its own, but never about a value that was set by hand. A line the user activated, or annotated, is therefore left alone.
+- A config carries the commented default lines it was first given, so when a default changes those lines start describing the old behavior. Such a line is refreshed to the current default. The file may be corrected about what the program does on its own, but never about a value that was set by hand. A line the user activated, or annotated, is therefore left alone.
 
 - Starting over is a rename rather than a delete. `--reset-config` moves the file aside and lets the next launch write a fresh one, so the previous settings stay recoverable.
 
@@ -292,12 +345,12 @@ The built-in stack is last for a reason: the generic monospace query below it is
 Guiding constraint: GitHub is dumb git hosting plus optional release storage, nothing more. No hosted CI, no Actions, as few third-party tools as possible; the whole pipeline runs locally (`cicd/cicd.bash`).
 
 - Merge gate: `cicd.bash --gate` (fmt check, clippy with warnings as errors, tests) runs as the `pre-push` hook for pushes to main or dev. This is the local stand-in for a hosted CI workflow; feature-branch pushes are not gated.
-- Version-bump guard: the same `pre-push` hook blocks a push to main unless its `source/Cargo.toml` version is a strict increase over the version already on main (full semver precedence, including prerelease ordering) - so a release merge can't ship the same-or-lower version. It also requires the README Release badge to match that version (the same check `release.bash` makes, just earlier). Skips on the first main push and on branch deletes; overridable with `--no-verify` / `SKIP_GATE=1`.
+- Version-bump guard: the same `pre-push` hook blocks a push to main unless its `source/Cargo.toml` version is a strict increase over the version already on main, by full semver precedence including prerelease ordering. So a release merge can't ship the same-or-lower version. It also requires the README Release badge to match that version, the same check `release.bash` makes, just earlier. It skips on the first main push and on branch deletes, and is overridable with `--no-verify` / `SKIP_GATE=1`.
 - Branch flow: feature branches merge `--no-ff` into `dev` (the integration target). `main` is release-only: merging dev into main cuts a release.
-- Releases: `cicd/utility/release.bash` tags the merge `v<version>` and can push the tag and attach the artifacts to a GitHub Release as plain uploads. The version comes from `source/Cargo.toml` alone - the tag is read from it and the build stamps from it, so they can never disagree. Version and README badge get bumped on dev before the release merge; nothing is ever committed directly on main.
-- Build matrix (buildable from this Linux x86_64 box): Linux x86_64 (native) and, via `cargo-zigbuild` + `zig`, Linux ARM64, Windows x86_64 (mingw), Windows ARM64. macOS and BSD are deferred - cross-building them needs an Apple SDK (osxcross, license-gated) or a FreeBSD sysroot, neither present here. The debug build is what the tests and profiler run against; the release builds (optimized) feed packaging and dogfooding. ARM64 targets are on by default (zig cross-builds aren't emulated, so not much slower) and drop out with `--no-arm`.
-- Windows x86_64 toolchain for releases: the gnu (mingw) build is the canonical shipped Windows x86_64 binary, and the msvc build is deliberately left out of the Linux-cut release. Reasoning: gnu cross-builds from this Linux box in the same run as everything else and is self-contained; msvc can only be built on Windows (needs `link.exe`), so folding it in would mean a Windows->Linux binary hand-off. Since the msvc build was made crt-static it no longer offers end users anything gnu doesn't - its remaining edges (PDB/WinDbg debugging, standard ABI) are dev-side only. `cicd-win.ps1` still builds msvc on Windows for local dogfooding/debugging. Two things would reopen this: Authenticode code-signing (the natural place to sign is Windows, which would pull Windows-installer finalization onto that box), or evidence that mingw binaries trip antivirus reputation heuristics enough to matter. `makensis` itself is host-agnostic, so building the Windows installers on Linux is a non-issue independent of this choice.
-- Packaging (pipeline stage 6, when `--quick` is not passed): built from the stage-5 release binaries, never rebuilt. Linux -> `.deb` (cargo-deb) and `.rpm` (cargo-generate-rpm) per arch, driven by `[package.metadata.deb]` / `[package.metadata.generate-rpm]` in `source/Cargo.toml`. Windows -> one self-contained NSIS installer `.exe` per arch (`cicd/packaging/windows/installer.nsi.in` + `makensis`); it upgrades an existing install in place (runs the old uninstaller first) and needs no bundled runtime because the binary links only system DLLs. RPM versions can't contain `-`, so `1.0.0-beta1` is emitted as `1.0.0~beta1`. AppImage/Flatpak and the deferred macOS `.dmg` / BSD packages are future work.
+- Releases: `cicd/utility/release.bash` tags the merge `v<version>` and can push the tag and attach the artifacts to a GitHub Release as plain uploads. The version comes from `source/Cargo.toml` alone. The tag is read from it and the build stamps from it, so they can never disagree. Version and README badge get bumped on dev before the release merge; nothing is ever committed directly on main.
+- Build matrix (buildable from this Linux x86_64 box): Linux x86_64 (native) and, via `cargo-zigbuild` + `zig`, Linux ARM64, Windows x86_64 (mingw), Windows ARM64. macOS and BSD are deferred, since cross-building them needs an Apple SDK (osxcross, license-gated) or a FreeBSD sysroot, neither present here. The debug build is what the tests and profiler run against, and the optimized release builds feed packaging and dogfooding. ARM64 targets are on by default, since zig cross-builds aren't emulated and so are not much slower, and they drop out with `--no-arm`.
+- Windows x86_64 toolchain for releases: the gnu (mingw) build is the canonical shipped Windows x86_64 binary, and the msvc build is deliberately left out of the Linux-cut release. The gnu build cross-builds from this Linux box in the same run as everything else, and is self-contained. msvc can only be built on Windows, since it needs `link.exe`, so folding it in would mean a Windows->Linux binary hand-off. Since the msvc build was made crt-static it no longer offers end users anything gnu doesn't. Its remaining edges, PDB/WinDbg debugging and a standard ABI, are dev-side only. `cicd-win.ps1` still builds msvc on Windows for local dogfooding and debugging. Two things would reopen this: Authenticode code-signing, whose natural home is Windows and would pull Windows-installer finalization onto that box; or evidence that mingw binaries trip antivirus reputation heuristics enough to matter. `makensis` itself is host-agnostic, so building the Windows installers on Linux is a non-issue independent of this choice.
+- Packaging (pipeline stage 6, when `--quick` is not passed): built from the stage-5 release binaries, never rebuilt. Linux -> `.deb` (cargo-deb) and `.rpm` (cargo-generate-rpm) per arch, driven by `[package.metadata.deb]` / `[package.metadata.generate-rpm]` in `source/Cargo.toml`. Windows -> one self-contained NSIS installer `.exe` per arch (`cicd/packaging/windows/installer.nsi.in` + `makensis`). It upgrades an existing install in place by running the old uninstaller first, and needs no bundled runtime because the binary links only system DLLs. RPM versions can't contain `-`, so `1.0.0-beta1` is emitted as `1.0.0~beta1`. AppImage/Flatpak and the deferred macOS `.dmg` / BSD packages are future work.
 - Artifact naming (stable; download links depend on it): `<exe>-<version>-<os-arch>[.exe]` for binaries, `<exe>-<version>-<os-arch>.{deb,rpm}` and `<exe>-<version>-<os-arch>-setup.exe` for packages, plus `<exe>-<version>-sha256sums.txt` (covers binaries and packages), all collected into `cicd/artifacts/release/`.
-- Pinning: `rust-toolchain.toml` pins rustc/clippy/rustfmt and the cross targets; cargo-installed helpers (cargo-deny, cargo-zigbuild, cargo-deb, cargo-generate-rpm) and makensis are pinned in `cicd/config.bash` (`TOOL_PINS`) with a non-gating drift warning. Dependency freshness is a periodic local `cargo update` pass; cargo-deny advisories flag anything urgent in every run.
-- README badges: static shields only (release, license, minimum Rust). No CI badge - there is no hosted workflow to point one at.
+- Pinning: `rust-toolchain.toml` pins rustc/clippy/rustfmt and the cross targets. The cargo-installed helpers (cargo-deny, cargo-zigbuild, cargo-deb, cargo-generate-rpm) and makensis are pinned in `cicd/config.bash` (`TOOL_PINS`) with a non-gating drift warning. Dependency freshness is a periodic local `cargo update` pass, and cargo-deny advisories flag anything urgent in every run.
+- README badges: static shields only (release, license, minimum Rust). No CI badge, since there is no hosted workflow to point one at.
