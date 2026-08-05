@@ -27,6 +27,7 @@ mod sysfont;
 mod term;
 mod text;
 mod theme;
+mod ui_spec;
 mod wallpaper;
 mod xmp;
 

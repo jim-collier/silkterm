@@ -1,0 +1,510 @@
+## SilkTerm - Settings dialog declarations.
+##
+## This file IS the dialog: which rows exist, in what order, under which
+## heading, on which tab, what each one edits, and when each is greyed out.
+## It is compiled into the binary, so an edit needs a rebuild - and the tests
+## fail if a row names a setting the code does not know, or leaves one out.
+##
+## Measurements are DIP: a CSS pixel, 1/96 inch. The layout is solved in that
+## space and multiplied by the display's scale factor on the way to the
+## screen, so these numbers mean the same physical size at any DPI.
+##
+## What is NOT here: how a value is read, written or formatted. Those go
+## through typed fields with transforms (a stored millisecond becomes a 1..100
+## slider, a fraction becomes a percent), which is code, not data.
+
+## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Tabs
+## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+## Left to right along the top. Every heading below names one of these.
+tabs: "Appearance", "Font", "Colors", "Window", "Scrolling"
+
+## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Layout
+## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+## Nearly every measurement here is a FLOOR, not a fixed size: content that
+## needs more room gets it (a wide label pushes the panel wider, a tall UI font
+## makes rows taller). So a value set too small loses to the content and one
+## set too large just gives a roomier dialog - neither can break the layout.
+
+layout:
+
+	## Panel
+	width: 540                 ## floor; the widest label, button row or tab strip wins
+	pad: 18                    ## margin inside all four panel edges
+	tabs_gap: 10               ## tab strip -> first row
+	buttons_gap: 14            ## last row -> footer buttons
+
+	## Rows
+	row_height: 32             ## floor for an ordinary row
+	row_pad: 8                 ## row grows to the UI line height plus this
+	header_height: 42          ## floor for a section heading
+	header_pad: 20             ## heading grows to the UI line height plus this
+	header_gap: 10             ## extra space above a heading that follows a section
+	label_width: 168           ## floor for the label column
+	label_gap: 14              ## clear space after the longest label
+	revert_width: 22           ## right-edge revert-to-default icon column
+
+	## Controls
+	slider_width: 220
+	swatch: 20                 ## colour chip, and the height of every boxed control
+	hex_width: 92              ## "#rrggbb" field beside a colour chip
+	value_width: 56            ## numeric field beside a slider
+	radio_box: 16              ## radio indicator square
+	radio_pitch: 96            ## per radio option: box + label + gap
+	dual_pitch: 118            ## per checkbox + label pair on a two-part row
+	dropdown_width: 208        ## collapsed dropdown box (fits its longest option)
+	dropdown_item_pad: 8       ## popup row grows to the UI line height plus this
+	dropdown_item_min: 24
+	base_line_height: 19       ## the UI line height the four pitches above were drawn for
+
+	## Editable fields
+	field_pad: 6               ## text inset inside a field
+	caret_pad: 6               ## kept clear right of the caret at end-of-text
+	view_ahead: 28             ## characters kept visible ahead of a travelling caret
+	edit_menu_width: 132       ## the field's right-click menu
+
+	## Footer buttons
+	button_height: 30          ## floor
+	button_pad: 24             ## clear space around the longest caption
+	button_width: 76           ## floor
+	button_gap: 10
+	tab_pad: 22                ## clear space around a tab's title
+	tab_gap: 6                 ## between tab buttons
+
+	## Scrollbar (shown only when a tab is taller than the panel)
+	scrollbar_width: 8
+	scrollbar_inset: 9         ## gap between the bar and the panel edge
+	scrollbar_thumb_min: 24
+
+## Chrome glyphs.
+icons:
+	dropdown_arrow: "▾"   ## in the collapsed box
+	dropdown_check: "✓"   ## marks the current value in the open list
+	revert: "↺"           ## revert-to-default, one per row
+
+## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Rows
+## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+## In screen order. A row's NAME is the setting it edits, spelled as the code
+## spells it; `kind: heading` starts a section and says which tab it lands on,
+## and every row after it belongs to that section.
+##
+## kind:      heading | toggle | slider | color | text | radio | dropdown | pair
+## label:     what the row is called on screen
+## setting:   the config.shcl path the revert arrow comments out
+## range:     slider low, high
+## whole:     slider steps in whole numbers
+## options:   the choices, in order, for radio / dropdown / pair
+## parts:     the two settings a `pair` row carries, one per option
+## key:       only when the row's name cannot be the setting's - because a
+##            heading already took that name, or because the row edits no
+##            single setting of its own (`key: none`)
+
+rows:
+
+	## ---------------------------------------------------------------- Appearance
+
+	Appearance:
+		kind: heading
+		label: Appearance
+		tab: Appearance
+
+	Transparency:
+		label: Transparency
+		kind: toggle
+		setting: transparency.enabled
+
+	Opacity:
+		label: Opacity
+		kind: slider
+		range: 0, 1
+		setting: transparency.opacity
+
+	BackdropBlur:
+		label: Blur-behind
+		kind: toggle
+		setting: transparency.blur_behind
+
+	BgEnabled:
+		label: Wallpaper
+		kind: toggle
+		setting: wallpaper.enabled
+
+	BgImage:
+		label: Background image
+		kind: text
+		setting: wallpaper.image
+
+	BgRotate:
+		label: Rotate folder
+		kind: toggle
+		setting: wallpaper.rotate.enabled
+
+	BgOpacity:
+		label: Bg image opacity
+		kind: slider
+		range: 0, 1
+		setting: wallpaper.opacity
+
+	BgBlur:
+		label: Bg image blur
+		kind: slider
+		range: 0, 50
+		setting: wallpaper.blur
+
+	BgFit:
+		label: Default fit
+		kind: radio
+		options: "Stretch", "Zoom"
+		setting: wallpaper.default_fit
+
+	BgHonorXmp:
+		label: Honor tags
+		kind: toggle
+		setting: wallpaper.honor_xmp
+
+	BgContrastMask:
+		label: Contrast mask
+		kind: toggle
+		setting: wallpaper.contrast_mask.enabled
+
+	BgContrastSize:
+		label: Mask size
+		kind: slider
+		range: 0, 1
+		setting: wallpaper.contrast_mask.size
+
+	BgContrastStrength:
+		label: Mask strength
+		kind: slider
+		range: 0, 1
+		setting: wallpaper.contrast_mask.strength
+
+	BgContrastAuto:
+		label: Mask auto
+		kind: slider
+		range: 0, 1
+		setting: wallpaper.contrast_mask.auto
+
+	TextScrim:
+		label: Text scrim
+		kind: toggle
+		setting: text.scrim.enabled
+
+	ScrimStrength:
+		## percent, where each 20% is one doubling of the finished halo's opacity
+		label: Strength
+		kind: slider
+		range: 0, 100
+		whole: true
+		setting: text.scrim.strength
+
+	ScrimRadius:
+		label: Scrim radius
+		kind: slider
+		range: 0, 20
+		setting: text.scrim.radius
+
+	ScrimSoftness:
+		label: Softness
+		kind: slider
+		range: 0, 1
+		setting: text.scrim.softness
+
+	Outline:
+		label: Text outline
+		kind: slider
+		range: 0, 4
+		setting: text.outline
+
+	ScrimFunction:
+		label: Scrim function
+		kind: dropdown
+		options: "Distance field", "Distance transform", "Dilate + feather", "Gaussian [ugly]"
+		setting: text.scrim.function
+
+	ScrimRamp:
+		label: Scrim falloff
+		kind: dropdown
+		options: "Exponential", "Half-normal", "Logarithmic", "Sigmoid", "Linear"
+		setting: text.scrim.ramp
+
+	Cursor:
+		## Two independent switches sharing one label; the row itself edits
+		## nothing, so its own name is not a setting.
+		key: none
+		label: Cursor
+		kind: pair
+		options: "Scrim", "Outline"
+		parts: CursorScrim, CursorOutline
+		setting: cursor.scrim, cursor.outline
+
+	## ---------------------------------------------------------------------- Font
+
+	Font:
+		kind: heading
+		label: Font
+		tab: Font
+
+	SystemFont:
+		label: Use system font
+		kind: pair
+		options: "Face", "Size"
+		parts: SystemFont, SystemFontSize
+		setting: font.use_system_family, font.use_system_size
+
+	FontFamily:
+		label: Font family
+		kind: text
+		setting: font.family
+
+	FontSize:
+		label: Font size
+		kind: slider
+		range: 6, 40
+		whole: true
+		setting: font.size
+
+	LineHeight:
+		label: Line height
+		kind: slider
+		range: 0.8, 2
+		setting: font.line_height_scale
+
+	## -------------------------------------------------------------------- Window
+
+	Window:
+		kind: heading
+		label: Window
+		tab: Window
+
+	Columns:
+		label: Columns
+		kind: slider
+		range: 20, 400
+		whole: true
+		setting: window.columns
+
+	Rows:
+		label: Rows
+		kind: slider
+		range: 6, 120
+		whole: true
+		setting: window.rows
+
+	RememberSize:
+		label: Remember last size
+		kind: toggle
+		setting: window.remember_size
+
+	Margin:
+		label: Margin
+		kind: slider
+		range: 0, 40
+		whole: true
+		setting: window.margin
+
+	## ----------------------------------------------------------------- Scrolling
+
+	Scrolling:
+		kind: heading
+		label: Scrolling
+		tab: Scrolling
+
+	SmoothScroll:
+		label: Smooth scrolling
+		kind: toggle
+		setting: scroll.smooth
+
+	## The five below are ordered as one output burst unfolds: it leaves rest,
+	## accelerates, tops out, winds down, lands. All five read the same way -
+	## higher is faster.
+
+	ScrollEaseIn:
+		label: Ease-in
+		kind: slider
+		range: 1, 100
+		whole: true
+		setting: scroll.ease_in_ms
+
+	ScrollRampUp:
+		label: Ramp-up
+		kind: slider
+		range: 1, 100
+		whole: true
+		setting: scroll.ramp_up_ms
+
+	SingleScreenTau:
+		label: Single-screen speed
+		kind: slider
+		range: 1, 100
+		whole: true
+		setting: scroll.single_screen_tau_ms
+
+	ScrollRampDown:
+		label: Ramp-down
+		kind: slider
+		range: 1, 100
+		whole: true
+		setting: scroll.ramp_down_ms
+
+	ScrollEaseOut:
+		label: Ease-out
+		kind: slider
+		range: 1, 100
+		whole: true
+		setting: scroll.ease_out_ms
+
+	WheelLines:
+		label: Wheel lines
+		kind: slider
+		range: 1, 10
+		whole: true
+		setting: scroll.wheel_lines
+
+	Scrollbar:
+		label: Scrollbar
+		kind: toggle
+		setting: scroll.scrollbar.enabled
+
+	ScrollbarThickness:
+		label: Scrollbar width
+		kind: slider
+		range: 4, 64
+		whole: true
+		setting: scroll.scrollbar.thickness
+
+	ScrollbarAutoHide:
+		label: Hide when idle
+		kind: toggle
+		setting: scroll.scrollbar.auto_hide
+
+	ColScrollbarThumb:
+		label: Scrollbar handle
+		kind: color
+		setting: colors.scrollbar_thumb
+
+	ColScrollbarTrough:
+		label: Scrollbar track
+		kind: color
+		setting: colors.scrollbar_trough
+
+	## --------------------------------------------------------------------- Shell
+
+	Shell:
+		kind: heading
+		label: Shell
+		tab: Window
+
+	DefaultShell:
+		label: Default shell
+		kind: text
+		setting: shell.default
+
+	CopyOnSelect:
+		label: Copy on select
+		kind: toggle
+		setting: shell.copy_on_select
+
+	## ---------------------------------------------------------------- Hyperlinks
+
+	Hyperlinks:
+		kind: heading
+		label: Hyperlinks
+		tab: Window
+
+	HyperlinksEnabled:
+		key: Hyperlinks
+		label: Hyperlinks
+		kind: toggle
+		setting: hyperlinks.enabled
+
+	LinkOpenCommand:
+		label: Open command
+		kind: text
+		setting: hyperlinks.open_command
+
+	## -------------------------------------------------------------------- Colors
+
+	Colors:
+		kind: heading
+		label: Colors
+		tab: Colors
+
+	ColBg:
+		label: Background
+		kind: color
+		setting: colors.background
+
+	ColFg:
+		label: Foreground
+		kind: color
+		setting: colors.foreground
+
+	ColCursor:
+		label: Cursor
+		kind: color
+		setting: colors.cursor
+
+	ColFocus:
+		label: Focus ring
+		kind: color
+		setting: colors.focus
+
+## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Greying
+## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+## A control is greyed out while any setting listed against it is off - a
+## toggle that is false, or a number sitting at zero. A leading "!" reverses
+## it: greyed while that setting is ON. Listing several means all must hold.
+##
+## Not listed here: the two system-font switches, which the environment greys
+## when the desktop reports no font for them to follow. That is a fact about
+## the machine, so it is answered in code.
+
+gates:
+
+	Opacity: Transparency
+	BackdropBlur: Transparency
+
+	BgImage: BgEnabled
+	BgRotate: BgEnabled
+	BgOpacity: BgEnabled
+	BgBlur: BgEnabled
+	BgFit: BgEnabled
+	BgHonorXmp: BgEnabled
+	BgContrastMask: BgEnabled
+	BgContrastSize: BgEnabled, BgContrastMask
+	BgContrastStrength: BgEnabled, BgContrastMask
+	BgContrastAuto: BgEnabled, BgContrastMask
+
+	ScrimStrength: TextScrim
+	ScrimRadius: TextScrim
+	ScrimSoftness: TextScrim
+	Outline: TextScrim
+	ScrimFunction: TextScrim
+	ScrimRamp: TextScrim
+	CursorScrim: TextScrim
+	CursorOutline: TextScrim, Outline    ## an outline to join, before it can join one
+
+	FontFamily: !SystemFont
+	FontSize: !SystemFontSize
+
+	Columns: !RememberSize
+	Rows: !RememberSize
+
+	ScrollEaseIn: SmoothScroll
+	ScrollRampUp: SmoothScroll
+	SingleScreenTau: SmoothScroll
+	ScrollRampDown: SmoothScroll
+	ScrollEaseOut: SmoothScroll
+
+	ScrollbarThickness: Scrollbar
+	ScrollbarAutoHide: Scrollbar
+	ColScrollbarThumb: Scrollbar
+	ColScrollbarTrough: Scrollbar
