@@ -40,6 +40,9 @@ pub fn tab_titles() -> &'static [&'static str] {
 struct Dlg {
 	panel_bg: [u8; 3],
 	panel_border: [u8; 3],
+	gutter: [u8; 3], // the strip the tabs stand on
+	tab_bg: [u8; 3], // a tab that is not the current one
+	tab_hl: [u8; 3], // the current tab: a lighter grey, deliberately NOT an accent
 	track: [u8; 3],
 	handle: [u8; 3],
 	field_bg: [u8; 3],
@@ -52,6 +55,8 @@ struct Dlg {
 #[rustfmt::skip]
 const DARK_DLG: Dlg = Dlg {
 	panel_bg: [0x20, 0x20, 0x2a], panel_border: [0x50, 0x50, 0x60],
+	gutter: [0x16, 0x16, 0x1e],
+	tab_bg: [0x28, 0x28, 0x32], tab_hl: [0x40, 0x40, 0x4c],
 	track: [0x14, 0x14, 0x1c], handle: [0x7a, 0x9a, 0xd0],
 	field_bg: [0x14, 0x14, 0x1c], focus_out: [0x7a, 0x9a, 0xd0],
 	btn_bg: [0x34, 0x34, 0x40], btn_hl: [0x4a, 0x6a, 0x9a],
@@ -60,6 +65,8 @@ const DARK_DLG: Dlg = Dlg {
 #[rustfmt::skip]
 const LIGHT_DLG: Dlg = Dlg {
 	panel_bg: [0xe6, 0xe6, 0xe3], panel_border: [0xb2, 0xb2, 0xb6],
+	gutter: [0xd3, 0xd3, 0xcf],
+	tab_bg: [0xdd, 0xdd, 0xd9], tab_hl: [0xf4, 0xf4, 0xf1],
 	track: [0xcf, 0xcf, 0xcc], handle: [0x4a, 0x6a, 0xa8],
 	field_bg: [0xf8, 0xf8, 0xf6], focus_out: [0x3a, 0x6a, 0xc0],
 	btn_bg: [0xd6, 0xd6, 0xd2], btn_hl: [0x9a, 0xb6, 0xe0],
@@ -84,9 +91,19 @@ fn dlg() -> Dlg {
 		LIGHT_DLG
 	};
 	let settings = config::settings();
+	// The two attention colours are themable and mean different things (see
+	// theme.rs). `highlight` paints everything that calls attention at once -
+	// slider handles, the scrollbar, revert arrows, the default button - and the
+	// button fill is a dimmed version of it, mixed toward the panel so a pressed
+	// button reads as pressed rather than as the focused one. `focus` paints only
+	// the ring around whatever the keyboard is on.
 	Dlg {
 		panel_bg: settings.dialog_bg,
 		text: settings.dialog_fg,
+		gutter: settings.gutter,
+		handle: settings.highlight,
+		btn_hl: mix3(settings.dialog_bg, settings.highlight, 0.62),
+		focus_out: settings.focus,
 		..base
 	}
 }
@@ -433,13 +450,21 @@ impl SettingsDialog {
 		lay().button_height.max(self.line_h + lay().row_pad)
 	}
 
+	// A heading that only repeats its own tab's title says nothing the tab strip
+	// has not already said, so it takes no space and draws nothing. It stays in
+	// the declarations because a heading is also what assigns the rows under it
+	// to a tab - deleting it there would orphan them.
+	fn header_is_tab_title(spec: &Spec) -> bool {
+		matches!(spec.kind, Kind::Header(label) if tab_titles().get(spec.tab) == Some(&label))
+	}
+
 	// Natural height of one tab's rows (header gaps included). Static so `new`
 	// can size the window before Self exists; row_y must walk rows the same way.
 	fn tab_content_h(specs: &[Spec], tab: usize, line_h: f32) -> f32 {
 		let mut h = 0.0;
 		let mut first = true;
 		for (i, spec) in specs.iter().enumerate() {
-			if specs[i].tab != tab {
+			if specs[i].tab != tab || Self::header_is_tab_title(&specs[i]) {
 				continue;
 			}
 			if matches!(spec.kind, Kind::Header(_)) && !first {
@@ -484,9 +509,11 @@ impl SettingsDialog {
 		let tallest = (0..tab_titles().len())
 			.map(|t| Self::tab_content_h(specs, t, line_h))
 			.fold(0.0f32, f32::max);
-		let h =
-			(lay().pad + btn_h + lay().tabs_gap + tallest + lay().buttons_gap + btn_h + lay().pad)
-				.min(max_h.max(300.0));
+		let h = (Self::gutter_h_for(line_h)
+			+ 1.0 + lay().tabs_gap
+			+ tallest + lay().buttons_gap
+			+ btn_h + lay().pad)
+			.min(max_h.max(300.0));
 		let tabs_w = lay().pad * 2.0
 			+ tab_ws.iter().sum::<f32>()
 			+ lay().tab_gap * tab_ws.len().saturating_sub(1) as f32;
@@ -655,10 +682,33 @@ impl SettingsDialog {
 		(quads, items)
 	}
 
-	// Tab-bar / rows-viewport / scrollbar geometry. The rows region sits between
-	// the tab bar and the buttons; only it scrolls (chrome stays put).
+	// Tab-strip / rows-viewport / scrollbar geometry. The rows region sits between
+	// the strip and the buttons; only it scrolls (chrome stays put).
+	//
+	// The tabs stand on a gutter strip that runs the panel's full width, and the
+	// line closing that strip is what they stand ON - so a tab is shorter than a
+	// footer button (it is chrome, not a control) and the strip's height is
+	// simply the drop from the panel edge plus that tab.
+	fn tab_h(&self) -> f32 {
+		Self::tab_h_for(self.line_h)
+	}
+	fn tab_h_for(line_h: f32) -> f32 {
+		lay().tab_height.max(line_h + lay().tab_pad_v)
+	}
+	fn gutter_h_for(line_h: f32) -> f32 {
+		lay().tab_top + Self::tab_h_for(line_h)
+	}
 	fn tab_bar_y(&self) -> f32 {
-		self.rect.y + lay().pad
+		self.rect.y + lay().tab_top
+	}
+	// The strip, and the 1px rule closing it off from the rows below.
+	fn gutter_rect(&self) -> Rect {
+		Rect {
+			x: self.rect.x,
+			y: self.rect.y,
+			w: self.rect.w,
+			h: Self::gutter_h_for(self.line_h),
+		}
 	}
 	fn tab_rect(&self, k: usize) -> Rect {
 		let x = self.rect.x
@@ -669,11 +719,12 @@ impl SettingsDialog {
 			x,
 			y: self.tab_bar_y(),
 			w: self.tab_ws[k],
-			h: self.btn_h(),
+			h: self.tab_h(),
 		}
 	}
 	fn rows_y0(&self) -> f32 {
-		self.tab_bar_y() + self.btn_h() + lay().tabs_gap
+		let g = self.gutter_rect();
+		g.y + g.h + 1.0 + lay().tabs_gap
 	}
 	// The scroll viewport in physical pixels (the render pass scissors to it).
 	pub fn viewport_px(&self) -> Rect {
@@ -802,7 +853,7 @@ impl SettingsDialog {
 	fn focus_ring(&self) -> Vec<Focus> {
 		let mut ring = Vec::new();
 		for i in 0..self.specs.len() {
-			if self.specs[i].tab != self.tab {
+			if self.specs[i].tab != self.tab || Self::header_is_tab_title(&self.specs[i]) {
 				continue;
 			}
 			for p in 0..self.parts_of(i) {
@@ -1082,7 +1133,7 @@ impl SettingsDialog {
 		let mut y = self.rows_y0() - self.scroll;
 		let mut first = true;
 		for (j, spec) in self.specs.iter().enumerate() {
-			if self.specs[j].tab != self.tab {
+			if self.specs[j].tab != self.tab || Self::header_is_tab_title(&self.specs[j]) {
 				continue;
 			}
 			if matches!(spec.kind, Kind::Header(_)) && !first {
@@ -1268,9 +1319,23 @@ impl SettingsDialog {
 			_ => None,
 		}
 	}
-	// The flyover to show while the cursor rests on a control with a
-	// disabled_tip: (text, anchor rect to hang the tip box under).
+	// The flyover to show while the cursor rests on something that has one:
+	// (text, anchor rect to hang the tip box under). Why a control is GREYED
+	// wins over what it does - that is the more urgent question when it is.
 	fn hover_tip_dip(&self, mx: f32, my: f32) -> Option<(&'static str, Rect)> {
+		for (action, r, _) in self.buttons() {
+			if r.contains(mx, my) {
+				let help = &ui().help;
+				return Some((
+					match action {
+						Action::Cancel => help.cancel,
+						Action::Apply => help.apply,
+						_ => help.ok,
+					},
+					r,
+				));
+			}
+		}
 		let vp = self.viewport();
 		if !vp.contains(mx, my) {
 			return None;
@@ -1279,12 +1344,12 @@ impl SettingsDialog {
 			if self.specs[i].tab != self.tab || matches!(self.specs[i].kind, Kind::Header(_)) {
 				continue;
 			}
-			let Some(tip) = Self::disabled_tip(self.specs[i].key) else {
-				continue;
+			let greyed = self.disabled(self.specs[i].key);
+			let tip = match Self::disabled_tip(self.specs[i].key).filter(|_| greyed) {
+				Some(why) => why,
+				None if !self.specs[i].help.is_empty() => self.specs[i].help,
+				None => continue,
 			};
-			if !self.disabled(self.specs[i].key) {
-				continue;
-			}
 			// hover target: the row's label + control span
 			let ctl = self.checkbox(i);
 			let hit = Rect {
@@ -1349,6 +1414,21 @@ impl SettingsDialog {
 			Kind::Dropdown(_) => self.dd_box(i),
 			Kind::Header(_) => self.track(i), // unreachable (headers aren't focusable)
 		}
+	}
+	// Does the keyboard ring land exactly on a control's own outline? For a boxed
+	// control it does, and then the box must not draw its border as well - a
+	// field ringed twice reads as two outlines for one control. A colour row is
+	// the near miss: its ring spans the chip AND the hex field, so it stays a
+	// couple of pixels out and only the hex field's own border stands down.
+	fn ring_is_the_box(&self, i: usize, part: u8) -> bool {
+		match self.specs[i].kind {
+			Kind::Text | Kind::Dropdown(_) => true,
+			Kind::Slider { .. } => part == 1,
+			_ => false,
+		}
+	}
+	fn ring_on(&self, i: usize, part: u8) -> bool {
+		self.focus == Some(Focus::Row(i, part))
 	}
 	// Is this row at its config default? (drives the revert icon). A Dual row is
 	// "default" only when both its keys are.
@@ -1641,7 +1721,9 @@ impl SettingsDialog {
 			Key::ColBg => settings.bg,
 			Key::ColFg => settings.fg,
 			Key::ColCursor => settings.cursor,
+			Key::ColHighlight => settings.highlight,
 			Key::ColFocus => settings.focus,
+			Key::ColGutter => settings.gutter,
 			Key::ColScrollbarThumb => settings.scrollbar_thumb,
 			Key::ColScrollbarTrough => settings.scrollbar_trough,
 			_ => [0, 0, 0],
@@ -1653,7 +1735,9 @@ impl SettingsDialog {
 			Key::ColBg => settings.bg = color,
 			Key::ColFg => settings.fg = color,
 			Key::ColCursor => settings.cursor = color,
+			Key::ColHighlight => settings.highlight = color,
 			Key::ColFocus => settings.focus = color,
+			Key::ColGutter => settings.gutter = color,
 			Key::ColScrollbarThumb => settings.scrollbar_thumb = color,
 			Key::ColScrollbarTrough => settings.scrollbar_trough = color,
 			_ => {}
@@ -1675,7 +1759,9 @@ impl SettingsDialog {
 			Key::ColBg => palette.bg,
 			Key::ColFg => palette.fg,
 			Key::ColCursor => palette.cursor,
+			Key::ColHighlight => palette.highlight,
 			Key::ColFocus => palette.focus,
+			Key::ColGutter => palette.gutter,
 			// chrome, not a palette colour - the same neutral under every theme
 			Key::ColScrollbarThumb => config::SCROLLBAR_THUMB_DEF,
 			Key::ColScrollbarTrough => config::SCROLLBAR_TROUGH_DEF,
@@ -1720,7 +1806,9 @@ impl SettingsDialog {
 			Key::ColBg
 			| Key::ColFg
 			| Key::ColCursor
+			| Key::ColHighlight
 			| Key::ColFocus
+			| Key::ColGutter
 			| Key::ColScrollbarThumb
 			| Key::ColScrollbarTrough => self.get_col(key) == self.default_col(key),
 			Key::None => true,
@@ -1820,7 +1908,9 @@ impl SettingsDialog {
 			Key::ColBg
 			| Key::ColFg
 			| Key::ColCursor
+			| Key::ColHighlight
 			| Key::ColFocus
+			| Key::ColGutter
 			| Key::ColScrollbarThumb
 			| Key::ColScrollbarTrough => {
 				let color = self.default_col(key);
@@ -1944,7 +2034,7 @@ impl SettingsDialog {
 			return Action::None;
 		}
 		for i in 0..self.specs.len() {
-			if self.specs[i].tab != self.tab {
+			if self.specs[i].tab != self.tab || Self::header_is_tab_title(&self.specs[i]) {
 				continue;
 			}
 			// revert-to-default icon (any control row; inert when already default)
@@ -2183,7 +2273,7 @@ impl SettingsDialog {
 			return;
 		}
 		for i in 0..self.specs.len() {
-			if self.specs[i].tab != self.tab {
+			if self.specs[i].tab != self.tab || Self::header_is_tab_title(&self.specs[i]) {
 				continue;
 			}
 			let Some(field) = self.field_rect(i) else {
@@ -2748,7 +2838,13 @@ impl SettingsDialog {
 			dlg().panel_bg,
 		));
 		border(&mut fixed, self.rect, 1.0, dlg().panel_border);
-		// tab bar: active tab filled brighter with an accent strip underneath
+		// The tab strip: a recessed gutter closed off by a rule, with the tabs
+		// standing on that rule. The current one is a lighter grey rather than an
+		// accent - it says "you are here", which is not the same job as the
+		// highlight colour's "look at this".
+		let gut = self.gutter_rect();
+		fixed.push(q(gut.x, gut.y, gut.w, gut.h, dlg().gutter));
+		fixed.push(q(gut.x, gut.y + gut.h, gut.w, 1.0, dlg().panel_border));
 		for k in 0..self.tab_ws.len() {
 			let r = self.tab_rect(k);
 			let active = k == self.tab;
@@ -2757,12 +2853,8 @@ impl SettingsDialog {
 				r.y,
 				r.w,
 				r.h,
-				if active { dlg().btn_hl } else { dlg().btn_bg },
+				if active { dlg().tab_hl } else { dlg().tab_bg },
 			));
-			border(&mut fixed, r, 1.0, dlg().panel_border);
-			if active {
-				fixed.push(q(r.x, r.y + r.h, r.w, 2.0, dlg().handle));
-			}
 		}
 		// scrollbar (only when the active tab overflows the viewport)
 		if let Some(thumb) = self.thumb() {
@@ -2772,7 +2864,7 @@ impl SettingsDialog {
 		}
 
 		for i in 0..self.specs.len() {
-			if self.specs[i].tab != self.tab {
+			if self.specs[i].tab != self.tab || Self::header_is_tab_title(&self.specs[i]) {
 				continue;
 			}
 			match self.specs[i].kind {
@@ -2805,16 +2897,18 @@ impl SettingsDialog {
 						dlg().field_bg,
 					));
 					let focused = matches!(&self.edit, Some(edit) if edit.row == i);
-					border(
-						&mut out,
-						val_box,
-						1.0,
-						if focused && !off {
-							dlg().focus_out
-						} else {
-							dlg().panel_border
-						},
-					);
+					if !self.ring_on(i, 1) {
+						border(
+							&mut out,
+							val_box,
+							1.0,
+							if focused && !off {
+								dlg().focus_out
+							} else {
+								dlg().panel_border
+							},
+						);
+					}
 					if focused && !off {
 						self.caret_quad(&mut out, val_box, &mut measure);
 					}
@@ -2838,16 +2932,18 @@ impl SettingsDialog {
 						dlg().field_bg,
 					));
 					let focused = matches!(&self.edit, Some(edit) if edit.row == i);
-					border(
-						&mut out,
-						hex_box,
-						1.0,
-						if focused {
-							dlg().focus_out
-						} else {
-							dlg().panel_border
-						},
-					);
+					if !self.ring_on(i, 0) {
+						border(
+							&mut out,
+							hex_box,
+							1.0,
+							if focused {
+								dlg().focus_out
+							} else {
+								dlg().panel_border
+							},
+						);
+					}
 					if focused {
 						self.caret_quad(&mut out, hex_box, &mut measure);
 					}
@@ -2862,16 +2958,18 @@ impl SettingsDialog {
 						dlg().field_bg,
 					));
 					let focused = matches!(&self.edit, Some(edit) if edit.row == i);
-					border(
-						&mut out,
-						text_box,
-						1.0,
-						if focused {
-							dlg().focus_out
-						} else {
-							dlg().panel_border
-						},
-					);
+					if !self.ring_on(i, 0) {
+						border(
+							&mut out,
+							text_box,
+							1.0,
+							if focused {
+								dlg().focus_out
+							} else {
+								dlg().panel_border
+							},
+						);
+					}
 					if focused {
 						self.caret_quad(&mut out, text_box, &mut measure);
 					}
@@ -2951,16 +3049,18 @@ impl SettingsDialog {
 					let off = self.disabled(self.specs[i].key);
 					let box_r = self.dd_box(i);
 					out.push(q(box_r.x, box_r.y, box_r.w, box_r.h, dlg().field_bg));
-					border(
-						&mut out,
-						box_r,
-						1.0,
-						if self.open == Some(i) && !off {
-							dlg().focus_out
-						} else {
-							dlg().panel_border
-						},
-					);
+					if !self.ring_on(i, 0) {
+						border(
+							&mut out,
+							box_r,
+							1.0,
+							if self.open == Some(i) && !off {
+								dlg().focus_out
+							} else {
+								dlg().panel_border
+							},
+						);
+					}
 				}
 				Kind::Header(_) => {
 					// faint rule near the bottom of the (tall) heading row, leaving a
@@ -2982,11 +3082,16 @@ impl SettingsDialog {
 		if let Some(Focus::Row(fr, fp)) = self.focus {
 			if self.specs[fr].tab == self.tab && !matches!(self.specs[fr].kind, Kind::Header(_)) {
 				let r = self.focus_ctl_rect(fr, fp);
+				let inset = if self.ring_is_the_box(fr, fp) {
+					0.0
+				} else {
+					2.0
+				};
 				let ring = Rect {
-					x: r.x - 2.0,
-					y: r.y - 2.0,
-					w: r.w + 4.0,
-					h: r.h + 4.0,
+					x: r.x - inset,
+					y: r.y - inset,
+					w: r.w + inset * 2.0,
+					h: r.h + inset * 2.0,
 				};
 				border(&mut out, ring, 1.0, dlg().focus_out);
 			}
@@ -3000,12 +3105,17 @@ impl SettingsDialog {
 			};
 			fixed.push(q(r.x, r.y, r.w, r.h, fill));
 			let ring = self.focus == Some(Focus::Button(btn_idx));
-			border(
-				&mut fixed,
-				r,
-				if ring { 2.0 } else { 1.0 },
-				if ring { dlg().focus_out } else { dlg().btn_hl },
-			);
+			// Only the default button (OK) is outlined in the highlight colour;
+			// the others take the same quiet grey the tabs use, so "this is the
+			// one Enter fires" stays a single, readable signal.
+			let outline = if ring {
+				dlg().focus_out
+			} else if btn_idx == 2 {
+				dlg().btn_hl
+			} else {
+				dlg().panel_border
+			};
+			border(&mut fixed, r, if ring { 2.0 } else { 1.0 }, outline);
 			// Alt held: underline the accelerator (the label's first letter). The
 			// label is drawn left-aligned at r.x+14; the cap glyph is ~0.55*line_h
 			// wide, and its baseline sits near the text bottom.
@@ -3033,10 +3143,17 @@ impl SettingsDialog {
 			scale: 1.0,
 		};
 		let row_text_y = |y: f32, h: f32| y + (h - line_h) / 2.0;
-		// tab titles
+		// tab titles - the current one reads at full strength, the rest step back
 		for (k, title) in tab_titles().iter().enumerate() {
 			let r = self.tab_rect(k);
-			out.push(mk((*title).into(), r.x + 11.0, row_text_y(r.y, r.h)));
+			out.push(TextItem {
+				color: if k == self.tab { dlg().text } else { dlg().dim },
+				..mk(
+					(*title).into(),
+					r.x + lay().tab_pad / 2.0,
+					row_text_y(r.y, r.h),
+				)
+			});
 		}
 		// row text clips to the scroll viewport so it can't ride over the chrome
 		let vp = self.viewport();
@@ -3053,7 +3170,7 @@ impl SettingsDialog {
 			}
 		};
 		for i in 0..self.specs.len() {
-			if self.specs[i].tab != self.tab {
+			if self.specs[i].tab != self.tab || Self::header_is_tab_title(&self.specs[i]) {
 				continue;
 			}
 			let ty = row_text_y(self.row_y(i), lay().row_height);
@@ -3457,6 +3574,58 @@ mod tests {
 		assert_eq!(d.scroll, d.max_scroll());
 	}
 
+	// The strip is chrome: shorter than a footer button, dropped clear of the
+	// panel edge, and closed off by a rule the rows start below.
+	#[test]
+	fn the_tabs_stand_on_the_line_that_closes_their_strip() {
+		let d = mk_dialog(2000.0);
+		let gut = d.gutter_rect();
+		let tab = d.tab_rect(0);
+		assert!(d.tab_h() < d.btn_h(), "a tab is shorter than a button");
+		assert!(tab.y > gut.y, "the tabs are clear of the panel edge");
+		assert!(
+			(tab.y + tab.h - (gut.y + gut.h)).abs() < 0.01,
+			"and stand on the strip's closing line"
+		);
+		assert!(d.rows_y0() > gut.y + gut.h, "rows begin below that line");
+	}
+
+	// A heading that only repeats its tab's title is gone from the layout
+	// entirely - not merely hidden, or it would leave a gap where it used to be.
+	#[test]
+	fn a_heading_that_repeats_its_tab_takes_no_room() {
+		let mut d = mk_dialog(2000.0);
+		for tab in 0..tab_titles().len() {
+			d.tab = tab;
+			let redundant = d
+				.specs
+				.iter()
+				.enumerate()
+				.find(|(_, spec)| spec.tab == tab && SettingsDialog::header_is_tab_title(spec));
+			let Some((_, spec)) = redundant else { continue };
+			// the first row that IS drawn starts hard against the top of the
+			// viewport, so the heading left no gap behind it
+			let first = (0..d.specs.len())
+				.find(|&j| {
+					d.specs[j].tab == tab && !SettingsDialog::header_is_tab_title(&d.specs[j])
+				})
+				.expect("a tab with rows");
+			assert!((d.row_y(first) - (d.rows_y0() - d.scroll)).abs() < 0.01);
+			// and the tab's height accounts for the rows it draws and nothing
+			// more: the surplus over them is header gaps, which are far smaller
+			// than the heading row that was dropped
+			let drawn: f32 = d
+				.specs
+				.iter()
+				.filter(|s| s.tab == tab && !SettingsDialog::header_is_tab_title(s))
+				.map(|s| SettingsDialog::row_h_for(&s.kind, d.line_h))
+				.sum();
+			let counted = SettingsDialog::tab_content_h(d.specs, tab, d.line_h);
+			assert!(counted >= drawn);
+			assert!(counted < drawn + SettingsDialog::row_h_for(&spec.kind, d.line_h));
+		}
+	}
+
 	#[test]
 	fn a_restored_view_never_outruns_the_new_dialog() {
 		// scrolled to the bottom of the last tab, as if the user had just closed it
@@ -3580,14 +3749,22 @@ mod tests {
 			let mut measure = |s: &str| s.len() as f32;
 			d.mouse_down(bx.x + 2.0, bx.y + 2.0, &mut measure);
 			assert!(d.edited.use_system_font);
-			// the flyover explains why; only over the row
-			assert!(d.hover_tip(bx.x + 2.0, bx.y + 2.0).is_some());
+			// the flyover explains WHY it is greyed, in place of the row's own
+			// help text, and only over the row
+			assert_eq!(
+				d.hover_tip(bx.x + 2.0, bx.y + 2.0).map(|(tip, _)| tip),
+				Some("No system monospace font to follow")
+			);
 			assert!(d.hover_tip(bx.x + 2.0, bx.y - 200.0).is_none());
 			// the family field stays editable, since it is what actually resolves
 			assert!(!d.disabled(Key::FontFamily));
 		} else {
 			assert!(!d.disabled(Key::SystemFont));
-			assert!(d.hover_tip(bx.x + 2.0, bx.y + 2.0).is_none());
+			// live, so the row explains what it does rather than why it cannot
+			assert_ne!(
+				d.hover_tip(bx.x + 2.0, bx.y + 2.0).map(|(tip, _)| tip),
+				Some("No system monospace font to follow")
+			);
 			// following the OS greys the field it overrides
 			d.edited.use_system_font = true;
 			assert!(d.disabled(Key::FontFamily));
@@ -3972,14 +4149,36 @@ mod tests {
 		);
 	}
 
+	// All four tab chords, in both directions, and the plain keys they must not
+	// steal: Tab alone walks controls, and PageUp/PageDown alone do nothing here.
 	#[test]
-	fn ctrl_tab_switches_tabs() {
+	fn ctrl_tab_and_ctrl_page_walk_the_tabs_both_ways() {
 		let mut d = mk_dialog(2000.0);
+		let last = tab_titles().len() - 1;
 		d.set_mods(false, false, true); // Ctrl held
-		let t0 = d.tab;
 		d.key_tab();
-		assert_ne!(d.tab, t0);
-		assert!(d.focus.is_some(), "tab switch lands focus on a control");
+		assert_eq!(d.tab, 1);
+		assert!(d.focus.is_some(), "a tab switch lands focus on a control");
+		d.set_mods(false, true, true); // Ctrl+Shift
+		d.key_tab();
+		assert_eq!(d.tab, 0);
+		d.key_tab();
+		assert_eq!(d.tab, last, "and wraps round the far end");
+
+		d.set_mods(false, false, true);
+		d.key_page(true);
+		assert_eq!(d.tab, 0, "PageDown is forward, wrapping");
+		d.key_page(false);
+		assert_eq!(d.tab, last);
+
+		// without Ctrl these are not tab keys at all
+		d.tab = 1;
+		d.set_mods(false, false, false);
+		d.key_page(true);
+		d.key_page(false);
+		assert_eq!(d.tab, 1);
+		d.key_tab();
+		assert_eq!(d.tab, 1, "plain Tab walks controls, not tabs");
 	}
 
 	#[test]

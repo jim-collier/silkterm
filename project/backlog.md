@@ -68,18 +68,23 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - 🛠️ Refactor settings dialog
 	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory. Reconcile by what makes the most sense given the obvious design direction this is going, with what has changed before.
 	- Being done in chunks, in this order: the chrome and the two new colours, then groups and the tab reorganization, then theme management, then the colour picker, then the Shells tab. Opening speed was dealt with first and is under Done.
-	- Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
-		- Including the some of the main buttons:
+	- ✅ Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
+		- Done: thirty rows carry their own help line, and a control that is greyed out still explains why instead - that question is the more urgent one. The text wraps to the panel, so a longer sentence or a bigger interface font cannot push it off the edge, and it flips above a control when there is no room beneath.
+		- ✅ Including the some of the main buttons:
 			- "Apply": "Apply changes now, without closing Settings."
 			- "OK": "Apply changes and close Settings."
-	- Tabs:
-		- Make buttons shaped more like tabs at the top of the dialog.
-			- Takes up less vertical space.
-			- Closer to the top but not touching.
-		- The tabs should sit on a darker (in dark mode) colored background, and directly on top of a line that separates that background (as a new named themable element), from the rest of the dialog below (like most tabbed interfaces).
-		- No "title" section for each tab, that mirrors the tab name. Just remove it.
-		- The currently selected tab should be a lighter gray, rather than "selected" color.
-		- Tabs navigable via CTRL+[PgUp|PgDn], and CTRL+[Tab|Shift+Tab].
+			- Cancel got one too, for symmetry: "Discard every change and close Settings."
+	- ✅ Tabs:
+		- ✅ Make buttons shaped more like tabs at the top of the dialog.
+			- ✅ Takes up less vertical space.
+			- ✅ Closer to the top but not touching.
+		- ✅ The tabs should sit on a darker (in dark mode) colored background, and directly on top of a line that separates that background (as a new named themable element), from the rest of the dialog below (like most tabbed interfaces).
+		- ✅ No "title" section for each tab, that mirrors the tab name. Just remove it.
+			- The heading stays in the declarations, because a heading is also what assigns the rows under it to a tab - it simply takes no space and draws nothing.
+		- ✅ The currently selected tab should be a lighter gray, rather than "selected" color.
+		- ✅ Tabs navigable via CTRL+[PgUp|PgDn], and CTRL+[Tab|Shift+Tab].
+			- These already worked; they are now pinned by test in both directions, including that the plain keys do not steal them.
+		- Between the shorter strip and the dropped heading the dialog is 58px shorter.
 	- Express all slider values that range from 0.0 to 1.0, as an integer % from 0% to 100%. (But store as original decimal value in config though.)
 	- Tabs and grouping (settings content and tab reorg):
 		- "Groups" are organized, titled sections within a dialog tab page. Differentiated by a title, and with adequate spacing between groups so that they are visually separate.
@@ -164,9 +169,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 						- "Foreground"
 						- "Cursor"
 					- Sub-group: "Dialog and menu background"
-						- "Gutter" (a new color defining small areas with no interactive elements, e.g. behind the top tabs).
-						- "Highlights" (formerly "Focus ring"; same color but with expanded meaning as noted above)
-						- "Focus" (a new color category that used to be part of "Focus ring", but now applies only to focused element)
+						- ✅ "Gutter" (a new color defining small areas with no interactive elements, e.g. behind the top tabs).
+						- ✅ "Highlights" (formerly "Focus ring"; same color but with expanded meaning as noted above)
+						- ✅ "Focus" (a new color category that used to be part of "Focus ring", but now applies only to focused element)
+						- Done: all three are themable and live on the Colors tab. The sub-group headings above wait on the grouping work; the rows are in place.
 				- Behavior changes
 					- When a hex field textbox gets focus, don't remove the existing value. Just highlight all, as now standard for textboxes.
 					- Make the colored boxes clickable. That pops up a color selection dialog.
@@ -219,15 +225,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 								- Will require special logic for Windows, to add the commands to launch named WSL1 or 2 distros
 				- If a new shell exe is found that doesn't already exist in the stored list, add it. (User can disable it later.)
 				- If an existing already defined shell exe name isn't found by explicit path, or in the environment path variable, disable it (don't delete it).
-
-- 🔘 Dialogs and menus:
-	- 🔘 Themes should have TWO highlight colors:
-		- 🔘 One color that calls attention to multiple things on the screen at once
-			- Example: Slider controls, default button outline, "OK" button, and clickable "reset" icons.
-			- Existing color is OK for this
-		- 🔘 Second highlight color should be a different, complimentary color that is also more vivid and saturated. That's for the current focus.
-		- 🔘 When text fields have focus highlight, there should only be one visible outline (rather than two - the highlight, AND the textbox outline).
-		- 🔘 The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
 
 - 🔘 Option: Dynamic theme based on wallpaper
 	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
@@ -1339,6 +1336,20 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
 
 #### Done - New features and enhancements
+
+- ✅ Dialogs and menus:
+	- ✅ Themes should have TWO highlight colors:
+		- ✅ One color that calls attention to multiple things on the screen at once
+			- Example: Slider controls, default button outline, "OK" button, and clickable "reset" icons.
+			- Existing color is OK for this
+			- Done: it keeps its value and is called "Highlights" now. It also drives the dialog's own accents, which were a fixed blue before and so ignored the theme entirely.
+		- ✅ Second highlight color should be a different, complimentary color that is also more vivid and saturated. That's for the current focus.
+			- Every theme sets its own, and a test holds the two far enough apart that they cannot read as the same signal.
+		- ✅ When text fields have focus highlight, there should only be one visible outline (rather than two - the highlight, AND the textbox outline).
+			- The ring lands on the field's own outline and the field stands its border down. Measured: the old build drew two rules with a gap of panel between them, the new one draws a single rule.
+		- ✅ The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
+	- Note: an existing config's `colors.focus` carries over to `colors.highlight` on the next launch, and the freed name now holds the new focus colour.
+	- UAT.
 
 - ✅ Hyperlinks. (20260804)
 	- A URL in the output underlines while the pointer is over it, in its own colour, and the pointer turns into a hand. Ctrl+click opens it in the desktop's handler; a right-click on one adds "Open link" and "Copy link" to the top of the menu.
