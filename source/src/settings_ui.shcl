@@ -71,13 +71,27 @@ layout:
 	button_pad: 24             ## clear space around the longest caption
 	button_width: 76           ## floor
 	button_gap: 10
-	tab_pad: 22                ## clear space around a tab's title
-	tab_gap: 6                 ## between tab buttons
+
+	## Tabs. They sit on the gutter strip at the top of the panel, standing on
+	## the line that separates it from the rows below - so they are shorter than
+	## a footer button and start a little below the panel's own edge.
+	tab_pad: 22                ## clear space either side of a tab's title
+	tab_height: 24             ## floor
+	tab_pad_v: 6               ## tab grows to the UI line height plus this
+	tab_top: 5                 ## panel edge -> top of the tabs
+	tab_gap: 4                 ## between tab buttons
 
 	## Scrollbar (shown only when a tab is taller than the panel)
 	scrollbar_width: 8
 	scrollbar_inset: 9         ## gap between the bar and the panel edge
 	scrollbar_thumb_min: 24
+
+## Flyover help for the footer buttons. Every other tip is the `help:` line on
+## the row it belongs to.
+help:
+	cancel: "Discard every change and close Settings."
+	apply: "Apply changes now, without closing Settings."
+	ok: "Apply changes and close Settings."
 
 ## Chrome glyphs.
 icons:
@@ -103,6 +117,7 @@ icons:
 ## key:       only when the row's name cannot be the setting's - because a
 ##            heading already took that name, or because the row edits no
 ##            single setting of its own (`key: none`)
+## help:      flyover text, for a control whose label does not explain it
 
 rows:
 
@@ -128,6 +143,7 @@ rows:
 		label: Blur-behind
 		kind: toggle
 		setting: transparency.blur_behind
+		help: "Blur whatever is behind the window, where the desktop can do it."
 
 	BgEnabled:
 		label: Wallpaper
@@ -143,12 +159,14 @@ rows:
 		label: Rotate folder
 		kind: toggle
 		setting: wallpaper.rotate.enabled
+		help: "Treat the path above as a folder and show a different image from it each time."
 
 	BgOpacity:
 		label: Bg image opacity
 		kind: slider
 		range: 0, 1
 		setting: wallpaper.opacity
+		help: "How strongly the wallpaper shows through the terminal background."
 
 	BgBlur:
 		label: Bg image blur
@@ -161,39 +179,46 @@ rows:
 		kind: radio
 		options: "Stretch", "Zoom"
 		setting: wallpaper.default_fit
+		help: "What to do when the image and the window are different shapes. An image carrying its own tag overrides this."
 
 	BgHonorXmp:
 		label: Honor tags
 		kind: toggle
 		setting: wallpaper.honor_xmp
+		help: "Let an image's own embedded Fit and Anchor tags decide how it is placed."
 
 	BgContrastMask:
 		label: Contrast mask
 		kind: toggle
 		setting: wallpaper.contrast_mask.enabled
+		help: "Quieten the wallpaper only where it would fight the text, leaving the rest alone."
 
 	BgContrastSize:
 		label: Mask size
 		kind: slider
 		range: 0, 1
 		setting: wallpaper.contrast_mask.size
+		help: "How large an area each point of the wallpaper is judged against."
 
 	BgContrastStrength:
 		label: Mask strength
 		kind: slider
 		range: 0, 1
 		setting: wallpaper.contrast_mask.strength
+		help: "How far the mask is allowed to push the wallpaper down."
 
 	BgContrastAuto:
 		label: Mask auto
 		kind: slider
 		range: 0, 1
 		setting: wallpaper.contrast_mask.auto
+		help: "How much of the masking is left to the picture itself rather than the setting above."
 
 	TextScrim:
 		label: Text scrim
 		kind: toggle
 		setting: text.scrim.enabled
+		help: "A soft halo behind the glyphs, so text stays readable over a busy wallpaper."
 
 	ScrimStrength:
 		## percent, where each 20% is one doubling of the finished halo's opacity
@@ -202,36 +227,42 @@ rows:
 		range: 0, 100
 		whole: true
 		setting: text.scrim.strength
+		help: "How solid the halo gets. High values close the gaps between glyphs into a plate."
 
 	ScrimRadius:
 		label: Scrim radius
 		kind: slider
 		range: 0, 20
 		setting: text.scrim.radius
+		help: "How far the halo reaches out from the ink."
 
 	ScrimSoftness:
 		label: Softness
 		kind: slider
 		range: 0, 1
 		setting: text.scrim.softness
+		help: "How gradually the halo fades out towards its edge."
 
 	Outline:
 		label: Text outline
 		kind: slider
 		range: 0, 4
 		setting: text.outline
+		help: "A crisp outline drawn hard against the glyphs, on top of the halo."
 
 	ScrimFunction:
 		label: Scrim function
 		kind: dropdown
 		options: "Distance field", "Distance transform", "Dilate + feather", "Gaussian [ugly]"
 		setting: text.scrim.function
+		help: "How the halo's shape is computed from the glyphs."
 
 	ScrimRamp:
 		label: Scrim falloff
 		kind: dropdown
 		options: "Exponential", "Half-normal", "Logarithmic", "Sigmoid", "Linear"
 		setting: text.scrim.ramp
+		help: "The curve the halo fades along."
 
 	Cursor:
 		## Two independent switches sharing one label; the row itself edits
@@ -256,6 +287,7 @@ rows:
 		options: "Face", "Size"
 		parts: SystemFont, SystemFontSize
 		setting: font.use_system_family, font.use_system_size
+		help: "Follow the desktop's own monospace font, for the face and the size independently."
 
 	FontFamily:
 		label: Font family
@@ -274,6 +306,7 @@ rows:
 		kind: slider
 		range: 0.8, 2
 		setting: font.line_height_scale
+		help: "Space between lines, as a multiple of the font's own."
 
 	## -------------------------------------------------------------------- Window
 
@@ -300,6 +333,7 @@ rows:
 		label: Remember last size
 		kind: toggle
 		setting: window.remember_size
+		help: "Reopen at whatever size the window was last closed at, ignoring the two above."
 
 	Margin:
 		label: Margin
@@ -307,6 +341,7 @@ rows:
 		range: 0, 40
 		whole: true
 		setting: window.margin
+		help: "Clear space between the text and the window edge."
 
 	## ----------------------------------------------------------------- Scrolling
 
@@ -319,6 +354,7 @@ rows:
 		label: Smooth scrolling
 		kind: toggle
 		setting: scroll.smooth
+		help: "Ease the view instead of jumping a whole line at a time. Off makes every setting below inert."
 
 	## The five below are ordered as one output burst unfolds: it leaves rest,
 	## accelerates, tops out, winds down, lands. All five read the same way -
@@ -330,6 +366,7 @@ rows:
 		range: 1, 100
 		whole: true
 		setting: scroll.ease_in_ms
+		help: "How sharply the view leaves a standstill when output starts."
 
 	ScrollRampUp:
 		label: Ramp-up
@@ -337,6 +374,7 @@ rows:
 		range: 1, 100
 		whole: true
 		setting: scroll.ramp_up_ms
+		help: "How quickly the view picks up speed once it is moving."
 
 	SingleScreenTau:
 		label: Single-screen speed
@@ -344,6 +382,7 @@ rows:
 		range: 1, 100
 		whole: true
 		setting: scroll.single_screen_tau_ms
+		help: "Top speed while the output still fits on one screen."
 
 	ScrollRampDown:
 		label: Ramp-down
@@ -351,6 +390,7 @@ rows:
 		range: 1, 100
 		whole: true
 		setting: scroll.ramp_down_ms
+		help: "How hard the view brakes as the output runs out."
 
 	ScrollEaseOut:
 		label: Ease-out
@@ -358,6 +398,7 @@ rows:
 		range: 1, 100
 		whole: true
 		setting: scroll.ease_out_ms
+		help: "How crisply the view lands on the final line."
 
 	WheelLines:
 		label: Wheel lines
@@ -365,6 +406,7 @@ rows:
 		range: 1, 10
 		whole: true
 		setting: scroll.wheel_lines
+		help: "Lines travelled per notch of the mouse wheel."
 
 	Scrollbar:
 		label: Scrollbar
@@ -382,6 +424,7 @@ rows:
 		label: Hide when idle
 		kind: toggle
 		setting: scroll.scrollbar.auto_hide
+		help: "Fade the scrollbar out while the view sits still at the bottom."
 
 	ColScrollbarThumb:
 		label: Scrollbar handle
@@ -409,6 +452,7 @@ rows:
 		label: Copy on select
 		kind: toggle
 		setting: shell.copy_on_select
+		help: "Put selected text on the clipboard as soon as it is selected."
 
 	## ---------------------------------------------------------------- Hyperlinks
 
@@ -427,6 +471,7 @@ rows:
 		label: Open command
 		kind: text
 		setting: hyperlinks.open_command
+		help: "What to run for a clicked link. Empty hands it to the desktop."
 
 	## -------------------------------------------------------------------- Colors
 
@@ -450,10 +495,23 @@ rows:
 		kind: color
 		setting: colors.cursor
 
+	ColHighlight:
+		label: Highlights
+		kind: color
+		setting: colors.highlight
+		help: "Marks several things at once - the live pane's ring, slider handles, revert arrows, the default button."
+
 	ColFocus:
-		label: Focus ring
+		label: Focus
 		kind: color
 		setting: colors.focus
+		help: "Marks only the one control the keyboard is on."
+
+	ColGutter:
+		label: Gutter
+		kind: color
+		setting: colors.gutter
+		help: "Chrome that holds no control, such as the strip these tabs sit on."
 
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Greying

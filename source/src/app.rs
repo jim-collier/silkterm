@@ -3377,7 +3377,9 @@ fn scissor(rect: Rect, sw: u32, sh: u32) -> (u32, u32, u32, u32) {
 }
 
 fn focus_ring(rect: Rect) -> [RectInstance; 4] {
-	let color = config::srgb_f32(config::settings().focus);
+	// the calm one: the ring marks which pane is live, alongside the dialog's own
+	// sliders and revert arrows, rather than the single keyboard-focused control
+	let color = config::srgb_f32(config::settings().highlight);
 	let thickness = config::FOCUS_RING_PX;
 	[
 		RectInstance {

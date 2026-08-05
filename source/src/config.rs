@@ -192,6 +192,9 @@ pub struct Settings {
 	pub bg: [u8; 3],
 	pub fg: [u8; 3],
 	pub cursor: [u8; 3],
+	// Two attention colours (see theme.rs): `highlight` marks several things at
+	// once, `focus` marks only what the keyboard is on.
+	pub highlight: [u8; 3],
 	pub focus: [u8; 3],
 	// chrome colours (menu bar / dropdowns, and pop-out dialogs), from the theme
 	// palette; colors.menu_*/colors.dialog_* keys override
@@ -199,6 +202,7 @@ pub struct Settings {
 	pub menu_fg: [u8; 3],
 	pub dialog_bg: [u8; 3],
 	pub dialog_fg: [u8; 3],
+	pub gutter: [u8; 3], // chrome areas holding no control (the dialog's tab strip)
 	// scrollbar, neutral in every theme (see SCROLLBAR_THUMB_DEF); the
 	// colors.scrollbar_* keys override
 	pub scrollbar_thumb: [u8; 3],
@@ -311,11 +315,13 @@ impl Default for Settings {
 			bg: [0x00, 0x00, 0x00],
 			fg: [0x88, 0xee, 0xcc],
 			cursor: [0x96, 0x49, 0xaf],
-			focus: [0xc8, 0xa0, 0x5a],
+			highlight: [0xc8, 0xa0, 0x5a],
+			focus: [0x40, 0x86, 0xff],
 			menu_bg: crate::theme::MENU_BG_DEF,
 			menu_fg: crate::theme::MENU_FG_DEF,
 			dialog_bg: [0x20, 0x20, 0x2a],
 			dialog_fg: [0xe2, 0xe2, 0xea],
+			gutter: [0x16, 0x16, 0x1e],
 			scrollbar_thumb: SCROLLBAR_THUMB_DEF,
 			scrollbar_trough: SCROLLBAR_TROUGH_DEF,
 			ansi: crate::theme::resolve("SilkTerm", "dark", true).ansi,
@@ -360,11 +366,13 @@ pub fn reapply_for_os(dark: bool) -> bool {
 	new.bg = pal.bg;
 	new.fg = pal.fg;
 	new.cursor = pal.cursor;
+	new.highlight = pal.highlight;
 	new.focus = pal.focus;
 	new.menu_bg = pal.menu_bg;
 	new.menu_fg = pal.menu_fg;
 	new.dialog_bg = pal.dialog_bg;
 	new.dialog_fg = pal.dialog_fg;
+	new.gutter = pal.gutter;
 	new.ansi = pal.ansi;
 	update(new);
 	true
@@ -768,7 +776,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	set_color("background", s.bg, orig.bg);
 	set_color("foreground", s.fg, orig.fg);
 	set_color("cursor", s.cursor, orig.cursor);
+	set_color("highlight", s.highlight, orig.highlight);
 	set_color("focus", s.focus, orig.focus);
+	set_color("gutter", s.gutter, orig.gutter);
 
 	write_doc(&path, &doc);
 	true
@@ -895,11 +905,13 @@ struct RawColors {
 	background: Option<String>,
 	foreground: Option<String>,
 	cursor: Option<String>,
+	highlight: Option<String>,
 	focus: Option<String>,
 	menu_background: Option<String>,
 	menu_foreground: Option<String>,
 	dialog_background: Option<String>,
 	dialog_foreground: Option<String>,
+	gutter: Option<String>,
 	scrollbar_thumb: Option<String>,
 	scrollbar_trough: Option<String>,
 }
@@ -930,7 +942,11 @@ fn load() -> Settings {
 	migrate_config(&path);
 	backfill_config(&path);
 	let raw = match std::fs::read_to_string(&path) {
-		Ok(text) => read_raw(&text, &path),
+		// The writes above defer when the file looks open elsewhere, so parse the
+		// migrated text rather than what is on disk: a renamed key must never be
+		// read under its old spelling, which matters most where a rename hands an
+		// old name to a new setting (colors.focus).
+		Ok(text) => read_raw(&migrate_config_text(&text).unwrap_or(text), &path),
 		Err(_) => RawConfig::default(),
 	};
 	resolve(raw)
@@ -1097,11 +1113,13 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 			background: r.s("colors.background"),
 			foreground: r.s("colors.foreground"),
 			cursor: r.s("colors.cursor"),
+			highlight: r.s("colors.highlight"),
 			focus: r.s("colors.focus"),
 			menu_background: r.s("colors.menu_background"),
 			menu_foreground: r.s("colors.menu_foreground"),
 			dialog_background: r.s("colors.dialog_background"),
 			dialog_foreground: r.s("colors.dialog_foreground"),
+			gutter: r.s("colors.gutter"),
 			scrollbar_thumb: r.s("colors.scrollbar_thumb"),
 			scrollbar_trough: r.s("colors.scrollbar_trough"),
 		},
@@ -1328,11 +1346,13 @@ fn resolve(raw: RawConfig) -> Settings {
 		bg: color(raw.colors.background, pal.bg),
 		fg: color(raw.colors.foreground, pal.fg),
 		cursor: color(raw.colors.cursor, pal.cursor),
+		highlight: color(raw.colors.highlight, pal.highlight),
 		focus: color(raw.colors.focus, pal.focus),
 		menu_bg: color(raw.colors.menu_background, pal.menu_bg),
 		menu_fg: color(raw.colors.menu_foreground, pal.menu_fg),
 		dialog_bg: color(raw.colors.dialog_background, pal.dialog_bg),
 		dialog_fg: color(raw.colors.dialog_foreground, pal.dialog_fg),
+		gutter: color(raw.colors.gutter, pal.gutter),
 		scrollbar_thumb: color(raw.colors.scrollbar_thumb, SCROLLBAR_THUMB_DEF),
 		scrollbar_trough: color(raw.colors.scrollbar_trough, SCROLLBAR_TROUGH_DEF),
 		ansi: pal.ansi,
@@ -1619,7 +1639,15 @@ fn line_setting_key(line: &str) -> Option<&str> {
 // same parent block - the machinery rewrites the line in place, it does not
 // move lines between blocks. (The whole pre-nesting flat namespace is handled
 // separately by `convert_legacy_config`, not here.)
-const CONFIG_RENAMES: &[(&str, &str)] = &[("scroll.inview_tau_ms", "scroll.single_screen_tau_ms")];
+const CONFIG_RENAMES: &[(&str, &str)] = &[
+	("scroll.inview_tau_ms", "scroll.single_screen_tau_ms"),
+	// The one attention colour became two. The old key's value IS the calmer of
+	// the pair, so it carries to `highlight` and the freed-up `colors.focus`
+	// starts from its own default. That reuse is the reason `load` migrates the
+	// text it parses as well as the file: a config open in an editor defers the
+	// write, and the old spelling must not read as its successor even once.
+	("colors.focus", "colors.highlight"),
+];
 // Paths that no longer exist and should be removed from an existing config.
 // scroll.tau_ms ("Initial scroll speed") has no successor: the speed curve now
 // leaves rest through Ease-in and the one knob that fed four mechanisms is
@@ -1655,8 +1683,9 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// read through
 	("colors.cursor", "\"#cc88ee\"  ## Default"),
 	("colors.cursor", "\"#eecc88\"  ## Default"),
-	// the focus ring was a cold blue, picked for the palette before this one
-	("colors.focus", "\"#5580c8\"  ## Default"),
+	// the pane ring was a cold blue, picked for the palette before this one (the
+	// key was `colors.focus` then, so a config carrying it arrives here renamed)
+	("colors.highlight", "\"#5580c8\"  ## Default"),
 ];
 
 // The whole pre-nesting flat namespace, old key -> new nested path. Primary
@@ -2051,40 +2080,46 @@ fn migrate_config_text(text: &str) -> Option<String> {
 	let mut changed = false;
 	let mut out: Vec<String> = Vec::new();
 	for (index, line) in lines.iter().enumerate() {
-		let mut kept = match path_of.get(&index) {
-			Some(path) if CONFIG_REMOVED.contains(&path.as_str()) => {
+		let Some(path) = path_of.get(&index) else {
+			out.push((*line).to_string());
+			continue;
+		};
+		if CONFIG_REMOVED.contains(&path.as_str()) {
+			changed = true;
+			continue; // drop
+		}
+		// A rename fires only while the new spelling is absent. Where both are
+		// present the old line is left ALONE, never dropped: a rename can free
+		// its old name for a NEW setting (colors.focus did exactly that), and
+		// dropping there would delete that setting's own line on every launch.
+		let renamed = CONFIG_RENAMES
+			.iter()
+			.find(|(old, _)| old == path)
+			.filter(|(_, new)| !have.contains(*new));
+		let mut kept = match renamed {
+			Some((_, new)) => {
 				changed = true;
-				continue; // drop
+				// the line spells the leaf (nested) or the full path
+				// (dotted); rewrite whichever token is actually there
+				let old_leaf = path.rsplit('.').next().unwrap_or(path);
+				let new_leaf = new.rsplit('.').next().unwrap_or(new);
+				let key = line_setting_key(line).unwrap_or(old_leaf);
+				let target = if key == *path { new } else { new_leaf };
+				line.replacen(key, target, 1)
 			}
-			Some(path) => match CONFIG_RENAMES.iter().find(|(old, _)| old == path) {
-				Some((_, new)) if !have.contains(*new) => {
-					changed = true;
-					// the line spells the leaf (nested) or the full path
-					// (dotted); rewrite whichever token is actually there
-					let old_leaf = path.rsplit('.').next().unwrap_or(path);
-					let new_leaf = new.rsplit('.').next().unwrap_or(new);
-					let key = line_setting_key(line).unwrap_or(old_leaf);
-					let target = if key == *path { new } else { new_leaf };
-					line.replacen(key, target, 1)
-				}
-				Some(_) => {
-					changed = true;
-					continue; // new path already there; drop the old
-				}
-				None => (*line).to_string(),
-			},
 			None => (*line).to_string(),
 		};
-		if let Some(path) = path_of.get(&index) {
-			if let Some(refreshed) = refresh_superseded_default(&kept, path) {
+		// the refreshes below key on where the line ENDS UP, not where it came
+		// from - a just-renamed line belongs to its new path now
+		let path: &str = renamed.map_or(path.as_str(), |(_, new)| new);
+		if let Some(refreshed) = refresh_superseded_default(&kept, path) {
+			kept = refreshed;
+			changed = true;
+		}
+		if path == "font.family" && !kept.trim_start().starts_with('#') {
+			if let Some(refreshed) = refresh_font_stack(&kept) {
 				kept = refreshed;
 				changed = true;
-			}
-			if path == "font.family" && !kept.trim_start().starts_with('#') {
-				if let Some(refreshed) = refresh_font_stack(&kept) {
-					kept = refreshed;
-					changed = true;
-				}
 			}
 		}
 		out.push(kept);
@@ -2781,19 +2816,23 @@ theme_mode: dark
 
 ## Colour overrides
 ## Per-colour overrides on top of the theme (uncomment any to tweak one colour).
-## The menu_*/dialog_*/scrollbar_* keys recolour the chrome (menu bar + dropdowns,
-## the pop-out Settings/About dialogs, and the scrollbar); by default every theme
-## shares the same neutral chrome. Menu hover/border shades derive from
-## menu_background automatically.
+## The menu_*/dialog_*/scrollbar_*/gutter keys recolour the chrome (menu bar +
+## dropdowns, the pop-out Settings/About dialogs, the scrollbar, and the strip
+## the dialog's tabs sit on); by default every theme shares the same neutral
+## chrome. Menu hover/border shades derive from menu_background automatically.
+## highlight marks several things at once (the live pane's ring, slider handles,
+## revert arrows, the default button); focus marks only what the keyboard is on.
 colors:
 	# background: "#000000"  ## Default
 	# foreground: "#88eecc"  ## Default
 	# cursor: "#9649af"  ## Default
-	# focus: "#c8a05a"  ## Default
+	# highlight: "#c8a05a"  ## Default
+	# focus: "#4086ff"  ## Default
 	# menu_background: "#36363b"  ## Default
 	# menu_foreground: "#f0f0f2"  ## Default
 	# dialog_background: "#20202a"  ## Default
 	# dialog_foreground: "#e2e2ea"  ## Default
+	# gutter: "#16161e"  ## Default
 	# scrollbar_thumb: "#8a8a92"  ## Default
 	# scrollbar_trough: "#2e2e36"  ## Default
 "##;
@@ -3269,6 +3308,42 @@ mod tests {
 		);
 		// and a config that already carries the new spelling is left alone
 		assert!(migrate_config_text("scroll:\n\tsingle_screen_tau_ms: 45.0\n").is_none());
+	}
+
+	// A rename can hand its old name to a NEW setting - `colors.focus` became
+	// `colors.highlight` and the freed name now holds the vivid focus colour.
+	// Once both spellings are in the file the old line must be left exactly
+	// where it is: it is no longer stale, it is the new setting's own line, and
+	// dropping or re-renaming it would delete a user's colour on every launch.
+	#[test]
+	fn a_renamed_key_frees_its_old_name_for_a_new_setting() {
+		// first launch: the one colour there is becomes the calm one
+		let once = migrate_config_text("colors:\n\tfocus: \"#abcdef\"\n").expect("should migrate");
+		assert_eq!(once, "colors:\n\thighlight: \"#abcdef\"\n");
+		let s = resolve(read_raw(&once, std::path::Path::new("test.shcl")));
+		assert_eq!(s.highlight, [0xab, 0xcd, 0xef]);
+		assert_eq!(
+			s.focus,
+			Settings::default().focus,
+			"the new one starts fresh"
+		);
+
+		// after backfill both spellings are present, and every launch after that
+		// is a no-op - the file has reached its resting state
+		let both = "colors:\n\thighlight: \"#abcdef\"\n\tfocus: \"#123456\"\n";
+		assert!(migrate_config_text(both).is_none());
+		let s = resolve(read_raw(both, std::path::Path::new("test.shcl")));
+		assert_eq!(s.highlight, [0xab, 0xcd, 0xef]);
+		assert_eq!(s.focus, [0x12, 0x34, 0x56]);
+
+		// a stale line carrying the pre-theme default still refreshes, under the
+		// path it lands on rather than the one it was written under
+		let stale = migrate_config_text("colors:\n\t# focus: \"#5580c8\"  ## Default\n")
+			.expect("should refresh");
+		assert!(
+			stale.contains("# highlight: \"#c8a05a\"  ## Default"),
+			"got {stale}"
+		);
 	}
 
 	// The retired speed knobs leave existing configs entirely: tau_ms has no

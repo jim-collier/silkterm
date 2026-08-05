@@ -3,8 +3,9 @@
 
 //! Colour themes: each theme is a (dark, light) pair of `Palette`s. The active
 //! theme name + mode (Dark / Light / System) resolve to one `Palette` - the
-//! terminal bg/fg/cursor/focus plus the 16 ANSI colours - which `config` folds
-//! into `Settings` and `palette.rs` reads. The `colors.*` keys still override on
+//! terminal bg/fg/cursor, the two attention colours and the 16 ANSI colours -
+//! which `config` folds into `Settings` and `palette.rs` reads. The `colors.*`
+//! keys still override on
 //! top (a per-colour tweak). Chrome/dialog theming, config-defined themes, and
 //! the Settings dropdown build on this foundation.
 
@@ -13,6 +14,12 @@ pub struct Palette {
 	pub bg: [u8; 3],
 	pub fg: [u8; 3],
 	pub cursor: [u8; 3],
+	// Two attention colours, deliberately separate. `highlight` marks SEVERAL
+	// things at once - the live pane's ring, slider handles, revert icons, the
+	// default button - so it stays calm. `focus` marks the ONE element the
+	// keyboard is on, so it is the more vivid of the pair and sits well away
+	// from `highlight` in hue.
+	pub highlight: [u8; 3],
 	pub focus: [u8; 3],
 	// Chrome: menu bar / dropdowns (menu_*) and pop-out dialogs (dialog_*). Every
 	// built-in theme uses the SAME neutral defaults below (menu identical in both
@@ -22,6 +29,9 @@ pub struct Palette {
 	pub menu_fg: [u8; 3],
 	pub dialog_bg: [u8; 3],
 	pub dialog_fg: [u8; 3],
+	// Chrome areas that hold no interactive element - the strip the dialog's tabs
+	// sit on. Recessed against the panel in both modes.
+	pub gutter: [u8; 3],
 	pub ansi: [[u8; 3]; 16],
 }
 
@@ -33,6 +43,8 @@ const DLG_BG_DARK: [u8; 3] = [0x20, 0x20, 0x2a];
 const DLG_FG_DARK: [u8; 3] = [0xe2, 0xe2, 0xea];
 const DLG_BG_LIGHT: [u8; 3] = [0xe6, 0xe6, 0xe3];
 const DLG_FG_LIGHT: [u8; 3] = [0x22, 0x24, 0x2c];
+const GUTTER_DARK: [u8; 3] = [0x16, 0x16, 0x1e];
+const GUTTER_LIGHT: [u8; 3] = [0xd3, 0xd3, 0xcf];
 
 #[derive(Clone, Copy)]
 pub struct Theme {
@@ -48,13 +60,16 @@ const SILK_DARK: Palette = Palette {
 	// enough to read text against - a cursor at the fg's own brightness sits at
 	// 1.1:1 and the two mush together. This is the fg's triadic partner dropped
 	// to the brightness where it reads equally against the text and against the
-	// black bg (3.9:1 either way). Focus stays warm: it marks the pane, not the
-	// caret, so it wants its own identity rather than an echo of the cursor.
+	// black bg (3.9:1 either way). The highlight stays warm: it marks the pane,
+	// not the caret, so it wants its own identity rather than an echo of the
+	// cursor. Focus is its azure complement - the one thing the keyboard is on.
 	fg: [0x88, 0xee, 0xcc],
 	cursor: [0x96, 0x49, 0xaf],
-	focus: [0xc8, 0xa0, 0x5a],
+	highlight: [0xc8, 0xa0, 0x5a],
+	focus: [0x40, 0x86, 0xff],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_DARK, dialog_fg: DLG_FG_DARK,
+	gutter: GUTTER_DARK,
 	// Hues sit where their names say, warmed toward the pair above; saturation is
 	// the pastel end. Each colour's BRIGHTNESS was carried over from the palette
 	// this replaced, hue by hue, so contrast and legibility are unchanged - only
@@ -72,9 +87,11 @@ const SILK_LIGHT: Palette = Palette {
 	bg: [0xf6, 0xf5, 0xf0],
 	fg: [0x30, 0x32, 0x38],
 	cursor: [0x33, 0x55, 0x99],
-	focus: [0x33, 0x66, 0xbb],
+	highlight: [0x33, 0x66, 0xbb],
+	focus: [0xb8, 0x6e, 0x00],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_LIGHT, dialog_fg: DLG_FG_LIGHT,
+	gutter: GUTTER_LIGHT,
 	ansi: [
 		[0x32, 0x32, 0x3a], [0xc0, 0x3a, 0x42], [0x4f, 0x8a, 0x2f], [0xa6, 0x78, 0x12],
 		[0x27, 0x65, 0xc0], [0x9a, 0x40, 0xb0], [0x1f, 0x86, 0x96], [0x55, 0x58, 0x60],
@@ -90,9 +107,11 @@ const MATRIX_DARK: Palette = Palette {
 	bg: [0x00, 0x08, 0x02],
 	fg: [0x33, 0xff, 0x66],
 	cursor: [0x33, 0xff, 0x66],
-	focus: [0x1f, 0xaa, 0x44],
+	highlight: [0x1f, 0xaa, 0x44],
+	focus: [0xaa, 0xff, 0xcc],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_DARK, dialog_fg: DLG_FG_DARK,
+	gutter: GUTTER_DARK,
 	ansi: [
 		[0x05, 0x18, 0x0a], [0x2a, 0xcc, 0x44], [0x33, 0xff, 0x66], [0x7a, 0xff, 0x8a],
 		[0x1f, 0xaa, 0x3a], [0x44, 0xdd, 0x77], [0x55, 0xee, 0x88], [0x9a, 0xff, 0xaa],
@@ -106,9 +125,11 @@ const MATRIX_LIGHT: Palette = Palette {
 	bg: [0xe9, 0xee, 0xe9],
 	fg: [0x0a, 0x55, 0x1f],
 	cursor: [0x0a, 0x66, 0x22],
-	focus: [0x0a, 0x77, 0x2a],
+	highlight: [0x0a, 0x77, 0x2a],
+	focus: [0x0a, 0x8f, 0x9a],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_LIGHT, dialog_fg: DLG_FG_LIGHT,
+	gutter: GUTTER_LIGHT,
 	ansi: [
 		[0x14, 0x2a, 0x18], [0x18, 0x6a, 0x2a], [0x0a, 0x55, 0x1f], [0x2a, 0x70, 0x38],
 		[0x1a, 0x60, 0x2a], [0x22, 0x6a, 0x34], [0x16, 0x66, 0x2c], [0x2c, 0x52, 0x36],
@@ -124,9 +145,11 @@ const AMBER_DARK: Palette = Palette {
 	bg: [0x10, 0x0a, 0x00],
 	fg: [0xff, 0xb0, 0x00],
 	cursor: [0xff, 0xb0, 0x00],
-	focus: [0xcc, 0x80, 0x00],
+	highlight: [0xcc, 0x80, 0x00],
+	focus: [0xff, 0x40, 0x20],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_DARK, dialog_fg: DLG_FG_DARK,
+	gutter: GUTTER_DARK,
 	ansi: [
 		[0x2a, 0x1c, 0x06], [0xff, 0x8c, 0x1a], [0xff, 0xb0, 0x00], [0xff, 0xc8, 0x4a],
 		[0xd0, 0x86, 0x10], [0xff, 0xa0, 0x33], [0xff, 0xc0, 0x55], [0xff, 0xd8, 0x9a],
@@ -140,9 +163,11 @@ const AMBER_LIGHT: Palette = Palette {
 	bg: [0xf2, 0xee, 0xe6],
 	fg: [0x7a, 0x42, 0x00],
 	cursor: [0x8a, 0x4a, 0x00],
-	focus: [0x9a, 0x52, 0x00],
+	highlight: [0x9a, 0x52, 0x00],
+	focus: [0xc8, 0x10, 0x2e],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_LIGHT, dialog_fg: DLG_FG_LIGHT,
+	gutter: GUTTER_LIGHT,
 	ansi: [
 		[0x33, 0x24, 0x10], [0xa0, 0x4e, 0x08], [0x7a, 0x42, 0x00], [0x90, 0x5a, 0x0c],
 		[0x86, 0x46, 0x06], [0x96, 0x52, 0x10], [0x80, 0x4a, 0x08], [0x52, 0x40, 0x2a],
@@ -206,6 +231,24 @@ mod tests {
 			assert_eq!(t.dark.menu_fg, MENU_FG_DEF);
 			// the dialog panel is darker in dark mode than in light mode
 			assert!(t.dark.dialog_bg[0] < t.light.dialog_bg[0]);
+			// the gutter is recessed against the panel it sits on, both ways round
+			assert!(t.dark.gutter[0] < t.dark.dialog_bg[0]);
+			assert!(t.light.gutter[0] < t.light.dialog_bg[0]);
+		}
+	}
+
+	// The pair only works if the two read as different signals. A theme that let
+	// them converge would draw the focused control and everything merely
+	// highlighted in the same colour, which is the whole point of splitting them.
+	#[test]
+	fn the_two_attention_colours_stay_apart() {
+		for (name, t) in THEMES {
+			for pal in [t.dark, t.light] {
+				let apart: i32 = (0..3)
+					.map(|k| (i32::from(pal.highlight[k]) - i32::from(pal.focus[k])).abs())
+					.sum();
+				assert!(apart >= 120, "{name}: highlight and focus are too close");
+			}
 		}
 	}
 

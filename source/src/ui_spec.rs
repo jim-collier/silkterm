@@ -61,7 +61,8 @@ keys![
 	SmoothScroll, ScrollEaseIn, ScrollRampUp, SingleScreenTau, ScrollRampDown,
 	ScrollEaseOut, WheelLines,
 	Scrollbar, ScrollbarThickness, ScrollbarAutoHide,
-	ColScrollbarThumb, ColScrollbarTrough, ColBg, ColFg, ColCursor, ColFocus,
+	ColScrollbarThumb, ColScrollbarTrough, ColBg, ColFg, ColCursor,
+	ColHighlight, ColFocus, ColGutter,
 ];
 
 pub enum Kind {
@@ -89,6 +90,9 @@ pub struct Spec {
 	pub key: Key,
 	pub kind: Kind,
 	pub tab: usize,
+	// Flyover text for a control whose purpose is not obvious from its label.
+	// Empty means the row explains itself and gets no tip.
+	pub help: &'static str,
 }
 
 // One setting a control has to wait on, resolved from the file's gate lines.
@@ -133,10 +137,21 @@ pub struct Layout {
 	pub button_width: f32,
 	pub button_gap: f32,
 	pub tab_pad: f32,
+	pub tab_height: f32,
+	pub tab_pad_v: f32,
+	pub tab_top: f32,
 	pub tab_gap: f32,
 	pub scrollbar_width: f32,
 	pub scrollbar_inset: f32,
 	pub scrollbar_thumb_min: f32,
+}
+
+// Flyover text for the footer buttons, which are chrome rather than settings and
+// so have no row of their own to carry it.
+pub struct Help {
+	pub cancel: &'static str,
+	pub apply: &'static str,
+	pub ok: &'static str,
 }
 
 pub struct Icons {
@@ -149,6 +164,7 @@ pub struct Ui {
 	pub tabs: Vec<&'static str>,
 	pub layout: Layout,
 	pub icons: Icons,
+	pub help: Help,
 	pub specs: Vec<Spec>,
 	// config path per addressable setting, in row order (parallel to `keys`)
 	settings: Vec<(Key, &'static [&'static str])>,
@@ -246,6 +262,9 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 		button_width: float("layout.button_width", &mut problems),
 		button_gap: float("layout.button_gap", &mut problems),
 		tab_pad: float("layout.tab_pad", &mut problems),
+		tab_height: float("layout.tab_height", &mut problems),
+		tab_pad_v: float("layout.tab_pad_v", &mut problems),
+		tab_top: float("layout.tab_top", &mut problems),
 		tab_gap: float("layout.tab_gap", &mut problems),
 		scrollbar_width: float("layout.scrollbar_width", &mut problems),
 		scrollbar_inset: float("layout.scrollbar_inset", &mut problems),
@@ -259,6 +278,11 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 				"?"
 			}
 		}
+	};
+	let help = Help {
+		cancel: glyph("help.cancel", &mut problems),
+		apply: glyph("help.apply", &mut problems),
+		ok: glyph("help.ok", &mut problems),
 	};
 	let icons = Icons {
 		dropdown_arrow: glyph("icons.dropdown_arrow", &mut problems),
@@ -373,6 +397,7 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 			key,
 			kind,
 			tab,
+			help: doc.get_string(&at("help")).map_or("", keep),
 		});
 	}
 
@@ -413,6 +438,7 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 			tabs,
 			layout,
 			icons,
+			help,
 			specs,
 			settings,
 			gates,

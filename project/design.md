@@ -22,6 +22,7 @@
 	- [Text readability scrim](#text-readability-scrim)
 	- [Font fallback stack](#font-fallback-stack)
 	- [Hyperlinks](#hyperlinks)
+	- [Attention colours and dialog chrome](#attention-colours-and-dialog-chrome)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Environment](#environment)
 	- [Startup and slow external resources](#startup-and-slow-external-resources)
@@ -197,6 +198,18 @@ The built-in stack is last for a reason: the generic monospace query below it is
 - An app that is watching the mouse itself owns the pointer, so nothing underlines over it - holding Shift asks for the local behaviour instead, the same bypass selection already uses. The right-click menu continues to win over such an app, as all our chrome does.
 
 - Links open through the desktop's own handler by default, with a configurable program to override it. Deciding what a URL means is the desktop's job, not a terminal's.
+
+### Attention colours and dialog chrome
+
+- A theme carries two attention colours rather than one, because they answer different questions. **Highlights** marks several things at once - the live pane's ring, slider handles, revert arrows, the default button - so it stays calm enough to appear many times on a screen. **Focus** marks the single control the keyboard is on, so it is the more vivid of the pair and sits well away from its partner in hue. A test holds every theme's two apart, since a theme that let them converge would draw "look at this" and "you are here" in the same colour.
+
+- The dialog's own accents follow the theme now. They used to be a fixed blue while the theme's attention colour was something else entirely, so the panel could not agree with the terminal it belonged to. The pressed-button fill is that colour mixed back toward the panel, which is what makes a pressed button read as pressed rather than as the focused one.
+
+- A focused field shows one outline, not two. The ring lands exactly on the box's own outline and the box stands its border down; where the ring genuinely spans more than one control - a colour chip and its hex field - it stays a little outside instead, and only the field's border gives way.
+
+- Tabs sit on a recessed **Gutter** strip and stand on the rule that closes it off, the way tabbed interfaces generally read. The current tab is a lighter grey rather than an accent: "you are here" is not the same job as "look at this". Above the rows there is no heading repeating the tab's own name - the strip has said it already.
+
+- Controls whose label does not explain them carry a line of flyover help, and one that is greyed out explains why instead, that being the more urgent question at the time. The text wraps to the panel rather than being clamped to its edge, so neither a longer sentence nor a larger interface font can push it out of view.
 
 ### Render Loop Sketch
 
