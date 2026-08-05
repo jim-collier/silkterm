@@ -274,8 +274,8 @@ impl Default for Settings {
 			text_scrim: true,
 			text_scrim_radius: 5.0,
 			text_scrim_softness: 0.5,
-			text_scrim_strength: 20.0,
-			text_outline: 2.0,
+			text_scrim_strength: 15.0,
+			text_outline: 1.0,
 			text_scrim_ramp: "exp".to_string(),
 			text_scrim_function: "sdf".to_string(),
 			text_scrim_regular_weight: true,
@@ -310,7 +310,7 @@ impl Default for Settings {
 			hyperlink_open_command: String::new(),
 			bg: [0x00, 0x00, 0x00],
 			fg: [0x88, 0xee, 0xcc],
-			cursor: [0xee, 0xcc, 0x88],
+			cursor: [0x96, 0x49, 0xaf],
 			focus: [0xc8, 0xa0, 0x5a],
 			menu_bg: crate::theme::MENU_BG_DEF,
 			menu_fg: crate::theme::MENU_FG_DEF,
@@ -1643,12 +1643,18 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// first tuned value on the new scale was a shade heavier
 	("text.scrim.strength", "0  ## Default"),
 	("text.scrim.strength", "30  ## Default"),
+	("text.scrim.strength", "20  ## Default"),
+	// the outline shipped at two pixels before the halo carried more of the work
+	("text.outline", "2.0  ## Default"),
 	// these two never tracked the theme they document - they carried a grey and a
 	// steel blue from before themes existed, so every config in the wild has them
 	("colors.foreground", "\"#d2d2da\"  ## Default"),
 	("colors.cursor", "\"#7a9ad0\"  ## Default"),
-	// the cursor briefly shipped as the cool third of the same triad
+	// the cursor briefly shipped as the cool third of the same triad, then as the
+	// warm one - both at the text's own brightness, which is why neither could be
+	// read through
 	("colors.cursor", "\"#cc88ee\"  ## Default"),
+	("colors.cursor", "\"#eecc88\"  ## Default"),
 	// the focus ring was a cold blue, picked for the palette before this one
 	("colors.focus", "\"#5580c8\"  ## Default"),
 ];
@@ -2511,7 +2517,7 @@ text:
 		## its opacity (100% = five doublings), so a faint halo turns into a solid
 		## plate. 0 leaves it exactly as built.
 		## Range: 0 to 100
-		# strength: 20  ## Default
+		# strength: 15  ## Default
 		## Halo radius in pixels.
 		# radius: 5.0  ## Default
 		## Range: 0.0 to 1.0 - 0.0 is hard/solid, 1.0 is soft/faint
@@ -2527,7 +2533,7 @@ text:
 	## Text outline
 	## Antialiased outline around glyphs, in pixels (0 = none).
 	## Range: 0.0 to 8.0
-	# outline: 2.0  ## Default
+	# outline: 1.0  ## Default
 
 	## Colour emoji
 	## Paint colour emoji (COLRv1); false renders them as monochrome outlines.
@@ -2782,7 +2788,7 @@ theme_mode: dark
 colors:
 	# background: "#000000"  ## Default
 	# foreground: "#88eecc"  ## Default
-	# cursor: "#eecc88"  ## Default
+	# cursor: "#9649af"  ## Default
 	# focus: "#c8a05a"  ## Default
 	# menu_background: "#36363b"  ## Default
 	# menu_foreground: "#f0f0f2"  ## Default
@@ -2987,9 +2993,9 @@ mod tests {
 		assert!(d.text_scrim, "text_scrim should default on");
 		assert_eq!(d.text_scrim_radius, 5.0);
 		assert_eq!(d.text_scrim_softness, 0.5);
-		// 20% = one doubling on the 20%-per-doubling scale
-		assert_eq!(d.text_scrim_strength, 20.0);
-		assert_eq!(d.text_outline, 2.0);
+		// 15% on the 20%-per-doubling scale, so a shade under one doubling
+		assert_eq!(d.text_scrim_strength, 15.0);
+		assert_eq!(d.text_outline, 1.0);
 		assert_eq!(d.text_scrim_ramp, "exp");
 		assert_eq!(d.text_scrim_function, "sdf");
 		assert!(d.text_scrim_regular_weight);

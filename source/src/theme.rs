@@ -44,11 +44,14 @@ pub struct Theme {
 #[rustfmt::skip]
 const SILK_DARK: Palette = Palette {
 	bg: [0x00, 0x00, 0x00],
-	// fg and cursor are the same three channel values permuted - an exact triad,
-	// so they share a saturation and a brightness and can't clash. Focus echoes
-	// the cursor a few stops down: warm is what "this one is live" looks like here.
+	// The cursor is an alpha plate drawn OVER the glyph, so it has to be dark
+	// enough to read text against - a cursor at the fg's own brightness sits at
+	// 1.1:1 and the two mush together. This is the fg's triadic partner dropped
+	// to the brightness where it reads equally against the text and against the
+	// black bg (3.9:1 either way). Focus stays warm: it marks the pane, not the
+	// caret, so it wants its own identity rather than an echo of the cursor.
 	fg: [0x88, 0xee, 0xcc],
-	cursor: [0xee, 0xcc, 0x88],
+	cursor: [0x96, 0x49, 0xaf],
 	focus: [0xc8, 0xa0, 0x5a],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_DARK, dialog_fg: DLG_FG_DARK,

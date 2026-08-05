@@ -494,6 +494,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - Bugs
 
+- ✅ Bug: Text sitting under the cursor is hard to read - UAT.
+	- The cursor is a tinted plate drawn over the character, so the two are only distinguishable when their brightnesses differ. The default foreground and the default cursor were the same three channel values in a different order, which makes them an exact match in brightness: measured on screen, a character under the cursor stood at under 2:1 against the plate behind it.
+	- The cursor is now the cool third of the same triad, dropped to the brightness where it reads as well against the text as it does against the background - a deep violet. On screen the same character now stands at close to 6:1, and nothing outside the one cell changes.
+	- The focus ring stays warm. It marks which pane is live rather than where the caret is, so it wants an identity of its own rather than an echo of the cursor.
+	- New defaults alongside it: text scrim strength 15 (was 20) and text outline 1 (was 2), so slightly more of the background shows through around each character.
+	- All three reach an existing config only where its line is still the shipped one. A value already changed, or a line annotated by hand, is left alone.
+
 - ✅ Bug: Editing a line at any point on the prompt, that has one or more emojis in it, results in apparently random left-right shifting of other characters, at apparently random points unrelated to the cursor position. (But probably not really "random".) The actual content that moves doesn't actually change in the buffer, but it looks like it does and makes it visually unreliable and confusing.
 	- Not random: it happened on exactly the rows holding one of a small set of characters. A terminal gives a double-width character two columns. A monospace font is free to carry that same character at its ordinary single-column width, and the default font does so for 53 of them - several common emoji among them, plus fullwidth punctuation. The row was laid out from the font, so one of those characters consumed one column where the grid had allotted two, and everything after it on that row drew a column to the left of where its own background, the cursor and any separately-drawn character still sat. Editing moved such a character around the line, so the misalignment appeared to wander.
 	- Fix: a character now rides the shared row layout only when the font's own width for it agrees with the number of columns the terminal gave it. Anything that disagrees is drawn on its own, fitted to its real box - the same path characters missing from the font already took.
