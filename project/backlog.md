@@ -65,8 +65,9 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✅ Settings dialog measurements are DIP. The layout is solved in that space and the display's scale factor is applied only where it meets the window, so the dialog keeps its proportions at any DPI. At 2x the old build kept 20px checkboxes and truncated its value fields; it is now simply twice the size.
 	- 🔘 The main window's own chrome (menu bar, tab bar, dropdown menus, focus ring, pane gap) is still measured in raw pixels, so it thins out as DPI rises. Same treatment, but it cannot use the same boundary trick - chrome shares a coordinate space with the terminal grid, so each measurement scales where it is used.
 
-- 🔘 Refactor settings dialog
+- 🛠️ Refactor settings dialog
 	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory. Reconcile by what makes the most sense given the obvious design direction this is going, with what has changed before.
+	- Being done in chunks, in this order: the chrome and the two new colours, then groups and the tab reorganization, then theme management, then the colour picker, then the Shells tab. Opening speed was dealt with first and is under Done.
 	- Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
 		- Including the some of the main buttons:
 			- "Apply": "Apply changes now, without closing Settings."
@@ -493,6 +494,14 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 ### Done
 
 #### Done - Bugs
+
+- ✅ Settings takes far too long to open. - UAT.
+	- Measured from the keypress to a usable window: 310 ms, and the same again on every reopen, because nothing was kept between them.
+	- Nearly all of it was building a graphics context: the dialogs cannot borrow the terminal's, so each one built its own instance, adapter and device on the click - 230 ms of the 310. That is now built once on a worker thread as soon as the terminal is on screen, and then kept, so no dialog open pays for it.
+	- The dialog declarations were not the cause. Reading that document takes about a millisecond and already happened only once per run, so it accounted for well under one percent of the open.
+	- Now 86 ms, and the window renders identically either way - compared pixel for pixel against a build with the warm-up switched off, which is also the path taken if the warm-up cannot be used.
+	- Startup is untouched: the warm-up only begins once the terminal window is up, and time to a visible terminal is unchanged.
+	- What is left is roughly 50 ms of per-window setup that cannot be done in advance because it needs the window itself, and about 20 ms of font setup that is currently repeated per dialog.
 
 - ✅ Bug: Text sitting under the cursor is hard to read - UAT.
 	- The cursor is a tinted plate drawn over the character, so the two are only distinguishable when their brightnesses differ. The default foreground and the default cursor were the same three channel values in a different order, which makes them an exact match in brightness: measured on screen, a character under the cursor stood at under 2:1 against the plate behind it.
