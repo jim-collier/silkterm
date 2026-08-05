@@ -59,6 +59,10 @@ pub struct App {
 	raise_next: Instant,
 	// VT watcher spawned (once per process; GL path only)
 	vt_watch: bool,
+	// GPU context the pop-out dialogs draw on, warmed on a worker thread once the
+	// terminal is on screen (see gfx::DialogGpu for why they can't share the
+	// terminal's) and then kept, so no dialog open pays for it.
+	gpu_warm: crate::gfx::GpuWarm,
 	// cicd profiler stage: when SILK_PROFILE_OUT is set the app runs a workload
 	// (via --shell) for SILK_PROFILE_SECS then exits, so main can dump a flamegraph.
 	#[cfg(feature = "profiling")]
@@ -79,6 +83,7 @@ impl App {
 			raise_reassert: 0,
 			raise_next: Instant::now(),
 			vt_watch: false,
+			gpu_warm: crate::gfx::GpuWarm::idle(),
 			#[cfg(feature = "profiling")]
 			profile_secs: std::env::var("SILK_PROFILE_SECS")
 				.ok()
@@ -598,6 +603,10 @@ const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to 
 // PTY reading never stops - and catches up in one hard-cut frame on restore.
 // Covers WMs that never report Occluded for an iconified window.
 const FREEZE_MINIMIZED: bool = true;
+// Warm knob (one line rolls it back): build the dialogs' GPU context on a worker
+// thread once the terminal is up, instead of on the click that opens one. Off
+// means every dialog open pays for its own instance + adapter + device again.
+const WARM_DIALOG_GPU: bool = true;
 const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-size settle time before hitting disk
 const VRAM_CHECK_IVL: Duration = Duration::from_secs(2); // GL sentinel probe tick (VT-switch texture loss)
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
@@ -4521,6 +4530,12 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 		}
 
+		// Warm the dialogs' GPU context once the terminal is genuinely on screen,
+		// so building it can't slow the path to the first frame. Idempotent.
+		if WARM_DIALOG_GPU && self.state.as_ref().is_some_and(|state| state.revealed) {
+			self.gpu_warm.start();
+		}
+
 		// Open the About window if requested (window creation needs the event loop,
 		// so State only signals and we act here).
 		let open_about = self
@@ -4537,13 +4552,19 @@ impl ApplicationHandler<UserEvent> for App {
 				.ok()
 				.map(|handle| handle.as_raw())
 		});
+		// cloned (all wgpu handles, so refcount bumps) rather than borrowed: the
+		// open arms below also take `&mut self` to store the dialog
+		let warm = (open_about || self.state.as_ref().is_some_and(|s| s.pending_settings))
+			.then(|| self.gpu_warm.get())
+			.flatten();
 		if open_about {
 			if let Some(info) = self
 				.state
 				.as_ref()
 				.map(|state| state.gfx.adapter_info.clone())
 			{
-				match crate::dialog::DialogWin::new_about(event_loop, &info, parent) {
+				match crate::dialog::DialogWin::new_about(event_loop, &info, parent, warm.as_ref())
+				{
 					Ok(d) => {
 						self.dialog = Some(d);
 						self.center_dialog();
@@ -4566,7 +4587,8 @@ impl ApplicationHandler<UserEvent> for App {
 				.take()
 				.filter(|(closed, _)| closed.elapsed() <= SETTINGS_RESUME)
 				.map(|(_, view)| view);
-			match crate::dialog::DialogWin::new_settings(event_loop, parent, resume) {
+			match crate::dialog::DialogWin::new_settings(event_loop, parent, resume, warm.as_ref())
+			{
 				Ok(d) => {
 					self.dialog = Some(d);
 					self.center_dialog();

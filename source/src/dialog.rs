@@ -101,6 +101,7 @@ impl DialogWin {
 		w: f32,
 		h: f32,
 		parent: Option<RawWindowHandle>,
+		warm: Option<&crate::gfx::DialogGpu>,
 	) -> anyhow::Result<(Arc<Window>, Gfx, TextCtx, RectRenderer)> {
 		#[allow(unused_mut)] // reassigned on linux/windows/macos below
 		let mut attrs = Window::default_attributes()
@@ -149,8 +150,17 @@ impl DialogWin {
 		set_transient_for(&window, parent.as_ref());
 		// PRIMARY (no GL): the main window may hold a glutin GL/EGL context, and a
 		// second wgpu GL instance would panic in EGL teardown. Dialogs are opaque,
-		// so Vulkan/Metal/DX12 is all they need.
-		let mut gfx = Gfx::with_backends(window.clone(), wgpu::Backends::PRIMARY)?;
+		// so Vulkan/Metal/DX12 is all they need. The warm context (see DialogGpu)
+		// has already paid for the instance/adapter/device; without it, or if its
+		// adapter can't present here, build one the slow way.
+		let warmed = match warm {
+			Some(gpu) => Gfx::with_dialog_gpu(window.clone(), gpu)?,
+			None => None,
+		};
+		let mut gfx = match warmed {
+			Some(gfx) => gfx,
+			None => Gfx::with_backends(window.clone(), wgpu::Backends::PRIMARY)?,
+		};
 		// adopt the size winit actually gave us
 		let size = window.inner_size();
 		gfx.resize(size.width, size.height);
@@ -164,6 +174,7 @@ impl DialogWin {
 		el: &ActiveEventLoop,
 		adapter: &wgpu::AdapterInfo,
 		parent: Option<RawWindowHandle>,
+		warm: Option<&crate::gfx::DialogGpu>,
 	) -> anyhow::Result<Self> {
 		// provisional window so we have a TextCtx to measure with
 		let (window, mut gfx, mut text, rects) = Self::make(
@@ -172,6 +183,7 @@ impl DialogWin {
 			560.0,
 			360.0,
 			parent,
+			warm,
 		)?;
 		let (lines, links, size) = layout_about(&mut text, adapter);
 		let requested_size =
@@ -201,11 +213,12 @@ impl DialogWin {
 		el: &ActiveEventLoop,
 		parent: Option<RawWindowHandle>,
 		resume: Option<View>,
+		warm: Option<&crate::gfx::DialogGpu>,
 	) -> anyhow::Result<Self> {
 		// provisional window first: sizing needs a TextCtx to measure labels in
 		// the real UI font (same pattern as About)
 		let (window, mut gfx, mut text, rects) =
-			Self::make(el, "Settings".into(), 560.0, 800.0, parent)?;
+			Self::make(el, "Settings".into(), 560.0, 800.0, parent, warm)?;
 		let (label_w, btn_w, tab_ws) = crate::settings_ui::chrome_widths(&mut text);
 		let scale = window.scale_factor() as f32;
 		// cap the window height to the monitor (minus decorations headroom) and to

@@ -325,7 +325,6 @@ impl Gfx {
 	// wgpu-hal's EGL teardown (`unmake_current().unwrap()`), so dialogs must avoid
 	// touching EGL entirely.
 	pub fn with_backends(window: Arc<Window>, backends: wgpu::Backends) -> anyhow::Result<Self> {
-		let size = window.inner_size();
 		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
 			backends,
 			flags: wgpu::InstanceFlags::default(),
@@ -348,48 +347,9 @@ impl Gfx {
 		let adapter_info = adapter.get_info();
 		log_renderer(&adapter_info);
 
-		let (device, queue) =
-			pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-				label: Some("silkterm device"),
-				required_features: wgpu::Features::empty(),
-				required_limits: adapter.limits(),
-				..Default::default()
-			}))?;
-
-		let caps = surface.get_capabilities(&adapter);
-		let format = caps
-			.formats
-			.iter()
-			.copied()
-			.find(wgpu::TextureFormat::is_srgb)
-			.unwrap_or(caps.formats[0]);
-
-		// Prefer a premultiplied-alpha mode so a translucent background shows the
-		// desktop through. If only Opaque is available (no compositor), stay
-		// opaque - transparency is silently ignored.
-		let alpha_mode = caps
-			.alpha_modes
-			.iter()
-			.copied()
-			.find(|m| *m == wgpu::CompositeAlphaMode::PreMultiplied)
-			.unwrap_or(caps.alpha_modes[0]);
-		let transparent = alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
-
-		let config = wgpu::SurfaceConfiguration {
-			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-			format,
-			width: size.width.max(1),
-			height: size.height.max(1),
-			present_mode: wgpu::PresentMode::AutoVsync,
-			alpha_mode,
-			view_formats: vec![],
-			// Windows: one queued frame, not two. With Fifo + 2-frame DXGI latency
-			// the CPU races ahead then blocks, so the wall-clock dt between frames
-			// alternates short/long and the scroll ease steps unevenly (judder).
-			// One frame paces present to the display -> steady dt -> smooth. The GL
-			// path (below) and other platforms already pace evenly, so leave them.
-			desired_maximum_frame_latency: if cfg!(windows) { 1 } else { 2 },
-		};
+		let (device, queue) = pollster::block_on(request_device(&adapter))?;
+		let (config, format, transparent) = surface_config(&surface, &adapter, &window)
+			.ok_or_else(|| anyhow::anyhow!("adapter cannot present to this window"))?;
 		surface.configure(&device, &config);
 
 		Ok(Self {
@@ -403,6 +363,35 @@ impl Gfx {
 			sentinel: None,
 			_window: window,
 		})
+	}
+
+	// Same native path, but on a context that was built ahead of time (see
+	// `DialogGpu`). Only the surface is created here, which is sub-millisecond -
+	// the instance/adapter/device that dominate `with_backends` are already paid
+	// for. `None` means this adapter cannot present to this window's surface, so
+	// the caller must fall back to a cold `with_backends`.
+	pub fn with_dialog_gpu(window: Arc<Window>, gpu: &DialogGpu) -> anyhow::Result<Option<Self>> {
+		let surface = gpu.instance.create_surface(window.clone())?;
+		// The warm adapter was picked with no surface to check against (no window
+		// existed yet), so a multi-GPU box could hand back one that can't draw
+		// here. `surface_config` reports that as None.
+		let Some((config, format, transparent)) = surface_config(&surface, &gpu.adapter, &window)
+		else {
+			return Ok(None);
+		};
+		surface.configure(&gpu.device, &config);
+
+		Ok(Some(Self {
+			device: gpu.device.clone(),
+			queue: gpu.queue.clone(),
+			config,
+			format,
+			transparent,
+			adapter_info: gpu.adapter_info.clone(),
+			backend: Backend::Native(surface),
+			sentinel: None,
+			_window: window,
+		}))
 	}
 
 	// X11-only per-pixel transparency: glutin creates the window with a 32-bit
@@ -848,6 +837,169 @@ fn f16_to_f32(bits: u16) -> f32 {
 		(1.0 + mant as f32 / 1024.0) * 2f32.powi(exp as i32 - 15)
 	};
 	if sign == 1 { -magnitude } else { magnitude }
+}
+
+fn request_device(
+	adapter: &wgpu::Adapter,
+) -> impl std::future::Future<Output = Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError>>
+{
+	adapter.request_device(&wgpu::DeviceDescriptor {
+		label: Some("silkterm device"),
+		required_features: wgpu::Features::empty(),
+		required_limits: adapter.limits(),
+		..Default::default()
+	})
+}
+
+// Surface format + alpha mode + configuration, shared by the cold and prewarmed
+// native paths so the two can't drift. `None` means this adapter cannot present
+// to this surface at all (no formats), which is only reachable on the prewarmed
+// path - see `Gfx::with_dialog_gpu`.
+fn surface_config(
+	surface: &wgpu::Surface<'static>,
+	adapter: &wgpu::Adapter,
+	window: &Window,
+) -> Option<(wgpu::SurfaceConfiguration, wgpu::TextureFormat, bool)> {
+	let size = window.inner_size();
+	let caps = surface.get_capabilities(adapter);
+	if caps.formats.is_empty() {
+		return None;
+	}
+	let format = caps
+		.formats
+		.iter()
+		.copied()
+		.find(wgpu::TextureFormat::is_srgb)
+		.unwrap_or(caps.formats[0]);
+
+	// Prefer a premultiplied-alpha mode so a translucent background shows the
+	// desktop through. If only Opaque is available (no compositor), stay
+	// opaque - transparency is silently ignored.
+	let alpha_mode = caps
+		.alpha_modes
+		.iter()
+		.copied()
+		.find(|m| *m == wgpu::CompositeAlphaMode::PreMultiplied)
+		.unwrap_or(caps.alpha_modes[0]);
+
+	let config = wgpu::SurfaceConfiguration {
+		usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+		format,
+		width: size.width.max(1),
+		height: size.height.max(1),
+		present_mode: wgpu::PresentMode::AutoVsync,
+		alpha_mode,
+		view_formats: vec![],
+		// Windows: one queued frame, not two. With Fifo + 2-frame DXGI latency
+		// the CPU races ahead then blocks, so the wall-clock dt between frames
+		// alternates short/long and the scroll ease steps unevenly (judder).
+		// One frame paces present to the display -> steady dt -> smooth. The GL
+		// path and other platforms already pace evenly, so leave them.
+		desired_maximum_frame_latency: if cfg!(windows) { 1 } else { 2 },
+	};
+	Some((
+		config,
+		format,
+		alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied,
+	))
+}
+
+// A wgpu instance/adapter/device kept for the life of the process and shared by
+// every pop-out dialog.
+//
+// Dialogs cannot borrow the terminal's context: on X11 that one is a glutin
+// GL/EGL context, and a second GL instance panics in wgpu-hal's EGL teardown. So
+// each dialog used to build a whole PRIMARY context of its own, ON THE CLICK -
+// measured at 310ms from keypress to a usable Settings window, 230ms of it being
+// `Instance::new` + `request_device` alone, and paid again on every reopen since
+// nothing was retained. Warming it once on a worker thread moves that off the
+// click, and keeping it moves it off every subsequent open too.
+#[derive(Clone)]
+pub struct DialogGpu {
+	instance: wgpu::Instance,
+	adapter: wgpu::Adapter,
+	device: wgpu::Device,
+	queue: wgpu::Queue,
+	adapter_info: wgpu::AdapterInfo,
+}
+
+impl DialogGpu {
+	// Runs off the winit thread, so there is no window to check the adapter
+	// against - `Gfx::with_dialog_gpu` does that later against the real surface.
+	// Not logged: the terminal already reported the GPU, and this picks the same
+	// one on any single-adapter box.
+	pub fn build() -> anyhow::Result<Self> {
+		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+			backends: wgpu::Backends::PRIMARY,
+			flags: wgpu::InstanceFlags::default(),
+			memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+			backend_options: wgpu::BackendOptions::default(),
+			display: None,
+		});
+		let pick = |fallback| {
+			pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+				power_preference: wgpu::PowerPreference::HighPerformance,
+				compatible_surface: None,
+				force_fallback_adapter: fallback,
+			}))
+		};
+		let adapter = pick(false).or_else(|_| pick(true))?;
+		let adapter_info = adapter.get_info();
+		let (device, queue) = pollster::block_on(request_device(&adapter))?;
+		Ok(Self {
+			instance,
+			adapter,
+			device,
+			queue,
+			adapter_info,
+		})
+	}
+}
+
+// Owns the warm-up worker and the context it produces.
+pub struct GpuWarm {
+	job: Option<std::thread::JoinHandle<Option<DialogGpu>>>,
+	ready: Option<DialogGpu>,
+}
+
+impl GpuWarm {
+	pub const fn idle() -> Self {
+		Self {
+			job: None,
+			ready: None,
+		}
+	}
+
+	// Start warming. Called once the terminal is actually on screen, so the
+	// device build lands in dead time rather than competing with startup.
+	// Repeat calls are no-ops.
+	pub fn start(&mut self) {
+		if self.job.is_some() || self.ready.is_some() {
+			return;
+		}
+		self.job = Some(std::thread::spawn(|| match DialogGpu::build() {
+			Ok(gpu) => Some(gpu),
+			// A dialog can still be opened without this - it just pays the old
+			// cost - so a failure here is a note, not an error.
+			Err(e) => {
+				eprintln!(
+					"{}: dialog GPU warm-up failed ({e}); dialogs will open more slowly",
+					crate::config::APP_NAME
+				);
+				None
+			}
+		}));
+	}
+
+	// The warm context, waiting on the worker if it is still going. That wait can
+	// never cost more than building one here would have, since the work is
+	// already under way - and normally it finished seconds ago.
+	pub fn get(&mut self) -> Option<DialogGpu> {
+		if let Some(job) = self.job.take() {
+			self.ready = job.join().unwrap_or(None);
+		}
+		self.ready.clone()
+	}
 }
 
 fn log_renderer(info: &wgpu::AdapterInfo) {
