@@ -432,7 +432,7 @@ enum WalkLine {
 		active: bool,
 		header: bool,
 	},
-	Fence(usize),
+	Fence,
 	Blank,
 	Other(usize),
 }
@@ -448,7 +448,7 @@ fn walk_settings(text: &str) -> Vec<WalkLine> {
 	let mut fence: Option<(char, usize)> = None;
 	for (index, line) in text.lines().enumerate() {
 		if let Some((ch, len)) = fence {
-			out.push(WalkLine::Fence(index));
+			out.push(WalkLine::Fence);
 			let t = line.trim();
 			if t.chars().all(|c| c == ch) && t.len() >= len {
 				fence = None; // closing fence
@@ -456,7 +456,7 @@ fn walk_settings(text: &str) -> Vec<WalkLine> {
 			continue;
 		}
 		if let Some(open) = fence_run(line) {
-			out.push(WalkLine::Fence(index));
+			out.push(WalkLine::Fence);
 			fence = Some(open);
 			continue;
 		}
@@ -516,105 +516,15 @@ fn fence_run(line: &str) -> Option<(char, usize)> {
 
 // Serialize a document back to disk text.
 //
-// `to_canonical` keeps comments, blank-line grouping and line order, and never
-// rewrites a scalar. The one thing it still re-lays-out is INDENTATION of a
-// comment run with no active sibling to anchor it: under a block header whose
-// children are all commented-out defaults (most of this template), the run
-// comes back at the header's own depth instead of the children's. Canonical
-// preserves order, so that is repaired positionally against `before` - a
-// comment line is re-emitted exactly as the user last had it.
-fn to_text(doc: &shcl::Document, before: &str) -> String {
-	// (identity, verbatim line) for every non-blank line of `before`.
-	let before_lines: Vec<&str> = before.lines().collect();
-	let mut prior: Vec<(String, &str)> = Vec::new();
-	for w in walk_settings(before) {
-		match w {
-			WalkLine::Blank => {}
-			WalkLine::Fence(i) | WalkLine::Other(i) => {
-				prior.push((line_identity_at(before_lines[i], None), before_lines[i]));
-			}
-			WalkLine::Setting { index, path, .. } => {
-				prior.push((
-					line_identity_at(before_lines[index], Some(&path)),
-					before_lines[index],
-				));
-			}
-		}
-	}
-
-	let canonical = doc.to_canonical();
-	let canon_lines: Vec<&str> = canonical.lines().collect();
-	let mut out = String::new();
-	let mut at = 0; // how far through `prior` we've matched
-	for w in walk_settings(&canonical) {
-		let (index, id, comment) = match w {
-			WalkLine::Blank => {
-				out.push('\n');
-				continue;
-			}
-			// raw-fence content is verbatim by definition - emit as-is (blank
-			// content lines included), consuming its prior twin positionally
-			WalkLine::Fence(i) => {
-				let line = canon_lines[i];
-				if let Some(offset) = prior[at..]
-					.iter()
-					.position(|(pid, _)| *pid == line.trim_start())
-				{
-					at += offset + 1;
-				}
-				out.push_str(line);
-				out.push('\n');
-				continue;
-			}
-			WalkLine::Other(i) => {
-				let line = canon_lines[i];
-				(
-					i,
-					line_identity_at(line, None),
-					line.trim_start().starts_with('#'),
-				)
-			}
-			WalkLine::Setting {
-				index,
-				ref path,
-				active,
-				..
-			} => {
-				let line = canon_lines[index];
-				(index, line_identity_at(line, Some(path)), !active)
-			}
-		};
-		let mut emit: &str = canon_lines[index];
-		if let Some(offset) = prior[at..].iter().position(|(pid, _)| *pid == id) {
-			// a comment's indentation is the user's own; canonical re-pads an
-			// unanchored run to its parent's depth, so put theirs back
-			if comment {
-				emit = prior[at + offset].1;
-			}
-			at += offset + 1;
-		}
-		out.push_str(emit);
-		out.push('\n');
-	}
-	out
-}
-
-// What makes two lines "the same line" across a rewrite. An active setting is
-// its full path (so re-quoting or respacing a value still matches); a commented
-// setting or plain comment is its trimmed text; anything else likewise.
-fn line_identity_at(line: &str, path: Option<&str>) -> String {
-	let trimmed = line.trim_start();
-	if let Some(path) = path {
-		if !trimmed.starts_with('#') {
-			return format!("\0{path}");
-		}
-	}
-	trimmed.to_string()
-}
-
-// Write `doc` back to `path`, restoring the blank-line grouping of what was there.
-fn write_doc(path: &std::path::Path, doc: &shcl::Document, before: &str) {
-	if let Err(e) = std::fs::write(path, to_text(doc, before)) {
+// `to_canonical` keeps comments, blank-line grouping, indentation and line
+// order, and never rewrites a scalar - so it IS the disk text. shcl 1.2 was
+// what made that true: before it, a comment run under a block whose children
+// are all commented-out defaults (most of this template) came back at the
+// header's depth, and a positional repair pass put the user's own indentation
+// back. Verified against the shipped template, a live config and a torture
+// fixture: canonical is byte-identical to each.
+fn write_doc(path: &std::path::Path, doc: &shcl::Document) {
+	if let Err(e) = std::fs::write(path, doc.to_canonical()) {
 		eprintln!("{APP_NAME}: could not save config {}: {e}", path.display());
 	}
 }
@@ -634,7 +544,6 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 		note_config_busy(&path);
 		return false;
 	}
-	let before = std::fs::read_to_string(&path).unwrap_or_default();
 	let Some(mut doc) = read_doc(&path) else {
 		return true;
 	};
@@ -861,7 +770,7 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	set_color("cursor", s.cursor, orig.cursor);
 	set_color("focus", s.focus, orig.focus);
 
-	write_doc(&path, &doc, &before);
+	write_doc(&path, &doc);
 	true
 }
 
@@ -1035,6 +944,21 @@ struct Reader<'a> {
 	path: &'a std::path::Path,
 }
 
+// " line 4" / " lines 2, 4" for a diagnostic, empty when there is nothing to
+// cite (a writer-built node reports 0, and a wildcard slot that missed does too).
+fn line_list(lines: &[usize]) -> String {
+	let cited: Vec<String> = lines
+		.iter()
+		.filter(|n| **n > 0)
+		.map(std::string::ToString::to_string)
+		.collect();
+	match cited.len() {
+		0 => String::new(),
+		1 => format!(" line {}", cited[0]),
+		_ => format!(" lines {}", cited.join(", ")),
+	}
+}
+
 impl Reader<'_> {
 	// Complain once about a value that is present but the wrong type. Anything
 	// else (absent, empty) is silent - a commented-out setting is the norm here.
@@ -1042,15 +966,22 @@ impl Reader<'_> {
 		match got {
 			Ok(v) => Some(v),
 			Err(shcl::Status::BadType) => {
-				// cite the line so the user can find it; 0 means the path did
-				// not resolve to one binding, and then there is nothing to cite
-				let at = match self.doc.line(key) {
-					0 => String::new(),
-					n => format!(" line {n}"),
-				};
 				eprintln!(
-					"{APP_NAME}: {}{at}: ignoring invalid value for `{key}`",
-					self.path.display()
+					"{APP_NAME}: {}{}: ignoring invalid value for `{key}`",
+					self.path.display(),
+					line_list(&self.doc.lines(key))
+				);
+				None
+			}
+			Err(shcl::Status::Multiple) => {
+				// Set more than once. shcl refuses to pick a winner, so the
+				// default is what actually takes effect - which used to happen
+				// in silence, and reads as the setting being ignored outright.
+				// Cite every line: the point is that there IS more than one.
+				eprintln!(
+					"{APP_NAME}: {}{}: `{key}` is set more than once, so its default is used",
+					self.path.display(),
+					line_list(&self.doc.lines(key))
 				);
 				None
 			}
@@ -2172,7 +2103,6 @@ pub fn revert_keys(keys: &[&str]) {
 		note_config_busy(&path);
 		return;
 	}
-	let before = std::fs::read_to_string(&path).unwrap_or_default();
 	let Some(mut doc) = read_doc(&path) else {
 		return;
 	};
@@ -2180,7 +2110,7 @@ pub fn revert_keys(keys: &[&str]) {
 	for full_key in keys {
 		doc.remove(full_key);
 	}
-	write_doc(&path, &doc, &before);
+	write_doc(&path, &doc);
 	backfill_config(&path);
 }
 
@@ -2973,6 +2903,29 @@ mod tests {
 		);
 	}
 
+	// A key written twice cannot resolve to one value, so the default takes
+	// effect. That is the right outcome, but it has to be SAID - the setting is
+	// there in the file, plainly set, and doing nothing.
+	#[test]
+	fn a_setting_written_twice_falls_back_and_is_reported() {
+		let p = std::path::Path::new("test.shcl");
+		let s = resolve(read_raw(
+			"font:\n\tfamily: \"One\"\n\tsize: 13.0\n\tfamily: \"Two\"\n",
+			p,
+		));
+		// as good as absent: neither spelling wins
+		let absent = resolve(read_raw("font:\n\tsize: 13.0\n", p));
+		assert_eq!(
+			s.font_family, absent.font_family,
+			"a repeated key falls back as if it were not there"
+		);
+		assert_eq!(s.font_size, 13.0, "its siblings are unaffected");
+		// the message is what makes the fallback discoverable; both lines cited
+		assert_eq!(line_list(&[2, 4]), " lines 2, 4");
+		assert_eq!(line_list(&[7]), " line 7");
+		assert_eq!(line_list(&[0]), "", "an uncitable node adds nothing");
+	}
+
 	#[test]
 	fn default_config_is_valid_shcl() {
 		let doc = shcl::Document::parse(DEFAULT_CONFIG);
@@ -2986,13 +2939,14 @@ mod tests {
 
 	// The shipped template must already be what a save would produce, or the very
 	// first save would reflow the file we just wrote. Nearly every setting here is
-	// a commented default with no active sibling, so this is the guard on `to_text`
-	// putting their indentation back after canonical re-pads them.
+	// a commented default with no active sibling - the shape that shcl used to
+	// re-pad to the block header's depth - so this is now the guard on the writer
+	// itself, and a bump that reintroduced the reflow would fail here.
 	#[test]
 	fn default_config_survives_a_save_unchanged() {
 		let doc = shcl::Document::parse(DEFAULT_CONFIG);
 		assert_eq!(
-			to_text(&doc, DEFAULT_CONFIG),
+			doc.to_canonical(),
 			DEFAULT_CONFIG,
 			"a save would rewrite the shipped template"
 		);
@@ -3427,14 +3381,26 @@ mod tests {
 	}
 
 	// A dialog save on a fresh nested config: the new active value lands inside
-	// its block, and the commented defaults around it keep their indentation and
-	// blank-line grouping (canonical would de-indent trailing comment runs).
+	// its block, and everything else in the file is left exactly as it stands.
+	// The whole-file diff is the strong form of that - a save may only ever add
+	// the lines it was asked to add - and the spot checks below say WHICH shapes
+	// are being relied on, so a failure names the one that moved.
 	#[test]
 	fn a_save_keeps_nested_comment_layout() {
 		let mut doc = shcl::Document::parse(DEFAULT_CONFIG);
 		doc.set_float("wallpaper.opacity", 0.5);
 		doc.set_bool("text.scrim.enabled", false);
-		let out = to_text(&doc, DEFAULT_CONFIG);
+		let out = doc.to_canonical();
+
+		let added: Vec<&str> = out
+			.lines()
+			.filter(|l| !DEFAULT_CONFIG.lines().any(|d| d == *l))
+			.collect();
+		assert_eq!(
+			added,
+			vec!["\topacity: 0.5", "\t\tenabled: false"],
+			"a save changed lines it was not asked to:\n{out}"
+		);
 
 		assert!(
 			out.contains("\topacity: 0.5"),
