@@ -74,7 +74,7 @@ if ($Release -eq 'stable') {
 if ($Release -eq 'dev' -and -not $tag) {
 	try { $rels = @(Invoke-RestMethod "$apiBase/releases?per_page=5"); if ($rels.Count) { $tag = $rels[0].tag_name } } catch {}
 }
-if (-not $tag) { fFail "no releases found at github.com/$ownerRepo (releases may not be published yet - see the README for building from source)" }
+if (-not $tag) { fFail "no releases found at github.com/$ownerRepo (releases may not be published yet - see the README for building it yourself)" }
 $version = $tag -replace '^v', ''
 
 ## Work out names, paths, and the plan

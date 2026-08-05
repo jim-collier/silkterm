@@ -171,7 +171,7 @@ impl App {
 				..
 			} => {
 				if let Some(d) = &mut self.dialog {
-					// grey the menu's Paste when the clipboard holds nothing
+					// gray the menu's Paste when the clipboard holds nothing
 					let paste_ok = self.state.as_mut().is_some_and(|s| {
 						s.clipboard.get_clipboard().is_some_and(|t| !t.is_empty())
 					});
@@ -527,7 +527,7 @@ impl ContextMenu {
 // Shaped chrome text, kept frame to frame: menu-bar titles + the copybox label,
 // the tab close-"x", and per-tab title buffers. Re-shaping these every rendered
 // frame was constant background work during any animation (even the idle cursor
-// pulse). Rebuilt when the menu colour changes; a tab entry re-shapes only when
+// pulse). Rebuilt when the menu color changes; a tab entry re-shapes only when
 // its title or the tab width changes; the whole cache is dropped on a
 // text-context rebuild (buffers are tied to the FontSystem they were made with).
 struct ChromeCache {
@@ -578,7 +578,7 @@ impl Tabs {
 		let n = self.list.len();
 		self.active = (self.active + n - 1) % n;
 	}
-	// swap the active tab with its neighbour and follow it
+	// swap the active tab with its neighbor and follow it
 	fn move_active(&mut self, fwd: bool) {
 		let n = self.list.len();
 		if n < 2 {
@@ -1769,7 +1769,7 @@ impl State {
 		self.dirty = true;
 	}
 
-	// A wallpaper set from the command line while running: honour it for the rest
+	// A wallpaper set from the command line while running: honor it for the rest
 	// of the session and stop rotating, without touching the stored settings.
 	fn lock_wallpaper(&mut self, image: Option<std::path::PathBuf>) {
 		self.wp_locked = true;
@@ -1945,8 +1945,8 @@ impl State {
 		// retained-frame app-scroll slide geometry per pane (None = no active slide)
 		let mut slides: HashMap<u64, Option<crate::pane::Slide>> = HashMap::new();
 		let mut animating = bell > 0.0;
-		// text-scrim colour map needs each cell's bg (so a glyph's halo takes its
-		// own cell colour, not always the global) - collect them while building
+		// text-scrim color map needs each cell's bg (so a glyph's halo takes its
+		// own cell color, not always the global) - collect them while building
 		let scrim_on = cfg.text_scrim && cfg.text_scrim_radius > 0.0;
 		let mut scrim_cells: Vec<RectInstance> = Vec::new();
 
@@ -2003,7 +2003,7 @@ impl State {
 		let under_len = under.len() as u32;
 		let mut instances = under;
 		// per-pane bg quads (scissored to the pane so overscan rows don't bleed
-		// into neighbours), copied once from each pane's retained frame
+		// into neighbors), copied once from each pane's retained frame
 		let mut group_ranges: Vec<(Rect, u32, u32)> = Vec::new();
 		for p in self.tabs.cur().panes.values() {
 			let bg_quads = &p.draw().bg;
@@ -2318,7 +2318,7 @@ impl State {
 			Vec::new()
 		};
 		let tab_w = (self.gfx.config.width as f32 / self.tabs.len().max(1) as f32).min(TAB_MAX_W);
-		// keep the shaped chrome text current (see ChromeCache) - a colour change
+		// keep the shaped chrome text current (see ChromeCache) - a color change
 		// rebuilds it all, otherwise only changed tab titles re-shape
 		if self
 			.chrome
@@ -2650,7 +2650,7 @@ impl State {
 		// per item label (at the gutter), plus a checkmark buffer for checked toggles.
 		// Re-shaping every frame while a menu sits open (the cursor blink keeps
 		// frames coming) is skippable: the overlay text only depends on the menu's
-		// geometry/labels/colour. Only skip alongside text_same - the end-of-frame
+		// geometry/labels/color. Only skip alongside text_same - the end-of-frame
 		// atlas trim (which runs when !text_same) drops glyphs the retained overlay
 		// vertex buffers still reference, so a trim frame must re-prepare.
 		if let Some(menu) = &self.menu {
@@ -2663,7 +2663,7 @@ impl State {
 				menu.item_h.to_bits().hash(&mut h);
 				self.gfx.config.width.hash(&mut h);
 				self.gfx.config.height.hash(&mut h);
-				self.chrome_rev.hash(&mut h); // covers a menu colour change
+				self.chrome_rev.hash(&mut h); // covers a menu color change
 				for entry in &menu.entries {
 					if let Entry::Item { label, check, .. } = entry {
 						label.hash(&mut h);
@@ -2746,7 +2746,7 @@ impl State {
 				label: Some("frame"),
 			});
 
-		// Text readability scrim: build the per-pixel colour map, render the prepared
+		// Text readability scrim: build the per-pixel color map, render the prepared
 		// text to the scrim texture, blur it, then composite under the crisp text.
 		// "Softness" 0..1 -> coverage boost: 0 = hard/solid (x10), 1 = soft/faint (x1)
 		let scrim_intensity = 10.0 - cfg.text_scrim_softness.clamp(0.0, 1.0) * 9.0;
@@ -2773,7 +2773,7 @@ impl State {
 		let scrim_ext = cfg.text_scrim_radius * 2.0;
 		// The halo is built from the text alone - the cursor lives in its own
 		// coverage texture and only joins at the blur (cursor_scrim) or the
-		// composite (cursor_outline). So when the text is unchanged the colour map,
+		// composite (cursor_outline). So when the text is unchanged the color map,
 		// the text-coverage pass and the blur can all be reused from last frame;
 		// every scrim texture is stored, not transient. That is most of the idle
 		// GPU cost. The blur still has to re-run if the cursor feeds it.
@@ -2931,7 +2931,7 @@ impl State {
 				// "garbage around split lines"; an edge at the WINDOW border clips at the rect
 				// edge so the outer halo still fills the window margin. The gutter (margin +
 				// gap + margin) is wider than the halo reach, so no pane's halo touches a
-				// neighbour's content region.
+				// neighbor's content region.
 				let area = self.area();
 				for (rect, _, _) in &group_ranges {
 					// external = sits on the content-area boundary (window edge); otherwise it
@@ -3109,7 +3109,7 @@ fn scrollbar_insts(bar: &crate::pane::Bar, fade: f32, active: bool) -> [RectInst
 	]
 }
 
-// close-"X" stroke colour: menu fg dimmed toward the tab bg (~0.6), so it reads
+// close-"X" stroke color: menu fg dimmed toward the tab bg (~0.6), so it reads
 // as a quiet button mark rather than a title character
 fn close_x_rgb() -> [u8; 3] {
 	let fg = config::menu_fg();
@@ -3122,7 +3122,7 @@ fn mix_rgb(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
 	[mix(a[0], b[0]), mix(a[1], b[1]), mix(a[2], b[2])]
 }
 
-// Dim a chrome colour toward the bar background when the window isn't focused;
+// Dim a chrome color toward the bar background when the window isn't focused;
 // used on the copy-mode checkboxes + labels to signal auto-copy is inert until
 // the window regains focus (the pane's flags stay set meanwhile). Focused = no
 // change.
@@ -3479,7 +3479,7 @@ impl ApplicationHandler<UserEvent> for App {
 		// System theme mode: seed the OS dark/light bit before the first frame so a
 		// system-mode theme resolves to the right palette immediately (no flash).
 		config::reapply_for_os(!matches!(window.theme(), Some(winit::window::Theme::Light)));
-		// Window-level CLI style (--font-name/-size, colours, bg image/fit/opacity)
+		// Window-level CLI style (--font-name/-size, colors, bg image/fit/opacity)
 		// overrides the loaded settings before text + bg image are built. Applied
 		// after the theme/OS palette settles so it isn't clobbered. Per-pane style
 		// stays deferred (needs a per-pane renderer).
@@ -3831,7 +3831,7 @@ impl ApplicationHandler<UserEvent> for App {
 				state.update_bar_hover(x, y);
 				state.update_link_hover(Some((x, y)));
 				// hovering a different top-level title with a bar menu open
-				// switches to it (standard menu-bar behaviour)
+				// switches to it (standard menu-bar behavior)
 				if state.bar_open.is_some() && y < state.menu_bar_h() {
 					if let Some(i) = state.menubar_hit(x) {
 						if state.bar_open != Some(i) {

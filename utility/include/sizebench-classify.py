@@ -419,7 +419,7 @@ class WindowsBackend:
 			MEMORY_BASIC_INFORMATION, WS_EX_INFO, PROCESSENTRY32W, SYSTEM_INFO)
 
 		#	These layouts are a contract with the OS, and getting one wrong does not fail -
-		#	it reads neighbouring bytes and reports confident nonsense. Check the documented
+		#	it reads neighboring bytes and reports confident nonsense. Check the documented
 		#	sizes up front so a bad declaration says so instead.
 		if ct.sizeof(ct.c_void_p) == 8:
 			for cls, want in ((MEMORY_BASIC_INFORMATION, 48), (WS_EX_INFO, 16),

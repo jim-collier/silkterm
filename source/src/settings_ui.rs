@@ -35,14 +35,14 @@ pub fn tab_titles() -> &'static [&'static str] {
 	&ui().tabs
 }
 
-// Dialog colours adapt to the active mode (dark-gray for dark, light-gray for
+// Dialog colors adapt to the active mode (dark-gray for dark, light-gray for
 // light); see config::is_dark(). The menu/main-window chrome stays a fixed gray.
 struct Dlg {
 	panel_bg: [u8; 3],
 	panel_border: [u8; 3],
 	gutter: [u8; 3], // the strip the tabs stand on
 	tab_bg: [u8; 3], // a tab that is not the current one
-	tab_hl: [u8; 3], // the current tab: a lighter grey, deliberately NOT an accent
+	tab_hl: [u8; 3], // the current tab: a lighter gray, deliberately not an accent
 	track: [u8; 3],
 	handle: [u8; 3],
 	field_bg: [u8; 3],
@@ -72,11 +72,11 @@ const LIGHT_DLG: Dlg = Dlg {
 	btn_bg: [0xd6, 0xd6, 0xd2], btn_hl: [0x9a, 0xb6, 0xe0],
 	text: [0x22, 0x24, 0x2c], dim: [0x70, 0x70, 0x76],
 };
-// The dialog colour set for the active mode, with the panel background + text
-// overridden by the configured dialog colours (theme default or a colours
+// The dialog color set for the active mode, with the panel background + text
+// overridden by the configured dialog colors (theme default or a colors
 // dialog_*/menu_* override). The remaining shades (border/track/handle/fields/
 // buttons) stay from the mode preset so contrast holds.
-// sRGB-space blend of two colours (selection highlight = field bg toward accent)
+// sRGB-space blend of two colors (selection highlight = field bg toward accent)
 fn mix3(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
 	let mut out = [0u8; 3];
 	for k in 0..3 {
@@ -91,7 +91,7 @@ fn dlg() -> Dlg {
 		LIGHT_DLG
 	};
 	let settings = config::settings();
-	// The two attention colours are themable and mean different things (see
+	// The two attention colors are themable and mean different things (see
 	// theme.rs). `highlight` paints everything that calls attention at once -
 	// slider handles, the scrollbar, revert arrows, the default button - and the
 	// button fill is a dimmed version of it, mixed toward the panel so a pressed
@@ -108,7 +108,7 @@ fn dlg() -> Dlg {
 	}
 }
 
-// Mode-adaptive dialog colours for the pop-out window (clear + About text).
+// Mode-adaptive dialog colors for the pop-out window (clear + About text).
 pub fn dialog_bg() -> [u8; 3] {
 	dlg().panel_bg
 }
@@ -158,10 +158,10 @@ const TAU_MAX: f32 = 1000.0;
 // nobody thinks in 0.35. Only the display moves - the file keeps the decimal,
 // so the two are the same transform in opposite directions and every default
 // comparison happens on the same side of it.
-fn pct(fraction: f32) -> f32 {
+fn to_percent(fraction: f32) -> f32 {
 	fraction * 100.0
 }
-fn unpct(percent: f32) -> f32 {
+fn from_percent(percent: f32) -> f32 {
 	percent / 100.0
 }
 
@@ -428,22 +428,39 @@ impl ThemeBtn {
 // A small box over the panel: name a new theme, rename one, or confirm a delete.
 // It is drawn in the overlay pass and takes every click and key while it is up,
 // so the panel behind it can be left exactly as it was.
+// Where the keyboard is inside the box. A confirmation has no field, so `Field`
+// is unreachable there and the focus walk starts at Cancel.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PromptFocus {
+	Field,
+	Cancel,
+	Ok,
+}
+
+#[derive(Debug)]
 struct Prompt {
 	which: ThemeBtn,
 	title: String,
-	field: bool,          // false for the delete confirmation, which asks nothing
-	focus: u8,            // 0 = field, 1 = Cancel, 2 = OK
+	focus: PromptFocus,
 	warn: Option<String>, // why OK is refusing (a blank or taken name)
 }
 
+impl Prompt {
+	// Derived rather than stored: only the delete confirmation asks nothing, so a
+	// separate flag could only ever disagree with the button that opened the box.
+	fn has_field(&self) -> bool {
+		!matches!(self.which, ThemeBtn::Delete)
+	}
+}
+
 // The prompt's text field is the dialog's one open edit, so every bit of field
-// behaviour - selection, word ops, the clipboard, the caret ease, the right-click
+// behavior - selection, word ops, the clipboard, the caret ease, the right-click
 // menu - works there without a second copy. It belongs to no row, hence a row
 // index no row can have.
 const PROMPT_ROW: usize = usize::MAX;
 
 // Open field context menu: anchor point, keyboard-highlighted item, and whether
-// the clipboard held text when it opened (greys Paste).
+// the clipboard held text when it opened (grays Paste).
 struct EMenu {
 	x: f32,
 	y: f32,
@@ -921,7 +938,12 @@ impl SettingsDialog {
 	pub fn shift(&self) -> bool {
 		self.shift
 	}
-	pub fn alt_key(c: char) -> Action {
+	// Takes &self so the prompt can swallow it: the footer accelerators would
+	// otherwise apply and close the dialog out from under an open theme box.
+	pub fn alt_key(&self, c: char) -> Action {
+		if self.prompt.is_some() {
+			return Action::None;
+		}
 		match c.to_ascii_lowercase() {
 			'c' => Action::Cancel,
 			'a' => Action::Apply,
@@ -993,6 +1015,13 @@ impl SettingsDialog {
 		ring.extend((0..3).map(Focus::Button));
 		ring
 	}
+	// Sort key matching the ring above: rows in spec order, footer buttons last.
+	fn focus_order(f: Focus) -> (usize, u8) {
+		match f {
+			Focus::Row(i, p) => (i, p),
+			Focus::Button(b) => (usize::MAX, b as u8),
+		}
+	}
 	// Tab / Shift+Tab (and Down / Up off a non-slider row): move focus to the
 	// next/prev item in the ring, wrapping, and scroll a focused row into view.
 	fn focus_move(&mut self, forward: bool) {
@@ -1008,8 +1037,21 @@ impl SettingsDialog {
 		let next = match cur {
 			Some(p) if forward => (p + 1) % n,
 			Some(p) => (p + n - 1) % n,
-			None if forward => 0,
-			None => n - 1,
+			// Nothing focused, or the focused control grayed out from under us
+			// (pressing Save turns Save off). Resume from where it sat rather
+			// than snapping back to the top of the tab.
+			None => match self.focus.map(Self::focus_order) {
+				Some(k) if forward => ring
+					.iter()
+					.position(|&r| Self::focus_order(r) > k)
+					.unwrap_or(0),
+				Some(k) => ring
+					.iter()
+					.rposition(|&r| Self::focus_order(r) < k)
+					.unwrap_or(n - 1),
+				None if forward => 0,
+				None => n - 1,
+			},
 		};
 		self.focus = Some(ring[next]);
 		self.scroll_focus_into_view();
@@ -1151,7 +1193,7 @@ impl SettingsDialog {
 		// in the prompt box, the field owns Left/Right while it has focus and the
 		// two buttons share them otherwise
 		if let Some(prompt) = self.prompt.as_ref() {
-			if prompt.focus != 0 {
+			if prompt.focus != PromptFocus::Field {
 				self.prompt_focus_move(dir > 0);
 				return;
 			}
@@ -1197,9 +1239,9 @@ impl SettingsDialog {
 	pub fn key_space(&mut self) -> Action {
 		if let Some(prompt) = self.prompt.as_ref() {
 			match prompt.focus {
-				1 => self.prompt_close(),
-				2 => self.prompt_accept(),
-				_ => self.char_input(' '),
+				PromptFocus::Cancel => self.prompt_close(),
+				PromptFocus::Ok => self.prompt_accept(),
+				PromptFocus::Field => self.char_input(' '),
 			}
 			return Action::None;
 		}
@@ -1449,7 +1491,7 @@ impl SettingsDialog {
 		}
 	}
 	// The config Key that governs part `p` of row `i` (Dual parts differ; every
-	// other kind uses the row's single key for both the value and its greying).
+	// other kind uses the row's single key for both the value and its graying).
 	fn part_key(&self, i: usize, p: u8) -> Key {
 		match self.specs[i].kind {
 			Kind::Dual { keys, .. } => keys[p as usize],
@@ -1477,7 +1519,7 @@ impl SettingsDialog {
 		}
 	}
 	// The flyover to show while the cursor rests on something that has one:
-	// (text, anchor rect to hang the tip box under). Why a control is GREYED
+	// (text, anchor rect to hang the tip box under). Why a control is GRAYED
 	// wins over what it does - that is the more urgent question when it is.
 	fn hover_tip_dip(&self, mx: f32, my: f32) -> Option<(&'static str, Rect)> {
 		for (action, r, _) in self.buttons() {
@@ -1501,8 +1543,8 @@ impl SettingsDialog {
 			if self.specs[i].tab != self.tab || matches!(self.specs[i].kind, Kind::Header(_)) {
 				continue;
 			}
-			let greyed = self.disabled(self.specs[i].key);
-			let tip = match Self::disabled_tip(self.specs[i].key).filter(|_| greyed) {
+			let grayed = self.disabled(self.specs[i].key);
+			let tip = match Self::disabled_tip(self.specs[i].key).filter(|_| grayed) {
 				Some(why) => why,
 				None if !self.specs[i].help.is_empty() => self.specs[i].help,
 				None => continue,
@@ -1575,7 +1617,7 @@ impl SettingsDialog {
 	}
 	// Does the keyboard ring land exactly on a control's own outline? For a boxed
 	// control it does, and then the box must not draw its border as well - a
-	// field ringed twice reads as two outlines for one control. A colour row is
+	// field ringed twice reads as two outlines for one control. A color row is
 	// the near miss: its ring spans the chip AND the hex field, so it stays a
 	// couple of pixels out and only the hex field's own border stands down.
 	fn ring_is_the_box(&self, i: usize, part: u8) -> bool {
@@ -1636,10 +1678,10 @@ impl SettingsDialog {
 
 	// One of a Buttons row's push-buttons. They start at the control column, so
 	// they line up under whatever the row above them holds.
-	fn row_btn_rect(&self, i: usize, p: u8) -> Rect {
+	fn row_btn_rect(&self, i: usize, part: u8) -> Rect {
 		let h = self.btn_h();
 		Rect {
-			x: self.control_x() + f32::from(p) * (self.row_btn_w + lay().button_gap),
+			x: self.control_x() + f32::from(part) * (self.row_btn_w + lay().button_gap),
 			y: self.row_y(i) + (self.row_h(&self.specs[i].kind) - h) / 2.0,
 			w: self.row_btn_w,
 			h,
@@ -1655,17 +1697,17 @@ impl SettingsDialog {
 			.position(|t| t.name.eq_ignore_ascii_case(name))
 	}
 
-	// Has the user moved a colour away from what the current theme says? That IS
-	// the unsaved-changes test, and it needs no flag of its own: an edited colour
+	// Has the user moved a color away from what the current theme says? That IS
+	// the unsaved-changes test, and it needs no flag of its own: an edited color
 	// lives on as a `colors.*` line, so the answer survives a restart for free.
 	fn theme_dirty(&self) -> bool {
-		(0..crate::theme::PALETTE_KEYS.len()).any(|i| {
-			let key = Self::palette_key(i);
-			self.get_col(key) != self.default_col(key)
-		})
+		// resolve the palette once - this runs per button, per frame
+		let palette = self.theme_palette();
+		(0..crate::theme::PALETTE_KEYS.len())
+			.any(|i| self.get_col(Self::palette_key(i)) != palette.get(i))
 	}
 
-	// The dialog row key holding palette colour `i` (same order as PALETTE_KEYS).
+	// The dialog row key holding palette color `i` (same order as PALETTE_KEYS).
 	fn palette_key(i: usize) -> Key {
 		match i {
 			0 => Key::ColBg,
@@ -1691,19 +1733,26 @@ impl SettingsDialog {
 		}
 	}
 
-	// Take on the colours of whatever theme and mode are now selected. Switching
-	// theme therefore ADOPTS the new scheme rather than keeping tweaks made to the
-	// old one on top of it - a picker that visibly changed nothing would be worse,
-	// and the tweaks were changes to the theme being left behind.
+	// Take on the colors of whatever theme and mode are now selected. Switching
+	// theme adopts the new scheme rather than keeping tweaks made to the old one
+	// on top of it - a picker that visibly changed nothing would be worse, and the
+	// tweaks were changes to the theme being left behind.
+	//
+	// Reverting each key rather than just setting it is what keeps the file honest:
+	// the colors on screen are now the theme's own, so the per-color overrides have
+	// nothing left to say and Apply comments them out. Setting them alone would
+	// write ten active colors.* lines pinning this one palette, which then wins over
+	// every later theme change and freezes one variant under theme_mode: system.
 	fn adopt_theme(&mut self) {
 		let pal = self.theme_palette();
 		for i in 0..crate::theme::PALETTE_KEYS.len() {
-			self.set_col(Self::palette_key(i), pal.get(i));
+			// default_col resolves through theme_palette, so this lands on pal.get(i)
+			self.revert(Self::palette_key(i));
 		}
 		self.edited.ansi = pal.ansi;
 	}
 
-	// Store the colours on screen under `name`, replacing a saved theme of that
+	// Store the colors on screen under `name`, replacing a saved theme of that
 	// name or adding one. The variant the dialog is NOT showing is carried over
 	// from whatever `name` resolves to today, so a theme is always complete.
 	fn save_theme_as(&mut self, name: &str) {
@@ -1745,7 +1794,7 @@ impl SettingsDialog {
 			None => self.edited.user_themes.push(theme),
 		}
 		self.edited.theme = name;
-		// the tweaks are the theme's own colours now, so the per-colour overrides
+		// the tweaks are the theme's own colors now, so the per-color overrides
 		// have nothing left to say and are commented back out on Apply
 		for i in 0..crate::theme::PALETTE_KEYS.len() {
 			self.revert(Self::palette_key(i));
@@ -1767,11 +1816,7 @@ impl SettingsDialog {
 			})
 			.collect();
 		let base = base.trim_matches('_').to_string();
-		let base = if base.is_empty() {
-			"theme".to_string()
-		} else {
-			base
-		};
+		let base = if base.is_empty() { "theme" } else { &base }.to_string();
 		let taken = |s: &str| self.edited.user_themes.iter().any(|t| t.slug == s);
 		if !taken(&base) {
 			return base;
@@ -1826,8 +1871,7 @@ impl SettingsDialog {
 				self.prompt = Some(Prompt {
 					which,
 					title,
-					field: true,
-					focus: 0,
+					focus: PromptFocus::Field,
 					warn: None,
 				});
 			}
@@ -1835,8 +1879,7 @@ impl SettingsDialog {
 				self.prompt = Some(Prompt {
 					which,
 					title: format!("Really delete theme \"{}\"?", self.edited.theme),
-					field: false,
-					focus: 2,
+					focus: PromptFocus::Ok,
 					warn: None,
 				});
 			}
@@ -1850,7 +1893,7 @@ impl SettingsDialog {
 		};
 		let which = prompt.which;
 		let typed = prompt
-			.field
+			.has_field()
 			.then(|| self.edit.as_ref().map_or(String::new(), |e| e.buf.clone()));
 		if let Some(name) = typed {
 			if let Some(warn) = self.name_problem(which, &name) {
@@ -1878,7 +1921,7 @@ impl SettingsDialog {
 
 	// ---- the prompt box -------------------------------------------------------
 
-	// Centred over the panel, sized to what it holds. Two buttons, right-aligned,
+	// Centered over the panel, sized to what it holds. Two buttons, right-aligned,
 	// the same way the dialog's own footer reads.
 	fn prompt_rect(&self) -> Rect {
 		let Some(prompt) = &self.prompt else {
@@ -1892,7 +1935,7 @@ impl SettingsDialog {
 		let w = (self.rect.w - lay().pad * 6.0).max(240.0);
 		let row = self.line_h + lay().row_pad;
 		let mut h = lay().pad + row + lay().pad;
-		if prompt.field {
+		if prompt.has_field() {
 			h += row + lay().row_pad;
 		}
 		if prompt.warn.is_some() {
@@ -1908,7 +1951,7 @@ impl SettingsDialog {
 	}
 	fn prompt_field_rect(&self) -> Option<Rect> {
 		let prompt = self.prompt.as_ref()?;
-		if !prompt.field {
+		if !prompt.has_field() {
 			return None;
 		}
 		let r = self.prompt_rect();
@@ -1919,13 +1962,12 @@ impl SettingsDialog {
 			h: lay().swatch.max(self.line_h + lay().row_pad),
 		})
 	}
-	// part: 1 = Cancel, 2 = OK (matching Prompt::focus).
-	fn prompt_btn_rect(&self, part: u8) -> Rect {
+	fn prompt_btn_rect(&self, part: PromptFocus) -> Rect {
 		let r = self.prompt_rect();
 		let h = self.btn_h();
 		let x_ok = r.x + r.w - lay().pad - self.btn_w;
 		Rect {
-			x: if part == 2 {
+			x: if part == PromptFocus::Ok {
 				x_ok
 			} else {
 				x_ok - lay().button_gap - self.btn_w
@@ -1940,11 +1982,14 @@ impl SettingsDialog {
 		let Some(prompt) = self.prompt.as_mut() else {
 			return;
 		};
-		let first = u8::from(!prompt.field);
-		let span = i32::from(3 - first);
-		let cur = i32::from(prompt.focus.max(first) - first);
-		let next = (cur + if forward { 1 } else { span - 1 }) % span;
-		prompt.focus = first + next as u8;
+		let stops: &[PromptFocus] = if prompt.has_field() {
+			&[PromptFocus::Field, PromptFocus::Cancel, PromptFocus::Ok]
+		} else {
+			&[PromptFocus::Cancel, PromptFocus::Ok]
+		};
+		let cur = stops.iter().position(|&s| s == prompt.focus).unwrap_or(0);
+		let step = if forward { 1 } else { stops.len() - 1 };
+		prompt.focus = stops[(cur + step) % stops.len()];
 	}
 	// Every click while the box is up belongs to it: its own controls act, and
 	// anything outside is swallowed rather than reaching the panel behind.
@@ -1952,23 +1997,23 @@ impl SettingsDialog {
 		if self.emenu.is_some() {
 			return;
 		}
-		for part in 1u8..=2 {
-			if self.prompt_btn_rect(part).contains(x, y) {
-				if let Some(prompt) = self.prompt.as_mut() {
-					prompt.focus = part;
-				}
-				if part == 2 {
-					self.prompt_accept();
-				} else {
-					self.prompt_close();
-				}
-				return;
+		for part in [PromptFocus::Cancel, PromptFocus::Ok] {
+			if !self.prompt_btn_rect(part).contains(x, y) {
+				continue;
 			}
+			if let Some(prompt) = self.prompt.as_mut() {
+				prompt.focus = part;
+			}
+			match part {
+				PromptFocus::Ok => self.prompt_accept(),
+				_ => self.prompt_close(),
+			}
+			return;
 		}
 		if let Some(field) = self.prompt_field_rect() {
 			if field.contains(x, y) {
 				if let Some(prompt) = self.prompt.as_mut() {
-					prompt.focus = 0;
+					prompt.focus = PromptFocus::Field;
 				}
 				self.field_click(PROMPT_ROW, 0, field, x, measure);
 			}
@@ -2003,14 +2048,14 @@ impl SettingsDialog {
 	fn get_f32(&self, key: Key) -> f32 {
 		let settings = &self.edited;
 		match key {
-			Key::Opacity => pct(settings.opacity),
-			Key::BgOpacity => pct(settings.wallpaper_opacity),
+			Key::Opacity => to_percent(settings.opacity),
+			Key::BgOpacity => to_percent(settings.wallpaper_opacity),
 			Key::BgBlur => settings.wallpaper_blur,
-			Key::BgContrastSize => pct(settings.wallpaper_contrast_mask_size),
-			Key::BgContrastStrength => pct(settings.wallpaper_contrast_mask_strength),
-			Key::BgContrastAuto => pct(settings.wallpaper_contrast_mask_auto),
+			Key::BgContrastSize => to_percent(settings.wallpaper_contrast_mask_size),
+			Key::BgContrastStrength => to_percent(settings.wallpaper_contrast_mask_strength),
+			Key::BgContrastAuto => to_percent(settings.wallpaper_contrast_mask_auto),
 			Key::ScrimRadius => settings.text_scrim_radius,
-			Key::ScrimSoftness => pct(settings.text_scrim_softness),
+			Key::ScrimSoftness => to_percent(settings.text_scrim_softness),
 			Key::ScrimStrength => settings.text_scrim_strength,
 			Key::Outline => settings.text_outline,
 			Key::CursorBlink => settings.cursor_blink_rate_ms,
@@ -2048,14 +2093,16 @@ impl SettingsDialog {
 		}
 		let settings = &mut self.edited;
 		match key {
-			Key::Opacity => settings.opacity = unpct(value),
-			Key::BgOpacity => settings.wallpaper_opacity = unpct(value),
+			Key::Opacity => settings.opacity = from_percent(value),
+			Key::BgOpacity => settings.wallpaper_opacity = from_percent(value),
 			Key::BgBlur => settings.wallpaper_blur = value,
-			Key::BgContrastSize => settings.wallpaper_contrast_mask_size = unpct(value),
-			Key::BgContrastStrength => settings.wallpaper_contrast_mask_strength = unpct(value),
-			Key::BgContrastAuto => settings.wallpaper_contrast_mask_auto = unpct(value),
+			Key::BgContrastSize => settings.wallpaper_contrast_mask_size = from_percent(value),
+			Key::BgContrastStrength => {
+				settings.wallpaper_contrast_mask_strength = from_percent(value);
+			}
+			Key::BgContrastAuto => settings.wallpaper_contrast_mask_auto = from_percent(value),
 			Key::ScrimRadius => settings.text_scrim_radius = value,
-			Key::ScrimSoftness => settings.text_scrim_softness = unpct(value),
+			Key::ScrimSoftness => settings.text_scrim_softness = from_percent(value),
 			Key::ScrimStrength => settings.text_scrim_strength = value,
 			Key::Outline => settings.text_outline = value,
 			Key::CursorBlink => settings.cursor_blink_rate_ms = value,
@@ -2256,7 +2303,7 @@ impl SettingsDialog {
 				}
 				.to_string();
 			}
-			// picking a theme or a mode re-reads the whole palette, so the colour
+			// picking a theme or a mode re-reads the whole palette, so the color
 			// rows below follow the selection instead of describing the last one
 			Key::Theme => {
 				let names = crate::theme::all_names(&self.edited.user_themes);
@@ -2277,7 +2324,7 @@ impl SettingsDialog {
 			_ => {}
 		}
 	}
-	// A control greyed out because a prerequisite toggle is off (the opacity
+	// A control grayed out because a prerequisite toggle is off (the opacity
 	// slider needs Transparency; the scrim radius needs Text scrim; the explicit
 	// columns/rows are inactive when "Remember last size" is on).
 	fn disabled(&self, key: Key) -> bool {
@@ -2357,7 +2404,7 @@ impl SettingsDialog {
 			Key::ColMenuFg => palette.menu_fg,
 			Key::ColDialogBg => palette.dialog_bg,
 			Key::ColDialogFg => palette.dialog_fg,
-			// chrome, not a palette colour - the same neutral under every theme
+			// chrome, not a palette color - the same neutral under every theme
 			Key::ColScrollbarThumb => config::SCROLLBAR_THUMB_DEF,
 			Key::ColScrollbarTrough => config::SCROLLBAR_TROUGH_DEF,
 			_ => [0, 0, 0],
@@ -2422,14 +2469,14 @@ impl SettingsDialog {
 	fn default_f32(&self, key: Key) -> f32 {
 		let defaults = &self.defaults;
 		match key {
-			Key::Opacity => pct(defaults.opacity),
-			Key::BgOpacity => pct(defaults.wallpaper_opacity),
+			Key::Opacity => to_percent(defaults.opacity),
+			Key::BgOpacity => to_percent(defaults.wallpaper_opacity),
 			Key::BgBlur => defaults.wallpaper_blur,
-			Key::BgContrastSize => pct(defaults.wallpaper_contrast_mask_size),
-			Key::BgContrastStrength => pct(defaults.wallpaper_contrast_mask_strength),
-			Key::BgContrastAuto => pct(defaults.wallpaper_contrast_mask_auto),
+			Key::BgContrastSize => to_percent(defaults.wallpaper_contrast_mask_size),
+			Key::BgContrastStrength => to_percent(defaults.wallpaper_contrast_mask_strength),
+			Key::BgContrastAuto => to_percent(defaults.wallpaper_contrast_mask_auto),
 			Key::ScrimRadius => defaults.text_scrim_radius,
-			Key::ScrimSoftness => pct(defaults.text_scrim_softness),
+			Key::ScrimSoftness => to_percent(defaults.text_scrim_softness),
 			Key::ScrimStrength => defaults.text_scrim_strength,
 			Key::Outline => defaults.text_outline,
 			Key::CursorBlink => defaults.cursor_blink_rate_ms,
@@ -2676,7 +2723,7 @@ impl SettingsDialog {
 			match self.specs[i].kind {
 				Kind::Slider { .. } => {
 					if self.disabled(self.specs[i].key) {
-						continue; // greyed-out slider ignores clicks
+						continue; // grayed-out slider ignores clicks
 					}
 					// click the numeric field -> edit the value, caret at the click
 					let val_box = self.valbox(i);
@@ -2719,7 +2766,7 @@ impl SettingsDialog {
 				Kind::Toggle => {
 					if self.checkbox(i).contains(x, y) {
 						if self.disabled(self.specs[i].key) {
-							continue; // greyed checkbox ignores clicks
+							continue; // grayed checkbox ignores clicks
 						}
 						let key = self.specs[i].key;
 						self.focus = Some(Focus::Row(i, 0));
@@ -2736,7 +2783,7 @@ impl SettingsDialog {
 							&& (y - (bx.y + bx.h / 2.0)).abs() <= bx.h / 2.0 + 4.0
 						{
 							if self.disabled(keys[p as usize]) {
-								continue; // greyed checkbox ignores clicks
+								continue; // grayed checkbox ignores clicks
 							}
 							let key = keys[p as usize];
 							self.focus = Some(Focus::Row(i, p));
@@ -2914,6 +2961,15 @@ impl SettingsDialog {
 		self.mouse = (x, y);
 		self.emenu = None;
 		self.open = None;
+		// The prompt takes every click while it is up. Its own field still gets the
+		// menu; anywhere else does nothing, or the click would open an edit on the
+		// row behind the box and OK would then save under that row's value.
+		if self.prompt.is_some() {
+			if let Some(field) = self.prompt_field_rect().filter(|f| f.contains(x, y)) {
+				self.pop_field_menu(field, x, y, paste_ok, measure);
+			}
+			return;
+		}
 		let vp = self.viewport();
 		if y < vp.y || y > vp.y + vp.h {
 			return;
@@ -2938,23 +2994,36 @@ impl SettingsDialog {
 			}
 			let part = u8::from(matches!(self.specs[i].kind, Kind::Slider { .. }));
 			self.focus = Some(Focus::Row(i, part));
-			if let Some(edit) = &mut self.edit {
-				let rel_x = x - (field.x + lay().field_pad) + edit.view;
-				let cur = caret_from_click(&edit.buf, rel_x, measure);
-				let inside = edit.sel_range().is_some_and(|(a, b)| cur >= a && cur <= b);
-				if !inside {
-					edit.cur = cur;
-					edit.sel = None;
-				}
-			}
-			self.emenu = Some(EMenu {
-				x,
-				y,
-				hover: None,
-				paste_ok,
-			});
+			self.pop_field_menu(field, x, y, paste_ok, measure);
 			return;
 		}
+	}
+	// Caret placement plus the menu itself, shared by the panel rows and the theme
+	// prompt's own field. A click inside an existing selection leaves it alone, so
+	// the menu can act on it (standard).
+	fn pop_field_menu(
+		&mut self,
+		field: Rect,
+		x: f32,
+		y: f32,
+		paste_ok: bool,
+		measure: &mut impl FnMut(&str) -> f32,
+	) {
+		if let Some(edit) = &mut self.edit {
+			let rel_x = x - (field.x + lay().field_pad) + edit.view;
+			let cur = caret_from_click(&edit.buf, rel_x, measure);
+			let inside = edit.sel_range().is_some_and(|(a, b)| cur >= a && cur <= b);
+			if !inside {
+				edit.cur = cur;
+				edit.sel = None;
+			}
+		}
+		self.emenu = Some(EMenu {
+			x,
+			y,
+			hover: None,
+			paste_ok,
+		});
 	}
 	// Keyboard Menu key: pop the context menu at the caret of the active edit.
 	fn menu_key_dip(&mut self, paste_ok: bool, measure: &mut impl FnMut(&str) -> f32) {
@@ -2997,7 +3066,7 @@ impl SettingsDialog {
 			)
 		};
 		let dragging = self.edit_drag.is_some();
-		let edit = self.edit.as_mut().unwrap();
+		let edit = self.edit.as_mut().unwrap(); // Some: row extracted above
 		if sig == edit.last_sig {
 			edit.blink_t += dt;
 		} else {
@@ -3141,9 +3210,11 @@ impl SettingsDialog {
 			return; // Ctrl+letter is a shortcut (copy/paste/...), never types
 		}
 		// typing into a keyboard-focused (but not-yet-open) field opens it with
-		// the value selected, so the keystroke replaces it (standard field entry)
+		// the value selected, so the keystroke replaces it (standard field entry).
+		// The delete confirmation has no field of its own, so without the prompt
+		// test this would open the row sitting behind the box and edit that.
 		if self.edit.is_none() {
-			let Some(Focus::Row(i, _)) = self.focus else {
+			let (Some(Focus::Row(i, _)), None) = (self.focus, self.prompt.as_ref()) else {
 				return;
 			};
 			match self.specs[i].kind {
@@ -3213,8 +3284,9 @@ impl SettingsDialog {
 		}
 	}
 	pub fn select_all(&mut self) {
-		// Ctrl+A on a focused-but-closed field opens it first
-		if self.edit.is_none() {
+		// Ctrl+A on a focused-but-closed field opens it first - but not through an
+		// open prompt, whose delete variant leaves no edit for this to find
+		if self.edit.is_none() && self.prompt.is_none() {
 			if let Some(Focus::Row(i, _)) = self.focus {
 				if matches!(
 					self.specs[i].kind,
@@ -3409,7 +3481,7 @@ impl SettingsDialog {
 		}
 		// Enter in the prompt box is its OK, unless Cancel is the focused button
 		if let Some(prompt) = self.prompt.as_ref() {
-			if prompt.focus == 1 {
+			if prompt.focus == PromptFocus::Cancel {
 				self.prompt_close();
 			} else {
 				self.prompt_accept();
@@ -3528,9 +3600,9 @@ impl SettingsDialog {
 		));
 		border(&mut fixed, self.rect, 1.0, dlg().panel_border);
 		// The tab strip: a recessed gutter closed off by a rule, with the tabs
-		// standing on that rule. The current one is a lighter grey rather than an
+		// standing on that rule. The current one is a lighter gray rather than an
 		// accent - it says "you are here", which is not the same job as the
-		// highlight colour's "look at this".
+		// highlight color's "look at this".
 		let gut = self.gutter_rect();
 		fixed.push(q(gut.x, gut.y, gut.w, gut.h, dlg().gutter));
 		fixed.push(q(gut.x, gut.y + gut.h, gut.w, 1.0, dlg().panel_border));
@@ -3811,8 +3883,8 @@ impl SettingsDialog {
 			};
 			fixed.push(q(r.x, r.y, r.w, r.h, fill));
 			let ring = self.focus == Some(Focus::Button(btn_idx));
-			// Only the default button (OK) is outlined in the highlight colour;
-			// the others take the same quiet grey the tabs use, so "this is the
+			// Only the default button (OK) is outlined in the highlight color;
+			// the others take the same quiet gray the tabs use, so "this is the
 			// one Enter fires" stays a single, readable signal.
 			let outline = if ring {
 				dlg().focus_out
@@ -4170,7 +4242,7 @@ impl SettingsDialog {
 		));
 		if let Some(field) = self.prompt_field_rect() {
 			rects.push(q(field.x, field.y, field.w, field.h, dlg().field_bg));
-			if prompt.focus == 0 {
+			if prompt.focus == PromptFocus::Field {
 				border(&mut rects, field, 1.0, dlg().focus_out);
 			} else {
 				border(&mut rects, field, 1.0, dlg().panel_border);
@@ -4187,13 +4259,13 @@ impl SettingsDialog {
 			});
 		}
 		if let Some(warn) = &prompt.warn {
-			let y = self.prompt_btn_rect(2).y - (self.line_h + lay().row_pad);
+			let y = self.prompt_btn_rect(PromptFocus::Ok).y - (self.line_h + lay().row_pad);
 			texts.push(TextItem {
 				color: dlg().btn_hl,
 				..mk(warn.clone(), box_r.x + lay().pad, y)
 			});
 		}
-		for (part, caption) in [(1u8, "Cancel"), (2u8, "OK")] {
+		for (part, caption) in [(PromptFocus::Cancel, "Cancel"), (PromptFocus::Ok, "OK")] {
 			let r = self.prompt_btn_rect(part);
 			rects.push(q(r.x, r.y, r.w, r.h, dlg().btn_bg));
 			let ring = prompt.focus == part;
@@ -4201,7 +4273,7 @@ impl SettingsDialog {
 			// the keyboard is elsewhere
 			let outline = if ring {
 				dlg().focus_out
-			} else if part == 2 {
+			} else if part == PromptFocus::Ok {
 				dlg().btn_hl
 			} else {
 				dlg().panel_border
@@ -4549,7 +4621,7 @@ mod tests {
 
 	// A row whose setting the writer never writes is a dead end: the change
 	// applies for the session and is gone at relaunch, with nothing anywhere to
-	// say so. Both scrollbar colours did exactly that from the day the bar
+	// say so. Both scrollbar colors did exactly that from the day the bar
 	// shipped, so the check is generic - every row, saved and read back.
 	#[test]
 	fn every_row_survives_a_save_and_a_relaunch() {
@@ -4719,7 +4791,7 @@ mod tests {
 		assert_eq!(d.focus, Some(Focus::Row(f[2], 0)));
 		// after the LAST control the ring visits the three footer buttons
 		let last = *f.last().unwrap();
-		d.focus = Some(Focus::Row(last, d.parts_of(last) - 1));
+		d.focus = Some(super::Focus::Row(last, d.parts_of(last) - 1));
 		d.key_tab();
 		assert_eq!(d.focus, Some(Focus::Button(0)));
 		d.key_tab();
@@ -4794,11 +4866,11 @@ mod tests {
 			// checkbox shows the effective (off) state despite the config value
 			d.edited.use_system_font = true;
 			assert!(!d.get_toggle(Key::SystemFont));
-			// clicking the greyed checkbox must not flip the setting
+			// clicking the grayed checkbox must not flip the setting
 			let mut measure = |s: &str| s.len() as f32;
 			d.mouse_down(bx.x + 2.0, bx.y + 2.0, &mut measure);
 			assert!(d.edited.use_system_font);
-			// the flyover explains WHY it is greyed, in place of the row's own
+			// the flyover explains WHY it is grayed, in place of the row's own
 			// help text, and only over the row
 			assert_eq!(
 				d.hover_tip(bx.x + 2.0, bx.y + 2.0).map(|(tip, _)| tip),
@@ -4814,7 +4886,7 @@ mod tests {
 				d.hover_tip(bx.x + 2.0, bx.y + 2.0).map(|(tip, _)| tip),
 				Some("No system monospace font to follow")
 			);
-			// following the OS greys the field it overrides
+			// following the OS grays the field it overrides
 			d.edited.use_system_font = true;
 			assert!(d.disabled(Key::FontFamily));
 			d.edited.use_system_font = false;
@@ -4871,7 +4943,7 @@ mod tests {
 		);
 		let (bv, hv) = (base.viewport_px(), hidpi.viewport_px());
 		assert!((hv.y - bv.y * 2.0).abs() < 0.01 && (hv.h - bv.h * 2.0).abs() < 0.01);
-		// a click at the checkbox's physical centre still toggles its setting
+		// a click at the checkbox's physical center still toggles its setting
 		let i = base
 			.specs
 			.iter()
@@ -4893,7 +4965,7 @@ mod tests {
 		use super::{Action, Focus, Key, Kind};
 		let mut d = mk_dialog(2000.0);
 		d.tab = 0;
-		d.edited.text_scrim = true; // not greyed out
+		d.edited.text_scrim = true; // not grayed out
 		let i = d
 			.specs
 			.iter()
@@ -5236,7 +5308,7 @@ mod tests {
 		use super::{Focus, Key};
 		let mut d = mk_dialog(2000.0);
 		// Font size: an int slider on the Font tab, range 6..40
-		d.edited.use_system_font_size = false; // else Font size is greyed/disabled
+		d.edited.use_system_font_size = false; // else Font size is grayed/disabled
 		let i = d.specs.iter().position(|s| s.key == Key::FontSize).unwrap();
 		d.tab = d.specs[i].tab;
 		d.focus = Some(Focus::Row(i, 0));
@@ -5617,17 +5689,18 @@ mod tests {
 			.position(|s| matches!(s.kind, super::Kind::Buttons(_)))
 			.expect("the theme actions row")
 	}
-	// Put the dialog on a known theme with no colour overrides on top.
+	// Put the dialog on a known theme with no color overrides on top.
 	fn on_theme(name: &str) -> SettingsDialog {
 		let mut d = mk_dialog(4000.0);
 		d.edited = config::Settings::default();
 		d.edited.theme = name.to_string();
 		d.adopt_theme();
 		d.orig = d.edited.clone();
+		d.reverted.clear(); // adopting queues them; start each test from nothing pending
 		d
 	}
 
-	// Nothing anywhere records "this theme has unsaved changes" - a colour that
+	// Nothing anywhere records "this theme has unsaved changes" - a color that
 	// disagrees with the theme IS the record, and it lives in the config file, so
 	// the answer is the same after a restart.
 	#[test]
@@ -5636,7 +5709,7 @@ mod tests {
 		let row = theme_row(&d);
 		assert!(!d.theme_dirty());
 		assert!(!d.theme_btn_enabled(super::ThemeBtn::Save));
-		assert!(d.part_disabled(row, 0), "Save starts greyed");
+		assert!(d.part_disabled(row, 0), "Save starts grayed");
 
 		d.set_col(Key::ColFg, [1, 2, 3]);
 		assert!(d.theme_dirty());
@@ -5647,7 +5720,7 @@ mod tests {
 		assert!(d.part_disabled(row, 3), "Delete needs a saved theme");
 	}
 
-	// Saving folds the edits into the theme itself, so the per-colour overrides
+	// Saving folds the edits into the theme itself, so the per-color overrides
 	// have nothing left to say and are queued to be commented back out.
 	#[test]
 	fn saving_folds_the_edits_into_the_theme() {
@@ -5669,11 +5742,31 @@ mod tests {
 			crate::theme::resolve("Matrix", "dark", true).ansi
 		);
 
-		assert!(!d.theme_dirty(), "the edit is the theme's own colour now");
+		assert!(!d.theme_dirty(), "the edit is the theme's own color now");
 		assert!(
 			d.reverted.contains(&"colors.foreground"),
 			"the override is queued for removal"
 		);
+	}
+
+	// Saving grays Save out, so the control the keyboard was on drops out of the
+	// Tab ring. Focus has to carry on to the next button rather than snapping
+	// back to the first control on the tab.
+	#[test]
+	fn focus_carries_on_when_the_control_under_it_greys_out() {
+		let mut d = on_theme("Matrix");
+		let row = theme_row(&d);
+		d.tab = d.specs[row].tab;
+		d.set_col(Key::ColFg, [1, 2, 3]);
+		d.focus = Some(super::Focus::Row(row, 0));
+		d.theme_action(super::ThemeBtn::Save);
+		assert!(d.part_disabled(row, 0), "Save grays out once it has saved");
+		d.focus_move(true);
+		assert_eq!(d.focus, Some(super::Focus::Row(row, 1)));
+		// and backwards off the same gap lands on the row above, not the last button
+		d.focus = Some(super::Focus::Row(row, 0));
+		d.focus_move(false);
+		assert!(matches!(d.focus, Some(super::Focus::Row(i, _)) if i < row));
 	}
 
 	// A theme may take a built-in's name and stand in for it; deleting it puts the
@@ -5697,8 +5790,8 @@ mod tests {
 		assert_eq!(d.get_col(Key::ColFg), builtin_fg);
 	}
 
-	// Picking a theme takes on its colours. Keeping the old theme's tweaks would
-	// make the picker look broken on every colour that had been edited.
+	// Picking a theme takes on its colors. Keeping the old theme's tweaks would
+	// make the picker look broken on every color that had been edited.
 	#[test]
 	fn picking_a_theme_adopts_its_colours() {
 		let mut d = on_theme("SilkTerm");
@@ -5718,6 +5811,69 @@ mod tests {
 			crate::theme::resolve("Matrix", "dark", true).fg
 		);
 		assert!(!d.theme_dirty(), "a fresh theme starts unmodified");
+	}
+
+	// Picking a theme must not leave the old palette behind as colors.* overrides.
+	// Those would be written as active lines and then outrank every later theme
+	// change, which also freezes one variant when the mode follows the desktop.
+	#[test]
+	fn adopting_a_theme_clears_the_colour_overrides() {
+		let mut d = on_theme("SilkTerm");
+		d.set_col(Key::ColFg, [1, 2, 3]);
+		d.set_col(Key::ColBg, [4, 5, 6]);
+		d.reverted.clear();
+
+		d.edited.theme = "Matrix".to_string();
+		d.adopt_theme();
+
+		let pending = d.take_reverted();
+		for i in 0..crate::theme::PALETTE_KEYS.len() {
+			for cfg_key in super::ui().settings_of(SettingsDialog::palette_key(i)) {
+				assert!(
+					pending.contains(cfg_key),
+					"{cfg_key} must be commented out on Apply"
+				);
+			}
+		}
+		assert!(!d.theme_dirty(), "the adopted palette is not an edit");
+	}
+
+	// The box is modal by gate, and the gate is a list every input path has to be
+	// on. These four were missed once: the accelerators applied and closed the
+	// dialog through the box, and typing edited the row sitting behind it.
+	#[test]
+	fn the_prompt_swallows_every_input_path() {
+		let mut m = |s: &str| s.chars().count() as f32;
+		for which in [super::ThemeBtn::SaveAs, super::ThemeBtn::Delete] {
+			let mut d = on_theme("Matrix");
+			d.save_theme_as("Mine"); // Rename and Delete need a theme of the user's own
+			d.reverted.clear();
+			d.focus = Some(super::Focus::Row(
+				d.specs.iter().position(|s| s.key == Key::ColFg).unwrap(),
+				0,
+			));
+			let before = d.get_col(Key::ColFg);
+			d.theme_action(which);
+			assert!(d.prompt.is_some(), "{which:?} opens the box");
+
+			for c in ['o', 'a', 'c'] {
+				assert_eq!(
+					d.alt_key(c),
+					super::Action::None,
+					"Alt+{c} must not reach OK"
+				);
+			}
+			d.char_input('f');
+			d.select_all();
+			d.mouse_right(d.rect.x + 4.0, d.rect.y + d.rect.h - 4.0, true, &mut m);
+
+			assert!(d.prompt.is_some(), "the box is still up");
+			assert_eq!(d.get_col(Key::ColFg), before, "the row behind is untouched");
+			assert!(
+				d.edit.as_ref().is_none_or(|e| e.row == super::PROMPT_ROW),
+				"no edit opened on a panel row"
+			);
+		}
 	}
 
 	// Renaming moves the name and the selection together; the slug behind it does

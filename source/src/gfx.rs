@@ -368,20 +368,21 @@ impl Gfx {
 	// Same native path, but on a context that was built ahead of time (see
 	// `DialogGpu`). Only the surface is created here, which is sub-millisecond -
 	// the instance/adapter/device that dominate `with_backends` are already paid
-	// for. `None` means this adapter cannot present to this window's surface, so
-	// the caller must fall back to a cold `with_backends`.
-	pub fn with_dialog_gpu(window: Arc<Window>, gpu: &DialogGpu) -> anyhow::Result<Option<Self>> {
-		let surface = gpu.instance.create_surface(window.clone())?;
+	// for. `None` means this warm context cannot serve this window, so the caller
+	// must fall back to a cold `with_backends`.
+	pub fn with_dialog_gpu(window: Arc<Window>, gpu: &DialogGpu) -> Option<Self> {
+		// The warm instance was built with no display connection, so it may not be
+		// able to make a surface for this window at all. That is the same answer as
+		// an adapter that cannot present here: fall back, rather than failing the
+		// open and leaving the dialog unreachable for the life of the process.
+		let surface = gpu.instance.create_surface(window.clone()).ok()?;
 		// The warm adapter was picked with no surface to check against (no window
 		// existed yet), so a multi-GPU box could hand back one that can't draw
 		// here. `surface_config` reports that as None.
-		let Some((config, format, transparent)) = surface_config(&surface, &gpu.adapter, &window)
-		else {
-			return Ok(None);
-		};
+		let (config, format, transparent) = surface_config(&surface, &gpu.adapter, &window)?;
 		surface.configure(&gpu.device, &config);
 
-		Ok(Some(Self {
+		Some(Self {
 			device: gpu.device.clone(),
 			queue: gpu.queue.clone(),
 			config,
@@ -391,7 +392,7 @@ impl Gfx {
 			backend: Backend::Native(surface),
 			sentinel: None,
 			_window: window,
-		}))
+		})
 	}
 
 	// X11-only per-pixel transparency: glutin creates the window with a 32-bit
@@ -909,12 +910,12 @@ fn surface_config(
 //
 // Dialogs cannot borrow the terminal's context: on X11 that one is a glutin
 // GL/EGL context, and a second GL instance panics in wgpu-hal's EGL teardown. So
-// each dialog used to build a whole PRIMARY context of its own, ON THE CLICK -
-// measured at 310ms from keypress to a usable Settings window, 230ms of it being
-// `Instance::new` + `request_device` alone, and paid again on every reopen since
-// nothing was retained. Warming it once on a worker thread moves that off the
-// click, and keeping it moves it off every subsequent open too.
-#[derive(Clone)]
+// each dialog used to build a whole PRIMARY context of its own, on the click, and
+// again on every reopen since nothing was retained. Building the instance,
+// adapter and device is most of the time it takes to open a dialog. Warming it
+// once on a worker thread moves that off the click, and keeping it moves it off
+// every later open too.
+#[derive(Clone, Debug)]
 pub struct DialogGpu {
 	instance: wgpu::Instance,
 	adapter: wgpu::Adapter,
@@ -956,28 +957,34 @@ impl DialogGpu {
 	}
 }
 
-// Owns the warm-up worker and the context it produces.
-pub struct GpuWarm {
-	job: Option<std::thread::JoinHandle<Option<DialogGpu>>>,
-	ready: Option<DialogGpu>,
+// The warm-up worker and the context it produces. `Failed` is a state of its own
+// rather than an empty `Ready`: a box with no usable adapter fails every time, so
+// without it `start` would spawn another worker on the next event-loop pass and
+// keep paying a full adapter probe (and printing) for the life of the process.
+#[derive(Debug)]
+enum Warm {
+	Idle,
+	Building(std::thread::JoinHandle<Option<DialogGpu>>),
+	Ready(DialogGpu),
+	Failed,
 }
+
+#[derive(Debug)]
+pub struct GpuWarm(Warm);
 
 impl GpuWarm {
 	pub const fn idle() -> Self {
-		Self {
-			job: None,
-			ready: None,
-		}
+		Self(Warm::Idle)
 	}
 
 	// Start warming. Called once the terminal is actually on screen, so the
-	// device build lands in dead time rather than competing with startup.
+	// device build happens in dead time rather than competing with startup.
 	// Repeat calls are no-ops.
 	pub fn start(&mut self) {
-		if self.job.is_some() || self.ready.is_some() {
+		if !matches!(self.0, Warm::Idle) {
 			return;
 		}
-		self.job = Some(std::thread::spawn(|| match DialogGpu::build() {
+		self.0 = Warm::Building(std::thread::spawn(|| match DialogGpu::build() {
 			Ok(gpu) => Some(gpu),
 			// A dialog can still be opened without this - it just pays the old
 			// cost - so a failure here is a note, not an error.
@@ -995,10 +1002,14 @@ impl GpuWarm {
 	// never cost more than building one here would have, since the work is
 	// already under way - and normally it finished seconds ago.
 	pub fn get(&mut self) -> Option<DialogGpu> {
-		if let Some(job) = self.job.take() {
-			self.ready = job.join().unwrap_or(None);
+		if let Warm::Building(job) = std::mem::replace(&mut self.0, Warm::Failed) {
+			// a panicked worker reads as a failure, same as a returned None
+			self.0 = job.join().ok().flatten().map_or(Warm::Failed, Warm::Ready);
 		}
-		self.ready.clone()
+		match &self.0 {
+			Warm::Ready(gpu) => Some(gpu.clone()),
+			_ => None,
+		}
 	}
 }
 

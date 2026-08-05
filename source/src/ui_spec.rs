@@ -3,7 +3,7 @@
 
 //! The Settings dialog's declarations, read from `settings_ui.shcl` (compiled
 //! in). The file owns what the dialog IS - rows, order, sections, tabs, the
-//! config path behind each row, when a row greys out, and the geometry.
+//! config path behind each row, when a row grays out, and the geometry.
 //! `settings_ui.rs` owns what it DOES.
 //!
 //! The document is constant, so it is parsed once and handed out as `'static`.
@@ -77,7 +77,7 @@ pub enum Kind {
 	Color,
 	Text,   // free-text field (path / font family; empty = default)
 	Toggle, // checkbox (e.g. use system font)
-	// two labelled checkboxes on one row sharing the row label + revert (e.g.
+	// two labeled checkboxes on one row sharing the row label + revert (e.g.
 	// Cursor: Scrim / Outline); each checkbox is a separate focus stop
 	Dual {
 		keys: [Key; 2],

@@ -8,7 +8,7 @@
 //! Three knobs (all 0..1):
 //! - `size`: the flatten scale - the localMean blur radius. 1.0 = half the
 //!   longest pixel dimension (localMean ~ the global average, so the whole image
-//!   collapses toward one tone); small = a tight neighbourhood, so only fine busy
+//!   collapses toward one tone); small = a tight neighborhood, so only fine busy
 //!   detail flattens. 0 = off.
 //! - `strength`: how far each pixel is pulled toward that local mean. 0 = none,
 //!   1 = fully flat.
@@ -87,7 +87,7 @@ fn auto_params(busy: f32) -> (f32, f32) {
 }
 
 // Separable box mean (radius r) via per-row/col prefix sums, edge-clamped and
-// count-normalised so borders average only the samples they actually have.
+// count-normalized so borders average only the samples they actually have.
 // O(pixels) regardless of radius. f64 accumulation avoids large-sum drift.
 fn box_mean(src: &[[f32; 3]], w: usize, h: usize, r: usize) -> Vec<[f32; 3]> {
 	if r == 0 {

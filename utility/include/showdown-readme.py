@@ -5,7 +5,7 @@ The speed columns are owned by utility/termbench.py, which refreshes only its ow
 leaves everything else exactly as written. This owns the other two, keyed the same way -
 by terminal name - so the two writers never touch the same cell.
 
-Only ever updates a row that already exists. Adding a row is a judgement call about where
+Only ever updates a row that already exists. Adding a row is a judgment call about where
 it belongs in the ordering, and the speed tool makes that call.
 """
 

@@ -22,7 +22,7 @@
 	- [Text readability scrim](#text-readability-scrim)
 	- [Font fallback stack](#font-fallback-stack)
 	- [Hyperlinks](#hyperlinks)
-	- [Attention colours and dialog chrome](#attention-colours-and-dialog-chrome)
+	- [Attention colors and dialog chrome](#attention-colors-and-dialog-chrome)
 	- [Groups and sub-groups in the Settings dialog](#groups-and-sub-groups-in-the-settings-dialog)
 	- [Saved themes](#saved-themes)
 	- [Render Loop Sketch](#render-loop-sketch)
@@ -130,7 +130,7 @@ The ease curve is deliberately asymmetric. A single exponential lerp starts at p
 
 Same mechanism: when new output pushes content up, animate `visual_offset` from +1 line back to 0 over the easing window instead of snapping. Treat output-scroll as an animated target like wheel-scroll.
 
-Catch-up speed is modelled as one curve on a time/speed graph, and each setting is a named segment of it - nothing more. The curve starts and ends at zero, and each segment hands exactly one thing to the next: the point where it ended. In order: Ease-in lifts the speed from rest over its duration (the only segment that can leave zero); Ramp-up doubles the speed every one of its periods, toward whichever top applies; the top is either the single-screen speed (while the burst's own first line is still on screen - a short listing never races) or unbounded (once a screenful has scrolled past, the ramp reaches whatever keeps up); when the cap lifts mid-burst, Ease-in runs once more from the speed it found itself at, then Ramp-up resumes. Among the curve-shape options considered (one smooth sigmoid-family curve per segment, versus straight speed segments with the adjustment being time), we went with the linear/exponential segments adjusted by time - the same shape language audio and video production use, cheap to compute, and each knob stays a plain duration.
+Catch-up speed is modeled as one curve on a time/speed graph, and each setting is a named segment of it - nothing more. The curve starts and ends at zero, and each segment hands exactly one thing to the next: the point where it ended. In order: Ease-in lifts the speed from rest over its duration (the only segment that can leave zero); Ramp-up doubles the speed every one of its periods, toward whichever top applies; the top is either the single-screen speed (while the burst's own first line is still on screen - a short listing never races) or unbounded (once a screenful has scrolled past, the ramp reaches whatever keeps up); when the cap lifts mid-burst, Ease-in runs once more from the speed it found itself at, then Ramp-up resumes. Among the curve-shape options considered (one smooth sigmoid-family curve per segment, versus straight speed segments with the adjustment being time), we went with the linear/exponential segments adjusted by time - the same shape language audio and video production use, cheap to compute, and each knob stays a plain duration.
 
 Winding down is the same curve traced backwards. Ramp-down is a braking curve computed from Ease-out's landing point: at any moment the speed may not exceed what could still be wound down (halving per the Ramp-down period) within the lines left to render. Applied continuously, that one rule is both the reserve - at speed, the view deliberately trails the live output by a braking distance - and the deceleration: the moment output ceases, the speed rides the curve down and hands off to Ease-out exactly at the landing band. An earlier design only relaxed the speed during a lull, which in practice never fired; the ramp-down knob read as inert, and stops from speed were cliffs.
 
@@ -138,7 +138,7 @@ The backlog is deliberately not capped in lines. An earlier design capped it at 
 
 The five settings that shape all of this are presented in the order they are watched, rather than grouped by mechanism: how gently the view leaves rest (Ease-in), how hard it accelerates (Ramp-up), the ceiling while the burst still fits on screen (Single-screen speed), how gradually it winds down (Ramp-down), and how gently it lands (Ease-out). A sixth, the initial scroll speed, was removed: it fed four separate mechanisms at once, which made every slider appear to influence every other, and the curve's own Ease-in now owns leaving rest. Two of the five are matched pairs, and it was decided that each pair must run one direction - higher Ease-in and Ease-out are gentler, higher Ramp-up and Ramp-down are harder. That constraint decides how a value is stored rather than the other way round: both ends of the ease are stored as how long they take, not how fast they move, purely so each slider runs with its partner instead of against it. Storing the mechanism directly would have made one half of each pair read backwards.
 
-A single "Smooth scrolling" master switch (`scroll.smooth`) turns all scroll animation off at once - wheel ease, output ease, and the full-screen-app slide - without touching the individual settings; their dialog controls grey out while it is off. Every effect group in Settings follows the same master-switch pattern (transparency, wallpaper, contrast mask, text scrim, scrollbar).
+A single "Smooth scrolling" master switch (`scroll.smooth`) turns all scroll animation off at once - wheel ease, output ease, and the full-screen-app slide - without touching the individual settings; their dialog controls gray out while it is off. Every effect group in Settings follows the same master-switch pattern (transparency, wallpaper, contrast mask, text scrim, scrollbar).
 
 ### Smooth-scroll inside full-screen apps
 
@@ -158,7 +158,7 @@ Why it is hard, in one place: there is no scroll event to hook and `alacritty_te
 
 ### Text readability scrim
 
-A bg-coloured backing behind glyphs so text stays legible over a busy background image or a near-transparent terminal. The scene's text is rendered to a coverage texture, turned into a halo, and composited under the crisp text, coloured per-pixel so each glyph's backing takes its own cell's bg colour. The cursor is a separate coverage texture so it can join the halo and the outline as independent toggles.
+A bg-colored backing behind glyphs so text stays legible over a busy background image or a near-transparent terminal. The scene's text is rendered to a coverage texture, turned into a halo, and composited under the crisp text, colored per-pixel so each glyph's backing takes its own cell's bg color. The cursor is a separate coverage texture so it can join the halo and the outline as independent toggles.
 
 The halo shape is selectable ("Scrim function"), because a plain Gaussian blur is a poor legibility backing: it is a round kernel, so as the radius grows the backing rounds off and the corners of a solid block recede - a square of text reads as sitting on a separate round blob rather than an even plate. Four functions are offered:
 
@@ -185,7 +185,7 @@ Which family that is comes from a single search order, the same on every platfor
 
 We decided the setting should only *reorder* that list, never truncate it. An earlier version dropped `font_family` entirely while following the OS font, which meant the same build and the same config resolved differently depending on the platform, and a configured stack could be silently ignored. Every list is now always walked, so a family that is not installed simply falls through to the next one, and the configured stack still has effect as a fallback.
 
-Platforms differ only in what they report, not in the rules applied to it: Windows has a system font *size* but no monospace *family*, so following the family there is a no-op and resolution starts at `font_family` without a special case. A toggle with nothing behind it reads as inert - the Settings checkbox greys out and says why. The same holds for a desktop with no font setting configured at all, which is why the check asks what was detected rather than which platform is running.
+Platforms differ only in what they report, not in the rules applied to it: Windows has a system font *size* but no monospace *family*, so following the family there is a no-op and resolution starts at `font_family` without a special case. A toggle with nothing behind it reads as inert - the Settings checkbox grays out and says why. The same holds for a desktop with no font setting configured at all, which is why the check asks what was detected rather than which platform is running.
 
 The built-in stack is last for a reason: the generic monospace query below it is effectively a lottery over installed fonts, and its winner may ship no bold face - which ejects bold runs into an arbitrary, often proportional, fallback whose advances can't be snapped to the cell grid. Every entry in the built-in stack carries a real bold face. When that stack changes, the outgoing value is recorded so an existing config still carrying it verbatim is refreshed on the next launch; a stack the user edited is theirs and is left alone.
 
@@ -197,21 +197,21 @@ The built-in stack is last for a reason: the generic monospace query below it is
 
 - Hovering underlines, Ctrl+click opens. The underline appears on a plain hover with no modifier, since a link the user cannot see is a link they will not try. Opening needs Ctrl so it can never be confused with selecting; the press arms and the release opens, so a slipped press can be dragged off to cancel. A right-click on a link puts "Open link" and "Copy link" at the top of the menu, and only there.
 
-- An app that is watching the mouse itself owns the pointer, so nothing underlines over it - holding Shift asks for the local behaviour instead, the same bypass selection already uses. The right-click menu continues to win over such an app, as all our chrome does.
+- An app that is watching the mouse itself owns the pointer, so nothing underlines over it - holding Shift asks for the local behavior instead, the same bypass selection already uses. The right-click menu continues to win over such an app, as all our chrome does.
 
 - Links open through the desktop's own handler by default, with a configurable program to override it. Deciding what a URL means is the desktop's job, not a terminal's.
 
-### Attention colours and dialog chrome
+### Attention colors and dialog chrome
 
-- A theme carries two attention colours rather than one, because they answer different questions. **Highlights** marks several things at once - the live pane's ring, slider handles, revert arrows, the default button - so it stays calm enough to appear many times on a screen. **Focus** marks the single control the keyboard is on, so it is the more vivid of the pair and sits well away from its partner in hue. A test holds every theme's two apart, since a theme that let them converge would draw "look at this" and "you are here" in the same colour.
+- A theme carries two attention colors rather than one, because they answer different questions. **Highlights** marks several things at once - the live pane's ring, slider handles, revert arrows, the default button - so it stays calm enough to appear many times on a screen. **Focus** marks the single control the keyboard is on, so it is the more vivid of the pair and sits well away from its partner in hue. A test holds every theme's two apart, since a theme that let them converge would draw "look at this" and "you are here" in the same color.
 
-- The dialog's own accents follow the theme now. They used to be a fixed blue while the theme's attention colour was something else entirely, so the panel could not agree with the terminal it belonged to. The pressed-button fill is that colour mixed back toward the panel, which is what makes a pressed button read as pressed rather than as the focused one.
+- The dialog's own accents follow the theme now. They used to be a fixed blue while the theme's attention color was something else entirely, so the panel could not agree with the terminal it belonged to. The pressed-button fill is that color mixed back toward the panel, which is what makes a pressed button read as pressed rather than as the focused one.
 
-- A focused field shows one outline, not two. The ring lands exactly on the box's own outline and the box stands its border down; where the ring genuinely spans more than one control - a colour chip and its hex field - it stays a little outside instead, and only the field's border gives way.
+- A focused field shows one outline, not two. The ring lands exactly on the box's own outline and the box stands its border down; where the ring genuinely spans more than one control - a color chip and its hex field - it stays a little outside instead, and only the field's border gives way.
 
-- Tabs sit on a recessed **Gutter** strip and stand on the rule that closes it off, the way tabbed interfaces generally read. The current tab is a lighter grey rather than an accent: "you are here" is not the same job as "look at this". Above the rows there is no heading repeating the tab's own name - the strip has said it already.
+- Tabs sit on a recessed **Gutter** strip and stand on the rule that closes it off, the way tabbed interfaces generally read. The current tab is a lighter gray rather than an accent: "you are here" is not the same job as "look at this". Above the rows there is no heading repeating the tab's own name - the strip has said it already.
 
-- Controls whose label does not explain them carry a line of flyover help, and one that is greyed out explains why instead, that being the more urgent question at the time. The text wraps to the panel rather than being clamped to its edge, so neither a longer sentence nor a larger interface font can push it out of view.
+- Controls whose label does not explain them carry a line of flyover help, and one that is grayed out explains why instead, that being the more urgent question at the time. The text wraps to the panel rather than being clamped to its edge, so neither a longer sentence nor a larger interface font can push it out of view.
 
 ### Groups and sub-groups in the Settings dialog
 
@@ -225,15 +225,15 @@ The built-in stack is last for a reason: the generic monospace query below it is
 
 ### Saved themes
 
-- A theme the user saves is stored **whole** - both variants, the ten palette colours and the sixteen ANSI colours - rather than as a base theme plus the differences. Among the options that was decided on three grounds: saving, renaming and deleting all become one operation on one config subtree; a stale colour cannot survive under a name that no longer sets it; and a saved theme is self-contained enough to hand to someone else.
+- A theme the user saves is stored **whole** - both variants, the ten palette colors and the sixteen ANSI colors - rather than as a base theme plus the differences. Among the options that was decided on three grounds: saving, renaming and deleting all become one operation on one config subtree; a stale color cannot survive under a name that no longer sets it; and a saved theme is self-contained enough to hand to someone else.
 
 - What identifies a saved theme in the file is a slug that never changes, with the display name stored beside it. A rename therefore rewrites one line instead of moving a subtree, and the `theme` setting keeps holding a name a person would recognize.
 
-- **Nothing records "this theme has unsaved changes".** A per-colour override that disagrees with the theme is that record, and it already lives in the config file - so the Save button is right after a restart with no flag to keep in step. Saving folds the overrides into the theme and drops them, which is also what makes the button go quiet again.
+- **Nothing records "this theme has unsaved changes".** A per-color override that disagrees with the theme is that record, and it already lives in the config file - so the Save button is right after a restart with no flag to keep in step. Saving folds the overrides into the theme and drops them, which is also what makes the button go quiet again.
 
 - A saved theme may take a built-in's name and stand in for it. That gives "customize a built-in" an obvious home, and deleting the saved copy puts the built-in back rather than leaving the name pointing at nothing. Built-ins themselves cannot be renamed or deleted.
 
-- Picking a theme takes on its colours wholesale rather than keeping the previous theme's tweaks on top. A picker that visibly changed nothing on every colour that had been edited would read as broken, and those tweaks belonged to the theme being left behind.
+- Picking a theme takes on its colors wholesale rather than keeping the previous theme's tweaks on top. A picker that visibly changed nothing on every color that had been edited would read as broken, and those tweaks belonged to the theme being left behind.
 
 ### Render Loop Sketch
 
@@ -247,7 +247,7 @@ The built-in stack is last for a reason: the generic monospace query below it is
 
 	- The X11 path additionally uses a glutin GL context for per-pixel background transparency (wgpu can't drive an ARGB surface on X11); Wayland uses the plain wgpu surface, which already does premultiplied alpha. Everything else - chrome, text, scrollback slide, background image + blur + scrim - is the shared native path on both.
 
-	- Wayland coverage: the scroll regression harness runs its scenes a second time under a headless `cage` kiosk (`run.bash --wayland`), so the smooth-scroll behaviour is asserted identical on both engines. Per-pixel transparency and dialog stacking on Wayland are not yet exercised (follow-ups).
+	- Wayland coverage: the scroll regression harness runs its scenes a second time under a headless `cage` kiosk (`run.bash --wayland`), so the smooth-scroll behavior is asserted identical on both engines. Per-pixel transparency and dialog stacking on Wayland are not yet exercised (follow-ups).
 
 - Pixel-precise input: touchpad gives true pixel deltas; notched mouse wheel snaps to lines (clamp/accumulate notch deltas into smooth target).
 
@@ -257,7 +257,7 @@ The built-in stack is last for a reason: the generic monospace query below it is
 
 - The wallpaper is the whole of that category today: scanning the rotation folder, reading the shuffle history, decoding the image, blurring and contrast-flattening it, and reading its layout tags. All of it runs on a worker thread; the window opens and the shell starts immediately, and the wallpaper appears when it is ready. That visible gap is an accepted trade - the alternative is a window that may never open at all.
 
-- Each request gets its own thread rather than sharing a long-lived worker. A request stuck on a dead mount can never be cancelled, so a shared worker would leave every later request stuck behind it; an abandoned thread costs almost nothing, and a stale result is discarded on arrival.
+- Each request gets its own thread rather than sharing a long-lived worker. A request stuck on a dead mount can never be canceled, so a shared worker would leave every later request stuck behind it; an abandoned thread costs almost nothing, and a stale result is discarded on arrival.
 
 - The config file itself is a deliberate exception. Window size, font metrics and theme all come from it, and the window is held hidden until it can open at its final size, so reading it later would only trade a small local read for a visible resize flash.
 

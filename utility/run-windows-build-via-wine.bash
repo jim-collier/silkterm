@@ -27,7 +27,7 @@
 ##		- Works: the window, the GPU path (wgpu picks up the real card through
 ##		  winevulkan), fonts, menu/tab chrome, dialogs, wallpaper, scrim.
 ##		- Does not work: the shell. Wine's ConPTY is half implemented -
-##		  CreatePseudoConsole succeeds and the initial size is honoured (conhost starts
+##		  CreatePseudoConsole succeeds and the initial size is honored (conhost starts
 ##		  headless at the right grid), but a child spawned with
 ##		  PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE does not actually attach to it, so no
 ##		  child output ever reaches the grid. Expect a live, correctly drawn, empty

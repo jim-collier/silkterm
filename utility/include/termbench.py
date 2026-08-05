@@ -8,7 +8,7 @@
 ##		what separates a fast terminal from a slow one: 1-byte ASCII takes the
 ##		renderer's fast path, 2-byte stays in the primary font, 3-byte goes
 ##		double-width, and 4-byte emoji fall out of the mono font entirely into
-##		fallback and colour-glyph paths. A fifth scene mixes all four with colour
+##		fallback and color-glyph paths. A fifth scene mixes all four with color
 ##		and attribute changes. ASCII is tested four times as often as the wide
 ##		classes and 2-byte twice, so the overall score leans the way real output
 ##		does.
@@ -147,7 +147,7 @@ EMOJI_SPANS = [
 SYMBOL_SPANS = [
 	(0x2500, 0x257F),                   # box drawing
 	(0x2190, 0x21FF),                   # arrows
-	(0x2200, 0x22FF),                   # maths
+	(0x2200, 0x22FF),                   # math
 ]
 
 
@@ -224,7 +224,7 @@ def _rand(seed, nbytes):
 
 
 def _u16(seed, count):
-	"""count deterministic 16-bit values, byte order normalised."""
+	"""count deterministic 16-bit values, byte order normalized."""
 	a = array.array("H")
 	a.frombytes(_rand(seed, count * 2))
 	if sys.byteorder != "little":
@@ -274,8 +274,8 @@ def _build_uniform(cls, target_bytes, line_cells):
 	return blob, nchars, nchars * wcells, nlines
 
 
-# Foreground colours cycled through the mixed scene. Chosen to include the
-# 16-colour, 256-colour and 24-bit paths, since terminals treat them
+# Foreground colors cycled through the mixed scene. Chosen to include the
+# 16-color, 256-color and 24-bit paths, since terminals treat them
 # differently, plus bold and reverse for the attribute path.
 MIXED_SGR = [
 	"\x1b[0m", "\x1b[1m", "\x1b[31m", "\x1b[1;32m", "\x1b[38;5;208m",
@@ -919,7 +919,7 @@ def readme_path():
 def _plain(cell):
 	"""A table cell reduced to comparable text: no markup, no footnote marks."""
 	text = re.sub(r"<sup>.*?</sup>", "", cell)
-	# The highlighted row is coloured through GitHub's maths renderer, with or
+	# The highlighted row is colored through GitHub's math renderer, with or
 	# without a weight around the name, so unwrap the weight first.
 	text = re.sub(r"\\text(?:bf|it)\{([^{}]*)\}", r"\1", text)
 	text = re.sub(r"\$\\textcolor\{[^{}]*\}\{([^{}]*)\}\$", r"\1", text)

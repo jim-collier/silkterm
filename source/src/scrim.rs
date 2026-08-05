@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright © 2026 Jim Collier
 
-//! Text readability scrim: a background-coloured halo behind glyphs so text stays
+//! Text readability scrim: a background-colored halo behind glyphs so text stays
 //! legible over a light/busy background image or a near-transparent terminal. The
 //! scene's text is rendered to a coverage texture, turned into a halo by one of
-//! four functions, and composited UNDER the crisp text, coloured per-pixel by a
-//! `bgcolor` map so a glyph's halo takes ITS cell's bg colour (a glyph on a
-//! one-off colored cell isn't smeared with the global bg colour).
+//! four functions, and composited UNDER the crisp text, colored per-pixel by a
+//! `bgcolor` map so a glyph's halo takes ITS cell's bg color (a glyph on a
+//! one-off colored cell isn't smeared with the global bg color).
 //!
 //! Two passes build the halo in `tex_a` (`tex_t` stays crisp for the border). Gaussian
 //! (legacy, corners recede) is a separable sum-blur; the distance functions (dilate
 //! / sdf / dt) are a separable, bounded Euclidean/Chebyshev distance transform so
 //! corners stay full - pass a = per-column 1D distance, pass b = row combine. The
 //! composite maps the blurred coverage OR the distance (through a falloff curve) to
-//! the per-pixel bg colour, plus a thin dilated outline of the crisp coverage.
+//! the per-pixel bg color, plus a thin dilated outline of the crisp coverage.
 //!
 //! `tex_t` <- crisp TEXT coverage; `tex_cur` <- crisp CURSOR coverage (kept apart so
 //! the cursor can join the halo and the outline independently, each by its own
@@ -41,7 +41,7 @@ struct BlurU {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct CompU {
 	resolution: [f32; 2],
-	intensity: f32, // coverage boost; the colour comes from the bgcolor texture
+	intensity: f32, // coverage boost; the color comes from the bgcolor texture
 	border_px: f32, // dilated outline radius around the crisp coverage (0 = none)
 	cursor: f32,    // 1 = give the cursor an outline too, 0 = text only
 	function: f32,  // 0 dilate, 1 sdf, 2 dt (distance paths), 3 gaussian (legacy blur)
@@ -84,8 +84,8 @@ pub struct Scrim {
 	comp_bgl: wgpu::BindGroupLayout,
 	comp_u: wgpu::Buffer,
 	comp_bind: wgpu::BindGroup, // sample tex_a (scrim alpha) + bgcolor (rgb) + tex_t (border)
-	// per-pixel scrim colour: cleared to the global bg, with per-cell bg rects drawn
-	// over it, so a glyph's halo takes ITS cell's bg colour (not always the global).
+	// per-pixel scrim color: cleared to the global bg, with per-cell bg rects drawn
+	// over it, so a glyph's halo takes ITS cell's bg color (not always the global).
 	bgcolor: wgpu::Texture,
 	bgcolor_view: wgpu::TextureView,
 	bg_rects: RectRenderer,
@@ -249,12 +249,12 @@ impl Scrim {
 		self.h = h;
 	}
 
-	// Build the per-pixel scrim-colour map: clear to the global bg colour, then draw
+	// Build the per-pixel scrim-color map: clear to the global bg color, then draw
 	// the per-cell bg rects (opaque) over it. A glyph's halo then takes its own
-	// cell's bg colour instead of always the global one. The alpha channel doubles
+	// cell's bg color instead of always the global one. The alpha channel doubles
 	// as an "own-bg" mask - cleared to 0, the opaque cell rects write 1, so the blur
 	// can drop coverage from cells that already carry a solid bg (reverse video,
-	// coloured bg, selection): they have full contrast, so a halo there is only
+	// colored bg, selection): they have full contrast, so a halo there is only
 	// artifact (nano's reverse header cast a jumping drop-shadow). See fs_blur.
 	pub fn render_bgcolor(
 		&mut self,
@@ -439,7 +439,7 @@ impl Scrim {
 	}
 
 	// Draw the scrim into the current pass, under the text: blurred coverage from
-	// tex_a, coloured per-pixel by the bgcolor map, plus a `border_px` dilated
+	// tex_a, colored per-pixel by the bgcolor map, plus a `border_px` dilated
 	// outline of the crisp coverage (tex_t, + tex_cur when `cursor` is 1).
 	// write_comp_uniform must have run this frame.
 	pub fn composite(&self, pass: &mut wgpu::RenderPass<'_>) {
@@ -754,7 +754,7 @@ fn falloff(td: f32, ramp: f32) -> f32 {
 // ~3sigma-covered. Corners recede (a round kernel) - the distance paths fix that.
 //
 // Each tap is gated by `keep` = 1 - own-bg mask, so coverage sitting over a cell
-// with its own solid bg (reverse video, coloured bg, selection) contributes to no
+// with its own solid bg (reverse video, colored bg, selection) contributes to no
 // pixel's halo. Gating the SOURCE coverage (not the final pixel) is what stops a
 // reverse-video header's glyphs from bleeding a halo below the bar - the artifact
 // that read as a drop-shadow jumping with the app-scroll slide.
@@ -825,13 +825,13 @@ struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32, cursor: f3
 @group(0) @binding(0) var<uniform> cu: CompU;
 @group(0) @binding(1) var gtex: texture_2d<f32>;   // scrim: blurred coverage (.a) or distance (.r)
 @group(0) @binding(2) var gsamp: sampler;
-@group(0) @binding(3) var bgtex: texture_2d<f32>;  // per-pixel scrim colour
+@group(0) @binding(3) var bgtex: texture_2d<f32>;  // per-pixel scrim color
 @group(0) @binding(4) var ttex: texture_2d<f32>;   // crisp glyph coverage
 @group(0) @binding(5) var ccur: texture_2d<f32>;   // crisp cursor coverage
 
-// colour the scrim coverage per-pixel by the local bg colour; premultiplied.
+// color the scrim coverage per-pixel by the local bg color; premultiplied.
 // border: dilate the crisp coverage by border_px (8 taps; linear sampling keeps
-// it antialiased) and take the union with the scrim - a solid bg-coloured plate
+// it antialiased) and take the union with the scrim - a solid bg-colored plate
 // hugging each glyph. The crisp text draws over its interior, so what remains
 // visible is the thin outline around the letterforms. Each border tap is gated by
 // the own-bg mask (bgtex.a) too, matching fs_blur, so an own-bg glyph casts no

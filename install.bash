@@ -109,7 +109,7 @@ function fMain() {
 	if [[ "${release}" == "dev" && -z "${tag}" ]]; then
 		tag="$(curl -fsSL "${apiBase}/releases?per_page=5" 2>/dev/null | fFirstTag)" || true
 	fi
-	[[ -n "${tag}" ]] || fFail "no releases found at github.com/${ownerRepo} (releases may not be published yet - see the README for building from source)"
+	[[ -n "${tag}" ]] || fFail "no releases found at github.com/${ownerRepo} (releases may not be published yet - see the README for building it yourself)"
 	local version="${tag#v}"
 
 	## Work out names, paths, and the plan

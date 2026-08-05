@@ -120,7 +120,7 @@ fn pin_ui_family(fs: &FontSystem) {
 	let sys_font = crate::sysfont::interface();
 	let name = resolve_ui_family(fs).map(|family| &*Box::leak(family.into_boxed_str()));
 	*UI_FAMILY.write().unwrap() = name;
-	// honour the desktop's weight/slant only when its family actually resolved
+	// honor the desktop's weight/slant only when its family actually resolved
 	// (a fallback sans shouldn't inherit "Bold" meant for another face)
 	let using_sys = match (name, &sys_font.family) {
 		(Some(resolved), Some(family)) => resolved.eq_ignore_ascii_case(family),
@@ -377,11 +377,11 @@ pub struct TextCtx {
 	// grid cells the face's own advance for that char spans, 0 for "no glyph".
 	mono_face: Option<fontdb::ID>,
 	cover_cache: HashMap<char, u8>,
-	// COLRv1 colour glyphs, which swash can't rasterize (see coloremoji.rs). Panes
+	// COLRv1 color glyphs, which swash can't rasterize (see coloremoji.rs). Panes
 	// route an emoji cell here instead of to a monochrome fallback face.
 	color_glyphs: ColorGlyphs,
 	// Measured chrome-text widths. Keyed by text only: every chrome measurement
-	// uses the base UI attrs (colour varies, which doesn't affect width), and the
+	// uses the base UI attrs (color varies, which doesn't affect width), and the
 	// font is fixed for this TextCtx's life. Measuring shapes a throwaway buffer,
 	// and the menu bar re-measures its titles every rendered frame - the memo
 	// turns that into a lookup. Bounded (cleared) so dynamic tab titles can't
@@ -526,20 +526,20 @@ impl TextCtx {
 		cells
 	}
 
-	// Colour glyph for `ch`, with the design box a caller fits to the cell. None
-	// for anything no installed colour font paints - i.e. almost everything.
+	// Color glyph for `ch`, with the design box a caller fits to the cell. None
+	// for anything no installed color font paints - i.e. almost everything.
 	// Gated by the caller (`color_emoji`), which already holds the settings.
 	pub fn color_metrics(&mut self, ch: char) -> Option<ColorMetrics> {
 		self.color_glyphs.metrics(self.font_system.db(), ch)
 	}
 
-	// Build the raster for a placed colour glyph. Done here, during the frame
+	// Build the raster for a placed color glyph. Done here, during the frame
 	// build, because `prepare` holds the FontSystem (the font bytes) mutably.
 	pub fn color_warm(&mut self, id: u16, w: u16, h: u16) {
 		self.color_glyphs.warm(self.font_system.db(), id, w, h);
 	}
 
-	// Open a frame's colour-glyph warming, so the raster cache knows which of
+	// Open a frame's color-glyph warming, so the raster cache knows which of
 	// its entries this frame is about to depend on.
 	pub fn color_frame(&mut self) {
 		self.color_glyphs.begin_frame();
@@ -567,7 +567,7 @@ impl TextCtx {
 		if let Some(ink) = self.shape_ink(buf, ch, attrs) {
 			return ink;
 		}
-		// The face the pinned family fell back to rasterizes nothing - a colour
+		// The face the pinned family fell back to rasterizes nothing - a color
 		// emoji font (Noto Color Emoji here) hands swash a strike it can't scale, so
 		// every emoji came out as a blank cell. Reshape through the generic
 		// monospace chain, which lands on a face that does raster.
@@ -686,7 +686,7 @@ impl TextCtx {
 		queue: &wgpu::Queue,
 		areas: Vec<TextArea<'_>>,
 	) -> Result<(), glyphon::PrepareError> {
-		// Destructured so the colour-glyph lookup can borrow alongside the renderer
+		// Destructured so the color-glyph lookup can borrow alongside the renderer
 		// and font system (disjoint fields of the same struct).
 		let Self {
 			renderer,
@@ -823,7 +823,7 @@ fn bold_matches_cell(fs: &mut FontSystem, metrics: Metrics, cell_w: f32) -> bool
 
 // Shape `ch` into `buf` and measure its rasterized ink as `(width_px, left_px)`.
 // None when the face draws nothing - no glyph for it, or a glyph that rasterizes
-// empty (which is what a colour-bitmap emoji face does through swash here).
+// empty (which is what a color-bitmap emoji face does through swash here).
 fn shaped_ink(
 	fs: &mut FontSystem,
 	swash: &mut SwashCache,
@@ -914,7 +914,7 @@ mod tests {
 		assert_eq!(mono_candidates(None, None, true), builtin);
 	}
 
-	// A pinned mono family falls back to a colour emoji face that rasterizes to
+	// A pinned mono family falls back to a color emoji face that rasterizes to
 	// nothing, which drew every emoji as an empty cell. The generic-monospace
 	// retry must find a face that actually paints.
 	#[test]

@@ -28,8 +28,8 @@ pub const SELECTION_BG: [u8; 3] = [0x33, 0x44, 0x66];
 // drag-and-drop pane reorder: drop-target tint
 pub const DROP_TARGET: [u8; 3] = [0x55, 0x80, 0xc8];
 
-// Scrollbar. Neutral mid-grey in every theme rather than a palette colour: desktop
-// scrollbars read as chrome, not as part of the terminal's own colour scheme. There
+// Scrollbar. Neutral mid-gray in every theme rather than a palette color: desktop
+// scrollbars read as chrome, not as part of the terminal's own color scheme. There
 // is no portable way to ask the OS for its actual value (GTK only names a theme),
 // so this is the shade those themes converge on. colors.scrollbar_* overrides.
 pub const SCROLLBAR_THUMB_DEF: [u8; 3] = [0x8a, 0x8a, 0x92];
@@ -69,9 +69,9 @@ const SUPERSEDED_FONT_STACKS: &[&str] = &[
 // right-click context menu
 pub const MENU_LINK: [u8; 3] = [0x6c, 0x9c, 0xff]; // clickable URL
 
-// Menu bar / dropdown colours: bg + text come from the active theme (overridable
+// Menu bar / dropdown colors: bg + text come from the active theme (overridable
 // via colors.menu_background/menu_foreground); hover, border, and the group
-// separator are derived shades of the bg, so a custom menu colour stays coherent
+// separator are derived shades of the bg, so a custom menu color stays coherent
 // in either a dark or a light direction.
 pub fn menu_bg() -> [u8; 3] {
 	settings().menu_bg
@@ -88,7 +88,7 @@ pub fn menu_border() -> [u8; 3] {
 pub fn menu_sep() -> [u8; 3] {
 	shade(menu_bg(), 20)
 }
-// Nudge a colour toward more contrast: lighten a dark base, darken a light one.
+// Nudge a color toward more contrast: lighten a dark base, darken a light one.
 fn shade(color: [u8; 3], magnitude: i16) -> [u8; 3] {
 	let luminance = (color[0] as i16 * 30 + color[1] as i16 * 59 + color[2] as i16 * 11) / 100;
 	let delta = if luminance < 128 {
@@ -162,11 +162,11 @@ pub struct Settings {
 	pub text_scrim_radius: f32, // scrim blur sigma in px
 	pub text_scrim_softness: f32, // 0 = hard/solid scrim, 1 = soft/faint (maps to the intensity boost)
 	pub text_scrim_strength: f32, // 0..100% -> 0..5 doublings of the halo alpha (0 = as built)
-	pub text_outline: f32, // antialiased outline around glyphs, px (0 = none; scrim colour rules)
+	pub text_outline: f32, // antialiased outline around glyphs, px (0 = none; scrim color rules)
 	pub text_scrim_ramp: String, // halo falloff curve: "sigmoid" | "half_normal" | "linear" | "log" | "exp"
 	pub text_scrim_function: String, // halo build: "dilate" | "sdf" | "dt" | "gaussian" (legacy blur)
 	pub text_scrim_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
-	pub color_emoji: bool, // paint COLRv1 colour glyphs (emoji) instead of falling back to a monochrome face
+	pub color_emoji: bool, // paint COLRv1 color glyphs (emoji) instead of falling back to a monochrome face
 	pub embolden_inverse: bool, // render reverse-video (dark-on-light) text bold so it reads as strongly as normal text (the scrim only boosts light-on-dark)
 	pub cursor_scrim: bool,     // cursor joins the text scrim halo (default off)
 	pub cursor_outline: bool,   // cursor joins the text outline (default on)
@@ -192,11 +192,11 @@ pub struct Settings {
 	pub bg: [u8; 3],
 	pub fg: [u8; 3],
 	pub cursor: [u8; 3],
-	// Two attention colours (see theme.rs): `highlight` marks several things at
+	// Two attention colors (see theme.rs): `highlight` marks several things at
 	// once, `focus` marks only what the keyboard is on.
 	pub highlight: [u8; 3],
 	pub focus: [u8; 3],
-	// chrome colours (menu bar / dropdowns, and pop-out dialogs), from the theme
+	// chrome colors (menu bar / dropdowns, and pop-out dialogs), from the theme
 	// palette; colors.menu_*/colors.dialog_* keys override
 	pub menu_bg: [u8; 3],
 	pub menu_fg: [u8; 3],
@@ -207,7 +207,7 @@ pub struct Settings {
 	// colors.scrollbar_* keys override
 	pub scrollbar_thumb: [u8; 3],
 	pub scrollbar_trough: [u8; 3],
-	pub ansi: [[u8; 3]; 16], // 16-colour ANSI palette, resolved from the active theme
+	pub ansi: [[u8; 3]; 16], // 16-color ANSI palette, resolved from the active theme
 	pub theme: String,       // active theme name (see theme.rs)
 	pub theme_mode: String,  // "dark" | "light" | "system"
 	// Themes saved from the Settings dialog, whole, in file order. They resolve
@@ -357,7 +357,7 @@ pub fn is_dark() -> bool {
 
 // On an OS dark/light change (System mode only): recompute the theme palette and
 // swap it in (no file write). Returns true if anything changed (caller redraws).
-// NOTE: re-derives from the theme, so a one-off colours override is dropped on an
+// NOTE: re-derives from the theme, so a one-off colors override is dropped on an
 // OS flip; overrides re-apply on the next full config load.
 pub fn reapply_for_os(dark: bool) -> bool {
 	let prev = OS_DARK.swap(dark, Ordering::Relaxed);
@@ -808,7 +808,7 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	set_color("menu_foreground", s.menu_fg, orig.menu_fg);
 	set_color("dialog_background", s.dialog_bg, orig.dialog_bg);
 	set_color("dialog_foreground", s.dialog_fg, orig.dialog_fg);
-	// the two scrollbar colours have had dialog rows since the bar shipped but
+	// the two scrollbar colors have had dialog rows since the bar shipped but
 	// were never written back, so an edit lasted only as long as the session
 	set_color("scrollbar_thumb", s.scrollbar_thumb, orig.scrollbar_thumb);
 	set_color(
@@ -1165,7 +1165,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 	}
 }
 
-// Saved themes, in file order. A slug with no readable colours at all is skipped;
+// Saved themes, in file order. A slug with no readable colors at all is skipped;
 // anything else missing falls back to the first built-in, so a hand-edited or
 // half-written block still yields a usable theme rather than none.
 fn read_user_themes(doc: &shcl::Document) -> Vec<crate::theme::UserTheme> {
@@ -1219,7 +1219,7 @@ fn read_user_themes(doc: &shcl::Document) -> Vec<crate::theme::UserTheme> {
 // Bring the file's `themes.*` subtrees in line with the dialog's list. A theme
 // that changed at all is dropped and rewritten whole rather than edited field by
 // field: saving, renaming and deleting are then one operation with one shape, and
-// a stale colour cannot survive under a name that no longer sets it.
+// a stale color cannot survive under a name that no longer sets it.
 fn write_user_themes(
 	doc: &mut shcl::Document,
 	orig: &[crate::theme::UserTheme],
@@ -1292,7 +1292,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		wallpaper_folder_auto: configured_folder.is_none(),
 		use_system_font,
 		// absent = follow the face toggle, so configs predating the split (and an
-		// explicit font_size, which used to imply off) keep their exact behaviour
+		// explicit font_size, which used to imply off) keep their exact behavior
 		use_system_font_size: raw
 			.use_system_font_size
 			.unwrap_or(use_system_font && raw.font_size.is_none()),
@@ -1517,7 +1517,7 @@ pub fn default_font_size() -> f32 {
 // font SIZE (the message-box font) but no monospace FAMILY, and a Linux desktop
 // with no readable font setting reports neither. Keying on what was detected
 // rather than on the platform keeps one rule everywhere - a toggle with nothing
-// to follow resolves from font_family / font_size as if off, and greys out.
+// to follow resolves from font_family / font_size as if off, and grays out.
 pub fn system_font_face_active(s: &Settings) -> bool {
 	s.use_system_font && crate::sysfont::monospace().family.is_some()
 }
@@ -1769,7 +1769,7 @@ fn line_setting_key(line: &str) -> Option<&str> {
 // separately by `convert_legacy_config`, not here.)
 const CONFIG_RENAMES: &[(&str, &str)] = &[
 	("scroll.inview_tau_ms", "scroll.single_screen_tau_ms"),
-	// The one attention colour became two. The old key's value IS the calmer of
+	// The one attention color became two. The old key's value IS the calmer of
 	// the pair, so it carries to `highlight` and the freed-up `colors.focus`
 	// starts from its own default. That reuse is the reason `load` migrates the
 	// text it parses as well as the file: a config open in an editor defers the
@@ -1785,7 +1785,7 @@ const CONFIG_REMOVED: &[&str] = &["scroll.tau_ms", "scroll.ease_in"];
 
 // Defaults that changed, as (path, the value that used to be the default). An
 // existing config carries the template's commented lines verbatim, so after a
-// default changes those lines quietly describe the old behaviour. A commented
+// default changes those lines quietly describe the old behavior. A commented
 // line matching the outgoing default is refreshed to the current template line.
 // An ACTIVE line is never touched: that value is the user's own choice, and it
 // keeps working exactly as they set it. NOTE: the stored value is the raw
@@ -1802,7 +1802,7 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	("text.scrim.strength", "20  ## Default"),
 	// the outline shipped at two pixels before the halo carried more of the work
 	("text.outline", "2.0  ## Default"),
-	// these two never tracked the theme they document - they carried a grey and a
+	// these two never tracked the theme they document - they carried a gray and a
 	// steel blue from before themes existed, so every config in the wild has them
 	("colors.foreground", "\"#d2d2da\"  ## Default"),
 	("colors.cursor", "\"#7a9ad0\"  ## Default"),
@@ -1908,7 +1908,7 @@ const LEGACY_KEYS: &[(&str, &str)] = &[
 
 // A carried value keeps its exact spelling but not an old trailing comment -
 // the new template's comments describe the setting already. `#` inside a
-// quoted value (every colour) survives.
+// quoted value (every color) survives.
 fn strip_trailing_comment(value: &str) -> &str {
 	let mut quote: Option<char> = None;
 	let mut escaped = false;
@@ -2708,8 +2708,8 @@ text:
 	## Range: 0.0 to 8.0
 	# outline: 1.0  ## Default
 
-	## Colour emoji
-	## Paint colour emoji (COLRv1); false renders them as monochrome outlines.
+	## Color emoji
+	## Paint color emoji (COLRv1); false renders them as monochrome outlines.
 	# color_emoji: true  ## Default
 
 	## Embolden inverse
@@ -2943,18 +2943,18 @@ scroll:
 		# auto_hide: true  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-## Theme and colours
+## Theme and colors
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## Colour theme
+## Color theme
 ## Pick a built-in (SilkTerm, Matrix, Retro Amber) or one you add in a themes.*
 ## entry. theme_mode is "dark", "light", or "system" (follow the OS).
 theme: SilkTerm
 theme_mode: dark
 
-## Colour overrides
-## Per-colour overrides on top of the theme (uncomment any to tweak one colour).
-## The menu_*/dialog_*/scrollbar_*/gutter keys recolour the chrome (menu bar +
+## Color overrides
+## Per-color overrides on top of the theme (uncomment any to tweak one color).
+## The menu_*/dialog_*/scrollbar_*/gutter keys recolor the chrome (menu bar +
 ## dropdowns, the pop-out Settings/About dialogs, the scrollbar, and the strip
 ## the dialog's tabs sit on); by default every theme shares the same neutral
 ## chrome. Menu hover/border shades derive from menu_background automatically.
@@ -3287,11 +3287,11 @@ mod tests {
 
 	#[test]
 	fn chrome_colors_default_and_override() {
-		// theme provides the chrome; the default matches the shared menu colours
+		// theme provides the chrome; the default matches the shared menu colors
 		let d = Settings::default();
 		assert_eq!(d.menu_bg, crate::theme::MENU_BG_DEF);
 		assert_eq!(d.menu_fg, crate::theme::MENU_FG_DEF);
-		// a colours override wins; unspecified chrome stays at the theme default
+		// a colors override wins; unspecified chrome stays at the theme default
 		let raw = read_raw(
 			"colors.menu_background: \"#123456\"\ncolors.dialog_foreground: \"#abcdef\"\n",
 			std::path::Path::new("test.shcl"),
@@ -3371,7 +3371,7 @@ mod tests {
 		);
 		assert!(
 			out.contains("\tfocus: \"#abcdef\""),
-			"colour override carried"
+			"color override carried"
 		);
 		assert!(out.contains("theme: Matrix"), "theme choice carried");
 		assert!(
@@ -3450,13 +3450,13 @@ mod tests {
 	}
 
 	// A rename can hand its old name to a NEW setting - `colors.focus` became
-	// `colors.highlight` and the freed name now holds the vivid focus colour.
+	// `colors.highlight` and the freed name now holds the vivid focus color.
 	// Once both spellings are in the file the old line must be left exactly
 	// where it is: it is no longer stale, it is the new setting's own line, and
-	// dropping or re-renaming it would delete a user's colour on every launch.
+	// dropping or re-renaming it would delete a user's color on every launch.
 	#[test]
 	fn a_renamed_key_frees_its_old_name_for_a_new_setting() {
-		// first launch: the one colour there is becomes the calm one
+		// first launch: the one color there is becomes the calm one
 		let once = migrate_config_text("colors:\n\tfocus: \"#abcdef\"\n").expect("should migrate");
 		assert_eq!(once, "colors:\n\thighlight: \"#abcdef\"\n");
 		let s = resolve(read_raw(&once, std::path::Path::new("test.shcl")));

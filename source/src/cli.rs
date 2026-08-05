@@ -29,7 +29,7 @@ pub enum Size {
 	Percent(f32),
 }
 
-// Cascading look/behaviour options; each level fills what it sets, the rest
+// Cascading look/behavior options; each level fills what it sets, the rest
 // inherit. `wallpaper_img: Some(None)` means "explicitly no image".
 #[derive(Debug, Default, Clone)]
 pub struct Style {
@@ -558,7 +558,7 @@ pub fn fold_window_style(settings: &mut config::Settings, style: &Style) {
 
 impl WindowOpts {
 	// Apply this window's CLI style to the live settings at startup (no-op if none
-	// set). Call after the theme/OS palette settles so colours aren't clobbered.
+	// set). Call after the theme/OS palette settles so colors aren't clobbered.
 	pub fn apply_style(&self) {
 		let style = &self.style;
 		let any = style.font_name.is_some()

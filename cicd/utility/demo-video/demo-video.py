@@ -24,8 +24,8 @@
 ##		ever covers the terminal. The band is static, which costs a gif almost
 ##		nothing (the encoder only stores what changes between frames). The window
 ##		decoration is generated at record time (a square-cornered dark theme
-##		recoloured slate blue-gray) so it reads as chrome against both the black
-##		band and the terminal's own colours.
+##		recolored slate blue-gray) so it reads as chrome against both the black
+##		band and the terminal's own colors.
 ##		Settings changes shown mid-run (the cursor ones) go through the app's
 ##		control socket, so they land live with nothing typed on camera.
 ##		Both profiles start opaque on a plain black background (no image); the
@@ -102,7 +102,7 @@ BORDER   = 8
 FRAME_L, FRAME_R, FRAME_T, FRAME_B = 2, 2, 32, 2
 
 # The decoration is built at record time from a square-cornered dark theme (its
-# parts are flat one-colour SVGs, so a colour swap is the whole job) and dropped
+# parts are flat one-color SVGs, so a color swap is the whole job) and dropped
 # in the WM's own throwaway HOME - nothing is installed system-wide. Slate
 # blue-gray: it has to read as chrome next to mint terminal text and warm yellow
 # captions, while separating the window from the black border and black band.
@@ -386,7 +386,7 @@ class Rec:
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ##	Typing engine
 
-# qwerty neighbours for plausible typos
+# qwerty neighbors for plausible typos
 NEIGH = {
 	"a": "sq", "b": "vn", "c": "xv", "d": "sf", "e": "wr", "f": "dg", "g": "fh",
 	"h": "gj", "i": "uo", "j": "hk", "k": "jl", "l": "k", "m": "n", "n": "bm",
@@ -458,7 +458,7 @@ class Typist:
 		while i < len(text):
 			ch = text[i]
 			time.sleep(self._delay() * (1.6 if ch == " " else 1.0))
-			# an expert's slip: wrong neighbour, maybe one more char, catch it, fix it
+			# an expert's slip: wrong neighbor, maybe one more char, catch it, fix it
 			if ch.lower() in NEIGH and self.rng.random() < typos:
 				wrong = self.rng.choice(NEIGH[ch.lower()])
 				self._emit(wrong)
@@ -732,7 +732,7 @@ def write_tree(rec, rng):
 	# cleared. readline reads this file regardless of bash's --norc.
 	(home / ".inputrc").write_text('"\\C-l": clear-display\n')
 
-	# the closing scene over the wallpaper: true colour, attributes, scripts,
+	# the closing scene over the wallpaper: true color, attributes, scripts,
 	# double-width kanji and katakana, emoji and box drawing in a handful of short
 	# lines (a dense screenful would cost the gif far more than it says).
 	# The bar sweeps the whole hue circle the short way round - dark purple, up
@@ -751,8 +751,8 @@ def write_tree(rec, rng):
 	show.write_text(f'''#!/bin/dash
 for c in {" ".join(stops)}; do printf '\\033[48;2;%sm  ' "$c"; done
 printf '\\033[0m\\n\\n'
-printf '  \\033[1m24-bit colour\\033[0m    \\033[3mitalic\\033[0m    '
-printf '\\033[1;38;2;255;216;102mbold colour\\033[0m    \\033[7m reverse \\033[0m\\n\\n'
+printf '  \\033[1m24-bit color\\033[0m    \\033[3mitalic\\033[0m    '
+printf '\\033[1;38;2;255;216;102mbold color\\033[0m    \\033[7m reverse \\033[0m\\n\\n'
 printf '  日本語 忍者 桜 猫   タ ッ ネ ホ   Ελληνικά  Кириллица  العربية\\n'
 printf '  🤔 🍰 🎉 😀   ┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅▆▇█\\n\\n'
 ''')
@@ -915,14 +915,14 @@ def seg_wallpaper(r, t, m):
 	with Banner(r, "Text stays legible over any of it"):
 		time.sleep(2.8)
 	# no wipe from here on: the closing scenes build up the frame that the demo
-	# ends on - wallpaper, colour, then the sign-off
+	# ends on - wallpaper, color, then the sign-off
 
 def seg_showcase(r, t, m):
 	# drop the flag the prompt watches for BEFORE this command runs, so the prompt
 	# it returns to is already the gray one and the outro can type straight into
 	# it - no bare Return just to draw a fresh prompt.
 	(r.home / ".silk-gray").touch()
-	with Banner(r, "24-bit colour. Unicode. Over anything."):
+	with Banner(r, "24-bit color. Unicode. Over anything."):
 		t.cmd("showcase", settle=2.6)
 		time.sleep(0.8)
 
@@ -1345,7 +1345,7 @@ if __name__ == "__main__":
 ##		  dropped; emoji and kanji in the closing showcase.
 ##		- 20260726: narration moved into a black band above the window (plain
 ##		  yellow, no box, same wobble pop); longer scene list (wheel scrollback,
-##		  split panes, tabs) closing on the built-in wallpaper + a colour/unicode
+##		  split panes, tabs) closing on the built-in wallpaper + a color/unicode
 ##		  showcase; screens cleared between scenes; the README gif is now the whole
 ##		  demo (the highlight cut is gone) and runs through gifsicle.
 ##		- 20260713: the faux window fills the view - only a 4px black border

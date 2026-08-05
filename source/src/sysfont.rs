@@ -126,7 +126,7 @@ mod platform {
 
 	// Parse a Pango font description "Family Style... Size", e.g.
 	// "GentiumAlt Bold 13" -> family "GentiumAlt", size 13, bold. The style
-	// words are captured (bold/italic), not just stripped, so chrome can honour
+	// words are captured (bold/italic), not just stripped, so chrome can honor
 	// the desktop's weight/slant.
 	fn parse_pango(desc: &str) -> super::UiFont {
 		let desc = desc.trim().trim_matches(['\'', '"']);
@@ -275,7 +275,7 @@ mod platform {
 	}
 
 	// The menu font is what native chrome (menus/dialog labels) uses; family,
-	// size, weight and slant all honour the user's "Menu" font setting.
+	// size, weight and slant all honor the user's "Menu" font setting.
 	pub fn interface() -> super::UiFont {
 		unsafe {
 			let mut ncm: NONCLIENTMETRICSW = core::mem::zeroed();
