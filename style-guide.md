@@ -16,7 +16,7 @@ The canonical style reference for SilkTerm. It covers prose, comments, naming, R
 
 This applies to the README, design docs, backlog, this guide, and any other Markdown in the tree.
 
-- Write for a human reader in a hurry. Short sentences. One idea each.
+- Write for a reader in a hurry. Short sentences. One idea each.
 - Avoid run-on sentences that chain several ideas with dashes, semicolons, and parentheticals. Split them, or break them into nested bullets.
 - Prefer nested bullet points over dense paragraphs when laying out several related points.
 - Go easy on emphasis. Reserve bold, italics, and ALL-CAPS for the rare word that genuinely needs the weight.
@@ -28,7 +28,7 @@ This applies to the README, design docs, backlog, this guide, and any other Mark
 
 ## Comments
 
-- Terse and human. Explain *why*, not *what* - the code already says what.
+- Terse and plain. Explain *why*, not *what* - the code already says what.
 - No narration that restates the next line, and no banner dividers or decorative flowerboxing.
 - ASCII only, same as prose above. Do not use Unicode in a comment unless you are documenting something that is itself about Unicode.
 - Follow the surrounding file: match its comment density, its section-header style, and its idioms rather than introducing a new house style mid-file.
@@ -48,7 +48,7 @@ This applies to the README, design docs, backlog, this guide, and any other Mark
 
 ## Naming
 
-- Use meaningful, human-searchable names. It should be easy to read and to search-and-replace `upperBound`; a bare `ub` is not.
+- Use meaningful, searchable names. It should be easy to read and to search-and-replace `upperBound`; a bare `ub` is not.
 - Do not overcorrect. A name does not need to be long or globally unique - it needs to be clear and easy to locate. Short conventional names are fine where they read cleanly.
 - Single-letter loop counters and iterators (`for i in ...`) are fine when that is the idiomatic choice for the language.
 - Follow the language's canonical case and word-order conventions (snake_case in Rust, and so on).

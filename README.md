@@ -57,7 +57,7 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 <table style="border: none; border-collapse: collapse;">
 	<tr style="border: none; border-collapse: collapse;">
 		<td style="border: none; border-collapse: collapse;"><img src="source/assets/logo.png" alt="Silky" width="320"/></td>
-		<td style="border: none;">SilkTerm is the only known terminal currently in existence, that smooth-scrolls lines on output - for silky-smooth and less-tiring long terminal sessions. It also has smooth cursor options such as phase effect for blinking, and smooth movement.<br /><br />SilkTerm also has detachable multi-tabs, split-panes, transparency and blur, background image and blur, text scrim, and can run without a menu and/or window decorations.<br /><br />Cross-platform. Written in Rust for a small single executable, and blazing speed.</td>
+		<td style="border: none;">SilkTerm is the only known terminal currently in existence, that smooth-scrolls lines on output - for silky-smooth and less-tiring long terminal sessions. It also has smooth cursor options such as phase effect for blinking, and smooth movement.<br /><br />SilkTerm also has multiple tabs, split-panes, transparency and blur, background image and blur, text scrim, and can run without a menu and/or window decorations.<br /><br />Cross-platform. Written in Rust for a small single executable, and blazing speed.</td>
 	</tr style="border: none; border-collapse: collapse;">
 </table>
 -->
@@ -152,7 +152,7 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **Background transparency blur**. If using background transparency and this is enabled, everything behind the terminal is blurred. Supported on most window compositors. (But limited to the compositor's options. SilkTerm just talks to the WM to enable it.)
 
-- **User-selectable background image**. User-selectable, with a few dozen cool offerings included.
+- **User-selectable background image**. Over a hundred are included, or point it at a folder of your own.
 
 	- The background image can be dimmed with adjustable %, relative to the background color - and independent of main background transparency.
 
@@ -200,15 +200,15 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **Loosely based on [Alacritty](https://github.com/alacritty/alacritty)** (not a fork), just for the basement plumbing - to avoid rewriting the complex but solved problems of terminal emulation. Alacritty is also a high-performance, open-source terminal written in Rust.
 
-	- *Fun fact: SilkTerm has more lines of code than Alacritty, especially compared to the subset we use. Which is part of why we chose it for the bare guts without reinventing a thoroughly-and-repeatedly-invented wheel.*
+	- *Fun fact: SilkTerm is about three times the size of the Alacritty terminal core it sits on. That core solves a thoroughly-and-repeatedly-solved problem, so there was no reason to write another one.*
 
 - **GPU-accelerated** with software fallback.
 
 ## Terminal showdown - speed and size
 
-Smooth scrolling is worth nothing if the terminal falls behind the moment something dumps a lot of text, so throughput is measured rather than asserted. In testing, each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it. Speed is measured at a 160x42 grid.
+Smooth scrolling counts for nothing if the terminal falls behind the moment something dumps a lot of text, so throughput is measured rather than asserted. In testing, each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it. Speed is measured at a 160x42 grid.
 
-A terminal is also the program that is always open, usually several times over, so what it costs while doing nothing is worth knowing. Size and memory are measured separately, with each terminal at a 100x30 grid and its own defaults.
+A terminal is also the program that is always open, usually several times over, so what it costs while doing nothing matters. Size and memory are measured separately, with each terminal at a 100x30 grid and its own defaults.
 
 Sorted by speed. Terminals not yet measured for speed follow, ordered by what it takes to install them.
 
@@ -288,7 +288,7 @@ PowerShell 7+ (Windows, Linux):
 
 Install locations:
 
-| OS      | User install (default)                    | ￩ Launcher                                                      | (or) System install       | ￩ Launcher
+| OS      | User install (default)                    | <- Launcher                                                     | (or) System install       | <- Launcher
 | :---    | :---                                      | :---                                                            | :---                      | :---
 | Linux   | `~/.local/bin/silkterm`                   | `~/.local/share/applications/silkterm.desktop`                  | `/usr/local/bin/silkterm` | `/usr/local/share/applications/silkterm.desktop`
 | Windows | `%LOCALAPPDATA%\Programs\SilkTerm\`       | Start Menu shortcut, and the install dir is added to `%PATH%`   | `C:\Program Files\SilkTerm\` | Common Start Menu shortcut (needs an elevated shell)

@@ -43,7 +43,6 @@
 
 ## Source 'gnulwi': the b23 SilkTerm Windows (x86_64-pc-windows-gnu) release build,
 ## reached over SMB.
-# $B23ReleaseDir = "\\b23\home-collierjr\0-0\0_links\projects\dev\zf10…github∙jimcollier\silkterm\github\target\x86_64-pc-windows-gnu\release"
 $B23ReleaseDir = "\\b23\zfs\zf10\0-0\users\collierjr\data\prs\dev\github.com\jim-collier\silkterm\github\target\x86_64-pc-windows-gnu\release"
 
 ## Sources 'gnuwwi'/'msvcwwi': the local Windows-native release build dirs (same

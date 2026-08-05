@@ -4,16 +4,16 @@ SilkTerm is written and maintained by one programmer in his spare time. If you l
 
 Even a few dollars a month is meaningful. Or just buy me a coffee.
 
-## Direct support
+**Direct support**
 
 - [GitHub Sponsors](https://github.com/sponsors/jim-collier)
 
-## Indirect support
+**Indirect support**
 
 - Star the repo.
 - File good bug reports and feature requests.
 
-## Get the word out
+**Get the word out**
 
 Most importantly: Tell other terminal nerds on various socials how this has changed your life:
 

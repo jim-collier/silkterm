@@ -115,7 +115,7 @@ $ExeName = "silkterm"
 ## The single version source (first `version = "..."` line).
 $VersionManifest = Join-Path $Root "source\Cargo.toml"
 
-## Release build matrix. x86_64 msvc + gnu build every run (owner rule: always
+## Release build matrix. x86_64 msvc + gnu build every run (house rule: always
 ## build both). ARM64 rows are attempted only when their toolchain is detected
 ## (see fArmSkipReason); otherwise they warn-skip. os-arch feeds the artifact
 ## name (<exe>-<version>-<os-arch>.exe).
@@ -293,7 +293,7 @@ function fArmSkipReason {
 }
 
 ## Build one release target. Returns a result object on success, or $null when an
-## ARM target is skipped (x86_64 failures abort - owner rule: always build both).
+## ARM target is skipped (x86_64 failures abort - house rule: always build both).
 function fBuildTarget {
 	param([Parameter(Mandatory)]$Target)
 

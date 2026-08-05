@@ -305,10 +305,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - 🔘 Stable release!
 
-- 🔘 Wallpaper: Need a way to detect maximum and average brightness of background image - or some human hueristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
+- 🔘 Wallpaper: Need a way to detect maximum and average brightness of background image - or some heuristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
 	- 🔘 Really what I'm after, is this resulting effect. The implimentation is up to research:
 		- 🔘 At 100% background image visibility, it's just the image as-is.
-		- 🔘 But below that, the opacity % scales with human perception.
+		- 🔘 But below that, the opacity % scales with perception.
 			- 🔘 In other words, at say 90%, it is actually scaled to some average of ([perceived brightness], [brightest pixel]).
 			- 🔘 As an example, 50% for a very bright image, may be significantly darker than 50% for a very dark image.
 		- 🔘 And the inverse, for light-mode themes.
@@ -668,10 +668,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✅ Static case confirmed: this Windows box is actually at 125% (an earlier "100%" reading was a DPI-unaware shell being fed a virtualized 96 DPI). A dogfood build renders crisply and natively at 125% - measured cell width ~11.3px and row pitch ~23px, both exactly 1.25x their 100% values, with sharp anti-aliasing (not a 100% render upscaled by the compositor). So the app reads and applies the scale correctly.
 
 - ✅ Windows: no smooth-scrolling in full-screen / scroll-region apps (muffer, nano), though it works on the Linux build.
-	- Scope (owner-confirmed): plain directory listings and mouse-wheel scrollback DO scroll smoothly on Windows; only apps that keep a fixed UI with a scrolling sub-region (muffer's bottom input box, nano's top/bottom bars) failed.
+	- Scope (confirmed): plain directory listings and mouse-wheel scrollback DO scroll smoothly on Windows; only apps that keep a fixed UI with a scrolling sub-region (muffer's bottom input box, nano's top/bottom bars) failed.
 	- Diagnosed on the Windows box via a per-frame probe reading real muffer + nano. ConPTY re-emits a scroll-region app's scrolling as an in-place repaint, so scrollback never grows: for nano (alt screen) `history` is 0 and the rows still translate cleanly (the signed clean-translate detector reports healthy shifts of 2-14 rows); for muffer (normal screen) `history` is frozen at 1 and `grew` is 0 every frame, so output-easing can never fire and there is no scrollback to ease through - yet the rows translate 1-2 at a time and the signed detector catches them. On a Unix PTY these scrolls arrive as real grid-scrolls, which is why Linux was fine.
 	- Fix: the app-scroll slide (fixed-UI + scrolling-region, no scrollback, synthesized reveal strip) is exactly the right mechanism but was gated to the alt screen only. Extended it to also engage on the normal screen when following with no scrollback growth (`repaint_scroll` in `pane.rs build`); the render side already consumes `app_off` regardless of screen. Plain output (grew>0) still uses output-easing; a static in-place redraw yields no clean shift so it stays put (no bounce). One `smooth_scroll_apps` setting now covers alt-screen apps (nano/vim/less) AND normal-screen repaint apps (muffer on ConPTY).
-	- Made default-on (owner call): `smooth_scroll_apps` now defaults `true` (was false), so nano and muffer both slide out of the box; explicit `= false` still opts out. Feel-test passed on the real display (both "much smoother", no bounce).
+	- Made default-on: `smooth_scroll_apps` now defaults `true` (was false), so nano and muffer both slide out of the box; explicit `= false` still opts out. Feel-test passed on the real display (both "much smoother", no bounce).
 
 - ✅ Config file rewriting is proving problematic.
 	- For example, when user makes a "non-standard" change (e.g. some extra comments), they get removed in the background, and the editor notices the file changed.
@@ -1494,7 +1494,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 				- The shape definitions per function don't change with adjustment, they just grow or shrink (in proportional size) depending on the scale of each individual setting.
 					- In other words, the curve grows along both the x-axis AND Y-axis. Getting sharper (smaller) or gentler (larger).
 				- Computationally expensive?
-			- Option 2: Each scroll speed parameter is defined by a straight line. This may not be as jarring as it sounds, as these kind of linear + angular graphs work fine in audio and video production, which are all about human perception.
+			- Option 2: Each scroll speed parameter is defined by a straight line. This may not be as jarring as it sounds, as these kind of linear + angular graphs work fine in audio and video production, which are all about perception.
 				- The linear slope of each line is variable based on the height (Y) and time (X).
 				- The end of each adjustable line must touch the beginning of the next - but the transition may be an abrupt angle.
 				- Option 2a: Adjustment is time, length and height auto-adjust.
@@ -1771,7 +1771,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- Done: the close "x" is now bold and centered inside a 1px outlined square button with equal top/right/bottom margins (the slack falls to the left, separating it from the title). The button box, its glyph, and the click region share one geometry helper so they stay aligned.
 				- ✅ X still too small and not centered in the box.
 					- Done: the font glyph (a lowercase-style multiplication sign, baseline-positioned, hence never truly centered) is replaced by a drawn X - two diagonal bars with angled ends, centered exactly in the box at any size. The box keeps equal top/right/bottom margins, now slightly larger; the active tab's box fill carries a faint pastel-red tint so the current tab reads at a glance.
-		- ✅ Provide brief visual feedback on click - as the tab closes. Maybe the terminal area can close immediately while the tab lingers just enough milliseconds for human perception to notice the click feedback, if that doesn't require rejiggering the whole pipeline.
+		- ✅ Provide brief visual feedback on click - as the tab closes. Maybe the terminal area can close immediately while the tab lingers just enough milliseconds for the eye to notice the click feedback, if that doesn't require rejiggering the whole pipeline.
 			- Note: two candidate approaches - a press-arm highlight (light on the button while pressed, close on release) that fits the existing input path, or the lingering-tab timed close described above (a short animation, more involved and feel-sensitive). Light on the button while pressed, close on release, is going to be the easiest, that's the winner.
 			- Done: press-arm - the button lights while held, the close fires on release over the same button, and dragging off before releasing cancels (standard button feel). Verified live: lit while held, release closes, drag-off leaves the tab open.
 

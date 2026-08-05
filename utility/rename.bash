@@ -3,7 +3,7 @@
 #
 #   utility/rename.bash <NewDisplayName>
 #
-# <NewDisplayName> is the human-facing name (e.g. "SilkTerm"). The lowercase
+# <NewDisplayName> is the display name (e.g. "SilkTerm"). The lowercase
 # identifier used for the cargo package, the binary, and the config directory
 # is derived from it (e.g. "silkterm").
 #
