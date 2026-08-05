@@ -603,6 +603,22 @@ def write_config(home, profile):
 	# which needs wallpaper.fallback_builtin OFF - it defaults on, and while it is on there
 	# is no "no wallpaper" state to start from (an unset image IS what shows the
 	# built-in one). Image opacity stays at the 0.10 default.
+	#
+	# rotate.enabled OFF matters just as much and is far less obvious: rotation
+	# adopts a wallpaper folder sitting beside the config on its own, and the
+	# wallpapers/ dir holding the image seg_wallpaper reveals is exactly that. On
+	# the defaults it picked the image at launch, so the demo opened ON the
+	# wallpaper and the reveal changed nothing. Naming the file outright still
+	# works with rotation off, which is all seg_wallpaper does.
+	#
+	# What is pinned here and what is deliberately absent:
+	#  - grid, font and margin stay pinned even where they equal a default, so a
+	#    later default change cannot reflow a scene that was timed against them.
+	#  - the scrim and the scroll feel are NOT pinned, so the demo always shows
+	#    what ships. Pinning them is how the old gif ended up advertising a halo
+	#    and an outline no build had used for weeks.
+	#  - cursor.size.width IS pinned, and to the shipped block on purpose: it is
+	#    the before half of seg_cursor, which narrows it to a bar on camera.
 	cfgdir = home / ".config" / "silkterm"
 	wpdir = cfgdir / "wallpapers"
 	wpdir.mkdir(parents=True, exist_ok=True)
@@ -617,14 +633,13 @@ window.columns: 160
 window.rows: 48
 transparency.enabled: false
 wallpaper.fallback_builtin: false
+wallpaper.rotate.enabled: false
 wallpaper.opacity: 0.10
 wallpaper.default_fit: zoom
 wallpaper.blur: 10.0
 text.scrim.enabled: true
-text.outline: 2.0
-text.scrim.ramp: gaussian
 cursor.size.height: 100
-cursor.size.width: 25
+cursor.size.width: 100
 cursor.animation: pulse_vertical
 cursor.animation_resume_s: 1
 cursor.blink_rate_ms: 500
@@ -822,14 +837,42 @@ def set_cfg(rec, keys):
 	# a settings change, applied the way a settings change applies: rewrite the
 	# keys and reload. Live, and nothing has to be typed on camera. Strings are
 	# quoted so a value can never read as a comment or a bare word like none.
-	# Keys are dotted config paths, matched only on the top-level dotted lines
-	# write_config wrote (the escaped dot can't wander into nested lines).
+	#
+	# Keys are dotted config paths, and each line's path is RESOLVED from an
+	# indent stack of block headers rather than matched literally. That is not
+	# defensive programming - the app rewrites this file into nested blocks the
+	# first time it saves, so a literal `^cursor\.size\.width: ` matched the file
+	# write_config wrote and then matched nothing at all for the rest of the run.
+	# It failed silently, which cost a whole render to notice: the cursor never
+	# changed shape and the panes scene never stilled its cursors.
+	#
+	# Hence the miss check below - a key that resolves to no line is a scene that
+	# will quietly not happen, so it stops the run instead.
 	cfg = rec.home / ".config/silkterm/config.shcl"
-	text = cfg.read_text()
-	for key, val in keys.items():
-		line = f'{key}: "{val}"' if isinstance(val, str) else f"{key}: {val}"
-		text = re.sub(rf"^{re.escape(key)}: .*$", lambda _m, s=line: s, text, flags=re.M)
-	cfg.write_text(text)
+	lines = cfg.read_text().split("\n")
+	stack, seen = [], set()
+	for i, raw in enumerate(lines):
+		body = raw.strip()
+		if not body or body.startswith("#"):
+			continue
+		indent = len(raw) - len(raw.lstrip())
+		while stack and stack[-1][0] >= indent:
+			stack.pop()
+		name, _, rest = body.partition(":")
+		name = name.strip()
+		if not rest.strip():                       # a block header, not a setting
+			stack.append((indent, name))
+			continue
+		path = ".".join([n for _, n in stack] + [name])
+		if path in keys:
+			val = keys[path]
+			lines[i] = f"{raw[:indent]}{name}: " + (
+				f'"{val}"' if isinstance(val, str) else f"{val}")
+			seen.add(path)
+	missing = sorted(set(keys) - seen)
+	if missing:
+		raise RuntimeError(f"set_cfg: no line for {missing} in {cfg}")
+	cfg.write_text("\n".join(lines))
 	return ctl(rec, "reload")
 
 
@@ -896,13 +939,22 @@ def seg_panes(r, t, m):
 
 def seg_cursor(r, t, m):
 	# the cursor is a setting, so switch it the way a setting switches - live,
-	# through the control socket, with nothing typed on camera. Back to pulsing
-	# after the panes scene stilled it, and a full block instead of the bar it
-	# started as. An empty screen: the cursor is the only thing moving on it.
+	# through the control socket, with nothing typed on camera. An empty screen:
+	# the cursor is the only thing moving on it.
+	#
+	# Two steps, and the order is the point. The panes scene stilled the cursor,
+	# so pulsing has to come back first and settle - THEN the shape changes on its
+	# own. The animation is identical either side of that switch, so the only
+	# thing the eye can attribute the change to is the shape.
 	with Banner(r, "Cursor shape and animation, your pick"):
 		r.xdo("windowactivate", r.win)
-		time.sleep(1.2)
-		set_cfg(r, {"cursor.size.width": 100, "cursor.animation": "pulse_vertical"})
+		set_cfg(r, {"cursor.animation": "pulse_vertical"})
+		# the reload is not instant (~1.2s from the call to the first pulse on
+		# screen), so this dwell is mostly spent waiting for the pulse to show up
+		# at all - measured at 1.6s it left 0.4s of pulsing block before the shape
+		# changed, which is too brief to read as two separate events.
+		time.sleep(2.8)
+		set_cfg(r, {"cursor.size.width": 25})
 		time.sleep(2.6)
 
 def seg_wallpaper(r, t, m):
@@ -1329,6 +1381,12 @@ if __name__ == "__main__":
 
 
 ##	Script history:
+##		- 20260805: set_cfg resolves a dotted path from the indentation instead of
+##		  matching the line literally, and stops the run when a key resolves to
+##		  nothing - the config is nested by the time any scene changes a setting,
+##		  so every live change had been a silent no-op. Wallpaper rotation off, or
+##		  it adopts the reveal image at launch. Scrim values unpinned so the demo
+##		  shows what ships. Cursor starts as the block and narrows to a bar.
 ##		- 20260729: a blank line closes the showcase output, so the sign-off block
 ##		  sits clear of the unicode row.
 ##		- 20260726: gif cut under 10 MiB - the `less` scene dropped, the wheel one
