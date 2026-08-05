@@ -24,6 +24,7 @@
 	- [Hyperlinks](#hyperlinks)
 	- [Attention colours and dialog chrome](#attention-colours-and-dialog-chrome)
 	- [Groups and sub-groups in the Settings dialog](#groups-and-sub-groups-in-the-settings-dialog)
+	- [Saved themes](#saved-themes)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Environment](#environment)
 	- [Startup and slow external resources](#startup-and-slow-external-resources)
@@ -221,6 +222,18 @@ The built-in stack is last for a reason: the generic monospace query below it is
 - It was decided that a fraction stored as a decimal is shown as a whole percent. Nobody thinks in 0.35, and the file is a different audience from the dialog - the decimal is what the renderer wants and what a hand-edited config should keep. The two directions are exact inverses, so reverting one lands on its own default rather than a hair off it.
 
 - The tabs follow what a person is looking at rather than what the code calls it: Background, Text, Cursor, Movement, Themes, Window. Settings that describe one subject sit together even when they are implemented in different places - the cursor's shape, its animation and whether it joins the text halo are all "cursor" to the person changing them.
+
+### Saved themes
+
+- A theme the user saves is stored **whole** - both variants, the ten palette colours and the sixteen ANSI colours - rather than as a base theme plus the differences. Among the options that was decided on three grounds: saving, renaming and deleting all become one operation on one config subtree; a stale colour cannot survive under a name that no longer sets it; and a saved theme is self-contained enough to hand to someone else.
+
+- What identifies a saved theme in the file is a slug that never changes, with the display name stored beside it. A rename therefore rewrites one line instead of moving a subtree, and the `theme` setting keeps holding a name a person would recognize.
+
+- **Nothing records "this theme has unsaved changes".** A per-colour override that disagrees with the theme is that record, and it already lives in the config file - so the Save button is right after a restart with no flag to keep in step. Saving folds the overrides into the theme and drops them, which is also what makes the button go quiet again.
+
+- A saved theme may take a built-in's name and stand in for it. That gives "customize a built-in" an obvious home, and deleting the saved copy puts the built-in back rather than leaving the name pointing at nothing. Built-ins themselves cannot be renamed or deleted.
+
+- Picking a theme takes on its colours wholesale rather than keeping the previous theme's tweaks on top. A picker that visibly changed nothing on every colour that had been edited would read as broken, and those tweaks belonged to the theme being left behind.
 
 ### Render Loop Sketch
 

@@ -247,7 +247,7 @@ impl DialogWin {
 		// the real UI font (same pattern as About)
 		let (window, mut gfx, mut text, rects) =
 			Self::make(el, "Settings".into(), 560.0, 800.0, parent, warm)?;
-		let (label_w, btn_w, tab_ws) = crate::settings_ui::chrome_widths(&mut text);
+		let (label_w, btn_w, row_btn_w, tab_ws) = crate::settings_ui::chrome_widths(&mut text);
 		let scale = window.scale_factor() as f32;
 		// cap the window height to the monitor (minus decorations headroom) and to
 		// ~1010px total; a tab that doesn't fit scrolls instead of clipping buttons
@@ -262,6 +262,7 @@ impl DialogWin {
 			text.ui_line_h,
 			label_w,
 			btn_w,
+			row_btn_w,
 			tab_ws,
 			max_h,
 			scale,
@@ -723,7 +724,11 @@ impl DialogWin {
 				// rows (drawn on top, unscissored, in a second pass); text goes to
 				// the overlay renderer
 				if dialog.overlay_open() {
-					let (ov_rects, ov_texts) = dialog.overlay();
+					let (ov_rects, ov_texts) = {
+						let text = &mut self.text;
+						let attrs = ui_attrs();
+						dialog.overlay(&mut |s| text.measure_ui_text(s, &attrs))
+					};
 					let start = rect_inst.len() as u32;
 					rect_inst.extend(ov_rects);
 					overlay_range = Some((start, rect_inst.len() as u32));

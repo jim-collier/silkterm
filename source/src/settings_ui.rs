@@ -224,6 +224,22 @@ struct EditState {
 	last_sig: (usize, Option<usize>, usize),
 }
 impl EditState {
+	// A field opened on `buf`, caret at the end. `row` is `usize::MAX` for the
+	// prompt box's field, which belongs to no row.
+	fn new(row: usize, buf: String) -> EditState {
+		let cur = buf.len();
+		EditState {
+			row,
+			buf,
+			cur,
+			sel: None,
+			view: 0.0,
+			view_to: 0.0,
+			caret_vis: None,
+			blink_t: 0.0,
+			last_sig: (usize::MAX, None, usize::MAX),
+		}
+	}
 	// Smooth blink: solid just after activity, then a soft cosine pulse (never a
 	// hard on/off pop).
 	fn caret_alpha(&self) -> f32 {
@@ -390,6 +406,42 @@ const EDIT_MENU: [(&str, EditCmd); 5] = [
 	("Select all", EditCmd::SelectAll),
 ];
 
+// The theme row's four buttons, in the order they are declared.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ThemeBtn {
+	Save,
+	SaveAs,
+	Rename,
+	Delete,
+}
+impl ThemeBtn {
+	fn of(part: u8) -> ThemeBtn {
+		match part {
+			0 => ThemeBtn::Save,
+			1 => ThemeBtn::SaveAs,
+			2 => ThemeBtn::Rename,
+			_ => ThemeBtn::Delete,
+		}
+	}
+}
+
+// A small box over the panel: name a new theme, rename one, or confirm a delete.
+// It is drawn in the overlay pass and takes every click and key while it is up,
+// so the panel behind it can be left exactly as it was.
+struct Prompt {
+	which: ThemeBtn,
+	title: String,
+	field: bool,          // false for the delete confirmation, which asks nothing
+	focus: u8,            // 0 = field, 1 = Cancel, 2 = OK
+	warn: Option<String>, // why OK is refusing (a blank or taken name)
+}
+
+// The prompt's text field is the dialog's one open edit, so every bit of field
+// behaviour - selection, word ops, the clipboard, the caret ease, the right-click
+// menu - works there without a second copy. It belongs to no row, hence a row
+// index no row can have.
+const PROMPT_ROW: usize = usize::MAX;
+
 // Open field context menu: anchor point, keyboard-highlighted item, and whether
 // the clipboard held text when it opened (greys Paste).
 struct EMenu {
@@ -416,14 +468,16 @@ pub struct SettingsDialog {
 	reverted: Vec<&'static str>, // config keys reverted this session -> comment out on Apply
 	rect: Rect,
 	specs: &'static [Spec],
-	tab: usize,               // active tab
-	tab_ws: Vec<f32>,         // measured tab-button widths (UI font)
-	scroll: f32,              // rows-region scroll offset (0 when everything fits)
-	drag_thumb: Option<f32>,  // scrollbar-thumb drag: grab offset within the thumb
-	drag: Option<usize>,      // slider row being dragged
-	pressed: Option<usize>,   // footer button held down (fires on release; drawn pressed)
-	edit: Option<EditState>,  // row being typed (hex for Color, path for Text)
-	edit_drag: Option<usize>, // field row being drag-selected with the mouse
+	tab: usize,                       // active tab
+	tab_ws: Vec<f32>,                 // measured tab-button widths (UI font)
+	scroll: f32,                      // rows-region scroll offset (0 when everything fits)
+	drag_thumb: Option<f32>,          // scrollbar-thumb drag: grab offset within the thumb
+	drag: Option<usize>,              // slider row being dragged
+	pressed: Option<usize>,           // footer button held down (fires on release; drawn pressed)
+	pressed_row: Option<(usize, u8)>, // a row's push-button held down (same press/release)
+	prompt: Option<Prompt>,           // the name / confirm box a theme action puts over the panel
+	edit: Option<EditState>,          // row being typed (hex for Color, path for Text)
+	edit_drag: Option<usize>,         // field row being drag-selected with the mouse
 	select_all_on_up: bool, // a fresh single-click field entry: select all on release unless it became a drag
 	// multi-click detection (double = select word, triple = select all)
 	last_click: Option<(std::time::Instant, f32, f32)>,
@@ -442,6 +496,7 @@ pub struct SettingsDialog {
 	line_h: f32,
 	label_w: f32,
 	btn_w: f32,
+	row_btn_w: f32, // push-buttons that sit on a row (see chrome_widths)
 	// DIP -> physical pixel factor for the window this dialog lives in. Every
 	// measurement in here is a DIP; this is applied only at the boundary.
 	scale: f32,
@@ -526,6 +581,7 @@ impl SettingsDialog {
 		line_h: f32,
 		label_w: f32,
 		btn_w: f32,
+		row_btn_w: f32,
 		tab_ws: Vec<f32>,
 		max_h: f32,
 		scale: f32,
@@ -537,11 +593,12 @@ impl SettingsDialog {
 		};
 		let (screen_w, screen_h) = (screen_w / scale, screen_h / scale);
 		let (line_h, max_h) = (line_h / scale, max_h / scale);
-		let (label_w, btn_w) = (label_w / scale, btn_w / scale);
+		let (label_w, btn_w, row_btn_w) = (label_w / scale, btn_w / scale, row_btn_w / scale);
 		let tab_ws: Vec<f32> = tab_ws.into_iter().map(|w| w / scale).collect();
 		let specs: &'static [Spec] = &ui().specs;
 		let label_w = label_w.max(lay().label_width);
 		let btn_w = btn_w.max(lay().button_width);
+		let row_btn_w = row_btn_w.max(lay().button_width);
 		let btn_h = lay().button_height.max(line_h + lay().row_pad);
 		let tallest = (0..tab_titles().len())
 			.map(|t| Self::tab_content_h(specs, t, line_h))
@@ -577,10 +634,28 @@ impl SettingsDialog {
 		} else {
 			0.0
 		};
+		// a row of push-buttons starts at the control column and must fit too
+		let max_row_btns = specs
+			.iter()
+			.filter_map(|spec| match spec.kind {
+				Kind::Buttons(captions) => Some(captions.len()),
+				_ => None,
+			})
+			.max()
+			.unwrap_or(0) as f32;
+		let btns_w = if max_row_btns > 0.0 {
+			lay().pad
+				+ label_w + max_row_btns * row_btn_w
+				+ (max_row_btns - 1.0) * lay().button_gap
+				+ lay().pad
+		} else {
+			0.0
+		};
 		let w = (lay().width + (label_w - lay().label_width) + (btn_w - lay().button_width) * 3.0)
 			.max(tabs_w)
 			.max(radio_w)
-			.max(dd_w);
+			.max(dd_w)
+			.max(btns_w);
 		let rect = Rect {
 			x: ((screen_w - w) / 2.0).max(0.0),
 			y: ((screen_h - h) / 2.0).max(0.0),
@@ -601,6 +676,8 @@ impl SettingsDialog {
 			drag_thumb: None,
 			drag: None,
 			pressed: None,
+			pressed_row: None,
+			prompt: None,
 			edit: None,
 			edit_drag: None,
 			select_all_on_up: false,
@@ -617,6 +694,7 @@ impl SettingsDialog {
 			line_h,
 			label_w,
 			btn_w,
+			row_btn_w,
 			scale,
 		}
 	}
@@ -712,8 +790,12 @@ impl SettingsDialog {
 		self.texts_px(&mut items);
 		items
 	}
-	pub fn overlay(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
-		let (mut quads, mut items) = self.overlay_dip();
+	pub fn overlay(
+		&self,
+		measure: &mut impl FnMut(&str) -> f32,
+	) -> (Vec<RectInstance>, Vec<TextItem>) {
+		let s = self.scale;
+		let (mut quads, mut items) = self.overlay_dip(&mut |t| measure(t) / s);
 		self.quads_px(&mut quads);
 		self.texts_px(&mut items);
 		(quads, items)
@@ -784,6 +866,9 @@ impl SettingsDialog {
 		(self.content_h() - self.viewport().h).max(0.0)
 	}
 	pub fn wheel(&mut self, dy_px: f32) {
+		if self.prompt.is_some() {
+			return; // nothing behind the prompt box may move under it
+		}
 		self.dismiss_menu();
 		let dy = self.to_dip(dy_px);
 		self.scroll = (self.scroll - dy).clamp(0.0, self.max_scroll());
@@ -847,10 +932,16 @@ impl SettingsDialog {
 
 	// ---- dropdown popup (open list; commits on Enter / click) -----------------
 
-	fn dd_options(&self, i: usize) -> &'static [&'static str] {
+	// A dropdown's option list. Every one but the theme picker is fixed in the
+	// declarations; that one is whatever themes exist right now, so the list has
+	// to be built per call rather than borrowed from the document.
+	fn dd_options(&self, i: usize) -> Vec<String> {
 		match self.specs[i].kind {
-			Kind::Dropdown(opts) => opts,
-			_ => &[],
+			_ if self.specs[i].key == Key::Theme => {
+				crate::theme::all_names(&self.edited.user_themes)
+			}
+			Kind::Dropdown(opts) => opts.iter().map(|o| (*o).to_string()).collect(),
+			_ => Vec::new(),
 		}
 	}
 	// Open row `i`'s popup with the current value highlighted.
@@ -959,6 +1050,10 @@ impl SettingsDialog {
 	// The Tab key: Ctrl switches tabs, otherwise walk control focus (Shift = back).
 	pub fn key_tab(&mut self) {
 		self.dismiss_menu();
+		if self.prompt.is_some() {
+			self.prompt_focus_move(!self.shift);
+			return;
+		}
 		if self.ctrl {
 			self.tab_switch(!self.shift);
 		} else {
@@ -967,7 +1062,7 @@ impl SettingsDialog {
 	}
 	// Ctrl+PageUp / Ctrl+PageDown cycle the active tab (PageDown = next).
 	pub fn key_page(&mut self, forward: bool) {
-		if self.ctrl {
+		if self.ctrl && self.prompt.is_none() {
 			self.tab_switch(forward);
 		}
 	}
@@ -975,6 +1070,10 @@ impl SettingsDialog {
 	// dropdown, else step a focused numeric slider (spinbox feel), else walk control
 	// focus (a peer of Tab).
 	pub fn key_vertical(&mut self, forward: bool) {
+		if self.prompt.is_some() && self.emenu.is_none() {
+			self.prompt_focus_move(forward);
+			return;
+		}
 		if self.emenu.is_some() {
 			// walk the field context-menu items (wraps)
 			let n = EDIT_MENU.len() as i32;
@@ -1049,6 +1148,14 @@ impl SettingsDialog {
 	// the focused slider (by one step) or move a focused radio's selection.
 	pub fn key_horizontal(&mut self, dir: i32) {
 		self.dismiss_menu();
+		// in the prompt box, the field owns Left/Right while it has focus and the
+		// two buttons share them otherwise
+		if let Some(prompt) = self.prompt.as_ref() {
+			if prompt.focus != 0 {
+				self.prompt_focus_move(dir > 0);
+				return;
+			}
+		}
 		if self.edit.is_some() {
 			if dir < 0 {
 				self.cursor_left();
@@ -1070,10 +1177,17 @@ impl SettingsDialog {
 		match self.specs[i].kind {
 			Kind::Slider { .. } => self.step_slider(i, dir, self.shift),
 			// closed dropdown: Left/Right nudge the value without opening (combobox feel)
-			Kind::Radio(options) | Kind::Dropdown(options) => {
+			Kind::Radio(options) => {
 				let sel = self.get_radio(key) as i32;
 				let new_sel = (sel + dir).clamp(0, options.len() as i32 - 1);
 				self.set_radio(key, new_sel as usize);
+			}
+			Kind::Dropdown(_) => {
+				let n = self.dd_options(i).len() as i32;
+				if n > 0 {
+					let sel = self.get_radio(key) as i32;
+					self.set_radio(key, (sel + dir).clamp(0, n - 1) as usize);
+				}
 			}
 			_ => {}
 		}
@@ -1081,6 +1195,14 @@ impl SettingsDialog {
 	// Space: type into an active edit, activate a focused button, else activate the
 	// focused control - flip a toggle or open a text/color field for editing.
 	pub fn key_space(&mut self) -> Action {
+		if let Some(prompt) = self.prompt.as_ref() {
+			match prompt.focus {
+				1 => self.prompt_close(),
+				2 => self.prompt_accept(),
+				_ => self.char_input(' '),
+			}
+			return Action::None;
+		}
 		if self.open.is_some() {
 			self.dd_commit(); // Space picks the highlighted option
 			return Action::None;
@@ -1105,6 +1227,7 @@ impl SettingsDialog {
 			// (standard field-entry: typing replaces, arrows keep it)
 			Kind::Text | Kind::Color | Kind::Slider { .. } => self.open_edit(i, true),
 			Kind::Dropdown(_) => self.dd_open(i),
+			Kind::Buttons(_) => self.theme_action(ThemeBtn::of(part)),
 			_ => {}
 		}
 		Action::None
@@ -1112,6 +1235,9 @@ impl SettingsDialog {
 
 	// Current value of row i's editable field, as text.
 	fn edit_buf(&self, i: usize) -> String {
+		if i == PROMPT_ROW {
+			return self.edit.as_ref().map_or(String::new(), |e| e.buf.clone());
+		}
 		match self.specs[i].kind {
 			Kind::Text => self.get_text(self.specs[i].key),
 			Kind::Color => {
@@ -1125,20 +1251,9 @@ impl SettingsDialog {
 	// Open row i's field for editing; select_all puts the whole value under the
 	// selection so the next keystroke replaces it.
 	fn open_edit(&mut self, i: usize, select_all: bool) {
-		let buf = self.edit_buf(i);
-		let cur = buf.len();
-		let sel = (select_all && cur > 0).then_some(0);
-		self.edit = Some(EditState {
-			row: i,
-			buf,
-			cur,
-			sel,
-			view: 0.0,
-			view_to: 0.0,
-			caret_vis: None,
-			blink_t: 0.0,
-			last_sig: (usize::MAX, None, usize::MAX),
-		});
+		let mut edit = EditState::new(i, self.edit_buf(i));
+		edit.sel = (select_all && edit.cur > 0).then_some(0);
+		self.edit = Some(edit);
 	}
 
 	// Panel size (used to size a dedicated dialog window when the panel is laid
@@ -1329,6 +1444,7 @@ impl SettingsDialog {
 		match self.specs[i].kind {
 			Kind::Header(_) => 0,
 			Kind::Slider { .. } | Kind::Dual { .. } => 2,
+			Kind::Buttons(captions) => captions.len() as u8,
 			_ => 1,
 		}
 	}
@@ -1340,8 +1456,13 @@ impl SettingsDialog {
 			_ => self.specs[i].key,
 		}
 	}
+	// A push-button decides for itself (there is nothing to gate on); everything
+	// else asks the setting behind it.
 	fn part_disabled(&self, i: usize, p: u8) -> bool {
-		self.disabled(self.part_key(i, p))
+		match self.specs[i].kind {
+			Kind::Buttons(_) => !self.theme_btn_enabled(ThemeBtn::of(p)),
+			_ => self.disabled(self.part_key(i, p)),
+		}
 	}
 	// Flyover text for a control the environment disables rather than another
 	// setting - explains why it is inert. Only the system-font toggles today,
@@ -1448,6 +1569,7 @@ impl SettingsDialog {
 				}
 			}
 			Kind::Dropdown(_) => self.dd_box(i),
+			Kind::Buttons(_) => self.row_btn_rect(i, p),
 			Kind::Header(_) => self.track(i), // unreachable (headers aren't focusable)
 		}
 	}
@@ -1458,7 +1580,7 @@ impl SettingsDialog {
 	// couple of pixels out and only the hex field's own border stands down.
 	fn ring_is_the_box(&self, i: usize, part: u8) -> bool {
 		match self.specs[i].kind {
-			Kind::Text | Kind::Dropdown(_) => true,
+			Kind::Text | Kind::Dropdown(_) | Kind::Buttons(_) => true,
 			Kind::Slider { .. } => part == 1,
 			_ => false,
 		}
@@ -1473,6 +1595,10 @@ impl SettingsDialog {
 			Kind::Dual { keys, .. } => keys.iter().all(|&k| self.is_default(k)),
 			_ => self.is_default(self.specs[i].key),
 		}
+	}
+	// A row of push-buttons has no value, so it gets no revert arrow.
+	fn has_revert(&self, i: usize) -> bool {
+		!matches!(self.specs[i].kind, Kind::Header(_) | Kind::Buttons(_))
 	}
 	// Revert a whole row to defaults (both keys for a Dual row).
 	fn row_revert(&mut self, i: usize) {
@@ -1504,6 +1630,374 @@ impl SettingsDialog {
 			(Action::Apply, mk(x_apply), "Apply"),
 			(Action::Ok, mk(x_ok), "OK"),
 		]
+	}
+
+	// ---- themes ---------------------------------------------------------------
+
+	// One of a Buttons row's push-buttons. They start at the control column, so
+	// they line up under whatever the row above them holds.
+	fn row_btn_rect(&self, i: usize, p: u8) -> Rect {
+		let h = self.btn_h();
+		Rect {
+			x: self.control_x() + f32::from(p) * (self.row_btn_w + lay().button_gap),
+			y: self.row_y(i) + (self.row_h(&self.specs[i].kind) - h) / 2.0,
+			w: self.row_btn_w,
+			h,
+		}
+	}
+
+	// The saved theme the `theme` setting currently names, if it names one.
+	fn user_theme_index(&self) -> Option<usize> {
+		let name = self.edited.theme.trim();
+		self.edited
+			.user_themes
+			.iter()
+			.position(|t| t.name.eq_ignore_ascii_case(name))
+	}
+
+	// Has the user moved a colour away from what the current theme says? That IS
+	// the unsaved-changes test, and it needs no flag of its own: an edited colour
+	// lives on as a `colors.*` line, so the answer survives a restart for free.
+	fn theme_dirty(&self) -> bool {
+		(0..crate::theme::PALETTE_KEYS.len()).any(|i| {
+			let key = Self::palette_key(i);
+			self.get_col(key) != self.default_col(key)
+		})
+	}
+
+	// The dialog row key holding palette colour `i` (same order as PALETTE_KEYS).
+	fn palette_key(i: usize) -> Key {
+		match i {
+			0 => Key::ColBg,
+			1 => Key::ColFg,
+			2 => Key::ColCursor,
+			3 => Key::ColHighlight,
+			4 => Key::ColFocus,
+			5 => Key::ColMenuBg,
+			6 => Key::ColMenuFg,
+			7 => Key::ColDialogBg,
+			8 => Key::ColDialogFg,
+			_ => Key::ColGutter,
+		}
+	}
+
+	fn theme_btn_enabled(&self, which: ThemeBtn) -> bool {
+		match which {
+			ThemeBtn::Save => self.theme_dirty(),
+			ThemeBtn::SaveAs => true,
+			// a built-in is not the user's to rename or throw away; saving over its
+			// name first makes a copy that is
+			ThemeBtn::Rename | ThemeBtn::Delete => self.user_theme_index().is_some(),
+		}
+	}
+
+	// Take on the colours of whatever theme and mode are now selected. Switching
+	// theme therefore ADOPTS the new scheme rather than keeping tweaks made to the
+	// old one on top of it - a picker that visibly changed nothing would be worse,
+	// and the tweaks were changes to the theme being left behind.
+	fn adopt_theme(&mut self) {
+		let pal = self.theme_palette();
+		for i in 0..crate::theme::PALETTE_KEYS.len() {
+			self.set_col(Self::palette_key(i), pal.get(i));
+		}
+		self.edited.ansi = pal.ansi;
+	}
+
+	// Store the colours on screen under `name`, replacing a saved theme of that
+	// name or adding one. The variant the dialog is NOT showing is carried over
+	// from whatever `name` resolves to today, so a theme is always complete.
+	fn save_theme_as(&mut self, name: &str) {
+		let name = name.trim().to_string();
+		let dark_now = crate::theme::is_dark_mode(&self.edited.theme_mode, config::is_dark());
+		let other = crate::theme::resolve_in(
+			&self.edited.user_themes,
+			&self.edited.theme,
+			if dark_now { "light" } else { "dark" },
+			config::is_dark(),
+		);
+		let mut shown = other; // start from a full palette, then overwrite with the edits
+		for i in 0..crate::theme::PALETTE_KEYS.len() {
+			shown.set(i, self.get_col(Self::palette_key(i)));
+		}
+		shown.ansi = self.edited.ansi;
+		let (dark, light) = if dark_now {
+			(shown, other)
+		} else {
+			(other, shown)
+		};
+		let existing = self
+			.edited
+			.user_themes
+			.iter()
+			.position(|t| t.name.eq_ignore_ascii_case(&name));
+		let slug = match existing {
+			Some(k) => self.edited.user_themes[k].slug.clone(),
+			None => self.free_slug(&name),
+		};
+		let theme = crate::theme::UserTheme {
+			slug,
+			name: name.clone(),
+			dark,
+			light,
+		};
+		match existing {
+			Some(k) => self.edited.user_themes[k] = theme,
+			None => self.edited.user_themes.push(theme),
+		}
+		self.edited.theme = name;
+		// the tweaks are the theme's own colours now, so the per-colour overrides
+		// have nothing left to say and are commented back out on Apply
+		for i in 0..crate::theme::PALETTE_KEYS.len() {
+			self.revert(Self::palette_key(i));
+		}
+	}
+
+	// A config path segment for a new theme: the name reduced to something a path
+	// can hold, then made unique. The slug never changes afterwards, so a rename
+	// rewrites one line rather than moving a subtree.
+	fn free_slug(&self, name: &str) -> String {
+		let base: String = name
+			.chars()
+			.map(|c| {
+				if c.is_ascii_alphanumeric() {
+					c.to_ascii_lowercase()
+				} else {
+					'_'
+				}
+			})
+			.collect();
+		let base = base.trim_matches('_').to_string();
+		let base = if base.is_empty() {
+			"theme".to_string()
+		} else {
+			base
+		};
+		let taken = |s: &str| self.edited.user_themes.iter().any(|t| t.slug == s);
+		if !taken(&base) {
+			return base;
+		}
+		(2..=u32::from(u16::MAX))
+			.map(|n| format!("{base}{n}"))
+			.find(|s| !taken(s))
+			.unwrap_or(base)
+	}
+
+	// Why OK cannot accept the typed name, if it cannot.
+	fn name_problem(&self, which: ThemeBtn, name: &str) -> Option<String> {
+		let name = name.trim();
+		if name.is_empty() {
+			return Some("Enter a name.".into());
+		}
+		let clashes = self
+			.edited
+			.user_themes
+			.iter()
+			.any(|t| t.name.eq_ignore_ascii_case(name));
+		// Save as over a saved theme's name replaces it, which is a fair reading of
+		// the button; a rename onto another theme's name would merge two into one.
+		if which == ThemeBtn::Rename && clashes {
+			return Some("That name is already taken.".into());
+		}
+		None
+	}
+
+	// Press a theme button: Save acts at once, the other three ask first.
+	fn theme_action(&mut self, which: ThemeBtn) {
+		if !self.theme_btn_enabled(which) {
+			return;
+		}
+		self.commit_edit();
+		match which {
+			ThemeBtn::Save => {
+				let name = self.edited.theme.clone();
+				self.save_theme_as(&name);
+			}
+			ThemeBtn::SaveAs | ThemeBtn::Rename => {
+				let (title, seed) = if which == ThemeBtn::SaveAs {
+					("Enter a new theme name".to_string(), String::new())
+				} else {
+					("Rename theme".to_string(), self.edited.theme.clone())
+				};
+				// a rename opens on the existing name, selected, the way a rename
+				// field does everywhere else
+				let mut edit = EditState::new(PROMPT_ROW, seed);
+				edit.sel = (!edit.buf.is_empty()).then_some(0);
+				self.edit = Some(edit);
+				self.prompt = Some(Prompt {
+					which,
+					title,
+					field: true,
+					focus: 0,
+					warn: None,
+				});
+			}
+			ThemeBtn::Delete => {
+				self.prompt = Some(Prompt {
+					which,
+					title: format!("Really delete theme \"{}\"?", self.edited.theme),
+					field: false,
+					focus: 2,
+					warn: None,
+				});
+			}
+		}
+	}
+
+	// OK in the prompt box. A name that will not do keeps the box open and says why.
+	fn prompt_accept(&mut self) {
+		let Some(prompt) = self.prompt.as_ref() else {
+			return;
+		};
+		let which = prompt.which;
+		let typed = prompt
+			.field
+			.then(|| self.edit.as_ref().map_or(String::new(), |e| e.buf.clone()));
+		if let Some(name) = typed {
+			if let Some(warn) = self.name_problem(which, &name) {
+				if let Some(prompt) = self.prompt.as_mut() {
+					prompt.warn = Some(warn);
+				}
+				return;
+			}
+			match which {
+				ThemeBtn::Rename => self.rename_theme(&name),
+				_ => self.save_theme_as(&name),
+			}
+		} else {
+			self.delete_theme();
+		}
+		self.prompt_close();
+	}
+	fn prompt_close(&mut self) {
+		self.prompt = None;
+		self.emenu = None;
+		if self.edit.as_ref().is_some_and(|e| e.row == PROMPT_ROW) {
+			self.edit = None;
+		}
+	}
+
+	// ---- the prompt box -------------------------------------------------------
+
+	// Centred over the panel, sized to what it holds. Two buttons, right-aligned,
+	// the same way the dialog's own footer reads.
+	fn prompt_rect(&self) -> Rect {
+		let Some(prompt) = &self.prompt else {
+			return Rect {
+				x: 0.0,
+				y: 0.0,
+				w: 0.0,
+				h: 0.0,
+			};
+		};
+		let w = (self.rect.w - lay().pad * 6.0).max(240.0);
+		let row = self.line_h + lay().row_pad;
+		let mut h = lay().pad + row + lay().pad;
+		if prompt.field {
+			h += row + lay().row_pad;
+		}
+		if prompt.warn.is_some() {
+			h += row;
+		}
+		h += self.btn_h();
+		Rect {
+			x: self.rect.x + (self.rect.w - w) / 2.0,
+			y: self.rect.y + (self.rect.h - h) / 2.0,
+			w,
+			h,
+		}
+	}
+	fn prompt_field_rect(&self) -> Option<Rect> {
+		let prompt = self.prompt.as_ref()?;
+		if !prompt.field {
+			return None;
+		}
+		let r = self.prompt_rect();
+		Some(Rect {
+			x: r.x + lay().pad,
+			y: r.y + lay().pad + self.line_h + lay().row_pad,
+			w: r.w - lay().pad * 2.0,
+			h: lay().swatch.max(self.line_h + lay().row_pad),
+		})
+	}
+	// part: 1 = Cancel, 2 = OK (matching Prompt::focus).
+	fn prompt_btn_rect(&self, part: u8) -> Rect {
+		let r = self.prompt_rect();
+		let h = self.btn_h();
+		let x_ok = r.x + r.w - lay().pad - self.btn_w;
+		Rect {
+			x: if part == 2 {
+				x_ok
+			} else {
+				x_ok - lay().button_gap - self.btn_w
+			},
+			y: r.y + r.h - lay().pad - h,
+			w: self.btn_w,
+			h,
+		}
+	}
+	// Tab / arrows walk field -> Cancel -> OK, wrapping; a confirmation has no field.
+	fn prompt_focus_move(&mut self, forward: bool) {
+		let Some(prompt) = self.prompt.as_mut() else {
+			return;
+		};
+		let first = u8::from(!prompt.field);
+		let span = i32::from(3 - first);
+		let cur = i32::from(prompt.focus.max(first) - first);
+		let next = (cur + if forward { 1 } else { span - 1 }) % span;
+		prompt.focus = first + next as u8;
+	}
+	// Every click while the box is up belongs to it: its own controls act, and
+	// anything outside is swallowed rather than reaching the panel behind.
+	fn prompt_mouse_down(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) {
+		if self.emenu.is_some() {
+			return;
+		}
+		for part in 1u8..=2 {
+			if self.prompt_btn_rect(part).contains(x, y) {
+				if let Some(prompt) = self.prompt.as_mut() {
+					prompt.focus = part;
+				}
+				if part == 2 {
+					self.prompt_accept();
+				} else {
+					self.prompt_close();
+				}
+				return;
+			}
+		}
+		if let Some(field) = self.prompt_field_rect() {
+			if field.contains(x, y) {
+				if let Some(prompt) = self.prompt.as_mut() {
+					prompt.focus = 0;
+				}
+				self.field_click(PROMPT_ROW, 0, field, x, measure);
+			}
+		}
+	}
+
+	fn rename_theme(&mut self, name: &str) {
+		let name = name.trim().to_string();
+		if let Some(k) = self.user_theme_index() {
+			self.edited.user_themes[k].name.clone_from(&name);
+			self.edited.theme = name;
+		}
+	}
+
+	// Drop the saved theme. A built-in of the same name comes back out from behind
+	// it; otherwise the selection falls to the first theme left.
+	fn delete_theme(&mut self) {
+		let Some(k) = self.user_theme_index() else {
+			return;
+		};
+		let name = self.edited.user_themes[k].name.clone();
+		self.edited.user_themes.remove(k);
+		if !crate::theme::is_builtin(&name) {
+			self.edited.theme = crate::theme::all_names(&self.edited.user_themes)
+				.first()
+				.cloned()
+				.unwrap_or_else(|| name.clone());
+		}
+		self.adopt_theme();
 	}
 
 	fn get_f32(&self, key: Key) -> f32 {
@@ -1712,6 +2206,15 @@ impl SettingsDialog {
 				"none" => 0,
 				_ => 2, // pulse_vertical
 			},
+			Key::Theme => crate::theme::all_names(&self.edited.user_themes)
+				.iter()
+				.position(|n| n.eq_ignore_ascii_case(self.edited.theme.trim()))
+				.unwrap_or(0),
+			Key::ThemeMode => match self.edited.theme_mode.as_str() {
+				"light" => 1,
+				"system" => 2,
+				_ => 0, // dark
+			},
 			_ => 0,
 		}
 	}
@@ -1752,6 +2255,24 @@ impl SettingsDialog {
 					_ => "pulse_vertical",
 				}
 				.to_string();
+			}
+			// picking a theme or a mode re-reads the whole palette, so the colour
+			// rows below follow the selection instead of describing the last one
+			Key::Theme => {
+				let names = crate::theme::all_names(&self.edited.user_themes);
+				if let Some(name) = names.get(idx) {
+					self.edited.theme.clone_from(name);
+					self.adopt_theme();
+				}
+			}
+			Key::ThemeMode => {
+				self.edited.theme_mode = match idx {
+					1 => "light",
+					2 => "system",
+					_ => "dark",
+				}
+				.to_string();
+				self.adopt_theme();
 			}
 			_ => {}
 		}
@@ -1816,7 +2337,8 @@ impl SettingsDialog {
 	// The active theme's palette - the effective default for the colors.* keys
 	// (commented-out colors fall back to the theme, not to SilkTerm-dark).
 	fn theme_palette(&self) -> crate::theme::Palette {
-		crate::theme::resolve(
+		crate::theme::resolve_in(
+			&self.edited.user_themes,
 			&self.edited.theme,
 			&self.edited.theme_mode,
 			config::is_dark(),
@@ -1876,6 +2398,8 @@ impl SettingsDialog {
 			Key::LinkOpenCommand => {
 				edited.hyperlink_open_command == defaults.hyperlink_open_command
 			}
+			Key::Theme => edited.theme == defaults.theme,
+			Key::ThemeMode => edited.theme_mode == defaults.theme_mode,
 			Key::ColBg
 			| Key::ColFg
 			| Key::ColCursor
@@ -1888,7 +2412,8 @@ impl SettingsDialog {
 			| Key::ColDialogFg
 			| Key::ColScrollbarThumb
 			| Key::ColScrollbarTrough => self.get_col(key) == self.default_col(key),
-			Key::None => true,
+			// buttons and headings hold nothing to revert
+			Key::None | Key::ThemeActions => true,
 			// the sliders
 			_ => self.get_f32(key) == self.default_f32(key),
 		}
@@ -1981,6 +2506,14 @@ impl SettingsDialog {
 				self.edited.wallpaper = self.defaults.wallpaper.clone();
 				self.edited.wallpaper_raw = self.defaults.wallpaper_raw.clone();
 			}
+			Key::Theme => {
+				self.edited.theme = self.defaults.theme.clone();
+				self.adopt_theme();
+			}
+			Key::ThemeMode => {
+				self.edited.theme_mode = self.defaults.theme_mode.clone();
+				self.adopt_theme();
+			}
 			Key::FontFamily => self.edited.font_family = self.defaults.font_family.clone(),
 			Key::DefaultShell => self.edited.default_shell = self.defaults.default_shell.clone(),
 			Key::LinkOpenCommand => {
@@ -2046,6 +2579,17 @@ impl SettingsDialog {
 			_ => 1,
 		};
 		self.last_click = Some((now, x, y));
+		// the prompt box is modal over the panel: it takes the click either way
+		if self.prompt.is_some() {
+			if self.emenu.is_some() {
+				let hit = (0..EDIT_MENU.len()).find(|&k| self.em_item_rect(k).contains(x, y));
+				let cmd = hit.filter(|&k| self.em_enabled(k)).map(|k| EDIT_MENU[k].1);
+				self.emenu = None;
+				return cmd.map_or(Action::None, Action::Edit);
+			}
+			self.prompt_mouse_down(x, y, measure);
+			return Action::None;
+		}
 		// an open field context menu captures the click: an enabled item fires its
 		// command (clipboard glue in dialog.rs), anywhere else just dismisses
 		if self.emenu.is_some() {
@@ -2123,7 +2667,7 @@ impl SettingsDialog {
 				continue;
 			}
 			// revert-to-default icon (any control row; inert when already default)
-			if !matches!(self.specs[i].kind, Kind::Header(_)) && self.revert_box(i).contains(x, y) {
+			if self.has_revert(i) && self.revert_box(i).contains(x, y) {
 				if !self.row_is_default(i) {
 					self.row_revert(i);
 				}
@@ -2225,6 +2769,20 @@ impl SettingsDialog {
 						return Action::None;
 					}
 				}
+				// same press-arm / release-fire as the footer buttons, so a
+				// press-drag-off cancels and the press is visible
+				Kind::Buttons(captions) => {
+					for p in 0..captions.len() as u8 {
+						if self.row_btn_rect(i, p).contains(x, y) {
+							if self.part_disabled(i, p) {
+								continue;
+							}
+							self.focus = Some(Focus::Row(i, p));
+							self.pressed_row = Some((i, p));
+							return Action::None;
+						}
+					}
+				}
 				Kind::Header(_) => {}
 			}
 		}
@@ -2233,6 +2791,9 @@ impl SettingsDialog {
 
 	// The editable text box of row i, by kind (None for non-field rows).
 	fn field_rect(&self, i: usize) -> Option<Rect> {
+		if i == PROMPT_ROW {
+			return self.prompt_field_rect();
+		}
 		match self.specs[i].kind {
 			Kind::Slider { .. } => Some(self.valbox(i)),
 			Kind::Color => Some(self.hexbox(i)),
@@ -2551,6 +3112,11 @@ impl SettingsDialog {
 				return action;
 			}
 		}
+		if let Some((i, p)) = self.pressed_row.take() {
+			if self.row_btn_rect(i, p).contains(x, y) {
+				self.theme_action(ThemeBtn::of(p));
+			}
+		}
 		Action::None
 	}
 
@@ -2598,6 +3164,16 @@ impl SettingsDialog {
 		let sel_len = edit.sel_range().map_or(0, |(a, b)| b - a);
 		// where the char would land once any selection is gone
 		let landing = edit.sel_range().map_or(edit.cur, |(a, _)| a);
+		if edit.row == PROMPT_ROW {
+			// a theme name: any ordinary character, within a sane length
+			if c.is_control() || edit.buf.len() - sel_len >= 64 {
+				return false;
+			}
+			edit.remove_selection();
+			edit.buf.insert(edit.cur, c);
+			edit.cur += c.len_utf8();
+			return true;
+		}
 		let ok = match self.specs[edit.row].kind {
 			Kind::Color => {
 				(c == '#' || c.is_ascii_hexdigit())
@@ -2771,6 +3347,14 @@ impl SettingsDialog {
 		let Some((i, buf)) = self.edit.as_ref().map(|edit| (edit.row, edit.buf.clone())) else {
 			return;
 		};
+		if i == PROMPT_ROW {
+			// nothing to apply yet - but the name just changed, so whatever OK
+			// last objected to may no longer be true
+			if let Some(prompt) = self.prompt.as_mut() {
+				prompt.warn = None;
+			}
+			return;
+		}
 		match self.specs[i].kind {
 			Kind::Color => {
 				if let Some(color) = config::parse_hex(&buf) {
@@ -2801,6 +3385,9 @@ impl SettingsDialog {
 		// Esc closes the field context menu / dropdown popup first, not the dialog
 		if self.emenu.take().is_some() || self.open.take().is_some() {
 			Action::None
+		} else if self.prompt.is_some() {
+			self.prompt_close(); // then the prompt box, still not the dialog
+			Action::None
 		} else if self.edit.is_some() {
 			self.edit = None;
 			Action::None
@@ -2820,6 +3407,15 @@ impl SettingsDialog {
 			self.emenu = None;
 			return cmd.map_or(Action::None, Action::Edit);
 		}
+		// Enter in the prompt box is its OK, unless Cancel is the focused button
+		if let Some(prompt) = self.prompt.as_ref() {
+			if prompt.focus == 1 {
+				self.prompt_close();
+			} else {
+				self.prompt_accept();
+			}
+			return Action::None;
+		}
 		if self.open.is_some() {
 			self.dd_commit();
 			Action::None
@@ -2828,6 +3424,14 @@ impl SettingsDialog {
 			Action::None
 		} else if let Some(Focus::Button(b)) = self.focus {
 			self.buttons()[b].0 // a focused footer button
+		} else if let Some(Focus::Row(i, p)) = self.focus {
+			// a focused push-button is what Enter presses, not the dialog's OK
+			if matches!(self.specs[i].kind, Kind::Buttons(_)) {
+				self.theme_action(ThemeBtn::of(p));
+				Action::None
+			} else {
+				Action::Ok
+			}
 		} else {
 			Action::Ok
 		}
@@ -3147,6 +3751,23 @@ impl SettingsDialog {
 						);
 					}
 				}
+				// A pressed button fills with the highlight, the same click feedback
+				// the footer gives. Its outline is left to the focus ring below,
+				// which lands exactly on this box rather than outside it.
+				Kind::Buttons(captions) => {
+					for p in 0..captions.len() as u8 {
+						let r = self.row_btn_rect(i, p);
+						let fill = if self.pressed_row == Some((i, p)) {
+							dlg().btn_hl
+						} else {
+							dlg().btn_bg
+						};
+						out.push(q(r.x, r.y, r.w, r.h, fill));
+						if !self.ring_on(i, p) {
+							border(&mut out, r, 1.0, dlg().panel_border);
+						}
+					}
+				}
 				Kind::Header(_) => {
 					// faint rule near the bottom of the (tall) heading row, leaving a
 					// clear gap below the heading text above it
@@ -3277,16 +3898,18 @@ impl SettingsDialog {
 				..mk(self.specs[i].label.into(), self.label_x(i), ty)
 			});
 			// revert-to-default icon: bright + clickable when off-default, dim when at it
-			let revert_rect = self.revert_box(i);
-			out.push(TextItem {
-				color: if self.row_is_default(i) {
-					dlg().dim
-				} else {
-					dlg().handle
-				},
-				clip: Some(vp),
-				..mk(ui().icons.revert.into(), revert_rect.x + 4.0, ty)
-			});
+			if self.has_revert(i) {
+				let revert_rect = self.revert_box(i);
+				out.push(TextItem {
+					color: if self.row_is_default(i) {
+						dlg().dim
+					} else {
+						dlg().handle
+					},
+					clip: Some(vp),
+					..mk(ui().icons.revert.into(), revert_rect.x + 4.0, ty)
+				});
+			}
 			// horizontal view offset of row i's field while it's being edited (the
 			// text slides left as the view scrolls; the box clip crops the rest)
 			let view = |i: usize| -> f32 {
@@ -3378,16 +4001,17 @@ impl SettingsDialog {
 						});
 					}
 				}
-				Kind::Dropdown(options) => {
+				Kind::Dropdown(_) => {
 					let off = self.disabled(self.specs[i].key);
 					let color = if off { dlg().dim } else { dlg().text };
 					let box_r = self.dd_box(i);
 					let sel = self.get_radio(self.specs[i].key);
-					let label = options.get(sel).copied().unwrap_or("");
+					let options = self.dd_options(i);
+					let label = options.get(sel).cloned().unwrap_or_default();
 					out.push(TextItem {
 						color,
 						clip: Some(intersect(box_r)),
-						..mk(label.into(), box_r.x + 8.0, row_text_y(box_r.y, box_r.h))
+						..mk(label, box_r.x + 8.0, row_text_y(box_r.y, box_r.h))
 					});
 					out.push(TextItem {
 						color,
@@ -3398,6 +4022,22 @@ impl SettingsDialog {
 							row_text_y(box_r.y, box_r.h),
 						)
 					});
+				}
+				Kind::Buttons(captions) => {
+					for (p, caption) in captions.iter().enumerate() {
+						let r = self.row_btn_rect(i, p as u8);
+						let color = if self.part_disabled(i, p as u8) {
+							dlg().dim
+						} else {
+							dlg().text
+						};
+						let lx = r.x + (r.w - measure(caption)).max(0.0) / 2.0;
+						out.push(TextItem {
+							color,
+							clip: Some(vp),
+							..mk((*caption).into(), lx, row_text_y(r.y, r.h))
+						});
+					}
 				}
 				Kind::Toggle | Kind::Header(_) => {}
 			}
@@ -3474,19 +4114,120 @@ impl SettingsDialog {
 			if k == sel {
 				texts.push(mk(ui().icons.dropdown_check.into(), r.x + r.w - 18.0, ty));
 			}
-			texts.push(mk((*opt).into(), r.x + 10.0, ty));
+			texts.push(mk(opt.clone(), r.x + 10.0, ty));
+		}
+		(rects, texts)
+	}
+
+	// The name / confirm box, drawn over everything the panel just drew. Its own
+	// field caret rides the same edit state the rows use, so it blinks and eases
+	// the same way.
+	fn prompt_overlay(
+		&self,
+		measure: &mut impl FnMut(&str) -> f32,
+	) -> (Vec<RectInstance>, Vec<TextItem>) {
+		let mut rects = Vec::new();
+		let mut texts = Vec::new();
+		let Some(prompt) = &self.prompt else {
+			return (rects, texts);
+		};
+		let q = |x: f32, y: f32, w: f32, h: f32, color: [u8; 3]| RectInstance {
+			pos: [x, y],
+			size: [w, h],
+			color: config::srgb_f32(color),
+			..Default::default()
+		};
+		let border = |out: &mut Vec<RectInstance>, r: Rect, t: f32, color: [u8; 3]| {
+			out.push(q(r.x - t, r.y - t, r.w + 2.0 * t, t, color));
+			out.push(q(r.x - t, r.y + r.h, r.w + 2.0 * t, t, color));
+			out.push(q(r.x - t, r.y, t, r.h, color));
+			out.push(q(r.x + r.w, r.y, t, r.h, color));
+		};
+		let mk = |text: String, x: f32, y: f32| TextItem {
+			text,
+			x,
+			y,
+			color: dlg().text,
+			clip: None,
+			bold: false,
+			scale: 1.0,
+		};
+		let row_text_y = |y: f32, h: f32| y + (h - self.line_h) / 2.0;
+		// dim the panel behind, so it is plain that it is not taking input
+		rects.push(RectInstance {
+			pos: [self.rect.x, self.rect.y],
+			size: [self.rect.w, self.rect.h],
+			color: [0.0, 0.0, 0.0, 0.45],
+			..Default::default()
+		});
+		let box_r = self.prompt_rect();
+		rects.push(q(box_r.x, box_r.y, box_r.w, box_r.h, dlg().panel_bg));
+		border(&mut rects, box_r, 1.0, dlg().panel_border);
+		texts.push(mk(
+			prompt.title.clone(),
+			box_r.x + lay().pad,
+			box_r.y + lay().pad + (self.line_h + lay().row_pad - self.line_h) / 2.0,
+		));
+		if let Some(field) = self.prompt_field_rect() {
+			rects.push(q(field.x, field.y, field.w, field.h, dlg().field_bg));
+			if prompt.focus == 0 {
+				border(&mut rects, field, 1.0, dlg().focus_out);
+			} else {
+				border(&mut rects, field, 1.0, dlg().panel_border);
+			}
+			self.caret_quad(&mut rects, field, measure);
+			let view = self.edit.as_ref().map_or(0.0, |e| e.view);
+			texts.push(TextItem {
+				clip: Some(field),
+				..mk(
+					self.edit.as_ref().map_or(String::new(), |e| e.buf.clone()),
+					field.x + lay().field_pad - view,
+					row_text_y(field.y, field.h),
+				)
+			});
+		}
+		if let Some(warn) = &prompt.warn {
+			let y = self.prompt_btn_rect(2).y - (self.line_h + lay().row_pad);
+			texts.push(TextItem {
+				color: dlg().btn_hl,
+				..mk(warn.clone(), box_r.x + lay().pad, y)
+			});
+		}
+		for (part, caption) in [(1u8, "Cancel"), (2u8, "OK")] {
+			let r = self.prompt_btn_rect(part);
+			rects.push(q(r.x, r.y, r.w, r.h, dlg().btn_bg));
+			let ring = prompt.focus == part;
+			// OK is the default here too, so it keeps the highlight outline when
+			// the keyboard is elsewhere
+			let outline = if ring {
+				dlg().focus_out
+			} else if part == 2 {
+				dlg().btn_hl
+			} else {
+				dlg().panel_border
+			};
+			border(&mut rects, r, if ring { 2.0 } else { 1.0 }, outline);
+			let lx = r.x + (r.w - measure(caption)).max(0.0) / 2.0;
+			texts.push(mk(caption.into(), lx, row_text_y(r.y, r.h)));
 		}
 		(rects, texts)
 	}
 
 	// True when anything needs the second (on-top) render pass.
 	pub fn overlay_open(&self) -> bool {
-		self.open.is_some() || self.emenu.is_some()
+		self.open.is_some() || self.emenu.is_some() || self.prompt.is_some()
 	}
 	// Everything for the second pass: the open dropdown popup and/or the field
 	// context menu (only one is ever open at a time in practice).
-	fn overlay_dip(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
+	fn overlay_dip(
+		&self,
+		measure: &mut impl FnMut(&str) -> f32,
+	) -> (Vec<RectInstance>, Vec<TextItem>) {
 		let (mut rects, mut texts) = self.dropdown_overlay();
+		// the prompt box sits over everything, including an open popup
+		let (prompt_rects, prompt_texts) = self.prompt_overlay(measure);
+		rects.extend(prompt_rects);
+		texts.extend(prompt_texts);
 		if self.emenu.is_none() {
 			return (rects, texts);
 		}
@@ -3530,7 +4271,7 @@ impl SettingsDialog {
 // Widest field label, button caption, and per-tab title widths at the current
 // UI font, so the dialog sizes to the real text (a wide serif or a big desktop
 // size never truncates).
-pub fn chrome_widths(text: &mut crate::text::TextCtx) -> (f32, f32, Vec<f32>) {
+pub fn chrome_widths(text: &mut crate::text::TextCtx) -> (f32, f32, f32, Vec<f32>) {
 	let attrs = crate::text::ui_attrs();
 	// an indented label starts further right, so the column has to clear the
 	// deepest one plus its own indent - not merely the longest string
@@ -3547,11 +4288,24 @@ pub fn chrome_widths(text: &mut crate::text::TextCtx) -> (f32, f32, Vec<f32>) {
 		.map(|caption| text.measure_ui_text(caption, &attrs))
 		.fold(0.0f32, f32::max)
 		+ lay().button_pad;
+	// the buttons that sit on a row are measured apart from the footer's, so a
+	// long caption there widens its own row instead of every button in the dialog
+	let row_btn_w = ui()
+		.specs
+		.iter()
+		.filter_map(|spec| match spec.kind {
+			Kind::Buttons(captions) => Some(captions),
+			_ => None,
+		})
+		.flatten()
+		.map(|caption| text.measure_ui_text(caption, &attrs))
+		.fold(0.0f32, f32::max)
+		+ lay().button_pad;
 	let tab_ws = tab_titles()
 		.iter()
 		.map(|title| text.measure_ui_text(title, &attrs) + lay().tab_pad)
 		.collect();
-	(label_w, btn_w, tab_ws)
+	(label_w, btn_w, row_btn_w, tab_ws)
 }
 
 // Returns true if `old` and `new` differ in any field that needs a text-context
@@ -3603,6 +4357,7 @@ mod tests {
 			18.0 * scale,
 			170.0 * scale,
 			80.0 * scale,
+			90.0 * scale,
 			vec![90.0 * scale; tab_titles().len()],
 			max_h * scale,
 			scale,
@@ -3767,11 +4522,17 @@ mod tests {
 				let was = d.get_toggle(key);
 				d.set_toggle(key, !was);
 			}
-			super::Kind::Radio(opts) | super::Kind::Dropdown(opts) => {
-				let next = (d.get_radio(key) + 1) % opts.len();
-				d.set_radio(key, next);
+			super::Kind::Radio(_) | super::Kind::Dropdown(_) => {
+				let n = d.dd_options(i).len().max(match d.specs[i].kind {
+					super::Kind::Radio(opts) => opts.len(),
+					_ => 0,
+				});
+				if n > 1 {
+					let next = (d.get_radio(key) + 1) % n;
+					d.set_radio(key, next);
+				}
 			}
-			super::Kind::Header(_) => {}
+			super::Kind::Buttons(_) | super::Kind::Header(_) => {}
 		}
 	}
 	// What the row shows, whichever kind it is.
@@ -3782,7 +4543,7 @@ mod tests {
 			super::Kind::Text => d.get_text(key),
 			super::Kind::Toggle | super::Kind::Dual { .. } => format!("{}", d.get_toggle(key)),
 			super::Kind::Radio(_) | super::Kind::Dropdown(_) => format!("{}", d.get_radio(key)),
-			super::Kind::Header(_) => String::new(),
+			super::Kind::Buttons(_) | super::Kind::Header(_) => String::new(),
 		}
 	}
 
@@ -3806,7 +4567,8 @@ mod tests {
 		let mut checked = 0;
 		for i in 0..d.specs.len() {
 			let keys: Vec<Key> = match d.specs[i].kind {
-				super::Kind::Header(_) => vec![],
+				// a heading and a row of push-buttons both store nothing
+				super::Kind::Header(_) | super::Kind::Buttons(_) => vec![],
 				super::Kind::Dual { keys, .. } => keys.to_vec(),
 				_ => vec![d.specs[i].key],
 			};
@@ -4071,6 +4833,7 @@ mod tests {
 			38.0,
 			340.0,
 			160.0,
+			180.0,
 			vec![180.0; tab_titles().len()],
 			4000.0,
 			1.0,
@@ -4844,5 +5607,246 @@ mod tests {
 		let e = d.edit.as_ref().unwrap();
 		assert!(e.blink_t < 0.1);
 		assert_eq!(e.caret_alpha(), 1.0);
+	}
+
+	// ---- themes ---------------------------------------------------------------
+
+	fn theme_row(d: &SettingsDialog) -> usize {
+		d.specs
+			.iter()
+			.position(|s| matches!(s.kind, super::Kind::Buttons(_)))
+			.expect("the theme actions row")
+	}
+	// Put the dialog on a known theme with no colour overrides on top.
+	fn on_theme(name: &str) -> SettingsDialog {
+		let mut d = mk_dialog(4000.0);
+		d.edited = config::Settings::default();
+		d.edited.theme = name.to_string();
+		d.adopt_theme();
+		d.orig = d.edited.clone();
+		d
+	}
+
+	// Nothing anywhere records "this theme has unsaved changes" - a colour that
+	// disagrees with the theme IS the record, and it lives in the config file, so
+	// the answer is the same after a restart.
+	#[test]
+	fn an_edited_colour_is_what_makes_the_theme_dirty() {
+		let mut d = on_theme("Matrix");
+		let row = theme_row(&d);
+		assert!(!d.theme_dirty());
+		assert!(!d.theme_btn_enabled(super::ThemeBtn::Save));
+		assert!(d.part_disabled(row, 0), "Save starts greyed");
+
+		d.set_col(Key::ColFg, [1, 2, 3]);
+		assert!(d.theme_dirty());
+		assert!(!d.part_disabled(row, 0), "Save wakes up on an edit");
+		// Save as is always available; the other two need a theme of the user's own
+		assert!(!d.part_disabled(row, 1));
+		assert!(d.part_disabled(row, 2), "Rename needs a saved theme");
+		assert!(d.part_disabled(row, 3), "Delete needs a saved theme");
+	}
+
+	// Saving folds the edits into the theme itself, so the per-colour overrides
+	// have nothing left to say and are queued to be commented back out.
+	#[test]
+	fn saving_folds_the_edits_into_the_theme() {
+		let mut d = on_theme("Matrix");
+		d.set_col(Key::ColFg, [1, 2, 3]);
+		d.save_theme_as("Mine");
+
+		assert_eq!(d.edited.theme, "Mine");
+		let saved = crate::theme::find_user(&d.edited.user_themes, "Mine").expect("saved");
+		assert_eq!(saved.dark.fg, [1, 2, 3]);
+		// the mode the dialog was NOT showing still comes out complete
+		assert_eq!(
+			saved.light.fg,
+			crate::theme::resolve("Matrix", "light", true).fg
+		);
+		// and the ANSI set came along, so the theme stands on its own
+		assert_eq!(
+			saved.dark.ansi,
+			crate::theme::resolve("Matrix", "dark", true).ansi
+		);
+
+		assert!(!d.theme_dirty(), "the edit is the theme's own colour now");
+		assert!(
+			d.reverted.contains(&"colors.foreground"),
+			"the override is queued for removal"
+		);
+	}
+
+	// A theme may take a built-in's name and stand in for it; deleting it puts the
+	// built-in back rather than leaving the name pointing at nothing.
+	#[test]
+	fn a_saved_theme_shadows_a_builtin_and_delete_uncovers_it() {
+		let mut d = on_theme("Matrix");
+		let builtin_fg = d.get_col(Key::ColFg);
+		d.set_col(Key::ColFg, [9, 9, 9]);
+		d.save_theme_as("Matrix");
+		assert_eq!(d.get_col(Key::ColFg), [9, 9, 9]);
+		// it is the user's theme now, so it can be renamed or thrown away
+		let row = theme_row(&d);
+		assert!(!d.part_disabled(row, 2) && !d.part_disabled(row, 3));
+		// the name is listed once, not twice
+		let names = crate::theme::all_names(&d.edited.user_themes);
+		assert_eq!(names.iter().filter(|n| *n == "Matrix").count(), 1);
+
+		d.delete_theme();
+		assert_eq!(d.edited.theme, "Matrix");
+		assert_eq!(d.get_col(Key::ColFg), builtin_fg);
+	}
+
+	// Picking a theme takes on its colours. Keeping the old theme's tweaks would
+	// make the picker look broken on every colour that had been edited.
+	#[test]
+	fn picking_a_theme_adopts_its_colours() {
+		let mut d = on_theme("SilkTerm");
+		d.set_col(Key::ColFg, [1, 2, 3]);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::Theme)
+			.expect("the theme row");
+		let names = d.dd_options(i);
+		let k = names.iter().position(|n| n == "Matrix").expect("Matrix");
+		d.set_radio(Key::Theme, k);
+
+		assert_eq!(d.edited.theme, "Matrix");
+		assert_eq!(
+			d.get_col(Key::ColFg),
+			crate::theme::resolve("Matrix", "dark", true).fg
+		);
+		assert!(!d.theme_dirty(), "a fresh theme starts unmodified");
+	}
+
+	// Renaming moves the name and the selection together; the slug behind it does
+	// not move, so the config subtree stays where it is.
+	#[test]
+	fn a_rename_moves_the_name_and_the_selection() {
+		let mut d = on_theme("Matrix");
+		d.set_col(Key::ColFg, [4, 5, 6]);
+		d.save_theme_as("Mine");
+		let slug = d.edited.user_themes[0].slug.clone();
+
+		d.rename_theme("Ours");
+		assert_eq!(d.edited.theme, "Ours");
+		assert_eq!(d.edited.user_themes[0].slug, slug);
+		assert_eq!(d.get_col(Key::ColFg), [4, 5, 6]);
+
+		// two themes cannot share a name, or one would swallow the other
+		d.save_theme_as("Theirs");
+		assert_eq!(d.edited.user_themes.len(), 2);
+		assert!(d.name_problem(super::ThemeBtn::Rename, "ours").is_some());
+		assert!(d.name_problem(super::ThemeBtn::Rename, "  ").is_some());
+		assert!(d.name_problem(super::ThemeBtn::Rename, "Third").is_none());
+		// Save as over an existing name replaces it, which is a fair reading
+		assert!(d.name_problem(super::ThemeBtn::SaveAs, "ours").is_none());
+	}
+
+	// The prompt box takes the keyboard while it is up, and Esc leaves the theme
+	// exactly as it was.
+	#[test]
+	fn the_prompt_box_owns_the_keyboard_until_it_closes() {
+		let mut d = on_theme("Matrix");
+		d.set_col(Key::ColFg, [7, 7, 7]);
+		d.theme_action(super::ThemeBtn::SaveAs);
+		assert!(d.prompt.is_some() && d.edit.is_some());
+
+		for c in "My Theme".chars() {
+			d.char_input(c);
+		}
+		// Esc closes the box, not the dialog, and saves nothing
+		assert_eq!(d.key_escape(), super::Action::None);
+		assert!(d.prompt.is_none() && d.edit.is_none());
+		assert!(d.edited.user_themes.is_empty());
+
+		// again, this time through OK
+		d.theme_action(super::ThemeBtn::SaveAs);
+		for c in "My Theme".chars() {
+			d.char_input(c);
+		}
+		assert_eq!(d.key_enter(), super::Action::None);
+		assert!(d.prompt.is_none());
+		assert_eq!(d.edited.theme, "My Theme");
+		assert_eq!(
+			crate::theme::find_user(&d.edited.user_themes, "My Theme")
+				.unwrap()
+				.dark
+				.fg,
+			[7, 7, 7]
+		);
+	}
+
+	// A name OK cannot take keeps the box open and says why, instead of closing
+	// and quietly doing nothing.
+	#[test]
+	fn a_name_it_cannot_take_keeps_the_box_open() {
+		let mut d = on_theme("Matrix");
+		d.save_theme_as("Mine");
+		d.theme_action(super::ThemeBtn::Rename);
+		d.select_all();
+		for c in "   ".chars() {
+			d.char_input(c);
+		}
+		d.prompt_accept();
+		assert!(d.prompt.is_some(), "still asking");
+		assert!(d.prompt.as_ref().unwrap().warn.is_some(), "and saying why");
+		// typing again clears the complaint
+		d.char_input('x');
+		assert!(d.prompt.as_ref().unwrap().warn.is_none());
+	}
+
+	// A saved theme has to come back after a restart, or saving it meant nothing.
+	#[test]
+	fn a_saved_theme_survives_a_relaunch() {
+		let _guard = config::test_config_lock();
+		let _ = config::settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_theme_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let path = dir.join("config.shcl");
+		let _ = std::fs::write(&path, "");
+		config::set_config_override(path.clone());
+		let base = config::reload_from_disk();
+
+		let mut d = mk_dialog(4000.0);
+		d.orig = base.clone();
+		d.edited = base.clone();
+		d.edited.theme = "Matrix".into();
+		d.adopt_theme();
+		d.set_col(Key::ColFg, [0x12, 0x34, 0x56]);
+		d.save_theme_as("Saved One");
+		assert!(config::persist(&base, &d.edited));
+
+		let back = config::reload_from_disk();
+		let saved = crate::theme::find_user(&back.user_themes, "Saved One").expect("on disk");
+		assert_eq!(saved.dark.fg, [0x12, 0x34, 0x56]);
+		assert_eq!(
+			saved.dark.ansi,
+			crate::theme::resolve("Matrix", "dark", true).ansi
+		);
+		assert_eq!(back.theme, "Saved One");
+		assert_eq!(
+			back.fg,
+			[0x12, 0x34, 0x56],
+			"and it is what the terminal uses"
+		);
+
+		// deleting it takes the whole subtree with it
+		let mut d2 = mk_dialog(4000.0);
+		d2.orig = back.clone();
+		d2.edited = back.clone();
+		d2.delete_theme();
+		assert!(config::persist(&back, &d2.edited));
+		let after = config::reload_from_disk();
+		assert!(after.user_themes.is_empty(), "gone from the file");
+		assert!(
+			!std::fs::read_to_string(&path)
+				.unwrap()
+				.contains("Saved One"),
+			"and nothing of it is left behind"
+		);
+
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 }

@@ -65,6 +65,7 @@ keys![
 	ColScrollbarThumb, ColScrollbarTrough, ColBg, ColFg, ColCursor,
 	ColHighlight, ColFocus, ColGutter,
 	ColMenuBg, ColMenuFg, ColDialogBg, ColDialogFg,
+	Theme, ThemeMode, ThemeActions,
 ];
 
 pub enum Kind {
@@ -84,7 +85,10 @@ pub enum Kind {
 	},
 	Radio(&'static [&'static str]), // pick one of N mutually-exclusive options
 	Dropdown(&'static [&'static str]), // one-of-N via a collapsed box + popup list
-	Header(&'static str),           // a section heading, no control
+	// a row of push-buttons that act on the row above rather than holding a value
+	// (Save / Save as / Rename / Delete); each is its own focus stop
+	Buttons(&'static [&'static str]),
+	Header(&'static str), // a section heading, no control
 }
 
 pub struct Spec {
@@ -349,7 +353,9 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 			"color" => Kind::Color,
 			"text" => Kind::Text,
 			"radio" | "dropdown" => {
-				if options.len() < 2 {
+				// A dropdown whose list is only known at run time (the themes) has
+				// no options here; the code fills it, so an empty list is allowed.
+				if options.len() < 2 && !(kind_text == "dropdown" && options.is_empty()) {
 					problems.push(format!("rows.{name}: {kind_text} needs options"));
 				}
 				if kind_text == "radio" {
@@ -357,6 +363,12 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 				} else {
 					Kind::Dropdown(options)
 				}
+			}
+			"buttons" => {
+				if options.is_empty() {
+					problems.push(format!("rows.{name}: buttons needs captions"));
+				}
+				Kind::Buttons(options)
 			}
 			"slider" => {
 				let range = doc.get_float_array(&at("range")).unwrap_or_default();
@@ -396,8 +408,8 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 				continue;
 			}
 		};
-		// a pair row already filed its two parts above
-		if key != Key::None && !matches!(kind, Kind::Dual { .. }) {
+		// a pair row already filed its two parts above; a buttons row holds no value
+		if key != Key::None && !matches!(kind, Kind::Dual { .. } | Kind::Buttons(_)) {
 			match paths.len() {
 				1 => settings.push((key, keep_all(paths))),
 				_ => problems.push(format!("rows.{name}: needs exactly one setting path")),
@@ -474,10 +486,16 @@ mod tests {
 			Err(problems) => panic!("settings_ui.shcl:\n  {}", problems.join("\n  ")),
 		};
 		let mut declared: Vec<Key> = Vec::new();
+		// a buttons row is on the roll call but stores nothing, so it has no path
+		let mut valueless: Vec<Key> = Vec::new();
 		for spec in &ui.specs {
 			match spec.kind {
 				Kind::Dual { keys, .. } => declared.extend(keys),
 				Kind::Header(_) => {}
+				Kind::Buttons(_) => {
+					declared.push(spec.key);
+					valueless.push(spec.key);
+				}
 				_ => declared.push(spec.key),
 			}
 		}
@@ -487,7 +505,7 @@ mod tests {
 			.map(|k| k.name())
 			.collect();
 		assert!(missing.is_empty(), "no dialog row for: {missing:?}");
-		for key in &declared {
+		for key in declared.iter().filter(|k| !valueless.contains(k)) {
 			assert!(
 				!ui.settings_of(*key).is_empty(),
 				"{} has no config path",
