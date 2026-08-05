@@ -1330,6 +1330,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Two settings under a new Hyperlinks group on the Window tab: the feature on or off, and a program to open links with (blank = the desktop's own).
 	- Verified on screen: the underline covers exactly the URL and nothing either side of it; hovering ordinary text or another line draws none; Ctrl+click and both menu items hand over the exact URL; a plain click, a Ctrl+click off a link, and a press dragged off all hand over nothing; with the feature off there is no underline, no menu items and no opening.
 	- Found and fixed alongside: a right-click menu too tall to fit opens against the top of the window, where the menu bar was taking the clicks meant for its first items.
+	- The underline is drawn above the text scrim, alongside the cursor. Below it, the scrim's halo shaded the rule in the pattern of the letters sitting on it, so it came out streaked rather than solid - only visible with the scrim on, since the halo takes the background colour and shows only where something brighter is drawn under it. The rule is now one flat colour end to end.
 	- 🔘 UAT
 
 - ✅ Config language moved to SHCL 1.1. (20260804)
