@@ -196,7 +196,7 @@ What makes this hard:
 
 - All of it is sub-line and per-frame, riding the same fractional renderer and scrim pass, under a redraw loop that cannot trust X11/Compiz redraw requests.
 
-It is opt-in (`smooth_scroll_apps`, default off). The strip retains roughly a screenful of scrolled-off rows, so even a fast wheel burst stays filled. The ease's lag ramp bounds how far the content trails reality.
+It is switchable (`smooth_scroll_apps`, on by default). The strip retains roughly a screenful of scrolled-off rows, so even a fast wheel burst stays filled. The ease's lag ramp bounds how far the content trails reality.
 
 ### Text readability scrim
 
