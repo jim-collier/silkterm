@@ -501,6 +501,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - Bugs
 
+- ✅ The demo recording had stopped reflecting the app, in three ways at once - UAT.
+	- The recording pinned a halo and an outline that no build had used for weeks, so it advertised a look that had been replaced. Those values are no longer pinned; the recording now takes whatever ships, and the scroll feel already worked that way.
+	- Every settings change made during a scene had quietly stopped happening. The scenes rewrite a setting and reload, matching the line by name - but the app rewrites that file into nested sections the first time it saves, so the name stopped matching anything partway through the run. The cursor never changed shape and the split-screen scene never stilled its cursors. Lines are now found by their full setting path, and a change that finds no line stops the recording instead of passing silently.
+	- The wallpaper was on screen from the first frame, so the scene that introduces it changed nothing. Rotation adopts a wallpaper folder sitting beside the configuration on its own, and the folder holding that very image is one. Rotation is now off for the recording, which still leaves the scene free to name the file outright.
+	- Recorded again at 50 frames a second: 63 seconds, 8.0 MiB.
+
 - ✅ Settings takes far too long to open. - UAT.
 	- From the keypress to a usable window: 310 ms, and the same again on every reopen, because nothing was kept between them.
 	- Nearly all of it was building a graphics context: the dialogs cannot borrow the terminal's, so each one built its own instance, adapter and device on the click - 230 ms of the 310. That is now built once on a worker thread as soon as the terminal is on screen, and then kept, so no dialog open pays for it.
