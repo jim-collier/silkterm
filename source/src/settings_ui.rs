@@ -12,6 +12,15 @@
 //! dialog stays well under screen height; if a tab still doesn't fit (huge UI
 //! font / short screen) the rows region scrolls (wheel + draggable thumb) and
 //! the window height is capped instead of clipping the buttons.
+//!
+//! Units: every measurement below is a DIP - a CSS pixel, i.e. 1/96 inch - and
+//! the whole layout is solved in that space. The window's scale factor is
+//! applied only at the boundary: pointer positions, measured text widths, the
+//! UI line height and the height cap divide down on the way in; the window
+//! size, the scissor viewport, quads and text positions multiply back out on
+//! the way to the renderer. So the dialog keeps its proportions at any DPI
+//! rather than shrinking as the scale factor grows, and there is exactly one
+//! set of numbers to reason about. At scale 1 nothing changes.
 
 use crate::config::{self, Settings};
 use crate::gfx::RectInstance;
@@ -960,6 +969,9 @@ pub struct SettingsDialog {
 	line_h: f32,
 	label_w: f32,
 	btn_w: f32,
+	// DIP -> physical pixel factor for the window this dialog lives in. Every
+	// measurement in here is a DIP; this is applied only at the boundary.
+	scale: f32,
 }
 
 impl SettingsDialog {
@@ -998,6 +1010,9 @@ impl SettingsDialog {
 	// are the measured widths in that font (see chrome_widths) so nothing
 	// truncates. `max_h` caps the window height (short screens / huge fonts);
 	// a tab that doesn't fit scrolls instead of clipping the buttons.
+	// `scale` is the window's DIP -> physical factor; every other argument arrives
+	// in physical pixels and is converted on the way in (see the module note on
+	// the DIP boundary).
 	pub fn new(
 		screen_w: f32,
 		screen_h: f32,
@@ -1006,7 +1021,17 @@ impl SettingsDialog {
 		btn_w: f32,
 		tab_ws: Vec<f32>,
 		max_h: f32,
+		scale: f32,
 	) -> Self {
+		let scale = if scale.is_finite() && scale > 0.0 {
+			scale
+		} else {
+			1.0
+		};
+		let (screen_w, screen_h) = (screen_w / scale, screen_h / scale);
+		let (line_h, max_h) = (line_h / scale, max_h / scale);
+		let (label_w, btn_w) = (label_w / scale, btn_w / scale);
+		let tab_ws: Vec<f32> = tab_ws.into_iter().map(|w| w / scale).collect();
 		let specs = fields();
 		let mut cur_tab = 0usize;
 		let spec_tab: Vec<usize> = specs
@@ -1030,7 +1055,7 @@ impl SettingsDialog {
 			+ TAB_GAP * tab_ws.len().saturating_sub(1) as f32;
 		// widest radio row (scaled pitch at HiDPI / large fonts) must fit the panel,
 		// or the last option overflows the right edge
-		let scale = (line_h / BASE_LH).max(1.0);
+		let font_scale = (line_h / BASE_LH).max(1.0);
 		let max_radio_opts = specs
 			.iter()
 			.filter_map(|spec| match spec.kind {
@@ -1039,11 +1064,11 @@ impl SettingsDialog {
 			})
 			.max()
 			.unwrap_or(0) as f32;
-		let radio_w = PAD + label_w + max_radio_opts * RADIO_PITCH * scale + PAD;
+		let radio_w = PAD + label_w + max_radio_opts * RADIO_PITCH * font_scale + PAD;
 		// a dropdown's collapsed box (+ revert column) must fit too
 		let has_dropdown = specs.iter().any(|s| matches!(s.kind, Kind::Dropdown(_)));
 		let dd_w = if has_dropdown {
-			PAD + label_w + DD_W * scale + 6.0 + REVERT_W + PAD
+			PAD + label_w + DD_W * font_scale + 6.0 + REVERT_W + PAD
 		} else {
 			0.0
 		};
@@ -1088,7 +1113,106 @@ impl SettingsDialog {
 			line_h,
 			label_w,
 			btn_w,
+			scale,
 		}
+	}
+
+	// DIP <-> physical pixels. Coordinates and sizes cross the boundary in the
+	// public methods only: everything below them is DIP.
+	fn to_dip(&self, px: f32) -> f32 {
+		px / self.scale
+	}
+	fn to_px(&self, dip: f32) -> f32 {
+		dip * self.scale
+	}
+	fn rect_px(&self, r: Rect) -> Rect {
+		Rect {
+			x: self.to_px(r.x),
+			y: self.to_px(r.y),
+			w: self.to_px(r.w),
+			h: self.to_px(r.h),
+		}
+	}
+	// Scale a batch of quads out to physical pixels. `params.y` is a stroke width
+	// or corner radius, so it is a measurement too and scales with the rest.
+	fn quads_px(&self, quads: &mut [RectInstance]) {
+		for quad in quads {
+			quad.pos = [self.to_px(quad.pos[0]), self.to_px(quad.pos[1])];
+			quad.size = [self.to_px(quad.size[0]), self.to_px(quad.size[1])];
+			quad.params[1] = self.to_px(quad.params[1]);
+		}
+	}
+	fn texts_px(&self, items: &mut [TextItem]) {
+		for item in items {
+			item.x = self.to_px(item.x);
+			item.y = self.to_px(item.y);
+			item.clip = item.clip.map(|r| self.rect_px(r));
+		}
+	}
+
+	// The pointer/measurement boundary. Pointer positions arrive in physical
+	// pixels and the caller's text measurement answers in them too, so both are
+	// divided down before any of the layout below sees them.
+	pub fn mouse_down(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) -> Action {
+		let s = self.scale;
+		self.mouse_down_dip(x / s, y / s, &mut |t| measure(t) / s)
+	}
+	pub fn mouse_up(&mut self, x: f32, y: f32) -> Action {
+		let s = self.scale;
+		self.mouse_up_dip(x / s, y / s)
+	}
+	pub fn mouse_move(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) {
+		let s = self.scale;
+		self.mouse_move_dip(x / s, y / s, &mut |t| measure(t) / s);
+	}
+	pub fn mouse_right(
+		&mut self,
+		x: f32,
+		y: f32,
+		paste_ok: bool,
+		measure: &mut impl FnMut(&str) -> f32,
+	) {
+		let s = self.scale;
+		self.mouse_right_dip(x / s, y / s, paste_ok, &mut |t| measure(t) / s);
+	}
+	pub fn menu_key(&mut self, paste_ok: bool, measure: &mut impl FnMut(&str) -> f32) {
+		let s = self.scale;
+		self.menu_key_dip(paste_ok, &mut |t| measure(t) / s);
+	}
+	pub fn animate(&mut self, dt: f32, measure: &mut impl FnMut(&str) -> f32) -> Option<u64> {
+		let s = self.scale;
+		self.animate_dip(dt, &mut |t| measure(t) / s)
+	}
+	pub fn hover_tip(&self, mx: f32, my: f32) -> Option<(&'static str, Rect)> {
+		let s = self.scale;
+		self.hover_tip_dip(mx / s, my / s)
+			.map(|(tip, anchor)| (tip, self.rect_px(anchor)))
+	}
+
+	// The drawing boundary: the layout is solved in DIP, then everything handed
+	// to the renderer is multiplied out to physical pixels.
+	pub fn rects(
+		&self,
+		line_h: f32,
+		mut measure: impl FnMut(&str) -> f32,
+	) -> (Vec<RectInstance>, Vec<RectInstance>) {
+		let s = self.scale;
+		let (mut fixed, mut rows) = self.rects_dip(line_h / s, |t| measure(t) / s);
+		self.quads_px(&mut fixed);
+		self.quads_px(&mut rows);
+		(fixed, rows)
+	}
+	pub fn texts(&self, line_h: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<TextItem> {
+		let s = self.scale;
+		let mut items = self.texts_dip(line_h / s, |t| measure(t) / s);
+		self.texts_px(&mut items);
+		items
+	}
+	pub fn overlay(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
+		let (mut quads, mut items) = self.overlay_dip();
+		self.quads_px(&mut quads);
+		self.texts_px(&mut items);
+		(quads, items)
 	}
 
 	// Tab-bar / rows-viewport / scrollbar geometry. The rows region sits between
@@ -1108,7 +1232,11 @@ impl SettingsDialog {
 	fn rows_y0(&self) -> f32 {
 		self.tab_bar_y() + self.btn_h() + 10.0
 	}
-	pub fn viewport(&self) -> Rect {
+	// The scroll viewport in physical pixels (the render pass scissors to it).
+	pub fn viewport_px(&self) -> Rect {
+		self.rect_px(self.viewport())
+	}
+	fn viewport(&self) -> Rect {
 		let y0 = self.rows_y0();
 		Rect {
 			x: self.rect.x,
@@ -1125,7 +1253,8 @@ impl SettingsDialog {
 	}
 	pub fn wheel(&mut self, dy_px: f32) {
 		self.dismiss_menu();
-		self.scroll = (self.scroll - dy_px).clamp(0.0, self.max_scroll());
+		let dy = self.to_dip(dy_px);
+		self.scroll = (self.scroll - dy).clamp(0.0, self.max_scroll());
 	}
 	pub fn view(&self) -> View {
 		View {
@@ -1482,8 +1611,9 @@ impl SettingsDialog {
 
 	// Panel size (used to size a dedicated dialog window when the panel is laid
 	// out at the origin - `new(0.0, 0.0)`).
+	// Window size in physical pixels.
 	pub fn size(&self) -> (f32, f32) {
-		(self.rect.w, self.rect.h)
+		(self.to_px(self.rect.w), self.to_px(self.rect.h))
 	}
 
 	pub fn edited(&self) -> &Settings {
@@ -1696,7 +1826,7 @@ impl SettingsDialog {
 	}
 	// The flyover to show while the cursor rests on a control with a
 	// disabled_tip: (text, anchor rect to hang the tip box under).
-	pub fn hover_tip(&self, mx: f32, my: f32) -> Option<(&'static str, Rect)> {
+	fn hover_tip_dip(&self, mx: f32, my: f32) -> Option<(&'static str, Rect)> {
 		let vp = self.viewport();
 		if !vp.contains(mx, my) {
 			return None;
@@ -2316,7 +2446,7 @@ impl SettingsDialog {
 
 	// `measure` gives a string's rendered width in the UI font (for placing the
 	// caret at the clicked position inside a text field).
-	pub fn mouse_down(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) -> Action {
+	fn mouse_down_dip(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) -> Action {
 		// double/triple-click detection (word / whole-value selection in fields)
 		let now = std::time::Instant::now();
 		self.click_streak = match self.last_click {
@@ -2623,7 +2753,7 @@ impl SettingsDialog {
 	}
 	// Right-click in an editable field: open (or keep) the edit, place the caret
 	// at the click unless it lands inside the selection (standard), pop the menu.
-	pub fn mouse_right(
+	fn mouse_right_dip(
 		&mut self,
 		x: f32,
 		y: f32,
@@ -2676,7 +2806,7 @@ impl SettingsDialog {
 		}
 	}
 	// Keyboard Menu key: pop the context menu at the caret of the active edit.
-	pub fn menu_key(&mut self, paste_ok: bool, measure: &mut impl FnMut(&str) -> f32) {
+	fn menu_key_dip(&mut self, paste_ok: bool, measure: &mut impl FnMut(&str) -> f32) {
 		let Some(edit) = &self.edit else { return };
 		let Some(field) = self.field_rect(edit.row) else {
 			return;
@@ -2698,10 +2828,10 @@ impl SettingsDialog {
 	// replays a drag past the box edges (edge autoscroll). Returns the wake the
 	// caller should schedule: fast while something moves, blink-rate while an
 	// idle edit pulses, None when there's nothing to animate.
-	pub fn animate(&mut self, dt: f32, measure: &mut impl FnMut(&str) -> f32) -> Option<u64> {
+	fn animate_dip(&mut self, dt: f32, measure: &mut impl FnMut(&str) -> f32) -> Option<u64> {
 		if self.edit_drag.is_some() {
 			let (mx, my) = self.mouse;
-			self.mouse_move(mx, my, measure);
+			self.mouse_move_dip(mx, my, measure);
 		}
 		let row = self.edit.as_ref().map(|e| e.row)?;
 		let field = self.field_rect(row)?;
@@ -2746,7 +2876,7 @@ impl SettingsDialog {
 		Some(if moving || dragging { 8 } else { 33 })
 	}
 
-	pub fn mouse_move(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) {
+	fn mouse_move_dip(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) {
 		self.mouse = (x, y);
 		// open field context menu: track the hovered item
 		if self.emenu.is_some() {
@@ -2805,7 +2935,7 @@ impl SettingsDialog {
 	}
 	// Release: end any slider/thumb drag, and fire an armed button's action only if
 	// the cursor is still over it (a press that drifted off cancels).
-	pub fn mouse_up(&mut self, x: f32, y: f32) -> Action {
+	fn mouse_up_dip(&mut self, x: f32, y: f32) -> Action {
 		self.drag = None;
 		self.drag_thumb = None;
 		self.edit_drag = None;
@@ -3163,7 +3293,7 @@ impl SettingsDialog {
 	// (fixed chrome, scrolled rows): the rows vec is drawn scissored to
 	// `viewport()` so scrolled-out controls can't paint over the chrome.
 	// `measure` gives the rendered width of a string in the UI font (for the caret).
-	pub fn rects(
+	fn rects_dip(
 		&self,
 		line_h: f32,
 		mut measure: impl FnMut(&str) -> f32,
@@ -3470,7 +3600,7 @@ impl SettingsDialog {
 	// `line_h` is the rendered text line height (the app's cell_h); rows, hex
 	// fields, and buttons center their text vertically against it so alignment
 	// holds for any font/size rather than a baked-in guess.
-	pub fn texts(&self, line_h: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<TextItem> {
+	fn texts_dip(&self, line_h: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<TextItem> {
 		let mut out = Vec::new();
 		let mk = |text: String, x: f32, y: f32| TextItem {
 			text,
@@ -3660,7 +3790,7 @@ impl SettingsDialog {
 	// The open dropdown's popup, as (rects, text), for a second (LoadOp::Load) pass
 	// drawn on top of the dialog so the covered rows' text can't bleed through the
 	// opaque box (same reason the context menu uses its own pass). Empty when closed.
-	pub fn dropdown_overlay(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
+	fn dropdown_overlay(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
 		let mut rects = Vec::new();
 		let mut texts = Vec::new();
 		let Some(i) = self.open else {
@@ -3732,7 +3862,7 @@ impl SettingsDialog {
 	}
 	// Everything for the second pass: the open dropdown popup and/or the field
 	// context menu (only one is ever open at a time in practice).
-	pub fn overlay(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
+	fn overlay_dip(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
 		let (mut rects, mut texts) = self.dropdown_overlay();
 		if self.emenu.is_none() {
 			return (rects, texts);
@@ -3834,14 +3964,20 @@ mod tests {
 	use crate::config;
 
 	fn mk_dialog(max_h: f32) -> SettingsDialog {
+		mk_dialog_at(max_h, 1.0)
+	}
+	// Everything a real dialog is handed arrives in physical pixels, so a scale
+	// of 2 means twice the line height, label width, tab widths and height cap.
+	fn mk_dialog_at(max_h: f32, scale: f32) -> SettingsDialog {
 		SettingsDialog::new(
 			0.0,
 			0.0,
-			18.0,
-			170.0,
-			80.0,
-			vec![90.0; TAB_TITLES.len()],
-			max_h,
+			18.0 * scale,
+			170.0 * scale,
+			80.0 * scale,
+			vec![90.0 * scale; TAB_TITLES.len()],
+			max_h * scale,
+			scale,
 		)
 	}
 
@@ -4039,9 +4175,9 @@ mod tests {
 	}
 
 	#[test]
-	fn hidpi_scales_radio_layout_and_widens_panel() {
+	fn a_large_ui_font_scales_radio_layout_and_widens_panel() {
 		use super::Kind;
-		// base (1x) vs a 2x UI font (HiDPI or a large desktop font)
+		// base vs a desktop UI font twice the size (a bigger font, same DPI)
 		let base = mk_dialog(4000.0);
 		let big = SettingsDialog::new(
 			0.0,
@@ -4051,6 +4187,7 @@ mod tests {
 			160.0,
 			vec![180.0; TAB_TITLES.len()],
 			4000.0,
+			1.0,
 		);
 		// radio pitch tracks the font so multi-option labels don't collide
 		assert!(big.radio_pitch() > base.radio_pitch() * 1.5);
@@ -4070,6 +4207,36 @@ mod tests {
 			last.x + last.w <= big.rect.x + big.rect.w,
 			"last radio option overflows the panel at 2x"
 		);
+	}
+
+	// The layout is DIP, so a doubled scale factor may only multiply it: same
+	// dialog, twice the pixels, and a pointer still lands on the same control.
+	#[test]
+	fn the_scale_factor_only_multiplies_the_layout() {
+		let base = mk_dialog(4000.0);
+		let hidpi = mk_dialog_at(4000.0, 2.0);
+		let ((bw, bh), (hw, hh)) = (base.size(), hidpi.size());
+		assert!(
+			(hw - bw * 2.0).abs() < 0.01 && (hh - bh * 2.0).abs() < 0.01,
+			"window {bw}x{bh} at 1x vs {hw}x{hh} at 2x"
+		);
+		let (bv, hv) = (base.viewport_px(), hidpi.viewport_px());
+		assert!((hv.y - bv.y * 2.0).abs() < 0.01 && (hv.h - bv.h * 2.0).abs() < 0.01);
+		// a click at the checkbox's physical centre still toggles its setting
+		let i = base
+			.specs
+			.iter()
+			.position(|s| s.key == Key::Transparency)
+			.unwrap();
+		let target = base.checkbox(i);
+		let mut d = hidpi;
+		let before = d.edited.transparent_background;
+		d.mouse_down(
+			(target.x + target.w / 2.0) * 2.0,
+			(target.y + target.h / 2.0) * 2.0,
+			&mut |s: &str| s.len() as f32 * 12.0,
+		);
+		assert_ne!(d.edited.transparent_background, before);
 	}
 
 	#[test]
