@@ -85,13 +85,16 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- ✅ Tabs navigable via CTRL+[PgUp|PgDn], and CTRL+[Tab|Shift+Tab].
 			- These already worked; they are now pinned by test in both directions, including that the plain keys do not steal them.
 		- Between the shorter strip and the dropped heading the dialog is 58px shorter.
-	- Express all slider values that range from 0.0 to 1.0, as an integer % from 0% to 100%. (But store as original decimal value in config though.)
-	- Tabs and grouping (settings content and tab reorg):
-		- "Groups" are organized, titled sections within a dialog tab page. Differentiated by a title, and with adequate spacing between groups so that they are visually separate.
-		- There is now the concept of "Sub-groups" within groups, distinguished through indentation of the leading text labels (but not the controls themselves).
-			- Sub-groups (and their style) can exist without Groups.
-			- Unlike a Group, a Sub-group begins with an actual control. (Whose text label is NOT indented, while everything below within the Sub-group is.)
-		- Tab: "Background"
+	- ✅ Express all slider values that range from 0.0 to 1.0, as an integer % from 0% to 100%. (But store as original decimal value in config though.)
+		- Six sliders read 0-100 in whole steps now; the file still holds the decimal. Reverting one lands exactly on its own default rather than a hair off it, and a percent field takes no decimal point.
+	- Found and fixed on the way: both scrollbar colours had rows in the dialog but were never written to the file, so an edit lasted only until the next launch. Every row is now held against a save-and-reload by test, so a row that edits nothing lasting fails rather than going quiet.
+	- 🛠️ Tabs and grouping (settings content and tab reorg):
+		- ✅ "Groups" are organized, titled sections within a dialog tab page. Differentiated by a title, and with adequate spacing between groups so that they are visually separate.
+		- ✅ There is now the concept of "Sub-groups" within groups, distinguished through indentation of the leading text labels (but not the controls themselves).
+			- A sub-group is not declared anywhere. It is a row followed by rows at a greater indent, so the leader and its members cannot disagree about who belongs to what. Only labels move; every control keeps its column.
+			- ✅ Sub-groups (and their style) can exist without Groups.
+			- ✅ Unlike a Group, a Sub-group begins with an actual control. (Whose text label is NOT indented, while everything below within the Sub-group is.)
+		- ✅ Tab: "Background"
 			- Sub-group: "Transparency" checkbox
 				- "Opacity" (%)
 				- "Blur-behind"
@@ -122,7 +125,9 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 				- "Size" (Formerly "Mask size". 0% to 100%)
 				- "Strength" (Formerly "Mask strength". 0% to 100%)
 				- "Automask mix" (Formerly "Mask auto". 0% to 100%)
-		- Tab: "Text"
+			- Three sub-groups as listed. Renames done: Background image -> File or folder, Bg image opacity -> Visibility, Bg image blur -> Blur, Mask size/strength/auto -> Size/Strength/Automask mix.
+			- 🔘 Deferred, each needing engine work rather than dialog work: the Randomize sub-group (new window / new tab / new pane / interval), and the four min/max contrast and saturation percentages. Rotation itself is still the existing "Rotate folder" switch.
+		- ✅ Tab: "Text"
 			- Group "Font"
 				- Use system font    [ ] Face   [ ] Size
 					- Disabled on Windows.
@@ -139,7 +144,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 					- "Outline px" (formerly "Text outline"; existing range and values)
 					- Function
 					- Falloff
-		- Tab: "Cursor"
+			- ✅ Done as specified, with Strength first under the switch (it is the knob the others hang off). The shipped font stack already read exactly as listed, so nothing changed there.
+		- ✅ Tab: "Cursor"
 			- "Blink rate" slider
 			- "Shape"
 			- "Animation"
@@ -149,11 +155,14 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 				- [ ] Input inactivity
 				- "Inactivity timer" 100 ms to 1m
 			- "Visibility"    [ ] Scrim   [ ] Outline
-		- Tab: "Movement" (formerly "Scrolling")
+			- Blink rate, Height, Width, Animation and the Scrim/Outline pair (now "Visibility"), plus Inactivity timer as a sub-group under Animation. All were config-only settings before; none is new.
+			- 🔘 Deferred: the three "Animation pauses on" checkboxes. Loss of window focus and loss of pane activity are source constants today, so exposing them means wiring, not a row.
+		- ✅ Tab: "Movement" (formerly "Scrolling")
 			- Sub-groups:
 				- Scrolling
 				- Cursor
-		- Tab: "Themes"
+			- Done as two sub-groups: Smooth scrolling (the five feel sliders) and Scrollbar (width, hide-when-idle, and its two colours). There is no Cursor sub-group - cursor movement has no settings behind it, only source constants.
+		- 🛠️ Tab: "Themes"
 			- Group: "Themes"
 				- "Theme" (drop-down of selectable themes).
 				- Buttons aligned underneath theme dropdown box, arranged in one horizontal row:
@@ -165,14 +174,16 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 						- [Delete] pops up a confirmation Cancel|OK dialog (defaul Yes), and 'Really delete theme "<them name>"?'
 			- Group: "Colors" Update dynamically with theme selection and can be user-overridden and persisted, even if the named them that was tweaked, isn't saved.)
 				- Controls
-					- Sub-group: "Terminal background" (formerly labeled "Background")
+					- ✅ Sub-group: "Terminal background" (formerly labeled "Background")
 						- "Foreground"
 						- "Cursor"
-					- Sub-group: "Dialog and menu background"
+					- ✅ Sub-group: "Dialog and menu background"
 						- ✅ "Gutter" (a new color defining small areas with no interactive elements, e.g. behind the top tabs).
 						- ✅ "Highlights" (formerly "Focus ring"; same color but with expanded meaning as noted above)
 						- ✅ "Focus" (a new color category that used to be part of "Focus ring", but now applies only to focused element)
 						- Done: all three are themable and live on the Colors tab. The sub-group headings above wait on the grouping work; the rows are in place.
+						- ✅ Both sub-groups are in place now. The dialog and menu backgrounds and their two text colours picked up rows at the same time - they were themable but not editable, and half a family on screen invites the question.
+						- The Themes group above waits on theme management; the tab carries Colors alone until then.
 				- Behavior changes
 					- When a hex field textbox gets focus, don't remove the existing value. Just highlight all, as now standard for textboxes.
 					- Make the colored boxes clickable. That pops up a color selection dialog.
@@ -187,7 +198,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 								- Saturation %
 								- Hex value
 							- At bottom right, buttons: "Cancel|OK" (default "OK")
-		- Tab: "Window":
+		- ✅ Tab: "Window":
 			- Sub-group: "Remember last size" checkbox
 				- Columns
 				- Rows

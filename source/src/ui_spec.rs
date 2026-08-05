@@ -55,6 +55,7 @@ keys![
 	BgContrastMask, BgContrastSize, BgContrastStrength, BgContrastAuto,
 	TextScrim, ScrimRadius, ScrimSoftness, ScrimStrength, ScrimFunction, ScrimRamp,
 	Outline, CursorScrim, CursorOutline,
+	CursorBlink, CursorHeight, CursorWidth, CursorAnimation, CursorResume,
 	SystemFont, SystemFontSize, FontFamily, FontSize, LineHeight,
 	Columns, Rows, RememberSize, Margin,
 	DefaultShell, CopyOnSelect, Hyperlinks, LinkOpenCommand,
@@ -63,6 +64,7 @@ keys![
 	Scrollbar, ScrollbarThickness, ScrollbarAutoHide,
 	ColScrollbarThumb, ColScrollbarTrough, ColBg, ColFg, ColCursor,
 	ColHighlight, ColFocus, ColGutter,
+	ColMenuBg, ColMenuFg, ColDialogBg, ColDialogFg,
 ];
 
 pub enum Kind {
@@ -93,6 +95,11 @@ pub struct Spec {
 	// Flyover text for a control whose purpose is not obvious from its label.
 	// Empty means the row explains itself and gets no tip.
 	pub help: &'static str,
+	// Sub-group depth. Only the LABEL moves; the controls stay in their column,
+	// so a run of indented labels reads as belonging to the row above it. A
+	// sub-group is therefore not declared anywhere - it is the leader's own
+	// depth plus everything deeper that follows.
+	pub indent: u8,
 }
 
 // One setting a control has to wait on, resolved from the file's gate lines.
@@ -114,6 +121,8 @@ pub struct Layout {
 	pub header_height: f32,
 	pub header_pad: f32,
 	pub header_gap: f32,
+	pub subgroup_gap: f32,
+	pub indent: f32,
 	pub label_width: f32,
 	pub label_gap: f32,
 	pub revert_width: f32,
@@ -239,6 +248,8 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 		header_height: float("layout.header_height", &mut problems),
 		header_pad: float("layout.header_pad", &mut problems),
 		header_gap: float("layout.header_gap", &mut problems),
+		subgroup_gap: float("layout.subgroup_gap", &mut problems),
+		indent: float("layout.indent", &mut problems),
 		label_width: float("layout.label_width", &mut problems),
 		label_gap: float("layout.label_gap", &mut problems),
 		revert_width: float("layout.revert_width", &mut problems),
@@ -398,6 +409,7 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 			kind,
 			tab,
 			help: doc.get_string(&at("help")).map_or("", keep),
+			indent: doc.get_int(&at("indent")).unwrap_or(0).clamp(0, 4) as u8,
 		});
 	}
 
