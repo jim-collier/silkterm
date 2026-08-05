@@ -94,7 +94,7 @@ pub enum CopyKind {
 	Output, // copy a command's output once the pane settles back at the prompt
 }
 
-// One styled cell captured for the scrolled-off strip. Colours are resolved at
+// One styled cell captured for the scrolled-off strip. Colors are resolved at
 // capture time (the palette/theme can change later; the strip shows what was on
 // screen). `wide` is the cell count: 0 = wide-char spacer (skip), 1, or 2.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -208,7 +208,7 @@ fn weld_region_clip(
 
 // Fingerprint every visible row (FNV-1a over the chars) and, when `styled` is
 // given, snapshot the styled cells too - the scrolled-off strip's source data.
-// Colours resolve the same way build()'s cell loop does (minus the transient
+// Colors resolve the same way build()'s cell loop does (minus the transient
 // bell flash and selection, which don't belong in a retained row). Recycles the
 // caller's row allocations. One entry per column; a wide-char spacer stays as a
 // wide=0 placeholder so indexes keep matching columns.
@@ -318,7 +318,7 @@ fn pulse_env(phase: f32) -> f32 {
 	}
 }
 
-// Lerp a text colour toward white by `t` (0..1) of the BELL_BRIGHTEN ceiling, for
+// Lerp a text color toward white by `t` (0..1) of the BELL_BRIGHTEN ceiling, for
 // the visual-bell flash. Identity at t<=0.
 fn bell_brighten(color: [u8; 3], t: f32) -> [u8; 3] {
 	if t <= 0.0 {
@@ -432,7 +432,7 @@ fn link_at(
 	let point_of = |i: usize| Point::new(Line(first_line + (i / cols) as i32), Column(i % cols));
 	let start_pt = point_of(start);
 	let cell = &grid[start_pt.line][start_pt.column];
-	// Underline in the link's own colour, so a coloured URL keeps its identity.
+	// Underline in the link's own color, so a colored URL keeps its identity.
 	let fg = if cell.flags.contains(Flags::INVERSE) {
 		palette::resolve(cell.bg, colors, settings)
 	} else {
@@ -791,9 +791,9 @@ pub struct Slide {
 	pub has_top_band: bool,
 }
 
-// A shaped fallback glyph, cached per (char, bold, italic). Colour is NOT baked
+// A shaped fallback glyph, cached per (char, bold, italic). Color is NOT baked
 // (the TextArea's default_color tints it), so one shaped buffer serves every
-// cell/colour drawing that glyph - the shaping (harfbuzz fallback matching) is
+// cell/color drawing that glyph - the shaping (harfbuzz fallback matching) is
 // the expensive part and only pays once per distinct glyph instead of per cell
 // per frame. `ink_w`/`ink_off` are the rasterized ink box for cell-fit scaling.
 struct FallbackGlyph {
@@ -881,8 +881,8 @@ pub struct Pane {
 	// across frames (dropped on a font/size rebuild, see rebuild_buffers).
 	glyph_cache: HashMap<(char, bool, bool), FallbackGlyph>,
 	glyphs: Vec<((char, bool, bool), f32, f32, GColor, f32)>,
-	// Colour (COLRv1) glyphs this frame, placed in absolute screen px and drawn
-	// through glyphon's colour atlas - see coloremoji.rs. They ride a TextArea
+	// Color (COLRv1) glyphs this frame, placed in absolute screen px and drawn
+	// through glyphon's color atlas - see coloremoji.rs. They ride a TextArea
 	// that carries no text of its own, hence `empty_buf`.
 	emoji: Vec<CustomGlyph>,
 	empty_buf: Buffer,
@@ -1430,7 +1430,7 @@ impl Pane {
 
 		// While a slide eases, region rows shift by voff but rect quads only get the
 		// per-pane scissor (no per-area clip like text) - clamp region-row rects to
-		// the region so an own-bg row (inverse video, a coloured block) can't poke
+		// the region so an own-bg row (inverse video, a colored block) can't poke
 		// into the title/status bands mid-slide.
 		let region_rect_clip = slide.as_ref().map(|sl| {
 			(
@@ -1486,7 +1486,7 @@ impl Pane {
 				}
 			};
 		}
-		// End the current row and start a fresh one. Run state (colour/bold/italic)
+		// End the current row and start a fresh one. Run state (color/bold/italic)
 		// deliberately carries over: `run` is empty here, so an unchanged attribute
 		// at the start of the next row just keeps appending. Rows land in recycled
 		// scratch slots so their String capacity survives across frames.
@@ -1646,7 +1646,7 @@ impl Pane {
 		// could hang here (see git history) but no longer does (stress-tested).
 		//
 		// Scrim source with uniform weight: bold ink is wider, so its halo reads
-		// heavier than the neighbours'. When text_scrim_regular_weight is on and
+		// heavier than the neighbors'. When text_scrim_regular_weight is on and
 		// bold is on screen, shape a parallel buffer with bold stripped for the
 		// scrim pass (crisp text on top keeps its real weight). Costs a second
 		// shape only on rebuild frames that contain bold. Per-cell fallback
@@ -1697,7 +1697,7 @@ impl Pane {
 			self.strip_dirty = false;
 			self.shape_strip(ctx, &settings);
 		}
-		// Strip cells with their own background (inverse video, coloured bg) keep it
+		// Strip cells with their own background (inverse video, colored bg) keep it
 		// while revealed: emit their rects at the strip's slide position, clamped to
 		// the region clip like the sliding content's rects above.
 		if let (Some(sl), Some((clip_t, clip_b))) = (&slide, region_rect_clip) {
@@ -1724,7 +1724,7 @@ impl Pane {
 		}
 
 		// Scrim source with uniform weight: bold ink is wider, so its halo reads
-		// heavier than the neighbours'. When text_scrim_regular_weight is on and
+		// heavier than the neighbors'. When text_scrim_regular_weight is on and
 		// bold is on screen, shape a parallel buffer with bold stripped for the
 		// scrim pass (crisp text on top keeps its real weight). Costs a second
 		// shape only on rebuild frames that contain bold. Per-cell fallback
@@ -1733,7 +1733,7 @@ impl Pane {
 		// differs from cell_w: there the de-bold buffer drifts from the display
 		// buffer along the line, so the scrim would sit wider than the text.
 		// place the per-cell fallback glyphs. Each distinct glyph is shaped once
-		// (harfbuzz fallback matching is the cost) and cached; every cell/colour
+		// (harfbuzz fallback matching is the cost) and cached; every cell/color
 		// drawing it reuses that buffer, tinted per-cell via TextArea.default_color.
 		self.glyphs.clear();
 		self.emoji.clear();
@@ -1741,7 +1741,7 @@ impl Pane {
 		for (ch, color, bold, italic, c, screen_row, cells) in glyph_specs {
 			let cell_x = content_x + c as f32 * cell_w;
 			let row_y = rect_y + margin + (screen_row as f32 + voff_of(screen_row)) * cell_h;
-			// A colour glyph is a self-contained image, so it goes to the colour
+			// A color glyph is a self-contained image, so it goes to the color
 			// atlas whole rather than through the monochrome fallback face below.
 			let color_glyph = if settings.color_emoji {
 				ctx.color_metrics(ch)
@@ -1750,7 +1750,7 @@ impl Pane {
 			};
 			if let Some(metrics) = color_glyph {
 				// Fit the design box inside the cell box, keeping its aspect, and
-				// centre it there. Colour glyphs are drawn, not typeset - fitting the
+				// center it there. Color glyphs are drawn, not typeset - fitting the
 				// cell reads better than sitting them on the text baseline.
 				let target_w = cells as f32 * cell_w;
 				let fit = (target_w / metrics.box_w).min(cell_h / metrics.box_h);
@@ -1773,7 +1773,7 @@ impl Pane {
 			}
 			let key = (ch, bold, italic);
 			let glyph = self.glyph_cache.entry(key).or_insert_with(|| {
-				let mut attrs = mono_attrs(); // colour left unset - the TextArea tints it
+				let mut attrs = mono_attrs(); // color left unset - the TextArea tints it
 				if bold {
 					attrs.weight = crate::text::mono_bold_weight();
 				}
@@ -2247,7 +2247,7 @@ impl Pane {
 		let cell_y = self.rect.y + margin + (cursor_screen_row as f32 + voff) * cell_h;
 		let cell_x = content_x + self.cursor_x * cell_w;
 		// Width grows from the left, height from the bottom - but a *pulsing*
-		// dimension grows from the cell centre (the "line in the middle") and may
+		// dimension grows from the cell center (the "line in the middle") and may
 		// shrink to nothing (the momentary disappear), so it skips the 2px floor.
 		let w = if pulsing_w {
 			cell_w * w_frac
@@ -2363,7 +2363,7 @@ impl Pane {
 	}
 
 	// Re-shape the scrolled-off strip buffer from its captured rows. Same span
-	// rules as build()'s main loop: runs merged by (colour, bold, italic),
+	// rules as build()'s main loop: runs merged by (color, bold, italic),
 	// newlines embedded into non-empty runs, never empty/standalone spans (they
 	// make set_rich_text loop forever). Glyphs the primary mono face lacks stay
 	// space placeholders - the strip is transient reveal content, not worth a
@@ -2456,7 +2456,7 @@ impl Pane {
 			})
 	}
 
-	// This frame's colour glyphs (see Pane::build). One text area carries them all:
+	// This frame's color glyphs (see Pane::build). One text area carries them all:
 	// their coordinates are absolute, so it sits at the origin with an empty
 	// buffer and exists only to hand glyphon the custom-glyph list.
 	pub fn emoji_area(&self, margin: f32) -> Option<TextArea<'_>> {
@@ -2475,7 +2475,7 @@ impl Pane {
 				right: (self.rect.x + self.rect.w - margin) as i32,
 				bottom: (self.rect.y + self.rect.h - margin) as i32,
 			},
-			// unused: a colour glyph carries its own pixels
+			// unused: a color glyph carries its own pixels
 			default_color: GColor::rgb(255, 255, 255),
 			custom_glyphs: &self.emoji,
 		})
@@ -2543,7 +2543,7 @@ impl Pane {
 
 	// If armed and the terminal has settled (no output for `settle`) back at the
 	// shell prompt, return the command's output as plain Unicode text (control/
-	// colour codes are already gone - it's read from the parsed grid) and disarm.
+	// color codes are already gone - it's read from the parsed grid) and disarm.
 	// Returns None otherwise, and skips empty output (e.g. a bare Enter or `cd`).
 	pub fn poll_capture(&mut self, settle: std::time::Duration) -> Option<String> {
 		if !self.capture_armed || self.last_output.elapsed() < settle {
@@ -3075,7 +3075,7 @@ fn capture_start<T: alacritty_terminal::event::EventListener>(
 // on Pane), so e.g. a two-line prompt's decoration line isn't copied as output
 // even when its content (cwd, clock) changed since the arm. Fail-safe: a row
 // whose structure doesn't match (nothing learned yet, genuinely different row)
-// stops the strip and stays in the copy - the prior behaviour.
+// stops the strip and stays in the copy - the prior behavior.
 fn prompt_strip<T: alacritty_terminal::event::EventListener>(
 	term: &Term<T>,
 	start_abs: usize,
@@ -4854,11 +4854,11 @@ mod tests {
 	// toggle) is caught without a live GL run. The committed headless harness
 	// (cicd/tests/scroll) exercises the same shapes end-to-end via SILK_SCROLLDBG.
 
-	// Build a (last, cur) frame pair modelling a full-screen app whose middle scroll
+	// Build a (last, cur) frame pair modeling a full-screen app whose middle scroll
 	// region moved up by `shift` rows (forward = content scrolls up, newer rows in at
 	// the bottom), with `top` static title rows above and `bot` static status rows
 	// below. Row fingerprints are arbitrary distinct u64s viewing a rolling window, so
-	// a shift reuses neighbouring content rows exactly as a real repaint does.
+	// a shift reuses neighboring content rows exactly as a real repaint does.
 	fn app_frames(rows: usize, top: usize, bot: usize, shift: i32) -> (Vec<u64>, Vec<u64>) {
 		let pool: Vec<u64> = (1000u64..1000 + rows as u64 * 4).collect(); // content pool
 		let title: Vec<u64> = (1u64..=top as u64).collect(); // static top band
@@ -5092,7 +5092,7 @@ mod tests {
 	// Plain shell output eases via scroll_shift (unsigned) + nudge_output. The bugs to
 	// guard against: the page "re-listing" itself or "jumping around" (over-reporting
 	// a small advance as a full turnover) and not scrolling at all on an in-place
-	// bottom redraw (which would bounce). The desired behaviour for a finishing
+	// bottom redraw (which would bounce). The desired behavior for a finishing
 	// command is just adding new lines at the bottom.
 
 	#[test]
@@ -5201,7 +5201,7 @@ mod tests {
 	// coordinate reads as a cell without arithmetic.
 	const LINK_METRICS: (f32, f32, f32) = (10.0, 20.0, 5.0);
 
-	// Pointer at the centre of grid cell (row, col), in window pixels.
+	// Pointer at the center of grid cell (row, col), in window pixels.
 	fn cell_px(row: i32, col: usize) -> (f32, f32) {
 		let (cw, ch, margin) = LINK_METRICS;
 		(

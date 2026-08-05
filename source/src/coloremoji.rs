@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright © 2026 Jim Collier
 
-//! Colour glyph (`COLRv1`) rasterization.
+//! Color glyph (`COLRv1`) rasterization.
 //!
 //! swash - the rasterizer cosmic-text drives - only reads COLR **v0**, and every
-//! current colour emoji font ships v1 only. Those glyphs come back as an empty
+//! current color emoji font ships v1 only. Those glyphs come back as an empty
 //! image, so the fallback path lands on a monochrome face instead. skrifa (already
 //! in the tree, under swash) walks the v1 paint graph; this module is the 2D back
 //! end it paints into - transform/clip/layer stacks over zeno's coverage
 //! rasterizer - producing straight-alpha sRGB RGBA, which glyphon uploads to its
-//! colour atlas as a custom glyph.
+//! color atlas as a custom glyph.
 //!
 //! Rasters are built ahead of `prepare` (see `TextCtx`), because glyphon holds the
 //! `FontSystem` mutably during it and the font bytes come from that same database.
@@ -27,7 +27,7 @@ use skrifa::raw::types::BoundingBox;
 use skrifa::{FontRef, GlyphId, MetadataProvider};
 use zeno::{Command, Format, Mask, Origin, Point as ZPoint};
 
-// Gradient colour-line resolution. A 256-entry lookup beats searching the stop
+// Gradient color-line resolution. A 256-entry lookup beats searching the stop
 // list per pixel and is finer than the 8-bit output can show.
 const RAMP_LEN: usize = 256;
 // Layer nesting cap. skrifa's decycler stops paint-graph cycles; this bounds the
@@ -43,7 +43,7 @@ const MAX_RASTERS: usize = 4096;
 // is a panic inside glyphon - so the sweep only ever drops older stamps.
 const RASTER_PIN_FRAMES: u64 = 2;
 
-// A colour glyph resolved for one char: which face holds it, and the design box
+// A color glyph resolved for one char: which face holds it, and the design box
 // the raster covers (font units) so the caller can fit it to a cell.
 #[derive(Clone, Copy)]
 pub struct ColorMetrics {
@@ -66,9 +66,9 @@ struct Resolved {
 
 pub struct ColorGlyphs {
 	// Faces with a COLR table, found by one lazy pass over the db (only paid once
-	// a colour candidate actually appears on screen).
+	// a color candidate actually appears on screen).
 	faces: Option<Vec<fontdb::ID>>,
-	// Per-char resolution, including the misses - a char with no colour glyph is
+	// Per-char resolution, including the misses - a char with no color glyph is
 	// looked up on every cell of every frame otherwise. A hit carries its
 	// glyphon custom-glyph id (u16, handed out per char, never reused).
 	lookup: HashMap<char, Option<Resolved>>,
@@ -90,7 +90,7 @@ impl ColorGlyphs {
 		}
 	}
 
-	// Does `ch` have a colour glyph, and how big is it in design units? None for
+	// Does `ch` have a color glyph, and how big is it in design units? None for
 	// the overwhelming majority of chars, so the miss is cached too.
 	pub fn metrics(&mut self, db: &fontdb::Database, ch: char) -> Option<ColorMetrics> {
 		if let Some(hit) = self.lookup.get(&ch) {
@@ -101,7 +101,7 @@ impl ColorGlyphs {
 				box_h: hit.box_h,
 			});
 		}
-		// u16 ids: 65k distinct colour glyphs is far past any real font's coverage,
+		// u16 ids: 65k distinct color glyphs is far past any real font's coverage,
 		// but refuse (cache as a miss) rather than wrap onto a live id.
 		let found = self.resolve(db, ch).and_then(|mut hit| {
 			hit.id = u16::try_from(self.chars.len()).ok()?;
@@ -125,7 +125,7 @@ impl ColorGlyphs {
 				let gid = font.charmap().map(ch)?;
 				let glyph = font.color_glyphs().get(gid)?;
 				// A ClipBox gives the exact painted extent; without one, fall back to
-				// the glyph's advance and the font's vertical extent - a colour font
+				// the glyph's advance and the font's vertical extent - a color font
 				// fills that box closely enough for cell fitting.
 				let (x, y, w, h) =
 					match glyph.bounding_box(LocationRef::default(), Size::unscaled()) {
@@ -236,7 +236,7 @@ fn color_faces(db: &fontdb::Database) -> Vec<fontdb::ID> {
 		.collect()
 }
 
-// Paint one colour glyph into a straight-alpha sRGB RGBA buffer of `w`x`h`.
+// Paint one color glyph into a straight-alpha sRGB RGBA buffer of `w`x`h`.
 fn paint(data: &[u8], index: u32, res: &Resolved, w: u16, h: u16) -> Option<Vec<u8>> {
 	let font = FontRef::from_index(data, index).ok()?;
 	let glyph = font.color_glyphs().get(res.gid)?;
@@ -332,7 +332,7 @@ impl Painter<'_> {
 		self.clips.push(merged);
 	}
 
-	// Colour line as a lookup table over t in 0..1, straight sRGB.
+	// Color line as a lookup table over t in 0..1, straight sRGB.
 	fn ramp(&self, stops: &[ColorStop]) -> Vec<[f32; 4]> {
 		let mut lut = vec![[0.0; 4]; RAMP_LEN];
 		if stops.is_empty() {
@@ -358,7 +358,7 @@ impl Painter<'_> {
 			let (a, b) = (pair[0], pair[1]);
 			if t >= a.offset && t <= b.offset {
 				let span = b.offset - a.offset;
-				// Coincident stops are a hard colour break; take the later one.
+				// Coincident stops are a hard color break; take the later one.
 				let f = if span > f32::EPSILON {
 					(t - a.offset) / span
 				} else {
@@ -381,8 +381,8 @@ impl Painter<'_> {
 		color
 	}
 
-	// CPAL lookup. 0xFFFF means "the text foreground colour" - the raster is
-	// cached independently of the cell colour, so it resolves to white (which
+	// CPAL lookup. 0xFFFF means "the text foreground color" - the raster is
+	// cached independently of the cell color, so it resolves to white (which
 	// leaves such a paint tintable later if that's ever wanted).
 	fn color(&self, index: u16) -> [f32; 4] {
 		if index == 0xFFFF {
@@ -776,7 +776,7 @@ fn conical(c0: (f32, f32), r0: f32, cd: (f32, f32), dr: f32, x: f32, y: f32) -> 
 	}
 	let root = disc.sqrt();
 	// Prefer the larger t. Which root that is flips with the sign of `a` (the
-	// radius growing faster than the centre moves), so order them rather than
+	// radius growing faster than the center moves), so order them rather than
 	// assuming - taking the wrong one paints the far side of the cone.
 	let (mut hi, mut lo) = ((b + root) / a, (b - root) / a);
 	if hi < lo {
@@ -977,15 +977,15 @@ mod tests {
 	}
 
 	// The whole point of the module: a COLRv1-only emoji font must produce actual
-	// colour pixels, where swash hands back an empty image. Skipped where the box
-	// has no colour font at all.
+	// color pixels, where swash hands back an empty image. Skipped where the box
+	// has no color font at all.
 	#[test]
 	fn colr_v1_emoji_rasterizes_in_colour() {
 		let mut db = fontdb::Database::new();
 		db.load_system_fonts();
 		let mut glyphs = ColorGlyphs::new();
 		let Some(metrics) = glyphs.metrics(&db, '\u{1F600}') else {
-			eprintln!("no colour glyph for U+1F600 on this box; skipping");
+			eprintln!("no color glyph for U+1F600 on this box; skipping");
 			return;
 		};
 		glyphs.warm(&db, metrics.id, 48, 48);
@@ -1006,7 +1006,7 @@ mod tests {
 			opaque > 200,
 			"only {opaque} solid pixels - glyph came out blank"
 		);
-		// "Colour" means the channels actually differ somewhere; a monochrome
+		// "Color" means the channels actually differ somewhere; a monochrome
 		// outline would pass the coverage check above on its own.
 		let tinted = raster
 			.data
@@ -1015,7 +1015,7 @@ mod tests {
 			.count();
 		assert!(
 			tinted > 100,
-			"only {tinted} coloured pixels - looks monochrome"
+			"only {tinted} colored pixels - looks monochrome"
 		);
 	}
 
@@ -1033,7 +1033,7 @@ mod tests {
 		);
 	}
 
-	// Extend modes drive what happens past the ends of a colour line.
+	// Extend modes drive what happens past the ends of a color line.
 	#[test]
 	fn gradient_extend_modes_wrap_clamp_and_mirror() {
 		let ramp: Vec<[f32; 4]> = (0..RAMP_LEN)
@@ -1058,7 +1058,7 @@ mod tests {
 		// Two degenerate point-circles on the x axis: nothing off that axis is on
 		// any interpolated circle.
 		assert!(conical((0.0, 0.0), 0.0, (10.0, 0.0), 0.0, 0.0, 5.0).is_none());
-		// Shrinking radius with a fixed centre puts `a` negative, which flips which
+		// Shrinking radius with a fixed center puts `a` negative, which flips which
 		// root is the larger one. The larger (t = 6) needs radius -5, so the valid
 		// answer is the backward extension at t = -4 (radius 5) - not None.
 		let t = conical((0.0, 0.0), 1.0, (0.0, 0.0), -1.0, 5.0, 0.0).expect("on a circle");

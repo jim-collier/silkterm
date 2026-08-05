@@ -57,7 +57,7 @@ struct Line {
 }
 
 // A clickable region in the About box. `button` links draw a filled box behind
-// their label (the Support button); plain links are just coloured text. A link
+// their label (the Support button); plain links are just colored text. A link
 // with a `tooltip` shows that text as a flyover while the cursor is over it -
 // used so the Support button can reveal the URL it opens without baking it into
 // the label.
@@ -181,10 +181,7 @@ impl DialogWin {
 		// so Vulkan/Metal/DX12 is all they need. The warm context (see DialogGpu)
 		// has already paid for the instance/adapter/device; without it, or if its
 		// adapter can't present here, build one the slow way.
-		let warmed = match warm {
-			Some(gpu) => Gfx::with_dialog_gpu(window.clone(), gpu)?,
-			None => None,
-		};
+		let warmed = warm.and_then(|gpu| Gfx::with_dialog_gpu(window.clone(), gpu));
 		let mut gfx = match warmed {
 			Some(gfx) => gfx,
 			None => Gfx::with_backends(window.clone(), wgpu::Backends::PRIMARY)?,
@@ -370,7 +367,7 @@ impl DialogWin {
 	}
 
 	// Right mouse button: pop the field context menu (Settings only). `paste_ok`
-	// greys the Paste item when the clipboard holds nothing.
+	// grays the Paste item when the clipboard holds nothing.
 	pub fn mouse_right(&mut self, paste_ok: bool) {
 		let (mx, my) = self.mouse;
 		if let Content::Settings(dialog) = &mut self.content {
@@ -466,7 +463,7 @@ impl DialogWin {
 		clip: Option<&mut crate::clipboard::Clipboard>,
 	) -> Option<DialogAction> {
 		match &mut self.content {
-			Content::Settings(dialog) if dialog.alt() => map_action(SettingsDialog::alt_key(ch)),
+			Content::Settings(dialog) if dialog.alt() => map_action(dialog.alt_key(ch)),
 			Content::Settings(dialog) if dialog.ctrl() => {
 				match ch.to_ascii_lowercase() {
 					'a' => dialog.select_all(),
@@ -753,7 +750,7 @@ impl DialogWin {
 						ov_bufs.push((item.x, item.y, item.scale, item.color, item.clip, buf));
 					}
 				}
-				// flyover: what a control does, or why it is greyed out. A small box
+				// flyover: what a control does, or why it is grayed out. A small box
 				// under it, drawn in the overlay pass so it can't bleed with the row
 				// text (same as the About URL tip). It WRAPS - a sentence long enough
 				// to outrun the panel would otherwise be clamped to the edge and run
@@ -1038,7 +1035,7 @@ fn set_transient_for(window: &Window, parent: Option<&RawWindowHandle>) {
 
 	// the window is already mapped, so also request the states via the EWMH
 	// client message (action ADD=1, source = application=1) for WMs that only
-	// honour a state change that way rather than a bare property write.
+	// honor a state change that way rather than a bare property write.
 	let add_state = |st: u32| {
 		let ev = ClientMessageEvent::new(32, xid, state, [1, st, 0, 1, 0]);
 		let _ = conn.send_event(
@@ -1060,7 +1057,7 @@ fn set_transient_for(_window: &Window, _parent: Option<&RawWindowHandle>) {}
 // transient's parent with it automatically; Compiz does not, so when the dialog
 // is re-activated after another window came forward, the terminal stays buried
 // behind that window - this slots it back just beneath the dialog. The message
-// goes to root (the only stacking path Compiz honours for a managed window: it
+// goes to root (the only stacking path Compiz honors for a managed window: it
 // reparents clients into decoration frames, so a direct XConfigureWindow on the
 // client isn't redirected to the WM and does nothing). Focus is untouched.
 #[cfg(target_os = "linux")]
@@ -1221,7 +1218,7 @@ fn layout_about(
 		content_w = content_w.max(width);
 	}
 
-	// Support button: a filled box with a centred label; opens DONATE.md and
+	// Support button: a filled box with a centered label; opens DONATE.md and
 	// reveals that URL as a flyover on hover (config::DONATE_URL).
 	let btn_label = "Support SilkTerm!";
 	let (btn_pad_x, btn_pad_y) = (16.0, 8.0);
@@ -1265,7 +1262,7 @@ fn layout_about(
 		y += line_h * scale;
 	}
 
-	// Support button below the text, centred in the content column
+	// Support button below the text, centered in the content column
 	y += gap * 1.5;
 	let btn_x = pad + (content_w - btn_w) * 0.5;
 	links.push(AboutLink {

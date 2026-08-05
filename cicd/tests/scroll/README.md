@@ -1,6 +1,6 @@
 # Scroll regression harness
 
-Deterministic, headless check of the smooth-scroll behaviour, driven off the
+Deterministic, headless check of the smooth-scroll behavior, driven off the
 permanent `SILK_SCROLLDBG` per-frame trace in `pane.rs`. It runs SilkTerm headless
 (the private `:98` Xvfb on X11, or a `cage` kiosk on Wayland), feeds it scenes that
 model how real full-screen apps repaint, and asserts each app scrolls the way it is

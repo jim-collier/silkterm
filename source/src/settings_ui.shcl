@@ -1,7 +1,7 @@
 ## SilkTerm - Settings dialog declarations.
 ##
 ## This file IS the dialog: which rows exist, in what order, under which
-## heading, on which tab, what each one edits, and when each is greyed out.
+## heading, on which tab, what each one edits, and when each is grayed out.
 ## It is compiled into the binary, so an edit needs a rebuild - and the tests
 ## fail if a row names a setting the code does not know, or leaves one out.
 ##
@@ -51,8 +51,8 @@ layout:
 
 	## Controls
 	slider_width: 220
-	swatch: 20                 ## colour chip, and the height of every boxed control
-	hex_width: 92              ## "#rrggbb" field beside a colour chip
+	swatch: 20                 ## color chip, and the height of every boxed control
+	hex_width: 92              ## "#rrggbb" field beside a color chip
 	value_width: 56            ## numeric field beside a slider
 	radio_box: 16              ## radio indicator square
 	radio_pitch: 96            ## per radio option: box + label + gap
@@ -310,7 +310,7 @@ rows:
 		whole: true
 		indent: 1
 		setting: text.scrim.softness
-		help: "How gradually the halo fades out towards its edge."
+		help: "How gradually the halo fades out toward its edge."
 
 	Outline:
 		label: Outline px
@@ -459,7 +459,7 @@ rows:
 		range: 1, 10
 		whole: true
 		setting: scroll.wheel_lines
-		help: "Lines travelled per notch of the mouse wheel."
+		help: "Lines traveled per notch of the mouse wheel."
 
 	Scrollbar:
 		label: Scrollbar
@@ -504,7 +504,7 @@ rows:
 		label: Theme
 		kind: dropdown
 		setting: theme
-		help: "The colour scheme the terminal and this dialog follow."
+		help: "The color scheme the terminal and this dialog follow."
 
 	ThemeMode:
 		label: Mode
@@ -518,7 +518,7 @@ rows:
 		label: ""
 		kind: buttons
 		options: "Save", "Save as...", "Rename", "Delete"
-		help: "Save keeps the colours below under this theme's name. Only a saved theme can be renamed or deleted."
+		help: "Save keeps the colors below under this theme's name. Only a saved theme can be renamed or deleted."
 
 	Colors:
 		kind: heading
@@ -658,14 +658,14 @@ rows:
 		help: "What to run for a clicked link. Empty hands it to the desktop."
 
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-## Greying
+## Graying
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## A control is greyed out while any setting listed against it is off - a
+## A control is grayed out while any setting listed against it is off - a
 ## toggle that is false, or a number sitting at zero. A leading "!" reverses
-## it: greyed while that setting is ON. Listing several means all must hold.
+## it: grayed while that setting is ON. Listing several means all must hold.
 ##
-## Not listed here: the two system-font switches, which the environment greys
+## Not listed here: the two system-font switches, which the environment grays
 ## when the desktop reports no font for them to follow. That is a fact about
 ## the machine, so it is answered in code.
 

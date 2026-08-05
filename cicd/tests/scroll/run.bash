@@ -8,7 +8,7 @@
 ##	- Purpose:
 ##		Headless scroll regression harness. Drives SilkTerm on a private Xvfb with
 ##		SILK_SCROLLDBG on and deterministic full-redraw scenes that model how real
-##		full-screen apps repaint, then checks the per-frame trace for the behaviour
+##		full-screen apps repaint, then checks the per-frame trace for the behavior
 ##		each app is supposed to have:
 ##		   less / vim   - no static top band: the smooth slide engages, monotone (no bounce)
 ##		   nano / muffer - static title bar held still, the region under it slides

@@ -56,7 +56,7 @@ One consequence worth knowing: a wineprefix maps `Z:` to `/` (and further drives
 What this does and does not buy you:
 
 - Rendering, fonts, menus, tabs, dialogs, wallpaper and the scrim all work, on the real GPU (wgpu reaches the card through winevulkan). That covers most of what a Windows check is for.
-- The shell does not work. Wine's ConPTY is only half implemented: `CreatePseudoConsole` succeeds and the initial grid size is honoured, but a child started with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` never attaches to it, so no output reaches the grid. Expect a correctly drawn, empty terminal.
+- The shell does not work. Wine's ConPTY is only half implemented: `CreatePseudoConsole` succeeds and the initial grid size is honored, but a child started with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` never attaches to it, so no output reaches the grid. Expect a correctly drawn, empty terminal.
 - `ResizePseudoConsole` is a stub returning `E_NOTIMPL`, and the terminal backend asserts that it returns `S_OK` - so the app would die on its first resize. The script builds a tiny `conpty.dll` (the backend prefers any loadable `conpty.dll` over kernel32) that passes create/close through to kernel32 and answers resize with `S_OK`. Microsoft's own `conpty.dll`/`OpenConsole.exe` fail earlier under wine, so there is nothing better to drop in.
 - Only the x86_64 build runs; wine on x86_64 cannot execute the ARM64 exe.
 
@@ -115,7 +115,7 @@ wgpu uses the Metal backend automatically. No extra system packages are needed b
 
 ## Formatting
 
-`rustfmt.toml` pins the style (`hard_tabs`). The hand-formatted data tables (the `Palette`/`Dlg` colour matrices in `theme.rs`/`settings_ui.rs`, the About table in `dialog.rs`) carry `#[rustfmt::skip]` so `cargo fmt` leaves them compact; everything else is rustfmt-canonical.
+`rustfmt.toml` pins the style (`hard_tabs`). The hand-formatted data tables (the `Palette`/`Dlg` color matrices in `theme.rs`/`settings_ui.rs`, the About table in `dialog.rs`) carry `#[rustfmt::skip]` so `cargo fmt` leaves them compact; everything else is rustfmt-canonical.
 
 A pre-commit hook (`utility/git-hooks/pre-commit`) reformats the staged `.rs` files on every commit so they never drift. Activate it once per clone:
 

@@ -41,13 +41,13 @@
 
 </div>
 
-SilkTerm™ is the only (contemporary) terminal emulator in the known universe that smooth-scrolls lines on output - for a silky-smooth UI you have see to believe.
+SilkTerm™ is the only (contemporary) terminal emulator in the known universe that smooth-scrolls lines on output - for a silky-smooth UI you have to see to believe.
 
 It also has smooth cursor blink animation and movement.
 
 The background image and text scrim options are also completely unique.
 
-It has the other requisite features of a modern terminal emulator: detachable multi-tabs, native split-panes, transparency (with blur!), and can run without a menu and/or window decorations.
+It has the other requisite features of a modern terminal emulator: tabs, native split-panes, transparency (with blur!), and can run without a menu and/or window decorations.
 
 Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 
@@ -57,7 +57,7 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 <table style="border: none; border-collapse: collapse;">
 	<tr style="border: none; border-collapse: collapse;">
 		<td style="border: none; border-collapse: collapse;"><img src="source/assets/logo.png" alt="Silky" width="320"/></td>
-		<td style="border: none;">SilkTerm is the only known terminal currently in existence, that smooth-scrolls lines on output - for silky-smooth and less-tiring long terminal sessions. It also has smooth cursor options such as phase effect for blinking, and smooth movement.<br /><br />SilkTerm also has detachable multi-tabs, split-panes, transparency and blur, background image and blur, text scrim, and can run without a menu and/or window decorations.<br /><br />Cross-platform. Written in Rust for a small single executable, and blazing speed.</td>
+		<td style="border: none;">SilkTerm is the only known terminal currently in existence, that smooth-scrolls lines on output - for silky-smooth and less-tiring long terminal sessions. It also has smooth cursor options such as phase effect for blinking, and smooth movement.<br /><br />SilkTerm also has multiple tabs, split-panes, transparency and blur, background image and blur, text scrim, and can run without a menu and/or window decorations.<br /><br />Cross-platform. Written in Rust for a small single executable, and blazing speed.</td>
 	</tr style="border: none; border-collapse: collapse;">
 </table>
 -->
@@ -74,8 +74,10 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 - [Terminal showdown - speed and size](#terminal-showdown---speed-and-size)
 - [Getting and using](#getting-and-using)
 	- [Installing](#installing)
+		- [Packages and installers](#packages-and-installers)
 		- [Direct](#direct)
-	- [Building from source](#building-from-source)
+		- [Build it yourself](#build-it-yourself)
+	- [Setting up a development environment](#setting-up-a-development-environment)
 	- [Configuration](#configuration)
 - [Contributing](#contributing)
 - [Support SilkTerm](#support-silkterm)
@@ -95,7 +97,7 @@ One analogy is playing a video game with mouse-look at, say, 3 frames-per-second
 
 As the youtube video linked above goes into, jerky line-snapped output taxes mental resources - however slightly - in a way that stacks up over long sessions. At the extreme, it can contribute to headaches and fatigue. And that's brainpower that could have been used to solve whatever it is you're working on.
 
-The crazy thing is that **several early CRT text-mode computers offered smooth-scrolling**. (For example, many UNIX client terminal consoles of the 80's.)
+The crazy thing is that **several early CRT text-mode computers offered smooth-scrolling**. (For example, many UNIX client terminal consoles of the 80s.)
 
 So when it's said that SilkTerm is "the only one to offer it", that means *now* - not across time.
 
@@ -150,7 +152,7 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **Background transparency blur**. If using background transparency and this is enabled, everything behind the terminal is blurred. Supported on most window compositors. (But limited to the compositor's options. SilkTerm just talks to the WM to enable it.)
 
-- **User-selectable background image**. User-selectable, with a few dozen cool offerings included.
+- **User-selectable background image**. Over a hundred are included, or point it at a folder of your own.
 
 	- The background image can be dimmed with adjustable %, relative to the background color - and independent of main background transparency.
 
@@ -174,6 +176,14 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **Read-only output toggle**.
 
+- **Clickable links**. Hover a URL to underline it, Ctrl+click to open it, or use the right-click menu. Only known-safe schemes are ever treated as links, and an app that has taken over the mouse keeps it.
+
+- **Copy on select, and copy on output**. Both optional, both per-pane. Copy-on-output grabs what a command printed without the prompt around it.
+
+- **Overlay scrollbar**. Thick enough to grab, fades out when you're at the bottom, and takes no columns away from the text.
+
+- **Settings dialog with themes**. Every setting has a control, a flyover explaining it, and a revert arrow back to its default. Three color themes ship, each with a dark and a light variant - edit any color and save the result as a theme of your own.
+
 - **Simple and sane configuration**. No pages of nested tabs representing multiple settings metaphors. (E.g. no separate "Profiles" and "Layouts".) If you want to get fancy with multiple sets of wildly different options - that's easy with alternate config files, and/or scripted launch-time arguments.
 
 - **Rich command-line syntax**: A simple yet (optionally) insanely powerful CLI syntax, that allows creating multiple tabs and/or complex pane structure(s) at launch time.
@@ -184,21 +194,21 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **Written in Rust** as a single self-contained binary - no runtime dependencies - and fast. (Several terminal emulators - such as the revered `terminator` - are written in interpreted Python.) The one binary bundles the entire GPU and text-rendering stack, which is why it's ~10 MiB; [the FAQ explains how that actually compares to a GTK terminal's few-hundred-KiB launcher](FAQ.md).
 
-- **One codebase for Linux + Windows, both with x86_64 and ARM builds**. The Window and/or ARM versions can be built all at once on x86_64 Linux. *MacOS is built natively on a Mac from the same codebase, but is so far untested (no releases target it yet)*.
+- **One codebase for Linux + Windows, both with x86_64 and ARM builds**. The Windows and ARM versions all build in one pass on x86_64 Linux. *macOS should build from the same codebase on a Mac, but is untested and no releases target it yet*.
 
 - **Native X11 and Wayland** on Linux from one binary - the display backend is chosen at runtime, with no separate build or wrapper.
 
 - **Loosely based on [Alacritty](https://github.com/alacritty/alacritty)** (not a fork), just for the basement plumbing - to avoid rewriting the complex but solved problems of terminal emulation. Alacritty is also a high-performance, open-source terminal written in Rust.
 
-	- *Fun fact: SilkTerm has more lines of code than Alacritty, especially compared to the subset we use. Which is part of why we chose it for the bare guts without reinventing a thoroughly-and-repeatedly-invented wheel.*
+	- *Fun fact: SilkTerm is about three times the size of the Alacritty terminal core it sits on. That core solves a thoroughly-and-repeatedly-solved problem, so there was no reason to write another one.*
 
 - **GPU-accelerated** with software fallback.
 
 ## Terminal showdown - speed and size
 
-Smooth scrolling is worth nothing if the terminal falls behind the moment something dumps a lot of text, so throughput is measured rather than asserted. In testing, each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it. Speed is measured at a 160x42 grid.
+Smooth scrolling counts for nothing if the terminal falls behind the moment something dumps a lot of text, so throughput is measured rather than asserted. In testing, each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it. Speed is measured at a 160x42 grid.
 
-A terminal is also the program that is always open, usually several times over, so what it costs while doing nothing is worth knowing. Size and memory are measured separately, with each terminal at a 100x30 grid and its own defaults.
+A terminal is also the program that is always open, usually several times over, so what it costs while doing nothing matters. Size and memory are measured separately, with each terminal at a 100x30 grid and its own defaults.
 
 Sorted by speed. Terminals not yet measured for speed follow, ordered by what it takes to install them.
 
@@ -206,9 +216,9 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 
 | OS<sup>9</sup> | Terminal | Ver | 1-byte<sup>1</sup> | 4-byte<sup>1</sup> | Speed score<sup>2</sup> | File size<sup>3</sup> (MiB) | File+ deps<sup>4</sup> (MiB) | Mem<sup>4</sup> (MiB) |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| \[multi\] | $\textcolor{limegreen}{SilkTerm}$ plain<sup>6</sup> | 1.0.0 | 86.9 | 129.3 | **71.1** | **13.2** | **17.4** | **76.1** |
+| \[multi\] | $\textcolor{limegreen}{SilkTerm}$ plain<sup>6</sup> | 1.0.0 | 86.9 | 129.3 | **71.1** | **10.5** | **14.1** | **100.1** |
 | \[multi\] | Alacritty<sup>8</sup> | 0.15.1 | 79.8 | 129.1 | **68.4** | 8.5 | 12.7 | 50.4 |
-| \[multi\] | $\textcolor{limegreen}{SilkTerm}$ +candy<sup>5</sup> | 1.0.0 | 77.4 | 135.1 | **67.6** | **13.2** | **17.4** | **121.4** |
+| \[multi\] | $\textcolor{limegreen}{SilkTerm}$ +candy<sup>5</sup> | 1.0.0 | 77.4 | 135.1 | **67.6** | **10.5** | **14.1** | **167.7** |
 | Linux | GNOME Terminal | 3.58.1 | 100.2 | 62.6 | **55.3** | 0.4 | 84.0 | 53.6 |
 | Linux | XFCE4 Terminal | 1.2.0 | 94.2 | 65.0 | **54.0** | 0.3 | 84.1 | 48.6 |
 | Linux | Terminator | 3.13.5 | 87.8 | 67.3 | **51.8** | script | 92.6 | 82.2 |
@@ -230,21 +240,21 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 
 <!-- termbench:end -->
 
-<sub><sup>1</sup> Throughput in MB/s, higher is better, on a stream made entirely of characters of that UTF-8 width - 1-byte is plain ASCII, 4-byte is emoji. Two more width classes and a mixed stream are measured as well and count towards the score; the tool prints all five. Only rows measured at the same grid size are comparable.</sub>
+<sub><sup>1</sup> Throughput in MB/s, higher is better, on a stream made entirely of characters of that UTF-8 width - 1-byte is plain ASCII, 4-byte is emoji. Two more width classes and a mixed stream are measured as well and count toward the score; the tool prints all five. Only rows measured at the same grid size are comparable.</sub>
 
-<sub><sup>2</sup> Millions of cells per second - the weighted geometric mean of all five classes, leaning towards plain ASCII since that is most of what a terminal ever sees, and geometric so no single class can dominate. Counted in cells rather than bytes, because a wide-character stream moves far more bytes for the same amount of screen. It says how fast a terminal swallows output and keeps up, not how fast it rasterizes glyphs - only a screenful is ever visible, so most of a large stream is parsed, stored and scrolled past. The clock stops when the terminal answers a query that it can only answer once it has worked through everything queued, so a terminal that never answers cannot be timed this way and its speed cells stay blank. A slow terminal gets fewer repetitions of the same payloads, which makes its figures noisier but no less comparable.</sub>
+<sub><sup>2</sup> Millions of cells per second - the weighted geometric mean of all five classes, leaning toward plain ASCII since that is most of what a terminal ever sees, and geometric so no single class can dominate. Counted in cells rather than bytes, because a wide-character stream moves far more bytes for the same amount of screen. It says how fast a terminal swallows output and keeps up, not how fast it rasterizes glyphs - only a screenful is ever visible, so most of a large stream is parsed, stored and scrolled past. The clock stops when the terminal answers a query that it can only answer once it has worked through everything queued, so a terminal that never answers cannot be timed this way and its speed cells stay blank. A slow terminal gets fewer repetitions of the same payloads, which makes its figures noisier but no less comparable.</sub>
 
-<sub><sup>3</sup> This number is near-meaningless alone. A small executable usually means the code sits in shared libraries instead. But they are loaded only once however many programs map them - so anything built on a stack the desktop already loads costs less than its File+deps implies. SilkTerm links nothing but the C runtime (for maximum portability and long-term stability without "bitrot"), so its binary is the whole of it.</sub>
+<sub><sup>3</sup> This number is near-meaningless alone. A small executable usually means the code sits in shared libraries instead. But they are loaded only once however many programs map them - so anything built on a stack the desktop already loads costs less than its File+deps implies. SilkTerm links nothing beyond the C runtime and what the graphics stack loads at runtime (for maximum portability and long-term stability without "bitrot"), so almost all of it is in the one file.</sub>
 
-<sub><sup>4</sup> File+deps is the executable plus everything else it needs beyond a base OS. Memory is the unique resident footprint of the whole process tree - private pages, plus each shared mapping counted once. Self-contained bundles count their extracted payload plus the system libraries they still borrow. Both columns leave out the graphics stack and what it pulls in, because accelerated terminals share it with the compositor and every other accelerated program: 108 SilkTerm, 105 WezTerm, 73 kitty and Alacritty, 48 Tabby, 1 Hyper. "A base OS" is not the same size on every platform - on Linux it means the C runtime and nothing else, since a desktop library is something you installed, while on Windows the whole of System32 ships with the machine - so a Windows row counts less towards File+deps than a Linux one, on top of everything in note 9. Expect a few MiB of drift between runs, since libraries load on demand.</sub>
+<sub><sup>4</sup> File+deps is the executable plus everything else it needs beyond a base OS. Memory is the unique resident footprint of the whole process tree - private pages, plus each shared mapping counted once. Self-contained bundles count their extracted payload plus the system libraries they still borrow. Both columns leave out the graphics stack and what it pulls in, because accelerated terminals share it with the compositor and every other accelerated program: 141 SilkTerm, 105 WezTerm, 73 kitty and Alacritty, 48 Tabby, 1 Hyper. "A base OS" is not the same size on every platform - on Linux it means the C runtime and nothing else, since a desktop library is something you installed, while on Windows the whole of System32 ships with the machine - so a Windows row counts less toward File+deps than a Linux one, on top of everything in note 9. Expect a few MiB of drift between runs, since libraries load on demand.</sub>
 
-<sub><sup>5</sup> SilkTerm as it ships, with the eye candy on: wallpaper, text scrim and outline, animated cursor, smooth application scrolling and colour emoji. Every one of them is a setting, and the row below is the same binary with the lot switched off.</sub>
+<sub><sup>5</sup> SilkTerm as it ships, with the eye candy on: wallpaper, text scrim and outline, animated cursor, smooth application scrolling and color emoji. Every one of them is a setting, and the row below is the same binary with the lot switched off.</sub>
 
-<sub><sup>6</sup> Wallpaper, scrim, outline, cursor animation, smooth app scrolling, transparency and colour emoji all off.</sub>
+<sub><sup>6</sup> Wallpaper, scrim, outline, cursor animation, smooth app scrolling, transparency and color emoji all off.</sub>
 
 <sub><sup>7</sup> Vendor's released artifact, not measured here, so not comparable with the measured columns. Blank: conhost.exe and Terminal.app ship inside the OS, Warp publishes no size, and the macOS rows have nothing here to run on.</sub>
 
-<sub><sup>8</sup> SilkTerm uses Alacritty's terminal-emulation core, so the two share the parsing and grid work that this benchmark mostly measures - which is why they are within a few percent of each other, and why both sit so far ahead of terminals that parse their own way. It is the lighter of the two to run, which is what the eye candy costs: SilkTerm with everything switched off is 26 MiB above it, and as it ships, 71.</sub>
+<sub><sup>8</sup> SilkTerm uses Alacritty's terminal-emulation core, so the two share the parsing and grid work that this benchmark mostly measures - which is why they are within a few percent of each other, and why both sit so far ahead of terminals that parse their own way. It is the lighter of the two to run, which is what the eye candy costs: SilkTerm with everything switched off is 50 MiB above it, and as it ships, 117.</sub>
 
 <sub><sup>9</sup> Every measured row comes from one machine, because the measuring rig is not neutral: rendering through software OpenGL roughly halves SilkTerm's throughput and going through VirtualGL still costs it about 14%, while terminals that draw on the CPU do not move at all. A table built from mixed rigs can therefore rank the wrong terminal first. These figures were taken on a headless Wayland compositor driving a discrete GPU (Linux, Ryzen host, GeForce RTX 3060 Ti), so nothing on the desktop competes for the card. Windows rows, when they are filled in, will come from a virtual machine on that same host with half the cores, less memory, some virtualization overhead and a lower-specification passed-through GPU (RTX 2060) - so they will not be directly comparable until they are calibrated against the terminals that run on both platforms.</sub>
 
@@ -254,48 +264,60 @@ Run it yourself with [`utility/update-showdown.py`](utility/update-showdown.py) 
 
 ### Installing
 
-The primary install is a native package from the [releases page](https://github.com/jim-collier/silkterm/releases): `.deb` / `.rpm` on Linux, or the NSIS setup `.exe` on Windows. (No releases published yet? Build from source per the section below.) Optional either way: copy the example config tree in [`filesystem/home/`](filesystem/home/) over your own `$HOME` for a starter config and the background image pack.
+#### Packages and installers
+
+The primary install is a native package from the [releases page](https://github.com/jim-collier/silkterm/releases): `.deb` / `.rpm` on Linux, or the NSIS setup `.exe` on Windows. (No releases published yet? Build it yourself, below.) Optional either way: copy the example config tree in [`filesystem/home/`](filesystem/home/) over your own `$HOME` for a starter config and the background image pack.
 
 #### Direct
 
-Prefer a plain binary? These one-liners download the latest release, verify its sha256, and install it. Each states its plan and asks before touching anything, and does nothing if you're already current.
+Prefer a plain binary? These one-liners download the latest release, verify its sha256, and install it. Each states its plan and asks before touching anything, and does nothing if you're already current. `stable` falls back to the newest pre-release when no full release has been published yet.
 
 Bash >= 3.2 (Linux, WSL):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/jim-collier/silkterm/main/install.bash)  [--release stable|dev]  [--target user|system]  [--arch x64|arm64]
+bash <(curl -fsSL https://raw.githubusercontent.com/jim-collier/silkterm/main/install.bash)  [--release stable|dev]  [--target user|system]  [--arch x64|amd64|arm64]  [--yes]
 ```
 
 PowerShell 7+ (Windows, Linux):
 
 ```powershell
-& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/jim-collier/silkterm/main/install.ps1')))  [-Release stable|dev]  [-Target user|system]  [-Arch x64|arm64]
+& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/jim-collier/silkterm/main/install.ps1')))  [-Release stable|dev]  [-Target user|system]  [-Arch x64|amd64|arm64]  [-Yes]
 ```
+
+`--yes` / `-Yes` skips the confirmation, for unattended installs.
 
 Install locations:
 
-| OS      | User install (default)                    | ￩ Launcher                                                      | (or) System install       | ￩ Launcher
+| OS      | User install (default)                    | <- Launcher                                                     | (or) System install       | <- Launcher
 | :---    | :---                                      | :---                                                            | :---                      | :---
 | Linux   | `~/.local/bin/silkterm`                   | `~/.local/share/applications/silkterm.desktop`                  | `/usr/local/bin/silkterm` | `/usr/local/share/applications/silkterm.desktop`
 | Windows | `%LOCALAPPDATA%\Programs\SilkTerm\`       | Start Menu shortcut, and the install dir is added to `%PATH%`   | `C:\Program Files\SilkTerm\` | Common Start Menu shortcut (needs an elevated shell)
 
-macOS and BSD builds aren't published yet - build from source below.
+macOS and BSD builds aren't published yet - build it yourself, below.
 
-### Building from source
+#### Build it yourself
 
-Install the per-platform prerequisites first: [prerequisites.md](prerequisites.md). Then see [build.md](build.md) for the build commands.
-
-Quick start on Linux:
+Install the per-platform prerequisites first ([prerequisites.md](prerequisites.md)), then on Linux:
 
 ```bash
 cargo run --release
 ```
 
-Or for the full CI/CD pipeline (lint, debug compile, regression test, profile, release builds, versioned backup, commit to git, push):
+That's the whole of it for a native build. [build.md](build.md) covers the cross-builds (Windows, and ARM64 for both) which all run from an x86_64 Linux box.
+
+### Setting up a development environment
+
+[prerequisites.md](prerequisites.md) lists what each platform needs, down to the package names and the one-time toolchain setup. [build.md](build.md) covers the build and cross-build commands, and [contributing.md](contributing.md) covers the branch and review flow.
+
+The toolchain version is pinned in `rust-toolchain.toml`, so rustup picks the right one on its own.
+
+To run everything a change has to pass before it can be pushed - format, lint, regression tests, profiling, the release and cross builds, packaging, then backup and publish:
 
 ```bash
 cicd/cicd.bash [--quick]
 ```
+
+`--quick` skips the cross-builds and the slow stages. A fast subset of it - format check, lint, tests - also runs as a pre-push hook (`cicd/cicd.bash --gate`), so nothing reaches a shared branch unverified.
 
 ### Configuration
 
@@ -309,7 +331,7 @@ If making changes directly (rather than through Settings), you can apply them im
 
 To start over from the shipped defaults, run `silkterm --reset-config`. The old file is kept alongside as `config.shcl.bak` rather than deleted.
 
-Drop a few images into a `wallpapers` folder next to the config and SilkTerm picks one each launch, favouring whatever it hasn't shown lately. Naming a wallpaper in the config, or passing one on the command line, takes precedence.
+Drop a few images into a `wallpaper` folder next to the config and SilkTerm picks one each launch, favoring whatever it hasn't shown lately. Naming a wallpaper in the config, or passing one on the command line, takes precedence.
 
 <!--
 ## Renaming the project
@@ -349,12 +371,12 @@ Even a few dollars a month is meaningful. Or just buy me a coffee.
 Tell other terminal nerds on various socials how this has changed your life!
 
 - [r/commandline](https://www.reddit.com/r/commandline/)
-- [Hacker News](news.ycombinator.com)
+- [Hacker News](https://news.ycombinator.com/)
 - [r/unixporn](https://www.reddit.com/r/unixporn/)
 
 ## Legal stuff
 
-SilkTerm is build on the basic plumbing of [Alacritty](https://github.com/alacritty/alacritty), which is dual-licensed under the [Apache License, Version 2.0](https://github.com/alacritty/alacritty/blob/master/LICENSE-APACHE) and [MIT License](https://github.com/alacritty/alacritty/blob/master/LICENSE-MIT).
+SilkTerm is built on the basic plumbing of [Alacritty](https://github.com/alacritty/alacritty), which is dual-licensed under the [Apache License, Version 2.0](https://github.com/alacritty/alacritty/blob/master/LICENSE-APACHE) and [MIT License](https://github.com/alacritty/alacritty/blob/master/LICENSE-MIT).
 
 SilkTerm's license is specifically compatible with Alacritty's:
 

@@ -10,19 +10,19 @@ Short version: you're comparing a whole self-contained program against a thin la
 
 Most GTK terminals (`xfce4-terminal`, `gnome-terminal`, `terminator`, ...) are small *executables* but not small *programs*. The binary on disk is mostly glue; the real work lives in shared libraries that ship with your desktop and don't count toward the binary's size:
 
-- **VTE** - the terminal widget (this *is* the emulator).
-- **GTK** + **GLib/GObject** - the toolkit.
-- **Pango** + **HarfBuzz** + **FreeType** + **fontconfig** - text shaping and glyph rendering.
-- **Cairo** + **pixman** - drawing.
+- **VTE**: the terminal widget (this *is* the emulator).
+- **GTK**, **GLib/GObject**: the toolkit.
+- **Pango**, **HarfBuzz**, **FreeType**, **fontconfig**: text shaping and glyph rendering.
+- **Cairo**, **pixman**: drawing.
 
 `terminator` goes a step further: it's Python, so its "binary" is basically a launcher script and the real cost is the Python interpreter plus everything above.
 
 SilkTerm instead statically links nearly its entire stack into one file - and that stack is heavier by design, because it's a *GPU* terminal, not a GTK-widget terminal:
 
-- **wgpu / naga** - the GPU abstraction and WGSL shader compiler. This is the single biggest chunk.
-- **cosmic-text / swash / rustybuzz / ttf-parser** - SilkTerm's own text shaping and rasterization (its answer to Pango + HarfBuzz + FreeType).
-- **alacritty_terminal** - the grid, PTY, and escape-sequence engine.
-- **winit / glutin** - windowing and GL/X11 plumbing.
+- **wgpu / naga**: the GPU abstraction and WGSL shader compiler. This is the single biggest chunk.
+- **cosmic-text / swash / rustybuzz / ttf-parser**: SilkTerm's own text shaping and rasterization, standing in for Pango, HarfBuzz and FreeType.
+- **alacritty_terminal**: the grid, PTY, and escape-sequence engine.
+- **winit / glutin**: windowing and GL/X11 plumbing.
 
 None of that is handed to us by the OS the way GTK and VTE are, so it all rides inside the one binary. In exchange you get a single file that runs with no toolkit to install and nothing to keep in version-sync.
 

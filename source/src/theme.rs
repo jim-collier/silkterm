@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright © 2026 Jim Collier
 
-//! Colour themes: each theme is a (dark, light) pair of `Palette`s. The active
+//! Color themes: each theme is a (dark, light) pair of `Palette`s. The active
 //! theme name + mode (Dark / Light / System) resolve to one `Palette` - the
-//! terminal bg/fg/cursor, the two attention colours and the 16 ANSI colours -
+//! terminal bg/fg/cursor, the two attention colors and the 16 ANSI colors -
 //! which `config` folds into `Settings` and `palette.rs` reads. The `colors.*`
 //! keys still override on
-//! top (a per-colour tweak).
+//! top (a per-color tweak).
 //!
 //! A theme the user saves from the Settings dialog is a `UserTheme`: the same
 //! (dark, light) pair, stored whole in `config.shcl` under `themes.<slug>` and
 //! resolved ahead of the built-ins, so one may take a built-in's name and stand
 //! in for it until it is deleted.
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Palette {
 	pub bg: [u8; 3],
 	pub fg: [u8; 3],
 	pub cursor: [u8; 3],
-	// Two attention colours, deliberately separate. `highlight` marks SEVERAL
+	// Two attention colors, deliberately separate. `highlight` marks several
 	// things at once - the live pane's ring, slider handles, revert icons, the
 	// default button - so it stays calm. `focus` marks the ONE element the
 	// keyboard is on, so it is the more vivid of the pair and sits well away
@@ -39,7 +39,7 @@ pub struct Palette {
 	pub ansi: [[u8; 3]; 16],
 }
 
-// The ten palette colours a user can edit, spelled as `colors.*` spells them.
+// The ten palette colors a user can edit, spelled as `colors.*` spells them.
 // One order, used by the dialog's rows, by a saved theme's config block, and by
 // the index accessors below - so none of the three can drift from the others.
 pub const PALETTE_KEYS: [&str; 10] = [
@@ -86,12 +86,12 @@ impl Palette {
 	}
 }
 
-// A theme the user saved. It carries both variants WHOLE rather than a base plus
+// A theme the user saved. It carries both variants in full rather than a base plus
 // the differences: saving, renaming and deleting are then all the same operation
 // on one config subtree, and a saved theme is self-contained enough to hand to
 // someone else. `slug` is its config path segment and never changes, so a rename
 // only rewrites `name` - and `name` is what the `theme` setting stores.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct UserTheme {
 	pub slug: String,
 	pub name: String,
@@ -135,9 +135,9 @@ const SILK_DARK: Palette = Palette {
 	dialog_bg: DLG_BG_DARK, dialog_fg: DLG_FG_DARK,
 	gutter: GUTTER_DARK,
 	// Hues sit where their names say, warmed toward the pair above; saturation is
-	// the pastel end. Each colour's BRIGHTNESS was carried over from the palette
+	// the pastel end. Each color's BRIGHTNESS was carried over from the palette
 	// this replaced, hue by hue, so contrast and legibility are unchanged - only
-	// the family moved. The greys carry a faint warm cast for the same reason.
+	// the family moved. The grays carry a faint warm cast for the same reason.
 	ansi: [
 		[0x1d, 0x1b, 0x18], [0xd0, 0x72, 0x64], [0x6c, 0xd0, 0x79], [0xd7, 0xc5, 0x7c],
 		[0x7c, 0xa8, 0xe5], [0xbf, 0x7b, 0xd5], [0x53, 0xb9, 0xb5], [0xb7, 0xb1, 0xa5],
@@ -321,7 +321,7 @@ mod tests {
 
 	#[test]
 	fn chrome_defaults_shared_across_themes() {
-		// every built-in theme uses the same neutral menu colours (both modes)
+		// every built-in theme uses the same neutral menu colors (both modes)
 		for (_, t) in THEMES {
 			assert_eq!(t.dark.menu_bg, MENU_BG_DEF);
 			assert_eq!(t.light.menu_bg, MENU_BG_DEF);
@@ -336,7 +336,7 @@ mod tests {
 
 	// The pair only works if the two read as different signals. A theme that let
 	// them converge would draw the focused control and everything merely
-	// highlighted in the same colour, which is the whole point of splitting them.
+	// highlighted in the same color, which is the whole point of splitting them.
 	#[test]
 	fn the_two_attention_colours_stay_apart() {
 		for (name, t) in THEMES {

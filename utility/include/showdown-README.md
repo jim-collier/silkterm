@@ -55,7 +55,7 @@ Watch the `CV%` column. On a machine that is also being used for other work, a r
 
 **File+deps** is the executable plus every shared library the running process actually maps, minus the base OS runtime (libc, libm, libgcc, the loader) and minus the graphics stack. Self-contained bundles count their extracted payload plus the system libraries they still borrow - a different basis to a packaged terminal's, deliberately, because it is the honest answer to "what does installing this cost" for each packaging style.
 
-**Mem** is the unique resident footprint of the whole process tree: private pages summed per process, plus each shared mapping counted once. It is neighbour-independent and free of intra-tree double counting, which the obvious alternatives are not - summed RSS charges a multi-process terminal several times for the same pages, and PSS divides shared pages by however many unrelated programs happen to be running.
+**Mem** is the unique resident footprint of the whole process tree: private pages summed per process, plus each shared mapping counted once. It is neighbor-independent and free of intra-tree double counting, which the obvious alternatives are not - summed RSS charges a multi-process terminal several times for the same pages, and PSS divides shared pages by however many unrelated programs happen to be running.
 
 ### Three ways to get this wrong
 
@@ -95,7 +95,7 @@ Most terminals need nothing but their key. The awkward ones, and why:
 - **Tabby** ignores `SHELL` and offers no profile hook that takes. Dismiss its Welcome tab once by clicking "Close and never show again", then hook the run through the login shell's `.bashrc`.
 - **Electron terminals** must not be run under a fake `HOME`: the results store lives under `~/.local/share/silkterm-bench`, and redirecting `HOME` sends the results there too. Give `AppRun` an `APPDIR` or run the inner binary directly. They exit with SIGTRAP or SIGILL after measurement under Xvfb, which is harmless - the pids have already been sampled.
 
-Only processes these scripts launched are ever signalled, and only by pid. A pattern kill would match the harness's own command line, and has taken out a live session before now.
+Only processes these scripts launched are ever signaled, and only by pid. A pattern kill would match the harness's own command line, and has taken out a live session before now.
 
 Binaries are resolved from `PATH` first, then `cicd/artifacts/sizebench/terms/`. That directory is gitignored and excluded from the backup archive, and deliberately keeps the downloaded comparison artifacts so a re-measure needs no re-download. Alacritty is kept there as an extracted `.deb`:
 

@@ -132,7 +132,7 @@ gfs_rotate(){
 	done
 
 	## Frequent: most recent kFreq not already claimed by a coarser role. The
-	## single newest file is labelled "latest" instead - a stable, naturally-
+	## single newest file is labeled "latest" instead - a stable, naturally-
 	## sorting pointer to the most recent file (no separate "<prefix>-latest" copy).
 	local ni=${#items[@]}
 	for ((i = ni>kFreq ? ni-kFreq : 0; i<ni; i++)); do

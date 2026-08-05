@@ -43,7 +43,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ## To-do
 
-
 - 🛠️ Terminal throughput benchmark (Windows):
 	- Both halves now run on Windows as well, measured from inside the terminal under test, which is the only way to reach the terminals that exist nowhere else. Each half checks the window is at its own fixed size first and refuses otherwise, since measuring at the wrong one produces a figure that looks fine and belongs in no column.
 		- 🔘 Fill in the Windows rows: conhost, Windows Terminal and MobaXterm need running on a Windows machine.
@@ -61,15 +60,15 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - 🛠️ Consolidate UI (e.g. settings) declarations into one or more source shcl file(s) that get compiled or transpiled into code.
 	- Measurements specified in CSS px or DIP that renders "correctly" at any DPI.
-	- ✅ Settings dialog: rows, order, sections, tabs, the config path behind each row, the greying rules and the whole geometry now live in `source/src/settings_ui.shcl`, compiled in. The hand-written tables it replaces are gone. A test holds the file against the settings the code knows, in both directions - a row naming a setting that does not exist, and a setting with no row.
+	- ✅ Settings dialog: rows, order, sections, tabs, the config path behind each row, the graying rules and the whole geometry now live in `source/src/settings_ui.shcl`, compiled in. The hand-written tables it replaces are gone. A test holds the file against the settings the code knows, in both directions - a row naming a setting that does not exist, and a setting with no row.
 	- ✅ Settings dialog measurements are DIP. The layout is solved in that space and the display's scale factor is applied only where it meets the window, so the dialog keeps its proportions at any DPI. At 2x the old build kept 20px checkboxes and truncated its value fields; it is now simply twice the size.
 	- 🔘 The main window's own chrome (menu bar, tab bar, dropdown menus, focus ring, pane gap) is still measured in raw pixels, so it thins out as DPI rises. Same treatment, but it cannot use the same boundary trick - chrome shares a coordinate space with the terminal grid, so each measurement scales where it is used.
 
 - 🛠️ Refactor settings dialog
 	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory. Reconcile by what makes the most sense given the obvious design direction this is going, with what has changed before.
-	- Being done in chunks, in this order: the chrome and the two new colours, then groups and the tab reorganization, then theme management, then the colour picker, then the Shells tab. Opening speed was dealt with first and is under Done.
+	- Being done in chunks, in this order: the chrome and the two new colors, then groups and the tab reorganization, then theme management, then the color picker, then the Shells tab. Opening speed was dealt with first and is under Done.
 	- ✅ Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
-		- Done: thirty rows carry their own help line, and a control that is greyed out still explains why instead - that question is the more urgent one. The text wraps to the panel, so a longer sentence or a bigger interface font cannot push it off the edge, and it flips above a control when there is no room beneath.
+		- Done: thirty rows carry their own help line, and a control that is grayed out still explains why instead - that question is the more urgent one. The text wraps to the panel, so a longer sentence or a bigger interface font cannot push it off the edge, and it flips above a control when there is no room beneath.
 		- ✅ Including the some of the main buttons:
 			- "Apply": "Apply changes now, without closing Settings."
 			- "OK": "Apply changes and close Settings."
@@ -87,7 +86,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Between the shorter strip and the dropped heading the dialog is 58px shorter.
 	- ✅ Express all slider values that range from 0.0 to 1.0, as an integer % from 0% to 100%. (But store as original decimal value in config though.)
 		- Six sliders read 0-100 in whole steps now; the file still holds the decimal. Reverting one lands exactly on its own default rather than a hair off it, and a percent field takes no decimal point.
-	- Found and fixed on the way: both scrollbar colours had rows in the dialog but were never written to the file, so an edit lasted only until the next launch. Every row is now held against a save-and-reload by test, so a row that edits nothing lasting fails rather than going quiet.
+	- Found and fixed on the way: both scrollbar colors had rows in the dialog but were never written to the file, so an edit lasted only until the next launch. Every row is now held against a save-and-reload by test, so a row that edits nothing lasting fails rather than going quiet.
 	- 🛠️ Tabs and grouping (settings content and tab reorg):
 		- ✅ "Groups" are organized, titled sections within a dialog tab page. Differentiated by a title, and with adequate spacing between groups so that they are visually separate.
 		- ✅ There is now the concept of "Sub-groups" within groups, distinguished through indentation of the leading text labels (but not the controls themselves).
@@ -161,7 +160,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- Sub-groups:
 				- Scrolling
 				- Cursor
-			- Done as two sub-groups: Smooth scrolling (the five feel sliders) and Scrollbar (width, hide-when-idle, and its two colours). There is no Cursor sub-group - cursor movement has no settings behind it, only source constants.
+			- Done as two sub-groups: Smooth scrolling (the five feel sliders) and Scrollbar (width, hide-when-idle, and its two colors). There is no Cursor sub-group - cursor movement has no settings behind it, only source constants.
 		- 🛠️ Tab: "Themes"
 			- ✅ Group: "Themes"
 				- ✅ "Theme" (drop-down of selectable themes).
@@ -172,12 +171,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 						- ✅ [Save as ...] pops up a small dialog with the text "Enter a new theme name", and below that, an empty textbox. buttons at bottom-right "Cancel|OK" (OK default)
 						- ✅ [Rename] pops up a small dialog to edit existing name (all text selected by default), with buttons "Cancel|OK" (OK default).
 						- ✅ [Delete] pops up a confirmation Cancel|OK dialog (defaul Yes), and 'Really delete theme "<them name>"?'
-					- Nothing records "unsaved changes" separately - a colour that disagrees with the theme is the record, and it lives in the config file, so the answer is the same after a restart.
-					- A saved theme is written whole (both variants, the ANSI set included) under its own name, so it stands on its own and can be handed to someone else. Saving folds the per-colour tweaks into it and drops them as overrides.
+					- Nothing records "unsaved changes" separately - a color that disagrees with the theme is the record, and it lives in the config file, so the answer is the same after a restart.
+					- A saved theme is written whole (both variants, the ANSI set included) under its own name, so it stands on its own and can be handed to someone else. Saving folds the per-color tweaks into it and drops them as overrides.
 					- A saved theme may take a built-in's name and stand in for it; deleting it puts the built-in back. Only a saved theme can be renamed or deleted.
 				- A "Mode" row was added beside it (Dark / Light / System). It was a config-only setting, and a theme picker with no way to pick the variant invites the question.
 			- ✅ Group: "Colors" Update dynamically with theme selection and can be user-overridden and persisted, even if the named them that was tweaked, isn't saved.)
-				- Picking a theme takes on its colours wholesale. Keeping the previous theme's tweaks on top would make the picker look broken on every colour that had been edited, and those tweaks belonged to the theme being left behind.
+				- Picking a theme takes on its colors wholesale. Keeping the previous theme's tweaks on top would make the picker look broken on every color that had been edited, and those tweaks belonged to the theme being left behind.
 				- Controls
 					- ✅ Sub-group: "Terminal background" (formerly labeled "Background")
 						- "Foreground"
@@ -187,7 +186,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 						- ✅ "Highlights" (formerly "Focus ring"; same color but with expanded meaning as noted above)
 						- ✅ "Focus" (a new color category that used to be part of "Focus ring", but now applies only to focused element)
 						- Done: all three are themable and live on the Colors tab. The sub-group headings above wait on the grouping work; the rows are in place.
-						- ✅ Both sub-groups are in place now. The dialog and menu backgrounds and their two text colours picked up rows at the same time - they were themable but not editable, and half a family on screen invites the question.
+						- ✅ Both sub-groups are in place now. The dialog and menu backgrounds and their two text colors picked up rows at the same time - they were themable but not editable, and half a family on screen invites the question.
 				- Behavior changes
 					- When a hex field textbox gets focus, don't remove the existing value. Just highlight all, as now standard for textboxes.
 					- Make the colored boxes clickable. That pops up a color selection dialog.
@@ -260,14 +259,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - 🛠️ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- 🔘 Add Windows support.
 
-
 - 🔘 "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
 	- Looks and behaves not too differently than some modern text editors.
 	- When disabled, has no effect on performance - truly skipped code paths.
 	- It has it's own area within the render area, it doesn't sit on top of it.
 	- When enabled:
 		- The visible section is highlighted and is smoothly draggable, scrollable (when mouse is over it).
-		- The scrollbar to the right of it, acts on the the scroll-buffer, and is synced pixel-perfect with the highlight area over the preview. In other words, the preview AND the scrollbar, are essentially one-and-the-same.
+		- The scrollbar to the right of it, acts on the scroll-buffer, and is synced pixel-perfect with the highlight area over the preview. In other words, the preview AND the scrollbar, are essentially one-and-the-same.
 		- If the previously implemented "regular" scrollbar is *also* enabled, that scrollbar sits between the terimal area on the left, and the preview area on the right.
 			- This is a departure from other implementations, that only have one scrollbar on the far right that behaves the same way whether there is a preview area or not. But I want to visually indicate that the *terminal* scrollbar, is for the *terminal*, not the preview.
 
@@ -286,8 +284,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - 🛠️ Setting dialog (part 2):
 	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
 	- ✅ Size: A boolean setting to "Remember last size".
-		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows grey out when on.
-		- Verified: a manual resize persisted the remembered size, relaunch used it instead of the default, and the dialog shows the toggle checked with Columns and Rows greyed.
+		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
+		- Verified: a manual resize persisted the remembered size, relaunch used it instead of the default, and the dialog shows the toggle checked with Columns and Rows grayed.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
 			- 🔘 "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
 
@@ -300,17 +298,17 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Defines unusual, technical, and/or highly specific English word terms used in the settings dialog, backlog, design.md, etc.
 	- Even in source code that are referred to or hinted at - frequently not rarely - as English words.
 	- Limit to concrete concepts that are unique to this project, not highly technical, and/or may be unfamiliar to, say, high-school reading level users.
-	- Targeted towards end users, as well as junior developers brand-new to the projecs.
+	- Targeted toward end users, as well as junior developers brand-new to the projecs.
 	- Limit the number of definitions to something like the top 20 to 50 terms most useful to define, in terms of uniqueness and approximate frequency. (E.g. "Scrim", "Contrast mask", and parts of the application UI, UX, settings, or features that are given specific names so that we know what's being referred to. Etc.)
 
 - 🔘 Prepare for code review
 
 - 🔘 Stable release!
 
-- 🔘 Wallpaper: Need a way to detect maximum and average brightness of background image - or some human hueristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
+- 🔘 Wallpaper: Need a way to detect maximum and average brightness of background image - or some heuristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
 	- 🔘 Really what I'm after, is this resulting effect. The implimentation is up to research:
 		- 🔘 At 100% background image visibility, it's just the image as-is.
-		- 🔘 But below that, the opacity % scales with human perception.
+		- 🔘 But below that, the opacity % scales with perception.
 			- 🔘 In other words, at say 90%, it is actually scaled to some average of ([perceived brightness], [brightest pixel]).
 			- 🔘 As an example, 50% for a very bright image, may be significantly darker than 50% for a very dark image.
 		- 🔘 And the inverse, for light-mode themes.
@@ -540,13 +538,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ Bug: repeated `clear; ls -lA ~/` scrolled smoothly the first time and appeared instantly every time after. (20260803)
 	- Cause: the smooth output scroll arms itself from how much the scrollback grew between two drawn frames. `clear` empties the scrollback, and re-running the same command refills it to exactly the same depth - both inside a single read of the program's output - so the measured growth was zero and nothing was armed, even though a screenful of lines had gone past. The end state carries no trace of it either: the screen and the scrollback both look exactly as they did before, so nothing about the finished picture can tell that anything happened.
 	- Fixed: the depth is now sampled once per read of the program's output rather than once per drawn frame, which is the only point where the emptying is still visible, and a drop is read for what it can only mean - the scrollback was cleared, so everything left in it arrived afterwards and is new. Repeats now scroll exactly like the first run.
-	- Sampling gives up immediately rather than wait its turn, so it can never hold up output; a skipped sample is picked up by the next one, and if every sample is skipped the previous behaviour applies unchanged. Switching a full-screen program in or out, and resizing the window, both reset the measurement, since each moves the depth without anything having scrolled.
+	- Sampling gives up immediately rather than wait its turn, so it can never hold up output; a skipped sample is picked up by the next one, and if every sample is skipped the previous behavior applies unchanged. Switching a full-screen program in or out, and resizing the window, both reset the measurement, since each moves the depth without anything having scrolled.
 	- Verified: the first run and every repeat now arm the same amount and glide through it identically, where before only the first did and later runs did no work at all - measurable as roughly seven times the drawing effort across three repeats, in both orderings. Heavy output drains no slower than before. The four scrolling scenes covered by the regression suite still slide smoothly with no bounce.
 
 - ✅ Bug: scrolling back in muffer with the mouse wheel made its "1 new message" indicator smear and bounce - the same shape as #t78br, "The Notorious 'Bouncing Shadow' nano bug". (20260803)
 	- Steps to reproduce: open muffer, let the conversation grow past one screen, then wheel back. The indicator that appears at the bottom of the transcript ("1 new message", or "Jump to bottom" when nothing new has arrived) is drawn twice and rides the scroll instead of holding still.
 	- Cause: a smooth slide keeps the fixed parts of an application's screen still and moves only the scrolling middle, and it worked out which rows were fixed by asking which ones had not changed. That misses a fixed element whose text changes while it sits still. The indicator is painted over the last row of the transcript rather than below it, so that row differs on every step, the search for unchanging rows stopped short of it, and the indicator was treated as scrolling content - the same class of fault as the title bar that used to ghost in nano.
-	- Fixed: the fixed rows are now also derived from what the detected scroll itself accounts for. A row a real scroll owns either moves cleanly or is one of the rows the step newly reveals; anything else is fixed furniture and is held still. The two measures are combined by taking whichever holds more rows still, so the previous behaviour is a floor and no row that used to move can start behaving differently. Because the span is anchored on the rows that genuinely moved, it can only ever be widened outward, so an element stranded in the middle of the scrolling area can never hand the rows past it to the fixed set.
+	- Fixed: the fixed rows are now also derived from what the detected scroll itself accounts for. A row a real scroll owns either moves cleanly or is one of the rows the step newly reveals; anything else is fixed furniture and is held still. The two measures are combined by taking whichever holds more rows still, so the previous behavior is a floor and no row that used to move can start behaving differently. Because the span is anchored on the rows that genuinely moved, it can only ever be widened outward, so an element stranded in the middle of the scrolling area can never hand the rows past it to the fixed set.
 	- Verified.
 
 - ✅ A pipeline run aborted at the profiler stage and reported an application problem, when the compiler itself had crashed. (20260802)
@@ -585,7 +583,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- The stack should be identical on every platform, varying only where a platform genuinely requires it, and should be listed whether or not the fonts are installed.
 	- The order was decided by asking which platform was running rather than what it had to offer, so "follow the system font" meant "and skip the configured stack" on Linux and macOS while Windows started at that stack. Same build, same config, two different results - and a configured stack could be discarded outright.
 	- Fixed: one search order everywhere. The setting only decides whether the OS family is tried ahead of `font_family` or behind it; every list is still walked, so an absent family falls through to the next instead of skipping the rest. The built-in stack always backs both up.
-	- Platforms now show through only in what they report. Windows has a system font size but no monospace family, so following the family is simply a no-op there and resolution starts at `font_family` with no special case. Wherever there is nothing to follow the checkbox greys out and the flyover says which half is missing - that also covers a desktop with no font setting at all, which used to claim it was following a font that did not exist.
+	- Platforms now show through only in what they report. Windows has a system font size but no monospace family, so following the family is simply a no-op there and resolution starts at `font_family` with no special case. Wherever there is nothing to follow the checkbox grays out and the flyover says which half is missing - that also covers a desktop with no font setting at all, which used to claim it was following a font that did not exist.
 	- Also fixed: the size half was inert on Windows even though Windows does report a system font size, so that checkbox is now live there too. A config with no explicit `font_size` is unaffected, since that value was already seeded from the same OS size.
 	- Existing configs kept whatever `font_family` they were first written with, because backfill only ever adds a missing key. A stack that still matches a superseded default exactly is now refreshed on launch; anything edited, or commented out, is left as written.
 	- 🔘 Confirm on Windows: the size checkbox is now live there and can't be exercised from this box.
@@ -645,8 +643,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Fix: terminal bold now requests the boldest weight the pinned mono family actually ships (like chrome already did), so it can't escape into a proportional bold fallback. New test guards it. Awaiting confirm on the affected host.
 		- Second half: with the font auto/unset, Windows picked the mono family by a font-db lottery (it has no system monospace setting), which could land on a family with no bold at all - then "boldest available" = regular and bold renders flat. Confirmed live on this host; the fallback-stack item below fixes the pick. Both hosts should recheck after it lands.
 	- ✅ Font fallback: one cross-platform stack (Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New) is now the font_family default and the resolver's last resort everywhere. Windows always resolves through it ("use system font" is inert there - no OS monospace setting exists), so the family always carries a real bold face.
-		- The Settings "Use system font" checkbox is disabled and greyed on Windows, with a flyover explaining why. Font family/size stay editable there regardless of the config value.
-		- Superseded by the per-platform divergence fix in Bugs: the order is now one list everywhere and the greying keys on what the OS actually reports, so only the family half is inert on Windows - the size half is live there.
+		- The Settings "Use system font" checkbox is disabled and grayed on Windows, with a flyover explaining why. Font family/size stay editable there regardless of the config value.
+		- Superseded by the per-platform divergence fix in Bugs: the order is now one list everywhere and the graying keys on what the OS actually reports, so only the family half is inert on Windows - the size half is live there.
 	- ✅ Scrolling in muffer, and `less`, is juddery. Up-and-down motion, while making progress in the intended direction.
 		- Reproduces on this host, and with plain scrolled output too - not just full-screen apps - so it's the frame/output pacing, not the alt-screen slide detector alone.
 		- Fix: on Windows, one queued present frame instead of two, so the per-frame dt stays steady (two let the CPU race ahead then stall, jittering the ease). Best-guess; needs a visual check on this host - could not measure headlessly (background windows throttle to ~10fps).
@@ -670,10 +668,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✅ Static case confirmed: this Windows box is actually at 125% (an earlier "100%" reading was a DPI-unaware shell being fed a virtualized 96 DPI). A dogfood build renders crisply and natively at 125% - measured cell width ~11.3px and row pitch ~23px, both exactly 1.25x their 100% values, with sharp anti-aliasing (not a 100% render upscaled by the compositor). So the app reads and applies the scale correctly.
 
 - ✅ Windows: no smooth-scrolling in full-screen / scroll-region apps (muffer, nano), though it works on the Linux build.
-	- Scope (owner-confirmed): plain directory listings and mouse-wheel scrollback DO scroll smoothly on Windows; only apps that keep a fixed UI with a scrolling sub-region (muffer's bottom input box, nano's top/bottom bars) failed.
+	- Scope (confirmed): plain directory listings and mouse-wheel scrollback DO scroll smoothly on Windows; only apps that keep a fixed UI with a scrolling sub-region (muffer's bottom input box, nano's top/bottom bars) failed.
 	- Diagnosed on the Windows box via a per-frame probe reading real muffer + nano. ConPTY re-emits a scroll-region app's scrolling as an in-place repaint, so scrollback never grows: for nano (alt screen) `history` is 0 and the rows still translate cleanly (the signed clean-translate detector reports healthy shifts of 2-14 rows); for muffer (normal screen) `history` is frozen at 1 and `grew` is 0 every frame, so output-easing can never fire and there is no scrollback to ease through - yet the rows translate 1-2 at a time and the signed detector catches them. On a Unix PTY these scrolls arrive as real grid-scrolls, which is why Linux was fine.
 	- Fix: the app-scroll slide (fixed-UI + scrolling-region, no scrollback, synthesized reveal strip) is exactly the right mechanism but was gated to the alt screen only. Extended it to also engage on the normal screen when following with no scrollback growth (`repaint_scroll` in `pane.rs build`); the render side already consumes `app_off` regardless of screen. Plain output (grew>0) still uses output-easing; a static in-place redraw yields no clean shift so it stays put (no bounce). One `smooth_scroll_apps` setting now covers alt-screen apps (nano/vim/less) AND normal-screen repaint apps (muffer on ConPTY).
-	- Made default-on (owner call): `smooth_scroll_apps` now defaults `true` (was false), so nano and muffer both slide out of the box; explicit `= false` still opts out. Feel-test passed on the real display (both "much smoother", no bounce).
+	- Made default-on: `smooth_scroll_apps` now defaults `true` (was false), so nano and muffer both slide out of the box; explicit `= false` still opts out. Feel-test passed on the real display (both "much smoother", no bounce).
 
 - ✅ Config file rewriting is proving problematic.
 	- For example, when user makes a "non-standard" change (e.g. some extra comments), they get removed in the background, and the editor notices the file changed.
@@ -954,7 +952,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - ✅ Severe bug: Trying to open the settings dialog crashes the program. (20260625-150526)
 	- Cause: on X11 the main window holds a GL context, and the pop-out dialog created a second graphics instance that also tried to init GL, which panicked because a GL context was already current. It only showed with a transparent (GL) main window, so a default-config main masked it.
-	- Fix: dialogs now create their `Gfx` via `Gfx::with_backends(window, Backends::PRIMARY)` (Vulkan/Metal/DX12, no GL) - opaque dialogs don't need GL, and avoiding it sidesteps the EGL conflict. Verified: Settings + About open over a transparent GL main with no crash; toggle on->Opacity enabled, off->greyed.
+	- Fix: dialogs now create their `Gfx` via `Gfx::with_backends(window, Backends::PRIMARY)` (Vulkan/Metal/DX12, no GL) - opaque dialogs don't need GL, and avoiding it sidesteps the EGL conflict. Verified: Settings + About open over a transparent GL main with no crash; toggle on->Opacity enabled, off->grayed.
 
 - ✅ Mouse text selection, and double-click selection, quit working. (20260625-161509)
 	- Cause: It was actually the selection highlight being invisible (input + copy-to-PRIMARY worked): the GL offscreen was `Rgba8UnormSrgb`, so the blit's `textureSample` decoded sRGB->linear, cancelling the blit's `lin2srgb`, and wgpu's GL backend doesn't sRGB-encode the offscreen write either - so all rect/text colors passed through as raw linear and rendered too dark (text ~64% looked "ok"; the dark `SELECTION_BG` (51,68,102)->(8,15,34) went invisible). Fix: make the GL offscreen plain `Rgba8Unorm` so shaders store their linear output raw and the blit's `lin2srgb` does the one true encode - uniformly for rects, glyphon text, and the bg image. Verified: SELECTION_BG renders (50,69,102), text is full-brightness (210). This also completes the earlier transparency sRGB fix (text was still ~164, now a true 210).
@@ -986,7 +984,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - ✅ There are weird spacing issues with the cursor. It appears too far after text. There are also weird text background color interactions with `ble`, which I suspect is caused by the spacing issue.
 	- Cause (re-fixed): the earlier two-part fix below was incomplete because `cell_w` was rounded (measured pitch ~10.5px -> 11). Everything grid-positioned (cursor, cell bg, per-cell glyphs) is placed at `col*cell_w`, so a `cell_w` that's bigger than the text's actual advance drifts them right of the text, and the drift accumulates per column. The cursor sat further past the text the longer the line, and fallback glyphs landed on top of the next cell at higher columns (`set_monospace_width` doesn't snap here. Cosmic-text only snaps when the font's `monospace_em_width()` is `Some`, which system fonts often aren't, so text renders at its natural advance).
-	- Fix: the cell width now measures the real rendered pitch and is not rounded, so it matches the text and residual drift is sub-pixel. Per-cell fallback glyphs are fit to their cell box, scaled and centered so an over-wide fallback can't spill onto its neighbour. Verified: the cursor sits one cell after the prompt with no drift, and wide glyphs (CJK, emoji) occupy two cells without overlapping.
+	- Fix: the cell width now measures the real rendered pitch and is not rounded, so it matches the text and residual drift is sub-pixel. Per-cell fallback glyphs are fit to their cell box, scaled and centered so an over-wide fallback can't spill onto its neighbor. Verified: the cursor sits one cell after the prompt with no drift, and wide glyphs (CJK, emoji) occupy two cells without overlapping.
 	- (Earlier partial fix, superseded by the above) 1) `set_monospace_width(cell_w)` in `TextCtx::new_buffer`; 2) pulling glyphs the primary mono face lacks out of the main buffer and drawing them per-cell. The extraction [2] is still in place; [1] is kept but is largely inert for system fonts.
 
 - ✅ Opacity should only affect the text rendering area, the actual terminal. Instead, it is also affecting the entire window including window decorations.
@@ -1363,11 +1361,11 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- ✅ When text fields have focus highlight, there should only be one visible outline (rather than two - the highlight, AND the textbox outline).
 			- The ring lands on the field's own outline and the field stands its border down. Measured: the old build drew two rules with a gap of panel between them, the new one draws a single rule.
 		- ✅ The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
-	- Note: an existing config's `colors.focus` carries over to `colors.highlight` on the next launch, and the freed name now holds the new focus colour.
+	- Note: an existing config's `colors.focus` carries over to `colors.highlight` on the next launch, and the freed name now holds the new focus color.
 	- UAT.
 
 - ✅ Hyperlinks. (20260804)
-	- A URL in the output underlines while the pointer is over it, in its own colour, and the pointer turns into a hand. Ctrl+click opens it in the desktop's handler; a right-click on one adds "Open link" and "Copy link" to the top of the menu.
+	- A URL in the output underlines while the pointer is over it, in its own color, and the pointer turns into a hand. Ctrl+click opens it in the desktop's handler; a right-click on one adds "Open link" and "Copy link" to the top of the menu.
 	- Only these schemes count as a link, and nothing outside the list can be opened: http, https, ftp, ftps, sftp, ssh, file, mailto. A word with a colon in it (a drive path, an aspect ratio, a namespaced identifier) is not a link.
 	- Trailing sentence punctuation and a bracket the URL sits inside are left out; a bracket the URL itself opened is kept. A URL that wraps across rows is one link, from either half.
 	- Ctrl+press arms and the release over the same link opens it, so a slipped press can be dragged off to cancel.
@@ -1375,7 +1373,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Two settings under a new Hyperlinks group on the Window tab: the feature on or off, and a program to open links with (blank = the desktop's own).
 	- Verified on screen: the underline covers exactly the URL and nothing either side of it; hovering ordinary text or another line draws none; Ctrl+click and both menu items hand over the exact URL; a plain click, a Ctrl+click off a link, and a press dragged off all hand over nothing; with the feature off there is no underline, no menu items and no opening.
 	- Found and fixed alongside: a right-click menu too tall to fit opens against the top of the window, where the menu bar was taking the clicks meant for its first items.
-	- The underline is drawn above the text scrim, alongside the cursor. Below it, the scrim's halo shaded the rule in the pattern of the letters sitting on it, so it came out streaked rather than solid - only visible with the scrim on, since the halo takes the background colour and shows only where something brighter is drawn under it. The rule is now one flat colour end to end.
+	- The underline is drawn above the text scrim, alongside the cursor. Below it, the scrim's halo shaded the rule in the pattern of the letters sitting on it, so it came out streaked rather than solid - only visible with the scrim on, since the halo takes the background color and shows only where something brighter is drawn under it. The rule is now one flat color end to end.
 	- 🔘 UAT
 
 - ✅ Config language moved to SHCL 1.2. (20260804)
@@ -1391,13 +1389,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- A complaint about a setting whose value can't be used now names the line it is on.
 	- Verified: an existing config file, the shipped template, and a save that changes a value all come back byte-identical apart from what actually changed.
 
-- ✅ New default colour scheme. (20260804)
+- ✅ New default color scheme. (20260804)
 	- Foreground is #88eecc, a slightly greener mint than the cyan it replaces.
-	- Cursor is #eecc88, a soft gold. It is the same three channel values as the foreground in a different order, which makes the two an exact colour triad - equal saturation, equal brightness, a third of the wheel apart, so neither can clash with the other.
-	- The sixteen program colours were reworked around that pair. Each hue still sits where its name says and was warmed toward the pair; saturation is at the pastel end to match. Every colour's brightness was carried over from the palette it replaces, hue by hue, so contrast and legibility are unchanged and only the family moved. The greys carry a faint warm cast for the same reason.
+	- Cursor is #eecc88, a soft gold. It is the same three channel values as the foreground in a different order, which makes the two an exact color triad - equal saturation, equal brightness, a third of the wheel apart, so neither can clash with the other.
+	- The sixteen program colors were reworked around that pair. Each hue still sits where its name says and was warmed toward the pair; saturation is at the pastel end to match. Every color's brightness was carried over from the palette it replaces, hue by hue, so contrast and legibility are unchanged and only the family moved. The grays carry a faint warm cast for the same reason.
 	- The focus ring around the active pane was a cold blue chosen for the old palette. It is now a muted amber, a few stops below the cursor - warm is what "this one is live" looks like in this scheme.
-	- The commented lines in the config file that name the foreground and cursor had never tracked the theme; they carried a grey and a steel blue from before themes existed. They now show the real defaults, and an existing file is brought forward for those and for the focus ring.
-	- Verified on screen: all sixteen colours, both as text and as backgrounds, plus a file listing, a diff, a warning and an error line - each still reads as the colour it names. The focus ring renders at exactly the new value. On disk: a fresh file writes the new lines, a file still holding an old one is brought forward, and a value written or annotated there is left as it stands.
+	- The commented lines in the config file that name the foreground and cursor had never tracked the theme; they carried a gray and a steel blue from before themes existed. They now show the real defaults, and an existing file is brought forward for those and for the focus ring.
+	- Verified on screen: all sixteen colors, both as text and as backgrounds, plus a file listing, a diff, a warning and an error line - each still reads as the color it names. The focus ring renders at exactly the new value. On disk: a fresh file writes the new lines, a file still holding an old one is brought forward, and a value written or annotated there is left as it stands.
 	- The light variant of the theme is untouched; its foreground is a near-black and the request was about the default dark scheme.
 
 - ✅ Scrim strength ships at 20 rather than 30. (20260804)
@@ -1455,7 +1453,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- The beginning and end of the curve necessarily sit at Y=0. Scrolling starts from stillness, and ends at stillness.
 			- The some segment of "curve" may be perfectly flat on the Y axis, and quite finite (i.e. capped at Y=[max single-screen speed]).
 				- Possibly the whole curve, if output fits into a single screen.
-			- We don't care about defining or modelling the overall "curve" - only the named segments within it.
+			- We don't care about defining or modeling the overall "curve" - only the named segments within it.
 			- **Each output-scroll-related setting define a completely separate "function" (conceptually if not literally), that have extremely limited and precisely-defined influence over the next**.
 				- With only one few exceptions, the one and only influence each setting has on the next, is that the *end* X/Y point of the previous function, determines exactly where the START point of the next is located. Those exceptions are documented in the "Parameters" section below.
 			- At some point, the middle of the overall "curve" could turn from flat, to quickly ramp up to some nondeterministic, unbounded, virtual Y speed (i.e. when scrolling that was within a single screen, reaches the top of the terminal and must start speeding up to keep up with unlimited output). In that case:
@@ -1496,7 +1494,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 				- The shape definitions per function don't change with adjustment, they just grow or shrink (in proportional size) depending on the scale of each individual setting.
 					- In other words, the curve grows along both the x-axis AND Y-axis. Getting sharper (smaller) or gentler (larger).
 				- Computationally expensive?
-			- Option 2: Each scroll speed parameter is defined by a straight line. This may not be as jarring as it sounds, as these kind of linear + angular graphs work fine in audio and video production, which are all about human perception.
+			- Option 2: Each scroll speed parameter is defined by a straight line. This may not be as jarring as it sounds, as these kind of linear + angular graphs work fine in audio and video production, which are all about perception.
 				- The linear slope of each line is variable based on the height (Y) and time (X).
 				- The end of each adjustable line must touch the beginning of the next - but the transition may be an abrupt angle.
 				- Option 2a: Adjustment is time, length and height auto-adjust.
@@ -1524,10 +1522,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 				- Other scenarious (e.g. output starts in the middle of the screen) can be inferred from those 4 scenarios.
 
 - ✅ A single boolean option to disable/enable smooth scrolling, without changing other settings (but disabling their controls). (20260802)
-	- New "Smooth scrolling" switch at the top of the Scrolling tab (config: `scroll.smooth`, default on). Off = wheel, output and full-screen-app scrolling all land instantly, and the two speed sliders grey out. Wheel lines, scrollbar and the rest stay active since they apply either way.
+	- New "Smooth scrolling" switch at the top of the Scrolling tab (config: `scroll.smooth`, default on). Off = wheel, output and full-screen-app scrolling all land instantly, and the two speed sliders gray out. Wheel lines, scrollbar and the rest stay active since they apply either way.
 
 - ✅ All such feature groups should have a master on/off switch like the above (some already do, e.g. the recent wallpaper switch). (20260802)
-	- Audited the whole Settings dialog: Transparency, Wallpaper, Contrast mask, Text scrim and Scrollbar already have masters that grey their dependent rows; Scrolling was the only group without one, fixed above. Text outline is a slider whose zero is "off", which is its own master.
+	- Audited the whole Settings dialog: Transparency, Wallpaper, Contrast mask, Text scrim and Scrollbar already have masters that gray their dependent rows; Scrolling was the only group without one, fixed above. Text outline is a slider whose zero is "off", which is its own master.
 
 - ✅ Scroll-on-output enhancement: One additional setting: (20260629)
 	- ✅ In-view fast output scroll speed. (E.g. for a short directory listing that doesn't exceed a single pane height.)
@@ -1543,7 +1541,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Fades out while the view sits idle at the bottom and comes back on a scroll, or when the pointer nears it. It also stays up the whole time the view is parked up in the scrollback, where knowing the position is the point. Always-visible is a setting.
 	- Drag the handle to scroll, or click the track above or below it to page that way. A dragged handle follows the pointer exactly while the text eases in behind it, so the grab never drifts.
 	- Full-screen apps (less, vim) keep no scrollback of their own, so they get no scrollbar - one pinned full-height could only report a fiction.
-	- Settings carries the on/off switch, the width, and the hide-when-idle switch; the handle and track colors are there too, defaulting to a neutral grey in every theme the way the rest of the chrome does. The dependent rows stay listed but grey out while the scrollbar is off.
+	- Settings carries the on/off switch, the width, and the hide-when-idle switch; the handle and track colors are there too, defaulting to a neutral gray in every theme the way the rest of the chrome does. The dependent rows stay listed but gray out while the scrollbar is off.
 	- Verified: the handle sits at the bottom while following output, moves a third of the way up the track after scrolling a third of the way back, and tracks a drag to the pixel. Fading, the full-screen-app case, and the off switch all confirmed against rendered frames.
 
 - ✅ Epic 1n6fydv: Reduce CPU and GPU resource usage
@@ -1570,7 +1568,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- The remaining half of the original idea - using damage to skip even reading unchanged rows - was measured and dropped: the whole grid read is under 2% of a frame, well below the risk of getting damage bookkeeping wrong.
 		- ✋ 3.2 Batch fallback glyphs. Each one is drawn as its own text area today, so an emoji or CJK heavy screen means hundreds of them.
 			- Measured before building it, and the premise doesn't hold: a screen filled entirely with fallback symbols is *cheaper* than ordinary text (10.9% of a core vs 24.7%), because each one leaves a blank placeholder that costs nothing to lay out. Assembling their text areas is 1.6% of a frame at that extreme.
-			- Batching them would mean rasterizing the glyphs ourselves and placing them as images, which is exactly the code that took several rounds to get right for size, centring and color. Not worth 1.6%. Reopen if a real workload ever says otherwise.
+			- Batching them would mean rasterizing the glyphs ourselves and placing them as images, which is exactly the code that took several rounds to get right for size, centering and color. Not worth 1.6%. Reopen if a real workload ever says otherwise.
 	- Tier 4 - the pane froze under heavy output. Found while checking whether the lock contention above was worth acting on.
 		- ✅ 4.1 A pane could stop redrawing for seconds during a flood of output. Not a speed problem - the frames were being drawn, they just kept showing the same stale picture.
 			- Cause: to avoid stalling the display we only ever *tried* for the terminal and gave up immediately if the reader had it. But the reader holds it across a whole read cycle and grabs it again the instant it lets go, so that polite try could lose forever. Measured on a large `cat`: 98% of frames showed a stale picture, the worst run lasting 2.1 seconds.
@@ -1668,13 +1666,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Done: the renderer, its cicd stage, the `--shots` flag and the `SHOTS_ENABLE` setting are gone. The README grid and its images had already been retired, so the stage was rendering into a folder nothing referenced.
 	- The demo gif is unaffected - it is still a live README artifact and still re-recorded on request.
 
-- ✅ A new setting no longer duplicates its neighbours' comment block.
+- ✅ A new setting no longer duplicates its neighbors' comment block.
 	- Description: adding a setting to a group that an existing config already had part of appended the group's whole comment paragraph a second time at the end of the file, alongside the one already in place.
 	- Fixed: a setting whose group is already partly present is put back beside its siblings, in the order the template lists them, with no comment block - those comments are already there. A group the file has never seen still arrives whole.
 
 - ✅ Wallpaper settings renamed, and given two master switches.
 	- ✅ `wallpaper_enabled` turns the whole feature off in one line; `wallpaper_rotate_enabled` turns folder rotation off without disturbing the folder. Both default on, both in Settings as "Wallpaper" and "Rotate folder".
-	- ✅ Switching the master off greys out every wallpaper row under it, the way the contrast-mask rows already followed their own checkbox.
+	- ✅ Switching the master off grays out every wallpaper row under it, the way the contrast-mask rows already followed their own checkbox.
 	- ✅ `wallpaper_default` is now `wallpaper_fallback_builtin` and `wallpaper_fit` is now `wallpaper_default_fit`, matching what the Settings dialog calls them. Existing configs are renamed on the next launch.
 	- ✅ The wallpaper folder is `wallpaper/` beside the config now, not `wallpapers/`. The older spellings still work.
 	- ✅ A path in the config can start with `~`.
@@ -1685,8 +1683,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✅ Two XMP fields, read straight from the image file: `wallpaper:Fit` (`stretch` or `zoom`) and `wallpaper:Anchor` (`"<horizontal>%, <vertical>%"`, which part of the image a zoom crop keeps). They override the global default per image, so a photo isn't squashed while a gradient still fills the window.
 	- ✅ The namespace is named for what the tags describe rather than for this program, so other tools can write and read them too.
 	- ✅ Settings: "Bg image fit" is now "Default fit", with "Honor tags" under it (on by default). Turning it off puts every image back on the default.
-	- ✅ A zoom crop is no longer always centred - the anchor picks the part that survives.
-	- ✅ Missing, unreadable or unrecognised tags leave the image on the default; nothing fails to load over metadata.
+	- ✅ A zoom crop is no longer always centered - the anchor picks the part that survives.
+	- ✅ Missing, unreadable or unrecognized tags leave the image on the default; nothing fails to load over metadata.
 	- Verified: both container formats read end to end against real tagged files, and the collection is tagged - photos, logos and anything with circles zoom, gradients and blurs stretch.
 
 - ✅ Dogfood build copies are named for what they hold.
@@ -1754,7 +1752,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- ✅ Refinement: the two auto-copy triggers ("Copy on select" / "Copy on output") never disable themselves any more, and are now independent (both can be on at once). Reversed the earlier "exclusive to one pane / one window" behavior. A new pane inherits its tab's setting; a new tab or window starts off (nothing is remembered/persisted). It stays a per-active-pane behavior: the flags can be left on across many panes/tabs/windows, but only the focused pane of the active tab in the focused window actually copies. When a window loses focus its checkbox + label dim to show the feature is currently inert (it re-activates on refocus). Dropped the cross-instance "turn yours off" broadcast.
-	- ✅ Follow-up: a copy-on-output capture pending when the window/tab/pane loses its active status is now cancelled, instead of firing the moment focus returns. Otherwise output that finished while you were elsewhere would land on the clipboard on alt-tab-back, clobbering whatever you copied in between. Only a command launched after returning copies. Same cancel when the checkbox is turned off mid-command (re-enabling later could previously copy several old commands' worth of output).
+	- ✅ Follow-up: a copy-on-output capture pending when the window/tab/pane loses its active status is now canceled, instead of firing the moment focus returns. Otherwise output that finished while you were elsewhere would land on the clipboard on alt-tab-back, clobbering whatever you copied in between. Only a command launched after returning copies. Same cancel when the checkbox is turned off mid-command (re-enabling later could previously copy several old commands' worth of output).
 
 - ✅ Ctrl+Shift+N: New window on same directory.
 	- Done: opens a new window (own process) starting in the focused pane's current directory. Verified live: the new instance lands in the source pane's cwd.
@@ -1773,7 +1771,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- Done: the close "x" is now bold and centered inside a 1px outlined square button with equal top/right/bottom margins (the slack falls to the left, separating it from the title). The button box, its glyph, and the click region share one geometry helper so they stay aligned.
 				- ✅ X still too small and not centered in the box.
 					- Done: the font glyph (a lowercase-style multiplication sign, baseline-positioned, hence never truly centered) is replaced by a drawn X - two diagonal bars with angled ends, centered exactly in the box at any size. The box keeps equal top/right/bottom margins, now slightly larger; the active tab's box fill carries a faint pastel-red tint so the current tab reads at a glance.
-		- ✅ Provide brief visual feedback on click - as the tab closes. Maybe the terminal area can close immediately while the tab lingers just enough milliseconds for human perception to notice the click feedback, if that doesn't require rejiggering the whole pipeline.
+		- ✅ Provide brief visual feedback on click - as the tab closes. Maybe the terminal area can close immediately while the tab lingers just enough milliseconds for the eye to notice the click feedback, if that doesn't require rejiggering the whole pipeline.
 			- Note: two candidate approaches - a press-arm highlight (light on the button while pressed, close on release) that fits the existing input path, or the lingering-tab timed close described above (a short animation, more involved and feel-sensitive). Light on the button while pressed, close on release, is going to be the easiest, that's the winner.
 			- Done: press-arm - the button lights while held, the close fires on release over the same button, and dragging off before releasing cancels (standard button feel). Verified live: lit while held, release closes, drag-off leaves the tab open.
 
@@ -1805,7 +1803,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ Font size should be able to be increased, even when using system font.
 	- May need to refactor "Use system font [ ]" in settings to:
 		- Use system font    [ ] Face   [ ] Size
-	- Done: the single toggle is now a dual-checkbox row (Face / Size), each following the OS independently, with matching config keys. Face governs font_family, Size governs font_size; each greys its own field. A config predating the split keeps its exact behavior (absent size follows the face toggle), except an explicit font_size - previously silently ignored - now wins over the OS size, since it reads as intent. Both checkboxes stay disabled on Windows.
+	- Done: the single toggle is now a dual-checkbox row (Face / Size), each following the OS independently, with matching config keys. Face governs font_family, Size governs font_size; each grays its own field. A config predating the split keeps its exact behavior (absent size follows the face toggle), except an explicit font_size - previously silently ignored - now wins over the OS size, since it reads as intent. Both checkboxes stay disabled on Windows.
 
 - ✅ Add an option in settings, to persist "Copy on select". (Which overrides my earlier direction.)
 	- Done: new `copy_on_select` config key plus a "Copy on select" checkbox in Settings (Window tab, Shell section). When on, every pane starts with copy-on-select enabled; applying the toggle also flips all existing panes. The menu-bar checkbox still toggles it live per pane for the session, without writing back to the config.
@@ -1887,7 +1885,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- The range of the field will dictate how much each increment is. In this mode, there should be roughly 10 increments across the range.
 
 - ✅ New setting: Background image contrast mask - flatten the image's contrast so it stops competing with text.
-	- Done: applies uniformly across the whole image, baked at load in linear light. A main on/off (default on) plus three 0..1 knobs (default 0.5 each): `size` = the flatten scale, the localMean radius (1.0 = half the longest pixel dimension, so the image collapses toward one tone; small = only fine detail flattens); `strength` = how far each pixel is pulled toward that local mean; `auto` = blends the manual knobs with values derived from the image's own busyness (1.0 = full auto, 0.0 = manual only, 0.5 = average). Config keys `background_contrast_mask` / `_size` / `_strength` / `_auto`; a Settings toggle + three sliders (sliders grey out while the mask is off).
+	- Done: applies uniformly across the whole image, baked at load in linear light. A main on/off (default on) plus three 0..1 knobs (default 0.5 each): `size` = the flatten scale, the localMean radius (1.0 = half the longest pixel dimension, so the image collapses toward one tone; small = only fine detail flattens); `strength` = how far each pixel is pulled toward that local mean; `auto` = blends the manual knobs with values derived from the image's own busyness (1.0 = full auto, 0.0 = manual only, 0.5 = average). Config keys `background_contrast_mask` / `_size` / `_strength` / `_auto`; a Settings toggle + three sliders (sliders gray out while the mask is off).
 	- Verified: on a busy wallpaper the mask visibly lowers image contrast while overall brightness stays put (a flatten toward the mean, not a darkening).
 
 - ✅ Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
@@ -1899,11 +1897,11 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Done: full selection model in every editable field (text / hex color / numeric), cross-platform. Mouse: click places the caret, drag selects, Shift+click extends, double-click selects the word, triple-click selects all. Keyboard: Shift+arrows/Home/End extend, Ctrl+Left/Right jump by words, Ctrl+A select all, Ctrl+C/X/V copy/cut/paste (also Ctrl+Insert / Shift+Insert / Shift+Delete), Ctrl+Backspace/Delete delete by word. Typing or pasting replaces the selection; paste runs through each field's own validation (hex digits only in color fields, digits/single dot in numeric). Opening a field via keyboard selects its whole value so typing replaces it; the selection draws highlighted behind the text.
 	- Verified live on Windows end to end: typed into the Background image field, Ctrl+A/Ctrl+C landed the text on the system clipboard (read by another process), Ctrl+V replaced it, and OK persisted the pasted value to config.toml.
 	- ✅ In-field right-click menu (Cut/Copy/Paste) - the hotkeys and mouse selection cover everything functionally; add if wanted.
-		- Done: right-click in any editable field pops Cut / Copy / Paste / Delete / Select all (also the Menu key or Shift+F10, opening at the caret). Items grey out when inapplicable (no selection, empty clipboard); Up/Down + Enter drive it from the keyboard, Esc or a click elsewhere dismisses.
+		- Done: right-click in any editable field pops Cut / Copy / Paste / Delete / Select all (also the Menu key or Shift+F10, opening at the caret). Items gray out when inapplicable (no selection, empty clipboard); Up/Down + Enter drive it from the keyboard, Esc or a click elsewhere dismisses.
 
 - ✅ Settings dialog: text fields longer than the box must scroll with the cursor, like standard GUI textboxes everywhere (arrows, Home/End, typing, selecting, deleting, mouse drag past the edges).
 	- Done: each field keeps a horizontal view offset that follows the caret. Moving or typing toward an edge scrolls preemptively so a few characters stay visible ahead of travel; a little padding past end-of-text keeps the cursor clearly visible there; dragging a selection past either edge auto-scrolls and keeps selecting. Clicks land on the right character through the scrolled view. The scroll and the caret both ease smoothly, and the caret blinks with a soft fade instead of a hard on/off.
-	- Verified live on Windows: typed a 251-char path into the Background image field, travelled it with Home/End and long arrow runs, replaced it via the context menu's Paste, and OK persisted the result to config.toml.
+	- Verified live on Windows: typed a 251-char path into the Background image field, traveled it with Home/End and long arrow runs, replaced it via the context menu's Paste, and OK persisted the result to config.toml.
 
 - ✅ Verify and cover the Wayland engine (Linux runs native on both X11 and Wayland from one binary).
 	- Done: confirmed the single Linux binary renders the full UI on Wayland via the native wgpu path - menu chrome, scrolling text, background image + blur + text scrim all correct. No separate build: winit selects X11 or Wayland at runtime, and both display libraries are loaded on demand, so a future Wayland-only system needs no X11.
@@ -1987,7 +1985,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✅ Cursor scrim/outline:
 		- ✅ Rather than two lines, just one, like so:
 			Cursor    [ ] Scrim    [ ] Outline                [reset]
-			- Done: the two "Cursor in scrim / outline" toggle rows collapsed into one `Cursor` row with two labelled checkboxes (each its own focus stop; Scrim greys with the scrim off, Outline with no outline).
+			- Done: the two "Cursor in scrim / outline" toggle rows collapsed into one `Cursor` row with two labeled checkboxes (each its own focus stop; Scrim grays with the scrim off, Outline with no outline).
 		- ✅ The reset resets both of them (the row's revert icon reverts cursor_scrim + cursor_outline together).
 
 - ✅ Use dropdown list boxes for Scrim function, and Scrim falloff.
@@ -1998,7 +1996,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✅ Bug "Function selection not saving state": the apply path swaps the live settings (`RwLock<Arc<Settings>>`) and the diff writer persists `text_scrim_function`, so a picked function both takes effect live and is written to `config.toml` on Apply/OK - verified end to end.
 
 - ✅ Improve the text scrim
-	- Done: added a "Scrim function" choice (Dilate / SDF / DT / Gaussian [ugly]) and expanded "Scrim falloff" to five curves (S-curve / Gaussian / Linear / Logarithmic / Exponential), both in `config.toml` (`text_scrim_function`, `text_scrim_ramp`) and as Settings radios. The three non-Gaussian functions share one cheap separable Euclidean/Chebyshev distance transform (bounded to the halo radius, two passes, no jump-flood), so corners stay full instead of receding. Default is now SDF (round, full corners); Gaussian is kept as the labelled-ugly baseline. Falloff and function are orthogonal (shape vs fade). Verified all four render on the GL path and read as distinct backings.
+	- Done: added a "Scrim function" choice (Dilate / SDF / DT / Gaussian [ugly]) and expanded "Scrim falloff" to five curves (S-curve / Gaussian / Linear / Logarithmic / Exponential), both in `config.toml` (`text_scrim_function`, `text_scrim_ramp`) and as Settings radios. The three non-Gaussian functions share one cheap separable Euclidean/Chebyshev distance transform (bounded to the halo radius, two passes, no jump-flood), so corners stay full instead of receding. Default is now SDF (round, full corners); Gaussian is kept as the labeled-ugly baseline. Falloff and function are orthogonal (shape vs fade). Verified all four render on the GL path and read as distinct backings.
 	- Standard Gaussian Blur function is a poor fit for the text scrim, as a legibility aid. Here's why:
 	- **What's wrong**: To illustrate conceptually: If you apply a background scrim to a solid square using gaussian blur, as the blur radius increases, the total blur shape looks more and more "round". This means that - effectively - the blur behind the square, doesn't look even at the corners. It looks "too strong" along the middle of the sides of the square, and "pulled-in" at the corners. The corners look naked. Basically it looks like a square sitting on top of a separate round fuzzy thing - rather than something evenly integrated with the square. (Which describes the cursor in block mode perfectly, and also why the scrim behind some clusters of letters looks "clumpy".)
 	- **What would be better**: Ideally, the blur would also be square-ish - extending evenly from every angle, from every point along the edge of the square. (With corners rounding off with increasing blur radius, but never actually pulling in below the corners.) In other words, if you measured the density fall-off of the blur starting from the corner and moving outwart diagonally, it should fall-off at about the same rate, as if you measured it from the middle of an edge and moved out perpendicularly.
@@ -2138,8 +2136,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✅ A radio button for background image, to stretch or zoom. - New `Kind::Radio(&[..])` in the settings dialog (reusable N-option control: indicator box per option, fills the selected, click-to-pick); a "Bg image fit" row bound to `background_fit` (Stretch/Zoom). Verified: renders with Stretch selected by default; clicking Zoom switches it; `background_fit` persists + re-fits the image on Apply.
 	- ✅ "Default shell": A command line to launch by default for new windows, tabs, and panes, if nothing else specified. Leave blank to use system default. - New "Shell" section in Settings with a "Default shell" text field bound to the existing `default_shell` config (empty shows "(system default)"; argv-split applies to new tabs/panes). Verified the field renders.
 	- ✅ Size: A boolean setting to "Remember last size".
-		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows grey out when on.
-		- Verified: a manual resize persisted the remembered size, relaunch used it instead of the default, and the dialog shows the toggle checked with Columns and Rows greyed.
+		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
+		- Verified: a manual resize persisted the remembered size, relaunch used it instead of the default, and the dialog shows the toggle checked with Columns and Rows grayed.
 		- Overrides explicit numeric size.
 		- Explicit numeric size fields disabled and grayed out.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
@@ -2184,17 +2182,17 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Note: reverting Font size does not clear "Use system font" (unit-tested).
 		- Verified: end-to-end.
 	- ✅ "Use system font" boolean should be visible checked, if using it.
-		- Done: already in place. Re-verified in the new Font tab - box checked, fields greyed.
+		- Done: already in place. Re-verified in the new Font tab - box checked, fields grayed.
 		- ✅ If checked (setting a config boolean), the other font settings should be disabled. Whatever values they held, should remain.
-			- Done: existing behavior - Font family and Font size grey out and keep their values. Re-verified.
+			- Done: existing behavior - Font family and Font size gray out and keep their values. Re-verified.
 		- ✅ Font family should default to a list with several fallbacks for Linux, Windows, and macOS.
-			- Done: a default font stack shows in the greyed field. The stack itself has been replaced twice since; the current one is in the Bugs entry on the fallback stack, and a config still carrying a superseded one is refreshed on launch.
+			- Done: a default font stack shows in the grayed field. The stack itself has been replaced twice since; the current one is in the Bugs entry on the fallback stack, and a config still carrying a superseded one is refreshed on launch.
 	- ✅ Editable fields should have a visible cursor when focused, and respond to standard text-editing key controls. (20260702, branch dlgedit)
 		- Done: the edit carries a caret. Typing inserts at it, Backspace and Delete remove around it, Home/End and arrows move it, and a thin caret line renders at the right spot in both hex and text fields.
 		- Verified: typed and edited a value with the caret visibly tracking position.
 		- Note: click still places the caret at the end; click-to-position is queued with the full-keyboard-control item.
 	- ✅ Full keyboard control, e.g. tab order, full text field editing, alt+down for dropdowns, space to toggle booleans, etc. (20260702, branch dlgkeys)
-		- Done: a keyboard-focus model over the whole dialog. Tab and Shift+Tab (and Up/Down) walk the controls on the active tab, wrapping and auto-scrolling into view, skipping headers and greyed-out rows. Ctrl+Tab cycles the tabs. Space flips a toggle or opens a field; arrows adjust a focused slider or radio and double as caret motion while editing. Clicking a field drops the caret at the nearest character to the click.
+		- Done: a keyboard-focus model over the whole dialog. Tab and Shift+Tab (and Up/Down) walk the controls on the active tab, wrapping and auto-scrolling into view, skipping headers and grayed-out rows. Ctrl+Tab cycles the tabs. Space flips a toggle or opens a field; arrows adjust a focused slider or radio and double as caret motion while editing. Clicking a field drops the caret at the nearest character to the click.
 		- Verified: unit tests plus a focus-ring walk that correctly skips disabled rows.
 		- Note: alt+down for dropdowns is N/A today - the dialog has no dropdowns yet; wire it up with the theme dropdown in Themes part 3.
 	- Note: It might be best to defer some of these, until after (and if) native window controls are implimented.
@@ -2247,7 +2245,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- Done: a use_system_font bool (default true) follows the OS monospace, overriding an always-active comma-separated font_family fallback stack (first installed wins) plus size. A pre-existing explicit font migrates to use_system_font=false.
 			- Verified: the system font resolved, and the stack correctly skipped a missing first choice.
 		- ✅ If using the system-defined font, enable the checbox and disable the related font adjustements (but don't clear their values). (20260701)
-			- Done: the box opens checked when on the system font; Font family and Font size grey out but keep their values.
+			- Done: the box opens checked when on the system font; Font family and Font size gray out but keep their values.
 			- Verified: in the dialog.
 			- User can un-check this later (or change the related config setting), to user the defined font settings instead.
 
@@ -2258,7 +2256,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Done: cursor_size_horizontal is the cursor height % from the bottom. Together with width they make any shape.
 		- Verified: bar, block, and underline all render.
 	- ✅ animation_style
-		- Done: cursor_animation of none, phase, pulse_vertical, pulse_horizontal, or pulse_both, one cycle per blink_rate. Pulse grows from the cell centre, holds, shrinks, then disappears.
+		- Done: cursor_animation of none, phase, pulse_vertical, pulse_horizontal, or pulse_both, one cycle per blink_rate. Pulse grows from the cell center, holds, shrinks, then disappears.
 		- Verified: pulse_both grows, peaks, shrinks, and vanishes over about a second.
 		- ✅ none
 		- ✅ phase (the current default)
@@ -2392,8 +2390,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Even if the background is 100% opaque but the background image is very light (like the terminal text color), the text will still be readable - for the same reason.
 	- ✅ Expose config value in settings dialog:
 		- ✅ Blur radius: Boolean to enable, slider + number field to adjust.
-			- "Text glow" toggle + "Glow radius" slider in Settings -> Appearance; the radius is greyed out/inert when the toggle is off (same `disabled()` mechanism as the Opacity slider). Verified in the dialog. (Editable numeric field is part of the deferred dialog-part-2 work.)
-		- ✅ Softness/intensity control. Maybe "Softness" as the name. - New `text_glow_softness` (0..1, default 0.4) + a "Softness" slider in Settings (greyed when Text glow is off). Maps to the glow's coverage boost: 0 = hard/solid/strong halo (x10), 1 = soft/faint (x1). Verified: softness 0.1 = bold dark halo, 0.9 = gentle faint glow. (If the high=softer direction reads backwards, it's a one-line flip.)
+			- "Text glow" toggle + "Glow radius" slider in Settings -> Appearance; the radius is grayed out/inert when the toggle is off (same `disabled()` mechanism as the Opacity slider). Verified in the dialog. (Editable numeric field is part of the deferred dialog-part-2 work.)
+		- ✅ Softness/intensity control. Maybe "Softness" as the name. - New `text_glow_softness` (0..1, default 0.4) + a "Softness" slider in Settings (grayed when Text glow is off). Maps to the glow's coverage boost: 0 = hard/solid/strong halo (x10), 1 = soft/faint (x1). Verified: softness 0.1 = bold dark halo, 0.9 = gentle faint glow. (If the high=softer direction reads backwards, it's a one-line flip.)
 	- ✅ Visual bug: When background glow is applied to characters that have a per-character(s)-box different background, and the foreground color is similar to the global background for that character(s), then the character is a blurry mess. (E.g. the global background is dark, but some characters are rendered one-off with dark text and light background, then it's not readable.)
 		- ✅ The solution is, if a character has a different background color than global, use that one-off background color as the glow color for that character. - Done: the glow is now colored by a per-pixel "bgcolor" texture (cleared to the global bg, with the per-cell bg rects drawn over it) instead of a single global tint; the composite multiplies the blurred glyph coverage by that local color. So a glyph on a colored cell gets a halo matching its own cell bg (harmless), while global-bg cells keep their readability halo. Verified: dark text on a light cell over a dark global bg renders clean (no dark blur), global-bg text keeps its glow.
 

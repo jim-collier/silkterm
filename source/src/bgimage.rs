@@ -16,7 +16,7 @@ struct Uniform {
 	image_size: [f32; 2],
 	opacity: f32,
 	fit: f32,         // 0 = stretch, 1 = zoom (cover)
-	anchor: [f32; 2], // which part of the image survives a zoom crop; 0.5 = centre
+	anchor: [f32; 2], // which part of the image survives a zoom crop; 0.5 = center
 }
 
 // Wallpaper VRAM-content probe verdict (see `vram_check_poll`).

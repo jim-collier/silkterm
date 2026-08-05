@@ -13,7 +13,7 @@ use crate::config;
 // Dynamic-speed output scroll: an output burst is chased at an explicit speed
 // (`chase`, lines/s) that traverses a chain of named segments, each handing its
 // end point to the next - the settings are the segments, and each one has no
-// other influence on its neighbours:
+// other influence on its neighbors:
 //
 //   Ease-in    a linear lift from rest to KNEE_LPS, covering that delta in
 //              `scroll_ease_in_ms`. This is the only segment that can leave
@@ -860,7 +860,7 @@ mod tests {
 	#[test]
 	fn ease_in_sets_how_gently_motion_leaves_rest() {
 		let _g = pin();
-		let travelled = |ease_in_ms: f32| {
+		let traveled = |ease_in_ms: f32| {
 			with(config::Settings {
 				scroll_ease_in_ms: ease_in_ms,
 				..config::Settings::default()
@@ -873,8 +873,8 @@ mod tests {
 			}
 			s.visual
 		};
-		let abrupt = travelled(8.0);
-		let gentle = travelled(800.0);
+		let abrupt = traveled(8.0);
+		let gentle = traveled(800.0);
 		with(config::Settings::default()); // other modules read this same store
 		assert!(
 			abrupt > gentle * 1.5,
