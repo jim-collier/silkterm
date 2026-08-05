@@ -8,27 +8,32 @@
 //! text; an open dropdown's popup draws in a second (`LoadOp::Load`) pass on top so
 //! covered rows' text can't bleed through it (see `dropdown_overlay`).
 //!
-//! Sections are grouped into tabs (see `TAB_TITLES`/`tab_for_section`) so the
+//! Sections are grouped into tabs (see `tab_titles()`/`tab_for_section`) so the
 //! dialog stays well under screen height; if a tab still doesn't fit (huge UI
 //! font / short screen) the rows region scrolls (wheel + draggable thumb) and
 //! the window height is capped instead of clipping the buttons.
+//!
+//! Units: every measurement below is a DIP - a CSS pixel, i.e. 1/96 inch - and
+//! the whole layout is solved in that space. The window's scale factor is
+//! applied only at the boundary: pointer positions, measured text widths, the
+//! UI line height and the height cap divide down on the way in; the window
+//! size, the scissor viewport, quads and text positions multiply back out on
+//! the way to the renderer. So the dialog keeps its proportions at any DPI
+//! rather than shrinking as the scale factor grows, and there is exactly one
+//! set of numbers to reason about. At scale 1 nothing changes.
 
 use crate::config::{self, Settings};
 use crate::gfx::RectInstance;
 use crate::pane::Rect;
+use crate::ui_spec::{self, Key, Kind, Layout, Spec, ui};
 
-const W: f32 = 540.0;
-const PAD: f32 = 18.0;
-const ROW_H: f32 = 32.0;
-const HEADER_H: f32 = 42.0; // a section heading row (extra top spacing + gap to its rule)
-const LABEL_W: f32 = 168.0;
-const SLIDER_W: f32 = 220.0;
-const SWATCH: f32 = 20.0;
-const HEX_W: f32 = 92.0;
-const VAL_W: f32 = 56.0; // editable numeric field to the right of a slider
-const BTN_H: f32 = 30.0;
-const BTN_W: f32 = 76.0;
-const BTN_GAP: f32 = 10.0;
+// The declared geometry, all of it in DIP (see the units note above).
+fn lay() -> &'static Layout {
+	&ui().layout
+}
+pub fn tab_titles() -> &'static [&'static str] {
+	&ui().tabs
+}
 
 // Dialog colours adapt to the active mode (dark-gray for dark, light-gray for
 // light); see config::is_dark(). The menu/main-window chrome stays a fixed gray.
@@ -106,63 +111,6 @@ pub fn dialog_border() -> [u8; 3] {
 	dlg().panel_border
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Key {
-	None, // section headers
-	Transparency,
-	Opacity,
-	BackdropBlur,
-	BgEnabled,
-	BgRotate,
-	BgOpacity,
-	BgBlur,
-	BgFit,
-	BgHonorXmp,
-	BgContrastMask,
-	BgContrastSize,
-	BgContrastStrength,
-	BgContrastAuto,
-	TextScrim,
-	ScrimRadius,
-	ScrimSoftness,
-	ScrimStrength,
-	Outline,
-	ScrimFunction,
-	ScrimRamp,
-	CursorScrim,
-	CursorOutline,
-	BgImage,
-	SystemFont,
-	SystemFontSize,
-	FontFamily,
-	DefaultShell,
-	CopyOnSelect,
-	Hyperlinks,
-	LinkOpenCommand,
-	FontSize,
-	LineHeight,
-	Columns,
-	Rows,
-	RememberSize,
-	Margin,
-	SmoothScroll,
-	ScrollEaseIn,
-	ScrollRampUp,
-	SingleScreenTau,
-	ScrollRampDown,
-	ScrollEaseOut,
-	WheelLines,
-	Scrollbar,
-	ScrollbarThickness,
-	ScrollbarAutoHide,
-	ColScrollbarThumb,
-	ColScrollbarTrough,
-	ColBg,
-	ColFg,
-	ColCursor,
-	ColFocus,
-}
-
 // The Scrolling tab's time constants are all shown as a friendly 1..100 but
 // stored as milliseconds. Logarithmic: a time constant is felt by ratio, and a
 // linear map wastes most of the travel on values that look identical (the old
@@ -207,121 +155,6 @@ const RAMP_DOWN_MAX: f32 = 4500.0;
 // Tail duration: 13ms is an abrupt landing, 1.3s a long float-in.
 const EASE_OUT_MIN: f32 = 13.0;
 const EASE_OUT_MAX: f32 = 1300.0;
-
-enum Kind {
-	Slider {
-		min: f32,
-		max: f32,
-		int: bool,
-	},
-	Color,
-	Text,   // free-text field (path / font family; empty = default)
-	Toggle, // checkbox (e.g. use system font)
-	// two labelled checkboxes on one row sharing the row label + revert (e.g.
-	// Cursor: Scrim / Outline); each checkbox is a separate focus stop
-	Dual {
-		keys: [Key; 2],
-		labels: [&'static str; 2],
-	},
-	Radio(&'static [&'static str]), // pick one of N mutually-exclusive options
-	Dropdown(&'static [&'static str]), // one-of-N via a collapsed box + popup list
-	Header(&'static str),           // a section heading, no control
-}
-
-const RADIO_BOX: f32 = 16.0; // radio indicator square
-const RADIO_PITCH: f32 = 96.0; // px per option (box + label + gap) at BASE_LH
-const DUAL_PITCH: f32 = 118.0; // px per [checkbox + label] pair on a Dual row at BASE_LH
-const BASE_LH: f32 = 19.0; // UI line height the fixed radio consts were tuned for
-const DD_W: f32 = 208.0; // collapsed dropdown box width at BASE_LH (fits the longest option + arrow)
-const FIELD_PAD: f32 = 6.0; // text inset inside an editable field
-const CARET_PAD: f32 = 6.0; // spare px kept visible right of the caret at end-of-text
-const VIEW_AHEAD: f32 = 28.0; // lookahead margin: keep ~a few chars visible past the caret
-const EM_W: f32 = 132.0; // field context-menu width at BASE_LH
-const DD_ARROW: &str = "\u{25be}"; // small down-triangle in the collapsed box
-const DD_CHECK: &str = "\u{2713}"; // marks the current value in the open popup
-
-// Tabs ("super-sections"); each config section maps to one via tab_for_section.
-pub const TAB_TITLES: [&str; 5] = ["Appearance", "Font", "Colors", "Window", "Scrolling"];
-fn tab_for_section(section: &str) -> usize {
-	match section {
-		"Font" => 1,
-		"Colors" => 2,
-		"Window" | "Shell" | "Hyperlinks" => 3,
-		"Scrolling" => 4,
-		_ => 0, // "Appearance"
-	}
-}
-const TAB_GAP: f32 = 6.0; // px between tab buttons
-const HEADER_EXTRA: f32 = 10.0; // extra gap above a section header that follows another section
-const SCROLLBAR_W: f32 = 8.0;
-const REVERT_W: f32 = 22.0; // right-edge revert-to-default icon column
-const REVERT_ICON: &str = "\u{21ba}"; // anticlockwise open-circle arrow
-
-// Config-file path(s) behind a dialog Key, for revert's comment-out. Dotted
-// paths address the nested layout. Empty for headers.
-fn cfg_keys(key: Key) -> &'static [&'static str] {
-	match key {
-		Key::Transparency => &["transparency.enabled"],
-		Key::Opacity => &["transparency.opacity"],
-		Key::BackdropBlur => &["transparency.blur_behind"],
-		Key::BgEnabled => &["wallpaper.enabled"],
-		Key::BgRotate => &["wallpaper.rotate.enabled"],
-		Key::BgOpacity => &["wallpaper.opacity"],
-		Key::BgBlur => &["wallpaper.blur"],
-		Key::BgFit => &["wallpaper.default_fit"],
-		Key::BgHonorXmp => &["wallpaper.honor_xmp"],
-		Key::BgContrastMask => &["wallpaper.contrast_mask.enabled"],
-		Key::BgContrastSize => &["wallpaper.contrast_mask.size"],
-		Key::BgContrastStrength => &["wallpaper.contrast_mask.strength"],
-		Key::BgContrastAuto => &["wallpaper.contrast_mask.auto"],
-		Key::TextScrim => &["text.scrim.enabled"],
-		Key::ScrimRadius => &["text.scrim.radius"],
-		Key::ScrimSoftness => &["text.scrim.softness"],
-		Key::ScrimStrength => &["text.scrim.strength"],
-		Key::Outline => &["text.outline"],
-		Key::ScrimFunction => &["text.scrim.function"],
-		Key::ScrimRamp => &["text.scrim.ramp"],
-		Key::CursorScrim => &["cursor.scrim"],
-		Key::CursorOutline => &["cursor.outline"],
-		Key::BgImage => &["wallpaper.image"],
-		Key::SystemFont => &["font.use_system_family"],
-		Key::SystemFontSize => &["font.use_system_size"],
-		Key::FontFamily => &["font.family"],
-		Key::DefaultShell => &["shell.default"],
-		Key::CopyOnSelect => &["shell.copy_on_select"],
-		Key::Hyperlinks => &["hyperlinks.enabled"],
-		Key::LinkOpenCommand => &["hyperlinks.open_command"],
-		Key::FontSize => &["font.size"],
-		Key::LineHeight => &["font.line_height_scale"],
-		Key::Columns => &["window.columns"],
-		Key::Rows => &["window.rows"],
-		Key::RememberSize => &["window.remember_size"],
-		Key::Margin => &["window.margin"],
-		Key::SmoothScroll => &["scroll.smooth"],
-		Key::ScrollEaseIn => &["scroll.ease_in_ms"],
-		Key::ScrollRampUp => &["scroll.ramp_up_ms"],
-		Key::SingleScreenTau => &["scroll.single_screen_tau_ms"],
-		Key::ScrollRampDown => &["scroll.ramp_down_ms"],
-		Key::ScrollEaseOut => &["scroll.ease_out_ms"],
-		Key::WheelLines => &["scroll.wheel_lines"],
-		Key::Scrollbar => &["scroll.scrollbar.enabled"],
-		Key::ScrollbarThickness => &["scroll.scrollbar.thickness"],
-		Key::ScrollbarAutoHide => &["scroll.scrollbar.auto_hide"],
-		Key::ColScrollbarThumb => &["colors.scrollbar_thumb"],
-		Key::ColScrollbarTrough => &["colors.scrollbar_trough"],
-		Key::ColBg => &["colors.background"],
-		Key::ColFg => &["colors.foreground"],
-		Key::ColCursor => &["colors.cursor"],
-		Key::ColFocus => &["colors.focus"],
-		Key::None => &[],
-	}
-}
-
-struct Spec {
-	label: &'static str,
-	key: Key,
-	kind: Kind,
-}
 
 // What holds keyboard focus: one control within a row, or a footer button (index
 // into `buttons()`: 0 = Cancel, 1 = Apply, 2 = OK). `Row(i, part)` names a row and
@@ -502,384 +335,6 @@ fn slider_step(min: f32, max: f32, int: bool, shift: bool) -> f32 {
 	if int { raw.round().max(1.0) } else { raw }
 }
 
-fn fields() -> Vec<Spec> {
-	use Key::*;
-	use Kind::*;
-	let hdr = |t| Spec {
-		label: "",
-		key: None,
-		kind: Header(t),
-	};
-	vec![
-		hdr("Appearance"),
-		Spec {
-			label: "Transparency",
-			key: Transparency,
-			kind: Toggle,
-		},
-		Spec {
-			label: "Opacity",
-			key: Opacity,
-			kind: Slider {
-				min: 0.0,
-				max: 1.0,
-				int: false,
-			},
-		},
-		Spec {
-			label: "Blur-behind",
-			key: BackdropBlur,
-			kind: Toggle,
-		},
-		Spec {
-			label: "Wallpaper",
-			key: BgEnabled,
-			kind: Toggle,
-		},
-		Spec {
-			label: "Background image",
-			key: BgImage,
-			kind: Text,
-		},
-		Spec {
-			label: "Rotate folder",
-			key: BgRotate,
-			kind: Toggle,
-		},
-		Spec {
-			label: "Bg image opacity",
-			key: BgOpacity,
-			kind: Slider {
-				min: 0.0,
-				max: 1.0,
-				int: false,
-			},
-		},
-		Spec {
-			label: "Bg image blur",
-			key: BgBlur,
-			kind: Slider {
-				min: 0.0,
-				max: 50.0,
-				int: false,
-			},
-		},
-		Spec {
-			label: "Default fit",
-			key: BgFit,
-			kind: Radio(&["Stretch", "Zoom"]),
-		},
-		Spec {
-			label: "Honor tags",
-			key: BgHonorXmp,
-			kind: Toggle,
-		},
-		Spec {
-			label: "Contrast mask",
-			key: BgContrastMask,
-			kind: Toggle,
-		},
-		Spec {
-			label: "Mask size",
-			key: BgContrastSize,
-			kind: Slider {
-				min: 0.0,
-				max: 1.0,
-				int: false,
-			},
-		},
-		Spec {
-			label: "Mask strength",
-			key: BgContrastStrength,
-			kind: Slider {
-				min: 0.0,
-				max: 1.0,
-				int: false,
-			},
-		},
-		Spec {
-			label: "Mask auto",
-			key: BgContrastAuto,
-			kind: Slider {
-				min: 0.0,
-				max: 1.0,
-				int: false,
-			},
-		},
-		Spec {
-			label: "Text scrim",
-			key: TextScrim,
-			kind: Toggle,
-		},
-		// percent, where each 20% is one doubling of the finished halo's opacity
-		Spec {
-			label: "Strength",
-			key: ScrimStrength,
-			kind: Slider {
-				min: 0.0,
-				max: 100.0,
-				int: true,
-			},
-		},
-		Spec {
-			label: "Scrim radius",
-			key: ScrimRadius,
-			kind: Slider {
-				min: 0.0,
-				max: 20.0,
-				int: false,
-			},
-		},
-		Spec {
-			label: "Softness",
-			key: ScrimSoftness,
-			kind: Slider {
-				min: 0.0,
-				max: 1.0,
-				int: false,
-			},
-		},
-		Spec {
-			label: "Text outline",
-			key: Outline,
-			kind: Slider {
-				min: 0.0,
-				max: 4.0,
-				int: false,
-			},
-		},
-		Spec {
-			label: "Scrim function",
-			key: ScrimFunction,
-			kind: Dropdown(&[
-				"Distance field",
-				"Distance transform",
-				"Dilate + feather",
-				"Gaussian [ugly]",
-			]),
-		},
-		Spec {
-			label: "Scrim falloff",
-			key: ScrimRamp,
-			kind: Dropdown(&[
-				"Exponential",
-				"Half-normal",
-				"Logarithmic",
-				"Sigmoid",
-				"Linear",
-			]),
-		},
-		Spec {
-			label: "Cursor",
-			key: None,
-			kind: Dual {
-				keys: [CursorScrim, CursorOutline],
-				labels: ["Scrim", "Outline"],
-			},
-		},
-		hdr("Font"),
-		Spec {
-			label: "Use system font",
-			key: SystemFont,
-			kind: Dual {
-				keys: [SystemFont, SystemFontSize],
-				labels: ["Face", "Size"],
-			},
-		},
-		Spec {
-			label: "Font family",
-			key: FontFamily,
-			kind: Text,
-		},
-		Spec {
-			label: "Font size",
-			key: FontSize,
-			kind: Slider {
-				min: 6.0,
-				max: 40.0,
-				int: true,
-			},
-		},
-		Spec {
-			label: "Line height",
-			key: LineHeight,
-			kind: Slider {
-				min: 0.8,
-				max: 2.0,
-				int: false,
-			},
-		},
-		hdr("Window"),
-		Spec {
-			label: "Columns",
-			key: Columns,
-			kind: Slider {
-				min: 20.0,
-				max: 400.0,
-				int: true,
-			},
-		},
-		Spec {
-			label: "Rows",
-			key: Rows,
-			kind: Slider {
-				min: 6.0,
-				max: 120.0,
-				int: true,
-			},
-		},
-		Spec {
-			label: "Remember last size",
-			key: RememberSize,
-			kind: Toggle,
-		},
-		Spec {
-			label: "Margin",
-			key: Margin,
-			kind: Slider {
-				min: 0.0,
-				max: 40.0,
-				int: true,
-			},
-		},
-		hdr("Scrolling"),
-		Spec {
-			label: "Smooth scrolling",
-			key: SmoothScroll,
-			kind: Toggle,
-		},
-		// Ordered as one output burst unfolds: leaves rest, settles at the
-		// initial speed, accelerates, tops out, relaxes, lands. All five read
-		// the same direction: higher = faster.
-		Spec {
-			label: "Ease-in",
-			key: ScrollEaseIn,
-			kind: Slider {
-				min: 1.0,
-				max: 100.0,
-				int: true,
-			},
-		},
-		Spec {
-			label: "Ramp-up",
-			key: ScrollRampUp,
-			kind: Slider {
-				min: 1.0,
-				max: 100.0,
-				int: true,
-			},
-		},
-		Spec {
-			label: "Single-screen speed",
-			key: SingleScreenTau,
-			kind: Slider {
-				min: 1.0,
-				max: 100.0,
-				int: true,
-			},
-		},
-		Spec {
-			label: "Ramp-down",
-			key: ScrollRampDown,
-			kind: Slider {
-				min: 1.0,
-				max: 100.0,
-				int: true,
-			},
-		},
-		Spec {
-			label: "Ease-out",
-			key: ScrollEaseOut,
-			kind: Slider {
-				min: 1.0,
-				max: 100.0,
-				int: true,
-			},
-		},
-		Spec {
-			label: "Wheel lines",
-			key: WheelLines,
-			kind: Slider {
-				min: 1.0,
-				max: 10.0,
-				int: true,
-			},
-		},
-		Spec {
-			label: "Scrollbar",
-			key: Scrollbar,
-			kind: Toggle,
-		},
-		Spec {
-			label: "Scrollbar width",
-			key: ScrollbarThickness,
-			kind: Slider {
-				min: 4.0,
-				max: 64.0,
-				int: true,
-			},
-		},
-		Spec {
-			label: "Hide when idle",
-			key: ScrollbarAutoHide,
-			kind: Toggle,
-		},
-		Spec {
-			label: "Scrollbar handle",
-			key: ColScrollbarThumb,
-			kind: Color,
-		},
-		Spec {
-			label: "Scrollbar track",
-			key: ColScrollbarTrough,
-			kind: Color,
-		},
-		hdr("Shell"),
-		Spec {
-			label: "Default shell",
-			key: DefaultShell,
-			kind: Text,
-		},
-		Spec {
-			label: "Copy on select",
-			key: CopyOnSelect,
-			kind: Toggle,
-		},
-		hdr("Hyperlinks"),
-		Spec {
-			label: "Hyperlinks",
-			key: Hyperlinks,
-			kind: Toggle,
-		},
-		Spec {
-			label: "Open command",
-			key: LinkOpenCommand,
-			kind: Text,
-		},
-		hdr("Colors"),
-		Spec {
-			label: "Background",
-			key: ColBg,
-			kind: Color,
-		},
-		Spec {
-			label: "Foreground",
-			key: ColFg,
-			kind: Color,
-		},
-		Spec {
-			label: "Cursor",
-			key: ColCursor,
-			kind: Color,
-		},
-		Spec {
-			label: "Focus ring",
-			key: ColFocus,
-			kind: Color,
-		},
-	]
-}
-
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Action {
 	None,
@@ -932,8 +387,7 @@ pub struct SettingsDialog {
 	defaults: Settings,          // config defaults, for the revert-to-default buttons
 	reverted: Vec<&'static str>, // config keys reverted this session -> comment out on Apply
 	rect: Rect,
-	specs: Vec<Spec>,
-	spec_tab: Vec<usize>,     // which tab each spec lives on
+	specs: &'static [Spec],
 	tab: usize,               // active tab
 	tab_ws: Vec<f32>,         // measured tab-button widths (UI font)
 	scroll: f32,              // rows-region scroll offset (0 when everything fits)
@@ -960,33 +414,36 @@ pub struct SettingsDialog {
 	line_h: f32,
 	label_w: f32,
 	btn_w: f32,
+	// DIP -> physical pixel factor for the window this dialog lives in. Every
+	// measurement in here is a DIP; this is applied only at the boundary.
+	scale: f32,
 }
 
 impl SettingsDialog {
 	fn row_h_for(kind: &Kind, line_h: f32) -> f32 {
 		match kind {
-			Kind::Header(_) => HEADER_H.max(line_h + 20.0),
-			_ => ROW_H.max(line_h + 8.0),
+			Kind::Header(_) => lay().header_height.max(line_h + lay().header_pad),
+			_ => lay().row_height.max(line_h + lay().row_pad),
 		}
 	}
 	fn row_h(&self, kind: &Kind) -> f32 {
 		Self::row_h_for(kind, self.line_h)
 	}
 	fn btn_h(&self) -> f32 {
-		BTN_H.max(self.line_h + 8.0)
+		lay().button_height.max(self.line_h + lay().row_pad)
 	}
 
 	// Natural height of one tab's rows (header gaps included). Static so `new`
 	// can size the window before Self exists; row_y must walk rows the same way.
-	fn tab_content_h(specs: &[Spec], spec_tab: &[usize], tab: usize, line_h: f32) -> f32 {
+	fn tab_content_h(specs: &[Spec], tab: usize, line_h: f32) -> f32 {
 		let mut h = 0.0;
 		let mut first = true;
 		for (i, spec) in specs.iter().enumerate() {
-			if spec_tab[i] != tab {
+			if specs[i].tab != tab {
 				continue;
 			}
 			if matches!(spec.kind, Kind::Header(_)) && !first {
-				h += HEADER_EXTRA;
+				h += lay().header_gap;
 			}
 			h += Self::row_h_for(&spec.kind, line_h);
 			first = false;
@@ -998,6 +455,9 @@ impl SettingsDialog {
 	// are the measured widths in that font (see chrome_widths) so nothing
 	// truncates. `max_h` caps the window height (short screens / huge fonts);
 	// a tab that doesn't fit scrolls instead of clipping the buttons.
+	// `scale` is the window's DIP -> physical factor; every other argument arrives
+	// in physical pixels and is converted on the way in (see the module note on
+	// the DIP boundary).
 	pub fn new(
 		screen_w: f32,
 		screen_h: f32,
@@ -1006,31 +466,33 @@ impl SettingsDialog {
 		btn_w: f32,
 		tab_ws: Vec<f32>,
 		max_h: f32,
+		scale: f32,
 	) -> Self {
-		let specs = fields();
-		let mut cur_tab = 0usize;
-		let spec_tab: Vec<usize> = specs
-			.iter()
-			.map(|spec| {
-				if let Kind::Header(section) = spec.kind {
-					cur_tab = tab_for_section(section);
-				}
-				cur_tab
-			})
-			.collect();
-		let label_w = label_w.max(LABEL_W);
-		let btn_w = btn_w.max(BTN_W);
-		let btn_h = BTN_H.max(line_h + 8.0);
-		let tallest = (0..TAB_TITLES.len())
-			.map(|t| Self::tab_content_h(&specs, &spec_tab, t, line_h))
+		let scale = if scale.is_finite() && scale > 0.0 {
+			scale
+		} else {
+			1.0
+		};
+		let (screen_w, screen_h) = (screen_w / scale, screen_h / scale);
+		let (line_h, max_h) = (line_h / scale, max_h / scale);
+		let (label_w, btn_w) = (label_w / scale, btn_w / scale);
+		let tab_ws: Vec<f32> = tab_ws.into_iter().map(|w| w / scale).collect();
+		let specs: &'static [Spec] = &ui().specs;
+		let label_w = label_w.max(lay().label_width);
+		let btn_w = btn_w.max(lay().button_width);
+		let btn_h = lay().button_height.max(line_h + lay().row_pad);
+		let tallest = (0..tab_titles().len())
+			.map(|t| Self::tab_content_h(specs, t, line_h))
 			.fold(0.0f32, f32::max);
-		let h = (PAD + btn_h + 10.0 + tallest + 14.0 + btn_h + PAD).min(max_h.max(300.0));
-		let tabs_w = PAD * 2.0
+		let h =
+			(lay().pad + btn_h + lay().tabs_gap + tallest + lay().buttons_gap + btn_h + lay().pad)
+				.min(max_h.max(300.0));
+		let tabs_w = lay().pad * 2.0
 			+ tab_ws.iter().sum::<f32>()
-			+ TAB_GAP * tab_ws.len().saturating_sub(1) as f32;
+			+ lay().tab_gap * tab_ws.len().saturating_sub(1) as f32;
 		// widest radio row (scaled pitch at HiDPI / large fonts) must fit the panel,
 		// or the last option overflows the right edge
-		let scale = (line_h / BASE_LH).max(1.0);
+		let font_scale = (line_h / lay().base_line_height).max(1.0);
 		let max_radio_opts = specs
 			.iter()
 			.filter_map(|spec| match spec.kind {
@@ -1039,15 +501,19 @@ impl SettingsDialog {
 			})
 			.max()
 			.unwrap_or(0) as f32;
-		let radio_w = PAD + label_w + max_radio_opts * RADIO_PITCH * scale + PAD;
+		let radio_w =
+			lay().pad + label_w + max_radio_opts * lay().radio_pitch * font_scale + lay().pad;
 		// a dropdown's collapsed box (+ revert column) must fit too
 		let has_dropdown = specs.iter().any(|s| matches!(s.kind, Kind::Dropdown(_)));
 		let dd_w = if has_dropdown {
-			PAD + label_w + DD_W * scale + 6.0 + REVERT_W + PAD
+			lay().pad
+				+ label_w + lay().dropdown_width * font_scale
+				+ 6.0 + lay().revert_width
+				+ lay().pad
 		} else {
 			0.0
 		};
-		let w = (W + (label_w - LABEL_W) + (btn_w - BTN_W) * 3.0)
+		let w = (lay().width + (label_w - lay().label_width) + (btn_w - lay().button_width) * 3.0)
 			.max(tabs_w)
 			.max(radio_w)
 			.max(dd_w);
@@ -1065,7 +531,6 @@ impl SettingsDialog {
 			reverted: Vec::new(),
 			rect,
 			specs,
-			spec_tab,
 			tab: 0,
 			tab_ws,
 			scroll: 0.0,
@@ -1088,16 +553,118 @@ impl SettingsDialog {
 			line_h,
 			label_w,
 			btn_w,
+			scale,
 		}
+	}
+
+	// DIP <-> physical pixels. Coordinates and sizes cross the boundary in the
+	// public methods only: everything below them is DIP.
+	fn to_dip(&self, px: f32) -> f32 {
+		px / self.scale
+	}
+	fn to_px(&self, dip: f32) -> f32 {
+		dip * self.scale
+	}
+	fn rect_px(&self, r: Rect) -> Rect {
+		Rect {
+			x: self.to_px(r.x),
+			y: self.to_px(r.y),
+			w: self.to_px(r.w),
+			h: self.to_px(r.h),
+		}
+	}
+	// Scale a batch of quads out to physical pixels. `params.y` is a stroke width
+	// or corner radius, so it is a measurement too and scales with the rest.
+	fn quads_px(&self, quads: &mut [RectInstance]) {
+		for quad in quads {
+			quad.pos = [self.to_px(quad.pos[0]), self.to_px(quad.pos[1])];
+			quad.size = [self.to_px(quad.size[0]), self.to_px(quad.size[1])];
+			quad.params[1] = self.to_px(quad.params[1]);
+		}
+	}
+	fn texts_px(&self, items: &mut [TextItem]) {
+		for item in items {
+			item.x = self.to_px(item.x);
+			item.y = self.to_px(item.y);
+			item.clip = item.clip.map(|r| self.rect_px(r));
+		}
+	}
+
+	// The pointer/measurement boundary. Pointer positions arrive in physical
+	// pixels and the caller's text measurement answers in them too, so both are
+	// divided down before any of the layout below sees them.
+	pub fn mouse_down(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) -> Action {
+		let s = self.scale;
+		self.mouse_down_dip(x / s, y / s, &mut |t| measure(t) / s)
+	}
+	pub fn mouse_up(&mut self, x: f32, y: f32) -> Action {
+		let s = self.scale;
+		self.mouse_up_dip(x / s, y / s)
+	}
+	pub fn mouse_move(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) {
+		let s = self.scale;
+		self.mouse_move_dip(x / s, y / s, &mut |t| measure(t) / s);
+	}
+	pub fn mouse_right(
+		&mut self,
+		x: f32,
+		y: f32,
+		paste_ok: bool,
+		measure: &mut impl FnMut(&str) -> f32,
+	) {
+		let s = self.scale;
+		self.mouse_right_dip(x / s, y / s, paste_ok, &mut |t| measure(t) / s);
+	}
+	pub fn menu_key(&mut self, paste_ok: bool, measure: &mut impl FnMut(&str) -> f32) {
+		let s = self.scale;
+		self.menu_key_dip(paste_ok, &mut |t| measure(t) / s);
+	}
+	pub fn animate(&mut self, dt: f32, measure: &mut impl FnMut(&str) -> f32) -> Option<u64> {
+		let s = self.scale;
+		self.animate_dip(dt, &mut |t| measure(t) / s)
+	}
+	pub fn hover_tip(&self, mx: f32, my: f32) -> Option<(&'static str, Rect)> {
+		let s = self.scale;
+		self.hover_tip_dip(mx / s, my / s)
+			.map(|(tip, anchor)| (tip, self.rect_px(anchor)))
+	}
+
+	// The drawing boundary: the layout is solved in DIP, then everything handed
+	// to the renderer is multiplied out to physical pixels.
+	pub fn rects(
+		&self,
+		line_h: f32,
+		mut measure: impl FnMut(&str) -> f32,
+	) -> (Vec<RectInstance>, Vec<RectInstance>) {
+		let s = self.scale;
+		let (mut fixed, mut rows) = self.rects_dip(line_h / s, |t| measure(t) / s);
+		self.quads_px(&mut fixed);
+		self.quads_px(&mut rows);
+		(fixed, rows)
+	}
+	pub fn texts(&self, line_h: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<TextItem> {
+		let s = self.scale;
+		let mut items = self.texts_dip(line_h / s, |t| measure(t) / s);
+		self.texts_px(&mut items);
+		items
+	}
+	pub fn overlay(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
+		let (mut quads, mut items) = self.overlay_dip();
+		self.quads_px(&mut quads);
+		self.texts_px(&mut items);
+		(quads, items)
 	}
 
 	// Tab-bar / rows-viewport / scrollbar geometry. The rows region sits between
 	// the tab bar and the buttons; only it scrolls (chrome stays put).
 	fn tab_bar_y(&self) -> f32 {
-		self.rect.y + PAD
+		self.rect.y + lay().pad
 	}
 	fn tab_rect(&self, k: usize) -> Rect {
-		let x = self.rect.x + PAD + self.tab_ws[..k].iter().sum::<f32>() + TAB_GAP * k as f32;
+		let x = self.rect.x
+			+ lay().pad
+			+ self.tab_ws[..k].iter().sum::<f32>()
+			+ lay().tab_gap * k as f32;
 		Rect {
 			x,
 			y: self.tab_bar_y(),
@@ -1106,26 +673,32 @@ impl SettingsDialog {
 		}
 	}
 	fn rows_y0(&self) -> f32 {
-		self.tab_bar_y() + self.btn_h() + 10.0
+		self.tab_bar_y() + self.btn_h() + lay().tabs_gap
 	}
-	pub fn viewport(&self) -> Rect {
+	// The scroll viewport in physical pixels (the render pass scissors to it).
+	pub fn viewport_px(&self) -> Rect {
+		self.rect_px(self.viewport())
+	}
+	fn viewport(&self) -> Rect {
 		let y0 = self.rows_y0();
 		Rect {
 			x: self.rect.x,
 			y: y0,
 			w: self.rect.w,
-			h: (self.rect.y + self.rect.h - PAD - self.btn_h() - 14.0 - y0).max(0.0),
+			h: (self.rect.y + self.rect.h - lay().pad - self.btn_h() - lay().buttons_gap - y0)
+				.max(0.0),
 		}
 	}
 	fn content_h(&self) -> f32 {
-		Self::tab_content_h(&self.specs, &self.spec_tab, self.tab, self.line_h)
+		Self::tab_content_h(self.specs, self.tab, self.line_h)
 	}
 	fn max_scroll(&self) -> f32 {
 		(self.content_h() - self.viewport().h).max(0.0)
 	}
 	pub fn wheel(&mut self, dy_px: f32) {
 		self.dismiss_menu();
-		self.scroll = (self.scroll - dy_px).clamp(0.0, self.max_scroll());
+		let dy = self.to_dip(dy_px);
+		self.scroll = (self.scroll - dy).clamp(0.0, self.max_scroll());
 	}
 	pub fn view(&self) -> View {
 		View {
@@ -1137,7 +710,7 @@ impl SettingsDialog {
 	// its geometry can be assumed: the UI font, screen height or field set may all
 	// have changed since. Clamp rather than trust.
 	pub fn restore(&mut self, view: View) {
-		if view.tab >= TAB_TITLES.len() {
+		if view.tab >= tab_titles().len() {
 			return;
 		}
 		self.tab = view.tab;
@@ -1149,11 +722,11 @@ impl SettingsDialog {
 			return None;
 		}
 		let vp = self.viewport();
-		let thumb_h = (vp.h * vp.h / self.content_h()).max(24.0);
+		let thumb_h = (vp.h * vp.h / self.content_h()).max(lay().scrollbar_thumb_min);
 		Some(Rect {
-			x: self.rect.x + self.rect.w - PAD / 2.0 - SCROLLBAR_W,
+			x: self.rect.x + self.rect.w - lay().scrollbar_inset - lay().scrollbar_width,
 			y: vp.y + (self.scroll / scroll_max) * (vp.h - thumb_h),
-			w: SCROLLBAR_W,
+			w: lay().scrollbar_width,
 			h: thumb_h,
 		})
 	}
@@ -1215,7 +788,7 @@ impl SettingsDialog {
 	fn focusables(&self) -> Vec<usize> {
 		(0..self.specs.len())
 			.filter(|&i| {
-				self.spec_tab[i] == self.tab
+				self.specs[i].tab == self.tab
 					&& (0..self.parts_of(i)).any(|p| !self.part_disabled(i, p))
 			})
 			.collect()
@@ -1229,7 +802,7 @@ impl SettingsDialog {
 	fn focus_ring(&self) -> Vec<Focus> {
 		let mut ring = Vec::new();
 		for i in 0..self.specs.len() {
-			if self.spec_tab[i] != self.tab {
+			if self.specs[i].tab != self.tab {
 				continue;
 			}
 			for p in 0..self.parts_of(i) {
@@ -1482,8 +1055,9 @@ impl SettingsDialog {
 
 	// Panel size (used to size a dedicated dialog window when the panel is laid
 	// out at the origin - `new(0.0, 0.0)`).
+	// Window size in physical pixels.
 	pub fn size(&self) -> (f32, f32) {
-		(self.rect.w, self.rect.h)
+		(self.to_px(self.rect.w), self.to_px(self.rect.h))
 	}
 
 	pub fn edited(&self) -> &Settings {
@@ -1508,11 +1082,11 @@ impl SettingsDialog {
 		let mut y = self.rows_y0() - self.scroll;
 		let mut first = true;
 		for (j, spec) in self.specs.iter().enumerate() {
-			if self.spec_tab[j] != self.tab {
+			if self.specs[j].tab != self.tab {
 				continue;
 			}
 			if matches!(spec.kind, Kind::Header(_)) && !first {
-				y += HEADER_EXTRA;
+				y += lay().header_gap;
 			}
 			if j == i {
 				return y;
@@ -1523,39 +1097,39 @@ impl SettingsDialog {
 		y
 	}
 	fn control_x(&self) -> f32 {
-		self.rect.x + PAD + self.label_w
+		self.rect.x + lay().pad + self.label_w
 	}
 	fn track(&self, i: usize) -> Rect {
 		Rect {
 			x: self.control_x(),
-			y: self.row_y(i) + ROW_H / 2.0 - 3.0,
-			w: SLIDER_W,
+			y: self.row_y(i) + lay().row_height / 2.0 - 3.0,
+			w: lay().slider_width,
 			h: 6.0,
 		}
 	}
 	fn swatch(&self, i: usize) -> Rect {
 		Rect {
 			x: self.control_x(),
-			y: self.row_y(i) + (ROW_H - SWATCH) / 2.0,
-			w: SWATCH,
-			h: SWATCH,
+			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			w: lay().swatch,
+			h: lay().swatch,
 		}
 	}
 	fn hexbox(&self, i: usize) -> Rect {
 		Rect {
-			x: self.control_x() + SWATCH + 8.0,
-			y: self.row_y(i) + (ROW_H - SWATCH) / 2.0,
-			w: HEX_W,
-			h: SWATCH,
+			x: self.control_x() + lay().swatch + 8.0,
+			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			w: lay().hex_width,
+			h: lay().swatch,
 		}
 	}
 	// editable numeric field to the right of a slider (shows/edits the value)
 	fn valbox(&self, i: usize) -> Rect {
 		Rect {
-			x: self.control_x() + SLIDER_W + 14.0,
-			y: self.row_y(i) + (ROW_H - SWATCH) / 2.0,
-			w: VAL_W,
-			h: SWATCH,
+			x: self.control_x() + lay().slider_width + 14.0,
+			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			w: lay().value_width,
+			h: lay().swatch,
 		}
 	}
 	// wide editable field (background-image path), control_x -> the revert column
@@ -1563,57 +1137,57 @@ impl SettingsDialog {
 		let x = self.control_x();
 		Rect {
 			x,
-			y: self.row_y(i) + (ROW_H - SWATCH) / 2.0,
-			w: self.rect.x + self.rect.w - PAD - REVERT_W - 6.0 - x,
-			h: SWATCH,
+			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			w: self.rect.x + self.rect.w - lay().pad - lay().revert_width - 6.0 - x,
+			h: lay().swatch,
 		}
 	}
 	// right-edge revert-to-default icon for row `i`
 	fn revert_box(&self, i: usize) -> Rect {
 		Rect {
-			x: self.rect.x + self.rect.w - PAD - REVERT_W,
-			y: self.row_y(i) + (ROW_H - SWATCH) / 2.0,
-			w: REVERT_W,
-			h: SWATCH,
+			x: self.rect.x + self.rect.w - lay().pad - lay().revert_width,
+			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			w: lay().revert_width,
+			h: lay().swatch,
 		}
 	}
 	fn checkbox(&self, i: usize) -> Rect {
 		Rect {
 			x: self.control_x(),
-			y: self.row_y(i) + (ROW_H - SWATCH) / 2.0,
-			w: SWATCH,
-			h: SWATCH,
+			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			w: lay().swatch,
+			h: lay().swatch,
 		}
 	}
 	fn dual_pitch(&self) -> f32 {
-		DUAL_PITCH * self.ui_scale()
+		lay().dual_pitch * self.ui_scale()
 	}
 	// checkbox `p` (0/1) on a Dual row; its label sits just to the right
 	fn dual_box(&self, i: usize, p: u8) -> Rect {
 		Rect {
 			x: self.control_x() + p as f32 * self.dual_pitch(),
-			y: self.row_y(i) + (ROW_H - SWATCH) / 2.0,
-			w: SWATCH,
-			h: SWATCH,
+			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			w: lay().swatch,
+			h: lay().swatch,
 		}
 	}
 	// Radio geometry scales with the UI font (HiDPI or a large desktop font), so
 	// multi-option labels don't collide the way fixed 96px pitch does at 2x.
 	fn ui_scale(&self) -> f32 {
-		(self.line_h / BASE_LH).max(1.0)
+		(self.line_h / lay().base_line_height).max(1.0)
 	}
 	fn radio_pitch(&self) -> f32 {
-		RADIO_PITCH * self.ui_scale()
+		lay().radio_pitch * self.ui_scale()
 	}
 	fn radio_box_sz(&self) -> f32 {
-		RADIO_BOX * self.ui_scale()
+		lay().radio_box * self.ui_scale()
 	}
 	// indicator box for radio option `k` in row `i`
 	fn radio_box(&self, i: usize, k: usize) -> Rect {
 		let size = self.radio_box_sz();
 		Rect {
 			x: self.control_x() + k as f32 * self.radio_pitch(),
-			y: self.row_y(i) + (ROW_H - size) / 2.0,
+			y: self.row_y(i) + (lay().row_height - size) / 2.0,
 			w: size,
 			h: size,
 		}
@@ -1621,17 +1195,17 @@ impl SettingsDialog {
 	// Collapsed dropdown box (the always-visible control): shows the current option
 	// + a down-arrow; clicking it opens the popup list.
 	fn dd_box(&self, i: usize) -> Rect {
-		let h = (self.line_h + 6.0).max(SWATCH);
+		let h = (self.line_h + 6.0).max(lay().swatch);
 		Rect {
 			x: self.control_x(),
-			y: self.row_y(i) + (ROW_H - h) / 2.0,
-			w: DD_W * self.ui_scale(),
+			y: self.row_y(i) + (lay().row_height - h) / 2.0,
+			w: lay().dropdown_width * self.ui_scale(),
 			h,
 		}
 	}
 	// One option row inside the open popup.
 	fn dd_item_h(&self) -> f32 {
-		(self.line_h + 8.0).max(24.0)
+		(self.line_h + lay().dropdown_item_pad).max(lay().dropdown_item_min)
 	}
 	// The open popup box. Opens downward from the collapsed box, or upward when that
 	// would spill past the viewport bottom (so a dropdown low in a scrolled tab still
@@ -1696,13 +1270,13 @@ impl SettingsDialog {
 	}
 	// The flyover to show while the cursor rests on a control with a
 	// disabled_tip: (text, anchor rect to hang the tip box under).
-	pub fn hover_tip(&self, mx: f32, my: f32) -> Option<(&'static str, Rect)> {
+	fn hover_tip_dip(&self, mx: f32, my: f32) -> Option<(&'static str, Rect)> {
 		let vp = self.viewport();
 		if !vp.contains(mx, my) {
 			return None;
 		}
 		for i in 0..self.specs.len() {
-			if self.spec_tab[i] != self.tab || matches!(self.specs[i].kind, Kind::Header(_)) {
+			if self.specs[i].tab != self.tab || matches!(self.specs[i].kind, Kind::Header(_)) {
 				continue;
 			}
 			let Some(tip) = Self::disabled_tip(self.specs[i].key) else {
@@ -1714,9 +1288,9 @@ impl SettingsDialog {
 			// hover target: the row's label + control span
 			let ctl = self.checkbox(i);
 			let hit = Rect {
-				x: self.rect.x + PAD,
+				x: self.rect.x + lay().pad,
 				y: self.row_y(i),
-				w: ctl.x + ctl.w - (self.rect.x + PAD),
+				w: ctl.x + ctl.w - (self.rect.x + lay().pad),
 				h: self.row_h(&self.specs[i].kind),
 			};
 			if hit.contains(mx, my) {
@@ -1799,10 +1373,10 @@ impl SettingsDialog {
 	}
 	// Cancel, Apply, OK rects (right-aligned)
 	fn buttons(&self) -> [(Action, Rect, &'static str); 3] {
-		let y = self.rect.y + self.rect.h - PAD - self.btn_h();
-		let x_ok = self.rect.x + self.rect.w - PAD - self.btn_w;
-		let x_apply = x_ok - BTN_GAP - self.btn_w;
-		let x_cancel = x_apply - BTN_GAP - self.btn_w;
+		let y = self.rect.y + self.rect.h - lay().pad - self.btn_h();
+		let x_ok = self.rect.x + self.rect.w - lay().pad - self.btn_w;
+		let x_apply = x_ok - lay().button_gap - self.btn_w;
+		let x_cancel = x_apply - lay().button_gap - self.btn_w;
 		let mk = |x| Rect {
 			x,
 			y,
@@ -2045,54 +1619,21 @@ impl SettingsDialog {
 	// slider needs Transparency; the scrim radius needs Text scrim; the explicit
 	// columns/rows are inactive when "Remember last size" is on).
 	fn disabled(&self, key: Key) -> bool {
-		(matches!(key, Key::Opacity | Key::BackdropBlur) && !self.edited.transparent_background)
-			|| (matches!(
-				key,
-				Key::ScrimRadius
-					| Key::ScrimSoftness
-					| Key::ScrimStrength
-					| Key::Outline | Key::ScrimFunction
-					| Key::ScrimRamp | Key::CursorScrim
-					| Key::CursorOutline
-			) && !self.edited.text_scrim)
-			// the cursor outline needs an outline to join
-			|| (matches!(key, Key::CursorOutline) && self.edited.text_outline <= 0.0)
-			|| (matches!(
-				key,
-				Key::BgContrastSize | Key::BgContrastStrength | Key::BgContrastAuto
-			) && !self.edited.wallpaper_contrast_mask)
-			// everything below the master switch is moot while it is off
-			|| (matches!(
-				key,
-				Key::BgImage
-					| Key::BgRotate | Key::BgOpacity
-					| Key::BgBlur | Key::BgFit
-					| Key::BgHonorXmp | Key::BgContrastMask
-					| Key::BgContrastSize | Key::BgContrastStrength
-					| Key::BgContrastAuto
-			) && !self.edited.wallpaper_enabled)
-			// the speed sliders shape an animation the master has turned off
-			|| (matches!(
-				key,
-				Key::ScrollEaseIn
-					| Key::ScrollRampUp
-					| Key::SingleScreenTau
-					| Key::ScrollRampDown
-					| Key::ScrollEaseOut
-			) && !self.edited.scroll_smooth)
-			// the scrollbar's own settings stay listed with it off, just inert
-			|| (matches!(
-				key,
-				Key::ScrollbarThickness
-					| Key::ScrollbarAutoHide
-					| Key::ColScrollbarThumb
-					| Key::ColScrollbarTrough
-			) && !self.edited.scrollbar)
-			|| (matches!(key, Key::Columns | Key::Rows) && self.edited.remember_size)
-			|| (matches!(key, Key::FontFamily) && config::system_font_face_active(&self.edited))
-			|| (matches!(key, Key::FontSize) && config::system_font_size_active(&self.edited))
+		!ui().needs_of(key).iter().all(|need| self.gate_ok(need))
 			// nothing for a system-font toggle to follow (the tip says so)
 			|| Self::disabled_tip(key).is_some()
+	}
+	// Is one declared prerequisite satisfied? A slider counts while it sits above
+	// zero, everything else while it is switched on - except the two system-font
+	// switches, which only bite when the desktop actually names a font to follow.
+	fn gate_ok(&self, need: &ui_spec::Need) -> bool {
+		let on = match need.key {
+			Key::SystemFont => config::system_font_face_active(&self.edited),
+			Key::SystemFontSize => config::system_font_size_active(&self.edited),
+			_ if need.numeric => self.get_f32(need.key) > 0.0,
+			_ => self.get_toggle(need.key),
+		};
+		on != need.invert
 	}
 	fn get_col(&self, key: Key) -> [u8; 3] {
 		let settings = &self.edited;
@@ -2294,7 +1835,7 @@ impl SettingsDialog {
 				self.set_f32(key, value);
 			}
 		}
-		for cfg_key in cfg_keys(key) {
+		for cfg_key in ui().settings_of(key) {
 			if !self.reverted.contains(cfg_key) {
 				self.reverted.push(cfg_key);
 			}
@@ -2316,7 +1857,7 @@ impl SettingsDialog {
 
 	// `measure` gives a string's rendered width in the UI font (for placing the
 	// caret at the clicked position inside a text field).
-	pub fn mouse_down(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) -> Action {
+	fn mouse_down_dip(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) -> Action {
 		// double/triple-click detection (word / whole-value selection in fields)
 		let now = std::time::Instant::now();
 		self.click_streak = match self.last_click {
@@ -2403,7 +1944,7 @@ impl SettingsDialog {
 			return Action::None;
 		}
 		for i in 0..self.specs.len() {
-			if self.spec_tab[i] != self.tab {
+			if self.specs[i].tab != self.tab {
 				continue;
 			}
 			// revert-to-default icon (any control row; inert when already default)
@@ -2543,7 +2084,11 @@ impl SettingsDialog {
 		let (shift, streak) = (self.shift, self.click_streak);
 		self.focus = Some(Focus::Row(i, part));
 		let Some(edit) = &mut self.edit else { return };
-		let cur = caret_from_click(&edit.buf, x - (field.x + FIELD_PAD) + edit.view, measure);
+		let cur = caret_from_click(
+			&edit.buf,
+			x - (field.x + lay().field_pad) + edit.view,
+			measure,
+		);
 		if shift && same_row {
 			if edit.sel.is_none() {
 				edit.sel = Some(edit.cur);
@@ -2585,7 +2130,7 @@ impl SettingsDialog {
 				h: 0.0,
 			};
 		};
-		let w = EM_W * self.ui_scale();
+		let w = lay().edit_menu_width * self.ui_scale();
 		let h = EDIT_MENU.len() as f32 * self.em_item_h();
 		// clamp into the panel; flip upward when it would spill past the bottom
 		let x = menu
@@ -2623,7 +2168,7 @@ impl SettingsDialog {
 	}
 	// Right-click in an editable field: open (or keep) the edit, place the caret
 	// at the click unless it lands inside the selection (standard), pop the menu.
-	pub fn mouse_right(
+	fn mouse_right_dip(
 		&mut self,
 		x: f32,
 		y: f32,
@@ -2638,7 +2183,7 @@ impl SettingsDialog {
 			return;
 		}
 		for i in 0..self.specs.len() {
-			if self.spec_tab[i] != self.tab {
+			if self.specs[i].tab != self.tab {
 				continue;
 			}
 			let Some(field) = self.field_rect(i) else {
@@ -2658,7 +2203,7 @@ impl SettingsDialog {
 			let part = u8::from(matches!(self.specs[i].kind, Kind::Slider { .. }));
 			self.focus = Some(Focus::Row(i, part));
 			if let Some(edit) = &mut self.edit {
-				let rel_x = x - (field.x + FIELD_PAD) + edit.view;
+				let rel_x = x - (field.x + lay().field_pad) + edit.view;
 				let cur = caret_from_click(&edit.buf, rel_x, measure);
 				let inside = edit.sel_range().is_some_and(|(a, b)| cur >= a && cur <= b);
 				if !inside {
@@ -2676,12 +2221,12 @@ impl SettingsDialog {
 		}
 	}
 	// Keyboard Menu key: pop the context menu at the caret of the active edit.
-	pub fn menu_key(&mut self, paste_ok: bool, measure: &mut impl FnMut(&str) -> f32) {
+	fn menu_key_dip(&mut self, paste_ok: bool, measure: &mut impl FnMut(&str) -> f32) {
 		let Some(edit) = &self.edit else { return };
 		let Some(field) = self.field_rect(edit.row) else {
 			return;
 		};
-		let cx = (field.x + FIELD_PAD + measure(&edit.buf[..edit.cur]) - edit.view)
+		let cx = (field.x + lay().field_pad + measure(&edit.buf[..edit.cur]) - edit.view)
 			.clamp(field.x, field.x + field.w);
 		self.emenu = Some(EMenu {
 			x: cx,
@@ -2693,20 +2238,20 @@ impl SettingsDialog {
 
 	// Per-frame upkeep of the active field edit, with real frame time: eases the
 	// horizontal view (caret kept visible with a lookahead margin so several
-	// characters show ahead of travel; CARET_PAD keeps the caret clear of the
+	// characters show ahead of travel; lay().caret_pad keeps the caret clear of the
 	// right edge at end-of-text), eases the caret x, advances the blink, and
 	// replays a drag past the box edges (edge autoscroll). Returns the wake the
 	// caller should schedule: fast while something moves, blink-rate while an
 	// idle edit pulses, None when there's nothing to animate.
-	pub fn animate(&mut self, dt: f32, measure: &mut impl FnMut(&str) -> f32) -> Option<u64> {
+	fn animate_dip(&mut self, dt: f32, measure: &mut impl FnMut(&str) -> f32) -> Option<u64> {
 		if self.edit_drag.is_some() {
 			let (mx, my) = self.mouse;
-			self.mouse_move(mx, my, measure);
+			self.mouse_move_dip(mx, my, measure);
 		}
 		let row = self.edit.as_ref().map(|e| e.row)?;
 		let field = self.field_rect(row)?;
-		let inner_w = (field.w - 2.0 * FIELD_PAD).max(1.0);
-		let ahead = (VIEW_AHEAD * self.ui_scale()).min(inner_w / 3.0);
+		let inner_w = (field.w - 2.0 * lay().field_pad).max(1.0);
+		let ahead = (lay().view_ahead * self.ui_scale()).min(inner_w / 3.0);
 		let (caret_x, text_w, sig) = {
 			let edit = self.edit.as_ref().unwrap(); // Some: row extracted above
 			(
@@ -2725,7 +2270,7 @@ impl SettingsDialog {
 		}
 		// target view: keep the caret in sight with the margin; the clamp snaps
 		// the margin away at the true ends so 0 / end-of-text sit flush
-		let max_view = (text_w + CARET_PAD - inner_w).max(0.0);
+		let max_view = (text_w + lay().caret_pad - inner_w).max(0.0);
 		let mut to = edit.view_to;
 		if caret_x < to + ahead {
 			to = caret_x - ahead;
@@ -2746,7 +2291,7 @@ impl SettingsDialog {
 		Some(if moving || dragging { 8 } else { 33 })
 	}
 
-	pub fn mouse_move(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) {
+	fn mouse_move_dip(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) {
 		self.mouse = (x, y);
 		// open field context menu: track the hovered item
 		if self.emenu.is_some() {
@@ -2761,7 +2306,7 @@ impl SettingsDialog {
 		if let Some(row) = self.edit_drag {
 			if let Some(field) = self.field_rect(row) {
 				let moved = if let Some(edit) = &mut self.edit {
-					let rel_x = x - (field.x + FIELD_PAD) + edit.view;
+					let rel_x = x - (field.x + lay().field_pad) + edit.view;
 					let cur = caret_from_click(&edit.buf, rel_x, measure);
 					if cur == edit.cur {
 						false
@@ -2794,7 +2339,7 @@ impl SettingsDialog {
 		}
 		if let Some(grab) = self.drag_thumb {
 			let vp = self.viewport();
-			let thumb_h = self.thumb().map_or(24.0, |t| t.h);
+			let thumb_h = self.thumb().map_or(lay().scrollbar_thumb_min, |t| t.h);
 			let frac = ((y - grab - vp.y) / (vp.h - thumb_h).max(1.0)).clamp(0.0, 1.0);
 			self.scroll = frac * self.max_scroll();
 			return;
@@ -2805,7 +2350,7 @@ impl SettingsDialog {
 	}
 	// Release: end any slider/thumb drag, and fire an armed button's action only if
 	// the cursor is still over it (a press that drifted off cancels).
-	pub fn mouse_up(&mut self, x: f32, y: f32) -> Action {
+	fn mouse_up_dip(&mut self, x: f32, y: f32) -> Action {
 		self.drag = None;
 		self.drag_thumb = None;
 		self.edit_drag = None;
@@ -3122,7 +2667,7 @@ impl SettingsDialog {
 		measure: &mut impl FnMut(&str) -> f32,
 	) {
 		let Some(edit) = &self.edit else { return };
-		let left = field.x + FIELD_PAD - edit.view;
+		let left = field.x + lay().field_pad - edit.view;
 		let (lo, hi) = (field.x + 1.0, field.x + field.w - 1.0);
 		// the caret's own x is the eased position (smooth caret travel); other
 		// selection edges are exact
@@ -3163,7 +2708,7 @@ impl SettingsDialog {
 	// (fixed chrome, scrolled rows): the rows vec is drawn scissored to
 	// `viewport()` so scrolled-out controls can't paint over the chrome.
 	// `measure` gives the rendered width of a string in the UI font (for the caret).
-	pub fn rects(
+	fn rects_dip(
 		&self,
 		line_h: f32,
 		mut measure: impl FnMut(&str) -> f32,
@@ -3227,7 +2772,7 @@ impl SettingsDialog {
 		}
 
 		for i in 0..self.specs.len() {
-			if self.spec_tab[i] != self.tab {
+			if self.specs[i].tab != self.tab {
 				continue;
 			}
 			match self.specs[i].kind {
@@ -3421,15 +2966,21 @@ impl SettingsDialog {
 					// faint rule near the bottom of the (tall) heading row, leaving a
 					// clear gap below the heading text above it
 					let y = self.row_y(i) + self.row_h(&Kind::Header("")) - 8.0;
-					let x = self.rect.x + PAD;
-					out.push(q(x, y, self.rect.w - PAD * 2.0, 1.0, dlg().panel_border));
+					let x = self.rect.x + lay().pad;
+					out.push(q(
+						x,
+						y,
+						self.rect.w - lay().pad * 2.0,
+						1.0,
+						dlg().panel_border,
+					));
 				}
 			}
 		}
 		// keyboard-focus ring around the active control row (scrolls + clips with
 		// the rows; a focused button is ringed below, in the fixed chrome).
 		if let Some(Focus::Row(fr, fp)) = self.focus {
-			if self.spec_tab[fr] == self.tab && !matches!(self.specs[fr].kind, Kind::Header(_)) {
+			if self.specs[fr].tab == self.tab && !matches!(self.specs[fr].kind, Kind::Header(_)) {
 				let r = self.focus_ctl_rect(fr, fp);
 				let ring = Rect {
 					x: r.x - 2.0,
@@ -3470,7 +3021,7 @@ impl SettingsDialog {
 	// `line_h` is the rendered text line height (the app's cell_h); rows, hex
 	// fields, and buttons center their text vertically against it so alignment
 	// holds for any font/size rather than a baked-in guess.
-	pub fn texts(&self, line_h: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<TextItem> {
+	fn texts_dip(&self, line_h: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<TextItem> {
 		let mut out = Vec::new();
 		let mk = |text: String, x: f32, y: f32| TextItem {
 			text,
@@ -3483,7 +3034,7 @@ impl SettingsDialog {
 		};
 		let row_text_y = |y: f32, h: f32| y + (h - line_h) / 2.0;
 		// tab titles
-		for (k, title) in TAB_TITLES.iter().enumerate() {
+		for (k, title) in tab_titles().iter().enumerate() {
 			let r = self.tab_rect(k);
 			out.push(mk((*title).into(), r.x + 11.0, row_text_y(r.y, r.h)));
 		}
@@ -3502,17 +3053,17 @@ impl SettingsDialog {
 			}
 		};
 		for i in 0..self.specs.len() {
-			if self.spec_tab[i] != self.tab {
+			if self.specs[i].tab != self.tab {
 				continue;
 			}
-			let ty = row_text_y(self.row_y(i), ROW_H);
+			let ty = row_text_y(self.row_y(i), lay().row_height);
 			if let Kind::Header(section) = self.specs[i].kind {
 				// heading near the top of the row; the rule sits lower (gap between)
 				let hy = self.row_y(i) + 5.0;
 				out.push(TextItem {
 					bold: true,
 					clip: Some(vp),
-					..mk(section.into(), self.rect.x + PAD, hy)
+					..mk(section.into(), self.rect.x + lay().pad, hy)
 				});
 				continue;
 			}
@@ -3521,7 +3072,7 @@ impl SettingsDialog {
 			out.push(TextItem {
 				color: label_color,
 				clip: Some(vp),
-				..mk(self.specs[i].label.into(), self.rect.x + PAD, ty)
+				..mk(self.specs[i].label.into(), self.rect.x + lay().pad, ty)
 			});
 			// revert-to-default icon: bright + clickable when off-default, dim when at it
 			let revert_rect = self.revert_box(i);
@@ -3532,7 +3083,7 @@ impl SettingsDialog {
 					dlg().handle
 				},
 				clip: Some(vp),
-				..mk(REVERT_ICON.into(), revert_rect.x + 4.0, ty)
+				..mk(ui().icons.revert.into(), revert_rect.x + 4.0, ty)
 			});
 			// horizontal view offset of row i's field while it's being edited (the
 			// text slides left as the view scrolls; the box clip crops the rest)
@@ -3554,7 +3105,7 @@ impl SettingsDialog {
 						clip: Some(intersect(val_box)),
 						..mk(
 							txt,
-							val_box.x + FIELD_PAD - view(i),
+							val_box.x + lay().field_pad - view(i),
 							row_text_y(val_box.y, val_box.h),
 						)
 					});
@@ -3569,7 +3120,7 @@ impl SettingsDialog {
 						clip: Some(intersect(hex_box)),
 						..mk(
 							txt,
-							hex_box.x + FIELD_PAD - view(i),
+							hex_box.x + lay().field_pad - view(i),
 							row_text_y(hex_box.y, hex_box.h),
 						)
 					});
@@ -3596,7 +3147,7 @@ impl SettingsDialog {
 						clip: Some(intersect(text_box)),
 						..mk(
 							txt,
-							text_box.x + FIELD_PAD - view(i),
+							text_box.x + lay().field_pad - view(i),
 							row_text_y(text_box.y, text_box.h),
 						)
 					});
@@ -3640,7 +3191,7 @@ impl SettingsDialog {
 						color,
 						clip: Some(vp),
 						..mk(
-							DD_ARROW.into(),
+							ui().icons.dropdown_arrow.into(),
 							box_r.x + box_r.w - 18.0,
 							row_text_y(box_r.y, box_r.h),
 						)
@@ -3660,7 +3211,7 @@ impl SettingsDialog {
 	// The open dropdown's popup, as (rects, text), for a second (LoadOp::Load) pass
 	// drawn on top of the dialog so the covered rows' text can't bleed through the
 	// opaque box (same reason the context menu uses its own pass). Empty when closed.
-	pub fn dropdown_overlay(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
+	fn dropdown_overlay(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
 		let mut rects = Vec::new();
 		let mut texts = Vec::new();
 		let Some(i) = self.open else {
@@ -3719,7 +3270,7 @@ impl SettingsDialog {
 			}
 			let ty = r.y + (r.h - self.line_h) / 2.0;
 			if k == sel {
-				texts.push(mk(DD_CHECK.into(), r.x + r.w - 18.0, ty));
+				texts.push(mk(ui().icons.dropdown_check.into(), r.x + r.w - 18.0, ty));
 			}
 			texts.push(mk((*opt).into(), r.x + 10.0, ty));
 		}
@@ -3732,7 +3283,7 @@ impl SettingsDialog {
 	}
 	// Everything for the second pass: the open dropdown popup and/or the field
 	// context menu (only one is ever open at a time in practice).
-	pub fn overlay(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
+	fn overlay_dip(&self) -> (Vec<RectInstance>, Vec<TextItem>) {
 		let (mut rects, mut texts) = self.dropdown_overlay();
 		if self.emenu.is_none() {
 			return (rects, texts);
@@ -3779,19 +3330,20 @@ impl SettingsDialog {
 // size never truncates).
 pub fn chrome_widths(text: &mut crate::text::TextCtx) -> (f32, f32, Vec<f32>) {
 	let attrs = crate::text::ui_attrs();
-	let label_w = fields()
+	let label_w = ui()
+		.specs
 		.iter()
 		.map(|spec| text.measure_ui_text(spec.label, &attrs))
 		.fold(0.0f32, f32::max)
-		+ 14.0;
+		+ lay().label_gap;
 	let btn_w = ["Cancel", "Apply", "OK"]
 		.iter()
 		.map(|caption| text.measure_ui_text(caption, &attrs))
 		.fold(0.0f32, f32::max)
-		+ 24.0;
-	let tab_ws = TAB_TITLES
+		+ lay().button_pad;
+	let tab_ws = tab_titles()
 		.iter()
-		.map(|title| text.measure_ui_text(title, &attrs) + 22.0)
+		.map(|title| text.measure_ui_text(title, &attrs) + lay().tab_pad)
 		.collect();
 	(label_w, btn_w, tab_ws)
 }
@@ -3828,20 +3380,26 @@ pub fn wallpaper_changed(old: &Settings, new: &Settings) -> bool {
 mod tests {
 	use super::{
 		EASE_IN_MAX, EASE_IN_MIN, EASE_OUT_MAX, EASE_OUT_MIN, Key, RAMP_DOWN_MAX, RAMP_DOWN_MIN,
-		RAMP_UP_MAX, RAMP_UP_MIN, SettingsDialog, TAB_TITLES, TAU_MAX, TAU_MIN, falling_slider,
-		speed_to_tau, tau_to_speed,
+		RAMP_UP_MAX, RAMP_UP_MIN, SettingsDialog, TAU_MAX, TAU_MIN, falling_slider, speed_to_tau,
+		tab_titles, tau_to_speed,
 	};
 	use crate::config;
 
 	fn mk_dialog(max_h: f32) -> SettingsDialog {
+		mk_dialog_at(max_h, 1.0)
+	}
+	// Everything a real dialog is handed arrives in physical pixels, so a scale
+	// of 2 means twice the line height, label width, tab widths and height cap.
+	fn mk_dialog_at(max_h: f32, scale: f32) -> SettingsDialog {
 		SettingsDialog::new(
 			0.0,
 			0.0,
-			18.0,
-			170.0,
-			80.0,
-			vec![90.0; TAB_TITLES.len()],
-			max_h,
+			18.0 * scale,
+			170.0 * scale,
+			80.0 * scale,
+			vec![90.0 * scale; tab_titles().len()],
+			max_h * scale,
+			scale,
 		)
 	}
 
@@ -3849,9 +3407,9 @@ mod tests {
 	fn tabs_partition_all_specs() {
 		let d = mk_dialog(2000.0);
 		// every spec lands on a valid tab and no tab is empty
-		assert!(d.spec_tab.iter().all(|&t| t < TAB_TITLES.len()));
-		for t in 0..TAB_TITLES.len() {
-			assert!(d.spec_tab.contains(&t), "tab {t} has no rows");
+		assert!(d.specs.iter().all(|s| s.tab < tab_titles().len()));
+		for t in 0..tab_titles().len() {
+			assert!(d.specs.iter().any(|s| s.tab == t), "tab {t} has no rows");
 		}
 	}
 
@@ -3903,7 +3461,7 @@ mod tests {
 	fn a_restored_view_never_outruns_the_new_dialog() {
 		// scrolled to the bottom of the last tab, as if the user had just closed it
 		let mut d = mk_dialog(400.0);
-		d.tab = TAB_TITLES.len() - 1;
+		d.tab = tab_titles().len() - 1;
 		d.wheel(-1e9);
 		let view = d.view();
 		assert!(view.scroll > 0.0);
@@ -3919,7 +3477,7 @@ mod tests {
 		// a tab that no longer exists leaves the fresh dialog alone
 		let mut d = mk_dialog(400.0);
 		d.restore(super::View {
-			tab: TAB_TITLES.len(),
+			tab: tab_titles().len(),
 			scroll: 50.0,
 		});
 		assert_eq!(d.tab, 0);
@@ -3968,7 +3526,7 @@ mod tests {
 			.iter()
 			.position(|s| matches!(s.kind, Kind::Dual { .. }))
 			.unwrap();
-		d.tab = d.spec_tab[i];
+		d.tab = d.specs[i].tab;
 		// enabled prerequisites: scrim on, an outline present
 		d.edited.text_scrim = true;
 		d.edited.text_outline = 2.0;
@@ -4011,7 +3569,7 @@ mod tests {
 			.iter()
 			.position(|s| matches!(s.key, Key::SystemFont))
 			.unwrap();
-		d.tab = d.spec_tab[i];
+		d.tab = d.specs[i].tab;
 		let bx = d.checkbox(i);
 		if crate::sysfont::monospace().family.is_none() {
 			assert!(d.disabled(Key::SystemFont));
@@ -4039,9 +3597,9 @@ mod tests {
 	}
 
 	#[test]
-	fn hidpi_scales_radio_layout_and_widens_panel() {
+	fn a_large_ui_font_scales_radio_layout_and_widens_panel() {
 		use super::Kind;
-		// base (1x) vs a 2x UI font (HiDPI or a large desktop font)
+		// base vs a desktop UI font twice the size (a bigger font, same DPI)
 		let base = mk_dialog(4000.0);
 		let big = SettingsDialog::new(
 			0.0,
@@ -4049,8 +3607,9 @@ mod tests {
 			38.0,
 			340.0,
 			160.0,
-			vec![180.0; TAB_TITLES.len()],
+			vec![180.0; tab_titles().len()],
 			4000.0,
+			1.0,
 		);
 		// radio pitch tracks the font so multi-option labels don't collide
 		assert!(big.radio_pitch() > base.radio_pitch() * 1.5);
@@ -4070,6 +3629,36 @@ mod tests {
 			last.x + last.w <= big.rect.x + big.rect.w,
 			"last radio option overflows the panel at 2x"
 		);
+	}
+
+	// The layout is DIP, so a doubled scale factor may only multiply it: same
+	// dialog, twice the pixels, and a pointer still lands on the same control.
+	#[test]
+	fn the_scale_factor_only_multiplies_the_layout() {
+		let base = mk_dialog(4000.0);
+		let hidpi = mk_dialog_at(4000.0, 2.0);
+		let ((bw, bh), (hw, hh)) = (base.size(), hidpi.size());
+		assert!(
+			(hw - bw * 2.0).abs() < 0.01 && (hh - bh * 2.0).abs() < 0.01,
+			"window {bw}x{bh} at 1x vs {hw}x{hh} at 2x"
+		);
+		let (bv, hv) = (base.viewport_px(), hidpi.viewport_px());
+		assert!((hv.y - bv.y * 2.0).abs() < 0.01 && (hv.h - bv.h * 2.0).abs() < 0.01);
+		// a click at the checkbox's physical centre still toggles its setting
+		let i = base
+			.specs
+			.iter()
+			.position(|s| s.key == Key::Transparency)
+			.unwrap();
+		let target = base.checkbox(i);
+		let mut d = hidpi;
+		let before = d.edited.transparent_background;
+		d.mouse_down(
+			(target.x + target.w / 2.0) * 2.0,
+			(target.y + target.h / 2.0) * 2.0,
+			&mut |s: &str| s.len() as f32 * 12.0,
+		);
+		assert_ne!(d.edited.transparent_background, before);
 	}
 
 	#[test]
@@ -4281,7 +3870,7 @@ mod tests {
 		assert!(d.get_f32(Key::SingleScreenTau) >= lower);
 		// radio: focus the (always-enabled) bg-fit radio and move its selection
 		let i = d.specs.iter().position(|s| s.key == Key::BgFit).unwrap();
-		d.tab = d.spec_tab[i];
+		d.tab = d.specs[i].tab;
 		d.focus = Some(super::Focus::Row(i, 0));
 		let before = d.get_radio(Key::BgFit);
 		d.key_horizontal(1);
@@ -4311,7 +3900,7 @@ mod tests {
 			.iter()
 			.position(|s| s.key == Key::SingleScreenTau)
 			.unwrap();
-		d.tab = d.spec_tab[i];
+		d.tab = d.specs[i].tab;
 		d.focus = Some(super::Focus::Row(i, 0));
 		d.set_f32(Key::SingleScreenTau, 50.0);
 		d.key_vertical(false); // Up -> increase by 1 (int step)
@@ -4333,7 +3922,7 @@ mod tests {
 			.iter()
 			.position(|s| s.key == Key::SingleScreenTau)
 			.unwrap();
-		d.tab = d.spec_tab[i];
+		d.tab = d.specs[i].tab;
 		d.focus = Some(super::Focus::Row(i, 0));
 		d.set_f32(Key::SingleScreenTau, 30.0);
 		d.key_space(); // open the field, fully selected
@@ -4355,7 +3944,7 @@ mod tests {
 		let mut m = |s: &str| s.chars().count() as f32; // 1px per char
 		// fresh single click into a text field: select all on release
 		let mut d = mk_dialog(4000.0);
-		d.tab = d.spec_tab[i0];
+		d.tab = d.specs[i0].tab;
 		d.edited.wallpaper_raw = "foo bar.png".to_string();
 		let field = d.textbox(i0);
 		let at = |k: usize| field.x + 6.0 + k as f32;
@@ -4371,7 +3960,7 @@ mod tests {
 		);
 		// a click that drags selects the dragged range instead
 		let mut d = mk_dialog(4000.0);
-		d.tab = d.spec_tab[i0];
+		d.tab = d.specs[i0].tab;
 		d.edited.wallpaper_raw = "foo bar.png".to_string();
 		d.mouse_down(at(2), y, &mut m);
 		d.mouse_move(at(6), y, &mut m);
@@ -4400,7 +3989,7 @@ mod tests {
 		// Font size: an int slider on the Font tab, range 6..40
 		d.edited.use_system_font_size = false; // else Font size is greyed/disabled
 		let i = d.specs.iter().position(|s| s.key == Key::FontSize).unwrap();
-		d.tab = d.spec_tab[i];
+		d.tab = d.specs[i].tab;
 		d.focus = Some(Focus::Row(i, 0));
 		// Space opens the field pre-filled with the current value
 		d.key_space();
@@ -4430,7 +4019,7 @@ mod tests {
 		let mut d = mk_dialog(2000.0);
 		// Opacity: a float slider on Appearance, range 0..1
 		let i = d.specs.iter().position(|s| s.key == Key::Opacity).unwrap();
-		d.tab = d.spec_tab[i];
+		d.tab = d.specs[i].tab;
 		d.edited.transparent_background = true; // opacity enabled
 		d.focus = Some(Focus::Row(i, 0));
 		// typing a digit into the focused (unopened) slider starts a fresh number
@@ -4471,7 +4060,7 @@ mod tests {
 		use super::{Focus, Key};
 		let mut d = mk_dialog(4000.0);
 		let i = d.specs.iter().position(|s| s.key == Key::BgImage).unwrap();
-		d.tab = d.spec_tab[i];
+		d.tab = d.specs[i].tab;
 		d.edited.wallpaper_raw = value.to_string();
 		d.focus = Some(Focus::Row(i, 0));
 		d.set_mods(false, false, false);
@@ -4544,7 +4133,7 @@ mod tests {
 			.iter()
 			.position(|s| matches!(s.kind, Kind::Color))
 			.unwrap();
-		d.tab = d.spec_tab[i];
+		d.tab = d.specs[i].tab;
 		d.focus = Some(Focus::Row(i, 0));
 		d.key_space();
 		d.select_all();
@@ -4556,7 +4145,7 @@ mod tests {
 		// slider field: digits/dot only, single dot
 		let mut d = mk_dialog(4000.0);
 		let i = d.specs.iter().position(|s| s.key == Key::Opacity).unwrap();
-		d.tab = d.spec_tab[i];
+		d.tab = d.specs[i].tab;
 		d.edited.transparent_background = true;
 		d.focus = Some(Focus::Row(i, 0));
 		d.key_space();
@@ -4625,17 +4214,17 @@ mod tests {
 
 	#[test]
 	fn long_value_scrolls_to_keep_caret_visible() {
-		use super::{CARET_PAD, FIELD_PAD};
+		use super::lay;
 		let (mut d, i) = mk_text_edit(&"x".repeat(400));
 		let mut m = |s: &str| s.chars().count() as f32; // 1px per char
 		d.cursor_end(); // collapse the open-time selection, caret at char 400
 		settle(&mut d, &mut m);
 		let field = d.textbox(i);
-		let inner = field.w - 2.0 * FIELD_PAD;
+		let inner = field.w - 2.0 * lay().field_pad;
 		let e = d.edit.as_ref().unwrap();
 		// scrolled right, caret in view, with the end padding visible after it
 		assert!(e.view_to > 0.0);
-		assert!((400.0 - e.view) <= inner - CARET_PAD + 0.5);
+		assert!((400.0 - e.view) <= inner - lay().caret_pad + 0.5);
 		assert_eq!(e.view, e.view_to, "ease settles exactly on the target");
 		// moving left keeps the lookahead margin of context before the caret
 		for _ in 0..200 {
@@ -4661,7 +4250,7 @@ mod tests {
 
 	#[test]
 	fn click_and_drag_map_through_the_view() {
-		use super::FIELD_PAD;
+		use super::lay;
 		let (mut d, i) = mk_text_edit(&"y".repeat(400));
 		let mut m = |s: &str| s.chars().count() as f32;
 		d.cursor_end();
@@ -4672,19 +4261,19 @@ mod tests {
 		let y = field.y + field.h / 2.0;
 		// a click 10px into the box lands on the char 10px past the scrolled-off part
 		d.last_click = None;
-		d.mouse_down(field.x + FIELD_PAD + 10.0, y, &mut m);
+		d.mouse_down(field.x + lay().field_pad + 10.0, y, &mut m);
 		let cur = d.edit.as_ref().unwrap().cur;
 		assert!(
 			(cur as f32 - (view + 10.0)).abs() <= 0.5,
 			"cur {cur} vs view {view}"
 		);
-		d.mouse_up(field.x + FIELD_PAD + 10.0, y);
+		d.mouse_up(field.x + lay().field_pad + 10.0, y);
 		// from the far left, dragging past the right edge keeps selecting while
 		// the view crawls (edge autoscroll)
 		d.cursor_home();
 		settle(&mut d, &mut m);
 		d.last_click = None;
-		d.mouse_down(field.x + FIELD_PAD, y, &mut m);
+		d.mouse_down(field.x + lay().field_pad, y, &mut m);
 		d.mouse_move(field.x + field.w + 40.0, y, &mut m);
 		let cur0 = d.edit.as_ref().unwrap().cur;
 		assert!(cur0 < 400, "the first drag event lands short of the end");
@@ -4698,13 +4287,13 @@ mod tests {
 
 	#[test]
 	fn context_menu_open_fire_and_gating() {
-		use super::{Action, EditCmd, FIELD_PAD};
+		use super::{Action, EditCmd, lay};
 		let (mut d, i) = mk_text_edit("hello world");
 		let mut m = |s: &str| s.chars().count() as f32;
 		let field = d.textbox(i);
 		let y = field.y + field.h / 2.0;
 		// right-click inside the (select-all) selection keeps it; menu opens
-		d.mouse_right(field.x + FIELD_PAD + 3.0, y, true, &mut m);
+		d.mouse_right(field.x + lay().field_pad + 3.0, y, true, &mut m);
 		assert!(d.emenu.is_some());
 		assert_eq!(d.selected_text().as_deref(), Some("hello world"));
 		// Copy is enabled; clicking it returns the command for the clipboard glue
@@ -4716,7 +4305,7 @@ mod tests {
 		assert!(d.emenu.is_none());
 		// no selection + empty clipboard: only Select all stays enabled
 		d.cursor_end();
-		d.mouse_right(field.x + FIELD_PAD + 3.0, y, false, &mut m);
+		d.mouse_right(field.x + lay().field_pad + 3.0, y, false, &mut m);
 		assert!(
 			d.selected_text().is_none(),
 			"right-click outside sel places caret"
@@ -4730,12 +4319,12 @@ mod tests {
 		assert_eq!(d.key_enter(), Action::Edit(EditCmd::SelectAll));
 		assert!(d.emenu.is_none());
 		// Esc closes the menu but keeps the edit alive
-		d.mouse_right(field.x + FIELD_PAD + 3.0, y, true, &mut m);
+		d.mouse_right(field.x + lay().field_pad + 3.0, y, true, &mut m);
 		assert!(d.emenu.is_some());
 		assert_eq!(d.key_escape(), Action::None);
 		assert!(d.emenu.is_none() && d.edit.is_some());
 		// typing dismisses a stale menu
-		d.mouse_right(field.x + FIELD_PAD + 3.0, y, true, &mut m);
+		d.mouse_right(field.x + lay().field_pad + 3.0, y, true, &mut m);
 		d.char_input('a');
 		assert!(d.emenu.is_none());
 	}

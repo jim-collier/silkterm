@@ -207,6 +207,7 @@ impl DialogWin {
 		let (window, mut gfx, mut text, rects) =
 			Self::make(el, "Settings".into(), 560.0, 800.0, parent)?;
 		let (label_w, btn_w, tab_ws) = crate::settings_ui::chrome_widths(&mut text);
+		let scale = window.scale_factor() as f32;
 		// cap the window height to the monitor (minus decorations headroom) and to
 		// ~1010px total; a tab that doesn't fit scrolls instead of clipping buttons
 		let max_h = window
@@ -214,8 +215,16 @@ impl DialogWin {
 			.map_or(1010.0, |monitor| monitor.size().height as f32 - 38.0)
 			.min(1010.0);
 		// laid out at the origin
-		let mut dialog =
-			SettingsDialog::new(0.0, 0.0, text.ui_line_h, label_w, btn_w, tab_ws, max_h);
+		let mut dialog = SettingsDialog::new(
+			0.0,
+			0.0,
+			text.ui_line_h,
+			label_w,
+			btn_w,
+			tab_ws,
+			max_h,
+			scale,
+		);
 		if let Some(view) = resume {
 			dialog.restore(view);
 		}
@@ -640,7 +649,7 @@ impl DialogWin {
 					dialog.rects(line_h, |s| text.measure_ui_text(s, &attrs))
 				};
 				rect_split = fixed.len();
-				scissor_vp = Some(dialog.viewport());
+				scissor_vp = Some(dialog.viewport_px());
 				rect_inst = fixed;
 				rect_inst.extend(rows);
 				let items = {
