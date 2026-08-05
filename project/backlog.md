@@ -1333,6 +1333,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- The underline is drawn above the text scrim, alongside the cursor. Below it, the scrim's halo shaded the rule in the pattern of the letters sitting on it, so it came out streaked rather than solid - only visible with the scrim on, since the halo takes the background colour and shows only where something brighter is drawn under it. The rule is now one flat colour end to end.
 	- 🔘 UAT
 
+- ✅ Config language moved to SHCL 1.2. (20260804)
+	- The last layout quirk the config writer worked around is fixed at the source, so the repair pass is gone entirely - what the language writes is now what lands on disk, comments, blank lines, indentation and order included.
+	- Checked against the shipped template, a real config, a config with settings turned on, and a deliberately awkward one: each comes back exactly as it went in, where before they came back with 14 to 178 lines re-laid-out. Saving a change still touches only the lines that changed, and a setting turned on for the first time lands inside its section at the right depth.
+	- A setting written twice is now reported instead of quietly doing nothing. The language will not guess which one was meant, so the built-in default is what takes effect; the message names both lines.
+	- 🔘 UAT
+
 - ✅ Config language moved to SHCL 1.1. (20260804)
 	- Two of the three layout quirks the config writer worked around are fixed at the source. Blank-line grouping now survives a save on its own, and a comment block sitting after the last setting of a section keeps its indentation instead of drifting into whatever comes next. Both workarounds are gone.
 	- One is left, and it is narrower than it was: under a section whose settings are all commented-out defaults - which is most of this file - a comment run comes back at the section's own indentation rather than its settings'. The writer still puts that back, so nothing changes on disk.
