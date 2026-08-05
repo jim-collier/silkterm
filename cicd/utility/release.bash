@@ -78,11 +78,20 @@ if ((do_push)); then
 else
 	echo "next: git push origin main && git push origin ${tag}"
 fi
+## A semver version carrying a pre-release suffix (the '-' in 1.0.0-beta2) is
+## marked as one on the release page too. That is not cosmetic: the API's
+## "latest" excludes pre-releases, and both installers ask for latest FIRST and
+## only then fall back to the newest release of any kind. Publishing a beta
+## unmarked makes it the stable answer, so every install.bash/ps1 run takes a
+## beta as the release build and the fallback never runs.
+prerelease=()
+if [[ "$ver" == *-* ]]; then prerelease=(--prerelease); fi
+
 if ((do_publish)); then
 	command -v gh >/dev/null 2>&1 || die "gh CLI not found"
 	gh release create "${tag}" --title "${APP_NAME} ${ver}" --notes "See the README for details." \
-		"${art_dir}/${EXE_NAME}-${ver}-"*
-	echo "GitHub Release ${tag} created with artifacts"
+		"${prerelease[@]}" "${art_dir}/${EXE_NAME}-${ver}-"*
+	echo "GitHub Release ${tag} created with artifacts${prerelease:+ (pre-release)}"
 elif ((do_push)); then
-	echo "next (optional): gh release create ${tag} ${art_dir}/${EXE_NAME}-${ver}-*"
+	echo "next (optional): gh release create ${tag} ${prerelease[*]} ${art_dir}/${EXE_NAME}-${ver}-*"
 fi
