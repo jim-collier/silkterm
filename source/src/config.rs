@@ -210,6 +210,9 @@ pub struct Settings {
 	pub ansi: [[u8; 3]; 16], // 16-colour ANSI palette, resolved from the active theme
 	pub theme: String,       // active theme name (see theme.rs)
 	pub theme_mode: String,  // "dark" | "light" | "system"
+	// Themes saved from the Settings dialog, whole, in file order. They resolve
+	// ahead of the built-ins, so one may carry a built-in's name.
+	pub user_themes: Vec<crate::theme::UserTheme>,
 }
 
 impl Settings {
@@ -327,6 +330,7 @@ impl Default for Settings {
 			ansi: crate::theme::resolve("SilkTerm", "dark", true).ansi,
 			theme: "SilkTerm".to_string(),
 			theme_mode: "dark".to_string(),
+			user_themes: Vec::new(),
 		}
 	}
 }
@@ -361,7 +365,12 @@ pub fn reapply_for_os(dark: bool) -> bool {
 	if prev == dark || current.theme_mode != "system" {
 		return false;
 	}
-	let pal = crate::theme::resolve(&current.theme, &current.theme_mode, dark);
+	let pal = crate::theme::resolve_in(
+		&current.user_themes,
+		&current.theme,
+		&current.theme_mode,
+		dark,
+	);
 	let mut new = (*current).clone();
 	new.bg = pal.bg;
 	new.fg = pal.fg;
@@ -564,6 +573,7 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.theme_mode != orig.theme_mode {
 		doc.set_string("theme_mode", s.theme_mode.as_str());
 	}
+	write_user_themes(&mut doc, &orig.user_themes, &s.user_themes);
 
 	if s.use_system_font != orig.use_system_font {
 		doc.set_bool("font.use_system_family", s.use_system_font);
@@ -925,6 +935,7 @@ struct RawConfig {
 	hyperlinks: Option<bool>,
 	hyperlink_open_command: Option<String>,
 	colors: RawColors,
+	user_themes: Vec<crate::theme::UserTheme>,
 }
 
 #[derive(Default)]
@@ -1150,6 +1161,90 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 			scrollbar_thumb: r.s("colors.scrollbar_thumb"),
 			scrollbar_trough: r.s("colors.scrollbar_trough"),
 		},
+		user_themes: read_user_themes(&r.doc),
+	}
+}
+
+// Saved themes, in file order. A slug with no readable colours at all is skipped;
+// anything else missing falls back to the first built-in, so a hand-edited or
+// half-written block still yields a usable theme rather than none.
+fn read_user_themes(doc: &shcl::Document) -> Vec<crate::theme::UserTheme> {
+	let base = crate::theme::THEMES[0].1;
+	let mut out = Vec::new();
+	for slug in doc.children("themes") {
+		let read = |mode: &str, fallback: crate::theme::Palette| {
+			let mut pal = fallback;
+			let mut any = false;
+			for (i, key) in crate::theme::PALETTE_KEYS.iter().enumerate() {
+				if let Some(c) = doc
+					.get_string(&format!("themes.{slug}.{mode}.{key}"))
+					.ok()
+					.as_deref()
+					.and_then(parse_hex)
+				{
+					pal.set(i, c);
+					any = true;
+				}
+			}
+			if let Ok(list) = doc.get_string_array(&format!("themes.{slug}.{mode}.ansi")) {
+				for (slot, text) in pal.ansi.iter_mut().zip(list.iter()) {
+					if let Some(c) = parse_hex(text) {
+						*slot = c;
+						any = true;
+					}
+				}
+			}
+			(pal, any)
+		};
+		let (dark, got_dark) = read("dark", base.dark);
+		let (light, got_light) = read("light", base.light);
+		if !got_dark && !got_light {
+			continue;
+		}
+		let name = doc
+			.get_string(&format!("themes.{slug}.name"))
+			.ok()
+			.filter(|n| !n.trim().is_empty())
+			.unwrap_or_else(|| slug.clone());
+		out.push(crate::theme::UserTheme {
+			slug,
+			name,
+			dark,
+			light,
+		});
+	}
+	out
+}
+
+// Bring the file's `themes.*` subtrees in line with the dialog's list. A theme
+// that changed at all is dropped and rewritten whole rather than edited field by
+// field: saving, renaming and deleting are then one operation with one shape, and
+// a stale colour cannot survive under a name that no longer sets it.
+fn write_user_themes(
+	doc: &mut shcl::Document,
+	orig: &[crate::theme::UserTheme],
+	now: &[crate::theme::UserTheme],
+) {
+	for old in orig {
+		if !now.iter().any(|t| t.slug == old.slug) {
+			doc.remove(&format!("themes.{}", old.slug));
+		}
+	}
+	for theme in now {
+		if orig.iter().any(|t| t == theme) {
+			continue;
+		}
+		let at = format!("themes.{}", theme.slug);
+		doc.remove(&at);
+		doc.set_string(&format!("{at}.name"), &theme.name);
+		for (mode, pal) in [("dark", &theme.dark), ("light", &theme.light)] {
+			for (i, key) in crate::theme::PALETTE_KEYS.iter().enumerate() {
+				doc.set_string(&format!("{at}.{mode}.{key}"), &format_hex(pal.get(i)));
+			}
+			let ansi: Vec<String> = pal.ansi.iter().map(|c| format_hex(*c)).collect();
+			let ansi: Vec<&str> = ansi.iter().map(String::as_str).collect();
+			doc.set_string_array(&format!("{at}.{mode}.ansi"), &ansi);
+		}
 	}
 }
 
@@ -1158,7 +1253,12 @@ fn resolve(raw: RawConfig) -> Settings {
 	let theme_name = raw.theme.unwrap_or_else(|| d.theme.clone());
 	let theme_mode = raw.theme_mode.unwrap_or_else(|| d.theme_mode.clone());
 	// system-mode OS dark/light detection is wired later; default to dark for now
-	let pal = crate::theme::resolve(&theme_name, &theme_mode, OS_DARK.load(Ordering::Relaxed));
+	let pal = crate::theme::resolve_in(
+		&raw.user_themes,
+		&theme_name,
+		&theme_mode,
+		OS_DARK.load(Ordering::Relaxed),
+	);
 	let color = |raw: Option<String>, fallback: [u8; 3]| {
 		raw.as_deref().and_then(parse_hex).unwrap_or(fallback)
 	};
@@ -1385,6 +1485,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		ansi: pal.ansi,
 		theme: theme_name,
 		theme_mode,
+		user_themes: raw.user_themes,
 	}
 }
 

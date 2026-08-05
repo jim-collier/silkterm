@@ -163,16 +163,21 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 				- Cursor
 			- Done as two sub-groups: Smooth scrolling (the five feel sliders) and Scrollbar (width, hide-when-idle, and its two colours). There is no Cursor sub-group - cursor movement has no settings behind it, only source constants.
 		- 🛠️ Tab: "Themes"
-			- Group: "Themes"
-				- "Theme" (drop-down of selectable themes).
-				- Buttons aligned underneath theme dropdown box, arranged in one horizontal row:
+			- ✅ Group: "Themes"
+				- ✅ "Theme" (drop-down of selectable themes).
+				- ✅ Buttons aligned underneath theme dropdown box, arranged in one horizontal row:
 					- [Save]  [Save as ...]  [Rename]  [Delete]
 					- Behavior:
-						- [Save] is only enabled, if the user has unsaved changes to current theme. Even across sessions.
-						- [Save as ...] pops up a small dialog with the text "Enter a new theme name", and below that, an empty textbox. buttons at bottom-right "Cancel|OK" (OK default)
-						- [Rename] pops up a small dialog to edit existing name (all text selected by default), with buttons "Cancel|OK" (OK default).
-						- [Delete] pops up a confirmation Cancel|OK dialog (defaul Yes), and 'Really delete theme "<them name>"?'
-			- Group: "Colors" Update dynamically with theme selection and can be user-overridden and persisted, even if the named them that was tweaked, isn't saved.)
+						- ✅ [Save] is only enabled, if the user has unsaved changes to current theme. Even across sessions.
+						- ✅ [Save as ...] pops up a small dialog with the text "Enter a new theme name", and below that, an empty textbox. buttons at bottom-right "Cancel|OK" (OK default)
+						- ✅ [Rename] pops up a small dialog to edit existing name (all text selected by default), with buttons "Cancel|OK" (OK default).
+						- ✅ [Delete] pops up a confirmation Cancel|OK dialog (defaul Yes), and 'Really delete theme "<them name>"?'
+					- Nothing records "unsaved changes" separately - a colour that disagrees with the theme is the record, and it lives in the config file, so the answer is the same after a restart.
+					- A saved theme is written whole (both variants, the ANSI set included) under its own name, so it stands on its own and can be handed to someone else. Saving folds the per-colour tweaks into it and drops them as overrides.
+					- A saved theme may take a built-in's name and stand in for it; deleting it puts the built-in back. Only a saved theme can be renamed or deleted.
+				- A "Mode" row was added beside it (Dark / Light / System). It was a config-only setting, and a theme picker with no way to pick the variant invites the question.
+			- ✅ Group: "Colors" Update dynamically with theme selection and can be user-overridden and persisted, even if the named them that was tweaked, isn't saved.)
+				- Picking a theme takes on its colours wholesale. Keeping the previous theme's tweaks on top would make the picker look broken on every colour that had been edited, and those tweaks belonged to the theme being left behind.
 				- Controls
 					- ✅ Sub-group: "Terminal background" (formerly labeled "Background")
 						- "Foreground"
@@ -183,7 +188,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 						- ✅ "Focus" (a new color category that used to be part of "Focus ring", but now applies only to focused element)
 						- Done: all three are themable and live on the Colors tab. The sub-group headings above wait on the grouping work; the rows are in place.
 						- ✅ Both sub-groups are in place now. The dialog and menu backgrounds and their two text colours picked up rows at the same time - they were themable but not editable, and half a family on screen invites the question.
-						- The Themes group above waits on theme management; the tab carries Colors alone until then.
 				- Behavior changes
 					- When a hex field textbox gets focus, don't remove the existing value. Just highlight all, as now standard for textboxes.
 					- Make the colored boxes clickable. That pops up a color selection dialog.

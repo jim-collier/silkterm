@@ -6,10 +6,14 @@
 //! terminal bg/fg/cursor, the two attention colours and the 16 ANSI colours -
 //! which `config` folds into `Settings` and `palette.rs` reads. The `colors.*`
 //! keys still override on
-//! top (a per-colour tweak). Chrome/dialog theming, config-defined themes, and
-//! the Settings dropdown build on this foundation.
+//! top (a per-colour tweak).
+//!
+//! A theme the user saves from the Settings dialog is a `UserTheme`: the same
+//! (dark, light) pair, stored whole in `config.shcl` under `themes.<slug>` and
+//! resolved ahead of the built-ins, so one may take a built-in's name and stand
+//! in for it until it is deleted.
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
 	pub bg: [u8; 3],
 	pub fg: [u8; 3],
@@ -33,6 +37,66 @@ pub struct Palette {
 	// sit on. Recessed against the panel in both modes.
 	pub gutter: [u8; 3],
 	pub ansi: [[u8; 3]; 16],
+}
+
+// The ten palette colours a user can edit, spelled as `colors.*` spells them.
+// One order, used by the dialog's rows, by a saved theme's config block, and by
+// the index accessors below - so none of the three can drift from the others.
+pub const PALETTE_KEYS: [&str; 10] = [
+	"background",
+	"foreground",
+	"cursor",
+	"highlight",
+	"focus",
+	"menu_background",
+	"menu_foreground",
+	"dialog_background",
+	"dialog_foreground",
+	"gutter",
+];
+
+impl Palette {
+	pub fn get(&self, i: usize) -> [u8; 3] {
+		match i {
+			0 => self.bg,
+			1 => self.fg,
+			2 => self.cursor,
+			3 => self.highlight,
+			4 => self.focus,
+			5 => self.menu_bg,
+			6 => self.menu_fg,
+			7 => self.dialog_bg,
+			8 => self.dialog_fg,
+			_ => self.gutter,
+		}
+	}
+	pub fn set(&mut self, i: usize, color: [u8; 3]) {
+		match i {
+			0 => self.bg = color,
+			1 => self.fg = color,
+			2 => self.cursor = color,
+			3 => self.highlight = color,
+			4 => self.focus = color,
+			5 => self.menu_bg = color,
+			6 => self.menu_fg = color,
+			7 => self.dialog_bg = color,
+			8 => self.dialog_fg = color,
+			_ => self.gutter = color,
+		}
+	}
+}
+
+// A theme the user saved. It carries both variants WHOLE rather than a base plus
+// the differences: saving, renaming and deleting are then all the same operation
+// on one config subtree, and a saved theme is self-contained enough to hand to
+// someone else. `slug` is its config path segment and never changes, so a rename
+// only rewrites `name` - and `name` is what the `theme` setting stores.
+#[derive(Clone, PartialEq, Eq)]
+pub struct UserTheme {
+	pub slug: String,
+	pub name: String,
+	pub dark: Palette,
+	pub light: Palette,
 }
 
 // Shared chrome defaults (same for every theme). The menu keeps one neutral gray
@@ -183,24 +247,57 @@ pub const THEMES: &[(&str, Theme)] = &[
 	("Retro Amber", Theme { dark: AMBER_DARK, light: AMBER_LIGHT }),
 ];
 
-#[allow(dead_code)] // used by the Settings theme dropdown (next increment)
 pub fn names() -> impl Iterator<Item = &'static str> {
 	THEMES.iter().map(|(n, _)| *n)
 }
 
-// Resolve the active palette from a theme name + mode. Unknown name falls back to
-// the first theme; `system_dark` chooses the variant when mode is "system".
-pub fn resolve(name: &str, mode: &str, system_dark: bool) -> Palette {
+pub fn is_builtin(name: &str) -> bool {
+	names().any(|n| n.eq_ignore_ascii_case(name.trim()))
+}
+
+// Every selectable theme name, saved ones first so a saved theme that took a
+// built-in's name appears once, as itself.
+pub fn all_names(user: &[UserTheme]) -> Vec<String> {
+	let mut out: Vec<String> = user.iter().map(|t| t.name.clone()).collect();
+	for name in names() {
+		if !out.iter().any(|n| n.eq_ignore_ascii_case(name)) {
+			out.push(name.to_string());
+		}
+	}
+	out
+}
+
+pub fn find_user<'a>(user: &'a [UserTheme], name: &str) -> Option<&'a UserTheme> {
+	user.iter()
+		.find(|t| t.name.eq_ignore_ascii_case(name.trim()))
+}
+
+// Does this mode resolve to the dark variant? "system" follows the OS.
+pub fn is_dark_mode(mode: &str, system_dark: bool) -> bool {
+	match mode.trim().to_ascii_lowercase().as_str() {
+		"light" => false,
+		"system" => system_dark,
+		_ => true, // "dark" / unknown
+	}
+}
+
+// Resolve the active palette from a theme name + mode. A saved theme wins over a
+// built-in of the same name; an unknown name falls back to the first built-in.
+pub fn resolve_in(user: &[UserTheme], name: &str, mode: &str, system_dark: bool) -> Palette {
+	let dark = is_dark_mode(mode, system_dark);
+	if let Some(t) = find_user(user, name) {
+		return if dark { t.dark } else { t.light };
+	}
 	let theme = THEMES
 		.iter()
 		.find(|(n, _)| n.eq_ignore_ascii_case(name.trim()))
 		.map_or(&THEMES[0].1, |(_, t)| t);
-	let dark = match mode.trim().to_ascii_lowercase().as_str() {
-		"light" => false,
-		"system" => system_dark,
-		_ => true, // "dark" / unknown
-	};
 	if dark { theme.dark } else { theme.light }
+}
+
+// Built-ins only - for paths that have no user themes to hand (and the tests).
+pub fn resolve(name: &str, mode: &str, system_dark: bool) -> Palette {
+	resolve_in(&[], name, mode, system_dark)
 }
 
 #[cfg(test)]
