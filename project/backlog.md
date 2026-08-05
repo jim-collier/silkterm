@@ -59,8 +59,11 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
 		- The nesting pass kept the existing section order; the reorganization waits on the Settings dialog refactor it mirrors.
 
-- 🔘 Consolidate UI (e.g. settings) declarations into one or more source shcl file(s) that get compiled or transpiled into code.
+- 🛠️ Consolidate UI (e.g. settings) declarations into one or more source shcl file(s) that get compiled or transpiled into code.
 	- Measurements specified in CSS px or DIP that renders "correctly" at any DPI.
+	- ✅ Settings dialog: rows, order, sections, tabs, the config path behind each row, the greying rules and the whole geometry now live in `source/src/settings_ui.shcl`, compiled in. The hand-written tables it replaces are gone. A test holds the file against the settings the code knows, in both directions - a row naming a setting that does not exist, and a setting with no row.
+	- ✅ Settings dialog measurements are DIP. The layout is solved in that space and the display's scale factor is applied only where it meets the window, so the dialog keeps its proportions at any DPI. At 2x the old build kept 20px checkboxes and truncated its value fields; it is now simply twice the size.
+	- 🔘 The main window's own chrome (menu bar, tab bar, dropdown menus, focus ring, pane gap) is still measured in raw pixels, so it thins out as DPI rises. Same treatment, but it cannot use the same boundary trick - chrome shares a coordinate space with the terminal grid, so each measurement scales where it is used.
 
 - 🔘 Refactor settings dialog
 	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory. Reconcile by what makes the most sense given the obvious design direction this is going, with what has changed before.
