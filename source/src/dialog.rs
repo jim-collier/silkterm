@@ -15,8 +15,36 @@ use winit::window::{Window, WindowId};
 use crate::config;
 use crate::gfx::{Gfx, RectInstance, RectRenderer};
 use crate::pane::Rect;
-use crate::settings_ui::{Action, SettingsDialog};
+use crate::settings_ui::{Action, EditCmd, SettingsDialog, View};
 use crate::text::{TextCtx, ui_attrs};
+
+// Greedy word wrap for a flyover, measured in the UI font. A single word wider
+// than the budget still gets its own line rather than being split - breaking
+// mid-word would be worse than a tip that overhangs by one long word.
+fn wrap_tip(text: &str, max_w: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<String> {
+	let mut lines: Vec<String> = Vec::new();
+	let mut line = String::new();
+	for word in text.split_whitespace() {
+		let candidate = if line.is_empty() {
+			word.to_string()
+		} else {
+			format!("{line} {word}")
+		};
+		if !line.is_empty() && measure(&candidate) > max_w {
+			lines.push(std::mem::take(&mut line));
+			line = word.to_string();
+		} else {
+			line = candidate;
+		}
+	}
+	if !line.is_empty() {
+		lines.push(line);
+	}
+	if lines.is_empty() {
+		lines.push(String::new());
+	}
+	lines
+}
 
 // A laid-out line of static dialog text (window-relative coords).
 struct Line {
@@ -29,7 +57,7 @@ struct Line {
 }
 
 // A clickable region in the About box. `button` links draw a filled box behind
-// their label (the Support button); plain links are just coloured text. A link
+// their label (the Support button); plain links are just colored text. A link
 // with a `tooltip` shows that text as a flyover while the cursor is over it -
 // used so the Support button can reveal the URL it opens without baking it into
 // the label.
@@ -62,6 +90,10 @@ pub struct DialogWin {
 	rects: RectRenderer,
 	content: Content,
 	mouse: (f32, f32),
+	// field-edit animation (view scroll / caret ease / blink): frame timing and
+	// the wake cadence the app loop should keep while something animates
+	last_frame: std::time::Instant,
+	anim_wake: Option<u64>,
 	// the terminal window this dialog belongs to, so we can restack it beneath
 	// us when we're activated (see raise_parent).
 	parent: Option<RawWindowHandle>,
@@ -97,6 +129,7 @@ impl DialogWin {
 		w: f32,
 		h: f32,
 		parent: Option<RawWindowHandle>,
+		warm: Option<&crate::gfx::DialogGpu>,
 	) -> anyhow::Result<(Arc<Window>, Gfx, TextCtx, RectRenderer)> {
 		#[allow(unused_mut)] // reassigned on linux/windows/macos below
 		let mut attrs = Window::default_attributes()
@@ -108,12 +141,23 @@ impl DialogWin {
 				h.ceil().max(1.0) as u32,
 			));
 		// Tie the dialog to the terminal window so the WM keeps it above its
-		// parent and groups them. Windows/macOS: winit's parent_window is owner/
-		// parent semantics - what we want. X11: parent_window means literal X
-		// reparenting (an embedded child, unmanaged by the WM), so DON'T pass it
-		// there; WM_TRANSIENT_FOR is set after creation instead (below).
+		// parent and groups them. Windows: MUST be owner semantics, not winit's
+		// generic parent_window - that creates a WS_CHILD window there, which
+		// embeds the dialog inside the terminal's client area (clipped when the
+		// dialog is bigger than the terminal) and never gets its own keyboard
+		// activation (text fields dead). An owned popup floats above the owner,
+		// takes focus normally, and stays off the taskbar. macOS: parent_window
+		// is child-window-of semantics, which is what we want there. X11:
+		// parent_window means literal X reparenting (an embedded child, unmanaged
+		// by the WM), so DON'T pass it there; WM_TRANSIENT_FOR is set after
+		// creation instead (below).
+		#[cfg(target_os = "windows")]
+		if let Some(RawWindowHandle::Win32(h)) = parent {
+			use winit::platform::windows::WindowAttributesExtWindows;
+			attrs = attrs.with_owner_window(h.hwnd.get());
+		}
 		// SAFETY: the handle comes from the live main window on this same thread.
-		#[cfg(any(target_os = "windows", target_os = "macos"))]
+		#[cfg(target_os = "macos")]
 		if parent.is_some() {
 			attrs = unsafe { attrs.with_parent_window(parent) };
 		}
@@ -122,7 +166,11 @@ impl DialogWin {
 		// property write is read too late by Compiz et al - that's why re-selecting
 		// the dialog raised it alone and left the parent buried. The caller shows the
 		// window after the final resize (see new_about / new_settings).
-		#[cfg(target_os = "linux")]
+		// Windows: an owned popup gets no auto-placement and lands at the screen
+		// origin, so it must be created hidden, centered over the terminal, drawn
+		// once, then revealed by the caller - otherwise it flashes at (0,0) then
+		// jumps to center.
+		#[cfg(any(target_os = "linux", target_os = "windows"))]
 		{
 			attrs = attrs.with_visible(false);
 		}
@@ -130,8 +178,14 @@ impl DialogWin {
 		set_transient_for(&window, parent.as_ref());
 		// PRIMARY (no GL): the main window may hold a glutin GL/EGL context, and a
 		// second wgpu GL instance would panic in EGL teardown. Dialogs are opaque,
-		// so Vulkan/Metal/DX12 is all they need.
-		let mut gfx = Gfx::with_backends(window.clone(), wgpu::Backends::PRIMARY)?;
+		// so Vulkan/Metal/DX12 is all they need. The warm context (see DialogGpu)
+		// has already paid for the instance/adapter/device; without it, or if its
+		// adapter can't present here, build one the slow way.
+		let warmed = warm.and_then(|gpu| Gfx::with_dialog_gpu(window.clone(), gpu));
+		let mut gfx = match warmed {
+			Some(gfx) => gfx,
+			None => Gfx::with_backends(window.clone(), wgpu::Backends::PRIMARY)?,
+		};
 		// adopt the size winit actually gave us
 		let size = window.inner_size();
 		gfx.resize(size.width, size.height);
@@ -145,6 +199,7 @@ impl DialogWin {
 		el: &ActiveEventLoop,
 		adapter: &wgpu::AdapterInfo,
 		parent: Option<RawWindowHandle>,
+		warm: Option<&crate::gfx::DialogGpu>,
 	) -> anyhow::Result<Self> {
 		// provisional window so we have a TextCtx to measure with
 		let (window, mut gfx, mut text, rects) = Self::make(
@@ -153,6 +208,7 @@ impl DialogWin {
 			560.0,
 			360.0,
 			parent,
+			warm,
 		)?;
 		let (lines, links, size) = layout_about(&mut text, adapter);
 		let requested_size =
@@ -170,28 +226,47 @@ impl DialogWin {
 			rects,
 			content: Content::About { lines, links },
 			mouse: (0.0, 0.0),
+			last_frame: std::time::Instant::now(),
+			anim_wake: None,
 			parent,
 		})
 	}
 
+	// `resume` is the view a recently closed Settings window was left on (see
+	// App::settings_view); None opens at the top of the first tab.
 	pub fn new_settings(
 		el: &ActiveEventLoop,
 		parent: Option<RawWindowHandle>,
+		resume: Option<View>,
+		warm: Option<&crate::gfx::DialogGpu>,
 	) -> anyhow::Result<Self> {
 		// provisional window first: sizing needs a TextCtx to measure labels in
 		// the real UI font (same pattern as About)
 		let (window, mut gfx, mut text, rects) =
-			Self::make(el, "Settings".into(), 560.0, 800.0, parent)?;
-		let (label_w, btn_w, tab_ws) = crate::settings_ui::chrome_widths(&mut text);
+			Self::make(el, "Settings".into(), 560.0, 800.0, parent, warm)?;
+		let (label_w, btn_w, row_btn_w, tab_ws) = crate::settings_ui::chrome_widths(&mut text);
+		let scale = window.scale_factor() as f32;
 		// cap the window height to the monitor (minus decorations headroom) and to
 		// ~1010px total; a tab that doesn't fit scrolls instead of clipping buttons
 		let max_h = window
 			.current_monitor()
-			.map(|monitor| monitor.size().height as f32 - 38.0)
-			.unwrap_or(1010.0)
+			.map_or(1010.0, |monitor| monitor.size().height as f32 - 38.0)
 			.min(1010.0);
 		// laid out at the origin
-		let dialog = SettingsDialog::new(0.0, 0.0, text.ui_line_h, label_w, btn_w, tab_ws, max_h);
+		let mut dialog = SettingsDialog::new(
+			0.0,
+			0.0,
+			text.ui_line_h,
+			label_w,
+			btn_w,
+			row_btn_w,
+			tab_ws,
+			max_h,
+			scale,
+		);
+		if let Some(view) = resume {
+			dialog.restore(view);
+		}
 		let (w, h) = dialog.size();
 		let requested_size = winit::dpi::PhysicalSize::new(w.ceil() as u32, h.ceil() as u32);
 		if let Some(applied) = window.request_inner_size(requested_size) {
@@ -207,6 +282,8 @@ impl DialogWin {
 			rects,
 			content: Content::Settings(dialog),
 			mouse: (0.0, 0.0),
+			last_frame: std::time::Instant::now(),
+			anim_wake: None,
 			parent,
 		})
 	}
@@ -219,7 +296,15 @@ impl DialogWin {
 				dialog.edited().clone(),
 				dialog.use_system_font(),
 			)),
-			_ => None,
+			Content::About { .. } => None,
+		}
+	}
+
+	// The tab + scroll this dialog is sitting on, for a later reopen to resume.
+	pub fn settings_view(&self) -> Option<View> {
+		match &self.content {
+			Content::Settings(dialog) => Some(dialog.view()),
+			Content::About { .. } => None,
 		}
 	}
 
@@ -232,22 +317,29 @@ impl DialogWin {
 	}
 
 	// Config keys the user hit "revert to default" on since the last Apply; the
-	// app comments them out in config.toml (config::revert_keys).
+	// app comments them out in config.shcl (config::revert_keys).
 	pub fn take_reverted(&mut self) -> Vec<&'static str> {
 		match &mut self.content {
 			Content::Settings(dialog) => dialog.take_reverted(),
-			_ => Vec::new(),
+			Content::About { .. } => Vec::new(),
 		}
 	}
 
 	pub fn set_cursor(&mut self, x: f32, y: f32) {
 		self.mouse = (x, y);
 		if let Content::Settings(dialog) = &mut self.content {
-			dialog.mouse_move(x, y); // slider drag + open-dropdown hover
+			// slider drag + open-dropdown hover + field drag-selection
+			let attrs = ui_attrs();
+			let text = &mut self.text;
+			let mut measure = |s: &str| text.measure_ui_text(s, &attrs);
+			dialog.mouse_move(x, y, &mut measure);
 		}
 	}
 
-	pub fn mouse_down(&mut self) -> Option<DialogAction> {
+	pub fn mouse_down(
+		&mut self,
+		clip: Option<&mut crate::clipboard::Clipboard>,
+	) -> Option<DialogAction> {
 		let (mx, my) = self.mouse;
 		match &mut self.content {
 			Content::About { links, .. } => links
@@ -264,8 +356,44 @@ impl DialogWin {
 				let attrs = ui_attrs();
 				let text = &mut self.text;
 				let mut measure = |s: &str| text.measure_ui_text(s, &attrs);
-				map_action(dialog.mouse_down(mx, my, &mut measure))
+				let action = dialog.mouse_down(mx, my, &mut measure);
+				if let Action::Edit(cmd) = action {
+					edit_cmd(dialog, cmd, clip);
+					return None;
+				}
+				map_action(action)
 			}
+		}
+	}
+
+	// Right mouse button: pop the field context menu (Settings only). `paste_ok`
+	// grays the Paste item when the clipboard holds nothing.
+	pub fn mouse_right(&mut self, paste_ok: bool) {
+		let (mx, my) = self.mouse;
+		if let Content::Settings(dialog) = &mut self.content {
+			let attrs = ui_attrs();
+			let text = &mut self.text;
+			let mut measure = |s: &str| text.measure_ui_text(s, &attrs);
+			dialog.mouse_right(mx, my, paste_ok, &mut measure);
+		}
+	}
+
+	// Shift held (from the dialog's own modifier tracking): Shift+F10 opens the
+	// field context menu like the Menu key.
+	pub fn shift_held(&self) -> bool {
+		match &self.content {
+			Content::Settings(dialog) => dialog.shift(),
+			Content::About { .. } => false,
+		}
+	}
+
+	// Keyboard Menu key: context menu at the caret of the active field edit.
+	pub fn menu_key(&mut self, paste_ok: bool) {
+		if let Content::Settings(dialog) = &mut self.content {
+			let attrs = ui_attrs();
+			let text = &mut self.text;
+			let mut measure = |s: &str| text.measure_ui_text(s, &attrs);
+			dialog.menu_key(paste_ok, &mut measure);
 		}
 	}
 
@@ -322,20 +450,50 @@ impl DialogWin {
 	pub fn key_space(&mut self) -> Option<DialogAction> {
 		match &mut self.content {
 			Content::Settings(dialog) => map_action(dialog.key_space()),
-			_ => None,
+			Content::About { .. } => None,
 		}
 	}
 
-	// A character key: while Alt is held it's an accelerator (Cancel/Apply/OK),
+	// A character key: while Alt is held it's an accelerator (Cancel/Apply/OK);
+	// while Ctrl is held it's an edit shortcut (select-all/copy/cut/paste);
 	// otherwise it types into the focused field.
-	pub fn key_char(&mut self, ch: char) -> Option<DialogAction> {
+	pub fn key_char(
+		&mut self,
+		ch: char,
+		clip: Option<&mut crate::clipboard::Clipboard>,
+	) -> Option<DialogAction> {
 		match &mut self.content {
 			Content::Settings(dialog) if dialog.alt() => map_action(dialog.alt_key(ch)),
+			Content::Settings(dialog) if dialog.ctrl() => {
+				match ch.to_ascii_lowercase() {
+					'a' => dialog.select_all(),
+					'c' => {
+						if let (Some(clip), Some(text)) = (clip, dialog.selected_text()) {
+							clip.set_clipboard(text);
+						}
+					}
+					'x' => {
+						if let (Some(clip), Some(text)) = (clip, dialog.selected_text()) {
+							clip.set_clipboard(text);
+							dialog.delete_selection();
+						}
+					}
+					'v' => {
+						if let Some(text) =
+							clip.and_then(super::clipboard::Clipboard::get_clipboard)
+						{
+							dialog.insert_str(&text);
+						}
+					}
+					_ => {}
+				}
+				None
+			}
 			Content::Settings(dialog) => {
 				dialog.char_input(ch);
 				None
 			}
-			_ => None,
+			Content::About { .. } => None,
 		}
 	}
 
@@ -345,15 +503,38 @@ impl DialogWin {
 		}
 	}
 
-	// Home / End / Delete inside a focused settings field (Left/Right go through
-	// key_horizontal so they can double as slider/radio adjust when not editing).
-	pub fn edit_nav(&mut self, key: winit::keyboard::NamedKey) {
+	// Home / End / Delete / Insert inside a focused settings field (Left/Right go
+	// through key_horizontal so they can double as slider/radio adjust when not
+	// editing). Shift+Delete = cut, Ctrl+Insert = copy, Shift+Insert = paste.
+	pub fn edit_nav(
+		&mut self,
+		key: winit::keyboard::NamedKey,
+		clip: Option<&mut crate::clipboard::Clipboard>,
+	) {
 		use winit::keyboard::NamedKey as N;
 		if let Content::Settings(dialog) = &mut self.content {
 			match key {
 				N::Home => dialog.cursor_home(),
 				N::End => dialog.cursor_end(),
+				N::Delete if dialog.shift() => {
+					if let (Some(clip), Some(text)) = (clip, dialog.selected_text()) {
+						clip.set_clipboard(text);
+						dialog.delete_selection();
+					} else {
+						dialog.delete_forward();
+					}
+				}
 				N::Delete => dialog.delete_forward(),
+				N::Insert if dialog.shift() => {
+					if let Some(text) = clip.and_then(super::clipboard::Clipboard::get_clipboard) {
+						dialog.insert_str(&text);
+					}
+				}
+				N::Insert if dialog.ctrl() => {
+					if let (Some(clip), Some(text)) = (clip, dialog.selected_text()) {
+						clip.set_clipboard(text);
+					}
+				}
 				_ => {}
 			}
 		}
@@ -366,11 +547,27 @@ impl DialogWin {
 		}
 	}
 
-	pub fn key_enter(&mut self) -> Option<DialogAction> {
+	pub fn key_enter(
+		&mut self,
+		clip: Option<&mut crate::clipboard::Clipboard>,
+	) -> Option<DialogAction> {
 		match &mut self.content {
-			Content::Settings(dialog) => map_action(dialog.key_enter()),
-			_ => None,
+			Content::Settings(dialog) => {
+				let action = dialog.key_enter();
+				if let Action::Edit(cmd) = action {
+					edit_cmd(dialog, cmd, clip);
+					return None;
+				}
+				map_action(action)
+			}
+			Content::About { .. } => None,
 		}
+	}
+
+	// While a field edit animates (view scroll / caret ease / blink), the wake
+	// interval in ms the app loop should keep so frames keep coming.
+	pub fn anim_wake_ms(&self) -> Option<u64> {
+		self.anim_wake
 	}
 
 	pub fn resize(&mut self, w: u32, h: u32) {
@@ -379,9 +576,20 @@ impl DialogWin {
 	}
 
 	pub fn render(&mut self) {
-		let frame = match self.gfx.begin_frame() {
-			Some(f) => f,
-			None => return,
+		// advance the field-edit animation (view scroll ease, caret ease, blink)
+		// with real frame time before anything is laid out
+		let now = std::time::Instant::now();
+		let dt = (now - self.last_frame).as_secs_f32().min(0.1);
+		self.last_frame = now;
+		self.anim_wake = if let Content::Settings(dialog) = &mut self.content {
+			let attrs = ui_attrs();
+			let text = &mut self.text;
+			dialog.animate(dt, &mut |s| text.measure_ui_text(s, &attrs))
+		} else {
+			None
+		};
+		let Some(frame) = self.gfx.begin_frame() else {
+			return;
 		};
 		let view = self.gfx.frame_view(&frame);
 		let (w, h) = (self.gfx.config.width, self.gfx.config.height);
@@ -411,6 +619,7 @@ impl DialogWin {
 					pos: [x, y],
 					size: [bw, bh],
 					color: config::srgb_f32(color),
+					..Default::default()
 				};
 				// filled boxes behind button-style links (the Support button),
 				// brightened while hovered
@@ -479,7 +688,7 @@ impl DialogWin {
 					dialog.rects(line_h, |s| text.measure_ui_text(s, &attrs))
 				};
 				rect_split = fixed.len();
-				scissor_vp = Some(dialog.viewport());
+				scissor_vp = Some(dialog.viewport_px());
 				rect_inst = fixed;
 				rect_inst.extend(rows);
 				let items = {
@@ -508,10 +717,15 @@ impl DialogWin {
 					bufs.push((item.x, item.y, item.scale, item.color, item.clip, buf));
 				}
 				rows_end = rect_inst.len();
-				// open dropdown popup: rects appended after the rows (drawn on top,
-				// unscissored, in a second pass); its text goes to the overlay renderer
-				if dialog.dropdown_open() {
-					let (ov_rects, ov_texts) = dialog.dropdown_overlay();
+				// open dropdown popup / field context menu: rects appended after the
+				// rows (drawn on top, unscissored, in a second pass); text goes to
+				// the overlay renderer
+				if dialog.overlay_open() {
+					let (ov_rects, ov_texts) = {
+						let text = &mut self.text;
+						let attrs = ui_attrs();
+						dialog.overlay(&mut |s| text.measure_ui_text(s, &attrs))
+					};
 					let start = rect_inst.len() as u32;
 					rect_inst.extend(ov_rects);
 					overlay_range = Some((start, rect_inst.len() as u32));
@@ -534,6 +748,62 @@ impl DialogWin {
 						);
 						buf.shape_until_scroll(&mut self.text.font_system, false);
 						ov_bufs.push((item.x, item.y, item.scale, item.color, item.clip, buf));
+					}
+				}
+				// flyover: what a control does, or why it is grayed out. A small box
+				// under it, drawn in the overlay pass so it can't bleed with the row
+				// text (same as the About URL tip). It WRAPS - a sentence long enough
+				// to outrun the panel would otherwise be clamped to the edge and run
+				// off it, and the panel's width is not ours to grow.
+				let (mx, my) = self.mouse;
+				if let Some((tip, anchor)) = dialog.hover_tip(mx, my) {
+					let border_col = crate::settings_ui::dialog_border();
+					let q = |x: f32, y: f32, bw: f32, bh: f32, color: [u8; 3]| RectInstance {
+						pos: [x, y],
+						size: [bw, bh],
+						color: config::srgb_f32(color),
+						..Default::default()
+					};
+					let attrs = ui_attrs();
+					let (pad_x, pad_y) = (8.0, 4.0);
+					let avail = (w as f32 - 8.0 - pad_x * 2.0).max(40.0);
+					let lines = wrap_tip(tip, avail, |s| self.text.measure_ui_text(s, &attrs));
+					let tip_w = lines
+						.iter()
+						.map(|l| self.text.measure_ui_text(l, &attrs))
+						.fold(0.0f32, f32::max);
+					let box_w = tip_w + pad_x * 2.0;
+					let box_h = line_h * lines.len() as f32 + pad_y * 2.0;
+					let bx = (anchor.x + anchor.w * 0.5 - box_w * 0.5)
+						.clamp(4.0, (w as f32 - box_w - 4.0).max(4.0));
+					// under the control, or above it when there is no room below -
+					// clamping into the bottom edge would sit a footer button's own
+					// tip on the buttons it is describing
+					let below = anchor.y + anchor.h + 8.0;
+					let by = if below + box_h + 4.0 <= h as f32 {
+						below
+					} else {
+						(anchor.y - 8.0 - box_h).max(4.0)
+					};
+					let start = overlay_range.map_or(rect_inst.len() as u32, |(s, _)| s);
+					rect_inst.push(q(bx - 1.0, by - 1.0, box_w + 2.0, box_h + 2.0, border_col));
+					rect_inst.push(q(bx, by, box_w, box_h, crate::settings_ui::dialog_btn()));
+					overlay_range = Some((start, rect_inst.len() as u32));
+					let dim = crate::settings_ui::dialog_dim();
+					let mut a = ui_attrs();
+					a.color_opt = Some(GColor::rgb(dim[0], dim[1], dim[2]));
+					for (n, text) in lines.iter().enumerate() {
+						let mut buf = self.text.new_ui_buffer(w as f32, line_h);
+						buf.set_text(
+							&mut self.text.font_system,
+							text,
+							&a,
+							Shaping::Advanced,
+							None,
+						);
+						buf.shape_until_scroll(&mut self.text.font_system, false);
+						let ty = by + pad_y + line_h * n as f32;
+						ov_bufs.push((bx + pad_x, ty, 1.0, dim, None, buf));
 					}
 				}
 			}
@@ -765,7 +1035,7 @@ fn set_transient_for(window: &Window, parent: Option<&RawWindowHandle>) {
 
 	// the window is already mapped, so also request the states via the EWMH
 	// client message (action ADD=1, source = application=1) for WMs that only
-	// honour a state change that way rather than a bare property write.
+	// honor a state change that way rather than a bare property write.
 	let add_state = |st: u32| {
 		let ev = ClientMessageEvent::new(32, xid, state, [1, st, 0, 1, 0]);
 		let _ = conn.send_event(
@@ -787,7 +1057,7 @@ fn set_transient_for(_window: &Window, _parent: Option<&RawWindowHandle>) {}
 // transient's parent with it automatically; Compiz does not, so when the dialog
 // is re-activated after another window came forward, the terminal stays buried
 // behind that window - this slots it back just beneath the dialog. The message
-// goes to root (the only stacking path Compiz honours for a managed window: it
+// goes to root (the only stacking path Compiz honors for a managed window: it
 // reparents clients into decoration frames, so a direct XConfigureWindow on the
 // client isn't redirected to the WM and does nothing). Focus is untouched.
 #[cfg(target_os = "linux")]
@@ -839,8 +1109,9 @@ fn restack_parent_below(dialog: &Window, parent: Option<&RawWindowHandle>, dbg: 
 					.reply()
 					.ok()
 			})
-			.map(|reply| reply.value32().map(Iterator::collect).unwrap_or_default())
-			.unwrap_or_else(Vec::new);
+			.map_or_else(Vec::new, |reply| {
+				reply.value32().map(Iterator::collect).unwrap_or_default()
+			});
 		let pos = |w: u32| order.iter().position(|&x| x == w);
 		let (tp, dp) = (pos(parent_xid), pos(dlg_xid));
 		let ok = matches!((tp, dp), (Some(t), Some(d)) if t + 1 == d);
@@ -853,12 +1124,42 @@ fn restack_parent_below(dialog: &Window, parent: Option<&RawWindowHandle>, dbg: 
 #[cfg(not(target_os = "linux"))]
 fn restack_parent_below(_d: &Window, _p: Option<&RawWindowHandle>, _dbg: bool, _kind: &str) {}
 
+// Field context-menu command against the active edit; the clipboard glue lives
+// here (settings_ui stays clipboard-free), mirroring the Ctrl+letter shortcuts.
+fn edit_cmd(
+	dialog: &mut SettingsDialog,
+	cmd: EditCmd,
+	clip: Option<&mut crate::clipboard::Clipboard>,
+) {
+	match cmd {
+		EditCmd::Cut => {
+			if let (Some(clip), Some(text)) = (clip, dialog.selected_text()) {
+				clip.set_clipboard(text);
+				dialog.delete_selection();
+			}
+		}
+		EditCmd::Copy => {
+			if let (Some(clip), Some(text)) = (clip, dialog.selected_text()) {
+				clip.set_clipboard(text);
+			}
+		}
+		EditCmd::Paste => {
+			if let Some(text) = clip.and_then(super::clipboard::Clipboard::get_clipboard) {
+				dialog.insert_str(&text);
+			}
+		}
+		EditCmd::Delete => dialog.delete_selection(),
+		EditCmd::SelectAll => dialog.select_all(),
+	}
+}
+
 fn map_action(action: Action) -> Option<DialogAction> {
 	match action {
-		Action::None => None,
 		Action::Apply => Some(DialogAction::Apply),
 		Action::Ok => Some(DialogAction::ApplyAndClose),
 		Action::Cancel => Some(DialogAction::Close),
+		// None, plus context-menu Edit cmds (handled by edit_cmd before mapping)
+		Action::None | Action::Edit(_) => None,
 	}
 }
 
@@ -876,7 +1177,7 @@ fn layout_about(
 		wgpu::DeviceType::IntegratedGpu => "Hardware (integrated GPU)",
 		wgpu::DeviceType::DiscreteGpu => "Hardware (discrete GPU)",
 		wgpu::DeviceType::VirtualGpu => "Hardware (virtual GPU)",
-		_ => "Unknown",
+		wgpu::DeviceType::Other => "Unknown",
 	};
 	let repo_url = env!("CARGO_PKG_REPOSITORY").to_string();
 	let gap = config::MENU_SEP_H;
@@ -917,7 +1218,7 @@ fn layout_about(
 		content_w = content_w.max(width);
 	}
 
-	// Support button: a filled box with a centred label; opens DONATE.md and
+	// Support button: a filled box with a centered label; opens DONATE.md and
 	// reveals that URL as a flyover on hover (config::DONATE_URL).
 	let btn_label = "Support SilkTerm!";
 	let (btn_pad_x, btn_pad_y) = (16.0, 8.0);
@@ -961,7 +1262,7 @@ fn layout_about(
 		y += line_h * scale;
 	}
 
-	// Support button below the text, centred in the content column
+	// Support button below the text, centered in the content column
 	y += gap * 1.5;
 	let btn_x = pad + (content_w - btn_w) * 0.5;
 	links.push(AboutLink {
@@ -988,4 +1289,35 @@ fn layout_about(
 	// leave room below the button for the URL flyover to appear on hover
 	let box_h = y + pad + line_h + 14.0;
 	(lines, links, (box_w, box_h))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::wrap_tip;
+
+	// The flyover has to fit the panel it hangs off, whatever the UI font does
+	// to the text - a tip clamped to the window edge simply runs off it.
+	#[test]
+	fn a_flyover_wraps_to_the_width_it_is_given() {
+		// one unit per character, so the budget reads in characters
+		let per_char = |s: &str| s.chars().count() as f32;
+		let lines = wrap_tip(
+			"Apply changes now, without closing Settings.",
+			20.0,
+			per_char,
+		);
+		assert!(lines.len() > 1);
+		assert!(lines.iter().all(|l| per_char(l) <= 20.0));
+		assert_eq!(
+			lines.join(" "),
+			"Apply changes now, without closing Settings."
+		);
+
+		// a word longer than the budget keeps its own line rather than splitting
+		let lines = wrap_tip("a supercalifragilistic word", 8.0, per_char);
+		assert_eq!(lines, vec!["a", "supercalifragilistic", "word"]);
+
+		// and text that already fits stays on one line
+		assert_eq!(wrap_tip("short", 40.0, per_char), vec!["short"]);
+	}
 }

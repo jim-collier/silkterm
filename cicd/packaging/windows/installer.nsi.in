@@ -1,0 +1,69 @@
+; SilkTerm Windows installer (NSIS). Rendered per-arch by the cicd packages stage:
+; the @TOKENS@ below are substituted, then makensis compiles a single self-contained
+; setup .exe. The app binary links only system DLLs, so nothing else is bundled.
+; Upgrade-in-place: an existing install's uninstaller is run silently first.
+
+Unicode true
+SetCompressor /SOLID lzma
+
+!include "MUI2.nsh"
+
+!define APPNAME   "SilkTerm"
+!define EXENAME   "silkterm.exe"
+!define COMPANY   "Jim Collier"
+!define VERSION   "@VERSION@"
+!define ARCH      "@ARCH@"
+!define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
+
+Name "${APPNAME} ${VERSION}"
+OutFile "@OUTFILE@"
+InstallDir "$PROGRAMFILES64\${APPNAME}"
+InstallDirRegKey HKLM "Software\${APPNAME}" "InstallDir"
+RequestExecutionLevel admin
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "English"
+
+; Remove any prior install before laying down the new one (silent, keep dir).
+Function .onInit
+	ReadRegStr $0 HKLM "${UNINSTKEY}" "QuietUninstallString"
+	StrCmp $0 "" done
+	ReadRegStr $1 HKLM "${UNINSTKEY}" "InstallLocation"
+	ExecWait '$0 _?=$1'
+	Delete "$1\uninstall.exe"
+done:
+FunctionEnd
+
+Section "Install"
+	SetOutPath "$INSTDIR"
+	File "@SRCEXE@"
+	WriteRegStr HKLM "Software\${APPNAME}" "InstallDir" "$INSTDIR"
+
+	CreateDirectory "$SMPROGRAMS\${APPNAME}"
+	CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\${EXENAME}"
+
+	WriteUninstaller "$INSTDIR\uninstall.exe"
+	WriteRegStr   HKLM "${UNINSTKEY}" "DisplayName"       "${APPNAME}"
+	WriteRegStr   HKLM "${UNINSTKEY}" "DisplayVersion"    "${VERSION}"
+	WriteRegStr   HKLM "${UNINSTKEY}" "Publisher"         "${COMPANY}"
+	WriteRegStr   HKLM "${UNINSTKEY}" "InstallLocation"   "$INSTDIR"
+	WriteRegStr   HKLM "${UNINSTKEY}" "UninstallString"   '"$INSTDIR\uninstall.exe"'
+	WriteRegStr   HKLM "${UNINSTKEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
+	WriteRegDWORD HKLM "${UNINSTKEY}" "NoModify" 1
+	WriteRegDWORD HKLM "${UNINSTKEY}" "NoRepair" 1
+SectionEnd
+
+Section "Uninstall"
+	Delete "$INSTDIR\${EXENAME}"
+	Delete "$INSTDIR\uninstall.exe"
+	Delete "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk"
+	RMDir  "$SMPROGRAMS\${APPNAME}"
+	RMDir  "$INSTDIR"
+	DeleteRegKey HKLM "${UNINSTKEY}"
+	DeleteRegKey HKLM "Software\${APPNAME}"
+SectionEnd

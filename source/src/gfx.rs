@@ -3,6 +3,7 @@
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use glutin::config::GlConfig;
 use glutin::context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentContext, Version};
@@ -40,7 +41,11 @@ enum Backend {
 		ctx: PossiblyCurrentContext,
 		surface: GlWindowSurface<WindowSurface>,
 		fb: wgpu::Texture,
+		// views of fb/offscreen, rebuilt on resize only (both textures are
+		// persistent, so creating fresh views per frame was waste)
+		fb_view: wgpu::TextureView,
 		offscreen: wgpu::Texture,
+		offscreen_view: wgpu::TextureView,
 		blit: Blit,
 	},
 }
@@ -153,6 +158,150 @@ pub enum Frame {
 	Gl,
 }
 
+// A VT switch (Ctrl+Alt+F1 and back) or suspend/resume can silently trash the
+// CONTENTS of GPU textures on the GL path: the context survives, so per-frame
+// procedural draws (rects, cursor) still work, but everything sampled from a
+// once-uploaded texture - the glyph atlases (all text) and the wallpaper -
+// reads garbage, which is the "window goes mostly black" bug. No event reports
+// this, so known-pattern sentinel textures are probed on a slow tick; a
+// mismatched readback means the uploads are gone and the app rebuilds them
+// (State::recover_gpu). Native-surface backends already get Lost/Outdated from
+// the swapchain and are not affected, so the sentinel exists only on GL.
+//
+// TWO witnesses, because the NVIDIA driver restores what it holds a sysmem
+// backing for and purges the rest (NV_robustness_video_memory_purge: resources
+// exclusively in video memory "will be lost"; the driver "attempts to hide"
+// the purge for the ones it can restore). A round-1 single 64px copy-usage
+// sentinel survived a real VT switch that still wiped the atlas, so:
+// - `up_tex`: CPU-uploaded + TEXTURE_BINDING, sized like a glyph atlas -
+//   catches drivers that purge sampled uploads.
+// - `fbo_tex`: seeded only by a GPU-side copy, never from the CPU, so no
+//   driver can re-materialize its contents from a sysmem copy - catches the
+//   documented purge of vidmem-exclusive (rendered/FBO-class) resources.
+//   Seeded by copy, not a render-pass clear: a clear could be tracked as
+//   metadata and re-applied on restore, which would false-negative.
+const SENTINEL_PX: u32 = 256; // atlas-sized, so it shares the real textures' VRAM pool
+const SENTINEL_ROW: u32 = SENTINEL_PX * 4; // Rgba8Unorm; multiple of 256 (COPY_BYTES_PER_ROW_ALIGNMENT), so no pad rows
+const SENTINEL_BYTES: usize = (SENTINEL_ROW * SENTINEL_PX) as usize;
+
+// Odd multiplier = a byte permutation tiled over the texture; neither zeroed
+// nor noise VRAM plausibly reproduces 16KB of it.
+fn sentinel_pattern() -> Vec<u8> {
+	(0..SENTINEL_BYTES)
+		.map(|i| (i as u8).wrapping_mul(151).wrapping_add(43))
+		.collect()
+}
+
+// One probe's verdict (see `vram_check_poll`).
+pub enum VramProbe {
+	Intact,
+	// which witness lost its pattern (true = gone)
+	Lost { uploaded: bool, rendered: bool },
+	// readback map failed - inconclusive, will retry
+	MapFailed,
+}
+
+struct Sentinel {
+	up_tex: wgpu::Texture,
+	fbo_tex: wgpu::Texture,
+	buf: wgpu::Buffer, // both witnesses read back into one buffer (up at 0, fbo at SENTINEL_BYTES)
+	// probe in flight; the map_async callback stores 1 = mapped ok, 2 = failed
+	inflight: Option<Arc<AtomicU8>>,
+}
+
+impl Sentinel {
+	fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+		let mk_tex = |label: &str, usage: wgpu::TextureUsages| {
+			device.create_texture(&wgpu::TextureDescriptor {
+				label: Some(label),
+				size: wgpu::Extent3d {
+					width: SENTINEL_PX,
+					height: SENTINEL_PX,
+					depth_or_array_layers: 1,
+				},
+				mip_level_count: 1,
+				sample_count: 1,
+				dimension: wgpu::TextureDimension::D2,
+				format: wgpu::TextureFormat::Rgba8Unorm,
+				usage,
+				view_formats: &[],
+			})
+		};
+		let up_tex = mk_tex(
+			"vram sentinel uploaded",
+			wgpu::TextureUsages::TEXTURE_BINDING
+				| wgpu::TextureUsages::COPY_DST
+				| wgpu::TextureUsages::COPY_SRC,
+		);
+		let fbo_tex = mk_tex(
+			"vram sentinel rendered",
+			wgpu::TextureUsages::RENDER_ATTACHMENT
+				| wgpu::TextureUsages::TEXTURE_BINDING
+				| wgpu::TextureUsages::COPY_DST
+				| wgpu::TextureUsages::COPY_SRC,
+		);
+		let buf = device.create_buffer(&wgpu::BufferDescriptor {
+			label: Some("vram sentinel read"),
+			size: (SENTINEL_BYTES * 2) as u64,
+			usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+			mapped_at_creation: false,
+		});
+		let sentinel = Self {
+			up_tex,
+			fbo_tex,
+			buf,
+			inflight: None,
+		};
+		sentinel.seed(device, queue, &sentinel_pattern());
+		sentinel
+	}
+
+	// Upload `data` into up_tex, then GPU-copy it into fbo_tex (write_texture is
+	// ordered before subsequently submitted command buffers, so the copy sees it).
+	fn seed(&self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) {
+		queue.write_texture(
+			wgpu::TexelCopyTextureInfo {
+				texture: &self.up_tex,
+				mip_level: 0,
+				origin: wgpu::Origin3d::ZERO,
+				aspect: wgpu::TextureAspect::All,
+			},
+			data,
+			wgpu::TexelCopyBufferLayout {
+				offset: 0,
+				bytes_per_row: Some(SENTINEL_ROW),
+				rows_per_image: Some(SENTINEL_PX),
+			},
+			wgpu::Extent3d {
+				width: SENTINEL_PX,
+				height: SENTINEL_PX,
+				depth_or_array_layers: 1,
+			},
+		);
+		let mut enc = device.create_command_encoder(&Default::default());
+		enc.copy_texture_to_texture(
+			wgpu::TexelCopyTextureInfo {
+				texture: &self.up_tex,
+				mip_level: 0,
+				origin: wgpu::Origin3d::ZERO,
+				aspect: wgpu::TextureAspect::All,
+			},
+			wgpu::TexelCopyTextureInfo {
+				texture: &self.fbo_tex,
+				mip_level: 0,
+				origin: wgpu::Origin3d::ZERO,
+				aspect: wgpu::TextureAspect::All,
+			},
+			wgpu::Extent3d {
+				width: SENTINEL_PX,
+				height: SENTINEL_PX,
+				depth_or_array_layers: 1,
+			},
+		);
+		queue.submit(Some(enc.finish()));
+	}
+}
+
 pub struct Gfx {
 	pub device: wgpu::Device,
 	pub queue: wgpu::Queue,
@@ -161,6 +310,7 @@ pub struct Gfx {
 	pub transparent: bool, // surface can show the desktop through (compositor present)
 	pub adapter_info: wgpu::AdapterInfo,
 	backend: Backend,
+	sentinel: Option<Sentinel>, // GL path only: VT-switch texture-content-loss probe
 	_window: Arc<Window>,
 }
 
@@ -175,7 +325,6 @@ impl Gfx {
 	// wgpu-hal's EGL teardown (`unmake_current().unwrap()`), so dialogs must avoid
 	// touching EGL entirely.
 	pub fn with_backends(window: Arc<Window>, backends: wgpu::Backends) -> anyhow::Result<Self> {
-		let size = window.inner_size();
 		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
 			backends,
 			flags: wgpu::InstanceFlags::default(),
@@ -198,43 +347,9 @@ impl Gfx {
 		let adapter_info = adapter.get_info();
 		log_renderer(&adapter_info);
 
-		let (device, queue) =
-			pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-				label: Some("silkterm device"),
-				required_features: wgpu::Features::empty(),
-				required_limits: adapter.limits(),
-				..Default::default()
-			}))?;
-
-		let caps = surface.get_capabilities(&adapter);
-		let format = caps
-			.formats
-			.iter()
-			.copied()
-			.find(|f| f.is_srgb())
-			.unwrap_or(caps.formats[0]);
-
-		// Prefer a premultiplied-alpha mode so a translucent background shows the
-		// desktop through. If only Opaque is available (no compositor), stay
-		// opaque - transparency is silently ignored.
-		let alpha_mode = caps
-			.alpha_modes
-			.iter()
-			.copied()
-			.find(|m| *m == wgpu::CompositeAlphaMode::PreMultiplied)
-			.unwrap_or(caps.alpha_modes[0]);
-		let transparent = alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
-
-		let config = wgpu::SurfaceConfiguration {
-			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-			format,
-			width: size.width.max(1),
-			height: size.height.max(1),
-			present_mode: wgpu::PresentMode::AutoVsync,
-			alpha_mode,
-			view_formats: vec![],
-			desired_maximum_frame_latency: 2,
-		};
+		let (device, queue) = pollster::block_on(request_device(&adapter))?;
+		let (config, format, transparent) = surface_config(&surface, &adapter, &window)
+			.ok_or_else(|| anyhow::anyhow!("adapter cannot present to this window"))?;
 		surface.configure(&device, &config);
 
 		Ok(Self {
@@ -245,6 +360,37 @@ impl Gfx {
 			transparent,
 			adapter_info,
 			backend: Backend::Native(surface),
+			sentinel: None,
+			_window: window,
+		})
+	}
+
+	// Same native path, but on a context that was built ahead of time (see
+	// `DialogGpu`). Only the surface is created here, which is sub-millisecond -
+	// the instance/adapter/device that dominate `with_backends` are already paid
+	// for. `None` means this warm context cannot serve this window, so the caller
+	// must fall back to a cold `with_backends`.
+	pub fn with_dialog_gpu(window: Arc<Window>, gpu: &DialogGpu) -> Option<Self> {
+		// The warm instance was built with no display connection, so it may not be
+		// able to make a surface for this window at all. That is the same answer as
+		// an adapter that cannot present here: fall back, rather than failing the
+		// open and leaving the dialog unreachable for the life of the process.
+		let surface = gpu.instance.create_surface(window.clone()).ok()?;
+		// The warm adapter was picked with no surface to check against (no window
+		// existed yet), so a multi-GPU box could hand back one that can't draw
+		// here. `surface_config` reports that as None.
+		let (config, format, transparent) = surface_config(&surface, &gpu.adapter, &window)?;
+		surface.configure(&gpu.device, &config);
+
+		Some(Self {
+			device: gpu.device.clone(),
+			queue: gpu.queue.clone(),
+			config,
+			format,
+			transparent,
+			adapter_info: gpu.adapter_info.clone(),
+			backend: Backend::Native(surface),
+			sentinel: None,
 			_window: window,
 		})
 	}
@@ -322,18 +468,16 @@ impl Gfx {
 		// Frame pacing on this path is swap_buffers blocking on vblank; the driver
 		// default isn't guaranteed (__GL_SYNC_TO_VBLANK=0, PRIME setups), and without
 		// it every scroll animation becomes an unthrottled busy-render loop.
-		let _ = surface.set_swap_interval(
-			&ctx,
-			glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()),
-		);
+		let _ =
+			surface.set_swap_interval(&ctx, glutin::surface::SwapInterval::Wait(NonZeroU32::MIN));
 
 		// wrap glutin's GL context as a wgpu device (hal external interop)
 		let exposed = unsafe {
 			wgpu::hal::gles::Adapter::new_external(
 				|name| {
-					std::ffi::CString::new(name)
-						.map(|cstr| gl_display.get_proc_address(&cstr) as *const _)
-						.unwrap_or(std::ptr::null())
+					std::ffi::CString::new(name).map_or(std::ptr::null(), |cstr| {
+						gl_display.get_proc_address(&cstr).cast()
+					})
 				},
 				wgpu::GlBackendOptions::default(),
 			)
@@ -378,13 +522,12 @@ impl Gfx {
 			desired_maximum_frame_latency: 2,
 		};
 		let fb = default_fb(&device, FB_FORMAT, config.width, config.height);
+		let fb_view = fb.create_view(&Default::default());
 		let offscreen = offscreen_tex(&device, format, config.width, config.height);
-		let blit = Blit::new(
-			&device,
-			FB_FORMAT,
-			&offscreen.create_view(&Default::default()),
-		);
+		let offscreen_view = offscreen.create_view(&Default::default());
+		let blit = Blit::new(&device, FB_FORMAT, &offscreen_view);
 
+		let sentinel = Some(Sentinel::new(&device, &queue));
 		Ok((
 			Self {
 				device,
@@ -397,9 +540,12 @@ impl Gfx {
 					ctx,
 					surface,
 					fb,
+					fb_view,
 					offscreen,
+					offscreen_view,
 					blit,
 				},
+				sentinel,
 				_window: window.clone(),
 			},
 			window,
@@ -432,9 +578,7 @@ impl Gfx {
 				.texture
 				.create_view(&wgpu::TextureViewDescriptor::default()),
 			// the scene renders to the offscreen texture (normal orientation)
-			(Frame::Gl, Backend::Gl { offscreen, .. }) => {
-				offscreen.create_view(&wgpu::TextureViewDescriptor::default())
-			}
+			(Frame::Gl, Backend::Gl { offscreen_view, .. }) => offscreen_view.clone(),
 			_ => unreachable!("frame/backend mismatch"),
 		}
 	}
@@ -447,13 +591,12 @@ impl Gfx {
 				Backend::Gl {
 					ctx,
 					surface,
-					fb,
+					fb_view,
 					blit,
 					..
 				},
 			) => {
 				// flip-blit the offscreen scene into the GL default framebuffer
-				let target = fb.create_view(&wgpu::TextureViewDescriptor::default());
 				let mut enc = self
 					.device
 					.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -463,7 +606,7 @@ impl Gfx {
 					let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
 						label: Some("blit pass"),
 						color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-							view: &target,
+							view: fb_view,
 							resolve_target: None,
 							depth_slice: None,
 							ops: wgpu::Operations {
@@ -499,7 +642,9 @@ impl Gfx {
 				surface,
 				ctx,
 				fb,
+				fb_view,
 				offscreen,
+				offscreen_view,
 				blit,
 			} => {
 				surface.resize(
@@ -508,12 +653,110 @@ impl Gfx {
 					NonZeroU32::new(h).unwrap(),
 				);
 				*fb = default_fb(&self.device, FB_FORMAT, w, h);
+				*fb_view = fb.create_view(&wgpu::TextureViewDescriptor::default());
 				*offscreen = offscreen_tex(&self.device, self.format, w, h);
-				blit.rebind(
-					&self.device,
-					&offscreen.create_view(&wgpu::TextureViewDescriptor::default()),
-				);
+				*offscreen_view = offscreen.create_view(&wgpu::TextureViewDescriptor::default());
+				blit.rebind(&self.device, offscreen_view);
 			}
+		}
+	}
+}
+
+// VRAM-content probe (see the Sentinel comment above). All no-ops on the
+// native backend, where sentinel is None.
+impl Gfx {
+	pub fn is_gl(&self) -> bool {
+		matches!(self.backend, Backend::Gl { .. })
+	}
+
+	// Start an async sentinel readback (both witnesses into one buffer). False
+	// when there's no sentinel (native path) or a probe is already in flight.
+	pub fn vram_check_start(&mut self) -> bool {
+		let Some(sent) = &mut self.sentinel else {
+			return false;
+		};
+		if sent.inflight.is_some() {
+			return false;
+		}
+		let mut enc = self.device.create_command_encoder(&Default::default());
+		for (tex, offset) in [(&sent.up_tex, 0u64), (&sent.fbo_tex, SENTINEL_BYTES as u64)] {
+			enc.copy_texture_to_buffer(
+				wgpu::TexelCopyTextureInfo {
+					texture: tex,
+					mip_level: 0,
+					origin: wgpu::Origin3d::ZERO,
+					aspect: wgpu::TextureAspect::All,
+				},
+				wgpu::TexelCopyBufferInfo {
+					buffer: &sent.buf,
+					layout: wgpu::TexelCopyBufferLayout {
+						offset,
+						bytes_per_row: Some(SENTINEL_ROW),
+						rows_per_image: Some(SENTINEL_PX),
+					},
+				},
+				wgpu::Extent3d {
+					width: SENTINEL_PX,
+					height: SENTINEL_PX,
+					depth_or_array_layers: 1,
+				},
+			);
+		}
+		self.queue.submit(Some(enc.finish()));
+		let flag = Arc::new(AtomicU8::new(0));
+		let done = flag.clone();
+		sent.buf.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+			done.store(if r.is_ok() { 1 } else { 2 }, Ordering::Release);
+		});
+		sent.inflight = Some(flag);
+		true
+	}
+
+	// Poll an in-flight probe. Some(Lost{..}) = a witness pattern is gone (the
+	// sentinels are reseeded before returning so the caller only rebuilds the
+	// rest). None = still pending / no probe.
+	pub fn vram_check_poll(&mut self) -> Option<VramProbe> {
+		let sent = self.sentinel.as_mut()?;
+		let flag = sent.inflight.as_ref()?.clone();
+		if flag.load(Ordering::Acquire) == 0 {
+			// non-blocking pump so the map callback can run
+			let _ = self.device.poll(wgpu::PollType::Poll);
+		}
+		match flag.load(Ordering::Acquire) {
+			0 => None,
+			2 => {
+				sent.inflight = None;
+				Some(VramProbe::MapFailed)
+			}
+			_ => {
+				sent.inflight = None;
+				let (up_ok, fbo_ok) = {
+					let data = sent.buf.slice(..).get_mapped_range();
+					let pattern = sentinel_pattern();
+					(
+						data[..SENTINEL_BYTES] == pattern[..],
+						data[SENTINEL_BYTES..] == pattern[..],
+					)
+				};
+				sent.buf.unmap();
+				if up_ok && fbo_ok {
+					Some(VramProbe::Intact)
+				} else {
+					sent.seed(&self.device, &self.queue, &sentinel_pattern());
+					Some(VramProbe::Lost {
+						uploaded: !up_ok,
+						rendered: !fbo_ok,
+					})
+				}
+			}
+		}
+	}
+
+	// Diagnostic (SILK_VRAMLOSS): zero both sentinels to fake a content loss,
+	// so the detect->rebuild path can be exercised without a real VT switch.
+	pub fn vram_clobber(&self) {
+		if let Some(sent) = &self.sentinel {
+			sent.seed(&self.device, &self.queue, &vec![0u8; SENTINEL_BYTES]);
 		}
 	}
 }
@@ -597,6 +840,179 @@ fn f16_to_f32(bits: u16) -> f32 {
 	if sign == 1 { -magnitude } else { magnitude }
 }
 
+fn request_device(
+	adapter: &wgpu::Adapter,
+) -> impl std::future::Future<Output = Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError>>
+{
+	adapter.request_device(&wgpu::DeviceDescriptor {
+		label: Some("silkterm device"),
+		required_features: wgpu::Features::empty(),
+		required_limits: adapter.limits(),
+		..Default::default()
+	})
+}
+
+// Surface format + alpha mode + configuration, shared by the cold and prewarmed
+// native paths so the two can't drift. `None` means this adapter cannot present
+// to this surface at all (no formats), which is only reachable on the prewarmed
+// path - see `Gfx::with_dialog_gpu`.
+fn surface_config(
+	surface: &wgpu::Surface<'static>,
+	adapter: &wgpu::Adapter,
+	window: &Window,
+) -> Option<(wgpu::SurfaceConfiguration, wgpu::TextureFormat, bool)> {
+	let size = window.inner_size();
+	let caps = surface.get_capabilities(adapter);
+	if caps.formats.is_empty() {
+		return None;
+	}
+	let format = caps
+		.formats
+		.iter()
+		.copied()
+		.find(wgpu::TextureFormat::is_srgb)
+		.unwrap_or(caps.formats[0]);
+
+	// Prefer a premultiplied-alpha mode so a translucent background shows the
+	// desktop through. If only Opaque is available (no compositor), stay
+	// opaque - transparency is silently ignored.
+	let alpha_mode = caps
+		.alpha_modes
+		.iter()
+		.copied()
+		.find(|m| *m == wgpu::CompositeAlphaMode::PreMultiplied)
+		.unwrap_or(caps.alpha_modes[0]);
+
+	let config = wgpu::SurfaceConfiguration {
+		usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+		format,
+		width: size.width.max(1),
+		height: size.height.max(1),
+		present_mode: wgpu::PresentMode::AutoVsync,
+		alpha_mode,
+		view_formats: vec![],
+		// Windows: one queued frame, not two. With Fifo + 2-frame DXGI latency
+		// the CPU races ahead then blocks, so the wall-clock dt between frames
+		// alternates short/long and the scroll ease steps unevenly (judder).
+		// One frame paces present to the display -> steady dt -> smooth. The GL
+		// path and other platforms already pace evenly, so leave them.
+		desired_maximum_frame_latency: if cfg!(windows) { 1 } else { 2 },
+	};
+	Some((
+		config,
+		format,
+		alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied,
+	))
+}
+
+// A wgpu instance/adapter/device kept for the life of the process and shared by
+// every pop-out dialog.
+//
+// Dialogs cannot borrow the terminal's context: on X11 that one is a glutin
+// GL/EGL context, and a second GL instance panics in wgpu-hal's EGL teardown. So
+// each dialog used to build a whole PRIMARY context of its own, on the click, and
+// again on every reopen since nothing was retained. Building the instance,
+// adapter and device is most of the time it takes to open a dialog. Warming it
+// once on a worker thread moves that off the click, and keeping it moves it off
+// every later open too.
+#[derive(Clone, Debug)]
+pub struct DialogGpu {
+	instance: wgpu::Instance,
+	adapter: wgpu::Adapter,
+	device: wgpu::Device,
+	queue: wgpu::Queue,
+	adapter_info: wgpu::AdapterInfo,
+}
+
+impl DialogGpu {
+	// Runs off the winit thread, so there is no window to check the adapter
+	// against - `Gfx::with_dialog_gpu` does that later against the real surface.
+	// Not logged: the terminal already reported the GPU, and this picks the same
+	// one on any single-adapter box.
+	pub fn build() -> anyhow::Result<Self> {
+		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+			backends: wgpu::Backends::PRIMARY,
+			flags: wgpu::InstanceFlags::default(),
+			memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+			backend_options: wgpu::BackendOptions::default(),
+			display: None,
+		});
+		let pick = |fallback| {
+			pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+				power_preference: wgpu::PowerPreference::HighPerformance,
+				compatible_surface: None,
+				force_fallback_adapter: fallback,
+			}))
+		};
+		let adapter = pick(false).or_else(|_| pick(true))?;
+		let adapter_info = adapter.get_info();
+		let (device, queue) = pollster::block_on(request_device(&adapter))?;
+		Ok(Self {
+			instance,
+			adapter,
+			device,
+			queue,
+			adapter_info,
+		})
+	}
+}
+
+// The warm-up worker and the context it produces. `Failed` is a state of its own
+// rather than an empty `Ready`: a box with no usable adapter fails every time, so
+// without it `start` would spawn another worker on the next event-loop pass and
+// keep paying a full adapter probe (and printing) for the life of the process.
+#[derive(Debug)]
+enum Warm {
+	Idle,
+	Building(std::thread::JoinHandle<Option<DialogGpu>>),
+	Ready(DialogGpu),
+	Failed,
+}
+
+#[derive(Debug)]
+pub struct GpuWarm(Warm);
+
+impl GpuWarm {
+	pub const fn idle() -> Self {
+		Self(Warm::Idle)
+	}
+
+	// Start warming. Called once the terminal is actually on screen, so the
+	// device build happens in dead time rather than competing with startup.
+	// Repeat calls are no-ops.
+	pub fn start(&mut self) {
+		if !matches!(self.0, Warm::Idle) {
+			return;
+		}
+		self.0 = Warm::Building(std::thread::spawn(|| match DialogGpu::build() {
+			Ok(gpu) => Some(gpu),
+			// A dialog can still be opened without this - it just pays the old
+			// cost - so a failure here is a note, not an error.
+			Err(e) => {
+				eprintln!(
+					"{}: dialog GPU warm-up failed ({e}); dialogs will open more slowly",
+					crate::config::APP_NAME
+				);
+				None
+			}
+		}));
+	}
+
+	// The warm context, waiting on the worker if it is still going. That wait can
+	// never cost more than building one here would have, since the work is
+	// already under way - and normally it finished seconds ago.
+	pub fn get(&mut self) -> Option<DialogGpu> {
+		if let Warm::Building(job) = std::mem::replace(&mut self.0, Warm::Failed) {
+			// a panicked worker reads as a failure, same as a returned None
+			self.0 = job.join().ok().flatten().map_or(Warm::Failed, Warm::Ready);
+		}
+		match &self.0 {
+			Warm::Ready(gpu) => Some(gpu.clone()),
+			_ => None,
+		}
+	}
+}
+
 fn log_renderer(info: &wgpu::AdapterInfo) {
 	eprintln!(
 		"{}: renderer = {} [{:?} / {:?}]",
@@ -665,11 +1081,16 @@ fn default_fb(device: &wgpu::Device, format: wgpu::TextureFormat, w: u32, h: u32
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct RectInstance {
 	pub pos: [f32; 2],
 	pub size: [f32; 2],
 	pub color: [f32; 4],
+	// params.x = mode (0 solid quad, 1 close-"X" mark, 2 rounded quad),
+	// params.y = stroke px for the X, corner radius for the rounded quad.
+	// The X is two 45-degree bars drawn in the fragment shader, so it centers
+	// exactly in the quad (a font glyph never did - baseline metrics vary).
+	pub params: [f32; 2],
 }
 
 #[repr(C)]
@@ -686,6 +1107,8 @@ pub struct RectRenderer {
 	capacity: u64,
 	uniform: wgpu::Buffer,
 	bind_group: wgpu::BindGroup,
+	// last resolution written to the uniform (skip the per-frame re-write)
+	last_res: std::cell::Cell<(f32, f32)>,
 }
 
 impl RectRenderer {
@@ -741,7 +1164,7 @@ impl RectRenderer {
 				buffers: &[wgpu::VertexBufferLayout {
 					array_stride: std::mem::size_of::<RectInstance>() as u64,
 					step_mode: wgpu::VertexStepMode::Instance,
-					attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4],
+					attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x2],
 				}],
 			},
 			fragment: Some(wgpu::FragmentState {
@@ -780,10 +1203,16 @@ impl RectRenderer {
 			capacity,
 			uniform,
 			bind_group,
+			last_res: std::cell::Cell::new((0.0, 0.0)),
 		}
 	}
 
 	pub fn set_resolution(&self, queue: &wgpu::Queue, w: f32, h: f32) {
+		// called per frame; the uniform only changes on resize
+		if self.last_res.get() == (w, h) {
+			return;
+		}
+		self.last_res.set((w, h));
 		let uniform_data = Uniform {
 			resolution: [w, h],
 			_pad: [0.0, 0.0],
@@ -818,7 +1247,7 @@ impl RectRenderer {
 	}
 }
 
-const RECT_WGSL: &str = r#"
+const RECT_WGSL: &str = r"
 struct Uniform { resolution: vec2<f32>, _pad: vec2<f32> };
 @group(0) @binding(0) var<uniform> u: Uniform;
 
@@ -826,11 +1255,15 @@ struct VsIn {
     @location(0) pos: vec2<f32>,
     @location(1) size: vec2<f32>,
     @location(2) color: vec4<f32>,
+    @location(3) params: vec2<f32>,
     @builtin(vertex_index) vi: u32,
 };
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) local: vec2<f32>,
+    @location(2) size: vec2<f32>,
+    @location(3) params: vec2<f32>,
 };
 
 @vertex
@@ -841,15 +1274,52 @@ fn vs(in: VsIn) -> VsOut {
     var out: VsOut;
     out.clip = vec4<f32>(ndc, 0.0, 1.0);
     out.color = in.color;
+    out.local = corner * in.size;
+    out.size = in.size;
+    out.params = in.params;
     return out;
+}
+
+// One 45-degree bar of the X: q is the pixel offset from the quad center in the
+// bar's rotated frame (x along the bar, y across it). Box-SDF with ~1px edges,
+// so the bar ends are square caps perpendicular to the stroke - i.e. cut on the
+// diagonal, not flat like a letter X.
+fn xbar(q: vec2<f32>, half_len: f32, half_th: f32) -> f32 {
+    let d = max(abs(q.x) - half_len, abs(q.y) - half_th);
+    return clamp(0.5 - d, 0.0, 1.0);
+}
+
+// fraction of the quad's short side left as padding around the X mark
+const X_INSET: f32 = 0.26;
+
+// Signed distance to a rounded box, negative inside. p is the offset from the
+// quad center, half the quad's extent, r the corner radius.
+fn round_box(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
+    let q = abs(p) - (half - vec2<f32>(r, r));
+    return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
+    var a = in.color.a;
+    if (in.params.x > 1.5) {
+        let half = in.size * 0.5;
+        let r = min(in.params.y, min(half.x, half.y));
+        // ~1px linear edge, same convention as the X bars
+        a = a * clamp(0.5 - round_box(in.local - half, half, r), 0.0, 1.0);
+    } else if (in.params.x > 0.5) {
+        let p = in.local - in.size * 0.5;
+        // both diagonals in one rotation: u = 45-deg frame, u.yx = the other bar
+        let q = vec2<f32>(p.x + p.y, p.x - p.y) * 0.7071068;
+        let half_ext = min(in.size.x, in.size.y) * (0.5 - X_INSET);
+        let half_len = half_ext * 1.4142136;
+        let half_th = in.params.y * 0.5;
+        a = a * max(xbar(q, half_len, half_th), xbar(vec2<f32>(q.y, q.x), half_len, half_th));
+    }
     // premultiply: lets translucent backgrounds composite over the desktop
-    return vec4<f32>(in.color.rgb * in.color.a, in.color.a);
+    return vec4<f32>(in.color.rgb * a, a);
 }
-"#;
+";
 
 // Fullscreen-triangle flip-blit: samples the offscreen scene and writes it to
 // the GL default framebuffer with V flipped (fbo 0 has a bottom-left origin).
@@ -896,3 +1366,33 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(lin2srgb(c.rgb) + vec3<f32>(d), c.a);
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	// The sentinel only detects loss if its pattern can't be mistaken for
+	// trashed VRAM: right size, deterministic, and not a trivial fill.
+	#[test]
+	fn sentinel_pattern_is_deterministic_and_varied() {
+		let a = sentinel_pattern();
+		assert_eq!(a.len(), SENTINEL_BYTES);
+		assert_eq!(a, sentinel_pattern());
+		// a byte permutation tiled: every value present, so neither zeroed nor
+		// constant-fill memory matches
+		let mut seen = [false; 256];
+		for &b in &a[..256] {
+			seen[b as usize] = true;
+		}
+		assert!(seen.iter().all(|&s| s));
+		assert_ne!(a, vec![0u8; SENTINEL_BYTES]);
+	}
+
+	#[test]
+	fn sentinel_row_is_copy_aligned() {
+		// stride == unpadded row, so the readback compares without de-padding
+		assert_eq!(SENTINEL_ROW % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT, 0);
+		// the second witness reads back at this buffer offset
+		assert_eq!(SENTINEL_BYTES as u64 % wgpu::COPY_BUFFER_ALIGNMENT, 0);
+	}
+}

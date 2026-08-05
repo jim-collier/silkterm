@@ -1,5 +1,6 @@
 #!/bin/bash
 
+#  shellcheck disable=1083  ## 'This { is literal.' False hits on git's own refspec syntax, e.g. '@{u}'.
 #  shellcheck disable=1091  ## 'source is valid here, but shellcheck doesn't know the path to it.'
 #  shellcheck disable=2001  ## 'See if you can use ${variable//search/replace} instead.' Complains about good uses of sed.
 #  shellcheck disable=2016  ## 'Expressions don't expand in single quotes, use double quotes for that.' I know, and I often want an explicit '$'.
@@ -22,7 +23,7 @@
 ##	Purpose: See fAbout() below.
 ##	History: At bottom of script.
 
-##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Copyright © 2026 Bubbles (ID: XଌฅრX۳ᛟԃლፀƅꓩหδლც)
 ##	Licensed under The MIT License (MIT). Full text at:
 ##		https://mit-license.org/
 ##	SPDX-License-Identifier: MIT
@@ -35,9 +36,13 @@
 [[ -v thisVersion            ]] || declare -r  thisVersion="1.0.0-beta3"
 [[ -v thisBuild              ]] || declare -r  thisBuild="1n0rx7c"
 [[ -v thisCopyrightYear      ]] || declare -r  thisCopyrightYear="2026"
-[[ -v thisAuthor             ]] || declare -r  thisAuthor="Jim Collier"
+[[ -v thisAuthor             ]] || declare -r  thisAuthor="Bubbles"
 [[ -v atLeastOneArgRequired  ]] || declare -ri atLeastOneArgRequired=0
-[[ -v skipBackup             ]] || declare  -i skipBackup=0                ; [[ "${GIT_BACKUP_AND_PUBLISH_NOBACKUP:-0}" == "1" ]] && skipBackup=1
+[[ -v skipBackup             ]] || declare  -i skipBackup=0               ; [[ "${GIT_BACKUP_AND_PUBLISH_NOBACKUP:-0}" == "1" ]] && skipBackup=1
+## Commit message, lowest precedence first: the cicd engines drive us with
+## GIT_AUTO_MESSAGE, and '--message' (parsed later) overrides either env.
+[[ -v commitMessage          ]] || declare     commitMessage=""           ; [[ -n "${GIT_AUTO_MESSAGE:-}" ]]                  && commitMessage="${GIT_AUTO_MESSAGE}"
+[[ -n "${GIT_BACKUP_AND_PUBLISH_MESSAGE:-}" ]] && commitMessage="${GIT_BACKUP_AND_PUBLISH_MESSAGE}"
 
 #•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Copyright, about, & syntax (minified)
@@ -55,7 +60,7 @@ fAbout(){ { ((doQuietly)) || ((wasShown_About)); } && return; wasShown_About=1;
 	#           X-------------------------------------------------------------------------------X
 	fEcho_Clean "Backs up a github directory to a versioned archive, and publishes changes, ie:"
 	fEcho_Clean "  • rar {flags} ../versions/{version}.rar  ../*"
-	fEcho_Clean "  • git stash push --include-untracked &&  git pull --no-ff  &&  git stash pop"
+	fEcho_Clean "  • git stash push --include-untracked &&  git pull --ff-only  &&  git stash pop"
 	fEcho_Clean "  • git add --all  &&  git commit"
 	fEcho_Clean "  • git push origin"
 	#           X-------------------------------------------------------------------------------X
@@ -65,9 +70,16 @@ fSyntax(){  { ((doQuietly)) || ((wasShown_Syntax)); } && return; wasShown_Syntax
 	fEcho_Clean ""
 	#           X-------------------------------------------------------------------------------X
 	fEcho_Clean "Arguments:"
-	fEcho_Clean "  --quiet [optional]: Be less verbose, and don't prompt user to continue."
-	fEcho_Clean "  --message MSG [or --msg, -m]: commit message (else git opens an editor)."
+	fEcho_Clean "  --message, -m <msg> [also --msg, and -m=<msg>]: Commit message; skips the editor."
+	fEcho_Clean "  --quiet, -q [optional]: Be less verbose, and don't prompt user to continue."
 	fEcho_Clean "  --help, --version [or -h, -v]"
+	fEcho_Clean ""
+	fEcho_Clean "Environment variables (all optional):"
+	fEcho_Clean "  GIT_BACKUP_AND_PUBLISH_QUIET=1        same as --quiet"
+	fEcho_Clean "  GIT_BACKUP_AND_PUBLISH_NOBACKUP=1     skip the rar backup, publish only"
+	fEcho_Clean "  GIT_BACKUP_AND_PUBLISH_MESSAGE        same as --message"
+	fEcho_Clean "  GIT_AUTO_MESSAGE                      same as --message (cicd convention)"
+	fEcho_Clean "  GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES   extra rar -x'...' patterns, space-joined"
 	fEcho_Clean ""
 	fEcho_Clean "Expected folder structure - something like:"
 	fEcho_Clean "    project-name              [REQUIRED, any name, parent folder]"
@@ -83,8 +95,10 @@ fSyntax(){  { ((doQuietly)) || ((wasShown_Syntax)); } && return; wasShown_Syntax
 #••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 fMain(){
 
-	## Settings
-	local baseCmdArgs="a -r0 -ep1 -rr -ol -m3"
+	## Settings. Symlinks are deliberately followed (no '-ol'): '../private' is itself
+	## a link in most projects, and its contents are the point of the backup. Big
+	## linked-in trees are dropped by name below instead.
+	local -a baseCmdArgs=(a -r0 -ep1 -rr -m3)
 
 	## Generic variables
 	local -i wasShown_Copyright=0; local -i wasShown_About=0; wasShown_Syntax=0
@@ -94,23 +108,15 @@ fMain(){
 	case " ${*,,} " in
 		*" -h "*|*" --help "*)                 fCopyright; fAbout; fSyntax; return 0; ;;
 		*" -v "*|*" --ver "*|*" --version "*)  fCopyright;                  return 0; ;;
-	esac  ## -q/--quiet and -m/--message/--msg are handled in fParseArgs below.
+	esac
 
 	## Validate dependencies
 	fMustBeInPath rar
 	fMustBeInPath git
 
-	## Arguments
-	local commitMessage=""                       ## may be set by fParseArgs (-m/--message/--msg)
-	local -ri parseArgs_maxPositionalArgCount=1  ## Variable expected by fParseArgs()
+	## Arguments. This script takes no positional args; a stray one is a typo, so throw.
+	local -ri parseArgs_maxPositionalArgCount=0  ## Variable expected by fParseArgs()
 	fParseArgs  "${@}"
-
-	## A -m/--message/--msg drives a hands-off commit: fill git's editor from it
-	## (mirrors how the cicd engine drives us via GIT_AUTO_MESSAGE).
-	if [[ -n "${commitMessage}" ]]; then
-		export GIT_AUTO_MESSAGE="${commitMessage}"
-		[[ -n "${GIT_EDITOR:-}" ]] || export GIT_EDITOR="${meDir}/git-auto-msg.bash"
-	fi
 
 	## Settings; relative paths
 	local -r dirPath_GitProj="."
@@ -119,9 +125,43 @@ fMain(){
 	local -r dirName_Top="$(basename "$(readlink -f "${dirPath_Top}")")"
 	local -r dirPath_Rar="${dirPath_Top}/versions"
 	local -r filePath_Rar="${dirPath_Rar}/${dirName_Top}_${serialDT}.rar"
-	baseCmdArgs="${baseCmdArgs} -x'*/${dirName_GitProj}/.git/*' -x'*/versions/*' -x'*/${dirName_GitProj}/target/*' -x'*/private/backgrounds/*'"
-	readonly baseCmdArgs
-	local -r cmd_Rar="rar ${baseCmdArgs}  '${filePath_Rar}'  '../.'"
+
+	## Backup excludes, generic first: intermediates and dev builds that a build
+	## regenerates. Release builds, installers, packages, source, project docs, and
+	## the repo's own assets/ (the README demo gif) all stay in.
+	baseCmdArgs+=("-x*/.git/*" "-x*/versions/*")
+	## Rust: keep the final release binaries, drop debug profiles and every
+	## intermediate. rar's '*' spans '/', so the '*/target/*/' forms also cover
+	## per-target cross-compile trees.
+	baseCmdArgs+=("-x*/target/debug/*" "-x*/target/*/debug/*" "-x*/target/lint/*" "-x*/target/profiling/*")
+	baseCmdArgs+=("-x*/target/*/deps/*" "-x*/target/*/build/*" "-x*/target/*/incremental/*" "-x*/target/*/.fingerprint/*" "-x*/target/*/examples/*")
+	## Python and Node: fetched or regenerated wholesale. 'dist' is deliberately
+	## absent - that's where the release packages land.
+	baseCmdArgs+=("-x*/__pycache__/*" "-x*/.venv/*" "-x*/.mypy_cache/*" "-x*/.pytest_cache/*" "-x*/.ruff_cache/*" "-x*/node_modules/*")
+	## Wine: a wineprefix is regenerated by wineboot, and its dosdevices map Z: to
+	## '/' plus further drives to raw /dev nodes, as symlinks - so following them
+	## climbs out of the project and walks the whole filesystem. Exclude the dirs
+	## as well as their contents, or rar still descends to test each entry.
+	baseCmdArgs+=("-x*/dosdevices" "-x*/dosdevices/*" "-x*/drive_c" "-x*/drive_c/*")
+	## Wallpaper-sized source stills that never ship.
+	baseCmdArgs+=("-x*/private/backgrounds/*")
+	## The linked-in vault of external resources (GBs of game assets and the like).
+	## Excluding the dir too, not just its contents, stops rar walking into it.
+	baseCmdArgs+=("-x*/assets-vault" "-x*/assets-vault/*")
+	## GFS-rotated history (demo gifs/videos, logs). Matching the timestamp+role
+	## shape that gfs-rotate.bash writes keeps this to its own output, and the
+	## newest of each set is named '_latest', which is deliberately not listed.
+	local gfsRole=""
+	for gfsRole in first frequent hour day week month year; do baseCmdArgs+=("-x*_????????-??????_${gfsRole}.*"); done
+	## Project-specific excludes from the caller (space-joined -x'...' patterns), for
+	## big regenerable trees only this project knows about. Set by its cicd config.
+	if [[ -n "${GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES:-}" ]]; then
+		local -a extraExcludes=()
+		eval "extraExcludes=( ${GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES} )"
+		((${#extraExcludes[@]})) && baseCmdArgs+=("${extraExcludes[@]}")
+	fi
+	local -a cmd_Rar=(rar "${baseCmdArgs[@]}" "${filePath_Rar}" "../.")
+	local -r cmd_Rar_display="rar ${baseCmdArgs[*]}  '${filePath_Rar}'  '../.'"
 
 	## Validate
 	[[ -f "${dirPath_GitProj}/.git/HEAD" ]]  ||  { fSyntax; fThrowError "Not in git project base directory."; }
@@ -135,7 +175,7 @@ fMain(){
 			fEcho_Clean "Archive target ...............: ${filePath_Rar}"
 			fEcho_Clean
 			fEcho_Clean "Rar command:"
-			fEcho_Clean "${cmd_Rar}"
+			fEcho_Clean "${cmd_Rar_display}"
 			fEcho_Clean
 		fi
 		fEcho_Clean "Remote info (git remote -v); make sure it's 'git@' and not 'https://':"
@@ -149,7 +189,14 @@ fMain(){
 		git config user.email
 		fEcho_Clean
 		fEcho_Clean "SSH key being used"
-		ssh -nTv git@github.com 2>&1 | grep -iE "offering|successfully authenticated" | sed 's/debug1: //' || true  ## -n: don't read stdin, else it eats the next prompt's input
+		## Test the repo's actual remote host, not a hardcoded one, so the
+		## per-repo ssh alias/key is exercised (a generic github.com falls
+		## back to default key resolution and can report the wrong account).
+		## Handle every remote form: ssh:// scheme, scp-style git@host:path,
+		## and a bare alias:path with no user@ (the ssh-config Host supplies
+		## it) - the old '.*@' pattern silently failed on that last one.
+		local sshHost; sshHost="$(git remote get-url origin 2>/dev/null | sed -E 's|^[a-z][a-z0-9+.-]*://||; s|^[^@/]*@||; s|[:/].*$||')"
+		ssh -nTv git@${sshHost:-github.com} 2>&1 | grep -iE "offering|successfully authenticated" | sed 's/debug1: //' || true  ## -n: don't read stdin, else it eats the next prompt's input
 		fIntroPromptToContinue  ""
 		fEcho_Clean
 	fi
@@ -159,14 +206,18 @@ fMain(){
 		[[ -d "${dirPath_Rar}" ]]  ||  mkdir -p "${dirPath_Rar}"
 
 		fEcho "Creating version backup '${filePath_Rar}' ..."
-		eval "${cmd_Rar}"
+		"${cmd_Rar[@]}"
 
 		## Prune old backups (GFS): keep ~30 - first + newest-per-
 		## hour/day/week/month/year + the last 10. Also conforms pre-existing
 		## backup names. Tunable via GFS_KEEP_* env (see include/gfs-rotate.bash).
 		fEcho; fEcho "Rotating version backups (GFS retention) ..."
 		## Non-fatal: pruning is housekeeping and must never abort a good publish.
-		gfs_rotate "${dirPath_Rar}" "${dirName_Top}" rar || fEcho "WARNING: backup rotation failed (non-fatal); continuing."
+		if declare -F gfs_rotate >/dev/null 2>&1; then
+			gfs_rotate "${dirPath_Rar}" "${dirName_Top}" rar || fEcho "WARNING: backup rotation failed (non-fatal); continuing."
+		else
+			fEcho "WARNING: include/gfs-rotate.bash not found; skipping rotation."
+		fi
 	fi
 
 	## Variables for git actions
@@ -186,23 +237,44 @@ fMain(){
 	## Sync with this branch's upstream if it has one. A brand-new local branch
 	## has nothing to pull; the push below sets its upstream on first publish.
 	if git rev-parse --abbrev-ref @{u} >/dev/null 2>&1; then
-		fEcho; fEcho "git pull --no-ff ..."
-		git pull --no-ff
+		fEcho; fEcho "git pull --ff-only ..."
+		## ff-only per the house rule: a divergent upstream stops here loudly
+		## instead of auto-merging behind the publish.
+		git pull --ff-only
 	fi
 
-	## Stash pop
+	## Stash pop. A conflict here leaves the tree with markers and keeps the
+	## stash entry; set -e treats git's exit 1 as a clean exit, so left alone it
+	## silently strands a half-merged tree. Catch it, say what to do, and stop
+	## before anything gets staged, committed, or pushed.
 	if ((didStash)); then
 		fEcho; fEcho "git stash pop ..."
-		git stash pop
+		if ! git stash pop; then
+			fThrowError "stash pop conflicted after pull. Resolve the conflicts, then 'git stash drop', and re-run. Nothing was committed or pushed."
+			return 1
+		fi
 	fi
 
-	# Stage everything
+	## Never publish an unresolved merge: 'git add --all' would happily stage a
+	## conflict-marked file as resolved. Bail on any unmerged path first.
+	if [[ -n "$(git ls-files --unmerged)" ]]; then
+		fThrowError "unmerged paths present; refusing to stage or publish. Resolve them and re-run."
+		return 1
+	fi
+
+	# Stage everything tracked/new (still honors .gitignore).
 	fEcho; fEcho "git add --all ..."
 	git add --all
 
 	if ! git diff --cached --quiet; then
 		fEcho; fEcho "git commit ..."
-		git commit
+		## Message precedence: --message (or either message env) wins; otherwise when
+		## quiet, auto-generate one so an unattended run never blocks on an editor;
+		## otherwise open the editor as usual.
+		if   [[ -n "${commitMessage}" ]]; then git commit -m "${commitMessage}"
+		elif ((doQuietly));               then git commit -m "${dirName_Top} ${serialDT}"
+		else                                   git commit
+		fi
 	fi
 
 	# Push only if we're ahead of the remote
@@ -275,16 +347,25 @@ fParseArgs(){
 
 			## Strip switch dashes off
 			while [[ "${tmpStr}" == -* ]]; do tmpStr="${tmpStr#-}"; done
-			lastSwitch="${tmpStr}" ## Remember lastSwitch
+
+			## Support an inline "=value" on a switch (e.g. --msg="text"). The value
+			## keeps its original case (tmpStr is lowercased for matching only).
+			local inlineOptVal=""; local -i hasInlineOptVal=0
+			if [[ "${tmpStr}" == *=* ]]; then
+				local origNoDash="${currentArg}"; while [[ "${origNoDash}" == -* ]]; do origNoDash="${origNoDash#-}"; done
+				inlineOptVal="${origNoDash#*=}"
+				tmpStr="${tmpStr%%=*}"
+				hasInlineOptVal=1
+			fi
+			lastSwitch="${tmpStr}" ## Remember lastSwitch (name only, minus any =value)
 
 			case "${tmpStr}" in
 
-			## ✶✶✶✶✶✶✶✶ CUSTOM UNARY SWITCHES
-				"q"|"quiet")                doQuietly=1 ;;
-				"m="*|"message="*|"msg="*)  commitMessage="${currentArg#*=}" ;;  ## -m=MSG / --message=MSG / --msg=MSG (joined)
+				## ✶✶✶✶✶✶✶✶ PUT CUSTOM UNARY SWITCH TESTS AND PARENT BOOLEAN VARIABLE ASSIGNMENTS HERE
+				"q"|"quiet")  doQuietly=1  ;;
 
-			## ✶✶✶✶✶✶✶✶ CUSTOM LONG-OPTIONS THAT EXPECT AN ARGUMENT TO FOLLOW
-				"m"|"message"|"msg")        expectingSwitchParamForNextArg=1 ;;   ## -m MSG (spaced; value captured below)
+				## ✶✶✶✶✶✶✶✶ PUT TESTS FOR CUSTOM LONG-OPTION LOGIC THAT EXPECTS AN ARGUMENT TO FOLLOW, HERE
+				"m"|"msg"|"message")  if ((hasInlineOptVal)); then commitMessage="${inlineOptVal}"; else expectingSwitchParamForNextArg=1; fi  ;;
 
 				## ¯\_(ツ)_/¯
 				*) fThrowError  "Unexpected option in this context: '${currentArg}'."  ;;
@@ -295,12 +376,11 @@ fParseArgs(){
 
 			if ((expectingSwitchParamForNextArg)); then
 				## Now we know we're expecting a long-option argument
-				#fEcho_Clean "Debug: arg for long-option: '${lastSwitch}': '${currentArg}'"
 
-			## ✶✶✶✶✶✶✶✶ CUSTOM LONG-OPTION ARGUMENT TESTS AND PARENT VARIABLE ASSIGNMENTS
+				## ✶✶✶✶✶✶✶✶ PUT CUSTOM LONG-OPTION ARGUMENT TESTS AND PARENT VARIABLE ASSIGNMENTS HERE
 				case "${lastSwitch,,}" in
-					"m"|"message"|"msg") commitMessage="${currentArg}" ;;
-					*)                   fThrowError "Unknown option: '${lastSwitchAsPassed}', current parameter: '${currentArg}'." ;;
+					"m"|"msg"|"message") commitMessage="${currentArg}" ;;
+					*)                   fThrowError "Unknown option: '${lastSwitchAsPassed}', current parameter: '${currentArg}'." ;;  ## A redundant check.
 				esac
 				expectingSwitchParamForNextArg=0
 
@@ -311,13 +391,7 @@ fParseArgs(){
 				#fEcho_Clean "Debug: positional arg #${positionalArgCounter}: '${currentArg}'"
 
 				## ✶✶✶✶✶✶✶✶ PUT CUSTOM POSITIONAL ARG LOGIC HERE (only use one of the following methods, delete the other)
-
-				## Assign parent variables; Method 1: argument counter (less flexible but best for simple input)
-				case $positionalArgCounter in
-					1) stringArg="${currentArg}"      ;;
-					2) arg_intArg="${currentArg}" ;;
-					*) fThrowError "Unexpected positional argument # ${positionalArgCounter}: '${currentArg}'." ;;
-				esac
+				fThrowError "Unexpected positional argument # ${positionalArgCounter}: '${currentArg}'."
 
 			fi
 		fi
@@ -467,22 +541,45 @@ declare -i isSourced; { (return 0 2>/dev/null) && isSourced=1; } || isSourced=0
 [[ -v relaunch_Key_sudo ]] || declare -r relaunch_Key_sudo="${meName}_relaunch_sudo_4KQDYluNbzLQHwMwsWxgdk"  ## This isn't for 'security' or uniqueness. It just needs to be an exceptionally unlikely user argument.
 
 # Reusable GFS rotation (its own logic, kept separate from the backup logic below).
+# Tolerate its absence: rotation is optional housekeeping, publishing is not.
 # shellcheck source=/dev/null
-source "${meDir}/include/gfs-rotate.bash"
+[[ -f "${meDir}/include/gfs-rotate.bash" ]] && source "${meDir}/include/gfs-rotate.bash"
 
 ## Invoke main
 fMain  "${@}"
 
 
 ##	Script history:
-##		- 20260416 JC: Created.
-##		- 20260425 JC: Update copyright comment.
-##		- 20260519 JC:
+##		- 20260416: Created.
+##		- 20260425: Update copyright comment.
+##		- 20260519:
 ##			- Removed several cruft template functions.
 ##			- Changed license from GPL 2, to MIT.
-##		- 20260622 JC:
+##		- 20260622:
 ##			- Validate SSH key directly, not via git config core.sshCommand, which may not be set.
-##			- Added check of environment variable 'N8GIT_BACKUP_AND_PUBLISH_QUIET'.
-##			- Added check of environment variable 'N8GIT_BACKUP_AND_PUBLISH_NOBACKUP'.
-##		- 20260628 JC:
+##			- Added check of environment variable 'GIT_BACKUP_AND_PUBLISH_QUIET'.
+##			- Added check of environment variable 'GIT_BACKUP_AND_PUBLISH_NOBACKUP'.
+##		- 20260628:
 ##			- Call gfs-rotate.bash to prune old backups (GFS retention).
+##		- 20260704:
+##			- Changed `git pull --no-ff` to `--ff-only`, per x9git best practices.
+##			- Accept -q/--quiet and -m/--message/--msg MSG (also -m=MSG) for
+##			  hands-off commit; parsed in fParseArgs (not a custom pre-loop).
+##			- Honor env 'GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES' for extra rar -x
+##			  patterns (project-specific big/regenerable trees).
+##		- 20260713:
+##			- Abort cleanly on a stash-pop conflict (and any unmerged path)
+##			  instead of stranding a half-merged tree and committing markers.
+##			- Document the honored env vars in --help.
+##		- 20260722: Backup excludes: debug builds, build intermediates, GFS-rotated demo renders (release binaries and assets/ kept).
+##		- 20260725:
+##			- Harmonized every copy of this script to one identical file.
+##			- Backup excludes now cover Python and Node intermediates, the
+##			  linked-in assets-vault, and match GFS-rotated media by its
+##			  timestamp+role name, which keeps '_latest'. Symlinks stay
+##			  followed, so the linked-in '../private' is archived by content.
+##			- Commit message also from env 'GIT_BACKUP_AND_PUBLISH_MESSAGE' or
+##			  'GIT_AUTO_MESSAGE'; when quiet with no message, one is generated
+##			  rather than blocking on the editor.
+##			- A stray positional argument now throws instead of being ignored.
+##			- Missing include/gfs-rotate.bash warns instead of aborting.

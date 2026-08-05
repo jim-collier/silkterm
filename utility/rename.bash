@@ -3,13 +3,18 @@
 #
 #   utility/rename.bash <NewDisplayName>
 #
-# <NewDisplayName> is the human-facing name (e.g. "SilkTerm"). The lowercase
+# <NewDisplayName> is the display name (e.g. "SilkTerm"). The lowercase
 # identifier used for the cargo package, the binary, and the config directory
 # is derived from it (e.g. "silkterm").
 #
 # Replaces the display name (SilkTerm) and the id (silkterm) across Cargo.toml,
 # all Rust sources, and the Markdown docs. Cargo.lock is left for `cargo build`
 # to regenerate. Review `git diff` afterwards.
+
+##	Copyright © 2026 Bubbles (ID: XଌฅრX۳ᛟԃლፀƅꓩหδლც)
+##	Licensed under The MIT License (MIT). Full text at:
+##		https://mit-license.org/
+##	SPDX-License-Identifier: MIT
 set -euo pipefail
 
 new_display="${1:-}"

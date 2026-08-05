@@ -1,28 +1,102 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright © 2026 Jim Collier
 
-//! Colour themes: each theme is a (dark, light) pair of `Palette`s. The active
+//! Color themes: each theme is a (dark, light) pair of `Palette`s. The active
 //! theme name + mode (Dark / Light / System) resolve to one `Palette` - the
-//! terminal bg/fg/cursor/focus plus the 16 ANSI colours - which `config` folds
-//! into `Settings` and `palette.rs` reads. The `[colors]` keys still override on
-//! top (a per-colour tweak). Chrome/dialog theming, config-defined themes, and
-//! the Settings dropdown build on this foundation.
+//! terminal bg/fg/cursor, the two attention colors and the 16 ANSI colors -
+//! which `config` folds into `Settings` and `palette.rs` reads. The `colors.*`
+//! keys still override on
+//! top (a per-color tweak).
+//!
+//! A theme the user saves from the Settings dialog is a `UserTheme`: the same
+//! (dark, light) pair, stored whole in `config.shcl` under `themes.<slug>` and
+//! resolved ahead of the built-ins, so one may take a built-in's name and stand
+//! in for it until it is deleted.
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Palette {
 	pub bg: [u8; 3],
 	pub fg: [u8; 3],
 	pub cursor: [u8; 3],
+	// Two attention colors, deliberately separate. `highlight` marks several
+	// things at once - the live pane's ring, slider handles, revert icons, the
+	// default button - so it stays calm. `focus` marks the ONE element the
+	// keyboard is on, so it is the more vivid of the pair and sits well away
+	// from `highlight` in hue.
+	pub highlight: [u8; 3],
 	pub focus: [u8; 3],
 	// Chrome: menu bar / dropdowns (menu_*) and pop-out dialogs (dialog_*). Every
 	// built-in theme uses the SAME neutral defaults below (menu identical in both
 	// modes, dialog lighter in Light mode) - a theme MAY override, and the
-	// [colors] menu_*/dialog_* keys tweak them per-user.
+	// colors.menu_*/dialog_* keys tweak them per-user.
 	pub menu_bg: [u8; 3],
 	pub menu_fg: [u8; 3],
 	pub dialog_bg: [u8; 3],
 	pub dialog_fg: [u8; 3],
+	// Chrome areas that hold no interactive element - the strip the dialog's tabs
+	// sit on. Recessed against the panel in both modes.
+	pub gutter: [u8; 3],
 	pub ansi: [[u8; 3]; 16],
+}
+
+// The ten palette colors a user can edit, spelled as `colors.*` spells them.
+// One order, used by the dialog's rows, by a saved theme's config block, and by
+// the index accessors below - so none of the three can drift from the others.
+pub const PALETTE_KEYS: [&str; 10] = [
+	"background",
+	"foreground",
+	"cursor",
+	"highlight",
+	"focus",
+	"menu_background",
+	"menu_foreground",
+	"dialog_background",
+	"dialog_foreground",
+	"gutter",
+];
+
+impl Palette {
+	pub fn get(&self, i: usize) -> [u8; 3] {
+		match i {
+			0 => self.bg,
+			1 => self.fg,
+			2 => self.cursor,
+			3 => self.highlight,
+			4 => self.focus,
+			5 => self.menu_bg,
+			6 => self.menu_fg,
+			7 => self.dialog_bg,
+			8 => self.dialog_fg,
+			_ => self.gutter,
+		}
+	}
+	pub fn set(&mut self, i: usize, color: [u8; 3]) {
+		match i {
+			0 => self.bg = color,
+			1 => self.fg = color,
+			2 => self.cursor = color,
+			3 => self.highlight = color,
+			4 => self.focus = color,
+			5 => self.menu_bg = color,
+			6 => self.menu_fg = color,
+			7 => self.dialog_bg = color,
+			8 => self.dialog_fg = color,
+			_ => self.gutter = color,
+		}
+	}
+}
+
+// A theme the user saved. It carries both variants in full rather than a base plus
+// the differences: saving, renaming and deleting are then all the same operation
+// on one config subtree, and a saved theme is self-contained enough to hand to
+// someone else. `slug` is its config path segment and never changes, so a rename
+// only rewrites `name` - and `name` is what the `theme` setting stores.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct UserTheme {
+	pub slug: String,
+	pub name: String,
+	pub dark: Palette,
+	pub light: Palette,
 }
 
 // Shared chrome defaults (same for every theme). The menu keeps one neutral gray
@@ -33,6 +107,8 @@ const DLG_BG_DARK: [u8; 3] = [0x20, 0x20, 0x2a];
 const DLG_FG_DARK: [u8; 3] = [0xe2, 0xe2, 0xea];
 const DLG_BG_LIGHT: [u8; 3] = [0xe6, 0xe6, 0xe3];
 const DLG_FG_LIGHT: [u8; 3] = [0x22, 0x24, 0x2c];
+const GUTTER_DARK: [u8; 3] = [0x16, 0x16, 0x1e];
+const GUTTER_LIGHT: [u8; 3] = [0xd3, 0xd3, 0xcf];
 
 #[derive(Clone, Copy)]
 pub struct Theme {
@@ -44,16 +120,29 @@ pub struct Theme {
 #[rustfmt::skip]
 const SILK_DARK: Palette = Palette {
 	bg: [0x00, 0x00, 0x00],
-	fg: [0x88, 0xff, 0xee],
-	cursor: [0xff, 0x88, 0xaa],
-	focus: [0x55, 0x80, 0xc8],
+	// The cursor is an alpha plate drawn OVER the glyph, so it has to be dark
+	// enough to read text against - a cursor at the fg's own brightness sits at
+	// 1.1:1 and the two mush together. This is the fg's triadic partner dropped
+	// to the brightness where it reads equally against the text and against the
+	// black bg (3.9:1 either way). The highlight stays warm: it marks the pane,
+	// not the caret, so it wants its own identity rather than an echo of the
+	// cursor. Focus is its azure complement - the one thing the keyboard is on.
+	fg: [0x88, 0xee, 0xcc],
+	cursor: [0x96, 0x49, 0xaf],
+	highlight: [0xc8, 0xa0, 0x5a],
+	focus: [0x40, 0x86, 0xff],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_DARK, dialog_fg: DLG_FG_DARK,
+	gutter: GUTTER_DARK,
+	// Hues sit where their names say, warmed toward the pair above; saturation is
+	// the pastel end. Each color's BRIGHTNESS was carried over from the palette
+	// this replaced, hue by hue, so contrast and legibility are unchanged - only
+	// the family moved. The grays carry a faint warm cast for the same reason.
 	ansi: [
-		[0x1a, 0x1a, 0x22], [0xe0, 0x6c, 0x75], [0x98, 0xc3, 0x79], [0xe5, 0xc0, 0x7b],
-		[0x61, 0xaf, 0xef], [0xc6, 0x78, 0xdd], [0x56, 0xb6, 0xc2], [0xab, 0xb2, 0xbf],
-		[0x5c, 0x63, 0x70], [0xef, 0x8a, 0x92], [0xb5, 0xd9, 0x9c], [0xf0, 0xd2, 0x9a],
-		[0x8a, 0xc4, 0xf5], [0xd7, 0x9b, 0xeb], [0x7d, 0xcd, 0xd8], [0xe6, 0xe6, 0xee],
+		[0x1d, 0x1b, 0x18], [0xd0, 0x72, 0x64], [0x6c, 0xd0, 0x79], [0xd7, 0xc5, 0x7c],
+		[0x7c, 0xa8, 0xe5], [0xbf, 0x7b, 0xd5], [0x53, 0xb9, 0xb5], [0xb7, 0xb1, 0xa5],
+		[0x67, 0x61, 0x58], [0xe2, 0x90, 0x83], [0x8e, 0xe5, 0x99], [0xe5, 0xd6, 0x97],
+		[0x9c, 0xc0, 0xf3], [0xd8, 0x9c, 0xec], [0x74, 0xd0, 0xcc], [0xeb, 0xe6, 0xdf],
 	],
 };
 
@@ -62,9 +151,11 @@ const SILK_LIGHT: Palette = Palette {
 	bg: [0xf6, 0xf5, 0xf0],
 	fg: [0x30, 0x32, 0x38],
 	cursor: [0x33, 0x55, 0x99],
-	focus: [0x33, 0x66, 0xbb],
+	highlight: [0x33, 0x66, 0xbb],
+	focus: [0xb8, 0x6e, 0x00],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_LIGHT, dialog_fg: DLG_FG_LIGHT,
+	gutter: GUTTER_LIGHT,
 	ansi: [
 		[0x32, 0x32, 0x3a], [0xc0, 0x3a, 0x42], [0x4f, 0x8a, 0x2f], [0xa6, 0x78, 0x12],
 		[0x27, 0x65, 0xc0], [0x9a, 0x40, 0xb0], [0x1f, 0x86, 0x96], [0x55, 0x58, 0x60],
@@ -80,9 +171,11 @@ const MATRIX_DARK: Palette = Palette {
 	bg: [0x00, 0x08, 0x02],
 	fg: [0x33, 0xff, 0x66],
 	cursor: [0x33, 0xff, 0x66],
-	focus: [0x1f, 0xaa, 0x44],
+	highlight: [0x1f, 0xaa, 0x44],
+	focus: [0xaa, 0xff, 0xcc],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_DARK, dialog_fg: DLG_FG_DARK,
+	gutter: GUTTER_DARK,
 	ansi: [
 		[0x05, 0x18, 0x0a], [0x2a, 0xcc, 0x44], [0x33, 0xff, 0x66], [0x7a, 0xff, 0x8a],
 		[0x1f, 0xaa, 0x3a], [0x44, 0xdd, 0x77], [0x55, 0xee, 0x88], [0x9a, 0xff, 0xaa],
@@ -96,9 +189,11 @@ const MATRIX_LIGHT: Palette = Palette {
 	bg: [0xe9, 0xee, 0xe9],
 	fg: [0x0a, 0x55, 0x1f],
 	cursor: [0x0a, 0x66, 0x22],
-	focus: [0x0a, 0x77, 0x2a],
+	highlight: [0x0a, 0x77, 0x2a],
+	focus: [0x0a, 0x8f, 0x9a],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_LIGHT, dialog_fg: DLG_FG_LIGHT,
+	gutter: GUTTER_LIGHT,
 	ansi: [
 		[0x14, 0x2a, 0x18], [0x18, 0x6a, 0x2a], [0x0a, 0x55, 0x1f], [0x2a, 0x70, 0x38],
 		[0x1a, 0x60, 0x2a], [0x22, 0x6a, 0x34], [0x16, 0x66, 0x2c], [0x2c, 0x52, 0x36],
@@ -114,9 +209,11 @@ const AMBER_DARK: Palette = Palette {
 	bg: [0x10, 0x0a, 0x00],
 	fg: [0xff, 0xb0, 0x00],
 	cursor: [0xff, 0xb0, 0x00],
-	focus: [0xcc, 0x80, 0x00],
+	highlight: [0xcc, 0x80, 0x00],
+	focus: [0xff, 0x40, 0x20],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_DARK, dialog_fg: DLG_FG_DARK,
+	gutter: GUTTER_DARK,
 	ansi: [
 		[0x2a, 0x1c, 0x06], [0xff, 0x8c, 0x1a], [0xff, 0xb0, 0x00], [0xff, 0xc8, 0x4a],
 		[0xd0, 0x86, 0x10], [0xff, 0xa0, 0x33], [0xff, 0xc0, 0x55], [0xff, 0xd8, 0x9a],
@@ -130,9 +227,11 @@ const AMBER_LIGHT: Palette = Palette {
 	bg: [0xf2, 0xee, 0xe6],
 	fg: [0x7a, 0x42, 0x00],
 	cursor: [0x8a, 0x4a, 0x00],
-	focus: [0x9a, 0x52, 0x00],
+	highlight: [0x9a, 0x52, 0x00],
+	focus: [0xc8, 0x10, 0x2e],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
 	dialog_bg: DLG_BG_LIGHT, dialog_fg: DLG_FG_LIGHT,
+	gutter: GUTTER_LIGHT,
 	ansi: [
 		[0x33, 0x24, 0x10], [0xa0, 0x4e, 0x08], [0x7a, 0x42, 0x00], [0x90, 0x5a, 0x0c],
 		[0x86, 0x46, 0x06], [0x96, 0x52, 0x10], [0x80, 0x4a, 0x08], [0x52, 0x40, 0x2a],
@@ -148,25 +247,57 @@ pub const THEMES: &[(&str, Theme)] = &[
 	("Retro Amber", Theme { dark: AMBER_DARK, light: AMBER_LIGHT }),
 ];
 
-#[allow(dead_code)] // used by the Settings theme dropdown (next increment)
 pub fn names() -> impl Iterator<Item = &'static str> {
 	THEMES.iter().map(|(n, _)| *n)
 }
 
-// Resolve the active palette from a theme name + mode. Unknown name falls back to
-// the first theme; `system_dark` chooses the variant when mode is "system".
-pub fn resolve(name: &str, mode: &str, system_dark: bool) -> Palette {
-	let theme = THEMES
-		.iter()
-		.find(|(n, _)| n.eq_ignore_ascii_case(name.trim()))
-		.map(|(_, t)| t)
-		.unwrap_or(&THEMES[0].1);
-	let dark = match mode.trim().to_ascii_lowercase().as_str() {
+pub fn is_builtin(name: &str) -> bool {
+	names().any(|n| n.eq_ignore_ascii_case(name.trim()))
+}
+
+// Every selectable theme name, saved ones first so a saved theme that took a
+// built-in's name appears once, as itself.
+pub fn all_names(user: &[UserTheme]) -> Vec<String> {
+	let mut out: Vec<String> = user.iter().map(|t| t.name.clone()).collect();
+	for name in names() {
+		if !out.iter().any(|n| n.eq_ignore_ascii_case(name)) {
+			out.push(name.to_string());
+		}
+	}
+	out
+}
+
+pub fn find_user<'a>(user: &'a [UserTheme], name: &str) -> Option<&'a UserTheme> {
+	user.iter()
+		.find(|t| t.name.eq_ignore_ascii_case(name.trim()))
+}
+
+// Does this mode resolve to the dark variant? "system" follows the OS.
+pub fn is_dark_mode(mode: &str, system_dark: bool) -> bool {
+	match mode.trim().to_ascii_lowercase().as_str() {
 		"light" => false,
 		"system" => system_dark,
 		_ => true, // "dark" / unknown
-	};
+	}
+}
+
+// Resolve the active palette from a theme name + mode. A saved theme wins over a
+// built-in of the same name; an unknown name falls back to the first built-in.
+pub fn resolve_in(user: &[UserTheme], name: &str, mode: &str, system_dark: bool) -> Palette {
+	let dark = is_dark_mode(mode, system_dark);
+	if let Some(t) = find_user(user, name) {
+		return if dark { t.dark } else { t.light };
+	}
+	let theme = THEMES
+		.iter()
+		.find(|(n, _)| n.eq_ignore_ascii_case(name.trim()))
+		.map_or(&THEMES[0].1, |(_, t)| t);
 	if dark { theme.dark } else { theme.light }
+}
+
+// Built-ins only - for paths that have no user themes to hand (and the tests).
+pub fn resolve(name: &str, mode: &str, system_dark: bool) -> Palette {
+	resolve_in(&[], name, mode, system_dark)
 }
 
 #[cfg(test)]
@@ -190,13 +321,31 @@ mod tests {
 
 	#[test]
 	fn chrome_defaults_shared_across_themes() {
-		// every built-in theme uses the same neutral menu colours (both modes)
+		// every built-in theme uses the same neutral menu colors (both modes)
 		for (_, t) in THEMES {
 			assert_eq!(t.dark.menu_bg, MENU_BG_DEF);
 			assert_eq!(t.light.menu_bg, MENU_BG_DEF);
 			assert_eq!(t.dark.menu_fg, MENU_FG_DEF);
 			// the dialog panel is darker in dark mode than in light mode
 			assert!(t.dark.dialog_bg[0] < t.light.dialog_bg[0]);
+			// the gutter is recessed against the panel it sits on, both ways round
+			assert!(t.dark.gutter[0] < t.dark.dialog_bg[0]);
+			assert!(t.light.gutter[0] < t.light.dialog_bg[0]);
+		}
+	}
+
+	// The pair only works if the two read as different signals. A theme that let
+	// them converge would draw the focused control and everything merely
+	// highlighted in the same color, which is the whole point of splitting them.
+	#[test]
+	fn the_two_attention_colours_stay_apart() {
+		for (name, t) in THEMES {
+			for pal in [t.dark, t.light] {
+				let apart: i32 = (0..3)
+					.map(|k| (i32::from(pal.highlight[k]) - i32::from(pal.focus[k])).abs())
+					.sum();
+				assert!(apart >= 120, "{name}: highlight and focus are too close");
+			}
 		}
 	}
 

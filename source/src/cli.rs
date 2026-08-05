@@ -29,8 +29,8 @@ pub enum Size {
 	Percent(f32),
 }
 
-// Cascading look/behaviour options; each level fills what it sets, the rest
-// inherit. `bg_image: Some(None)` means "explicitly no image".
+// Cascading look/behavior options; each level fills what it sets, the rest
+// inherit. `wallpaper_img: Some(None)` means "explicitly no image".
 #[derive(Debug, Default, Clone)]
 pub struct Style {
 	pub shell: Option<Vec<String>>, // argv (already shell-word-split)
@@ -39,9 +39,9 @@ pub struct Style {
 	pub font_size: Option<f32>,
 	pub bg_color: Option<[u8; 3]>,
 	pub fg_color: Option<[u8; 3]>,
-	pub bg_image: Option<Option<String>>,
-	pub bg_fit: Option<Fit>,
-	pub bg_opacity: Option<f32>,
+	pub wallpaper_img: Option<Option<String>>,
+	pub wallpaper_default_fit: Option<Fit>,
+	pub wallpaper_opacity: Option<f32>,
 }
 
 // Options that apply to the whole window (only valid before any tab/pane marker).
@@ -110,6 +110,11 @@ pub struct Cli {
 	pub version: bool,
 	pub syntax: bool,
 	pub config: Option<PathBuf>,
+	pub reset_config: bool,
+	// control commands for an already-running window (talk, then exit):
+	// `Some(None)` clears the wallpaper, `Some(Some(p))` sets it.
+	pub wallpaper: Option<Option<String>>,
+	pub reload: bool,
 	pub win: WindowOpts,
 	pub tabs: Vec<TabSpec>, // empty -> no hierarchical options given (use defaults)
 	pub hierarchical: bool, // any tab/pane/structure flag was seen
@@ -130,6 +135,8 @@ fn parse_bool(s: &str) -> Option<bool> {
 
 // Minimal POSIX-ish word split honouring single/double quotes and backslash, so
 // `git log --oneline`, `bash --norc`, and `sh -c "a | b"` all argv-split right.
+// Outside quotes a backslash only escapes whitespace and quotes, so Windows paths
+// can be written plainly; inside double quotes the usual POSIX escapes apply.
 pub fn shell_split(s: &str) -> Result<Vec<String>, String> {
 	let mut out = Vec::new();
 	let mut word = String::new();
@@ -160,7 +167,8 @@ pub fn shell_split(s: &str) -> Result<Vec<String>, String> {
 						'\\' => {
 							if let Some(&next) = chars.peek() {
 								if next == '"' || next == '\\' || next == '$' || next == '`' {
-									word.push(chars.next().unwrap());
+									chars.next();
+									word.push(next);
 									continue;
 								}
 							}
@@ -170,10 +178,18 @@ pub fn shell_split(s: &str) -> Result<Vec<String>, String> {
 					}
 				}
 			}
+			// Only whitespace and quotes are worth escaping outside quotes. A backslash
+			// before anything else stays put, so a Windows path survives unquoted -
+			// consuming it turned `C:\windows\system32\cmd.exe` into
+			// `C:windowssystem32cmd.exe`, and `\\host\share` into `\host\share`.
 			'\\' => {
 				in_word = true;
-				if let Some(next) = chars.next() {
-					word.push(next);
+				match chars.peek() {
+					Some(&next) if matches!(next, ' ' | '\t' | '\'' | '"') => {
+						chars.next();
+						word.push(next);
+					}
+					_ => word.push('\\'),
 				}
 			}
 			_ => {
@@ -333,6 +349,21 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 			_ => {}
 		}
 
+		// control commands (act on the running window this shell is inside,
+		// then exit - see ctl.rs; main.rs short-circuits before any layout)
+		match name {
+			"wallpaper" => {
+				// value = new image path; bare flag = clear (mirrors --wallpaper-file)
+				cli.wallpaper = Some(a.optional_value(inline));
+				continue;
+			}
+			"reload-settings" => {
+				cli.reload = true;
+				continue;
+			}
+			_ => {}
+		}
+
 		// window-level options (illegal once a tab/pane marker was seen)
 		let window_only = matches!(
 			name,
@@ -343,8 +374,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 				| "hide-windowframe"
 				| "hide-menu"
 				| "fullscreen"
-				| "config" | "help"
-				| "version" | "syntax"
+				| "config" | "reset-config"
+				| "help" | "version"
+				| "syntax"
 		);
 		if window_only {
 			if cur_tab.is_some() {
@@ -358,36 +390,37 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 						a.value(name, inline)?
 							.parse()
 							.map_err(|_| "bad --columns")?,
-					)
+					);
 				}
 				"rows" => {
-					cli.win.rows = Some(a.value(name, inline)?.parse().map_err(|_| "bad --rows")?)
+					cli.win.rows = Some(a.value(name, inline)?.parse().map_err(|_| "bad --rows")?);
 				}
 				"pixel-width" => {
 					cli.win.pixel_width = Some(
 						a.value(name, inline)?
 							.parse()
 							.map_err(|_| "bad --pixel-width")?,
-					)
+					);
 				}
 				"pixel-height" => {
 					cli.win.pixel_height = Some(
 						a.value(name, inline)?
 							.parse()
 							.map_err(|_| "bad --pixel-height")?,
-					)
+					);
 				}
 				"background-opacity" => {
-					cli.win.opacity = Some(parse_f32(name, &a.value(name, inline)?)?)
+					cli.win.opacity = Some(parse_f32(name, &a.value(name, inline)?)?);
 				}
 				"hide-windowframe" => cli.win.hide_frame = Some(a.bool_value(name, inline)?),
 				"hide-menu" => cli.win.hide_menu = Some(a.bool_value(name, inline)?),
 				"fullscreen" => cli.win.fullscreen = Some(a.bool_value(name, inline)?),
 				"config" => cli.config = Some(PathBuf::from(a.value(name, inline)?)),
+				"reset-config" => cli.reset_config = true,
 				"help" => cli.help = true,
 				"version" => cli.version = true,
 				"syntax" => cli.syntax = true,
-				_ => unreachable!(),
+				_ => unreachable!("name in the matches! set above"),
 			}
 			continue;
 		}
@@ -412,7 +445,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 				"left" => set_dir(pane, Dir4::Left, a.bool_value(name, inline)?, name)?,
 				"right" => set_dir(pane, Dir4::Right, a.bool_value(name, inline)?, name)?,
 				"size" => pane.size = Some(parse_size(&a.value(name, inline)?)?),
-				_ => unreachable!(),
+				_ => unreachable!("name in the matches! set above"),
 			}
 			continue;
 		}
@@ -451,23 +484,24 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 			"font-size" => style.font_size = Some(parse_f32(name, &a.value(name, inline)?)?),
 			"background-color" => style.bg_color = Some(parse_hex(name, &a.value(name, inline)?)?),
 			"foreground-color" => style.fg_color = Some(parse_hex(name, &a.value(name, inline)?)?),
-			"background-image" => {
+			// --background-image* are kept as aliases for the --wallpaper* names.
+			"wallpaper-file" | "background-image" => {
 				// value present -> that path; no value -> explicitly none. A bare
 				// flag followed by another option must not eat that option as a path.
-				style.bg_image = Some(a.optional_value(inline));
+				style.wallpaper_img = Some(a.optional_value(inline));
 			}
-			"background-image-stretch" => {
+			"wallpaper-stretch" | "background-image-stretch" => {
 				if a.bool_value(name, inline)? {
-					style.bg_fit = Some(Fit::Stretch);
+					style.wallpaper_default_fit = Some(Fit::Stretch);
 				}
 			}
-			"background-image-zoom" => {
+			"wallpaper-zoom" | "background-image-zoom" => {
 				if a.bool_value(name, inline)? {
-					style.bg_fit = Some(Fit::Zoom);
+					style.wallpaper_default_fit = Some(Fit::Zoom);
 				}
 			}
-			"background-image-opacity" => {
-				style.bg_opacity = Some(parse_f32(name, &a.value(name, inline)?)?)
+			"wallpaper-opacity" | "background-image-opacity" => {
+				style.wallpaper_opacity = Some(parse_f32(name, &a.value(name, inline)?)?);
 			}
 			_ => return Err(format!("unknown option: --{name}")),
 		}
@@ -507,29 +541,33 @@ pub fn fold_window_style(settings: &mut config::Settings, style: &Style) {
 	if let Some(color) = style.fg_color {
 		settings.fg = color;
 	}
-	if let Some(img) = &style.bg_image {
-		settings.background_image = img.as_ref().map(PathBuf::from);
+	if let Some(img) = &style.wallpaper_img {
+		settings.wallpaper_raw = img.clone().unwrap_or_default();
+		settings.wallpaper = img.as_ref().map(PathBuf::from);
+		// naming one is a deliberate choice for this run; don't let a config that
+		// has wallpaper switched off swallow it
+		settings.wallpaper_enabled |= img.is_some();
 	}
-	if let Some(fit) = style.bg_fit {
-		settings.background_fit = fit;
+	if let Some(fit) = style.wallpaper_default_fit {
+		settings.wallpaper_default_fit = fit;
 	}
-	if let Some(opacity) = style.bg_opacity {
-		settings.background_opacity = opacity;
+	if let Some(opacity) = style.wallpaper_opacity {
+		settings.wallpaper_opacity = opacity;
 	}
 }
 
 impl WindowOpts {
 	// Apply this window's CLI style to the live settings at startup (no-op if none
-	// set). Call after the theme/OS palette settles so colours aren't clobbered.
+	// set). Call after the theme/OS palette settles so colors aren't clobbered.
 	pub fn apply_style(&self) {
 		let style = &self.style;
 		let any = style.font_name.is_some()
 			|| style.font_size.is_some()
 			|| style.bg_color.is_some()
 			|| style.fg_color.is_some()
-			|| style.bg_image.is_some()
-			|| style.bg_fit.is_some()
-			|| style.bg_opacity.is_some();
+			|| style.wallpaper_img.is_some()
+			|| style.wallpaper_default_fit.is_some()
+			|| style.wallpaper_opacity.is_some();
 		if !any {
 			return;
 		}
@@ -593,9 +631,14 @@ Window options (must precede any tab/pane):
   --hide-menu[=BOOL]          start with the menu bar hidden
   --fullscreen[=BOOL]         start fullscreen
   --config PATH               use an alternate config file
+  --reset-config              rename the config aside and start from defaults
   --help, -h                  this help
   --syntax                    options list only
   --version                   program name + version + build
+
+Control (run from a shell inside a window; acts on that window, then exits):
+  --wallpaper [PATH]          change the wallpaper live (no value = none)
+  --reload-settings           re-read the config file and apply it
 
 Layout:
   --new-tab[=HANDLE]          create a tab (becomes current)
@@ -614,10 +657,10 @@ Per-scope (window/tab/pane; cascades, most-specific wins):
   --font-size N               font size
   --background-color #rrggbb
   --foreground-color #rrggbb
-  --background-image \"path\"   (no value = none)
-  --background-image-stretch[=BOOL]
-  --background-image-zoom[=BOOL]
-  --background-image-opacity F
+  --wallpaper-file \"path\"      (no value = none; alias --background-image)
+  --wallpaper-stretch[=BOOL]   (alias --background-image-stretch)
+  --wallpaper-zoom[=BOOL]      (alias --background-image-zoom)
+  --wallpaper-opacity F        (alias --background-image-opacity)
 "
 }
 
@@ -694,6 +737,29 @@ mod tests {
 	}
 
 	#[test]
+	fn shell_keeps_unquoted_backslashes() {
+		// A Windows path written plainly must arrive intact, quoted or not.
+		assert_eq!(
+			shell_split(r"C:\windows\system32\cmd.exe").unwrap(),
+			[r"C:\windows\system32\cmd.exe"]
+		);
+		assert_eq!(
+			shell_split(r"\\host\share\app.exe -x").unwrap(),
+			[r"\\host\share\app.exe", "-x"]
+		);
+		assert_eq!(
+			shell_split(r#""C:\windows\system32\cmd.exe""#).unwrap(),
+			[r"C:\windows\system32\cmd.exe"]
+		);
+	}
+
+	#[test]
+	fn shell_still_escapes_whitespace_and_quotes() {
+		assert_eq!(shell_split(r"/opt/my\ app/sh").unwrap(), ["/opt/my app/sh"]);
+		assert_eq!(shell_split(r"it\'s fine").unwrap(), ["it's", "fine"]);
+	}
+
+	#[test]
 	fn style_cascade_scope() {
 		let c = p("--shell=fish --new-tab --shell=zsh --new-pane --shell=htop");
 		assert_eq!(
@@ -711,19 +777,34 @@ mod tests {
 	}
 
 	#[test]
-	fn background_image_never_eats_the_next_option() {
+	fn wallpaper_never_eats_the_next_option() {
 		// bare flag followed by another option = explicitly none; the option survives
 		let c = p("--background-image --background-image-zoom");
-		assert_eq!(c.win.style.bg_image, Some(None));
-		assert_eq!(c.win.style.bg_fit, Some(Fit::Zoom));
+		assert_eq!(c.win.style.wallpaper_img, Some(None));
+		assert_eq!(c.win.style.wallpaper_default_fit, Some(Fit::Zoom));
 		// both value forms still work
 		let c = p("--background-image=/x.png");
-		assert_eq!(c.win.style.bg_image, Some(Some("/x.png".into())));
+		assert_eq!(c.win.style.wallpaper_img, Some(Some("/x.png".into())));
 		let c = p("--background-image /x.png");
-		assert_eq!(c.win.style.bg_image, Some(Some("/x.png".into())));
+		assert_eq!(c.win.style.wallpaper_img, Some(Some("/x.png".into())));
 		// trailing bare flag = none
 		let c = p("--background-image");
-		assert_eq!(c.win.style.bg_image, Some(None));
+		assert_eq!(c.win.style.wallpaper_img, Some(None));
+	}
+
+	#[test]
+	fn control_flags() {
+		let c = p("--wallpaper /x.png");
+		assert_eq!(c.wallpaper, Some(Some("/x.png".into())));
+		assert!(!c.reload);
+		// bare flag = clear; must not eat a following option
+		let c = p("--wallpaper --reload-settings");
+		assert_eq!(c.wallpaper, Some(None));
+		assert!(c.reload);
+		let c = p("--wallpaper=/y.png");
+		assert_eq!(c.wallpaper, Some(Some("/y.png".into())));
+		let c = p("--columns 80");
+		assert_eq!(c.wallpaper, None);
 	}
 
 	#[test]
@@ -756,9 +837,9 @@ mod tests {
 		assert_eq!(s.font_size, 20.0);
 		assert_eq!(s.bg, [0x10, 0x20, 0x30]);
 		assert_eq!(s.fg, [0xab, 0xcd, 0xef]);
-		assert_eq!(s.background_image, Some(PathBuf::from("/x.png")));
-		assert_eq!(s.background_fit, config::Fit::Zoom);
-		assert_eq!(s.background_opacity, 0.5);
+		assert_eq!(s.wallpaper, Some(PathBuf::from("/x.png")));
+		assert_eq!(s.wallpaper_default_fit, config::Fit::Zoom);
+		assert_eq!(s.wallpaper_opacity, 0.5);
 	}
 
 	#[test]

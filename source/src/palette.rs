@@ -6,10 +6,10 @@ use alacritty_terminal::vte::ansi::{Color, NamedColor};
 
 use crate::config::Settings;
 
-// The 16 ANSI colours come from the active theme (config::settings().ansi),
+// The 16 ANSI colors come from the active theme (config::settings().ansi),
 // resolved in config from the theme name + mode. See theme.rs. Callers pass
 // their per-frame Settings snapshot: this runs ~2x per cell per rebuilt frame,
-// and settings() is an RwLock read + Arc clone - too hot to take per colour.
+// and settings() is an RwLock read + Arc clone - too hot to take per color.
 
 pub fn resolve(c: Color, colors: &Colors, s: &Settings) -> [u8; 3] {
 	match c {
@@ -47,10 +47,10 @@ fn default_indexed(i: u8, s: &Settings) -> [u8; 3] {
 }
 
 fn named(n: NamedColor, colors: &Colors, s: &Settings) -> [u8; 3] {
+	use NamedColor::*;
 	if let Some(rgb) = colors[n] {
 		return [rgb.r, rgb.g, rgb.b];
 	}
-	use NamedColor::*;
 	match n {
 		Foreground | DimForeground | BrightForeground => s.fg,
 		Background => s.bg,

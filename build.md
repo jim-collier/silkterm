@@ -39,6 +39,37 @@ cargo build --release --target x86_64-pc-windows-gnu
 
 The linker and a static-CRT flag are wired up in `.cargo/config.toml`, so the resulting `.exe` is self-contained (depends only on stock Windows system DLLs) and is a GUI binary (no console window in release builds).
 
+### Running the Windows build on Linux, under wine
+
+`utility/run-windows-build-via-wine.bash` runs that `.exe` here, so the Windows build can be looked at without a Windows machine:
+
+```sh
+./utility/run-windows-build-via-wine.bash              # newest build, on the current display
+./utility/run-windows-build-via-wine.bash --restage    # rebuild the wineprefix first
+./utility/run-windows-build-via-wine.bash --attach     # foreground, output on this terminal
+```
+
+It stages a private wineprefix, the exe, and its own `config.toml` under `cicd/artifacts/win-run/` (gitignored), so `~/.wine` and the real `~/.config/silkterm` are untouched. Needs `wine`; mingw is used for a small shim (see below) and is already a prerequisite for the cross-build.
+
+One consequence worth knowing: a wineprefix maps `Z:` to `/` (and further drives to raw `/dev` nodes) as symlinks under `prefix/dosdevices/`. Anything that walks the tree following symlinks therefore climbs out of the repo and into the whole filesystem. `cicd/config.bash` excludes `cicd/artifacts` from the backup for that reason - keep any new tree-walker off it too, or point it at `--exclude`.
+
+What this does and does not buy you:
+
+- Rendering, fonts, menus, tabs, dialogs, wallpaper and the scrim all work, on the real GPU (wgpu reaches the card through winevulkan). That covers most of what a Windows check is for.
+- The shell does not work. Wine's ConPTY is only half implemented: `CreatePseudoConsole` succeeds and the initial grid size is honored, but a child started with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` never attaches to it, so no output reaches the grid. Expect a correctly drawn, empty terminal.
+- `ResizePseudoConsole` is a stub returning `E_NOTIMPL`, and the terminal backend asserts that it returns `S_OK` - so the app would die on its first resize. The script builds a tiny `conpty.dll` (the backend prefers any loadable `conpty.dll` over kernel32) that passes create/close through to kernel32 and answers resize with `S_OK`. Microsoft's own `conpty.dll`/`OpenConsole.exe` fail earlier under wine, so there is nothing better to drop in.
+- Only the x86_64 build runs; wine on x86_64 cannot execute the ARM64 exe.
+
+A newer wine does not help, so there is no reason to chase one. Measured against wine 11.14 (staging): the shell is still dead - the pty pipe gets zero bytes and the child's output escapes to the parent, exactly as on 10.0. The one thing that does change is `ResizePseudoConsole`, which fakes success from wine 11.2 onward (still a stub, it resizes nothing) and so merely makes the shim above redundant. Wine 11.0 stable is not enough - it still returns `E_NOTIMPL`.
+
+To try a different wine anyway, put it first on `PATH`: the script calls `wine`/`wineboot` unqualified, so nothing else is needed. Give it its own prefix, since wine upgrades a prefix in place and an older wine will not take it back:
+
+```sh
+PATH=/path/to/other-wine/bin:$PATH ./utility/run-windows-build-via-wine.bash --restage
+```
+
+WineHQ ships Debian packages rather than tarballs, but they install self-contained under `/opt/wine-*`, so `dpkg -x wine-staging-amd64_*.deb <dir>` gives a runnable tree without touching the system wine.
+
 ## ARM64 (Linux & Windows, cross-compile via cargo-zigbuild)
 
 `cargo-zigbuild` uses `zig` as a universal cross-linker, so ARM64 Linux and Windows build from an x86_64 Linux host with no per-target gcc/SDK.
@@ -84,7 +115,7 @@ wgpu uses the Metal backend automatically. No extra system packages are needed b
 
 ## Formatting
 
-`rustfmt.toml` pins the style (`hard_tabs`). The hand-formatted data tables (the `Palette`/`Dlg` colour matrices in `theme.rs`/`settings_ui.rs`, the About table in `dialog.rs`) carry `#[rustfmt::skip]` so `cargo fmt` leaves them compact; everything else is rustfmt-canonical.
+`rustfmt.toml` pins the style (`hard_tabs`). The hand-formatted data tables (the `Palette`/`Dlg` color matrices in `theme.rs`/`settings_ui.rs`, the About table in `dialog.rs`) carry `#[rustfmt::skip]` so `cargo fmt` leaves them compact; everything else is rustfmt-canonical.
 
 A pre-commit hook (`utility/git-hooks/pre-commit`) reformats the staged `.rs` files on every commit so they never drift. Activate it once per clone:
 

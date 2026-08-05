@@ -1,0 +1,22 @@
+Sound asset sources and licenses
+================================
+
+keys-oreo/ (per-key press sounds)
+  The Mechvibes "EG Oreo" sound pack, unmodified.
+  Source: https://github.com/hainguyents13/mechvibes (files under src/audio/eg-oreo/)
+  License: MIT (LICENSE at repo root; the pack ships in the repo)
+  Attribution: "Keyboard sounds from the Mechvibes EG Oreo pack (github.com/hainguyents13/mechvibes), MIT license"
+  Format: one recording (oreo.ogg) + config.json mapping each keycode to its
+  [start_ms, duration_ms] slice - 114 keys, each with its own sample, including
+  dedicated SPACE (57), ENTER (28) and BACKSPACE (14).
+
+mouse/click.wav and mouse/click_quiet.wav
+  Single clicks extracted (with edge fades) from "Computer Mouse Clicks -
+  Single, Double and Soft Clicks" by ApeinCave.
+  Source: https://freesound.org/people/ApeinCave/sounds/855467/
+  License: CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/)
+  Attribution: none required (CC0)
+  click.wav       = click at 23.18s of the source (deepest: centroid ~3 kHz, RMS -39 dB)
+  click_quiet.wav = click at 20.55s of the source (quietest: RMS -42.6 dB)
+  Note: extracted from the freesound HQ preview mp3 (128 kbps); the original
+  wav needs a login.

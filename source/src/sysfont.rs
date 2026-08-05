@@ -30,7 +30,7 @@ pub struct UiFont {
 
 /// Cached desktop *interface* (UI/chrome) font: whatever the user picked for
 /// menus and dialogs - serif or not. This is the first choice for chrome text;
-/// sans_serif() below is only the fallback when no desktop setting is readable.
+/// `sans_serif()` below is only the fallback when no desktop setting is readable.
 pub fn interface() -> &'static UiFont {
 	static U: OnceLock<UiFont> = OnceLock::new();
 	U.get_or_init(platform::interface)
@@ -126,7 +126,7 @@ mod platform {
 
 	// Parse a Pango font description "Family Style... Size", e.g.
 	// "GentiumAlt Bold 13" -> family "GentiumAlt", size 13, bold. The style
-	// words are captured (bold/italic), not just stripped, so chrome can honour
+	// words are captured (bold/italic), not just stripped, so chrome can honor
 	// the desktop's weight/slant.
 	fn parse_pango(desc: &str) -> super::UiFont {
 		let desc = desc.trim().trim_matches(['\'', '"']);
@@ -141,8 +141,12 @@ mod platform {
 		}
 		// Peel trailing weight/style/stretch words so only the family remains.
 		let (mut bold, mut italic) = (false, false);
-		while tokens.last().is_some_and(|t| is_style_word(t)) {
-			let word = tokens.pop().unwrap().to_ascii_lowercase();
+		while let Some(&last) = tokens.last() {
+			if !is_style_word(last) {
+				break;
+			}
+			tokens.pop();
+			let word = last.to_ascii_lowercase();
 			match word.as_str() {
 				"bold" | "semibold" | "semi-bold" | "demibold" | "demi-bold" | "extrabold"
 				| "extra-bold" | "ultrabold" | "ultra-bold" | "black" | "heavy" => bold = true,
@@ -260,7 +264,9 @@ mod platform {
 
 	// Windows has no dedicated monospace setting; report the message-box font
 	// size (the conventional system size). No reliable system *monospace* family,
-	// so leave family None and let the generic monospace resolution pick one.
+	// so leave family None - the resolver then walks the user's font_family stack
+	// and config::DEFAULT_FONT_STACK (never the bare Family::Monospace db lottery,
+	// whose winner can lack a bold face).
 	pub fn monospace() -> Monospace {
 		Monospace {
 			family: None,
@@ -269,7 +275,7 @@ mod platform {
 	}
 
 	// The menu font is what native chrome (menus/dialog labels) uses; family,
-	// size, weight and slant all honour the user's "Menu" font setting.
+	// size, weight and slant all honor the user's "Menu" font setting.
 	pub fn interface() -> super::UiFont {
 		unsafe {
 			let mut ncm: NONCLIENTMETRICSW = core::mem::zeroed();

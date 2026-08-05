@@ -6,6 +6,8 @@
 //! it composites the same way as the rect pipeline and works with transparency.
 
 use crate::config::Fit;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -13,9 +15,21 @@ struct Uniform {
 	resolution: [f32; 2],
 	image_size: [f32; 2],
 	opacity: f32,
-	fit: f32, // 0 = stretch, 1 = zoom (cover)
-	_pad: [f32; 2],
+	fit: f32,         // 0 = stretch, 1 = zoom (cover)
+	anchor: [f32; 2], // which part of the image survives a zoom crop; 0.5 = center
 }
+
+// Wallpaper VRAM-content probe verdict (see `vram_check_poll`).
+pub enum WpProbe {
+	Intact,
+	Lost,
+	MapFailed,
+}
+
+// The probe block edge. 64 keeps bytes_per_row (side*4 = 256) copy-aligned;
+// images smaller than this in either dimension just skip the probe.
+const PROBE_SIDE: u32 = 64;
+const PROBE_BYTES: usize = (PROBE_SIDE * PROBE_SIDE * 4) as usize;
 
 pub struct ImageRenderer {
 	pipeline: wgpu::RenderPipeline,
@@ -24,6 +38,19 @@ pub struct ImageRenderer {
 	image_size: [f32; 2],
 	opacity: f32,
 	fit: f32,
+	anchor: [f32; 2],
+	// last resolution written to the uniform (skip the per-frame re-write)
+	last_res: std::cell::Cell<(f32, f32)>,
+	// VT-switch loss probe: this texture is a REAL casualty of a VRAM purge
+	// (it is sampled every frame, so it lives hot in video memory - unlike a
+	// synthetic sentinel, which the driver can keep restorable elsewhere). A
+	// center block of the uploaded pixels is kept CPU-side and read back on the
+	// probe tick; a mismatch means the purge hit us.
+	texture: wgpu::Texture,
+	probe_at: Option<(u32, u32)>, // block origin; None = image too small, probe disabled
+	probe_ref: Vec<u8>,
+	probe_buf: wgpu::Buffer,
+	probe_inflight: Option<Arc<AtomicU8>>,
 }
 
 impl ImageRenderer {
@@ -36,6 +63,7 @@ impl ImageRenderer {
 		height: u32,
 		opacity: f32,
 		fit: Fit,
+		anchor: [f32; 2],
 	) -> Self {
 		let size = wgpu::Extent3d {
 			width,
@@ -49,7 +77,9 @@ impl ImageRenderer {
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
 			format: wgpu::TextureFormat::Rgba8UnormSrgb,
-			usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+			usage: wgpu::TextureUsages::TEXTURE_BINDING
+				| wgpu::TextureUsages::COPY_DST
+				| wgpu::TextureUsages::COPY_SRC,
 			view_formats: &[],
 		});
 		queue.write_texture(
@@ -170,6 +200,25 @@ impl ImageRenderer {
 			cache: None,
 		});
 
+		// Reference block from the image center (corners are more likely to be a
+		// flat color a zero-wipe could coincidentally match).
+		let probe_at = (width >= PROBE_SIDE && height >= PROBE_SIDE)
+			.then(|| ((width - PROBE_SIDE) / 2, (height - PROBE_SIDE) / 2));
+		let probe_ref = probe_at.map_or_else(Vec::new, |(bx, by)| {
+			let mut block = Vec::with_capacity(PROBE_BYTES);
+			for row in 0..PROBE_SIDE {
+				let start = (((by + row) * width + bx) * 4) as usize;
+				block.extend_from_slice(&rgba[start..start + (PROBE_SIDE * 4) as usize]);
+			}
+			block
+		});
+		let probe_buf = device.create_buffer(&wgpu::BufferDescriptor {
+			label: Some("bg probe read"),
+			size: PROBE_BYTES as u64,
+			usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+			mapped_at_creation: false,
+		});
+
 		Self {
 			pipeline,
 			bind_group,
@@ -177,16 +226,29 @@ impl ImageRenderer {
 			image_size: [width as f32, height as f32],
 			opacity,
 			fit: if fit == Fit::Zoom { 1.0 } else { 0.0 },
+			anchor: [anchor[0].clamp(0.0, 1.0), anchor[1].clamp(0.0, 1.0)],
+			texture,
+			probe_at,
+			probe_ref,
+			probe_buf,
+			probe_inflight: None,
+			last_res: std::cell::Cell::new((0.0, 0.0)),
 		}
 	}
 
 	pub fn set_resolution(&self, queue: &wgpu::Queue, w: f32, h: f32) {
+		// called per frame; opacity/fit/anchor are fixed at construction, so the
+		// uniform only changes on resize
+		if self.last_res.get() == (w, h) {
+			return;
+		}
+		self.last_res.set((w, h));
 		let uniform_data = Uniform {
 			resolution: [w, h],
 			image_size: self.image_size,
 			opacity: self.opacity,
 			fit: self.fit,
-			_pad: [0.0, 0.0],
+			anchor: self.anchor,
 		};
 		queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform_data));
 	}
@@ -196,15 +258,114 @@ impl ImageRenderer {
 		pass.set_bind_group(0, &self.bind_group, &[]);
 		pass.draw(0..4, 0..1);
 	}
+
+	// Start an async readback of the probe block. False when the probe is
+	// disabled (tiny image) or one is already in flight.
+	pub fn vram_check_start(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
+		let Some((bx, by)) = self.probe_at else {
+			return false;
+		};
+		if self.probe_inflight.is_some() {
+			return false;
+		}
+		let mut enc = device.create_command_encoder(&Default::default());
+		enc.copy_texture_to_buffer(
+			wgpu::TexelCopyTextureInfo {
+				texture: &self.texture,
+				mip_level: 0,
+				origin: wgpu::Origin3d { x: bx, y: by, z: 0 },
+				aspect: wgpu::TextureAspect::All,
+			},
+			wgpu::TexelCopyBufferInfo {
+				buffer: &self.probe_buf,
+				layout: wgpu::TexelCopyBufferLayout {
+					offset: 0,
+					bytes_per_row: Some(PROBE_SIDE * 4),
+					rows_per_image: Some(PROBE_SIDE),
+				},
+			},
+			wgpu::Extent3d {
+				width: PROBE_SIDE,
+				height: PROBE_SIDE,
+				depth_or_array_layers: 1,
+			},
+		);
+		queue.submit(Some(enc.finish()));
+		let flag = Arc::new(AtomicU8::new(0));
+		let done = flag.clone();
+		self.probe_buf
+			.slice(..)
+			.map_async(wgpu::MapMode::Read, move |r| {
+				done.store(if r.is_ok() { 1 } else { 2 }, Ordering::Release);
+			});
+		self.probe_inflight = Some(flag);
+		true
+	}
+
+	// Poll an in-flight probe. Lost is not reseeded here - on loss the caller
+	// reloads the wallpaper wholesale (recover_gpu), replacing this instance.
+	pub fn vram_check_poll(&mut self, device: &wgpu::Device) -> Option<WpProbe> {
+		let flag = self.probe_inflight.as_ref()?.clone();
+		if flag.load(Ordering::Acquire) == 0 {
+			// non-blocking pump so the map callback can run
+			let _ = device.poll(wgpu::PollType::Poll);
+		}
+		match flag.load(Ordering::Acquire) {
+			0 => None,
+			2 => {
+				self.probe_inflight = None;
+				Some(WpProbe::MapFailed)
+			}
+			_ => {
+				self.probe_inflight = None;
+				let intact = {
+					let data = self.probe_buf.slice(..).get_mapped_range();
+					data[..] == self.probe_ref[..]
+				};
+				self.probe_buf.unmap();
+				Some(if intact {
+					WpProbe::Intact
+				} else {
+					WpProbe::Lost
+				})
+			}
+		}
+	}
+
+	// Diagnostic (SILK_VRAMLOSS): zero the probe block to fake a content loss.
+	pub fn vram_clobber(&self, queue: &wgpu::Queue) {
+		let Some((bx, by)) = self.probe_at else {
+			return;
+		};
+		queue.write_texture(
+			wgpu::TexelCopyTextureInfo {
+				texture: &self.texture,
+				mip_level: 0,
+				origin: wgpu::Origin3d { x: bx, y: by, z: 0 },
+				aspect: wgpu::TextureAspect::All,
+			},
+			&[0u8; PROBE_BYTES],
+			wgpu::TexelCopyBufferLayout {
+				offset: 0,
+				bytes_per_row: Some(PROBE_SIDE * 4),
+				rows_per_image: Some(PROBE_SIDE),
+			},
+			wgpu::Extent3d {
+				width: PROBE_SIDE,
+				height: PROBE_SIDE,
+				depth_or_array_layers: 1,
+			},
+		);
+	}
 }
 
-const BG_WGSL: &str = r#"
+const BG_WGSL: &str = r"
 struct Uniform {
     resolution: vec2<f32>,
     image_size: vec2<f32>,
     opacity: f32,
     fit: f32,
-    _pad: vec2<f32>,
+    anchor: vec2<f32>,
 };
 @group(0) @binding(0) var<uniform> u: Uniform;
 @group(0) @binding(1) var tex: texture_2d<f32>;
@@ -223,13 +384,14 @@ fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     if (u.fit < 0.5) {
         uv = p / u.resolution; // stretch
     } else {
-        // zoom / cover: fill while preserving aspect, center-crop
+        // zoom / cover: fill while preserving aspect, crop about the anchor
+        // (0 keeps the left/top edge, 1 the right/bottom, 0.5 centers)
         let scale = max(u.resolution.x / u.image_size.x, u.resolution.y / u.image_size.y);
         let disp = u.image_size * scale;
-        uv = (p + (disp - u.resolution) * 0.5) / disp;
+        uv = (p + (disp - u.resolution) * u.anchor) / disp;
     }
     let c = textureSample(tex, samp, uv);
     let a = c.a * u.opacity;
     return vec4<f32>(c.rgb * a, a); // premultiplied
 }
-"#;
+";

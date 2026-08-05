@@ -2,6 +2,7 @@
 // Copyright © 2026 Jim Collier
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,13 +18,12 @@ use winit::window::{CursorIcon, Fullscreen, Window, WindowId};
 use alacritty_terminal::term::TermMode;
 use glyphon::{Buffer, Color as GColor, Shaping, TextArea, TextBounds};
 
-use crate::bgimage::ImageRenderer;
+use crate::bgimage::{ImageRenderer, WpProbe};
 use crate::clipboard::Clipboard;
 use crate::config;
-use crate::config::DONATE_URL;
-use crate::gfx::{Gfx, RectInstance, RectRenderer};
+use crate::gfx::{Gfx, RectInstance, RectRenderer, VramProbe};
 use crate::input;
-use crate::pane::{Dir, Pane, PaneManager, Rect};
+use crate::pane::{BarHit, CopyKind, Dir, Pane, PaneManager, Rect};
 use crate::term::{PaneId, UserEvent};
 use crate::text::TextCtx;
 
@@ -36,6 +36,11 @@ use crate::text::TextCtx;
 const RAISE_REASSERTS: u8 = 24;
 const RAISE_REASSERT_IVL: Duration = Duration::from_millis(50);
 
+// Reopening Settings this soon after closing it resumes the tab and scroll it
+// was left on - long enough to cover "closed it, went to look at the result,
+// came back", short enough that a later visit still starts from the top.
+const SETTINGS_RESUME: Duration = Duration::from_secs(60);
+
 pub struct App {
 	proxy: EventLoopProxy<UserEvent>,
 	state: Option<State>,
@@ -44,12 +49,20 @@ pub struct App {
 	// context, so it can be larger than the main window.
 	dialog: Option<crate::dialog::DialogWin>,
 	dialog_dirty: bool,
+	// where the Settings dialog was when it last closed, and when that was
+	settings_view: Option<(Instant, crate::settings_ui::View)>,
 	// after the dialog is focused, re-assert "keep the terminal under me" a few
 	// times: the WM's own activation (raising the dialog) can land just after our
 	// first restack and re-bury the terminal, so a couple of delayed retries
 	// settle it (see handle_dialog_event / about_to_wait).
 	raise_reassert: u8,
 	raise_next: Instant,
+	// VT watcher spawned (once per process; GL path only)
+	vt_watch: bool,
+	// GPU context the pop-out dialogs draw on, warmed on a worker thread once the
+	// terminal is on screen (see gfx::DialogGpu for why they can't share the
+	// terminal's) and then kept, so no dialog open pays for it.
+	gpu_warm: crate::gfx::GpuWarm,
 	// cicd profiler stage: when SILK_PROFILE_OUT is set the app runs a workload
 	// (via --shell) for SILK_PROFILE_SECS then exits, so main can dump a flamegraph.
 	#[cfg(feature = "profiling")]
@@ -66,8 +79,11 @@ impl App {
 			cli,
 			dialog: None,
 			dialog_dirty: false,
+			settings_view: None,
 			raise_reassert: 0,
 			raise_next: Instant::now(),
+			vt_watch: false,
+			gpu_warm: crate::gfx::GpuWarm::idle(),
 			#[cfg(feature = "profiling")]
 			profile_secs: std::env::var("SILK_PROFILE_SECS")
 				.ok()
@@ -81,10 +97,22 @@ impl App {
 	// Events for the pop-out dialog window (its own surface/input).
 	fn handle_dialog_event(&mut self, event: WindowEvent) {
 		use crate::dialog::DialogAction as DA;
+		if env_flag("SILK_DLGDBG") {
+			match &event {
+				WindowEvent::KeyboardInput { event: k, .. } => {
+					eprintln!("[dlg] key {:?} {:?}", k.logical_key, k.state);
+				}
+				WindowEvent::Focused(f) => eprintln!("[dlg] focused {f}"),
+				WindowEvent::MouseInput { state, button, .. } => {
+					eprintln!("[dlg] mouse {button:?} {state:?}");
+				}
+				_ => {}
+			}
+		}
 		let mut act: Option<DA> = None;
 		match event {
 			WindowEvent::CloseRequested => {
-				self.dialog = None;
+				self.close_dialog();
 				return;
 			}
 			WindowEvent::Focused(true) => {
@@ -127,9 +155,27 @@ impl App {
 			} => {
 				if let Some(d) = &mut self.dialog {
 					match state {
-						ElementState::Pressed => act = d.mouse_down(),
+						ElementState::Pressed => {
+							// clipboard for the field context-menu commands
+							let clip = self.state.as_mut().map(|s| &mut s.clipboard);
+							act = d.mouse_down(clip);
+						}
 						ElementState::Released => act = d.mouse_up(),
 					}
+					self.dialog_dirty = true;
+				}
+			}
+			WindowEvent::MouseInput {
+				state: ElementState::Pressed,
+				button: MouseButton::Right,
+				..
+			} => {
+				if let Some(d) = &mut self.dialog {
+					// gray the menu's Paste when the clipboard holds nothing
+					let paste_ok = self.state.as_mut().is_some_and(|s| {
+						s.clipboard.get_clipboard().is_some_and(|t| !t.is_empty())
+					});
+					d.mouse_right(paste_ok);
 					self.dialog_dirty = true;
 				}
 			}
@@ -139,7 +185,24 @@ impl App {
 				if let Some(d) = &mut self.dialog {
 					match &key_event.logical_key {
 						Key::Named(NamedKey::Escape) => act = d.key_escape(),
-						Key::Named(NamedKey::Enter) => act = d.key_enter(),
+						Key::Named(NamedKey::Enter) => {
+							// clipboard for a context-menu item fired via Enter
+							let clip = self.state.as_mut().map(|s| &mut s.clipboard);
+							act = d.key_enter(clip);
+						}
+						Key::Named(NamedKey::ContextMenu) => {
+							let paste_ok = self.state.as_mut().is_some_and(|s| {
+								s.clipboard.get_clipboard().is_some_and(|t| !t.is_empty())
+							});
+							d.menu_key(paste_ok);
+						}
+						// Shift+F10: the other standard context-menu chord
+						Key::Named(NamedKey::F10) if d.shift_held() => {
+							let paste_ok = self.state.as_mut().is_some_and(|s| {
+								s.clipboard.get_clipboard().is_some_and(|t| !t.is_empty())
+							});
+							d.menu_key(paste_ok);
+						}
 						Key::Named(NamedKey::Tab) => d.key_tab(),
 						Key::Named(NamedKey::PageUp) => d.key_page(false),
 						Key::Named(NamedKey::PageDown) => d.key_page(true),
@@ -150,11 +213,18 @@ impl App {
 						Key::Named(NamedKey::ArrowLeft) => d.key_horizontal(-1),
 						Key::Named(NamedKey::ArrowRight) => d.key_horizontal(1),
 						Key::Named(
-							nav_key @ (NamedKey::Home | NamedKey::End | NamedKey::Delete),
-						) => d.edit_nav(*nav_key),
+							nav_key @ (NamedKey::Home
+							| NamedKey::End
+							| NamedKey::Delete
+							| NamedKey::Insert),
+						) => {
+							let clip = self.state.as_mut().map(|s| &mut s.clipboard);
+							d.edit_nav(*nav_key, clip);
+						}
 						Key::Character(typed) => {
 							for c in typed.chars() {
-								if let Some(action) = d.key_char(c) {
+								let clip = self.state.as_mut().map(|s| &mut s.clipboard);
+								if let Some(action) = d.key_char(c, clip) {
 									act = Some(action);
 								}
 							}
@@ -192,15 +262,73 @@ impl App {
 		}
 	}
 
+	// Windows: an owned popup gets no automatic placement (it lands at the
+	// screen origin), so center a fresh dialog over the terminal window.
+	// Linux WMs place transients themselves.
+	#[cfg(target_os = "windows")]
+	fn center_dialog(&self) {
+		let (Some(state), Some(dialog)) = (self.state.as_ref(), self.dialog.as_ref()) else {
+			return;
+		};
+		if let Ok(pos) = state.window.outer_position() {
+			let win = state.window.outer_size();
+			let dlg = dialog.window.outer_size();
+			let x = pos.x + (win.width as i32 - dlg.width as i32) / 2;
+			let y = pos.y + (win.height as i32 - dlg.height as i32) / 2;
+			dialog
+				.window
+				.set_outer_position(winit::dpi::PhysicalPosition::new(x.max(0), y.max(0)));
+		}
+	}
+	// self kept for call-site parity with the Windows version above
+	#[cfg(not(target_os = "windows"))]
+	#[allow(clippy::unused_self)]
+	fn center_dialog(&self) {}
+
+	// Windows: the dialog is created hidden (see dialog::make), so after centering it
+	// draw one frame at the final position and then show it - no origin flash, no jump.
+	// Elsewhere the dialog is already mapped by new_about / new_settings.
+	#[cfg(target_os = "windows")]
+	fn reveal_dialog(&mut self) {
+		if let Some(d) = self.dialog.as_mut() {
+			d.render();
+			d.window.set_visible(true);
+		}
+	}
+	// self kept for call-site parity with the Windows version above
+	#[cfg(not(target_os = "windows"))]
+	#[allow(clippy::unused_self)]
+	fn reveal_dialog(&self) {}
+
+	// Drop the dialog window, remembering a Settings view on the way out so a
+	// reopen within SETTINGS_RESUME picks up where it left off. Every close goes
+	// through here - Cancel, OK, Esc and the window's own close button alike.
+	fn close_dialog(&mut self) {
+		if let Some(view) = self
+			.dialog
+			.as_ref()
+			.and_then(super::dialog::DialogWin::settings_view)
+		{
+			self.settings_view = Some((Instant::now(), view));
+		}
+		self.dialog = None;
+	}
+
 	fn apply_dialog_action(&mut self, action: crate::dialog::DialogAction) {
 		use crate::dialog::DialogAction as DA;
 		match action {
 			DA::OpenUrl(u) => open_url(&u),
-			DA::Close => self.dialog = None,
-			DA::Apply => self.apply_dialog_settings(),
-			DA::ApplyAndClose => {
+			DA::Close => self.close_dialog(),
+			DA::Apply => {
 				self.apply_dialog_settings();
-				self.dialog = None;
+			}
+			DA::ApplyAndClose => {
+				// Only close on OK if the save actually landed; if the file looked
+				// open elsewhere the change applied live but wasn't written, so we
+				// keep the dialog up (the FYI went to stderr).
+				if self.apply_dialog_settings() {
+					self.close_dialog();
+				}
 			}
 		}
 	}
@@ -208,15 +336,29 @@ impl App {
 	// Pull the edited Settings from the dialog window and live-apply them to the
 	// main window (config + persist + rebuild). The dialog has its own surface,
 	// so it's unaffected.
-	fn apply_dialog_settings(&mut self) {
-		if let Some((orig, edited, sys)) = self.dialog.as_ref().and_then(|d| d.settings_values()) {
+	// Returns true when the change was written to disk (false = file open elsewhere,
+	// applied live but not saved - OK then leaves the dialog open).
+	fn apply_dialog_settings(&mut self) -> bool {
+		let mut wrote = true;
+		if let Some((orig, edited, sys)) = self
+			.dialog
+			.as_ref()
+			.and_then(super::dialog::DialogWin::settings_values)
+		{
 			if let Some(state) = self.state.as_mut() {
-				state.apply_settings_values(&orig, edited, sys);
+				wrote = state.apply_settings_values(&orig, edited, sys);
 			}
 			// Reverted-to-default keys: after persist wrote the diffs, comment
 			// them back out so the file returns to the template's default line.
-			if let Some(reverted) = self.dialog.as_mut().map(|d| d.take_reverted()) {
-				config::revert_keys(&reverted);
+			// Skip when the write was deferred (revert_keys would just no-op busy).
+			if wrote {
+				if let Some(reverted) = self
+					.dialog
+					.as_mut()
+					.map(super::dialog::DialogWin::take_reverted)
+				{
+					config::revert_keys(&reverted);
+				}
 			}
 			// The applied values are the new baseline, so a later Apply diffs against
 			// the live state (without this, re-selecting the open-time value - e.g.
@@ -226,42 +368,60 @@ impl App {
 			}
 			self.dialog_dirty = true;
 		}
+		wrote
 	}
 }
 
 #[derive(Clone, Copy)]
 enum MenuAction {
+	OpenLink,
+	CopyLink,
 	Copy,
 	Paste,
 	PasteSelection,
 	ToggleReadOnly,
-	ToggleAutoCopy,
+	ToggleCopySelect,
+	ToggleCopyOutput,
 	NewTab,
 	CloseTab,
-	NextTab,
-	PrevTab,
 	SplitVertical,
 	SplitHorizontal,
 	Close,
+	FontBigger,
+	FontSmaller,
+	FontReset,
 	ToggleFullscreen,
 	ToggleFrame,
 	ToggleMenuBar,
+	ToggleSingleTab,
 	ReloadConfig,
 	Settings,
-	Support,
 	About,
 	Quit,
 }
 
 // One row of a menu: an action item (optionally a checkmark toggle) or a group
 // separator. Separators render as a faint horizontal line, never hover/click.
+// `accel` is the byte offset of the item's accelerator letter in the label
+// (underlined; typing it picks the item); None = no accelerator - accelerators
+// must be unique per menu, so low-priority items (and ones that already have a
+// hotkey) go without.
 enum Entry {
 	Item {
 		label: String,
 		action: MenuAction,
 		check: Option<bool>,
+		accel: Option<usize>,
 	},
 	Sep,
+}
+
+// Byte offset of the accelerator letter: exact-case match first (so 'S' can
+// pick "Selection" in "Paste Selection"), else case-insensitive.
+fn accel_at(label: &str, ch: char) -> Option<usize> {
+	label
+		.find(ch)
+		.or_else(|| label.to_ascii_lowercase().find(ch.to_ascii_lowercase()))
 }
 
 fn mi(label: &str, action: MenuAction) -> Entry {
@@ -269,6 +429,15 @@ fn mi(label: &str, action: MenuAction) -> Entry {
 		label: label.into(),
 		action,
 		check: None,
+		accel: None,
+	}
+}
+fn mia(ch: char, label: &str, action: MenuAction) -> Entry {
+	Entry::Item {
+		label: label.into(),
+		action,
+		check: None,
+		accel: accel_at(label, ch),
 	}
 }
 fn mt(on: bool, label: &str, action: MenuAction) -> Entry {
@@ -276,6 +445,15 @@ fn mt(on: bool, label: &str, action: MenuAction) -> Entry {
 		label: label.into(),
 		action,
 		check: Some(on),
+		accel: None,
+	}
+}
+fn mta(ch: char, on: bool, label: &str, action: MenuAction) -> Entry {
+	Entry::Item {
+		label: label.into(),
+		action,
+		check: Some(on),
+		accel: accel_at(label, ch),
 	}
 }
 
@@ -309,6 +487,11 @@ impl ContextMenu {
 				.map(|entry| self.entry_h(entry))
 				.sum::<f32>()
 	}
+	// Anywhere on the popup, separators and padding included - a click that lands
+	// on the menu belongs to the menu, whatever chrome it happens to cover.
+	fn hit(&self, mx: f32, my: f32) -> bool {
+		mx >= self.x && mx < self.x + self.w && my >= self.y && my < self.y + self.height()
+	}
 	fn item_at(&self, mx: f32, my: f32) -> Option<usize> {
 		if mx < self.x || mx >= self.x + self.w {
 			return None;
@@ -330,9 +513,7 @@ impl ContextMenu {
 		if n == 0 {
 			return None;
 		}
-		let mut i = from
-			.map(|i| i as i32)
-			.unwrap_or(if dir > 0 { -1 } else { 0 });
+		let mut i = from.map_or(if dir > 0 { -1 } else { 0 }, |i| i as i32);
 		for _ in 0..n {
 			i = (i + dir).rem_euclid(n);
 			if matches!(self.entries[i as usize], Entry::Item { .. }) {
@@ -346,16 +527,22 @@ impl ContextMenu {
 // Shaped chrome text, kept frame to frame: menu-bar titles + the copybox label,
 // the tab close-"x", and per-tab title buffers. Re-shaping these every rendered
 // frame was constant background work during any animation (even the idle cursor
-// pulse). Rebuilt when the menu colour changes; a tab entry re-shapes only when
+// pulse). Rebuilt when the menu color changes; a tab entry re-shapes only when
 // its title or the tab width changes; the whole cache is dropped on a
 // text-context rebuild (buffers are tied to the FontSystem they were made with).
 struct ChromeCache {
 	menu_fg: [u8; 3],
 	menubar: Vec<Buffer>, // MENU_BAR titles + trailing "Copy output" label
-	close: Buffer,
-	close_w: f32, // advance of the "x" glyph, for centering it in the button box
 	tab_w: f32,
 	tabs: Vec<(String, Buffer)>,
+}
+
+// The menu bar's right-side copy-mode cluster: "Copy on [ ] select [ ] output".
+// Drawing, label placement, and click hit-testing all read this one layout.
+struct CopyBoxes {
+	boxes: [Rect; 2],  // select, output checkbox squares
+	label_x: [f32; 3], // left edge per COPYBOX_LABELS entry
+	label_w: [f32; 3],
 }
 
 // Tab strip: each tab owns its own pane split-tree. Detach/dock to other
@@ -391,7 +578,7 @@ impl Tabs {
 		let n = self.list.len();
 		self.active = (self.active + n - 1) % n;
 	}
-	// swap the active tab with its neighbour and follow it
+	// swap the active tab with its neighbor and follow it
 	fn move_active(&mut self, fwd: bool) {
 		let n = self.list.len();
 		if n < 2 {
@@ -412,12 +599,111 @@ impl Tabs {
 const MENU_BAR_VPAD: f32 = 6.0;
 const TAB_BAR_VPAD: f32 = 6.0; // text is metric-centered in the bar; descenders clear via that
 const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to settle)
+// Freeze knob (one line rolls it back): a minimized window builds no frames -
+// PTY reading never stops - and catches up in one hard-cut frame on restore.
+// Covers WMs that never report Occluded for an iconified window.
+const FREEZE_MINIMIZED: bool = true;
+// Warm knob (one line rolls it back): build the dialogs' GPU context on a worker
+// thread once the terminal is up, instead of on the click that opens one. Off
+// means every dialog open pays for its own instance + adapter + device again.
+const WARM_DIALOG_GPU: bool = true;
 const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-size settle time before hitting disk
+const VRAM_CHECK_IVL: Duration = Duration::from_secs(2); // GL sentinel probe tick (VT-switch texture loss)
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
 const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
 const TAB_MAX_W: f32 = 220.0; // tab button width cap - drawing AND click hit-testing use this
 const TAB_CLOSE_W: f32 = 26.0; // right-edge close-button region per tab (title clips before it)
-const TAB_CLOSE_M: f32 = 5.0; // balanced top/right/bottom margin around the close button box
+const TAB_CLOSE_M: f32 = 6.0; // balanced top/right/bottom margin around the close button box
+
+// SILK_DUMP / SILK_DLGDBG are consulted per frame / per event; read the env
+// once (var_os takes the env lock and scans environ every call). Same pattern
+// as pane.rs scroll_dbg.
+fn env_flag(name: &str) -> bool {
+	use std::sync::OnceLock;
+	static DUMP: OnceLock<bool> = OnceLock::new();
+	static DLGDBG: OnceLock<bool> = OnceLock::new();
+	let cell = match name {
+		"SILK_DUMP" => &DUMP,
+		_ => &DLGDBG,
+	};
+	*cell.get_or_init(|| std::env::var_os(name).is_some())
+}
+
+// VT-switch field diagnostics: `touch ~/silk_vramdbg.on` (no relaunch needed)
+// makes the sentinel probes append their results to ~/silk_vramdbg.txt, so a
+// desktop repro can show whether loss detection fired. The marker is re-checked
+// per call - probes tick every 2s, so the stat costs nothing.
+fn vramdbg(msg: &str) {
+	use std::io::Write;
+	let Some(home) = std::env::var_os("HOME") else {
+		return;
+	};
+	let home = std::path::PathBuf::from(home);
+	if !home.join("silk_vramdbg.on").exists() {
+		return;
+	}
+	let path = home.join("silk_vramdbg.txt");
+	// a forgotten marker must not grow the log unbounded
+	if std::fs::metadata(&path).is_ok_and(|meta| meta.len() > 4_000_000) {
+		return;
+	}
+	let epoch = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.map_or(0, |d| d.as_secs());
+	if let Ok(mut f) = std::fs::OpenOptions::new()
+		.create(true)
+		.append(true)
+		.open(&path)
+	{
+		let _ = writeln!(f, "{epoch} pid={} {msg}", std::process::id());
+	}
+}
+
+// Watch the active virtual console (/sys/class/tty/tty0/active). A VT switch
+// away and back breaks sampling of long-lived textures in ways the readback
+// probes cannot see (field logs: every witness read back intact across a switch
+// that blacked the window - the driver restores readback contents while the
+// sampled copies stay garbage). So detect the switch itself: the value at spawn
+// is the console this display lives on; when the file returns to it after being
+// elsewhere, send VtSwitched so the sampled textures are rebuilt. Only returns
+// are signaled - a rebuild done while parked on another console could itself be
+// purged on the way back. SILK_VTFILE overrides the watched path so a headless
+// test can drive the mechanism (Xvfb has no VTs).
+#[cfg(target_os = "linux")]
+fn spawn_vt_watch(proxy: EventLoopProxy<UserEvent>) -> bool {
+	let path = std::env::var_os("SILK_VTFILE").map_or_else(
+		|| std::path::PathBuf::from("/sys/class/tty/tty0/active"),
+		std::path::PathBuf::from,
+	);
+	let read = |p: &std::path::Path| std::fs::read_to_string(p).ok().map(|s| s.trim().to_owned());
+	// unreadable (container, odd kernel) -> no watcher; probes remain as fallback
+	let Some(home_vt) = read(&path) else {
+		return false;
+	};
+	std::thread::spawn(move || {
+		let mut last = home_vt.clone();
+		loop {
+			std::thread::sleep(Duration::from_millis(500));
+			let Some(cur) = read(&path) else {
+				continue;
+			};
+			if cur != last {
+				vramdbg(&format!("vt switch: {last} -> {cur}"));
+				let returned = cur == home_vt && last != home_vt;
+				last = cur;
+				if returned && proxy.send_event(UserEvent::VtSwitched).is_err() {
+					return; // event loop gone - exit with the app
+				}
+			}
+		}
+	});
+	true
+}
+
+#[cfg(not(target_os = "linux"))]
+fn spawn_vt_watch(_proxy: EventLoopProxy<UserEvent>) -> bool {
+	false
+}
 
 // The close-"x" button box within a tab: a square with equal top/right/bottom
 // margins (the extra room falls to the left, separating it from the title).
@@ -433,14 +719,16 @@ fn tab_close_box(tab_x: f32, tab_w: f32, bar_y: f32, tab_h: f32) -> Rect {
 	}
 }
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
-const COPYBOX_LABEL: &str = "Copy output"; // always-visible auto-copy checkbox on the menu bar
+const COPYBOX_LABELS: [&str; 3] = ["Copy on:", "select", "output"]; // menu-bar auto-copy checkboxes
 
 struct State {
 	window: Arc<Window>,
 	gfx: Gfx,
 	text: TextCtx,
 	rects: RectRenderer,
-	bg_image: Option<ImageRenderer>,
+	// posts worker results (wallpaper) back into this event loop
+	proxy: EventLoopProxy<UserEvent>,
+	wallpaper_img: Option<ImageRenderer>,
 	scrim: crate::scrim::Scrim, // text readability scrim (used only when config.text_scrim)
 	tabs: Tabs,
 	mods: ModifiersState,
@@ -450,28 +738,74 @@ struct State {
 	selecting: Option<PaneId>,          // pane with an in-progress drag-select
 	last_click: Option<(Instant, f32, f32)>, // for multi-click detection
 	click_count: u32,                   // consecutive clicks in the same spot (2=double, 3=triple)
-	resizing: Option<Vec<bool>>,        // split-tree path of the divider being dragged
-	dragging_pane: Option<PaneId>,      // pane being drag-reordered (Shift+drag)
+	// (active tab, focused pane, window focused) at the last frame - a change
+	// while focused pokes the focused pane's cursor, so a long-idle-parked
+	// animation resumes on any window/tab/pane refocus
+	cursor_focus_sig: Option<(usize, PaneId, bool)>,
+	resizing: Option<Vec<bool>>, // split-tree path of the divider being dragged
+	dragging_pane: Option<PaneId>, // pane being drag-reordered (Shift+drag)
+	bar_dragging: Option<PaneId>, // pane whose scrollbar thumb is being dragged
+	// A Ctrl+press landed on a hyperlink: the release over the same link opens it,
+	// a release anywhere else drops it (drag off to cancel, like the tab close
+	// button). The URL is captured at press time - output can scroll it away in
+	// between - and `menu_link` is the same for the right-click menu's two items.
+	link_arm: Option<(PaneId, String)>,
+	menu_link: Option<String>,
 	cursor_icon: CursorIcon,
 	clipboard: Clipboard,
 	last_frame: Instant,
 	dirty: bool,
 	bell_flash: f32,    // visual-bell brightness, set to 1.0 on BEL, decays to 0
 	size_tracked: bool, // false until the first frame, so startup/programmatic resizes don't overwrite remembered_size
+	// The window is born hidden and revealed once a real frame is on screen at its
+	// final (grid-derived) size, so it never flashes the default size / blank client
+	// before painting. reveal_want is the physical size to wait for when the startup
+	// resize was async (None = reveal on the first frame); reveal_deadline is a hard
+	// fallback so an async or WM-adjusted resize can't strand the window hidden.
+	revealed: bool,
+	reveal_want: Option<winit::dpi::PhysicalSize<u32>>,
+	reveal_deadline: Instant,
 	pending_size: Option<(usize, usize)>, // debounced remember-size: persisted after the size holds, not per resize tick
 	pending_size_at: Instant,
 	menu: Option<ContextMenu>,
-	decorated: bool,             // window frame shown (winit has no getter, so track it)
-	menu_bar: bool,              // window menu bar (File/Edit/...) shown
-	bar_open: Option<usize>,     // which top-level menu's dropdown is open, if any
-	quit: bool,                  // set by File->Quit; the event handler exits after applying
-	win_opacity: Option<f32>,    // CLI --background-opacity override (this window only)
-	win_title: Option<String>,   // CLI --title override (else "AppName - <tab title>")
-	last_win_title: String,      // last string set on the window (skip redundant set_title)
+	tab_close_arm: Option<usize>, // tab whose close button is held down (closes on release)
+	decorated: bool,              // window frame shown (winit has no getter, so track it)
+	menu_bar: bool,               // window menu bar (File/Edit/...) shown
+	bar_open: Option<usize>,      // which top-level menu's dropdown is open, if any
+	quit: bool,                   // set by File->Quit; the event handler exits after applying
+	win_opacity: Option<f32>,     // CLI --background-opacity override (this window only)
+	win_title: Option<String>,    // CLI --title override (else "AppName - <tab title>")
+	last_win_title: String,       // last string set on the window (skip redundant set_title)
 	focused: bool, // window has keyboard focus (gates copy-output: never copy from a background window)
 	pending_about: bool, // request to open the About window (App acts on it; needs the event loop)
 	pending_settings: bool, // request to open the Settings window
 	chrome: Option<ChromeCache>, // shaped menu/tab text, reused across frames
+	chrome_rev: u64, // bumped whenever a chrome buffer is (re)shaped
+	// Signature of everything feeding the prepared text set, from the last frame
+	// that actually prepared. A pure cursor frame matches it, and then both
+	// glyphon prepares (the bulk of per-frame CPU) and the atlas trim are skipped
+	// - the retained vertex buffers are still correct. None = must prepare.
+	text_sig: Option<u64>,
+	// same idea for the context-menu overlay (skip re-shaping an open menu)
+	overlay_sig: Option<u64>,
+	// The scrim's blurred source is valid for this signature. The halo depends on
+	// the text alone (the cursor has its own coverage texture), so a cursor-only
+	// frame reuses it instead of re-rendering and re-blurring the whole window.
+	scrim_sig: Option<u64>,
+	occluded: bool, // window fully hidden: skip rendering entirely until it comes back
+	// last cycle's frozen state (occluded or minimized); the false edge is the
+	// unfreeze - one dirty catch-up frame, hard-cut for panes with pending output
+	was_hidden: bool,
+	// Rotation state as of the last scan; the folder itself, the shuffle history
+	// and the picking all live in the worker (wallpaper.rs), so nothing here reads
+	// the filesystem.
+	wp_count: usize, // images the last scan found (<2 = nothing to rotate to)
+	wp_current: Option<PathBuf>, // image showing now, so order mode advances from it
+	wp_next: Option<Instant>, // when to rotate next (None = no timer / startup-only)
+	wp_locked: bool, // a command-line wallpaper owns this session; don't rotate
+	wp_seq: u64,     // request stamp; a worker result with an older one is stale
+	vram_next: Instant, // next GL VRAM sentinel probe (VT-switch content-loss detection)
+	vramloss_test: bool, // SILK_VRAMLOSS one-shot: fake a loss to exercise the rebuild path
 }
 
 impl State {
@@ -491,11 +825,17 @@ impl State {
 		}
 	}
 
+	// The tab bar shows for >1 tab always; for a single tab unless the user
+	// opts out (hide_single_tab, View menu / config).
+	fn tab_bar_visible(&self) -> bool {
+		self.tabs.len() > 1 || !config::settings().hide_single_tab
+	}
+
 	fn area(&self) -> Rect {
 		// Panes sit below the menu bar (always when shown) and the tab bar
-		// (only with >1 tab), stacked in that order.
+		// (when visible), stacked in that order.
 		let bar = self.menubar_h()
-			+ if self.tabs.len() > 1 {
+			+ if self.tab_bar_visible() {
 				self.tab_bar_h()
 			} else {
 				0.0
@@ -515,11 +855,114 @@ impl State {
 		}
 	}
 
+	// Point every pane at the pointer (only the one under it gets a position), so
+	// the next build can look for a hyperlink there. Marking dirty on a pending
+	// probe is what makes the underline appear at all - the frame that scans is
+	// also the frame that draws the result - and it costs at most one frame per
+	// cell crossed, never one per pixel.
+	fn update_link_hover(&mut self, at: Option<(f32, f32)>) {
+		if !config::settings().hyperlinks {
+			return;
+		}
+		// An app watching the pointer owns it: no underline flickering through a
+		// TUI that uses the mouse itself. This has to key on the app's MODE, not on
+		// whether this particular event was reported - the report is throttled to
+		// cell changes, so a pointer that settles inside one cell would slip
+		// through and underline anyway. Shift is the local-action bypass, the same
+		// one that already lets a selection through a tracking app.
+		let shift = self.mods.shift_key();
+		let over = at
+			.and_then(|(x, y)| self.tabs.cur().pane_at(x, y))
+			.filter(|id| {
+				shift
+					|| !self.tabs.cur().panes.get(id).is_some_and(|p| {
+						p.mode
+							.intersects(TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG)
+					})
+			});
+		let text = &self.text;
+		let mut probing = false;
+		for (id, p) in &mut self.tabs.cur_mut().panes {
+			p.set_hover(at.filter(|_| over == Some(*id)), text);
+			probing |= p.link_probing();
+		}
+		self.dirty |= probing;
+	}
+
+	// Whether the pointer is over an underlined link - the pane's own hover state,
+	// so this is only the pointer shape's question. Anything that ACTS on a link
+	// re-scans through link_at_pointer instead of trusting a frame-old answer.
+	fn hovering_link(&self) -> bool {
+		let (x, y) = self.mouse;
+		self.tabs
+			.cur()
+			.pane_at(x, y)
+			.and_then(|id| self.tabs.cur().panes.get(&id))
+			.is_some_and(|p| p.link_hover.is_some())
+	}
+
+	// Fresh scan for the link under the pointer, with the pane it belongs to.
+	fn link_at_pointer(&self) -> Option<(PaneId, crate::pane::LinkHit)> {
+		let (x, y) = self.mouse;
+		let id = self.tabs.cur().pane_at(x, y)?;
+		let hit = self
+			.tabs
+			.cur()
+			.panes
+			.get(&id)?
+			.link_at_px(x, y, &self.text)?;
+		Some((id, hit))
+	}
+
+	// One owner for the pointer shape: a drag beats a divider, a divider beats a
+	// link. Called from the pointer move AND from the frame, since a link found
+	// under a pointer that has stopped moving still has to change the cursor.
+	fn sync_cursor_icon(&mut self) {
+		let (x, y) = self.mouse;
+		let icon = if self.dragging_pane.is_some() {
+			CursorIcon::Grabbing
+		} else {
+			match self.tabs.cur().divider_at(x, y, self.area()) {
+				Some((_, Dir::Vertical)) => CursorIcon::ColResize,
+				Some((_, Dir::Horizontal)) => CursorIcon::RowResize,
+				None if self.hovering_link() => CursorIcon::Pointer,
+				None => CursorIcon::Default,
+			}
+		};
+		if icon != self.cursor_icon {
+			self.window.set_cursor(icon);
+			self.cursor_icon = icon;
+		}
+	}
+
+	// Refresh every pane's scrollbar-hover flag from the pointer. Only the pane the
+	// pointer is actually over can be hovered, so this also clears the one it just
+	// left. Marks dirty only on a change - the fade is what needs the frames, and
+	// this runs on every mouse move.
+	fn update_bar_hover(&mut self, x: f32, y: f32) {
+		let cfg = config::settings();
+		if !cfg.scrollbar {
+			return;
+		}
+		let over = self.tabs.cur().pane_at(x, y);
+		let mut changed = false;
+		for (id, p) in &mut self.tabs.cur_mut().panes {
+			let near = over == Some(*id) && p.bar_near(x, y, &cfg);
+			if p.bar_hover != near {
+				p.bar_hover = near;
+				changed = true;
+			}
+		}
+		if changed {
+			self.dirty = true;
+		}
+	}
+
 	// Mouse reporting: forward a button press/release to the pane under the cursor
 	// when the app has mouse tracking on. Shift is the local-action override (so the
 	// user can still select/paste/menu). Returns true when the event was reported
 	// (and should not be handled locally). Records the held button for drag + release.
-	fn report_mouse_button(&mut self, button: MouseButton, pressed: bool) -> bool {
+	fn report_mouse_button(&mut self, button: MouseButton, state: ElementState) -> bool {
 		let Some(btn) = mouse_btn_of(button) else {
 			return false;
 		};
@@ -529,7 +972,7 @@ impl State {
 			return false;
 		}
 		let (x, y) = self.mouse;
-		if pressed {
+		if state == ElementState::Pressed {
 			if self.mods.shift_key() {
 				return false;
 			}
@@ -614,20 +1057,29 @@ impl State {
 	}
 
 	// Copy-output: when the focused pane's foreground command finishes, copy its
-	// output text to the desktop clipboard - gated on this window being focused and
-	// the pane's per-pane opt-in, so a background window/pane never exports output.
+	// output text to the desktop clipboard. A pending capture only survives while
+	// its pane stays the active copy target (window focused, tab active, pane
+	// focused, trigger on) - anything else disarms it, so output that finished
+	// while the user was elsewhere never copies late on refocus; only a command
+	// launched after returning does. Runs every event-loop pass, and every way
+	// eligibility can break is itself an event, so the disarm always lands before
+	// a refocus could re-poll.
 	fn poll_output_copy(&mut self) {
-		if !self.focused {
-			return;
+		let keep = self.focused.then(|| self.tabs.cur().focused);
+		for pm in &mut self.tabs.list {
+			for (id, pane) in &mut pm.panes {
+				if keep != Some(*id) || !pane.copy_output {
+					pane.disarm_capture();
+				}
+			}
 		}
-		let focused_id = self.tabs.cur().focused;
+		let Some(focused_id) = keep else {
+			return;
+		};
 		let text = {
 			let Some(pane) = self.tabs.cur_mut().panes.get_mut(&focused_id) else {
 				return;
 			};
-			if !pane.auto_copy {
-				return;
-			}
 			pane.poll_capture(CAPTURE_SETTLE)
 		};
 		if let Some(text) = text {
@@ -643,7 +1095,7 @@ impl State {
 		}
 		let focused_id = self.tabs.cur().focused;
 		let p = self.tabs.cur().panes.get(&focused_id)?;
-		p.auto_copy
+		p.copy_output
 			.then(|| p.capture_deadline(CAPTURE_SETTLE))
 			.flatten()
 	}
@@ -657,8 +1109,7 @@ impl State {
 		let focused_id = pm.focused;
 		pm.panes
 			.get_mut(&focused_id)
-			.map(|p| p.term.tab_title())
-			.unwrap_or_else(|| config::APP_NAME.into())
+			.map_or_else(|| config::APP_NAME.into(), |p| p.term.tab_title())
 	}
 
 	// The window title (taskbar / alt-tab): a CLI --title override verbatim, else
@@ -686,35 +1137,50 @@ impl State {
 	fn open_menu(&mut self, target: PaneId, mx: f32, my: f32) {
 		let p = self.tabs.cur().panes.get(&target);
 		let read_only = p.is_some_and(|p| p.read_only);
-		let auto_copy = p.is_some_and(|p| p.auto_copy);
-		let entries = vec![
-			mi("Copy", MenuAction::Copy),
-			mi("Paste", MenuAction::Paste),
-			mi("Paste Selection", MenuAction::PasteSelection),
+		let copy_select = p.is_some_and(|p| p.copy_select);
+		let copy_output = p.is_some_and(|p| p.copy_output);
+		// A link under the click gets its two items at the top, and only then -
+		// they'd be dead weight on every other right-click.
+		self.menu_link = self.link_at_pointer().map(|(_, link)| link.url);
+		let mut entries = Vec::new();
+		if self.menu_link.is_some() {
+			entries.extend([
+				mia('O', "Open link", MenuAction::OpenLink),
+				mia('L', "Copy link", MenuAction::CopyLink),
+				Entry::Sep,
+			]);
+		}
+		entries.extend([
+			mia('C', "Copy (Ctrl+Shift+C)", MenuAction::Copy),
+			mia('P', "Paste (Ctrl+Shift+V)", MenuAction::Paste),
+			mia('S', "Paste Selection", MenuAction::PasteSelection),
 			Entry::Sep,
-			mt(auto_copy, "Auto-copy output", MenuAction::ToggleAutoCopy),
-			mt(read_only, "Read-only", MenuAction::ToggleReadOnly),
+			mt(copy_select, "Copy on select", MenuAction::ToggleCopySelect),
+			mt(copy_output, "Copy on output", MenuAction::ToggleCopyOutput),
+			mta('R', read_only, "Read-only", MenuAction::ToggleReadOnly),
 			Entry::Sep,
-			mi("New Tab", MenuAction::NewTab),
-			mi("Split Vertical", MenuAction::SplitVertical),
-			mi("Split Horizontal", MenuAction::SplitHorizontal),
+			mia('N', "New Tab (Ctrl+Shift+T)", MenuAction::NewTab),
+			mia('V', "Split Vertical", MenuAction::SplitVertical),
+			mia('H', "Split Horizontal", MenuAction::SplitHorizontal),
 			mi("Close Pane", MenuAction::Close),
 			Entry::Sep,
-			mt(
+			mta(
+				'F',
 				self.window.fullscreen().is_some(),
-				"Fullscreen",
+				"Fullscreen (F11)",
 				MenuAction::ToggleFullscreen,
 			),
-			mt(
+			mta(
+				'w',
 				!self.decorated,
 				"Hide window frame",
 				MenuAction::ToggleFrame,
 			),
-			mt(self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
+			mta('M', self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
 			Entry::Sep,
 			mi("Reload Config", MenuAction::ReloadConfig),
-			mi("Settings\u{2026}", MenuAction::Settings),
-		];
+			mi("Settings\u{2026} (Ctrl+,)", MenuAction::Settings),
+		]);
 		self.bar_open = None;
 		self.popup(target, entries, mx, my);
 	}
@@ -751,53 +1217,62 @@ impl State {
 	fn bar_menu_items(&self, idx: usize) -> Vec<Entry> {
 		let p = self.tabs.cur().panes.get(&self.tabs.cur().focused);
 		let read_only = p.is_some_and(|p| p.read_only);
-		let auto_copy = p.is_some_and(|p| p.auto_copy);
+		let copy_select = p.is_some_and(|p| p.copy_select);
+		let copy_output = p.is_some_and(|p| p.copy_output);
 		match idx {
 			0 => vec![
-				mi("Reload Config", MenuAction::ReloadConfig),
-				mi("Settings\u{2026}", MenuAction::Settings),
+				mia('R', "Reload Config", MenuAction::ReloadConfig),
+				mia('S', "Settings\u{2026} (Ctrl+,)", MenuAction::Settings),
 				Entry::Sep,
-				mi("Quit", MenuAction::Quit),
+				mia('Q', "Quit", MenuAction::Quit),
 			],
 			1 => vec![
-				mi("Copy", MenuAction::Copy),
-				mi("Paste", MenuAction::Paste),
-				mi("Paste Selection", MenuAction::PasteSelection),
+				mia('C', "Copy (Ctrl+Shift+C)", MenuAction::Copy),
+				mia('P', "Paste (Ctrl+Shift+V)", MenuAction::Paste),
+				mia('S', "Paste Selection", MenuAction::PasteSelection),
 				Entry::Sep,
-				mt(auto_copy, "Auto-copy output", MenuAction::ToggleAutoCopy),
-				mt(read_only, "Read-only", MenuAction::ToggleReadOnly),
+				mt(copy_select, "Copy on select", MenuAction::ToggleCopySelect),
+				mt(copy_output, "Copy on output", MenuAction::ToggleCopyOutput),
 			],
 			2 => vec![
-				mt(
+				mia('I', "Increase Font Size (Ctrl +)", MenuAction::FontBigger),
+				mia('D', "Decrease Font Size (Ctrl -)", MenuAction::FontSmaller),
+				mia('e', "Reset Font Size (Ctrl 0)", MenuAction::FontReset),
+				Entry::Sep,
+				mta('R', read_only, "Read-only", MenuAction::ToggleReadOnly),
+				Entry::Sep,
+				mta(
+					'F',
 					self.window.fullscreen().is_some(),
-					"Fullscreen",
+					"Fullscreen (F11)",
 					MenuAction::ToggleFullscreen,
 				),
-				mt(
+				mta(
+					'w',
 					!self.decorated,
 					"Hide window frame",
 					MenuAction::ToggleFrame,
 				),
-				mt(self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
+				mta('M', self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
+				mta(
+					's',
+					config::settings().hide_single_tab,
+					"Hide single tab",
+					MenuAction::ToggleSingleTab,
+				),
 			],
 			3 => vec![
-				mi("New Tab", MenuAction::NewTab),
-				mi("Next Tab", MenuAction::NextTab),
-				mi("Previous Tab", MenuAction::PrevTab),
+				mia('N', "New Tab (Ctrl+Shift+T)", MenuAction::NewTab),
 				Entry::Sep,
-				mi("Close Tab", MenuAction::CloseTab),
+				mia('C', "Close Tab (Ctrl+Shift+W)", MenuAction::CloseTab),
 			],
 			4 => vec![
-				mi("Split Vertical", MenuAction::SplitVertical),
-				mi("Split Horizontal", MenuAction::SplitHorizontal),
+				mia('V', "Split Vertical", MenuAction::SplitVertical),
+				mia('H', "Split Horizontal", MenuAction::SplitHorizontal),
 				Entry::Sep,
-				mi("Close Pane", MenuAction::Close),
+				mia('C', "Close Pane", MenuAction::Close),
 			],
-			_ => vec![
-				mi("Support SilkTerm\u{2026}", MenuAction::Support),
-				Entry::Sep,
-				mi("About\u{2026}", MenuAction::About),
-			],
+			_ => vec![mia('A', "About\u{2026}", MenuAction::About)],
 		}
 	}
 
@@ -831,30 +1306,66 @@ impl State {
 			.position(|&(x, w)| mx >= x && mx < x + w)
 	}
 
-	// Always-visible "Copy output" checkbox on the right of the menu bar (security:
-	// the user can always see when the focused pane is auto-copying output). Returns
-	// the checkbox-square rect, the label's left x, and the label width.
-	fn copybox_layout(&mut self) -> (Rect, f32, f32) {
+	// Always-visible "Copy on [ ] select [ ] output" pair on the right of the
+	// menu bar (security: the user can always see when the focused pane is
+	// auto-copying). label_x/label_w index-match COPYBOX_LABELS.
+	fn copybox_layout(&mut self) -> CopyBoxes {
 		let attrs = crate::text::ui_attrs();
-		let label_w = self.text.measure_ui_text(COPYBOX_LABEL, &attrs);
+		let mut label_w = [0.0f32; 3];
+		for (w, label) in label_w.iter_mut().zip(COPYBOX_LABELS) {
+			*w = self.text.measure_ui_text(label, &attrs);
+		}
 		let box_sz = (self.text.ui_line_h * 0.6).round();
-		let menu_h = self.menu_bar_h();
+		let box_y = (self.menu_bar_h() - box_sz) / 2.0;
 		let right = self.gfx.config.width as f32 - MENU_BAR_PAD;
-		let label_x = right - label_w;
-		let box_x = label_x - 6.0 - box_sz;
-		let rect = Rect {
-			x: box_x,
-			y: (menu_h - box_sz) / 2.0,
+		let out_x = right - label_w[2];
+		let out_box = Rect {
+			x: out_x - 6.0 - box_sz,
+			y: box_y,
 			w: box_sz,
 			h: box_sz,
 		};
-		(rect, label_x, label_w)
+		let sel_x = out_box.x - 14.0 - label_w[1];
+		let sel_box = Rect {
+			x: sel_x - 6.0 - box_sz,
+			y: box_y,
+			w: box_sz,
+			h: box_sz,
+		};
+		let lead_x = sel_box.x - 10.0 - label_w[0];
+		CopyBoxes {
+			boxes: [sel_box, out_box],
+			label_x: [lead_x, sel_x, out_x],
+			label_w,
+		}
 	}
 
-	// True if a menu-bar click at `mx` hit the copy-output checkbox area.
-	fn copybox_hit(&mut self, mx: f32) -> bool {
-		let (rect, label_x, label_w) = self.copybox_layout();
-		mx >= rect.x && mx <= label_x + label_w
+	// Which copy-mode checkbox (the square or its word) a menu-bar click hit.
+	fn copybox_hit(&mut self, mx: f32) -> Option<CopyKind> {
+		let cb = self.copybox_layout();
+		if mx >= cb.boxes[0].x && mx <= cb.label_x[1] + cb.label_w[1] {
+			Some(CopyKind::Select)
+		} else if mx >= cb.boxes[1].x && mx <= cb.label_x[2] + cb.label_w[2] {
+			Some(CopyKind::Output)
+		} else {
+			None
+		}
+	}
+
+	// Flip one of a pane's two auto-copy triggers. The two are independent and can
+	// both be on; nothing else is touched (other panes/tabs/windows keep theirs -
+	// only the focused pane of the active tab actually copies, gated at copy time).
+	// A toggle from a context menu on an unfocused pane focuses it so the menu-bar
+	// checkboxes reflect the pane just changed.
+	fn toggle_copy(&mut self, target: PaneId, kind: CopyKind) {
+		let Some(p) = self.tabs.find_pane_mut(target) else {
+			return;
+		};
+		let now = !p.copy_enabled(kind);
+		p.set_copy(kind, now);
+		if self.tabs.cur().panes.contains_key(&target) {
+			self.tabs.cur_mut().focused = target;
+		}
 	}
 
 	// Request the About window. App opens it (window creation needs the event
@@ -873,52 +1384,59 @@ impl State {
 	) {
 		let area = self.area();
 		match action {
+			// the URL was captured when the menu opened - the output under it may
+			// have scrolled away since
+			MenuAction::OpenLink => {
+				if let Some(url) = self.menu_link.clone() {
+					open_link(&url);
+				}
+			}
+			MenuAction::CopyLink => {
+				if let Some(url) = self.menu_link.clone() {
+					self.clipboard.set_clipboard(url);
+				}
+			}
 			MenuAction::Copy => {
 				if let Some(text) = self
 					.tabs
 					.cur()
 					.panes
 					.get(&target)
-					.and_then(|p| p.selection_text())
+					.and_then(super::pane::Pane::selection_text)
 				{
 					self.clipboard.set_clipboard(text);
 				}
 			}
 			MenuAction::Paste => {
 				if let Some(text) = self.clipboard.get_clipboard() {
-					if let Some(p) = self.tabs.cur().panes.get(&target) {
+					if let Some(p) = self.tabs.cur_mut().panes.get_mut(&target) {
 						p.paste(&text);
 					}
 				}
 			}
 			MenuAction::PasteSelection => {
 				if let Some(text) = self.clipboard.get_primary() {
-					if let Some(p) = self.tabs.cur().panes.get(&target) {
+					if let Some(p) = self.tabs.cur_mut().panes.get_mut(&target) {
 						p.paste(&text);
 					}
 				}
 			}
-			MenuAction::ToggleAutoCopy => {
-				if let Some(p) = self.tabs.cur_mut().panes.get_mut(&target) {
-					p.auto_copy = !p.auto_copy;
-				}
-			}
+			MenuAction::ToggleCopySelect => self.toggle_copy(target, CopyKind::Select),
+			MenuAction::ToggleCopyOutput => self.toggle_copy(target, CopyKind::Output),
 			MenuAction::ToggleReadOnly => {
 				if let Some(p) = self.tabs.cur_mut().panes.get_mut(&target) {
 					p.read_only = !p.read_only;
 				}
 			}
 			MenuAction::SplitVertical => {
-				let _ =
-					self.tabs
-						.cur_mut()
-						.split(&mut self.text, proxy, target, Dir::Vertical, area);
+				self.tabs
+					.cur_mut()
+					.split(&mut self.text, proxy, target, Dir::Vertical, area);
 			}
 			MenuAction::SplitHorizontal => {
-				let _ =
-					self.tabs
-						.cur_mut()
-						.split(&mut self.text, proxy, target, Dir::Horizontal, area);
+				self.tabs
+					.cur_mut()
+					.split(&mut self.text, proxy, target, Dir::Horizontal, area);
 			}
 			MenuAction::Close => {
 				if self.tabs.cur().panes.len() > 1 {
@@ -933,14 +1451,9 @@ impl State {
 			}
 			MenuAction::NewTab => self.new_tab(proxy),
 			MenuAction::CloseTab => self.close_tab(),
-			MenuAction::NextTab => {
-				self.tabs.next();
-				self.relayout_all();
-			}
-			MenuAction::PrevTab => {
-				self.tabs.prev();
-				self.relayout_all();
-			}
+			MenuAction::FontBigger => self.font_zoom(1),
+			MenuAction::FontSmaller => self.font_zoom(-1),
+			MenuAction::FontReset => self.font_zoom_reset(),
 			MenuAction::ToggleFullscreen => self.toggle_fullscreen(),
 			MenuAction::ToggleFrame => {
 				self.decorated = !self.decorated;
@@ -950,9 +1463,17 @@ impl State {
 				self.menu_bar = !self.menu_bar;
 				self.relayout_all();
 			}
+			MenuAction::ToggleSingleTab => {
+				let orig = (*config::settings()).clone();
+				let mut new = orig.clone();
+				new.hide_single_tab = !new.hide_single_tab;
+				// config open elsewhere -> persist skips; the session keeps the value
+				let _ = config::persist(&orig, &new);
+				config::update(new);
+				self.relayout_all();
+			}
 			MenuAction::ReloadConfig => self.reload_config(),
 			MenuAction::Settings => self.open_settings(),
-			MenuAction::Support => open_url(DONATE_URL),
 			MenuAction::About => self.open_about(),
 			MenuAction::Quit => self.quit = true,
 		}
@@ -983,7 +1504,7 @@ impl State {
 		let cols = px_to_cells(w as f32, self.text.cell_w, 0.0);
 		let rows = px_to_cells(h as f32, self.text.cell_h, self.menubar_h());
 		// debounce: an interactive drag fires many Resized events; writing
-		// config.toml on each would be dozens of file writes/sec. Persist in
+		// config.shcl on each would be dozens of file writes/sec. Persist in
 		// flush_window_size once the size has held (or on exit).
 		self.pending_size = Some((cols, rows));
 		self.pending_size_at = Instant::now();
@@ -1004,7 +1525,9 @@ impl State {
 		let mut new = orig.clone();
 		new.remembered_columns = cols;
 		new.remembered_rows = rows;
-		config::persist(&orig, &new);
+		// If the file's open elsewhere persist skips it (retried on the next resize
+		// or at exit); the live size still updates in memory either way.
+		let _ = config::persist(&orig, &new);
 		config::update(new);
 	}
 
@@ -1018,13 +1541,52 @@ impl State {
 			w: self.gfx.config.width as f32,
 			h: (self.gfx.config.height as f32 - bar).max(1.0),
 		};
-		if let Ok(pm) = PaneManager::new(&mut self.text, proxy, area, config::default_shell_argv())
-		{
+		// inherit shell + directory from the pane that was active when the tab
+		// was opened; a default-shell pane carries None -> still the default
+		let (cmd, cwd) = self
+			.tabs
+			.list
+			.get(self.tabs.active)
+			.map_or((None, None), PaneManager::inherit_spawn);
+		let cmd = cmd.or_else(config::default_shell_argv);
+		if let Ok(pm) = PaneManager::new(&mut self.text, proxy, area, cmd, cwd) {
 			self.tabs.list.push(pm);
 			self.tabs.active = self.tabs.list.len() - 1;
 			self.relayout_all(); // existing tab(s) shrink for the now-shown bar
 			self.update_title();
 			self.dirty = true;
+		}
+	}
+
+	// New window = a fresh process (each window is its own process), started in
+	// the focused pane's current directory so it picks up where you are. The
+	// child sets up its own ctl socket/env at startup; a reaper thread waits on
+	// it so a closed window can't linger as a zombie.
+	fn new_window(&mut self) {
+		let cwd = self
+			.tabs
+			.cur()
+			.panes
+			.get(&self.tabs.cur().focused)
+			.and_then(|p| p.term.cwd());
+		let exe = match std::env::current_exe() {
+			Ok(p) => p,
+			Err(e) => {
+				eprintln!("new window: {e}");
+				return;
+			}
+		};
+		let mut cmd = std::process::Command::new(exe);
+		if let Some(dir) = cwd {
+			cmd.current_dir(dir);
+		}
+		match cmd.spawn() {
+			Ok(mut child) => {
+				std::thread::spawn(move || {
+					let _ = child.wait();
+				});
+			}
+			Err(e) => eprintln!("new window: {e}"),
 		}
 	}
 
@@ -1038,6 +1600,7 @@ impl State {
 		if self.tabs.list.len() <= 1 {
 			return; // keep at least one tab; close the window to exit
 		}
+		let showed = idx == self.tabs.active;
 		self.tabs.list.remove(idx);
 		if self.tabs.active > idx {
 			self.tabs.active -= 1; // a tab before the active one went away
@@ -1045,8 +1608,25 @@ impl State {
 		if self.tabs.active >= self.tabs.list.len() {
 			self.tabs.active = self.tabs.list.len() - 1;
 		}
+		if showed {
+			self.freeze_catchup(); // closing the shown tab reveals a frozen one
+		}
 		self.relayout_all(); // if back to 1 tab, the bar hides and panes grow
 		self.update_title();
+		self.dirty = true;
+	}
+
+	// A frozen surface coming back on screen: hidden tabs never build, and a
+	// minimized/occluded window builds nothing - so the reveal is one dirty
+	// catch-up frame, hard-cut for any pane with output pending (easing the
+	// buffered backlog in is the bounce class). Panes with nothing pending keep
+	// their state untouched.
+	fn freeze_catchup(&mut self) {
+		for pane in self.tabs.cur_mut().panes.values_mut() {
+			if pane.content_dirty {
+				pane.hard_cut();
+			}
+		}
 		self.dirty = true;
 	}
 
@@ -1067,19 +1647,23 @@ impl State {
 
 	// Live-apply edited settings (from the dialog), persist, and rebuild whatever
 	// the change touched (text metrics, background image, opacity, window size).
+	// Returns false if the config file looked open elsewhere so the write was
+	// skipped - the caller (dialog OK) then keeps the dialog open instead of
+	// closing over an unsaved change. The values still apply live regardless.
 	fn apply_settings_values(
 		&mut self,
 		orig: &config::Settings,
 		edited: config::Settings,
 		_system_font: bool,
-	) {
-		// use_system_font is now a persisted setting that overrides font_family at
+	) -> bool {
+		// use_system_font is a persisted setting that only reorders font_family at
 		// resolve time, so nothing special to strip - persist the diff as usual.
-		config::persist(orig, &edited);
+		let wrote = config::persist(orig, &edited);
 		self.apply_new_settings(orig, edited, false);
+		wrote
 	}
 
-	// Re-read config.toml from disk and live-apply it (the "internal command" for
+	// Re-read config.shcl from disk and live-apply it (the "internal command" for
 	// picking up hand-edits without a file watcher). The file is the source here,
 	// so nothing is persisted back.
 	fn reload_config(&mut self) {
@@ -1088,6 +1672,153 @@ impl State {
 		// Force the background image to re-read even when its path is unchanged:
 		// the user may have swapped the file contents under the same name (#167).
 		self.apply_new_settings(&orig, edited, true);
+	}
+
+	// Control-socket wallpaper change: live-only and window-scoped, like the
+	// launch-time --background-image - nothing is persisted to config.shcl.
+	fn set_wallpaper(&mut self, image: Option<std::path::PathBuf>) {
+		let orig = config::settings().as_ref().clone();
+		let mut edited = orig.clone();
+		edited.wallpaper_raw = image
+			.as_ref()
+			.map(|path| path.to_string_lossy().into_owned())
+			.unwrap_or_default();
+		edited.wallpaper = image;
+		self.apply_new_settings(&orig, edited, true);
+	}
+
+	// Hand the wallpaper to a worker thread and carry on drawing. `scan` also
+	// (re)reads the rotation folder and picks from it. Nothing here waits: the
+	// folder, the image and its tags can all live on a share that answers slowly,
+	// which is precisely why none of it runs on this thread.
+	fn request_wallpaper(&mut self, scan: bool) {
+		// retires anything already in flight - a result landing after a newer
+		// request (a rotation tick overtaken by a settings change) is dropped
+		self.wp_seq = self.wp_seq.wrapping_add(1);
+		crate::wallpaper::spawn(
+			&self.proxy,
+			crate::wallpaper::Request {
+				seq: self.wp_seq,
+				settings: config::settings(),
+				scan,
+				current: self.wp_current.clone(),
+			},
+		);
+	}
+
+	// Wallpaper rotation: unless a wallpaper came in on the command line (a
+	// deliberate choice for this session, which leaves rotation out of it
+	// entirely), scan the folder and pick one. The timer arms when the scan
+	// answers - only then do we know whether there is anything to rotate through.
+	fn init_wallpaper(&mut self, lock: bool) {
+		self.wp_locked = lock;
+		self.request_wallpaper(!lock);
+	}
+
+	// Rotate to the next image. The worker re-scans, so images added to or removed
+	// from the folder since launch are picked up.
+	fn advance_wallpaper(&mut self) {
+		// locked, switched off since the timer was armed, or one image (or none):
+		// nothing to rotate to, so drop the timer
+		if self.wp_locked || self.wp_count < 2 || config::settings().rotation_folder().is_none() {
+			self.wp_next = None;
+			return;
+		}
+		self.request_wallpaper(true);
+	}
+
+	// A worker finished; uploading the pixels is all that was left for this thread.
+	fn wallpaper_ready(&mut self, loaded: crate::wallpaper::Loaded) {
+		if loaded.seq != self.wp_seq {
+			return; // superseded while it was working
+		}
+		if loaded.scanned {
+			// a scan is authoritative about rotation: no pick means the folder holds
+			// nothing (or went away), so the timer goes with it
+			self.wp_count = 0;
+			self.wp_current = None;
+			self.wp_next = None;
+			if let Some(rot) = &loaded.rotation {
+				self.wp_count = rot.count;
+				self.wp_current = Some(rot.current.clone());
+				// live-only, like a --wallpaper-file: the dialog shows what is on
+				// screen, and nothing about the pick reaches config.shcl
+				let mut settings = config::settings().as_ref().clone();
+				settings.wallpaper_raw = rot.current.to_string_lossy().into_owned();
+				settings.wallpaper = Some(rot.current.clone());
+				config::update(settings);
+				let ivl = config::settings().wallpaper_rotate_interval_s;
+				self.wp_next = (ivl > 0.0 && rot.count > 1)
+					.then(|| Instant::now() + Duration::from_secs_f32(ivl));
+			}
+		}
+		self.wallpaper_img = loaded.image.map(|img| {
+			let (w, h) = img.rgba.dimensions();
+			ImageRenderer::new(
+				&self.gfx.device,
+				&self.gfx.queue,
+				self.gfx.format,
+				&img.rgba,
+				w,
+				h,
+				img.opacity,
+				img.fit,
+				img.anchor,
+			)
+		});
+		self.dirty = true;
+	}
+
+	// A wallpaper set from the command line while running: honor it for the rest
+	// of the session and stop rotating, without touching the stored settings.
+	fn lock_wallpaper(&mut self, image: Option<std::path::PathBuf>) {
+		self.wp_locked = true;
+		self.wp_next = None;
+		// rotation is done for this session, so drop what it was showing - otherwise
+		// an explicit clear would fall back to it instead of clearing
+		self.wp_current = None;
+		self.set_wallpaper(image);
+	}
+
+	// Rebuild the text context (cell metrics, chrome, pane buffers) for a new
+	// scale factor or font, then relayout. Shared by settings-driven font
+	// rebuilds and DPI scale-factor changes. The surface itself is reconfigured
+	// separately (a Resized event follows a scale change).
+	// Session font zoom (hotkeys / View menu): step the zoom offset and rebuild
+	// the text context at the new effective size. Window-wide, never persisted.
+	fn font_zoom(&mut self, dir: i32) {
+		config::nudge_font_zoom(dir);
+		let scale = self.window.scale_factor() as f32;
+		self.rebuild_text(scale);
+		self.dirty = true;
+	}
+
+	fn font_zoom_reset(&mut self) {
+		if config::font_zoom_px() == 0 {
+			return; // already at the configured size
+		}
+		config::reset_font_zoom();
+		let scale = self.window.scale_factor() as f32;
+		self.rebuild_text(scale);
+		self.dirty = true;
+	}
+
+	// Force the next frame through a full prepare + scrim build. Call whenever
+	// something outside the signature's reach makes the retained GPU state stale
+	// (new atlases, recreated textures, lost VRAM).
+	fn invalidate_prepared(&mut self) {
+		self.text_sig = None;
+		self.scrim_sig = None;
+	}
+
+	fn rebuild_text(&mut self, scale: f32) {
+		self.text = TextCtx::new(&self.gfx.device, &self.gfx.queue, self.gfx.format, scale);
+		self.chrome = None; // cached chrome buffers are tied to the old FontSystem
+		self.invalidate_prepared(); // fresh atlases hold nothing to reuse
+		for pm in &mut self.tabs.list {
+			pm.rebuild_buffers(&mut self.text);
+		}
+		self.relayout_all();
 	}
 
 	// Swap in `edited` and rebuild whatever changed vs `orig` (text metrics,
@@ -1100,9 +1831,18 @@ impl State {
 		force_bg: bool,
 	) {
 		let rebuild = crate::settings_ui::needs_text_rebuild(orig, &edited);
-		let bg = force_bg || crate::settings_ui::bg_image_changed(orig, &edited);
+		let bg = force_bg || crate::settings_ui::wallpaper_changed(orig, &edited);
 		let resize = edited.columns != orig.columns || edited.rows != orig.rows;
 		let blur_changed = edited.transparent_background_blur != orig.transparent_background_blur;
+		// copy_on_select changed -> apply to every existing pane too, so the
+		// dialog toggle takes effect now, not only for panes spawned later
+		if edited.copy_on_select != orig.copy_on_select {
+			for pm in &mut self.tabs.list {
+				for pane in pm.panes.values_mut() {
+					pane.copy_select = edited.copy_on_select;
+				}
+			}
+		}
 		config::update(edited);
 
 		// Backdrop-blur hint toggled -> set/clear the compositor property live.
@@ -1127,17 +1867,24 @@ impl State {
 			}
 		}
 		if rebuild {
-			let scale = self.window.scale_factor() as f32;
-			self.text = TextCtx::new(&self.gfx.device, &self.gfx.queue, self.gfx.format, scale);
-			self.chrome = None; // cached chrome buffers are tied to the old FontSystem
-			for pm in &mut self.tabs.list {
-				pm.rebuild_buffers(&mut self.text);
-			}
-			self.relayout_all();
+			self.rebuild_text(self.window.scale_factor() as f32);
 		}
 		if bg {
-			self.bg_image = load_bg_image(&self.gfx);
+			self.request_wallpaper(false);
 		}
+		self.dirty = true;
+	}
+
+	// GPU texture contents were lost (VT switch / suspend; see the Sentinel note
+	// in gfx.rs). Re-upload everything that was uploaded once: fresh glyph
+	// atlases + chrome via rebuild_text, and the wallpaper. rebuild_text also drops
+	// the prepared/scrim signatures, so the next frame rebuilds the scrim source
+	// instead of reusing a texture that no longer holds anything.
+	fn recover_gpu(&mut self) {
+		self.rebuild_text(self.window.scale_factor() as f32);
+		// re-decoded rather than kept resident: a large wallpaper is tens of MB, and
+		// a VT switch is rare enough not to trade that for a moment without one
+		self.request_wallpaper(false);
 		self.dirty = true;
 	}
 
@@ -1161,6 +1908,18 @@ impl State {
 		self.last_frame = now;
 		let cfg = config::settings(); // one snapshot per frame, not per use/pane
 
+		// Regaining the window, switching tab, or moving pane focus pokes the
+		// focused pane: its cursor animation resumes immediately, from the top of
+		// the cycle - no resume delay, that one is for input.
+		let focus_sig = (self.tabs.active, self.tabs.cur().focused, self.focused);
+		if self.focused && self.cursor_focus_sig != Some(focus_sig) {
+			let id = self.tabs.cur().focused;
+			if let Some(pane) = self.tabs.cur_mut().panes.get_mut(&id) {
+				pane.poke_cursor();
+			}
+		}
+		self.cursor_focus_sig = Some(focus_sig);
+
 		// Visual-bell flash decays toward 0; while >0 the text is brightened (in
 		// build) and we keep rendering so the fade is smooth.
 		if self.bell_flash > 0.0 {
@@ -1180,60 +1939,91 @@ impl State {
 		};
 
 		let mut under: Vec<RectInstance> = Vec::new();
-		// per-pane (bg cells + cursor), scissored to the pane so overscan rows
-		// don't bleed into neighbours
-		let mut groups: Vec<(Rect, Vec<RectInstance>)> = Vec::new();
 		// cursors are drawn separately (above the scrim, so its halo can't obscure them)
 		let mut cursors: Vec<(Rect, RectInstance)> = Vec::new();
 		let mut tops: HashMap<u64, f32> = HashMap::new();
 		// retained-frame app-scroll slide geometry per pane (None = no active slide)
 		let mut slides: HashMap<u64, Option<crate::pane::Slide>> = HashMap::new();
 		let mut animating = bell > 0.0;
-		// text-scrim colour map needs each cell's bg (so a glyph's halo takes its
-		// own cell colour, not always the global) - collect them while building
+		// text-scrim color map needs each cell's bg (so a glyph's halo takes its
+		// own cell color, not always the global) - collect them while building
 		let scrim_on = cfg.text_scrim && cfg.text_scrim_radius > 0.0;
 		let mut scrim_cells: Vec<RectInstance> = Vec::new();
 
-		for (id, pane) in self.tabs.cur_mut().panes.iter_mut() {
+		self.text.color_frame();
+		let win_focused = self.focused;
+		let active_pane = self.tabs.cur().focused;
+		// pane fill color is loop-invariant
+		let pane_bg = {
+			let mut c = config::srgb_f32(cfg.bg);
+			c[3] = bg_alpha;
+			c
+		};
+		for (id, pane) in &mut self.tabs.cur_mut().panes {
 			pane.scroll.advance(dt);
+			pane.scrollbar_tick(dt, &cfg);
+			if pane.bar_animating {
+				animating = true;
+			}
 			let rect = pane.rect;
 			// scope the expensive re-shape to panes that actually changed: fresh
 			// PTY output (content_dirty), an active scroll ease, or a global
 			// cause (bell flash, chrome/UI change) - idle siblings reuse their
 			// cached frame instead of re-shaping at the busy pane's rate
 			let force = force_rebuild || pane.content_dirty || pane.scroll.animating();
-			let draw = pane.build(&mut self.text, dt, bell, force);
+			pane.build(
+				&mut self.text,
+				dt,
+				bell,
+				force,
+				win_focused && *id == active_pane,
+			);
 			if pane.scroll.animating() || pane.cursor_animating {
 				animating = true;
 			}
+			let draw = pane.draw();
 			tops.insert(*id, draw.top);
-			slides.insert(*id, draw.slide);
-			let mut bg = config::srgb_f32(cfg.bg);
-			bg[3] = bg_alpha;
+			slides.insert(*id, draw.slide.clone());
 			under.push(RectInstance {
 				pos: [rect.x, rect.y],
 				size: [rect.w, rect.h],
-				color: bg,
+				color: pane_bg,
+				..Default::default()
 			});
-			if scrim_on {
-				scrim_cells.extend_from_slice(&draw.bg);
-			}
-			groups.push((rect, draw.bg));
 			if let Some(cursor_quad) = draw.cursor {
 				cursors.push((rect, cursor_quad));
 			}
 		}
 
+		// The builds above are where a hyperlink hover is resolved, so the pointer
+		// shape can only be settled after them - a link found under a pointer that
+		// has stopped moving gets no further pointer event to react to.
+		self.sync_cursor_icon();
+
 		let under_len = under.len() as u32;
 		let mut instances = under;
+		// per-pane bg quads (scissored to the pane so overscan rows don't bleed
+		// into neighbors), copied once from each pane's retained frame
 		let mut group_ranges: Vec<(Rect, u32, u32)> = Vec::new();
-		for (rect, bg_quads) in groups {
+		for p in self.tabs.cur().panes.values() {
+			let bg_quads = &p.draw().bg;
 			let start = instances.len() as u32;
-			instances.extend(bg_quads);
-			group_ranges.push((rect, start, instances.len() as u32));
+			instances.extend_from_slice(bg_quads);
+			if scrim_on {
+				scrim_cells.extend_from_slice(bg_quads);
+			}
+			group_ranges.push((p.rect, start, instances.len() as u32));
 		}
 
 		let ring_start = instances.len() as u32;
+		// Scrollbars, drawn with the ring (after the text, so they overlay it) but
+		// pushed first so the focus ring stays on top where they meet at the corner.
+		for p in self.tabs.cur().panes.values() {
+			if let Some(bar) = p.scrollbar(&self.text, &cfg) {
+				let active = p.bar_drag.is_some() || p.bar_hover;
+				instances.extend(scrollbar_insts(&bar, p.bar_fade(), active));
+			}
+		}
 		// Focus ring only distinguishes panes when there's more than one; with a
 		// single pane it's just an unwanted border line around the whole content
 		// (the user wants background all the way to the edge), so skip it.
@@ -1253,6 +2043,7 @@ impl State {
 							pos: [p.rect.x, p.rect.y],
 							size: [p.rect.w, p.rect.h],
 							color,
+							..Default::default()
 						});
 					}
 				}
@@ -1269,6 +2060,23 @@ impl State {
 		} else {
 			Vec::new()
 		};
+
+		// Hyperlink underlines sit with the cursor, AFTER the scrim composite - they
+		// are chrome about the text, not a cell background. Filed with the bg quads
+		// they were painted over by the halo, which is densest right under the
+		// glyphs, so a solid rule came out as a barcode tracing the letterforms.
+		// They stay out of the scrim's coverage map either way (an underline should
+		// cast no halo of its own), and stay under the cursor as before.
+		let mut link_ranges: Vec<(Rect, u32, u32)> = Vec::new();
+		for p in self.tabs.cur().panes.values() {
+			let link_quads = &p.draw().links;
+			if link_quads.is_empty() {
+				continue;
+			}
+			let start = instances.len() as u32;
+			instances.extend_from_slice(link_quads);
+			link_ranges.push((p.rect, start, instances.len() as u32));
+		}
 
 		// cursor quads get their own per-pane ranges, drawn after the scrim composite
 		let mut cursor_ranges: Vec<(Rect, u32, u32)> = Vec::new();
@@ -1311,38 +2119,42 @@ impl State {
 					}
 				}
 			}
-			// always-visible copy-output checkbox (right side): outline always, filled
-			// when the focused pane is auto-copying, so the state is never hidden.
-			let auto_copy = self
-				.tabs
-				.cur()
-				.panes
-				.get(&self.tabs.cur().focused)
-				.is_some_and(|p| p.auto_copy);
-			let (checkbox, _, _) = self.copybox_layout();
-			let border = config::menu_border();
-			instances.push(rect_inst(
-				checkbox.x - 1.0,
-				checkbox.y - 1.0,
-				checkbox.w + 2.0,
-				checkbox.h + 2.0,
-				border,
-			));
-			instances.push(rect_inst(
-				checkbox.x,
-				checkbox.y,
-				checkbox.w,
-				checkbox.h,
-				config::TAB_BAR_BG,
-			));
-			if auto_copy {
+			// always-visible copy-mode checkboxes (right side): outlines always,
+			// filled per the focused pane's two independent triggers, so the state
+			// is never hidden. Dimmed when this window isn't focused - the flags
+			// stay set, but nothing copies until it regains focus.
+			let fp = self.tabs.cur().panes.get(&self.tabs.cur().focused);
+			let checked = [
+				fp.is_some_and(|p| p.copy_select),
+				fp.is_some_and(|p| p.copy_output),
+			];
+			let cb = self.copybox_layout();
+			let border = copy_dim(config::menu_border(), self.focused);
+			let fill = copy_dim(config::menu_fg(), self.focused);
+			for (checkbox, on) in cb.boxes.iter().zip(checked) {
 				instances.push(rect_inst(
-					checkbox.x + 3.0,
-					checkbox.y + 3.0,
-					checkbox.w - 6.0,
-					checkbox.h - 6.0,
-					config::menu_fg(),
+					checkbox.x - 1.0,
+					checkbox.y - 1.0,
+					checkbox.w + 2.0,
+					checkbox.h + 2.0,
+					border,
 				));
+				instances.push(rect_inst(
+					checkbox.x,
+					checkbox.y,
+					checkbox.w,
+					checkbox.h,
+					config::TAB_BAR_BG,
+				));
+				if on {
+					instances.push(rect_inst(
+						checkbox.x + 3.0,
+						checkbox.y + 3.0,
+						checkbox.w - 6.0,
+						checkbox.h - 6.0,
+						fill,
+					));
+				}
 			}
 			Some((start, instances.len() as u32))
 		} else {
@@ -1351,11 +2163,14 @@ impl State {
 
 		// tab bar (only with >1 tab), drawn just below the menu bar
 		let tab_bar_y = self.menubar_h();
-		let tabbar_range = if self.tabs.len() > 1 {
+		let tabbar_range = if self.tab_bar_visible() {
 			let start = instances.len() as u32;
 			instances.push(rect_inst(0.0, tab_bar_y, win_w, tab_h, config::TAB_BAR_BG));
 			let n = self.tabs.len();
 			let tab_w = (win_w / n as f32).min(TAB_MAX_W);
+			// per-tab loop invariants (each config accessor is an RwLock read)
+			let box_border = config::menu_border();
+			let x_rgb = close_x_rgb();
 			for i in 0..n {
 				let x = i as f32 * tab_w;
 				let color = if i == self.tabs.active {
@@ -1370,16 +2185,28 @@ impl State {
 					tab_h - 3.0,
 					color,
 				));
-				// close-button box: a 1px outline (border rect + inner tab-bg fill)
+				// close-button box: a 1px outline (border rect + inner tab-bg fill).
+				// The active tab's box fill leans faintly toward a pastel red - just
+				// past noticeable, so the current tab reads at a glance without a
+				// clashing accent.
 				let cb = tab_close_box(x, tab_w, tab_bar_y, tab_h);
 				instances.push(rect_inst(
 					cb.x - 1.0,
 					cb.y - 1.0,
 					cb.w + 2.0,
 					cb.h + 2.0,
-					config::menu_border(),
+					box_border,
 				));
-				instances.push(rect_inst(cb.x, cb.y, cb.w, cb.h, color));
+				let box_fill = if self.tab_close_arm == Some(i) {
+					// held down: light the button (press feedback; closes on release)
+					mix_rgb(color, [0xff, 0xff, 0xff], 0.28)
+				} else if i == self.tabs.active {
+					mix_rgb(color, [0xd0, 0x80, 0x80], 0.12)
+				} else {
+					color
+				};
+				instances.push(rect_inst(cb.x, cb.y, cb.w, cb.h, box_fill));
+				instances.push(close_x_inst(cb, x_rgb));
 			}
 			Some((start, instances.len() as u32))
 		} else {
@@ -1427,20 +2254,27 @@ impl State {
 					));
 				}
 			}
-			// accelerator underline under each item's first letter (press it to pick)
+			// accelerator underline under each item's accelerator letter (press it
+			// to pick); items without one draw no underline
 			let acc_attrs = crate::text::ui_attrs();
 			let line_h = self.text.ui_line_h;
 			let acc_x = menu.x + config::MENU_PAD_X + config::MENU_GUTTER;
 			for (i, entry) in menu.entries.iter().enumerate() {
-				if let Entry::Item { label, .. } = entry {
-					if let Some(c) = label.chars().next() {
+				if let Entry::Item {
+					label,
+					accel: Some(pos),
+					..
+				} = entry
+				{
+					if let Some(c) = label[*pos..].chars().next() {
+						let prefix_w = self.text.measure_ui_text(&label[..*pos], &acc_attrs);
 						let mut buf = [0u8; 4];
 						let letter_w = self
 							.text
 							.measure_ui_text(c.encode_utf8(&mut buf), &acc_attrs);
 						let top = menu.row_top(i) + (menu.item_h - line_h) / 2.0;
 						instances.push(rect_inst(
-							acc_x,
+							acc_x + prefix_w,
 							top + line_h - 3.0,
 							letter_w,
 							1.0,
@@ -1459,18 +2293,14 @@ impl State {
 		let margin = self.text.margin;
 		let menu_fg_rgb = config::menu_fg();
 		let menu_fg = GColor::rgb(menu_fg_rgb[0], menu_fg_rgb[1], menu_fg_rgb[2]);
-		// subtle close-"x" glyph colour, dimmed toward the tab bg (~0.6)
-		let close_fg = {
-			let dim = |v: u8| ((v as u16 * 3) / 5) as u8;
-			GColor::rgb(
-				dim(menu_fg_rgb[0]),
-				dim(menu_fg_rgb[1]),
-				dim(menu_fg_rgb[2]),
-			)
+		// copy-mode labels dim with their checkboxes when the window is unfocused
+		let copy_label_fg = {
+			let c = copy_dim(menu_fg_rgb, self.focused);
+			GColor::rgb(c[0], c[1], c[2])
 		};
 		// tab titles ("<shell> [<program>]") - computed first (tab_title is &mut)
 		// before self.text is borrowed for the buffers below
-		let tab_titles: Vec<String> = if self.tabs.len() > 1 {
+		let tab_titles: Vec<String> = if self.tab_bar_visible() {
 			self.tabs
 				.list
 				.iter_mut()
@@ -1481,15 +2311,14 @@ impl State {
 					let focused_id = pm.focused;
 					pm.panes
 						.get_mut(&focused_id)
-						.map(|p| p.term.tab_title())
-						.unwrap_or_else(|| config::APP_NAME.into())
+						.map_or_else(|| config::APP_NAME.into(), |p| p.term.tab_title())
 				})
 				.collect()
 		} else {
 			Vec::new()
 		};
 		let tab_w = (self.gfx.config.width as f32 / self.tabs.len().max(1) as f32).min(TAB_MAX_W);
-		// keep the shaped chrome text current (see ChromeCache) - a colour change
+		// keep the shaped chrome text current (see ChromeCache) - a color change
 		// rebuilds it all, otherwise only changed tab titles re-shape
 		if self
 			.chrome
@@ -1508,53 +2337,41 @@ impl State {
 				buf
 			};
 			// menu-bar titles (one per top-level menu) plus the trailing
-			// "Copy output" label for the always-visible checkbox
+			// "Copy on / select / output" labels for the always-visible checkboxes
 			let menubar = MENU_BAR
 				.iter()
-				.chain(std::iter::once(&COPYBOX_LABEL))
+				.chain(COPYBOX_LABELS.iter())
 				.map(|title| shape_ui(&mut self.text, title, 240.0, menu_h, menu_fg))
 				.collect();
-			// the close "x" is bold so it reads as a button glyph
-			let close = {
-				let mut buf = self.text.new_ui_buffer(TAB_CLOSE_W, tab_h);
-				let mut attrs = crate::text::ui_attrs();
-				attrs.weight = crate::text::ui_bold_weight();
-				attrs.color_opt = Some(close_fg);
-				buf.set_text(
-					&mut self.text.font_system,
-					"\u{00d7}",
-					&attrs,
-					Shaping::Advanced,
-					None,
-				);
-				buf.shape_until_scroll(&mut self.text.font_system, false);
-				buf
-			};
-			let close_w = {
-				let mut attrs = crate::text::ui_attrs();
-				attrs.weight = crate::text::ui_bold_weight();
-				self.text.measure_ui_text("\u{00d7}", &attrs)
-			};
 			self.chrome = Some(ChromeCache {
 				menu_fg: menu_fg_rgb,
 				menubar,
-				close,
-				close_w,
 				tab_w: -1.0, // force the tab pass below to fill in
 				tabs: Vec::new(),
 			});
+			self.chrome_rev = self.chrome_rev.wrapping_add(1);
 		}
 		{
-			let cache = self.chrome.as_mut().unwrap();
+			let mut reshaped = false;
+			let cache = self.chrome.as_mut().unwrap(); // ensured above
 			if cache.tab_w != tab_w {
 				cache.tab_w = tab_w;
 				cache.tabs.clear(); // width changed: every title buffer re-wraps
+				reshaped = true;
+			}
+			if cache.tabs.len() > tab_titles.len() {
+				reshaped = true;
 			}
 			cache.tabs.truncate(tab_titles.len());
-			for (i, title) in tab_titles.iter().enumerate() {
-				if cache.tabs.get(i).is_some_and(|(cached, _)| cached == title) {
+			for (i, title) in tab_titles.into_iter().enumerate() {
+				if cache
+					.tabs
+					.get(i)
+					.is_some_and(|(cached, _)| cached == &title)
+				{
 					continue; // unchanged title keeps its shaped buffer
 				}
+				reshaped = true;
 				let mut buf = self
 					.text
 					.new_ui_buffer((tab_w - 16.0 - TAB_CLOSE_W).max(8.0), tab_h);
@@ -1562,118 +2379,74 @@ impl State {
 				attrs.color_opt = Some(menu_fg);
 				buf.set_text(
 					&mut self.text.font_system,
-					title,
+					&title,
 					&attrs,
 					Shaping::Advanced,
 					None,
 				);
 				buf.shape_until_scroll(&mut self.text.font_system, false);
 				if i < cache.tabs.len() {
-					cache.tabs[i] = (title.clone(), buf);
+					cache.tabs[i] = (title, buf);
 				} else {
-					cache.tabs.push((title.clone(), buf));
+					cache.tabs.push((title, buf));
 				}
+			}
+			if reshaped {
+				self.chrome_rev = self.chrome_rev.wrapping_add(1);
 			}
 		}
 		// compute before borrowing panes for `areas` (menubar_layout takes &mut self)
 		let bar_layout = self.menubar_layout();
-		let (_, copy_label_x, copy_label_w) = self.copybox_layout();
-		let chrome = self.chrome.as_ref().unwrap(); // ensured above
-		let mut areas: Vec<TextArea> = Vec::new();
-		for p in self.tabs.cur().panes.values() {
-			// app-scroll slide: fill the revealed gap from the scrolled-off strip,
-			// draw the current scroll region over it, then the static bands unshifted
-			match &slides[&p.id] {
-				Some(slide) => {
-					if let Some(strip) = p.strip_text_area(slide, margin) {
-						areas.push(strip);
-					}
-					areas.push(p.text_area_band(
-						tops[&p.id],
-						margin,
-						slide.region_clip_t,
-						slide.region_clip_b,
-					));
-					if slide.has_top_band {
-						areas.push(p.text_area_band(
-							slide.band_top,
-							margin,
-							f32::MIN,
-							slide.top_split_y,
-						));
-					}
-					if slide.has_band {
-						areas.push(p.text_area_band(
-							slide.band_top,
-							margin,
-							slide.split_y,
-							f32::MAX,
-						));
+		let copyboxes = self.copybox_layout();
+
+		// Fingerprint every input to the prepared text set. A pure cursor frame
+		// reproduces it exactly, which is the signal that glyphon's retained
+		// buffers are still correct and both prepares can be skipped. Anything
+		// missed here shows up as an extra prepare, never as stale text - so err
+		// toward including a value rather than reasoning that it can't change.
+		let text_sig = {
+			use std::hash::{Hash, Hasher};
+			let mut h = std::collections::hash_map::DefaultHasher::new();
+			self.chrome_rev.hash(&mut h);
+			self.gfx.config.width.hash(&mut h);
+			self.gfx.config.height.hash(&mut h);
+			margin.to_bits().hash(&mut h);
+			tab_w.to_bits().hash(&mut h);
+			self.menu_bar.hash(&mut h);
+			self.tab_bar_visible().hash(&mut h);
+			self.tabs.active.hash(&mut h);
+			self.focused.hash(&mut h); // dims the copy-mode labels
+			scrim_on.hash(&mut h);
+			// one pointer covers every setting: a change swaps the whole snapshot
+			(std::sync::Arc::as_ptr(&cfg) as usize).hash(&mut h);
+			for (id, p) in &self.tabs.cur().panes {
+				id.hash(&mut h);
+				p.shape_rev.hash(&mut h); // bumped by every full re-shape
+				tops[id].to_bits().hash(&mut h);
+				for v in [p.rect.x, p.rect.y, p.rect.w, p.rect.h] {
+					v.to_bits().hash(&mut h);
+				}
+				match &slides[id] {
+					None => 0u8.hash(&mut h),
+					Some(s) => {
+						1u8.hash(&mut h);
+						s.has_band.hash(&mut h);
+						s.has_top_band.hash(&mut h);
+						for v in [
+							s.band_top,
+							s.split_y,
+							s.top_split_y,
+							s.region_clip_t,
+							s.region_clip_b,
+						] {
+							v.to_bits().hash(&mut h);
+						}
 					}
 				}
-				None => areas.push(p.text_area(tops[&p.id], margin)),
 			}
-			areas.extend(p.glyph_areas());
-		}
-		if self.menu_bar {
-			for (i, buf) in chrome.menubar.iter().enumerate() {
-				// the last buffer is the right-aligned "Copy output" checkbox label
-				let (left, left_bound, right_bound) = if i < bar_layout.len() {
-					let (x, w) = bar_layout[i];
-					(x + MENU_BAR_PAD, x, x + w)
-				} else {
-					(copy_label_x, copy_label_x, copy_label_x + copy_label_w)
-				};
-				areas.push(TextArea {
-					buffer: buf,
-					left,
-					top: self.text.ui_text_top(0.0, menu_h),
-					scale: 1.0,
-					bounds: TextBounds {
-						left: left_bound as i32,
-						top: 0,
-						right: right_bound as i32,
-						bottom: menu_h as i32,
-					},
-					default_color: menu_fg,
-					custom_glyphs: &[],
-				});
-			}
-		}
-		for (i, (_, buf)) in chrome.tabs.iter().enumerate() {
-			let x = i as f32 * tab_w;
-			let close_x = x + tab_w - TAB_CLOSE_W;
-			let cb = tab_close_box(x, tab_w, tab_bar_y, tab_h);
-			areas.push(TextArea {
-				buffer: buf,
-				left: x + 8.0,
-				// center the visible text box in the tab bar (metric-based)
-				top: self.text.ui_text_top(tab_bar_y, tab_h),
-				scale: 1.0,
-				bounds: TextBounds {
-					left: x as i32,
-					top: tab_bar_y as i32,
-					right: close_x as i32, // leave room for the close "x"
-					bottom: (tab_bar_y + tab_h) as i32,
-				},
-				default_color: menu_fg,
-				custom_glyphs: &[],
-			});
-			areas.push(TextArea {
-				buffer: &chrome.close,
-				left: cb.x + (cb.w - chrome.close_w).max(0.0) / 2.0,
-				top: self.text.ui_text_top(cb.y, cb.h),
-				scale: 1.0,
-				bounds: TextBounds {
-					left: cb.x as i32,
-					top: cb.y as i32,
-					right: (cb.x + cb.w) as i32,
-					bottom: (cb.y + cb.h) as i32,
-				},
-				default_color: close_fg,
-				custom_glyphs: &[],
-			});
-		}
+			h.finish()
+		};
+		let text_same = self.text_sig == Some(text_sig);
 
 		// All rect instances and the bg-image shader work in absolute
 		// framebuffer pixels (matching the glyphon viewport), so the resolution
@@ -1686,48 +2459,36 @@ impl State {
 			self.gfx.config.height,
 		);
 		self.rects.set_resolution(&self.gfx.queue, frame_w, frame_h);
-		if let Some(img) = &self.bg_image {
+		if let Some(img) = &self.wallpaper_img {
 			img.set_resolution(&self.gfx.queue, frame_w, frame_h);
 		}
 		self.rects
 			.upload(&self.gfx.device, &self.gfx.queue, &instances);
-		if let Err(e) = self.text.prepare(&self.gfx.device, &self.gfx.queue, areas) {
-			// Atlas full (after a long session of varied glyphs). The normal per-frame
-			// trim is at the END of render, below this early return - so without
-			// trimming here the atlas never recovers and ALL text goes black for good
-			// (cursor/cell-bg quads use a separate renderer, so they still show). Trim
-			// now to free space; the next frame re-prepares with room and recovers.
-			eprintln!(
-				"{}: text prepare failed; trimming atlas to recover: {e:?}",
-				config::APP_NAME
-			);
-			self.text.trim_atlas();
-			return animating;
-		}
-		// scrim source pass has its own prepared set: pane text only (no chrome),
-		// with de-bolded buffers where a pane built one (text_scrim_regular_weight)
-		if scrim_on {
-			let mut scrim_areas: Vec<TextArea> = Vec::new();
+
+		// Nothing that feeds the text changed, so glyphon's prepared buffers from
+		// the last frame still describe this one exactly. Skipping the whole area
+		// build + both prepares is the point of the signature: shaping and
+		// glyph-cache lookups are over half the per-frame cost, and an idle cursor
+		// pulse repeats them 30x a second for no visual difference.
+		if !text_same {
+			let chrome = self.chrome.as_ref().unwrap(); // ensured above
+			let mut areas: Vec<TextArea> = Vec::new();
 			for p in self.tabs.cur().panes.values() {
-				// scrim follows the current frame's slide, INCLUDING the scrolled-off
-				// strip filling the reveal gap - without it the strip's text (e.g. the
-				// row just below a static header) loses its readability halo mid-slide
-				// and the halo "pops" when the slide settles, reading as a shadow that
-				// jumps at the band boundary. The strip holds only region rows, so it
-				// is always scrim-safe (no furniture to guard out of the scrim).
+				// app-scroll slide: fill the revealed gap from the scrolled-off strip,
+				// draw the current scroll region over it, then the static bands unshifted
 				match &slides[&p.id] {
 					Some(slide) => {
 						if let Some(strip) = p.strip_text_area(slide, margin) {
-							scrim_areas.push(strip);
+							areas.push(strip);
 						}
-						scrim_areas.push(p.scrim_text_area_band(
+						areas.push(p.text_area_band(
 							tops[&p.id],
 							margin,
 							slide.region_clip_t,
 							slide.region_clip_b,
 						));
 						if slide.has_top_band {
-							scrim_areas.push(p.scrim_text_area_band(
+							areas.push(p.text_area_band(
 								slide.band_top,
 								margin,
 								f32::MIN,
@@ -1735,7 +2496,7 @@ impl State {
 							));
 						}
 						if slide.has_band {
-							scrim_areas.push(p.scrim_text_area_band(
+							areas.push(p.text_area_band(
 								slide.band_top,
 								margin,
 								slide.split_y,
@@ -1743,93 +2504,239 @@ impl State {
 							));
 						}
 					}
-					None => scrim_areas.push(p.scrim_text_area(tops[&p.id], margin)),
+					None => areas.push(p.text_area(tops[&p.id], margin)),
 				}
-				scrim_areas.extend(p.glyph_areas());
+				areas.extend(p.glyph_areas(margin));
+				areas.extend(p.emoji_area(margin));
 			}
-			if let Err(e) = self
-				.text
-				.prepare_scrim(&self.gfx.device, &self.gfx.queue, scrim_areas)
-			{
+			if self.menu_bar {
+				for (i, buf) in chrome.menubar.iter().enumerate() {
+					// the trailing buffers are the right-aligned copy-mode labels;
+					// their lowercase words center on full ink, not ascent..baseline
+					let (left, left_bound, right_bound, top) = if i < bar_layout.len() {
+						let (x, w) = bar_layout[i];
+						(
+							x + MENU_BAR_PAD,
+							x,
+							x + w,
+							self.text.ui_text_top(0.0, menu_h),
+						)
+					} else {
+						let j = i - bar_layout.len();
+						let x = copyboxes.label_x[j];
+						let w = copyboxes.label_w[j];
+						(x, x, x + w, self.text.ui_text_top_ink(0.0, menu_h))
+					};
+					// trailing buffers are the copy-mode labels - dim them off-focus
+					let color = if i < bar_layout.len() {
+						menu_fg
+					} else {
+						copy_label_fg
+					};
+					areas.push(TextArea {
+						buffer: buf,
+						left,
+						top,
+						scale: 1.0,
+						bounds: TextBounds {
+							left: left_bound as i32,
+							top: 0,
+							right: right_bound as i32,
+							bottom: menu_h as i32,
+						},
+						default_color: color,
+						custom_glyphs: &[],
+					});
+				}
+			}
+			for (i, (_, buf)) in chrome.tabs.iter().enumerate() {
+				let x = i as f32 * tab_w;
+				let close_x = x + tab_w - TAB_CLOSE_W;
+				areas.push(TextArea {
+					buffer: buf,
+					left: x + 8.0,
+					// center the visible text box in the tab bar (metric-based)
+					top: self.text.ui_text_top(tab_bar_y, tab_h),
+					scale: 1.0,
+					bounds: TextBounds {
+						left: x as i32,
+						top: tab_bar_y as i32,
+						right: close_x as i32, // leave room for the close "X"
+						bottom: (tab_bar_y + tab_h) as i32,
+					},
+					default_color: menu_fg,
+					custom_glyphs: &[],
+				});
+				// the close "X" itself is a shader-drawn rect instance (tab bar pass)
+			}
+
+			if let Err(e) = self.text.prepare(&self.gfx.device, &self.gfx.queue, areas) {
+				// Atlas full (after a long session of varied glyphs). The normal per-frame
+				// trim is at the END of render, below this early return - so without
+				// trimming here the atlas never recovers and ALL text goes black for good
+				// (cursor/cell-bg quads use a separate renderer, so they still show). Trim
+				// now to free space; the next frame re-prepares with room and recovers.
 				eprintln!(
-					"{}: scrim prepare failed; trimming atlas to recover: {e:?}",
+					"{}: text prepare failed; trimming atlas to recover: {e:?}",
 					config::APP_NAME
 				);
 				self.text.trim_atlas();
+				self.text_sig = None;
+				self.scrim_sig = None;
 				return animating;
 			}
-		}
+			// scrim source pass has its own prepared set: pane text only (no chrome),
+			// with de-bolded buffers where a pane built one (text_scrim_regular_weight)
+			if scrim_on {
+				let mut scrim_areas: Vec<TextArea> = Vec::new();
+				for p in self.tabs.cur().panes.values() {
+					// scrim follows the current frame's slide, INCLUDING the scrolled-off
+					// strip filling the reveal gap - without it the strip's text (e.g. the
+					// row just below a static header) loses its readability halo mid-slide
+					// and the halo "pops" when the slide settles, reading as a shadow that
+					// jumps at the band boundary. The strip holds only region rows, so it
+					// is always scrim-safe (no furniture to guard out of the scrim).
+					match &slides[&p.id] {
+						Some(slide) => {
+							if let Some(strip) = p.strip_text_area(slide, margin) {
+								scrim_areas.push(strip);
+							}
+							scrim_areas.push(p.scrim_text_area_band(
+								tops[&p.id],
+								margin,
+								slide.region_clip_t,
+								slide.region_clip_b,
+							));
+							if slide.has_top_band {
+								scrim_areas.push(p.scrim_text_area_band(
+									slide.band_top,
+									margin,
+									f32::MIN,
+									slide.top_split_y,
+								));
+							}
+							if slide.has_band {
+								scrim_areas.push(p.scrim_text_area_band(
+									slide.band_top,
+									margin,
+									slide.split_y,
+									f32::MAX,
+								));
+							}
+						}
+						None => scrim_areas.push(p.scrim_text_area(tops[&p.id], margin)),
+					}
+					scrim_areas.extend(p.glyph_areas(margin));
+					scrim_areas.extend(p.emoji_area(margin));
+				}
+				if let Err(e) =
+					self.text
+						.prepare_scrim(&self.gfx.device, &self.gfx.queue, scrim_areas)
+				{
+					eprintln!(
+						"{}: scrim prepare failed; trimming atlas to recover: {e:?}",
+						config::APP_NAME
+					);
+					self.text.trim_atlas();
+					self.text_sig = None;
+					self.scrim_sig = None;
+					return animating;
+				}
+			}
+		} // !text_same
+		self.text_sig = Some(text_sig);
 
 		// lay out the menu into the overlay renderer: one proportional buffer
 		// per item label (at the gutter), plus a checkmark buffer for checked toggles.
+		// Re-shaping every frame while a menu sits open (the cursor blink keeps
+		// frames coming) is skippable: the overlay text only depends on the menu's
+		// geometry/labels/color. Only skip alongside text_same - the end-of-frame
+		// atlas trim (which runs when !text_same) drops glyphs the retained overlay
+		// vertex buffers still reference, so a trim frame must re-prepare.
 		if let Some(menu) = &self.menu {
-			// (left, top, buffer) collected first so the borrow of self.text ends
-			let mut specs: Vec<(f32, f32, Buffer)> = Vec::new();
-			let mut attrs = crate::text::ui_attrs();
-			attrs.color_opt = Some(GColor::rgb(
-				config::menu_fg()[0],
-				config::menu_fg()[1],
-				config::menu_fg()[2],
-			));
-			for (i, entry) in menu.entries.iter().enumerate() {
-				let Entry::Item { label, check, .. } = entry else {
-					continue;
-				};
-				let top = menu.row_top(i) + (menu.item_h - self.text.ui_line_h) / 2.0;
-				let mut buf = self.text.new_ui_buffer(menu.w, menu.item_h);
-				buf.set_text(
-					&mut self.text.font_system,
-					label,
-					&attrs,
-					Shaping::Advanced,
-					None,
-				);
-				buf.shape_until_scroll(&mut self.text.font_system, false);
-				specs.push((menu.x + config::MENU_PAD_X + config::MENU_GUTTER, top, buf));
-				if *check == Some(true) {
-					let mut check_buf = self.text.new_ui_buffer(config::MENU_GUTTER, menu.item_h);
-					check_buf.set_text(
+			let overlay_sig = {
+				use std::hash::{Hash, Hasher};
+				let mut h = std::collections::hash_map::DefaultHasher::new();
+				menu.x.to_bits().hash(&mut h);
+				menu.y.to_bits().hash(&mut h);
+				menu.w.to_bits().hash(&mut h);
+				menu.item_h.to_bits().hash(&mut h);
+				self.gfx.config.width.hash(&mut h);
+				self.gfx.config.height.hash(&mut h);
+				self.chrome_rev.hash(&mut h); // covers a menu color change
+				for entry in &menu.entries {
+					if let Entry::Item { label, check, .. } = entry {
+						label.hash(&mut h);
+						check.hash(&mut h);
+					}
+				}
+				h.finish()
+			};
+			if text_same && self.overlay_sig == Some(overlay_sig) {
+				// prepared overlay from the last frame still matches
+			} else {
+				self.overlay_sig = Some(overlay_sig);
+				// (left, top, buffer) collected first so the borrow of self.text ends
+				let mut specs: Vec<(f32, f32, Buffer)> = Vec::new();
+				let mut attrs = crate::text::ui_attrs();
+				let fg = config::menu_fg();
+				attrs.color_opt = Some(GColor::rgb(fg[0], fg[1], fg[2]));
+				for (i, entry) in menu.entries.iter().enumerate() {
+					let Entry::Item { label, check, .. } = entry else {
+						continue;
+					};
+					let top = menu.row_top(i) + (menu.item_h - self.text.ui_line_h) / 2.0;
+					let mut buf = self.text.new_ui_buffer(menu.w, menu.item_h);
+					buf.set_text(
 						&mut self.text.font_system,
-						"\u{2713}",
+						label,
 						&attrs,
 						Shaping::Advanced,
 						None,
 					);
-					check_buf.shape_until_scroll(&mut self.text.font_system, false);
-					specs.push((menu.x + config::MENU_PAD_X, top, check_buf));
+					buf.shape_until_scroll(&mut self.text.font_system, false);
+					specs.push((menu.x + config::MENU_PAD_X + config::MENU_GUTTER, top, buf));
+					if *check == Some(true) {
+						let mut check_buf =
+							self.text.new_ui_buffer(config::MENU_GUTTER, menu.item_h);
+						check_buf.set_text(
+							&mut self.text.font_system,
+							"\u{2713}",
+							&attrs,
+							Shaping::Advanced,
+							None,
+						);
+						check_buf.shape_until_scroll(&mut self.text.font_system, false);
+						specs.push((menu.x + config::MENU_PAD_X, top, check_buf));
+					}
 				}
+				let (sw, sh) = (self.gfx.config.width as i32, self.gfx.config.height as i32);
+				let menu_color = GColor::rgb(fg[0], fg[1], fg[2]);
+				let areas: Vec<TextArea> = specs
+					.iter()
+					.map(|(left, top, buf)| TextArea {
+						buffer: buf,
+						left: *left,
+						top: *top,
+						scale: 1.0,
+						bounds: TextBounds {
+							left: 0,
+							top: 0,
+							right: sw,
+							bottom: sh,
+						},
+						default_color: menu_color,
+						custom_glyphs: &[],
+					})
+					.collect();
+				let _ = self
+					.text
+					.prepare_overlay(&self.gfx.device, &self.gfx.queue, areas);
 			}
-			let (sw, sh) = (self.gfx.config.width as i32, self.gfx.config.height as i32);
-			let menu_color = GColor::rgb(
-				config::menu_fg()[0],
-				config::menu_fg()[1],
-				config::menu_fg()[2],
-			);
-			let areas: Vec<TextArea> = specs
-				.iter()
-				.map(|(left, top, buf)| TextArea {
-					buffer: buf,
-					left: *left,
-					top: *top,
-					scale: 1.0,
-					bounds: TextBounds {
-						left: 0,
-						top: 0,
-						right: sw,
-						bottom: sh,
-					},
-					default_color: menu_color,
-					custom_glyphs: &[],
-				})
-				.collect();
-			let _ = self
-				.text
-				.prepare_overlay(&self.gfx.device, &self.gfx.queue, areas);
 		}
 
-		let frame = match self.gfx.begin_frame() {
-			Some(frame) => frame,
-			None => return animating,
+		let Some(frame) = self.gfx.begin_frame() else {
+			return animating;
 		};
 		let view = self.gfx.frame_view(&frame);
 		let mut encoder = self
@@ -1839,18 +2746,21 @@ impl State {
 				label: Some("frame"),
 			});
 
-		// Text readability scrim: build the per-pixel colour map, render the prepared
+		// Text readability scrim: build the per-pixel color map, render the prepared
 		// text to the scrim texture, blur it, then composite under the crisp text.
 		// "Softness" 0..1 -> coverage boost: 0 = hard/solid (x10), 1 = soft/faint (x1)
 		let scrim_intensity = 10.0 - cfg.text_scrim_softness.clamp(0.0, 1.0) * 9.0;
-		// falloff curve index: 0 s, 1 gaussian, 2 linear, 3 log, 4 exp
+		// falloff curve index: 0 sigmoid, 1 half-normal, 2 linear, 3 log, 4 exp
 		let scrim_ramp = match cfg.text_scrim_ramp.as_str() {
-			"gaussian" => 1.0,
+			"half_normal" => 1.0,
 			"linear" => 2.0,
 			"log" => 3.0,
 			"exp" => 4.0,
-			_ => 0.0, // "s"
+			_ => 0.0, // "sigmoid"
 		};
+		// "Strength" 0..100% -> doublings of the finished halo alpha (0 = as built),
+		// each 20% one doubling, so the top of the slider is x32
+		let scrim_strength = cfg.text_scrim_strength.clamp(0.0, 100.0) / 20.0;
 		// build function index: 0 dilate, 1 sdf, 2 dt, 3 gaussian (legacy blur)
 		let scrim_function = match cfg.text_scrim_function.as_str() {
 			"dilate" => 0.0,
@@ -1861,17 +2771,29 @@ impl State {
 		// distance paths measure the halo extent in px; keep it a touch wider than
 		// the (sigma-based) gaussian look so switching functions doesn't shrink it.
 		let scrim_ext = cfg.text_scrim_radius * 2.0;
+		// The halo is built from the text alone - the cursor lives in its own
+		// coverage texture and only joins at the blur (cursor_scrim) or the
+		// composite (cursor_outline). So when the text is unchanged the color map,
+		// the text-coverage pass and the blur can all be reused from last frame;
+		// every scrim texture is stored, not transient. That is most of the idle
+		// GPU cost. The blur still has to re-run if the cursor feeds it.
+		let scrim_cached = scrim_on && text_same && self.scrim_sig == Some(text_sig);
+		let blur_cached = scrim_cached && !cfg.cursor_scrim;
 		if scrim_on {
-			self.scrim.render_bgcolor(
-				&self.gfx.device,
-				&self.gfx.queue,
-				&mut encoder,
-				&scrim_cells,
-				config::srgb_f32(cfg.bg),
-			);
-			self.scrim
-				.upload_cursors(&self.gfx.device, &self.gfx.queue, &scrim_cursor_quads);
-			{
+			if !scrim_cached {
+				self.scrim.render_bgcolor(
+					&self.gfx.device,
+					&self.gfx.queue,
+					&mut encoder,
+					&scrim_cells,
+					config::srgb_f32(cfg.bg),
+				);
+			}
+			if cfg.cursor_scrim || cfg.cursor_outline {
+				self.scrim
+					.upload_cursors(&self.gfx.device, &self.gfx.queue, &scrim_cursor_quads);
+			}
+			if !scrim_cached {
 				let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 					label: Some("scrim text"),
 					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1891,8 +2813,9 @@ impl State {
 				let _ = self.text.render_scrim(&mut pass);
 			}
 			// cursor coverage in its own texture (kept apart from the text so the
-			// halo and the outline can each include it independently)
-			{
+			// halo and the outline can each include it independently). Skipped -
+			// full-res clear included - when neither flag samples it.
+			if cfg.cursor_scrim || cfg.cursor_outline {
 				let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 					label: Some("scrim cursor"),
 					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1911,23 +2834,31 @@ impl State {
 				});
 				self.scrim.draw_cursors(&mut pass);
 			}
-			self.scrim.blur(
-				&self.gfx.queue,
-				&mut encoder,
-				cfg.text_scrim_radius,
-				scrim_ext,
-				scrim_ramp,
-				if cfg.cursor_scrim { 1.0 } else { 0.0 },
-				scrim_function,
-			);
+			if !blur_cached {
+				self.scrim.blur(
+					&self.gfx.queue,
+					&mut encoder,
+					cfg.text_scrim_radius,
+					scrim_ext,
+					scrim_ramp,
+					if cfg.cursor_scrim { 1.0 } else { 0.0 },
+					scrim_function,
+				);
+			}
+			self.scrim_sig = Some(text_sig);
+		} else {
+			self.scrim_sig = None;
 		}
 
-		let content_area = self.area(); // for clipping the scrim to the terminal region
 		{
 			let divider = config::srgb_f32(config::DIVIDER);
-			// transparent base when compositing: pane-gap dividers show the
-			// desktop through; opaque divider color otherwise (premultiplied)
-			let clear = if self.gfx.transparent {
+			// transparent base only when the background is actually see-through
+			// (same gate as bg_alpha): pane-gap dividers then show the desktop.
+			// Otherwise the clear must be opaque - the X11 window is always an
+			// ARGB visual, so any alpha<1 pixel (the 1px divider slits, AA edges
+			// of fractional pane rects) lets the compositor blend the desktop
+			// through as bright speckles along the split lines.
+			let clear = if self.gfx.transparent && cfg.transparent_background {
 				wgpu::Color::TRANSPARENT
 			} else {
 				wgpu::Color {
@@ -1958,7 +2889,7 @@ impl State {
 			// pane backgrounds (exactly pane-sized, no clip needed)
 			self.rects.draw(&mut pass, 0..under_len);
 			// background image over the pane fill, under cells/text
-			if let Some(img) = &self.bg_image {
+			if let Some(img) = &self.wallpaper_img {
 				img.draw(&mut pass);
 			}
 			// per-pane cell bg + cursor, clipped to the pane
@@ -1982,19 +2913,72 @@ impl State {
 			// the content area so the halo only affects terminal text, never the
 			// menu bar / tab titles above it.
 			if scrim_on {
-				let (cx, cy, cw, ch) = scissor(content_area, sw, sh);
-				pass.set_scissor_rect(cx, cy, cw, ch);
-				self.scrim.composite(
+				// frame-invariant composite args: upload the uniform once, not per pane
+				self.scrim.write_comp_uniform(
 					&self.gfx.queue,
-					&mut pass,
 					scrim_intensity,
 					cfg.text_outline,
 					if cfg.cursor_outline { 1.0 } else { 0.0 },
 					scrim_function,
 					scrim_ramp,
 					scrim_ext,
+					scrim_strength,
 				);
+				// The scrim is a full-frame blur - each glyph's halo spreads ~scrim_ext
+				// px every direction. Composite it PER-PANE, clipped per-side: an edge that
+				// borders ANOTHER pane (internal divider) clips at the content edge (rect
+				// inset by the margin) so the halo can't reach the inter-pane gutter - the
+				// "garbage around split lines"; an edge at the WINDOW border clips at the rect
+				// edge so the outer halo still fills the window margin. The gutter (margin +
+				// gap + margin) is wider than the halo reach, so no pane's halo touches a
+				// neighbor's content region.
+				let area = self.area();
+				for (rect, _, _) in &group_ranges {
+					// external = sits on the content-area boundary (window edge); otherwise it
+					// borders a gap/another pane -> pull the clip in by the margin.
+					let l = if rect.x <= area.x + 0.5 {
+						rect.x
+					} else {
+						rect.x + margin
+					};
+					let t = if rect.y <= area.y + 0.5 {
+						rect.y
+					} else {
+						rect.y + margin
+					};
+					let r = if rect.x + rect.w >= area.x + area.w - 0.5 {
+						rect.x + rect.w
+					} else {
+						rect.x + rect.w - margin
+					};
+					let b = if rect.y + rect.h >= area.y + area.h - 0.5 {
+						rect.y + rect.h
+					} else {
+						rect.y + rect.h - margin
+					};
+					let clip = Rect {
+						x: l,
+						y: t,
+						w: (r - l).max(0.0),
+						h: (b - t).max(0.0),
+					};
+					let (cx, cy, cw, ch) = scissor(clip, sw, sh);
+					if cw == 0 || ch == 0 {
+						continue;
+					}
+					pass.set_scissor_rect(cx, cy, cw, ch);
+					self.scrim.composite(&mut pass);
+				}
 				pass.set_scissor_rect(0, 0, sw, sh);
+			}
+			// link underlines above the scrim (halo can't eat them), under the cursor
+			for (rect, start, end) in &link_ranges {
+				let (x, y, w, h) = scissor(*rect, sw, sh);
+				if w == 0 || h == 0 {
+					continue;
+				}
+				pass.set_scissor_rect(x, y, w, h);
+				self.rects.draw(&mut pass, *start..*end);
 			}
 			// cursor above the scrim (halo can't obscure it), still under the crisp text
 			for (rect, start, end) in &cursor_ranges {
@@ -2036,10 +3020,29 @@ impl State {
 
 		self.gfx.queue.submit(Some(encoder.finish()));
 		self.gfx.end_frame(frame);
-		if std::env::var_os("SILK_DUMP").is_some() {
+		// The window was created hidden; reveal it once a real frame is on screen at
+		// the final size (no default-size/blank flash). reveal_want (async resize)
+		// holds off until the surface reaches the grid size; the deadline is a hard
+		// fallback so a WM that grants a different size can't leave it stuck hidden.
+		if !self.revealed {
+			let settled = self.reveal_want.is_none_or(|w| {
+				self.gfx.config.width == w.width && self.gfx.config.height == w.height
+			});
+			if settled || Instant::now() >= self.reveal_deadline {
+				self.revealed = true;
+				self.window.set_visible(true);
+			}
+		}
+		if env_flag("SILK_DUMP") {
 			self.gfx.dump_offscreen("/tmp/silk_offscreen.png");
 		}
-		self.text.trim_atlas();
+		// Trim only on a frame that prepared. The trim clears glyphon's in-use set,
+		// and a later allocation evicts whatever isn't in it - so trimming after a
+		// skipped prepare would let the atlas drop glyphs the retained buffers are
+		// still pointing at.
+		if !text_same {
+			self.text.trim_atlas();
+		}
 		animating
 	}
 }
@@ -2059,7 +3062,81 @@ fn rect_inst(x: f32, y: f32, w: f32, h: f32, color: [u8; 3]) -> RectInstance {
 		pos: [x, y],
 		size: [w, h],
 		color: config::srgb_f32(color),
+		..Default::default()
 	}
+}
+
+// The close-"X" mark: a shader-drawn quad (mode 1) whose two diagonal bars
+// center exactly in `cb` at any size/DPI. Stroke scales with the box.
+fn close_x_inst(cb: Rect, color: [u8; 3]) -> RectInstance {
+	RectInstance {
+		pos: [cb.x, cb.y],
+		size: [cb.w, cb.h],
+		color: config::srgb_f32(color),
+		params: [1.0, (cb.w * 0.14).max(1.4)],
+	}
+}
+
+// One scrollbar piece: a rounded quad (mode 2) with the pill radius its short
+// side implies, at `alpha` (the pane's fade times the piece's own weight).
+fn bar_inst(r: Rect, color: [u8; 3], alpha: f32) -> RectInstance {
+	let mut c = config::srgb_f32(color);
+	c[3] = alpha;
+	RectInstance {
+		pos: [r.x, r.y],
+		size: [r.w, r.h],
+		color: c,
+		params: [2.0, r.w.min(r.h) * 0.5],
+	}
+}
+
+// The scrollbar's quads for one pane: a faint track with the handle on it. The
+// thumb brightens while hovered or dragged, the usual affordance.
+fn scrollbar_insts(bar: &crate::pane::Bar, fade: f32, active: bool) -> [RectInstance; 2] {
+	let cfg = config::settings();
+	let thumb_a = if active {
+		config::SCROLLBAR_ACTIVE_A
+	} else {
+		config::SCROLLBAR_IDLE_A
+	};
+	[
+		bar_inst(
+			bar.track,
+			cfg.scrollbar_trough,
+			fade * config::SCROLLBAR_TROUGH_A,
+		),
+		bar_inst(bar.thumb, cfg.scrollbar_thumb, fade * thumb_a),
+	]
+}
+
+// close-"X" stroke color: menu fg dimmed toward the tab bg (~0.6), so it reads
+// as a quiet button mark rather than a title character
+fn close_x_rgb() -> [u8; 3] {
+	let fg = config::menu_fg();
+	let dim = |v: u8| ((v as u16 * 3) / 5) as u8;
+	[dim(fg[0]), dim(fg[1]), dim(fg[2])]
+}
+
+fn mix_rgb(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
+	let mix = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+	[mix(a[0], b[0]), mix(a[1], b[1]), mix(a[2], b[2])]
+}
+
+// Dim a chrome color toward the bar background when the window isn't focused;
+// used on the copy-mode checkboxes + labels to signal auto-copy is inert until
+// the window regains focus (the pane's flags stay set meanwhile). Focused = no
+// change.
+fn copy_dim(color: [u8; 3], focused: bool) -> [u8; 3] {
+	if focused {
+		return color;
+	}
+	let bg = config::TAB_BAR_BG;
+	let mix = |a: u8, b: u8| (a as f32 * 0.4 + b as f32 * 0.6) as u8;
+	[
+		mix(color[0], bg[0]),
+		mix(color[1], bg[1]),
+		mix(color[2], bg[2]),
+	]
 }
 
 // The window/taskbar icon, decoded from the bundled logo (downscaled so the
@@ -2070,13 +3147,12 @@ fn is_x11(el: &ActiveEventLoop) -> bool {
 	use raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
 	el.owned_display_handle()
 		.display_handle()
-		.map(|handle| {
+		.is_ok_and(|handle| {
 			matches!(
 				handle.as_raw(),
 				RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)
 			)
 		})
-		.unwrap_or(false)
 }
 
 // Stable X11 WM_CLASS (+ Wayland app_id) so the window is identifiable to the
@@ -2155,7 +3231,7 @@ fn build_layout(
 	// A bad --shell / default_shell (typo'd binary, PTY failure) should read
 	// like the CLI parse errors, not a Rust panic + backtrace.
 	let spawn = |text: &mut TextCtx, shell: Option<Vec<String>>| {
-		PaneManager::new(text, proxy, area, shell).unwrap_or_else(|e| {
+		PaneManager::new(text, proxy, area, shell, None).unwrap_or_else(|e| {
 			eprintln!("{}: failed to start shell: {e}", config::APP_NAME);
 			std::process::exit(2);
 		})
@@ -2217,7 +3293,7 @@ fn build_layout(
 				None => 0.5,
 				Some(Size::Percent(pct)) => pct / 100.0,
 				Some(Size::Cells(n)) => {
-					let rect = pm.panes.get(&target).map(|p| p.rect).unwrap_or(area);
+					let rect = pm.panes.get(&target).map_or(area, |p| p.rect);
 					let denom = match dir {
 						Dir::Vertical => (rect.w / text.cell_w).max(1.0),
 						Dir::Horizontal => (rect.h / text.cell_h).max(1.0),
@@ -2233,6 +3309,7 @@ fn build_layout(
 				before,
 				ratio,
 				shell.clone(),
+				None,
 				area,
 				false,
 			) {
@@ -2245,7 +3322,7 @@ fn build_layout(
 		}
 		// focus the tab's first pane, not the last split
 		pm.focused = main_id;
-		pm.title_override = tab.title.clone();
+		pm.title_override.clone_from(&tab.title);
 		out.push(pm);
 	}
 	out
@@ -2281,57 +3358,13 @@ fn open_url(url: &str) {
 
 // Decode the configured background image and upload it to a texture.
 
-fn load_bg_image(gfx: &Gfx) -> Option<ImageRenderer> {
-	let settings = config::settings();
-	let path = settings.background_image.as_ref()?;
-	let mut img = match image::open(path) {
-		Ok(i) => i.to_rgba8(),
-		Err(e) => {
-			eprintln!(
-				"{}: background image {}: {e}",
-				config::APP_NAME,
-				path.display()
-			);
-			return None;
-		}
-	};
-	// Gaussian blur, done in LINEAR light (decode sRGB -> blur in f32 -> re-encode)
-	// so transitions are gamma-correct; an sRGB-space blur darkens edges. The f32
-	// intermediate also avoids 8-bit banding inside the blur (final banding is
-	// handled by the high-precision offscreen + the blit's dither).
-	if settings.background_blur > 0.0 {
-		let (w, h) = img.dimensions();
-		let mut linear: image::ImageBuffer<image::Rgba<f32>, Vec<f32>> =
-			image::ImageBuffer::new(w, h);
-		for (dst, src) in linear.pixels_mut().zip(img.pixels()) {
-			*dst = image::Rgba([
-				config::to_linear(src[0]),
-				config::to_linear(src[1]),
-				config::to_linear(src[2]),
-				src[3] as f32 / 255.0,
-			]);
-		}
-		let blurred = image::imageops::blur(&linear, settings.background_blur);
-		for (dst, src) in img.pixels_mut().zip(blurred.pixels()) {
-			*dst = image::Rgba([
-				config::from_linear_u8(src[0]),
-				config::from_linear_u8(src[1]),
-				config::from_linear_u8(src[2]),
-				(src[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
-			]);
-		}
+// Hand a clicked link to the desktop. A failure is the opener's (no xdg-open, a
+// bad open_command) and is worth saying out loud once, not worth an alert.
+fn open_link(url: &str) {
+	let cfg = config::settings();
+	if let Err(e) = crate::links::open(url, &cfg.hyperlink_open_command) {
+		eprintln!("{}: could not open {url}: {e}", config::APP_NAME);
 	}
-	let (w, h) = img.dimensions();
-	Some(ImageRenderer::new(
-		&gfx.device,
-		&gfx.queue,
-		gfx.format,
-		&img,
-		w,
-		h,
-		settings.background_opacity,
-		settings.background_fit,
-	))
 }
 
 // clamp a pane rect to an integer scissor box inside the surface
@@ -2344,28 +3377,34 @@ fn scissor(rect: Rect, sw: u32, sh: u32) -> (u32, u32, u32, u32) {
 }
 
 fn focus_ring(rect: Rect) -> [RectInstance; 4] {
-	let color = config::srgb_f32(config::settings().focus);
+	// the calm one: the ring marks which pane is live, alongside the dialog's own
+	// sliders and revert arrows, rather than the single keyboard-focused control
+	let color = config::srgb_f32(config::settings().highlight);
 	let thickness = config::FOCUS_RING_PX;
 	[
 		RectInstance {
 			pos: [rect.x, rect.y],
 			size: [rect.w, thickness],
 			color,
+			..Default::default()
 		},
 		RectInstance {
 			pos: [rect.x, rect.y + rect.h - thickness],
 			size: [rect.w, thickness],
 			color,
+			..Default::default()
 		},
 		RectInstance {
 			pos: [rect.x, rect.y],
 			size: [thickness, rect.h],
 			color,
+			..Default::default()
 		},
 		RectInstance {
 			pos: [rect.x + rect.w - thickness, rect.y],
 			size: [thickness, rect.h],
 			color,
+			..Default::default()
 		},
 	]
 }
@@ -2380,13 +3419,34 @@ impl ApplicationHandler<UserEvent> for App {
 		let menu_bar = !cli_win.hide_menu.unwrap_or(false);
 		let win_title = cli_win.title.clone();
 		let win_opacity = cli_win.opacity;
+		// When both pixel dims are given, the window must be BORN at that size, not
+		// resized into it: some EGL presents (VirtualGL's, for one) latch the surface
+		// size at creation and never see later resizes, leaving a stale-offset blit.
+		let initial_size: winit::dpi::Size = match (cli_win.pixel_width, cli_win.pixel_height) {
+			(Some(w), Some(h)) => winit::dpi::PhysicalSize::new(w, h).into(),
+			_ => winit::dpi::LogicalSize::new(1000.0, 640.0).into(),
+		};
+		// On Windows, requesting transparency forces a no-redirection-bitmap
+		// (layered) window that some virtual-desktop managers - VirtuaWin - won't
+		// track, so it sits still across workspace switches. The native surface
+		// there only shows alpha when it reports PreMultiplied (Vulkan/DX swapchains
+		// usually don't), so an always-transparent window buys nothing when
+		// Transparency is off. Ask for it only when it's actually in use; X11/Wayland
+		// always request it so the live toggle works (no such side effect there).
+		let want_transparent =
+			!cfg!(windows) || config::settings().transparent_background || win_opacity.is_some();
 		let attrs = Window::default_attributes()
 			.with_title(win_title.as_deref().unwrap_or(config::APP_NAME))
 			.with_window_icon(load_icon())
 			.with_decorations(decorated)
-			.with_transparent(true)
-			.with_inner_size(winit::dpi::LogicalSize::new(1000.0, 640.0));
+			.with_transparent(want_transparent)
+			.with_inner_size(initial_size);
 		let attrs = with_app_id(attrs); // stable WM_CLASS/app_id
+		// Born hidden, then resized to the grid-derived size and drawn once before
+		// being shown (revealed after the first correct frame in render). Otherwise it
+		// flashes the 1000x640 default with a blank client, then jumps to the real
+		// size and paints - visible on X11/Wayland as well as Windows.
+		let attrs = attrs.with_visible(false);
 
 		// On X11 the wgpu surface can't do per-pixel alpha, so we ALWAYS take the
 		// glutin GL path there (transparent-capable backend), regardless of the
@@ -2419,7 +3479,7 @@ impl ApplicationHandler<UserEvent> for App {
 		// System theme mode: seed the OS dark/light bit before the first frame so a
 		// system-mode theme resolves to the right palette immediately (no flash).
 		config::reapply_for_os(!matches!(window.theme(), Some(winit::window::Theme::Light)));
-		// Window-level CLI style (--font-name/-size, colours, bg image/fit/opacity)
+		// Window-level CLI style (--font-name/-size, colors, bg image/fit/opacity)
 		// overrides the loaded settings before text + bg image are built. Applied
 		// after the theme/OS palette settles so it isn't clobbered. Per-pane style
 		// stays deferred (needs a per-pane renderer).
@@ -2436,7 +3496,6 @@ impl ApplicationHandler<UserEvent> for App {
 		let scale = window.scale_factor() as f32;
 		let mut text = TextCtx::new(&gfx.device, &gfx.queue, gfx.format, scale);
 		let rects = RectRenderer::new(&gfx.device, gfx.format);
-		let bg_image = load_bg_image(&gfx);
 		let scrim =
 			crate::scrim::Scrim::new(&gfx.device, gfx.format, gfx.config.width, gfx.config.height);
 
@@ -2474,10 +3533,17 @@ impl ApplicationHandler<UserEvent> for App {
 			}),
 		);
 		let mut scrim = scrim;
-		if let Some(applied) = window.request_inner_size(want) {
+		// If the resize applies synchronously (Windows), the first frame is already at
+		// the final size - reveal on it. Otherwise (async X11/Wayland) wait for the
+		// surface to reach `want` before revealing, so the window never maps at the
+		// default size first.
+		let reveal_want = if let Some(applied) = window.request_inner_size(want) {
 			gfx.resize(applied.width, applied.height);
 			scrim.resize(&gfx.device, applied.width, applied.height);
-		}
+			None
+		} else {
+			Some(want)
+		};
 
 		// initial content area, inset by the menu bar (when shown) and the tab
 		// bar (when the CLI makes >1 tab), so panes start correctly sized.
@@ -2505,7 +3571,9 @@ impl ApplicationHandler<UserEvent> for App {
 			gfx,
 			text,
 			rects,
-			bg_image,
+			proxy: self.proxy.clone(),
+			// filled in when the worker answers; the window is not held up for it
+			wallpaper_img: None,
 			scrim,
 			tabs: Tabs { list, active: 0 },
 			mods: ModifiersState::empty(),
@@ -2515,17 +3583,25 @@ impl ApplicationHandler<UserEvent> for App {
 			selecting: None,
 			last_click: None,
 			click_count: 0,
+			cursor_focus_sig: None,
 			resizing: None,
 			dragging_pane: None,
+			bar_dragging: None,
+			link_arm: None,
+			menu_link: None,
 			cursor_icon: CursorIcon::Default,
 			clipboard: Clipboard::new(),
 			last_frame: Instant::now(),
 			dirty: true,
 			bell_flash: 0.0,
 			size_tracked: false,
+			revealed: false,
+			reveal_want,
+			reveal_deadline: Instant::now() + Duration::from_millis(400),
 			pending_size: None,
 			pending_size_at: Instant::now(),
 			menu: None,
+			tab_close_arm: None,
 			decorated,
 			menu_bar,
 			bar_open: None,
@@ -2537,7 +3613,31 @@ impl ApplicationHandler<UserEvent> for App {
 			pending_about: false,
 			pending_settings: false,
 			chrome: None,
+			chrome_rev: 0,
+			text_sig: None,
+			overlay_sig: None,
+			scrim_sig: None,
+			occluded: false,
+			was_hidden: false,
+			wp_count: 0,
+			wp_current: None,
+			wp_next: None,
+			wp_locked: false,
+			wp_seq: 0,
+			vram_next: Instant::now() + VRAM_CHECK_IVL,
+			vramloss_test: std::env::var_os("SILK_VRAMLOSS").is_some(),
 		});
+		// A wallpaper given on the command line (--wallpaper-file, incl. an explicit
+		// clear) owns this session: rotation is skipped entirely, whatever the config
+		// says, and the stored rotation settings are left untouched.
+		let cli_wallpaper = self.cli.win.style.wallpaper_img.is_some();
+		if let Some(state) = self.state.as_mut() {
+			state.init_wallpaper(cli_wallpaper);
+		}
+		// GL path only: the native path's swapchain reports loss itself
+		if !self.vt_watch && self.state.as_ref().is_some_and(|s| s.gfx.is_gl()) {
+			self.vt_watch = spawn_vt_watch(self.proxy.clone());
+		}
 	}
 
 	fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
@@ -2545,6 +3645,7 @@ impl ApplicationHandler<UserEvent> for App {
 			return;
 		};
 		match event {
+			UserEvent::WallpaperReady(loaded) => state.wallpaper_ready(*loaded),
 			UserEvent::Wakeup(id) => {
 				// output easing is triggered in Pane::build when the screen
 				// actually scrolls, not on every content change. Only the pane
@@ -2553,6 +3654,9 @@ impl ApplicationHandler<UserEvent> for App {
 				if let Some(p) = state.tabs.find_pane_mut(id) {
 					p.content_dirty = true;
 					p.note_output(); // copy-output: push the settle deadline out
+					// scrollback depth, sampled per read cycle - the only
+					// granularity that sees a `clear` truncate it
+					p.note_history();
 				}
 			}
 			UserEvent::PtyWrite(id, bytes) => {
@@ -2595,6 +3699,15 @@ impl ApplicationHandler<UserEvent> for App {
 				state.bell_flash = 1.0;
 				state.dirty = true;
 			}
+			UserEvent::SetWallpaper(image) => state.lock_wallpaper(image),
+			UserEvent::ReloadSettings => state.reload_config(),
+			UserEvent::VtSwitched => {
+				// Return to our console (the watcher signals only returns).
+				// Rebuild unconditionally: focus may land on another window or
+				// nowhere, and an unfocused window must heal too.
+				vramdbg("vt return -> recover_gpu");
+				state.recover_gpu();
+			}
 		}
 	}
 
@@ -2634,6 +3747,15 @@ impl ApplicationHandler<UserEvent> for App {
 					.resize(&state.gfx.device, size.width, size.height);
 				state.relayout_all();
 				state.save_window_size(size.width, size.height);
+				state.invalidate_prepared(); // scrim textures were just recreated
+				state.dirty = true;
+			}
+
+			// DPI/scale changed (monitor move or a live scaling change). Re-scale
+			// cell metrics + chrome for the new factor; winit preserves the logical
+			// size, so a Resized event follows to reconfigure the surface + scrim.
+			WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+				state.rebuild_text(scale_factor as f32);
 				state.dirty = true;
 			}
 
@@ -2646,6 +3768,29 @@ impl ApplicationHandler<UserEvent> for App {
 			// Window focus gates copy-output: a background window never copies.
 			WindowEvent::Focused(focused) => {
 				state.focused = focused;
+				// repaint: focus-dependent chrome (copybox dim) and the refocus
+				// poke that resumes a long-idle-parked cursor both live in render
+				state.dirty = true;
+				// Regaining focus is the likely first moment back from a VT
+				// switch/suspend - probe the GPU uploads now, not at the slow tick.
+				if focused && state.gfx.is_gl() {
+					state.vram_next = Instant::now();
+					vramdbg("focus regained -> immediate probe");
+				}
+			}
+
+			// Becoming visible again (VT return, compositor remap) - probe now too;
+			// a VT switch doesn't always hand focus straight back.
+			WindowEvent::Occluded(occluded) => {
+				state.occluded = occluded;
+				if !occluded {
+					// nothing was drawn while hidden, so catch up in one frame
+					state.dirty = true;
+					if state.gfx.is_gl() {
+						state.vram_next = Instant::now();
+						vramdbg("unoccluded -> immediate probe");
+					}
+				}
 			}
 
 			// OS switched dark/light: a "System" theme follows it live.
@@ -2656,18 +3801,37 @@ impl ApplicationHandler<UserEvent> for App {
 				}
 			}
 
+			WindowEvent::CursorLeft { .. } => {
+				// no pointer, no hover underline
+				state.update_link_hover(None);
+			}
+
 			WindowEvent::CursorMoved { position, .. } => {
 				state.mouse = (position.x as f32, position.y as f32);
 				let (x, y) = state.mouse;
+				// A thumb drag in progress owns the pointer - before the mouse-report
+				// path, so a tracking app can't swallow the drag half way down.
+				if let Some(id) = state.bar_dragging {
+					let cfg = config::settings();
+					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
+						p.bar_drag_to(y, &state.text, &cfg);
+					}
+					state.dirty = true;
+					return;
+				}
 				// mouse-tracking app wants motion/drag reports; when it does, skip our
 				// local hover/selection handling for this move. The report is
 				// PTY-bound: nothing local changed, so no redraw - marking dirty here
 				// forced a full re-shape of every pane per cell crossed.
 				if state.report_mouse_motion() {
+					// the app owns the pointer, so nothing of ours is hovering it
+					state.update_link_hover(None);
 					return;
 				}
+				state.update_bar_hover(x, y);
+				state.update_link_hover(Some((x, y)));
 				// hovering a different top-level title with a bar menu open
-				// switches to it (standard menu-bar behaviour)
+				// switches to it (standard menu-bar behavior)
 				if state.bar_open.is_some() && y < state.menu_bar_h() {
 					if let Some(i) = state.menubar_hit(x) {
 						if state.bar_open != Some(i) {
@@ -2703,17 +3867,8 @@ impl ApplicationHandler<UserEvent> for App {
 					// redraw the drop-target highlight as the cursor moves
 					state.dirty = true;
 				} else {
-					// show a resize cursor when hovering a divider
-					let area = state.area();
-					let icon = match state.tabs.cur().divider_at(x, y, area) {
-						Some((_, Dir::Vertical)) => CursorIcon::ColResize,
-						Some((_, Dir::Horizontal)) => CursorIcon::RowResize,
-						None => CursorIcon::Default,
-					};
-					if icon != state.cursor_icon {
-						state.window.set_cursor(icon);
-						state.cursor_icon = icon;
-					}
+					// resize cursor over a divider, hand over a link
+					state.sync_cursor_icon();
 				}
 			}
 
@@ -2723,14 +3878,20 @@ impl ApplicationHandler<UserEvent> for App {
 				..
 			} => {
 				let (x, y) = state.mouse;
+				// A popup tall enough to be clamped to the top of the window covers
+				// the menu bar, and the click belongs to whatever is drawn on top -
+				// otherwise its first item is unreachable. Same reason the tab-bar
+				// branch below stands aside for an open menu.
+				let on_popup = state.menu.as_ref().is_some_and(|m| m.hit(x, y));
 				// click on the menu bar: toggle/open the top-level menu's dropdown
-				if button == MouseButton::Left && state.menu_bar && y < state.menu_bar_h() {
-					// the always-visible copy-output checkbox toggles the focused pane
-					if state.copybox_hit(x) {
+				if button == MouseButton::Left
+					&& state.menu_bar
+					&& !on_popup && y < state.menu_bar_h()
+				{
+					// the always-visible copy-mode checkboxes toggle the focused pane
+					if let Some(kind) = state.copybox_hit(x) {
 						let focused_id = state.tabs.cur().focused;
-						if let Some(p) = state.tabs.cur_mut().panes.get_mut(&focused_id) {
-							p.auto_copy = !p.auto_copy;
-						}
+						state.toggle_copy(focused_id, kind);
 						state.menu = None;
 						state.bar_open = None;
 						state.dirty = true;
@@ -2757,7 +3918,7 @@ impl ApplicationHandler<UserEvent> for App {
 				let tab_bar_y = state.menubar_h();
 				if button == MouseButton::Left
 					&& state.menu.is_none()
-					&& state.tabs.len() > 1
+					&& state.tab_bar_visible()
 					&& y >= tab_bar_y
 					&& y < tab_bar_y + state.tab_bar_h()
 				{
@@ -2765,23 +3926,56 @@ impl ApplicationHandler<UserEvent> for App {
 						(state.gfx.config.width as f32 / state.tabs.len() as f32).min(TAB_MAX_W);
 					let i = (x / tab_w).floor() as usize;
 					if i < state.tabs.len() {
-						// click in the close-button column closes that tab; else select it
+						// press in the close-button column only ARMS the close (the
+						// button lights up); the close itself fires on release over
+						// the same box, so a slipped press can be dragged off to
+						// cancel - standard button feel. Elsewhere selects the tab.
 						let cb =
 							tab_close_box(i as f32 * tab_w, tab_w, tab_bar_y, state.tab_bar_h());
 						if x >= cb.x {
-							state.close_tab_at(i);
+							state.tab_close_arm = Some(i);
 						} else {
-							state.tabs.active = i;
+							if state.tabs.active != i {
+								state.tabs.active = i;
+								state.freeze_catchup();
+							}
 							state.update_title();
 						}
 						state.dirty = true;
 					}
 					return;
 				}
+				// A visible scrollbar takes the click before anything else - including a
+				// mouse-tracking app, the same way the right-click menu does. `bar_hit`
+				// answers None whenever the bar is faded out, so an invisible bar never
+				// steals a click that belonged to the text under it.
+				if button == MouseButton::Left && state.menu.is_none() {
+					let cfg = config::settings();
+					let hit = state.tabs.cur().pane_at(x, y).and_then(|id| {
+						let p = state.tabs.cur().panes.get(&id)?;
+						Some((id, p.bar_hit(x, y, &state.text, &cfg)?))
+					});
+					if let Some((id, hit)) = hit {
+						state.focus_at(x, y);
+						if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
+							match hit {
+								BarHit::Thumb => p.bar_grab(y, &state.text, &cfg),
+								BarHit::TrackUp => p.bar_page(true, &state.text),
+								BarHit::TrackDown => p.bar_page(false, &state.text),
+							}
+						}
+						if hit == BarHit::Thumb {
+							state.bar_dragging = Some(id);
+						}
+						state.dirty = true;
+						return;
+					}
+				}
 				// mouse-tracking app owns the pointer: report the press, skip local
 				// selection/paste/menu (Shift bypasses to the local action). An open
 				// menu must get the click (operate/dismiss it), not the app underneath.
-				if state.menu.is_none() && state.report_mouse_button(button, true) {
+				if state.menu.is_none() && state.report_mouse_button(button, ElementState::Pressed)
+				{
 					state.dirty = true;
 					return;
 				}
@@ -2813,6 +4007,18 @@ impl ApplicationHandler<UserEvent> for App {
 								state.window.set_cursor(CursorIcon::Grabbing);
 								state.cursor_icon = CursorIcon::Grabbing;
 							}
+						} else if let Some((id, link)) = state
+							.mods
+							.control_key()
+							.then(|| state.link_at_pointer())
+							.flatten()
+						{
+							// Ctrl+click a link: arm here, open on the release over the
+							// same link, so a slipped press can be dragged off to
+							// cancel. Ctrl elsewhere still starts a block selection -
+							// only a press ON a link is taken.
+							state.focus_at(x, y);
+							state.link_arm = Some((id, link.url));
 						} else {
 							state.focus_at(x, y);
 							// 1 click = plain run (Ctrl = rectangle), 2 = word/pair,
@@ -2856,7 +4062,7 @@ impl ApplicationHandler<UserEvent> for App {
 											p.update_selection(end, Side::Right);
 										}
 										None => {
-											p.begin_selection(point, side, SelectionType::Semantic)
+											p.begin_selection(point, side, SelectionType::Semantic);
 										}
 									}
 								} else {
@@ -2883,7 +4089,7 @@ impl ApplicationHandler<UserEvent> for App {
 								.cur()
 								.pane_at(x, y)
 								.unwrap_or(state.tabs.cur().focused);
-							if let Some(p) = state.tabs.cur().panes.get(&id) {
+							if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
 								p.paste(&text);
 							}
 						}
@@ -2907,7 +4113,7 @@ impl ApplicationHandler<UserEvent> for App {
 				button,
 				..
 			} if state.mouse_btn.is_some() && state.mouse_btn == mouse_btn_of(button) => {
-				if state.report_mouse_button(button, false) {
+				if state.report_mouse_button(button, ElementState::Released) {
 					state.dirty = true;
 				}
 			}
@@ -2918,6 +4124,38 @@ impl ApplicationHandler<UserEvent> for App {
 				..
 			} => {
 				state.resizing = None;
+				// armed link: open only if the release is still on the same one
+				if let Some((armed_id, url)) = state.link_arm.take() {
+					let same = state
+						.link_at_pointer()
+						.is_some_and(|(id, link)| id == armed_id && link.url == url);
+					if same {
+						open_link(&url);
+					}
+				}
+				// end a thumb drag; the hold keeps the bar up for a moment afterwards
+				if let Some(id) = state.bar_dragging.take() {
+					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
+						p.bar_drag = None;
+						p.poke_scrollbar();
+					}
+					state.dirty = true;
+				}
+				// armed tab close: fire only if the release is still on the same box
+				if let Some(i) = state.tab_close_arm.take() {
+					let (x, y) = state.mouse;
+					let tab_bar_y = state.menubar_h();
+					if i < state.tabs.len() && y >= tab_bar_y && y < tab_bar_y + state.tab_bar_h() {
+						let tab_w = (state.gfx.config.width as f32 / state.tabs.len() as f32)
+							.min(TAB_MAX_W);
+						let cb =
+							tab_close_box(i as f32 * tab_w, tab_w, tab_bar_y, state.tab_bar_h());
+						if (x / tab_w).floor() as usize == i && x >= cb.x {
+							state.close_tab_at(i);
+						}
+					}
+					state.dirty = true;
+				}
 				// drop a dragged pane onto the pane under the cursor (swap)
 				if let Some(src) = state.dragging_pane.take() {
 					let (x, y) = state.mouse;
@@ -2942,7 +4180,24 @@ impl ApplicationHandler<UserEvent> for App {
 						sel_text
 					});
 					match text {
-						Some(sel_text) => state.clipboard.set_primary(sel_text),
+						Some(sel_text) => {
+							// copy-on-select: a finished selection also lands on
+							// the desktop clipboard when the pane opted in
+							// copy-on-select fires only for the focused pane of the
+							// active tab in a focused window (only that pane copies)
+							if state.focused
+								&& id == state.tabs.cur().focused
+								&& state
+									.tabs
+									.cur()
+									.panes
+									.get(&id)
+									.is_some_and(|p| p.copy_select)
+							{
+								state.clipboard.set_clipboard(sel_text.clone());
+							}
+							state.clipboard.set_primary(sel_text);
+						}
 						None => state.dirty = true,
 					}
 				}
@@ -3027,6 +4282,9 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 					} else {
 						p.scroll.wheel(lines);
+						// user-driven scroll, so the bar comes up; output-driven
+						// scrolling deliberately doesn't (it never stops)
+						p.poke_scrollbar();
 					}
 				}
 				state.dirty = true;
@@ -3053,7 +4311,7 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 						// Left/Right cycle between menu-bar dropdowns (no-op for a
 						// right-click context menu, which isn't bar-anchored)
-						Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight) => {
+						Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight) => {
 							if let Some(open_idx) = state.bar_open {
 								let n = MENU_BAR.len();
 								let next =
@@ -3079,14 +4337,15 @@ impl ApplicationHandler<UserEvent> for App {
 								}
 							}
 						}
-						// accelerator: a letter activates the first item starting with it
+						// accelerator: a letter activates the item carrying it (the
+						// underlined letter; unique per menu, some items have none)
 						Key::Character(typed) => {
 							let ch = typed.chars().next().map(|c| c.to_ascii_lowercase());
 							let hit = ch.and_then(|ch| {
 								state.menu.as_ref().and_then(|menu| {
 									menu.entries.iter().position(|entry| {
-										matches!(entry, Entry::Item { label, .. }
-											if label.chars().next().map(|c| c.to_ascii_lowercase()) == Some(ch))
+										matches!(entry, Entry::Item { label, accel: Some(pos), .. }
+											if label[*pos..].chars().next().map(|c| c.to_ascii_lowercase()) == Some(ch))
 									})
 								})
 							});
@@ -3165,11 +4424,33 @@ impl ApplicationHandler<UserEvent> for App {
 							state.close_tab();
 							return;
 						}
+						// Ctrl+Shift+N: new window, starting in the focused pane's
+						// current directory
+						Key::Character(typed) if shift && typed.eq_ignore_ascii_case("n") => {
+							state.new_window();
+							return;
+						}
+						// Ctrl+- / Ctrl+= / Ctrl++: session font zoom ("+" is
+						// Shift+"=" on most layouts, so both spellings count)
+						Key::Character(typed) if typed == "-" => {
+							state.font_zoom(-1);
+							return;
+						}
+						Key::Character(typed) if typed == "=" || typed == "+" => {
+							state.font_zoom(1);
+							return;
+						}
+						// Ctrl+0: reset the session font zoom to the configured size
+						Key::Character(typed) if typed == "0" => {
+							state.font_zoom_reset();
+							return;
+						}
 						Key::Named(NamedKey::PageUp) => {
 							if shift {
-								state.tabs.move_active(false)
+								state.tabs.move_active(false); // same tab follows - nothing was frozen
 							} else {
-								state.tabs.prev()
+								state.tabs.prev();
+								state.freeze_catchup();
 							}
 							state.update_title();
 							state.dirty = true;
@@ -3177,9 +4458,10 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 						Key::Named(NamedKey::PageDown) => {
 							if shift {
-								state.tabs.move_active(true)
+								state.tabs.move_active(true);
 							} else {
-								state.tabs.next()
+								state.tabs.next();
+								state.freeze_catchup();
 							}
 							state.update_title();
 							state.dirty = true;
@@ -3198,8 +4480,7 @@ impl ApplicationHandler<UserEvent> for App {
 					.cur()
 					.panes
 					.get(&focused)
-					.map(|p| p.mode.contains(TermMode::APP_CURSOR))
-					.unwrap_or(false);
+					.is_some_and(|p| p.mode.contains(TermMode::APP_CURSOR));
 				if let Some(bytes) = input::encode(&key, state.mods, app_cursor) {
 					// copy-output: Enter at the shell prompt may launch a command;
 					// arm the capture so its output is copied once the pane settles.
@@ -3208,7 +4489,8 @@ impl ApplicationHandler<UserEvent> for App {
 						if !p.read_only {
 							p.scroll.jump_bottom();
 							p.term.write(bytes);
-							if is_enter && p.auto_copy {
+							p.note_typed();
+							if is_enter && p.copy_output {
 								p.arm_capture();
 							}
 						}
@@ -3250,6 +4532,12 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 		}
 
+		// Warm the dialogs' GPU context once the terminal is genuinely on screen,
+		// so building it can't slow the path to the first frame. Idempotent.
+		if WARM_DIALOG_GPU && self.state.as_ref().is_some_and(|state| state.revealed) {
+			self.gpu_warm.start();
+		}
+
 		// Open the About window if requested (window creation needs the event loop,
 		// so State only signals and we act here).
 		let open_about = self
@@ -3266,15 +4554,23 @@ impl ApplicationHandler<UserEvent> for App {
 				.ok()
 				.map(|handle| handle.as_raw())
 		});
+		// cloned (all wgpu handles, so refcount bumps) rather than borrowed: the
+		// open arms below also take `&mut self` to store the dialog
+		let warm = (open_about || self.state.as_ref().is_some_and(|s| s.pending_settings))
+			.then(|| self.gpu_warm.get())
+			.flatten();
 		if open_about {
 			if let Some(info) = self
 				.state
 				.as_ref()
 				.map(|state| state.gfx.adapter_info.clone())
 			{
-				match crate::dialog::DialogWin::new_about(event_loop, &info, parent) {
+				match crate::dialog::DialogWin::new_about(event_loop, &info, parent, warm.as_ref())
+				{
 					Ok(d) => {
 						self.dialog = Some(d);
+						self.center_dialog();
+						self.reveal_dialog();
 						self.dialog_dirty = true;
 					}
 					Err(e) => eprintln!("{}: About window failed: {e}", config::APP_NAME),
@@ -3286,13 +4582,32 @@ impl ApplicationHandler<UserEvent> for App {
 			.as_mut()
 			.is_some_and(|state| std::mem::take(&mut state.pending_settings));
 		if open_settings {
-			match crate::dialog::DialogWin::new_settings(event_loop, parent) {
+			// a view older than the resume window is dead either way, so take it
+			// unconditionally and discard it if it has expired
+			let resume = self
+				.settings_view
+				.take()
+				.filter(|(closed, _)| closed.elapsed() <= SETTINGS_RESUME)
+				.map(|(_, view)| view);
+			match crate::dialog::DialogWin::new_settings(event_loop, parent, resume, warm.as_ref())
+			{
 				Ok(d) => {
 					self.dialog = Some(d);
+					self.center_dialog();
+					self.reveal_dialog();
 					self.dialog_dirty = true;
 				}
 				Err(e) => eprintln!("{}: Settings window failed: {e}", config::APP_NAME),
 			}
+		}
+		// a dialog with an animating field edit (view scroll / caret / blink)
+		// keeps re-rendering at the cadence it reports (see dlg_wake below)
+		if self
+			.dialog
+			.as_ref()
+			.is_some_and(|d| d.anim_wake_ms().is_some())
+		{
+			self.dialog_dirty = true;
 		}
 		if self.dialog_dirty {
 			if let Some(d) = &mut self.dialog {
@@ -3300,6 +4615,11 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 			self.dialog_dirty = false;
 		}
+		let dlg_wake = self
+			.dialog
+			.as_ref()
+			.and_then(super::dialog::DialogWin::anim_wake_ms)
+			.map(|ms| Instant::now() + Duration::from_millis(ms));
 
 		// re-assert the dialog->terminal stacking a few times after focus (see the
 		// field comment). Cleared when the dialog closes.
@@ -3325,10 +4645,111 @@ impl ApplicationHandler<UserEvent> for App {
 			.any(|p| p.scroll.animating());
 		let cursor_anim = state.tabs.cur().panes.values().any(|p| p.cursor_animating);
 		let content = state.tabs.cur().panes.values().any(|p| p.content_dirty);
+		// Parked-cursor resume: no frames flow while a cursor is parked at full,
+		// so consume any due wake (render one catch-up frame - the pause state
+		// sees the timeouts met and resumes the cycle) and keep the earliest
+		// pending one to fold into the control flow below.
+		let mut cursor_wake: Option<Instant> = None;
+		let wake_now = Instant::now();
+		for pane in state.tabs.cur_mut().panes.values_mut() {
+			if let Some(wake) = pane.cursor_wake {
+				if wake_now >= wake {
+					pane.cursor_wake = None; // consumed - or an occluded window would spin on it
+					state.dirty = true;
+				} else {
+					cursor_wake = Some(cursor_wake.map_or(wake, |w| w.min(wake)));
+				}
+			}
+		}
 		// copy-output: catch the focused pane's command finishing (see method)
 		state.poll_output_copy();
+		// wallpaper rotation: swap to the next image when its interval elapses
+		// (sets state.dirty so the change renders this cycle)
+		if state.wp_next.is_some_and(|next| Instant::now() >= next) {
+			state.advance_wallpaper();
+		}
+		// GL path: the VT watcher (spawn_vt_watch) is the real loss trigger; the
+		// readback probes below stay as field evidence + a fallback for a missed
+		// switch, since a real purge read back "intact" (driver restores readback
+		// contents while sampled copies stay garbage).
+		if state.gfx.is_gl() {
+			if state.vramloss_test && state.revealed {
+				state.vramloss_test = false;
+				state.gfx.vram_clobber();
+				if let Some(wp) = &state.wallpaper_img {
+					wp.vram_clobber(&state.gfx.queue);
+				}
+				vramdbg("SILK_VRAMLOSS: sentinels + wallpaper clobbered");
+			}
+			// Poll both probes; either detecting loss triggers the one rebuild.
+			// Field logs showed EVERY witness - synthetic sentinels AND the
+			// wallpaper's own uploaded block - reading back intact across a real
+			// purge that blacked the window, so readback cannot be the primary
+			// detector. Kept for the diagnostic trail and as a fallback.
+			let mut lost = None;
+			match state.gfx.vram_check_poll() {
+				Some(VramProbe::Lost { uploaded, rendered }) => {
+					lost = Some(format!(
+						"sentinel uploaded={} rendered={}",
+						if uploaded { "gone" } else { "ok" },
+						if rendered { "gone" } else { "ok" }
+					));
+				}
+				Some(VramProbe::Intact) => vramdbg("probe: sentinels intact"),
+				Some(VramProbe::MapFailed) => {
+					vramdbg("probe: sentinel readback map FAILED (inconclusive)");
+				}
+				None => {}
+			}
+			if let Some(wp) = state.wallpaper_img.as_mut() {
+				match wp.vram_check_poll(&state.gfx.device) {
+					Some(WpProbe::Lost) => lost = Some("wallpaper block gone".into()),
+					Some(WpProbe::Intact) => vramdbg("probe: wallpaper intact"),
+					Some(WpProbe::MapFailed) => {
+						vramdbg("probe: wallpaper readback map FAILED (inconclusive)");
+					}
+					None => {}
+				}
+			}
+			if let Some(what) = lost {
+				eprintln!(
+					"{}: GPU texture contents lost (VT switch or resume?) - rebuilding",
+					config::APP_NAME
+				);
+				vramdbg(&format!("probe: LOST ({what}) -> recover_gpu"));
+				state.recover_gpu();
+			}
+			if Instant::now() >= state.vram_next {
+				state.gfx.vram_check_start();
+				if let Some(wp) = state.wallpaper_img.as_mut() {
+					wp.vram_check_start(&state.gfx.device, &state.gfx.queue);
+				}
+				state.vram_next = Instant::now() + VRAM_CHECK_IVL;
+			}
+		}
 		let bell_anim = state.bell_flash > 0.0;
-		let flow = if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
+		// Until revealed (born hidden, shown at final size), keep rendering so the
+		// reveal check runs each cycle; the deadline wake below guarantees it can't
+		// stay hidden if no post-resize frame is otherwise triggered.
+		if !state.revealed {
+			state.dirty = true;
+		}
+		let reveal_wake = (!state.revealed).then_some(state.reveal_deadline);
+		// Fully hidden window: nobody can see the frame, so don't build one. PTY
+		// reading never stops - output lands in the grid and the panes' flags wait.
+		// Occluded covers WMs that report it; is_minimized() covers iconified
+		// windows where they don't. The unfreeze edge is one dirty catch-up frame,
+		// hard-cut for panes with output pending (never eased in - bounce class).
+		let minimized =
+			FREEZE_MINIMIZED && state.revealed && state.window.is_minimized().unwrap_or(false);
+		let hidden = (state.occluded || minimized) && state.revealed;
+		if state.was_hidden && !hidden {
+			state.freeze_catchup();
+		}
+		state.was_hidden = hidden;
+		let flow = if hidden {
+			ControlFlow::Wait
+		} else if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
 			// UI/chrome changes and the bell force ALL panes to re-shape; fresh
 			// output and scroll eases are scoped per pane inside render (a pure
 			// cursor-animation frame lets every pane reuse its cached frame).
@@ -3371,8 +4792,39 @@ impl ApplicationHandler<UserEvent> for App {
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
 		};
+		// keep frames coming while a dialog field edit animates
+		let flow = match (flow, dlg_wake) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
 		// keep the loop waking while dialog-raise retries are pending
 		let flow = match (flow, raise_wake) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
+		// wake a parked cursor at its scheduled resume time, even when idle
+		let flow = match (flow, cursor_wake) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
+		// wake to rotate the wallpaper when its interval is up, even when idle
+		let flow = match (flow, state.wp_next) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
+		// wake at the reveal deadline so a hidden startup window is shown even if no
+		// post-resize frame arrives
+		let flow = match (flow, reveal_wake) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
+		// slow-tick wake so the VRAM sentinel probe runs even while fully idle
+		let flow = match (flow, state.gfx.is_gl().then_some(state.vram_next)) {
 			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
@@ -3405,7 +4857,7 @@ impl State {
 					.cur()
 					.panes
 					.get(&focused)
-					.and_then(|p| p.selection_text())
+					.and_then(super::pane::Pane::selection_text)
 				{
 					self.clipboard.set_clipboard(text);
 				}
@@ -3413,7 +4865,7 @@ impl State {
 			}
 			Key::Character(typed) if typed.eq_ignore_ascii_case("v") => {
 				if let Some(text) = self.clipboard.get_clipboard() {
-					if let Some(p) = self.tabs.cur().panes.get(&focused) {
+					if let Some(p) = self.tabs.cur_mut().panes.get_mut(&focused) {
 						p.paste(&text);
 					}
 				}
@@ -3421,5 +4873,19 @@ impl State {
 			}
 			_ => false,
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::accel_at;
+
+	#[test]
+	fn accel_prefers_exact_case_then_falls_back() {
+		// 'S' must land on "Selection", not the 's' in "Paste"
+		assert_eq!(accel_at("Paste Selection", 'S'), Some(6));
+		// no capital 's' -> case-insensitive fallback finds "single"
+		assert_eq!(accel_at("Hide single tab", 's'), Some(5));
+		assert_eq!(accel_at("Quit", 'x'), None);
 	}
 }

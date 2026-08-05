@@ -1,0 +1,280 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright © 2026 Jim Collier
+
+//! Per-image layout tags, read out of the wallpaper file's own XMP packet:
+//! `wallpaper:Fit` (stretch|zoom) and `wallpaper:Anchor` ("50%, 50%"). An image
+//! that knows it must not be distorted can say so, instead of the one global
+//! setting deciding for the whole collection.
+//!
+//! No XML parser and no new crate: the packet is reached through the container's
+//! own segment/chunk table, then the two properties are picked out of the text.
+//! Anything unrecognised yields None and the caller keeps its own default - a
+//! wallpaper must still load when its metadata is missing or malformed.
+
+use crate::config::Fit;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
+
+// Namespace prefix as written into the files. The URI is
+// https://github.com/jim-collier/xmp/wallpaper/1.0/ - deliberately named for
+// what the tags describe, not for this program, so other tools can write them
+// too. Matched on the prefix alone, which is what a writer emits and what a
+// re-serialize preserves.
+const NS: &str = "wallpaper:";
+
+// Both writers put XMP in the header (before SOS / before IDAT), so these only
+// bound a malformed or hostile file - never a real one.
+const MAX_SCAN: u64 = 1 << 20;
+const MAX_PACKET: u64 = 1 << 20;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Layout {
+	pub fit: Option<Fit>,
+	// x, y in 0.0..=1.0; 0 is left/top, 1 is right/bottom. Zoom only.
+	pub anchor: Option<[f32; 2]>,
+}
+
+pub fn read(path: &Path) -> Layout {
+	packet(path).map_or_else(Layout::default, |xmp| Layout {
+		fit: property(&xmp, "Fit").as_deref().and_then(parse_fit),
+		anchor: property(&xmp, "Anchor").as_deref().and_then(parse_anchor),
+	})
+}
+
+fn packet(path: &Path) -> Option<String> {
+	let mut file = File::open(path).ok()?;
+	let mut magic = [0u8; 8];
+	file.read_exact(&mut magic).ok()?;
+	file.seek(SeekFrom::Start(0)).ok()?;
+	let raw = if magic == [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a] {
+		png(&mut file)?
+	} else if magic[0] == 0xff && magic[1] == 0xd8 {
+		jpeg(&mut file)?
+	} else {
+		return None;
+	};
+	String::from_utf8(raw).ok()
+}
+
+// PNG: walk the chunk table for the uncompressed iTXt that carries XMP. A
+// zTXt/compressed one is skipped rather than inflated - nothing writes XMP that
+// way, and carrying an inflate for it would not pay for itself.
+fn png(file: &mut File) -> Option<Vec<u8>> {
+	const KEYWORD: &[u8] = b"XML:com.adobe.xmp\0";
+	file.seek(SeekFrom::Start(8)).ok()?;
+	loop {
+		let mut header = [0u8; 8];
+		file.read_exact(&mut header).ok()?;
+		let len = u64::from(u32::from_be_bytes([
+			header[0], header[1], header[2], header[3],
+		]));
+		let kind = &header[4..8];
+		// pixel data has started; any XMP would have come first
+		if kind == b"IDAT" || kind == b"IEND" {
+			return None;
+		}
+		if kind == b"iTXt" && len <= MAX_PACKET {
+			let mut data = vec![0u8; usize::try_from(len).ok()?];
+			file.read_exact(&mut data).ok()?;
+			// keyword\0 + compression flag + method + lang\0 + translated\0 + text
+			if let Some(rest) = data.strip_prefix(KEYWORD)
+				&& rest.first() == Some(&0)
+			{
+				let mut fields = rest.get(2..)?.splitn(3, |b| *b == 0);
+				fields.next()?; // language
+				fields.next()?; // translated keyword
+				return fields.next().map(<[u8]>::to_vec);
+			}
+		} else {
+			file.seek(SeekFrom::Current(i64::try_from(len).ok()?))
+				.ok()?;
+		}
+		file.seek(SeekFrom::Current(4)).ok()?; // crc
+		if file.stream_position().ok()? > MAX_SCAN {
+			return None;
+		}
+	}
+}
+
+// JPEG: walk the marker segments for the APP1 whose payload carries the XMP
+// signature. Only the main packet - an extended (>64KB) one holds overflow
+// properties, never these two.
+fn jpeg(file: &mut File) -> Option<Vec<u8>> {
+	const SIG: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+	file.seek(SeekFrom::Start(2)).ok()?;
+	loop {
+		let mut byte = [0u8; 1];
+		file.read_exact(&mut byte).ok()?;
+		if byte[0] != 0xff {
+			return None;
+		}
+		// fill bytes are legal before a marker
+		while byte[0] == 0xff {
+			file.read_exact(&mut byte).ok()?;
+		}
+		match byte[0] {
+			// standalone markers: no length, no payload
+			0x01 | 0xd0..=0xd8 => continue,
+			// entropy-coded data starts here, and the header is over
+			0xd9 | 0xda => return None,
+			_ => {}
+		}
+		let mut len_bytes = [0u8; 2];
+		file.read_exact(&mut len_bytes).ok()?;
+		let body = u64::from(u16::from_be_bytes(len_bytes)).checked_sub(2)?;
+		if byte[0] == 0xe1 && body <= MAX_PACKET {
+			let mut data = vec![0u8; usize::try_from(body).ok()?];
+			file.read_exact(&mut data).ok()?;
+			if let Some(rest) = data.strip_prefix(SIG) {
+				return Some(rest.to_vec());
+			}
+		} else {
+			file.seek(SeekFrom::Current(i64::try_from(body).ok()?))
+				.ok()?;
+		}
+		if file.stream_position().ok()? > MAX_SCAN {
+			return None;
+		}
+	}
+}
+
+// Both spellings a writer may use: an element, or an attribute on the enclosing
+// rdf:Description (the "shorthand" form a re-serialize can switch to).
+fn property(xmp: &str, name: &str) -> Option<String> {
+	let open = format!("<{NS}{name}>");
+	if let Some(start) = xmp.find(&open) {
+		let rest = &xmp[start + open.len()..];
+		if let Some(end) = rest.find(&format!("</{NS}{name}>")) {
+			return Some(rest[..end].trim().to_string());
+		}
+	}
+	let attr = format!("{NS}{name}=");
+	let rest = &xmp[xmp.find(&attr)? + attr.len()..];
+	let quote = rest.chars().next()?;
+	if quote != '"' && quote != '\'' {
+		return None;
+	}
+	let rest = &rest[1..];
+	Some(rest[..rest.find(quote)?].trim().to_string())
+}
+
+fn parse_fit(value: &str) -> Option<Fit> {
+	match value.trim().to_ascii_lowercase().as_str() {
+		"zoom" => Some(Fit::Zoom),
+		"stretch" => Some(Fit::Stretch),
+		_ => None,
+	}
+}
+
+// "<h>%, <v>%" - the trailing % is optional so a bare "50, 50" still reads.
+fn parse_anchor(value: &str) -> Option<[f32; 2]> {
+	let mut parts = value.split(',');
+	let x = parse_percent(parts.next()?)?;
+	let y = parse_percent(parts.next()?)?;
+	parts.next().is_none().then_some([x, y])
+}
+
+fn parse_percent(value: &str) -> Option<f32> {
+	let value: f32 = value.trim().trim_end_matches('%').trim().parse().ok()?;
+	value.is_finite().then(|| (value / 100.0).clamp(0.0, 1.0))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	const DOC: &str = "<rdf:Description rdf:about=''>\
+		<wallpaper:Fit>stretch</wallpaper:Fit>\
+		<wallpaper:Anchor>25%, 80%</wallpaper:Anchor></rdf:Description>";
+
+	#[test]
+	fn reads_both_spellings_of_a_property() {
+		assert_eq!(property(DOC, "Fit").as_deref(), Some("stretch"));
+		let short = "<rdf:Description wallpaper:Fit='zoom' wallpaper:Anchor=\"0%, 100%\"/>";
+		assert_eq!(property(short, "Fit").as_deref(), Some("zoom"));
+		assert_eq!(property(short, "Anchor").as_deref(), Some("0%, 100%"));
+		assert_eq!(property(DOC, "Nope"), None);
+	}
+
+	// Chunk/segment walking is the part that can silently stop finding tags after
+	// an edit, so both containers get driven end to end. Bodies are synthetic but
+	// laid out exactly as a writer emits them; CRCs are never checked.
+	fn png_file(packet: &str) -> Vec<u8> {
+		let mut text = b"XML:com.adobe.xmp\0\0\0\0\0".to_vec();
+		text.extend_from_slice(packet.as_bytes());
+		let mut out = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+		for (kind, body) in [
+			(b"IHDR".as_slice(), vec![0u8; 13]),
+			(b"iTXt".as_slice(), text),
+			(b"IDAT".as_slice(), vec![0u8; 4]),
+		] {
+			out.extend_from_slice(&u32::try_from(body.len()).unwrap().to_be_bytes());
+			out.extend_from_slice(kind);
+			out.extend_from_slice(&body);
+			out.extend_from_slice(&[0; 4]); // crc
+		}
+		out
+	}
+
+	fn jpeg_file(packet: &str) -> Vec<u8> {
+		let mut app1 = b"http://ns.adobe.com/xap/1.0/\0".to_vec();
+		app1.extend_from_slice(packet.as_bytes());
+		let mut out = vec![0xff, 0xd8, 0xff, 0xe0]; // SOI, APP0
+		out.extend_from_slice(&6u16.to_be_bytes());
+		out.extend_from_slice(b"JFIF");
+		out.extend_from_slice(&[0xff, 0xe1]);
+		out.extend_from_slice(&u16::try_from(app1.len() + 2).unwrap().to_be_bytes());
+		out.extend_from_slice(&app1);
+		out.extend_from_slice(&[0xff, 0xda]); // SOS
+		out
+	}
+
+	#[test]
+	fn walks_a_png_and_a_jpeg_to_the_packet() {
+		let dir = std::env::temp_dir().join(format!("silkterm_xmp_{}", std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let cases = [
+			("a.png", png_file(DOC)),
+			("a.jpg", jpeg_file(DOC)),
+			// no packet at all: the caller keeps its own default
+			("bare.png", png_file("<rdf:Description/>")),
+		];
+		for (name, bytes) in cases {
+			let path = dir.join(name);
+			std::fs::write(&path, &bytes).unwrap();
+			let got = read(&path);
+			if name.starts_with("bare") {
+				assert_eq!(got, Layout::default(), "{name}");
+			} else {
+				assert_eq!(got.fit, Some(Fit::Stretch), "{name}");
+				assert_eq!(got.anchor, Some([0.25, 0.8]), "{name}");
+			}
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	#[test]
+	fn anchor_accepts_the_written_form_and_rejects_junk() {
+		assert_eq!(parse_anchor("50%, 50%"), Some([0.5, 0.5]));
+		assert_eq!(parse_anchor("0,100"), Some([0.0, 1.0]));
+		// out of range is clamped, not dropped - the intent is still readable
+		assert_eq!(parse_anchor("-20%, 300%"), Some([0.0, 1.0]));
+		for junk in ["50%", "50%, 50%, 50%", "left, top", "", "%,%"] {
+			assert_eq!(parse_anchor(junk), None, "{junk} should not parse");
+		}
+	}
+
+	// A missing or unreadable tag must leave the caller on its own default
+	// rather than forcing one - that is what keeps the global setting meaningful.
+	#[test]
+	fn unknown_values_yield_nothing_to_apply() {
+		assert_eq!(parse_fit("ZOOM"), Some(Fit::Zoom));
+		assert_eq!(parse_fit(" stretch "), Some(Fit::Stretch));
+		assert_eq!(parse_fit("cover"), None);
+		assert_eq!(
+			read(Path::new("/nonexistent/wallpaper-test.png")),
+			Layout::default()
+		);
+	}
+}

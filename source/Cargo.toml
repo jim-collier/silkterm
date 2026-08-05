@@ -1,6 +1,6 @@
 [package]
 name = "silkterm"
-version = "1.0.0-beta1"
+version = "1.0.0-beta2"
 edition = "2024"
 rust-version = "1.89"
 description = "Smooth-scrolling GUI terminal emulator with split panes"
@@ -20,20 +20,51 @@ path = "src/main.rs"
 name = "glyphon_gl"
 path = "diagnostics/glyphon_gl.rs"
 
+# Packaging metadata for the cicd packages stage. cargo-deb (.deb) and
+# cargo-generate-rpm (.rpm) read these; both package the already-built release
+# binary (--no-build), per-arch via --target. The binary links only libc + system
+# libs, so no explicit runtime depends are needed. Asset paths are relative to
+# this manifest; the "target/release/" prefix is remapped to the real target dir
+# (and to target/<triple>/release when --target is given).
+[package.metadata.deb]
+maintainer = "Jim Collier <jim-collier@users.noreply.github.com>"
+copyright = "2026, Jim Collier"
+license-file = ["../license.md", "0"]
+extended-description = "GPU-accelerated terminal with smooth scrolling, split panes, tabs, true-color and Unicode, and true per-pixel background transparency."
+section = "utils"
+priority = "optional"
+assets = [
+	["target/release/silkterm", "usr/bin/", "755"],
+	["../cicd/packaging/linux/silkterm.desktop", "usr/share/applications/", "644"],
+]
+
+[package.metadata.generate-rpm]
+summary = "Smooth-scrolling GUI terminal emulator with split panes"
+assets = [
+	{ source = "target/release/silkterm", dest = "/usr/bin/silkterm", mode = "755" },
+	{ source = "../cicd/packaging/linux/silkterm.desktop", dest = "/usr/share/applications/silkterm.desktop", mode = "644" },
+]
+
 [dependencies]
 alacritty_terminal = "0.26"
 wgpu = "29"
 winit = "0.30"
 glyphon = "0.11"
+# COLRv1 color glyphs (see coloremoji.rs). Both already link via swash; the
+# feature sets below match what swash resolves, so this adds no new crate and no
+# feature churn - only the paint-graph + rasterizer code we actually call.
+skrifa = { version = "0.42", default-features = false, features = ["std"] }
+zeno = { version = "0.3", default-features = false, features = ["std", "eval"] }
 pollster = "0.4"
 raw-window-handle = "0.6"
 bytemuck = { version = "1", features = ["derive"] }
 log = "0.4"
 env_logger = "0.11"
 anyhow = "1"
-serde = { version = "1", features = ["derive"] }
-toml = "1.1"
-toml_edit = "0.25"
+# Config format. Zero dependencies, and its parser is forgiving by design: one
+# bad line yields a diagnostic instead of sinking the whole file, so the config
+# layer needs no hand-rolled error recovery of its own.
+shcl = "1.2.0"
 copypasta = "0.10"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # X11 per-pixel transparency: wgpu's GLES surface can't bind the window's ARGB
@@ -75,6 +106,13 @@ windows-sys = { version = "0.59", features = [
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# Embed the Windows icon resource (build.rs). Host-side build tool, so it stays
+# unconditional - a cfg(windows) gate here would be false when cross-compiling to
+# windows from Linux. compile() no-ops on non-windows targets. It locates the
+# resource compiler via the cc crate (reliable msvc SDK + mingw windres lookup).
+[build-dependencies]
+embed-resource = "3"
 
 [package.metadata.silkterm]
 note = "see build.md for cross-compile + macOS instructions"

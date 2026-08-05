@@ -12,7 +12,11 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::CursorShape;
-use glyphon::{Attrs, Buffer, Color as GColor, Shaping, Style, TextArea, TextBounds, Weight};
+use glyphon::cosmic_text::{LineEnding, Scroll as TextScroll};
+use glyphon::{
+	Attrs, AttrsList, Buffer, BufferLine, Color as GColor, CustomGlyph, Shaping, Style, TextArea,
+	TextBounds, Weight,
+};
 use winit::event_loop::EventLoopProxy;
 
 use crate::config;
@@ -40,8 +44,27 @@ fn scroll_dbg() -> bool {
 
 // Cursor animation tunables (internal).
 const CURSOR_MOVE_TAU_MS: f32 = 55.0; // horizontal slide responsiveness (lower = snappier)
+// Catch-up: the slide's time-constant shrinks the farther the cursor trails its
+// real column, so a fast burst/paste doesn't leave it lagging across the line
+// (per-cell factor); and it never trails more than CURSOR_MAX_LAG cells.
+const CURSOR_CATCHUP: f32 = 0.45; // tau divisor per cell of lag
+const CURSOR_MAX_LAG: f32 = 8.0; // hard cap on how far behind the slide may sit (cells)
 const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
-const CURSOR_INPUT_PAUSE_S: f32 = 0.35; // idle time before the animation resumes (input-pause mode)
+// Escape hatch: true restores the old always-running animation (the removed
+// cursor_animation_input = "continuous"), bypassing the pause/park machinery.
+const CURSOR_ANIM_CONTINUOUS: bool = false;
+// A cursor move this soon after the user sent input is that input's echo; a
+// later move is the program's own output. Only echoed input carries the full
+// resume delay - see resume_delay.
+const TYPED_ECHO_S: f32 = 0.2;
+// Resume delay for a pause that output caused: just enough stillness that a
+// gap between two writes cannot unpark it, short enough to read as "the moment
+// the prompt came back". The configured delay is for typing, not for output.
+const OUTPUT_RESUME_S: f32 = 0.05;
+// Freeze knob (one line rolls it back): only the focused pane of the focused
+// window animates its cursor; every other pane parks at full size (same
+// glide-to-full / resume-from-full machinery, so the size stays continuous).
+const FREEZE_UNFOCUSED_BLINK: bool = true;
 const BELL_BRIGHTEN: f32 = 0.6; // max lerp of text toward white at the bell flash peak
 
 // Alt-screen app-scroll tunables.
@@ -55,7 +78,23 @@ const APP_SCROLL_MAX: usize = 24; // max per-step shift the slide detector accep
 // bottom status line (less, vim) have no top band and slide regardless.
 const SLIDE_TOP_BAND_APPS: bool = true;
 
-// One styled cell captured for the scrolled-off strip. Colours are resolved at
+const PROMPT_ABOVE_MAX: usize = 4; // rows above the prompt considered for multi-line-prompt learning
+
+// Consecutive frames that may reuse the last built frame before build() stops
+// trying and waits for the terminal (see the lock in build). 2 keeps the pane
+// under ~3 frames stale while costing nothing when nothing is contending.
+const LOCK_WAIT_AFTER: u32 = 2;
+
+// The two independent auto-copy triggers a pane can have on (session-only, never
+// persisted). Each is a per-pane bool; the enum just names which one a UI action
+// or menu row refers to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CopyKind {
+	Select, // copy the highlighted selection the moment a select finishes
+	Output, // copy a command's output once the pane settles back at the prompt
+}
+
+// One styled cell captured for the scrolled-off strip. Colors are resolved at
 // capture time (the palette/theme can change later; the strip shows what was on
 // screen). `wide` is the cell count: 0 = wide-char spacer (skip), 1, or 2.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -127,6 +166,19 @@ impl OffStrip {
 	}
 }
 
+// Lines that entered the scrollback between two depth samples. A DROP can only
+// mean the buffer was cleared (`clear`'s E3), and everything left in it arrived
+// after that, so the whole of it is new; anything else is ordinary growth. The
+// count alone can't distinguish a clear-and-refill that lands on the same depth,
+// which is why this is sampled per PTY read cycle rather than per frame.
+fn pushed_since(history: usize, baseline: usize) -> usize {
+	if history < baseline {
+		history
+	} else {
+		history - baseline
+	}
+}
+
 // The rows a detected step pushed out of the scroll region, as a range into the
 // PREVIOUS frame's rows. shift > 0 = content moved up, rows left off the top of
 // the region (just under any title band); shift < 0 = off the bottom.
@@ -156,7 +208,7 @@ fn weld_region_clip(
 
 // Fingerprint every visible row (FNV-1a over the chars) and, when `styled` is
 // given, snapshot the styled cells too - the scrolled-off strip's source data.
-// Colours resolve the same way build()'s cell loop does (minus the transient
+// Colors resolve the same way build()'s cell loop does (minus the transient
 // bell flash and selection, which don't belong in a retained row). Recycles the
 // caller's row allocations. One entry per column; a wide-char spacer stays as a
 // wide=0 placeholder so indexes keep matching columns.
@@ -266,7 +318,7 @@ fn pulse_env(phase: f32) -> f32 {
 	}
 }
 
-// Lerp a text colour toward white by `t` (0..1) of the BELL_BRIGHTEN ceiling, for
+// Lerp a text color toward white by `t` (0..1) of the BELL_BRIGHTEN ceiling, for
 // the visual-bell flash. Identity at t<=0.
 fn bell_brighten(color: [u8; 3], t: f32) -> [u8; 3] {
 	if t <= 0.0 {
@@ -287,6 +339,26 @@ fn fnv_row(chars: impl Iterator<Item = char>) -> u64 {
 	hash
 }
 
+// Skeleton fingerprint for prompt learning/stripping: runs of alphanumerics
+// collapse to one marker and runs of spaces to one space, so a prompt row whose
+// content changes per command (cwd, git branch, clock, right-aligned segments)
+// still prints the same while its punctuation/box-drawing structure must match
+// exactly. An exact-content compare here misses every dynamic multi-line
+// prompt, which then gets copied as output.
+fn fnv_row_skel(chars: impl Iterator<Item = char>) -> u64 {
+	let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+	let mut last = '\0';
+	for c in chars {
+		let k = if c.is_alphanumeric() { 'a' } else { c };
+		if (k == 'a' || k == ' ') && k == last {
+			continue;
+		}
+		last = k;
+		hash = (hash ^ k as u64).wrapping_mul(0x100_0000_01b3);
+	}
+	hash
+}
+
 // The char to feed the shaper for a grid cell. A cell may hold a literal control
 // char - alacritty leaves the '\t' in the first tab cell and fills to the tab
 // stop with spaces - and cosmic-text shapes a raw tab as a full 8-col stop,
@@ -296,6 +368,136 @@ fn fnv_row(chars: impl Iterator<Item = char>) -> u64 {
 // any control char as a plain 1-cell space.
 fn render_char(c: char) -> char {
 	if c.is_control() { ' ' } else { c }
+}
+
+// Rows a hyperlink may span. A logical line can be the entire scrollback (one
+// `cat` of a huge line wraps forever) and this scan runs per pointer move, so
+// the wrap walk is capped instead of following the line to its real ends.
+const LINK_WRAP_ROWS: i32 = 4;
+
+// The link under window pixel (px, py), as a grid span. `display_offset` and the
+// grid come from the frame being built, so the answer can't disagree with what
+// is on screen. Strict bounds, unlike point_at's clamping: the pointer sitting
+// in the margin is over no cell at all, not over the first one.
+#[allow(clippy::too_many_arguments)]
+fn link_at(
+	grid: &Grid<Cell>,
+	colors: &Colors,
+	settings: &config::Settings,
+	rect: Rect,
+	px: f32,
+	py: f32,
+	metrics: (f32, f32, f32), // cell_w, cell_h, margin
+	dims: (usize, usize),     // cols, lines
+	display_offset: i32,
+) -> Option<LinkHit> {
+	let (cell_w, cell_h, margin) = metrics;
+	let (cols, lines) = dims;
+	if cols == 0 || lines == 0 || cell_w <= 0.0 || cell_h <= 0.0 {
+		return None;
+	}
+	let (rel_x, rel_y) = (px - rect.x - margin, py - rect.y - margin);
+	if rel_x < 0.0 || rel_y < 0.0 {
+		return None;
+	}
+	let col = (rel_x / cell_w).floor() as usize;
+	let screen_row = (rel_y / cell_h).floor() as i32;
+	if col >= cols || screen_row < 0 || screen_row >= lines as i32 {
+		return None;
+	}
+	let line = screen_row - display_offset;
+	let (top, bot) = (-(grid.history_size() as i32), lines as i32 - 1);
+	if line < top || line > bot {
+		return None;
+	}
+	// A soft-wrapped URL is one logical line, so the scan spans the wrap.
+	let end_col = Column(cols - 1);
+	let wraps = |l: i32| grid[Line(l)][end_col].flags.contains(Flags::WRAPLINE);
+	let mut first_line = line;
+	while first_line > top && line - first_line < LINK_WRAP_ROWS && wraps(first_line - 1) {
+		first_line -= 1;
+	}
+	let mut last_line = line;
+	while last_line < bot && last_line - line < LINK_WRAP_ROWS && wraps(last_line) {
+		last_line += 1;
+	}
+	let rows = (last_line - first_line + 1) as usize;
+	let mut text = Vec::with_capacity(rows * cols);
+	for l in first_line..=last_line {
+		let row = &grid[Line(l)];
+		text.extend((0..cols).map(|c| render_char(row[Column(c)].c)));
+	}
+	let hit = (line - first_line) as usize * cols + col;
+	let (start, end, url) = crate::links::find_at(&text, hit)?;
+	let point_of = |i: usize| Point::new(Line(first_line + (i / cols) as i32), Column(i % cols));
+	let start_pt = point_of(start);
+	let cell = &grid[start_pt.line][start_pt.column];
+	// Underline in the link's own color, so a colored URL keeps its identity.
+	let fg = if cell.flags.contains(Flags::INVERSE) {
+		palette::resolve(cell.bg, colors, settings)
+	} else {
+		palette::resolve(cell.fg, colors, settings)
+	};
+	Some(LinkHit {
+		url,
+		start: start_pt,
+		end: point_of(end - 1),
+		fg,
+	})
+}
+
+// Same spans at a single weight - what the scrim's de-bolded buffer wants. Derived
+// on demand rather than built alongside the real list, so a screen with no bold on
+// it pays nothing.
+fn debold_attrs(src: &AttrsList, weight: Weight) -> AttrsList {
+	let mut out = AttrsList::new(&src.defaults());
+	for (range, attrs) in src.spans_iter() {
+		let mut plain = attrs.as_attrs();
+		plain.weight = weight;
+		out.add_span(range.clone(), &plain);
+	}
+	out
+}
+
+// Assign one built row per buffer line. `set_text` compares against what the line
+// already holds and only drops its cached shaping when something differs, so an
+// unchanged row costs a string compare instead of a re-shape. Mirrors what
+// set_rich_text does around the lines themselves (reset scroll, no alignment).
+fn set_buffer_rows<'a>(
+	buf: &mut Buffer,
+	rows: impl ExactSizeIterator<Item = (&'a str, AttrsList)>,
+) {
+	let count = rows.len();
+	for (i, (text, attrs)) in rows.enumerate() {
+		if let Some(line) = buf.lines.get_mut(i) {
+			line.set_text(text, LineEnding::default(), attrs);
+		} else {
+			buf.lines.push(BufferLine::new(
+				text,
+				LineEnding::default(),
+				attrs,
+				Shaping::Advanced,
+			));
+		}
+	}
+	buf.lines.truncate(count);
+	buf.set_scroll(TextScroll::default());
+}
+
+// One step of the cursor's horizontal slide toward `target` (visual columns).
+// Exponential easing whose time-constant shrinks with the gap, so the cursor
+// speeds up the farther it trails its real column (a burst/paste catches up
+// instead of dragging across the line) while a single-cell move keeps the gentle
+// slide - plus a hard cap so it never sits more than CURSOR_MAX_LAG cells behind.
+fn cursor_slide_step(cursor_x: f32, target: f32, dt: f32) -> f32 {
+	let gap = (target - cursor_x).abs();
+	let tau = CURSOR_MOVE_TAU_MS / (1.0 + gap * CURSOR_CATCHUP);
+	let mut next = cursor_x + (target - cursor_x) * (1.0 - (-dt * 1000.0 / tau).exp());
+	let lag = target - next;
+	if lag.abs() > CURSOR_MAX_LAG {
+		next = target - CURSOR_MAX_LAG * lag.signum();
+	}
+	next
 }
 
 // Advance the blink phase one frame toward `full_phase` (the point in the cycle
@@ -317,30 +519,71 @@ fn glide_to_full(blink_t: f32, dt: f32, period: f32, full_phase: f32) -> (f32, b
 	}
 }
 
-// "pause" input mode. On input the cycle keeps running at its normal speed until
-// it next reaches the full-size phase, parks there while input stays recent,
+// One animation cycle: (period seconds, the phase where the cursor is at its
+// largest). That full-size phase is the only point a pause ever parks at and
+// the only point a resume ever starts from - "phase" fades from full at 0, the
+// pulses peak mid-cycle. Both the pause and the refocus resume read it here so
+// they cannot drift apart.
+fn cursor_cycle(anim: &str, blink_rate_ms: f32) -> (f32, f32) {
+	let period = (blink_rate_ms / 1000.0 * 2.0).max(0.05); // full on->off->on
+	let full_phase = if anim == "phase" { 0.0 } else { 0.5 };
+	(period, full_phase)
+}
+
+// Was a cursor move the echo of user input, or the program's own output? The
+// echo of a keystroke lands within a frame or two of the write; anything later
+// belongs to whatever is running.
+fn move_is_input(typed_at: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+	typed_at.is_some_and(|at| now.saturating_duration_since(at).as_secs_f32() < TYPED_ECHO_S)
+}
+
+// How long a pause holds at full size before the cycle resumes. Typing gets the
+// configured delay, so the cursor stays still between keystrokes. Output gets
+// almost none: a command scrolling the screen is not the user doing something,
+// so once it stops - the prompt is back - the cursor comes straight back to life.
+fn resume_delay(by_input: bool, configured_s: f32) -> f32 {
+	if by_input {
+		configured_s
+	} else {
+		OUTPUT_RESUME_S
+	}
+}
+
+// Cursor animation pause. On input (or long idle) the cycle keeps running at
+// its normal speed until it next reaches the full-size phase, parks there,
 // then resumes the cycle from that same point - so the size is continuous at
 // every step: no snap to full on a keystroke, and no snap to small on resume
-// even when the glide outlasts the idle timeout (slow blink rates).
+// even when the glide outlasts the idle window (slow blink rates). While
+// parked no frames flow (the CPU win), so the timers take a wall-clock dt.
 #[derive(Default)]
 struct PauseState {
-	active: bool, // an input episode is in progress (gliding or holding)
+	active: bool, // an episode is in progress (gliding or holding)
 	parked: bool, // reached the full-size phase, holding there
-	hold_t: f32,  // seconds parked at full
+	hold_t: f32,  // seconds parked at full (wall clock)
 }
 
 impl PauseState {
+	#[allow(clippy::too_many_arguments)] // private helper; the inputs are the whole story
 	fn advance(
 		&mut self,
 		blink_t: f32,
 		dt: f32,
+		wall_dt: f32,
 		period: f32,
 		full_phase: f32,
-		timeout: f32,
+		resume_s: f32,
+		idle_stop_s: f32,
 		moved: bool,
 		idle_t: f32,
+		blocked: bool,
 	) -> f32 {
-		if moved && !self.active {
+		// past the long-idle threshold the animation stops outright: park (via
+		// the same glide, so it stops at full) and stay parked until activity.
+		// A blocked pane (not the focused pane of the focused window) parks the
+		// same way and holds until it is active again - nothing times it out.
+		let idle_stopped = idle_stop_s > 0.0 && idle_t >= idle_stop_s;
+		let held = idle_stopped || blocked;
+		if (moved || held) && !self.active {
 			self.active = true;
 			self.parked = false;
 			self.hold_t = 0.0;
@@ -354,13 +597,24 @@ impl PauseState {
 			return next;
 		}
 		// parked: hold at full until input has been idle AND the hold has lasted
-		// the timeout (a long glide can eat the whole idle window)
-		self.hold_t += dt;
-		if self.hold_t >= timeout && idle_t >= timeout {
+		// the resume delay (a long glide can eat the whole idle window). A cursor
+		// move resets idle_t, so a long-idle park then resumes the resume delay
+		// after it; a refocus skips the wait entirely via resume().
+		self.hold_t += wall_dt;
+		if !held && self.hold_t >= resume_s && idle_t >= resume_s {
 			self.active = false;
 			return full_phase * period + dt; // resume the cycle from full
 		}
 		full_phase * period
+	}
+
+	// End the episode now instead of waiting out the resume delay. Only for a
+	// refocus, where the caller also parks blink_t at the full-size phase - so
+	// this still resumes from full, like every other resume.
+	fn resume(&mut self) {
+		self.active = false;
+		self.parked = false;
+		self.hold_t = 0.0;
 	}
 }
 
@@ -403,6 +657,82 @@ pub enum Dir {
 	Horizontal,
 }
 
+// ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+// Scrollbar
+// ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+// Seconds the bar stays up after the last user scroll before it starts fading.
+const BAR_HOLD_S: f32 = 1.1;
+// Fade time constants: appearing is quick, leaving is unhurried.
+const BAR_IN_TAU_S: f32 = 0.06;
+const BAR_OUT_TAU_S: f32 = 0.22;
+// Below this the bar is treated as fully gone: no quads, and no hit-testing (so
+// a faded-out bar never steals a click meant for the text under it).
+const BAR_VISIBLE_EPS: f32 = 0.02;
+// Shortest thumb, as a multiple of the bar's thickness. A huge scrollback would
+// otherwise grind the thumb down to a sliver nobody can grab.
+const BAR_MIN_THUMB: f32 = 1.6;
+// How far outside the bar the pointer still counts as "near" it, so the bar
+// fades in slightly before you get there rather than under the cursor.
+const BAR_HOVER_SLOP: f32 = 6.0;
+
+// Where a press landed on the scrollbar.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BarHit {
+	// on the handle: `f32` is the grab offset from the thumb's top edge
+	Thumb,
+	// on the track above/below the thumb: pages toward the click
+	TrackUp,
+	TrackDown,
+}
+
+// A pane's scrollbar geometry for this frame, in absolute window px.
+#[derive(Clone, Copy, Debug)]
+pub struct Bar {
+	pub track: Rect,
+	pub thumb: Rect,
+}
+
+// Is a scrollbar meaningful for a pane in this state? A full-screen app owns its
+// screen and keeps no scrollback of its own, so there is nothing a bar could
+// report - and one pinned full-height would only be a lie. Nothing to scroll,
+// same answer. Free fn so the rule is testable without a live PTY.
+fn bar_applies_to(cfg: &config::Settings, alt: bool, max_lines: f32) -> bool {
+	cfg.scrollbar && !alt && max_lines > 0.0
+}
+
+// Thumb length and position for a scroll state. Split out from the pane so the
+// mapping (and its inverse, `bar_pos_to_lines`) can be tested directly.
+//
+// `pos` runs 0 at the bottom (following new output) to 1 at the oldest line, so
+// it matches the scroll model's "lines back from the bottom" rather than the
+// screen's y axis - the caller flips it.
+fn bar_thumb_span(track_h: f32, thickness: f32, rows: f32, max: f32, pos_lines: f32) -> (f32, f32) {
+	// the viewport's share of everything there is to look at
+	let visible = (rows / (rows + max)).clamp(0.0, 1.0);
+	let thumb_h = (track_h * visible)
+		.max(thickness * BAR_MIN_THUMB)
+		.min(track_h);
+	let pos = if max > 0.0 {
+		(pos_lines / max).clamp(0.0, 1.0)
+	} else {
+		0.0
+	};
+	// y is measured down the track, so pos 1 (oldest) sits at the top
+	let y = (track_h - thumb_h) * (1.0 - pos);
+	(y, thumb_h)
+}
+
+// Inverse of `bar_thumb_span`: a thumb-top offset down the track, back to a
+// scroll position in lines. Used while dragging.
+fn bar_pos_to_lines(track_h: f32, thumb_h: f32, max: f32, thumb_y: f32) -> f32 {
+	let span = track_h - thumb_h;
+	if span <= 0.0 {
+		return 0.0;
+	}
+	(1.0 - (thumb_y / span).clamp(0.0, 1.0)) * max
+}
+
 enum Node {
 	Leaf(PaneId),
 	Split {
@@ -422,6 +752,11 @@ enum Node {
 pub struct PaneDraw {
 	pub top: f32,
 	pub bg: Vec<RectInstance>,
+	// Underline quads for the hovered hyperlink. Kept out of `bg` deliberately:
+	// those double as the scrim's "this cell paints its own background" mask, and
+	// an underline is not a cell background - filing it there would punch the
+	// readability halo out of every line holding a link.
+	pub links: Vec<RectInstance>,
 	pub cursor: Option<RectInstance>,
 	// App-scroll slide (None = common case: whole pane at `top`). While a
 	// full-screen app's scroll eases, the current frame draws shifted at `top`
@@ -456,15 +791,25 @@ pub struct Slide {
 	pub has_top_band: bool,
 }
 
-// A shaped fallback glyph, cached per (char, bold, italic). Colour is NOT baked
+// A shaped fallback glyph, cached per (char, bold, italic). Color is NOT baked
 // (the TextArea's default_color tints it), so one shaped buffer serves every
-// cell/colour drawing that glyph - the shaping (harfbuzz fallback matching) is
+// cell/color drawing that glyph - the shaping (harfbuzz fallback matching) is
 // the expensive part and only pays once per distinct glyph instead of per cell
 // per frame. `ink_w`/`ink_off` are the rasterized ink box for cell-fit scaling.
 struct FallbackGlyph {
 	buf: Buffer,
 	ink_w: f32,
 	ink_off: f32,
+}
+
+// The hyperlink under the pointer: the URL, and the grid span it occupies so the
+// underline can be drawn (inclusive, absolute grid lines - negative in history).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LinkHit {
+	pub url: String,
+	pub start: Point,
+	pub end: Point,
+	pub fg: [u8; 3],
 }
 
 pub struct Pane {
@@ -485,6 +830,9 @@ pub struct Pane {
 	// `cells_scratch` recycles the row allocations frame to frame.
 	last_cells: Vec<Vec<StripCell>>,
 	cells_scratch: Vec<Vec<StripCell>>,
+	// Recycles the per-row Strings the build's attr-run assembler fills each
+	// rebuilt frame (set_text copies out of them, so fresh ones were pure churn).
+	rows_scratch: Vec<(String, AttrsList)>,
 	pub rect: Rect,
 	pub title: String,
 	pub read_only: bool, // accept no PTY input/paste; selection + copy still work
@@ -492,7 +840,18 @@ pub struct Pane {
 	// runs the same shell as the one it forked off (see design.md).
 	command: Option<Vec<String>>,
 	last_draw: PaneDraw,
+	// Frames in a row that reused last_draw because the terminal was busy.
+	lock_misses: u32,
 	last_history: usize,
+	// Lines pushed into scrollback since the last build, accumulated per PTY
+	// wakeup rather than measured between frames - see `note_history`.
+	wake_pushed: usize,
+	wake_hist: usize,
+	// Fingerprint of the row just above the viewport - the line that most recently
+	// scrolled off. Once the scrollback is capped history_size() is pinned, so it
+	// can no longer say whether anything scrolled; this still can. None while
+	// scrolled back (the row means something else there), which reads as "unknown".
+	last_offscreen: Option<u64>,
 	// On-screen row fingerprints from the last build, used to detect a scrolled
 	// viewport once the scrollback buffer is full (output easing) and to detect an
 	// alt-screen app's repaint-scroll (app-scroll easing). See build().
@@ -510,6 +869,10 @@ pub struct Pane {
 	// Previous frame's alt-screen state. An enter/exit is an instant screen swap,
 	// not a scroll - detected here to hard-cut it instead of animating the swap.
 	last_alt: bool,
+	// Set by hard_cut() when this pane comes back from a freeze (hidden tab,
+	// minimized window): the next build treats the gap like an alt-screen swap -
+	// rebaseline the scroll detectors, suppress the nudge, land instantly.
+	pending_cut: bool,
 	// Fallback glyphs (not in the primary mono font) pulled out of `buffer` and
 	// drawn one-per-cell so their font advance can't shift the row. `glyph_cache`
 	// holds each distinct glyph shaped once (keyed by char + bold + italic);
@@ -518,6 +881,11 @@ pub struct Pane {
 	// across frames (dropped on a font/size rebuild, see rebuild_buffers).
 	glyph_cache: HashMap<(char, bool, bool), FallbackGlyph>,
 	glyphs: Vec<((char, bool, bool), f32, f32, GColor, f32)>,
+	// Color (COLRv1) glyphs this frame, placed in absolute screen px and drawn
+	// through glyphon's color atlas - see coloremoji.rs. They ride a TextArea
+	// that carries no text of its own, hence `empty_buf`.
+	emoji: Vec<CustomGlyph>,
+	empty_buf: Buffer,
 	// Scrim source with bold stripped (text_scrim_regular_weight): shaped alongside
 	// the main buffer only on rebuild frames that actually contain bold runs.
 	// `scrim_debold` says the buffer is valid for the current content.
@@ -531,13 +899,44 @@ pub struct Pane {
 	cursor_row: i32,
 	cursor_init: bool,
 	blink_t: f32,
-	cursor_idle_t: f32, // seconds since the cursor last moved (input-pause gating)
+	cursor_idle_t: f32, // seconds since the cursor last moved or was poked (pause gating)
+	// wall clock behind cursor_idle_t/hold_t: a parked cursor renders no frames,
+	// so frame-dt accumulation would freeze the timers across the sleep
+	cursor_step_at: Option<std::time::Instant>,
+	// when the user last sent input here (keys, paste), and whether the cursor's
+	// last move was that input's echo rather than program output - the two get
+	// different resume delays
+	typed_at: Option<std::time::Instant>,
+	cursor_by_input: bool,
 	cursor_pause: PauseState,
 	pub cursor_animating: bool,
+	// parked cursor: when the loop must wake to resume the cycle (no frames flow
+	// while parked). None while animating, or when parked with no timed resume.
+	pub cursor_wake: Option<std::time::Instant>,
+	// Scrollbar fade: `bar_alpha` eases toward 0 or 1, `bar_hold` keeps it up for
+	// a moment after the last user scroll. `bar_drag` is the grab offset from the
+	// thumb's top edge while the handle is being dragged (Some = dragging).
+	bar_alpha: f32,
+	bar_hold: f32,
+	pub bar_hover: bool,
+	pub bar_drag: Option<f32>,
+	pub bar_animating: bool,
+	// Hyperlink hover: the pointer in window px (None = not over this pane), the
+	// link it landed on, and a request to re-scan. The scan needs the grid, so it
+	// runs in build() where the term lock is already held - on the frame the
+	// pointer changed cell, and on any frame that re-shaped text (output moves the
+	// span out from under a pointer that never moved).
+	hover_px: Option<(f32, f32)>,
+	link_probe: bool,
+	pub link_hover: Option<LinkHit>,
 	// false until the first full build (and reset on a buffer rebuild). When the
 	// frame is a pure cursor animation (no content/scroll/bell change), build skips
 	// the expensive text re-shape and reuses the cached buffer/bg/glyphs.
 	text_built: bool,
+	// Bumped on every full re-shape, so the renderer can tell "this pane's text
+	// is byte-for-byte the frame before" without inspecting the buffers. Drives
+	// the prepare/scrim skip in app.rs.
+	pub shape_rev: u64,
 	// TermMode snapshot from the last build, so per-keystroke/wheel input paths
 	// read it lock-free (at worst one frame stale) instead of taking the term
 	// lock the PTY reader may hold across a whole read cycle.
@@ -548,13 +947,18 @@ pub struct Pane {
 	// re-shaping to panes that changed: one busy pane no longer forces its
 	// idle siblings through set_rich_text every frame.
 	pub content_dirty: bool,
-	// Copy-output-on-command-finish (see arm_capture / poll_capture). `auto_copy` is
-	// the per-pane opt-in. On Enter at the shell prompt we arm and record `cmd_start`
-	// (the line after the prompt); when the terminal then settles (no new output for
-	// a debounce) back at the prompt, the lines since are copied. `last_output` is
-	// refreshed on every Wakeup so the settle timer measures true idle. This catches
-	// both instant (ls) and long commands without racing the fg-pgid transition.
-	pub auto_copy: bool,
+	// Auto-copy triggers, independent and session-only (never persisted). A new
+	// pane inherits both from the pane it split off (see split_at); a new tab or
+	// window starts with both off. Only the focused pane of the active tab in the
+	// focused window actually copies - the flags stay set otherwise (see the copy
+	// gating in app.rs), so leaving them on across background tabs/windows is fine.
+	// copy_output drives the command-output capture (see arm_capture / poll_capture):
+	// on Enter at the shell prompt we arm and record `cmd_start` (the line after the
+	// prompt); when the terminal settles back at the prompt, the lines since are
+	// copied. `last_output` is refreshed on every Wakeup so the settle timer measures
+	// true idle. This catches both instant (ls) and long commands.
+	pub copy_select: bool,
+	pub copy_output: bool,
 	capture_armed: bool,
 	cmd_start: usize,
 	// Fingerprint of the arm-time prompt row. cmd_start is "history + row", an
@@ -562,6 +966,15 @@ pub struct Pane {
 	// the oldest), so capture re-finds the prompt row by content instead and only
 	// falls back to cmd_start when it can't (evicted, or redrawn on Enter).
 	cmd_anchor: Option<u64>,
+	// Multi-line prompt learning: the rows a prompt paints ABOVE its input line
+	// keep their structure before every command, while output above the prompt
+	// changes run to run. Skeleton fingerprints (fnv_row_skel) so dynamic prompt
+	// content still matches. `prompt_above` holds the last arm's above-cursor
+	// fingerprints; the contiguous match against the current arm's becomes
+	// `prompt_block`, and capture strips the same rows off the resumed prompt
+	// (see prompt_strip).
+	prompt_above: Vec<u64>,
+	prompt_block: Vec<u64>,
 	last_output: std::time::Instant,
 }
 
@@ -572,7 +985,10 @@ impl Pane {
 		dt: f32,
 		bell: f32,
 		force_rebuild: bool,
-	) -> PaneDraw {
+		active: bool, // the focused pane of the focused window (cursor animates only there)
+	) {
+		// Result lands in self.last_draw (read via draw()) - returning it by value
+		// cloned the whole bg-quad Vec per pane per frame.
 		let cell_w = ctx.cell_w;
 		let cell_h = ctx.cell_h;
 		let margin = ctx.margin;
@@ -580,13 +996,24 @@ impl Pane {
 		let lines = self.term.lines;
 		let settings = config::settings(); // snapshot once, not per cell
 
-		// Never block the render thread: the PTY reader thread can hold the
-		// terminal lock through long bursts (e.g. a chatty shell rc). If it's
-		// busy this frame, reuse the last built frame.
-		let mut guard = match self.term.term.try_lock_unfair() {
-			Some(g) => g,
-			None => return self.last_draw.clone(),
+		// Don't block the render thread while the PTY reader is mid-burst: it holds
+		// the terminal across a whole read cycle, so reuse the last built frame and
+		// come back next frame. But an unfair try can lose that race forever (the
+		// reader re-acquires the instant it lets go), so after LOCK_WAIT_AFTER misses
+		// take the FAIR lock instead: it queues on the lease, which puts us in at the
+		// end of the current read cycle and makes the reader's next cycle wait behind
+		// us. That caps the stale-frame run - without it a heavy `cat` freezes the
+		// pane for seconds - at the cost of blocking for one cycle (measured under
+		// 5ms). See design.md.
+		let mut guard = if self.lock_misses >= LOCK_WAIT_AFTER {
+			self.term.term.lock()
+		} else if let Some(guard) = self.term.term.try_lock_unfair() {
+			guard
+		} else {
+			self.lock_misses += 1;
+			return;
 		};
+		self.lock_misses = 0;
 		self.mode = *guard.mode();
 		self.content_dirty = false;
 
@@ -598,7 +1025,10 @@ impl Pane {
 		// in. `gesture_active` (an alt-scroll slide already easing) freezes the band
 		// sizes across a continuous scroll - see the app-scroll block.
 		let alt = self.mode.contains(TermMode::ALT_SCREEN);
-		let alt_transition = alt != self.last_alt;
+		// a freeze catch-up (pending_cut) is the same shape as the screen swap:
+		// the grid moved arbitrarily far while nothing was built, so every
+		// detector must rebaseline and nothing may ease
+		let cut = alt != self.last_alt || std::mem::take(&mut self.pending_cut);
 		self.last_alt = alt;
 		let gesture_active = self.scroll.app_offset() != 0.0;
 
@@ -615,17 +1045,37 @@ impl Pane {
 		// fills the buffer faster). At the cap, fall back to inferring the advance
 		// from how far last frame's on-screen rows reappear shifted up this frame;
 		// an in-place bottom-row change shifts nothing, so it still won't nudge.
-		let grew = history.saturating_sub(self.last_history);
+		// The per-wakeup accumulator is the authority when it has anything, since
+		// it alone survives a scrollback truncation (see `note_history`). It stays
+		// 0 whenever every sample this frame lost the lock race, so fall back to
+		// the between-frames difference and behave exactly as before.
+		let grew = if self.wake_pushed > 0 {
+			std::mem::take(&mut self.wake_pushed)
+		} else {
+			history.saturating_sub(self.last_history)
+		};
 		self.last_history = history;
+		// Deliberately NOT touching `wake_hist`: the sampler owns it. A build sees
+		// the post-clear depth before that cycle's wakeup is delivered, so writing
+		// the baseline here erases the pre-clear value the drop is measured
+		// against and the truncation goes undetected all over again.
 		self.scroll.set_max(history as f32);
-		if alt_transition {
-			// hard-cut the screen swap: drop any in-flight slide and rebaseline the
-			// row fingerprints (and the styled snapshot the strip captures from) to
-			// the NEW screen, so neither the output-scroll probe nor the app-scroll
-			// probe diffs against the old screen next frame.
+		if cut {
+			// Rebaseline the wakeup sampler too. The alt grid carries no
+			// scrollback, so entering and leaving swings the depth by the whole
+			// history; a wakeup delivered AFTER this frame would otherwise bank
+			// that swing and ease it on the next ordinary frame. Safe to write the
+			// baseline here precisely because a cut means "rebaseline everything" -
+			// an ordinary frame must not (see the note by `last_history`).
+			self.wake_pushed = 0;
+			self.wake_hist = history;
+			// hard-cut the screen swap (or freeze catch-up): drop any in-flight
+			// slide and rebaseline the row fingerprints (and the styled snapshot
+			// the strip captures from) to the NEW screen, so neither the
+			// output-scroll probe nor the app-scroll probe diffs across the gap.
 			self.scroll.cancel_app_scroll();
 			self.strip.clear();
-			self.last_rows = if settings.smooth_scroll_apps {
+			self.last_rows = if settings.smooth_apps() {
 				let mut cur_cells = std::mem::take(&mut self.cells_scratch);
 				let rows = snapshot_rows(
 					guard.grid(),
@@ -641,18 +1091,30 @@ impl Pane {
 		}
 		let follow = self.scroll.following();
 		let full = settings.scrollback > 0 && history >= settings.scrollback;
+		// Did anything actually scroll off into history since last frame? At the cap
+		// the line count is pinned, so only the CONTENT above the viewport can tell.
+		// A full-screen app that repaints in place (top) never pushes a line up, so
+		// this stays put - which is what stops its refresh reading as a turnover.
+		let offscreen = if follow && history > 0 {
+			let row = &guard.grid()[Line(-1)];
+			Some(fnv_row((0..cols).map(|c| row[Column(c)].c)))
+		} else {
+			None // scrolled back: that row isn't the scroll-off point, so don't judge
+		};
+		let scrolled_off = matches!((offscreen, self.last_offscreen), (Some(a), Some(b)) if a != b);
+		self.last_offscreen = offscreen;
 		let advanced = if grew > 0 {
 			grew
 		} else if follow && full {
 			let rows = snapshot_rows(guard.grid(), lines, cols, None);
-			let inferred_advance = scroll_shift(&rows, &self.last_rows);
+			let inferred_advance = scroll_shift(&rows, &self.last_rows, scrolled_off);
 			self.last_rows = rows;
 			inferred_advance
 		} else {
 			0
 		};
-		if advanced > 0 && follow && !alt_transition {
-			self.scroll.nudge_output(advanced as f32);
+		if advanced > 0 && follow && !cut {
+			self.scroll.nudge_output(advanced as f32, lines as f32);
 		}
 
 		// Alt-screen app-scroll easing: a full-screen app owns its screen and scrolls
@@ -667,10 +1129,21 @@ impl Pane {
 		// only appear when the grid content changed, and that always forces a full
 		// build - so the styled snapshot isn't paid per blink frame.
 		let mut shift_dbg = 0i32;
-		if settings.smooth_scroll_apps
-			&& alt && !alt_transition
-			&& (force_rebuild || !self.text_built)
-		{
+		// The slide handles a full-screen repaint - a fixed UI with a scrolling region,
+		// no scrollback growth. On the alt screen that's nano/vim/less. On Windows, ConPTY
+		// re-emits a normal-screen TUI's region-scroll (output scrolling above a fixed input
+		// line) as an in-place repaint: history never grows (so output-easing can't fire, and
+		// there's no scrollback to ease through) but the rows still translate cleanly. Detect
+		// that - following, no scrollback growth, buffer not full - and slide it the same way.
+		// grew>0 (plain output) still uses output-easing; a static in-place redraw yields no
+		// clean shift, so it stays put (no bounce).
+		// The snapshot refreshes on EVERY content frame of a screen the detector can run
+		// on, not just slide frames: a grew>0 frame is already animated by the output ease
+		// above, and if it left the snapshot stale the next repaint frame would diff across
+		// that eased scroll and slide it AGAIN - a spurious extra down-then-up on every
+		// output line (the shell redraws its prompt right after the scroll).
+		let (snap_frame, slide_frame) = app_scroll_frames(alt, follow, grew, full);
+		if settings.smooth_apps() && snap_frame && !cut && (force_rebuild || !self.text_built) {
 			let mut cur_cells = std::mem::take(&mut self.cells_scratch);
 			let rows = snapshot_rows(
 				guard.grid(),
@@ -678,14 +1151,18 @@ impl Pane {
 				cols,
 				Some((guard.colors(), &settings, &mut cur_cells)),
 			);
-			let shift = scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX);
+			let shift = if slide_frame {
+				scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX)
+			} else {
+				0
+			};
 			shift_dbg = shift;
 			if shift != 0 {
-				// Freeze the static-band sizes on the gesture's first step (a clean
+				// Freeze the band sizes on the gesture's first step (a clean
 				// settled-vs-scrolled diff); re-measuring per step fluctuates by a row
 				// whenever a blank/matching line abuts a band. Held while the slide eases.
 				if !gesture_active {
-					let (st, sb) = static_bands(&rows, &self.last_rows);
+					let (st, sb) = slide_bands(&rows, &self.last_rows, shift);
 					self.slide_static = sb;
 					self.slide_static_top = st;
 				}
@@ -703,7 +1180,12 @@ impl Pane {
 					{
 						let range =
 							vanished_range(shift, self.slide_static_top, self.slide_static, lines);
-						let chunk = self.last_cells[range].to_vec();
+						// move the rows out, don't clone: last_cells is replaced wholesale
+						// below, and snapshot_rows recycles emptied slots next capture
+						let chunk: Vec<Vec<StripCell>> = self.last_cells[range]
+							.iter_mut()
+							.map(std::mem::take)
+							.collect();
 						if !chunk.is_empty() {
 							self.strip.push_step(shift.signum() as i8, chunk);
 							self.strip_dirty = true;
@@ -734,7 +1216,7 @@ impl Pane {
 		// check per frame. The per-frame (sh, app_off, slide_sh, st, sb) sequence is
 		// the deterministic proof that the slide eases smoothly (app_off monotonic, no
 		// bounce) without needing to eyeball a render - see the headless bounce harness.
-		if scroll_dbg() && settings.smooth_scroll_apps && alt {
+		if scroll_dbg() && settings.smooth_apps() && alt {
 			let frame = DBG_FRAME.fetch_add(1, Ordering::Relaxed);
 			eprintln!(
 				"SCROLLDBG f={frame} pane={} sh={shift_dbg} app_off={app_off:.4} slide_sh={:.4} st={} sb={} frac={frac:.4}",
@@ -746,15 +1228,15 @@ impl Pane {
 		// fractional-only position. `split_row` is the first row of the bottom band;
 		// `top_split_row` is the first row of the scroll region (just below the title).
 		// No bands (or no active slide) => whole pane at voff.
-		let static_rows = if app_off != 0.0 {
+		let static_rows = if app_off == 0.0 {
+			0
+		} else {
 			self.slide_static.min(lines)
-		} else {
-			0
 		};
-		let static_top = if app_off != 0.0 {
-			self.slide_static_top.min(lines.saturating_sub(static_rows))
-		} else {
+		let static_top = if app_off == 0.0 {
 			0
+		} else {
+			self.slide_static_top.min(lines.saturating_sub(static_rows))
 		};
 		let split_row = (lines - static_rows) as i32;
 		let top_split_row = static_top as i32;
@@ -784,7 +1266,9 @@ impl Pane {
 		// edge and rides the same eased offset, so it never moves relative to the
 		// content: its last row ends exactly at the region's first row (up-scroll),
 		// or its first row starts one past the region's last (down-scroll).
-		let slide = if app_off != 0.0 {
+		let slide = if app_off == 0.0 {
+			None
+		} else {
 			// split_y bounds the scroll region below; top_split_y bounds it above (a
 			// static top band sits above it; f32::MIN = no band, so the clip is open).
 			let split_y = if static_rows > 0 {
@@ -819,12 +1303,77 @@ impl Pane {
 				has_band: static_rows > 0,
 				has_top_band: static_top > 0,
 			})
-		} else {
-			None
 		};
 		// gesture over: the revealed gap is gone, drop the strip
 		if slide.is_none() && self.strip.len() > 0 {
 			self.strip.clear();
+		}
+
+		// Hyperlink under the pointer. The scan wants the grid, which is locked
+		// right here - so it runs on the frame the pointer changed cell, and on
+		// every frame that re-shapes text (output slides the span out from under a
+		// pointer that never moved). A missed lock leaves the probe pending.
+		if self.link_probe || force_rebuild || !self.text_built {
+			self.link_probe = false;
+			let hit = if settings.hyperlinks {
+				self.hover_px.and_then(|(px, py)| {
+					link_at(
+						guard.grid(),
+						guard.colors(),
+						&settings,
+						self.rect,
+						px,
+						py,
+						(cell_w, cell_h, margin),
+						(cols, lines),
+						display_offset,
+					)
+				})
+			} else {
+				None
+			};
+			if hit != self.link_hover {
+				self.link_hover = hit;
+			}
+		}
+		// Underline quads, rebuilt every frame: they ride the eased scroll offset
+		// through y_of, so a cached set would lag the text it belongs to.
+		let mut link_rects = Vec::new();
+		if let Some(link) = &self.link_hover {
+			// A link underline wants to sit just under the baseline; the mono
+			// baseline isn't published, so it's placed off the cell box instead -
+			// close enough for a 1px rule, and it scales with the font.
+			let thick = (cell_h * 0.06).round().max(1.0);
+			let gap = (cell_h * 0.10).round();
+			let color = config::srgb_f32(link.fg);
+			for grid_line in link.start.line.0..=link.end.line.0 {
+				let screen_row = grid_line + display_offset;
+				if screen_row < 0 || screen_row >= lines as i32 {
+					continue;
+				}
+				let first_col = if grid_line == link.start.line.0 {
+					link.start.column.0
+				} else {
+					0
+				};
+				let last_col = if grid_line == link.end.line.0 {
+					link.end.column.0
+				} else {
+					cols.saturating_sub(1)
+				};
+				if last_col < first_col {
+					continue;
+				}
+				link_rects.push(RectInstance {
+					pos: [
+						content_x + first_col as f32 * cell_w,
+						y_of(screen_row) + cell_h - thick - gap,
+					],
+					size: [(last_col - first_col + 1) as f32 * cell_w, thick],
+					color,
+					..Default::default()
+				});
+			}
 		}
 
 		// Cursor position/shape as plain values (no lasting borrow of the lock), so
@@ -857,19 +1406,18 @@ impl Pane {
 				voff,
 				dt,
 				settings.cursor,
+				active,
 			);
-			let bg = std::mem::take(&mut self.last_draw.bg);
 			// the fast path is a pure cursor frame - never taken while a slide eases
 			// (that forces a rebuild), so there is never a slide here
-			self.last_draw = PaneDraw {
-				top,
-				bg,
-				cursor,
-				slide: None,
-			};
-			return self.last_draw.clone();
+			self.last_draw.top = top;
+			self.last_draw.cursor = cursor;
+			self.last_draw.links = link_rects;
+			self.last_draw.slide = None;
+			return;
 		}
 		self.text_built = true;
+		self.shape_rev = self.shape_rev.wrapping_add(1);
 
 		let colors = guard.colors();
 		let sel_range = guard.selection.as_ref().and_then(|s| s.to_range(&*guard));
@@ -882,7 +1430,7 @@ impl Pane {
 
 		// While a slide eases, region rows shift by voff but rect quads only get the
 		// per-pane scissor (no per-area clip like text) - clamp region-row rects to
-		// the region so an own-bg row (inverse video, a coloured block) can't poke
+		// the region so an own-bg row (inverse video, a colored block) can't poke
 		// into the title/status bands mid-slide.
 		let region_rect_clip = slide.as_ref().map(|sl| {
 			(
@@ -899,39 +1447,72 @@ impl Pane {
 			)
 		});
 
-		// Build attr-runs spanning the viewport (+1 overscan row). Newlines are
-		// embedded into runs (never empty/standalone spans) - empty spans make
-		// cosmic-text's set_rich_text loop forever.
-		let mut spans: Vec<(String, Attrs)> = Vec::with_capacity(lines + 1);
+		// Build attr-runs, but keep them grouped BY ROW (viewport + 1 overscan row)
+		// rather than as one newline-joined blob. Handing cosmic-text the rows one
+		// at a time lets it compare each against what that line already holds and
+		// re-shape only the ones that really changed - a keystroke touches one row,
+		// not a screenful. See the buffer update after this loop.
+		let mut rows_out = std::mem::take(&mut self.rows_scratch);
+		rows_out.reserve(lines + 1);
+		let mut rows_used = 0usize;
+		let mut line_text = String::new();
+		let mut line_attrs = AttrsList::new(&default_attrs);
 		let mut run = String::new();
 		let mut run_color = settings.fg;
 		let mut run_bold = false;
 		let mut run_italic = false;
 		let mut saw_bold = false;
+		// hoisted: mono_attrs() takes an RwLock read, too hot per attribute run
+		let bold_weight = crate::text::mono_bold_weight();
 
 		macro_rules! flush_run {
 			() => {
 				if !run.is_empty() {
-					let mut attrs = mono_attrs();
+					let mut attrs = default_attrs.clone();
 					attrs.color_opt = Some(GColor::rgb(run_color[0], run_color[1], run_color[2]));
 					if run_bold {
-						attrs.weight = Weight::BOLD;
+						attrs.weight = bold_weight;
 					}
 					if run_italic {
 						attrs.style = Style::Italic;
 					}
-					spans.push((std::mem::take(&mut run), attrs));
+					let start = line_text.len();
+					line_text.push_str(&run);
+					run.clear();
+					// same rule cosmic-text uses: a run matching the defaults needs no span
+					if attrs != default_attrs {
+						line_attrs.add_span(start..line_text.len(), &attrs);
+					}
 				}
+			};
+		}
+		// End the current row and start a fresh one. Run state (color/bold/italic)
+		// deliberately carries over: `run` is empty here, so an unchanged attribute
+		// at the start of the next row just keeps appending. Rows land in recycled
+		// scratch slots so their String capacity survives across frames.
+		macro_rules! flush_row {
+			() => {
+				flush_run!();
+				let attrs = std::mem::replace(&mut line_attrs, AttrsList::new(&default_attrs));
+				if rows_used < rows_out.len() {
+					let slot = &mut rows_out[rows_used];
+					std::mem::swap(&mut slot.0, &mut line_text);
+					slot.1 = attrs;
+					line_text.clear(); // recycled slot String, capacity kept
+				} else {
+					rows_out.push((std::mem::take(&mut line_text), attrs));
+				}
+				rows_used += 1;
 			};
 		}
 
 		for screen_row in -1..(lines as i32) {
-			if screen_row != -1 {
-				run.push('\n');
-			}
 			let grid_line = screen_row - display_offset; // grid line for this screen row
+			// off the top/bottom of real content: blank row (still emitted, so the
+			// row count always matches the buffer's line count)
 			if grid_line < -hist || grid_line > (lines as i32 - 1) {
-				continue; // off the top/bottom of real content: blank row
+				flush_row!();
+				continue;
 			}
 			let row = &grid[Line(grid_line)];
 			let y = y_of(screen_row);
@@ -982,6 +1563,7 @@ impl Pane {
 							pos: [content_x + c as f32 * cell_w, rect_top],
 							size: [cell_w, rect_bot - rect_top],
 							color: config::srgb_f32(col),
+							..Default::default()
 						});
 					}
 				}
@@ -996,16 +1578,19 @@ impl Pane {
 				// A glyph the primary mono font lacks renders via a fallback font
 				// whose advance may not equal the grid width, drifting the rest of
 				// the row. Pull it out, draw it per-cell, leave space placeholders.
-				if !cell.c.is_ascii() && !ctx.covered(cell.c) {
-					let w = if flags.contains(Flags::WIDE_CHAR) {
-						2
-					} else {
-						1
-					};
+				// Same for one the font does carry but advances by the wrong number
+				// of cells - a mono face routinely holds a double-width char at its
+				// ordinary single advance.
+				let w = if flags.contains(Flags::WIDE_CHAR) {
+					2
+				} else {
+					1
+				};
+				if !cell.c.is_ascii() && !ctx.covered_at(cell.c, w) {
 					for _ in 0..w {
 						run.push(' ');
 					}
-					glyph_specs.push((cell.c, fg, bold, italic, c, screen_row, w as u8));
+					glyph_specs.push((cell.c, fg, bold, italic, c, screen_row, w));
 				} else {
 					if (fg, bold, italic) != (run_color, run_bold, run_italic) {
 						flush_run!();
@@ -1016,8 +1601,9 @@ impl Pane {
 					run.push(render_char(cell.c));
 				}
 			}
+			flush_row!();
 		}
-		flush_run!();
+		rows_out.truncate(rows_used); // drop stale slots from a taller prior frame
 
 		drop(guard);
 		let mut cursor = self.cursor_quad(
@@ -1034,6 +1620,7 @@ impl Pane {
 			voff_of(cursor_pt.line.0 + display_offset),
 			dt,
 			settings.cursor,
+			active,
 		);
 		// the cursor rides the sliding region too - clamp it like the bg rects
 		// (only when it's a region row; nano parks it in the status band on ^W)
@@ -1047,19 +1634,62 @@ impl Pane {
 				}
 			}
 		}
-		let span_refs = spans.iter().map(|(s, a)| (s.as_str(), a.clone()));
+		// Update the buffer a line at a time instead of through set_rich_text.
+		// set_rich_text rebuilds every line unconditionally, which drops each one's
+		// cached shaping - so a single changed cell used to re-shape the whole
+		// screen. Per-line assignment compares text and attributes first and only
+		// invalidates lines that actually differ; shape_until_scroll then re-shapes
+		// just those. Shaping is the expensive half of a frame.
 		// Advanced (not Basic) so missing glyphs fall back to other fonts
 		// (CJK/emoji/math/RTL) instead of rendering tofu. cosmic-text 0.18.2's
 		// fallback loop is bounded and keeps monospace alignment; earlier 0.18
 		// could hang here (see git history) but no longer does (stress-tested).
-		self.buffer.set_rich_text(
-			&mut ctx.font_system,
-			span_refs,
-			&default_attrs,
-			Shaping::Advanced,
-			None,
+		//
+		// Scrim source with uniform weight: bold ink is wider, so its halo reads
+		// heavier than the neighbors'. When text_scrim_regular_weight is on and
+		// bold is on screen, shape a parallel buffer with bold stripped for the
+		// scrim pass (crisp text on top keeps its real weight). Costs a second
+		// shape only on rebuild frames that contain bold. Per-cell fallback
+		// glyphs keep their weight - rare, and not worth a second glyph pool.
+		// ctx.debold_safe guards a font (Windows default faces) whose bold advance
+		// differs from cell_w: there the de-bold buffer drifts from the display
+		// buffer along the line, so the scrim would sit wider than the text.
+		// Runs first because it reads the rows the display buffer then consumes.
+		self.scrim_debold = settings.text_scrim
+			&& settings.text_scrim_radius > 0.0
+			&& settings.text_scrim_regular_weight
+			&& ctx.debold_safe
+			&& saw_bold;
+		if self.scrim_debold {
+			let (buf_w, buf_h) = self.buffer.size();
+			let scrim_buffer = self.scrim_buf.get_or_insert_with(|| {
+				let mut buf = Buffer::new(&mut ctx.font_system, ctx.metrics);
+				buf.set_wrap(&mut ctx.font_system, glyphon::Wrap::None);
+				buf.set_monospace_width(&mut ctx.font_system, Some(cell_w));
+				buf
+			});
+			scrim_buffer.set_metrics(&mut ctx.font_system, ctx.metrics);
+			scrim_buffer.set_size(&mut ctx.font_system, buf_w, buf_h);
+			// borrow the row text; only the attrs differ (bold stripped)
+			set_buffer_rows(
+				scrim_buffer,
+				rows_out.iter().map(|(text, attrs)| {
+					(text.as_str(), debold_attrs(attrs, default_attrs.weight))
+				}),
+			);
+			scrim_buffer.shape_until_scroll(&mut ctx.font_system, false);
+		}
+		set_buffer_rows(
+			&mut self.buffer,
+			rows_out.iter_mut().map(|(text, attrs)| {
+				(
+					text.as_str(),
+					std::mem::replace(attrs, AttrsList::new(&default_attrs)),
+				)
+			}),
 		);
 		self.buffer.shape_until_scroll(&mut ctx.font_system, false);
+		self.rows_scratch = rows_out; // keep the row Strings for the next frame
 
 		// Re-shape the scrolled-off strip when its rows changed this frame. Cheap:
 		// the strip is at most OffStrip::CAP short rows, and only steps dirty it.
@@ -1067,7 +1697,7 @@ impl Pane {
 			self.strip_dirty = false;
 			self.shape_strip(ctx, &settings);
 		}
-		// Strip cells with their own background (inverse video, coloured bg) keep it
+		// Strip cells with their own background (inverse video, colored bg) keep it
 		// while revealed: emit their rects at the strip's slide position, clamped to
 		// the region clip like the sliding content's rects above.
 		if let (Some(sl), Some((clip_t, clip_b))) = (&slide, region_rect_clip) {
@@ -1086,6 +1716,7 @@ impl Pane {
 							pos: [content_x + c as f32 * cell_w, rect_top],
 							size: [cell_w, rect_bot - rect_top],
 							color: config::srgb_f32(col),
+							..Default::default()
 						});
 					}
 				}
@@ -1093,51 +1724,58 @@ impl Pane {
 		}
 
 		// Scrim source with uniform weight: bold ink is wider, so its halo reads
-		// heavier than the neighbours'. When text_scrim_regular_weight is on and
+		// heavier than the neighbors'. When text_scrim_regular_weight is on and
 		// bold is on screen, shape a parallel buffer with bold stripped for the
 		// scrim pass (crisp text on top keeps its real weight). Costs a second
 		// shape only on rebuild frames that contain bold. Per-cell fallback
 		// glyphs keep their weight - rare, and not worth a second glyph pool.
-		self.scrim_debold = settings.text_scrim
-			&& settings.text_scrim_radius > 0.0
-			&& settings.text_scrim_regular_weight
-			&& saw_bold;
-		if self.scrim_debold {
-			let (buf_w, buf_h) = self.buffer.size();
-			let scrim_buffer = self.scrim_buf.get_or_insert_with(|| {
-				let mut buf = Buffer::new(&mut ctx.font_system, ctx.metrics);
-				buf.set_wrap(&mut ctx.font_system, glyphon::Wrap::None);
-				buf.set_monospace_width(&mut ctx.font_system, Some(cell_w));
-				buf
-			});
-			scrim_buffer.set_metrics(&mut ctx.font_system, ctx.metrics);
-			scrim_buffer.set_size(&mut ctx.font_system, buf_w, buf_h);
-			let despan = spans.iter().map(|(text, attrs)| {
-				let mut debold_attrs = attrs.clone();
-				debold_attrs.weight = default_attrs.weight;
-				(text.as_str(), debold_attrs)
-			});
-			scrim_buffer.set_rich_text(
-				&mut ctx.font_system,
-				despan,
-				&default_attrs,
-				Shaping::Advanced,
-				None,
-			);
-			scrim_buffer.shape_until_scroll(&mut ctx.font_system, false);
-		}
-
+		// ctx.debold_safe guards a font (Windows default faces) whose bold advance
+		// differs from cell_w: there the de-bold buffer drifts from the display
+		// buffer along the line, so the scrim would sit wider than the text.
 		// place the per-cell fallback glyphs. Each distinct glyph is shaped once
-		// (harfbuzz fallback matching is the cost) and cached; every cell/colour
+		// (harfbuzz fallback matching is the cost) and cached; every cell/color
 		// drawing it reuses that buffer, tinted per-cell via TextArea.default_color.
 		self.glyphs.clear();
+		self.emoji.clear();
 		let rect_y = self.rect.y;
 		for (ch, color, bold, italic, c, screen_row, cells) in glyph_specs {
+			let cell_x = content_x + c as f32 * cell_w;
+			let row_y = rect_y + margin + (screen_row as f32 + voff_of(screen_row)) * cell_h;
+			// A color glyph is a self-contained image, so it goes to the color
+			// atlas whole rather than through the monochrome fallback face below.
+			let color_glyph = if settings.color_emoji {
+				ctx.color_metrics(ch)
+			} else {
+				None
+			};
+			if let Some(metrics) = color_glyph {
+				// Fit the design box inside the cell box, keeping its aspect, and
+				// center it there. Color glyphs are drawn, not typeset - fitting the
+				// cell reads better than sitting them on the text baseline.
+				let target_w = cells as f32 * cell_w;
+				let fit = (target_w / metrics.box_w).min(cell_h / metrics.box_h);
+				let w = (metrics.box_w * fit).round().max(1.0);
+				let h = (metrics.box_h * fit).round().max(1.0);
+				ctx.color_warm(metrics.id, w as u16, h as u16);
+				self.emoji.push(CustomGlyph {
+					id: metrics.id,
+					left: cell_x + (target_w - w) / 2.0,
+					top: row_y + (cell_h - h) / 2.0,
+					width: w,
+					height: h,
+					color: None,
+					// An image wants whole pixels; this also keeps one raster per
+					// size instead of one per subpixel bin.
+					snap_to_physical_pixel: true,
+					metadata: 0,
+				});
+				continue;
+			}
 			let key = (ch, bold, italic);
 			let glyph = self.glyph_cache.entry(key).or_insert_with(|| {
-				let mut attrs = mono_attrs(); // colour left unset - the TextArea tints it
+				let mut attrs = mono_attrs(); // color left unset - the TextArea tints it
 				if bold {
-					attrs.weight = Weight::BOLD;
+					attrs.weight = crate::text::mono_bold_weight();
 				}
 				if italic {
 					attrs.style = Style::Italic;
@@ -1160,11 +1798,8 @@ impl Pane {
 			} else {
 				1.0
 			};
-			let cell_x = content_x + c as f32 * cell_w;
 			let x = cell_x + (target - glyph.ink_w * scale) / 2.0 - glyph.ink_off * scale;
-			let y = rect_y
-				+ margin + (screen_row as f32 + voff_of(screen_row)) * cell_h
-				+ cell_h * (1.0 - scale) / 2.0;
+			let y = row_y + cell_h * (1.0 - scale) / 2.0;
 			self.glyphs
 				.push((key, x, y, GColor::rgb(color[0], color[1], color[2]), scale));
 		}
@@ -1172,10 +1807,291 @@ impl Pane {
 		self.last_draw = PaneDraw {
 			top,
 			bg,
+			links: link_rects,
 			cursor,
 			slide,
 		};
-		self.last_draw.clone()
+	}
+
+	// The frame build() just produced (or the retained one on a lock miss).
+	pub fn draw(&self) -> &PaneDraw {
+		&self.last_draw
+	}
+
+	// Where the pointer sits over this pane (None = elsewhere). Only asks for a
+	// re-scan when the CELL changed, so sweeping across a row costs one scan per
+	// cell rather than one per pixel; the scan itself happens in build().
+	pub fn set_hover(&mut self, px: Option<(f32, f32)>, ctx: &TextCtx) {
+		let cell_of = |(x, y): (f32, f32)| {
+			(
+				((x - self.rect.x - ctx.margin) / ctx.cell_w).floor() as i32,
+				((y - self.rect.y - ctx.margin) / ctx.cell_h).floor() as i32,
+			)
+		};
+		if self.hover_px.map(cell_of) != px.map(cell_of) {
+			self.link_probe = true;
+		}
+		self.hover_px = px;
+		if px.is_none() {
+			self.link_hover = None;
+		}
+	}
+
+	// A re-scan is pending, so the frame it lands on must actually be drawn.
+	pub fn link_probing(&self) -> bool {
+		self.link_probe
+	}
+
+	// The link at window pixel (x, y) as of RIGHT NOW - its own scan under the
+	// term lock. `link_hover` is a frame behind the pointer (it is filled in by
+	// build), which is fine for an underline and not fine for a click: the paths
+	// that act on a link ask here instead, so they work even where hover never
+	// ran (a mouse-tracking app owns the pointer, but our menu still wins the
+	// right-click).
+	pub fn link_at_px(&self, x: f32, y: f32, ctx: &TextCtx) -> Option<LinkHit> {
+		let settings = config::settings();
+		if !settings.hyperlinks || !self.rect.contains(x, y) {
+			return None;
+		}
+		let guard = self.term.term.lock_unfair();
+		let display_offset = guard.grid().display_offset() as i32;
+		link_at(
+			guard.grid(),
+			guard.colors(),
+			&settings,
+			self.rect,
+			x,
+			y,
+			(ctx.cell_w, ctx.cell_h, ctx.margin),
+			(self.term.cols, self.term.lines),
+			display_offset,
+		)
+	}
+
+	// The user sent input here (a keystroke, a paste). Stamps the moment so the
+	// cursor move it echoes is told apart from a program's own output.
+	pub fn note_typed(&mut self) {
+		self.typed_at = Some(std::time::Instant::now());
+	}
+
+	// A window/tab/pane refocus resumes the cursor animation AT ONCE - no resume
+	// delay, unlike a keystroke - starting from the top of the cycle, which is
+	// the same full-size point a pause always parks at.
+	pub fn poke_cursor(&mut self) {
+		self.cursor_idle_t = 0.0;
+		self.cursor_step_at = Some(std::time::Instant::now());
+		let settings = config::settings();
+		let (period, full_phase) =
+			cursor_cycle(&settings.cursor_animation, settings.cursor_blink_rate_ms);
+		self.blink_t = full_phase * period;
+		self.cursor_pause.resume();
+	}
+
+	// ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+	// Scrollbar
+	// ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+	fn bar_applies(&self, cfg: &config::Settings) -> bool {
+		bar_applies_to(
+			cfg,
+			self.mode.contains(TermMode::ALT_SCREEN),
+			self.scroll.max_lines(),
+		)
+	}
+
+	// The user scrolled this pane: show the bar, and hold it up briefly afterwards
+	// so a flick of the wheel doesn't leave it flickering. Deliberately NOT called
+	// for output-driven scrolling - that happens constantly and would pin the bar
+	// on-screen for the life of any busy pane.
+	pub fn poke_scrollbar(&mut self) {
+		self.bar_hold = BAR_HOLD_S;
+	}
+
+	// Advance the fade. Runs once per pane per frame, before the geometry is asked
+	// for, and sets `bar_animating` so the event loop keeps rendering while it
+	// moves (a bar resting at full or fully gone costs no frames).
+	pub fn scrollbar_tick(&mut self, dt: f32, cfg: &config::Settings) {
+		self.bar_hold = (self.bar_hold - dt).max(0.0);
+		// Held up while: dragged, hovered, just scrolled, or parked in the
+		// scrollback - up there, where you are IS the thing you want to see.
+		let want = if !self.bar_applies(cfg) {
+			0.0
+		} else if !cfg.scrollbar_auto_hide
+			|| self.bar_drag.is_some()
+			|| self.bar_hover
+			|| self.bar_hold > 0.0
+			|| !self.scroll.following()
+		{
+			1.0
+		} else {
+			0.0
+		};
+		let tau = if want > self.bar_alpha {
+			BAR_IN_TAU_S
+		} else {
+			BAR_OUT_TAU_S
+		};
+		self.bar_alpha += (want - self.bar_alpha) * (1.0 - (-dt / tau).exp());
+		if (want - self.bar_alpha).abs() < BAR_VISIBLE_EPS {
+			self.bar_alpha = want;
+		}
+		self.bar_animating = self.bar_alpha != want || self.bar_hold > 0.0;
+	}
+
+	// This frame's fade level, 0..1. Zero means the bar is not drawn AND not
+	// clickable - the two must agree, or an invisible bar eats selection clicks.
+	pub fn bar_fade(&self) -> f32 {
+		self.bar_alpha
+	}
+
+	// Track and thumb in absolute window px, or None when there's nothing to show.
+	// The bar hugs the pane's right edge (overlay, so it costs the grid no columns)
+	// and runs the height of the content area.
+	pub fn scrollbar(&self, ctx: &TextCtx, cfg: &config::Settings) -> Option<Bar> {
+		if !self.bar_applies(cfg) || self.bar_alpha <= 0.0 {
+			return None;
+		}
+		let (_, _, _, rows) = content_dims(self.rect, ctx);
+		let thickness = cfg.scrollbar_thickness.min(self.rect.w);
+		let track = Rect {
+			x: self.rect.x + self.rect.w - thickness,
+			y: self.rect.y + ctx.margin,
+			w: thickness,
+			h: (self.rect.h - 2.0 * ctx.margin).max(0.0),
+		};
+		if track.h <= 0.0 || track.w <= 0.0 {
+			return None;
+		}
+		// A dragged thumb rides `target` so the handle tracks the pointer exactly;
+		// otherwise it rides `visual` so it moves with the content it describes.
+		let pos_lines = if self.bar_drag.is_some() {
+			self.scroll.target_lines()
+		} else {
+			self.scroll.visual_lines()
+		};
+		let (thumb_y, thumb_h) = bar_thumb_span(
+			track.h,
+			thickness,
+			rows as f32,
+			self.scroll.max_lines(),
+			pos_lines,
+		);
+		Some(Bar {
+			track,
+			thumb: Rect {
+				x: track.x,
+				y: track.y + thumb_y,
+				w: track.w,
+				h: thumb_h,
+			},
+		})
+	}
+
+	// Would a press at (x, y) land on the bar, and where? None when the bar is
+	// faded out, so clicks fall through to selection exactly when it's invisible.
+	pub fn bar_hit(&self, x: f32, y: f32, ctx: &TextCtx, cfg: &config::Settings) -> Option<BarHit> {
+		let bar = self.scrollbar(ctx, cfg)?;
+		if self.bar_alpha < BAR_VISIBLE_EPS || !bar.track.contains(x, y) {
+			return None;
+		}
+		if bar.thumb.contains(x, y) {
+			Some(BarHit::Thumb)
+		} else if y < bar.thumb.y {
+			Some(BarHit::TrackUp)
+		} else {
+			Some(BarHit::TrackDown)
+		}
+	}
+
+	// Is the pointer on (or just beside) the bar's strip? Drives the fade-in, so
+	// it uses the strip rather than a hit: with auto-hide on there is no bar to
+	// hit until this has already brought one back.
+	pub fn bar_near(&self, x: f32, y: f32, cfg: &config::Settings) -> bool {
+		if !self.bar_applies(cfg) {
+			return false;
+		}
+		let thickness = cfg.scrollbar_thickness.min(self.rect.w);
+		let strip = Rect {
+			x: self.rect.x + self.rect.w - thickness - BAR_HOVER_SLOP,
+			y: self.rect.y,
+			w: thickness + BAR_HOVER_SLOP,
+			h: self.rect.h,
+		};
+		strip.contains(x, y)
+	}
+
+	// Start a thumb drag, remembering where inside the handle it was grabbed so
+	// the thumb doesn't jump under the pointer.
+	pub fn bar_grab(&mut self, y: f32, ctx: &TextCtx, cfg: &config::Settings) {
+		if let Some(bar) = self.scrollbar(ctx, cfg) {
+			self.bar_drag = Some(y - bar.thumb.y);
+			self.poke_scrollbar();
+		}
+	}
+
+	// Continue a thumb drag: put the thumb's top where the pointer says, and map
+	// that back to a scroll position.
+	pub fn bar_drag_to(&mut self, y: f32, ctx: &TextCtx, cfg: &config::Settings) {
+		let Some(grab) = self.bar_drag else { return };
+		let Some(bar) = self.scrollbar(ctx, cfg) else {
+			return;
+		};
+		let lines = bar_pos_to_lines(
+			bar.track.h,
+			bar.thumb.h,
+			self.scroll.max_lines(),
+			y - grab - bar.track.y,
+		);
+		self.scroll.scroll_to(lines);
+		self.poke_scrollbar();
+	}
+
+	// Click on the track above/below the thumb: page that way, like every other
+	// scrollbar. A page is the viewport less one line of overlap.
+	pub fn bar_page(&mut self, up: bool, ctx: &TextCtx) {
+		let (_, _, _, rows) = content_dims(self.rect, ctx);
+		let page = (rows as f32 - 1.0).max(1.0);
+		self.scroll.wheel(if up { page } else { -page });
+		self.poke_scrollbar();
+	}
+
+	// Coming back from a freeze (hidden tab shown, minimized window restored):
+	// everything that happened meanwhile lands as one instant cut. Snap any
+	// leftover motion now and flag the next build to rebaseline its scroll
+	// detectors instead of easing across the gap - that ease is the bounce class.
+	pub fn hard_cut(&mut self) {
+		self.pending_cut = true;
+		self.scroll.snap();
+	}
+
+	// Sample the scrollback depth for this PTY read cycle. `history_size()` is a
+	// COUNT, and `clear` (E3) TRUNCATES it, so growth measured between two frames
+	// reads zero across a clear-and-refill that pushed a whole screenful past -
+	// repeating `clear; ls -lA ~/` eased the first time and snapped every time
+	// after, because the identical listing refilled the buffer to the identical
+	// depth. A build never sees the dip (the clear and the output land in one
+	// parse cycle), but a wakeup does, so accumulate here instead: a DROP can only
+	// mean the scrollback was cleared, and everything left in it arrived after
+	// that, so the whole of it is new. `try_lock_unfair` and give up on a miss -
+	// this must never contend with the reader; `wake_hist` only advances on a
+	// successful sample, so the next one spans the cycles that were missed and
+	// nothing is lost.
+	// After a reflow the depth can change with nothing having scrolled, so
+	// re-baseline rather than let the next sample read that as a clear. Resizes
+	// are rare and this is bounded (one read cycle), so take the fair lock.
+	pub fn rebaseline_history(&mut self) {
+		self.wake_pushed = 0;
+		self.wake_hist = self.term.term.lock().grid().history_size();
+	}
+
+	pub fn note_history(&mut self) {
+		let Some(guard) = self.term.term.try_lock_unfair() else {
+			return;
+		};
+		let history = guard.grid().history_size();
+		drop(guard);
+		self.wake_pushed += pushed_since(history, self.wake_hist);
+		self.wake_hist = history;
 	}
 
 	// The cursor quad: visual column eased toward the target (slides as you type,
@@ -1198,6 +2114,7 @@ impl Pane {
 		voff: f32,
 		dt: f32,
 		cursor_rgb: [u8; 3],
+		active: bool,
 	) -> Option<RectInstance> {
 		let cursor_screen_row = cursor_pt.line.0 + display_offset;
 		let shown = following
@@ -1206,8 +2123,16 @@ impl Pane {
 			&& (cursor_screen_row as usize) < lines;
 		self.cursor_animating = false;
 		if !shown {
+			self.cursor_wake = None;
 			return None;
 		}
+		// wall-clock dt for the pause timers: while parked no frames flow, so the
+		// one wake/event frame after a sleep must account for the whole gap
+		let step_now = std::time::Instant::now();
+		let wall_dt = self
+			.cursor_step_at
+			.map_or(dt, |at| (step_now - at).as_secs_f32());
+		self.cursor_step_at = Some(step_now);
 		let target_col = cursor_pt.column.0 as f32;
 		let row_jump = !self.cursor_init || cursor_screen_row != self.cursor_row;
 		let moved = row_jump || (target_col - self.cursor_col).abs() > 0.001;
@@ -1216,14 +2141,20 @@ impl Pane {
 		}
 		if moved {
 			self.cursor_idle_t = 0.0; // reset idle timer on any cursor move
+			// Classify only on a move, so the verdict holds while the cursor sits
+			// still - re-testing every frame would expire the echo window mid-pause
+			// and cut typing's delay short.
+			self.cursor_by_input = move_is_input(self.typed_at, step_now);
 		} else {
-			self.cursor_idle_t += dt;
+			self.cursor_idle_t += wall_dt;
 		}
 		self.cursor_init = true;
 		self.cursor_row = cursor_screen_row;
 		self.cursor_col = target_col;
-		let k = 1.0 - (-dt * 1000.0 / CURSOR_MOVE_TAU_MS).exp();
-		self.cursor_x += (target_col - self.cursor_x) * k;
+		// Ease toward the target column, speeding up the farther behind it is (a
+		// burst catches up fast, a single-cell move keeps the gentle slide), never
+		// trailing more than CURSOR_MAX_LAG cells.
+		self.cursor_x = cursor_slide_step(self.cursor_x, target_col, dt);
 		let easing = (target_col - self.cursor_x).abs() > 0.01;
 		if !easing {
 			self.cursor_x = target_col;
@@ -1231,23 +2162,49 @@ impl Pane {
 		// Animation: "none" = steady; "phase" = smooth cosine fade; "pulse_*" =
 		// grow/shrink a dimension over one cycle. The envelope applies whenever the
 		// animation is on - including during a horizontal slide - so the size never
-		// jumps on a keystroke. "continuous" runs the cycle unconditionally;
-		// "pause" routes through PauseState (glide to full, hold, resume from full).
+		// jumps on a keystroke. PauseState parks the cycle at full size while
+		// typing (resuming cursor_animation_resume_s after input goes idle) and
+		// again after cursor_animation_idle_stop_s of nothing, indefinitely; both
+		// pause AND resume happen at the cursor's full size, always. Output parks
+		// it the same way, but carries no delay of its own (resume_delay), so the
+		// cursor is alive again as soon as a command stops writing. A parked
+		// cursor renders no frames - the timed resume comes from cursor_wake, and
+		// a refocus ends the park outright (poke_cursor).
 		let settings = config::settings();
 		let anim = settings.cursor_animation.as_str();
-		let period = (settings.cursor_blink_rate_ms / 1000.0 * 2.0).max(0.05); // full on->off->on
+		let (period, full_phase) = cursor_cycle(anim, settings.cursor_blink_rate_ms);
 		let anim_on = anim != "none";
-		let full_phase = if anim == "phase" { 0.0 } else { 0.5 };
-		if anim_on && settings.cursor_animation_input != "continuous" {
+		let mut parked = false;
+		self.cursor_wake = None;
+		if anim_on && !CURSOR_ANIM_CONTINUOUS {
+			let resume_s = resume_delay(self.cursor_by_input, settings.cursor_animation_resume_s);
+			let idle_stop_s = settings.cursor_animation_idle_stop_s;
+			// only the focused pane of the focused window animates; everyone else
+			// parks at full and holds until they're the active pane again
+			let blocked = FREEZE_UNFOCUSED_BLINK && !active;
 			self.blink_t = self.cursor_pause.advance(
 				self.blink_t,
 				dt,
+				wall_dt,
 				period,
 				full_phase,
-				CURSOR_INPUT_PAUSE_S,
+				resume_s,
+				idle_stop_s,
 				moved,
 				self.cursor_idle_t,
+				blocked,
 			);
+			parked = self.cursor_pause.active && self.cursor_pause.parked;
+			let idle_stopped = idle_stop_s > 0.0 && self.cursor_idle_t >= idle_stop_s;
+			if parked && !idle_stopped && !blocked {
+				// input pause: schedule the wake that resumes the cycle (a
+				// long-idle stop or a blocked pane has no timed resume -
+				// activity / becoming active again ends it)
+				let wait = (resume_s - self.cursor_idle_t)
+					.max(resume_s - self.cursor_pause.hold_t)
+					.max(0.0);
+				self.cursor_wake = Some(step_now + std::time::Duration::from_secs_f32(wait + 0.02));
+			}
 		} else {
 			self.blink_t += dt;
 		}
@@ -1281,15 +2238,16 @@ impl Pane {
 		} else {
 			(false, false)
 		};
-		// keep frames flowing while a pulse/phase cursor is shown (even during an
-		// input pause) so the animation can resume once input goes idle
-		self.cursor_animating = easing || anim_on;
+		// keep frames flowing while the cursor slides or the cycle runs. A parked
+		// cursor is static at full size, so it needs NO frames - that is the whole
+		// idle-CPU win; the timed resume is driven by cursor_wake instead
+		self.cursor_animating = easing || (anim_on && !parked);
 		let mut cursor_color = config::srgb_f32(cursor_rgb);
 		cursor_color[3] = alpha;
 		let cell_y = self.rect.y + margin + (cursor_screen_row as f32 + voff) * cell_h;
 		let cell_x = content_x + self.cursor_x * cell_w;
 		// Width grows from the left, height from the bottom - but a *pulsing*
-		// dimension grows from the cell centre (the "line in the middle") and may
+		// dimension grows from the cell center (the "line in the middle") and may
 		// shrink to nothing (the momentary disappear), so it skips the 2px floor.
 		let w = if pulsing_w {
 			cell_w * w_frac
@@ -1315,13 +2273,14 @@ impl Pane {
 			pos: [x, y],
 			size: [w, h],
 			color: cursor_color,
+			..Default::default()
 		})
 	}
 
 	// Same as `text_area` but for the scrim source pass: uses the de-bolded buffer
 	// when it was built this frame (text_scrim_regular_weight + bold on screen), so
 	// the halo weight matches non-bold text while the crisp text keeps its weight.
-	pub fn scrim_text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
+	pub fn scrim_text_area(&self, top: f32, margin: f32) -> TextArea<'_> {
 		let mut area = self.text_area(top, margin);
 		if self.scrim_debold {
 			if let Some(scrim_buffer) = &self.scrim_buf {
@@ -1332,13 +2291,13 @@ impl Pane {
 	}
 
 	// scrim_text_area with the band clip of text_area_band (see there).
-	pub fn scrim_text_area_band<'a>(
-		&'a self,
+	pub fn scrim_text_area_band(
+		&self,
 		top: f32,
 		margin: f32,
 		clip_top: f32,
 		clip_bottom: f32,
-	) -> TextArea<'a> {
+	) -> TextArea<'_> {
 		let mut area = self.scrim_text_area(top, margin);
 		area.bounds.top = area.bounds.top.max(clip_top as i32);
 		area.bounds.bottom = area.bounds.bottom.min(clip_bottom as i32);
@@ -1358,29 +2317,29 @@ impl Pane {
 				right: (self.rect.x + self.rect.w - margin) as i32,
 				bottom: (self.rect.y + self.rect.h - margin) as i32,
 			},
-			default_color: GColor::rgb(
-				config::settings().fg[0],
-				config::settings().fg[1],
-				config::settings().fg[2],
-			),
+			default_color: {
+				// one settings() (RwLock read + Arc clone), not three
+				let fg = config::settings().fg;
+				GColor::rgb(fg[0], fg[1], fg[2])
+			},
 			custom_glyphs: &[],
 		}
 	}
 
-	pub fn text_area<'a>(&'a self, top: f32, margin: f32) -> TextArea<'a> {
+	pub fn text_area(&self, top: f32, margin: f32) -> TextArea<'_> {
 		self.buf_area(&self.buffer, top, margin)
 	}
 
 	// Same buffer as text_area, positioned at `top`, but with its vertical clip
 	// narrowed to [clip_top, clip_bottom]. Used by the app-scroll slide to draw the
 	// current buffer clipped to the scroll region and the static band separately.
-	pub fn text_area_band<'a>(
-		&'a self,
+	pub fn text_area_band(
+		&self,
 		top: f32,
 		margin: f32,
 		clip_top: f32,
 		clip_bottom: f32,
-	) -> TextArea<'a> {
+	) -> TextArea<'_> {
 		let mut area = self.text_area(top, margin);
 		area.bounds.top = area.bounds.top.max(clip_top as i32);
 		area.bounds.bottom = area.bounds.bottom.min(clip_bottom as i32);
@@ -1404,15 +2363,12 @@ impl Pane {
 	}
 
 	// Re-shape the scrolled-off strip buffer from its captured rows. Same span
-	// rules as build()'s main loop: runs merged by (colour, bold, italic),
+	// rules as build()'s main loop: runs merged by (color, bold, italic),
 	// newlines embedded into non-empty runs, never empty/standalone spans (they
 	// make set_rich_text loop forever). Glyphs the primary mono face lacks stay
 	// space placeholders - the strip is transient reveal content, not worth a
 	// per-cell fallback pool.
 	fn shape_strip(&mut self, ctx: &mut TextCtx, settings: &config::Settings) {
-		if self.strip.len() == 0 {
-			return;
-		}
 		fn flush(spans: &mut Vec<(String, Attrs)>, run: &mut String, style: ([u8; 3], bool, bool)) {
 			if run.is_empty() {
 				return;
@@ -1420,12 +2376,15 @@ impl Pane {
 			let mut attrs = mono_attrs();
 			attrs.color_opt = Some(GColor::rgb(style.0[0], style.0[1], style.0[2]));
 			if style.1 {
-				attrs.weight = Weight::BOLD;
+				attrs.weight = crate::text::mono_bold_weight();
 			}
 			if style.2 {
 				attrs.style = Style::Italic;
 			}
 			spans.push((std::mem::take(run), attrs));
+		}
+		if self.strip.len() == 0 {
+			return;
 		}
 		let mut spans: Vec<(String, Attrs)> = Vec::with_capacity(self.strip.len() + 1);
 		let mut run = String::new();
@@ -1438,7 +2397,7 @@ impl Pane {
 				if cell.wide == 0 {
 					continue; // wide-char spacer
 				}
-				if !cell.c.is_ascii() && !ctx.covered(cell.c) {
+				if !cell.c.is_ascii() && !ctx.covered_at(cell.c, cell.wide) {
 					for _ in 0..cell.wide {
 						run.push(' ');
 					}
@@ -1472,24 +2431,54 @@ impl Pane {
 
 	// Per-cell fallback glyphs, already positioned (see Pane::build). Drawn in
 	// the same text pass as `text_area`, on top of their space placeholders.
-	pub fn glyph_areas(&self) -> Vec<TextArea<'_>> {
+	// Iterator, not a Vec: both callers extend() into their own area list, so a
+	// materialized intermediate was two throwaway allocations per frame.
+	pub fn glyph_areas(&self, margin: f32) -> impl Iterator<Item = TextArea<'_>> {
+		// content clip, same as buf_area: an edge row's fallback glyph (ink
+		// taller than its cell, or shifted by a scroll fraction) must not
+		// paint the margin - the main buffer's text never can
+		let bounds = TextBounds {
+			left: (self.rect.x + margin) as i32,
+			top: (self.rect.y + margin) as i32,
+			right: (self.rect.x + self.rect.w - margin) as i32,
+			bottom: (self.rect.y + self.rect.h - margin) as i32,
+		};
 		self.glyphs
 			.iter()
-			.map(|&(key, x, y, color, scale)| TextArea {
+			.map(move |&(key, x, y, color, scale)| TextArea {
 				buffer: &self.glyph_cache[&key].buf,
 				left: x,
 				top: y,
 				scale,
-				bounds: TextBounds {
-					left: self.rect.x as i32,
-					top: self.rect.y as i32,
-					right: (self.rect.x + self.rect.w) as i32,
-					bottom: (self.rect.y + self.rect.h) as i32,
-				},
+				bounds,
 				default_color: color,
 				custom_glyphs: &[],
 			})
-			.collect()
+	}
+
+	// This frame's color glyphs (see Pane::build). One text area carries them all:
+	// their coordinates are absolute, so it sits at the origin with an empty
+	// buffer and exists only to hand glyphon the custom-glyph list.
+	pub fn emoji_area(&self, margin: f32) -> Option<TextArea<'_>> {
+		if self.emoji.is_empty() {
+			return None;
+		}
+		Some(TextArea {
+			buffer: &self.empty_buf,
+			left: 0.0,
+			top: 0.0,
+			scale: 1.0,
+			// content clip, same as glyph_areas
+			bounds: TextBounds {
+				left: (self.rect.x + margin) as i32,
+				top: (self.rect.y + margin) as i32,
+				right: (self.rect.x + self.rect.w - margin) as i32,
+				bottom: (self.rect.y + self.rect.h - margin) as i32,
+			},
+			// unused: a color glyph carries its own pixels
+			default_color: GColor::rgb(255, 255, 255),
+			custom_glyphs: &self.emoji,
+		})
 	}
 
 	// Copy-output: Enter was pressed at the shell prompt, so a command is (maybe)
@@ -1512,8 +2501,32 @@ impl Pane {
 		let row = &grid[cursor_line];
 		let blank = (0..cols).all(|c| row[Column(c)].c == ' ');
 		self.cmd_anchor = (!blank).then(|| fnv_row((0..cols).map(|c| row[Column(c)].c)));
+		// learn the multi-line prompt block: rows above the input line that were
+		// also there (same skeleton) at the previous arm are prompt, not output
+		let hist = grid.history_size() as i32;
+		let above: Vec<u64> = (1..=PROMPT_ABOVE_MAX as i32)
+			.map_while(|up| {
+				let line = Line(cursor_line.0 - up);
+				(line.0 >= -hist).then(|| fnv_row_skel((0..cols).map(|c| grid[line][Column(c)].c)))
+			})
+			.collect();
+		let confirmed = above
+			.iter()
+			.zip(&self.prompt_above)
+			.take_while(|(cur, prev)| cur == prev)
+			.count();
+		self.prompt_block = above[..confirmed].to_vec();
+		self.prompt_above = above;
 		self.capture_armed = true;
 		self.last_output = std::time::Instant::now();
+	}
+
+	// Cancel a pending capture. Called when the pane stops being the active copy
+	// target (window unfocused, tab switched, focus moved, trigger turned off):
+	// output that finished while the user was elsewhere must not copy late on
+	// refocus - only a command launched after returning copies.
+	pub fn disarm_capture(&mut self) {
+		self.capture_armed = false;
 	}
 
 	// New PTY output arrived: push the settle deadline out so capture waits for the
@@ -1530,7 +2543,7 @@ impl Pane {
 
 	// If armed and the terminal has settled (no output for `settle`) back at the
 	// shell prompt, return the command's output as plain Unicode text (control/
-	// colour codes are already gone - it's read from the parsed grid) and disarm.
+	// color codes are already gone - it's read from the parsed grid) and disarm.
 	// Returns None otherwise, and skips empty output (e.g. a bare Enter or `cd`).
 	pub fn poll_capture(&mut self, settle: std::time::Duration) -> Option<String> {
 		if !self.capture_armed || self.last_output.elapsed() < settle {
@@ -1546,6 +2559,7 @@ impl Pane {
 			grid.history_size() + grid.cursor.point.line.0.max(0) as usize
 		};
 		let start = capture_start(&guard, self.cmd_start, self.cmd_anchor, end);
+		let end = prompt_strip(&guard, start, end, &self.prompt_block);
 		let text = capture_grid_text(&guard, start, end);
 		(!text.trim().is_empty()).then_some(text)
 	}
@@ -1646,6 +2660,20 @@ impl Pane {
 		self.term.term.lock_unfair().selection = None;
 	}
 
+	pub fn copy_enabled(&self, kind: CopyKind) -> bool {
+		match kind {
+			CopyKind::Select => self.copy_select,
+			CopyKind::Output => self.copy_output,
+		}
+	}
+
+	pub fn set_copy(&mut self, kind: CopyKind, on: bool) {
+		match kind {
+			CopyKind::Select => self.copy_select = on,
+			CopyKind::Output => self.copy_output = on,
+		}
+	}
+
 	pub fn selection_text(&self) -> Option<String> {
 		self.term
 			.term
@@ -1656,7 +2684,7 @@ impl Pane {
 
 	// Write pasted text to the PTY (wrapped in bracketed paste when the app
 	// enabled it). No-op when the pane is read-only.
-	pub fn paste(&self, text: &str) {
+	pub fn paste(&mut self, text: &str) {
 		if self.read_only || text.is_empty() {
 			return;
 		}
@@ -1670,6 +2698,7 @@ impl Pane {
 			bytes.extend_from_slice(b"\x1b[201~");
 		}
 		self.term.write(bytes);
+		self.note_typed();
 	}
 }
 
@@ -1687,9 +2716,10 @@ impl PaneManager {
 		proxy: &EventLoopProxy<UserEvent>,
 		area: Rect,
 		command: Option<Vec<String>>,
+		cwd: Option<std::path::PathBuf>,
 	) -> anyhow::Result<Self> {
 		let id = alloc_pane_id();
-		let pane = spawn_pane(ctx, proxy, id, area, command)?;
+		let pane = spawn_pane(ctx, proxy, id, area, command, cwd)?;
 		let mut panes = HashMap::new();
 		panes.insert(id, pane);
 		Ok(Self {
@@ -1701,7 +2731,8 @@ impl PaneManager {
 	}
 
 	// Interactive split (menu/keyboard): even ratio, new pane after; inherits the
-	// source pane's command so the new pane runs the same shell it forked off.
+	// source pane's command and current directory, so the new pane runs the same
+	// shell it forked off, starting where that shell is now.
 	pub fn split(
 		&mut self,
 		ctx: &mut TextCtx,
@@ -1709,12 +2740,20 @@ impl PaneManager {
 		id: PaneId,
 		dir: Dir,
 		area: Rect,
-	) -> anyhow::Result<()> {
+	) {
 		let cmd = self.panes.get(&id).and_then(|p| p.command.clone());
+		let cwd = self.panes.get(&id).and_then(|p| p.term.cwd());
 		// interactive splits even-distribute the same-direction run (unless a divider
 		// in it was hand-dragged); the CLI drives its own sizing, so it passes false
-		self.split_at(ctx, proxy, id, dir, false, 0.5, cmd, area, true);
-		Ok(())
+		self.split_at(ctx, proxy, id, dir, false, 0.5, cmd, cwd, area, true);
+	}
+
+	// What a new tab/window spawned "from" the focused pane should inherit:
+	// its launch command (None = default shell) and the shell's current dir.
+	pub fn inherit_spawn(&self) -> (Option<Vec<String>>, Option<std::path::PathBuf>) {
+		self.panes
+			.get(&self.focused)
+			.map_or((None, None), |pane| (pane.command.clone(), pane.term.cwd()))
 	}
 
 	// General split used by the CLI: split `id` along `dir`, the new pane on the
@@ -1731,6 +2770,7 @@ impl PaneManager {
 		before: bool,
 		new_ratio: f32,
 		command: Option<Vec<String>>,
+		cwd: Option<std::path::PathBuf>,
 		area: Rect,
 		equalize: bool,
 	) -> Option<PaneId> {
@@ -1740,15 +2780,24 @@ impl PaneManager {
 			return None;
 		}
 		let new_id = alloc_pane_id();
+		// a new pane inherits the auto-copy flags of the pane it split off (the
+		// "tab setting" the user sees); a new tab/window starts from the
+		// copy_on_select config default (output always off)
+		let (inherit_select, inherit_output) = self
+			.panes
+			.get(&id)
+			.map_or((false, false), |src| (src.copy_select, src.copy_output));
 		// spawn BEFORE touching the tree: a failed spawn must not leave a
 		// phantom leaf that reserves layout space with no pane behind it
-		let pane = match spawn_pane(ctx, proxy, new_id, area, command) {
+		let mut pane = match spawn_pane(ctx, proxy, new_id, area, command, cwd) {
 			Ok(p) => p,
 			Err(e) => {
 				eprintln!("split: failed to spawn shell: {e}");
 				return None;
 			}
 		};
+		pane.copy_select = inherit_select;
+		pane.copy_output = inherit_output;
 		// child-a's ratio: if the new pane is 'a' (before) it takes new_ratio,
 		// else 'a' is the old pane and keeps the remainder.
 		let ratio_a = if before { new_ratio } else { 1.0 - new_ratio };
@@ -1775,20 +2824,17 @@ impl PaneManager {
 
 	// returns true when the last pane closed (caller should exit)
 	pub fn close(&mut self, ctx: &mut TextCtx, id: PaneId, area: Rect) -> bool {
-		match prune(std::mem::replace(&mut self.root, Node::Leaf(0)), id) {
-			Some(n) => {
-				self.root = n;
-				self.panes.remove(&id);
-				if self.focused == id {
-					self.focused = first_leaf(&self.root);
-				}
-				self.relayout(ctx, area);
-				false
+		if let Some(n) = prune(std::mem::replace(&mut self.root, Node::Leaf(0)), id) {
+			self.root = n;
+			self.panes.remove(&id);
+			if self.focused == id {
+				self.focused = first_leaf(&self.root);
 			}
-			None => {
-				self.panes.remove(&id);
-				true
-			}
+			self.relayout(ctx, area);
+			false
+		} else {
+			self.panes.remove(&id);
+			true
 		}
 	}
 
@@ -1827,6 +2873,9 @@ impl PaneManager {
 				// a resize invalidates the strip's captured columns and the
 				// frame-old styled snapshot it fills from
 				pane.strip.clear();
+				// a reflow can shrink history with nothing scrolled, which would
+				// otherwise read as a scrollback clear
+				pane.rebaseline_history();
 				pane.strip_dirty = false;
 				pane.last_cells.clear();
 			}
@@ -1898,6 +2947,7 @@ fn spawn_pane(
 	id: PaneId,
 	rect: Rect,
 	command: Option<Vec<String>>,
+	cwd: Option<std::path::PathBuf>,
 ) -> anyhow::Result<Pane> {
 	let (cw, ch, cols, lines) = content_dims(rect, ctx);
 	let term = TermInstance::spawn(
@@ -1908,10 +2958,12 @@ fn spawn_pane(
 		ctx.cell_h as u16,
 		proxy.clone(),
 		command.clone(),
+		cwd,
 	)?;
 	// +2 cells of height for the overscan rows build() renders (see relayout).
 	let buffer = ctx.new_buffer(cw, ch + 2.0 * ctx.cell_h);
 	let strip_buf = ctx.new_buffer(cw, ctx.cell_h);
+	let empty_buf = ctx.new_plain_buffer(); // never given text - see emoji_area
 	Ok(Pane {
 		id,
 		term,
@@ -1922,6 +2974,7 @@ fn spawn_pane(
 		strip_dirty: false,
 		last_cells: Vec::new(),
 		cells_scratch: Vec::new(),
+		rows_scratch: Vec::new(),
 		rect,
 		title: config::APP_NAME.into(),
 		read_only: false,
@@ -1929,17 +2982,25 @@ fn spawn_pane(
 		last_draw: PaneDraw {
 			top: rect.y,
 			bg: Vec::new(),
+			links: Vec::new(),
 			cursor: None,
 			slide: None,
 		},
+		lock_misses: 0,
 		last_history: 0,
+		wake_pushed: 0,
+		wake_hist: 0,
+		last_offscreen: None,
 		last_rows: Vec::new(),
 		slide_static: 0,
 		slide_static_top: 0,
 		slide_sh: 0.0,
 		last_alt: false,
+		pending_cut: false,
 		glyph_cache: HashMap::new(),
 		glyphs: Vec::new(),
+		emoji: Vec::new(),
+		empty_buf,
 		scrim_buf: None,
 		scrim_debold: false,
 		cursor_x: 0.0,
@@ -1948,12 +3009,28 @@ fn spawn_pane(
 		cursor_init: false,
 		blink_t: 0.0,
 		cursor_idle_t: 0.0,
+		cursor_step_at: None,
+		typed_at: None,
+		cursor_by_input: false,
 		cursor_pause: PauseState::default(),
+		cursor_wake: None,
+		bar_alpha: 0.0,
+		bar_hold: 0.0,
+		bar_hover: false,
+		bar_drag: None,
+		bar_animating: false,
+		hover_px: None,
+		link_probe: false,
+		link_hover: None,
 		cursor_animating: false,
 		text_built: false,
+		shape_rev: 0,
 		mode: TermMode::empty(),
 		content_dirty: true,
-		auto_copy: false,
+		copy_select: config::settings().copy_on_select,
+		copy_output: false,
+		prompt_above: Vec::new(),
+		prompt_block: Vec::new(),
 		capture_armed: false,
 		cmd_start: 0,
 		cmd_anchor: None,
@@ -1990,6 +3067,36 @@ fn capture_start<T: alacritty_terminal::event::EventListener>(
 		}
 	}
 	cmd_start
+}
+
+// Drop a multi-line prompt's extra rows off the capture end. `end_abs` already
+// excludes the resumed prompt's input line (the cursor row); strip the rows
+// above it whose skeleton matches the learned prompt block (see prompt_block
+// on Pane), so e.g. a two-line prompt's decoration line isn't copied as output
+// even when its content (cwd, clock) changed since the arm. Fail-safe: a row
+// whose structure doesn't match (nothing learned yet, genuinely different row)
+// stops the strip and stays in the copy - the prior behavior.
+fn prompt_strip<T: alacritty_terminal::event::EventListener>(
+	term: &Term<T>,
+	start_abs: usize,
+	end_abs: usize,
+	block: &[u64],
+) -> usize {
+	let grid = term.grid();
+	let hist = grid.history_size() as i64;
+	let cols = grid.columns();
+	let mut end = end_abs;
+	for &fingerprint in block {
+		if end <= start_abs {
+			break;
+		}
+		let row = &grid[Line((end as i64 - 1 - hist) as i32)];
+		if fnv_row_skel((0..cols).map(|c| row[Column(c)].c)) != fingerprint {
+			break;
+		}
+		end -= 1;
+	}
+	end
 }
 
 // Extract the grid text for absolute line range [start_abs, end_abs) as plain
@@ -2426,6 +3533,23 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
 	*manual = true; // dragged: stop auto even-distribution for this run
 }
 
+// Which frames take part in the app-scroll slide bookkeeping, per frame state.
+// `snap`: refresh the styled row snapshot. This must cover every content frame
+// of a screen the detector can later run on - grew>0 frames included, even
+// though they animate via the output ease instead. Skipping them (the original
+// normal-screen gate) left the snapshot stale across the eased scroll, so the
+// shell's prompt redraw one frame later diffed against pre-scroll rows, read
+// the whole scroll as a fresh repaint-shift, and slid it a second time: the
+// "down one line, then up two" output judder. A full normal-screen buffer
+// never slides (the full-branch above keeps its own fingerprints), so it
+// skips the styled snapshot cost. `slide`: this frame may interpret the diff
+// as a scroll - the alt screen always, the normal screen only on a repaint
+// frame (following, no growth, not full - the ConPTY case).
+fn app_scroll_frames(alt: bool, follow: bool, grew: usize, full: bool) -> (bool, bool) {
+	let repaint_scroll = !alt && follow && grew == 0 && !full;
+	(alt || !full, alt || repaint_scroll)
+}
+
 // Lines the on-screen content scrolled up between frames, inferred from row
 // fingerprints when scrollback growth can't tell us (the buffer is full). It's
 // the smallest shift k where this frame's top (rows-k) lines equal last frame's
@@ -2438,13 +3562,26 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
 // scrolling region is a middle block, not a top prefix. We therefore count, for
 // each candidate k, how many rows translate cleanly ANYWHERE (cur[i]==last[i+k]),
 // and pick the k with the most. A shift counts only if a solid block translates
-// (>= `need`) AND enough of those rows actually MOVED (cur[i]!=last[i], >= MOVED_MIN)
-// - a static or blank field matches positionally but hasn't scrolled, and easing
-// that produces the apt/blank-jitter bounce. Otherwise 0 (in-place redraw, content
-// change, or a jump bigger than `max`) and the caller hard-cuts. 64-bit row
-// fingerprints make a coincidental non-translation match vanishingly unlikely, so
-// no contiguity check is needed. It never guesses a full turnover the way
-// scroll_shift does - easing a non-scroll looks wrong.
+// (>= `need`) AND enough of those rows actually MOVED (>= MOVED_MIN) - where a row
+// only counts as moved when the content appeared at its new position AND left its
+// old one. Both halves matter: a static or blank field matches positionally but
+// hasn't scrolled (easing that produces the apt/blank-jitter bounce), and a row
+// whose source still holds the old content is a COPY, not a move - a repeated
+// command's output on a half-empty screen re-prints the previous listing lower
+// down, which reads as a perfect downward translate (the blank field supplies the
+// positional matches, the repeat supplies the changed targets) and slid brand-new
+// output down out from under the prompt. A shift must also EXPLAIN the frame: at
+// least two thirds of the changed rows beyond the k it reveals must be rows the
+// translation moved. An option-list TUI that swaps in a taller/shorter block for
+// the highlighted entry only pushes the short footer under it - the rewritten
+// block and marker rows above sit unexplained, so that relayout (which passes
+// both moved tests: the footer really moves and really vacates) is rejected,
+// while a real scroll accounts for nearly everything that changed (a couple of
+// live status/spinner rows fit inside the third). Otherwise 0 (in-place redraw,
+// content change, or a jump bigger than `max`) and the caller hard-cuts. 64-bit
+// row fingerprints make a coincidental non-translation match vanishingly
+// unlikely, so no contiguity check is needed. It never guesses a full turnover
+// the way scroll_shift does - easing a non-scroll looks wrong.
 const MOVED_MIN: usize = 3; // a real scroll must move at least this many rows
 fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
 	let n = cur.len();
@@ -2453,34 +3590,38 @@ fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
 	}
 	// a quarter of the screen, since static top+bottom bands shrink the middle
 	let need = (n / 4).max(3);
+	let changed = cur.iter().zip(last).filter(|(a, b)| a != b).count();
+	let explains = |moved: usize, k: usize| moved * 3 >= changed.saturating_sub(k) * 2;
 	let limit = max.min(n - 1);
 	let (mut best, mut best_score) = (0i32, 0usize);
 	for k in 1..=limit {
-		// forward: content moved up k rows -> cur[i] == last[i+k]
+		// forward: content moved up k rows -> cur[i] == last[i+k]. Moved = the row
+		// changed at its new position (i) and vacated its old one (i+k).
 		let (mut matched, mut moved) = (0usize, 0usize);
 		for i in 0..n - k {
 			if cur[i] == last[i + k] {
 				matched += 1;
-				if cur[i] != last[i] {
+				if cur[i] != last[i] && cur[i + k] != last[i + k] {
 					moved += 1;
 				}
 			}
 		}
-		if matched >= need && moved >= MOVED_MIN && matched > best_score {
+		if matched >= need && moved >= MOVED_MIN && explains(moved, k) && matched > best_score {
 			best_score = matched;
 			best = k as i32;
 		}
-		// backward: content moved down k rows -> cur[i+k] == last[i]
+		// backward: content moved down k rows -> cur[i+k] == last[i]. Moved = changed
+		// at the new position (i+k) and vacated the old one (i).
 		let (mut matched, mut moved) = (0usize, 0usize);
 		for i in 0..n - k {
 			if cur[i + k] == last[i] {
 				matched += 1;
-				if cur[i + k] != last[i + k] {
+				if cur[i + k] != last[i + k] && cur[i] != last[i] {
 					moved += 1;
 				}
 			}
 		}
-		if matched >= need && moved >= MOVED_MIN && matched > best_score {
+		if matched >= need && moved >= MOVED_MIN && explains(moved, k) && matched > best_score {
 			best_score = matched;
 			best = -(k as i32);
 		}
@@ -2509,22 +3650,131 @@ fn static_bands(cur: &[u64], last: &[u64]) -> (usize, usize) {
 	if st + sb >= n { (0, 0) } else { (st, sb) }
 }
 
-fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
+// The span a detected shift actually covers, as inclusive screen rows, or None if
+// the shift explains nothing. A row a real scroll owns either translates cleanly
+// or is one of the k rows the step reveals at the far edge; the span is the moved
+// rows (widened outward through rows that merely match, since a blank line inside
+// the region translates without ever counting as moved) plus that reveal.
+fn translate_span(cur: &[u64], last: &[u64], shift: i32) -> Option<(usize, usize)> {
+	let n = cur.len();
+	let k = shift.unsigned_abs() as usize;
+	if n == 0 || last.len() != n || k == 0 || k >= n {
+		return None;
+	}
+	// Destination row of the pair anchored at i, and the two tests, in destination
+	// space: forward (shift > 0) moves content up, so dest == i; backward moves it
+	// down, so dest == i + k.
+	let matches = |dest: usize| {
+		if shift > 0 {
+			dest < n - k && cur[dest] == last[dest + k]
+		} else {
+			dest >= k && cur[dest] == last[dest - k]
+		}
+	};
+	let (mut lo, mut hi) = (usize::MAX, 0usize);
+	for i in 0..n - k {
+		let (dest, src) = if shift > 0 { (i, i + k) } else { (i + k, i) };
+		// moved = arrived at the new row AND vacated the old one, as the detectors
+		// count it: a copy left in place never established a scroll region
+		if matches(dest) && cur[dest] != last[dest] && cur[src] != last[src] {
+			lo = lo.min(dest);
+			hi = hi.max(dest);
+		}
+	}
+	if lo == usize::MAX {
+		return None;
+	}
+	while lo > 0 && matches(lo - 1) {
+		lo -= 1;
+	}
+	while hi + 1 < n && matches(hi + 1) {
+		hi += 1;
+	}
+	if shift > 0 {
+		Some((lo, (hi + k).min(n - 1)))
+	} else {
+		Some((lo.saturating_sub(k), hi))
+	}
+}
+
+// The rows a slide must NOT translate. `static_bands` finds them by "didn't
+// change", which misses fixed-position chrome that CHANGES while it sits still:
+// muffer paints a "N new messages"/"Jump to bottom" pill at the bottom edge of its
+// transcript, composited OVER the last region row, so that row differs every step,
+// the unchanged-suffix walk stops below it, and the pill rode the ease - the same
+// ghost the title bar used to produce. So also pin whatever the shift's own extent
+// leaves out. Combined by MAX, which is what makes this safe: a band can only grow,
+// so no row that slid before starts sliding differently, and since the span always
+// contains every moved row a band can never swallow one that genuinely scrolled.
+fn slide_bands(cur: &[u64], last: &[u64], shift: i32) -> (usize, usize) {
+	let n = cur.len();
+	let (mut st, mut sb) = static_bands(cur, last);
+	if let Some((top, bot)) = translate_span(cur, last, shift) {
+		st = st.max(top);
+		sb = sb.max(n - 1 - bot);
+	}
+	if st + sb >= n { (0, 0) } else { (st, sb) }
+}
+
+fn scroll_shift(cur: &[u64], last: &[u64], scrolled_off: bool) -> usize {
 	let n = cur.len();
 	if n == 0 || last.len() != n {
 		return 0;
 	}
+	// Pick the forward shift k (content moved up k rows) that best explains the
+	// frame: count rows that translate cleanly (cur[i] == last[i+k]) and that
+	// actually moved (cur[i] != last[i]), and take the k covering the most of the
+	// overlap. Scoring by best explanation is what keeps this honest - the true
+	// shift always covers the most overlap, and a coincidental match at a larger k
+	// has less overlap to win with. Requiring instead that NEARLY ALL of the
+	// overlap translate broke on any program holding a live region: apt, dnf and
+	// flatpak rewrite a multi-row progress area every tick, so an ordinary
+	// one-line advance under one left too many rows off, fell through to the
+	// turnover guess below, and reported the backlog cap - kicking the view up a
+	// screenful and easing it back on every single line of output.
+	let changed = cur.iter().zip(last).filter(|(a, b)| a != b).count();
+	let (mut best, mut best_score) = (0usize, 0usize);
 	for k in 1..n {
-		if cur[..n - k] == last[k..] {
-			return k;
+		let overlap = n - k;
+		let (mut matched, mut moved) = (0usize, 0usize);
+		for i in 0..overlap {
+			if cur[i] == last[i + k] {
+				matched += 1;
+				// moved = changed at the new position AND vacated the old one,
+				// like the signed sibling - a copy left in place is not a move
+				if cur[i] != last[i] && cur[i + k] != last[i + k] {
+					moved += 1;
+				}
+			}
 		}
+		// A solid block must translate, enough of it must genuinely have moved -
+		// a static or blank field matches positionally but never scrolled (easing
+		// that was the apt/status-line bounce; same tolerance as the signed sibling,
+		// a live progress area is a static band in all but name) - and the shift
+		// must explain most of the frame's change (the signed sibling's relayout
+		// gate: an option list swapping in a taller description only pushes the
+		// short footer below it, which is a redraw to hard-cut, not a scroll).
+		let need = (overlap / 4).max(MOVED_MIN).min(overlap);
+		let real = moved >= MOVED_MIN.min(overlap);
+		let explains = moved * 3 >= changed.saturating_sub(k) * 2;
+		if matched >= need && real && explains && matched > best_score {
+			best_score = matched;
+			best = k;
+		}
+	}
+	if best > 0 {
+		return best;
 	}
 	// No clean vertical shift matched. Either nothing scrolled - an in-place
 	// change, e.g. a status line redrawn with no newline (don't nudge: that was
 	// the apt-bounce hazard) - or the screen turned over completely in one fast
-	// burst. The top line is the tell: unchanged => nothing scrolled; changed =>
-	// a full-screen burst, so report the backlog cap to ramp to full catch-up.
-	if cur[0] == last[0] {
+	// burst, where reporting the backlog cap ramps the ease to full catch-up.
+	// A changed top line alone can't tell those apart: a whole-screen app that
+	// repaints in place keeps a live clock up there (top), so it read as a
+	// turnover every refresh and kicked the view up a screenful each time.
+	// Requiring that a line genuinely scrolled off settles it - a repaint in
+	// place pushes nothing into history, a real burst pushes plenty.
+	if !scrolled_off || cur[0] == last[0] {
 		0
 	} else {
 		crate::scroll::MAX_BACKLOG as usize
@@ -2534,20 +3784,114 @@ fn scroll_shift(cur: &[u64], last: &[u64]) -> usize {
 #[cfg(test)]
 mod tests {
 	use super::{
-		APP_SCROLL_MAX, Dir, Node, OffStrip, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell,
-		bell_brighten, capture_grid_text, capture_start, distinct_pair, equalize_dir_run, fnv_row,
-		glide_to_full, layout, logical_line_bounds, pair_inside, render_char, same_char_pair,
-		scroll_shift, scroll_shift_signed, static_bands, vanished_range, weld_region_clip,
+		APP_SCROLL_MAX, BAR_MIN_THUMB, CURSOR_MAX_LAG, Dir, LinkHit, Node, OffStrip, PauseState,
+		Rect, SLIDE_TOP_BAND_APPS, StripCell, app_scroll_frames, bar_applies_to, bar_pos_to_lines,
+		bar_thumb_span, bell_brighten, capture_grid_text, capture_start, cursor_cycle,
+		cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full,
+		layout, link_at, logical_line_bounds, move_is_input, pair_inside, prompt_strip,
+		pushed_since, render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed,
+		slide_bands, snapshot_rows, static_bands, translate_span, vanished_range, weld_region_clip,
 	};
+	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
-	use alacritty_terminal::index::{Column, Line};
+	use alacritty_terminal::index::{Column, Line, Point};
 	use alacritty_terminal::term::{Config as TermConfig, Term};
 	use alacritty_terminal::vte::ansi::Processor;
 
 	struct VoidListener;
 	impl EventListener for VoidListener {
 		fn send_event(&self, _e: Event) {}
+	}
+
+	// A full-screen app has no scrollback of its own, so a bar there could only
+	// report a fiction. Same answer when there is simply nothing to scroll.
+	#[test]
+	fn no_scrollbar_without_scrollback_or_on_the_alt_screen() {
+		let mut cfg = crate::config::Settings {
+			scrollbar: true,
+			..Default::default()
+		};
+		assert!(
+			bar_applies_to(&cfg, false, 500.0),
+			"normal screen with history"
+		);
+		assert!(
+			!bar_applies_to(&cfg, true, 500.0),
+			"alt screen owns its screen"
+		);
+		assert!(!bar_applies_to(&cfg, false, 0.0), "nothing to scroll");
+		cfg.scrollbar = false;
+		assert!(!bar_applies_to(&cfg, false, 500.0), "turned off");
+	}
+
+	// Dragging maps thumb position -> scroll position; the two must be inverses,
+	// or the thumb creeps away from the pointer over a long drag.
+	#[test]
+	fn thumb_position_round_trips_through_a_drag() {
+		let (track_h, thickness, rows, max) = (400.0, 16.0, 40.0, 1000.0);
+		for lines in [0.0, 1.0, 250.0, 999.0, 1000.0] {
+			let (y, thumb_h) = bar_thumb_span(track_h, thickness, rows, max, lines);
+			let back = bar_pos_to_lines(track_h, thumb_h, max, y);
+			assert!(
+				(back - lines).abs() < 0.01,
+				"{lines} lines -> y {y} -> {back} lines"
+			);
+		}
+		// bottom of the track is the bottom of the scrollback, top is the oldest line
+		let (bottom, _) = bar_thumb_span(track_h, thickness, rows, max, 0.0);
+		let (top, _) = bar_thumb_span(track_h, thickness, rows, max, max);
+		assert!(top < bottom, "the oldest line sits at the top of the track");
+		assert_eq!(top, 0.0);
+	}
+
+	// A huge scrollback would grind the thumb down to an ungrabbable sliver.
+	#[test]
+	fn thumb_never_shrinks_below_the_grab_minimum() {
+		let thickness = 16.0;
+		let (_, thumb_h) = bar_thumb_span(400.0, thickness, 40.0, 500_000.0, 0.0);
+		assert!(thumb_h >= thickness * BAR_MIN_THUMB, "thumb_h={thumb_h}");
+		// ... but it can never outgrow the track it rides in
+		let (y, tall) = bar_thumb_span(20.0, thickness, 40.0, 1.0, 0.0);
+		assert!(tall <= 20.0, "thumb_h={tall}");
+		assert!(y >= 0.0);
+	}
+
+	#[test]
+	fn cursor_slide_catches_up_faster_when_farther() {
+		let dt = 1.0 / 60.0;
+		// one step covers more ground, proportionally, from a big lag than a small one
+		let near = cursor_slide_step(0.0, 1.0, dt) / 1.0; // fraction of a 1-cell move
+		let far = (cursor_slide_step(0.0, 20.0, dt) - 0.0) / 20.0; // fraction of a 20-cell move
+		assert!(
+			far > near,
+			"a farther-behind cursor should close a larger fraction per step: near={near} far={far}"
+		);
+		// monotone approach, never overshoots
+		let next = cursor_slide_step(2.0, 5.0, dt);
+		assert!(
+			next > 2.0 && next < 5.0,
+			"eases toward target without overshoot: {next}"
+		);
+	}
+
+	#[test]
+	fn cursor_slide_never_trails_past_the_cap() {
+		// A tiny dt (high refresh) closes little of a big gap per step, so the clamp
+		// engages: whatever the frame rate, the cursor sits at most CURSOR_MAX_LAG behind.
+		let tiny = 0.001;
+		let next = cursor_slide_step(0.0, 40.0, tiny);
+		assert!(
+			(40.0 - next) <= CURSOR_MAX_LAG + 0.001,
+			"lag capped at {CURSOR_MAX_LAG}, got {}",
+			40.0 - next
+		);
+		// symmetric for a leftward jump
+		let back = cursor_slide_step(40.0, 0.0, tiny);
+		assert!(
+			back <= CURSOR_MAX_LAG + 0.001,
+			"leftward lag capped too: {back}"
+		);
 	}
 
 	// A small live Term fed via the real parser, for the copy-output tests.
@@ -2573,6 +3917,11 @@ mod tests {
 		let grid = term.grid();
 		let cols = grid.columns();
 		fnv_row((0..cols).map(|c| grid[Line(line)][Column(c)].c))
+	}
+	fn row_skel(term: &Term<VoidListener>, line: i32) -> u64 {
+		let grid = term.grid();
+		let cols = grid.columns();
+		fnv_row_skel((0..cols).map(|c| grid[Line(line)][Column(c)].c))
 	}
 
 	fn leaf(id: u64) -> Node {
@@ -2654,14 +4003,14 @@ mod tests {
 		let mut st = PauseState::default();
 		// input mid-shrink: the cycle keeps running forward at normal speed - the
 		// very next frame is a plain +dt, not a jump to full
-		let mut t = st.advance(0.7, 0.01, period, 0.5, timeout, true, 0.0);
+		let mut t = st.advance(0.7, 0.01, 0.01, period, 0.5, timeout, 0.0, true, 0.0, false);
 		assert!((t - 0.71).abs() < 1e-6);
 		assert!(st.active && !st.parked);
 		// runs on around the cycle and parks exactly at the full-size phase, even
 		// though the idle timeout expires long before it gets there
 		let mut idle = 0.01;
 		for _ in 0..200 {
-			t = st.advance(t, 0.01, period, 0.5, timeout, false, idle);
+			t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, idle, false);
 			idle += 0.01;
 			if st.parked {
 				break;
@@ -2670,14 +4019,14 @@ mod tests {
 		assert!(st.parked);
 		assert!(((t / period).fract() - 0.5).abs() < 1e-6);
 		// typing while parked keeps it parked at full
-		t = st.advance(t, 0.01, period, 0.5, timeout, true, 0.0);
+		t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, true, 0.0, false);
 		assert!(st.parked && ((t / period).fract() - 0.5).abs() < 1e-6);
 		// holds through the timeout after the last input, then resumes from full:
 		// the first resumed frame is full_phase + dt, so the size is continuous
 		idle = 0.01;
 		let mut resumed = None;
 		for _ in 0..200 {
-			t = st.advance(t, 0.01, period, 0.5, timeout, false, idle);
+			t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, idle, false);
 			idle += 0.01;
 			if !st.active {
 				resumed = Some(t);
@@ -2687,7 +4036,7 @@ mod tests {
 		let t = resumed.expect("should resume");
 		assert!((t - (0.5 * period + 0.01)).abs() < 1e-6);
 		// and once resumed it just accumulates
-		let t2 = st.advance(t, 0.01, period, 0.5, timeout, false, 1.0);
+		let t2 = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, 1.0, false);
 		assert!((t2 - (t + 0.01)).abs() < 1e-6);
 	}
 
@@ -2697,17 +4046,214 @@ mod tests {
 		let timeout = 0.35;
 		let mut st = PauseState::default();
 		// start already near full so it parks on the first step
-		let mut t = st.advance(0.49, 0.02, period, 0.5, timeout, true, 0.0);
+		let mut t = st.advance(
+			0.49, 0.02, 0.02, period, 0.5, timeout, 0.0, true, 0.0, false,
+		);
 		assert!(st.parked);
 		// idle long past the timeout, but the hold itself must also last it: a
 		// glide that ate the idle window still gets a real pause at full
-		t = st.advance(t, 0.01, period, 0.5, timeout, false, 10.0);
+		t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, 10.0, false);
 		assert!(st.active && ((t / period).fract() - 0.5).abs() < 1e-6);
 		// conversely, held long enough but input still recent keeps it parked
 		for _ in 0..100 {
-			t = st.advance(t, 0.01, period, 0.5, timeout, false, 0.1);
+			t = st.advance(t, 0.01, 0.01, period, 0.5, timeout, 0.0, false, 0.1, false);
 		}
 		assert!(st.active && ((t / period).fract() - 0.5).abs() < 1e-6);
+	}
+
+	#[test]
+	fn pause_state_long_idle_parks_at_full_and_resumes_on_activity() {
+		let period = 1.0;
+		let (resume, stop) = (0.35, 60.0);
+		let mut st = PauseState::default();
+		// running free, idle crosses the stop threshold with no input: an episode
+		// starts anyway and the glide carries it to the full-size phase
+		let mut t = st.advance(
+			0.7, 0.01, 0.01, period, 0.5, resume, stop, false, stop, false,
+		);
+		assert!(st.active && !st.parked);
+		let mut idle = stop;
+		for _ in 0..200 {
+			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, idle, false);
+			idle += 0.01;
+			if st.parked {
+				break;
+			}
+		}
+		assert!(st.parked && ((t / period).fract() - 0.5).abs() < 1e-6);
+		// stays parked indefinitely - a big wall-clock gap (the sleeping loop
+		// catching up) satisfies the hold but idle_t past the stop pins it
+		t = st.advance(
+			t,
+			0.01,
+			300.0,
+			period,
+			0.5,
+			resume,
+			stop,
+			false,
+			idle + 300.0,
+			false,
+		);
+		assert!(st.active && ((t / period).fract() - 0.5).abs() < 1e-6);
+		// activity (keystroke or refocus poke) resets idle_t: still parked for
+		// the resume delay, then the cycle resumes from full - never mid-cycle
+		t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, 0.0, false);
+		assert!(st.active && ((t / period).fract() - 0.5).abs() < 1e-6);
+		let mut idle = 0.01;
+		let mut resumed = None;
+		for _ in 0..200 {
+			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, idle, false);
+			idle += 0.01;
+			if !st.active {
+				resumed = Some(t);
+				break;
+			}
+		}
+		let t = resumed.expect("should resume after the delay");
+		assert!((t - (0.5 * period + 0.01)).abs() < 1e-6);
+	}
+
+	#[test]
+	fn pause_state_blocked_parks_at_full_until_unblocked() {
+		let period = 1.0;
+		let (resume, stop) = (0.35, 60.0);
+		let mut st = PauseState::default();
+		// pane loses active status mid-cycle: an episode starts with no input and
+		// the glide carries it to the full-size phase (never a snap)
+		let mut t = st.advance(0.7, 0.01, 0.01, period, 0.5, resume, stop, false, 0.0, true);
+		assert!(st.active && !st.parked);
+		for _ in 0..200 {
+			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, 0.0, true);
+			if st.parked {
+				break;
+			}
+		}
+		assert!(st.parked && ((t / period).fract() - 0.5).abs() < 1e-6);
+		// held indefinitely while blocked: output moving the cursor (moved) and
+		// long holds satisfy nothing - only becoming active again can end it
+		for _ in 0..300 {
+			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, true, 5.0, true);
+		}
+		assert!(st.active && st.parked && ((t / period).fract() - 0.5).abs() < 1e-6);
+		// unblocked with only idle_t reset: holds out the resume delay, then the
+		// cycle resumes from full - size continuous throughout. (In the app a
+		// refocus also calls resume(), which skips this wait - see below.)
+		let mut idle = 0.0;
+		let mut resumed = None;
+		for _ in 0..200 {
+			t = st.advance(t, 0.01, 0.01, period, 0.5, resume, stop, false, idle, false);
+			idle += 0.01;
+			if !st.active {
+				resumed = Some(t);
+				break;
+			}
+		}
+		let t = resumed.expect("should resume once unblocked");
+		assert!((t - (0.5 * period + 0.01)).abs() < 1e-6);
+	}
+
+	// A refocus ends the park at once - it must not sit out the resume delay the
+	// way input does - and still resumes from the cursor's full size.
+	#[test]
+	fn pause_state_resume_skips_the_delay() {
+		let period = 1.0;
+		let (resume_s, stop) = (1.0, 60.0);
+		let mut st = PauseState::default();
+		let mut t = st.advance(
+			0.7, 0.01, 0.01, period, 0.5, resume_s, stop, true, 0.0, false,
+		);
+		for _ in 0..200 {
+			t = st.advance(
+				t, 0.01, 0.01, period, 0.5, resume_s, stop, false, 0.0, false,
+			);
+			if st.parked {
+				break;
+			}
+		}
+		assert!(st.parked, "typing should park the cycle at full");
+		// a fraction of the delay in, the timed path is still holding
+		st.advance(
+			t, 0.01, 0.01, period, 0.5, resume_s, stop, false, 0.1, false,
+		);
+		assert!(st.active && st.parked);
+		st.resume();
+		assert!(!st.active && !st.parked);
+		// poke_cursor puts blink_t at the full-size phase; the cycle runs on from there
+		let t = st.advance(
+			0.5 * period,
+			0.01,
+			0.01,
+			period,
+			0.5,
+			resume_s,
+			stop,
+			false,
+			0.0,
+			false,
+		);
+		assert!((t - (0.5 * period + 0.01)).abs() < 1e-6);
+	}
+
+	// The pause and the refocus resume must agree on where "full size" is: mid
+	// cycle for the pulses, phase 0 for the fade.
+	#[test]
+	fn cursor_cycle_full_phase_matches_the_animation() {
+		assert_eq!(cursor_cycle("pulse_vertical", 500.0), (1.0, 0.5));
+		assert_eq!(cursor_cycle("phase", 500.0), (1.0, 0.0));
+		assert_eq!(cursor_cycle("pulse_both", 250.0).0, 0.5);
+		assert_eq!(cursor_cycle("phase", 0.0).0, 0.05); // period never reaches zero
+	}
+
+	#[test]
+	fn only_a_keystrokes_echo_counts_as_input() {
+		use std::time::{Duration, Instant};
+		let now = Instant::now();
+		let ago = |ms| now.checked_sub(Duration::from_millis(ms)).unwrap();
+		assert!(!move_is_input(None, now), "nothing typed yet");
+		assert!(move_is_input(Some(ago(30)), now));
+		// a command's output starts within a frame or two of Enter but keeps
+		// coming long after it - that later stretch is the program, not the user
+		assert!(!move_is_input(Some(ago(800)), now));
+	}
+
+	#[test]
+	fn output_gives_the_cursor_straight_back() {
+		// typing holds the configured delay; output holds only long enough not to
+		// unpark between two writes, so the prompt returning revives the cursor
+		assert_eq!(resume_delay(true, 1.0), 1.0);
+		assert!(resume_delay(false, 1.0) < 0.1);
+
+		// drive the park itself: same state machine, output's delay
+		let (period, full) = cursor_cycle("pulse_vertical", 500.0);
+		let delay = resume_delay(false, 1.0);
+		let mut st = PauseState::default();
+		let mut blink = 0.2;
+		let dt = 1.0 / 60.0;
+		// a command writing: the cursor keeps moving, so the cycle glides to full
+		// and stays parked there for as long as the output lasts
+		for _ in 0..300 {
+			blink = st.advance(blink, dt, dt, period, full, delay, 0.0, true, 0.0, false);
+		}
+		assert!(st.parked, "output parks the cursor at full size");
+		assert!((blink - full * period).abs() < 1e-6);
+		// output stops (the prompt is back): no more moves, and the cycle picks up
+		let mut idle = 0.0;
+		let mut frames = 0;
+		while st.active && frames < 60 {
+			idle += dt;
+			blink = st.advance(blink, dt, dt, period, full, delay, 0.0, false, idle, false);
+			frames += 1;
+		}
+		assert!(!st.active, "the animation resumed");
+		assert!(
+			idle < 0.2,
+			"resumed at once, not after the typing delay: {idle}"
+		);
+		assert!(
+			(blink - (full * period + dt)).abs() < 1e-6,
+			"resumed from full size"
+		);
 	}
 
 	#[test]
@@ -2737,6 +4283,67 @@ mod tests {
 		// recorded index is the fallback, never a panic
 		assert_eq!(capture_start(&term, cmd_start, None, end), cmd_start);
 		assert_eq!(capture_start(&term, cmd_start, Some(1), end), cmd_start);
+	}
+
+	#[test]
+	fn capture_strips_multiline_prompt_rows() {
+		// two-line prompt: the decoration row the prompt paints above its input
+		// line must not be copied as output once the block is learned
+		let mut term = term_fed(20, 6, 100, "==info==\r\nuser$ cmd");
+		let grid = term.grid();
+		let cmd_start = grid.history_size() + grid.cursor.point.line.0.max(0) as usize + 1;
+		let block = vec![row_skel(&term, grid.cursor.point.line.0 - 1)];
+		feed(&mut term, "\r\nA\r\nB\r\n==info==\r\nuser$ ");
+		let grid = term.grid();
+		let end = grid.history_size() + grid.cursor.point.line.0.max(0) as usize;
+		let stripped = prompt_strip(&term, cmd_start, end, &block);
+		assert_eq!(capture_grid_text(&term, cmd_start, stripped), "A\nB\n");
+		// nothing learned yet, or a non-matching row: strip nothing (fail-safe)
+		assert_eq!(prompt_strip(&term, cmd_start, end, &[]), end);
+		assert_eq!(prompt_strip(&term, cmd_start, end, &[123]), end);
+	}
+
+	#[test]
+	fn capture_strips_dynamic_prompt_rows() {
+		// the decoration row's content changes per command (cwd, clock) but its
+		// structure doesn't; the skeleton match must still strip it - an exact
+		// compare left every dynamic prompt's rows in the copy (the reported bug)
+		let mut term = term_fed(30, 8, 100, "[~/proj git:main 10:01]\r\nuser$ cmd");
+		let grid = term.grid();
+		let cmd_start = grid.history_size() + grid.cursor.point.line.0.max(0) as usize + 1;
+		let block = vec![row_skel(&term, grid.cursor.point.line.0 - 1)];
+		feed(
+			&mut term,
+			"\r\nA\r\nB\r\n[~/other git:fixup 10:47]\r\nuser$ ",
+		);
+		let grid = term.grid();
+		let end = grid.history_size() + grid.cursor.point.line.0.max(0) as usize;
+		let stripped = prompt_strip(&term, cmd_start, end, &block);
+		assert_eq!(capture_grid_text(&term, cmd_start, stripped), "A\nB\n");
+		// an output row with different structure must NOT match the block
+		assert_ne!(
+			row_skel(&term, grid.cursor.point.line.0 - 2),
+			block[0],
+			"plain output must not skeleton-match the prompt decoration"
+		);
+	}
+
+	#[test]
+	fn skeleton_hash_collapses_dynamic_runs() {
+		// same punctuation structure, different-length words/digits/spacing = same
+		let a = fnv_row_skel("[~/proj git:main 10:01]".chars());
+		let b = fnv_row_skel("[~/another git:x 9:47]".chars());
+		assert_eq!(a, b);
+		// right-aligned segment shifting with left content length = same
+		let c = fnv_row_skel("u@h ~/a          ok".chars());
+		let d = fnv_row_skel("u@h ~/longer   ok".chars());
+		assert_eq!(c, d);
+		// different punctuation structure = different
+		assert_ne!(fnv_row_skel("[a/b]".chars()), fnv_row_skel("(a/b)".chars()));
+		assert_ne!(
+			fnv_row_skel("hello world".chars()),
+			fnv_row_skel("   ".chars())
+		);
 	}
 
 	#[test]
@@ -2945,7 +4552,7 @@ mod tests {
 	#[test]
 	fn shift_none_when_unchanged() {
 		let f = [10, 20, 30, 40, 50];
-		assert_eq!(scroll_shift(&f, &f), 0);
+		assert_eq!(scroll_shift(&f, &f, true), 0);
 	}
 
 	#[test]
@@ -2953,21 +4560,21 @@ mod tests {
 		// only the last row changed (an in-place status line) - no scroll
 		let last = [10, 20, 30, 40, 50];
 		let cur = [10, 20, 30, 40, 99];
-		assert_eq!(scroll_shift(&cur, &last), 0);
+		assert_eq!(scroll_shift(&cur, &last, true), 0);
 	}
 
 	#[test]
 	fn shift_by_one() {
 		let last = [10, 20, 30, 40, 50];
 		let cur = [20, 30, 40, 50, 60]; // scrolled up one, new line 60 at bottom
-		assert_eq!(scroll_shift(&cur, &last), 1);
+		assert_eq!(scroll_shift(&cur, &last, true), 1);
 	}
 
 	#[test]
 	fn shift_by_three() {
 		let last = [10, 20, 30, 40, 50];
 		let cur = [40, 50, 60, 70, 80];
-		assert_eq!(scroll_shift(&cur, &last), 3);
+		assert_eq!(scroll_shift(&cur, &last, true), 3);
 	}
 
 	#[test]
@@ -2975,13 +4582,13 @@ mod tests {
 		// no overlap at all (a fast burst replaced the whole screen)
 		let last = [10, 20, 30, 40, 50];
 		let cur = [60, 70, 80, 90, 100];
-		assert_eq!(scroll_shift(&cur, &last), CAP);
+		assert_eq!(scroll_shift(&cur, &last, true), CAP);
 	}
 
 	#[test]
 	fn shift_empty_or_mismatched_is_zero() {
-		assert_eq!(scroll_shift(&[], &[]), 0);
-		assert_eq!(scroll_shift(&[1, 2, 3], &[1, 2]), 0);
+		assert_eq!(scroll_shift(&[], &[], true), 0);
+		assert_eq!(scroll_shift(&[1, 2, 3], &[1, 2], true), 0);
 	}
 
 	#[test]
@@ -3026,6 +4633,71 @@ mod tests {
 	}
 
 	#[test]
+	fn repeated_output_on_a_half_empty_screen_is_not_a_scroll() {
+		// A cleared screen, then the same short command run twice: the second
+		// listing re-prints the first one's rows lower down while the originals
+		// stay put. That's a COPY, not a translate - the blank field below
+		// supplies enough positional matches to clear `need`, and the repeated
+		// rows land on formerly-blank targets, so the old moved test passed and
+		// the brand-new output slid down out from under the prompt. The vacated
+		// half of the moved test rejects it: the sources never left.
+		const B: u64 = 77; // blank row fingerprint (identical for every blank row)
+		let listing = [101u64, 102, 103, 104, 105, 106];
+		let (p1, p2, p2c) = (200u64, 201, 202); // prompts; p2c = p2 + typed command
+		let n = 24;
+		let mut last = vec![p1];
+		last.extend_from_slice(&listing);
+		last.push(p2);
+		last.resize(n, B);
+		let mut cur = vec![p1];
+		cur.extend_from_slice(&listing);
+		cur.push(p2c);
+		cur.extend_from_slice(&listing);
+		cur.push(p2); // fresh prompt, same text as the last one
+		cur.resize(n, B);
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 0);
+	}
+
+	// An option list (a question/select TUI): moving the highlight swaps in a
+	// description block of a DIFFERENT height, so the short footer below it (hint
+	// line, rule, key help) genuinely translates a row - and vacates its sources,
+	// so the vacated-move test passes - while the rewritten description and the
+	// two marker rows sit above it unexplained. Blank rows supply the positional
+	// matches. A real scroll explains nearly all of a frame's change; this
+	// explains about half, so the explanation gate rejects it in both detectors.
+	fn list_relayout_frames() -> (Vec<u64>, Vec<u64>) {
+		const B: u64 = 9; // blank rows all share one fingerprint
+		let conv: Vec<u64> = (2000..2015).collect(); // static conversation above
+		let mut small = conv.clone(); // highlight on option 1, two desc lines
+		small.extend_from_slice(&[100, 110, B, 300, 301, B, 400, B, 500, 501, 502]);
+		small.resize(30, B);
+		let mut big = conv; // highlight on option 2, three desc lines
+		big.extend_from_slice(&[101, 111, B, 310, 311, 312, B, 400, B, 500, 501, 502]);
+		big.resize(30, B);
+		(small, big)
+	}
+
+	#[test]
+	fn list_relayout_description_height_change_is_not_a_scroll() {
+		let (small, big) = list_relayout_frames();
+		// grow: the footer slid DOWN one row; shrink: back UP one. Neither is a
+		// scroll - the pane must hard-cut, not glide the list around.
+		assert_eq!(scroll_shift_signed(&big, &small, APP_SCROLL_MAX), 0);
+		assert_eq!(scroll_shift_signed(&small, &big, APP_SCROLL_MAX), 0);
+	}
+
+	#[test]
+	fn list_relayout_at_full_scrollback_is_not_an_advance() {
+		// same shape on a full buffer: the advance inference must not read the
+		// footer sliding back up as a one-line scroll (that nudge is a bounce).
+		let (small, big) = list_relayout_frames();
+		assert_eq!(scroll_shift(&small, &big, false), 0);
+		// even mid-output (a line really did scroll off around the redraw), the
+		// static conversation keeps the turnover guess quiet too
+		assert_eq!(scroll_shift(&small, &big, true), 0);
+	}
+
+	#[test]
 	fn static_bands_measures_title_and_status() {
 		// nano shape: static title (rows 0..2), scroll region (2..6), status band (6..8)
 		let last = [700u64, 701, 10, 20, 30, 40, 900, 901];
@@ -3041,6 +4713,139 @@ mod tests {
 		assert_eq!(static_bands(&a, &last), (0, 0));
 	}
 
+	#[test]
+	fn a_scrollback_clear_reads_as_everything_that_refilled_it() {
+		// ordinary growth
+		assert_eq!(pushed_since(75, 0), 75);
+		assert_eq!(pushed_since(76, 75), 1);
+		assert_eq!(pushed_since(75, 75), 0);
+		// `clear` truncates, then the same listing refills to the SAME depth. The
+		// per-frame difference reads 0 here, which is the whole bug; sampled per
+		// read cycle the pre-clear depth is still 76, and the drop says all 75
+		// lines now in the buffer arrived after the clear.
+		assert_eq!(pushed_since(75, 76), 75);
+		// a bare `clear` with no output that follows must not arm anything
+		assert_eq!(pushed_since(0, 76), 0);
+		// entering the alt screen drops the depth to zero the same way
+		assert_eq!(pushed_since(0, 500), 0);
+	}
+
+	#[test]
+	fn missed_samples_are_recovered_not_lost() {
+		// The sampler gives up rather than contend with the reader, so a busy pane
+		// skips cycles. The baseline only advances on a successful sample, so the
+		// next one spans everything that was missed.
+		let (mut pushed, mut baseline) = (0usize, 10usize);
+		for depth in [12usize, 15, 20] {
+			// pretend the samples between these were all lock misses
+			pushed += pushed_since(depth, baseline);
+			baseline = depth;
+		}
+		assert_eq!(pushed, 10, "20 - 10, however many samples were dropped");
+		// and a truncation inside the gap still lands in full
+		let mut pushed = 0usize;
+		pushed += pushed_since(30, 20); // grew
+		pushed += pushed_since(8, 30); // cleared, refilled to 8
+		assert_eq!(pushed, 18);
+	}
+
+	// A live overlay pinned to the bottom edge of a scrolling viewport, composited
+	// OVER the last region row so that row changes on every step - muffer's "N new
+	// messages"/"Jump to bottom" pill, captured from a real session: 30 rows, the
+	// transcript sliding down one row per wheel notch, the pill at row 24, and five
+	// rows of input box and hints below it. The unchanged-suffix walk stops below
+	// the pill, so it used to sit inside the sliding region and ghost.
+	fn muffer_pill_frames(pill_last: u64, pill_cur: u64) -> ([u64; 30], [u64; 30]) {
+		let mut last = [0u64; 30];
+		let mut cur = [0u64; 30];
+		for row in 0..24 {
+			last[row] = 100 + row as u64;
+			// content moved DOWN one row (wheel up): row 0 is freshly revealed
+			cur[row] = if row == 0 { 99 } else { 100 + row as u64 - 1 };
+		}
+		last[24] = pill_last;
+		cur[24] = pill_cur;
+		for row in 25..30 {
+			last[row] = 900 + row as u64; // input box + hint rows, unchanged
+			cur[row] = 900 + row as u64;
+		}
+		(cur, last)
+	}
+
+	#[test]
+	fn a_live_bottom_overlay_is_pinned_not_slid() {
+		// the pill's text changes every step (it is composited over scrolling content)
+		let (cur, last) = muffer_pill_frames(700, 701);
+		let shift = scroll_shift_signed(&cur, &last, APP_SCROLL_MAX);
+		assert_eq!(
+			shift, -1,
+			"a wheel notch back is still a clean one-row scroll"
+		);
+		// what the old unchanged-suffix walk saw: the pill row inside the region
+		assert_eq!(static_bands(&cur, &last), (0, 5));
+		// the shift's own extent stops at row 23, so the pill row is band
+		assert_eq!(translate_span(&cur, &last, shift), Some((0, 23)));
+		assert_eq!(slide_bands(&cur, &last, shift), (0, 6));
+	}
+
+	#[test]
+	fn pinning_the_overlay_keeps_it_out_of_the_strip() {
+		// the rows a step retires must come from the region, never from the pinned
+		// overlay - a strip row holding the pill would redraw it inside the reveal
+		let (cur, last) = muffer_pill_frames(700, 701);
+		let (st, sb) = slide_bands(&cur, &last, -1);
+		let range = vanished_range(-1, st, sb, 30);
+		assert_eq!(
+			range,
+			23..24,
+			"the region's own last row leaves, not the pill's"
+		);
+		assert!(!range.contains(&24));
+		// with the unchanged-suffix walk alone the pill's own row was retired into
+		// the strip, which is what drew it a second time inside the reveal
+		let (ost, osb) = static_bands(&cur, &last);
+		assert!(vanished_range(-1, ost, osb, 30).contains(&24));
+	}
+
+	#[test]
+	fn a_band_never_swallows_a_row_that_scrolled() {
+		// the safety property: an overlay stranded MID-region (muffer also floats a
+		// dim scroll-hint arrow inside the viewport) must not hand every row past it
+		// to the band - the span is anchored on the moved rows, so it can only be
+		// widened outward, never pulled in across one.
+		let (mut cur, mut last) = muffer_pill_frames(700, 701);
+		last[12] = 555; // a live one-row overlay floating mid-transcript
+		cur[12] = 556;
+		let shift = scroll_shift_signed(&cur, &last, APP_SCROLL_MAX);
+		assert_eq!(shift, -1);
+		let (st, sb) = slide_bands(&cur, &last, shift);
+		assert_eq!(
+			(st, sb),
+			(0, 6),
+			"the mid-region overlay does not collapse the region"
+		);
+		assert!(30 - sb > 13, "rows below the stranded overlay still slide");
+	}
+
+	#[test]
+	fn bands_only_ever_grow_against_the_unchanged_walk() {
+		// combining by MAX is what keeps this from regressing the settled shapes: for
+		// every app in the matrix the pinned rows must be at least what they were.
+		for (top, bot) in [(0usize, 1usize), (0, 2), (1, 2), (2, 2), (0, 0)] {
+			for shift in [1i32, 2, -1, -2] {
+				let (last, cur) = app_frames(24, top, bot, shift);
+				let (sst, ssb) = static_bands(&cur, &last);
+				let (st, sb) = slide_bands(&cur, &last, shift);
+				assert!(
+					st >= sst && sb >= ssb,
+					"top={top} bot={bot} shift={shift}: bands shrank {sst},{ssb} -> {st},{sb}"
+				);
+				// and the settled app shapes are unchanged by the addition
+				assert_eq!((st, sb), (top, bot), "top={top} bot={bot} shift={shift}");
+			}
+		}
+	}
+
 	// ---- App-scroll scenario matrix -------------------------------------------
 	// Per-app regression coverage for the alt-screen slide: each real full-screen
 	// app repaints in a characteristic shape, and the (shift, static-band) pair the
@@ -3049,11 +4854,11 @@ mod tests {
 	// toggle) is caught without a live GL run. The committed headless harness
 	// (cicd/tests/scroll) exercises the same shapes end-to-end via SILK_SCROLLDBG.
 
-	// Build a (last, cur) frame pair modelling a full-screen app whose middle scroll
+	// Build a (last, cur) frame pair modeling a full-screen app whose middle scroll
 	// region moved up by `shift` rows (forward = content scrolls up, newer rows in at
 	// the bottom), with `top` static title rows above and `bot` static status rows
 	// below. Row fingerprints are arbitrary distinct u64s viewing a rolling window, so
-	// a shift reuses neighbouring content rows exactly as a real repaint does.
+	// a shift reuses neighboring content rows exactly as a real repaint does.
 	fn app_frames(rows: usize, top: usize, bot: usize, shift: i32) -> (Vec<u64>, Vec<u64>) {
 		let pool: Vec<u64> = (1000u64..1000 + rows as u64 * 4).collect(); // content pool
 		let title: Vec<u64> = (1u64..=top as u64).collect(); // static top band
@@ -3145,6 +4950,54 @@ mod tests {
 		// but a jump past the window is not eased (hard-cut) - it isn't a clean scroll
 		let (last2, cur2) = app_frames(40, 0, 1, (APP_SCROLL_MAX + 5) as i32);
 		assert_eq!(scroll_shift_signed(&cur2, &last2, APP_SCROLL_MAX), 0);
+	}
+
+	#[test]
+	fn app_scroll_frame_gate_matrix() {
+		// (snap, slide) per frame state: alt always does both; a normal repaint
+		// frame (following, no growth, not full - the ConPTY case) does both; a
+		// grew frame snapshots but must NOT slide (the output ease owns it); a
+		// scrolled-back frame keeps the snapshot current without sliding; a full
+		// normal-screen buffer does neither (the full-branch owns its fingerprints).
+		assert_eq!(app_scroll_frames(true, true, 0, false), (true, true));
+		assert_eq!(app_scroll_frames(true, false, 3, false), (true, true));
+		assert_eq!(app_scroll_frames(false, true, 0, false), (true, true));
+		assert_eq!(app_scroll_frames(false, true, 1, false), (true, false));
+		assert_eq!(app_scroll_frames(false, false, 0, false), (true, false));
+		assert_eq!(app_scroll_frames(false, true, 0, true), (false, false));
+	}
+
+	#[test]
+	fn output_frame_refreshes_snapshot_so_repaint_probe_cannot_reslide() {
+		// One shell "enter", as frames: the scroll lands in a grew=1 frame (animated
+		// by the output ease), the prompt redraw lands one frame later with grew=0 -
+		// a slide frame. A snapshot left stale across the grew frame makes that
+		// slide frame read the eased scroll as a fresh 1-line repaint shift and
+		// slide it a second time - the "down one line, then up two" output judder.
+		// The gate refreshes the snapshot on the grew frame, so the slide frame
+		// diffs only the in-place prompt redraw: no shift.
+		use std::fmt::Write as _;
+		let (cols, lines) = (20usize, 12usize);
+		let mut prime = String::new();
+		for i in 0..lines {
+			let _ = write!(prime, "prime row {i} qz{i}{i}\r\n");
+		}
+		let mut term = term_fed(cols, lines, 1000, &prime);
+		let stale = snapshot_rows(term.grid(), lines, cols, None);
+		// grew frame: a new output line scrolls the screen; snapshot, don't slide
+		feed(&mut term, "output line abcdef\r\n");
+		assert_eq!(app_scroll_frames(false, true, 1, false), (true, false));
+		let fresh = snapshot_rows(term.grid(), lines, cols, None);
+		// slide frame: the prompt redraw, in place
+		feed(&mut term, "$ ");
+		let cur = snapshot_rows(term.grid(), lines, cols, None);
+		let vs_stale = scroll_shift_signed(&cur, &stale, APP_SCROLL_MAX);
+		let vs_fresh = scroll_shift_signed(&cur, &fresh, APP_SCROLL_MAX);
+		assert_eq!(vs_stale, 1, "a stale snapshot re-reads the eased scroll");
+		assert_eq!(
+			vs_fresh, 0,
+			"a fresh snapshot sees only the in-place redraw"
+		);
 	}
 
 	// ---- Scrolled-off strip -----------------------------------------------------
@@ -3239,7 +5092,7 @@ mod tests {
 	// Plain shell output eases via scroll_shift (unsigned) + nudge_output. The bugs to
 	// guard against: the page "re-listing" itself or "jumping around" (over-reporting
 	// a small advance as a full turnover) and not scrolling at all on an in-place
-	// bottom redraw (which would bounce). The desired behaviour for a finishing
+	// bottom redraw (which would bounce). The desired behavior for a finishing
 	// command is just adding new lines at the bottom.
 
 	#[test]
@@ -3248,10 +5101,10 @@ mod tests {
 		// the lines printed, not a re-list. One new line at the bottom -> advance 1.
 		let last = [10u64, 20, 30, 40, 50, 60];
 		let cur = [20u64, 30, 40, 50, 60, 70];
-		assert_eq!(scroll_shift(&cur, &last), 1);
+		assert_eq!(scroll_shift(&cur, &last, true), 1);
 		// a short multi-line result advances by exactly that many lines (no re-list)
 		let cur3 = [40u64, 50, 60, 70, 80, 90];
-		assert_eq!(scroll_shift(&cur3, &last), 3);
+		assert_eq!(scroll_shift(&cur3, &last, true), 3);
 	}
 
 	#[test]
@@ -3261,7 +5114,74 @@ mod tests {
 		// was the old apt/status-line bounce.
 		let last = [10u64, 20, 30, 40, 50, 60];
 		let cur = [10u64, 20, 30, 40, 50, 99]; // only the last row changed
-		assert_eq!(scroll_shift(&cur, &last), 0);
+		assert_eq!(scroll_shift(&cur, &last, true), 0);
+	}
+
+	#[test]
+	fn small_advance_with_off_cells_is_not_ballooned_to_cap() {
+		// The bounce bug: a small real advance whose retained region isn't a
+		// pixel-clean translate (a redrawn prompt/spinner mid-screen, or a
+		// multi-frame gap). Strict full-row equality failed and reported the cap,
+		// snapping the view up a screenful. A couple of off cells must still read
+		// as the true small advance.
+		let last = [10u64, 20, 30, 40, 50, 60, 70, 80];
+		// scrolled up 2, but one retained row (was 50) got rewritten to 555
+		let cur = [30u64, 40, 555, 60, 70, 80, 90, 100];
+		assert_eq!(scroll_shift(&cur, &last, true), 2);
+		// and it must NOT read as the full backlog cap
+		assert_ne!(
+			scroll_shift(&cur, &last, true),
+			crate::scroll::MAX_BACKLOG as usize
+		);
+	}
+
+	#[test]
+	fn live_progress_area_reports_the_real_advance_not_the_cap() {
+		// flatpak/apt/dnf keep a multi-row live progress area at the bottom and
+		// rewrite all of it every tick. A one-line advance under that redraw leaves
+		// most of the retained region translating cleanly, but not nearly all of it -
+		// which fell through to the turnover guess and reported the backlog cap, so
+		// each output line kicked the view up a screenful and eased it back.
+		let n = 30usize;
+		let live = 6usize; // rows the progress area rewrites each tick
+		let last: Vec<u64> = (1..=n as u64).collect();
+		let mut cur: Vec<u64> = (2..=n as u64 + 1).collect(); // advanced one line
+		for (offset, row) in cur[n - live..].iter_mut().enumerate() {
+			*row = 900 + offset as u64; // the progress area, freshly redrawn
+		}
+		assert_eq!(scroll_shift(&cur, &last, true), 1);
+	}
+
+	#[test]
+	fn static_blank_field_does_not_read_as_a_scroll() {
+		// a screen padded with blank rows that did not scroll: positions match at
+		// every k (blank == blank) but nothing moved - must report 0, not nudge.
+		let last = [0u64, 0, 0, 0, 0, 0];
+		let cur = [0u64, 0, 0, 0, 0, 0];
+		assert_eq!(scroll_shift(&cur, &last, true), 0);
+		// blank top, static content below, still no scroll
+		let last2 = [0u64, 0, 0, 11, 22, 33];
+		let cur2 = [0u64, 0, 0, 11, 22, 33];
+		assert_eq!(scroll_shift(&cur2, &last2, true), 0);
+	}
+
+	#[test]
+	fn in_place_full_screen_repaint_is_not_a_turnover() {
+		// `top` repaints its whole screen every refresh without scrolling: nearly
+		// every row changes (cpu figures, re-sorted process list) so no shift
+		// matches, and row 0 is a live clock so it always differs. That looked
+		// exactly like a full-screen burst and reported the backlog cap, kicking
+		// the view up a screenful and easing it back once per refresh. Nothing
+		// scrolled off, so it must report no advance.
+		let last = [10u64, 20, 30, 40, 50, 60];
+		let cur = [11u64, 21, 31, 41, 51, 61]; // whole screen rewritten in place
+		assert_eq!(scroll_shift(&cur, &last, false), 0);
+		// the identical frames still read as a burst when a line really did scroll
+		// off, so genuine fast output is unaffected
+		assert_eq!(
+			scroll_shift(&cur, &last, true),
+			crate::scroll::MAX_BACKLOG as usize
+		);
 	}
 
 	#[test]
@@ -3272,8 +5192,112 @@ mod tests {
 		let last = [10u64, 20, 30, 40, 50, 60];
 		let cur = [70u64, 80, 90, 100, 110, 120]; // no overlap
 		assert_eq!(
-			scroll_shift(&cur, &last),
+			scroll_shift(&cur, &last, true),
 			crate::scroll::MAX_BACKLOG as usize
+		);
+	}
+
+	// (cell_w, cell_h, margin) for the link tests - round numbers so a pixel
+	// coordinate reads as a cell without arithmetic.
+	const LINK_METRICS: (f32, f32, f32) = (10.0, 20.0, 5.0);
+
+	// Pointer at the center of grid cell (row, col), in window pixels.
+	fn cell_px(row: i32, col: usize) -> (f32, f32) {
+		let (cw, ch, margin) = LINK_METRICS;
+		(
+			margin + col as f32 * cw + cw / 2.0,
+			margin + row as f32 * ch + ch / 2.0,
+		)
+	}
+
+	fn link_probe(
+		term: &Term<VoidListener>,
+		cols: usize,
+		lines: usize,
+		row: i32,
+		col: usize,
+	) -> Option<LinkHit> {
+		let settings = config::Settings::default();
+		let rect = Rect {
+			x: 0.0,
+			y: 0.0,
+			w: 400.0,
+			h: 200.0,
+		};
+		let (px, py) = cell_px(row, col);
+		link_at(
+			term.grid(),
+			term.colors(),
+			&settings,
+			rect,
+			px,
+			py,
+			LINK_METRICS,
+			(cols, lines),
+			0,
+		)
+	}
+
+	#[test]
+	fn a_url_in_the_grid_maps_back_to_the_cells_it_occupies() {
+		let term = term_fed(40, 4, 100, "see http://example.com/x now");
+		let hit = link_probe(&term, 40, 4, 0, 8).expect("link under the pointer");
+		assert_eq!(hit.url, "http://example.com/x");
+		assert_eq!(hit.start, Point::new(Line(0), Column(4)));
+		assert_eq!(hit.end, Point::new(Line(0), Column(23)));
+		// the words either side are not the link
+		assert!(link_probe(&term, 40, 4, 0, 1).is_none(), "before");
+		assert!(link_probe(&term, 40, 4, 0, 25).is_none(), "after");
+		// nor is a blank row below it
+		assert!(link_probe(&term, 40, 4, 1, 8).is_none(), "next row");
+	}
+
+	// A URL that runs past the right edge is ONE logical line, so the scan has to
+	// span the wrap - otherwise hovering the tail half finds a fragment, or
+	// nothing, depending on where the break landed.
+	#[test]
+	fn a_wrapped_url_is_found_whole_from_either_half() {
+		let cols = 20;
+		let term = term_fed(cols, 4, 100, "https://example.com/ab");
+		let head = link_probe(&term, cols, 4, 0, 3).expect("first row");
+		let tail = link_probe(&term, cols, 4, 1, 1).expect("second row");
+		assert_eq!(head.url, "https://example.com/ab");
+		assert_eq!(head, tail, "both halves report the same link");
+		assert_eq!(head.start, Point::new(Line(0), Column(0)));
+		assert_eq!(head.end, Point::new(Line(1), Column(1)));
+	}
+
+	// point_at CLAMPS a stray pixel onto the nearest cell, which is right for
+	// dragging a selection and wrong here: the margin is over no cell at all, and
+	// clamping there would underline a link the pointer is not on.
+	#[test]
+	fn the_margin_is_over_no_link() {
+		let term = term_fed(40, 4, 100, "http://example.com/x");
+		let settings = config::Settings::default();
+		let rect = Rect {
+			x: 0.0,
+			y: 0.0,
+			w: 400.0,
+			h: 200.0,
+		};
+		let probe = |px, py| {
+			link_at(
+				term.grid(),
+				term.colors(),
+				&settings,
+				rect,
+				px,
+				py,
+				LINK_METRICS,
+				(40, 4),
+				0,
+			)
+		};
+		assert!(probe(2.0, 12.0).is_none(), "left margin");
+		assert!(probe(12.0, 2.0).is_none(), "top margin");
+		assert!(
+			probe(12.0, 12.0).is_some(),
+			"and the cell itself still hits"
 		);
 	}
 

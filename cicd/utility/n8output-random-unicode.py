@@ -3,7 +3,7 @@
 ##	Purpose: Spits out random lengths of random lines of unicode.
 ##	History: At bottom of script.
 
-##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Copyright © 2026 Bubbles (ID: XଌฅრX۳ᛟԃლፀƅꓩหδლც)
 ##	Licensed under The MIT License (MIT). Full text at:
 ##		https://mit-license.org/
 ##	SPDX-License-Identifier: MIT
@@ -134,4 +134,4 @@ while time.monotonic() < end:
 
 
 ##	History:
-##		- 20260628 JC: Created.
+##		- 20260628: Created.

@@ -24,6 +24,20 @@ pub enum UserEvent {
 	Exit(PaneId),
 	// terminal bell (BEL): drives a brief visual flash (text brightens, fades back)
 	Bell,
+	// control socket (ctl.rs): change the background image live (None = clear).
+	// ctl is Unix-only, so these are never constructed on non-unix.
+	#[cfg_attr(not(unix), allow(dead_code))]
+	SetWallpaper(Option<std::path::PathBuf>),
+	// control socket: re-read config.shcl and apply it (same as Menu > Reload)
+	#[cfg_attr(not(unix), allow(dead_code))]
+	ReloadSettings,
+	// wallpaper worker (wallpaper.rs): decoded pixels, ready to upload. Boxed -
+	// it carries a whole image, and every other variant is small.
+	WallpaperReady(Box<crate::wallpaper::Loaded>),
+	// VT watcher thread (app.rs spawn_vt_watch): the active console changed.
+	// Linux GL path only; never constructed elsewhere.
+	#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+	VtSwitched,
 }
 
 // bridges alacritty's PTY thread back to the winit loop
@@ -52,7 +66,7 @@ impl EventListener for EventProxy {
 				.proxy
 				.send_event(UserEvent::PtyWrite(self.id, text.into_bytes())),
 			Event::Bell => self.proxy.send_event(UserEvent::Bell),
-			Event::MouseCursorDirty => Ok(()),
+			// MouseCursorDirty and any other events: nothing to forward
 			_ => Ok(()),
 		};
 	}
@@ -93,9 +107,15 @@ pub struct TermInstance {
 	shell_name: Option<String>,
 	#[cfg(unix)]
 	last_program: Option<String>,
+	// throttles the per-frame title probe (see tab_title)
+	#[cfg(unix)]
+	title_cache: Option<(std::time::Instant, String)>,
 }
 
 impl TermInstance {
+	// command is owned by the spawned terminal conceptually; the by-value
+	// constructor input threads through split_at/spawn_pane as a move
+	#[allow(clippy::needless_pass_by_value)]
 	pub fn spawn(
 		id: PaneId,
 		cols: usize,
@@ -104,13 +124,16 @@ impl TermInstance {
 		cell_h: u16,
 		proxy: EventLoopProxy<UserEvent>,
 		command: Option<Vec<String>>,
+		cwd: Option<std::path::PathBuf>,
 	) -> anyhow::Result<Self> {
 		let cols = cols.max(1);
 		let lines = lines.max(1);
 
 		let mut config = Config::default();
 		config.scrolling_history = crate::config::settings().scrollback;
-		config.semantic_escape_chars = crate::config::settings().word_separators.clone();
+		config
+			.semantic_escape_chars
+			.clone_from(&crate::config::settings().word_separators);
 
 		let dims = TermDimensions {
 			columns: cols,
@@ -135,6 +158,8 @@ impl TermInstance {
 		if let Some((prog, args)) = command.as_ref().and_then(|c| c.split_first()) {
 			opts.shell = Some(tty::Shell::new(prog.clone(), args.to_vec()));
 		}
+		// start in an inherited directory (new tab/split follows the source pane)
+		opts.working_directory = cwd;
 		let pty = tty::new(&opts, win, id)?;
 		// Capture the master fd + shell pid before the event loop takes the pty;
 		// they drive the tab title (foreground program). The fd stays valid for
@@ -168,6 +193,8 @@ impl TermInstance {
 			shell_name: None,
 			#[cfg(unix)]
 			last_program: None,
+			#[cfg(unix)]
+			title_cache: None,
 		})
 	}
 
@@ -175,8 +202,24 @@ impl TermInstance {
 	// "<shell> [last: <program>]" / "<shell>" when only the shell is at the
 	// prompt. Names are executable basenames (from /proc comm), not full
 	// command lines. Unix only; elsewhere falls back to the app name.
+	// The probe (tcgetpgrp + a /proc read) is throttled: render asks per tab
+	// per frame, and paying syscalls on every idle blink frame added up.
 	#[cfg(unix)]
 	pub fn tab_title(&mut self) -> String {
+		const PROBE_IVL: std::time::Duration = std::time::Duration::from_millis(250);
+		let now = std::time::Instant::now();
+		if let Some((at, title)) = &self.title_cache {
+			if now.duration_since(*at) < PROBE_IVL {
+				return title.clone();
+			}
+		}
+		let title = self.probe_title();
+		self.title_cache = Some((now, title.clone()));
+		title
+	}
+
+	#[cfg(unix)]
+	fn probe_title(&mut self) -> String {
 		let shell = self
 			.shell_name
 			.get_or_insert_with(|| proc_comm(self.shell_pid).unwrap_or_else(|| "shell".into()))
@@ -199,9 +242,27 @@ impl TermInstance {
 		}
 	}
 
+	// self kept for signature parity with the unix version above
 	#[cfg(not(unix))]
+	#[allow(clippy::unused_self)]
 	pub fn tab_title(&mut self) -> String {
 		crate::config::APP_NAME.to_string()
+	}
+
+	// The shell's current directory, for a new tab/split to start in. A deleted
+	// dir reads back with a " (deleted)" suffix, so require it to still exist.
+	#[cfg(unix)]
+	pub fn cwd(&self) -> Option<std::path::PathBuf> {
+		std::fs::read_link(format!("/proc/{}/cwd", self.shell_pid))
+			.ok()
+			.filter(|dir| dir.is_dir())
+	}
+
+	// No /proc equivalent wired up off-unix; callers fall back to the default.
+	#[cfg(not(unix))]
+	#[allow(clippy::unused_self)]
+	pub fn cwd(&self) -> Option<std::path::PathBuf> {
+		None
 	}
 
 	// Is the shell itself (not a spawned command) the terminal's foreground
@@ -214,6 +275,7 @@ impl TermInstance {
 		pgid <= 0 || pgid as u32 == self.shell_pid
 	}
 	#[cfg(not(unix))]
+	#[allow(clippy::unused_self)]
 	pub fn at_shell_prompt(&self) -> bool {
 		true
 	}

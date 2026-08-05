@@ -26,7 +26,7 @@
 ##		  PATH so the rustup toolchain (cross targets, edition 2024) wins over system rust.
 ##	History: At bottom of script.
 
-##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Copyright © 2026 Jim Collier (CryptogID: ѳ6ᴚ℈𐀘𐇦ɛ𐊁¥Mﾏb϶Δ𐌞)
 ##	Licensed under The MIT License (MIT). Full text at:
 ##		https://mit-license.org/
 ##	SPDX-License-Identifier: MIT
@@ -44,6 +44,20 @@ EXE_NAME="silkterm"
 ## Stage 1: format the source in place before anything is compiled or tested.
 ## Empty it (FMT_CMD=()) when reusing the pipeline in a non-Rust project.
 FMT_CMD=(cargo fmt)
+## Non-mutating variant for the --gate mode (fails on drift instead of rewriting).
+FMT_CHECK_CMD=(cargo fmt --check)
+
+## Pinned versions of the cargo-installed helpers the pipeline probes for; the
+## engine warns (non-gating) when an installed tool has drifted from its pin, so
+## a box update can't silently change results. Format: "name|version|command...".
+## The rustc/clippy toolchain itself is pinned by rust-toolchain.toml at repo root.
+TOOL_PINS=(
+	"cargo-deny|0.19.9|cargo deny --version"
+	"cargo-zigbuild|0.23.0|cargo-zigbuild --version"
+	"cargo-deb|3.7.0|cargo-deb --version"
+	"cargo-generate-rpm|0.21.0|cargo-generate-rpm --version"
+	"makensis|3.11|makensis -VERSION"
+)
 
 ## Stage 2: debug build (fast compile sanity)
 DEBUG_BUILD_CMD=(cargo build)
@@ -54,9 +68,10 @@ TEST_CMD=(cargo test)
 ## Stage 3 (after tests): lints. Gating; house allows live in the workspace
 ## Cargo.toml [workspace.lints.clippy]. PROBE decides tool availability -
 ## a failed probe skips the step with a warning instead of aborting.
-## clippy comes from the rustup toolchain while the build stages use the system
-## cargo; the two rustcs sharing one target dir throws E0514 (artifacts from the
-## other compiler), so lint pins the rustup PATH and gets its own target dir.
+## rust-toolchain.toml pins one toolchain for every rustup-routed cargo, but a
+## shell where system cargo wins PATH can still populate target/ with the other
+## rustc (E0514: artifacts from a different compiler), so lint pins the rustup
+## PATH and keeps its own target dir as insurance.
 LINT_PROBE=(env "PATH=${HOME}/.cargo/bin:${PATH}" cargo clippy --version)
 LINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" CARGO_TARGET_DIR=target/lint cargo clippy --workspace --all-targets -- -D warnings)
 
@@ -70,18 +85,50 @@ DENY_CMD=(cargo deny check)
 ## but a measured scroll regression aborts. Empty () to disable.
 SCROLL_HARNESS=(cicd/tests/scroll/run.bash)
 
+## Also run the harness a second time under a headless Wayland compositor (cage), to
+## prove the Wayland backend renders + scrolls the same as X11. Self-skips (non-fatal)
+## where cage is not installed. 0/unset to disable.
+SCROLL_HARNESS_WAYLAND=1
+
+## Stages 4 + 5: how many times a fat-LTO build may be attempted before the pipeline
+## calls it a failure. rustc crashes inside LLVM here every so often and compiles the
+## same source clean on the next try; 1 disables retrying.
+BUILD_ATTEMPTS=3
+
 ## Stage 5: native release build + its artifact (this is what gets dogfooded)
 RELEASE_NATIVE_CMD=(cargo build --release)
 RELEASE_NATIVE_BIN="target/release/${EXE_NAME}"
+RELEASE_NATIVE_OSARCH="linux-x86_64"
 
-## Stage 5: cross-release targets. One per line: "label|artifact|command...".
+## Stage 5: cross-release targets. One per line: "label|os-arch|artifact|command...".
+## os-arch feeds the versioned artifact name (<exe>-<version>-<os-arch>[.exe]).
 ## Set BUILD_CROSS=0 to skip them for a quick local run.
 BUILD_CROSS=1
 CROSS_TARGETS=(
-	"Windows x86_64 (mingw)|target/x86_64-pc-windows-gnu/release/${EXE_NAME}.exe|cargo build --release --target x86_64-pc-windows-gnu"
-	"Linux ARM64 (zig)|target/aarch64-unknown-linux-gnu/release/${EXE_NAME}|cargo zigbuild --release --target aarch64-unknown-linux-gnu"
-	"Windows ARM64 (zig)|target/aarch64-pc-windows-gnullvm/release/${EXE_NAME}.exe|cargo zigbuild --release --target aarch64-pc-windows-gnullvm"
+	"Windows x86_64 (mingw)|windows-x86_64|target/x86_64-pc-windows-gnu/release/${EXE_NAME}.exe|cargo build --release --target x86_64-pc-windows-gnu"
+	"Linux ARM64 (zig)|linux-arm64|target/aarch64-unknown-linux-gnu/release/${EXE_NAME}|cargo zigbuild --release --target aarch64-unknown-linux-gnu"
+	"Windows ARM64 (zig)|windows-arm64|target/aarch64-pc-windows-gnullvm/release/${EXE_NAME}.exe|cargo zigbuild --release --target aarch64-pc-windows-gnullvm"
 )
+
+## Stage 5 (after builds): collect the built binaries under versioned names plus
+## a sha256 checksums file, ready to attach to a release as plain uploads.
+## Naming scheme (stable; download links depend on it):
+##   <exe>-<version>-<os-arch>[.exe]   e.g. silkterm-1.0.0-beta1-linux-x86_64
+##   <exe>-<version>-sha256sums.txt
+## Version comes from source/Cargo.toml alone. Empty to disable collection.
+RELEASE_ARTIFACT_DIR="cicd/artifacts/release"   # relative to repo root; gitignored
+VERSION_MANIFEST="source/Cargo.toml"            # the single version source
+
+## Stage 6: distributable packages, built from the stage-5 release binaries (never
+## rebuilt) when --quick is NOT passed. Linux -> .deb + .rpm (cargo-deb /
+## cargo-generate-rpm, metadata in source/Cargo.toml). Windows -> a single self-
+## contained NSIS installer .exe per arch (makensis), which upgrades an existing
+## install in place. macOS (.dmg) and BSD are deferred: this box has no Apple SDK
+## / FreeBSD sysroot to cross-build their binaries. ARM64 packages follow the same
+## --no-arm gate as the ARM release builds. Packages land in RELEASE_ARTIFACT_DIR
+## and fold into the sha256sums. Set PACKAGE_ENABLE=0 (or --no-package) to skip.
+PACKAGE_ENABLE=1
+NSIS_TEMPLATE="cicd/packaging/windows/installer.nsi.in"
 
 ## Stage 4: profiler (non-gating artifact, not a pass/fail test). Builds an
 ## optimized+symbols binary (cargo --profile $PROFILE_PROFILE --features
@@ -98,6 +145,12 @@ PROFILE_WORKLOAD_ARGS="600 0"          # <duration_s> <delay_s>; duration >> PRO
 PROFILE_OUT_DIR="cicd/artifacts/profiling"  # relative to repo root; created if missing (gitignored)
 PROFILE_STRICT=0                        # 1 = any profiler failure aborts the pipeline
 
+## Demo video re-record (cicd/utility/demo-video/demo-video.py). Off by default -
+## only worth re-recording after major visual/feature changes; flip to 1 or pass
+## --demo for one run. Also skipped under --quick. Video GFS-rotates into
+## ../private/demo-video/; the README highlight gif lands in assets/demo.gif.
+DEMO_ENABLE=0
+
 ## Full run output is tee'd here (gitignored) so warnings from any stage can be
 ## reviewed after the fact. Kept rotated like the flamegraphs.
 LINT_LOG_DIR="cicd/artifacts/lint"      # relative to repo root; created if missing (gitignored)
@@ -112,17 +165,32 @@ DOGFOOD_FIXED_DESTS=(
 	"${HOME}/synced/0-0/common/exec/util/linux/bin"
 	"/usr/local/sbin"
 )
-## Rotating: also drop a dated copy "<DOGFOOD_PREFIX>_<YYYYmmDD-HHMMSS>" here (created
-## if missing), so builds coexist under unique paths - an automated test killing one
-## can't hit an unrelated version - pruning older copies that aren't running. Launch
-## the newest via utility/n8runterm. Set DOGFOOD_PREFIX empty to disable the rotating copy.
+## Rotating: also drop a dated copy "<DOGFOOD_PREFIX>_<YYYYmmDD-HHMMSS>_<tag>" here
+## (created if missing), so builds coexist under unique paths - an automated test
+## killing one can't hit an unrelated version - pruning older copies that aren't
+## running. Launch the newest via utility/n8runterm.bash. Set DOGFOOD_PREFIX empty to
+## disable the rotating copy.
 DOGFOOD_ROTATING_DESTS=(
 	"${HOME}/.local/bin"
 )
 DOGFOOD_PREFIX="slktrmdf"
+## Which build a copy holds: "<toolchain: gnu|msvc><built on: l|m|b|w><target: l|m|b|w><arch: i|a>"
+## - so a pool of copies from several hosts stays readable (n8runterm.ps1 keeps three
+## on Windows). Left unset it's derived from this host; set it to pin, empty to drop.
+# DOGFOOD_TAG="gnulli"
 
 ## Stage 7: backup + publish to git (runs from repo root).
 GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
+
+## Extra backup excludes for this project. cicd/artifacts is per-run scratch: the
+## release binaries there are copies of ones already kept from target/, and the
+## rest is logs and staging. Excluding it is also load-bearing, not just tidy -
+## the wine staging tree holds a wineprefix whose dosdevices map Z: to '/' (plus
+## raw /dev nodes), so a backup that walks in climbs out of the repo and into the
+## whole filesystem. Exclude the dir as well as its contents, or rar still
+## descends to test each entry. Quoted so eval hands rar the glob, not a match.
+## private/source is bulk working material that never ships, same treatment.
+export GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES="-x'*/cicd/artifacts' -x'*/cicd/artifacts/*' -x'*/private/source' -x'*/private/source/*'"
 
 ## Set a non-empty commit message to publish hands-off (suppresses the script's
 ## prompt and supplies the message so `git commit` won't open an editor). Left

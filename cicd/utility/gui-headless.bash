@@ -32,10 +32,10 @@
 ##		gui-headless.bash stop              ## kill only what we started
 ##	Notes:
 ##		Display/size is overridable via CICD_HEADLESS_DISPLAY / CICD_HEADLESS_SIZE
-##		(legacy RPD_* names still honoured as fallbacks).
+##		(legacy RPD_* names still honored as fallbacks).
 ##	History: At bottom of script.
 
-##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Copyright © 2026 Bubbles (ID: XଌฅრX۳ᛟԃლፀƅꓩหδლც)
 ##	Licensed under The MIT License (MIT). Full text at:
 ##		https://mit-license.org/
 ##	SPDX-License-Identifier: MIT
@@ -117,4 +117,4 @@ esac
 
 
 ##	Script history:
-##		- 20260701 JC: Created.
+##		- 20260701: Created.

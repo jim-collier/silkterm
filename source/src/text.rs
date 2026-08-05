@@ -10,6 +10,7 @@ use glyphon::{
 	TextAtlas, TextRenderer, Viewport, Wrap,
 };
 
+use crate::coloremoji::{ColorGlyphs, ColorMetrics};
 use crate::config;
 
 // Concrete family name behind `Family::Monospace`, re-resolved on each TextCtx
@@ -18,6 +19,12 @@ use crate::config;
 // than the regular run; pinning one name keeps every weight in it. `Attrs` needs
 // a 'static name, so the resolved string is leaked (rare - only on a font change).
 static MONO_FAMILY: RwLock<Option<&'static str>> = RwLock::new(None);
+// Nearest-to-Bold weight the pinned mono family actually ships. Terminal bold
+// runs request THIS, not a literal 700: a mono family with no bold face would
+// otherwise eject the whole run into a proportional bold fallback, whose
+// advances set_monospace_width can't snap - skewing space-based alignment (the
+// muffer startup screen, box-drawing, etc.). Mirrors chrome's UI_WEIGHT_BOLD.
+static MONO_WEIGHT_BOLD: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(700);
 
 fn mono_family() -> Option<&'static str> {
 	*MONO_FAMILY.read().unwrap()
@@ -25,8 +32,24 @@ fn mono_family() -> Option<&'static str> {
 
 // Re-resolve and pin the monospace family for the current config + font system.
 fn pin_mono_family(fs: &FontSystem) {
+	use std::sync::atomic::Ordering;
 	let name = resolve_mono_family(fs).map(|family| &*Box::leak(family.into_boxed_str()));
 	*MONO_FAMILY.write().unwrap() = name;
+	// Snap "bold" to the family's boldest available face so it can never eject the
+	// family. No pinned name (generic Monospace) -> keep 700, nothing to snap to.
+	let bold = match name {
+		Some(family) => nearest_face(fs.db(), family, 700, false).map_or(700, |(w, _)| w),
+		None => 700,
+	};
+	MONO_WEIGHT_BOLD.store(bold, Ordering::Relaxed);
+}
+
+// Weight a terminal bold cell should request: the closest weight to Bold the
+// pinned mono family really ships. Use instead of a literal Weight::BOLD, which
+// kicks the family out (into a proportional fallback) when it has no bold face.
+pub fn mono_bold_weight() -> glyphon::Weight {
+	use std::sync::atomic::Ordering;
+	glyphon::Weight(MONO_WEIGHT_BOLD.load(Ordering::Relaxed))
 }
 
 pub fn mono_attrs() -> Attrs<'static> {
@@ -97,7 +120,7 @@ fn pin_ui_family(fs: &FontSystem) {
 	let sys_font = crate::sysfont::interface();
 	let name = resolve_ui_family(fs).map(|family| &*Box::leak(family.into_boxed_str()));
 	*UI_FAMILY.write().unwrap() = name;
-	// honour the desktop's weight/slant only when its family actually resolved
+	// honor the desktop's weight/slant only when its family actually resolved
 	// (a fallback sans shouldn't inherit "Bold" meant for another face)
 	let using_sys = match (name, &sys_font.family) {
 		(Some(resolved), Some(family)) => resolved.eq_ignore_ascii_case(family),
@@ -228,14 +251,51 @@ fn resolve_ui_family(fs: &FontSystem) -> Option<String> {
 		.clone()
 		.into_iter()
 		.chain(crate::sysfont::sans_serif().map(str::to_string))
-		.chain(curated.iter().map(|s| s.to_string()))
+		.chain(curated.iter().map(std::string::ToString::to_string))
 		.find_map(|fam| installed(&fam))
 }
 
-// Resolve the monospace family to pin for every weight: the user's configured
-// `font_family` if installed, else the OS monospace family, else whatever
-// `Family::Monospace` maps to. Validated against the db so a bad name doesn't
-// silently fall back to an unrelated font.
+// The family search order, in full, whether or not any of it is installed. Same
+// on every platform: the OS monospace leads while `use_system_font` is on and
+// trails the configured stack otherwise, and the built-in stack is always last.
+// A platform only shows through in what it reports - Windows has no monospace
+// setting, so it passes None and resolution simply starts at `font_family`
+// there, with no special case for it. Kept pure so the order can be tested
+// without a font db.
+fn mono_candidates(
+	os_family: Option<&str>,
+	configured: Option<&str>,
+	follow_os: bool,
+) -> Vec<String> {
+	let split = |list: Option<&str>| {
+		list.into_iter()
+			.flat_map(|l| l.split(','))
+			.map(|name| name.trim().to_string())
+			.filter(|name| !name.is_empty())
+			.collect::<Vec<_>>()
+	};
+	let os = os_family.map(str::to_string);
+	let mut candidates = Vec::new();
+	if follow_os {
+		candidates.extend(os.clone());
+	}
+	candidates.extend(split(configured));
+	if !follow_os {
+		candidates.extend(os);
+	}
+	// Built-in stack as the last resort everywhere, ahead of the bare
+	// Family::Monospace query: that query is a db lottery whose winner may lack a
+	// bold face, and cosmic-text only keeps a family when a face matches the
+	// requested weight exactly - so bold runs would silently eject to an
+	// arbitrary (often proportional) fallback. Known-good families avoid that.
+	candidates.extend(split(Some(config::DEFAULT_FONT_STACK)));
+	candidates
+}
+
+// Resolve the monospace family to pin for every weight: the first family from
+// `mono_candidates` that is actually installed, else whatever `Family::Monospace`
+// maps to. Validated against the db so a bad name doesn't silently fall back to
+// an unrelated font.
 fn resolve_mono_family(fs: &FontSystem) -> Option<String> {
 	use glyphon::cosmic_text::fontdb;
 	let db = fs.db();
@@ -255,24 +315,11 @@ fn resolve_mono_family(fs: &FontSystem) -> Option<String> {
 	};
 
 	let settings = config::settings();
-	let sys_family = crate::sysfont::monospace().family.clone();
-	// Priority: the OS monospace first when following the system font; otherwise
-	// each family in the user's comma-separated fallback stack, then the OS mono.
-	let mut candidates: Vec<String> = Vec::new();
-	if settings.use_system_font {
-		candidates.extend(sys_family.clone());
-	} else {
-		candidates.extend(
-			settings
-				.font_family
-				.iter()
-				.flat_map(|list| list.split(','))
-				.map(|name| name.trim().to_string())
-				.filter(|name| !name.is_empty()),
-		);
-		candidates.extend(sys_family.clone());
-	}
-	for fam in candidates {
+	for fam in mono_candidates(
+		crate::sysfont::monospace().family.as_deref(),
+		settings.font_family.as_deref(),
+		config::system_font_face_active(&settings),
+	) {
 		if installed(&fam) {
 			return Some(fam);
 		}
@@ -293,7 +340,12 @@ pub struct TextCtx {
 	pub font_system: FontSystem,
 	pub swash_cache: SwashCache,
 	pub atlas: TextAtlas,
+	// The scrim renders into an Rgba16Float coverage texture, a different format
+	// than the surface, so its glyphon renderer needs its own same-format atlas.
+	scrim_atlas: TextAtlas,
 	pub viewport: Viewport,
+	// last resolution given to the viewport (skip the per-frame re-write)
+	viewport_size: (u32, u32),
 	pub renderer: TextRenderer,
 	// separate renderer for the context-menu overlay (second pass, on top)
 	pub overlay: TextRenderer,
@@ -302,6 +354,12 @@ pub struct TextCtx {
 	pub scrim: TextRenderer,
 	pub cell_w: f32,
 	pub cell_h: f32,
+	// Whether a bold run shapes to the same per-cell advance as regular. When
+	// false (font ignores set_monospace_width and its bold face has a different
+	// advance - common on Windows), the de-bold scrim buffer would drift from the
+	// display buffer along the line, so panes reuse the display buffer for the
+	// scrim instead (see Pane::build, text_scrim_regular_weight).
+	pub debold_safe: bool,
 	// physical-px inset between content and pane edge
 	pub margin: f32,
 	pub metrics: Metrics,
@@ -315,16 +373,30 @@ pub struct TextCtx {
 	ui_vmetrics: (f32, f32),
 	// primary monospace face + a coverage cache, so the pane can tell which
 	// glyphs fall back to another font (those drift from the cell grid and get
-	// rendered per-cell instead - see Pane::build).
+	// rendered per-cell instead - see Pane::build). The cached value is how many
+	// grid cells the face's own advance for that char spans, 0 for "no glyph".
 	mono_face: Option<fontdb::ID>,
-	cover_cache: HashMap<char, bool>,
+	cover_cache: HashMap<char, u8>,
+	// COLRv1 color glyphs, which swash can't rasterize (see coloremoji.rs). Panes
+	// route an emoji cell here instead of to a monochrome fallback face.
+	color_glyphs: ColorGlyphs,
 	// Measured chrome-text widths. Keyed by text only: every chrome measurement
-	// uses the base UI attrs (colour varies, which doesn't affect width), and the
+	// uses the base UI attrs (color varies, which doesn't affect width), and the
 	// font is fixed for this TextCtx's life. Measuring shapes a throwaway buffer,
 	// and the menu bar re-measures its titles every rendered frame - the memo
 	// turns that into a lookup. Bounded (cleared) so dynamic tab titles can't
 	// grow it without limit.
 	ui_measure_cache: HashMap<String, f32>,
+}
+
+// Round a glyph's advance to whole cells, `unit` being the face's own advance
+// for an ASCII cell. A face that reports nothing usable answers 1, so an
+// unmeasurable font behaves the way it always did.
+fn advance_cells(advance: f32, unit: f32) -> u8 {
+	if unit <= 0.0 {
+		return 1;
+	}
+	(advance / unit).round().clamp(0.0, 8.0) as u8
 }
 
 impl TextCtx {
@@ -344,6 +416,7 @@ impl TextCtx {
 
 		let cell_w = measure_cell(&mut font_system, metrics);
 		let cell_h = line_height.max(1.0);
+		let debold_safe = bold_matches_cell(&mut font_system, metrics, cell_w);
 
 		// Chrome follows the desktop UI font size (pt -> px at the 96-DPI
 		// reference, like the mono path); terminal size is the fallback so the
@@ -369,23 +442,39 @@ impl TextCtx {
 
 		let cache = Cache::new(device);
 		let mut atlas = TextAtlas::new(device, queue, &cache, format);
+		// The scrim text pass renders into a separate Rgba16Float coverage texture
+		// (crate::scrim::FMT), so its glyphon renderer must target THAT format. On the
+		// X11 GL path gfx.format is already Rgba16Float and a shared atlas happened to
+		// match; on the native path (Windows, Wayland) gfx.format is an sRGB surface
+		// format, so a shared atlas targets the wrong format - wgpu rejects it as
+		// "incompatible color attachments" on the first scrim frame. One Cache backs
+		// both atlases (it's built to serve multiple target formats).
+		let mut scrim_atlas = TextAtlas::new(device, queue, &cache, crate::scrim::FMT);
 		let viewport = Viewport::new(device, &cache);
 		let renderer =
 			TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
 		let overlay =
 			TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
-		let scrim = TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
+		let scrim = TextRenderer::new(
+			&mut scrim_atlas,
+			device,
+			wgpu::MultisampleState::default(),
+			None,
+		);
 
 		Self {
 			font_system,
 			swash_cache: SwashCache::new(),
 			atlas,
+			scrim_atlas,
 			viewport,
+			viewport_size: (0, 0),
 			renderer,
 			overlay,
 			scrim,
 			cell_w,
 			cell_h,
+			debold_safe,
 			margin: (config::settings().margin * scale).round(),
 			metrics,
 			ui_line_h,
@@ -393,25 +482,67 @@ impl TextCtx {
 			ui_vmetrics,
 			mono_face,
 			cover_cache: HashMap::new(),
+			color_glyphs: ColorGlyphs::new(),
 			ui_measure_cache: HashMap::new(),
 		}
 	}
 
-	// Does the primary monospace face have a glyph for `ch`? ASCII is always
-	// assumed covered. Cached because it's hit per visible cell per frame.
-	pub fn covered(&mut self, ch: char) -> bool {
+	// Can `ch` ride the shared row buffer, given the grid puts it in `cells`
+	// columns? ASCII always can. Coverage alone isn't enough: a monospace face
+	// can carry a double-width char (emoji, fullwidth punctuation) at its
+	// ordinary single advance, and then one glyph eats one column of layout
+	// where the grid gave it two - every later glyph
+	// on the row lands a cell left of the grid position its background, cursor
+	// and any per-cell glyph still use. Demanding the advance match the grid
+	// sends those to the per-cell path, which fits them to their real box.
+	pub fn covered_at(&mut self, ch: char, cells: u8) -> bool {
+		self.face_cells(ch) == cells
+	}
+
+	// Cells the primary face's own advance for `ch` spans, 0 when it has no
+	// glyph. Measured against the face's ASCII advance so no pixel size is
+	// involved; an unmeasurable face reports 1, keeping the old fast path.
+	fn face_cells(&mut self, ch: char) -> u8 {
 		if ch.is_ascii() {
-			return true;
+			return 1;
 		}
 		if let Some(&cached) = self.cover_cache.get(&ch) {
 			return cached;
 		}
-		let covered = self
+		let cells = self
 			.mono_face
 			.and_then(|id| self.font_system.get_font(id, fontdb::Weight::NORMAL))
-			.is_some_and(|font| font.as_swash().charmap().map(ch) != 0);
-		self.cover_cache.insert(ch, covered);
-		covered
+			.map_or(0, |font| {
+				let face = font.as_swash();
+				let glyph = face.charmap().map(ch);
+				if glyph == 0 {
+					return 0;
+				}
+				let metrics = face.glyph_metrics(&[]);
+				let unit = metrics.advance_width(face.charmap().map('M'));
+				advance_cells(metrics.advance_width(glyph), unit)
+			});
+		self.cover_cache.insert(ch, cells);
+		cells
+	}
+
+	// Color glyph for `ch`, with the design box a caller fits to the cell. None
+	// for anything no installed color font paints - i.e. almost everything.
+	// Gated by the caller (`color_emoji`), which already holds the settings.
+	pub fn color_metrics(&mut self, ch: char) -> Option<ColorMetrics> {
+		self.color_glyphs.metrics(self.font_system.db(), ch)
+	}
+
+	// Build the raster for a placed color glyph. Done here, during the frame
+	// build, because `prepare` holds the FontSystem (the font bytes) mutably.
+	pub fn color_warm(&mut self, id: u16, w: u16, h: u16) {
+		self.color_glyphs.warm(self.font_system.db(), id, w, h);
+	}
+
+	// Open a frame's color-glyph warming, so the raster cache knows which of
+	// its entries this frame is about to depend on.
+	pub fn color_frame(&mut self) {
+		self.color_glyphs.begin_frame();
 	}
 
 	// Buffer for a single fallback glyph: no monospace snapping (render at its
@@ -433,33 +564,21 @@ impl TextCtx {
 	// the ink box, not the advance, because these fallback symbols routinely
 	// paint wider than they advance and would otherwise overlap the next cell.
 	pub fn fill_glyph(&mut self, buf: &mut Buffer, ch: char, attrs: &Attrs) -> (f32, f32) {
-		let mut utf8_buf = [0u8; 4];
-		buf.set_text(
-			&mut self.font_system,
-			ch.encode_utf8(&mut utf8_buf),
-			attrs,
-			Shaping::Advanced,
-			None,
-		);
-		buf.shape_until_scroll(&mut self.font_system, false);
-		let phys = buf
-			.layout_runs()
-			.next()
-			.and_then(|run| run.glyphs.first())
-			.map(|glyph| glyph.physical((0.0, 0.0), 1.0));
-		let Some(phys) = phys else {
-			return (self.cell_w, 0.0);
-		};
-		match self
-			.swash_cache
-			.get_image(&mut self.font_system, phys.cache_key)
-		{
-			Some(image) => (
-				image.placement.width.max(1) as f32,
-				phys.x as f32 + image.placement.left as f32,
-			),
-			None => (self.cell_w, 0.0),
+		if let Some(ink) = self.shape_ink(buf, ch, attrs) {
+			return ink;
 		}
+		// The face the pinned family fell back to rasterizes nothing - a color
+		// emoji font (Noto Color Emoji here) hands swash a strike it can't scale, so
+		// every emoji came out as a blank cell. Reshape through the generic
+		// monospace chain, which lands on a face that does raster.
+		let mut generic = attrs.clone();
+		generic.family = Family::Monospace;
+		self.shape_ink(buf, ch, &generic)
+			.unwrap_or((self.cell_w, 0.0))
+	}
+
+	fn shape_ink(&mut self, buf: &mut Buffer, ch: char, attrs: &Attrs) -> Option<(f32, f32)> {
+		shaped_ink(&mut self.font_system, &mut self.swash_cache, buf, ch, attrs)
 	}
 
 	// `top` for a chrome text buffer so its VISIBLE box (cap-top to baseline)
@@ -469,6 +588,14 @@ impl TextCtx {
 	// high with empty descent space below.
 	pub fn ui_text_top(&self, bar_top: f32, bar_h: f32) -> f32 {
 		ui_visible_center_top(self.ui_line_h, self.ui_vmetrics, bar_top, bar_h)
+	}
+
+	// `top` that centers the full ascent..descent ink box instead. Right for
+	// lowercase labels with descenders ("select"/"output"), which read
+	// bottom-heavy under the ascent..baseline centering above. cosmic-text
+	// centers that box in the line, so this is just centering the buffer.
+	pub fn ui_text_top_ink(&self, bar_top: f32, bar_h: f32) -> f32 {
+		bar_top + (bar_h - self.ui_line_h) / 2.0
 	}
 
 	// Screen-space baseline of chrome text placed with `ui_text_top` - for the
@@ -539,6 +666,11 @@ impl TextCtx {
 	}
 
 	pub fn update_viewport(&mut self, queue: &wgpu::Queue, w: u32, h: u32) {
+		// called per frame; only changes on resize
+		if self.viewport_size == (w, h) {
+			return;
+		}
+		self.viewport_size = (w, h);
 		self.viewport.update(
 			queue,
 			Resolution {
@@ -554,14 +686,26 @@ impl TextCtx {
 		queue: &wgpu::Queue,
 		areas: Vec<TextArea<'_>>,
 	) -> Result<(), glyphon::PrepareError> {
-		self.renderer.prepare(
+		// Destructured so the color-glyph lookup can borrow alongside the renderer
+		// and font system (disjoint fields of the same struct).
+		let Self {
+			renderer,
+			font_system,
+			atlas,
+			viewport,
+			swash_cache,
+			color_glyphs,
+			..
+		} = self;
+		renderer.prepare_with_custom(
 			device,
 			queue,
-			&mut self.font_system,
-			&mut self.atlas,
-			&self.viewport,
+			font_system,
+			atlas,
+			viewport,
 			areas,
-			&mut self.swash_cache,
+			swash_cache,
+			|req| color_glyphs.raster(req),
 		)
 	}
 
@@ -599,14 +743,24 @@ impl TextCtx {
 		queue: &wgpu::Queue,
 		areas: Vec<TextArea<'_>>,
 	) -> Result<(), glyphon::PrepareError> {
-		self.scrim.prepare(
+		let Self {
+			scrim,
+			font_system,
+			scrim_atlas,
+			viewport,
+			swash_cache,
+			color_glyphs,
+			..
+		} = self;
+		scrim.prepare_with_custom(
 			device,
 			queue,
-			&mut self.font_system,
-			&mut self.atlas,
-			&self.viewport,
+			font_system,
+			scrim_atlas,
+			viewport,
 			areas,
-			&mut self.swash_cache,
+			swash_cache,
+			|req| color_glyphs.raster(req),
 		)
 	}
 
@@ -614,11 +768,12 @@ impl TextCtx {
 		&self,
 		pass: &mut wgpu::RenderPass<'_>,
 	) -> Result<(), glyphon::RenderError> {
-		self.scrim.render(&self.atlas, &self.viewport, pass)
+		self.scrim.render(&self.scrim_atlas, &self.viewport, pass)
 	}
 
 	pub fn trim_atlas(&mut self) {
 		self.atlas.trim();
+		self.scrim_atlas.trim();
 	}
 }
 
@@ -640,14 +795,142 @@ fn measure_cell(fs: &mut FontSystem, metrics: Metrics) -> f32 {
 	buf.shape_until_scroll(fs, false);
 	buf.layout_runs()
 		.next()
-		.map(|run| run.line_w / N as f32)
-		.unwrap_or(metrics.font_size * 0.6)
+		.map_or(metrics.font_size * 0.6, |run| run.line_w / N as f32)
 		.max(1.0)
+}
+
+// Does a bold run shape to the same advance as the regular pitch cell_w? Shaped
+// exactly like the render/scrim buffers (monospace_width set, Advanced). True
+// when the mono face honors the snap, or bold and regular naturally share an
+// advance; false when they diverge - then the de-bold scrim buffer drifts from
+// the display buffer and must not be used (see the debold_safe field).
+fn bold_matches_cell(fs: &mut FontSystem, metrics: Metrics, cell_w: f32) -> bool {
+	const N: usize = 40;
+	let mut buf = Buffer::new(fs, metrics);
+	buf.set_wrap(fs, Wrap::None);
+	buf.set_monospace_width(fs, Some(cell_w));
+	buf.set_size(fs, None, None);
+	let mut attrs = mono_attrs();
+	attrs.weight = fontdb::Weight(MONO_WEIGHT_BOLD.load(std::sync::atomic::Ordering::Relaxed));
+	buf.set_text(fs, &"M".repeat(N), &attrs, Shaping::Advanced, None);
+	buf.shape_until_scroll(fs, false);
+	let adv = buf
+		.layout_runs()
+		.next()
+		.map_or(cell_w, |run| run.line_w / N as f32);
+	(adv - cell_w).abs() < 0.1
+}
+
+// Shape `ch` into `buf` and measure its rasterized ink as `(width_px, left_px)`.
+// None when the face draws nothing - no glyph for it, or a glyph that rasterizes
+// empty (which is what a color-bitmap emoji face does through swash here).
+fn shaped_ink(
+	fs: &mut FontSystem,
+	swash: &mut SwashCache,
+	buf: &mut Buffer,
+	ch: char,
+	attrs: &Attrs,
+) -> Option<(f32, f32)> {
+	let mut utf8_buf = [0u8; 4];
+	buf.set_text(
+		fs,
+		ch.encode_utf8(&mut utf8_buf),
+		attrs,
+		Shaping::Advanced,
+		None,
+	);
+	buf.shape_until_scroll(fs, false);
+	let phys = buf
+		.layout_runs()
+		.next()
+		.and_then(|run| run.glyphs.first())
+		.map(|glyph| glyph.physical((0.0, 0.0), 1.0))?;
+	let image = swash.get_image(fs, phys.cache_key).as_ref()?;
+	if image.placement.width == 0 || image.placement.height == 0 {
+		return None;
+	}
+	Some((
+		image.placement.width as f32,
+		phys.x as f32 + image.placement.left as f32,
+	))
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// A monospace face routinely carries a double-width char at its ordinary
+	// single advance (Monaspace Argon does it for 53 of them, emoji included).
+	// Whole cells is what the row buffer lays out in, so the rounding has to
+	// report that honestly rather than call anything close enough.
+	#[test]
+	fn a_single_advance_never_reads_as_two_cells() {
+		let unit = 1240.0; // Monaspace Argon's own ASCII advance, in font units
+		assert_eq!(advance_cells(unit, unit), 1);
+		assert_eq!(advance_cells(unit * 2.0, unit), 2);
+		assert_eq!(
+			advance_cells(unit * 1.02, unit),
+			1,
+			"hinting slack is not a cell"
+		);
+		assert_eq!(advance_cells(0.0, unit), 0);
+		// A face that reports no usable advance keeps the shared-buffer path.
+		assert_eq!(advance_cells(0.0, 0.0), 1);
+	}
+
+	// The search order is one list on every platform. `use_system_font` only
+	// decides where the OS family sits in it - it must never drop the configured
+	// stack, which is what made Linux and Windows resolve the same config
+	// differently, and the built-in stack always backs both up.
+	#[test]
+	fn mono_candidates_keep_one_order_on_every_platform() {
+		let configured = Some("Alpha, Beta");
+		let builtin: Vec<String> = config::DEFAULT_FONT_STACK
+			.split(',')
+			.map(|name| name.trim().to_string())
+			.collect();
+
+		let following = mono_candidates(Some("OS Mono"), configured, true);
+		assert_eq!(following[..3], ["OS Mono", "Alpha", "Beta"]);
+		let not_following = mono_candidates(Some("OS Mono"), configured, false);
+		assert_eq!(not_following[..3], ["Alpha", "Beta", "OS Mono"]);
+		for order in [&following, &not_following] {
+			assert!(order.ends_with(&builtin), "built-in stack must back it up");
+		}
+
+		// Windows reports no OS family, so following it is a no-op there: the
+		// order collapses onto the same list every other platform ends up with.
+		assert_eq!(
+			mono_candidates(None, configured, true),
+			mono_candidates(None, configured, false)
+		);
+		assert_eq!(
+			mono_candidates(None, configured, true)[..2],
+			["Alpha", "Beta"]
+		);
+
+		// An empty or absent stack leaves no blank entries behind.
+		assert_eq!(mono_candidates(None, Some(" , ,"), false), builtin);
+		assert_eq!(mono_candidates(None, None, true), builtin);
+	}
+
+	// A pinned mono family falls back to a color emoji face that rasterizes to
+	// nothing, which drew every emoji as an empty cell. The generic-monospace
+	// retry must find a face that actually paints.
+	#[test]
+	fn emoji_falls_back_to_a_face_that_rasterizes() {
+		let mut fs = FontSystem::new();
+		let mut swash = SwashCache::new();
+		let mut buf = Buffer::new(&mut fs, Metrics::new(18.0, 22.0));
+		let mut generic = mono_attrs();
+		generic.family = Family::Monospace;
+		for ch in ['\u{1F680}', '\u{1F525}', '\u{1F49A}'] {
+			assert!(
+				shaped_ink(&mut fs, &mut swash, &mut buf, ch, &generic).is_some(),
+				"no ink for {ch:?}"
+			);
+		}
+	}
 
 	// Chrome must pin a concrete face, never fall back to generic
 	// `Family::SansSerif` (which lands on a serif when fontdb's "Arial" default
@@ -703,6 +986,53 @@ mod tests {
 				assert!(
 					fams.iter().any(|n| n == want),
 					"chrome glyph shaped in {fams:?}, not the pinned family {want:?}"
+				);
+			}
+		}
+	}
+
+	// A terminal bold run must stay in the pinned monospace family. A literal
+	// Weight::BOLD in a mono family with no bold face ejects the run into a
+	// proportional bold fallback (advances set_monospace_width can't snap), which
+	// skews space-based alignment. mono_bold_weight() requests the family's
+	// boldest available face instead, so bold never leaves the family.
+	#[test]
+	fn mono_bold_stays_in_pinned_family() {
+		let mut fs = FontSystem::new();
+		pin_mono_family(&fs);
+		let mut attrs = mono_attrs();
+		let Family::Name(want) = attrs.family else {
+			eprintln!("no concrete mono family on this box; skipping");
+			return;
+		};
+		attrs.weight = mono_bold_weight();
+		// the pinned weight must be one the family actually ships
+		let shipped: Vec<u16> = fs
+			.db()
+			.faces()
+			.filter(|f| f.families.iter().any(|(n, _)| n == want))
+			.map(|f| f.weight.0)
+			.collect();
+		assert!(
+			shipped.contains(&mono_bold_weight().0),
+			"bold weight {} not shipped by {want:?} (has {shipped:?})",
+			mono_bold_weight().0
+		);
+		let mut b = Buffer::new(&mut fs, Metrics::new(16.0, 20.0));
+		b.set_monospace_width(&mut fs, Some(9.0));
+		b.set_size(&mut fs, Some(400.0), Some(30.0));
+		b.set_text(&mut fs, "MMMM", &attrs, Shaping::Advanced, None);
+		b.shape_until_scroll(&mut fs, false);
+		for run in b.layout_runs() {
+			for g in run.glyphs {
+				let fams: Vec<String> = fs
+					.db()
+					.face(g.font_id)
+					.map(|f| f.families.iter().map(|(n, _)| n.clone()).collect())
+					.unwrap_or_default();
+				assert!(
+					fams.iter().any(|n| n == want),
+					"bold mono glyph shaped in {fams:?}, not the pinned family {want:?}"
 				);
 			}
 		}

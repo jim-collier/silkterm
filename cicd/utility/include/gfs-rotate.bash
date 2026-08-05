@@ -40,7 +40,7 @@
 
 ##	History: At bottom of script.
 
-##	Copyright © 2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##	Copyright © 2026 Bubbles (ID: XଌฅრX۳ᛟԃლፀƅꓩหδლც)
 ##	Licensed under The MIT License (MIT). Full text at:
 ##		https://mit-license.org/
 ##	SPDX-License-Identifier: MIT
@@ -132,7 +132,7 @@ gfs_rotate(){
 	done
 
 	## Frequent: most recent kFreq not already claimed by a coarser role. The
-	## single newest file is labelled "latest" instead - a stable, naturally-
+	## single newest file is labeled "latest" instead - a stable, naturally-
 	## sorting pointer to the most recent file (no separate "<prefix>-latest" copy).
 	local ni=${#items[@]}
 	for ((i = ni>kFreq ? ni-kFreq : 0; i<ni; i++)); do
@@ -163,4 +163,5 @@ declare -i isSourced_t6wq5=0; [[ "${BASH_SOURCE[0]}" == "${0}" ]] || isSourced_t
 
 
 ##	History:
-##		- 2026-06-05 JC: Created.
+##		- 2026-06-05: Created.
+##		- 2026-07-25: Harmonized every copy of this file to one identical file.
