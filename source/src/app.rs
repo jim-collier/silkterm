@@ -2003,9 +2003,6 @@ impl State {
 			if scrim_on {
 				scrim_cells.extend_from_slice(bg_quads);
 			}
-			// hyperlink underline: in the pane's scissor group with the cell
-			// backgrounds, but never in the scrim's coverage map
-			instances.extend_from_slice(&p.draw().links);
 			group_ranges.push((p.rect, start, instances.len() as u32));
 		}
 
@@ -2054,6 +2051,23 @@ impl State {
 		} else {
 			Vec::new()
 		};
+
+		// Hyperlink underlines sit with the cursor, AFTER the scrim composite - they
+		// are chrome about the text, not a cell background. Filed with the bg quads
+		// they were painted over by the halo, which is densest right under the
+		// glyphs, so a solid rule came out as a barcode tracing the letterforms.
+		// They stay out of the scrim's coverage map either way (an underline should
+		// cast no halo of its own), and stay under the cursor as before.
+		let mut link_ranges: Vec<(Rect, u32, u32)> = Vec::new();
+		for p in self.tabs.cur().panes.values() {
+			let link_quads = &p.draw().links;
+			if link_quads.is_empty() {
+				continue;
+			}
+			let start = instances.len() as u32;
+			instances.extend_from_slice(link_quads);
+			link_ranges.push((p.rect, start, instances.len() as u32));
+		}
 
 		// cursor quads get their own per-pane ranges, drawn after the scrim composite
 		let mut cursor_ranges: Vec<(Rect, u32, u32)> = Vec::new();
@@ -2947,6 +2961,15 @@ impl State {
 					self.scrim.composite(&mut pass);
 				}
 				pass.set_scissor_rect(0, 0, sw, sh);
+			}
+			// link underlines above the scrim (halo can't eat them), under the cursor
+			for (rect, start, end) in &link_ranges {
+				let (x, y, w, h) = scissor(*rect, sw, sh);
+				if w == 0 || h == 0 {
+					continue;
+				}
+				pass.set_scissor_rect(x, y, w, h);
+				self.rects.draw(&mut pass, *start..*end);
 			}
 			// cursor above the scrim (halo can't obscure it), still under the crisp text
 			for (rect, start, end) in &cursor_ranges {
