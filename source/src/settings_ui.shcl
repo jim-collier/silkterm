@@ -18,7 +18,7 @@
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
 ## Left to right along the top. Every heading below names one of these.
-tabs: "Appearance", "Font", "Colors", "Window", "Scrolling"
+tabs: "Background", "Text", "Cursor", "Movement", "Themes", "Window"
 
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Layout
@@ -43,6 +43,8 @@ layout:
 	header_height: 42          ## floor for a section heading
 	header_pad: 20             ## heading grows to the UI line height plus this
 	header_gap: 10             ## extra space above a heading that follows a section
+	subgroup_gap: 8            ## extra space above a row that leads a sub-group
+	indent: 16                 ## label offset per sub-group level (controls do not move)
 	label_width: 168           ## floor for the label column
 	label_gap: 14              ## clear space after the longest label
 	revert_width: 22           ## right-edge revert-to-default icon column
@@ -104,14 +106,20 @@ icons:
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
 ## In screen order. A row's NAME is the setting it edits, spelled as the code
-## spells it; `kind: heading` starts a section and says which tab it lands on,
-## and every row after it belongs to that section.
+## spells it; `kind: heading` starts a GROUP and says which tab it lands on,
+## and every row after it belongs to that group.
+##
+## A SUB-GROUP is not declared. It is a row followed by rows at a greater
+## `indent:` - the leader's own label stays put and its members' labels step
+## right, so the run reads as belonging to it. Only labels move; every control
+## keeps its column. A row back at the shallower depth ends the sub-group.
 ##
 ## kind:      heading | toggle | slider | color | text | radio | dropdown | pair
 ## label:     what the row is called on screen
 ## setting:   the config.shcl path the revert arrow comments out
 ## range:     slider low, high
 ## whole:     slider steps in whole numbers
+## indent:    sub-group depth of the label (default 0)
 ## options:   the choices, in order, for radio / dropdown / pair
 ## parts:     the two settings a `pair` row carries, one per option
 ## key:       only when the row's name cannot be the setting's - because a
@@ -121,12 +129,14 @@ icons:
 
 rows:
 
-	## ---------------------------------------------------------------- Appearance
+	## ---------------------------------------------------------------- Background
 
-	Appearance:
+	## A heading whose label is its own tab's title says nothing the tab strip
+	## has not, so it draws nothing - but it still assigns the rows below it.
+	Background:
 		kind: heading
-		label: Appearance
-		tab: Appearance
+		label: Background
+		tab: Background
 
 	Transparency:
 		label: Transparency
@@ -136,12 +146,15 @@ rows:
 	Opacity:
 		label: Opacity
 		kind: slider
-		range: 0, 1
+		range: 0, 100
+		whole: true
+		indent: 1
 		setting: transparency.opacity
 
 	BackdropBlur:
 		label: Blur-behind
 		kind: toggle
+		indent: 1
 		setting: transparency.blur_behind
 		help: "Blur whatever is behind the window, where the desktop can do it."
 
@@ -151,41 +164,48 @@ rows:
 		setting: wallpaper.enabled
 
 	BgImage:
-		label: Background image
+		label: File or folder
 		kind: text
+		indent: 1
 		setting: wallpaper.image
 
-	BgRotate:
-		label: Rotate folder
-		kind: toggle
-		setting: wallpaper.rotate.enabled
-		help: "Treat the path above as a folder and show a different image from it each time."
-
-	BgOpacity:
-		label: Bg image opacity
-		kind: slider
-		range: 0, 1
-		setting: wallpaper.opacity
-		help: "How strongly the wallpaper shows through the terminal background."
-
-	BgBlur:
-		label: Bg image blur
-		kind: slider
-		range: 0, 50
-		setting: wallpaper.blur
-
 	BgFit:
-		label: Default fit
+		label: Fit
 		kind: radio
 		options: "Stretch", "Zoom"
+		indent: 1
 		setting: wallpaper.default_fit
 		help: "What to do when the image and the window are different shapes. An image carrying its own tag overrides this."
 
 	BgHonorXmp:
 		label: Honor tags
 		kind: toggle
+		indent: 1
 		setting: wallpaper.honor_xmp
 		help: "Let an image's own embedded Fit and Anchor tags decide how it is placed."
+
+	BgRotate:
+		label: Rotate folder
+		kind: toggle
+		indent: 1
+		setting: wallpaper.rotate.enabled
+		help: "Treat the path above as a folder and show a different image from it each time."
+
+	BgOpacity:
+		label: Visibility
+		kind: slider
+		range: 0, 100
+		whole: true
+		indent: 1
+		setting: wallpaper.opacity
+		help: "How strongly the wallpaper shows through the terminal background."
+
+	BgBlur:
+		label: Blur
+		kind: slider
+		range: 0, 50
+		indent: 1
+		setting: wallpaper.blur
 
 	BgContrastMask:
 		label: Contrast mask
@@ -194,25 +214,70 @@ rows:
 		help: "Quieten the wallpaper only where it would fight the text, leaving the rest alone."
 
 	BgContrastSize:
-		label: Mask size
+		label: Size
 		kind: slider
-		range: 0, 1
+		range: 0, 100
+		whole: true
+		indent: 1
 		setting: wallpaper.contrast_mask.size
 		help: "How large an area each point of the wallpaper is judged against."
 
 	BgContrastStrength:
-		label: Mask strength
+		label: Strength
 		kind: slider
-		range: 0, 1
+		range: 0, 100
+		whole: true
+		indent: 1
 		setting: wallpaper.contrast_mask.strength
 		help: "How far the mask is allowed to push the wallpaper down."
 
 	BgContrastAuto:
-		label: Mask auto
+		label: Automask mix
 		kind: slider
-		range: 0, 1
+		range: 0, 100
+		whole: true
+		indent: 1
 		setting: wallpaper.contrast_mask.auto
 		help: "How much of the masking is left to the picture itself rather than the setting above."
+
+	## ---------------------------------------------------------------------- Text
+
+	Font:
+		kind: heading
+		label: Font
+		tab: Text
+
+	SystemFont:
+		label: Use system font
+		kind: pair
+		options: "Face", "Size"
+		parts: SystemFont, SystemFontSize
+		setting: font.use_system_family, font.use_system_size
+		help: "Follow the desktop's own monospace font, for the face and the size independently."
+
+	FontFamily:
+		label: Family
+		kind: text
+		setting: font.family
+
+	FontSize:
+		label: Size
+		kind: slider
+		range: 6, 40
+		whole: true
+		setting: font.size
+
+	LineHeight:
+		label: Line height
+		kind: slider
+		range: 0.8, 2
+		setting: font.line_height_scale
+		help: "Space between lines, as a multiple of the font's own."
+
+	TextReadability:
+		kind: heading
+		label: Text readability
+		tab: Text
 
 	TextScrim:
 		label: Text scrim
@@ -226,6 +291,7 @@ rows:
 		kind: slider
 		range: 0, 100
 		whole: true
+		indent: 1
 		setting: text.scrim.strength
 		help: "How solid the halo gets. High values close the gaps between glyphs into a plate."
 
@@ -233,122 +299,104 @@ rows:
 		label: Scrim radius
 		kind: slider
 		range: 0, 20
+		indent: 1
 		setting: text.scrim.radius
 		help: "How far the halo reaches out from the ink."
 
 	ScrimSoftness:
 		label: Softness
 		kind: slider
-		range: 0, 1
+		range: 0, 100
+		whole: true
+		indent: 1
 		setting: text.scrim.softness
 		help: "How gradually the halo fades out towards its edge."
 
 	Outline:
-		label: Text outline
+		label: Outline px
 		kind: slider
 		range: 0, 4
+		indent: 1
 		setting: text.outline
 		help: "A crisp outline drawn hard against the glyphs, on top of the halo."
 
 	ScrimFunction:
-		label: Scrim function
+		label: Function
 		kind: dropdown
 		options: "Distance field", "Distance transform", "Dilate + feather", "Gaussian [ugly]"
+		indent: 1
 		setting: text.scrim.function
 		help: "How the halo's shape is computed from the glyphs."
 
 	ScrimRamp:
-		label: Scrim falloff
+		label: Falloff
 		kind: dropdown
 		options: "Exponential", "Half-normal", "Logarithmic", "Sigmoid", "Linear"
+		indent: 1
 		setting: text.scrim.ramp
 		help: "The curve the halo fades along."
 
+	## -------------------------------------------------------------------- Cursor
+
 	Cursor:
+		kind: heading
+		label: Cursor
+		tab: Cursor
+
+	CursorBlink:
+		label: Blink rate
+		kind: slider
+		range: 100, 3000
+		whole: true
+		setting: cursor.blink_rate_ms
+		help: "One full animation cycle, in milliseconds."
+
+	CursorHeight:
+		label: Height
+		kind: slider
+		range: 1, 100
+		whole: true
+		setting: cursor.size.height
+		help: "Cursor height as a percentage of the cell, measured up from the bottom."
+
+	CursorWidth:
+		label: Width
+		kind: slider
+		range: 1, 100
+		whole: true
+		setting: cursor.size.width
+		help: "Cursor width as a percentage of the cell, measured from the left."
+
+	CursorAnimation:
+		label: Animation
+		kind: dropdown
+		options: "None", "Phase", "Pulse vertical", "Pulse horizontal", "Pulse both"
+		setting: cursor.animation
+
+	CursorResume:
+		label: Inactivity timer
+		kind: slider
+		range: 0.1, 60
+		indent: 1
+		setting: cursor.animation_resume_s
+		help: "Seconds of no typing before the animation picks up again. Output does not wait this out."
+
+	CursorVisibility:
 		## Two independent switches sharing one label; the row itself edits
 		## nothing, so its own name is not a setting.
 		key: none
-		label: Cursor
+		label: Visibility
 		kind: pair
 		options: "Scrim", "Outline"
 		parts: CursorScrim, CursorOutline
 		setting: cursor.scrim, cursor.outline
 
-	## ---------------------------------------------------------------------- Font
+	## ------------------------------------------------------------------ Movement
 
-	Font:
+	Movement:
 		kind: heading
-		label: Font
-		tab: Font
-
-	SystemFont:
-		label: Use system font
-		kind: pair
-		options: "Face", "Size"
-		parts: SystemFont, SystemFontSize
-		setting: font.use_system_family, font.use_system_size
-		help: "Follow the desktop's own monospace font, for the face and the size independently."
-
-	FontFamily:
-		label: Font family
-		kind: text
-		setting: font.family
-
-	FontSize:
-		label: Font size
-		kind: slider
-		range: 6, 40
-		whole: true
-		setting: font.size
-
-	LineHeight:
-		label: Line height
-		kind: slider
-		range: 0.8, 2
-		setting: font.line_height_scale
-		help: "Space between lines, as a multiple of the font's own."
-
-	## -------------------------------------------------------------------- Window
-
-	Window:
-		kind: heading
-		label: Window
-		tab: Window
-
-	Columns:
-		label: Columns
-		kind: slider
-		range: 20, 400
-		whole: true
-		setting: window.columns
-
-	Rows:
-		label: Rows
-		kind: slider
-		range: 6, 120
-		whole: true
-		setting: window.rows
-
-	RememberSize:
-		label: Remember last size
-		kind: toggle
-		setting: window.remember_size
-		help: "Reopen at whatever size the window was last closed at, ignoring the two above."
-
-	Margin:
-		label: Margin
-		kind: slider
-		range: 0, 40
-		whole: true
-		setting: window.margin
-		help: "Clear space between the text and the window edge."
-
-	## ----------------------------------------------------------------- Scrolling
-
-	Scrolling:
-		kind: heading
-		label: Scrolling
-		tab: Scrolling
+		label: Movement
+		tab: Movement
 
 	SmoothScroll:
 		label: Smooth scrolling
@@ -365,6 +413,7 @@ rows:
 		kind: slider
 		range: 1, 100
 		whole: true
+		indent: 1
 		setting: scroll.ease_in_ms
 		help: "How sharply the view leaves a standstill when output starts."
 
@@ -373,6 +422,7 @@ rows:
 		kind: slider
 		range: 1, 100
 		whole: true
+		indent: 1
 		setting: scroll.ramp_up_ms
 		help: "How quickly the view picks up speed once it is moving."
 
@@ -381,6 +431,7 @@ rows:
 		kind: slider
 		range: 1, 100
 		whole: true
+		indent: 1
 		setting: scroll.single_screen_tau_ms
 		help: "Top speed while the output still fits on one screen."
 
@@ -389,6 +440,7 @@ rows:
 		kind: slider
 		range: 1, 100
 		whole: true
+		indent: 1
 		setting: scroll.ramp_down_ms
 		help: "How hard the view brakes as the output runs out."
 
@@ -397,6 +449,7 @@ rows:
 		kind: slider
 		range: 1, 100
 		whole: true
+		indent: 1
 		setting: scroll.ease_out_ms
 		help: "How crisply the view lands on the final line."
 
@@ -414,29 +467,136 @@ rows:
 		setting: scroll.scrollbar.enabled
 
 	ScrollbarThickness:
-		label: Scrollbar width
+		label: Width
 		kind: slider
 		range: 4, 64
 		whole: true
+		indent: 1
 		setting: scroll.scrollbar.thickness
 
 	ScrollbarAutoHide:
 		label: Hide when idle
 		kind: toggle
+		indent: 1
 		setting: scroll.scrollbar.auto_hide
 		help: "Fade the scrollbar out while the view sits still at the bottom."
 
 	ColScrollbarThumb:
-		label: Scrollbar handle
+		label: Handle
 		kind: color
+		indent: 1
 		setting: colors.scrollbar_thumb
 
 	ColScrollbarTrough:
-		label: Scrollbar track
+		label: Track
 		kind: color
+		indent: 1
 		setting: colors.scrollbar_trough
 
-	## --------------------------------------------------------------------- Shell
+	## -------------------------------------------------------------------- Themes
+
+	Colors:
+		kind: heading
+		label: Colors
+		tab: Themes
+
+	ColBg:
+		label: Terminal background
+		kind: color
+		setting: colors.background
+
+	ColFg:
+		label: Foreground
+		kind: color
+		indent: 1
+		setting: colors.foreground
+
+	ColCursor:
+		label: Cursor
+		kind: color
+		indent: 1
+		setting: colors.cursor
+
+	ColDialogBg:
+		label: Dialog background
+		kind: color
+		setting: colors.dialog_background
+
+	ColDialogFg:
+		label: Dialog text
+		kind: color
+		indent: 1
+		setting: colors.dialog_foreground
+
+	ColMenuBg:
+		label: Menu background
+		kind: color
+		indent: 1
+		setting: colors.menu_background
+
+	ColMenuFg:
+		label: Menu text
+		kind: color
+		indent: 1
+		setting: colors.menu_foreground
+
+	ColGutter:
+		label: Gutter
+		kind: color
+		indent: 1
+		setting: colors.gutter
+		help: "Chrome that holds no control, such as the strip these tabs sit on."
+
+	ColHighlight:
+		label: Highlights
+		kind: color
+		indent: 1
+		setting: colors.highlight
+		help: "Marks several things at once - the live pane's ring, slider handles, revert arrows, the default button."
+
+	ColFocus:
+		label: Focus
+		kind: color
+		indent: 1
+		setting: colors.focus
+		help: "Marks only the one control the keyboard is on."
+
+	## -------------------------------------------------------------------- Window
+
+	Window:
+		kind: heading
+		label: Window
+		tab: Window
+
+	RememberSize:
+		label: Remember last size
+		kind: toggle
+		setting: window.remember_size
+		help: "Reopen at whatever size the window was last closed at, ignoring the two below."
+
+	Columns:
+		label: Columns
+		kind: slider
+		range: 20, 400
+		whole: true
+		indent: 1
+		setting: window.columns
+
+	Rows:
+		label: Rows
+		kind: slider
+		range: 6, 120
+		whole: true
+		indent: 1
+		setting: window.rows
+
+	Margin:
+		label: Margin px
+		kind: slider
+		range: 0, 40
+		whole: true
+		setting: window.margin
+		help: "Clear space between the text and the window edge."
 
 	Shell:
 		kind: heading
@@ -454,8 +614,6 @@ rows:
 		setting: shell.copy_on_select
 		help: "Put selected text on the clipboard as soon as it is selected."
 
-	## ---------------------------------------------------------------- Hyperlinks
-
 	Hyperlinks:
 		kind: heading
 		label: Hyperlinks
@@ -463,55 +621,16 @@ rows:
 
 	HyperlinksEnabled:
 		key: Hyperlinks
-		label: Hyperlinks
+		label: Enabled
 		kind: toggle
 		setting: hyperlinks.enabled
 
 	LinkOpenCommand:
 		label: Open command
 		kind: text
+		indent: 1
 		setting: hyperlinks.open_command
 		help: "What to run for a clicked link. Empty hands it to the desktop."
-
-	## -------------------------------------------------------------------- Colors
-
-	Colors:
-		kind: heading
-		label: Colors
-		tab: Colors
-
-	ColBg:
-		label: Background
-		kind: color
-		setting: colors.background
-
-	ColFg:
-		label: Foreground
-		kind: color
-		setting: colors.foreground
-
-	ColCursor:
-		label: Cursor
-		kind: color
-		setting: colors.cursor
-
-	ColHighlight:
-		label: Highlights
-		kind: color
-		setting: colors.highlight
-		help: "Marks several things at once - the live pane's ring, slider handles, revert arrows, the default button."
-
-	ColFocus:
-		label: Focus
-		kind: color
-		setting: colors.focus
-		help: "Marks only the one control the keyboard is on."
-
-	ColGutter:
-		label: Gutter
-		kind: color
-		setting: colors.gutter
-		help: "Chrome that holds no control, such as the strip these tabs sit on."
 
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Greying
@@ -566,3 +685,5 @@ gates:
 	ScrollbarAutoHide: Scrollbar
 	ColScrollbarThumb: Scrollbar
 	ColScrollbarTrough: Scrollbar
+
+	LinkOpenCommand: Hyperlinks

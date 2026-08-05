@@ -23,6 +23,7 @@
 	- [Font fallback stack](#font-fallback-stack)
 	- [Hyperlinks](#hyperlinks)
 	- [Attention colours and dialog chrome](#attention-colours-and-dialog-chrome)
+	- [Groups and sub-groups in the Settings dialog](#groups-and-sub-groups-in-the-settings-dialog)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Environment](#environment)
 	- [Startup and slow external resources](#startup-and-slow-external-resources)
@@ -210,6 +211,16 @@ The built-in stack is last for a reason: the generic monospace query below it is
 - Tabs sit on a recessed **Gutter** strip and stand on the rule that closes it off, the way tabbed interfaces generally read. The current tab is a lighter grey rather than an accent: "you are here" is not the same job as "look at this". Above the rows there is no heading repeating the tab's own name - the strip has said it already.
 
 - Controls whose label does not explain them carry a line of flyover help, and one that is greyed out explains why instead, that being the more urgent question at the time. The text wraps to the panel rather than being clamped to its edge, so neither a longer sentence nor a larger interface font can push it out of view.
+
+### Groups and sub-groups in the Settings dialog
+
+- Settings are organized two ways. A **group** is a titled section with a rule under it and clear space above. A **sub-group** has no title of its own: it is a control followed by the controls that depend on it, whose labels step right so the run reads as belonging to the leader. A master switch and the things it governs is the shape this exists for.
+
+- Only labels move. Every control keeps the one column it shares with every other row, because a settings list is scanned down that column and a control that wandered with its label would break it. A sub-group is therefore free of any bookkeeping: it is read off the indentation rather than declared a second time, so the leader and its members cannot disagree about who belongs to what.
+
+- It was decided that a fraction stored as a decimal is shown as a whole percent. Nobody thinks in 0.35, and the file is a different audience from the dialog - the decimal is what the renderer wants and what a hand-edited config should keep. The two directions are exact inverses, so reverting one lands on its own default rather than a hair off it.
+
+- The tabs follow what a person is looking at rather than what the code calls it: Background, Text, Cursor, Movement, Themes, Window. Settings that describe one subject sit together even when they are implemented in different places - the cursor's shape, its animation and whether it joins the text halo are all "cursor" to the person changing them.
 
 ### Render Loop Sketch
 

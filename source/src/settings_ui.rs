@@ -154,6 +154,17 @@ fn falling_value(slider: f32, min: f32, max: f32) -> f32 {
 // 1 = one line/s, 100 = a hundred lines/s.
 const TAU_MIN: f32 = 10.0;
 const TAU_MAX: f32 = 1000.0;
+// A fraction the config stores as 0..1 reads as a whole percent in the dialog:
+// nobody thinks in 0.35. Only the display moves - the file keeps the decimal,
+// so the two are the same transform in opposite directions and every default
+// comparison happens on the same side of it.
+fn pct(fraction: f32) -> f32 {
+	fraction * 100.0
+}
+fn unpct(percent: f32) -> f32 {
+	percent / 100.0
+}
+
 fn tau_to_speed(tau: f32) -> f32 {
 	falling_slider(tau, TAU_MIN, TAU_MAX)
 }
@@ -458,20 +469,46 @@ impl SettingsDialog {
 		matches!(spec.kind, Kind::Header(label) if tab_titles().get(spec.tab) == Some(&label))
 	}
 
-	// Natural height of one tab's rows (header gaps included). Static so `new`
-	// can size the window before Self exists; row_y must walk rows the same way.
+	// The rows one tab actually draws, in order.
+	fn visible(specs: &[Spec], tab: usize) -> impl Iterator<Item = (usize, &Spec)> {
+		specs
+			.iter()
+			.enumerate()
+			.filter(move |(_, spec)| spec.tab == tab && !Self::header_is_tab_title(spec))
+	}
+
+	// A row leads a sub-group when the row drawn under it is indented further.
+	// Read off the indentation rather than declared a second time, so the two
+	// cannot disagree.
+	fn leads_subgroup(specs: &[Spec], i: usize, tab: usize) -> bool {
+		Self::visible(specs, tab)
+			.find(|(j, _)| *j > i)
+			.is_some_and(|(_, next)| next.indent > specs[i].indent)
+	}
+
+	// Clear space above a drawn row: a group heading is set off from the section
+	// before it, a sub-group's leader from the sub-group before it. Neither
+	// applies at the top of a section, where the separation is already there.
+	fn gap_above(specs: &[Spec], i: usize, tab: usize, prev: Option<&Spec>) -> f32 {
+		let Some(prev) = prev else { return 0.0 };
+		if matches!(specs[i].kind, Kind::Header(_)) {
+			return lay().header_gap;
+		}
+		if matches!(prev.kind, Kind::Header(_)) || !Self::leads_subgroup(specs, i, tab) {
+			return 0.0;
+		}
+		lay().subgroup_gap
+	}
+
+	// Natural height of one tab's rows (gaps included). Static so `new` can size
+	// the window before Self exists; row_y must walk rows the same way.
 	fn tab_content_h(specs: &[Spec], tab: usize, line_h: f32) -> f32 {
 		let mut h = 0.0;
-		let mut first = true;
-		for (i, spec) in specs.iter().enumerate() {
-			if specs[i].tab != tab || Self::header_is_tab_title(&specs[i]) {
-				continue;
-			}
-			if matches!(spec.kind, Kind::Header(_)) && !first {
-				h += lay().header_gap;
-			}
+		let mut prev: Option<&Spec> = None;
+		for (i, spec) in Self::visible(specs, tab) {
+			h += Self::gap_above(specs, i, tab, prev);
 			h += Self::row_h_for(&spec.kind, line_h);
-			first = false;
+			prev = Some(spec);
 		}
 		h
 	}
@@ -1131,21 +1168,20 @@ impl SettingsDialog {
 	// way tab_content_h does so heights and header gaps stay in sync.
 	fn row_y(&self, i: usize) -> f32 {
 		let mut y = self.rows_y0() - self.scroll;
-		let mut first = true;
-		for (j, spec) in self.specs.iter().enumerate() {
-			if self.specs[j].tab != self.tab || Self::header_is_tab_title(&self.specs[j]) {
-				continue;
-			}
-			if matches!(spec.kind, Kind::Header(_)) && !first {
-				y += lay().header_gap;
-			}
+		let mut prev: Option<&Spec> = None;
+		for (j, spec) in Self::visible(self.specs, self.tab) {
+			y += Self::gap_above(self.specs, j, self.tab, prev);
 			if j == i {
 				return y;
 			}
 			y += self.row_h(&spec.kind);
-			first = false;
+			prev = Some(spec);
 		}
 		y
+	}
+	// Left edge of a row's label: its own sub-group depth in from the panel pad.
+	fn label_x(&self, i: usize) -> f32 {
+		self.rect.x + lay().pad + f32::from(self.specs[i].indent) * lay().indent
 	}
 	fn control_x(&self) -> f32 {
 		self.rect.x + lay().pad + self.label_w
@@ -1473,16 +1509,20 @@ impl SettingsDialog {
 	fn get_f32(&self, key: Key) -> f32 {
 		let settings = &self.edited;
 		match key {
-			Key::Opacity => settings.opacity,
-			Key::BgOpacity => settings.wallpaper_opacity,
+			Key::Opacity => pct(settings.opacity),
+			Key::BgOpacity => pct(settings.wallpaper_opacity),
 			Key::BgBlur => settings.wallpaper_blur,
-			Key::BgContrastSize => settings.wallpaper_contrast_mask_size,
-			Key::BgContrastStrength => settings.wallpaper_contrast_mask_strength,
-			Key::BgContrastAuto => settings.wallpaper_contrast_mask_auto,
+			Key::BgContrastSize => pct(settings.wallpaper_contrast_mask_size),
+			Key::BgContrastStrength => pct(settings.wallpaper_contrast_mask_strength),
+			Key::BgContrastAuto => pct(settings.wallpaper_contrast_mask_auto),
 			Key::ScrimRadius => settings.text_scrim_radius,
-			Key::ScrimSoftness => settings.text_scrim_softness,
+			Key::ScrimSoftness => pct(settings.text_scrim_softness),
 			Key::ScrimStrength => settings.text_scrim_strength,
 			Key::Outline => settings.text_outline,
+			Key::CursorBlink => settings.cursor_blink_rate_ms,
+			Key::CursorHeight => settings.cursor_size_height,
+			Key::CursorWidth => settings.cursor_size_width,
+			Key::CursorResume => settings.cursor_animation_resume_s,
 			Key::FontSize => settings.font_size,
 			Key::LineHeight => settings.line_height_scale,
 			Key::Margin => settings.margin,
@@ -1514,16 +1554,20 @@ impl SettingsDialog {
 		}
 		let settings = &mut self.edited;
 		match key {
-			Key::Opacity => settings.opacity = value,
-			Key::BgOpacity => settings.wallpaper_opacity = value,
+			Key::Opacity => settings.opacity = unpct(value),
+			Key::BgOpacity => settings.wallpaper_opacity = unpct(value),
 			Key::BgBlur => settings.wallpaper_blur = value,
-			Key::BgContrastSize => settings.wallpaper_contrast_mask_size = value,
-			Key::BgContrastStrength => settings.wallpaper_contrast_mask_strength = value,
-			Key::BgContrastAuto => settings.wallpaper_contrast_mask_auto = value,
+			Key::BgContrastSize => settings.wallpaper_contrast_mask_size = unpct(value),
+			Key::BgContrastStrength => settings.wallpaper_contrast_mask_strength = unpct(value),
+			Key::BgContrastAuto => settings.wallpaper_contrast_mask_auto = unpct(value),
 			Key::ScrimRadius => settings.text_scrim_radius = value,
-			Key::ScrimSoftness => settings.text_scrim_softness = value,
+			Key::ScrimSoftness => settings.text_scrim_softness = unpct(value),
 			Key::ScrimStrength => settings.text_scrim_strength = value,
 			Key::Outline => settings.text_outline = value,
+			Key::CursorBlink => settings.cursor_blink_rate_ms = value,
+			Key::CursorHeight => settings.cursor_size_height = value,
+			Key::CursorWidth => settings.cursor_size_width = value,
+			Key::CursorResume => settings.cursor_animation_resume_s = value,
 			Key::FontSize => settings.font_size = value,
 			Key::LineHeight => settings.line_height_scale = value,
 			Key::Margin => settings.margin = value,
@@ -1661,6 +1705,13 @@ impl SettingsDialog {
 				"linear" => 4,
 				_ => 0, // exp
 			},
+			Key::CursorAnimation => match self.edited.cursor_animation.as_str() {
+				"phase" => 1,
+				"pulse_horizontal" => 3,
+				"pulse_both" => 4,
+				"none" => 0,
+				_ => 2, // pulse_vertical
+			},
 			_ => 0,
 		}
 	}
@@ -1689,6 +1740,16 @@ impl SettingsDialog {
 					3 => "sigmoid",
 					4 => "linear",
 					_ => "exp",
+				}
+				.to_string();
+			}
+			Key::CursorAnimation => {
+				self.edited.cursor_animation = match idx {
+					0 => "none",
+					1 => "phase",
+					3 => "pulse_horizontal",
+					4 => "pulse_both",
+					_ => "pulse_vertical",
 				}
 				.to_string();
 			}
@@ -1724,6 +1785,10 @@ impl SettingsDialog {
 			Key::ColHighlight => settings.highlight,
 			Key::ColFocus => settings.focus,
 			Key::ColGutter => settings.gutter,
+			Key::ColMenuBg => settings.menu_bg,
+			Key::ColMenuFg => settings.menu_fg,
+			Key::ColDialogBg => settings.dialog_bg,
+			Key::ColDialogFg => settings.dialog_fg,
 			Key::ColScrollbarThumb => settings.scrollbar_thumb,
 			Key::ColScrollbarTrough => settings.scrollbar_trough,
 			_ => [0, 0, 0],
@@ -1738,6 +1803,10 @@ impl SettingsDialog {
 			Key::ColHighlight => settings.highlight = color,
 			Key::ColFocus => settings.focus = color,
 			Key::ColGutter => settings.gutter = color,
+			Key::ColMenuBg => settings.menu_bg = color,
+			Key::ColMenuFg => settings.menu_fg = color,
+			Key::ColDialogBg => settings.dialog_bg = color,
+			Key::ColDialogFg => settings.dialog_fg = color,
 			Key::ColScrollbarThumb => settings.scrollbar_thumb = color,
 			Key::ColScrollbarTrough => settings.scrollbar_trough = color,
 			_ => {}
@@ -1762,6 +1831,10 @@ impl SettingsDialog {
 			Key::ColHighlight => palette.highlight,
 			Key::ColFocus => palette.focus,
 			Key::ColGutter => palette.gutter,
+			Key::ColMenuBg => palette.menu_bg,
+			Key::ColMenuFg => palette.menu_fg,
+			Key::ColDialogBg => palette.dialog_bg,
+			Key::ColDialogFg => palette.dialog_fg,
 			// chrome, not a palette colour - the same neutral under every theme
 			Key::ColScrollbarThumb => config::SCROLLBAR_THUMB_DEF,
 			Key::ColScrollbarTrough => config::SCROLLBAR_TROUGH_DEF,
@@ -1809,6 +1882,10 @@ impl SettingsDialog {
 			| Key::ColHighlight
 			| Key::ColFocus
 			| Key::ColGutter
+			| Key::ColMenuBg
+			| Key::ColMenuFg
+			| Key::ColDialogBg
+			| Key::ColDialogFg
 			| Key::ColScrollbarThumb
 			| Key::ColScrollbarTrough => self.get_col(key) == self.default_col(key),
 			Key::None => true,
@@ -1820,16 +1897,20 @@ impl SettingsDialog {
 	fn default_f32(&self, key: Key) -> f32 {
 		let defaults = &self.defaults;
 		match key {
-			Key::Opacity => defaults.opacity,
-			Key::BgOpacity => defaults.wallpaper_opacity,
+			Key::Opacity => pct(defaults.opacity),
+			Key::BgOpacity => pct(defaults.wallpaper_opacity),
 			Key::BgBlur => defaults.wallpaper_blur,
-			Key::BgContrastSize => defaults.wallpaper_contrast_mask_size,
-			Key::BgContrastStrength => defaults.wallpaper_contrast_mask_strength,
-			Key::BgContrastAuto => defaults.wallpaper_contrast_mask_auto,
+			Key::BgContrastSize => pct(defaults.wallpaper_contrast_mask_size),
+			Key::BgContrastStrength => pct(defaults.wallpaper_contrast_mask_strength),
+			Key::BgContrastAuto => pct(defaults.wallpaper_contrast_mask_auto),
 			Key::ScrimRadius => defaults.text_scrim_radius,
-			Key::ScrimSoftness => defaults.text_scrim_softness,
+			Key::ScrimSoftness => pct(defaults.text_scrim_softness),
 			Key::ScrimStrength => defaults.text_scrim_strength,
 			Key::Outline => defaults.text_outline,
+			Key::CursorBlink => defaults.cursor_blink_rate_ms,
+			Key::CursorHeight => defaults.cursor_size_height,
+			Key::CursorWidth => defaults.cursor_size_width,
+			Key::CursorResume => defaults.cursor_animation_resume_s,
 			Key::FontSize => defaults.font_size,
 			Key::LineHeight => defaults.line_height_scale,
 			Key::Margin => defaults.margin,
@@ -1911,6 +1992,10 @@ impl SettingsDialog {
 			| Key::ColHighlight
 			| Key::ColFocus
 			| Key::ColGutter
+			| Key::ColMenuBg
+			| Key::ColMenuFg
+			| Key::ColDialogBg
+			| Key::ColDialogFg
 			| Key::ColScrollbarThumb
 			| Key::ColScrollbarTrough => {
 				let color = self.default_col(key);
@@ -3189,7 +3274,7 @@ impl SettingsDialog {
 			out.push(TextItem {
 				color: label_color,
 				clip: Some(vp),
-				..mk(self.specs[i].label.into(), self.rect.x + lay().pad, ty)
+				..mk(self.specs[i].label.into(), self.label_x(i), ty)
 			});
 			// revert-to-default icon: bright + clickable when off-default, dim when at it
 			let revert_rect = self.revert_box(i);
@@ -3447,10 +3532,14 @@ impl SettingsDialog {
 // size never truncates).
 pub fn chrome_widths(text: &mut crate::text::TextCtx) -> (f32, f32, Vec<f32>) {
 	let attrs = crate::text::ui_attrs();
+	// an indented label starts further right, so the column has to clear the
+	// deepest one plus its own indent - not merely the longest string
 	let label_w = ui()
 		.specs
 		.iter()
-		.map(|spec| text.measure_ui_text(spec.label, &attrs))
+		.map(|spec| {
+			text.measure_ui_text(spec.label, &attrs) + f32::from(spec.indent) * lay().indent
+		})
 		.fold(0.0f32, f32::max)
 		+ lay().label_gap;
 	let btn_w = ["Cancel", "Apply", "OK"]
@@ -3590,6 +3679,202 @@ mod tests {
 		assert!(d.rows_y0() > gut.y + gut.h, "rows begin below that line");
 	}
 
+	// The whole point of a sub-group: the label steps right, the control does
+	// not. A control that moved with its label would break the one column every
+	// row shares, which is what makes a settings list scannable.
+	#[test]
+	fn a_sub_group_indents_labels_and_nothing_else() {
+		let mut d = mk_dialog(4000.0);
+		let mut seen_indented = false;
+		for tab in 0..tab_titles().len() {
+			d.tab = tab;
+			let rows: Vec<usize> = SettingsDialog::visible(d.specs, tab)
+				.map(|(i, _)| i)
+				.collect();
+			for &i in &rows {
+				let indent = f32::from(d.specs[i].indent);
+				seen_indented |= indent > 0.0;
+				assert!(
+					(d.label_x(i) - (d.rect.x + super::lay().pad + indent * super::lay().indent))
+						.abs() < 0.01
+				);
+				assert!(
+					d.label_x(i) >= d.rect.x + super::lay().pad,
+					"a label never steps left of the panel pad"
+				);
+				// every control on the tab starts in the same column
+				assert!((d.control_x() - (d.rect.x + super::lay().pad + d.label_w)).abs() < 0.01);
+				assert!(
+					d.label_x(i) + super::lay().indent <= d.control_x(),
+					"the label column still clears the deepest indent"
+				);
+			}
+			// a member is never deeper than one step below its leader
+			for pair in rows.windows(2) {
+				let (prev, next) = (d.specs[pair[0]].indent, d.specs[pair[1]].indent);
+				assert!(next <= prev + 1, "sub-group depth jumps more than one step");
+			}
+		}
+		assert!(seen_indented, "no sub-groups declared at all");
+	}
+
+	// A sub-group's leader is set off from whatever sat above it, the way a
+	// heading is - but its own members are not, or the run would not read as one.
+	#[test]
+	fn a_sub_group_leader_gets_the_gap_and_its_members_do_not() {
+		let d = mk_dialog(4000.0);
+		let mut leaders = 0;
+		for tab in 0..tab_titles().len() {
+			let rows: Vec<usize> = SettingsDialog::visible(d.specs, tab)
+				.map(|(i, _)| i)
+				.collect();
+			for (n, &i) in rows.iter().enumerate() {
+				let prev = n.checked_sub(1).map(|k| &d.specs[rows[k]]);
+				let gap = SettingsDialog::gap_above(d.specs, i, tab, prev);
+				let leads = SettingsDialog::leads_subgroup(d.specs, i, tab);
+				let after_header = prev.is_some_and(|p| matches!(p.kind, super::Kind::Header(_)));
+				if matches!(d.specs[i].kind, super::Kind::Header(_)) {
+					continue; // headings carry their own gap, tested elsewhere
+				}
+				if leads && prev.is_some() && !after_header {
+					leaders += 1;
+					assert_eq!(gap, super::lay().subgroup_gap, "{}", d.specs[i].label);
+				} else {
+					assert_eq!(gap, 0.0, "{}", d.specs[i].label);
+				}
+			}
+		}
+		assert!(leaders >= 3, "expected several sub-groups, saw {leaders}");
+	}
+
+	// Change whatever a row edits, whichever kind it is, to something it is not.
+	fn nudge(d: &mut SettingsDialog, i: usize, key: Key) {
+		match d.specs[i].kind {
+			super::Kind::Slider { min, max, int } => {
+				let far = if (d.get_f32(key) - min).abs() < (max - d.get_f32(key)).abs() {
+					max
+				} else {
+					min
+				};
+				d.set_f32(key, if int { far.round() } else { far });
+			}
+			super::Kind::Color => {
+				let c = d.get_col(key);
+				d.set_col(key, [c[0] ^ 0x7f, c[1] ^ 0x7f, c[2] ^ 0x7f]);
+			}
+			super::Kind::Text => d.set_text(key, "silkterm-roundtrip"),
+			super::Kind::Toggle | super::Kind::Dual { .. } => {
+				let was = d.get_toggle(key);
+				d.set_toggle(key, !was);
+			}
+			super::Kind::Radio(opts) | super::Kind::Dropdown(opts) => {
+				let next = (d.get_radio(key) + 1) % opts.len();
+				d.set_radio(key, next);
+			}
+			super::Kind::Header(_) => {}
+		}
+	}
+	// What the row shows, whichever kind it is.
+	fn row_value(d: &SettingsDialog, i: usize, key: Key) -> String {
+		match d.specs[i].kind {
+			super::Kind::Slider { .. } => format!("{}", d.get_f32(key)),
+			super::Kind::Color => format!("{:?}", d.get_col(key)),
+			super::Kind::Text => d.get_text(key),
+			super::Kind::Toggle | super::Kind::Dual { .. } => format!("{}", d.get_toggle(key)),
+			super::Kind::Radio(_) | super::Kind::Dropdown(_) => format!("{}", d.get_radio(key)),
+			super::Kind::Header(_) => String::new(),
+		}
+	}
+
+	// A row whose setting the writer never writes is a dead end: the change
+	// applies for the session and is gone at relaunch, with nothing anywhere to
+	// say so. Both scrollbar colours did exactly that from the day the bar
+	// shipped, so the check is generic - every row, saved and read back.
+	#[test]
+	fn every_row_survives_a_save_and_a_relaunch() {
+		let _guard = config::test_config_lock();
+		let _ = config::settings(); // memoize before the override goes in
+		let dir = std::env::temp_dir().join(format!("silkterm_rows_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let path = dir.join("config.shcl");
+		let _ = std::fs::write(&path, "");
+		config::set_config_override(path.clone());
+		config::reload_from_disk(); // lets backfill lay the template down once
+		let pristine = std::fs::read_to_string(&path).unwrap();
+
+		let mut d = mk_dialog(4000.0);
+		let mut checked = 0;
+		for i in 0..d.specs.len() {
+			let keys: Vec<Key> = match d.specs[i].kind {
+				super::Kind::Header(_) => vec![],
+				super::Kind::Dual { keys, .. } => keys.to_vec(),
+				_ => vec![d.specs[i].key],
+			};
+			for key in keys {
+				let _ = std::fs::write(&path, &pristine);
+				let base = config::reload_from_disk();
+				d.orig = base.clone();
+				d.edited = base.clone();
+				let before = row_value(&d, i, key);
+				nudge(&mut d, i, key);
+				let want = row_value(&d, i, key);
+				assert_ne!(before, want, "{} did not budge", d.specs[i].label);
+				assert!(
+					config::persist(&base, &d.edited),
+					"{} was not written at all",
+					d.specs[i].label
+				);
+				let mut back = mk_dialog(4000.0);
+				back.edited = config::reload_from_disk();
+				assert_eq!(
+					row_value(&back, i, key),
+					want,
+					"{} is lost on relaunch",
+					d.specs[i].label
+				);
+				checked += 1;
+			}
+		}
+		assert!(checked > 40, "only {checked} rows checked");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// A 0..1 fraction reads as a whole percent and is stored as the decimal. The
+	// two directions have to be exact inverses: a revert that landed a hair off
+	// its own default would leave the arrow lit with nothing to undo.
+	#[test]
+	fn a_fraction_reads_as_a_whole_percent_and_stores_as_a_decimal() {
+		let mut d = mk_dialog(4000.0);
+		for key in [
+			Key::Opacity,
+			Key::BgOpacity,
+			Key::ScrimSoftness,
+			Key::BgContrastSize,
+			Key::BgContrastStrength,
+			Key::BgContrastAuto,
+		] {
+			let spec = d.specs.iter().find(|s| s.key == key).unwrap();
+			let super::Kind::Slider { min, max, int } = spec.kind else {
+				panic!("{} is not a slider", spec.label)
+			};
+			assert!(
+				min == 0.0 && max == 100.0 && int,
+				"{} must run 0..100 in whole steps",
+				spec.label
+			);
+			d.set_f32(key, 35.0);
+			assert_eq!(d.get_f32(key), 35.0, "{}", spec.label);
+			d.revert(key);
+			assert!(d.is_default(key), "{}", spec.label);
+			assert_eq!(d.get_f32(key), d.default_f32(key), "{}", spec.label);
+		}
+		// and the decimal really is what reaches the settings the app runs on
+		d.set_f32(Key::Opacity, 35.0);
+		assert_eq!(d.edited.opacity, 0.35);
+		d.set_f32(Key::BgContrastSize, 100.0);
+		assert_eq!(d.edited.wallpaper_contrast_mask_size, 1.0);
+	}
+
 	// A heading that only repeats its tab's title is gone from the layout
 	// entirely - not merely hidden, or it would leave a gap where it used to be.
 	#[test]
@@ -3657,7 +3942,7 @@ mod tests {
 	fn keyboard_focus_walks_controls_then_buttons() {
 		use super::Focus;
 		let mut d = mk_dialog(2000.0);
-		d.tab = 4; // Scrolling: the smooth-scroll master toggle, then two sliders
+		d.tab = 3; // Movement: the smooth-scroll master toggle, then two sliders
 		let f = d.focusables();
 		assert!(f.len() >= 3, "scrolling tab has focusable rows");
 		d.set_mods(false, false, false);
@@ -3693,7 +3978,9 @@ mod tests {
 		let i = d
 			.specs
 			.iter()
-			.position(|s| matches!(s.kind, Kind::Dual { .. }))
+			.position(
+				|s| matches!(s.kind, Kind::Dual { keys, .. } if keys[0] == super::Key::CursorScrim),
+			)
 			.unwrap();
 		d.tab = d.specs[i].tab;
 		// enabled prerequisites: scrim on, an outline present
@@ -3879,13 +4166,13 @@ mod tests {
 	fn dropdown_mouse_open_and_pick() {
 		use super::Key;
 		let mut d = mk_dialog(2000.0);
-		d.tab = 0;
 		d.edited.text_scrim = true;
 		let i = d
 			.specs
 			.iter()
 			.position(|s| s.key == Key::ScrimRamp)
 			.unwrap();
+		d.tab = d.specs[i].tab;
 		let n = d.dd_options(i).len();
 		let mut m = |_: &str| 8.0;
 		// click the collapsed box opens the popup
@@ -4216,20 +4503,35 @@ mod tests {
 	fn slider_field_typing_starts_fresh_and_rejects_letters() {
 		use super::{Focus, Key};
 		let mut d = mk_dialog(2000.0);
-		// Opacity: a float slider on Appearance, range 0..1
-		let i = d.specs.iter().position(|s| s.key == Key::Opacity).unwrap();
+		// Line height: a slider that really is a decimal, so the dot is legal
+		let i = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::LineHeight)
+			.unwrap();
 		d.tab = d.specs[i].tab;
-		d.edited.transparent_background = true; // opacity enabled
 		d.focus = Some(Focus::Row(i, 0));
 		// typing a digit into the focused (unopened) slider starts a fresh number
-		d.char_input('0');
+		d.char_input('1');
 		d.char_input('.');
-		d.char_input('5');
-		assert_eq!(d.edited.opacity, 0.5);
-		// a second '.' and any letter are ignored (buffer stays "0.5")
+		d.char_input('2');
+		assert_eq!(d.edited.line_height_scale, 1.2);
+		// a second '.' and any letter are ignored (buffer stays "1.2")
 		d.char_input('.');
 		d.char_input('x');
-		assert_eq!(d.edit.as_ref().unwrap().buf, "0.5");
+		assert_eq!(d.edit.as_ref().unwrap().buf, "1.2");
+		// a fraction shown as a whole percent takes no dot at all - it is an
+		// integer field, and 0.5 typed into one would read as half a percent
+		d.commit_edit();
+		let j = d.specs.iter().position(|s| s.key == Key::Opacity).unwrap();
+		d.tab = d.specs[j].tab;
+		d.edited.transparent_background = true; // opacity enabled
+		d.focus = Some(Focus::Row(j, 0));
+		d.char_input('5');
+		d.char_input('.');
+		d.char_input('0');
+		assert_eq!(d.edit.as_ref().unwrap().buf, "50");
+		assert_eq!(d.edited.opacity, 0.5);
 	}
 
 	#[test]
@@ -4343,14 +4645,17 @@ mod tests {
 		assert_eq!(d.edit.as_ref().unwrap().buf, "#123456");
 		// slider field: digits/dot only, single dot
 		let mut d = mk_dialog(4000.0);
-		let i = d.specs.iter().position(|s| s.key == Key::Opacity).unwrap();
+		let i = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::LineHeight)
+			.unwrap();
 		d.tab = d.specs[i].tab;
-		d.edited.transparent_background = true;
 		d.focus = Some(Focus::Row(i, 0));
 		d.key_space();
 		d.select_all();
-		d.insert_str("0.7.5x");
-		assert_eq!(d.edit.as_ref().unwrap().buf, "0.75");
+		d.insert_str("1.2.5x");
+		assert_eq!(d.edit.as_ref().unwrap().buf, "1.25");
 	}
 
 	#[test]

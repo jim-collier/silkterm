@@ -717,6 +717,21 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.cursor_outline != orig.cursor_outline {
 		doc.set_bool("cursor.outline", s.cursor_outline);
 	}
+	if s.cursor_size_height != orig.cursor_size_height {
+		doc.set_float("cursor.size.height", r(s.cursor_size_height));
+	}
+	if s.cursor_size_width != orig.cursor_size_width {
+		doc.set_float("cursor.size.width", r(s.cursor_size_width));
+	}
+	if s.cursor_animation != orig.cursor_animation {
+		doc.set_string("cursor.animation", &s.cursor_animation);
+	}
+	if s.cursor_animation_resume_s != orig.cursor_animation_resume_s {
+		doc.set_float("cursor.animation_resume_s", r(s.cursor_animation_resume_s));
+	}
+	if s.cursor_blink_rate_ms != orig.cursor_blink_rate_ms {
+		doc.set_float("cursor.blink_rate_ms", r(s.cursor_blink_rate_ms));
+	}
 	if s.columns != orig.columns {
 		doc.set_int("window.columns", s.columns as i64);
 	}
@@ -779,6 +794,18 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	set_color("highlight", s.highlight, orig.highlight);
 	set_color("focus", s.focus, orig.focus);
 	set_color("gutter", s.gutter, orig.gutter);
+	set_color("menu_background", s.menu_bg, orig.menu_bg);
+	set_color("menu_foreground", s.menu_fg, orig.menu_fg);
+	set_color("dialog_background", s.dialog_bg, orig.dialog_bg);
+	set_color("dialog_foreground", s.dialog_fg, orig.dialog_fg);
+	// the two scrollbar colours have had dialog rows since the bar shipped but
+	// were never written back, so an edit lasted only as long as the session
+	set_color("scrollbar_thumb", s.scrollbar_thumb, orig.scrollbar_thumb);
+	set_color(
+		"scrollbar_trough",
+		s.scrollbar_trough,
+		orig.scrollbar_trough,
+	);
 
 	write_doc(&path, &doc);
 	true
@@ -2342,6 +2369,16 @@ fn anchor_for(
 // Set by `--config PATH` before any settings are read; overrides the default
 // location for this process.
 static CONFIG_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+// Serializes the tests that install a config-path override. The override is
+// process-global, so two of them running at once would each read the other's
+// file - and they live in different modules, so the guard has to live here.
+#[cfg(test)]
+pub fn test_config_lock() -> std::sync::MutexGuard<'static, ()> {
+	static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+	LOCK.lock()
+		.unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 pub fn set_config_override(path: PathBuf) {
 	let _ = CONFIG_OVERRIDE.set(path);
 }
@@ -2866,6 +2903,7 @@ mod tests {
 		// thread initializing settings() after the override would load() - an
 		// in-place migrate/backfill REWRITE of our temp file - racing our own
 		// read below (parallel-suite flake: truncated read -> defaults).
+		let _guard = super::test_config_lock();
 		let _ = settings();
 		let dir = std::env::temp_dir().join(format!("silkterm_cfgsave_{}", std::process::id()));
 		let _ = std::fs::create_dir_all(&dir);
