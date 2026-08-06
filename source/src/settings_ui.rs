@@ -2181,10 +2181,15 @@ impl SettingsDialog {
 	}
 	fn get_toggle(&self, key: Key) -> bool {
 		match key {
-			// shows the EFFECTIVE state: unchecked on Windows even when the config
-			// value is true, since the toggle is inert there (no OS monospace font)
-			Key::SystemFont => config::system_font_face_active(&self.edited),
-			Key::SystemFontSize => config::system_font_size_active(&self.edited),
+			// These two read what is STORED, like every other row. Where the desktop
+			// names no font to follow they are grayed and the flyover says why -
+			// that is how the dialog says "inert" everywhere else. Showing them
+			// unchecked instead misreported the setting: the box sat unchecked
+			// beside a dimmed revert arrow, claiming unchecked was the default when
+			// the default is on. `gate_ok` still asks the EFFECTIVE state, so the
+			// family field it overrides stays editable.
+			Key::SystemFont => self.edited.use_system_font,
+			Key::SystemFontSize => self.edited.use_system_font_size,
 			Key::Transparency => self.edited.transparent_background,
 			Key::BackdropBlur => self.edited.transparent_background_blur,
 			Key::TextScrim => self.edited.text_scrim,
@@ -4574,18 +4579,6 @@ mod tests {
 		assert!(leaders >= 3, "expected several sub-groups, saw {leaders}");
 	}
 
-	// The two system-font switches show their EFFECTIVE state, so on a desktop
-	// that names no font to follow they read false whatever is stored - which
-	// would leave the round trip below unable to see the value it just wrote.
-	// Persistence is the question here, so read what is stored.
-	fn toggle_of(d: &SettingsDialog, key: Key) -> bool {
-		match key {
-			Key::SystemFont => d.edited.use_system_font,
-			Key::SystemFontSize => d.edited.use_system_font_size,
-			_ => d.get_toggle(key),
-		}
-	}
-
 	// Change whatever a row edits, whichever kind it is, to something it is not.
 	fn nudge(d: &mut SettingsDialog, i: usize, key: Key) {
 		match d.specs[i].kind {
@@ -4603,7 +4596,7 @@ mod tests {
 			}
 			super::Kind::Text => d.set_text(key, "silkterm-roundtrip"),
 			super::Kind::Toggle | super::Kind::Dual { .. } => {
-				let was = toggle_of(d, key);
+				let was = d.get_toggle(key);
 				d.set_toggle(key, !was);
 			}
 			super::Kind::Radio(_) | super::Kind::Dropdown(_) => {
@@ -4625,7 +4618,7 @@ mod tests {
 			super::Kind::Slider { .. } => format!("{}", d.get_f32(key)),
 			super::Kind::Color => format!("{:?}", d.get_col(key)),
 			super::Kind::Text => d.get_text(key),
-			super::Kind::Toggle | super::Kind::Dual { .. } => format!("{}", toggle_of(d, key)),
+			super::Kind::Toggle | super::Kind::Dual { .. } => format!("{}", d.get_toggle(key)),
 			super::Kind::Radio(_) | super::Kind::Dropdown(_) => format!("{}", d.get_radio(key)),
 			super::Kind::Buttons(_) | super::Kind::Header(_) => String::new(),
 		}
@@ -4875,9 +4868,21 @@ mod tests {
 		let bx = d.checkbox(i);
 		if crate::sysfont::monospace().family.is_none() {
 			assert!(d.disabled(Key::SystemFont));
-			// checkbox shows the effective (off) state despite the config value
+			// Grayed is what says "inert"; the box still shows what is stored, both
+			// ways. It used to show off whatever was stored, which put an unchecked
+			// box beside an at-default revert arrow - the two disagreeing about a
+			// default that is on.
 			d.edited.use_system_font = true;
+			assert!(d.get_toggle(Key::SystemFont));
+			d.edited.use_system_font = false;
 			assert!(!d.get_toggle(Key::SystemFont));
+			d.edited.use_system_font = d.defaults.use_system_font;
+			assert_eq!(
+				d.get_toggle(Key::SystemFont),
+				d.defaults.use_system_font,
+				"the box must show the default it reports"
+			);
+			assert!(d.is_default(Key::SystemFont));
 			// clicking the grayed checkbox must not flip the setting
 			let mut measure = |s: &str| s.len() as f32;
 			d.mouse_down(bx.x + 2.0, bx.y + 2.0, &mut measure);
