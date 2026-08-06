@@ -501,6 +501,11 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - Bugs
 
+- ✅ The settings round-trip check failed on Windows.
+	- It reads every row back through the dialog. The two system-font switches deliberately show whether the desktop has a font to follow at all, rather than what is stored - and Windows names no monospace family, so on that platform the switch reads the same however it is set. The check could not see the value it had just saved.
+	- It now reads what those two rows store, which is the question it exists to answer. The switches are unchanged and still show the effective state.
+	- The two rows are genuinely covered on Windows now, where before they could not be checked at all.
+
 - ✅ The demo recording had stopped reflecting the app, in three ways at once - UAT.
 	- The recording pinned a halo and an outline that no build had used for weeks, so it advertised a look that had been replaced. Those values are no longer pinned; the recording now takes whatever ships, and the scroll feel already worked that way.
 	- Every settings change made during a scene had quietly stopped happening. The scenes rewrite a setting and reload, matching the line by name - but the app rewrites that file into nested sections the first time it saves, so the name stopped matching anything partway through the run. The cursor never changed shape and the split-screen scene never stilled its cursors. Lines are now found by their full setting path, and a change that finds no line stops the recording instead of passing silently.
