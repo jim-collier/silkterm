@@ -4574,6 +4574,18 @@ mod tests {
 		assert!(leaders >= 3, "expected several sub-groups, saw {leaders}");
 	}
 
+	// The two system-font switches show their EFFECTIVE state, so on a desktop
+	// that names no font to follow they read false whatever is stored - which
+	// would leave the round trip below unable to see the value it just wrote.
+	// Persistence is the question here, so read what is stored.
+	fn toggle_of(d: &SettingsDialog, key: Key) -> bool {
+		match key {
+			Key::SystemFont => d.edited.use_system_font,
+			Key::SystemFontSize => d.edited.use_system_font_size,
+			_ => d.get_toggle(key),
+		}
+	}
+
 	// Change whatever a row edits, whichever kind it is, to something it is not.
 	fn nudge(d: &mut SettingsDialog, i: usize, key: Key) {
 		match d.specs[i].kind {
@@ -4591,7 +4603,7 @@ mod tests {
 			}
 			super::Kind::Text => d.set_text(key, "silkterm-roundtrip"),
 			super::Kind::Toggle | super::Kind::Dual { .. } => {
-				let was = d.get_toggle(key);
+				let was = toggle_of(d, key);
 				d.set_toggle(key, !was);
 			}
 			super::Kind::Radio(_) | super::Kind::Dropdown(_) => {
@@ -4613,7 +4625,7 @@ mod tests {
 			super::Kind::Slider { .. } => format!("{}", d.get_f32(key)),
 			super::Kind::Color => format!("{:?}", d.get_col(key)),
 			super::Kind::Text => d.get_text(key),
-			super::Kind::Toggle | super::Kind::Dual { .. } => format!("{}", d.get_toggle(key)),
+			super::Kind::Toggle | super::Kind::Dual { .. } => format!("{}", toggle_of(d, key)),
 			super::Kind::Radio(_) | super::Kind::Dropdown(_) => format!("{}", d.get_radio(key)),
 			super::Kind::Buttons(_) | super::Kind::Header(_) => String::new(),
 		}
