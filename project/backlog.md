@@ -501,10 +501,11 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - Bugs
 
-- ✅ The settings round-trip check failed on Windows.
-	- It reads every row back through the dialog. The two system-font switches deliberately show whether the desktop has a font to follow at all, rather than what is stored - and Windows names no monospace family, so on that platform the switch reads the same however it is set. The check could not see the value it had just saved.
-	- It now reads what those two rows store, which is the question it exists to answer. The switches are unchanged and still show the effective state.
-	- The two rows are genuinely covered on Windows now, where before they could not be checked at all.
+- ✅ The two system-font switches showed off wherever the desktop names no font to follow, whatever was stored.
+	- Everywhere else in the dialog a control that cannot act is grayed and its flyover says why, while the control itself still shows its value. These two were grayed AND forced to read off - the only rows in the dialog whose displayed state was not the stored one.
+	- That put an unchecked box beside a revert arrow reporting the row as already at its default, when the default is on. The two disagreed about the same setting.
+	- They now show what is stored, both ways, and graying alone carries the message. The field they override stays editable exactly as before, since that follows the effective state rather than the switch.
+	- Surfaced as a failing check on Windows: it reads every row back through the dialog, so on the one platform where the masking bites it could not see the value it had just saved. That row is genuinely covered there now, where before it could not be checked at all.
 
 - ✅ The demo recording had stopped reflecting the app, in three ways at once - UAT.
 	- The recording pinned a halo and an outline that no build had used for weeks, so it advertised a look that had been replaced. Those values are no longer pinned; the recording now takes whatever ships, and the scroll feel already worked that way.
