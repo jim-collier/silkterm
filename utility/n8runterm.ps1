@@ -12,6 +12,10 @@
 ##		  never blocks the copy.
 ##		- Each run, in order: delete idle builds over 7 days old; refresh each source
 ##		  whose build is newer than what we already hold; then pick one to run.
+##		- A source reached over the network gets a hard wait bound at every step, so
+##		  an off host or a link that drops mid-copy costs seconds rather than the
+##		  redirector's own timeout. A copy lands on a temp name and is renamed into
+##		  place, so one we abandon can't leave a half-written build behind.
 ##		- Which to run: the newest build by stamp. If that newest came from b23
 ##		  (gnulwi) run it. Otherwise it's a local Windows build - if the newest gnuwwi
 ##		  and msvcwwi are within 15 min of each other, flip a coin between them, else
@@ -103,6 +107,18 @@ $MaxAgeDays = 7
 ## on which to run instead of always taking whichever finished last.
 $CoinWindowMin = 15
 
+## How long to wait on a source reached over the network before giving up on it.
+## Measured here against a host that resolves but doesn't answer: a single stat of
+## the UNC path sits for 21s on TCP retries alone, and the copy that follows has no
+## bound at all - which a shortcut click reads as a hang. So each remote step gets
+## its own wall-clock limit, all of them under the redirector's: a TCP probe of the
+## host first (a dead host is the common case, and it settles in one round trip),
+## then a bounded stat, then a bounded copy. The copy gets the most - it moves the
+## whole binary, and a slow link is not the same thing as a dead one.
+$NetProbeTimeoutMs = 2000
+$NetStatTimeoutSec = 5
+$NetCopyTimeoutSec = 20
+
 ## Stamp format shared by the copy name and every date comparison below.
 $StampFormat = "yyyyMMdd-HHmmss"
 
@@ -168,6 +184,11 @@ function fDeleteOldBuilds {
 		}
 
 	if ($deleted) { fNote "deleted $deleted build(s) older than $MaxAgeDays days" }
+
+	## Leftovers from a copy that was abandoned or interrupted (see fCopyIfNewer).
+	## Best-effort: one still held open by a dying copy just waits for the next run.
+	Get-ChildItem -LiteralPath $TargetDir -File -Filter "${DogfoodPrefix}_*.exe.partial" -ErrorAction SilentlyContinue |
+		ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
 }
 
 
@@ -180,13 +201,34 @@ function fCopyIfNewer {
 		[Parameter(Mandatory)][string]$Tag
 	)
 
-	$src = Join-Path $SourceDir $ExeName
-	if (-not (Test-Path -LiteralPath $src)) {
+	$src    = Join-Path $SourceDir $ExeName
+	$remote = fIsUncPath $src
+
+	## A host that's simply off is the usual reason a launch stalls, so settle that
+	## first - the probe answers in one round trip where the redirector would sit
+	## through its own retries.
+	if ($remote -and -not (fUncHostReachable $src)) {
+		fWarn "$Tag source host not answering: $src"
+		return
+	}
+
+	$stat = fRunBounded -Remote:$remote -TimeoutSec $NetStatTimeoutSec -Arguments @($src) -Script {
+		param($SrcPath)
+		$item = Get-Item -LiteralPath $SrcPath -ErrorAction SilentlyContinue
+		if ($item) { $item.LastWriteTime } else { $null }
+	}
+	if (-not $stat.Done) {
+		fWarn "$Tag source stopped answering; gave up after $NetStatTimeoutSec s: $src"
+		return
+	}
+
+	$mtime = $stat.Value | Select-Object -First 1
+	if (-not $mtime) {
 		fWarn "$Tag source not reachable: $src"
 		return
 	}
 
-	$stamp     = (Get-Item -LiteralPath $src).LastWriteTime.ToString($StampFormat)
+	$stamp     = ([datetime]$mtime).ToString($StampFormat)
 	$stampTime = fParseStamp $stamp
 	$existing  = fNewestOfTag $Tag
 
@@ -201,11 +243,38 @@ function fCopyIfNewer {
 		return
 	}
 
+	## Copy to a temp name and rename it into place. A copy we abandon mid-transfer
+	## (or one a dropped link kills) otherwise leaves a half-written .exe that later
+	## reads as a perfectly good build and gets launched. '.partial' matches neither
+	## the selection nor the age-prune name spec, so a leftover is inert either way;
+	## fDeleteOldBuilds sweeps them.
+	$tmp = "$dst.partial"
+	Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+
+	$copy = fRunBounded -Remote:$remote -TimeoutSec $NetCopyTimeoutSec -Arguments @($src, $tmp) -Script {
+		param($SrcPath, $TmpPath)
+		Copy-Item -LiteralPath $SrcPath -Destination $TmpPath -Force -ErrorAction Stop
+	}
+
+	if (-not $copy.Done) {
+		## The abandoned copy may still hold the temp file open, so this delete is
+		## best-effort - the next run's sweep gets what's left.
+		Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+		fWarn -Gui "gave up copying $Tag build after $NetCopyTimeoutSec s (source stopped answering)"
+		return
+	}
+	if ($copy.Error) {
+		Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+		fWarn -Gui "couldn't copy $Tag build ($($copy.Error))"
+		return
+	}
+
 	try {
-		Copy-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
+		Move-Item -LiteralPath $tmp -Destination $dst -Force -ErrorAction Stop
 		fNote "copied $Tag -> $(Split-Path $dst -Leaf)"
 	} catch {
-		fWarn -Gui "couldn't copy $Tag build ($($_.Exception.Message))"
+		Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+		fWarn -Gui "couldn't place $Tag build ($($_.Exception.Message))"
 	}
 }
 
@@ -312,6 +381,88 @@ function fRemoveIfIdle {
 	} catch {
 		fNote "kept (locked): $($FileInfo.Name)"
 		return $false
+	}
+}
+
+
+## Is this a UNC path (\\host\share\...)? Only those get the bounded treatment
+## below; a local path that stalls is a broken disk, not a network we can outwait.
+## A mapped drive letter reads as local here - map by UNC to keep the bound.
+function fIsUncPath {
+	param([Parameter(Mandatory)][string]$Path)
+	return ($Path -like "\\*")
+}
+
+
+## Is a UNC path's host answering on SMB (port 445) within $NetProbeTimeoutMs? A
+## TCP connect settles a dead host in one round trip, where the redirector retries
+## for ~21s first. Cached per host, so three sources on one host cost one probe.
+## Anything unexpected reads as reachable - the bounded calls are the real backstop
+## and a probe must never be the reason a live source is skipped.
+function fUncHostReachable {
+	param([Parameter(Mandatory)][string]$Path)
+
+	if ($Path -notmatch '^\\\\(?<host>[^\\]+)\\') { return $true }
+	$hostName = $Matches.host
+	if ($script:NetProbed.ContainsKey($hostName)) { return $script:NetProbed[$hostName] }
+
+	$reachable = $true
+	try {
+		$client = New-Object System.Net.Sockets.TcpClient
+		try {
+			$pending   = $client.BeginConnect($hostName, 445, $null, $null)
+			$reachable = $pending.AsyncWaitHandle.WaitOne($NetProbeTimeoutMs)
+			if ($reachable) {
+				## Connected, refused, or no such name - only the first is reachable.
+				try { $client.EndConnect($pending) } catch { $reachable = $false }
+			}
+		} finally { $client.Close() }
+	} catch { $reachable = $true }
+
+	$script:NetProbed[$hostName] = $reachable
+	return $reachable
+}
+
+
+## Run a scriptblock under a wall-clock limit and report what happened, as
+## @{ Done; Value; Error }. Done=$false means it was still going when the limit
+## hit and has been abandoned - a wedged SMB call can't be interrupted, so we stop
+## the runspace asynchronously and leave the thread to die on its own rather than
+## block on the very thing we're timing out. -Remote is what asks for any of this;
+## without it the block just runs inline (a runspace per local source is pure cost).
+function fRunBounded {
+	param(
+		[Parameter(Mandatory)][scriptblock]$Script,
+		[Parameter(Mandatory)][int]$TimeoutSec,
+		[object[]]$Arguments = @(),
+		[switch]$Remote
+	)
+
+	if (-not $Remote) {
+		try   { return @{ Done = $true; Value = @(& $Script @Arguments); Error = $null } }
+		catch { return @{ Done = $true; Value = @(); Error = $_.Exception.Message } }
+	}
+
+	$shell = [powershell]::Create()
+	[void]$shell.AddScript($Script)
+	foreach ($argument in $Arguments) { [void]$shell.AddArgument($argument) }
+
+	$pending = $shell.BeginInvoke()
+	if (-not $pending.AsyncWaitHandle.WaitOne([timespan]::FromSeconds($TimeoutSec))) {
+		try { [void]$shell.BeginStop($null, $null) } catch { }
+		return @{ Done = $false; Value = @(); Error = "gave up after $TimeoutSec s" }
+	}
+
+	try {
+		return @{ Done = $true; Value = @($shell.EndInvoke($pending)); Error = $null }
+	} catch {
+		## EndInvoke rethrows the block's own error wrapped in its own; report the
+		## innermost one, or a copy failure reads as a PowerShell plumbing failure.
+		$reason = $_.Exception
+		while ($reason.InnerException) { $reason = $reason.InnerException }
+		return @{ Done = $true; Value = @(); Error = $reason.Message }
+	} finally {
+		$shell.Dispose()
 	}
 }
 
@@ -579,6 +730,9 @@ $ErrorActionPreference = "Stop"
 ## launched from a shortcut. Must exist before any fWarn -Gui / fFail can run.
 $script:RunWarnings = @()
 
+## Per-host result of the SMB reachability probe, so each host is probed once a run.
+$script:NetProbed = @{}
+
 ## Consume our own flags; forward everything else to the terminal.
 ##   --admin  run the WHOLE launcher elevated (self-elevates below) - copy, log and
 ##            the launched terminal all get admin rights.
@@ -635,6 +789,9 @@ if ($script:GuiFeedback -and $script:RunWarnings.Count) {
 
 
 ##	History:
+##		- 2026-08-06: Bound the wait on a network source (probe, stat, copy) instead
+##		  of sitting through the SMB timeout when b23 is off or the link drops. Copy
+##		  via a temp name so an abandoned one leaves no half-written build.
 ##		- 2026-08-02: Stop picking a wallpaper; the terminal rotates its own.
 ##		- 2026-08-01: Retag copies '<toolchain><built on><target><arch>', so a tag
 ##		  says what the binary IS: gnul -> gnulwi, gnuw -> gnuwwi, msvc -> msvcwwi.
