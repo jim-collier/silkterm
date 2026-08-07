@@ -270,21 +270,25 @@ The primary install is a native package from the [releases page](https://github.
 
 #### Direct
 
-Prefer a plain binary? These one-liners download the latest release, verify its sha256, and install it. Each states its plan and asks before touching anything, and does nothing if you're already current. `stable` falls back to the newest pre-release when no full release has been published yet.
+Prefer a plain binary? These one-liners work out your operating system and CPU on their own, download the release built for it, verify its sha256, and install it. Each prints what it is about to do and asks before touching anything, and does nothing at all when you are already up to date. The defaults suit most people - add `--help` for the handful of things you can change.
 
-Bash >= 3.2 (Linux, WSL):
+Bash 3.2 or newer (Linux, macOS, WSL):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/jim-collier/silkterm/main/install.bash)  [--release stable|dev]  [--target user|system]  [--arch x64|amd64|arm64]  [--yes]
+bash <(curl -fsSL https://raw.githubusercontent.com/jim-collier/silkterm/main/install.bash)
 ```
 
-PowerShell 7+ (Windows, Linux):
+PowerShell 5.1 or 7+ (Windows, Linux, macOS):
 
 ```powershell
-& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/jim-collier/silkterm/main/install.ps1')))  [-Release stable|dev]  [-Target user|system]  [-Arch x64|amd64|arm64]  [-Yes]
+irm https://raw.githubusercontent.com/jim-collier/silkterm/main/install.ps1 | iex
 ```
 
-`--yes` / `-Yes` skips the confirmation, for unattended installs.
+PowerShell needs the script-block form to pass anything, `-Help` included:
+
+```powershell
+& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/jim-collier/silkterm/main/install.ps1'))) -Help
+```
 
 Install locations:
 
@@ -293,7 +297,7 @@ Install locations:
 | Linux   | `~/.local/bin/silkterm`                   | `~/.local/share/applications/silkterm.desktop`                  | `/usr/local/bin/silkterm` | `/usr/local/share/applications/silkterm.desktop`
 | Windows | `%LOCALAPPDATA%\Programs\SilkTerm\`       | Start Menu shortcut, and the install dir is added to `%PATH%`   | `C:\Program Files\SilkTerm\` | Common Start Menu shortcut (needs an elevated shell)
 
-macOS and BSD builds aren't published yet - build it yourself, below.
+Only Linux and Windows binaries are published so far. On anything else the installer says so and lists what the release does carry, so build it yourself - below.
 
 #### Build it yourself
 
