@@ -19,6 +19,10 @@
 ##	  - 20260806 JC: Made project-agnostic; dropped -Arch for autodetection;
 ##	                 added -Version; runs on Windows PowerShell 5.1 as well as 7+;
 ##	                 permission and lock failures now explain themselves.
+##	  - 20260807 JC: Safe to run from `irm | iex`, where the text executes in the
+##	                 caller's own shell: no `exit` (it would close their window),
+##	                 no $script: scope (absent in a script block), and StrictMode
+##	                 plus the preference variables scoped to the run.
 
 ##	Copyright © 2026 Jim Collier (CryptogID: ѳ6ᴚ℈𐀘𐇦ɛ𐊁¥Mﾏb϶Δ𐌞)
 ##	Licensed under The MIT License (MIT). Full text at:
@@ -63,28 +67,40 @@ $apiBase = "https://api.github.com/repos/$ownerRepo"
 $dlBase  = "https://github.com/$ownerRepo/releases/download"
 $rawBase = "https://raw.githubusercontent.com/$ownerRepo/main"
 
+##	`exit` is only safe when this really IS its own process. The advertised
+##	one-liner runs the downloaded text inside the USER'S shell, where an `exit`
+##	closes their window instead of ending the install - so failures travel as an
+##	exception and only a genuine script file turns that into an exit code.
+$runningAsScriptFile = -not [string]::IsNullOrEmpty($MyInvocation.MyCommand.Path)
+
 ##	5.0 and older lack Get-FileHash, so there is no verifying a download there.
 if ($PSVersionTable.PSVersion.Major -lt 5) {
 	Write-Host "Error: this installer needs PowerShell 5.1 or newer (you have $($PSVersionTable.PSVersion))." -ForegroundColor Red
 	Write-Host '  Install PowerShell 7: https://aka.ms/powershell'
 	Write-Host ''
-	exit 1
+	if ($runningAsScriptFile) { exit 1 }
+	return
 }
 
-Set-StrictMode -Version 2.0
-$ErrorActionPreference = 'Stop'
+##	Nothing here sets StrictMode or a preference variable. Run by `irm ... | iex`
+##	this text executes in the user's OWN shell, so a change at this level would
+##	outlive the install and quietly alter their session. The entry point at the
+##	bottom sets all of it inside a script block, which scopes it to the run and
+##	needs no restoring - assigning a preference from a child scope only makes a
+##	local copy of it anyway, so "save it and put it back" does not work here.
 
 
 ##	Output helpers
 
-##	fFail <message> [hint ...] - one error line, then any hints, then exit.
+##	fFail <message> [hint ...] - one error line, then any hints, then abort.
 function fFail {
 	param([string]$Message, [string[]]$Hints = @())
 	Write-Host ''
 	Write-Host "Error: $Message" -ForegroundColor Red
 	foreach ($hint in $Hints) { Write-Host "  $hint" }
 	Write-Host ''
-	exit 1
+	##	Carries no message worth printing - fFail has already said everything.
+	throw (New-Object System.OperationCanceledException 'installer-abort')
 }
 
 function fHelp {
@@ -130,7 +146,7 @@ function fFileError {
 	$msg = $ex.Message
 	if ($ex -is [System.UnauthorizedAccessException]) {
 		$hints = @("Windows/your OS refused write access to: $Path")
-		if ($script:onWindows) {
+		if ($onWindows) {
 			if ($Target -eq 'system') { $hints += 'Re-run from an elevated PowerShell (right-click -> Run as administrator).' }
 			else { $hints += 'Check that the folder is not read-only, and that antivirus is not blocking it.' }
 			$hints += 'Or use -Target user to install under your own profile instead.'
@@ -169,9 +185,6 @@ if (-not $onWindows -or $PSVersionTable.PSVersion.Major -lt 6) {
 	try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}
 }
 
-##	On 5.1 the progress bar makes Invoke-WebRequest an order of magnitude slower.
-$savedProgress = $ProgressPreference
-$ProgressPreference = 'SilentlyContinue'
 
 ##	-UseBasicParsing keeps 5.1 off the Internet Explorer engine, which throws
 ##	outright when IE has never been launched on the machine. 7 dropped the
@@ -185,7 +198,7 @@ function fApi {
 	param([string]$Url)
 	$headers = @{ 'Accept' = 'application/vnd.github+json' }
 	if ($env:GITHUB_TOKEN) { $headers['Authorization'] = "Bearer $($env:GITHUB_TOKEN)" }
-	return Invoke-RestMethod -Uri $Url -Headers $headers @script:webArgs
+	return Invoke-RestMethod -Uri $Url -Headers $headers @webArgs
 }
 
 
@@ -193,14 +206,20 @@ function fMain {
 
 	Write-Host ''
 
+	##	A local copy, because the stable -> dev fallback below rewrites it. Note
+	##	nothing in here uses a $script:-qualified variable: that scope does not
+	##	exist when this text is run as a script BLOCK, which is one of the three
+	##	ways the one-liner reaches a user.
+	$release = $Release
+
 	##	Detect the platform. Windows reports the CPU through the environment,
 	##	because [RuntimeInformation] needs .NET 4.7.1 and 5.1 predates that.
 	$osToken = ''; $archToken = ''; $exeExt = ''; $osProblem = ''
-	if ($script:onWindows) {
+	if ($onWindows) {
 		$osToken = 'windows'; $exeExt = '.exe'
 		$rawArch = $env:PROCESSOR_ARCHITEW6432
 		if (-not $rawArch) { $rawArch = $env:PROCESSOR_ARCHITECTURE }
-	} elseif ($script:onMac) {
+	} elseif ($onMac) {
 		$osToken = 'macos'
 		$rawArch = (& uname -m)
 	} else {
@@ -227,18 +246,18 @@ function fMain {
 	##	Resolve the release tag. "latest" deliberately EXCLUDES pre-releases, so
 	##	stable asks for it first and only then falls back to the newest of any
 	##	kind - which is also what makes a project with only betas installable.
-	Write-Host "Looking up the newest $script:Release release of $appName ..."
+	Write-Host "Looking up the newest $release release of $appName ..."
 	$tag = $null
 	$apiError = ''
-	if ($script:Release -eq 'stable') {
+	if ($release -eq 'stable') {
 		try { $tag = (fApi "$apiBase/releases/latest").tag_name }
 		catch {
 			$apiError = fInnerMessage $_
 			Write-Host 'No full release published yet; using the newest pre-release instead.'
-			$script:Release = 'dev'
+			$release = 'dev'
 		}
 	}
-	if ($script:Release -eq 'dev' -and -not $tag) {
+	if ($release -eq 'dev' -and -not $tag) {
 		try {
 			$rels = @(fApi "$apiBase/releases?per_page=10")
 			if ($rels.Count -gt 0) { $tag = $rels[0].tag_name }
@@ -270,7 +289,7 @@ function fMain {
 	New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
 	try {
 		$sumsPath = Join-Path $tmpDir $sums
-		try { Invoke-WebRequest -Uri "$dlBase/$tag/$sums" -OutFile $sumsPath @script:webArgs }
+		try { Invoke-WebRequest -Uri "$dlBase/$tag/$sums" -OutFile $sumsPath @webArgs }
 		catch {
 			fFail "release $tag has no checksums file ($sums)" @(
 				'Nothing can be verified without it, so nothing will be installed.',
@@ -299,8 +318,8 @@ function fMain {
 		##	Destination
 		$menuDir = ''
 		$appDir = ''
-		if ($script:onWindows) {
-			if ($script:Target -eq 'user') {
+		if ($onWindows) {
+			if ($Target -eq 'user') {
 				$destDir = Join-Path $env:LOCALAPPDATA "Programs\$appName"
 				$menuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
 				$pathScope = 'User'
@@ -318,7 +337,7 @@ function fMain {
 			}
 			$destFile = Join-Path $destDir "$exeName.exe"
 		} else {
-			if ($script:Target -eq 'user') {
+			if ($Target -eq 'user') {
 				$destDir = Join-Path $HOME '.local/bin'
 				$appDir = Join-Path $HOME '.local/share/applications'
 			} else {
@@ -332,7 +351,7 @@ function fMain {
 			}
 			$destFile = Join-Path $destDir $exeName
 		}
-		if ($menuEntry -ne 1 -or $script:onMac) { $menuDir = ''; $appDir = '' }
+		if ($menuEntry -ne 1 -or $onMac) { $menuDir = ''; $appDir = '' }
 
 		##	Already current? Then say so and stop - no prompt, no download.
 		##	A file that cannot be READ (locked by a running copy) must not throw
@@ -353,16 +372,16 @@ function fMain {
 		##	The plan
 		Write-Host ''
 		Write-Host 'Plan:'
-		Write-Host "  Program:  $appName $tag ($script:Release)"
+		Write-Host "  Program:  $appName $tag ($release)"
 		Write-Host "  Platform: $osToken-$archToken"
 		Write-Host "  Download: $dlBase/$tag/$asset"
 		Write-Host "  Verify:   sha256 against $sums"
 		Write-Host "  Install:  $destFile"
 		if ($menuDir) { Write-Host "  Shortcut: $menuDir\$appName.lnk" }
 		if ($appDir)  { Write-Host "  Launcher: $appDir/$exeName.desktop" }
-		if ($script:onWindows) { Write-Host "  PATH:     $destDir added to the $pathScope PATH" }
+		if ($onWindows) { Write-Host "  PATH:     $destDir added to the $pathScope PATH" }
 		Write-Host ''
-		if (-not $script:Yes) {
+		if (-not $Yes) {
 			##	Read-Host hands back an empty COLLECTION at end-of-input, and
 			##	`@() -notmatch ...` is itself an empty collection - which is
 			##	falsy, so an `if (... -notmatch ...)` abort branch silently does
@@ -391,7 +410,7 @@ function fMain {
 		##	Download + verify
 		Write-Host "Downloading $asset ..."
 		$assetPath = Join-Path $tmpDir $asset
-		try { Invoke-WebRequest -Uri "$dlBase/$tag/$asset" -OutFile $assetPath @script:webArgs }
+		try { Invoke-WebRequest -Uri "$dlBase/$tag/$asset" -OutFile $assetPath @webArgs }
 		catch {
 			fFail 'download failed' @(
 				'The release lists this asset, so this is most likely a network problem.',
@@ -416,7 +435,7 @@ function fMain {
 		catch { fFileError $_ "could not create $destDir" $destDir }
 		try { Copy-Item -LiteralPath $assetPath -Destination $destFile -Force }
 		catch { fFileError $_ "could not write $destFile" $destFile }
-		if (-not $script:onWindows) { & chmod 0755 $destFile }
+		if (-not $onWindows) { & chmod 0755 $destFile }
 
 		##	Start Menu shortcut (Windows)
 		if ($menuDir) {
@@ -448,7 +467,7 @@ function fMain {
 		}
 
 		##	PATH
-		if ($script:onWindows) {
+		if ($onWindows) {
 			fAddToWindowsPath $destDir $pathScope
 		} else {
 			if (":$($env:PATH):" -notlike "*:$destDir`:*") {
@@ -506,11 +525,31 @@ function fAddToWindowsPath {
 }
 
 
-##	Script entry point
-try {
-	if ($Help) { fHelp; exit 0 }
-	if ($Version) { Write-Host ''; Write-Host "$appName installer $installerVersion"; Write-Host ''; exit 0 }
-	fMain
-} finally {
-	$ProgressPreference = $savedProgress
-}
+##	Script entry point. The `& { }` is what keeps StrictMode off the caller's
+##	shell - it applies to this block and everything it calls, and lapses here.
+##	A hashtable rather than the block's return value: it is a reference, so the
+##	child scope can set it directly, and a stray line of pipeline output from
+##	anything in here cannot turn the answer into an array.
+$state = @{ failed = $false }
+& {
+	Set-StrictMode -Version 2.0
+	$ErrorActionPreference = 'Stop'
+	##	On 5.1 the progress bar makes Invoke-WebRequest an order of magnitude
+	##	slower. Both of these lapse with the block, so nothing needs restoring.
+	$ProgressPreference = 'SilentlyContinue'
+	try {
+		if ($Help) { fHelp }
+		elseif ($Version) { Write-Host ''; Write-Host "$appName installer $installerVersion"; Write-Host '' }
+		else { fMain }
+	} catch [System.OperationCanceledException] {
+		##	A handled failure; fFail already printed what went wrong and why.
+		$state.failed = $true
+	} catch {
+		##	Anything unforeseen still reads as a sentence, not a stack trace.
+		Write-Host ''
+		Write-Host "Error: $(fInnerMessage $_)" -ForegroundColor Red
+		Write-Host ''
+		$state.failed = $true
+	}
+} | Out-Null
+if ($state.failed -and $runningAsScriptFile) { exit 1 }
