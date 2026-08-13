@@ -48,9 +48,21 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- 🔘 Fill in the Windows rows: conhost, Windows Terminal and MobaXterm need running on a Windows machine.
 		- Windows figures answer a slightly different question and are not directly comparable, which the table's notes say: a base OS includes far more there, and the machine differs.
 
+- 🛠️ Demo gif: the jumping, and showing the speed curve off properly:
+	- ✅ The gif was sampled at 50fps from a source that paints 60, so one source frame in six was dropped and every fifth stored frame carried two frames of travel. Measured on the shipped gif that is an exact doubling, on a strict period, at every speed and in both directions - a regular hitch that no amount of scroll tuning could have removed, and it is worst right after a clear, where a command dumps its output fastest. It now records at the paint rate and stores 20fps, the fastest rate a gif can hold that divides 60 evenly.
+	- ✅ The compile scene is paced in five movements rather than at random, so the speed leaves rest, ramps, tops out, brakes and lands. Output arriving at one rate only ever shows one point on that curve; the long silence in the middle is what makes the wind-down visible, since the view is still travelling when the output stops.
+	- ✅ The second pane split is horizontal. Two vertical splits left the prompt very nearly filling a third-width pane, readline redisplayed it on a fresh line, and each pane then eased that line in a beat after the split - staggered, on an otherwise empty screen, which read as glitching.
+	- 🔘 Render it. Needs the Linux box (Xvfb + VirtualGL + xdotool), so none of the above is verified on screen yet - only the diagnosis is, off the shipped gif's own pixels.
+	- The budget is not the constraint it was: dense scrolling costs 0.65 MB/s at 20fps, so even with the longer compile scene the whole thing projects to about 5 MB against the 12 it has to fit.
+
 ## Backlog
 
 ### Bugs
+
+- 🔘 A wheel gesture can land by moving backwards about one line.
+	- Measured on the shipped demo: at the end of a scroll-back the view goes forward all the way, then hops back 19px (the row pitch is 21) and stays. The top row reads `.dircolors`, then `.gitconfig`, then `.dircolors` again over about a third of a second, which is a visible bounce against the direction of the gesture.
+	- Most likely the whole-line detent doing what it is asked: the gesture ended about nine tenths of a line past a boundary and the nearest boundary was the one behind. Rounding to nearest is defensible, so this may be a taste call rather than a defect - but a gesture that ends by reversing reads as a glitch, and always landing forwards would not.
+	- Worth confirming against the code before changing anything; the measurement says what happens, not why.
 
 ### New features and enhancements
 
