@@ -99,8 +99,15 @@ impl App {
 		use crate::dialog::DialogAction as DA;
 		if env_flag("SILK_DLGDBG") {
 			match &event {
-				WindowEvent::KeyboardInput { event: k, .. } => {
-					eprintln!("[dlg] key {:?} {:?}", k.logical_key, k.state);
+				WindowEvent::KeyboardInput {
+					event: k,
+					is_synthetic,
+					..
+				} => {
+					eprintln!(
+						"[dlg] key {:?} {:?} synthetic={is_synthetic}",
+						k.logical_key, k.state
+					);
 				}
 				WindowEvent::Focused(f) => eprintln!("[dlg] focused {f}"),
 				WindowEvent::MouseInput { state, button, .. } => {
@@ -180,8 +187,10 @@ impl App {
 				}
 			}
 			WindowEvent::KeyboardInput {
-				event: key_event, ..
-			} if key_event.state == ElementState::Pressed => {
+				event: key_event,
+				is_synthetic,
+				..
+			} if key_is_typed(key_event.state, is_synthetic) => {
 				if let Some(d) = &mut self.dialog {
 					match &key_event.logical_key {
 						Key::Named(NamedKey::Escape) => act = d.key_escape(),
@@ -614,16 +623,32 @@ const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
 const TAB_MAX_W: f32 = 220.0; // tab button width cap - drawing AND click hit-testing use this
 const TAB_CLOSE_W: f32 = 26.0; // right-edge close-button region per tab (title clips before it)
 const TAB_CLOSE_M: f32 = 6.0; // balanced top/right/bottom margin around the close button box
+// Input knob (one line rolls it back): a key that arrives while the window is
+// unfocused is never typed. A WM hotkey grab (Ctrl+Alt+Arrow for desktop
+// switching) brackets the chord with a focus-out/in pair, and winit zeroes the
+// modifiers on the way out - so a grab that still passes the key through hands
+// us an arrow with nothing held, which would encode as a bare arrow.
+const IGNORE_KEYS_WHILE_UNFOCUSED: bool = true;
 
-// SILK_DUMP / SILK_DLGDBG are consulted per frame / per event; read the env
-// once (var_os takes the env lock and scans environ every call). Same pattern
-// as pane.rs scroll_dbg.
+// Winit replays every key already held down whenever focus changes, flagged
+// `is_synthetic`, so an app can track what is physically pressed. That is
+// state, not typing - and on X11 the replay lands BEFORE winit re-queries the
+// modifiers, so a held Ctrl+Alt+Arrow comes back through it as a bare arrow.
+fn key_is_typed(state: ElementState, is_synthetic: bool) -> bool {
+	state == ElementState::Pressed && !is_synthetic
+}
+
+// SILK_DUMP / SILK_DLGDBG / SILK_KEYDBG are consulted per frame / per event;
+// read the env once (var_os takes the env lock and scans environ every call).
+// Same pattern as pane.rs scroll_dbg.
 fn env_flag(name: &str) -> bool {
 	use std::sync::OnceLock;
 	static DUMP: OnceLock<bool> = OnceLock::new();
 	static DLGDBG: OnceLock<bool> = OnceLock::new();
+	static KEYDBG: OnceLock<bool> = OnceLock::new();
 	let cell = match name {
 		"SILK_DUMP" => &DUMP,
+		"SILK_KEYDBG" => &KEYDBG,
 		_ => &DLGDBG,
 	};
 	*cell.get_or_init(|| std::env::var_os(name).is_some())
@@ -4329,7 +4354,31 @@ impl ApplicationHandler<UserEvent> for App {
 				state.dirty = true;
 			}
 
-			WindowEvent::KeyboardInput { event: key, .. } if key.state == ElementState::Pressed => {
+			WindowEvent::KeyboardInput {
+				event: key,
+				is_synthetic,
+				..
+			} => {
+				if env_flag("SILK_KEYDBG") {
+					eprintln!(
+						"[key] {:?} {:?} synthetic={is_synthetic} focused={} mods=[{}{}{}]",
+						key.logical_key,
+						key.state,
+						state.focused,
+						if state.mods.control_key() { "C" } else { "" },
+						if state.mods.alt_key() { "A" } else { "" },
+						if state.mods.shift_key() { "S" } else { "" },
+					);
+				}
+				// A replayed press is focus bookkeeping, and a release is the
+				// shell's business, not ours - neither is typing.
+				if !key_is_typed(key.state, is_synthetic) {
+					return;
+				}
+				// see IGNORE_KEYS_WHILE_UNFOCUSED
+				if IGNORE_KEYS_WHILE_UNFOCUSED && !state.focused {
+					return;
+				}
 				// An open menu (context menu / menu-bar dropdown) captures the
 				// navigation keys - they drive the menu, not the terminal pane.
 				if state.menu.is_some() {
@@ -4926,8 +4975,21 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-	use super::{accel_at, pace_frame};
+	use super::{accel_at, key_is_typed, pace_frame};
 	use std::time::{Duration, Instant};
+	use winit::event::ElementState;
+
+	// A WM hotkey grab (Ctrl+Alt+Arrow) brackets its chord with a focus change,
+	// and winit replays every held key as a synthetic press on the way back in -
+	// before it re-reads the modifiers. Taking that replay as typing is what put
+	// a bare arrow into the shell, so only a real press may count.
+	#[test]
+	fn a_replayed_key_is_not_typing() {
+		assert!(key_is_typed(ElementState::Pressed, false));
+		assert!(!key_is_typed(ElementState::Pressed, true));
+		assert!(!key_is_typed(ElementState::Released, false));
+		assert!(!key_is_typed(ElementState::Released, true));
+	}
 
 	// The demo capture samples on a fixed clock, so a pinned rate that drifts is
 	// worse than none: it would wander off the sampling grid instead of sitting
