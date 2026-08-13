@@ -515,6 +515,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - Bugs
 
+- ✅ On Linux, an arrow pressed as part of a desktop-switching chord (Ctrl+Alt+Up and friends) reached the shell as a bare arrow - UAT.
+	- A bare arrow arriving unasked walks the shell's history, and inside a full-screen program it moves whatever that program moves. Other terminals don't do it.
+	- The window manager brackets its own hotkey with a focus change. On the way out the modifiers are zeroed, and on the way back in every key still physically held is replayed to us as a fresh press - before the modifiers are re-read. That replay was being taken as typing, so a held arrow was encoded with nothing held and sent on.
+	- A replayed key is now treated as what it is - a report of what is held down, not something the user typed - and is never sent to the shell. The same guard covers the Settings and About windows, where a replayed Enter could have closed the dialog.
+	- Keys arriving while the window doesn't have focus are also no longer typed, which closes the other way the same chord can reach us. One line rolls that half back if it ever misfires.
+	- `SILK_KEYDBG=1` prints every key event with its focus and modifier state, for the next time something like this needs settling.
+
 - ✅ The Windows launcher hung when the build it copies from over the network wasn't answering.
 	- A host that resolves but is off left a single check of the remote path sitting for 21 seconds before it gave up, and the copy that follows had no limit at all. From a shortcut, that reads as nothing happening.
 	- Each network step now has its own limit, well under the one the operating system would eventually apply: the host is probed first (a couple of seconds settles a host that is simply off), then the check, then the copy - which gets the most room, since a slow link is not the same thing as a dead one. Everything local is untouched.
