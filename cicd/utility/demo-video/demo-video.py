@@ -123,8 +123,21 @@ PROFILES = {
 		size=(1920, 1080), cap_fps=60, out_fps=60, mono_pt=19.5, ui_pt=11,
 		banner_fs=38, band=112, audio=True, banner_min=4.0,
 	),
+	# A gif stores each frame's delay in whole centiseconds, so the only rates it
+	# can hold are 100/n fps. 50 (2cs) looks like the obvious pick and is the one
+	# that was shipped - but the source is 60, and 60 into 50 does not divide: one
+	# source frame in six is dropped, so every fifth stored frame carries two
+	# frames of travel. Measured on the shipped gif, a scroll reads
+	# -11 -11 -22, -10 -10 -19, -8 -8 -8 -7 -14: an exact doubling on a strict
+	# period, at every speed and in both directions. That regular hitch is what
+	# reads as the text jumping, and no amount of scroll tuning can remove it.
+	# 20fps (5cs) is the fastest rate that takes 60 evenly - every third frame,
+	# nothing dropped unevenly - so the cadence is dead flat. Even steps read as
+	# smoother than uneven ones even when there are fewer of them, and it halves
+	# the frame count into the bargain. 25 (4cs) is the alternative: more temporal
+	# resolution, but 60 into 25 is 12:5, so a milder 1.5x beat comes back.
 	"gif": dict(
-		size=(960, 540), cap_fps=50, out_fps=50, mono_pt=13, ui_pt=10,
+		size=(960, 540), cap_fps=60, out_fps=20, mono_pt=13, ui_pt=10,
 		banner_fs=24, band=60, audio=False, banner_min=3.0,
 	),
 }
@@ -773,22 +786,55 @@ printf '  🤔 🍰 🎉 😀   ┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅�
 ''')
 	show.chmod(0o755)
 
-	# build.sh: cargo-flavoured output with varied pacing and burst sizes. The crate
-	# list is deliberately short - this is the second-costliest scene in the gif and
-	# a scroll says everything it has to say in a few seconds.
-	crates = ["proc-macro2", "quote", "syn", "libc", "bitflags", "smallvec",
-		"log", "wgpu-hal", "wgpu", "winit", "glam"]
+	# build.sh: cargo-flavoured output, paced in movements rather than at random.
+	# The scroll speed is not a constant - it leaves rest gently, doubles while the
+	# backlog grows, tops out, then rides a braking curve down into a slow landing.
+	# Output that arrives at one rate only ever shows one point on that curve, so
+	# the earlier version (a line every so often, with a quarter chance of a pause)
+	# never left the gentle end and the whole middle of the curve went unseen. The
+	# pacing below walks the curve end to end, and the long silence at movement 4
+	# is what makes the wind-down visible at all: the view is still travelling when
+	# the output stops, and has to brake and land on its own.
+	crates = [
+		"proc-macro2", "quote", "syn", "unicode-ident", "libc", "bitflags",
+		"smallvec", "log", "cfg-if", "once_cell", "memchr", "either",
+		"itertools", "regex-syntax", "aho-corasick", "hashbrown", "indexmap",
+		"equivalent", "serde", "serde_derive", "ryu", "itoa", "thiserror",
+		"anyhow", "bytemuck", "raw-window-handle", "wayland-client",
+		"x11-dl", "calloop", "wgpu-types", "naga", "spirv", "gpu-alloc",
+		"gpu-descriptor", "renderdoc-sys", "wgpu-hal", "wgpu", "winit",
+		"glam", "cosmic-text", "swash", "skrifa", "zeno", "ttf-parser",
+		"rustybuzz", "glyphon", "pulsar-render",
+	]
+	ver = lambda: f"{rng.randint(0, 3)}.{rng.randint(1, 30)}.{rng.randint(0, 9)}"
 	lines = ["#!/bin/dash", 'g="\\033[1;32m"; y="\\033[1;33m"; b="\\033[1;34m"; r="\\033[0m"']
+	comp = lambda c: lines.append(
+		f'printf "   ${{g}}Compiling${{r}} {c} v{ver()}\\n"')
 	lines.append('printf "   ${g}Compiling${r} pulsar workspace\\n"')
-	for c in crates:
-		v = f"{rng.randint(0,3)}.{rng.randint(1,30)}.{rng.randint(0,9)}"
-		lines.append(f'printf "   ${{g}}Compiling${{r}} {c} v{v}\\n"')
-		if rng.random() < 0.25:
-			lines.append(f"sleep 0.{rng.randint(15, 45):02d}")
+	feed = iter(crates)
+
+	# 1 - well apart: each line eases and lands before the next arrives, so this is
+	#     the gentle end of the curve on its own, one line at a time
+	for _ in range(5):
+		comp(next(feed))
+		lines.append("sleep 0.45")
+	# 2 - the gaps close: a line now arrives before the last has settled, so the
+	#     speed ramps instead of restarting from rest each time
+	for gap in ("0.34", "0.27", "0.21", "0.16", "0.13", "0.10", "0.08", "0.06"):
+		comp(next(feed))
+		lines.append(f"sleep {gap}")
+	# 3 - no gaps at all: a sustained burst, which is the only thing that lifts the
+	#     speed past its single-screen cap and makes the view trail the live bottom
+	for c in feed:
+		comp(c)
+	# 4 - silence, and this is the point of the whole scene: nothing more arrives,
+	#     so the view has to brake down the ramp and land by itself, in view
+	lines.append("sleep 1.3")
+	# 5 - coda: a couple of slow lines, which start gently again from rest
 	lines += [
 		'printf "${y}warning${r}: unused variable: ${b}lift${r}\\n"',
 		'printf "  ${b}-->${r} src/render.rs:141:9\\n"',
-		'sleep 0.4',
+		'sleep 0.5',
 		'printf "   ${g}Compiling${r} pulsar v0.4.1\\n"',
 		'sleep 0.9',
 		'printf "    ${g}Finished${r} release [optimized] in 12.31s\\n"',
@@ -897,9 +943,12 @@ def seg_ls(r, t, m):
 	# no wipe: the build output is meant to push this listing up
 
 def seg_build(r, t, m):
-	with Banner(r, "Smooth cursor. Smooth scroll."):
+	with Banner(r, "Watch it speed up, then wind down."):
 		t.cmd("cd projects/pulsar", settle=0.6, typos=0.0)
-		t.cmd("./build.sh", settle=4.0)          # covers the script's own runtime
+		# the script runs ~6.5s now (five paced movements, see write_tree) and the
+		# settle has to outlast it, or the scene cuts away mid wind-down - which is
+		# the half worth watching
+		t.cmd("./build.sh", settle=7.0)
 		time.sleep(0.7)
 	# no wipe: the wheel scene scrolls back up through all of this
 
@@ -928,10 +977,18 @@ def seg_panes(r, t, m):
 	with Banner(r, "Split panes, sized for you"):
 		r.xdo("windowactivate", r.win)
 		time.sleep(0.3)
-		for _ in range(2):
+		# vertical then HORIZONTAL, not vertical twice. Two vertical splits leave
+		# three columns, and at a third of the width the prompt very nearly fills
+		# its pane - readline then redisplays it on a fresh line, which is a line
+		# of new output, which the panes ease in like any other. The result was two
+		# panes each sliding up a row a beat after they appeared, staggered, on an
+		# otherwise empty screen: nothing else to look at, so it read as glitching.
+		# At half width the prompt has room and no pane reprints. Splitting both
+		# ways also shows the tree does both, which one direction twice does not.
+		for accel in ("v", "h"):
 			t.key("alt+p", sound=key_sound("p"))
 			time.sleep(0.55)
-			t.key("v", sound=key_sound("v"))
+			t.key(accel, sound=key_sound(accel))
 			time.sleep(1.1)
 		t.cmd("exit", settle=1.2, typos=0.0)
 		t.cmd("exit", settle=1.2, typos=0.0)
