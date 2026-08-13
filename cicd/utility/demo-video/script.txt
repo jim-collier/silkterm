@@ -1,17 +1,15 @@
-@ SilkTerm demo script - the readable source of truth for the video and the gif.
-@ Edit this file and hand it back; it gets turned into demo-video.py. Anything
-@ asked for in conversation lands here too, so this file never falls behind.
+@ SilkTerm demo script. This gets converted into demo-video.py.
 @
 @ How to read it:
-@   A bare line is TYPED ON CAMERA, exactly as written. A leading # is a shell
+@   A bare line is typed on camera, exactly as written. A leading # is a shell
 @   comment and is typed like anything else.
 @   A line whose first non-blank character is @ is a note to the assistant and
 @   never appears on screen.
 @   Indentation is for reading only - it means nothing.
 @   Scenes run top to bottom in the order they appear here.
 
-
-@ ••• Formats •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Formats
 @
 @ Gif:   960x540, 50 fps, font 100%, silent.        -> assets/demo.gif (README)
 @ Video: 1920x1080, 60 fps, font 150%, with sound.  -> the mp4
@@ -29,7 +27,8 @@
 @ motion, and only then dropping the frame rate.
 
 
-@ ••• The set •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ The set
 @
 @ A real, decorated SilkTerm window on a plain black desktop, with the narration
 @ in a black band above it - never over the terminal.
@@ -42,11 +41,12 @@
 @   theme SilkTerm dark, text scrim on, no transparency
 @   cursor: full block, pulse_vertical, 500ms blink
 @   scrollback 10000, wheel 3 lines
-@   NO wallpaper at the start - it arrives on camera, later
-@   Scroll feel is deliberately NOT pinned: the demo shows what ships.
+@   No wallpaper at the start - it arrives on camera, later
+@   Scroll feel is deliberately not pinned: the demo shows what ships.
 
 
-@ ••• Scene: opening listing ••••••••••••••••••••••••••••••••••••••••••••••••••
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: opening listing
 @ banner: "Silky-smooth output scrolling"
 @ Open straight on this - no title card, no intro typing.
 
@@ -62,7 +62,8 @@ ls ~/
 @ do NOT clear - the next scene's output is meant to push this listing up
 
 
-@ ••• Scene: the build ••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: the build
 @ banner: "Watch it speed up, then wind down."
 @ This scene exists to show the scroll SPEED CURVE, so the output is paced in
 @ five movements rather than at a constant rate. Output that arrives at one rate
@@ -89,7 +90,8 @@ cd projects/pulsar
 @ do NOT clear - the next scene scrolls back up through all of this
 
 
-@ ••• Scene: scrolling back •••••••••••••••••••••••••••••••••••••••••••••••••••
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: scrolling back
 @ banner: "Scroll back just as smoothly"
 
 @ move the pointer to the middle of the window
@@ -102,7 +104,8 @@ cd projects/pulsar
 @ clear the screen
 
 
-@ ••• Scene: split panes ••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: split panes
 @ Before the banner, silently: turn the cursor animation OFF.
 	@ Three panes each pulsing their own cursor pull the eye off the split, and
 	@ every pulse is motion the gif pays for. It goes through the app's control
@@ -127,7 +130,8 @@ exit
 @ clear the screen
 
 
-@ ••• Scene: the cursor •••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: the cursor
 @ banner: "Cursor shape and animation, your pick"
 @ An empty screen: the cursor is the only thing moving on it. Both changes go
 @ through the control socket - a setting should be seen changing like a setting,
@@ -144,7 +148,8 @@ exit
 @ do NOT clear - the closing scenes build up the frame the demo ends on
 
 
-@ ••• Scene: the wallpaper ••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: the wallpaper
 @ banner: "The built-in wallpaper, live"
 
 silkterm --wallpaper ~/.config/silkterm/wallpapers/default.jpg
@@ -156,7 +161,8 @@ silkterm --wallpaper ~/.config/silkterm/wallpapers/default.jpg
 @ do NOT clear
 
 
-@ ••• Scene: colour and unicode •••••••••••••••••••••••••••••••••••••••••••••••
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: colour and unicode
 @ banner: "24-bit color. Unicode. Over anything."
 
 showcase
@@ -174,7 +180,8 @@ showcase
 @ highlighter were installed.
 
 
-@ ••• Scene: sign-off •••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: sign-off
 @ banner: "github.com/jim-collier/silkterm"
 
 @ press Enter on an empty prompt, so the sign-off sits on its own
