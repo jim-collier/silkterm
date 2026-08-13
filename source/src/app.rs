@@ -629,6 +629,41 @@ fn env_flag(name: &str) -> bool {
 	*cell.get_or_init(|| std::env::var_os(name).is_some())
 }
 
+// SILK_MAX_FPS pins the animation frame rate instead of letting vblank set it.
+// Unset (every ordinary run) this is None and nothing below it changes: the GL
+// path keeps swap interval 1 and a scroll ease keeps rendering on Poll.
+//
+// It exists for the demo recorder, which samples the X screen at a fixed rate.
+// Whatever paces the app has to divide that rate evenly or frames land off the
+// sampling grid on a strict period - a source of 60 into a capture of 50 drops
+// one frame in six, so every fifth stored frame carries two frames of travel,
+// and a regular hitch like that is exactly what reads as the picture jumping.
+// Pinning the source to the capture rate takes the host's refresh rate out of
+// the answer entirely. Also useful for measuring a fixed frame budget.
+fn max_fps() -> Option<f64> {
+	use std::sync::OnceLock;
+	static FPS: OnceLock<Option<f64>> = OnceLock::new();
+	*FPS.get_or_init(|| {
+		std::env::var("SILK_MAX_FPS")
+			.ok()
+			.and_then(|raw| raw.trim().parse::<f64>().ok())
+			.filter(|fps| *fps > 0.0 && fps.is_finite())
+	})
+}
+
+// Next frame on a FIXED schedule, not `now + interval` - the latter adds each
+// frame's own render time to the period and runs slow. Falling behind resyncs
+// rather than trying to catch up in a burst.
+fn pace_frame(next: &mut Option<Instant>, ivl: Duration) -> ControlFlow {
+	let now = Instant::now();
+	let mut at = next.unwrap_or(now) + ivl;
+	if at <= now {
+		at = now + ivl;
+	}
+	*next = Some(at);
+	ControlFlow::WaitUntil(at)
+}
+
 // VT-switch field diagnostics: `touch ~/silk_vramdbg.on` (no relaunch needed)
 // makes the sentinel probes append their results to ~/silk_vramdbg.txt, so a
 // desktop repro can show whether loss detection fired. The marker is re-checked
@@ -796,6 +831,9 @@ struct State {
 	// last cycle's frozen state (occluded or minimized); the false edge is the
 	// unfreeze - one dirty catch-up frame, hard-cut for panes with pending output
 	was_hidden: bool,
+	// Deadline of the next animation frame while SILK_MAX_FPS pins the rate; None
+	// otherwise, which is every ordinary run. See `max_fps`.
+	next_frame: Option<Instant>,
 	// Rotation state as of the last scan; the folder itself, the shuffle history
 	// and the picking all live in the worker (wallpaper.rs), so nothing here reads
 	// the filesystem.
@@ -3619,6 +3657,7 @@ impl ApplicationHandler<UserEvent> for App {
 			scrim_sig: None,
 			occluded: false,
 			was_hidden: false,
+			next_frame: None,
 			wp_count: 0,
 			wp_current: None,
 			wp_next: None,
@@ -4760,17 +4799,26 @@ impl ApplicationHandler<UserEvent> for App {
 			// skipped) - retry shortly instead of waiting for the next event,
 			// or the last wakeup of a burst could leave a stale frame up
 			let retry = state.tabs.cur().panes.values().any(|p| p.content_dirty);
+			let pace = max_fps().map(|fps| Duration::from_secs_f64(1.0 / fps));
 			if animating && (scroll_anim || bell_anim) {
 				// scroll (the flagship smooth feature) and the bell flash render
 				// at full rate; fresh content needs no Poll - each PTY read
 				// batch arrives as its own Wakeup
-				ControlFlow::Poll
+				match pace {
+					Some(ivl) => pace_frame(&mut state.next_frame, ivl),
+					None => ControlFlow::Poll,
+				}
 			} else if retry {
 				ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(5))
 			} else if animating {
 				// a lone idle cursor blink is capped to ~30fps so it isn't
-				// re-rendering every frame just to pulse
-				ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(33))
+				// re-rendering every frame just to pulse - but a pinned rate
+				// covers the cursor too, or a scene where the cursor is the only
+				// thing moving samples off the grid the rest of the run is on
+				match pace {
+					Some(ivl) => pace_frame(&mut state.next_frame, ivl),
+					None => ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(33)),
+				}
 			} else {
 				ControlFlow::Wait
 			}
@@ -4878,7 +4926,36 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-	use super::accel_at;
+	use super::{accel_at, pace_frame};
+	use std::time::{Duration, Instant};
+
+	// The demo capture samples on a fixed clock, so a pinned rate that drifts is
+	// worse than none: it would wander off the sampling grid instead of sitting
+	// on it. Each frame's deadline therefore has to come from the LAST DEADLINE,
+	// never from "now" - which is the whole of what this pins.
+	#[test]
+	fn a_pinned_frame_rate_does_not_drift() {
+		let ivl = Duration::from_millis(20);
+		let mut next = None;
+		let start = Instant::now();
+		pace_frame(&mut next, ivl);
+		let first = next.unwrap();
+		// a frame that takes most of its budget must not push the next one out
+		for step in 1..=10u32 {
+			pace_frame(&mut next, ivl);
+			assert_eq!(next.unwrap(), first + ivl * step, "drifted at frame {step}");
+		}
+		assert!(next.unwrap() >= start + ivl * 11);
+
+		// falling behind resyncs to now rather than firing a catch-up burst
+		let behind = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
+		let mut late = Some(behind);
+		pace_frame(&mut late, ivl);
+		assert!(
+			late.unwrap() > Instant::now(),
+			"a stale deadline must be dropped"
+		);
+	}
 
 	#[test]
 	fn accel_prefers_exact_case_then_falls_back() {

@@ -12,8 +12,9 @@
 ##		The app is rendered ON THE GPU via VirtualGL (vglrun -d egl); on plain
 ##		llvmpipe the Xvfb caps it near 10fps and the scroll judders, which no
 ##		capture rate or frame-averaging can fix (the frames aren't there to blend).
-##		On the GPU it paints a true ~60fps, so we grab straight at the delivery
-##		rate. The window size is passed at LAUNCH (--pixel-width/height), never
+##		On the GPU it paints as fast as vblank lets it, so the run PINS the app's
+##		frame rate to the capture rate (SILK_MAX_FPS, see PROFILES) rather than
+##		guessing at it. The window size is passed at LAUNCH (--pixel-width/height), never
 ##		resized after: the VGL EGL present latches the surface size at creation
 ##		(the app's xcb event connection bypasses VGL's Xlib interposer), so a
 ##		post-launch xdotool resize leaves a stale-offset blit (clipped video /
@@ -113,31 +114,36 @@ DECO_BG_OFF   = "#3c4557"                   # inactive
 DECO_GLYPH    = "#e8eefa"                   # button glyphs
 DECO_TEXT     = "#eef3fb"                   # title text
 
-# The app is driven through the GPU (VirtualGL, see launch_app) so it renders a
-# genuine ~60fps on the headless Xvfb - on plain llvmpipe it only manages ~10
-# distinct frames/sec, which no capture rate or frame-averaging can un-judder
-# (the frames simply aren't there to blend). With the GPU the source is smooth,
-# so we grab at the delivery rate straight: cap_fps == what the app paints.
+# cap_fps == out_fps == what the app paints, and all three are now WELDED: the
+# run exports SILK_MAX_FPS=cap_fps (see launch_app), which pins the app's
+# animation loop to that rate and takes vblank out of the picture.
+#
+# The welding is the whole point, and the shipped gif is what proved it matters.
+# x11grab samples the X screen on a fixed clock and gets whatever frame is
+# current, so the step between two samples is always a whole number of the app's
+# frames. Unless the app's rate divides the capture rate evenly, that number is
+# not constant: it was painting 60 (vblank on a 60Hz host) into a 50fps capture,
+# so one frame in six was dropped and every fifth stored frame carried two frames
+# of travel. Measured on the shipped gif, a scroll reads -11 -11 -22, -10 -10 -19,
+# -8 -8 -8 -7 -14, +5 +5 +5 +5 +10: an exact doubling on a strict period, at every
+# speed and in both directions. Speed-independence is what rules the app's own
+# scrolling out - a scroll defect does not double itself identically at 3px/frame
+# and at 11px/frame. That regular hitch is what reads as the picture jumping, and
+# no amount of scroll tuning could ever have removed it.
+#
+# Pinning also removes a hidden dependency nobody would have looked for: without
+# it the source rate is the RECORDING HOST'S refresh rate, so the same script on
+# a 144Hz box beats against both profiles.
+#
+# A gif stores each frame's delay in whole centiseconds, so its rate must be
+# 100/n: 50 is 2cs. The video has no such constraint.
 PROFILES = {
 	"video": dict(
 		size=(1920, 1080), cap_fps=60, out_fps=60, mono_pt=19.5, ui_pt=11,
 		banner_fs=38, band=112, audio=True, banner_min=4.0,
 	),
-	# A gif stores each frame's delay in whole centiseconds, so the only rates it
-	# can hold are 100/n fps. 50 (2cs) looks like the obvious pick and is the one
-	# that was shipped - but the source is 60, and 60 into 50 does not divide: one
-	# source frame in six is dropped, so every fifth stored frame carries two
-	# frames of travel. Measured on the shipped gif, a scroll reads
-	# -11 -11 -22, -10 -10 -19, -8 -8 -8 -7 -14: an exact doubling on a strict
-	# period, at every speed and in both directions. That regular hitch is what
-	# reads as the text jumping, and no amount of scroll tuning can remove it.
-	# 20fps (5cs) is the fastest rate that takes 60 evenly - every third frame,
-	# nothing dropped unevenly - so the cadence is dead flat. Even steps read as
-	# smoother than uneven ones even when there are fewer of them, and it halves
-	# the frame count into the bargain. 25 (4cs) is the alternative: more temporal
-	# resolution, but 60 into 25 is 12:5, so a milder 1.5x beat comes back.
 	"gif": dict(
-		size=(960, 540), cap_fps=60, out_fps=20, mono_pt=13, ui_pt=10,
+		size=(960, 540), cap_fps=50, out_fps=50, mono_pt=13, ui_pt=10,
 		banner_fs=24, band=60, audio=False, banner_min=3.0,
 	),
 }
@@ -321,7 +327,11 @@ class Rec:
 		# gray ("as if ble.sh") without ble.sh, which drops the odd first keystroke.
 		gray_flag = ("\\[$(test -f \"$HOME/.silk-gray\" && "
 			"printf '\\033[38;5;245m')\\]")
-		e.update(SHELL="/bin/bash", HOME=str(self.home),
+		# pin the app's animation rate to the rate we grab at, so every capture
+		# tick lands on exactly one painted frame (see PROFILES). Off outside the
+		# recorder, where vblank does the pacing.
+		e.update(SILK_MAX_FPS=str(self.cap_fps),
+			SHELL="/bin/bash", HOME=str(self.home),
 			XDG_CONFIG_HOME=str(self.home / ".config"),
 			PATH=f"{self.home}/bin:{os.environ['PATH']}",
 			VK_ICD_FILENAMES="/usr/share/vulkan/icd.d/lvp_icd.json",
@@ -1328,10 +1338,15 @@ def encode_gif(rec, work, out_gif, video_end_e):
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ##	Output placement + rotation (video and gif in their own dirs)
 
-# The README carries the whole demo now (it ends on the wallpaper + the black
-# tail, which a cut-down highlight could never show), so the ceiling is what a
-# full ~80s 50fps gif can honestly reach after gifsicle - not what a 9s clip did.
-GIF_ASSET_MAX_MB = 28
+# The README carries the whole demo (it ends on the wallpaper + the black tail,
+# which a cut-down highlight could never show), and 12 MiB is the stated ceiling
+# for it. Scrolling is what sets the size - measured per second of finished gif
+# at 50fps: a dense full-width scroll runs ~1.6 MiB/s, the build scene ~0.4, a
+# near-static scene ~0.03. So if a render lands over, the levers in order are the
+# LENGTH of the wheel scene, the width of the rows in motion, and only then
+# GIF_LOSSY. Dropping to 25fps halves it outright and is the last resort - the
+# smoothness is the thing being demonstrated.
+GIF_ASSET_MAX_MB = 12
 
 def rotate(out_dir, prefix, ext, no_rotate):
 	if no_rotate:
@@ -1438,6 +1453,14 @@ if __name__ == "__main__":
 
 
 ##	Script history:
+##		- 20260813: the run pins the app's frame rate to the capture rate
+##		  (SILK_MAX_FPS) - the two were 60 and 50, so one frame in six was dropped
+##		  and the picture hitched on a strict period. Gif back to 50fps on that
+##		  footing; asset ceiling 12 MiB. The build scene walks the speed curve in
+##		  five paced movements with a silence in the middle, so the wind-down is
+##		  visible at all. Second pane split is horizontal - at a third of the width
+##		  the prompt wrapped on resize and each pane eased the reprint in. Scene
+##		  list mirrored in script.txt, which is the file to edit.
 ##		- 20260805: set_cfg resolves a dotted path from the indentation instead of
 ##		  matching the line literally, and stops the run when a key resolves to
 ##		  nothing - the config is nested by the time any scene changes a setting,
