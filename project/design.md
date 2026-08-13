@@ -29,6 +29,7 @@
 	- [Environment](#environment)
 	- [Startup and slow external resources](#startup-and-slow-external-resources)
 	- [Configuration format](#configuration-format)
+	- [Command-line options](#command-line-options)
 - [Delivery (CI/CD, branches, releases)](#delivery-cicd-branches-releases)
 
 <!-- /TOC -->
@@ -321,6 +322,20 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - The deciding property is forgiveness. A malformed line yields a diagnostic and is skipped, so one bad value costs only its own setting. Strict TOML could instead fail the whole document and sink every setting to its default. Forgiveness let two workarounds be deleted outright: a retry loop that blanked offending lines and reparsed, and a rewrite pass for leading-dot floats, which are valid here.
 
 - Values are typed by the reader, not the file, so there is nothing to get wrong in the syntax and a value is stored back exactly as written.
+
+### Command-line options
+
+- Most options describe a window to open: a hierarchy of tabs and panes built with create/select verbs, with look and behavior cascading window -> tab -> pane.
+
+- A second, much smaller family only prints something and exits. `--help`, `--syntax`, `--about`, `--donate` and `--version` never open a window, never read a config, and never touch a layout.
+
+- Those flags are accepted in any position. The rest of the grammar cares a great deal about order, but answering a request for the help with a complaint about where the flag was written would be absurd.
+
+- Output written for a person is padded with a blank line above and below, so it sits clear of the shell prompts either side of it. `--version` is the exception, and it exists to be captured by a script, so it stays a single flush line. `--ver` and `-v` are the same flag.
+
+- `--about` reports what a bug report needs: version, which of the cross builds this is, and the GPU the renderer picked. It asks the graphics stack for an adapter but never builds a device, which is the expensive half. A box with no usable adapter loses three lines and still prints the rest.
+
+- On Windows a release build owns no console of its own, so printing has to join the one that launched it. This happens only on the paths that print and exit; a terminal window that held a console would die with the shell that started it.
 
 - The contract on saving is that a user's comments and blank-line grouping survive. Layout may be tidied, meaning indentation and quotes that are not needed, but a value is never rewritten. The shipped template is deliberately spelled the way a save would spell it, so the first save is a no-op rather than a reflow of the file we just wrote.
 

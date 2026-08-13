@@ -1172,26 +1172,11 @@ fn layout_about(
 	let menu_fg = crate::settings_ui::dialog_text();
 	let menu_dim = crate::settings_ui::dialog_dim();
 	let menu_link = config::MENU_LINK;
-	let accel = match info.device_type {
-		wgpu::DeviceType::Cpu => "Software (CPU)",
-		wgpu::DeviceType::IntegratedGpu => "Hardware (integrated GPU)",
-		wgpu::DeviceType::DiscreteGpu => "Hardware (discrete GPU)",
-		wgpu::DeviceType::VirtualGpu => "Hardware (virtual GPU)",
-		wgpu::DeviceType::Other => "Unknown",
-	};
+	let accel = crate::gfx::acceleration(info.device_type);
 	let repo_url = env!("CARGO_PKG_REPOSITORY").to_string();
 	let gap = config::MENU_SEP_H;
 	// build target the binary was compiled for (distinguishes the cross builds)
-	let profile = if cfg!(debug_assertions) {
-		"debug"
-	} else {
-		"release"
-	};
-	let build = format!(
-		"{} / {} ({profile})",
-		std::env::consts::ARCH,
-		std::env::consts::OS
-	);
+	let build = config::build_target();
 	#[rustfmt::skip]
 	let content: Vec<(String, [u8; 3], f32, f32, bool, f32)> = vec![
 		(format!("About {}", config::APP_NAME), menu_fg, 0.0, 0.0, true, 1.5),

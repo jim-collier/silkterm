@@ -1020,6 +1020,42 @@ impl GpuWarm {
 	}
 }
 
+// How the About text names an adapter's device type. Shared by the dialog and
+// `--about`, so a bug report reads the same either way.
+pub const fn acceleration(device_type: wgpu::DeviceType) -> &'static str {
+	match device_type {
+		wgpu::DeviceType::Cpu => "Software (CPU)",
+		wgpu::DeviceType::IntegratedGpu => "Hardware (integrated GPU)",
+		wgpu::DeviceType::DiscreteGpu => "Hardware (discrete GPU)",
+		wgpu::DeviceType::VirtualGpu => "Hardware (virtual GPU)",
+		wgpu::DeviceType::Other => "Unknown",
+	}
+}
+
+// Adapter details for `--about`, with no window and no device. Only the adapter
+// is asked for: request_device is the expensive half (measured ~161ms against
+// ~6ms), and nothing here draws. PRIMARY matches what the About dialog runs on,
+// so the two report the same GPU. None on a box with no usable adapter - the
+// rest of the About text is still worth printing.
+pub fn probe_adapter_info() -> Option<wgpu::AdapterInfo> {
+	let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+		backends: wgpu::Backends::PRIMARY,
+		flags: wgpu::InstanceFlags::default(),
+		memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+		backend_options: wgpu::BackendOptions::default(),
+		display: None,
+	});
+	let pick = |fallback| {
+		pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+			power_preference: wgpu::PowerPreference::HighPerformance,
+			compatible_surface: None,
+			force_fallback_adapter: fallback,
+		}))
+	};
+	let adapter = pick(false).or_else(|_| pick(true)).ok()?;
+	Some(adapter.get_info())
+}
+
 fn log_renderer(info: &wgpu::AdapterInfo) {
 	eprintln!(
 		"{}: renderer = {} [{:?} / {:?}]",
