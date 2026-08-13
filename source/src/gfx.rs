@@ -468,8 +468,15 @@ impl Gfx {
 		// Frame pacing on this path is swap_buffers blocking on vblank; the driver
 		// default isn't guaranteed (__GL_SYNC_TO_VBLANK=0, PRIME setups), and without
 		// it every scroll animation becomes an unthrottled busy-render loop.
-		let _ =
-			surface.set_swap_interval(&ctx, glutin::surface::SwapInterval::Wait(NonZeroU32::MIN));
+		// SILK_MAX_FPS (app.rs) paces the loop itself, and then vblank must NOT also
+		// have a say: a swap that blocks to the next refresh puts every frame back on
+		// the display's grid, which is the grid the pinned rate exists to leave.
+		let interval = if std::env::var_os("SILK_MAX_FPS").is_some() {
+			glutin::surface::SwapInterval::DontWait
+		} else {
+			glutin::surface::SwapInterval::Wait(NonZeroU32::MIN)
+		};
+		let _ = surface.set_swap_interval(&ctx, interval);
 
 		// wrap glutin's GL context as a wgpu device (hal external interop)
 		let exposed = unsafe {
