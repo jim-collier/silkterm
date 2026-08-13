@@ -99,11 +99,13 @@ libc = "0.2"
 # Profiles (release/dev/profiling) live in the workspace root Cargo.toml -
 # Cargo ignores profile sections in member crates.
 
-# windows: detect the system font size (no console window in release is set in main.rs)
+# windows: detect the system font size (no console window in release is set in
+# main.rs), and join the launching console so the CLI-only flags can print.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_System_Console",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

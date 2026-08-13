@@ -1073,6 +1073,15 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - New features and enhancements
 
+- ✅ Command-line-only flags: `--help`, `--about`, `--donate`, `--ver` - UAT.
+	- These print something and exit. No window opens, no config is read, and nothing about a layout is built.
+	- They are accepted anywhere on the line. Everything else in the syntax cares about order; asking for the help and being told it was written in the wrong place would not be.
+	- Output meant for a person gets a blank line above and below it, so the block stands clear of the prompts either side. `--version` is the exception - it exists to be captured by a script, so it stays one flush line. `--ver` and `-v` are the same flag.
+	- `--about` gives what a bug report needs: version, which build this is, and the graphics device in use. It asks for an adapter but never builds a device, which is the slow half; that costs about a fifth of a second. A machine with no usable adapter loses three lines and still prints the rest.
+	- `--donate` is the short version of DONATE.md - the address, not the essay.
+	- Found on the way and fixed: on Windows, none of these printed anything at all when run from a terminal, and that had been true of `--help` and `--version` since they were written. A release build owns no console, so it now joins the one that launched it. Redirecting to a file or a pipe always worked, which is why nothing caught it.
+	- Still true on Windows, and unavoidable: the shell doesn't wait for a windowed program, so the prompt comes back before the text does.
+
 - ✅ Dialogs and menus:
 	- ✅ Themes should have two highlight colors:
 		- ✅ One color that calls attention to multiple things on the screen at once

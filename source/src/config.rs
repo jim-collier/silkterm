@@ -14,6 +14,25 @@ pub const APP_NAME: &str = "SilkTerm";
 // a single link baked into the binary. HEAD resolves to the repo default branch.
 pub const DONATE_URL: &str = "https://github.com/jim-collier/silkterm/blob/HEAD/DONATE.md";
 
+// The one address worth handing straight to someone who has already decided.
+// DONATE.md carries the rest; --donate prints both.
+pub const SPONSOR_URL: &str = "https://github.com/sponsors/jim-collier";
+
+// Which of the cross builds this binary is - otherwise indistinguishable at a
+// glance. Shared by the About dialog and `--about` so the two can't drift.
+pub fn build_target() -> String {
+	let profile = if cfg!(debug_assertions) {
+		"debug"
+	} else {
+		"release"
+	};
+	format!(
+		"{} / {} ({profile})",
+		std::env::consts::ARCH,
+		std::env::consts::OS
+	)
+}
+
 // internal, not user-tunable (yet)
 pub const PANE_GAP_PX: f32 = 1.0;
 pub const DIVIDER_GRAB_PX: f32 = 5.0; // mouse tolerance for grabbing a pane divider

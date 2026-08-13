@@ -106,9 +106,12 @@ impl TabSpec {
 
 #[derive(Debug, Default)]
 pub struct Cli {
+	// CLI-only flags: print something and exit, never open a window.
 	pub help: bool,
 	pub version: bool,
 	pub syntax: bool,
+	pub about: bool,
+	pub donate: bool,
 	pub config: Option<PathBuf>,
 	pub reset_config: bool,
 	// control commands for an already-running window (talk, then exit):
@@ -295,6 +298,10 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 			cli.help = true;
 			continue;
 		}
+		if token == "-v" {
+			cli.version = true;
+			continue;
+		}
 		let Some(body) = token.strip_prefix("--") else {
 			return Err(format!("unexpected argument: {token}"));
 		};
@@ -302,6 +309,33 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 			Some((n, v)) => (n, Some(v.to_string())),
 			None => (body, None),
 		};
+
+		// CLI-only flags: main.rs prints and exits on these, so no window and no
+		// layout is ever built. Taken in ANY position on purpose - asking for the
+		// help should never be answered with a complaint about where it was put.
+		match name {
+			"help" => {
+				cli.help = true;
+				continue;
+			}
+			"syntax" => {
+				cli.syntax = true;
+				continue;
+			}
+			"about" => {
+				cli.about = true;
+				continue;
+			}
+			"donate" => {
+				cli.donate = true;
+				continue;
+			}
+			"version" | "ver" => {
+				cli.version = true;
+				continue;
+			}
+			_ => {}
+		}
 
 		// markers (enter/select a scope)
 		match name {
@@ -375,8 +409,6 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 				| "hide-menu"
 				| "fullscreen"
 				| "config" | "reset-config"
-				| "help" | "version"
-				| "syntax"
 		);
 		if window_only {
 			if cur_tab.is_some() {
@@ -417,9 +449,6 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 				"fullscreen" => cli.win.fullscreen = Some(a.bool_value(name, inline)?),
 				"config" => cli.config = Some(PathBuf::from(a.value(name, inline)?)),
 				"reset-config" => cli.reset_config = true,
-				"help" => cli.help = true,
-				"version" => cli.version = true,
-				"syntax" => cli.syntax = true,
 				_ => unreachable!("name in the matches! set above"),
 			}
 			continue;
@@ -616,10 +645,79 @@ fn find_pane(tab: &TabSpec, id: &str) -> Option<usize> {
 		.position(|pane| pane.id.as_deref() == Some(id))
 }
 
+// Program name and version, as --version prints it.
+pub fn version_line() -> String {
+	format!("{} {}", config::APP_NAME, env!("CARGO_PKG_VERSION"))
+}
+
+// A CLI-only flag's output with a blank line above and below, so the block sits
+// clear of the shell prompts either side of it. Print with `print!` - the
+// trailing blank line is part of the string. --version is deliberately NOT run
+// through this: it exists to be captured by a script.
+pub fn padded(body: &str) -> String {
+	format!("\n{}\n\n", body.trim_end_matches('\n'))
+}
+
+// What --about prints: enough to identify a build in a bug report. `info` is
+// None when no GPU adapter could be probed - the version and build still are
+// worth having, so that reads as three missing lines rather than a failure.
+pub fn about(info: Option<&wgpu::AdapterInfo>) -> String {
+	let mut lines = vec![
+		format!("About {}", config::APP_NAME),
+		format!("version {}", env!("CARGO_PKG_VERSION")),
+		"Copyright © 2026 Jim Collier".to_string(),
+		format!("License: {}", env!("CARGO_PKG_LICENSE")),
+		String::new(),
+		"Info".to_string(),
+		format!("  Build:  {}", config::build_target()),
+	];
+	if let Some(info) = info {
+		lines.push(format!("  Renderer:  {}", info.name));
+		lines.push(format!("  Backend:  {:?}", info.backend));
+		lines.push(format!(
+			"  Acceleration:  {}",
+			crate::gfx::acceleration(info.device_type)
+		));
+	}
+	lines.push(String::new());
+	lines.push(env!("CARGO_PKG_REPOSITORY").to_string());
+	lines.join("\n")
+}
+
+// What --donate prints. The short version of DONATE.md - someone who reached
+// for this from a shell wants the address, not the essay.
+pub fn donate() -> String {
+	format!(
+		"\
+Support {app}
+
+{app} is written and maintained by one programmer in his spare time. If
+you use it often, or it saves you time, sponsoring it keeps it moving.
+Even a few dollars a month is meaningful.
+
+  Sponsor:  {sponsor}
+  Details:  {details}
+
+It helps just as much to star the repo, file good bug reports, and tell
+other terminal nerds it exists.",
+		app = config::APP_NAME,
+		sponsor = config::SPONSOR_URL,
+		details = config::DONATE_URL,
+	)
+}
+
 // One-line-per-option usage text (shared by --help and --syntax).
 pub fn usage() -> &'static str {
 	"\
 Usage: silkterm [WINDOW OPTIONS] [--new-tab|--tab=ID [TAB OPTIONS]] [--new-pane|--pane=ID [PANE OPTIONS]] ...
+       silkterm --help|--syntax|--about|--donate|--version
+
+Information (prints and exits; no window opens, position doesn't matter):
+  --help, -h                  this help
+  --syntax                    the option list on its own
+  --about                     version, build and renderer details
+  --donate                    how to support SilkTerm
+  --version, --ver, -v        program name + version, unpadded for scripts
 
 Window options (must precede any tab/pane):
   --columns N                 initial width in cells
@@ -632,9 +730,6 @@ Window options (must precede any tab/pane):
   --fullscreen[=BOOL]         start fullscreen
   --config PATH               use an alternate config file
   --reset-config              rename the config aside and start from defaults
-  --help, -h                  this help
-  --syntax                    options list only
-  --version                   program name + version + build
 
 Control (run from a shell inside a window; acts on that window, then exits):
   --wallpaper [PATH]          change the wallpaper live (no value = none)
@@ -679,6 +774,75 @@ mod tests {
 		assert_eq!(c.win.fullscreen, Some(true));
 		assert_eq!(c.win.hide_menu, Some(false));
 		assert!(!c.hierarchical);
+	}
+
+	#[test]
+	fn cli_only_flags_are_taken_anywhere() {
+		// They print and exit, so where they sit can't matter - and answering
+		// "--new-tab --help" with a placement complaint would be absurd.
+		assert!(p("--help").help);
+		assert!(p("-h").help);
+		assert!(p("--new-tab --new-pane --help").help);
+		assert!(p("--about").about);
+		assert!(p("--new-tab --about").about);
+		assert!(p("--donate").donate);
+		assert!(p("--syntax").syntax);
+		assert!(p("--new-pane --donate").donate);
+	}
+
+	#[test]
+	fn the_three_version_spellings_are_one_flag() {
+		assert!(p("--version").version);
+		assert!(p("--ver").version);
+		assert!(p("-v").version);
+		assert!(!p("--columns 80").version);
+	}
+
+	#[test]
+	fn padding_puts_one_blank_line_either_side() {
+		// A body's own trailing newlines must not stack up into extra blanks -
+		// usage() ends with one, the built texts don't.
+		assert_eq!(padded("a\nb"), "\na\nb\n\n");
+		assert_eq!(padded("a\nb\n"), "\na\nb\n\n");
+		assert_eq!(padded("a\nb\n\n\n"), "\na\nb\n\n");
+	}
+
+	#[test]
+	fn about_survives_having_no_adapter() {
+		// A box with no usable GPU still has a version and a build worth
+		// reporting; only the three renderer lines go missing.
+		let text = about(None);
+		assert!(text.contains(env!("CARGO_PKG_VERSION")));
+		assert!(text.contains(env!("CARGO_PKG_REPOSITORY")));
+		assert!(text.contains(&config::build_target()));
+		assert!(!text.contains("Renderer:"));
+		assert!(!text.contains("Acceleration:"));
+	}
+
+	#[test]
+	fn donate_names_the_address() {
+		let text = donate();
+		assert!(text.contains(config::SPONSOR_URL));
+		assert!(text.contains(config::DONATE_URL));
+	}
+
+	#[test]
+	fn usage_lists_every_cli_only_flag() {
+		// The flags exist to be found; one added without its line is a flag
+		// nobody can discover.
+		let text = usage();
+		for flag in [
+			"--help",
+			"--syntax",
+			"--about",
+			"--donate",
+			"--version",
+			"--ver",
+			"-v",
+			"-h",
+		] {
+			assert!(text.contains(flag), "usage() never mentions {flag}");
+		}
 	}
 
 	#[test]
