@@ -1,0 +1,508 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document
+	xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+	xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+	xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+	xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+	xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+	xmlns:number="urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0"
+	office:version="1.3"
+	office:mimetype="application/vnd.oasis.opendocument.spreadsheet">
+
+	<office:automatic-styles>
+		<style:style style:name="coNarrow" style:family="table-column">
+			<style:table-column-properties style:column-width="0.9in"/>
+		</style:style>
+		<style:style style:name="coMed" style:family="table-column">
+			<style:table-column-properties style:column-width="1.7in"/>
+		</style:style>
+		<style:style style:name="coWide" style:family="table-column">
+			<style:table-column-properties style:column-width="6.5in"/>
+		</style:style>
+		<style:style style:name="ceHead" style:family="table-cell">
+			<style:table-cell-properties fo:background-color="#dddddd"/>
+			<style:text-properties fo:font-weight="bold"/>
+		</style:style>
+		<style:style style:name="ceWrap" style:family="table-cell">
+			<style:table-cell-properties fo:wrap-option="wrap" style:vertical-align="top"/>
+		</style:style>
+		<style:style style:name="ceBad" style:family="table-cell">
+			<style:table-cell-properties fo:background-color="#ffdddd"/>
+		</style:style>
+	</office:automatic-styles>
+
+	<office:body>
+	<office:spreadsheet>
+
+	<!-- ============================== Session ============================== -->
+	<table:table table:name="Session">
+		<table:table-column table:style-name="coMed"/>
+		<table:table-column table:style-name="coWide"/>
+		<table:table-row>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Field</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Value</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Date</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Times in this file</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>UTC, matching the results store. Local was UTC-4, so 17:23Z is 13:23 local.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Purpose</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Fill the Windows rows of the README shootout table (conhost, Windows Terminal, MobaXterm), which have never been measured because the two rigs need a Linux display.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Outcome</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Nothing published. The figures are real and repeatable but not comparable with the existing rows, for the reasons on the Validity sheet. Numbers kept here so a later pass on comparable hardware has a baseline to check itself against.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Raw records</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>%LOCALAPPDATA%\silkterm-bench\results.jsonl (31 records, including the discarded and exploratory ones)</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row/>
+		<table:table-row>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Measured on</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Reference rig the table was built on</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Lenovo 20Y1S00C00 (laptop, bare metal)</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>b23 (desktop)</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>AMD Ryzen 7 PRO 4750U, 8C/16T, mobile</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>AMD Ryzen 9 3950X, desktop</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>AMD Radeon Pro, integrated</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>GeForce RTX 3060 Ti, discrete</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>37.7 GiB</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>not recorded here</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Windows 11 Pro 10.0.26200, Python 3.14.7</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>Linux, headless Wayland compositor on the discrete GPU</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row/>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Note</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>README footnote 9 anticipates the Windows rows coming from a VM on the b23 host with a passed-through RTX 2060. That is not this machine. This is a different physical laptop with integrated graphics, which is the single biggest reason the figures below cannot be published beside the Linux rows.</text:p></table:table-cell>
+		</table:table-row>
+	</table:table>
+
+	<!-- ============================== Speed ============================== -->
+	<table:table table:name="Speed runs">
+		<table:table-column table:style-name="coMed"/>
+		<table:table-column table:style-name="coMed"/>
+		<table:table-column table:style-name="coNarrow" table:number-columns-repeated="8"/>
+		<table:table-row>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>When (UTC)</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Terminal</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Build</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Scene</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>MB/s</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Kcells/s</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>CV%</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Reps</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Score</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Trust</text:p></table:table-cell>
+		</table:table-row>
+
+		<!-- conhost, the one fully clean five-scene run -->
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:23:12</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>conhost.exe</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>10.0.26100.1</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>ascii</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="13.61"><text:p>13.61</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="13282"><text:p>13282</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="0.69"><text:p>0.69</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="8.9"><text:p>8.9</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>clean</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:23:12</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>conhost.exe</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>10.0.26100.1</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>latin</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="12.48"><text:p>12.48</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6162"><text:p>6162</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="0.88"><text:p>0.88</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>clean</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:23:12</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>conhost.exe</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>10.0.26100.1</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>cjk</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="9.79"><text:p>9.79</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6420"><text:p>6420</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="0.48"><text:p>0.48</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>clean</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:23:12</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>conhost.exe</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>10.0.26100.1</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>emoji</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="13.68"><text:p>13.68</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6756"><text:p>6756</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="1.35"><text:p>1.35</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>clean</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:23:12</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>conhost.exe</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>10.0.26100.1</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>mixed</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="11.3"><text:p>11.30</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6850"><text:p>6850</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="0.77"><text:p>0.77</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>clean</text:p></table:table-cell>
+		</table:table-row>
+
+		<!-- Windows Terminal, the clean run -->
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:54:07</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>Windows Terminal</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>1.24.11911</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>ascii</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="93.14"><text:p>93.14</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="90865"><text:p>90865</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="3.05"><text:p>3.05</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="33.5"><text:p>33.5</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>quiet box</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:54:07</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>Windows Terminal</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>1.24.11911</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>latin</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceBad" office:value-type="float" office:value="16.11"><text:p>16.11</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="7957"><text:p>7957</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceBad" office:value-type="float" office:value="29.78"><text:p>29.78</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>unstable, see Validity 5</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:54:07</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>Windows Terminal</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>1.24.11911</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>cjk</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="36.98"><text:p>36.98</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="24251"><text:p>24251</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="2.93"><text:p>2.93</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>quiet box</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:54:07</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>Windows Terminal</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>1.24.11911</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>emoji</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="45.74"><text:p>45.74</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="22587"><text:p>22587</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="1.75"><text:p>1.75</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>quiet box</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:54:07</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>Windows Terminal</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>1.24.11911</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>mixed</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="37.34"><text:p>37.34</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="22629"><text:p>22629</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="2.61"><text:p>2.61</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>quiet box</text:p></table:table-cell>
+		</table:table-row>
+
+		<!-- Calibration terminals: ascii only, the rest deadlock -->
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:29:40</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>SilkTerm +candy</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>1.0.0-beta2</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>ascii</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.53"><text:p>10.53</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10278"><text:p>10278</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="1.29"><text:p>1.29</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>set 1</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:55:52</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>SilkTerm +candy</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>1.0.0-beta2</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>ascii</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.26"><text:p>10.26</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10006"><text:p>10006</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="2.12"><text:p>2.12</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>set 2, quiet box</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:30:56</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>SilkTerm plain</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>1.0.0-beta2</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>ascii</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.06"><text:p>10.06</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="9819"><text:p>9819</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="1.07"><text:p>1.07</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>set 1</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:57:04</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>SilkTerm plain</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>1.0.0-beta2</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>ascii</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.41"><text:p>10.41</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10153"><text:p>10153</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="0.68"><text:p>0.68</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>set 2, quiet box</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:32:40</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>Alacritty</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>0.15.1</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>ascii</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.93"><text:p>10.93</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10667"><text:p>10667</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="0.92"><text:p>0.92</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>set 1</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>2026-08-14 17:58:14</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>Alacritty</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>0.15.1</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>ascii</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="9.77"><text:p>9.77</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="9531"><text:p>9531</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="1.16"><text:p>1.16</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>set 2, quiet box</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row/>
+		<table:table-row>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Discarded</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string" table:number-columns-spanned="9"><text:p>Three earlier Windows Terminal runs (17:26:27 and two at 17:28:11) overlapped each other and are not used. A harness fault let the benchmark keep running inside the window after the driver had given up, so a later run started while an earlier one was still going. Kept in results.jsonl, excluded here.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Conditions</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string" table:number-columns-spanned="9"><text:p>All runs: grid 160x42, mode full, scale 1.00, reps 6, line-cells 80, payload version 1, all synced on the DA1 barrier. Harness ceiling to a sink measured 55.4 to 57.4 GB/s, several hundred times the fastest terminal, so the tool is not what was measured.</text:p></table:table-cell>
+		</table:table-row>
+	</table:table>
+
+	<!-- ============================== Calibration ============================== -->
+	<table:table table:name="Calibration">
+		<table:table-column table:style-name="coMed"/>
+		<table:table-column table:style-name="coNarrow" table:number-columns-repeated="5"/>
+		<table:table-column table:style-name="coWide"/>
+		<table:table-row>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Terminal</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>b23 ascii</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Here set 1</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Here set 2</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Here mean</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Ratio</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Note</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>SilkTerm +candy</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="77.4"><text:p>77.4</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.53"><text:p>10.53</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.26"><text:p>10.26</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.4"><text:p>10.40</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="7.44"><text:p>7.44</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>same binary and version both sides</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>SilkTerm plain</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="86.9"><text:p>86.9</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.06"><text:p>10.06</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.41"><text:p>10.41</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.24"><text:p>10.24</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="8.49"><text:p>8.49</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>every optional effect off</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Alacritty</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="79.8"><text:p>79.8</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.93"><text:p>10.93</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="9.77"><text:p>9.77</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="10.35"><text:p>10.35</text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="7.71"><text:p>7.71</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>version matched to the table on purpose</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Mean ratio</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			<table:table-cell office:value-type="float" office:value="7.88"><text:p>7.88</text:p></table:table-cell>
+			<table:table-cell office:value-type="string"><text:p>DO NOT APPLY - see below and Validity 2 and 3</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row/>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Best guess at scaling</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string" table:number-columns-spanned="6"><text:p>None of these is a hardware factor, and there is no defensible one in this data. The three terminals land within 1.5% of each other here (10.24, 10.35, 10.40) while spanning 77.4 to 86.9 on b23. Three different programs converging on one number means the transport is the limit, not the terminal, so the ratio measures the Windows console pipe far more than it measures the machine. The hardware gap alone is probably nearer 1.3x to 1.5x, from the single-core class difference between a desktop 3950X and a mobile 4750U, but that is an estimate from part numbers and was not measured - do not publish it. To get a real one, run the same terminal on both sides of a comparison where only the hardware differs.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>What would fix it</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string" table:number-columns-spanned="6"><text:p>Windows 11 in a VM on the b23 host with a passed-through GPU, which is what README footnote 9 already describes. Same host, same memory, same GPU family, so the residual is VM overhead plus the card difference - plausibly 1.1x to 1.5x rather than 7.9x, and measurable rather than guessed because SilkTerm, Alacritty and WezTerm all run on both sides. A small correction that is slightly wrong is survivable; a 7.9x one is not.</text:p></table:table-cell>
+		</table:table-row>
+	</table:table>
+
+	<!-- ============================== Deadlock ============================== -->
+	<table:table table:name="Deadlock">
+		<table:table-column table:style-name="coMed"/>
+		<table:table-column table:style-name="coWide"/>
+		<table:table-row>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Item</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Detail</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Symptom</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>SilkTerm and Alacritty on Windows stop dead when a program writes sustained non-ASCII output. Not slow - stopped. The window stays up and never recovers.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Evidence</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>2 MiB of 2-byte UTF-8 into Alacritty froze at 393,204 bytes and did not move across six samples over 42 seconds. conhost took the identical payload in 0.24 s (8.81 MB/s). SilkTerm behaves the same: ascii completes, latin never does.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Where it is stuck</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>The writer is blocked in os.write, in the first bulk write of the run, and never returns. Both sides sit idle at near-zero CPU, which is a circular wait rather than a slow consumer.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Ruled out</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Not the benchmark: reproduces with a plain os.write loop and no benchmark involved. Not cmd.exe: reproduces with the writer as the terminal's direct child. Not raw console mode: reproduces with no console mode changes at all. Not payload size: 100 MiB of ascii completes, 2 MiB of latin does not.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Shared factor</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Both terminals drive the system ConPTY through the same pty backend. conhost and Windows Terminal, which host the console themselves, are unaffected - Windows Terminal ships its own console host.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Why it matters</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>This is a shipped defect, not a benchmarking obstacle. Any Windows user who cats a file of non-ASCII text, or runs a build with non-ASCII diagnostics, can hang the terminal permanently.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Open question</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Whether it is a true circular wait or a race that only shows when the renderer is slow. Untested on faster hardware. Worth checking early on any VM, because if it persists the calibration terminals stay limited to the ascii class.</text:p></table:table-cell>
+		</table:table-row>
+	</table:table>
+
+	<!-- ============================== Validity ============================== -->
+	<table:table table:name="Validity">
+		<table:table-column table:style-name="coNarrow"/>
+		<table:table-column table:style-name="coWide"/>
+		<table:table-row>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>#</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Why these figures are not in the README</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="float" office:value="1"><text:p>1</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Wrong class of machine. Every published row comes from one desktop with a discrete RTX 3060 Ti. This is a laptop with a mobile CPU and integrated graphics. The table's own note 9 records that the rig is not neutral - GPU-accelerated terminals swing by a factor of two between rigs while CPU-rendered ones do not move - so mixing the two can rank the wrong terminal first.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="float" office:value="2"><text:p>2</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>No single factor transfers across Windows terminals. On this one machine conhost reads 13.6 MB/s ascii and Windows Terminal 93.1, a 6.8x spread. They are limited by different things - conhost by its own renderer, Windows Terminal by neither - so one multiplier cannot serve both.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="float" office:value="3"><text:p>3</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>The available factor measures the wrong thing. SilkTerm +candy, SilkTerm plain and Alacritty all land within 1.5% of each other here despite spanning 77.4 to 86.9 on b23. Three unrelated programs agreeing that precisely means they are all pinned at the console pipe's ceiling, so the 7.9x ratio is mostly a platform penalty, not a hardware one. Applying it to Windows Terminal would publish roughly 730 MB/s ascii, far beyond anything measured anywhere, which is how you can tell it is wrong.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="float" office:value="4"><text:p>4</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>The calibration covers one width class. SilkTerm and Alacritty deadlock on every non-ASCII scene here, so only ascii could be measured for them. A factor derived from one class cannot be assumed to hold for the other four, and there is no way to check it on this hardware.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="float" office:value="5"><text:p>5</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Windows Terminal's 2-byte figure is not stable enough to publish. Its latin scene ran 12.67 to 31.08 MB/s inside a single run, CV 29.8%, on an otherwise idle machine. Across four runs latin came out at 20.16, 26.99, 26.10 and 16.11. Published rows run 1 to 4% and the rig's own guidance is to re-run anything much worse; this does not settle with repetition, so it looks intrinsic to that terminal rather than to the conditions.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>No size or memory figures were taken. The one attempt measured cmd.exe rather than the console host, because launching conhost explicitly inverts the usual parentage that the collector relies on to find the terminal. The number it produced (File+deps 7.0 MiB, Mem 16.7 MiB) is cmd.exe's and is not recorded as conhost's.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="float" office:value="7"><text:p>7</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>MobaXterm was installed but never measured, so that row is still empty. PuTTY cannot be measured this way at all - it has no local shell mode, only network sessions - which is worth recording so nobody tries again.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="float" office:value="8"><text:p>8</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>kitty and Ghostty have no Windows build, so those rows can never be filled from a Windows box. Note the Chocolatey package named kitty is KiTTY, an unrelated PuTTY fork; installing it and labelling the row kitty would put a wrong figure in the table.</text:p></table:table-cell>
+		</table:table-row>
+	</table:table>
+
+	<!-- ============================== Method ============================== -->
+	<table:table table:name="Method">
+		<table:table-column table:style-name="coNarrow"/>
+		<table:table-column table:style-name="coWide"/>
+		<table:table-row>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Item</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Detail</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>How</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>There is no compositor rig on Windows, so each terminal was launched with a scene script inside it that reports its own grid, waits for a go file, then runs the tool with stdout still on the tty and the report written out of band. Terminals that take a grid on the command line were told one; the rest were fitted by resizing the window against the grid they reported back.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Grid</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Checked, never trusted. SilkTerm needs this: asked for 160x42 it comes up 160x40, because its own chrome takes the difference. Two rows out of 42 is a 5% error in the wrong direction, and it looks like nothing in the output.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Reps</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>6 per scene rather than the default 12 times the scene weight. Reps change only how many timing samples are taken, not the weighting of the score, so this stays comparable and only widens the confidence interval. Scale was left at 1.00 throughout; shrinking the payload changes what is measured and was used only for diagnosis.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>README safety</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Every run used --no-readme. The table writer keys on the terminal name, so a Windows run labelled SilkTerm +candy would have overwritten the b23 row's speed cells in place, silently replacing the headline figures with laptop ones.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Trap</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Windows Terminal keeps every window in one long-lived process, which may well be one the user is sitting in, and wt.exe attaches to an existing window unless told otherwise. Launch it with -w new, identify it by comparing process ids before and after, and never signal it by name.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Trap</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>The size collector asks stdout, then stderr, then stdin for the grid, and on Windows only a screen-buffer handle answers. Capturing both stdout and stderr leaves only stdin and it refuses the run as unknown.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Trap</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>--config names a file the loader maintains, not one it only reads. Pointing SilkTerm at the plain-row config in the tree backfilled it from 13 lines to 461 and moved the header comment inside a block. Copy it somewhere temporary first; the run is still correct, but the file stops meaning what it says.</text:p></table:table-cell>
+		</table:table-row>
+		<table:table-row>
+			<table:table-cell office:value-type="string"><text:p>Next</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Re-measure on Windows in a VM on the b23 host. Test the deadlock there first: if it persists, the calibration terminals stay limited to ascii and the same problem recurs. Then MobaXterm, then the size and memory half, which needs no calibration and is the one part unaffected by any of this.</text:p></table:table-cell>
+		</table:table-row>
+	</table:table>
+
+	</office:spreadsheet>
+	</office:body>
+</office:document>
