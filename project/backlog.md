@@ -52,7 +52,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- And no single correction can serve the table anyway: on one machine the console host reads 13.6 MB/s of ASCII and Windows Terminal 93.1, so they are limited by different things.
 			- Windows Terminal's 2-byte figure would not settle either - 12.67 to 31.08 MB/s inside one run on an idle machine, and no better across four runs. Published rows run 1 to 4%.
 			- Next: re-measure in a VM on the reference host with a passed-through card, which is what the table's own notes already promise. The residual is then VM overhead plus the card difference, small enough to correct for and measurable rather than guessed. Test the freeze above first - if it survives, the terminals needed for the correction can still only be measured on ASCII.
-			- MobaXterm is installed but unmeasured. PuTTY cannot be measured this way at all: it has no local shell, only network sessions. kitty and Ghostty have no Windows build, and the package named kitty is KiTTY, an unrelated PuTTY fork.
+			- MobaXterm needs more than it is worth. Its local shell is Cygwin on a real pty and stty reports the grid, but no Windows program gets a tty through it - isatty is false both ways and the grid call fails - and its python3 is the Windows one on PATH, so there is nothing to fall back to. Both halves need a real terminal on stdin and stdout, so it would take a Cygwin python installed into the plugin environment first.
+			- PuTTY cannot be measured this way at all: it has no local shell, only network sessions. kitty and Ghostty have no Windows build, and the package named kitty is KiTTY, an unrelated PuTTY fork.
 		- Windows figures answer a slightly different question and are not directly comparable, which the table's notes say: a base OS includes far more there, and the machine differs.
 
 - 🛠️ Demo gif: the jumping, and showing the speed curve off properly:

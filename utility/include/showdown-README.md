@@ -123,7 +123,7 @@ The grid is checked rather than trusted: at the wrong size each half says so and
 The three Windows-only rows have to be measured this way or not at all. Two of them need care:
 
 - **conhost** is not an ancestor of the shell - it is attached to it as a child - so the console window is asked which process owns it. That also picks the right thing under Windows Terminal, where a console host sits between the shell and the window process that is the real terminal.
-- **MobaXterm** runs its local shell under Cygwin, so the ancestor walk finds it normally.
+- **MobaXterm** runs its local shell under Cygwin, so the ancestor walk finds it normally - but neither half can be run inside it as things stand. No Windows program gets a tty through that shell: `isatty` is false on both streams and the grid call fails, even though `stty` reports the size correctly. Its `python3` is the Windows one on `PATH`, so there is no Cygwin interpreter to fall back to, and both halves need a real terminal on stdin and stdout. Installing a Cygwin python into the plugin environment would be the way in.
 
 A first pass ran on a laptop and published nothing; the figures and the reasons are in `ancillary-notes.fods`. Three things from it are worth knowing before the next attempt:
 
