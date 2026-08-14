@@ -453,7 +453,7 @@
 		</table:table-row>
 		<table:table-row>
 			<table:table-cell office:value-type="float" office:value="7"><text:p>7</text:p></table:table-cell>
-			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>MobaXterm was installed but never measured, so that row is still empty. PuTTY cannot be measured this way at all - it has no local shell mode, only network sessions - which is worth recording so nobody tries again.</text:p></table:table-cell>
+			<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>MobaXterm cannot be measured with these tools as they stand, so that row stays empty. Its local shell is Cygwin on a real pty - stty reports the grid correctly - but no Windows program gets a tty through it: isatty is false on both streams and the grid call fails outright. Its python3 is the Windows one on PATH, so there is no Cygwin interpreter to fall back to, and both halves need a real terminal on stdin and stdout. It would take a genuine Cygwin python installed into the plugin environment, which is a lot of setup for one row. PuTTY cannot be measured at all: no local shell, only network sessions.</text:p></table:table-cell>
 		</table:table-row>
 		<table:table-row>
 			<table:table-cell office:value-type="float" office:value="8"><text:p>8</text:p></table:table-cell>
