@@ -125,6 +125,16 @@ The three Windows-only rows have to be measured this way or not at all. Two of t
 - **conhost** is not an ancestor of the shell - it is attached to it as a child - so the console window is asked which process owns it. That also picks the right thing under Windows Terminal, where a console host sits between the shell and the window process that is the real terminal.
 - **MobaXterm** runs its local shell under Cygwin, so the ancestor walk finds it normally.
 
+A first pass ran on a laptop and published nothing; the figures and the reasons are in `ancillary-notes.fods`. Three things from it are worth knowing before the next attempt:
+
+- **A terminal measured on non-comparable hardware cannot be rescued by calibrating it.** The three terminals that run on both platforms all landed within 1.5% of each other there, while spanning 77.4 to 86.9 MB/s on the reference rig - which says they were all pinned at the console pipe rather than by the machine, so the ratio measures the platform, not the hardware. There is no correction to derive from that.
+- **No single factor serves the whole table anyway.** On one machine the console host read 13.6 MB/s of ASCII and Windows Terminal 93.1. They are limited by different things, so a multiplier fitted to one is wrong for the other.
+- **Windows Terminal's 2-byte scene does not settle.** 12.67 to 31.08 MB/s inside a single run on an idle machine, and no better over four runs, against the 1 to 4% the published rows hold to.
+
+**Copy `termbench-plain.shcl` somewhere temporary before pointing SilkTerm at it.** `--config` is a file the loader maintains, not just reads: it backfills every missing key and rewrites the layout, so one plain-row run turned the 13-line override list into 461 lines with the header comment moved inside a block. It still measures correctly, and the file no longer means what it says.
+
+Two traps in driving a terminal from outside, both of which produce a plausible wrong answer rather than an error. Windows Terminal keeps every window in one long-lived process, quite possibly one someone is sitting in, and `wt.exe` joins an existing window unless given `-w new` - so a run can end up measuring inside somebody's session, and a name-based kill would take it out. And the size collector asks stdout, then stderr, then stdin for the grid, of which only a screen-buffer handle answers on Windows: capture both streams and it sees no terminal at all and refuses.
+
 ### What the Windows accounting does differently
 
 The two collectors take the same measurement by different routes: the module list stands in for the mapped library set, mapped regions plus their resident pages for `smaps`, and PE imports for `DT_NEEDED`. The self-check (`sizebench-classify.py --selftest`) measures the running process both ways and compares, which stands in for the reproduce gate - there is no published Windows row to reproduce yet.
@@ -146,9 +156,10 @@ Do not correct that with a guessed multiplier. Calibrate it: SilkTerm, Alacritty
 | `bench-common.bash` | output helpers and pid-safe teardown, sourced by both rigs |
 | `termbench-run.bash` | speed rig: compositor bring-up, terminal launch, grid fit, teardown |
 | `termbench-scene.sh` | runs inside the terminal; reports its grid, then runs the benchmark |
-| `termbench-plain.toml` | SilkTerm with every optional effect off, for the "plain" rows |
+| `termbench-plain.shcl` | SilkTerm with every optional effect off, for the "plain" rows |
 | `sizebench-run.bash` | size rig: display bring-up, launch, grid sizing, process-tree collection |
 | `sizebench-classify.py` | the closure classifier and the accounting, plus a collector for each platform |
 | `showdown-readme.py` | writes the File+deps and Mem cells for one row |
+| `ancillary-notes.fods` | measurements taken but not published, and why they could not be |
 
 The entry point is Python and the rigs are shell, which is the right split: the rigs drive a Linux display and are Linux-only by nature, while the entry point has to run wherever a terminal does. It is deliberately one file rather than a shell copy plus a PowerShell copy. Two copies of one program drift, and a fix then lands in whichever copy was to hand rather than the one being run - which has happened here before, to `n8git_backup-and-publish`.

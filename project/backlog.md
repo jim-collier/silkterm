@@ -45,7 +45,14 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - 🛠️ Terminal throughput benchmark (Windows):
 	- Both halves now run on Windows as well, measured from inside the terminal under test, which is the only way to reach the terminals that exist nowhere else. Each half checks the window is at its own fixed size first and refuses otherwise, since measuring at the wrong one produces a figure that looks fine and belongs in no column.
-		- 🔘 Fill in the Windows rows: conhost, Windows Terminal and MobaXterm need running on a Windows machine.
+		- 🛠️ Fill in the Windows rows: conhost, Windows Terminal and MobaXterm need running on a Windows machine.
+			- Measured on a laptop, and nothing was published. Figures, host details and the reasoning are in `utility/include/ancillary-notes.fods` so a later pass has something to check itself against.
+			- The machine was the problem: a mobile chip with integrated graphics against the desktop and discrete card every other row comes from. That needs a correction of about 7.9x, and a correction that large is worth more than the differences the table exists to show.
+			- Worse, the only correction available measures the wrong thing. SilkTerm with the candy on, SilkTerm plain and Alacritty all land within 1.5% of each other there while spanning 77.4 to 86.9 on the reference machine - three unrelated programs agreeing that closely means they are all pinned at the console pipe, not at anything the machine or the terminal does.
+			- And no single correction can serve the table anyway: on one machine the console host reads 13.6 MB/s of ASCII and Windows Terminal 93.1, so they are limited by different things.
+			- Windows Terminal's 2-byte figure would not settle either - 12.67 to 31.08 MB/s inside one run on an idle machine, and no better across four runs. Published rows run 1 to 4%.
+			- Next: re-measure in a VM on the reference host with a passed-through card, which is what the table's own notes already promise. The residual is then VM overhead plus the card difference, small enough to correct for and measurable rather than guessed. Test the freeze above first - if it survives, the terminals needed for the correction can still only be measured on ASCII.
+			- MobaXterm is installed but unmeasured. PuTTY cannot be measured this way at all: it has no local shell, only network sessions. kitty and Ghostty have no Windows build, and the package named kitty is KiTTY, an unrelated PuTTY fork.
 		- Windows figures answer a slightly different question and are not directly comparable, which the table's notes say: a base OS includes far more there, and the machine differs.
 
 - 🛠️ Demo gif: the jumping, and showing the speed curve off properly:
@@ -60,6 +67,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 ## Backlog
 
 ### Bugs
+
+- 🔘 Windows: a long run of non-ASCII output freezes the window for good.
+	- Not slow, stopped. 2 MiB of 2-byte UTF-8 got 393,204 bytes in and never moved again; the console host takes the same bytes in a quarter of a second. Plain ASCII is fine at any size - 100 MiB of it completes normally - so it is the content, not the volume.
+	- Both ends sit idle with the writer blocked in a write that never returns, which is a circular wait rather than a slow consumer.
+	- Not the shell and not console modes: it reproduces with a bare write loop, with the writer as a direct child of the window, and with no console settings touched. Alacritty does the same on the same machine, so the shared pty backend looks like the common factor rather than anything in the renderer.
+	- Reachable by ordinary use - anyone who cats a file of accented text, or runs a build whose diagnostics are not pure ASCII, can hang the window and have to kill it.
+	- Open: whether it is a true deadlock or a race that only shows when the renderer is slow. Only seen so far on one laptop with integrated graphics, so it is worth re-testing on faster hardware before assuming it is universal.
 
 - 🔘 A wheel gesture can land by moving backwards about one line.
 	- Measured on the shipped demo: at the end of a scroll-back the view goes forward all the way, then hops back 19px (the row pitch is 21) and stays. The top row reads `.dircolors`, then `.gitconfig`, then `.dircolors` again over about a third of a second, which is a visible bounce against the direction of the gesture.
