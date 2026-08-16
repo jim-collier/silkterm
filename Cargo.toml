@@ -4,6 +4,24 @@
 members = ["source"]
 resolver = "3"
 
+# TEMPORARY - remove once a released alacritty_terminal carries the fix.
+#
+# On Windows the terminal froze for good on any large burst of output: the
+# engine's reader thread fills a one-megabyte staging buffer and waits for room,
+# while the side that consumes it is told there is data only as a side effect of
+# writing into that same buffer. Once it is full there can be no further write,
+# so nothing is left to tell anyone, and both ends wait forever at no CPU. It
+# needs only enough output to fill the buffer, so it was reachable by ordinary
+# use and nothing about our own code was involved.
+#
+# This pins the released 0.26.0 plus that one change. Submitted upstream as
+# alacritty/alacritty#9026; the branch is cut from the v0.17.0 tag rather than
+# master purely so the version still reads 0.26.0 - cargo silently ignores a
+# patch whose version does not satisfy the dependency requirement, and master
+# carries a pre-release version that does not.
+[patch.crates-io]
+alacritty_terminal = { git = "https://github.com/jim-collier/alacritty", branch = "pty-deadlock-fix-0.26.0" }
+
 # Clippy gate (cicd lints stage runs -D warnings). pedantic is on; the allows
 # below are deliberate house style, not suppressed problems.
 [workspace.lints.clippy]
