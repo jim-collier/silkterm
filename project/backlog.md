@@ -69,12 +69,30 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### Bugs
 
-- 🔘 Windows: a long run of non-ASCII output freezes the window for good.
-	- Not slow, stopped. 2 MiB of 2-byte UTF-8 got 393,204 bytes in and never moved again; the console host takes the same bytes in a quarter of a second. Plain ASCII is fine at any size - 100 MiB of it completes normally - so it is the content, not the volume.
-	- Both ends sit idle with the writer blocked in a write that never returns, which is a circular wait rather than a slow consumer.
-	- Not the shell and not console modes: it reproduces with a bare write loop, with the writer as a direct child of the window, and with no console settings touched. Alacritty does the same on the same machine, so the shared pty backend looks like the common factor rather than anything in the renderer.
-	- Reachable by ordinary use - anyone who cats a file of accented text, or runs a build whose diagnostics are not pure ASCII, can hang the window and have to kill it.
-	- Open: whether it is a true deadlock or a race that only shows when the renderer is slow. Only seen so far on one laptop with integrated graphics, so it is worth re-testing on faster hardware before assuming it is universal.
+- 🔘 Severe windows multiscreen bug [20260816-085441]:
+	- Description: Dragging from a high-dpi screen to a low-dpi screen causes the window size to freak out. It seems to jump in size from larger to normal to even larger (possibly at each Windows rerender point), getting bigger each time, until it spans several screens worth of real-estate and slows to a crawl.
+	- Steps to reproduce: Easy to reproduce. Essentially the description.
+	- Workaround: Stop dragging the window. Maximize it on the target screen. Finish work, close, relaunch (or just accept a maximized state for that terminal session).
+
+- ✅ Windows: a long run of output freezes the window for good.
+	- Not slow, stopped. Both ends sit idle with the writer blocked in a write that never returns, and the window burns no CPU at all while stalled - a circular wait, not a slow consumer.
+	- Reachable by ordinary use - anyone who cats a large file, or runs a build with a lot of output, can hang the window and have to kill it.
+	- Corrected: ASCII is NOT exempt. It was thought to be, but it stalls too, just later and at a point that moves between runs. Non-ASCII merely arrives sooner and lands on the same byte every time.
+	- It is back-pressure, not content: a quarter-megabyte payload finishes, two megabytes stalls, and the stall point is identical whether the window is in front or behind.
+	- Not the console: a newer bundled ConPTY still stalls (see below), and a minimal test host driving the same system ConPTY never stalls at all, even with a deliberately slowed reader.
+	- **Diagnosed.** It is in the terminal engine we depend on, not in our code: a build with no renderer, no window and no drawing at all - just the engine's own pty and event loop - stalls at the identical byte. So nothing in SilkTerm is involved.
+	- The engine reads the console into a one-megabyte staging buffer on a helper thread and tells the main loop "there is data" only as a side effect of writing into that buffer. If the main loop goes back to sleep while data is still buffered, nothing is left to tell it - and once the buffer is full there can be no further write, so the notice can never come. The reader waits for room, the main loop waits for a notice, and neither can move. That is why it needs a big burst, why it is unrelated to the console, and why both ends sit idle.
+	- Fix found and proven: have the reading thread announce data itself instead of relying on that side effect. Two lines. With it, payloads four times the size that used to hang complete normally, on the stock console.
+	- Upstream: not fixed, and no issue or report existed. The file has had two commits in its life and has been wrong since the one that introduced it, in October 2023.
+	- Submitted as alacritty/alacritty#9026.
+	- Carried locally in the meantime: the workspace pins the released engine plus that one change, so our builds are fixed now rather than waiting. Cargo records the exact commit, so a build is still reproducible.
+	- Follow-up when a release carries it: drop the pin from the workspace file (it says so in place) and delete the branch it points at.
+
+- ✅ Windows: try a bundled newer ConPTY to see if it fixes the freeze above.
+	- It does not. Verified with the real binary and the console host checked rather than assumed, so a clean result could not be mistaken for the library never loading.
+	- Free to try: the pty backend already prefers a `conpty.dll` sitting beside the executable and falls back to the system one, so bundling is two files and no code change. The redistributable is published and carries a matching console host.
+	- Worth keeping anyway as a possibility for later, but it is not this fix, so nothing was shipped.
+	- Found on the way: the bundled console asks the terminal what it is at startup and waits for the answer. A terminal slow to reply pays several seconds before any output appears - worth knowing if it is ever adopted.
 
 - 🔘 A wheel gesture can land by moving backwards about one line.
 	- Measured on the shipped demo: at the end of a scroll-back the view goes forward all the way, then hops back 19px (the row pitch is 21) and stays. The top row reads `.dircolors`, then `.gitconfig`, then `.dircolors` again over about a third of a second, which is a visible bounce against the direction of the gesture.
@@ -368,6 +386,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- 🛠️ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
 		- Done: scrolling is covered by library tests encoding the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
 	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
+
+- Add silkterm to a Windows package manager (e.g. winget or choco).
 
 - 🔘 Ability to change hotkeys, and/or assign new ones dynamically. Including a "capture" dialog.
 

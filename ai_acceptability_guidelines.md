@@ -27,6 +27,7 @@ Where AI is allowed near this project, where it isn't, and who is accountable ei
 	- [Review and analysis](#review-and-analysis)
 	- [Tests and tooling](#tests-and-tooling)
 	- [Hard problems](#hard-problems)
+	- [Tedious non-coding tasks that pay nothing](#tedious-non-coding-tasks-that-pay-nothing)
 - [Rules for AI use in this project](#rules-for-ai-use-in-this-project)
 	- [A person is accountable for every merged line](#a-person-is-accountable-for-every-merged-line)
 	- [Self-assessment of AI speedup is not evidence](#self-assessment-of-ai-speedup-is-not-evidence)
@@ -41,23 +42,21 @@ Where AI is allowed near this project, where it isn't, and who is accountable ei
 
 ## Introduction
 
-This project's original author has 40+ years of programming experience, including low-level embedded projects. (And quite a bit of OO still to unlearn.)
+This project's original author has decades of programming experience. (Hobby, then professional, then hobby.) With a whole career involving software development.
 
-It started as a hobby, then moved into professional work in team enviroments, then back to hobby work as my career progressed into more senior and executive roles - always involving software.
+When AI started becoming a "thing" in programming, I (the original author) was against it. Which was convenient, because it sucked at it.
 
-When AI started becoming a "thing" in programming, I was against it - back when it was genuinely bad at it. (But embraced the "search" aspect of it.)
+But that view on AI in programming has been softening, with the emergence of frontier models like Claude Fable.
 
-That view on AI in programming has been softening, with the emergence of frontier models like Claude Fable.
+I've been running "AI-led" experiments under an alt GitHub account, mostly to find where these tools break, and where they can be useful. Many documented hard lessons-learned are coming out of that work.
 
-I've been running "AI-led" experiments under an alt GitHub account, mostly to find where these tools break, and where they can be most helpful. Many documented hard lessons-learned are coming out of that work.
-
-One result is that this now 9-year old main account no longer has a blanket "no-AI" policy.
+One result is that this nearly decade-old main account (as of 2026) no longer has a blanket "no-AI" policy.
 
 This document is a first pass at specifically documenting what, when, and how AI is allowed into this and other projects.
 
 ## Problems with AI
 
-Feel free to skip this section. It may not be stating anything you don't already know. It's mostly just stating for the record, the awareness of them.
+Feel free to skip this section. It may not be stating anything you don't already know. It's mostly just stating "for the record", an awareness of some of the main problems.
 
 ### Environmental
 
@@ -107,7 +106,7 @@ This project can't fix this problem, and might be presumptuous to even discuss i
 
 ### Code quality
 
-Code quality was a serious and universal problem until recently, even on small projects. Even on the latest frontier models, it needs to be carefully managed.
+Code quality was a serious and universal problem until recently, even on small projects. But even on the latest frontier models, it needs to be carefully managed.
 
 One main risk is not that the code fails to work. It is that it works and quietly rots. [GitClear's analysis](https://www.gitclear.com/ai_assistant_code_quality_2025_research) of 211 million changed lines found 2024 was the first year on record where copy-pasted code exceeded moved code, with code clones up roughly fourfold. Refactoring went from about a quarter of changed lines in 2021 to under a tenth in 2024.
 
@@ -135,29 +134,29 @@ AI is becoming a public enemy. The cause is (probably) mostly greed-driven hype,
 
 That perception will probably/hopefully shift once desktop-class open models are good enough to work offline, which looks like a short wait rather than a long one. (And for the love of Gorn don't confuse that concept with "Copilot"!)
 
-Either way, hiding the involvement of AI is not the way out of AI's growing PR problem. I believe that being transparent about its use is the "right" and principled path forward, along with managing it effectively as a tool - with an attempt at objective reasoning, effictiveness measurement, and global facts at hand. And then, accepting whatever criticism may come as a result - whether grounded in fact and reality or irrational fear - and well-deserved or not. (And the lines between them may not always be objectively obvious.)
+Either way, hiding the involvement of AI is not the way out of AI's growing PR problem. I believe that being transparent about its use is the "right" and principled path forward, along with managing it effectively as a tool - with an attempt at objective reasoning, effectiveness measurement, and global facts at hand. And then, accepting whatever criticism may come as a result - whether grounded in fact and reality or irrational fear - and well-deserved or not. (And the lines between them may not always be objectively obvious.)
 
 ## Non-problems with AI
 
 The common objection "LLMs don't understand context" is fundamentally wrong at worst, or confused at best.
 
-And either way, is specifically regarded as *not* a problem here.
+And either way, is specifically regarded as *not* a problem (or really an "anti-problem") for this project, and github account.
 
 Contextualization isn't something bolted onto an LLM; it *is* the mechanism.
 
 They are literally *context engines*, by design.
 
-But the objection usually means something narrower: situational context. In other words, who you are, what you ate this morning, what's at stake here. So that would be a fair criticism, just poorly worded.
+But the human objection usually means something narrower: *situational* context. In other words, who you are, what you ate this morning (maybe too many carbs), and what's really at stake here. So that would be a fair criticism, just poorly worded.
 
 Where LLMs vastly exceed us is textual context: conditioning on a hundred thousand things at once, across domains no single person could ever read let alone remember.
 
-And "understand" belongs in quotes, because nobody can specify what "understanding" *is*, beyond what it *does*.
+And "understand" belongs in quotes, because nobody can specify what "understanding" *is*, beyond what it *does*. (Try it.)
 
-We grant "understanding" to other humans on inference alone - for free: same substrate, same origins, and we've each got one running locally.
+We grant "understanding" to other humans on inference alone, for free: they presumably have the same substrate, the same evolutionary origins, and we've each got one running locally.
 
-But in the end, we can't be sure *any* intelligence - yours, mine, the pilot of your next flight - is anything more than next-word-prediction, running on wetware, that got good enough at not dying to mistake itself for something else.
+But in the end, we can't be sure *any* intelligence - yours, mine, the pilot of your next flight - is anything more than next-word-prediction machines, running on wetware, that got good enough at not dying to mistake itself for something else.
 
-An "optimal" AI or AGI may or may not eventually be LLM-based. There is ongoing R&D that may yield superior "intelligence" that looks utterly alien to us - maybe that we can't even recognize. Also, "intelligence" rooted in human language, history, and perspective (and fears and biases and scifi novels) - may be too limiting if not outright dangerous. But the advantage of LLMs at least for now, is that 1) they *can* communicate with us, and 2) we can literally watch them think, in our own native language.
+An "optimal" AI or AGI may or may not eventually be LLM-based. There is ongoing R&D that may yield superior "intelligence" that looks utterly alien to us - maybe that we can't even recognize. Also, "intelligence" rooted in human language, history, and perspective (and our monkey fears and biases and scifi novels) - may be too limiting if not outright dangerous. But the advantage of LLMs at least for now, is that 1) they *can* communicate with us, and 2) we can literally watch them think, in our own native language.
 
 Another advantage of LLMs specifically for coding - and more to the point here - is that the inventors of computer languages borrowed the machinery of linguistics - which LLMs happen to be particularly well-suited for dealing with.
 
@@ -173,15 +172,21 @@ What current LLMs demonstrably do well:
 
 - Look up information they were never trained on.
 
-What they cannot do: retain anything between sessions (without memory files), or exist as one continuous mind. Our rules for AI are built with these limits in mind.
+What they cannot do:
 
-As mentioned before, code also happens to suit LLMs well. Parsing, tokens, syntax, semantics, grammar - the vocabulary of programming was literally created from linguistics in the first place - and by experts in human language. That is a large part of why these models got good at code before they got good at most other technical work.
+- Retain anything between sessions (without memory files),
+
+- Exist as one continuous mind.
+
+Our rules for AI contribution are built, in part, with these limits in mind.
+
+As mentioned before, code also happens to suit LLMs well. Parsing, tokens, syntax, semantics, grammar - the vocabulary of programming was literally created from linguistics in the first place. That is a large part of why these models got good at code before they got good at most other technical work.
 
 ### Review and analysis
 
 Verification is where LLMs are strongest, because a wrong answer is cheaper than a defect.
 
-- Adversarial code reviews are arguably the most valuable use of AI in coding. The ginormous context windows of LLMs are able to trace through large code paths and hold more in mind at once, than any human. Hallucination is not an issue, and LLMs don't get bored.
+- Adversarial code reviews are arguably the most valuable use of AI in coding. The ginormous context windows of LLMs are able to trace through large and multiple branches of code paths and hold more in mind at once, than any human. Hallucination is not (or does not seem to be) an issue. And LLMs don't get bored to tears.
 
 - Security reviews: input handling, allowlists, deserialization, anything touching a file path or a URL scheme.
 
@@ -204,6 +209,16 @@ A model that reports a defect can usually write the fix too. Those patches are a
 - Bugs needing more context than one person can hold at once, where the cause is spread across several files and a dozen interacting conditions. This is a genuine human/AI delta, not just a speed increase.
 
 - Math, algorithms, and logic that have published academic literature behind them. First of all, the LLMs are aware of the papers in the first place, even obscure historical ones. Secondly, it has already read them. Third, it "*understands*" them, in the context of how it might apply to your particular problem. It's not necessarily "better than human" - just profoundly faster at doing the research and applying - or rejecting - the findings.
+
+### Tedious non-coding tasks that pay nothing
+
+Examples:
+
+- Demo gif and video generation. AI is quite good at this (including fully anonymized synthetic scenarios), where for humans it is incredibly tedious and not fun for anyone - generally neither technical nor creative types.
+
+- Asset generation. This is a tougher call, as creatives need work too and are being replaced by AI at heartbreaking levels. But for assets on a FLOSS project with no pay, and no one stepping up to volunteer their creative blood sweat and tears, what are you going to do? Personally, I'm artistic enough - and experienced enough with the tools - to generate image, audio, and video assets by hand. But it is extremely time-consuming, and I'd rather be putting that time to where it matters most: product design, problem-solving, and coding. For the assets, I usually know exactly what I want, and can describe it precisely. That's a good use of AI (at least in those isolated terms).
+
+- Boring "required" website setup and generation. I don't mean websites that are the core function of a product and where programmers, product designers, human factors designers, artists, graybeard seniors, back-end engineers, stakeholders and investors come together to make something wonderful. I mean the boring "required" bare-minimum web presence that even basic FLOSS products need, but no one wants to take on the torturous tedium of putting together without getting paid for doing. Such websites are (arguably) commodities - not big-brain creative work.
 
 ## Rules for AI use in this project
 
