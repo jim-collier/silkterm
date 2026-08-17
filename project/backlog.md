@@ -4,13 +4,6 @@
 <!-- markdownlint-disable MD055 -- Table pipe style [Expected: leading_and_trailing; Actual: leading_only; Missing trailing pipe] -->
 <!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
 
-<!-- TOC ignore:true -->
-# SilkTerm backlog
-
-This is backlog just for pre-v1.0.0 release. After that, bugs, features, and enhancements will be mananged in Github Issues, and also probably an issue tracker defined in nano-git-db.
-
-<!-- TOC ignore:true -->
-## Table of contents
 <!-- TOC -->
 
 - [Conventions](#conventions)
@@ -288,8 +281,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
 	- The background-work pattern this needs is in place (see the wallpaper item under Done): a worker thread posts its result back to the window, which folds it in. Reuse it rather than building a second one.
 
-- 🔘 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, and to legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
-
 - 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
 	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with.
 	- 🔘 Windows: the new-pane side works, but reading the source shell's current directory isn't wired up there yet - new tabs/panes keep the old start-dir behavior until then. (Needs Windows host.)
@@ -344,6 +335,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - 🔘 Prepare for code review
 
 - 🔘 Stable release!
+
+- 🔘 At startup, offer to copy wallpaper from repo, to local.
 
 - 🔘 Wallpaper: Need a way to detect maximum and average brightness of background image - or some heuristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
 	- 🔘 Really what I'm after, is this resulting effect. The implimentation is up to research:
@@ -2359,6 +2352,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✋ Delay this to see if other fixes, fix this.
 
 ### Canceled
+
+- 🚫 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, and to legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
 
 - 🚫 README screenshot refresh in cicd is off (`SHOTS_ENABLE=0` in `cicd/config.bash`; `--shots` re-enables per run). So the README grid images won't auto-update after visual changes
 	- Moot point.
