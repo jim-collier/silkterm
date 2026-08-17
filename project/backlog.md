@@ -69,11 +69,6 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### Bugs
 
-- 🔘 Severe windows multiscreen bug [20260816-085441]:
-	- Description: Dragging from a high-dpi screen to a low-dpi screen causes the window size to freak out. It seems to jump in size from larger to normal to even larger (possibly at each Windows rerender point), getting bigger each time, until it spans several screens worth of real-estate and slows to a crawl.
-	- Steps to reproduce: Easy to reproduce. Essentially the description.
-	- Workaround: Stop dragging the window. Maximize it on the target screen. Finish work, close, relaunch (or just accept a maximized state for that terminal session).
-
 - ✅ Windows: a long run of output freezes the window for good.
 	- Not slow, stopped. Both ends sit idle with the writer blocked in a write that never returns, and the window burns no CPU at all while stalled - a circular wait, not a slow consumer.
 	- Reachable by ordinary use - anyone who cats a large file, or runs a build with a lot of output, can hang the window and have to kill it.
@@ -2309,6 +2304,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 #### Done - To-do
 
 ### Future and/or deferred
+
+- ✋ Severe windows multiscreen bug [20260816-085441]:
+	- Description: Dragging from a high-dpi screen to a low-dpi screen causes the window size to freak out. It seems to jump in size from larger to normal to even larger (possibly at each Windows rerender point), getting bigger each time, until it spans several screens worth of real-estate and slows to a crawl.
+	- Steps to reproduce: Easy to reproduce. Essentially the description.
+	- Workaround: Stop dragging the window. Maximize it on the target screen. Finish work, close, relaunch (or just accept a maximized state for that terminal session).
+	- ✋ Can't replicate on different monitors that also have different DPI. Don't have access to original setup. Only observed once, and was in a hurry to shutdown, so it could have been a fluke. Leaving open on backlog just in case.
 
 - ✋ Feature: Minority Report mode: Borderless, transparent, changes perspective depending on screen location.
 	- Top feature once the backlog is mostly worked through. Nothing remotely like this exists.
