@@ -81,6 +81,23 @@ def measure(pids, exe_paths, be, verbose=False):
 		hit = by_name.get(be.base_name(name))
 		return hit if hit else be.find_library(name)
 
+	# Injected rather than depended on. Windows machines routinely have libraries pushed
+	# into every process - font hooks, security shims - and those belong to the machine,
+	# not to the terminal: billing them makes a row that no other machine reproduces. The
+	# test is self-calibrating rather than a name list: a library none of the tree's own
+	# binaries import, which is nonetheless mapped into this tool's process as well, is
+	# being injected into everything. Anything genuinely imported stays whoever else maps it.
+	# Windows only for now, deliberately: every published row was measured on Linux, and
+	# the rule there could only move one. Extending it needs a published row reproduced
+	# first, which is the gate every change to this accounting goes through.
+	injected = set()
+	if be.name == "windows":
+		own_closure = closure([p for p in exe_paths if os.path.exists(p)], be.needed, resolve)
+		ambient = be.mapped_files(os.getpid())
+		injected = {p for p in libs
+		            if p in ambient and p not in own_closure and not be.is_base_os(p)}
+		libs -= injected
+
 	gfx_named = {p for p in libs if be.is_gfx(p)}
 	driver_closure = closure(gfx_named, be.needed, resolve) | gfx_named
 
@@ -122,11 +139,13 @@ def measure(pids, exe_paths, be, verbose=False):
 		for key, val in per_file.items():
 			shared_max[key] = max(shared_max[key], val)
 
-	app_mem = driver_mem = 0
+	app_mem = driver_mem = injected_mem = 0
 	for key in set(priv) | set(shared_max):
 		total = priv.get(key, 0) + shared_max.get(key, 0)
 		if key in driver_libs:
 			driver_mem += total
+		elif key in injected:
+			injected_mem += total
 		else:
 			app_mem += total
 
@@ -141,8 +160,14 @@ def measure(pids, exe_paths, be, verbose=False):
 		"driver_disk_mib": disk(driver_libs) / MIB,
 		"n_driver_libs": len(driver_libs),
 		"n_app_libs": len(app_libs),
+		"injected_mem_mib": injected_mem / MIB,
+		"injected_disk_mib": disk(injected) / MIB,
+		"n_injected_libs": len(injected),
 	}
 	if verbose:
+		result["injected_libs"] = sorted(
+			((os.stat(p).st_size / MIB, p) for p in injected), reverse=True
+		)
 		result["app_libs"] = sorted(
 			((os.stat(p).st_size / MIB, p) for p in app_libs - set(exe_paths)), reverse=True
 		)
@@ -833,6 +858,9 @@ SHELLISH = {"bash", "sh", "dash", "zsh", "fish", "ksh", "csh", "tcsh", "python",
 # Console hosts, which draw a window but are not the thing you installed.
 CONSOLE_HOSTS = {"conhost", "openconsole"}
 
+#	Anything that could be running this tool rather than being measured by it.
+INTERPRETERS = {"python", "python3", "pythonw", "py"}
+
 
 def stem_of(path):
 	name = os.path.basename(path).lower()
@@ -867,6 +895,17 @@ def find_terminal(be):
 	pids, exe = [], ""
 
 	owner = be.console_owner() if hasattr(be, "console_owner") else 0
+	program = owner
+	if owner and stem_of(be.exe_of(owner)) not in CONSOLE_HOSTS:
+		#	Windows 11 answers this query with the console PROGRAM, not the host, so the
+		#	host has to be found beside it: a child where the system attached one, a parent
+		#	where it was launched explicitly. Only adjacent - walking further up leaves the
+		#	session entirely and lands on whatever started it.
+		for near in [be.parent_of(owner)] + be.children_of(owner):
+			if near > 1 and stem_of(be.exe_of(near)) in CONSOLE_HOSTS:
+				owner = near
+				break
+
 	if owner:
 		exe = be.exe_of(owner)
 		if stem_of(exe) in CONSOLE_HOSTS:
@@ -875,12 +914,30 @@ def find_terminal(be):
 			if above and stem_of(above) not in SHELLISH:
 				#	A window process owns the host, so that is the terminal.
 				pids, exe = tree_of(be, parent), above
+			elif program and program != owner and program in tree_of(be, owner):
+				#	The host was launched explicitly and the console program runs below
+				#	it, so the pair is the host's own tree.
+				pids = tree_of(be, owner)
 			else:
 				#	Classic console: the host draws and the program it is attached to runs
 				#	in it, which is the same pair measured elsewhere as terminal plus shell.
 				pids = tree_of(be, parent) if parent > 1 else tree_of(be, owner)
 		else:
-			pids = tree_of(be, owner)
+			#	No host beside it, so nothing came between: the terminal spawned this
+			#	program itself and sits above it. Walk up past the shells to the window
+			#	process, which is what actually draws - stopping at the program would
+			#	measure the shell and call it the terminal.
+			up = be.parent_of(owner)
+			for _ in range(8):
+				if up <= 1:
+					break
+				got = be.exe_of(up)
+				if got and stem_of(got) not in SHELLISH:
+					pids, exe = tree_of(be, up), got
+					break
+				up = be.parent_of(up)
+			if not pids:
+				pids = tree_of(be, owner)
 
 	if not pids:
 		pid = os.getpid()
@@ -897,7 +954,52 @@ def find_terminal(be):
 			break
 
 	mine = set(tree_of(be, os.getpid()))
+	#	The wrapper runs this script, so the interpreter above is part of the measuring
+	#	tool too and has to go the same way its child does - billing a terminal for it adds
+	#	about 19 MiB that no rig-measured row carries. Only interpreters are dropped, so the
+	#	walk stops at the shell, which the terminal is entitled to.
+	above = be.parent_of(os.getpid())
+	while above > 1 and stem_of(be.exe_of(above)) in INTERPRETERS:
+		mine.add(above)
+		above = be.parent_of(above)
 	return [p for p in pids if p not in mine], exe
+
+
+def console_grid():
+	"""(columns, rows) straight from the console, on Windows only.
+
+	Asking the standard streams cannot work here. The wrapper reads this script through a
+	pipe with stderr folded into it, and stdin is an input handle, which no grid query
+	answers - so all three fail and the run is refused however the window is sized. CONOUT$
+	is the screen buffer itself and answers whatever the streams have been redirected to.
+	Python's own get_terminal_size cannot be used on it: on Windows it resolves a file
+	descriptor back to one of the three standard handles, so any other one is rejected.
+	"""
+	import ctypes
+	from ctypes import wintypes
+
+	class ScreenBuffer(ctypes.Structure):
+		_fields_ = [
+			("dwSize", wintypes._COORD),
+			("dwCursorPosition", wintypes._COORD),
+			("wAttributes", wintypes.WORD),
+			("srWindow", wintypes.SMALL_RECT),
+			("dwMaximumWindowSize", wintypes._COORD),
+		]
+
+	kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+	handle = kernel32.CreateFileW("CONOUT$", 0xC000_0000, 3, None, 3, 0, None)
+	if handle == -1:
+		return None
+	try:
+		info = ScreenBuffer()
+		if not kernel32.GetConsoleScreenBufferInfo(wintypes.HANDLE(handle), ctypes.byref(info)):
+			return None
+		#	The visible window, not dwSize: the buffer stays tall for scrollback.
+		box = info.srWindow
+		return (box.Right - box.Left + 1, box.Bottom - box.Top + 1)
+	finally:
+		kernel32.CloseHandle(wintypes.HANDLE(handle))
 
 
 def terminal_grid():
@@ -906,6 +1008,13 @@ def terminal_grid():
 	All three are tried because the wrapper reads this script's output through a pipe, and
 	asking only stdout would then report no terminal at all and refuse every run.
 	"""
+	if os.name == "nt":
+		try:
+			got = console_grid()
+		except Exception:
+			got = None
+		if got:
+			return got
 	for stream in (sys.__stdout__, sys.__stderr__, sys.__stdin__):
 		try:
 			size = os.get_terminal_size(stream.fileno())
@@ -1100,6 +1209,10 @@ def main():
 	print(f"  Mem            {res['mem_mib']:8.1f} MiB")
 	print(f"  driver (excl)  {res['driver_mem_mib']:8.1f} MiB resident, "
 	      f"{res['driver_disk_mib']:.1f} MiB on disk, {res['n_driver_libs']} libraries")
+	#	Said out loud rather than dropped quietly: a silent exclusion reads as a wrong number.
+	if res.get("n_injected_libs"):
+		print(f"  injected (excl){res['injected_mem_mib']:8.1f} MiB resident, "
+		      f"{res['injected_disk_mib']:.1f} MiB on disk, {res['n_injected_libs']} libraries")
 	if args.verbose:
 		print("\n  billed to the terminal:")
 		for size, path in res["app_libs"]:
@@ -1107,6 +1220,10 @@ def main():
 		print("\n  billed to the driver:")
 		for size, path in res["driver_libs"][:20]:
 			print(f"    {size:7.2f}  {path}")
+		if res.get("injected_libs"):
+			print("\n  injected into every process, so billed to nobody:")
+			for size, path in res["injected_libs"]:
+				print(f"    {size:7.2f}  {path}")
 	if args.summary:
 		print(f"RESULT file={res['exe_mib']:.1f} filedeps={res['file_deps_mib']:.1f} "
 		      f"mem={res['mem_mib']:.1f} driver={res['driver_mem_mib']:.1f}")

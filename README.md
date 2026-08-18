@@ -226,6 +226,7 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 | \[multi\] | kitty | 0.48.1 | 24.2 | 59.6 | **22.6** | 0.2 | 115.0 | 140.8 |
 | \[multi\] | WezTerm | 20240203 | 15.6 | 22.2 | **10.4** | 70.5 | 129.9 | 84.8 |
 | \[multi\] | Tabby | 1.0.235 | 8.5 | 9.0 | **5.7** | 192.1 | 454.2 | 473.4 |
+| Win | conhost.exe | - | - | - | - | 1.0 | 1.0 | 21.1 |
 | Win | PuTTY | - | - | - | - | 1.6<sup>7</sup> | - | - |
 | Linux | Guake | - | - | - | - | 1.7<sup>7</sup> | - | - |
 | Linux | Konsole | - | - | - | - | 7.3<sup>7</sup> | - | - |
@@ -234,7 +235,6 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 | macOS | iTerm2 | - | - | - | - | 43.0<sup>7</sup> | - | - |
 | Win | MobaXterm | - | - | - | - | 43.4<sup>7</sup> | - | - |
 | \[multi\] | Hyper | - | - | - | - | 147.8 | 300.9 | 309.4 |
-| Win | conhost.exe | - | - | - | - | - | - | - |
 | macOS | Terminal.app | - | - | - | - | - | - | - |
 | macOS | Warp | - | - | - | - | - | - | - |
 
