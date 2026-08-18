@@ -79,6 +79,17 @@ const APP_SCROLL_MAX: usize = 24; // max per-step shift the slide detector accep
 const SLIDE_TOP_BAND_APPS: bool = true;
 
 const PROMPT_ABOVE_MAX: usize = 4; // rows above the prompt considered for multi-line-prompt learning
+// Skeleton segments a row must carry before it can be learned as a prompt row.
+// The skeleton collapses every run of alphanumerics to one 'a' - that is what
+// lets a prompt's clock and cwd change without breaking the match - so EVERY
+// one-word row hashes alike. Two commands in a row that each printed a single
+// word therefore taught the learner that the row above the input line was
+// prompt, and the strip then ate the real last line of every copy after that
+// (measured driving PowerShell: two of five commands copied nothing at all).
+// The bias has to run this way round: a row wrongly learned as prompt DELETES
+// output, while one wrongly left as output only puts a prompt line on the
+// clipboard.
+const PROMPT_SKEL_MIN: usize = 6;
 
 // Consecutive frames that may reuse the last built frame before build() stops
 // trying and waits for the terminal (see the lock in build). 2 keeps the pane
@@ -345,18 +356,20 @@ fn fnv_row(chars: impl Iterator<Item = char>) -> u64 {
 // still prints the same while its punctuation/box-drawing structure must match
 // exactly. An exact-content compare here misses every dynamic multi-line
 // prompt, which then gets copied as output.
-fn fnv_row_skel(chars: impl Iterator<Item = char>) -> u64 {
+fn fnv_row_skel(chars: impl Iterator<Item = char>) -> (u64, usize) {
 	let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
 	let mut last = '\0';
+	let mut segments = 0;
 	for c in chars {
 		let k = if c.is_alphanumeric() { 'a' } else { c };
 		if (k == 'a' || k == ' ') && k == last {
 			continue;
 		}
 		last = k;
+		segments += 1;
 		hash = (hash ^ k as u64).wrapping_mul(0x100_0000_01b3);
 	}
-	hash
+	(hash, segments)
 }
 
 // The char to feed the shaper for a grid cell. A cell may hold a literal control
@@ -2507,7 +2520,11 @@ impl Pane {
 		let above: Vec<u64> = (1..=PROMPT_ABOVE_MAX as i32)
 			.map_while(|up| {
 				let line = Line(cursor_line.0 - up);
-				(line.0 >= -hist).then(|| fnv_row_skel((0..cols).map(|c| grid[line][Column(c)].c)))
+				if line.0 < -hist {
+					return None;
+				}
+				let (skel, segments) = fnv_row_skel((0..cols).map(|c| grid[line][Column(c)].c));
+				(segments >= PROMPT_SKEL_MIN).then_some(skel)
 			})
 			.collect();
 		let confirmed = above
@@ -2533,6 +2550,9 @@ impl Pane {
 	// command (and its prompt) to finish before copying.
 	pub fn note_output(&mut self) {
 		self.last_output = std::time::Instant::now();
+		// windows: a returning prompt is itself output, so this is where the
+		// at-prompt probe's cached answer goes stale (see TermInstance).
+		self.term.note_activity();
 	}
 
 	// While armed, the instant the settle timer would fire (so the loop can wake to
@@ -3091,7 +3111,7 @@ fn prompt_strip<T: alacritty_terminal::event::EventListener>(
 			break;
 		}
 		let row = &grid[Line((end as i64 - 1 - hist) as i32)];
-		if fnv_row_skel((0..cols).map(|c| row[Column(c)].c)) != fingerprint {
+		if fnv_row_skel((0..cols).map(|c| row[Column(c)].c)).0 != fingerprint {
 			break;
 		}
 		end -= 1;
@@ -3784,13 +3804,14 @@ fn scroll_shift(cur: &[u64], last: &[u64], scrolled_off: bool) -> usize {
 #[cfg(test)]
 mod tests {
 	use super::{
-		APP_SCROLL_MAX, BAR_MIN_THUMB, CURSOR_MAX_LAG, Dir, LinkHit, Node, OffStrip, PauseState,
-		Rect, SLIDE_TOP_BAND_APPS, StripCell, app_scroll_frames, bar_applies_to, bar_pos_to_lines,
-		bar_thumb_span, bell_brighten, capture_grid_text, capture_start, cursor_cycle,
-		cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full,
-		layout, link_at, logical_line_bounds, move_is_input, pair_inside, prompt_strip,
-		pushed_since, render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed,
-		slide_bands, snapshot_rows, static_bands, translate_span, vanished_range, weld_region_clip,
+		APP_SCROLL_MAX, BAR_MIN_THUMB, CURSOR_MAX_LAG, Dir, LinkHit, Node, OffStrip,
+		PROMPT_SKEL_MIN, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell, app_scroll_frames,
+		bar_applies_to, bar_pos_to_lines, bar_thumb_span, bell_brighten, capture_grid_text,
+		capture_start, cursor_cycle, cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row,
+		fnv_row_skel, glide_to_full, layout, link_at, logical_line_bounds, move_is_input,
+		pair_inside, prompt_strip, pushed_since, render_char, resume_delay, same_char_pair,
+		scroll_shift, scroll_shift_signed, slide_bands, snapshot_rows, static_bands,
+		translate_span, vanished_range, weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
@@ -3921,7 +3942,7 @@ mod tests {
 	fn row_skel(term: &Term<VoidListener>, line: i32) -> u64 {
 		let grid = term.grid();
 		let cols = grid.columns();
-		fnv_row_skel((0..cols).map(|c| grid[Line(line)][Column(c)].c))
+		fnv_row_skel((0..cols).map(|c| grid[Line(line)][Column(c)].c)).0
 	}
 
 	fn leaf(id: u64) -> Node {
@@ -4326,6 +4347,20 @@ mod tests {
 			block[0],
 			"plain output must not skeleton-match the prompt decoration"
 		);
+	}
+
+	#[test]
+	fn a_plain_row_is_too_thin_to_learn_as_a_prompt() {
+		// the skeleton cannot tell one one-word row from another - by design, so a
+		// prompt's cwd and clock can change - which is exactly why such a row must
+		// never be learned as prompt: the strip would then eat a real output line.
+		let word = fnv_row_skel("alpha    ".chars());
+		let year = fnv_row_skel("2026     ".chars());
+		assert_eq!(word.0, year.0, "unrelated one-word rows hash alike");
+		assert!(word.1 < PROMPT_SKEL_MIN, "so neither may be learned");
+		// a real decoration row still carries enough structure to be learnable
+		assert!(fnv_row_skel("[~/proj git:main 10:01]".chars()).1 >= PROMPT_SKEL_MIN);
+		assert!(fnv_row_skel("==info==            ".chars()).1 >= PROMPT_SKEL_MIN);
 	}
 
 	#[test]

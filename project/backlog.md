@@ -299,8 +299,11 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- 🔘 "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
 		- Waits on the Settings "Shells" tab (the shell list it draws from).
 
-- 🛠️ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
-	- 🔘 Add Windows support.
+- ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
+	- ✅ Add Windows support. It was inert there: a Windows console has no foreground process group, so the terminal always believed the shell was at its prompt and the capture fired about a tenth of a second into every command - copying a fragment, or far more often nothing at all.
+		- Windows says the same thing a different way: while a command runs it is a live child process of the shell, and it is gone by the time the prompt comes back. Asking that costs a walk of the process table (~6ms), so the answer is kept until the terminal next stirs instead of being taken per frame - about one look per command.
+		- Known limit: a PowerShell background job (`Start-Job`) reads as a command still running, so nothing copies until it ends. Windows offers no way to tell a background child from a foreground one.
+	- ✅ Fixed on the way, and it applies to every platform: two commands in a row that each printed a single word taught the multi-line-prompt detector that the line above the prompt was part of the prompt, and the copy then lost its last line - usually the whole of it. A line now has to carry more shape than one bare word before it counts as prompt.
 
 - 🔘 "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
 	- Looks and behaves not too differently than some modern text editors.

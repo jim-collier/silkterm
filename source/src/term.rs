@@ -110,6 +110,16 @@ pub struct TermInstance {
 	// throttles the per-frame title probe (see tab_title)
 	#[cfg(unix)]
 	title_cache: Option<(std::time::Instant, String)>,
+	// windows: the shell's pid and the time it started, for the child-process
+	// probe that stands in for a foreground process group (see at_shell_prompt),
+	// plus that probe's answer for as long as it holds (see note_activity).
+	// Either 0 means "unknown".
+	#[cfg(windows)]
+	shell_pid: u32,
+	#[cfg(windows)]
+	shell_started: u64,
+	#[cfg(windows)]
+	prompt_probe: std::cell::Cell<Option<bool>>,
 }
 
 impl TermInstance {
@@ -171,6 +181,12 @@ impl TermInstance {
 		};
 		#[cfg(unix)]
 		let shell_pid = pty.child().id();
+		// Windows has no master fd; the ConPTY child watcher carries the shell pid.
+		#[cfg(windows)]
+		let shell_pid = pty
+			.child_watcher()
+			.pid()
+			.map_or(0, std::num::NonZeroU32::get);
 		let event_loop = EventLoop::new(term.clone(), event_proxy, pty, false, false)?;
 		let sender = event_loop.channel();
 		let handle = event_loop.spawn();
@@ -195,6 +211,12 @@ impl TermInstance {
 			last_program: None,
 			#[cfg(unix)]
 			title_cache: None,
+			#[cfg(windows)]
+			shell_pid,
+			#[cfg(windows)]
+			shell_started: process_start_time(shell_pid).unwrap_or(0),
+			#[cfg(windows)]
+			prompt_probe: std::cell::Cell::new(None),
 		})
 	}
 
@@ -266,21 +288,57 @@ impl TermInstance {
 	}
 
 	// Is the shell itself (not a spawned command) the terminal's foreground
-	// process group? Drives copy-output's command start/end detection: the fg pgid
-	// equals the shell's while at the prompt, and a command's while it runs. Unix
-	// only; elsewhere we can't tell, so report "at prompt" (the feature stays inert).
+	// process? Drives copy-output's command start/end detection. On unix that is
+	// the foreground process group: the fg pgid equals the shell's while at the
+	// prompt, and a command's while it runs. Windows answers the same question a
+	// different way, below.
 	#[cfg(unix)]
 	pub fn at_shell_prompt(&self) -> bool {
 		let pgid = unsafe { libc::tcgetpgrp(self.master_fd) };
 		pgid <= 0 || pgid as u32 == self.shell_pid
 	}
-	#[cfg(not(unix))]
-	#[allow(clippy::unused_self)]
+	// A Windows console has no foreground process group, so the stand-in is "does
+	// the shell have a live child?" - measured on this box: a command the shell
+	// launches is its DIRECT child and is gone again by the time the prompt
+	// returns, while the console host (conhost/OpenConsole) hangs off OUR process,
+	// never the shell's. A shell builtin spawns nothing, which reads as "at the
+	// prompt" throughout - right, since its output ends when the prompt returns.
+	// A background job (PowerShell's Start-Job) does read as a command still
+	// running; Windows offers nothing that tells one from a foreground command.
+	// The only way to ask is a walk of the whole process table, and that is not
+	// cheap - 6.4ms per scan measured here, release and debug alike, across 237
+	// processes - so the answer is cached until the terminal next stirs (see
+	// note_activity) instead of being taken per event-loop pass. Callers only
+	// ask once output has gone quiet, so in practice this is one scan per
+	// command rather than one per frame.
+	#[cfg(windows)]
 	pub fn at_shell_prompt(&self) -> bool {
-		true
+		if self.shell_pid == 0 {
+			return true; // no pid to probe: report "at prompt" (the feature stays inert)
+		}
+		if let Some(answer) = self.prompt_probe.get() {
+			return answer;
+		}
+		let answer = !has_command_child(self.shell_pid, self.shell_started);
+		self.prompt_probe.set(Some(answer));
+		answer
 	}
 
+	// Windows: the cached at-prompt answer holds only until the terminal next
+	// stirs. Both halves matter - anything typed can start a command, and a
+	// command that ends always brings the prompt back with it, so its own last
+	// act is PTY output. Anywhere else this is nothing.
+	#[cfg(windows)]
+	pub fn note_activity(&self) {
+		self.prompt_probe.set(None);
+	}
+
+	#[cfg(not(windows))]
+	#[allow(clippy::unused_self)]
+	pub fn note_activity(&self) {}
+
 	pub fn write<B: Into<Vec<u8>>>(&self, bytes: B) {
+		self.note_activity();
 		let _ = self.sender.send(Msg::Input(bytes.into().into()));
 	}
 
@@ -325,5 +383,102 @@ fn proc_comm(pid: u32) -> Option<String> {
 		None
 	} else {
 		Some(comm.to_string())
+	}
+}
+
+// Does a process-table row belong to a command this shell launched? Windows
+// recycles pids aggressively and a row keeps whatever parent id it was born
+// with, so the parent id ALONE can name an unrelated long-lived process whose
+// creator's pid the shell later inherited - which would read as a command that
+// never finishes and would silently kill copy-output for that pane. A child
+// cannot predate its parent, so the start times settle it. An unknown child
+// start time (a process we may not open, so never one of ours) answers no; an
+// unknown shell start time has nothing to compare against, so the parent id
+// stands on its own.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_command_child(child_started: Option<u64>, shell_started: u64) -> bool {
+	shell_started == 0 || child_started.is_some_and(|started| started >= shell_started)
+}
+
+// Windows: does `shell_pid` have a live child process? Walks the process table -
+// there is no narrower query - and stops at the first real child.
+#[cfg(windows)]
+fn has_command_child(shell_pid: u32, shell_started: u64) -> bool {
+	use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+	use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+		CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+		TH32CS_SNAPPROCESS,
+	};
+
+	let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+	if snapshot == INVALID_HANDLE_VALUE {
+		return false; // can't tell: answer "no command", i.e. at the prompt
+	}
+	let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+	entry.dwSize = u32::try_from(size_of::<PROCESSENTRY32W>()).unwrap_or(0);
+	let mut found = false;
+	let mut more = unsafe { Process32FirstW(snapshot, &raw mut entry) };
+	while more != 0 {
+		if entry.th32ParentProcessID == shell_pid
+			&& is_command_child(process_start_time(entry.th32ProcessID), shell_started)
+		{
+			found = true;
+			break;
+		}
+		more = unsafe { Process32NextW(snapshot, &raw mut entry) };
+	}
+	unsafe { CloseHandle(snapshot) };
+	found
+}
+
+// Windows: a process's creation time as a raw FILETIME, for is_command_child.
+// None when the process is gone or can't be opened (a protected/system process,
+// which is never a command our shell started).
+#[cfg(windows)]
+fn process_start_time(pid: u32) -> Option<u64> {
+	use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+	use windows_sys::Win32::System::Threading::{
+		GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+	};
+
+	let mut created = FILETIME {
+		dwLowDateTime: 0,
+		dwHighDateTime: 0,
+	};
+	let mut ignored = [FILETIME {
+		dwLowDateTime: 0,
+		dwHighDateTime: 0,
+	}; 3];
+	let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+	if process.is_null() {
+		return None;
+	}
+	let ok = unsafe {
+		GetProcessTimes(
+			process,
+			&raw mut created,
+			&raw mut ignored[0],
+			&raw mut ignored[1],
+			&raw mut ignored[2],
+		)
+	};
+	unsafe { CloseHandle(process) };
+	(ok != 0).then(|| u64::from(created.dwHighDateTime) << 32 | u64::from(created.dwLowDateTime))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::is_command_child;
+
+	// A recycled pid is the failure this guard exists for: the row claims the
+	// shell as its parent but started before the shell did, so it belongs to
+	// whoever held that pid before.
+	#[test]
+	fn a_child_that_predates_the_shell_is_not_its_command() {
+		assert!(is_command_child(Some(200), 100));
+		assert!(is_command_child(Some(100), 100)); // same tick: still a child
+		assert!(!is_command_child(Some(50), 100));
+		assert!(!is_command_child(None, 100)); // unopenable, so not ours
+		assert!(is_command_child(None, 0)); // shell time unknown: parent id alone
 	}
 }
