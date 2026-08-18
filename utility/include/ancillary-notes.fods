@@ -899,7 +899,7 @@
 			</table:table-row>
 			<table:table-row>
 				<table:table-cell office:value-type="string"><text:p>8</text:p></table:table-cell>
-				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>It is not the clock. Each terminal answers the device-attributes barrier with its own distinct identity string - SilkTerm and Alacritty share one because they share the VT core, conhost, Windows Terminal and WezTerm each differ - so ConPTY is not intercepting the query and answering on the terminal's behalf. The clock genuinely stops when the terminal under test has consumed the stream, on Windows as on Linux.</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>WRONG, corrected 2026-08-18 - see the Bottleneck sheet. This read that the clock stops when the terminal has consumed the stream, on the grounds that each terminal answered the barrier with its own identity string. The inference does not hold, and this file's own raw data disproves it: the reply captured inside SilkTerm is a DEC-level ESC[?61;6;7;22;23;24;28;32;42c, while the VT core SilkTerm is built on answers ESC[?6c. ConPTY answers the query itself and never forwards it; the identity strings differed because Windows Terminal and WezTerm bundle their own console host. A Windows figure therefore times the console host consuming the payload, with the terminal in the loop only through the pipe between them.</text:p></table:table-cell>
 			</table:table-row>
 			<table:table-row>
 				<table:table-cell office:value-type="string"><text:p>9</text:p></table:table-cell>
@@ -912,6 +912,211 @@
 			<table:table-row>
 				<table:table-cell office:value-type="string"><text:p>Bottom line</text:p></table:table-cell>
 				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Two passes on deliberately different hardware now agree that the Windows speed rows cannot be filled from the tools as they stand. The blocker was never the machine. It is that the fast terminals are not being limited by themselves, that the one terminal which is fast is fast for a reason no Linux row shares, and that a headline terminal cannot be benchmarked on the platform at all until the deadlock fix lands upstream.</text:p></table:table-cell>
+			</table:table-row>
+		</table:table>
+
+		<table:table table:name="Bottleneck">
+			<table:table-column table:style-name="coMed"/>
+			<table:table-column table:style-name="coWide"/>
+			<table:table-row>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Field</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Value</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Date</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>2026-08-18</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Question</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Where does the Windows throughput go? The VM pass measured 12.4 MB/s of ASCII against 86.9 for the same build on Linux, and a fork of the terminal engine was on the table if that was what it took.</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Answer</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>None of it is ours. A consumer that reads the bytes and discards them measures what the terminal measures. The limit is ConPTY and the terminal is already at it, so there is nothing in the engine to fork for.</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Method</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>A harness spawning the same pseudoconsole, payload and grid the terminal does, with the consumer swapped for four increasingly complete versions of the real stack. Every lane stops on the same end-of-stream mark, so the layer that costs the throughput would be the one the number drops at.</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Harness</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Written for this, not kept. Four lanes plus a swappable child, so the shipped benchmark itself could be run against a lane and compared with the row it published from inside a real terminal.</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Guest</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Same VM as the VM sheets: Windows 11 Pro 10.0.26200 on the b23 host, RTX 2060 passed through.</text:p></table:table-cell>
+			</table:table-row>
+		</table:table>
+
+		<table:table table:name="Bottleneck lanes">
+			<table:table-column table:style-name="coNarrow"/>
+			<table:table-column table:style-name="coMed"/>
+			<table:table-column table:style-name="coNarrow"/>
+			<table:table-column table:style-name="coWide"/>
+			<table:table-row>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Lane</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>What the consumer does</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>MB/s</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>What it adds over the lane above</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>a0</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>read and discard, no poller</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="11.31"><text:p>11.31</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>console host, its reader thread and the staging pipe</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>a</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>read and discard, poller</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="11.35"><text:p>11.35</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>adds the completion-port wake and a poll per batch</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>b</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>read and parse into a grid</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="12.12"><text:p>12.12</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>adds the whole VT parser and the terminal grid</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>c</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>the shipped event loop</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="11.36"><text:p>11.36</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>adds the terminal lock, the read chunking and the listener</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Conditions</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>32 MiB of ASCII, grid 160x42, system console host, best of two runs each. Run-to-run spread on a single lane is about 8%, so the four are indistinguishable. The parser is free, the event loop is free, and the completion-port wake added by our own deadlock fix is free.</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			</table:table-row>
+		</table:table>
+
+		<table:table table:name="Bottleneck scenes">
+			<table:table-column table:style-name="coNarrow"/>
+			<table:table-column table:style-name="coNarrow"/>
+			<table:table-column table:style-name="coNarrow"/>
+			<table:table-column table:style-name="coNarrow"/>
+			<table:table-column table:style-name="coNarrow"/>
+			<table:table-row>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Scene</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Width</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>SilkTerm MB/s</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Discarded MB/s</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Difference</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>ascii</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>1-byte</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="12.44"><text:p>12.44</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="12.33"><text:p>12.33</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>-0.9%</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>latin</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>2-byte</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="17.34"><text:p>17.34</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="17.29"><text:p>17.29</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>-0.3%</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>cjk</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>3-byte</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="12.68"><text:p>12.68</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="12.7"><text:p>12.7</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>+0.2%</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>emoji</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>4-byte</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="15.76"><text:p>15.76</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="15.86"><text:p>15.86</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>+0.6%</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>mixed</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>mixed</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="11.53"><text:p>11.53</text:p></table:table-cell>
+				<table:table-cell office:value-type="float" office:value="11.53"><text:p>11.53</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p>+0.0%</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Conditions</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>The shipped benchmark, run unmodified, against a consumer that reads the stream and throws it away. Terminal figures are the VM pass at 6 reps per scene; the discard figures are a quick run at 3 to 12 reps, CV under 1.1% throughout. Emoji is the one that settles it - that is our most expensive path by far, and it comes out 0.6% FASTER when nothing is drawn at all.</text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+				<table:table-cell office:value-type="string"><text:p></text:p></table:table-cell>
+			</table:table-row>
+		</table:table>
+
+		<table:table table:name="Bottleneck levers">
+			<table:table-column table:style-name="coMed"/>
+			<table:table-column table:style-name="coWide"/>
+			<table:table-column table:style-name="coMed"/>
+			<table:table-row>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Lever</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>What was tried</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>Result</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Newer console host</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Microsoft's own conpty.dll and OpenConsole.exe, from the current NuGet package, verified loaded by the child's process parentage rather than assumed</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>9.4 MB/s against 11.3 - slightly slower</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Pseudoconsole mode flags</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Created with each of 0, 1, 2, 4 and 8; 8 is passthrough mode, which the bundled host accepts</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>9.4 MB/s throughout - no flag moves it</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Pipe buffer</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>The pipe between the console host and us, at the system default and at 64 KB, 1 MB and 16 MB</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>10.5 to 12.3 MB/s - inside the noise</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Everything we draw</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Every effect on against every effect off, from the VM pass</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>12.33 against 12.44 - 0.9% apart</text:p></table:table-cell>
+			</table:table-row>
+		</table:table>
+
+		<table:table table:name="Bottleneck findings">
+			<table:table-column table:style-name="coNarrow"/>
+			<table:table-column table:style-name="coWide"/>
+			<table:table-row>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>#</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceHead" office:value-type="string"><text:p>What the investigation settled</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>1</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>The engine is not the bottleneck and a fork would buy nothing. Four consumers spanning from raw discard to the shipped event loop all measure the same, and the shipped benchmark cannot tell a real terminal from a consumer that discards the bytes. That is as close to a null result as this kind of question gets.</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>2</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>The console host is where the time goes, and it is visible directly: during a run it holds around 130 seconds of processor time against our 17.</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>3</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>The barrier is answered by the console host, not by the terminal. The query never appears in the stream the terminal receives - a full inventory of the escape sequences in a run finds no trace of it - and the child gets back a reply no terminal in this comparison would produce. This corrects VM finding 8, which said the opposite.</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>4</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>That does not make the published Windows numbers wrong, only narrower than they looked. The chain is still measured end to end, because the console host can run ahead of the terminal only by what the pipes between them hold. It cannot be read as one terminal's speed.</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>5</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Two Windows terminals within a percent of each other are not tied - they are both at the ceiling. That is the honest reading of ours with and without eye candy, and it is why no amount of switching things off moved the figure.</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>6</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>A methodology trap worth keeping: the child writing the payload must not use a line-buffered stream. An eighty-column payload through one flushes per line, which alone cost a factor of 1.6 and would have made the console host look slower than it is. The shipped benchmark writes a megabyte at a time to a raw descriptor, which is why it reads higher.</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>7</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>Windows Terminal's 112 MB/s is still unexplained by any of this, and none of the levers above reproduce it. It is excluded from the table for its own reasons and nothing here changes that.</text:p></table:table-cell>
+			</table:table-row>
+			<table:table-row>
+				<table:table-cell office:value-type="string"><text:p>Bottom line</text:p></table:table-cell>
+				<table:table-cell table:style-name="ceWrap" office:value-type="string"><text:p>The Windows throughput question is closed for our purposes. There is no work to do in the terminal, and the remaining gap against Linux is a property of the platform's console, not of what we built on it.</text:p></table:table-cell>
 			</table:table-row>
 		</table:table>
 	</office:spreadsheet>
