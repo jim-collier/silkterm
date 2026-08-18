@@ -131,6 +131,15 @@ A first pass ran on a laptop and published nothing; the figures and the reasons 
 - **No single factor serves the whole table anyway.** On one machine the console host read 13.6 MB/s of ASCII and Windows Terminal 93.1. They are limited by different things, so a multiplier fitted to one is wrong for the other.
 - **Windows Terminal's 2-byte scene does not settle.** 12.67 to 31.08 MB/s inside a single run on an idle machine, and no better over four runs, against the 1 to 4% the published rows hold to.
 
+A second pass then ran on exactly the machine that was supposed to fix it - Windows in a VM on the b23 host with a discrete GPU passed through - and still published nothing. **The hardware was never the blocker.** Its figures and reasoning are in `ancillary-notes.fods` under the three `VM` sheets; four things from it decide whether a third attempt is worth making:
+
+- **A single correction factor is dead, and this time by direct measurement rather than by inference.** On the laptop everything clustered, so the ratio said more about the console pipe than the machine. On the VM the cross-platform terminals do not cluster and their ratios genuinely disagree - SilkTerm plain 6.98x against its own Linux row, WezTerm 2.93x against its own. Two terminals differing by more than a factor of two is proof that no one multiplier serves the table.
+- **Windows Terminal beats every published Linux row** (112.4 MB/s ascii against the fastest Linux row's 100.2), because it hosts the console itself rather than reading a relayed one. Sorting it into the main table would put it first overall on figures from another platform and another transport.
+- **The fast terminals are not being limited by themselves.** SilkTerm plain and +candy land 0.9% apart on Windows against 12% apart on Linux - the eye candy is rendering cost, so switching all of it off should move the figure and does not. A number produced under that condition is not the terminal's speed and must not be published as one.
+- **Alacritty cannot be benchmarked on Windows at all.** Stock 0.15.1 deadlocks partway through (see "What the Windows accounting does differently" below), so the one terminal that would anchor the whole comparison produces no row.
+
+What is still worth doing on Windows is the **size and memory half**, which needs no calibration and is untouched by any of this.
+
 **Copy `termbench-plain.shcl` somewhere temporary before pointing SilkTerm at it.** `--config` is a file the loader maintains, not just reads: it backfills every missing key and rewrites the layout, so one plain-row run turned the 13-line override list into 461 lines with the header comment moved inside a block. It still measures correctly, and the file no longer means what it says.
 
 Two traps in driving a terminal from outside, both of which produce a plausible wrong answer rather than an error. Windows Terminal keeps every window in one long-lived process, quite possibly one someone is sitting in, and `wt.exe` joins an existing window unless given `-w new` - so a run can end up measuring inside somebody's session, and a name-based kill would take it out. And the size collector asks stdout, then stderr, then stdin for the grid, of which only a screen-buffer handle answers on Windows: capture both streams and it sees no terminal at all and refuses.
@@ -143,9 +152,9 @@ One difference is real and deliberate. "Beyond a base OS" means only the C runti
 
 A managed assembly contributes no closure edges, because the runtime resolves its references rather than the loader. That can only ever leave a driver-side library billed to the terminal, never the reverse, so it is the safe direction to be wrong in.
 
-Windows figures are **not** directly comparable with the Linux rows, because the Windows host is a virtual machine on the same box with half the cores, less memory, virtualization overhead and a lower-specification passed-through GPU.
+Windows **speed** figures are not comparable with the Linux rows, and calibrating them is no longer an open idea - it was tried on the VM and it failed. Do not re-derive a multiplier: the terminals that run on both platforms disagree about it by more than a factor of two, and the one that would anchor the comparison cannot be run at all. The size and memory half is unaffected and remains publishable on its own terms.
 
-Do not correct that with a guessed multiplier. Calibrate it: SilkTerm, Alacritty, WezTerm and kitty all run on both platforms, so measuring those four on the VM gives a measured host-to-guest ratio, separately for parser-bound and GPU-sensitive terminals. A guessed factor cannot be validated against Windows-only terminals like conhost or MobaXterm, because those will only ever have been run on one rig.
+**Alacritty deadlocks on Windows under sustained output, and that is a shipped defect rather than a rig problem.** The pty backend's reader thread arms its waker only when the pipe came back empty, so once the staging buffer is full the notice that would drain it can never be sent: the reader waits for room, the event loop waits for a notice, and both sit at zero CPU. Measured on the VM, stock 0.15.1 ran about 17 s and then held at exactly 0.00 s of CPU delta across 24 s. SilkTerm carries a two-line fix (alacritty/alacritty#9026, still open upstream) and completes every scene on the same box, which is the cleanest demonstration of the fix there is - one build patched, one not, same payloads, same machine.
 
 ## Files
 

@@ -38,15 +38,15 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - 🛠️ Terminal throughput benchmark (Windows):
 	- Both halves now run on Windows as well, measured from inside the terminal under test, which is the only way to reach the terminals that exist nowhere else. Each half checks the window is at its own fixed size first and refuses otherwise, since measuring at the wrong one produces a figure that looks fine and belongs in no column.
-		- 🛠️ Fill in the Windows rows: conhost, Windows Terminal and MobaXterm need running on a Windows machine.
-			- Measured on a laptop, and nothing was published. Figures, host details and the reasoning are in `utility/include/ancillary-notes.fods` so a later pass has something to check itself against.
-			- The machine was the problem: a mobile chip with integrated graphics against the desktop and discrete card every other row comes from. That needs a correction of about 7.9x, and a correction that large is worth more than the differences the table exists to show.
-			- Worse, the only correction available measures the wrong thing. SilkTerm with the candy on, SilkTerm plain and Alacritty all land within 1.5% of each other there while spanning 77.4 to 86.9 on the reference machine - three unrelated programs agreeing that closely means they are all pinned at the console pipe, not at anything the machine or the terminal does.
-			- And no single correction can serve the table anyway: on one machine the console host reads 13.6 MB/s of ASCII and Windows Terminal 93.1, so they are limited by different things.
-			- Windows Terminal's 2-byte figure would not settle either - 12.67 to 31.08 MB/s inside one run on an idle machine, and no better across four runs. Published rows run 1 to 4%.
-			- Next: re-measure in a VM on the reference host with a passed-through card, which is what the table's own notes already promise. The residual is then VM overhead plus the card difference, small enough to correct for and measurable rather than guessed. Test the freeze above first - if it survives, the terminals needed for the correction can still only be measured on ASCII.
-			- MobaXterm needs more than it is worth. Its local shell is Cygwin on a real pty and stty reports the grid, but no Windows program gets a tty through it - isatty is false both ways and the grid call fails - and its python3 is the Windows one on PATH, so there is nothing to fall back to. Both halves need a real terminal on stdin and stdout, so it would take a Cygwin python installed into the plugin environment first.
-			- PuTTY cannot be measured this way at all: it has no local shell, only network sessions. kitty and Ghostty have no Windows build, and the package named kitty is KiTTY, an unrelated PuTTY fork.
+		- ✋ Speed rows: deferred, and the machine was never the problem. Measured twice on deliberately different hardware - a laptop, then Windows in a VM on the reference host with a discrete card passed through, which is the setup the table's own notes promised would fix it. Neither pass produced anything publishable. Figures and full reasoning are in `utility/include/ancillary-notes.fods`, now under three `VM` sheets beside the original ones.
+			- There is no correction factor to find. The terminals that run on both platforms disagree about the host-to-guest ratio by more than a factor of two, so one multiplier cannot serve the table - and that is measured now, not inferred from everything clustering the way it did on the laptop.
+			- Windows Terminal comes out faster than every published Linux row, because it hosts the console itself rather than reading a relayed one. Sorting it in would rank it first overall on figures taken from another platform and another transport.
+			- The fast terminals are not being limited by themselves: ours reads the same with all the eye candy on as with it all off, 0.9% apart, where Linux separates them by 12%. A figure produced under that condition is not the terminal's speed.
+			- Alacritty cannot be run at all - it deadlocks partway through, which is the bug below.
+			- Retry when the deadlock fix is upstream and the throughput bottleneck below is understood. Until both, a third pass would spend a day to reach the same answer.
+		- 🔘 Size and memory rows: still worth doing, need no calibration, and are untouched by any of the above. The cheapest Windows work left.
+		- 🚫 MobaXterm needs more than it is worth. Its local shell is Cygwin on a real pty and stty reports the grid, but no Windows program gets a tty through it - isatty is false both ways and the grid call fails - and its python3 is the Windows one on PATH, so there is nothing to fall back to. Both halves need a real terminal on stdin and stdout, so it would take a Cygwin python installed into the plugin environment first.
+		- 🚫 PuTTY cannot be measured this way at all: it has no local shell, only network sessions. kitty and Ghostty have no Windows build, and the package named kitty is KiTTY, an unrelated PuTTY fork.
 		- Windows figures answer a slightly different question and are not directly comparable, which the table's notes say: a base OS includes far more there, and the machine differs.
 
 - 🛠️ Demo gif: the jumping, and showing the speed curve off properly:
@@ -61,6 +61,14 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 ## Backlog
 
 ### Bugs
+
+- 🔘 Windows: output throughput is about a seventh of Linux, and a ninth of Windows Terminal on the same machine.
+	- Measured 2026-08-18 on the VM at the shootout's own 160x42 grid: 12.4 MB/s of plain ASCII, against 86.9 for the same build on Linux, while Windows Terminal on that same VM reads 112.4.
+	- So the platform can plainly move the data that fast. Something on our side of it cannot, and this is what a user actually gets when a build or a large file dumps output.
+	- Not rendering: every effect on reads 12.33 and every effect off reads 12.44, which is 0.9% apart, where the same two builds are 12% apart on Linux. Switching off everything that draws changes nothing, so the limit sits before the drawing.
+	- Not the measurement: each terminal answers the benchmark's barrier query with its own identity, so the clock stops when that terminal has genuinely consumed the stream.
+	- First place to look is the pty reader in the terminal engine - the same file as the freeze below, which parses in 64 KiB slices and goes back to the event loop between them. That is a suspicion, not a finding; measure before changing anything.
+	- Worth hard-forking the engine if that is what it takes. The freeze fix is already carried as a pinned branch and upstream has not moved on it.
 
 - ✅ Windows: a long run of output freezes the window for good.
 	- Not slow, stopped. Both ends sit idle with the writer blocked in a write that never returns, and the window burns no CPU at all while stalled - a circular wait, not a slow consumer.
