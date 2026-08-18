@@ -26,6 +26,16 @@
 ##		deferred work lands inside the next rep and comes out in the average, but
 ##		a single rep can flatter an asynchronous renderer.
 ##
+##		ON WINDOWS THE BARRIER IS ANSWERED BY THE CONSOLE HOST, NOT THE TERMINAL.
+##		ConPTY parses the child's output itself and replies on its own account:
+##		measured, the reply is a DEC-level "ESC[?61;..." and the query never
+##		reaches the terminal at all, so a terminal that would have answered
+##		"ESC[?6c" never sees one. A Windows figure is therefore the whole chain
+##		- console host plus terminal, coupled through the pipe between them -
+##		and not the terminal on its own. It also puts a low ceiling on every
+##		Windows row: a consumer that reads the bytes and throws them away
+##		measures the same figure as a real terminal, to within a percent.
+##
 ##		CELLS PER SECOND, not just MB/s. Megabytes reward ASCII for being narrow
 ##		and flatter emoji for being wide: at one point 2-byte text measured
 ##		faster than ASCII in MB/s while being slower per character. Cells per

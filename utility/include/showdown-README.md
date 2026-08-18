@@ -29,6 +29,8 @@ Ingest and keep-up throughput - "why does it bog down when something dumps text"
 
 A terminal that never answers cannot be timed this way. `termbench.py` records that as `synced: false` and refuses to publish the row, so an unbarriered figure can never reach the table - it would be timing a timeout. Hyper is the standing example.
 
+**On Windows the barrier is answered by ConPTY, not by the terminal, and that changes what a Windows figure means.** Measured 20260818: the query never appears in the stream the terminal receives, and the child gets back a DEC-level `ESC[?61;...c` - conhost's own reply - where the terminal would have said `ESC[?6c`. So a Windows number times the console host consuming the payload, with the terminal in the loop only through the pipe between them. It bounds the whole chain honestly enough, but it does not isolate the terminal, and the ceiling it imposes is low: a consumer that reads the bytes and discards them measures 12.45 MB/s of ASCII on the VM, against 12.44 for a real terminal. Two Windows terminals within a percent of each other are both simply at that ceiling.
+
 ### The rig is not neutral - this is the whole reason it exists
 
 Measured 20260730, same terminal, same grid, three rigs:
