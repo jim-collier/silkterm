@@ -230,7 +230,7 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 | Win | PuTTY | - | - | - | - | 1.6<sup>7</sup> | - | - |
 | Linux | Guake | - | - | - | - | 1.7<sup>7</sup> | - | - |
 | Linux | Konsole | - | - | - | - | 7.3<sup>7</sup> | - | - |
-| \[multi\] | Windows Terminal | - | - | - | - | 11.1<sup>7</sup> | - | - |
+| \[multi\] | Windows Terminal | - | - | - | - | 11.1<sup>7</sup> | 14.2 | 93.0 |
 | \[multi\] | Ghostty | - | - | - | - | 32.0<sup>7</sup> | - | - |
 | macOS | iTerm2 | - | - | - | - | 43.0<sup>7</sup> | - | - |
 | Win | MobaXterm | - | - | - | - | 43.4<sup>7</sup> | - | - |
