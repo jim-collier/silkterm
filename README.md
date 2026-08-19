@@ -220,10 +220,10 @@ dir="${XDG_CONFIG_HOME:-$HOME/.config}/silkterm" && mkdir -p "$dir" && curl -fsS
 PowerShell (Windows):
 
 ```powershell
-$dest = "$env:APPDATA\silkterm"; $tgz = "$env:TEMP\silkterm-main.tar.gz"; New-Item -ItemType Directory -Force $dest | Out-Null; curl.exe -fsSL https://github.com/jim-collier/silkterm/archive/refs/heads/main.tar.gz -o $tgz; tar -xzf $tgz -C $dest --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper; Remove-Item $tgz
+$dest = "$env:LOCALAPPDATA\silkterm"; $tgz = "$env:TEMP\silkterm-main.tar.gz"; New-Item -ItemType Directory -Force $dest | Out-Null; curl.exe -fsSL https://github.com/jim-collier/silkterm/archive/refs/heads/main.tar.gz -o $tgz; tar -xzf $tgz -C $dest --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper; Remove-Item $tgz
 ```
 
-Either one is a single line, so it survives a paste however your terminal handles one, and lands the images at `wallpaper/` inside your config directory - which is where rotation looks for them. Both pull the whole repository archive, since GitHub serves no smaller unit - about 67 MiB over the wire.
+Either one is a single line, so it survives a paste however your terminal handles one, and lands the images where rotation looks for them - `wallpaper/` beside the config on Linux and macOS, and under `%LOCALAPPDATA%` on Windows (see the table in [Configuration](#configuration)). Both pull the whole repository archive, since GitHub serves no smaller unit - about 67 MiB over the wire.
 
 Rendered with [`cicd/utility/wallpaper-gallery.bash`](cicd/utility/wallpaper-gallery.bash), which rebuilds the contact sheet above whenever the pack changes.
 
@@ -348,11 +348,17 @@ cicd/cicd.bash [--quick]
 
 ### Configuration
 
-On first run SilkTerm writes a commented config file with all defaults to:
+On first run SilkTerm writes a commented config file with all defaults, in the place each platform keeps settings:
 
-```bash
-$XDG_CONFIG_HOME/silkterm/config.shcl   (falls back to ~/.config/...)
-```
+| OS      | Config                                          | Wallpaper folder
+| :---    | :---                                            | :---
+| Linux   | `$XDG_CONFIG_HOME/silkterm/` (or `~/.config/...`) | beside the config
+| Windows | `%APPDATA%\silkterm\`                           | `%LOCALAPPDATA%\silkterm\wallpaper\`
+| macOS   | `~/Library/Application Support/silkterm/`       | beside the config
+
+Setting `XDG_CONFIG_HOME` overrides the platform default everywhere, and `--config PATH` overrides everything - an alternate config keeps its own wallpaper and history beside itself rather than sharing the defaults.
+
+Windows splits the two because settings are worth roaming between machines and a 60 MiB wallpaper pack is not. A pack already sitting beside the config still works; nothing has to be moved.
 
 If making changes directly (rather than through Settings), you can apply them immediately with the "Reload config" menu item.
 
