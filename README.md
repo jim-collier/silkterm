@@ -214,22 +214,16 @@ SilkTerm ships with the 113 wallpapers it was built and tuned against, in [`file
 They come to 60 MiB against a 10 MiB terminal, so no package or installer carries them - fetch the folder on its own. Bash (Linux, macOS, WSL):
 
 ```bash
-dir="${XDG_CONFIG_HOME:-$HOME/.config}/silkterm" && mkdir -p "$dir" &&
-curl -fsSL https://github.com/jim-collier/silkterm/archive/refs/heads/main.tar.gz |
-	tar -xz -C "$dir" --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper
+dir="${XDG_CONFIG_HOME:-$HOME/.config}/silkterm" && mkdir -p "$dir" && curl -fsSL https://github.com/jim-collier/silkterm/archive/refs/heads/main.tar.gz | tar -xz -C "$dir" --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper
 ```
 
 PowerShell (Windows):
 
 ```powershell
-$dest = "$env:APPDATA\silkterm"; $tgz = "$env:TEMP\silkterm-main.tar.gz"
-New-Item -ItemType Directory -Force $dest | Out-Null
-curl.exe -fsSL https://github.com/jim-collier/silkterm/archive/refs/heads/main.tar.gz -o $tgz
-tar -xzf $tgz -C $dest --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper
-Remove-Item $tgz
+$dest = "$env:APPDATA\silkterm"; $tgz = "$env:TEMP\silkterm-main.tar.gz"; New-Item -ItemType Directory -Force $dest | Out-Null; curl.exe -fsSL https://github.com/jim-collier/silkterm/archive/refs/heads/main.tar.gz -o $tgz; tar -xzf $tgz -C $dest --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper; Remove-Item $tgz
 ```
 
-Either one lands the images at `wallpaper/` inside your config directory, which is where rotation looks for them. Both pull the whole repository archive, since GitHub serves no smaller unit - about 67 MiB over the wire.
+Either one is a single line, so it survives a paste however your terminal handles one, and lands the images at `wallpaper/` inside your config directory - which is where rotation looks for them. Both pull the whole repository archive, since GitHub serves no smaller unit - about 67 MiB over the wire.
 
 Rendered with [`cicd/utility/wallpaper-gallery.bash`](cicd/utility/wallpaper-gallery.bash), which rebuilds the contact sheet above whenever the pack changes.
 
