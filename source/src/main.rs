@@ -24,6 +24,7 @@ mod perf;
 mod scrim;
 mod scroll;
 mod settings_ui;
+mod shells;
 mod sysfont;
 mod term;
 mod text;
