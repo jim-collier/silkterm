@@ -305,6 +305,15 @@ impl DialogWin {
 		}
 	}
 
+	// A background shell scan landed while this dialog was open. Fold it into the
+	// settings BOTH copies hold: the edited one so the user sees what turned up,
+	// and the baseline so the fold does not read as an edit they made.
+	pub fn fold_shells(&mut self, found: &[crate::shells::Found]) {
+		if let Content::Settings(dialog) = &mut self.content {
+			dialog.fold_shells(found);
+		}
+	}
+
 	// The tab + scroll this dialog is sitting on, for a later reopen to resume.
 	pub fn settings_view(&self) -> Option<View> {
 		match &self.content {

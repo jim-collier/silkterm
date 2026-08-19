@@ -1130,9 +1130,10 @@ pub struct RectInstance {
 	pub size: [f32; 2],
 	pub color: [f32; 4],
 	// params.x = mode (0 solid quad, 1 close-"X" mark, 2 rounded quad,
-	// 3 right-pointing triangle for a submenu arrow),
-	// params.y = stroke px for the X, corner radius for the rounded quad.
-	// The X and the arrow are drawn in the fragment shader, so each centers
+	// 3 triangle - a submenu arrow, or a move-this-row arrow),
+	// params.y = stroke px for the X, corner radius for the rounded quad,
+	// quarter-turns clockwise for the triangle (0 right, 1 down, 2 left, 3 up).
+	// The X and the arrows are drawn in the fragment shader, so each centers
 	// exactly in its quad (a font glyph never did - baseline metrics vary, and
 	// there is no arrow every interface font carries).
 	pub params: [f32; 2],
@@ -1354,13 +1355,30 @@ fn right_triangle(p: vec2<f32>, half: vec2<f32>) -> f32 {
     return max(dot(q - vec2<f32>(half.x, 0.0), n), -half.x - q.x);
 }
 
+// Turn the sample point instead of the shape, so one triangle serves all four
+// directions. An odd number of quarter-turns also swaps the half-extents, or a
+// non-square box would point the arrow at a corner.
+fn turned(p: vec2<f32>, half: vec2<f32>, turns: f32) -> vec2<f32> {
+    let t = i32(round(turns)) & 3;
+    if (t == 1) { return vec2<f32>(p.y, -p.x); }        // down
+    if (t == 2) { return vec2<f32>(-p.x, p.y); }        // left
+    if (t == 3) { return vec2<f32>(-p.y, p.x); }        // up
+    return p;
+}
+fn turned_half(half: vec2<f32>, turns: f32) -> vec2<f32> {
+    let t = i32(round(turns)) & 3;
+    if (t == 1 || t == 3) { return vec2<f32>(half.y, half.x); }
+    return half;
+}
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     var a = in.color.a;
     if (in.params.x > 2.5) {
         let half = in.size * 0.5;
+        let p = turned(in.local - half, half, in.params.y);
         // ~1px linear edge, same convention as the X bars
-        a = a * clamp(0.5 - right_triangle(in.local - half, half), 0.0, 1.0);
+        a = a * clamp(0.5 - right_triangle(p, turned_half(half, in.params.y)), 0.0, 1.0);
     } else if (in.params.x > 1.5) {
         let half = in.size * 0.5;
         let r = min(in.params.y, min(half.x, half.y));

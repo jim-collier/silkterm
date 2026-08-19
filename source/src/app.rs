@@ -557,13 +557,20 @@ fn shell_submenu(accel: Option<char>) -> Vec<Entry> {
 	}
 }
 
-// The background shell scan came back (shells.rs). Nothing on screen changes -
-// the menus are built when they open - so this only has to land the list in the
-// live settings and in the file. A scan that found nothing new compares equal
-// and writes nothing at all; if the config looks open in another program the
-// write is skipped and the list still applies for this session.
-fn fold_shells(shells: Vec<crate::shells::ShellEntry>) {
+// The background shell scan came back (shells.rs). It reports what it FOUND;
+// the fold into the stored list happens here, on the winit thread, against the
+// list as it stands right now - so a scan cannot carry a snapshot that went
+// stale while it ran. Nothing on screen changes (menus are built when they
+// open), so this only has to land the list in the live settings and in the file.
+// A scan that found nothing new compares equal and writes nothing at all; if the
+// config looks open in another program the write is skipped and the list still
+// applies for this session.
+//
+// A Settings dialog open at that moment is folded into as well, on BOTH of its
+// copies - see `Dialog::fold_shells`.
+fn fold_shells(found: &[crate::shells::Found]) {
 	let orig = (*config::settings()).clone();
+	let shells = crate::shells::merge(&orig.shells, found);
 	if shells == orig.shells {
 		return;
 	}
@@ -2119,16 +2126,20 @@ impl State {
 		edited: config::Settings,
 		_system_font: bool,
 	) -> bool {
-		// The shell list is no part of what the dialog edits - the background scan
-		// owns it (shells.rs) - so both sides take the LIVE one and it stays
-		// invisible to this path. A dialog that opened before a scan landed still
-		// holds the empty list it copied then, and swapping that in would empty the
-		// Tabs menu for the rest of the session while the file still had every
-		// shell in it.
+		// The Shells tab edits the list now, so this is the one path allowed to
+		// write it - and it is the dialog's copy that wins. The baseline is the
+		// LIVE list rather than the dialog's own `orig`: a scan that landed while
+		// the dialog was open has already been folded into both of its copies
+		// (Dialog::fold_shells), so the two agree, and taking the live one is what
+		// keeps them honest if they ever do not.
+		//
+		// An entry with no command names nothing to run, so it is dropped here
+		// rather than written - that is the whole of the grid's "Command is
+		// required" rule at the point the list leaves the dialog.
 		let mut orig = orig.clone();
 		let mut edited = edited;
 		orig.shells.clone_from(&config::settings().shells);
-		edited.shells.clone_from(&orig.shells);
+		edited.shells.retain(|e| !e.command.trim().is_empty());
 		// use_system_font is a persisted setting that only reorders font_family at
 		// resolve time, so nothing special to strip - persist the diff as usual.
 		let wrote = config::persist(&orig, &edited);
@@ -4189,7 +4200,12 @@ impl ApplicationHandler<UserEvent> for App {
 		};
 		match event {
 			UserEvent::WallpaperReady(loaded) => state.wallpaper_ready(*loaded),
-			UserEvent::ShellsReady(shells) => fold_shells(shells),
+			UserEvent::ShellsReady(found) => {
+				fold_shells(&found);
+				if let Some(dialog) = self.dialog.as_mut() {
+					dialog.fold_shells(&found);
+				}
+			}
 			UserEvent::Wakeup(id) => {
 				crate::perf::bump(&crate::perf::WAKEUPS);
 				// output easing is triggered in Pane::build when the screen
@@ -5132,7 +5148,7 @@ impl ApplicationHandler<UserEvent> for App {
 		if let Some(state) = self.state.as_mut() {
 			if state.shell_scan_at.is_some_and(|at| Instant::now() >= at) {
 				state.shell_scan_at = None;
-				crate::shells::spawn(&self.proxy, config::settings().shells.clone());
+				crate::shells::spawn(&self.proxy);
 			}
 		}
 

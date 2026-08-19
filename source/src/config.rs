@@ -243,7 +243,6 @@ pub struct Settings {
 	pub remembered_rows: usize,
 	pub word_separators: String, // delimiters for double-click word selection
 	pub selection_pairs: String, // matched pairs a double-click selects inside of
-	pub default_shell: String,   // command for new tabs/panes (empty = system shell)
 	pub command_line: String,    // default CLI layout/options when launched with no args
 	pub copy_on_select: bool,    // panes start with copy-on-select enabled
 	pub hyperlinks: bool,        // underline URLs in output on hover; Ctrl+click opens them
@@ -372,7 +371,6 @@ impl Default for Settings {
 				.filter(|&c| c != ':')
 				.collect(),
 			selection_pairs: DEFAULT_SELECTION_PAIRS.to_owned(),
-			default_shell: String::new(),
 			command_line: String::new(),
 			copy_on_select: false,
 			hyperlinks: true,
@@ -458,12 +456,19 @@ pub fn settings() -> Arc<Settings> {
 // backticks, double quotes, single quotes, then {} () [] <>.
 pub const DEFAULT_SELECTION_PAIRS: &str = "`` \"\" '' {} () [] <>";
 
-// argv for the configured default shell, or None to use the system default.
+// argv for the default shell - the first ACTIVE entry in the stored list, which
+// is what "the one at the top" means. None hands the choice to the system: an
+// empty list, or one whose every entry is switched off.
+//
+// The order is the user's (the Settings dialog's Shells tab moves entries; a
+// scan only ever appends), and an initial population is led by the shell the
+// user actually logs in with - see `shells::detect`.
 pub fn default_shell_argv() -> Option<Vec<String>> {
-	let shell = settings().default_shell.clone();
-	if shell.trim().is_empty() {
-		return None;
-	}
+	let shell = settings()
+		.shells
+		.iter()
+		.find(|entry| entry.active)
+		.map(|entry| entry.command.clone())?;
 	crate::cli::shell_split(&shell).ok()
 }
 
@@ -830,9 +835,6 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.selection_pairs != orig.selection_pairs {
 		doc.set_string("selection.pairs", &s.selection_pairs);
 	}
-	if s.default_shell != orig.default_shell {
-		doc.set_string("shell.default", &s.default_shell);
-	}
 	if s.command_line != orig.command_line {
 		doc.set_string("shell.command_line", &s.command_line);
 	}
@@ -993,7 +995,6 @@ struct RawConfig {
 	remembered_rows: Option<usize>,
 	word_separators: Option<String>,
 	selection_pairs: Option<String>,
-	default_shell: Option<String>,
 	command_line: Option<String>,
 	copy_on_select: Option<bool>,
 	hyperlinks: Option<bool>,
@@ -1043,6 +1044,7 @@ fn load() -> Settings {
 	// the program's own option set changed. The in-place writes defer (with an
 	// FYI) if the file looks open in another program.
 	convert_legacy_config(&path);
+	adopt_default_shell(&path);
 	migrate_config(&path);
 	backfill_config(&path);
 	let raw = match std::fs::read_to_string(&path) {
@@ -1208,7 +1210,6 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		remembered_rows: r.u("window.remembered_rows"),
 		word_separators: r.s("selection.word_separators"),
 		selection_pairs: r.s("selection.pairs"),
-		default_shell: r.s("shell.default"),
 		command_line: r.s("shell.command_line"),
 		copy_on_select: r.b("shell.copy_on_select"),
 		hyperlinks: r.b("hyperlinks.enabled"),
@@ -1338,6 +1339,13 @@ fn read_shells(doc: &shcl::Document) -> Vec<crate::shells::ShellEntry> {
 				.get_bool(&format!("shells.{slug}.active"))
 				.unwrap_or(true),
 			comment: text("comment").unwrap_or_default(),
+			// A date the file spells any other way is simply not a date we can
+			// show, so it reads as "never seen" rather than failing the entry.
+			last_seen: doc
+				.get_datetime(&format!("shells.{slug}.last_seen"))
+				.ok()
+				.and_then(|when| when.date)
+				.map_or_else(String::new, |(y, m, d)| format!("{y:04}-{m:02}-{d:02}")),
 			slug,
 		});
 	}
@@ -1355,6 +1363,22 @@ fn write_shells(
 	orig: &[crate::shells::ShellEntry],
 	now: &[crate::shells::ShellEntry],
 ) {
+	// File ORDER is the list's order - it decides the menu and, at the top, the
+	// default shell - and a reorder changes no entry, so the per-entry path below
+	// would write nothing at all and lose it. A moved entry therefore rewrites
+	// the whole subtree in the new order, which is the only way to say it.
+	let order = |list: &[crate::shells::ShellEntry]| -> Vec<String> {
+		list.iter().map(|e| e.slug.clone()).collect()
+	};
+	if order(orig) != order(now) {
+		for old in orig {
+			doc.remove(&format!("shells.{}", old.slug));
+		}
+		for entry in now {
+			write_shell(doc, entry);
+		}
+		return;
+	}
 	for old in orig {
 		if !now.iter().any(|e| e.slug == old.slug) {
 			doc.remove(&format!("shells.{}", old.slug));
@@ -1364,15 +1388,31 @@ fn write_shells(
 		if orig.iter().any(|e| e == entry) {
 			continue;
 		}
-		let at = format!("shells.{}", entry.slug);
-		doc.remove(&at);
-		doc.set_string(&format!("{at}.title"), &entry.title);
-		doc.set_string(&format!("{at}.command"), &entry.command);
-		doc.set_bool(&format!("{at}.active"), entry.active);
-		if !entry.comment.is_empty() {
-			doc.set_string(&format!("{at}.comment"), &entry.comment);
-		}
+		write_shell(doc, entry);
 	}
+}
+
+// One entry's whole subtree, dropped and rewritten so a field that no longer has
+// a value cannot survive under a key that stopped setting it.
+fn write_shell(doc: &mut shcl::Document, entry: &crate::shells::ShellEntry) {
+	let at = format!("shells.{}", entry.slug);
+	doc.remove(&at);
+	doc.set_string(&format!("{at}.title"), &entry.title);
+	doc.set_string(&format!("{at}.command"), &entry.command);
+	doc.set_bool(&format!("{at}.active"), entry.active);
+	if !entry.comment.is_empty() {
+		doc.set_string(&format!("{at}.comment"), &entry.comment);
+	}
+	if let Some(when) = parse_iso_date(&entry.last_seen) {
+		doc.set_datetime(&format!("{at}.last_seen"), &when);
+	}
+}
+
+// "YYYY-MM-DD" as the document's own date type. Anything else is None, so a
+// hand-typed value that is not a date is dropped rather than written back.
+fn parse_iso_date(text: &str) -> Option<shcl::ShclDateTime> {
+	let when = shcl::parse_datetime(text.trim())?;
+	when.date.is_some().then_some(when)
 }
 
 fn resolve(raw: RawConfig) -> Settings {
@@ -1590,7 +1630,6 @@ fn resolve(raw: RawConfig) -> Settings {
 		remembered_rows: raw.remembered_rows.unwrap_or(d.remembered_rows).max(1),
 		word_separators: raw.word_separators.unwrap_or(d.word_separators),
 		selection_pairs: raw.selection_pairs.unwrap_or(d.selection_pairs),
-		default_shell: raw.default_shell.unwrap_or(d.default_shell),
 		command_line: raw.command_line.unwrap_or(d.command_line),
 		copy_on_select: raw.copy_on_select.unwrap_or(d.copy_on_select),
 		hyperlinks: raw.hyperlinks.unwrap_or(d.hyperlinks),
@@ -1922,7 +1961,10 @@ const CONFIG_RENAMES: &[(&str, &str)] = &[
 // leaves rest through Ease-in and the one knob that fed four mechanisms is
 // gone. scroll.ease_in was a unitless fraction; its replacement is a duration
 // (scroll.ease_in_ms), so the old value cannot be carried by a rename.
-const CONFIG_REMOVED: &[&str] = &["scroll.tau_ms", "scroll.ease_in"];
+// `shell.default` is here because the list itself now names the default (its
+// top active entry). Adoption runs BEFORE this drops the line - see
+// `adopt_default_shell` - so the value is moved into the list, not discarded.
+const CONFIG_REMOVED: &[&str] = &["scroll.tau_ms", "scroll.ease_in", "shell.default"];
 
 // Defaults that changed, as (path, the value that used to be the default). An
 // existing config carries the template's commented lines verbatim, so after a
@@ -2400,6 +2442,54 @@ fn migrate_config_text(text: &str) -> Option<String> {
 	})
 }
 
+// One-time: `shell.default` used to name the default shell on its own. The list
+// names it now - its first active entry - so the two could disagree, and the
+// stored value is the user's own statement of which one they meant. Move the
+// entry it names to the top (creating one if the list has nothing running that
+// program) and drop the key; `CONFIG_REMOVED` clears any commented remnant.
+//
+// It runs BEFORE that removal, and only while the key is actively set: a config
+// that never had one, or has already been through this, is not touched at all.
+fn adopt_default_shell(path: &std::path::Path) {
+	let Some(doc) = read_doc(path) else { return };
+	let Some(wanted) = doc
+		.get_string("shell.default")
+		.ok()
+		.map(|v| v.trim().to_string())
+		.filter(|v| !v.is_empty())
+	else {
+		return;
+	};
+	if config_open_elsewhere(path) {
+		note_config_busy(path);
+		return;
+	}
+	let stored = read_shells(&doc);
+	let moved = adopt_default_into(&stored, &wanted);
+	let mut doc = doc;
+	write_shells(&mut doc, &stored, &moved);
+	doc.remove("shell.default");
+	write_doc(path, &doc);
+}
+
+// The list with `wanted` at the front. An entry already running that exact
+// command line moves; anything else is added as a new entry, since a command the
+// list does not carry is still a shell the user chose to launch.
+fn adopt_default_into(
+	stored: &[crate::shells::ShellEntry],
+	wanted: &str,
+) -> Vec<crate::shells::ShellEntry> {
+	let mut out = stored.to_vec();
+	match out.iter().position(|e| e.command.trim() == wanted) {
+		Some(at) => {
+			let entry = out.remove(at);
+			out.insert(0, entry);
+		}
+		None => out.insert(0, crate::shells::adopted(wanted, stored)),
+	}
+	out
+}
+
 // Revert config keys to their defaults: drop the active assignment from
 // config.shcl (dotted keys are paths), then backfill so the
 // key comes back as the template's commented default line. Used by the Settings
@@ -2622,7 +2712,28 @@ pub fn test_config_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 pub fn set_config_override(path: PathBuf) {
+	#[cfg(test)]
+	{
+		*test_override()
+			.lock()
+			.unwrap_or_else(std::sync::PoisonError::into_inner) = Some(path.clone());
+	}
 	let _ = CONFIG_OVERRIDE.set(path);
+}
+
+// `--config` is decided once, before any setting is read, which is exactly what
+// a OnceLock says - but a test installs SEVERAL throwaway configs in one
+// process, and the second `set` there is silently ignored. That failed quietly
+// and in the worst possible way: every later test wrote its own file and read
+// the FIRST one's, so one test's leftovers steered another's assertions
+// (measured: the theme round-trip read theme_mode "light" out of the generic
+// row test's config and stored its edit in the wrong variant of the palette).
+// So a test build gets a settable door beside the OnceLock. It is still
+// process-global, hence `test_config_lock` around any test that uses it.
+#[cfg(test)]
+fn test_override() -> &'static std::sync::Mutex<Option<PathBuf>> {
+	static OVERRIDE: OnceLock<std::sync::Mutex<Option<PathBuf>>> = OnceLock::new();
+	OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
 }
 
 // The directory name under whichever base a platform hands us. One spelling, so
@@ -2689,6 +2800,14 @@ fn config_base_for(
 }
 
 fn config_path() -> Option<PathBuf> {
+	#[cfg(test)]
+	if let Some(p) = test_override()
+		.lock()
+		.unwrap_or_else(std::sync::PoisonError::into_inner)
+		.clone()
+	{
+		return Some(p);
+	}
 	if let Some(p) = CONFIG_OVERRIDE.get() {
 		return Some(p.clone());
 	}
@@ -3106,16 +3225,13 @@ selection:
 ## Shell
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-shell:
+## The shell for new windows, tabs and panes is the first ACTIVE entry in the
+## shells.<name> blocks below - "the one at the top". Those blocks are written
+## for you a few seconds after launch, by a look around for what is installed,
+## and the Settings dialog's "Shells" tab is where the order is set. A CLI
+## --shell and per-pane inheritance still take precedence over both.
 
-	## Default shell
-	## Shell/command for new windows, tabs, and panes when nothing else is given
-	## (CLI --shell and per-pane inheritance take precedence). argv-split, so
-	## "bash --norc" works. Leave blank/commented for the system default shell.
-	## This is separate from the shells offered under "New Tab with Shell", which
-	## live in their own shells.<name> blocks - written for you a few seconds
-	## after launch, by a look around for what is installed.
-	# default: "bash --norc"  ## Default
+shell:
 
 	## Default command line
 	## Applied when SilkTerm is launched with no arguments - the same
@@ -3376,6 +3492,81 @@ mod tests {
 		}
 		// zero stays zero - the floor is for measurements meant to be seen
 		assert_eq!(dip(0.0, 2.0), 0.0);
+	}
+
+	fn shell_entry(slug: &str, command: &str) -> crate::shells::ShellEntry {
+		crate::shells::ShellEntry {
+			slug: slug.into(),
+			title: slug.into(),
+			command: command.into(),
+			active: true,
+			comment: String::new(),
+			last_seen: String::new(),
+		}
+	}
+
+	fn doc_with_shells(list: &[crate::shells::ShellEntry]) -> shcl::Document {
+		let mut doc = shcl::Document::parse("");
+		write_shells(&mut doc, &[], list);
+		doc
+	}
+
+	// File order IS the list's order - it decides what the menu offers first and
+	// therefore which shell is the default - and a reorder changes no entry, so
+	// the per-entry write path would have written nothing at all and lost it.
+	#[test]
+	fn a_reorder_is_written_even_though_no_entry_changed() {
+		let list = vec![
+			shell_entry("bash", "/bin/bash"),
+			shell_entry("fish", "/usr/bin/fish"),
+			shell_entry("zsh", "/bin/zsh"),
+		];
+		let mut doc = doc_with_shells(&list);
+		assert_eq!(doc.children("shells"), vec!["bash", "fish", "zsh"]);
+		let moved = vec![list[2].clone(), list[0].clone(), list[1].clone()];
+		write_shells(&mut doc, &list, &moved);
+		assert_eq!(doc.children("shells"), vec!["zsh", "bash", "fish"]);
+		// and every entry survived the rewrite whole
+		let back = read_shells(&doc);
+		assert_eq!(
+			back.iter().map(|e| e.command.as_str()).collect::<Vec<_>>(),
+			vec!["/bin/zsh", "/bin/bash", "/usr/bin/fish"]
+		);
+	}
+
+	#[test]
+	fn the_date_a_shell_was_last_seen_round_trips() {
+		let mut entry = shell_entry("bash", "/bin/bash");
+		entry.last_seen = "2026-08-19".into();
+		let doc = doc_with_shells(std::slice::from_ref(&entry));
+		assert_eq!(read_shells(&doc)[0].last_seen, "2026-08-19");
+		// a value that is not a date is not written, and reads as never seen
+		let mut junk = shell_entry("fish", "/usr/bin/fish");
+		junk.last_seen = "whenever".into();
+		let doc = doc_with_shells(std::slice::from_ref(&junk));
+		assert!(read_shells(&doc)[0].last_seen.is_empty());
+	}
+
+	// The list names the default now (its top active entry), so an old
+	// `shell.default` has to become the top of the list rather than be dropped.
+	#[test]
+	fn an_old_default_shell_becomes_the_top_of_the_list() {
+		let list = vec![
+			shell_entry("bash", "/bin/bash"),
+			shell_entry("fish", "/usr/bin/fish"),
+		];
+		// one the list already carries simply moves
+		let moved = adopt_default_into(&list, "/usr/bin/fish");
+		assert_eq!(
+			moved.iter().map(|e| e.slug.as_str()).collect::<Vec<_>>(),
+			vec!["fish", "bash"]
+		);
+		// one it does not know is still the shell they chose, so it is added there
+		let added = adopt_default_into(&list, "/opt/ion --login");
+		assert_eq!(added.len(), 3);
+		assert_eq!(added[0].command, "/opt/ion --login");
+		assert!(added[0].active);
+		assert_eq!(added[1].slug, "bash", "and nothing else moved");
 	}
 
 	// ':' must NOT be a word separator, else a double-click on C:\... drops the

@@ -190,7 +190,7 @@ const EASE_OUT_MAX: f32 = 1300.0;
 // combined cursor row expose two parts). Tab walks parts then buttons.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Focus {
-	Row(usize, u8),
+	Row(usize, u16),
 	Button(usize),
 }
 
@@ -415,7 +415,7 @@ enum ThemeBtn {
 	Delete,
 }
 impl ThemeBtn {
-	fn of(part: u8) -> ThemeBtn {
+	fn of(part: u16) -> ThemeBtn {
 		match part {
 			0 => ThemeBtn::Save,
 			1 => ThemeBtn::SaveAs,
@@ -425,9 +425,10 @@ impl ThemeBtn {
 	}
 }
 
-// A small box over the panel: name a new theme, rename one, or confirm a delete.
-// It is drawn in the overlay pass and takes every click and key while it is up,
-// so the panel behind it can be left exactly as it was.
+// A small box over the panel: name a new theme, rename one, or confirm a delete
+// - of a theme, or of a shell. It is drawn in the overlay pass and takes every
+// click and key while it is up, so the panel behind it can be left exactly as it
+// was.
 // Where the keyboard is inside the box. A confirmation has no field, so `Field`
 // is unreachable there and the focus walk starts at Cancel.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -437,27 +438,106 @@ enum PromptFocus {
 	Ok,
 }
 
+// What OK will do. The box itself is the same either way; only this says who
+// asked for it and what to carry out.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PromptJob {
+	Theme(ThemeBtn),
+	DropShell(usize), // index into `edited.shells`
+}
+
 #[derive(Debug)]
 struct Prompt {
-	which: ThemeBtn,
+	job: PromptJob,
 	title: String,
 	focus: PromptFocus,
 	warn: Option<String>, // why OK is refusing (a blank or taken name)
 }
 
 impl Prompt {
-	// Derived rather than stored: only the delete confirmation asks nothing, so a
-	// separate flag could only ever disagree with the button that opened the box.
+	// Derived rather than stored: only a confirmation asks nothing, so a separate
+	// flag could only ever disagree with the button that opened the box.
 	fn has_field(&self) -> bool {
-		!matches!(self.which, ThemeBtn::Delete)
+		matches!(
+			self.job,
+			PromptJob::Theme(ThemeBtn::SaveAs | ThemeBtn::Rename)
+		)
 	}
 }
 
-// The prompt's text field is the dialog's one open edit, so every bit of field
-// behavior - selection, word ops, the clipboard, the caret ease, the right-click
-// menu - works there without a second copy. It belongs to no row, hence a row
-// index no row can have.
+// The prompt's text field and the shells grid's own fields are the dialog's ONE
+// open edit, so every bit of field behavior - selection, word ops, the
+// clipboard, the caret ease, the right-click menu - works in all of them without
+// a second copy. None belongs to a spec row, so each borrows an index no row can
+// have: every `specs[edit.row]` comparison in this file simply never matches
+// one, and the four places that INDEX specs by it each carry their own guard.
+const PSEUDO_ROW: usize = usize::MAX / 2;
 const PROMPT_ROW: usize = usize::MAX;
+// Two per shell entry, counting down: name, then command.
+const SHELL_ROW_BASE: usize = usize::MAX - 1;
+
+// Which grid field a pseudo row stands for: (entry index, is-the-command-field).
+fn shell_field_of(row: usize) -> Option<(usize, bool)> {
+	if row < PSEUDO_ROW || row == PROMPT_ROW {
+		return None;
+	}
+	let k = SHELL_ROW_BASE - row;
+	Some((k / 2, k % 2 == 1))
+}
+fn shell_field_row(entry: usize, command: bool) -> usize {
+	SHELL_ROW_BASE - (entry * 2 + usize::from(command))
+}
+
+// One shell's own controls, in Tab order. `Add` is the single stop past the last
+// entry, so a grid of `n` entries has `n * ShellPart::COUNT + 1` stops.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ShellPart {
+	Name,
+	Command,
+	Active,
+	Top,
+	Up,
+	Down,
+	Bottom,
+	Remove,
+}
+
+impl ShellPart {
+	const COUNT: u16 = 8;
+	const ALL: [ShellPart; 8] = [
+		ShellPart::Name,
+		ShellPart::Command,
+		ShellPart::Active,
+		ShellPart::Top,
+		ShellPart::Up,
+		ShellPart::Down,
+		ShellPart::Bottom,
+		ShellPart::Remove,
+	];
+	fn of(k: u16) -> ShellPart {
+		ShellPart::ALL[(k % ShellPart::COUNT) as usize]
+	}
+}
+
+// Where a part index lands in the grid: an entry's control, or the Add button
+// past the end.
+enum ShellStop {
+	Entry(usize, ShellPart),
+	Add,
+}
+
+fn shell_stop(part: u16, entries: usize) -> ShellStop {
+	let entry = (part / ShellPart::COUNT) as usize;
+	if entry >= entries {
+		ShellStop::Add
+	} else {
+		ShellStop::Entry(entry, ShellPart::of(part))
+	}
+}
+fn shell_part_index(entry: usize, part: ShellPart) -> u16 {
+	entry as u16 * ShellPart::COUNT
+		+ ShellPart::ALL.iter().position(|p| *p == part).unwrap_or(0) as u16
+}
 
 // Open field context menu: anchor point, keyboard-highlighted item, and whether
 // the clipboard held text when it opened (grays Paste).
@@ -485,16 +565,16 @@ pub struct SettingsDialog {
 	reverted: Vec<&'static str>, // config keys reverted this session -> comment out on Apply
 	rect: Rect,
 	specs: &'static [Spec],
-	tab: usize,                       // active tab
-	tab_ws: Vec<f32>,                 // measured tab-button widths (UI font)
-	scroll: f32,                      // rows-region scroll offset (0 when everything fits)
-	drag_thumb: Option<f32>,          // scrollbar-thumb drag: grab offset within the thumb
-	drag: Option<usize>,              // slider row being dragged
-	pressed: Option<usize>,           // footer button held down (fires on release; drawn pressed)
-	pressed_row: Option<(usize, u8)>, // a row's push-button held down (same press/release)
-	prompt: Option<Prompt>,           // the name / confirm box a theme action puts over the panel
-	edit: Option<EditState>,          // row being typed (hex for Color, path for Text)
-	edit_drag: Option<usize>,         // field row being drag-selected with the mouse
+	tab: usize,                        // active tab
+	tab_ws: Vec<f32>,                  // measured tab-button widths (UI font)
+	scroll: f32,                       // rows-region scroll offset (0 when everything fits)
+	drag_thumb: Option<f32>,           // scrollbar-thumb drag: grab offset within the thumb
+	drag: Option<usize>,               // slider row being dragged
+	pressed: Option<usize>,            // footer button held down (fires on release; drawn pressed)
+	pressed_row: Option<(usize, u16)>, // a row's push-button held down (same press/release)
+	prompt: Option<Prompt>,            // the name / confirm box a theme action puts over the panel
+	edit: Option<EditState>,           // row being typed (hex for Color, path for Text)
+	edit_drag: Option<usize>,          // field row being drag-selected with the mouse
 	select_all_on_up: bool, // a fresh single-click field entry: select all on release unless it became a drag
 	// multi-click detection (double = select word, triple = select all)
 	last_click: Option<(std::time::Instant, f32, f32)>,
@@ -520,14 +600,30 @@ pub struct SettingsDialog {
 }
 
 impl SettingsDialog {
-	fn row_h_for(kind: &Kind, line_h: f32) -> f32 {
+	// `shells` is the length of the stored list: the grid is one spec row and n
+	// lines on screen, so it is the one kind whose height is not a constant.
+	fn row_h_for(kind: &Kind, line_h: f32, shells: usize) -> f32 {
+		let line = lay().row_height.max(line_h + lay().row_pad);
 		match kind {
 			Kind::Header(_) => lay().header_height.max(line_h + lay().header_pad),
-			_ => lay().row_height.max(line_h + lay().row_pad),
+			// column titles, a line per shell, then the Add button
+			Kind::ShellList => {
+				line_h
+					+ lay().shell_head_gap
+					+ shells as f32 * line
+					+ lay().shell_add_gap
+					+ lay().button_height.max(line_h + lay().row_pad)
+			}
+			_ => line,
 		}
 	}
 	fn row_h(&self, kind: &Kind) -> f32 {
-		Self::row_h_for(kind, self.line_h)
+		Self::row_h_for(kind, self.line_h, self.edited.shells.len())
+	}
+	// One line of the grid - the same height as an ordinary settings row, so the
+	// fields in it match every other field in the dialog.
+	fn shell_line_h(&self) -> f32 {
+		lay().row_height.max(self.line_h + lay().row_pad)
 	}
 	fn btn_h(&self) -> f32 {
 		lay().button_height.max(self.line_h + lay().row_pad)
@@ -574,12 +670,12 @@ impl SettingsDialog {
 
 	// Natural height of one tab's rows (gaps included). Static so `new` can size
 	// the window before Self exists; row_y must walk rows the same way.
-	fn tab_content_h(specs: &[Spec], tab: usize, line_h: f32) -> f32 {
+	fn tab_content_h(specs: &[Spec], tab: usize, line_h: f32, shells: usize) -> f32 {
 		let mut h = 0.0;
 		let mut prev: Option<&Spec> = None;
 		for (i, spec) in Self::visible(specs, tab) {
 			h += Self::gap_above(specs, i, tab, prev);
-			h += Self::row_h_for(&spec.kind, line_h);
+			h += Self::row_h_for(&spec.kind, line_h, shells);
 			prev = Some(spec);
 		}
 		h
@@ -617,8 +713,9 @@ impl SettingsDialog {
 		let btn_w = btn_w.max(lay().button_width);
 		let row_btn_w = row_btn_w.max(lay().button_width);
 		let btn_h = lay().button_height.max(line_h + lay().row_pad);
+		let shells = config::settings().shells.len();
 		let tallest = (0..tab_titles().len())
-			.map(|t| Self::tab_content_h(specs, t, line_h))
+			.map(|t| Self::tab_content_h(specs, t, line_h, shells))
 			.fold(0.0f32, f32::max);
 		let h = (Self::gutter_h_for(line_h)
 			+ 1.0 + lay().tabs_gap
@@ -668,11 +765,19 @@ impl SettingsDialog {
 		} else {
 			0.0
 		};
+		// the shells grid spans the whole content width, so its columns are a floor
+		// on the panel rather than on a column of it
+		let grid_w = if specs.iter().any(|s| matches!(s.kind, Kind::ShellList)) {
+			lay().pad + Self::shell_columns_w(font_scale) + lay().pad
+		} else {
+			0.0
+		};
 		let w = (lay().width + (label_w - lay().label_width) + (btn_w - lay().button_width) * 3.0)
 			.max(tabs_w)
 			.max(radio_w)
 			.max(dd_w)
-			.max(btns_w);
+			.max(btns_w)
+			.max(grid_w);
 		let rect = Rect {
 			x: ((screen_w - w) / 2.0).max(0.0),
 			y: ((screen_h - h) / 2.0).max(0.0),
@@ -877,7 +982,7 @@ impl SettingsDialog {
 		}
 	}
 	fn content_h(&self) -> f32 {
-		Self::tab_content_h(self.specs, self.tab, self.line_h)
+		Self::tab_content_h(self.specs, self.tab, self.line_h, self.edited.shells.len())
 	}
 	fn max_scroll(&self) -> f32 {
 		(self.content_h() - self.viewport().h).max(0.0)
@@ -1016,10 +1121,10 @@ impl SettingsDialog {
 		ring
 	}
 	// Sort key matching the ring above: rows in spec order, footer buttons last.
-	fn focus_order(f: Focus) -> (usize, u8) {
+	fn focus_order(f: Focus) -> (usize, u16) {
 		match f {
 			Focus::Row(i, p) => (i, p),
-			Focus::Button(b) => (usize::MAX, b as u8),
+			Focus::Button(b) => (usize::MAX, b as u16),
 		}
 	}
 	// Tab / Shift+Tab (and Down / Up off a non-slider row): move focus to the
@@ -1059,12 +1164,20 @@ impl SettingsDialog {
 	// Scroll the rows region so a focused control row is fully visible (buttons
 	// are fixed chrome - always visible).
 	fn scroll_focus_into_view(&mut self) {
-		let Some(Focus::Row(i, _)) = self.focus else {
+		let Some(Focus::Row(i, part)) = self.focus else {
 			return;
 		};
 		let vp = self.viewport();
-		let top = self.row_y(i);
-		let bottom = top + self.row_h(&self.specs[i].kind);
+		// The shells grid is one row and many lines, and a long one is taller
+		// than the viewport - so it is the focused CONTROL that has to come into
+		// view there, not the row, which may not fit at all.
+		let (top, bottom) = if matches!(self.specs[i].kind, Kind::ShellList) {
+			let r = self.shell_stop_rect(i, part);
+			(r.y - 4.0, r.y + r.h + 4.0)
+		} else {
+			let top = self.row_y(i);
+			(top, top + self.row_h(&self.specs[i].kind))
+		};
 		if top < vp.y {
 			self.scroll -= vp.y - top; // row above viewport -> scroll it down into view
 		} else if bottom > vp.y + vp.h {
@@ -1270,15 +1383,64 @@ impl SettingsDialog {
 			Kind::Text | Kind::Color | Kind::Slider { .. } => self.open_edit(i, true),
 			Kind::Dropdown(_) => self.dd_open(i),
 			Kind::Buttons(_) => self.theme_action(ThemeBtn::of(part)),
+			Kind::ShellList => self.shell_activate(i, part),
 			_ => {}
 		}
 		Action::None
+	}
+
+	// Space or Enter on a grid stop: open a field, flip the switch, move the
+	// entry, or ask before dropping it.
+	fn shell_activate(&mut self, i: usize, part: u16) {
+		match shell_stop(part, self.edited.shells.len()) {
+			ShellStop::Add => self.shell_add(i),
+			ShellStop::Entry(k, ShellPart::Name) => self.open_edit(shell_field_row(k, false), true),
+			ShellStop::Entry(k, ShellPart::Command) => {
+				self.open_edit(shell_field_row(k, true), true);
+			}
+			ShellStop::Entry(k, ShellPart::Active) => {
+				if let Some(entry) = self.edited.shells.get_mut(k) {
+					entry.active = !entry.active;
+				}
+			}
+			ShellStop::Entry(k, ShellPart::Remove) => self.shell_confirm_remove(k),
+			ShellStop::Entry(k, moved) => self.shell_move(i, k, moved),
+		}
+	}
+
+	// Dropping an entry is the one grid action that cannot be undone by doing the
+	// opposite, so it asks - the same box the theme delete uses.
+	fn shell_confirm_remove(&mut self, k: usize) {
+		let Some(entry) = self.edited.shells.get(k) else {
+			return;
+		};
+		let name = if entry.title.trim().is_empty() {
+			entry.command.clone()
+		} else {
+			entry.title.clone()
+		};
+		self.commit_edit();
+		self.prompt = Some(Prompt {
+			job: PromptJob::DropShell(k),
+			title: format!("Really remove \"{name}\" from the list?"),
+			focus: PromptFocus::Ok,
+			warn: None,
+		});
 	}
 
 	// Current value of row i's editable field, as text.
 	fn edit_buf(&self, i: usize) -> String {
 		if i == PROMPT_ROW {
 			return self.edit.as_ref().map_or(String::new(), |e| e.buf.clone());
+		}
+		if let Some((k, command)) = shell_field_of(i) {
+			return self.edited.shells.get(k).map_or_else(String::new, |entry| {
+				if command {
+					entry.command.clone()
+				} else {
+					entry.title.clone()
+				}
+			});
 		}
 		match self.specs[i].kind {
 			Kind::Text => self.get_text(self.specs[i].key),
@@ -1314,6 +1476,16 @@ impl SettingsDialog {
 	// After an Apply, make the applied values the new baseline so a later Apply
 	// compares against the live state, not the stale open-time snapshot (otherwise
 	// re-selecting the original value reads as "no change" and isn't applied).
+	// A scan landed while this dialog was open. Both copies move, so a user who
+	// has changed nothing still has nothing changed - the same reasoning that
+	// keeps the list out of an ordinary Apply diff. Anything they have already
+	// done to the list (a rename, a reorder, a removal) is what the merge folds
+	// INTO, so none of it is undone; a scan only ever appends and switches off.
+	pub fn fold_shells(&mut self, found: &[crate::shells::Found]) {
+		self.orig.shells = crate::shells::merge(&self.orig.shells, found);
+		self.edited.shells = crate::shells::merge(&self.edited.shells, found);
+	}
+
 	pub fn commit_baseline(&mut self) {
 		self.orig = self.edited.clone();
 	}
@@ -1336,6 +1508,168 @@ impl SettingsDialog {
 		}
 		y
 	}
+	// ---- the shells grid ------------------------------------------------------
+	//
+	// The spec index of the grid, for the pseudo-row fields, which know which
+	// entry they belong to but not which row draws it.
+	fn shell_row(&self) -> Option<usize> {
+		(0..self.specs.len()).find(|&i| matches!(self.specs[i].kind, Kind::ShellList))
+	}
+	//
+	// The grid spans the whole content width rather than starting at the control
+	// column: there is no label beside it, and the command it holds is the one
+	// value in the dialog that is routinely too long to read. Columns are laid
+	// out from BOTH ends - the fixed ones from the right, the name from the left
+	// - and the command takes whatever is left between them, so a wider panel
+	// widens the column that needs it.
+
+	// Total width of everything except the command's own slack: what the panel
+	// must clear for the grid to be readable at all. Static, so `new` can size
+	// the window before Self exists.
+	fn shell_columns_w(font_scale: f32) -> f32 {
+		let l = lay();
+		l.shell_name_width
+			+ l.shell_command_width
+			+ l.shell_seen_width
+			+ l.shell_active_width
+			+ l.shell_col_gap * 4.0
+			+ (l.shell_button * 5.0 + l.shell_button_gap * 4.0) * font_scale
+	}
+	fn shell_buttons_w(&self) -> f32 {
+		(lay().shell_button * 5.0 + lay().shell_button_gap * 4.0) * self.ui_scale()
+	}
+	// x of each column's left edge, plus the command column's width:
+	// (name, command, command_w, seen, active, buttons).
+	fn shell_cols(&self) -> (f32, f32, f32, f32, f32, f32) {
+		let l = lay();
+		let left = self.rect.x + l.pad;
+		let right = self.rect.x + self.rect.w - l.pad;
+		let buttons = right - self.shell_buttons_w();
+		let active = buttons - l.shell_col_gap - l.shell_active_width;
+		let seen = active - l.shell_col_gap - l.shell_seen_width;
+		let command = left + l.shell_name_width + l.shell_col_gap;
+		let command_w = (seen - l.shell_col_gap - command).max(l.shell_command_width / 2.0);
+		(left, command, command_w, seen, active, buttons)
+	}
+	// Top of the grid's column titles, and of entry `k`'s own line.
+	fn shell_head_y(&self, i: usize) -> f32 {
+		self.row_y(i)
+	}
+	fn shell_line_y(&self, i: usize, k: usize) -> f32 {
+		self.shell_head_y(i) + self.line_h + lay().shell_head_gap + k as f32 * self.shell_line_h()
+	}
+	// A boxed control centered in entry `k`'s line, at `x` and `w` wide.
+	fn shell_box(&self, i: usize, k: usize, x: f32, w: f32) -> Rect {
+		let line = self.shell_line_h();
+		let h = lay().swatch.max(self.line_h + 4.0);
+		Rect {
+			x,
+			y: self.shell_line_y(i, k) + (line - h) / 2.0,
+			w,
+			h,
+		}
+	}
+	fn shell_name_box(&self, i: usize, k: usize) -> Rect {
+		let (left, ..) = self.shell_cols();
+		self.shell_box(i, k, left, lay().shell_name_width)
+	}
+	fn shell_cmd_box(&self, i: usize, k: usize) -> Rect {
+		let (_, command, command_w, ..) = self.shell_cols();
+		self.shell_box(i, k, command, command_w)
+	}
+	// The Active checkbox, centered under its own column title.
+	fn shell_active_box(&self, i: usize, k: usize) -> Rect {
+		let (.., active, _) = self.shell_cols();
+		let size = lay().swatch;
+		self.shell_box(i, k, active + (lay().shell_active_width - size) / 2.0, size)
+	}
+	// One of the five icon buttons on entry `k`'s line, left to right.
+	fn shell_btn_box(&self, i: usize, k: usize, which: usize) -> Rect {
+		let (.., buttons) = self.shell_cols();
+		let size = lay().shell_button * self.ui_scale();
+		let pitch = size + lay().shell_button_gap * self.ui_scale();
+		let line = self.shell_line_h();
+		Rect {
+			x: buttons + which as f32 * pitch,
+			y: self.shell_line_y(i, k) + (line - size) / 2.0,
+			w: size,
+			h: size,
+		}
+	}
+	fn shell_add_box(&self, i: usize) -> Rect {
+		let (left, ..) = self.shell_cols();
+		let n = self.edited.shells.len();
+		Rect {
+			x: left,
+			y: self.shell_line_y(i, n) + lay().shell_add_gap,
+			w: self.row_btn_w,
+			h: self.btn_h(),
+		}
+	}
+	// The rect the keyboard ring goes around, for any stop in the grid.
+	fn shell_stop_rect(&self, i: usize, part: u16) -> Rect {
+		match shell_stop(part, self.edited.shells.len()) {
+			ShellStop::Add => self.shell_add_box(i),
+			ShellStop::Entry(k, ShellPart::Name) => self.shell_name_box(i, k),
+			ShellStop::Entry(k, ShellPart::Command) => self.shell_cmd_box(i, k),
+			ShellStop::Entry(k, ShellPart::Active) => self.shell_active_box(i, k),
+			ShellStop::Entry(k, other) => self.shell_btn_box(i, k, Self::shell_btn_index(other)),
+		}
+	}
+	// Which of the five icon boxes a part is drawn in.
+	fn shell_btn_index(part: ShellPart) -> usize {
+		match part {
+			ShellPart::Top => 0,
+			ShellPart::Up => 1,
+			ShellPart::Down => 2,
+			ShellPart::Bottom => 3,
+			_ => 4, // Remove
+		}
+	}
+	// A move that would go nowhere is offered as a grayed button rather than
+	// hidden, so the four of them stay in the same place on every line.
+	fn shell_move_ok(&self, k: usize, part: ShellPart) -> bool {
+		let last = self.edited.shells.len().saturating_sub(1);
+		match part {
+			ShellPart::Top | ShellPart::Up => k > 0,
+			ShellPart::Down | ShellPart::Bottom => k < last,
+			_ => true,
+		}
+	}
+	// Move entry `k`, keeping focus on the button that moved it - which is now on
+	// a different line, so the focus part has to travel with it.
+	fn shell_move(&mut self, i: usize, k: usize, part: ShellPart) {
+		if !self.shell_move_ok(k, part) {
+			return;
+		}
+		let to = match part {
+			ShellPart::Top => 0,
+			ShellPart::Up => k - 1,
+			ShellPart::Down => k + 1,
+			_ => self.edited.shells.len() - 1,
+		};
+		let entry = self.edited.shells.remove(k);
+		self.edited.shells.insert(to, entry);
+		self.focus = Some(Focus::Row(i, shell_part_index(to, part)));
+	}
+	fn shell_remove(&mut self, k: usize) {
+		if k < self.edited.shells.len() {
+			self.edited.shells.remove(k);
+		}
+		self.commit_edit();
+		self.focus = None;
+	}
+	// Add opens the new entry's Command field straight away: an entry with no
+	// command names nothing to run, and is dropped rather than saved.
+	fn shell_add(&mut self, i: usize) {
+		self.commit_edit();
+		let entry = crate::shells::adopted("", &self.edited.shells);
+		self.edited.shells.push(entry);
+		let k = self.edited.shells.len() - 1;
+		self.focus = Some(Focus::Row(i, shell_part_index(k, ShellPart::Command)));
+		self.open_edit(shell_field_row(k, true), true);
+	}
+
 	// Left edge of a row's label: its own sub-group depth in from the panel pad.
 	fn label_x(&self, i: usize) -> f32 {
 		self.rect.x + lay().pad + f32::from(self.specs[i].indent) * lay().indent
@@ -1407,7 +1741,7 @@ impl SettingsDialog {
 		lay().dual_pitch * self.ui_scale()
 	}
 	// checkbox `p` (0/1) on a Dual row; its label sits just to the right
-	fn dual_box(&self, i: usize, p: u8) -> Rect {
+	fn dual_box(&self, i: usize, p: u16) -> Rect {
 		Rect {
 			x: self.control_x() + p as f32 * self.dual_pitch(),
 			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
@@ -1482,17 +1816,19 @@ impl SettingsDialog {
 	}
 	// Number of focusable sub-controls in row `i` (0 for a header). Sliders and
 	// the Dual (cursor) row expose two; every other control is a single part.
-	fn parts_of(&self, i: usize) -> u8 {
+	fn parts_of(&self, i: usize) -> u16 {
 		match self.specs[i].kind {
 			Kind::Header(_) => 0,
 			Kind::Slider { .. } | Kind::Dual { .. } => 2,
-			Kind::Buttons(captions) => captions.len() as u8,
+			Kind::Buttons(captions) => captions.len() as u16,
+			// every entry's own controls, then the one Add stop past the end
+			Kind::ShellList => self.edited.shells.len() as u16 * ShellPart::COUNT + 1,
 			_ => 1,
 		}
 	}
 	// The config Key that governs part `p` of row `i` (Dual parts differ; every
 	// other kind uses the row's single key for both the value and its graying).
-	fn part_key(&self, i: usize, p: u8) -> Key {
+	fn part_key(&self, i: usize, p: u16) -> Key {
 		match self.specs[i].kind {
 			Kind::Dual { keys, .. } => keys[p as usize],
 			_ => self.specs[i].key,
@@ -1500,9 +1836,13 @@ impl SettingsDialog {
 	}
 	// A push-button decides for itself (there is nothing to gate on); everything
 	// else asks the setting behind it.
-	fn part_disabled(&self, i: usize, p: u8) -> bool {
+	fn part_disabled(&self, i: usize, p: u16) -> bool {
 		match self.specs[i].kind {
 			Kind::Buttons(_) => !self.theme_btn_enabled(ThemeBtn::of(p)),
+			Kind::ShellList => match shell_stop(p, self.edited.shells.len()) {
+				ShellStop::Entry(k, part) => !self.shell_move_ok(k, part),
+				ShellStop::Add => false,
+			},
 			_ => self.disabled(self.part_key(i, p)),
 		}
 	}
@@ -1549,23 +1889,42 @@ impl SettingsDialog {
 				None if !self.specs[i].help.is_empty() => self.specs[i].help,
 				None => continue,
 			};
-			// hover target: the row's label + control span
+			// hover target: the row's label + control span. The shells grid is
+			// the exception - its "row" is the whole grid, and a tip that popped
+			// up over every line of it would be in the way of the work; it hangs
+			// off the column titles instead, which is where the question is.
 			let ctl = self.checkbox(i);
-			let hit = Rect {
-				x: self.rect.x + lay().pad,
-				y: self.row_y(i),
-				w: ctl.x + ctl.w - (self.rect.x + lay().pad),
-				h: self.row_h(&self.specs[i].kind),
+			let hit = if matches!(self.specs[i].kind, Kind::ShellList) {
+				Rect {
+					x: self.rect.x + lay().pad,
+					y: self.shell_head_y(i),
+					w: self.rect.w - lay().pad * 2.0,
+					h: self.line_h,
+				}
+			} else {
+				Rect {
+					x: self.rect.x + lay().pad,
+					y: self.row_y(i),
+					w: ctl.x + ctl.w - (self.rect.x + lay().pad),
+					h: self.row_h(&self.specs[i].kind),
+				}
 			};
 			if hit.contains(mx, my) {
-				return Some((tip, ctl));
+				return Some((
+					tip,
+					if matches!(self.specs[i].kind, Kind::ShellList) {
+						hit
+					} else {
+						ctl
+					},
+				));
 			}
 		}
 		None
 	}
 	// Tight box around one focused sub-control (the keyboard-focus ring hugs this,
 	// a couple px out, instead of spanning the whole row).
-	fn focus_ctl_rect(&self, i: usize, p: u8) -> Rect {
+	fn focus_ctl_rect(&self, i: usize, p: u16) -> Rect {
 		match self.specs[i].kind {
 			Kind::Slider { .. } => {
 				if p == 0 {
@@ -1612,6 +1971,7 @@ impl SettingsDialog {
 			}
 			Kind::Dropdown(_) => self.dd_box(i),
 			Kind::Buttons(_) => self.row_btn_rect(i, p),
+			Kind::ShellList => self.shell_stop_rect(i, p),
 			Kind::Header(_) => self.track(i), // unreachable (headers aren't focusable)
 		}
 	}
@@ -1620,14 +1980,20 @@ impl SettingsDialog {
 	// field ringed twice reads as two outlines for one control. A color row is
 	// the near miss: its ring spans the chip AND the hex field, so it stays a
 	// couple of pixels out and only the hex field's own border stands down.
-	fn ring_is_the_box(&self, i: usize, part: u8) -> bool {
+	fn ring_is_the_box(&self, i: usize, part: u16) -> bool {
 		match self.specs[i].kind {
 			Kind::Text | Kind::Dropdown(_) | Kind::Buttons(_) => true,
 			Kind::Slider { .. } => part == 1,
+			// the two fields and the Add button are boxes; the checkbox and the
+			// icon buttons are not, so they keep the ring a couple of pixels out
+			Kind::ShellList => matches!(
+				shell_stop(part, self.edited.shells.len()),
+				ShellStop::Add | ShellStop::Entry(_, ShellPart::Name | ShellPart::Command)
+			),
 			_ => false,
 		}
 	}
-	fn ring_on(&self, i: usize, part: u8) -> bool {
+	fn ring_on(&self, i: usize, part: u16) -> bool {
 		self.focus == Some(Focus::Row(i, part))
 	}
 	// Is this row at its config default? (drives the revert icon). A Dual row is
@@ -1638,9 +2004,13 @@ impl SettingsDialog {
 			_ => self.is_default(self.specs[i].key),
 		}
 	}
-	// A row of push-buttons has no value, so it gets no revert arrow.
+	// A row of push-buttons has no value, and the shells grid is a list rather
+	// than a setting - neither has a default to go back to.
 	fn has_revert(&self, i: usize) -> bool {
-		!matches!(self.specs[i].kind, Kind::Header(_) | Kind::Buttons(_))
+		!matches!(
+			self.specs[i].kind,
+			Kind::Header(_) | Kind::Buttons(_) | Kind::ShellList
+		)
 	}
 	// Revert a whole row to defaults (both keys for a Dual row).
 	fn row_revert(&mut self, i: usize) {
@@ -1678,7 +2048,7 @@ impl SettingsDialog {
 
 	// One of a Buttons row's push-buttons. They start at the control column, so
 	// they line up under whatever the row above them holds.
-	fn row_btn_rect(&self, i: usize, part: u8) -> Rect {
+	fn row_btn_rect(&self, i: usize, part: u16) -> Rect {
 		let h = self.btn_h();
 		Rect {
 			x: self.control_x() + f32::from(part) * (self.row_btn_w + lay().button_gap),
@@ -1869,7 +2239,7 @@ impl SettingsDialog {
 				edit.sel = (!edit.buf.is_empty()).then_some(0);
 				self.edit = Some(edit);
 				self.prompt = Some(Prompt {
-					which,
+					job: PromptJob::Theme(which),
 					title,
 					focus: PromptFocus::Field,
 					warn: None,
@@ -1877,7 +2247,7 @@ impl SettingsDialog {
 			}
 			ThemeBtn::Delete => {
 				self.prompt = Some(Prompt {
-					which,
+					job: PromptJob::Theme(which),
 					title: format!("Really delete theme \"{}\"?", self.edited.theme),
 					focus: PromptFocus::Ok,
 					warn: None,
@@ -1891,23 +2261,26 @@ impl SettingsDialog {
 		let Some(prompt) = self.prompt.as_ref() else {
 			return;
 		};
-		let which = prompt.which;
+		let job = prompt.job;
 		let typed = prompt
 			.has_field()
 			.then(|| self.edit.as_ref().map_or(String::new(), |e| e.buf.clone()));
-		if let Some(name) = typed {
-			if let Some(warn) = self.name_problem(which, &name) {
-				if let Some(prompt) = self.prompt.as_mut() {
-					prompt.warn = Some(warn);
+		match (job, typed) {
+			(PromptJob::Theme(which), Some(name)) => {
+				if let Some(warn) = self.name_problem(which, &name) {
+					if let Some(prompt) = self.prompt.as_mut() {
+						prompt.warn = Some(warn);
+					}
+					return;
 				}
-				return;
+				if which == ThemeBtn::Rename {
+					self.rename_theme(&name);
+				} else {
+					self.save_theme_as(&name);
+				}
 			}
-			match which {
-				ThemeBtn::Rename => self.rename_theme(&name),
-				_ => self.save_theme_as(&name),
-			}
-		} else {
-			self.delete_theme();
+			(PromptJob::Theme(_), None) => self.delete_theme(),
+			(PromptJob::DropShell(at), _) => self.shell_remove(at),
 		}
 		self.prompt_close();
 	}
@@ -2015,7 +2388,7 @@ impl SettingsDialog {
 				if let Some(prompt) = self.prompt.as_mut() {
 					prompt.focus = PromptFocus::Field;
 				}
-				self.field_click(PROMPT_ROW, 0, field, x, measure);
+				self.field_click(PROMPT_ROW, (PROMPT_ROW, 0), field, x, measure);
 			}
 		}
 	}
@@ -2149,7 +2522,6 @@ impl SettingsDialog {
 				}
 			}
 			Key::FontFamily => self.edited.font_family.clone().unwrap_or_default(),
-			Key::DefaultShell => self.edited.default_shell.clone(),
 			Key::LinkOpenCommand => self.edited.hyperlink_open_command.clone(),
 			_ => String::new(),
 		}
@@ -2174,7 +2546,6 @@ impl SettingsDialog {
 					Some(trimmed.to_string())
 				};
 			}
-			Key::DefaultShell => self.edited.default_shell = trimmed.to_string(),
 			Key::LinkOpenCommand => self.edited.hyperlink_open_command = trimmed.to_string(),
 			_ => {}
 		}
@@ -2446,7 +2817,6 @@ impl SettingsDialog {
 			Key::ScrimRamp => edited.text_scrim_ramp == defaults.text_scrim_ramp,
 			Key::BgImage => edited.wallpaper == defaults.wallpaper,
 			Key::FontFamily => edited.font_family == defaults.font_family,
-			Key::DefaultShell => edited.default_shell == defaults.default_shell,
 			Key::LinkOpenCommand => {
 				edited.hyperlink_open_command == defaults.hyperlink_open_command
 			}
@@ -2567,7 +2937,6 @@ impl SettingsDialog {
 				self.adopt_theme();
 			}
 			Key::FontFamily => self.edited.font_family = self.defaults.font_family.clone(),
-			Key::DefaultShell => self.edited.default_shell = self.defaults.default_shell.clone(),
 			Key::LinkOpenCommand => {
 				self.edited.hyperlink_open_command = self.defaults.hyperlink_open_command.clone();
 			}
@@ -2733,7 +3102,7 @@ impl SettingsDialog {
 					// click the numeric field -> edit the value, caret at the click
 					let val_box = self.valbox(i);
 					if val_box.contains(x, y) {
-						self.field_click(i, 1, val_box, x, measure);
+						self.field_click(i, (i, 1), val_box, x, measure);
 						return Action::None;
 					}
 					let track = self.track(i);
@@ -2757,14 +3126,14 @@ impl SettingsDialog {
 					}
 					let hex_box = self.hexbox(i);
 					if hex_box.contains(x, y) {
-						self.field_click(i, 0, hex_box, x, measure);
+						self.field_click(i, (i, 0), hex_box, x, measure);
 						return Action::None;
 					}
 				}
 				Kind::Text => {
 					let text_box = self.textbox(i);
 					if text_box.contains(x, y) {
-						self.field_click(i, 0, text_box, x, measure);
+						self.field_click(i, (i, 0), text_box, x, measure);
 						return Action::None;
 					}
 				}
@@ -2781,7 +3150,7 @@ impl SettingsDialog {
 				}
 				Kind::Dual { keys, .. } => {
 					// hit either checkbox (or its label span, out to the next pitch)
-					for p in 0u8..2 {
+					for p in 0u16..2 {
 						let bx = self.dual_box(i, p);
 						if x >= bx.x
 							&& x <= bx.x + self.dual_pitch() - 8.0
@@ -2824,7 +3193,7 @@ impl SettingsDialog {
 				// same press-arm / release-fire as the footer buttons, so a
 				// press-drag-off cancels and the press is visible
 				Kind::Buttons(captions) => {
-					for p in 0..captions.len() as u8 {
+					for p in 0..captions.len() as u16 {
 						if self.row_btn_rect(i, p).contains(x, y) {
 							if self.part_disabled(i, p) {
 								continue;
@@ -2835,16 +3204,73 @@ impl SettingsDialog {
 						}
 					}
 				}
+				Kind::ShellList => {
+					if self.shell_mouse_down(i, x, y, measure) {
+						return Action::None;
+					}
+				}
 				Kind::Header(_) => {}
 			}
 		}
 		Action::None
 	}
 
+	// A click somewhere in the grid. Returns whether it landed on something.
+	// The move and remove buttons arm on press and fire on release, the same way
+	// the footer and the theme buttons do, so a press that drifts off cancels.
+	fn shell_mouse_down(
+		&mut self,
+		i: usize,
+		x: f32,
+		y: f32,
+		measure: &mut impl FnMut(&str) -> f32,
+	) -> bool {
+		for part in 0..self.parts_of(i) {
+			if !self.shell_stop_rect(i, part).contains(x, y) {
+				continue;
+			}
+			match shell_stop(part, self.edited.shells.len()) {
+				ShellStop::Entry(k, ShellPart::Name) => {
+					let field = self.shell_name_box(i, k);
+					let row = shell_field_row(k, false);
+					self.field_click(row, (i, part), field, x, measure);
+				}
+				ShellStop::Entry(k, ShellPart::Command) => {
+					let field = self.shell_cmd_box(i, k);
+					let row = shell_field_row(k, true);
+					self.field_click(row, (i, part), field, x, measure);
+				}
+				ShellStop::Entry(k, ShellPart::Active) => {
+					self.focus = Some(Focus::Row(i, part));
+					if let Some(entry) = self.edited.shells.get_mut(k) {
+						entry.active = !entry.active;
+					}
+				}
+				ShellStop::Add | ShellStop::Entry(_, _) => {
+					if self.part_disabled(i, part) {
+						return true; // a grayed move button still eats the click
+					}
+					self.focus = Some(Focus::Row(i, part));
+					self.pressed_row = Some((i, part));
+				}
+			}
+			return true;
+		}
+		false
+	}
+
 	// The editable text box of row i, by kind (None for non-field rows).
 	fn field_rect(&self, i: usize) -> Option<Rect> {
 		if i == PROMPT_ROW {
 			return self.prompt_field_rect();
+		}
+		if let Some((k, command)) = shell_field_of(i) {
+			let grid = self.shell_row()?;
+			return Some(if command {
+				self.shell_cmd_box(grid, k)
+			} else {
+				self.shell_name_box(grid, k)
+			});
 		}
 		match self.specs[i].kind {
 			Kind::Slider { .. } => Some(self.valbox(i)),
@@ -2856,21 +3282,26 @@ impl SettingsDialog {
 	// Click into an editable field: caret at the click; Shift extends the
 	// selection; double-click selects the word, triple selects all; a plain
 	// click starts a drag-selection.
+	// `row` is the edit's own index - a spec row, or one of the pseudo rows the
+	// grid's fields use - and `focus` is the spec row and part the ring goes on.
+	// For every field but the grid's they are the same row; for those two they
+	// cannot be, since no spec row draws them.
 	fn field_click(
 		&mut self,
-		i: usize,
-		part: u8,
+		row: usize,
+		focus: (usize, u16),
 		field: Rect,
 		x: f32,
 		measure: &mut impl FnMut(&str) -> f32,
 	) {
+		let i = row;
 		let same_row = self.edit.as_ref().is_some_and(|e| e.row == i);
 		if !same_row {
 			self.open_edit(i, false);
 		}
 		self.select_all_on_up = false;
 		let (shift, streak) = (self.shift, self.click_streak);
-		self.focus = Some(Focus::Row(i, part));
+		self.focus = Some(Focus::Row(focus.0, focus.1));
 		let Some(edit) = &mut self.edit else { return };
 		let cur = caret_from_click(
 			&edit.buf,
@@ -2997,7 +3428,7 @@ impl SettingsDialog {
 				self.commit_edit();
 				self.open_edit(i, false);
 			}
-			let part = u8::from(matches!(self.specs[i].kind, Kind::Slider { .. }));
+			let part = u16::from(matches!(self.specs[i].kind, Kind::Slider { .. }));
 			self.focus = Some(Focus::Row(i, part));
 			self.pop_field_menu(field, x, y, paste_ok, measure);
 			return;
@@ -3187,7 +3618,11 @@ impl SettingsDialog {
 			}
 		}
 		if let Some((i, p)) = self.pressed_row.take() {
-			if self.row_btn_rect(i, p).contains(x, y) {
+			if matches!(self.specs[i].kind, Kind::ShellList) {
+				if self.shell_stop_rect(i, p).contains(x, y) {
+					self.shell_activate(i, p);
+				}
+			} else if self.row_btn_rect(i, p).contains(x, y) {
 				self.theme_action(ThemeBtn::of(p));
 			}
 		}
@@ -3240,9 +3675,15 @@ impl SettingsDialog {
 		let sel_len = edit.sel_range().map_or(0, |(a, b)| b - a);
 		// where the char would land once any selection is gone
 		let landing = edit.sel_range().map_or(edit.cur, |(a, _)| a);
-		if edit.row == PROMPT_ROW {
-			// a theme name: any ordinary character, within a sane length
-			if c.is_control() || edit.buf.len() - sel_len >= 64 {
+		// a theme name, a shell's title or its command line: any ordinary
+		// character, within a sane length (a command may be a long path)
+		if edit.row >= PSEUDO_ROW {
+			let cap = if shell_field_of(edit.row).is_some_and(|(_, cmd)| cmd) {
+				512
+			} else {
+				64
+			};
+			if c.is_control() || edit.buf.len() - sel_len >= cap {
 				return false;
 			}
 			edit.remove_selection();
@@ -3432,6 +3873,24 @@ impl SettingsDialog {
 			}
 			return;
 		}
+		if let Some((k, command)) = shell_field_of(i) {
+			let Some(entry) = self.edited.shells.get_mut(k) else {
+				return;
+			};
+			if command {
+				// The command is REQUIRED, and this is where that is enforced:
+				// a blank buffer simply isn't written, so committing an emptied
+				// field leaves the stored command standing and the box shows it
+				// again. (An entry that never got one is dropped on the way out
+				// of the dialog - see `app::apply_settings_values`.)
+				if !buf.trim().is_empty() {
+					entry.command = buf.trim().to_string();
+				}
+			} else {
+				entry.title = buf.trim().to_string();
+			}
+			return;
+		}
 		match self.specs[i].kind {
 			Kind::Color => {
 				if let Some(color) = config::parse_hex(&buf) {
@@ -3502,12 +3961,18 @@ impl SettingsDialog {
 		} else if let Some(Focus::Button(b)) = self.focus {
 			self.buttons()[b].0 // a focused footer button
 		} else if let Some(Focus::Row(i, p)) = self.focus {
-			// a focused push-button is what Enter presses, not the dialog's OK
-			if matches!(self.specs[i].kind, Kind::Buttons(_)) {
-				self.theme_action(ThemeBtn::of(p));
-				Action::None
-			} else {
-				Action::Ok
+			// a focused push-button is what Enter presses, not the dialog's OK -
+			// and every stop in the shells grid is one of those or a field
+			match self.specs[i].kind {
+				Kind::Buttons(_) => {
+					self.theme_action(ThemeBtn::of(p));
+					Action::None
+				}
+				Kind::ShellList => {
+					self.shell_activate(i, p);
+					Action::None
+				}
+				_ => Action::Ok,
 			}
 		} else {
 			Action::Ok
@@ -3767,7 +4232,7 @@ impl SettingsDialog {
 					}
 				}
 				Kind::Dual { keys, .. } => {
-					for p in 0u8..2 {
+					for p in 0u16..2 {
 						let off = self.disabled(keys[p as usize]);
 						let bx = self.dual_box(i, p);
 						out.push(q(bx.x, bx.y, bx.w, bx.h, dlg().field_bg));
@@ -3832,7 +4297,7 @@ impl SettingsDialog {
 				// the footer gives. Its outline is left to the focus ring below,
 				// which lands exactly on this box rather than outside it.
 				Kind::Buttons(captions) => {
-					for p in 0..captions.len() as u8 {
+					for p in 0..captions.len() as u16 {
 						let r = self.row_btn_rect(i, p);
 						let fill = if self.pressed_row == Some((i, p)) {
 							dlg().btn_hl
@@ -3845,6 +4310,7 @@ impl SettingsDialog {
 						}
 					}
 				}
+				Kind::ShellList => self.shell_rects(i, &mut out, &q, &border, &mut measure),
 				Kind::Header(_) => {
 					// faint rule near the bottom of the (tall) heading row, leaving a
 					// clear gap below the heading text above it
@@ -3914,6 +4380,122 @@ impl SettingsDialog {
 	// `line_h` is the rendered text line height (the app's cell_h); rows, hex
 	// fields, and buttons center their text vertically against it so alignment
 	// holds for any font/size rather than a baked-in guess.
+	// The grid's own quads: the two field boxes and the checkbox per entry, the
+	// five icon buttons, and the Add button. The arrows are shader-drawn (mode 3
+	// with a quarter-turn) for the same reason the tab close mark is - no
+	// interface font can be relied on to carry one, and a glyph's own metrics
+	// decide where it lands.
+	fn shell_rects(
+		&self,
+		i: usize,
+		out: &mut Vec<RectInstance>,
+		q: &impl Fn(f32, f32, f32, f32, [u8; 3]) -> RectInstance,
+		border: &impl Fn(&mut Vec<RectInstance>, Rect, f32, [u8; 3]),
+		measure: &mut impl FnMut(&str) -> f32,
+	) {
+		let scale = self.ui_scale();
+		let mut field = |out: &mut Vec<RectInstance>, r: Rect, row: usize, part: u16| {
+			out.push(q(r.x, r.y, r.w, r.h, dlg().field_bg));
+			let focused = matches!(&self.edit, Some(edit) if edit.row == row);
+			if !self.ring_on(i, part) {
+				border(
+					out,
+					r,
+					1.0,
+					if focused {
+						dlg().focus_out
+					} else {
+						dlg().panel_border
+					},
+				);
+			}
+			if focused {
+				self.caret_quad(out, r, measure);
+			}
+		};
+		for k in 0..self.edited.shells.len() {
+			let name = self.shell_name_box(i, k);
+			field(
+				out,
+				name,
+				shell_field_row(k, false),
+				shell_part_index(k, ShellPart::Name),
+			);
+			let cmd = self.shell_cmd_box(i, k);
+			field(
+				out,
+				cmd,
+				shell_field_row(k, true),
+				shell_part_index(k, ShellPart::Command),
+			);
+			// Active checkbox, drawn the way every other checkbox in the dialog is
+			let box_r = self.shell_active_box(i, k);
+			out.push(q(box_r.x, box_r.y, box_r.w, box_r.h, dlg().field_bg));
+			border(out, box_r, 1.0, dlg().panel_border);
+			if self.edited.shells.get(k).is_some_and(|e| e.active) {
+				let inset = (box_r.w * 0.25).max(3.0);
+				out.push(q(
+					box_r.x + inset,
+					box_r.y + inset,
+					box_r.w - inset * 2.0,
+					box_r.h - inset * 2.0,
+					dlg().handle,
+				));
+			}
+			// Top / Up / Down / Bottom, then Remove. "Top" and "Bottom" are the
+			// plain arrow with a bar against the edge it travels to, which is the
+			// conventional reading and needs no second shader mode.
+			for part in [
+				ShellPart::Top,
+				ShellPart::Up,
+				ShellPart::Down,
+				ShellPart::Bottom,
+				ShellPart::Remove,
+			] {
+				let r = self.shell_btn_box(i, k, Self::shell_btn_index(part));
+				let on = self.shell_move_ok(k, part);
+				let color = if on { dlg().text } else { dlg().dim };
+				out.push(q(r.x, r.y, r.w, r.h, dlg().btn_bg));
+				if !self.ring_on(i, shell_part_index(k, part)) {
+					border(out, r, 1.0, dlg().panel_border);
+				}
+				if part == ShellPart::Remove {
+					out.push(RectInstance {
+						pos: [r.x, r.y],
+						size: [r.w, r.h],
+						color: config::srgb_f32(color),
+						params: [1.0, (r.w * 0.12).max(1.2)],
+					});
+					continue;
+				}
+				let bar = (1.0 * scale).max(1.0);
+				let up = matches!(part, ShellPart::Top | ShellPart::Up);
+				let pad = (r.h * 0.2).max(2.0);
+				// the bar eats into the arrow's box, so both fit the same button
+				let (arrow_y, arrow_h) = match part {
+					ShellPart::Top => (r.y + pad + bar + 1.0, r.h - 2.0 * pad - bar - 1.0),
+					ShellPart::Bottom => (r.y + pad, r.h - 2.0 * pad - bar - 1.0),
+					_ => (r.y + pad, r.h - 2.0 * pad),
+				};
+				out.push(RectInstance {
+					pos: [r.x + r.w * 0.22, arrow_y],
+					size: [r.w * 0.56, arrow_h.max(2.0)],
+					color: config::srgb_f32(color),
+					params: [3.0, if up { 3.0 } else { 1.0 }],
+				});
+				if matches!(part, ShellPart::Top | ShellPart::Bottom) {
+					let y = if up { r.y + pad } else { r.y + r.h - pad - bar };
+					out.push(q(r.x + r.w * 0.22, y, r.w * 0.56, bar, color));
+				}
+			}
+		}
+		let add = self.shell_add_box(i);
+		out.push(q(add.x, add.y, add.w, add.h, dlg().btn_bg));
+		if !self.ring_on(i, self.parts_of(i).saturating_sub(1)) {
+			border(out, add, 1.0, dlg().panel_border);
+		}
+	}
+
 	fn texts_dip(&self, line_h: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<TextItem> {
 		let mut out = Vec::new();
 		let mk = |text: String, x: f32, y: f32| TextItem {
@@ -4033,12 +4615,11 @@ impl SettingsDialog {
 						Some(edit) if edit.row == i => edit.buf.clone(),
 						_ => self.get_text(self.specs[i].key),
 					};
-					let placeholder =
-						if matches!(self.specs[i].key, Key::FontFamily | Key::DefaultShell) {
-							"(system default)"
-						} else {
-							"(none)"
-						};
+					let placeholder = if matches!(self.specs[i].key, Key::FontFamily) {
+						"(system default)"
+					} else {
+						"(none)"
+					};
 					let (txt, color) = if val.is_empty() {
 						(placeholder.to_string(), dlg().dim)
 					} else {
@@ -4055,7 +4636,7 @@ impl SettingsDialog {
 					});
 				}
 				Kind::Dual { keys, labels } => {
-					for p in 0u8..2 {
+					for p in 0u16..2 {
 						let off = self.disabled(keys[p as usize]);
 						let color = if off { dlg().dim } else { dlg().text };
 						let bx = self.dual_box(i, p);
@@ -4102,8 +4683,8 @@ impl SettingsDialog {
 				}
 				Kind::Buttons(captions) => {
 					for (p, caption) in captions.iter().enumerate() {
-						let r = self.row_btn_rect(i, p as u8);
-						let color = if self.part_disabled(i, p as u8) {
+						let r = self.row_btn_rect(i, p as u16);
+						let color = if self.part_disabled(i, p as u16) {
 							dlg().dim
 						} else {
 							dlg().text
@@ -4115,6 +4696,84 @@ impl SettingsDialog {
 							..mk((*caption).into(), lx, row_text_y(r.y, r.h))
 						});
 					}
+				}
+				Kind::ShellList => {
+					let (left, command, _, seen, active, _) = self.shell_cols();
+					// column titles, once, above the whole grid
+					let head_y = self.shell_head_y(i);
+					for (title, tx) in [
+						("Name", left),
+						("Command", command),
+						("Last seen", seen),
+						("Active", active),
+					] {
+						out.push(TextItem {
+							color: dlg().dim,
+							clip: Some(vp),
+							..mk((*title).to_string(), tx, head_y)
+						});
+					}
+					for k in 0..self.edited.shells.len() {
+						let name_box = self.shell_name_box(i, k);
+						let cmd_box = self.shell_cmd_box(i, k);
+						let name_row = shell_field_row(k, false);
+						let cmd_row = shell_field_row(k, true);
+						let entry = &self.edited.shells[k];
+						// an inactive shell is still listed, but reads as parked
+						let color = if entry.active { dlg().text } else { dlg().dim };
+						let text = |row: usize, stored: &str| -> String {
+							match &self.edit {
+								Some(edit) if edit.row == row => edit.buf.clone(),
+								_ => stored.to_string(),
+							}
+						};
+						out.push(TextItem {
+							color,
+							clip: Some(intersect(name_box)),
+							..mk(
+								text(name_row, &entry.title),
+								name_box.x + lay().field_pad - view(name_row),
+								row_text_y(name_box.y, name_box.h),
+							)
+						});
+						let cmd = text(cmd_row, &entry.command);
+						let (cmd, cmd_color) = if cmd.is_empty() {
+							("(required)".to_string(), dlg().dim)
+						} else {
+							(cmd, color)
+						};
+						out.push(TextItem {
+							color: cmd_color,
+							clip: Some(intersect(cmd_box)),
+							..mk(
+								cmd,
+								cmd_box.x + lay().field_pad - view(cmd_row),
+								row_text_y(cmd_box.y, cmd_box.h),
+							)
+						});
+						// Last seen is the program's own note, never edited here
+						let seen_text = if entry.last_seen.is_empty() {
+							"never".to_string()
+						} else {
+							entry.last_seen.clone()
+						};
+						out.push(TextItem {
+							color: dlg().dim,
+							clip: Some(vp),
+							..mk(
+								seen_text,
+								seen,
+								row_text_y(self.shell_line_y(i, k), self.shell_line_h()),
+							)
+						});
+					}
+					let add = self.shell_add_box(i);
+					let caption = "Add";
+					let lx = add.x + (add.w - measure(caption)).max(0.0) / 2.0;
+					out.push(TextItem {
+						clip: Some(vp),
+						..mk(caption.to_string(), lx, row_text_y(add.y, add.h))
+					});
 				}
 				Kind::Toggle | Kind::Header(_) => {}
 			}
@@ -4609,7 +5268,9 @@ mod tests {
 					d.set_radio(key, next);
 				}
 			}
-			super::Kind::Buttons(_) | super::Kind::Header(_) => {}
+			// no single value to nudge: a push-button row, a heading, or the
+			// shells grid (a list, exercised by its own tests)
+			super::Kind::Buttons(_) | super::Kind::Header(_) | super::Kind::ShellList => {}
 		}
 	}
 	// What the row shows, whichever kind it is.
@@ -4620,7 +5281,9 @@ mod tests {
 			super::Kind::Text => d.get_text(key),
 			super::Kind::Toggle | super::Kind::Dual { .. } => format!("{}", d.get_toggle(key)),
 			super::Kind::Radio(_) | super::Kind::Dropdown(_) => format!("{}", d.get_radio(key)),
-			super::Kind::Buttons(_) | super::Kind::Header(_) => String::new(),
+			super::Kind::Buttons(_) | super::Kind::Header(_) | super::Kind::ShellList => {
+				String::new()
+			}
 		}
 	}
 
@@ -4644,8 +5307,11 @@ mod tests {
 		let mut checked = 0;
 		for i in 0..d.specs.len() {
 			let keys: Vec<Key> = match d.specs[i].kind {
-				// a heading and a row of push-buttons both store nothing
-				super::Kind::Header(_) | super::Kind::Buttons(_) => vec![],
+				// a heading and a row of push-buttons store nothing; the shells
+				// grid stores a list rather than a setting
+				super::Kind::Header(_) | super::Kind::Buttons(_) | super::Kind::ShellList => {
+					vec![]
+				}
 				super::Kind::Dual { keys, .. } => keys.to_vec(),
 				_ => vec![d.specs[i].key],
 			};
@@ -4726,7 +5392,9 @@ mod tests {
 				.iter()
 				.enumerate()
 				.find(|(_, spec)| spec.tab == tab && SettingsDialog::header_is_tab_title(spec));
-			let Some((_, spec)) = redundant else { continue };
+			if redundant.is_none() {
+				continue;
+			}
 			// the first row that IS drawn starts hard against the top of the
 			// viewport, so the heading left no gap behind it
 			let first = (0..d.specs.len())
@@ -4738,23 +5406,302 @@ mod tests {
 			// and the tab's height accounts for the rows it draws and nothing
 			// more: the surplus over them is header gaps, which are far smaller
 			// than the heading row that was dropped
+			let shells = d.edited.shells.len();
 			let drawn: f32 = d
 				.specs
 				.iter()
 				.filter(|s| s.tab == tab && !SettingsDialog::header_is_tab_title(s))
-				.map(|s| SettingsDialog::row_h_for(&s.kind, d.line_h))
+				.map(|s| SettingsDialog::row_h_for(&s.kind, d.line_h, shells))
 				.sum();
-			let counted = SettingsDialog::tab_content_h(d.specs, tab, d.line_h);
-			assert!(counted >= drawn);
-			assert!(counted < drawn + SettingsDialog::row_h_for(&spec.kind, d.line_h));
+			// the surplus over the rows is the declared gaps and NOTHING else -
+			// stated exactly rather than bounded by a heading's height, so
+			// retuning header_gap cannot quietly turn this into a near miss
+			let mut gaps = 0.0;
+			let mut prev = None;
+			for (i, s) in SettingsDialog::visible(d.specs, tab) {
+				gaps += SettingsDialog::gap_above(d.specs, i, tab, prev);
+				prev = Some(s);
+			}
+			let counted = SettingsDialog::tab_content_h(d.specs, tab, d.line_h, shells);
+			assert!(
+				(counted - drawn - gaps).abs() < 0.01,
+				"tab {tab}: {counted} != {drawn} rows + {gaps} gaps"
+			);
 		}
+	}
+
+	// ---- the shells grid ------------------------------------------------------
+
+	fn shell_entry(title: &str, command: &str) -> crate::shells::ShellEntry {
+		crate::shells::ShellEntry {
+			slug: title.to_lowercase().replace(' ', "_"),
+			title: title.into(),
+			command: command.into(),
+			active: true,
+			comment: String::new(),
+			last_seen: String::new(),
+		}
+	}
+
+	// A dialog sitting on the Shell tab with `n` shells in it.
+	fn mk_shell_dialog(n: usize) -> (SettingsDialog, usize) {
+		let mut d = mk_dialog(4000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| matches!(s.kind, super::Kind::ShellList))
+			.expect("a shells grid");
+		d.tab = d.specs[i].tab;
+		d.edited.shells = (0..n)
+			.map(|k| shell_entry(&format!("Shell {k}"), &format!("/bin/sh{k}")))
+			.collect();
+		d.orig.shells.clone_from(&d.edited.shells);
+		(d, i)
+	}
+
+	#[test]
+	fn the_shells_grid_has_a_tab_to_itself() {
+		let ui = super::ui_spec::ui();
+		let grid = ui
+			.specs
+			.iter()
+			.find(|s| matches!(s.kind, super::Kind::ShellList))
+			.expect("a shells grid");
+		assert_eq!(tab_titles()[grid.tab], "Shell");
+		// and that tab holds nothing else but the heading that names it
+		for spec in ui.specs.iter().filter(|s| s.tab == grid.tab) {
+			assert!(
+				matches!(spec.kind, super::Kind::ShellList | super::Kind::Header(_)),
+				"{} does not belong on the Shell tab",
+				spec.label
+			);
+		}
+	}
+
+	// Asked for on the Cursor tab, and asked for LAST - so both halves are
+	// pinned, or a row appended later quietly takes its place.
+	#[test]
+	fn copy_on_select_is_the_last_thing_on_the_cursor_tab() {
+		let d = mk_dialog(4000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::CopyOnSelect)
+			.expect("a copy-on-select row");
+		let tab = d.specs[i].tab;
+		assert_eq!(tab_titles()[tab], "Cursor");
+		let last = SettingsDialog::visible(d.specs, tab)
+			.map(|(j, _)| j)
+			.last()
+			.expect("the tab draws rows");
+		assert_eq!(last, i);
+	}
+
+	// Every control on every line is its own stop, and a part index names
+	// exactly one of them - the encoding both the focus ring and the hit tests
+	// read, so a mistake here would put the ring on one control and the click on
+	// another.
+	#[test]
+	fn a_part_index_names_one_control_on_one_line() {
+		let (d, i) = mk_shell_dialog(3);
+		assert_eq!(d.parts_of(i), 3 * super::ShellPart::COUNT + 1);
+		for k in 0..3 {
+			for part in super::ShellPart::ALL {
+				let p = super::shell_part_index(k, part);
+				match super::shell_stop(p, 3) {
+					super::ShellStop::Entry(entry, named) => {
+						assert_eq!((entry, named), (k, part));
+					}
+					super::ShellStop::Add => panic!("{k}/{part:?} read as the Add button"),
+				}
+			}
+		}
+		assert!(matches!(
+			super::shell_stop(d.parts_of(i) - 1, 3),
+			super::ShellStop::Add
+		));
+	}
+
+	// A move that would go nowhere is grayed rather than hidden, so the four
+	// buttons stay in the same place on every line.
+	#[test]
+	fn a_move_that_would_go_nowhere_is_offered_grayed() {
+		use super::ShellPart::{Bottom, Down, Top, Up};
+		let (d, i) = mk_shell_dialog(3);
+		let off = |k: usize, part| d.part_disabled(i, super::shell_part_index(k, part));
+		assert!(off(0, Top) && off(0, Up), "nothing above the first");
+		assert!(!off(0, Down) && !off(0, Bottom));
+		assert!(!off(1, Top) && !off(1, Up) && !off(1, Down) && !off(1, Bottom));
+		assert!(off(2, Down) && off(2, Bottom), "nothing below the last");
+		// and a grayed stop is not in the keyboard ring at all
+		let ring = d.focus_ring();
+		assert!(!ring.contains(&super::Focus::Row(i, super::shell_part_index(0, Up))));
+		assert!(ring.contains(&super::Focus::Row(i, super::shell_part_index(1, Up))));
+	}
+
+	// The button that moved an entry is now on a different line, so the focus has
+	// to travel with it - otherwise a second press moves whatever moved into its
+	// place, which is the opposite of what the user asked for.
+	#[test]
+	fn moving_an_entry_carries_the_focus_with_it() {
+		use super::ShellPart::{Down, Top};
+		let (mut d, i) = mk_shell_dialog(3);
+		d.shell_move(i, 0, Down);
+		let titles: Vec<&str> = d.edited.shells.iter().map(|e| e.title.as_str()).collect();
+		assert_eq!(titles, vec!["Shell 1", "Shell 0", "Shell 2"]);
+		assert_eq!(
+			d.focus,
+			Some(super::Focus::Row(i, super::shell_part_index(1, Down)))
+		);
+		d.shell_move(i, 2, Top);
+		let titles: Vec<&str> = d.edited.shells.iter().map(|e| e.title.as_str()).collect();
+		assert_eq!(titles, vec!["Shell 2", "Shell 1", "Shell 0"]);
+		assert_eq!(
+			d.focus,
+			Some(super::Focus::Row(i, super::shell_part_index(0, Top)))
+		);
+	}
+
+	// The command is REQUIRED: emptying the field cannot be what stores an entry
+	// that names nothing to run. The stored value stands and the box shows it
+	// again, which is the whole rule at the field.
+	#[test]
+	fn a_blank_command_cannot_replace_a_stored_one() {
+		let (mut d, _) = mk_shell_dialog(2);
+		let row = super::shell_field_row(1, true);
+		d.open_edit(row, true);
+		d.select_all();
+		d.backspace();
+		assert_eq!(
+			d.edited.shells[1].command, "/bin/sh1",
+			"an emptied field leaves the stored command standing"
+		);
+		// a real value does apply, so the guard is not simply inert
+		d.insert_str("/usr/bin/fish");
+		assert_eq!(d.edited.shells[1].command, "/usr/bin/fish");
+		assert_eq!(d.edited.shells[0].command, "/bin/sh0", "and only that one");
+	}
+
+	// A name edit lands on the entry it was opened for, not on the row index -
+	// the two are different numbers here, which is the whole point of the
+	// pseudo-row scheme.
+	#[test]
+	fn a_field_edit_lands_on_its_own_entry() {
+		let (mut d, _) = mk_shell_dialog(3);
+		d.open_edit(super::shell_field_row(2, false), true);
+		d.select_all();
+		d.insert_str("Renamed");
+		assert_eq!(d.edited.shells[2].title, "Renamed");
+		assert_eq!(d.edited.shells[0].title, "Shell 0");
+		assert_eq!(d.edited.shells[1].title, "Shell 1");
+	}
+
+	// Add lands an entry with no command and puts the caret straight in it - the
+	// one field that has to be filled before the entry means anything.
+	#[test]
+	fn adding_a_shell_opens_the_field_it_needs() {
+		let (mut d, i) = mk_shell_dialog(1);
+		d.shell_add(i);
+		assert_eq!(d.edited.shells.len(), 2);
+		assert!(d.edited.shells[1].command.is_empty());
+		assert_eq!(
+			d.edit.as_ref().map(|e| e.row),
+			Some(super::shell_field_row(1, true))
+		);
+		assert_eq!(
+			d.focus,
+			Some(super::Focus::Row(
+				i,
+				super::shell_part_index(1, super::ShellPart::Command)
+			))
+		);
+	}
+
+	// Removing is the one grid action doing the opposite cannot undo, so it asks
+	// first - and asking must not remove anything by itself.
+	#[test]
+	fn removing_a_shell_asks_before_it_happens() {
+		let (mut d, _) = mk_shell_dialog(3);
+		d.shell_confirm_remove(1);
+		assert_eq!(
+			d.edited.shells.len(),
+			3,
+			"the question alone changes nothing"
+		);
+		assert!(matches!(
+			d.prompt.as_ref().map(|p| p.job),
+			Some(super::PromptJob::DropShell(1))
+		));
+		d.prompt_accept();
+		let titles: Vec<&str> = d.edited.shells.iter().map(|e| e.title.as_str()).collect();
+		assert_eq!(titles, vec!["Shell 0", "Shell 2"]);
+		assert!(d.prompt.is_none());
+	}
+
+	// The columns are laid out from both ends with the command taking the slack,
+	// so the one thing that can go wrong is them meeting in the middle.
+	#[test]
+	fn the_grid_columns_stay_inside_the_panel_in_order() {
+		let (d, i) = mk_shell_dialog(2);
+		let left = d.rect.x + super::lay().pad;
+		let right = d.rect.x + d.rect.w - super::lay().pad;
+		for k in 0..2 {
+			let name = d.shell_name_box(i, k);
+			let cmd = d.shell_cmd_box(i, k);
+			let active = d.shell_active_box(i, k);
+			let first = d.shell_btn_box(i, k, 0);
+			let last = d.shell_btn_box(i, k, 4);
+			assert!(name.x >= left - 0.01, "the name column starts inside");
+			assert!(name.x + name.w <= cmd.x + 0.01, "name runs into command");
+			assert!(cmd.w > 0.0, "the command column collapsed");
+			assert!(cmd.x + cmd.w <= active.x + 0.01, "command runs into active");
+			assert!(
+				active.x + active.w <= first.x + 0.01,
+				"active runs into the buttons"
+			);
+			assert!(
+				last.x + last.w <= right + 0.01,
+				"the buttons overrun the panel"
+			);
+			// and every line sits below the column titles
+			assert!(d.shell_line_y(i, k) > d.shell_head_y(i));
+		}
+	}
+
+	// A scan landing while the dialog is open moves BOTH copies, so it does not
+	// read as an edit the user made - and it folds into what they have already
+	// done rather than replacing it.
+	#[test]
+	fn a_scan_that_lands_mid_edit_is_not_mistaken_for_an_edit() {
+		let (mut d, _) = mk_shell_dialog(1);
+		d.edited.shells[0].title = "Renamed by hand".into();
+		let found = vec![crate::shells::Found {
+			title: "Fish".into(),
+			command: "/bin/sh0".into(), // the one already stored, so nothing is added
+			comment: String::new(),
+		}];
+		d.fold_shells(&found);
+		assert_eq!(
+			d.edited.shells[0].title, "Renamed by hand",
+			"a scan never rewrites what the user typed"
+		);
+		assert_eq!(d.orig.shells.len(), d.edited.shells.len());
 	}
 
 	#[test]
 	fn a_restored_view_never_outruns_the_new_dialog() {
 		// scrolled to the bottom of the last tab, as if the user had just closed it
 		let mut d = mk_dialog(400.0);
-		d.tab = tab_titles().len() - 1;
+		// the tallest tab, not merely the last: which tab overflows a short
+		// window is a property of the content, and a new tab can change it
+		d.tab = (0..tab_titles().len())
+			.max_by(|a, b| {
+				let h = |t: usize| {
+					SettingsDialog::tab_content_h(d.specs, t, d.line_h, d.edited.shells.len())
+				};
+				h(*a).total_cmp(&h(*b))
+			})
+			.expect("at least one tab");
 		d.wheel(-1e9);
 		let view = d.view();
 		assert!(view.scroll > 0.0);
@@ -5421,6 +6368,17 @@ mod tests {
 		(d, i)
 	}
 
+	// The same, with a value comfortably wider than the field it sits in - at the
+	// 1px-per-char measure these tests use. Derived from the field rather than
+	// hardcoded, or a wider panel (a new tab, a longer label) quietly makes the
+	// scrolling case untestable instead of failing.
+	fn mk_long_text_edit(fill: char) -> (SettingsDialog, usize, usize) {
+		let (probe, i) = mk_text_edit("");
+		let n = probe.textbox(i).w as usize + 100;
+		let (d, i) = mk_text_edit(&fill.to_string().repeat(n));
+		(d, i, n)
+	}
+
 	#[test]
 	fn open_selects_all_and_typing_replaces() {
 		let (mut d, _) = mk_text_edit("old.png");
@@ -5571,16 +6529,16 @@ mod tests {
 	#[test]
 	fn long_value_scrolls_to_keep_caret_visible() {
 		use super::lay;
-		let (mut d, i) = mk_text_edit(&"x".repeat(400));
+		let (mut d, i, n) = mk_long_text_edit('x');
 		let mut m = |s: &str| s.chars().count() as f32; // 1px per char
-		d.cursor_end(); // collapse the open-time selection, caret at char 400
+		d.cursor_end(); // collapse the open-time selection, caret at the last char
 		settle(&mut d, &mut m);
 		let field = d.textbox(i);
 		let inner = field.w - 2.0 * lay().field_pad;
 		let e = d.edit.as_ref().unwrap();
 		// scrolled right, caret in view, with the end padding visible after it
 		assert!(e.view_to > 0.0);
-		assert!((400.0 - e.view) <= inner - lay().caret_pad + 0.5);
+		assert!((n as f32 - e.view) <= inner - lay().caret_pad + 0.5);
 		assert_eq!(e.view, e.view_to, "ease settles exactly on the target");
 		// moving left keeps the lookahead margin of context before the caret
 		for _ in 0..200 {
@@ -5588,7 +6546,10 @@ mod tests {
 		}
 		settle(&mut d, &mut m);
 		let e = d.edit.as_ref().unwrap();
-		assert!(200.0 - e.view_to >= 27.0, "margin ahead of leftward travel");
+		assert!(
+			(n - 200) as f32 - e.view_to >= 27.0,
+			"margin ahead of leftward travel"
+		);
 		// Home scrolls all the way back
 		d.cursor_home();
 		settle(&mut d, &mut m);
@@ -5607,7 +6568,7 @@ mod tests {
 	#[test]
 	fn click_and_drag_map_through_the_view() {
 		use super::lay;
-		let (mut d, i) = mk_text_edit(&"y".repeat(400));
+		let (mut d, i, n) = mk_long_text_edit('y');
 		let mut m = |s: &str| s.chars().count() as f32;
 		d.cursor_end();
 		settle(&mut d, &mut m);
@@ -5632,7 +6593,7 @@ mod tests {
 		d.mouse_down(field.x + lay().field_pad, y, &mut m);
 		d.mouse_move(field.x + field.w + 40.0, y, &mut m);
 		let cur0 = d.edit.as_ref().unwrap().cur;
-		assert!(cur0 < 400, "the first drag event lands short of the end");
+		assert!(cur0 < n, "the first drag event lands short of the end");
 		settle(&mut d, &mut m);
 		d.mouse_up(field.x + field.w + 40.0, y);
 		let e = d.edit.as_ref().unwrap();
@@ -5993,7 +6954,15 @@ mod tests {
 
 		let back = config::reload_from_disk();
 		let saved = crate::theme::find_user(&back.user_themes, "Saved One").expect("on disk");
-		assert_eq!(saved.dark.fg, [0x12, 0x34, 0x56]);
+		assert_eq!(
+			// which variant an edit lands in follows the mode, so name it: a mode
+			// arriving out of somebody else's config file is what this last went
+			// wrong as, and the colors alone do not say that
+			saved.dark.fg,
+			[0x12, 0x34, 0x56],
+			"mode {:?}",
+			d.edited.theme_mode
+		);
 		assert_eq!(
 			saved.dark.ansi,
 			crate::theme::resolve("Matrix", "dark", true).ansi
