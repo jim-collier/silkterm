@@ -466,12 +466,26 @@ fn mta(ch: char, on: bool, label: &str, action: MenuAction) -> Entry {
 	}
 }
 
+// A popup's own DIP measurements at one scale factor: the padding above the
+// first item and below the last, and the height of a separator row. Resolved
+// once when the menu is built (see `popup`) so the draw and both hit tests read
+// the same numbers without carrying a TextCtx into the geometry.
+fn menu_metrics(scale: f32) -> (f32, f32) {
+	(
+		config::dip(config::MENU_ITEM_PAD_Y, scale),
+		config::dip(config::MENU_SEP_H, scale),
+	)
+}
+
 // right-click context menu / menu-bar dropdown over a pane
 struct ContextMenu {
 	x: f32,
 	y: f32,
 	w: f32,
 	item_h: f32,
+	// this popup's `menu_metrics`, in physical px
+	pad_y: f32,
+	sep_h: f32,
 	target: PaneId,
 	entries: Vec<Entry>,
 	hover: Option<usize>, // index into entries; only ever an Item
@@ -480,17 +494,17 @@ struct ContextMenu {
 impl ContextMenu {
 	fn height(&self) -> f32 {
 		let rows: f32 = self.entries.iter().map(|entry| self.entry_h(entry)).sum();
-		rows + config::MENU_ITEM_PAD_Y * 2.0
+		rows + self.pad_y * 2.0
 	}
 	fn entry_h(&self, entry: &Entry) -> f32 {
 		match entry {
-			Entry::Sep => config::MENU_SEP_H,
+			Entry::Sep => self.sep_h,
 			Entry::Item { .. } => self.item_h,
 		}
 	}
 	fn row_top(&self, i: usize) -> f32 {
 		self.y
-			+ config::MENU_ITEM_PAD_Y
+			+ self.pad_y
 			+ self.entries[..i]
 				.iter()
 				.map(|entry| self.entry_h(entry))
@@ -505,7 +519,7 @@ impl ContextMenu {
 		if mx < self.x || mx >= self.x + self.w {
 			return None;
 		}
-		let mut y = self.y + config::MENU_ITEM_PAD_Y;
+		let mut y = self.y + self.pad_y;
 		for (i, entry) in self.entries.iter().enumerate() {
 			let h = self.entry_h(entry);
 			if my >= y && my < y + h {
@@ -605,6 +619,7 @@ impl Tabs {
 
 // Menu/tab bars auto-size to the menu (proportional) font: height = the text line
 // height (cell_h) + this vertical padding, so a larger font isn't clipped (#124).
+// Chrome measurements are DIP and convert at their use site - see config::dip.
 const MENU_BAR_VPAD: f32 = 6.0;
 const TAB_BAR_VPAD: f32 = 6.0; // text is metric-centered in the bar; descenders clear via that
 const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to settle)
@@ -619,10 +634,21 @@ const WARM_DIALOG_GPU: bool = true;
 const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-size settle time before hitting disk
 const VRAM_CHECK_IVL: Duration = Duration::from_secs(2); // GL sentinel probe tick (VT-switch texture loss)
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
-const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
+// Chrome geometry, all DIP (see config::dip).
+const MENU_BAR_PAD: f32 = 10.0; // around each top-level title
 const TAB_MAX_W: f32 = 220.0; // tab button width cap - drawing AND click hit-testing use this
 const TAB_CLOSE_W: f32 = 26.0; // right-edge close-button region per tab (title clips before it)
 const TAB_CLOSE_M: f32 = 6.0; // balanced top/right/bottom margin around the close button box
+const TAB_TITLE_PAD: f32 = 8.0; // tab title's left inset
+const TAB_GAP: f32 = 1.0; // gap between adjacent tab buttons (each side of the seam)
+const TAB_TOP_PAD: f32 = 2.0; // tab button's inset from the top of the bar
+const CHROME_HAIRLINE: f32 = 1.0; // 1px rules: accelerator underlines, menu/checkbox borders
+const COPYBOX_BOX_GAP: f32 = 6.0; // checkbox to its own word
+const COPYBOX_PAIR_GAP: f32 = 14.0; // one checkbox pair to the next
+const COPYBOX_LEAD_GAP: f32 = 10.0; // "Copy on:" lead-in to the first checkbox
+const COPYBOX_TICK_INSET: f32 = 3.0; // checked fill's inset inside its box
+const MENUBAR_TEXT_W: f32 = 240.0; // shaping width for a menu-bar title buffer
+const MENU_ACCEL_DROP: f32 = 3.0; // accelerator underline's rise off the item's line box
 // Input knob (one line rolls it back): a key that arrives while the window is
 // unfocused is never typed. A WM hotkey grab (Ctrl+Alt+Arrow for desktop
 // switching) brackets the chord with a focus-out/in pair, and winit zeroes the
@@ -769,11 +795,12 @@ fn spawn_vt_watch(_proxy: EventLoopProxy<UserEvent>) -> bool {
 // margins (the extra room falls to the left, separating it from the title).
 // Shared by the rect draw, the glyph placement, and the click hit-test so they
 // can't drift apart.
-fn tab_close_box(tab_x: f32, tab_w: f32, bar_y: f32, tab_h: f32) -> Rect {
-	let side = (tab_h - 2.0 * TAB_CLOSE_M).max(8.0);
+fn tab_close_box(tab_x: f32, tab_w: f32, bar_y: f32, tab_h: f32, scale: f32) -> Rect {
+	let m = config::dip(TAB_CLOSE_M, scale);
+	let side = (tab_h - 2.0 * m).max(config::dip(8.0, scale));
 	Rect {
-		x: tab_x + tab_w - TAB_CLOSE_M - side,
-		y: bar_y + TAB_CLOSE_M,
+		x: tab_x + tab_w - m - side,
+		y: bar_y + m,
 		w: side,
 		h: side,
 	}
@@ -875,10 +902,10 @@ impl State {
 	// Pixels reserved at the very top by the menu bar (0 when hidden).
 	// Bar heights track the menu font's line height so they scale with font size.
 	fn menu_bar_h(&self) -> f32 {
-		self.text.ui_line_h + MENU_BAR_VPAD
+		self.text.ui_line_h + self.text.dip(MENU_BAR_VPAD)
 	}
 	fn tab_bar_h(&self) -> f32 {
-		self.text.ui_line_h + TAB_BAR_VPAD
+		self.text.ui_line_h + self.text.dip(TAB_BAR_VPAD)
 	}
 	fn menubar_h(&self) -> f32 {
 		if self.menu_bar {
@@ -985,7 +1012,11 @@ impl State {
 		let icon = if self.dragging_pane.is_some() {
 			CursorIcon::Grabbing
 		} else {
-			match self.tabs.cur().divider_at(x, y, self.area()) {
+			match self
+				.tabs
+				.cur()
+				.divider_at(x, y, self.area(), self.text.scale)
+			{
 				Some((_, Dir::Vertical)) => CursorIcon::ColResize,
 				Some((_, Dir::Horizontal)) => CursorIcon::RowResize,
 				None if self.hovering_link() => CursorIcon::Pointer,
@@ -1009,8 +1040,9 @@ impl State {
 		}
 		let over = self.tabs.cur().pane_at(x, y);
 		let mut changed = false;
+		let text = &self.text;
 		for (id, p) in &mut self.tabs.cur_mut().panes {
-			let near = over == Some(*id) && p.bar_near(x, y, &cfg);
+			let near = over == Some(*id) && p.bar_near(x, y, text, &cfg);
 			if p.bar_hover != near {
 				p.bar_hover = near;
 				changed = true;
@@ -1258,13 +1290,18 @@ impl State {
 				max_label_w = max_label_w.max(self.text.measure_ui_text(label, &attrs));
 			}
 		}
-		let w = config::MENU_GUTTER + max_label_w + config::MENU_PAD_X * 2.0;
+		let w = self.text.dip(config::MENU_GUTTER)
+			+ max_label_w
+			+ self.text.dip(config::MENU_PAD_X) * 2.0;
 		let item_h = self.text.ui_line_h;
+		let (pad_y, sep_h) = menu_metrics(self.text.scale);
 		let menu = ContextMenu {
 			x: mx,
 			y: my,
 			w,
 			item_h,
+			pad_y,
+			sep_h,
 			target,
 			entries,
 			hover: None,
@@ -1356,7 +1393,7 @@ impl State {
 		let mut x = 0.0;
 		let mut out = Vec::with_capacity(MENU_BAR.len());
 		for title in MENU_BAR {
-			let w = self.text.measure_ui_text(title, &attrs) + MENU_BAR_PAD * 2.0;
+			let w = self.text.measure_ui_text(title, &attrs) + self.text.dip(MENU_BAR_PAD) * 2.0;
 			out.push((x, w));
 			x += w;
 		}
@@ -1380,22 +1417,23 @@ impl State {
 		}
 		let box_sz = (self.text.ui_line_h * 0.6).round();
 		let box_y = (self.menu_bar_h() - box_sz) / 2.0;
-		let right = self.gfx.config.width as f32 - MENU_BAR_PAD;
+		let box_gap = self.text.dip(COPYBOX_BOX_GAP);
+		let right = self.gfx.config.width as f32 - self.text.dip(MENU_BAR_PAD);
 		let out_x = right - label_w[2];
 		let out_box = Rect {
-			x: out_x - 6.0 - box_sz,
+			x: out_x - box_gap - box_sz,
 			y: box_y,
 			w: box_sz,
 			h: box_sz,
 		};
-		let sel_x = out_box.x - 14.0 - label_w[1];
+		let sel_x = out_box.x - self.text.dip(COPYBOX_PAIR_GAP) - label_w[1];
 		let sel_box = Rect {
-			x: sel_x - 6.0 - box_sz,
+			x: sel_x - box_gap - box_sz,
 			y: box_y,
 			w: box_sz,
 			h: box_sz,
 		};
-		let lead_x = sel_box.x - 10.0 - label_w[0];
+		let lead_x = sel_box.x - self.text.dip(COPYBOX_LEAD_GAP) - label_w[0];
 		CopyBoxes {
 			boxes: [sel_box, out_box],
 			label_x: [lead_x, sel_x, out_x],
@@ -1851,7 +1889,7 @@ impl State {
 	// the text context at the new effective size. Window-wide, never persisted.
 	fn font_zoom(&mut self, dir: i32) {
 		config::nudge_font_zoom(dir);
-		let scale = self.window.scale_factor() as f32;
+		let scale = config::display_scale(self.window.scale_factor());
 		self.rebuild_text(scale);
 		self.dirty = true;
 	}
@@ -1861,7 +1899,7 @@ impl State {
 			return; // already at the configured size
 		}
 		config::reset_font_zoom();
-		let scale = self.window.scale_factor() as f32;
+		let scale = config::display_scale(self.window.scale_factor());
 		self.rebuild_text(scale);
 		self.dirty = true;
 	}
@@ -1930,7 +1968,7 @@ impl State {
 			}
 		}
 		if rebuild {
-			self.rebuild_text(self.window.scale_factor() as f32);
+			self.rebuild_text(config::display_scale(self.window.scale_factor()));
 		}
 		if bg {
 			self.request_wallpaper(false);
@@ -1944,7 +1982,7 @@ impl State {
 	// the prepared/scrim signatures, so the next frame rebuilds the scrim source
 	// instead of reusing a texture that no longer holds anything.
 	fn recover_gpu(&mut self) {
-		self.rebuild_text(self.window.scale_factor() as f32);
+		self.rebuild_text(config::display_scale(self.window.scale_factor()));
 		// re-decoded rather than kept resident: a large wallpaper is tens of MB, and
 		// a VT switch is rare enough not to trade that for a moment without one
 		self.request_wallpaper(false);
@@ -2094,7 +2132,7 @@ impl State {
 		// (the user wants background all the way to the edge), so skip it.
 		if self.tabs.cur().panes.len() > 1 {
 			if let Some(p) = self.tabs.cur().panes.get(&self.tabs.cur().focused) {
-				instances.extend(focus_ring(p.rect));
+				instances.extend(focus_ring(p.rect, self.text.scale));
 			}
 		}
 		// drop-target tint while drag-reordering a pane
@@ -2169,16 +2207,18 @@ impl State {
 				// Alt held (no dropdown open): underline each title's accelerator
 				// letter, like the open-dropdown items do (press the letter to open).
 				let attrs = crate::text::ui_attrs();
-				let underline_y = self.text.ui_baseline(0.0, menu_h) + 1.0;
+				let rule = self.text.dip(CHROME_HAIRLINE);
+				let underline_y = self.text.ui_baseline(0.0, menu_h) + rule;
+				let title_pad = self.text.dip(MENU_BAR_PAD);
 				for (i, &(x, _)) in layout.iter().enumerate() {
 					if let Some(c) = MENU_BAR[i].chars().next() {
 						let mut buf = [0u8; 4];
 						let letter_w = self.text.measure_ui_text(c.encode_utf8(&mut buf), &attrs);
 						instances.push(rect_inst(
-							x + MENU_BAR_PAD,
+							x + title_pad,
 							underline_y,
 							letter_w,
-							1.0,
+							rule,
 							config::menu_fg(),
 						));
 					}
@@ -2196,12 +2236,14 @@ impl State {
 			let cb = self.copybox_layout();
 			let border = copy_dim(config::menu_border(), self.focused);
 			let fill = copy_dim(config::menu_fg(), self.focused);
+			let box_rule = self.text.dip(CHROME_HAIRLINE);
+			let tick_inset = self.text.dip(COPYBOX_TICK_INSET);
 			for (checkbox, on) in cb.boxes.iter().zip(checked) {
 				instances.push(rect_inst(
-					checkbox.x - 1.0,
-					checkbox.y - 1.0,
-					checkbox.w + 2.0,
-					checkbox.h + 2.0,
+					checkbox.x - box_rule,
+					checkbox.y - box_rule,
+					checkbox.w + 2.0 * box_rule,
+					checkbox.h + 2.0 * box_rule,
 					border,
 				));
 				instances.push(rect_inst(
@@ -2213,10 +2255,10 @@ impl State {
 				));
 				if on {
 					instances.push(rect_inst(
-						checkbox.x + 3.0,
-						checkbox.y + 3.0,
-						checkbox.w - 6.0,
-						checkbox.h - 6.0,
+						checkbox.x + tick_inset,
+						checkbox.y + tick_inset,
+						checkbox.w - 2.0 * tick_inset,
+						checkbox.h - 2.0 * tick_inset,
 						fill,
 					));
 				}
@@ -2232,10 +2274,13 @@ impl State {
 			let start = instances.len() as u32;
 			instances.push(rect_inst(0.0, tab_bar_y, win_w, tab_h, config::TAB_BAR_BG));
 			let n = self.tabs.len();
-			let tab_w = (win_w / n as f32).min(TAB_MAX_W);
+			let tab_w = (win_w / n as f32).min(self.text.dip(TAB_MAX_W));
 			// per-tab loop invariants (each config accessor is an RwLock read)
 			let box_border = config::menu_border();
 			let x_rgb = close_x_rgb();
+			let tab_gap = self.text.dip(TAB_GAP);
+			let tab_top = self.text.dip(TAB_TOP_PAD);
+			let cb_rule = self.text.dip(CHROME_HAIRLINE);
 			for i in 0..n {
 				let x = i as f32 * tab_w;
 				let color = if i == self.tabs.active {
@@ -2243,23 +2288,25 @@ impl State {
 				} else {
 					config::TAB_INACTIVE
 				};
+				// the button sits inside the bar: a gap each side of the seam, and it
+				// runs to the bar's bottom edge less one hairline
 				instances.push(rect_inst(
-					x + 1.0,
-					tab_bar_y + 2.0,
-					tab_w - 2.0,
-					tab_h - 3.0,
+					x + tab_gap,
+					tab_bar_y + tab_top,
+					tab_w - 2.0 * tab_gap,
+					tab_h - tab_top - cb_rule,
 					color,
 				));
 				// close-button box: a 1px outline (border rect + inner tab-bg fill).
 				// The active tab's box fill leans faintly toward a pastel red - just
 				// past noticeable, so the current tab reads at a glance without a
 				// clashing accent.
-				let cb = tab_close_box(x, tab_w, tab_bar_y, tab_h);
+				let cb = tab_close_box(x, tab_w, tab_bar_y, tab_h, self.text.scale);
 				instances.push(rect_inst(
-					cb.x - 1.0,
-					cb.y - 1.0,
-					cb.w + 2.0,
-					cb.h + 2.0,
+					cb.x - cb_rule,
+					cb.y - cb_rule,
+					cb.w + 2.0 * cb_rule,
+					cb.h + 2.0 * cb_rule,
 					box_border,
 				));
 				let box_fill = if self.tab_close_arm == Some(i) {
@@ -2282,7 +2329,7 @@ impl State {
 		let menu_range = if let Some(menu) = &self.menu {
 			let start = instances.len() as u32;
 			let popup_h = menu.height();
-			let border = 1.0;
+			let border = self.text.dip(CHROME_HAIRLINE);
 			instances.push(rect_inst(
 				menu.x - border,
 				menu.y - border,
@@ -2309,12 +2356,13 @@ impl State {
 			// faint separator lines between logical groups
 			for (i, entry) in menu.entries.iter().enumerate() {
 				if matches!(entry, Entry::Sep) {
-					let sep_y = menu.row_top(i) + config::MENU_SEP_H / 2.0;
+					let sep_y = menu.row_top(i) + menu.sep_h / 2.0;
+					let pad_x = self.text.dip(config::MENU_PAD_X);
 					instances.push(rect_inst(
-						menu.x + config::MENU_PAD_X,
+						menu.x + pad_x,
 						sep_y,
-						menu.w - config::MENU_PAD_X * 2.0,
-						1.0,
+						menu.w - pad_x * 2.0,
+						self.text.dip(CHROME_HAIRLINE),
 						config::menu_sep(),
 					));
 				}
@@ -2323,7 +2371,9 @@ impl State {
 			// to pick); items without one draw no underline
 			let acc_attrs = crate::text::ui_attrs();
 			let line_h = self.text.ui_line_h;
-			let acc_x = menu.x + config::MENU_PAD_X + config::MENU_GUTTER;
+			let acc_rule = self.text.dip(CHROME_HAIRLINE);
+			let acc_x =
+				menu.x + self.text.dip(config::MENU_PAD_X) + self.text.dip(config::MENU_GUTTER);
 			for (i, entry) in menu.entries.iter().enumerate() {
 				if let Entry::Item {
 					label,
@@ -2340,9 +2390,9 @@ impl State {
 						let top = menu.row_top(i) + (menu.item_h - line_h) / 2.0;
 						instances.push(rect_inst(
 							acc_x + prefix_w,
-							top + line_h - 3.0,
+							top + line_h - self.text.dip(MENU_ACCEL_DROP),
 							letter_w,
-							1.0,
+							acc_rule,
 							config::menu_fg(),
 						));
 					}
@@ -2382,7 +2432,8 @@ impl State {
 		} else {
 			Vec::new()
 		};
-		let tab_w = (self.gfx.config.width as f32 / self.tabs.len().max(1) as f32).min(TAB_MAX_W);
+		let tab_w = (self.gfx.config.width as f32 / self.tabs.len().max(1) as f32)
+			.min(self.text.dip(TAB_MAX_W));
 		// keep the shaped chrome text current (see ChromeCache) - a color change
 		// rebuilds it all, otherwise only changed tab titles re-shape
 		if self
@@ -2406,7 +2457,10 @@ impl State {
 			let menubar = MENU_BAR
 				.iter()
 				.chain(COPYBOX_LABELS.iter())
-				.map(|title| shape_ui(&mut self.text, title, 240.0, menu_h, menu_fg))
+				.map(|title| {
+					let w = self.text.dip(MENUBAR_TEXT_W);
+					shape_ui(&mut self.text, title, w, menu_h, menu_fg)
+				})
 				.collect();
 			self.chrome = Some(ChromeCache {
 				menu_fg: menu_fg_rgb,
@@ -2437,9 +2491,10 @@ impl State {
 					continue; // unchanged title keeps its shaped buffer
 				}
 				reshaped = true;
-				let mut buf = self
-					.text
-					.new_ui_buffer((tab_w - 16.0 - TAB_CLOSE_W).max(8.0), tab_h);
+				let title_pad = self.text.dip(TAB_TITLE_PAD);
+				let title_w =
+					(tab_w - 2.0 * title_pad - self.text.dip(TAB_CLOSE_W)).max(self.text.dip(8.0));
+				let mut buf = self.text.new_ui_buffer(title_w, tab_h);
 				let mut attrs = crate::text::ui_attrs();
 				attrs.color_opt = Some(menu_fg);
 				buf.set_text(
@@ -2582,7 +2637,7 @@ impl State {
 					let (left, left_bound, right_bound, top) = if i < bar_layout.len() {
 						let (x, w) = bar_layout[i];
 						(
-							x + MENU_BAR_PAD,
+							x + self.text.dip(MENU_BAR_PAD),
 							x,
 							x + w,
 							self.text.ui_text_top(0.0, menu_h),
@@ -2617,10 +2672,10 @@ impl State {
 			}
 			for (i, (_, buf)) in chrome.tabs.iter().enumerate() {
 				let x = i as f32 * tab_w;
-				let close_x = x + tab_w - TAB_CLOSE_W;
+				let close_x = x + tab_w - self.text.dip(TAB_CLOSE_W);
 				areas.push(TextArea {
 					buffer: buf,
-					left: x + 8.0,
+					left: x + self.text.dip(TAB_TITLE_PAD),
 					// center the visible text box in the tab bar (metric-based)
 					top: self.text.ui_text_top(tab_bar_y, tab_h),
 					scale: 1.0,
@@ -2761,10 +2816,11 @@ impl State {
 						None,
 					);
 					buf.shape_until_scroll(&mut self.text.font_system, false);
-					specs.push((menu.x + config::MENU_PAD_X + config::MENU_GUTTER, top, buf));
+					let pad_x = self.text.dip(config::MENU_PAD_X);
+					let gutter = self.text.dip(config::MENU_GUTTER);
+					specs.push((menu.x + pad_x + gutter, top, buf));
 					if *check == Some(true) {
-						let mut check_buf =
-							self.text.new_ui_buffer(config::MENU_GUTTER, menu.item_h);
+						let mut check_buf = self.text.new_ui_buffer(gutter, menu.item_h);
 						check_buf.set_text(
 							&mut self.text.font_system,
 							"\u{2713}",
@@ -2773,7 +2829,7 @@ impl State {
 							None,
 						);
 						check_buf.shape_until_scroll(&mut self.text.font_system, false);
-						specs.push((menu.x + config::MENU_PAD_X, top, check_buf));
+						specs.push((menu.x + pad_x, top, check_buf));
 					}
 				}
 				let (sw, sh) = (self.gfx.config.width as i32, self.gfx.config.height as i32);
@@ -3449,11 +3505,11 @@ fn scissor(rect: Rect, sw: u32, sh: u32) -> (u32, u32, u32, u32) {
 	(x, y, right.saturating_sub(x), bottom.saturating_sub(y))
 }
 
-fn focus_ring(rect: Rect) -> [RectInstance; 4] {
+fn focus_ring(rect: Rect, scale: f32) -> [RectInstance; 4] {
 	// the calm one: the ring marks which pane is live, alongside the dialog's own
 	// sliders and revert arrows, rather than the single keyboard-focused control
 	let color = config::srgb_f32(config::settings().highlight);
-	let thickness = config::FOCUS_RING_PX;
+	let thickness = config::dip(config::FOCUS_RING_PX, scale);
 	[
 		RectInstance {
 			pos: [rect.x, rect.y],
@@ -3566,7 +3622,7 @@ impl ApplicationHandler<UserEvent> for App {
 
 		// Transparency only ever affects the terminal background (per-pixel), never
 		// the whole window - so there's no compositor whole-window-opacity fallback.
-		let scale = window.scale_factor() as f32;
+		let scale = config::display_scale(window.scale_factor());
 		let mut text = TextCtx::new(&gfx.device, &gfx.queue, gfx.format, scale);
 		let rects = RectRenderer::new(&gfx.device, gfx.format);
 		let scrim =
@@ -3593,7 +3649,7 @@ impl ApplicationHandler<UserEvent> for App {
 			settings.rows
 		});
 		let menu_bar_h = if menu_bar {
-			text.ui_line_h + MENU_BAR_VPAD
+			text.ui_line_h + text.dip(MENU_BAR_VPAD)
 		} else {
 			0.0
 		};
@@ -3627,7 +3683,7 @@ impl ApplicationHandler<UserEvent> for App {
 		};
 		let top = menu_bar_h
 			+ if n_tabs > 1 {
-				text.ui_line_h + TAB_BAR_VPAD
+				text.ui_line_h + text.dip(TAB_BAR_VPAD)
 			} else {
 				0.0
 			};
@@ -3834,7 +3890,7 @@ impl ApplicationHandler<UserEvent> for App {
 			// cell metrics + chrome for the new factor; winit preserves the logical
 			// size, so a Resized event follows to reconfigure the surface + scrim.
 			WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-				state.rebuild_text(scale_factor as f32);
+				state.rebuild_text(config::display_scale(scale_factor));
 				state.dirty = true;
 			}
 
@@ -4001,16 +4057,21 @@ impl ApplicationHandler<UserEvent> for App {
 					&& y >= tab_bar_y
 					&& y < tab_bar_y + state.tab_bar_h()
 				{
-					let tab_w =
-						(state.gfx.config.width as f32 / state.tabs.len() as f32).min(TAB_MAX_W);
+					let tab_w = (state.gfx.config.width as f32 / state.tabs.len() as f32)
+						.min(state.text.dip(TAB_MAX_W));
 					let i = (x / tab_w).floor() as usize;
 					if i < state.tabs.len() {
 						// press in the close-button column only ARMS the close (the
 						// button lights up); the close itself fires on release over
 						// the same box, so a slipped press can be dragged off to
 						// cancel - standard button feel. Elsewhere selects the tab.
-						let cb =
-							tab_close_box(i as f32 * tab_w, tab_w, tab_bar_y, state.tab_bar_h());
+						let cb = tab_close_box(
+							i as f32 * tab_w,
+							tab_w,
+							tab_bar_y,
+							state.tab_bar_h(),
+							state.text.scale,
+						);
 						if x >= cb.x {
 							state.tab_close_arm = Some(i);
 						} else {
@@ -4074,7 +4135,10 @@ impl ApplicationHandler<UserEvent> for App {
 							}
 							state.dirty = true;
 						} else if let Some((path, _)) =
-							state.tabs.cur().divider_at(x, y, state.area())
+							state
+								.tabs
+								.cur()
+								.divider_at(x, y, state.area(), state.text.scale)
 						{
 							// grab a divider to resize instead of selecting
 							state.resizing = Some(path);
@@ -4226,9 +4290,14 @@ impl ApplicationHandler<UserEvent> for App {
 					let tab_bar_y = state.menubar_h();
 					if i < state.tabs.len() && y >= tab_bar_y && y < tab_bar_y + state.tab_bar_h() {
 						let tab_w = (state.gfx.config.width as f32 / state.tabs.len() as f32)
-							.min(TAB_MAX_W);
-						let cb =
-							tab_close_box(i as f32 * tab_w, tab_w, tab_bar_y, state.tab_bar_h());
+							.min(state.text.dip(TAB_MAX_W));
+						let cb = tab_close_box(
+							i as f32 * tab_w,
+							tab_w,
+							tab_bar_y,
+							state.tab_bar_h(),
+							state.text.scale,
+						);
 						if (x / tab_w).floor() as usize == i && x >= cb.x {
 							state.close_tab_at(i);
 						}
@@ -4994,9 +5063,105 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-	use super::{accel_at, key_is_typed, pace_frame};
+	use super::{
+		ContextMenu, Entry, MenuAction, TAB_CLOSE_M, accel_at, focus_ring, key_is_typed,
+		menu_metrics, pace_frame, tab_close_box,
+	};
+	use crate::config;
 	use std::time::{Duration, Instant};
 	use winit::event::ElementState;
+
+	// The chrome shares a coordinate space with the terminal grid, so nothing
+	// converts it at a boundary the way the Settings dialog does - every piece
+	// scales at its own use site, and a piece that misses out is exactly the
+	// defect this pass fixed (chrome thinning out as the display's DPI rises).
+	// So: the same geometry at 2x must come out at twice the size, everywhere.
+	#[test]
+	fn the_chrome_doubles_when_the_display_does() {
+		// the tab's close button, measured against a bar that has itself doubled
+		let one = tab_close_box(0.0, 200.0, 0.0, 30.0, 1.0);
+		let two = tab_close_box(0.0, 400.0, 0.0, 60.0, 2.0);
+		assert_eq!(two.w, one.w * 2.0, "close button width");
+		assert_eq!(two.h, one.h * 2.0, "close button height");
+		assert_eq!(two.y, one.y * 2.0, "close button top margin");
+		// its right margin, which is what a raw-px inset would have left frozen
+		assert_eq!(400.0 - (two.x + two.w), (200.0 - (one.x + one.w)) * 2.0);
+		assert_eq!(one.y, TAB_CLOSE_M, "1x must still be the DIP value itself");
+
+		// the live pane's focus ring
+		let rect = super::Rect {
+			x: 0.0,
+			y: 0.0,
+			w: 100.0,
+			h: 100.0,
+		};
+		let thin = focus_ring(rect, 1.0)[0].size[1];
+		let thick = focus_ring(rect, 2.0)[0].size[1];
+		assert_eq!(thin, config::FOCUS_RING_PX);
+		assert_eq!(thick, thin * 2.0);
+	}
+
+	// A dropdown resolves its own padding and separator height from DIP once, at
+	// the moment it is built, so the draw and the two hit tests read one set of
+	// numbers. Whatever the display does to them, `item_at` and `row_top` have to
+	// keep agreeing - a menu whose rows are drawn one place and clicked another
+	// is the failure this guards.
+	#[test]
+	fn a_dropdown_scales_whole_and_its_rows_still_hit_test() {
+		let menu_at = |scale: f32| {
+			let (pad_y, sep_h) = menu_metrics(scale);
+			ContextMenu {
+				x: 0.0,
+				y: 0.0,
+				w: config::dip(200.0, scale),
+				item_h: config::dip(20.0, scale),
+				pad_y,
+				sep_h,
+				target: 0,
+				entries: vec![
+					Entry::Item {
+						label: "One".into(),
+						action: MenuAction::Copy,
+						check: None,
+						accel: None,
+					},
+					Entry::Sep,
+					Entry::Item {
+						label: "Two".into(),
+						action: MenuAction::Paste,
+						check: None,
+						accel: None,
+					},
+				],
+				hover: None,
+			}
+		};
+		// the padding and the separator row scale, which is what makes the whole
+		// popup scale - height() and row_top() are built out of them
+		assert_eq!(
+			menu_metrics(1.0),
+			(config::MENU_ITEM_PAD_Y, config::MENU_SEP_H)
+		);
+		assert_eq!(
+			menu_metrics(2.0),
+			(config::MENU_ITEM_PAD_Y * 2.0, config::MENU_SEP_H * 2.0)
+		);
+		let one = menu_at(1.0);
+		let two = menu_at(2.0);
+		assert_eq!(two.height(), one.height() * 2.0);
+		assert_eq!(two.row_top(2), one.row_top(2) * 2.0);
+		// every item is still picked at the row it is drawn on, at either scale
+		for menu in [&one, &two] {
+			for i in [0usize, 2] {
+				let mid = menu.row_top(i) + menu.item_h / 2.0;
+				assert_eq!(menu.item_at(menu.w / 2.0, mid), Some(i));
+			}
+			// the separator's own band belongs to no item
+			assert_eq!(menu.item_at(menu.w / 2.0, menu.row_top(1) + 1.0), None);
+			// and a click just past the last row is off the menu entirely
+			assert!(!menu.hit(menu.w / 2.0, menu.height() + 1.0));
+		}
+	}
 
 	// A WM hotkey grab (Ctrl+Alt+Arrow) brackets its chord with a focus change,
 	// and winit replays every held key as a synthetic press on the way back in -
