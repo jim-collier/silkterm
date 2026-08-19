@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SilkTerm wallpaper pack</title>
+<meta name="description" content="The wallpapers SilkTerm ships with - browse them full size, page through with the arrow keys.">
+<meta name="color-scheme" content="dark">
+<!--
+	Rendered by cicd/utility/wallpaper-gallery.bash from the pack itself. Edit the
+	template, never the generated page - docs/wallpapers/index.html is overwritten.
+	The generator fills in the raw-image base and the record list marked below.
+-->
+<style>
+	:root {
+		--bg:      #14141a;
+		--panel:   #1c1c24;
+		--edge:    #2c2c38;
+		--fg:      #88eecc;   /* SilkTerm's default foreground */
+		--gold:    #c8a05a;   /* and its focus ring */
+		--text:    #d6d6de;
+		--dim:     #8a8a9a;
+	}
+	* { box-sizing: border-box; }
+	html, body { margin: 0; padding: 0; }
+	body {
+		background: var(--bg);
+		color: var(--text);
+		font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+		-webkit-font-smoothing: antialiased;
+	}
+	a { color: var(--gold); }
+	a:hover { color: var(--fg); }
+
+	header { max-width: 1500px; margin: 0 auto; padding: 30px 20px 12px; }
+	h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; letter-spacing: .2px; color: var(--fg); }
+	.lede { margin: 0 0 4px; color: var(--text); }
+	.meta { margin: 0 0 18px; color: var(--dim); font-size: 13.5px; }
+	.tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+	#q {
+		flex: 1 1 220px; max-width: 340px; padding: 8px 11px;
+		background: var(--panel); border: 1px solid var(--edge); border-radius: 6px;
+		color: var(--text); font: inherit; font-size: 14px;
+	}
+	#q::placeholder { color: #6a6a7a; }
+	#q:focus { outline: none; border-color: var(--gold); }
+	#count { color: var(--dim); font-size: 13px; }
+
+	main { max-width: 1500px; margin: 0 auto; padding: 16px 20px 70px; }
+	#grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+	.tile {
+		position: relative; display: block; padding: 0; border: 0; border-radius: 8px;
+		background: #0d0d12; overflow: hidden; cursor: pointer; aspect-ratio: 16 / 10;
+	}
+	.tile img {
+		width: 100%; height: 100%; object-fit: cover; display: block; opacity: .92;
+		transition: transform .18s ease, opacity .18s ease;
+	}
+	.tile:hover img, .tile:focus-visible img { transform: scale(1.045); opacity: 1; }
+	.tile:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+	.tile b {
+		position: absolute; left: 0; right: 0; bottom: 0; padding: 20px 9px 7px;
+		font: 400 11.5px/1.35 inherit; color: #edeef4; text-align: left; opacity: 0;
+		background: linear-gradient(to top, rgba(6,6,10,.92), rgba(6,6,10,0));
+		transition: opacity .18s ease;
+	}
+	.tile:hover b, .tile:focus-visible b { opacity: 1; }
+	#empty { color: var(--dim); padding: 30px 2px; }
+
+	/* The viewer */
+	#lb {
+		position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column;
+		background: rgba(8,8,12,.965); backdrop-filter: blur(3px);
+	}
+	#lb[hidden] { display: none; }
+	#stage { flex: 1 1 auto; position: relative; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 18px 64px 6px; }
+	#full { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; box-shadow: 0 10px 40px rgba(0,0,0,.55); opacity: 1; transition: opacity .12s ease; }
+	#stage.loading #full { opacity: .25; }
+	#spin { position: absolute; color: var(--dim); font-size: 13px; opacity: 0; transition: opacity .12s ease; pointer-events: none; }
+	#stage.loading #spin { opacity: 1; }
+
+	#cap { flex: 0 0 auto; padding: 10px 64px 20px; text-align: center; }
+	#cap .name { color: var(--fg); font-size: 15px; word-break: break-word; }
+	#cap .cred { color: var(--dim); font-size: 13px; margin-top: 3px; }
+	#cap .cred span + span::before { content: " · "; color: #55555f; }
+	#cap .idx { color: #6a6a7a; font-size: 12px; margin-top: 5px; letter-spacing: .3px; }
+
+	.nav {
+		position: absolute; top: 50%; transform: translateY(-50%);
+		width: 46px; height: 78px; display: flex; align-items: center; justify-content: center;
+		background: rgba(28,28,36,.72); border: 1px solid var(--edge); border-radius: 8px;
+		color: var(--text); font-size: 30px; line-height: 1; cursor: pointer; user-select: none;
+	}
+	.nav:hover { background: rgba(40,40,52,.92); color: var(--fg); }
+	.nav:focus-visible, #close:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+	#prev { left: 10px; }
+	#next { right: 10px; }
+	#close {
+		position: absolute; top: 12px; right: 12px; z-index: 2;
+		width: 38px; height: 38px; border-radius: 8px; cursor: pointer;
+		background: rgba(28,28,36,.72); border: 1px solid var(--edge);
+		color: var(--text); font-size: 22px; line-height: 1;
+	}
+	#close:hover { background: rgba(40,40,52,.92); color: var(--fg); }
+
+	footer { max-width: 1500px; margin: 0 auto; padding: 0 20px 50px; color: var(--dim); font-size: 13px; }
+
+	@media (max-width: 620px) {
+		#grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+		#stage { padding: 12px 12px 4px; }
+		#cap { padding: 8px 14px 16px; }
+		.nav { width: 38px; height: 62px; font-size: 24px; }
+		#prev { left: 4px; }
+		#next { right: 4px; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.tile img, .tile b, #full, #spin { transition: none; }
+		.tile:hover img, .tile:focus-visible img { transform: none; }
+	}
+</style>
+</head>
+<body>
+
+<header>
+	<h1>SilkTerm wallpaper pack</h1>
+	<p class="lede">The wallpapers <a href="https://github.com/jim-collier/silkterm">SilkTerm</a> was built and tuned against, and ships with.</p>
+	<p class="meta">Click one to see it full size. Arrow keys page through, <kbd>Esc</kbd> closes. &nbsp;<a href="https://github.com/jim-collier/silkterm#wallpaper-pack">Download the pack</a> &middot; <a href="https://github.com/jim-collier/silkterm/blob/main/filesystem/home/.config/silkterm/wallpaper-attribution.md">Provenance</a></p>
+	<div class="tools">
+		<input id="q" type="search" placeholder="Filter by name, artist or source" autocomplete="off" spellcheck="false" aria-label="Filter wallpapers">
+		<span id="count"></span>
+	</div>
+</header>
+
+<main>
+	<div id="grid"></div>
+	<p id="empty" hidden>Nothing matches that.</p>
+</main>
+
+<footer>
+	Full images are served from the repository, so this page carries only thumbnails. Rendered by <a href="https://github.com/jim-collier/silkterm/blob/main/cicd/utility/wallpaper-gallery.bash">wallpaper-gallery.bash</a>.
+</footer>
+
+<div id="lb" hidden role="dialog" aria-modal="true" aria-label="Wallpaper viewer">
+	<button id="close" type="button" title="Close (Esc)" aria-label="Close">&times;</button>
+	<div id="stage">
+		<button id="prev" class="nav" type="button" title="Previous (left arrow)" aria-label="Previous">&#8249;</button>
+		<img id="full" alt="">
+		<span id="spin">Loading&hellip;</span>
+		<button id="next" class="nav" type="button" title="Next (right arrow)" aria-label="Next">&#8250;</button>
+	</div>
+	<div id="cap">
+		<div class="name"></div>
+		<div class="cred"></div>
+		<div class="idx"></div>
+	</div>
+</div>
+
+<script>
+	const RAW = "https://raw.githubusercontent.com/jim-collier/silkterm/main/filesystem/home/.config/silkterm/wallpaper/";
+	const DATA = [
+		{"f":"@jc; art; 3d; V-tunnel.jpg","t":"@jc; art; 3d; V-tunnel","s":"jc-art-3d-v-tunnel","c":"(c) 1998 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; art; 3d; molecule disguise.jpg","t":"@jc; art; 3d; molecule disguise","s":"jc-art-3d-molecule-disguise","c":"(c) 1992, 1998 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; art; Ruff Riders.jpg","t":"@jc; art; Ruff Riders","s":"jc-art-ruff-riders","c":"(c) 2013 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; art; cherry tree in a graveyard.jpg","t":"@jc; art; cherry tree in a graveyard","s":"jc-art-cherry-tree-in-a-graveyard","c":"(c) 2023 @jc","l":"CC0 1.0","u":""},
+		{"f":"@jc; art; concentric ripples, olive.jpg","t":"@jc; art; concentric ripples, olive","s":"jc-art-concentric-ripples-olive","c":"(c) 2020 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; art; dog under cherry blossom.jpg","t":"@jc; art; dog under cherry blossom","s":"jc-art-dog-under-cherry-blossom","c":"(c) 2023 @jc","l":"CC0 1.0","u":""},
+		{"f":"@jc; art; fish astronaut.jpg","t":"@jc; art; fish astronaut","s":"jc-art-fish-astronaut","c":"(c) 2024 @jc","l":"CC0 1.0","u":""},
+		{"f":"@jc; art; green valley and mountains.jpg","t":"@jc; art; green valley and mountains","s":"jc-art-green-valley-and-mountains","c":"(c) 2024 @jc","l":"CC0 1.0","u":""},
+		{"f":"@jc; art; miniature roadtrip.jpg","t":"@jc; art; miniature roadtrip","s":"jc-art-miniature-roadtrip","c":"(c) 2023 @jc","l":"CC0 1.0","u":""},
+		{"f":"@jc; art; ominous bliss.jpg","t":"@jc; art; ominous bliss","s":"jc-art-ominous-bliss","c":"(c) 2007 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; art; rainbow gradient.jpg","t":"@jc; art; rainbow gradient","s":"jc-art-rainbow-gradient","c":"(c) 2026 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; art; red tree on a lava flow.jpg","t":"@jc; art; red tree on a lava flow","s":"jc-art-red-tree-on-a-lava-flow","c":"(c) 2023 @jc","l":"CC0 1.0","u":""},
+		{"f":"@jc; game; Doom; fortress in a nebula.jpg","t":"@jc; game; Doom; fortress in a nebula","s":"jc-game-doom-fortress-in-a-nebula","c":"(c) 2020 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; game; Doom; furnace hall.jpg","t":"@jc; game; Doom; furnace hall","s":"jc-game-doom-furnace-hall","c":"(c) 2020 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; game; Doom; overgrown city ruins.jpg","t":"@jc; game; Doom; overgrown city ruins","s":"jc-game-doom-overgrown-city-ruins","c":"(c) 2021 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; game; Doom; overgrown village.jpg","t":"@jc; game; Doom; overgrown village","s":"jc-game-doom-overgrown-village","c":"(c) 2021 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; game; Doom; red rock canyon.jpg","t":"@jc; game; Doom; red rock canyon","s":"jc-game-doom-red-rock-canyon","c":"(c) 2020 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; photo; Grand Canyon 1a.jpg","t":"@jc; photo; Grand Canyon 1a","s":"jc-photo-grand-canyon-1a","c":"(c) 2005 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; photo; Grand Canyon 1b.jpg","t":"@jc; photo; Grand Canyon 1b","s":"jc-photo-grand-canyon-1b","c":"(c) 2005 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; photo; Grand Canyon 2.jpg","t":"@jc; photo; Grand Canyon 2","s":"jc-photo-grand-canyon-2","c":"(c) 2005 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; photo; Pacific Ocean.jpg","t":"@jc; photo; Pacific Ocean","s":"jc-photo-pacific-ocean","c":"(c) 2005 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; photo; Washington.jpg","t":"@jc; photo; Washington","s":"jc-photo-washington","c":"(c) 2007 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; photo; lake lillies.jpg","t":"@jc; photo; lake lillies","s":"jc-photo-lake-lillies","c":"(c) 2004 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; photo; milky way over fog river.jpg","t":"@jc; photo; milky way over fog river","s":"jc-photo-milky-way-over-fog-river","c":"(c) 2005 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; photo; storm clouds, golden.jpg","t":"@jc; photo; storm clouds, golden","s":"jc-photo-storm-clouds-golden","c":"(c) 2006 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@jc; photo; sunset clouds, pink and grey.jpg","t":"@jc; photo; sunset clouds, pink and grey","s":"jc-photo-sunset-clouds-pink-and-grey","c":"(c) 2006 @jc","l":"CC BY 4.0","u":""},
+		{"f":"@tt; art; GNOME 1998_1.jpg","t":"@tt; art; GNOME 1998_1","s":"tt-art-gnome-1998-1","c":"Copyright © 2026 @t00mietum [13x4sv]","l":"CC0 1.0","u":""},
+		{"f":"@tt; art; GNOME_1.jpg","t":"@tt; art; GNOME_1","s":"tt-art-gnome-1","c":"Copyright © 2026 @t00mietum [13x4sv]","l":"CC0 1.0","u":""},
+		{"f":"@tt; art; Rainbow Paper.jpg","t":"@tt; art; Rainbow Paper","s":"tt-art-rainbow-paper","c":"Copyright © 2026 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; art; Trail to Africa_1.jpg","t":"@tt; art; Trail to Africa_1","s":"tt-art-trail-to-africa-1","c":"Copyright © 2026 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; art; abstract; color streaks.jpg","t":"@tt; art; abstract; color streaks","s":"tt-art-abstract-color-streaks","c":"Copyright © 2020 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; art; animals; two cattle dogs.jpg","t":"@tt; art; animals; two cattle dogs","s":"tt-art-animals-two-cattle-dogs","c":"Copyright © 2025 @t00mietum [13x4sv]","l":"CC0 1.0","u":""},
+		{"f":"@tt; art; beach; girl and robot at sunset.jpg","t":"@tt; art; beach; girl and robot at sunset","s":"tt-art-beach-girl-and-robot-at-sunset","c":"Copyright © 2024 @t00mietum [13x4sv]","l":"CC0 1.0","u":""},
+		{"f":"@tt; art; beach; walker at sunset.jpg","t":"@tt; art; beach; walker at sunset","s":"tt-art-beach-walker-at-sunset","c":"Copyright © 2024 @t00mietum [13x4sv]","l":"CC0 1.0","u":""},
+		{"f":"@tt; art; bliss; animal clouds.jpg","t":"@tt; art; bliss; animal clouds","s":"tt-art-bliss-animal-clouds","c":"Copyright © 2020 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; art; bliss; apocalypse.jpg","t":"@tt; art; bliss; apocalypse","s":"tt-art-bliss-apocalypse","c":"Copyright © 2020 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; art; bliss; dinosaurs.jpg","t":"@tt; art; bliss; dinosaurs","s":"tt-art-bliss-dinosaurs","c":"Copyright © 2020 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; art; landscape; green hills and towering clouds.jpg","t":"@tt; art; landscape; green hills and towering clouds","s":"tt-art-landscape-green-hills-and-towering-clouds","c":"Copyright © 2024 @t00mietum [13x4sv]","l":"CC0 1.0","u":""},
+		{"f":"@tt; art; mashup; raptor over color blocks.jpg","t":"@tt; art; mashup; raptor over color blocks","s":"tt-art-mashup-raptor-over-color-blocks","c":"Copyright © 2022 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; linux; arch; green hills.jpg","t":"@tt; linux; arch; green hills","s":"tt-linux-arch-green-hills","c":"Copyright © 2022 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; linux; arch; red.jpg","t":"@tt; linux; arch; red","s":"tt-linux-arch-red","c":"Copyright © 2022 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; linux; debian; desert.jpg","t":"@tt; linux; debian; desert","s":"tt-linux-debian-desert","c":"Copyright © 2024 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; linux; debian; red.jpg","t":"@tt; linux; debian; red","s":"tt-linux-debian-red","c":"Copyright © 2024 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; multi; ubuntu and apple over color blocks.jpg","t":"@tt; multi; ubuntu and apple over color blocks","s":"tt-multi-ubuntu-and-apple-over-color-blocks","c":"Copyright © 2022 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; win; 1993; WFWG 3.11; red.jpg","t":"@tt; win; 1993; WFWG 3.11; red","s":"tt-win-1993-wfwg-3-11-red","c":"Copyright © 2022 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; win; 1995; 95; color blocks.jpg","t":"@tt; win; 1995; 95; color blocks","s":"tt-win-1995-95-color-blocks","c":"Copyright © 2020 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; win; 1996; NT 4.0; color blocks.jpg","t":"@tt; win; 1996; NT 4.0; color blocks","s":"tt-win-1996-nt-4-0-color-blocks","c":"Copyright © 2022 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; win; 1996; NT 4.0; flat flag on streaks.jpg","t":"@tt; win; 1996; NT 4.0; flat flag on streaks","s":"tt-win-1996-nt-4-0-flat-flag-on-streaks","c":"Copyright © 2022 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; win; 1996; NT 4.0; grass at night.jpg","t":"@tt; win; 1996; NT 4.0; grass at night","s":"tt-win-1996-nt-4-0-grass-at-night","c":"Copyright © 2024 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; win; 1996; NT 4.0; red.jpg","t":"@tt; win; 1996; NT 4.0; red","s":"tt-win-1996-nt-4-0-red","c":"Copyright © 2022 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; win; 1999; 98 SE; color blocks.jpg","t":"@tt; win; 1999; 98 SE; color blocks","s":"tt-win-1999-98-se-color-blocks","c":"Copyright © 2022 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; win; 2001; XP; grass at dusk.jpg","t":"@tt; win; 2001; XP; grass at dusk","s":"tt-win-2001-xp-grass-at-dusk","c":"Copyright © 2022 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; win; 2001; XP; grass at night.jpg","t":"@tt; win; 2001; XP; grass at night","s":"tt-win-2001-xp-grass-at-night","c":"Copyright © 2022 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"@tt; win; 2015; 10; dark teal.jpg","t":"@tt; win; 2015; 10; dark teal","s":"tt-win-2015-10-dark-teal","c":"Copyright © 2020 @t00mietum [13x4sv]","l":"CC BY-SA 4.0","u":""},
+		{"f":"Alphacoders; 1026345; radiant gradient.jpg","t":"Alphacoders; 1026345; radiant gradient","s":"alphacoders-1026345-radiant-gradient","c":"","l":"Alphacoders states 'free for private, personal use'; no original artist credited","u":"https://wall.alphacoders.com/big.php?i=1026345"},
+		{"f":"Alphacoders; 1038370; vivid spectrum.jpg","t":"Alphacoders; 1038370; vivid spectrum","s":"alphacoders-1038370-vivid-spectrum","c":"","l":"Alphacoders states 'free for private, personal use'; no original artist credited","u":"https://wall.alphacoders.com/big.php?i=1038370"},
+		{"f":"Alphacoders; 3DART; yellow wave.jpg","t":"Alphacoders; 3DART; yellow wave","s":"alphacoders-3dart-yellow-wave","c":"(c) 3DART","l":"Alphacoders states 'free for private, personal use'","u":"https://wall.alphacoders.com/big.php?i=1044371"},
+		{"f":"Alphacoders; 898450; rainbow waves.jpg","t":"Alphacoders; 898450; rainbow waves","s":"alphacoders-898450-rainbow-waves","c":"","l":"Alphacoders states 'free for private, personal use'; no original artist credited","u":"https://wall.alphacoders.com/big.php?i=898450"},
+		{"f":"Blue Marble; astro; Earth, South America closer; @jc enhance.jpg","t":"Blue Marble; astro; Earth, South America closer; @jc enhance","s":"blue-marble-astro-earth-south-america-closer-jc-enhance","c":"Public domain (NASA Blue Marble); enhancement (c) @jc","l":"NASA media usage policy - public domain","u":""},
+		{"f":"Blue Marble; astro; Earth, South America; @jc enhance.jpg","t":"Blue Marble; astro; Earth, South America; @jc enhance","s":"blue-marble-astro-earth-south-america-jc-enhance","c":"Public domain (NASA Blue Marble); enhancement (c) @jc","l":"NASA media usage policy - public domain","u":""},
+		{"f":"DeviantArt; BlackDiamondOne; Seven Colors.jpg","t":"DeviantArt; BlackDiamondOne; Seven Colors","s":"deviantart-blackdiamondone-seven-colors","c":"(c) 2013 BlackDiamondOne","l":"CC BY-NC-ND 3.0","u":"https://www.deviantart.com/blackdiamondone/art/Seven-Colors-415472711"},
+		{"f":"DeviantArt; FabioMorales9999; Flatxfce.jpg","t":"DeviantArt; FabioMorales9999; Flatxfce","s":"deviantart-fabiomorales9999-flatxfce","c":"(c) 2015 FabioMorales9999","l":"CC BY 3.0","u":"https://www.deviantart.com/fabiomorales9999/art/Flatxfce-530005781"},
+		{"f":"DeviantArt; Kryuko; Debian Darkness.jpg","t":"DeviantArt; Kryuko; Debian Darkness","s":"deviantart-kryuko-debian-darkness","c":"(c) 2012 Kryuko","l":"CC BY-NC-ND 3.0","u":"https://www.deviantart.com/kryuko/art/Debian-Darkness-Wallpaper-330303443"},
+		{"f":"DeviantArt; LunarPixel; Lonery.jpg","t":"DeviantArt; LunarPixel; Lonery","s":"deviantart-lunarpixel-lonery","c":"(c) 2013 LunarPixel","l":"CC BY-NC-ND 3.0","u":"https://www.deviantart.com/lunarpixel/art/Lonery-378527087"},
+		{"f":"DeviantArt; MoodyBlue; Stock 12.jpg","t":"DeviantArt; MoodyBlue; Stock 12","s":"deviantart-moodyblue-stock-12","c":"(c) 2018 MoodyBlue","l":"CC BY-NC-SA 3.0","u":"https://www.deviantart.com/moodyblue/art/MoodyBlue-Stock-12-773307106"},
+		{"f":"DeviantArt; daelly; Star Map.jpg","t":"DeviantArt; daelly; Star Map","s":"deviantart-daelly-star-map","c":"(c) 2012 daelly","l":"All rights reserved (DeviantArt default); download enabled, artist requests a link back","u":"https://www.deviantart.com/daelly/art/Star-Map-309268243"},
+		{"f":"DeviantArt; nirklars; Red Dwarf Dreams 3.jpg","t":"DeviantArt; nirklars; Red Dwarf Dreams 3","s":"deviantart-nirklars-red-dwarf-dreams-3","c":"(c) 2014 nirklars","l":"CC BY-NC 3.0","u":"https://www.deviantart.com/nirklars/art/Red-dwarf-dreams-3-492938387"},
+		{"f":"ESO; M Kornmesser; Mars Four Billion Years Ago.jpg","t":"ESO; M Kornmesser; Mars Four Billion Years Ago","s":"eso-m-kornmesser-mars-four-billion-years-ago","c":"(c) ESO/M. Kornmesser","l":"CC BY 4.0","u":"https://www.eso.org/public/images/eso1509b/"},
+		{"f":"GNOME; 3D foot logo.jpg","t":"GNOME; 3D foot logo","s":"gnome-3d-foot-logo","c":"","l":"","u":""},
+		{"f":"GNOME; Jungle Gnome.jpg","t":"GNOME; Jungle Gnome","s":"gnome-jungle-gnome","c":"","l":"","u":""},
+		{"f":"MaDonna; colourful spheres.jpg","t":"MaDonna; colourful spheres","s":"madonna-colourful-spheres","c":"(c) MaDonna","l":"","u":""},
+		{"f":"Marina Dolgopolova; autumn lake shore.jpg","t":"Marina Dolgopolova; autumn lake shore","s":"marina-dolgopolova-autumn-lake-shore","c":"(c) Marina Dolgopolova","l":"","u":""},
+		{"f":"NASA; Juno; Jupiter 2018-10-29.jpg","t":"NASA; Juno; Jupiter 2018-10-29","s":"nasa-juno-jupiter-2018-10-29","c":"Public domain (NASA/JPL-Caltech/SwRI/MSSS); enhancement (c) @t00mietum","l":"NASA media usage policy - public domain, no permission required","u":"https://www.nasa.gov/image-feature/jupiters-magnificent-swirling-clouds"},
+		{"f":"NOIRLab; N A Sharp; High Resolution Solar Spectrum_1.jpg","t":"NOIRLab; N A Sharp; High Resolution Solar Spectrum_1","s":"noirlab-n-a-sharp-high-resolution-solar-spectrum-1","c":"(c) N.A. Sharp, NOAO/NSO/Kitt Peak FTS/AURA/NSF","l":"CC BY 4.0","u":"https://noirlab.edu/public/images/noao-sun/"},
+		{"f":"Ubuntu; 8.04 Hardy Heron; r3mix.jpg","t":"Ubuntu; 8.04 Hardy Heron; r3mix","s":"ubuntu-8-04-hardy-heron-r3mix","c":"(c) Canonical Ltd / respective Ubuntu artwork contributors","l":"Ubuntu artwork is generally CC BY-SA 3.0 (not confirmed for this file)","u":"https://wiki.ubuntu.com/Artwork/Incoming/Hardy"},
+		{"f":"Unsplash; Daniele Levis Pelusi; Rainbow_1.jpg","t":"Unsplash; Daniele Levis Pelusi; Rainbow_1","s":"unsplash-daniele-levis-pelusi-rainbow-1","c":"(c) Daniele Levis Pelusi","l":"Unsplash License","u":"https://unsplash.com/photos/multicolored-rainbow-artwork-UUjxTEET0c0"},
+		{"f":"Van Gogh; The Starry Night.jpg","t":"Van Gogh; The Starry Night","s":"van-gogh-the-starry-night","c":"Public domain (painted 1889; author died 1890)","l":"Public domain","u":"https://www.moma.org/collection/works/79802"},
+		{"f":"Wallpaperscraft; wave line colorful.jpg","t":"Wallpaperscraft; wave line colorful","s":"wallpaperscraft-wave-line-colorful","c":"","l":"","u":""},
+		{"f":"Xiaomi; MIUI 9; material.jpg","t":"Xiaomi; MIUI 9; material","s":"xiaomi-miui-9-material","c":"(c) Xiaomi Inc.","l":"Bundled device wallpaper; no redistribution licence","u":""},
+		{"f":"snipes2; Metro pack; multicolor.jpg","t":"snipes2; Metro pack; multicolor","s":"snipes2-metro-pack-multicolor","c":"(c) snipes2","l":"","u":""},
+		{"f":"unknown; abstract; Glacial, green radial blur.jpg","t":"unknown; abstract; Glacial, green radial blur","s":"unknown-abstract-glacial-green-radial-blur","c":"","l":"","u":""},
+		{"f":"unknown; abstract; Radiance, warm blur.jpg","t":"unknown; abstract; Radiance, warm blur","s":"unknown-abstract-radiance-warm-blur","c":"","l":"","u":""},
+		{"f":"unknown; abstract; Zilgesque, green ribbon on dark.jpg","t":"unknown; abstract; Zilgesque, green ribbon on dark","s":"unknown-abstract-zilgesque-green-ribbon-on-dark","c":"","l":"","u":""},
+		{"f":"unknown; abstract; blue to orange diagonal streaks.jpg","t":"unknown; abstract; blue to orange diagonal streaks","s":"unknown-abstract-blue-to-orange-diagonal-streaks","c":"","l":"","u":""},
+		{"f":"unknown; abstract; blurred colour field, State of iOS.jpg","t":"unknown; abstract; blurred colour field, State of iOS","s":"unknown-abstract-blurred-colour-field-state-of-ios","c":"","l":"","u":""},
+		{"f":"unknown; abstract; bright rainbow diagonal streaks.jpg","t":"unknown; abstract; bright rainbow diagonal streaks","s":"unknown-abstract-bright-rainbow-diagonal-streaks","c":"","l":"","u":""},
+		{"f":"unknown; abstract; dark rainbow diagonal streaks.jpg","t":"unknown; abstract; dark rainbow diagonal streaks","s":"unknown-abstract-dark-rainbow-diagonal-streaks","c":"","l":"","u":""},
+		{"f":"unknown; abstract; hexagon field.jpg","t":"unknown; abstract; hexagon field","s":"unknown-abstract-hexagon-field","c":"","l":"","u":""},
+		{"f":"unknown; abstract; material diagonal bands.jpg","t":"unknown; abstract; material diagonal bands","s":"unknown-abstract-material-diagonal-bands","c":"","l":"","u":""},
+		{"f":"unknown; abstract; molten fractal.jpg","t":"unknown; abstract; molten fractal","s":"unknown-abstract-molten-fractal","c":"","l":"","u":""},
+		{"f":"unknown; abstract; neon chrome swirl.jpg","t":"unknown; abstract; neon chrome swirl","s":"unknown-abstract-neon-chrome-swirl","c":"","l":"","u":""},
+		{"f":"unknown; abstract; paper-cut colour waves.jpg","t":"unknown; abstract; paper-cut colour waves","s":"unknown-abstract-paper-cut-colour-waves","c":"","l":"","u":""},
+		{"f":"unknown; abstract; vertical colour bars.jpg","t":"unknown; abstract; vertical colour bars","s":"unknown-abstract-vertical-colour-bars","c":"","l":"","u":""},
+		{"f":"unknown; abstract; violet waves, HD volume I.jpg","t":"unknown; abstract; violet waves, HD volume I","s":"unknown-abstract-violet-waves-hd-volume-i","c":"","l":"","u":""},
+		{"f":"unknown; art; Yin-Yang.jpg","t":"unknown; art; Yin-Yang","s":"unknown-art-yin-yang","c":"","l":"","u":""},
+		{"f":"unknown; art; galaxy over a tropical beach.jpg","t":"unknown; art; galaxy over a tropical beach","s":"unknown-art-galaxy-over-a-tropical-beach","c":"","l":"","u":""},
+		{"f":"unknown; art; green cartoon face.jpg","t":"unknown; art; green cartoon face","s":"unknown-art-green-cartoon-face","c":"","l":"","u":""},
+		{"f":"unknown; art; minimal sunset over hills.jpg","t":"unknown; art; minimal sunset over hills","s":"unknown-art-minimal-sunset-over-hills","c":"","l":"","u":""},
+		{"f":"unknown; art; mossy gorge.jpg","t":"unknown; art; mossy gorge","s":"unknown-art-mossy-gorge","c":"","l":"","u":""},
+		{"f":"unknown; art; palm island under stars.jpg","t":"unknown; art; palm island under stars","s":"unknown-art-palm-island-under-stars","c":"","l":"","u":""},
+		{"f":"unknown; art; red cabin on a mountain lake.jpg","t":"unknown; art; red cabin on a mountain lake","s":"unknown-art-red-cabin-on-a-mountain-lake","c":"","l":"","u":""},
+		{"f":"unknown; astro; Mars.jpg","t":"unknown; astro; Mars","s":"unknown-astro-mars","c":"","l":"","u":""},
+		{"f":"unknown; gradient; blue to purple glow.jpg","t":"unknown; gradient; blue to purple glow","s":"unknown-gradient-blue-to-purple-glow","c":"","l":"","u":""},
+		{"f":"unknown; gradient; dark blue.jpg","t":"unknown; gradient; dark blue","s":"unknown-gradient-dark-blue","c":"","l":"","u":""},
+		{"f":"unknown; gradient; dark green.jpg","t":"unknown; gradient; dark green","s":"unknown-gradient-dark-green","c":"","l":"","u":""},
+		{"f":"unknown; gradient; dark orange.jpg","t":"unknown; gradient; dark orange","s":"unknown-gradient-dark-orange","c":"","l":"","u":""},
+		{"f":"unknown; gradient; dark red.jpg","t":"unknown; gradient; dark red","s":"unknown-gradient-dark-red","c":"","l":"","u":""},
+		{"f":"unknown; gradient; orange to pink.jpg","t":"unknown; gradient; orange to pink","s":"unknown-gradient-orange-to-pink","c":"","l":"","u":""},
+		{"f":"unknown; gradient; purple.jpg","t":"unknown; gradient; purple","s":"unknown-gradient-purple","c":"","l":"","u":""},
+		{"f":"unknown; light streaks.jpg","t":"unknown; light streaks","s":"unknown-light-streaks","c":"","l":"","u":""},
+		{"f":"unknown; linux; Linux wordmark on slate.jpg","t":"unknown; linux; Linux wordmark on slate","s":"unknown-linux-linux-wordmark-on-slate","c":"","l":"","u":""},
+		{"f":"unknown; linux; Ubuntu smooth chocolate.jpg","t":"unknown; linux; Ubuntu smooth chocolate","s":"unknown-linux-ubuntu-smooth-chocolate","c":"","l":"","u":""},
+		{"f":"vivo; V9; gradient abstract.jpg","t":"vivo; V9; gradient abstract","s":"vivo-v9-gradient-abstract","c":"(c) vivo Communication Technology Co., Ltd.","l":"Bundled device wallpaper; no redistribution licence","u":""}
+	];
+
+	const grid  = document.getElementById("grid");
+	const empty = document.getElementById("empty");
+	const count = document.getElementById("count");
+	const q     = document.getElementById("q");
+	const lb    = document.getElementById("lb");
+	const stage = document.getElementById("stage");
+	const full  = document.getElementById("full");
+	const capN  = document.querySelector("#cap .name");
+	const capC  = document.querySelector("#cap .cred");
+	const capI  = document.querySelector("#cap .idx");
+
+	const pad     = n => String(n + 1).padStart(3, "0");
+	const thumbOf = i => "thumb/" + pad(i) + ".jpg";
+	const fullOf  = i => RAW + encodeURIComponent(DATA[i].f);
+
+	/* The grid. Every tile exists from the start; filtering only hides them, so a
+	   thumbnail is never fetched twice and the browser keeps its lazy-load work. */
+	const tiles = DATA.map((it, i) => {
+		const b = document.createElement("button");
+		b.className = "tile";
+		b.type = "button";
+		b.title = it.t;
+		b.innerHTML = '<img loading="lazy" decoding="async"><b></b>';
+		b.firstChild.src = thumbOf(i);
+		b.firstChild.alt = it.t;
+		b.lastChild.textContent = it.t;
+		b.addEventListener("click", () => openAt(i));
+		grid.appendChild(b);
+		return b;
+	});
+
+	function haystack(it) {
+		return (it.t + " " + it.c + " " + it.l + " " + it.u).toLowerCase();
+	}
+	const hay = DATA.map(haystack);
+
+	function filter() {
+		const needle = q.value.trim().toLowerCase();
+		let shown = 0;
+		for (let i = 0; i < tiles.length; i++) {
+			const hit = !needle || hay[i].includes(needle);
+			tiles[i].hidden = !hit;
+			if (hit) shown++;
+		}
+		empty.hidden = shown > 0;
+		count.textContent = needle
+			? shown + " of " + DATA.length
+			: DATA.length + " wallpapers";
+	}
+	q.addEventListener("input", filter);
+	filter();
+
+	/* The viewer. `at` is an index into DATA, not into what the filter is showing -
+	   paging walks the visible tiles, so a filtered view pages within itself. */
+	let at = -1;
+
+	function visible() {
+		const v = [];
+		for (let i = 0; i < tiles.length; i++) if (!tiles[i].hidden) v.push(i);
+		return v.length ? v : DATA.map((_, i) => i);
+	}
+
+	function show(i) {
+		at = i;
+		const it = DATA[i];
+		stage.classList.add("loading");
+		full.src = fullOf(i);
+		full.alt = it.t;
+		capN.textContent = it.t;
+
+		capC.textContent = "";
+		const bits = [];
+		if (it.c) bits.push({ text: it.c });
+		if (it.l) bits.push({ text: it.l });
+		if (it.u) bits.push({ text: "Source", href: it.u });
+		if (!bits.length) bits.push({ text: "Provenance not established" });
+		for (const bit of bits) {
+			const el = document.createElement("span");
+			if (bit.href) {
+				const a = document.createElement("a");
+				a.href = bit.href;
+				a.target = "_blank";
+				a.rel = "noopener noreferrer";
+				a.textContent = bit.text;
+				el.appendChild(a);
+			} else {
+				el.textContent = bit.text;
+			}
+			capC.appendChild(el);
+		}
+
+		const v = visible();
+		const pos = v.indexOf(i);
+		capI.textContent = (pos < 0 ? i + 1 : pos + 1) + " / " + (pos < 0 ? DATA.length : v.length);
+
+		/* Warm the neighbours so a press of an arrow key lands on a decoded image. */
+		for (const step of [1, -1]) {
+			const n = next(i, step);
+			if (n !== i) new Image().src = fullOf(n);
+		}
+	}
+
+	full.addEventListener("load",  () => stage.classList.remove("loading"));
+	full.addEventListener("error", () => stage.classList.remove("loading"));
+
+	function next(from, step) {
+		const v = visible();
+		const pos = v.indexOf(from);
+		if (pos < 0) return from;
+		return v[(pos + step + v.length) % v.length];
+	}
+
+	function openAt(i) {
+		lb.hidden = false;
+		document.body.style.overflow = "hidden";
+		show(i);
+		mark(DATA[i].s);
+		document.getElementById("close").focus({ preventScroll: true });
+	}
+
+	function page(step) {
+		if (lb.hidden) return;
+		const i = next(at, step);
+		show(i);
+		mark(DATA[i].s);
+	}
+
+	function closeViewer() {
+		if (lb.hidden) return;
+		lb.hidden = true;
+		full.removeAttribute("src");
+		document.body.style.overflow = "";
+		mark("");
+		if (at >= 0 && tiles[at]) tiles[at].focus({ preventScroll: true });
+	}
+
+	document.getElementById("prev").addEventListener("click", () => page(-1));
+	document.getElementById("next").addEventListener("click", () => page(1));
+	document.getElementById("close").addEventListener("click", closeViewer);
+
+	/* A click on the backdrop closes; one on the image or the caption does not. */
+	lb.addEventListener("click", e => {
+		if (e.target === lb || e.target === stage) closeViewer();
+	});
+
+	document.addEventListener("keydown", e => {
+		if (lb.hidden) {
+			if (e.key === "/" && document.activeElement !== q) { e.preventDefault(); q.focus(); }
+			return;
+		}
+		if (e.key === "Escape")     { e.preventDefault(); closeViewer(); }
+		else if (e.key === "ArrowLeft"  || e.key === "PageUp")   { e.preventDefault(); page(-1); }
+		else if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); page(1); }
+		else if (e.key === "Home")  { e.preventDefault(); show(visible()[0]); }
+		else if (e.key === "End")   { const v = visible(); e.preventDefault(); show(v[v.length - 1]); }
+	});
+
+	/* Swipe, for a touch screen. A short flick pages; anything slower is a scroll. */
+	let touchX = 0, touchY = 0;
+	stage.addEventListener("touchstart", e => {
+		touchX = e.changedTouches[0].clientX;
+		touchY = e.changedTouches[0].clientY;
+	}, { passive: true });
+	stage.addEventListener("touchend", e => {
+		const dx = e.changedTouches[0].clientX - touchX;
+		const dy = e.changedTouches[0].clientY - touchY;
+		if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5) page(dx < 0 ? 1 : -1);
+	}, { passive: true });
+
+	/* A permalink names the image by slug, so it survives the pack being reordered.
+	   replaceState throws on a file:// page, and the viewer must still work there -
+	   opening the repository's own copy of this file is a perfectly ordinary thing
+	   to do - so the address bar is a nicety and never a dependency. */
+	function mark(slug) {
+		try {
+			history.replaceState(null, "", slug ? "#" + slug : location.pathname + location.search);
+		} catch (e) { /* file:// - no permalink, everything else still works */ }
+	}
+
+	function fromHash() {
+		const want = decodeURIComponent(location.hash.replace(/^#/, ""));
+		if (!want) return;
+		const i = DATA.findIndex(it => it.s === want);
+		if (i >= 0) openAt(i);
+	}
+	window.addEventListener("hashchange", fromHash);
+	fromHash();
+</script>
+
+</body>
+</html>

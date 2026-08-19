@@ -209,7 +209,9 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 SilkTerm ships with the 113 wallpapers it was built and tuned against, in [`filesystem/home/.config/silkterm/wallpaper/`](filesystem/home/.config/silkterm/wallpaper/). Put them next to your config and rotation picks one each launch, favoring whatever it hasn't shown lately. Each image carries its own fit and anchor in its metadata, so a photo is cropped rather than squashed while a gradient still stretches edge to edge. Provenance for every one of them is in [wallpaper-attribution.md](filesystem/home/.config/silkterm/wallpaper-attribution.md).
 
-[![Wallpaper pack](assets/wallpaper-gallery.jpg)](filesystem/home/.config/silkterm/wallpaper/)
+[![Wallpaper pack](assets/wallpaper-gallery.jpg)](https://jim-collier.github.io/silkterm/wallpapers/)
+
+Click the sheet for the [browsable gallery](https://jim-collier.github.io/silkterm/wallpapers/) - any wallpaper opens full size in place, the arrow keys page through them, and each one carries its credit and licence underneath.
 
 They come to 60 MiB against a 10 MiB terminal, so no package or installer carries them - fetch the folder on its own. Bash (Linux, macOS, WSL):
 
@@ -225,7 +227,7 @@ $dest = "$env:LOCALAPPDATA\silkterm"; $tgz = "$env:TEMP\silkterm-main.tar.gz"; N
 
 Either one is a single line, so it survives a paste however your terminal handles one, and lands the images where rotation looks for them - `wallpaper/` beside the config on Linux and macOS, and under `%LOCALAPPDATA%` on Windows (see the table in [Configuration](#configuration)). Both pull the whole repository archive, since GitHub serves no smaller unit - about 67 MiB over the wire.
 
-Rendered with [`cicd/utility/wallpaper-gallery.bash`](cicd/utility/wallpaper-gallery.bash), which rebuilds the contact sheet above whenever the pack changes.
+Both the contact sheet and the gallery are rendered by [`cicd/utility/wallpaper-gallery.bash`](cicd/utility/wallpaper-gallery.bash) - re-run it whenever the pack changes. The gallery carries thumbnails only; it fetches each full image from the pack in this repository, so nothing is stored twice.
 
 ## Terminal showdown - speed and size
 

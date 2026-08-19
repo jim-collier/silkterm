@@ -381,6 +381,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - 🔘 Stable release!
 
+- ✅ Wallpaper contact sheet opens a browsable gallery rather than a folder listing.
+	- A README can carry no scripting, so a click-to-enlarge viewer cannot live in it; the sheet links out to a GitHub Pages page instead.
+	- Thumbnail grid with a filter box; a tile opens the wallpaper full size in place, arrow keys and on-screen chevrons page through, Esc closes, and each one shows its credit, licence and source.
+	- The page stores thumbnails only and fetches full images from the pack in the repository, so nothing is duplicated.
+	- Needs Pages switched on for the repository (main branch, /docs) once the section reaches main.
+
 - 🔘 At startup, offer to copy wallpaper from repo, to local.
 	- The README now carries a one-liner for it (Wallpaper pack section), so this item is only about the in-app offer.
 
