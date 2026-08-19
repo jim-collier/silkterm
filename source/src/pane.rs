@@ -2706,17 +2706,19 @@ impl Pane {
 	}
 
 	// Write pasted text to the PTY (wrapped in bracketed paste when the app
-	// enabled it). No-op when the pane is read-only.
+	// enabled it, and put through paste_payload either way). No-op when the
+	// pane is read-only.
 	pub fn paste(&mut self, text: &str) {
 		if self.read_only || text.is_empty() {
 			return;
 		}
 		let bracket = self.mode.contains(TermMode::BRACKETED_PASTE);
-		let mut bytes = Vec::with_capacity(text.len() + 12);
+		let payload = paste_payload(text, bracket);
+		let mut bytes = Vec::with_capacity(payload.len() + 12);
 		if bracket {
 			bytes.extend_from_slice(b"\x1b[200~");
 		}
-		bytes.extend_from_slice(text.as_bytes());
+		bytes.extend_from_slice(payload.as_bytes());
 		if bracket {
 			bytes.extend_from_slice(b"\x1b[201~");
 		}
@@ -3162,6 +3164,27 @@ fn capture_grid_text<T: alacritty_terminal::event::EventListener>(
 		abs_line += 1;
 	}
 	out
+}
+
+// What a paste actually puts on the wire.
+//
+// UNBRACKETED, the application cannot tell a paste from typing, so a line break
+// has to arrive the way the Enter key delivers one - a lone CR. Sending the LF
+// as well leaves a shell sitting on a continuation line after every row, and a
+// Windows clipboard is CRLF by nature, so that is the ORDINARY case there and
+// not an edge one.
+//
+// BRACKETED, the text goes over as the application asked for it - line breaks
+// included - EXCEPT for ESC: one carried in the payload closes the bracket
+// early (the application is watching for `ESC[201~`), and everything after it
+// is then read as keystrokes rather than as data, which is how a paste runs a
+// command nobody typed. Dropping ESC is what makes the bracket a real boundary.
+fn paste_payload(text: &str, bracket: bool) -> String {
+	if bracket {
+		text.replace('\x1b', "")
+	} else {
+		text.replace("\r\n", "\r").replace('\n', "\r")
+	}
 }
 
 // Inside span (start..=end columns) of the highest-precedence matched pair that
@@ -3820,8 +3843,8 @@ mod tests {
 		bar_applies_to, bar_pos_to_lines, bar_thumb_span, bell_brighten, capture_grid_text,
 		capture_start, child_areas, cursor_cycle, cursor_slide_step, distinct_pair, divider_at,
 		equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full, layout, link_at,
-		logical_line_bounds, move_is_input, pair_inside, prompt_strip, pushed_since, render_char,
-		resume_delay, same_char_pair, scroll_shift, scroll_shift_signed, slide_bands,
+		logical_line_bounds, move_is_input, pair_inside, paste_payload, prompt_strip, pushed_since,
+		render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed, slide_bands,
 		snapshot_rows, static_bands, translate_span, vanished_range, weld_region_clip,
 	};
 	use crate::config;
@@ -4420,6 +4443,44 @@ mod tests {
 		// a real decoration row still carries enough structure to be learnable
 		assert!(fnv_row_skel("[~/proj git:main 10:01]".chars()).1 >= PROMPT_SKEL_MIN);
 		assert!(fnv_row_skel("==info==            ".chars()).1 >= PROMPT_SKEL_MIN);
+	}
+
+	#[test]
+	fn a_pasted_line_break_arrives_the_way_enter_delivers_one() {
+		// Unbracketed, the application cannot tell the paste from typing, so every
+		// flavour of line break has to reduce to the lone CR the Enter key sends. A
+		// Windows clipboard is CRLF, so this is the ordinary case there: sending the
+		// LF too leaves the shell on a continuation line after every row.
+		assert_eq!(
+			paste_payload("one\r\ntwo\r\nthree", false),
+			"one\rtwo\rthree"
+		);
+		assert_eq!(paste_payload("one\ntwo", false), "one\rtwo");
+		assert_eq!(
+			paste_payload("one\r\ntwo\nthree\r", false),
+			"one\rtwo\rthree\r"
+		);
+		// nothing to do without a line break
+		assert_eq!(paste_payload("plain text", false), "plain text");
+		// and not one LF may survive to reach the shell
+		assert!(!paste_payload("a\r\nb\nc", false).contains('\n'));
+	}
+
+	#[test]
+	fn a_bracketed_paste_cannot_be_closed_from_inside() {
+		// The application is watching for ESC[201~, so an ESC carried in the payload
+		// ends the bracket early and everything after it is read as keystrokes -
+		// which is how a paste runs a command nobody typed. The ESC has to go.
+		let attack = "safe\x1b[201~rm -rf ~\r";
+		let out = paste_payload(attack, true);
+		assert!(
+			!out.contains('\x1b'),
+			"no ESC may survive into a bracketed paste"
+		);
+		assert_eq!(out, "safe[201~rm -rf ~\r");
+		// Bracketed, the application asked for the text itself, so line breaks pass
+		// through untouched - only ESC is taken out.
+		assert_eq!(paste_payload("one\r\ntwo", true), "one\r\ntwo");
 	}
 
 	#[test]
