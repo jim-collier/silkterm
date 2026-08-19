@@ -686,7 +686,8 @@ const BAR_VISIBLE_EPS: f32 = 0.02;
 // otherwise grind the thumb down to a sliver nobody can grab.
 const BAR_MIN_THUMB: f32 = 1.6;
 // How far outside the bar the pointer still counts as "near" it, so the bar
-// fades in slightly before you get there rather than under the cursor.
+// fades in slightly before you get there rather than under the cursor. DIP, like
+// the configured thickness it widens.
 const BAR_HOVER_SLOP: f32 = 6.0;
 
 // Where a press landed on the scrollbar.
@@ -1966,7 +1967,7 @@ impl Pane {
 			return None;
 		}
 		let (_, _, _, rows) = content_dims(self.rect, ctx);
-		let thickness = cfg.scrollbar_thickness.min(self.rect.w);
+		let thickness = ctx.dip(cfg.scrollbar_thickness).min(self.rect.w);
 		let track = Rect {
 			x: self.rect.x + self.rect.w - thickness,
 			y: self.rect.y + ctx.margin,
@@ -2020,15 +2021,16 @@ impl Pane {
 	// Is the pointer on (or just beside) the bar's strip? Drives the fade-in, so
 	// it uses the strip rather than a hit: with auto-hide on there is no bar to
 	// hit until this has already brought one back.
-	pub fn bar_near(&self, x: f32, y: f32, cfg: &config::Settings) -> bool {
+	pub fn bar_near(&self, x: f32, y: f32, ctx: &TextCtx, cfg: &config::Settings) -> bool {
 		if !self.bar_applies(cfg) {
 			return false;
 		}
-		let thickness = cfg.scrollbar_thickness.min(self.rect.w);
+		let thickness = ctx.dip(cfg.scrollbar_thickness).min(self.rect.w);
+		let slop = ctx.dip(BAR_HOVER_SLOP);
 		let strip = Rect {
-			x: self.rect.x + self.rect.w - thickness - BAR_HOVER_SLOP,
+			x: self.rect.x + self.rect.w - thickness - slop,
 			y: self.rect.y,
-			w: thickness + BAR_HOVER_SLOP,
+			w: thickness + slop,
 			h: self.rect.h,
 		};
 		strip.contains(x, y)
@@ -2876,7 +2878,7 @@ impl PaneManager {
 
 	pub fn relayout(&mut self, ctx: &mut TextCtx, area: Rect) {
 		let mut out = Vec::new();
-		layout(&self.root, area, &mut out);
+		layout(&self.root, area, ctx.scale, &mut out);
 		for (id, rect) in out {
 			if let Some(pane) = self.panes.get_mut(&id) {
 				pane.rect = rect;
@@ -2912,14 +2914,14 @@ impl PaneManager {
 
 	// A grabbable divider under the cursor: its path in the split-tree and
 	// orientation (for the resize cursor).
-	pub fn divider_at(&self, x: f32, y: f32, area: Rect) -> Option<(Vec<bool>, Dir)> {
+	pub fn divider_at(&self, x: f32, y: f32, area: Rect, scale: f32) -> Option<(Vec<bool>, Dir)> {
 		let mut path = Vec::new();
-		divider_at(&self.root, area, x, y, &mut path).map(|dir| (path, dir))
+		divider_at(&self.root, area, x, y, scale, &mut path).map(|dir| (path, dir))
 	}
 
 	// Drag a divider (identified by `path`) to the cursor and relayout.
 	pub fn drag_divider(&mut self, ctx: &mut TextCtx, path: &[bool], area: Rect, x: f32, y: f32) {
-		set_ratio(&mut self.root, area, path, x, y);
+		set_ratio(&mut self.root, area, path, x, y, ctx.scale);
 		self.relayout(ctx, area);
 	}
 
@@ -3425,22 +3427,23 @@ fn first_leaf(node: &Node) -> PaneId {
 	}
 }
 
-fn layout(node: &Node, area: Rect, out: &mut Vec<(PaneId, Rect)>) {
+fn layout(node: &Node, area: Rect, scale: f32, out: &mut Vec<(PaneId, Rect)>) {
 	match node {
 		Node::Leaf(id) => out.push((*id, area)),
 		Node::Split {
 			dir, ratio, a, b, ..
 		} => {
-			let (a_area, b_area) = child_areas(area, *dir, *ratio);
-			layout(a, a_area, out);
-			layout(b, b_area, out);
+			let (a_area, b_area) = child_areas(area, *dir, *ratio, scale);
+			layout(a, a_area, scale, out);
+			layout(b, b_area, scale, out);
 		}
 	}
 }
 
-// The two child rects of a split, with the gap strip between them.
-fn child_areas(area: Rect, dir: Dir, ratio: f32) -> (Rect, Rect) {
-	let gap = config::PANE_GAP_PX;
+// The two child rects of a split, with the gap strip between them. The gap is
+// DIP, so the divider keeps its weight as the display's scale factor rises.
+fn child_areas(area: Rect, dir: Dir, ratio: f32, scale: f32) -> (Rect, Rect) {
+	let gap = config::dip(config::PANE_GAP_PX, scale);
 	match dir {
 		Dir::Vertical => {
 			let a_width = ((area.w - gap) * ratio).floor();
@@ -3482,15 +3485,22 @@ fn child_areas(area: Rect, dir: Dir, ratio: f32) -> (Rect, Rect) {
 // Find the split whose divider is under (x, y), within a grab tolerance.
 // Returns a path of child choices (false = a, true = b) from the root to that
 // split, plus its orientation (for the resize cursor).
-fn divider_at(node: &Node, area: Rect, x: f32, y: f32, path: &mut Vec<bool>) -> Option<Dir> {
+fn divider_at(
+	node: &Node,
+	area: Rect,
+	x: f32,
+	y: f32,
+	scale: f32,
+	path: &mut Vec<bool>,
+) -> Option<Dir> {
 	let Node::Split {
 		dir, ratio, a, b, ..
 	} = node
 	else {
 		return None;
 	};
-	let (a_area, b_area) = child_areas(area, *dir, *ratio);
-	let tol = config::DIVIDER_GRAB_PX;
+	let (a_area, b_area) = child_areas(area, *dir, *ratio, scale);
+	let tol = config::dip(config::DIVIDER_GRAB_PX, scale);
 	let on_divider =
 		match dir {
 			Dir::Vertical => {
@@ -3509,14 +3519,14 @@ fn divider_at(node: &Node, area: Rect, x: f32, y: f32, path: &mut Vec<bool>) -> 
 	}
 	if a_area.contains(x, y) {
 		path.push(false);
-		if let Some(found_dir) = divider_at(a, a_area, x, y, path) {
+		if let Some(found_dir) = divider_at(a, a_area, x, y, scale, path) {
 			return Some(found_dir);
 		}
 		path.pop();
 	}
 	if b_area.contains(x, y) {
 		path.push(true);
-		if let Some(found_dir) = divider_at(b, b_area, x, y, path) {
+		if let Some(found_dir) = divider_at(b, b_area, x, y, scale, path) {
 			return Some(found_dir);
 		}
 		path.pop();
@@ -3525,7 +3535,7 @@ fn divider_at(node: &Node, area: Rect, x: f32, y: f32, path: &mut Vec<bool>) -> 
 }
 
 // Walk `path` to a split node and set its ratio from the mouse position.
-fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
+fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32, scale: f32) {
 	let Node::Split {
 		dir,
 		ratio,
@@ -3537,15 +3547,15 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
 		return;
 	};
 	if let [first, rest @ ..] = path {
-		let (a_area, b_area) = child_areas(area, *dir, *ratio);
+		let (a_area, b_area) = child_areas(area, *dir, *ratio, scale);
 		if *first {
-			set_ratio(b, b_area, rest, x, y);
+			set_ratio(b, b_area, rest, x, y, scale);
 		} else {
-			set_ratio(a, a_area, rest, x, y);
+			set_ratio(a, a_area, rest, x, y, scale);
 		}
 		return;
 	}
-	let gap = config::PANE_GAP_PX;
+	let gap = config::dip(config::PANE_GAP_PX, scale);
 	let new_ratio = match dir {
 		Dir::Vertical => (x - area.x) / (area.w - gap),
 		Dir::Horizontal => (y - area.y) / (area.h - gap),
@@ -3808,11 +3818,11 @@ mod tests {
 		APP_SCROLL_MAX, BAR_MIN_THUMB, CURSOR_MAX_LAG, Dir, LinkHit, Node, OffStrip,
 		PROMPT_SKEL_MIN, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell, app_scroll_frames,
 		bar_applies_to, bar_pos_to_lines, bar_thumb_span, bell_brighten, capture_grid_text,
-		capture_start, cursor_cycle, cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row,
-		fnv_row_skel, glide_to_full, layout, link_at, logical_line_bounds, move_is_input,
-		pair_inside, prompt_strip, pushed_since, render_char, resume_delay, same_char_pair,
-		scroll_shift, scroll_shift_signed, slide_bands, snapshot_rows, static_bands,
-		translate_span, vanished_range, weld_region_clip,
+		capture_start, child_areas, cursor_cycle, cursor_slide_step, distinct_pair, divider_at,
+		equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full, layout, link_at,
+		logical_line_bounds, move_is_input, pair_inside, prompt_strip, pushed_since, render_char,
+		resume_delay, same_char_pair, scroll_shift, scroll_shift_signed, slide_bands,
+		snapshot_rows, static_bands, translate_span, vanished_range, weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
@@ -3968,10 +3978,58 @@ mod tests {
 				w,
 				h: 100.0,
 			},
+			1.0,
 			&mut out,
 		);
 		out.sort_by_key(|(id, _)| *id);
 		out.into_iter().map(|(id, r)| (id, r.w)).collect()
+	}
+
+	// The strip of background between two panes is one DIP, so it keeps its
+	// weight as the display's DPI rises instead of thinning to a hairline that
+	// disappears - and the tolerance for grabbing it has to widen with it, or the
+	// divider becomes progressively harder to catch on a high-DPI screen.
+	#[test]
+	fn the_pane_gap_and_its_grab_zone_scale_with_the_display() {
+		let area = Rect {
+			x: 0.0,
+			y: 0.0,
+			w: 400.0,
+			h: 200.0,
+		};
+		let gap_at = |scale: f32| {
+			let (a, b) = child_areas(area, Dir::Vertical, 0.5, scale);
+			b.x - (a.x + a.w)
+		};
+		assert_eq!(gap_at(1.0), config::PANE_GAP_PX);
+		assert_eq!(gap_at(2.0), config::PANE_GAP_PX * 2.0);
+		// the two children still tile the whole area, gap included, at either scale
+		for scale in [1.0, 2.0] {
+			let (a, b) = child_areas(area, Dir::Vertical, 0.5, scale);
+			assert_eq!(a.w + gap_at(scale) + b.w, area.w);
+		}
+
+		// the grab zone: a press this far off the seam still finds the divider
+		let root = split(Dir::Vertical, 0.5, false, leaf(1), leaf(2));
+		let seam = {
+			let (a, _) = child_areas(area, Dir::Vertical, 0.5, 2.0);
+			a.x + a.w
+		};
+		let reach = config::dip(config::DIVIDER_GRAB_PX, 2.0);
+		let mut path = Vec::new();
+		assert!(
+			matches!(
+				divider_at(&root, area, seam - reach + 0.5, 100.0, 2.0, &mut path),
+				Some(Dir::Vertical)
+			),
+			"the grab zone must widen with the gap it catches"
+		);
+		// and one that lands well clear of it does not
+		path.clear();
+		assert!(
+			divider_at(&root, area, seam - reach * 3.0, 100.0, 2.0, &mut path).is_none(),
+			"a press clear of the seam is not a divider grab"
+		);
 	}
 
 	#[test]

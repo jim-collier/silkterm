@@ -33,11 +33,47 @@ pub fn build_target() -> String {
 	)
 }
 
-// internal, not user-tunable (yet)
+// The display scale factor to lay out at, given what the window reports.
+// SILK_SCALE overrides it, which is the only way to see a high-DPI layout on a
+// 1x display: chrome written in raw pixels is INVISIBLE at 1x and only thins out
+// as the factor rises, so the defect it guards against cannot be looked at
+// without one. Read once (var_os takes the env lock and scans environ), same
+// pattern as SILK_MAX_FPS. Off X11 there is no winit knob for this at all.
+pub fn display_scale(reported: f64) -> f32 {
+	use std::sync::OnceLock;
+	static OVERRIDE: OnceLock<Option<f32>> = OnceLock::new();
+	let over = OVERRIDE.get_or_init(|| {
+		std::env::var("SILK_SCALE")
+			.ok()
+			.and_then(|raw| raw.trim().parse::<f32>().ok())
+			.filter(|s| *s > 0.0 && s.is_finite())
+	});
+	over.unwrap_or(reported as f32)
+}
+
+// Chrome measurements are written in DIP (a CSS pixel, 1/96 inch) and converted
+// to physical pixels where they are used. The main window's chrome shares a
+// coordinate space with the terminal grid, so there is no single boundary to
+// divide at the way settings_ui.rs has - each measurement scales at its own use
+// site, through here or `TextCtx::dip`.
+//
+// Rounded to whole pixels so a rule, a ring or a hairline gap stays crisp, and a
+// measurement the author asked to be visible never rounds away to nothing (a 1
+// DIP gap under a scale factor below 1 would otherwise vanish).
+pub fn dip(v: f32, scale: f32) -> f32 {
+	let px = v * scale;
+	if v > 0.0 {
+		px.round().max(1.0)
+	} else {
+		px.round()
+	}
+}
+
+// internal, not user-tunable (yet); DIP, see `dip`
 pub const PANE_GAP_PX: f32 = 1.0;
 pub const DIVIDER_GRAB_PX: f32 = 5.0; // mouse tolerance for grabbing a pane divider
 pub const FOCUS_RING_PX: f32 = 2.0;
-pub const SETTLE_EPS: f32 = 0.002;
+pub const SETTLE_EPS: f32 = 0.002; // a settle threshold, not a measurement - never scaled
 
 pub const DIVIDER: [u8; 3] = [0x2c, 0x2c, 0x36];
 
@@ -118,6 +154,9 @@ fn shade(color: [u8; 3], magnitude: i16) -> [u8; 3] {
 	let adjust = |channel: u8| (channel as i16 + delta).clamp(0, 255) as u8;
 	[adjust(color[0]), adjust(color[1]), adjust(color[2])]
 }
+// Dropdown/context-menu geometry, DIP (see `dip`). The pop-out dialogs lay out
+// in DIP throughout and use these raw; the main window's menus convert at each
+// use site.
 pub const MENU_PAD_X: f32 = 12.0;
 pub const MENU_ITEM_PAD_Y: f32 = 6.0;
 pub const MENU_SEP_H: f32 = 9.0; // height of a separator row (line + spacing)
@@ -2997,6 +3036,29 @@ colors:
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// The whole point of the DIP pass: a chrome measurement is the same physical
+	// size on any display, so it doubles when the scale factor does. The floor is
+	// the other half - a hairline the author asked to be visible must never round
+	// down to nothing, which is what a 1 DIP rule does on a display below 1x.
+	#[test]
+	fn a_chrome_measurement_scales_and_a_hairline_survives() {
+		assert_eq!(dip(10.0, 1.0), 10.0);
+		assert_eq!(dip(10.0, 2.0), 20.0);
+		assert_eq!(dip(FOCUS_RING_PX, 2.0), FOCUS_RING_PX * 2.0);
+		// fractional factors round to whole pixels so a rule stays crisp
+		assert_eq!(dip(10.0, 1.5), 15.0);
+		assert_eq!(dip(9.0, 1.25), 11.0);
+		// a hairline holds at every factor, including down-scaled displays
+		for scale in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0] {
+			assert!(
+				dip(PANE_GAP_PX, scale) >= 1.0,
+				"the pane gap vanished at {scale}x"
+			);
+		}
+		// zero stays zero - the floor is for measurements meant to be seen
+		assert_eq!(dip(0.0, 2.0), 0.0);
+	}
 
 	// ':' must NOT be a word separator, else a double-click on C:\... drops the
 	// drive prefix (the alacritty default splits on ':'). Regression guard.
