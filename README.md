@@ -71,6 +71,7 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 	- [Why smooth-scrolling output](#why-smooth-scrolling-output)
 	- [Why text scrim](#why-text-scrim)
 - [Features](#features)
+- [Wallpaper pack](#wallpaper-pack)
 - [Terminal showdown - speed and size](#terminal-showdown---speed-and-size)
 - [Getting and using](#getting-and-using)
 	- [Installing](#installing)
@@ -204,6 +205,34 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **GPU-accelerated** with software fallback.
 
+## Wallpaper pack
+
+SilkTerm ships with the 113 wallpapers it was built and tuned against, in [`filesystem/home/.config/silkterm/wallpaper/`](filesystem/home/.config/silkterm/wallpaper/). Put them next to your config and rotation picks one each launch, favoring whatever it hasn't shown lately. Each image carries its own fit and anchor in its metadata, so a photo is cropped rather than squashed while a gradient still stretches edge to edge. Provenance for every one of them is in [wallpaper-attribution.md](filesystem/home/.config/silkterm/wallpaper-attribution.md).
+
+[![Wallpaper pack](assets/wallpaper-gallery.jpg)](filesystem/home/.config/silkterm/wallpaper/)
+
+They come to 60 MiB against a 10 MiB terminal, so no package or installer carries them - fetch the folder on its own. Bash (Linux, macOS, WSL):
+
+```bash
+dir="${XDG_CONFIG_HOME:-$HOME/.config}/silkterm" && mkdir -p "$dir" &&
+curl -fsSL https://github.com/jim-collier/silkterm/archive/refs/heads/main.tar.gz |
+	tar -xz -C "$dir" --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper
+```
+
+PowerShell (Windows):
+
+```powershell
+$dest = "$env:APPDATA\silkterm"; $tgz = "$env:TEMP\silkterm-main.tar.gz"
+New-Item -ItemType Directory -Force $dest | Out-Null
+curl.exe -fsSL https://github.com/jim-collier/silkterm/archive/refs/heads/main.tar.gz -o $tgz
+tar -xzf $tgz -C $dest --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper
+Remove-Item $tgz
+```
+
+Either one lands the images at `wallpaper/` inside your config directory, which is where rotation looks for them. Both pull the whole repository archive, since GitHub serves no smaller unit - about 67 MiB over the wire.
+
+Rendered with [`cicd/utility/wallpaper-gallery.bash`](cicd/utility/wallpaper-gallery.bash), which rebuilds the contact sheet above whenever the pack changes.
+
 ## Terminal showdown - speed and size
 
 Smooth scrolling counts for nothing if the terminal falls behind the moment something dumps a lot of text, so throughput is measured rather than asserted. In testing, each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it. Speed is measured at a 160x42 grid.
@@ -335,7 +364,7 @@ If making changes directly (rather than through Settings), you can apply them im
 
 To start over from the shipped defaults, run `silkterm --reset-config`. The old file is kept alongside as `config.shcl.bak` rather than deleted.
 
-Drop a few images into a `wallpaper` folder next to the config and SilkTerm picks one each launch, favoring whatever it hasn't shown lately. Naming a wallpaper in the config, or passing one on the command line, takes precedence.
+Drop a few images into a `wallpaper` folder next to the config and SilkTerm picks one each launch, favoring whatever it hasn't shown lately. Naming a wallpaper in the config, or passing one on the command line, takes precedence. The [wallpaper pack](#wallpaper-pack) is a ready-made folder to start from.
 
 <!--
 ## Renaming the project

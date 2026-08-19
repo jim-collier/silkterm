@@ -382,6 +382,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - 🔘 Stable release!
 
 - 🔘 At startup, offer to copy wallpaper from repo, to local.
+	- The README now carries a one-liner for it (Wallpaper pack section), so this item is only about the in-app offer.
 
 - 🔘 Wallpaper: Need a way to detect maximum and average brightness of background image - or some heuristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
 	- 🔘 Really what I'm after, is this resulting effect. The implimentation is up to research:
