@@ -1020,6 +1020,7 @@ struct RawColors {
 }
 
 fn load() -> Settings {
+	adopt_legacy_config();
 	let Some(path) = config_path() else {
 		return Settings::default();
 	};
@@ -1713,7 +1714,7 @@ fn expand_tilde(value: &str) -> PathBuf {
 }
 
 pub fn resolve_wallpaper(explicit: Option<String>) -> Option<PathBuf> {
-	let dir = config_path()?.parent()?.to_path_buf();
+	let dir = config_dir()?;
 	if let Some(given) = explicit.filter(|value| !value.trim().is_empty()) {
 		let path = expand_tilde(given.trim());
 		// Handed back unchecked: the loader opens it on its own thread and says so
@@ -1726,20 +1727,25 @@ pub fn resolve_wallpaper(explicit: Option<String>) -> Option<PathBuf> {
 		});
 	}
 	// Current convention first (wallpaper/wallpaper.*), then the older spellings
-	// so existing setups keep working.
-	[
-		("wallpaper", "wallpaper"),
-		("wallpapers", "wallpaper"),
-		("backgrounds", "background"),
-	]
-	.into_iter()
-	.flat_map(|(sub, stem)| {
-		let sub_dir = dir.join(sub);
-		["png", "jpg", "jpeg"]
+	// so existing setups keep working - across every directory a pack may sit in,
+	// which on Windows means Local before the config dir it used to share.
+	wallpaper_search_dirs()
+		.into_iter()
+		.flat_map(|dir| {
+			[
+				("wallpaper", "wallpaper"),
+				("wallpapers", "wallpaper"),
+				("backgrounds", "background"),
+			]
 			.into_iter()
-			.map(move |ext| sub_dir.join(format!("{stem}.{ext}")))
-	})
-	.find(|path| path.exists())
+			.flat_map(move |(sub, stem)| {
+				let sub_dir = dir.join(sub);
+				["png", "jpg", "jpeg"]
+					.into_iter()
+					.map(move |ext| sub_dir.join(format!("{stem}.{ext}")))
+			})
+		})
+		.find(|path| path.exists())
 }
 
 // The wallpaper-rotation folder: a relative value resolves against the config
@@ -1752,7 +1758,7 @@ pub fn resolve_wallpaper_folder(explicit: Option<String>) -> Option<PathBuf> {
 	if path.is_absolute() {
 		return Some(path);
 	}
-	Some(config_path()?.parent()?.join(&path))
+	Some(config_dir()?.join(&path))
 }
 
 // Enough kept resets that nobody hits the ceiling in practice, low enough that a
@@ -1799,7 +1805,12 @@ pub fn reset_config() -> Option<PathBuf> {
 // Where the wallpaper shuffle keeps its recently-shown list. Beside the config,
 // so a --config override gets its own history instead of sharing one.
 pub fn wallpaper_history_path() -> Option<PathBuf> {
-	Some(config_path()?.parent()?.join(".wallpaper-history"))
+	let name = ".wallpaper-history";
+	let beside_config = config_dir().map(|dir| dir.join(name));
+	if let Some(old) = beside_config.filter(|p| p.exists()) {
+		return Some(old);
+	}
+	Some(data_dir()?.join(name))
 }
 
 // Image files we're willing to load as a wallpaper. One list, so the folder
@@ -1819,10 +1830,13 @@ pub fn is_image_file(path: &std::path::Path) -> bool {
 // scan's job, off the startup thread, and an empty one still means no rotation
 // and no diagnostic, since the user never asked for one.
 fn default_wallpaper_folder() -> Option<PathBuf> {
-	let dir = config_path()?.parent()?.to_path_buf();
-	["wallpaper", "wallpapers", "backgrounds"]
+	wallpaper_search_dirs()
 		.into_iter()
-		.map(|sub| dir.join(sub))
+		.flat_map(|dir| {
+			["wallpaper", "wallpapers", "backgrounds"]
+				.into_iter()
+				.map(move |sub| dir.join(sub))
+		})
 		.find(|sub| sub.is_dir())
 }
 
@@ -2611,16 +2625,189 @@ pub fn set_config_override(path: PathBuf) {
 	let _ = CONFIG_OVERRIDE.set(path);
 }
 
+// The directory name under whichever base a platform hands us. One spelling, so
+// the config dir, the data dir and the legacy probe cannot drift apart.
+const APP_DIR: &str = "silkterm";
+
+// Which platform's conventions to lay the paths out by. Named rather than read
+// off `cfg!` at each site so the WHOLE scheme can be tested for every platform
+// from any one of them - the boxes here are Linux and Windows, and a macOS path
+// nobody present can run is exactly the kind that rots unnoticed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Layout {
+	Windows,
+	MacOs,
+	Xdg,
+}
+
+fn host_layout() -> Layout {
+	if cfg!(windows) {
+		Layout::Windows
+	} else if cfg!(target_os = "macos") {
+		Layout::MacOs
+	} else {
+		Layout::Xdg
+	}
+}
+
+// An environment variable as a path, treating empty as unset - an exported but
+// empty HOME is not a home directory.
+fn env_path(name: &str) -> Option<PathBuf> {
+	std::env::var_os(name)
+		.filter(|value| !value.is_empty())
+		.map(PathBuf::from)
+}
+
+fn home_dir() -> Option<PathBuf> {
+	env_path("HOME").or_else(|| env_path("USERPROFILE"))
+}
+
+// Where settings live, by platform convention.
+//
+// An explicit XDG_CONFIG_HOME is honoured on EVERY platform - somebody who sets
+// it means it - and only then does the platform get its say: Roaming on Windows
+// (settings are meant to follow the user between machines), Application Support
+// on macOS, ~/.config elsewhere. Each falls back to ~/.config if the native base
+// is missing from the environment, which is better than having no config at all.
+fn config_base_for(
+	layout: Layout,
+	xdg: Option<&std::path::Path>,
+	home: Option<&std::path::Path>,
+	appdata: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+	if let Some(dir) = xdg {
+		return Some(dir.to_path_buf());
+	}
+	let dotconfig = || home.map(|h| h.join(".config"));
+	match layout {
+		Layout::Windows => appdata.map(std::path::Path::to_path_buf).or_else(dotconfig),
+		Layout::MacOs => home
+			.map(|h| h.join("Library").join("Application Support"))
+			.or_else(dotconfig),
+		Layout::Xdg => dotconfig(),
+	}
+}
+
 fn config_path() -> Option<PathBuf> {
 	if let Some(p) = CONFIG_OVERRIDE.get() {
 		return Some(p.clone());
 	}
-	let base = std::env::var_os("XDG_CONFIG_HOME")
-		.map(PathBuf::from)
-		.filter(|p| !p.as_os_str().is_empty())
-		.or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-		.or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))?;
-	Some(base.join("silkterm").join("config.shcl"))
+	let xdg = env_path("XDG_CONFIG_HOME");
+	let home = home_dir();
+	let appdata = env_path("APPDATA");
+	let base = config_base_for(
+		host_layout(),
+		xdg.as_deref(),
+		home.as_deref(),
+		appdata.as_deref(),
+	)?;
+	Some(base.join(APP_DIR).join("config.shcl"))
+}
+
+pub fn config_dir() -> Option<PathBuf> {
+	Some(config_path()?.parent()?.to_path_buf())
+}
+
+// Where bulk, machine-local data goes. On Windows that is Local rather than
+// Roaming: a wallpaper pack is 60 MiB and has no business following the user
+// onto every machine they sign into. Everywhere else it IS the config dir, which
+// is what those platforms' conventions already mean.
+//
+// Two cases deliberately keep everything together instead: a `--config` override
+// (so an alternate config still gets its own wallpaper and history rather than
+// sharing the default ones - that isolation is the point of the flag), and an
+// explicit XDG_CONFIG_HOME (somebody who asks for one tree means one tree).
+pub fn data_dir() -> Option<PathBuf> {
+	if CONFIG_OVERRIDE.get().is_some() || env_path("XDG_CONFIG_HOME").is_some() {
+		return config_dir();
+	}
+	match host_layout() {
+		Layout::Windows => env_path("LOCALAPPDATA")
+			.map(|dir| dir.join(APP_DIR))
+			.or_else(config_dir),
+		_ => config_dir(),
+	}
+}
+
+// Every directory a wallpaper folder may sit in, best first. More than one entry
+// only where the data dir split off from the config dir - a pack already beside
+// the config still has to be found, because nobody should have to move 60 MiB to
+// keep what already worked.
+fn wallpaper_search_dirs() -> Vec<PathBuf> {
+	let mut dirs = Vec::new();
+	if let Some(dir) = data_dir() {
+		dirs.push(dir);
+	}
+	if let Some(dir) = config_dir() {
+		if !dirs.contains(&dir) {
+			dirs.push(dir);
+		}
+	}
+	dirs
+}
+
+// A config left at ~/.config by a build that predates the per-platform layout.
+// None where that IS the native location, so there is nothing to adopt on Linux.
+fn legacy_config_path() -> Option<PathBuf> {
+	if CONFIG_OVERRIDE.get().is_some() || host_layout() == Layout::Xdg {
+		return None;
+	}
+	let legacy = home_dir()?
+		.join(".config")
+		.join(APP_DIR)
+		.join("config.shcl");
+	// An XDG_CONFIG_HOME pointing at the old spot makes the two the same file.
+	if config_path().is_some_and(|native| native == legacy) {
+		return None;
+	}
+	Some(legacy)
+}
+
+// Bring a pre-layout config across, ONCE, and only when the native location
+// holds nothing. If both exist the native one is the live file and the old one
+// is left exactly where it is - guessing which of two real configs somebody
+// wants is not a call this can make, so it says what it found and moves on.
+// Called before the default template would be written, or a fresh template
+// would win the race against the file being adopted.
+fn adopt_legacy_config() {
+	let (Some(native), Some(legacy)) = (config_path(), legacy_config_path()) else {
+		return;
+	};
+	if !legacy.exists() {
+		return;
+	}
+	if native.exists() {
+		eprintln!(
+			"{APP_NAME}: using {}; the older {} is being ignored (delete it, or point --config at it)",
+			native.display(),
+			legacy.display()
+		);
+		return;
+	}
+	if let Some(dir) = native.parent() {
+		if let Err(e) = std::fs::create_dir_all(dir) {
+			eprintln!("{APP_NAME}: could not create {}: {e}", dir.display());
+			return;
+		}
+	}
+	// rename first: same volume is the ordinary case and it is atomic. A cross
+	// volume move fails EXDEV, so fall back to copy-then-remove, and keep the
+	// original if the remove fails rather than risk having neither.
+	let moved = std::fs::rename(&legacy, &native).is_ok()
+		|| (std::fs::copy(&legacy, &native).is_ok() && std::fs::remove_file(&legacy).is_ok());
+	if moved {
+		eprintln!(
+			"{APP_NAME}: moved your config from {} to {}",
+			legacy.display(),
+			native.display()
+		);
+	} else {
+		eprintln!(
+			"{APP_NAME}: could not move {} to {}",
+			legacy.display(),
+			native.display()
+		);
+	}
 }
 
 const DEFAULT_CONFIG: &str = r##"# SilkTerm configuration file.
@@ -3108,6 +3295,65 @@ colors:
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// Each platform keeps settings somewhere of its own, and the reason the
+	// decision is a pure function of (layout, environment) is exactly this test:
+	// it pins the macOS answer from a box that has no macOS, and the Windows one
+	// from Linux. Reading cfg! at each use site instead would leave two thirds of
+	// this unrunnable wherever it happens to be run.
+	#[test]
+	fn each_platform_keeps_its_config_where_that_platform_keeps_settings() {
+		let home = PathBuf::from("/home/u");
+		let roaming = PathBuf::from("C:/Users/u/AppData/Roaming");
+		assert_eq!(
+			config_base_for(Layout::Windows, None, Some(&home), Some(&roaming)),
+			Some(roaming.clone()),
+			"Windows settings roam, so they belong in Roaming"
+		);
+		assert_eq!(
+			config_base_for(Layout::MacOs, None, Some(&home), None),
+			Some(home.join("Library").join("Application Support"))
+		);
+		assert_eq!(
+			config_base_for(Layout::Xdg, None, Some(&home), None),
+			Some(home.join(".config"))
+		);
+		// and no platform reaches for another's spelling
+		assert_ne!(
+			config_base_for(Layout::Windows, None, Some(&home), Some(&roaming)),
+			Some(home.join(".config"))
+		);
+	}
+
+	#[test]
+	fn an_explicit_xdg_config_home_wins_on_every_platform() {
+		// Setting it is a deliberate act, so it outranks the platform default
+		// everywhere - including the two platforms that have a native answer.
+		let xdg = PathBuf::from("/elsewhere/cfg");
+		let home = PathBuf::from("/home/u");
+		let roaming = PathBuf::from("C:/Users/u/AppData/Roaming");
+		for layout in [Layout::Windows, Layout::MacOs, Layout::Xdg] {
+			assert_eq!(
+				config_base_for(layout, Some(&xdg), Some(&home), Some(&roaming)),
+				Some(xdg.clone()),
+				"{layout:?} ignored an explicit XDG_CONFIG_HOME"
+			);
+		}
+	}
+
+	#[test]
+	fn a_missing_native_base_falls_back_rather_than_leaving_no_config() {
+		// A stripped environment (a service, a bare shell) can carry no APPDATA.
+		// Falling back to ~/.config is better than having nowhere to put settings.
+		let home = PathBuf::from("/home/u");
+		assert_eq!(
+			config_base_for(Layout::Windows, None, Some(&home), None),
+			Some(home.join(".config"))
+		);
+		// With nothing at all to go on there is genuinely no answer.
+		assert_eq!(config_base_for(Layout::Windows, None, None, None), None);
+		assert_eq!(config_base_for(Layout::Xdg, None, None, None), None);
+	}
 
 	// The whole point of the DIP pass: a chrome measurement is the same physical
 	// size on any display, so it doubles when the scale factor does. The floor is
