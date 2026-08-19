@@ -1024,6 +1024,7 @@ impl Pane {
 			guard
 		} else {
 			self.lock_misses += 1;
+			crate::perf::bump(&crate::perf::LOCK_MISS);
 			return;
 		};
 		self.lock_misses = 0;

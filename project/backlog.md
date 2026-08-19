@@ -71,6 +71,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Nothing on our side of the pipe moves it. Microsoft's own newer console host, every pseudoconsole mode flag including passthrough, and pipe buffers from the default up to 16 MB all land inside the run-to-run noise; the newer host is slightly slower.
 	- So there is nothing to fix in the terminal engine, and the idea of forking it for this is dropped. The freeze fix stays pinned for its own reasons.
 	- Fell out of it: the benchmark's barrier is answered by the console host on Windows, not by the terminal, so a Windows figure times the whole chain and can never be read as one terminal's speed. Both the tool and the rig notes say so now, and the earlier claim to the contrary is corrected in the spreadsheet.
+	- Reopened and re-measured on 2026-08-18 once a barrier-free instrument put the real end-to-end gap at about 2x rather than 10x. Four consumers of the same 32 MiB of output, on the same box: bytes read and thrown away 1.45s, one thread reading and parsing 1.94s, the shipped engine plumbing with no window at all 2.45s, the terminal itself the same 2.5s plus its scroll ease settling. Windows Terminal is around 1.3s, which is the console host's own ceiling - so it is not beating us by being a better terminal, it is sitting on the ceiling while we are at about 60% of it.
+	- What is left to gain is therefore about a second per 32 MiB, and none of it is in the drawing: parsing is half a second of that, and the rest is the engine's Windows pipe plumbing, which delivers about 17 MB/s where a plain blocking read of the same pipe gets 22. Two obvious levers were tried and neither moved it - folding the engine's internal notifications, and waiting for the pipe to accumulate before reading it. Reading and parsing on ONE thread beats the shipped two-thread arrangement by half a second, which is the direction worth exploring if this is ever picked up again, and it would mean a real fork.
+	- Also settled: the console host's delivery ceiling is fixed. Pipe buffers from the default to 16 MB, read sizes from 64 KB to 1 MB, and Microsoft's redistributable host beside the executable all land within noise.
+
 
 - ✅ Windows: a long run of output freezes the window for good.
 	- Not slow, stopped. Both ends sit idle with the writer blocked in a write that never returns, and the window burns no CPU at all while stalled - a circular wait, not a slow consumer.
@@ -91,6 +95,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Free to try: the pty backend already prefers a `conpty.dll` sitting beside the executable and falls back to the system one, so bundling is two files and no code change. The redistributable is published and carries a matching console host.
 	- Worth keeping anyway as a possibility for later, but it is not this fix, so nothing was shipped.
 	- Found on the way: the bundled console asks the terminal what it is at startup and waits for the answer. A terminal slow to reply pays several seconds before any output appears - worth knowing if it is ever adopted.
+
+- ✅ Under heavy output the window burned more CPU on being told about it than on parsing and drawing it.
+	- Measured on 32 MiB of output: about 20,000 "there is new output" events reached the window, and 2.5 seconds of the window thread went into the operating system's message queue delivering them - against 0.5s of parsing, 0.03s of laying out text and 0.2s of the work the events actually asked for.
+	- Fixed by letting one notice stand until the window takes delivery of it. Nothing is lost: the notice carries no content, so the window always reads the grid as it stands.
+	- Result: process CPU down about a third and the window thread down more than half, with throughput unchanged.
+	- Fell out of it: a `SILK_PERF` counter set that reports where a burst of output went - notices, loop passes, frames, and the time inside each part of a frame, plus this thread's CPU against the whole process. It is what turned "the window feels busy" into a number.
 
 - 🔘 A wheel gesture can land by moving backwards about one line.
 	- Measured on the shipped demo: at the end of a scroll-back the view goes forward all the way, then hops back 19px (the row pitch is 21) and stays. The top row reads `.dircolors`, then `.gitconfig`, then `.dircolors` again over about a third of a second, which is a visible bounce against the direction of the gesture.

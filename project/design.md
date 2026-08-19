@@ -293,6 +293,14 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - Need: glyph atlas (rasterize font once, cache cells), cell metrics (width/height in px), vsync via wgpu surface.
 
+### Output notices under a flood
+
+- A pane's PTY reader finishes a read cycle roughly every 900 bytes when output is pouring in, and each cycle used to become its own window event. On 32 MiB of output that is about 20,000 events, and it was decided that the window should take delivery of at most one at a time: the notice carries nothing, so the window reads the grid as it stands whenever it gets round to one, and a queue of twenty identical notices only ever produced twenty identical reads.
+
+- Measured on the Windows box, the folding costs nothing and saves a great deal: throughput is unchanged (11.8 against 11.7 MB/s over four alternating pairs) while the process burns a third less CPU and the window thread less than half - the 2.5 seconds that used to go into the operating system's message queue was more than parsing and drawing put together.
+
+- The notice is re-armed BEFORE the window acts on it, so a read cycle landing mid-handling posts a fresh one rather than being dropped. That ordering is the whole safety argument, and it is what a unit test pins.
+
 ### Environment
 
 - Target: Debian. The primary dev/reference environment is X11 (Compiz), but one Linux binary runs native on both X11 and Wayland. winit selects the backend at runtime, and X11/Wayland/GL are all loaded on demand. Windows and macOS are targets too, all with x86_64 and ARM64 variants.

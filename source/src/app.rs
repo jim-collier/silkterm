@@ -2034,13 +2034,15 @@ impl State {
 			// cause (bell flash, chrome/UI change) - idle siblings reuse their
 			// cached frame instead of re-shaping at the busy pane's rate
 			let force = force_rebuild || pane.content_dirty || pane.scroll.animating();
-			pane.build(
-				&mut self.text,
-				dt,
-				bell,
-				force,
-				win_focused && *id == active_pane,
-			);
+			crate::perf::timed(&crate::perf::BUILD_NS, || {
+				pane.build(
+					&mut self.text,
+					dt,
+					bell,
+					force,
+					win_focused && *id == active_pane,
+				);
+			});
 			if pane.scroll.animating() || pane.cursor_animating {
 				animating = true;
 			}
@@ -2509,6 +2511,7 @@ impl State {
 			}
 			h.finish()
 		};
+		let prep = crate::perf::mark();
 		let text_same = self.text_sig == Some(text_sig);
 
 		// All rect instances and the bg-image shader work in absolute
@@ -2798,9 +2801,13 @@ impl State {
 			}
 		}
 
+		crate::perf::since(&crate::perf::PREP_NS, prep);
+		let acquire = crate::perf::mark();
 		let Some(frame) = self.gfx.begin_frame() else {
 			return animating;
 		};
+		crate::perf::since(&crate::perf::ACQUIRE_NS, acquire);
+		let encode = crate::perf::mark();
 		let view = self.gfx.frame_view(&frame);
 		let mut encoder = self
 			.gfx
@@ -3081,8 +3088,11 @@ impl State {
 			let _ = self.text.render_overlay(&mut pass);
 		}
 
+		crate::perf::since(&crate::perf::ENCODE_NS, encode);
+		let submit = crate::perf::mark();
 		self.gfx.queue.submit(Some(encoder.finish()));
 		self.gfx.end_frame(frame);
+		crate::perf::since(&crate::perf::SUBMIT_NS, submit);
 		// The window was created hidden; reveal it once a real frame is on screen at
 		// the final size (no default-size/blank flash). reveal_want (async resize)
 		// holds off until the surface reaches the grid size; the deadline is a hard
@@ -3705,23 +3715,28 @@ impl ApplicationHandler<UserEvent> for App {
 	}
 
 	fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+		let _t = crate::perf::Span::new(&crate::perf::EVENT_NS);
 		let Some(state) = self.state.as_mut() else {
 			return;
 		};
 		match event {
 			UserEvent::WallpaperReady(loaded) => state.wallpaper_ready(*loaded),
 			UserEvent::Wakeup(id) => {
+				crate::perf::bump(&crate::perf::WAKEUPS);
 				// output easing is triggered in Pane::build when the screen
 				// actually scrolls, not on every content change. Only the pane
 				// that produced output is marked; a background tab's flag just
 				// waits until its tab is shown (the switch forces a rebuild).
-				if let Some(p) = state.tabs.find_pane_mut(id) {
-					p.content_dirty = true;
-					p.note_output(); // copy-output: push the settle deadline out
-					// scrollback depth, sampled per read cycle - the only
-					// granularity that sees a `clear` truncate it
-					p.note_history();
-				}
+				crate::perf::timed(&crate::perf::NOTE_NS, || {
+					if let Some(p) = state.tabs.find_pane_mut(id) {
+						p.term.wake_handled();
+						p.content_dirty = true;
+						p.note_output(); // copy-output: push the settle deadline out
+						// scrollback depth, sampled per read cycle - the only
+						// granularity that sees a `clear` truncate it
+						p.note_history();
+					}
+				});
 			}
 			UserEvent::PtyWrite(id, bytes) => {
 				if let Some(p) = state.tabs.find_pane(id) {
@@ -4603,9 +4618,12 @@ impl ApplicationHandler<UserEvent> for App {
 		if let Some(state) = self.state.as_mut() {
 			state.flush_window_size(true);
 		}
+		crate::perf::report();
 	}
 
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+		crate::perf::bump(&crate::perf::PASSES);
+		let _t = crate::perf::Span::new(&crate::perf::PASS_NS);
 		// cicd profiler: in profile mode run for SILK_PROFILE_SECS then exit, so
 		// main can dump the flamegraph (the workload runs in the startup pane).
 		#[cfg(feature = "profiling")]
@@ -4843,7 +4861,8 @@ impl ApplicationHandler<UserEvent> for App {
 			// cursor-animation frame lets every pane reuse its cached frame).
 			let force = state.dirty || bell_anim;
 			state.dirty = false;
-			let animating = state.render(force);
+			crate::perf::bump(&crate::perf::FRAMES);
+			let animating = crate::perf::timed(&crate::perf::RENDER_NS, || state.render(force));
 			// a pane whose term was locked kept its content_dirty (rebuild was
 			// skipped) - retry shortly instead of waiting for the next event,
 			// or the last wakeup of a burst could leave a stale frame up
