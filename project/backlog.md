@@ -585,6 +585,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - Bugs
 
+- ✅ A second cursor showed up in the far bottom-right corner, flickering against the real one at the prompt.
+	- A program that redraws its whole display hides the cursor first, redraws, then puts it back where it belongs and shows it again. The request to hide it was being ignored, so a cursor was drawn wherever the redraw had left it - on Windows that is the bottom-right corner - and it alternated with the one at the prompt once per redraw, which is faster than a cursor blinks.
+	- Hiding the cursor and choosing its shape are two separate things, and only the shape was being read. Both are asked now, so a hidden cursor is not drawn at all - and, while hidden, costs no frames either.
+
 - ✅ On Linux, an arrow pressed as part of a desktop-switching chord (Ctrl+Alt+Up and friends) reached the shell as a bare arrow - UAT.
 	- A bare arrow arriving unasked walks the shell's history, and inside a full-screen program it moves whatever that program moves. Other terminals don't do it.
 	- The window manager brackets its own hotkey with a focus change. On the way out the modifiers are zeroed, and on the way back in every key still physically held is replayed to us as a fresh press - before the modifiers are re-read. That replay was being taken as typing, so a held arrow was encoded with nothing held and sent on.

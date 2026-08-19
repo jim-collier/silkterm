@@ -293,6 +293,19 @@ fn snapshot_rows(
 	rows
 }
 
+// Whether to draw a cursor at all, and as what. DECTCEM (CSI ?25 l/h) lives in
+// the terminal MODE - `cursor_style()` reports the shape an app asked for and
+// says nothing about whether the app wants one drawn - so both have to be asked,
+// the way the engine's own renderable content does. Miss this and a TUI that
+// hides the cursor to repaint still gets one painted wherever the paint left it.
+fn shown_cursor_shape(mode: TermMode, shape: CursorShape) -> CursorShape {
+	if mode.contains(TermMode::SHOW_CURSOR) {
+		shape
+	} else {
+		CursorShape::Hidden
+	}
+}
+
 // The rendered cursor geometry as (width, height) fractions of the cell. An
 // app-set Beam/Underline (DECSCUSR) maps to a thin bar / underline; a plain Block
 // uses the configured cursor_size_* - except on the alt screen, where the app
@@ -1394,7 +1407,7 @@ impl Pane {
 		// Cursor position/shape as plain values (no lasting borrow of the lock), so
 		// the fast path below can drop the term lock immediately.
 		let cursor_pt = guard.grid().cursor.point;
-		let cursor_shape = guard.cursor_style().shape;
+		let cursor_shape = shown_cursor_shape(*guard.mode(), guard.cursor_style().shape);
 		// Alt-screen apps own their cursor shape; on the primary screen it's the
 		// configured geometry (or the app's DECSCUSR). See cursor_geometry.
 		let cursor_geom =
@@ -3844,15 +3857,16 @@ mod tests {
 		capture_start, child_areas, cursor_cycle, cursor_slide_step, distinct_pair, divider_at,
 		equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full, layout, link_at,
 		logical_line_bounds, move_is_input, pair_inside, paste_payload, prompt_strip, pushed_since,
-		render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed, slide_bands,
-		snapshot_rows, static_bands, translate_span, vanished_range, weld_region_clip,
+		render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed,
+		shown_cursor_shape, slide_bands, snapshot_rows, static_bands, translate_span,
+		vanished_range, weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
 	use alacritty_terminal::index::{Column, Line, Point};
 	use alacritty_terminal::term::{Config as TermConfig, Term};
-	use alacritty_terminal::vte::ansi::Processor;
+	use alacritty_terminal::vte::ansi::{CursorShape, Processor};
 
 	struct VoidListener;
 	impl EventListener for VoidListener {
@@ -3946,6 +3960,47 @@ mod tests {
 		assert!(
 			back <= CURSOR_MAX_LAG + 0.001,
 			"leftward lag capped too: {back}"
+		);
+	}
+
+	// A TUI hides the cursor to repaint (CSI ?25l) and parks it wherever the paint
+	// ended - commonly the far bottom-right cell. Ignore DECTCEM and that parked
+	// position gets a cursor drawn on it, alternating with the real one at repaint
+	// rate, which is faster than any blink. Visibility is a MODE; the shape carries
+	// nothing about it, so asking the shape alone can never answer this.
+	#[test]
+	fn a_hidden_cursor_is_not_drawn_where_the_app_parked_it() {
+		let shape = |t: &Term<VoidListener>| shown_cursor_shape(*t.mode(), t.cursor_style().shape);
+		let mut term = term_fed(20, 6, 0, "");
+		assert_ne!(
+			shape(&term),
+			CursorShape::Hidden,
+			"shown until an app says otherwise"
+		);
+
+		// hide, then park at the bottom-right the way a repaint leaves it
+		feed(&mut term, "[?25l[6;20H");
+		assert_eq!(
+			shape(&term),
+			CursorShape::Hidden,
+			"hidden while the app repaints"
+		);
+		feed(&mut term, "[?25h");
+		assert_ne!(
+			shape(&term),
+			CursorShape::Hidden,
+			"back when the app shows it again"
+		);
+
+		// a shape the app set (DECSCUSR) survives while shown and is still suppressed
+		// while hidden - the two are independent, which is the whole point
+		feed(&mut term, "[5 q");
+		assert_eq!(shape(&term), CursorShape::Beam, "DECSCUSR beam");
+		feed(&mut term, "[?25l");
+		assert_eq!(
+			shape(&term),
+			CursorShape::Hidden,
+			"hidden outranks the shape"
 		);
 	}
 
