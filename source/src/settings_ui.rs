@@ -5668,6 +5668,67 @@ mod tests {
 		}
 	}
 
+	// The draw path has no other cover, and it is where a new control kind fails
+	// silently: a grid that renders nothing at all still passes every geometry
+	// test above. So this walks what would actually be handed to the renderer.
+	#[test]
+	fn the_grid_draws_a_line_for_every_shell() {
+		let (d, i) = mk_shell_dialog(3);
+		let mut measure = |s: &str| s.chars().count() as f32 * 7.0;
+		let texts = d.texts_dip(d.line_h, &mut measure);
+		let said: Vec<&str> = texts.iter().map(|t| t.text.as_str()).collect();
+		for want in [
+			"Name",
+			"Command",
+			"Last seen",
+			"Active",
+			"Add",
+			"Shell 0",
+			"Shell 1",
+			"Shell 2",
+			"/bin/sh0",
+			"/bin/sh2",
+		] {
+			assert!(said.contains(&want), "the grid never drew {want:?}: {said:?}");
+		}
+		// a shell no scan has vouched for says so rather than leaving a blank
+		assert_eq!(
+			said.iter().filter(|t| **t == "never").count(),
+			3,
+			"one 'last seen' per line"
+		);
+		// and the quads scale with the list rather than being drawn once
+		let count = |n: usize| {
+			let (mut d, _) = mk_shell_dialog(n);
+			d.tab = d.specs[i].tab;
+			let mut m = |s: &str| s.chars().count() as f32 * 7.0;
+			let (fixed, rows) = d.rects_dip(d.line_h, &mut m);
+			let _ = fixed;
+			rows.len()
+		};
+		let (one, three) = (count(1), count(3));
+		assert!(
+			three > one && three - one == 2 * (one - count(0)),
+			"each line costs the same quads: 0->{} 1->{one} 3->{three}",
+			count(0)
+		);
+	}
+
+	// An entry being edited shows the BUFFER, not the stored value - the field
+	// would otherwise look inert while it is typed into.
+	#[test]
+	fn a_grid_field_being_edited_shows_what_is_typed() {
+		let (mut d, _) = mk_shell_dialog(2);
+		d.open_edit(super::shell_field_row(1, false), true);
+		d.select_all();
+		d.insert_str("Half typed");
+		let mut measure = |s: &str| s.chars().count() as f32 * 7.0;
+		let texts = d.texts_dip(d.line_h, &mut measure);
+		let said: Vec<&str> = texts.iter().map(|t| t.text.as_str()).collect();
+		assert!(said.contains(&"Half typed"));
+		assert!(said.contains(&"Shell 0"), "and the other line is untouched");
+	}
+
 	// A scan landing while the dialog is open moves BOTH copies, so it does not
 	// read as an edit the user made - and it folds into what they have already
 	// done rather than replacing it.

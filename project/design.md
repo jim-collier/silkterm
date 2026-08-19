@@ -306,7 +306,9 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 ### The shell list and how it is filled
 
-- The shells a new tab can be started with are one list, stored in the config as `shells.<key>` with a title, a command, an active flag and a comment. File order is list order, which is also menu order. It is a plain part of the config, so it can be hand-edited, and it is what the Settings "Shells" tab will edit when it is built - the list came first on purpose, so the tab is only an editor for something that already works.
+- The shells a new tab can be started with are one list, stored in the config as `shells.<key>` with a title, a command, an active flag, a comment, and the date a scan last found the program installed. File order is list order, which is also menu order. It is a plain part of the config, so it can be hand-edited, and the Settings dialog's "Shell" tab is an editor for something that already works - the list came first on purpose.
+
+- **The list names the default shell: its first switched-on entry.** There was a separate `shell.default` setting saying the same thing, and two places claiming to name one shell can only ever disagree; one rule that is visible in the list is worth more than a second field. A config that carried the old setting has that entry moved to the top of the list, once, and the line removed - the value was the user's own statement of which shell they meant, so it is carried rather than dropped. An initial population is led by the shell the user logs in with, which is what makes the default right without their having said anything.
 
 - Finding installed shells is background work that starts a few seconds after the window is genuinely on screen. It stats every directory on PATH and, on Windows, reads the registry - any of which can be a mount or a hive that answers slowly - so none of it may sit between launch and the first frame. It runs on its own thread and the result is folded in when it arrives, the same shape the wallpaper pipeline uses.
 
@@ -318,7 +320,11 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - WSL distributions are read from the registry, never by asking `wsl.exe`. A WSL2 distribution lives in a virtual disk, and listing what is installed must not be the thing that boots a virtual machine - that would be slow, surprising, and arguably a security problem for the user. Each distribution is offered whole, running its own default shell; anyone who wants a particular shell inside one edits the entry to say so.
 
-- The list is no part of what the Settings dialog edits, so the dialog carries the live one through untouched on Apply. A dialog opened before a scan landed still holds the empty list it copied then, and writing that back would empty the menu for the rest of the session while the file on disk still had every shell in it.
+- **The Shell tab is the one place allowed to write the list, and a scan landing while it is open is folded into it rather than fought with.** Everywhere else the dialog carries the live list through untouched on Apply: a dialog that opened before a scan landed would otherwise write back the empty list it copied then, emptying the menu for the rest of the session while the file on disk still had every shell in it. The tab needs to write it, so instead the scan is folded into BOTH of the dialog's copies - the edited one, so the user sees what turned up, and the baseline, so the fold does not read as an edit they made. Because a scan only ever appends and switches off, folding it into work already done cannot undo any of it.
+
+- The grid edits every field in the row rather than through a popup: it costs fewer clicks and reuses the field machinery the dialog already has. Four columns are fixed-width and the command takes whatever width is left, since it is the one value that is routinely too long to read at a glance. "Last seen" is read-only - it is the program's own note about the entry, and it is what makes a switched-off shell explicable. The command is required, which is enforced in the two places it can be broken: emptying the field leaves the stored command standing, and an entry that never got one is dropped on the way out of the dialog rather than written as a shell that names nothing to run.
+
+- Removing an entry asks first, and moving one does not. Doing the opposite undoes a move; nothing undoes a removal.
 
 ### Render Loop Sketch
 
