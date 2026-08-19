@@ -85,7 +85,8 @@ pub fn timed<T>(counter: &AtomicU64, body: impl FnOnce() -> T) -> T {
 // time and no CPU, so a wall-clock render figure on its own cannot say whether
 // the main thread is working or waiting.
 #[cfg(windows)]
-fn cpu_seconds() -> (f64, f64) {
+#[allow(clippy::unnecessary_wraps)] // the other platforms answer None
+fn cpu_seconds() -> Option<(f64, f64)> {
 	use std::ptr::from_mut;
 	use windows_sys::Win32::Foundation::FILETIME;
 	use windows_sys::Win32::System::Threading::{
@@ -111,13 +112,15 @@ fn cpu_seconds() -> (f64, f64) {
 		GetThreadTimes(GetCurrentThread(), created, exited, kernel, user);
 		let thread = secs(*kernel) + secs(*user);
 		GetProcessTimes(GetCurrentProcess(), created, exited, kernel, user);
-		(thread, secs(*kernel) + secs(*user))
+		Some((thread, secs(*kernel) + secs(*user)))
 	}
 }
 
+// Nothing equivalent is wired up elsewhere yet, and a pair of zeroes would read
+// as "this thread did nothing" rather than "not measured here".
 #[cfg(not(windows))]
-fn cpu_seconds() -> (f64, f64) {
-	(0.0, 0.0)
+fn cpu_seconds() -> Option<(f64, f64)> {
+	None
 }
 
 // Scope timer for a whole function, where wrapping the body in a closure would
@@ -149,7 +152,7 @@ pub fn report() {
 	if !on() {
 		return;
 	}
-	let (thread_cpu, process_cpu) = cpu_seconds();
+	let cpu = cpu_seconds();
 	let ms = |counter: &AtomicU64| counter.load(Relaxed) as f64 / 1e6;
 	eprintln!(
 		"[perf] wakeups {} passes {} frames {} | render {:.0}ms (build {:.0}ms) note {:.0}ms | lock misses {}",
@@ -173,5 +176,7 @@ pub fn report() {
 		ms(&ENCODE_NS),
 		ms(&SUBMIT_NS),
 	);
-	eprintln!("[perf] cpu: this thread {thread_cpu:.2}s of process {process_cpu:.2}s");
+	if let Some((thread_cpu, process_cpu)) = cpu {
+		eprintln!("[perf] cpu: this thread {thread_cpu:.2}s of process {process_cpu:.2}s");
+	}
 }
