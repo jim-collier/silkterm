@@ -447,6 +447,29 @@ fn entry_label(entry: &Entry) -> Option<&str> {
 	}
 }
 
+// The first accelerator letter two rows of one menu both claim, if any.
+//
+// Typing a letter picks the FIRST row carrying it, so a duplicate does not read
+// as a duplicate - it silently makes the LATER row unreachable from the
+// keyboard, which is why this is asserted where a menu is built rather than
+// left to be noticed.
+fn accel_clash(entries: &[Entry]) -> Option<char> {
+	let mut seen: Vec<char> = Vec::new();
+	for entry in entries {
+		let Some((label, pos)) = entry_accel(entry) else {
+			continue;
+		};
+		let Some(ch) = label[pos..].chars().next().map(|c| c.to_ascii_lowercase()) else {
+			continue;
+		};
+		if seen.contains(&ch) {
+			return Some(ch);
+		}
+		seen.push(ch);
+	}
+	None
+}
+
 // The label and the byte offset of its accelerator letter, for a row that has one.
 fn entry_accel(entry: &Entry) -> Option<(&str, usize)> {
 	match entry {
@@ -488,10 +511,12 @@ fn mia(ch: char, label: &str, action: MenuAction) -> Entry {
 		accel: accel_at(label, ch),
 	}
 }
-fn msub(ch: char, label: &str, items: Vec<Entry>) -> Entry {
+// `ch` is optional because accelerators have to be unique WITHIN a menu, and a
+// row that appears in two of them cannot always spell it the same way.
+fn msub(ch: Option<char>, label: &str, items: Vec<Entry>) -> Entry {
 	Entry::Sub {
 		label: label.into(),
-		accel: accel_at(label, ch),
+		accel: ch.and_then(|ch| accel_at(label, ch)),
 		items,
 	}
 }
@@ -517,7 +542,7 @@ fn mta(ch: char, on: bool, label: &str, action: MenuAction) -> Entry {
 // the titles and the order; only the active entries are offered, and the action
 // carries the index into the WHOLE list so a disabled entry between two active
 // ones cannot shift what a click runs.
-fn shell_submenu() -> Vec<Entry> {
+fn shell_submenu(accel: Option<char>) -> Vec<Entry> {
 	let items: Vec<Entry> = config::settings()
 		.shells
 		.iter()
@@ -528,7 +553,7 @@ fn shell_submenu() -> Vec<Entry> {
 	if items.is_empty() {
 		Vec::new()
 	} else {
-		vec![msub('w', "New Tab with Shell", items)]
+		vec![msub(accel, "New Tab with Shell", items)]
 	}
 }
 
@@ -1368,7 +1393,11 @@ impl State {
 				Entry::Sep,
 			]);
 		}
-		let shells = shell_submenu();
+		// no accelerator here: this menu already spends every letter the label
+		// offers - 'w' on "Hide window frame", 'H' on "Split Horizontal", 'S' on
+		// "Paste Selection" - and a duplicate would make the older item
+		// unreachable, since the first match wins
+		let shells = shell_submenu(None);
 		entries.extend([
 			mia('C', "Copy (Ctrl+Shift+C)", MenuAction::Copy),
 			mia('P', "Paste (Ctrl+Shift+V)", MenuAction::Paste),
@@ -1424,6 +1453,11 @@ impl State {
 		mx: f32,
 		my: f32,
 	) -> ContextMenu {
+		debug_assert!(
+			accel_clash(&entries).is_none(),
+			"two rows of one menu claim the accelerator {:?}",
+			accel_clash(&entries)
+		);
 		let attrs = crate::text::ui_attrs();
 		let mut max_label_w: f32 = 0.0;
 		let mut any_sub = false;
@@ -1679,7 +1713,7 @@ impl State {
 			],
 			3 => {
 				let mut items = vec![mia('N', "New Tab (Ctrl+Shift+T)", MenuAction::NewTab)];
-				items.extend(shell_submenu());
+				items.extend(shell_submenu(Some('S')));
 				items.extend([
 					Entry::Sep,
 					mia('C', "Close Tab (Ctrl+Shift+W)", MenuAction::CloseTab),
@@ -5459,8 +5493,8 @@ impl State {
 #[cfg(test)]
 mod tests {
 	use super::{
-		ContextMenu, Entry, MenuAction, TAB_CLOSE_M, accel_at, focus_ring, key_is_typed,
-		menu_metrics, msub, pace_frame, tab_close_box,
+		ContextMenu, Entry, MenuAction, TAB_CLOSE_M, accel_at, accel_clash, focus_ring,
+		key_is_typed, menu_metrics, mia, msub, mta, pace_frame, tab_close_box,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
@@ -5522,6 +5556,24 @@ mod tests {
 		}
 	}
 
+	// A letter picks the first row carrying it, so a menu that spends one twice
+	// does not read as ambiguous - it quietly makes the later row unreachable.
+	// Every menu is checked for this where it is built.
+	#[test]
+	fn one_menu_never_spends_an_accelerator_twice() {
+		let rows = vec![
+			mia('C', "Copy", MenuAction::Copy),
+			msub(Some('S'), "New Tab with Shell", vec![]),
+			mta('w', false, "Hide window frame", MenuAction::ToggleFrame),
+		];
+		assert_eq!(accel_clash(&rows), None);
+		// 'w' again, which is what the right-click menu would have done had the
+		// submenu row spelled its accelerator the way the Tabs menu's does
+		let mut clashing = rows;
+		clashing.insert(1, msub(Some('w'), "New Tab with Shell", vec![]));
+		assert_eq!(accel_clash(&clashing), Some('w'));
+	}
+
 	// A submenu row is an ordinary row to the pointer and to the keyboard - only
 	// what ACTIVATING it does is different. Treating it as a separator instead
 	// (which is what the old two-arm matches did) leaves it unhoverable and
@@ -5533,7 +5585,7 @@ mod tests {
 			200.0,
 			vec![
 				test_item("One"),
-				msub('w', "With Shell", vec![test_item("Bash")]),
+				msub(Some('w'), "With Shell", vec![test_item("Bash")]),
 				Entry::Sep,
 				test_item("Two"),
 			],
@@ -5576,7 +5628,7 @@ mod tests {
 	// it too - otherwise a submenu overlapping either band loses its clicks to it.
 	#[test]
 	fn a_click_in_the_submenu_still_counts_as_a_click_on_the_menu() {
-		let mut parent = test_menu(0.0, 200.0, vec![msub('w', "With Shell", vec![])]);
+		let mut parent = test_menu(0.0, 200.0, vec![msub(Some('w'), "With Shell", vec![])]);
 		let sub = test_menu(200.0, 120.0, vec![test_item("Bash")]);
 		let (x, y) = (sub.x + 10.0, sub.row_top(0) + 2.0);
 		assert!(!parent.hit(x, y));
