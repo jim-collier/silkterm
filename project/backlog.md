@@ -662,6 +662,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Fix: color glyphs are now painted directly - the paint graph is walked and rendered through a small 2D back end (transforms, clip and layer stacks, solid/linear/radial/sweep fills, Porter-Duff and blend compositing), then handed to the renderer's color atlas as a per-cell image fitted to the cell box. Chars with no color glyph are untouched and still take the monochrome fallback path.
 	- `color_emoji` (default true) turns it off, which restores the monochrome outlines.
 
+- ✅ Paste sent the clipboard bytes unchanged, which breaks a multi-line paste on Windows and leaves bracketed paste open to injection:
+	- Description: two separate faults in the same place. (1) With no bracketed paste, an application cannot tell a paste from typing, so a line break has to arrive as the Enter key delivers one - a lone CR. We sent whatever the clipboard held, and a Windows clipboard is CRLF, so every row also carried an LF and left the shell sitting on a continuation line. That is the ordinary case on Windows, not an edge one. (2) Inside a bracketed paste, an ESC in the text closes the bracket early - the application is watching for `ESC[201~` - and everything after it is then read as keystrokes rather than as data, so pasted content can run a command nobody typed.
+	- Fixed: one helper decides what actually goes on the wire. Unbracketed, every flavour of line break reduces to a single CR; bracketed, the text passes through as the application asked for it except that ESC is dropped.
+	- Steps to reproduce: paste several lines into a shell that has not enabled bracketed paste. Before the fix each line was followed by a continuation prompt.
+	- Not yet confirmed in the running app - the unit tests are mutation-checked, but the on-screen check needs a window that takes focus, so it is left for a moment when that is not disruptive.
+
 - ✅ Wallpaper scan accepts formats that can't be loaded:
 	- Description: the folder scan counts `webp`, `bmp`, `gif`, `tiff` and `tif` as wallpapers, but only PNG and JPEG can actually be decoded. A file in one of the other formats passes the scan, gets picked by rotation, and then fails to load.
 	- Fixed: the scan now accepts only the formats that decode. Adding the other decoders was the alternative, but each one grows the binary for a format nothing in the collection uses.
