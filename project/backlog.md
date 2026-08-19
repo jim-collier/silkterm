@@ -102,10 +102,17 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Result: process CPU down about a third and the window thread down more than half, with throughput unchanged.
 	- Fell out of it: a `SILK_PERF` counter set that reports where a burst of output went - notices, loop passes, frames, and the time inside each part of a frame, plus this thread's CPU against the whole process. It is what turned "the window feels busy" into a number.
 
-- 🔘 In a narrow window the "Copy on: select / output" checkboxes overlap the menu titles.
+- 🔘 In a narrow window the "Copy on: select / output" checkboxes overlap the menu titles. Hide the section when there is no room for it.
 	- The pair is right-aligned to the window edge and the titles run left to right, so below a certain width they simply cross: seen on a 384px-wide window, "Copy on:" lands on top of "Panes" and "select" on top of "Help", both drawn, neither readable.
 	- Not new and not DPI-related - it reads the same at any scale factor, since both sides scale together. The width it starts at just moves with the interface font.
-	- Wants a rule for what gives way: drop the "Copy on:" lead-in first, then the words, keeping the two boxes; or move the pair down onto the tab bar.
+	- Wanted: shed it responsively, widest arrangement that still clears the titles. Drop the "Copy on:" lead-in first, then the two words, keeping the checkboxes - they carry the state, the words only name it - and drop the whole cluster when even the boxes cannot clear. It comes back on its own as the window widens.
+	- Note this crosses an existing rule: the pair is described in the source as always visible, so that a person can always see when the focused pane is auto-copying. Hiding it is still the better of the two, since an unreadable pile of overlapping text says less about the copy state than a clean absence does - but the staged fallback is what keeps the state showing down to a very narrow window.
+
+- 🔘 The menu titles and the "Copy on" section do not sit on the same baseline.
+	- Only noticeable once they are close enough to compare, which is the same narrow window as above - normally a wide gap separates them.
+	- Measured: the copy labels sit one pixel high at 1x, and it scales, so it is two at 2x. The offset is exactly half a descent.
+	- Both placements are deliberate and neither is wrong on its own. The titles center their ascender-top..baseline box, since they carry ascenders and no descenders and centering the full line would leave the empty descent reading as space below. The copy labels center the full ascent..descent box, because "select" and "output" are lowercase with descenders and read bottom-heavy the other way.
+	- So the fix is a rule for text sharing one bar rather than a change to either helper: pick one of the two for everything in the menu bar, or align the two runs on their baselines and let the centering differ only between bars.
 
 - 🔘 A wheel gesture can land by moving backwards about one line.
 	- Measured on the shipped demo: at the end of a scroll-back the view goes forward all the way, then hops back 19px (the row pitch is 21) and stays. The top row reads `.dircolors`, then `.gitconfig`, then `.dircolors` again over about a third of a second, which is a visible bounce against the direction of the gesture.
