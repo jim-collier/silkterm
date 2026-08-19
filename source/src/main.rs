@@ -20,6 +20,7 @@ mod input;
 mod links;
 mod palette;
 mod pane;
+mod perf;
 mod scrim;
 mod scroll;
 mod settings_ui;

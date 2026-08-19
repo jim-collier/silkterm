@@ -40,22 +40,62 @@ pub enum UserEvent {
 	VtSwitched,
 }
 
+// One line to roll the folding back, should a platform ever need every notice
+// delivered separately.
+const COALESCE_WAKEUPS: bool = true;
+
+// One outstanding "there is new output" notice per pane.
+//
+// The engine finishes a read cycle roughly every 900 bytes under a flood, and
+// each cycle used to become its own window event: measured on 32 MiB of output,
+// about 20,000 of them, costing 2.5 SECONDS of main-thread CPU inside the OS
+// message pump alone - more than the parsing and the drawing put together, for
+// a message that says nothing but "look again".
+//
+// Nothing is lost by folding them. The notice carries no payload: whenever the
+// window gets round to one it reads the grid as it stands, so a queue of twenty
+// identical notices produced twenty identical reads. `handled` is cleared BEFORE
+// the window acts on it, so a cycle that lands mid-handling posts a fresh notice
+// rather than being dropped.
+#[derive(Default)]
+pub struct WakeGate {
+	pending: std::sync::atomic::AtomicBool,
+}
+
+impl WakeGate {
+	// True when this notice has to be posted (nothing outstanding).
+	pub fn post(&self) -> bool {
+		!COALESCE_WAKEUPS || !self.pending.swap(true, std::sync::atomic::Ordering::AcqRel)
+	}
+
+	pub fn handled(&self) {
+		self.pending
+			.store(false, std::sync::atomic::Ordering::Release);
+	}
+}
+
 // bridges alacritty's PTY thread back to the winit loop
 #[derive(Clone)]
 pub struct EventProxy {
 	id: PaneId,
 	proxy: EventLoopProxy<UserEvent>,
+	wake: Arc<WakeGate>,
 }
 
 impl EventProxy {
 	pub fn new(id: PaneId, proxy: EventLoopProxy<UserEvent>) -> Self {
-		Self { id, proxy }
+		Self {
+			id,
+			proxy,
+			wake: Arc::new(WakeGate::default()),
+		}
 	}
 }
 
 impl EventListener for EventProxy {
 	fn send_event(&self, event: Event) {
 		let _ = match event {
+			Event::Wakeup if !self.wake.post() => Ok(()), // one notice is enough
 			Event::Wakeup => self.proxy.send_event(UserEvent::Wakeup(self.id)),
 			Event::Title(t) => self.proxy.send_event(UserEvent::Title(self.id, t)),
 			Event::ResetTitle => self
@@ -93,6 +133,8 @@ impl Dimensions for TermDimensions {
 
 pub struct TermInstance {
 	pub term: Arc<FairMutex<Term<EventProxy>>>,
+	// same gate the engine's thread posts through, so the window can re-arm it
+	notifier: EventProxy,
 	pub cols: usize,
 	pub lines: usize,
 	sender: EventLoopSender,
@@ -123,6 +165,12 @@ pub struct TermInstance {
 }
 
 impl TermInstance {
+	// The window has taken delivery of an output notice, so the next read cycle
+	// posts a fresh one (see WakeGate).
+	pub fn wake_handled(&self) {
+		self.notifier.wake.handled();
+	}
+
 	// command is owned by the spawned terminal conceptually; the by-value
 	// constructor input threads through split_at/spawn_pane as a move
 	#[allow(clippy::needless_pass_by_value)]
@@ -187,6 +235,7 @@ impl TermInstance {
 			.child_watcher()
 			.pid()
 			.map_or(0, std::num::NonZeroU32::get);
+		let notifier = event_proxy.clone();
 		let event_loop = EventLoop::new(term.clone(), event_proxy, pty, false, false)?;
 		let sender = event_loop.channel();
 		let handle = event_loop.spawn();
@@ -197,6 +246,7 @@ impl TermInstance {
 
 		Ok(Self {
 			term,
+			notifier,
 			cols,
 			lines,
 			sender,
@@ -468,7 +518,19 @@ fn process_start_time(pid: u32) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-	use super::is_command_child;
+	use super::{WakeGate, is_command_child};
+
+	// Folding the notices may never LOSE one: the window clears the gate before
+	// it looks at the grid, so a read cycle that lands mid-handling posts again.
+	#[test]
+	fn one_notice_stands_until_the_window_takes_it() {
+		let gate = WakeGate::default();
+		assert!(gate.post()); // nothing outstanding: this one goes
+		assert!(!gate.post()); // ... and the next hundred ride on it
+		assert!(!gate.post());
+		gate.handled();
+		assert!(gate.post());
+	}
 
 	// A recycled pid is the failure this guard exists for: the row claims the
 	// shell as its parent but started before the shell did, so it belongs to
