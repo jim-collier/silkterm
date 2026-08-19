@@ -15,6 +15,18 @@ fn main() {
 	println!("cargo:rerun-if-env-changed=CARGO_PKG_VERSION");
 	println!("cargo:rerun-if-env-changed=CARGO_PKG_DESCRIPTION");
 
+	// Nothing here belongs in a non-Windows binary, and the no-op has to be
+	// explicit: on a WINDOWS host, embed-resource picks its compiler from the
+	// host rather than the target, so it happily ran rc.exe and handed the
+	// resulting COFF .lib to whatever linker was in play - a Linux cross-build
+	// from this box then died with "invalid token in LD script" on it. On a Linux
+	// host the same call already came to nothing, so this changes no behavior
+	// anywhere; it just stops the one host that got it wrong.
+	let target = env::var("TARGET").unwrap_or_default();
+	if !target.contains("windows") {
+		return;
+	}
+
 	let manifest = env::var("CARGO_MANIFEST_DIR").unwrap();
 	let out = env::var("OUT_DIR").unwrap();
 
@@ -46,7 +58,6 @@ fn main() {
 	// can't link. So cross-building a gnu target from an msvc host, drive windres
 	// ourselves for a real COFF object. Every other path (Linux cross, gnu host)
 	// already uses windres via embed-resource, so leave it be.
-	let target = env::var("TARGET").unwrap_or_default();
 	let host = env::var("HOST").unwrap_or_default();
 	let gnu_target = target.ends_with("-windows-gnu") || target.ends_with("-windows-gnullvm");
 	if gnu_target && host.ends_with("-windows-msvc") {

@@ -5689,7 +5689,10 @@ mod tests {
 			"/bin/sh0",
 			"/bin/sh2",
 		] {
-			assert!(said.contains(&want), "the grid never drew {want:?}: {said:?}");
+			assert!(
+				said.contains(&want),
+				"the grid never drew {want:?}: {said:?}"
+			);
 		}
 		// a shell no scan has vouched for says so rather than leaving a blank
 		assert_eq!(

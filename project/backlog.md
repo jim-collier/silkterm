@@ -311,6 +311,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 				- If an existing already defined shell exe name isn't found by explicit path, or in the environment path variable, disable it (don't delete it).
 			- ✅ All of the behavior above is built and running - see the auto-detect item under "New features and enhancements".
 
+- ✅ Cross-building a Linux target from the Windows box failed at the link step. The build script embeds the Windows icon and version strings, and said in its own comment that it does nothing for a non-Windows target - but it only actually did nothing when the build was running on Linux. On Windows it compiled the resource anyway and handed the result to the Linux linker, which read it as a broken linker script. It now stops where it always claimed to. Nothing changes for either Windows build or for cross-building from Linux.
+
 - 🔘 Option: Dynamic theme based on wallpaper
 	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
 
