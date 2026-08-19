@@ -26,6 +26,7 @@
 	- [Attention colors and dialog chrome](#attention-colors-and-dialog-chrome)
 	- [Groups and sub-groups in the Settings dialog](#groups-and-sub-groups-in-the-settings-dialog)
 	- [Saved themes](#saved-themes)
+	- [The shell list and how it is filled](#the-shell-list-and-how-it-is-filled)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Output notices under a flood](#output-notices-under-a-flood)
 	- [Environment](#environment)
@@ -302,6 +303,22 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - A saved theme may take a built-in's name and stand in for it. That gives "customize a built-in" an obvious home, and deleting the saved copy puts the built-in back rather than leaving the name pointing at nothing. Built-ins themselves cannot be renamed or deleted.
 
 - Picking a theme takes on its colors wholesale rather than keeping the previous theme's tweaks on top. A picker that visibly changed nothing on every color that had been edited would read as broken, and those tweaks belonged to the theme being left behind.
+
+### The shell list and how it is filled
+
+- The shells a new tab can be started with are one list, stored in the config as `shells.<key>` with a title, a command, an active flag and a comment. File order is list order, which is also menu order. It is a plain part of the config, so it can be hand-edited, and it is what the Settings "Shells" tab will edit when it is built - the list came first on purpose, so the tab is only an editor for something that already works.
+
+- Finding installed shells is background work that starts a few seconds after the window is genuinely on screen. It stats every directory on PATH and, on Windows, reads the registry - any of which can be a mount or a hive that answers slowly - so none of it may sit between launch and the first frame. It runs on its own thread and the result is folded in when it arrives, the same shape the wallpaper pipeline uses.
+
+- **What a scan may do to the list is deliberately lopsided.** It may add a shell it found, and it may switch off one whose program has gone - keeping the entry, its title, its flags and its place, since a shell that is merely uninstalled is not a shell the user stopped wanting. It may never switch one back on, and never rewrite a command line. A scan cannot tell a program that came back from a switch somebody turned off on purpose, and the cost of guessing wrong runs one way: quietly re-enabling something the user disabled is worse than leaving them one tick to undo.
+
+- Two shells count as one entry when they run the same program with the same arguments. Which program that is has to be resolved rather than compared as text, because the same shell is written several ways (`bash`, `/bin/bash`) and, on Windows, three environments ship a program called `bash` and they are not the same shell. Where a stored entry resolves nowhere at all, a bare name match is enough - that is what lets a reinstall re-arm the disabled entry it belongs to instead of landing beside it as a second copy.
+
+- The user's own login shell leads the list, with a twin below it that starts without reading its startup files. Each shell spells that its own way (`--norc`, `--no-rcs`, `--no-config`, `-NoProfile`, `/d`), so the flag is per shell and the twin only exists where there is one. Only the login shell gets a twin; every shell having one would double a list nobody asked to be long.
+
+- WSL distributions are read from the registry, never by asking `wsl.exe`. A WSL2 distribution lives in a virtual disk, and listing what is installed must not be the thing that boots a virtual machine - that would be slow, surprising, and arguably a security problem for the user. Each distribution is offered whole, running its own default shell; anyone who wants a particular shell inside one edits the entry to say so.
+
+- The list is no part of what the Settings dialog edits, so the dialog carries the live one through untouched on Apply. A dialog opened before a scan landed still holds the empty list it copied then, and writing that back would empty the menu for the rest of the session while the file on disk still had every shell in it.
 
 ### Render Loop Sketch
 

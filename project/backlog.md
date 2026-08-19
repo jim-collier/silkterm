@@ -308,20 +308,28 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 								- Will require special logic for Windows, to add the commands to launch named WSL1 or 2 distros
 				- If a new shell exe is found that doesn't already exist in the stored list, add it. (User can disable it later.)
 				- If an existing already defined shell exe name isn't found by explicit path, or in the environment path variable, disable it (don't delete it).
+			- ✅ All of the behavior above is built and running - see the auto-detect item under "New features and enhancements". What is left for this tab is the UI: the grid, the row buttons, and the edit and delete popups.
 
 - 🔘 Option: Dynamic theme based on wallpaper
 	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
 
-- 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
-	- The background-work pattern this needs is in place (see the wallpaper item under Done): a worker thread posts its result back to the window, which folds it in. Reuse it rather than building a second one.
+- ✅ After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
+	- Done: a few seconds after the window is genuinely on screen, a background thread looks for installed shells and folds what it finds into the list in the config. It looks on PATH, at the places a shell is installed outside it, and - on Linux - at the system's own list of login shells; the user's own shell leads the list, with a twin below it that starts without reading its startup files (each shell's own flag: `--norc`, `--no-rcs`, `--no-config`, `-NoProfile`, `/d`).
+	- Windows finds installed WSL distributions too, from the registry rather than by asking `wsl.exe` - listing them must never be the thing that boots a virtual machine. Each is offered whole, running its own default shell, which the user can narrow by editing the entry.
+	- What a scan may do to the list is deliberately lopsided: it ADDS a shell it found and it SWITCHES OFF one whose program has gone (keeping the entry, its title and its place). It never switches one back on and never rewrites a command line - it has no way to tell a program that came back from a switch the user turned off on purpose.
+	- The list lives in the config as `shells.<key>` with a title, a command, an active flag and a comment, in file order - which is the order the menu offers them in. A scan that finds nothing new writes nothing at all.
+	- Beyond the names asked for: Nushell, Elvish, Xonsh, YSH/OSH, Murex, Ion, Es, rc, Yash, mksh, tcsh, Git Bash, MSYS2, Cygwin, PyCmd, and the language shells (Python 3, IPython, Node).
 
 - 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
 	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with.
 	- 🔘 Windows: the new-pane side works, but reading the source shell's current directory isn't wired up there yet - new tabs/panes keep the old start-dir behavior until then. (Needs Windows host.)
 
-- 🔘 Menu enhancements:
-	- 🔘 "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
-		- Waits on the Settings "Shells" tab (the shell list it draws from).
+- 🛠️ Menu enhancements:
+	- ✅ "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
+		- Done: the row sits under "New Tab" in the Tabs menu and in the right-click menu, and opens a flyout listing every active shell by title. It draws from the stored list, which the background scan above fills in - so it did not have to wait for the Settings "Shells" tab after all; that tab is now only the editor for a list that already exists.
+		- The row is absent entirely while there is no shell to put under it, rather than opening an empty flyout.
+		- A new tab started this way still inherits the current directory - picking a shell says nothing about where to start.
+		- Menus gained submenus to carry it: a flyout opens on hover and on click, keyboard Right enters it and Left and Escape back out one level, and its arrow is drawn rather than set in a font (no interface font can be relied on for one, the same reason the tab close mark is drawn).
 
 - ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
 	- ✅ Add Windows support. It was inert there: a Windows console has no foreground process group, so the terminal always believed the shell was at its prompt and the capture fired about a tenth of a second into every command - copying a fragment, or far more often nothing at all.
@@ -451,8 +459,9 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- 🛠️ The shell configuration is stored in the config file as a simple key:value list of shell names and command lines. Command lines may have spaces, single quotes, and/or double quotes in them.
 		- Done: a single default_shell string key, argv-split so it handles spaces and quotes.
 		- Note: the named key:value list and its consumers (the grid editor and Tab/Pane menus below) are still hand-rolled work.
-		- 🔘 The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
-			- Note: hand-rolled, follows the named-shell list above.
+		- 🛠️ The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
+			- Done: the list itself, and the Tab half of it - "New Tab with Shell" is in the Tabs menu and in the right-click menu, off the stored `shells.*` list.
+			- 🔘 Still to do: the same for a new PANE (split), and the two bracketed rows - "[SilkTerm default]" at the top where the config names one, "[system default]" always at the bottom.
 
 - 🛠️ Command-line options:
 	- Done (part 1, the options engine):

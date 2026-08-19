@@ -161,6 +161,7 @@ pub const MENU_PAD_X: f32 = 12.0;
 pub const MENU_ITEM_PAD_Y: f32 = 6.0;
 pub const MENU_SEP_H: f32 = 9.0; // height of a separator row (line + spacing)
 pub const MENU_GUTTER: f32 = 20.0; // left checkmark gutter; item text starts after it
+pub const MENU_SUB_ARROW: f32 = 14.0; // right column a submenu row draws its arrow in
 
 // How a background image fills the window.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -271,6 +272,9 @@ pub struct Settings {
 	// Themes saved from the Settings dialog, whole, in file order. They resolve
 	// ahead of the built-ins, so one may carry a built-in's name.
 	pub user_themes: Vec<crate::theme::UserTheme>,
+	// The shells the Tabs menu offers, in file order. Written by the background
+	// scan (shells.rs) and by hand; see `write_shells` for what a scan may touch.
+	pub shells: Vec<crate::shells::ShellEntry>,
 }
 
 impl Settings {
@@ -389,6 +393,7 @@ impl Default for Settings {
 			theme: "SilkTerm".to_string(),
 			theme_mode: "dark".to_string(),
 			user_themes: Vec::new(),
+			shells: Vec::new(),
 		}
 	}
 }
@@ -632,6 +637,7 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 		doc.set_string("theme_mode", s.theme_mode.as_str());
 	}
 	write_user_themes(&mut doc, &orig.user_themes, &s.user_themes);
+	write_shells(&mut doc, &orig.shells, &s.shells);
 
 	if s.use_system_font != orig.use_system_font {
 		doc.set_bool("font.use_system_family", s.use_system_font);
@@ -994,6 +1000,7 @@ struct RawConfig {
 	hyperlink_open_command: Option<String>,
 	colors: RawColors,
 	user_themes: Vec<crate::theme::UserTheme>,
+	shells: Vec<crate::shells::ShellEntry>,
 }
 
 #[derive(Default)]
@@ -1220,6 +1227,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 			scrollbar_trough: r.s("colors.scrollbar_trough"),
 		},
 		user_themes: read_user_themes(&r.doc),
+		shells: read_shells(&r.doc),
 	}
 }
 
@@ -1302,6 +1310,66 @@ fn write_user_themes(
 			let ansi: Vec<String> = pal.ansi.iter().map(|c| format_hex(*c)).collect();
 			let ansi: Vec<&str> = ansi.iter().map(String::as_str).collect();
 			doc.set_string_array(&format!("{at}.{mode}.ansi"), &ansi);
+		}
+	}
+}
+
+// Stored shells, in file order - which IS the menu's order. An entry with no
+// command is skipped: a title alone names nothing to run. Everything else falls
+// back rather than dropping the entry, so a hand-written or half-written block
+// still yields a usable shell.
+fn read_shells(doc: &shcl::Document) -> Vec<crate::shells::ShellEntry> {
+	let mut out = Vec::new();
+	for slug in doc.children("shells") {
+		let text = |key: &str| {
+			doc.get_string(&format!("shells.{slug}.{key}"))
+				.ok()
+				.map(|v| v.trim().to_string())
+				.filter(|v| !v.is_empty())
+		};
+		let Some(command) = text("command") else {
+			continue;
+		};
+		out.push(crate::shells::ShellEntry {
+			title: text("title").unwrap_or_else(|| slug.clone()),
+			command,
+			active: doc
+				.get_bool(&format!("shells.{slug}.active"))
+				.unwrap_or(true),
+			comment: text("comment").unwrap_or_default(),
+			slug,
+		});
+	}
+	out
+}
+
+// Bring the file's `shells.*` subtrees in line with the list in memory. Same
+// shape as the themes above - an entry that changed at all is dropped and
+// rewritten whole, so a field that no longer has a value cannot survive under a
+// key that stopped setting it - and, as there, an entry that did not change is
+// not touched, which is what keeps a scan that found nothing new from rewriting
+// the file at all.
+fn write_shells(
+	doc: &mut shcl::Document,
+	orig: &[crate::shells::ShellEntry],
+	now: &[crate::shells::ShellEntry],
+) {
+	for old in orig {
+		if !now.iter().any(|e| e.slug == old.slug) {
+			doc.remove(&format!("shells.{}", old.slug));
+		}
+	}
+	for entry in now {
+		if orig.iter().any(|e| e == entry) {
+			continue;
+		}
+		let at = format!("shells.{}", entry.slug);
+		doc.remove(&at);
+		doc.set_string(&format!("{at}.title"), &entry.title);
+		doc.set_string(&format!("{at}.command"), &entry.command);
+		doc.set_bool(&format!("{at}.active"), entry.active);
+		if !entry.comment.is_empty() {
+			doc.set_string(&format!("{at}.comment"), &entry.comment);
 		}
 	}
 }
@@ -1544,6 +1612,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		theme: theme_name,
 		theme_mode,
 		user_themes: raw.user_themes,
+		shells: raw.shells,
 	}
 }
 
@@ -2856,6 +2925,9 @@ shell:
 	## Shell/command for new windows, tabs, and panes when nothing else is given
 	## (CLI --shell and per-pane inheritance take precedence). argv-split, so
 	## "bash --norc" works. Leave blank/commented for the system default shell.
+	## This is separate from the shells offered under "New Tab with Shell", which
+	## live in their own shells.<name> blocks - written for you a few seconds
+	## after launch, by a look around for what is installed.
 	# default: "bash --norc"  ## Default
 
 	## Default command line

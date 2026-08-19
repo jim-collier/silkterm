@@ -34,6 +34,9 @@ pub enum UserEvent {
 	// wallpaper worker (wallpaper.rs): decoded pixels, ready to upload. Boxed -
 	// it carries a whole image, and every other variant is small.
 	WallpaperReady(Box<crate::wallpaper::Loaded>),
+	// shell scan (shells.rs): the stored shell list with whatever the scan found
+	// folded in.
+	ShellsReady(Vec<crate::shells::ShellEntry>),
 	// VT watcher thread (app.rs spawn_vt_watch): the active console changed.
 	// Linux GL path only; never constructed elsewhere.
 	#[cfg_attr(not(target_os = "linux"), allow(dead_code))]

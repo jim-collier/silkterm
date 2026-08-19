@@ -1129,10 +1129,12 @@ pub struct RectInstance {
 	pub pos: [f32; 2],
 	pub size: [f32; 2],
 	pub color: [f32; 4],
-	// params.x = mode (0 solid quad, 1 close-"X" mark, 2 rounded quad),
+	// params.x = mode (0 solid quad, 1 close-"X" mark, 2 rounded quad,
+	// 3 right-pointing triangle for a submenu arrow),
 	// params.y = stroke px for the X, corner radius for the rounded quad.
-	// The X is two 45-degree bars drawn in the fragment shader, so it centers
-	// exactly in the quad (a font glyph never did - baseline metrics vary).
+	// The X and the arrow are drawn in the fragment shader, so each centers
+	// exactly in its quad (a font glyph never did - baseline metrics vary, and
+	// there is no arrow every interface font carries).
 	pub params: [f32; 2],
 }
 
@@ -1342,10 +1344,24 @@ fn round_box(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
     return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
+// Signed distance to a right-pointing isoceles triangle that fills the quad,
+// negative inside. p is the offset from the quad center, half its extent. The
+// two slanted edges are one line mirrored across the x axis; the third is the
+// flat base at the left.
+fn right_triangle(p: vec2<f32>, half: vec2<f32>) -> f32 {
+    let q = vec2<f32>(p.x, abs(p.y));
+    let n = normalize(vec2<f32>(half.y, 2.0 * half.x));
+    return max(dot(q - vec2<f32>(half.x, 0.0), n), -half.x - q.x);
+}
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     var a = in.color.a;
-    if (in.params.x > 1.5) {
+    if (in.params.x > 2.5) {
+        let half = in.size * 0.5;
+        // ~1px linear edge, same convention as the X bars
+        a = a * clamp(0.5 - right_triangle(in.local - half, half), 0.0, 1.0);
+    } else if (in.params.x > 1.5) {
         let half = in.size * 0.5;
         let r = min(in.params.y, min(half.x, half.y));
         // ~1px linear edge, same convention as the X bars
