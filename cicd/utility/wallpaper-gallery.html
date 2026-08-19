@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SilkTerm wallpaper pack</title>
+<meta name="description" content="The wallpapers SilkTerm ships with - browse them full size, page through with the arrow keys.">
+<meta name="color-scheme" content="dark">
+<!--
+	Rendered by cicd/utility/wallpaper-gallery.bash from the pack itself. Edit the
+	template, never the generated page - docs/wallpapers/index.html is overwritten.
+	The generator fills in the raw-image base and the record list marked below.
+-->
+<style>
+	:root {
+		--bg:      #14141a;
+		--panel:   #1c1c24;
+		--edge:    #2c2c38;
+		--fg:      #88eecc;   /* SilkTerm's default foreground */
+		--gold:    #c8a05a;   /* and its focus ring */
+		--text:    #d6d6de;
+		--dim:     #8a8a9a;
+	}
+	* { box-sizing: border-box; }
+	html, body { margin: 0; padding: 0; }
+	body {
+		background: var(--bg);
+		color: var(--text);
+		font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+		-webkit-font-smoothing: antialiased;
+	}
+	a { color: var(--gold); }
+	a:hover { color: var(--fg); }
+
+	header { max-width: 1500px; margin: 0 auto; padding: 30px 20px 12px; }
+	h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; letter-spacing: .2px; color: var(--fg); }
+	.lede { margin: 0 0 4px; color: var(--text); }
+	.meta { margin: 0 0 18px; color: var(--dim); font-size: 13.5px; }
+	.tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+	#q {
+		flex: 1 1 220px; max-width: 340px; padding: 8px 11px;
+		background: var(--panel); border: 1px solid var(--edge); border-radius: 6px;
+		color: var(--text); font: inherit; font-size: 14px;
+	}
+	#q::placeholder { color: #6a6a7a; }
+	#q:focus { outline: none; border-color: var(--gold); }
+	#count { color: var(--dim); font-size: 13px; }
+
+	main { max-width: 1500px; margin: 0 auto; padding: 16px 20px 70px; }
+	#grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+	.tile {
+		position: relative; display: block; padding: 0; border: 0; border-radius: 8px;
+		background: #0d0d12; overflow: hidden; cursor: pointer; aspect-ratio: 16 / 10;
+	}
+	.tile img {
+		width: 100%; height: 100%; object-fit: cover; display: block; opacity: .92;
+		transition: transform .18s ease, opacity .18s ease;
+	}
+	.tile:hover img, .tile:focus-visible img { transform: scale(1.045); opacity: 1; }
+	.tile:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+	.tile b {
+		position: absolute; left: 0; right: 0; bottom: 0; padding: 20px 9px 7px;
+		font: 400 11.5px/1.35 inherit; color: #edeef4; text-align: left; opacity: 0;
+		background: linear-gradient(to top, rgba(6,6,10,.92), rgba(6,6,10,0));
+		transition: opacity .18s ease;
+	}
+	.tile:hover b, .tile:focus-visible b { opacity: 1; }
+	#empty { color: var(--dim); padding: 30px 2px; }
+
+	/* The viewer */
+	#lb {
+		position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column;
+		background: rgba(8,8,12,.965); backdrop-filter: blur(3px);
+	}
+	#lb[hidden] { display: none; }
+	#stage { flex: 1 1 auto; position: relative; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 18px 64px 6px; }
+	#full { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; box-shadow: 0 10px 40px rgba(0,0,0,.55); opacity: 1; transition: opacity .12s ease; }
+	#stage.loading #full { opacity: .25; }
+	#spin { position: absolute; color: var(--dim); font-size: 13px; opacity: 0; transition: opacity .12s ease; pointer-events: none; }
+	#stage.loading #spin { opacity: 1; }
+
+	#cap { flex: 0 0 auto; padding: 10px 64px 20px; text-align: center; }
+	#cap .name { color: var(--fg); font-size: 15px; word-break: break-word; }
+	#cap .cred { color: var(--dim); font-size: 13px; margin-top: 3px; }
+	#cap .cred span + span::before { content: " · "; color: #55555f; }
+	#cap .idx { color: #6a6a7a; font-size: 12px; margin-top: 5px; letter-spacing: .3px; }
+
+	.nav {
+		position: absolute; top: 50%; transform: translateY(-50%);
+		width: 46px; height: 78px; display: flex; align-items: center; justify-content: center;
+		background: rgba(28,28,36,.72); border: 1px solid var(--edge); border-radius: 8px;
+		color: var(--text); font-size: 30px; line-height: 1; cursor: pointer; user-select: none;
+	}
+	.nav:hover { background: rgba(40,40,52,.92); color: var(--fg); }
+	.nav:focus-visible, #close:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+	#prev { left: 10px; }
+	#next { right: 10px; }
+	#close {
+		position: absolute; top: 12px; right: 12px; z-index: 2;
+		width: 38px; height: 38px; border-radius: 8px; cursor: pointer;
+		background: rgba(28,28,36,.72); border: 1px solid var(--edge);
+		color: var(--text); font-size: 22px; line-height: 1;
+	}
+	#close:hover { background: rgba(40,40,52,.92); color: var(--fg); }
+
+	footer { max-width: 1500px; margin: 0 auto; padding: 0 20px 50px; color: var(--dim); font-size: 13px; }
+
+	@media (max-width: 620px) {
+		#grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+		#stage { padding: 12px 12px 4px; }
+		#cap { padding: 8px 14px 16px; }
+		.nav { width: 38px; height: 62px; font-size: 24px; }
+		#prev { left: 4px; }
+		#next { right: 4px; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.tile img, .tile b, #full, #spin { transition: none; }
+		.tile:hover img, .tile:focus-visible img { transform: none; }
+	}
+</style>
+</head>
+<body>
+
+<header>
+	<h1>SilkTerm wallpaper pack</h1>
+	<p class="lede">The wallpapers <a href="https://github.com/jim-collier/silkterm">SilkTerm</a> was built and tuned against, and ships with.</p>
+	<p class="meta">Click one to see it full size. Arrow keys page through, <kbd>Esc</kbd> closes. &nbsp;<a href="https://github.com/jim-collier/silkterm#wallpaper-pack">Download the pack</a> &middot; <a href="https://github.com/jim-collier/silkterm/blob/main/filesystem/home/.config/silkterm/wallpaper-attribution.md">Provenance</a></p>
+	<div class="tools">
+		<input id="q" type="search" placeholder="Filter by name, artist or source" autocomplete="off" spellcheck="false" aria-label="Filter wallpapers">
+		<span id="count"></span>
+	</div>
+</header>
+
+<main>
+	<div id="grid"></div>
+	<p id="empty" hidden>Nothing matches that.</p>
+</main>
+
+<footer>
+	Full images are served from the repository, so this page carries only thumbnails. Rendered by <a href="https://github.com/jim-collier/silkterm/blob/main/cicd/utility/wallpaper-gallery.bash">wallpaper-gallery.bash</a>.
+</footer>
+
+<div id="lb" hidden role="dialog" aria-modal="true" aria-label="Wallpaper viewer">
+	<button id="close" type="button" title="Close (Esc)" aria-label="Close">&times;</button>
+	<div id="stage">
+		<button id="prev" class="nav" type="button" title="Previous (left arrow)" aria-label="Previous">&#8249;</button>
+		<img id="full" alt="">
+		<span id="spin">Loading&hellip;</span>
+		<button id="next" class="nav" type="button" title="Next (right arrow)" aria-label="Next">&#8250;</button>
+	</div>
+	<div id="cap">
+		<div class="name"></div>
+		<div class="cred"></div>
+		<div class="idx"></div>
+	</div>
+</div>
+
+<script>
+	const RAW = "@@RAW@@";
+	const DATA = [
+//@@DATA@@
+	];
+
+	const grid  = document.getElementById("grid");
+	const empty = document.getElementById("empty");
+	const count = document.getElementById("count");
+	const q     = document.getElementById("q");
+	const lb    = document.getElementById("lb");
+	const stage = document.getElementById("stage");
+	const full  = document.getElementById("full");
+	const capN  = document.querySelector("#cap .name");
+	const capC  = document.querySelector("#cap .cred");
+	const capI  = document.querySelector("#cap .idx");
+
+	const pad     = n => String(n + 1).padStart(3, "0");
+	const thumbOf = i => "thumb/" + pad(i) + ".jpg";
+	const fullOf  = i => RAW + encodeURIComponent(DATA[i].f);
+
+	/* The grid. Every tile exists from the start; filtering only hides them, so a
+	   thumbnail is never fetched twice and the browser keeps its lazy-load work. */
+	const tiles = DATA.map((it, i) => {
+		const b = document.createElement("button");
+		b.className = "tile";
+		b.type = "button";
+		b.title = it.t;
+		b.innerHTML = '<img loading="lazy" decoding="async"><b></b>';
+		b.firstChild.src = thumbOf(i);
+		b.firstChild.alt = it.t;
+		b.lastChild.textContent = it.t;
+		b.addEventListener("click", () => openAt(i));
+		grid.appendChild(b);
+		return b;
+	});
+
+	function haystack(it) {
+		return (it.t + " " + it.c + " " + it.l + " " + it.u).toLowerCase();
+	}
+	const hay = DATA.map(haystack);
+
+	function filter() {
+		const needle = q.value.trim().toLowerCase();
+		let shown = 0;
+		for (let i = 0; i < tiles.length; i++) {
+			const hit = !needle || hay[i].includes(needle);
+			tiles[i].hidden = !hit;
+			if (hit) shown++;
+		}
+		empty.hidden = shown > 0;
+		count.textContent = needle
+			? shown + " of " + DATA.length
+			: DATA.length + " wallpapers";
+	}
+	q.addEventListener("input", filter);
+	filter();
+
+	/* The viewer. `at` is an index into DATA, not into what the filter is showing -
+	   paging walks the visible tiles, so a filtered view pages within itself. */
+	let at = -1;
+
+	function visible() {
+		const v = [];
+		for (let i = 0; i < tiles.length; i++) if (!tiles[i].hidden) v.push(i);
+		return v.length ? v : DATA.map((_, i) => i);
+	}
+
+	function show(i) {
+		at = i;
+		const it = DATA[i];
+		stage.classList.add("loading");
+		full.src = fullOf(i);
+		full.alt = it.t;
+		capN.textContent = it.t;
+
+		capC.textContent = "";
+		const bits = [];
+		if (it.c) bits.push({ text: it.c });
+		if (it.l) bits.push({ text: it.l });
+		if (it.u) bits.push({ text: "Source", href: it.u });
+		if (!bits.length) bits.push({ text: "Provenance not established" });
+		for (const bit of bits) {
+			const el = document.createElement("span");
+			if (bit.href) {
+				const a = document.createElement("a");
+				a.href = bit.href;
+				a.target = "_blank";
+				a.rel = "noopener noreferrer";
+				a.textContent = bit.text;
+				el.appendChild(a);
+			} else {
+				el.textContent = bit.text;
+			}
+			capC.appendChild(el);
+		}
+
+		const v = visible();
+		const pos = v.indexOf(i);
+		capI.textContent = (pos < 0 ? i + 1 : pos + 1) + " / " + (pos < 0 ? DATA.length : v.length);
+
+		/* Warm the neighbours so a press of an arrow key lands on a decoded image. */
+		for (const step of [1, -1]) {
+			const n = next(i, step);
+			if (n !== i) new Image().src = fullOf(n);
+		}
+	}
+
+	full.addEventListener("load",  () => stage.classList.remove("loading"));
+	full.addEventListener("error", () => stage.classList.remove("loading"));
+
+	function next(from, step) {
+		const v = visible();
+		const pos = v.indexOf(from);
+		if (pos < 0) return from;
+		return v[(pos + step + v.length) % v.length];
+	}
+
+	function openAt(i) {
+		lb.hidden = false;
+		document.body.style.overflow = "hidden";
+		show(i);
+		mark(DATA[i].s);
+		document.getElementById("close").focus({ preventScroll: true });
+	}
+
+	function page(step) {
+		if (lb.hidden) return;
+		const i = next(at, step);
+		show(i);
+		mark(DATA[i].s);
+	}
+
+	function closeViewer() {
+		if (lb.hidden) return;
+		lb.hidden = true;
+		full.removeAttribute("src");
+		document.body.style.overflow = "";
+		mark("");
+		if (at >= 0 && tiles[at]) tiles[at].focus({ preventScroll: true });
+	}
+
+	document.getElementById("prev").addEventListener("click", () => page(-1));
+	document.getElementById("next").addEventListener("click", () => page(1));
+	document.getElementById("close").addEventListener("click", closeViewer);
+
+	/* A click on the backdrop closes; one on the image or the caption does not. */
+	lb.addEventListener("click", e => {
+		if (e.target === lb || e.target === stage) closeViewer();
+	});
+
+	document.addEventListener("keydown", e => {
+		if (lb.hidden) {
+			if (e.key === "/" && document.activeElement !== q) { e.preventDefault(); q.focus(); }
+			return;
+		}
+		if (e.key === "Escape")     { e.preventDefault(); closeViewer(); }
+		else if (e.key === "ArrowLeft"  || e.key === "PageUp")   { e.preventDefault(); page(-1); }
+		else if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); page(1); }
+		else if (e.key === "Home")  { e.preventDefault(); show(visible()[0]); }
+		else if (e.key === "End")   { const v = visible(); e.preventDefault(); show(v[v.length - 1]); }
+	});
+
+	/* Swipe, for a touch screen. A short flick pages; anything slower is a scroll. */
+	let touchX = 0, touchY = 0;
+	stage.addEventListener("touchstart", e => {
+		touchX = e.changedTouches[0].clientX;
+		touchY = e.changedTouches[0].clientY;
+	}, { passive: true });
+	stage.addEventListener("touchend", e => {
+		const dx = e.changedTouches[0].clientX - touchX;
+		const dy = e.changedTouches[0].clientY - touchY;
+		if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5) page(dx < 0 ? 1 : -1);
+	}, { passive: true });
+
+	/* A permalink names the image by slug, so it survives the pack being reordered.
+	   replaceState throws on a file:// page, and the viewer must still work there -
+	   opening the repository's own copy of this file is a perfectly ordinary thing
+	   to do - so the address bar is a nicety and never a dependency. */
+	function mark(slug) {
+		try {
+			history.replaceState(null, "", slug ? "#" + slug : location.pathname + location.search);
+		} catch (e) { /* file:// - no permalink, everything else still works */ }
+	}
+
+	function fromHash() {
+		const want = decodeURIComponent(location.hash.replace(/^#/, ""));
+		if (!want) return;
+		const i = DATA.findIndex(it => it.s === want);
+		if (i >= 0) openAt(i);
+	}
+	window.addEventListener("hashchange", fromHash);
+	fromHash();
+</script>
+
+</body>
+</html>
