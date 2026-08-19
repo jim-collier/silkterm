@@ -135,7 +135,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - 🛠️ Refactor settings dialog
 	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory. Reconcile by what makes the most sense given the obvious design direction this is going, with what has changed before.
-	- Being done in chunks, in this order: the chrome and the two new colors, then groups and the tab reorganization, then theme management, then the color picker, then the Shells tab. Opening speed was dealt with first and is under Done.
+	- Being done in chunks, in this order: the chrome and the two new colors, then groups and the tab reorganization, then theme management, then the color picker, then the Shells tab. Opening speed was dealt with first and is under Done. The Shells tab was brought forward and is done; the color picker is the one chunk left.
 	- ✅ Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
 		- Done: thirty rows carry their own help line, and a control that is grayed out still explains why instead - that question is the more urgent one. The text wraps to the panel, so a longer sentence or a bigger interface font cannot push it off the edge, and it flips above a control when there is no room beneath.
 		- ✅ Including the some of the main buttons:
@@ -158,6 +158,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Found and fixed on the way: both scrollbar colors had rows in the dialog but were never written to the file, so an edit lasted only until the next launch. Every row now writes what it edits.
 	- 🛠️ Tabs and grouping (settings content and tab reorg):
 		- ✅ "Groups" are organized, titled sections within a dialog tab page. Differentiated by a title, and with adequate spacing between groups so that they are visually separate.
+			- ✅ Retuned: more space between one section and the next, and less between a heading and the rule under it, so a heading reads as belonging to what follows it rather than floating between the two.
 		- ✅ There is now the concept of "Sub-groups" within groups, distinguished through indentation of the leading text labels (but not the controls themselves).
 			- A sub-group is not declared anywhere. It is a row followed by rows at a greater indent, so the leader and its members cannot disagree about who belongs to what. Only labels move; every control keeps its column.
 			- ✅ Sub-groups (and their style) can exist without Groups.
@@ -275,16 +276,16 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 				- Columns
 				- Rows
 			- Margin px
-		- Tab: "Shells"
+		- ✅ Tab: "Shell"
 			- UI:
-				- A grid:
-					- Header row: "Title", "Shell command", "Active", "Comment"
-						- "Active" is a textbox. If checked, the shell title will show up under the future sub-menu item (to implement later), "Tabs/New tab with shell ... ->", (sub-menu showing a list of shells by title)
-				- Next to each row on the grid, on the right, with icons representing:
-					- "Move up" (disabled at the top)
-					- "Move down" (disabled at the bottom)
-					- "Edit" - Opens a popup dialog with the fields from the row in editable textbox form - and buttons "Cancel|OK".
-					- "Delete" - Opens a popup confirmation, like the "delete theme" confirmation spec from above.
+				- A grid, one line per stored shell, every field edited in place: "Name", "Command", "Last seen", "Active"
+					- Reconciled with what was asked for later, which supersedes the original spelling of this item: the columns are the four above, "Last seen" is new (a date, read-only, written by the scan), the edit popup is gone in favour of editing in the row, and "Comment" is no longer a column - the scan still writes it and it shows as the row's flyover tip.
+					- "Active" is a checkbox. When it is on, the shell's name appears under "Tabs/New tab with shell ... ->".
+					- The command is required: emptying the field leaves the stored one standing, and an entry that never got one is dropped rather than saved.
+				- Next to each line on the right, five icons: "Move to top", "Move up", "Move down", "Move to bottom" (each grayed where it would go nowhere), and "Remove", which asks first the way the theme delete does.
+				- An "Add" button below the grid, for a shell the scan cannot find. It lands a new line and puts the caret straight in its command field.
+				- The first switched-on shell in the list is the default for new windows, tabs and panes. The old `shell.default` setting is retired: a config that had one has that entry moved to the top of the list, once, and the line removed.
+				- Done: the whole tab, plus the arrows, which are drawn in the shader rather than set as glyphs - no interface font can be relied on to carry one.
 			- Behavior
 				- At startup - first, the terminal renders. Then launches a background process to search for [initial shells|changes to shell availability].
 					- If a shell exe name already exists in the list of shells, ignore it.
@@ -308,7 +309,9 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 								- Will require special logic for Windows, to add the commands to launch named WSL1 or 2 distros
 				- If a new shell exe is found that doesn't already exist in the stored list, add it. (User can disable it later.)
 				- If an existing already defined shell exe name isn't found by explicit path, or in the environment path variable, disable it (don't delete it).
-			- ✅ All of the behavior above is built and running - see the auto-detect item under "New features and enhancements". What is left for this tab is the UI: the grid, the row buttons, and the edit and delete popups.
+			- ✅ All of the behavior above is built and running - see the auto-detect item under "New features and enhancements".
+
+- ✅ Cross-building a Linux target from the Windows box failed at the link step. The build script embeds the Windows icon and version strings, and said in its own comment that it does nothing for a non-Windows target - but it only actually did nothing when the build was running on Linux. On Windows it compiled the resource anyway and handed the result to the Linux linker, which read it as a broken linker script. It now stops where it always claimed to. Nothing changes for either Windows build or for cross-building from Linux.
 
 - 🔘 Option: Dynamic theme based on wallpaper
 	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
@@ -1620,7 +1623,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Done: the single toggle is now a dual-checkbox row (Face / Size), each following the OS independently, with matching config keys. Face governs font_family, Size governs font_size; each grays its own field. A config predating the split keeps its exact behavior (absent size follows the face toggle), except an explicit font_size - previously silently ignored - now wins over the OS size, since it reads as intent. Both checkboxes stay disabled on Windows.
 
 - ✅ Add an option in settings, to persist "Copy on select". (Which overrides my earlier direction.)
-	- Done: new `copy_on_select` config key plus a "Copy on select" checkbox in Settings (Window tab, Shell section). When on, every pane starts with copy-on-select enabled; applying the toggle also flips all existing panes. The menu-bar checkbox still toggles it live per pane for the session, without writing back to the config.
+	- Done: new `copy_on_select` config key plus a "Copy on select" checkbox in Settings (Cursor tab, last row - it was on the Window tab under Shell until that section moved out to its own tab). When on, every pane starts with copy-on-select enabled; applying the toggle also flips all existing panes. The menu-bar checkbox still toggles it live per pane for the session, without writing back to the config.
 
 - ✅ CICD: check that local can be safely refreshed from remote before building, rather than only pulling at publish time.
 	- Done: new stage 0 "remote sync" in `cicd.bash` and `cicd-win.ps1` - fetch, fast-forward (stash-wrapped) when only behind, abort early when diverged. Offline or no upstream just warns and continues. `--no-sync` / `-NoSync` bypasses.
@@ -1904,6 +1907,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ Setting dialog (part 2):
 	- ✅ A radio button for background image, to stretch or zoom. - New `Kind::Radio(&[..])` in the settings dialog (reusable N-option control: indicator box per option, fills the selected, click-to-pick); a "Bg image fit" row bound to `background_fit` (Stretch/Zoom). Stretch is selected by default; `background_fit` persists and re-fits the image on Apply.
 	- ✅ "Default shell": A command line to launch by default for new windows, tabs, and panes, if nothing else specified. Leave blank to use system default. - New "Shell" section in Settings with a "Default shell" text field bound to the existing `default_shell` config (empty shows "(system default)"; argv-split applies to new tabs/panes).
+		- Superseded: the shells list names the default now - its first switched-on entry, which the Shell tab lets you drag to the top. The separate setting and its text field are gone, and a config that had one has that entry moved to the top once, then the line removed. An initial population is led by the shell the user logs in with, so the default is right without their saying anything.
 	- ✅ Size: A boolean setting to "Remember last size".
 		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
 		- Overrides explicit numeric size.

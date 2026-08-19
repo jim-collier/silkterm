@@ -40,6 +40,10 @@ pub struct ShellEntry {
 	pub command: String,
 	pub active: bool,
 	pub comment: String,
+	// The last date a scan found this shell's program installed, YYYY-MM-DD.
+	// Empty means no scan has ever seen it - a hand-written entry, or one that
+	// was already switched off when the field was added.
+	pub last_seen: String,
 }
 
 // One shell a scan turned up. It becomes a `ShellEntry` only if the stored list
@@ -64,13 +68,12 @@ impl Found {
 // Run a scan on its own thread and post the merged list back to the event loop.
 // A thread per scan rather than a long-lived worker: a PATH entry on a dead
 // mount blocks its own thread forever, and there is nothing queued behind it.
-pub fn spawn(proxy: &EventLoopProxy<UserEvent>, stored: Vec<ShellEntry>) {
+pub fn spawn(proxy: &EventLoopProxy<UserEvent>) {
 	let proxy = proxy.clone();
 	let spawned = std::thread::Builder::new()
 		.name("shells".into())
 		.spawn(move || {
-			let merged = merge(&stored, &detect());
-			let _ = proxy.send_event(UserEvent::ShellsReady(merged));
+			let _ = proxy.send_event(UserEvent::ShellsReady(detect()));
 		});
 	if let Err(e) = spawned {
 		eprintln!("{}: could not start shell scan: {e}", config::APP_NAME);
@@ -86,13 +89,14 @@ pub fn spawn(proxy: &EventLoopProxy<UserEvent>, stored: Vec<ShellEntry>) {
 // its place. It is NOT switched back on if the program returns - a scan cannot
 // tell that from a switch the user turned off on purpose.
 pub fn merge(stored: &[ShellEntry], found: &[Found]) -> Vec<ShellEntry> {
-	merge_with(stored, found, &which)
+	merge_with(stored, found, &which, &today())
 }
 
 fn merge_with(
 	stored: &[ShellEntry],
 	found: &[Found],
 	resolve: &dyn Fn(&str) -> Option<PathBuf>,
+	today: &str,
 ) -> Vec<ShellEntry> {
 	let mut out: Vec<ShellEntry> = stored.to_vec();
 	// One identity per stored entry, resolved once: where its program actually
@@ -104,6 +108,11 @@ fn merge_with(
 	for (entry, id) in out.iter_mut().zip(&ids) {
 		if id.as_ref().is_none_or(|id| id.exe.is_none()) {
 			entry.active = false;
+		} else {
+			// Stamped on the way past rather than only when something changed:
+			// "last seen" is the one field a scan that found nothing new still
+			// has news about.
+			entry.last_seen = today.to_string();
 		}
 	}
 	for hit in found {
@@ -120,9 +129,42 @@ fn merge_with(
 			command: hit.command.clone(),
 			active: true,
 			comment: hit.comment.clone(),
+			last_seen: today.to_string(),
 		});
 	}
 	out
+}
+
+// Today's date as YYYY-MM-DD, UTC. A "last seen" only ever has to be readable
+// and comparable by eye, so a plain date is the whole of it - no clock, no zone,
+// and nothing worth pulling a calendar crate in for.
+pub fn today() -> String {
+	let secs = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.map_or(0, |since| since.as_secs());
+	let (year, month, day) = civil_from_days((secs / 86_400) as i64);
+	format!("{year:04}-{month:02}-{day:02}")
+}
+
+// Days since 1970-01-01 -> (year, month, day). Hinnant's civil_from_days: the
+// era arithmetic makes the 400-year leap cycle exact, so there is no table and
+// no special case for February.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+	let shifted = days + 719_468; // re-base on 0000-03-01, so leap day lands last
+	let era = shifted.div_euclid(146_097); // 400 years
+	let day_of_era = shifted.rem_euclid(146_097);
+	let year_of_era =
+		(day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+	let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+	let month_index = (5 * day_of_year + 2) / 153; // 0 = March
+	let day = (day_of_year - (153 * month_index + 2) / 5 + 1) as u32;
+	let month = if month_index < 10 {
+		month_index + 3
+	} else {
+		month_index - 9
+	} as u32;
+	let year = year_of_era + era * 400;
+	(if month <= 2 { year + 1 } else { year }, month, day)
 }
 
 // What makes two command lines "the same shell". `exe` is where the program
@@ -157,6 +199,27 @@ impl Ident {
 			(None, _) => self.base == other.base,
 			_ => false,
 		}
+	}
+}
+
+// A list entry for a command line the list does not carry yet: the Settings
+// dialog's "Add", and the one-time adoption of the old `shell.default`. The
+// title is the program's own name, tidied - the user renames it if they want
+// something else - and the key is made unique against what is already stored.
+// `last_seen` stays empty: no scan has vouched for this one.
+pub fn adopted(command: &str, existing: &[ShellEntry]) -> ShellEntry {
+	let title = crate::cli::shell_split(command)
+		.ok()
+		.and_then(|argv| argv.first().map(|prog| pretty(&base_name(prog))))
+		.filter(|title| !title.is_empty())
+		.unwrap_or_else(|| "New shell".to_string());
+	ShellEntry {
+		slug: unique_slug(&title, existing),
+		title,
+		command: command.trim().to_string(),
+		active: true,
+		comment: String::new(),
+		last_seen: String::new(),
 	}
 }
 
@@ -350,8 +413,11 @@ pub fn detect() -> Vec<Found> {
 		out.push(hit);
 	};
 
-	// The user's own shell leads, and it is the one that gets the twin that
-	// skips its startup files.
+	// The user's own shell leads - and that is load-bearing rather than merely
+	// tidy, because an initial population becomes the list verbatim and the top
+	// of the list IS the default shell (config::default_shell_argv). So the
+	// terminal opens on the shell the user logs in with, without their having to
+	// say so. It is also the one that gets the twin that skips its startup files.
 	if let Some(login) = login_shell() {
 		let base = base_name(&login);
 		let title = pretty(&base);
@@ -380,8 +446,9 @@ pub fn detect() -> Vec<Found> {
 }
 
 // The shell the user logs in with. $SHELL is what a person means by "my shell"
-// and every desktop session sets it; on Windows there is no such thing, and the
-// table below leads instead.
+// and every desktop session sets it. Windows has no user shell at all, so the
+// nearest discoverable thing is what it calls the command processor (ComSpec,
+// i.e. cmd.exe); if even that is unset, the table below leads instead.
 #[cfg(unix)]
 fn login_shell() -> Option<String> {
 	let shell = std::env::var("SHELL").ok()?;
@@ -587,7 +654,20 @@ mod tests {
 			command: command.into(),
 			active,
 			comment: String::new(),
+			last_seen: String::new(),
 		}
+	}
+
+	// A fixed "today", so a stamped date is something to assert on rather than
+	// whatever the clock says while the suite runs.
+	const NOW: &str = "2026-08-19";
+
+	fn merged(
+		stored: &[ShellEntry],
+		found: &[Found],
+		resolve: &dyn Fn(&str) -> Option<PathBuf>,
+	) -> Vec<ShellEntry> {
+		merge_with(stored, found, resolve, NOW)
 	}
 
 	// Pretend every listed program is installed at /opt/<name> and nothing else is.
@@ -603,7 +683,7 @@ mod tests {
 	#[test]
 	fn a_shell_that_is_gone_is_switched_off_and_kept() {
 		let stored = vec![entry("bash", "bash", true), entry("fish", "fish", true)];
-		let out = merge_with(&stored, &[], &installed(&["bash"]));
+		let out = merged(&stored, &[], &installed(&["bash"]));
 		assert_eq!(out.len(), 2, "nothing is ever deleted");
 		assert!(out[0].active);
 		assert!(!out[1].active, "fish is not installed any more");
@@ -615,7 +695,7 @@ mod tests {
 	fn a_scan_never_switches_a_shell_back_on() {
 		let stored = vec![entry("fish", "fish", false)];
 		let found = vec![Found::new("Fish", "fish".into(), "")];
-		let out = merge_with(&stored, &found, &installed(&["fish"]));
+		let out = merged(&stored, &found, &installed(&["fish"]));
 		assert_eq!(out.len(), 1, "it is already stored, so nothing is added");
 		assert!(!out[0].active);
 	}
@@ -624,7 +704,7 @@ mod tests {
 	fn a_shell_already_stored_is_not_added_twice() {
 		let stored = vec![entry("bash", "/bin/bash", true)];
 		let found = vec![Found::new("Bash", "bash".into(), "")];
-		let out = merge_with(&stored, &found, &installed(&["bash"]));
+		let out = merged(&stored, &found, &installed(&["bash"]));
 		assert_eq!(out.len(), 1, "the bare name resolves to the stored path");
 	}
 
@@ -634,7 +714,7 @@ mod tests {
 	fn the_same_program_with_different_flags_is_a_different_shell() {
 		let stored = vec![entry("bash", "bash", true)];
 		let found = vec![Found::new("Bash (no rc)", "bash --norc".into(), "")];
-		let out = merge_with(&stored, &found, &installed(&["bash"]));
+		let out = merged(&stored, &found, &installed(&["bash"]));
 		assert_eq!(out.len(), 2);
 		assert_eq!(out[1].command, "bash --norc");
 	}
@@ -649,7 +729,7 @@ mod tests {
 		};
 		let stored = vec![entry("msys2_bash", r"C:\msys64\usr\bin\bash.exe", true)];
 		let found = vec![Found::new("Git Bash", r"C:\Git\bin\bash.exe".into(), "")];
-		let out = merge_with(&stored, &found, &resolve);
+		let out = merged(&stored, &found, &resolve);
 		assert_eq!(out.len(), 2, "same name, different program");
 	}
 
@@ -661,15 +741,40 @@ mod tests {
 		let stored = vec![entry("fish", "/usr/local/bin/fish", false)];
 		let found = vec![Found::new("Fish", "/usr/bin/fish".into(), "")];
 		let resolve = |prog: &str| (prog == "/usr/bin/fish").then(|| PathBuf::from(prog));
-		let out = merge_with(&stored, &found, &resolve);
+		let out = merged(&stored, &found, &resolve);
 		assert_eq!(out.len(), 1, "no duplicate beside the disabled entry");
+	}
+
+	// Initial population IS the scan's order, and detect() leads with the login
+	// shell - which is what puts the user's own shell at the top, where the top
+	// means "the default". Nothing may quietly sort or group the findings.
+	#[test]
+	fn an_empty_list_takes_the_scan_in_the_order_it_found_them() {
+		let found = vec![
+			Found::new("Fish", "fish".into(), ""),
+			Found::new("Bash", "bash".into(), ""),
+			Found::new("Zsh", "zsh".into(), ""),
+		];
+		let out = merged(&[], &found, &installed(&["bash", "fish", "zsh"]));
+		let titles: Vec<&str> = out.iter().map(|e| e.title.as_str()).collect();
+		assert_eq!(titles, vec!["Fish", "Bash", "Zsh"]);
+		assert!(out[0].active, "and the one at the top is usable");
+	}
+
+	#[test]
+	fn an_adopted_command_is_titled_after_its_program() {
+		let entry = adopted("/usr/bin/fish --login", &[]);
+		assert_eq!(entry.title, "Fish");
+		assert_eq!(entry.slug, "fish");
+		assert!(entry.active);
+		assert!(entry.last_seen.is_empty(), "no scan has vouched for it");
 	}
 
 	#[test]
 	fn a_new_shell_lands_at_the_end_with_its_own_key() {
 		let stored = vec![entry("bash", "bash", true)];
 		let found = vec![Found::new("PowerShell 7", "pwsh".into(), "note")];
-		let out = merge_with(&stored, &found, &installed(&["bash", "pwsh"]));
+		let out = merged(&stored, &found, &installed(&["bash", "pwsh"]));
 		assert_eq!(out.len(), 2);
 		assert_eq!(out[1].slug, "powershell_7");
 		assert_eq!(out[1].comment, "note");
@@ -681,13 +786,13 @@ mod tests {
 		let stored = vec![entry("git_bash", "/a/bash", true)];
 		let found = vec![Found::new("Git Bash", "/b/bash".into(), "")];
 		let resolve = |prog: &str| Some(PathBuf::from(prog));
-		let out = merge_with(&stored, &found, &resolve);
+		let out = merged(&stored, &found, &resolve);
 		assert_eq!(out[1].slug, "git_bash_2");
 	}
 
 	#[test]
 	fn a_command_that_does_not_split_is_ignored_rather_than_stored() {
-		let out = merge_with(&[], &[Found::new("Empty", String::new(), "")], &|_| {
+		let out = merged(&[], &[Found::new("Empty", String::new(), "")], &|_| {
 			Some(PathBuf::from("/x"))
 		});
 		assert!(out.is_empty());
@@ -702,6 +807,50 @@ mod tests {
 		assert_eq!(no_startup_file("pwsh").map(|f| f.0), Some("-NoProfile"));
 		assert_eq!(no_startup_file("cmd").map(|f| f.0), Some("/d"));
 		assert_eq!(no_startup_file("dash"), None, "dash has no such flag");
+	}
+
+	// The stamp is what makes the "Active" column trustworthy: a shell switched
+	// off carries the date it was last there, so the switch is explicable.
+	#[test]
+	fn a_scan_dates_what_it_found_and_leaves_what_it_did_not() {
+		let mut gone = entry("fish", "fish", true);
+		gone.last_seen = "2026-01-02".into();
+		let stored = vec![entry("bash", "bash", true), gone];
+		let out = merged(&stored, &[], &installed(&["bash"]));
+		assert_eq!(out[0].last_seen, NOW, "bash is installed today");
+		assert_eq!(
+			out[1].last_seen, "2026-01-02",
+			"a shell that is gone keeps the date it was last seen"
+		);
+		assert!(!out[1].active);
+	}
+
+	#[test]
+	fn a_newly_found_shell_is_dated_the_day_it_turned_up() {
+		let found = vec![Found::new("Fish", "fish".into(), "")];
+		let out = merged(&[], &found, &installed(&["fish"]));
+		assert_eq!(out[0].last_seen, NOW);
+	}
+
+	// The epoch, a leap day, and a century that is not a leap year - the three
+	// places the era arithmetic can go wrong.
+	#[test]
+	fn a_day_count_reads_as_the_date_it_is() {
+		assert_eq!(civil_from_days(0), (1970, 1, 1));
+		assert_eq!(civil_from_days(-1), (1969, 12, 31));
+		assert_eq!(civil_from_days(19_417), (2023, 3, 1));
+		assert_eq!(
+			civil_from_days(19_416),
+			(2023, 2, 28),
+			"2023 is not a leap year"
+		);
+		assert_eq!(civil_from_days(18_321), (2020, 2, 29), "2020 is");
+		assert_eq!(
+			civil_from_days(11_016),
+			(2000, 2, 29),
+			"2000 is, despite the century"
+		);
+		assert_eq!(civil_from_days(20_684), (2026, 8, 19));
 	}
 
 	#[test]
