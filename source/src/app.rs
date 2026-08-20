@@ -3784,8 +3784,12 @@ fn build_layout(
 	// The lowest-precedence directory: None whenever a shell launched us, so the
 	// directory it was in survives (see config::startup_dir).
 	let start = config::startup_dir();
-	let spawn = |text: &mut TextCtx, shell: Option<Vec<String>>| {
-		PaneManager::new(text, proxy, area, shell, start.clone()).unwrap_or_else(|e| {
+	// `--directory` is resolved once per place it was written, not once per pane,
+	// so a path that isn't there is reported once however many panes inherit it.
+	let win_dir = cli.win.style.directory.as_deref().and_then(config::cli_dir);
+	let spawn = |text: &mut TextCtx, shell: Option<Vec<String>>, dir: Option<PathBuf>| {
+		let dir = dir.or_else(|| start.clone());
+		PaneManager::new(text, proxy, area, shell, dir).unwrap_or_else(|e| {
 			eprintln!("{}: failed to start shell: {e}", config::APP_NAME);
 			std::process::exit(2);
 		})
@@ -3797,7 +3801,7 @@ fn build_layout(
 			.shell
 			.clone()
 			.or_else(config::default_shell_argv);
-		return vec![spawn(text, shell)];
+		return vec![spawn(text, shell, win_dir)];
 	}
 	let mut out = Vec::new();
 	for tab in &cli.tabs {
@@ -3809,7 +3813,20 @@ fn build_layout(
 			.or_else(|| tab.style.shell.clone())
 			.or_else(|| cli.win.style.shell.clone())
 			.or_else(config::default_shell_argv);
-		let mut pm = spawn(text, main_shell.clone());
+		// directories cascade the same way the shells do
+		let tab_dir = tab
+			.style
+			.directory
+			.as_deref()
+			.and_then(config::cli_dir)
+			.or_else(|| win_dir.clone());
+		let main_dir = tab.panes[0]
+			.style
+			.directory
+			.as_deref()
+			.and_then(config::cli_dir)
+			.or_else(|| tab_dir.clone());
+		let mut pm = spawn(text, main_shell.clone(), main_dir.clone());
 		let main_id = pm.focused;
 		let mut handles: HashMap<String, PaneId> = HashMap::new();
 		handles.insert("main".into(), main_id);
@@ -3819,6 +3836,8 @@ fn build_layout(
 		}
 		let mut shells: HashMap<PaneId, Option<Vec<String>>> = HashMap::new();
 		shells.insert(main_id, main_shell);
+		let mut dirs: HashMap<PaneId, Option<PathBuf>> = HashMap::new();
+		dirs.insert(main_id, main_dir);
 		let mut prev = main_id;
 
 		for pane_spec in &tab.panes[1..] {
@@ -3843,6 +3862,14 @@ fn build_layout(
 				.or_else(|| tab.style.shell.clone())
 				.or_else(|| cli.win.style.shell.clone())
 				.or_else(config::default_shell_argv);
+			// and its directory: explicit -> the pane it splits -> tab -> window
+			let pane_dir = pane_spec
+				.style
+				.directory
+				.as_deref()
+				.and_then(config::cli_dir)
+				.or_else(|| dirs.get(&target).cloned().flatten())
+				.or_else(|| tab_dir.clone());
 			let ratio = match pane_spec.size {
 				None => 0.5,
 				Some(Size::Percent(pct)) => pct / 100.0,
@@ -3863,7 +3890,7 @@ fn build_layout(
 				before,
 				ratio,
 				shell.clone(),
-				None,
+				pane_dir.clone().or_else(|| start.clone()),
 				area,
 				false,
 			) {
@@ -3871,6 +3898,7 @@ fn build_layout(
 					handles.insert(handle.clone(), new_id);
 				}
 				shells.insert(new_id, shell);
+				dirs.insert(new_id, pane_dir);
 				prev = new_id;
 			}
 		}
