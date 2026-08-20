@@ -244,6 +244,7 @@ pub struct Settings {
 	pub word_separators: String, // delimiters for double-click word selection
 	pub selection_pairs: String, // matched pairs a double-click selects inside of
 	pub command_line: String,    // default CLI layout/options when launched with no args
+	pub startup_directory: String, // where a shell starts when nothing else said (see startup_dir)
 	pub copy_on_select: bool,    // panes start with copy-on-select enabled
 	pub hyperlinks: bool,        // underline URLs in output on hover; Ctrl+click opens them
 	pub hyperlink_open_command: String, // opener for a clicked link (empty = the desktop's own)
@@ -372,6 +373,7 @@ impl Default for Settings {
 				.collect(),
 			selection_pairs: DEFAULT_SELECTION_PAIRS.to_owned(),
 			command_line: String::new(),
+			startup_directory: HOME_TOKEN.to_string(),
 			copy_on_select: false,
 			hyperlinks: true,
 			hyperlink_open_command: String::new(),
@@ -470,6 +472,134 @@ pub fn default_shell_argv() -> Option<Vec<String>> {
 		.find(|entry| entry.active)
 		.map(|entry| entry.command.clone())?;
 	crate::cli::shell_split(&shell).ok()
+}
+
+// Where the FIRST pane of a freshly launched window starts, or None to leave it
+// where SilkTerm itself was started. Three things can decide a shell's directory
+// and this is the last of them: a new tab, pane or window inherits from the pane
+// it came from (handled by the caller, which passes an inherited path instead of
+// asking here), a SilkTerm launched from a shell keeps that shell's directory,
+// and only what is left over reads the setting.
+//
+// So the setting is what a launch from the desktop, a menu or a shortcut gets -
+// which is the case where the inherited directory is an accident of whoever
+// started us rather than anything the user chose.
+pub fn startup_dir() -> Option<std::path::PathBuf> {
+	if launched_from_shell() {
+		return None;
+	}
+	let wanted = settings().startup_directory.trim().to_string();
+	if wanted.is_empty() {
+		return None;
+	}
+	let dir = std::path::PathBuf::from(expand_path(&wanted));
+	if dir.is_dir() {
+		return Some(dir);
+	}
+	// Worth one line: a directory that has been renamed or unmounted would
+	// otherwise look like the setting being ignored.
+	eprintln!("{APP_NAME}: shell.startup_directory: no such directory: {wanted}");
+	None
+}
+
+// Substitute environment variables written in either platform's spelling, plus a
+// leading `~`. Both spellings everywhere on purpose: a config file gets carried
+// between machines, and a `$HOME` that silently stayed a literal directory name
+// on Windows would be a very quiet way to fail. An unset name expands to
+// nothing, the way a shell does it.
+pub fn expand_path(text: &str) -> String {
+	let text = match text.strip_prefix('~') {
+		Some(rest) if rest.is_empty() || rest.starts_with(['/', '\\']) => {
+			format!("{}{rest}", home_string())
+		}
+		_ => text.to_string(),
+	};
+	let mut out = String::with_capacity(text.len());
+	let mut rest = text.as_str();
+	while let Some(at) = rest.find(['$', '%']) {
+		out.push_str(&rest[..at]);
+		let tail = &rest[at..];
+		let (name, after) = if let Some(braced) = tail.strip_prefix("${") {
+			match braced.split_once('}') {
+				Some((name, after)) => (name, after),
+				None => break,
+			}
+		} else if let Some(percent) = tail.strip_prefix('%') {
+			match percent.split_once('%') {
+				// `%%` is an empty name, not a variable - leave it alone.
+				Some((name, after)) if !name.is_empty() => (name, after),
+				_ => {
+					out.push_str(&tail[..1]);
+					rest = &tail[1..];
+					continue;
+				}
+			}
+		} else {
+			let bare = &tail[1..];
+			let end = bare
+				.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+				.unwrap_or(bare.len());
+			if end == 0 {
+				out.push_str(&tail[..1]);
+				rest = &tail[1..];
+				continue;
+			}
+			(&bare[..end], &bare[end..])
+		};
+		if let Some(value) = std::env::var_os(name).filter(|v| !v.is_empty()) {
+			out.push_str(&value.to_string_lossy());
+		} else if name.eq_ignore_ascii_case("HOME") || name.eq_ignore_ascii_case("USERPROFILE") {
+			// The one pair worth answering ourselves: native Windows sets no
+			// HOME, and $HOME is what the shipped default says on unix - so a
+			// config carried either way still names a real directory.
+			out.push_str(&home_string());
+		}
+		rest = after;
+	}
+	out.push_str(rest);
+	out
+}
+
+// The home directory as text, empty when the environment names none. Same
+// answer `home_dir` gives the config-location logic, so a `~` here and a `~` in
+// a path there can never disagree.
+fn home_string() -> String {
+	home_dir().map_or_else(String::new, |dir| dir.to_string_lossy().into_owned())
+}
+
+// Did a shell start us? If so its directory is a deliberate choice and outranks
+// the setting; if not, the directory we inherited is whatever the launcher felt
+// like and says nothing about where the user wants to be.
+//
+// The test is the same on both platforms - "is standard input a terminal" - and
+// it is what separates the two cases without asking about parent processes,
+// which costs a process-table walk on Windows and would sit on the path to the
+// first frame. Measured on Windows: launched from a console the std handles are
+// the console's (FILE_TYPE_CHAR), launched through ShellExecute the way Explorer
+// and the Start menu do it they are NULL. A release build is a GUI-subsystem
+// binary and owns no console either way, so GetConsoleWindow cannot answer this
+// and AttachConsole answers it wrong (it succeeds via the grandparent).
+#[cfg(unix)]
+fn launched_from_shell() -> bool {
+	// SAFETY: isatty only inspects the descriptor; 0 is always a valid argument.
+	unsafe { libc::isatty(0) == 1 }
+}
+
+#[cfg(windows)]
+fn launched_from_shell() -> bool {
+	use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+	use windows_sys::Win32::Storage::FileSystem::{FILE_TYPE_CHAR, GetFileType};
+	use windows_sys::Win32::System::Console::{GetStdHandle, STD_INPUT_HANDLE};
+	// SAFETY: both calls only read the process's own standard-handle table.
+	unsafe {
+		let handle = GetStdHandle(STD_INPUT_HANDLE);
+		!handle.is_null() && handle != INVALID_HANDLE_VALUE && GetFileType(handle) == FILE_TYPE_CHAR
+	}
+}
+
+#[cfg(not(any(unix, windows)))]
+fn launched_from_shell() -> bool {
+	true
 }
 
 // Parse `selection_pairs` into (open, close) char pairs, in precedence order.
@@ -838,6 +968,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.command_line != orig.command_line {
 		doc.set_string("shell.command_line", &s.command_line);
 	}
+	if s.startup_directory != orig.startup_directory {
+		doc.set_string("shell.startup_directory", &s.startup_directory);
+	}
 	if s.copy_on_select != orig.copy_on_select {
 		doc.set_bool("shell.copy_on_select", s.copy_on_select);
 	}
@@ -996,6 +1129,7 @@ struct RawConfig {
 	word_separators: Option<String>,
 	selection_pairs: Option<String>,
 	command_line: Option<String>,
+	startup_directory: Option<String>,
 	copy_on_select: Option<bool>,
 	hyperlinks: Option<bool>,
 	hyperlink_open_command: Option<String>,
@@ -1029,7 +1163,7 @@ fn load() -> Settings {
 		if let Some(dir) = path.parent() {
 			let _ = std::fs::create_dir_all(dir);
 		}
-		if let Err(e) = std::fs::write(&path, DEFAULT_CONFIG) {
+		if let Err(e) = std::fs::write(&path, default_config()) {
 			eprintln!(
 				"{APP_NAME}: could not create config {}: {e}",
 				path.display()
@@ -1211,6 +1345,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		word_separators: r.s("selection.word_separators"),
 		selection_pairs: r.s("selection.pairs"),
 		command_line: r.s("shell.command_line"),
+		startup_directory: r.s("shell.startup_directory"),
 		copy_on_select: r.b("shell.copy_on_select"),
 		hyperlinks: r.b("hyperlinks.enabled"),
 		hyperlink_open_command: r.s("hyperlinks.open_command"),
@@ -1631,6 +1766,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		word_separators: raw.word_separators.unwrap_or(d.word_separators),
 		selection_pairs: raw.selection_pairs.unwrap_or(d.selection_pairs),
 		command_line: raw.command_line.unwrap_or(d.command_line),
+		startup_directory: raw.startup_directory.unwrap_or(d.startup_directory),
 		copy_on_select: raw.copy_on_select.unwrap_or(d.copy_on_select),
 		hyperlinks: raw.hyperlinks.unwrap_or(d.hyperlinks),
 		hyperlink_open_command: raw
@@ -2163,7 +2299,7 @@ fn convert_legacy_config(path: &std::path::Path) {
 	// active values: current-format paths carry as themselves (a mixed file
 	// loses nothing), old spellings map through the table, best (lowest table
 	// index) spelling winning per new path
-	let known_new: std::collections::HashSet<String> = setting_lines(DEFAULT_CONFIG)
+	let known_new: std::collections::HashSet<String> = setting_lines(default_config())
 		.into_iter()
 		.map(|(p, _)| p)
 		.collect();
@@ -2235,7 +2371,7 @@ fn convert_legacy_config(path: &std::path::Path) {
 	let Some(backup) = backup_aside(path) else {
 		return;
 	};
-	let mut out: Vec<String> = DEFAULT_CONFIG.lines().map(str::to_string).collect();
+	let mut out: Vec<String> = default_config().lines().map(str::to_string).collect();
 	for (new_path, (_, value)) in &carry {
 		if !activate_line(&mut out, new_path, value) {
 			// no template line (shouldn't happen) - keep it as a dotted line
@@ -2367,7 +2503,7 @@ fn refresh_superseded_default(line: &str, path: &str) -> Option<String> {
 	{
 		return None;
 	}
-	setting_lines(DEFAULT_CONFIG)
+	setting_lines(default_config())
 		.into_iter()
 		.find(|(name, _)| name == path)
 		.map(|(_, template)| template)
@@ -2472,15 +2608,27 @@ fn adopt_default_shell(path: &std::path::Path) {
 	write_doc(path, &doc);
 }
 
-// The list with `wanted` at the front. An entry already running that exact
-// command line moves; anything else is added as a new entry, since a command the
-// list does not carry is still a shell the user chose to launch.
+// The list with `wanted` at the front. An entry already running that shell moves;
+// anything else is added as a new entry, since a command the list does not carry
+// is still a shell the user chose to launch.
+//
+// "Already running that shell" is an identity question, not a string one: the
+// retired `shell.default` was routinely a bare name where the scan had already
+// stored the full path to the same file, and a string compare therefore promoted
+// a DUPLICATE of the user's default shell to the top of their list.
 fn adopt_default_into(
 	stored: &[crate::shells::ShellEntry],
 	wanted: &str,
 ) -> Vec<crate::shells::ShellEntry> {
 	let mut out = stored.to_vec();
-	match out.iter().position(|e| e.command.trim() == wanted) {
+	let at = out
+		.iter()
+		.position(|e| e.command.trim() == wanted)
+		.or_else(|| {
+			out.iter()
+				.position(|e| crate::shells::same_command(&e.command, wanted))
+		});
+	match at {
 		Some(at) => {
 			let entry = out.remove(at);
 			out.insert(0, entry);
@@ -2514,7 +2662,7 @@ pub fn revert_keys(keys: &[&str]) {
 	backfill_config(&path);
 }
 
-// Insert any settings the `DEFAULT_CONFIG` template defines that `path` lacks,
+// Insert any settings the shipped template defines that `path` lacks,
 // using the template's own (commented or active) line so follow-system keys stay
 // absent and behavior is unchanged. Existing values, comments, and formatting are
 // preserved (nothing already in the file is rewritten). Every setting is one
@@ -2534,7 +2682,7 @@ fn backfill_config(path: &std::path::Path) {
 	let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
 
 	let mut groups: Vec<Vec<(String, Vec<String>)>> = Vec::new();
-	for (p, block, new_group) in setting_groups(DEFAULT_CONFIG) {
+	for (p, block, new_group) in setting_groups(default_config()) {
 		if new_group || groups.is_empty() {
 			groups.push(Vec::new());
 		}
@@ -2929,7 +3077,30 @@ fn adopt_legacy_config() {
 	}
 }
 
-const DEFAULT_CONFIG: &str = r##"# SilkTerm configuration file.
+// The shipped template, with the one line whose default is platform-specific
+// filled in. `{HOME}` is the only substitution and it is the home-directory
+// token a person on THIS platform would type - a Windows user reading `$HOME`
+// in their own config would not recognize it as a default they could edit.
+//
+// Everything that compares a config against the template (backfill, the
+// superseded-default refresh, the group walk) reads it through here, so the
+// text is assembled once and every one of them sees the same bytes.
+static DEFAULT_CONFIG_TEXT: std::sync::LazyLock<String> =
+	std::sync::LazyLock::new(|| DEFAULT_CONFIG_TEMPLATE.replace("{HOME}", HOME_TOKEN));
+
+fn default_config() -> &'static str {
+	DEFAULT_CONFIG_TEXT.as_str()
+}
+
+// How a person on this platform spells "my home directory" in a path. Also what
+// `expand_path` understands, along with the other platform's spelling and `~`:
+// a config that is carried between machines should not stop working.
+#[cfg(windows)]
+pub const HOME_TOKEN: &str = "%USERPROFILE%";
+#[cfg(not(windows))]
+pub const HOME_TOKEN: &str = "$HOME";
+
+const DEFAULT_CONFIG_TEMPLATE: &str = r##"# SilkTerm configuration file.
 #
 #
 # This config file format is:
@@ -3239,6 +3410,17 @@ shell:
 	## command-line arguments override this entirely. Leave blank/commented for
 	## none.
 	# command_line: "--new-pane --right --size 35%"  ## Default
+
+	## Default startup directory
+	## Where a shell starts when nothing else has said. It is the LOWEST
+	## precedence of three: a new tab, pane or window inherits the directory of
+	## the pane it was opened from, and a SilkTerm launched from a shell keeps
+	## the directory that shell was in - so this is what a launch from the
+	## desktop, a menu or a shortcut gets. `~` and either platform's home token
+	## ($HOME, %USERPROFILE%) are understood, as is any other environment
+	## variable in the same spellings. A directory that does not exist is
+	## reported and ignored.
+	# startup_directory: "{HOME}"  ## Default
 
 	## Copy on select
 	## Start every pane with "Copy on select" enabled (selected text goes to the
@@ -3702,13 +3884,13 @@ mod tests {
 
 	#[test]
 	fn default_config_is_valid_shcl() {
-		let doc = shcl::Document::parse(DEFAULT_CONFIG);
+		let doc = shcl::Document::parse(default_config());
 		let errors: Vec<_> = doc
 			.diagnostics()
 			.iter()
 			.filter(|d| matches!(d.severity, shcl::Severity::Error))
 			.collect();
-		assert!(errors.is_empty(), "DEFAULT_CONFIG has errors: {errors:?}");
+		assert!(errors.is_empty(), "the shipped template has errors: {errors:?}");
 	}
 
 	// The shipped template must already be what a save would produce, or the very
@@ -3718,10 +3900,10 @@ mod tests {
 	// itself, and a bump that reintroduced the reflow would fail here.
 	#[test]
 	fn default_config_survives_a_save_unchanged() {
-		let doc = shcl::Document::parse(DEFAULT_CONFIG);
+		let doc = shcl::Document::parse(default_config());
 		assert_eq!(
 			doc.to_canonical(),
-			DEFAULT_CONFIG,
+			default_config(),
 			"a save would rewrite the shipped template"
 		);
 	}
@@ -3732,9 +3914,9 @@ mod tests {
 	fn default_config_comment_style() {
 		// The file header (the format blurb, down to the first '##' line) is
 		// verbatim prose in single-'#' form and is exempt from the convention.
-		let body = DEFAULT_CONFIG
+		let body = default_config()
 			.find("\n##")
-			.map_or(DEFAULT_CONFIG, |i| &DEFAULT_CONFIG[i..]);
+			.map_or(default_config(), |i| &default_config()[i..]);
 		for line in body.lines() {
 			let t = line.trim_start();
 			if !t.starts_with('#') {
@@ -3984,9 +4166,9 @@ mod tests {
 		let dir = std::env::temp_dir().join(format!("silkterm_noconvert_{}", std::process::id()));
 		let _ = std::fs::create_dir_all(&dir);
 		let path = dir.join("config.shcl");
-		std::fs::write(&path, DEFAULT_CONFIG).unwrap();
+		std::fs::write(&path, default_config()).unwrap();
 		convert_legacy_config(&path);
-		assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_CONFIG);
+		assert_eq!(std::fs::read_to_string(&path).unwrap(), default_config());
 		assert!(
 			!dir.join("config.shcl.bak").exists(),
 			"no backup for a current-format file"
@@ -4099,7 +4281,7 @@ mod tests {
 			migrate_config_text("transparency.opacity: 0.7\ncursor.animation: \"phase\"\n")
 				.is_none()
 		);
-		assert!(migrate_config_text(DEFAULT_CONFIG).is_none());
+		assert!(migrate_config_text(default_config()).is_none());
 	}
 
 	// Backfill only ever adds a missing key, so a config written when an older
@@ -4150,7 +4332,7 @@ mod tests {
 		};
 		for (path, stale) in SUPERSEDED_DEFAULTS {
 			let leaf = path.rsplit('.').next().unwrap();
-			let current = setting_lines(DEFAULT_CONFIG)
+			let current = setting_lines(default_config())
 				.into_iter()
 				.find_map(|(name, line)| (name == *path).then_some(line))
 				.unwrap_or_else(|| panic!("{path} has no template line"));
@@ -4197,14 +4379,14 @@ mod tests {
 	// are being relied on, so a failure names the one that moved.
 	#[test]
 	fn a_save_keeps_nested_comment_layout() {
-		let mut doc = shcl::Document::parse(DEFAULT_CONFIG);
+		let mut doc = shcl::Document::parse(default_config());
 		doc.set_float("wallpaper.opacity", 0.5);
 		doc.set_bool("text.scrim.enabled", false);
 		let out = doc.to_canonical();
 
 		let added: Vec<&str> = out
 			.lines()
-			.filter(|l| !DEFAULT_CONFIG.lines().any(|d| d == *l))
+			.filter(|l| !default_config().lines().any(|d| d == *l))
 			.collect();
 		assert_eq!(
 			added,

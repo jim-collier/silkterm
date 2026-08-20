@@ -202,6 +202,26 @@ impl Ident {
 	}
 }
 
+// Do two command lines name the same shell? Same rule the scan folds on, so a
+// caller outside this module gets the same answer: a bare name is looked up
+// before comparing, and a stored entry whose program has gone falls back to its
+// bare name. Asked in both directions because that fallback is one-sided.
+//
+// `adopt_default_shell` is what needs it. The retired `shell.default` was
+// routinely a bare name (`pwsh`) where the scanned list already carried the full
+// path to the same file, and comparing those as STRINGS put a second copy of one
+// shell at the top of the list - which is then the default shell, twice over.
+pub fn same_command(a: &str, b: &str) -> bool {
+	same_command_with(a, b, &which)
+}
+
+fn same_command_with(a: &str, b: &str, resolve: &dyn Fn(&str) -> Option<PathBuf>) -> bool {
+	match (Ident::of(a, resolve), Ident::of(b, resolve)) {
+		(Some(a), Some(b)) => a.same(&b) || b.same(&a),
+		_ => false,
+	}
+}
+
 // A list entry for a command line the list does not carry yet: the Settings
 // dialog's "Add", and the one-time adoption of the old `shell.default`. The
 // title is the program's own name, tidied - the user renames it if they want
@@ -331,7 +351,6 @@ fn no_startup_file(base: &str) -> Option<(&'static str, &'static str)> {
 		"nu" => ("--no-config-file", "no config"),
 		"xonsh" => ("--no-rc", "no rc"),
 		"pwsh" | "powershell" => ("-NoProfile", "no profile"),
-		"cmd" => ("/d", "no AutoRun"),
 		_ => return None,
 	})
 }
@@ -386,12 +405,12 @@ const KNOWN: &[(&str, &str, &str)] = &[
 	("pwsh", "PowerShell 7", ""),
 	(
 		"powershell",
-		"Windows PowerShell",
+		"Windows PowerShell 5",
 		"the 5.1 shell that ships with Windows",
 	),
 	("cmd", "Command Prompt", ""),
 	("nu", "Nushell", "structured data through the pipeline"),
-	("PyCmd", "PyCmd", "cmd.exe with completion and history"),
+	("pycmd", "PyCmd", "cmd.exe with completion and history"),
 	("elvish", "Elvish", ""),
 	("xonsh", "Xonsh", "Python syntax with shell primitives"),
 	("python", "Python 3", ""),
@@ -492,7 +511,7 @@ fn platform_extras() -> Vec<Found> {
 		for (rel, title, comment) in [
 			(
 				r"System32\WindowsPowerShell\v1.0\powershell.exe",
-				"Windows PowerShell",
+				"Windows PowerShell 5",
 				"the 5.1 shell that ships with Windows",
 			),
 			(r"System32\cmd.exe", "Command Prompt", ""),
@@ -520,6 +539,20 @@ fn platform_extras() -> Vec<Found> {
 			"Git Bash",
 			quoted(&path),
 			"MSYS2-based, from Git for Windows",
+		));
+	}
+	// PyCmd ships as a zip that is extracted wherever the user likes, so it is
+	// normally nowhere near PATH - the table above finds it only for someone who
+	// put it there deliberately. Program Files is where it usually lands.
+	let pycmd = program_files()
+		.iter()
+		.map(|base| base.join(r"PyCmd\PyCmd.exe"))
+		.find(|path| path.is_file());
+	if let Some(path) = pycmd {
+		out.push(Found::new(
+			"PyCmd",
+			quoted(&path),
+			"cmd.exe with completion and history",
 		));
 	}
 	for (path, title, comment) in [
@@ -805,8 +838,12 @@ mod tests {
 		assert_eq!(no_startup_file("bash").map(|f| f.0), Some("--norc"));
 		assert_eq!(no_startup_file("zsh").map(|f| f.0), Some("--no-rcs"));
 		assert_eq!(no_startup_file("pwsh").map(|f| f.0), Some("-NoProfile"));
-		assert_eq!(no_startup_file("cmd").map(|f| f.0), Some("/d"));
 		assert_eq!(no_startup_file("dash"), None, "dash has no such flag");
+		// cmd.exe is deliberately not on the list. It is the Windows login shell
+		// (ComSpec), so it would get a twin on every Windows box - and an AutoRun
+		// is rare enough that a second "Command Prompt" in everyone's Tabs menu
+		// costs more than it is worth.
+		assert_eq!(no_startup_file("cmd"), None, "cmd.exe gets no twin");
 	}
 
 	// The stamp is what makes the "Active" column trustworthy: a shell switched

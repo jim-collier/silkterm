@@ -676,6 +676,21 @@ rows:
 		kind: shells
 		help: "The topmost switched-on shell is the default for new tabs, panes and windows."
 
+	## The lowest-precedence answer to "where does this shell start". A new tab,
+	## pane or window inherits the directory of the pane it came from, and a
+	## SilkTerm launched from a shell keeps that shell's directory - so this is
+	## what a launch from the desktop, a menu or a shortcut gets.
+	StartupDir:
+		kind: heading
+		label: "Default startup directory"
+		tab: Shell
+
+	StartupDirectory:
+		label: Directory
+		kind: text
+		setting: shell.startup_directory
+		help: "Where a shell starts when nothing else has said. Understands ~ and environment variables ($HOME, %USERPROFILE%). Overridden by an inherited directory, and by the directory SilkTerm was launched from."
+
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Graying
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••

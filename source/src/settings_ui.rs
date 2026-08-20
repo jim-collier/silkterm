@@ -2523,6 +2523,7 @@ impl SettingsDialog {
 			}
 			Key::FontFamily => self.edited.font_family.clone().unwrap_or_default(),
 			Key::LinkOpenCommand => self.edited.hyperlink_open_command.clone(),
+			Key::StartupDirectory => self.edited.startup_directory.clone(),
 			_ => String::new(),
 		}
 	}
@@ -2547,6 +2548,7 @@ impl SettingsDialog {
 				};
 			}
 			Key::LinkOpenCommand => self.edited.hyperlink_open_command = trimmed.to_string(),
+			Key::StartupDirectory => self.edited.startup_directory = trimmed.to_string(),
 			_ => {}
 		}
 	}
@@ -2820,6 +2822,7 @@ impl SettingsDialog {
 			Key::LinkOpenCommand => {
 				edited.hyperlink_open_command == defaults.hyperlink_open_command
 			}
+			Key::StartupDirectory => edited.startup_directory == defaults.startup_directory,
 			Key::Theme => edited.theme == defaults.theme,
 			Key::ThemeMode => edited.theme_mode == defaults.theme_mode,
 			Key::ColBg
@@ -2939,6 +2942,9 @@ impl SettingsDialog {
 			Key::FontFamily => self.edited.font_family = self.defaults.font_family.clone(),
 			Key::LinkOpenCommand => {
 				self.edited.hyperlink_open_command = self.defaults.hyperlink_open_command.clone();
+			}
+			Key::StartupDirectory => {
+				self.edited.startup_directory = self.defaults.startup_directory.clone();
 			}
 			Key::ColBg
 			| Key::ColFg
@@ -5468,14 +5474,28 @@ mod tests {
 			.find(|s| matches!(s.kind, super::Kind::ShellList))
 			.expect("a shells grid");
 		assert_eq!(tab_titles()[grid.tab], "Shell");
-		// and that tab holds nothing else but the heading that names it
+		// The tab is the grid, its headings, and the startup directory that the
+		// grid's own default shell starts in - nothing else belongs beside them.
 		for spec in ui.specs.iter().filter(|s| s.tab == grid.tab) {
 			assert!(
-				matches!(spec.kind, super::Kind::ShellList | super::Kind::Header(_)),
+				matches!(spec.kind, super::Kind::ShellList | super::Kind::Header(_))
+					|| spec.key == Key::StartupDirectory,
 				"{} does not belong on the Shell tab",
 				spec.label
 			);
 		}
+		// and the directory reads BELOW the list it applies to
+		let dir = ui
+			.specs
+			.iter()
+			.position(|s| s.key == Key::StartupDirectory)
+			.expect("a startup directory row");
+		let at = ui
+			.specs
+			.iter()
+			.position(|s| matches!(s.kind, super::Kind::ShellList))
+			.expect("a shells grid");
+		assert!(dir > at, "the startup directory sits below the shells");
 	}
 
 	// Asked for on the Cursor tab, and asked for LAST - so both halves are
