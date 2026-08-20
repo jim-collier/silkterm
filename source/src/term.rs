@@ -333,8 +333,21 @@ impl TermInstance {
 			.filter(|dir| dir.is_dir())
 	}
 
-	// No /proc equivalent wired up off-unix; callers fall back to the default.
-	#[cfg(not(unix))]
+	// Windows keeps a process's current directory in its own address space
+	// rather than anywhere the OS will hand out, so the answer is read from the
+	// shell's PEB (see peb_cwd). What that CAN'T see is a shell that keeps its
+	// own idea of "where I am" and never tells the OS: measured on this box,
+	// PowerShell 7 and Windows PowerShell 5.1 both leave the process directory
+	// at the launch directory across a `Set-Location`, so a PowerShell pane
+	// reports where it started. cmd.exe, Git Bash and MSYS2 all call
+	// SetCurrentDirectory and read back correctly.
+	#[cfg(windows)]
+	pub fn cwd(&self) -> Option<std::path::PathBuf> {
+		peb_cwd(self.shell_pid)
+	}
+
+	// Neither /proc nor a PEB: callers fall back to the default.
+	#[cfg(not(any(unix, windows)))]
 	#[allow(clippy::unused_self)]
 	pub fn cwd(&self) -> Option<std::path::PathBuf> {
 		None
@@ -519,6 +532,121 @@ fn process_start_time(pid: u32) -> Option<u64> {
 	(ok != 0).then(|| u64::from(created.dwHighDateTime) << 32 | u64::from(created.dwLowDateTime))
 }
 
+// Windows: a process's current directory, out of its own PEB. There is no API
+// that answers this for another process - GetCurrentDirectory only ever reports
+// the caller's - so the walk is: ProcessBasicInformation for the PEB address,
+// then two reads across it. Both offsets are undocumented but have been fixed
+// since Vista, and the result is checked with is_dir() before it is believed,
+// so a layout that ever did move degrades to "don't know" rather than to a
+// wrong directory.
+#[cfg(all(windows, target_pointer_width = "64"))]
+fn peb_cwd(shell_pid: u32) -> Option<std::path::PathBuf> {
+	use std::ffi::c_void;
+	use std::os::windows::ffi::OsStringExt;
+
+	use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
+	use windows_sys::Win32::Foundation::CloseHandle;
+	use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+	use windows_sys::Win32::System::Threading::{
+		OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+	};
+
+	// PEB -> RTL_USER_PROCESS_PARAMETERS -> CurrentDirectory.DosPath, 64-bit.
+	const PROCESS_PARAMETERS: usize = 0x20;
+	const CURRENT_DIRECTORY: usize = 0x38;
+
+	if shell_pid == 0 {
+		return None;
+	}
+	// SAFETY: every call below is a plain FFI call on values this function owns;
+	// the handle is closed on every path out, and ReadProcessMemory reports a
+	// failure rather than faulting when an address isn't mapped.
+	unsafe {
+		let process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, shell_pid);
+		if process.is_null() {
+			return None;
+		}
+		let read = |at: usize, into: *mut c_void, len: usize| -> bool {
+			let mut got = 0usize;
+			at != 0
+				&& ReadProcessMemory(process, at as *const c_void, into, len, &raw mut got) != 0
+				&& got == len
+		};
+		let mut basic: ProcessBasicInfo = std::mem::zeroed();
+		let status = NtQueryInformationProcess(
+			process,
+			ProcessBasicInformation,
+			(&raw mut basic).cast::<c_void>(),
+			u32::try_from(size_of::<ProcessBasicInfo>()).unwrap_or(0),
+			std::ptr::null_mut(),
+		);
+		let peb = usize::try_from(basic.peb).unwrap_or(0);
+		let mut params = 0usize;
+		let mut dos_path = UnicodeString::default();
+		let ok = status == 0
+			&& read(
+				peb + PROCESS_PARAMETERS,
+				(&raw mut params).cast::<c_void>(),
+				size_of::<usize>(),
+			) && read(
+			params + CURRENT_DIRECTORY,
+			(&raw mut dos_path).cast::<c_void>(),
+			size_of::<UnicodeString>(),
+		);
+		// Length is in BYTES, and a path is UTF-16 - halve it for the buffer.
+		let chars = usize::from(dos_path.length) / 2;
+		let mut wide = vec![0u16; chars];
+		let ok = ok
+			&& chars > 0
+			&& read(
+				dos_path.buffer as usize,
+				wide.as_mut_ptr().cast::<c_void>(),
+				chars * 2,
+			);
+		CloseHandle(process);
+		if !ok {
+			return None;
+		}
+		// It comes back with a trailing separator and may name a directory that
+		// has since been removed, so it is checked the way the unix side is.
+		let dir = std::path::PathBuf::from(std::ffi::OsString::from_wide(&wide));
+		dir.is_dir().then_some(dir)
+	}
+}
+
+// The 32-bit PEB is laid out differently and no 32-bit Windows target is built,
+// so it answers "don't know" rather than reading the wrong offsets.
+#[cfg(all(windows, not(target_pointer_width = "64")))]
+fn peb_cwd(_shell_pid: u32) -> Option<std::path::PathBuf> {
+	None
+}
+
+// The two structures the walk reads, declared here rather than taken from
+// windows-sys because they describe ANOTHER process's memory: what matters is
+// the 64-bit layout of the process being read, which is fixed, and declaring
+// them costs less than a windows-sys feature pulled in for two fields.
+#[cfg(all(windows, target_pointer_width = "64"))]
+#[repr(C)]
+struct ProcessBasicInfo {
+	exit_status: i32,
+	peb: u64, // repr(C) pads to the 8-byte alignment, as the real one does
+	affinity_mask: usize,
+	base_priority: i32,
+	unique_pid: usize,
+	parent_pid: usize,
+}
+
+// The UNICODE_STRING sitting inside RTL_USER_PROCESS_PARAMETERS.
+#[cfg(all(windows, target_pointer_width = "64"))]
+#[derive(Default)]
+#[repr(C)]
+struct UnicodeString {
+	length: u16,
+	capacity: u16,
+	_pad: u32,
+	buffer: u64,
+}
+
 #[cfg(test)]
 mod tests {
 	use super::{WakeGate, is_command_child};
@@ -533,6 +661,61 @@ mod tests {
 		assert!(!gate.post());
 		gate.handled();
 		assert!(gate.post());
+	}
+
+	// Windows has no /proc, so a new tab or split can only inherit a directory
+	// if the shell's own PEB can be read - and the point is the directory it is
+	// in NOW. A process that never moves must read back where it was started
+	// (that half is deterministic), and one that calls SetCurrentDirectory - as
+	// cmd.exe's `cd` does - must read back the new place, not the old one.
+	#[cfg(windows)]
+	#[test]
+	fn a_windows_shell_reports_where_it_is_now_not_where_it_started() {
+		use std::process::Command;
+
+		use super::peb_cwd;
+		let real = |dir: &std::path::Path| std::fs::canonicalize(dir).expect("canonicalize");
+		let started_in = std::env::temp_dir();
+		let moved_to = std::path::PathBuf::from(r"C:\Windows");
+
+		// a process that stays put, for the plain "did we read the right one"
+		let mut still = Command::new("cmd.exe")
+			.args(["/c", "ping -n 6 127.0.0.1 >nul"])
+			.current_dir(&started_in)
+			.spawn()
+			.expect("spawn cmd.exe");
+		// and one that moves, for the half that matters
+		let mut roams = Command::new("cmd.exe")
+			.args(["/c", r"cd /d C:\Windows && ping -n 6 127.0.0.1 >nul"])
+			.current_dir(&started_in)
+			.spawn()
+			.expect("spawn cmd.exe");
+
+		// the move takes a moment to happen; nothing else here waits on a clock
+		let mut roamed = None;
+		for _ in 0..60 {
+			roamed = peb_cwd(roams.id());
+			if roamed.as_deref().map(std::path::Path::to_path_buf).map(|dir| real(&dir))
+				== Some(real(&moved_to))
+			{
+				break;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(50));
+		}
+		let stayed = peb_cwd(still.id());
+		let _ = still.kill();
+		let _ = roams.kill();
+
+		assert_eq!(
+			stayed.map(|dir| real(&dir)),
+			Some(real(&started_in)),
+			"a process that never moved read back somewhere else"
+		);
+		assert_eq!(
+			roamed.map(|dir| real(&dir)),
+			Some(real(&moved_to)),
+			"the directory the shell moved to never came back"
+		);
 	}
 
 	// A recycled pid is the failure this guard exists for: the row claims the
