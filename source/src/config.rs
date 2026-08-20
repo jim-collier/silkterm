@@ -2620,14 +2620,19 @@ fn adopt_default_into(
 	stored: &[crate::shells::ShellEntry],
 	wanted: &str,
 ) -> Vec<crate::shells::ShellEntry> {
+	adopt_default_into_with(stored, wanted, &crate::shells::same_command)
+}
+
+fn adopt_default_into_with(
+	stored: &[crate::shells::ShellEntry],
+	wanted: &str,
+	same: &dyn Fn(&str, &str) -> bool,
+) -> Vec<crate::shells::ShellEntry> {
 	let mut out = stored.to_vec();
 	let at = out
 		.iter()
 		.position(|e| e.command.trim() == wanted)
-		.or_else(|| {
-			out.iter()
-				.position(|e| crate::shells::same_command(&e.command, wanted))
-		});
+		.or_else(|| out.iter().position(|e| same(&e.command, wanted)));
 	match at {
 		Some(at) => {
 			let entry = out.remove(at);
@@ -3890,7 +3895,10 @@ mod tests {
 			.iter()
 			.filter(|d| matches!(d.severity, shcl::Severity::Error))
 			.collect();
-		assert!(errors.is_empty(), "the shipped template has errors: {errors:?}");
+		assert!(
+			errors.is_empty(),
+			"the shipped template has errors: {errors:?}"
+		);
 	}
 
 	// The shipped template must already be what a save would produce, or the very
@@ -4004,6 +4012,65 @@ mod tests {
 		);
 		let s = resolve(read_raw("font.size: 20.0\nfont.use_system_size: true\n", p));
 		assert!(s.use_system_font_size, "explicit key beats the inference");
+	}
+
+	// The setting ships as a literal token, so the expander is what makes it name
+	// a directory at all. Both platforms' spellings everywhere: a config file gets
+	// carried between machines, and a `$HOME` left standing as a literal folder
+	// name on Windows would be a very quiet way to fail.
+	#[test]
+	fn a_home_token_expands_however_it_is_spelled() {
+		let home = super::home_string();
+		assert!(!home.is_empty(), "this box names no home directory");
+		for spelling in ["~", "$HOME", "${HOME}", "%USERPROFILE%", "%userprofile%"] {
+			assert_eq!(expand_path(spelling), home, "{spelling} did not expand");
+		}
+		assert_eq!(expand_path("~/work"), format!("{home}/work"));
+		// a name that is not a variable is left exactly as it stands
+		assert_eq!(expand_path("/srv/~backup"), "/srv/~backup", "~ mid-path");
+		assert_eq!(expand_path("100%"), "100%", "a lone percent");
+		assert_eq!(expand_path("50%% off"), "50%% off", "an empty name");
+		assert_eq!(expand_path("cost $ 5"), "cost $ 5", "a lone dollar");
+		// and an unset one expands to nothing, the way a shell does it
+		assert_eq!(expand_path("$SILKTERM_NO_SUCH_VAR/x"), "/x");
+	}
+
+	// The bug this fixes shipped in everyone's config: `shell.default` was
+	// routinely a bare name where the scan had already stored the full path to
+	// the same file, so a STRING compare promoted a second copy of the user's
+	// default shell to the top of their own list - where the top is what "default
+	// shell" now means, so the duplicate became the default.
+	#[test]
+	fn a_default_shell_already_in_the_list_moves_instead_of_doubling() {
+		let entry = |slug: &str, command: &str| crate::shells::ShellEntry {
+			slug: slug.to_string(),
+			title: slug.to_string(),
+			command: command.to_string(),
+			active: true,
+			comment: String::new(),
+			last_seen: String::new(),
+		};
+		let stored = vec![
+			entry("cmd", "cmd.exe"),
+			entry("pwsh", "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\""),
+		];
+		// the stub says what the real resolver says on a box with pwsh installed
+		let same = |a: &str, b: &str| a.contains("pwsh") && b.contains("pwsh");
+		let out = adopt_default_into_with(&stored, "pwsh", &same);
+		assert_eq!(out.len(), 2, "the list grew a duplicate");
+		assert_eq!(
+			out[0].slug, "pwsh",
+			"the default shell did not move to the top"
+		);
+		assert_eq!(
+			out[0].command, stored[1].command,
+			"the stored command was replaced by the bare name"
+		);
+		// a shell the list really does not carry is still added
+		let same_none = |_: &str, _: &str| false;
+		let out = adopt_default_into_with(&stored, "fish", &same_none);
+		assert_eq!(out.len(), 3);
+		assert_eq!(out[0].command, "fish");
 	}
 
 	#[test]

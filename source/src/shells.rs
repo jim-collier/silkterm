@@ -831,6 +831,40 @@ mod tests {
 		assert!(out.is_empty());
 	}
 
+	// A table key is looked up under the name the CODE will have by then, which
+	// is a base name - lowercased on Windows, `.exe` stripped. A mixed-case key
+	// therefore can never be found, and the shell it names silently loses its
+	// friendly title. PyCmd shipped spelled "PyCmd" and did exactly that.
+	#[test]
+	fn a_known_shell_can_be_found_under_its_own_name() {
+		for (exe, title, _) in KNOWN {
+			assert_eq!(
+				&pretty(&base_name(exe)),
+				title,
+				"{exe} cannot be looked up under the name it will be found by"
+			);
+		}
+	}
+
+	// The identity `adopt_default_shell` needs: a bare name and the full path to
+	// the same file are one shell, and the question has to answer the same way
+	// round either way, because the resolves-nowhere fallback is one-sided.
+	#[test]
+	fn a_bare_name_and_its_full_path_are_one_shell() {
+		let real = |prog: &str| match prog {
+			"pwsh" | "/opt/ps/pwsh" => Some(PathBuf::from("/opt/ps/pwsh")),
+			"bash" | "/bin/bash" => Some(PathBuf::from("/bin/bash")),
+			_ => None,
+		};
+		assert!(same_command_with("pwsh", "/opt/ps/pwsh", &real));
+		assert!(same_command_with("/opt/ps/pwsh", "pwsh", &real));
+		assert!(!same_command_with("pwsh", "/bin/bash", &real));
+		// arguments are part of the identity, so a twin stays its own entry
+		assert!(!same_command_with("pwsh", "/opt/ps/pwsh -NoProfile", &real));
+		// and nothing that resolves nowhere is claimed to be anything
+		assert!(!same_command_with("ghost", "/opt/ps/pwsh", &real));
+	}
+
 	// The twin exists for the shell the user actually logs in with, so the flag
 	// has to be the right one per shell rather than bash's spelling for all.
 	#[test]

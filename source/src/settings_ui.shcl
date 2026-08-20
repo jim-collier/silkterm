@@ -76,8 +76,8 @@ layout:
 	shell_seen_width: 78       ## the read-only "Last seen" date
 	shell_active_width: 44     ## wide enough for the column title, not the checkbox
 	shell_col_gap: 8
-	shell_button: 18           ## one move-or-remove icon box
-	shell_button_gap: 3
+	shell_grip: 16             ## the drag handle that reorders a line
+	shell_button: 18           ## the remove icon box
 	shell_head_gap: 5          ## column titles -> first entry
 	shell_add_gap: 10          ## last entry -> the Add button
 
