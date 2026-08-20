@@ -695,7 +695,10 @@ mod tests {
 		let mut roamed = None;
 		for _ in 0..60 {
 			roamed = peb_cwd(roams.id());
-			if roamed.as_deref().map(std::path::Path::to_path_buf).map(|dir| real(&dir))
+			if roamed
+				.as_deref()
+				.map(std::path::Path::to_path_buf)
+				.map(|dir| real(&dir))
 				== Some(real(&moved_to))
 			{
 				break;
@@ -705,6 +708,9 @@ mod tests {
 		let stayed = peb_cwd(still.id());
 		let _ = still.kill();
 		let _ = roams.kill();
+		// reaped, or the test leaves two zombies behind it
+		let _ = still.wait();
+		let _ = roams.wait();
 
 		assert_eq!(
 			stayed.map(|dir| real(&dir)),

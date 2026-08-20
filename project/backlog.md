@@ -328,8 +328,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Beyond the names asked for: Nushell, Elvish, Xonsh, YSH/OSH, Murex, Ion, Es, rc, Yash, mksh, tcsh, Git Bash, MSYS2, Cygwin, PyCmd, and the language shells (Python 3, IPython, Node).
 
 - 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
-	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with.
-	- 🔘 Windows: the new-pane side works, but reading the source shell's current directory isn't wired up there yet - new tabs/panes keep the old start-dir behavior until then. (Needs Windows host.)
+	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Same for a new window (Ctrl+Shift+N), and the same shell inheritance applies to all three.
+	- ✅ Windows: reading the source shell's current directory is wired up now. Windows has no /proc and no API that reports another process's directory, so it is read out of the shell's own process memory - the place SetCurrentDirectory keeps it - and checked for still being a directory before it is used.
+		- Verified in the running app: a pane whose shell moved to another directory reports the new one, and reports nothing once the shell has exited (callers then fall back, as before).
+	- 🔘 PowerShell panes still inherit where the pane STARTED, not where the user navigated to.
+		- Measured, in PowerShell 7 and Windows PowerShell 5.1 alike: `Set-Location` moves PowerShell's own idea of where it is and never tells the OS, so there is nothing to read. cmd.exe, Git Bash and MSYS2 all move the process itself and read back correctly.
+		- Not specific to us - every Windows terminal has the same hole, and the way they all fill it is shell integration: the shell announces its directory with an escape sequence (OSC 7, or the ConEmu-style OSC 9;9) that the terminal listens for.
+		- Cost of doing it here: our VT layer gets escape sequences from the `vte` crate, which handles neither, so it means a second fork alongside the alacritty one plus a documented snippet for people to add to their PowerShell profile. Worth deciding rather than assuming.
 
 - 🛠️ Menu enhancements:
 	- ✅ "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
