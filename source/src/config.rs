@@ -475,10 +475,11 @@ pub fn default_shell_argv() -> Option<Vec<String>> {
 }
 
 // Where the FIRST pane of a freshly launched window starts, or None to leave it
-// where SilkTerm itself was started. Three things can decide a shell's directory
-// and this is the last of them: a new tab, pane or window inherits from the pane
-// it came from (handled by the caller, which passes an inherited path instead of
-// asking here), a SilkTerm launched from a shell keeps that shell's directory,
+// where SilkTerm itself was started. Four things can decide a shell's directory
+// and this is the last of them: `--directory` on the command line (cli_dir, the
+// caller's first choice), a new tab, pane or window inheriting from the pane it
+// came from (handled by the caller, which passes an inherited path instead of
+// asking here), a SilkTerm launched from a shell keeping that shell's directory,
 // and only what is left over reads the setting.
 //
 // So the setting is what a launch from the desktop, a menu or a shortcut gets -
@@ -488,17 +489,32 @@ pub fn startup_dir() -> Option<std::path::PathBuf> {
 	if launched_from_shell() {
 		return None;
 	}
-	let wanted = settings().startup_directory.trim().to_string();
+	resolve_dir(&settings().startup_directory, "shell.startup_directory")
+}
+
+// Where a shell named on the command line starts (`--directory`). Sits ABOVE
+// every one of startup_dir's three cases: asking for a directory on the command
+// line is the most deliberate statement of the lot, so it beats an inherited
+// one, the shell we were launched from, and the setting alike.
+pub fn cli_dir(raw: &str) -> Option<std::path::PathBuf> {
+	resolve_dir(raw, "--directory")
+}
+
+// Expand and check one directory, naming what asked for it when it isn't there.
+// `label` is how the user spelled it, so the line points at the setting or the
+// flag rather than at a path they may never have typed.
+fn resolve_dir(raw: &str, label: &str) -> Option<std::path::PathBuf> {
+	let wanted = raw.trim();
 	if wanted.is_empty() {
 		return None;
 	}
-	let dir = std::path::PathBuf::from(expand_path(&wanted));
+	let dir = std::path::PathBuf::from(expand_path(wanted));
 	if dir.is_dir() {
 		return Some(dir);
 	}
 	// Worth one line: a directory that has been renamed or unmounted would
 	// otherwise look like the setting being ignored.
-	eprintln!("{APP_NAME}: shell.startup_directory: no such directory: {wanted}");
+	eprintln!("{APP_NAME}: {label}: no such directory: {wanted}");
 	None
 }
 
@@ -3418,10 +3434,11 @@ shell:
 
 	## Default startup directory
 	## Where a shell starts when nothing else has said. It is the LOWEST
-	## precedence of three: a new tab, pane or window inherits the directory of
-	## the pane it was opened from, and a SilkTerm launched from a shell keeps
-	## the directory that shell was in - so this is what a launch from the
-	## desktop, a menu or a shortcut gets. `~` and either platform's home token
+	## precedence of four: a --directory on the command line wins outright, a
+	## new tab, pane or window inherits the directory of the pane it was opened
+	## from, and a SilkTerm launched from a shell keeps the directory that shell
+	## was in - so this is what a launch from the desktop, a menu or a shortcut
+	## gets. `~` and either platform's home token
 	## ($HOME, %USERPROFILE%) are understood, as is any other environment
 	## variable in the same spellings. A directory that does not exist is
 	## reported and ignored.
@@ -4033,6 +4050,23 @@ mod tests {
 		assert_eq!(expand_path("cost $ 5"), "cost $ 5", "a lone dollar");
 		// and an unset one expands to nothing, the way a shell does it
 		assert_eq!(expand_path("$SILKTERM_NO_SUCH_VAR/x"), "/x");
+	}
+
+	// A directory named on the command line is checked before anything spawns, so
+	// a path that is not there reads as one line naming the flag rather than as a
+	// shell that failed to start - and it expands the same tokens the setting does.
+	#[test]
+	fn a_named_directory_is_expanded_and_checked() {
+		let home = super::home_string();
+		assert!(!home.is_empty(), "this box names no home directory");
+		assert_eq!(cli_dir("~"), Some(PathBuf::from(&home)));
+		assert_eq!(cli_dir(" $HOME "), Some(PathBuf::from(&home)), "trimmed");
+		assert_eq!(cli_dir("   "), None, "nothing asked for");
+		assert_eq!(
+			cli_dir("$SILKTERM_NO_SUCH_VAR/nowhere"),
+			None,
+			"no such dir"
+		);
 	}
 
 	// The bug this fixes shipped in everyone's config: `shell.default` was

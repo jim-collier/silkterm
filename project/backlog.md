@@ -484,6 +484,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Window options: columns, rows, pixel-width, pixel-height, background-opacity, hide-windowframe, hide-menu, fullscreen, title. A window option after a tab/pane marker errors.
 		- Layout: --new-tab/--tab=/--new-pane/--pane=/--splits with direction and --size, building real tabs and panes (targeted splits into arbitrary trees, smart default direction, percent or cell sizes).
 		- Per-pane --shell (argv-exec; cascades pane, split-source, tab, window, then config default_shell; interactive splits inherit).
+		- Per-pane --directory (alias --dir), on the same cascade, deciding where that shell starts.
 		- Config command_line applied when launched with no args. Any real CLI argument overrides it entirely.
 		- Tab --title override, shown in the tab bar.
 		- Window-level visual style: font, size, colors, and the background image with its stretch/zoom/opacity fold into the live settings at startup.
@@ -558,6 +559,11 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 			- Only valid with `--new-pane`; error otherwise. Not inheritable.
 		- 🔘 `--shell[=| ]"command"`
 			- Can contain escaped single and/or double quotes, as logically required by whatever quotes are used around the whole command.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+		- ✅ `--directory[=| ]"path"` (alias `--dir`)
+			- Where the shell starts. Beats every other source: an inherited directory, the directory SilkTerm was launched from, and the `shell.startup_directory` setting.
+			- `~` and either platform's variable spellings are understood, and are expanded at spawn time rather than at parse - so a directory written into the config's own command line means the same thing there.
+			- A path that is not a directory is reported once, naming the flag, and that scope falls back to what it would have used without it.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
 		- 🔘 `--keep-open[=| ]bool`
 			- Keep pane|tab|window open after shell command exits, showing exit value.

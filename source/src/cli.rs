@@ -34,6 +34,7 @@ pub enum Size {
 #[derive(Debug, Default, Clone)]
 pub struct Style {
 	pub shell: Option<Vec<String>>, // argv (already shell-word-split)
+	pub directory: Option<String>,  // where that shell starts (unexpanded)
 	pub keep_open: Option<bool>,
 	pub font_name: Option<String>,
 	pub font_size: Option<f32>,
@@ -508,6 +509,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 		};
 		match name {
 			"shell" => style.shell = Some(shell_split(&a.value(name, inline)?)?),
+			// Kept unexpanded: `~` and the env-var spellings are resolved at spawn
+			// time by config::spawn_dir, the same way the config setting is.
+			"directory" | "dir" => style.directory = Some(a.value(name, inline)?),
 			"keep-open" => style.keep_open = Some(a.bool_value(name, inline)?),
 			"font-name" => style.font_name = Some(a.value(name, inline)?),
 			"font-size" => style.font_size = Some(parse_f32(name, &a.value(name, inline)?)?),
@@ -747,6 +751,7 @@ Layout:
 Per-scope (window/tab/pane; cascades, most-specific wins):
   --title \"...\"               window/tab title (pane-level: not wired up yet)
   --shell \"...\"               command to run (argv; e.g. fish, 'bash --norc')
+  --directory \"...\"           where that shell starts (alias --dir; ~ and $VARs ok)
   --keep-open[=BOOL]          keep the pane after the command exits (not implemented yet)
   --font-name \"...\"           font family
   --font-size N               font size
@@ -938,6 +943,22 @@ mod tests {
 			c.tabs[1].panes[1].style.shell.as_deref(),
 			Some(&["htop".to_string()][..])
 		);
+	}
+
+	// A directory rides the same cascade as the shell it starts, in both
+	// spellings and both value forms. It is kept exactly as written: `~` and
+	// `%VAR%` mean nothing until spawn time, and expanding at parse would bake
+	// this process's environment into a value the config file can also carry.
+	#[test]
+	fn a_directory_cascades_the_way_a_shell_does() {
+		let c = p("--directory=/w --new-tab --dir /t --new-pane --directory=~/p");
+		assert_eq!(c.win.style.directory.as_deref(), Some("/w"));
+		assert_eq!(c.tabs[1].style.directory.as_deref(), Some("/t"));
+		assert_eq!(c.tabs[1].panes[1].style.directory.as_deref(), Some("~/p"));
+		// nothing said = nothing set, so the config's own setting still decides
+		assert_eq!(p("--shell=fish").win.style.directory, None);
+		// and it needs a value - a bare flag must not swallow the next option
+		assert!(parse(["--directory".to_string()]).is_err());
 	}
 
 	#[test]
