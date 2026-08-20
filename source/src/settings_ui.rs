@@ -5787,6 +5787,77 @@ mod tests {
 		}
 	}
 
+	// The look of the two changed columns, asserted in the quads themselves,
+	// because the geometry tests above pass just as happily on a grid that draws
+	// the old arrows. Three things: the grip is three bars and not a button, the
+	// remove mark is drawn in the danger colour and not the text colour, and no
+	// arrow survives anywhere in the grid.
+	#[test]
+	fn the_grip_reads_as_bars_and_the_remove_mark_reads_as_red() {
+		let (mut d, i) = mk_shell_dialog(2);
+		d.tab = d.specs[i].tab;
+		let mut measure = |s: &str| s.chars().count() as f32 * 7.0;
+		let (_, rows) = d.rects_dip(d.line_h, &mut measure);
+		let danger = super::config::srgb_f32(super::dlg().danger);
+		let dim = super::config::srgb_f32(super::dlg().dim);
+
+		// the X: one per line, in the danger colour, inside the remove box
+		let marks: Vec<_> = rows
+			.iter()
+			.filter(|r| (r.params[0] - 1.0).abs() < f32::EPSILON)
+			.collect();
+		assert_eq!(marks.len(), 2, "one remove mark per line");
+		for (k, mark) in marks.iter().enumerate() {
+			assert_eq!(
+				mark.color, danger,
+				"the remove mark is not the danger colour"
+			);
+			assert_ne!(
+				mark.color,
+				super::config::srgb_f32(super::dlg().text),
+				"the remove mark reads as ordinary text"
+			);
+			let box_r = d.shell_remove_box(i, k);
+			assert!((mark.pos[0] - box_r.x).abs() < 0.01, "mark off its own box");
+		}
+
+		// the grip: three bars of one width, stacked inside the grip column
+		for k in 0..2 {
+			let grip = d.shell_grip_box(i, k);
+			let bars: Vec<_> = rows
+				.iter()
+				.filter(|r| {
+					r.color == dim
+						&& r.pos[0] > grip.x - 0.01
+						&& r.pos[0] + r.size[0] < grip.x + grip.w + 0.01
+						&& r.pos[1] >= grip.y - 0.01
+						&& r.pos[1] <= grip.y + grip.h + 0.01
+				})
+				.collect();
+			assert_eq!(bars.len(), 3, "line {k}'s grip is not three bars");
+			assert!(
+				bars.iter()
+					.all(|b| (b.size[0] - bars[0].size[0]).abs() < 0.01),
+				"the grip's bars are not one width"
+			);
+			let mut ys: Vec<f32> = bars.iter().map(|b| b.pos[1]).collect();
+			ys.sort_by(f32::total_cmp);
+			assert!(ys[0] < ys[1] && ys[1] < ys[2], "the bars are not stacked");
+			assert!(
+				(ys[1] - ys[0] - (ys[2] - ys[1])).abs() < 0.01,
+				"the bars are not evenly spaced"
+			);
+		}
+
+		// and nothing in the grid still draws a triangle
+		assert!(
+			!rows
+				.iter()
+				.any(|r| (r.params[0] - 3.0).abs() < f32::EPSILON),
+			"an arrow is still being drawn in the shells grid"
+		);
+	}
+
 	// The draw path has no other cover, and it is where a new control kind fails
 	// silently: a grid that renders nothing at all still passes every geometry
 	// test above. So this walks what would actually be handed to the renderer.
