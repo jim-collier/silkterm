@@ -100,13 +100,15 @@ libc = "0.2"
 # Cargo ignores profile sections in member crates.
 
 # windows: detect the system font size (no console window in release is set in
-# main.rs), join the launching console so the CLI-only flags can print, and walk
-# the process table for the shell's live child (copy-output's stand-in for a
+# main.rs), join the launching console so the CLI-only flags can print, ask
+# whether standard input is a console at all (config::launched_from_shell), and
+# walk the process table for the shell's live child (copy-output's stand-in for a
 # foreground process group - see term.rs at_shell_prompt).
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
     "Win32_System_Console",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Registry",

@@ -51,6 +51,10 @@ struct Dlg {
 	btn_hl: [u8; 3],
 	text: [u8; 3],
 	dim: [u8; 3],
+	// The dialog's one destructive control (the shells grid's remove). Chrome,
+	// not theme-derived: "this deletes something" is a fixed meaning, and a
+	// theme whose accent happened to be red would say it about everything.
+	danger: [u8; 3],
 }
 #[rustfmt::skip]
 const DARK_DLG: Dlg = Dlg {
@@ -61,6 +65,7 @@ const DARK_DLG: Dlg = Dlg {
 	field_bg: [0x14, 0x14, 0x1c], focus_out: [0x7a, 0x9a, 0xd0],
 	btn_bg: [0x34, 0x34, 0x40], btn_hl: [0x4a, 0x6a, 0x9a],
 	text: [0xe2, 0xe2, 0xea], dim: [0x9a, 0x9a, 0xa6],
+	danger: [0xe2, 0x6a, 0x6a],
 };
 #[rustfmt::skip]
 const LIGHT_DLG: Dlg = Dlg {
@@ -71,6 +76,7 @@ const LIGHT_DLG: Dlg = Dlg {
 	field_bg: [0xf8, 0xf8, 0xf6], focus_out: [0x3a, 0x6a, 0xc0],
 	btn_bg: [0xd6, 0xd6, 0xd2], btn_hl: [0x9a, 0xb6, 0xe0],
 	text: [0x22, 0x24, 0x2c], dim: [0x70, 0x70, 0x76],
+	danger: [0xb8, 0x2c, 0x2c],
 };
 // The dialog color set for the active mode, with the panel background + text
 // overridden by the configured dialog colors (theme default or a colors
@@ -488,35 +494,56 @@ fn shell_field_row(entry: usize, command: bool) -> usize {
 	SHELL_ROW_BASE - (entry * 2 + usize::from(command))
 }
 
-// One shell's own controls, in Tab order. `Add` is the single stop past the last
-// entry, so a grid of `n` entries has `n * ShellPart::COUNT + 1` stops.
+// One shell's own controls, in Tab order - which is also left to right across
+// its line. `Add` is the single stop past the last entry, so a grid of `n`
+// entries has `n * ShellPart::COUNT + 1` stops.
+//
+// The grip is deliberately NOT one of them. Reordering is a mouse gesture now,
+// so a Tab through the grid walks the values and nothing else; there is no stop
+// that draws a control the keyboard cannot work.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ShellPart {
 	Name,
 	Command,
-	Active,
-	Top,
-	Up,
-	Down,
-	Bottom,
 	Remove,
+	Active,
 }
 
 impl ShellPart {
-	const COUNT: u16 = 8;
-	const ALL: [ShellPart; 8] = [
+	const COUNT: u16 = 4;
+	const ALL: [ShellPart; 4] = [
 		ShellPart::Name,
 		ShellPart::Command,
-		ShellPart::Active,
-		ShellPart::Top,
-		ShellPart::Up,
-		ShellPart::Down,
-		ShellPart::Bottom,
 		ShellPart::Remove,
+		ShellPart::Active,
 	];
 	fn of(k: u16) -> ShellPart {
 		ShellPart::ALL[(k % ShellPart::COUNT) as usize]
 	}
+}
+
+// Left edge of every column on a shells line, plus the width of the one column
+// that is not fixed. The fixed columns are placed from BOTH ends and the command
+// takes whatever is left between them, so a wider panel widens the one value
+// that is routinely too long to read.
+struct ShellCols {
+	grip: f32,
+	name: f32,
+	command: f32,
+	command_w: f32,
+	remove: f32,
+	seen: f32,
+	active: f32,
+}
+
+// A line being dragged by its grip. `at` is where it currently sits, because the
+// list is reordered as the pointer moves rather than on release - the line the
+// user is dragging is the line they can see moving, which is the whole reason to
+// use a grip instead of buttons.
+struct ShellDrag {
+	at: usize,
+	// where inside the line the pointer took hold, so it does not jump on grab
+	grab_dy: f32,
 }
 
 // Where a part index lands in the grid: an entry's control, or the Add button
@@ -570,6 +597,7 @@ pub struct SettingsDialog {
 	scroll: f32,                       // rows-region scroll offset (0 when everything fits)
 	drag_thumb: Option<f32>,           // scrollbar-thumb drag: grab offset within the thumb
 	drag: Option<usize>,               // slider row being dragged
+	shell_drag: Option<ShellDrag>,     // shells line being dragged by its grip
 	pressed: Option<usize>,            // footer button held down (fires on release; drawn pressed)
 	pressed_row: Option<(usize, u16)>, // a row's push-button held down (same press/release)
 	prompt: Option<Prompt>,            // the name / confirm box a theme action puts over the panel
@@ -797,6 +825,7 @@ impl SettingsDialog {
 			scroll: 0.0,
 			drag_thumb: None,
 			drag: None,
+			shell_drag: None,
 			pressed: None,
 			pressed_row: None,
 			prompt: None,
@@ -1404,7 +1433,6 @@ impl SettingsDialog {
 				}
 			}
 			ShellStop::Entry(k, ShellPart::Remove) => self.shell_confirm_remove(k),
-			ShellStop::Entry(k, moved) => self.shell_move(i, k, moved),
 		}
 	}
 
@@ -1532,24 +1560,40 @@ impl SettingsDialog {
 			+ l.shell_command_width
 			+ l.shell_seen_width
 			+ l.shell_active_width
-			+ l.shell_col_gap * 4.0
-			+ (l.shell_button * 5.0 + l.shell_button_gap * 4.0) * font_scale
+			+ l.shell_col_gap * 5.0
+			+ (l.shell_grip + l.shell_button) * font_scale
 	}
-	fn shell_buttons_w(&self) -> f32 {
-		(lay().shell_button * 5.0 + lay().shell_button_gap * 4.0) * self.ui_scale()
+	// The two icon columns follow the UI font the way the checkboxes do, so a
+	// bigger desktop font gets a bigger grab handle rather than a fiddlier one.
+	fn shell_grip_w(&self) -> f32 {
+		lay().shell_grip * self.ui_scale()
 	}
-	// x of each column's left edge, plus the command column's width:
-	// (name, command, command_w, seen, active, buttons).
-	fn shell_cols(&self) -> (f32, f32, f32, f32, f32, f32) {
+	fn shell_button_w(&self) -> f32 {
+		lay().shell_button * self.ui_scale()
+	}
+	// x of each column's left edge, plus the command column's width. Remove sits
+	// between the command and the read-only date rather than at the end of the
+	// line: it is the one control here that doing the opposite cannot undo, so
+	// it is deliberately kept off the right-hand edge the pointer travels down.
+	fn shell_cols(&self) -> ShellCols {
 		let l = lay();
 		let left = self.rect.x + l.pad;
 		let right = self.rect.x + self.rect.w - l.pad;
-		let buttons = right - self.shell_buttons_w();
-		let active = buttons - l.shell_col_gap - l.shell_active_width;
+		let active = right - l.shell_active_width;
 		let seen = active - l.shell_col_gap - l.shell_seen_width;
-		let command = left + l.shell_name_width + l.shell_col_gap;
-		let command_w = (seen - l.shell_col_gap - command).max(l.shell_command_width / 2.0);
-		(left, command, command_w, seen, active, buttons)
+		let remove = seen - l.shell_col_gap - self.shell_button_w();
+		let name = left + self.shell_grip_w() + l.shell_col_gap;
+		let command = name + l.shell_name_width + l.shell_col_gap;
+		let command_w = (remove - l.shell_col_gap - command).max(l.shell_command_width / 2.0);
+		ShellCols {
+			grip: left,
+			name,
+			command,
+			command_w,
+			remove,
+			seen,
+			active,
+		}
 	}
 	// Top of the grid's column titles, and of entry `k`'s own line.
 	fn shell_head_y(&self, i: usize) -> f32 {
@@ -1570,37 +1614,38 @@ impl SettingsDialog {
 		}
 	}
 	fn shell_name_box(&self, i: usize, k: usize) -> Rect {
-		let (left, ..) = self.shell_cols();
-		self.shell_box(i, k, left, lay().shell_name_width)
+		self.shell_box(i, k, self.shell_cols().name, lay().shell_name_width)
 	}
 	fn shell_cmd_box(&self, i: usize, k: usize) -> Rect {
-		let (_, command, command_w, ..) = self.shell_cols();
-		self.shell_box(i, k, command, command_w)
+		let cols = self.shell_cols();
+		self.shell_box(i, k, cols.command, cols.command_w)
 	}
 	// The Active checkbox, centered under its own column title.
 	fn shell_active_box(&self, i: usize, k: usize) -> Rect {
-		let (.., active, _) = self.shell_cols();
 		let size = lay().swatch;
-		self.shell_box(i, k, active + (lay().shell_active_width - size) / 2.0, size)
+		let x = self.shell_cols().active + (lay().shell_active_width - size) / 2.0;
+		self.shell_box(i, k, x, size)
 	}
-	// One of the five icon buttons on entry `k`'s line, left to right.
-	fn shell_btn_box(&self, i: usize, k: usize, which: usize) -> Rect {
-		let (.., buttons) = self.shell_cols();
-		let size = lay().shell_button * self.ui_scale();
-		let pitch = size + lay().shell_button_gap * self.ui_scale();
+	// The drag handle. As tall as the fields beside it rather than square,
+	// because it is grabbed rather than aimed at - the taller box is the whole
+	// difference between a reorder that feels direct and one that keeps missing.
+	fn shell_grip_box(&self, i: usize, k: usize) -> Rect {
+		self.shell_box(i, k, self.shell_cols().grip, self.shell_grip_w())
+	}
+	fn shell_remove_box(&self, i: usize, k: usize) -> Rect {
+		let size = self.shell_button_w();
 		let line = self.shell_line_h();
 		Rect {
-			x: buttons + which as f32 * pitch,
+			x: self.shell_cols().remove,
 			y: self.shell_line_y(i, k) + (line - size) / 2.0,
 			w: size,
 			h: size,
 		}
 	}
 	fn shell_add_box(&self, i: usize) -> Rect {
-		let (left, ..) = self.shell_cols();
 		let n = self.edited.shells.len();
 		Rect {
-			x: left,
+			x: self.shell_cols().grip,
 			y: self.shell_line_y(i, n) + lay().shell_add_gap,
 			w: self.row_btn_w,
 			h: self.btn_h(),
@@ -1613,44 +1658,34 @@ impl SettingsDialog {
 			ShellStop::Entry(k, ShellPart::Name) => self.shell_name_box(i, k),
 			ShellStop::Entry(k, ShellPart::Command) => self.shell_cmd_box(i, k),
 			ShellStop::Entry(k, ShellPart::Active) => self.shell_active_box(i, k),
-			ShellStop::Entry(k, other) => self.shell_btn_box(i, k, Self::shell_btn_index(other)),
+			ShellStop::Entry(k, ShellPart::Remove) => self.shell_remove_box(i, k),
 		}
 	}
-	// Which of the five icon boxes a part is drawn in.
-	fn shell_btn_index(part: ShellPart) -> usize {
-		match part {
-			ShellPart::Top => 0,
-			ShellPart::Up => 1,
-			ShellPart::Down => 2,
-			ShellPart::Bottom => 3,
-			_ => 4, // Remove
-		}
-	}
-	// A move that would go nowhere is offered as a grayed button rather than
-	// hidden, so the four of them stay in the same place on every line.
-	fn shell_move_ok(&self, k: usize, part: ShellPart) -> bool {
+	// Move one entry to another place in the list - the whole point of the grip.
+	// The list IS the order the Tabs menu offers, and its first switched-on line
+	// is the default shell, so a reorder is a real edit and not a view setting.
+	fn shell_move_to(&mut self, from: usize, to: usize) {
 		let last = self.edited.shells.len().saturating_sub(1);
-		match part {
-			ShellPart::Top | ShellPart::Up => k > 0,
-			ShellPart::Down | ShellPart::Bottom => k < last,
-			_ => true,
-		}
-	}
-	// Move entry `k`, keeping focus on the button that moved it - which is now on
-	// a different line, so the focus part has to travel with it.
-	fn shell_move(&mut self, i: usize, k: usize, part: ShellPart) {
-		if !self.shell_move_ok(k, part) {
+		let to = to.min(last);
+		if from > last || from == to {
 			return;
 		}
-		let to = match part {
-			ShellPart::Top => 0,
-			ShellPart::Up => k - 1,
-			ShellPart::Down => k + 1,
-			_ => self.edited.shells.len() - 1,
-		};
-		let entry = self.edited.shells.remove(k);
+		let entry = self.edited.shells.remove(from);
 		self.edited.shells.insert(to, entry);
-		self.focus = Some(Focus::Row(i, shell_part_index(to, part)));
+	}
+	// Where a pointer at `y` wants the dragged line to sit. Measured from the
+	// line's own TOP - the pointer keeps whatever offset inside the grip it took
+	// hold at - and rounded, so an entry changes place once it has travelled half
+	// a line rather than a whole one.
+	//
+	// Both ends are clamped and neither needs a branch: a float-to-integer `as`
+	// saturates in Rust, so a line dragged off the top comes back 0 rather than
+	// wrapping, and `min` catches the other end.
+	fn shell_drop_at(&self, i: usize, y: f32, grab_dy: f32) -> usize {
+		let last = self.edited.shells.len().saturating_sub(1);
+		let line = self.shell_line_h().max(1.0);
+		let offset = (y - grab_dy - self.shell_line_y(i, 0)) / line;
+		(offset.round() as usize).min(last)
 	}
 	fn shell_remove(&mut self, k: usize) {
 		if k < self.edited.shells.len() {
@@ -1839,10 +1874,9 @@ impl SettingsDialog {
 	fn part_disabled(&self, i: usize, p: u16) -> bool {
 		match self.specs[i].kind {
 			Kind::Buttons(_) => !self.theme_btn_enabled(ThemeBtn::of(p)),
-			Kind::ShellList => match shell_stop(p, self.edited.shells.len()) {
-				ShellStop::Entry(k, part) => !self.shell_move_ok(k, part),
-				ShellStop::Add => false,
-			},
+			// Nothing in the grid is ever grayed: every stop is a value the user
+			// can always edit, and reordering left the keyboard with the arrows.
+			Kind::ShellList => false,
 			_ => self.disabled(self.part_key(i, p)),
 		}
 	}
@@ -2523,6 +2557,7 @@ impl SettingsDialog {
 			}
 			Key::FontFamily => self.edited.font_family.clone().unwrap_or_default(),
 			Key::LinkOpenCommand => self.edited.hyperlink_open_command.clone(),
+			Key::StartupDirectory => self.edited.startup_directory.clone(),
 			_ => String::new(),
 		}
 	}
@@ -2547,6 +2582,7 @@ impl SettingsDialog {
 				};
 			}
 			Key::LinkOpenCommand => self.edited.hyperlink_open_command = trimmed.to_string(),
+			Key::StartupDirectory => self.edited.startup_directory = trimmed.to_string(),
 			_ => {}
 		}
 	}
@@ -2820,6 +2856,7 @@ impl SettingsDialog {
 			Key::LinkOpenCommand => {
 				edited.hyperlink_open_command == defaults.hyperlink_open_command
 			}
+			Key::StartupDirectory => edited.startup_directory == defaults.startup_directory,
 			Key::Theme => edited.theme == defaults.theme,
 			Key::ThemeMode => edited.theme_mode == defaults.theme_mode,
 			Key::ColBg
@@ -2939,6 +2976,9 @@ impl SettingsDialog {
 			Key::FontFamily => self.edited.font_family = self.defaults.font_family.clone(),
 			Key::LinkOpenCommand => {
 				self.edited.hyperlink_open_command = self.defaults.hyperlink_open_command.clone();
+			}
+			Key::StartupDirectory => {
+				self.edited.startup_directory = self.defaults.startup_directory.clone();
 			}
 			Key::ColBg
 			| Key::ColFg
@@ -3225,6 +3265,18 @@ impl SettingsDialog {
 		y: f32,
 		measure: &mut impl FnMut(&str) -> f32,
 	) -> bool {
+		// The grip first, and outside the part walk: it is not a keyboard stop,
+		// so there is no part index that names it.
+		for k in 0..self.edited.shells.len() {
+			if self.shell_grip_box(i, k).contains(x, y) {
+				self.commit_edit();
+				self.shell_drag = Some(ShellDrag {
+					at: k,
+					grab_dy: y - self.shell_line_y(i, k),
+				});
+				return true;
+			}
+		}
 		for part in 0..self.parts_of(i) {
 			if !self.shell_stop_rect(i, part).contains(x, y) {
 				continue;
@@ -3246,10 +3298,10 @@ impl SettingsDialog {
 						entry.active = !entry.active;
 					}
 				}
-				ShellStop::Add | ShellStop::Entry(_, _) => {
-					if self.part_disabled(i, part) {
-						return true; // a grayed move button still eats the click
-					}
+				// Add and Remove arm on press and fire on release, the same way
+				// the footer and theme buttons do, so a press that drifts off
+				// cancels - which matters most for the one that deletes a line.
+				ShellStop::Add | ShellStop::Entry(_, ShellPart::Remove) => {
 					self.focus = Some(Focus::Row(i, part));
 					self.pressed_row = Some((i, part));
 				}
@@ -3534,6 +3586,20 @@ impl SettingsDialog {
 
 	fn mouse_move_dip(&mut self, x: f32, y: f32, measure: &mut impl FnMut(&str) -> f32) {
 		self.mouse = (x, y);
+		// a line being dragged by its grip, reordered as it travels
+		if let Some(drag) = &self.shell_drag {
+			let (at, grab_dy) = (drag.at, drag.grab_dy);
+			if let Some(i) = self.shell_row() {
+				let want = self.shell_drop_at(i, y, grab_dy);
+				if want != at {
+					self.shell_move_to(at, want);
+					if let Some(drag) = &mut self.shell_drag {
+						drag.at = want;
+					}
+				}
+			}
+			return;
+		}
 		// open field context menu: track the hovered item
 		if self.emenu.is_some() {
 			let hover = (0..EDIT_MENU.len()).find(|&k| self.em_item_rect(k).contains(x, y));
@@ -3592,6 +3658,11 @@ impl SettingsDialog {
 	// Release: end any slider/thumb drag, and fire an armed button's action only if
 	// the cursor is still over it (a press that drifted off cancels).
 	fn mouse_up_dip(&mut self, x: f32, y: f32) -> Action {
+		// A release that ends a grip drag is not a click on anything: the list was
+		// reordered as the pointer moved, and there is nothing left to fire.
+		if self.shell_drag.take().is_some() {
+			return Action::None;
+		}
 		self.drag = None;
 		self.drag_thumb = None;
 		self.edit_drag = None;
@@ -4442,52 +4513,40 @@ impl SettingsDialog {
 					dlg().handle,
 				));
 			}
-			// Top / Up / Down / Bottom, then Remove. "Top" and "Bottom" are the
-			// plain arrow with a bar against the edge it travels to, which is the
-			// conventional reading and needs no second shader mode.
-			for part in [
-				ShellPart::Top,
-				ShellPart::Up,
-				ShellPart::Down,
-				ShellPart::Bottom,
-				ShellPart::Remove,
-			] {
-				let r = self.shell_btn_box(i, k, Self::shell_btn_index(part));
-				let on = self.shell_move_ok(k, part);
-				let color = if on { dlg().text } else { dlg().dim };
-				out.push(q(r.x, r.y, r.w, r.h, dlg().btn_bg));
-				if !self.ring_on(i, shell_part_index(k, part)) {
-					border(out, r, 1.0, dlg().panel_border);
-				}
-				if part == ShellPart::Remove {
-					out.push(RectInstance {
-						pos: [r.x, r.y],
-						size: [r.w, r.h],
-						color: config::srgb_f32(color),
-						params: [1.0, (r.w * 0.12).max(1.2)],
-					});
-					continue;
-				}
-				let bar = (1.0 * scale).max(1.0);
-				let up = matches!(part, ShellPart::Top | ShellPart::Up);
-				let pad = (r.h * 0.2).max(2.0);
-				// the bar eats into the arrow's box, so both fit the same button
-				let (arrow_y, arrow_h) = match part {
-					ShellPart::Top => (r.y + pad + bar + 1.0, r.h - 2.0 * pad - bar - 1.0),
-					ShellPart::Bottom => (r.y + pad, r.h - 2.0 * pad - bar - 1.0),
-					_ => (r.y + pad, r.h - 2.0 * pad),
-				};
-				out.push(RectInstance {
-					pos: [r.x + r.w * 0.22, arrow_y],
-					size: [r.w * 0.56, arrow_h.max(2.0)],
-					color: config::srgb_f32(color),
-					params: [3.0, if up { 3.0 } else { 1.0 }],
-				});
-				if matches!(part, ShellPart::Top | ShellPart::Bottom) {
-					let y = if up { r.y + pad } else { r.y + r.h - pad - bar };
-					out.push(q(r.x + r.w * 0.22, y, r.w * 0.56, bar, color));
-				}
+			// The grip: three stacked bars, the shape every reorderable list uses.
+			// No box and no border around it - it is a texture to grab, not a
+			// button to press, and drawing it as one would invite a click that
+			// does nothing. Plain quads, so it costs no shader mode at all.
+			let grip = self.shell_grip_box(i, k);
+			let held = self.shell_drag.as_ref().is_some_and(|d| d.at == k);
+			let bar_h = (1.0 * scale).max(1.0);
+			let bar_w = (grip.w * 0.56).max(4.0);
+			let bar_x = grip.x + (grip.w - bar_w) / 2.0;
+			let pitch = bar_h * 3.0;
+			let stack = bar_h + pitch * 2.0;
+			let top = grip.y + (grip.h - stack) / 2.0;
+			for n in 0..3 {
+				out.push(q(
+					bar_x,
+					top + n as f32 * pitch,
+					bar_w,
+					bar_h,
+					if held { dlg().handle } else { dlg().dim },
+				));
 			}
+			// Remove, between the command and the date. Red, because it is the
+			// one control in the whole dialog that destroys something.
+			let r = self.shell_remove_box(i, k);
+			out.push(q(r.x, r.y, r.w, r.h, dlg().btn_bg));
+			if !self.ring_on(i, shell_part_index(k, ShellPart::Remove)) {
+				border(out, r, 1.0, dlg().panel_border);
+			}
+			out.push(RectInstance {
+				pos: [r.x, r.y],
+				size: [r.w, r.h],
+				color: config::srgb_f32(dlg().danger),
+				params: [1.0, (r.w * 0.12).max(1.2)],
+			});
 		}
 		let add = self.shell_add_box(i);
 		out.push(q(add.x, add.y, add.w, add.h, dlg().btn_bg));
@@ -4698,14 +4757,16 @@ impl SettingsDialog {
 					}
 				}
 				Kind::ShellList => {
-					let (left, command, _, seen, active, _) = self.shell_cols();
-					// column titles, once, above the whole grid
+					let cols = self.shell_cols();
+					// Column titles, once, above the whole grid. The grip and the
+					// remove button get none: neither is a value, and a title over
+					// either would read as a column of data that is not there.
 					let head_y = self.shell_head_y(i);
 					for (title, tx) in [
-						("Name", left),
-						("Command", command),
-						("Last seen", seen),
-						("Active", active),
+						("Name", cols.name),
+						("Command", cols.command),
+						("Last seen", cols.seen),
+						("Active", cols.active),
 					] {
 						out.push(TextItem {
 							color: dlg().dim,
@@ -4762,7 +4823,7 @@ impl SettingsDialog {
 							clip: Some(vp),
 							..mk(
 								seen_text,
-								seen,
+								cols.seen,
 								row_text_y(self.shell_line_y(i, k), self.shell_line_h()),
 							)
 						});
@@ -5468,14 +5529,28 @@ mod tests {
 			.find(|s| matches!(s.kind, super::Kind::ShellList))
 			.expect("a shells grid");
 		assert_eq!(tab_titles()[grid.tab], "Shell");
-		// and that tab holds nothing else but the heading that names it
+		// The tab is the grid, its headings, and the startup directory that the
+		// grid's own default shell starts in - nothing else belongs beside them.
 		for spec in ui.specs.iter().filter(|s| s.tab == grid.tab) {
 			assert!(
-				matches!(spec.kind, super::Kind::ShellList | super::Kind::Header(_)),
+				matches!(spec.kind, super::Kind::ShellList | super::Kind::Header(_))
+					|| spec.key == Key::StartupDirectory,
 				"{} does not belong on the Shell tab",
 				spec.label
 			);
 		}
+		// and the directory reads BELOW the list it applies to
+		let dir = ui
+			.specs
+			.iter()
+			.position(|s| s.key == Key::StartupDirectory)
+			.expect("a startup directory row");
+		let at = ui
+			.specs
+			.iter()
+			.position(|s| matches!(s.kind, super::Kind::ShellList))
+			.expect("a shells grid");
+		assert!(dir > at, "the startup directory sits below the shells");
 	}
 
 	// Asked for on the Cursor tab, and asked for LAST - so both halves are
@@ -5522,44 +5597,80 @@ mod tests {
 		));
 	}
 
-	// A move that would go nowhere is grayed rather than hidden, so the four
-	// buttons stay in the same place on every line.
+	// Reordering left the keyboard when the arrows did, so the grip must not be a
+	// stop - a ring sitting on a control that Space cannot work is worse than no
+	// ring at all. Nothing in the grid is grayed any more either.
 	#[test]
-	fn a_move_that_would_go_nowhere_is_offered_grayed() {
-		use super::ShellPart::{Bottom, Down, Top, Up};
+	fn the_grip_is_a_gesture_and_not_a_keyboard_stop() {
 		let (d, i) = mk_shell_dialog(3);
-		let off = |k: usize, part| d.part_disabled(i, super::shell_part_index(k, part));
-		assert!(off(0, Top) && off(0, Up), "nothing above the first");
-		assert!(!off(0, Down) && !off(0, Bottom));
-		assert!(!off(1, Top) && !off(1, Up) && !off(1, Down) && !off(1, Bottom));
-		assert!(off(2, Down) && off(2, Bottom), "nothing below the last");
-		// and a grayed stop is not in the keyboard ring at all
-		let ring = d.focus_ring();
-		assert!(!ring.contains(&super::Focus::Row(i, super::shell_part_index(0, Up))));
-		assert!(ring.contains(&super::Focus::Row(i, super::shell_part_index(1, Up))));
+		assert_eq!(d.parts_of(i), 3 * super::ShellPart::COUNT + 1);
+		for part in 0..d.parts_of(i) {
+			assert!(!d.part_disabled(i, part), "part {part} came up grayed");
+		}
+		// no stop draws where the grip does
+		for k in 0..3 {
+			let grip = d.shell_grip_box(i, k);
+			let (cx, cy) = (grip.x + grip.w / 2.0, grip.y + grip.h / 2.0);
+			for part in 0..d.parts_of(i) {
+				assert!(
+					!d.shell_stop_rect(i, part).contains(cx, cy),
+					"part {part} hit-tests over line {k}'s grip"
+				);
+			}
+		}
 	}
 
-	// The button that moved an entry is now on a different line, so the focus has
-	// to travel with it - otherwise a second press moves whatever moved into its
-	// place, which is the opposite of what the user asked for.
+	// The grip's whole job. Dragging is live - the list reorders under the
+	// pointer rather than on release - so each step of the gesture is asserted,
+	// not just where it ended up.
 	#[test]
-	fn moving_an_entry_carries_the_focus_with_it() {
-		use super::ShellPart::{Down, Top};
+	fn a_grip_drag_reorders_the_list() {
 		let (mut d, i) = mk_shell_dialog(3);
-		d.shell_move(i, 0, Down);
-		let titles: Vec<&str> = d.edited.shells.iter().map(|e| e.title.as_str()).collect();
-		assert_eq!(titles, vec!["Shell 1", "Shell 0", "Shell 2"]);
-		assert_eq!(
-			d.focus,
-			Some(super::Focus::Row(i, super::shell_part_index(1, Down)))
+		let mut measure = |s: &str| s.chars().count() as f32 * 7.0;
+		let line = d.shell_line_h();
+		let titles = |d: &super::SettingsDialog| -> Vec<String> {
+			d.edited.shells.iter().map(|e| e.title.clone()).collect()
+		};
+		let grip = d.shell_grip_box(i, 0);
+		let (x, y) = (grip.x + grip.w / 2.0, grip.y + grip.h / 2.0);
+		assert!(
+			d.shell_mouse_down(i, x, y, &mut measure),
+			"the grip did not take the press"
 		);
-		d.shell_move(i, 2, Top);
+		// less than half a line is not yet a move
+		d.mouse_move_dip(x, y + line * 0.4, &mut measure);
+		assert_eq!(titles(&d), ["Shell 0", "Shell 1", "Shell 2"]);
+		// past half, it swaps with the line below
+		d.mouse_move_dip(x, y + line * 0.6, &mut measure);
+		assert_eq!(titles(&d), ["Shell 1", "Shell 0", "Shell 2"]);
+		// and keeps going, without letting go
+		d.mouse_move_dip(x, y + line * 2.0, &mut measure);
+		assert_eq!(titles(&d), ["Shell 1", "Shell 2", "Shell 0"]);
+		// dragged past the end it stops at the end rather than vanishing
+		d.mouse_move_dip(x, y + line * 40.0, &mut measure);
+		assert_eq!(titles(&d), ["Shell 1", "Shell 2", "Shell 0"]);
+		d.mouse_up_dip(x, y + line * 40.0);
+		assert!(d.shell_drag.is_none(), "the drag outlived the release");
+		// and a plain move afterwards moves nothing
+		d.mouse_move_dip(x, y, &mut measure);
+		assert_eq!(titles(&d), ["Shell 1", "Shell 2", "Shell 0"]);
+	}
+
+	// Dragged the other way, and off the top: the first line is as far as it
+	// goes. The arithmetic is in f32 and lands on a usize, so this is the test
+	// that says the saturating cast is being RELIED on rather than tolerated.
+	#[test]
+	fn a_line_dragged_off_the_top_lands_on_the_first() {
+		let (mut d, i) = mk_shell_dialog(3);
+		let mut measure = |s: &str| s.chars().count() as f32 * 7.0;
+		let line = d.shell_line_h();
+		let grip = d.shell_grip_box(i, 2);
+		let (x, y) = (grip.x + grip.w / 2.0, grip.y + grip.h / 2.0);
+		assert!(d.shell_mouse_down(i, x, y, &mut measure));
+		d.mouse_move_dip(x, y - line * 99.0, &mut measure);
 		let titles: Vec<&str> = d.edited.shells.iter().map(|e| e.title.as_str()).collect();
-		assert_eq!(titles, vec!["Shell 2", "Shell 1", "Shell 0"]);
-		assert_eq!(
-			d.focus,
-			Some(super::Focus::Row(i, super::shell_part_index(0, Top)))
-		);
+		assert_eq!(titles, ["Shell 2", "Shell 0", "Shell 1"]);
+		d.mouse_up_dip(x, y);
 	}
 
 	// The command is REQUIRED: emptying the field cannot be what stores an entry
@@ -5639,33 +5750,112 @@ mod tests {
 	}
 
 	// The columns are laid out from both ends with the command taking the slack,
-	// so the one thing that can go wrong is them meeting in the middle.
+	// so the one thing that can go wrong is them meeting in the middle. The
+	// order asserted here is the order asked for: remove sits between the
+	// command and the date, where it is hard to press by accident.
 	#[test]
 	fn the_grid_columns_stay_inside_the_panel_in_order() {
 		let (d, i) = mk_shell_dialog(2);
 		let left = d.rect.x + super::lay().pad;
 		let right = d.rect.x + d.rect.w - super::lay().pad;
+		let cols = d.shell_cols();
 		for k in 0..2 {
+			let grip = d.shell_grip_box(i, k);
 			let name = d.shell_name_box(i, k);
 			let cmd = d.shell_cmd_box(i, k);
+			let remove = d.shell_remove_box(i, k);
 			let active = d.shell_active_box(i, k);
-			let first = d.shell_btn_box(i, k, 0);
-			let last = d.shell_btn_box(i, k, 4);
-			assert!(name.x >= left - 0.01, "the name column starts inside");
+			assert!(grip.x >= left - 0.01, "the grip starts inside the panel");
+			assert!(grip.x + grip.w <= name.x + 0.01, "grip runs into the name");
 			assert!(name.x + name.w <= cmd.x + 0.01, "name runs into command");
 			assert!(cmd.w > 0.0, "the command column collapsed");
-			assert!(cmd.x + cmd.w <= active.x + 0.01, "command runs into active");
+			assert!(cmd.x + cmd.w <= remove.x + 0.01, "command runs into remove");
 			assert!(
-				active.x + active.w <= first.x + 0.01,
-				"active runs into the buttons"
+				remove.x + remove.w <= cols.seen + 0.01,
+				"remove runs into the date"
 			);
 			assert!(
-				last.x + last.w <= right + 0.01,
-				"the buttons overrun the panel"
+				cols.seen + super::lay().shell_seen_width <= active.x + 0.01,
+				"the date runs into active"
+			);
+			assert!(
+				active.x + active.w <= right + 0.01,
+				"the last column overruns the panel"
 			);
 			// and every line sits below the column titles
 			assert!(d.shell_line_y(i, k) > d.shell_head_y(i));
 		}
+	}
+
+	// The look of the two changed columns, asserted in the quads themselves,
+	// because the geometry tests above pass just as happily on a grid that draws
+	// the old arrows. Three things: the grip is three bars and not a button, the
+	// remove mark is drawn in the danger colour and not the text colour, and no
+	// arrow survives anywhere in the grid.
+	#[test]
+	fn the_grip_reads_as_bars_and_the_remove_mark_reads_as_red() {
+		let (mut d, i) = mk_shell_dialog(2);
+		d.tab = d.specs[i].tab;
+		let mut measure = |s: &str| s.chars().count() as f32 * 7.0;
+		let (_, rows) = d.rects_dip(d.line_h, &mut measure);
+		let danger = super::config::srgb_f32(super::dlg().danger);
+		let dim = super::config::srgb_f32(super::dlg().dim);
+
+		// the X: one per line, in the danger colour, inside the remove box
+		let marks: Vec<_> = rows
+			.iter()
+			.filter(|r| (r.params[0] - 1.0).abs() < f32::EPSILON)
+			.collect();
+		assert_eq!(marks.len(), 2, "one remove mark per line");
+		for (k, mark) in marks.iter().enumerate() {
+			assert_eq!(
+				mark.color, danger,
+				"the remove mark is not the danger colour"
+			);
+			assert_ne!(
+				mark.color,
+				super::config::srgb_f32(super::dlg().text),
+				"the remove mark reads as ordinary text"
+			);
+			let box_r = d.shell_remove_box(i, k);
+			assert!((mark.pos[0] - box_r.x).abs() < 0.01, "mark off its own box");
+		}
+
+		// the grip: three bars of one width, stacked inside the grip column
+		for k in 0..2 {
+			let grip = d.shell_grip_box(i, k);
+			let bars: Vec<_> = rows
+				.iter()
+				.filter(|r| {
+					r.color == dim
+						&& r.pos[0] > grip.x - 0.01
+						&& r.pos[0] + r.size[0] < grip.x + grip.w + 0.01
+						&& r.pos[1] >= grip.y - 0.01
+						&& r.pos[1] <= grip.y + grip.h + 0.01
+				})
+				.collect();
+			assert_eq!(bars.len(), 3, "line {k}'s grip is not three bars");
+			assert!(
+				bars.iter()
+					.all(|b| (b.size[0] - bars[0].size[0]).abs() < 0.01),
+				"the grip's bars are not one width"
+			);
+			let mut ys: Vec<f32> = bars.iter().map(|b| b.pos[1]).collect();
+			ys.sort_by(f32::total_cmp);
+			assert!(ys[0] < ys[1] && ys[1] < ys[2], "the bars are not stacked");
+			assert!(
+				(ys[1] - ys[0] - (ys[2] - ys[1])).abs() < 0.01,
+				"the bars are not evenly spaced"
+			);
+		}
+
+		// and nothing in the grid still draws a triangle
+		assert!(
+			!rows
+				.iter()
+				.any(|r| (r.params[0] - 3.0).abs() < f32::EPSILON),
+			"an arrow is still being drawn in the shells grid"
+		);
 	}
 
 	// The draw path has no other cover, and it is where a new control kind fails

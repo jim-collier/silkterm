@@ -3781,8 +3781,11 @@ fn build_layout(
 	use crate::cli::Size;
 	// A bad --shell / default_shell (typo'd binary, PTY failure) should read
 	// like the CLI parse errors, not a Rust panic + backtrace.
+	// The lowest-precedence directory: None whenever a shell launched us, so the
+	// directory it was in survives (see config::startup_dir).
+	let start = config::startup_dir();
 	let spawn = |text: &mut TextCtx, shell: Option<Vec<String>>| {
-		PaneManager::new(text, proxy, area, shell, None).unwrap_or_else(|e| {
+		PaneManager::new(text, proxy, area, shell, start.clone()).unwrap_or_else(|e| {
 			eprintln!("{}: failed to start shell: {e}", config::APP_NAME);
 			std::process::exit(2);
 		})
