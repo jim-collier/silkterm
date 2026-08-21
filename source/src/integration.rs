@@ -15,7 +15,13 @@
 //!   other OSC 7 / OSC 9;9 already in the file (a Windows Terminal setup, say),
 //!   means somebody has this in hand and the file is left alone.
 //! - Only ever APPENDED to, after a copy is kept beside it, and only once - the
-//!   marker is what makes a second launch a no-op.
+//!   marker is what makes a second launch a no-op. The one exception is the
+//!   block ITSELF, which is kept current in place: it gains things over time
+//!   (the version prompt did), and an install that only ever appends would
+//!   leave everyone who already had it on the first version forever. That edit
+//!   is only safe because the region is delimited by our own two markers and
+//!   was written by us - which is exactly the signal a stored shell entry
+//!   lacks, and why THAT list may only ever be added to.
 //! - Deleting the block is how it is switched off; nothing puts it back, since
 //!   the block is gone and no marker is left to match. `shell.integration`
 //!   switches the whole thing off before it starts.
@@ -36,7 +42,14 @@ use crate::shells::Found;
 // binary is the one source of it - `shell-integration.md` documents the same
 // text for anyone adding it by hand, and a test holds the two together.
 pub const SNIPPET: &str = include_str!("shell_integration.ps1");
+// Named rather than spelled at each use: this module compares and rewrites
+// line endings constantly, and an escape is easy to get subtly wrong.
+const LF: &str = "\n";
+const CRLF: &str = "\r\n";
+const NL: char = '\n';
+
 pub const MARKER: &str = "# >>> SilkTerm shell integration >>>";
+pub const END_MARKER: &str = "# <<< SilkTerm shell integration <<<";
 
 // A file that already carries either sequence is reporting - by our block or by
 // somebody else's setup - and is not ours to edit.
@@ -191,8 +204,48 @@ fn policy_runs_scripts(policy: &str) -> bool {
 	)
 }
 
+// The profile with our block brought up to date, or None when there is nothing
+// to do - no block of ours in the file, or the one there is already current.
+// Only the text BETWEEN the two markers is touched; whatever the user wrote
+// above or below it is carried through untouched. An opening marker with no
+// closing one is not a block we finished writing, so it is not a region we may
+// replace either.
+pub fn refreshed_block(profile: &str, newline: &str) -> Option<String> {
+	let start = profile.find(MARKER)?;
+	let end_marker = profile[start..].find(END_MARKER)? + start;
+	let end = profile[end_marker..]
+		.find(NL)
+		.map_or(profile.len(), |nl| end_marker + nl + 1);
+	let block = SNIPPET.replace(CRLF, LF).replace(NL, newline);
+	if profile[start..end].replace(CRLF, LF) == block.replace(CRLF, LF) {
+		return None;
+	}
+	Some(format!("{}{block}{}", &profile[..start], &profile[end..]))
+}
+
 fn install_into(profile: &Path) {
 	let existing = std::fs::read_to_string(profile).unwrap_or_default();
+	// a profile is read by the platform's own shell, so it gets the platform's
+	// line ending rather than whatever the compiled-in copy carries
+	let newline = if cfg!(windows) { CRLF } else { LF };
+	// already ours: the only thing left to do is bring it up to date
+	if existing.contains(MARKER) {
+		if let Some(updated) = refreshed_block(&existing, newline) {
+			match std::fs::write(profile, updated) {
+				Ok(()) => eprintln!(
+					"{}: updated the shell integration block in {}",
+					config::APP_NAME,
+					profile.display()
+				),
+				Err(e) => eprintln!(
+					"{}: could not write {}: {e}",
+					config::APP_NAME,
+					profile.display()
+				),
+			}
+		}
+		return;
+	}
 	if already_reports(&existing) {
 		return;
 	}
@@ -217,9 +270,6 @@ fn install_into(profile: &Path) {
 			return;
 		}
 	}
-	// a profile is read by the platform's own shell, so it gets the platform's
-	// line ending rather than whatever the compiled-in copy carries
-	let newline = if cfg!(windows) { "\r\n" } else { "\n" };
 	match std::fs::write(profile, with_block(&existing, newline)) {
 		Ok(()) => eprintln!(
 			"{}: added shell integration to {} - new tabs and panes will open where the shell is (see shell-integration.md)",
@@ -236,7 +286,10 @@ fn install_into(profile: &Path) {
 
 #[cfg(test)]
 mod tests {
-	use super::{MARKER, SNIPPET, already_reports, is_powershell, powershells, with_block};
+	use super::{
+		END_MARKER, LF, MARKER, SNIPPET, already_reports, is_powershell, powershells,
+		refreshed_block, with_block,
+	};
 	use crate::shells::Found;
 
 	fn found(title: &str, command: &str) -> Found {
@@ -370,6 +423,37 @@ mod tests {
 		assert_eq!(
 			powershells(&scan),
 			vec![r"C:\pwsh.exe".to_string(), "powershell.exe".to_string()]
+		);
+	}
+
+	// The block gains things over time, so an install that only ever appended
+	// would leave anyone who already has it on whatever version they first got.
+	#[test]
+	fn an_existing_block_is_brought_up_to_date_in_place() {
+		let stale = format!(
+			"# mine, above\n\n{MARKER}\nWrite-Host 'an older block'\n{END_MARKER}\n\n# mine, below\n"
+		);
+		let updated = refreshed_block(&stale, LF).expect("a stale block needs replacing");
+		assert!(
+			updated.starts_with("# mine, above\n"),
+			"lost what was above"
+		);
+		assert!(updated.ends_with("# mine, below\n"), "lost what was below");
+		assert!(
+			!updated.contains("an older block"),
+			"kept the old block: {updated}"
+		);
+		assert!(updated.contains(SNIPPET.replace("\r\n", LF).trim_end()));
+		// ...and having done it once, there is nothing left to do.
+		assert_eq!(refreshed_block(&updated, LF), None);
+	}
+
+	#[test]
+	fn a_profile_with_no_block_of_ours_is_not_rewritten() {
+		assert_eq!(refreshed_block("# just my own profile\n", LF), None);
+		assert_eq!(
+			refreshed_block(&format!("{MARKER}\nhalf a block\n"), LF),
+			None
 		);
 	}
 

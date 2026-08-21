@@ -2746,6 +2746,9 @@ pub struct PaneManager {
 	pub focused: PaneId,
 	// CLI `--title` for this tab; overrides the computed "<shell> [program]".
 	pub title_override: Option<String>,
+	// When this tab was opened, for the tip's elapsed time. A tab, not a pane:
+	// splitting one does not start it over.
+	pub created: std::time::Instant,
 }
 
 impl PaneManager {
@@ -2765,6 +2768,7 @@ impl PaneManager {
 			root: Node::Leaf(id),
 			focused: id,
 			title_override: None,
+			created: std::time::Instant::now(),
 		})
 	}
 
@@ -2784,6 +2788,24 @@ impl PaneManager {
 		// interactive splits even-distribute the same-direction run (unless a divider
 		// in it was hand-dragged); the CLI drives its own sizing, so it passes false
 		self.split_at(ctx, proxy, id, dir, false, 0.5, cmd, cwd, area, true);
+	}
+
+	// What the tab has to say about itself: the command its focused pane was
+	// launched with (None = whatever the default shell is), what that shell is
+	// running, and where it is now. `&mut` because asking what is running costs a
+	// probe, which the term throttles and caches for itself.
+	pub fn tab_facts(
+		&mut self,
+	) -> (
+		Option<Vec<String>>,
+		crate::term::Task,
+		Option<std::path::PathBuf>,
+	) {
+		let focused_id = self.focused;
+		self.panes.get_mut(&focused_id).map_or_else(
+			|| (None, crate::term::Task::Idle, None),
+			|pane| (pane.command.clone(), pane.term.task(), pane.term.cwd()),
+		)
 	}
 
 	// What a new tab/window spawned "from" the focused pane should inherit:
@@ -2987,6 +3009,15 @@ fn spawn_pane(
 	command: Option<Vec<String>>,
 	cwd: Option<std::path::PathBuf>,
 ) -> anyhow::Result<Pane> {
+	// A pane with no command of its own runs the default shell - resolved HERE
+	// and then remembered, rather than left as "whatever the default is". The
+	// list can change under a running pane: the background scan fills it a few
+	// seconds after launch, and the Shells tab reorders it. Leaving it unresolved
+	// made the tab name whichever shell was first at the moment somebody LOOKED,
+	// which is how a pane running PowerShell came to be labelled Command Prompt.
+	// It stays None only when nothing is switched on at all, where the engine
+	// picks its own default and there is genuinely nothing to report.
+	let command = command.or_else(config::default_shell_argv);
 	let (cw, ch, cols, lines) = content_dims(rect, ctx);
 	let term = TermInstance::spawn(
 		id,

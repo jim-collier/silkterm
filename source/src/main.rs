@@ -28,6 +28,7 @@ mod scroll;
 mod settings_ui;
 mod shells;
 mod sysfont;
+mod tabtitle;
 mod term;
 mod text;
 mod theme;
