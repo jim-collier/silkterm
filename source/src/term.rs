@@ -142,6 +142,9 @@ pub struct TermInstance {
 	pub lines: usize,
 	sender: EventLoopSender,
 	io: Option<std::thread::JoinHandle<()>>,
+	// where the shell last SAID it is (OSC 7 / OSC 9;9, see cwd.rs) - the only
+	// answer for a shell whose location the OS cannot see, PowerShell above all
+	reported_cwd: crate::cwd::Reported,
 	// for tab titles: the PTY master fd (foreground-process group) + shell pid;
 	// `shell_name` is cached, `last_program` tracks the most recent foreground.
 	#[cfg(unix)]
@@ -239,6 +242,9 @@ impl TermInstance {
 			.pid()
 			.map_or(0, std::num::NonZeroU32::get);
 		let notifier = event_proxy.clone();
+		// the tap goes between the PTY and the parser; the bytes are untouched
+		let reported_cwd = crate::cwd::Reported::default();
+		let pty = crate::cwd::TappedPty::new(pty, reported_cwd.clone());
 		let event_loop = EventLoop::new(term.clone(), event_proxy, pty, false, false)?;
 		let sender = event_loop.channel();
 		let handle = event_loop.spawn();
@@ -254,6 +260,7 @@ impl TermInstance {
 			lines,
 			sender,
 			io: Some(io),
+			reported_cwd,
 			#[cfg(unix)]
 			master_fd,
 			#[cfg(unix)]
@@ -324,10 +331,25 @@ impl TermInstance {
 		crate::config::APP_NAME.to_string()
 	}
 
-	// The shell's current directory, for a new tab/split to start in. A deleted
-	// dir reads back with a " (deleted)" suffix, so require it to still exist.
-	#[cfg(unix)]
+	// The shell's current directory, for a new tab/split to start in.
+	//
+	// What the shell SAID wins over what the OS can see, and that order is the
+	// point: a shell reporting its directory is answering the question directly,
+	// while the OS can only see where the process itself sits - which for
+	// PowerShell is the launch directory forever. A report that no longer names
+	// a directory (a stale one, or a path on the far side of an ssh) is dropped
+	// rather than trusted, and the OS answer stands instead.
 	pub fn cwd(&self) -> Option<std::path::PathBuf> {
+		self.reported_cwd
+			.get()
+			.filter(|dir| dir.is_dir())
+			.or_else(|| self.os_cwd())
+	}
+
+	// Where the OS says the shell process itself is. A deleted dir reads back
+	// with a " (deleted)" suffix, so require it to still exist.
+	#[cfg(unix)]
+	fn os_cwd(&self) -> Option<std::path::PathBuf> {
 		std::fs::read_link(format!("/proc/{}/cwd", self.shell_pid))
 			.ok()
 			.filter(|dir| dir.is_dir())
@@ -342,14 +364,14 @@ impl TermInstance {
 	// reports where it started. cmd.exe, Git Bash and MSYS2 all call
 	// SetCurrentDirectory and read back correctly.
 	#[cfg(windows)]
-	pub fn cwd(&self) -> Option<std::path::PathBuf> {
+	fn os_cwd(&self) -> Option<std::path::PathBuf> {
 		peb_cwd(self.shell_pid)
 	}
 
-	// Neither /proc nor a PEB: callers fall back to the default.
+	// Neither /proc nor a PEB: only what a shell reports can answer here.
 	#[cfg(not(any(unix, windows)))]
 	#[allow(clippy::unused_self)]
-	pub fn cwd(&self) -> Option<std::path::PathBuf> {
+	fn os_cwd(&self) -> Option<std::path::PathBuf> {
 		None
 	}
 

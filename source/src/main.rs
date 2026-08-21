@@ -14,6 +14,7 @@ mod coloremoji;
 mod config;
 mod contrast;
 mod ctl;
+mod cwd;
 mod dialog;
 mod gfx;
 mod input;
