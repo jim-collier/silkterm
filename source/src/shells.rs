@@ -46,6 +46,59 @@ pub struct ShellEntry {
 	pub last_seen: String,
 }
 
+// Where a find sits in the order the list is offered in. A scan sorts by this
+// and then by `seq`/title, so the order is stated once, in one place, instead of
+// falling out of the sequence the detection happens to run in.
+//
+// It only ever decides an INITIAL population and where a newly-found shell is
+// offered - `merge` keeps a stored list's own order whole, because that order is
+// the user's (the Shell tab exists to set it). So changing anything here reaches
+// a fresh config and nobody's existing one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Group {
+	// The user's own login shell, and directly under it the twin that skips its
+	// startup files. Unix only: Windows has no user shell, and the order there
+	// is stated outright rather than led by whatever ComSpec names.
+	Login,
+	LoginNoRc,
+	// Windows leads with PowerShell 7 where it is installed.
+	Pwsh7,
+	// The modern cross-platform shells, alphabetically among themselves.
+	Modern,
+	// WSL distributions, each version alphabetically among its own. Both are
+	// offered when both exist - a WSL1 distribution is installed and usable, and
+	// hiding one because a newer-generation one exists beside it is not something
+	// a scan gets to decide.
+	Wsl2,
+	Wsl1,
+	// The POSIX environments' bashes (MSYS2, Git for Windows, Cygwin) - one
+	// curated order, since they are three builds of the same shell.
+	PosixEnv,
+	PyCmd,
+	// Language REPLs people do use as a shell, alphabetically.
+	Language,
+	// Everything else installed: Windows Cmd, and on unix the rest of the POSIX
+	// family. Curated order (the table's own), which is a rough preference order
+	// and more use than an alphabetical one here.
+	Legacy,
+	// The Windows 5.1 shell, and below it the variant that relaxes the execution
+	// policy for its own session. Last because they are what you reach for when
+	// something needs them, not what you open a terminal to get.
+	WinPs5,
+	WinPs5Relaxed,
+}
+
+// Whether the group's members sort alphabetically among themselves. The rest use
+// `seq`, which is the position the table gave them.
+impl Group {
+	fn alphabetical(self) -> bool {
+		matches!(
+			self,
+			Self::Modern | Self::Wsl2 | Self::Wsl1 | Self::Language
+		)
+	}
+}
+
 // One shell a scan turned up. It becomes a `ShellEntry` only if the stored list
 // has nothing already running the same program.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,15 +110,21 @@ pub struct Found {
 	// presumably wanted. A variant that only exists as an alternative to another
 	// entry arrives OFF instead, so the list gains a row rather than a surprise.
 	pub active: bool,
+	// Where this sits in the offered order, and its position inside its own group
+	// where that group is curated rather than alphabetical.
+	group: Group,
+	seq: u32,
 }
 
 impl Found {
-	fn new(title: &str, command: String, comment: &str) -> Self {
+	pub(crate) fn new(title: &str, command: String, comment: &str) -> Self {
 		Self {
 			title: title.to_string(),
 			command,
 			comment: comment.to_string(),
 			active: true,
+			group: Group::Legacy,
+			seq: 0,
 		}
 	}
 
@@ -76,6 +135,22 @@ impl Found {
 			active: false,
 			..Self::new(title, command, comment)
 		}
+	}
+
+	fn in_group(self, group: Group, seq: u32) -> Self {
+		Self { group, seq, ..self }
+	}
+
+	// What a find sorts on. An alphabetical group ignores `seq` outright, so a
+	// table position cannot quietly override the order that group is meant to be
+	// in; the title is folded to lowercase so "YSH" does not sort above "elvish".
+	fn order(&self) -> (Group, u32, String) {
+		let seq = if self.group.alphabetical() {
+			0
+		} else {
+			self.seq
+		};
+		(self.group, seq, self.title.to_lowercase())
 	}
 }
 
@@ -425,7 +500,7 @@ fn no_startup_file(base: &str) -> Option<(&'static str, &'static str)> {
 
 // A friendly name for a program we found by its bare name.
 fn pretty(base: &str) -> String {
-	for (exe, title, _) in KNOWN {
+	for (exe, title, _, _) in KNOWN {
 		if *exe == base {
 			return (*title).to_string();
 		}
@@ -437,52 +512,105 @@ fn pretty(base: &str) -> String {
 	)
 }
 
-// The shells worth looking for by name, in the order they should be offered.
-// Interactive shells first, then the language REPLs that people do use as one.
-// A name not on this list is still found when it is the user's login shell.
+// Where a program found by its bare name belongs in the order, and its position
+// inside a curated group. Anything the table does not name is an ordinary system
+// shell - that is what /etc/shells turns up.
+fn known_group(base: &str) -> (Group, u32) {
+	for (seq, (exe, _, _, group)) in KNOWN.iter().enumerate() {
+		if *exe == base {
+			return (*group, seq as u32);
+		}
+	}
+	(Group::Legacy, KNOWN.len() as u32)
+}
+
+// The shells worth looking for by name. The fourth field is where each belongs
+// in the offered order (see `Group`); within a curated group the table's own
+// position decides, so this list is also the preference order for the POSIX
+// family. A name not on this list is still found when it is the user's login
+// shell, or when /etc/shells names it.
 #[cfg(unix)]
-const KNOWN: &[(&str, &str, &str)] = &[
-	("bash", "Bash", ""),
-	("zsh", "Zsh", ""),
-	("fish", "Fish", ""),
-	("dash", "Dash", ""),
-	("ash", "Ash", ""),
-	("ksh", "Korn shell", ""),
-	("mksh", "MirBSD Korn shell", ""),
-	("yash", "Yash", ""),
-	("tcsh", "Tcsh", ""),
-	("csh", "C shell", ""),
-	("sh", "POSIX shell", ""),
-	("nu", "Nushell", "structured data through the pipeline"),
-	("elvish", "Elvish", ""),
-	("xonsh", "Xonsh", "Python syntax with shell primitives"),
-	("ysh", "YSH", "the Oils shell"),
-	("osh", "OSH", "the Oils shell, bash-compatible"),
-	("murex", "Murex", ""),
-	("ion", "Ion", ""),
-	("es", "Es", ""),
-	("rc", "rc", "the Plan 9 shell"),
-	("pwsh", "PowerShell 7", ""),
-	("python3", "Python 3", ""),
-	("ipython", "IPython", ""),
-	("node", "Node.js", ""),
+const KNOWN: &[(&str, &str, &str, Group)] = &[
+	("bash", "Bash", "", Group::Legacy),
+	("zsh", "Zsh", "", Group::Legacy),
+	("fish", "Fish", "", Group::Legacy),
+	("dash", "Dash", "", Group::Legacy),
+	("ash", "Ash", "", Group::Legacy),
+	("ksh", "Korn shell", "", Group::Legacy),
+	("mksh", "MirBSD Korn shell", "", Group::Legacy),
+	("yash", "Yash", "", Group::Legacy),
+	("tcsh", "Tcsh", "", Group::Legacy),
+	("csh", "C shell", "", Group::Legacy),
+	("sh", "POSIX shell", "", Group::Legacy),
+	("es", "Es", "", Group::Legacy),
+	("rc", "rc", "the Plan 9 shell", Group::Legacy),
+	(
+		"nu",
+		"Nushell",
+		"structured data through the pipeline",
+		Group::Modern,
+	),
+	("elvish", "Elvish", "", Group::Modern),
+	(
+		"xonsh",
+		"Xonsh",
+		"Python syntax with shell primitives",
+		Group::Modern,
+	),
+	("ysh", "YSH", "the Oils shell", Group::Modern),
+	(
+		"osh",
+		"OSH",
+		"the Oils shell, bash-compatible",
+		Group::Modern,
+	),
+	("murex", "Murex", "", Group::Modern),
+	("ion", "Ion", "", Group::Modern),
+	("pwsh", "PowerShell 7", "", Group::Modern),
+	("python3", "Python 3", "", Group::Language),
+	("ipython", "IPython", "", Group::Language),
+	("node", "Node.js", "", Group::Language),
 ];
 
 #[cfg(not(unix))]
-const KNOWN: &[(&str, &str, &str)] = &[
-	("pwsh", "PowerShell 7", ""),
+const KNOWN: &[(&str, &str, &str, Group)] = &[
+	("pwsh", "PowerShell 7", "", Group::Pwsh7),
+	(
+		"nu",
+		"Nushell",
+		"structured data through the pipeline",
+		Group::Modern,
+	),
+	("elvish", "Elvish", "", Group::Modern),
+	(
+		"xonsh",
+		"Xonsh",
+		"Python syntax with shell primitives",
+		Group::Modern,
+	),
+	("ysh", "YSH", "the Oils shell", Group::Modern),
+	(
+		"osh",
+		"OSH",
+		"the Oils shell, bash-compatible",
+		Group::Modern,
+	),
+	("murex", "Murex", "", Group::Modern),
+	(
+		"pycmd",
+		"PyCmd",
+		"cmd.exe with completion and history",
+		Group::PyCmd,
+	),
+	("python", "Python 3", "", Group::Language),
+	("node", "Node.js", "", Group::Language),
+	("cmd", "Windows Cmd", "", Group::Legacy),
 	(
 		"powershell",
 		"Windows PowerShell 5",
 		"the 5.1 shell that ships with Windows",
+		Group::WinPs5,
 	),
-	("cmd", "Command Prompt", ""),
-	("nu", "Nushell", "structured data through the pipeline"),
-	("pycmd", "PyCmd", "cmd.exe with completion and history"),
-	("elvish", "Elvish", ""),
-	("xonsh", "Xonsh", "Python syntax with shell primitives"),
-	("python", "Python 3", ""),
-	("node", "Node.js", ""),
 ];
 
 // A shell offered with the flags it reads better with. Only presentation: the
@@ -499,7 +627,8 @@ fn launch(command: &str, program: &str) -> String {
 	}
 }
 
-// Everything installed that looks like a shell, best first.
+// Everything installed that looks like a shell, in the order it should be
+// offered in (see `Group`).
 pub fn detect() -> Vec<Found> {
 	let mut out: Vec<Found> = Vec::new();
 	let mut seen: Vec<Ident> = Vec::new();
@@ -514,36 +643,44 @@ pub fn detect() -> Vec<Found> {
 		out.push(hit);
 	};
 
-	// The user's own shell leads - and that is load-bearing rather than merely
-	// tidy, because an initial population becomes the list verbatim and the top
-	// of the list IS the default shell (config::default_shell_argv). So the
+	// On unix the user's own shell leads - and that is load-bearing rather than
+	// merely tidy, because an initial population becomes the list verbatim and the
+	// top of the list IS the default shell (config::default_shell_argv). So the
 	// terminal opens on the shell the user logs in with, without their having to
-	// say so. It is also the one that gets the twin that skips its startup files.
+	// say so. It is also the one, and the only one, that gets the twin that skips
+	// its startup files. Windows has no user shell, so ComSpec takes its ordinary
+	// place in the order instead of the top of it.
 	if let Some(login) = login_shell() {
 		let base = base_name(&login);
 		let title = pretty(&base);
 		let login_cmd = launch(&login, &base);
+		let (at, twin_at) = login_groups(&base);
 		add(
-			Found::new(&title, login_cmd.clone(), ""),
+			Found::new(&title, login_cmd.clone(), "").in_group(at.0, at.1),
 			&mut out,
 			&mut seen,
 		);
 		if let Some((flag, note)) = no_startup_file(&base) {
+			// Switched OFF: it is what you reach for when your own rc file is the
+			// thing you are debugging, not what you want a second copy of in the
+			// menu every day.
 			add(
-				Found::new(
+				Found::dormant(
 					&format!("{title} ({note})"),
 					format!("{login_cmd} {flag}"),
-					"",
-				),
+					"starts without reading the shell's startup files",
+				)
+				.in_group(twin_at.0, twin_at.1),
 				&mut out,
 				&mut seen,
 			);
 		}
 	}
-	for (exe, title, comment) in KNOWN {
+	for (seq, (exe, title, comment, group)) in KNOWN.iter().enumerate() {
 		if let Some(path) = which(exe) {
 			add(
-				Found::new(title, launch(&quoted(&path), exe), comment),
+				Found::new(title, launch(&quoted(&path), exe), comment)
+					.in_group(*group, seq as u32),
 				&mut out,
 				&mut seen,
 			);
@@ -552,7 +689,22 @@ pub fn detect() -> Vec<Found> {
 	for hit in platform_extras() {
 		add(hit, &mut out, &mut seen);
 	}
+	// One sort, at the end: the order is a property of the list, not of the
+	// sequence the looking happened to run in.
+	out.sort_by_key(Found::order);
 	out
+}
+
+// Where the login shell and its startup-file-free twin belong. Both arms compile
+// on both platforms - a `cfg` here would make Login/LoginNoRc look unconstructed
+// on Windows, and it is worth being able to read the whole rule from either box.
+fn login_groups(base: &str) -> ((Group, u32), (Group, u32)) {
+	if cfg!(unix) {
+		((Group::Login, 0), (Group::LoginNoRc, 0))
+	} else {
+		let at = known_group(base);
+		(at, at)
+	}
 }
 
 // The shell the user logs in with. $SHELL is what a person means by "my shell"
@@ -587,7 +739,8 @@ fn platform_extras() -> Vec<Found> {
 		.filter(|line| line.starts_with('/'))
 		.map(|line| {
 			let base = base_name(line);
-			Found::new(&pretty(&base), line.to_string(), "")
+			let (group, seq) = known_group(&base);
+			Found::new(&pretty(&base), line.to_string(), "").in_group(group, seq)
 		})
 		.collect()
 }
@@ -599,17 +752,20 @@ fn platform_extras() -> Vec<Found> {
 	// system root, whether or not the user has them on PATH.
 	if let Ok(root) = std::env::var("SystemRoot") {
 		let root = Path::new(&root);
-		for (rel, title, comment) in [
+		for (rel, title, comment, group) in [
 			(
 				r"System32\WindowsPowerShell\v1.0\powershell.exe",
 				"Windows PowerShell 5",
 				"the 5.1 shell that ships with Windows",
+				Group::WinPs5,
 			),
-			(r"System32\cmd.exe", "Command Prompt", ""),
+			(r"System32\cmd.exe", "Windows Cmd", "", Group::Legacy),
 		] {
 			let path = root.join(rel);
 			if path.is_file() {
-				out.push(Found::new(title, launch(&quoted(&path), rel), comment));
+				out.push(
+					Found::new(title, launch(&quoted(&path), rel), comment).in_group(group, 0),
+				);
 			}
 		}
 		// Windows PowerShell 5.1 ships at a policy that refuses to run script
@@ -619,18 +775,22 @@ fn platform_extras() -> Vec<Found> {
 		// a security setting: an alternative to reach for, not a default.
 		let ps51 = root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
 		if ps51.is_file() {
-			out.push(Found::dormant(
-				"Windows PowerShell 5 (relaxed)",
-				format!(
-					"{} -ExecutionPolicy RemoteSigned",
-					launch(&quoted(&ps51), "powershell")
-				),
-				"runs profile scripts; per-session, nothing is written",
-			));
+			out.push(
+				Found::dormant(
+					"Windows PowerShell 5 (relaxed)",
+					format!(
+						"{} -ExecutionPolicy RemoteSigned",
+						launch(&quoted(&ps51), "powershell")
+					),
+					"runs profile scripts; per-session, nothing is written",
+				)
+				.in_group(Group::WinPs5Relaxed, 0),
+			);
 		}
 	}
 	// The POSIX environments each ship their own bash. They share a name and
-	// nothing else, so each is offered under the environment it belongs to.
+	// nothing else, so each is offered under the environment it belongs to - and
+	// they are named for it, since "Bash" alone would be three identical rows.
 	//
 	// Git for Windows is the exception that has to be handled: it installs the
 	// same shell under two names (bin\bash.exe wraps usr\bin\bash.exe) and a
@@ -642,11 +802,14 @@ fn platform_extras() -> Vec<Found> {
 		.flat_map(|base| [r"Git\bin\bash.exe", r"Git\usr\bin\bash.exe"].map(|rel| base.join(rel)))
 		.find(|path| path.is_file());
 	if let Some(path) = git_bash {
-		out.push(Found::new(
-			"Git Bash",
-			quoted(&path),
-			"MSYS2-based, from Git for Windows",
-		));
+		out.push(
+			Found::new(
+				"Bash (Git's mini)",
+				quoted(&path),
+				"MSYS2-based, from Git for Windows",
+			)
+			.in_group(Group::PosixEnv, 1),
+		);
 	}
 	// PyCmd ships as a zip that is extracted wherever the user likes, so it is
 	// normally nowhere near PATH - the table above finds it only for someone who
@@ -656,32 +819,40 @@ fn platform_extras() -> Vec<Found> {
 		.map(|base| base.join(r"PyCmd\PyCmd.exe"))
 		.find(|path| path.is_file());
 	if let Some(path) = pycmd {
-		out.push(Found::new(
-			"PyCmd",
-			quoted(&path),
-			"cmd.exe with completion and history",
-		));
+		out.push(
+			Found::new(
+				"PyCmd",
+				quoted(&path),
+				"cmd.exe with completion and history",
+			)
+			.in_group(Group::PyCmd, 0),
+		);
 	}
-	for (path, title, comment) in [
-		(r"C:\msys64\usr\bin\bash.exe", "MSYS2 Bash", ""),
-		(r"C:\msys32\usr\bin\bash.exe", "MSYS2 Bash", ""),
-		(r"C:\cygwin64\bin\bash.exe", "Cygwin Bash", ""),
-		(r"C:\cygwin\bin\bash.exe", "Cygwin Bash", ""),
+	for (path, title, comment, seq) in [
+		(r"C:\msys64\usr\bin\bash.exe", "Bash (MSYS2's full)", "", 0),
+		(r"C:\msys32\usr\bin\bash.exe", "Bash (MSYS2's full)", "", 0),
+		(r"C:\cygwin64\bin\bash.exe", "Bash (Cygwin)", "", 2),
+		(r"C:\cygwin\bin\bash.exe", "Bash (Cygwin)", "", 2),
 	] {
 		let path = Path::new(path);
 		if path.is_file() {
-			out.push(Found::new(title, quoted(path), comment));
+			out.push(Found::new(title, quoted(path), comment).in_group(Group::PosixEnv, seq));
 		}
 	}
 	// WSL distributions, read from the registry rather than by asking wsl.exe:
 	// a WSL2 distribution lives in a virtual disk, and listing them must not be
 	// the thing that boots the virtual machine. What is offered is the whole
 	// distribution, with no shell named - its own default runs, and the user can
-	// add flags to the entry if they want a particular one.
-	for name in wsl_distributions() {
-		let title = format!("WSL: {name}");
+	// add flags to the entry if they want a particular one. The generation is
+	// part of the title because it is the whole difference between two rows that
+	// would otherwise read identically, and it decides which sorts first.
+	for (name, wsl2) in wsl_distributions() {
+		let title = format!("WSL{}; {name}", if wsl2 { 2 } else { 1 });
 		let command = format!("wsl.exe -d {}", quoted(Path::new(&name)));
-		out.push(Found::new(&title, command, "the distribution's own shell"));
+		out.push(
+			Found::new(&title, command, "the distribution's own shell")
+				.in_group(if wsl2 { Group::Wsl2 } else { Group::Wsl1 }, 0),
+		);
 	}
 	out
 }
@@ -695,15 +866,25 @@ fn program_files() -> Vec<PathBuf> {
 		.collect()
 }
 
-// Installed WSL distributions, by name, straight out of the registry. Nothing
-// is launched: the key is written when a distribution is registered.
+// Installed WSL distributions, by name, with whether each runs on WSL2. Nothing
+// is launched: the keys are written when a distribution is registered.
+//
+// The generation is bit 3 of the distribution's `Flags` value. Note the `Version`
+// value beside it is NOT it - that is the registration format's version, and it
+// reads 2 for a WSL1 distribution as happily as for a WSL2 one (measured). A
+// distribution whose flags cannot be read is reported as WSL1, which is the
+// older behaviour and puts it lower in the list rather than claiming something
+// about it that was never established.
 #[cfg(windows)]
-fn wsl_distributions() -> Vec<String> {
+fn wsl_distributions() -> Vec<(String, bool)> {
 	use windows_sys::Win32::Foundation::ERROR_SUCCESS;
 	use windows_sys::Win32::System::Registry::{
-		HKEY, HKEY_CURRENT_USER, KEY_READ, REG_SZ, RegCloseKey, RegEnumKeyExW, RegOpenKeyExW,
-		RegQueryValueExW,
+		HKEY, HKEY_CURRENT_USER, KEY_READ, REG_DWORD, REG_SZ, RegCloseKey, RegEnumKeyExW,
+		RegOpenKeyExW, RegQueryValueExW,
 	};
+
+	// Bit 3 of a distribution's Flags: set = WSL2.
+	const FLAG_WSL2: u32 = 0x8;
 
 	fn wide(s: &str) -> Vec<u16> {
 		s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -719,6 +900,7 @@ fn wsl_distributions() -> Vec<String> {
 		return out;
 	}
 	let value = wide("DistributionName");
+	let flags_value = wide("Flags");
 	for index in 0.. {
 		// Key names are bounded at 255 characters by the registry itself.
 		let mut name = [0u16; 256];
@@ -761,16 +943,33 @@ fn wsl_distributions() -> Vec<String> {
 				&raw mut bytes,
 			)
 		};
+		let mut flags = 0u32;
+		let mut flags_kind = 0u32;
+		let mut flags_bytes = std::mem::size_of::<u32>() as u32;
+		// SAFETY: a DWORD-sized read into a DWORD, with the size in bytes.
+		let flags_read = unsafe {
+			RegQueryValueExW(
+				distro,
+				flags_value.as_ptr(),
+				std::ptr::null(),
+				&raw mut flags_kind,
+				(&raw mut flags).cast::<u8>(),
+				&raw mut flags_bytes,
+			)
+		};
 		// SAFETY: the handle came from a successful open above.
 		unsafe { RegCloseKey(distro) };
 		if read != ERROR_SUCCESS || kind != REG_SZ {
 			continue;
 		}
+		let wsl2 = flags_read == ERROR_SUCCESS
+			&& flags_kind == REG_DWORD
+			&& (flags & FLAG_WSL2) == FLAG_WSL2;
 		let chars = (bytes as usize / 2).min(buf.len());
 		let name = String::from_utf16_lossy(&buf[..chars]);
 		let name = name.trim_end_matches('\0').trim().to_string();
 		if !name.is_empty() {
-			out.push(name);
+			out.push((name, wsl2));
 		}
 	}
 	// SAFETY: the handle came from the successful open at the top.
@@ -786,6 +985,118 @@ fn platform_extras() -> Vec<Found> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	fn hit(title: &str, group: Group, seq: u32) -> Found {
+		Found::new(title, format!("/x/{title}"), "").in_group(group, seq)
+	}
+
+	fn ordered(mut found: Vec<Found>) -> Vec<String> {
+		found.sort_by_key(Found::order);
+		found.into_iter().map(|hit| hit.title).collect()
+	}
+
+	// The whole offered order, in one assertion: this is what the Tabs menu looks
+	// like on a fresh install, so a group that moved - or one that quietly stopped
+	// sorting alphabetically - is a visible change and not an implementation
+	// detail. Elvish carries a LATER table position than YSH on purpose: inside an
+	// alphabetical group the title decides and the table position must not leak in.
+	#[test]
+	fn the_offered_order_groups_first_and_sorts_inside_a_group() {
+		let titles = ordered(vec![
+			hit("Windows Cmd", Group::Legacy, 9),
+			hit("YSH", Group::Modern, 3),
+			hit("PowerShell 7", Group::Pwsh7, 0),
+			hit("WSL1; Debian", Group::Wsl1, 0),
+			hit("Nushell", Group::Modern, 0),
+			hit("Python 3", Group::Language, 1),
+			hit("WSL2; Ubuntu", Group::Wsl2, 0),
+			hit("Windows PowerShell 5 (relaxed)", Group::WinPs5Relaxed, 0),
+			hit("Bash (Git's mini)", Group::PosixEnv, 1),
+			hit("Node.js", Group::Language, 0),
+			hit("Windows PowerShell 5", Group::WinPs5, 0),
+			hit("PyCmd", Group::PyCmd, 0),
+			hit("WSL2; Fedora", Group::Wsl2, 0),
+			hit("Bash (MSYS2's full)", Group::PosixEnv, 0),
+			hit("Elvish", Group::Modern, 9),
+		]);
+		assert_eq!(
+			titles,
+			[
+				"PowerShell 7",
+				"Elvish",
+				"Nushell",
+				"YSH",
+				"WSL2; Fedora",
+				"WSL2; Ubuntu",
+				"WSL1; Debian",
+				"Bash (MSYS2's full)",
+				"Bash (Git's mini)",
+				"PyCmd",
+				"Node.js",
+				"Python 3",
+				"Windows Cmd",
+				"Windows PowerShell 5",
+				"Windows PowerShell 5 (relaxed)",
+			]
+		);
+	}
+
+	// The top of the list is the default shell (config::default_shell_argv), so on
+	// unix nothing may sort above the user's own - and its startup-file-free twin
+	// has to stay directly under it rather than sorting off among the others.
+	#[test]
+	fn the_login_shell_leads_and_its_twin_stays_under_it() {
+		let titles = ordered(vec![
+			hit("Bash", Group::Legacy, 0),
+			hit("Zsh (no rc)", Group::LoginNoRc, 0),
+			hit("Nushell", Group::Modern, 0),
+			hit("Zsh", Group::Login, 0),
+			hit("Python 3", Group::Language, 0),
+		]);
+		assert_eq!(
+			titles,
+			["Zsh", "Zsh (no rc)", "Nushell", "Python 3", "Bash"]
+		);
+	}
+
+	// A curated group keeps its table order even when that disagrees with the
+	// alphabet - the three POSIX-environment bashes are one shell built three
+	// ways, and MSYS2's full one is the one to reach for first.
+	#[test]
+	fn a_curated_group_keeps_its_table_order() {
+		let titles = ordered(vec![
+			hit("Bash (Cygwin)", Group::PosixEnv, 2),
+			hit("Bash (MSYS2's full)", Group::PosixEnv, 0),
+			hit("Bash (Git's mini)", Group::PosixEnv, 1),
+		]);
+		assert_eq!(
+			titles,
+			["Bash (MSYS2's full)", "Bash (Git's mini)", "Bash (Cygwin)"]
+		);
+	}
+
+	// The table is where each shell's place is declared, so the places the order
+	// names outright are worth holding to it.
+	#[test]
+	fn the_table_puts_each_named_shell_where_the_order_says() {
+		if cfg!(unix) {
+			// no shell leads on merit here - the user's own does, whatever it is
+			assert_eq!(known_group("pwsh").0, Group::Modern);
+			assert_eq!(known_group("nu").0, Group::Modern);
+			assert_eq!(known_group("bash").0, Group::Legacy);
+			assert_eq!(known_group("fish").0, Group::Legacy);
+			assert_eq!(known_group("python3").0, Group::Language);
+		} else {
+			assert_eq!(known_group("pwsh").0, Group::Pwsh7);
+			assert_eq!(known_group("nu").0, Group::Modern);
+			assert_eq!(known_group("pycmd").0, Group::PyCmd);
+			assert_eq!(known_group("node").0, Group::Language);
+			assert_eq!(known_group("cmd").0, Group::Legacy);
+			assert_eq!(known_group("powershell").0, Group::WinPs5);
+		}
+		// anything the table does not name is an ordinary system shell
+		assert_eq!(known_group("some-new-shell").0, Group::Legacy);
+	}
 
 	fn entry(slug: &str, command: &str, active: bool) -> ShellEntry {
 		ShellEntry {
@@ -997,7 +1308,7 @@ mod tests {
 	// friendly title. PyCmd shipped spelled "PyCmd" and did exactly that.
 	#[test]
 	fn a_known_shell_can_be_found_under_its_own_name() {
-		for (exe, title, _) in KNOWN {
+		for (exe, title, _, _) in KNOWN {
 			assert_eq!(
 				&pretty(&base_name(exe)),
 				title,

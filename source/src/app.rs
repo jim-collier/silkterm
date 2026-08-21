@@ -784,6 +784,11 @@ const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-siz
 // the shell reads at startup, short enough that the Tabs menu has its list well
 // before anyone opens it.
 const SHELL_SCAN_DELAY: Duration = Duration::from_secs(3);
+// The scan waits for the wallpaper to be on screen (see `wp_shown`), and a
+// wallpaper on a share that never answers would otherwise hold it off for the
+// life of the window - leaving the Tabs menu with no shells in it. This is the
+// backstop, measured from the reveal.
+const SHELL_SCAN_MAX_WAIT: Duration = Duration::from_secs(20);
 const VRAM_CHECK_IVL: Duration = Duration::from_secs(2); // GL sentinel probe tick (VT-switch texture loss)
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
 // Chrome geometry, all DIP (see config::dip).
@@ -1085,6 +1090,16 @@ struct State {
 	wp_next: Option<Instant>, // when to rotate next (None = no timer / startup-only)
 	wp_locked: bool, // a command-line wallpaper owns this session; don't rotate
 	wp_seq: u64,     // request stamp; a worker result with an older one is stale
+	// A worker has answered - with an image, or with the news that there is none.
+	wp_answered: bool,
+	// ...and a frame has been drawn since, so whatever it said is ON SCREEN. This
+	// is what the shell scan waits for: the scan is filesystem and registry work
+	// and the wallpaper is hundreds of ms of decode and blur off-thread, so letting
+	// them overlap puts a stall between the window appearing and the wallpaper
+	// arriving in it - the one moment anyone is looking.
+	wp_shown: bool,
+	// The hard deadline for that wait (see SHELL_SCAN_MAX_WAIT).
+	shell_scan_cap: Option<Instant>,
 	vram_next: Instant, // next GL VRAM sentinel probe (VT-switch content-loss detection)
 	vramloss_test: bool, // SILK_VRAMLOSS one-shot: fake a loss to exercise the rebuild path
 }
@@ -1570,51 +1585,71 @@ impl State {
 		})
 	}
 
-	// What a tip says. The path is shown WHOLE here - the tab is where it gets
-	// shortened, and the tip is the place to look when the short form was not
-	// enough.
+	// What a tip says, as key/value pairs padded to one column (tabtitle::tip_lines).
+	// The path is shown WHOLE here - the tab is where it gets shortened, and the tip
+	// is the place to look when the short form was not enough. A value that carries
+	// a space or a quote is quoted, so its edges are never in doubt.
 	fn tab_tip_lines(&mut self, index: usize) -> Vec<String> {
 		let Some(pm) = self.tabs.list.get_mut(index) else {
 			return Vec::new();
 		};
 		let created = pm.created;
 		let override_title = pm.title_override.clone();
-		let (command, _, cwd) = pm.tab_facts();
+		let (command, task, cwd) = pm.tab_facts();
 		let settings = config::settings();
 		let command_line = tab_command_line(command.as_deref());
-		let mut lines = Vec::new();
+		let quoted = crate::tabtitle::tip_value;
+		let mut rows: Vec<(&str, String)> = Vec::new();
 		if let Some(title) = override_title {
-			lines.push(title);
+			rows.push(("Tab title", quoted(&title)));
 		}
-		lines.push(crate::shells::friendly(&command_line, &settings.shells));
+		rows.push((
+			"Shell name",
+			quoted(&crate::shells::friendly(&command_line, &settings.shells)),
+		));
 		if !command_line.is_empty() {
-			lines.push(command_line);
+			rows.push(("Shell command", quoted(&command_line)));
 		}
-		lines.push(cwd.map_or_else(
-			|| "(directory not reported)".to_string(),
-			|dir| {
-				crate::tabtitle::path_forms(
-					&dir.to_string_lossy(),
-					None,
-					crate::tabtitle::Style::native(),
-				)
-				.into_iter()
-				.next()
-				.unwrap_or_default()
-			},
+		// Only what is running NOW. A tab already says so itself, but it says it in
+		// the width it has left; the tip has the whole name.
+		if let crate::term::Task::Running(program) = task {
+			rows.push(("Running", quoted(&program)));
+		}
+		rows.push((
+			"Current path",
+			cwd.map_or_else(
+				// not a value, so it takes no quotes - a directory called
+				// "(not reported)" is not what this line is saying
+				|| "(not reported)".to_string(),
+				|dir| {
+					quoted(
+						&crate::tabtitle::path_forms(
+							&dir.to_string_lossy(),
+							None,
+							crate::tabtitle::Style::native(),
+						)
+						.into_iter()
+						.next()
+						.unwrap_or_default(),
+					)
+				},
+			),
 		));
-		lines.push(format!(
-			"Open {}",
-			crate::tabtitle::elapsed(created.elapsed().as_secs())
+		// a clock reading, not a value either
+		rows.push((
+			"Open",
+			crate::tabtitle::elapsed(created.elapsed().as_secs()),
 		));
-		lines
+		crate::tabtitle::tip_lines(&rows)
 	}
 
-	// The tip's box, and where each of its lines sits inside it. Measured against
-	// the interface font, so the box fits the longest line rather than guessing;
-	// it hangs off its own TAB rather than off the pointer, so it does not jitter
-	// as the pointer moves about inside one, and it is pushed back inside the
-	// window rather than being allowed to run off the right edge.
+	// The tip's box, and where each of its lines sits inside it. Measured in the
+	// TERMINAL font, which is the one thing in the chrome that is: the lines are a
+	// key/value table padded with spaces, and spaces align nothing in a
+	// proportional face. The box fits the longest line rather than guessing; it
+	// hangs off its own TAB rather than off the pointer, so it does not jitter as
+	// the pointer moves about inside one, and it is pushed back inside the window
+	// rather than being allowed to run off the right edge.
 	fn tab_tip_layout(&mut self) -> Option<(Rect, Vec<(f32, f32, String)>)> {
 		let (tab, lines) = {
 			let tip = self.tab_tip.as_ref()?;
@@ -1623,12 +1658,11 @@ impl State {
 		if lines.is_empty() {
 			return None;
 		}
-		let attrs = crate::text::ui_attrs();
 		let text_w = lines.iter().fold(0.0f32, |widest, line| {
-			widest.max(self.text.measure_ui_text(line, &attrs))
+			widest.max(self.text.measure_mono_text(line))
 		});
 		let pad = self.text.dip(TAB_TIP_PAD);
-		let line_h = self.text.ui_line_h;
+		let line_h = self.text.cell_h;
 		let w = text_w + 2.0 * pad;
 		let h = line_h * lines.len() as f32 + 2.0 * pad;
 		let win_w = self.gfx.config.width as f32;
@@ -2542,6 +2576,9 @@ impl State {
 				img.anchor,
 			)
 		});
+		// Answered either way: an empty result is the news that there is no
+		// wallpaper to wait for, which settles the question just as well.
+		self.wp_answered = true;
 		self.dirty = true;
 	}
 
@@ -3518,13 +3555,18 @@ impl State {
 				let mut attrs = crate::text::ui_attrs();
 				let fg = config::menu_fg();
 				attrs.color_opt = Some(GColor::rgb(fg[0], fg[1], fg[2]));
+				// The tip alone shapes in the terminal font: its lines are a table
+				// padded with spaces, which no proportional face can align.
 				if let Some((box_rect, placed)) = &tip_layout {
+					let mut tip_attrs = crate::text::mono_attrs();
+					tip_attrs.color_opt = attrs.color_opt;
+					let line_h = self.text.cell_h;
 					for (left, top, line) in placed {
-						let mut buf = self.text.new_ui_buffer(box_rect.w, self.text.ui_line_h);
+						let mut buf = self.text.new_buffer(box_rect.w, line_h);
 						buf.set_text(
 							&mut self.text.font_system,
 							line,
-							&attrs,
+							&tip_attrs,
 							Shaping::Advanced,
 							None,
 						);
@@ -3899,6 +3941,20 @@ impl State {
 				self.revealed = true;
 				self.window.set_visible(true);
 				self.shell_scan_at = Some(Instant::now() + SHELL_SCAN_DELAY);
+				self.shell_scan_cap = Some(Instant::now() + SHELL_SCAN_MAX_WAIT);
+			}
+		}
+		// This frame carried whatever the wallpaper worker answered, so the scan's
+		// clock starts from HERE rather than from the reveal - a wallpaper that took
+		// two seconds to decode used to have the scan running underneath it. Only
+		// ever pushed back, never re-armed: once the scan has gone (shell_scan_at
+		// cleared, which the backstop guarantees) a late wallpaper must not start a
+		// second one.
+		if self.revealed && self.wp_answered && !self.wp_shown {
+			self.wp_shown = true;
+			if self.shell_scan_at.is_some() {
+				let due = Instant::now() + SHELL_SCAN_DELAY;
+				self.shell_scan_at = Some(self.shell_scan_cap.map_or(due, |cap| due.min(cap)));
 			}
 		}
 		if env_flag("SILK_DUMP") {
@@ -4540,6 +4596,9 @@ impl ApplicationHandler<UserEvent> for App {
 			wp_next: None,
 			wp_locked: false,
 			wp_seq: 0,
+			wp_answered: false,
+			wp_shown: false,
+			shell_scan_cap: None,
 			vram_next: Instant::now() + VRAM_CHECK_IVL,
 			vramloss_test: std::env::var_os("SILK_VRAMLOSS").is_some(),
 		});

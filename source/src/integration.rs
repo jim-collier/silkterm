@@ -293,12 +293,7 @@ mod tests {
 	use crate::shells::Found;
 
 	fn found(title: &str, command: &str) -> Found {
-		Found {
-			title: title.to_string(),
-			command: command.to_string(),
-			comment: String::new(),
-			active: true,
-		}
+		Found::new(title, command.to_string(), "")
 	}
 
 	// A profile that already reports is not ours to edit, whoever set it up -

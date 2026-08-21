@@ -632,6 +632,15 @@ impl TextCtx {
 		w
 	}
 
+	// Width in px of `text` in the TERMINAL font. The tab hover tip is the one
+	// piece of chrome that uses it: its lines are key/value pairs padded to a
+	// column with spaces, which only aligns in a monospace face. Uncached - the
+	// tip rebuilds a few lines twice a second at most.
+	pub fn measure_mono_text(&mut self, text: &str) -> f32 {
+		let attrs = mono_attrs();
+		self.measure_at(text, &attrs, self.metrics)
+	}
+
 	fn measure_at(&mut self, text: &str, attrs: &Attrs, metrics: Metrics) -> f32 {
 		let mut buf = Buffer::new(&mut self.font_system, metrics);
 		buf.set_wrap(&mut self.font_system, Wrap::None);

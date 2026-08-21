@@ -132,6 +132,9 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✅ The main window's own chrome is DIP now too: menu bar, tab bar, tab buttons and their close marks, the dropdown and right-click menus, the copy-mode checkboxes, the focus ring, the pane gap and its grab zone, and the scrollbar. Each measurement scales where it is used rather than at a boundary, since chrome shares a coordinate space with the terminal grid. Measured on a real display: at twice the scale factor the menu bar and the tab button come out at exactly twice their size, where the old build was short by a fifth and an eighth - the padding had stayed frozen at its 1x size while the text doubled. At 1x the whole window renders byte-identical to the old build.
 		- The About panel and the Settings window's own height cap went with it, so nothing on screen is measured in raw pixels any more.
 		- `SILK_SCALE` overrides the scale factor the display reports, which is what makes any of this checkable: chrome written in raw pixels looks perfect at 1x and only thins out as the factor rises, and outside X11 there is no other way to ask for a high-DPI layout.
+	- ✅ The Settings dialog's tab titles sat too far right at high DPI, and overflowed their buttons above 2x. (20260821)
+		- Cause: the dialog's tab, label and button widths are a text measurement (real pixels) plus a clear-space constant (DIP), added together and then divided at the dialog's boundary - which shrank the constant by the scale factor. A tab's box ended up with half the clear space at 2x, and a third of it at 3x, while the title still started at half of it from the left edge.
+		- The constant now converts where it is used, the way the main window's chrome already did, through one rule the four sites share. Shown side by side at 2x: every title used to touch or cross its own right border, and each is now centred with equal space either side.
 
 - 🛠️ Refactor settings dialog
 	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory. Reconcile by what makes the most sense given the obvious design direction this is going, with what has changed before.
@@ -326,6 +329,15 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- What a scan may do to the list is deliberately lopsided: it ADDS a shell it found and it SWITCHES OFF one whose program has gone (keeping the entry, its title and its place). It never switches one back on and never rewrites a command line - it has no way to tell a program that came back from a switch the user turned off on purpose.
 	- The list lives in the config as `shells.<key>` with a title, a command, an active flag and a comment, in file order - which is the order the menu offers them in. A scan that finds nothing new writes nothing at all.
 	- Beyond the names asked for: Nushell, Elvish, Xonsh, YSH/OSH, Murex, Ion, Es, rc, Yash, mksh, tcsh, Git Bash, MSYS2, Cygwin, PyCmd, and the language shells (Python 3, IPython, Node).
+	- ✅ A fresh list now arrives in a stated order rather than in whatever order the looking ran. (20260821)
+		- Windows: PowerShell 7, then the modern cross-platform shells alphabetically, then the WSL distributions (WSL2 above WSL1, each alphabetical, the generation in the name), then Bash (MSYS2's full), Bash (Git's mini), PyCmd, the language shells alphabetically, Windows Cmd, and last the two Windows PowerShell 5 entries.
+		- Unix: the user's own login shell, then its startup-file-free twin, then the modern cross-platform shells alphabetically, the language shells alphabetically, and the rest of the POSIX family.
+		- Renames that came with it: "Command Prompt" -> "Windows Cmd", "Git Bash" -> "Bash (Git's mini)", "MSYS2 Bash" -> "Bash (MSYS2's full)", "Cygwin Bash" -> "Bash (Cygwin)", and "WSL: x" -> "WSL2; x" or "WSL1; x".
+		- The twin now arrives switched OFF, and only the top default shell gets one: it is for the day your own rc file is what you are debugging, not a second copy of your shell in the menu every day.
+		- **This reaches a fresh config and nobody's existing one.** A scan may only add and switch off, and it never rewrites a stored title or a stored order - that order is the user's. So an existing list keeps its own names and sequence until somebody edits or resets it. The owner's own config was brought over by hand (backup beside it), which also cleared two stale duplicates a pre-`-NoLogo` dogfood build had appended.
+	- ✅ The scan now waits for the WALLPAPER to be on screen, not just the window. (20260821)
+		- Both are off-thread and both are slow the same way, so overlapping them put a stall in the one moment anyone is looking - the gap between the window appearing and the picture arriving in it.
+		- A wallpaper that never answers cannot hold the scan off forever: past a deadline it runs anyway, since a terminal with no shells in its menu is worse than one with no picture behind its text.
 
 - 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
 	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Same for a new window (Ctrl+Shift+N), and the same shell inheritance applies to all three.
@@ -384,6 +396,9 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Tab width is now a min and a max percentage of the window (`window.tab_min_width_pct` / `window.tab_max_width_pct`, and two Settings sliders) instead of a fixed cap. Wider by default, to fit the extra text.
 	- Because a tab now never shrinks past its minimum, more tabs than fit become a page. The wheel over the tab bar turns it, and switching tabs brings the new one onto it.
 	- A hover tip on a tab gives the three things the tab is too narrow to say plus one it never says: the shell's name, the command that started it, the full current path, and how long the tab has been open.
+	- ✅ The tip reads as a table: one `key: value` per line, with every value starting in the same column, plus a line for whatever is running right now. (20260821)
+		- It is drawn in the terminal font rather than the interface one - the column is made of spaces, and spaces align nothing in a proportional face. It is the only piece of chrome that is.
+		- A value with a space or a quote in it is quoted so its edges are unambiguous, picking the quote the value does not already contain: a Windows command line full of double quotes reads inside single ones. The clock reading and the "no directory reported" note stay bare, since quoting them would say they were data.
 	- PowerShell's prompt now shows which PowerShell it is (`[PS 7.6] C:\some\path\>`), on 5.1 and 7 and on every OS 7 runs on - but only when the prompt is still the stock one, so oh-my-posh, starship and a hand-written prompt are untouched.
 
 - 🛠️ Setting dialog (part 2):

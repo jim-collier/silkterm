@@ -5079,23 +5079,39 @@ impl SettingsDialog {
 // Widest field label, button caption, and per-tab title widths at the current
 // UI font, so the dialog sizes to the real text (a wide serif or a big desktop
 // size never truncates).
-pub fn chrome_widths(text: &mut crate::text::TextCtx) -> (f32, f32, f32, Vec<f32>) {
+//
+// This measures against the text context, so it works in PHYSICAL pixels - which
+// is why every layout constant it reads converts through `config::dip` at its use
+// site, the way the main window's chrome does. Adding a raw DIP number to a
+// physical measurement here is a live bug: `SettingsDialog::new` divides the whole
+// sum by the scale factor, so the constant arrives shrunk by that factor. That is
+// what put a tab's title `tab_pad/2` from its left edge inside a box only
+// `tab_pad/scale` wider than the title - flush right at 2x, overflowing past it
+// above that.
+// A measured width plus the clear space that goes around it. The measurement is
+// physical and the clear space is DIP, so the constant converts before they meet.
+fn measured_plus(measured_px: f32, clear_dip: f32, scale: f32) -> f32 {
+	measured_px + config::dip(clear_dip, scale)
+}
+
+pub fn chrome_widths(text: &mut crate::text::TextCtx, scale: f32) -> (f32, f32, f32, Vec<f32>) {
 	let attrs = crate::text::ui_attrs();
+	let dip = |v: f32| config::dip(v, scale);
 	// an indented label starts further right, so the column has to clear the
 	// deepest one plus its own indent - not merely the longest string
 	let label_w = ui()
 		.specs
 		.iter()
 		.map(|spec| {
-			text.measure_ui_text(spec.label, &attrs) + f32::from(spec.indent) * lay().indent
+			text.measure_ui_text(spec.label, &attrs) + f32::from(spec.indent) * dip(lay().indent)
 		})
-		.fold(0.0f32, f32::max)
-		+ lay().label_gap;
-	let btn_w = ["Cancel", "Apply", "OK"]
+		.fold(0.0f32, f32::max);
+	let label_w = measured_plus(label_w, lay().label_gap, scale);
+	let btn_w: f32 = ["Cancel", "Apply", "OK"]
 		.iter()
 		.map(|caption| text.measure_ui_text(caption, &attrs))
-		.fold(0.0f32, f32::max)
-		+ lay().button_pad;
+		.fold(0.0f32, f32::max);
+	let btn_w = measured_plus(btn_w, lay().button_pad, scale);
 	// the buttons that sit on a row are measured apart from the footer's, so a
 	// long caption there widens its own row instead of every button in the dialog
 	let row_btn_w = ui()
@@ -5107,11 +5123,11 @@ pub fn chrome_widths(text: &mut crate::text::TextCtx) -> (f32, f32, f32, Vec<f32
 		})
 		.flatten()
 		.map(|caption| text.measure_ui_text(caption, &attrs))
-		.fold(0.0f32, f32::max)
-		+ lay().button_pad;
+		.fold(0.0f32, f32::max);
+	let row_btn_w = measured_plus(row_btn_w, lay().button_pad, scale);
 	let tab_ws = tab_titles()
 		.iter()
-		.map(|title| text.measure_ui_text(title, &attrs) + lay().tab_pad)
+		.map(|title| measured_plus(text.measure_ui_text(title, &attrs), lay().tab_pad, scale))
 		.collect();
 	(label_w, btn_w, row_btn_w, tab_ws)
 }
@@ -5170,6 +5186,31 @@ mod tests {
 			max_h * scale,
 			scale,
 		)
+	}
+
+	// A tab's title is drawn `tab_pad / 2` inside its own box, and the box is only
+	// as wide as the title plus `tab_pad` - so the pad on both sides of that sum has
+	// to be the SAME pad. Mixing a physical measurement with a raw DIP constant
+	// halves the box's share of it at 2x (flush right) and takes two thirds of it
+	// at 3x (the title runs past the box).
+	#[test]
+	fn a_tab_title_keeps_its_clear_space_at_every_scale() {
+		let pad = super::lay().tab_pad;
+		for scale in [1.0, 1.25, 1.5, 2.0, 3.0, 4.0] {
+			let title_dip = 61.0;
+			// what chrome_widths hands over, back in the dialog's own units
+			let box_dip = super::measured_plus(title_dip * scale, pad, scale) / scale;
+			assert!(
+				(box_dip - (title_dip + pad)).abs() <= 1.0 / scale,
+				"at {scale}x the box is {box_dip}, wanted {}",
+				title_dip + pad
+			);
+			assert!(
+				box_dip >= title_dip + pad / 2.0,
+				"at {scale}x the title overflows its box ({box_dip} < {})",
+				title_dip + pad / 2.0
+			);
+		}
 	}
 
 	#[test]
@@ -5943,12 +5984,8 @@ mod tests {
 	fn a_scan_that_lands_mid_edit_is_not_mistaken_for_an_edit() {
 		let (mut d, _) = mk_shell_dialog(1);
 		d.edited.shells[0].title = "Renamed by hand".into();
-		let found = vec![crate::shells::Found {
-			active: true,
-			title: "Fish".into(),
-			command: "/bin/sh0".into(), // the one already stored, so nothing is added
-			comment: String::new(),
-		}];
+		// the command is the one already stored, so nothing is added
+		let found = vec![crate::shells::Found::new("Fish", "/bin/sh0".into(), "")];
 		d.fold_shells(&found);
 		assert_eq!(
 			d.edited.shells[0].title, "Renamed by hand",
