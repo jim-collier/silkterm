@@ -246,6 +246,7 @@ pub struct Settings {
 	pub command_line: String,    // default CLI layout/options when launched with no args
 	pub startup_directory: String, // where a shell starts when nothing else said (see startup_dir)
 	pub copy_on_select: bool,    // panes start with copy-on-select enabled
+	pub shell_integration: bool, // put the directory-reporting block in PowerShell profiles
 	pub hyperlinks: bool,        // underline URLs in output on hover; Ctrl+click opens them
 	pub hyperlink_open_command: String, // opener for a clicked link (empty = the desktop's own)
 	pub bg: [u8; 3],
@@ -375,6 +376,7 @@ impl Default for Settings {
 			command_line: String::new(),
 			startup_directory: HOME_TOKEN.to_string(),
 			copy_on_select: false,
+			shell_integration: true,
 			hyperlinks: true,
 			hyperlink_open_command: String::new(),
 			bg: [0x00, 0x00, 0x00],
@@ -987,6 +989,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.startup_directory != orig.startup_directory {
 		doc.set_string("shell.startup_directory", &s.startup_directory);
 	}
+	if s.shell_integration != orig.shell_integration {
+		doc.set_bool("shell.integration", s.shell_integration);
+	}
 	if s.copy_on_select != orig.copy_on_select {
 		doc.set_bool("shell.copy_on_select", s.copy_on_select);
 	}
@@ -1147,6 +1152,7 @@ struct RawConfig {
 	command_line: Option<String>,
 	startup_directory: Option<String>,
 	copy_on_select: Option<bool>,
+	shell_integration: Option<bool>,
 	hyperlinks: Option<bool>,
 	hyperlink_open_command: Option<String>,
 	colors: RawColors,
@@ -1363,6 +1369,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		command_line: r.s("shell.command_line"),
 		startup_directory: r.s("shell.startup_directory"),
 		copy_on_select: r.b("shell.copy_on_select"),
+		shell_integration: r.b("shell.integration"),
 		hyperlinks: r.b("hyperlinks.enabled"),
 		hyperlink_open_command: r.s("hyperlinks.open_command"),
 		colors: RawColors {
@@ -1784,6 +1791,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		command_line: raw.command_line.unwrap_or(d.command_line),
 		startup_directory: raw.startup_directory.unwrap_or(d.startup_directory),
 		copy_on_select: raw.copy_on_select.unwrap_or(d.copy_on_select),
+		shell_integration: raw.shell_integration.unwrap_or(d.shell_integration),
 		hyperlinks: raw.hyperlinks.unwrap_or(d.hyperlinks),
 		hyperlink_open_command: raw
 			.hyperlink_open_command
@@ -3443,6 +3451,17 @@ shell:
 	## variable in the same spellings. A directory that does not exist is
 	## reported and ignored.
 	# startup_directory: "{HOME}"  ## Default
+
+	## Shell integration
+	## Add a small block to each PowerShell profile that reports the shell's
+	## directory, so a new tab, pane or window opens where that shell is.
+	## PowerShell keeps its location to itself, so without it the OS has nothing
+	## to report and a new pane starts where the old one was launched. Every
+	## other shell moves its own process and needs nothing. A profile that
+	## already reports - ours or anyone else's - is left alone, what is there is
+	## kept with a copy beside it, and deleting the block switches it off for
+	## good. See shell-integration.md.
+	# integration: true  ## Default
 
 	## Copy on select
 	## Start every pane with "Copy on select" enabled (selected text goes to the

@@ -336,6 +336,10 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- No fork was needed after all. The feared cost was a second fork of `vte` (which handles neither sequence), but the PTY itself is what gets wrapped: `EventedPty` is a public trait and the event loop is generic over it, so the tap sits in front of the real PTY and scans what it reads. The bytes reach the parser exactly as they arrived.
 		- Costs 47ms per 32 MiB of output on this box (714 MB/s, measured over a stream carrying colour and title sequences), against a Windows delivery ceiling of about 1.45s for the same 32 MiB. Nothing but the two sequences is ever collected, so a clipboard write carrying a whole paste is skipped rather than buffered.
 		- The snippets live in `shell-integration.md`, linked from the README: PowerShell, bash, zsh, fish, and the two cases that need nothing (cmd.exe, and fish, which already emits it).
+	- ✅ The PowerShell block is installed for you, a few seconds after launch, into each PowerShell profile that reports nothing.
+		- It appends after saving a copy beside the profile, never rewrites; a marker makes a second launch a no-op; deleting the block switches it off for good; the prompt is wrapped rather than replaced (and on PowerShell 6+ not touched at all, which leaves oh-my-posh and starship alone).
+		- A shell whose execution policy would refuse to load the profile is left alone with a line saying which and why - found the hard way on this box, where writing a profile for Windows PowerShell 5.1 turned every launch into a red execution-policy error.
+		- `shell.integration` (Settings > Shell > "PowerShell profiles") switches it off before it runs.
 
 - 🛠️ Menu enhancements:
 	- ✅ "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.

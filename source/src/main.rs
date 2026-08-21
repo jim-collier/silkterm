@@ -18,6 +18,7 @@ mod cwd;
 mod dialog;
 mod gfx;
 mod input;
+mod integration;
 mod links;
 mod palette;
 mod pane;

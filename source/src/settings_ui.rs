@@ -2604,6 +2604,7 @@ impl SettingsDialog {
 			Key::CursorOutline => self.edited.cursor_outline,
 			Key::RememberSize => self.edited.remember_size,
 			Key::CopyOnSelect => self.edited.copy_on_select,
+			Key::ShellIntegration => self.edited.shell_integration,
 			Key::Hyperlinks => self.edited.hyperlinks,
 			Key::BgContrastMask => self.edited.wallpaper_contrast_mask,
 			Key::BgEnabled => self.edited.wallpaper_enabled,
@@ -2626,6 +2627,7 @@ impl SettingsDialog {
 			Key::CursorOutline => self.edited.cursor_outline = on,
 			Key::RememberSize => self.edited.remember_size = on,
 			Key::CopyOnSelect => self.edited.copy_on_select = on,
+			Key::ShellIntegration => self.edited.shell_integration = on,
 			Key::Hyperlinks => self.edited.hyperlinks = on,
 			Key::BgContrastMask => self.edited.wallpaper_contrast_mask = on,
 			Key::BgEnabled => self.edited.wallpaper_enabled = on,
@@ -2842,6 +2844,7 @@ impl SettingsDialog {
 			Key::SystemFontSize => edited.use_system_font_size == defaults.use_system_font_size,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
 			Key::CopyOnSelect => edited.copy_on_select == defaults.copy_on_select,
+			Key::ShellIntegration => edited.shell_integration == defaults.shell_integration,
 			Key::Hyperlinks => edited.hyperlinks == defaults.hyperlinks,
 			Key::SmoothScroll => edited.scroll_smooth == defaults.scroll_smooth,
 			Key::Scrollbar => edited.scrollbar == defaults.scrollbar,
@@ -2931,6 +2934,7 @@ impl SettingsDialog {
 			| Key::SystemFontSize
 			| Key::RememberSize
 			| Key::CopyOnSelect
+			| Key::ShellIntegration
 			| Key::Hyperlinks
 			| Key::BgEnabled
 			| Key::BgRotate
@@ -2947,6 +2951,7 @@ impl SettingsDialog {
 					Key::SystemFont => self.defaults.use_system_font,
 					Key::SystemFontSize => self.defaults.use_system_font_size,
 					Key::CopyOnSelect => self.defaults.copy_on_select,
+					Key::ShellIntegration => self.defaults.shell_integration,
 					Key::Hyperlinks => self.defaults.hyperlinks,
 					Key::BgContrastMask => self.defaults.wallpaper_contrast_mask,
 					Key::BgEnabled => self.defaults.wallpaper_enabled,
@@ -5529,12 +5534,15 @@ mod tests {
 			.find(|s| matches!(s.kind, super::Kind::ShellList))
 			.expect("a shells grid");
 		assert_eq!(tab_titles()[grid.tab], "Shell");
-		// The tab is the grid, its headings, and the startup directory that the
-		// grid's own default shell starts in - nothing else belongs beside them.
+		// The tab is the grid, its headings, the startup directory the grid's own
+		// default shell starts in, and the switch that decides whether a shell
+		// is given a way to report where it is - nothing else belongs beside
+		// them.
 		for spec in ui.specs.iter().filter(|s| s.tab == grid.tab) {
 			assert!(
 				matches!(spec.kind, super::Kind::ShellList | super::Kind::Header(_))
-					|| spec.key == Key::StartupDirectory,
+					|| spec.key == Key::StartupDirectory
+					|| spec.key == Key::ShellIntegration,
 				"{} does not belong on the Shell tab",
 				spec.label
 			);
