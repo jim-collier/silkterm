@@ -492,13 +492,23 @@ impl Drop for TermInstance {
 // -ExecutionPolicy sets it and EVERY descendant inherits it, so a pane can run
 // under a policy nobody chose for it.
 //
-// Only Windows has this class: it needs two PowerShells sharing one variable,
-// and a unix box carries a single pwsh. The unix analogues (VIRTUAL_ENV,
-// CONDA_*) are ones a user WANTS a pane to inherit.
-#[cfg(windows)]
-const SHELL_PRIVATE_ENV: &[&str] = &["PSModulePath", "PSExecutionPolicyPreference"];
-#[cfg(not(windows))]
-const SHELL_PRIVATE_ENV: &[&str] = &[];
+// pwsh runs on Linux and macOS too and mutates the same variable there, and a
+// side-by-side install (a distro pwsh beside a preview, or a Homebrew one beside
+// the .pkg) is the same collision as 5.1-below-7 - so the list is not
+// platform-split. OLDPWD earns its place on every platform for a different
+// reason: it is the launching shell's own `cd -` target, and a pane opens
+// somewhere else entirely, so inheriting it points `cd -` at a directory the
+// user was never in.
+//
+// What is deliberately NOT here: VIRTUAL_ENV and CONDA_*, which a user activates
+// and then WANTS a pane to keep (and which cannot be dropped honestly anyway -
+// the matching PATH edits would stay, leaving a half-activated environment);
+// SHLVL, which is a real nesting count every shell agrees on rather than one
+// shell's private state.
+//
+// A name may only join this list if a desktop session NEVER sets it - see
+// session_env below, whose unix arm cannot tell the difference.
+const SHELL_PRIVATE_ENV: &[&str] = &["PSModulePath", "PSExecutionPolicyPreference", "OLDPWD"];
 
 // Put the shell-private variables back to what a freshly launched process would
 // see, so a pane's shell starts the way it would from the desktop. Everything
@@ -512,9 +522,6 @@ const SHELL_PRIVATE_ENV: &[&str] = &[];
 // pane, a split, a new tab, a new window, the shell scan and the PowerShell the
 // profile installer starts.
 pub fn sanitize_shell_env() {
-	if SHELL_PRIVATE_ENV.is_empty() {
-		return;
-	}
 	// No answer means leave the environment alone. A pane that starts with a
 	// stale variable beats one that starts with none.
 	let Some(session) = session_env() else {
@@ -607,9 +614,18 @@ fn session_env() -> Option<std::collections::HashMap<String, String>> {
 	}
 }
 
+// Unix has no equivalent of CreateEnvironmentBlock - nothing will say what a
+// freshly launched program would see, because the answer is composed by PAM, the
+// session manager and the login shell between them and is never recorded
+// anywhere afterwards. But every name on the list above is one a desktop session
+// does not set, so the answer for those IS the empty set, and each of them is
+// dropped rather than reset. That is the whole reason the list may only ever
+// carry variables a session never sets: a name that a login profile legitimately
+// exports would be dropped here rather than restored, and nothing on this
+// platform could tell the two apart.
 #[cfg(not(windows))]
 fn session_env() -> Option<std::collections::HashMap<String, String>> {
-	None
+	Some(std::collections::HashMap::new())
 }
 
 // Copy an environment block out of the OS's memory so the parsing above it can
@@ -902,7 +918,9 @@ struct UnicodeString {
 
 #[cfg(test)]
 mod tests {
-	use super::{WakeGate, env_fixups, expand_refs, is_command_child, parse_env_block};
+	use super::{
+		SHELL_PRIVATE_ENV, WakeGate, env_fixups, expand_refs, is_command_child, parse_env_block,
+	};
 
 	// Folding the notices may never LOSE one: the window clears the gate before
 	// it looks at the grid, so a read cycle that lands mid-handling posts again.
@@ -1095,5 +1113,24 @@ mod tests {
 		);
 		assert_eq!(expand_refs("%NotAThing%;tail", &vars), "%NotAThing%;tail");
 		assert_eq!(expand_refs("100% done", &vars), "100% done");
+	}
+
+	// The unix arm has no way to ask what a freshly launched program would see, so
+	// it answers with the empty set and every listed variable is DROPPED. That is
+	// only honest because nothing on the list is a variable a session sets - and it
+	// is the same path Windows takes for a variable its session block lacks.
+	#[test]
+	fn an_empty_session_drops_every_private_variable() {
+		let inherited = vars(&[
+			("PSModulePath", "/opt/microsoft/powershell/7/Modules"),
+			("PSExecutionPolicyPreference", "Bypass"),
+			("OLDPWD", "/home/me/elsewhere"),
+			("PATH", "/usr/bin"),
+		]);
+		let fixups = env_fixups(SHELL_PRIVATE_ENV, &vars(&[]), &inherited);
+		assert_eq!(fixups.len(), SHELL_PRIVATE_ENV.len());
+		assert!(fixups.iter().all(|(_, value)| value.is_none()));
+		// and the one nobody asked about is untouched
+		assert!(!fixups.iter().any(|(name, _)| name == "PATH"));
 	}
 }
