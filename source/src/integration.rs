@@ -75,7 +75,18 @@ pub fn powershells(found: &[Found]) -> Vec<String> {
 		if !is_powershell(program) {
 			continue;
 		}
-		if !out.iter().any(|seen| seen == program) {
+		// Windows hands the same file back under more than one spelling of its
+		// path (%SystemRoot% is C:\WINDOWS, PATH says C:\Windows), and each
+		// one costs a shell launched to ask it the same question and a second
+		// copy of the same diagnostic.
+		let same = |seen: &String| {
+			if cfg!(windows) {
+				seen.eq_ignore_ascii_case(program)
+			} else {
+				seen == program
+			}
+		};
+		if !out.iter().any(same) {
 			out.push(program.clone());
 		}
 	}
@@ -233,6 +244,7 @@ mod tests {
 			title: title.to_string(),
 			command: command.to_string(),
 			comment: String::new(),
+			active: true,
 		}
 	}
 

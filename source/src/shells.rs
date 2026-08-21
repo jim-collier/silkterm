@@ -53,6 +53,10 @@ pub struct Found {
 	pub title: String,
 	pub command: String,
 	pub comment: String,
+	// Almost everything found is offered switched ON - it is installed, so it is
+	// presumably wanted. A variant that only exists as an alternative to another
+	// entry arrives OFF instead, so the list gains a row rather than a surprise.
+	pub active: bool,
 }
 
 impl Found {
@@ -61,6 +65,16 @@ impl Found {
 			title: title.to_string(),
 			command,
 			comment: comment.to_string(),
+			active: true,
+		}
+	}
+
+	// The same, offered switched off: there for the user to turn on, never
+	// something they have to notice and turn back off.
+	fn dormant(title: &str, command: String, comment: &str) -> Self {
+		Self {
+			active: false,
+			..Self::new(title, command, comment)
 		}
 	}
 }
@@ -131,7 +145,7 @@ fn merge_with(
 			slug,
 			title: hit.title.clone(),
 			command: hit.command.clone(),
-			active: true,
+			active: hit.active,
 			comment: hit.comment.clone(),
 			last_seen: today.to_string(),
 		});
@@ -179,6 +193,14 @@ struct Ident {
 	args: Vec<String>,
 }
 
+// Flags that change how a shell LOOKS and nothing about what it is, so two
+// commands differing only by one of these are the same shell. Everything else
+// stays part of the identity - that is what keeps a `--norc` twin a separate
+// entry from the shell it twins. Without this, adding `-NoLogo` to the table
+// would land a second PowerShell beside every stored one on the next scan,
+// which is the exact duplicate-entry mess this list already had once.
+const COSMETIC_FLAGS: &[&str] = &["-nologo"];
+
 impl Ident {
 	fn of(command: &str, resolve: &dyn Fn(&str) -> Option<PathBuf>) -> Option<Self> {
 		let argv = crate::cli::shell_split(command).ok()?;
@@ -186,7 +208,11 @@ impl Ident {
 		Some(Self {
 			exe: resolve(prog).map(|p| norm(&p)),
 			base: base_name(prog),
-			args: args.to_vec(),
+			args: args
+				.iter()
+				.filter(|arg| !COSMETIC_FLAGS.contains(&arg.to_ascii_lowercase().as_str()))
+				.cloned()
+				.collect(),
 		})
 	}
 	// Same arguments, and either both programs resolve to the same file or the
@@ -421,6 +447,20 @@ const KNOWN: &[(&str, &str, &str)] = &[
 	("node", "Node.js", ""),
 ];
 
+// A shell offered with the flags it reads better with. Only presentation: the
+// PowerShells print a copyright banner (and 7 an occasional update notice)
+// before their first prompt, which is noise in a terminal that opens a new tab
+// per thought. Nothing here may change how a shell BEHAVES - every such flag
+// belongs in COSMETIC_FLAGS too, or the next scan lands a duplicate.
+fn launch(command: &str, program: &str) -> String {
+	let base = base_name(program);
+	let base = base.strip_suffix(".exe").unwrap_or(&base);
+	match base {
+		"pwsh" | "powershell" => format!("{command} -NoLogo"),
+		_ => command.to_string(),
+	}
+}
+
 // Everything installed that looks like a shell, best first.
 pub fn detect() -> Vec<Found> {
 	let mut out: Vec<Found> = Vec::new();
@@ -444,10 +484,19 @@ pub fn detect() -> Vec<Found> {
 	if let Some(login) = login_shell() {
 		let base = base_name(&login);
 		let title = pretty(&base);
-		add(Found::new(&title, login.clone(), ""), &mut out, &mut seen);
+		let login_cmd = launch(&login, &base);
+		add(
+			Found::new(&title, login_cmd.clone(), ""),
+			&mut out,
+			&mut seen,
+		);
 		if let Some((flag, note)) = no_startup_file(&base) {
 			add(
-				Found::new(&format!("{title} ({note})"), format!("{login} {flag}"), ""),
+				Found::new(
+					&format!("{title} ({note})"),
+					format!("{login_cmd} {flag}"),
+					"",
+				),
 				&mut out,
 				&mut seen,
 			);
@@ -456,7 +505,7 @@ pub fn detect() -> Vec<Found> {
 	for (exe, title, comment) in KNOWN {
 		if let Some(path) = which(exe) {
 			add(
-				Found::new(title, quoted(&path), comment),
+				Found::new(title, launch(&quoted(&path), exe), comment),
 				&mut out,
 				&mut seen,
 			);
@@ -522,8 +571,24 @@ fn platform_extras() -> Vec<Found> {
 		] {
 			let path = root.join(rel);
 			if path.is_file() {
-				out.push(Found::new(title, quoted(&path), comment));
+				out.push(Found::new(title, launch(&quoted(&path), rel), comment));
 			}
+		}
+		// Windows PowerShell 5.1 ships at a policy that refuses to run script
+		// files, so it loads no profile - which is why it cannot report where it
+		// is (see integration.rs). This entry relaxes that for its own session
+		// only, nothing written anywhere. It arrives switched OFF because it is
+		// a security setting: an alternative to reach for, not a default.
+		let ps51 = root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+		if ps51.is_file() {
+			out.push(Found::dormant(
+				"Windows PowerShell 5 (relaxed)",
+				format!(
+					"{} -ExecutionPolicy RemoteSigned",
+					launch(&quoted(&ps51), "powershell")
+				),
+				"runs profile scripts; per-session, nothing is written",
+			));
 		}
 	}
 	// The POSIX environments each ship their own bash. They share a name and
@@ -743,6 +808,59 @@ mod tests {
 		let found = vec![Found::new("Bash", "bash".into(), "")];
 		let out = merged(&stored, &found, &installed(&["bash"]));
 		assert_eq!(out.len(), 1, "the bare name resolves to the stored path");
+	}
+
+	// Adding a banner flag to the table must not land a SECOND PowerShell beside
+	// everyone's stored one, so a flag that changes only how a shell looks is
+	// left out of what makes it that shell. The stored command is not rewritten
+	// either - a scan never touches one - so an existing entry keeps its banner
+	// until the user says otherwise.
+	#[test]
+	fn a_cosmetic_flag_does_not_make_it_a_different_shell() {
+		let stored = vec![entry("pwsh", "/opt/ps/pwsh", true)];
+		let found = vec![Found::new(
+			"PowerShell 7",
+			"/opt/ps/pwsh -NoLogo".into(),
+			"",
+		)];
+		let out = merged(&stored, &found, &installed(&["pwsh", "/opt/ps/pwsh"]));
+		assert_eq!(out.len(), 1, "a duplicate was appended");
+		assert_eq!(
+			out[0].command, "/opt/ps/pwsh",
+			"the stored command was rewritten"
+		);
+		// spelled either way round, and case does not matter
+		let stored = vec![entry("pwsh", "/opt/ps/pwsh -nologo", true)];
+		let found = vec![Found::new("PowerShell 7", "/opt/ps/pwsh".into(), "")];
+		assert_eq!(
+			merged(&stored, &found, &installed(&["/opt/ps/pwsh"])).len(),
+			1
+		);
+		// and a flag that changes BEHAVIOUR still makes a separate entry
+		let stored = vec![entry("pwsh", "/opt/ps/pwsh -NoLogo", true)];
+		let found = vec![Found::new(
+			"relaxed",
+			"/opt/ps/pwsh -NoLogo -ExecutionPolicy RemoteSigned".into(),
+			"",
+		)];
+		assert_eq!(
+			merged(&stored, &found, &installed(&["/opt/ps/pwsh"])).len(),
+			2
+		);
+	}
+
+	// Something offered as an alternative to another entry arrives switched OFF:
+	// a list that grows a row is fine, one that grows a row the user has to
+	// notice and turn back off is not.
+	#[test]
+	fn a_dormant_find_arrives_switched_off() {
+		let found = vec![Found::dormant("Relaxed", "/opt/ps/pwsh -x".into(), "")];
+		let out = merged(&[], &found, &installed(&["/opt/ps/pwsh"]));
+		assert_eq!(out.len(), 1);
+		assert!(!out[0].active, "it should arrive switched off");
+		// ...and everything else still arrives switched on
+		let found = vec![Found::new("Bash", "/bin/bash".into(), "")];
+		assert!(merged(&[], &found, &installed(&["/bin/bash"]))[0].active);
 	}
 
 	// The arguments are part of what makes a shell one entry or two: the twin

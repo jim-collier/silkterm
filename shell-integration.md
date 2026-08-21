@@ -26,6 +26,8 @@ What it will not do:
 
 To switch the whole thing off before it ever runs, set `shell.integration: false` in the config, or clear "PowerShell integration" on the Shell tab of Settings.
 
+If you would rather relax the policy than change it, the Tabs menu offers **Windows PowerShell 5 (relaxed)** - the same shell launched with `-ExecutionPolicy RemoteSigned`, which applies to that session and writes nothing anywhere. It ships switched off; enable it on the Shell tab of Settings. Note that the flag is inherited by anything that session starts, so it relaxes the policy for the whole pane, not just the profile.
+
 This is the block, if you would rather paste it in yourself (`notepad $PROFILE`, creating the file if it is not there):
 
 ```powershell

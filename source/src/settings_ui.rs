@@ -5938,6 +5938,7 @@ mod tests {
 		let (mut d, _) = mk_shell_dialog(1);
 		d.edited.shells[0].title = "Renamed by hand".into();
 		let found = vec![crate::shells::Found {
+			active: true,
 			title: "Fish".into(),
 			command: "/bin/sh0".into(), // the one already stored, so nothing is added
 			comment: String::new(),
