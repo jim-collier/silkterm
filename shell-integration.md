@@ -18,13 +18,25 @@ A few seconds after launch, SilkTerm looks for the PowerShells you have installe
 What it will not do:
 
 - **Touch a profile that already reports.** Its own marker, or any other OSC 7 / OSC 9;9 already in the file - a Windows Terminal setup, oh-my-posh, anything - means somebody has this in hand, and the file is left exactly as it is.
-- **Rewrite what is there.** The block is appended, after a copy of the profile is saved beside it as `Microsoft.PowerShell_profile.ps1.silkterm-backup`.
+- **Rewrite what is there.** The block is appended, after a copy of the profile is saved beside it as `Microsoft.PowerShell_profile.ps1.silkterm-backup`. Everything above and below the two markers stays exactly as you wrote it.
 - **Put it back.** Deleting the block is how you switch it off. Nothing restores it.
-- **Change your prompt.** On PowerShell 6+ the prompt is not touched at all; on Windows PowerShell 5.1, which has no other hook, whatever prompt is in place is wrapped rather than replaced.
+- **Replace a prompt you chose.** If your prompt is still the one PowerShell ships, the block swaps in one that names the version - `[PS 7.6] C:\some\path\>` - because two PowerShells look alike at a prompt. If it is anything else, including oh-my-posh, starship or a `prompt` function of your own, it is left alone: on PowerShell 6+ the prompt is not touched at all, and on Windows PowerShell 5.1, which has no other hook, yours is wrapped rather than replaced.
+
+One thing it *will* do: keep the block itself up to date. It gains things over time - the version prompt is one - and only the text between the two markers is ever rewritten. If you want to change what the block does, copy it out below the markers and edit that copy, or your edits will be replaced on a later launch.
 
 - **Write a file the shell would refuse to read.** If PowerShell's execution policy blocks script files, the block would only turn every launch into a red execution-policy error, so the profile is left alone and a line says which shell and why. Windows PowerShell 5.1 is commonly in that state; `Get-ExecutionPolicy` shows it, and `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` is the usual fix - your call to make, not SilkTerm's.
 
 To switch the whole thing off before it ever runs, set `shell.integration: false` in the config, or clear "PowerShell integration" on the Shell tab of Settings.
+
+### The prompt
+
+Once the block is in place, a stock prompt reads:
+
+```text
+[PS 7.6] C:\Users\you\projects\silkterm\>
+```
+
+The trailing separator is deliberate - it says the text is a place, not a command - and the same prompt appears on Windows PowerShell 5.1 (`[PS 5.1] ...`) and on PowerShell 7 wherever it runs, macOS and Linux included. To take it back, define your own `prompt` **below** the block; anything of yours is detected on the next launch and left alone from then on.
 
 If you would rather relax the policy than change it, the Tabs menu offers **Windows PowerShell 5 (relaxed)** - the same shell launched with `-ExecutionPolicy RemoteSigned`, which applies to that session and writes nothing anywhere. It ships switched off; enable it on the Shell tab of Settings. Note that the flag is inherited by anything that session starts, so it relaxes the policy for the whole pane, not just the profile.
 
