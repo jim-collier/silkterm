@@ -373,9 +373,13 @@ Drop a few images into a `wallpaper` folder next to the config and SilkTerm pick
 
 A new tab, split or window starts in the directory the current pane is in. For most shells that needs nothing set up - SilkTerm reads the shell process's own directory.
 
-PowerShell is the exception worth knowing about: `Set-Location` moves PowerShell's own idea of where it is and leaves the process where it was launched, so there is nothing to read and a new pane would start in the launch directory. Adding four lines to your profile fixes it, and a profile already set up for Windows Terminal works here unchanged. Same story for a shell running behind `ssh` or in a container.
+PowerShell is the exception worth knowing about: `Set-Location` moves PowerShell's own idea of where it is and leaves the process where it was launched, so there is nothing to read and a new pane would start in the launch directory.
 
-[shell-integration.md](shell-integration.md) has the snippets, for PowerShell, bash, zsh and fish.
+SilkTerm handles that one for you. A few seconds after launch it adds a small directory-reporting block to each PowerShell profile - and it will not touch a profile that already reports (a Windows Terminal setup, oh-my-posh, anything else), will not rewrite what is there (it appends, after saving a copy beside it), will not change your prompt, and will not put the block back if you delete it. A shell whose execution policy would refuse to load the profile is left alone and said so, rather than being handed a file it cannot read. Clear "PowerShell integration" on the Shell tab of Settings, or set `shell.integration: false`, to switch it off before it ever runs.
+
+Same story for a shell running behind `ssh` or in a container - that one is yours to set up, since the shell you are typing at is not the process SilkTerm started.
+
+[shell-integration.md](shell-integration.md) covers all of it, including the snippets for bash, zsh and fish.
 
 <!--
 ## Renaming the project

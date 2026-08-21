@@ -58,7 +58,7 @@ keys![
 	CursorBlink, CursorHeight, CursorWidth, CursorAnimation, CursorResume,
 	SystemFont, SystemFontSize, FontFamily, FontSize, LineHeight,
 	Columns, Rows, RememberSize, Margin,
-	Shells, StartupDirectory, CopyOnSelect, Hyperlinks, LinkOpenCommand,
+	Shells, StartupDirectory, ShellIntegration, CopyOnSelect, Hyperlinks, LinkOpenCommand,
 	SmoothScroll, ScrollEaseIn, ScrollRampUp, SingleScreenTau, ScrollRampDown,
 	ScrollEaseOut, WheelLines,
 	Scrollbar, ScrollbarThickness, ScrollbarAutoHide,

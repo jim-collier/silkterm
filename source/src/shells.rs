@@ -73,7 +73,11 @@ pub fn spawn(proxy: &EventLoopProxy<UserEvent>) {
 	let spawned = std::thread::Builder::new()
 		.name("shells".into())
 		.spawn(move || {
-			let _ = proxy.send_event(UserEvent::ShellsReady(detect()));
+			let found = detect();
+			// PowerShell cannot be asked where it is, so it is offered a way to
+			// say - on this thread, since it means starting one (integration.rs)
+			crate::integration::install(&found);
+			let _ = proxy.send_event(UserEvent::ShellsReady(found));
 		});
 	if let Err(e) = spawned {
 		eprintln!("{}: could not start shell scan: {e}", config::APP_NAME);
