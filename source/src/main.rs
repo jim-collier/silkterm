@@ -66,6 +66,10 @@ fn open_console() {
 fn main() -> anyhow::Result<()> {
 	env_logger::init();
 	alacritty_terminal::tty::setup_env();
+	// Drop the launching shell's private variables before anything can spawn
+	// a shell of its own (see term.rs SHELL_PRIVATE_ENV). Here because an
+	// environment write needs the process still single-threaded.
+	term::sanitize_shell_env();
 
 	let mut cli = match cli::parse(std::env::args().skip(1)) {
 		Ok(parsed) => parsed,
