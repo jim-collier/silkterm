@@ -631,7 +631,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Not ours in origin - the same thing happens to a plain command prompt launched from PowerShell 7, with no terminal in the picture - but a pane should start the way it would from the desktop, and the terminal is the only place that can settle it once for every shell it opens.
 	- A pane's shell now gets those few variables back as a freshly launched program would see them, read from the machine at startup so it stays right wherever PowerShell happens to be installed. Everything the user exported themselves is still inherited, which is the whole point of opening a terminal from a shell.
 	- The same treatment covers the execution-policy variable that PowerShell hands down to everything it starts, so a pane can no longer end up running under a policy nobody chose for it.
-	- Only Windows needs this: it takes two versions of one shell sharing a variable, and a Linux or macOS box carries a single PowerShell.
+	- The same list applies on Linux and macOS, where PowerShell runs too and two installs side by side collide the same way, and where the launching shell's own `cd -` target was being handed to panes that open somewhere else entirely.
 
 - ✅ A second cursor showed up in the far bottom-right corner, flickering against the real one at the prompt.
 	- A program that redraws its whole display hides the cursor first, redraws, then puts it back where it belongs and shows it again. The request to hide it was being ignored, so a cursor was drawn wherever the redraw had left it - on Windows that is the bottom-right corner - and it alternated with the one at the prompt once per redraw, which is faster than a cursor blinks.
