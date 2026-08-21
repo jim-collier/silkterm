@@ -18,13 +18,25 @@ A few seconds after launch, SilkTerm looks for the PowerShells you have installe
 What it will not do:
 
 - **Touch a profile that already reports.** Its own marker, or any other OSC 7 / OSC 9;9 already in the file - a Windows Terminal setup, oh-my-posh, anything - means somebody has this in hand, and the file is left exactly as it is.
-- **Rewrite what is there.** The block is appended, after a copy of the profile is saved beside it as `Microsoft.PowerShell_profile.ps1.silkterm-backup`.
+- **Rewrite what is there.** The block is appended, after a copy of the profile is saved beside it as `Microsoft.PowerShell_profile.ps1.silkterm-backup`. Everything above and below the two markers stays exactly as you wrote it.
 - **Put it back.** Deleting the block is how you switch it off. Nothing restores it.
-- **Change your prompt.** On PowerShell 6+ the prompt is not touched at all; on Windows PowerShell 5.1, which has no other hook, whatever prompt is in place is wrapped rather than replaced.
+- **Replace a prompt you chose.** If your prompt is still the one PowerShell ships, the block swaps in one that names the version - `[PS 7.6] C:\some\path\>` - because two PowerShells look alike at a prompt. If it is anything else, including oh-my-posh, starship or a `prompt` function of your own, it is left alone: on PowerShell 6+ the prompt is not touched at all, and on Windows PowerShell 5.1, which has no other hook, yours is wrapped rather than replaced.
+
+One thing it *will* do: keep the block itself up to date. It gains things over time - the version prompt is one - and only the text between the two markers is ever rewritten. If you want to change what the block does, copy it out below the markers and edit that copy, or your edits will be replaced on a later launch.
 
 - **Write a file the shell would refuse to read.** If PowerShell's execution policy blocks script files, the block would only turn every launch into a red execution-policy error, so the profile is left alone and a line says which shell and why. Windows PowerShell 5.1 is commonly in that state; `Get-ExecutionPolicy` shows it, and `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` is the usual fix - your call to make, not SilkTerm's.
 
 To switch the whole thing off before it ever runs, set `shell.integration: false` in the config, or clear "PowerShell integration" on the Shell tab of Settings.
+
+### The prompt
+
+Once the block is in place, a stock prompt reads:
+
+```text
+[PS 7.6] C:\Users\you\projects\silkterm\>
+```
+
+The trailing separator is deliberate - it says the text is a place, not a command - and the same prompt appears on Windows PowerShell 5.1 (`[PS 5.1] ...`) and on PowerShell 7 wherever it runs, macOS and Linux included. To take it back, define your own `prompt` **below** the block; anything of yours is detected on the next launch and left alone from then on.
 
 If you would rather relax the policy than change it, the Tabs menu offers **Windows PowerShell 5 (relaxed)** - the same shell launched with `-ExecutionPolicy RemoteSigned`, which applies to that session and writes nothing anywhere. It ships switched off; enable it on the Shell tab of Settings. Note that the flag is inherited by anything that session starts, so it relaxes the policy for the whole pane, not just the profile.
 
@@ -36,11 +48,28 @@ This is the block, if you would rather paste it in yourself (`notepad $PROFILE`,
 # opens where this shell is. PowerShell keeps its location to itself, so there
 # is nothing for a terminal to read unless the shell says so. Nothing is drawn
 # on screen, and a terminal that does not understand the sequence ignores it.
-# Delete this block to switch it off - SilkTerm will not put it back.
+# It also sets a prompt showing which PowerShell this is - but only when the
+# prompt is still the stock one, so your own prompt is never replaced.
+# Delete this block to switch it off - SilkTerm will not put it back. It does
+# keep the block itself up to date, so an edit made INSIDE the two markers is
+# replaced on a later launch - copy it out below them to make it yours.
 if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	function global:__SilkTermReportDir {
 		$dir = $ExecutionContext.SessionState.Path.CurrentLocation.ProviderPath
 		if ($dir) { Write-Host -NoNewline ("{0}]9;9;`"{1}`"{0}\" -f [char]27, $dir) }
+	}
+	# Is this still the prompt PowerShell ships? Its own help link is the marker:
+	# a prompt anybody has written, or that oh-my-posh or starship installed,
+	# will not carry it. Only the stock one is replaced.
+	$__SilkTermStock = (-not $function:prompt) -or ($function:prompt.ToString() -match 'LinkID=225750')
+	function global:__SilkTermPrompt {
+		# "[PS 7.6] C:\some\path\> " - the version, because two PowerShells look
+		# alike at a prompt, and a trailing separator so the path reads as one.
+		$dir = "$($ExecutionContext.SessionState.Path.CurrentLocation)"
+		$sep = [System.IO.Path]::DirectorySeparatorChar
+		if (-not ($dir.EndsWith($sep) -or $dir.EndsWith('/'))) { $dir += $sep }
+		$v = $PSVersionTable.PSVersion
+		"[PS $($v.Major).$($v.Minor)] $dir$('>' * ($NestedPromptLevel + 1)) "
 	}
 	if ($null -ne $ExecutionContext.SessionState.InvokeCommand.PSObject.Properties['LocationChangedAction']) {
 		# PowerShell 6+ can be told about the location itself, which leaves the
@@ -51,15 +80,16 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 			if ($global:__SilkTermPrevLocation) { & $global:__SilkTermPrevLocation @args }
 			__SilkTermReportDir
 		}
+		if ($__SilkTermStock) { function global:prompt { __SilkTermPrompt } }
 	}
 	else {
 		# Windows PowerShell 5.1 has no such hook, so wrap whatever prompt is in
 		# place rather than replacing it.
-		$global:__SilkTermPrevPrompt = $function:prompt
+		$global:__SilkTermPrevPrompt = if ($__SilkTermStock) { $null } else { $function:prompt }
 		function global:prompt {
 			__SilkTermReportDir
 			if ($global:__SilkTermPrevPrompt) { & $global:__SilkTermPrevPrompt }
-			else { "PS $($ExecutionContext.SessionState.Path.CurrentLocation)$('>' * ($NestedPromptLevel + 1)) " }
+			else { __SilkTermPrompt }
 		}
 	}
 	__SilkTermReportDir

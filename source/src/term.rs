@@ -134,6 +134,17 @@ impl Dimensions for TermDimensions {
 	}
 }
 
+// What a pane's shell is doing, as its tab reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Task {
+	/// A command is in the foreground right now.
+	Running(String),
+	/// Back at the prompt; this is the last command that ran.
+	Last(String),
+	/// This shell has never run anything.
+	Idle,
+}
+
 pub struct TermInstance {
 	pub term: Arc<FairMutex<Term<EventProxy>>>,
 	// same gate the engine's thread posts through, so the window can re-arm it
@@ -145,29 +156,27 @@ pub struct TermInstance {
 	// where the shell last SAID it is (OSC 7 / OSC 9;9, see cwd.rs) - the only
 	// answer for a shell whose location the OS cannot see, PowerShell above all
 	reported_cwd: crate::cwd::Reported,
-	// for tab titles: the PTY master fd (foreground-process group) + shell pid;
-	// `shell_name` is cached, `last_program` tracks the most recent foreground.
+	// for tab titles: the PTY master fd, which names the foreground process group.
 	#[cfg(unix)]
 	master_fd: std::os::unix::io::RawFd,
 	#[cfg(unix)]
 	shell_pid: u32,
-	#[cfg(unix)]
-	shell_name: Option<String>,
-	#[cfg(unix)]
+	// The last command this shell ran, so an idle tab can still say what it was
+	// doing. Both platforms answer "what is running" differently and both keep
+	// this the same way.
 	last_program: Option<String>,
-	// throttles the per-frame title probe (see tab_title)
-	#[cfg(unix)]
-	title_cache: Option<(std::time::Instant, String)>,
+	// throttles the per-frame task probe (see task())
+	task_cache: Option<(std::time::Instant, Task)>,
 	// windows: the shell's pid and the time it started, for the child-process
 	// probe that stands in for a foreground process group (see at_shell_prompt),
 	// plus that probe's answer for as long as it holds (see note_activity).
-	// Either 0 means "unknown".
+	// Either 0 means "unknown"; the inner Option is the running command's name.
 	#[cfg(windows)]
 	shell_pid: u32,
 	#[cfg(windows)]
 	shell_started: u64,
 	#[cfg(windows)]
-	prompt_probe: std::cell::Cell<Option<bool>>,
+	child_probe: std::cell::RefCell<Option<Option<String>>>,
 }
 
 impl TermInstance {
@@ -265,70 +274,68 @@ impl TermInstance {
 			master_fd,
 			#[cfg(unix)]
 			shell_pid,
-			#[cfg(unix)]
-			shell_name: None,
-			#[cfg(unix)]
 			last_program: None,
-			#[cfg(unix)]
-			title_cache: None,
+			task_cache: None,
 			#[cfg(windows)]
 			shell_pid,
 			#[cfg(windows)]
 			shell_started: process_start_time(shell_pid).unwrap_or(0),
 			#[cfg(windows)]
-			prompt_probe: std::cell::Cell::new(None),
+			child_probe: std::cell::RefCell::new(None),
 		})
 	}
 
-	// Tab title: "<shell> [<program>]" while a foreground program runs, or
-	// "<shell> [last: <program>]" / "<shell>" when only the shell is at the
-	// prompt. Names are executable basenames (from /proc comm), not full
-	// command lines. Unix only; elsewhere falls back to the app name.
-	// The probe (tcgetpgrp + a /proc read) is throttled: render asks per tab
-	// per frame, and paying syscalls on every idle blink frame added up.
-	#[cfg(unix)]
-	pub fn tab_title(&mut self) -> String {
+	// What this pane's shell is doing, for the tab to say. "Running" is the
+	// program the shell has in the foreground right now; "Last" is what it ran
+	// most recently, which is what an idle tab reports instead. A shell that has
+	// never run anything is Idle, and the tab shows its directory instead.
+	//
+	// Both platforms answer this, by quite different means - a foreground process
+	// group on unix, a live child process on Windows (see at_shell_prompt) - and
+	// both are throttled the same way: render asks per tab per frame, and paying
+	// for a probe on every idle blink frame added up.
+	pub fn task(&mut self) -> Task {
 		const PROBE_IVL: std::time::Duration = std::time::Duration::from_millis(250);
 		let now = std::time::Instant::now();
-		if let Some((at, title)) = &self.title_cache {
+		if let Some((at, task)) = &self.task_cache {
 			if now.duration_since(*at) < PROBE_IVL {
-				return title.clone();
+				return task.clone();
 			}
 		}
-		let title = self.probe_title();
-		self.title_cache = Some((now, title.clone()));
-		title
-	}
-
-	#[cfg(unix)]
-	fn probe_title(&mut self) -> String {
-		let shell = self
-			.shell_name
-			.get_or_insert_with(|| proc_comm(self.shell_pid).unwrap_or_else(|| "shell".into()))
-			.clone();
-		let pgid = unsafe { libc::tcgetpgrp(self.master_fd) };
-		let fg_program = if pgid > 0 {
-			proc_comm(pgid as u32)
-		} else {
-			None
-		};
-		match fg_program {
-			Some(program) if program != shell => {
+		let task = match self.running_program() {
+			Some(program) => {
 				self.last_program = Some(program.clone());
-				format!("{shell} [{program}]")
+				Task::Running(program)
 			}
-			_ => match &self.last_program {
-				Some(last_program) => format!("{shell} [last: {last_program}]"),
-				None => shell,
+			None => match &self.last_program {
+				Some(last) => Task::Last(last.clone()),
+				None => Task::Idle,
 			},
-		}
+		};
+		self.task_cache = Some((now, task.clone()));
+		task
 	}
 
-	// self kept for signature parity with the unix version above
-	#[cfg(not(unix))]
+	// The foreground process group is the shell's own while it sits at its prompt,
+	// and a command's while one runs - so a pgid that is neither answers None.
+	#[cfg(unix)]
+	fn running_program(&mut self) -> Option<String> {
+		let pgid = unsafe { libc::tcgetpgrp(self.master_fd) };
+		if pgid <= 0 || pgid as u32 == self.shell_pid {
+			return None;
+		}
+		proc_comm(pgid as u32)
+	}
+
+	#[cfg(windows)]
+	fn running_program(&mut self) -> Option<String> {
+		self.command_child()
+	}
+
+	#[cfg(not(any(unix, windows)))]
 	#[allow(clippy::unused_self)]
-	pub fn tab_title(&mut self) -> String {
-		crate::config::APP_NAME.to_string()
+	fn running_program(&mut self) -> Option<String> {
+		None
 	}
 
 	// The shell's current directory, for a new tab/split to start in.
@@ -401,14 +408,21 @@ impl TermInstance {
 	// command rather than one per frame.
 	#[cfg(windows)]
 	pub fn at_shell_prompt(&self) -> bool {
+		self.command_child().is_none()
+	}
+
+	// The name of the command the shell is running, if any - the one scan answers
+	// both questions, so a tab title costs nothing on top of copy-output's.
+	#[cfg(windows)]
+	fn command_child(&self) -> Option<String> {
 		if self.shell_pid == 0 {
-			return true; // no pid to probe: report "at prompt" (the feature stays inert)
+			return None; // no pid to probe: report "at prompt" (the feature stays inert)
 		}
-		if let Some(answer) = self.prompt_probe.get() {
-			return answer;
+		if let Some(answer) = self.child_probe.borrow().as_ref() {
+			return answer.clone();
 		}
-		let answer = !has_command_child(self.shell_pid, self.shell_started);
-		self.prompt_probe.set(Some(answer));
+		let answer = command_child_name(self.shell_pid, self.shell_started);
+		*self.child_probe.borrow_mut() = Some(answer.clone());
 		answer
 	}
 
@@ -418,7 +432,7 @@ impl TermInstance {
 	// act is PTY output. Anywhere else this is nothing.
 	#[cfg(windows)]
 	pub fn note_activity(&self) {
-		self.prompt_probe.set(None);
+		*self.child_probe.borrow_mut() = None;
 	}
 
 	#[cfg(not(windows))]
@@ -488,10 +502,12 @@ fn is_command_child(child_started: Option<u64>, shell_started: u64) -> bool {
 	shell_started == 0 || child_started.is_some_and(|started| started >= shell_started)
 }
 
-// Windows: does `shell_pid` have a live child process? Walks the process table -
-// there is no narrower query - and stops at the first real child.
+// Windows: the name of `shell_pid`'s live child process, if it has one. Walks
+// the process table - there is no narrower query - and stops at the first real
+// child. The name is the executable's, without its extension, which is the same
+// shape unix reports through /proc comm.
 #[cfg(windows)]
-fn has_command_child(shell_pid: u32, shell_started: u64) -> bool {
+fn command_child_name(shell_pid: u32, shell_started: u64) -> Option<String> {
 	use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 	use windows_sys::Win32::System::Diagnostics::ToolHelp::{
 		CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
@@ -500,23 +516,42 @@ fn has_command_child(shell_pid: u32, shell_started: u64) -> bool {
 
 	let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
 	if snapshot == INVALID_HANDLE_VALUE {
-		return false; // can't tell: answer "no command", i.e. at the prompt
+		return None; // can't tell: answer "no command", i.e. at the prompt
 	}
 	let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
 	entry.dwSize = u32::try_from(size_of::<PROCESSENTRY32W>()).unwrap_or(0);
-	let mut found = false;
+	let mut found = None;
 	let mut more = unsafe { Process32FirstW(snapshot, &raw mut entry) };
 	while more != 0 {
 		if entry.th32ParentProcessID == shell_pid
 			&& is_command_child(process_start_time(entry.th32ProcessID), shell_started)
 		{
-			found = true;
+			found = Some(exe_display_name(&entry.szExeFile));
 			break;
 		}
 		more = unsafe { Process32NextW(snapshot, &raw mut entry) };
 	}
 	unsafe { CloseHandle(snapshot) };
 	found
+}
+
+// A PROCESSENTRY32W name (NUL-padded UTF-16) as the bare program name a tab
+// shows: no directory, no extension. An empty or unreadable name still has to
+// answer something, or a running command would read as an idle prompt.
+#[cfg(windows)]
+fn exe_display_name(raw: &[u16]) -> String {
+	let end = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
+	let name = String::from_utf16_lossy(&raw[..end]);
+	let name = name.rsplit(['\\', '/']).next().unwrap_or(&name);
+	let stem = name
+		.rfind('.')
+		.filter(|dot| *dot > 0)
+		.map_or(name, |dot| &name[..dot]);
+	if stem.is_empty() {
+		"command".to_string()
+	} else {
+		stem.to_string()
+	}
 }
 
 // Windows: a process's creation time as a raw FILETIME, for is_command_child.

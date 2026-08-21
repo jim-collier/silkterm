@@ -634,6 +634,22 @@ rows:
 		indent: 1
 		setting: window.rows
 
+	TabMinWidth:
+		label: Tab width min %
+		kind: slider
+		range: 4, 50
+		whole: true
+		setting: window.tab_min_width_pct
+		help: "Narrowest a tab may be, as a percentage of the window. Raise it to keep tabs readable when many are open - the strip then shows them a page at a time."
+
+	TabMaxWidth:
+		label: Tab width max %
+		kind: slider
+		range: 4, 50
+		whole: true
+		setting: window.tab_max_width_pct
+		help: "Widest a tab may be, as a percentage of the window."
+
 	Margin:
 		label: Margin px
 		kind: slider

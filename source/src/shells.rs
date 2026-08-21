@@ -252,6 +252,44 @@ fn same_command_with(a: &str, b: &str, resolve: &dyn Fn(&str) -> Option<PathBuf>
 	}
 }
 
+// An argv back as one command line, quoted the way this module's own tables
+// write one - so `friendly` can be asked about a pane launched from the CLI,
+// where the shell arrives already split.
+pub fn command_line(argv: &[String]) -> String {
+	argv.iter()
+		.map(|arg| {
+			if arg.contains(' ') {
+				format!("\"{arg}\"")
+			} else {
+				arg.clone()
+			}
+		})
+		.collect::<Vec<_>>()
+		.join(" ")
+}
+
+// What a tab calls the shell it is running. The stored list is the authority -
+// the user renamed those titles, so "Windows PowerShell 5 (relaxed)" is what
+// their tab should say - and only where nothing matches does the program's own
+// name stand in. Matching goes through `same_command`, not string equality, for
+// the reason that rule exists at all: the pane may have been launched with a
+// bare `pwsh` where the list carries the full path to the same file.
+pub fn friendly(command: &str, stored: &[ShellEntry]) -> String {
+	if let Some(entry) = stored
+		.iter()
+		.find(|entry| same_command(&entry.command, command))
+	{
+		if !entry.title.trim().is_empty() {
+			return entry.title.clone();
+		}
+	}
+	crate::cli::shell_split(command)
+		.ok()
+		.and_then(|argv| argv.first().map(|prog| pretty(&base_name(prog))))
+		.filter(|title| !title.is_empty())
+		.unwrap_or_else(|| "Shell".to_string())
+}
+
 // A list entry for a command line the list does not carry yet: the Settings
 // dialog's "Add", and the one-time adoption of the old `shell.default`. The
 // title is the program's own name, tidied - the user renames it if they want
