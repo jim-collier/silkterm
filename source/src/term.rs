@@ -476,6 +476,202 @@ impl Drop for TermInstance {
 	}
 }
 
+// Variables the launching shell keeps for ITSELF, which must not ride along
+// into a different shell.
+//
+// A terminal hands its child whatever environment it was launched with, and for
+// anything the user exported that is exactly right. A shell's own private
+// bookkeeping is not: pwsh 7 PREPENDS its own module directories to
+// PSModulePath in its process, so a Windows PowerShell 5.1 pane opened anywhere
+// below one resolves PSReadLine to pwsh's copy instead of its own, and cannot
+// load it - the 5.1 copy is signed as a Windows OS component and is exempt from
+// a Restricted execution policy while the pwsh 7 copy is not, so 5.1 starts
+// with "Cannot load PSReadline module." and no line editing. Measured on this
+// box; it reproduces in a bare cmd.exe launched from pwsh, with no terminal
+// involved at all. PSExecutionPolicyPreference is the same shape - pwsh's
+// -ExecutionPolicy sets it and EVERY descendant inherits it, so a pane can run
+// under a policy nobody chose for it.
+//
+// Only Windows has this class: it needs two PowerShells sharing one variable,
+// and a unix box carries a single pwsh. The unix analogues (VIRTUAL_ENV,
+// CONDA_*) are ones a user WANTS a pane to inherit.
+#[cfg(windows)]
+const SHELL_PRIVATE_ENV: &[&str] = &["PSModulePath", "PSExecutionPolicyPreference"];
+#[cfg(not(windows))]
+const SHELL_PRIVATE_ENV: &[&str] = &[];
+
+// Put the shell-private variables back to what a freshly launched process would
+// see, so a pane's shell starts the way it would from the desktop. Everything
+// else is left exactly as inherited - discarding the whole environment would
+// throw away the user's own exports, which is the one thing inheriting from a
+// shell is for.
+//
+// Called ONCE from main, before any thread exists: an environment write is
+// process-global and unsound beside a reader. Doing it to our own environment
+// rather than per spawn is what makes it cover every path at once - the first
+// pane, a split, a new tab, a new window, the shell scan and the PowerShell the
+// profile installer starts.
+pub fn sanitize_shell_env() {
+	if SHELL_PRIVATE_ENV.is_empty() {
+		return;
+	}
+	// No answer means leave the environment alone. A pane that starts with a
+	// stale variable beats one that starts with none.
+	let Some(session) = session_env() else {
+		return;
+	};
+	let inherited: std::collections::HashMap<String, String> = std::env::vars().collect();
+	for (name, value) in env_fixups(SHELL_PRIVATE_ENV, &session, &inherited) {
+		// SAFETY: single-threaded here - this runs at the top of main, before the
+		// event loop, any worker thread or any PTY exists.
+		unsafe {
+			match value {
+				Some(want) => std::env::set_var(&name, want),
+				None => std::env::remove_var(&name),
+			}
+		}
+	}
+}
+
+// What has to change for each named variable to read the way a freshly launched
+// process would see it: Some(value) to set, None to drop (the session never set
+// it, so neither should a pane). Pure, and the list is passed in rather than
+// read off cfg!, so both platforms' answers are testable from either box - the
+// same reason config_base_for takes a Layout.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn env_fixups(
+	names: &[&str],
+	session: &std::collections::HashMap<String, String>,
+	inherited: &std::collections::HashMap<String, String>,
+) -> Vec<(String, Option<String>)> {
+	// Windows environment names are case-insensitive, and a block keeps whatever
+	// spelling set it first, so the two sides can disagree on case alone.
+	let find = |vars: &std::collections::HashMap<String, String>, name: &str| {
+		vars.iter()
+			.find(|(key, _)| key.eq_ignore_ascii_case(name))
+			.map(|(_, value)| value.clone())
+	};
+	names
+		.iter()
+		.filter_map(|name| {
+			let want = find(session, name);
+			// already what it should be (launched from the desktop, say)
+			if want == find(inherited, name) {
+				return None;
+			}
+			Some(((*name).to_string(), want))
+		})
+		.collect()
+}
+
+// The environment a freshly launched process would see - machine plus user,
+// merged the way the desktop composes it, so it stays right on a box whose
+// PowerShell lives somewhere unusual or whose variables come from domain
+// policy. NULL as the token yields SYSTEM variables only, so the process token
+// is required.
+#[cfg(windows)]
+fn session_env() -> Option<std::collections::HashMap<String, String>> {
+	use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+	use windows_sys::Win32::Security::TOKEN_QUERY;
+	use windows_sys::Win32::System::Environment::{
+		CreateEnvironmentBlock, DestroyEnvironmentBlock,
+	};
+	use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+	// SAFETY: plain Win32 calls. The token and the block are each released on
+	// every path out, and any failure returns None so the caller stands aside.
+	unsafe {
+		let mut token: HANDLE = std::ptr::null_mut();
+		if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) == 0 {
+			return None;
+		}
+		let mut block: *mut core::ffi::c_void = std::ptr::null_mut();
+		let made = CreateEnvironmentBlock(&raw mut block, token, 0);
+		CloseHandle(token);
+		if made == 0 || block.is_null() {
+			return None;
+		}
+		let raw = parse_env_block(&read_env_block(block.cast::<u16>()));
+		DestroyEnvironmentBlock(block);
+		// A machine variable is stored as REG_EXPAND_SZ and comes back with its
+		// references intact - PSModulePath really is spelled
+		// "%ProgramFiles%\\WindowsPowerShell\\Modules" here - so a shell handed one
+		// raw would search a directory that does not exist. Windows expands them
+		// once when it composes an environment; so does this, against the SESSION
+		// block rather than our own, since ours is the thing being replaced.
+		let vars = raw
+			.iter()
+			.map(|(name, value)| (name.clone(), expand_refs(value, &raw)))
+			.collect();
+		Some(vars)
+	}
+}
+
+#[cfg(not(windows))]
+fn session_env() -> Option<std::collections::HashMap<String, String>> {
+	None
+}
+
+// Copy an environment block out of the OS's memory so the parsing above it can
+// be an ordinary function over a slice.
+#[cfg(windows)]
+unsafe fn read_env_block(block: *const u16) -> Vec<u16> {
+	let mut len = 0;
+	// two NULs in a row close the block
+	while unsafe { *block.add(len) } != 0 || unsafe { *block.add(len + 1) } != 0 {
+		len += 1;
+	}
+	unsafe { std::slice::from_raw_parts(block, len + 1) }.to_vec()
+}
+
+// One pass of %NAME% substitution, the way Windows expands a REG_EXPAND_SZ when
+// it builds an environment: a name it does not know is left standing rather than
+// blanked, and a lone % is a literal.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn expand_refs(value: &str, vars: &std::collections::HashMap<String, String>) -> String {
+	let mut out = String::with_capacity(value.len());
+	let mut rest = value;
+	while let Some(open) = rest.find('%') {
+		let (before, tail) = rest.split_at(open);
+		out.push_str(before);
+		match tail[1..].find('%') {
+			Some(len) if len > 0 => {
+				let name = &tail[1..=len];
+				match vars.iter().find(|(key, _)| key.eq_ignore_ascii_case(name)) {
+					Some((_, found)) => out.push_str(found),
+					None => out.push_str(&tail[..=len + 1]),
+				}
+				rest = &tail[len + 2..];
+			}
+			_ => {
+				out.push('%');
+				rest = &tail[1..];
+			}
+		}
+	}
+	out.push_str(rest);
+	out
+}
+
+// An environment block is NAME=VALUE runs separated by NUL. A name is never
+// empty, so a leading '=' marks one of the hidden per-drive entries Windows
+// keeps ("=C:=C:\dir") and the split starts past the first character.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn parse_env_block(block: &[u16]) -> std::collections::HashMap<String, String> {
+	block
+		.split(|unit| *unit == 0)
+		.filter_map(|entry| {
+			let text = String::from_utf16_lossy(entry);
+			let at = text
+				.char_indices()
+				.skip(1)
+				.find(|(_, ch)| *ch == '=')
+				.map(|(idx, _)| idx)?;
+			Some((text[..at].to_string(), text[at + 1..].to_string()))
+		})
+		.collect()
+}
+
 // Executable basename of a process from /proc/<pid>/comm (Linux/most Unix).
 #[cfg(unix)]
 fn proc_comm(pid: u32) -> Option<String> {
@@ -706,7 +902,7 @@ struct UnicodeString {
 
 #[cfg(test)]
 mod tests {
-	use super::{WakeGate, is_command_child};
+	use super::{WakeGate, env_fixups, expand_refs, is_command_child, parse_env_block};
 
 	// Folding the notices may never LOSE one: the window clears the gate before
 	// it looks at the grid, so a read cycle that lands mid-handling posts again.
@@ -791,5 +987,113 @@ mod tests {
 		assert!(!is_command_child(Some(50), 100));
 		assert!(!is_command_child(None, 100)); // unopenable, so not ours
 		assert!(is_command_child(None, 0)); // shell time unknown: parent id alone
+	}
+
+	fn vars(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+		pairs
+			.iter()
+			.map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+			.collect()
+	}
+
+	// A shell's private bookkeeping must not decide how a DIFFERENT shell starts.
+	// pwsh 7 prepends its own module directories to PSModulePath in its process,
+	// so a Windows PowerShell 5.1 pane opened below one finds pwsh's PSReadLine
+	// ahead of its own, cannot load it, and starts with no line editing.
+	#[test]
+	fn a_shell_private_variable_is_put_back_to_the_session_value() {
+		let session = vars(&[(
+			"PSModulePath",
+			r"C:\Program Files\WindowsPowerShell\Modules",
+		)]);
+		let inherited = vars(&[(
+			"PSModulePath",
+			r"C:\Program Files\PowerShell\7\Modules;C:\Program Files\WindowsPowerShell\Modules",
+		)]);
+		assert_eq!(
+			env_fixups(&["PSModulePath"], &session, &inherited),
+			vec![(
+				"PSModulePath".to_string(),
+				Some(r"C:\Program Files\WindowsPowerShell\Modules".to_string()),
+			)]
+		);
+	}
+
+	// pwsh's -ExecutionPolicy sets this and every descendant inherits it. The
+	// session never sets it, so neither should a pane - and that means DROPPING
+	// it, not handing the shell an empty one to read.
+	#[test]
+	fn a_variable_the_session_never_set_is_dropped() {
+		let session = vars(&[("PATH", r"C:\bin")]);
+		let inherited = vars(&[("PSExecutionPolicyPreference", "Bypass")]);
+		assert_eq!(
+			env_fixups(&["PSExecutionPolicyPreference"], &session, &inherited),
+			vec![("PSExecutionPolicyPreference".to_string(), None)]
+		);
+	}
+
+	// Launched from the desktop rather than from a shell, the inherited
+	// environment already IS the session one. That is the ordinary case and it
+	// must write nothing at all.
+	#[test]
+	fn an_environment_that_already_matches_needs_no_fixups() {
+		let session = vars(&[("PSModulePath", "one;two")]);
+		let inherited = vars(&[("PSModulePath", "one;two")]);
+		assert!(env_fixups(&["PSModulePath"], &session, &inherited).is_empty());
+	}
+
+	// Everything the user exported themselves is the reason a pane inherits at
+	// all, so a variable off the list is left alone however far it has drifted.
+	#[test]
+	fn only_the_named_variables_are_touched() {
+		let session = vars(&[("VIRTUAL_ENV", ""), ("PSModulePath", "one")]);
+		let inherited = vars(&[("VIRTUAL_ENV", "/home/me/venv"), ("PSModulePath", "one")]);
+		assert!(env_fixups(&["PSModulePath"], &session, &inherited).is_empty());
+	}
+
+	// Windows environment names are case-insensitive and a block keeps whichever
+	// spelling set it first, so the two sides can differ by case alone - which is
+	// not a difference and must not read as one.
+	#[test]
+	fn a_name_that_differs_only_in_case_is_the_same_variable() {
+		let session = vars(&[("PSModulePath", "one")]);
+		let inherited = vars(&[("PSMODULEPATH", "one")]);
+		assert!(env_fixups(&["PSModulePath"], &session, &inherited).is_empty());
+	}
+
+	// The block is NUL-separated NAME=VALUE closed by a second NUL, and it also
+	// carries the hidden per-drive entries Windows keeps, whose NAME begins with
+	// '=' - so the separator can never be the first character.
+	#[test]
+	fn an_environment_block_splits_names_from_values() {
+		let mut block: Vec<u16> = Vec::new();
+		for entry in [r"=C:=C:\work", "PSModulePath=one;two", r"Path=C:\bin"] {
+			block.extend(entry.encode_utf16());
+			block.push(0);
+		}
+		block.push(0);
+
+		let found = parse_env_block(&block);
+		assert_eq!(
+			found.get("PSModulePath").map(String::as_str),
+			Some("one;two")
+		);
+		assert_eq!(found.get("Path").map(String::as_str), Some(r"C:\bin"));
+		assert_eq!(found.get("=C:").map(String::as_str), Some(r"C:\work"));
+	}
+
+	// PSModulePath is stored as REG_EXPAND_SZ, so the session block hands it over
+	// spelled with its references intact. A shell given that raw would search a
+	// directory that does not exist - and an unknown name has to survive rather
+	// than collapse to nothing, which would silently shorten a search path.
+	#[test]
+	fn a_stored_reference_expands_and_an_unknown_one_survives() {
+		let vars = vars(&[("ProgramFiles", r"C:\Program Files")]);
+		assert_eq!(
+			expand_refs(r"%ProgramFiles%\WindowsPowerShell\Modules", &vars),
+			r"C:\Program Files\WindowsPowerShell\Modules"
+		);
+		assert_eq!(expand_refs("%NotAThing%;tail", &vars), "%NotAThing%;tail");
+		assert_eq!(expand_refs("100% done", &vars), "100% done");
 	}
 }

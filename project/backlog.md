@@ -626,6 +626,13 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 #### Done - Bugs
 
+- ✅ Windows PowerShell 5.1 started with "Cannot load PSReadline module. Console is running without PSReadline." and no line editing.
+	- A terminal hands its shell whatever environment it was launched with. That is right for anything the user set themselves, and wrong for the bookkeeping a shell keeps for its own use: PowerShell 7 puts its own module directories on the search path that every version of PowerShell shares, so a Windows PowerShell 5.1 pane opened anywhere below one found PowerShell 7's copy of PSReadLine ahead of its own, and was not allowed to load it.
+	- Not ours in origin - the same thing happens to a plain command prompt launched from PowerShell 7, with no terminal in the picture - but a pane should start the way it would from the desktop, and the terminal is the only place that can settle it once for every shell it opens.
+	- A pane's shell now gets those few variables back as a freshly launched program would see them, read from the machine at startup so it stays right wherever PowerShell happens to be installed. Everything the user exported themselves is still inherited, which is the whole point of opening a terminal from a shell.
+	- The same treatment covers the execution-policy variable that PowerShell hands down to everything it starts, so a pane can no longer end up running under a policy nobody chose for it.
+	- Only Windows needs this: it takes two versions of one shell sharing a variable, and a Linux or macOS box carries a single PowerShell.
+
 - ✅ A second cursor showed up in the far bottom-right corner, flickering against the real one at the prompt.
 	- A program that redraws its whole display hides the cursor first, redraws, then puts it back where it belongs and shows it again. The request to hide it was being ignored, so a cursor was drawn wherever the redraw had left it - on Windows that is the bottom-right corner - and it alternated with the one at the prompt once per redraw, which is faster than a cursor blinks.
 	- Hiding the cursor and choosing its shape are two separate things, and only the shape was being read. Both are asked now, so a hidden cursor is not drawn at all - and, while hidden, costs no frames either.

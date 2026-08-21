@@ -27,6 +27,7 @@
 	- [Groups and sub-groups in the Settings dialog](#groups-and-sub-groups-in-the-settings-dialog)
 	- [Saved themes](#saved-themes)
 	- [The shell list and how it is filled](#the-shell-list-and-how-it-is-filled)
+	- [What a pane's shell inherits](#what-a-panes-shell-inherits)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Output notices under a flood](#output-notices-under-a-flood)
 	- [Environment](#environment)
@@ -339,6 +340,18 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - The test for "did a shell launch us" is whether standard input is a terminal, and it is the same question on both platforms. Asking about parent processes would be more direct and costs a process-table walk on Windows, which is not something to put on the path to the first frame. Measured there: launched from a console the standard handles are the console's, launched the way Explorer and the Start menu do it they are null. A release build owns no console of its own either way, so the window-handle and attach-to-parent answers are both wrong for this question.
 
 - Removing an entry asks first, and moving one does not. Doing the opposite undoes a move; nothing undoes a removal.
+
+### What a pane's shell inherits
+
+- A pane's shell inherits the environment SilkTerm itself was launched with. That is deliberate for anything the user set - an activated virtualenv, a PATH they added, a variable they exported before starting the terminal - and it is what makes a terminal opened from a shell behave as a continuation of that shell.
+
+- It is wrong for the bookkeeping a shell keeps for ITSELF. PowerShell 7 prepends its own module directories to the module search path that every version of PowerShell shares, so a Windows PowerShell 5.1 pane opened anywhere below one resolves PSReadLine to PowerShell 7's copy rather than its own and is not allowed to load it - the pane then starts with an error and no line editing. The execution-policy variable is the same shape: one shell sets it and everything that shell starts inherits it, so a pane can run under a policy nobody chose for it.
+
+- So a short list of shell-private variables is put back to what a freshly launched program would see, read from the machine at startup, and everything else is passed through untouched. Among the options it was decided that a narrow list is the only one that holds up: replacing the whole environment would discard the user's own exports, which is the one thing inheriting exists for, and editing the polluted value in place - dropping the entries that belong to the other shell - would depend on where that shell happens to be installed.
+
+- This is not a defect in SilkTerm, and the fix is not a workaround for one. The same thing happens to a command prompt launched from PowerShell 7 with nothing of ours involved. But a pane should start the way it would from the desktop, and the terminal is the only place that can decide that once for every shell it opens.
+
+- Only Windows has this class today: it takes two versions of one shell sharing a variable, and a unix box carries a single PowerShell. The unix analogues are variables a user wants a pane to inherit, so the list there is empty.
 
 ### Render Loop Sketch
 
