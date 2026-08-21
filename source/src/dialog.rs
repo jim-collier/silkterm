@@ -244,8 +244,9 @@ impl DialogWin {
 		// the real UI font (same pattern as About)
 		let (window, mut gfx, mut text, rects) =
 			Self::make(el, "Settings".into(), 560.0, 800.0, parent, warm)?;
-		let (label_w, btn_w, row_btn_w, tab_ws) = crate::settings_ui::chrome_widths(&mut text);
 		let scale = config::display_scale(window.scale_factor());
+		let (label_w, btn_w, row_btn_w, tab_ws) =
+			crate::settings_ui::chrome_widths(&mut text, scale);
 		// Cap the window height to the monitor (minus decorations headroom) and to
 		// ~1010 DIP total; a tab that doesn't fit scrolls instead of clipping
 		// buttons. SettingsDialog divides this by the scale factor on the way in,

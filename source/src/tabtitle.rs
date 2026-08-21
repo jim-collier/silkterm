@@ -310,6 +310,46 @@ pub fn tab_at_x(x: f32, tab_w: f32, first: usize, shown: usize) -> Option<usize>
 /// How long a tab has been open, at the coarseness a person reads at a glance.
 /// Two units is the most that stays legible in a tip line, and the smaller of
 /// the two is zero-padded so the width does not jump as it ticks.
+// One value on a hover-tip line, quoted only where the eye needs the boundary:
+// a value carrying a space or a quote character. Which quote is picked follows
+// the config file's own habit - single ones around a value that already holds
+// double quotes, so a Windows command line reads inside them rather than
+// fighting them - and a value holding both is escaped instead.
+pub fn tip_value(value: &str) -> String {
+	let has_double = value.contains('"');
+	let has_single = value.contains('\'');
+	if !value.contains(' ') && !has_double && !has_single {
+		return value.to_string();
+	}
+	if has_double && has_single {
+		return format!("\"{}\"", value.replace('"', "\\\""));
+	}
+	if has_double {
+		return format!("'{value}'");
+	}
+	format!("\"{value}\"")
+}
+
+// The tip's lines: every value starts at one column, so the pairs read down the
+// left the way a table does. This is the whole reason the tip is drawn in the
+// TERMINAL font rather than the interface one - padding with spaces aligns
+// nothing in a proportional face. The KEY is padded, never the value, so a long
+// path runs on to the right and the box grows for it instead of the column
+// moving.
+pub fn tip_lines(rows: &[(&str, String)]) -> Vec<String> {
+	let key_w = rows
+		.iter()
+		.map(|(key, _)| key.chars().count())
+		.max()
+		.unwrap_or(0);
+	rows.iter()
+		.map(|(key, value)| {
+			let pad = " ".repeat(key_w - key.chars().count());
+			format!("{key}:{pad} {value}")
+		})
+		.collect()
+}
+
 pub fn elapsed(secs: u64) -> String {
 	const MINUTE: u64 = 60;
 	const HOUR: u64 = 60 * MINUTE;
@@ -329,8 +369,53 @@ pub fn elapsed(secs: u64) -> String {
 mod tests {
 	use super::{
 		Style, Task, clamp_page, elapsed, label_forms, page_for, path_forms, slot_x, tab_at_x,
-		tab_width, tabs_that_fit,
+		tab_width, tabs_that_fit, tip_lines, tip_value,
 	};
+
+	// The tip is a table, so a value carries quotes only where its own edges are
+	// in doubt. Quoting everything would put them round every friendly shell name
+	// and every clock reading in the box.
+	#[test]
+	fn a_tip_value_is_quoted_only_where_its_edges_are_in_doubt() {
+		assert_eq!(tip_value("Bash"), "Bash");
+		assert_eq!(tip_value("/bin/bash"), "/bin/bash");
+		assert_eq!(tip_value("PowerShell 7"), "\"PowerShell 7\"");
+		// a command line already full of double quotes reads inside single ones
+		assert_eq!(
+			tip_value(r#""C:\Program Files\pwsh.exe" -NoLogo"#),
+			r#"'"C:\Program Files\pwsh.exe" -NoLogo'"#
+		);
+		// both kinds present: escape, rather than pick a quote that cannot close
+		assert_eq!(tip_value(r#"say "it's""#), r#""say \"it's\"""#);
+		// a lone apostrophe still needs a boundary drawn round it
+		assert_eq!(tip_value("it's"), "\"it's\"");
+	}
+
+	// The keys are padded so the values line up; a value is never padded, so a
+	// long path widens the box instead of moving the column.
+	#[test]
+	fn tip_keys_pad_so_every_value_starts_in_one_column() {
+		let lines = tip_lines(&[
+			("Shell name", "Bash".to_string()),
+			("Shell command", "/bin/bash".to_string()),
+			("Open", "1m 26s".to_string()),
+		]);
+		assert_eq!(lines[0], "Shell name:    Bash");
+		assert_eq!(lines[1], "Shell command: /bin/bash");
+		assert_eq!(lines[2], "Open:          1m 26s");
+		// and as the property rather than three strings: one column for them all
+		let value_col = |line: &str| {
+			let colon = line.find(':').expect("a key");
+			line[colon..]
+				.find(|c: char| c != ':' && c != ' ')
+				.map(|i| colon + i)
+				.expect("a value")
+		};
+		let first = value_col(&lines[0]);
+		for line in &lines {
+			assert_eq!(value_col(line), first, "{line:?} is out of column");
+		}
+	}
 
 	// The anchor and the trailing separator are what tell a reader this is a
 	// place and not a command, so no shortening may cost either of them.
