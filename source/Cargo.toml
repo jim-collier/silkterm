@@ -47,6 +47,10 @@ assets = [
 
 [dependencies]
 alacritty_terminal = "0.26"
+# The crate alacritty_terminal registers its PTY with. Named here only so the
+# tapped PTY in cwd.rs can implement that trait, which speaks in these types -
+# it resolves to the version already in the tree, so nothing new is linked.
+polling = "3.8"
 wgpu = "29"
 winit = "0.30"
 glyphon = "0.11"

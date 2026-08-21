@@ -2461,6 +2461,7 @@ dependencies = [
  "image",
  "libc",
  "log",
+ "polling",
  "pollster",
  "pprof",
  "raw-window-handle",

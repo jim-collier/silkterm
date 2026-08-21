@@ -80,6 +80,7 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 		- [Build it yourself](#build-it-yourself)
 	- [Setting up a development environment](#setting-up-a-development-environment)
 	- [Configuration](#configuration)
+	- [Shell integration](#shell-integration)
 - [Contributing](#contributing)
 - [Support SilkTerm](#support-silkterm)
 - [Legal stuff](#legal-stuff)
@@ -367,6 +368,14 @@ If making changes directly (rather than through Settings), you can apply them im
 To start over from the shipped defaults, run `silkterm --reset-config`. The old file is kept alongside as `config.shcl.bak` rather than deleted.
 
 Drop a few images into a `wallpaper` folder next to the config and SilkTerm picks one each launch, favoring whatever it hasn't shown lately. Naming a wallpaper in the config, or passing one on the command line, takes precedence. The [wallpaper pack](#wallpaper-pack) is a ready-made folder to start from.
+
+### Shell integration
+
+A new tab, split or window starts in the directory the current pane is in. For most shells that needs nothing set up - SilkTerm reads the shell process's own directory.
+
+PowerShell is the exception worth knowing about: `Set-Location` moves PowerShell's own idea of where it is and leaves the process where it was launched, so there is nothing to read and a new pane would start in the launch directory. Adding four lines to your profile fixes it, and a profile already set up for Windows Terminal works here unchanged. Same story for a shell running behind `ssh` or in a container.
+
+[shell-integration.md](shell-integration.md) has the snippets, for PowerShell, bash, zsh and fish.
 
 <!--
 ## Renaming the project
