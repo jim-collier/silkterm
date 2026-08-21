@@ -329,6 +329,15 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- What a scan may do to the list is deliberately lopsided: it ADDS a shell it found and it SWITCHES OFF one whose program has gone (keeping the entry, its title and its place). It never switches one back on and never rewrites a command line - it has no way to tell a program that came back from a switch the user turned off on purpose.
 	- The list lives in the config as `shells.<key>` with a title, a command, an active flag and a comment, in file order - which is the order the menu offers them in. A scan that finds nothing new writes nothing at all.
 	- Beyond the names asked for: Nushell, Elvish, Xonsh, YSH/OSH, Murex, Ion, Es, rc, Yash, mksh, tcsh, Git Bash, MSYS2, Cygwin, PyCmd, and the language shells (Python 3, IPython, Node).
+	- ✅ A fresh list now arrives in a stated order rather than in whatever order the looking ran. (20260821)
+		- Windows: PowerShell 7, then the modern cross-platform shells alphabetically, then the WSL distributions (WSL2 above WSL1, each alphabetical, the generation in the name), then Bash (MSYS2's full), Bash (Git's mini), PyCmd, the language shells alphabetically, Windows Cmd, and last the two Windows PowerShell 5 entries.
+		- Unix: the user's own login shell, then its startup-file-free twin, then the modern cross-platform shells alphabetically, the language shells alphabetically, and the rest of the POSIX family.
+		- Renames that came with it: "Command Prompt" -> "Windows Cmd", "Git Bash" -> "Bash (Git's mini)", "MSYS2 Bash" -> "Bash (MSYS2's full)", "Cygwin Bash" -> "Bash (Cygwin)", and "WSL: x" -> "WSL2; x" or "WSL1; x".
+		- The twin now arrives switched OFF, and only the top default shell gets one: it is for the day your own rc file is what you are debugging, not a second copy of your shell in the menu every day.
+		- **This reaches a fresh config and nobody's existing one.** A scan may only add and switch off, and it never rewrites a stored title or a stored order - that order is the user's. So an existing list keeps its own names and sequence until somebody edits or resets it. The owner's own config was brought over by hand (backup beside it), which also cleared two stale duplicates a pre-`-NoLogo` dogfood build had appended.
+	- ✅ The scan now waits for the WALLPAPER to be on screen, not just the window. (20260821)
+		- Both are off-thread and both are slow the same way, so overlapping them put a stall in the one moment anyone is looking - the gap between the window appearing and the picture arriving in it.
+		- A wallpaper that never answers cannot hold the scan off forever: past a deadline it runs anyway, since a terminal with no shells in its menu is worse than one with no picture behind its text.
 
 - 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
 	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Same for a new window (Ctrl+Shift+N), and the same shell inheritance applies to all three.
