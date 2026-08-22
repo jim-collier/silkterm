@@ -942,25 +942,40 @@ mod tests {
 	#[cfg(windows)]
 	#[test]
 	fn a_windows_shell_reports_where_it_is_now_not_where_it_started() {
-		use std::process::Command;
+		use std::io::Write;
+		use std::process::{Command, Stdio};
 
 		use super::peb_cwd;
 		let real = |dir: &std::path::Path| std::fs::canonicalize(dir).expect("canonicalize");
 		let started_in = std::env::temp_dir();
 		let moved_to = std::path::PathBuf::from(r"C:\Windows");
 
-		// a process that stays put, for the plain "did we read the right one"
-		let mut still = Command::new("cmd.exe")
-			.args(["/c", "ping -n 6 127.0.0.1 >nul"])
-			.current_dir(&started_in)
-			.spawn()
-			.expect("spawn cmd.exe");
-		// and one that moves, for the half that matters
-		let mut roams = Command::new("cmd.exe")
-			.args(["/c", r"cd /d C:\Windows && ping -n 6 127.0.0.1 >nul"])
-			.current_dir(&started_in)
-			.spawn()
-			.expect("spawn cmd.exe");
+		// Each shell is held open on its own stdin pipe, and runs NOTHING. That is
+		// load-bearing rather than tidy: `Child::kill` is TerminateProcess, which
+		// ends one process and never its tree, so the old `cmd /c ping ...` left the
+		// ping behind every time this test ran. They do not exit on their own either
+		// (measured: alive for days at 0% CPU, 2 MB apiece), so they accumulate one
+		// or two per `cargo test` - fifteen had piled up before anyone counted. A
+		// cmd.exe waiting on a pipe is the same shell doing the same `cd` with no
+		// grandchild under it to strand.
+		let hold = |dir: &std::path::Path| {
+			Command::new("cmd.exe")
+				.arg("/k")
+				.current_dir(dir)
+				.stdin(Stdio::piped())
+				.stdout(Stdio::null())
+				.stderr(Stdio::null())
+				.spawn()
+				.expect("spawn cmd.exe")
+		};
+		// one that stays put, for the plain "did we read the right one"
+		let mut still = hold(&started_in);
+		// and one that moves, for the half that matters - told to down its own stdin
+		let mut roams = hold(&started_in);
+		if let Some(pipe) = roams.stdin.as_mut() {
+			let _ = writeln!(pipe, "cd /d {}", moved_to.display());
+			let _ = pipe.flush();
+		}
 
 		// the move takes a moment to happen; nothing else here waits on a clock
 		let mut roamed = None;
@@ -977,6 +992,8 @@ mod tests {
 			std::thread::sleep(std::time::Duration::from_millis(50));
 		}
 		let stayed = peb_cwd(still.id());
+		// killed BEFORE the assertions, so a failing assert still cleans up after
+		// itself - these two wait forever otherwise, being fed by a pipe
 		let _ = still.kill();
 		let _ = roams.kill();
 		// reaped, or the test leaves two zombies behind it
