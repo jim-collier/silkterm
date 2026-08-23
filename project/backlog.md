@@ -419,6 +419,9 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ The app icon is square. (20260823)
 	- The logo is wider than it is tall, and everything that shows an icon reserves a square, so it used to sit in a band of nothing. It is stretched to fill the square now, in both the window/taskbar icon and the Windows exe icon.
 
+- ✅ The shipped config file says the same things in far fewer words. (20260823)
+	- The comments were doing too much explaining. A fresh config.shcl is about a third shorter, with the key name left to do the work its own title line was repeating and each range folded into the sentence beside it.
+
 - 🛠️ Setting dialog (part 2):
 	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
 		- Note: the tab bar has one now (shell name, command, full path, elapsed time). It is a tab-bar tip rather than the reusable system this item asks for.
