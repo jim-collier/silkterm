@@ -54,6 +54,8 @@ pub struct ShellEntry {
 // offered - `merge` keeps a stored list's own order whole, because that order is
 // the user's (the Shell tab exists to set it). So changing anything here reaches
 // a fresh config and nobody's existing one.
+// Several groups are Windows-only finds, but the order is declared as one list.
+#[cfg_attr(unix, allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Group {
 	// The user's own login shell, and directly under it the twin that skips its
