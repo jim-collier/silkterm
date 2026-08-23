@@ -2,11 +2,19 @@
 ##		- Windows port of the bash 'n8runterm' launcher. Keeps a small pool of
 ##		  date-stamped SilkTerm dogfood builds in the local target dir and launches
 ##		  one, passing through any arguments.
-##		- Three build sources, each tagged in the copy's name so they coexist. A tag
+##		- Four build sources, each tagged in the copy's name so they coexist. A tag
 ##		  is '<toolchain: gnu|msvc><built on: l|m|b|w><target: l|m|b|w><arch: i|a>':
 ##			gnulwi   the b23 cross-build over SMB  (gnu, built on Linux, x86_64)
 ##			gnuwwi   local Windows gnu release     (gnu, built on Windows, x86_64)
 ##			msvcwwi  local Windows msvc release    (msvc, built on Windows, x86_64)
+##		  plus one that does not follow the convention, because it can't:
+##			dfsync   the fixed-name copy in the SYNCED dogfood dir. Whichever box
+##			         ran its pipeline last put it there and the file doesn't say
+##			         which, so the tag names the source instead of the build. This
+##			         is what keeps a launch current when b23 is off and nothing was
+##			         built here - Dropbox carries it. It only copies when it is
+##			         newer than EVERY copy held, so re-taking a build we already
+##			         have under its real tag can't happen.
 ##		  Copies are named 'slktrmdf_<YYYYMMDD-HHMMSS>_<tag>.exe' where the stamp is
 ##		  the build's own mtime, so a given build is copied once and a running copy
 ##		  never blocks the copy.
@@ -17,9 +25,9 @@
 ##		  redirector's own timeout. A copy lands on a temp name and is renamed into
 ##		  place, so one we abandon can't leave a half-written build behind.
 ##		- Which to run: the newest build by stamp. If that newest came from b23
-##		  (gnulwi) run it. Otherwise it's a local Windows build - if the newest gnuwwi
-##		  and msvcwwi are within 15 min of each other, flip a coin between them, else
-##		  run the newest outright.
+##		  (gnulwi) or the synced dogfood dir (dfsync), run it. Otherwise it's a local
+##		  Windows build - if the newest gnuwwi and msvcwwi are within 15 min of each
+##		  other, flip a coin between them, else run the newest outright.
 ##		- Prepends a build-tagged title so a dogfood window is visually distinct. It
 ##		  precedes the passed args, so a caller can still override it. (Picking a
 ##		  wallpaper here is disabled - the terminal rotates its own.)
@@ -63,12 +71,18 @@ if (-not $LocalTargetRoot) { $LocalTargetRoot = $LocalTargetRootCandidates[0] }
 $LocalGnuReleaseDir  = Join-Path $LocalTargetRoot "x86_64-pc-windows-gnu\release"
 $LocalMsvcReleaseDir = Join-Path $LocalTargetRoot "x86_64-pc-windows-msvc\release"
 
+## Source 'dfsync': the fixed-name dogfood copy in the SYNCED util dir - the same
+## dir cicd-win.ps1 installs to, and where the Linux pipeline's Windows cross-build
+## arrives over Dropbox. A local path, so no bounded wait applies to it.
+$SyncedDogfoodDir = "C:\opt\0-0\common\exec\synced\util\mswin\gui\by-self\win64"
+
 ## The tag each source's copies carry, spelled once so the copy, the selection and
 ## the window title can't drift apart. Same convention the Linux pipeline uses:
 ## '<toolchain: gnu|msvc><built on: l|m|b|w><target: l|m|b|w><arch: i|a>'.
 $TagB23       = "gnulwi"
 $TagLocalGnu  = "gnuwwi"
 $TagLocalMsvc = "msvcwwi"
+$TagSynced    = "dfsync"    ## names its source, not the build - see the header
 
 $ExeName = "silkterm.exe"
 
@@ -148,6 +162,7 @@ function fMain {
 	fCopyIfNewer -SourceDir $B23ReleaseDir       -Tag $TagB23
 	fCopyIfNewer -SourceDir $LocalGnuReleaseDir  -Tag $TagLocalGnu
 	fCopyIfNewer -SourceDir $LocalMsvcReleaseDir -Tag $TagLocalMsvc
+	fCopyIfNewer -SourceDir $SyncedDogfoodDir    -Tag $TagSynced -BeatsEveryTag
 
 	## 3. Pick one and launch it.
 	$exe = fSelectBuildToRun
@@ -194,11 +209,15 @@ function fDeleteOldBuilds {
 
 ## Copy $SourceDir\$ExeName in as 'slktrmdf_<stamp>_<Tag>.exe' when its build is
 ## newer than the newest copy of that tag we already hold. No-op if the source is
-## unreachable or we're already current. Each tag is checked independently.
+## unreachable or we're already current. Each tag is checked independently, unless
+## -BeatsEveryTag: then it has to beat the newest copy of ANY tag, which is what
+## keeps a source that re-serves someone else's build (dfsync) from taking a second
+## copy of one we already hold under its own tag.
 function fCopyIfNewer {
 	param(
 		[Parameter(Mandatory)][string]$SourceDir,
-		[Parameter(Mandatory)][string]$Tag
+		[Parameter(Mandatory)][string]$Tag,
+		[switch]$BeatsEveryTag
 	)
 
 	$src    = Join-Path $SourceDir $ExeName
@@ -230,7 +249,11 @@ function fCopyIfNewer {
 
 	$stamp     = ([datetime]$mtime).ToString($StampFormat)
 	$stampTime = fParseStamp $stamp
-	$existing  = fNewestOfTag $Tag
+	$existing  = if ($BeatsEveryTag) {
+		fTaggedBuilds | Sort-Object Stamp -Descending | Select-Object -First 1
+	} else {
+		fNewestOfTag $Tag
+	}
 
 	if ($existing -and $existing.Stamp -ge $stampTime) {
 		fNote "$Tag already current (held $($existing.Stamp.ToString($StampFormat)), src $stamp)"
@@ -296,8 +319,9 @@ function fSelectBuildToRun {
 
 	$latest = $builds | Sort-Object Stamp -Descending | Select-Object -First 1
 
-	if ($latest.Tag -eq $TagB23) {
-		fNote "running newest (b23/$TagB23): $($latest.Name)"
+	## Neither of these has a sibling to weigh it against, so newest just wins.
+	if ($latest.Tag -eq $TagB23 -or $latest.Tag -eq $TagSynced) {
+		fNote "running newest ($($latest.Tag)): $($latest.Name)"
 		return $latest.File.FullName
 	}
 
@@ -320,10 +344,10 @@ function fSelectBuildToRun {
 
 
 ## All tagged copies as objects { File, Name, Tag, Stamp(DateTime) }. Only our own
-## three tags match, so a copy for some other target can never be selected to run
-## here; adding a source means adding its tag above, nothing else.
+## tags match, so a copy for some other target can never be selected to run here;
+## adding a source means adding its tag above, nothing else.
 function fTaggedBuilds {
-	$known = ($TagB23, $TagLocalGnu, $TagLocalMsvc | ForEach-Object { [regex]::Escape($_) }) -join "|"
+	$known = ($TagB23, $TagLocalGnu, $TagLocalMsvc, $TagSynced | ForEach-Object { [regex]::Escape($_) }) -join "|"
 	$rx    = "^$([regex]::Escape($DogfoodPrefix))_(?<stamp>\d{8}-\d{6})_(?<tag>$known)\.exe$"
 	Get-ChildItem -LiteralPath $TargetDir -File -Filter "${DogfoodPrefix}_*.exe" -ErrorAction SilentlyContinue |
 		ForEach-Object {
@@ -789,6 +813,8 @@ if ($script:GuiFeedback -and $script:RunWarnings.Count) {
 
 
 ##	History:
+##		- 2026-08-23: Added the synced dogfood dir as a fourth source ('dfsync'), so
+##		  a build made on another box still reaches this one when b23 is off.
 ##		- 2026-08-06: Bound the wait on a network source (probe, stat, copy) instead
 ##		  of sitting through the SMB timeout when b23 is off or the link drops. Copy
 ##		  via a temp name so an abandoned one leaves no half-written build.
