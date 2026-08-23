@@ -99,8 +99,15 @@ impl App {
 		use crate::dialog::DialogAction as DA;
 		if env_flag("SILK_DLGDBG") {
 			match &event {
-				WindowEvent::KeyboardInput { event: k, .. } => {
-					eprintln!("[dlg] key {:?} {:?}", k.logical_key, k.state);
+				WindowEvent::KeyboardInput {
+					event: k,
+					is_synthetic,
+					..
+				} => {
+					eprintln!(
+						"[dlg] key {:?} {:?} synthetic={is_synthetic}",
+						k.logical_key, k.state
+					);
 				}
 				WindowEvent::Focused(f) => eprintln!("[dlg] focused {f}"),
 				WindowEvent::MouseInput { state, button, .. } => {
@@ -180,8 +187,10 @@ impl App {
 				}
 			}
 			WindowEvent::KeyboardInput {
-				event: key_event, ..
-			} if key_event.state == ElementState::Pressed => {
+				event: key_event,
+				is_synthetic,
+				..
+			} if key_is_typed(key_event.state, is_synthetic) => {
 				if let Some(d) = &mut self.dialog {
 					match &key_event.logical_key {
 						Key::Named(NamedKey::Escape) => act = d.key_escape(),
@@ -383,6 +392,9 @@ enum MenuAction {
 	ToggleCopySelect,
 	ToggleCopyOutput,
 	NewTab,
+	// New tab running the shell at this index in the stored list (config
+	// `shells.*`; see the Tabs menu's "New Tab with Shell").
+	NewTabShell(usize),
 	CloseTab,
 	SplitVertical,
 	SplitHorizontal,
@@ -406,6 +418,7 @@ enum MenuAction {
 // (underlined; typing it picks the item); None = no accelerator - accelerators
 // must be unique per menu, so low-priority items (and ones that already have a
 // hotkey) go without.
+#[derive(Clone)]
 enum Entry {
 	Item {
 		label: String,
@@ -413,7 +426,65 @@ enum Entry {
 		check: Option<bool>,
 		accel: Option<usize>,
 	},
+	// A row that opens a menu of its own to the right instead of doing
+	// something. It carries its own items, so the popup can be built the moment
+	// the pointer reaches the row.
+	Sub {
+		label: String,
+		accel: Option<usize>,
+		items: Vec<Entry>,
+	},
 	Sep,
+}
+
+// The text a row draws, if it draws any - a separator does not. Item and Sub
+// rows are laid out and measured identically, so everything that walks a menu
+// asks here rather than matching the two arms itself.
+fn entry_label(entry: &Entry) -> Option<&str> {
+	match entry {
+		Entry::Item { label, .. } | Entry::Sub { label, .. } => Some(label),
+		Entry::Sep => None,
+	}
+}
+
+// The first accelerator letter two rows of one menu both claim, if any.
+//
+// Typing a letter picks the FIRST row carrying it, so a duplicate does not read
+// as a duplicate - it silently makes the LATER row unreachable from the
+// keyboard, which is why this is asserted where a menu is built rather than
+// left to be noticed.
+fn accel_clash(entries: &[Entry]) -> Option<char> {
+	let mut seen: Vec<char> = Vec::new();
+	for entry in entries {
+		let Some((label, pos)) = entry_accel(entry) else {
+			continue;
+		};
+		let Some(ch) = label[pos..].chars().next().map(|c| c.to_ascii_lowercase()) else {
+			continue;
+		};
+		if seen.contains(&ch) {
+			return Some(ch);
+		}
+		seen.push(ch);
+	}
+	None
+}
+
+// The label and the byte offset of its accelerator letter, for a row that has one.
+fn entry_accel(entry: &Entry) -> Option<(&str, usize)> {
+	match entry {
+		Entry::Item {
+			label,
+			accel: Some(pos),
+			..
+		}
+		| Entry::Sub {
+			label,
+			accel: Some(pos),
+			..
+		} => Some((label, *pos)),
+		_ => None,
+	}
 }
 
 // Byte offset of the accelerator letter: exact-case match first (so 'S' can
@@ -440,6 +511,15 @@ fn mia(ch: char, label: &str, action: MenuAction) -> Entry {
 		accel: accel_at(label, ch),
 	}
 }
+// `ch` is optional because accelerators have to be unique WITHIN a menu, and a
+// row that appears in two of them cannot always spell it the same way.
+fn msub(ch: Option<char>, label: &str, items: Vec<Entry>) -> Entry {
+	Entry::Sub {
+		label: label.into(),
+		accel: ch.and_then(|ch| accel_at(label, ch)),
+		items,
+	}
+}
 fn mt(on: bool, label: &str, action: MenuAction) -> Entry {
 	Entry::Item {
 		label: label.into(),
@@ -457,31 +537,121 @@ fn mta(ch: char, on: bool, label: &str, action: MenuAction) -> Entry {
 	}
 }
 
+// The "New Tab with Shell" row, or nothing at all while there is no shell to
+// put under it - an empty flyout is worse than no row. The stored list supplies
+// the titles and the order; only the active entries are offered, and the action
+// carries the index into the WHOLE list so a disabled entry between two active
+// ones cannot shift what a click runs.
+fn shell_submenu(accel: Option<char>) -> Vec<Entry> {
+	let items: Vec<Entry> = config::settings()
+		.shells
+		.iter()
+		.enumerate()
+		.filter(|(_, shell)| shell.active)
+		.map(|(i, shell)| mi(&shell.title, MenuAction::NewTabShell(i)))
+		.collect();
+	if items.is_empty() {
+		Vec::new()
+	} else {
+		vec![msub(accel, "New Tab with Shell", items)]
+	}
+}
+
+// The background shell scan came back (shells.rs). It reports what it FOUND;
+// the fold into the stored list happens here, on the winit thread, against the
+// list as it stands right now - so a scan cannot carry a snapshot that went
+// stale while it ran. Nothing on screen changes (menus are built when they
+// open), so this only has to land the list in the live settings and in the file.
+// A scan that found nothing new compares equal and writes nothing at all; if the
+// config looks open in another program the write is skipped and the list still
+// applies for this session.
+//
+// A Settings dialog open at that moment is folded into as well, on BOTH of its
+// copies - see `Dialog::fold_shells`.
+fn fold_shells(found: &[crate::shells::Found]) {
+	let orig = (*config::settings()).clone();
+	let shells = crate::shells::merge(&orig.shells, found);
+	if shells == orig.shells {
+		return;
+	}
+	let mut new = orig.clone();
+	new.shells = shells;
+	let _ = config::persist(&orig, &new);
+	config::update(new);
+}
+
+// argv for the stored shell at `index`. None when the list moved under an open
+// menu, in which case the new tab falls back to the default shell rather than
+// running something the user did not pick.
+fn shell_argv(index: usize) -> Option<Vec<String>> {
+	let command = config::settings().shells.get(index)?.command.clone();
+	crate::cli::shell_split(&command).ok()
+}
+
+// A popup's own DIP measurements at one scale factor: the padding above the
+// first item and below the last, and the height of a separator row. Resolved
+// once when the menu is built (see `popup`) so the draw and both hit tests read
+// the same numbers without carrying a TextCtx into the geometry.
+fn menu_metrics(scale: f32) -> (f32, f32) {
+	(
+		config::dip(config::MENU_ITEM_PAD_Y, scale),
+		config::dip(config::MENU_SEP_H, scale),
+	)
+}
+
 // right-click context menu / menu-bar dropdown over a pane
 struct ContextMenu {
 	x: f32,
 	y: f32,
 	w: f32,
 	item_h: f32,
+	// this popup's `menu_metrics`, in physical px
+	pad_y: f32,
+	sep_h: f32,
 	target: PaneId,
 	entries: Vec<Entry>,
-	hover: Option<usize>, // index into entries; only ever an Item
+	hover: Option<usize>, // index into entries; never a separator
+	// The submenu standing open off one of these rows, if any. It is placed
+	// clear of this popup's right edge, so "the pointer is in the submenu" and
+	// "the pointer is on a parent row" can never both be true.
+	sub: Option<Box<ContextMenu>>,
 }
 
 impl ContextMenu {
 	fn height(&self) -> f32 {
 		let rows: f32 = self.entries.iter().map(|entry| self.entry_h(entry)).sum();
-		rows + config::MENU_ITEM_PAD_Y * 2.0
+		rows + self.pad_y * 2.0
 	}
 	fn entry_h(&self, entry: &Entry) -> f32 {
 		match entry {
-			Entry::Sep => config::MENU_SEP_H,
-			Entry::Item { .. } => self.item_h,
+			Entry::Sep => self.sep_h,
+			_ => self.item_h,
 		}
+	}
+	// This popup and every submenu standing open off it, outermost first.
+	fn chain(&self) -> Vec<&ContextMenu> {
+		let mut out = vec![self];
+		let mut at = self;
+		while let Some(sub) = &at.sub {
+			out.push(sub);
+			at = sub;
+		}
+		out
+	}
+	// The popup the keyboard and the pointer are on: the innermost open one.
+	fn inner_mut(&mut self) -> &mut ContextMenu {
+		match self.sub {
+			Some(_) => self.sub.as_mut().expect("just matched").inner_mut(),
+			None => self,
+		}
+	}
+	// Anywhere on this popup or a submenu of it.
+	fn hit_any(&self, mx: f32, my: f32) -> bool {
+		self.chain().iter().any(|popup| popup.hit(mx, my))
 	}
 	fn row_top(&self, i: usize) -> f32 {
 		self.y
-			+ config::MENU_ITEM_PAD_Y
+			+ self.pad_y
 			+ self.entries[..i]
 				.iter()
 				.map(|entry| self.entry_h(entry))
@@ -496,11 +666,11 @@ impl ContextMenu {
 		if mx < self.x || mx >= self.x + self.w {
 			return None;
 		}
-		let mut y = self.y + config::MENU_ITEM_PAD_Y;
+		let mut y = self.y + self.pad_y;
 		for (i, entry) in self.entries.iter().enumerate() {
 			let h = self.entry_h(entry);
 			if my >= y && my < y + h {
-				return matches!(entry, Entry::Item { .. }).then_some(i);
+				return (!matches!(entry, Entry::Sep)).then_some(i);
 			}
 			y += h;
 		}
@@ -516,7 +686,7 @@ impl ContextMenu {
 		let mut i = from.map_or(if dir > 0 { -1 } else { 0 }, |i| i as i32);
 		for _ in 0..n {
 			i = (i + dir).rem_euclid(n);
-			if matches!(self.entries[i as usize], Entry::Item { .. }) {
+			if !matches!(self.entries[i as usize], Entry::Sep) {
 				return Some(i as usize);
 			}
 		}
@@ -596,6 +766,7 @@ impl Tabs {
 
 // Menu/tab bars auto-size to the menu (proportional) font: height = the text line
 // height (cell_h) + this vertical padding, so a larger font isn't clipped (#124).
+// Chrome measurements are DIP and convert at their use site - see config::dip.
 const MENU_BAR_VPAD: f32 = 6.0;
 const TAB_BAR_VPAD: f32 = 6.0; // text is metric-centered in the bar; descenders clear via that
 const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to settle)
@@ -608,25 +779,100 @@ const FREEZE_MINIMIZED: bool = true;
 // means every dialog open pays for its own instance + adapter + device again.
 const WARM_DIALOG_GPU: bool = true;
 const SIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(500); // remember-size settle time before hitting disk
+// How long after the window is genuinely on screen the background shell scan
+// starts (shells.rs). Long enough to be clear of the first prompt and whatever
+// the shell reads at startup, short enough that the Tabs menu has its list well
+// before anyone opens it.
+const SHELL_SCAN_DELAY: Duration = Duration::from_secs(3);
+// The scan waits for the wallpaper to be on screen (see `wp_shown`), and a
+// wallpaper on a share that never answers would otherwise hold it off for the
+// life of the window - leaving the Tabs menu with no shells in it. This is the
+// backstop, measured from the reveal.
+const SHELL_SCAN_MAX_WAIT: Duration = Duration::from_secs(20);
 const VRAM_CHECK_IVL: Duration = Duration::from_secs(2); // GL sentinel probe tick (VT-switch texture loss)
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
-const MENU_BAR_PAD: f32 = 10.0; // px around each top-level title
-const TAB_MAX_W: f32 = 220.0; // tab button width cap - drawing AND click hit-testing use this
+// Chrome geometry, all DIP (see config::dip).
+const MENU_BAR_PAD: f32 = 10.0; // around each top-level title
+const TAB_TIP_DELAY: Duration = Duration::from_millis(600); // pointer rest before a tab's tip appears
+const TAB_TIP_REFRESH: Duration = Duration::from_millis(500); // how often an open tip re-reads what it says
+const TAB_TIP_PAD: f32 = 8.0; // inside the tip box, DIP
+const TAB_TIP_GAP: f32 = 4.0; // between the tab bar and the tip below it, DIP
 const TAB_CLOSE_W: f32 = 26.0; // right-edge close-button region per tab (title clips before it)
 const TAB_CLOSE_M: f32 = 6.0; // balanced top/right/bottom margin around the close button box
+const TAB_TITLE_PAD: f32 = 8.0; // tab title's left inset
+const TAB_GAP: f32 = 1.0; // gap between adjacent tab buttons (each side of the seam)
+const TAB_TOP_PAD: f32 = 2.0; // tab button's inset from the top of the bar
+const CHROME_HAIRLINE: f32 = 1.0; // 1px rules: accelerator underlines, menu/checkbox borders
+const COPYBOX_BOX_GAP: f32 = 6.0; // checkbox to its own word
+const COPYBOX_PAIR_GAP: f32 = 14.0; // one checkbox pair to the next
+const COPYBOX_LEAD_GAP: f32 = 10.0; // "Copy on:" lead-in to the first checkbox
+const COPYBOX_TICK_INSET: f32 = 3.0; // checked fill's inset inside its box
+const MENUBAR_TEXT_W: f32 = 240.0; // shaping width for a menu-bar title buffer
+const MENU_ACCEL_DROP: f32 = 3.0; // accelerator underline's rise off the item's line box
+// Input knob (one line rolls it back): a key that arrives while the window is
+// unfocused is never typed. A WM hotkey grab (Ctrl+Alt+Arrow for desktop
+// switching) brackets the chord with a focus-out/in pair, and winit zeroes the
+// modifiers on the way out - so a grab that still passes the key through hands
+// us an arrow with nothing held, which would encode as a bare arrow.
+const IGNORE_KEYS_WHILE_UNFOCUSED: bool = true;
 
-// SILK_DUMP / SILK_DLGDBG are consulted per frame / per event; read the env
-// once (var_os takes the env lock and scans environ every call). Same pattern
-// as pane.rs scroll_dbg.
+// Winit replays every key already held down whenever focus changes, flagged
+// `is_synthetic`, so an app can track what is physically pressed. That is
+// state, not typing - and on X11 the replay lands BEFORE winit re-queries the
+// modifiers, so a held Ctrl+Alt+Arrow comes back through it as a bare arrow.
+fn key_is_typed(state: ElementState, is_synthetic: bool) -> bool {
+	state == ElementState::Pressed && !is_synthetic
+}
+
+// SILK_DUMP / SILK_DLGDBG / SILK_KEYDBG are consulted per frame / per event;
+// read the env once (var_os takes the env lock and scans environ every call).
+// Same pattern as pane.rs scroll_dbg.
 fn env_flag(name: &str) -> bool {
 	use std::sync::OnceLock;
 	static DUMP: OnceLock<bool> = OnceLock::new();
 	static DLGDBG: OnceLock<bool> = OnceLock::new();
+	static KEYDBG: OnceLock<bool> = OnceLock::new();
 	let cell = match name {
 		"SILK_DUMP" => &DUMP,
+		"SILK_KEYDBG" => &KEYDBG,
 		_ => &DLGDBG,
 	};
 	*cell.get_or_init(|| std::env::var_os(name).is_some())
+}
+
+// SILK_MAX_FPS pins the animation frame rate instead of letting vblank set it.
+// Unset (every ordinary run) this is None and nothing below it changes: the GL
+// path keeps swap interval 1 and a scroll ease keeps rendering on Poll.
+//
+// It exists for the demo recorder, which samples the X screen at a fixed rate.
+// Whatever paces the app has to divide that rate evenly or frames land off the
+// sampling grid on a strict period - a source of 60 into a capture of 50 drops
+// one frame in six, so every fifth stored frame carries two frames of travel,
+// and a regular hitch like that is exactly what reads as the picture jumping.
+// Pinning the source to the capture rate takes the host's refresh rate out of
+// the answer entirely. Also useful for measuring a fixed frame budget.
+fn max_fps() -> Option<f64> {
+	use std::sync::OnceLock;
+	static FPS: OnceLock<Option<f64>> = OnceLock::new();
+	*FPS.get_or_init(|| {
+		std::env::var("SILK_MAX_FPS")
+			.ok()
+			.and_then(|raw| raw.trim().parse::<f64>().ok())
+			.filter(|fps| *fps > 0.0 && fps.is_finite())
+	})
+}
+
+// Next frame on a FIXED schedule, not `now + interval` - the latter adds each
+// frame's own render time to the period and runs slow. Falling behind resyncs
+// rather than trying to catch up in a burst.
+fn pace_frame(next: &mut Option<Instant>, ivl: Duration) -> ControlFlow {
+	let now = Instant::now();
+	let mut at = next.unwrap_or(now) + ivl;
+	if at <= now {
+		at = now + ivl;
+	}
+	*next = Some(at);
+	ControlFlow::WaitUntil(at)
 }
 
 // VT-switch field diagnostics: `touch ~/silk_vramdbg.on` (no relaunch needed)
@@ -709,15 +955,45 @@ fn spawn_vt_watch(_proxy: EventLoopProxy<UserEvent>) -> bool {
 // margins (the extra room falls to the left, separating it from the title).
 // Shared by the rect draw, the glyph placement, and the click hit-test so they
 // can't drift apart.
-fn tab_close_box(tab_x: f32, tab_w: f32, bar_y: f32, tab_h: f32) -> Rect {
-	let side = (tab_h - 2.0 * TAB_CLOSE_M).max(8.0);
+fn tab_close_box(tab_x: f32, tab_w: f32, bar_y: f32, tab_h: f32, scale: f32) -> Rect {
+	let m = config::dip(TAB_CLOSE_M, scale);
+	let side = (tab_h - 2.0 * m).max(config::dip(8.0, scale));
 	Rect {
-		x: tab_x + tab_w - TAB_CLOSE_M - side,
-		y: bar_y + TAB_CLOSE_M,
+		x: tab_x + tab_w - m - side,
+		y: bar_y + m,
 		w: side,
 		h: side,
 	}
 }
+// How much of a tab its title actually gets: the button less its own inset on
+// both sides and the close-button column it must never run under. The draw and
+// the fit read the one rule, or a title is shortened to a width it is not then
+// given.
+fn tab_title_w(tab_w: f32, scale: f32) -> f32 {
+	let pad = config::dip(TAB_TITLE_PAD, scale);
+	(tab_w - 2.0 * pad - config::dip(TAB_CLOSE_W, scale)).max(config::dip(8.0, scale))
+}
+
+// The command line behind a tab, for naming the shell it runs. Every pane
+// resolves its own at spawn (see `spawn_pane`), so None here means nothing is
+// switched on at all and the engine picked its own default - which we have no
+// way to name, and must not GUESS at from the list: guessing is what had a pane
+// running PowerShell labelled Command Prompt.
+fn tab_command_line(command: Option<&[String]>) -> String {
+	command.map_or_else(String::new, crate::shells::command_line)
+}
+
+// A tab's hover tip: what it runs, how it was started, where it is, and how
+// long it has been open - the three of those a tab is too narrow to say, plus
+// the one it never says. The lines are built on a timer rather than per frame:
+// naming the shell resolves its program on the filesystem, and the clock at the
+// bottom has to tick anyway.
+struct TabTip {
+	tab: usize,
+	lines: Vec<String>,
+	built: Instant,
+}
+
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
 const COPYBOX_LABELS: [&str; 3] = ["Copy on:", "select", "output"]; // menu-bar auto-copy checkboxes
 
@@ -763,12 +1039,19 @@ struct State {
 	// resize was async (None = reveal on the first frame); reveal_deadline is a hard
 	// fallback so an async or WM-adjusted resize can't strand the window hidden.
 	revealed: bool,
+	// When the background shell scan is due: set when the window is revealed,
+	// cleared when the scan is away. None the rest of the time - it runs once.
+	shell_scan_at: Option<Instant>,
 	reveal_want: Option<winit::dpi::PhysicalSize<u32>>,
 	reveal_deadline: Instant,
 	pending_size: Option<(usize, usize)>, // debounced remember-size: persisted after the size holds, not per resize tick
 	pending_size_at: Instant,
 	menu: Option<ContextMenu>,
 	tab_close_arm: Option<usize>, // tab whose close button is held down (closes on release)
+	tab_hover: Option<(usize, Instant)>, // tab under the pointer, and since when
+	tab_first: usize,             // tab the strip is paged to (clamped on read)
+	tab_followed: usize,          // active tab the page last followed (see follow_active_tab)
+	tab_tip: Option<TabTip>,      // the hover tip currently up, if any
 	decorated: bool,              // window frame shown (winit has no getter, so track it)
 	menu_bar: bool,               // window menu bar (File/Edit/...) shown
 	bar_open: Option<usize>,      // which top-level menu's dropdown is open, if any
@@ -796,6 +1079,9 @@ struct State {
 	// last cycle's frozen state (occluded or minimized); the false edge is the
 	// unfreeze - one dirty catch-up frame, hard-cut for panes with pending output
 	was_hidden: bool,
+	// Deadline of the next animation frame while SILK_MAX_FPS pins the rate; None
+	// otherwise, which is every ordinary run. See `max_fps`.
+	next_frame: Option<Instant>,
 	// Rotation state as of the last scan; the folder itself, the shuffle history
 	// and the picking all live in the worker (wallpaper.rs), so nothing here reads
 	// the filesystem.
@@ -804,6 +1090,16 @@ struct State {
 	wp_next: Option<Instant>, // when to rotate next (None = no timer / startup-only)
 	wp_locked: bool, // a command-line wallpaper owns this session; don't rotate
 	wp_seq: u64,     // request stamp; a worker result with an older one is stale
+	// A worker has answered - with an image, or with the news that there is none.
+	wp_answered: bool,
+	// ...and a frame has been drawn since, so whatever it said is ON SCREEN. This
+	// is what the shell scan waits for: the scan is filesystem and registry work
+	// and the wallpaper is hundreds of ms of decode and blur off-thread, so letting
+	// them overlap puts a stall between the window appearing and the wallpaper
+	// arriving in it - the one moment anyone is looking.
+	wp_shown: bool,
+	// The hard deadline for that wait (see SHELL_SCAN_MAX_WAIT).
+	shell_scan_cap: Option<Instant>,
 	vram_next: Instant, // next GL VRAM sentinel probe (VT-switch content-loss detection)
 	vramloss_test: bool, // SILK_VRAMLOSS one-shot: fake a loss to exercise the rebuild path
 }
@@ -812,10 +1108,79 @@ impl State {
 	// Pixels reserved at the very top by the menu bar (0 when hidden).
 	// Bar heights track the menu font's line height so they scale with font size.
 	fn menu_bar_h(&self) -> f32 {
-		self.text.ui_line_h + MENU_BAR_VPAD
+		self.text.ui_line_h + self.text.dip(MENU_BAR_VPAD)
 	}
+	// How wide one tab is. A percentage of the window rather than a fixed cap:
+	// a tab now carries a shell name and either a task or a path, which wants
+	// room on a wide display - while a lone tab stretching the whole bar reads
+	// as no tab bar at all. Drawing and BOTH hit tests read this one answer, or
+	// a click lands on a different tab than the one under the pointer.
+	fn tab_w(&self) -> f32 {
+		let settings = config::settings();
+		crate::tabtitle::tab_width(
+			self.gfx.config.width as f32,
+			self.tabs.len(),
+			settings.tab_min_pct,
+			settings.tab_max_pct,
+		)
+	}
+
+	// The strip as drawn: one tab's width, the tab it starts at, and how many it
+	// shows. Because a tab never shrinks past its minimum, more tabs than fit
+	// become a PAGE - so every site that draws or hit-tests a tab has to go
+	// through here, or a click lands on a different tab than the one under the
+	// pointer. `tab_first` is only a preference: it is clamped on read against the
+	// active tab and the tab count, so opening or closing a tab cannot strand it.
+	fn tab_strip(&self) -> (f32, usize, usize) {
+		let tab_w = self.tab_w();
+		let fit = crate::tabtitle::tabs_that_fit(self.gfx.config.width as f32, tab_w);
+		let first = crate::tabtitle::clamp_page(self.tab_first, self.tabs.len(), fit);
+		(tab_w, first, fit.min(self.tabs.len().saturating_sub(first)))
+	}
+
+	// Bring the active tab onto the page when it CHANGES - and only then, so a
+	// page the wheel moved to stays put. Driven from the change rather than from
+	// each of the many places that set `tabs.active`, so no path can miss it.
+	fn follow_active_tab(&mut self) {
+		if self.tab_followed == self.tabs.active {
+			return;
+		}
+		self.tab_followed = self.tabs.active;
+		let fit = crate::tabtitle::tabs_that_fit(self.gfx.config.width as f32, self.tab_w());
+		self.tab_first =
+			crate::tabtitle::page_for(self.tab_first, self.tabs.active, self.tabs.len(), fit);
+	}
+
+	// Where tab `i` sits on the bar, or None when it is on another page.
+	fn tab_x(&self, i: usize) -> Option<f32> {
+		let (tab_w, first, shown) = self.tab_strip();
+		crate::tabtitle::slot_x(i, tab_w, first, shown)
+	}
+
+	// Which tab a pointer at `x` is over - the inverse of `tab_x`, and the only
+	// thing the two hit tests may use.
+	fn tab_at(&self, x: f32) -> Option<usize> {
+		let (tab_w, first, shown) = self.tab_strip();
+		crate::tabtitle::tab_at_x(x, tab_w, first, shown)
+	}
+
+	// A wheel over the tab bar turns the page. Without it a tab past the edge
+	// could only be reached from the keyboard or the Tabs menu.
+	fn scroll_tab_strip(&mut self, lines: f32) {
+		let (_, first, _) = self.tab_strip();
+		let step = if lines > 0.0 {
+			first.saturating_sub(1)
+		} else {
+			first.saturating_add(1)
+		};
+		if step != self.tab_first {
+			self.tab_first = step;
+			self.dirty = true;
+		}
+	}
+
 	fn tab_bar_h(&self) -> f32 {
-		self.text.ui_line_h + TAB_BAR_VPAD
+		self.text.ui_line_h + self.text.dip(TAB_BAR_VPAD)
 	}
 	fn menubar_h(&self) -> f32 {
 		if self.menu_bar {
@@ -922,7 +1287,11 @@ impl State {
 		let icon = if self.dragging_pane.is_some() {
 			CursorIcon::Grabbing
 		} else {
-			match self.tabs.cur().divider_at(x, y, self.area()) {
+			match self
+				.tabs
+				.cur()
+				.divider_at(x, y, self.area(), self.text.scale)
+			{
 				Some((_, Dir::Vertical)) => CursorIcon::ColResize,
 				Some((_, Dir::Horizontal)) => CursorIcon::RowResize,
 				None if self.hovering_link() => CursorIcon::Pointer,
@@ -946,8 +1315,9 @@ impl State {
 		}
 		let over = self.tabs.cur().pane_at(x, y);
 		let mut changed = false;
+		let text = &self.text;
 		for (id, p) in &mut self.tabs.cur_mut().panes {
-			let near = over == Some(*id) && p.bar_near(x, y, &cfg);
+			let near = over == Some(*id) && p.bar_near(x, y, text, &cfg);
 			if p.bar_hover != near {
 				p.bar_hover = near;
 				changed = true;
@@ -1100,16 +1470,222 @@ impl State {
 			.flatten()
 	}
 
-	// The active tab's title ("<shell> [<program>]" or a per-tab --title override).
-	fn active_tab_title(&mut self) -> String {
-		let pm = self.tabs.cur_mut();
+	// Everything a tab could say, longest form first (see tabtitle). A `--title`
+	// override is the whole answer; otherwise it is the shell's FRIENDLY name -
+	// what the Shells list calls it, which is the name the user themselves gave
+	// it - plus whatever that shell has to report: the command it is running,
+	// the last one it ran, or, having run nothing at all, where it is.
+	fn tab_label_forms(&mut self, index: usize) -> Vec<String> {
+		let Some(pm) = self.tabs.list.get_mut(index) else {
+			return vec![config::APP_NAME.to_string()];
+		};
 		if let Some(title) = &pm.title_override {
-			return title.clone();
+			return vec![title.clone()];
 		}
-		let focused_id = pm.focused;
-		pm.panes
-			.get_mut(&focused_id)
-			.map_or_else(|| config::APP_NAME.into(), |p| p.term.tab_title())
+		let (command, task, cwd) = pm.tab_facts();
+		let settings = config::settings();
+		let command_line = tab_command_line(command.as_deref());
+		let friendly = crate::shells::friendly(&command_line, &settings.shells);
+		let cwd = cwd.map(|dir| dir.to_string_lossy().into_owned());
+		let home = config::home_dir().map(|dir| dir.to_string_lossy().into_owned());
+		let task = match &task {
+			crate::term::Task::Running(program) => Some(crate::tabtitle::Task::Running(program)),
+			crate::term::Task::Last(program) => Some(crate::tabtitle::Task::Last(program)),
+			crate::term::Task::Idle => None,
+		};
+		crate::tabtitle::label_forms(
+			&friendly,
+			task,
+			cwd.as_deref(),
+			home.as_deref(),
+			crate::tabtitle::Style::native(),
+		)
+	}
+
+	// The widest form that fits the space a tab gives its title, else the
+	// shortest one there is - which still names the drive and ends in a
+	// separator, so it reads as a place even clipped.
+	fn tab_label(&mut self, index: usize, width: f32) -> String {
+		let forms = self.tab_label_forms(index);
+		let attrs = crate::text::ui_attrs();
+		for form in &forms {
+			if self.text.measure_ui_text(form, &attrs) <= width {
+				return form.clone();
+			}
+		}
+		forms.into_iter().next_back().unwrap_or_default()
+	}
+
+	// Which tab the pointer is over, and since when. Anything the pointer is
+	// already busy with - a drag, an open menu - owns it instead, so no tip
+	// appears underneath one.
+	fn note_tab_hover(&mut self, x: f32, y: f32) {
+		let busy = self.bar_dragging.is_some()
+			|| self.dragging_pane.is_some()
+			|| self.menu.is_some()
+			|| self.bar_open.is_some()
+			|| self.tab_close_arm.is_some();
+		let bar_y = self.menubar_h();
+		let over = if busy || !self.tab_bar_visible() || y < bar_y || y >= bar_y + self.tab_bar_h()
+		{
+			None
+		} else {
+			self.tab_at(x)
+		};
+		match (over, self.tab_hover) {
+			(Some(i), Some((was, _))) if was == i => {} // same tab: the clock runs on
+			(Some(i), _) => self.tab_hover = Some((i, Instant::now())),
+			(None, None) => {}
+			(None, Some(_)) => {
+				self.tab_hover = None;
+				if self.tab_tip.take().is_some() {
+					self.dirty = true;
+				}
+			}
+		}
+	}
+
+	// Bring the tip up once the pointer has rested, and keep what it says
+	// current while it is up. Returns true when the frame has to be redrawn.
+	fn update_tab_tip(&mut self) -> bool {
+		let Some((tab, since)) = self.tab_hover else {
+			return self.tab_tip.take().is_some();
+		};
+		let now = Instant::now();
+		if now.duration_since(since) < TAB_TIP_DELAY {
+			return false;
+		}
+		let stale = self
+			.tab_tip
+			.as_ref()
+			.is_none_or(|tip| tip.tab != tab || now.duration_since(tip.built) >= TAB_TIP_REFRESH);
+		if !stale {
+			return false;
+		}
+		let lines = self.tab_tip_lines(tab);
+		let changed = self
+			.tab_tip
+			.as_ref()
+			.is_none_or(|tip| tip.tab != tab || tip.lines != lines);
+		self.tab_tip = Some(TabTip {
+			tab,
+			lines,
+			built: now,
+		});
+		changed
+	}
+
+	// When the loop next has to wake for the tip - to raise one whose pointer has
+	// rested, or to re-read one that is already up (its clock ticks).
+	fn tab_tip_wake(&self) -> Option<Instant> {
+		let (_, since) = self.tab_hover?;
+		Some(match &self.tab_tip {
+			Some(tip) => tip.built + TAB_TIP_REFRESH,
+			None => since + TAB_TIP_DELAY,
+		})
+	}
+
+	// What a tip says, as key/value pairs padded to one column (tabtitle::tip_lines).
+	// The path is shown WHOLE here - the tab is where it gets shortened, and the tip
+	// is the place to look when the short form was not enough. A value that carries
+	// a space or a quote is quoted, so its edges are never in doubt.
+	fn tab_tip_lines(&mut self, index: usize) -> Vec<String> {
+		let Some(pm) = self.tabs.list.get_mut(index) else {
+			return Vec::new();
+		};
+		let created = pm.created;
+		let override_title = pm.title_override.clone();
+		let (command, task, cwd) = pm.tab_facts();
+		let settings = config::settings();
+		let command_line = tab_command_line(command.as_deref());
+		let quoted = crate::tabtitle::tip_value;
+		let mut rows: Vec<(&str, String)> = Vec::new();
+		if let Some(title) = override_title {
+			rows.push(("Tab title", quoted(&title)));
+		}
+		rows.push((
+			"Shell name",
+			quoted(&crate::shells::friendly(&command_line, &settings.shells)),
+		));
+		if !command_line.is_empty() {
+			rows.push(("Shell command", quoted(&command_line)));
+		}
+		// Only what is running NOW. A tab already says so itself, but it says it in
+		// the width it has left; the tip has the whole name.
+		if let crate::term::Task::Running(program) = task {
+			rows.push(("Running", quoted(&program)));
+		}
+		rows.push((
+			"Current path",
+			cwd.map_or_else(
+				// not a value, so it takes no quotes - a directory called
+				// "(not reported)" is not what this line is saying
+				|| "(not reported)".to_string(),
+				|dir| {
+					quoted(
+						&crate::tabtitle::path_forms(
+							&dir.to_string_lossy(),
+							None,
+							crate::tabtitle::Style::native(),
+						)
+						.into_iter()
+						.next()
+						.unwrap_or_default(),
+					)
+				},
+			),
+		));
+		// a clock reading, not a value either
+		rows.push((
+			"Open",
+			crate::tabtitle::elapsed(created.elapsed().as_secs()),
+		));
+		crate::tabtitle::tip_lines(&rows)
+	}
+
+	// The tip's box, and where each of its lines sits inside it. Measured in the
+	// TERMINAL font, which is the one thing in the chrome that is: the lines are a
+	// key/value table padded with spaces, and spaces align nothing in a
+	// proportional face. The box fits the longest line rather than guessing; it
+	// hangs off its own TAB rather than off the pointer, so it does not jitter as
+	// the pointer moves about inside one, and it is pushed back inside the window
+	// rather than being allowed to run off the right edge.
+	fn tab_tip_layout(&mut self) -> Option<(Rect, Vec<(f32, f32, String)>)> {
+		let (tab, lines) = {
+			let tip = self.tab_tip.as_ref()?;
+			(tip.tab, tip.lines.clone())
+		};
+		if lines.is_empty() {
+			return None;
+		}
+		let text_w = lines.iter().fold(0.0f32, |widest, line| {
+			widest.max(self.text.measure_mono_text(line))
+		});
+		let pad = self.text.dip(TAB_TIP_PAD);
+		let line_h = self.text.cell_h;
+		let w = text_w + 2.0 * pad;
+		let h = line_h * lines.len() as f32 + 2.0 * pad;
+		let win_w = self.gfx.config.width as f32;
+		// A tab paged off the strip while its tip was up takes the tip with it -
+		// a tip hanging off nothing would sit at the bar's left end, pointing at
+		// whichever tab happened to be there.
+		let x = self.tab_x(tab)?.min((win_w - w).max(0.0)).max(0.0);
+		let y = self.menubar_h() + self.tab_bar_h() + self.text.dip(TAB_TIP_GAP);
+		let placed = lines
+			.into_iter()
+			.enumerate()
+			.map(|(i, line)| (x + pad, y + pad + line_h * i as f32, line))
+			.collect();
+		Some((Rect { x, y, w, h }, placed))
+	}
+
+	// The active tab's title, in full - the window title has the whole title bar
+	// and the OS elides it itself.
+	fn active_tab_title(&mut self) -> String {
+		self.tab_label_forms(self.tabs.active)
+			.into_iter()
+			.next()
+			.unwrap_or_else(|| config::APP_NAME.to_string())
 	}
 
 	// The window title (taskbar / alt-tab): a CLI --title override verbatim, else
@@ -1150,6 +1726,11 @@ impl State {
 				Entry::Sep,
 			]);
 		}
+		// no accelerator here: this menu already spends every letter the label
+		// offers - 'w' on "Hide window frame", 'H' on "Split Horizontal", 'S' on
+		// "Paste Selection" - and a duplicate would make the older item
+		// unreachable, since the first match wins
+		let shells = shell_submenu(None);
 		entries.extend([
 			mia('C', "Copy (Ctrl+Shift+C)", MenuAction::Copy),
 			mia('P', "Paste (Ctrl+Shift+V)", MenuAction::Paste),
@@ -1160,6 +1741,9 @@ impl State {
 			mta('R', read_only, "Read-only", MenuAction::ToggleReadOnly),
 			Entry::Sep,
 			mia('N', "New Tab (Ctrl+Shift+T)", MenuAction::NewTab),
+		]);
+		entries.extend(shells);
+		entries.extend([
 			mia('V', "Split Vertical", MenuAction::SplitVertical),
 			mia('H', "Split Horizontal", MenuAction::SplitHorizontal),
 			mi("Close Pane", MenuAction::Close),
@@ -1185,32 +1769,231 @@ impl State {
 		self.popup(target, entries, mx, my);
 	}
 
-	// Build and place a dropdown/context popup, clamped on-screen. Width is the
-	// widest (proportional) label plus the checkmark gutter and padding.
+	// Build and place a dropdown/context popup, clamped on-screen.
 	fn popup(&mut self, target: PaneId, entries: Vec<Entry>, mx: f32, my: f32) {
+		self.menu = Some(self.build_popup(target, entries, mx, my));
+	}
+
+	// Lay one popup out at (mx, my), clamped on-screen. Width is the widest
+	// (proportional) label plus the checkmark gutter, the padding, and - only
+	// where a row opens a submenu - the column its arrow sits in. Shared by the
+	// menu bar, the right-click menu and the submenus, so all of them size and
+	// clamp alike.
+	fn build_popup(
+		&mut self,
+		target: PaneId,
+		entries: Vec<Entry>,
+		mx: f32,
+		my: f32,
+	) -> ContextMenu {
+		debug_assert!(
+			accel_clash(&entries).is_none(),
+			"two rows of one menu claim the accelerator {:?}",
+			accel_clash(&entries)
+		);
 		let attrs = crate::text::ui_attrs();
 		let mut max_label_w: f32 = 0.0;
+		let mut any_sub = false;
 		for entry in &entries {
-			if let Entry::Item { label, .. } = entry {
+			if let Some(label) = entry_label(entry) {
 				max_label_w = max_label_w.max(self.text.measure_ui_text(label, &attrs));
 			}
+			any_sub |= matches!(entry, Entry::Sub { .. });
 		}
-		let w = config::MENU_GUTTER + max_label_w + config::MENU_PAD_X * 2.0;
+		let arrow_col = if any_sub {
+			self.text.dip(config::MENU_SUB_ARROW)
+		} else {
+			0.0
+		};
+		let w = self.text.dip(config::MENU_GUTTER)
+			+ max_label_w
+			+ arrow_col
+			+ self.text.dip(config::MENU_PAD_X) * 2.0;
 		let item_h = self.text.ui_line_h;
+		let (pad_y, sep_h) = menu_metrics(self.text.scale);
 		let menu = ContextMenu {
 			x: mx,
 			y: my,
 			w,
 			item_h,
+			pad_y,
+			sep_h,
 			target,
 			entries,
 			hover: None,
+			sub: None,
 		};
 		let sw = self.gfx.config.width as f32;
 		let sh = self.gfx.config.height as f32;
 		let x = mx.min((sw - w).max(0.0));
 		let y = my.min((sh - menu.height()).max(0.0));
-		self.menu = Some(ContextMenu { x, y, ..menu });
+		ContextMenu { x, y, ..menu }
+	}
+
+	// Open the submenu on row `row` of the open popup, or close whatever was
+	// standing open if that row does not have one.
+	//
+	// It goes to the RIGHT of the parent, never overlapping it, with its first
+	// row lined up on the parent row - which is what lets the pointer rule stay
+	// as simple as it is: moving right off the row leaves the parent entirely,
+	// so nothing else can claim the hover on the way in. It flips to the left
+	// only when there is no room on the right.
+	fn open_submenu(&mut self, row: usize) {
+		let Some(menu) = self.menu.as_ref() else {
+			return;
+		};
+		let Some(Entry::Sub { items, .. }) = menu.entries.get(row) else {
+			if let Some(menu) = self.menu.as_mut() {
+				menu.sub = None;
+			}
+			return;
+		};
+		let items = items.clone();
+		let (px, pw, top, pad_y) = (menu.x, menu.w, menu.row_top(row), menu.pad_y);
+		// measured against a provisional build, since the width is what decides
+		// which side it goes on
+		let mut popup = self.build_popup(menu.target, items, px + pw, top - pad_y);
+		if px + pw + popup.w > self.gfx.config.width as f32 {
+			popup = self.build_popup(
+				popup.target,
+				popup.entries,
+				(px - popup.w).max(0.0),
+				top - pad_y,
+			);
+		}
+		if let Some(menu) = self.menu.as_mut() {
+			menu.sub = Some(Box::new(popup));
+		}
+	}
+
+	// Point the open menu at (x, y). The innermost popup under the pointer takes
+	// the highlight, and moving onto (or off) a submenu row opens (or closes) its
+	// popup. Returns whether anything moved.
+	fn menu_hover(&mut self, x: f32, y: f32) -> bool {
+		let Some(menu) = self.menu.as_mut() else {
+			return false;
+		};
+		// A submenu takes the pointer first - it overlaps no parent row, so being
+		// inside it is unambiguous, and the parent keeps its highlight on the row
+		// the submenu belongs to.
+		if let Some(sub) = menu.sub.as_mut() {
+			if sub.hit(x, y) {
+				let hovered = sub.item_at(x, y);
+				let moved = hovered != sub.hover;
+				sub.hover = hovered;
+				return moved;
+			}
+		}
+		let hovered = menu.item_at(x, y);
+		if hovered == menu.hover {
+			return false;
+		}
+		menu.hover = hovered;
+		let row = hovered.filter(|&i| matches!(menu.entries[i], Entry::Sub { .. }));
+		match row {
+			Some(row) => self.open_submenu(row),
+			None => {
+				if let Some(menu) = self.menu.as_mut() {
+					menu.sub = None;
+				}
+			}
+		}
+		true
+	}
+
+	// Act on a click at (x, y) with a menu open: an item fires and closes the
+	// whole stack, a submenu row opens its popup and leaves everything standing,
+	// and anything else dismisses.
+	fn menu_click(&mut self, x: f32, y: f32, proxy: &EventLoopProxy<UserEvent>) {
+		let Some(menu) = self.menu.as_ref() else {
+			return;
+		};
+		let target = menu.target;
+		let chain = menu.chain();
+		// innermost first: a submenu is drawn over whatever it covers
+		let found = chain
+			.iter()
+			.enumerate()
+			.rev()
+			.find_map(|(depth, popup)| popup.item_at(x, y).map(|row| (depth, row)));
+		let Some((depth, row)) = found else {
+			self.menu = None;
+			self.bar_open = None;
+			return;
+		};
+		let entry = chain[depth].entries[row].clone();
+		match entry {
+			// only the root popup carries submenus, so a deeper one cannot open
+			Entry::Sub { .. } => {
+				if depth == 0 {
+					self.open_submenu(row);
+				}
+			}
+			Entry::Item { action, .. } => {
+				self.menu = None;
+				self.bar_open = None;
+				self.apply_menu(action, target, proxy);
+			}
+			Entry::Sep => {}
+		}
+	}
+
+	// Fire row `row` of the innermost open popup, the way Enter and an
+	// accelerator letter do. A submenu row opens and takes the highlight to its
+	// first item instead of acting.
+	fn menu_activate(&mut self, row: usize, proxy: &EventLoopProxy<UserEvent>) {
+		let Some(menu) = self.menu.as_ref() else {
+			return;
+		};
+		let target = menu.target;
+		let chain = menu.chain();
+		let depth = chain.len() - 1;
+		let Some(entry) = chain[depth].entries.get(row).cloned() else {
+			return;
+		};
+		match entry {
+			Entry::Sub { .. } if depth == 0 => {
+				self.open_submenu(row);
+				if let Some(sub) = self.menu.as_mut().and_then(|menu| menu.sub.as_mut()) {
+					sub.hover = sub.step(None, 1);
+				}
+			}
+			Entry::Item { action, .. } => {
+				self.menu = None;
+				self.bar_open = None;
+				self.apply_menu(action, target, proxy);
+			}
+			_ => {}
+		}
+	}
+
+	// The popup the keyboard is on: the innermost one standing open.
+	fn menu_inner(&mut self) -> Option<&mut ContextMenu> {
+		self.menu.as_mut().map(ContextMenu::inner_mut)
+	}
+
+	// The highlighted row of the open popup when it is one that opens a submenu
+	// and has not opened it yet - i.e. what Right arrow would enter.
+	fn submenu_row(&self) -> Option<usize> {
+		let menu = self.menu.as_ref()?;
+		if menu.sub.is_some() {
+			return None;
+		}
+		menu.hover
+			.filter(|&row| matches!(menu.entries[row], Entry::Sub { .. }))
+	}
+
+	// Close the open submenu; returns false when there was none, so the caller
+	// can fall through to whatever it does otherwise.
+	fn close_submenu(&mut self) -> bool {
+		let Some(menu) = self.menu.as_mut() else {
+			return false;
+		};
+		if menu.sub.is_none() {
+			return false;
+		}
+		menu.sub = None;
+		true
 	}
 
 	// The dropdown entries for top-level menu-bar entry `idx` (File/Edit/...).
@@ -1261,11 +2044,15 @@ impl State {
 					MenuAction::ToggleSingleTab,
 				),
 			],
-			3 => vec![
-				mia('N', "New Tab (Ctrl+Shift+T)", MenuAction::NewTab),
-				Entry::Sep,
-				mia('C', "Close Tab (Ctrl+Shift+W)", MenuAction::CloseTab),
-			],
+			3 => {
+				let mut items = vec![mia('N', "New Tab (Ctrl+Shift+T)", MenuAction::NewTab)];
+				items.extend(shell_submenu(Some('S')));
+				items.extend([
+					Entry::Sep,
+					mia('C', "Close Tab (Ctrl+Shift+W)", MenuAction::CloseTab),
+				]);
+				items
+			}
 			4 => vec![
 				mia('V', "Split Vertical", MenuAction::SplitVertical),
 				mia('H', "Split Horizontal", MenuAction::SplitHorizontal),
@@ -1293,7 +2080,7 @@ impl State {
 		let mut x = 0.0;
 		let mut out = Vec::with_capacity(MENU_BAR.len());
 		for title in MENU_BAR {
-			let w = self.text.measure_ui_text(title, &attrs) + MENU_BAR_PAD * 2.0;
+			let w = self.text.measure_ui_text(title, &attrs) + self.text.dip(MENU_BAR_PAD) * 2.0;
 			out.push((x, w));
 			x += w;
 		}
@@ -1317,22 +2104,23 @@ impl State {
 		}
 		let box_sz = (self.text.ui_line_h * 0.6).round();
 		let box_y = (self.menu_bar_h() - box_sz) / 2.0;
-		let right = self.gfx.config.width as f32 - MENU_BAR_PAD;
+		let box_gap = self.text.dip(COPYBOX_BOX_GAP);
+		let right = self.gfx.config.width as f32 - self.text.dip(MENU_BAR_PAD);
 		let out_x = right - label_w[2];
 		let out_box = Rect {
-			x: out_x - 6.0 - box_sz,
+			x: out_x - box_gap - box_sz,
 			y: box_y,
 			w: box_sz,
 			h: box_sz,
 		};
-		let sel_x = out_box.x - 14.0 - label_w[1];
+		let sel_x = out_box.x - self.text.dip(COPYBOX_PAIR_GAP) - label_w[1];
 		let sel_box = Rect {
-			x: sel_x - 6.0 - box_sz,
+			x: sel_x - box_gap - box_sz,
 			y: box_y,
 			w: box_sz,
 			h: box_sz,
 		};
-		let lead_x = sel_box.x - 10.0 - label_w[0];
+		let lead_x = sel_box.x - self.text.dip(COPYBOX_LEAD_GAP) - label_w[0];
 		CopyBoxes {
 			boxes: [sel_box, out_box],
 			label_x: [lead_x, sel_x, out_x],
@@ -1450,6 +2238,7 @@ impl State {
 				}
 			}
 			MenuAction::NewTab => self.new_tab(proxy),
+			MenuAction::NewTabShell(index) => self.new_tab_with(proxy, shell_argv(index)),
 			MenuAction::CloseTab => self.close_tab(),
 			MenuAction::FontBigger => self.font_zoom(1),
 			MenuAction::FontSmaller => self.font_zoom(-1),
@@ -1532,6 +2321,13 @@ impl State {
 	}
 
 	fn new_tab(&mut self, proxy: &EventLoopProxy<UserEvent>) {
+		self.new_tab_with(proxy, None);
+	}
+
+	// `shell` is a shell picked by name from the Tabs menu; None inherits from
+	// the pane that was active, as a plain new tab does. The directory is
+	// inherited either way - picking a shell says nothing about where to start.
+	fn new_tab_with(&mut self, proxy: &EventLoopProxy<UserEvent>, shell: Option<Vec<String>>) {
 		// area with the bar shown (we're about to have >1 tab); relayout_all fixes
 		// the exact rects right after, this is just the new pane's provisional box
 		let bar = self.menubar_h() + self.tab_bar_h();
@@ -1548,7 +2344,7 @@ impl State {
 			.list
 			.get(self.tabs.active)
 			.map_or((None, None), PaneManager::inherit_spawn);
-		let cmd = cmd.or_else(config::default_shell_argv);
+		let cmd = shell.or(cmd).or_else(config::default_shell_argv);
 		if let Ok(pm) = PaneManager::new(&mut self.text, proxy, area, cmd, cwd) {
 			self.tabs.list.push(pm);
 			self.tabs.active = self.tabs.list.len() - 1;
@@ -1656,10 +2452,24 @@ impl State {
 		edited: config::Settings,
 		_system_font: bool,
 	) -> bool {
+		// The Shells tab edits the list now, so this is the one path allowed to
+		// write it - and it is the dialog's copy that wins. The baseline is the
+		// LIVE list rather than the dialog's own `orig`: a scan that landed while
+		// the dialog was open has already been folded into both of its copies
+		// (Dialog::fold_shells), so the two agree, and taking the live one is what
+		// keeps them honest if they ever do not.
+		//
+		// An entry with no command names nothing to run, so it is dropped here
+		// rather than written - that is the whole of the grid's "Command is
+		// required" rule at the point the list leaves the dialog.
+		let mut orig = orig.clone();
+		let mut edited = edited;
+		orig.shells.clone_from(&config::settings().shells);
+		edited.shells.retain(|e| !e.command.trim().is_empty());
 		// use_system_font is a persisted setting that only reorders font_family at
 		// resolve time, so nothing special to strip - persist the diff as usual.
-		let wrote = config::persist(orig, &edited);
-		self.apply_new_settings(orig, edited, false);
+		let wrote = config::persist(&orig, &edited);
+		self.apply_new_settings(&orig, edited, false);
 		wrote
 	}
 
@@ -1766,6 +2576,9 @@ impl State {
 				img.anchor,
 			)
 		});
+		// Answered either way: an empty result is the news that there is no
+		// wallpaper to wait for, which settles the question just as well.
+		self.wp_answered = true;
 		self.dirty = true;
 	}
 
@@ -1788,7 +2601,7 @@ impl State {
 	// the text context at the new effective size. Window-wide, never persisted.
 	fn font_zoom(&mut self, dir: i32) {
 		config::nudge_font_zoom(dir);
-		let scale = self.window.scale_factor() as f32;
+		let scale = config::display_scale(self.window.scale_factor());
 		self.rebuild_text(scale);
 		self.dirty = true;
 	}
@@ -1798,7 +2611,7 @@ impl State {
 			return; // already at the configured size
 		}
 		config::reset_font_zoom();
-		let scale = self.window.scale_factor() as f32;
+		let scale = config::display_scale(self.window.scale_factor());
 		self.rebuild_text(scale);
 		self.dirty = true;
 	}
@@ -1867,7 +2680,7 @@ impl State {
 			}
 		}
 		if rebuild {
-			self.rebuild_text(self.window.scale_factor() as f32);
+			self.rebuild_text(config::display_scale(self.window.scale_factor()));
 		}
 		if bg {
 			self.request_wallpaper(false);
@@ -1881,7 +2694,7 @@ impl State {
 	// the prepared/scrim signatures, so the next frame rebuilds the scrim source
 	// instead of reusing a texture that no longer holds anything.
 	fn recover_gpu(&mut self) {
-		self.rebuild_text(self.window.scale_factor() as f32);
+		self.rebuild_text(config::display_scale(self.window.scale_factor()));
 		// re-decoded rather than kept resident: a large wallpaper is tens of MB, and
 		// a VT switch is rare enough not to trade that for a moment without one
 		self.request_wallpaper(false);
@@ -1971,13 +2784,15 @@ impl State {
 			// cause (bell flash, chrome/UI change) - idle siblings reuse their
 			// cached frame instead of re-shaping at the busy pane's rate
 			let force = force_rebuild || pane.content_dirty || pane.scroll.animating();
-			pane.build(
-				&mut self.text,
-				dt,
-				bell,
-				force,
-				win_focused && *id == active_pane,
-			);
+			crate::perf::timed(&crate::perf::BUILD_NS, || {
+				pane.build(
+					&mut self.text,
+					dt,
+					bell,
+					force,
+					win_focused && *id == active_pane,
+				);
+			});
 			if pane.scroll.animating() || pane.cursor_animating {
 				animating = true;
 			}
@@ -2029,7 +2844,7 @@ impl State {
 		// (the user wants background all the way to the edge), so skip it.
 		if self.tabs.cur().panes.len() > 1 {
 			if let Some(p) = self.tabs.cur().panes.get(&self.tabs.cur().focused) {
-				instances.extend(focus_ring(p.rect));
+				instances.extend(focus_ring(p.rect, self.text.scale));
 			}
 		}
 		// drop-target tint while drag-reordering a pane
@@ -2104,16 +2919,18 @@ impl State {
 				// Alt held (no dropdown open): underline each title's accelerator
 				// letter, like the open-dropdown items do (press the letter to open).
 				let attrs = crate::text::ui_attrs();
-				let underline_y = self.text.ui_baseline(0.0, menu_h) + 1.0;
+				let rule = self.text.dip(CHROME_HAIRLINE);
+				let underline_y = self.text.ui_baseline(0.0, menu_h) + rule;
+				let title_pad = self.text.dip(MENU_BAR_PAD);
 				for (i, &(x, _)) in layout.iter().enumerate() {
 					if let Some(c) = MENU_BAR[i].chars().next() {
 						let mut buf = [0u8; 4];
 						let letter_w = self.text.measure_ui_text(c.encode_utf8(&mut buf), &attrs);
 						instances.push(rect_inst(
-							x + MENU_BAR_PAD,
+							x + title_pad,
 							underline_y,
 							letter_w,
-							1.0,
+							rule,
 							config::menu_fg(),
 						));
 					}
@@ -2131,12 +2948,14 @@ impl State {
 			let cb = self.copybox_layout();
 			let border = copy_dim(config::menu_border(), self.focused);
 			let fill = copy_dim(config::menu_fg(), self.focused);
+			let box_rule = self.text.dip(CHROME_HAIRLINE);
+			let tick_inset = self.text.dip(COPYBOX_TICK_INSET);
 			for (checkbox, on) in cb.boxes.iter().zip(checked) {
 				instances.push(rect_inst(
-					checkbox.x - 1.0,
-					checkbox.y - 1.0,
-					checkbox.w + 2.0,
-					checkbox.h + 2.0,
+					checkbox.x - box_rule,
+					checkbox.y - box_rule,
+					checkbox.w + 2.0 * box_rule,
+					checkbox.h + 2.0 * box_rule,
 					border,
 				));
 				instances.push(rect_inst(
@@ -2148,10 +2967,10 @@ impl State {
 				));
 				if on {
 					instances.push(rect_inst(
-						checkbox.x + 3.0,
-						checkbox.y + 3.0,
-						checkbox.w - 6.0,
-						checkbox.h - 6.0,
+						checkbox.x + tick_inset,
+						checkbox.y + tick_inset,
+						checkbox.w - 2.0 * tick_inset,
+						checkbox.h - 2.0 * tick_inset,
 						fill,
 					));
 				}
@@ -2166,35 +2985,40 @@ impl State {
 		let tabbar_range = if self.tab_bar_visible() {
 			let start = instances.len() as u32;
 			instances.push(rect_inst(0.0, tab_bar_y, win_w, tab_h, config::TAB_BAR_BG));
-			let n = self.tabs.len();
-			let tab_w = (win_w / n as f32).min(TAB_MAX_W);
+			let (tab_w, first, shown) = self.tab_strip();
 			// per-tab loop invariants (each config accessor is an RwLock read)
 			let box_border = config::menu_border();
 			let x_rgb = close_x_rgb();
-			for i in 0..n {
-				let x = i as f32 * tab_w;
+			let tab_gap = self.text.dip(TAB_GAP);
+			let tab_top = self.text.dip(TAB_TOP_PAD);
+			let cb_rule = self.text.dip(CHROME_HAIRLINE);
+			for slot in 0..shown {
+				let i = first + slot;
+				let x = slot as f32 * tab_w;
 				let color = if i == self.tabs.active {
 					config::TAB_ACTIVE
 				} else {
 					config::TAB_INACTIVE
 				};
+				// the button sits inside the bar: a gap each side of the seam, and it
+				// runs to the bar's bottom edge less one hairline
 				instances.push(rect_inst(
-					x + 1.0,
-					tab_bar_y + 2.0,
-					tab_w - 2.0,
-					tab_h - 3.0,
+					x + tab_gap,
+					tab_bar_y + tab_top,
+					tab_w - 2.0 * tab_gap,
+					tab_h - tab_top - cb_rule,
 					color,
 				));
 				// close-button box: a 1px outline (border rect + inner tab-bg fill).
 				// The active tab's box fill leans faintly toward a pastel red - just
 				// past noticeable, so the current tab reads at a glance without a
 				// clashing accent.
-				let cb = tab_close_box(x, tab_w, tab_bar_y, tab_h);
+				let cb = tab_close_box(x, tab_w, tab_bar_y, tab_h, self.text.scale);
 				instances.push(rect_inst(
-					cb.x - 1.0,
-					cb.y - 1.0,
-					cb.w + 2.0,
-					cb.h + 2.0,
+					cb.x - cb_rule,
+					cb.y - cb_rule,
+					cb.w + 2.0 * cb_rule,
+					cb.h + 2.0 * cb_rule,
 					box_border,
 				));
 				let box_fill = if self.tab_close_arm == Some(i) {
@@ -2213,73 +3037,91 @@ impl State {
 			None
 		};
 
-		// context menu quads (drawn in a second pass, on top of everything)
-		let menu_range = if let Some(menu) = &self.menu {
+		// context menu quads (drawn in a second pass, on top of everything). A
+		// submenu is just another popup in the same pass, drawn after its parent.
+		let menu_range = if let Some(root) = &self.menu {
 			let start = instances.len() as u32;
-			let popup_h = menu.height();
-			let border = 1.0;
-			instances.push(rect_inst(
-				menu.x - border,
-				menu.y - border,
-				menu.w + 2.0 * border,
-				popup_h + 2.0 * border,
-				config::menu_border(),
-			));
-			instances.push(rect_inst(
-				menu.x,
-				menu.y,
-				menu.w,
-				popup_h,
-				config::menu_bg(),
-			));
-			if let Some(i) = menu.hover {
+			for menu in root.chain() {
+				let popup_h = menu.height();
+				let border = self.text.dip(CHROME_HAIRLINE);
+				instances.push(rect_inst(
+					menu.x - border,
+					menu.y - border,
+					menu.w + 2.0 * border,
+					popup_h + 2.0 * border,
+					config::menu_border(),
+				));
 				instances.push(rect_inst(
 					menu.x,
-					menu.row_top(i),
+					menu.y,
 					menu.w,
-					menu.item_h,
-					config::menu_hover(),
+					popup_h,
+					config::menu_bg(),
 				));
-			}
-			// faint separator lines between logical groups
-			for (i, entry) in menu.entries.iter().enumerate() {
-				if matches!(entry, Entry::Sep) {
-					let sep_y = menu.row_top(i) + config::MENU_SEP_H / 2.0;
+				if let Some(i) = menu.hover {
 					instances.push(rect_inst(
-						menu.x + config::MENU_PAD_X,
-						sep_y,
-						menu.w - config::MENU_PAD_X * 2.0,
-						1.0,
-						config::menu_sep(),
+						menu.x,
+						menu.row_top(i),
+						menu.w,
+						menu.item_h,
+						config::menu_hover(),
 					));
 				}
-			}
-			// accelerator underline under each item's accelerator letter (press it
-			// to pick); items without one draw no underline
-			let acc_attrs = crate::text::ui_attrs();
-			let line_h = self.text.ui_line_h;
-			let acc_x = menu.x + config::MENU_PAD_X + config::MENU_GUTTER;
-			for (i, entry) in menu.entries.iter().enumerate() {
-				if let Entry::Item {
-					label,
-					accel: Some(pos),
-					..
-				} = entry
-				{
-					if let Some(c) = label[*pos..].chars().next() {
-						let prefix_w = self.text.measure_ui_text(&label[..*pos], &acc_attrs);
-						let mut buf = [0u8; 4];
-						let letter_w = self
-							.text
-							.measure_ui_text(c.encode_utf8(&mut buf), &acc_attrs);
-						let top = menu.row_top(i) + (menu.item_h - line_h) / 2.0;
+				// faint separator lines between logical groups
+				for (i, entry) in menu.entries.iter().enumerate() {
+					if matches!(entry, Entry::Sep) {
+						let sep_y = menu.row_top(i) + menu.sep_h / 2.0;
+						let pad_x = self.text.dip(config::MENU_PAD_X);
 						instances.push(rect_inst(
-							acc_x + prefix_w,
-							top + line_h - 3.0,
-							letter_w,
-							1.0,
-							config::menu_fg(),
+							menu.x + pad_x,
+							sep_y,
+							menu.w - pad_x * 2.0,
+							self.text.dip(CHROME_HAIRLINE),
+							config::menu_sep(),
 						));
+					}
+				}
+				// the arrow marking a row that opens a submenu, drawn rather than set
+				// in text: a font's own metrics decide where a glyph lands, and there
+				// is no arrow every interface font carries (same reason as the tab
+				// close mark)
+				for (i, entry) in menu.entries.iter().enumerate() {
+					if matches!(entry, Entry::Sub { .. }) {
+						let h = (menu.item_h * 0.38).round().max(4.0);
+						let w = (h * 0.62).round().max(3.0);
+						let arrow = Rect {
+							x: menu.x + menu.w - self.text.dip(config::MENU_PAD_X) - w,
+							y: menu.row_top(i) + (menu.item_h - h) / 2.0,
+							w,
+							h,
+						};
+						instances.push(sub_arrow_inst(arrow, config::menu_fg()));
+					}
+				}
+				// accelerator underline under each item's accelerator letter (press it
+				// to pick); items without one draw no underline
+				let acc_attrs = crate::text::ui_attrs();
+				let line_h = self.text.ui_line_h;
+				let acc_rule = self.text.dip(CHROME_HAIRLINE);
+				let acc_x =
+					menu.x + self.text.dip(config::MENU_PAD_X) + self.text.dip(config::MENU_GUTTER);
+				for (i, entry) in menu.entries.iter().enumerate() {
+					if let Some((label, pos)) = entry_accel(entry) {
+						if let Some(c) = label[pos..].chars().next() {
+							let prefix_w = self.text.measure_ui_text(&label[..pos], &acc_attrs);
+							let mut buf = [0u8; 4];
+							let letter_w = self
+								.text
+								.measure_ui_text(c.encode_utf8(&mut buf), &acc_attrs);
+							let top = menu.row_top(i) + (menu.item_h - line_h) / 2.0;
+							instances.push(rect_inst(
+								acc_x + prefix_w,
+								top + line_h - self.text.dip(MENU_ACCEL_DROP),
+								letter_w,
+								acc_rule,
+								config::menu_fg(),
+							));
+						}
 					}
 				}
 			}
@@ -2288,7 +3130,32 @@ impl State {
 			None
 		};
 
-		let overlay_range = menu_range;
+		// the hover tip's box, in the same overlay pass as the menus so it lands
+		// over everything - including a pane's own text, which it sits on top of
+		let tip_layout = self.tab_tip_layout();
+		let tip_range = tip_layout.as_ref().map(|(box_rect, _)| {
+			let start = instances.len() as u32;
+			let border = self.text.dip(CHROME_HAIRLINE);
+			instances.push(rect_inst(
+				box_rect.x - border,
+				box_rect.y - border,
+				box_rect.w + 2.0 * border,
+				box_rect.h + 2.0 * border,
+				config::menu_border(),
+			));
+			instances.push(rect_inst(
+				box_rect.x,
+				box_rect.y,
+				box_rect.w,
+				box_rect.h,
+				config::menu_bg(),
+			));
+			(start, instances.len() as u32)
+		});
+		let overlay_range = match (menu_range, tip_range) {
+			(Some((start, _)), Some((_, end))) | (Some((start, end)), None) => Some((start, end)),
+			(None, other) => other,
+		};
 
 		let margin = self.text.margin;
 		let menu_fg_rgb = config::menu_fg();
@@ -2298,26 +3165,20 @@ impl State {
 			let c = copy_dim(menu_fg_rgb, self.focused);
 			GColor::rgb(c[0], c[1], c[2])
 		};
-		// tab titles ("<shell> [<program>]") - computed first (tab_title is &mut)
-		// before self.text is borrowed for the buffers below
+		let tab_w = self.tab_w();
+		// tab titles - computed first (the task probe and the fit are both &mut)
+		// before self.text is borrowed for the buffers below. Each is fitted to
+		// the space its own tab has, which is where a path gets shortened.
+		let title_w = tab_title_w(tab_w, self.text.scale);
+		self.follow_active_tab();
+		let (_, title_first, title_shown) = self.tab_strip();
 		let tab_titles: Vec<String> = if self.tab_bar_visible() {
-			self.tabs
-				.list
-				.iter_mut()
-				.map(|pm| {
-					if let Some(title) = &pm.title_override {
-						return title.clone();
-					}
-					let focused_id = pm.focused;
-					pm.panes
-						.get_mut(&focused_id)
-						.map_or_else(|| config::APP_NAME.into(), |p| p.term.tab_title())
-				})
+			(title_first..title_first + title_shown)
+				.map(|i| self.tab_label(i, title_w))
 				.collect()
 		} else {
 			Vec::new()
 		};
-		let tab_w = (self.gfx.config.width as f32 / self.tabs.len().max(1) as f32).min(TAB_MAX_W);
 		// keep the shaped chrome text current (see ChromeCache) - a color change
 		// rebuilds it all, otherwise only changed tab titles re-shape
 		if self
@@ -2341,7 +3202,10 @@ impl State {
 			let menubar = MENU_BAR
 				.iter()
 				.chain(COPYBOX_LABELS.iter())
-				.map(|title| shape_ui(&mut self.text, title, 240.0, menu_h, menu_fg))
+				.map(|title| {
+					let w = self.text.dip(MENUBAR_TEXT_W);
+					shape_ui(&mut self.text, title, w, menu_h, menu_fg)
+				})
 				.collect();
 			self.chrome = Some(ChromeCache {
 				menu_fg: menu_fg_rgb,
@@ -2372,9 +3236,7 @@ impl State {
 					continue; // unchanged title keeps its shaped buffer
 				}
 				reshaped = true;
-				let mut buf = self
-					.text
-					.new_ui_buffer((tab_w - 16.0 - TAB_CLOSE_W).max(8.0), tab_h);
+				let mut buf = self.text.new_ui_buffer(title_w, tab_h);
 				let mut attrs = crate::text::ui_attrs();
 				attrs.color_opt = Some(menu_fg);
 				buf.set_text(
@@ -2446,6 +3308,7 @@ impl State {
 			}
 			h.finish()
 		};
+		let prep = crate::perf::mark();
 		let text_same = self.text_sig == Some(text_sig);
 
 		// All rect instances and the bg-image shader work in absolute
@@ -2516,7 +3379,7 @@ impl State {
 					let (left, left_bound, right_bound, top) = if i < bar_layout.len() {
 						let (x, w) = bar_layout[i];
 						(
-							x + MENU_BAR_PAD,
+							x + self.text.dip(MENU_BAR_PAD),
 							x,
 							x + w,
 							self.text.ui_text_top(0.0, menu_h),
@@ -2549,12 +3412,12 @@ impl State {
 					});
 				}
 			}
-			for (i, (_, buf)) in chrome.tabs.iter().enumerate() {
-				let x = i as f32 * tab_w;
-				let close_x = x + tab_w - TAB_CLOSE_W;
+			for (slot, (_, buf)) in chrome.tabs.iter().enumerate() {
+				let x = slot as f32 * tab_w;
+				let close_x = x + tab_w - self.text.dip(TAB_CLOSE_W);
 				areas.push(TextArea {
 					buffer: buf,
-					left: x + 8.0,
+					left: x + self.text.dip(TAB_TITLE_PAD),
 					// center the visible text box in the tab bar (metric-based)
 					top: self.text.ui_text_top(tab_bar_y, tab_h),
 					scale: 1.0,
@@ -2653,21 +3516,32 @@ impl State {
 		// geometry/labels/color. Only skip alongside text_same - the end-of-frame
 		// atlas trim (which runs when !text_same) drops glyphs the retained overlay
 		// vertex buffers still reference, so a trim frame must re-prepare.
-		if let Some(menu) = &self.menu {
+		if self.menu.is_some() || tip_layout.is_some() {
 			let overlay_sig = {
 				use std::hash::{Hash, Hasher};
 				let mut h = std::collections::hash_map::DefaultHasher::new();
-				menu.x.to_bits().hash(&mut h);
-				menu.y.to_bits().hash(&mut h);
-				menu.w.to_bits().hash(&mut h);
-				menu.item_h.to_bits().hash(&mut h);
 				self.gfx.config.width.hash(&mut h);
 				self.gfx.config.height.hash(&mut h);
 				self.chrome_rev.hash(&mut h); // covers a menu color change
-				for entry in &menu.entries {
-					if let Entry::Item { label, check, .. } = entry {
-						label.hash(&mut h);
-						check.hash(&mut h);
+				if let Some((_, placed)) = &tip_layout {
+					for (left, top, line) in placed {
+						left.to_bits().hash(&mut h);
+						top.to_bits().hash(&mut h);
+						line.hash(&mut h);
+					}
+				}
+				for menu in self.menu.iter().flat_map(ContextMenu::chain) {
+					menu.x.to_bits().hash(&mut h);
+					menu.y.to_bits().hash(&mut h);
+					menu.w.to_bits().hash(&mut h);
+					menu.item_h.to_bits().hash(&mut h);
+					for entry in &menu.entries {
+						if let Some(label) = entry_label(entry) {
+							label.hash(&mut h);
+						}
+						if let Entry::Item { check, .. } = entry {
+							check.hash(&mut h);
+						}
 					}
 				}
 				h.finish()
@@ -2681,33 +3555,61 @@ impl State {
 				let mut attrs = crate::text::ui_attrs();
 				let fg = config::menu_fg();
 				attrs.color_opt = Some(GColor::rgb(fg[0], fg[1], fg[2]));
-				for (i, entry) in menu.entries.iter().enumerate() {
-					let Entry::Item { label, check, .. } = entry else {
-						continue;
-					};
-					let top = menu.row_top(i) + (menu.item_h - self.text.ui_line_h) / 2.0;
-					let mut buf = self.text.new_ui_buffer(menu.w, menu.item_h);
-					buf.set_text(
-						&mut self.text.font_system,
-						label,
-						&attrs,
-						Shaping::Advanced,
-						None,
-					);
-					buf.shape_until_scroll(&mut self.text.font_system, false);
-					specs.push((menu.x + config::MENU_PAD_X + config::MENU_GUTTER, top, buf));
-					if *check == Some(true) {
-						let mut check_buf =
-							self.text.new_ui_buffer(config::MENU_GUTTER, menu.item_h);
-						check_buf.set_text(
+				// The tip alone shapes in the terminal font: its lines are a table
+				// padded with spaces, which no proportional face can align.
+				if let Some((box_rect, placed)) = &tip_layout {
+					let mut tip_attrs = crate::text::mono_attrs();
+					tip_attrs.color_opt = attrs.color_opt;
+					let line_h = self.text.cell_h;
+					for (left, top, line) in placed {
+						let mut buf = self.text.new_buffer(box_rect.w, line_h);
+						buf.set_text(
 							&mut self.text.font_system,
-							"\u{2713}",
+							line,
+							&tip_attrs,
+							Shaping::Advanced,
+							None,
+						);
+						buf.shape_until_scroll(&mut self.text.font_system, false);
+						specs.push((*left, *top, buf));
+					}
+				}
+				for menu in self.menu.iter().flat_map(ContextMenu::chain) {
+					for (i, entry) in menu.entries.iter().enumerate() {
+						let Some(label) = entry_label(entry) else {
+							continue;
+						};
+						let top = menu.row_top(i) + (menu.item_h - self.text.ui_line_h) / 2.0;
+						let mut buf = self.text.new_ui_buffer(menu.w, menu.item_h);
+						buf.set_text(
+							&mut self.text.font_system,
+							label,
 							&attrs,
 							Shaping::Advanced,
 							None,
 						);
-						check_buf.shape_until_scroll(&mut self.text.font_system, false);
-						specs.push((menu.x + config::MENU_PAD_X, top, check_buf));
+						buf.shape_until_scroll(&mut self.text.font_system, false);
+						let pad_x = self.text.dip(config::MENU_PAD_X);
+						let gutter = self.text.dip(config::MENU_GUTTER);
+						specs.push((menu.x + pad_x + gutter, top, buf));
+						if matches!(
+							entry,
+							Entry::Item {
+								check: Some(true),
+								..
+							}
+						) {
+							let mut check_buf = self.text.new_ui_buffer(gutter, menu.item_h);
+							check_buf.set_text(
+								&mut self.text.font_system,
+								"\u{2713}",
+								&attrs,
+								Shaping::Advanced,
+								None,
+							);
+							check_buf.shape_until_scroll(&mut self.text.font_system, false);
+							specs.push((menu.x + pad_x, top, check_buf));
+						}
 					}
 				}
 				let (sw, sh) = (self.gfx.config.width as i32, self.gfx.config.height as i32);
@@ -2735,9 +3637,13 @@ impl State {
 			}
 		}
 
+		crate::perf::since(&crate::perf::PREP_NS, prep);
+		let acquire = crate::perf::mark();
 		let Some(frame) = self.gfx.begin_frame() else {
 			return animating;
 		};
+		crate::perf::since(&crate::perf::ACQUIRE_NS, acquire);
+		let encode = crate::perf::mark();
 		let view = self.gfx.frame_view(&frame);
 		let mut encoder = self
 			.gfx
@@ -3018,8 +3924,11 @@ impl State {
 			let _ = self.text.render_overlay(&mut pass);
 		}
 
+		crate::perf::since(&crate::perf::ENCODE_NS, encode);
+		let submit = crate::perf::mark();
 		self.gfx.queue.submit(Some(encoder.finish()));
 		self.gfx.end_frame(frame);
+		crate::perf::since(&crate::perf::SUBMIT_NS, submit);
 		// The window was created hidden; reveal it once a real frame is on screen at
 		// the final size (no default-size/blank flash). reveal_want (async resize)
 		// holds off until the surface reaches the grid size; the deadline is a hard
@@ -3031,6 +3940,21 @@ impl State {
 			if settled || Instant::now() >= self.reveal_deadline {
 				self.revealed = true;
 				self.window.set_visible(true);
+				self.shell_scan_at = Some(Instant::now() + SHELL_SCAN_DELAY);
+				self.shell_scan_cap = Some(Instant::now() + SHELL_SCAN_MAX_WAIT);
+			}
+		}
+		// This frame carried whatever the wallpaper worker answered, so the scan's
+		// clock starts from HERE rather than from the reveal - a wallpaper that took
+		// two seconds to decode used to have the scan running underneath it. Only
+		// ever pushed back, never re-armed: once the scan has gone (shell_scan_at
+		// cleared, which the backstop guarantees) a late wallpaper must not start a
+		// second one.
+		if self.revealed && self.wp_answered && !self.wp_shown {
+			self.wp_shown = true;
+			if self.shell_scan_at.is_some() {
+				let due = Instant::now() + SHELL_SCAN_DELAY;
+				self.shell_scan_at = Some(self.shell_scan_cap.map_or(due, |cap| due.min(cap)));
 			}
 		}
 		if env_flag("SILK_DUMP") {
@@ -3074,6 +3998,17 @@ fn close_x_inst(cb: Rect, color: [u8; 3]) -> RectInstance {
 		size: [cb.w, cb.h],
 		color: config::srgb_f32(color),
 		params: [1.0, (cb.w * 0.14).max(1.4)],
+	}
+}
+
+// The submenu arrow: a shader-drawn quad (mode 3) holding a right-pointing
+// triangle that centers exactly in `at` at any size and DPI.
+fn sub_arrow_inst(at: Rect, color: [u8; 3]) -> RectInstance {
+	RectInstance {
+		pos: [at.x, at.y],
+		size: [at.w, at.h],
+		color: config::srgb_f32(color),
+		params: [3.0, 0.0],
 	}
 }
 
@@ -3230,8 +4165,15 @@ fn build_layout(
 	use crate::cli::Size;
 	// A bad --shell / default_shell (typo'd binary, PTY failure) should read
 	// like the CLI parse errors, not a Rust panic + backtrace.
-	let spawn = |text: &mut TextCtx, shell: Option<Vec<String>>| {
-		PaneManager::new(text, proxy, area, shell, None).unwrap_or_else(|e| {
+	// The lowest-precedence directory: None whenever a shell launched us, so the
+	// directory it was in survives (see config::startup_dir).
+	let start = config::startup_dir();
+	// `--directory` is resolved once per place it was written, not once per pane,
+	// so a path that isn't there is reported once however many panes inherit it.
+	let win_dir = cli.win.style.directory.as_deref().and_then(config::cli_dir);
+	let spawn = |text: &mut TextCtx, shell: Option<Vec<String>>, dir: Option<PathBuf>| {
+		let dir = dir.or_else(|| start.clone());
+		PaneManager::new(text, proxy, area, shell, dir).unwrap_or_else(|e| {
 			eprintln!("{}: failed to start shell: {e}", config::APP_NAME);
 			std::process::exit(2);
 		})
@@ -3243,7 +4185,7 @@ fn build_layout(
 			.shell
 			.clone()
 			.or_else(config::default_shell_argv);
-		return vec![spawn(text, shell)];
+		return vec![spawn(text, shell, win_dir)];
 	}
 	let mut out = Vec::new();
 	for tab in &cli.tabs {
@@ -3255,7 +4197,20 @@ fn build_layout(
 			.or_else(|| tab.style.shell.clone())
 			.or_else(|| cli.win.style.shell.clone())
 			.or_else(config::default_shell_argv);
-		let mut pm = spawn(text, main_shell.clone());
+		// directories cascade the same way the shells do
+		let tab_dir = tab
+			.style
+			.directory
+			.as_deref()
+			.and_then(config::cli_dir)
+			.or_else(|| win_dir.clone());
+		let main_dir = tab.panes[0]
+			.style
+			.directory
+			.as_deref()
+			.and_then(config::cli_dir)
+			.or_else(|| tab_dir.clone());
+		let mut pm = spawn(text, main_shell.clone(), main_dir.clone());
 		let main_id = pm.focused;
 		let mut handles: HashMap<String, PaneId> = HashMap::new();
 		handles.insert("main".into(), main_id);
@@ -3265,6 +4220,8 @@ fn build_layout(
 		}
 		let mut shells: HashMap<PaneId, Option<Vec<String>>> = HashMap::new();
 		shells.insert(main_id, main_shell);
+		let mut dirs: HashMap<PaneId, Option<PathBuf>> = HashMap::new();
+		dirs.insert(main_id, main_dir);
 		let mut prev = main_id;
 
 		for pane_spec in &tab.panes[1..] {
@@ -3289,6 +4246,14 @@ fn build_layout(
 				.or_else(|| tab.style.shell.clone())
 				.or_else(|| cli.win.style.shell.clone())
 				.or_else(config::default_shell_argv);
+			// and its directory: explicit -> the pane it splits -> tab -> window
+			let pane_dir = pane_spec
+				.style
+				.directory
+				.as_deref()
+				.and_then(config::cli_dir)
+				.or_else(|| dirs.get(&target).cloned().flatten())
+				.or_else(|| tab_dir.clone());
 			let ratio = match pane_spec.size {
 				None => 0.5,
 				Some(Size::Percent(pct)) => pct / 100.0,
@@ -3309,7 +4274,7 @@ fn build_layout(
 				before,
 				ratio,
 				shell.clone(),
-				None,
+				pane_dir.clone().or_else(|| start.clone()),
 				area,
 				false,
 			) {
@@ -3317,6 +4282,7 @@ fn build_layout(
 					handles.insert(handle.clone(), new_id);
 				}
 				shells.insert(new_id, shell);
+				dirs.insert(new_id, pane_dir);
 				prev = new_id;
 			}
 		}
@@ -3376,11 +4342,11 @@ fn scissor(rect: Rect, sw: u32, sh: u32) -> (u32, u32, u32, u32) {
 	(x, y, right.saturating_sub(x), bottom.saturating_sub(y))
 }
 
-fn focus_ring(rect: Rect) -> [RectInstance; 4] {
+fn focus_ring(rect: Rect, scale: f32) -> [RectInstance; 4] {
 	// the calm one: the ring marks which pane is live, alongside the dialog's own
 	// sliders and revert arrows, rather than the single keyboard-focused control
 	let color = config::srgb_f32(config::settings().highlight);
-	let thickness = config::FOCUS_RING_PX;
+	let thickness = config::dip(config::FOCUS_RING_PX, scale);
 	[
 		RectInstance {
 			pos: [rect.x, rect.y],
@@ -3493,7 +4459,7 @@ impl ApplicationHandler<UserEvent> for App {
 
 		// Transparency only ever affects the terminal background (per-pixel), never
 		// the whole window - so there's no compositor whole-window-opacity fallback.
-		let scale = window.scale_factor() as f32;
+		let scale = config::display_scale(window.scale_factor());
 		let mut text = TextCtx::new(&gfx.device, &gfx.queue, gfx.format, scale);
 		let rects = RectRenderer::new(&gfx.device, gfx.format);
 		let scrim =
@@ -3520,7 +4486,7 @@ impl ApplicationHandler<UserEvent> for App {
 			settings.rows
 		});
 		let menu_bar_h = if menu_bar {
-			text.ui_line_h + MENU_BAR_VPAD
+			text.ui_line_h + text.dip(MENU_BAR_VPAD)
 		} else {
 			0.0
 		};
@@ -3554,7 +4520,7 @@ impl ApplicationHandler<UserEvent> for App {
 		};
 		let top = menu_bar_h
 			+ if n_tabs > 1 {
-				text.ui_line_h + TAB_BAR_VPAD
+				text.ui_line_h + text.dip(TAB_BAR_VPAD)
 			} else {
 				0.0
 			};
@@ -3596,12 +4562,17 @@ impl ApplicationHandler<UserEvent> for App {
 			bell_flash: 0.0,
 			size_tracked: false,
 			revealed: false,
+			shell_scan_at: None,
 			reveal_want,
 			reveal_deadline: Instant::now() + Duration::from_millis(400),
 			pending_size: None,
 			pending_size_at: Instant::now(),
 			menu: None,
 			tab_close_arm: None,
+			tab_hover: None,
+			tab_first: 0,
+			tab_followed: 0,
+			tab_tip: None,
 			decorated,
 			menu_bar,
 			bar_open: None,
@@ -3619,11 +4590,15 @@ impl ApplicationHandler<UserEvent> for App {
 			scrim_sig: None,
 			occluded: false,
 			was_hidden: false,
+			next_frame: None,
 			wp_count: 0,
 			wp_current: None,
 			wp_next: None,
 			wp_locked: false,
 			wp_seq: 0,
+			wp_answered: false,
+			wp_shown: false,
+			shell_scan_cap: None,
 			vram_next: Instant::now() + VRAM_CHECK_IVL,
 			vramloss_test: std::env::var_os("SILK_VRAMLOSS").is_some(),
 		});
@@ -3641,23 +4616,34 @@ impl ApplicationHandler<UserEvent> for App {
 	}
 
 	fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+		let _t = crate::perf::Span::new(&crate::perf::EVENT_NS);
 		let Some(state) = self.state.as_mut() else {
 			return;
 		};
 		match event {
 			UserEvent::WallpaperReady(loaded) => state.wallpaper_ready(*loaded),
+			UserEvent::ShellsReady(found) => {
+				fold_shells(&found);
+				if let Some(dialog) = self.dialog.as_mut() {
+					dialog.fold_shells(&found);
+				}
+			}
 			UserEvent::Wakeup(id) => {
+				crate::perf::bump(&crate::perf::WAKEUPS);
 				// output easing is triggered in Pane::build when the screen
 				// actually scrolls, not on every content change. Only the pane
 				// that produced output is marked; a background tab's flag just
 				// waits until its tab is shown (the switch forces a rebuild).
-				if let Some(p) = state.tabs.find_pane_mut(id) {
-					p.content_dirty = true;
-					p.note_output(); // copy-output: push the settle deadline out
-					// scrollback depth, sampled per read cycle - the only
-					// granularity that sees a `clear` truncate it
-					p.note_history();
-				}
+				crate::perf::timed(&crate::perf::NOTE_NS, || {
+					if let Some(p) = state.tabs.find_pane_mut(id) {
+						p.term.wake_handled();
+						p.content_dirty = true;
+						p.note_output(); // copy-output: push the settle deadline out
+						// scrollback depth, sampled per read cycle - the only
+						// granularity that sees a `clear` truncate it
+						p.note_history();
+					}
+				});
 			}
 			UserEvent::PtyWrite(id, bytes) => {
 				if let Some(p) = state.tabs.find_pane(id) {
@@ -3755,7 +4741,7 @@ impl ApplicationHandler<UserEvent> for App {
 			// cell metrics + chrome for the new factor; winit preserves the logical
 			// size, so a Resized event follows to reconfigure the surface + scrim.
 			WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-				state.rebuild_text(scale_factor as f32);
+				state.rebuild_text(config::display_scale(scale_factor));
 				state.dirty = true;
 			}
 
@@ -3802,13 +4788,18 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 
 			WindowEvent::CursorLeft { .. } => {
-				// no pointer, no hover underline
+				// no pointer, no hover underline and no tab tip
 				state.update_link_hover(None);
+				state.note_tab_hover(f32::MIN, f32::MIN);
 			}
 
 			WindowEvent::CursorMoved { position, .. } => {
 				state.mouse = (position.x as f32, position.y as f32);
 				let (x, y) = state.mouse;
+				// The tab bar is chrome and sits above every pane, so its tip is
+				// tracked before anything that could claim the pointer - including a
+				// mouse-tracking app, which never sees the bar at all.
+				state.note_tab_hover(x, y);
 				// A thumb drag in progress owns the pointer - before the mouse-report
 				// path, so a tracking app can't swallow the drag half way down.
 				if let Some(id) = state.bar_dragging {
@@ -3840,12 +4831,8 @@ impl ApplicationHandler<UserEvent> for App {
 						}
 					}
 				}
-				if let Some(menu) = &mut state.menu {
-					let hovered = menu.item_at(x, y);
-					if hovered != menu.hover {
-						menu.hover = hovered;
-						state.dirty = true;
-					}
+				if state.menu_hover(x, y) {
+					state.dirty = true;
 				}
 				if let Some(path) = state.resizing.clone() {
 					// drag a pane divider
@@ -3882,7 +4869,7 @@ impl ApplicationHandler<UserEvent> for App {
 				// the menu bar, and the click belongs to whatever is drawn on top -
 				// otherwise its first item is unreachable. Same reason the tab-bar
 				// branch below stands aside for an open menu.
-				let on_popup = state.menu.as_ref().is_some_and(|m| m.hit(x, y));
+				let on_popup = state.menu.as_ref().is_some_and(|m| m.hit_any(x, y));
 				// click on the menu bar: toggle/open the top-level menu's dropdown
 				if button == MouseButton::Left
 					&& state.menu_bar
@@ -3922,16 +4909,19 @@ impl ApplicationHandler<UserEvent> for App {
 					&& y >= tab_bar_y
 					&& y < tab_bar_y + state.tab_bar_h()
 				{
-					let tab_w =
-						(state.gfx.config.width as f32 / state.tabs.len() as f32).min(TAB_MAX_W);
-					let i = (x / tab_w).floor() as usize;
-					if i < state.tabs.len() {
+					let tab_w = state.tab_w();
+					if let Some(i) = state.tab_at(x) {
 						// press in the close-button column only ARMS the close (the
 						// button lights up); the close itself fires on release over
 						// the same box, so a slipped press can be dragged off to
 						// cancel - standard button feel. Elsewhere selects the tab.
-						let cb =
-							tab_close_box(i as f32 * tab_w, tab_w, tab_bar_y, state.tab_bar_h());
+						let cb = tab_close_box(
+							state.tab_x(i).unwrap_or(0.0),
+							tab_w,
+							tab_bar_y,
+							state.tab_bar_h(),
+							state.text.scale,
+						);
 						if x >= cb.x {
 							state.tab_close_arm = Some(i);
 						} else {
@@ -3981,21 +4971,20 @@ impl ApplicationHandler<UserEvent> for App {
 				}
 				match button {
 					MouseButton::Left => {
-						if let Some(menu) = state.menu.take() {
-							// click an item to act, click anywhere else to dismiss
-							state.bar_open = None;
-							if let Some(i) = menu.item_at(x, y) {
-								if let Entry::Item { action, .. } = &menu.entries[i] {
-									state.apply_menu(*action, menu.target, &self.proxy);
-								}
-							}
+						if state.menu.is_some() {
+							// click an item to act, a submenu row to open its popup,
+							// anywhere else to dismiss
+							state.menu_click(x, y, &self.proxy);
 							if state.quit {
 								event_loop.exit();
 								return;
 							}
 							state.dirty = true;
 						} else if let Some((path, _)) =
-							state.tabs.cur().divider_at(x, y, state.area())
+							state
+								.tabs
+								.cur()
+								.divider_at(x, y, state.area(), state.text.scale)
 						{
 							// grab a divider to resize instead of selecting
 							state.resizing = Some(path);
@@ -4146,11 +5135,15 @@ impl ApplicationHandler<UserEvent> for App {
 					let (x, y) = state.mouse;
 					let tab_bar_y = state.menubar_h();
 					if i < state.tabs.len() && y >= tab_bar_y && y < tab_bar_y + state.tab_bar_h() {
-						let tab_w = (state.gfx.config.width as f32 / state.tabs.len() as f32)
-							.min(TAB_MAX_W);
-						let cb =
-							tab_close_box(i as f32 * tab_w, tab_w, tab_bar_y, state.tab_bar_h());
-						if (x / tab_w).floor() as usize == i && x >= cb.x {
+						let tab_w = state.tab_w();
+						let cb = tab_close_box(
+							state.tab_x(i).unwrap_or(0.0),
+							tab_w,
+							tab_bar_y,
+							state.tab_bar_h(),
+							state.text.scale,
+						);
+						if state.tab_at(x) == Some(i) && x >= cb.x {
 							state.close_tab_at(i);
 						}
 					}
@@ -4205,6 +5198,18 @@ impl ApplicationHandler<UserEvent> for App {
 
 			WindowEvent::MouseWheel { delta, .. } => {
 				let (x, y) = state.mouse;
+				// The tab bar takes the wheel first, and turns its own page. With
+				// more tabs than fit, this is the only way to reach one past the
+				// edge with the mouse alone.
+				let bar_y = state.menubar_h();
+				if state.tab_bar_visible() && y >= bar_y && y < bar_y + state.tab_bar_h() {
+					let up = match delta {
+						MouseScrollDelta::LineDelta(_, dy) => dy > 0.0,
+						MouseScrollDelta::PixelDelta(pos) => pos.y > 0.0,
+					};
+					state.scroll_tab_strip(if up { 1.0 } else { -1.0 });
+					return;
+				}
 				let id = state
 					.tabs
 					.cur()
@@ -4290,47 +5295,78 @@ impl ApplicationHandler<UserEvent> for App {
 				state.dirty = true;
 			}
 
-			WindowEvent::KeyboardInput { event: key, .. } if key.state == ElementState::Pressed => {
+			WindowEvent::KeyboardInput {
+				event: key,
+				is_synthetic,
+				..
+			} => {
+				if env_flag("SILK_KEYDBG") {
+					eprintln!(
+						"[key] {:?} {:?} synthetic={is_synthetic} focused={} mods=[{}{}{}]",
+						key.logical_key,
+						key.state,
+						state.focused,
+						if state.mods.control_key() { "C" } else { "" },
+						if state.mods.alt_key() { "A" } else { "" },
+						if state.mods.shift_key() { "S" } else { "" },
+					);
+				}
+				// A replayed press is focus bookkeeping, and a release is the
+				// shell's business, not ours - neither is typing.
+				if !key_is_typed(key.state, is_synthetic) {
+					return;
+				}
+				// see IGNORE_KEYS_WHILE_UNFOCUSED
+				if IGNORE_KEYS_WHILE_UNFOCUSED && !state.focused {
+					return;
+				}
 				// An open menu (context menu / menu-bar dropdown) captures the
 				// navigation keys - they drive the menu, not the terminal pane.
 				if state.menu.is_some() {
+					// Every one of these drives the INNERMOST open popup - with a
+					// submenu standing open, that is the submenu.
 					match &key.logical_key {
 						Key::Named(NamedKey::Escape) => {
-							state.menu = None;
-							state.bar_open = None;
+							// back out one level at a time, the way a submenu is entered
+							if !state.close_submenu() {
+								state.menu = None;
+								state.bar_open = None;
+							}
 						}
 						Key::Named(NamedKey::ArrowDown) => {
-							if let Some(menu) = state.menu.as_mut() {
+							if let Some(menu) = state.menu_inner() {
 								menu.hover = menu.step(menu.hover, 1);
 							}
 						}
 						Key::Named(NamedKey::ArrowUp) => {
-							if let Some(menu) = state.menu.as_mut() {
+							if let Some(menu) = state.menu_inner() {
 								menu.hover = menu.step(menu.hover, -1);
 							}
 						}
-						// Left/Right cycle between menu-bar dropdowns (no-op for a
-						// right-click context menu, which isn't bar-anchored)
+						// Right enters a submenu and Left leaves one; where there is
+						// no submenu in the way they cycle between menu-bar dropdowns
+						// (a no-op for a right-click context menu, which isn't
+						// bar-anchored)
 						Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight) => {
-							if let Some(open_idx) = state.bar_open {
-								let n = MENU_BAR.len();
-								let next =
-									if matches!(key.logical_key, Key::Named(NamedKey::ArrowLeft)) {
+							let left = matches!(key.logical_key, Key::Named(NamedKey::ArrowLeft));
+							let enter = (!left).then(|| state.submenu_row()).flatten();
+							if let Some(row) = enter {
+								state.menu_activate(row, &self.proxy);
+							} else if !(left && state.close_submenu()) {
+								if let Some(open_idx) = state.bar_open {
+									let n = MENU_BAR.len();
+									let next = if left {
 										(open_idx + n - 1) % n
 									} else {
 										(open_idx + 1) % n
 									};
-								state.open_bar_menu(next);
+									state.open_bar_menu(next);
+								}
 							}
 						}
 						Key::Named(NamedKey::Enter) => {
-							if let Some(menu) = state.menu.take() {
-								state.bar_open = None;
-								if let Some(Entry::Item { action, .. }) =
-									menu.hover.map(|i| &menu.entries[i])
-								{
-									state.apply_menu(*action, menu.target, &self.proxy);
-								}
+							if let Some(row) = state.menu_inner().and_then(|menu| menu.hover) {
+								state.menu_activate(row, &self.proxy);
 								if state.quit {
 									event_loop.exit();
 									return;
@@ -4343,22 +5379,22 @@ impl ApplicationHandler<UserEvent> for App {
 							let ch = typed.chars().next().map(|c| c.to_ascii_lowercase());
 							let hit = ch.and_then(|ch| {
 								state.menu.as_ref().and_then(|menu| {
-									menu.entries.iter().position(|entry| {
-										matches!(entry, Entry::Item { label, accel: Some(pos), .. }
-											if label[*pos..].chars().next().map(|c| c.to_ascii_lowercase()) == Some(ch))
+									let chain = menu.chain();
+									chain[chain.len() - 1].entries.iter().position(|entry| {
+										entry_accel(entry).is_some_and(|(label, pos)| {
+											label[pos..]
+												.chars()
+												.next()
+												.map(|c| c.to_ascii_lowercase()) == Some(ch)
+										})
 									})
 								})
 							});
-							if let Some(i) = hit {
-								if let Some(menu) = state.menu.take() {
-									state.bar_open = None;
-									if let Entry::Item { action, .. } = &menu.entries[i] {
-										state.apply_menu(*action, menu.target, &self.proxy);
-									}
-									if state.quit {
-										event_loop.exit();
-										return;
-									}
+							if let Some(row) = hit {
+								state.menu_activate(row, &self.proxy);
+								if state.quit {
+									event_loop.exit();
+									return;
 								}
 							}
 						}
@@ -4515,9 +5551,12 @@ impl ApplicationHandler<UserEvent> for App {
 		if let Some(state) = self.state.as_mut() {
 			state.flush_window_size(true);
 		}
+		crate::perf::report();
 	}
 
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+		crate::perf::bump(&crate::perf::PASSES);
+		let _t = crate::perf::Span::new(&crate::perf::PASS_NS);
 		// cicd profiler: in profile mode run for SILK_PROFILE_SECS then exit, so
 		// main can dump the flamegraph (the workload runs in the startup pane).
 		#[cfg(feature = "profiling")]
@@ -4536,6 +5575,24 @@ impl ApplicationHandler<UserEvent> for App {
 		// so building it can't slow the path to the first frame. Idempotent.
 		if WARM_DIALOG_GPU && self.state.as_ref().is_some_and(|state| state.revealed) {
 			self.gpu_warm.start();
+		}
+
+		// Look for installed shells, once, a little after the window is genuinely
+		// on screen. A PATH scan stats every directory the user has on it and the
+		// Windows side reads the registry, so it runs on its own thread and lands
+		// back as UserEvent::ShellsReady.
+		if let Some(state) = self.state.as_mut() {
+			if state.shell_scan_at.is_some_and(|at| Instant::now() >= at) {
+				state.shell_scan_at = None;
+				crate::shells::spawn(&self.proxy);
+			}
+		}
+
+		// Raise a rested pointer's tab tip, and keep an open one's clock ticking.
+		if let Some(state) = self.state.as_mut() {
+			if state.update_tab_tip() {
+				state.dirty = true;
+			}
 		}
 
 		// Open the About window if requested (window creation needs the event loop,
@@ -4755,22 +5812,32 @@ impl ApplicationHandler<UserEvent> for App {
 			// cursor-animation frame lets every pane reuse its cached frame).
 			let force = state.dirty || bell_anim;
 			state.dirty = false;
-			let animating = state.render(force);
+			crate::perf::bump(&crate::perf::FRAMES);
+			let animating = crate::perf::timed(&crate::perf::RENDER_NS, || state.render(force));
 			// a pane whose term was locked kept its content_dirty (rebuild was
 			// skipped) - retry shortly instead of waiting for the next event,
 			// or the last wakeup of a burst could leave a stale frame up
 			let retry = state.tabs.cur().panes.values().any(|p| p.content_dirty);
+			let pace = max_fps().map(|fps| Duration::from_secs_f64(1.0 / fps));
 			if animating && (scroll_anim || bell_anim) {
 				// scroll (the flagship smooth feature) and the bell flash render
 				// at full rate; fresh content needs no Poll - each PTY read
 				// batch arrives as its own Wakeup
-				ControlFlow::Poll
+				match pace {
+					Some(ivl) => pace_frame(&mut state.next_frame, ivl),
+					None => ControlFlow::Poll,
+				}
 			} else if retry {
 				ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(5))
 			} else if animating {
 				// a lone idle cursor blink is capped to ~30fps so it isn't
-				// re-rendering every frame just to pulse
-				ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(33))
+				// re-rendering every frame just to pulse - but a pinned rate
+				// covers the cursor too, or a scene where the cursor is the only
+				// thing moving samples off the grid the rest of the run is on
+				match pace {
+					Some(ivl) => pace_frame(&mut state.next_frame, ivl),
+					None => ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(33)),
+				}
 			} else {
 				ControlFlow::Wait
 			}
@@ -4812,6 +5879,20 @@ impl ApplicationHandler<UserEvent> for App {
 		};
 		// wake to rotate the wallpaper when its interval is up, even when idle
 		let flow = match (flow, state.wp_next) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
+		// wake when the background shell scan comes due, even on an idle window
+		let flow = match (flow, state.shell_scan_at) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
+		// wake to raise a tab tip whose pointer has rested, and to keep an open
+		// one current - the pointer sitting still generates no events of its own,
+		// so nothing else would bring the window back
+		let flow = match (flow, state.tab_tip_wake()) {
 			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
@@ -4878,7 +5959,296 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-	use super::accel_at;
+	use super::{
+		ContextMenu, Entry, MenuAction, TAB_CLOSE_M, accel_at, accel_clash, focus_ring,
+		key_is_typed, menu_metrics, mia, msub, mta, pace_frame, tab_close_box, tab_command_line,
+		tab_title_w,
+	};
+	use crate::config;
+	use std::time::{Duration, Instant};
+	use winit::event::ElementState;
+
+	// The chrome shares a coordinate space with the terminal grid, so nothing
+	// converts it at a boundary the way the Settings dialog does - every piece
+	// scales at its own use site, and a piece that misses out is exactly the
+	// defect this pass fixed (chrome thinning out as the display's DPI rises).
+	// So: the same geometry at 2x must come out at twice the size, everywhere.
+	#[test]
+	fn the_chrome_doubles_when_the_display_does() {
+		// the tab's close button, measured against a bar that has itself doubled
+		let one = tab_close_box(0.0, 200.0, 0.0, 30.0, 1.0);
+		let two = tab_close_box(0.0, 400.0, 0.0, 60.0, 2.0);
+		assert_eq!(two.w, one.w * 2.0, "close button width");
+		assert_eq!(two.h, one.h * 2.0, "close button height");
+		assert_eq!(two.y, one.y * 2.0, "close button top margin");
+		// its right margin, which is what a raw-px inset would have left frozen
+		assert_eq!(400.0 - (two.x + two.w), (200.0 - (one.x + one.w)) * 2.0);
+		assert_eq!(one.y, TAB_CLOSE_M, "1x must still be the DIP value itself");
+
+		// the live pane's focus ring
+		let rect = super::Rect {
+			x: 0.0,
+			y: 0.0,
+			w: 100.0,
+			h: 100.0,
+		};
+		let thin = focus_ring(rect, 1.0)[0].size[1];
+		let thick = focus_ring(rect, 2.0)[0].size[1];
+		assert_eq!(thin, config::FOCUS_RING_PX);
+		assert_eq!(thick, thin * 2.0);
+	}
+
+	// Build a popup by hand, the way the geometry tests need it - no window, no
+	// text context, just the numbers `row_top`/`item_at`/`step` are made of.
+	// The width a title is FITTED to and the width the buffer is SHAPED at are
+	// the same number by construction - shorten a path to a width the tab does not
+	// then give it and the last component is clipped anyway, which is the whole
+	// thing the shortening exists to avoid.
+	#[test]
+	fn a_title_is_fitted_to_the_width_it_is_actually_given() {
+		for scale in [1.0, 1.5, 2.0] {
+			for tab_w in [60.0, 140.0, 300.0] {
+				let title_w = tab_title_w(tab_w, scale);
+				let close = tab_close_box(0.0, tab_w, 0.0, 30.0, scale);
+				assert!(title_w > 0.0, "no room at all for a title");
+				assert!(
+					title_w <= tab_w,
+					"a title wider than its own tab: {title_w} in {tab_w}"
+				);
+				// and it stops short of the close button rather than running under it
+				assert!(
+					title_w <= close.x || tab_w < config::dip(40.0, scale),
+					"title {title_w} runs under the close box at {}",
+					close.x
+				);
+			}
+		}
+	}
+
+	// A tab may only name the shell it can SEE. A pane resolves its own command
+	// at spawn, so an unresolved one means nothing was switched on and the engine
+	// chose for itself - and a guess from the list is exactly what had a pane
+	// running PowerShell labelled Command Prompt.
+	#[test]
+	fn a_tab_names_only_the_shell_it_can_actually_see() {
+		assert_eq!(tab_command_line(None), "");
+		// An argument holding a space survives the round trip back into one line,
+		// so the name lookup splits it the same way the launch did.
+		let argv = vec!["C:/Program Files/x.exe".to_string(), "a b".to_string()];
+		assert_eq!(
+			tab_command_line(Some(&argv)),
+			"\"C:/Program Files/x.exe\" \"a b\""
+		);
+	}
+
+	fn test_menu(x: f32, w: f32, entries: Vec<Entry>) -> ContextMenu {
+		ContextMenu {
+			x,
+			y: 0.0,
+			w,
+			item_h: 20.0,
+			pad_y: 6.0,
+			sep_h: 9.0,
+			target: 0,
+			entries,
+			hover: None,
+			sub: None,
+		}
+	}
+
+	fn test_item(label: &str) -> Entry {
+		Entry::Item {
+			label: label.into(),
+			action: MenuAction::Copy,
+			check: None,
+			accel: None,
+		}
+	}
+
+	// A letter picks the first row carrying it, so a menu that spends one twice
+	// does not read as ambiguous - it quietly makes the later row unreachable.
+	// Every menu is checked for this where it is built.
+	#[test]
+	fn one_menu_never_spends_an_accelerator_twice() {
+		let rows = vec![
+			mia('C', "Copy", MenuAction::Copy),
+			msub(Some('S'), "New Tab with Shell", vec![]),
+			mta('w', false, "Hide window frame", MenuAction::ToggleFrame),
+		];
+		assert_eq!(accel_clash(&rows), None);
+		// 'w' again, which is what the right-click menu would have done had the
+		// submenu row spelled its accelerator the way the Tabs menu's does
+		let mut clashing = rows;
+		clashing.insert(1, msub(Some('w'), "New Tab with Shell", vec![]));
+		assert_eq!(accel_clash(&clashing), Some('w'));
+	}
+
+	// A submenu row is an ordinary row to the pointer and to the keyboard - only
+	// what ACTIVATING it does is different. Treating it as a separator instead
+	// (which is what the old two-arm matches did) leaves it unhoverable and
+	// unreachable, i.e. an item nothing can ever pick.
+	#[test]
+	fn a_submenu_row_hit_tests_and_steps_like_an_item() {
+		let menu = test_menu(
+			0.0,
+			200.0,
+			vec![
+				test_item("One"),
+				msub(Some('w'), "With Shell", vec![test_item("Bash")]),
+				Entry::Sep,
+				test_item("Two"),
+			],
+		);
+		let mid = |row: usize| menu.row_top(row) + menu.item_h / 2.0;
+		assert_eq!(menu.item_at(10.0, mid(1)), Some(1), "the row is hoverable");
+		let sep_mid = menu.row_top(2) + menu.sep_h / 2.0;
+		assert_eq!(
+			menu.item_at(10.0, sep_mid),
+			None,
+			"a separator still is not"
+		);
+		// down from the first row lands on it, and carries on past it
+		assert_eq!(menu.step(Some(0), 1), Some(1));
+		assert_eq!(menu.step(Some(1), 1), Some(3), "the separator is skipped");
+		assert_eq!(menu.step(Some(3), -1), Some(1));
+	}
+
+	// The submenu is placed clear of its parent's right edge on purpose: that is
+	// the whole of what keeps the pointer rule simple, since "inside the submenu"
+	// and "on a parent row" can then never both be true. A submenu that overlaps
+	// would close itself the moment the pointer entered it.
+	#[test]
+	fn a_submenu_stands_clear_of_the_rows_it_came_from() {
+		let parent = test_menu(0.0, 200.0, vec![test_item("One"), test_item("Two")]);
+		let sub = test_menu(200.0, 120.0, vec![test_item("Bash"), test_item("Zsh")]);
+		for row in 0..2 {
+			let y = sub.row_top(row) + sub.item_h / 2.0;
+			let x = sub.x + sub.w / 2.0;
+			assert!(sub.item_at(x, y).is_some(), "the submenu owns its own rows");
+			assert!(
+				parent.item_at(x, y).is_none(),
+				"and the parent claims none of them"
+			);
+		}
+	}
+
+	// A click inside an open submenu is a click on the menu, so the chrome that
+	// stands aside for a popup (the menu bar, the tab bar) has to stand aside for
+	// it too - otherwise a submenu overlapping either band loses its clicks to it.
+	#[test]
+	fn a_click_in_the_submenu_still_counts_as_a_click_on_the_menu() {
+		let mut parent = test_menu(0.0, 200.0, vec![msub(Some('w'), "With Shell", vec![])]);
+		let sub = test_menu(200.0, 120.0, vec![test_item("Bash")]);
+		let (x, y) = (sub.x + 10.0, sub.row_top(0) + 2.0);
+		assert!(!parent.hit(x, y));
+		assert!(!parent.hit_any(x, y), "nothing is open yet");
+		parent.sub = Some(Box::new(sub));
+		assert!(parent.hit_any(x, y));
+		assert_eq!(parent.chain().len(), 2);
+	}
+
+	// A dropdown resolves its own padding and separator height from DIP once, at
+	// the moment it is built, so the draw and the two hit tests read one set of
+	// numbers. Whatever the display does to them, `item_at` and `row_top` have to
+	// keep agreeing - a menu whose rows are drawn one place and clicked another
+	// is the failure this guards.
+	#[test]
+	fn a_dropdown_scales_whole_and_its_rows_still_hit_test() {
+		let menu_at = |scale: f32| {
+			let (pad_y, sep_h) = menu_metrics(scale);
+			ContextMenu {
+				x: 0.0,
+				y: 0.0,
+				w: config::dip(200.0, scale),
+				item_h: config::dip(20.0, scale),
+				pad_y,
+				sep_h,
+				target: 0,
+				entries: vec![
+					Entry::Item {
+						label: "One".into(),
+						action: MenuAction::Copy,
+						check: None,
+						accel: None,
+					},
+					Entry::Sep,
+					Entry::Item {
+						label: "Two".into(),
+						action: MenuAction::Paste,
+						check: None,
+						accel: None,
+					},
+				],
+				hover: None,
+				sub: None,
+			}
+		};
+		// the padding and the separator row scale, which is what makes the whole
+		// popup scale - height() and row_top() are built out of them
+		assert_eq!(
+			menu_metrics(1.0),
+			(config::MENU_ITEM_PAD_Y, config::MENU_SEP_H)
+		);
+		assert_eq!(
+			menu_metrics(2.0),
+			(config::MENU_ITEM_PAD_Y * 2.0, config::MENU_SEP_H * 2.0)
+		);
+		let one = menu_at(1.0);
+		let two = menu_at(2.0);
+		assert_eq!(two.height(), one.height() * 2.0);
+		assert_eq!(two.row_top(2), one.row_top(2) * 2.0);
+		// every item is still picked at the row it is drawn on, at either scale
+		for menu in [&one, &two] {
+			for i in [0usize, 2] {
+				let mid = menu.row_top(i) + menu.item_h / 2.0;
+				assert_eq!(menu.item_at(menu.w / 2.0, mid), Some(i));
+			}
+			// the separator's own band belongs to no item
+			assert_eq!(menu.item_at(menu.w / 2.0, menu.row_top(1) + 1.0), None);
+			// and a click just past the last row is off the menu entirely
+			assert!(!menu.hit(menu.w / 2.0, menu.height() + 1.0));
+		}
+	}
+
+	// A WM hotkey grab (Ctrl+Alt+Arrow) brackets its chord with a focus change,
+	// and winit replays every held key as a synthetic press on the way back in -
+	// before it re-reads the modifiers. Taking that replay as typing is what put
+	// a bare arrow into the shell, so only a real press may count.
+	#[test]
+	fn a_replayed_key_is_not_typing() {
+		assert!(key_is_typed(ElementState::Pressed, false));
+		assert!(!key_is_typed(ElementState::Pressed, true));
+		assert!(!key_is_typed(ElementState::Released, false));
+		assert!(!key_is_typed(ElementState::Released, true));
+	}
+
+	// The demo capture samples on a fixed clock, so a pinned rate that drifts is
+	// worse than none: it would wander off the sampling grid instead of sitting
+	// on it. Each frame's deadline therefore has to come from the LAST DEADLINE,
+	// never from "now" - which is the whole of what this pins.
+	#[test]
+	fn a_pinned_frame_rate_does_not_drift() {
+		let ivl = Duration::from_millis(20);
+		let mut next = None;
+		let start = Instant::now();
+		pace_frame(&mut next, ivl);
+		let first = next.unwrap();
+		// a frame that takes most of its budget must not push the next one out
+		for step in 1..=10u32 {
+			pace_frame(&mut next, ivl);
+			assert_eq!(next.unwrap(), first + ivl * step, "drifted at frame {step}");
+		}
+		assert!(next.unwrap() >= start + ivl * 11);
+
+		// falling behind resyncs to now rather than firing a catch-up burst
+		let behind = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
+		let mut late = Some(behind);
+		pace_frame(&mut late, ivl);
+		assert!(
+			late.unwrap() > Instant::now(),
+			"a stale deadline must be dropped"
+		);
+	}
 
 	#[test]
 	fn accel_prefers_exact_case_then_falls_back() {

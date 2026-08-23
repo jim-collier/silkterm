@@ -29,6 +29,8 @@ Ingest and keep-up throughput - "why does it bog down when something dumps text"
 
 A terminal that never answers cannot be timed this way. `termbench.py` records that as `synced: false` and refuses to publish the row, so an unbarriered figure can never reach the table - it would be timing a timeout. Hyper is the standing example.
 
+**On Windows the barrier is answered by ConPTY, not by the terminal, and that changes what a Windows figure means.** Measured 20260818: the query never appears in the stream the terminal receives, and the child gets back a DEC-level `ESC[?61;...c` - conhost's own reply - where the terminal would have said `ESC[?6c`. So a Windows number times the console host consuming the payload, with the terminal in the loop only through the pipe between them. It bounds the whole chain honestly enough, but it does not isolate the terminal, and the ceiling it imposes is low: a consumer that reads the bytes and discards them measures 12.45 MB/s of ASCII on the VM, against 12.44 for a real terminal. Two Windows terminals within a percent of each other are both simply at that ceiling.
+
 ### The rig is not neutral - this is the whole reason it exists
 
 Measured 20260730, same terminal, same grid, three rigs:
@@ -120,10 +122,59 @@ The grid is checked rather than trusted: at the wrong size each half says so and
 
 `--label` is the table's row name, and both halves need it - one writes the speed cells, the other File+deps and Mem. Without it the numbers are printed and nothing is written, since putting a figure in the wrong row is worse than leaving the row empty.
 
-The three Windows-only rows have to be measured this way or not at all. Two of them need care:
+**Never trust what a terminal was asked for.** Windows Terminal's `--size` is not the grid it gives: asked for 100x30 it produces 100x33, and asked for 160x42, 160x47. The offset is not constant either, so there is no correction to apply - `--size 100,27` happens to give 100x30 on this machine and may not on another. The grid check is what makes this safe rather than silent, and it is the only thing that does.
 
-- **conhost** is not an ancestor of the shell - it is attached to it as a child - so the console window is asked which process owns it. That also picks the right thing under Windows Terminal, where a console host sits between the shell and the window process that is the real terminal.
-- **MobaXterm** runs its local shell under Cygwin, so the ancestor walk finds it normally.
+**Four things had to be fixed before any of this worked on Windows at all** (20260818), all of which produced a plausible wrong answer or a flat refusal rather than an error:
+
+- **The grid query never reached a screen buffer.** It asked stdout, then stderr, then stdin, but the wrapper reads this script through a pipe with stderr folded into it, and stdin is an input handle, which no grid query answers on Windows. All three failed however the window was sized, so the size half refused every run. It asks `CONOUT$` directly now, which is the screen buffer itself and answers whatever the streams are pointed at.
+- **The row writer could not read the README.** `read_text` defaults to the locale codec, which is cp1252 here, and the table's own characters are not in it. Had the read succeeded the write would have been worse, silently re-encoding the whole file.
+- **The wrapper's own interpreter was billed to the terminal.** Only the classifier's own subtree was dropped, and the wrapper is its parent, so about 19 MiB of Python went into every `--here` figure. Interpreters above this process are dropped too now; the walk stops at the shell, which the terminal is entitled to.
+- **Injected libraries were billed to the terminal.** This machine has MacType hooked into every process, and 1.6 MiB of it landed in conhost's 2.6 MiB File+deps. This is not a local quirk - security shims do the same thing on most Windows machines - so a row measured anywhere would carry somebody's. A library that none of the tree's own binaries import, which is also mapped into this tool's process, is now counted for nobody and reported on its own line, since a silent exclusion reads as a wrong number.
+
+The three Windows-only rows have to be measured this way or not at all. Each needs care:
+
+- **conhost** is not an ancestor of the shell - it is attached to it as a child - so the console window is asked which process owns it. On Windows 11 that query answers with the console *program* rather than the host, so the host is looked for beside it: a child where the system attached one, a parent where it was launched explicitly. Only adjacent, because walking further leaves the session and lands on whatever started it. Measured that way it comes out as the host plus the one program running in it, which is the same terminal-plus-shell pair every Linux row is.
+- **Windows Terminal can only be measured in a process of its own, and that means a process nothing else has ever run in.** Every window shares one - `wt.exe` joins an existing one rather than starting another, and `-w new` only means a new window inside it - so check that none is running before launching, not that the window looks empty. An attempt that took in the user's own session (20260818) resolved to nine processes and reported 106 MiB of File+deps and 994 MiB of Mem, nearly all of it PowerShell's .NET runtime and unrelated tools that merely lived in the same terminal. The subtler half is that emptying it is not enough: a window opened in a process that had hosted an earlier tab read 96.7 MiB against 93.0 for a fresh one, with the earlier tab's processes long gone. The first figure published for the row was that one, and it was corrected the same day.
+	- Measured clean (20260818): File+deps 14.2 MiB, Mem 93.0, five runs spanning 92.9 to 93.1. Three processes - the window, the console host it starts, and the one shell in it.
+	- **Give it `cmd.exe`, the way the Linux rows are given `dash`.** The shell is inside the figure, so a PowerShell session would publish .NET's runtime as the terminal's memory.
+	- Its File size cell stays the vendor's install figure. The executable alone is 0.6 MiB and everything it is made of sits in its own DLLs beside it, which is what File+deps counts - so a measured 0.6 in that column would read as a 0.6 MiB install, and the tail of the table is ordered by what installing costs.
+	- One dependency is the machine's rather than the terminal's design: it maps Visual Studio's setup-discovery DLL (0.95 MiB) to enumerate developer-prompt profiles, so a box without Visual Studio would come out that much lighter.
+- **MobaXterm** runs its local shell under Cygwin, so the ancestor walk finds it normally - but neither half can be run inside it as things stand. No Windows program gets a tty through that shell: `isatty` is false on both streams and the grid call fails, even though `stty` reports the size correctly. Its `python3` is the Windows one on `PATH`, so there is no Cygwin interpreter to fall back to, and both halves need a real terminal on stdin and stdout. Installing a Cygwin python into the plugin environment would be the way in.
+
+A first pass ran on a laptop and published nothing; the figures and the reasons are in `ancillary-notes.fods`. Three things from it are worth knowing before the next attempt:
+
+- **A terminal measured on non-comparable hardware cannot be rescued by calibrating it.** The three terminals that run on both platforms all landed within 1.5% of each other there, while spanning 77.4 to 86.9 MB/s on the reference rig - which says they were all pinned at the console pipe rather than by the machine, so the ratio measures the platform, not the hardware. There is no correction to derive from that.
+- **No single factor serves the whole table anyway.** On one machine the console host read 13.6 MB/s of ASCII and Windows Terminal 93.1. They are limited by different things, so a multiplier fitted to one is wrong for the other.
+- **Windows Terminal's 2-byte scene does not settle.** 12.67 to 31.08 MB/s inside a single run on an idle machine, and no better over four runs, against the 1 to 4% the published rows hold to.
+
+A second pass then ran on exactly the machine that was supposed to fix it - Windows in a VM on the b23 host with a discrete GPU passed through - and still published nothing. **The hardware was never the blocker.** Its figures and reasoning are in `ancillary-notes.fods` under the three `VM` sheets; four things from it decide whether a third attempt is worth making:
+
+- **A single correction factor is dead, and this time by direct measurement rather than by inference.** On the laptop everything clustered, so the ratio said more about the console pipe than the machine. On the VM the cross-platform terminals do not cluster and their ratios genuinely disagree - SilkTerm plain 6.98x against its own Linux row, WezTerm 2.93x against its own. Two terminals differing by more than a factor of two is proof that no one multiplier serves the table.
+- **Windows Terminal beats every published Linux row** (112.4 MB/s ascii against the fastest Linux row's 100.2), because it hosts the console itself rather than reading a relayed one. Sorting it into the main table would put it first overall on figures from another platform and another transport.
+- **The fast terminals are not being limited by themselves.** SilkTerm plain and +candy land 0.9% apart on Windows against 12% apart on Linux - the eye candy is rendering cost, so switching all of it off should move the figure and does not. A number produced under that condition is not the terminal's speed and must not be published as one.
+- **Alacritty cannot be benchmarked on Windows at all.** Stock 0.15.1 deadlocks partway through (see "What the Windows accounting does differently" below), so the one terminal that would anchor the whole comparison produces no row.
+
+A third pass (20260818) replaced the barrier instead of arguing about it, and what it moves is the meaning of the Windows figures rather than the figures themselves.
+
+- **Windows Terminal's bundled console host is byte-identical to the one already tested.** Its `OpenConsole.exe` and the NuGet package's are the same 1,066,296 bytes and the same sha256 `b7fd936c2668b87b9ecf7b3366dc6568afc1c6f981874cba3e955a1c35cf8160`, so the host binary was never a variable and no version of it explains anything.
+- **A barrier-free instrument removes ConPTY from the timing question entirely.** The child writes 32 MiB of grid-width ASCII to `CONOUT$` in 1 MiB blocks and the clock stops when the last `WriteFile` returns, so nothing depends on who answers a query. At 160x42 on the Windows box: `conhost` 3.37 MB/s, SilkTerm on the system pseudoconsole 12.11 to 12.44 over three runs, SilkTerm with `conpty.dll` and `OpenConsole.exe` beside the executable 84.5 to 85.8, Windows Terminal 215 to 231.
+- **That spread is bytes accepted, not bytes consumed, and sampling past the last write is what separates them.** Bundling the console host returns SilkTerm's writes at 0.40 s but it keeps working to about 2.7 s, which is where the system path finishes anyway - the buffer moves the back-pressure off the writer without making the terminal faster. Windows Terminal settles by about 1.3 s having spent about 0.95 s of CPU.
+- **So the end-to-end gap is around 2x, not the 10x the writer-side figures read as.** Both the 112 MB/s from the VM pass and the 231 here are acceptance rates. This does not make a Windows row publishable - it is one more way the same number can mean two things - but a report of an order-of-magnitude deficit is measuring the buffer.
+
+A fourth pass (20260818) took the 2x apart, by giving the same 32 MiB of output to four different consumers on the one box (160x42 ASCII, system pseudoconsole).
+
+- **The console host's delivery ceiling is about 22 MB/s and nothing reaches past it.** Bytes read from the pipe and discarded take 1.45 s. Pipe buffers from the default to 16 MB, reads from 64 KB to 1 MB, and Microsoft's redistributable host beside the executable all land inside the noise - so a consumer measured at 12 MB/s is not being throttled by its own parser, and Windows Terminal's ~1.3 s is the ceiling rather than a superior terminal.
+- **Parsing is not the problem and never was.** One thread reading and parsing the same stream into a full grid takes 1.94 s, of which the parser itself is 0.4-0.55 s (66 MB/s on the captured bytes with no pipe involved).
+- **The engine's Windows plumbing costs about half a second more than doing both jobs on one thread.** Its tty plus event loop, with no window and no renderer, takes 2.45 s at 1.9 s of CPU. The consumer is not what limits it: a variant that waits for the pipe rather than going back to the poller cut read cycles from 47,000 to 519 and changed the wall clock by nothing. The producer side reads 188 bytes per `ReadFile`, 180,000 times, because a dedicated reader thread is always first in line at an empty pipe.
+- **What was ours was the notification traffic, and it is fixed.** Each read cycle became a window event - about 20,000 of them - and delivering them cost 2.5 s of window-thread CPU in the operating system's message queue, more than parsing and drawing together. One outstanding notice per pane now stands until the window takes it: process CPU 6.96 s -> 4.76 s and window thread 3.3 s -> 1.5 s, with throughput unchanged over four alternating pairs.
+- **So the remaining gap is about a second per 32 MiB and it is in the engine's pipe design, not in the terminal.** Closing it means forking that, which is a decision rather than a tweak.
+- **The README says this now.** Note 9 used to promise Windows speed rows once they were calibrated; it states the finding instead - no Windows rows, why the numbers reported anywhere cannot be read as a terminal's speed, and the end-to-end 1.3 s against 2.5 s with its parts named. Keep the two in step: a figure changed here has to change there.
+
+What was still worth doing on Windows is the **size and memory half**, which needs no calibration and is untouched by any of this. It is done: both measurable rows are published.
+
+**Copy `termbench-plain.shcl` somewhere temporary before pointing SilkTerm at it.** `--config` is a file the loader maintains, not just reads: it backfills every missing key and rewrites the layout, so one plain-row run turned the 13-line override list into 461 lines with the header comment moved inside a block. It still measures correctly, and the file no longer means what it says.
+
+Two traps in driving a terminal from outside, both of which produce a plausible wrong answer rather than an error. Windows Terminal keeps every window in one long-lived process, quite possibly one someone is sitting in, and `wt.exe` joins an existing window unless given `-w new` - so a run can end up measuring inside somebody's session, and a name-based kill would take it out. And the size collector asks stdout, then stderr, then stdin for the grid, of which only a screen-buffer handle answers on Windows: capture both streams and it sees no terminal at all and refuses.
 
 ### What the Windows accounting does differently
 
@@ -133,9 +184,11 @@ One difference is real and deliberate. "Beyond a base OS" means only the C runti
 
 A managed assembly contributes no closure edges, because the runtime resolves its references rather than the loader. That can only ever leave a driver-side library billed to the terminal, never the reverse, so it is the safe direction to be wrong in.
 
-Windows figures are **not** directly comparable with the Linux rows, because the Windows host is a virtual machine on the same box with half the cores, less memory, virtualization overhead and a lower-specification passed-through GPU.
+Windows **size and memory** figures are comparable, and both rows that can be measured at all are published (20260818): `conhost.exe` at File+deps 1.0 MiB and Mem 21.1, five runs spanning 21.1 to 21.3, and Windows Terminal at 14.2 and 93.0, five runs spanning 92.9 to 93.1. conhost's File+deps is the executable alone because every library it needs is under System32, which is the base-OS exclusion doing exactly what it should; Windows Terminal's is almost all its own DLLs, which sit beside it rather than in the system.
 
-Do not correct that with a guessed multiplier. Calibrate it: SilkTerm, Alacritty, WezTerm and kitty all run on both platforms, so measuring those four on the VM gives a measured host-to-guest ratio, separately for parser-bound and GPU-sensitive terminals. A guessed factor cannot be validated against Windows-only terminals like conhost or MobaXterm, because those will only ever have been run on one rig.
+Windows **speed** figures are not comparable with the Linux rows, and calibrating them is no longer an open idea - it was tried on the VM and it failed. Do not re-derive a multiplier: the terminals that run on both platforms disagree about it by more than a factor of two, and the one that would anchor the comparison cannot be run at all. The size and memory half is unaffected and remains publishable on its own terms.
+
+**Alacritty deadlocks on Windows under sustained output, and that is a shipped defect rather than a rig problem.** The pty backend's reader thread arms its waker only when the pipe came back empty, so once the staging buffer is full the notice that would drain it can never be sent: the reader waits for room, the event loop waits for a notice, and both sit at zero CPU. Measured on the VM, stock 0.15.1 ran about 17 s and then held at exactly 0.00 s of CPU delta across 24 s. SilkTerm carries a two-line fix (alacritty/alacritty#9026, still open upstream) and completes every scene on the same box, which is the cleanest demonstration of the fix there is - one build patched, one not, same payloads, same machine.
 
 ## Files
 
@@ -146,9 +199,10 @@ Do not correct that with a guessed multiplier. Calibrate it: SilkTerm, Alacritty
 | `bench-common.bash` | output helpers and pid-safe teardown, sourced by both rigs |
 | `termbench-run.bash` | speed rig: compositor bring-up, terminal launch, grid fit, teardown |
 | `termbench-scene.sh` | runs inside the terminal; reports its grid, then runs the benchmark |
-| `termbench-plain.toml` | SilkTerm with every optional effect off, for the "plain" rows |
+| `termbench-plain.shcl` | SilkTerm with every optional effect off, for the "plain" rows |
 | `sizebench-run.bash` | size rig: display bring-up, launch, grid sizing, process-tree collection |
 | `sizebench-classify.py` | the closure classifier and the accounting, plus a collector for each platform |
 | `showdown-readme.py` | writes the File+deps and Mem cells for one row |
+| `ancillary-notes.fods` | measurements taken but not published, and why they could not be |
 
 The entry point is Python and the rigs are shell, which is the right split: the rigs drive a Linux display and are Linux-only by nature, while the entry point has to run wherever a terminal does. It is deliberately one file rather than a shell copy plus a PowerShell copy. Two copies of one program drift, and a fix then lands in whichever copy was to hand rather than the one being run - which has happened here before, to `n8git_backup-and-publish`.

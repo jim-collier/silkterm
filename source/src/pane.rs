@@ -79,6 +79,17 @@ const APP_SCROLL_MAX: usize = 24; // max per-step shift the slide detector accep
 const SLIDE_TOP_BAND_APPS: bool = true;
 
 const PROMPT_ABOVE_MAX: usize = 4; // rows above the prompt considered for multi-line-prompt learning
+// Skeleton segments a row must carry before it can be learned as a prompt row.
+// The skeleton collapses every run of alphanumerics to one 'a' - that is what
+// lets a prompt's clock and cwd change without breaking the match - so EVERY
+// one-word row hashes alike. Two commands in a row that each printed a single
+// word therefore taught the learner that the row above the input line was
+// prompt, and the strip then ate the real last line of every copy after that
+// (measured driving PowerShell: two of five commands copied nothing at all).
+// The bias has to run this way round: a row wrongly learned as prompt DELETES
+// output, while one wrongly left as output only puts a prompt line on the
+// clipboard.
+const PROMPT_SKEL_MIN: usize = 6;
 
 // Consecutive frames that may reuse the last built frame before build() stops
 // trying and waits for the terminal (see the lock in build). 2 keeps the pane
@@ -282,6 +293,19 @@ fn snapshot_rows(
 	rows
 }
 
+// Whether to draw a cursor at all, and as what. DECTCEM (CSI ?25 l/h) lives in
+// the terminal MODE - `cursor_style()` reports the shape an app asked for and
+// says nothing about whether the app wants one drawn - so both have to be asked,
+// the way the engine's own renderable content does. Miss this and a TUI that
+// hides the cursor to repaint still gets one painted wherever the paint left it.
+fn shown_cursor_shape(mode: TermMode, shape: CursorShape) -> CursorShape {
+	if mode.contains(TermMode::SHOW_CURSOR) {
+		shape
+	} else {
+		CursorShape::Hidden
+	}
+}
+
 // The rendered cursor geometry as (width, height) fractions of the cell. An
 // app-set Beam/Underline (DECSCUSR) maps to a thin bar / underline; a plain Block
 // uses the configured cursor_size_* - except on the alt screen, where the app
@@ -345,18 +369,20 @@ fn fnv_row(chars: impl Iterator<Item = char>) -> u64 {
 // still prints the same while its punctuation/box-drawing structure must match
 // exactly. An exact-content compare here misses every dynamic multi-line
 // prompt, which then gets copied as output.
-fn fnv_row_skel(chars: impl Iterator<Item = char>) -> u64 {
+fn fnv_row_skel(chars: impl Iterator<Item = char>) -> (u64, usize) {
 	let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
 	let mut last = '\0';
+	let mut segments = 0;
 	for c in chars {
 		let k = if c.is_alphanumeric() { 'a' } else { c };
 		if (k == 'a' || k == ' ') && k == last {
 			continue;
 		}
 		last = k;
+		segments += 1;
 		hash = (hash ^ k as u64).wrapping_mul(0x100_0000_01b3);
 	}
-	hash
+	(hash, segments)
 }
 
 // The char to feed the shaper for a grid cell. A cell may hold a literal control
@@ -673,7 +699,8 @@ const BAR_VISIBLE_EPS: f32 = 0.02;
 // otherwise grind the thumb down to a sliver nobody can grab.
 const BAR_MIN_THUMB: f32 = 1.6;
 // How far outside the bar the pointer still counts as "near" it, so the bar
-// fades in slightly before you get there rather than under the cursor.
+// fades in slightly before you get there rather than under the cursor. DIP, like
+// the configured thickness it widens.
 const BAR_HOVER_SLOP: f32 = 6.0;
 
 // Where a press landed on the scrollbar.
@@ -1011,6 +1038,7 @@ impl Pane {
 			guard
 		} else {
 			self.lock_misses += 1;
+			crate::perf::bump(&crate::perf::LOCK_MISS);
 			return;
 		};
 		self.lock_misses = 0;
@@ -1379,7 +1407,7 @@ impl Pane {
 		// Cursor position/shape as plain values (no lasting borrow of the lock), so
 		// the fast path below can drop the term lock immediately.
 		let cursor_pt = guard.grid().cursor.point;
-		let cursor_shape = guard.cursor_style().shape;
+		let cursor_shape = shown_cursor_shape(*guard.mode(), guard.cursor_style().shape);
 		// Alt-screen apps own their cursor shape; on the primary screen it's the
 		// configured geometry (or the app's DECSCUSR). See cursor_geometry.
 		let cursor_geom =
@@ -1952,7 +1980,7 @@ impl Pane {
 			return None;
 		}
 		let (_, _, _, rows) = content_dims(self.rect, ctx);
-		let thickness = cfg.scrollbar_thickness.min(self.rect.w);
+		let thickness = ctx.dip(cfg.scrollbar_thickness).min(self.rect.w);
 		let track = Rect {
 			x: self.rect.x + self.rect.w - thickness,
 			y: self.rect.y + ctx.margin,
@@ -2006,15 +2034,16 @@ impl Pane {
 	// Is the pointer on (or just beside) the bar's strip? Drives the fade-in, so
 	// it uses the strip rather than a hit: with auto-hide on there is no bar to
 	// hit until this has already brought one back.
-	pub fn bar_near(&self, x: f32, y: f32, cfg: &config::Settings) -> bool {
+	pub fn bar_near(&self, x: f32, y: f32, ctx: &TextCtx, cfg: &config::Settings) -> bool {
 		if !self.bar_applies(cfg) {
 			return false;
 		}
-		let thickness = cfg.scrollbar_thickness.min(self.rect.w);
+		let thickness = ctx.dip(cfg.scrollbar_thickness).min(self.rect.w);
+		let slop = ctx.dip(BAR_HOVER_SLOP);
 		let strip = Rect {
-			x: self.rect.x + self.rect.w - thickness - BAR_HOVER_SLOP,
+			x: self.rect.x + self.rect.w - thickness - slop,
 			y: self.rect.y,
-			w: thickness + BAR_HOVER_SLOP,
+			w: thickness + slop,
 			h: self.rect.h,
 		};
 		strip.contains(x, y)
@@ -2507,7 +2536,11 @@ impl Pane {
 		let above: Vec<u64> = (1..=PROMPT_ABOVE_MAX as i32)
 			.map_while(|up| {
 				let line = Line(cursor_line.0 - up);
-				(line.0 >= -hist).then(|| fnv_row_skel((0..cols).map(|c| grid[line][Column(c)].c)))
+				if line.0 < -hist {
+					return None;
+				}
+				let (skel, segments) = fnv_row_skel((0..cols).map(|c| grid[line][Column(c)].c));
+				(segments >= PROMPT_SKEL_MIN).then_some(skel)
 			})
 			.collect();
 		let confirmed = above
@@ -2533,6 +2566,9 @@ impl Pane {
 	// command (and its prompt) to finish before copying.
 	pub fn note_output(&mut self) {
 		self.last_output = std::time::Instant::now();
+		// windows: a returning prompt is itself output, so this is where the
+		// at-prompt probe's cached answer goes stale (see TermInstance).
+		self.term.note_activity();
 	}
 
 	// While armed, the instant the settle timer would fire (so the loop can wake to
@@ -2683,17 +2719,19 @@ impl Pane {
 	}
 
 	// Write pasted text to the PTY (wrapped in bracketed paste when the app
-	// enabled it). No-op when the pane is read-only.
+	// enabled it, and put through paste_payload either way). No-op when the
+	// pane is read-only.
 	pub fn paste(&mut self, text: &str) {
 		if self.read_only || text.is_empty() {
 			return;
 		}
 		let bracket = self.mode.contains(TermMode::BRACKETED_PASTE);
-		let mut bytes = Vec::with_capacity(text.len() + 12);
+		let payload = paste_payload(text, bracket);
+		let mut bytes = Vec::with_capacity(payload.len() + 12);
 		if bracket {
 			bytes.extend_from_slice(b"\x1b[200~");
 		}
-		bytes.extend_from_slice(text.as_bytes());
+		bytes.extend_from_slice(payload.as_bytes());
 		if bracket {
 			bytes.extend_from_slice(b"\x1b[201~");
 		}
@@ -2708,6 +2746,9 @@ pub struct PaneManager {
 	pub focused: PaneId,
 	// CLI `--title` for this tab; overrides the computed "<shell> [program]".
 	pub title_override: Option<String>,
+	// When this tab was opened, for the tip's elapsed time. A tab, not a pane:
+	// splitting one does not start it over.
+	pub created: std::time::Instant,
 }
 
 impl PaneManager {
@@ -2727,6 +2768,7 @@ impl PaneManager {
 			root: Node::Leaf(id),
 			focused: id,
 			title_override: None,
+			created: std::time::Instant::now(),
 		})
 	}
 
@@ -2746,6 +2788,24 @@ impl PaneManager {
 		// interactive splits even-distribute the same-direction run (unless a divider
 		// in it was hand-dragged); the CLI drives its own sizing, so it passes false
 		self.split_at(ctx, proxy, id, dir, false, 0.5, cmd, cwd, area, true);
+	}
+
+	// What the tab has to say about itself: the command its focused pane was
+	// launched with (None = whatever the default shell is), what that shell is
+	// running, and where it is now. `&mut` because asking what is running costs a
+	// probe, which the term throttles and caches for itself.
+	pub fn tab_facts(
+		&mut self,
+	) -> (
+		Option<Vec<String>>,
+		crate::term::Task,
+		Option<std::path::PathBuf>,
+	) {
+		let focused_id = self.focused;
+		self.panes.get_mut(&focused_id).map_or_else(
+			|| (None, crate::term::Task::Idle, None),
+			|pane| (pane.command.clone(), pane.term.task(), pane.term.cwd()),
+		)
 	}
 
 	// What a new tab/window spawned "from" the focused pane should inherit:
@@ -2855,7 +2915,7 @@ impl PaneManager {
 
 	pub fn relayout(&mut self, ctx: &mut TextCtx, area: Rect) {
 		let mut out = Vec::new();
-		layout(&self.root, area, &mut out);
+		layout(&self.root, area, ctx.scale, &mut out);
 		for (id, rect) in out {
 			if let Some(pane) = self.panes.get_mut(&id) {
 				pane.rect = rect;
@@ -2891,14 +2951,14 @@ impl PaneManager {
 
 	// A grabbable divider under the cursor: its path in the split-tree and
 	// orientation (for the resize cursor).
-	pub fn divider_at(&self, x: f32, y: f32, area: Rect) -> Option<(Vec<bool>, Dir)> {
+	pub fn divider_at(&self, x: f32, y: f32, area: Rect, scale: f32) -> Option<(Vec<bool>, Dir)> {
 		let mut path = Vec::new();
-		divider_at(&self.root, area, x, y, &mut path).map(|dir| (path, dir))
+		divider_at(&self.root, area, x, y, scale, &mut path).map(|dir| (path, dir))
 	}
 
 	// Drag a divider (identified by `path`) to the cursor and relayout.
 	pub fn drag_divider(&mut self, ctx: &mut TextCtx, path: &[bool], area: Rect, x: f32, y: f32) {
-		set_ratio(&mut self.root, area, path, x, y);
+		set_ratio(&mut self.root, area, path, x, y, ctx.scale);
 		self.relayout(ctx, area);
 	}
 
@@ -2949,6 +3009,15 @@ fn spawn_pane(
 	command: Option<Vec<String>>,
 	cwd: Option<std::path::PathBuf>,
 ) -> anyhow::Result<Pane> {
+	// A pane with no command of its own runs the default shell - resolved HERE
+	// and then remembered, rather than left as "whatever the default is". The
+	// list can change under a running pane: the background scan fills it a few
+	// seconds after launch, and the Shells tab reorders it. Leaving it unresolved
+	// made the tab name whichever shell was first at the moment somebody LOOKED,
+	// which is how a pane running PowerShell came to be labelled Command Prompt.
+	// It stays None only when nothing is switched on at all, where the engine
+	// picks its own default and there is genuinely nothing to report.
+	let command = command.or_else(config::default_shell_argv);
 	let (cw, ch, cols, lines) = content_dims(rect, ctx);
 	let term = TermInstance::spawn(
 		id,
@@ -3091,7 +3160,7 @@ fn prompt_strip<T: alacritty_terminal::event::EventListener>(
 			break;
 		}
 		let row = &grid[Line((end as i64 - 1 - hist) as i32)];
-		if fnv_row_skel((0..cols).map(|c| row[Column(c)].c)) != fingerprint {
+		if fnv_row_skel((0..cols).map(|c| row[Column(c)].c)).0 != fingerprint {
 			break;
 		}
 		end -= 1;
@@ -3139,6 +3208,27 @@ fn capture_grid_text<T: alacritty_terminal::event::EventListener>(
 		abs_line += 1;
 	}
 	out
+}
+
+// What a paste actually puts on the wire.
+//
+// UNBRACKETED, the application cannot tell a paste from typing, so a line break
+// has to arrive the way the Enter key delivers one - a lone CR. Sending the LF
+// as well leaves a shell sitting on a continuation line after every row, and a
+// Windows clipboard is CRLF by nature, so that is the ORDINARY case there and
+// not an edge one.
+//
+// BRACKETED, the text goes over as the application asked for it - line breaks
+// included - EXCEPT for ESC: one carried in the payload closes the bracket
+// early (the application is watching for `ESC[201~`), and everything after it
+// is then read as keystrokes rather than as data, which is how a paste runs a
+// command nobody typed. Dropping ESC is what makes the bracket a real boundary.
+fn paste_payload(text: &str, bracket: bool) -> String {
+	if bracket {
+		text.replace('\x1b', "")
+	} else {
+		text.replace("\r\n", "\r").replace('\n', "\r")
+	}
 }
 
 // Inside span (start..=end columns) of the highest-precedence matched pair that
@@ -3404,22 +3494,23 @@ fn first_leaf(node: &Node) -> PaneId {
 	}
 }
 
-fn layout(node: &Node, area: Rect, out: &mut Vec<(PaneId, Rect)>) {
+fn layout(node: &Node, area: Rect, scale: f32, out: &mut Vec<(PaneId, Rect)>) {
 	match node {
 		Node::Leaf(id) => out.push((*id, area)),
 		Node::Split {
 			dir, ratio, a, b, ..
 		} => {
-			let (a_area, b_area) = child_areas(area, *dir, *ratio);
-			layout(a, a_area, out);
-			layout(b, b_area, out);
+			let (a_area, b_area) = child_areas(area, *dir, *ratio, scale);
+			layout(a, a_area, scale, out);
+			layout(b, b_area, scale, out);
 		}
 	}
 }
 
-// The two child rects of a split, with the gap strip between them.
-fn child_areas(area: Rect, dir: Dir, ratio: f32) -> (Rect, Rect) {
-	let gap = config::PANE_GAP_PX;
+// The two child rects of a split, with the gap strip between them. The gap is
+// DIP, so the divider keeps its weight as the display's scale factor rises.
+fn child_areas(area: Rect, dir: Dir, ratio: f32, scale: f32) -> (Rect, Rect) {
+	let gap = config::dip(config::PANE_GAP_PX, scale);
 	match dir {
 		Dir::Vertical => {
 			let a_width = ((area.w - gap) * ratio).floor();
@@ -3461,15 +3552,22 @@ fn child_areas(area: Rect, dir: Dir, ratio: f32) -> (Rect, Rect) {
 // Find the split whose divider is under (x, y), within a grab tolerance.
 // Returns a path of child choices (false = a, true = b) from the root to that
 // split, plus its orientation (for the resize cursor).
-fn divider_at(node: &Node, area: Rect, x: f32, y: f32, path: &mut Vec<bool>) -> Option<Dir> {
+fn divider_at(
+	node: &Node,
+	area: Rect,
+	x: f32,
+	y: f32,
+	scale: f32,
+	path: &mut Vec<bool>,
+) -> Option<Dir> {
 	let Node::Split {
 		dir, ratio, a, b, ..
 	} = node
 	else {
 		return None;
 	};
-	let (a_area, b_area) = child_areas(area, *dir, *ratio);
-	let tol = config::DIVIDER_GRAB_PX;
+	let (a_area, b_area) = child_areas(area, *dir, *ratio, scale);
+	let tol = config::dip(config::DIVIDER_GRAB_PX, scale);
 	let on_divider =
 		match dir {
 			Dir::Vertical => {
@@ -3488,14 +3586,14 @@ fn divider_at(node: &Node, area: Rect, x: f32, y: f32, path: &mut Vec<bool>) -> 
 	}
 	if a_area.contains(x, y) {
 		path.push(false);
-		if let Some(found_dir) = divider_at(a, a_area, x, y, path) {
+		if let Some(found_dir) = divider_at(a, a_area, x, y, scale, path) {
 			return Some(found_dir);
 		}
 		path.pop();
 	}
 	if b_area.contains(x, y) {
 		path.push(true);
-		if let Some(found_dir) = divider_at(b, b_area, x, y, path) {
+		if let Some(found_dir) = divider_at(b, b_area, x, y, scale, path) {
 			return Some(found_dir);
 		}
 		path.pop();
@@ -3504,7 +3602,7 @@ fn divider_at(node: &Node, area: Rect, x: f32, y: f32, path: &mut Vec<bool>) -> 
 }
 
 // Walk `path` to a split node and set its ratio from the mouse position.
-fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
+fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32, scale: f32) {
 	let Node::Split {
 		dir,
 		ratio,
@@ -3516,15 +3614,15 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32) {
 		return;
 	};
 	if let [first, rest @ ..] = path {
-		let (a_area, b_area) = child_areas(area, *dir, *ratio);
+		let (a_area, b_area) = child_areas(area, *dir, *ratio, scale);
 		if *first {
-			set_ratio(b, b_area, rest, x, y);
+			set_ratio(b, b_area, rest, x, y, scale);
 		} else {
-			set_ratio(a, a_area, rest, x, y);
+			set_ratio(a, a_area, rest, x, y, scale);
 		}
 		return;
 	}
-	let gap = config::PANE_GAP_PX;
+	let gap = config::dip(config::PANE_GAP_PX, scale);
 	let new_ratio = match dir {
 		Dir::Vertical => (x - area.x) / (area.w - gap),
 		Dir::Horizontal => (y - area.y) / (area.h - gap),
@@ -3784,20 +3882,22 @@ fn scroll_shift(cur: &[u64], last: &[u64], scrolled_off: bool) -> usize {
 #[cfg(test)]
 mod tests {
 	use super::{
-		APP_SCROLL_MAX, BAR_MIN_THUMB, CURSOR_MAX_LAG, Dir, LinkHit, Node, OffStrip, PauseState,
-		Rect, SLIDE_TOP_BAND_APPS, StripCell, app_scroll_frames, bar_applies_to, bar_pos_to_lines,
-		bar_thumb_span, bell_brighten, capture_grid_text, capture_start, cursor_cycle,
-		cursor_slide_step, distinct_pair, equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full,
-		layout, link_at, logical_line_bounds, move_is_input, pair_inside, prompt_strip,
-		pushed_since, render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed,
-		slide_bands, snapshot_rows, static_bands, translate_span, vanished_range, weld_region_clip,
+		APP_SCROLL_MAX, BAR_MIN_THUMB, CURSOR_MAX_LAG, Dir, LinkHit, Node, OffStrip,
+		PROMPT_SKEL_MIN, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell, app_scroll_frames,
+		bar_applies_to, bar_pos_to_lines, bar_thumb_span, bell_brighten, capture_grid_text,
+		capture_start, child_areas, cursor_cycle, cursor_slide_step, distinct_pair, divider_at,
+		equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full, layout, link_at,
+		logical_line_bounds, move_is_input, pair_inside, paste_payload, prompt_strip, pushed_since,
+		render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed,
+		shown_cursor_shape, slide_bands, snapshot_rows, static_bands, translate_span,
+		vanished_range, weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
 	use alacritty_terminal::grid::Dimensions;
 	use alacritty_terminal::index::{Column, Line, Point};
 	use alacritty_terminal::term::{Config as TermConfig, Term};
-	use alacritty_terminal::vte::ansi::Processor;
+	use alacritty_terminal::vte::ansi::{CursorShape, Processor};
 
 	struct VoidListener;
 	impl EventListener for VoidListener {
@@ -3894,6 +3994,47 @@ mod tests {
 		);
 	}
 
+	// A TUI hides the cursor to repaint (CSI ?25l) and parks it wherever the paint
+	// ended - commonly the far bottom-right cell. Ignore DECTCEM and that parked
+	// position gets a cursor drawn on it, alternating with the real one at repaint
+	// rate, which is faster than any blink. Visibility is a MODE; the shape carries
+	// nothing about it, so asking the shape alone can never answer this.
+	#[test]
+	fn a_hidden_cursor_is_not_drawn_where_the_app_parked_it() {
+		let shape = |t: &Term<VoidListener>| shown_cursor_shape(*t.mode(), t.cursor_style().shape);
+		let mut term = term_fed(20, 6, 0, "");
+		assert_ne!(
+			shape(&term),
+			CursorShape::Hidden,
+			"shown until an app says otherwise"
+		);
+
+		// hide, then park at the bottom-right the way a repaint leaves it
+		feed(&mut term, "[?25l[6;20H");
+		assert_eq!(
+			shape(&term),
+			CursorShape::Hidden,
+			"hidden while the app repaints"
+		);
+		feed(&mut term, "[?25h");
+		assert_ne!(
+			shape(&term),
+			CursorShape::Hidden,
+			"back when the app shows it again"
+		);
+
+		// a shape the app set (DECSCUSR) survives while shown and is still suppressed
+		// while hidden - the two are independent, which is the whole point
+		feed(&mut term, "[5 q");
+		assert_eq!(shape(&term), CursorShape::Beam, "DECSCUSR beam");
+		feed(&mut term, "[?25l");
+		assert_eq!(
+			shape(&term),
+			CursorShape::Hidden,
+			"hidden outranks the shape"
+		);
+	}
+
 	// A small live Term fed via the real parser, for the copy-output tests.
 	fn term_fed(cols: usize, lines: usize, scrollback: usize, input: &str) -> Term<VoidListener> {
 		let cfg = TermConfig {
@@ -3921,7 +4062,7 @@ mod tests {
 	fn row_skel(term: &Term<VoidListener>, line: i32) -> u64 {
 		let grid = term.grid();
 		let cols = grid.columns();
-		fnv_row_skel((0..cols).map(|c| grid[Line(line)][Column(c)].c))
+		fnv_row_skel((0..cols).map(|c| grid[Line(line)][Column(c)].c)).0
 	}
 
 	fn leaf(id: u64) -> Node {
@@ -3946,10 +4087,58 @@ mod tests {
 				w,
 				h: 100.0,
 			},
+			1.0,
 			&mut out,
 		);
 		out.sort_by_key(|(id, _)| *id);
 		out.into_iter().map(|(id, r)| (id, r.w)).collect()
+	}
+
+	// The strip of background between two panes is one DIP, so it keeps its
+	// weight as the display's DPI rises instead of thinning to a hairline that
+	// disappears - and the tolerance for grabbing it has to widen with it, or the
+	// divider becomes progressively harder to catch on a high-DPI screen.
+	#[test]
+	fn the_pane_gap_and_its_grab_zone_scale_with_the_display() {
+		let area = Rect {
+			x: 0.0,
+			y: 0.0,
+			w: 400.0,
+			h: 200.0,
+		};
+		let gap_at = |scale: f32| {
+			let (a, b) = child_areas(area, Dir::Vertical, 0.5, scale);
+			b.x - (a.x + a.w)
+		};
+		assert_eq!(gap_at(1.0), config::PANE_GAP_PX);
+		assert_eq!(gap_at(2.0), config::PANE_GAP_PX * 2.0);
+		// the two children still tile the whole area, gap included, at either scale
+		for scale in [1.0, 2.0] {
+			let (a, b) = child_areas(area, Dir::Vertical, 0.5, scale);
+			assert_eq!(a.w + gap_at(scale) + b.w, area.w);
+		}
+
+		// the grab zone: a press this far off the seam still finds the divider
+		let root = split(Dir::Vertical, 0.5, false, leaf(1), leaf(2));
+		let seam = {
+			let (a, _) = child_areas(area, Dir::Vertical, 0.5, 2.0);
+			a.x + a.w
+		};
+		let reach = config::dip(config::DIVIDER_GRAB_PX, 2.0);
+		let mut path = Vec::new();
+		assert!(
+			matches!(
+				divider_at(&root, area, seam - reach + 0.5, 100.0, 2.0, &mut path),
+				Some(Dir::Vertical)
+			),
+			"the grab zone must widen with the gap it catches"
+		);
+		// and one that lands well clear of it does not
+		path.clear();
+		assert!(
+			divider_at(&root, area, seam - reach * 3.0, 100.0, 2.0, &mut path).is_none(),
+			"a press clear of the seam is not a divider grab"
+		);
 	}
 
 	#[test]
@@ -4326,6 +4515,58 @@ mod tests {
 			block[0],
 			"plain output must not skeleton-match the prompt decoration"
 		);
+	}
+
+	#[test]
+	fn a_plain_row_is_too_thin_to_learn_as_a_prompt() {
+		// the skeleton cannot tell one one-word row from another - by design, so a
+		// prompt's cwd and clock can change - which is exactly why such a row must
+		// never be learned as prompt: the strip would then eat a real output line.
+		let word = fnv_row_skel("alpha    ".chars());
+		let year = fnv_row_skel("2026     ".chars());
+		assert_eq!(word.0, year.0, "unrelated one-word rows hash alike");
+		assert!(word.1 < PROMPT_SKEL_MIN, "so neither may be learned");
+		// a real decoration row still carries enough structure to be learnable
+		assert!(fnv_row_skel("[~/proj git:main 10:01]".chars()).1 >= PROMPT_SKEL_MIN);
+		assert!(fnv_row_skel("==info==            ".chars()).1 >= PROMPT_SKEL_MIN);
+	}
+
+	#[test]
+	fn a_pasted_line_break_arrives_the_way_enter_delivers_one() {
+		// Unbracketed, the application cannot tell the paste from typing, so every
+		// flavour of line break has to reduce to the lone CR the Enter key sends. A
+		// Windows clipboard is CRLF, so this is the ordinary case there: sending the
+		// LF too leaves the shell on a continuation line after every row.
+		assert_eq!(
+			paste_payload("one\r\ntwo\r\nthree", false),
+			"one\rtwo\rthree"
+		);
+		assert_eq!(paste_payload("one\ntwo", false), "one\rtwo");
+		assert_eq!(
+			paste_payload("one\r\ntwo\nthree\r", false),
+			"one\rtwo\rthree\r"
+		);
+		// nothing to do without a line break
+		assert_eq!(paste_payload("plain text", false), "plain text");
+		// and not one LF may survive to reach the shell
+		assert!(!paste_payload("a\r\nb\nc", false).contains('\n'));
+	}
+
+	#[test]
+	fn a_bracketed_paste_cannot_be_closed_from_inside() {
+		// The application is watching for ESC[201~, so an ESC carried in the payload
+		// ends the bracket early and everything after it is read as keystrokes -
+		// which is how a paste runs a command nobody typed. The ESC has to go.
+		let attack = "safe\x1b[201~rm -rf ~\r";
+		let out = paste_payload(attack, true);
+		assert!(
+			!out.contains('\x1b'),
+			"no ESC may survive into a bracketed paste"
+		);
+		assert_eq!(out, "safe[201~rm -rf ~\r");
+		// Bracketed, the application asked for the text itself, so line breaks pass
+		// through untouched - only ESC is taken out.
+		assert_eq!(paste_payload("one\r\ntwo", true), "one\r\ntwo");
 	}
 
 	#[test]

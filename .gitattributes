@@ -1,0 +1,21 @@
+# Scripts must arrive LF on every platform. With core.autocrlf a Windows checkout
+# hands them out CRLF, and a copy of one to a Linux/WSL target then begins
+# '#!/usr/bin/env bash\r', which fails as "bad interpreter" - the launcher copies
+# under utility/ are installed that way, so this is a live path, not a theory.
+*.bash          text eol=lf
+*.sh            text eol=lf
+*.py            text eol=lf
+*.desktop       text eol=lf
+
+# The same, for the scripts that carry no extension.
+cicd/utility/n8git_backup-and-publish   text eol=lf
+utility/git-hooks/pre-commit            text eol=lf
+utility/git-hooks/pre-push              text eol=lf
+
+# PowerShell is the mirror case: CRLF is the form it ships in, so pin that rather
+# than leave it to whoever checks it out.
+*.ps1           text eol=crlf
+
+# Rust sources and .shcl documents are deliberately left alone. They build and test
+# the same either way, and settings_ui.shcl is compiled in with include_str!, so
+# pinning it would change the bytes a Windows build embeds for no gain here.

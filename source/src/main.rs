@@ -14,16 +14,21 @@ mod coloremoji;
 mod config;
 mod contrast;
 mod ctl;
+mod cwd;
 mod dialog;
 mod gfx;
 mod input;
+mod integration;
 mod links;
 mod palette;
 mod pane;
+mod perf;
 mod scrim;
 mod scroll;
 mod settings_ui;
+mod shells;
 mod sysfont;
+mod tabtitle;
 mod term;
 mod text;
 mod theme;
@@ -36,28 +41,67 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use crate::app::App;
 use crate::term::UserEvent;
 
+// Make stdout/stderr reach the terminal we were launched from.
+//
+// A Windows release build is GUI-subsystem (see the attribute at the top of this
+// file), so the loader gives it no console and a plain println! from a CLI-only
+// flag lands NOWHERE - measured: run from a real console, the output simply never
+// appears, while the same command through a pipe works, which is what makes this
+// so easy to miss. Joining the parent's console fixes it.
+//
+// Called only on the paths that print and exit. NOT on the normal launch path: a
+// terminal window that owns a console would die with the shell that started it.
+// Everywhere else this is a no-op (already have one, or nothing to join).
+fn open_console() {
+	#[cfg(windows)]
+	// SAFETY: a plain Win32 call taking a constant; failure is reported by the
+	// return value, which we have nothing useful to do about.
+	unsafe {
+		windows_sys::Win32::System::Console::AttachConsole(
+			windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS,
+		);
+	}
+}
+
 fn main() -> anyhow::Result<()> {
 	env_logger::init();
 	alacritty_terminal::tty::setup_env();
+	// Drop the launching shell's private variables before anything can spawn
+	// a shell of its own (see term.rs SHELL_PRIVATE_ENV). Here because an
+	// environment write needs the process still single-threaded.
+	term::sanitize_shell_env();
 
 	let mut cli = match cli::parse(std::env::args().skip(1)) {
 		Ok(parsed) => parsed,
 		Err(e) => {
+			open_console();
 			eprintln!("{}: {e}\nTry --help.", config::APP_NAME);
 			std::process::exit(2);
 		}
 	};
-	let version = format!("{} {}", config::APP_NAME, env!("CARGO_PKG_VERSION"));
-	if cli.help {
-		println!("{version}\n\n{}", cli::usage());
-		return Ok(());
-	}
-	if cli.syntax {
-		print!("{}", cli::usage());
-		return Ok(());
-	}
-	if cli.version {
-		println!("{version}");
+	// CLI-only flags: print and exit, before anything reads a config or opens a
+	// window. All but --version are padded with a blank line either side so the
+	// block stands clear of the prompts above and below it; --version stays flush
+	// because its job is to be captured.
+	if cli.help || cli.syntax || cli.about || cli.donate || cli.version {
+		open_console();
+		if cli.help {
+			print!(
+				"{}",
+				cli::padded(&format!("{}\n\n{}", cli::version_line(), cli::usage()))
+			);
+		} else if cli.syntax {
+			print!("{}", cli::padded(cli::usage()));
+		} else if cli.about {
+			print!(
+				"{}",
+				cli::padded(&cli::about(gfx::probe_adapter_info().as_ref()))
+			);
+		} else if cli.donate {
+			print!("{}", cli::padded(&cli::donate()));
+		} else {
+			println!("{}", cli::version_line());
+		}
 		return Ok(());
 	}
 	// Control commands: talk to the already-running window this shell lives in

@@ -352,6 +352,11 @@ pub struct TextCtx {
 	// separate renderer for the scrim source pass: pane text only (no chrome), and
 	// panes may substitute a de-bolded buffer (text_scrim_regular_weight)
 	pub scrim: TextRenderer,
+	// The display's scale factor this context was built at. Every chrome
+	// measurement in the main window is written in DIP and converted through
+	// `dip` at its use site, since chrome shares a coordinate space with the
+	// terminal grid and has no boundary to convert at.
+	pub scale: f32,
 	pub cell_w: f32,
 	pub cell_h: f32,
 	// Whether a bold run shapes to the same per-cell advance as regular. When
@@ -472,6 +477,7 @@ impl TextCtx {
 			renderer,
 			overlay,
 			scrim,
+			scale,
 			cell_w,
 			cell_h,
 			debold_safe,
@@ -485,6 +491,13 @@ impl TextCtx {
 			color_glyphs: ColorGlyphs::new(),
 			ui_measure_cache: HashMap::new(),
 		}
+	}
+
+	// A chrome measurement written in DIP, in physical pixels at this display's
+	// scale factor. See config::dip - chrome is converted where it is used, not
+	// at a boundary, because it shares a coordinate space with the terminal grid.
+	pub fn dip(&self, v: f32) -> f32 {
+		config::dip(v, self.scale)
 	}
 
 	// Can `ch` ride the shared row buffer, given the grid puts it in `cells`
@@ -617,6 +630,15 @@ impl TextCtx {
 		}
 		self.ui_measure_cache.insert(text.to_string(), w);
 		w
+	}
+
+	// Width in px of `text` in the TERMINAL font. The tab hover tip is the one
+	// piece of chrome that uses it: its lines are key/value pairs padded to a
+	// column with spaces, which only aligns in a monospace face. Uncached - the
+	// tip rebuilds a few lines twice a second at most.
+	pub fn measure_mono_text(&mut self, text: &str) -> f32 {
+		let attrs = mono_attrs();
+		self.measure_at(text, &attrs, self.metrics)
 	}
 
 	fn measure_at(&mut self, text: &str, attrs: &Attrs, metrics: Metrics) -> f32 {

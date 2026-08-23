@@ -5,7 +5,7 @@
 <!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
 <div align="center">
 
-[![Release](https://img.shields.io/badge/Release-1.0.0--beta2-blue)](https://github.com/jim-collier/silkterm/releases)
+[![Release](https://img.shields.io/badge/Release-1.0.0--beta3-blue)](https://github.com/jim-collier/silkterm/releases)
 [![made-with-rust](https://img.shields.io/badge/Made%20with-Rust-1f425f.svg)](https://www.rust-lang.org/)
 ![Rust: 1.89+](https://img.shields.io/badge/Rust-1.89%2B-orange)
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
@@ -71,6 +71,7 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 	- [Why smooth-scrolling output](#why-smooth-scrolling-output)
 	- [Why text scrim](#why-text-scrim)
 - [Features](#features)
+- [Wallpaper pack](#wallpaper-pack)
 - [Terminal showdown - speed and size](#terminal-showdown---speed-and-size)
 - [Getting and using](#getting-and-using)
 	- [Installing](#installing)
@@ -79,6 +80,7 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 		- [Build it yourself](#build-it-yourself)
 	- [Setting up a development environment](#setting-up-a-development-environment)
 	- [Configuration](#configuration)
+	- [Shell integration](#shell-integration)
 - [Contributing](#contributing)
 - [Support SilkTerm](#support-silkterm)
 - [Legal stuff](#legal-stuff)
@@ -204,6 +206,30 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **GPU-accelerated** with software fallback.
 
+## Wallpaper pack
+
+SilkTerm ships with the 113 wallpapers it was built and tuned against, in [`filesystem/home/.config/silkterm/wallpaper/`](filesystem/home/.config/silkterm/wallpaper/). Put them next to your config and rotation picks one each launch, favoring whatever it hasn't shown lately. Each image carries its own fit and anchor in its metadata, so a photo is cropped rather than squashed while a gradient still stretches edge to edge. Provenance for every one of them is in [wallpaper-attribution.md](filesystem/home/.config/silkterm/wallpaper-attribution.md).
+
+[![Wallpaper pack](assets/wallpaper-gallery.jpg)](https://jim-collier.github.io/silkterm/wallpapers/)
+
+Click the sheet for the [browsable gallery](https://jim-collier.github.io/silkterm/wallpapers/) - any wallpaper opens full size in place, the arrow keys page through them, and each one carries its credit and licence underneath.
+
+They come to 60 MiB against a 10 MiB terminal, so no package or installer carries them - fetch the folder on its own. Bash (Linux, macOS, WSL):
+
+```bash
+dir="${XDG_CONFIG_HOME:-$HOME/.config}/silkterm" && mkdir -p "$dir" && curl -fsSL https://github.com/jim-collier/silkterm/archive/refs/heads/main.tar.gz | tar -xz -C "$dir" --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper
+```
+
+PowerShell (Windows):
+
+```powershell
+$dest = "$env:LOCALAPPDATA\silkterm"; $tgz = "$env:TEMP\silkterm-main.tar.gz"; New-Item -ItemType Directory -Force $dest | Out-Null; curl.exe -fsSL https://github.com/jim-collier/silkterm/archive/refs/heads/main.tar.gz -o $tgz; tar -xzf $tgz -C $dest --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper; Remove-Item $tgz
+```
+
+Either one is a single line, so it survives a paste however your terminal handles one, and lands the images where rotation looks for them - `wallpaper/` beside the config on Linux and macOS, and under `%LOCALAPPDATA%` on Windows (see the table in [Configuration](#configuration)). Both pull the whole repository archive, since GitHub serves no smaller unit - about 67 MiB over the wire.
+
+Both the contact sheet and the gallery are rendered by [`cicd/utility/wallpaper-gallery.bash`](cicd/utility/wallpaper-gallery.bash) - re-run it whenever the pack changes. The gallery carries thumbnails only; it fetches each full image from the pack in this repository, so nothing is stored twice.
+
 ## Terminal showdown - speed and size
 
 Smooth scrolling counts for nothing if the terminal falls behind the moment something dumps a lot of text, so throughput is measured rather than asserted. In testing, each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has genuinely consumed the stream rather than when the pipe accepted it. Speed is measured at a 160x42 grid.
@@ -226,15 +252,15 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 | \[multi\] | kitty | 0.48.1 | 24.2 | 59.6 | **22.6** | 0.2 | 115.0 | 140.8 |
 | \[multi\] | WezTerm | 20240203 | 15.6 | 22.2 | **10.4** | 70.5 | 129.9 | 84.8 |
 | \[multi\] | Tabby | 1.0.235 | 8.5 | 9.0 | **5.7** | 192.1 | 454.2 | 473.4 |
+| Win | conhost.exe | - | - | - | - | 1.0 | 1.0 | 21.1 |
 | Win | PuTTY | - | - | - | - | 1.6<sup>7</sup> | - | - |
 | Linux | Guake | - | - | - | - | 1.7<sup>7</sup> | - | - |
 | Linux | Konsole | - | - | - | - | 7.3<sup>7</sup> | - | - |
-| \[multi\] | Windows Terminal | - | - | - | - | 11.1<sup>7</sup> | - | - |
+| \[multi\] | Windows Terminal | - | - | - | - | 11.1<sup>7</sup> | 14.2 | 93.0 |
 | \[multi\] | Ghostty | - | - | - | - | 32.0<sup>7</sup> | - | - |
 | macOS | iTerm2 | - | - | - | - | 43.0<sup>7</sup> | - | - |
 | Win | MobaXterm | - | - | - | - | 43.4<sup>7</sup> | - | - |
 | \[multi\] | Hyper | - | - | - | - | 147.8 | 300.9 | 309.4 |
-| Win | conhost.exe | - | - | - | - | - | - | - |
 | macOS | Terminal.app | - | - | - | - | - | - | - |
 | macOS | Warp | - | - | - | - | - | - | - |
 
@@ -256,7 +282,7 @@ Sorted by speed. Terminals not yet measured for speed follow, ordered by what it
 
 <sub><sup>8</sup> SilkTerm uses Alacritty's terminal-emulation core, so the two share the parsing and grid work that this benchmark mostly measures - which is why they are within a few percent of each other, and why both sit so far ahead of terminals that parse their own way. It is the lighter of the two to run, which is what the eye candy costs: SilkTerm with everything switched off is 50 MiB above it, and as it ships, 117.</sub>
 
-<sub><sup>9</sup> Every measured row comes from one machine, because the measuring rig is not neutral: rendering through software OpenGL roughly halves SilkTerm's throughput and going through VirtualGL still costs it about 14%, while terminals that draw on the CPU do not move at all. A table built from mixed rigs can therefore rank the wrong terminal first. These figures were taken on a headless Wayland compositor driving a discrete GPU (Linux, Ryzen host, GeForce RTX 3060 Ti), so nothing on the desktop competes for the card. Windows rows, when they are filled in, will come from a virtual machine on that same host with half the cores, less memory, some virtualization overhead and a lower-specification passed-through GPU (RTX 2060) - so they will not be directly comparable until they are calibrated against the terminals that run on both platforms.</sub>
+<sub><sup>9</sup> Every measured row comes from one machine, because the measuring rig is not neutral: rendering through software OpenGL roughly halves SilkTerm's throughput and going through VirtualGL still costs it about 14%, while terminals that draw on the CPU do not move at all. A table built from mixed rigs can therefore rank the wrong terminal first. These figures were taken on a headless Wayland compositor driving a discrete GPU (Linux, Ryzen host, GeForce RTX 3060 Ti), so nothing on the desktop competes for the card. <b>There are no Windows rows, and there will not be.</b> On Windows a terminal never receives its output directly: the child writes into a console host, which relays the bytes over a pipe. On the measuring machine a consumer that reads that pipe and throws the bytes away is done with 32 MiB in 1.45 s, and nothing moves it - pipe buffers from the default to 16 MB, reads from 64 KB to 1 MB, and Microsoft's own redistributable console host all land inside the noise. Any Windows terminal near that figure is showing the transport rather than itself. The high Windows throughput numbers reported anywhere, this benchmark included, are worse than merely ambiguous: they measure how fast bytes are ACCEPTED into buffers, not consumed - bundling the same console host beside SilkTerm takes its writer-visible rate from 12.4 to 85.8 MB/s while the terminal still finishes at the same moment. Sampling past the last write gives the only honest end-to-end figures available: Windows Terminal settles in about 1.3 s against SilkTerm's 2.5 s, roughly 2x, of which 1.45 s is the transport both of them pay, about 0.5 s is parsing, and the rest is pipe plumbing in the terminal engine we depend on. The renderer is not in it at all - capping the frame rate at 5, 20, 30 or 60 changes the time by nothing. A cross-platform correction factor is dead too: SilkTerm measures 6.98x its own Linux row where WezTerm measures 2.93x its own, so no single multiplier serves the table. The size and memory columns are unaffected by any of this, which is why Windows rows appear there.</sub>
 
 Run it yourself with [`utility/update-showdown.py`](utility/update-showdown.py) (`--quick` for a thirty-second version). It needs only Python 3 and a terminal, works on any emulator on any OS, and refreshes the speed columns above as more terminals are measured.
 
@@ -325,17 +351,35 @@ cicd/cicd.bash [--quick]
 
 ### Configuration
 
-On first run SilkTerm writes a commented config file with all defaults to:
+On first run SilkTerm writes a commented config file with all defaults, in the place each platform keeps settings:
 
-```bash
-$XDG_CONFIG_HOME/silkterm/config.shcl   (falls back to ~/.config/...)
-```
+| OS      | Config                                          | Wallpaper folder
+| :---    | :---                                            | :---
+| Linux   | `$XDG_CONFIG_HOME/silkterm/` (or `~/.config/...`) | beside the config
+| Windows | `%APPDATA%\silkterm\`                           | `%LOCALAPPDATA%\silkterm\wallpaper\`
+| macOS   | `~/Library/Application Support/silkterm/`       | beside the config
+
+Setting `XDG_CONFIG_HOME` overrides the platform default everywhere, and `--config PATH` overrides everything - an alternate config keeps its own wallpaper and history beside itself rather than sharing the defaults.
+
+Windows splits the two because settings are worth roaming between machines and a 60 MiB wallpaper pack is not. A pack already sitting beside the config still works; nothing has to be moved.
 
 If making changes directly (rather than through Settings), you can apply them immediately with the "Reload config" menu item.
 
 To start over from the shipped defaults, run `silkterm --reset-config`. The old file is kept alongside as `config.shcl.bak` rather than deleted.
 
-Drop a few images into a `wallpaper` folder next to the config and SilkTerm picks one each launch, favoring whatever it hasn't shown lately. Naming a wallpaper in the config, or passing one on the command line, takes precedence.
+Drop a few images into a `wallpaper` folder next to the config and SilkTerm picks one each launch, favoring whatever it hasn't shown lately. Naming a wallpaper in the config, or passing one on the command line, takes precedence. The [wallpaper pack](#wallpaper-pack) is a ready-made folder to start from.
+
+### Shell integration
+
+A new tab, split or window starts in the directory the current pane is in. For most shells that needs nothing set up - SilkTerm reads the shell process's own directory.
+
+PowerShell is the exception worth knowing about: `Set-Location` moves PowerShell's own idea of where it is and leaves the process where it was launched, so there is nothing to read and a new pane would start in the launch directory.
+
+SilkTerm handles that one for you. A few seconds after launch it adds a small directory-reporting block to each PowerShell profile - and it will not touch a profile that already reports (a Windows Terminal setup, oh-my-posh, anything else), will not rewrite what is there (it appends, after saving a copy beside it), will not change your prompt, and will not put the block back if you delete it. A shell whose execution policy would refuse to load the profile is left alone and said so, rather than being handed a file it cannot read. Clear "PowerShell integration" on the Shell tab of Settings, or set `shell.integration: false`, to switch it off before it ever runs.
+
+Same story for a shell running behind `ssh` or in a container - that one is yours to set up, since the shell you are typing at is not the process SilkTerm started.
+
+[shell-integration.md](shell-integration.md) covers all of it, including the snippets for bash, zsh and fish.
 
 <!--
 ## Renaming the project

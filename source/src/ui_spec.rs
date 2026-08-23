@@ -57,8 +57,8 @@ keys![
 	Outline, CursorScrim, CursorOutline,
 	CursorBlink, CursorHeight, CursorWidth, CursorAnimation, CursorResume,
 	SystemFont, SystemFontSize, FontFamily, FontSize, LineHeight,
-	Columns, Rows, RememberSize, Margin,
-	DefaultShell, CopyOnSelect, Hyperlinks, LinkOpenCommand,
+	Columns, Rows, RememberSize, Margin, TabMinWidth, TabMaxWidth,
+	Shells, StartupDirectory, ShellIntegration, CopyOnSelect, Hyperlinks, LinkOpenCommand,
 	SmoothScroll, ScrollEaseIn, ScrollRampUp, SingleScreenTau, ScrollRampDown,
 	ScrollEaseOut, WheelLines,
 	Scrollbar, ScrollbarThickness, ScrollbarAutoHide,
@@ -88,6 +88,11 @@ pub enum Kind {
 	// a row of push-buttons that act on the row above rather than holding a value
 	// (Save / Save as / Rename / Delete); each is its own focus stop
 	Buttons(&'static [&'static str]),
+	// The shells grid: one line per stored shell (name, command, last seen,
+	// active, and the buttons that move or remove it), plus an Add button. It is
+	// one row here and many on screen, so its height follows the list's length
+	// rather than the row metrics - see `SettingsDialog::row_h_for`.
+	ShellList,
 	Header(&'static str), // a section heading, no control
 }
 
@@ -149,6 +154,15 @@ pub struct Layout {
 	pub button_pad: f32,
 	pub button_width: f32,
 	pub button_gap: f32,
+	pub shell_name_width: f32,
+	pub shell_command_width: f32,
+	pub shell_seen_width: f32,
+	pub shell_active_width: f32,
+	pub shell_col_gap: f32,
+	pub shell_grip: f32,
+	pub shell_button: f32,
+	pub shell_head_gap: f32,
+	pub shell_add_gap: f32,
 	pub tab_pad: f32,
 	pub tab_height: f32,
 	pub tab_pad_v: f32,
@@ -276,6 +290,15 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 		button_pad: float("layout.button_pad", &mut problems),
 		button_width: float("layout.button_width", &mut problems),
 		button_gap: float("layout.button_gap", &mut problems),
+		shell_name_width: float("layout.shell_name_width", &mut problems),
+		shell_command_width: float("layout.shell_command_width", &mut problems),
+		shell_seen_width: float("layout.shell_seen_width", &mut problems),
+		shell_active_width: float("layout.shell_active_width", &mut problems),
+		shell_col_gap: float("layout.shell_col_gap", &mut problems),
+		shell_grip: float("layout.shell_grip", &mut problems),
+		shell_button: float("layout.shell_button", &mut problems),
+		shell_head_gap: float("layout.shell_head_gap", &mut problems),
+		shell_add_gap: float("layout.shell_add_gap", &mut problems),
 		tab_pad: float("layout.tab_pad", &mut problems),
 		tab_height: float("layout.tab_height", &mut problems),
 		tab_pad_v: float("layout.tab_pad_v", &mut problems),
@@ -350,6 +373,7 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 				Kind::Header(keep(label.clone()))
 			}
 			"toggle" => Kind::Toggle,
+			"shells" => Kind::ShellList,
 			"color" => Kind::Color,
 			"text" => Kind::Text,
 			"radio" | "dropdown" => {
@@ -408,8 +432,11 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 				continue;
 			}
 		};
-		// a pair row already filed its two parts above; a buttons row holds no value
-		if key != Key::None && !matches!(kind, Kind::Dual { .. } | Kind::Buttons(_)) {
+		// a pair row already filed its two parts above; neither a buttons row nor
+		// the shells grid holds a value of its own
+		if key != Key::None
+			&& !matches!(kind, Kind::Dual { .. } | Kind::Buttons(_) | Kind::ShellList)
+		{
 			match paths.len() {
 				1 => settings.push((key, keep_all(paths))),
 				_ => problems.push(format!("rows.{name}: needs exactly one setting path")),
@@ -486,13 +513,14 @@ mod tests {
 			Err(problems) => panic!("settings_ui.shcl:\n  {}", problems.join("\n  ")),
 		};
 		let mut declared: Vec<Key> = Vec::new();
-		// a buttons row is on the roll call but stores nothing, so it has no path
+		// a buttons row and the shells grid are on the roll call but store no
+		// single value, so neither has a config path
 		let mut valueless: Vec<Key> = Vec::new();
 		for spec in &ui.specs {
 			match spec.kind {
 				Kind::Dual { keys, .. } => declared.extend(keys),
 				Kind::Header(_) => {}
-				Kind::Buttons(_) => {
+				Kind::Buttons(_) | Kind::ShellList => {
 					declared.push(spec.key);
 					valueless.push(spec.key);
 				}

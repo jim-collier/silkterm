@@ -14,11 +14,66 @@ pub const APP_NAME: &str = "SilkTerm";
 // a single link baked into the binary. HEAD resolves to the repo default branch.
 pub const DONATE_URL: &str = "https://github.com/jim-collier/silkterm/blob/HEAD/DONATE.md";
 
-// internal, not user-tunable (yet)
+// The one address worth handing straight to someone who has already decided.
+// DONATE.md carries the rest; --donate prints both.
+pub const SPONSOR_URL: &str = "https://github.com/sponsors/jim-collier";
+
+// Which of the cross builds this binary is - otherwise indistinguishable at a
+// glance. Shared by the About dialog and `--about` so the two can't drift.
+pub fn build_target() -> String {
+	let profile = if cfg!(debug_assertions) {
+		"debug"
+	} else {
+		"release"
+	};
+	format!(
+		"{} / {} ({profile})",
+		std::env::consts::ARCH,
+		std::env::consts::OS
+	)
+}
+
+// The display scale factor to lay out at, given what the window reports.
+// SILK_SCALE overrides it, which is the only way to see a high-DPI layout on a
+// 1x display: chrome written in raw pixels is INVISIBLE at 1x and only thins out
+// as the factor rises, so the defect it guards against cannot be looked at
+// without one. Read once (var_os takes the env lock and scans environ), same
+// pattern as SILK_MAX_FPS. Off X11 there is no winit knob for this at all.
+pub fn display_scale(reported: f64) -> f32 {
+	use std::sync::OnceLock;
+	static OVERRIDE: OnceLock<Option<f32>> = OnceLock::new();
+	let over = OVERRIDE.get_or_init(|| {
+		std::env::var("SILK_SCALE")
+			.ok()
+			.and_then(|raw| raw.trim().parse::<f32>().ok())
+			.filter(|s| *s > 0.0 && s.is_finite())
+	});
+	over.unwrap_or(reported as f32)
+}
+
+// Chrome measurements are written in DIP (a CSS pixel, 1/96 inch) and converted
+// to physical pixels where they are used. The main window's chrome shares a
+// coordinate space with the terminal grid, so there is no single boundary to
+// divide at the way settings_ui.rs has - each measurement scales at its own use
+// site, through here or `TextCtx::dip`.
+//
+// Rounded to whole pixels so a rule, a ring or a hairline gap stays crisp, and a
+// measurement the author asked to be visible never rounds away to nothing (a 1
+// DIP gap under a scale factor below 1 would otherwise vanish).
+pub fn dip(v: f32, scale: f32) -> f32 {
+	let px = v * scale;
+	if v > 0.0 {
+		px.round().max(1.0)
+	} else {
+		px.round()
+	}
+}
+
+// internal, not user-tunable (yet); DIP, see `dip`
 pub const PANE_GAP_PX: f32 = 1.0;
 pub const DIVIDER_GRAB_PX: f32 = 5.0; // mouse tolerance for grabbing a pane divider
 pub const FOCUS_RING_PX: f32 = 2.0;
-pub const SETTLE_EPS: f32 = 0.002;
+pub const SETTLE_EPS: f32 = 0.002; // a settle threshold, not a measurement - never scaled
 
 pub const DIVIDER: [u8; 3] = [0x2c, 0x2c, 0x36];
 
@@ -99,10 +154,14 @@ fn shade(color: [u8; 3], magnitude: i16) -> [u8; 3] {
 	let adjust = |channel: u8| (channel as i16 + delta).clamp(0, 255) as u8;
 	[adjust(color[0]), adjust(color[1]), adjust(color[2])]
 }
+// Dropdown/context-menu geometry, DIP (see `dip`). The pop-out dialogs lay out
+// in DIP throughout and use these raw; the main window's menus convert at each
+// use site.
 pub const MENU_PAD_X: f32 = 12.0;
 pub const MENU_ITEM_PAD_Y: f32 = 6.0;
 pub const MENU_SEP_H: f32 = 9.0; // height of a separator row (line + spacing)
 pub const MENU_GUTTER: f32 = 20.0; // left checkmark gutter; item text starts after it
+pub const MENU_SUB_ARROW: f32 = 14.0; // right column a submenu row draws its arrow in
 
 // How a background image fills the window.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -180,13 +239,16 @@ pub struct Settings {
 	pub rows: usize,
 	pub remember_size: bool, // launch at the last window size instead of columns/rows
 	pub hide_single_tab: bool, // hide the tab bar while only one tab is open
+	pub tab_min_pct: f32,    // narrowest a tab may be, as a % of the window's width
+	pub tab_max_pct: f32,    // widest a tab may be, as a % of the window's width
 	pub remembered_columns: usize, // last actual window size (not shown in the dialog)
 	pub remembered_rows: usize,
 	pub word_separators: String, // delimiters for double-click word selection
 	pub selection_pairs: String, // matched pairs a double-click selects inside of
-	pub default_shell: String,   // command for new tabs/panes (empty = system shell)
 	pub command_line: String,    // default CLI layout/options when launched with no args
+	pub startup_directory: String, // where a shell starts when nothing else said (see startup_dir)
 	pub copy_on_select: bool,    // panes start with copy-on-select enabled
+	pub shell_integration: bool, // put the directory-reporting block in PowerShell profiles
 	pub hyperlinks: bool,        // underline URLs in output on hover; Ctrl+click opens them
 	pub hyperlink_open_command: String, // opener for a clicked link (empty = the desktop's own)
 	pub bg: [u8; 3],
@@ -213,6 +275,9 @@ pub struct Settings {
 	// Themes saved from the Settings dialog, whole, in file order. They resolve
 	// ahead of the built-ins, so one may carry a built-in's name.
 	pub user_themes: Vec<crate::theme::UserTheme>,
+	// The shells the Tabs menu offers, in file order. Written by the background
+	// scan (shells.rs) and by hand; see `write_shells` for what a scan may touch.
+	pub shells: Vec<crate::shells::ShellEntry>,
 }
 
 impl Settings {
@@ -300,6 +365,8 @@ impl Default for Settings {
 			rows: 48,
 			remember_size: true,
 			hide_single_tab: false,
+			tab_min_pct: 8.0,
+			tab_max_pct: 26.0,
 			remembered_columns: 160,
 			remembered_rows: 48,
 			// alacritty's default delimiters minus ':', so a Windows drive path
@@ -310,9 +377,10 @@ impl Default for Settings {
 				.filter(|&c| c != ':')
 				.collect(),
 			selection_pairs: DEFAULT_SELECTION_PAIRS.to_owned(),
-			default_shell: String::new(),
 			command_line: String::new(),
+			startup_directory: HOME_TOKEN.to_string(),
 			copy_on_select: false,
+			shell_integration: true,
 			hyperlinks: true,
 			hyperlink_open_command: String::new(),
 			bg: [0x00, 0x00, 0x00],
@@ -331,6 +399,7 @@ impl Default for Settings {
 			theme: "SilkTerm".to_string(),
 			theme_mode: "dark".to_string(),
 			user_themes: Vec::new(),
+			shells: Vec::new(),
 		}
 	}
 }
@@ -395,13 +464,164 @@ pub fn settings() -> Arc<Settings> {
 // backticks, double quotes, single quotes, then {} () [] <>.
 pub const DEFAULT_SELECTION_PAIRS: &str = "`` \"\" '' {} () [] <>";
 
-// argv for the configured default shell, or None to use the system default.
+// argv for the default shell - the first ACTIVE entry in the stored list, which
+// is what "the one at the top" means. None hands the choice to the system: an
+// empty list, or one whose every entry is switched off.
+//
+// The order is the user's (the Settings dialog's Shells tab moves entries; a
+// scan only ever appends), and an initial population is led by the shell the
+// user actually logs in with - see `shells::detect`.
 pub fn default_shell_argv() -> Option<Vec<String>> {
-	let shell = settings().default_shell.clone();
-	if shell.trim().is_empty() {
+	let shell = settings()
+		.shells
+		.iter()
+		.find(|entry| entry.active)
+		.map(|entry| entry.command.clone())?;
+	crate::cli::shell_split(&shell).ok()
+}
+
+// Where the FIRST pane of a freshly launched window starts, or None to leave it
+// where SilkTerm itself was started. Four things can decide a shell's directory
+// and this is the last of them: `--directory` on the command line (cli_dir, the
+// caller's first choice), a new tab, pane or window inheriting from the pane it
+// came from (handled by the caller, which passes an inherited path instead of
+// asking here), a SilkTerm launched from a shell keeping that shell's directory,
+// and only what is left over reads the setting.
+//
+// So the setting is what a launch from the desktop, a menu or a shortcut gets -
+// which is the case where the inherited directory is an accident of whoever
+// started us rather than anything the user chose.
+pub fn startup_dir() -> Option<std::path::PathBuf> {
+	if launched_from_shell() {
 		return None;
 	}
-	crate::cli::shell_split(&shell).ok()
+	resolve_dir(&settings().startup_directory, "shell.startup_directory")
+}
+
+// Where a shell named on the command line starts (`--directory`). Sits ABOVE
+// every one of startup_dir's three cases: asking for a directory on the command
+// line is the most deliberate statement of the lot, so it beats an inherited
+// one, the shell we were launched from, and the setting alike.
+pub fn cli_dir(raw: &str) -> Option<std::path::PathBuf> {
+	resolve_dir(raw, "--directory")
+}
+
+// Expand and check one directory, naming what asked for it when it isn't there.
+// `label` is how the user spelled it, so the line points at the setting or the
+// flag rather than at a path they may never have typed.
+fn resolve_dir(raw: &str, label: &str) -> Option<std::path::PathBuf> {
+	let wanted = raw.trim();
+	if wanted.is_empty() {
+		return None;
+	}
+	let dir = std::path::PathBuf::from(expand_path(wanted));
+	if dir.is_dir() {
+		return Some(dir);
+	}
+	// Worth one line: a directory that has been renamed or unmounted would
+	// otherwise look like the setting being ignored.
+	eprintln!("{APP_NAME}: {label}: no such directory: {wanted}");
+	None
+}
+
+// Substitute environment variables written in either platform's spelling, plus a
+// leading `~`. Both spellings everywhere on purpose: a config file gets carried
+// between machines, and a `$HOME` that silently stayed a literal directory name
+// on Windows would be a very quiet way to fail. An unset name expands to
+// nothing, the way a shell does it.
+pub fn expand_path(text: &str) -> String {
+	let text = match text.strip_prefix('~') {
+		Some(rest) if rest.is_empty() || rest.starts_with(['/', '\\']) => {
+			format!("{}{rest}", home_string())
+		}
+		_ => text.to_string(),
+	};
+	let mut out = String::with_capacity(text.len());
+	let mut rest = text.as_str();
+	while let Some(at) = rest.find(['$', '%']) {
+		out.push_str(&rest[..at]);
+		let tail = &rest[at..];
+		let (name, after) = if let Some(braced) = tail.strip_prefix("${") {
+			match braced.split_once('}') {
+				Some((name, after)) => (name, after),
+				None => break,
+			}
+		} else if let Some(percent) = tail.strip_prefix('%') {
+			match percent.split_once('%') {
+				// `%%` is an empty name, not a variable - leave it alone.
+				Some((name, after)) if !name.is_empty() => (name, after),
+				_ => {
+					out.push_str(&tail[..1]);
+					rest = &tail[1..];
+					continue;
+				}
+			}
+		} else {
+			let bare = &tail[1..];
+			let end = bare
+				.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+				.unwrap_or(bare.len());
+			if end == 0 {
+				out.push_str(&tail[..1]);
+				rest = &tail[1..];
+				continue;
+			}
+			(&bare[..end], &bare[end..])
+		};
+		if let Some(value) = std::env::var_os(name).filter(|v| !v.is_empty()) {
+			out.push_str(&value.to_string_lossy());
+		} else if name.eq_ignore_ascii_case("HOME") || name.eq_ignore_ascii_case("USERPROFILE") {
+			// The one pair worth answering ourselves: native Windows sets no
+			// HOME, and $HOME is what the shipped default says on unix - so a
+			// config carried either way still names a real directory.
+			out.push_str(&home_string());
+		}
+		rest = after;
+	}
+	out.push_str(rest);
+	out
+}
+
+// The home directory as text, empty when the environment names none. Same
+// answer `home_dir` gives the config-location logic, so a `~` here and a `~` in
+// a path there can never disagree.
+fn home_string() -> String {
+	home_dir().map_or_else(String::new, |dir| dir.to_string_lossy().into_owned())
+}
+
+// Did a shell start us? If so its directory is a deliberate choice and outranks
+// the setting; if not, the directory we inherited is whatever the launcher felt
+// like and says nothing about where the user wants to be.
+//
+// The test is the same on both platforms - "is standard input a terminal" - and
+// it is what separates the two cases without asking about parent processes,
+// which costs a process-table walk on Windows and would sit on the path to the
+// first frame. Measured on Windows: launched from a console the std handles are
+// the console's (FILE_TYPE_CHAR), launched through ShellExecute the way Explorer
+// and the Start menu do it they are NULL. A release build is a GUI-subsystem
+// binary and owns no console either way, so GetConsoleWindow cannot answer this
+// and AttachConsole answers it wrong (it succeeds via the grandparent).
+#[cfg(unix)]
+fn launched_from_shell() -> bool {
+	// SAFETY: isatty only inspects the descriptor; 0 is always a valid argument.
+	unsafe { libc::isatty(0) == 1 }
+}
+
+#[cfg(windows)]
+fn launched_from_shell() -> bool {
+	use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+	use windows_sys::Win32::Storage::FileSystem::{FILE_TYPE_CHAR, GetFileType};
+	use windows_sys::Win32::System::Console::{GetStdHandle, STD_INPUT_HANDLE};
+	// SAFETY: both calls only read the process's own standard-handle table.
+	unsafe {
+		let handle = GetStdHandle(STD_INPUT_HANDLE);
+		!handle.is_null() && handle != INVALID_HANDLE_VALUE && GetFileType(handle) == FILE_TYPE_CHAR
+	}
+}
+
+#[cfg(not(any(unix, windows)))]
+fn launched_from_shell() -> bool {
+	true
 }
 
 // Parse `selection_pairs` into (open, close) char pairs, in precedence order.
@@ -574,6 +794,7 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 		doc.set_string("theme_mode", s.theme_mode.as_str());
 	}
 	write_user_themes(&mut doc, &orig.user_themes, &s.user_themes);
+	write_shells(&mut doc, &orig.shells, &s.shells);
 
 	if s.use_system_font != orig.use_system_font {
 		doc.set_bool("font.use_system_family", s.use_system_font);
@@ -754,6 +975,12 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.hide_single_tab != orig.hide_single_tab {
 		doc.set_bool("window.hide_single_tab", s.hide_single_tab);
 	}
+	if s.tab_min_pct != orig.tab_min_pct {
+		doc.set_float("window.tab_min_width_pct", r(s.tab_min_pct));
+	}
+	if s.tab_max_pct != orig.tab_max_pct {
+		doc.set_float("window.tab_max_width_pct", r(s.tab_max_pct));
+	}
 	if s.remembered_columns != orig.remembered_columns {
 		doc.set_int("window.remembered_columns", s.remembered_columns as i64);
 	}
@@ -766,11 +993,14 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.selection_pairs != orig.selection_pairs {
 		doc.set_string("selection.pairs", &s.selection_pairs);
 	}
-	if s.default_shell != orig.default_shell {
-		doc.set_string("shell.default", &s.default_shell);
-	}
 	if s.command_line != orig.command_line {
 		doc.set_string("shell.command_line", &s.command_line);
+	}
+	if s.startup_directory != orig.startup_directory {
+		doc.set_string("shell.startup_directory", &s.startup_directory);
+	}
+	if s.shell_integration != orig.shell_integration {
+		doc.set_bool("shell.integration", s.shell_integration);
 	}
 	if s.copy_on_select != orig.copy_on_select {
 		doc.set_bool("shell.copy_on_select", s.copy_on_select);
@@ -925,17 +1155,21 @@ struct RawConfig {
 	rows: Option<usize>,
 	remember_size: Option<bool>,
 	hide_single_tab: Option<bool>,
+	tab_min_pct: Option<f32>,
+	tab_max_pct: Option<f32>,
 	remembered_columns: Option<usize>,
 	remembered_rows: Option<usize>,
 	word_separators: Option<String>,
 	selection_pairs: Option<String>,
-	default_shell: Option<String>,
 	command_line: Option<String>,
+	startup_directory: Option<String>,
 	copy_on_select: Option<bool>,
+	shell_integration: Option<bool>,
 	hyperlinks: Option<bool>,
 	hyperlink_open_command: Option<String>,
 	colors: RawColors,
 	user_themes: Vec<crate::theme::UserTheme>,
+	shells: Vec<crate::shells::ShellEntry>,
 }
 
 #[derive(Default)]
@@ -955,6 +1189,7 @@ struct RawColors {
 }
 
 fn load() -> Settings {
+	adopt_legacy_config();
 	let Some(path) = config_path() else {
 		return Settings::default();
 	};
@@ -962,7 +1197,7 @@ fn load() -> Settings {
 		if let Some(dir) = path.parent() {
 			let _ = std::fs::create_dir_all(dir);
 		}
-		if let Err(e) = std::fs::write(&path, DEFAULT_CONFIG) {
+		if let Err(e) = std::fs::write(&path, default_config()) {
 			eprintln!(
 				"{APP_NAME}: could not create config {}: {e}",
 				path.display()
@@ -977,6 +1212,7 @@ fn load() -> Settings {
 	// the program's own option set changed. The in-place writes defer (with an
 	// FYI) if the file looks open in another program.
 	convert_legacy_config(&path);
+	adopt_default_shell(&path);
 	migrate_config(&path);
 	backfill_config(&path);
 	let raw = match std::fs::read_to_string(&path) {
@@ -1138,13 +1374,16 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		rows: r.u("window.rows"),
 		remember_size: r.b("window.remember_size"),
 		hide_single_tab: r.b("window.hide_single_tab"),
+		tab_min_pct: r.f("window.tab_min_width_pct"),
+		tab_max_pct: r.f("window.tab_max_width_pct"),
 		remembered_columns: r.u("window.remembered_columns"),
 		remembered_rows: r.u("window.remembered_rows"),
 		word_separators: r.s("selection.word_separators"),
 		selection_pairs: r.s("selection.pairs"),
-		default_shell: r.s("shell.default"),
 		command_line: r.s("shell.command_line"),
+		startup_directory: r.s("shell.startup_directory"),
 		copy_on_select: r.b("shell.copy_on_select"),
+		shell_integration: r.b("shell.integration"),
 		hyperlinks: r.b("hyperlinks.enabled"),
 		hyperlink_open_command: r.s("hyperlinks.open_command"),
 		colors: RawColors {
@@ -1162,6 +1401,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 			scrollbar_trough: r.s("colors.scrollbar_trough"),
 		},
 		user_themes: read_user_themes(&r.doc),
+		shells: read_shells(&r.doc),
 	}
 }
 
@@ -1246,6 +1486,105 @@ fn write_user_themes(
 			doc.set_string_array(&format!("{at}.{mode}.ansi"), &ansi);
 		}
 	}
+}
+
+// Stored shells, in file order - which IS the menu's order. An entry with no
+// command is skipped: a title alone names nothing to run. Everything else falls
+// back rather than dropping the entry, so a hand-written or half-written block
+// still yields a usable shell.
+fn read_shells(doc: &shcl::Document) -> Vec<crate::shells::ShellEntry> {
+	let mut out = Vec::new();
+	for slug in doc.children("shells") {
+		let text = |key: &str| {
+			doc.get_string(&format!("shells.{slug}.{key}"))
+				.ok()
+				.map(|v| v.trim().to_string())
+				.filter(|v| !v.is_empty())
+		};
+		let Some(command) = text("command") else {
+			continue;
+		};
+		out.push(crate::shells::ShellEntry {
+			title: text("title").unwrap_or_else(|| slug.clone()),
+			command,
+			active: doc
+				.get_bool(&format!("shells.{slug}.active"))
+				.unwrap_or(true),
+			comment: text("comment").unwrap_or_default(),
+			// A date the file spells any other way is simply not a date we can
+			// show, so it reads as "never seen" rather than failing the entry.
+			last_seen: doc
+				.get_datetime(&format!("shells.{slug}.last_seen"))
+				.ok()
+				.and_then(|when| when.date)
+				.map_or_else(String::new, |(y, m, d)| format!("{y:04}-{m:02}-{d:02}")),
+			slug,
+		});
+	}
+	out
+}
+
+// Bring the file's `shells.*` subtrees in line with the list in memory. Same
+// shape as the themes above - an entry that changed at all is dropped and
+// rewritten whole, so a field that no longer has a value cannot survive under a
+// key that stopped setting it - and, as there, an entry that did not change is
+// not touched, which is what keeps a scan that found nothing new from rewriting
+// the file at all.
+fn write_shells(
+	doc: &mut shcl::Document,
+	orig: &[crate::shells::ShellEntry],
+	now: &[crate::shells::ShellEntry],
+) {
+	// File ORDER is the list's order - it decides the menu and, at the top, the
+	// default shell - and a reorder changes no entry, so the per-entry path below
+	// would write nothing at all and lose it. A moved entry therefore rewrites
+	// the whole subtree in the new order, which is the only way to say it.
+	let order = |list: &[crate::shells::ShellEntry]| -> Vec<String> {
+		list.iter().map(|e| e.slug.clone()).collect()
+	};
+	if order(orig) != order(now) {
+		for old in orig {
+			doc.remove(&format!("shells.{}", old.slug));
+		}
+		for entry in now {
+			write_shell(doc, entry);
+		}
+		return;
+	}
+	for old in orig {
+		if !now.iter().any(|e| e.slug == old.slug) {
+			doc.remove(&format!("shells.{}", old.slug));
+		}
+	}
+	for entry in now {
+		if orig.iter().any(|e| e == entry) {
+			continue;
+		}
+		write_shell(doc, entry);
+	}
+}
+
+// One entry's whole subtree, dropped and rewritten so a field that no longer has
+// a value cannot survive under a key that stopped setting it.
+fn write_shell(doc: &mut shcl::Document, entry: &crate::shells::ShellEntry) {
+	let at = format!("shells.{}", entry.slug);
+	doc.remove(&at);
+	doc.set_string(&format!("{at}.title"), &entry.title);
+	doc.set_string(&format!("{at}.command"), &entry.command);
+	doc.set_bool(&format!("{at}.active"), entry.active);
+	if !entry.comment.is_empty() {
+		doc.set_string(&format!("{at}.comment"), &entry.comment);
+	}
+	if let Some(when) = parse_iso_date(&entry.last_seen) {
+		doc.set_datetime(&format!("{at}.last_seen"), &when);
+	}
+}
+
+// "YYYY-MM-DD" as the document's own date type. Anything else is None, so a
+// hand-typed value that is not a date is dropped rather than written back.
+fn parse_iso_date(text: &str) -> Option<shcl::ShclDateTime> {
+	let when = shcl::parse_datetime(text.trim())?;
+	when.date.is_some().then_some(when)
 }
 
 fn resolve(raw: RawConfig) -> Settings {
@@ -1456,6 +1795,12 @@ fn resolve(raw: RawConfig) -> Settings {
 		rows: raw.rows.unwrap_or(d.rows).max(1),
 		remember_size: raw.remember_size.unwrap_or(d.remember_size),
 		hide_single_tab: raw.hide_single_tab.unwrap_or(d.hide_single_tab),
+		tab_min_pct: raw.tab_min_pct.unwrap_or(d.tab_min_pct).clamp(2.0, 100.0),
+		tab_max_pct: raw
+			.tab_max_pct
+			.unwrap_or(d.tab_max_pct)
+			.clamp(2.0, 100.0)
+			.max(raw.tab_min_pct.unwrap_or(d.tab_min_pct).clamp(2.0, 100.0)),
 		remembered_columns: raw
 			.remembered_columns
 			.unwrap_or(d.remembered_columns)
@@ -1463,9 +1808,10 @@ fn resolve(raw: RawConfig) -> Settings {
 		remembered_rows: raw.remembered_rows.unwrap_or(d.remembered_rows).max(1),
 		word_separators: raw.word_separators.unwrap_or(d.word_separators),
 		selection_pairs: raw.selection_pairs.unwrap_or(d.selection_pairs),
-		default_shell: raw.default_shell.unwrap_or(d.default_shell),
 		command_line: raw.command_line.unwrap_or(d.command_line),
+		startup_directory: raw.startup_directory.unwrap_or(d.startup_directory),
 		copy_on_select: raw.copy_on_select.unwrap_or(d.copy_on_select),
+		shell_integration: raw.shell_integration.unwrap_or(d.shell_integration),
 		hyperlinks: raw.hyperlinks.unwrap_or(d.hyperlinks),
 		hyperlink_open_command: raw
 			.hyperlink_open_command
@@ -1486,6 +1832,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		theme: theme_name,
 		theme_mode,
 		user_themes: raw.user_themes,
+		shells: raw.shells,
 	}
 }
 
@@ -1586,7 +1933,7 @@ fn expand_tilde(value: &str) -> PathBuf {
 }
 
 pub fn resolve_wallpaper(explicit: Option<String>) -> Option<PathBuf> {
-	let dir = config_path()?.parent()?.to_path_buf();
+	let dir = config_dir()?;
 	if let Some(given) = explicit.filter(|value| !value.trim().is_empty()) {
 		let path = expand_tilde(given.trim());
 		// Handed back unchecked: the loader opens it on its own thread and says so
@@ -1599,20 +1946,25 @@ pub fn resolve_wallpaper(explicit: Option<String>) -> Option<PathBuf> {
 		});
 	}
 	// Current convention first (wallpaper/wallpaper.*), then the older spellings
-	// so existing setups keep working.
-	[
-		("wallpaper", "wallpaper"),
-		("wallpapers", "wallpaper"),
-		("backgrounds", "background"),
-	]
-	.into_iter()
-	.flat_map(|(sub, stem)| {
-		let sub_dir = dir.join(sub);
-		["png", "jpg", "jpeg"]
+	// so existing setups keep working - across every directory a pack may sit in,
+	// which on Windows means Local before the config dir it used to share.
+	wallpaper_search_dirs()
+		.into_iter()
+		.flat_map(|dir| {
+			[
+				("wallpaper", "wallpaper"),
+				("wallpapers", "wallpaper"),
+				("backgrounds", "background"),
+			]
 			.into_iter()
-			.map(move |ext| sub_dir.join(format!("{stem}.{ext}")))
-	})
-	.find(|path| path.exists())
+			.flat_map(move |(sub, stem)| {
+				let sub_dir = dir.join(sub);
+				["png", "jpg", "jpeg"]
+					.into_iter()
+					.map(move |ext| sub_dir.join(format!("{stem}.{ext}")))
+			})
+		})
+		.find(|path| path.exists())
 }
 
 // The wallpaper-rotation folder: a relative value resolves against the config
@@ -1625,7 +1977,7 @@ pub fn resolve_wallpaper_folder(explicit: Option<String>) -> Option<PathBuf> {
 	if path.is_absolute() {
 		return Some(path);
 	}
-	Some(config_path()?.parent()?.join(&path))
+	Some(config_dir()?.join(&path))
 }
 
 // Enough kept resets that nobody hits the ceiling in practice, low enough that a
@@ -1672,7 +2024,12 @@ pub fn reset_config() -> Option<PathBuf> {
 // Where the wallpaper shuffle keeps its recently-shown list. Beside the config,
 // so a --config override gets its own history instead of sharing one.
 pub fn wallpaper_history_path() -> Option<PathBuf> {
-	Some(config_path()?.parent()?.join(".wallpaper-history"))
+	let name = ".wallpaper-history";
+	let beside_config = config_dir().map(|dir| dir.join(name));
+	if let Some(old) = beside_config.filter(|p| p.exists()) {
+		return Some(old);
+	}
+	Some(data_dir()?.join(name))
 }
 
 // Image files we're willing to load as a wallpaper. One list, so the folder
@@ -1692,10 +2049,13 @@ pub fn is_image_file(path: &std::path::Path) -> bool {
 // scan's job, off the startup thread, and an empty one still means no rotation
 // and no diagnostic, since the user never asked for one.
 fn default_wallpaper_folder() -> Option<PathBuf> {
-	let dir = config_path()?.parent()?.to_path_buf();
-	["wallpaper", "wallpapers", "backgrounds"]
+	wallpaper_search_dirs()
 		.into_iter()
-		.map(|sub| dir.join(sub))
+		.flat_map(|dir| {
+			["wallpaper", "wallpapers", "backgrounds"]
+				.into_iter()
+				.map(move |sub| dir.join(sub))
+		})
 		.find(|sub| sub.is_dir())
 }
 
@@ -1781,7 +2141,10 @@ const CONFIG_RENAMES: &[(&str, &str)] = &[
 // leaves rest through Ease-in and the one knob that fed four mechanisms is
 // gone. scroll.ease_in was a unitless fraction; its replacement is a duration
 // (scroll.ease_in_ms), so the old value cannot be carried by a rename.
-const CONFIG_REMOVED: &[&str] = &["scroll.tau_ms", "scroll.ease_in"];
+// `shell.default` is here because the list itself now names the default (its
+// top active entry). Adoption runs BEFORE this drops the line - see
+// `adopt_default_shell` - so the value is moved into the list, not discarded.
+const CONFIG_REMOVED: &[&str] = &["scroll.tau_ms", "scroll.ease_in", "shell.default"];
 
 // Defaults that changed, as (path, the value that used to be the default). An
 // existing config carries the template's commented lines verbatim, so after a
@@ -1980,7 +2343,7 @@ fn convert_legacy_config(path: &std::path::Path) {
 	// active values: current-format paths carry as themselves (a mixed file
 	// loses nothing), old spellings map through the table, best (lowest table
 	// index) spelling winning per new path
-	let known_new: std::collections::HashSet<String> = setting_lines(DEFAULT_CONFIG)
+	let known_new: std::collections::HashSet<String> = setting_lines(default_config())
 		.into_iter()
 		.map(|(p, _)| p)
 		.collect();
@@ -2052,7 +2415,7 @@ fn convert_legacy_config(path: &std::path::Path) {
 	let Some(backup) = backup_aside(path) else {
 		return;
 	};
-	let mut out: Vec<String> = DEFAULT_CONFIG.lines().map(str::to_string).collect();
+	let mut out: Vec<String> = default_config().lines().map(str::to_string).collect();
 	for (new_path, (_, value)) in &carry {
 		if !activate_line(&mut out, new_path, value) {
 			// no template line (shouldn't happen) - keep it as a dotted line
@@ -2184,7 +2547,7 @@ fn refresh_superseded_default(line: &str, path: &str) -> Option<String> {
 	{
 		return None;
 	}
-	setting_lines(DEFAULT_CONFIG)
+	setting_lines(default_config())
 		.into_iter()
 		.find(|(name, _)| name == path)
 		.map(|(_, template)| template)
@@ -2259,6 +2622,71 @@ fn migrate_config_text(text: &str) -> Option<String> {
 	})
 }
 
+// One-time: `shell.default` used to name the default shell on its own. The list
+// names it now - its first active entry - so the two could disagree, and the
+// stored value is the user's own statement of which one they meant. Move the
+// entry it names to the top (creating one if the list has nothing running that
+// program) and drop the key; `CONFIG_REMOVED` clears any commented remnant.
+//
+// It runs BEFORE that removal, and only while the key is actively set: a config
+// that never had one, or has already been through this, is not touched at all.
+fn adopt_default_shell(path: &std::path::Path) {
+	let Some(doc) = read_doc(path) else { return };
+	let Some(wanted) = doc
+		.get_string("shell.default")
+		.ok()
+		.map(|v| v.trim().to_string())
+		.filter(|v| !v.is_empty())
+	else {
+		return;
+	};
+	if config_open_elsewhere(path) {
+		note_config_busy(path);
+		return;
+	}
+	let stored = read_shells(&doc);
+	let moved = adopt_default_into(&stored, &wanted);
+	let mut doc = doc;
+	write_shells(&mut doc, &stored, &moved);
+	doc.remove("shell.default");
+	write_doc(path, &doc);
+}
+
+// The list with `wanted` at the front. An entry already running that shell moves;
+// anything else is added as a new entry, since a command the list does not carry
+// is still a shell the user chose to launch.
+//
+// "Already running that shell" is an identity question, not a string one: the
+// retired `shell.default` was routinely a bare name where the scan had already
+// stored the full path to the same file, and a string compare therefore promoted
+// a DUPLICATE of the user's default shell to the top of their list.
+fn adopt_default_into(
+	stored: &[crate::shells::ShellEntry],
+	wanted: &str,
+) -> Vec<crate::shells::ShellEntry> {
+	adopt_default_into_with(stored, wanted, &crate::shells::same_command)
+}
+
+fn adopt_default_into_with(
+	stored: &[crate::shells::ShellEntry],
+	wanted: &str,
+	same: &dyn Fn(&str, &str) -> bool,
+) -> Vec<crate::shells::ShellEntry> {
+	let mut out = stored.to_vec();
+	let at = out
+		.iter()
+		.position(|e| e.command.trim() == wanted)
+		.or_else(|| out.iter().position(|e| same(&e.command, wanted)));
+	match at {
+		Some(at) => {
+			let entry = out.remove(at);
+			out.insert(0, entry);
+		}
+		None => out.insert(0, crate::shells::adopted(wanted, stored)),
+	}
+	out
+}
+
 // Revert config keys to their defaults: drop the active assignment from
 // config.shcl (dotted keys are paths), then backfill so the
 // key comes back as the template's commented default line. Used by the Settings
@@ -2283,7 +2711,7 @@ pub fn revert_keys(keys: &[&str]) {
 	backfill_config(&path);
 }
 
-// Insert any settings the `DEFAULT_CONFIG` template defines that `path` lacks,
+// Insert any settings the shipped template defines that `path` lacks,
 // using the template's own (commented or active) line so follow-system keys stay
 // absent and behavior is unchanged. Existing values, comments, and formatting are
 // preserved (nothing already in the file is rewritten). Every setting is one
@@ -2303,7 +2731,7 @@ fn backfill_config(path: &std::path::Path) {
 	let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
 
 	let mut groups: Vec<Vec<(String, Vec<String>)>> = Vec::new();
-	for (p, block, new_group) in setting_groups(DEFAULT_CONFIG) {
+	for (p, block, new_group) in setting_groups(default_config()) {
 		if new_group || groups.is_empty() {
 			groups.push(Vec::new());
 		}
@@ -2481,22 +2909,247 @@ pub fn test_config_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 pub fn set_config_override(path: PathBuf) {
+	#[cfg(test)]
+	{
+		*test_override()
+			.lock()
+			.unwrap_or_else(std::sync::PoisonError::into_inner) = Some(path.clone());
+	}
 	let _ = CONFIG_OVERRIDE.set(path);
 }
 
+// `--config` is decided once, before any setting is read, which is exactly what
+// a OnceLock says - but a test installs SEVERAL throwaway configs in one
+// process, and the second `set` there is silently ignored. That failed quietly
+// and in the worst possible way: every later test wrote its own file and read
+// the FIRST one's, so one test's leftovers steered another's assertions
+// (measured: the theme round-trip read theme_mode "light" out of the generic
+// row test's config and stored its edit in the wrong variant of the palette).
+// So a test build gets a settable door beside the OnceLock. It is still
+// process-global, hence `test_config_lock` around any test that uses it.
+#[cfg(test)]
+fn test_override() -> &'static std::sync::Mutex<Option<PathBuf>> {
+	static OVERRIDE: OnceLock<std::sync::Mutex<Option<PathBuf>>> = OnceLock::new();
+	OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+// The directory name under whichever base a platform hands us. One spelling, so
+// the config dir, the data dir and the legacy probe cannot drift apart.
+const APP_DIR: &str = "silkterm";
+
+// Which platform's conventions to lay the paths out by. Named rather than read
+// off `cfg!` at each site so the WHOLE scheme can be tested for every platform
+// from any one of them - the boxes here are Linux and Windows, and a macOS path
+// nobody present can run is exactly the kind that rots unnoticed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Layout {
+	Windows,
+	MacOs,
+	Xdg,
+}
+
+fn host_layout() -> Layout {
+	if cfg!(windows) {
+		Layout::Windows
+	} else if cfg!(target_os = "macos") {
+		Layout::MacOs
+	} else {
+		Layout::Xdg
+	}
+}
+
+// An environment variable as a path, treating empty as unset - an exported but
+// empty HOME is not a home directory.
+fn env_path(name: &str) -> Option<PathBuf> {
+	std::env::var_os(name)
+		.filter(|value| !value.is_empty())
+		.map(PathBuf::from)
+}
+
+pub fn home_dir() -> Option<PathBuf> {
+	env_path("HOME").or_else(|| env_path("USERPROFILE"))
+}
+
+// Where settings live, by platform convention.
+//
+// An explicit XDG_CONFIG_HOME is honoured on EVERY platform - somebody who sets
+// it means it - and only then does the platform get its say: Roaming on Windows
+// (settings are meant to follow the user between machines), Application Support
+// on macOS, ~/.config elsewhere. Each falls back to ~/.config if the native base
+// is missing from the environment, which is better than having no config at all.
+fn config_base_for(
+	layout: Layout,
+	xdg: Option<&std::path::Path>,
+	home: Option<&std::path::Path>,
+	appdata: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+	if let Some(dir) = xdg {
+		return Some(dir.to_path_buf());
+	}
+	let dotconfig = || home.map(|h| h.join(".config"));
+	match layout {
+		Layout::Windows => appdata.map(std::path::Path::to_path_buf).or_else(dotconfig),
+		Layout::MacOs => home
+			.map(|h| h.join("Library").join("Application Support"))
+			.or_else(dotconfig),
+		Layout::Xdg => dotconfig(),
+	}
+}
+
 fn config_path() -> Option<PathBuf> {
+	#[cfg(test)]
+	if let Some(p) = test_override()
+		.lock()
+		.unwrap_or_else(std::sync::PoisonError::into_inner)
+		.clone()
+	{
+		return Some(p);
+	}
 	if let Some(p) = CONFIG_OVERRIDE.get() {
 		return Some(p.clone());
 	}
-	let base = std::env::var_os("XDG_CONFIG_HOME")
-		.map(PathBuf::from)
-		.filter(|p| !p.as_os_str().is_empty())
-		.or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-		.or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))?;
-	Some(base.join("silkterm").join("config.shcl"))
+	let xdg = env_path("XDG_CONFIG_HOME");
+	let home = home_dir();
+	let appdata = env_path("APPDATA");
+	let base = config_base_for(
+		host_layout(),
+		xdg.as_deref(),
+		home.as_deref(),
+		appdata.as_deref(),
+	)?;
+	Some(base.join(APP_DIR).join("config.shcl"))
 }
 
-const DEFAULT_CONFIG: &str = r##"# SilkTerm configuration file.
+pub fn config_dir() -> Option<PathBuf> {
+	Some(config_path()?.parent()?.to_path_buf())
+}
+
+// Where bulk, machine-local data goes. On Windows that is Local rather than
+// Roaming: a wallpaper pack is 60 MiB and has no business following the user
+// onto every machine they sign into. Everywhere else it IS the config dir, which
+// is what those platforms' conventions already mean.
+//
+// Two cases deliberately keep everything together instead: a `--config` override
+// (so an alternate config still gets its own wallpaper and history rather than
+// sharing the default ones - that isolation is the point of the flag), and an
+// explicit XDG_CONFIG_HOME (somebody who asks for one tree means one tree).
+pub fn data_dir() -> Option<PathBuf> {
+	if CONFIG_OVERRIDE.get().is_some() || env_path("XDG_CONFIG_HOME").is_some() {
+		return config_dir();
+	}
+	match host_layout() {
+		Layout::Windows => env_path("LOCALAPPDATA")
+			.map(|dir| dir.join(APP_DIR))
+			.or_else(config_dir),
+		_ => config_dir(),
+	}
+}
+
+// Every directory a wallpaper folder may sit in, best first. More than one entry
+// only where the data dir split off from the config dir - a pack already beside
+// the config still has to be found, because nobody should have to move 60 MiB to
+// keep what already worked.
+fn wallpaper_search_dirs() -> Vec<PathBuf> {
+	let mut dirs = Vec::new();
+	if let Some(dir) = data_dir() {
+		dirs.push(dir);
+	}
+	if let Some(dir) = config_dir() {
+		if !dirs.contains(&dir) {
+			dirs.push(dir);
+		}
+	}
+	dirs
+}
+
+// A config left at ~/.config by a build that predates the per-platform layout.
+// None where that IS the native location, so there is nothing to adopt on Linux.
+fn legacy_config_path() -> Option<PathBuf> {
+	if CONFIG_OVERRIDE.get().is_some() || host_layout() == Layout::Xdg {
+		return None;
+	}
+	let legacy = home_dir()?
+		.join(".config")
+		.join(APP_DIR)
+		.join("config.shcl");
+	// An XDG_CONFIG_HOME pointing at the old spot makes the two the same file.
+	if config_path().is_some_and(|native| native == legacy) {
+		return None;
+	}
+	Some(legacy)
+}
+
+// Bring a pre-layout config across, ONCE, and only when the native location
+// holds nothing. If both exist the native one is the live file and the old one
+// is left exactly where it is - guessing which of two real configs somebody
+// wants is not a call this can make, so it says what it found and moves on.
+// Called before the default template would be written, or a fresh template
+// would win the race against the file being adopted.
+fn adopt_legacy_config() {
+	let (Some(native), Some(legacy)) = (config_path(), legacy_config_path()) else {
+		return;
+	};
+	if !legacy.exists() {
+		return;
+	}
+	if native.exists() {
+		eprintln!(
+			"{APP_NAME}: using {}; the older {} is being ignored (delete it, or point --config at it)",
+			native.display(),
+			legacy.display()
+		);
+		return;
+	}
+	if let Some(dir) = native.parent() {
+		if let Err(e) = std::fs::create_dir_all(dir) {
+			eprintln!("{APP_NAME}: could not create {}: {e}", dir.display());
+			return;
+		}
+	}
+	// rename first: same volume is the ordinary case and it is atomic. A cross
+	// volume move fails EXDEV, so fall back to copy-then-remove, and keep the
+	// original if the remove fails rather than risk having neither.
+	let moved = std::fs::rename(&legacy, &native).is_ok()
+		|| (std::fs::copy(&legacy, &native).is_ok() && std::fs::remove_file(&legacy).is_ok());
+	if moved {
+		eprintln!(
+			"{APP_NAME}: moved your config from {} to {}",
+			legacy.display(),
+			native.display()
+		);
+	} else {
+		eprintln!(
+			"{APP_NAME}: could not move {} to {}",
+			legacy.display(),
+			native.display()
+		);
+	}
+}
+
+// The shipped template, with the one line whose default is platform-specific
+// filled in. `{HOME}` is the only substitution and it is the home-directory
+// token a person on THIS platform would type - a Windows user reading `$HOME`
+// in their own config would not recognize it as a default they could edit.
+//
+// Everything that compares a config against the template (backfill, the
+// superseded-default refresh, the group walk) reads it through here, so the
+// text is assembled once and every one of them sees the same bytes.
+static DEFAULT_CONFIG_TEXT: std::sync::LazyLock<String> =
+	std::sync::LazyLock::new(|| DEFAULT_CONFIG_TEMPLATE.replace("{HOME}", HOME_TOKEN));
+
+fn default_config() -> &'static str {
+	DEFAULT_CONFIG_TEXT.as_str()
+}
+
+// How a person on this platform spells "my home directory" in a path. Also what
+// `expand_path` understands, along with the other platform's spelling and `~`:
+// a config that is carried between machines should not stop working.
+#[cfg(windows)]
+pub const HOME_TOKEN: &str = "%USERPROFILE%";
+#[cfg(not(windows))]
+pub const HOME_TOKEN: &str = "$HOME";
+
+const DEFAULT_CONFIG_TEMPLATE: &str = r##"# SilkTerm configuration file.
 #
 #
 # This config file format is:
@@ -2580,6 +3233,15 @@ window:
 	## Hide single tab
 	## Hide the tab bar while only one tab is open (also in the View menu).
 	# hide_single_tab: false  ## Default
+
+	## Tab width
+	## How wide a tab may be, as a percentage of the window's width. Tabs share
+	## the bar evenly between these two bounds. Raising the minimum keeps tabs
+	## readable when many are open, at the cost of showing them a page at a time -
+	## the wheel over the tab bar turns the page, and switching tabs brings the
+	## new one onto it.
+	# tab_min_width_pct: 8.0  ## Default
+	# tab_max_width_pct: 26.0  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Background and transparency
@@ -2792,13 +3454,13 @@ selection:
 ## Shell
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-shell:
+## The shell for new windows, tabs and panes is the first ACTIVE entry in the
+## shells.<name> blocks below - "the one at the top". Those blocks are written
+## for you a few seconds after launch, by a look around for what is installed,
+## and the Settings dialog's "Shells" tab is where the order is set. A CLI
+## --shell and per-pane inheritance still take precedence over both.
 
-	## Default shell
-	## Shell/command for new windows, tabs, and panes when nothing else is given
-	## (CLI --shell and per-pane inheritance take precedence). argv-split, so
-	## "bash --norc" works. Leave blank/commented for the system default shell.
-	# default: "bash --norc"  ## Default
+shell:
 
 	## Default command line
 	## Applied when SilkTerm is launched with no arguments - the same
@@ -2806,6 +3468,29 @@ shell:
 	## command-line arguments override this entirely. Leave blank/commented for
 	## none.
 	# command_line: "--new-pane --right --size 35%"  ## Default
+
+	## Default startup directory
+	## Where a shell starts when nothing else has said. It is the LOWEST
+	## precedence of four: a --directory on the command line wins outright, a
+	## new tab, pane or window inherits the directory of the pane it was opened
+	## from, and a SilkTerm launched from a shell keeps the directory that shell
+	## was in - so this is what a launch from the desktop, a menu or a shortcut
+	## gets. `~` and either platform's home token
+	## ($HOME, %USERPROFILE%) are understood, as is any other environment
+	## variable in the same spellings. A directory that does not exist is
+	## reported and ignored.
+	# startup_directory: "{HOME}"  ## Default
+
+	## Shell integration
+	## Add a small block to each PowerShell profile that reports the shell's
+	## directory, so a new tab, pane or window opens where that shell is.
+	## PowerShell keeps its location to itself, so without it the OS has nothing
+	## to report and a new pane starts where the old one was launched. Every
+	## other shell moves its own process and needs nothing. A profile that
+	## already reports - ours or anyone else's - is left alone, what is there is
+	## kept with a copy beside it, and deleting the block switches it off for
+	## good. See shell-integration.md.
+	# integration: true  ## Default
 
 	## Copy on select
 	## Start every pane with "Copy on select" enabled (selected text goes to the
@@ -2979,6 +3664,163 @@ colors:
 mod tests {
 	use super::*;
 
+	// Each platform keeps settings somewhere of its own, and the reason the
+	// decision is a pure function of (layout, environment) is exactly this test:
+	// it pins the macOS answer from a box that has no macOS, and the Windows one
+	// from Linux. Reading cfg! at each use site instead would leave two thirds of
+	// this unrunnable wherever it happens to be run.
+	#[test]
+	fn each_platform_keeps_its_config_where_that_platform_keeps_settings() {
+		let home = PathBuf::from("/home/u");
+		let roaming = PathBuf::from("C:/Users/u/AppData/Roaming");
+		assert_eq!(
+			config_base_for(Layout::Windows, None, Some(&home), Some(&roaming)),
+			Some(roaming.clone()),
+			"Windows settings roam, so they belong in Roaming"
+		);
+		assert_eq!(
+			config_base_for(Layout::MacOs, None, Some(&home), None),
+			Some(home.join("Library").join("Application Support"))
+		);
+		assert_eq!(
+			config_base_for(Layout::Xdg, None, Some(&home), None),
+			Some(home.join(".config"))
+		);
+		// and no platform reaches for another's spelling
+		assert_ne!(
+			config_base_for(Layout::Windows, None, Some(&home), Some(&roaming)),
+			Some(home.join(".config"))
+		);
+	}
+
+	#[test]
+	fn an_explicit_xdg_config_home_wins_on_every_platform() {
+		// Setting it is a deliberate act, so it outranks the platform default
+		// everywhere - including the two platforms that have a native answer.
+		let xdg = PathBuf::from("/elsewhere/cfg");
+		let home = PathBuf::from("/home/u");
+		let roaming = PathBuf::from("C:/Users/u/AppData/Roaming");
+		for layout in [Layout::Windows, Layout::MacOs, Layout::Xdg] {
+			assert_eq!(
+				config_base_for(layout, Some(&xdg), Some(&home), Some(&roaming)),
+				Some(xdg.clone()),
+				"{layout:?} ignored an explicit XDG_CONFIG_HOME"
+			);
+		}
+	}
+
+	#[test]
+	fn a_missing_native_base_falls_back_rather_than_leaving_no_config() {
+		// A stripped environment (a service, a bare shell) can carry no APPDATA.
+		// Falling back to ~/.config is better than having nowhere to put settings.
+		let home = PathBuf::from("/home/u");
+		assert_eq!(
+			config_base_for(Layout::Windows, None, Some(&home), None),
+			Some(home.join(".config"))
+		);
+		// With nothing at all to go on there is genuinely no answer.
+		assert_eq!(config_base_for(Layout::Windows, None, None, None), None);
+		assert_eq!(config_base_for(Layout::Xdg, None, None, None), None);
+	}
+
+	// The whole point of the DIP pass: a chrome measurement is the same physical
+	// size on any display, so it doubles when the scale factor does. The floor is
+	// the other half - a hairline the author asked to be visible must never round
+	// down to nothing, which is what a 1 DIP rule does on a display below 1x.
+	#[test]
+	fn a_chrome_measurement_scales_and_a_hairline_survives() {
+		assert_eq!(dip(10.0, 1.0), 10.0);
+		assert_eq!(dip(10.0, 2.0), 20.0);
+		assert_eq!(dip(FOCUS_RING_PX, 2.0), FOCUS_RING_PX * 2.0);
+		// fractional factors round to whole pixels so a rule stays crisp
+		assert_eq!(dip(10.0, 1.5), 15.0);
+		assert_eq!(dip(9.0, 1.25), 11.0);
+		// a hairline holds at every factor, including down-scaled displays
+		for scale in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0] {
+			assert!(
+				dip(PANE_GAP_PX, scale) >= 1.0,
+				"the pane gap vanished at {scale}x"
+			);
+		}
+		// zero stays zero - the floor is for measurements meant to be seen
+		assert_eq!(dip(0.0, 2.0), 0.0);
+	}
+
+	fn shell_entry(slug: &str, command: &str) -> crate::shells::ShellEntry {
+		crate::shells::ShellEntry {
+			slug: slug.into(),
+			title: slug.into(),
+			command: command.into(),
+			active: true,
+			comment: String::new(),
+			last_seen: String::new(),
+		}
+	}
+
+	fn doc_with_shells(list: &[crate::shells::ShellEntry]) -> shcl::Document {
+		let mut doc = shcl::Document::parse("");
+		write_shells(&mut doc, &[], list);
+		doc
+	}
+
+	// File order IS the list's order - it decides what the menu offers first and
+	// therefore which shell is the default - and a reorder changes no entry, so
+	// the per-entry write path would have written nothing at all and lost it.
+	#[test]
+	fn a_reorder_is_written_even_though_no_entry_changed() {
+		let list = vec![
+			shell_entry("bash", "/bin/bash"),
+			shell_entry("fish", "/usr/bin/fish"),
+			shell_entry("zsh", "/bin/zsh"),
+		];
+		let mut doc = doc_with_shells(&list);
+		assert_eq!(doc.children("shells"), vec!["bash", "fish", "zsh"]);
+		let moved = vec![list[2].clone(), list[0].clone(), list[1].clone()];
+		write_shells(&mut doc, &list, &moved);
+		assert_eq!(doc.children("shells"), vec!["zsh", "bash", "fish"]);
+		// and every entry survived the rewrite whole
+		let back = read_shells(&doc);
+		assert_eq!(
+			back.iter().map(|e| e.command.as_str()).collect::<Vec<_>>(),
+			vec!["/bin/zsh", "/bin/bash", "/usr/bin/fish"]
+		);
+	}
+
+	#[test]
+	fn the_date_a_shell_was_last_seen_round_trips() {
+		let mut entry = shell_entry("bash", "/bin/bash");
+		entry.last_seen = "2026-08-19".into();
+		let doc = doc_with_shells(std::slice::from_ref(&entry));
+		assert_eq!(read_shells(&doc)[0].last_seen, "2026-08-19");
+		// a value that is not a date is not written, and reads as never seen
+		let mut junk = shell_entry("fish", "/usr/bin/fish");
+		junk.last_seen = "whenever".into();
+		let doc = doc_with_shells(std::slice::from_ref(&junk));
+		assert!(read_shells(&doc)[0].last_seen.is_empty());
+	}
+
+	// The list names the default now (its top active entry), so an old
+	// `shell.default` has to become the top of the list rather than be dropped.
+	#[test]
+	fn an_old_default_shell_becomes_the_top_of_the_list() {
+		let list = vec![
+			shell_entry("bash", "/bin/bash"),
+			shell_entry("fish", "/usr/bin/fish"),
+		];
+		// one the list already carries simply moves
+		let moved = adopt_default_into(&list, "/usr/bin/fish");
+		assert_eq!(
+			moved.iter().map(|e| e.slug.as_str()).collect::<Vec<_>>(),
+			vec!["fish", "bash"]
+		);
+		// one it does not know is still the shell they chose, so it is added there
+		let added = adopt_default_into(&list, "/opt/ion --login");
+		assert_eq!(added.len(), 3);
+		assert_eq!(added[0].command, "/opt/ion --login");
+		assert!(added[0].active);
+		assert_eq!(added[1].slug, "bash", "and nothing else moved");
+	}
+
 	// ':' must NOT be a word separator, else a double-click on C:\... drops the
 	// drive prefix (the alacritty default splits on ':'). Regression guard.
 	#[test]
@@ -3112,13 +3954,16 @@ mod tests {
 
 	#[test]
 	fn default_config_is_valid_shcl() {
-		let doc = shcl::Document::parse(DEFAULT_CONFIG);
+		let doc = shcl::Document::parse(default_config());
 		let errors: Vec<_> = doc
 			.diagnostics()
 			.iter()
 			.filter(|d| matches!(d.severity, shcl::Severity::Error))
 			.collect();
-		assert!(errors.is_empty(), "DEFAULT_CONFIG has errors: {errors:?}");
+		assert!(
+			errors.is_empty(),
+			"the shipped template has errors: {errors:?}"
+		);
 	}
 
 	// The shipped template must already be what a save would produce, or the very
@@ -3128,10 +3973,10 @@ mod tests {
 	// itself, and a bump that reintroduced the reflow would fail here.
 	#[test]
 	fn default_config_survives_a_save_unchanged() {
-		let doc = shcl::Document::parse(DEFAULT_CONFIG);
+		let doc = shcl::Document::parse(default_config());
 		assert_eq!(
 			doc.to_canonical(),
-			DEFAULT_CONFIG,
+			default_config(),
 			"a save would rewrite the shipped template"
 		);
 	}
@@ -3142,9 +3987,9 @@ mod tests {
 	fn default_config_comment_style() {
 		// The file header (the format blurb, down to the first '##' line) is
 		// verbatim prose in single-'#' form and is exempt from the convention.
-		let body = DEFAULT_CONFIG
+		let body = default_config()
 			.find("\n##")
-			.map_or(DEFAULT_CONFIG, |i| &DEFAULT_CONFIG[i..]);
+			.map_or(default_config(), |i| &default_config()[i..]);
 		for line in body.lines() {
 			let t = line.trim_start();
 			if !t.starts_with('#') {
@@ -3232,6 +4077,82 @@ mod tests {
 		);
 		let s = resolve(read_raw("font.size: 20.0\nfont.use_system_size: true\n", p));
 		assert!(s.use_system_font_size, "explicit key beats the inference");
+	}
+
+	// The setting ships as a literal token, so the expander is what makes it name
+	// a directory at all. Both platforms' spellings everywhere: a config file gets
+	// carried between machines, and a `$HOME` left standing as a literal folder
+	// name on Windows would be a very quiet way to fail.
+	#[test]
+	fn a_home_token_expands_however_it_is_spelled() {
+		let home = super::home_string();
+		assert!(!home.is_empty(), "this box names no home directory");
+		for spelling in ["~", "$HOME", "${HOME}", "%USERPROFILE%", "%userprofile%"] {
+			assert_eq!(expand_path(spelling), home, "{spelling} did not expand");
+		}
+		assert_eq!(expand_path("~/work"), format!("{home}/work"));
+		// a name that is not a variable is left exactly as it stands
+		assert_eq!(expand_path("/srv/~backup"), "/srv/~backup", "~ mid-path");
+		assert_eq!(expand_path("100%"), "100%", "a lone percent");
+		assert_eq!(expand_path("50%% off"), "50%% off", "an empty name");
+		assert_eq!(expand_path("cost $ 5"), "cost $ 5", "a lone dollar");
+		// and an unset one expands to nothing, the way a shell does it
+		assert_eq!(expand_path("$SILKTERM_NO_SUCH_VAR/x"), "/x");
+	}
+
+	// A directory named on the command line is checked before anything spawns, so
+	// a path that is not there reads as one line naming the flag rather than as a
+	// shell that failed to start - and it expands the same tokens the setting does.
+	#[test]
+	fn a_named_directory_is_expanded_and_checked() {
+		let home = super::home_string();
+		assert!(!home.is_empty(), "this box names no home directory");
+		assert_eq!(cli_dir("~"), Some(PathBuf::from(&home)));
+		assert_eq!(cli_dir(" $HOME "), Some(PathBuf::from(&home)), "trimmed");
+		assert_eq!(cli_dir("   "), None, "nothing asked for");
+		assert_eq!(
+			cli_dir("$SILKTERM_NO_SUCH_VAR/nowhere"),
+			None,
+			"no such dir"
+		);
+	}
+
+	// The bug this fixes shipped in everyone's config: `shell.default` was
+	// routinely a bare name where the scan had already stored the full path to
+	// the same file, so a STRING compare promoted a second copy of the user's
+	// default shell to the top of their own list - where the top is what "default
+	// shell" now means, so the duplicate became the default.
+	#[test]
+	fn a_default_shell_already_in_the_list_moves_instead_of_doubling() {
+		let entry = |slug: &str, command: &str| crate::shells::ShellEntry {
+			slug: slug.to_string(),
+			title: slug.to_string(),
+			command: command.to_string(),
+			active: true,
+			comment: String::new(),
+			last_seen: String::new(),
+		};
+		let stored = vec![
+			entry("cmd", "cmd.exe"),
+			entry("pwsh", "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\""),
+		];
+		// the stub says what the real resolver says on a box with pwsh installed
+		let same = |a: &str, b: &str| a.contains("pwsh") && b.contains("pwsh");
+		let out = adopt_default_into_with(&stored, "pwsh", &same);
+		assert_eq!(out.len(), 2, "the list grew a duplicate");
+		assert_eq!(
+			out[0].slug, "pwsh",
+			"the default shell did not move to the top"
+		);
+		assert_eq!(
+			out[0].command, stored[1].command,
+			"the stored command was replaced by the bare name"
+		);
+		// a shell the list really does not carry is still added
+		let same_none = |_: &str, _: &str| false;
+		let out = adopt_default_into_with(&stored, "fish", &same_none);
+		assert_eq!(out.len(), 3);
+		assert_eq!(out[0].command, "fish");
 	}
 
 	#[test]
@@ -3394,9 +4315,9 @@ mod tests {
 		let dir = std::env::temp_dir().join(format!("silkterm_noconvert_{}", std::process::id()));
 		let _ = std::fs::create_dir_all(&dir);
 		let path = dir.join("config.shcl");
-		std::fs::write(&path, DEFAULT_CONFIG).unwrap();
+		std::fs::write(&path, default_config()).unwrap();
 		convert_legacy_config(&path);
-		assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_CONFIG);
+		assert_eq!(std::fs::read_to_string(&path).unwrap(), default_config());
 		assert!(
 			!dir.join("config.shcl.bak").exists(),
 			"no backup for a current-format file"
@@ -3509,7 +4430,7 @@ mod tests {
 			migrate_config_text("transparency.opacity: 0.7\ncursor.animation: \"phase\"\n")
 				.is_none()
 		);
-		assert!(migrate_config_text(DEFAULT_CONFIG).is_none());
+		assert!(migrate_config_text(default_config()).is_none());
 	}
 
 	// Backfill only ever adds a missing key, so a config written when an older
@@ -3560,7 +4481,7 @@ mod tests {
 		};
 		for (path, stale) in SUPERSEDED_DEFAULTS {
 			let leaf = path.rsplit('.').next().unwrap();
-			let current = setting_lines(DEFAULT_CONFIG)
+			let current = setting_lines(default_config())
 				.into_iter()
 				.find_map(|(name, line)| (name == *path).then_some(line))
 				.unwrap_or_else(|| panic!("{path} has no template line"));
@@ -3607,14 +4528,14 @@ mod tests {
 	// are being relied on, so a failure names the one that moved.
 	#[test]
 	fn a_save_keeps_nested_comment_layout() {
-		let mut doc = shcl::Document::parse(DEFAULT_CONFIG);
+		let mut doc = shcl::Document::parse(default_config());
 		doc.set_float("wallpaper.opacity", 0.5);
 		doc.set_bool("text.scrim.enabled", false);
 		let out = doc.to_canonical();
 
 		let added: Vec<&str> = out
 			.lines()
-			.filter(|l| !DEFAULT_CONFIG.lines().any(|d| d == *l))
+			.filter(|l| !default_config().lines().any(|d| d == *l))
 			.collect();
 		assert_eq!(
 			added,

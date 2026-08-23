@@ -468,8 +468,15 @@ impl Gfx {
 		// Frame pacing on this path is swap_buffers blocking on vblank; the driver
 		// default isn't guaranteed (__GL_SYNC_TO_VBLANK=0, PRIME setups), and without
 		// it every scroll animation becomes an unthrottled busy-render loop.
-		let _ =
-			surface.set_swap_interval(&ctx, glutin::surface::SwapInterval::Wait(NonZeroU32::MIN));
+		// SILK_MAX_FPS (app.rs) paces the loop itself, and then vblank must NOT also
+		// have a say: a swap that blocks to the next refresh puts every frame back on
+		// the display's grid, which is the grid the pinned rate exists to leave.
+		let interval = if std::env::var_os("SILK_MAX_FPS").is_some() {
+			glutin::surface::SwapInterval::DontWait
+		} else {
+			glutin::surface::SwapInterval::Wait(NonZeroU32::MIN)
+		};
+		let _ = surface.set_swap_interval(&ctx, interval);
 
 		// wrap glutin's GL context as a wgpu device (hal external interop)
 		let exposed = unsafe {
@@ -1013,6 +1020,42 @@ impl GpuWarm {
 	}
 }
 
+// How the About text names an adapter's device type. Shared by the dialog and
+// `--about`, so a bug report reads the same either way.
+pub const fn acceleration(device_type: wgpu::DeviceType) -> &'static str {
+	match device_type {
+		wgpu::DeviceType::Cpu => "Software (CPU)",
+		wgpu::DeviceType::IntegratedGpu => "Hardware (integrated GPU)",
+		wgpu::DeviceType::DiscreteGpu => "Hardware (discrete GPU)",
+		wgpu::DeviceType::VirtualGpu => "Hardware (virtual GPU)",
+		wgpu::DeviceType::Other => "Unknown",
+	}
+}
+
+// Adapter details for `--about`, with no window and no device. Only the adapter
+// is asked for: request_device is the expensive half (measured ~161ms against
+// ~6ms), and nothing here draws. PRIMARY matches what the About dialog runs on,
+// so the two report the same GPU. None on a box with no usable adapter - the
+// rest of the About text is still worth printing.
+pub fn probe_adapter_info() -> Option<wgpu::AdapterInfo> {
+	let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+		backends: wgpu::Backends::PRIMARY,
+		flags: wgpu::InstanceFlags::default(),
+		memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+		backend_options: wgpu::BackendOptions::default(),
+		display: None,
+	});
+	let pick = |fallback| {
+		pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+			power_preference: wgpu::PowerPreference::HighPerformance,
+			compatible_surface: None,
+			force_fallback_adapter: fallback,
+		}))
+	};
+	let adapter = pick(false).or_else(|_| pick(true)).ok()?;
+	Some(adapter.get_info())
+}
+
 fn log_renderer(info: &wgpu::AdapterInfo) {
 	eprintln!(
 		"{}: renderer = {} [{:?} / {:?}]",
@@ -1086,10 +1129,13 @@ pub struct RectInstance {
 	pub pos: [f32; 2],
 	pub size: [f32; 2],
 	pub color: [f32; 4],
-	// params.x = mode (0 solid quad, 1 close-"X" mark, 2 rounded quad),
-	// params.y = stroke px for the X, corner radius for the rounded quad.
-	// The X is two 45-degree bars drawn in the fragment shader, so it centers
-	// exactly in the quad (a font glyph never did - baseline metrics vary).
+	// params.x = mode (0 solid quad, 1 close-"X" mark, 2 rounded quad,
+	// 3 triangle - a submenu arrow, or a move-this-row arrow),
+	// params.y = stroke px for the X, corner radius for the rounded quad,
+	// quarter-turns clockwise for the triangle (0 right, 1 down, 2 left, 3 up).
+	// The X and the arrows are drawn in the fragment shader, so each centers
+	// exactly in its quad (a font glyph never did - baseline metrics vary, and
+	// there is no arrow every interface font carries).
 	pub params: [f32; 2],
 }
 
@@ -1299,10 +1345,41 @@ fn round_box(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
     return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
+// Signed distance to a right-pointing isoceles triangle that fills the quad,
+// negative inside. p is the offset from the quad center, half its extent. The
+// two slanted edges are one line mirrored across the x axis; the third is the
+// flat base at the left.
+fn right_triangle(p: vec2<f32>, half: vec2<f32>) -> f32 {
+    let q = vec2<f32>(p.x, abs(p.y));
+    let n = normalize(vec2<f32>(half.y, 2.0 * half.x));
+    return max(dot(q - vec2<f32>(half.x, 0.0), n), -half.x - q.x);
+}
+
+// Turn the sample point instead of the shape, so one triangle serves all four
+// directions. An odd number of quarter-turns also swaps the half-extents, or a
+// non-square box would point the arrow at a corner.
+fn turned(p: vec2<f32>, half: vec2<f32>, turns: f32) -> vec2<f32> {
+    let t = i32(round(turns)) & 3;
+    if (t == 1) { return vec2<f32>(p.y, -p.x); }        // down
+    if (t == 2) { return vec2<f32>(-p.x, p.y); }        // left
+    if (t == 3) { return vec2<f32>(-p.y, p.x); }        // up
+    return p;
+}
+fn turned_half(half: vec2<f32>, turns: f32) -> vec2<f32> {
+    let t = i32(round(turns)) & 3;
+    if (t == 1 || t == 3) { return vec2<f32>(half.y, half.x); }
+    return half;
+}
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     var a = in.color.a;
-    if (in.params.x > 1.5) {
+    if (in.params.x > 2.5) {
+        let half = in.size * 0.5;
+        let p = turned(in.local - half, half, in.params.y);
+        // ~1px linear edge, same convention as the X bars
+        a = a * clamp(0.5 - right_triangle(p, turned_half(half, in.params.y)), 0.0, 1.0);
+    } else if (in.params.x > 1.5) {
         let half = in.size * 0.5;
         let r = min(in.params.y, min(half.x, half.y));
         // ~1px linear edge, same convention as the X bars

@@ -4,13 +4,6 @@
 <!-- markdownlint-disable MD055 -- Table pipe style [Expected: leading_and_trailing; Actual: leading_only; Missing trailing pipe] -->
 <!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
 
-<!-- TOC ignore:true -->
-# SilkTerm backlog
-
-This is backlog just for pre-v1.0.0 release. After that, bugs, features, and enhancements will be mananged in Github Issues, and also probably an issue tracker defined in nano-git-db.
-
-<!-- TOC ignore:true -->
-## Table of contents
 <!-- TOC -->
 
 - [Conventions](#conventions)
@@ -45,12 +38,86 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 - 🛠️ Terminal throughput benchmark (Windows):
 	- Both halves now run on Windows as well, measured from inside the terminal under test, which is the only way to reach the terminals that exist nowhere else. Each half checks the window is at its own fixed size first and refuses otherwise, since measuring at the wrong one produces a figure that looks fine and belongs in no column.
-		- 🔘 Fill in the Windows rows: conhost, Windows Terminal and MobaXterm need running on a Windows machine.
+		- ✋ Speed rows: deferred, and the machine was never the problem. Measured twice on deliberately different hardware - a laptop, then Windows in a VM on the reference host with a discrete card passed through, which is the setup the table's own notes promised would fix it. Neither pass produced anything publishable. Figures and full reasoning are in `utility/include/ancillary-notes.fods`, now under three `VM` sheets beside the original ones.
+			- There is no correction factor to find. The terminals that run on both platforms disagree about the host-to-guest ratio by more than a factor of two, so one multiplier cannot serve the table - and that is measured now, not inferred from everything clustering the way it did on the laptop.
+			- Windows Terminal comes out faster than every published Linux row, because it hosts the console itself rather than reading a relayed one. Sorting it in would rank it first overall on figures taken from another platform and another transport.
+			- The fast terminals are not being limited by themselves, and this is now measured rather than inferred: a consumer that reads the stream and discards it produces the same figure as a real terminal, on every width class. Every Windows terminal near that number is simply at the console host's ceiling, which is also why ours reads the same with all the eye candy on as with it all off.
+			- The barrier is answered by the console host rather than by the terminal, so a Windows row would not mean what the column heading says even if the rest were solved.
+			- Alacritty cannot be run at all - it deadlocks partway through, which is the bug below.
+			- Retry only if the console host stops being the limit. The deadlock fix reaching upstream would let Alacritty be measured, but it would land on the same ceiling as everything else.
+		- ✅ Size and memory rows: both terminals that can be measured on Windows are published - `conhost.exe` (File+deps 1.0 MiB, Mem 21.1 MiB) and Windows Terminal (14.2 MiB, 93.0 MiB). It was not cheap after all - the half had never actually run on Windows, and four separate faults had to be fixed first, each of which refused outright or produced a plausible wrong answer. They are written up in the rig notes.
+			- ✅ Windows Terminal, measured with nothing else in it (three processes, five runs spanning 92.9 to 93.1). Every one of its windows shares a single process, so an earlier attempt that took in the user's own session read 106 MiB of dependencies and 994 MiB of memory, nearly all of it PowerShell and unrelated tools. The clean-process rule goes further than it looks: a window opened in a process that had hosted an earlier tab still read about 4 MiB high after that tab had gone.
+			- Worth knowing before any Windows run: its `--size` is not the grid it gives, and the offset is not constant. Only the grid check catches that.
+		- 🚫 MobaXterm needs more than it is worth. Its local shell is Cygwin on a real pty and stty reports the grid, but no Windows program gets a tty through it - isatty is false both ways and the grid call fails - and its python3 is the Windows one on PATH, so there is nothing to fall back to. Both halves need a real terminal on stdin and stdout, so it would take a Cygwin python installed into the plugin environment first.
+		- 🚫 PuTTY cannot be measured this way at all: it has no local shell, only network sessions. kitty and Ghostty have no Windows build, and the package named kitty is KiTTY, an unrelated PuTTY fork.
 		- Windows figures answer a slightly different question and are not directly comparable, which the table's notes say: a base OS includes far more there, and the machine differs.
+
+- 🛠️ Demo gif: the jumping, and showing the speed curve off properly:
+	- ✅ The gif was sampled at 50fps from a source that paints 60, so one source frame in six was dropped and every fifth stored frame carried two frames of travel. Measured on the shipped gif that is an exact doubling, on a strict period, at every speed and in both directions - a regular hitch that no amount of scroll tuning could have removed, and it is worst right after a clear, where a command dumps its output fastest.
+	- ✅ Fixed at the source rather than by slowing the gif down: the app's own frame rate is now pinned to the rate the recording samples at, so the two cannot disagree. The 60 was the recording machine's refresh rate arriving through vblank, which also means the same script on a differently-timed display would have beaten against both the gif and the video, with nothing to show for it in the script. The gif stays at 50fps, which is the smoothest a gif can be.
+	- ✅ The demo now has a plain-language script, `cicd/utility/demo-video/script.txt`: formats, the set, every scene in order, the typed lines, and why each beat is the length it is. It is meant to be edited directly, and it is kept in step with any change asked for in conversation.
+	- ✅ The compile scene is paced in five movements rather than at random, so the speed leaves rest, ramps, tops out, brakes and lands. Output arriving at one rate only ever shows one point on that curve; the long silence in the middle is what makes the wind-down visible, since the view is still travelling when the output stops.
+	- ✅ The second pane split is horizontal. Two vertical splits left the prompt very nearly filling a third-width pane, readline redisplayed it on a fresh line, and each pane then eased that line in a beat after the split - staggered, on an otherwise empty screen, which read as glitching.
+	- 🔘 Render it, both formats. Needs the Linux box (Xvfb + VirtualGL + xdotool), so none of the above is verified on screen yet - only the diagnosis is, off the shipped gif's own pixels. The one thing worth measuring afterwards is whether the steps in a scroll come out even; they are what the whole fix is about.
+	- The gif budget is now enforced at 12 MiB rather than 28: over that, the README copy is left alone and the run says so. At 50fps the projection is around 10 MiB, so it fits, but not by much - the levers in order are the length of the wheel scene, the width of the rows in motion, and only then the frame rate.
 
 ## Backlog
 
 ### Bugs
+
+- ✅ Windows: output throughput is about a seventh of Linux, and a ninth of Windows Terminal on the same machine.
+	- Measured 2026-08-18 on the VM at the shootout's own 160x42 grid: 12.4 MB/s of plain ASCII, against 86.9 for the same build on Linux, while Windows Terminal on that same VM reads 112.4.
+	- Answered the same day, and none of it is ours. A stand-in consumer that reads the bytes and throws them away - no parser, no grid, nothing drawn, not even an event loop - runs the real benchmark at 12.33 MB/s where the terminal itself gets 12.44, and every other width class agrees within a percent too. The limit is ConPTY and we are already sitting on it.
+	- Nothing on our side of the pipe moves it. Microsoft's own newer console host, every pseudoconsole mode flag including passthrough, and pipe buffers from the default up to 16 MB all land inside the run-to-run noise; the newer host is slightly slower.
+	- So there is nothing to fix in the terminal engine, and the idea of forking it for this is dropped. The freeze fix stays pinned for its own reasons.
+	- Fell out of it: the benchmark's barrier is answered by the console host on Windows, not by the terminal, so a Windows figure times the whole chain and can never be read as one terminal's speed. Both the tool and the rig notes say so now, and the earlier claim to the contrary is corrected in the spreadsheet.
+	- Reopened and re-measured on 2026-08-18 once a barrier-free instrument put the real end-to-end gap at about 2x rather than 10x. Four consumers of the same 32 MiB of output, on the same box: bytes read and thrown away 1.45s, one thread reading and parsing 1.94s, the shipped engine plumbing with no window at all 2.45s, the terminal itself the same 2.5s plus its scroll ease settling. Windows Terminal is around 1.3s, which is the console host's own ceiling - so it is not beating us by being a better terminal, it is sitting on the ceiling while we are at about 60% of it.
+	- What is left to gain is therefore about a second per 32 MiB, and none of it is in the drawing: parsing is half a second of that, and the rest is the engine's Windows pipe plumbing, which delivers about 17 MB/s where a plain blocking read of the same pipe gets 22. Two obvious levers were tried and neither moved it - folding the engine's internal notifications, and waiting for the pipe to accumulate before reading it. Reading and parsing on ONE thread beats the shipped two-thread arrangement by half a second, which is the direction worth exploring if this is ever picked up again, and it would mean a real fork.
+	- Also settled: the console host's delivery ceiling is fixed. Pipe buffers from the default to 16 MB, read sizes from 64 KB to 1 MB, and Microsoft's redistributable host beside the executable all land within noise.
+
+
+- ✅ Windows: a long run of output freezes the window for good.
+	- Not slow, stopped. Both ends sit idle with the writer blocked in a write that never returns, and the window burns no CPU at all while stalled - a circular wait, not a slow consumer.
+	- Reachable by ordinary use - anyone who cats a large file, or runs a build with a lot of output, can hang the window and have to kill it.
+	- Corrected: ASCII is NOT exempt. It was thought to be, but it stalls too, just later and at a point that moves between runs. Non-ASCII merely arrives sooner and lands on the same byte every time.
+	- It is back-pressure, not content: a quarter-megabyte payload finishes, two megabytes stalls, and the stall point is identical whether the window is in front or behind.
+	- Not the console: a newer bundled ConPTY still stalls (see below), and a minimal test host driving the same system ConPTY never stalls at all, even with a deliberately slowed reader.
+	- **Diagnosed.** It is in the terminal engine we depend on, not in our code: a build with no renderer, no window and no drawing at all - just the engine's own pty and event loop - stalls at the identical byte. So nothing in SilkTerm is involved.
+	- The engine reads the console into a one-megabyte staging buffer on a helper thread and tells the main loop "there is data" only as a side effect of writing into that buffer. If the main loop goes back to sleep while data is still buffered, nothing is left to tell it - and once the buffer is full there can be no further write, so the notice can never come. The reader waits for room, the main loop waits for a notice, and neither can move. That is why it needs a big burst, why it is unrelated to the console, and why both ends sit idle.
+	- Fix found and proven: have the reading thread announce data itself instead of relying on that side effect. Two lines. With it, payloads four times the size that used to hang complete normally, on the stock console.
+	- Upstream: not fixed, and no issue or report existed. The file has had two commits in its life and has been wrong since the one that introduced it, in October 2023.
+	- Submitted as alacritty/alacritty#9026.
+	- Carried locally in the meantime: the workspace pins the released engine plus that one change, so our builds are fixed now rather than waiting. Cargo records the exact commit, so a build is still reproducible.
+	- Follow-up when a release carries it: drop the pin from the workspace file (it says so in place) and delete the branch it points at.
+
+- ✅ Windows: try a bundled newer ConPTY to see if it fixes the freeze above.
+	- It does not. Verified with the real binary and the console host checked rather than assumed, so a clean result could not be mistaken for the library never loading.
+	- Free to try: the pty backend already prefers a `conpty.dll` sitting beside the executable and falls back to the system one, so bundling is two files and no code change. The redistributable is published and carries a matching console host.
+	- Worth keeping anyway as a possibility for later, but it is not this fix, so nothing was shipped.
+	- Found on the way: the bundled console asks the terminal what it is at startup and waits for the answer. A terminal slow to reply pays several seconds before any output appears - worth knowing if it is ever adopted.
+
+- ✅ Under heavy output the window burned more CPU on being told about it than on parsing and drawing it.
+	- Measured on 32 MiB of output: about 20,000 "there is new output" events reached the window, and 2.5 seconds of the window thread went into the operating system's message queue delivering them - against 0.5s of parsing, 0.03s of laying out text and 0.2s of the work the events actually asked for.
+	- Fixed by letting one notice stand until the window takes delivery of it. Nothing is lost: the notice carries no content, so the window always reads the grid as it stands.
+	- Result: process CPU down about a third and the window thread down more than half, with throughput unchanged.
+	- Fell out of it: a `SILK_PERF` counter set that reports where a burst of output went - notices, loop passes, frames, and the time inside each part of a frame, plus this thread's CPU against the whole process. It is what turned "the window feels busy" into a number.
+
+- 🔘 In a narrow window the "Copy on: select / output" checkboxes overlap the menu titles. Hide the section when there is no room for it.
+	- The pair is right-aligned to the window edge and the titles run left to right, so below a certain width they simply cross: seen on a 384px-wide window, "Copy on:" lands on top of "Panes" and "select" on top of "Help", both drawn, neither readable.
+	- Not new and not DPI-related - it reads the same at any scale factor, since both sides scale together. The width it starts at just moves with the interface font.
+	- Wanted: shed it responsively, widest arrangement that still clears the titles. Drop the "Copy on:" lead-in first, then the two words, keeping the checkboxes - they carry the state, the words only name it - and drop the whole cluster when even the boxes cannot clear. It comes back on its own as the window widens.
+	- Note this crosses an existing rule: the pair is described in the source as always visible, so that a person can always see when the focused pane is auto-copying. Hiding it is still the better of the two, since an unreadable pile of overlapping text says less about the copy state than a clean absence does - but the staged fallback is what keeps the state showing down to a very narrow window.
+
+- 🔘 The menu titles and the "Copy on" section do not sit on the same baseline.
+	- Only noticeable once they are close enough to compare, which is the same narrow window as above - normally a wide gap separates them.
+	- Measured: the copy labels sit one pixel high at 1x, and it scales, so it is two at 2x. The offset is exactly half a descent.
+	- Both placements are deliberate and neither is wrong on its own. The titles center their ascender-top..baseline box, since they carry ascenders and no descenders and centering the full line would leave the empty descent reading as space below. The copy labels center the full ascent..descent box, because "select" and "output" are lowercase with descenders and read bottom-heavy the other way.
+	- So the fix is a rule for text sharing one bar rather than a change to either helper: pick one of the two for everything in the menu bar, or align the two runs on their baselines and let the centering differ only between bars.
+
+- 🔘 A wheel gesture can land by moving backwards about one line.
+	- Measured on the shipped demo: at the end of a scroll-back the view goes forward all the way, then hops back 19px (the row pitch is 21) and stays. The top row reads `.dircolors`, then `.gitconfig`, then `.dircolors` again over about a third of a second, which is a visible bounce against the direction of the gesture.
+	- Most likely the whole-line detent doing what it is asked: the gesture ended about nine tenths of a line past a boundary and the nearest boundary was the one behind. Rounding to nearest is defensible, so this may be a taste call rather than a defect - but a gesture that ends by reversing reads as a glitch, and always landing forwards would not.
+	- Worth confirming against the code before changing anything; the measurement says what happens, not why.
 
 ### New features and enhancements
 
@@ -62,11 +129,16 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Measurements specified in CSS px or DIP that renders "correctly" at any DPI.
 	- ✅ Settings dialog: rows, order, sections, tabs, the config path behind each row, the graying rules and the whole geometry now live in `source/src/settings_ui.shcl`, compiled in. The hand-written tables it replaces are gone. The file and the settings the code knows are held in step both ways - a row naming a setting that does not exist, and a setting with no row.
 	- ✅ Settings dialog measurements are DIP. The layout is solved in that space and the display's scale factor is applied only where it meets the window, so the dialog keeps its proportions at any DPI. At 2x the old build kept 20px checkboxes and truncated its value fields; it is now simply twice the size.
-	- 🔘 The main window's own chrome (menu bar, tab bar, dropdown menus, focus ring, pane gap) is still measured in raw pixels, so it thins out as DPI rises. Same treatment, but it cannot use the same boundary trick - chrome shares a coordinate space with the terminal grid, so each measurement scales where it is used.
+	- ✅ The main window's own chrome is DIP now too: menu bar, tab bar, tab buttons and their close marks, the dropdown and right-click menus, the copy-mode checkboxes, the focus ring, the pane gap and its grab zone, and the scrollbar. Each measurement scales where it is used rather than at a boundary, since chrome shares a coordinate space with the terminal grid. Measured on a real display: at twice the scale factor the menu bar and the tab button come out at exactly twice their size, where the old build was short by a fifth and an eighth - the padding had stayed frozen at its 1x size while the text doubled. At 1x the whole window renders byte-identical to the old build.
+		- The About panel and the Settings window's own height cap went with it, so nothing on screen is measured in raw pixels any more.
+		- `SILK_SCALE` overrides the scale factor the display reports, which is what makes any of this checkable: chrome written in raw pixels looks perfect at 1x and only thins out as the factor rises, and outside X11 there is no other way to ask for a high-DPI layout.
+	- ✅ The Settings dialog's tab titles sat too far right at high DPI, and overflowed their buttons above 2x. (20260821)
+		- Cause: the dialog's tab, label and button widths are a text measurement (real pixels) plus a clear-space constant (DIP), added together and then divided at the dialog's boundary - which shrank the constant by the scale factor. A tab's box ended up with half the clear space at 2x, and a third of it at 3x, while the title still started at half of it from the left edge.
+		- The constant now converts where it is used, the way the main window's chrome already did, through one rule the four sites share. Shown side by side at 2x: every title used to touch or cross its own right border, and each is now centred with equal space either side.
 
 - 🛠️ Refactor settings dialog
 	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory. Reconcile by what makes the most sense given the obvious design direction this is going, with what has changed before.
-	- Being done in chunks, in this order: the chrome and the two new colors, then groups and the tab reorganization, then theme management, then the color picker, then the Shells tab. Opening speed was dealt with first and is under Done.
+	- Being done in chunks, in this order: the chrome and the two new colors, then groups and the tab reorganization, then theme management, then the color picker, then the Shells tab. Opening speed was dealt with first and is under Done. The Shells tab was brought forward and is done; the color picker is the one chunk left.
 	- ✅ Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
 		- Done: thirty rows carry their own help line, and a control that is grayed out still explains why instead - that question is the more urgent one. The text wraps to the panel, so a longer sentence or a bigger interface font cannot push it off the edge, and it flips above a control when there is no room beneath.
 		- ✅ Including the some of the main buttons:
@@ -89,6 +161,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Found and fixed on the way: both scrollbar colors had rows in the dialog but were never written to the file, so an edit lasted only until the next launch. Every row now writes what it edits.
 	- 🛠️ Tabs and grouping (settings content and tab reorg):
 		- ✅ "Groups" are organized, titled sections within a dialog tab page. Differentiated by a title, and with adequate spacing between groups so that they are visually separate.
+			- ✅ Retuned: more space between one section and the next, and less between a heading and the rule under it, so a heading reads as belonging to what follows it rather than floating between the two.
 		- ✅ There is now the concept of "Sub-groups" within groups, distinguished through indentation of the leading text labels (but not the controls themselves).
 			- A sub-group is not declared anywhere. It is a row followed by rows at a greater indent, so the leader and its members cannot disagree about who belongs to what. Only labels move; every control keeps its column.
 			- ✅ Sub-groups (and their style) can exist without Groups.
@@ -206,16 +279,18 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 				- Columns
 				- Rows
 			- Margin px
-		- Tab: "Shells"
+		- ✅ Tab: "Shell"
 			- UI:
-				- A grid:
-					- Header row: "Title", "Shell command", "Active", "Comment"
-						- "Active" is a textbox. If checked, the shell title will show up under the future sub-menu item (to implement later), "Tabs/New tab with shell ... ->", (sub-menu showing a list of shells by title)
-				- Next to each row on the grid, on the right, with icons representing:
-					- "Move up" (disabled at the top)
-					- "Move down" (disabled at the bottom)
-					- "Edit" - Opens a popup dialog with the fields from the row in editable textbox form - and buttons "Cancel|OK".
-					- "Delete" - Opens a popup confirmation, like the "delete theme" confirmation spec from above.
+				- A grid, one line per stored shell, every field edited in place: "Name", "Command", "Last seen", "Active"
+					- Reconciled with what was asked for later, which supersedes the original spelling of this item: the columns are the four above, "Last seen" is new (a date, read-only, written by the scan), the edit popup is gone in favour of editing in the row, and "Comment" is no longer a column - the scan still writes it and it shows as the row's flyover tip.
+					- "Active" is a checkbox. When it is on, the shell's name appears under "Tabs/New tab with shell ... ->".
+					- The command is required: emptying the field leaves the stored one standing, and an entry that never got one is dropped rather than saved.
+				- ✅ A grip at the left of each line reorders it by dragging. This supersedes the four move icons this item first asked for ("Move to top", "Move up", "Move down", "Move to bottom"), which are gone; reordering is mouse-only now.
+				- ✅ "Remove" sits between "Command" and "Last seen" rather than at the end of the line, so it is harder to press by accident, and its X is red. It still asks first, the way the theme delete does.
+				- ✅ Below the grid, a "Default startup directory" section. It ships as the literal `$HOME` / `%USERPROFILE%`, understands `~` and either platform's variable spellings, and is the lowest of three precedences - a new tab, pane or window inherits from the pane it came from, and a SilkTerm launched from a shell keeps that shell's directory.
+				- An "Add" button below the grid, for a shell the scan cannot find. It lands a new line and puts the caret straight in its command field.
+				- The first switched-on shell in the list is the default for new windows, tabs and panes. The old `shell.default` setting is retired: a config that had one has that entry moved to the top of the list, once, and the line removed.
+				- Done: the whole tab. The grip and the remove mark are drawn in the shader rather than set as glyphs - no interface font can be relied on to carry either one.
 			- Behavior
 				- At startup - first, the terminal renders. Then launches a background process to search for [initial shells|changes to shell availability].
 					- If a shell exe name already exists in the list of shells, ignore it.
@@ -239,25 +314,59 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 								- Will require special logic for Windows, to add the commands to launch named WSL1 or 2 distros
 				- If a new shell exe is found that doesn't already exist in the stored list, add it. (User can disable it later.)
 				- If an existing already defined shell exe name isn't found by explicit path, or in the environment path variable, disable it (don't delete it).
+			- ✅ All of the behavior above is built and running - see the auto-detect item under "New features and enhancements".
+
+- ✅ Cross-building a Linux target from the Windows box failed at the link step. The build script embeds the Windows icon and version strings, and said in its own comment that it does nothing for a non-Windows target - but it only actually did nothing when the build was running on Linux. On Windows it compiled the resource anyway and handed the result to the Linux linker, which read it as a broken linker script. It now stops where it always claimed to. Nothing changes for either Windows build or for cross-building from Linux.
 
 - 🔘 Option: Dynamic theme based on wallpaper
 	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
 
-- 🔘 After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
-	- The background-work pattern this needs is in place (see the wallpaper item under Done): a worker thread posts its result back to the window, which folds it in. Reuse it rather than building a second one.
-
-- 🔘 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, and to legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
+- ✅ After startup and enough time to settle down, auto-detect shells in the background. Dynamically pre-populate (or verify) the list of available shells, with user-friendly names. Bash, Dash, Ash, ZSH, PowerShell, Cmd, WSL2 Debian, Fish, PyCmd, YSH, Korn - do a web search for other common shells that might be installed.
+	- Done: a few seconds after the window is genuinely on screen, a background thread looks for installed shells and folds what it finds into the list in the config. It looks on PATH, at the places a shell is installed outside it, and - on Linux - at the system's own list of login shells; the user's own shell leads the list, with a twin below it that starts without reading its startup files (each shell's own flag: `--norc`, `--no-rcs`, `--no-config`, `-NoProfile`).
+	- Corrected after a first real run: PyCmd is found where it is actually installed (Program Files) rather than only on PATH, and its table entry is spelled the way the lookup will spell it - a mixed-case key could never be found, so it drew its own name instead of its friendly one. `cmd.exe` no longer gets the no-startup-file twin (it is the Windows login shell, so everyone got two "Command Prompt" lines for a rarely-set AutoRun key), and "Windows PowerShell" is now "Windows PowerShell 5".
+	- Also corrected: the one-time adoption of the retired `shell.default` matched it against the list as TEXT, so a bare `pwsh` beside the stored full path to the same file added a duplicate - at the top, where the top is what "default shell" means. It asks the same identity question the scan does now.
+	- Windows finds installed WSL distributions too, from the registry rather than by asking `wsl.exe` - listing them must never be the thing that boots a virtual machine. Each is offered whole, running its own default shell, which the user can narrow by editing the entry.
+	- What a scan may do to the list is deliberately lopsided: it ADDS a shell it found and it SWITCHES OFF one whose program has gone (keeping the entry, its title and its place). It never switches one back on and never rewrites a command line - it has no way to tell a program that came back from a switch the user turned off on purpose.
+	- The list lives in the config as `shells.<key>` with a title, a command, an active flag and a comment, in file order - which is the order the menu offers them in. A scan that finds nothing new writes nothing at all.
+	- Beyond the names asked for: Nushell, Elvish, Xonsh, YSH/OSH, Murex, Ion, Es, rc, Yash, mksh, tcsh, Git Bash, MSYS2, Cygwin, PyCmd, and the language shells (Python 3, IPython, Node).
+	- ✅ A fresh list now arrives in a stated order rather than in whatever order the looking ran. (20260821)
+		- Windows: PowerShell 7, then the modern cross-platform shells alphabetically, then the WSL distributions (WSL2 above WSL1, each alphabetical, the generation in the name), then Bash (MSYS2's full), Bash (Git's mini), PyCmd, the language shells alphabetically, Windows Cmd, and last the two Windows PowerShell 5 entries.
+		- Unix: the user's own login shell, then its startup-file-free twin, then the modern cross-platform shells alphabetically, the language shells alphabetically, and the rest of the POSIX family.
+		- Renames that came with it: "Command Prompt" -> "Windows Cmd", "Git Bash" -> "Bash (Git's mini)", "MSYS2 Bash" -> "Bash (MSYS2's full)", "Cygwin Bash" -> "Bash (Cygwin)", and "WSL: x" -> "WSL2; x" or "WSL1; x".
+		- The twin now arrives switched OFF, and only the top default shell gets one: it is for the day your own rc file is what you are debugging, not a second copy of your shell in the menu every day.
+		- **This reaches a fresh config and nobody's existing one.** A scan may only add and switch off, and it never rewrites a stored title or a stored order - that order is the user's. So an existing list keeps its own names and sequence until somebody edits or resets it. The owner's own config was brought over by hand (backup beside it), which also cleared two stale duplicates a pre-`-NoLogo` dogfood build had appended.
+	- ✅ The scan now waits for the WALLPAPER to be on screen, not just the window. (20260821)
+		- Both are off-thread and both are slow the same way, so overlapping them put a stall in the one moment anyone is looking - the gap between the window appearing and the picture arriving in it.
+		- A wallpaper that never answers cannot hold the scan off forever: past a deadline it runs anyway, since a terminal with no shells in its menu is worse than one with no picture behind its text.
 
 - 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
-	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with.
-	- 🔘 Windows: the new-pane side works, but reading the source shell's current directory isn't wired up there yet - new tabs/panes keep the old start-dir behavior until then. (Needs Windows host.)
+	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Same for a new window (Ctrl+Shift+N), and the same shell inheritance applies to all three.
+	- ✅ Windows: reading the source shell's current directory is wired up now. Windows has no /proc and no API that reports another process's directory, so it is read out of the shell's own process memory - the place SetCurrentDirectory keeps it - and checked for still being a directory before it is used.
+		- Verified in the running app: a pane whose shell moved to another directory reports the new one, and reports nothing once the shell has exited (callers then fall back, as before).
+	- ✅ Shell integration, so a shell that keeps its own idea of where it is can say so. Both spellings are read: OSC 7 (the `file://` URL the unix shells emit) and OSC 9;9 (the ConEmu spelling Windows Terminal documents, so a PowerShell profile already set up for that terminal works here unchanged).
+		- What the shell reports beats what the OS can see, since a shell reporting is answering the question directly while the OS only ever sees where the process sits. A report that no longer names a directory here is dropped and the OS answer stands - which is also what rejects a directory reported from the far side of an ssh, along with an OSC 7 URL naming another machine.
+		- No fork was needed after all. The feared cost was a second fork of `vte` (which handles neither sequence), but the PTY itself is what gets wrapped: `EventedPty` is a public trait and the event loop is generic over it, so the tap sits in front of the real PTY and scans what it reads. The bytes reach the parser exactly as they arrived.
+		- Costs 47ms per 32 MiB of output on this box (714 MB/s, measured over a stream carrying colour and title sequences), against a Windows delivery ceiling of about 1.45s for the same 32 MiB. Nothing but the two sequences is ever collected, so a clipboard write carrying a whole paste is skipped rather than buffered.
+		- The snippets live in `shell-integration.md`, linked from the README: PowerShell, bash, zsh, fish, and the two cases that need nothing (cmd.exe, and fish, which already emits it).
+	- ✅ The PowerShells are offered with `-NoLogo`, so a new tab opens on a prompt rather than a copyright banner. A flag that only changes how a shell looks is deliberately left out of what makes it that shell, or the next scan would land a second PowerShell beside every stored one.
+	- ✅ A "Windows PowerShell 5 (relaxed)" entry is offered, switched OFF, carrying `-ExecutionPolicy RemoteSigned` - the 5.1 that ships with Windows refuses to run script files, so it loads no profile and cannot report where it is. Per-session only; nothing is written anywhere, and it arrives off because it is a security setting rather than a default.
+	- ✅ The PowerShell block is installed for you, a few seconds after launch, into each PowerShell profile that reports nothing.
+		- It appends after saving a copy beside the profile, never rewrites; a marker makes a second launch a no-op; deleting the block switches it off for good; the prompt is wrapped rather than replaced (and on PowerShell 6+ not touched at all, which leaves oh-my-posh and starship alone).
+		- A shell whose execution policy would refuse to load the profile is left alone with a line saying which and why - found the hard way on this box, where writing a profile for Windows PowerShell 5.1 turned every launch into a red execution-policy error.
+		- `shell.integration` (Settings > Shell > "PowerShell profiles") switches it off before it runs.
 
-- 🔘 Menu enhancements:
-	- 🔘 "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
-		- Waits on the Settings "Shells" tab (the shell list it draws from).
+- 🛠️ Menu enhancements:
+	- ✅ "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
+		- Done: the row sits under "New Tab" in the Tabs menu and in the right-click menu, and opens a flyout listing every active shell by title. It draws from the stored list, which the background scan above fills in - so it did not have to wait for the Settings "Shells" tab after all; that tab is now only the editor for a list that already exists.
+		- The row is absent entirely while there is no shell to put under it, rather than opening an empty flyout.
+		- A new tab started this way still inherits the current directory - picking a shell says nothing about where to start.
+		- Menus gained submenus to carry it: a flyout opens on hover and on click, keyboard Right enters it and Left and Escape back out one level, and its arrow is drawn rather than set in a font (no interface font can be relied on for one, the same reason the tab close mark is drawn).
 
-- 🛠️ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
-	- 🔘 Add Windows support.
+- ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
+	- ✅ Add Windows support. It was inert there: a Windows console has no foreground process group, so the terminal always believed the shell was at its prompt and the capture fired about a tenth of a second into every command - copying a fragment, or far more often nothing at all.
+		- Windows says the same thing a different way: while a command runs it is a live child process of the shell, and it is gone by the time the prompt comes back. Asking that costs a walk of the process table (~6ms), so the answer is kept until the terminal next stirs instead of being taken per frame - about one look per command.
+		- Known limit: a PowerShell background job (`Start-Job`) reads as a command still running, so nothing copies until it ends. Windows offers no way to tell a background child from a foreground one.
+	- ✅ Fixed on the way, and it applies to every platform: two commands in a row that each printed a single word taught the multi-line-prompt detector that the line above the prompt was part of the prompt, and the copy then lost its last line - usually the whole of it. A line now has to carry more shape than one bare word before it counts as prompt.
 
 - 🔘 "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
 	- Looks and behaves not too differently than some modern text editors.
@@ -280,8 +389,21 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- 🔘 Dock tab to different existing window with mouse
 		- Note: deferred, needs multi-window.
 
+- ✅ Tabs say what they are running, and where. (20260821)
+	- Each tab reads "<shell friendly name> [<task>]" while a command runs, "[last: <task>]" once it finishes, and "<shell> - <path>" when it has never run one. The friendly name is the one the Shells list carries, so a tab shows whatever the user renamed that shell to.
+	- Windows had no tab title at all before this - every tab just said SilkTerm. The running command now comes off the same process scan that copy-output already pays for, so it costs nothing extra.
+	- The path shortens PyCmd-style: directories above the current one drop to their initials, then an ellipsis eats the middle, but only where that is genuinely shorter. It always keeps the drive (or `/`, or `~`) and always ends in a separator, so it reads as a place rather than a command.
+	- Tab width is now a min and a max percentage of the window (`window.tab_min_width_pct` / `window.tab_max_width_pct`, and two Settings sliders) instead of a fixed cap. Wider by default, to fit the extra text.
+	- Because a tab now never shrinks past its minimum, more tabs than fit become a page. The wheel over the tab bar turns it, and switching tabs brings the new one onto it.
+	- A hover tip on a tab gives the three things the tab is too narrow to say plus one it never says: the shell's name, the command that started it, the full current path, and how long the tab has been open.
+	- ✅ The tip reads as a table: one `key: value` per line, with every value starting in the same column, plus a line for whatever is running right now. (20260821)
+		- It is drawn in the terminal font rather than the interface one - the column is made of spaces, and spaces align nothing in a proportional face. It is the only piece of chrome that is.
+		- A value with a space or a quote in it is quoted so its edges are unambiguous, picking the quote the value does not already contain: a Windows command line full of double quotes reads inside single ones. The clock reading and the "no directory reported" note stay bare, since quoting them would say they were data.
+	- PowerShell's prompt now shows which PowerShell it is (`[PS 7.6] C:\some\path\>`), on 5.1 and 7 and on every OS 7 runs on - but only when the prompt is still the stock one, so oh-my-posh, starship and a hand-written prompt are untouched.
+
 - 🛠️ Setting dialog (part 2):
 	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
+		- Note: the tab bar has one now (shell name, command, full path, elapsed time). It is a tab-bar tip rather than the reusable system this item asks for.
 	- ✅ Size: A boolean setting to "Remember last size".
 		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
@@ -302,6 +424,15 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - 🔘 Prepare for code review
 
 - 🔘 Stable release!
+
+- ✅ Wallpaper contact sheet opens a browsable gallery rather than a folder listing.
+	- A README can carry no scripting, so a click-to-enlarge viewer cannot live in it; the sheet links out to a GitHub Pages page instead.
+	- Thumbnail grid with a filter box; a tile opens the wallpaper full size in place, arrow keys and on-screen chevrons page through, Esc closes, and each one shows its credit, licence and source.
+	- The page stores thumbnails only and fetches full images from the pack in the repository, so nothing is duplicated.
+	- Needs Pages switched on for the repository (main branch, /docs) once the section reaches main.
+
+- 🔘 At startup, offer to copy wallpaper from repo, to local.
+	- The README now carries a one-liner for it (Wallpaper pack section), so this item is only about the in-app offer.
 
 - 🔘 Wallpaper: Need a way to detect maximum and average brightness of background image - or some heuristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
 	- 🔘 Really what I'm after, is this resulting effect. The implimentation is up to research:
@@ -340,6 +471,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Done: scrolling is covered by library tests encoding the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
 	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
 
+- Add silkterm to a Windows package manager (e.g. winget or choco).
+
 - 🔘 Ability to change hotkeys, and/or assign new ones dynamically. Including a "capture" dialog.
 
 - 🛠️ Themes:
@@ -377,8 +510,9 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- 🛠️ The shell configuration is stored in the config file as a simple key:value list of shell names and command lines. Command lines may have spaces, single quotes, and/or double quotes in them.
 		- Done: a single default_shell string key, argv-split so it handles spaces and quotes.
 		- Note: the named key:value list and its consumers (the grid editor and Tab/Pane menus below) are still hand-rolled work.
-		- 🔘 The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
-			- Note: hand-rolled, follows the named-shell list above.
+		- 🛠️ The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
+			- Done: the list itself, and the Tab half of it - "New Tab with Shell" is in the Tabs menu and in the right-click menu, off the stored `shells.*` list.
+			- 🔘 Still to do: the same for a new PANE (split), and the two bracketed rows - "[SilkTerm default]" at the top where the config names one, "[system default]" always at the bottom.
 
 - 🛠️ Command-line options:
 	- Done (part 1, the options engine):
@@ -387,6 +521,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- Window options: columns, rows, pixel-width, pixel-height, background-opacity, hide-windowframe, hide-menu, fullscreen, title. A window option after a tab/pane marker errors.
 		- Layout: --new-tab/--tab=/--new-pane/--pane=/--splits with direction and --size, building real tabs and panes (targeted splits into arbitrary trees, smart default direction, percent or cell sizes).
 		- Per-pane --shell (argv-exec; cascades pane, split-source, tab, window, then config default_shell; interactive splits inherit).
+		- Per-pane --directory (alias --dir), on the same cascade, deciding where that shell starts.
 		- Config command_line applied when launched with no args. Any real CLI argument overrides it entirely.
 		- Tab --title override, shown in the tab bar.
 		- Window-level visual style: font, size, colors, and the background image with its stretch/zoom/opacity fold into the live settings at startup.
@@ -462,6 +597,11 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- 🔘 `--shell[=| ]"command"`
 			- Can contain escaped single and/or double quotes, as logically required by whatever quotes are used around the whole command.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+		- ✅ `--directory[=| ]"path"` (alias `--dir`)
+			- Where the shell starts. Beats every other source: an inherited directory, the directory SilkTerm was launched from, and the `shell.startup_directory` setting.
+			- `~` and either platform's variable spellings are understood, and are expanded at spawn time rather than at parse - so a directory written into the config's own command line means the same thing there.
+			- A path that is not a directory is reported once, naming the flag, and that scope falls back to what it would have used without it.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
 		- 🔘 `--keep-open[=| ]bool`
 			- Keep pane|tab|window open after shell command exits, showing exit value.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
@@ -500,6 +640,35 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 ### Done
 
 #### Done - Bugs
+
+- ✅ Windows PowerShell 5.1 started with "Cannot load PSReadline module. Console is running without PSReadline." and no line editing.
+	- A terminal hands its shell whatever environment it was launched with. That is right for anything the user set themselves, and wrong for the bookkeeping a shell keeps for its own use: PowerShell 7 puts its own module directories on the search path that every version of PowerShell shares, so a Windows PowerShell 5.1 pane opened anywhere below one found PowerShell 7's copy of PSReadLine ahead of its own, and was not allowed to load it.
+	- Not ours in origin - the same thing happens to a plain command prompt launched from PowerShell 7, with no terminal in the picture - but a pane should start the way it would from the desktop, and the terminal is the only place that can settle it once for every shell it opens.
+	- A pane's shell now gets those few variables back as a freshly launched program would see them, read from the machine at startup so it stays right wherever PowerShell happens to be installed. Everything the user exported themselves is still inherited, which is the whole point of opening a terminal from a shell.
+	- The same treatment covers the execution-policy variable that PowerShell hands down to everything it starts, so a pane can no longer end up running under a policy nobody chose for it.
+	- The same list applies on Linux and macOS, where PowerShell runs too and two installs side by side collide the same way, and where the launching shell's own `cd -` target was being handed to panes that open somewhere else entirely.
+
+- ✅ A second cursor showed up in the far bottom-right corner, flickering against the real one at the prompt.
+	- A program that redraws its whole display hides the cursor first, redraws, then puts it back where it belongs and shows it again. The request to hide it was being ignored, so a cursor was drawn wherever the redraw had left it - on Windows that is the bottom-right corner - and it alternated with the one at the prompt once per redraw, which is faster than a cursor blinks.
+	- Hiding the cursor and choosing its shape are two separate things, and only the shape was being read. Both are asked now, so a hidden cursor is not drawn at all - and, while hidden, costs no frames either.
+
+- ✅ On Linux, an arrow pressed as part of a desktop-switching chord (Ctrl+Alt+Up and friends) reached the shell as a bare arrow - UAT.
+	- A bare arrow arriving unasked walks the shell's history, and inside a full-screen program it moves whatever that program moves. Other terminals don't do it.
+	- The window manager brackets its own hotkey with a focus change. On the way out the modifiers are zeroed, and on the way back in every key still physically held is replayed to us as a fresh press - before the modifiers are re-read. That replay was being taken as typing, so a held arrow was encoded with nothing held and sent on.
+	- A replayed key is now treated as what it is - a report of what is held down, not something the user typed - and is never sent to the shell. The same guard covers the Settings and About windows, where a replayed Enter could have closed the dialog.
+	- Keys arriving while the window doesn't have focus are also no longer typed, which closes the other way the same chord can reach us. One line rolls that half back if it ever misfires.
+	- `SILK_KEYDBG=1` prints every key event with its focus and modifier state, for the next time something like this needs settling.
+
+- ✅ The Windows launcher hung when the build it copies from over the network wasn't answering.
+	- A host that resolves but is off left a single check of the remote path sitting for 21 seconds before it gave up, and the copy that follows had no limit at all. From a shortcut, that reads as nothing happening.
+	- Each network step now has its own limit, well under the one the operating system would eventually apply: the host is probed first (a couple of seconds settles a host that is simply off), then the check, then the copy - which gets the most room, since a slow link is not the same thing as a dead one. Everything local is untouched.
+	- A copy now lands under a temporary name and is renamed once complete, so one that is given up on - or that a dropped link kills - can't leave a half-written build behind for a later run to launch. Any leftover is swept.
+
+- ✅ The two system-font switches showed off wherever the desktop names no font to follow, whatever was stored.
+	- Everywhere else in the dialog a control that cannot act is grayed and its flyover says why, while the control itself still shows its value. These two were grayed AND forced to read off - the only rows in the dialog whose displayed state was not the stored one.
+	- That put an unchecked box beside a revert arrow reporting the row as already at its default, when the default is on. The two disagreed about the same setting.
+	- They now show what is stored, both ways, and graying alone carries the message. The field they override stays editable exactly as before, since that follows the effective state rather than the switch.
+	- Surfaced as a failing check on Windows: it reads every row back through the dialog, so on the one platform where the masking bites it could not see the value it had just saved. That row is genuinely covered there now, where before it could not be checked at all.
 
 - ✅ The demo recording had stopped reflecting the app, in three ways at once - UAT.
 	- The recording pinned a halo and an outline that no build had used for weeks, so it advertised a look that had been replaced. Those values are no longer pinned; the recording now takes whatever ships, and the scroll feel already worked that way.
@@ -559,6 +728,19 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Other terminals show the same fonts in color because their text rasterizer reads COLRv1.
 	- Fix: color glyphs are now painted directly - the paint graph is walked and rendered through a small 2D back end (transforms, clip and layer stacks, solid/linear/radial/sweep fills, Porter-Duff and blend compositing), then handed to the renderer's color atlas as a per-cell image fitted to the cell box. Chars with no color glyph are untouched and still take the monochrome fallback path.
 	- `color_emoji` (default true) turns it off, which restores the monochrome outlines.
+
+- ✅ Config went to the wrong place on Windows and macOS - and on Windows it went to two places:
+	- Description: the lookup tried `XDG_CONFIG_HOME`, then `$HOME/.config`, then `%APPDATA%`. On Windows `HOME` is unset in cmd and PowerShell but set in Git Bash, so the SAME install read `%APPDATA%\silkterm\config.shcl` launched one way and `%USERPROFILE%\.config\silkterm\config.shcl` launched the other. Both files were live and drifting apart - 147 differing lines on the dev box, including font size, opacity and whether transparency was on. macOS got `~/.config` too, which is not where a Mac keeps settings.
+	- Fixed: settings now go where each platform keeps them - `%APPDATA%` on Windows, `~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` (or `~/.config`) on Linux, which is unchanged. An explicit `XDG_CONFIG_HOME` still overrides the platform default everywhere, and `--config` still overrides everything.
+	- Bulk data splits off on Windows only: the wallpaper folder and its history live under `%LOCALAPPDATA%`, since settings are worth roaming between machines and a 60 MiB wallpaper pack is not. A pack already sitting beside the config is still found, so nothing has to be moved.
+	- Existing configs: a config left at the old `~/.config` location is moved across on first run, but only when the new location has nothing. Where both exist the new one is used and the old one is left exactly where it is, with a line on startup saying so - picking between two real configs is not a call the program should make.
+	- Confirmed on this box both ways: launched from Git Bash it now reports the Roaming config and says the `~/.config` one is being ignored, and that file is untouched; in a sandbox holding only a legacy config, the file moved and its settings survived the move and the backfill.
+
+- ✅ Paste sent the clipboard bytes unchanged, which breaks a multi-line paste on Windows and leaves bracketed paste open to injection:
+	- Description: two separate faults in the same place. (1) With no bracketed paste, an application cannot tell a paste from typing, so a line break has to arrive as the Enter key delivers one - a lone CR. We sent whatever the clipboard held, and a Windows clipboard is CRLF, so every row also carried an LF and left the shell sitting on a continuation line. That is the ordinary case on Windows, not an edge one. (2) Inside a bracketed paste, an ESC in the text closes the bracket early - the application is watching for `ESC[201~` - and everything after it is then read as keystrokes rather than as data, so pasted content can run a command nobody typed.
+	- Fixed: one helper decides what actually goes on the wire. Unbracketed, every flavour of line break reduces to a single CR; bracketed, the text passes through as the application asked for it except that ESC is dropped.
+	- Steps to reproduce: paste several lines into a shell that has not enabled bracketed paste. Before the fix each line was followed by a continuation prompt.
+	- Confirmed on screen, before and after, driving PowerShell 7.6 through a pasted five-line block: the old build ran the first line and then left a continuation prompt after every one of the rest, with the LAST line never running at all; the new build runs each in turn and leaves the final line sitting on the prompt awaiting Enter, which is what it should do when the clipboard has no trailing newline. cmd.exe was correct before and is unchanged.
 
 - ✅ Wallpaper scan accepts formats that can't be loaded:
 	- Description: the folder scan counts `webp`, `bmp`, `gif`, `tiff` and `tif` as wallpapers, but only PNG and JPEG can actually be decoded. A file in one of the other formats passes the scan, gets picked by rotation, and then fails to load.
@@ -1000,7 +1182,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ Installer script(s):
 	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
 	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
-	- Not yet confirmed: the Windows-only steps (Start Menu shortcut, PATH edit, elevated system install) on a Windows host.
+	- Done (20260806): both rewritten to be reusable across projects - everything project-specific is one settings block at the top, and the asset name is built from a pattern. `--arch` is gone (the CPU is detected), `--version` added, and the checksums file is fetched first so an unpublished platform reports what the release *does* carry, and an already-current install finishes without downloading the binary.
+	- Done (20260806): `install.bash` now targets bash 3.2 (the macOS system bash), and `install.ps1` runs on Windows PowerShell 5.1 as well as 7+, on any platform PowerShell supports.
+	- Why the extra care on failures: an installer is the first thing a new user runs, so a raw stack trace is the worst possible first impression. Permission denied, an unreachable github, a rate-limited API, a missing platform build and "the app is still running" each get their own message saying what to do next.
+	- Windows-only steps now confirmed on a Windows host: Start Menu shortcut, elevated system install, and the PATH edit - which writes through the registry rather than `SetEnvironmentVariable`, since that rewrites a `REG_EXPAND_SZ` PATH as plain `REG_SZ` and silently kills every `%VAR%` already in it.
+	- Done (20260807): fixed for the `irm ... | iex` form the README advertises. That runs the script inside the caller's own shell, so three things behaved differently there - a failure closed their window, the script-block form could not resolve its own variables, and strict mode was left switched on in their session afterwards. The retired `-Arch` option also rejected its own default under that form, which is how it surfaced.
+	- Done (20260807): both scripts and the README section published to `main`, so the advertised one-liners work ahead of the next release.
 
 	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
 
@@ -1035,6 +1222,15 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
 
 #### Done - New features and enhancements
+
+- ✅ Command-line-only flags: `--help`, `--about`, `--donate`, `--ver` - UAT.
+	- These print something and exit. No window opens, no config is read, and nothing about a layout is built.
+	- They are accepted anywhere on the line. Everything else in the syntax cares about order; asking for the help and being told it was written in the wrong place would not be.
+	- Output meant for a person gets a blank line above and below it, so the block stands clear of the prompts either side. `--version` is the exception - it exists to be captured by a script, so it stays one flush line. `--ver` and `-v` are the same flag.
+	- `--about` gives what a bug report needs: version, which build this is, and the graphics device in use. It asks for an adapter but never builds a device, which is the slow half; that costs about a fifth of a second. A machine with no usable adapter loses three lines and still prints the rest.
+	- `--donate` is the short version of DONATE.md - the address, not the essay.
+	- Found on the way and fixed: on Windows, none of these printed anything at all when run from a terminal, and that had been true of `--help` and `--version` since they were written. A release build owns no console, so it now joins the one that launched it. Redirecting to a file or a pipe always worked, which is why nothing caught it.
+	- Still true on Windows, and unavoidable: the shell doesn't wait for a windowed program, so the prompt comes back before the text does.
 
 - ✅ Dialogs and menus:
 	- ✅ Themes should have two highlight colors:
@@ -1481,39 +1677,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Done: the single toggle is now a dual-checkbox row (Face / Size), each following the OS independently, with matching config keys. Face governs font_family, Size governs font_size; each grays its own field. A config predating the split keeps its exact behavior (absent size follows the face toggle), except an explicit font_size - previously silently ignored - now wins over the OS size, since it reads as intent. Both checkboxes stay disabled on Windows.
 
 - ✅ Add an option in settings, to persist "Copy on select". (Which overrides my earlier direction.)
-	- Done: new `copy_on_select` config key plus a "Copy on select" checkbox in Settings (Window tab, Shell section). When on, every pane starts with copy-on-select enabled; applying the toggle also flips all existing panes. The menu-bar checkbox still toggles it live per pane for the session, without writing back to the config.
-
-	- A Bash >=3.2 script, and/or cross-platform PowerShell v7 script, that users can run as a one-liner from their shell - to download the latest stable or dev release, verify checksum, and install the executable. Idempotent; states its plan and asks before touching anything. Uses nice output, blank line at the start and end of script, and one blank line between major sections of output. Add something the contents below to README.md, under an "Installation" header, "Direct" subheader. (The primary install should be an installer.) Include the commands, and the install locations.
-
-	- Bash installer (Linux, BSD, macOS, WSL)
-
-		~~~bash
-		bash <(curl -fsSL https://raw.githubusercontent.com/USER/PROJECT/main/install.bash)  [--release dev|stable]  [--target user|system]  [--arch x64|amd64|arm64]
-		~~~
-
-	- PowerShell installer (Windows, Linux, macOS)
-
-		~~~powershell
-		& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/USER/PROJECT/main/install.ps1')))  [-Release dev|stable]  [-Target user|system]  [-Arch x64|amd64|arm64]
-		~~~
-
-	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
-
-		| OS      | System multi-file path  | <- Single exe or symlink        | (or) User install path              | <- Single exe or symlink
-		| :---    | :---                    | :---                           | :---                                | :---
-		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
-		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
-		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
-		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
-
-	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
-
-		| OS      | System multi-file path  | <- Launcher                                                    | (or) User install path        | <- Launcher
-		| :---    | :---                    | :---                                                          | :---                          | :---
-		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
-		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
-		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
-		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
+	- Done: new `copy_on_select` config key plus a "Copy on select" checkbox in Settings (Cursor tab, last row - it was on the Window tab under Shell until that section moved out to its own tab). When on, every pane starts with copy-on-select enabled; applying the toggle also flips all existing panes. The menu-bar checkbox still toggles it live per pane for the session, without writing back to the config.
 
 - ✅ CICD: check that local can be safely refreshed from remote before building, rather than only pulling at publish time.
 	- Done: new stage 0 "remote sync" in `cicd.bash` and `cicd-win.ps1` - fetch, fast-forward (stash-wrapped) when only behind, abort early when diverged. Offline or no upstream just warns and continues. `--no-sync` / `-NoSync` bypasses.
@@ -1797,6 +1961,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 - ✅ Setting dialog (part 2):
 	- ✅ A radio button for background image, to stretch or zoom. - New `Kind::Radio(&[..])` in the settings dialog (reusable N-option control: indicator box per option, fills the selected, click-to-pick); a "Bg image fit" row bound to `background_fit` (Stretch/Zoom). Stretch is selected by default; `background_fit` persists and re-fits the image on Apply.
 	- ✅ "Default shell": A command line to launch by default for new windows, tabs, and panes, if nothing else specified. Leave blank to use system default. - New "Shell" section in Settings with a "Default shell" text field bound to the existing `default_shell` config (empty shows "(system default)"; argv-split applies to new tabs/panes).
+		- Superseded: the shells list names the default now - its first switched-on entry, which the Shell tab lets you drag to the top. The separate setting and its text field are gone, and a config that had one has that entry moved to the top once, then the line removed. An initial population is led by the shell the user logs in with, so the default is right without their saying anything.
 	- ✅ Size: A boolean setting to "Remember last size".
 		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
 		- Overrides explicit numeric size.
@@ -2261,6 +2426,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### Future and/or deferred
 
+- ✋ Severe windows multiscreen bug [20260816-085441]:
+	- Description: Dragging from a high-dpi screen to a low-dpi screen causes the window size to freak out. It seems to jump in size from larger to normal to even larger (possibly at each Windows rerender point), getting bigger each time, until it spans several screens worth of real-estate and slows to a crawl.
+	- Steps to reproduce: Easy to reproduce. Essentially the description.
+	- Workaround: Stop dragging the window. Maximize it on the target screen. Finish work, close, relaunch (or just accept a maximized state for that terminal session).
+	- ✋ Can't replicate on different monitors that also have different DPI. Don't have access to original setup. Only observed once, and was in a hurry to shutdown, so it could have been a fluke. Leaving open on backlog just in case.
+
 - ✋ Feature: Minority Report mode: Borderless, transparent, changes perspective depending on screen location.
 	- Top feature once the backlog is mostly worked through. Nothing remotely like this exists.
 	- It would be highly impractical for actual long terminal sessions. But I'm pretty sure Alacritty's underlying plumbing doesn't prevent this. (Or, can be patched to do it.)
@@ -2309,6 +2480,8 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✋ Delay this to see if other fixes, fix this.
 
 ### Canceled
+
+- 🚫 Windows fonts look too small even at 100% scale, compared to regular modern windows apps, and to legacy apps. Including terminal text, menus, and Settings. (May need Windows host to test.)
 
 - 🚫 README screenshot refresh in cicd is off (`SHOTS_ENABLE=0` in `cicd/config.bash`; `--shots` re-enables per run). So the README grid images won't auto-update after visual changes
 	- Moot point.

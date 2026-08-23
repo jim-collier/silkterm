@@ -1,10 +1,27 @@
+<!-- markdownlint-disable MD007 -- Unordered list indentation -->
 <!-- markdownlint-disable MD010 -- No hard tabs -->
+<!-- markdownlint-disable MD033 -- No inline html -->
+<!-- markdownlint-disable MD055 -- Table pipe style [Expected: leading_and_trailing; Actual: leading_only; Missing trailing pipe] -->
+<!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
 
-# SilkTerm FAQ
+<!-- TOC ignore:true -->
+# FAQ
 
-## The binary is 10+ MiB. Isn't that huge for a terminal? `xfce4-terminal` is a few hundred KiB.
+<!-- TOC ignore:true -->
+## Table of contents
 
-Short version: you're comparing a whole self-contained program against a thin launcher that leans on 10+ MiB of shared libraries already installed on your desktop. Count what actually has to be present for each one to run, and SilkTerm lands in the same ballpark - often smaller.
+<!-- TOC -->
+
+- [The binary is 10+ MiB. Isn't that huge for a terminal?](#the-binary-is-10-mib-isnt-that-huge-for-a-terminal)
+	- [Static vs dynamic linking](#static-vs-dynamic-linking)
+	- [An "effective" comparison](#an-effective-comparison)
+	- [Why go static at all?](#why-go-static-at-all)
+
+<!-- /TOC -->
+
+## The binary is 10+ MiB. Isn't that huge for a terminal?
+
+Short version: SilkTerm is a self-contained program, with everything it needs *statically linked* inside it. It can't be compared against a thin launcher that leans on 10+ MiB of shared libraries that are *dynamically linked at runtime*. Count what actually has to be present for each one to run, and SilkTerm lands in the same ballpark - often smaller.
 
 ### Static vs dynamic linking
 
@@ -48,5 +65,7 @@ For reference, SilkTerm's release binary is about **10.3 MiB** (Linux x86_64), a
 - Nothing to break when your distro bumps GTK or VTE out from under you.
 - Not even tied to one display server: the same Linux binary runs native on both X11 and Wayland (chosen at runtime), so it keeps working across the slow industry migration between them.
 - The same story ships on Windows - the build imports only core OS DLLs, no redistributable - where there's no system VTE/GTK to lean on in the first place.
+- Much more resistant to bitrot over time. If you neglect to update SilkTerm, it will still run for many years into the future, even as your distro library requirements evolve out from underneath it in a way that leave other GUI programs stranded with no viable upgrade path.
 
 That's the whole trade: the file carries everything, so it's bigger on disk than a glue binary. The program as a whole is not.
+

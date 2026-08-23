@@ -12,8 +12,9 @@
 ##		The app is rendered ON THE GPU via VirtualGL (vglrun -d egl); on plain
 ##		llvmpipe the Xvfb caps it near 10fps and the scroll judders, which no
 ##		capture rate or frame-averaging can fix (the frames aren't there to blend).
-##		On the GPU it paints a true ~60fps, so we grab straight at the delivery
-##		rate. The window size is passed at LAUNCH (--pixel-width/height), never
+##		On the GPU it paints as fast as vblank lets it, so the run PINS the app's
+##		frame rate to the capture rate (SILK_MAX_FPS, see PROFILES) rather than
+##		guessing at it. The window size is passed at LAUNCH (--pixel-width/height), never
 ##		resized after: the VGL EGL present latches the surface size at creation
 ##		(the app's xcb event connection bypasses VGL's Xlib interposer), so a
 ##		post-launch xdotool resize leaves a stale-offset blit (clipped video /
@@ -113,11 +114,29 @@ DECO_BG_OFF   = "#3c4557"                   # inactive
 DECO_GLYPH    = "#e8eefa"                   # button glyphs
 DECO_TEXT     = "#eef3fb"                   # title text
 
-# The app is driven through the GPU (VirtualGL, see launch_app) so it renders a
-# genuine ~60fps on the headless Xvfb - on plain llvmpipe it only manages ~10
-# distinct frames/sec, which no capture rate or frame-averaging can un-judder
-# (the frames simply aren't there to blend). With the GPU the source is smooth,
-# so we grab at the delivery rate straight: cap_fps == what the app paints.
+# cap_fps == out_fps == what the app paints, and all three are now WELDED: the
+# run exports SILK_MAX_FPS=cap_fps (see launch_app), which pins the app's
+# animation loop to that rate and takes vblank out of the picture.
+#
+# The welding is the whole point, and the shipped gif is what proved it matters.
+# x11grab samples the X screen on a fixed clock and gets whatever frame is
+# current, so the step between two samples is always a whole number of the app's
+# frames. Unless the app's rate divides the capture rate evenly, that number is
+# not constant: it was painting 60 (vblank on a 60Hz host) into a 50fps capture,
+# so one frame in six was dropped and every fifth stored frame carried two frames
+# of travel. Measured on the shipped gif, a scroll reads -11 -11 -22, -10 -10 -19,
+# -8 -8 -8 -7 -14, +5 +5 +5 +5 +10: an exact doubling on a strict period, at every
+# speed and in both directions. Speed-independence is what rules the app's own
+# scrolling out - a scroll defect does not double itself identically at 3px/frame
+# and at 11px/frame. That regular hitch is what reads as the picture jumping, and
+# no amount of scroll tuning could ever have removed it.
+#
+# Pinning also removes a hidden dependency nobody would have looked for: without
+# it the source rate is the RECORDING HOST'S refresh rate, so the same script on
+# a 144Hz box beats against both profiles.
+#
+# A gif stores each frame's delay in whole centiseconds, so its rate must be
+# 100/n: 50 is 2cs. The video has no such constraint.
 PROFILES = {
 	"video": dict(
 		size=(1920, 1080), cap_fps=60, out_fps=60, mono_pt=19.5, ui_pt=11,
@@ -308,7 +327,11 @@ class Rec:
 		# gray ("as if ble.sh") without ble.sh, which drops the odd first keystroke.
 		gray_flag = ("\\[$(test -f \"$HOME/.silk-gray\" && "
 			"printf '\\033[38;5;245m')\\]")
-		e.update(SHELL="/bin/bash", HOME=str(self.home),
+		# pin the app's animation rate to the rate we grab at, so every capture
+		# tick lands on exactly one painted frame (see PROFILES). Off outside the
+		# recorder, where vblank does the pacing.
+		e.update(SILK_MAX_FPS=str(self.cap_fps),
+			SHELL="/bin/bash", HOME=str(self.home),
 			XDG_CONFIG_HOME=str(self.home / ".config"),
 			PATH=f"{self.home}/bin:{os.environ['PATH']}",
 			VK_ICD_FILENAMES="/usr/share/vulkan/icd.d/lvp_icd.json",
@@ -773,22 +796,55 @@ printf '  🤔 🍰 🎉 😀   ┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅�
 ''')
 	show.chmod(0o755)
 
-	# build.sh: cargo-flavoured output with varied pacing and burst sizes. The crate
-	# list is deliberately short - this is the second-costliest scene in the gif and
-	# a scroll says everything it has to say in a few seconds.
-	crates = ["proc-macro2", "quote", "syn", "libc", "bitflags", "smallvec",
-		"log", "wgpu-hal", "wgpu", "winit", "glam"]
+	# build.sh: cargo-flavoured output, paced in movements rather than at random.
+	# The scroll speed is not a constant - it leaves rest gently, doubles while the
+	# backlog grows, tops out, then rides a braking curve down into a slow landing.
+	# Output that arrives at one rate only ever shows one point on that curve, so
+	# the earlier version (a line every so often, with a quarter chance of a pause)
+	# never left the gentle end and the whole middle of the curve went unseen. The
+	# pacing below walks the curve end to end, and the long silence at movement 4
+	# is what makes the wind-down visible at all: the view is still travelling when
+	# the output stops, and has to brake and land on its own.
+	crates = [
+		"proc-macro2", "quote", "syn", "unicode-ident", "libc", "bitflags",
+		"smallvec", "log", "cfg-if", "once_cell", "memchr", "either",
+		"itertools", "regex-syntax", "aho-corasick", "hashbrown", "indexmap",
+		"equivalent", "serde", "serde_derive", "ryu", "itoa", "thiserror",
+		"anyhow", "bytemuck", "raw-window-handle", "wayland-client",
+		"x11-dl", "calloop", "wgpu-types", "naga", "spirv", "gpu-alloc",
+		"gpu-descriptor", "renderdoc-sys", "wgpu-hal", "wgpu", "winit",
+		"glam", "cosmic-text", "swash", "skrifa", "zeno", "ttf-parser",
+		"rustybuzz", "glyphon", "pulsar-render",
+	]
+	ver = lambda: f"{rng.randint(0, 3)}.{rng.randint(1, 30)}.{rng.randint(0, 9)}"
 	lines = ["#!/bin/dash", 'g="\\033[1;32m"; y="\\033[1;33m"; b="\\033[1;34m"; r="\\033[0m"']
+	comp = lambda c: lines.append(
+		f'printf "   ${{g}}Compiling${{r}} {c} v{ver()}\\n"')
 	lines.append('printf "   ${g}Compiling${r} pulsar workspace\\n"')
-	for c in crates:
-		v = f"{rng.randint(0,3)}.{rng.randint(1,30)}.{rng.randint(0,9)}"
-		lines.append(f'printf "   ${{g}}Compiling${{r}} {c} v{v}\\n"')
-		if rng.random() < 0.25:
-			lines.append(f"sleep 0.{rng.randint(15, 45):02d}")
+	feed = iter(crates)
+
+	# 1 - well apart: each line eases and lands before the next arrives, so this is
+	#     the gentle end of the curve on its own, one line at a time
+	for _ in range(5):
+		comp(next(feed))
+		lines.append("sleep 0.45")
+	# 2 - the gaps close: a line now arrives before the last has settled, so the
+	#     speed ramps instead of restarting from rest each time
+	for gap in ("0.34", "0.27", "0.21", "0.16", "0.13", "0.10", "0.08", "0.06"):
+		comp(next(feed))
+		lines.append(f"sleep {gap}")
+	# 3 - no gaps at all: a sustained burst, which is the only thing that lifts the
+	#     speed past its single-screen cap and makes the view trail the live bottom
+	for c in feed:
+		comp(c)
+	# 4 - silence, and this is the point of the whole scene: nothing more arrives,
+	#     so the view has to brake down the ramp and land by itself, in view
+	lines.append("sleep 1.3")
+	# 5 - coda: a couple of slow lines, which start gently again from rest
 	lines += [
 		'printf "${y}warning${r}: unused variable: ${b}lift${r}\\n"',
 		'printf "  ${b}-->${r} src/render.rs:141:9\\n"',
-		'sleep 0.4',
+		'sleep 0.5',
 		'printf "   ${g}Compiling${r} pulsar v0.4.1\\n"',
 		'sleep 0.9',
 		'printf "    ${g}Finished${r} release [optimized] in 12.31s\\n"',
@@ -897,9 +953,12 @@ def seg_ls(r, t, m):
 	# no wipe: the build output is meant to push this listing up
 
 def seg_build(r, t, m):
-	with Banner(r, "Smooth cursor. Smooth scroll."):
+	with Banner(r, "Watch it speed up, then wind down."):
 		t.cmd("cd projects/pulsar", settle=0.6, typos=0.0)
-		t.cmd("./build.sh", settle=4.0)          # covers the script's own runtime
+		# the script runs ~6.5s now (five paced movements, see write_tree) and the
+		# settle has to outlast it, or the scene cuts away mid wind-down - which is
+		# the half worth watching
+		t.cmd("./build.sh", settle=7.0)
 		time.sleep(0.7)
 	# no wipe: the wheel scene scrolls back up through all of this
 
@@ -928,10 +987,18 @@ def seg_panes(r, t, m):
 	with Banner(r, "Split panes, sized for you"):
 		r.xdo("windowactivate", r.win)
 		time.sleep(0.3)
-		for _ in range(2):
+		# vertical then HORIZONTAL, not vertical twice. Two vertical splits leave
+		# three columns, and at a third of the width the prompt very nearly fills
+		# its pane - readline then redisplays it on a fresh line, which is a line
+		# of new output, which the panes ease in like any other. The result was two
+		# panes each sliding up a row a beat after they appeared, staggered, on an
+		# otherwise empty screen: nothing else to look at, so it read as glitching.
+		# At half width the prompt has room and no pane reprints. Splitting both
+		# ways also shows the tree does both, which one direction twice does not.
+		for accel in ("v", "h"):
 			t.key("alt+p", sound=key_sound("p"))
 			time.sleep(0.55)
-			t.key("v", sound=key_sound("v"))
+			t.key(accel, sound=key_sound(accel))
 			time.sleep(1.1)
 		t.cmd("exit", settle=1.2, typos=0.0)
 		t.cmd("exit", settle=1.2, typos=0.0)
@@ -1271,10 +1338,15 @@ def encode_gif(rec, work, out_gif, video_end_e):
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ##	Output placement + rotation (video and gif in their own dirs)
 
-# The README carries the whole demo now (it ends on the wallpaper + the black
-# tail, which a cut-down highlight could never show), so the ceiling is what a
-# full ~80s 50fps gif can honestly reach after gifsicle - not what a 9s clip did.
-GIF_ASSET_MAX_MB = 28
+# The README carries the whole demo (it ends on the wallpaper + the black tail,
+# which a cut-down highlight could never show), and 12 MiB is the stated ceiling
+# for it. Scrolling is what sets the size - measured per second of finished gif
+# at 50fps: a dense full-width scroll runs ~1.6 MiB/s, the build scene ~0.4, a
+# near-static scene ~0.03. So if a render lands over, the levers in order are the
+# LENGTH of the wheel scene, the width of the rows in motion, and only then
+# GIF_LOSSY. Dropping to 25fps halves it outright and is the last resort - the
+# smoothness is the thing being demonstrated.
+GIF_ASSET_MAX_MB = 12
 
 def rotate(out_dir, prefix, ext, no_rotate):
 	if no_rotate:
@@ -1381,6 +1453,14 @@ if __name__ == "__main__":
 
 
 ##	Script history:
+##		- 20260813: the run pins the app's frame rate to the capture rate
+##		  (SILK_MAX_FPS) - the two were 60 and 50, so one frame in six was dropped
+##		  and the picture hitched on a strict period. Gif back to 50fps on that
+##		  footing; asset ceiling 12 MiB. The build scene walks the speed curve in
+##		  five paced movements with a silence in the middle, so the wind-down is
+##		  visible at all. Second pane split is horizontal - at a third of the width
+##		  the prompt wrapped on resize and each pane eased the reprint in. Scene
+##		  list mirrored in script.txt, which is the file to edit.
 ##		- 20260805: set_cfg resolves a dotted path from the indentation instead of
 ##		  matching the line literally, and stops the run when a key resolves to
 ##		  nothing - the config is nested by the time any scene changes a setting,

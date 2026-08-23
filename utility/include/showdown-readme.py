@@ -29,7 +29,9 @@ def split_row(line):
 
 
 def update(readme, terminal, file_deps, mem):
-	text = readme.read_text()
+	#	Spelled out, because the default is the locale codec: on Windows that is cp1252,
+	#	which cannot read the table's own characters and fails the run before it starts.
+	text = readme.read_text(encoding="utf-8")
 	if BEGIN not in text or END not in text:
 		return None, "table markers not found"
 
@@ -87,7 +89,7 @@ def main():
 	if args.dry_run:
 		print(f"would set {args.terminal}: File+deps {args.file_deps:.1f}, Mem {args.mem:.1f}")
 		return 0
-	args.readme.write_text(out)
+	args.readme.write_text(out, encoding="utf-8")
 	print(f"README: {args.terminal} -> File+deps {args.file_deps:.1f}, Mem {args.mem:.1f}")
 	return 0
 

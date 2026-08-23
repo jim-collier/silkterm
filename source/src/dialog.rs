@@ -189,7 +189,7 @@ impl DialogWin {
 		// adopt the size winit actually gave us
 		let size = window.inner_size();
 		gfx.resize(size.width, size.height);
-		let scale = window.scale_factor() as f32;
+		let scale = config::display_scale(window.scale_factor());
 		let text = TextCtx::new(&gfx.device, &gfx.queue, gfx.format, scale);
 		let rects = RectRenderer::new(&gfx.device, gfx.format);
 		Ok((window, gfx, text, rects))
@@ -244,14 +244,20 @@ impl DialogWin {
 		// the real UI font (same pattern as About)
 		let (window, mut gfx, mut text, rects) =
 			Self::make(el, "Settings".into(), 560.0, 800.0, parent, warm)?;
-		let (label_w, btn_w, row_btn_w, tab_ws) = crate::settings_ui::chrome_widths(&mut text);
-		let scale = window.scale_factor() as f32;
-		// cap the window height to the monitor (minus decorations headroom) and to
-		// ~1010px total; a tab that doesn't fit scrolls instead of clipping buttons
+		let scale = config::display_scale(window.scale_factor());
+		let (label_w, btn_w, row_btn_w, tab_ws) =
+			crate::settings_ui::chrome_widths(&mut text, scale);
+		// Cap the window height to the monitor (minus decorations headroom) and to
+		// ~1010 DIP total; a tab that doesn't fit scrolls instead of clipping
+		// buttons. SettingsDialog divides this by the scale factor on the way in,
+		// so both figures are physical: the monitor already is, the two DIP ones
+		// convert here.
 		let max_h = window
 			.current_monitor()
-			.map_or(1010.0, |monitor| monitor.size().height as f32 - 38.0)
-			.min(1010.0);
+			.map_or(f32::MAX, |monitor| {
+				monitor.size().height as f32 - DLG_DECOR_HEADROOM * scale
+			})
+			.min(DLG_MAX_H * scale);
 		// laid out at the origin
 		let mut dialog = SettingsDialog::new(
 			0.0,
@@ -297,6 +303,15 @@ impl DialogWin {
 				dialog.use_system_font(),
 			)),
 			Content::About { .. } => None,
+		}
+	}
+
+	// A background shell scan landed while this dialog was open. Fold it into the
+	// settings BOTH copies hold: the edited one so the user sees what turned up,
+	// and the baseline so the fold does not read as an edit they made.
+	pub fn fold_shells(&mut self, found: &[crate::shells::Found]) {
+		if let Content::Settings(dialog) = &mut self.content {
+			dialog.fold_shells(found);
 		}
 	}
 
@@ -630,7 +645,14 @@ impl DialogWin {
 						crate::settings_ui::dialog_btn()
 					};
 					let r = link.rect;
-					rect_inst.push(q(r.x - 1.0, r.y - 1.0, r.w + 2.0, r.h + 2.0, border_col));
+					let b = self.text.dip(ABOUT_BORDER);
+					rect_inst.push(q(
+						r.x - b,
+						r.y - b,
+						r.w + 2.0 * b,
+						r.h + 2.0 * b,
+						border_col,
+					));
 					rect_inst.push(q(r.x, r.y, r.w, r.h, fill));
 				}
 				for line in lines {
@@ -661,13 +683,23 @@ impl DialogWin {
 					let attrs = ui_attrs();
 					let line_h = self.text.ui_line_h;
 					let tip_w = self.text.measure_ui_text(tip, &attrs);
-					let (pad_x, pad_y) = (8.0, 4.0);
+					let pad_x = self.text.dip(ABOUT_TIP_PAD_X);
+					let pad_y = self.text.dip(ABOUT_TIP_PAD_Y);
+					let edge = self.text.dip(ABOUT_TIP_EDGE);
+					let b = self.text.dip(ABOUT_BORDER);
 					let box_w = tip_w + pad_x * 2.0;
 					let box_h = line_h + pad_y * 2.0;
 					let bx = (anchor.x + anchor.w * 0.5 - box_w * 0.5)
-						.clamp(4.0, (w as f32 - box_w - 4.0).max(4.0));
-					let by = (anchor.y + anchor.h + 8.0).min((h as f32 - box_h - 4.0).max(4.0));
-					rect_inst.push(q(bx - 1.0, by - 1.0, box_w + 2.0, box_h + 2.0, border_col));
+						.clamp(edge, (w as f32 - box_w - edge).max(edge));
+					let by = (anchor.y + anchor.h + self.text.dip(ABOUT_TIP_DROP))
+						.min((h as f32 - box_h - edge).max(edge));
+					rect_inst.push(q(
+						bx - b,
+						by - b,
+						box_w + 2.0 * b,
+						box_h + 2.0 * b,
+						border_col,
+					));
 					rect_inst.push(q(bx, by, box_w, box_h, crate::settings_ui::dialog_btn()));
 					let dim = crate::settings_ui::dialog_dim();
 					let mut a = ui_attrs();
@@ -1163,6 +1195,24 @@ fn map_action(action: Action) -> Option<DialogAction> {
 	}
 }
 
+// Settings-window height caps, DIP (see config::dip).
+const DLG_MAX_H: f32 = 1010.0;
+const DLG_DECOR_HEADROOM: f32 = 38.0; // room left for the WM's own title bar
+
+// About-panel geometry, DIP (see config::dip).
+const ABOUT_PAD: f32 = 20.0; // panel inset around the whole content column
+const ABOUT_INDENT: f32 = 16.0; // indent of a detail line under its heading
+const ABOUT_TIGHT_GAP: f32 = 2.0; // heading to its first detail line
+const ABOUT_LOOSE_GAP: f32 = 4.0; // title to the version line
+const ABOUT_BTN_PAD_X: f32 = 16.0;
+const ABOUT_BTN_PAD_Y: f32 = 8.0;
+const ABOUT_TIP_ROOM: f32 = 14.0; // headroom kept below the button for its flyover
+const ABOUT_BORDER: f32 = 1.0; // 1px rule around the button and the flyover box
+const ABOUT_TIP_PAD_X: f32 = 8.0;
+const ABOUT_TIP_PAD_Y: f32 = 4.0;
+const ABOUT_TIP_DROP: f32 = 8.0; // flyover's offset below the control it describes
+const ABOUT_TIP_EDGE: f32 = 4.0; // closest the flyover may sit to a window edge
+
 // Build the About content laid out at the window origin; returns
 // (lines, clickable links, (width, height)) in physical px.
 fn layout_about(
@@ -1172,43 +1222,34 @@ fn layout_about(
 	let menu_fg = crate::settings_ui::dialog_text();
 	let menu_dim = crate::settings_ui::dialog_dim();
 	let menu_link = config::MENU_LINK;
-	let accel = match info.device_type {
-		wgpu::DeviceType::Cpu => "Software (CPU)",
-		wgpu::DeviceType::IntegratedGpu => "Hardware (integrated GPU)",
-		wgpu::DeviceType::DiscreteGpu => "Hardware (discrete GPU)",
-		wgpu::DeviceType::VirtualGpu => "Hardware (virtual GPU)",
-		wgpu::DeviceType::Other => "Unknown",
-	};
+	let accel = crate::gfx::acceleration(info.device_type);
 	let repo_url = env!("CARGO_PKG_REPOSITORY").to_string();
-	let gap = config::MENU_SEP_H;
+	// Every measurement below is DIP, converted here rather than at a boundary -
+	// the panel is small enough that one conversion per number is clearer than a
+	// second coordinate space (settings_ui.rs is the one that earns that).
+	let gap = text.dip(config::MENU_SEP_H);
+	let indent = text.dip(ABOUT_INDENT);
+	let tight = text.dip(ABOUT_TIGHT_GAP);
+	let loose = text.dip(ABOUT_LOOSE_GAP);
 	// build target the binary was compiled for (distinguishes the cross builds)
-	let profile = if cfg!(debug_assertions) {
-		"debug"
-	} else {
-		"release"
-	};
-	let build = format!(
-		"{} / {} ({profile})",
-		std::env::consts::ARCH,
-		std::env::consts::OS
-	);
+	let build = config::build_target();
 	#[rustfmt::skip]
 	let content: Vec<(String, [u8; 3], f32, f32, bool, f32)> = vec![
 		(format!("About {}", config::APP_NAME), menu_fg, 0.0, 0.0, true, 1.5),
-		(format!("version {}", env!("CARGO_PKG_VERSION")), menu_dim, 0.0, 4.0, false, 1.0),
+		(format!("version {}", env!("CARGO_PKG_VERSION")), menu_dim, 0.0, loose, false, 1.0),
 		("Copyright © 2026 Jim Collier".into(), menu_dim, 0.0, 0.0, false, 1.0),
 		(format!("License: {}", env!("CARGO_PKG_LICENSE")), menu_dim, 0.0, 0.0, false, 1.0),
 		("Info".into(), menu_fg, 0.0, gap, true, 1.0),
-		(format!("Build:  {build}"), menu_dim, 16.0, 2.0, false, 1.0),
-		(format!("Renderer:  {}", info.name), menu_dim, 16.0, 0.0, false, 1.0),
-		(format!("Backend:  {:?}", info.backend), menu_dim, 16.0, 0.0, false, 1.0),
-		(format!("Acceleration:  {accel}"), menu_dim, 16.0, 0.0, false, 1.0),
+		(format!("Build:  {build}"), menu_dim, indent, tight, false, 1.0),
+		(format!("Renderer:  {}", info.name), menu_dim, indent, 0.0, false, 1.0),
+		(format!("Backend:  {:?}", info.backend), menu_dim, indent, 0.0, false, 1.0),
+		(format!("Acceleration:  {accel}"), menu_dim, indent, 0.0, false, 1.0),
 		(repo_url.clone(), menu_link, 0.0, gap, false, 1.0),
 		("Click a link to open it in your browser  ·  Esc to close".into(), menu_dim, 0.0, gap, false, 1.0),
 	];
 
 	let attrs = ui_attrs();
-	let pad = 20.0;
+	let pad = text.dip(ABOUT_PAD);
 	let line_h = text.ui_line_h;
 	let mut content_w: f32 = 0.0;
 	let mut widths = Vec::with_capacity(content.len());
@@ -1221,7 +1262,7 @@ fn layout_about(
 	// Support button: a filled box with a centered label; opens DONATE.md and
 	// reveals that URL as a flyover on hover (config::DONATE_URL).
 	let btn_label = "Support SilkTerm!";
-	let (btn_pad_x, btn_pad_y) = (16.0, 8.0);
+	let (btn_pad_x, btn_pad_y) = (text.dip(ABOUT_BTN_PAD_X), text.dip(ABOUT_BTN_PAD_Y));
 	let label_w = text.measure_ui_text(btn_label, &attrs);
 	let btn_w = label_w + btn_pad_x * 2.0;
 	let btn_h = line_h + btn_pad_y * 2.0;
@@ -1287,7 +1328,7 @@ fn layout_about(
 	y += btn_h;
 
 	// leave room below the button for the URL flyover to appear on hover
-	let box_h = y + pad + line_h + 14.0;
+	let box_h = y + pad + line_h + text.dip(ABOUT_TIP_ROOM);
 	(lines, links, (box_w, box_h))
 }
 

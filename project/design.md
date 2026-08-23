@@ -22,13 +22,18 @@
 	- [Text readability scrim](#text-readability-scrim)
 	- [Font fallback stack](#font-fallback-stack)
 	- [Hyperlinks](#hyperlinks)
+	- [Measurements and display scaling](#measurements-and-display-scaling)
 	- [Attention colors and dialog chrome](#attention-colors-and-dialog-chrome)
 	- [Groups and sub-groups in the Settings dialog](#groups-and-sub-groups-in-the-settings-dialog)
 	- [Saved themes](#saved-themes)
+	- [The shell list and how it is filled](#the-shell-list-and-how-it-is-filled)
+	- [What a pane's shell inherits](#what-a-panes-shell-inherits)
 	- [Render Loop Sketch](#render-loop-sketch)
+	- [Output notices under a flood](#output-notices-under-a-flood)
 	- [Environment](#environment)
 	- [Startup and slow external resources](#startup-and-slow-external-resources)
 	- [Configuration format](#configuration-format)
+	- [Command-line options](#command-line-options)
 - [Delivery (CI/CD, branches, releases)](#delivery-cicd-branches-releases)
 
 <!-- /TOC -->
@@ -246,6 +251,22 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - Links open through the desktop's own handler by default, with a configurable program to override it. Deciding what a URL means is the desktop's job, not a terminal's.
 
+### Measurements and display scaling
+
+- Every measurement in the interface is written once, in device-independent pixels, and turned into real ones only when it is drawn. A DIP is a ninety-sixth of an inch, so a border, a gap or a checkbox is the same physical size on any screen. Nothing is written in raw pixels any more - the terminal grid itself is the only thing sized in them, and that follows the font.
+
+- Where the conversion happens differs by surface, and the difference is deliberate.
+
+	- A pop-out dialog is solved end to end in DIP and converts once, where its layout meets its window. It owns its whole coordinate space, so one boundary is enough and a stray conversion inside would scale something twice.
+
+	- The main window's chrome converts at each measurement instead. Menu bar, tab bar, menus, focus ring and pane gap all share a coordinate space with the terminal grid, which is in real pixels by nature, so there is no boundary to put a conversion on.
+
+- **A measurement TAKEN in real pixels must convert the constant beside it, not the other way about.** Text is measured against the font, which is real pixels by nature; the clear space that goes around it is written in DIP. Adding the two as they stand and dividing the sum at the dialog's boundary shrinks the constant by the scale factor - so at 2x a tab's title had half the clear space its own box allowed for and sat flush against the right edge, and above that it ran past it. Every such site converts the constant where it is used, exactly as the main window's chrome does. There is one rule for it, so the four places that size the dialog's columns cannot drift apart.
+
+- Conversion rounds to whole pixels. A rule or a hairline that landed between two of them would come out soft, and the one-pixel gap between panes is the extreme case: on a screen scaled below 1x, rounding alone would take it to nothing, so a measurement asked to be visible never rounds away.
+
+- A raw-pixel measurement is invisible at 1x and only thins out as the scale factor rises, which makes this the kind of mistake nobody sees on the machine they wrote it on. So the scale factor can be overridden from the environment (`SILK_SCALE`), and a high-DPI layout can be looked at on an ordinary display. Off X11 there is no other way to ask for one.
+
 ### Attention colors and dialog chrome
 
 - A theme carries two attention colors rather than one, because they answer different questions. **Highlights** marks several things at once: the live pane's ring, slider handles, revert arrows, the default button. It therefore stays calm enough to appear many times on a screen. **Focus** marks the single control the keyboard is on, so it is the more vivid of the pair and sits well away from its partner in hue. Every theme keeps its two well apart, because a theme that let them converge would draw "look at this" and "you are here" in the same color.
@@ -286,11 +307,71 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - Picking a theme takes on its colors wholesale rather than keeping the previous theme's tweaks on top. A picker that visibly changed nothing on every color that had been edited would read as broken, and those tweaks belonged to the theme being left behind.
 
+### The shell list and how it is filled
+
+- The shells a new tab can be started with are one list, stored in the config as `shells.<key>` with a title, a command, an active flag, a comment, and the date a scan last found the program installed. File order is list order, which is also menu order. It is a plain part of the config, so it can be hand-edited, and the Settings dialog's "Shell" tab is an editor for something that already works - the list came first on purpose.
+
+- **The list names the default shell: its first switched-on entry.** There was a separate `shell.default` setting saying the same thing, and two places claiming to name one shell can only ever disagree; one rule that is visible in the list is worth more than a second field. A config that carried the old setting has that entry moved to the top of the list, once, and the line removed - the value was the user's own statement of which shell they meant, so it is carried rather than dropped. Finding which entry it names is the same identity question the scan asks, not a string compare: the old setting was routinely a bare name where the scan had already stored the full path to the same file, and comparing the two as text put a SECOND copy of the user's default shell at the top of their own list, where the top is what "default shell" now means. An initial population is led by the shell the user logs in with, which is what makes the default right without their having said anything.
+
+- Finding installed shells is background work that starts a few seconds after the WALLPAPER is genuinely on screen - not merely the window. Both are off-thread and both are slow in the same way, so overlapping them puts a stall in the one moment anybody is looking: the gap between the window appearing and the picture arriving in it. A wallpaper that never answers (a share on a dead mount) cannot hold the scan off forever - there is a deadline past which it runs anyway, since a terminal with no shells in its menu is worse than a terminal with no picture behind its text. It stats every directory on PATH and, on Windows, reads the registry - any of which can be a mount or a hive that answers slowly - so none of it may sit between launch and the first frame. It runs on its own thread and the result is folded in when it arrives, the same shape the wallpaper pipeline uses.
+
+- **What a scan may do to the list is deliberately lopsided.** It may add a shell it found, and it may switch off one whose program has gone - keeping the entry, its title, its flags and its place, since a shell that is merely uninstalled is not a shell the user stopped wanting. It may never switch one back on, and never rewrite a command line. A scan cannot tell a program that came back from a switch somebody turned off on purpose, and the cost of guessing wrong runs one way: quietly re-enabling something the user disabled is worse than leaving them one tick to undo.
+
+- Two shells count as one entry when they run the same program with the same arguments. Which program that is has to be resolved rather than compared as text, because the same shell is written several ways (`bash`, `/bin/bash`) and, on Windows, three environments ship a program called `bash` and they are not the same shell. Where a stored entry resolves nowhere at all, a bare name match is enough - that is what lets a reinstall re-arm the disabled entry it belongs to instead of landing beside it as a second copy.
+
+- **The order a fresh list arrives in is stated outright, in one place, rather than falling out of the sequence the looking happens to run in.** Each find is put in a group and the whole set is sorted once at the end. On unix the user's own login shell leads - nothing may sort above it, since the top of the list is what "default shell" means - then the modern cross-platform shells, the language REPLs, and the rest of the POSIX family. Windows has no user shell, so it is stated instead: PowerShell 7, the modern shells, the WSL distributions, the three POSIX-environment bashes, PyCmd, the language REPLs, Windows Cmd, and last the two Windows PowerShell 5 entries - the ones you reach for when something needs them rather than the one you open a terminal to get. Groups that hold shells of equal standing sort alphabetically inside themselves; groups that hold one shell built several ways keep a curated order, which is why MSYS2's full bash is offered above the mini one Git ships.
+
+- The login shell's twin sits directly below it and starts without reading its startup files. Each shell spells that its own way (`--norc`, `--no-rcs`, `--no-config`, `-NoProfile`), so the flag is per shell and the twin only exists where there is one. Only the login shell gets a twin; every shell having one would double a list nobody asked to be long. It arrives switched OFF: it is what you reach for when your own rc file is the thing you are debugging, not a second copy of your shell in the menu every day. `cmd.exe` is deliberately not on that table even though it has such a flag (`/d`, no AutoRun): it is what Windows reports as the command processor, so it is the login shell on every Windows box, and a second "Command Prompt" in everyone's menu costs more than a rarely-set AutoRun key is worth.
+
+- WSL distributions are read from the registry, never by asking `wsl.exe`. A WSL2 distribution lives in a virtual disk, and listing what is installed must not be the thing that boots a virtual machine - that would be slow, surprising, and arguably a security problem for the user. Each distribution is offered whole, running its own default shell; anyone who wants a particular shell inside one edits the entry to say so. Its generation is part of its name (`WSL2; Ubuntu`), because that is the whole difference between two rows that would otherwise read identically, and the WSL2 ones are offered above the WSL1 ones. Both are offered where both exist: a WSL1 distribution is installed and usable, and hiding one because a newer-generation one sits beside it is not a call a scan gets to make. The generation is a bit in the distribution's registry flags - the `Version` value beside it is the registration format's version and reads 2 for a WSL1 distribution just as happily.
+
+- **The Shell tab is the one place allowed to write the list, and a scan landing while it is open is folded into it rather than fought with.** Everywhere else the dialog carries the live list through untouched on Apply: a dialog that opened before a scan landed would otherwise write back the empty list it copied then, emptying the menu for the rest of the session while the file on disk still had every shell in it. The tab needs to write it, so instead the scan is folded into BOTH of the dialog's copies - the edited one, so the user sees what turned up, and the baseline, so the fold does not read as an edit they made. Because a scan only ever appends and switches off, folding it into work already done cannot undo any of it.
+
+- The grid edits every field in the row rather than through a popup: it costs fewer clicks and reuses the field machinery the dialog already has. Four columns are fixed-width and the command takes whatever width is left, since it is the one value that is routinely too long to read at a glance. "Last seen" is read-only - it is the program's own note about the entry, and it is what makes a switched-off shell explicable. The command is required, which is enforced in the two places it can be broken: emptying the field leaves the stored command standing, and an entry that never got one is dropped on the way out of the dialog rather than written as a shell that names nothing to run.
+
+- **Reordering is a mouse gesture on a grip, not four buttons.** Every line carries a drag handle at its left edge and the list reorders under the pointer as it travels, rather than on release - the line being dragged is the line that is seen to move, which is the whole reason to prefer a grip over arrows. It costs four Tab stops per line, and that is the trade taken knowingly: reordering has no keyboard equivalent now. The grip is therefore not a stop at all, since a focus ring on a control that Space cannot work would be worse than no ring.
+
+- **Remove sits between the command and the date, and is drawn in red.** It is the one control in the dialog that destroys something, so it is deliberately kept off the right-hand edge that a pointer travels down on its way to the checkboxes. The red is chrome rather than a theme colour: "this deletes something" is a fixed meaning, and a theme whose accent happened to be red would say it about every control at once.
+
+- **How "where is this shell now" is answered has two halves: what the OS can see, and what the shell says - and the second wins.** Unix reads the link at `/proc/<pid>/cwd`. Windows has no equivalent and no API that reports another process's directory, so it is read out of the shell's own process memory, where SetCurrentDirectory keeps it; the result is checked for still being a directory first, so a layout that ever moved would degrade to "don't know" rather than to a wrong directory. Neither can see a shell that keeps its own idea of where it is - PowerShell's `Set-Location` never tells the OS - which is why the shell is also given a way to say so directly, in the escape sequence every terminal reads for this (OSC 7, and the ConEmu OSC 9;9 spelling that Windows Terminal documents). A report is preferred to the OS answer because it comes from the one that knows; a report naming a directory that is not here, or a machine that is not this one, is dropped and the OS answer stands.
+
+- **The snippet is put into PowerShell profiles automatically, and what that licenses is deliberately narrow.** Asking every user to paste a block into a file before new tabs open in the right place is a poor trade when the block can be put there for them - but writing to somebody else's shell profile has to earn it. So: only a profile that reports nothing at all is touched (our marker or anyone else's OSC 7 / OSC 9;9 means it is in hand); it is appended to, never rewritten, after a copy is saved beside it; the marker makes a second launch a no-op; deleting the block is how it is switched off, and nothing puts it back; the prompt is not replaced, only wrapped where there is no other hook; and a shell whose execution policy would refuse to load the profile is left alone with a line saying why, because a file the shell cannot read is worse than no file. One setting switches the whole thing off before it starts.
+
+- **The listening is done by wrapping the PTY, not by forking the VT parser.** The sequences arrive as bytes and the parser we use handles neither, so the obvious route was a fork of it. The route taken instead is that the PTY is an interface rather than a concrete type: a wrapper sits in front of the real one and scans what it reads on the way past, leaving the byte stream untouched. It costs a single pass looking for one byte, and it means no second fork to carry.
+
+- **Where a shell starts is answered by four things in a fixed order, and the setting is the last of them.** A `--directory` on the command line wins outright; failing that a new tab, pane or window inherits the directory of the pane it came from; a SilkTerm that a shell launched keeps the directory that shell was in; and only what is left over - a launch from the desktop, a menu or a shortcut, where the inherited directory is an accident of whoever started us - reads `shell.startup_directory`. It ships as the literal home token a person on that platform would type (`$HOME`, `%USERPROFILE%`), because a setting whose default is a blank box says nothing about what may be put in it.
+
+- The test for "did a shell launch us" is whether standard input is a terminal, and it is the same question on both platforms. Asking about parent processes would be more direct and costs a process-table walk on Windows, which is not something to put on the path to the first frame. Measured there: launched from a console the standard handles are the console's, launched the way Explorer and the Start menu do it they are null. A release build owns no console of its own either way, so the window-handle and attach-to-parent answers are both wrong for this question.
+
+- Removing an entry asks first, and moving one does not. Doing the opposite undoes a move; nothing undoes a removal.
+
+### What a pane's shell inherits
+
+- A pane's shell inherits the environment SilkTerm itself was launched with. That is deliberate for anything the user set - an activated virtualenv, a PATH they added, a variable they exported before starting the terminal - and it is what makes a terminal opened from a shell behave as a continuation of that shell.
+
+- It is wrong for the bookkeeping a shell keeps for ITSELF. PowerShell 7 prepends its own module directories to the module search path that every version of PowerShell shares, so a Windows PowerShell 5.1 pane opened anywhere below one resolves PSReadLine to PowerShell 7's copy rather than its own and is not allowed to load it - the pane then starts with an error and no line editing. The execution-policy variable is the same shape: one shell sets it and everything that shell starts inherits it, so a pane can run under a policy nobody chose for it.
+
+- So a short list of shell-private variables is put back to what a freshly launched program would see, read from the machine at startup, and everything else is passed through untouched. Among the options it was decided that a narrow list is the only one that holds up: replacing the whole environment would discard the user's own exports, which is the one thing inheriting exists for, and editing the polluted value in place - dropping the entries that belong to the other shell - would depend on where that shell happens to be installed.
+
+- This is not a defect in SilkTerm, and the fix is not a workaround for one. The same thing happens to a command prompt launched from PowerShell 7 with nothing of ours involved. But a pane should start the way it would from the desktop, and the terminal is the only place that can decide that once for every shell it opens.
+
+- The list is not split by platform. PowerShell runs on Linux and macOS too and mutates the same variable there, so two installs side by side collide the same way; and the launching shell's `cd -` target is stale on every platform, since a pane opens somewhere else. What is deliberately left out is the class people reach for first - an activated virtualenv or conda environment - which a user wants a pane to keep, and which could not be removed honestly in any case, because the matching PATH edits would stay behind and leave the pane half-activated.
+
+- Unix constrains the list in a way Windows does not. There is no call that says what a freshly launched program would see - that answer is composed by PAM, the session manager and the login shell between them and is never recorded - so the unix arm can only DROP a variable, never restore it. A name may therefore join the list only if a desktop session never sets it. That holds for all three today, and it is the rule to check before adding a fourth.
+
 ### Render Loop Sketch
 
 - Frame: advance lerp -> cross-boundary check -> sync crate offset -> translate render -> draw cells (+overscan rows).
 
 - Need: glyph atlas (rasterize font once, cache cells), cell metrics (width/height in px), vsync via wgpu surface.
+
+### Output notices under a flood
+
+- A pane's PTY reader finishes a read cycle roughly every 900 bytes when output is pouring in, and each cycle used to become its own window event. On 32 MiB of output that is about 20,000 events, and it was decided that the window should take delivery of at most one at a time: the notice carries nothing, so the window reads the grid as it stands whenever it gets round to one, and a queue of twenty identical notices only ever produced twenty identical reads.
+
+- Measured on the Windows box, the folding costs nothing and saves a great deal: throughput is unchanged (11.8 against 11.7 MB/s over four alternating pairs) while the process burns a third less CPU and the window thread less than half - the 2.5 seconds that used to go into the operating system's message queue was more than parsing and drawing put together.
+
+- The notice is re-armed BEFORE the window acts on it, so a read cycle landing mid-handling posts a fresh one rather than being dropped. That ordering is the whole safety argument, and it is what a unit test pins.
 
 ### Environment
 
@@ -321,6 +402,22 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - The deciding property is forgiveness. A malformed line yields a diagnostic and is skipped, so one bad value costs only its own setting. Strict TOML could instead fail the whole document and sink every setting to its default. Forgiveness let two workarounds be deleted outright: a retry loop that blanked offending lines and reparsed, and a rewrite pass for leading-dot floats, which are valid here.
 
 - Values are typed by the reader, not the file, so there is nothing to get wrong in the syntax and a value is stored back exactly as written.
+
+### Command-line options
+
+- Most options describe a window to open: a hierarchy of tabs and panes built with create/select verbs, with look and behavior cascading window -> tab -> pane.
+
+- A second, much smaller family only prints something and exits. `--help`, `--syntax`, `--about`, `--donate` and `--version` never open a window, never read a config, and never touch a layout.
+
+- Those flags are accepted in any position. The rest of the grammar cares a great deal about order, but answering a request for the help with a complaint about where the flag was written would be absurd.
+
+- Output written for a person is padded with a blank line above and below, so it sits clear of the shell prompts either side of it. `--version` is the exception, and it exists to be captured by a script, so it stays a single flush line. `--ver` and `-v` are the same flag.
+
+- Where a shell starts is decided by four things, most deliberate first: `--directory` on the command line, then the directory inherited from the pane a new tab/pane/window came from, then the directory SilkTerm itself was launched from (only when a shell launched it), then the `shell.startup_directory` setting. `--directory` cascades window -> tab -> pane exactly as `--shell` does, so the flag that names a shell and the flag that says where it starts behave alike.
+
+- `--about` reports what a bug report needs: version, which of the cross builds this is, and the GPU the renderer picked. It asks the graphics stack for an adapter but never builds a device, which is the expensive half. A box with no usable adapter loses three lines and still prints the rest.
+
+- On Windows a release build owns no console of its own, so printing has to join the one that launched it. This happens only on the paths that print and exit; a terminal window that held a console would die with the shell that started it.
 
 - The contract on saving is that a user's comments and blank-line grouping survive. Layout may be tidied, meaning indentation and quotes that are not needed, but a value is never rewritten. The shipped template is deliberately spelled the way a save would spell it, so the first save is a no-op rather than a reflow of the file we just wrote.
 
@@ -354,3 +451,20 @@ Guiding constraint: GitHub is dumb git hosting plus optional release storage, no
 - Artifact naming (stable; download links depend on it): `<exe>-<version>-<os-arch>[.exe]` for binaries, `<exe>-<version>-<os-arch>.{deb,rpm}` and `<exe>-<version>-<os-arch>-setup.exe` for packages, plus `<exe>-<version>-sha256sums.txt` (covers binaries and packages), all collected into `cicd/artifacts/release/`.
 - Pinning: `rust-toolchain.toml` pins rustc/clippy/rustfmt and the cross targets. The cargo-installed helpers (cargo-deny, cargo-zigbuild, cargo-deb, cargo-generate-rpm) and makensis are pinned in `cicd/config.bash` (`TOOL_PINS`) with a non-gating drift warning. Dependency freshness is a periodic local `cargo update` pass, and cargo-deny advisories flag anything urgent in every run.
 - README badges: static shields only (release, license, minimum Rust). No CI badge, since there is no hosted workflow to point one at.
+- Wallpaper gallery on GitHub Pages: `docs/` is served from main, and holds one self-contained page - a thumbnail grid whose tiles open the wallpaper full size in place, with prev/next paging, a filter box and per-image provenance. A README cannot do this: GitHub renders no scripting and strips image maps, so a single contact sheet has no clickable tiles and there is no way to page through anything. It stretches the guiding constraint above and does so knowingly - Pages here is branch-served static files with no Actions workflow, GitHub builds nothing, and if it were switched off tomorrow the only casualty would be one README link. The page carries thumbnails only (about 1.4 MiB) and fetches each full image from the pack already in the repository, so the 60 MiB of wallpapers is never stored twice. Both it and the README contact sheet come out of `cicd/utility/wallpaper-gallery.bash`, which is deliberately one entry point: two rendered artifacts from one pack go stale together or not at all.
+
+### Tabs report what they are running, and where (2026-08-21)
+
+A tab used to say the application's own name on Windows and the shell's process name on unix. It now reports the shell by its FRIENDLY name - the one the Shells list carries, which is the name the user gave it - followed by what that shell is doing: the command in the foreground, or the last one it ran, or, having run nothing, the directory it is in.
+
+- The shell a pane runs is resolved once, when the pane is spawned. Leaving it as "whatever the default shell is" let the answer change under a running pane, since the background scan fills the list seconds after launch and the Shells tab reorders it - so a pane could be labelled with a shell it was not running.
+- The path is shortened the way PyCmd's prompt does it: directories above the current one drop to their initials, and only if that is still too wide does an ellipsis eat the middle. Two things survive every step, because they are what distinguish a location from a command - the anchor it starts from and the separator it ends with. Windows keeps its drive letter and gets no `~`, since neither shell there prints one.
+- Tab width is two percentages of the window rather than a fixed cap, so the extra text has room on a wide display while a lone tab still reads as a tab.
+- Among the options for what a minimum width should do when the tabs stop fitting, it was decided that it HOLDS and the strip shows a page at a time. A minimum that yields is provably inert - "the even share is below the floor" and "the tabs no longer fit at the floor" are the same condition - so the alternative was a setting that could never take effect. The wheel over the tab bar turns the page, and switching tabs brings the new one onto it.
+- A hover tip carries what the tab cannot: the shell's name, the command line behind it, whatever is running now, the whole path, and how long the tab has been open. It reads as a table - one `key: value` per line, every value starting in the same column - which is why it is the one piece of chrome drawn in the TERMINAL font rather than the interface one: the column is made of spaces, and spaces align nothing in a proportional face. A value carrying a space or a quote is quoted, so its edges are never in doubt; the quote picked is the one the value does not already contain, the same habit the config file has, so a Windows command line reads inside single quotes instead of fighting its own double ones. What is derived rather than quoted - the clock reading, and the note that no directory was reported - stays bare, since quoting those would say they were data.
+
+### PowerShell's prompt says which PowerShell it is (2026-08-21)
+
+The integration block now sets a prompt reading `[PS 7.6] C:\some\path\>` - two PowerShells look alike at a prompt, and the version is the thing you want to know. It is set only where the prompt is still the one PowerShell ships, identified by the help link its own definition carries; anything anybody else installed is left alone.
+
+The block is also kept up to date in place from then on, between its two markers. It gains things over time, and an install that only ever appended would leave everyone who already had it on the first version forever. That edit is safe only because the region is delimited by markers we wrote - which is exactly the signal the stored shell list lacks, and why that list may still only ever be added to.

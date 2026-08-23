@@ -1,0 +1,193 @@
+@ SilkTerm demo script. This gets converted into demo-video.py.
+@
+@ How to read it:
+@   A bare line is typed on camera, exactly as written. A leading # is a shell
+@   comment and is typed like anything else.
+@   A line whose first non-blank character is @ is a note to the assistant and
+@   never appears on screen.
+@   Indentation is for reading only - it means nothing.
+@   Scenes run top to bottom in the order they appear here.
+
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Formats
+@
+@ Gif:   960x540, 50 fps, font 100%, silent.        -> assets/demo.gif (README)
+@ Video: 1920x1080, 60 fps, font 150%, with sound.  -> the mp4
+@
+@ Two separate runs of this same script, one per format.
+@ The app's own frame rate is pinned to the capture rate, so the two cannot
+@ beat against each other - that beat is what used to read as the text jumping.
+@ Do not set the gif to a rate a gif cannot store: only 100/n works, so 50, 25
+@ and 20 are the realistic choices, and 50 is the smoothest.
+@
+@ Gif budget: 12 MiB, enforced - over that, assets/demo.gif is left alone and
+@ the run says so. Scrolling is what costs: at 50 fps a dense full-width scroll
+@ runs ~1.6 MiB/s, the build scene ~0.4, a near-static scene ~0.03. So the
+@ levers, in order, are the length of the wheel scene, the width of the rows in
+@ motion, and only then dropping the frame rate.
+
+
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ The set
+@
+@ A real, decorated SilkTerm window on a plain black desktop, with the narration
+@ in a black band above it - never over the terminal.
+@ Everything is anonymized: user juno@vela, a throwaway home, no real paths,
+@ no real usernames, no real machine names, and the shell prompt is generated.
+@ Typing is at a human pace with the occasional typo-and-correct.
+@
+@ Settings the demo pins (everything else is what ships):
+@   160x48 cells, system monospace, line height 1.22, 8px margin
+@   theme SilkTerm dark, text scrim on, no transparency
+@   cursor: full block, pulse_vertical, 500ms blink
+@   scrollback 10000, wheel 3 lines
+@   No wallpaper at the start - it arrives on camera, later
+@   Scroll feel is deliberately not pinned: the demo shows what ships.
+
+
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: opening listing
+@ banner: "Silky-smooth output scrolling"
+@ Open straight on this - no title card, no intro typing.
+
+ls ~/
+	@ The listing flags are baked into an `ls` wrapper, not typed on camera and
+	@ not shown as an alias: everyone aliases ls, so watching it being set says
+	@ nothing. It is long, colour, directories first, bare HH:MM times, and no
+	@ owner/group columns - every column is width the gif pays for on each
+	@ scrolled line.
+	@ Long enough to run well past the bottom of the window.
+
+@ hold 3.7 seconds
+@ do NOT clear - the next scene's output is meant to push this listing up
+
+
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: the build
+@ banner: "Watch it speed up, then wind down."
+@ This scene exists to show the scroll SPEED CURVE, so the output is paced in
+@ five movements rather than at a constant rate. Output that arrives at one rate
+@ only ever shows one point on the curve.
+
+cd projects/pulsar
+./build.sh
+	@ Fake cargo output, ~6.5 seconds, in five movements:
+	@   1. five lines 0.45s apart - each eases and lands before the next, so
+	@      this is the gentle start, one line at a time
+	@   2. eight lines with the gap closing 0.34 -> 0.06 - a line now arrives
+	@      before the last has settled, so the speed ramps instead of restarting
+	@   3. ~34 lines with no gap at all - the only thing that lifts the speed
+	@      past its single-screen cap and makes the view trail the live bottom
+	@   4. 1.3 seconds of SILENCE - the point of the whole scene. Nothing more
+	@      arrives, so the view is still travelling and has to brake down the
+	@      ramp and land by itself, in view
+	@   5. a warning and two slow lines - starting gently again from rest
+	@ Then it prints: Finished release [optimized] in 12.31s
+
+@ wait 7 seconds after Enter (the script runs ~6.5s), then hold another 0.7 -
+@ the wait has to outlast the wind-down, or the scene cuts away during the half
+@ worth watching
+@ do NOT clear - the next scene scrolls back up through all of this
+
+
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: scrolling back
+@ banner: "Scroll back just as smoothly"
+
+@ move the pointer to the middle of the window
+@ three wheel clicks upward, about 3 per second
+@ hold 0.9 seconds, then move the pointer out of frame
+	@ One direction only. Coming back down says nothing going up has not already
+	@ said, and a full-width listing in motion is the most expensive thing in
+	@ the gif. The scene is simply over at the top, with no remark.
+
+@ clear the screen
+
+
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: split panes
+@ Before the banner, silently: turn the cursor animation OFF.
+	@ Three panes each pulsing their own cursor pull the eye off the split, and
+	@ every pulse is motion the gif pays for. It goes through the app's control
+	@ socket, so nothing is typed on camera for it.
+@ banner: "Split panes, sized for you"
+
+@ Alt+P then V   -> split vertically
+@ Alt+P then H   -> split horizontally
+	@ Straight off the menu bar, all keyboard, no menu coordinates to guess at.
+	@ One of each, NOT two verticals: three columns leaves the prompt nearly
+	@ filling its pane, the shell then redisplays it on a fresh line when the
+	@ pane resizes, and each pane eases that reprint in - two panes sliding a
+	@ row a beat after they appear, on an otherwise empty screen, which read as
+	@ glitching. Both directions also shows the split tree does both.
+@ about 1.1 seconds between splits
+
+exit
+exit
+	@ Each pane is an ordinary shell, so `exit` is what closes it. Nothing else
+	@ is typed - the point is the auto-sizing, not a pane API.
+
+@ clear the screen
+
+
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: the cursor
+@ banner: "Cursor shape and animation, your pick"
+@ An empty screen: the cursor is the only thing moving on it. Both changes go
+@ through the control socket - a setting should be seen changing like a setting,
+@ with nothing typed.
+
+@ 1. animation back on (pulse) - hold 2.8 seconds
+	@ Order matters. The previous scene stilled the cursor, so pulsing has to
+	@ come back FIRST and settle. The reload takes ~1.2s to reach the screen, so
+	@ most of this dwell is spent waiting for the pulse to appear at all.
+@ 2. shape: full block -> thin bar - hold 2.6 seconds
+	@ The animation is identical either side of this, so the shape is the only
+	@ thing the eye can attribute the change to.
+
+@ do NOT clear - the closing scenes build up the frame the demo ends on
+
+
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: the wallpaper
+@ banner: "The built-in wallpaper, live"
+
+silkterm --wallpaper ~/.config/silkterm/wallpapers/default.jpg
+	@ The app's own baked-in default image, so this lands on exactly the
+	@ out-of-the-box look - live, no restart. Blurred, 10% opacity, zoom fit.
+
+@ hold 4 seconds
+@ banner: "Text stays legible over any of it" - hold 2.8 seconds
+@ do NOT clear
+
+
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: colour and unicode
+@ banner: "24-bit color. Unicode. Over anything."
+
+showcase
+	@ A few short lines, all over the wallpaper:
+	@   a 36-stop bar sweeping the whole hue circle the short way round, dark
+	@     purple up through the bright middle and down to dark red
+	@   bold / italic / bold colour / reverse
+	@   Japanese, katakana, Greek, Cyrillic, Arabic
+	@   emoji and box drawing
+	@ Deliberately NOT a dense screenful - that would cost the gif far more than
+	@ it says.
+
+@ hold 3.4 seconds
+@ From this command on, whatever is typed shows in gray, as if a shell
+@ highlighter were installed.
+
+
+@ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+@ Scene: sign-off
+@ banner: "github.com/jim-collier/silkterm"
+
+@ press Enter on an empty prompt, so the sign-off sits on its own
+
+# Smooth. Silky. ...SilkTerm.
+
+@ hold 3 seconds
+@ Then the encoder freezes the last frame for 4.5s and holds black for 2s. Both
+@ cost the gif nothing - a held frame stores as no change.
