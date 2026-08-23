@@ -437,7 +437,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- A README can carry no scripting, so a click-to-enlarge viewer cannot live in it; the sheet links out to a GitHub Pages page instead.
 	- Thumbnail grid with a filter box; a tile opens the wallpaper full size in place, arrow keys and on-screen chevrons page through, Esc closes, and each one shows its credit, licence and source.
 	- The page stores thumbnails only and fetches full images from the pack in the repository, so nothing is duplicated.
-	- Needs Pages switched on for the repository (main branch, /docs) once the section reaches main.
+	- Pages serves it from main's /docs as of the beta3 cut, so the gallery now updates on a release rather than on a push to dev.
 
 - 🔘 At startup, offer to copy wallpaper from repo, to local.
 	- The README now carries a one-liner for it (Wallpaper pack section), so this item is only about the in-app offer.
