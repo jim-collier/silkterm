@@ -416,6 +416,9 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- When a tab runs out of room, the parts give way in order: shell name shortens, then the command's name is truncated, then the path abbreviates, then the command goes, then the path, leaving the shortest form of the shell's name. That last form is the floor a tab cannot shrink past - the tabs beyond it become a page.
 	- Short shell names are hand-picked for the shells that ship ("Windows Cmd" reads "Cmd", "PowerShell 7" reads "PS 7") and derived for anything renamed.
 
+- ✅ The app icon is square. (20260823)
+	- The logo is wider than it is tall, and everything that shows an icon reserves a square, so it used to sit in a band of nothing. It is stretched to fill the square now, in both the window/taskbar icon and the Windows exe icon.
+
 - 🛠️ Setting dialog (part 2):
 	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
 		- Note: the tab bar has one now (shell name, command, full path, elapsed time). It is a tab-bar tip rather than the reusable system this item asks for.

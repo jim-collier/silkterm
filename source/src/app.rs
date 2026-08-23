@@ -4162,8 +4162,6 @@ fn copy_dim(color: [u8; 3], focused: bool) -> [u8; 3] {
 	]
 }
 
-// The window/taskbar icon, decoded from the bundled logo (downscaled so the
-// _NET_WM_ICON payload stays small). None if it can't be decoded.
 // X11 session? (Per-pixel transparency needs the glutin GL path only on X11;
 // Wayland's wgpu surface already does premultiplied alpha.)
 fn is_x11(el: &ActiveEventLoop) -> bool {
@@ -4235,9 +4233,15 @@ fn set_blur_behind(window: &Window, enable: bool) {
 #[cfg(not(target_os = "linux"))]
 fn set_blur_behind(_window: &Window, _enable: bool) {}
 
+// The window/taskbar icon, decoded from the bundled logo (downscaled so the
+// _NET_WM_ICON payload stays small). The logo is wider than it is tall and every
+// place an icon is shown reserves a square, so it is stretched to fill one
+// rather than left floating in a band of nothing. None if it can't be decoded.
 pub fn load_icon() -> Option<winit::window::Icon> {
 	let img = image::load_from_memory(include_bytes!("../assets/logo.png")).ok()?;
-	let img = img.thumbnail(64, 64).into_rgba8();
+	let img = img
+		.resize_exact(64, 64, image::imageops::FilterType::Lanczos3)
+		.into_rgba8();
 	let (w, h) = img.dimensions();
 	winit::window::Icon::from_rgba(img.into_raw(), w, h).ok()
 }
