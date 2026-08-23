@@ -121,6 +121,14 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ### New features and enhancements
 
+- 🛠️ Dogfood: a build made on one box should reach the others, and the launcher should always run the newest one it can find.
+	- ✅ The dogfood destinations are written down per platform and per direction, in the pipeline config rather than in anyone's head. macOS destinations are recorded but inert, since nothing builds for it yet.
+	- ✅ The Linux pipeline installs its Windows cross-build beside its own binary, so the Windows box picks up a Linux-made build without anyone copying it by hand.
+	- ✅ Both launchers work the same way now: check this clone's release build, b23 over the network, and the dogfood location, take whichever is newer than what is already held, then run the newest. Each step says what it did, on screen and in a log beside the pool.
+	- ✅ A copy is named for the build's own date rather than the date it was copied, so the same build arriving two ways is only held once. The installs preserve that date, which is what makes it work.
+	- ✅ The bash launcher used to just run whatever it found, in place. It has the same sources, the same pruning and the same reporting as the Windows one now.
+	- 🔘 Only the Windows half has been run. The bash launcher needs a pass on Linux, and its copy in the synced bash dir has to be put there from a Linux box.
+
 - 🔘 Config file:
 	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
 		- The nesting pass kept the existing section order; the reorganization waits on the Settings dialog refactor it mirrors.

@@ -174,6 +174,16 @@ DOGFOOD_ROTATING_DESTS=(
 	"${HOME}/.local/bin"
 )
 DOGFOOD_PREFIX="slktrmdf"
+## Also install cross-built binaries under a fixed name, so a box that can't build
+## for its own platform still gets a current one over Dropbox. One line per dest:
+## "<os-arch>|<name at dest>|<dest dir>", where os-arch names a CROSS_TARGETS row.
+## A dest that doesn't exist warn-skips; a target not built this run is skipped
+## quietly. The copy keeps its mtime, which is the build date n8runterm reads.
+DOGFOOD_CROSS_DESTS=(
+	"windows-x86_64|SilkTerm.exe|${HOME}/synced/0-0/common/exec/util/mswin/gui/by-self/win64"
+	## macOS is deferred (no Mac, no SDK). Dest recorded for when there is one:
+	#"macos-arm64|SilkTerm|${HOME}/synced/0-0/common/exec/util/macos/bin"
+)
 ## Which build a copy holds: "<toolchain: gnu|msvc><built on: l|m|b|w><target: l|m|b|w><arch: i|a>"
 ## - so a pool of copies from several hosts stays readable (n8runterm.ps1 keeps three
 ## on Windows). Left unset it's derived from this host; set it to pin, empty to drop.

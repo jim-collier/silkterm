@@ -28,7 +28,7 @@
 ##	   4. profiler (flamegraph SVG; non-gating artifact - see failure policy)
 ##	   5. release build (native + cross targets; optimized, for packaging + dogfood)
 ##	   6. packages (.deb/.rpm per Linux arch; NSIS installer .exe per Windows arch)
-##	   7. dogfood (install native release locally)
+##	   7. dogfood (install the release builds locally)
 ##	   8. backup + publish to git (runs from repo root)
 ##	- Syntax:
 ##	  cicd/cicd.bash [options]
@@ -42,7 +42,7 @@
 ##	   --no-arm            skip the ARM64 release builds + packages (x86_64 only)
 ##	   --no-package        skip the packages stage (.deb/.rpm/installer)
 ##	   --no-profile        skip the profiler stage
-##	   --no-dogfood        skip installing the native release locally
+##	   --no-dogfood        skip installing the release builds locally
 ##	   --no-publish        skip the git backup + publish stage
 ##	   --no-sync           skip the remote sync check (stage 0)
 ##	   --demo              re-record the demo video (off by default)
@@ -94,7 +94,7 @@ while (($#)); do case "$1" in
 	--no-arm)                 no_arm=1; shift ;;                ## drop ARM64 builds + packages
 	--no-package)             PACKAGE_ENABLE=0; shift ;;
 	--no-profile)             PROFILE_ENABLE=0; shift ;;
-	--no-dogfood)             DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); shift ;;
+	--no-dogfood)             DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); DOGFOOD_CROSS_DESTS=(); shift ;;
 	--no-publish)             GIT_PUBLISH=(); shift ;;
 	--no-sync)                sync=0; shift ;;
 	--demo)                   DEMO_ENABLE=1; shift ;;
@@ -288,6 +288,15 @@ if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
 	fEcho_Clean "Dogfood, rotating ...: ${rot_target}/${df_name}  (dated copy; prunes idle ones)"
 else
 	fEcho_Clean "Dogfood, rotating ...: (disabled)"
+fi
+if ((${#DOGFOOD_CROSS_DESTS[@]})); then
+	fEcho_Clean "Dogfood, cross ......:"
+	for xd in "${DOGFOOD_CROSS_DESTS[@]}"; do
+		xrest="${xd#*|}"; xname="${xrest%%|*}"; xdest="${xrest#*|}"
+		fEcho_Clean "    - ${xd%%|*} -> ${xdest}/${xname}$( [[ -d "$xdest" ]] || echo '  <dest missing - will skip>' )"
+	done
+else
+	fEcho_Clean "Dogfood, cross ......: (disabled)"
 fi
 if ((${#GIT_PUBLISH[@]} == 0)); then
 	fEcho_Clean "Publish (last) ......: (disabled)"
@@ -595,13 +604,14 @@ else
 fi
 
 ## Stage 7: dogfood. Two independent installs (fixed overwrite + rotating dated copy).
-fSection "7/8  Dogfood (install native release locally)"
+fSection "7/8  Dogfood (install release builds locally)"
 df_did=0
 
 ## 7a. Fixed name: overwrite EXE_NAME (the stable path you launch by hand).
 if ((${#DOGFOOD_FIXED_DESTS[@]})); then
 	if [[ -n "$fixed_dest" ]]; then
-		cp -f "${RELEASE_NATIVE_BIN}" "${fixed_dest}/${EXE_NAME}"
+		## -p: the launchers date a build by its mtime, so the copy has to keep it.
+		cp -pf "${RELEASE_NATIVE_BIN}" "${fixed_dest}/${EXE_NAME}"
 		fEcho "OK: installed (fixed) -> ${fixed_dest}/${EXE_NAME}"
 		df_did=1
 	else
@@ -631,6 +641,27 @@ if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
 	else
 		fEcho "WARNING: no rotating dogfood dest writable (${DOGFOOD_ROTATING_DESTS[*]}); skipping"
 	fi
+fi
+
+## 7c. Cross-built binaries under a fixed name, for the box that can't build them
+## itself to pick up over Dropbox. Only targets actually built this run are copied.
+if ((${#DOGFOOD_CROSS_DESTS[@]})); then
+	for xd in "${DOGFOOD_CROSS_DESTS[@]}"; do
+		xosarch="${xd%%|*}"; xrest="${xd#*|}"; xname="${xrest%%|*}"; xdest="${xrest#*|}"
+		xsrc=""
+		for pair in "${built_arts[@]}"; do
+			[[ "${pair%%|*}" == "$xosarch" ]] && { xsrc="${pair#*|}"; break; }
+		done
+		if [[ -z "$xsrc" ]]; then
+			fEcho_Clean "no ${xosarch} build this run; cross dogfood skipped"
+		elif [[ -d "$xdest" && -w "$xdest" ]]; then
+			cp -pf "$xsrc" "${xdest}/${xname}"
+			fEcho "OK: installed (cross ${xosarch}) -> ${xdest}/${xname}"
+			df_did=1
+		else
+			fEcho "WARNING: cross dogfood dest not writable (${xdest}); skipping ${xosarch}"
+		fi
+	done
 fi
 
 if ((! df_did)); then fEcho_Clean "dogfood disabled"; fi
