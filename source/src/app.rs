@@ -1154,22 +1154,18 @@ impl State {
 		let total = self.gfx.config.width as f32;
 		let scale = self.text.scale;
 		// what a tab spends on itself rather than on its label
-		let chrome = 2.0f32.mul_add(
-			config::dip(TAB_TITLE_PAD, scale),
-			config::dip(TAB_CLOSE_W, scale),
-		);
+		let chrome = 2.0 * config::dip(TAB_TITLE_PAD, scale) + config::dip(TAB_CLOSE_W, scale);
 		let attrs = crate::text::ui_attrs();
 		let forms: Vec<Vec<String>> = (0..self.tabs.len())
 			.map(|i| self.tab_label_forms(i))
 			.collect();
 		let mut demands = Vec::with_capacity(forms.len());
 		for tab in &forms {
-			let mut width_of = |form: Option<&String>| {
-				form.map_or(0.0, |s| self.text.measure_ui_text(s, &attrs)) + chrome
-			};
+			let mut width_of =
+				|form: Option<&String>| form.map_or(0.0, |s| self.text.measure_ui_text(s, &attrs));
 			demands.push(crate::tabtitle::Demand {
-				natural: width_of(tab.first()),
-				floor: width_of(tab.last()),
+				natural: width_of(tab.first()) + chrome,
+				floor: width_of(tab.last()) + chrome,
 			});
 		}
 		let floors: Vec<f32> = demands.iter().map(|d| d.floor).collect();
