@@ -110,10 +110,13 @@ pub fn powershells(found: &[Found]) -> Vec<String> {
 // table is (lowercased, `.exe` dropped), so a full path answers the same as a
 // bare name - and `pwsh-preview` and the like answer yes as well.
 fn is_powershell(program: &str) -> bool {
-	let base = Path::new(program)
-		.file_name()
-		.map(|name| name.to_string_lossy().to_ascii_lowercase())
-		.unwrap_or_default();
+	// split on both separators: a Windows path reaches this on any platform, and
+	// Path would hand back the whole string for one on unix
+	let base = program
+		.rsplit(['/', '\\'])
+		.next()
+		.unwrap_or(program)
+		.to_ascii_lowercase();
 	let base = base.strip_suffix(".exe").unwrap_or(&base);
 	base == "powershell" || base == "pwsh" || base.starts_with("pwsh-")
 }

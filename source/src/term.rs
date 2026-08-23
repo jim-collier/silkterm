@@ -624,6 +624,8 @@ fn session_env() -> Option<std::collections::HashMap<String, String>> {
 // exports would be dropped here rather than restored, and nothing on this
 // platform could tell the two apart.
 #[cfg(not(windows))]
+// The Option is the Windows arm's failure, kept so both arms read the same.
+#[allow(clippy::unnecessary_wraps)]
 fn session_env() -> Option<std::collections::HashMap<String, String>> {
 	Some(std::collections::HashMap::new())
 }
