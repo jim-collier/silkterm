@@ -703,8 +703,38 @@ impl ContextMenu {
 struct ChromeCache {
 	menu_fg: [u8; 3],
 	menubar: Vec<Buffer>, // MENU_BAR titles + trailing "Copy output" label
-	tab_w: f32,
-	tabs: Vec<(String, Buffer)>,
+	// per shown tab: the title, the width it was shaped for, and the buffer
+	tabs: Vec<(String, f32, Buffer)>,
+}
+
+// The tab strip as drawn: which tab it starts at, and per tab shown, how wide
+// it is and what it says. Tabs are no longer one width apiece, so a position on
+// the bar is a running total rather than a multiplication (see tabtitle).
+#[derive(Default)]
+struct TabLayout {
+	key: (u32, usize, usize, usize, u32),
+	first: usize,
+	widths: Vec<f32>,
+	labels: Vec<String>,
+}
+
+impl TabLayout {
+	fn shown(&self) -> usize {
+		self.widths.len()
+	}
+
+	fn x(&self, i: usize) -> Option<f32> {
+		(i >= self.first && i < self.first + self.shown())
+			.then(|| crate::tabtitle::slot_x(&self.widths, i - self.first))
+	}
+
+	fn w(&self, i: usize) -> Option<f32> {
+		self.widths.get(i.checked_sub(self.first)?).copied()
+	}
+
+	fn at_x(&self, x: f32) -> Option<usize> {
+		crate::tabtitle::slot_at_x(&self.widths, x).map(|slot| self.first + slot)
+	}
 }
 
 // The menu bar's right-side copy-mode cluster: "Copy on [ ] select [ ] output".
@@ -1050,7 +1080,8 @@ struct State {
 	tab_close_arm: Option<usize>, // tab whose close button is held down (closes on release)
 	tab_hover: Option<(usize, Instant)>, // tab under the pointer, and since when
 	tab_first: usize,             // tab the strip is paged to (clamped on read)
-	tab_followed: usize,          // active tab the page last followed (see follow_active_tab)
+	tab_followed: usize,          // active tab the page last followed (see rebuild_tab_layout)
+	tab_layout: TabLayout,        // the strip as measured (see rebuild_tab_layout)
 	tab_tip: Option<TabTip>,      // the hover tip currently up, if any
 	decorated: bool,              // window frame shown (winit has no getter, so track it)
 	menu_bar: bool,               // window menu bar (File/Edit/...) shown
@@ -1110,64 +1141,126 @@ impl State {
 	fn menu_bar_h(&self) -> f32 {
 		self.text.ui_line_h + self.text.dip(MENU_BAR_VPAD)
 	}
-	// How wide one tab is. A percentage of the window rather than a fixed cap:
-	// a tab now carries a shell name and either a task or a path, which wants
-	// room on a wide display - while a lone tab stretching the whole bar reads
-	// as no tab bar at all. Drawing and BOTH hit tests read this one answer, or
-	// a click lands on a different tab than the one under the pointer.
-	fn tab_w(&self) -> f32 {
+	// Measure the strip afresh: what each tab's label wants, what the least it
+	// can be given is, which tabs that leaves on the page, and the widest label
+	// form that fits the width each one ends up with.
+	//
+	// Kept rather than recomputed per call, because measuring every tab's label
+	// on each mouse move would be paid for on each mouse move. The render pass
+	// rebuilds unconditionally (a label changes when its shell does something);
+	// everything else goes through `tab_layout`, which rebuilds only when one of
+	// the inputs in `tab_layout_key` moved.
+	fn rebuild_tab_layout(&mut self) {
+		let total = self.gfx.config.width as f32;
+		let scale = self.text.scale;
+		// what a tab spends on itself rather than on its label
+		let chrome = 2.0f32.mul_add(
+			config::dip(TAB_TITLE_PAD, scale),
+			config::dip(TAB_CLOSE_W, scale),
+		);
+		let attrs = crate::text::ui_attrs();
+		let forms: Vec<Vec<String>> = (0..self.tabs.len())
+			.map(|i| self.tab_label_forms(i))
+			.collect();
+		let mut demands = Vec::with_capacity(forms.len());
+		for tab in &forms {
+			let mut width_of = |form: Option<&String>| {
+				form.map_or(0.0, |s| self.text.measure_ui_text(s, &attrs)) + chrome
+			};
+			demands.push(crate::tabtitle::Demand {
+				natural: width_of(tab.first()),
+				floor: width_of(tab.last()),
+			});
+		}
+		let floors: Vec<f32> = demands.iter().map(|d| d.floor).collect();
+		// Bring the active tab onto the page when it CHANGES - and only then, so
+		// a page the wheel moved to stays put. Driven from the change rather than
+		// from each of the many places that set `tabs.active`, so no path misses
+		// it. `tab_first` is otherwise only a preference, clamped on read, so
+		// opening or closing a tab cannot strand it.
+		if self.tab_followed != self.tabs.active {
+			self.tab_followed = self.tabs.active;
+			self.tab_first =
+				crate::tabtitle::page_for(self.tab_first, self.tabs.active, &floors, total);
+		}
+		let first = crate::tabtitle::clamp_page(self.tab_first, &floors, total);
+		let shown = crate::tabtitle::tabs_that_fit(total, &floors, first)
+			.min(self.tabs.len().saturating_sub(first));
 		let settings = config::settings();
-		crate::tabtitle::tab_width(
-			self.gfx.config.width as f32,
-			self.tabs.len(),
-			settings.tab_min_pct,
+		let widths = crate::tabtitle::widths(
+			total,
+			&demands[first..first + shown],
+			settings.tab_regular_pct,
 			settings.tab_max_pct,
+		);
+		// The widest form that fits the space this tab ended up with, else the
+		// shortest there is - which still names the shell, so it reads as a tab
+		// even clipped.
+		let labels = widths
+			.iter()
+			.enumerate()
+			.map(|(slot, w)| {
+				let title_w = tab_title_w(*w, scale);
+				let tab = &forms[first + slot];
+				tab.iter()
+					.find(|form| self.text.measure_ui_text(form, &attrs) <= title_w)
+					.or_else(|| tab.last())
+					.cloned()
+					.unwrap_or_default()
+			})
+			.collect();
+		self.tab_layout = TabLayout {
+			key: self.tab_layout_key(),
+			first,
+			widths,
+			labels,
+		};
+	}
+
+	// What the strip was measured from. A mouse move is not on the list, which
+	// is the point of having one.
+	fn tab_layout_key(&self) -> (u32, usize, usize, usize, u32) {
+		(
+			self.gfx.config.width,
+			self.tabs.len(),
+			self.tabs.active,
+			self.tab_first,
+			self.text.scale.to_bits(),
 		)
 	}
 
-	// The strip as drawn: one tab's width, the tab it starts at, and how many it
-	// shows. Because a tab never shrinks past its minimum, more tabs than fit
-	// become a PAGE - so every site that draws or hit-tests a tab has to go
-	// through here, or a click lands on a different tab than the one under the
-	// pointer. `tab_first` is only a preference: it is clamped on read against the
-	// active tab and the tab count, so opening or closing a tab cannot strand it.
-	fn tab_strip(&self) -> (f32, usize, usize) {
-		let tab_w = self.tab_w();
-		let fit = crate::tabtitle::tabs_that_fit(self.gfx.config.width as f32, tab_w);
-		let first = crate::tabtitle::clamp_page(self.tab_first, self.tabs.len(), fit);
-		(tab_w, first, fit.min(self.tabs.len().saturating_sub(first)))
-	}
-
-	// Bring the active tab onto the page when it CHANGES - and only then, so a
-	// page the wheel moved to stays put. Driven from the change rather than from
-	// each of the many places that set `tabs.active`, so no path can miss it.
-	fn follow_active_tab(&mut self) {
-		if self.tab_followed == self.tabs.active {
-			return;
+	// The strip as drawn, measured again only if one of its inputs moved.
+	fn tab_layout(&mut self) -> &TabLayout {
+		if self.tab_layout.key != self.tab_layout_key() {
+			self.rebuild_tab_layout();
 		}
-		self.tab_followed = self.tabs.active;
-		let fit = crate::tabtitle::tabs_that_fit(self.gfx.config.width as f32, self.tab_w());
-		self.tab_first =
-			crate::tabtitle::page_for(self.tab_first, self.tabs.active, self.tabs.len(), fit);
+		&self.tab_layout
 	}
 
-	// Where tab `i` sits on the bar, or None when it is on another page.
-	fn tab_x(&self, i: usize) -> Option<f32> {
-		let (tab_w, first, shown) = self.tab_strip();
-		crate::tabtitle::slot_x(i, tab_w, first, shown)
+	// Where tab `i` sits on the bar and how wide it is, or None when it is on
+	// another page. Drawing and both hit tests read this one answer, or a click
+	// lands on a different tab than the one under the pointer.
+	fn tab_box(&mut self, i: usize) -> Option<(f32, f32)> {
+		let layout = self.tab_layout();
+		Some((layout.x(i)?, layout.w(i)?))
 	}
 
-	// Which tab a pointer at `x` is over - the inverse of `tab_x`, and the only
+	// Which tab a pointer at `x` is over - the inverse of `tab_box`, and the only
 	// thing the two hit tests may use.
-	fn tab_at(&self, x: f32) -> Option<usize> {
-		let (tab_w, first, shown) = self.tab_strip();
-		crate::tabtitle::tab_at_x(x, tab_w, first, shown)
+	fn tab_at(&mut self, x: f32) -> Option<usize> {
+		self.tab_layout().at_x(x)
+	}
+
+	// The close button of tab `i`, if that tab is on the page.
+	fn tab_close_box_at(&mut self, i: usize, bar_y: f32, tab_h: f32) -> Option<Rect> {
+		let (x, w) = self.tab_box(i)?;
+		Some(tab_close_box(x, w, bar_y, tab_h, self.text.scale))
 	}
 
 	// A wheel over the tab bar turns the page. Without it a tab past the edge
 	// could only be reached from the keyboard or the Tabs menu.
 	fn scroll_tab_strip(&mut self, lines: f32) {
-		let (_, first, _) = self.tab_strip();
+		let first = self.tab_layout().first;
 		let step = if lines > 0.0 {
 			first.saturating_sub(1)
 		} else {
@@ -1502,20 +1595,6 @@ impl State {
 		)
 	}
 
-	// The widest form that fits the space a tab gives its title, else the
-	// shortest one there is - which still names the drive and ends in a
-	// separator, so it reads as a place even clipped.
-	fn tab_label(&mut self, index: usize, width: f32) -> String {
-		let forms = self.tab_label_forms(index);
-		let attrs = crate::text::ui_attrs();
-		for form in &forms {
-			if self.text.measure_ui_text(form, &attrs) <= width {
-				return form.clone();
-			}
-		}
-		forms.into_iter().next_back().unwrap_or_default()
-	}
-
 	// Which tab the pointer is over, and since when. Anything the pointer is
 	// already busy with - a drag, an open menu - owns it instead, so no tip
 	// appears underneath one.
@@ -1669,7 +1748,7 @@ impl State {
 		// A tab paged off the strip while its tip was up takes the tip with it -
 		// a tip hanging off nothing would sit at the bar's left end, pointing at
 		// whichever tab happened to be there.
-		let x = self.tab_x(tab)?.min((win_w - w).max(0.0)).max(0.0);
+		let x = self.tab_box(tab)?.0.min((win_w - w).max(0.0)).max(0.0);
 		let y = self.menubar_h() + self.tab_bar_h() + self.text.dip(TAB_TIP_GAP);
 		let placed = lines
 			.into_iter()
@@ -2985,16 +3064,17 @@ impl State {
 		let tabbar_range = if self.tab_bar_visible() {
 			let start = instances.len() as u32;
 			instances.push(rect_inst(0.0, tab_bar_y, win_w, tab_h, config::TAB_BAR_BG));
-			let (tab_w, first, shown) = self.tab_strip();
+			let first = self.tab_layout.first;
+			let strip = self.tab_layout.widths.clone();
 			// per-tab loop invariants (each config accessor is an RwLock read)
 			let box_border = config::menu_border();
 			let x_rgb = close_x_rgb();
 			let tab_gap = self.text.dip(TAB_GAP);
 			let tab_top = self.text.dip(TAB_TOP_PAD);
 			let cb_rule = self.text.dip(CHROME_HAIRLINE);
-			for slot in 0..shown {
+			let mut x = 0.0;
+			for (slot, tab_w) in strip.iter().copied().enumerate() {
 				let i = first + slot;
-				let x = slot as f32 * tab_w;
 				let color = if i == self.tabs.active {
 					config::TAB_ACTIVE
 				} else {
@@ -3031,6 +3111,7 @@ impl State {
 				};
 				instances.push(rect_inst(cb.x, cb.y, cb.w, cb.h, box_fill));
 				instances.push(close_x_inst(cb, x_rgb));
+				x += tab_w;
 			}
 			Some((start, instances.len() as u32))
 		} else {
@@ -3165,19 +3246,17 @@ impl State {
 			let c = copy_dim(menu_fg_rgb, self.focused);
 			GColor::rgb(c[0], c[1], c[2])
 		};
-		let tab_w = self.tab_w();
-		// tab titles - computed first (the task probe and the fit are both &mut)
+		// tab titles - measured first (the task probe and the fit are both &mut)
 		// before self.text is borrowed for the buffers below. Each is fitted to
 		// the space its own tab has, which is where a path gets shortened.
-		let title_w = tab_title_w(tab_w, self.text.scale);
-		self.follow_active_tab();
-		let (_, title_first, title_shown) = self.tab_strip();
-		let tab_titles: Vec<String> = if self.tab_bar_visible() {
-			(title_first..title_first + title_shown)
-				.map(|i| self.tab_label(i, title_w))
-				.collect()
+		self.rebuild_tab_layout();
+		let (tab_widths, tab_titles) = if self.tab_bar_visible() {
+			(
+				self.tab_layout.widths.clone(),
+				self.tab_layout.labels.clone(),
+			)
 		} else {
-			Vec::new()
+			(Vec::new(), Vec::new())
 		};
 		// keep the shaped chrome text current (see ChromeCache) - a color change
 		// rebuilds it all, otherwise only changed tab titles re-shape
@@ -3210,30 +3289,34 @@ impl State {
 			self.chrome = Some(ChromeCache {
 				menu_fg: menu_fg_rgb,
 				menubar,
-				tab_w: -1.0, // force the tab pass below to fill in
 				tabs: Vec::new(),
 			});
 			self.chrome_rev = self.chrome_rev.wrapping_add(1);
 		}
 		{
 			let mut reshaped = false;
-			let cache = self.chrome.as_mut().unwrap(); // ensured above
-			if cache.tab_w != tab_w {
-				cache.tab_w = tab_w;
-				cache.tabs.clear(); // width changed: every title buffer re-wraps
-				reshaped = true;
+			{
+				let cache = self.chrome.as_mut().unwrap(); // ensured above
+				if cache.tabs.len() > tab_titles.len() {
+					reshaped = true;
+				}
+				cache.tabs.truncate(tab_titles.len());
 			}
-			if cache.tabs.len() > tab_titles.len() {
-				reshaped = true;
-			}
-			cache.tabs.truncate(tab_titles.len());
+			let scale = self.text.scale;
 			for (i, title) in tab_titles.into_iter().enumerate() {
-				if cache
+				let title_w = tab_title_w(tab_widths[i], scale);
+				// an unchanged title in an unchanged tab keeps its shaped buffer;
+				// a width change re-wraps it
+				if self
+					.chrome
+					.as_ref()
+					.unwrap()
 					.tabs
 					.get(i)
-					.is_some_and(|(cached, _)| cached == &title)
-				{
-					continue; // unchanged title keeps its shaped buffer
+					.is_some_and(|(cached, cached_w, _)| {
+						cached == &title && (*cached_w - title_w).abs() < 0.01
+					}) {
+					continue;
 				}
 				reshaped = true;
 				let mut buf = self.text.new_ui_buffer(title_w, tab_h);
@@ -3247,10 +3330,11 @@ impl State {
 					None,
 				);
 				buf.shape_until_scroll(&mut self.text.font_system, false);
+				let cache = self.chrome.as_mut().unwrap();
 				if i < cache.tabs.len() {
-					cache.tabs[i] = (title, buf);
+					cache.tabs[i] = (title, title_w, buf);
 				} else {
-					cache.tabs.push((title, buf));
+					cache.tabs.push((title, title_w, buf));
 				}
 			}
 			if reshaped {
@@ -3273,7 +3357,9 @@ impl State {
 			self.gfx.config.width.hash(&mut h);
 			self.gfx.config.height.hash(&mut h);
 			margin.to_bits().hash(&mut h);
-			tab_w.to_bits().hash(&mut h);
+			for w in &tab_widths {
+				w.to_bits().hash(&mut h);
+			}
 			self.menu_bar.hash(&mut h);
 			self.tab_bar_visible().hash(&mut h);
 			self.tabs.active.hash(&mut h);
@@ -3412,8 +3498,9 @@ impl State {
 					});
 				}
 			}
-			for (slot, (_, buf)) in chrome.tabs.iter().enumerate() {
-				let x = slot as f32 * tab_w;
+			let mut x = 0.0;
+			for (slot, (_, _, buf)) in chrome.tabs.iter().enumerate() {
+				let tab_w = tab_widths.get(slot).copied().unwrap_or(0.0);
 				let close_x = x + tab_w - self.text.dip(TAB_CLOSE_W);
 				areas.push(TextArea {
 					buffer: buf,
@@ -3431,6 +3518,7 @@ impl State {
 					custom_glyphs: &[],
 				});
 				// the close "X" itself is a shader-drawn rect instance (tab bar pass)
+				x += tab_w;
 			}
 
 			if let Err(e) = self.text.prepare(&self.gfx.device, &self.gfx.queue, areas) {
@@ -4571,6 +4659,7 @@ impl ApplicationHandler<UserEvent> for App {
 			tab_close_arm: None,
 			tab_hover: None,
 			tab_first: 0,
+			tab_layout: TabLayout::default(),
 			tab_followed: 0,
 			tab_tip: None,
 			decorated,
@@ -4909,20 +4998,16 @@ impl ApplicationHandler<UserEvent> for App {
 					&& y >= tab_bar_y
 					&& y < tab_bar_y + state.tab_bar_h()
 				{
-					let tab_w = state.tab_w();
 					if let Some(i) = state.tab_at(x) {
 						// press in the close-button column only ARMS the close (the
 						// button lights up); the close itself fires on release over
 						// the same box, so a slipped press can be dragged off to
 						// cancel - standard button feel. Elsewhere selects the tab.
-						let cb = tab_close_box(
-							state.tab_x(i).unwrap_or(0.0),
-							tab_w,
-							tab_bar_y,
-							state.tab_bar_h(),
-							state.text.scale,
-						);
-						if x >= cb.x {
+						let bar_h = state.tab_bar_h();
+						let on_close = state
+							.tab_close_box_at(i, tab_bar_y, bar_h)
+							.is_some_and(|cb| x >= cb.x);
+						if on_close {
 							state.tab_close_arm = Some(i);
 						} else {
 							if state.tabs.active != i {
@@ -5135,15 +5220,11 @@ impl ApplicationHandler<UserEvent> for App {
 					let (x, y) = state.mouse;
 					let tab_bar_y = state.menubar_h();
 					if i < state.tabs.len() && y >= tab_bar_y && y < tab_bar_y + state.tab_bar_h() {
-						let tab_w = state.tab_w();
-						let cb = tab_close_box(
-							state.tab_x(i).unwrap_or(0.0),
-							tab_w,
-							tab_bar_y,
-							state.tab_bar_h(),
-							state.text.scale,
-						);
-						if state.tab_at(x) == Some(i) && x >= cb.x {
+						let bar_h = state.tab_bar_h();
+						let on_close = state
+							.tab_close_box_at(i, tab_bar_y, bar_h)
+							.is_some_and(|cb| x >= cb.x);
+						if on_close && state.tab_at(x) == Some(i) {
 							state.close_tab_at(i);
 						}
 					}

@@ -57,7 +57,7 @@ keys![
 	Outline, CursorScrim, CursorOutline,
 	CursorBlink, CursorHeight, CursorWidth, CursorAnimation, CursorResume,
 	SystemFont, SystemFontSize, FontFamily, FontSize, LineHeight,
-	Columns, Rows, RememberSize, Margin, TabMinWidth, TabMaxWidth,
+	Columns, Rows, RememberSize, Margin, TabRegularWidth, TabMaxWidth,
 	Shells, StartupDirectory, ShellIntegration, CopyOnSelect, Hyperlinks, LinkOpenCommand,
 	SmoothScroll, ScrollEaseIn, ScrollRampUp, SingleScreenTau, ScrollRampDown,
 	ScrollEaseOut, WheelLines,

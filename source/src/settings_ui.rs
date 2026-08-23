@@ -2472,7 +2472,7 @@ impl SettingsDialog {
 			Key::FontSize => settings.font_size,
 			Key::LineHeight => settings.line_height_scale,
 			Key::Margin => settings.margin,
-			Key::TabMinWidth => settings.tab_min_pct,
+			Key::TabRegularWidth => settings.tab_regular_pct,
 			Key::TabMaxWidth => settings.tab_max_pct,
 			// shown as an intuitive 1..100 speed (higher = faster); stored as tau
 			Key::ScrollEaseIn => {
@@ -2521,7 +2521,7 @@ impl SettingsDialog {
 			Key::FontSize => settings.font_size = value,
 			Key::LineHeight => settings.line_height_scale = value,
 			Key::Margin => settings.margin = value,
-			Key::TabMinWidth => settings.tab_min_pct = value,
+			Key::TabRegularWidth => settings.tab_regular_pct = value,
 			Key::TabMaxWidth => settings.tab_max_pct = value,
 			Key::ScrollEaseIn => {
 				settings.scroll_ease_in_ms = falling_value(value, EASE_IN_MIN, EASE_IN_MAX);
@@ -2905,7 +2905,7 @@ impl SettingsDialog {
 			Key::FontSize => defaults.font_size,
 			Key::LineHeight => defaults.line_height_scale,
 			Key::Margin => defaults.margin,
-			Key::TabMinWidth => defaults.tab_min_pct,
+			Key::TabRegularWidth => defaults.tab_regular_pct,
 			Key::TabMaxWidth => defaults.tab_max_pct,
 			Key::ScrollEaseIn => {
 				falling_slider(defaults.scroll_ease_in_ms, EASE_IN_MIN, EASE_IN_MAX)

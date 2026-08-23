@@ -239,7 +239,7 @@ pub struct Settings {
 	pub rows: usize,
 	pub remember_size: bool, // launch at the last window size instead of columns/rows
 	pub hide_single_tab: bool, // hide the tab bar while only one tab is open
-	pub tab_min_pct: f32,    // narrowest a tab may be, as a % of the window's width
+	pub tab_regular_pct: f32, // a tab's ordinary width, as a % of the window's width
 	pub tab_max_pct: f32,    // widest a tab may be, as a % of the window's width
 	pub remembered_columns: usize, // last actual window size (not shown in the dialog)
 	pub remembered_rows: usize,
@@ -365,8 +365,8 @@ impl Default for Settings {
 			rows: 48,
 			remember_size: true,
 			hide_single_tab: false,
-			tab_min_pct: 8.0,
-			tab_max_pct: 26.0,
+			tab_regular_pct: 10.0,
+			tab_max_pct: 100.0,
 			remembered_columns: 160,
 			remembered_rows: 48,
 			// alacritty's default delimiters minus ':', so a Windows drive path
@@ -975,8 +975,8 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.hide_single_tab != orig.hide_single_tab {
 		doc.set_bool("window.hide_single_tab", s.hide_single_tab);
 	}
-	if s.tab_min_pct != orig.tab_min_pct {
-		doc.set_float("window.tab_min_width_pct", r(s.tab_min_pct));
+	if s.tab_regular_pct != orig.tab_regular_pct {
+		doc.set_float("window.tab_regular_width_pct", r(s.tab_regular_pct));
 	}
 	if s.tab_max_pct != orig.tab_max_pct {
 		doc.set_float("window.tab_max_width_pct", r(s.tab_max_pct));
@@ -1155,7 +1155,7 @@ struct RawConfig {
 	rows: Option<usize>,
 	remember_size: Option<bool>,
 	hide_single_tab: Option<bool>,
-	tab_min_pct: Option<f32>,
+	tab_regular_pct: Option<f32>,
 	tab_max_pct: Option<f32>,
 	remembered_columns: Option<usize>,
 	remembered_rows: Option<usize>,
@@ -1374,7 +1374,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		rows: r.u("window.rows"),
 		remember_size: r.b("window.remember_size"),
 		hide_single_tab: r.b("window.hide_single_tab"),
-		tab_min_pct: r.f("window.tab_min_width_pct"),
+		tab_regular_pct: r.f("window.tab_regular_width_pct"),
 		tab_max_pct: r.f("window.tab_max_width_pct"),
 		remembered_columns: r.u("window.remembered_columns"),
 		remembered_rows: r.u("window.remembered_rows"),
@@ -1795,12 +1795,14 @@ fn resolve(raw: RawConfig) -> Settings {
 		rows: raw.rows.unwrap_or(d.rows).max(1),
 		remember_size: raw.remember_size.unwrap_or(d.remember_size),
 		hide_single_tab: raw.hide_single_tab.unwrap_or(d.hide_single_tab),
-		tab_min_pct: raw.tab_min_pct.unwrap_or(d.tab_min_pct).clamp(2.0, 100.0),
-		tab_max_pct: raw
-			.tab_max_pct
-			.unwrap_or(d.tab_max_pct)
-			.clamp(2.0, 100.0)
-			.max(raw.tab_min_pct.unwrap_or(d.tab_min_pct).clamp(2.0, 100.0)),
+		tab_regular_pct: raw
+			.tab_regular_pct
+			.unwrap_or(d.tab_regular_pct)
+			.clamp(2.0, 100.0),
+		// The pair is read as a range wherever it is used (tabtitle::bounds), so a
+		// maximum dragged below the regular width is stored as it was set rather
+		// than quietly rewritten under the user.
+		tab_max_pct: raw.tab_max_pct.unwrap_or(d.tab_max_pct).clamp(2.0, 100.0),
 		remembered_columns: raw
 			.remembered_columns
 			.unwrap_or(d.remembered_columns)
@@ -2135,6 +2137,9 @@ const CONFIG_RENAMES: &[(&str, &str)] = &[
 	// text it parses as well as the file: a config open in an editor defers the
 	// write, and the old spelling must not read as its successor even once.
 	("colors.focus", "colors.highlight"),
+	// the narrowest a tab could be became the width it sits at by default; the
+	// old value carries, since both are read the same way
+	("window.tab_min_width_pct", "window.tab_regular_width_pct"),
 ];
 // Paths that no longer exist and should be removed from an existing config.
 // scroll.tau_ms ("Initial scroll speed") has no successor: the speed curve now
@@ -2177,6 +2182,10 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// the pane ring was a cold blue, picked for the palette before this one (the
 	// key was `colors.focus` then, so a config carrying it arrives here renamed)
 	("colors.highlight", "\"#5580c8\"  ## Default"),
+	// tabs used to divide the bar evenly between two bounds, so the cap had to
+	// be low enough that a couple of them did not swallow the window
+	("window.tab_max_width_pct", "26.0  ## Default"),
+	("window.tab_regular_width_pct", "8.0  ## Default"),
 ];
 
 // The whole pre-nesting flat namespace, old key -> new nested path. Primary
@@ -3235,13 +3244,14 @@ window:
 	# hide_single_tab: false  ## Default
 
 	## Tab width
-	## How wide a tab may be, as a percentage of the window's width. Tabs share
-	## the bar evenly between these two bounds. Raising the minimum keeps tabs
-	## readable when many are open, at the cost of showing them a page at a time -
-	## the wheel over the tab bar turns the page, and switching tabs brings the
-	## new one onto it.
-	# tab_min_width_pct: 8.0  ## Default
-	# tab_max_width_pct: 26.0  ## Default
+	## A tab's ordinary width, and the most it may grow to, as percentages of the
+	## window. A tab sits at the regular width when nothing is pushing on it,
+	## grows toward the maximum when its text needs the room, and shrinks below
+	## the regular width when the bar is crowded - but never past the point where
+	## it still names its shell. The tabs that no longer fit become a page: the
+	## wheel over the tab bar turns it, and switching tabs brings the new one on.
+	# tab_regular_width_pct: 10.0  ## Default
+	# tab_max_width_pct: 100.0  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Background and transparency
