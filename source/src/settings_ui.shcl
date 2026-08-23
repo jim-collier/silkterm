@@ -634,21 +634,21 @@ rows:
 		indent: 1
 		setting: window.rows
 
-	TabMinWidth:
-		label: Tab width min %
+	TabRegularWidth:
+		label: Tab width regular %
 		kind: slider
-		range: 4, 50
+		range: 4, 100
 		whole: true
-		setting: window.tab_min_width_pct
-		help: "Narrowest a tab may be, as a percentage of the window. Raise it to keep tabs readable when many are open - the strip then shows them a page at a time."
+		setting: window.tab_regular_width_pct
+		help: "How wide a tab is when nothing is pushing on it, as a percentage of the window. A crowded bar shrinks tabs below this, and the ones that no longer fit become a page."
 
 	TabMaxWidth:
 		label: Tab width max %
 		kind: slider
-		range: 4, 50
+		range: 4, 100
 		whole: true
 		setting: window.tab_max_width_pct
-		help: "Widest a tab may be, as a percentage of the window."
+		help: "How far a tab may grow past its regular width when its text needs the room."
 
 	Margin:
 		label: Margin px

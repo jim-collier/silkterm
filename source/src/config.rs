@@ -239,7 +239,7 @@ pub struct Settings {
 	pub rows: usize,
 	pub remember_size: bool, // launch at the last window size instead of columns/rows
 	pub hide_single_tab: bool, // hide the tab bar while only one tab is open
-	pub tab_min_pct: f32,    // narrowest a tab may be, as a % of the window's width
+	pub tab_regular_pct: f32, // a tab's ordinary width, as a % of the window's width
 	pub tab_max_pct: f32,    // widest a tab may be, as a % of the window's width
 	pub remembered_columns: usize, // last actual window size (not shown in the dialog)
 	pub remembered_rows: usize,
@@ -365,8 +365,8 @@ impl Default for Settings {
 			rows: 48,
 			remember_size: true,
 			hide_single_tab: false,
-			tab_min_pct: 8.0,
-			tab_max_pct: 26.0,
+			tab_regular_pct: 10.0,
+			tab_max_pct: 100.0,
 			remembered_columns: 160,
 			remembered_rows: 48,
 			// alacritty's default delimiters minus ':', so a Windows drive path
@@ -975,8 +975,8 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.hide_single_tab != orig.hide_single_tab {
 		doc.set_bool("window.hide_single_tab", s.hide_single_tab);
 	}
-	if s.tab_min_pct != orig.tab_min_pct {
-		doc.set_float("window.tab_min_width_pct", r(s.tab_min_pct));
+	if s.tab_regular_pct != orig.tab_regular_pct {
+		doc.set_float("window.tab_regular_width_pct", r(s.tab_regular_pct));
 	}
 	if s.tab_max_pct != orig.tab_max_pct {
 		doc.set_float("window.tab_max_width_pct", r(s.tab_max_pct));
@@ -1155,7 +1155,7 @@ struct RawConfig {
 	rows: Option<usize>,
 	remember_size: Option<bool>,
 	hide_single_tab: Option<bool>,
-	tab_min_pct: Option<f32>,
+	tab_regular_pct: Option<f32>,
 	tab_max_pct: Option<f32>,
 	remembered_columns: Option<usize>,
 	remembered_rows: Option<usize>,
@@ -1374,7 +1374,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		rows: r.u("window.rows"),
 		remember_size: r.b("window.remember_size"),
 		hide_single_tab: r.b("window.hide_single_tab"),
-		tab_min_pct: r.f("window.tab_min_width_pct"),
+		tab_regular_pct: r.f("window.tab_regular_width_pct"),
 		tab_max_pct: r.f("window.tab_max_width_pct"),
 		remembered_columns: r.u("window.remembered_columns"),
 		remembered_rows: r.u("window.remembered_rows"),
@@ -1795,12 +1795,14 @@ fn resolve(raw: RawConfig) -> Settings {
 		rows: raw.rows.unwrap_or(d.rows).max(1),
 		remember_size: raw.remember_size.unwrap_or(d.remember_size),
 		hide_single_tab: raw.hide_single_tab.unwrap_or(d.hide_single_tab),
-		tab_min_pct: raw.tab_min_pct.unwrap_or(d.tab_min_pct).clamp(2.0, 100.0),
-		tab_max_pct: raw
-			.tab_max_pct
-			.unwrap_or(d.tab_max_pct)
-			.clamp(2.0, 100.0)
-			.max(raw.tab_min_pct.unwrap_or(d.tab_min_pct).clamp(2.0, 100.0)),
+		tab_regular_pct: raw
+			.tab_regular_pct
+			.unwrap_or(d.tab_regular_pct)
+			.clamp(2.0, 100.0),
+		// The pair is read as a range wherever it is used (tabtitle::bounds), so a
+		// maximum dragged below the regular width is stored as it was set rather
+		// than quietly rewritten under the user.
+		tab_max_pct: raw.tab_max_pct.unwrap_or(d.tab_max_pct).clamp(2.0, 100.0),
 		remembered_columns: raw
 			.remembered_columns
 			.unwrap_or(d.remembered_columns)
@@ -2135,6 +2137,9 @@ const CONFIG_RENAMES: &[(&str, &str)] = &[
 	// text it parses as well as the file: a config open in an editor defers the
 	// write, and the old spelling must not read as its successor even once.
 	("colors.focus", "colors.highlight"),
+	// the narrowest a tab could be became the width it sits at by default; the
+	// old value carries, since both are read the same way
+	("window.tab_min_width_pct", "window.tab_regular_width_pct"),
 ];
 // Paths that no longer exist and should be removed from an existing config.
 // scroll.tau_ms ("Initial scroll speed") has no successor: the speed curve now
@@ -2177,6 +2182,10 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// the pane ring was a cold blue, picked for the palette before this one (the
 	// key was `colors.focus` then, so a config carrying it arrives here renamed)
 	("colors.highlight", "\"#5580c8\"  ## Default"),
+	// tabs used to divide the bar evenly between two bounds, so the cap had to
+	// be low enough that a couple of them did not swallow the window
+	("window.tab_max_width_pct", "26.0  ## Default"),
+	("window.tab_regular_width_pct", "8.0  ## Default"),
 ];
 
 // The whole pre-nesting flat namespace, old key -> new nested path. Primary
@@ -3151,27 +3160,19 @@ pub const HOME_TOKEN: &str = "$HOME";
 
 const DEFAULT_CONFIG_TEMPLATE: &str = r##"# SilkTerm configuration file.
 #
-#
-# This config file format is:
-#
-# SHCL: Simple Hierarchical Config Language.
-#
-#    "Predictable, precise, and forgiving. The parser does the hard work, not you."
+# Format: SHCL, the Simple Hierarchical Config Language.
 #
 #    Home     https://github.com/jim-collier/shcl
 #    Syntax   https://github.com/jim-collier/shcl/blob/main/project/spec.md
 #    License  MIT. Copyright © 2026 Jim Collier.
 #
 #
-## Delete this file to regenerate defaults.
-## Convention: '## ' starts an explanatory comment; a single '# ' before a
-## `key: value` is a commented-out (disabled) setting you can uncomment - it
-## shows the built-in default. This file is yours to edit: your values and
-## comments are kept. Saving may tidy layout (indentation, grouping), but never
-## rewrites what you wrote. A malformed line is skipped on its own rather than
-## sinking the whole file. On launch SilkTerm only adds options new to this
-## version (and renames/removes ones that changed) - and even that is skipped
-## if the file looks open elsewhere.
+## Delete this file to start over from defaults.
+## A '## ' line is a note. A single '# ' before a `key: value` is a setting that
+## is switched off, showing its built-in default; uncomment it to change it.
+## Your values and your own comments are kept. A save may tidy the layout but
+## never rewrites what you wrote, and a bad line is skipped on its own. On
+## launch SilkTerm adds settings new to this version and nothing else.
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Font
@@ -3179,32 +3180,20 @@ const DEFAULT_CONFIG_TEMPLATE: &str = r##"# SilkTerm configuration file.
 
 font:
 
-	## System font face
-	## Use the OS default monospace font FAMILY: put it at the head of the family
-	## stack below. Turn off to start at family instead. Ignored where the OS has
-	## no monospace setting to read (Windows has none).
+	## Put the OS monospace font at the head of the family stack below. Windows
+	## has no such setting, so this does nothing there.
 	use_system_family: true
 
-	## System font size
-	## Use the OS default monospace font SIZE, overriding size below. Turn off to
-	## size the font yourself. Ignored where the OS reports no size.
+	## Use the OS monospace font size instead of size below.
 	# use_system_size: true  ## Default
 
-	## Font family
-	## A comma-separated fallback stack, first installed one wins. The same list
-	## is consulted on every platform; use_system_family above only decides
-	## whether the OS font is tried ahead of it. Anything not installed is
-	## skipped, and a built-in stack backs the whole list up.
+	## Comma-separated; the first one installed wins. A built-in stack backs it up.
 	family: "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
 
-	## Font size
-	## In logical pixels. Used when use_system_size is off.
-	## Range: 4.0 and up
+	## Logical pixels, from 4.0 up. Used when use_system_size is off.
 	# size: 17.0  ## Default
 
-	## Line height
-	## As a multiple of the font's natural height.
-	## Range: 0.5 and up - 1.0 is tight, higher is airier
+	## A multiple of the font's own height, from 0.5 up. 1.0 is tight.
 	line_height_scale: 1.22
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -3213,35 +3202,28 @@ font:
 
 window:
 
-	## Margin
 	## Pixels between the text and the pane edge.
 	margin: 8.0
 
-	## Initial window size
-	## In character cells. Used when remember_size is off.
+	## Starting size, in character cells. Used when remember_size is off.
 	columns: 160
 	rows: 48
 
-	## Remember last size
-	## Launch at the last window size instead of columns/rows. The remembered
-	## size updates automatically whenever you resize the window (kept separate
-	## from columns/rows so unchecking reverts to your defined size).
+	## Launch at the size you last dragged the window to. The remembered pair
+	## updates either way, so turning this off puts you back on columns/rows.
 	# remember_size: true  ## Default
 	# remembered_columns: 160  ## Default
 	# remembered_rows: 48  ## Default
 
-	## Hide single tab
 	## Hide the tab bar while only one tab is open (also in the View menu).
 	# hide_single_tab: false  ## Default
 
-	## Tab width
-	## How wide a tab may be, as a percentage of the window's width. Tabs share
-	## the bar evenly between these two bounds. Raising the minimum keeps tabs
-	## readable when many are open, at the cost of showing them a page at a time -
-	## the wheel over the tab bar turns the page, and switching tabs brings the
-	## new one onto it.
-	# tab_min_width_pct: 8.0  ## Default
-	# tab_max_width_pct: 26.0  ## Default
+	## Tab width, as percentages of the window. A tab sits at the regular width
+	## when nothing is pushing on it, grows toward the maximum when its text
+	## needs the room, and shrinks below regular when the bar is crowded. Tabs
+	## that no longer fit become a page: the wheel over the tab bar turns it.
+	# tab_regular_width_pct: 10.0  ## Default
+	# tab_max_width_pct: 100.0  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Background and transparency
@@ -3249,87 +3231,60 @@ window:
 
 transparency:
 
-	## Transparency
-	## When on, the terminal background (only - never the text, window frame, or
-	## menus) becomes see-through, using opacity below as its alpha. The code
-	## picks the method (per-pixel via a GL surface on X11; native elsewhere).
+	## See through the terminal background. Never the text, frame or menus.
 	# enabled: true  ## Default
 
-	## Background opacity
-	## Only takes effect when enabled above is on.
-	## Range: 0.0 to 1.0 - 0.0 is fully transparent, 1.0 is opaque
+	## 0.0 is fully transparent, 1.0 is opaque. Only used when enabled is on.
 	opacity: 0.95
 
-	## Blur-behind
-	## Ask the compositor to blur the desktop showing through the translucent
-	## background ("frosted glass"); text stays crisp. Only honored by KWin and
-	## picom-with-blur; on Compiz/GNOME it does nothing (enable blur in the
-	## compositor instead). The compositor controls the blur radius.
+	## Frosted glass: ask the compositor to blur whatever shows through. Only
+	## KWin and picom-with-blur do it. On Compiz and GNOME, turn blur on in the
+	## compositor instead.
 	# blur_behind: true  ## Default
 
 wallpaper:
 
-	## Wallpaper
 	## Master switch for the wallpaper image.
 	# enabled: true  ## Default
 
-	## Wallpaper image
-	## A single pinned image. Leave commented to auto-detect
-	## wallpaper/wallpaper.{png,jpg,jpeg}. The value may be an absolute path or
-	## a filename relative to this directory.
+	## One pinned image, by absolute path or by filename in this directory.
+	## Commented, SilkTerm looks for wallpaper/wallpaper.{png,jpg,jpeg}.
 	# image: "wallpaper.png"  ## Default
 
-	## Built-in fallback
-	## Show a built-in wallpaper when none is configured (no image found above
-	## and no rotation folder below).
+	## Show the shipped wallpaper when nothing else turns one up.
 	# fallback_builtin: true  ## Default
 
-	## Rotation
-	## Rotate the wallpaper through a folder of images (overrides image while
-	## set). The folder is absolute or relative to this directory. Left
-	## commented, a wallpaper/ dir here with images in it rotates on its own -
-	## unless image above pins one, or one is given on the command line for that
-	## run. Random picks avoid whatever came up recently, so runs feel varied
-	## rather than repeating; set random false for plain filename order.
-	## Interval 0 means only at launch.
+	## Cycle through a folder of images, which overrides image above. A
+	## wallpaper/ folder here rotates on its own without any of this being set.
+	## Random picks avoid what came up recently. Interval 0 means launch only.
 	rotate:
 		# enabled: true  ## Default
 		# folder: "wallpaper/"  ## Default
 		# interval_s: 0.0  ## Default
 		# random: true  ## Default
 
-	## Image visibility
-	## How visible the image is against the background color (independent of the
-	## transparency opacity above).
-	## Range: 0.0 to 1.0 - 0.0 is all background color, 1.0 is all image
+	## How much of the image shows through the background color: 0.0 is all
+	## color, 1.0 is all image.
 	# opacity: 0.10  ## Default
 
-	## Default fit
-	## How the image fits when it has nothing to say for itself: "stretch"
-	## (fill, ignore aspect) or "zoom" (cover, keep aspect, crop the overhang).
+	## "stretch" fills the window and ignores aspect. "zoom" keeps aspect and
+	## crops the overhang.
 	# default_fit: "stretch"  ## Default
 
-	## Honor tags
-	## Let a wallpaper carry its own layout in its XMP metadata, overriding the
-	## default above per image. `wallpaper:Fit` is "stretch" or "zoom";
-	## `wallpaper:Anchor` is "<horizontal>%, <vertical>%" (0% is left/top, 100%
-	## is right/bottom) and picks which part of the image a zoom crop keeps. A
-	## photo can then refuse to be squashed while a gradient still fills the
-	## window.
+	## Let an image override the fit above from its own XMP metadata, so a photo
+	## can refuse to be squashed while a gradient still fills the window.
+	## `wallpaper:Fit` is "stretch" or "zoom"; `wallpaper:Anchor` is
+	## "<horizontal>%, <vertical>%" and picks which part a zoom crop keeps.
 	# honor_xmp: true  ## Default
 
-	## Wallpaper blur
-	## Gaussian blur applied to the wallpaper (sigma in pixels; 0 = none).
-	## Range: 0.0 to 100.0
+	## Blur the wallpaper. Sigma in pixels, 0.0 to 100.0. 0 is none.
 	# blur: 10.0  ## Default
 
-	## Contrast mask
-	## Flatten the wallpaper's contrast so it stops competing with text. size is
-	## the flatten scale (1.0 = half the longest pixel dimension, so the whole
-	## image collapses toward one tone; small = only fine detail flattens).
-	## strength is how far each pixel is pulled toward that local mean. auto
-	## blends the two manual knobs with values derived from the image's own
-	## busyness (1.0 = full auto override, 0.0 = manual only, 0.5 = average).
+	## Flatten the wallpaper's contrast so it stops competing with the text.
+	## size is how wide a patch each pixel is compared against: small flattens
+	## only fine detail, 1.0 collapses the whole image toward one tone. strength
+	## is how far to pull. auto blends in values read off the image's own
+	## busyness, 1.0 being all auto and 0.0 all yours.
 	contrast_mask:
 		# enabled: true  ## Default
 		# size: 0.5  ## Default
@@ -3342,41 +3297,31 @@ wallpaper:
 
 text:
 
-	## Text scrim
-	## A blurry background-colored halo behind each glyph, so text stays legible
-	## over a light/busy background or a near-transparent terminal. On by
-	## default; uncomment enabled and set it false to disable.
+	## The scrim is a soft halo of background color behind each glyph, so text
+	## stays readable over a busy wallpaper or a near-transparent window.
 	scrim:
 		# enabled: true  ## Default
-		## How much bolder to make the finished halo, as a percent: each 20% doubles
-		## its opacity (100% = five doublings), so a faint halo turns into a solid
-		## plate. 0 leaves it exactly as built.
-		## Range: 0 to 100
+		## How much bolder to make the finished halo, 0 to 100. Every 20%
+		## doubles its opacity, so 100 is a solid plate and 0 leaves it as built.
 		# strength: 15  ## Default
 		## Halo radius in pixels.
 		# radius: 5.0  ## Default
-		## Range: 0.0 to 1.0 - 0.0 is hard/solid, 1.0 is soft/faint
+		## 0.0 is hard and solid, 1.0 is soft and faint.
 		# softness: 0.5  ## Default
-		## Halo shape: "sdf" (round, full corners), "dt", "dilate" (square), or
-		## "gaussian" (legacy, corners recede).
+		## Halo shape: "sdf" (round), "dt", "dilate" (square), or "gaussian".
 		# function: "sdf"  ## Default
-		## Halo falloff curve: "exp", "half_normal", "log", "sigmoid", or "linear".
+		## Falloff curve: "exp", "half_normal", "log", "sigmoid", or "linear".
 		# ramp: "exp"  ## Default
-		## Blur bold text at regular weight so its halo matches non-bold text.
+		## Blur bold text at regular weight, so its halo matches everything else.
 		# regular_weight: true  ## Default
 
-	## Text outline
-	## Antialiased outline around glyphs, in pixels (0 = none).
-	## Range: 0.0 to 8.0
+	## Outline around each glyph, in pixels, 0.0 to 8.0. 0 is none.
 	# outline: 1.0  ## Default
 
-	## Color emoji
-	## Paint color emoji (COLRv1); false renders them as monochrome outlines.
+	## Off renders emoji as monochrome outlines.
 	# color_emoji: true  ## Default
 
-	## Embolden inverse
-	## Render reverse-video (dark-on-light) text bold so it reads as strongly as
-	## normal text.
+	## Render reverse-video text bold, so it reads as strongly as normal text.
 	# embolden_inverse: true  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -3385,49 +3330,33 @@ text:
 
 cursor:
 
-	## Cursor size
-	## As a percent of the cell: height grows from the bottom, width from the
-	## left. Together they make any shape: a block (100 / 100), a thin bar
-	## (100 / 25), or an underline (15 / 100). Used when the app doesn't set its
-	## own; alt-screen apps (vim, less) still control theirs.
-	## Range: 1 to 100
+	## Percent of the cell, 1 to 100. Height grows from the bottom, width from
+	## the left, so the pair makes any shape: a block (100 / 100), a thin bar
+	## (100 / 25), an underline (15 / 100). Full-screen apps set their own.
 	size:
 		# height: 100  ## Default
 		# width: 100  ## Default
 
-	## Cursor animation
-	## "none" (steady), "phase" (smooth fade), or a pulse that grows/shrinks
-	## each cycle - "pulse_vertical", "pulse_horizontal", "pulse_both". The
-	## cursor always slides smoothly as you type.
+	## "none", "phase" (fade), or a pulse that grows and shrinks each cycle:
+	## "pulse_vertical", "pulse_horizontal", "pulse_both". The cursor always
+	## slides smoothly as you type, whichever this is.
 	# animation: "pulse_vertical"  ## Default
 
-	## Animation resume delay
-	## While you type, the animation glides to the cursor's full size and holds
-	## there; it resumes this many seconds after input goes idle. Pausing and
-	## resuming always happen at full size, so the cursor never jumps. This
-	## delay is for typing only - a command's output holds the cursor still
-	## while it writes, then hands it straight back when the prompt returns.
-	## Refocusing the window, tab, or pane also resumes at once.
-	## Range: 0.05 to 3600.0 (seconds)
+	## Typing parks the animation at full size; it starts again this many
+	## seconds after you stop, 0.05 to 3600. Output does the same and hands it
+	## straight back when the prompt returns, so this is for typing only.
 	# animation_resume_s: 1  ## Default
 
-	## Animation idle stop
-	## After this many seconds with no input the animation stops entirely,
-	## parked at full size, so an idle window costs nothing. Typing - or
-	## refocusing the window, tab, or pane - brings it back. 0 = never stop.
-	## Range: 0.0 to 86400.0 (seconds)
+	## Stop animating entirely after this long with no input, so an idle window
+	## costs nothing. Typing brings it back. 0 never stops.
 	# animation_idle_stop_s: 60  ## Default
 
-	## Blink rate
-	## Cursor animation cycle length, in milliseconds.
-	## Range: 50.0 and up
+	## One animation cycle, in milliseconds, from 50 up.
 	# blink_rate_ms: 500  ## Default
 
-	## Cursor scrim
-	## The cursor joins the scrim halo.
+	## The cursor joins the text halo.
 	# scrim: false  ## Default
 
-	## Cursor outline
 	## The cursor joins the text outline.
 	# outline: true  ## Default
 
@@ -3437,64 +3366,49 @@ cursor:
 
 selection:
 
-	## Word separators
-	## Delimiters that bound a double-click word selection. The default keeps
-	## : / . - _ ~ as part of a word, so paths (incl. C:\ drive paths), URLs and
-	## namespaced identifiers stay selected whole. Leave commented for the
-	## default; set to your own string of separator characters to override (add
-	## ':' back to split on it).
+	## What bounds a double-clicked word. The default keeps : / . - _ ~ inside a
+	## word, so paths, URLs and namespaced names stay selected whole. Set your
+	## own string of separator characters to override.
 	# word_separators: ",|\"' ()[]{}<>"  ## Default
 
-	## Selection pairs
-	## Pairs whose contents a double-click selects when the click is inside a
-	## matched pair (highest precedence first). Leave commented for the default.
+	## Double-clicking inside one of these selects what it holds. Highest
+	## precedence first.
 	# pairs: "`` \"\" '' {} () [] <>"  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Shell
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## The shell for new windows, tabs and panes is the first ACTIVE entry in the
-## shells.<name> blocks below - "the one at the top". Those blocks are written
-## for you a few seconds after launch, by a look around for what is installed,
-## and the Settings dialog's "Shells" tab is where the order is set. A CLI
-## --shell and per-pane inheritance still take precedence over both.
+## New windows, tabs and panes run the first switched-on entry in the shells.*
+## blocks below. Those are written for you a few seconds after launch, by a look
+## around for what is installed, and the Settings dialog's Shells tab is where
+## the order is set. A --shell on the command line still wins.
 
 shell:
 
-	## Default command line
-	## Applied when SilkTerm is launched with no arguments - the same
-	## window/tab/pane options the CLI accepts (see --help). Any actual
-	## command-line arguments override this entirely. Leave blank/commented for
-	## none.
+	## Used when SilkTerm is launched with no arguments. Takes the same
+	## window/tab/pane options the command line does (see --help). Real
+	## arguments override it entirely.
 	# command_line: "--new-pane --right --size 35%"  ## Default
 
-	## Default startup directory
-	## Where a shell starts when nothing else has said. It is the LOWEST
-	## precedence of four: a --directory on the command line wins outright, a
-	## new tab, pane or window inherits the directory of the pane it was opened
-	## from, and a SilkTerm launched from a shell keeps the directory that shell
-	## was in - so this is what a launch from the desktop, a menu or a shortcut
-	## gets. `~` and either platform's home token
-	## ($HOME, %USERPROFILE%) are understood, as is any other environment
-	## variable in the same spellings. A directory that does not exist is
-	## reported and ignored.
+	## Where a shell starts when nothing else has said. A --directory wins over
+	## this, and so does the pane a new tab or split was opened from, and so does
+	## the shell SilkTerm was launched from. That leaves launching from the
+	## desktop or a menu, which is what this is for. `~`, $HOME, %USERPROFILE%
+	## and any other environment variable are understood. A directory that does
+	## not exist is reported and ignored.
 	# startup_directory: "{HOME}"  ## Default
 
-	## Shell integration
-	## Add a small block to each PowerShell profile that reports the shell's
-	## directory, so a new tab, pane or window opens where that shell is.
-	## PowerShell keeps its location to itself, so without it the OS has nothing
-	## to report and a new pane starts where the old one was launched. Every
-	## other shell moves its own process and needs nothing. A profile that
-	## already reports - ours or anyone else's - is left alone, what is there is
-	## kept with a copy beside it, and deleting the block switches it off for
-	## good. See shell-integration.md.
+	## Add a small block to each PowerShell profile so it reports where it is,
+	## and a new tab or pane can open in the same place. PowerShell keeps its
+	## directory to itself, so without this the OS has nothing to tell us. Every
+	## other shell needs nothing. A profile that already reports is left alone,
+	## and deleting the block switches this off for good. See
+	## shell-integration.md.
 	# integration: true  ## Default
 
-	## Copy on select
-	## Start every pane with "Copy on select" enabled (selected text goes to the
-	## clipboard). The menu-bar checkbox still toggles it live per pane.
+	## Start every pane with selected text going straight to the clipboard. The
+	## menu-bar checkbox still toggles it per pane.
 	# copy_on_select: false  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -3503,17 +3417,14 @@ shell:
 
 hyperlinks:
 
-	## Hyperlinks
-	## Underline a URL in the output while the pointer is over it; Ctrl+click
-	## opens it, and a right-click there offers "Open link" and "Copy link".
-	## Only these schemes are recognized, and nothing else can be opened:
-	## http, https, ftp, ftps, sftp, ssh, file, mailto.
+	## Underline a URL under the pointer. Ctrl+click opens it, right-click offers
+	## "Open link" and "Copy link". Only these schemes are recognized, and
+	## nothing else can be opened: http, https, ftp, ftps, sftp, ssh, file,
+	## mailto.
 	# enabled: true  ## Default
 
-	## Open command
-	## Program that opens a clicked link, argv-split, with the URL appended as
-	## its last argument. Leave blank/commented to use the desktop's own handler
-	## (xdg-open, or start on Windows).
+	## What opens a clicked link, with the URL added as the last argument.
+	## Commented, the desktop's own handler does it (xdg-open, or start).
 	# open_command: "firefox --new-tab"  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -3522,129 +3433,83 @@ hyperlinks:
 
 scroll:
 
-	## Scrollback
-	## Lines of scrollback history kept per pane.
+	## Lines of history kept per pane.
 	scrollback: 10000
 
-	## Smooth scrolling
-	## Master switch for all scroll animation: eased wheel scrolling, eased
-	## output scrolling, and the sliding of full-screen apps. Off = every
-	## scroll lands instantly; the speed settings below then have no effect.
+	## Master switch for every kind of scroll animation. Off means each scroll
+	## lands instantly and the five speed settings below do nothing.
 	# smooth: true  ## Default
 
-	## The five settings below are the named segments of the output-scroll
-	## speed curve, in the order one burst traverses them: Ease-in lifts the
-	## speed from rest, Ramp-up accelerates it toward the top, Single-screen
-	## speed is the top while the burst still fits on screen (unbounded once it
-	## has scrolled off), Ramp-down winds the speed back down when output
-	## ceases, and Ease-out lands the last fraction of a line. Each segment
-	## hands its end point to the next and controls nothing else.
+	## Those five are the stretches of one burst of output, in the order it goes
+	## through them: ease in off rest, ramp up to speed, hold at the single-screen
+	## cap, ramp down when the output stops, ease out onto the last line. Each
+	## hands its end point to the next. The milliseconds below are quoted against
+	## the dialog's own 1..100 sliders, where higher always means crisper.
 
-	## Ease-in
-	## How long the view takes to build speed when it starts moving from rest:
-	## the first few lines per second arrive over this many milliseconds
-	## (wheel scrolling eases in over the same time). 82 ms is about 50 on the
-	## 1..100 dialog scale, where higher means a crisper start.
-	## Range: 1.0 and up (milliseconds) - higher is gentler
+	## How long the view takes to build speed from rest. Wheel scrolling eases in
+	## over the same time. 82 ms is about 50 on the slider.
 	ease_in_ms: 82.0
 
-	## Ramp-up
-	## How quickly a burst accelerates once past the ease-in: the catch-up
-	## speed doubles every this many milliseconds until it reaches the top
-	## speed that applies. Lower ramps harder, so a buffer dump is caught
-	## sooner. 96 ms (about ten doublings a second) is around 75 on the
-	## 1..100 dialog scale, where higher means a harder ramp.
-	## Range: 1.0 and up (milliseconds) - lower ramps harder
+	## Once past the ease-in, the catch-up speed doubles every this many
+	## milliseconds. Lower ramps harder, so a buffer dump is caught sooner.
+	## 96 ms is about 75.
 	ramp_up_ms: 96.0
 
-	## Single-screen speed
-	## Top scrolling speed for an output burst whose own first line is still on
-	## screen (a short directory listing, say): one line per this many
-	## milliseconds. Once a burst has scrolled its first line off the top, the
-	## ramp-up is unlimited and reaches whatever speed keeps up. 32 ms (~31
-	## lines/s) is about 75 on the 1..100 dialog scale.
-	## Range: 1.0 and up (milliseconds) - lower is faster
+	## Top speed while the burst's own first line is still on screen: one line
+	## per this many milliseconds. Once it has scrolled off the top, the ramp-up
+	## goes as fast as it needs to. 32 ms is about 75.
 	single_screen_tau_ms: 32.0
 
-	## Ramp-down
-	## How gradually the speed winds down once output ceases with lines still
-	## to render: the catch-up speed halves every this many milliseconds on the
-	## way to the landing. The view keeps that wind-down's distance in reserve
-	## behind a fast burst, so the stop is a descent, never a cliff. 144 ms is
-	## around 75 on the 1..100 dialog scale, where higher means a harder stop.
-	## Range: 1.0 and up (milliseconds) - lower stops harder
+	## When output stops with lines still to render, the speed halves every this
+	## many milliseconds. The view holds that much distance in reserve behind a
+	## fast burst, so the stop is a descent rather than a cliff. 144 ms is about 75.
 	ramp_down_ms: 144.0
 
-	## Ease-out
-	## How gradually the view settles onto its final line. The last fraction of
-	## a line is given at least this long, so the tail sweeps in instead of
-	## crawling to a halt. Higher is a softer, longer landing; lower is crisper.
-	## 212 ms is about 40 on the 1..100 dialog scale, where higher means a
-	## crisper landing.
-	## Range: 1.0 and up (milliseconds) - higher is gentler
+	## How gently the view settles on its last line. The final fraction of a line
+	## gets at least this long, so the tail sweeps in instead of crawling.
+	## 212 ms is about 40.
 	ease_out_ms: 212.0
 
-	## Wheel lines
-	## Lines per wheel notch (smooth scrollback).
+	## Lines per wheel notch.
 	wheel_lines: 3.0
 
-	## Alt-screen wheel lines
-	## Lines per wheel notch in full-screen apps (less, nano).
+	## Lines per wheel notch inside full-screen apps (less, nano).
 	alt_scroll_lines: 3.0
 
-	## Output ease distance
 	## How far new output slides in before easing to rest, in lines.
 	output_ease_lines: 1.0
 
-	## Smooth-scroll apps
 	## Ease the whole-line jumps of apps that repaint a scrolling region instead
-	## of growing scrollback: full-screen apps that own the screen (less, vim,
-	## nano, htop, tmux, ...) and, on Windows, ConPTY-driven TUIs whose output
-	## scrolls above a fixed input line. Their scrolling slides instead of
-	## snapping; the revealed strip fills with the background during the
-	## ~quarter-second slide. Only clean line-scrolls are eased (big page-jumps
-	## still snap).
+	## of adding to the scrollback: less, vim, nano, htop, tmux, and on Windows
+	## the ConPTY apps whose output scrolls above a fixed input line. Only clean
+	## line-scrolls are eased; a page-jump still snaps.
 	# smooth_apps: true  ## Default
 
-	## Scrollbar
-	## A scrollbar over each pane's right edge, showing where the view sits in
-	## the scrollback. It floats over the text rather than taking a column, so
-	## turning it on or off never changes the grid. Full-screen apps (less, vim)
-	## keep their own screen and get no scrollbar. Drag the thumb to scroll;
-	## click the track to page.
+	## A scrollbar over each pane's right edge. It floats over the text rather
+	## than taking a column, so turning it on never changes the grid. Drag the
+	## thumb to scroll, click the track to page. Full-screen apps get none, since
+	## they own their screen. Thickness is in pixels, 4 to 64. Auto-hide fades it
+	## out while the view sits idle at the bottom, and back in on a scroll or
+	## when the pointer nears it.
 	scrollbar:
-
-		## Enabled
 		# enabled: true  ## Default
-
-		## Thickness
-		## Width in pixels.
-		## Range: 4 to 64
 		# thickness: 16.0  ## Default
-
-		## Auto-hide
-		## Fade the scrollbar out while the view sits idle at the bottom, and back
-		## in on scroll or when the pointer nears it. Off keeps it always visible.
 		# auto_hide: true  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Theme and colors
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## Color theme
-## Pick a built-in (SilkTerm, Matrix, Retro Amber) or one you add in a themes.*
-## entry. theme_mode is "dark", "light", or "system" (follow the OS).
+## A built-in theme (SilkTerm, Matrix, Retro Amber) or one you add in a themes.*
+## entry. theme_mode is "dark", "light", or "system" to follow the OS.
 theme: SilkTerm
 theme_mode: dark
 
-## Color overrides
-## Per-color overrides on top of the theme (uncomment any to tweak one color).
-## The menu_*/dialog_*/scrollbar_*/gutter keys recolor the chrome (menu bar +
-## dropdowns, the pop-out Settings/About dialogs, the scrollbar, and the strip
-## the dialog's tabs sit on); by default every theme shares the same neutral
-## chrome. Menu hover/border shades derive from menu_background automatically.
-## highlight marks several things at once (the live pane's ring, slider handles,
-## revert arrows, the default button); focus marks only what the keyboard is on.
+## Per-color overrides on top of the theme. The menu_*, dialog_*, scrollbar_*
+## and gutter keys recolor the chrome, which every theme otherwise shares; menu
+## hover and border shades are derived from menu_background. highlight marks
+## several things at once (the live pane's ring, slider handles, revert arrows,
+## the default button), while focus marks only what the keyboard is on.
 colors:
 	# background: "#000000"  ## Default
 	# foreground: "#88eecc"  ## Default

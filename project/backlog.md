@@ -401,13 +401,26 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- Each tab reads "<shell friendly name> [<task>]" while a command runs, "[last: <task>]" once it finishes, and "<shell> - <path>" when it has never run one. The friendly name is the one the Shells list carries, so a tab shows whatever the user renamed that shell to.
 	- Windows had no tab title at all before this - every tab just said SilkTerm. The running command now comes off the same process scan that copy-output already pays for, so it costs nothing extra.
 	- The path shortens PyCmd-style: directories above the current one drop to their initials, then an ellipsis eats the middle, but only where that is genuinely shorter. It always keeps the drive (or `/`, or `~`) and always ends in a separator, so it reads as a place rather than a command.
-	- Tab width is now a min and a max percentage of the window (`window.tab_min_width_pct` / `window.tab_max_width_pct`, and two Settings sliders) instead of a fixed cap. Wider by default, to fit the extra text.
-	- Because a tab now never shrinks past its minimum, more tabs than fit become a page. The wheel over the tab bar turns it, and switching tabs brings the new one onto it.
+	- Tab width is now a percentage of the window instead of a fixed cap, with two Settings sliders. See the item below for what those two settings became.
+	- More tabs than fit become a page. The wheel over the tab bar turns it, and switching tabs brings the new one onto it.
 	- A hover tip on a tab gives the three things the tab is too narrow to say plus one it never says: the shell's name, the command that started it, the full current path, and how long the tab has been open.
 	- ✅ The tip reads as a table: one `key: value` per line, with every value starting in the same column, plus a line for whatever is running right now. (20260821)
 		- It is drawn in the terminal font rather than the interface one - the column is made of spaces, and spaces align nothing in a proportional face. It is the only piece of chrome that is.
 		- A value with a space or a quote in it is quoted so its edges are unambiguous, picking the quote the value does not already contain: a Windows command line full of double quotes reads inside single ones. The clock reading and the "no directory reported" note stay bare, since quoting them would say they were data.
 	- PowerShell's prompt now shows which PowerShell it is (`[PS 7.6] C:\some\path\>`), on 5.1 and 7 and on every OS 7 runs on - but only when the prompt is still the stock one, so oh-my-posh, starship and a hand-written prompt are untouched.
+
+- ✅ Tabs size themselves to what they have to say. (20260823)
+	- "Min %" is now "Regular %": the width a tab sits at when nothing is pushing on it. Tabs no longer share one width - each takes what its own label needs, growing toward the max when there is room and shrinking below regular when the bar is crowded. New defaults are 10% regular and 100% max.
+	- Everyone reaches the regular width before anyone grows past it, so one long path cannot cost another tab its ordinary size.
+	- A tab now shows its path alongside whatever it is running, where before a tab running something said only that.
+	- When a tab runs out of room, the parts give way in order: shell name shortens, then the command's name is truncated, then the path abbreviates, then the command goes, then the path, leaving the shortest form of the shell's name. That last form is the floor a tab cannot shrink past - the tabs beyond it become a page.
+	- Short shell names are hand-picked for the shells that ship ("Windows Cmd" reads "Cmd", "PowerShell 7" reads "PS 7") and derived for anything renamed.
+
+- ✅ The app icon is square. (20260823)
+	- The logo is wider than it is tall, and everything that shows an icon reserves a square, so it used to sit in a band of nothing. It is stretched to fill the square now, in both the window/taskbar icon and the Windows exe icon.
+
+- ✅ The shipped config file says the same things in far fewer words. (20260823)
+	- The comments were doing too much explaining. A fresh config.shcl is about a third shorter, with the key name left to do the work its own title line was repeating and each range folded into the sentence beside it.
 
 - 🛠️ Setting dialog (part 2):
 	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
