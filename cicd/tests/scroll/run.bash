@@ -18,7 +18,7 @@
 ##		result is deterministic. --real also smoke-tests the actual apps (best effort).
 ##	- Syntax:
 ##		run.bash [options]
-##		   --bin PATH      SilkTerm binary (default: target/debug then target/release)
+##		   --bin PATH      SilkTerm binary (default: <target dir>/debug then release)
 ##		   --display :N    headless display (default: $CICD_HEADLESS_DISPLAY or :98)
 ##		   --wayland       run under a headless Wayland compositor (cage) instead of Xvfb,
 ##		                   to prove the Wayland backend scrolls the same as X11
@@ -78,7 +78,12 @@ fSection "SilkTerm scroll regression (headless)"
 
 ## Resolve the binary: prefer debug (exists after the debug-build stage), then release.
 if [[ -z "$bin" ]]; then
-	for cand in "${root}/target/debug/silkterm" "${root}/target/release/silkterm"; do
+	## cargo's output dir moves with CARGO_TARGET_DIR, so ./target is a guess.
+	## Guessing wrong here costs nothing visible: the harness reports through its
+	## pass count, so a missed binary reads as a clean run that tested nothing.
+	tdir="${CARGO_TARGET_DIR:-target}"
+	[[ "$tdir" = /* ]] || tdir="${root}/${tdir}"
+	for cand in "${tdir}/debug/silkterm" "${tdir}/release/silkterm"; do
 		[[ -x "$cand" ]] && { bin="$cand"; break; }
 	done
 fi

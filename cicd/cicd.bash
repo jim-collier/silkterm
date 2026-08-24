@@ -285,7 +285,13 @@ else
 	fEcho_Clean "Release (cross) .....: (skipped)"
 fi
 if ((PACKAGE_ENABLE)) && ((! quick)); then
-	fEcho_Clean "Packages ............: .deb/.rpm (Linux) + NSIS installer .exe (Windows), per built arch"
+	## Name only what stage 5 will actually leave behind. The installer wraps a
+	## Windows binary, so under --no-windows (or --no-cross) there is none to wrap.
+	pkg_kinds=".deb/.rpm (Linux)"
+	if ((BUILD_CROSS)) && [[ " ${CROSS_TARGETS[*]:-} " == *windows* ]]; then
+		pkg_kinds="${pkg_kinds} + NSIS installer .exe (Windows)"
+	fi
+	fEcho_Clean "Packages ............: ${pkg_kinds}, per built arch"
 	fEcho_Clean "  deferred ..........: macOS (.dmg), BSD - no cross toolchain on this box"
 else
 	fEcho_Clean "Packages ............: $( ((quick)) && echo '(skipped --quick)' || echo '(disabled)')"
@@ -497,7 +503,7 @@ run_profiler(){
 	## real desktop and the profiler samples nothing.
 	env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE \
 	SILK_PROFILE_OUT="${out}" SILK_PROFILE_SECS="${PROFILE_SECS}" DISPLAY="${hdisp}" \
-		"${root}/${PROFILE_BIN}" --shell "python3 ${abs_script} ${PROFILE_WORKLOAD_ARGS}" || prc=$?
+		"${PROFILE_BIN}" --shell "python3 ${abs_script} ${PROFILE_WORKLOAD_ARGS}" || prc=$?
 	"${headless}" stop >/dev/null 2>&1 || true
 	((prc == 0)) || fDie "profiler run failed (non-zero exit - app problem)"
 	[[ -s "$out" ]] || fDie "profiler produced no SVG (app problem): ${out}"
