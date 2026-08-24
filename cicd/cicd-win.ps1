@@ -12,8 +12,9 @@
 ##		   4. release builds  x86_64 msvc AND gnu (always both), + ARM64 when its
 ##		                      toolchain is present (auto-detected, else warn-skip)
 ##		   5. packages       (NSIS installer .exe per built arch, if makensis found)
-##		   6. dogfood        (copy the best x86_64 build to <dogfood>\SilkTerm.exe)
-##		   7. publish        (stash -> pull -> add -> commit -> push, current branch)
+##		   6. linux half     (-Wsl: hand the Linux-only work to WSL2 - see below)
+##		   7. dogfood        (copy the best x86_64 build to <dogfood>\SilkTerm.exe)
+##		   8. publish        (stash -> pull -> add -> commit -> push, current branch)
 ##		- What Windows can't do (dropped vs cicd.bash): the profiler (pprof's
 ##		  SIGPROF sampler is Unix-only - the profiling feature can't even compile
 ##		  for a Windows target), the headless scroll harness / demo
@@ -21,6 +22,11 @@
 ##		  of publish (skipped by request). clippy is advisory, not gating: the
 ##		  Unix-gated ctl code emits dead_code warnings here, so -D warnings can't
 ##		  pass.
+##		- -Wsl gets all of that back on a box that has WSL2, by running the Linux
+##		  pipeline (cicd.bash --no-windows) there against THIS working tree. The
+##		  two halves split cleanly: Windows builds what only Windows can, msvc
+##		  above all, and WSL builds what only Linux can. Neither repeats the
+##		  other's targets. Off by default - it roughly doubles a run.
 ##		- Dogfood pick: prefer the msvc build IF it's self-contained (statically
 ##		  linked, no VCRUNTIME140/MSVCP140 dependency); else the gnu build; else
 ##		  whichever single build exists. The fixed SilkTerm.exe goes to the SYNCED
@@ -38,6 +44,9 @@
 ##		   -NoPackage      skip the packages stage (NSIS installers)
 ##		   -NoDogfood      skip the dogfood install
 ##		   -NoPublish      skip the git publish stage
+##		   -Wsl            also run the Linux half in WSL2 (.deb/.rpm, profiler,
+##		                   scroll harness - everything Windows can't do)
+##		   -WslDistro NAME which distribution to use (default: the first WSL2 one)
 ##		   -NoSync         skip the remote sync check (stage 0)
 ##		   -Message MSG    publish hands-off with this commit message (no editor)
 ##		   -Help           show this help
@@ -60,6 +69,8 @@ param(
 	[switch]$NoDogfood,
 	[switch]$NoPublish,
 	[switch]$NoSync,
+	[switch]$Wsl,
+	[string]$WslDistro = "",
 	[string]$Message = "",
 	[switch]$Help
 )
@@ -543,6 +554,104 @@ function fLintAdvisory {
 
 
 #••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+# The Linux half, handed to WSL2
+
+## A box with both can cover the whole matrix. Windows builds what only Windows
+## can (msvc above all); WSL builds what only Linux can - .deb/.rpm, the profiler,
+## the headless scroll harness. --no-windows on that side is what stops the two
+## halves rebuilding each other's targets.
+##
+## It builds THIS working tree over /mnt rather than a second checkout, so there
+## is nothing to keep in sync. Reading the source over 9p was measured and costs
+## nothing. CARGO_TARGET_DIR is the part that matters: left alone, the Linux build
+## would land in the same target\ the Windows build just used, and the two would
+## evict each other's artifacts on every run. It has to point somewhere native.
+
+## WSL2 distribution names, the default one first. WSL_UTF8 stops `wsl --list`
+## answering in UTF-16, which arrives here full of NULs and parses as nothing.
+function fWslDistros {
+	if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) { return @() }
+	$saved = $env:WSL_UTF8
+	$env:WSL_UTF8 = "1"
+	try { $lines = & wsl.exe --list --verbose 2>$null } finally { $env:WSL_UTF8 = $saved }
+	if ($LASTEXITCODE -ne 0 -or -not $lines) { return @() }
+	$found = @()
+	foreach ($line in $lines) {
+		## "  NAME  STATE  VERSION", '*' marking the default. The header line has
+		## no digit in its last column, so it falls out here without a special case.
+		if ($line -match '^\s*(\*?)\s*(\S+)\s+(\S+)\s+(\d+)\s*$') {
+			if ($Matches[4] -ne "2") { continue }        ## WSL1 has no kernel to build on
+			if ($Matches[1]) { $found = @($Matches[2]) + $found } else { $found += $Matches[2] }
+		}
+	}
+	return $found
+}
+
+## The distro's HOME if it can run the Linux pipeline, else $null. cicd.bash puts
+## ~/.cargo/bin and ~/.local/bin on PATH itself, so cargo is the only thing worth
+## proving before handing over.
+function fWslHome {
+	param([string]$Distro)
+	$homeDir = & wsl.exe -d $Distro -e printenv HOME 2>$null
+	if ($LASTEXITCODE -ne 0 -or -not $homeDir) { return $null }
+	$homeDir = "$homeDir".Trim()
+	& wsl.exe -d $Distro -e test -x "$homeDir/.cargo/bin/cargo" 2>$null | Out-Null
+	if ($LASTEXITCODE -ne 0) { return $null }
+	return $homeDir
+}
+
+## Anything environmental warn-skips (no WSL, no toolchain, tree not visible); an
+## actual failure of the Linux pipeline aborts the run like any other stage.
+function fWslLinuxHalf {
+	$distro = $WslDistro
+	if (-not $distro) { $distro = fWslDistros | Select-Object -First 1 }
+	if (-not $distro) { fWarn "Linux half skipped: no WSL2 distribution found"; return }
+
+	$wslHome = fWslHome -Distro $distro
+	if (-not $wslHome) { fWarn "Linux half skipped: $distro has no rustup cargo (see prerequisites.md)"; return }
+
+	$wslRepo = & wsl.exe -d $distro -e wslpath -a -u $Root 2>$null
+	if ($LASTEXITCODE -ne 0 -or -not $wslRepo) { fWarn "Linux half skipped: $distro cannot see $Root"; return }
+	$wslRepo = "$wslRepo".Trim()
+
+	## A script this side checked out CRLF dies under Linux as "$'\r': command not
+	## found" - exit 127, no useful message, and from a file nobody was looking at.
+	## .gitattributes asks for LF on all of them, but git never re-normalizes files
+	## that were already in the tree when the rule arrived, so a long-lived clone
+	## can carry them for years without noticing. Say so rather than let it happen.
+	$crlf = @(& git ls-files --eol | Where-Object { $_ -match "w/crlf" -and $_ -match "eol=lf" } |
+		ForEach-Object { ($_ -split "`t")[-1] })
+	if ($crlf) {
+		fWarn "Linux half skipped: $($crlf.Count) script(s) are CRLF here but must be LF to run under Linux"
+		foreach ($f in ($crlf | Select-Object -First 5)) { fNote "  $f" }
+		if ($crlf.Count -gt 5) { fNote "  ... and $($crlf.Count - 5) more" }
+		fNote "fix: delete those paths and 'git checkout --' them, so git applies the attributes it never did"
+		return
+	}
+
+	## Keyed by app so two projects delegating from one box don't share a dir.
+	$wslTarget = "$wslHome/.cache/$AppName-wsl-target"
+
+	## --no-fmt: formatting is the Windows half's job and it has already run. The
+	## rest are stages this side owns or has already done.
+	$cicdArgs = @("-y", "--no-sync", "--no-fmt", "--no-windows", "--no-dogfood", "--no-publish")
+	if ($Quick)     { $cicdArgs += "--quick" }
+	if ($NoArm)     { $cicdArgs += "--no-arm" }
+	if ($NoPackage) { $cicdArgs += "--no-package" }
+
+	fNote "distro ......: $distro"
+	fNote "tree ........: $wslRepo (this one, not a second checkout)"
+	fNote "target dir ..: $wslTarget"
+	fNote "cicd.bash ...: $($cicdArgs -join ' ')"
+	fEcho_Clean
+
+	& wsl.exe -d $distro --cd $wslRepo -e env "CARGO_TARGET_DIR=$wslTarget" bash cicd/cicd.bash @cicdArgs
+	if ($LASTEXITCODE -ne 0) { fDie "Linux half failed (exit $LASTEXITCODE)" }
+	fEcho "OK: Linux half"
+}
+
+
+#••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 # Entry point
 
 function fMain {
@@ -591,6 +700,13 @@ function fMain {
 	fEcho_Clean "Format ......: $(if ($NoFmt) { '(skipped)' } else { 'cargo fmt' })"
 	fEcho_Clean "Release .....: x86_64 msvc + gnu$(if ($NoArm -or $Quick) { '' } else { ' + ARM64 (if toolchain present)' })"
 	fEcho_Clean "Packages ....: $(if ($NoPackage -or $Quick) { '(skipped)' } else { 'NSIS installers (if makensis present)' })"
+	if ($Wsl) { fEcho_Clean "Linux half ..: WSL2 (.deb/.rpm, profiler, scroll harness)" }
+	else {
+		## Say it is available rather than leaving it to be found in the help.
+		$wslSeen = fWslDistros | Select-Object -First 1
+		if ($wslSeen) { fEcho_Clean "Linux half ..: (not requested - $wslSeen is here, -Wsl adds it)" }
+		else          { fEcho_Clean "Linux half ..: (no WSL2 on this box)" }
+	}
 	fEcho_Clean "Dogfood .....: $(if ($NoDogfood) { '(skipped)' } else { "$DogfoodDir\$DogfoodFixedExe" })"
 	if ($NoPublish)          { fEcho_Clean "Publish .....: (skipped)" }
 	elseif ($publishMsg)     { fEcho_Clean "Publish .....: commit + push current branch (hands-off: `"$publishMsg`")" }
@@ -651,13 +767,18 @@ function fMain {
 	if ($NoPackage -or $Quick) { fNote "packages skipped" }
 	else { fBuildPackages -Built $built -Ver $ver }
 
-	## Stage 6: dogfood.
-	fSection "6  Dogfood"
+	## Stage 6: the Linux half.
+	fSection "6  Linux half (WSL2)"
+	if (-not $Wsl) { fNote "not requested (-Wsl builds the Linux artifacts here too)" }
+	else { fWslLinuxHalf }
+
+	## Stage 7: dogfood.
+	fSection "7  Dogfood"
 	if ($NoDogfood) { fNote "dogfood skipped" }
 	else { fDogfood -Built $built }
 
-	## Stage 7: publish.
-	fSection "7  Publish"
+	## Stage 8: publish.
+	fSection "8  Publish"
 	if ($NoPublish) { fNote "publish skipped" }
 	else { fPublish -Msg $publishMsg }
 
@@ -673,6 +794,9 @@ try {
 
 
 ##	History:
+##		- 2026-08-24 JC: -Wsl runs the Linux half (cicd.bash --no-windows) in WSL2
+##		  against this same tree, so one box covers both platforms; stages
+##		  renumbered to 8.
 ##		- 2026-07-15 JC: Created (Windows-native port of cicd.bash: build/test/
 ##		  package/dogfood/publish; msvc + gnu always, ARM64 when ready).
 ##		- 2026-07-15 JC: Parity pass - profiler stage, full stash/pull/commit/push
