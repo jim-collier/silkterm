@@ -36,6 +36,15 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ## To-do
 
+- 🛠️ The pipeline should run on all four host shapes: Windows only, Windows plus WSL2, WSL2 only, and plain Linux.
+	- ✅ Plain Linux is what `cicd.bash` has always been, and Windows only is what `cicd-win.ps1` has always been. Neither changed.
+	- ✅ WSL2 only works, and a full eight-stage run passes there: tests, lints, deps check, both scroll-harness arms, profiler, all four release targets and all six packages. It needs `cage` and `nsis` from the distro, the four pinned cargo tools, and zig. Nothing in the pipeline needed changing to get there beyond the display fixes below.
+	- ✅ Three display bugs that blocked any Wayland-session host, WSL2 included. Setting DISPLAY does not move the app onto a private Xvfb, because winit prefers Wayland whenever it sees one, so the window opened on the real desktop and whatever was waiting for it waited forever. Fixed in the recorder, in `gui-headless.bash` and in the profiler stage.
+	- 🔘 Windows plus WSL2 is the one shape not built. The idea is that `cicd-win.ps1` hands the Linux half to WSL2 so one box covers everything. Worth settling first: whether it delegates or just tells you to run the other pipeline, and which side owns packaging when both can do it.
+		- Note that interop is off in this WSL's `wsl.conf`, so WSL cannot launch a `.exe`. Windows can still call inwards. Any delegation has to run that direction.
+	- 🔘 A run says which shape it is on nowhere. Worth printing it in the plan header, since the skips differ per shape and a reader currently has to infer the host from which warnings appeared.
+	- ✋ The publish stage stays unrun under WSL2. It commits and pushes the working tree and writes a backup archive to a synced path that does not exist there.
+
 - 🛠️ Terminal throughput benchmark (Windows):
 	- Both halves now run on Windows as well, measured from inside the terminal under test, which is the only way to reach the terminals that exist nowhere else. Each half checks the window is at its own fixed size first and refuses otherwise, since measuring at the wrong one produces a figure that looks fine and belongs in no column.
 		- ✋ Speed rows: deferred, and the machine was never the problem. Measured twice on deliberately different hardware - a laptop, then Windows in a VM on the reference host with a discrete card passed through, which is the setup the table's own notes promised would fix it. Neither pass produced anything publishable. Figures and full reasoning are in `utility/include/ancillary-notes.fods`, now under three `VM` sheets beside the original ones.
