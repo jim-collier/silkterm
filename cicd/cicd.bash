@@ -40,6 +40,8 @@
 ##	   --no-fmt            skip the formatter (cargo fmt) stage
 ##	   --no-cross          skip cross-target release builds
 ##	   --no-arm            skip the ARM64 release builds + packages (x86_64 only)
+##	   --no-windows        skip the Windows cross targets (Linux artifacts only) -
+##	                       what a Windows box's own pipeline delegates here
 ##	   --no-package        skip the packages stage (.deb/.rpm/installer)
 ##	   --no-profile        skip the profiler stage
 ##	   --no-dogfood        skip installing the release builds locally
@@ -84,7 +86,7 @@ cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
 ## Parse options.
-assume_yes=0; quiet=0; quick=0; gate=0; no_arm=0; sync=1; cli_message=""
+assume_yes=0; quiet=0; quick=0; gate=0; no_arm=0; no_windows=0; sync=1; cli_message=""
 while (($#)); do case "$1" in
 	-y|--yes)                 assume_yes=1; shift ;;
 	-q|--quiet)               quiet=1; assume_yes=1; shift ;;   ## quiet + unattended; publish runs quiet too
@@ -92,6 +94,7 @@ while (($#)); do case "$1" in
 	--no-fmt)                 FMT_CMD=(); shift ;;
 	--no-cross)               BUILD_CROSS=0; shift ;;
 	--no-arm)                 no_arm=1; shift ;;                ## drop ARM64 builds + packages
+	--no-windows)             no_windows=1; shift ;;            ## drop the Windows cross targets
 	--no-package)             PACKAGE_ENABLE=0; shift ;;
 	--no-profile)             PROFILE_ENABLE=0; shift ;;
 	--no-dogfood)             DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); DOGFOOD_CROSS_DESTS=(); shift ;;
@@ -110,6 +113,15 @@ esac; done
 if ((no_arm)) && declare -p CROSS_TARGETS &>/dev/null; then
 	kept=()
 	for t in "${CROSS_TARGETS[@]}"; do case "$t" in *arm64*|*aarch64*) ;; *) kept+=("$t") ;; esac; done
+	CROSS_TARGETS=("${kept[@]}")
+fi
+
+## --no-windows: drop the Windows cross targets. For a Windows box driving this
+## through WSL, which has already built its own Windows binaries natively - and
+## natively is the only way to get the msvc one at all.
+if ((no_windows)) && declare -p CROSS_TARGETS &>/dev/null; then
+	kept=()
+	for t in "${CROSS_TARGETS[@]}"; do case "$t" in *windows*) ;; *) kept+=("$t") ;; esac; done
 	CROSS_TARGETS=("${kept[@]}")
 fi
 declare -p PACKAGE_ENABLE &>/dev/null || PACKAGE_ENABLE=0   ## tolerate a config predating the packages stage
@@ -267,7 +279,7 @@ else
 fi
 fEcho_Clean "Release (native) ....: ${RELEASE_NATIVE_CMD[*]} -> ${RELEASE_NATIVE_BIN}"
 if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
-	fEcho_Clean "Release (cross) .....:$( ((no_arm)) && echo ' (x86_64 only, --no-arm)')"
+	fEcho_Clean "Release (cross) .....:$( ((no_arm)) && echo ' (x86_64 only, --no-arm)')$( ((no_windows)) && echo ' (Linux only, --no-windows)')"
 	for t in "${CROSS_TARGETS[@]}"; do fEcho_Clean "    - ${t%%|*}"; done
 else
 	fEcho_Clean "Release (cross) .....: (skipped)"

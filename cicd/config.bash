@@ -71,9 +71,12 @@ TEST_CMD=(cargo test)
 ## rust-toolchain.toml pins one toolchain for every rustup-routed cargo, but a
 ## shell where system cargo wins PATH can still populate target/ with the other
 ## rustc (E0514: artifacts from a different compiler), so lint pins the rustup
-## PATH and keeps its own target dir as insurance.
+## PATH and keeps its own target dir as insurance. That dir hangs off
+## CARGO_TARGET_DIR when one is set, so a run driven from elsewhere (a Windows
+## box delegating the Linux half through WSL) keeps its build output where it
+## put the rest of it, rather than in the source tree it was handed.
 LINT_PROBE=(env "PATH=${HOME}/.cargo/bin:${PATH}" cargo clippy --version)
-LINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" CARGO_TARGET_DIR=target/lint cargo clippy --workspace --all-targets -- -D warnings)
+LINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target}/lint" cargo clippy --workspace --all-targets -- -D warnings)
 
 ## Stage 3 (after lints): dependency police (licenses/advisories/duplicates,
 ## policy in deny.toml). Non-gating for now; tighten once the report is tuned.
