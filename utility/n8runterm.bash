@@ -18,10 +18,11 @@
 ##			dogfood   the fixed-name copy in the synced dogfood dir, which is how a
 ##			          build made on another box arrives
 ##			sbin      the fixed-name copy in /usr/local/sbin
-##		  A source is copied in only when its build is newer than anything held, so
-##		  the same build reaching us two ways is copied once. A copy is named for the
-##		  build's own mtime, not for when it was copied - which is what makes that
-##		  work, and is why cicd.bash preserves mtime on its fixed-name install.
+##		  A source is copied in only when its build is newer than anything held. A
+##		  copy is named for the build's own mtime, not for when it was copied. That
+##		  alone isn't enough to recognise one build reaching us two ways - the copies
+##		  don't agree on mtime - so a source that looks newer is compared byte for
+##		  byte against what's held, and a match just takes the newer stamp.
 ##		- The network source gets a hard wait bound at every step, so an off host or
 ##		  a dropped link costs seconds rather than the mount's own timeout. A copy
 ##		  lands on a temp name and is renamed into place, so one we abandon can't
@@ -190,7 +191,23 @@ fCopyIfNewer(){
 
 	local -r dst="${poolDir}/${dogfoodPrefix}_${srcStamp}_${tag}"
 	if [[ -e "${dst}" ]]; then
+		chmod +x "${dst}" 2>/dev/null || true   # a copy we can't run is a copy we don't have
 		fNote "${label}: copy already present ($(basename "${dst}"))"
+		return 0
+	fi
+
+	## Different copies of one build don't agree on mtime - cicd dates the pool copy
+	## and the synced copy separately, and Dropbox restamps what it syncs - so a
+	## build we already hold keeps looking new and keeps getting copied in again.
+	## Settle it on the bytes, then take the source's stamp so the cheap test above
+	## answers it next time without reading 11MB.
+	local -r twin="$(fHeldMatching "${src}" "${remote}")"
+	if [[ -n "${twin}" ]]; then
+		if mv -f "${twin}" "${dst}"; then
+			fNote "${label}: same build as $(basename "${twin}") - renamed to ${srcStamp}"
+		else
+			fWarn "${label}: same build as $(basename "${twin}"), but couldn't restamp it"
+		fi
 		return 0
 	fi
 
@@ -224,6 +241,53 @@ fCopyIfNewer(){
 }
 
 
+## Path of a held copy holding byte-for-byte the same build as $1, or empty. Size
+## is the cheap discriminator - two builds almost never match on it - so the hash
+## only runs when one does. $2 non-zero bounds the reads, since the source may be
+## across the network.
+fHeldMatching(){
+
+	local -r  src="${1}"
+	local -ri remote="${2}"
+
+	local srcSize=""
+	if ((remote)); then
+		srcSize="$(timeout -k 1 "${netStatTimeout}" stat -c %s "${src}" 2>/dev/null || true)"
+	else
+		srcSize="$(stat -c %s "${src}" 2>/dev/null || true)"
+	fi
+	[[ -n "${srcSize}" ]] || { echo ""; return 0; }
+
+	## Only bother hashing the source if something we hold is the same size.
+	local cand
+	local -a sameSize=()
+	for cand in "${poolDir}/${dogfoodPrefix}_"*; do
+		[[ -f "${cand}" ]] || continue
+		[[ -n "$(fStampOf "$(basename "${cand}")")" ]] || continue
+		[[ "$(stat -c %s "${cand}" 2>/dev/null || echo -1)" == "${srcSize}" ]] && sameSize+=("${cand}")
+	done
+	((${#sameSize[@]})) || { echo ""; return 0; }
+
+	## Reading the source costs about what copying it would, and it's bounded the
+	## same way, so a link that dies here is no worse than one that dies mid-copy.
+	local srcHash=""
+	if ((remote)); then
+		srcHash="$(timeout -k 1 "${netCopyTimeout}" sha256sum "${src}" 2>/dev/null | cut -d' ' -f1 || true)"
+	else
+		srcHash="$(sha256sum "${src}" 2>/dev/null | cut -d' ' -f1 || true)"
+	fi
+	[[ -n "${srcHash}" ]] || { echo ""; return 0; }
+
+	for cand in "${sameSize[@]}"; do
+		if [[ "$(sha256sum "${cand}" 2>/dev/null | cut -d' ' -f1 || true)" == "${srcHash}" ]]; then
+			echo "${cand}"
+			return 0
+		fi
+	done
+	echo ""
+}
+
+
 ## Delete stamped copies older than $maxAgeDays, skipping any that are running.
 ## Only ever touches files matching this launcher's own name spec, never a
 ## neighbour that merely shares the dir (the fixed-name 'silkterm', say).
@@ -233,9 +297,14 @@ fDeleteOldBuilds(){
 	local -a running=()
 	mapfile -t running < <(fRunningExePaths)
 
+	## Always keep the newest, however old it is. Age alone emptied the pool after a
+	## quiet week, and with no source answering that left nothing to launch.
+	local -r keep="$(fNewestHeld)"
+
 	local cand stamp path deleted=0 inUse
 	for cand in "${poolDir}/${dogfoodPrefix}_"*; do
 		[[ -f "${cand}" ]] || continue                     # no-match glob, and .partial below
+		[[ "${cand}" == "${keep}" ]] && continue
 		stamp="$(fStampOf "$(basename "${cand}")")"
 		[[ -n "${stamp}" ]] || continue
 		[[ "${stamp}" < "${cutoff}" ]] || continue
@@ -393,6 +462,10 @@ fMain  "${@}"
 
 
 ##	History:
+##		- 2026-08-24: Tell builds apart by their bytes, not their mtime - copies of
+##		              one build disagreed on it, so the same binary kept getting
+##		              copied in again. A match takes the newer stamp. Never prune
+##		              the newest copy, whatever its age.
 ##		- 2026-08-23: Same source model the Windows launcher uses: check this clone's
 ##		              release build, b23 over the mount with a bounded wait, and the
 ##		              synced dogfood dir; copy in whatever is newer than what is held;
