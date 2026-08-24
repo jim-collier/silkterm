@@ -698,7 +698,11 @@ elif ((quick)); then
 	fEcho_Clean "demo video skipped (--quick)"
 elif [[ -f "$demo_hook" ]]; then
 	fEcho_Clean "recording demo video ..."
-	if SILK_BIN="${root}/target/release/silkterm" python3 "$demo_hook"; then
+	## Absolute: the recorder runs the app from a scratch home of its own, so a
+	## relative path would resolve against the wrong directory.
+	silk_bin="${RELEASE_NATIVE_BIN}"
+	[[ "$silk_bin" = /* ]] || silk_bin="${root}/${silk_bin}"
+	if SILK_BIN="$silk_bin" python3 "$demo_hook"; then
 		fEcho "OK: demo video"
 	else
 		fEcho "WARNING: demo video hook failed (non-fatal)"
