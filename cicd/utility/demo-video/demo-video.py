@@ -60,6 +60,7 @@
 import argparse
 import colorsys
 import getpass
+import glob
 import json
 import math
 import os
@@ -161,6 +162,25 @@ def out_of(cmd):
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ##	Recorder: display/app/capture lifecycle + the event/banner logs
 
+def gpu_prefix(e):
+	"""Command prefix that puts the app on a real GPU, editing env `e` as needed.
+
+	Without one, llvmpipe caps the app near 10fps on Xvfb and the scroll judders,
+	which no capture rate can fix afterwards. Two hosts, two answers: VirtualGL on
+	a normal Linux box, and on WSL the d3d12 Mesa driver, which reaches the Windows
+	GPU directly and needs no 3D X server (there is no vglrun there anyway).
+	"""
+	if shutil.which("vglrun"):
+		return ["vglrun", "-d", "egl"]
+	if Path("/dev/dxg").exists() and glob.glob("/usr/lib/*/dri/d3d12_dri.so"):
+		e.update(MESA_LOADER_DRIVER_OVERRIDE="d3d12", GALLIUM_DRIVER="d3d12")
+		log("GPU: d3d12 (WSL)")
+		return []
+	log("WARNING: no GPU path found - software GL, the scroll will judder")
+	e["LIBGL_ALWAYS_SOFTWARE"] = "1"
+	return []
+
+
 class Rec:
 	def __init__(self, args, profile):
 		self.p        = profile
@@ -187,6 +207,12 @@ class Rec:
 	def env(self):
 		e = dict(os.environ)
 		e.update(DISPLAY=self.display, XAUTHORITY=self.auth, LIBGL_ALWAYS_SOFTWARE="1")
+		# Setting DISPLAY is not enough to move a winit app onto our private Xvfb:
+		# it prefers Wayland whenever WAYLAND_DISPLAY is set, so on any Wayland
+		# session (WSLg included) the window opens on the real desktop instead and
+		# nothing here can find it. Everything we launch belongs on the X display.
+		for k in ("WAYLAND_DISPLAY", "XDG_SESSION_TYPE"):
+			e.pop(k, None)
 		return e
 
 	def xdo(self, *a):
@@ -319,7 +345,7 @@ class Rec:
 
 	def launch_app(self, shell_cmd):
 		e = self.env()
-		e.pop("LIBGL_ALWAYS_SOFTWARE", None)      # the app runs on the GPU (vglrun)
+		e.pop("LIBGL_ALWAYS_SOFTWARE", None)      # the app runs on the GPU (see gpu_prefix)
 		# the pop-out dialogs (Settings/About) are static wgpu/Vulkan windows; pin
 		# them to lavapipe so they don't chase a GPU Vulkan surface Xvfb can't present
 		# gray prompt, rose user, sand host. The trailing bit grays whatever is TYPED
@@ -339,16 +365,9 @@ class Rec:
 				"\\[\\e[38;2;222;178;134m\\]vela\\[\\e[38;2;150;156;162m\\]:\\w\\$ "
 				"\\[\\e[0m\\]" + gray_flag,
 			HISTFILE="/dev/null")
-		# VirtualGL routes the app's GL to the real GPU (EGL backend, no 3D X
-		# server needed) - without it llvmpipe caps the app at ~10fps and the
-		# scroll judders. Fall back to software if vgl is missing.
 		cmd = [self.bin, "--config", str(self.home / ".config/silkterm/config.shcl"),
 			"--shell", shell_cmd]
-		if shutil.which("vglrun"):
-			cmd = ["vglrun", "-d", "egl", *cmd]
-		else:
-			log("WARNING: vglrun not found - falling back to software GL (scroll will judder)")
-			e["LIBGL_ALWAYS_SOFTWARE"] = "1"
+		cmd = gpu_prefix(e) + cmd
 		# a decorated (non-fullscreen) window: xfwm4 draws the full frame + the
 		# titlebar with buttons, which is the "fake decoration" the shot wants.
 		# The window fills the view below the narration band - a BORDER-px black
@@ -756,7 +775,12 @@ def write_tree(rec, rng):
 	bind.mkdir(exist_ok=True)
 	user = getpass.getuser()
 	wrapper = bind / "ls"
-	wrapper.write_text("#!/bin/dash\n/usr/bin/ls -lAgG --color"
+	# The colours come from the wrapper too. Without LS_COLORS in the environment
+	# ls colours directories and nothing else, so a listing's reds and magentas
+	# depended on whoever's shell started the recorder - the same run rendered
+	# differently on two boxes. Ask dircolors for the stock database instead.
+	wrapper.write_text('#!/bin/dash\neval "$(dircolors -b)"\nexport LS_COLORS\n'
+		"/usr/bin/ls -lAgG --color"
 		" --group-directories-first --time-style=+%H:%M"
 		f' "$@" | sed "s/{user}/juno/g"\n')
 	wrapper.chmod(0o755)

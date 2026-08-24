@@ -480,6 +480,10 @@ run_profiler(){
 	local out="${profile_dir}/flame_${stamp}_frequent.svg"
 	fEcho_Clean "running app ${PROFILE_SECS}s under sampler on headless ${hdisp} ..."
 	local prc=0
+	## -u WAYLAND_DISPLAY: winit prefers Wayland wherever it sees one, so on a
+	## Wayland session (WSLg included) DISPLAY alone leaves the window on the
+	## real desktop and the profiler samples nothing.
+	env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE \
 	SILK_PROFILE_OUT="${out}" SILK_PROFILE_SECS="${PROFILE_SECS}" DISPLAY="${hdisp}" \
 		"${root}/${PROFILE_BIN}" --shell "python3 ${abs_script} ${PROFILE_WORKLOAD_ARGS}" || prc=$?
 	"${headless}" stop >/dev/null 2>&1 || true
