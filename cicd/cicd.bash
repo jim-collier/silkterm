@@ -260,7 +260,7 @@ fixed_dest=""; for d in "${DOGFOOD_FIXED_DESTS[@]:-}"; do [[ -d "$d" && -w "$d" 
 rot_dest="";   for d in "${DOGFOOD_ROTATING_DESTS[@]:-}"; do [[ -d "$d" && -w "$d" ]] && { rot_dest="$d"; break; }; done
 rot_target="${rot_dest:-${DOGFOOD_ROTATING_DESTS[0]:-}}"  # created in stage 6 if it doesn't exist yet
 : "${DOGFOOD_TAG:=$(build_tag)}"                          # config.bash may pin it; empty = untagged
-df_name="${DOGFOOD_PREFIX:-}_${stamp}${DOGFOOD_TAG:+_${DOGFOOD_TAG}}"
+df_pattern="${DOGFOOD_PREFIX:-}_<build date>${DOGFOOD_TAG:+_${DOGFOOD_TAG}}"
 
 fEcho_Clean
 fEcho_Clean "${APP_NAME} local CI/CD"
@@ -303,7 +303,7 @@ else
 	fEcho_Clean "Dogfood, fixed name .: (disabled)"
 fi
 if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
-	fEcho_Clean "Dogfood, rotating ...: ${rot_target}/${df_name}  (dated copy; prunes idle ones)"
+	fEcho_Clean "Dogfood, rotating ...: ${rot_target}/${df_pattern}  (dated copy; prunes idle ones)"
 else
 	fEcho_Clean "Dogfood, rotating ...: (disabled)"
 fi
@@ -645,7 +645,13 @@ fi
 if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
 	[[ -z "$rot_dest" && -n "$rot_target" ]] && mkdir -p "$rot_target" 2>/dev/null && rot_dest="$rot_target"
 	if [[ -n "$rot_dest" && -w "$rot_dest" ]]; then
-		cp -f "${RELEASE_NATIVE_BIN}" "${rot_dest}/${df_name}"
+		## The launchers treat the stamp in the name as the build's identity, and
+		## compare it against a source binary's mtime. Using this run's start time
+		## instead put the two ~8 minutes apart, which read as a newer build and got
+		## the same binary copied in again on the next launch. -p keeps them equal.
+		df_stamp="$(date -r "${RELEASE_NATIVE_BIN}" +%Y%m%d-%H%M%S)"
+		df_name="${DOGFOOD_PREFIX:-}_${df_stamp}${DOGFOOD_TAG:+_${DOGFOOD_TAG}}"
+		cp -pf "${RELEASE_NATIVE_BIN}" "${rot_dest}/${df_name}"
 		chmod +x "${rot_dest}/${df_name}"
 		fEcho "OK: installed (rotating) -> ${rot_dest}/${df_name}"
 		pruned=0
@@ -733,6 +739,9 @@ fEcho_Clean
 
 
 ##	History:
+##		- 2026-08-24: Name and date the rotating dogfood copy from the build, not
+##		              from when the run started. The two were ~8 min apart, which
+##		              the launchers read as a newer build.
 ##		- 2026-06-05 JC: Created.
 ##		- 2026-07-22 JC: Stage 0 remote sync - fetch, fast-forward if safely behind, abort if diverged.
 ##		- 2026-07-22 JC: Normalize section spacing (exactly one blank before each rule).

@@ -13,11 +13,13 @@
 ##			         which, so the tag names the source instead of the build. This
 ##			         is what keeps a launch current when b23 is off and nothing was
 ##			         built here - Dropbox carries it. It only copies when it is
-##			         newer than EVERY copy held, so re-taking a build we already
-##			         have under its real tag can't happen.
+##			         newer than EVERY copy held AND its bytes differ from every copy
+##			         held, so re-taking a build we already have under its real tag
+##			         can't happen.
 ##		  Copies are named 'slktrmdf_<YYYYMMDD-HHMMSS>_<tag>.exe' where the stamp is
-##		  the build's own mtime, so a given build is copied once and a running copy
-##		  never blocks the copy.
+##		  the build's own mtime, so a running copy never blocks the copy. Copies of
+##		  one build don't reliably agree on that mtime, so what actually keeps a
+##		  build to one copy is the byte comparison, not the stamp.
 ##		- Each run, in order: delete idle builds over 7 days old; refresh each source
 ##		  whose build is newer than what we already hold; then pick one to run.
 ##		- A source reached over the network gets a hard wait bound at every step, so
@@ -191,8 +193,13 @@ function fDeleteOldBuilds {
 	$running = @(fRunningExePaths)
 	$deleted = 0
 
+	## Always keep the newest, however old it is. Age alone emptied the dir after a
+	## quiet week, and with no source answering that left nothing to launch.
+	$keep = (fTaggedBuilds | Sort-Object Stamp -Descending | Select-Object -First 1).File.FullName
+
 	Get-ChildItem -LiteralPath $TargetDir -File -Filter "${DogfoodPrefix}_*.exe" -ErrorAction SilentlyContinue |
 		Where-Object { $_.Name -match $rx } |
+		Where-Object { $_.FullName -ne $keep } |
 		Where-Object { (fBuildTime $_) -lt $cutoff } |
 		ForEach-Object {
 			if (fRemoveIfIdle -FileInfo $_ -Running $running) { $deleted++ }
@@ -263,6 +270,29 @@ function fCopyIfNewer {
 	$dst = Join-Path $TargetDir "${DogfoodPrefix}_${stamp}_${Tag}.exe"
 	if (Test-Path -LiteralPath $dst) {
 		fNote "$Tag copy already present: $(Split-Path $dst -Leaf)"
+		return
+	}
+
+	## Copies of one build do not agree on mtime - cicd dates the pool copy and the
+	## synced copy separately, and Dropbox restamps what it syncs - so a build we
+	## already hold keeps looking new and keeps getting copied in again. Settle it on
+	## the bytes. The held copy keeps its own tag (it says what the build IS, which a
+	## dfsync name cannot) and only takes the newer stamp, so the cheap test above
+	## answers it next run without reading the whole binary.
+	$twin = fHeldMatching -SrcPath $src -Remote:$remote
+	if ($twin) {
+		$restamped = Join-Path $TargetDir "${DogfoodPrefix}_${stamp}_$($twin.Tag).exe"
+		if (Test-Path -LiteralPath $restamped) {
+			fNote "$Tag same build as $($twin.Name); already held under that stamp"
+			return
+		}
+		try {
+			Move-Item -LiteralPath $twin.File.FullName -Destination $restamped -ErrorAction Stop
+			fNote "$Tag same build as $($twin.Name) - restamped to $stamp"
+		} catch {
+			## A running image can refuse the rename; next run just tries again.
+			fNote "$Tag same build as $($twin.Name), but the rename was refused"
+		}
 		return
 	}
 
@@ -360,6 +390,45 @@ function fTaggedBuilds {
 				}
 			}
 		}
+}
+
+
+## The held copy holding byte-for-byte the same build as $SrcPath, or $null. Size
+## is the cheap discriminator - two builds almost never match on it - so the hash
+## only runs when one does, and the read is bounded like every other remote step.
+function fHeldMatching {
+	param(
+		[Parameter(Mandatory)][string]$SrcPath,
+		[switch]$Remote
+	)
+
+	$stat = fRunBounded -Remote:$Remote -TimeoutSec $NetStatTimeoutSec -Arguments @($SrcPath) -Script {
+		param($P)
+		$i = Get-Item -LiteralPath $P -ErrorAction SilentlyContinue
+		if ($i) { $i.Length } else { $null }
+	}
+	if (-not $stat.Done) { return $null }
+	$srcSize = $stat.Value | Select-Object -First 1
+	if (-not $srcSize) { return $null }
+
+	$sameSize = @(fTaggedBuilds | Where-Object { $_.File.Length -eq $srcSize })
+	if (-not $sameSize) { return $null }
+
+	## Reading the source costs about what copying it would, and is bounded the same
+	## way, so a link that dies here is no worse than one that dies mid-copy.
+	$hash = fRunBounded -Remote:$Remote -TimeoutSec $NetCopyTimeoutSec -Arguments @($SrcPath) -Script {
+		param($P)
+		(Get-FileHash -LiteralPath $P -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
+	}
+	if (-not $hash.Done) { return $null }
+	$srcHash = $hash.Value | Select-Object -First 1
+	if (-not $srcHash) { return $null }
+
+	foreach ($cand in $sameSize) {
+		$h = (Get-FileHash -LiteralPath $cand.File.FullName -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
+		if ($h -eq $srcHash) { return $cand }
+	}
+	return $null
 }
 
 
@@ -813,6 +882,10 @@ if ($script:GuiFeedback -and $script:RunWarnings.Count) {
 
 
 ##	History:
+##		- 2026-08-24: Tell builds apart by their bytes, not their mtime - copies of
+##		  one build disagreed on it, so the same binary kept getting copied in again
+##		  under a second tag. A match keeps its own tag and takes the newer stamp.
+##		  Never prune the newest copy, whatever its age.
 ##		- 2026-08-23: Added the synced dogfood dir as a fourth source ('dfsync'), so
 ##		  a build made on another box still reaches this one when b23 is off.
 ##		- 2026-08-06: Bound the wait on a network source (probe, stat, copy) instead
