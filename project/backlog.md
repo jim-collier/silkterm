@@ -145,9 +145,14 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✅ The dogfood destinations are written down per platform and per direction, in the pipeline config rather than in anyone's head. macOS destinations are recorded but inert, since nothing builds for it yet.
 	- ✅ The Linux pipeline installs its Windows cross-build beside its own binary, so the Windows box picks up a Linux-made build without anyone copying it by hand.
 	- ✅ Both launchers work the same way now: check this clone's release build, b23 over the network, and the dogfood location, take whichever is newer than what is already held, then run the newest. Each step says what it did, on screen and in a log beside the pool.
-	- ✅ A copy is named for the build's own date rather than the date it was copied, so the same build arriving two ways is only held once. The installs preserve that date, which is what makes it work.
+	- ✅ A copy is named for the build's own date rather than the date it was copied, so the same build arriving two ways is only held once.
+		- ✋ The date alone did not deliver this, and the item above overstated it. The rotating install dated its copy from when the pipeline run started, about eight minutes off the build, and a synced copy can be restamped on the way through Dropbox. Three copies of one binary, three dates. So the launchers kept re-taking a build they already held, and which one looked newest came down to who wrote last.
+		- ✅ The rotating install now dates and names its copy from the build. Both launchers compare the bytes when a source looks newer, and a match just takes the newer date, so a build is held once whatever the dates say. Neither launcher will prune the newest copy any more, however old it is - a quiet week used to empty the pool and drop the launch to a fallback terminal.
+		- ✋ One case is still open and needs a build date inside the binary to close: a file restamped later while holding an older build outranks a genuinely newer one. Nothing on disk can tell them apart. `--version` reports only the release version, which two dogfood builds share.
 	- ✅ The bash launcher used to just run whatever it found, in place. It has the same sources, the same pruning and the same reporting as the Windows one now.
-	- 🔘 Only the Windows half has been run. The bash launcher needs a pass on Linux, and its copy in the synced bash dir has to be put there from a Linux box.
+	- 🛠️ Only the Windows half has been run. The bash launcher still needs a pass on Linux.
+		- ✅ Both launchers are deployed to the synced dirs, from a Linux box. The bash one goes to two dirs, not one - the linux and wsl trees mirror each other exactly, so writing only one would split them.
+		- 🔘 Unrun on Linux: the network source with b23 up and with it down, and the check that reads which copies are running before pruning one.
 
 - 🔘 Config file:
 	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
