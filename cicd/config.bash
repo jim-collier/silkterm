@@ -59,6 +59,13 @@ TOOL_PINS=(
 	"makensis|3.11|makensis -VERSION"
 )
 
+## Where cargo writes build output. CARGO_TARGET_DIR moves it, and a run driven
+## from another host does exactly that (cicd-win.ps1 -Wsl builds this tree with
+## the target dir on its own filesystem, so the two platforms' objects don't
+## evict each other). Nothing below may assume 'target' - a stage that does
+## still builds, then looks for its binary somewhere it was never put.
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+
 ## Stage 2: debug build (fast compile sanity)
 DEBUG_BUILD_CMD=(cargo build)
 
@@ -71,9 +78,12 @@ TEST_CMD=(cargo test)
 ## rust-toolchain.toml pins one toolchain for every rustup-routed cargo, but a
 ## shell where system cargo wins PATH can still populate target/ with the other
 ## rustc (E0514: artifacts from a different compiler), so lint pins the rustup
-## PATH and keeps its own target dir as insurance.
+## PATH and keeps its own target dir as insurance. That dir hangs off
+## CARGO_TARGET_DIR when one is set, so a run driven from elsewhere (a Windows
+## box delegating the Linux half through WSL) keeps its build output where it
+## put the rest of it, rather than in the source tree it was handed.
 LINT_PROBE=(env "PATH=${HOME}/.cargo/bin:${PATH}" cargo clippy --version)
-LINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" CARGO_TARGET_DIR=target/lint cargo clippy --workspace --all-targets -- -D warnings)
+LINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" "CARGO_TARGET_DIR=${TARGET_DIR}/lint" cargo clippy --workspace --all-targets -- -D warnings)
 
 ## Stage 3 (after lints): dependency police (licenses/advisories/duplicates,
 ## policy in deny.toml). Non-gating for now; tighten once the report is tuned.
@@ -97,7 +107,7 @@ BUILD_ATTEMPTS=3
 
 ## Stage 5: native release build + its artifact (this is what gets dogfooded)
 RELEASE_NATIVE_CMD=(cargo build --release)
-RELEASE_NATIVE_BIN="target/release/${EXE_NAME}"
+RELEASE_NATIVE_BIN="${TARGET_DIR}/release/${EXE_NAME}"
 RELEASE_NATIVE_OSARCH="linux-x86_64"
 
 ## Stage 5: cross-release targets. One per line: "label|os-arch|artifact|command...".
@@ -105,9 +115,9 @@ RELEASE_NATIVE_OSARCH="linux-x86_64"
 ## Set BUILD_CROSS=0 to skip them for a quick local run.
 BUILD_CROSS=1
 CROSS_TARGETS=(
-	"Windows x86_64 (mingw)|windows-x86_64|target/x86_64-pc-windows-gnu/release/${EXE_NAME}.exe|cargo build --release --target x86_64-pc-windows-gnu"
-	"Linux ARM64 (zig)|linux-arm64|target/aarch64-unknown-linux-gnu/release/${EXE_NAME}|cargo zigbuild --release --target aarch64-unknown-linux-gnu"
-	"Windows ARM64 (zig)|windows-arm64|target/aarch64-pc-windows-gnullvm/release/${EXE_NAME}.exe|cargo zigbuild --release --target aarch64-pc-windows-gnullvm"
+	"Windows x86_64 (mingw)|windows-x86_64|${TARGET_DIR}/x86_64-pc-windows-gnu/release/${EXE_NAME}.exe|cargo build --release --target x86_64-pc-windows-gnu"
+	"Linux ARM64 (zig)|linux-arm64|${TARGET_DIR}/aarch64-unknown-linux-gnu/release/${EXE_NAME}|cargo zigbuild --release --target aarch64-unknown-linux-gnu"
+	"Windows ARM64 (zig)|windows-arm64|${TARGET_DIR}/aarch64-pc-windows-gnullvm/release/${EXE_NAME}.exe|cargo zigbuild --release --target aarch64-pc-windows-gnullvm"
 )
 
 ## Stage 5 (after builds): collect the built binaries under versioned names plus
@@ -139,7 +149,7 @@ PROFILE_ENABLE=1
 PROFILE_SECS=8
 PROFILE_FEATURE="profiling"
 PROFILE_PROFILE="profiling"
-PROFILE_BIN="target/profiling/${EXE_NAME}"
+PROFILE_BIN="${TARGET_DIR}/profiling/${EXE_NAME}"
 PROFILE_WORKLOAD_SCRIPT="cicd/utility/n8output-random-unicode.py"
 PROFILE_WORKLOAD_ARGS="600 0"          # <duration_s> <delay_s>; duration >> PROFILE_SECS, no delay = max output
 PROFILE_OUT_DIR="cicd/artifacts/profiling"  # relative to repo root; created if missing (gitignored)

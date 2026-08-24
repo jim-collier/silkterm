@@ -36,13 +36,20 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 
 ## To-do
 
-- 🛠️ The pipeline should run on all four host shapes: Windows only, Windows plus WSL2, WSL2 only, and plain Linux.
+- ✅ The pipeline should run on all four host shapes: Windows only, Windows plus WSL2, WSL2 only, and plain Linux.
 	- ✅ Plain Linux is what `cicd.bash` has always been, and Windows only is what `cicd-win.ps1` has always been. Neither changed.
 	- ✅ WSL2 only works, and a full eight-stage run passes there: tests, lints, deps check, both scroll-harness arms, profiler, all four release targets and all six packages. It needs `cage` and `nsis` from the distro, the four pinned cargo tools, and zig. Nothing in the pipeline needed changing to get there beyond the display fixes below.
 	- ✅ Three display bugs that blocked any Wayland-session host, WSL2 included. Setting DISPLAY does not move the app onto a private Xvfb, because winit prefers Wayland whenever it sees one, so the window opened on the real desktop and whatever was waiting for it waited forever. Fixed in the recorder, in `gui-headless.bash` and in the profiler stage.
-	- 🔘 Windows plus WSL2 is the one shape not built. The idea is that `cicd-win.ps1` hands the Linux half to WSL2 so one box covers everything. Worth settling first: whether it delegates or just tells you to run the other pipeline, and which side owns packaging when both can do it.
-		- Note that interop is off in this WSL's `wsl.conf`, so WSL cannot launch a `.exe`. Windows can still call inwards. Any delegation has to run that direction.
-	- 🔘 A run says which shape it is on nowhere. Worth printing it in the plan header, since the skips differ per shape and a reader currently has to infer the host from which warnings appeared.
+	- ✅ Windows plus WSL2 is built. `-Wsl` on the Windows pipeline runs the Linux one (`cicd.bash --no-windows`) inside WSL2, so one box produces the whole matrix. Off by default, since it roughly doubles a run; the plan header says when WSL2 is present but unused.
+		- It builds the same working tree over `/mnt` rather than a second checkout, so there is nothing to keep in sync. Reading the source over 9p was measured first and costs almost nothing: 1m26s for a debug build against 1m35s fully native.
+		- `CARGO_TARGET_DIR` has to point somewhere native, and that is correctness rather than speed. Left alone, the Linux build lands in the same `target/` the Windows build just used, and the two evict each other every run.
+		- Four stages assumed `target/` by name and quietly looked in the wrong place once it moved. They read one `TARGET_DIR` now. The scroll harness was the dangerous one, since it reports through its pass count: a missed binary reads as a clean run that tested nothing.
+		- Neither half repeats the other's targets. Windows builds what only Windows can, msvc above all; WSL builds the rest. `--no-windows` draws the line, mirroring how `--no-arm` already worked.
+		- The two pipelines already wrote to separate artifact directories, so a combined run leaves both sets intact with no change needed.
+		- Interop is off in this WSL's `wsl.conf`, so WSL cannot launch a `.exe`. The delegation runs from Windows inwards, which works regardless.
+		- Nineteen tracked scripts declared `eol=lf` were CRLF in this clone, so the first delegated run died at exit 127 on a stray carriage return. Git applies those attributes at checkout and never renormalizes what is already there, and `git status` stays clean throughout. Fixed, and the delegation refuses to start when it finds any.
+	- 🛠️ A run says which shape it is on nowhere. Worth printing it in the plan header, since the skips differ per shape and a reader currently has to infer the host from which warnings appeared.
+		- Half done: the Windows plan header names the Linux half, or says WSL2 is here and unused, or that there is none. `cicd.bash` still says nothing about where it is running.
 	- ✋ The publish stage stays unrun under WSL2. It commits and pushes the working tree and writes a backup archive to a synced path that does not exist there.
 
 - 🛠️ Terminal throughput benchmark (Windows):

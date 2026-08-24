@@ -40,6 +40,8 @@
 ##	   --no-fmt            skip the formatter (cargo fmt) stage
 ##	   --no-cross          skip cross-target release builds
 ##	   --no-arm            skip the ARM64 release builds + packages (x86_64 only)
+##	   --no-windows        skip the Windows cross targets (Linux artifacts only) -
+##	                       what a Windows box's own pipeline delegates here
 ##	   --no-package        skip the packages stage (.deb/.rpm/installer)
 ##	   --no-profile        skip the profiler stage
 ##	   --no-dogfood        skip installing the release builds locally
@@ -84,7 +86,7 @@ cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
 ## Parse options.
-assume_yes=0; quiet=0; quick=0; gate=0; no_arm=0; sync=1; cli_message=""
+assume_yes=0; quiet=0; quick=0; gate=0; no_arm=0; no_windows=0; sync=1; cli_message=""
 while (($#)); do case "$1" in
 	-y|--yes)                 assume_yes=1; shift ;;
 	-q|--quiet)               quiet=1; assume_yes=1; shift ;;   ## quiet + unattended; publish runs quiet too
@@ -92,6 +94,7 @@ while (($#)); do case "$1" in
 	--no-fmt)                 FMT_CMD=(); shift ;;
 	--no-cross)               BUILD_CROSS=0; shift ;;
 	--no-arm)                 no_arm=1; shift ;;                ## drop ARM64 builds + packages
+	--no-windows)             no_windows=1; shift ;;            ## drop the Windows cross targets
 	--no-package)             PACKAGE_ENABLE=0; shift ;;
 	--no-profile)             PROFILE_ENABLE=0; shift ;;
 	--no-dogfood)             DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); DOGFOOD_CROSS_DESTS=(); shift ;;
@@ -110,6 +113,15 @@ esac; done
 if ((no_arm)) && declare -p CROSS_TARGETS &>/dev/null; then
 	kept=()
 	for t in "${CROSS_TARGETS[@]}"; do case "$t" in *arm64*|*aarch64*) ;; *) kept+=("$t") ;; esac; done
+	CROSS_TARGETS=("${kept[@]}")
+fi
+
+## --no-windows: drop the Windows cross targets. For a Windows box driving this
+## through WSL, which has already built its own Windows binaries natively - and
+## natively is the only way to get the msvc one at all.
+if ((no_windows)) && declare -p CROSS_TARGETS &>/dev/null; then
+	kept=()
+	for t in "${CROSS_TARGETS[@]}"; do case "$t" in *windows*) ;; *) kept+=("$t") ;; esac; done
 	CROSS_TARGETS=("${kept[@]}")
 fi
 declare -p PACKAGE_ENABLE &>/dev/null || PACKAGE_ENABLE=0   ## tolerate a config predating the packages stage
@@ -267,13 +279,19 @@ else
 fi
 fEcho_Clean "Release (native) ....: ${RELEASE_NATIVE_CMD[*]} -> ${RELEASE_NATIVE_BIN}"
 if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
-	fEcho_Clean "Release (cross) .....:$( ((no_arm)) && echo ' (x86_64 only, --no-arm)')"
+	fEcho_Clean "Release (cross) .....:$( ((no_arm)) && echo ' (x86_64 only, --no-arm)')$( ((no_windows)) && echo ' (Linux only, --no-windows)')"
 	for t in "${CROSS_TARGETS[@]}"; do fEcho_Clean "    - ${t%%|*}"; done
 else
 	fEcho_Clean "Release (cross) .....: (skipped)"
 fi
 if ((PACKAGE_ENABLE)) && ((! quick)); then
-	fEcho_Clean "Packages ............: .deb/.rpm (Linux) + NSIS installer .exe (Windows), per built arch"
+	## Name only what stage 5 will actually leave behind. The installer wraps a
+	## Windows binary, so under --no-windows (or --no-cross) there is none to wrap.
+	pkg_kinds=".deb/.rpm (Linux)"
+	if ((BUILD_CROSS)) && [[ " ${CROSS_TARGETS[*]:-} " == *windows* ]]; then
+		pkg_kinds="${pkg_kinds} + NSIS installer .exe (Windows)"
+	fi
+	fEcho_Clean "Packages ............: ${pkg_kinds}, per built arch"
 	fEcho_Clean "  deferred ..........: macOS (.dmg), BSD - no cross toolchain on this box"
 else
 	fEcho_Clean "Packages ............: $( ((quick)) && echo '(skipped --quick)' || echo '(disabled)')"
@@ -485,7 +503,7 @@ run_profiler(){
 	## real desktop and the profiler samples nothing.
 	env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE \
 	SILK_PROFILE_OUT="${out}" SILK_PROFILE_SECS="${PROFILE_SECS}" DISPLAY="${hdisp}" \
-		"${root}/${PROFILE_BIN}" --shell "python3 ${abs_script} ${PROFILE_WORKLOAD_ARGS}" || prc=$?
+		"${PROFILE_BIN}" --shell "python3 ${abs_script} ${PROFILE_WORKLOAD_ARGS}" || prc=$?
 	"${headless}" stop >/dev/null 2>&1 || true
 	((prc == 0)) || fDie "profiler run failed (non-zero exit - app problem)"
 	[[ -s "$out" ]] || fDie "profiler produced no SVG (app problem): ${out}"
@@ -680,7 +698,11 @@ elif ((quick)); then
 	fEcho_Clean "demo video skipped (--quick)"
 elif [[ -f "$demo_hook" ]]; then
 	fEcho_Clean "recording demo video ..."
-	if SILK_BIN="${root}/target/release/silkterm" python3 "$demo_hook"; then
+	## Absolute: the recorder runs the app from a scratch home of its own, so a
+	## relative path would resolve against the wrong directory.
+	silk_bin="${RELEASE_NATIVE_BIN}"
+	[[ "$silk_bin" = /* ]] || silk_bin="${root}/${silk_bin}"
+	if SILK_BIN="$silk_bin" python3 "$demo_hook"; then
 		fEcho "OK: demo video"
 	else
 		fEcho "WARNING: demo video hook failed (non-fatal)"
