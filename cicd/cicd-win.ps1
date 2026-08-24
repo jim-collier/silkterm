@@ -130,10 +130,13 @@ $VersionManifest = Join-Path $Root "source\Cargo.toml"
 ## build both). ARM64 rows are attempted only when their toolchain is detected
 ## (see fArmSkipReason); otherwise they warn-skip. os-arch feeds the artifact
 ## name (<exe>-<version>-<os-arch>.exe).
+##
+## No arm64 msvc row: gnullvm is the shipped ARM64 binary, and the only reason to
+## keep an msvc build is local debugging, which an x86_64 box can't do to an ARM64
+## exe anyway. Add it back on a machine that can actually run one.
 $Targets = @(
 	[pscustomobject]@{ Arch="x86_64"; Tk="msvc";    Triple="x86_64-pc-windows-msvc";     OsArch="windows-x86_64-msvc";    Builder="build";    Arm=$false }
 	[pscustomobject]@{ Arch="x86_64"; Tk="gnu";     Triple="x86_64-pc-windows-gnu";      OsArch="windows-x86_64-gnu";     Builder="build";    Arm=$false }
-	[pscustomobject]@{ Arch="arm64";  Tk="msvc";    Triple="aarch64-pc-windows-msvc";    OsArch="windows-arm64-msvc";     Builder="build";    Arm=$true  }
 	[pscustomobject]@{ Arch="arm64";  Tk="gnullvm"; Triple="aarch64-pc-windows-gnullvm"; OsArch="windows-arm64-gnullvm";  Builder="zigbuild"; Arm=$true  }
 )
 
@@ -278,16 +281,6 @@ function fTargetInstalled {
 	return ((& rustup target list --installed) -contains $Triple)
 }
 
-## True if the ARM64 msvc libraries are present (the VS "MSVC ARM64 build tools"
-## component installs a lib\arm64 under the MSVC tools dir).
-function fHasArm64VcLibs {
-	$base = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC"
-	if (-not (Test-Path -LiteralPath $base)) { return $false }
-	return [bool](Get-ChildItem -LiteralPath $base -Directory -ErrorAction SilentlyContinue |
-		ForEach-Object { Test-Path -LiteralPath (Join-Path $_.FullName "lib\arm64") } |
-		Where-Object { $_ })
-}
-
 ## Decide whether an ARM64 target can build here; returns a reason string when it
 ## can't (for a clear warn-skip), or $null when it's good to go.
 function fArmSkipReason {
@@ -296,9 +289,6 @@ function fArmSkipReason {
 	if ($Target.Builder -eq "zigbuild") {
 		if (-not (Get-Command cargo-zigbuild -ErrorAction SilentlyContinue)) { return "cargo-zigbuild not found" }
 		if (-not (Get-Command zig -ErrorAction SilentlyContinue))            { return "zig not found" }
-	}
-	if ($Target.Builder -eq "build" -and $Target.Arch -eq "arm64") {
-		if (-not (fHasArm64VcLibs)) { return "VS MSVC ARM64 build tools not installed" }
 	}
 	return $null
 }

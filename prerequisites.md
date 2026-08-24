@@ -74,29 +74,22 @@ choco install nsis
 
 `makensis` installs to `C:\Program Files (x86)\NSIS`; the pipeline probes there, so it needs no PATH change.
 
-### ARM64 (optional - either path yields an ARM64 build)
+### ARM64 (optional)
 
-Skip unless you need Windows-on-ARM binaries. Pick one:
+Skip unless you need Windows-on-ARM binaries.
 
-- **gnullvm via zig** (recommended - self-contained, small footprint; the target is preinstalled):
+**gnullvm via zig** - self-contained, small footprint, and the target is preinstalled:
 
-	```powershell
-	choco install zig
-	cargo install cargo-zigbuild --version 0.23.0 --locked
-	```
+```powershell
+choco install zig
+cargo install cargo-zigbuild --version 0.23.0 --locked
+```
 
-	The Linux box uses zig 0.13; if a newer choco zig errors on a version mismatch, pin `zig --version 0.13.0`.
+The Linux box uses zig 0.13; if a newer choco zig errors on a version mismatch, pin `zig --version 0.13.0`.
 
-- **msvc via the VS ARM64 workload** (larger; links the MSVC runtime):
+There is no msvc ARM64 build. It would ship nothing the gnullvm one doesn't, and the reason to keep an msvc build at all is local debugging, which an x86_64 box can't do to an ARM64 exe.
 
-	```powershell
-	choco install visualstudio2022-workload-vctools --package-parameters "--add Microsoft.VisualStudio.Component.VC.Tools.ARM64"
-	rustup target add aarch64-pc-windows-msvc
-	```
-
-	If the VC tools are already installed, choco may no-op the add - then use the Visual Studio Installer (Modify -> "MSVC v143 ARM64 build tools") instead.
-
-The pipeline auto-detects each ARM path and warn-skips it when its toolchain is absent, so ARM is never a hard requirement.
+The pipeline auto-detects the ARM path and warn-skips it when its toolchain is absent, so ARM is never a hard requirement.
 
 ### Build
 
