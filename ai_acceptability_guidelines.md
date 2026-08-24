@@ -27,6 +27,8 @@ Where AI is allowed near this project, where it isn't, and who is accountable ei
 	- [Review and analysis](#review-and-analysis)
 	- [Tests and tooling](#tests-and-tooling)
 	- [Hard problems](#hard-problems)
+	- [Porting to other languages](#porting-to-other-languages)
+	- [Porting to other operating systems](#porting-to-other-operating-systems)
 	- [Tedious non-coding tasks that pay nothing](#tedious-non-coding-tasks-that-pay-nothing)
 - [Rules for AI use in this project](#rules-for-ai-use-in-this-project)
 	- [A person is accountable for every merged line](#a-person-is-accountable-for-every-merged-line)
@@ -210,11 +212,33 @@ A model that reports a defect can usually write the fix too. Those patches are a
 
 - Math, algorithms, and logic that have published academic literature behind them. First of all, the LLMs are aware of the papers in the first place, even obscure historical ones. Secondly, it has already read them. Third, it "*understands*" them, in the context of how it might apply to your particular problem. It's not necessarily "better than human" - just profoundly faster at doing the research and applying - or rejecting - the findings.
 
+### Porting to other languages
+
+AI truly shines at taking a solid, well-defined and documented codebase, with comprehensive existing tests harnesses - and porting it to other (or additional) languages. The latest frontier models can do so with high fidelity, and while optionally (ideally) converting to target language native idioms.
+
+It is then a fully human responsibility to:
+
+- Read and understand the generated code.
+
+- Insure the code conforms to house style. (Which should be at the linting and autoformatting stage but still needs eyeballs.)
+
+- Make sure the it passes all automated *and* manual unit, integration, usability, UAT, regression, performance, and security tests.
+
+### Porting to other operating systems
+
+This is similar to the previous point. Depending on the language (e.g. Go/Rust/Zig and non-compiled cross-platform scripting languages), this may be a trivial non-AI task that should just be part of the CI pipeline.
+
+But depending on what the program is doing, there is often OS-specific branching the code has to take, for functionality that isn't covered by the language's own cross-platform standard library. AI is often better than humans at just "knowing" how to optimally and idiomatically handle such cases.
+
+But the human responsibility picks back up at the end, just as with the "porting to other languages" section.
+
 ### Tedious non-coding tasks that pay nothing
 
 Examples:
 
 - Demo gif and video generation. AI is quite good at this (including fully anonymized synthetic scenarios), where for humans it is incredibly tedious and not fun for anyone - generally neither technical nor creative types.
+
+- Benchmarking and measurements for competitive comparison charts.
 
 - Asset generation. This is a tougher call, as creatives need work too and are being replaced by AI at heartbreaking levels. But for assets on a FLOSS project with no pay, and no one stepping up to volunteer their creative blood sweat and tears, what are you going to do? Personally, I'm artistic enough - and experienced enough with the tools - to generate image, audio, and video assets by hand. But it is extremely time-consuming, and I'd rather be putting that time to where it matters most: product design, problem-solving, and coding. For the assets, I usually know exactly what I want, and can describe it precisely. That's a good use of AI (at least in those isolated terms).
 
