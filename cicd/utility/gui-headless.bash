@@ -48,6 +48,13 @@ size="${CICD_HEADLESS_SIZE:-${RPD_HEADLESS_SIZE:-1920x1080x24}}"
 num="${display#:}"
 run_dir="/tmp/cicd-gui-headless-${USER}"
 mkdir -p "$run_dir"
+
+## Run something on our private display. Clearing the Wayland vars matters as much
+## as setting DISPLAY: winit and GTK both prefer Wayland when they see it, so on a
+## Wayland session (WSLg included) the window opens on the real desktop instead and
+## nothing here can find it.
+onX(){ env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE DISPLAY="$display" "$@"; }
+
 xvfb_pid="$run_dir/xvfb-${num}.pid"
 wm_pid="$run_dir/wm-${num}.pid"
 apps_pids="$run_dir/apps-${num}.pids"
@@ -73,7 +80,7 @@ start() {
 		echo "Started Xvfb on $display (pid $(cat "$xvfb_pid"), $size)"
 	fi
 	if [[ "${1:-}" == "--wm" ]] && ! alive "$wm_pid"; then
-		DISPLAY="$display" xfwm4 --compositor=off >"$run_dir/wm-${num}.log" 2>&1 &
+		onX xfwm4 --compositor=off >"$run_dir/wm-${num}.log" 2>&1 &
 		echo $! > "$wm_pid"
 		echo "Started xfwm4 on $display (pid $(cat "$wm_pid"))"
 	fi
@@ -82,7 +89,7 @@ start() {
 launch() {
 	[[ $# -gt 0 ]] || { echo "usage: launch <cmd...>" >&2; exit 2; }
 	alive "$xvfb_pid" || start
-	DISPLAY="$display" "$@" >"$run_dir/app-${num}.log" 2>&1 &
+	onX "$@" >"$run_dir/app-${num}.log" 2>&1 &
 	echo $! >> "$apps_pids"
 	echo "Launched on $display (pid $!); log: $run_dir/app-${num}.log"
 }
