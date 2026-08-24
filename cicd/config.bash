@@ -56,7 +56,7 @@ TOOL_PINS=(
 	"cargo-zigbuild|0.23.0|cargo-zigbuild --version"
 	"cargo-deb|3.7.0|cargo-deb --version"
 	"cargo-generate-rpm|0.21.0|cargo-generate-rpm --version"
-	"makensis|3.11|makensis -VERSION"
+	"makensis|3.12|makensis -VERSION"
 )
 
 ## Where cargo writes build output. CARGO_TARGET_DIR moves it, and a run driven
