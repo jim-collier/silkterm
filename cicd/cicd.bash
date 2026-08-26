@@ -85,6 +85,11 @@ export RUST_TEST_THREADS="${CICD_MAX_JOBS}"
 cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
+## Pin the build number for the whole run. build.rs would otherwise read the clock
+## per target, so the four cross builds of one release would report four different
+## builds, minutes apart, and the release notes could not name one of them.
+export SILK_BUILD_MINUTES=$(( ($(date +%s) - 946684800) / 60 ))
+
 ## Parse options.
 assume_yes=0; quiet=0; quick=0; gate=0; no_arm=0; no_windows=0; sync=1; cli_message=""
 while (($#)); do case "$1" in

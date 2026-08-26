@@ -60,8 +60,21 @@ sums="${art_dir}/${EXE_NAME}-${ver}-sha256sums.txt"
 [[ -s "$sums" ]] || die "no ${sums} - run cicd/cicd.bash (full, not --quick) first"
 ( cd "${art_dir}" && sha256sum -c "${EXE_NAME}-${ver}-sha256sums.txt" >/dev/null ) || die "artifact checksums do not verify"
 
+## The build number comes out of the artifact itself. Every target in a pipeline
+## run shares one (cicd pins SILK_BUILD_MINUTES), so the native binary's answer is
+## also the Windows and ARM ones. Asking the artifact rather than the clock is what
+## stops the notes naming a build nobody can download.
+native="${art_dir}/${EXE_NAME}-${ver}-linux-$(uname -m)"
+build_id=""
+if [[ -x "$native" ]]; then
+	## || true: pipefail makes an artifact that won't run (wrong arch, missing lib)
+	## fail the assignment, and set -e would take the whole release down with it.
+	build_id="$("$native" --version 2>/dev/null | sed -n 's/.*(build \(.*\))$/\1/p' || true)"
+fi
+[[ -n "$build_id" ]] || echo "note: could not read a build number from ${native##*/}; notes will omit it"
+
 echo ""
-echo "Release ${tag} from $(git rev-parse --short HEAD) on main"
+echo "Release ${tag} from $(git rev-parse --short HEAD) on main${build_id:+, build ${build_id}}"
 echo "Artifacts:"; ls -1 "${art_dir}/${EXE_NAME}-${ver}-"* | sed 's/^/  /'
 echo "Push: ${do_push}  Publish (gh): ${do_publish}"
 if ((! assume_yes)); then read -r -p "Proceed? [y/N] " a; [[ "$a" == [yY]* ]] || exit 1; fi
@@ -89,7 +102,11 @@ if [[ "$ver" == *-* ]]; then prerelease=(--prerelease); fi
 
 if ((do_publish)); then
 	command -v gh >/dev/null 2>&1 || die "gh CLI not found"
-	gh release create "${tag}" --title "${APP_NAME} ${ver}" --notes "See the README for details." \
+	notes="See the README for details."
+	if [[ -n "$build_id" ]]; then
+		notes+=$'\n\n'"Build ${build_id}. Every download here is that build; \`silkterm --version\` says which one you are running."
+	fi
+	gh release create "${tag}" --title "${APP_NAME} ${ver}" --notes "${notes}" \
 		"${prerelease[@]}" "${art_dir}/${EXE_NAME}-${ver}-"*
 	echo "GitHub Release ${tag} created with artifacts${prerelease:+ (pre-release)}"
 elif ((do_push)); then

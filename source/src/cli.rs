@@ -649,9 +649,15 @@ fn find_pane(tab: &TabSpec, id: &str) -> Option<usize> {
 		.position(|pane| pane.id.as_deref() == Some(id))
 }
 
-// Program name and version, as --version prints it.
+// Program name, version and build, as --version prints it. The build number is
+// last so a script reading the second field still gets the version.
 pub fn version_line() -> String {
-	format!("{} {}", config::APP_NAME, env!("CARGO_PKG_VERSION"))
+	format!(
+		"{} {} (build {})",
+		config::APP_NAME,
+		env!("CARGO_PKG_VERSION"),
+		config::BUILD_ID
+	)
 }
 
 // A CLI-only flag's output with a blank line above and below, so the block sits
@@ -673,7 +679,7 @@ pub fn about(info: Option<&wgpu::AdapterInfo>) -> String {
 		format!("License: {}", env!("CARGO_PKG_LICENSE")),
 		String::new(),
 		"Info".to_string(),
-		format!("  Build:  {}", config::build_target()),
+		format!("  Build:  {}  {}", config::BUILD_ID, config::build_target()),
 	];
 	if let Some(info) = info {
 		lines.push(format!("  Renderer:  {}", info.name));
@@ -721,7 +727,7 @@ Information (prints and exits; no window opens, position doesn't matter):
   --syntax                    the option list on its own
   --about                     version, build and renderer details
   --donate                    how to support SilkTerm
-  --version, --ver, -v        program name + version, unpadded for scripts
+  --version, --ver, -v        program name, version and build, unpadded for scripts
 
 Window options (must precede any tab/pane):
   --columns N                 initial width in cells
@@ -819,9 +825,37 @@ mod tests {
 		let text = about(None);
 		assert!(text.contains(env!("CARGO_PKG_VERSION")));
 		assert!(text.contains(env!("CARGO_PKG_REPOSITORY")));
+		assert!(text.contains(config::BUILD_ID));
 		assert!(text.contains(&config::build_target()));
 		assert!(!text.contains("Renderer:"));
 		assert!(!text.contains("Acceleration:"));
+	}
+
+	#[test]
+	fn version_names_the_build_as_well_as_the_release() {
+		// A release version can't tell two builds apart, which is the whole reason
+		// the build number exists - so --version has to carry both.
+		let line = version_line();
+		assert!(line.starts_with(config::APP_NAME));
+		assert!(line.contains(env!("CARGO_PKG_VERSION")));
+		assert!(line.contains(config::BUILD_ID));
+		// One flush line: it exists to be captured by a script.
+		assert!(!line.contains('\n'));
+		// A script reading the second field still gets the version, not the build.
+		assert_eq!(line.split(' ').nth(1), Some(env!("CARGO_PKG_VERSION")));
+	}
+
+	#[test]
+	fn the_build_number_is_lowercase_crockford() {
+		// Baked in by build.rs, so this is the one place the shipped value itself
+		// gets checked rather than the generator that made it.
+		assert!(!config::BUILD_ID.is_empty());
+		for ch in config::BUILD_ID.chars() {
+			assert!(
+				"0123456789abcdefghjkmnpqrstvwxyz".contains(ch),
+				"{ch} is not a lowercase Crockford digit"
+			);
+		}
 	}
 
 	#[test]
