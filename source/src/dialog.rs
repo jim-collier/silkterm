@@ -1231,7 +1231,7 @@ fn layout_about(
 	let indent = text.dip(ABOUT_INDENT);
 	let tight = text.dip(ABOUT_TIGHT_GAP);
 	let loose = text.dip(ABOUT_LOOSE_GAP);
-	// build target the binary was compiled for (distinguishes the cross builds)
+	// which build this is, then which cross target it was compiled for
 	let build = config::build_target();
 	#[rustfmt::skip]
 	let content: Vec<(String, [u8; 3], f32, f32, bool, f32)> = vec![
@@ -1240,7 +1240,7 @@ fn layout_about(
 		("Copyright © 2026 Jim Collier".into(), menu_dim, 0.0, 0.0, false, 1.0),
 		(format!("License: {}", env!("CARGO_PKG_LICENSE")), menu_dim, 0.0, 0.0, false, 1.0),
 		("Info".into(), menu_fg, 0.0, gap, true, 1.0),
-		(format!("Build:  {build}"), menu_dim, indent, tight, false, 1.0),
+		(format!("Build:  {}  {build}", config::BUILD_ID), menu_dim, indent, tight, false, 1.0),
 		(format!("Renderer:  {}", info.name), menu_dim, indent, 0.0, false, 1.0),
 		(format!("Backend:  {:?}", info.backend), menu_dim, indent, 0.0, false, 1.0),
 		(format!("Acceleration:  {accel}"), menu_dim, indent, 0.0, false, 1.0),

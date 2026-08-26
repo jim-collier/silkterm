@@ -18,6 +18,12 @@ pub const DONATE_URL: &str = "https://github.com/jim-collier/silkterm/blob/HEAD/
 // DONATE.md carries the rest; --donate prints both.
 pub const SPONSOR_URL: &str = "https://github.com/sponsors/jim-collier";
 
+// Which exact build this is. The version can't say - every dogfood build of a
+// release carries the same one - so build.rs bakes in whole minutes since 2000 in
+// Crockford base 32 (source/src/buildnum.rs). Five characters, sorts in build
+// order, and decodes back to the minute it was built.
+pub const BUILD_ID: &str = env!("SILK_BUILD");
+
 // Which of the cross builds this binary is - otherwise indistinguishable at a
 // glance. Shared by the About dialog and `--about` so the two can't drift.
 pub fn build_target() -> String {

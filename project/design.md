@@ -413,9 +413,15 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - Output written for a person is padded with a blank line above and below, so it sits clear of the shell prompts either side of it. `--version` is the exception, and it exists to be captured by a script, so it stays a single flush line. `--ver` and `-v` are the same flag.
 
+- Every build carries a build number, because a version cannot identify one. Two dogfood builds of the same release share a version, so a report of "it still does this on beta3" names something that could be any of a dozen binaries. The number is whole minutes elapsed since 2000 began, written in Crockford base 32 in lowercase: five characters until 2063, it sorts in the order the builds were made, and it decodes back to the minute one was built. Crockford's alphabet leaves out i, l, o and u, so nothing read off a screen and typed into a bug report can come back as a different character.
+	- It appears in `--version`, in `--about`, in Help > About, and in the release notes.
+	- The pipeline pins one number for a whole run, so the four cross builds of a release report the same build rather than four made minutes apart. Without that the release notes could not name one.
+	- Unchanged sources keep the number they had. The binary did not change, so neither should what it calls itself.
+	- The release notes take the number out of the artifact being published rather than computing it again, so the notes cannot name a build nobody can download.
+
 - Where a shell starts is decided by four things, most deliberate first: `--directory` on the command line, then the directory inherited from the pane a new tab/pane/window came from, then the directory SilkTerm itself was launched from (only when a shell launched it), then the `shell.startup_directory` setting. `--directory` cascades window -> tab -> pane exactly as `--shell` does, so the flag that names a shell and the flag that says where it starts behave alike.
 
-- `--about` reports what a bug report needs: version, which of the cross builds this is, and the GPU the renderer picked. It asks the graphics stack for an adapter but never builds a device, which is the expensive half. A box with no usable adapter loses three lines and still prints the rest.
+- `--about` reports what a bug report needs: version, build number, which of the cross builds this is, and the GPU the renderer picked. It asks the graphics stack for an adapter but never builds a device, which is the expensive half. A box with no usable adapter loses three lines and still prints the rest.
 
 - On Windows a release build owns no console of its own, so printing has to join the one that launched it. This happens only on the paths that print and exit; a terminal window that held a console would die with the shell that started it.
 

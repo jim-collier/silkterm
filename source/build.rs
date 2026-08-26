@@ -9,11 +9,17 @@
 // target this arch (e.g. aarch64 windres), warn and build on iconless.
 use std::{env, fs, path::Path};
 
+// The build number generator, shared with the crate so the number baked in here
+// and the tests over there can't be two different implementations.
+include!("src/buildnum.rs");
+
 fn main() {
 	println!("cargo:rerun-if-changed=assets/silkterm.rc.in");
 	println!("cargo:rerun-if-changed=assets/icon.ico");
 	println!("cargo:rerun-if-env-changed=CARGO_PKG_VERSION");
 	println!("cargo:rerun-if-env-changed=CARGO_PKG_DESCRIPTION");
+
+	emit_build_number();
 
 	// Nothing here belongs in a non-Windows binary, and the no-op has to be
 	// explicit: on a WINDOWS host, embed-resource picks its compiler from the
@@ -71,6 +77,41 @@ fn main() {
 	if let Err(err) = result.manifest_optional() {
 		println!("cargo:warning=windows resources not embedded: {err}");
 	}
+}
+
+// A version alone can't tell two builds apart - every dogfood build of a release
+// shares it - so bake in a number that can. Watching src/ is what keeps it honest:
+// without it cargo would only re-run this script when the icon or the .rc changed,
+// and the number would sit frozen at whatever it was the first time. Unchanged
+// sources produce the same binary and keep the same number, which is the point.
+//
+// SILK_BUILD_MINUTES pins the value. cicd sets it once per run so all four target
+// builds report one build instead of one per link, minutes apart.
+fn emit_build_number() {
+	println!("cargo:rerun-if-changed=src");
+	println!("cargo:rerun-if-env-changed=SILK_BUILD_MINUTES");
+
+	let pinned = env::var("SILK_BUILD_MINUTES").unwrap_or_default();
+	let pinned = pinned.trim();
+	let minutes = if pinned.is_empty() {
+		minutes_since_2000(unix_now())
+	} else {
+		pinned.parse::<u64>().unwrap_or_else(|_| {
+			println!(
+				"cargo:warning=SILK_BUILD_MINUTES is not a number ({pinned}); using the clock"
+			);
+			minutes_since_2000(unix_now())
+		})
+	};
+	println!("cargo:rustc-env=SILK_BUILD={}", crockford32(minutes));
+}
+
+// Seconds since the unix epoch. A clock set before 1970 reads as 0, which comes
+// out the far end as build number "0" rather than as a failed build.
+fn unix_now() -> u64 {
+	std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.map_or(0, |since| since.as_secs())
 }
 
 // Compile the .rc to a COFF object with mingw windres and hand it to the linker.

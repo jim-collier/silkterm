@@ -148,7 +148,7 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 	- ✅ A copy is named for the build's own date rather than the date it was copied, so the same build arriving two ways is only held once.
 		- ✋ The date alone did not deliver this, and the item above overstated it. The rotating install dated its copy from when the pipeline run started, about eight minutes off the build, and a synced copy can be restamped on the way through Dropbox. Three copies of one binary, three dates. So the launchers kept re-taking a build they already held, and which one looked newest came down to who wrote last.
 		- ✅ The rotating install now dates and names its copy from the build. Both launchers compare the bytes when a source looks newer, and a match just takes the newer date, so a build is held once whatever the dates say. Neither launcher will prune the newest copy any more, however old it is - a quiet week used to empty the pool and drop the launch to a fallback terminal.
-		- ✋ One case is still open and needs a build date inside the binary to close: a file restamped later while holding an older build outranks a genuinely newer one. Nothing on disk can tell them apart. `--version` reports only the release version, which two dogfood builds share.
+		- ✅ The case that needed a build date inside the binary is closed. Every build now carries a build number, so two dogfood builds of one release are no longer indistinguishable - ask the binary rather than trusting a file date. The launcher still ranks copies by date, which is right for choosing what to run; the number is what settles which build a report is actually about.
 	- ✅ The bash launcher used to just run whatever it found, in place. It has the same sources, the same pruning and the same reporting as the Windows one now.
 	- 🛠️ Only the Windows half has been run. The bash launcher still needs a pass on Linux.
 		- ✅ Both launchers are deployed to the synced dirs, from a Linux box. The bash one goes to two dirs, not one - the linux and wsl trees mirror each other exactly, so writing only one would split them.
@@ -603,12 +603,12 @@ In each section, items are listed approximately from newest to oldest. Use a cli
 		- 🔘 `--hide-windowframe[[=| ]bool]`
 		- 🔘 `--hide-menu[[=| ]bool]`
 		- 🔘 `--fullscreen[[=| ]bool]`
-		- 🔘 `--help` | `-h`
-			- Show program {name, version, and build#}, copyright and license, and list options and meaning.
+		- 🛠️ `--help` | `-h`
+			- Shows program name, version and build# in its header, and lists the options. Copyright and license live in `--about` rather than being repeated here.
 		- 🔘 `--syntax`
 			- Similar to `--help` but just list options and meaning.
-		- 🔘 `--version`
-			- Just show program name, version, and build#.
+		- ✅ `--version`
+			- Shows program name, version, and build#. One flush line, so a script can still read the version as the second field.
 	- Hierarchical options:
 		- General notes:
 			- There is always an implicit first tab and first pane, each addressable by ID "0" or "main"; a window can never have zero tabs, nor a tab zero panes.
