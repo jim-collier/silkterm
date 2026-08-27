@@ -61,8 +61,12 @@ declare -ri maxAgeDays=7
 declare -ri netStatTimeout=5
 declare -ri netCopyTimeout=20
 
+## The account name the zfs tree is keyed by. Same as the login name on every box
+## that has one; override if a host logs in as something else.
+declare -r  treeUser="${SILKTERM_TREE_USER:-$(id -un)}"
+
 ## b23's clone, over the network mount. Same repo, same target dir.
-declare -r  b23ReleaseDir="/mnt/zfs/zf10/0-0/users/collierjr/data/prs/dev/github.com/jim-collier/silkterm/github/target/release"
+declare -r  b23ReleaseDir="/mnt/zfs/zf10/0-0/users/${treeUser}/data/prs/dev/github.com/jim-collier/silkterm/github/target/release"
 
 ## The synced dogfood dir: where cicd.bash installs the fixed-name binary, and so
 ## where a build made on another box arrives over Dropbox.
@@ -128,7 +132,7 @@ fCloneReleaseDir(){
 	local -ar candidates=(
 		"${self}/../target/release"
 		"${HOME}/data/prs/dev/github.com/jim-collier/silkterm/github/target/release"
-		"/0-0/users/collierjr/data/prs/dev/github.com/jim-collier/silkterm/github/target/release"
+		"/0-0/users/${treeUser}/data/prs/dev/github.com/jim-collier/silkterm/github/target/release"
 	)
 	local dir
 	for dir in "${candidates[@]}"; do

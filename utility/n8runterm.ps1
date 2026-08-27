@@ -55,18 +55,30 @@
 #••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 # Configuration
 
+## The account name the zfs tree is keyed by. It is a Linux login name, so the
+## Windows account is not necessarily it - read it off a local tree when there is
+## one, and only then fall back to this box's own name.
+$TreeUser = $env:SILKTERM_TREE_USER
+if (-not $TreeUser) {
+	foreach ($root in @("C:\0-0\users", "C:\opt\0-0\users")) {
+		$found = Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+		if ($found) { $TreeUser = $found.Name; break }
+	}
+}
+if (-not $TreeUser) { $TreeUser = $env:USERNAME }
+
 ## Source 'gnulwi': the b23 SilkTerm Windows (x86_64-pc-windows-gnu) release build,
 ## reached over SMB.
-$B23ReleaseDir = "\\b23\zfs\zf10\0-0\users\collierjr\data\prs\dev\github.com\jim-collier\silkterm\github\target\x86_64-pc-windows-gnu\release"
+$B23ReleaseDir = "\\b23\zfs\zf10\0-0\users\$TreeUser\data\prs\dev\github.com\jim-collier\silkterm\github\target\x86_64-pc-windows-gnu\release"
 
 ## Sources 'gnuwwi'/'msvcwwi': the local Windows-native release build dirs (same
 ## clone, two target triples). The clone root differs per host, so try the known
 ## candidates and take the first that exists; if none do, keep the first so the
 ## per-source copy below warn-skips it like any other unreachable source.
 $LocalTargetRootCandidates = @(
-	"C:\0-0\users\collierjr\data\prs\dev\github.com\jim-collier\silkterm\github\target"
-	"C:\opt\0-0\users\collierjr\data\prs\dev\github\jim-collier\silkterm\github\target"
-	"C:\opt\0-0\users\collierjr\data\prs\dev\github.com\jim-collier\silkterm\github\target"
+	"C:\0-0\users\$TreeUser\data\prs\dev\github.com\jim-collier\silkterm\github\target"
+	"C:\opt\0-0\users\$TreeUser\data\prs\dev\github\jim-collier\silkterm\github\target"
+	"C:\opt\0-0\users\$TreeUser\data\prs\dev\github.com\jim-collier\silkterm\github\target"
 )
 $LocalTargetRoot = $LocalTargetRootCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $LocalTargetRoot) { $LocalTargetRoot = $LocalTargetRootCandidates[0] }

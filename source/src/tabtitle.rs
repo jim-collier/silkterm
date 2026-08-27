@@ -666,7 +666,7 @@ mod tests {
 	// place and not a command, so no shortening may cost either of them.
 	#[test]
 	fn every_form_keeps_its_anchor_and_its_trailing_slash() {
-		let windows = path_forms(r"C:\Users\collierjr\data\prs\dev", None, Style::Windows);
+		let windows = path_forms(r"C:\Users\jim\data\prs\dev", None, Style::Windows);
 		assert!(windows.len() > 2, "expected several forms: {windows:?}");
 		for form in &windows {
 			assert!(form.starts_with(r"C:\"), "lost the drive: {form}");
@@ -698,9 +698,9 @@ mod tests {
 
 	#[test]
 	fn directories_above_the_current_one_drop_to_their_initials() {
-		let forms = path_forms(r"C:\Users\collierjr\data\prs\dev", None, Style::Windows);
-		assert_eq!(forms[0], r"C:\Users\collierjr\data\prs\dev\");
-		assert_eq!(forms[1], r"C:\U\c\d\p\dev\");
+		let forms = path_forms(r"C:\Users\jim\data\prs\dev", None, Style::Windows);
+		assert_eq!(forms[0], r"C:\Users\jim\data\prs\dev\");
+		assert_eq!(forms[1], r"C:\U\j\d\p\dev\");
 		// A hidden directory keeps the letter after its dot, or every one of them
 		// would abbreviate to a bare dot.
 		assert_eq!(
@@ -733,7 +733,7 @@ mod tests {
 	#[test]
 	fn the_forms_only_ever_get_shorter() {
 		for raw in [
-			r"C:\Users\collierjr\data\prs\dev\github.com\jim-collier\silkterm",
+			r"C:\Users\jim\data\prs\dev\github.com\jim-collier\silkterm",
 			r"C:\a\project",
 			r"C:\",
 		] {

@@ -173,7 +173,7 @@ LINT_LOG_DIR="cicd/artifacts/lint"      # relative to repo root; created if miss
 ## Fixed: overwrite EXE_NAME in the first existing dir here (the stable path you run).
 DOGFOOD_FIXED_DESTS=(
 	"${HOME}/synced/0-0/common/exec/util/linux/bin"
-	"/usr/local/sbin"
+	"${HOME}/.local/bin"
 )
 ## Rotating: also drop a dated copy "<DOGFOOD_PREFIX>_<YYYYmmDD-HHMMSS>_<tag>" here
 ## (created if missing), so builds coexist under unique paths - an automated test
