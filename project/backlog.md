@@ -607,6 +607,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 #### Done - Bugs
 
+- ✅ Output sometimes hops down a line and eases back up. Seen when rar finishes a file's in-place percent line and moves on to the next one.
+	- Cause: the scrollback depth was measured twice, once per PTY wakeup and once between frames, each against its own baseline. When a frame reached the grid before that read cycle's wakeup was handled, the same new line was counted at both, and the second count nudged the view down a line with nothing to scroll. A burst hides the extra line inside its backlog; a settled view under a slow progress line shows it whole.
+	- Fix: one baseline. Each frame samples the depth the same way the wakeup does, so whichever gets there first banks the growth and the other finds nothing left.
+	- Opened: n/a
+	- Closed: 20260827-105239
 - ✅ The dreaded "Nano Bounce Bug" is back. Or I don't think ever *really* left. This will serve as the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and probably chasing red-herrings. It's obviously related in to smooth-scrolling.
 	- Steps:
 		- Run nano. On any file, or with no file. Ideally, immediately afte a long scroll (e.g. as part of a script. `n8git_backup-and-publish` triggers this reliably.

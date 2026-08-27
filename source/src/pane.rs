@@ -869,9 +869,9 @@ pub struct Pane {
 	last_draw: PaneDraw,
 	// Frames in a row that reused last_draw because the terminal was busy.
 	lock_misses: u32,
-	last_history: usize,
-	// Lines pushed into scrollback since the last build, accumulated per PTY
-	// wakeup rather than measured between frames - see `note_history`.
+	// Lines pushed into scrollback since the last build. Sampled per PTY wakeup
+	// and again by each build, both against the one baseline `wake_hist` - see
+	// `note_history` and the growth step in build().
 	wake_pushed: usize,
 	wake_hist: usize,
 	// Fingerprint of the row just above the viewport - the line that most recently
@@ -1076,30 +1076,18 @@ impl Pane {
 		// fills the buffer faster). At the cap, fall back to inferring the advance
 		// from how far last frame's on-screen rows reappear shifted up this frame;
 		// an in-place bottom-row change shifts nothing, so it still won't nudge.
-		// The per-wakeup accumulator is the authority when it has anything, since
-		// it alone survives a scrollback truncation (see `note_history`). It stays
-		// 0 whenever every sample this frame lost the lock race, so fall back to
-		// the between-frames difference and behave exactly as before.
-		let grew = if self.wake_pushed > 0 {
-			std::mem::take(&mut self.wake_pushed)
-		} else {
-			history.saturating_sub(self.last_history)
-		};
-		self.last_history = history;
-		// Deliberately NOT touching `wake_hist`: the sampler owns it. A build sees
-		// the post-clear depth before that cycle's wakeup is delivered, so writing
-		// the baseline here erases the pre-clear value the drop is measured
-		// against and the truncation goes undetected all over again.
+		// The depth is sampled per PTY wakeup (`note_history`) and again here,
+		// both against the ONE baseline. A build that reaches the grid before
+		// that cycle's wakeup is handled banks the growth itself, and the wakeup
+		// then finds nothing left. Measuring it here against a baseline of its
+		// own counted a line twice whenever the build won that race, and under a
+		// steady in-place progress line (rar's percent) the second count showed
+		// as the view hopping down a line and easing back up. A screen swap's
+		// depth swing is banked the same way and thrown out by `!cut` below.
+		let grew = std::mem::take(&mut self.wake_pushed) + pushed_since(history, self.wake_hist);
+		self.wake_hist = history;
 		self.scroll.set_max(history as f32);
 		if cut {
-			// Rebaseline the wakeup sampler too. The alt grid carries no
-			// scrollback, so entering and leaving swings the depth by the whole
-			// history; a wakeup delivered AFTER this frame would otherwise bank
-			// that swing and ease it on the next ordinary frame. Safe to write the
-			// baseline here precisely because a cut means "rebaseline everything" -
-			// an ordinary frame must not (see the note by `last_history`).
-			self.wake_pushed = 0;
-			self.wake_hist = history;
 			// hard-cut the screen swap (or freeze catch-up): drop any in-flight
 			// slide and rebaseline the row fingerprints (and the styled snapshot
 			// the strip captures from) to the NEW screen, so neither the
@@ -3095,7 +3083,6 @@ fn spawn_pane(
 			slide: None,
 		},
 		lock_misses: 0,
-		last_history: 0,
 		wake_pushed: 0,
 		wake_hist: 0,
 		last_offscreen: None,
@@ -5027,6 +5014,22 @@ mod tests {
 		pushed += pushed_since(30, 20); // grew
 		pushed += pushed_since(8, 30); // cleared, refilled to 8
 		assert_eq!(pushed, 18);
+	}
+
+	#[test]
+	fn a_build_that_beats_the_wakeup_counts_a_line_once() {
+		// build and wakeup sample the same baseline, in whichever order they reach
+		// the grid, so a line pushed between them is banked by the first and found
+		// already counted by the second
+		let (mut pushed, mut baseline) = (0usize, 168usize);
+		let mut sample = |pushed: &mut usize, depth: usize| {
+			*pushed += pushed_since(depth, baseline);
+			baseline = depth;
+		};
+		sample(&mut pushed, 169); // the build, first to the grid
+		let grew = std::mem::take(&mut pushed);
+		sample(&mut pushed, 169); // the wakeup for that same read cycle
+		assert_eq!((grew, pushed), (1, 0));
 	}
 
 	// A live overlay pinned to the bottom edge of a scrolling viewport, composited
