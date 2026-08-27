@@ -58,12 +58,6 @@ In each section, items are listed approximately from newest to oldest. Each item
 - 🔘 Fix the demo gif problems.
 	- Opened: 20260826-123553
 
-- 🔘 A wheel gesture can land by moving backwards about one line.
-	- Measured on the shipped demo: at the end of a scroll-back the view goes forward all the way, then hops back 19px (the row pitch is 21) and stays. The top row reads `.dircolors`, then `.gitconfig`, then `.dircolors` again over about a third of a second, which is a visible bounce against the direction of the gesture.
-	- Most likely the whole-line detent doing what it is asked: the gesture ended about nine tenths of a line past a boundary and the nearest boundary was the one behind. Rounding to nearest is defensible, so this may be a taste call rather than a defect - but a gesture that ends by reversing reads as a glitch, and always landing forwards would not.
-	- Worth confirming against the code before changing anything; the measurement says what happens, not why.
-	- Opened: 20260813-091542
-
 ### New features and enhancements
 
 - 🔘 Pick up the newer SHCL, which carries some of the fixes asked for, and see whether it clears the outstanding config problems.
@@ -648,6 +642,12 @@ In each section, items are listed approximately from newest to oldest. Each item
 ### Done
 
 #### Done - Bugs
+
+- ✅ A wheel gesture can land by moving backwards about one line.
+	- Confirmed in the code: the rest position was rounded to the NEAREST whole line, so a gesture ending nine tenths past a boundary went all the way forward and then hopped back onto the one behind. Under a line of travel, but a visible reversal against the gesture.
+	- A wheel now rests on the line AHEAD of where it stopped, in the direction it was already going. A scrollbar drag or a track click has no direction of its own and still rounds to nearest, which is what direct manipulation wants.
+	- Opened: 20260813-091542
+	- Closed: 20260826-184319
 
 - ✅ In a narrow window the "Copy on: select / output" checkboxes overlap the menu titles. Hide the section when there is no room for it.
 	- The cluster sheds parts now instead of crossing the titles: the "Copy on:" lead-in goes first, then the two words, then the whole thing. The checkboxes are the last to go, since they carry the state and the words only name it. It comes back on its own as the window widens.
