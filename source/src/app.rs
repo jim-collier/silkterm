@@ -5122,8 +5122,10 @@ impl ApplicationHandler<UserEvent> for App {
 									p.begin_selection(start, Side::Left, SelectionType::Simple);
 									p.update_selection(end, Side::Right);
 								} else if double {
-									// inside a matched pair -> select its contents; else word
-									match p.pair_span(point, &pairs) {
+									// a shape we can name (URL, path) wins; else the
+									// contents of a matched pair; else the word
+									match p.shape_span(point).or_else(|| p.pair_span(point, &pairs))
+									{
 										Some((start, end)) => {
 											p.begin_selection(
 												start,

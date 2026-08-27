@@ -30,6 +30,7 @@ mod perf;
 mod scrim;
 mod scroll;
 mod settings_ui;
+mod shapes;
 mod shells;
 mod sysfont;
 mod tabtitle;

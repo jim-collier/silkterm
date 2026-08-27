@@ -41,12 +41,15 @@ In each section, items are listed approximately from newest to oldest. Each item
 	- Opened: 20260826-123553
 
 - 🔘 Windows: the transparency setting does nothing.
+	- Cause found, fix not attempted - none of it can be tried from the Linux box. A plain HWND swapchain offers only opaque compositing, so the per-pixel alpha the setting asks for is dropped and everything else still renders, which is why it reads as "does nothing" rather than as a fault.
+	- The lever is there: the graphics layer can be asked for the composition-based presentation path instead, which does offer premultiplied alpha. Two things go with it. The window has to be told to honor its own alpha, which it already is whenever the setting is on. And the backend has to be pinned, since the one picked by default varies per machine and only one of them has the option at all.
+	- Try it on Windows behind the existing setting, so a bad result is one checkbox away from being turned off.
 	- Opened: 20260826-123553
 
-- 🔘 Double-clicking a Windows path leaves off the drive letter.
-	- Be smarter about not selecting anything ahead of it, or past a file extension, even where that has to override the other rules.
-	- Full URLs and file URIs, Windows or Linux, should win over the other rules. Handle spaces in path names.
-	- Same for SSH URIs and other common, well-defined strings that may not be quoted.
+- 🛠️ Double-clicking a Windows path leaves off the drive letter.
+	- A double-click now looks for a shape it can name before it falls back to the word rules: a URL or file URI, a drive path, a UNC path, an absolute posix path, a `~/` path. What it recognizes it takes whole, so brackets inside a wiki URL and spaces inside a folder name no longer cut it short, and a trailing `:120:5` line number is left behind.
+	- A space is crossed only when a path separator turns up within the next forty characters, which is what separates "Program Files\app.exe" from a path followed by a sentence.
+	- The drive letter itself does not reproduce on Linux - the shipped word separators already keep `:`, and a double-click on `C:\Users\jim\notes.txt` selects it whole. Likely a config that still carries the older separator list, which the "start over" item below would also clear. Worth re-checking on Windows against a fresh config.
 	- Opened: 20260826-123553
 
 - 🔘 Does not work very well under tmux.
