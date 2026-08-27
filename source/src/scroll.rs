@@ -57,7 +57,7 @@ use crate::config;
 // slider) - which is why ease-out is stored as the tail's DURATION and the
 // closing speed is derived from it, rather than stored as the speed itself
 // (that would invert against its own partner).
-pub const MAX_BACKLOG: f32 = 16.0; // reference depth for output_ease_lines' clamp + set_max overscan
+pub const MAX_BACKLOG: f32 = 16.0; // reference depth for output_ease_lines' clamp and the turnover guess
 const CHASE_GROW_MIN: f32 = 2.0; // gap (lines) under which a user sweep counts as caught up
 // Where Ease-in hands off to Ramp-up (lines/s). An exponential ramp cannot
 // leave zero, so the first KNEE_LPS of speed is a linear lift; past it the
@@ -158,12 +158,18 @@ impl Scroll {
 		self.app_off
 	}
 
+	// The view may never sit past the grid. The renderer snaps the grid to
+	// `visual.floor()` and draws the fraction, so a `visual` beyond `max` has its
+	// whole part pinned while the fraction keeps cycling - and every wrap of it
+	// is a whole-cell hop. That was nano's wobble: a burst still easing when the
+	// alt screen (no scrollback, so max 0) took over hopped once per line of the
+	// leftover backlog. Clamping here also lands the ease the instant the screen
+	// swaps, which is the cut an alt-screen entry wants anyway.
 	pub fn set_max(&mut self, history_lines: f32) {
 		self.max = history_lines.max(0.0);
 		self.target = self.target.clamp(0.0, self.max);
-		let overscan = config::settings().output_ease_lines.max(MAX_BACKLOG);
-		self.visual = self.visual.clamp(0.0, self.max + overscan);
-		self.mid = self.mid.clamp(0.0, self.max + overscan);
+		self.visual = self.visual.clamp(0.0, self.max);
+		self.mid = self.mid.clamp(0.0, self.max);
 	}
 
 	pub fn following(&self) -> bool {
@@ -238,9 +244,11 @@ impl Scroll {
 				// itself at (same slope, same delta), then Ramp-up resumes
 				self.knee = self.chase + KNEE_LPS;
 			}
+			// the floor is capped by the history there is to ease through: a
+			// fresh terminal or one just cleared has no room past the grid
 			let floor = cfg.output_ease_lines.clamp(0.0, MAX_BACKLOG);
 			let before = self.visual;
-			self.visual = (self.visual + grown).max(floor);
+			self.visual = (self.visual + grown).max(floor).min(self.max);
 			// the nudge is a coordinate shift (content moved under the view), so the
 			// cascade stage rides along - shifting it keeps its lead over `visual`
 			// intact, which is what preserves the eased speed across a burst
@@ -1119,5 +1127,41 @@ mod tests {
 			s.advance(0.016);
 		}
 		assert!(s.desired_offset() <= 5);
+	}
+
+	// A burst still easing when an alt-screen app takes over: the alt grid has no
+	// scrollback, so there is nothing to ease through. The view must land at rest
+	// on the spot - left past the grid, its fraction wrapped through a whole cell
+	// once per line of leftover backlog (the nano wobble).
+	#[test]
+	fn an_alt_screen_entry_lands_a_running_ease_at_rest() {
+		let _g = pin();
+		let mut s = Scroll::new();
+		s.set_max(1000.0);
+		s.nudge_output(400.0, 34.0);
+		s.advance(0.016);
+		assert!(s.animating());
+		s.set_max(0.0);
+		assert!(!s.animating());
+		assert_eq!(s.desired_offset(), 0);
+		assert!(s.frac().abs() < 1e-6);
+		s.advance(0.016);
+		assert!(!s.animating() && s.frac().abs() < 1e-6);
+	}
+
+	// Same rule at the other end: a shallow history caps the ease floor, so the
+	// view never renders a line the grid cannot show.
+	#[test]
+	fn the_ease_floor_is_capped_by_the_history() {
+		let _g = pin();
+		let mut s = Scroll::new();
+		s.set_max(1.0);
+		s.nudge_output(1.0, 34.0);
+		for _ in 0..500 {
+			let pos = s.desired_offset() as f32 + s.frac();
+			assert!(pos <= 1.0 + 1e-6, "view sits past the grid at {pos}");
+			s.advance(0.016);
+		}
+		assert!(s.following());
 	}
 }

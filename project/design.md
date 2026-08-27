@@ -137,6 +137,8 @@ The ease curve is deliberately asymmetric. A single exponential lerp starts at p
 
 Same mechanism: when new output pushes content up, animate `visual_offset` from +1 line back to 0 over the easing window instead of snapping. Treat output-scroll as an animated target like wheel-scroll.
 
+The view never sits past the grid. The whole part of the offset is what the grid is scrolled by and the fraction is drawn, so an offset beyond the scrollback would pin the whole part while the fraction kept wrapping, one whole-cell hop per line. That was the nano wobble: a burst still easing when the alt screen (no scrollback) took over. The offset is clamped to the scrollback instead, which lands the ease the instant a screen swaps and caps how far a fresh terminal's first output eases.
+
 Catch-up speed is modeled as one curve on a time/speed graph, and each setting is a named segment of it. The curve starts and ends at zero. Each segment hands exactly one thing to the next: the point where it ended. In order:
 
 - Ease-in lifts the speed from rest over its duration. It is the only segment that can leave zero.

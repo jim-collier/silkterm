@@ -37,15 +37,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 The dreaded "Nano Bounce Bug" is back. Or I don't think ever *really* left. This will serve as the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and probably chasing red-herrings. It's obviously related in to smooth-scrolling.
-	- Steps:
-		- Run nano. On any file, or with no file. Ideally, immediately afte a long scroll (e.g. as part of a script. `n8git_backup-and-publish` triggers this reliably.
-		- Observe: It pops onto the screen, and "wobbles", "violently", for maybe a second or two. The wobbling is vertically up and down only.
-		- Turning off smooth-scrolling, "fixes" the problem.
-	- Delay this to see if other fixes, fix this.
-		- Result: Other fixes have not fixed this.
-	- Opened: 20260709-115247
-
 - 🔘 Windows: the transparency setting does nothing.
 	- Cause found, fix not attempted - none of it can be tried from the Linux box. A plain HWND swapchain offers only opaque compositing, so the per-pixel alpha the setting asks for is dropped and everything else still renders, which is why it reads as "does nothing" rather than as a fault.
 	- The lever is there: the graphics layer can be asked for the composition-based presentation path instead, which does offer premultiplied alpha. Two things go with it. The window has to be told to honor its own alpha, which it already is whenever the setting is on. And the backend has to be pinned, since the one picked by default varies per machine and only one of them has the option at all.
@@ -76,40 +67,41 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Delete the existing old config files and start over.
 	- Opened: 20260826-123553
 
-- 🔘 Pre-interpret the most common bash environment variables for shells that do not understand them.
+- 🔘 Pre-interpret the most common bash environment variables for shells that do not understand them. (In settings and config file.)
 	- Same for the common PowerShell variables.
 	- Same for the common Windows variables.
 	- Opened: 20260826-123553
 
 - 🔘 Lighten text that is too dark to read against the scrim and a dark background, and darken it in the opposite case.
-	- Comments in git's nano commit editor are the example that keeps coming up.
-	- Flipping the scrim colour for just that text would be better still, but does not look possible today.
+	- Comments in git's nano commit editor are the example that keeps coming up. Can't read at all on a dark background.
+	- Flipping the scrim colour for just that text would be better still, eventually.
 	- Opened: 20260826-123553
 
-- 🔘 A way to measure the delay between a keypress and the matching pixels.
-	- Running natively on a few-year-old laptop feels sluggish, and there is no number to point at.
+- 🔘 Figure out a way to measure the delay between a keypress, and the matching pixel response.
+	- Running natively on a few-year-old laptop feels sluggish; need an objective measure to measure and attack.
 	- Opened: 20260826-123553
 
 - 🔘 Windows installer.
-	- Offer "available to all users" or this user only.
+	- Offer "available to all users", or "this user only", or whatever the typical wording is.
 	- Add a SilkTerm folder to the start menu.
-	- Under it, one shortcut per discovered shell, carrying that shell's own icon, named "SilkTerm - <shell name>", starting in %USERPROFILE%.
+	- Under it, one shortcut per discovered shell (but with silkterm icon), named "SilkTerm - <shell name>", starting in %USERPROFILE%.
 	- Plus a plain SilkTerm shortcut with no shell argument, also starting in %USERPROFILE%.
 	- Opened: 20260826-123553
 
-- 🔘 One View menu item, also on the context menu, that temporarily hides the tab strip, the menu bar and the window decoration together. Working name "windowless mode".
+- 🔘 One View menu item, also on the context menu, that temporarily hides the tab strip, the menu bar and the window decoration together. Working name "windowless mode", but can probably think of a better name/phrase.
 	- Opened: 20260826-123553
 
 - 🔘 Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell.
 	- A PowerShell equivalent could follow.
+	- Alternately, bake into the executable. (Research if that's even easily possible/reasonable for a terminal emulator to inject its own terminal prompt.)
 	- Opened: 20260826-123553
 
-- 🔘 Wallpaper blur option.
+- 🔘 wallpaper image metadata: Blur options:
 	- Wallpaper metadata: Add blur radius in %, and opacity (relative to bg color) %.
 	- Add a checkbox in Settings for whether to honor them.
 	- Opened: 20260826-123553
 
-- 🛠️ The pipeline does not say which host shape it is running on. Print it in the plan header, since the skips differ per shape.
+- 🛠️ The CICD pipeline does not say which combination host environments it is running on. Print it in the plan header, since the skips differ depending on that.
 	- Half done: the Windows plan header names the Linux half, or says WSL2 is here and unused, or that there is none. `cicd.bash` still says nothing about where it is running.
 	- Opened: 20260824-123142
 
@@ -117,36 +109,197 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ The dogfood destinations are written down per platform and per direction, in the pipeline config rather than in anyone's head. macOS destinations are recorded but inert, since nothing builds for it yet.
 	- ✅ The Linux pipeline installs its Windows cross-build beside its own binary, so the Windows box picks up a Linux-made build without anyone copying it by hand.
 	- ✅ Both launchers work the same way now: check this clone's release build, b23 over the network, and the dogfood location, take whichever is newer than what is already held, then run the newest. Each step says what it did, on screen and in a log beside the pool.
-	- ✅ A copy is named for the build's own date rather than the date it was copied, so the same build arriving two ways is only held once.
-		- ✋ The date alone did not deliver this, and the item above overstated it. The rotating install dated its copy from when the pipeline run started, about eight minutes off the build, and a synced copy can be restamped on the way through Dropbox. Three copies of one binary, three dates. So the launchers kept re-taking a build they already held, and which one looked newest came down to who wrote last.
+	- ✅ A copy should be named for the build's own date rather than the date it was copied, so the same build arriving two ways is only held once.
+		- 🔘 The date alone did not deliver this, need to fix. The rotating install dated its copy from when the pipeline run started, about eight minutes off the build, and a synced copy can be restamped on the way through Dropbox. Three copies of one binary, three dates. So the launchers kept re-taking a build they already held, and which one looked newest came down to who wrote last.
 		- ✅ The rotating install now dates and names its copy from the build. Both launchers compare the bytes when a source looks newer, and a match just takes the newer date, so a build is held once whatever the dates say. Neither launcher will prune the newest copy any more, however old it is - a quiet week used to empty the pool and drop the launch to a fallback terminal.
 		- ✅ The case that needed a build date inside the binary is closed. Every build now carries a build number, so two dogfood builds of one release are no longer indistinguishable - ask the binary rather than trusting a file date. The launcher still ranks copies by date, which is right for choosing what to run; the number is what settles which build a report is actually about.
 	- ✅ The bash launcher used to just run whatever it found, in place. It has the same sources, the same pruning and the same reporting as the Windows one now.
 	- 🛠️ Only the Windows half has been run. The bash launcher still needs a pass on Linux.
 		- ✅ Both launchers are deployed to the synced dirs, from a Linux box. The bash one goes to two dirs, not one - the linux and wsl trees mirror each other exactly, so writing only one would split them.
-		- 🔘 Unrun on Linux: the network source with b23 up and with it down, and the check that reads which copies are running before pruning one.
+		- 🔬 Test on Linux and Windows, with the b23 network source both up and with it down (e.g. via SMB on/off), and the check that reads which copies are running before pruning one.
 	- Opened: 20260823-131929
 
 - 🔘 Config file:
-	- 🔘 Reorganize the whole thing more logically, similar to how the future refactor of the Settings dialog is going to go (as specified in the "Refactor settings dialog" main bulletpoint below)
-		- The nesting pass kept the existing section order; the reorganization waits on the Settings dialog refactor it mirrors.
+	- 🔘 Reorganize the whole thing more logically, similar to how the Settings dialog is organized.
 	- Opened: 20260719-085918
 
-- 🛠️ Consolidate UI (e.g. settings) declarations into one or more source shcl file(s) that get compiled or transpiled into code.
-	- Measurements specified in CSS px or DIP that renders "correctly" at any DPI.
-	- ✅ Settings dialog: rows, order, sections, tabs, the config path behind each row, the graying rules and the whole geometry now live in `source/src/settings_ui.shcl`, compiled in. The hand-written tables it replaces are gone. The file and the settings the code knows are held in step both ways - a row naming a setting that does not exist, and a setting with no row.
-	- ✅ Settings dialog measurements are DIP. The layout is solved in that space and the display's scale factor is applied only where it meets the window, so the dialog keeps its proportions at any DPI. At 2x the old build kept 20px checkboxes and truncated its value fields; it is now simply twice the size.
-	- ✅ The main window's own chrome is DIP now too: menu bar, tab bar, tab buttons and their close marks, the dropdown and right-click menus, the copy-mode checkboxes, the focus ring, the pane gap and its grab zone, and the scrollbar. Each measurement scales where it is used rather than at a boundary, since chrome shares a coordinate space with the terminal grid. Measured on a real display: at twice the scale factor the menu bar and the tab button come out at exactly twice their size, where the old build was short by a fifth and an eighth - the padding had stayed frozen at its 1x size while the text doubled. At 1x the whole window renders byte-identical to the old build.
-		- The About panel and the Settings window's own height cap went with it, so nothing on screen is measured in raw pixels any more.
-		- `SILK_SCALE` overrides the scale factor the display reports, which is what makes any of this checkable: chrome written in raw pixels looks perfect at 1x and only thins out as the factor rises, and outside X11 there is no other way to ask for a high-DPI layout.
-	- ✅ The Settings dialog's tab titles sat too far right at high DPI, and overflowed their buttons above 2x. (20260821)
-		- Cause: the dialog's tab, label and button widths are a text measurement (real pixels) plus a clear-space constant (DIP), added together and then divided at the dialog's boundary - which shrank the constant by the scale factor. A tab's box ended up with half the clear space at 2x, and a third of it at 3x, while the title still started at half of it from the left edge.
-		- The constant now converts where it is used, the way the main window's chrome already did, through one rule the four sites share. Shown side by side at 2x: every title used to touch or cross its own right border, and each is now centred with equal space either side.
-	- Opened: 20260802-203840
+- 🛠️ Menu enhancements:
+	- ✅ "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
+		- Done: the row sits under "New Tab" in the Tabs menu and in the right-click menu, and opens a flyout listing every active shell by title. It draws from the stored list, which the background scan above fills in - so it did not have to wait for the Settings "Shells" tab after all; that tab is now only the editor for a list that already exists.
+		- The row is absent entirely while there is no shell to put under it, rather than opening an empty flyout.
+		- A new tab started this way still inherits the current directory - picking a shell says nothing about where to start.
+		- Menus gained submenus to carry it: a flyout opens on hover and on click, keyboard Right enters it and Left and Escape back out one level, and its arrow is drawn rather than set in a font (no interface font can be relied on for one, the same reason the tab close mark is drawn).
+	- 🔘 Add "Split vertical with shell ->" and "Split horizontal with shell ->".
+	- 🔘 Sentence case for every item, except where a letter carries an Alt accelerator.
+	- 🔘 Context menu: a visible separator between the tab operations and the pane operations.
+	- Note: the three items above were added 20260826.
+	- Opened: 20260719-085918
+
+- 🔘 "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
+	- Looks and behaves not too differently than some modern text editors.
+	- When disabled, has no effect on performance - truly skipped code paths.
+	- It has it's own area within the render area, it doesn't sit on top of it.
+	- When enabled:
+		- The visible section is highlighted and is smoothly draggable, scrollable (when mouse is over it).
+		- The scrollbar to the right of it, acts on the scroll-buffer, and is synced pixel-perfect with the highlight area over the preview. In other words, the preview and the scrollbar are essentially one and the same.
+		- If the previously implemented "regular" scrollbar is *also* enabled, that scrollbar sits between the terimal area on the left, and the preview area on the right.
+			- This is a departure from other implementations, that only have one scrollbar on the far right that behaves the same way whether there is a preview area or not. But I want to visually indicate that the *terminal* scrollbar, is for the *terminal*, not the preview.
+	- Opened: 20260802-094409
+
+- 🛠️ Tab interface:
+	- Done: single-window core. Each tab owns a PaneManager; the tab bar shows once there's more than one tab, click to switch, and the pane area shrinks to make room for the bar.
+	- Note: detach and dock are deferred - they need multi-window.
+	- ✅ Close tab (CTRL+Shift+w, CTRL+F4)
+		- Done: both shortcuts close the current tab, matching the menu.
+		- Note: keeps at least one tab open. Shift on W leaves plain Ctrl+W for the shell.
+	- 🔘 Detach tab to new window with mouse
+		- Note: deferred, needs multi-window.
+	- 🔘 Dock tab to different existing window with mouse
+		- Note: deferred, needs multi-window.
+	- Opened: 20260703-091342
+
+- 🛠️ Setting dialog (part 2):
+	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
+		- Note: the tab bar has one now (shell name, command, full path, elapsed time). It is a tab-bar tip rather than the reusable system this item asks for.
+	- ✅ Size: A boolean setting to "Remember last size".
+		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
+		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
+			- 🔘 "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
+	- Opened: 20260628-083740
+
+- 🔘 Begin a detailed UI/UX '[repo]/project/uiux-style-guide.md'
+	1. Reverse engineer using existing work (mostly menus and settings dailog).
+	2. Refine the guide to be self-consistent and for a more user-friendly UI/UX.
+	3. Apply the updates across the project (mostly menus and settings dailog).
+	- Opened: 20260719-085918
+
+- 🔘 Begin a '[repo]/glossary.md' and link to it in README.md:
+	- Defines unusual, technical, and/or highly specific English word terms used in the settings dialog, backlog, design.md, etc.
+	- Even in source code that are referred to or hinted at - frequently not rarely - as English words.
+	- Limit to concrete concepts that are unique to this project, not highly technical, and/or may be unfamiliar to, say, high-school reading level users.
+	- Targeted toward end users, as well as junior developers brand-new to the projecs.
+	- Limit the number of definitions to something like the top 20 to 50 terms most useful to define, in terms of uniqueness and approximate frequency. (E.g. "Scrim", "Contrast mask", and parts of the application UI, UX, settings, or features that are given specific names so that we know what's being referred to. Etc.)
+	- Opened: 20260719-085918
+
+- 🔘 At startup, offer to copy the wallpaper pack from the repo to the local wallpaper directory.
+	- The README now carries a one-liner for it (Wallpaper pack section), so this item is only about the in-app offer.
+	- Show it once, on a first run with no config file and no wallpaper directory. Window title "First-time setup". Buttons bottom right: "Download background images now" and "Close".
+	- Body text:
+
+		~~~text
+		Welcome to SilkTerm!
+
+		This has been a labor of love, by a guy who works in a terminal most of the time. It's the coolest program I've ever written, and that I've personally ever used. I think (and hope) you'll agree!
+
+		The dimmed background image you see is a small default one baked into the executable. (That you can turn off in Settings.)
+
+		By default, SilkTerm looks in [WALLPAPER_DIRECTORY] for additional background images to randomly rotate on each startup. (This can also be disabled.)
+
+		**Would you like to download a [X MB] set of [NUMBER] official SilkTerm backgrounds to that directory? These are specifically created or selected for use by SilkTerm - that are all minimally disruptive, optimally-sized, with proper attribution, and with embedded metadata to help SilkTerm either zoom or stretch to fit, according to what will look best.**
+
+		This is the last time you'll see this message, but you can get back to the download prompt again at any time through Help|About.
+		~~~
+
+	- Add a "Wallpaper ..." button to Help > About that opens the same offer again. Window title "SilkTerm background wallpaper download", same two buttons, and the same body text minus the welcome and the last line.
+	- Note: the dialog copy was specified 20260826.
+	- Opened: 20260817-120024
+
+- 🔘 Wallpaper: Need a way to detect maximum and average brightness of background image - or some heuristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
+	- 🔘 Really what I'm after, is this resulting effect. The implimentation is up to research:
+		- 🔘 At 100% background image visibility, it's just the image as-is.
+		- 🔘 But below that, the opacity % scales with perception.
+			- 🔘 In other words, at say 90%, it is actually scaled to some average of ([perceived brightness], [brightest pixel]).
+			- 🔘 As an example, 50% for a very bright image, may be significantly darker than 50% for a very dark image.
+		- 🔘 And the inverse, for light-mode themes.
+		- 🔘 Need a config file name and a default value for the resulting strength of this calculation.
+	- Opened: 20260703-100322
+
+- 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
+	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
+		- Ideally as packaged plug-ins (think shader kits or something that be traded online and dropped into a directory for auto-discovery).
+		- Reasonably easy for others to write new effect plugins that can be dropped-in, discovered at silkterm startup, loaded, and avaiable as an option.
+		- Security model. Some plugins may need access to screen contents, others may not. If access to contents, make sure it can't do anything else - e.g. write to the filesystem, network, etc. Also, no reading from the filesystem, network, sockets - anything - except own config file.
+	- 🔘 Effect 1: When a "copy on output" or "copy on select" happens, make the relevant checkbox and label gently burst with a glow and tiny fine sparkles for about a second - as if a fairy just blinged it with a magic wand in a movie.
+		- Needs to be subtle and non-annoying over long-run, but definitely noticeable.
+		- Tunable in config.
+		- If it doesn't work well on non-GPU acellerated platforms, just some kind of noticeable blink. But still need visual feedback.
+			- Need to decide what kind of feedback if not practical on non-GPU.
+	- 🔘 Effect 2: When a command or program returns to the prompt, give a burst of visual feedback, with a strength linearly proportional to the amount of time it took.
+		- With an upper limit of course - say, an hour, config-tunable.
+		- Config-tunable selection of predefined burst effects.
+		- Default (and so far only): A glowing bright gold pulse that the cursor gives off upon landing back at the shell prompt, as if a yellow sun that shed an outer layer of blasma in a burst.
+	- Opened: 20260714-091630
+
+- 🔘 (Originally filed as bug but is really a refinement): At high blur radius and low softness, the blur has boxy artifacts.
+	- Cause: the scrim is a separable blur with a truncated kernel. The hard cutoff leaves a faint edge that low softness amplifies into a visible square, and the linear and s-curve falloffs are not true Gaussians, so their support reads as a diamond or box rather than a circle. The fix is a look-versus-performance tradeoff (wider extent, more taps, or a windowed kernel) that wants eyeballing. Deferred to a visual pass.
+	- 🔘 New feature: Adjustable blur quality in settings:
+		- High: Very high quality, may require a higher-end GPU, no visible artifacts at all.
+		- Medium (default): The current quality.
+		- Low: Trash quality, only looks OK at small blur radii. For VMs or remote sessions with punishing graphics. (In fact maybe this should be auto-detected...)
+	- Opened: 20260724-080316
+
+- 🔘 Option: Dynamic theme based on wallpaper
+	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
+	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
+	- Opened: 20260804-134813
+
+- 🔘 Testing:
+	- 🔘 Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
+	- 🛠️ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
+		- Done: scrolling is covered by library tests encoding the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
+	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
+	- Opened: 20260703-100322
+
+- 🔘 Add silkterm to a Windows package manager (e.g. winget or choco).
+	- Opened: 20260816-103257
+
+- 🔘 Ability to change hotkeys, and/or assign new ones dynamically. Including a "capture" dialog.
+	- Opened: 20260703-100322
+
+- 🛠️ Themes:
+	- Note: Any work done in the previous Settings dialog improvements work, override potential contradictions here.
+	- Done (part 1): theme foundation and terminal palette. A Palette (bg/fg/cursor/focus + 16 ANSI) times a Theme (a dark+light pair); the theme and theme_mode config keys pick the active palette, and the [colors] keys still override per-color. Three built-ins: SilkTerm, Matrix, Retro Amber, each dark and light.
+		- Note: Matrix is green on black, including green-toned ANSI; SilkTerm light is dark on light.
+	- Done (part 2): chrome/dialog theming plus System mode. Settings and About adapt to dark/light; the menu and tab chrome stay a fixed neutral gray. System mode follows the OS at startup and on theme-change, falling back to dark where the OS reports no preference (e.g. X11).
+		- Note: still open - config-defined [themes.*], the Settings theme dropdown and its own tab, clearing per-color overrides on re-select, per-theme menu color (#166), more themes (Pastel, Solarized).
+	- 🛠️ Provide a set of about 3 or 4 themes, each that support "Dark" or "Light" mode (or "System").
+		- Done: three built-ins with dark and light.
+		- Note: System (OS-follow) and a 4th theme are still pending.
+		- Dark mode means the background is dark, text light - both for the terminal, and dialogs.
+			- But dialogs have a different color than terminal background. E.g. the existing dark gray for Dark mode, light gray for Light mode.
+		- Light mode means light background, dark text.
+		- "System" means whatever mode the system is using.
+		- Theme definitions should be put in the default config file.
+		- Selecting a theme overrides custom color settings, but those can then be individually tweaked as overrides (until a theme is chosen again and tweaks overwritten).
+		- Themes and colors should probably go on their own settings tab.
+		- User can add themes in the config file. Theme dropdown in Settings UI pulls from those updates.
+		- Example themes:
+			- Matrix (bright green on black). Light mode: dark green on light gray.
+			- Retro amber (Orange on black). Light mode: dark orange on light gray.
+			- Pastel (a pleasing light pastel color, on dark gray background that has a subtle tint of complementary pastel).
+	- Opened: 20260628-083740
+
+- 🛠️ General configuration:
+	- Done: the default-shell behavior.
+	- Note: the named shell list and its UI (grid editor, Tab/Pane menus) are still to build by hand.
+	- 🛠️ Ability to define shells to launch in a new tab or pane.
+		- ✅ By default, new tab launches the default shell for the window.
+			- Done: new tabs and the startup pane use the default shell.
+			- ✅ By priority: Global command shell override, non-empty shell specified in config file, or system default shell.
+				- Done: order is the window --shell, then config default_shell, then system. A new pane also inherits from the pane it forked, its tab, then the window first.
+		- ✅ By default, new pane launches same shell as the pane the new one was forked off of.
+			- Done: a pane stores its launch command, and interactive splits inherit it.
+	- 🛠️ The shell configuration is stored in the config file as a simple key:value list of shell names and command lines. Command lines may have spaces, single quotes, and/or double quotes in them.
+		- Done: a single default_shell string key, argv-split so it handles spaces and quotes.
+		- Note: the named key:value list and its consumers (the grid editor and Tab/Pane menus below) are still hand-rolled work.
+		- 🛠️ The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
+			- Done: the list itself, and the Tab half of it - "New Tab with Shell" is in the Tabs menu and in the right-click menu, off the stored `shells.*` list.
+			- 🔘 Still to do: the same for a new PANE (split), and the two bracketed rows - "[SilkTerm default]" at the top where the config names one, "[system default]" always at the bottom.
+	- Opened: 20260628-083740
 
 - 🛠️ Refactor settings dialog
-	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory. Reconcile by what makes the most sense given the obvious design direction this is going, with what has changed before.
-	- Being done in chunks, in this order: the chrome and the two new colors, then groups and the tab reorganization, then theme management, then the color picker, then the Shells tab. Opening speed was dealt with first and is under Done. The Shells tab was brought forward and is done; the color picker is the one chunk left.
+	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory.
+	- The color picker and wallpaper sub-group randomization are the only remaining items.
 	- ✅ Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
 		- Done: thirty rows carry their own help line, and a control that is grayed out still explains why instead - that question is the more urgent one. The text wraps to the panel, so a longer sentence or a bigger interface font cannot push it off the edge, and it flips above a control when there is no room beneath.
 		- ✅ Including the some of the main buttons:
@@ -325,205 +478,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 			- ✅ All of the behavior above is built and running - see the auto-detect item under "New features and enhancements".
 	- Opened: 20260719-085918
 
-- 🔘 Option: Dynamic theme based on wallpaper
-	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
-	- Opened: 20260804-134813
-
-- 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
-	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Same for a new window (Ctrl+Shift+N), and the same shell inheritance applies to all three.
-	- ✅ Windows: reading the source shell's current directory works now. Windows has no /proc and no API that reports another process's directory, so it is read out of the shell's own process memory - the place SetCurrentDirectory keeps it - and checked for still being a directory before it is used.
-		- Verified in the running app: a pane whose shell moved to another directory reports the new one, and reports nothing once the shell has exited (callers then fall back, as before).
-	- ✅ Shell integration, so a shell that keeps its own idea of where it is can say so. Both spellings are read: OSC 7 (the `file://` URL the unix shells emit) and OSC 9;9 (the ConEmu spelling Windows Terminal documents, so a PowerShell profile already set up for that terminal works here unchanged).
-		- What the shell reports beats what the OS can see, since a shell reporting is answering the question directly while the OS only ever sees where the process sits. A report that no longer names a directory here is dropped and the OS answer stands - which is also what rejects a directory reported from the far side of an ssh, along with an OSC 7 URL naming another machine.
-		- No fork was needed after all. The feared cost was a second fork of `vte` (which handles neither sequence), but the PTY itself is what gets wrapped: `EventedPty` is a public trait and the event loop is generic over it, so the tap sits in front of the real PTY and scans what it reads. The bytes reach the parser exactly as they arrived.
-		- Costs 47ms per 32 MiB of output on this box (714 MB/s, measured over a stream carrying colour and title sequences), against a Windows delivery ceiling of about 1.45s for the same 32 MiB. Nothing but the two sequences is ever collected, so a clipboard write carrying a whole paste is skipped rather than buffered.
-		- The snippets live in `shell-integration.md`, linked from the README: PowerShell, bash, zsh, fish, and the two cases that need nothing (cmd.exe, and fish, which already emits it).
-	- ✅ The PowerShells are offered with `-NoLogo`, so a new tab opens on a prompt rather than a copyright banner. A flag that only changes how a shell looks is deliberately left out of what makes it that shell, or the next scan would land a second PowerShell beside every stored one.
-	- ✅ A "Windows PowerShell 5 (relaxed)" entry is offered, switched OFF, carrying `-ExecutionPolicy RemoteSigned` - the 5.1 that ships with Windows refuses to run script files, so it loads no profile and cannot report where it is. Per-session only; nothing is written anywhere, and it arrives off because it is a security setting rather than a default.
-	- ✅ The PowerShell block is installed for you, a few seconds after launch, into each PowerShell profile that reports nothing.
-		- It appends after saving a copy beside the profile, never rewrites; a marker makes a second launch a no-op; deleting the block switches it off for good; the prompt is wrapped rather than replaced (and on PowerShell 6+ not touched at all, which leaves oh-my-posh and starship alone).
-		- A shell whose execution policy would refuse to load the profile is left alone with a line saying which and why - found the hard way on this box, where writing a profile for Windows PowerShell 5.1 turned every launch into a red execution-policy error.
-		- `shell.integration` (Settings > Shell > "PowerShell profiles") switches it off before it runs.
-	- Opened: 20260722-100516
-	- Closed: 20260722-200952
-
-- 🛠️ Menu enhancements:
-	- ✅ "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
-		- Done: the row sits under "New Tab" in the Tabs menu and in the right-click menu, and opens a flyout listing every active shell by title. It draws from the stored list, which the background scan above fills in - so it did not have to wait for the Settings "Shells" tab after all; that tab is now only the editor for a list that already exists.
-		- The row is absent entirely while there is no shell to put under it, rather than opening an empty flyout.
-		- A new tab started this way still inherits the current directory - picking a shell says nothing about where to start.
-		- Menus gained submenus to carry it: a flyout opens on hover and on click, keyboard Right enters it and Left and Escape back out one level, and its arrow is drawn rather than set in a font (no interface font can be relied on for one, the same reason the tab close mark is drawn).
-	- 🔘 Add "Split vertical with shell ->" and "Split horizontal with shell ->".
-	- 🔘 Sentence case for every item, except where a letter carries an Alt accelerator.
-	- 🔘 Context menu: a visible separator between the tab operations and the pane operations.
-	- Note: the three items above were added 20260826.
-	- Opened: 20260719-085918
-
-- 🔘 "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
-	- Looks and behaves not too differently than some modern text editors.
-	- When disabled, has no effect on performance - truly skipped code paths.
-	- It has it's own area within the render area, it doesn't sit on top of it.
-	- When enabled:
-		- The visible section is highlighted and is smoothly draggable, scrollable (when mouse is over it).
-		- The scrollbar to the right of it, acts on the scroll-buffer, and is synced pixel-perfect with the highlight area over the preview. In other words, the preview and the scrollbar are essentially one and the same.
-		- If the previously implemented "regular" scrollbar is *also* enabled, that scrollbar sits between the terimal area on the left, and the preview area on the right.
-			- This is a departure from other implementations, that only have one scrollbar on the far right that behaves the same way whether there is a preview area or not. But I want to visually indicate that the *terminal* scrollbar, is for the *terminal*, not the preview.
-	- Opened: 20260802-094409
-
-- 🛠️ Tab interface:
-	- Done: single-window core. Each tab owns a PaneManager; the tab bar shows once there's more than one tab, click to switch, and the pane area shrinks to make room for the bar.
-	- Note: detach and dock are deferred - they need multi-window.
-	- ✅ Close tab (CTRL+Shift+w, CTRL+F4)
-		- Done: both shortcuts close the current tab, matching the menu.
-		- Note: keeps at least one tab open. Shift on W leaves plain Ctrl+W for the shell.
-	- 🔘 Detach tab to new window with mouse
-		- Note: deferred, needs multi-window.
-	- 🔘 Dock tab to different existing window with mouse
-		- Note: deferred, needs multi-window.
-	- Opened: 20260703-091342
-
-- 🛠️ Setting dialog (part 2):
-	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
-		- Note: the tab bar has one now (shell name, command, full path, elapsed time). It is a tab-bar tip rather than the reusable system this item asks for.
-	- ✅ Size: A boolean setting to "Remember last size".
-		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
-		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
-			- 🔘 "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
-	- Opened: 20260628-083740
-
-- 🔘 Begin a detailed UI/UX '[repo]/project/uiux-style-guide.md'
-	1. Reverse engineer using existing work (mostly menus and settings dailog).
-	2. Refine the guide to be self-consistent and for a more user-friendly UI/UX.
-	3. Apply the updates across the project (mostly menus and settings dailog).
-	- Opened: 20260719-085918
-
-- 🔘 Begin a '[repo]/glossary.md' and link to it in README.md:
-	- Defines unusual, technical, and/or highly specific English word terms used in the settings dialog, backlog, design.md, etc.
-	- Even in source code that are referred to or hinted at - frequently not rarely - as English words.
-	- Limit to concrete concepts that are unique to this project, not highly technical, and/or may be unfamiliar to, say, high-school reading level users.
-	- Targeted toward end users, as well as junior developers brand-new to the projecs.
-	- Limit the number of definitions to something like the top 20 to 50 terms most useful to define, in terms of uniqueness and approximate frequency. (E.g. "Scrim", "Contrast mask", and parts of the application UI, UX, settings, or features that are given specific names so that we know what's being referred to. Etc.)
-	- Opened: 20260719-085918
-
-- 🔘 Prepare for code review
-	- Opened: 20260724-080316
-
-- 🔘 First stable release.
-	- Windows store.
-	- macOS app store.
-	- Opened: 20260724-080316
-
-- 🔘 At startup, offer to copy the wallpaper pack from the repo to the local wallpaper directory.
-	- The README now carries a one-liner for it (Wallpaper pack section), so this item is only about the in-app offer.
-	- Show it once, on a first run with no config file and no wallpaper directory. Window title "First-time setup". Buttons bottom right: "Download background images now" and "Close".
-	- Body text:
-
-		~~~text
-		Welcome to SilkTerm!
-
-		This has been a labor of love, by a guy who works in a terminal most of the time. It's the coolest program I've ever written, and that I've personally ever used. I think (and hope) you'll agree!
-
-		The dimmed background image you see is a small default one baked into the executable. (That you can turn off in Settings.)
-
-		By default, SilkTerm looks in [WALLPAPER_DIRECTORY] for additional background images to randomly rotate on each startup. (This can also be disabled.)
-
-		**Would you like to download a [X MB] set of [NUMBER] official SilkTerm backgrounds to that directory? These are specifically created or selected for use by SilkTerm - that are all minimally disruptive, optimally-sized, with proper attribution, and with embedded metadata to help SilkTerm either zoom or stretch to fit, according to what will look best.**
-
-		This is the last time you'll see this message, but you can get back to the download prompt again at any time through Help|About.
-		~~~
-
-	- Add a "Wallpaper ..." button to Help > About that opens the same offer again. Window title "SilkTerm background wallpaper download", same two buttons, and the same body text minus the welcome and the last line.
-	- Note: the dialog copy was specified 20260826.
-	- Opened: 20260817-120024
-
-- 🔘 Wallpaper: Need a way to detect maximum and average brightness of background image - or some heuristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
-	- 🔘 Really what I'm after, is this resulting effect. The implimentation is up to research:
-		- 🔘 At 100% background image visibility, it's just the image as-is.
-		- 🔘 But below that, the opacity % scales with perception.
-			- 🔘 In other words, at say 90%, it is actually scaled to some average of ([perceived brightness], [brightest pixel]).
-			- 🔘 As an example, 50% for a very bright image, may be significantly darker than 50% for a very dark image.
-		- 🔘 And the inverse, for light-mode themes.
-		- 🔘 Need a config file name and a default value for the resulting strength of this calculation.
-	- Opened: 20260703-100322
-
-- 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
-	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
-		- Ideally as packaged plug-ins (think shader kits or something that be traded online and dropped into a directory for auto-discovery).
-		- Reasonably easy for others to write new effect plugins that can be dropped-in, discovered at silkterm startup, loaded, and avaiable as an option.
-		- Security model. Some plugins may need access to screen contents, others may not. If access to contents, make sure it can't do anything else - e.g. write to the filesystem, network, etc. Also, no reading from the filesystem, network, sockets - anything - except own config file.
-	- 🔘 Effect 1: When a "copy on output" or "copy on select" happens, make the relevant checkbox and label gently burst with a glow and tiny fine sparkles for about a second - as if a fairy just blinged it with a magic wand in a movie.
-		- Needs to be subtle and non-annoying over long-run, but definitely noticeable.
-		- Tunable in config.
-		- If it doesn't work well on non-GPU acellerated platforms, just some kind of noticeable blink. But still need visual feedback.
-			- Need to decide what kind of feedback if not practical on non-GPU.
-	- 🔘 Effect 2: When a command or program returns to the prompt, give a burst of visual feedback, with a strength linearly proportional to the amount of time it took.
-		- With an upper limit of course - say, an hour, config-tunable.
-		- Config-tunable selection of predefined burst effects.
-		- Default (and so far only): A glowing bright gold pulse that the cursor gives off upon landing back at the shell prompt, as if a yellow sun that shed an outer layer of blasma in a burst.
-	- Opened: 20260714-091630
-
-- 🔘 (Originally filed as bug but is really a refinement): At high blur radius and low softness, the blur has boxy artifacts.
-	- Cause: the scrim is a separable blur with a truncated kernel. The hard cutoff leaves a faint edge that low softness amplifies into a visible square, and the linear and s-curve falloffs are not true Gaussians, so their support reads as a diamond or box rather than a circle. The fix is a look-versus-performance tradeoff (wider extent, more taps, or a windowed kernel) that wants eyeballing. Deferred to a visual pass.
-	- 🔘 New feature: Adjustable blur quality in settings:
-		- High: Very high quality, may require a higher-end GPU, no visible artifacts at all.
-		- Medium (default): The current quality.
-		- Low: Trash quality, only looks OK at small blur radii. For VMs or remote sessions with punishing graphics. (In fact maybe this should be auto-detected...)
-	- Opened: 20260724-080316
-
-- 🔘 Testing:
-	- 🔘 Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
-	- 🛠️ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
-		- Done: scrolling is covered by library tests encoding the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
-	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
-	- Opened: 20260703-100322
-
-- 🔘 Add silkterm to a Windows package manager (e.g. winget or choco).
-	- Opened: 20260816-103257
-
-- 🔘 Ability to change hotkeys, and/or assign new ones dynamically. Including a "capture" dialog.
-	- Opened: 20260703-100322
-
-- 🛠️ Themes:
-	- Note: Any work done in the previous Settings dialog improvements work, override potential contradictions here.
-	- Done (part 1): theme foundation and terminal palette. A Palette (bg/fg/cursor/focus + 16 ANSI) times a Theme (a dark+light pair); the theme and theme_mode config keys pick the active palette, and the [colors] keys still override per-color. Three built-ins: SilkTerm, Matrix, Retro Amber, each dark and light.
-		- Note: Matrix is green on black, including green-toned ANSI; SilkTerm light is dark on light.
-	- Done (part 2): chrome/dialog theming plus System mode. Settings and About adapt to dark/light; the menu and tab chrome stay a fixed neutral gray. System mode follows the OS at startup and on theme-change, falling back to dark where the OS reports no preference (e.g. X11).
-		- Note: still open - config-defined [themes.*], the Settings theme dropdown and its own tab, clearing per-color overrides on re-select, per-theme menu color (#166), more themes (Pastel, Solarized).
-	- 🛠️ Provide a set of about 3 or 4 themes, each that support "Dark" or "Light" mode (or "System").
-		- Done: three built-ins with dark and light.
-		- Note: System (OS-follow) and a 4th theme are still pending.
-		- Dark mode means the background is dark, text light - both for the terminal, and dialogs.
-			- But dialogs have a different color than terminal background. E.g. the existing dark gray for Dark mode, light gray for Light mode.
-		- Light mode means light background, dark text.
-		- "System" means whatever mode the system is using.
-		- Theme definitions should be put in the default config file.
-		- Selecting a theme overrides custom color settings, but those can then be individually tweaked as overrides (until a theme is chosen again and tweaks overwritten).
-		- Themes and colors should probably go on their own settings tab.
-		- User can add themes in the config file. Theme dropdown in Settings UI pulls from those updates.
-		- Example themes:
-			- Matrix (bright green on black). Light mode: dark green on light gray.
-			- Retro amber (Orange on black). Light mode: dark orange on light gray.
-			- Pastel (a pleasing light pastel color, on dark gray background that has a subtle tint of complementary pastel).
-	- Opened: 20260628-083740
-
-- 🛠️ General configuration:
-	- Done: the default-shell behavior.
-	- Note: the named shell list and its UI (grid editor, Tab/Pane menus) are still to build by hand.
-	- 🛠️ Ability to define shells to launch in a new tab or pane.
-		- ✅ By default, new tab launches the default shell for the window.
-			- Done: new tabs and the startup pane use the default shell.
-			- ✅ By priority: Global command shell override, non-empty shell specified in config file, or system default shell.
-				- Done: order is the window --shell, then config default_shell, then system. A new pane also inherits from the pane it forked, its tab, then the window first.
-		- ✅ By default, new pane launches same shell as the pane the new one was forked off of.
-			- Done: a pane stores its launch command, and interactive splits inherit it.
-	- 🛠️ The shell configuration is stored in the config file as a simple key:value list of shell names and command lines. Command lines may have spaces, single quotes, and/or double quotes in them.
-		- Done: a single default_shell string key, argv-split so it handles spaces and quotes.
-		- Note: the named key:value list and its consumers (the grid editor and Tab/Pane menus below) are still hand-rolled work.
-		- 🛠️ The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
-			- Done: the list itself, and the Tab half of it - "New Tab with Shell" is in the Tabs menu and in the right-click menu, off the stored `shells.*` list.
-			- 🔘 Still to do: the same for a new PANE (split), and the two bracketed rows - "[SilkTerm default]" at the top where the config names one, "[system default]" always at the bottom.
-	- Opened: 20260628-083740
-
 - 🛠️ Command-line options:
 	- Done (part 1, the options engine):
 		- Full parser: create/select model, cascading style, shell-word-split.
@@ -652,6 +606,34 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ The dreaded "Nano Bounce Bug" is back. Or I don't think ever *really* left. This will serve as the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and probably chasing red-herrings. It's obviously related in to smooth-scrolling.
+	- Steps:
+		- Run nano. On any file, or with no file. Ideally, immediately afte a long scroll (e.g. as part of a script. `n8git_backup-and-publish` triggers this reliably.
+		- Observe: It pops onto the screen, and "wobbles", "violently", for maybe a second or two. The wobbling is vertically up and down only.
+		- Turning off smooth-scrolling, "fixes" the problem.
+	- Delay this to see if other fixes, fix this.
+		- Result: Other fixes have not fixed this.
+	- Cause: the smooth offset is kept in two parts. The grid is scrolled by a whole number of lines and the renderer draws the fraction left over. The output ease was allowed to run up to sixteen lines past the end of the scrollback. The alt screen has no scrollback at all, so when nano took over mid-ease the whole part sat pinned at zero while the fraction kept counting down through the leftover backlog, wrapping through a full cell once per line. Every wrap drew as a whole-cell hop. That is also why it looked random: it needs output still easing at the moment nano starts, which a long push before `git commit` gives reliably and a quiet prompt never does.
+	- Fix: the view can no longer sit past the grid. Entering the alt screen lands the ease on the spot, which is the cut a screen swap wants anyway, and a shallow scrollback caps how far a fresh terminal's first output eases. Both halves of the residual one-line scroll on alt-screen enter and exit go with it.
+	- The scroll harness has a fifth scene for it: a burst still easing when an alt screen takes over must sit still there.
+	- Opened: 20260709-115247
+	- Closed: 20260827-073521
+
+- ✅ Bug: Alt-screen enter/exit animated like a scroll (`smooth_scroll_apps`). Two symptoms: (a) opening nano "jiggles"/jelly-bounces or scrolls in from a few lines down; (b) exiting nano scrolls the previous screen contents back in from the bottom, where a normal terminal just cuts.
+	- Cause: an alt-screen enter/exit is an instant full-screen swap, but the scroll probes diffed frame-to-frame across it. On enter the app-scroll probe matched blank rows between the old and new screens -> bogus slide (jiggle). On exit `history_size` jumps (the alt grid carries no scrollback) -> the output-ease read it as new output and scrolled the restored screen in.
+	- Fixed: track the previous frame's alt-screen state; on a transition hard-cut it - cancel any in-flight slide, skip both probes, suppress the output nudge, and rebaseline the row fingerprints to the new screen.
+	- Both symptoms are fixed. Residual: a very slight one-line smooth scroll-up still happens on enter and exit - livable, deferred (see the deferred item below).
+	- Mostly fixed. Entering and exiting still result in a one-line smooth scroll. Tolerable, but worth fixing someday.
+		- This has its own bug entry.
+	- The last of it went with the nano wobble fix: the ease lands the moment the screen swaps, in both directions.
+	- Opened: 20260706-065828
+	- Closed: 20260827-073521
+
+- ✅ Bug: Residual 1-line smooth scroll-up on alt-screen enter and exit (`smooth_scroll_apps`). The enter/exit hard-cut fixed the big jiggle and scroll-in, but a slight single-line ease still rides the transition. Livable, deferred. Likely the output-ease firing one frame after the transition. A candidate fix is to rebaseline the history baseline and suppress the nudge one frame past the transition.
+	- Gone with the nano wobble fix. The ease never sits past the grid now, so there is nothing left to ride the transition.
+	- Opened: 20260706-101054
+	- Closed: 20260827-073521
 
 - ✅ A wheel gesture can land by moving backwards about one line.
 	- Confirmed in the code: the rest position was rounded to the NEAREST whole line, so a gesture ending nine tenths past a boundary went all the way forward and then hopped back onto the one behind. Under a line of travel, but a visible reversal against the gesture.
@@ -1429,6 +1411,37 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
+	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Same for a new window (Ctrl+Shift+N), and the same shell inheritance applies to all three.
+	- ✅ Windows: reading the source shell's current directory works now. Windows has no /proc and no API that reports another process's directory, so it is read out of the shell's own process memory - the place SetCurrentDirectory keeps it - and checked for still being a directory before it is used.
+		- Verified in the running app: a pane whose shell moved to another directory reports the new one, and reports nothing once the shell has exited (callers then fall back, as before).
+	- ✅ Shell integration, so a shell that keeps its own idea of where it is can say so. Both spellings are read: OSC 7 (the `file://` URL the unix shells emit) and OSC 9;9 (the ConEmu spelling Windows Terminal documents, so a PowerShell profile already set up for that terminal works here unchanged).
+		- What the shell reports beats what the OS can see, since a shell reporting is answering the question directly while the OS only ever sees where the process sits. A report that no longer names a directory here is dropped and the OS answer stands - which is also what rejects a directory reported from the far side of an ssh, along with an OSC 7 URL naming another machine.
+		- No fork was needed after all. The feared cost was a second fork of `vte` (which handles neither sequence), but the PTY itself is what gets wrapped: `EventedPty` is a public trait and the event loop is generic over it, so the tap sits in front of the real PTY and scans what it reads. The bytes reach the parser exactly as they arrived.
+		- Costs 47ms per 32 MiB of output on this box (714 MB/s, measured over a stream carrying colour and title sequences), against a Windows delivery ceiling of about 1.45s for the same 32 MiB. Nothing but the two sequences is ever collected, so a clipboard write carrying a whole paste is skipped rather than buffered.
+		- The snippets live in `shell-integration.md`, linked from the README: PowerShell, bash, zsh, fish, and the two cases that need nothing (cmd.exe, and fish, which already emits it).
+	- ✅ The PowerShells are offered with `-NoLogo`, so a new tab opens on a prompt rather than a copyright banner. A flag that only changes how a shell looks is deliberately left out of what makes it that shell, or the next scan would land a second PowerShell beside every stored one.
+	- ✅ A "Windows PowerShell 5 (relaxed)" entry is offered, switched OFF, carrying `-ExecutionPolicy RemoteSigned` - the 5.1 that ships with Windows refuses to run script files, so it loads no profile and cannot report where it is. Per-session only; nothing is written anywhere, and it arrives off because it is a security setting rather than a default.
+	- ✅ The PowerShell block is installed for you, a few seconds after launch, into each PowerShell profile that reports nothing.
+		- It appends after saving a copy beside the profile, never rewrites; a marker makes a second launch a no-op; deleting the block switches it off for good; the prompt is wrapped rather than replaced (and on PowerShell 6+ not touched at all, which leaves oh-my-posh and starship alone).
+		- A shell whose execution policy would refuse to load the profile is left alone with a line saying which and why - found the hard way on this box, where writing a profile for Windows PowerShell 5.1 turned every launch into a red execution-policy error.
+		- `shell.integration` (Settings > Shell > "PowerShell profiles") switches it off before it runs.
+	- Opened: 20260722-100516
+	- Closed: 20260722-200952
+
+- ✅ Consolidate UI (e.g. settings) declarations into one or more source shcl file(s) that get compiled or transpiled into code.
+	- Measurements specified in CSS px or DIP that renders "correctly" at any DPI.
+	- ✅ Settings dialog: rows, order, sections, tabs, the config path behind each row, the graying rules and the whole geometry now live in `source/src/settings_ui.shcl`, compiled in. The hand-written tables it replaces are gone. The file and the settings the code knows are held in step both ways - a row naming a setting that does not exist, and a setting with no row.
+	- ✅ Settings dialog measurements are DIP. The layout is solved in that space and the display's scale factor is applied only where it meets the window, so the dialog keeps its proportions at any DPI. At 2x the old build kept 20px checkboxes and truncated its value fields; it is now simply twice the size.
+	- ✅ The main window's own chrome is DIP now too: menu bar, tab bar, tab buttons and their close marks, the dropdown and right-click menus, the copy-mode checkboxes, the focus ring, the pane gap and its grab zone, and the scrollbar. Each measurement scales where it is used rather than at a boundary, since chrome shares a coordinate space with the terminal grid. Measured on a real display: at twice the scale factor the menu bar and the tab button come out at exactly twice their size, where the old build was short by a fifth and an eighth - the padding had stayed frozen at its 1x size while the text doubled. At 1x the whole window renders byte-identical to the old build.
+		- The About panel and the Settings window's own height cap went with it, so nothing on screen is measured in raw pixels any more.
+		- `SILK_SCALE` overrides the scale factor the display reports, which is what makes any of this checkable: chrome written in raw pixels looks perfect at 1x and only thins out as the factor rises, and outside X11 there is no other way to ask for a high-DPI layout.
+	- ✅ The Settings dialog's tab titles sat too far right at high DPI, and overflowed their buttons above 2x. (20260821)
+		- Cause: the dialog's tab, label and button widths are a text measurement (real pixels) plus a clear-space constant (DIP), added together and then divided at the dialog's boundary - which shrank the constant by the scale factor. A tab's box ended up with half the clear space at 2x, and a third of it at 3x, while the title still started at half of it from the left edge.
+		- The constant now converts where it is used, the way the main window's chrome already did, through one rule the four sites share. Shown side by side at 2x: every title used to touch or cross its own right border, and each is now centred with equal space either side.
+	- Opened: 20260802-203840
+	- Closed: 20260827-071421
 
 - ✅ Demo gif: the jumping, and showing the speed curve off properly.
 	- ✅ The gif was sampled at 50fps from a source that paints 60, so one source frame in six was dropped and every fifth stored frame carried two frames of travel. Measured on the shipped gif that is an exact doubling, on a strict period, at every speed and in both directions - a regular hitch that no amount of scroll tuning could have removed, and it is worst right after a clear, where a command dumps its output fastest.
@@ -3115,17 +3128,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Note: the general case is fixed - the hints are set before the window maps, and since Compiz won't raise a transient's parent, the terminal is restacked under the dialog on focus and re-asserted briefly to outlast Compiz's animated settle. The About-only failure has not been reproduced.
 	- 🔘 Is probably fixed. Test on non-compiz WM.
 	- Opened: 20260707-022408
-
-- ✋ Bug: Alt-screen enter/exit animated like a scroll (`smooth_scroll_apps`). Two symptoms: (a) opening nano "jiggles"/jelly-bounces or scrolls in from a few lines down; (b) exiting nano scrolls the previous screen contents back in from the bottom, where a normal terminal just cuts.
-	- Cause: an alt-screen enter/exit is an instant full-screen swap, but the scroll probes diffed frame-to-frame across it. On enter the app-scroll probe matched blank rows between the old and new screens -> bogus slide (jiggle). On exit `history_size` jumps (the alt grid carries no scrollback) -> the output-ease read it as new output and scrolled the restored screen in.
-	- Fixed: track the previous frame's alt-screen state; on a transition hard-cut it - cancel any in-flight slide, skip both probes, suppress the output nudge, and rebaseline the row fingerprints to the new screen.
-	- Both symptoms are fixed. Residual: a very slight one-line smooth scroll-up still happens on enter and exit - livable, deferred (see the deferred item below).
-	- Mostly fixed. Entering and exiting still result in a one-line smooth scroll. Tolerable, but worth fixing someday.
-		- This has its own bug entry.
-	- Opened: 20260706-065828
-
-- ✋ Bug: Residual 1-line smooth scroll-up on alt-screen enter and exit (`smooth_scroll_apps`). The enter/exit hard-cut fixed the big jiggle and scroll-in, but a slight single-line ease still rides the transition. Livable, deferred. Likely the output-ease firing one frame after the transition. A candidate fix is to rebaseline the history baseline and suppress the nudge one frame past the transition.
-	- Opened: 20260706-101054
 
 ### Canceled
 
