@@ -617,7 +617,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Cause: the smooth offset is kept in two parts. The grid is scrolled by a whole number of lines and the renderer draws the fraction left over. The output ease was allowed to run up to sixteen lines past the end of the scrollback. The alt screen has no scrollback at all, so when nano took over mid-ease the whole part sat pinned at zero while the fraction kept counting down through the leftover backlog, wrapping through a full cell once per line. Every wrap drew as a whole-cell hop. That is also why it looked random: it needs output still easing at the moment nano starts, which a long push before `git commit` gives reliably and a quiet prompt never does.
 	- Fix: the view can no longer sit past the grid. Entering the alt screen lands the ease on the spot, which is the cut a screen swap wants anyway, and a shallow scrollback caps how far a fresh terminal's first output eases. Both halves of the residual one-line scroll on alt-screen enter and exit go with it.
 	- The scroll harness has a fifth scene for it: a burst still easing when an alt screen takes over must sit still there.
-	- 🔬 Test exhaustively.
+	- 🔬 Test exhaustively
 	- Opened: 20260709-115247
 	- Closed: 20260827-073521
 
