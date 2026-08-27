@@ -2469,7 +2469,8 @@ impl State {
 	// shell can exit). Keeps `active` pointing at the same tab where it can.
 	fn close_tab_at(&mut self, idx: usize) {
 		if self.tabs.list.len() <= 1 {
-			return; // keep at least one tab; close the window to exit
+			self.quit = true; // closing the only tab closes the window
+			return;
 		}
 		let showed = idx == self.tabs.active;
 		self.tabs.list.remove(idx);
@@ -5060,10 +5061,6 @@ impl ApplicationHandler<UserEvent> for App {
 							// click an item to act, a submenu row to open its popup,
 							// anywhere else to dismiss
 							state.menu_click(x, y, &self.proxy);
-							if state.quit {
-								event_loop.exit();
-								return;
-							}
 							state.dirty = true;
 						} else if let Some((path, _)) =
 							state
@@ -5125,8 +5122,10 @@ impl ApplicationHandler<UserEvent> for App {
 									p.begin_selection(start, Side::Left, SelectionType::Simple);
 									p.update_selection(end, Side::Right);
 								} else if double {
-									// inside a matched pair -> select its contents; else word
-									match p.pair_span(point, &pairs) {
+									// a shape we can name (URL, path) wins; else the
+									// contents of a matched pair; else the word
+									match p.shape_span(point).or_else(|| p.pair_span(point, &pairs))
+									{
 										Some((start, end)) => {
 											p.begin_selection(
 												start,
@@ -5448,10 +5447,6 @@ impl ApplicationHandler<UserEvent> for App {
 						Key::Named(NamedKey::Enter) => {
 							if let Some(row) = state.menu_inner().and_then(|menu| menu.hover) {
 								state.menu_activate(row, &self.proxy);
-								if state.quit {
-									event_loop.exit();
-									return;
-								}
 							}
 						}
 						// accelerator: a letter activates the item carrying it (the
@@ -5473,10 +5468,6 @@ impl ApplicationHandler<UserEvent> for App {
 							});
 							if let Some(row) = hit {
 								state.menu_activate(row, &self.proxy);
-								if state.quit {
-									event_loop.exit();
-									return;
-								}
 							}
 						}
 						_ => {}
@@ -5530,9 +5521,9 @@ impl ApplicationHandler<UserEvent> for App {
 							state.new_tab(&self.proxy);
 							return;
 						}
-						// Ctrl+Shift+W / Ctrl+F4: close the current tab (keeps >=1 tab;
-						// close the window to exit). Shift on W so plain Ctrl+W reaches
-						// the shell (word-erase).
+						// Ctrl+Shift+W / Ctrl+F4: close the current tab, or the window
+						// if it is the last one. Shift on W so plain Ctrl+W reaches the
+						// shell (word-erase).
 						Key::Character(typed) if shift && typed.eq_ignore_ascii_case("w") => {
 							state.close_tab();
 							return;
@@ -5638,6 +5629,12 @@ impl ApplicationHandler<UserEvent> for App {
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
 		crate::perf::bump(&crate::perf::PASSES);
 		let _t = crate::perf::Span::new(&crate::perf::PASS_NS);
+		// One place to act on `quit`, so every path that sets it exits - menus,
+		// hotkeys, and the tab-close box all reach here on the next pass.
+		if self.state.as_ref().is_some_and(|state| state.quit) {
+			event_loop.exit();
+			return;
+		}
 		// cicd profiler: in profile mode run for SILK_PROFILE_SECS then exit, so
 		// main can dump the flamegraph (the workload runs in the startup pane).
 		#[cfg(feature = "profiling")]

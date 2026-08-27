@@ -2664,6 +2664,42 @@ impl Pane {
 		))
 	}
 
+	// The shape (URL, path, scp target) covering `point`, if there is one, as
+	// (first, last) cells. Spans a soft-wrapped line the way a hyperlink does,
+	// since a long path is exactly the thing that wraps.
+	pub fn shape_span(&self, point: Point) -> Option<(Point, Point)> {
+		let cols = self.term.cols;
+		if cols == 0 || point.column.0 >= cols {
+			return None;
+		}
+		let guard = self.term.term.lock_unfair();
+		let grid = guard.grid();
+		let (top, bot) = (-(grid.history_size() as i32), self.term.lines as i32 - 1);
+		let line = point.line.0;
+		if line < top || line > bot {
+			return None;
+		}
+		let end_col = Column(cols - 1);
+		let wraps = |l: i32| grid[Line(l)][end_col].flags.contains(Flags::WRAPLINE);
+		let mut first = line;
+		while first > top && line - first < LINK_WRAP_ROWS && wraps(first - 1) {
+			first -= 1;
+		}
+		let mut last = line;
+		while last < bot && last - line < LINK_WRAP_ROWS && wraps(last) {
+			last += 1;
+		}
+		let mut text = Vec::with_capacity((last - first + 1) as usize * cols);
+		for l in first..=last {
+			let row = &grid[Line(l)];
+			text.extend((0..cols).map(|c| render_char(row[Column(c)].c)));
+		}
+		let hit = (line - first) as usize * cols + point.column.0;
+		let (start, end) = crate::shapes::span_at(&text, hit)?;
+		let point_of = |i: usize| Point::new(Line(first + (i / cols) as i32), Column(i % cols));
+		Some((point_of(start), point_of(end - 1)))
+	}
+
 	// The whole logical line containing `point`, spanning soft-wrapped rows, as
 	// (top-row col 0 .. bottom-row last col) - the span a triple-click selects.
 	pub fn line_span(&self, point: Point) -> (Point, Point) {

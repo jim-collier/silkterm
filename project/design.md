@@ -251,6 +251,16 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - Links open through the desktop's own handler by default, with a configurable program to override it. Deciding what a URL means is the desktop's job, not a terminal's.
 
+### What a double-click grabs (2026-08-26)
+
+- A double-click asks three questions in order, and the first one that answers wins: is this a shape we can name, is it inside a matched pair, is it a word. Word selection was the only rule for a long time and it cannot handle a path with a space in it, because a space is what ends a word.
+
+- The shapes are URLs and file URIs, drive paths (`C:\...`), UNC paths, absolute posix paths, and `~/` paths. Each has to start at an anchor a reader would recognize, with only whitespace, a quote or an opening bracket in front of it. Among the options considered, that was preferred over "anything that is not obviously a word", which reads `and/or` as a path.
+
+- Where a path ends is two heuristics, both picked for what they refuse. A space is crossed only when a path separator turns up soon after, so a folder name with spaces stays whole while a path followed by a sentence does not swallow it. And the run stops at a file extension, which is what leaves a `:120:5` line number behind.
+
+- A trailing full stop, comma or bracket comes off the same way it does for a link. The two share the trimming idea but not the code, since a path may hold characters a URL may not.
+
 ### Measurements and display scaling
 
 - Every measurement in the interface is written once, in device-independent pixels, and turned into real ones only when it is drawn. A DIP is a ninety-sixth of an inch, so a border, a gap or a checkbox is the same physical size on any screen. Nothing is written in raw pixels any more - the terminal grid itself is the only thing sized in them, and that follows the font.

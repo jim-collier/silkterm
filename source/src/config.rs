@@ -491,17 +491,59 @@ pub fn default_shell_argv() -> Option<Vec<String>> {
 // and this is the last of them: `--directory` on the command line (cli_dir, the
 // caller's first choice), a new tab, pane or window inheriting from the pane it
 // came from (handled by the caller, which passes an inherited path instead of
-// asking here), a SilkTerm launched from a shell keeping that shell's directory,
-// and only what is left over reads the setting.
+// asking here), an inherited directory that somebody picked on purpose, and only
+// what is left over reads the setting.
 //
 // So the setting is what a launch from the desktop, a menu or a shortcut gets -
 // which is the case where the inherited directory is an accident of whoever
 // started us rather than anything the user chose.
 pub fn startup_dir() -> Option<std::path::PathBuf> {
-	if launched_from_shell() {
+	if inherited_dir_is_a_choice() {
 		return None;
 	}
 	resolve_dir(&settings().startup_directory, "shell.startup_directory")
+}
+
+// Is the directory we were started in a choice or an accident? A shell that
+// launched us was sitting somewhere on purpose, and so is a file manager's
+// "Open in terminal", which hands us the folder being looked at without giving
+// us a terminal. What is left - a desktop icon, a Start-menu entry, a shortcut -
+// lands in the home directory, at a filesystem root, or beside the executable,
+// and none of those say anything about where the user wants to be.
+fn inherited_dir_is_a_choice() -> bool {
+	if launched_from_shell() {
+		return true;
+	}
+	let exe_dir = std::env::current_exe()
+		.ok()
+		.and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
+	dir_is_a_choice(
+		std::env::current_dir().ok().as_deref(),
+		home_dir().as_deref(),
+		exe_dir.as_deref(),
+	)
+}
+
+// The decision on its own, so both platforms' answers are testable from either
+// box. Compared through `canonicalize` where it works, since $HOME is routinely
+// spelled differently from what getcwd hands back.
+fn dir_is_a_choice(
+	cwd: Option<&std::path::Path>,
+	home: Option<&std::path::Path>,
+	exe_dir: Option<&std::path::Path>,
+) -> bool {
+	let Some(cwd) = cwd else {
+		return false;
+	};
+	if cwd.parent().is_none() {
+		return false; // a filesystem root is where a launcher leaves us, not a choice
+	}
+	let real = |dir: &std::path::Path| dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+	let cwd = real(cwd);
+	![home, exe_dir]
+		.into_iter()
+		.flatten()
+		.any(|dir| real(dir) == cwd)
 }
 
 // Where a shell named on the command line starts (`--directory`). Sits ABOVE
@@ -3534,6 +3576,25 @@ colors:
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// The case that keeps coming up is a file manager's "Open in terminal": no
+	// tty, but a directory that was very much chosen. Only the three directories
+	// a launcher leaves us in by default may fall through to the setting.
+	#[test]
+	fn an_inherited_directory_is_a_choice_unless_a_launcher_picked_it() {
+		let home = PathBuf::from("/home/u");
+		let exe_dir = PathBuf::from("/opt/silkterm");
+		let choice =
+			|cwd: &str| dir_is_a_choice(Some(&PathBuf::from(cwd)), Some(&home), Some(&exe_dir));
+		assert!(choice("/home/u/src/thing"), "a file manager's folder");
+		assert!(!choice("/home/u"), "where a desktop icon starts");
+		assert!(!choice("/opt/silkterm"), "double-clicked the executable");
+		assert!(!choice("/"), "a launcher with no directory of its own");
+		assert!(
+			!dir_is_a_choice(None, Some(&home), Some(&exe_dir)),
+			"no directory at all is not a statement either"
+		);
+	}
 
 	// Each platform keeps settings somewhere of its own, and the reason the
 	// decision is a pure function of (layout, environment) is exactly this test:

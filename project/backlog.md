@@ -34,19 +34,22 @@ In each section, items are listed approximately from newest to oldest. Each item
 
 ### Bugs
 
-- 🔘 Startup directory and tab closing.
-	- The startup directory does not follow the calling directory, for instance "Open in terminal" from a file manager. If that cannot coexist with the "Default directory" setting, drop that setting.
-	- Closing a second tab crashes the program.
-	- Closing a single tab should close the whole program. It currently does nothing.
+- 🛠️ Startup directory and tab closing.
+	- Done: the startup directory follows the calling directory, so "Open in terminal" from a file manager starts in that folder. The setting still applies where the inherited directory was a launcher's default - home, a filesystem root, or beside the executable - so the two coexist and the setting stays.
+	- Done: closing the last tab closes the window.
+	- Open: closing a second tab crashes the program. Not reproducible on Linux - twelve tabs closed in a row, by hotkey and by the close box, wide window and narrow. Needs the platform and the steps.
 	- Opened: 20260826-123553
 
 - 🔘 Windows: the transparency setting does nothing.
+	- Cause found, fix not attempted - none of it can be tried from the Linux box. A plain HWND swapchain offers only opaque compositing, so the per-pixel alpha the setting asks for is dropped and everything else still renders, which is why it reads as "does nothing" rather than as a fault.
+	- The lever is there: the graphics layer can be asked for the composition-based presentation path instead, which does offer premultiplied alpha. Two things go with it. The window has to be told to honor its own alpha, which it already is whenever the setting is on. And the backend has to be pinned, since the one picked by default varies per machine and only one of them has the option at all.
+	- Try it on Windows behind the existing setting, so a bad result is one checkbox away from being turned off.
 	- Opened: 20260826-123553
 
-- 🔘 Double-clicking a Windows path leaves off the drive letter.
-	- Be smarter about not selecting anything ahead of it, or past a file extension, even where that has to override the other rules.
-	- Full URLs and file URIs, Windows or Linux, should win over the other rules. Handle spaces in path names.
-	- Same for SSH URIs and other common, well-defined strings that may not be quoted.
+- 🛠️ Double-clicking a Windows path leaves off the drive letter.
+	- A double-click now looks for a shape it can name before it falls back to the word rules: a URL or file URI, a drive path, a UNC path, an absolute posix path, a `~/` path. What it recognizes it takes whole, so brackets inside a wiki URL and spaces inside a folder name no longer cut it short, and a trailing `:120:5` line number is left behind.
+	- A space is crossed only when a path separator turns up within the next forty characters, which is what separates "Program Files\app.exe" from a path followed by a sentence.
+	- The drive letter itself does not reproduce on Linux - the shipped word separators already keep `:`, and a double-click on `C:\Users\jim\notes.txt` selects it whole. Likely a config that still carries the older separator list, which the "start over" item below would also clear. Worth re-checking on Windows against a fresh config.
 	- Opened: 20260826-123553
 
 - 🔘 Does not work very well under tmux.
@@ -83,9 +86,7 @@ In each section, items are listed approximately from newest to oldest. Each item
 	- Delete the existing old config files and start over.
 	- Opened: 20260826-123553
 
-- 🔘 Path and environment display options.
-	- Show Windows paths with forward slashes.
-	- Pre-interpret the most common bash environment variables for shells that do not understand them.
+- 🔘 Pre-interpret the most common bash environment variables for shells that do not understand them.
 	- Same for the common PowerShell variables.
 	- Same for the common Windows variables.
 	- Opened: 20260826-123553
@@ -109,12 +110,13 @@ In each section, items are listed approximately from newest to oldest. Each item
 - 🔘 One View menu item, also on the context menu, that temporarily hides the tab strip, the menu bar and the window decoration together. Working name "windowless mode".
 	- Opened: 20260826-123553
 
-- 🔘 Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell. A PowerShell equivalent could follow.
+- 🔘 Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell.
+	- A PowerShell equivalent could follow.
 	- Opened: 20260826-123553
 
 - 🔘 Wallpaper blur option.
-	- Add blur radius in pixels and opacity percent to the wallpaper metadata.
-	- Add a setting for whether to honor them.
+	- Wallpaper metadata: Add blur radius in %, and opacity (relative to bg color) %.
+	- Add a checkbox in Settings for whether to honor them.
 	- Opened: 20260826-123553
 
 - 🛠️ The pipeline does not say which host shape it is running on. Print it in the plan header, since the skips differ per shape.
