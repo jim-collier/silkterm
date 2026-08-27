@@ -1051,7 +1051,10 @@ impl Pane {
 		// scrolls in on launch); on exit the history_size jump (the alt grid carries no
 		// scrollback) would fire an output-ease that scrolls the restored screen back
 		// in. `gesture_active` (an alt-scroll slide already easing) freezes the band
-		// sizes across a continuous scroll - see the app-scroll block.
+		// sizes across a continuous scroll - see the app-scroll block. The output
+		// ease itself needs no cutting here: the alt grid has no scrollback, so the
+		// set_max(0) below lands it (see Scroll::set_max for the wobble that came
+		// from letting it run on).
 		let alt = self.mode.contains(TermMode::ALT_SCREEN);
 		// a freeze catch-up (pending_cut) is the same shape as the screen swap:
 		// the grid moved arbitrarily far while nothing was built, so every

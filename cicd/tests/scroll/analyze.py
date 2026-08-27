@@ -12,6 +12,12 @@ supposed to hold:
   --mode hardcut  : the app has a static top band (nano/muffer) so the slide is
                     deliberately disabled - the shift is still detected but app_off
                     must stay 0 across every frame (a plain page redraw).
+  --mode still    : the alt screen took over while plain output was still easing.
+                    There is no scrollback behind it, so the view must land at rest
+                    on the spot: frac stays 0 on every frame. A leftover ease shows
+                    up as the fraction wrapping through a whole cell once per line
+                    (the nano wobble). One frame is enough - a still screen builds
+                    only when something changes.
 
 Exit codes: 0 pass, 1 real regression (a genuine violation with data), 2 skip
 (not enough trace / the scene never scrolled - an environment/timing miss, not a
@@ -35,7 +41,7 @@ TRACE = re.compile(
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", required=True, choices=["slide", "hardcut"])
+    ap.add_argument("--mode", required=True, choices=["slide", "hardcut", "still"])
     ap.add_argument("--expect-st", type=int, default=-1)
     ap.add_argument("--label", default="scene")
     ap.add_argument("--eps", type=float, default=0.02)
@@ -51,11 +57,25 @@ def main() -> int:
                     "app_off": float(m.group(4)),
                     "st": int(m.group(6)),
                     "sb": int(m.group(7)),
+                    "frac": float(m.group(8)),
                 }
             )
 
     def out(tag, msg):
         print(f"[ {tag} {a.label}: {msg} ]")
+
+    if a.mode == "still":
+        if not frames:
+            out("SKIP", "no trace frames (GL warmup / timing?)")
+            return 2
+        moving = [f for f in frames if f["frac"] > a.eps]
+        if moving:
+            worst = max(f["frac"] for f in moving)
+            out("FAIL", f"view still easing on the alt screen: {len(moving)} of "
+                       f"{len(frames)} frame(s) carry a fraction (max {worst:.3f})")
+            return 1
+        out("PASS", f"landed at rest: frac 0 across {len(frames)} frame(s)")
+        return 0
 
     if len(frames) < 5:
         out("SKIP", f"only {len(frames)} trace frames (GL warmup / timing?)")

@@ -40,6 +40,9 @@ deterministic. `analyze.py` reads it and checks:
 | vim    | none top, 2 bottom        | slide, monotone (0 bounces) |
 | nano   | 1 top (title), 2 bottom   | slide, monotone (0 bounces) |
 | muffer | 2 top (header), 1 bottom  | slide, monotone (0 bounces) |
+| altenter | nano shape, entered mid-ease | still: frac 0 on every alt frame |
+
+`altenter` is a different check: 400 lines of plain output, a short gap so the ease is mid-flight, then the alt screen. The alt grid has no scrollback, so the view has to land at rest the moment it swaps in; a leftover ease renders as the fraction wrapping through a whole cell once per line of backlog, which is the nano wobble. One frame is enough, since a still screen only builds when something changes.
 
 Title-bar apps (nano, muffer) slide again: `SLIDE_TOP_BAND_APPS = true` in `pane.rs`,
 with the reveal gap filled by the scrolled-off strip (the styled rows each step pushes
