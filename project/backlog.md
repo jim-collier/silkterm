@@ -53,9 +53,13 @@ In each section, items are listed approximately from newest to oldest. Each item
 	- Opened: 20260826-123553
 
 - 🔘 Does not work very well under tmux.
+	- Needs a symptom before anything can be fixed. What was checked on Linux and looks right: a session starts and draws, the status bar stays pinned at the bottom while copy mode pages, the position counter tracks, colors and the box drawing are correct.
+	- One likely candidate, if the complaint is about the wheel: with tmux's own mouse support off, a wheel over the pane is turned into cursor keys, which is what a full-screen app wants but which recalls shell history at a bare prompt. That is the standing behavior for any full-screen app and `set -g mouse on` changes it, so it may be a documentation answer rather than a fix.
 	- Opened: 20260826-123553
 
 - 🔘 Fix the demo gif problems.
+	- Needs the list. The shipped gif is 960x540, 1789 frames, 10.3 MiB, so it is inside its budget and plays through.
+	- One thing that stands out on a read-through: "Watch it speed up, then wind down." shows twice, once white and centered and once yellow and left, which reads as two different caption styles for one line rather than a deliberate repeat. Worth confirming that is on the list before changing it.
 	- Opened: 20260826-123553
 
 ### New features and enhancements
