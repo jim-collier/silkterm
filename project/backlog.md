@@ -58,20 +58,6 @@ In each section, items are listed approximately from newest to oldest. Each item
 - 🔘 Fix the demo gif problems.
 	- Opened: 20260826-123553
 
-- 🔘 In a narrow window the "Copy on: select / output" checkboxes overlap the menu titles. Hide the section when there is no room for it.
-	- The pair is right-aligned to the window edge and the titles run left to right, so below a certain width they simply cross: seen on a 384px-wide window, "Copy on:" lands on top of "Panes" and "select" on top of "Help", both drawn, neither readable.
-	- Not new and not DPI-related - it reads the same at any scale factor, since both sides scale together. The width it starts at just moves with the interface font.
-	- Wanted: shed it responsively, widest arrangement that still clears the titles. Drop the "Copy on:" lead-in first, then the two words, keeping the checkboxes - they carry the state, the words only name it - and drop the whole cluster when even the boxes cannot clear. It comes back on its own as the window widens.
-	- Note this crosses an existing rule: the pair is described in the source as always visible, so that a person can always see when the focused pane is auto-copying. Hiding it is still the better of the two, since an unreadable pile of overlapping text says less about the copy state than a clean absence does - but the staged fallback is what keeps the state showing down to a very narrow window.
-	- Opened: 20260818-181932
-
-- 🔘 The menu titles and the "Copy on" section do not sit on the same baseline.
-	- Only noticeable once they are close enough to compare, which is the same narrow window as above - normally a wide gap separates them.
-	- Measured: the copy labels sit one pixel high at 1x, and it scales, so it is two at 2x. The offset is exactly half a descent.
-	- Both placements are deliberate and neither is wrong on its own. The titles center their ascender-top..baseline box, since they carry ascenders and no descenders and centering the full line would leave the empty descent reading as space below. The copy labels center the full ascent..descent box, because "select" and "output" are lowercase with descenders and read bottom-heavy the other way.
-	- So the fix is a rule for text sharing one bar rather than a change to either helper: pick one of the two for everything in the menu bar, or align the two runs on their baselines and let the centering differ only between bars.
-	- Opened: 20260818-183416
-
 - 🔘 A wheel gesture can land by moving backwards about one line.
 	- Measured on the shipped demo: at the end of a scroll-back the view goes forward all the way, then hops back 19px (the row pitch is 21) and stays. The top row reads `.dircolors`, then `.gitconfig`, then `.dircolors` again over about a third of a second, which is a visible bounce against the direction of the gesture.
 	- Most likely the whole-line detent doing what it is asked: the gesture ended about nine tenths of a line past a boundary and the nearest boundary was the one behind. Rounding to nearest is defensible, so this may be a taste call rather than a defect - but a gesture that ends by reversing reads as a glitch, and always landing forwards would not.
@@ -662,6 +648,16 @@ In each section, items are listed approximately from newest to oldest. Each item
 ### Done
 
 #### Done - Bugs
+
+- ✅ In a narrow window the "Copy on: select / output" checkboxes overlap the menu titles. Hide the section when there is no room for it.
+	- The cluster sheds parts now instead of crossing the titles: the "Copy on:" lead-in goes first, then the two words, then the whole thing. The checkboxes are the last to go, since they carry the state and the words only name it. It comes back on its own as the window widens.
+	- Opened: 20260818-181932
+	- Closed: 20260826-184319
+
+- ✅ The menu titles and the "Copy on" section do not sit on the same baseline.
+	- Everything on the menu bar centers the same way now, so the two runs share one baseline. The copy labels lost the full-ink centering that read better on its own but sat half a descent above the titles beside it.
+	- Opened: 20260818-183416
+	- Closed: 20260826-184319
 
 - ✅ Windows PowerShell 5.1 started with "Cannot load PSReadline module. Console is running without PSReadline." and no line editing.
 	- A terminal hands its shell whatever environment it was launched with. That is right for anything the user set themselves, and wrong for the bookkeeping a shell keeps for its own use: PowerShell 7 puts its own module directories on the search path that every version of PowerShell shares, so a Windows PowerShell 5.1 pane opened anywhere below one found PowerShell 7's copy of PSReadLine ahead of its own, and was not allowed to load it.
