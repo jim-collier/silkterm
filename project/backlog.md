@@ -20,12 +20,15 @@
 
 ## Conventions
 
-In each section, items are listed approximately from newest to oldest. Each item ends with an `Opened:` bullet, and a `Closed:` bullet once it is done or canceled, both stamped `YYYYmmDD-HHMMSS`. `Opened: n/a` means the item was written down and closed in the same pass. Use a clipboard or macro manager to make inserting these emojis easier.
+In each section, items are listed approximately from newest to oldest. Each item ends with an `Opened:` bullet, and a `Closed:` bullet once it is done or canceled, both stamped `YYYYmmDD-HHMMSS`. `Opened: n/a` means the item was written down and closed in the same pass, and/or just couldn't be easily figured out from notes and backlog without dates.
+
+Use a clipboard or macro manager to make inserting these emojis easier. This "database" will eventually be moved to a git-synced nano-git-db.
 
 | Icon | Status
 | :--: | :--
 | 🔘   | Not started
 | 🛠️   | Started, and/or partially complete
+| 🔬   | Testing not started or finished
 | ✋   | Defer
 | ✅   | Complete
 | 🚫   | Canceled
@@ -36,46 +39,39 @@ In each section, items are listed approximately from newest to oldest. Each item
 
 - 🔘 The dreaded "Nano Bounce Bug" is back. Or I don't think ever *really* left. This will serve as the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and probably chasing red-herrings. It's obviously related in to smooth-scrolling.
 	- Steps:
-		- Run nano. On any file, or with no file.
-		- Observe: It "pops" onto the screen, but "wobbles", "violently", for maybe a second or two. If I recall, the wobbling is vertically up and down only - but my memory may be biased by what I believe "should" only be possible given the design and code. But at this point - who knows.
-			- Note: It's short enough that it's livable (kind of cool even), but it's still a jarring effect for what is supposed to be a highly-polished terminal. (And by "kind of cool", I mean, if it were an opt-in, always happened "Compiz"-like "open-wobbly" effect. But we don't want that. We want stability.)
-	- It's hard to recreate, so I don't know the steps to do it. But once it happens once, it seems easy to repeat. It only seems to start happening after a while - so maybe related to lots of input and/or more likely, output. And/or many switching of modes? Or just time?
+		- Run nano. On any file, or with no file. Ideally, immediately afte a long scroll (e.g. as part of a script. `n8git_backup-and-publish` triggers this reliably.
+		- Observe: It pops onto the screen, and "wobbles", "violently", for maybe a second or two. The wobbling is vertically up and down only.
+		- Turning off smooth-scrolling, "fixes" the problem.
 	- Delay this to see if other fixes, fix this.
 		- Result: Other fixes have not fixed this.
 	- Opened: 20260709-115247
 
-- 🛠️ Startup directory and tab closing.
+- 🔘 Windows: the transparency setting does nothing.
+	- Cause found, fix not attempted - none of it can be tried from the Linux box. A plain HWND swapchain offers only opaque compositing, so the per-pixel alpha the setting asks for is dropped and everything else still renders, which is why it reads as "does nothing" rather than as a fault.
+	- The lever is there: the graphics layer can be asked for the composition-based presentation path instead, which does offer premultiplied alpha. Two things go with it. The window has to be told to honor its own alpha, which it already is whenever the setting is on. And the backend has to be pinned, since the one picked by default varies per machine and only one of them has the option at all.
+	- I need to try it on Windows.
+	- Opened: 20260826-123553
+
+- 🔬 Startup directory and tab closing.
 	- Done: the startup directory follows the calling directory, so "Open in terminal" from a file manager starts in that folder. The setting still applies where the inherited directory was a launcher's default - home, a filesystem root, or beside the executable - so the two coexist and the setting stays.
 	- Done: closing the last tab closes the window.
 	- Open: closing a second tab crashes the program. Not reproducible on Linux - twelve tabs closed in a row, by hotkey and by the close box, wide window and narrow. Needs the platform and the steps.
 	- Opened: 20260826-123553
 
-- 🔘 Windows: the transparency setting does nothing.
-	- Cause found, fix not attempted - none of it can be tried from the Linux box. A plain HWND swapchain offers only opaque compositing, so the per-pixel alpha the setting asks for is dropped and everything else still renders, which is why it reads as "does nothing" rather than as a fault.
-	- The lever is there: the graphics layer can be asked for the composition-based presentation path instead, which does offer premultiplied alpha. Two things go with it. The window has to be told to honor its own alpha, which it already is whenever the setting is on. And the backend has to be pinned, since the one picked by default varies per machine and only one of them has the option at all.
-	- Try it on Windows behind the existing setting, so a bad result is one checkbox away from being turned off.
-	- Opened: 20260826-123553
-
-- 🛠️ Double-clicking a Windows path leaves off the drive letter.
+- 🔬 Double-clicking a Windows path leaves off the drive letter.
 	- A double-click now looks for a shape it can name before it falls back to the word rules: a URL or file URI, a drive path, a UNC path, an absolute posix path, a `~/` path. What it recognizes it takes whole, so brackets inside a wiki URL and spaces inside a folder name no longer cut it short, and a trailing `:120:5` line number is left behind.
 	- A space is crossed only when a path separator turns up within the next forty characters, which is what separates "Program Files\app.exe" from a path followed by a sentence.
 	- The drive letter itself does not reproduce on Linux - the shipped word separators already keep `:`, and a double-click on `C:\Users\jim\notes.txt` selects it whole. Likely a config that still carries the older separator list, which the "start over" item below would also clear. Worth re-checking on Windows against a fresh config.
 	- Opened: 20260826-123553
 
-- 🔘 Does not work very well under tmux.
+- 🔬 Does not work very well under tmux.
 	- Needs a symptom before anything can be fixed. What was checked on Linux and looks right: a session starts and draws, the status bar stays pinned at the bottom while copy mode pages, the position counter tracks, colors and the box drawing are correct.
 	- One likely candidate, if the complaint is about the wheel: with tmux's own mouse support off, a wheel over the pane is turned into cursor keys, which is what a full-screen app wants but which recalls shell history at a bare prompt. That is the standing behavior for any full-screen app and `set -g mouse on` changes it, so it may be a documentation answer rather than a fix.
 	- Opened: 20260826-123553
 
-- 🔘 Fix the demo gif problems.
-	- Needs the list. The shipped gif is 960x540, 1789 frames, 10.3 MiB, so it is inside its budget and plays through.
-	- One thing that stands out on a read-through: "Watch it speed up, then wind down." shows twice, once white and centered and once yellow and left, which reads as two different caption styles for one line rather than a deliberate repeat. Worth confirming that is on the list before changing it.
-	- Opened: 20260826-123553
-
 ### New features and enhancements
 
-- 🔘 Pick up the newer SHCL, which carries some of the fixes asked for, and see whether it clears the outstanding config problems.
-	- The local copy of that repo is missing or badly out of date. Take it straight from source.
+- 🔘 Pick up the newer SHCL, which carries some fixes needed. Take it from github source.
 	- Reorganize the config file into a more logical order while in there.
 	- Delete the existing old config files and start over.
 	- Opened: 20260826-123553
