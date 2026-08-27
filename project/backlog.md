@@ -34,10 +34,10 @@ In each section, items are listed approximately from newest to oldest. Each item
 
 ### Bugs
 
-- 🔘 Startup directory and tab closing.
-	- The startup directory does not follow the calling directory, for instance "Open in terminal" from a file manager. If that cannot coexist with the "Default directory" setting, drop that setting.
-	- Closing a second tab crashes the program.
-	- Closing a single tab should close the whole program. It currently does nothing.
+- 🛠️ Startup directory and tab closing.
+	- Done: the startup directory follows the calling directory, so "Open in terminal" from a file manager starts in that folder. The setting still applies where the inherited directory was a launcher's default - home, a filesystem root, or beside the executable - so the two coexist and the setting stays.
+	- Done: closing the last tab closes the window.
+	- Open: closing a second tab crashes the program. Not reproducible on Linux - twelve tabs closed in a row, by hotkey and by the close box, wide window and narrow. Needs the platform and the steps.
 	- Opened: 20260826-123553
 
 - 🔘 Windows: the transparency setting does nothing.
@@ -83,9 +83,7 @@ In each section, items are listed approximately from newest to oldest. Each item
 	- Delete the existing old config files and start over.
 	- Opened: 20260826-123553
 
-- 🔘 Path and environment display options.
-	- Show Windows paths with forward slashes.
-	- Pre-interpret the most common bash environment variables for shells that do not understand them.
+- 🔘 Pre-interpret the most common bash environment variables for shells that do not understand them.
 	- Same for the common PowerShell variables.
 	- Same for the common Windows variables.
 	- Opened: 20260826-123553
@@ -109,12 +107,13 @@ In each section, items are listed approximately from newest to oldest. Each item
 - 🔘 One View menu item, also on the context menu, that temporarily hides the tab strip, the menu bar and the window decoration together. Working name "windowless mode".
 	- Opened: 20260826-123553
 
-- 🔘 Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell. A PowerShell equivalent could follow.
+- 🔘 Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell.
+	- A PowerShell equivalent could follow.
 	- Opened: 20260826-123553
 
 - 🔘 Wallpaper blur option.
-	- Add blur radius in pixels and opacity percent to the wallpaper metadata.
-	- Add a setting for whether to honor them.
+	- Wallpaper metadata: Add blur radius in %, and opacity (relative to bg color) %.
+	- Add a checkbox in Settings for whether to honor them.
 	- Opened: 20260826-123553
 
 - 🛠️ The pipeline does not say which host shape it is running on. Print it in the plan header, since the skips differ per shape.
