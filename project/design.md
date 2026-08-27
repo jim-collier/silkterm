@@ -129,6 +129,8 @@ Crate owns integer "where grid is." Renderer owns fractional overlay.
 
 1. Draw one extra row at top + bottom so partial rows fill viewport edges during fractional offset.
 
+A gesture rests on a whole line, and on the line it was heading FOR. A pixel-delta wheel leaves a fractional target, and parking there renders every row shifted by a sub-cell fraction. Rounding to the nearest line is the obvious way to settle that and it is wrong at the end of a gesture: a scroll that stops nine tenths past a boundary goes all the way forward and then hops back, which reads as a glitch even though the travel is under a line. So the detent goes forward, in the direction the wheel was already turning. A scrollbar drag or a track click carries no direction and still rounds to nearest, which is what direct manipulation wants.
+
 The ease curve is deliberately asymmetric. A single exponential lerp starts at peak speed on its first frame and crawls its last pixels in over a second. Both read wrong. Motion instead builds from rest through a two-stage cascade: the visual position chases a leading stage, which chases the target. The stop is sharpened by a minimum closing speed over the final fraction of a line. Ease-out above that band is unchanged. Neither stage can overshoot, so the curve cannot bounce.
 
 ### Output easing (new text)

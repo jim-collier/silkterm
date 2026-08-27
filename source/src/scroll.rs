@@ -103,6 +103,7 @@ pub struct Scroll {
 	burst: f32, // lines this output burst has advanced (resets once settled at rest)
 	overflow: bool, // burst topped a screenful: its first line is off - uncapped chase
 	sweep: bool, // user jumped back to the bottom: full ease speed until caught up
+	wheel_dir: f32, // sign of the last wheel motion, so the detent lands ahead of it
 }
 
 impl Scroll {
@@ -118,6 +119,7 @@ impl Scroll {
 			burst: 0.0,
 			overflow: false,
 			sweep: false,
+			wheel_dir: 0.0,
 		}
 	}
 
@@ -169,6 +171,9 @@ impl Scroll {
 	}
 
 	pub fn wheel(&mut self, lines: f32) {
+		if lines != 0.0 {
+			self.wheel_dir = lines.signum();
+		}
 		self.target = (self.target + lines).clamp(0.0, self.max);
 		// a wheel that lands back on the bottom is still the user driving: the
 		// remaining gap sweeps at full ease speed, not the output chase
@@ -196,6 +201,7 @@ impl Scroll {
 	// Scroll to an absolute position (lines from the bottom) - scrollbar drags
 	// and track clicks. Eases like every other scroll.
 	pub fn scroll_to(&mut self, lines: f32) {
+		self.wheel_dir = 0.0;
 		self.target = lines.clamp(0.0, self.max);
 		self.sweep = true;
 	}
@@ -240,6 +246,22 @@ impl Scroll {
 			// intact, which is what preserves the eased speed across a burst
 			self.mid = (self.mid + (self.visual - before)).clamp(0.0, self.visual);
 		}
+	}
+
+	// The whole line the view comes to rest on. Rounding to NEAREST is the obvious
+	// answer and it is wrong at the end of a gesture: a scroll that stops nine
+	// tenths of a line past a boundary would go all the way forward and then hop
+	// back, which reads as a glitch even though the distance is under a line. So a
+	// wheel lands on the line AHEAD of where it stopped, in the direction it was
+	// already going. A thumb drag or a track click has no direction of its own and
+	// still rounds to nearest.
+	fn detent(&self) -> f32 {
+		let whole = match self.wheel_dir {
+			d if d > 0.0 => self.target.ceil(),
+			d if d < 0.0 => self.target.floor(),
+			_ => self.target.round(),
+		};
+		whole.clamp(0.0, self.max)
 	}
 
 	pub fn advance(&mut self, dt_s: f32) {
@@ -327,7 +349,7 @@ impl Scroll {
 			// shifted by a sub-cell fraction - the top scanlines of the first
 			// clipped row peek out at the pane's content bottom, which reads as
 			// garbage hugging the divider. Glide to the nearest line instead.
-			let detent = self.target.round().clamp(0.0, self.max);
+			let detent = self.detent();
 			if (self.visual - detent).abs() < config::SETTLE_EPS {
 				self.target = detent;
 				self.visual = detent;
@@ -338,6 +360,7 @@ impl Scroll {
 				self.burst = 0.0;
 				self.overflow = false;
 				self.sweep = false;
+				self.wheel_dir = 0.0;
 			} else {
 				self.target = detent; // still a fraction away: keep easing to the detent
 			}
@@ -443,7 +466,7 @@ mod tests {
 			s.advance(0.016);
 		}
 		assert!(!s.animating());
-		assert_eq!(s.desired_offset(), 3); // detent at round(2.6)
+		assert_eq!(s.desired_offset(), 3);
 		assert!(s.frac().abs() < 1e-6, "frac {} at rest", s.frac());
 		// accumulating many small fractional notches also lands on a line
 		let mut t = Scroll::new();
@@ -454,8 +477,38 @@ mod tests {
 		for _ in 0..2000 {
 			t.advance(0.016);
 		}
-		assert_eq!(t.desired_offset(), 2); // round(2.1)
+		assert_eq!(t.desired_offset(), 3);
 		assert!(t.frac().abs() < 1e-6);
+	}
+
+	// A gesture that stops just past a line used to be rounded BACK onto it, so
+	// the view went all the way forward and then hopped a line the other way -
+	// under a line of travel, but a visible reversal against the gesture.
+	#[test]
+	fn a_wheel_settles_on_the_line_it_was_heading_for() {
+		let _g = pin();
+		let settle = |lines: f32| {
+			let mut s = Scroll::new();
+			s.set_max(100.0);
+			s.wheel(lines.abs().ceil() + 4.0); // somewhere to scroll back down from
+			for _ in 0..2000 {
+				s.advance(0.016);
+			}
+			let from = s.desired_offset();
+			s.wheel(lines);
+			for _ in 0..2000 {
+				s.advance(0.016);
+			}
+			(from, s.desired_offset())
+		};
+		let (from, to) = settle(2.1);
+		assert_eq!(
+			to,
+			from + 3,
+			"scrolling back lands on the far line, not back"
+		);
+		let (from, to) = settle(-2.1);
+		assert_eq!(to, from - 3, "and the same going the other way");
 	}
 
 	#[test]

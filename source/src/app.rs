@@ -743,6 +743,80 @@ struct CopyBoxes {
 	boxes: [Rect; 2],  // select, output checkbox squares
 	label_x: [f32; 3], // left edge per COPYBOX_LABELS entry
 	label_w: [f32; 3],
+	shown: [bool; 3], // which labels there is room for at this window width
+}
+
+impl CopyBoxes {
+	// Everything the cluster occupies, left edge first.
+	fn left(&self) -> f32 {
+		if self.shown[0] {
+			self.label_x[0]
+		} else {
+			self.boxes[0].x
+		}
+	}
+
+	// Where a click counts as hitting checkbox `i`: the box, plus its word when
+	// the word is there to be aimed at.
+	fn hit_range(&self, i: usize) -> (f32, f32) {
+		let label = i + 1;
+		let right = if self.shown[label] {
+			self.label_x[label] + self.label_w[label]
+		} else {
+			self.boxes[i].x + self.boxes[i].w
+		};
+		(self.boxes[i].x, right)
+	}
+}
+
+// What the cluster is measured from. Split out so the shedding order is a pure
+// function of the numbers, testable without a window.
+struct CopyMetrics {
+	right: f32, // where the cluster's right edge sits
+	label_w: [f32; 3],
+	box_sz: f32,
+	box_y: f32,
+	box_gap: f32,  // checkbox to its own word
+	pair_gap: f32, // one pair to the next
+	lead_gap: f32, // "Copy on:" to the first checkbox
+}
+
+// The widest arrangement that still clears `titles_right`, or None when even the
+// bare boxes cannot. Ordered widest first: whole thing, then without the lead-in,
+// then boxes alone.
+fn copybox_fit(m: &CopyMetrics, titles_right: f32) -> Option<CopyBoxes> {
+	[[true; 3], [false, true, true], [false; 3]]
+		.into_iter()
+		.map(|shown| copybox_place(m, shown))
+		.find(|cb| cb.left() >= titles_right)
+}
+
+// Laid out right to left, with a hidden label taking its own gap with it.
+fn copybox_place(m: &CopyMetrics, shown: [bool; 3]) -> CopyBoxes {
+	let mut label_w = m.label_w;
+	for (w, on) in label_w.iter_mut().zip(shown) {
+		if !on {
+			*w = 0.0;
+		}
+	}
+	let gap_if = |on: bool, gap: f32| if on { gap } else { 0.0 };
+	let square = |x: f32| Rect {
+		x,
+		y: m.box_y,
+		w: m.box_sz,
+		h: m.box_sz,
+	};
+	let out_x = m.right - label_w[2];
+	let out_box = square(out_x - gap_if(shown[2], m.box_gap) - m.box_sz);
+	let sel_x = out_box.x - m.pair_gap - label_w[1];
+	let sel_box = square(sel_x - gap_if(shown[1], m.box_gap) - m.box_sz);
+	let lead_x = sel_box.x - m.lead_gap - label_w[0];
+	CopyBoxes {
+		boxes: [sel_box, out_box],
+		label_x: [lead_x, sel_x, out_x],
+		label_w,
+		shown,
+	}
 }
 
 // Tab strip: each tab owns its own pane split-tree. Detach/dock to other
@@ -2168,51 +2242,44 @@ impl State {
 			.position(|&(x, w)| mx >= x && mx < x + w)
 	}
 
-	// Always-visible "Copy on [ ] select [ ] output" pair on the right of the
-	// menu bar (security: the user can always see when the focused pane is
-	// auto-copying). label_x/label_w index-match COPYBOX_LABELS.
-	fn copybox_layout(&mut self) -> CopyBoxes {
+	// The "Copy on [ ] select [ ] output" pair on the right of the menu bar. The
+	// user has to be able to see when the focused pane is auto-copying, so the
+	// cluster sheds parts rather than shrinking: the lead-in goes first, then the
+	// two words, and only when even the boxes cannot clear the menu titles does
+	// the whole thing go (None). Overlapping text says less about the copy state
+	// than a clean absence does. It comes back on its own as the window widens.
+	// label_x/label_w index-match COPYBOX_LABELS.
+	fn copybox_layout(&mut self) -> Option<CopyBoxes> {
+		let titles_right =
+			self.menubar_layout().last().map_or(0.0, |&(x, w)| x + w) + self.text.dip(MENU_BAR_PAD);
 		let attrs = crate::text::ui_attrs();
 		let mut label_w = [0.0f32; 3];
 		for (w, label) in label_w.iter_mut().zip(COPYBOX_LABELS) {
 			*w = self.text.measure_ui_text(label, &attrs);
 		}
 		let box_sz = (self.text.ui_line_h * 0.6).round();
-		let box_y = (self.menu_bar_h() - box_sz) / 2.0;
-		let box_gap = self.text.dip(COPYBOX_BOX_GAP);
-		let right = self.gfx.config.width as f32 - self.text.dip(MENU_BAR_PAD);
-		let out_x = right - label_w[2];
-		let out_box = Rect {
-			x: out_x - box_gap - box_sz,
-			y: box_y,
-			w: box_sz,
-			h: box_sz,
-		};
-		let sel_x = out_box.x - self.text.dip(COPYBOX_PAIR_GAP) - label_w[1];
-		let sel_box = Rect {
-			x: sel_x - box_gap - box_sz,
-			y: box_y,
-			w: box_sz,
-			h: box_sz,
-		};
-		let lead_x = sel_box.x - self.text.dip(COPYBOX_LEAD_GAP) - label_w[0];
-		CopyBoxes {
-			boxes: [sel_box, out_box],
-			label_x: [lead_x, sel_x, out_x],
+		let metrics = CopyMetrics {
+			right: self.gfx.config.width as f32 - self.text.dip(MENU_BAR_PAD),
 			label_w,
-		}
+			box_sz,
+			box_y: (self.menu_bar_h() - box_sz) / 2.0,
+			box_gap: self.text.dip(COPYBOX_BOX_GAP),
+			pair_gap: self.text.dip(COPYBOX_PAIR_GAP),
+			lead_gap: self.text.dip(COPYBOX_LEAD_GAP),
+		};
+		copybox_fit(&metrics, titles_right)
 	}
 
 	// Which copy-mode checkbox (the square or its word) a menu-bar click hit.
 	fn copybox_hit(&mut self, mx: f32) -> Option<CopyKind> {
-		let cb = self.copybox_layout();
-		if mx >= cb.boxes[0].x && mx <= cb.label_x[1] + cb.label_w[1] {
-			Some(CopyKind::Select)
-		} else if mx >= cb.boxes[1].x && mx <= cb.label_x[2] + cb.label_w[2] {
-			Some(CopyKind::Output)
-		} else {
-			None
+		let cb = self.copybox_layout()?;
+		for (i, kind) in [CopyKind::Select, CopyKind::Output].into_iter().enumerate() {
+			let (left, right) = cb.hit_range(i);
+			if mx >= left && mx <= right {
+				return Some(kind);
+			}
 		}
+		None
 	}
 
 	// Flip one of a pane's two auto-copy triggers. The two are independent and can
@@ -3021,34 +3088,35 @@ impl State {
 				fp.is_some_and(|p| p.copy_select),
 				fp.is_some_and(|p| p.copy_output),
 			];
-			let cb = self.copybox_layout();
-			let border = copy_dim(config::menu_border(), self.focused);
-			let fill = copy_dim(config::menu_fg(), self.focused);
-			let box_rule = self.text.dip(CHROME_HAIRLINE);
-			let tick_inset = self.text.dip(COPYBOX_TICK_INSET);
-			for (checkbox, on) in cb.boxes.iter().zip(checked) {
-				instances.push(rect_inst(
-					checkbox.x - box_rule,
-					checkbox.y - box_rule,
-					checkbox.w + 2.0 * box_rule,
-					checkbox.h + 2.0 * box_rule,
-					border,
-				));
-				instances.push(rect_inst(
-					checkbox.x,
-					checkbox.y,
-					checkbox.w,
-					checkbox.h,
-					config::TAB_BAR_BG,
-				));
-				if on {
+			if let Some(cb) = self.copybox_layout() {
+				let border = copy_dim(config::menu_border(), self.focused);
+				let fill = copy_dim(config::menu_fg(), self.focused);
+				let box_rule = self.text.dip(CHROME_HAIRLINE);
+				let tick_inset = self.text.dip(COPYBOX_TICK_INSET);
+				for (checkbox, on) in cb.boxes.iter().zip(checked) {
 					instances.push(rect_inst(
-						checkbox.x + tick_inset,
-						checkbox.y + tick_inset,
-						checkbox.w - 2.0 * tick_inset,
-						checkbox.h - 2.0 * tick_inset,
-						fill,
+						checkbox.x - box_rule,
+						checkbox.y - box_rule,
+						checkbox.w + 2.0 * box_rule,
+						checkbox.h + 2.0 * box_rule,
+						border,
 					));
+					instances.push(rect_inst(
+						checkbox.x,
+						checkbox.y,
+						checkbox.w,
+						checkbox.h,
+						config::TAB_BAR_BG,
+					));
+					if on {
+						instances.push(rect_inst(
+							checkbox.x + tick_inset,
+							checkbox.y + tick_inset,
+							checkbox.w - 2.0 * tick_inset,
+							checkbox.h - 2.0 * tick_inset,
+							fill,
+						));
+					}
 				}
 			}
 			Some((start, instances.len() as u32))
@@ -3456,22 +3524,23 @@ impl State {
 				areas.extend(p.emoji_area(margin));
 			}
 			if self.menu_bar {
+				// Everything on this bar sits on ONE baseline. The copy labels used
+				// to center their full ink box, which reads better on its own but
+				// left them half a descent above the titles beside them.
+				let bar_top = self.text.ui_text_top(0.0, menu_h);
 				for (i, buf) in chrome.menubar.iter().enumerate() {
-					// the trailing buffers are the right-aligned copy-mode labels;
-					// their lowercase words center on full ink, not ascent..baseline
+					// the trailing buffers are the right-aligned copy-mode labels,
+					// and at a narrow width some of them are not there at all
 					let (left, left_bound, right_bound, top) = if i < bar_layout.len() {
 						let (x, w) = bar_layout[i];
-						(
-							x + self.text.dip(MENU_BAR_PAD),
-							x,
-							x + w,
-							self.text.ui_text_top(0.0, menu_h),
-						)
+						(x + self.text.dip(MENU_BAR_PAD), x, x + w, bar_top)
 					} else {
 						let j = i - bar_layout.len();
-						let x = copyboxes.label_x[j];
-						let w = copyboxes.label_w[j];
-						(x, x, x + w, self.text.ui_text_top_ink(0.0, menu_h))
+						let Some(cb) = copyboxes.as_ref().filter(|cb| cb.shown[j]) else {
+							continue;
+						};
+						let (x, w) = (cb.label_x[j], cb.label_w[j]);
+						(x, x, x + w, bar_top)
 					};
 					// trailing buffers are the copy-mode labels - dim them off-focus
 					let color = if i < bar_layout.len() {
@@ -6038,15 +6107,69 @@ impl State {
 #[cfg(test)]
 mod tests {
 	use super::{
-		ContextMenu, Entry, MenuAction, TAB_CLOSE_M, accel_at, accel_clash, focus_ring,
-		key_is_typed, menu_metrics, mia, msub, mta, pace_frame, tab_close_box, tab_command_line,
-		tab_title_w,
+		ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, accel_at, accel_clash,
+		copybox_fit, copybox_place, focus_ring, key_is_typed, menu_metrics, mia, msub, mta,
+		pace_frame, tab_close_box, tab_command_line, tab_title_w,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
 	use winit::event::ElementState;
 
 	// The chrome shares a coordinate space with the terminal grid, so nothing
+	// A narrow window used to draw "Copy on:" straight over "Panes" and "Help" -
+	// both there, neither readable. The cluster sheds parts instead, and the
+	// checkboxes are the last thing to go because they carry the state.
+	#[test]
+	fn the_copy_cluster_sheds_parts_before_it_reaches_the_menu_titles() {
+		let metrics = |right: f32| CopyMetrics {
+			right,
+			label_w: [56.0, 34.0, 40.0],
+			box_sz: 10.0,
+			box_y: 4.0,
+			box_gap: 6.0,
+			pair_gap: 14.0,
+			lead_gap: 10.0,
+		};
+		let titles_right = 300.0;
+		let shown_at = |right: f32| copybox_fit(&metrics(right), titles_right).map(|cb| cb.shown);
+		assert_eq!(shown_at(700.0), Some([true; 3]), "room for all of it");
+		assert_eq!(
+			shown_at(450.0),
+			Some([false, true, true]),
+			"the lead-in goes first"
+		);
+		assert_eq!(shown_at(400.0), Some([false; 3]), "then the two words");
+		assert_eq!(shown_at(330.0), None, "and then the cluster itself");
+	}
+
+	// A word that is not drawn cannot be aimed at, so the box has to answer for
+	// itself - otherwise the narrow arrangement has a dead checkbox.
+	#[test]
+	fn a_checkbox_with_no_word_is_still_clickable() {
+		let metrics = CopyMetrics {
+			right: 400.0,
+			label_w: [56.0, 34.0, 40.0],
+			box_sz: 10.0,
+			box_y: 4.0,
+			box_gap: 6.0,
+			pair_gap: 14.0,
+			lead_gap: 10.0,
+		};
+		let bare = copybox_place(&metrics, [false; 3]);
+		for i in 0..2 {
+			let (left, right) = bare.hit_range(i);
+			assert_eq!(left, bare.boxes[i].x);
+			assert_eq!(right, bare.boxes[i].x + bare.boxes[i].w);
+		}
+		let full = copybox_place(&metrics, [true; 3]);
+		let (_, right) = full.hit_range(0);
+		assert_eq!(
+			right,
+			full.label_x[1] + full.label_w[1],
+			"the word counts too"
+		);
+	}
+
 	// converts it at a boundary the way the Settings dialog does - every piece
 	// scales at its own use site, and a piece that misses out is exactly the
 	// defect this pass fixed (chrome thinning out as the display's DPI rises).
