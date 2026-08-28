@@ -442,6 +442,8 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - On Windows a release build owns no console of its own, so printing has to join the one that launched it. This happens only on the paths that print and exit; a terminal window that held a console would die with the shell that started it.
 
 - The contract on saving is that a user's comments and blank-line grouping survive. Layout may be tidied, meaning indentation and quotes that are not needed, but a value is never rewritten. The shipped template is deliberately spelled the way a save would spell it, so the first save is a no-op rather than a reflow of the file we just wrote.
+- A save writes through a temp file and a rename, never in place, so a crash mid-save cannot leave a truncated config. If loading had to drop a line it could not place, the save is refused rather than quietly deleting it. One changed setting is not worth a line someone wrote.
+- The template's sections follow the Settings dialog's tabs, in the same order, so a person who has learned one has learned the other. That order reaches a new file only. An existing config keeps whatever order it has, since the machinery that adds new settings places them but never moves what is already there.
 
 - The file is organized as nested blocks, tab-indented, mirroring how the settings relate: `wallpaper` holds its children, with `rotate` and `contrast_mask` nested inside it. A setting can also be written as a single dotted line (`wallpaper.opacity: 0.1`) and reads identically. The block form is just the canonical spelling.
 
