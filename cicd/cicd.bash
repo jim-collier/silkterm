@@ -183,6 +183,30 @@ build_tag(){
 	esac
 	printf 'gnu%s%s%s' "$os" "$os" "$arch"
 }
+## Where this run is happening, for the plan header: the skips differ per host, so
+## say which one it is up front. WSL is told from its kernel string; the Windows
+## pipeline sets CICD_LINUX_HALF when it hands the Linux stages over.
+host_line(){
+	local kernel="" distro="${WSL_DISTRO_NAME:-}" os=""
+	[[ -r /proc/version ]] && kernel="$(</proc/version)"
+	[[ -r /etc/os-release ]] && os="$(. /etc/os-release 2>/dev/null; printf '%s' "${PRETTY_NAME:-${NAME:-}}")"
+	case "$(uname -s)" in
+		MINGW*|MSYS*|CYGWIN*)
+			printf 'Windows (MSYS bash) - cicd-win.ps1 is the pipeline for this box' ;;
+		Linux)
+			if [[ "${kernel,,}" == *microsoft* ]]; then
+				local gen="WSL"; [[ "$kernel" == *WSL2* ]] && gen="WSL2"
+				if [[ -n "${CICD_LINUX_HALF:-}" ]]; then
+					printf '%s%s on Windows, the Linux half of a cicd-win.ps1 run' "$gen" "${distro:+ ($distro)}"
+				else
+					printf '%s%s on Windows, run on its own' "$gen" "${distro:+ ($distro)}"
+				fi
+			else
+				printf 'Linux%s, %s' "${os:+ ($os)}" "$(uname -m)"
+			fi ;;
+		*) printf '%s, %s' "$(uname -s)" "$(uname -m)" ;;
+	esac
+}
 ## Run a build command, retrying it a few times before calling it a failure. Every
 ## profile that reaches here uses fat LTO, and rustc has repeatedly died part way
 ## through one inside LLVM - a different pass and a different signal each time
@@ -270,6 +294,7 @@ df_pattern="${DOGFOOD_PREFIX:-}_<build date>${DOGFOOD_TAG:+_${DOGFOOD_TAG}}"
 fEcho_Clean
 fEcho_Clean "${APP_NAME} local CI/CD"
 fEcho_Clean
+fEcho_Clean "Host ................: $(host_line)"
 fEcho_Clean "Repo root ...........: ${root}"
 fEcho_Clean "Remote sync .........: $( ((sync)) && echo 'fetch + fast-forward check' || echo '(skipped)')"
 fEcho_Clean "Format ..............: ${FMT_CMD[*]:-(skipped)}"

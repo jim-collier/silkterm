@@ -635,7 +635,7 @@ function fWslLinuxHalf {
 	fNote "cicd.bash ...: $($cicdArgs -join ' ')"
 	fEcho_Clean
 
-	& wsl.exe -d $distro --cd $wslRepo -e env "CARGO_TARGET_DIR=$wslTarget" bash cicd/cicd.bash @cicdArgs
+	& wsl.exe -d $distro --cd $wslRepo -e env "CARGO_TARGET_DIR=$wslTarget" CICD_LINUX_HALF=1 bash cicd/cicd.bash @cicdArgs
 	if ($LASTEXITCODE -ne 0) { fDie "Linux half failed (exit $LASTEXITCODE)" }
 	fEcho "OK: Linux half"
 }
