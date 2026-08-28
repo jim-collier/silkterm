@@ -90,8 +90,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Plus a plain SilkTerm shortcut with no shell argument, also starting in %USERPROFILE%.
 	- Opened: 20260826-123553
 
-- 🔘 One View menu item, also on the context menu, that temporarily hides the tab strip, the menu bar and the window decoration together. Working name "windowless mode", but can probably think of a better name/phrase.
+- ✅ One View menu item, also on the context menu, that temporarily hides the tab strip, the menu bar and the window decoration together. Working name "windowless mode", but can probably think of a better name/phrase.
+	- Done as "Bare window", a checkmark row at the end of the View menu and beside "Menu bar" in the right-click menu. Nothing is written to the config. Turning it off puts back whichever of the frame and menu bar were on before; one switched on in the meantime stays on. The name is a first pick and easy to change.
 	- Opened: 20260826-123553
+	- Closed: 20260828
 
 - 🔘 Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell.
 	- A PowerShell equivalent could follow.
