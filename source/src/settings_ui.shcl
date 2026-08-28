@@ -684,7 +684,7 @@ rows:
 		label: Shell
 		tab: Shell
 
-	## The shells the Tabs menu offers under "New Tab with Shell", in the order it
+	## The shells the Tabs menu offers under "New tab with shell", in the order it
 	## offers them - and the first switched-on one is the shell a plain new tab,
 	## pane or window runs. The list fills itself in a few seconds after launch;
 	## this grid is where it is ordered, renamed, switched off and pruned.

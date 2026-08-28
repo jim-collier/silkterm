@@ -37,17 +37,18 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔬 Windows: the transparency setting does nothing.
+- ✅ Windows: the transparency setting does nothing.
 	- Cause: a plain HWND swapchain offers only opaque compositing, so the per-pixel alpha the setting asks for was dropped while everything else still rendered, which is why it read as "does nothing" rather than as a fault.
 	- Fixed: with the setting on, the window is presented through the composition path on DX12, which carries premultiplied alpha, and without a redirection surface under it. The backend is pinned for it, since the default pick varies per machine and only DX12 has the option. If DX12 cannot serve the window it falls back to the old opaque path and says so.
 	- On Windows the setting takes effect on the next launch. The Settings tip and the config comment both say so.
-	- Verified that the alpha reaches the desktop compositor. Still to look at by eye: the desktop showing through, and that the frame and menus stay solid.
+	- Verified: the desktop shows through the pane, the title bar, menu bar, tab strip and dropdown menus stay solid, and a resize, a maximize and a VirtuaWin desktop switch all keep it. `--background-opacity` takes the same path.
 	- Opened: 20260826-123553
+	- Closed: 20260828
 
 - 🔬 Startup directory and tab closing.
 	- Done: the startup directory follows the calling directory, so "Open in terminal" from a file manager starts in that folder. The setting still applies where the inherited directory was a launcher's default - home, a filesystem root, or beside the executable - so the two coexist and the setting stays.
 	- Done: closing the last tab closes the window.
-	- Open: closing a second tab crashes the program. Not reproducible on Linux - twelve tabs closed in a row, by hotkey and by the close box, wide window and narrow. Not on Windows either when tabs close because their shell exits, in any order. So the removal itself is fine; the steps matter. Which key or click, and was the mouse over the tab strip?
+	- Open: closing a second tab crashes the program. Not reproducible on Linux - twelve tabs closed in a row, by hotkey and by the close box, wide window and narrow. Not on Windows either when tabs close because their shell exits, in any order. Nor with Ctrl+Shift+W twice, nor by clicking the close boxes, middle tab first or end tab first, with the pointer left over the strip. So the removal itself is fine; the steps matter. Which key or click, how many tabs and panes were open, and was anything running in the tab?
 	- Opened: 20260826-123553
 
 - 🔬 Double-clicking a Windows path leaves off the drive letter.
@@ -124,16 +125,18 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- 🔘 Reorganize the whole thing more logically, similar to how the Settings dialog is organized.
 	- Opened: 20260719-085918
 
-- 🛠️ Menu enhancements:
+- ✅ Menu enhancements:
 	- ✅ "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
 		- Done: the row sits under "New Tab" in the Tabs menu and in the right-click menu, and opens a flyout listing every active shell by title. It draws from the stored list, which the background scan above fills in - so it did not have to wait for the Settings "Shells" tab after all; that tab is now only the editor for a list that already exists.
 		- The row is absent entirely while there is no shell to put under it, rather than opening an empty flyout.
 		- A new tab started this way still inherits the current directory - picking a shell says nothing about where to start.
 		- Menus gained submenus to carry it: a flyout opens on hover and on click, keyboard Right enters it and Left and Escape back out one level, and its arrow is drawn rather than set in a font (no interface font can be relied on for one, the same reason the tab close mark is drawn).
-	- 🔘 Add "Split vertical with shell ->" and "Split horizontal with shell ->".
-	- 🔘 Sentence case for every item, except where a letter carries an Alt accelerator.
-	- 🔘 Context menu: a visible separator between the tab operations and the pane operations.
-	- Note: the three items above were added 20260826.
+	- ✅ Add "Split vertical with shell ->" and "Split horizontal with shell ->".
+		- Done: both sit under the two plain splits in the Panes menu and the right-click menu, and list the same shells the tab row does. The new pane starts where the source pane's shell is.
+	- ✅ Sentence case for every item, except where a letter carries an Alt accelerator.
+		- Done. The one label that kept its capital is "Paste Selection": lowercased, the S accelerator would have found the s in "Paste" first. Every other accelerator still finds its letter, so the underline marks it.
+	- ✅ Context menu: a visible separator between the tab operations and the pane operations.
+	- Note: the three items above were added 20260826, done 20260828.
 	- Opened: 20260719-085918
 
 - 🔘 "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
