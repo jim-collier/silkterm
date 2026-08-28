@@ -319,17 +319,50 @@ impl Gfx {
 		Self::with_backends(window, wgpu::Backends::all())
 	}
 
+	// Windows per-pixel transparency. A swapchain made straight from the HWND
+	// only ever composites opaque, whatever the window asked for, so the setting
+	// used to change nothing there. DX12 can instead present through a
+	// DirectComposition visual, which does carry premultiplied alpha - and it is
+	// the only backend with that option, so it has to be the one picked. Falls
+	// back to the ordinary path (opaque) when DX12 cannot serve this window.
+	#[cfg(windows)]
+	pub fn new_composited(window: Arc<Window>) -> anyhow::Result<Self> {
+		let dx12 = wgpu::Dx12BackendOptions {
+			presentation_system: wgpu::Dx12SwapchainKind::DxgiFromVisual,
+			..Default::default()
+		};
+		let options = wgpu::BackendOptions {
+			dx12,
+			..Default::default()
+		};
+		Self::build(window.clone(), wgpu::Backends::DX12, options).or_else(|e| {
+			eprintln!(
+				"{}: composited DX12 surface unavailable ({e}); using native surface (no transparency)",
+				crate::config::APP_NAME
+			);
+			Self::new(window)
+		})
+	}
+
 	// Native wgpu path with a chosen backend set. Pop-out dialog windows pass
 	// `Backends::PRIMARY` (Vulkan/Metal/DX12, NO GL): initializing wgpu's GL
 	// backend while the main window holds a glutin GL/EGL context panics in
 	// wgpu-hal's EGL teardown (`unmake_current().unwrap()`), so dialogs must avoid
 	// touching EGL entirely.
 	pub fn with_backends(window: Arc<Window>, backends: wgpu::Backends) -> anyhow::Result<Self> {
+		Self::build(window, backends, wgpu::BackendOptions::default())
+	}
+
+	fn build(
+		window: Arc<Window>,
+		backends: wgpu::Backends,
+		backend_options: wgpu::BackendOptions,
+	) -> anyhow::Result<Self> {
 		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
 			backends,
 			flags: wgpu::InstanceFlags::default(),
 			memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-			backend_options: wgpu::BackendOptions::default(),
+			backend_options,
 			display: None,
 		});
 		let surface = instance.create_surface(window.clone())?;
@@ -345,11 +378,11 @@ impl Gfx {
 		};
 		let adapter = pick(false).or_else(|_| pick(true))?;
 		let adapter_info = adapter.get_info();
-		log_renderer(&adapter_info);
 
 		let (device, queue) = pollster::block_on(request_device(&adapter))?;
 		let (config, format, transparent) = surface_config(&surface, &adapter, &window)
 			.ok_or_else(|| anyhow::anyhow!("adapter cannot present to this window"))?;
+		log_renderer(&adapter_info, transparent);
 		surface.configure(&device, &config);
 
 		Ok(Self {
@@ -502,7 +535,7 @@ impl Gfx {
 		});
 		let adapter = unsafe { instance.create_adapter_from_hal::<Gles>(exposed) };
 		let adapter_info = adapter.get_info();
-		log_renderer(&adapter_info);
+		log_renderer(&adapter_info, true);
 		let (device, queue) =
 			pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
 				label: Some("silkterm gl device"),
@@ -1056,13 +1089,20 @@ pub fn probe_adapter_info() -> Option<wgpu::AdapterInfo> {
 	Some(adapter.get_info())
 }
 
-fn log_renderer(info: &wgpu::AdapterInfo) {
+// `transparent` is whether the surface can carry alpha at all - the first thing
+// to look at when the transparency setting appears to do nothing.
+fn log_renderer(info: &wgpu::AdapterInfo, transparent: bool) {
 	eprintln!(
-		"{}: renderer = {} [{:?} / {:?}]",
+		"{}: renderer = {} [{:?} / {:?}] alpha = {}",
 		crate::config::APP_NAME,
 		info.name,
 		info.backend,
 		info.device_type,
+		if transparent {
+			"premultiplied"
+		} else {
+			"opaque"
+		},
 	);
 }
 

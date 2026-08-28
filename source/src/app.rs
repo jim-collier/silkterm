@@ -4552,11 +4552,11 @@ impl ApplicationHandler<UserEvent> for App {
 		};
 		// On Windows, requesting transparency forces a no-redirection-bitmap
 		// (layered) window that some virtual-desktop managers - VirtuaWin - won't
-		// track, so it sits still across workspace switches. The native surface
-		// there only shows alpha when it reports PreMultiplied (Vulkan/DX swapchains
-		// usually don't), so an always-transparent window buys nothing when
-		// Transparency is off. Ask for it only when it's actually in use; X11/Wayland
-		// always request it so the live toggle works (no such side effect there).
+		// track, so it sits still across workspace switches. Alpha only reaches the
+		// screen there through the composited DX12 path (Gfx::new_composited), so
+		// an always-transparent window buys nothing when Transparency is off. Ask
+		// for it only when it's actually in use; X11/Wayland always request it so
+		// the live toggle works (no such side effect there).
 		let want_transparent =
 			!cfg!(windows) || config::settings().transparent_background || win_opacity.is_some();
 		let attrs = Window::default_attributes()
@@ -4566,6 +4566,14 @@ impl ApplicationHandler<UserEvent> for App {
 			.with_transparent(want_transparent)
 			.with_inner_size(initial_size);
 		let attrs = with_app_id(attrs); // stable WM_CLASS/app_id
+		// The composited swapchain (Gfx::new_composited) wants no redirection
+		// surface under it: with one, the desktop manager composes that surface
+		// too, and winit's blur-behind hack for it is not needed either.
+		#[cfg(windows)]
+		let attrs = {
+			use winit::platform::windows::WindowAttributesExtWindows;
+			attrs.with_no_redirection_bitmap(want_transparent)
+		};
 		// Born hidden, then resized to the grid-derived size and drawn once before
 		// being shown (revealed after the first correct frame in render). Otherwise it
 		// flashes the 1000x640 default with a blank client, then jumps to the real
@@ -4593,7 +4601,15 @@ impl ApplicationHandler<UserEvent> for App {
 						eprintln!("{}: could not create a window: {e}", config::APP_NAME);
 						std::process::exit(2);
 					}));
-					let gfx = Gfx::new(window.clone()).unwrap_or_else(|e| {
+					#[cfg(windows)]
+					let gfx = if want_transparent {
+						Gfx::new_composited(window.clone())
+					} else {
+						Gfx::new(window.clone())
+					};
+					#[cfg(not(windows))]
+					let gfx = Gfx::new(window.clone());
+					let gfx = gfx.unwrap_or_else(|e| {
 						eprintln!("{}: no usable GPU/renderer: {e}", config::APP_NAME);
 						std::process::exit(2);
 					});

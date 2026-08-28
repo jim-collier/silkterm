@@ -37,10 +37,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 Windows: the transparency setting does nothing.
-	- Cause found, fix not attempted - none of it can be tried from the Linux box. A plain HWND swapchain offers only opaque compositing, so the per-pixel alpha the setting asks for is dropped and everything else still renders, which is why it reads as "does nothing" rather than as a fault.
-	- The lever is there: the graphics layer can be asked for the composition-based presentation path instead, which does offer premultiplied alpha. Two things go with it. The window has to be told to honor its own alpha, which it already is whenever the setting is on. And the backend has to be pinned, since the one picked by default varies per machine and only one of them has the option at all.
-	- I need to try it on Windows.
+- 🔬 Windows: the transparency setting does nothing.
+	- Cause: a plain HWND swapchain offers only opaque compositing, so the per-pixel alpha the setting asks for was dropped while everything else still rendered, which is why it read as "does nothing" rather than as a fault.
+	- Fixed: with the setting on, the window is presented through the composition path on DX12, which carries premultiplied alpha, and without a redirection surface under it. The backend is pinned for it, since the default pick varies per machine and only DX12 has the option. If DX12 cannot serve the window it falls back to the old opaque path and says so.
+	- On Windows the setting takes effect on the next launch. The Settings tip and the config comment both say so.
+	- Verified that the alpha reaches the desktop compositor. Still to look at by eye: the desktop showing through, and that the frame and menus stay solid.
 	- Opened: 20260826-123553
 
 - 🔬 Startup directory and tab closing.

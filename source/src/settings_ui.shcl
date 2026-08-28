@@ -155,6 +155,7 @@ rows:
 		label: Transparency
 		kind: toggle
 		setting: transparency.enabled
+		help: "See through the terminal background. On Windows this takes effect on the next launch."
 
 	Opacity:
 		label: Opacity

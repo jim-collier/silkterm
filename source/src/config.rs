@@ -204,7 +204,7 @@ pub struct Settings {
 	pub scrollbar_auto_hide: bool, // fade the scrollbar out while idle at the bottom
 	pub margin: f32,              // logical px between content and pane edge
 	pub opacity: f32,             // background opacity 0..1 (1 = fully opaque)
-	pub transparent_background: bool, // X11: per-pixel bg transparency (text stays opaque) via a GL surface
+	pub transparent_background: bool, // per-pixel bg transparency (text stays opaque): GL surface on X11, composited DX12 on Windows
 	pub transparent_background_blur: bool, // X11: ask a KWin/picom compositor to blur the desktop behind the window
 	pub wallpaper_enabled: bool,           // master switch: false = no wallpaper at all
 	pub wallpaper: Option<PathBuf>,        // resolved path, or None
@@ -3280,6 +3280,7 @@ window:
 transparency:
 
 	## See through the terminal background. Never the text, frame or menus.
+	## On Windows this takes effect on the next launch.
 	# enabled: true  ## Default
 
 	## 0.0 is fully transparent, 1.0 is opaque. Only used when enabled is on.

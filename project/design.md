@@ -84,8 +84,9 @@ The spine of the program is a single ownership tree:
 ```text
 App  (winit ApplicationHandler)
 +- State                      Main window
-|  +- Gfx                     GPU backend: native wgpu surface, or a glutin GL
-|  |                            context on X11 (the per-pixel-transparency path)
+|  +- Gfx                     GPU backend: native wgpu surface, a glutin GL context
+|  |                            on X11, or a composited DX12 surface on Windows
+|  |                            (the two per-pixel-transparency paths)
 |  +- renderers               Text (glyphon) + rects + bg image + scrim
 |  \- Tabs                    The tab list + active index
 |     \- PaneManager          One per tab: a binary split tree (Node::Split / Leaf)
@@ -392,6 +393,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - Target: Debian. The primary dev/reference environment is X11 (Compiz), but one Linux binary runs native on both X11 and Wayland. winit selects the backend at runtime, and X11/Wayland/GL are all loaded on demand. Windows and macOS are targets too, all with x86_64 and ARM64 variants.
 
 	- The X11 path additionally uses a glutin GL context for per-pixel background transparency, because wgpu can't drive an ARGB surface on X11. Wayland uses the plain wgpu surface, which already does premultiplied alpha. Everything else - chrome, text, scrollback slide, background image + blur + scrim - is the shared native path on both.
+	- On Windows, transparency means presenting through the desktop compositor: a DX12 swapchain on a DirectComposition visual, with no redirection surface under the window. A swapchain made straight from the window only composites opaque, and the backend picked by default varies per machine, so DX12 is pinned whenever the setting is on. Both are fixed at window creation, so the setting takes effect on the next launch there.
 
 	- Wayland coverage: smooth scrolling is identical on both engines. The scroll regression harness runs its scenes a second time under a headless `cage` kiosk (`run.bash --wayland`). Per-pixel transparency and dialog stacking on Wayland are not yet exercised (follow-ups).
 
