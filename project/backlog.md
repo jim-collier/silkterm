@@ -64,10 +64,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
-- 🔘 Pick up the newer SHCL, which carries some fixes needed. Take it from github source.
-	- Reorganize the config file into a more logical order while in there.
-	- Delete the existing old config files and start over.
+- ✅ Pick up the newer SHCL, which carries some fixes needed. Take it from github source.
+	- Now on shcl 2.0.0, which is what the repository's main branch holds. Nothing in the config code needed changing for it; every test passed on the bump as it stood.
+	- Two of its additions are in use. A save goes through a temp file and a rename, so a crash mid-save cannot leave a truncated config, and it is refused when the load had to drop a line the save would delete. A setting the writer cannot place is now reported rather than silently skipped.
+	- ✅ Reorganize the config file into a more logical order while in there.
+		- The template now follows the Settings dialog: background and transparency, font, text, cursor, selection, scrolling, theme and colors, window, hyperlinks, shell. An existing config keeps its own order; only a new file gets this one.
+	- ✅ Delete the existing old config files and start over.
+		- The Windows config and the old toml beside it are gone. The Linux box's config was not reachable from here.
 	- Opened: 20260826-123553
+	- Closed: 20260828
 
 - 🔘 Pre-interpret the most common bash environment variables for shells that do not understand them. (In settings and config file.)
 	- Same for the common PowerShell variables.

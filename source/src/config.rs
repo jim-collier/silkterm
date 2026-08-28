@@ -799,18 +799,63 @@ fn fence_run(line: &str) -> Option<(char, usize)> {
 	(len >= 3).then_some((ch, len))
 }
 
-// Serialize a document back to disk text.
+// Serialize a document back to disk.
 //
-// `to_canonical` keeps comments, blank-line grouping, indentation and line
-// order, and never rewrites a scalar - so it IS the disk text. shcl 1.2 was
-// what made that true: before it, a comment run under a block whose children
-// are all commented-out defaults (most of this template) came back at the
-// header's depth, and a positional repair pass put the user's own indentation
-// back. Verified against the shipped template, a live config and a torture
-// fixture: canonical is byte-identical to each.
+// The canonical text keeps comments, blank-line grouping, indentation and line
+// order, and never rewrites a scalar - so it IS the disk text (shcl 1.2 made
+// that true; before it a comment run under a block of commented-out defaults
+// came back at the header's depth). The write goes through a temp file and a
+// rename, so a crash mid-save cannot leave a truncated config, and it is
+// refused outright when the parse dropped lines the save would delete - the
+// user's own text is worth more than one changed setting.
 fn write_doc(path: &std::path::Path, doc: &shcl::Document) {
-	if let Err(e) = std::fs::write(path, doc.to_canonical()) {
+	if let Err(e) = doc.save_file(&path.to_string_lossy()) {
 		eprintln!("{APP_NAME}: could not save config {}: {e}", path.display());
+	}
+}
+
+// A setter answers whether the write applied, and every path here is one of
+// ours, so a refusal is a bug worth hearing about rather than a silent no-op.
+trait Put {
+	fn put_string(&mut self, path: &str, v: &str);
+	fn put_bool(&mut self, path: &str, v: bool);
+	fn put_float(&mut self, path: &str, v: f64);
+	fn put_int(&mut self, path: &str, v: i64);
+	fn put_datetime(&mut self, path: &str, v: &shcl::ShclDateTime);
+	fn put_string_array(&mut self, path: &str, v: &[&str]);
+}
+impl Put for shcl::Document {
+	fn put_string(&mut self, path: &str, v: &str) {
+		let applied = self.set_string(path, v);
+		unwritable(self, path, applied);
+	}
+	fn put_bool(&mut self, path: &str, v: bool) {
+		let applied = self.set_bool(path, v);
+		unwritable(self, path, applied);
+	}
+	fn put_float(&mut self, path: &str, v: f64) {
+		let applied = self.set_float(path, v);
+		unwritable(self, path, applied);
+	}
+	fn put_int(&mut self, path: &str, v: i64) {
+		let applied = self.set_int(path, v);
+		unwritable(self, path, applied);
+	}
+	fn put_datetime(&mut self, path: &str, v: &shcl::ShclDateTime) {
+		let applied = self.set_datetime(path, v);
+		unwritable(self, path, applied);
+	}
+	fn put_string_array(&mut self, path: &str, v: &[&str]) {
+		let applied = self.set_string_array(path, v);
+		unwritable(self, path, applied);
+	}
+}
+fn unwritable(doc: &shcl::Document, path: &str, applied: bool) {
+	if !applied {
+		eprintln!(
+			"{APP_NAME}: config: could not write {path} ({:?})",
+			doc.write_reason(path)
+		);
 	}
 }
 
@@ -836,96 +881,96 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	let r = |v: f32| (v as f64 * 1000.0).round() / 1000.0;
 
 	if s.theme != orig.theme {
-		doc.set_string("theme", s.theme.as_str());
+		doc.put_string("theme", s.theme.as_str());
 	}
 	if s.theme_mode != orig.theme_mode {
-		doc.set_string("theme_mode", s.theme_mode.as_str());
+		doc.put_string("theme_mode", s.theme_mode.as_str());
 	}
 	write_user_themes(&mut doc, &orig.user_themes, &s.user_themes);
 	write_shells(&mut doc, &orig.shells, &s.shells);
 
 	if s.use_system_font != orig.use_system_font {
-		doc.set_bool("font.use_system_family", s.use_system_font);
+		doc.put_bool("font.use_system_family", s.use_system_font);
 	}
 	if s.use_system_font_size != orig.use_system_font_size {
-		doc.set_bool("font.use_system_size", s.use_system_font_size);
+		doc.put_bool("font.use_system_size", s.use_system_font_size);
 	}
 	if s.font_family != orig.font_family {
 		if let Some(f) = &s.font_family {
-			doc.set_string("font.family", f);
+			doc.put_string("font.family", f);
 		}
 	}
 	if s.font_size != orig.font_size {
-		doc.set_float("font.size", r(s.font_size));
+		doc.put_float("font.size", r(s.font_size));
 	}
 	if s.line_height_scale != orig.line_height_scale {
-		doc.set_float("font.line_height_scale", r(s.line_height_scale));
+		doc.put_float("font.line_height_scale", r(s.line_height_scale));
 	}
 	if s.scrollback != orig.scrollback {
-		doc.set_int("scroll.scrollback", s.scrollback as i64);
+		doc.put_int("scroll.scrollback", s.scrollback as i64);
 	}
 	if s.scroll_smooth != orig.scroll_smooth {
-		doc.set_bool("scroll.smooth", s.scroll_smooth);
+		doc.put_bool("scroll.smooth", s.scroll_smooth);
 	}
 	if s.scroll_ease_in_ms != orig.scroll_ease_in_ms {
-		doc.set_float("scroll.ease_in_ms", r(s.scroll_ease_in_ms));
+		doc.put_float("scroll.ease_in_ms", r(s.scroll_ease_in_ms));
 	}
 	if s.scroll_ramp_up_ms != orig.scroll_ramp_up_ms {
-		doc.set_float("scroll.ramp_up_ms", r(s.scroll_ramp_up_ms));
+		doc.put_float("scroll.ramp_up_ms", r(s.scroll_ramp_up_ms));
 	}
 	if s.scroll_single_screen_tau_ms != orig.scroll_single_screen_tau_ms {
-		doc.set_float(
+		doc.put_float(
 			"scroll.single_screen_tau_ms",
 			r(s.scroll_single_screen_tau_ms),
 		);
 	}
 	if s.scroll_ramp_down_ms != orig.scroll_ramp_down_ms {
-		doc.set_float("scroll.ramp_down_ms", r(s.scroll_ramp_down_ms));
+		doc.put_float("scroll.ramp_down_ms", r(s.scroll_ramp_down_ms));
 	}
 	if s.scroll_ease_out_ms != orig.scroll_ease_out_ms {
-		doc.set_float("scroll.ease_out_ms", r(s.scroll_ease_out_ms));
+		doc.put_float("scroll.ease_out_ms", r(s.scroll_ease_out_ms));
 	}
 	if s.wheel_lines != orig.wheel_lines {
-		doc.set_float("scroll.wheel_lines", r(s.wheel_lines));
+		doc.put_float("scroll.wheel_lines", r(s.wheel_lines));
 	}
 	if s.alt_scroll_lines != orig.alt_scroll_lines {
-		doc.set_float("scroll.alt_scroll_lines", r(s.alt_scroll_lines));
+		doc.put_float("scroll.alt_scroll_lines", r(s.alt_scroll_lines));
 	}
 	if s.output_ease_lines != orig.output_ease_lines {
-		doc.set_float("scroll.output_ease_lines", r(s.output_ease_lines));
+		doc.put_float("scroll.output_ease_lines", r(s.output_ease_lines));
 	}
 	if s.scrollbar != orig.scrollbar {
-		doc.set_bool("scroll.scrollbar.enabled", s.scrollbar);
+		doc.put_bool("scroll.scrollbar.enabled", s.scrollbar);
 	}
 	if s.scrollbar_thickness != orig.scrollbar_thickness {
-		doc.set_float("scroll.scrollbar.thickness", r(s.scrollbar_thickness));
+		doc.put_float("scroll.scrollbar.thickness", r(s.scrollbar_thickness));
 	}
 	if s.scrollbar_auto_hide != orig.scrollbar_auto_hide {
-		doc.set_bool("scroll.scrollbar.auto_hide", s.scrollbar_auto_hide);
+		doc.put_bool("scroll.scrollbar.auto_hide", s.scrollbar_auto_hide);
 	}
 	if s.margin != orig.margin {
-		doc.set_float("window.margin", r(s.margin));
+		doc.put_float("window.margin", r(s.margin));
 	}
 	if s.opacity != orig.opacity {
-		doc.set_float("transparency.opacity", r(s.opacity));
+		doc.put_float("transparency.opacity", r(s.opacity));
 	}
 	if s.transparent_background != orig.transparent_background {
-		doc.set_bool("transparency.enabled", s.transparent_background);
+		doc.put_bool("transparency.enabled", s.transparent_background);
 	}
 	if s.transparent_background_blur != orig.transparent_background_blur {
-		doc.set_bool("transparency.blur_behind", s.transparent_background_blur);
+		doc.put_bool("transparency.blur_behind", s.transparent_background_blur);
 	}
 	if s.wallpaper_opacity != orig.wallpaper_opacity {
-		doc.set_float("wallpaper.opacity", r(s.wallpaper_opacity));
+		doc.put_float("wallpaper.opacity", r(s.wallpaper_opacity));
 	}
 	if s.wallpaper_enabled != orig.wallpaper_enabled {
-		doc.set_bool("wallpaper.enabled", s.wallpaper_enabled);
+		doc.put_bool("wallpaper.enabled", s.wallpaper_enabled);
 	}
 	if s.wallpaper_rotate_enabled != orig.wallpaper_rotate_enabled {
-		doc.set_bool("wallpaper.rotate.enabled", s.wallpaper_rotate_enabled);
+		doc.put_bool("wallpaper.rotate.enabled", s.wallpaper_rotate_enabled);
 	}
 	if s.wallpaper_default_fit != orig.wallpaper_default_fit {
-		doc.set_string(
+		doc.put_string(
 			"wallpaper.default_fit",
 			match s.wallpaper_default_fit {
 				Fit::Zoom => "zoom",
@@ -934,146 +979,146 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 		);
 	}
 	if s.wallpaper_honor_xmp != orig.wallpaper_honor_xmp {
-		doc.set_bool("wallpaper.honor_xmp", s.wallpaper_honor_xmp);
+		doc.put_bool("wallpaper.honor_xmp", s.wallpaper_honor_xmp);
 	}
 	if s.wallpaper_blur != orig.wallpaper_blur {
-		doc.set_float("wallpaper.blur", r(s.wallpaper_blur));
+		doc.put_float("wallpaper.blur", r(s.wallpaper_blur));
 	}
 	if s.wallpaper_contrast_mask != orig.wallpaper_contrast_mask {
-		doc.set_bool("wallpaper.contrast_mask.enabled", s.wallpaper_contrast_mask);
+		doc.put_bool("wallpaper.contrast_mask.enabled", s.wallpaper_contrast_mask);
 	}
 	if s.wallpaper_contrast_mask_size != orig.wallpaper_contrast_mask_size {
-		doc.set_float(
+		doc.put_float(
 			"wallpaper.contrast_mask.size",
 			r(s.wallpaper_contrast_mask_size),
 		);
 	}
 	if s.wallpaper_contrast_mask_strength != orig.wallpaper_contrast_mask_strength {
-		doc.set_float(
+		doc.put_float(
 			"wallpaper.contrast_mask.strength",
 			r(s.wallpaper_contrast_mask_strength),
 		);
 	}
 	if s.wallpaper_contrast_mask_auto != orig.wallpaper_contrast_mask_auto {
-		doc.set_float(
+		doc.put_float(
 			"wallpaper.contrast_mask.auto",
 			r(s.wallpaper_contrast_mask_auto),
 		);
 	}
 	if s.text_scrim != orig.text_scrim {
-		doc.set_bool("text.scrim.enabled", s.text_scrim);
+		doc.put_bool("text.scrim.enabled", s.text_scrim);
 	}
 	if s.text_scrim_radius != orig.text_scrim_radius {
-		doc.set_float("text.scrim.radius", r(s.text_scrim_radius));
+		doc.put_float("text.scrim.radius", r(s.text_scrim_radius));
 	}
 	if s.text_scrim_softness != orig.text_scrim_softness {
-		doc.set_float("text.scrim.softness", r(s.text_scrim_softness));
+		doc.put_float("text.scrim.softness", r(s.text_scrim_softness));
 	}
 	if s.text_scrim_strength != orig.text_scrim_strength {
-		doc.set_float("text.scrim.strength", r(s.text_scrim_strength));
+		doc.put_float("text.scrim.strength", r(s.text_scrim_strength));
 	}
 	if s.text_outline != orig.text_outline {
-		doc.set_float("text.outline", r(s.text_outline));
+		doc.put_float("text.outline", r(s.text_outline));
 	}
 	if s.text_scrim_ramp != orig.text_scrim_ramp {
-		doc.set_string("text.scrim.ramp", &s.text_scrim_ramp);
+		doc.put_string("text.scrim.ramp", &s.text_scrim_ramp);
 	}
 	if s.text_scrim_function != orig.text_scrim_function {
-		doc.set_string("text.scrim.function", &s.text_scrim_function);
+		doc.put_string("text.scrim.function", &s.text_scrim_function);
 	}
 	if s.text_scrim_regular_weight != orig.text_scrim_regular_weight {
-		doc.set_bool("text.scrim.regular_weight", s.text_scrim_regular_weight);
+		doc.put_bool("text.scrim.regular_weight", s.text_scrim_regular_weight);
 	}
 	if s.color_emoji != orig.color_emoji {
-		doc.set_bool("text.color_emoji", s.color_emoji);
+		doc.put_bool("text.color_emoji", s.color_emoji);
 	}
 	if s.embolden_inverse != orig.embolden_inverse {
-		doc.set_bool("text.embolden_inverse", s.embolden_inverse);
+		doc.put_bool("text.embolden_inverse", s.embolden_inverse);
 	}
 	if s.cursor_scrim != orig.cursor_scrim {
-		doc.set_bool("cursor.scrim", s.cursor_scrim);
+		doc.put_bool("cursor.scrim", s.cursor_scrim);
 	}
 	if s.cursor_outline != orig.cursor_outline {
-		doc.set_bool("cursor.outline", s.cursor_outline);
+		doc.put_bool("cursor.outline", s.cursor_outline);
 	}
 	if s.cursor_size_height != orig.cursor_size_height {
-		doc.set_float("cursor.size.height", r(s.cursor_size_height));
+		doc.put_float("cursor.size.height", r(s.cursor_size_height));
 	}
 	if s.cursor_size_width != orig.cursor_size_width {
-		doc.set_float("cursor.size.width", r(s.cursor_size_width));
+		doc.put_float("cursor.size.width", r(s.cursor_size_width));
 	}
 	if s.cursor_animation != orig.cursor_animation {
-		doc.set_string("cursor.animation", &s.cursor_animation);
+		doc.put_string("cursor.animation", &s.cursor_animation);
 	}
 	if s.cursor_animation_resume_s != orig.cursor_animation_resume_s {
-		doc.set_float("cursor.animation_resume_s", r(s.cursor_animation_resume_s));
+		doc.put_float("cursor.animation_resume_s", r(s.cursor_animation_resume_s));
 	}
 	if s.cursor_blink_rate_ms != orig.cursor_blink_rate_ms {
-		doc.set_float("cursor.blink_rate_ms", r(s.cursor_blink_rate_ms));
+		doc.put_float("cursor.blink_rate_ms", r(s.cursor_blink_rate_ms));
 	}
 	if s.columns != orig.columns {
-		doc.set_int("window.columns", s.columns as i64);
+		doc.put_int("window.columns", s.columns as i64);
 	}
 	if s.rows != orig.rows {
-		doc.set_int("window.rows", s.rows as i64);
+		doc.put_int("window.rows", s.rows as i64);
 	}
 	if s.remember_size != orig.remember_size {
-		doc.set_bool("window.remember_size", s.remember_size);
+		doc.put_bool("window.remember_size", s.remember_size);
 	}
 	if s.hide_single_tab != orig.hide_single_tab {
-		doc.set_bool("window.hide_single_tab", s.hide_single_tab);
+		doc.put_bool("window.hide_single_tab", s.hide_single_tab);
 	}
 	if s.tab_regular_pct != orig.tab_regular_pct {
-		doc.set_float("window.tab_regular_width_pct", r(s.tab_regular_pct));
+		doc.put_float("window.tab_regular_width_pct", r(s.tab_regular_pct));
 	}
 	if s.tab_max_pct != orig.tab_max_pct {
-		doc.set_float("window.tab_max_width_pct", r(s.tab_max_pct));
+		doc.put_float("window.tab_max_width_pct", r(s.tab_max_pct));
 	}
 	if s.remembered_columns != orig.remembered_columns {
-		doc.set_int("window.remembered_columns", s.remembered_columns as i64);
+		doc.put_int("window.remembered_columns", s.remembered_columns as i64);
 	}
 	if s.remembered_rows != orig.remembered_rows {
-		doc.set_int("window.remembered_rows", s.remembered_rows as i64);
+		doc.put_int("window.remembered_rows", s.remembered_rows as i64);
 	}
 	if s.word_separators != orig.word_separators {
-		doc.set_string("selection.word_separators", &s.word_separators);
+		doc.put_string("selection.word_separators", &s.word_separators);
 	}
 	if s.selection_pairs != orig.selection_pairs {
-		doc.set_string("selection.pairs", &s.selection_pairs);
+		doc.put_string("selection.pairs", &s.selection_pairs);
 	}
 	if s.command_line != orig.command_line {
-		doc.set_string("shell.command_line", &s.command_line);
+		doc.put_string("shell.command_line", &s.command_line);
 	}
 	if s.startup_directory != orig.startup_directory {
-		doc.set_string("shell.startup_directory", &s.startup_directory);
+		doc.put_string("shell.startup_directory", &s.startup_directory);
 	}
 	if s.shell_integration != orig.shell_integration {
-		doc.set_bool("shell.integration", s.shell_integration);
+		doc.put_bool("shell.integration", s.shell_integration);
 	}
 	if s.copy_on_select != orig.copy_on_select {
-		doc.set_bool("shell.copy_on_select", s.copy_on_select);
+		doc.put_bool("shell.copy_on_select", s.copy_on_select);
 	}
 	if s.hyperlinks != orig.hyperlinks {
-		doc.set_bool("hyperlinks.enabled", s.hyperlinks);
+		doc.put_bool("hyperlinks.enabled", s.hyperlinks);
 	}
 	if s.hyperlink_open_command != orig.hyperlink_open_command {
-		doc.set_string("hyperlinks.open_command", &s.hyperlink_open_command);
+		doc.put_string("hyperlinks.open_command", &s.hyperlink_open_command);
 	}
 	if s.wallpaper != orig.wallpaper || s.wallpaper_raw != orig.wallpaper_raw {
 		// the file keeps whatever form the user wrote (bare/relative/absolute)
 		if s.wallpaper_raw.trim().is_empty() {
 			doc.remove("wallpaper.image");
 		} else {
-			doc.set_string("wallpaper.image", s.wallpaper_raw.trim());
+			doc.put_string("wallpaper.image", s.wallpaper_raw.trim());
 		}
 	}
 	if s.wallpaper_fallback_builtin != orig.wallpaper_fallback_builtin {
-		doc.set_bool("wallpaper.fallback_builtin", s.wallpaper_fallback_builtin);
+		doc.put_bool("wallpaper.fallback_builtin", s.wallpaper_fallback_builtin);
 	}
 
 	let mut set_color = |key: &str, color: [u8; 3], orig_color: [u8; 3]| {
 		if color != orig_color {
-			doc.set_string(&format!("colors.{key}"), &format_hex(color));
+			doc.put_string(&format!("colors.{key}"), &format_hex(color));
 		}
 	};
 	set_color("background", s.bg, orig.bg);
@@ -1524,14 +1569,14 @@ fn write_user_themes(
 		}
 		let at = format!("themes.{}", theme.slug);
 		doc.remove(&at);
-		doc.set_string(&format!("{at}.name"), &theme.name);
+		doc.put_string(&format!("{at}.name"), &theme.name);
 		for (mode, pal) in [("dark", &theme.dark), ("light", &theme.light)] {
 			for (i, key) in crate::theme::PALETTE_KEYS.iter().enumerate() {
-				doc.set_string(&format!("{at}.{mode}.{key}"), &format_hex(pal.get(i)));
+				doc.put_string(&format!("{at}.{mode}.{key}"), &format_hex(pal.get(i)));
 			}
 			let ansi: Vec<String> = pal.ansi.iter().map(|c| format_hex(*c)).collect();
 			let ansi: Vec<&str> = ansi.iter().map(String::as_str).collect();
-			doc.set_string_array(&format!("{at}.{mode}.ansi"), &ansi);
+			doc.put_string_array(&format!("{at}.{mode}.ansi"), &ansi);
 		}
 	}
 }
@@ -1617,14 +1662,14 @@ fn write_shells(
 fn write_shell(doc: &mut shcl::Document, entry: &crate::shells::ShellEntry) {
 	let at = format!("shells.{}", entry.slug);
 	doc.remove(&at);
-	doc.set_string(&format!("{at}.title"), &entry.title);
-	doc.set_string(&format!("{at}.command"), &entry.command);
-	doc.set_bool(&format!("{at}.active"), entry.active);
+	doc.put_string(&format!("{at}.title"), &entry.title);
+	doc.put_string(&format!("{at}.command"), &entry.command);
+	doc.put_bool(&format!("{at}.active"), entry.active);
 	if !entry.comment.is_empty() {
-		doc.set_string(&format!("{at}.comment"), &entry.comment);
+		doc.put_string(&format!("{at}.comment"), &entry.comment);
 	}
 	if let Some(when) = parse_iso_date(&entry.last_seen) {
-		doc.set_datetime(&format!("{at}.last_seen"), &when);
+		doc.put_datetime(&format!("{at}.last_seen"), &when);
 	}
 }
 
@@ -3223,57 +3268,6 @@ const DEFAULT_CONFIG_TEMPLATE: &str = r##"# SilkTerm configuration file.
 ## launch SilkTerm adds settings new to this version and nothing else.
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-## Font
-## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-
-font:
-
-	## Put the OS monospace font at the head of the family stack below. Windows
-	## has no such setting, so this does nothing there.
-	use_system_family: true
-
-	## Use the OS monospace font size instead of size below.
-	# use_system_size: true  ## Default
-
-	## Comma-separated; the first one installed wins. A built-in stack backs it up.
-	family: "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
-
-	## Logical pixels, from 4.0 up. Used when use_system_size is off.
-	# size: 17.0  ## Default
-
-	## A multiple of the font's own height, from 0.5 up. 1.0 is tight.
-	line_height_scale: 1.22
-
-## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-## Window
-## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-
-window:
-
-	## Pixels between the text and the pane edge.
-	margin: 8.0
-
-	## Starting size, in character cells. Used when remember_size is off.
-	columns: 160
-	rows: 48
-
-	## Launch at the size you last dragged the window to. The remembered pair
-	## updates either way, so turning this off puts you back on columns/rows.
-	# remember_size: true  ## Default
-	# remembered_columns: 160  ## Default
-	# remembered_rows: 48  ## Default
-
-	## Hide the tab bar while only one tab is open (also in the View menu).
-	# hide_single_tab: false  ## Default
-
-	## Tab width, as percentages of the window. A tab sits at the regular width
-	## when nothing is pushing on it, grows toward the maximum when its text
-	## needs the room, and shrinks below regular when the bar is crowded. Tabs
-	## that no longer fit become a page: the wheel over the tab bar turns it.
-	# tab_regular_width_pct: 10.0  ## Default
-	# tab_max_width_pct: 100.0  ## Default
-
-## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Background and transparency
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
@@ -3339,6 +3333,28 @@ wallpaper:
 		# size: 0.5  ## Default
 		# strength: 0.5  ## Default
 		# auto: 0.5  ## Default
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Font
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+font:
+
+	## Put the OS monospace font at the head of the family stack below. Windows
+	## has no such setting, so this does nothing there.
+	use_system_family: true
+
+	## Use the OS monospace font size instead of size below.
+	# use_system_size: true  ## Default
+
+	## Comma-separated; the first one installed wins. A built-in stack backs it up.
+	family: "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
+
+	## Logical pixels, from 4.0 up. Used when use_system_size is off.
+	# size: 17.0  ## Default
+
+	## A multiple of the font's own height, from 0.5 up. 1.0 is tight.
+	line_height_scale: 1.22
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Text
@@ -3423,58 +3439,6 @@ selection:
 	## Double-clicking inside one of these selects what it holds. Highest
 	## precedence first.
 	# pairs: "`` \"\" '' {} () [] <>"  ## Default
-
-## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-## Shell
-## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-
-## New windows, tabs and panes run the first switched-on entry in the shells.*
-## blocks below. Those are written for you a few seconds after launch, by a look
-## around for what is installed, and the Settings dialog's Shells tab is where
-## the order is set. A --shell on the command line still wins.
-
-shell:
-
-	## Used when SilkTerm is launched with no arguments. Takes the same
-	## window/tab/pane options the command line does (see --help). Real
-	## arguments override it entirely.
-	# command_line: "--new-pane --right --size 35%"  ## Default
-
-	## Where a shell starts when nothing else has said. A --directory wins over
-	## this, and so does the pane a new tab or split was opened from, and so does
-	## the shell SilkTerm was launched from. That leaves launching from the
-	## desktop or a menu, which is what this is for. `~`, $HOME, %USERPROFILE%
-	## and any other environment variable are understood. A directory that does
-	## not exist is reported and ignored.
-	# startup_directory: "{HOME}"  ## Default
-
-	## Add a small block to each PowerShell profile so it reports where it is,
-	## and a new tab or pane can open in the same place. PowerShell keeps its
-	## directory to itself, so without this the OS has nothing to tell us. Every
-	## other shell needs nothing. A profile that already reports is left alone,
-	## and deleting the block switches this off for good. See
-	## shell-integration.md.
-	# integration: true  ## Default
-
-	## Start every pane with selected text going straight to the clipboard. The
-	## menu-bar checkbox still toggles it per pane.
-	# copy_on_select: false  ## Default
-
-## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-## Hyperlinks
-## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-
-hyperlinks:
-
-	## Underline a URL under the pointer. Ctrl+click opens it, right-click offers
-	## "Open link" and "Copy link". Only these schemes are recognized, and
-	## nothing else can be opened: http, https, ftp, ftps, sftp, ssh, file,
-	## mailto.
-	# enabled: true  ## Default
-
-	## What opens a clicked link, with the URL added as the last argument.
-	## Commented, the desktop's own handler does it (xdg-open, or start).
-	# open_command: "firefox --new-tab"  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Scrolling
@@ -3572,6 +3536,87 @@ colors:
 	# gutter: "#16161e"  ## Default
 	# scrollbar_thumb: "#8a8a92"  ## Default
 	# scrollbar_trough: "#2e2e36"  ## Default
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Window
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+window:
+
+	## Pixels between the text and the pane edge.
+	margin: 8.0
+
+	## Starting size, in character cells. Used when remember_size is off.
+	columns: 160
+	rows: 48
+
+	## Launch at the size you last dragged the window to. The remembered pair
+	## updates either way, so turning this off puts you back on columns/rows.
+	# remember_size: true  ## Default
+	# remembered_columns: 160  ## Default
+	# remembered_rows: 48  ## Default
+
+	## Hide the tab bar while only one tab is open (also in the View menu).
+	# hide_single_tab: false  ## Default
+
+	## Tab width, as percentages of the window. A tab sits at the regular width
+	## when nothing is pushing on it, grows toward the maximum when its text
+	## needs the room, and shrinks below regular when the bar is crowded. Tabs
+	## that no longer fit become a page: the wheel over the tab bar turns it.
+	# tab_regular_width_pct: 10.0  ## Default
+	# tab_max_width_pct: 100.0  ## Default
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Hyperlinks
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+hyperlinks:
+
+	## Underline a URL under the pointer. Ctrl+click opens it, right-click offers
+	## "Open link" and "Copy link". Only these schemes are recognized, and
+	## nothing else can be opened: http, https, ftp, ftps, sftp, ssh, file,
+	## mailto.
+	# enabled: true  ## Default
+
+	## What opens a clicked link, with the URL added as the last argument.
+	## Commented, the desktop's own handler does it (xdg-open, or start).
+	# open_command: "firefox --new-tab"  ## Default
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Shell
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+## New windows, tabs and panes run the first switched-on entry in the shells.*
+## blocks below. Those are written for you a few seconds after launch, by a look
+## around for what is installed, and the Settings dialog's Shells tab is where
+## the order is set. A --shell on the command line still wins.
+
+shell:
+
+	## Used when SilkTerm is launched with no arguments. Takes the same
+	## window/tab/pane options the command line does (see --help). Real
+	## arguments override it entirely.
+	# command_line: "--new-pane --right --size 35%"  ## Default
+
+	## Where a shell starts when nothing else has said. A --directory wins over
+	## this, and so does the pane a new tab or split was opened from, and so does
+	## the shell SilkTerm was launched from. That leaves launching from the
+	## desktop or a menu, which is what this is for. `~`, $HOME, %USERPROFILE%
+	## and any other environment variable are understood. A directory that does
+	## not exist is reported and ignored.
+	# startup_directory: "{HOME}"  ## Default
+
+	## Add a small block to each PowerShell profile so it reports where it is,
+	## and a new tab or pane can open in the same place. PowerShell keeps its
+	## directory to itself, so without this the OS has nothing to tell us. Every
+	## other shell needs nothing. A profile that already reports is left alone,
+	## and deleting the block switches this off for good. See
+	## shell-integration.md.
+	# integration: true  ## Default
+
+	## Start every pane with selected text going straight to the clipboard. The
+	## menu-bar checkbox still toggles it per pane.
+	# copy_on_select: false  ## Default
 "##;
 
 #[cfg(test)]
@@ -4462,8 +4507,8 @@ mod tests {
 	#[test]
 	fn a_save_keeps_nested_comment_layout() {
 		let mut doc = shcl::Document::parse(default_config());
-		doc.set_float("wallpaper.opacity", 0.5);
-		doc.set_bool("text.scrim.enabled", false);
+		assert!(doc.set_float("wallpaper.opacity", 0.5));
+		assert!(doc.set_bool("text.scrim.enabled", false));
 		let out = doc.to_canonical();
 
 		let added: Vec<&str> = out
@@ -4500,6 +4545,32 @@ mod tests {
 			out.contains("\t# dialog_foreground: \"#e2e2ea\"  ## Default"),
 			"the trailing colors block keeps its indentation:\n{out}"
 		);
+	}
+
+	// A line whose indentation matches no level is dropped by the parse, and a
+	// save would then delete it. The write refuses instead: a hand-written line
+	// is worth more than the one setting the save was carrying.
+	#[test]
+	fn a_save_that_would_drop_a_line_is_refused() {
+		let dir = std::env::temp_dir().join(format!("silk-lostgate-{}", std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		let text = "window:\n\tmargin: 8.0\n  rows: 40\n";
+		std::fs::write(&path, text).unwrap();
+		let mut doc = shcl::Document::parse(text);
+		assert_eq!(
+			doc.lost_count(),
+			1,
+			"the space-indented line is the one dropped"
+		);
+		doc.put_float("window.margin", 4.0);
+		write_doc(&path, &doc);
+		assert_eq!(
+			std::fs::read_to_string(&path).unwrap(),
+			text,
+			"the file was rewritten despite the dropped line"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 
 	// A new key added to a group the file already has PART of must land beside
