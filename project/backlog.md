@@ -103,9 +103,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Add a checkbox in Settings for whether to honor them.
 	- Opened: 20260826-123553
 
-- 🛠️ The CICD pipeline does not say which combination host environments it is running on. Print it in the plan header, since the skips differ depending on that.
-	- Half done: the Windows plan header names the Linux half, or says WSL2 is here and unused, or that there is none. `cicd.bash` still says nothing about where it is running.
+- ✅ The CICD pipeline does not say which combination host environments it is running on. Print it in the plan header, since the skips differ depending on that.
+	- The Windows plan header names the Linux half, or says WSL2 is here and unused, or that there is none.
+	- `cicd.bash` now opens its header with a Host line: plain Linux with the distribution and arch, WSL or WSL2 with the distribution and whether it is the Linux half of a Windows run or running on its own, or a Windows shell with a pointer to the right pipeline.
 	- Opened: 20260824-123142
+	- Closed: 20260828
 
 - 🛠️ Dogfood: a build made on one box should reach the others, and the launcher should always run the newest one it can find.
 	- ✅ The dogfood destinations are written down per platform and per direction, in the pipeline config rather than in anyone's head. macOS destinations are recorded but inert, since nothing builds for it yet.
