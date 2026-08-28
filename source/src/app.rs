@@ -408,6 +408,7 @@ enum MenuAction {
 	ToggleFrame,
 	ToggleMenuBar,
 	ToggleSingleTab,
+	ToggleBare,
 	ReloadConfig,
 	Settings,
 	About,
@@ -1175,11 +1176,13 @@ struct State {
 	tab_tip: Option<TabTip>,      // the hover tip currently up, if any
 	decorated: bool,              // window frame shown (winit has no getter, so track it)
 	menu_bar: bool,               // window menu bar (File/Edit/...) shown
-	bar_open: Option<usize>,      // which top-level menu's dropdown is open, if any
-	quit: bool,                   // set by File->Quit; the event handler exits after applying
-	win_opacity: Option<f32>,     // CLI --background-opacity override (this window only)
-	win_title: Option<String>,    // CLI --title override (else "AppName - <tab title>")
-	last_win_title: String,       // last string set on the window (skip redundant set_title)
+	bare: bool, // frame, menu bar and tab strip all off at once (View > Bare window); never written
+	bare_saved: (bool, bool), // (decorated, menu_bar) from before bare, to put back
+	bar_open: Option<usize>, // which top-level menu's dropdown is open, if any
+	quit: bool, // set by File->Quit; the event handler exits after applying
+	win_opacity: Option<f32>, // CLI --background-opacity override (this window only)
+	win_title: Option<String>, // CLI --title override (else "AppName - <tab title>")
+	last_win_title: String, // last string set on the window (skip redundant set_title)
 	focused: bool, // window has keyboard focus (gates copy-output: never copy from a background window)
 	pending_about: bool, // request to open the About window (App acts on it; needs the event loop)
 	pending_settings: bool, // request to open the Settings window
@@ -1372,7 +1375,7 @@ impl State {
 	// The tab bar shows for >1 tab always; for a single tab unless the user
 	// opts out (hide_single_tab, View menu / config).
 	fn tab_bar_visible(&self) -> bool {
-		self.tabs.len() > 1 || !config::settings().hide_single_tab
+		!self.bare && (self.tabs.len() > 1 || !config::settings().hide_single_tab)
 	}
 
 	fn area(&self) -> Rect {
@@ -1929,6 +1932,7 @@ impl State {
 				MenuAction::ToggleFrame,
 			),
 			mta('M', self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
+			mta('B', self.bare, "Bare window", MenuAction::ToggleBare),
 			Entry::Sep,
 			mi("Reload config", MenuAction::ReloadConfig),
 			mi("Settings\u{2026} (Ctrl+,)", MenuAction::Settings),
@@ -2211,6 +2215,7 @@ impl State {
 					"Hide single tab",
 					MenuAction::ToggleSingleTab,
 				),
+				mta('B', self.bare, "Bare window", MenuAction::ToggleBare),
 			],
 			3 => {
 				let mut items = vec![mia('N', "New tab (Ctrl+Shift+T)", MenuAction::NewTab)];
@@ -2423,6 +2428,7 @@ impl State {
 				self.menu_bar = !self.menu_bar;
 				self.relayout_all();
 			}
+			MenuAction::ToggleBare => self.toggle_bare(),
 			MenuAction::ToggleSingleTab => {
 				let orig = (*config::settings()).clone();
 				let mut new = orig.clone();
@@ -2596,6 +2602,24 @@ impl State {
 			}
 		}
 		self.dirty = true;
+	}
+
+	// Every piece of chrome off at once, and back the way it was. Only what is
+	// still off is put back, so a bar switched on in the meantime stays on.
+	fn toggle_bare(&mut self) {
+		self.bare = !self.bare;
+		if self.bare {
+			self.bare_saved = (self.decorated, self.menu_bar);
+			self.decorated = false;
+			self.menu_bar = false;
+		} else {
+			let (decorated, menu_bar) = self.bare_saved;
+			self.decorated |= decorated;
+			self.menu_bar |= menu_bar;
+		}
+		self.window.set_decorations(self.decorated);
+		self.bar_open = None;
+		self.relayout_all();
 	}
 
 	fn toggle_fullscreen(&self) {
@@ -4779,6 +4803,8 @@ impl ApplicationHandler<UserEvent> for App {
 			tab_tip: None,
 			decorated,
 			menu_bar,
+			bare: false,
+			bare_saved: (false, false),
 			bar_open: None,
 			quit: false,
 			win_opacity,
