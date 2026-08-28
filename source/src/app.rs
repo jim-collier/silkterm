@@ -393,11 +393,13 @@ enum MenuAction {
 	ToggleCopyOutput,
 	NewTab,
 	// New tab running the shell at this index in the stored list (config
-	// `shells.*`; see the Tabs menu's "New Tab with Shell").
+	// `shells.*`; see the Tabs menu's "New tab with shell").
 	NewTabShell(usize),
 	CloseTab,
 	SplitVertical,
 	SplitHorizontal,
+	// Split running the shell at this index in the stored list, like NewTabShell.
+	SplitShell(Dir, usize),
 	Close,
 	FontBigger,
 	FontSmaller,
@@ -537,24 +539,38 @@ fn mta(ch: char, on: bool, label: &str, action: MenuAction) -> Entry {
 	}
 }
 
-// The "New Tab with Shell" row, or nothing at all while there is no shell to
-// put under it - an empty flyout is worse than no row. The stored list supplies
-// the titles and the order; only the active entries are offered, and the action
+// A "... with shell" row, or nothing at all while there is no shell to put
+// under it - an empty flyout is worse than no row. The stored list supplies the
+// titles and the order; only the active entries are offered, and the action
 // carries the index into the WHOLE list so a disabled entry between two active
 // ones cannot shift what a click runs.
-fn shell_submenu(accel: Option<char>) -> Vec<Entry> {
+fn shell_submenu(accel: Option<char>, label: &str, action: fn(usize) -> MenuAction) -> Vec<Entry> {
 	let items: Vec<Entry> = config::settings()
 		.shells
 		.iter()
 		.enumerate()
 		.filter(|(_, shell)| shell.active)
-		.map(|(i, shell)| mi(&shell.title, MenuAction::NewTabShell(i)))
+		.map(|(i, shell)| mi(&shell.title, action(i)))
 		.collect();
 	if items.is_empty() {
 		Vec::new()
 	} else {
-		vec![msub(accel, "New Tab with Shell", items)]
+		vec![msub(accel, label, items)]
 	}
+}
+
+// The three shell rows: a new tab, and a split either way.
+fn new_tab_shells(accel: Option<char>) -> Vec<Entry> {
+	shell_submenu(accel, "New tab with shell", MenuAction::NewTabShell)
+}
+fn split_shells() -> Vec<Entry> {
+	let mut rows = shell_submenu(None, "Split vertical with shell", |i| {
+		MenuAction::SplitShell(Dir::Vertical, i)
+	});
+	rows.extend(shell_submenu(None, "Split horizontal with shell", |i| {
+		MenuAction::SplitShell(Dir::Horizontal, i)
+	}));
+	rows
 }
 
 // The background shell scan came back (shells.rs). It reports what it FOUND;
@@ -1875,11 +1891,10 @@ impl State {
 				Entry::Sep,
 			]);
 		}
-		// no accelerator here: this menu already spends every letter the label
-		// offers - 'w' on "Hide window frame", 'H' on "Split Horizontal", 'S' on
-		// "Paste Selection" - and a duplicate would make the older item
-		// unreachable, since the first match wins
-		let shells = shell_submenu(None);
+		// no accelerator on the shell rows: this menu already spends every letter
+		// their labels offer - 'w' on "Hide window frame", 'H' on "Split
+		// horizontal", 'S' on "Paste Selection" - and a duplicate would make the
+		// older item unreachable, since the first match wins
 		entries.extend([
 			mia('C', "Copy (Ctrl+Shift+C)", MenuAction::Copy),
 			mia('P', "Paste (Ctrl+Shift+V)", MenuAction::Paste),
@@ -1889,13 +1904,17 @@ impl State {
 			mt(copy_output, "Copy on output", MenuAction::ToggleCopyOutput),
 			mta('R', read_only, "Read-only", MenuAction::ToggleReadOnly),
 			Entry::Sep,
-			mia('N', "New Tab (Ctrl+Shift+T)", MenuAction::NewTab),
+			mia('N', "New tab (Ctrl+Shift+T)", MenuAction::NewTab),
 		]);
-		entries.extend(shells);
+		entries.extend(new_tab_shells(None));
 		entries.extend([
-			mia('V', "Split Vertical", MenuAction::SplitVertical),
-			mia('H', "Split Horizontal", MenuAction::SplitHorizontal),
-			mi("Close Pane", MenuAction::Close),
+			Entry::Sep,
+			mia('V', "Split vertical", MenuAction::SplitVertical),
+			mia('H', "Split horizontal", MenuAction::SplitHorizontal),
+		]);
+		entries.extend(split_shells());
+		entries.extend([
+			mi("Close pane", MenuAction::Close),
 			Entry::Sep,
 			mta(
 				'F',
@@ -1911,7 +1930,7 @@ impl State {
 			),
 			mta('M', self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
 			Entry::Sep,
-			mi("Reload Config", MenuAction::ReloadConfig),
+			mi("Reload config", MenuAction::ReloadConfig),
 			mi("Settings\u{2026} (Ctrl+,)", MenuAction::Settings),
 		]);
 		self.bar_open = None;
@@ -2153,7 +2172,7 @@ impl State {
 		let copy_output = p.is_some_and(|p| p.copy_output);
 		match idx {
 			0 => vec![
-				mia('R', "Reload Config", MenuAction::ReloadConfig),
+				mia('R', "Reload config", MenuAction::ReloadConfig),
 				mia('S', "Settings\u{2026} (Ctrl+,)", MenuAction::Settings),
 				Entry::Sep,
 				mia('Q', "Quit", MenuAction::Quit),
@@ -2167,9 +2186,9 @@ impl State {
 				mt(copy_output, "Copy on output", MenuAction::ToggleCopyOutput),
 			],
 			2 => vec![
-				mia('I', "Increase Font Size (Ctrl +)", MenuAction::FontBigger),
-				mia('D', "Decrease Font Size (Ctrl -)", MenuAction::FontSmaller),
-				mia('e', "Reset Font Size (Ctrl 0)", MenuAction::FontReset),
+				mia('I', "Increase font size (Ctrl +)", MenuAction::FontBigger),
+				mia('D', "Decrease font size (Ctrl -)", MenuAction::FontSmaller),
+				mia('e', "Reset font size (Ctrl 0)", MenuAction::FontReset),
 				Entry::Sep,
 				mta('R', read_only, "Read-only", MenuAction::ToggleReadOnly),
 				Entry::Sep,
@@ -2194,20 +2213,23 @@ impl State {
 				),
 			],
 			3 => {
-				let mut items = vec![mia('N', "New Tab (Ctrl+Shift+T)", MenuAction::NewTab)];
-				items.extend(shell_submenu(Some('S')));
+				let mut items = vec![mia('N', "New tab (Ctrl+Shift+T)", MenuAction::NewTab)];
+				items.extend(new_tab_shells(Some('S')));
 				items.extend([
 					Entry::Sep,
-					mia('C', "Close Tab (Ctrl+Shift+W)", MenuAction::CloseTab),
+					mia('C', "Close tab (Ctrl+Shift+W)", MenuAction::CloseTab),
 				]);
 				items
 			}
-			4 => vec![
-				mia('V', "Split Vertical", MenuAction::SplitVertical),
-				mia('H', "Split Horizontal", MenuAction::SplitHorizontal),
-				Entry::Sep,
-				mia('C', "Close Pane", MenuAction::Close),
-			],
+			4 => {
+				let mut items = vec![
+					mia('V', "Split vertical", MenuAction::SplitVertical),
+					mia('H', "Split horizontal", MenuAction::SplitHorizontal),
+				];
+				items.extend(split_shells());
+				items.extend([Entry::Sep, mia('C', "Close pane", MenuAction::Close)]);
+				items
+			}
 			_ => vec![mia('A', "About\u{2026}", MenuAction::About)],
 		}
 	}
@@ -2367,6 +2389,13 @@ impl State {
 				self.tabs
 					.cur_mut()
 					.split(&mut self.text, proxy, target, Dir::Horizontal, area);
+			}
+			MenuAction::SplitShell(dir, index) => {
+				if let Some(cmd) = shell_argv(index) {
+					self.tabs
+						.cur_mut()
+						.split_with(&mut self.text, proxy, target, dir, cmd, area);
+				}
 			}
 			MenuAction::Close => {
 				if self.tabs.cur().panes.len() > 1 {
@@ -5076,7 +5105,7 @@ impl ApplicationHandler<UserEvent> for App {
 				// click on the tab bar selects a tab. Skip when a dropdown is open: it
 				// opens flush under the menu bar, so its top item overlaps the tab-bar
 				// band - without this guard the tab bar steals the click and (e.g.)
-				// "Tabs|New Tab" selects a tab instead of firing, once >1 tab exists.
+				// "Tabs|New tab" selects a tab instead of firing, once >1 tab exists.
 				let tab_bar_y = state.menubar_h();
 				if button == MouseButton::Left
 					&& state.menu.is_none()
@@ -6289,14 +6318,14 @@ mod tests {
 	fn one_menu_never_spends_an_accelerator_twice() {
 		let rows = vec![
 			mia('C', "Copy", MenuAction::Copy),
-			msub(Some('S'), "New Tab with Shell", vec![]),
+			msub(Some('S'), "New tab with shell", vec![]),
 			mta('w', false, "Hide window frame", MenuAction::ToggleFrame),
 		];
 		assert_eq!(accel_clash(&rows), None);
 		// 'w' again, which is what the right-click menu would have done had the
 		// submenu row spelled its accelerator the way the Tabs menu's does
 		let mut clashing = rows;
-		clashing.insert(1, msub(Some('w'), "New Tab with Shell", vec![]));
+		clashing.insert(1, msub(Some('w'), "New tab with shell", vec![]));
 		assert_eq!(accel_clash(&clashing), Some('w'));
 	}
 

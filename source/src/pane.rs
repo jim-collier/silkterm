@@ -2811,10 +2811,36 @@ impl PaneManager {
 		area: Rect,
 	) {
 		let cmd = self.panes.get(&id).and_then(|p| p.command.clone());
+		self.split_cmd(ctx, proxy, id, dir, cmd, area);
+	}
+
+	// The same split, but the new pane runs `command` - a shell picked off the
+	// menu - and still starts where the source pane's shell is.
+	pub fn split_with(
+		&mut self,
+		ctx: &mut TextCtx,
+		proxy: &EventLoopProxy<UserEvent>,
+		id: PaneId,
+		dir: Dir,
+		command: Vec<String>,
+		area: Rect,
+	) {
+		self.split_cmd(ctx, proxy, id, dir, Some(command), area);
+	}
+
+	fn split_cmd(
+		&mut self,
+		ctx: &mut TextCtx,
+		proxy: &EventLoopProxy<UserEvent>,
+		id: PaneId,
+		dir: Dir,
+		command: Option<Vec<String>>,
+		area: Rect,
+	) {
 		let cwd = self.panes.get(&id).and_then(|p| p.term.cwd());
 		// interactive splits even-distribute the same-direction run (unless a divider
 		// in it was hand-dragged); the CLI drives its own sizing, so it passes false
-		self.split_at(ctx, proxy, id, dir, false, 0.5, cmd, cwd, area, true);
+		self.split_at(ctx, proxy, id, dir, false, 0.5, command, cwd, area, true);
 	}
 
 	// What the tab has to say about itself: the command its focused pane was
