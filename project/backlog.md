@@ -47,7 +47,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - 🔬 Startup directory and tab closing.
 	- Done: the startup directory follows the calling directory, so "Open in terminal" from a file manager starts in that folder. The setting still applies where the inherited directory was a launcher's default - home, a filesystem root, or beside the executable - so the two coexist and the setting stays.
 	- Done: closing the last tab closes the window.
-	- Open: closing a second tab crashes the program. Not reproducible on Linux - twelve tabs closed in a row, by hotkey and by the close box, wide window and narrow. Needs the platform and the steps.
+	- Open: closing a second tab crashes the program. Not reproducible on Linux - twelve tabs closed in a row, by hotkey and by the close box, wide window and narrow. Not on Windows either when tabs close because their shell exits, in any order. So the removal itself is fine; the steps matter. Which key or click, and was the mouse over the tab strip?
 	- Opened: 20260826-123553
 
 - 🔬 Double-clicking a Windows path leaves off the drive letter.
