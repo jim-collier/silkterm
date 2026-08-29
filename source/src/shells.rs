@@ -193,13 +193,26 @@ fn merge_with(
 	resolve: &dyn Fn(&str) -> Option<PathBuf>,
 	today: &str,
 ) -> Vec<ShellEntry> {
-	let mut out: Vec<ShellEntry> = stored.to_vec();
 	// One identity per stored entry, resolved once: where its program actually
 	// is (None = not installed), its bare name, and its arguments.
-	let ids: Vec<Option<Ident>> = out
-		.iter()
-		.map(|entry| Ident::of(&entry.command, resolve))
-		.collect();
+	//
+	// A list that already holds duplicates keeps holding them, because a scan
+	// only ever adds - so the rule that stops a second copy being added has to
+	// also be able to take one out. A row naming the same installed file as a row
+	// above it is dropped here; the one above stays, with its title, its place
+	// and its flags. That is the only kind of deletion anything here does.
+	let mut kept: Vec<(ShellEntry, Option<Ident>)> = Vec::with_capacity(stored.len());
+	for entry in stored {
+		let id = Ident::of(&entry.command, resolve);
+		let duplicate = id.as_ref().is_some_and(|id| {
+			kept.iter()
+				.any(|(_, seen)| seen.as_ref().is_some_and(|seen| seen.same_file(id)))
+		});
+		if !duplicate {
+			kept.push((entry.clone(), id));
+		}
+	}
+	let (mut out, ids): (Vec<ShellEntry>, Vec<Option<Ident>>) = kept.into_iter().unzip();
 	for (entry, id) in out.iter_mut().zip(&ids) {
 		if id.as_ref().is_none_or(|id| id.exe.is_none()) {
 			entry.active = false;
@@ -292,20 +305,36 @@ impl Ident {
 				.collect(),
 		})
 	}
-	// Same arguments, and either both programs resolve to the same file or the
-	// stored one resolves nowhere and merely shares a name. That second arm is
-	// what keeps a reinstall from adding a duplicate beside the disabled entry
-	// it belongs to; two shells that are BOTH installed stay distinct on their
-	// paths, so Git Bash, MSYS2 bash and Cygwin bash never collapse together.
+	// Same name, same arguments, and either both programs resolve to the same
+	// file or the stored one resolves nowhere. That last arm is what keeps a
+	// reinstall from adding a duplicate beside the disabled entry it belongs to;
+	// two shells that are BOTH installed stay distinct on their paths, so Git
+	// Bash, MSYS2 bash and Cygwin bash never collapse together.
+	//
+	// The name has to match as well as the file, because /bin/sh is usually a
+	// link to dash or bash and it is not the same shell as the one it links to -
+	// a shell reads its own name and behaves differently under it.
 	fn same(&self, other: &Self) -> bool {
-		if self.args != other.args {
+		if self.args != other.args || self.base != other.base {
 			return false;
 		}
 		match (&self.exe, &other.exe) {
 			(Some(a), Some(b)) => a == b,
-			(None, _) => self.base == other.base,
+			(None, _) => true,
 			_ => false,
 		}
+	}
+
+	// The strict half of `same`, for taking a duplicate OUT of a stored list:
+	// both programs have to be installed and be the same file. The fallback for
+	// a program that is gone must not apply here. It is right for "do not add a
+	// second copy of this", but it matches anything sharing a name, so using it
+	// to delete would take out an installed shell on behalf of an entry whose
+	// own program is missing.
+	fn same_file(&self, other: &Self) -> bool {
+		self.args == other.args
+			&& self.base == other.base
+			&& matches!((&self.exe, &other.exe), (Some(a), Some(b)) if a == b)
 	}
 }
 
@@ -417,12 +446,18 @@ fn unique_slug(title: &str, existing: &[ShellEntry]) -> String {
 		.unwrap_or(base)
 }
 
-// Case-fold a resolved path on Windows, where two spellings name one file.
+// Follow a resolved path to the real file, and case-fold it on Windows where two
+// spellings name one file. Following the links is what stops one shell being
+// offered several times: /bin is a symlink to /usr/bin on most Linux
+// distributions and /etc/shells lists both spellings, and a package that puts
+// its program under /opt links to it from /usr/bin. A path that does not resolve
+// is kept as it stands - the tests hand out paths that were never on disk.
 fn norm(path: &Path) -> PathBuf {
+	let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
 	if cfg!(windows) {
-		PathBuf::from(path.to_string_lossy().to_lowercase())
+		PathBuf::from(real.to_string_lossy().to_lowercase())
 	} else {
-		path.to_path_buf()
+		real
 	}
 }
 
@@ -457,7 +492,16 @@ fn which(prog: &str) -> Option<PathBuf> {
 		Vec::new()
 	};
 	let path = std::env::var_os("PATH")?;
+	let mut visited: Vec<PathBuf> = Vec::new();
 	for dir in std::env::split_paths(&path) {
+		// One directory under several names is normal - /bin and /usr/bin are the
+		// same place on most Linux distributions - and a lookup that finds nothing
+		// pays a stat for every spelling.
+		let real = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+		if visited.contains(&real) {
+			continue;
+		}
+		visited.push(real);
 		let direct = dir.join(prog);
 		if direct.is_file() {
 			return Some(direct);
@@ -1223,6 +1267,91 @@ mod tests {
 		let out = merged(&stored, &found, &installed(&["bash"]));
 		assert_eq!(out.len(), 2);
 		assert_eq!(out[1].command, "bash --norc");
+	}
+
+	// The duplicate-shell bug this module had for months: /bin is a symlink to
+	// /usr/bin on most Linux distributions, /etc/shells lists both spellings, and
+	// the list came out with two of everything. Following the links is what fixes
+	// it, so the test needs real ones on disk.
+	#[cfg(unix)]
+	#[test]
+	fn one_shell_reached_by_two_paths_is_one_entry() {
+		use std::os::unix::fs::symlink;
+		let dir = std::env::temp_dir().join(format!("silkterm_links_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(dir.join("usr/bin")).unwrap();
+		std::fs::write(dir.join("usr/bin/fish"), "").unwrap();
+		symlink("usr/bin", dir.join("bin")).unwrap();
+
+		let literal = |prog: &str| {
+			let path = PathBuf::from(prog);
+			path.is_file().then_some(path)
+		};
+		let by_link = dir.join("bin/fish").display().to_string();
+		let by_real = dir.join("usr/bin/fish").display().to_string();
+		assert!(same_command_with(&by_link, &by_real, &literal));
+
+		let stored = vec![entry("fish", &by_link, true)];
+		let found = vec![Found::new("Fish", by_real, "")];
+		assert_eq!(merged(&stored, &found, &literal).len(), 1);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// ...but a link is not always the shell it points at. /bin/sh is dash or bash
+	// on nearly every box, and it is a different shell from either: a shell reads
+	// the name it was started under and behaves differently under it.
+	#[cfg(unix)]
+	#[test]
+	fn a_link_is_not_the_shell_it_points_at() {
+		use std::os::unix::fs::symlink;
+		let dir = std::env::temp_dir().join(format!("silkterm_sh_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		std::fs::write(dir.join("dash"), "").unwrap();
+		symlink("dash", dir.join("sh")).unwrap();
+
+		let literal = |prog: &str| {
+			let path = PathBuf::from(prog);
+			path.is_file().then_some(path)
+		};
+		let dash = dir.join("dash").display().to_string();
+		let sh = dir.join("sh").display().to_string();
+		assert!(!same_command_with(&dash, &sh, &literal));
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// The half that reaches a config someone already has. A scan only adds, so a
+	// list that grew duplicates before the rule above existed would keep them
+	// forever unless the merge can take one out.
+	#[test]
+	fn a_duplicate_already_in_the_list_is_taken_out() {
+		let stored = vec![
+			entry("bash", "/opt/bash", true),
+			entry("nushell", "/opt/nu", true),
+			entry("bash_2", "bash", true),
+		];
+		let out = merged(&stored, &[], &installed(&["bash", "nu"]));
+		let slugs: Vec<&str> = out.iter().map(|e| e.slug.as_str()).collect();
+		assert_eq!(slugs, ["bash", "nushell"], "the first one stays put");
+	}
+
+	// A row only goes when the row it duplicates is installed too. Otherwise an
+	// entry whose program is gone - which matches anything sharing its name -
+	// would take out the working shell below it.
+	#[test]
+	fn a_missing_shell_never_deletes_the_one_below_it() {
+		let stored = vec![
+			entry("old_fish", "/usr/local/bin/fish", true),
+			entry("fish", "/opt/fish", true),
+		];
+		let resolve = |prog: &str| (prog == "/opt/fish").then(|| PathBuf::from(prog));
+		let out = merged(&stored, &[], &resolve);
+		assert_eq!(out.len(), 2);
+		assert!(
+			!out[0].active,
+			"the missing one is switched off, not deleted"
+		);
+		assert!(out[1].active);
 	}
 
 	// Three environments ship a program called bash and they are not the same

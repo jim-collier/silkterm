@@ -37,6 +37,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- ✅ Linux (and probably also Windows): Many duplicate shells get populated.
+	- Cause: two entries were treated as one shell only when their command lines resolved to the same literal path. On Linux `/bin` is a symlink to `/usr/bin`, `/etc/shells` lists both spellings, and a package under `/opt` links to itself from `/usr/bin`, so the same shell arrived under three names and got three rows.
+	- Fixed: a resolved program is now followed to the real file before two entries are compared, so every spelling of one shell collapses to one row.
+	- The name a shell is started under is part of what makes it that shell, so `/bin/sh` stays separate from the dash or bash it links to. A shell reads its own name and behaves differently under it.
+	- Fixed: a list that already held duplicates is collapsed on the next scan, keeping the first of each set with its title, its place and its flags. Until now a scan could only add, so an existing config would have kept its duplicates forever.
+	- Directories that appear on PATH under more than one name are now searched once.
+	- Verified on Linux: a list of nineteen entries came back as eleven, one per installed shell, with the login shell still leading. Not yet checked on Windows.
+	- Opened: 20260829
+	- Closed: 20260829
+
 - ✅ Windows: the transparency setting does nothing.
 	- Cause: a plain HWND swapchain offers only opaque compositing, so the per-pixel alpha the setting asks for was dropped while everything else still rendered, which is why it read as "does nothing" rather than as a fault.
 	- Fixed: with the setting on, the window is presented through the composition path on DX12, which carries premultiplied alpha, and without a redirection surface under it. The backend is pinned for it, since the default pick varies per machine and only DX12 has the option. If DX12 cannot serve the window it falls back to the old opaque path and says so.
