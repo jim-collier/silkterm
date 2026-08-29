@@ -74,6 +74,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
+- Checkboxes to dis/enable shells should be square (and vertically centered in row), not rectagular
+
 - ✅ Pick up the newer SHCL, which carries some fixes needed. Take it from github source.
 	- Now on shcl 2.0.0, which is what the repository's main branch holds. Nothing in the config code needed changing for it; every test passed on the bump as it stood.
 	- Two of its additions are in use. A save goes through a temp file and a rename, so a crash mid-save cannot leave a truncated config, and it is refused when the load had to drop a line the save would delete. A setting the writer cannot place is now reported rather than silently skipped.
