@@ -3553,8 +3553,8 @@ window:
 	## Launch at the size you last dragged the window to. The remembered pair
 	## updates either way, so turning this off puts you back on columns/rows.
 	# remember_size: true  ## Default
-	# remembered_columns: 160  ## Default
-	# remembered_rows: 48  ## Default
+	remembered_columns: 160
+	remembered_rows: 48
 
 	## Hide the tab bar while only one tab is open (also in the View menu).
 	# hide_single_tab: false  ## Default

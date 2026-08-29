@@ -116,7 +116,7 @@ fn cpu_seconds() -> Option<(f64, f64)> {
 	}
 }
 
-// Nothing equivalent is wired up elsewhere yet, and a pair of zeroes would read
+// Nothing equivalent exists elsewhere yet, and a pair of zeroes would read
 // as "this thread did nothing" rather than "not measured here".
 #[cfg(not(windows))]
 fn cpu_seconds() -> Option<(f64, f64)> {

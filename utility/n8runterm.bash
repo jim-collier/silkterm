@@ -17,7 +17,6 @@
 ##			b23       the same dir on b23, over the network mount
 ##			dogfood   the fixed-name copy in the synced dogfood dir, which is how a
 ##			          build made on another box arrives
-##			sbin      the fixed-name copy in /usr/local/sbin
 ##		  A source is copied in only when its build is newer than anything held. A
 ##		  copy is named for the build's own mtime, not for when it was copied. That
 ##		  alone isn't enough to recognise one build reaching us two ways - the copies
@@ -115,7 +114,6 @@ fSilkTermDogfood(){
 	[[ -n "${cloneDir}" ]] && fCopyIfNewer clone "${cloneDir}" 0
 	fCopyIfNewer b23     "${b23ReleaseDir}"    1
 	fCopyIfNewer dogfood "${syncedDogfoodDir}" 0
-	fCopyIfNewer sbin    "/usr/local/sbin"     0
 
 	local -r newest="$(fNewestHeld)"
 	[[ -n "${newest}" ]] || { fWarn "no dogfood build held, and no source reachable"; return 1; }

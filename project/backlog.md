@@ -74,7 +74,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
-- Checkboxes to dis/enable shells should be square (and vertically centered in row), not rectagular
+- ✅ Checkboxes to dis/enable shells should be square (and vertically centered in row), not rectagular
+	- Done: the Active box in the Shell tab was as tall as the fields beside it. It is square now, the same size as every other checkbox, and centered on its line.
+	- Opened: 20260829
+	- Closed: 20260829
 
 - ✅ Pick up the newer SHCL, which carries some fixes needed. Take it from github source.
 	- Now on shcl 2.0.0, which is what the repository's main branch holds. Nothing in the config code needed changing for it; every test passed on the bump as it stood.
@@ -137,14 +140,17 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- ✅ The rotating install now dates and names its copy from the build. Both launchers compare the bytes when a source looks newer, and a match just takes the newer date, so a build is held once whatever the dates say. Neither launcher will prune the newest copy any more, however old it is - a quiet week used to empty the pool and drop the launch to a fallback terminal.
 		- ✅ The case that needed a build date inside the binary is closed. Every build now carries a build number, so two dogfood builds of one release are no longer indistinguishable - ask the binary rather than trusting a file date. The launcher still ranks copies by date, which is right for choosing what to run; the number is what settles which build a report is actually about.
 	- ✅ The bash launcher used to just run whatever it found, in place. It has the same sources, the same pruning and the same reporting as the Windows one now.
-	- 🛠️ Only the Windows half has been run. The bash launcher still needs a pass on Linux.
+	- 🛠️ Both launchers have now been run on their own box. Still open: the network source when b23 is down.
+		- Done on Linux with b23 reachable: it copies in a newer build, declines one it already holds, and runs the newest. A copy that is old but still running is left alone when the pool is pruned; an idle one of the same age goes.
 		- ✅ Both launchers are deployed to the synced dirs, from a Linux box. The bash one goes to two dirs, not one - the linux and wsl trees mirror each other exactly, so writing only one would split them.
-		- 🔬 Test on Linux and Windows, with the b23 network source both up and with it down (e.g. via SMB on/off), and the check that reads which copies are running before pruning one.
+		- 🔬 Still to run: the b23-down case, from a box where b23 is over the network rather than local (Linux and Windows both), so the bounded wait is what gets exercised.
 	- Opened: 20260823-131929
 
-- 🔘 Config file:
-	- 🔘 Reorganize the whole thing more logically, similar to how the Settings dialog is organized.
+- ✅ Config file:
+	- ✅ Reorganize the whole thing more logically, similar to how the Settings dialog is organized.
+		- Done under the SHCL pickup above: a new file follows the dialog's tab order. An existing file keeps its own order.
 	- Opened: 20260719-085918
+	- Closed: 20260828
 
 - ✅ Menu enhancements:
 	- ✅ "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
@@ -189,7 +195,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Size: A boolean setting to "Remember last size".
 		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
-			- 🔘 "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
+			- ✅ "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
+				- Done: a new config file carries the pair as live lines. An existing file already has them from the first resize.
 	- Opened: 20260628-083740
 
 - 🔘 Begin a detailed UI/UX '[repo]/project/uiux-style-guide.md'
@@ -304,23 +311,23 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 			- Pastel (a pleasing light pastel color, on dark gray background that has a subtle tint of complementary pastel).
 	- Opened: 20260628-083740
 
-- 🛠️ General configuration:
-	- Done: the default-shell behavior.
-	- Note: the named shell list and its UI (grid editor, Tab/Pane menus) are still to build by hand.
-	- 🛠️ Ability to define shells to launch in a new tab or pane.
+- ✅ General configuration:
+	- Done: the default-shell behavior, the named shell list, its grid editor in the Shell tab, and the Tab and Pane menu rows that draw from it.
+	- ✅ Ability to define shells to launch in a new tab or pane.
 		- ✅ By default, new tab launches the default shell for the window.
 			- Done: new tabs and the startup pane use the default shell.
 			- ✅ By priority: Global command shell override, non-empty shell specified in config file, or system default shell.
 				- Done: order is the window --shell, then config default_shell, then system. A new pane also inherits from the pane it forked, its tab, then the window first.
 		- ✅ By default, new pane launches same shell as the pane the new one was forked off of.
 			- Done: a pane stores its launch command, and interactive splits inherit it.
-	- 🛠️ The shell configuration is stored in the config file as a simple key:value list of shell names and command lines. Command lines may have spaces, single quotes, and/or double quotes in them.
-		- Done: a single default_shell string key, argv-split so it handles spaces and quotes.
-		- Note: the named key:value list and its consumers (the grid editor and Tab/Pane menus below) are still hand-rolled work.
-		- 🛠️ The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
+	- ✅ The shell configuration is stored in the config file as a simple key:value list of shell names and command lines. Command lines may have spaces, single quotes, and/or double quotes in them.
+		- Done: the `shells` list in the config, one entry per shell with its title, command line and active flag, argv-split so spaces and quotes work. The first active entry is the default shell; the old single `default_shell` key is retired.
+		- ✅ The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
 			- Done: the list itself, and the Tab half of it - "New Tab with Shell" is in the Tabs menu and in the right-click menu, off the stored `shells.*` list.
-			- 🔘 Still to do: the same for a new PANE (split), and the two bracketed rows - "[SilkTerm default]" at the top where the config names one, "[system default]" always at the bottom.
+			- ✅ The same for a new pane: both split rows have their shell flyout now, see the menu item above.
+			- 🚫 The two bracketed rows. The list itself settles both: its first active entry is the default, and the system shell is on the list wherever the scan found it, so a bracketed row would only repeat a row already there.
 	- Opened: 20260628-083740
+	- Closed: 20260829
 
 - 🛠️ Refactor settings dialog
 	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory.
@@ -522,11 +529,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 			- If the user launches the program also with command-line options:
 				- Window-level options specified on the command-line at launch, override same command-line options stored in the config. (In other words, window-level options are "negotiated" between user-specified and config.)
 				- If a single hierarchical option is specified by the user on the command-line at launch time, all hierarchical options from the config file are ignored.
-	- 🔘 General format (unless we already inherited one):
+	- 🛠️ General format (unless we already inherited one):
+		- Done: both `--option value` and `--option=value` are taken, and a bool takes true/t/yes/y/1 or false/f/no/n/0. Short forms exist only for `-h` and `-v` so far.
 		- `--option[=| ]value` | `-o value`
 		- `--unary-flag` | `--unary-flag[=| ]\(true|t|yes|y|Y|1|false|f|no|n|N|0\)` | `-u` | ...etc.
 		- In other words, even unary flags can be treated as options, and important options have single unique "short" versions.
-	- 🔘 `--config[=| ]"alternate config file location"`
+	- ✅ `--config[=| ]"alternate config file location"`
+		- Done. Settings saves to the alternate while it is in force. The per-window notes below wait on multi-window, which does not exist yet.
 		- When active per-session, settings dialog should save to defined alternate.
 		- All launches without this flag should default to existing config.
 		- Configs are per-window, not per-tab.
@@ -534,21 +543,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Window-level options (all options only apply to a single window per launch):
 		- General:
 			- Specifying window-level options after any tab/pane marker (`--new-tab`, `--tab`, `--new-pane`, `--pane`) should exit with an error.
-		- 🔘 `--columns[=| ]<n>`
+		- ✅ `--columns[=| ]<n>`
 			- Primary way to specify window width
-		- 🔘 `--rows[=| ]<n>`
+		- ✅ `--rows[=| ]<n>`
 			- Primary way to specify window height
-		- 🔘 `--pixel-width[=| ]<n>`
+		- ✅ `--pixel-width[=| ]<n>`
 			- Alternate way to specify window width
-		- 🔘 `--pixel-height[=| ]<n>`
+		- ✅ `--pixel-height[=| ]<n>`
 			- Alternate way to specify window height
-		- 🔘 `--background-opacity[=| ]<n>`
-		- 🔘 `--hide-windowframe[[=| ]bool]`
-		- 🔘 `--hide-menu[[=| ]bool]`
-		- 🔘 `--fullscreen[[=| ]bool]`
-		- 🛠️ `--help` | `-h`
+		- ✅ `--background-opacity[=| ]<n>`
+		- ✅ `--hide-windowframe[[=| ]bool]`
+		- ✅ `--hide-menu[[=| ]bool]`
+		- ✅ `--fullscreen[[=| ]bool]`
+		- ✅ `--help` | `-h`
 			- Shows program name, version and build# in its header, and lists the options. Copyright and license live in `--about` rather than being repeated here.
-		- 🔘 `--syntax`
+		- ✅ `--syntax`
 			- Similar to `--help` but just list options and meaning.
 		- ✅ `--version`
 			- Shows program name, version, and build#. One flush line, so a script can still read the version as the second field.
@@ -560,30 +569,30 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 			- All options are logically under a single implicit 'window' (it can't be specified; it just means all options apply to one window).
 			- Inheritance (most-specific wins): a pane's effective value = explicit on that pane, else inherited from the pane it splits (recursively up that chain), else its tab, else the window. A tab's = explicit on the tab, else the window. Flow: window -> tab -> [pane it splits, recursively] -> pane. Handles, title, and size are non-inheritable; direction inherits along the split chain, and the style options below inherit down the whole flow.
 			- Order matters: options apply to the current tab/pane at the point they appear. You may re-select an earlier entity (e.g. `--tab=0`) later in the same command line to add panes to it or change its settings.
-		- 🔘 `--new-tab[[=| ]<handle>]`
+		- ✅ `--new-tab[[=| ]<handle>]`
 			- Create a new tab and make it current. Optional handle names it (unique within the window) for later `--tab=<handle>`. The implicit first tab (ID "0"/"main") always exists, so N `--new-tab`s => N+1 tabs.
-		- 🔘 `--tab[=| ]<id>`
+		- ✅ `--tab[=| ]<id>`
 			- Select an existing tab (ID "0"/"main" or a handle) and make it current - to add panes or change its settings. ID required; selecting a nonexistent tab errors.
-		- 🔘 `--new-pane[[=| ]<handle>]`
+		- ✅ `--new-pane[[=| ]<handle>]`
 			- Create a new pane (splitting `--splits`, default = the current pane) and make it current. Optional handle names it (unique within the tab) for later `--pane=<handle>` / `--splits=<handle>`. The implicit first pane (ID "0"/"main") always exists and is never created by `--new-pane`.
-		- 🔘 `--pane[=| ]<id>`
+		- ✅ `--pane[=| ]<id>`
 			- Select an existing pane (ID "0"/"main" or a handle, within the current tab) and make it current. ID required; selecting a nonexistent pane errors.
-		- 🔘 `--title[=| ]<"Display title">`
+		- ✅ `--title[=| ]<"Display title">`
 			- Before any tab/pane marker: replaces the default window title. After a tab marker (`--new-tab`/`--tab`): replaces that tab's calculated title. After a pane marker: ignored (reserved for a possible future per-pane use; not an error).
 			- Display only; not a handle, not inheritable.
-		- 🔘 `--splits[=| ]<pane id to split>` (alias `--splits-pane`)
+		- ✅ `--splits[=| ]<pane id to split>` (alias `--splits-pane`)
 			- Only valid with `--new-pane`; error otherwise.
 			- Optional. Default = the current pane in the current tab (resets to "0"/"main" after every tab create/select). Splitting the implicit first pane is fine - that's the first split.
-		- 🔘 `--down` | `--up` | `--right` | `--left` `[[=| ]bool]`
+		- ✅ `--down` | `--up` | `--right` | `--left` `[[=| ]bool]`
 			- Where the new pane goes relative to the pane it splits: `--down`/`--up` stack it below/above; `--right`/`--left` place it to the right/left.
 			- Only valid with `--new-pane`; error otherwise.
 			- Inheritable along the split chain: a later pane that splits this one reuses this direction unless it sets its own (handy for stacking a run of panes the same way).
-		- 🔘 Default direction when a `--new-pane` gives none and has nothing to inherit: "right" or "down", whichever has more space. ("Save layout" always emits an explicit direction rather than relying on this.)
-		- 🔘 `--size[=| ]<(n columns or rows | n%) of the split (parent) space in the split direction>`
+		- ✅ Default direction when a `--new-pane` gives none and has nothing to inherit: "right" or "down", whichever has more space. ("Save layout" always emits an explicit direction rather than relying on this.)
+		- ✅ `--size[=| ]<(n columns or rows | n%) of the split (parent) space in the split direction>`
 			- Defaults to 50%.
 				- Exception: a run of same-direction splits with no explicit size redistributes those adjacent undefined-size panes to ~equal in that direction.
 			- Only valid with `--new-pane`; error otherwise. Not inheritable.
-		- 🔘 `--shell[=| ]"command"`
+		- ✅ `--shell[=| ]"command"`
 			- Can contain escaped single and/or double quotes, as logically required by whatever quotes are used around the whole command.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
 		- ✅ `--directory[=| ]"path"` (alias `--dir`)
