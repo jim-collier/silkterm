@@ -755,7 +755,7 @@ Layout:
   --size=N | --size=N%        new pane size in the split direction
 
 Per-scope (window/tab/pane; cascades, most-specific wins):
-  --title \"...\"               window/tab title (pane-level: not wired up yet)
+  --title \"...\"               window/tab title (pane-level: reserved, not used yet)
   --shell \"...\"               command to run (argv; e.g. fish, 'bash --norc')
   --directory \"...\"           where that shell starts (alias --dir; ~ and $VARs ok)
   --keep-open[=BOOL]          keep the pane after the command exits (not implemented yet)

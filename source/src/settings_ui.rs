@@ -1620,11 +1620,17 @@ impl SettingsDialog {
 		let cols = self.shell_cols();
 		self.shell_box(i, k, cols.command, cols.command_w)
 	}
-	// The Active checkbox, centered under its own column title.
+	// The Active checkbox, centered under its own column title. Square like
+	// every other checkbox, not field-tall like the boxes beside it.
 	fn shell_active_box(&self, i: usize, k: usize) -> Rect {
 		let size = lay().swatch;
-		let x = self.shell_cols().active + (lay().shell_active_width - size) / 2.0;
-		self.shell_box(i, k, x, size)
+		let line = self.shell_line_h();
+		Rect {
+			x: self.shell_cols().active + (lay().shell_active_width - size) / 2.0,
+			y: self.shell_line_y(i, k) + (line - size) / 2.0,
+			w: size,
+			h: size,
+		}
 	}
 	// The drag handle. As tall as the fields beside it rather than square,
 	// because it is grabbed rather than aimed at - the taller box is the whole
