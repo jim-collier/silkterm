@@ -728,6 +728,9 @@ impl DialogWin {
 					let attrs = ui_attrs();
 					dialog.texts(line_h, |s| text.measure_ui_text(s, &attrs))
 				};
+				// The dialog centers its text by line box; this drops each buffer so
+				// what reads as centered is the text itself.
+				let ink_dy = self.text.ui_center_dy();
 				for item in items {
 					let mut attrs = ui_attrs();
 					attrs.color_opt =
@@ -746,7 +749,8 @@ impl DialogWin {
 						None,
 					);
 					buf.shape_until_scroll(&mut self.text.font_system, false);
-					bufs.push((item.x, item.y, item.scale, item.color, item.clip, buf));
+					let y = item.y + ink_dy * item.scale.max(1.0);
+					bufs.push((item.x, y, item.scale, item.color, item.clip, buf));
 				}
 				rows_end = rect_inst.len();
 				// open dropdown popup / field context menu: rects appended after the
@@ -779,7 +783,8 @@ impl DialogWin {
 							None,
 						);
 						buf.shape_until_scroll(&mut self.text.font_system, false);
-						ov_bufs.push((item.x, item.y, item.scale, item.color, item.clip, buf));
+						let y = item.y + ink_dy * item.scale.max(1.0);
+						ov_bufs.push((item.x, y, item.scale, item.color, item.clip, buf));
 					}
 				}
 				// flyover: what a control does, or why it is grayed out. A small box

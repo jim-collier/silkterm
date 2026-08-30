@@ -603,6 +603,13 @@ impl TextCtx {
 		ui_visible_center_top(self.ui_line_h, self.ui_vmetrics, bar_top, bar_h)
 	}
 
+	// How far to drop a chrome buffer that a caller centered by its LINE box, so
+	// what ends up centered is the text's visible box instead. Same rule as
+	// `ui_text_top`, as an offset for callers doing their own arithmetic.
+	pub fn ui_center_dy(&self) -> f32 {
+		self.ui_vmetrics.1 / 2.0
+	}
+
 	// Screen-space baseline of chrome text placed with `ui_text_top` - for the
 	// Alt-accelerator underline.
 	pub fn ui_baseline(&self, bar_top: f32, bar_h: f32) -> f32 {
