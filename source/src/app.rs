@@ -1201,7 +1201,8 @@ struct State {
 	scrim_sig: Option<u64>,
 	occluded: bool, // window fully hidden: skip rendering entirely until it comes back
 	// last cycle's frozen state (occluded or minimized); the false edge is the
-	// unfreeze - one dirty catch-up frame, hard-cut for panes with pending output
+	// unfreeze - one dirty catch-up frame, hard-cut. Read and written only by
+	// freeze_sync, which both render entry points go through.
 	was_hidden: bool,
 	// Deadline of the next animation frame while SILK_MAX_FPS pins the rate; None
 	// otherwise, which is every ordinary run. See `max_fps`.
@@ -2645,16 +2646,39 @@ impl State {
 		self.dirty = true;
 	}
 
+	// Nothing of this window is on screen: minimized, or occluded where the WM
+	// says so. Both render entry points check it - a frame built here would bank
+	// the whole buffered backlog into the output ease, and the reveal would then
+	// play it back as if it had just arrived.
+	fn hidden(&self) -> bool {
+		self.revealed
+			&& (self.occluded || (FREEZE_MINIMIZED && self.window.is_minimized().unwrap_or(false)))
+	}
+
+	// The freeze edge, owned in one place because both render entry points reach
+	// it: on restore the WM's own redraw arrives before `about_to_wait` runs, so
+	// whichever gets here first has to be the one that catches up - otherwise that
+	// frame banks the whole backlog into the ease before anything cuts it.
+	fn freeze_sync(&mut self) -> bool {
+		let hidden = self.hidden();
+		if self.was_hidden && !hidden {
+			self.freeze_catchup();
+		}
+		self.was_hidden = hidden;
+		hidden
+	}
+
 	// A frozen surface coming back on screen: hidden tabs never build, and a
 	// minimized/occluded window builds nothing - so the reveal is one dirty
-	// catch-up frame, hard-cut for any pane with output pending (easing the
-	// buffered backlog in is the bounce class). Panes with nothing pending keep
-	// their state untouched.
+	// catch-up frame, hard-cut so the gap lands instantly instead of easing in
+	// (that ease is the bounce class, and it also reads as output arriving now).
+	// Every pane is cut, not just the ones flagged dirty: the flag is cleared by
+	// whichever build got there first, so it answers "is a rebuild owed", not
+	// "did the grid move while nobody was looking". A pane that really did sit
+	// still is snapping a scroll already at rest.
 	fn freeze_catchup(&mut self) {
 		for pane in self.tabs.cur_mut().panes.values_mut() {
-			if pane.content_dirty {
-				pane.hard_cut();
-			}
+			pane.hard_cut();
 		}
 		self.dirty = true;
 	}
@@ -5826,6 +5850,9 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 
 			WindowEvent::RedrawRequested => {
+				if state.freeze_sync() {
+					return; // frozen - nothing on screen to paint
+				}
 				let _ = state.render(true);
 			}
 
@@ -6088,18 +6115,9 @@ impl ApplicationHandler<UserEvent> for App {
 			state.dirty = true;
 		}
 		let reveal_wake = (!state.revealed).then_some(state.reveal_deadline);
-		// Fully hidden window: nobody can see the frame, so don't build one. PTY
-		// reading never stops - output lands in the grid and the panes' flags wait.
-		// Occluded covers WMs that report it; is_minimized() covers iconified
-		// windows where they don't. The unfreeze edge is one dirty catch-up frame,
-		// hard-cut for panes with output pending (never eased in - bounce class).
-		let minimized =
-			FREEZE_MINIMIZED && state.revealed && state.window.is_minimized().unwrap_or(false);
-		let hidden = (state.occluded || minimized) && state.revealed;
-		if state.was_hidden && !hidden {
-			state.freeze_catchup();
-		}
-		state.was_hidden = hidden;
+		// Fully hidden window: don't build a frame nobody can see. PTY reading
+		// never stops, so the grid keeps up and the reveal is one catch-up frame.
+		let hidden = state.freeze_sync();
 		let flow = if hidden {
 			ControlFlow::Wait
 		} else if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
