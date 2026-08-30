@@ -758,7 +758,7 @@ Per-scope (window/tab/pane; cascades, most-specific wins):
   --title \"...\"               window/tab title (pane-level: reserved, not used yet)
   --shell \"...\"               command to run (argv; e.g. fish, 'bash --norc')
   --directory \"...\"           where that shell starts (alias --dir; ~ and $VARs ok)
-  --keep-open[=BOOL]          keep the pane after the command exits (not implemented yet)
+  --keep-open[=BOOL]          keep the pane after the command exits, showing its status
   --font-name \"...\"           font family
   --font-size N               font size
   --background-color #rrggbb
@@ -785,6 +785,15 @@ mod tests {
 		assert_eq!(c.win.fullscreen, Some(true));
 		assert_eq!(c.win.hide_menu, Some(false));
 		assert!(!c.hierarchical);
+	}
+
+	#[test]
+	fn keep_open_is_read_at_every_level() {
+		let c = p("--keep-open --new-tab --new-pane --keep-open=no");
+		assert_eq!(c.win.style.keep_open, Some(true));
+		assert_eq!(c.tabs[1].panes[1].style.keep_open, Some(false));
+		// unset anywhere it was not written, so the cascade can see through it
+		assert_eq!(c.tabs[1].panes[0].style.keep_open, None);
 	}
 
 	#[test]

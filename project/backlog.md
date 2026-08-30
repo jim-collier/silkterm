@@ -435,7 +435,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Tab --title override, shown in the tab bar.
 		- Window-level visual style: font, size, colors, and the background image with its stretch/zoom/opacity fold into the live settings at startup.
 			- Note: per-pane scope is still deferred. It needs a per-pane renderer the single-TextCtx architecture lacks, so these flags apply to the whole window but don't yet vary per pane (hence 🛠️).
-		- Note: still open - --keep-open (needs exit-status in a dead PTY), per-pane --title (reserved, none displayed yet), and finer field-level negotiation (today any CLI arg ignores the config command line wholesale).
+		- Done: --keep-open holds a pane open after its shell exits, saying how it ended and waiting for a key.
+		- Note: still open - per-pane --title (reserved, none displayed yet), and finer field-level negotiation (today any CLI arg ignores the config command line wholesale).
 	- General notes:
 		- Command-line options override any config setting, but only while that window is alive.
 		- As suggested in the main enhancement bulletpoint above, a command line can also be specified in the config file (and exposed in "Settings").
@@ -513,9 +514,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 			- `~` and either platform's variable spellings are understood, and are expanded at spawn time rather than at parse - so a directory written into the config's own command line means the same thing there.
 			- A path that is not a directory is reported once, naming the flag, and that scope falls back to what it would have used without it.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🔘 `--keep-open[=| ]bool`
+		- ✅ `--keep-open[=| ]bool`
 			- Keep pane|tab|window open after shell command exits, showing exit value.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+			- Done: the pane stays where it is, adds a line saying how the shell ended, hides the cursor and takes no more typing. Any key that would have gone to the shell closes it, and the pane, tab and window then close in the usual order.
+			- A pane that is not the focused one waits until it is clicked, since a keystroke goes where the focus is.
+			- Closed: 20260830-110900
 		- 🛠️ `--font-name[=| ]"string"`
 			- Note: window-level applied, per-pane deferred.
 			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
