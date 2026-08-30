@@ -188,6 +188,15 @@ fn ui_visible_center_top(ui_line_h: f32, vmetrics: (f32, f32), bar_top: f32, bar
 	bar_top + bar_h / 2.0 - ui_baseline_in_buf(ui_line_h, vmetrics) + ascent / 2.0
 }
 
+// Buffer `top` that centers chrome text's FULL ink box (ascender-top to
+// descender-bottom) in a bar. For a tab title - a path, so mostly lowercase and
+// slashes - the descenders carry as much weight as the caps, and the
+// ascender..baseline rule above leaves them hanging on the bottom edge.
+fn ui_ink_center_top(ui_line_h: f32, vmetrics: (f32, f32), bar_top: f32, bar_h: f32) -> f32 {
+	let (ascent, descent) = vmetrics;
+	bar_top + bar_h / 2.0 - ui_baseline_in_buf(ui_line_h, vmetrics) + (ascent - descent) / 2.0
+}
+
 // Emphasis weight for chrome (dialog titles, section headers): the closest
 // weight to Bold the pinned family really ships. Use this instead of a literal
 // `Weight::BOLD`, which kicks the whole family out when no 700 face exists.
@@ -603,6 +612,11 @@ impl TextCtx {
 		ui_visible_center_top(self.ui_line_h, self.ui_vmetrics, bar_top, bar_h)
 	}
 
+	// As `ui_text_top`, but centering the whole ink box - for tab titles.
+	pub fn ui_ink_top(&self, bar_top: f32, bar_h: f32) -> f32 {
+		ui_ink_center_top(self.ui_line_h, self.ui_vmetrics, bar_top, bar_h)
+	}
+
 	// How far to drop a chrome buffer that a caller centered by its LINE box, so
 	// what ends up centered is the text's visible box instead. Same rule as
 	// `ui_text_top`, as an offset for callers doing their own arithmetic.
@@ -971,6 +985,24 @@ mod tests {
 				(visible_center - (bar_top + bar_h / 2.0)).abs() < 0.01,
 				"visible center {visible_center} != bar center {}",
 				bar_top + bar_h / 2.0
+			);
+		}
+	}
+
+	// A tab title placed by ui_ink_center_top sits with ascender-top to
+	// descender-bottom centered, so descenders don't crowd the button's edge.
+	#[test]
+	fn chrome_ink_box_centers_in_bar() {
+		let vmetrics = (14.6f32, 4.7f32);
+		let ui_line_h = 23.0;
+		for &(bar_top, bar_h) in &[(0.0f32, 26.0f32), (31.0, 26.0), (10.0, 40.0)] {
+			let top = ui_ink_center_top(ui_line_h, vmetrics, bar_top, bar_h);
+			let baseline = top + ui_baseline_in_buf(ui_line_h, vmetrics);
+			let above = baseline - vmetrics.0 - bar_top;
+			let below = bar_top + bar_h - (baseline + vmetrics.1);
+			assert!(
+				(above - below).abs() < 0.01,
+				"above {above} != below {below}"
 			);
 		}
 	}
