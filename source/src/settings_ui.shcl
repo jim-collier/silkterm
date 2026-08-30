@@ -39,7 +39,7 @@ layout:
 
 	## Rows
 	row_height: 32             ## floor for an ordinary row
-	row_pad: 8                 ## row grows to the UI line height plus this
+	row_pad: 12                ## row grows to the UI line height plus this
 	header_height: 36          ## floor for a section heading (its rule sits at the bottom)
 	header_pad: 14             ## heading grows to the UI line height plus this
 	header_gap: 24             ## extra space above a heading that follows a section
@@ -51,7 +51,7 @@ layout:
 
 	## Controls
 	slider_width: 220
-	swatch: 20                 ## color chip, and the height of every boxed control
+	swatch: 20                 ## color chip; also the size of every square control (checkbox, radio)
 	hex_width: 92              ## "#rrggbb" field beside a color chip
 	value_width: 56            ## numeric field beside a slider
 	radio_box: 16              ## radio indicator square
@@ -63,7 +63,9 @@ layout:
 	base_line_height: 19       ## the UI line height the four pitches above were drawn for
 
 	## Editable fields
-	field_pad: 6               ## text inset inside a field
+	field_height: 26           ## floor; a field grows to the UI line height plus field_pad_v twice
+	field_pad: 8               ## text inset from the left and right outlines
+	field_pad_v: 4             ## clear space above and below the text line
 	caret_pad: 6               ## kept clear right of the caret at end-of-text
 	view_ahead: 28             ## characters kept visible ahead of a travelling caret
 	edit_menu_width: 132       ## the field's right-click menu

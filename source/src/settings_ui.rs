@@ -648,10 +648,23 @@ impl SettingsDialog {
 	fn row_h(&self, kind: &Kind) -> f32 {
 		Self::row_h_for(kind, self.line_h, self.edited.shells.len())
 	}
+	// The height of an ordinary row. Every boxed control centers in THIS, not in
+	// the `row_height` floor - at a large UI font the two are far apart, and
+	// centering in the floor leaves the controls riding high in their rows.
+	fn line_row_h(&self) -> f32 {
+		lay().row_height.max(self.line_h + lay().row_pad)
+	}
 	// One line of the grid - the same height as an ordinary settings row, so the
 	// fields in it match every other field in the dialog.
 	fn shell_line_h(&self) -> f32 {
-		lay().row_height.max(self.line_h + lay().row_pad)
+		self.line_row_h()
+	}
+	// An editable field is taller than a checkbox: the text needs clear space
+	// above and below it, not just left and right.
+	fn field_h(&self) -> f32 {
+		lay()
+			.field_height
+			.max(self.line_h + 2.0 * lay().field_pad_v)
 	}
 	fn btn_h(&self) -> f32 {
 		lay().button_height.max(self.line_h + lay().row_pad)
@@ -1605,7 +1618,7 @@ impl SettingsDialog {
 	// A boxed control centered in entry `k`'s line, at `x` and `w` wide.
 	fn shell_box(&self, i: usize, k: usize, x: f32, w: f32) -> Rect {
 		let line = self.shell_line_h();
-		let h = lay().swatch.max(self.line_h + 4.0);
+		let h = self.field_h();
 		Rect {
 			x,
 			y: self.shell_line_y(i, k) + (line - h) / 2.0,
@@ -1718,54 +1731,64 @@ impl SettingsDialog {
 	fn control_x(&self) -> f32 {
 		self.rect.x + lay().pad + self.label_w
 	}
+	// Top of a control `h` tall, centered in row `i`'s line.
+	fn centered_in_row(&self, i: usize, h: f32) -> f32 {
+		self.row_y(i) + (self.line_row_h() - h) / 2.0
+	}
 	fn track(&self, i: usize) -> Rect {
 		Rect {
 			x: self.control_x(),
-			y: self.row_y(i) + lay().row_height / 2.0 - 3.0,
+			y: self.centered_in_row(i, 6.0),
 			w: lay().slider_width,
 			h: 6.0,
 		}
 	}
+	// The color chip stands as tall as the hex field beside it, so the pair reads
+	// as one control rather than two of different sizes.
 	fn swatch(&self, i: usize) -> Rect {
+		let h = self.field_h();
 		Rect {
 			x: self.control_x(),
-			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
-			w: lay().swatch,
-			h: lay().swatch,
+			y: self.centered_in_row(i, h),
+			w: h,
+			h,
 		}
 	}
 	fn hexbox(&self, i: usize) -> Rect {
+		let h = self.field_h();
 		Rect {
-			x: self.control_x() + lay().swatch + 8.0,
-			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			x: self.control_x() + h + 8.0,
+			y: self.centered_in_row(i, h),
 			w: lay().hex_width,
-			h: lay().swatch,
+			h,
 		}
 	}
 	// editable numeric field to the right of a slider (shows/edits the value)
 	fn valbox(&self, i: usize) -> Rect {
+		let h = self.field_h();
 		Rect {
 			x: self.control_x() + lay().slider_width + 14.0,
-			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			y: self.centered_in_row(i, h),
 			w: lay().value_width,
-			h: lay().swatch,
+			h,
 		}
 	}
 	// wide editable field (background-image path), control_x -> the revert column
 	fn textbox(&self, i: usize) -> Rect {
 		let x = self.control_x();
+		let h = self.field_h();
 		Rect {
 			x,
-			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			y: self.centered_in_row(i, h),
 			w: self.rect.x + self.rect.w - lay().pad - lay().revert_width - 6.0 - x,
-			h: lay().swatch,
+			h,
 		}
 	}
 	// right-edge revert-to-default icon for row `i`
 	fn revert_box(&self, i: usize) -> Rect {
 		Rect {
 			x: self.rect.x + self.rect.w - lay().pad - lay().revert_width,
-			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			y: self.centered_in_row(i, lay().swatch),
 			w: lay().revert_width,
 			h: lay().swatch,
 		}
@@ -1773,7 +1796,7 @@ impl SettingsDialog {
 	fn checkbox(&self, i: usize) -> Rect {
 		Rect {
 			x: self.control_x(),
-			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			y: self.centered_in_row(i, lay().swatch),
 			w: lay().swatch,
 			h: lay().swatch,
 		}
@@ -1785,7 +1808,7 @@ impl SettingsDialog {
 	fn dual_box(&self, i: usize, p: u16) -> Rect {
 		Rect {
 			x: self.control_x() + p as f32 * self.dual_pitch(),
-			y: self.row_y(i) + (lay().row_height - lay().swatch) / 2.0,
+			y: self.centered_in_row(i, lay().swatch),
 			w: lay().swatch,
 			h: lay().swatch,
 		}
@@ -1806,7 +1829,7 @@ impl SettingsDialog {
 		let size = self.radio_box_sz();
 		Rect {
 			x: self.control_x() + k as f32 * self.radio_pitch(),
-			y: self.row_y(i) + (lay().row_height - size) / 2.0,
+			y: self.centered_in_row(i, size),
 			w: size,
 			h: size,
 		}
@@ -1814,10 +1837,10 @@ impl SettingsDialog {
 	// Collapsed dropdown box (the always-visible control): shows the current option
 	// + a down-arrow; clicking it opens the popup list.
 	fn dd_box(&self, i: usize) -> Rect {
-		let h = (self.line_h + 6.0).max(lay().swatch);
+		let h = self.field_h();
 		Rect {
 			x: self.control_x(),
-			y: self.row_y(i) + (lay().row_height - h) / 2.0,
+			y: self.centered_in_row(i, h),
 			w: lay().dropdown_width * self.ui_scale(),
 			h,
 		}
@@ -2372,7 +2395,7 @@ impl SettingsDialog {
 			x: r.x + lay().pad,
 			y: r.y + lay().pad + self.line_h + lay().row_pad,
 			w: r.w - lay().pad * 2.0,
-			h: lay().swatch.max(self.line_h + lay().row_pad),
+			h: self.field_h(),
 		})
 	}
 	fn prompt_btn_rect(&self, part: PromptFocus) -> Rect {
@@ -5178,8 +5201,8 @@ pub fn wallpaper_changed(old: &Settings, new: &Settings) -> bool {
 mod tests {
 	use super::{
 		EASE_IN_MAX, EASE_IN_MIN, EASE_OUT_MAX, EASE_OUT_MIN, Key, RAMP_DOWN_MAX, RAMP_DOWN_MIN,
-		RAMP_UP_MAX, RAMP_UP_MIN, SettingsDialog, TAU_MAX, TAU_MIN, falling_slider, speed_to_tau,
-		tab_titles, tau_to_speed,
+		RAMP_UP_MAX, RAMP_UP_MIN, SettingsDialog, TAU_MAX, TAU_MIN, falling_slider, lay,
+		speed_to_tau, tab_titles, tau_to_speed,
 	};
 	use crate::config;
 
@@ -6530,7 +6553,7 @@ mod tests {
 		d.tab = d.specs[i0].tab;
 		d.edited.wallpaper_raw = "foo bar.png".to_string();
 		let field = d.textbox(i0);
-		let at = |k: usize| field.x + 6.0 + k as f32;
+		let at = |k: usize| field.x + lay().field_pad + k as f32;
 		let y = field.y + field.h / 2.0;
 		d.mouse_down(at(2), y, &mut m);
 		assert!(d.edit.is_some(), "click opens the field");
@@ -6793,7 +6816,7 @@ mod tests {
 		let (mut d, i) = mk_text_edit("foo bar.png");
 		let field = d.textbox(i);
 		let mut m = |s: &str| s.chars().count() as f32; // 1px per char
-		let at = |k: usize| field.x + 6.0 + k as f32;
+		let at = |k: usize| field.x + lay().field_pad + k as f32;
 		let y = field.y + field.h / 2.0;
 		// single click: caret there, no selection
 		d.mouse_down(at(2), y, &mut m);

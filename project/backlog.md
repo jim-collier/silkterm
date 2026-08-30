@@ -1399,6 +1399,20 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 #### Done - New features and enhancements
 
+- ✅ All edit text boxes need more padding between outlines and text. And better vertically-centered text.
+	- Fields are their own height now instead of borrowing the color chip's, so the text has clear space above and below it as well as either side. Checkboxes and radio buttons stay the size they were.
+	- The color chip beside a hex field grew to match the field, so the pair reads as one control.
+	- Dialog text now centers on the text itself rather than on its line box, which is what left it riding high. The main window's chrome already worked this way.
+	- Controls center in the row they are actually in, rather than in the row floor - at a large interface font the two are far apart and everything sat high.
+	- Opened: 20260830-160000
+	- Closed: 20260830-160000
+
+- ✅ Tab text editing mode should look more like a regular text edit box control.
+	- Renaming a tab now draws a real field inside the tab: a recessed well with an outline in the focus color, the text inset from the outline, and the selection and caret confined to the box.
+	- The close button stays outside it, and the text does not move when an edit starts or ends.
+	- Opened: 20260830-160000
+	- Closed: 20260830-160000
+
 - ✅ Double-click a tab title to change it.
 	- The edit starts with what the tab says now, all selected, so the first thing typed replaces it. Enter or Tab keeps it, Escape drops it, and a click elsewhere keeps it.
 	- Selection, Home and End, and paste all work. A pasted newline becomes a space, since a tab is one line high.

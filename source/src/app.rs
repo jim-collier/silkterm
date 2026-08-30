@@ -921,6 +921,9 @@ const TAB_TIP_GAP: f32 = 4.0; // between the tab bar and the tip below it, DIP
 const TAB_CLOSE_W: f32 = 26.0; // right-edge close-button region per tab (title clips before it)
 const TAB_CLOSE_M: f32 = 6.0; // balanced top/right/bottom margin around the close button box
 const TAB_TITLE_PAD: f32 = 8.0; // tab title's left inset
+const TAB_EDIT_INSET: f32 = 4.0; // rename box's inset inside the tab button
+const TAB_EDIT_PAD: f32 = 4.0; // text inset inside the rename box (INSET + PAD == TAB_TITLE_PAD,
+// so the label does not move when a rename starts)
 const TAB_GAP: f32 = 1.0; // gap between adjacent tab buttons (each side of the seam)
 const TAB_TOP_PAD: f32 = 2.0; // tab button's inset from the top of the bar
 const CHROME_HAIRLINE: f32 = 1.0; // 1px rules: accelerator underlines, menu/checkbox borders
@@ -1086,6 +1089,22 @@ fn tab_close_box(tab_x: f32, tab_w: f32, bar_y: f32, tab_h: f32, scale: f32) -> 
 		h: side,
 	}
 }
+// The box a tab being renamed types into: a real text field inside the tab
+// button, stopping short of the close column and as tall as a line of text plus
+// its own padding, or the button itself where that is shorter.
+fn tab_edit_box(tab_x: f32, tab_w: f32, bar_y: f32, tab_h: f32, line_h: f32, scale: f32) -> Rect {
+	let inset = config::dip(TAB_EDIT_INSET, scale);
+	let h = (line_h + 2.0 * config::dip(TAB_EDIT_PAD, scale)).min(tab_h - 2.0 * inset);
+	let x = tab_x + inset;
+	let right = tab_x + tab_w - config::dip(TAB_CLOSE_W, scale) - inset;
+	Rect {
+		x,
+		y: bar_y + (tab_h - h) / 2.0,
+		w: (right - x).max(config::dip(8.0, scale)),
+		h,
+	}
+}
+
 // How much of a tab its title actually gets: the button less its own inset on
 // both sides and the close-button column it must never run under. The draw and
 // the fit read the one rule, or a title is shortened to a width it is not then
@@ -3454,7 +3473,7 @@ impl State {
 				let mut upto = |at: usize| self.text.measure_ui_text(&text[..at], &attrs);
 				(tab, upto(from), upto(to), upto(caret))
 			});
-			let title_pad = self.text.dip(TAB_TITLE_PAD);
+			let edit_pad = self.text.dip(TAB_EDIT_PAD);
 			let caret_w = self.text.dip(CHROME_HAIRLINE).max(1.0);
 			let mut x = 0.0;
 			for (slot, tab_w) in strip.iter().copied().enumerate() {
@@ -3473,23 +3492,54 @@ impl State {
 					tab_h - tab_top - cb_rule,
 					color,
 				));
-				// A rename in progress: the selection behind the text, then the caret.
-				// Both are drawn before the text pass, so the label sits on top.
+				// A rename in progress draws a text box in place of the label: a
+				// recessed well, an outline in the focus color, then the selection
+				// and the caret. All of it goes down before the text pass, so the
+				// label itself sits on top.
 				if let Some((edit_tab, sel_from, sel_to, caret)) = edit_marks {
 					if i == edit_tab {
-						let text_x = x + title_pad;
-						let top = tab_bar_y + tab_top + cb_rule;
-						let h = tab_h - tab_top - 2.0 * cb_rule;
+						let field = tab_edit_box(
+							x,
+							tab_w,
+							tab_bar_y,
+							tab_h,
+							self.text.ui_line_h,
+							self.text.scale,
+						);
+						instances.push(rect_inst(
+							field.x - cb_rule,
+							field.y - cb_rule,
+							field.w + 2.0 * cb_rule,
+							field.h + 2.0 * cb_rule,
+							config::settings().highlight,
+						));
+						instances.push(rect_inst(
+							field.x,
+							field.y,
+							field.w,
+							field.h,
+							mix_rgb(color, [0x00, 0x00, 0x00], 0.45),
+						));
+						let text_x = field.x + edit_pad;
+						let (top, h) = (field.y + cb_rule, field.h - 2.0 * cb_rule);
+						let inside = |at: f32| (text_x + at).clamp(field.x, field.x + field.w);
 						if sel_to > sel_from {
+							let (from, to) = (inside(sel_from), inside(sel_to));
 							instances.push(rect_inst(
-								text_x + sel_from,
+								from,
 								top,
-								sel_to - sel_from,
+								to - from,
 								h,
 								config::SELECTION_BG,
 							));
 						}
-						instances.push(rect_inst(text_x + caret, top, caret_w, h, x_rgb));
+						instances.push(rect_inst(
+							inside(caret).min(field.x + field.w - caret_w),
+							top,
+							caret_w,
+							h,
+							x_rgb,
+						));
 					}
 				}
 				// close-button box: a 1px outline (border rect + inner tab-bg fill).
@@ -3766,6 +3816,7 @@ impl State {
 			self.menu_bar.hash(&mut h);
 			self.tab_bar_visible().hash(&mut h);
 			self.tabs.active.hash(&mut h);
+			self.tab_edit.as_ref().map(|e| e.tab).hash(&mut h); // moves the label into its box
 			self.focused.hash(&mut h); // dims the copy-mode labels
 			scrim_on.hash(&mut h);
 			// one pointer covers every setting: a change swaps the whole snapshot
@@ -3902,20 +3953,41 @@ impl State {
 					});
 				}
 			}
+			let editing = self.tab_edit.as_ref().map(|e| e.tab);
 			let mut x = 0.0;
 			for (slot, (_, _, buf)) in chrome.tabs.iter().enumerate() {
 				let tab_w = tab_widths.get(slot).copied().unwrap_or(0.0);
 				let close_x = x + tab_w - self.text.dip(TAB_CLOSE_W);
+				// A tab being renamed reads inside its own box, at the same left
+				// inset as the label it replaced.
+				let field = (editing == Some(self.tab_layout.first + slot)).then(|| {
+					tab_edit_box(
+						x,
+						tab_w,
+						tab_bar_y,
+						tab_h,
+						self.text.ui_line_h,
+						self.text.scale,
+					)
+				});
+				let (left, clip_l, clip_r) = match field {
+					Some(f) => (
+						f.x + self.text.dip(TAB_EDIT_PAD),
+						f.x + self.text.dip(TAB_EDIT_PAD),
+						f.x + f.w - self.text.dip(TAB_EDIT_PAD),
+					),
+					None => (x + self.text.dip(TAB_TITLE_PAD), x, close_x),
+				};
 				areas.push(TextArea {
 					buffer: buf,
-					left: x + self.text.dip(TAB_TITLE_PAD),
+					left,
 					// center the visible text box in the tab bar (metric-based)
 					top: self.text.ui_text_top(tab_bar_y, tab_h),
 					scale: 1.0,
 					bounds: TextBounds {
-						left: x as i32,
+						left: clip_l as i32,
 						top: tab_bar_y as i32,
-						right: close_x as i32, // leave room for the close "X"
+						right: clip_r as i32, // leave room for the close "X"
 						bottom: (tab_bar_y + tab_h) as i32,
 					},
 					default_color: menu_fg,
