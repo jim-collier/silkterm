@@ -223,6 +223,7 @@ rows:
 		label: Blur px
 		kind: slider
 		range: 0, 50
+		whole: true
 		indent: 1
 		setting: wallpaper.blur
 
@@ -325,6 +326,7 @@ rows:
 		label: Scrim radius px
 		kind: slider
 		range: 0, 20
+		whole: true
 		indent: 1
 		setting: text.scrim.radius
 		help: "How far the halo reaches out from the ink."
@@ -342,6 +344,7 @@ rows:
 		label: Outline px
 		kind: slider
 		range: 0, 4
+		whole: true
 		indent: 1
 		setting: text.outline
 		help: "A crisp outline drawn hard against the glyphs, on top of the halo."
