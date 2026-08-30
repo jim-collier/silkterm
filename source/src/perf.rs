@@ -13,10 +13,14 @@
 //! The counters are plain atomics behind one cached flag, so an ordinary run
 //! pays a relaxed load per site and nothing else. The report goes to stderr when
 //! the loop exits.
+//!
+//! `SILK_LATENCY=1` answers the other question - how long a typed character
+//! takes to appear - and is separate because it is a stopwatch per keystroke
+//! rather than a running total.
 
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
-use std::time::Instant;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 pub fn on() -> bool {
 	static ON: OnceLock<bool> = OnceLock::new();
@@ -149,6 +153,7 @@ impl Drop for Span<'_> {
 }
 
 pub fn report() {
+	latency_report();
 	if !on() {
 		return;
 	}
@@ -178,5 +183,166 @@ pub fn report() {
 	);
 	if let Some((thread_cpu, process_cpu)) = cpu {
 		eprintln!("[perf] cpu: this thread {thread_cpu:.2}s of process {process_cpu:.2}s");
+	}
+}
+
+// Keypress to pixel (`SILK_LATENCY=1`), timed over three legs rather than as
+// one number: getting the key to the pty, the shell echoing it back, and us
+// putting that on screen. Only the last leg is ours, and a single total cannot
+// say which of the three is the slow one.
+//
+// Two things it cannot do. Nothing after `present` returns is visible from in
+// here, so the compositor and the display are missing and a figure is a floor,
+// not the whole wait. And it cannot tell a shell's echo from output nobody
+// typed for, so it belongs at a settled prompt; anything still unanswered after
+// LATENCY_WINDOW is dropped rather than reported as a very slow keystroke.
+pub fn latency_on() -> bool {
+	static ON: OnceLock<bool> = OnceLock::new();
+	*ON.get_or_init(|| std::env::var_os("SILK_LATENCY").is_some())
+}
+
+const LATENCY_WINDOW: Duration = Duration::from_millis(750);
+
+struct Pending {
+	pane: u64,
+	key: Instant,
+	wrote: Instant,
+	out: Option<Instant>,
+}
+
+static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
+static SAMPLES: Mutex<Vec<(u32, u32, u32)>> = Mutex::new(Vec::new());
+
+// When a key event arrived. Taken at the top of the handler, before any of the
+// hotkey and menu work, so what the key spends in this program is inside the
+// figure rather than beside it.
+pub fn key_mark() -> Option<Instant> {
+	latency_on().then(Instant::now)
+}
+
+// The key's bytes are on their way to the shell. A key pressed while one is
+// still in flight replaces it: the echo that follows belongs to the last thing
+// typed, and timing from the first would read the whole burst as one keystroke.
+pub fn typed(key: Option<Instant>, pane: u64) {
+	let Some(key) = key else {
+		return;
+	};
+	*PENDING.lock().unwrap() = Some(Pending {
+		pane,
+		key,
+		wrote: Instant::now(),
+		out: None,
+	});
+}
+
+// Output arrived from the pane that was typed at. Only the first notice counts:
+// a shell that answers in several reads is still one echo.
+pub fn echoed(pane: u64) {
+	if !latency_on() {
+		return;
+	}
+	let mut slot = PENDING.lock().unwrap();
+	let Some(pending) = slot.as_mut() else {
+		return;
+	};
+	if pending.pane != pane {
+		return;
+	}
+	if pending.key.elapsed() > LATENCY_WINDOW {
+		*slot = None;
+		return;
+	}
+	pending.out.get_or_insert_with(Instant::now);
+}
+
+// A frame just went out, so the echo is on screen. Says its own line as it goes
+// - the point is to watch this while typing, and printing after the frame costs
+// the frame nothing.
+pub fn painted() {
+	if !latency_on() {
+		return;
+	}
+	let mut slot = PENDING.lock().unwrap();
+	let Some(pending) = slot.as_ref() else {
+		return;
+	};
+	if pending.key.elapsed() > LATENCY_WINDOW {
+		*slot = None;
+		return;
+	}
+	// Typing marks the window dirty, so frames go out between the key and the
+	// echo. Those are not the frame being waited for - leave the stopwatch
+	// running rather than taking one of them as the answer.
+	let Some(out) = pending.out else {
+		return;
+	};
+	let us = |d: Duration| d.as_micros() as u32;
+	let (send, echo, draw) = (
+		us(pending.wrote - pending.key),
+		us(out - pending.wrote),
+		us(out.elapsed()),
+	);
+	*slot = None;
+	drop(slot);
+	let ms = |us: u32| f64::from(us) / 1e3;
+	eprintln!(
+		"[latency] send {:.2}ms  echo {:.2}ms  draw {:.2}ms  total {:.2}ms",
+		ms(send),
+		ms(echo),
+		ms(draw),
+		ms(send + echo + draw),
+	);
+	SAMPLES.lock().unwrap().push((send, echo, draw));
+}
+
+// Median and p95 of `sorted`, which must already be sorted.
+fn percentiles(sorted: &[u32]) -> (u32, u32) {
+	let at = |pct: usize| sorted[(sorted.len() * pct / 100).min(sorted.len() - 1)];
+	(at(50), at(95))
+}
+
+fn latency_report() {
+	if !latency_on() {
+		return;
+	}
+	let samples = SAMPLES.lock().unwrap();
+	if samples.is_empty() {
+		eprintln!("[latency] nothing timed - a keystroke needs an echo to measure against");
+		return;
+	}
+	let mean = |leg: fn(&(u32, u32, u32)) -> u32| {
+		samples.iter().map(|s| u64::from(leg(s))).sum::<u64>() as f64 / samples.len() as f64 / 1e3
+	};
+	let mut totals: Vec<u32> = samples.iter().map(|s| s.0 + s.1 + s.2).collect();
+	totals.sort_unstable();
+	let (median, p95) = percentiles(&totals);
+	let ms = |us: u32| f64::from(us) / 1e3;
+	eprintln!(
+		"[latency] {} keystrokes: median {:.2}ms  p95 {:.2}ms  worst {:.2}ms",
+		samples.len(),
+		ms(median),
+		ms(p95),
+		ms(*totals.last().unwrap()),
+	);
+	eprintln!(
+		"[latency] mean legs: send {:.2}ms  echo {:.2}ms  draw {:.2}ms",
+		mean(|s| s.0),
+		mean(|s| s.1),
+		mean(|s| s.2),
+	);
+}
+
+#[cfg(test)]
+mod tests {
+	use super::percentiles;
+
+	// One sample is the whole distribution, and 95% of one still has to land on
+	// it rather than one past the end.
+	#[test]
+	fn percentiles_never_step_past_the_last_sample() {
+		assert_eq!(percentiles(&[7]), (7, 7));
+		assert_eq!(percentiles(&[1, 2]), (2, 2));
+		let hundred: Vec<u32> = (1..=100).collect();
+		assert_eq!(percentiles(&hundred), (51, 96));
 	}
 }

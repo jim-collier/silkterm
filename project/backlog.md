@@ -75,10 +75,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Flipping the scrim colour for just that text would be better still, eventually.
 	- Opened: 20260826-123553
 
-- 🔘 Figure out a way to measure the delay between a keypress, and the matching pixel response.
-	- Running natively on a few-year-old laptop feels sluggish; need an objective measure to measure and attack.
-	- Opened: 20260826-123553
-
 - 🔘 Windows installer.
 	- Offer "available to all users", or "this user only", or whatever the typical wording is.
 	- Add a SilkTerm folder to the start menu.
@@ -1410,6 +1406,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Figure out a way to measure the delay between a keypress, and the matching pixel response.
+	- Running natively on a few-year-old laptop feels sluggish; need an objective measure to measure and attack.
+	- `SILK_LATENCY=1` times every keystroke and says where the wait went, in three parts: getting the key to the shell, the shell answering, and putting that answer on screen. One line per keystroke while it runs, then a median, a p95 and a worst case at the end. Off by default and it costs an ordinary run nothing.
+	- Only the first and third parts are this program's. Splitting them is the point - a single total cannot say whether to attack the renderer or something else.
+	- What it cannot see is everything after the frame is handed over: the compositor and the display itself. So a figure is a floor rather than the whole wait, and it belongs at a settled prompt, since output nobody typed for is indistinguishable from an echo.
+	- Already showed one thing. Typing marks the window dirty so the cursor can respond, and the shell's reply then lands while that frame is still being drawn - which puts a whole frame of the wait in the middle leg rather than the last. On a slow renderer that doubles the total. Worth a look when the render path is next opened up.
+	- Opened: 20260826-123553
+	- Closed: 20260830-152000
 
 - ✅ Pre-interpret the most common bash environment variables for shells that do not understand them. (In settings and config file.)
 	- Same for the common PowerShell variables.
