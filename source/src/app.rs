@@ -1144,6 +1144,13 @@ struct TabTip {
 	built: Instant,
 }
 
+// What a typed tab title is worth keeping, given what the tab would say on its
+// own. Blank, or the same as the automatic name, means no override at all -
+// both are the way back to a tab that names itself.
+fn typed_title(typed: String, auto: &str) -> Option<String> {
+	(!typed.trim().is_empty() && typed != auto).then_some(typed)
+}
+
 // A tab title being typed in place. `caret` and `anchor` are byte offsets into
 // `text`; equal means no selection. Committing text that matches what the tab
 // would have said on its own puts it back to naming the shell.
@@ -1818,8 +1825,8 @@ impl State {
 	}
 
 	// Take what was typed. A title matching what the tab would have said anyway
-	// is dropped rather than frozen, which is the way back to the automatic name;
-	// an empty one is kept, so a tab can be left blank on purpose.
+	// is dropped rather than frozen, and so is a blank one - either way the tab
+	// goes back to naming itself.
 	fn commit_tab_edit(&mut self) {
 		let Some(edit) = self.tab_edit.take() else {
 			return;
@@ -1835,7 +1842,7 @@ impl State {
 			.next()
 			.unwrap_or_default();
 		if let Some(pm) = self.tabs.list.get_mut(edit.tab) {
-			pm.title_override = (edit.text != auto).then_some(edit.text);
+			pm.title_override = typed_title(edit.text, &auto);
 		}
 		self.update_title();
 		self.dirty = true;
@@ -6648,11 +6655,24 @@ mod tests {
 	use super::{
 		Caret, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit, accel_at,
 		accel_clash, copybox_fit, copybox_place, focus_ring, key_is_typed, menu_metrics, mia, msub,
-		mta, pace_frame, tab_close_box, tab_command_line, tab_title_w,
+		mta, pace_frame, tab_close_box, tab_command_line, tab_title_w, typed_title,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
 	use winit::event::ElementState;
+
+	// Clearing the box is how a renamed tab goes back to naming itself, so a
+	// blank title must not be stored as one.
+	#[test]
+	fn a_cleared_tab_title_is_no_title_at_all() {
+		assert_eq!(typed_title(String::new(), "bash"), None);
+		assert_eq!(typed_title("   ".to_string(), "bash"), None);
+		assert_eq!(typed_title("bash".to_string(), "bash"), None);
+		assert_eq!(
+			typed_title("notes".to_string(), "bash"),
+			Some("notes".to_string())
+		);
+	}
 
 	// A tab title is renamed by byte offset over text that need not be ASCII, so
 	// every move and every erase has to land on a character boundary or the
