@@ -415,6 +415,49 @@ enum MenuAction {
 	Quit,
 }
 
+impl MenuAction {
+	// The flyover for a row that needs one. Most do not: "Copy" and "New tab"
+	// say what they do, and a tip on every row would be noise the reader has to
+	// learn to ignore. Empty means no tip.
+	fn help(self) -> &'static str {
+		match self {
+			MenuAction::PasteSelection => {
+				"Paste what was last highlighted with the mouse, without it having been copied first."
+			}
+			MenuAction::ToggleCopySelect => {
+				"Send highlighted text straight to the clipboard, with no copy step. Per pane."
+			}
+			MenuAction::ToggleCopyOutput => {
+				"Copy what a command printed, once the pane settles back at the prompt. Per pane."
+			}
+			MenuAction::ToggleReadOnly => {
+				"Ignore anything typed at this pane, so a long job cannot be interrupted by accident."
+			}
+			MenuAction::ToggleFrame => {
+				"Drop the title bar and border. The window manager's own buttons go with them."
+			}
+			MenuAction::ToggleMenuBar => {
+				"Hide the menu bar. Right-clicking a pane still reaches the same items."
+			}
+			MenuAction::ToggleSingleTab => {
+				"Hide the tab strip while there is only one tab, and show it again on the second."
+			}
+			MenuAction::ToggleBare => {
+				"Drop the title bar, menu bar and tab strip together. Choosing it again puts back whatever was on."
+			}
+			MenuAction::ReloadConfig => {
+				"Re-read the config file. Anything edited by hand since launch takes effect now."
+			}
+			MenuAction::NewTabShell(_) => "Open a tab running this shell instead of the usual one.",
+			MenuAction::SplitShell(..) => "Split this pane and run this shell in the new half.",
+			MenuAction::CopyLink => {
+				"Put the link's address on the clipboard rather than opening it."
+			}
+			_ => "",
+		}
+	}
+}
+
 // One row of a menu: an action item (optionally a checkmark toggle) or a group
 // separator. Separators render as a faint horizontal line, never hover/click.
 // `accel` is the byte offset of the item's accelerator letter in the label
@@ -914,9 +957,11 @@ const VRAM_CHECK_IVL: Duration = Duration::from_secs(2); // GL sentinel probe ti
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
 // Chrome geometry, all DIP (see config::dip).
 const MENU_BAR_PAD: f32 = 10.0; // around each top-level title
-const TAB_TIP_DELAY: Duration = Duration::from_millis(600); // pointer rest before a tab's tip appears
 const TAB_TIP_REFRESH: Duration = Duration::from_millis(500); // how often an open tip re-reads what it says
 const TAB_TIP_PAD: f32 = 8.0; // inside the tip box, DIP
+const MENU_TIP_PAD: f32 = 6.0; // inside a menu row's tip box, DIP
+const MENU_TIP_GAP: f32 = 6.0; // between the popup's edge and the tip beside it, DIP
+const MENU_TIP_MAX_W: f32 = 320.0; // widest a menu tip's text gets before it wraps, DIP
 const TAB_TIP_GAP: f32 = 4.0; // between the tab bar and the tip below it, DIP
 const TAB_CLOSE_W: f32 = 26.0; // right-edge close-button region per tab (title clips before it)
 const TAB_CLOSE_M: f32 = 6.0; // balanced top/right/bottom margin around the close button box
@@ -1274,15 +1319,21 @@ struct State {
 	pending_size_at: Instant,
 	menu: Option<ContextMenu>,
 	tab_close_arm: Option<usize>, // tab whose close button is held down (closes on release)
-	tab_hover: Option<(usize, Instant)>, // tab under the pointer, and since when
-	tab_first: usize,             // tab the strip is paged to (clamped on read)
-	tab_followed: usize,          // active tab the page last followed (see rebuild_tab_layout)
-	tab_layout: TabLayout,        // the strip as measured (see rebuild_tab_layout)
-	tab_tip: Option<TabTip>,      // the hover tip currently up, if any
-	tab_edit: Option<TabEdit>,    // tab title being renamed in place (double-click)
+	tab_hover: crate::tip::Dwell<usize>, // tab under the pointer, and since when
+	// menu row under the pointer, as (how deep in the open chain, which row)
+	menu_tip: crate::tip::Dwell<(usize, usize)>,
+	// the row whose tip is up. Kept because ripeness is reached by the clock
+	// rather than by an event, so "has it changed" has to be asked against what
+	// was last drawn, not against what the timer said a moment ago.
+	menu_tip_up: Option<(usize, usize)>,
+	tab_first: usize,                  // tab the strip is paged to (clamped on read)
+	tab_followed: usize,               // active tab the page last followed (see rebuild_tab_layout)
+	tab_layout: TabLayout,             // the strip as measured (see rebuild_tab_layout)
+	tab_tip: Option<TabTip>,           // the hover tip currently up, if any
+	tab_edit: Option<TabEdit>,         // tab title being renamed in place (double-click)
 	tab_dbl: Option<(Instant, usize)>, // last tab-strip click, for the double
-	decorated: bool,              // window frame shown (winit has no getter, so track it)
-	menu_bar: bool,               // window menu bar (File/Edit/...) shown
+	decorated: bool,                   // window frame shown (winit has no getter, so track it)
+	menu_bar: bool,                    // window menu bar (File/Edit/...) shown
 	bare: bool, // frame, menu bar and tab strip all off at once (View > Bare window); never written
 	bare_saved: (bool, bool), // (decorated, menu_bar) from before bare, to put back
 	bar_open: Option<usize>, // which top-level menu's dropdown is open, if any
@@ -1880,29 +1931,37 @@ impl State {
 		} else {
 			self.tab_at(x)
 		};
-		match (over, self.tab_hover) {
-			(Some(i), Some((was, _))) if was == i => {} // same tab: the clock runs on
-			(Some(i), _) => self.tab_hover = Some((i, Instant::now())),
-			(None, None) => {}
-			(None, Some(_)) => {
-				self.tab_hover = None;
-				if self.tab_tip.take().is_some() {
-					self.dirty = true;
-				}
-			}
+		if self.tab_hover.point_at(over) && self.tab_tip.take().is_some() {
+			self.dirty = true;
 		}
 	}
 
-	// Bring the tip up once the pointer has rested, and keep what it says
+	// Every tip's clock in one place: raise one whose pointer has rested, and
+	// keep an open tab tip's contents current. Returns true when the frame has
+	// to be redrawn.
+	fn update_tips(&mut self) -> bool {
+		self.menu_tip.point_at(self.menu_tip_target());
+		let up = self.menu_tip.ripe();
+		let menu_changed = up != self.menu_tip_up;
+		self.menu_tip_up = up;
+		self.update_tab_tip() || menu_changed
+	}
+
+	// When the loop next has to wake for any tip.
+	fn tip_wake(&self) -> Option<Instant> {
+		match (self.tab_tip_wake(), self.menu_tip.wake()) {
+			(Some(a), Some(b)) => Some(a.min(b)),
+			(only, None) | (None, only) => only,
+		}
+	}
+
+	// Bring the tab tip up once the pointer has rested, and keep what it says
 	// current while it is up. Returns true when the frame has to be redrawn.
 	fn update_tab_tip(&mut self) -> bool {
-		let Some((tab, since)) = self.tab_hover else {
-			return self.tab_tip.take().is_some();
+		let Some(tab) = self.tab_hover.ripe() else {
+			return self.tab_hover.wake().is_none() && self.tab_tip.take().is_some();
 		};
 		let now = Instant::now();
-		if now.duration_since(since) < TAB_TIP_DELAY {
-			return false;
-		}
 		let stale = self
 			.tab_tip
 			.as_ref()
@@ -1923,14 +1982,74 @@ impl State {
 		changed
 	}
 
+	// The menu row a tip would describe: the innermost open popup that the
+	// pointer is actually on (a parent keeps its highlight on the row its
+	// submenu hangs off, so the deepest hovered one is the right answer), and
+	// only when that row has something to say.
+	fn menu_tip_target(&self) -> Option<(usize, usize)> {
+		let root = self.menu.as_ref()?;
+		let (depth, menu, row) = root
+			.chain()
+			.iter()
+			.enumerate()
+			.filter_map(|(depth, menu)| menu.hover.map(|row| (depth, *menu, row)))
+			.next_back()?;
+		let help = match menu.entries.get(row)? {
+			Entry::Item { action, .. } => action.help(),
+			_ => "",
+		};
+		(!help.is_empty()).then_some((depth, row))
+	}
+
+	// The menu tip's box and its wrapped lines, once the pointer has rested on a
+	// row that has a tip. It stands beside the popup rather than under the row,
+	// so the rows being chosen between stay readable.
+	fn menu_tip_layout(&mut self) -> Option<(Rect, Vec<(f32, f32, String)>)> {
+		let (depth, row) = self.menu_tip.ripe()?;
+		let (anchor, help) = {
+			let menu = *self.menu.as_ref()?.chain().get(depth)?;
+			let help = match menu.entries.get(row)? {
+				Entry::Item { action, .. } => action.help(),
+				_ => "",
+			};
+			let anchor = Rect {
+				x: menu.x,
+				y: menu.row_top(row),
+				w: menu.w,
+				h: menu.item_h,
+			};
+			(anchor, help)
+		};
+		if help.is_empty() {
+			return None;
+		}
+		let attrs = crate::text::ui_attrs();
+		let pad = self.text.dip(MENU_TIP_PAD);
+		let line_h = self.text.ui_line_h;
+		let budget = self.text.dip(MENU_TIP_MAX_W);
+		let lines = crate::tip::wrap(help, budget, |line| self.text.measure_ui_text(line, &attrs));
+		let text_w = lines.iter().fold(0.0f32, |widest, line| {
+			widest.max(self.text.measure_ui_text(line, &attrs))
+		});
+		let w = text_w + 2.0 * pad;
+		let h = line_h * lines.len() as f32 + 2.0 * pad;
+		let win = (self.gfx.config.width as f32, self.gfx.config.height as f32);
+		let (x, y) = crate::tip::beside(anchor, (w, h), win, self.text.dip(MENU_TIP_GAP), pad);
+		let placed = lines
+			.into_iter()
+			.enumerate()
+			.map(|(i, line)| (x + pad, y + pad + line_h * i as f32, line))
+			.collect();
+		Some((Rect { x, y, w, h }, placed))
+	}
+
 	// When the loop next has to wake for the tip - to raise one whose pointer has
 	// rested, or to re-read one that is already up (its clock ticks).
 	fn tab_tip_wake(&self) -> Option<Instant> {
-		let (_, since) = self.tab_hover?;
-		Some(match &self.tab_tip {
-			Some(tip) => tip.built + TAB_TIP_REFRESH,
-			None => since + TAB_TIP_DELAY,
-		})
+		match &self.tab_tip {
+			Some(tip) => Some(tip.built + TAB_TIP_REFRESH),
+			None => self.tab_hover.wake(),
+		}
 	}
 
 	// What a tip says, as key/value pairs padded to one column (tabtitle::tip_lines).
@@ -3681,26 +3800,31 @@ impl State {
 			None
 		};
 
-		// the hover tip's box, in the same overlay pass as the menus so it lands
-		// over everything - including a pane's own text, which it sits on top of
+		// A tip's box, in the same overlay pass as the menus so it lands over
+		// everything - including a pane's own text, which it sits on top of. The
+		// tab strip's and a menu row's are the same two quads; only what they say
+		// and where they sit differ.
 		let tip_layout = self.tab_tip_layout();
-		let tip_range = tip_layout.as_ref().map(|(box_rect, _)| {
+		let menu_tip = self.menu_tip_layout();
+		let border = self.text.dip(CHROME_HAIRLINE);
+		let tip_range = (tip_layout.is_some() || menu_tip.is_some()).then(|| {
 			let start = instances.len() as u32;
-			let border = self.text.dip(CHROME_HAIRLINE);
-			instances.push(rect_inst(
-				box_rect.x - border,
-				box_rect.y - border,
-				box_rect.w + 2.0 * border,
-				box_rect.h + 2.0 * border,
-				config::menu_border(),
-			));
-			instances.push(rect_inst(
-				box_rect.x,
-				box_rect.y,
-				box_rect.w,
-				box_rect.h,
-				config::menu_bg(),
-			));
+			for (box_rect, _) in tip_layout.iter().chain(menu_tip.iter()) {
+				instances.push(rect_inst(
+					box_rect.x - border,
+					box_rect.y - border,
+					box_rect.w + 2.0 * border,
+					box_rect.h + 2.0 * border,
+					config::menu_border(),
+				));
+				instances.push(rect_inst(
+					box_rect.x,
+					box_rect.y,
+					box_rect.w,
+					box_rect.h,
+					config::menu_bg(),
+				));
+			}
 			(start, instances.len() as u32)
 		});
 		let overlay_range = match (menu_range, tip_range) {
@@ -4098,14 +4222,14 @@ impl State {
 		// geometry/labels/color. Only skip alongside text_same - the end-of-frame
 		// atlas trim (which runs when !text_same) drops glyphs the retained overlay
 		// vertex buffers still reference, so a trim frame must re-prepare.
-		if self.menu.is_some() || tip_layout.is_some() {
+		if self.menu.is_some() || tip_layout.is_some() || menu_tip.is_some() {
 			let overlay_sig = {
 				use std::hash::{Hash, Hasher};
 				let mut h = std::collections::hash_map::DefaultHasher::new();
 				self.gfx.config.width.hash(&mut h);
 				self.gfx.config.height.hash(&mut h);
 				self.chrome_rev.hash(&mut h); // covers a menu color change
-				if let Some((_, placed)) = &tip_layout {
+				for (_, placed) in tip_layout.iter().chain(menu_tip.iter()) {
 					for (left, top, line) in placed {
 						left.to_bits().hash(&mut h);
 						top.to_bits().hash(&mut h);
@@ -4149,6 +4273,22 @@ impl State {
 							&mut self.text.font_system,
 							line,
 							&tip_attrs,
+							Shaping::Advanced,
+							None,
+						);
+						buf.shape_until_scroll(&mut self.text.font_system, false);
+						specs.push((*left, *top, buf));
+					}
+				}
+				// a menu row's tip shapes in the interface font, like the rows it is
+				// explaining
+				if let Some((box_rect, placed)) = &menu_tip {
+					for (left, top, line) in placed {
+						let mut buf = self.text.new_ui_buffer(box_rect.w, self.text.ui_line_h);
+						buf.set_text(
+							&mut self.text.font_system,
+							line,
+							&attrs,
 							Shaping::Advanced,
 							None,
 						);
@@ -5202,7 +5342,9 @@ impl ApplicationHandler<UserEvent> for App {
 			tab_close_arm: None,
 			tab_edit: None,
 			tab_dbl: None,
-			tab_hover: None,
+			tab_hover: crate::tip::Dwell::default(),
+			menu_tip: crate::tip::Dwell::default(),
+			menu_tip_up: None,
 			tab_first: 0,
 			tab_layout: TabLayout::default(),
 			tab_followed: 0,
@@ -6292,7 +6434,7 @@ impl ApplicationHandler<UserEvent> for App {
 
 		// Raise a rested pointer's tab tip, and keep an open one's clock ticking.
 		if let Some(state) = self.state.as_mut() {
-			if state.update_tab_tip() {
+			if state.update_tips() {
 				state.dirty = true;
 			}
 		}
@@ -6585,7 +6727,7 @@ impl ApplicationHandler<UserEvent> for App {
 		// wake to raise a tab tip whose pointer has rested, and to keep an open
 		// one current - the pointer sitting still generates no events of its own,
 		// so nothing else would bring the window back
-		let flow = match (flow, state.tab_tip_wake()) {
+		let flow = match (flow, state.tip_wake()) {
 			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,

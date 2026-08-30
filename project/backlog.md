@@ -123,18 +123,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Note: deferred, needs multi-window.
 	- Opened: 20260703-091342
 
-- 🛠️ Setting dialog (part 2):
-	- 🛠️ Flyover help text when mousing over elements. (Make this a reusable feature.)
-		- Done: the Settings dialog has it. Thirty rows carry their own help line, a grayed-out control explains why it is grayed instead, and the text wraps to the panel.
-		- Done: the tab bar has one too (shell name, command, full path, elapsed time).
-		- Open: those are two separate implementations, and the menus have none. The reusable part of the item is what is left - one tip system all three read from.
-	- ✅ Size: A boolean setting to "Remember last size".
-		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
-		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
-			- ✅ "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
-				- Done: a new config file carries the pair as live lines. An existing file already has them from the first resize.
-	- Opened: 20260628-083740
-
 - 🔘 Begin a detailed UI/UX '[repo]/project/uiux-style-guide.md'
 	1. Reverse engineer using existing work (mostly menus and settings dailog).
 	2. Refine the guide to be self-consistent and for a more user-friendly UI/UX.
@@ -1408,6 +1396,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Setting dialog (part 2):
+	- ✅ Flyover help text when mousing over elements. (Make this a reusable feature.)
+		- Done: the Settings dialog has it. Thirty rows carry their own help line, a grayed-out control explains why it is grayed instead, and the text wraps to the panel.
+		- Done: the tab bar has one too (shell name, command, full path, elapsed time).
+		- Done: menus have one now, on the rows that need one. A tip stands beside the menu rather than under the row, so the choices stay readable, and it works the same in a submenu.
+		- Done: the reusable part. How long the pointer has to rest, how the text is broken to fit, and where the box goes are written once and read by all four places a tip comes up. Each still draws in its own font, which is the part that should differ.
+		- Rows that say what they do get no tip. A tip on every row is noise a reader learns to skip past.
+	- ✅ Size: A boolean setting to "Remember last size".
+		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
+		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
+			- ✅ "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
+				- Done: a new config file carries the pair as live lines. An existing file already has them from the first resize.
+	- Opened: 20260628-083740
+	- Closed: 20260830-172000
 
 - ✅ Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell.
 	- Baked into the executable, and handed to a bash pane as `PROMPT_COMMAND` in its environment. Nothing is written into anyone's `.bashrc`, and there is nothing to uninstall.

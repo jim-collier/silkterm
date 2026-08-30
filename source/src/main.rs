@@ -37,6 +37,7 @@ mod tabtitle;
 mod term;
 mod text;
 mod theme;
+mod tip;
 mod ui_spec;
 mod wallpaper;
 mod xmp;
