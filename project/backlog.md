@@ -70,9 +70,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
-- 🔘 Lighten text that is too dark to read against the scrim and a dark background, and darken it in the opposite case.
-	- Comments in git's nano commit editor are the example that keeps coming up. Can't read at all on a dark background.
-	- Flipping the scrim colour for just that text would be better still, eventually.
+- ✅ Lighten text that is too dark to read against the scrim and a dark background, and darken it in the opposite case.
+	- "Minimum contrast %" on the Text tab, default 45. Text closer than that to its own cell background is moved away from it, keeping its hue, so a program that writes near-black on a dark terminal is still readable.
+	- Measured against the cell's background colour rather than per-pixel. See design.md for why, and for the choice of Oklab over a WCAG ratio.
+	- Text set to exactly the background colour stays hidden, since that is deliberate.
+	- The nano case has not been reproduced on the Linux box - its comments come out cyan here. Worth confirming where it actually shows, in case the colour is coming from somewhere this does not reach.
+	- Flipping the scrim colour for just that text would be better still, eventually. Still open, and a shader answer rather than this one.
 	- Opened: 20260826-123553
 
 - 🔘 Windows installer.

@@ -365,6 +365,15 @@ rows:
 		setting: text.scrim.ramp
 		help: "The curve the halo fades along."
 
+	MinContrast:
+		## percent of the lightness range, not a WCAG ratio - see palette::readable
+		label: Minimum contrast %
+		kind: slider
+		range: 0, 60
+		whole: true
+		setting: text.min_contrast
+		help: "Lighten text too dark to read on a dark background, and darken it on a light one. Text set to exactly the background color stays hidden. 0 leaves every color alone."
+
 	## -------------------------------------------------------------------- Cursor
 
 	Cursor:

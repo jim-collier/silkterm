@@ -54,7 +54,7 @@ keys![
 	BgEnabled, BgRotate, BgOpacity, BgBlur, BgFit, BgHonorXmp, BgHonorXmpLook, BgImage,
 	BgContrastMask, BgContrastSize, BgContrastStrength, BgContrastAuto,
 	TextScrim, ScrimRadius, ScrimSoftness, ScrimStrength, ScrimFunction, ScrimRamp,
-	Outline, CursorScrim, CursorOutline,
+	Outline, MinContrast, CursorScrim, CursorOutline,
 	CursorBlink, CursorHeight, CursorWidth, CursorAnimation, CursorResume,
 	SystemFont, SystemFontSize, FontFamily, FontSize, LineHeight,
 	Columns, Rows, RememberSize, Margin, TabRegularWidth, TabMaxWidth,

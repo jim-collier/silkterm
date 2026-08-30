@@ -2494,6 +2494,7 @@ impl SettingsDialog {
 			Key::ScrimSoftness => to_percent(settings.text_scrim_softness),
 			Key::ScrimStrength => settings.text_scrim_strength,
 			Key::Outline => settings.text_outline,
+			Key::MinContrast => to_percent(settings.text_min_contrast),
 			Key::CursorBlink => settings.cursor_blink_rate_ms,
 			Key::CursorHeight => settings.cursor_size_height,
 			Key::CursorWidth => settings.cursor_size_width,
@@ -2543,6 +2544,7 @@ impl SettingsDialog {
 			Key::ScrimSoftness => settings.text_scrim_softness = from_percent(value),
 			Key::ScrimStrength => settings.text_scrim_strength = value,
 			Key::Outline => settings.text_outline = value,
+			Key::MinContrast => settings.text_min_contrast = from_percent(value),
 			Key::CursorBlink => settings.cursor_blink_rate_ms = value,
 			Key::CursorHeight => settings.cursor_size_height = value,
 			Key::CursorWidth => settings.cursor_size_width = value,
@@ -2932,6 +2934,7 @@ impl SettingsDialog {
 			Key::ScrimSoftness => to_percent(defaults.text_scrim_softness),
 			Key::ScrimStrength => defaults.text_scrim_strength,
 			Key::Outline => defaults.text_outline,
+			Key::MinContrast => to_percent(defaults.text_min_contrast),
 			Key::CursorBlink => defaults.cursor_blink_rate_ms,
 			Key::CursorHeight => defaults.cursor_size_height,
 			Key::CursorWidth => defaults.cursor_size_width,
@@ -5504,6 +5507,7 @@ mod tests {
 			Key::Opacity,
 			Key::BgOpacity,
 			Key::ScrimSoftness,
+			Key::MinContrast,
 			Key::BgContrastSize,
 			Key::BgContrastStrength,
 			Key::BgContrastAuto,
@@ -5513,8 +5517,8 @@ mod tests {
 				panic!("{} is not a slider", spec.label)
 			};
 			assert!(
-				min == 0.0 && max == 100.0 && int,
-				"{} must run 0..100 in whole steps",
+				min == 0.0 && int && max <= 100.0 && max.fract() == 0.0,
+				"{} must run from 0 to a whole percent, in whole steps",
 				spec.label
 			);
 			d.set_f32(key, 35.0);
