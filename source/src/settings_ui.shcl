@@ -100,7 +100,10 @@ layout:
 
 	## Scrollbar (shown only when a tab is taller than the panel)
 	scrollbar_width: 8
-	scrollbar_inset: 9         ## gap between the bar and the panel edge
+	scrollbar_inset: 5         ## gap between the bar and the panel edge. The bar
+	                           ## lives in the panel's own padding, so this has to
+	                           ## leave room between it and content that fills that
+	                           ## padding - the Shell tab's last column does.
 	scrollbar_thumb_min: 24
 
 ## Flyover help for the footer buttons. Every other tip is the `help:` line on
