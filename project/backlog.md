@@ -70,16 +70,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
-- 🔘 "Copy on select" sits on the Cursor tab.
-	- It is a selection setting, and the Cursor tab is blink rate, size, animation and visibility. The tab layout written down further below does not place it anywhere, which is how it ended up next to the thing it was declared after.
-	- The Window tab is the nearest fit, since it already carries Hyperlinks for the same reason. Its own small heading would say what it belongs to.
-	- Opened: 20260830-160000
-
-- 🔘 Pixel values in Settings are written with two decimals.
-	- "Blur px" reads 10.00, "Outline px" 1.00, "Scrim radius px" 5.00, while every percentage beside them is whole. The decimals say nothing at these ranges and make the column look unfinished.
-	- Line height is the one that genuinely needs them, so this is not a blanket rule.
-	- Opened: 20260830-160000
-
 - 🔘 Lighten text that is too dark to read against the scrim and a dark background, and darken it in the opposite case.
 	- Comments in git's nano commit editor are the example that keeps coming up. Can't read at all on a dark background.
 	- Flipping the scrim colour for just that text would be better still, eventually.
@@ -227,7 +217,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
 		- Done at 16pt against the usual 13. The menu bar, a dropdown, and all seven Settings tabs were looked at. Everything sizes off the interface font and stays put: titles and the copy cluster keep their margin, dropdowns fit their content, rows center, and the Shell grid holds its columns. The panel simply gets wider, which is what it should do.
 		- Fixed on the way: the panel's scrollbar sat one pixel from the Shell tab's last column, which read as touching it. It hugs the panel edge now, so there is clear space either side.
-		- Two things left alone, filed below: where "Copy on select" lives, and pixel values written with two decimals.
+		- Also fixed: Blur px, Scrim radius px and Outline px read 10.00, 5.00 and 1.00 beside whole percentages. All three step in whole pixels now, the way Scrollbar width px already did. Line height keeps its decimals, which it needs.
+		- Checked and left alone: "Copy on select" looks out of place at the bottom of the Cursor tab, but that is where it was asked for, and a test pins it there.
 	- 🛠️ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
 		- Done: scrolling is covered by library tests encoding the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
 	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
