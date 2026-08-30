@@ -37,24 +37,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- ✅ Linux (and probably also Windows): Many duplicate shells get populated.
-	- Cause: two entries were treated as one shell only when their command lines resolved to the same literal path. On Linux `/bin` is a symlink to `/usr/bin`, `/etc/shells` lists both spellings, and a package under `/opt` links to itself from `/usr/bin`, so the same shell arrived under three names and got three rows.
-	- Fixed: a resolved program is now followed to the real file before two entries are compared, so every spelling of one shell collapses to one row.
-	- The name a shell is started under is part of what makes it that shell, so `/bin/sh` stays separate from the dash or bash it links to. A shell reads its own name and behaves differently under it.
-	- Fixed: a list that already held duplicates is collapsed on the next scan, keeping the first of each set with its title, its place and its flags. Until now a scan could only add, so an existing config would have kept its duplicates forever.
-	- Directories that appear on PATH under more than one name are now searched once.
-	- Verified on Linux: a list of nineteen entries came back as eleven, one per installed shell, with the login shell still leading. Not yet checked on Windows.
-	- Opened: 20260829
-	- Closed: 20260829
-
-- ✅ Windows: the transparency setting does nothing.
-	- Cause: a plain HWND swapchain offers only opaque compositing, so the per-pixel alpha the setting asks for was dropped while everything else still rendered, which is why it read as "does nothing" rather than as a fault.
-	- Fixed: with the setting on, the window is presented through the composition path on DX12, which carries premultiplied alpha, and without a redirection surface under it. The backend is pinned for it, since the default pick varies per machine and only DX12 has the option. If DX12 cannot serve the window it falls back to the old opaque path and says so.
-	- On Windows the setting takes effect on the next launch. The Settings tip and the config comment both say so.
-	- Verified: the desktop shows through the pane, the title bar, menu bar, tab strip and dropdown menus stay solid, and a resize, a maximize and a VirtuaWin desktop switch all keep it. `--background-opacity` takes the same path.
-	- Opened: 20260826-123553
-	- Closed: 20260828
-
 - 🔬 Startup directory and tab closing.
 	- Done: the startup directory follows the calling directory, so "Open in terminal" from a file manager starts in that folder. The setting still applies where the inherited directory was a launcher's default - home, a filesystem root, or beside the executable - so the two coexist and the setting stays.
 	- Done: closing the last tab closes the window.
@@ -73,35 +55,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260826-123553
 
 ### New features and enhancements
-
-- 🔘 These values in Settings should be expressed in % (in labels), and displayed as integers.
-	- Transparency opacity
-	- Wallpaper visibility and blur
-	- Contrast mask size, strength, automask mix
-	- Text scrim strength, softness,
-	- Cursor Height, width
-	- Smooth scrolling: (all sub-settings)
-- 🔘 Other unit changes:
-	- Cursor blink rate: ms
-	- Animation inactivity timer: s
-	- Scrollbar width: (whatever the units are)
-	- Window / Margin px: (change 'px' to whatever the real units are)
-- 🔘 "PowerShell profiles": Make this a more meaningful phrase. (E.g. PowerShell profile update)
-
-- ✅ Checkboxes to dis/enable shells should be square (and vertically centered in row), not rectagular
-	- Done: the Active box in the Shell tab was as tall as the fields beside it. It is square now, the same size as every other checkbox, and centered on its line.
-	- Opened: 20260829
-	- Closed: 20260829
-
-- ✅ Pick up the newer SHCL, which carries some fixes needed. Take it from github source.
-	- Now on shcl 2.0.0, which is what the repository's main branch holds. Nothing in the config code needed changing for it; every test passed on the bump as it stood.
-	- Two of its additions are in use. A save goes through a temp file and a rename, so a crash mid-save cannot leave a truncated config, and it is refused when the load had to drop a line the save would delete. A setting the writer cannot place is now reported rather than silently skipped.
-	- ✅ Reorganize the config file into a more logical order while in there.
-		- The template now follows the Settings dialog: background and transparency, font, text, cursor, selection, scrolling, theme and colors, window, hyperlinks, shell. An existing config keeps its own order; only a new file gets this one.
-	- ✅ Delete the existing old config files and start over.
-		- The Windows config and the old toml beside it are gone. The Linux box's config was not reachable from here.
-	- Opened: 20260826-123553
-	- Closed: 20260828
 
 - 🔘 Pre-interpret the most common bash environment variables for shells that do not understand them. (In settings and config file.)
 	- Same for the common PowerShell variables.
@@ -124,31 +77,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Plus a plain SilkTerm shortcut with no shell argument, also starting in %USERPROFILE%.
 	- Opened: 20260826-123553
 
-- ✅ One View menu item, also on the context menu, that temporarily hides the tab strip, the menu bar and the window decoration together. Working name "windowless mode", but can probably think of a better name/phrase.
-	- Done as "Bare window", a checkmark row at the end of the View menu and beside "Menu bar" in the right-click menu. Nothing is written to the config. Turning it off puts back whichever of the frame and menu bar were on before; one switched on in the meantime stays on. The name is a first pick and easy to change.
-	- Opened: 20260826-123553
-	- Closed: 20260828
-
 - 🔘 Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell.
 	- A PowerShell equivalent could follow.
 	- Alternately, bake into the executable. (Research if that's even easily possible/reasonable for a terminal emulator to inject its own terminal prompt.)
 	- Opened: 20260826-123553
-
-- ✅ wallpaper image metadata: Blur options:
-	- Wallpaper metadata: Add blur radius in %, and opacity (relative to bg color) %.
-		- Done: `wallpaper:Opacity` and `wallpaper:Blur`, beside the existing Fit and Anchor tags. Same units as the two settings, and a tagged image takes them over the sliders. The sliders still apply to images without the tags.
-	- Populate default values - same as current code defaults.
-		- Done: every image in the pack and in the masters carries 10% opacity and blur 10, the code defaults.
-	- Add a checkbox in Settings for whether to honor them, if populated and valid values. (Default yes.)
-		- Done: "Honor look tags", under the Blur slider, on by default. A tag that is missing or does not parse leaves the setting alone.
-	- Opened: 20260826-123553
-	- Closed: 20260830
-
-- ✅ The CICD pipeline does not say which combination host environments it is running on. Print it in the plan header, since the skips differ depending on that.
-	- The Windows plan header names the Linux half, or says WSL2 is here and unused, or that there is none.
-	- `cicd.bash` now opens its header with a Host line: plain Linux with the distribution and arch, WSL or WSL2 with the distribution and whether it is the Linux half of a Windows run or running on its own, or a Windows shell with a pointer to the right pipeline.
-	- Opened: 20260824-123142
-	- Closed: 20260828
 
 - 🛠️ Dogfood: a build made on one box should reach the others, and the launcher should always run the newest one it can find.
 	- ✅ The dogfood destinations are written down per platform and per direction, in the pipeline config rather than in anyone's head. macOS destinations are recorded but inert, since nothing builds for it yet.
@@ -164,26 +96,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- ✅ Both launchers are deployed to the synced dirs, from a Linux box. The bash one goes to two dirs, not one - the linux and wsl trees mirror each other exactly, so writing only one would split them.
 		- 🔬 Still to run: the b23-down case, from a box where b23 is over the network rather than local (Linux and Windows both), so the bounded wait is what gets exercised.
 	- Opened: 20260823-131929
-
-- ✅ Config file:
-	- ✅ Reorganize the whole thing more logically, similar to how the Settings dialog is organized.
-		- Done under the SHCL pickup above: a new file follows the dialog's tab order. An existing file keeps its own order.
-	- Opened: 20260719-085918
-	- Closed: 20260828
-
-- ✅ Menu enhancements:
-	- ✅ "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
-		- Done: the row sits under "New Tab" in the Tabs menu and in the right-click menu, and opens a flyout listing every active shell by title. It draws from the stored list, which the background scan above fills in - so it did not have to wait for the Settings "Shells" tab after all; that tab is now only the editor for a list that already exists.
-		- The row is absent entirely while there is no shell to put under it, rather than opening an empty flyout.
-		- A new tab started this way still inherits the current directory - picking a shell says nothing about where to start.
-		- Menus gained submenus to carry it: a flyout opens on hover and on click, keyboard Right enters it and Left and Escape back out one level, and its arrow is drawn rather than set in a font (no interface font can be relied on for one, the same reason the tab close mark is drawn).
-	- ✅ Add "Split vertical with shell ->" and "Split horizontal with shell ->".
-		- Done: both sit under the two plain splits in the Panes menu and the right-click menu, and list the same shells the tab row does. The new pane starts where the source pane's shell is.
-	- ✅ Sentence case for every item, except where a letter carries an Alt accelerator.
-		- Done. The one label that kept its capital is "Paste Selection": lowercased, the S accelerator would have found the s in "Paste" first. Every other accelerator still finds its letter, so the underline marks it.
-	- ✅ Context menu: a visible separator between the tab operations and the pane operations.
-	- Note: the three items above were added 20260826, done 20260828.
-	- Opened: 20260719-085918
 
 - 🔘 "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
 	- Looks and behaves not too differently than some modern text editors.
@@ -329,24 +241,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 			- Retro amber (Orange on black). Light mode: dark orange on light gray.
 			- Pastel (a pleasing light pastel color, on dark gray background that has a subtle tint of complementary pastel).
 	- Opened: 20260628-083740
-
-- ✅ General configuration:
-	- Done: the default-shell behavior, the named shell list, its grid editor in the Shell tab, and the Tab and Pane menu rows that draw from it.
-	- ✅ Ability to define shells to launch in a new tab or pane.
-		- ✅ By default, new tab launches the default shell for the window.
-			- Done: new tabs and the startup pane use the default shell.
-			- ✅ By priority: Global command shell override, non-empty shell specified in config file, or system default shell.
-				- Done: order is the window --shell, then config default_shell, then system. A new pane also inherits from the pane it forked, its tab, then the window first.
-		- ✅ By default, new pane launches same shell as the pane the new one was forked off of.
-			- Done: a pane stores its launch command, and interactive splits inherit it.
-	- ✅ The shell configuration is stored in the config file as a simple key:value list of shell names and command lines. Command lines may have spaces, single quotes, and/or double quotes in them.
-		- Done: the `shells` list in the config, one entry per shell with its title, command line and active flag, argv-split so spaces and quotes work. The first active entry is the default shell; the old single `default_shell` key is retired.
-		- ✅ The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
-			- Done: the list itself, and the Tab half of it - "New Tab with Shell" is in the Tabs menu and in the right-click menu, off the stored `shells.*` list.
-			- ✅ The same for a new pane: both split rows have their shell flyout now, see the menu item above.
-			- 🚫 The two bracketed rows. The list itself settles both: its first active entry is the default, and the system shell is on the list wherever the scan found it, so a bracketed row would only repeat a row already there.
-	- Opened: 20260628-083740
-	- Closed: 20260829
 
 - 🛠️ Refactor settings dialog
 	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory.
@@ -660,11 +554,30 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 #### Done - Bugs
 
+- ✅ Linux (and probably also Windows): Many duplicate shells get populated.
+	- Cause: two entries were treated as one shell only when their command lines resolved to the same literal path. On Linux `/bin` is a symlink to `/usr/bin`, `/etc/shells` lists both spellings, and a package under `/opt` links to itself from `/usr/bin`, so the same shell arrived under three names and got three rows.
+	- Fixed: a resolved program is now followed to the real file before two entries are compared, so every spelling of one shell collapses to one row.
+	- The name a shell is started under is part of what makes it that shell, so `/bin/sh` stays separate from the dash or bash it links to. A shell reads its own name and behaves differently under it.
+	- Fixed: a list that already held duplicates is collapsed on the next scan, keeping the first of each set with its title, its place and its flags. Until now a scan could only add, so an existing config would have kept its duplicates forever.
+	- Directories that appear on PATH under more than one name are now searched once.
+	- Verified on Linux: a list of nineteen entries came back as eleven, one per installed shell, with the login shell still leading. Not yet checked on Windows.
+	- Opened: 20260829
+	- Closed: 20260829
+
+- ✅ Windows: the transparency setting does nothing.
+	- Cause: a plain HWND swapchain offers only opaque compositing, so the per-pixel alpha the setting asks for was dropped while everything else still rendered, which is why it read as "does nothing" rather than as a fault.
+	- Fixed: with the setting on, the window is presented through the composition path on DX12, which carries premultiplied alpha, and without a redirection surface under it. The backend is pinned for it, since the default pick varies per machine and only DX12 has the option. If DX12 cannot serve the window it falls back to the old opaque path and says so.
+	- On Windows the setting takes effect on the next launch. The Settings tip and the config comment both say so.
+	- Verified: the desktop shows through the pane, the title bar, menu bar, tab strip and dropdown menus stay solid, and a resize, a maximize and a VirtuaWin desktop switch all keep it. `--background-opacity` takes the same path.
+	- Opened: 20260826-123553
+	- Closed: 20260828
+
 - ✅ Output sometimes hops down a line and eases back up. Seen when rar finishes a file's in-place percent line and moves on to the next one.
 	- Cause: the scrollback depth was measured twice, once per PTY wakeup and once between frames, each against its own baseline. When a frame reached the grid before that read cycle's wakeup was handled, the same new line was counted at both, and the second count nudged the view down a line with nothing to scroll. A burst hides the extra line inside its backlog; a settled view under a slow progress line shows it whole.
 	- Fix: one baseline. Each frame samples the depth the same way the wakeup does, so whichever gets there first banks the growth and the other finds nothing left.
 	- Opened: n/a
 	- Closed: 20260827-105239
+
 - ✅ The dreaded "Nano Bounce Bug" is back. Or I don't think ever *really* left. This will serve as the official bug report for it, but it is referenced elsewhere and I've taken multiple cracks at it - all unsuccessful and probably chasing red-herrings. It's obviously related in to smooth-scrolling.
 	- Steps:
 		- Run nano. On any file, or with no file. Ideally, immediately afte a long scroll (e.g. as part of a script. `n8git_backup-and-publish` triggers this reliably.
@@ -1470,6 +1383,98 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ These values in Settings should be expressed in % (in labels), and displayed as integers.
+	- Done: transparency opacity, wallpaper visibility, the three contrast mask sliders, text scrim strength and softness, cursor height and width, and the five smooth-scrolling sliders all carry a % on the label. Every one of them already ran in whole steps, so nothing needed rounding.
+	- The five scrolling sliders are a relative 1 to 100 scale rather than a percentage of any measured thing, so the % there reads as percent of the fastest setting.
+	- Opened: n/a
+	- Closed: 20260830-105645
+
+- ✅ Other unit changes.
+	- Done: wallpaper blur and scrollbar width now say px, cursor blink rate says ms, the cursor animation inactivity timer says s. Scrim radius picked up px too, since it sits next to the outline, which already had it.
+	- The window margin and the scrollbar width are both in logical pixels, so px was already the right word for the margin and nothing changed there.
+	- The blink rate and inactivity timer help lines no longer repeat the unit now that the label carries it.
+	- Opened: n/a
+	- Closed: 20260830-105645
+
+- ✅ "PowerShell profiles": Make this a more meaningful phrase.
+	- Now "Update PowerShell profiles", which says what the switch does rather than naming what it touches.
+	- Opened: n/a
+	- Closed: 20260830-105645
+
+- ✅ Checkboxes to dis/enable shells should be square (and vertically centered in row), not rectagular
+	- Done: the Active box in the Shell tab was as tall as the fields beside it. It is square now, the same size as every other checkbox, and centered on its line.
+	- Opened: 20260829
+	- Closed: 20260829
+
+- ✅ Pick up the newer SHCL, which carries some fixes needed. Take it from github source.
+	- Now on shcl 2.0.0, which is what the repository's main branch holds. Nothing in the config code needed changing for it; every test passed on the bump as it stood.
+	- Two of its additions are in use. A save goes through a temp file and a rename, so a crash mid-save cannot leave a truncated config, and it is refused when the load had to drop a line the save would delete. A setting the writer cannot place is now reported rather than silently skipped.
+	- ✅ Reorganize the config file into a more logical order while in there.
+		- The template now follows the Settings dialog: background and transparency, font, text, cursor, selection, scrolling, theme and colors, window, hyperlinks, shell. An existing config keeps its own order; only a new file gets this one.
+	- ✅ Delete the existing old config files and start over.
+		- The Windows config and the old toml beside it are gone. The Linux box's config was not reachable from here.
+	- Opened: 20260826-123553
+	- Closed: 20260828
+
+- ✅ One View menu item, also on the context menu, that temporarily hides the tab strip, the menu bar and the window decoration together. Working name "windowless mode", but can probably think of a better name/phrase.
+	- Done as "Bare window", a checkmark row at the end of the View menu and beside "Menu bar" in the right-click menu. Nothing is written to the config. Turning it off puts back whichever of the frame and menu bar were on before; one switched on in the meantime stays on. The name is a first pick and easy to change.
+	- Opened: 20260826-123553
+	- Closed: 20260828
+
+- ✅ wallpaper image metadata: Blur options:
+	- Wallpaper metadata: Add blur radius in %, and opacity (relative to bg color) %.
+		- Done: `wallpaper:Opacity` and `wallpaper:Blur`, beside the existing Fit and Anchor tags. Same units as the two settings, and a tagged image takes them over the sliders. The sliders still apply to images without the tags.
+	- Populate default values - same as current code defaults.
+		- Done: every image in the pack and in the masters carries 10% opacity and blur 10, the code defaults.
+	- Add a checkbox in Settings for whether to honor them, if populated and valid values. (Default yes.)
+		- Done: "Honor look tags", under the Blur slider, on by default. A tag that is missing or does not parse leaves the setting alone.
+	- Opened: 20260826-123553
+	- Closed: 20260830
+
+- ✅ The CICD pipeline does not say which combination host environments it is running on. Print it in the plan header, since the skips differ depending on that.
+	- The Windows plan header names the Linux half, or says WSL2 is here and unused, or that there is none.
+	- `cicd.bash` now opens its header with a Host line: plain Linux with the distribution and arch, WSL or WSL2 with the distribution and whether it is the Linux half of a Windows run or running on its own, or a Windows shell with a pointer to the right pipeline.
+	- Opened: 20260824-123142
+	- Closed: 20260828
+
+- ✅ Config file:
+	- ✅ Reorganize the whole thing more logically, similar to how the Settings dialog is organized.
+		- Done under the SHCL pickup above: a new file follows the dialog's tab order. An existing file keeps its own order.
+	- Opened: 20260719-085918
+	- Closed: 20260828
+
+- ✅ Menu enhancements:
+	- ✅ "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
+		- Done: the row sits under "New Tab" in the Tabs menu and in the right-click menu, and opens a flyout listing every active shell by title. It draws from the stored list, which the background scan above fills in - so it did not have to wait for the Settings "Shells" tab after all; that tab is now only the editor for a list that already exists.
+		- The row is absent entirely while there is no shell to put under it, rather than opening an empty flyout.
+		- A new tab started this way still inherits the current directory - picking a shell says nothing about where to start.
+		- Menus gained submenus to carry it: a flyout opens on hover and on click, keyboard Right enters it and Left and Escape back out one level, and its arrow is drawn rather than set in a font (no interface font can be relied on for one, the same reason the tab close mark is drawn).
+	- ✅ Add "Split vertical with shell ->" and "Split horizontal with shell ->".
+		- Done: both sit under the two plain splits in the Panes menu and the right-click menu, and list the same shells the tab row does. The new pane starts where the source pane's shell is.
+	- ✅ Sentence case for every item, except where a letter carries an Alt accelerator.
+		- Done. The one label that kept its capital is "Paste Selection": lowercased, the S accelerator would have found the s in "Paste" first. Every other accelerator still finds its letter, so the underline marks it.
+	- ✅ Context menu: a visible separator between the tab operations and the pane operations.
+	- Note: the three items above were added 20260826, done 20260828.
+	- Opened: 20260719-085918
+
+- ✅ General configuration:
+	- Done: the default-shell behavior, the named shell list, its grid editor in the Shell tab, and the Tab and Pane menu rows that draw from it.
+	- ✅ Ability to define shells to launch in a new tab or pane.
+		- ✅ By default, new tab launches the default shell for the window.
+			- Done: new tabs and the startup pane use the default shell.
+			- ✅ By priority: Global command shell override, non-empty shell specified in config file, or system default shell.
+				- Done: order is the window --shell, then config default_shell, then system. A new pane also inherits from the pane it forked, its tab, then the window first.
+		- ✅ By default, new pane launches same shell as the pane the new one was forked off of.
+			- Done: a pane stores its launch command, and interactive splits inherit it.
+	- ✅ The shell configuration is stored in the config file as a simple key:value list of shell names and command lines. Command lines may have spaces, single quotes, and/or double quotes in them.
+		- Done: the `shells` list in the config, one entry per shell with its title, command line and active flag, argv-split so spaces and quotes work. The first active entry is the default shell; the old single `default_shell` key is retired.
+		- ✅ The "Tab" and "Pane" menus (both on the main menu and popup menu sections) should both have dedicated sections to select the shell, both pulling from the same list of shells in the config. (With "[SilkTerm default]" always the first if one is defined in the config, and "[system default]" always the last no matter what).
+			- Done: the list itself, and the Tab half of it - "New Tab with Shell" is in the Tabs menu and in the right-click menu, off the stored `shells.*` list.
+			- ✅ The same for a new pane: both split rows have their shell flyout now, see the menu item above.
+			- 🚫 The two bracketed rows. The list itself settles both: its first active entry is the default, and the system shell is on the list wherever the scan found it, so a bracketed row would only repeat a row already there.
+	- Opened: 20260628-083740
+	- Closed: 20260829
 
 - 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
 	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Same for a new window (Ctrl+Shift+N), and the same shell inheritance applies to all three.

@@ -158,7 +158,7 @@ rows:
 		help: "See through the terminal background. On Windows this takes effect on the next launch."
 
 	Opacity:
-		label: Opacity
+		label: Opacity %
 		kind: slider
 		range: 0, 100
 		whole: true
@@ -206,7 +206,7 @@ rows:
 		help: "Treat the path above as a folder and show a different image from it each time."
 
 	BgOpacity:
-		label: Visibility
+		label: Visibility %
 		kind: slider
 		range: 0, 100
 		whole: true
@@ -215,7 +215,7 @@ rows:
 		help: "How strongly the wallpaper shows through the terminal background."
 
 	BgBlur:
-		label: Blur
+		label: Blur px
 		kind: slider
 		range: 0, 50
 		indent: 1
@@ -235,7 +235,7 @@ rows:
 		help: "Quieten the wallpaper only where it would fight the text, leaving the rest alone."
 
 	BgContrastSize:
-		label: Size
+		label: Size %
 		kind: slider
 		range: 0, 100
 		whole: true
@@ -244,7 +244,7 @@ rows:
 		help: "How large an area each point of the wallpaper is judged against."
 
 	BgContrastStrength:
-		label: Strength
+		label: Strength %
 		kind: slider
 		range: 0, 100
 		whole: true
@@ -253,7 +253,7 @@ rows:
 		help: "How far the mask is allowed to push the wallpaper down."
 
 	BgContrastAuto:
-		label: Automask mix
+		label: Automask mix %
 		kind: slider
 		range: 0, 100
 		whole: true
@@ -308,7 +308,7 @@ rows:
 
 	ScrimStrength:
 		## percent, where each 20% is one doubling of the finished halo's opacity
-		label: Strength
+		label: Strength %
 		kind: slider
 		range: 0, 100
 		whole: true
@@ -317,7 +317,7 @@ rows:
 		help: "How solid the halo gets. High values close the gaps between glyphs into a plate."
 
 	ScrimRadius:
-		label: Scrim radius
+		label: Scrim radius px
 		kind: slider
 		range: 0, 20
 		indent: 1
@@ -325,7 +325,7 @@ rows:
 		help: "How far the halo reaches out from the ink."
 
 	ScrimSoftness:
-		label: Softness
+		label: Softness %
 		kind: slider
 		range: 0, 100
 		whole: true
@@ -365,15 +365,15 @@ rows:
 		tab: Cursor
 
 	CursorBlink:
-		label: Blink rate
+		label: Blink rate ms
 		kind: slider
 		range: 100, 3000
 		whole: true
 		setting: cursor.blink_rate_ms
-		help: "One full animation cycle, in milliseconds."
+		help: "One full animation cycle."
 
 	CursorHeight:
-		label: Height
+		label: Height %
 		kind: slider
 		range: 1, 100
 		whole: true
@@ -381,7 +381,7 @@ rows:
 		help: "Cursor height as a percentage of the cell, measured up from the bottom."
 
 	CursorWidth:
-		label: Width
+		label: Width %
 		kind: slider
 		range: 1, 100
 		whole: true
@@ -395,12 +395,12 @@ rows:
 		setting: cursor.animation
 
 	CursorResume:
-		label: Inactivity timer
+		label: Inactivity timer s
 		kind: slider
 		range: 0.1, 60
 		indent: 1
 		setting: cursor.animation_resume_s
-		help: "Seconds of no typing before the animation picks up again. Output does not wait this out."
+		help: "How long typing has to stop before the animation picks up again. Output does not wait this out."
 
 	CursorVisibility:
 		## Two independent switches sharing one label; the row itself edits
@@ -436,7 +436,7 @@ rows:
 	## higher is faster.
 
 	ScrollEaseIn:
-		label: Ease-in
+		label: Ease-in %
 		kind: slider
 		range: 1, 100
 		whole: true
@@ -445,7 +445,7 @@ rows:
 		help: "How sharply the view leaves a standstill when output starts."
 
 	ScrollRampUp:
-		label: Ramp-up
+		label: Ramp-up %
 		kind: slider
 		range: 1, 100
 		whole: true
@@ -454,7 +454,7 @@ rows:
 		help: "How quickly the view picks up speed once it is moving."
 
 	SingleScreenTau:
-		label: Single-screen speed
+		label: Single-screen speed %
 		kind: slider
 		range: 1, 100
 		whole: true
@@ -463,7 +463,7 @@ rows:
 		help: "Top speed while the output still fits on one screen."
 
 	ScrollRampDown:
-		label: Ramp-down
+		label: Ramp-down %
 		kind: slider
 		range: 1, 100
 		whole: true
@@ -472,7 +472,7 @@ rows:
 		help: "How hard the view brakes as the output runs out."
 
 	ScrollEaseOut:
-		label: Ease-out
+		label: Ease-out %
 		kind: slider
 		range: 1, 100
 		whole: true
@@ -494,7 +494,7 @@ rows:
 		setting: scroll.scrollbar.enabled
 
 	ScrollbarThickness:
-		label: Width
+		label: Width px
 		kind: slider
 		range: 4, 64
 		whole: true
@@ -726,7 +726,7 @@ rows:
 		tab: Shell
 
 	ShellIntegration:
-		label: "PowerShell profiles"
+		label: "Update PowerShell profiles"
 		kind: toggle
 		setting: shell.integration
 		help: "Add a directory-reporting block to each PowerShell profile, so a new tab, pane or window opens where that shell is. Other shells need nothing. A profile that already reports is left alone, and deleting the block switches it off for good."
