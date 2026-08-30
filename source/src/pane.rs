@@ -863,6 +863,11 @@ pub struct Pane {
 	pub rect: Rect,
 	pub title: String,
 	pub read_only: bool, // accept no PTY input/paste; selection + copy still work
+	// --keep-open: hold this pane after its shell exits instead of closing it.
+	// `held` is that pane once the shell has gone - it shows the exit line and
+	// waits for a key.
+	pub keep_open: bool,
+	pub held: bool,
 	// launch argv (None = default shell); a split inherits this so a new pane
 	// runs the same shell as the one it forked off (see design.md).
 	command: Option<Vec<String>>,
@@ -1398,7 +1403,11 @@ impl Pane {
 		// Cursor position/shape as plain values (no lasting borrow of the lock), so
 		// the fast path below can drop the term lock immediately.
 		let cursor_pt = guard.grid().cursor.point;
-		let cursor_shape = shown_cursor_shape(*guard.mode(), guard.cursor_style().shape);
+		let cursor_shape = if self.held {
+			CursorShape::Hidden // nothing is reading; a blinking cursor would lie
+		} else {
+			shown_cursor_shape(*guard.mode(), guard.cursor_style().shape)
+		};
 		// Alt-screen apps own their cursor shape; on the primary screen it's the
 		// configured geometry (or the app's DECSCUSR). See cursor_geometry.
 		let cursor_geom =
@@ -3100,6 +3109,8 @@ fn spawn_pane(
 		rect,
 		title: config::APP_NAME.into(),
 		read_only: false,
+		keep_open: false,
+		held: false,
 		command,
 		last_draw: PaneDraw {
 			top: rect.y,

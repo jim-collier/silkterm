@@ -2567,6 +2567,61 @@ impl State {
 		self.close_tab_at(self.tabs.active);
 	}
 
+	// A pane whose shell has gone: close just that pane, then its tab, then the
+	// window. Mirrors the Close-Pane menu cascade. The pane can be in any tab -
+	// a background tab's shell exits the same way.
+	fn close_dead_pane(&mut self, id: PaneId) {
+		let area = self.area();
+		let Some(tab_idx) = self
+			.tabs
+			.list
+			.iter()
+			.position(|pm| pm.panes.contains_key(&id))
+		else {
+			return;
+		};
+		if self.tabs.list[tab_idx].panes.len() > 1 {
+			self.tabs.list[tab_idx].close(&mut self.text, id, area);
+		} else if self.tabs.len() > 1 {
+			self.close_tab_at(tab_idx);
+		} else {
+			self.quit = true;
+		}
+		self.dirty = true;
+	}
+
+	// --keep-open: the shell is gone but the pane stays, saying how it ended and
+	// waiting for a key. Answers whether the pane is being held, so the caller
+	// knows not to close it. ChildExit carries the status and Exit follows with
+	// nothing, so the second call finds it already held and leaves it alone.
+	fn hold_dead_pane(&mut self, id: PaneId, status: &str) -> bool {
+		let Some(p) = self
+			.tabs
+			.list
+			.iter_mut()
+			.find_map(|pm| pm.panes.get_mut(&id))
+		else {
+			return false;
+		};
+		if p.held {
+			return true;
+		}
+		if !p.keep_open {
+			return false;
+		}
+		p.held = true;
+		p.read_only = true;
+		p.term.feed(
+			format!(
+				"\r\n{}: exit {status} - press a key to close\r\n",
+				config::APP_NAME
+			)
+			.as_bytes(),
+		);
+		self.dirty = true;
+		true
+	}
+
 	// Close the tab at `idx` (not necessarily the active one - a background tab's
 	// shell can exit). Keeps `active` pointing at the same tab where it can.
 	fn close_tab_at(&mut self, idx: usize) {
@@ -4389,6 +4444,12 @@ fn build_layout(
 			std::process::exit(2);
 		})
 	};
+	// --keep-open cascades like the shell and the directory do
+	let hold = |pm: &mut PaneManager, id: PaneId, keep: bool| {
+		if let Some(p) = pm.panes.get_mut(&id) {
+			p.keep_open = keep;
+		}
+	};
 	if !cli.hierarchical {
 		let shell = cli
 			.win
@@ -4396,7 +4457,10 @@ fn build_layout(
 			.shell
 			.clone()
 			.or_else(config::default_shell_argv);
-		return vec![spawn(text, shell, win_dir)];
+		let mut pm = spawn(text, shell, win_dir);
+		let id = pm.focused;
+		hold(&mut pm, id, cli.win.style.keep_open.unwrap_or(false));
+		return vec![pm];
 	}
 	let mut out = Vec::new();
 	for tab in &cli.tabs {
@@ -4421,8 +4485,15 @@ fn build_layout(
 			.as_deref()
 			.and_then(config::cli_dir)
 			.or_else(|| tab_dir.clone());
+		let main_keep = tab.panes[0]
+			.style
+			.keep_open
+			.or(tab.style.keep_open)
+			.or(cli.win.style.keep_open)
+			.unwrap_or(false);
 		let mut pm = spawn(text, main_shell.clone(), main_dir.clone());
 		let main_id = pm.focused;
+		hold(&mut pm, main_id, main_keep);
 		let mut handles: HashMap<String, PaneId> = HashMap::new();
 		handles.insert("main".into(), main_id);
 		handles.insert("0".into(), main_id);
@@ -4433,6 +4504,8 @@ fn build_layout(
 		shells.insert(main_id, main_shell);
 		let mut dirs: HashMap<PaneId, Option<PathBuf>> = HashMap::new();
 		dirs.insert(main_id, main_dir);
+		let mut keeps: HashMap<PaneId, bool> = HashMap::new();
+		keeps.insert(main_id, main_keep);
 		let mut prev = main_id;
 
 		for pane_spec in &tab.panes[1..] {
@@ -4465,6 +4538,14 @@ fn build_layout(
 				.and_then(config::cli_dir)
 				.or_else(|| dirs.get(&target).cloned().flatten())
 				.or_else(|| tab_dir.clone());
+			// and whether it is held open: explicit -> the pane it splits -> tab -> window
+			let keep = pane_spec
+				.style
+				.keep_open
+				.or_else(|| keeps.get(&target).copied())
+				.or(tab.style.keep_open)
+				.or(cli.win.style.keep_open)
+				.unwrap_or(false);
 			let ratio = match pane_spec.size {
 				None => 0.5,
 				Some(Size::Percent(pct)) => pct / 100.0,
@@ -4494,6 +4575,8 @@ fn build_layout(
 				}
 				shells.insert(new_id, shell);
 				dirs.insert(new_id, pane_dir);
+				keeps.insert(new_id, keep);
+				hold(&mut pm, new_id, keep);
 				prev = new_id;
 			}
 		}
@@ -4845,7 +4928,7 @@ impl ApplicationHandler<UserEvent> for App {
 		}
 	}
 
-	fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+	fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
 		let _t = crate::perf::Span::new(&crate::perf::EVENT_NS);
 		let Some(state) = self.state.as_mut() else {
 			return;
@@ -4888,25 +4971,14 @@ impl ApplicationHandler<UserEvent> for App {
 					state.update_title();
 				}
 			}
+			UserEvent::ChildExit(id, status) => {
+				state.hold_dead_pane(id, &status);
+			}
 			UserEvent::Exit(id) => {
-				// A shell exited: close just its pane, not the whole app. The pane
-				// may live in any tab (a background tab's shell can exit too), so
-				// find its owner. Last pane in that tab -> close the tab; last pane
-				// of the last tab -> quit. Mirrors the Close-Pane menu cascade.
-				let area = state.area();
-				if let Some(tab_idx) = state
-					.tabs
-					.list
-					.iter()
-					.position(|pm| pm.panes.contains_key(&id))
-				{
-					if state.tabs.list[tab_idx].panes.len() > 1 {
-						state.tabs.list[tab_idx].close(&mut state.text, id, area);
-					} else if state.tabs.len() > 1 {
-						state.close_tab_at(tab_idx);
-					} else {
-						event_loop.exit();
-					}
+				// A shell exited: close just its pane, not the whole app - unless
+				// --keep-open asked for the pane to stay and say how it ended.
+				if !state.hold_dead_pane(id, "unknown") {
+					state.close_dead_pane(id);
 				}
 				state.dirty = true;
 			}
@@ -5730,6 +5802,12 @@ impl ApplicationHandler<UserEvent> for App {
 					.get(&focused)
 					.is_some_and(|p| p.mode.contains(TermMode::APP_CURSOR));
 				if let Some(bytes) = input::encode(&key, state.mods, app_cursor) {
+					// a held pane has no shell left to type at, so any key that
+					// would have gone to one closes it instead
+					if state.tabs.cur().panes.get(&focused).is_some_and(|p| p.held) {
+						state.close_dead_pane(focused);
+						return;
+					}
 					// copy-output: Enter at the shell prompt may launch a command;
 					// arm the capture so its output is copied once the pane settles.
 					let is_enter = matches!(key.logical_key, Key::Named(NamedKey::Enter));

@@ -21,6 +21,9 @@ pub enum UserEvent {
 	// terminal replies (cursor position report, device attributes, ...) that
 	// must be written back to the PTY
 	PtyWrite(PaneId, Vec<u8>),
+	// the shell's own process ended, with the status it ended on (--keep-open
+	// shows this). Always followed by Exit for the same pane.
+	ChildExit(PaneId, String),
 	Exit(PaneId),
 	// terminal bell (BEL): drives a brief visual flash (text brightens, fades back)
 	Bell,
@@ -95,6 +98,22 @@ impl EventProxy {
 	}
 }
 
+// How a shell's exit reads on screen. Platform Display spellings vary
+// ("exit status: 1", "exit code: 1"), so say it ourselves.
+fn status_text(status: std::process::ExitStatus) -> String {
+	if let Some(code) = status.code() {
+		return code.to_string();
+	}
+	#[cfg(unix)]
+	{
+		use std::os::unix::process::ExitStatusExt;
+		if let Some(sig) = status.signal() {
+			return format!("signal {sig}");
+		}
+	}
+	"unknown".into()
+}
+
 impl EventListener for EventProxy {
 	fn send_event(&self, event: Event) {
 		let _ = match event {
@@ -104,7 +123,10 @@ impl EventListener for EventProxy {
 			Event::ResetTitle => self
 				.proxy
 				.send_event(UserEvent::Title(self.id, crate::config::APP_NAME.into())),
-			Event::Exit | Event::ChildExit(_) => self.proxy.send_event(UserEvent::Exit(self.id)),
+			Event::ChildExit(status) => self
+				.proxy
+				.send_event(UserEvent::ChildExit(self.id, status_text(status))),
+			Event::Exit => self.proxy.send_event(UserEvent::Exit(self.id)),
 			Event::PtyWrite(text) => self
 				.proxy
 				.send_event(UserEvent::PtyWrite(self.id, text.into_bytes())),
@@ -442,6 +464,16 @@ impl TermInstance {
 	pub fn write<B: Into<Vec<u8>>>(&self, bytes: B) {
 		self.note_activity();
 		let _ = self.sender.send(Msg::Input(bytes.into().into()));
+	}
+
+	// Put text on screen without a PTY behind it. The engine's thread owns the
+	// parser and dies with the shell, so anything added afterwards (the
+	// --keep-open exit line) needs a parser of our own.
+	pub fn feed(&self, bytes: &[u8]) {
+		let mut parser = alacritty_terminal::vte::ansi::Processor::<
+			alacritty_terminal::vte::ansi::StdSyncHandler,
+		>::default();
+		parser.advance(&mut *self.term.lock(), bytes);
 	}
 
 	pub fn resize(&mut self, cols: usize, lines: usize, cell_w: u16, cell_h: u16) {
@@ -922,7 +954,20 @@ struct UnicodeString {
 mod tests {
 	use super::{
 		SHELL_PRIVATE_ENV, WakeGate, env_fixups, expand_refs, is_command_child, parse_env_block,
+		status_text,
 	};
+
+	// The --keep-open line reads this out to the user, so it has to say the same
+	// thing on every platform.
+	#[cfg(unix)]
+	#[test]
+	fn an_exit_status_reads_the_same_on_every_platform() {
+		use std::os::unix::process::ExitStatusExt;
+		let st = |raw| status_text(std::process::ExitStatus::from_raw(raw));
+		assert_eq!(st(0), "0");
+		assert_eq!(st(1 << 8), "1");
+		assert_eq!(st(9), "signal 9");
+	}
 
 	// Folding the notices may never LOSE one: the window clears the gate before
 	// it looks at the grid, so a read cycle that lands mid-handling posts again.
