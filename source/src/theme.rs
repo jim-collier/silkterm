@@ -349,6 +349,29 @@ mod tests {
 		}
 	}
 
+	// Body text has to clear the minimum-contrast floor on its own - if a theme's
+	// own foreground needed lifting, the floor would be repainting the thing it is
+	// measured against. ANSI black is the other end of the same check: it is
+	// invisible on a dark ground by definition, which is the case the floor is for.
+	#[test]
+	fn a_theme_fg_clears_the_floor_and_ansi_black_does_not() {
+		let floor = crate::config::Settings::default().text_min_contrast;
+		for (name, t) in THEMES {
+			for pal in [t.dark, t.light] {
+				assert_eq!(
+					crate::palette::readable(pal.fg, pal.bg, floor),
+					pal.fg,
+					"{name}: the theme's own fg would be repainted"
+				);
+			}
+			assert_ne!(
+				crate::palette::readable(t.dark.ansi[0], t.dark.bg, floor),
+				t.dark.ansi[0],
+				"{name}: ansi black on a dark ground should be lifted"
+			);
+		}
+	}
+
 	fn find(name: &str) -> &'static Theme {
 		THEMES
 			.iter()

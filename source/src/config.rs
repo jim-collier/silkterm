@@ -255,6 +255,7 @@ pub struct Settings {
 	pub text_scrim_ramp: String, // halo falloff curve: "sigmoid" | "half_normal" | "linear" | "log" | "exp"
 	pub text_scrim_function: String, // halo build: "dilate" | "sdf" | "dt" | "gaussian" (legacy blur)
 	pub text_scrim_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
+	pub text_min_contrast: f32, // smallest Oklab lightness gap text may have from its own background, 0..1 (0 = leave every color alone)
 	pub color_emoji: bool, // paint COLRv1 color glyphs (emoji) instead of falling back to a monochrome face
 	pub embolden_inverse: bool, // render reverse-video (dark-on-light) text bold so it reads as strongly as normal text (the scrim only boosts light-on-dark)
 	pub cursor_scrim: bool,     // cursor joins the text scrim halo (default off)
@@ -382,6 +383,7 @@ impl Default for Settings {
 			text_scrim_ramp: "exp".to_string(),
 			text_scrim_function: "sdf".to_string(),
 			text_scrim_regular_weight: true,
+			text_min_contrast: 0.45,
 			color_emoji: true,
 			embolden_inverse: true,
 			cursor_scrim: false,
@@ -1111,6 +1113,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.text_scrim_regular_weight != orig.text_scrim_regular_weight {
 		doc.put_bool("text.scrim.regular_weight", s.text_scrim_regular_weight);
 	}
+	if s.text_min_contrast != orig.text_min_contrast {
+		doc.put_float("text.min_contrast", r(s.text_min_contrast));
+	}
 	if s.color_emoji != orig.color_emoji {
 		doc.put_bool("text.color_emoji", s.color_emoji);
 	}
@@ -1317,6 +1322,7 @@ struct RawConfig {
 	text_scrim_ramp: Option<String>,
 	text_scrim_function: Option<String>,
 	text_scrim_regular_weight: Option<bool>,
+	text_min_contrast: Option<f32>,
 	color_emoji: Option<bool>,
 	embolden_inverse: Option<bool>,
 	cursor_scrim: Option<bool>,
@@ -1537,6 +1543,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		text_scrim_ramp: r.s("text.scrim.ramp"),
 		text_scrim_function: r.s("text.scrim.function"),
 		text_scrim_regular_weight: r.b("text.scrim.regular_weight"),
+		text_min_contrast: r.f("text.min_contrast"),
 		color_emoji: r.b("text.color_emoji"),
 		embolden_inverse: r.b("text.embolden_inverse"),
 		cursor_scrim: r.b("cursor.scrim"),
@@ -1938,6 +1945,10 @@ fn resolve(raw: RawConfig) -> Settings {
 		text_scrim_regular_weight: raw
 			.text_scrim_regular_weight
 			.unwrap_or(d.text_scrim_regular_weight),
+		text_min_contrast: raw
+			.text_min_contrast
+			.unwrap_or(d.text_min_contrast)
+			.clamp(0.0, 0.6),
 		color_emoji: raw.color_emoji.unwrap_or(d.color_emoji),
 		embolden_inverse: raw.embolden_inverse.unwrap_or(d.embolden_inverse),
 		cursor_scrim: raw.cursor_scrim.unwrap_or(d.cursor_scrim),
@@ -3465,6 +3476,14 @@ text:
 
 	## Outline around each glyph, in pixels, 0.0 to 8.0. 0 is none.
 	# outline: 1.0  ## Default
+
+	## Smallest difference in lightness, 0.0 to 0.6, that text is allowed to have
+	## from the color behind it. Anything closer is lightened on a dark
+	## background and darkened on a light one, keeping its hue, so a program
+	## that writes near-black text on a dark terminal is still readable. Text
+	## set to exactly the background color is left hidden, since that is
+	## deliberate. 0.0 turns this off.
+	# min_contrast: 0.45  ## Default
 
 	## Off renders emoji as monochrome outlines.
 	# color_emoji: true  ## Default

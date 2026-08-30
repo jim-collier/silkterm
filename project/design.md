@@ -20,6 +20,7 @@
 	- [Output easing new text](#output-easing-new-text)
 	- [Smooth-scroll inside full-screen apps](#smooth-scroll-inside-full-screen-apps)
 	- [Text readability scrim](#text-readability-scrim)
+	- [Minimum contrast (2026-08-30)](#minimum-contrast-2026-08-30)
 	- [Font fallback stack](#font-fallback-stack)
 	- [Hyperlinks](#hyperlinks)
 	- [Measurements and display scaling](#measurements-and-display-scaling)
@@ -228,6 +229,18 @@ The halo shape is selectable ("Scrim function"), because a plain Gaussian blur i
 The distance functions share one engine: a separable, exactly-Euclidean distance transform bounded to the halo radius. It takes a per-column 1D distance, then a row combine. That is cheap - two passes, no jump-flood - and reads either metric off the same field. Independently, a "Scrim falloff" curve shapes how the backing fades with distance: Sigmoid, Half-normal, Linear, Logarithmic, or Exponential. It applies both as the blur kernel weight and as the distance-path transfer. Falloff and function are orthogonal: the function decides the halo's shape, the falloff its fade. The falloff is named for the curve it draws rather than for a blur, since the same word otherwise names both a shape and a fade. A bell curve's outer half is a half-normal, and a smoothstep is a sigmoid. Every curve is normalized to reach zero at the halo's outer edge, so a halo ends where its radius says it does.
 
 A third knob, "Strength", decides how bold the finished halo is: each 10% doubles its opacity, up to ten doublings at 100%. Because the doubled value is clamped, the halo's core saturates first and the solid part grows outward along the falloff. So the backing thickens into a plate rather than merely brightening, and it still stops at the radius. At 0 the halo is exactly as the function and falloff built it, which is what ships.
+
+### Minimum contrast (2026-08-30)
+
+Programs pick text colors for a terminal they cannot see. One that assumes a light background writes near-black text, and on a dark one it disappears. So a floor is enforced on how close text may come to the color behind it, and anything under it is moved away: lighter on a dark background, darker on a light one.
+
+The comparison is against the cell's own background color, not against what a pixel behind the glyph actually shows. Per-pixel would mean the wallpaper, the blur, the scrim and the cell color all at once, in the shader, and it would give one word two colors across a gradient. The cell color is also the honest answer in practice: a cell carrying its own background paints it solid, and one on the default background gets a scrim halo of exactly that color, with the wallpaper already pulled most of the way toward it.
+
+Lightness is measured in Oklab rather than as a WCAG ratio. That ratio's constant term swamps the dark end, so two near-blacks score respectably while being invisible, which is the whole case this is for. The move changes Oklab L alone and leaves a and b, so hue and saturation survive and colors stay told apart: a lifted navy is still navy. It goes to whichever side the text is already on, unless that side has no room left before white or black, in which case it goes the other way. Pale text on a merely light background is the case that needs the flip.
+
+The default floor is 45%, which puts previously invisible text at roughly 2.8:1 against a black background. Lower settings measure out as doing nothing visible at all. Two things are deliberately exempt. Text set to exactly its background color is left hidden, since that is how the hidden attribute works and how a program conceals a password. And ANSI black on a dark background is not exempt, even though it is invisible by definition - a program using it as a foreground has made the mistake this setting is for.
+
+Every built-in theme's own foreground clears the floor on its own, which is checked at build time. A theme whose body text needed lifting would mean the floor was repainting the thing it is measured against.
 
 ### Font fallback stack
 

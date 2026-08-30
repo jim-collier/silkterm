@@ -231,6 +231,7 @@ fn snapshot_rows(
 ) -> Vec<u64> {
 	let mut rows: Vec<u64> = Vec::with_capacity(lines);
 	let mut styled = styled;
+	let mut readable = palette::Readable::default();
 	if let Some((_, _, out)) = &mut styled {
 		out.resize_with(lines, Vec::new);
 	}
@@ -274,6 +275,7 @@ fn snapshot_rows(
 						fg[2] / 2 + fg[2] / 4,
 					];
 				}
+				fg = readable.get(fg, cell_bg, settings.text_min_contrast);
 				out_row.push(StripCell {
 					c: cell.c,
 					fg,
@@ -458,12 +460,18 @@ fn link_at(
 	let point_of = |i: usize| Point::new(Line(first_line + (i / cols) as i32), Column(i % cols));
 	let start_pt = point_of(start);
 	let cell = &grid[start_pt.line][start_pt.column];
-	// Underline in the link's own color, so a colored URL keeps its identity.
-	let fg = if cell.flags.contains(Flags::INVERSE) {
-		palette::resolve(cell.bg, colors, settings)
+	// Underline in the link's own color, so a colored URL keeps its identity -
+	// including the minimum-contrast lift, or the rule would sit off the text.
+	let (fg, bg) = if cell.flags.contains(Flags::INVERSE) {
+		(cell.bg, cell.fg)
 	} else {
-		palette::resolve(cell.fg, colors, settings)
+		(cell.fg, cell.bg)
 	};
+	let fg = palette::readable(
+		palette::resolve(fg, colors, settings),
+		palette::resolve(bg, colors, settings),
+		settings.text_min_contrast,
+	);
 	Some(LinkHit {
 		url,
 		start: start_pt,
@@ -921,6 +929,8 @@ pub struct Pane {
 	// Scrim source with bold stripped (text_scrim_regular_weight): shaped alongside
 	// the main buffer only on rebuild frames that actually contain bold runs.
 	// `scrim_debold` says the buffer is valid for the current content.
+	// Per-build memo for the minimum-contrast lift (see palette::Readable).
+	readable: palette::Readable,
 	scrim_buf: Option<Buffer>,
 	scrim_debold: bool,
 	// Cursor animation: `cursor_x` (visual column) eases toward the target column
@@ -1565,12 +1575,21 @@ impl Pane {
 						fg[2] / 2 + fg[2] / 4,
 					];
 				}
+				let selected =
+					sel_range.is_some_and(|r| r.contains(Point::new(Line(grid_line), Column(c))));
+				// What is actually painted behind the glyph - the selection quad
+				// where there is one. The bell flash rides on top of the result, so
+				// a flash can brighten but never undoes the lift.
+				let behind = if selected {
+					config::SELECTION_BG
+				} else {
+					cell_bg
+				};
+				fg = self.readable.get(fg, behind, settings.text_min_contrast);
 				if bell > 0.0 {
 					fg = bell_brighten(fg, bell); // visual-bell flash
 				}
 
-				let selected =
-					sel_range.is_some_and(|r| r.contains(Point::new(Line(grid_line), Column(c))));
 				let bg_color = if selected {
 					Some(config::SELECTION_BG)
 				} else if cell_bg != settings.bg {
@@ -3133,6 +3152,7 @@ fn spawn_pane(
 		glyphs: Vec::new(),
 		emoji: Vec::new(),
 		empty_buf,
+		readable: palette::Readable::default(),
 		scrim_buf: None,
 		scrim_debold: false,
 		cursor_x: 0.0,
