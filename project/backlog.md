@@ -56,20 +56,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
-- 🔘 Double-click tab title to edit/change it.
-	- Highlight all text by default when entering edit mode.
-	- User can also set to blank.
-	- Tab titles don't have to be unique.
-
-- 🔘 Window title
-	- 🔘 Allow application to change part of window title (e.g. as Claude Code changes Terminator window title.)
-		- Doesn't change the tab title.
-	- Window title always starts with "SilkTerm - ". If dogfood, then "Silkterm [dogfood ...] - " where the '...' represents the dogfood delail.
-		- After the " - " is the custom part. It is either:
-			- As much of the current tab title as will fit, or
-			- The window title set by the application in the active tab (e.g. window title set by Claude Code).
-			- User-defined tab titles always take priority over application-defined window title (unless the user set the tab title to empty).
-
 - 🔘 Pre-interpret the most common bash environment variables for shells that do not understand them. (In settings and config file.)
 	- Same for the common PowerShell variables.
 	- Same for the common Windows variables.
@@ -1412,6 +1398,24 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Double-click a tab title to change it.
+	- The edit starts with what the tab says now, all selected, so the first thing typed replaces it. Enter or Tab keeps it, Escape drops it, and a click elsewhere keeps it.
+	- Selection, Home and End, and paste all work. A pasted newline becomes a space, since a tab is one line high.
+	- A blank title is kept. The tab shrinks to its close box and is still selectable and closable.
+	- Titles do not have to be unique.
+	- Typing back the name the tab would have had on its own puts it back to naming the shell, which is the way out of a hand-typed title.
+	- Opening or closing a tab ends an edit in progress, since the edit is keyed by the tab's position.
+	- Opened: 20260830-143000
+	- Closed: 20260830-143000
+
+- ✅ Window title.
+	- It always starts with the application name, and a dogfood build says which build it is - the pool holds several and they look alike in the taskbar.
+	- After that comes, in order: a title typed on the tab, else the title the running program set, else what the tab says about the shell. So a program that renames the window reaches the title bar without touching the tab, and a typed tab title outranks it.
+	- A tab deliberately blanked lets the program's title through; with neither, the title is just the application name.
+	- A `--title` on the command line is still the whole answer, verbatim.
+	- Opened: 20260830-143000
+	- Closed: 20260830-143000
 
 - ✅ These values in Settings should be expressed in % (in labels), and displayed as integers.
 	- Done: transparency opacity, wallpaper visibility, the three contrast mask sliders, text scrim strength and softness, cursor height and width, and the five smooth-scrolling sliders all carry a % on the label. Every one of them already ran in whole steps, so nothing needed rounding.

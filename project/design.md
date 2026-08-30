@@ -481,6 +481,22 @@ Guiding constraint: GitHub is dumb git hosting plus optional release storage, no
 - README badges: static shields only (release, license, minimum Rust). No CI badge, since there is no hosted workflow to point one at.
 - Wallpaper gallery on GitHub Pages: `docs/` is served from main, and holds one self-contained page - a thumbnail grid whose tiles open the wallpaper full size in place, with prev/next paging, a filter box and per-image provenance. A README cannot do this: GitHub renders no scripting and strips image maps, so a single contact sheet has no clickable tiles and there is no way to page through anything. It stretches the guiding constraint above and does so knowingly - Pages here is branch-served static files with no Actions workflow, GitHub builds nothing, and if it were switched off tomorrow the only casualty would be one README link. The page carries thumbnails only (about 1.4 MiB) and fetches each full image from the pack already in the repository, so the 60 MiB of wallpapers is never stored twice. Both it and the README contact sheet come out of `cicd/utility/wallpaper-gallery.bash`, which is deliberately one entry point: two rendered artifacts from one pack go stale together or not at all.
 
+### A tab can be named by hand, and the window title follows the tab (2026-08-30)
+
+Double-clicking a tab renames it in place. The strip has always drawn what the shell is doing, which is right most of the time and wrong when several tabs are running the same thing in the same tree.
+
+- The edit starts with what the tab already says, all of it selected, so typing replaces it and any other key edits it. Enter or Tab keeps the change, Escape drops it, and a click anywhere else keeps it. Selection, Home and End, and paste all work; a pasted newline becomes a space, since a tab is one line high.
+- Committing a title that matches what the tab would have said on its own puts it back to naming the shell. That is the way out of a hand-typed title, and it needs no extra control.
+- A title left empty is kept, so a tab can be deliberately blank. The tab shrinks to its close box and is still selectable.
+- Titles need not be unique. Two tabs called the same thing is a thing people do on purpose.
+- The rename is keyed by the tab's position, so opening or closing a tab ends it - committed on an open, dropped on a close.
+
+The window title is now assembled in one place, and always starts with the application name. A dogfood build says which one it is, since the pool holds several and they are otherwise indistinguishable in the taskbar.
+
+- After the name comes, in order: a title typed on the tab, else the title the running program asked for, else what the tab says about the shell. So a program that renames the window (an editor, a build tool) reaches the title bar without touching the tab, and a hand-typed tab title outranks it.
+- A tab deliberately blanked lets the program's title through, and with neither the title is just the application name. That is the one case where blank means "defer" rather than "show nothing".
+- A `--title` given on the command line is still the whole answer, verbatim. It is an explicit request for exactly that string.
+
 ### Tabs report what they are running, and where (2026-08-21)
 
 A tab used to say the application's own name on Windows and the shell's process name on unix. It now reports the shell by its FRIENDLY name - the one the Shells list carries, which is the name the user gave it - followed by what that shell is doing: the command in the foreground, or the last one it ran, or, having run nothing, the directory it is in.
