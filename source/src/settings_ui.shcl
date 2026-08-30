@@ -733,10 +733,11 @@ rows:
 		setting: shell.startup_directory
 		help: "Where a shell starts when nothing else has said. Understands ~ and environment variables ($HOME, %USERPROFILE%). Overridden by --directory on the command line, by an inherited directory, and by the directory SilkTerm was launched from."
 
-	## PowerShell is the one shell that cannot be asked where it is - it keeps
-	## its location to itself - so it is offered a block for its profile that
-	## says so. Every other shell moves its own process and needs nothing. A
-	## profile that already reports is left alone.
+	## The two things SilkTerm sets up in a shell it starts. PowerShell is the
+	## one shell that cannot be asked where it is - it keeps its location to
+	## itself - so it is offered a block for its profile that says so, and a
+	## profile that already reports is left alone. The bash prompt is an offer
+	## through the environment; an rc file with a prompt of its own wins.
 	IntegrationHead:
 		kind: heading
 		label: "Shell integration"
@@ -747,6 +748,12 @@ rows:
 		kind: toggle
 		setting: shell.integration
 		help: "Add a directory-reporting block to each PowerShell profile, so a new tab, pane or window opens where that shell is. Other shells need nothing. A profile that already reports is left alone, and deleting the block switches it off for good."
+
+	BashPrompt:
+		label: "Git-aware bash prompt"
+		kind: toggle
+		setting: shell.bash_prompt
+		help: "Offer bash a prompt that shows the branch and status of the git project you are in. It is only an offer - a .bashrc with a prompt of its own wins, and nothing is written into any file."
 
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Graying

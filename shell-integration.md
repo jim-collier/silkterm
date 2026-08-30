@@ -26,7 +26,7 @@ One thing it *will* do: keep the block itself up to date. It gains things over t
 
 - **Write a file the shell would refuse to read.** If PowerShell's execution policy blocks script files, the block would only turn every launch into a red execution-policy error, so the profile is left alone and a line says which shell and why. Windows PowerShell 5.1 is commonly in that state; `Get-ExecutionPolicy` shows it, and `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` is the usual fix - your call to make, not SilkTerm's.
 
-To switch the whole thing off before it ever runs, set `shell.integration: false` in the config, or clear "PowerShell integration" on the Shell tab of Settings.
+To switch the whole thing off before it ever runs, set `shell.integration: false` in the config, or clear "Update PowerShell profiles" on the Shell tab of Settings.
 
 ### The prompt
 
@@ -111,6 +111,19 @@ PROMPT_COMMAND='printf "\033]7;file://%s%s\033\\" "$HOSTNAME" "$PWD"'
 Many distributions already do this for you - Debian and Fedora ship `/etc/profile.d/vte.sh`, which emits the same sequence. Check with `echo "$PROMPT_COMMAND"` before adding a second one.
 
 Paths with characters that need escaping in a URL are supposed to be percent-encoded. SilkTerm reads them either way, so the one-liner above is enough here; encode if you also use a terminal that is stricter about it.
+
+### A git-aware bash prompt
+
+A separate thing, and the only other setup SilkTerm does for a shell. A bash pane is offered a prompt that shows the branch you are on, whether the working tree is clean, and how far ahead or behind its tracking branch it is - updated after every command, and out of the way in a directory that is not a git project.
+
+It is an offer, not an install:
+
+- Nothing is written into `.bashrc` or any other file of yours. The prompt is handed to the pane as `PROMPT_COMMAND` in its environment.
+- Your rc files run afterwards, so a prompt of your own simply wins. If you already set `PROMPT_COMMAND` - directly, or through starship, oh-my-posh or `/etc/profile.d/vte.sh` - you will never see this one.
+- It reaches bash panes only, and only ones SilkTerm started. A shell you `ssh` into, or a `sudo -i`, keeps whatever prompt it has.
+- `X9PS1_STANDARD=1` in a pane puts the ordinary Debian-style prompt back for that session.
+
+Clear "Git-aware bash prompt" on the Shell tab of Settings, or set `shell.bash_prompt: false` in the config, to switch it off. The script itself is written beside the config as `x9ps1-git`, and is a copy of [x9ps1-git](https://github.com/jim-collier/x9ps1-git) (MIT) - usable on its own from a `PATH` directory if you want it in every terminal rather than this one.
 
 ## zsh
 

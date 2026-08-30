@@ -257,6 +257,8 @@ impl TermInstance {
 		}
 		// start in an inherited directory (new tab/split follows the source pane)
 		opts.working_directory = cwd;
+		opts.env
+			.extend(crate::integration::pane_env(command.as_deref()));
 		let pty = tty::new(&opts, win, id)?;
 		// Capture the master fd + shell pid before the event loop takes the pty;
 		// they drive the tab title (foreground program). The fd stays valid for

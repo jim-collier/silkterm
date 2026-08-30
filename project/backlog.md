@@ -85,11 +85,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Plus a plain SilkTerm shortcut with no shell argument, also starting in %USERPROFILE%.
 	- Opened: 20260826-123553
 
-- 🔘 Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell.
-	- A PowerShell equivalent could follow.
-	- Alternately, bake into the executable. (Research if that's even easily possible/reasonable for a terminal emulator to inject its own terminal prompt.)
-	- Opened: 20260826-123553
-
 - 🛠️ Dogfood: a build made on one box should reach the others, and the launcher should always run the newest one it can find.
 	- ✅ The dogfood destinations are written down per platform and per direction, in the pipeline config rather than in anyone's head. macOS destinations are recorded but inert, since nothing builds for it yet.
 	- ✅ The Linux pipeline installs its Windows cross-build beside its own binary, so the Windows box picks up a Linux-made build without anyone copying it by hand.
@@ -1413,6 +1408,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell.
+	- Baked into the executable, and handed to a bash pane as `PROMPT_COMMAND` in its environment. Nothing is written into anyone's `.bashrc`, and there is nothing to uninstall.
+	- Because rc files run after that, a prompt of your own always wins. So this reaches people who have not set one, and is invisible to everybody else.
+	- Only bash panes, and only ones SilkTerm started. `X9PS1_STANDARD=1` puts the plain prompt back for a session.
+	- The switch is "Git-aware bash prompt" on the Shell tab, beside the PowerShell one. The script is written beside the config and kept current there.
+	- A PowerShell equivalent could follow, and is not started.
+	- Opened: 20260826-123553
+	- Closed: 20260830-163500
 
 - ✅ Clearing text from tab, should reset it to default behavior - as if it had never been edited.
 	- Emptying the rename box now drops the custom title, so the tab goes back to naming its own shell and directory. A title of nothing but spaces counts as empty.

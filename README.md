@@ -428,6 +428,8 @@ Tell other terminal nerds on various socials how this has changed your life!
 
 SilkTerm is built on the basic plumbing of [Alacritty](https://github.com/alacritty/alacritty), which is dual-licensed under the [Apache License, Version 2.0](https://github.com/alacritty/alacritty/blob/master/LICENSE-APACHE) and [MIT License](https://github.com/alacritty/alacritty/blob/master/LICENSE-MIT).
 
+It also carries a copy of [x9ps1-git](https://github.com/jim-collier/x9ps1-git), the git-aware bash prompt it offers new bash panes, under the [MIT License](https://opensource.org/licenses/MIT).
+
 SilkTerm's license is specifically compatible with Alacritty's:
 
 > Copyright © 2026 Jim Collier (CryptogID: ѳ6ᴚ℈𐀘𐇦ɛ𐊁¥Mﾏb϶Δ𐌞)<br />
