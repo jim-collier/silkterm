@@ -4504,6 +4504,7 @@ impl State {
 		self.gfx.queue.submit(Some(encoder.finish()));
 		self.gfx.end_frame(frame);
 		crate::perf::since(&crate::perf::SUBMIT_NS, submit);
+		crate::perf::painted();
 		// The window was created hidden; reveal it once a real frame is on screen at
 		// the final size (no default-size/blank flash). reveal_want (async resize)
 		// holds off until the surface reaches the grid size; the deadline is a hard
@@ -5258,6 +5259,7 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 			UserEvent::Wakeup(id) => {
 				crate::perf::bump(&crate::perf::WAKEUPS);
+				crate::perf::echoed(id);
 				// output easing is triggered in Pane::build when the screen
 				// actually scrolls, not on every content change. Only the pane
 				// that produced output is marked; a background tab's flag just
@@ -5932,6 +5934,7 @@ impl ApplicationHandler<UserEvent> for App {
 				is_synthetic,
 				..
 			} => {
+				let key_at = crate::perf::key_mark();
 				if env_flag("SILK_KEYDBG") {
 					eprintln!(
 						"[key] {:?} {:?} synthetic={is_synthetic} focused={} mods=[{}{}{}]",
@@ -6207,6 +6210,7 @@ impl ApplicationHandler<UserEvent> for App {
 						if !p.read_only {
 							p.scroll.jump_bottom();
 							p.term.write(bytes);
+							crate::perf::typed(key_at, focused);
 							p.note_typed();
 							if is_enter && p.copy_output {
 								p.arm_capture();
