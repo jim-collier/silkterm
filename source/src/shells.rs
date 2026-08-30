@@ -293,7 +293,7 @@ const COSMETIC_FLAGS: &[&str] = &["-nologo"];
 
 impl Ident {
 	fn of(command: &str, resolve: &dyn Fn(&str) -> Option<PathBuf>) -> Option<Self> {
-		let argv = crate::cli::shell_split(command).ok()?;
+		let argv = crate::config::command_argv(command)?;
 		let (prog, args) = argv.split_first()?;
 		Some(Self {
 			exe: resolve(prog).map(|p| norm(&p)),

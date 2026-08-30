@@ -134,8 +134,8 @@ pub fn open(url: &str, open_command: &str) -> io::Result<()> {
 	let mut cmd = if open_command.trim().is_empty() {
 		default_command(url)
 	} else {
-		let argv = crate::cli::shell_split(open_command)
-			.map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+		let argv = crate::config::command_argv(open_command)
+			.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "bad open command"))?;
 		let (program, args) = argv
 			.split_first()
 			.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty open command"))?;
