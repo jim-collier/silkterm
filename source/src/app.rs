@@ -1857,14 +1857,42 @@ impl State {
 			.unwrap_or_else(|| config::APP_NAME.to_string())
 	}
 
+	// What the window title says after the app name. A title typed on the tab
+	// wins; blanking that one on purpose lets the running program's own title
+	// through, and with neither the tab's computed label stands in.
+	fn title_suffix(&mut self) -> Option<String> {
+		let typed = self.tabs.cur().title_override.clone();
+		if let Some(typed) = typed {
+			if !typed.trim().is_empty() {
+				return Some(typed);
+			}
+			return self.program_title();
+		}
+		self.program_title()
+			.or_else(|| Some(self.active_tab_title()))
+	}
+
+	// The title the focused pane's program asked for, if it asked for one.
+	fn program_title(&self) -> Option<String> {
+		let pm = self.tabs.cur();
+		let title = &pm.panes.get(&pm.focused)?.title;
+		(!title.trim().is_empty()).then(|| title.clone())
+	}
+
 	// The window title (taskbar / alt-tab): a CLI --title override verbatim, else
-	// "AppName - <active tab title>" so it tracks the focused tab's program.
-	// Called on tab/focus change and each rendered frame; set_title only fires when
-	// the string actually changed (avoids WM flicker / churn).
+	// the app name (with the dogfood build when this is one) and whatever the
+	// active tab has to say. Called on tab/focus change and each rendered frame;
+	// set_title only fires when the string actually changed (avoids WM flicker).
 	fn update_title(&mut self) {
 		let title = match &self.win_title {
 			Some(custom_title) => custom_title.clone(),
-			None => format!("{} - {}", config::APP_NAME, self.active_tab_title()),
+			None => {
+				let prefix = config::title_prefix();
+				match self.title_suffix() {
+					Some(suffix) => format!("{prefix} - {suffix}"),
+					None => prefix,
+				}
+			}
 		};
 		if title != self.last_win_title {
 			self.window.set_title(&title);
@@ -4720,7 +4748,7 @@ impl ApplicationHandler<UserEvent> for App {
 		let want_transparent =
 			!cfg!(windows) || config::settings().transparent_background || win_opacity.is_some();
 		let attrs = Window::default_attributes()
-			.with_title(win_title.as_deref().unwrap_or(config::APP_NAME))
+			.with_title(win_title.clone().unwrap_or_else(config::title_prefix))
 			.with_window_icon(load_icon())
 			.with_decorations(decorated)
 			.with_transparent(want_transparent)

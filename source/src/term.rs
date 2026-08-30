@@ -120,9 +120,11 @@ impl EventListener for EventProxy {
 			Event::Wakeup if !self.wake.post() => Ok(()), // one notice is enough
 			Event::Wakeup => self.proxy.send_event(UserEvent::Wakeup(self.id)),
 			Event::Title(t) => self.proxy.send_event(UserEvent::Title(self.id, t)),
+			// Empty, not the app name: that is how "the program set no title" is
+			// told apart from one it happened to set to our own name.
 			Event::ResetTitle => self
 				.proxy
-				.send_event(UserEvent::Title(self.id, crate::config::APP_NAME.into())),
+				.send_event(UserEvent::Title(self.id, String::new())),
 			Event::ChildExit(status) => self
 				.proxy
 				.send_event(UserEvent::ChildExit(self.id, status_text(status))),

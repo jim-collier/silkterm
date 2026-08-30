@@ -3107,7 +3107,7 @@ fn spawn_pane(
 		cells_scratch: Vec::new(),
 		rows_scratch: Vec::new(),
 		rect,
-		title: config::APP_NAME.into(),
+		title: String::new(), // what the running program asked the window be called
 		read_only: false,
 		keep_open: false,
 		held: false,

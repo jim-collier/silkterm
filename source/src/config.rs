@@ -24,6 +24,29 @@ pub const SPONSOR_URL: &str = "https://github.com/sponsors/jim-collier";
 // order, and decodes back to the minute it was built.
 pub const BUILD_ID: &str = env!("SILK_BUILD");
 
+// A dogfood copy is installed as `slktrmdf_<stamp>_<tag>`, and the pool holds
+// several at once, so the window title has to say which one is running. Anything
+// else (a release install, a cargo build) answers None.
+pub fn dogfood_detail() -> Option<&'static str> {
+	static DETAIL: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+	DETAIL
+		.get_or_init(|| {
+			let exe = std::env::current_exe().ok()?;
+			let stem = exe.file_stem()?.to_str()?;
+			Some(stem.strip_prefix("slktrmdf_")?.to_string())
+		})
+		.as_deref()
+}
+
+// What every window title starts with: the app name, plus the dogfood build when
+// this is one.
+pub fn title_prefix() -> String {
+	match dogfood_detail() {
+		Some(detail) => format!("{APP_NAME} [dogfood {detail}]"),
+		None => APP_NAME.to_string(),
+	}
+}
+
 // Which of the cross builds this binary is - otherwise indistinguishable at a
 // glance. Shared by the About dialog and `--about` so the two can't drift.
 pub fn build_target() -> String {
