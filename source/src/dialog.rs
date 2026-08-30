@@ -18,34 +18,6 @@ use crate::pane::Rect;
 use crate::settings_ui::{Action, EditCmd, SettingsDialog, View};
 use crate::text::{TextCtx, ui_attrs};
 
-// Greedy word wrap for a flyover, measured in the UI font. A single word wider
-// than the budget still gets its own line rather than being split - breaking
-// mid-word would be worse than a tip that overhangs by one long word.
-fn wrap_tip(text: &str, max_w: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<String> {
-	let mut lines: Vec<String> = Vec::new();
-	let mut line = String::new();
-	for word in text.split_whitespace() {
-		let candidate = if line.is_empty() {
-			word.to_string()
-		} else {
-			format!("{line} {word}")
-		};
-		if !line.is_empty() && measure(&candidate) > max_w {
-			lines.push(std::mem::take(&mut line));
-			line = word.to_string();
-		} else {
-			line = candidate;
-		}
-	}
-	if !line.is_empty() {
-		lines.push(line);
-	}
-	if lines.is_empty() {
-		lines.push(String::new());
-	}
-	lines
-}
-
 // A laid-out line of static dialog text (window-relative coords).
 struct Line {
 	text: String,
@@ -689,10 +661,13 @@ impl DialogWin {
 					let b = self.text.dip(ABOUT_BORDER);
 					let box_w = tip_w + pad_x * 2.0;
 					let box_h = line_h + pad_y * 2.0;
-					let bx = (anchor.x + anchor.w * 0.5 - box_w * 0.5)
-						.clamp(edge, (w as f32 - box_w - edge).max(edge));
-					let by = (anchor.y + anchor.h + self.text.dip(ABOUT_TIP_DROP))
-						.min((h as f32 - box_h - edge).max(edge));
+					let (bx, by) = crate::tip::place(
+						anchor,
+						(box_w, box_h),
+						(w as f32, h as f32),
+						self.text.dip(ABOUT_TIP_DROP),
+						edge,
+					);
 					rect_inst.push(q(
 						bx - b,
 						by - b,
@@ -804,24 +779,16 @@ impl DialogWin {
 					let attrs = ui_attrs();
 					let (pad_x, pad_y) = (8.0, 4.0);
 					let avail = (w as f32 - 8.0 - pad_x * 2.0).max(40.0);
-					let lines = wrap_tip(tip, avail, |s| self.text.measure_ui_text(s, &attrs));
+					let lines =
+						crate::tip::wrap(tip, avail, |s| self.text.measure_ui_text(s, &attrs));
 					let tip_w = lines
 						.iter()
 						.map(|l| self.text.measure_ui_text(l, &attrs))
 						.fold(0.0f32, f32::max);
 					let box_w = tip_w + pad_x * 2.0;
 					let box_h = line_h * lines.len() as f32 + pad_y * 2.0;
-					let bx = (anchor.x + anchor.w * 0.5 - box_w * 0.5)
-						.clamp(4.0, (w as f32 - box_w - 4.0).max(4.0));
-					// under the control, or above it when there is no room below -
-					// clamping into the bottom edge would sit a footer button's own
-					// tip on the buttons it is describing
-					let below = anchor.y + anchor.h + 8.0;
-					let by = if below + box_h + 4.0 <= h as f32 {
-						below
-					} else {
-						(anchor.y - 8.0 - box_h).max(4.0)
-					};
+					let (bx, by) =
+						crate::tip::place(anchor, (box_w, box_h), (w as f32, h as f32), 8.0, 4.0);
 					let start = overlay_range.map_or(rect_inst.len() as u32, |(s, _)| s);
 					rect_inst.push(q(bx - 1.0, by - 1.0, box_w + 2.0, box_h + 2.0, border_col));
 					rect_inst.push(q(bx, by, box_w, box_h, crate::settings_ui::dialog_btn()));
@@ -1335,35 +1302,4 @@ fn layout_about(
 	// leave room below the button for the URL flyover to appear on hover
 	let box_h = y + pad + line_h + text.dip(ABOUT_TIP_ROOM);
 	(lines, links, (box_w, box_h))
-}
-
-#[cfg(test)]
-mod tests {
-	use super::wrap_tip;
-
-	// The flyover has to fit the panel it hangs off, whatever the UI font does
-	// to the text - a tip clamped to the window edge simply runs off it.
-	#[test]
-	fn a_flyover_wraps_to_the_width_it_is_given() {
-		// one unit per character, so the budget reads in characters
-		let per_char = |s: &str| s.chars().count() as f32;
-		let lines = wrap_tip(
-			"Apply changes now, without closing Settings.",
-			20.0,
-			per_char,
-		);
-		assert!(lines.len() > 1);
-		assert!(lines.iter().all(|l| per_char(l) <= 20.0));
-		assert_eq!(
-			lines.join(" "),
-			"Apply changes now, without closing Settings."
-		);
-
-		// a word longer than the budget keeps its own line rather than splitting
-		let lines = wrap_tip("a supercalifragilistic word", 8.0, per_char);
-		assert_eq!(lines, vec!["a", "supercalifragilistic", "word"]);
-
-		// and text that already fits stays on one line
-		assert_eq!(wrap_tip("short", 40.0, per_char), vec!["short"]);
-	}
 }

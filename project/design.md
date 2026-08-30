@@ -31,6 +31,7 @@
 	- [The shell list and how it is filled](#the-shell-list-and-how-it-is-filled)
 	- [What a pane's shell inherits](#what-a-panes-shell-inherits)
 	- [A prompt is offered to bash, never installed (2026-08-30)](#a-prompt-is-offered-to-bash-never-installed-2026-08-30)
+	- [One tip system, four places that draw it (2026-08-30)](#one-tip-system-four-places-that-draw-it-2026-08-30)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Output notices under a flood](#output-notices-under-a-flood)
 	- [Environment](#environment)
@@ -403,6 +404,16 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - The script is written beside the config the first time a bash pane opens, and rewritten whenever it differs from the compiled-in copy, so an updated SilkTerm carries an updated prompt. The pane runs it through `$BASH`, which is bash's own path - no dependency on `PATH` and no execute bit needed.
 
 - x9ps1-git is a separate MIT project of the same author. The in-repo copy is a vendored copy of its `bin/x9ps1-git`, and will go stale on its own if nobody looks - the version it carries is in its own header.
+
+### One tip system, four places that draw it (2026-08-30)
+
+- Flyover help comes up in four places: a Settings row, a link in the About box, a tab in the strip, and a menu item. Two renderers and two fonts are involved, so the drawing was never going to be shared.
+
+- What is shared is everything else, and it lives in `tip.rs`: how long the pointer rests before a tip appears, how the text is broken to fit a width, and where the box goes relative to what it describes. A tip that answered faster in one place than another would read as a different kind of thing, which is the reason the delay in particular is one number.
+
+- There are two placement rules, not one, and which applies is a property of what is being described. A Settings row's tip goes under the control, flipping above it when there is no room - a footer button's tip clamped into the bottom edge would sit on the buttons it explains. A menu row's tip goes beside the popup instead, because a box under the row would cover the rows the reader is choosing between.
+
+- A menu row gets a tip only when its label does not already say what it does. Copy and New tab explain themselves; Paste Selection, Read-only and Bare window do not. A tip on every row is noise a reader learns to skip past, which costs the ones that matter.
 
 ### Render Loop Sketch
 
