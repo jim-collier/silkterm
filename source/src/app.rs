@@ -1075,6 +1075,15 @@ fn spawn_vt_watch(_proxy: EventLoopProxy<UserEvent>) -> bool {
 	false
 }
 
+// Top and height of a tab button inside the bar: inset at the top, and the bar's
+// bottom hairline left showing under it. The draw and the text centering read
+// the one rule.
+fn tab_button_v(bar_y: f32, tab_h: f32, scale: f32) -> (f32, f32) {
+	let top = config::dip(TAB_TOP_PAD, scale);
+	let rule = config::dip(CHROME_HAIRLINE, scale);
+	(bar_y + top, tab_h - top - rule)
+}
+
 // The close-"x" button box within a tab: a square with equal top/right/bottom
 // margins (the extra room falls to the left, separating it from the title).
 // Shared by the rect draw, the glyph placement, and the click hit-test so they
@@ -1094,12 +1103,13 @@ fn tab_close_box(tab_x: f32, tab_w: f32, bar_y: f32, tab_h: f32, scale: f32) -> 
 // its own padding, or the button itself where that is shorter.
 fn tab_edit_box(tab_x: f32, tab_w: f32, bar_y: f32, tab_h: f32, line_h: f32, scale: f32) -> Rect {
 	let inset = config::dip(TAB_EDIT_INSET, scale);
-	let h = (line_h + 2.0 * config::dip(TAB_EDIT_PAD, scale)).min(tab_h - 2.0 * inset);
+	let (btn_y, btn_h) = tab_button_v(bar_y, tab_h, scale);
+	let h = (line_h + 2.0 * config::dip(TAB_EDIT_PAD, scale)).min(btn_h - 2.0 * inset);
 	let x = tab_x + inset;
 	let right = tab_x + tab_w - config::dip(TAB_CLOSE_W, scale) - inset;
 	Rect {
 		x,
-		y: bar_y + (tab_h - h) / 2.0,
+		y: btn_y + (btn_h - h) / 2.0,
 		w: (right - x).max(config::dip(8.0, scale)),
 		h,
 	}
@@ -3459,7 +3469,7 @@ impl State {
 			let box_border = config::menu_border();
 			let x_rgb = close_x_rgb();
 			let tab_gap = self.text.dip(TAB_GAP);
-			let tab_top = self.text.dip(TAB_TOP_PAD);
+			let (btn_y, btn_h) = tab_button_v(tab_bar_y, tab_h, self.text.scale);
 			let cb_rule = self.text.dip(CHROME_HAIRLINE);
 			// Where the caret and the selection sit inside the label of a tab being
 			// renamed, measured once before the loop borrows nothing (measuring
@@ -3487,9 +3497,9 @@ impl State {
 				// runs to the bar's bottom edge less one hairline
 				instances.push(rect_inst(
 					x + tab_gap,
-					tab_bar_y + tab_top,
+					btn_y,
 					tab_w - 2.0 * tab_gap,
-					tab_h - tab_top - cb_rule,
+					btn_h,
 					color,
 				));
 				// A rename in progress draws a text box in place of the label: a
@@ -3978,11 +3988,12 @@ impl State {
 					),
 					None => (x + self.text.dip(TAB_TITLE_PAD), x, close_x),
 				};
+				let (btn_y, btn_h) = tab_button_v(tab_bar_y, tab_h, self.text.scale);
 				areas.push(TextArea {
 					buffer: buf,
 					left,
-					// center the visible text box in the tab bar (metric-based)
-					top: self.text.ui_text_top(tab_bar_y, tab_h),
+					// a title is a path, so center its whole ink box in the button
+					top: self.text.ui_ink_top(btn_y, btn_h),
 					scale: 1.0,
 					bounds: TextBounds {
 						left: clip_l as i32,
