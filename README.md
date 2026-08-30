@@ -166,6 +166,8 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 	- An image can also carry its own fit in its XMP metadata (`wallpaper:Fit`, plus a `wallpaper:Anchor` that picks which part of it a zoom crop keeps), overriding the default per image - so a photo isn't squashed while a gradient still fills the window. Read straight from the image file, and switchable off.
 
+	- Two more tags, `wallpaper:Opacity` and `wallpaper:Blur`, let an image scale your visibility and blur settings as a percentage, so a busy picture can ask to sit quieter than the rest of a folder without changing what the sliders mean. Also switchable off.
+
 - **Split panes**: A native feature to arbitrarily split any pane in either direction. Panes can be freely drag-n-dropped to change locations. Panes split in successive directions are automatically evenly distributed, unless adjusted (with the mouse).
 
 - **Window decorations and/or the menu can be disabled**, for "nothing but terminal". Fullscreen can also be toggled.

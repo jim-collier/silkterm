@@ -202,12 +202,28 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 		// so a fresh install still looks the part. Opt out with wallpaper_fallback_builtin.
 		None => builtin(settings, folder_active)?,
 	};
+	// The image's own tags: layout, and scales on the two look settings. Read
+	// straight from the file the pixels came from - the embedded default
+	// wallpaper has no path, and keeps the configured values.
+	let tags = source
+		.filter(|_| settings.wallpaper_honor_xmp || settings.wallpaper_honor_xmp_look)
+		.map_or_else(crate::xmp::Tags::default, crate::xmp::read);
+	let mut opacity = settings.wallpaper_opacity;
+	let mut blur = settings.wallpaper_blur;
+	if settings.wallpaper_honor_xmp_look {
+		if let Some(scale) = tags.opacity {
+			opacity = (opacity * scale).min(1.0);
+		}
+		if let Some(scale) = tags.blur {
+			blur *= scale;
+		}
+	}
 	// Blur and contrast-flatten, done in LINEAR light (decode sRGB -> process in
 	// f32 -> re-encode) so transitions are gamma-correct; an sRGB-space blur
 	// darkens edges. The f32 intermediate also avoids 8-bit banding inside the
 	// blur (final banding is handled by the high-precision offscreen + the blit's
 	// dither).
-	if settings.wallpaper_blur > 0.0 || settings.wallpaper_contrast_mask {
+	if blur > 0.0 || settings.wallpaper_contrast_mask {
 		let (w, h) = img.dimensions();
 		let mut linear: image::ImageBuffer<image::Rgba<f32>, Vec<f32>> =
 			image::ImageBuffer::new(w, h);
@@ -219,8 +235,8 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 				f32::from(src[3]) / 255.0,
 			]);
 		}
-		if settings.wallpaper_blur > 0.0 {
-			linear = image::imageops::blur(&linear, settings.wallpaper_blur);
+		if blur > 0.0 {
+			linear = image::imageops::blur(&linear, blur);
 		}
 		if settings.wallpaper_contrast_mask {
 			crate::contrast::apply(
@@ -239,25 +255,20 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 			]);
 		}
 	}
-	// An image can carry its own layout, so a photo isn't squashed by a default
-	// that suits gradients. Read straight from the file the pixels came from -
-	// the embedded default wallpaper has no path, and keeps the configured fit.
+	// A photo isn't squashed by a default that suits gradients.
 	let mut fit = settings.wallpaper_default_fit;
 	let mut anchor = [0.5, 0.5];
 	if settings.wallpaper_honor_xmp {
-		if let Some(path) = source {
-			let tags = crate::xmp::read(path);
-			if let Some(tagged) = tags.fit {
-				fit = tagged;
-			}
-			if let Some(tagged) = tags.anchor {
-				anchor = tagged;
-			}
+		if let Some(tagged) = tags.fit {
+			fit = tagged;
+		}
+		if let Some(tagged) = tags.anchor {
+			anchor = tagged;
 		}
 	}
 	Some(Prepared {
 		rgba: img,
-		opacity: settings.wallpaper_opacity,
+		opacity,
 		fit,
 		anchor,
 	})

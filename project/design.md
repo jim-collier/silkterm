@@ -461,6 +461,8 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - Some defaults are better inferred from the config directory than stated in the file. A folder of wallpapers sitting in the expected place is taken as wanting them rotated, without a setting to turn it on and without writing anything back. The inference yields to anything explicit: a wallpaper named in the config, or one given on the command line for a single run.
 
+- A wallpaper image can carry its own layout and look in its XMP metadata, under a `wallpaper` namespace named for what the tags describe rather than for this program, so any tool can write them. `Fit` and `Anchor` are absolute, since how an image should be cropped is a property of the image. `Opacity` and `Blur` are percentages of the viewer's own settings instead: the shipped pack carries them on every image, and an absolute value there would have made the two sliders do nothing until the tags were switched off. Each pair has its own switch in Settings, on by default, and a missing or unreadable tag always falls back to the setting rather than failing the image.
+
 ## Delivery (CI/CD, branches, releases)
 
 Guiding constraint: GitHub is dumb git hosting plus optional release storage, nothing more. No hosted CI, no Actions, as few third-party tools as possible; the whole pipeline runs locally (`cicd/cicd.bash`).

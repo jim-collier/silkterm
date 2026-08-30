@@ -2620,6 +2620,7 @@ impl SettingsDialog {
 			Key::BgEnabled => self.edited.wallpaper_enabled,
 			Key::BgRotate => self.edited.wallpaper_rotate_enabled,
 			Key::BgHonorXmp => self.edited.wallpaper_honor_xmp,
+			Key::BgHonorXmpLook => self.edited.wallpaper_honor_xmp_look,
 			Key::SmoothScroll => self.edited.scroll_smooth,
 			Key::Scrollbar => self.edited.scrollbar,
 			Key::ScrollbarAutoHide => self.edited.scrollbar_auto_hide,
@@ -2643,6 +2644,7 @@ impl SettingsDialog {
 			Key::BgEnabled => self.edited.wallpaper_enabled = on,
 			Key::BgRotate => self.edited.wallpaper_rotate_enabled = on,
 			Key::BgHonorXmp => self.edited.wallpaper_honor_xmp = on,
+			Key::BgHonorXmpLook => self.edited.wallpaper_honor_xmp_look = on,
 			Key::SmoothScroll => self.edited.scroll_smooth = on,
 			Key::Scrollbar => self.edited.scrollbar = on,
 			Key::ScrollbarAutoHide => self.edited.scrollbar_auto_hide = on,
@@ -2863,6 +2865,9 @@ impl SettingsDialog {
 			Key::BgEnabled => edited.wallpaper_enabled == defaults.wallpaper_enabled,
 			Key::BgRotate => edited.wallpaper_rotate_enabled == defaults.wallpaper_rotate_enabled,
 			Key::BgHonorXmp => edited.wallpaper_honor_xmp == defaults.wallpaper_honor_xmp,
+			Key::BgHonorXmpLook => {
+				edited.wallpaper_honor_xmp_look == defaults.wallpaper_honor_xmp_look
+			}
 			Key::ScrimRamp => edited.text_scrim_ramp == defaults.text_scrim_ramp,
 			Key::BgImage => edited.wallpaper == defaults.wallpaper,
 			Key::FontFamily => edited.font_family == defaults.font_family,
@@ -2951,6 +2956,7 @@ impl SettingsDialog {
 			| Key::BgEnabled
 			| Key::BgRotate
 			| Key::BgHonorXmp
+			| Key::BgHonorXmpLook
 			| Key::Scrollbar
 			| Key::ScrollbarAutoHide
 			| Key::BgContrastMask => {
@@ -2969,6 +2975,7 @@ impl SettingsDialog {
 					Key::BgEnabled => self.defaults.wallpaper_enabled,
 					Key::BgRotate => self.defaults.wallpaper_rotate_enabled,
 					Key::BgHonorXmp => self.defaults.wallpaper_honor_xmp,
+					Key::BgHonorXmpLook => self.defaults.wallpaper_honor_xmp_look,
 					Key::SmoothScroll => self.defaults.scroll_smooth,
 					Key::Scrollbar => self.defaults.scrollbar,
 					Key::ScrollbarAutoHide => self.defaults.scrollbar_auto_hide,
@@ -5158,6 +5165,7 @@ pub fn wallpaper_changed(old: &Settings, new: &Settings) -> bool {
 		|| old.wallpaper_opacity != new.wallpaper_opacity
 		|| old.wallpaper_default_fit != new.wallpaper_default_fit
 		|| old.wallpaper_honor_xmp != new.wallpaper_honor_xmp
+		|| old.wallpaper_honor_xmp_look != new.wallpaper_honor_xmp_look
 		|| old.wallpaper != new.wallpaper
 		|| old.wallpaper_blur != new.wallpaper_blur
 		|| old.wallpaper_contrast_mask != new.wallpaper_contrast_mask

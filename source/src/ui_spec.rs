@@ -51,7 +51,7 @@ macro_rules! keys {
 #[rustfmt::skip]
 keys![
 	Transparency, Opacity, BackdropBlur,
-	BgEnabled, BgRotate, BgOpacity, BgBlur, BgFit, BgHonorXmp, BgImage,
+	BgEnabled, BgRotate, BgOpacity, BgBlur, BgFit, BgHonorXmp, BgHonorXmpLook, BgImage,
 	BgContrastMask, BgContrastSize, BgContrastStrength, BgContrastAuto,
 	TextScrim, ScrimRadius, ScrimSoftness, ScrimStrength, ScrimFunction, ScrimRamp,
 	Outline, CursorScrim, CursorOutline,

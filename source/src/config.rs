@@ -218,8 +218,9 @@ pub struct Settings {
 	pub wallpaper_opacity: f32,            // image visibility 0..1
 	pub wallpaper_default_fit: Fit,        // used unless the image's own tags say otherwise
 	pub wallpaper_honor_xmp: bool,         // let a wallpaper's own Fit/Anchor tags win
-	pub wallpaper_blur: f32,               // Gaussian blur sigma applied to the image (0 = none)
-	pub wallpaper_contrast_mask: bool, // flatten the image's contrast so it stops competing with text
+	pub wallpaper_honor_xmp_look: bool, // and its Blur/Opacity tags, which scale the two settings below
+	pub wallpaper_blur: f32,            // Gaussian blur sigma applied to the image (0 = none)
+	pub wallpaper_contrast_mask: bool,  // flatten the image's contrast so it stops competing with text
 	pub wallpaper_contrast_mask_size: f32, // flatten scale 0..1 (1 = half the longest pixel dim)
 	pub wallpaper_contrast_mask_strength: f32, // how far toward the local mean 0..1
 	pub wallpaper_contrast_mask_auto: f32, // blend manual knobs with image-derived auto 0..1 (1 = full auto)
@@ -344,6 +345,7 @@ impl Default for Settings {
 			wallpaper_opacity: 0.10, // image visibility relative to bg color
 			wallpaper_default_fit: Fit::Stretch,
 			wallpaper_honor_xmp: true,
+			wallpaper_honor_xmp_look: true,
 			wallpaper_blur: 10.0,
 			wallpaper_contrast_mask: true,
 			wallpaper_contrast_mask_size: 0.5,
@@ -981,6 +983,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.wallpaper_honor_xmp != orig.wallpaper_honor_xmp {
 		doc.put_bool("wallpaper.honor_xmp", s.wallpaper_honor_xmp);
 	}
+	if s.wallpaper_honor_xmp_look != orig.wallpaper_honor_xmp_look {
+		doc.put_bool("wallpaper.honor_xmp_look", s.wallpaper_honor_xmp_look);
+	}
 	if s.wallpaper_blur != orig.wallpaper_blur {
 		doc.put_float("wallpaper.blur", r(s.wallpaper_blur));
 	}
@@ -1219,6 +1224,7 @@ struct RawConfig {
 	wallpaper_opacity: Option<f32>,
 	wallpaper_default_fit: Option<String>,
 	wallpaper_honor_xmp: Option<bool>,
+	wallpaper_honor_xmp_look: Option<bool>,
 	wallpaper_blur: Option<f32>,
 	wallpaper_contrast_mask: Option<bool>,
 	wallpaper_contrast_mask_size: Option<f32>,
@@ -1438,6 +1444,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		wallpaper_opacity: r.f("wallpaper.opacity"),
 		wallpaper_default_fit: r.s("wallpaper.default_fit"),
 		wallpaper_honor_xmp: r.b("wallpaper.honor_xmp"),
+		wallpaper_honor_xmp_look: r.b("wallpaper.honor_xmp_look"),
 		wallpaper_blur: r.f("wallpaper.blur"),
 		wallpaper_contrast_mask: r.b("wallpaper.contrast_mask.enabled"),
 		wallpaper_contrast_mask_size: r.f("wallpaper.contrast_mask.size"),
@@ -1884,6 +1891,9 @@ fn resolve(raw: RawConfig) -> Settings {
 			_ => Fit::Stretch,
 		},
 		wallpaper_honor_xmp: raw.wallpaper_honor_xmp.unwrap_or(d.wallpaper_honor_xmp),
+		wallpaper_honor_xmp_look: raw
+			.wallpaper_honor_xmp_look
+			.unwrap_or(d.wallpaper_honor_xmp_look),
 		columns: raw.columns.unwrap_or(d.columns).max(1),
 		rows: raw.rows.unwrap_or(d.rows).max(1),
 		remember_size: raw.remember_size.unwrap_or(d.remember_size),
@@ -2312,6 +2322,7 @@ const LEGACY_KEYS: &[(&str, &str)] = &[
 	("wallpaper_opacity", "wallpaper.opacity"),
 	("wallpaper_default_fit", "wallpaper.default_fit"),
 	("wallpaper_honor_xmp", "wallpaper.honor_xmp"),
+	("wallpaper_honor_xmp_look", "wallpaper.honor_xmp_look"),
 	("wallpaper_blur", "wallpaper.blur"),
 	("wallpaper_contrast_mask", "wallpaper.contrast_mask.enabled"),
 	("wallpaper_contrast_mask_size", "wallpaper.contrast_mask.size"),
@@ -3322,6 +3333,12 @@ wallpaper:
 
 	## Blur the wallpaper. Sigma in pixels, 0.0 to 100.0. 0 is none.
 	# blur: 10.0  ## Default
+
+	## Let an image scale the opacity and blur above from its own metadata:
+	## `wallpaper:Opacity` and `wallpaper:Blur` are percentages of your settings,
+	## so "100%" is what you chose and "50%" is half of it. A busy image can
+	## ask to sit quieter without the whole collection changing.
+	# honor_xmp_look: true  ## Default
 
 	## Flatten the wallpaper's contrast so it stops competing with the text.
 	## size is how wide a patch each pixel is compared against: small flattens
