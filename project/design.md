@@ -23,12 +23,14 @@
 	- [Minimum contrast (2026-08-30)](#minimum-contrast-2026-08-30)
 	- [Font fallback stack](#font-fallback-stack)
 	- [Hyperlinks](#hyperlinks)
+	- [What a double-click grabs (2026-08-26)](#what-a-double-click-grabs-2026-08-26)
 	- [Measurements and display scaling](#measurements-and-display-scaling)
 	- [Attention colors and dialog chrome](#attention-colors-and-dialog-chrome)
 	- [Groups and sub-groups in the Settings dialog](#groups-and-sub-groups-in-the-settings-dialog)
 	- [Saved themes](#saved-themes)
 	- [The shell list and how it is filled](#the-shell-list-and-how-it-is-filled)
 	- [What a pane's shell inherits](#what-a-panes-shell-inherits)
+	- [A prompt is offered to bash, never installed (2026-08-30)](#a-prompt-is-offered-to-bash-never-installed-2026-08-30)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Output notices under a flood](#output-notices-under-a-flood)
 	- [Environment](#environment)
@@ -389,6 +391,18 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - The list is not split by platform. PowerShell runs on Linux and macOS too and mutates the same variable there, so two installs side by side collide the same way; and the launching shell's `cd -` target is stale on every platform, since a pane opens somewhere else. What is deliberately left out is the class people reach for first - an activated virtualenv or conda environment - which a user wants a pane to keep, and which could not be removed honestly in any case, because the matching PATH edits would stay behind and leave the pane half-activated.
 
 - Unix constrains the list in a way Windows does not. There is no call that says what a freshly launched program would see - that answer is composed by PAM, the session manager and the login shell between them and is never recorded - so the unix arm can only DROP a variable, never restore it. A name may therefore join the list only if a desktop session never sets it. That holds for all three today, and it is the rule to check before adding a fourth.
+
+### A prompt is offered to bash, never installed (2026-08-30)
+
+- SilkTerm ships x9ps1-git, a git-aware bash prompt, and hands it to the bash panes it starts. It shows the branch, whether the tree is clean, and how far ahead or behind its tracking branch it is. It is on by default.
+
+- Among the ways to deliver it, it was decided to set `PROMPT_COMMAND` in the pane's environment. bash picks that up as a shell variable, and the user's own rc files run afterwards - so anyone who already has a prompt keeps it without knowing this exists, and anyone who does not gets a better one. Nothing is written into anyone's `.bashrc`, there is nothing to uninstall, and it cannot follow the user into a shell SilkTerm did not start.
+
+- The alternative considered was the PowerShell approach: append a block to the rc file. That was rejected here because the PowerShell case has no other option - PowerShell cannot report its directory any other way - while bash has one that touches nothing. A prompt is also a matter of taste in a way a directory report is not, so the reversible answer wins.
+
+- The script is written beside the config the first time a bash pane opens, and rewritten whenever it differs from the compiled-in copy, so an updated SilkTerm carries an updated prompt. The pane runs it through `$BASH`, which is bash's own path - no dependency on `PATH` and no execute bit needed.
+
+- x9ps1-git is a separate MIT project of the same author. The in-repo copy is a vendored copy of its `bin/x9ps1-git`, and will go stale on its own if nobody looks - the version it carries is in its own header.
 
 ### Render Loop Sketch
 

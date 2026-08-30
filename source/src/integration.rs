@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright © 2026 Jim Collier
 
-//! Putting the directory-reporting snippet into a PowerShell profile.
+//! What gets set up in the shells this terminal starts: a directory-reporting
+//! block in PowerShell profiles, and a git-aware prompt offered to bash.
+//!
+//! The PowerShell half:
 //!
 //! Every other shell moves its own process when it moves, so the operating
 //! system can be asked where it is and nothing needs setting up (see `cwd.rs`).
@@ -32,6 +35,13 @@
 //!   doing nothing, and changing somebody's execution policy is not ours to do.
 //! - It runs on the shell-scan thread, well after the window is up, because it
 //!   asks PowerShell itself where its profile is - which means starting one.
+//!
+//! The bash half is a much smaller thing, and deliberately so. bash picks up
+//! `PROMPT_COMMAND` from its environment, and an rc file that sets one of its
+//! own runs afterwards and wins - so a pane is OFFERED a prompt rather than
+//! given one, and anybody who already has a prompt keeps it without knowing
+//! this exists. Nothing is written into anyone's rc file, and switching it off
+//! is a setting rather than an uninstall.
 
 use std::path::{Path, PathBuf};
 
@@ -287,13 +297,128 @@ fn install_into(profile: &Path) {
 	}
 }
 
+// The prompt script itself, compiled in so the binary is the one source of it.
+// x9ps1-git is a separate MIT project of the same author; this is a copy of its
+// `bin/x9ps1-git`, and the version it carries is in its own header.
+const BASH_PROMPT: &str = include_str!("x9ps1-git.bash");
+
+// What the script is called once it is on disk. No extension, because it is
+// also perfectly usable by hand from a PATH directory.
+const BASH_PROMPT_FILE: &str = "x9ps1-git";
+
+// Is this program bash? Same base-name matching as `is_powershell`, so Git Bash
+// and a full path both answer yes, while `sh` (which may well be dash) does not.
+fn is_bash(program: &str) -> bool {
+	let base = program
+		.rsplit(['/', '\\'])
+		.next()
+		.unwrap_or(program)
+		.to_ascii_lowercase();
+	base.strip_suffix(".exe").unwrap_or(&base) == "bash"
+}
+
+// The PROMPT_COMMAND a bash pane is given, for a script sitting at `path`.
+//
+// `$BASH` is bash's own path, so the script runs under the same bash the pane
+// does with no dependency on what is on PATH and no execute bit needed. The
+// path is spelled with forward slashes and single-quoted, which every bash
+// takes - including a Windows one, where a backslash inside quotes would
+// otherwise arrive as an escape.
+fn prompt_command(path: &Path) -> String {
+	let quoted = path
+		.display()
+		.to_string()
+		.replace('\\', "/")
+		.replace('\'', "'\\''");
+	format!("PS1=$(\"$BASH\" '{quoted}')")
+}
+
+// Put the script in the data directory, once per run, and say where it is.
+// Rewritten whenever it differs, so an updated SilkTerm carries an updated
+// prompt rather than leaving the first copy standing forever.
+fn bash_prompt_path() -> Option<&'static Path> {
+	static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+	PATH.get_or_init(|| {
+		let dir = config::data_dir()?;
+		let path = dir.join(BASH_PROMPT_FILE);
+		if std::fs::read_to_string(&path).is_ok_and(|held| held == BASH_PROMPT) {
+			return Some(path);
+		}
+		std::fs::create_dir_all(&dir).ok()?;
+		match std::fs::write(&path, BASH_PROMPT) {
+			Ok(()) => Some(path),
+			Err(e) => {
+				eprintln!(
+					"{}: could not write {}: {e}",
+					config::APP_NAME,
+					path.display()
+				);
+				None
+			}
+		}
+	})
+	.as_deref()
+}
+
+// The environment a pane about to run `command` should start with, on top of
+// what it inherits. Empty for anything that is not bash, and for a bash pane
+// when the setting is off.
+pub fn pane_env(command: Option<&[String]>) -> Vec<(String, String)> {
+	if !config::settings().bash_prompt {
+		return Vec::new();
+	}
+	let Some(program) = command.and_then(<[String]>::first) else {
+		return Vec::new();
+	};
+	if !is_bash(program) {
+		return Vec::new();
+	}
+	bash_prompt_path()
+		.map(|path| vec![("PROMPT_COMMAND".to_string(), prompt_command(path))])
+		.unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
 	use super::{
-		END_MARKER, LF, MARKER, SNIPPET, already_reports, is_powershell, powershells,
-		refreshed_block, with_block,
+		BASH_PROMPT, END_MARKER, LF, MARKER, SNIPPET, already_reports, is_bash, is_powershell,
+		powershells, prompt_command, refreshed_block, with_block,
 	};
 	use crate::shells::Found;
+
+	// sh may well be dash, and a shell named by a full path is the ordinary case
+	// on Windows - so both have to answer the way a bare `bash` does.
+	#[test]
+	fn only_bash_is_offered_the_bash_prompt() {
+		assert!(is_bash("bash"));
+		assert!(is_bash("/usr/bin/bash"));
+		assert!(is_bash("C:\\Program Files\\Git\\bin\\bash.exe"));
+		assert!(!is_bash("sh"));
+		assert!(!is_bash("zsh"));
+		assert!(!is_bash("wsl.exe"));
+	}
+
+	// The value is handed to bash as a command string, so a Windows path has to
+	// arrive as something bash reads rather than as a run of escapes.
+	#[test]
+	fn a_prompt_command_survives_a_windows_path() {
+		let win = prompt_command(std::path::Path::new("C:\\Users\\me\\x9ps1-git"));
+		assert_eq!(win, "PS1=$(\"$BASH\" 'C:/Users/me/x9ps1-git')");
+		let unix = prompt_command(std::path::Path::new("/home/me/.config/silkterm/x9ps1-git"));
+		assert_eq!(
+			unix,
+			"PS1=$(\"$BASH\" '/home/me/.config/silkterm/x9ps1-git')"
+		);
+	}
+
+	// The compiled-in copy is what gets written out and then run by bash, so a
+	// truncated or mangled vendoring should not reach anybody's prompt.
+	#[test]
+	fn the_bash_prompt_script_is_a_whole_script() {
+		assert!(BASH_PROMPT.starts_with("#!/bin/bash"));
+		assert!(BASH_PROMPT.contains("x9ps1-git v"));
+		assert!(BASH_PROMPT.contains("fMain"));
+	}
 
 	fn found(title: &str, command: &str) -> Found {
 		Found::new(title, command.to_string(), "")

@@ -280,6 +280,7 @@ pub struct Settings {
 	pub startup_directory: String, // where a shell starts when nothing else said (see startup_dir)
 	pub copy_on_select: bool,    // panes start with copy-on-select enabled
 	pub shell_integration: bool, // put the directory-reporting block in PowerShell profiles
+	pub bash_prompt: bool,       // offer bash the git-aware prompt (see integration.rs)
 	pub hyperlinks: bool,        // underline URLs in output on hover; Ctrl+click opens them
 	pub hyperlink_open_command: String, // opener for a clicked link (empty = the desktop's own)
 	pub bg: [u8; 3],
@@ -414,6 +415,7 @@ impl Default for Settings {
 			startup_directory: HOME_TOKEN.to_string(),
 			copy_on_select: false,
 			shell_integration: true,
+			bash_prompt: true,
 			hyperlinks: true,
 			hyperlink_open_command: String::new(),
 			bg: [0x00, 0x00, 0x00],
@@ -1182,6 +1184,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.shell_integration != orig.shell_integration {
 		doc.put_bool("shell.integration", s.shell_integration);
 	}
+	if s.bash_prompt != orig.bash_prompt {
+		doc.put_bool("shell.bash_prompt", s.bash_prompt);
+	}
 	if s.copy_on_select != orig.copy_on_select {
 		doc.put_bool("shell.copy_on_select", s.copy_on_select);
 	}
@@ -1347,6 +1352,7 @@ struct RawConfig {
 	startup_directory: Option<String>,
 	copy_on_select: Option<bool>,
 	shell_integration: Option<bool>,
+	bash_prompt: Option<bool>,
 	hyperlinks: Option<bool>,
 	hyperlink_open_command: Option<String>,
 	colors: RawColors,
@@ -1568,6 +1574,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		startup_directory: r.s("shell.startup_directory"),
 		copy_on_select: r.b("shell.copy_on_select"),
 		shell_integration: r.b("shell.integration"),
+		bash_prompt: r.b("shell.bash_prompt"),
 		hyperlinks: r.b("hyperlinks.enabled"),
 		hyperlink_open_command: r.s("hyperlinks.open_command"),
 		colors: RawColors {
@@ -2005,6 +2012,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		startup_directory: raw.startup_directory.unwrap_or(d.startup_directory),
 		copy_on_select: raw.copy_on_select.unwrap_or(d.copy_on_select),
 		shell_integration: raw.shell_integration.unwrap_or(d.shell_integration),
+		bash_prompt: raw.bash_prompt.unwrap_or(d.bash_prompt),
 		hyperlinks: raw.hyperlinks.unwrap_or(d.hyperlinks),
 		hyperlink_open_command: raw
 			.hyperlink_open_command
@@ -3714,6 +3722,12 @@ shell:
 	## and deleting the block switches this off for good. See
 	## shell-integration.md.
 	# integration: true  ## Default
+
+	## Offer bash a git-aware prompt: branch, status and how far ahead or behind
+	## the tracking branch is, updated after every command. It is only an offer -
+	## a .bashrc that sets a prompt of its own runs afterwards and wins, so this
+	## reaches people who have not set one. Nothing is written into any rc file.
+	# bash_prompt: true  ## Default
 
 	## Start every pane with selected text going straight to the clipboard. The
 	## menu-bar checkbox still toggles it per pane.
