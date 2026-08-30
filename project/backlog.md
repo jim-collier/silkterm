@@ -74,6 +74,20 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
+- 🔘 These values in Settings should be expressed in % (in labels), and displayed as integers.
+	- Transparency opacity
+	- Wallpaper visibility and blur
+	- Contrast mask size, strength, automask mix
+	- Text scrim strength, softness,
+	- Cursor Height, width
+	- Smooth scrolling: (all sub-settings)
+- 🔘 Other unit changes:
+	- Cursor blink rate: ms
+	- Animation inactivity timer: s
+	- Scrollbar width: (whatever the units are)
+	- Window / Margin px: (change 'px' to whatever the real units are)
+- 🔘 "PowerShell profiles": Make this a more meaningful phrase. (E.g. PowerShell profile update)
+
 - ✅ Checkboxes to dis/enable shells should be square (and vertically centered in row), not rectagular
 	- Done: the Active box in the Shell tab was as tall as the fields beside it. It is square now, the same size as every other checkbox, and centered on its line.
 	- Opened: 20260829
@@ -122,9 +136,9 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ wallpaper image metadata: Blur options:
 	- Wallpaper metadata: Add blur radius in %, and opacity (relative to bg color) %.
-		- Done: `wallpaper:Opacity` and `wallpaper:Blur`, beside the existing Fit and Anchor tags. Each is a percentage of the matching setting rather than an absolute, so 100% is "as configured" and the sliders keep working on a tagged folder.
+		- Done: `wallpaper:Opacity` and `wallpaper:Blur`, beside the existing Fit and Anchor tags. Same units as the two settings, and a tagged image takes them over the sliders. The sliders still apply to images without the tags.
 	- Populate default values - same as current code defaults.
-		- Done: every image in the pack and in the masters now carries 100% for both, which is the code default exactly.
+		- Done: every image in the pack and in the masters carries 10% opacity and blur 10, the code defaults.
 	- Add a checkbox in Settings for whether to honor them, if populated and valid values. (Default yes.)
 		- Done: "Honor look tags", under the Blur slider, on by default. A tag that is missing or does not parse leaves the setting alone.
 	- Opened: 20260826-123553

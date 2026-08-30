@@ -38,7 +38,7 @@ Four XMP fields tell a wallpaper how it should fill a screen that is not its own
 
 `zoom` is the safe default and is what anything with a real subject gets: people, animals, plants, planets, a brand mark, or circles and squares that would read as squashed. `stretch` is for the images with nothing in them to distort - gradients, stripes, blurs, soft abstracts.
 
-- `Opacity` and `Blur` are each a percentage of the viewer's own setting, not an absolute. `100%` means "as configured"; `50%` halves it and `200%` doubles it. A busy image can ask to sit quieter, or a soft gradient to skip most of the blur, without deciding for the viewer what the sliders mean. Everything here is `100%`.
+- `Opacity` is how strongly the image shows through, `0%` to `100%`. `Blur` is a Gaussian sigma in pixels. Where present they take the place of the viewer's own two settings for that image, so a busy image can sit quieter, or a soft gradient can skip the blur. Everything here carries the program defaults: `10%` and `10`.
 
 ## Legend
 

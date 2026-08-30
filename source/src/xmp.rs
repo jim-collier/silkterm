@@ -3,9 +3,9 @@
 
 //! Per-image tags, read out of the wallpaper file's own XMP packet:
 //! `wallpaper:Fit` (stretch|zoom) and `wallpaper:Anchor` ("50%, 50%") for layout,
-//! `wallpaper:Opacity` and `wallpaper:Blur` ("100%") as scales on the user's own
-//! two settings. An image that knows it must not be distorted, or that it is too
-//! busy to sit at the usual strength, can say so instead of the one global
+//! `wallpaper:Opacity` ("10%") and `wallpaper:Blur` (sigma in px, "10") for how
+//! it wants to show. An image that knows it must not be distorted, or that it is
+//! too busy to sit at the usual strength, can say so instead of the one global
 //! setting deciding for the whole collection.
 //!
 //! No XML parser and no new crate: the packet is reached through the container's
@@ -35,9 +35,8 @@ pub struct Tags {
 	pub fit: Option<Fit>,
 	// x, y in 0.0..=1.0; 0 is left/top, 1 is right/bottom. Zoom only.
 	pub anchor: Option<[f32; 2]>,
-	// Multipliers on the configured opacity and blur: 1.0 leaves the setting
-	// alone. Relative rather than absolute so a tagged collection does not turn
-	// the two sliders into no-ops.
+	// Same units as the two settings they replace: visibility 0..1, blur sigma
+	// in px. A tagged image takes these over the sliders.
 	pub opacity: Option<f32>,
 	pub blur: Option<f32>,
 }
@@ -46,8 +45,8 @@ pub fn read(path: &Path) -> Tags {
 	packet(path).map_or_else(Tags::default, |xmp| Tags {
 		fit: property(&xmp, "Fit").as_deref().and_then(parse_fit),
 		anchor: property(&xmp, "Anchor").as_deref().and_then(parse_anchor),
-		opacity: property(&xmp, "Opacity").as_deref().and_then(parse_scale),
-		blur: property(&xmp, "Blur").as_deref().and_then(parse_scale),
+		opacity: property(&xmp, "Opacity").as_deref().and_then(parse_percent),
+		blur: property(&xmp, "Blur").as_deref().and_then(parse_blur),
 	})
 }
 
@@ -184,15 +183,20 @@ fn parse_anchor(value: &str) -> Option<[f32; 2]> {
 	parts.next().is_none().then_some([x, y])
 }
 
+// "<n>%" as a 0..1 fraction; the sign is optional and so is the unit.
 fn parse_percent(value: &str) -> Option<f32> {
-	parse_scale(value).map(|v| v.min(1.0))
+	number(value, "%").map(|v| (v / 100.0).clamp(0.0, 1.0))
 }
 
-// "<n>%" as a multiplier. Capped at 10x: past that a value is a typo, not an
-// intent, and a runaway blur sigma would stall the decode.
-fn parse_scale(value: &str) -> Option<f32> {
-	let value: f32 = value.trim().trim_end_matches('%').trim().parse().ok()?;
-	value.is_finite().then(|| (value / 100.0).clamp(0.0, 10.0))
+// Sigma in pixels, "px" optional. Same ceiling as the config's own range: past
+// that a value is a typo, and a runaway sigma would stall the decode.
+fn parse_blur(value: &str) -> Option<f32> {
+	number(value, "px").map(|v| v.clamp(0.0, 100.0))
+}
+
+fn number(value: &str, unit: &str) -> Option<f32> {
+	let value: f32 = value.trim().trim_end_matches(unit).trim().parse().ok()?;
+	value.is_finite().then_some(value)
 }
 
 #[cfg(test)]
@@ -202,8 +206,8 @@ mod tests {
 	const DOC: &str = "<rdf:Description rdf:about=''>\
 		<wallpaper:Fit>stretch</wallpaper:Fit>\
 		<wallpaper:Anchor>25%, 80%</wallpaper:Anchor>\
-		<wallpaper:Opacity>150%</wallpaper:Opacity>\
-		<wallpaper:Blur>50</wallpaper:Blur></rdf:Description>";
+		<wallpaper:Opacity>15%</wallpaper:Opacity>\
+		<wallpaper:Blur>5</wallpaper:Blur></rdf:Description>";
 
 	#[test]
 	fn reads_both_spellings_of_a_property() {
@@ -266,8 +270,8 @@ mod tests {
 			} else {
 				assert_eq!(got.fit, Some(Fit::Stretch), "{name}");
 				assert_eq!(got.anchor, Some([0.25, 0.8]), "{name}");
-				assert_eq!(got.opacity, Some(1.5), "{name}");
-				assert_eq!(got.blur, Some(0.5), "{name}");
+				assert_eq!(got.opacity, Some(0.15), "{name}");
+				assert_eq!(got.blur, Some(5.0), "{name}");
 			}
 		}
 		let _ = std::fs::remove_dir_all(&dir);
@@ -298,14 +302,17 @@ mod tests {
 	}
 
 	#[test]
-	fn scales_are_percentages_with_a_ceiling() {
-		assert_eq!(parse_scale("100%"), Some(1.0));
-		assert_eq!(parse_scale(" 25 "), Some(0.25));
-		assert_eq!(parse_scale("0"), Some(0.0));
-		assert_eq!(parse_scale("5000%"), Some(10.0));
-		assert_eq!(parse_scale("-10%"), Some(0.0));
+	fn look_tags_read_in_the_settings_own_units() {
+		assert_eq!(parse_percent("10%"), Some(0.1));
+		assert_eq!(parse_percent(" 25 "), Some(0.25));
+		assert_eq!(parse_percent("150%"), Some(1.0));
+		assert_eq!(parse_percent("-10%"), Some(0.0));
+		assert_eq!(parse_blur("10"), Some(10.0));
+		assert_eq!(parse_blur("2.5px"), Some(2.5));
+		assert_eq!(parse_blur("500"), Some(100.0));
 		for junk in ["", "%", "lots", "nan", "inf"] {
-			assert_eq!(parse_scale(junk), None, "{junk} should not parse");
+			assert_eq!(parse_percent(junk), None, "{junk} should not parse");
+			assert_eq!(parse_blur(junk), None, "{junk} should not parse");
 		}
 	}
 }

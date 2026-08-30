@@ -218,7 +218,7 @@ pub struct Settings {
 	pub wallpaper_opacity: f32,            // image visibility 0..1
 	pub wallpaper_default_fit: Fit,        // used unless the image's own tags say otherwise
 	pub wallpaper_honor_xmp: bool,         // let a wallpaper's own Fit/Anchor tags win
-	pub wallpaper_honor_xmp_look: bool, // and its Blur/Opacity tags, which scale the two settings below
+	pub wallpaper_honor_xmp_look: bool, // and its Opacity/Blur tags, which replace the two settings below
 	pub wallpaper_blur: f32,            // Gaussian blur sigma applied to the image (0 = none)
 	pub wallpaper_contrast_mask: bool,  // flatten the image's contrast so it stops competing with text
 	pub wallpaper_contrast_mask_size: f32, // flatten scale 0..1 (1 = half the longest pixel dim)
@@ -3334,10 +3334,10 @@ wallpaper:
 	## Blur the wallpaper. Sigma in pixels, 0.0 to 100.0. 0 is none.
 	# blur: 10.0  ## Default
 
-	## Let an image scale the opacity and blur above from its own metadata:
-	## `wallpaper:Opacity` and `wallpaper:Blur` are percentages of your settings,
-	## so "100%" is what you chose and "50%" is half of it. A busy image can
-	## ask to sit quieter without the whole collection changing.
+	## Let an image set its own opacity and blur from its metadata:
+	## `wallpaper:Opacity` ("10%") and `wallpaper:Blur` (sigma, "10") take the
+	## place of the two settings above for that image. The settings still apply
+	## to images without the tags. The shipped wallpapers all carry the defaults.
 	# honor_xmp_look: true  ## Default
 
 	## Flatten the wallpaper's contrast so it stops competing with the text.

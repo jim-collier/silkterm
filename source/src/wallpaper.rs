@@ -202,21 +202,16 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 		// so a fresh install still looks the part. Opt out with wallpaper_fallback_builtin.
 		None => builtin(settings, folder_active)?,
 	};
-	// The image's own tags: layout, and scales on the two look settings. Read
-	// straight from the file the pixels came from - the embedded default
-	// wallpaper has no path, and keeps the configured values.
+	// The image's own tags: layout, and the two look values. Read straight from
+	// the file the pixels came from - the embedded default wallpaper has no
+	// path, and keeps the configured values.
 	let tags = source
 		.filter(|_| settings.wallpaper_honor_xmp || settings.wallpaper_honor_xmp_look)
 		.map_or_else(crate::xmp::Tags::default, crate::xmp::read);
-	let mut opacity = settings.wallpaper_opacity;
-	let mut blur = settings.wallpaper_blur;
+	let (mut opacity, mut blur) = (settings.wallpaper_opacity, settings.wallpaper_blur);
 	if settings.wallpaper_honor_xmp_look {
-		if let Some(scale) = tags.opacity {
-			opacity = (opacity * scale).min(1.0);
-		}
-		if let Some(scale) = tags.blur {
-			blur *= scale;
-		}
+		opacity = tags.opacity.unwrap_or(opacity);
+		blur = tags.blur.unwrap_or(blur);
 	}
 	// Blur and contrast-flatten, done in LINEAR light (decode sRGB -> process in
 	// f32 -> re-encode) so transitions are gamma-correct; an sRGB-space blur

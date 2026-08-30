@@ -226,7 +226,7 @@ rows:
 		kind: toggle
 		indent: 1
 		setting: wallpaper.honor_xmp_look
-		help: "Let an image's own embedded Opacity and Blur tags scale the two sliders above, as a percentage of what you set."
+		help: "Let an image's own embedded Opacity and Blur tags take the place of the two sliders above. The sliders still apply to images without the tags."
 
 	BgContrastMask:
 		label: Contrast mask
