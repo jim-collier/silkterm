@@ -70,6 +70,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
+- 🔘 Clearing text from tab, should reset it to default behavior - as if it had never been edited.
+
 - ✅ Lighten text that is too dark to read against the scrim and a dark background, and darken it in the opposite case.
 	- "Minimum contrast %" on the Text tab, default 45. Text closer than that to its own cell background is moved away from it, keeping its hue, so a program that writes near-black on a dark terminal is still readable.
 	- Measured against the cell's background colour rather than per-pixel. See design.md for why, and for the choice of Oklab over a WCAG ratio.
