@@ -192,7 +192,7 @@ rows:
 		help: "What to do when the image and the window are different shapes. An image carrying its own tag overrides this."
 
 	BgHonorXmp:
-		label: Honor tags
+		label: Honor layout tags
 		kind: toggle
 		indent: 1
 		setting: wallpaper.honor_xmp
@@ -220,6 +220,13 @@ rows:
 		range: 0, 50
 		indent: 1
 		setting: wallpaper.blur
+
+	BgHonorXmpLook:
+		label: Honor look tags
+		kind: toggle
+		indent: 1
+		setting: wallpaper.honor_xmp_look
+		help: "Let an image's own embedded Opacity and Blur tags scale the two sliders above, as a percentage of what you set."
 
 	BgContrastMask:
 		label: Contrast mask

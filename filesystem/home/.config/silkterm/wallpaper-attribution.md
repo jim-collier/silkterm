@@ -26,17 +26,19 @@ Each image also carries this information in its own metadata:
 
 - `Instructions` for the provenance trail (original URL, original source filename, original filesystem name, licensed yes/no, match confidence, legal status, and the copyright and rating values that were there before this pass)
 
-- `wallpaper:Fit` and `wallpaper:Anchor` for how the image wants to be laid out - see below
+- `wallpaper:Fit` and `wallpaper:Anchor` for how the image wants to be laid out, and `wallpaper:Opacity` and `wallpaper:Blur` for how strongly it wants to show - see below
 
-## Layout tags
+## Layout and look tags
 
-Two XMP fields tell a wallpaper how it should fill a screen that is not its own shape. They live in a `wallpaper` namespace (`https://github.com/jim-collier/xmp/wallpaper/1.0/`), named for what they describe rather than for any one program, so other tools can read and write them too.
+Four XMP fields tell a wallpaper how it should fill a screen that is not its own shape, and how strongly it wants to show. They live in a `wallpaper` namespace (`https://github.com/jim-collier/xmp/wallpaper/1.0/`), named for what they describe rather than for any one program, so other tools can read and write them too.
 
 - `Fit` is `zoom` or `stretch`. `zoom` fills the screen while keeping the aspect ratio and crops the overhang; `stretch` distorts to fit exactly and never crops.
 
 - `Anchor` is `<horizontal>%, <vertical>%` - 0% is left/top, 100% is right/bottom. It picks which part of the image survives a `zoom` crop, and is ignored under `stretch`. Everything here is `50%, 50%`.
 
 `zoom` is the safe default and is what anything with a real subject gets: people, animals, plants, planets, a brand mark, or circles and squares that would read as squashed. `stretch` is for the images with nothing in them to distort - gradients, stripes, blurs, soft abstracts.
+
+- `Opacity` and `Blur` are each a percentage of the viewer's own setting, not an absolute. `100%` means "as configured"; `50%` halves it and `200%` doubles it. A busy image can ask to sit quieter, or a soft gradient to skip most of the blur, without deciding for the viewer what the sliders mean. Everything here is `100%`.
 
 ## Legend
 

@@ -120,10 +120,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Alternately, bake into the executable. (Research if that's even easily possible/reasonable for a terminal emulator to inject its own terminal prompt.)
 	- Opened: 20260826-123553
 
-- 🔘 wallpaper image metadata: Blur options:
+- ✅ wallpaper image metadata: Blur options:
 	- Wallpaper metadata: Add blur radius in %, and opacity (relative to bg color) %.
-	- Add a checkbox in Settings for whether to honor them.
+		- Done: `wallpaper:Opacity` and `wallpaper:Blur`, beside the existing Fit and Anchor tags. Each is a percentage of the matching setting rather than an absolute, so 100% is "as configured" and the sliders keep working on a tagged folder.
+	- Populate default values - same as current code defaults.
+		- Done: every image in the pack and in the masters now carries 100% for both, which is the code default exactly.
+	- Add a checkbox in Settings for whether to honor them, if populated and valid values. (Default yes.)
+		- Done: "Honor look tags", under the Blur slider, on by default. A tag that is missing or does not parse leaves the setting alone.
 	- Opened: 20260826-123553
+	- Closed: 20260830
 
 - ✅ The CICD pipeline does not say which combination host environments it is running on. Print it in the plan header, since the skips differ depending on that.
 	- The Windows plan header names the Linux half, or says WSL2 is here and unused, or that there is none.
