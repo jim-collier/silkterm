@@ -4,6 +4,11 @@
 <!-- markdownlint-disable MD055 -- Table pipe style [Expected: leading_and_trailing; Actual: leading_only; Missing trailing pipe] -->
 <!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
 
+<!-- TOC ignore:true -->
+# SilkTerm backlog
+
+<!-- TOC ignore:true -->
+## Table of contents
 <!-- TOC -->
 
 - [Conventions](#conventions)
@@ -37,10 +42,19 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔘 A WSL pane does not start in the current directory.
+	- Seen doing "Open terminal here" on Windows. Nothing hands wsl.exe a directory today - a distribution is stored as `wsl.exe -d <name>`, and the pane starts wherever the spawned process inherited from.
+	- Two cases that need separating before anything is changed, because only the second is clearly broken:
+		- The first pane of a launch inherits the folder the launcher was sitting in, which wsl.exe is supposed to translate on its own. If that is the failing case, the question is what it does instead.
+		- A new tab or split from a WSL pane inherits what the shell last reported, which is a posix path. That cannot be a Windows working directory at all. Fits the garbled `/tmp/...` prompt seen once after splitting a WSL pane.
+	- Likely fix is to pass the directory to wsl.exe with `--cd` rather than relying on inheritance, since that takes a Windows path and a posix one alike. Check first that it is accepted by a wsl.exe old enough to matter.
+	- Opened: 20260830-140000
+
 - 🔬 Startup directory and tab closing.
 	- Done: the startup directory follows the calling directory, so "Open in terminal" from a file manager starts in that folder. The setting still applies where the inherited directory was a launcher's default - home, a filesystem root, or beside the executable - so the two coexist and the setting stays.
 	- Done: closing the last tab closes the window.
 	- Open: closing a second tab crashes the program. Not reproducible on Linux - twelve tabs closed in a row, by hotkey and by the close box, wide window and narrow. Not on Windows either when tabs close because their shell exits, in any order. Nor with Ctrl+Shift+W twice, nor by clicking the close boxes, middle tab first or end tab first, with the pointer left over the strip. So the removal itself is fine; the steps matter. Which key or click, how many tabs and panes were open, and was anything running in the tab?
+		- Ruled out since: the tab strip's paging math cannot run off the end of the list, and every tab lookup outside `close_tab_at` itself is a checked one. So it is not a stale tab index left behind by the removal.
 	- Opened: 20260826-123553
 
 - 🔬 Double-clicking a Windows path leaves off the drive letter.
@@ -116,8 +130,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260703-091342
 
 - 🛠️ Setting dialog (part 2):
-	- 🔘 Flyover help text when mousing over elements. (Make this a reusable feature.)
-		- Note: the tab bar has one now (shell name, command, full path, elapsed time). It is a tab-bar tip rather than the reusable system this item asks for.
+	- 🛠️ Flyover help text when mousing over elements. (Make this a reusable feature.)
+		- Done: the Settings dialog has it. Thirty rows carry their own help line, a grayed-out control explains why it is grayed instead, and the text wraps to the panel.
+		- Done: the tab bar has one too (shell name, command, full path, elapsed time).
+		- Open: those are two separate implementations, and the menus have none. The reusable part of the item is what is left - one tip system all three read from.
 	- ✅ Size: A boolean setting to "Remember last size".
 		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
 		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
@@ -1189,6 +1205,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Proper fix: Size both the menu and the tabs according to the font height (plus extra), then *vertically center* the text within that area. If the font was created poorly centered, which may are, then there may be nothing to do about that - but the current font seems properly designed elsewhere.
 		- Done: both bars center the text on its real visible box using the UI face's actual ascent/descent, instead of the old hand-tuned padding that left titles riding high.
 		- Note: tab bar padding dropped to match the menu bar now that centering handles descender clearance.
+		- Later: a tab title is a path, so it is centered on its whole ink box rather than ascender-to-baseline, and it centers in the tab button rather than in the bar. The menu bar keeps the original rule, which suits its curated labels.
 	- Opened: 20260703-091342
 	- Closed: 20260703-100322
 
