@@ -37,17 +37,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- ✅ A window or tab that was out of view smooth-scrolled its backlog in when it came back.
-	- Nothing had actually just happened, so animating it read as live output rather than as catching up on stale content. It should land in one cut, flash and all.
-	- A minimized or occluded window and a hidden tab already build no frames, and coming back was already meant to be one instant cut. Two things defeated that.
-	- The window manager's own redraw was drawn regardless. An expose arriving while the window sat iconified built exactly one frame, and that frame took the whole buffered backlog - 358 lines in the test - as something to scroll through. No further frames flowed, so the view was left that far behind with the motion still owed.
-	- The catch-up then skipped every pane, because it only cut panes still flagged as owing a rebuild, and that one stray frame had cleared the flag. So the reveal cut nothing and the backlog eased in on screen.
-	- Fixed both ways. A frozen window draws nothing from either path now, and the reveal cuts every pane rather than only the flagged ones - a pane that really did sit still is snapping something already at rest. That also covers freezing part-way through an ease, where nothing is pending at all and the leftover motion used to replay on the way back.
-	- Verified on three shapes: minimized across a long burst, minimized part-way through an ease, and a hidden tab. Each lands at the bottom with no motion.
-	- Note that a window merely covered by another one is not frozen, at least not under the window manager here, so it keeps drawing and eases as usual. Only minimize, occlusion where it is reported, and hidden tabs freeze.
-	- Opened: 20260830-120333
-	- Closed: 20260830-120333
-
 - 🔬 Startup directory and tab closing.
 	- Done: the startup directory follows the calling directory, so "Open in terminal" from a file manager starts in that folder. The setting still applies where the inherited directory was a launcher's default - home, a filesystem root, or beside the executable - so the two coexist and the setting stays.
 	- Done: closing the last tab closes the window.
@@ -568,6 +557,17 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ A window or tab that was out of view smooth-scrolled its backlog in when it came back.
+	- Nothing had actually just happened, so animating it read as live output rather than as catching up on stale content. It should land in one cut, flash and all.
+	- A minimized or occluded window and a hidden tab already build no frames, and coming back was already meant to be one instant cut. Two things defeated that.
+	- The window manager's own redraw was drawn regardless. An expose arriving while the window sat iconified built exactly one frame, and that frame took the whole buffered backlog - 358 lines in the test - as something to scroll through. No further frames flowed, so the view was left that far behind with the motion still owed.
+	- The catch-up then skipped every pane, because it only cut panes still flagged as owing a rebuild, and that one stray frame had cleared the flag. So the reveal cut nothing and the backlog eased in on screen.
+	- Fixed both ways. A frozen window draws nothing from either path now, and the reveal cuts every pane rather than only the flagged ones - a pane that really did sit still is snapping something already at rest. That also covers freezing part-way through an ease, where nothing is pending at all and the leftover motion used to replay on the way back.
+	- Verified on three shapes: minimized across a long burst, minimized part-way through an ease, and a hidden tab. Each lands at the bottom with no motion.
+	- Note that a window merely covered by another one is not frozen, at least not under the window manager here, so it keeps drawing and eases as usual. Only minimize, occlusion where it is reported, and hidden tabs freeze.
+	- Opened: 20260830-120333
+	- Closed: 20260830-120333
 
 - ✅ Linux (and probably also Windows): Many duplicate shells get populated.
 	- Cause: two entries were treated as one shell only when their command lines resolved to the same literal path. On Linux `/bin` is a symlink to `/usr/bin`, `/etc/shells` lists both spellings, and a package under `/opt` links to itself from `/usr/bin`, so the same shell arrived under three names and got three rows.
@@ -1398,6 +1398,24 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Double-click a tab title to change it.
+	- The edit starts with what the tab says now, all selected, so the first thing typed replaces it. Enter or Tab keeps it, Escape drops it, and a click elsewhere keeps it.
+	- Selection, Home and End, and paste all work. A pasted newline becomes a space, since a tab is one line high.
+	- A blank title is kept. The tab shrinks to its close box and is still selectable and closable.
+	- Titles do not have to be unique.
+	- Typing back the name the tab would have had on its own puts it back to naming the shell, which is the way out of a hand-typed title.
+	- Opening or closing a tab ends an edit in progress, since the edit is keyed by the tab's position.
+	- Opened: 20260830-143000
+	- Closed: 20260830-143000
+
+- ✅ Window title.
+	- It always starts with the application name, and a dogfood build says which build it is - the pool holds several and they look alike in the taskbar.
+	- After that comes, in order: a title typed on the tab, else the title the running program set, else what the tab says about the shell. So a program that renames the window reaches the title bar without touching the tab, and a typed tab title outranks it.
+	- A tab deliberately blanked lets the program's title through; with neither, the title is just the application name.
+	- A `--title` on the command line is still the whole answer, verbatim.
+	- Opened: 20260830-143000
+	- Closed: 20260830-143000
 
 - ✅ These values in Settings should be expressed in % (in labels), and displayed as integers.
 	- Done: transparency opacity, wallpaper visibility, the three contrast mask sliders, text scrim strength and softness, cursor height and width, and the five smooth-scrolling sliders all carry a % on the label. Every one of them already ran in whole steps, so nothing needed rounding.

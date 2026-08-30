@@ -1115,6 +1115,75 @@ struct TabTip {
 	built: Instant,
 }
 
+// A tab title being typed in place. `caret` and `anchor` are byte offsets into
+// `text`; equal means no selection. Committing text that matches what the tab
+// would have said on its own puts it back to naming the shell.
+struct TabEdit {
+	tab: usize,
+	text: String,
+	caret: usize,
+	anchor: usize,
+}
+
+impl TabEdit {
+	fn range(&self) -> (usize, usize) {
+		(self.caret.min(self.anchor), self.caret.max(self.anchor))
+	}
+
+	// Replace the selection (or insert at the caret) and leave the caret after it.
+	fn insert(&mut self, typed: &str) {
+		let (from, to) = self.range();
+		self.text.replace_range(from..to, typed);
+		self.caret = from + typed.len();
+		self.anchor = self.caret;
+	}
+
+	// Backspace (back = true) or Delete. With a selection, either just clears it.
+	fn erase(&mut self, back: bool) {
+		let (from, to) = self.range();
+		if from != to {
+			self.text.replace_range(from..to, "");
+			self.caret = from;
+		} else if back {
+			if let Some(prev) = self.text[..self.caret].chars().next_back() {
+				self.caret -= prev.len_utf8();
+				self.text.remove(self.caret);
+			}
+		} else if self.caret < self.text.len() {
+			self.text.remove(self.caret);
+		}
+		self.anchor = self.caret;
+	}
+
+	// Move the caret one character, to an end, and either drag the selection with
+	// it or drop it.
+	fn move_caret(&mut self, to: Caret, select: bool) {
+		self.caret = match to {
+			Caret::Left => self.text[..self.caret]
+				.chars()
+				.next_back()
+				.map_or(0, |c| self.caret - c.len_utf8()),
+			Caret::Right => self.text[self.caret..]
+				.chars()
+				.next()
+				.map_or(self.caret, |c| self.caret + c.len_utf8()),
+			Caret::Home => 0,
+			Caret::End => self.text.len(),
+		};
+		if !select {
+			self.anchor = self.caret;
+		}
+	}
+}
+
+#[derive(Clone, Copy)]
+enum Caret {
+	Left,
+	Right,
+	Home,
+	End,
+}
+
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
 const COPYBOX_LABELS: [&str; 3] = ["Copy on:", "select", "output"]; // menu-bar auto-copy checkboxes
 
@@ -1174,6 +1243,8 @@ struct State {
 	tab_followed: usize,          // active tab the page last followed (see rebuild_tab_layout)
 	tab_layout: TabLayout,        // the strip as measured (see rebuild_tab_layout)
 	tab_tip: Option<TabTip>,      // the hover tip currently up, if any
+	tab_edit: Option<TabEdit>,    // tab title being renamed in place (double-click)
+	tab_dbl: Option<(Instant, usize)>, // last tab-strip click, for the double
 	decorated: bool,              // window frame shown (winit has no getter, so track it)
 	menu_bar: bool,               // window menu bar (File/Edit/...) shown
 	bare: bool, // frame, menu bar and tab strip all off at once (View > Bare window); never written
@@ -1659,6 +1730,14 @@ impl State {
 	// it - plus whatever that shell has to report: the command it is running,
 	// the last one it ran, or, having run nothing at all, where it is.
 	fn tab_label_forms(&mut self, index: usize) -> Vec<String> {
+		// A rename in progress is what the tab says, so what is typed is what is
+		// seen - and it is one form, never shortened, or the caret would sit off
+		// the end of an abbreviated label.
+		if let Some(edit) = &self.tab_edit {
+			if edit.tab == index {
+				return vec![edit.text.clone()];
+			}
+		}
 		let Some(pm) = self.tabs.list.get_mut(index) else {
 			return vec![config::APP_NAME.to_string()];
 		};
@@ -1685,12 +1764,76 @@ impl State {
 		)
 	}
 
+	// Start renaming tab `i` in place, seeded with what it says now and with all
+	// of that selected, so the first thing typed replaces it.
+	fn begin_tab_edit(&mut self, tab: usize) {
+		let text = self
+			.tabs
+			.list
+			.get(tab)
+			.and_then(|pm| pm.title_override.clone())
+			.unwrap_or_else(|| {
+				self.tab_label_forms(tab)
+					.into_iter()
+					.next()
+					.unwrap_or_default()
+			});
+		self.tab_edit = Some(TabEdit {
+			tab,
+			caret: text.len(),
+			anchor: 0,
+			text,
+		});
+		self.tab_tip = None;
+		self.dirty = true;
+	}
+
+	// Take what was typed. A title matching what the tab would have said anyway
+	// is dropped rather than frozen, which is the way back to the automatic name;
+	// an empty one is kept, so a tab can be left blank on purpose.
+	fn commit_tab_edit(&mut self) {
+		let Some(edit) = self.tab_edit.take() else {
+			return;
+		};
+		// What this tab would say with no title of its own - cleared first, since
+		// that is what the label is built from.
+		if let Some(pm) = self.tabs.list.get_mut(edit.tab) {
+			pm.title_override = None;
+		}
+		let auto = self
+			.tab_label_forms(edit.tab)
+			.into_iter()
+			.next()
+			.unwrap_or_default();
+		if let Some(pm) = self.tabs.list.get_mut(edit.tab) {
+			pm.title_override = (edit.text != auto).then_some(edit.text);
+		}
+		self.update_title();
+		self.dirty = true;
+	}
+
+	// Change the edit in place and redraw. Every key that types into a tab title
+	// goes through here so no path forgets the redraw.
+	fn edit_tab(&mut self, change: impl FnOnce(&mut TabEdit)) {
+		if let Some(edit) = self.tab_edit.as_mut() {
+			change(edit);
+			self.dirty = true;
+		}
+	}
+
+	fn cancel_tab_edit(&mut self) {
+		if self.tab_edit.take().is_some() {
+			self.dirty = true;
+		}
+	}
+
 	// Which tab the pointer is over, and since when. Anything the pointer is
 	// already busy with - a drag, an open menu - owns it instead, so no tip
 	// appears underneath one.
 	fn note_tab_hover(&mut self, x: f32, y: f32) {
 		let busy = self.bar_dragging.is_some()
 			|| self.dragging_pane.is_some()
+			|| self.tab_edit.is_some()
 			|| self.menu.is_some()
 			|| self.bar_open.is_some()
 			|| self.tab_close_arm.is_some();
@@ -1857,14 +2000,41 @@ impl State {
 			.unwrap_or_else(|| config::APP_NAME.to_string())
 	}
 
+	// What the window title says after the app name. A title typed on the tab
+	// wins; blanking that one on purpose lets the running program's own title
+	// through, and with neither the tab's computed label stands in.
+	fn title_suffix(&mut self) -> Option<String> {
+		let typed = self.tabs.cur().title_override.clone();
+		if let Some(typed) = typed {
+			if !typed.trim().is_empty() {
+				return Some(typed);
+			}
+			return self.program_title();
+		}
+		self.program_title()
+			.or_else(|| Some(self.active_tab_title()))
+	}
+
+	// The title the focused pane's program asked for, if it asked for one.
+	fn program_title(&self) -> Option<String> {
+		let pm = self.tabs.cur();
+		let title = &pm.panes.get(&pm.focused)?.title;
+		(!title.trim().is_empty()).then(|| title.clone())
+	}
+
 	// The window title (taskbar / alt-tab): a CLI --title override verbatim, else
-	// "AppName - <active tab title>" so it tracks the focused tab's program.
-	// Called on tab/focus change and each rendered frame; set_title only fires when
-	// the string actually changed (avoids WM flicker / churn).
+	// the app name (with the dogfood build when this is one) and whatever the
+	// active tab has to say. Called on tab/focus change and each rendered frame;
+	// set_title only fires when the string actually changed (avoids WM flicker).
 	fn update_title(&mut self) {
-		let title = match &self.win_title {
-			Some(custom_title) => custom_title.clone(),
-			None => format!("{} - {}", config::APP_NAME, self.active_tab_title()),
+		let title = if let Some(custom_title) = &self.win_title {
+			custom_title.clone()
+		} else {
+			let prefix = config::title_prefix();
+			match self.title_suffix() {
+				Some(suffix) => format!("{prefix} - {suffix}"),
+				None => prefix,
+			}
 		};
 		if title != self.last_win_title {
 			self.window.set_title(&title);
@@ -2506,6 +2676,7 @@ impl State {
 	// the pane that was active, as a plain new tab does. The directory is
 	// inherited either way - picking a shell says nothing about where to start.
 	fn new_tab_with(&mut self, proxy: &EventLoopProxy<UserEvent>, shell: Option<Vec<String>>) {
+		self.commit_tab_edit();
 		// area with the bar shown (we're about to have >1 tab); relayout_all fixes
 		// the exact rects right after, this is just the new pane's provisional box
 		let bar = self.menubar_h() + self.tab_bar_h();
@@ -2626,6 +2797,8 @@ impl State {
 	// Close the tab at `idx` (not necessarily the active one - a background tab's
 	// shell can exit). Keeps `active` pointing at the same tab where it can.
 	fn close_tab_at(&mut self, idx: usize) {
+		// A rename is keyed by position, so any change to the list ends it.
+		self.cancel_tab_edit();
 		if self.tabs.list.len() <= 1 {
 			self.quit = true; // closing the only tab closes the window
 			return;
@@ -3269,6 +3442,20 @@ impl State {
 			let tab_gap = self.text.dip(TAB_GAP);
 			let tab_top = self.text.dip(TAB_TOP_PAD);
 			let cb_rule = self.text.dip(CHROME_HAIRLINE);
+			// Where the caret and the selection sit inside the label of a tab being
+			// renamed, measured once before the loop borrows nothing (measuring
+			// wants &mut self.text).
+			let edit_marks = self.tab_edit.as_ref().map(|edit| {
+				let (from, to) = edit.range();
+				(edit.tab, edit.text.clone(), from, to, edit.caret)
+			});
+			let edit_marks = edit_marks.map(|(tab, text, from, to, caret)| {
+				let attrs = crate::text::ui_attrs();
+				let mut upto = |at: usize| self.text.measure_ui_text(&text[..at], &attrs);
+				(tab, upto(from), upto(to), upto(caret))
+			});
+			let title_pad = self.text.dip(TAB_TITLE_PAD);
+			let caret_w = self.text.dip(CHROME_HAIRLINE).max(1.0);
 			let mut x = 0.0;
 			for (slot, tab_w) in strip.iter().copied().enumerate() {
 				let i = first + slot;
@@ -3286,6 +3473,25 @@ impl State {
 					tab_h - tab_top - cb_rule,
 					color,
 				));
+				// A rename in progress: the selection behind the text, then the caret.
+				// Both are drawn before the text pass, so the label sits on top.
+				if let Some((edit_tab, sel_from, sel_to, caret)) = edit_marks {
+					if i == edit_tab {
+						let text_x = x + title_pad;
+						let top = tab_bar_y + tab_top + cb_rule;
+						let h = tab_h - tab_top - 2.0 * cb_rule;
+						if sel_to > sel_from {
+							instances.push(rect_inst(
+								text_x + sel_from,
+								top,
+								sel_to - sel_from,
+								h,
+								config::SELECTION_BG,
+							));
+						}
+						instances.push(rect_inst(text_x + caret, top, caret_w, h, x_rgb));
+					}
+				}
 				// close-button box: a 1px outline (border rect + inner tab-bg fill).
 				// The active tab's box fill leans faintly toward a pastel red - just
 				// past noticeable, so the current tab reads at a glance without a
@@ -4720,7 +4926,7 @@ impl ApplicationHandler<UserEvent> for App {
 		let want_transparent =
 			!cfg!(windows) || config::settings().transparent_background || win_opacity.is_some();
 		let attrs = Window::default_attributes()
-			.with_title(win_title.as_deref().unwrap_or(config::APP_NAME))
+			.with_title(win_title.clone().unwrap_or_else(config::title_prefix))
 			.with_window_icon(load_icon())
 			.with_decorations(decorated)
 			.with_transparent(want_transparent)
@@ -4903,6 +5109,8 @@ impl ApplicationHandler<UserEvent> for App {
 			pending_size_at: Instant::now(),
 			menu: None,
 			tab_close_arm: None,
+			tab_edit: None,
+			tab_dbl: None,
 			tab_hover: None,
 			tab_first: 0,
 			tab_layout: TabLayout::default(),
@@ -5080,6 +5288,9 @@ impl ApplicationHandler<UserEvent> for App {
 			// Window focus gates copy-output: a background window never copies.
 			WindowEvent::Focused(focused) => {
 				state.focused = focused;
+				if !focused {
+					state.commit_tab_edit(); // a rename does not outlive the window's focus
+				}
 				// repaint: focus-dependent chrome (copybox dim) and the refocus
 				// poke that resumes a long-idle-parked cursor both live in render
 				state.dirty = true;
@@ -5191,6 +5402,17 @@ impl ApplicationHandler<UserEvent> for App {
 				..
 			} => {
 				let (x, y) = state.mouse;
+				// A rename ends wherever the next click goes, unless it goes back to
+				// the tab being renamed (the tab-strip branch below handles that).
+				if state.tab_edit.is_some() {
+					let on_edited = state.tab_bar_visible()
+						&& y >= state.menubar_h()
+						&& y < state.menubar_h() + state.tab_bar_h()
+						&& state.tab_at(x) == state.tab_edit.as_ref().map(|e| e.tab);
+					if !on_edited {
+						state.commit_tab_edit();
+					}
+				}
 				// A popup tall enough to be clamped to the top of the window covers
 				// the menu bar, and the click belongs to whatever is drawn on top -
 				// otherwise its first item is unreachable. Same reason the tab-bar
@@ -5244,9 +5466,20 @@ impl ApplicationHandler<UserEvent> for App {
 						let on_close = state
 							.tab_close_box_at(i, tab_bar_y, bar_h)
 							.is_some_and(|cb| x >= cb.x);
+						// second click on the same tab, soon enough: rename it
+						let now = Instant::now();
+						let again = state.tab_dbl.is_some_and(|(when, was)| {
+							was == i && now.duration_since(when) < Duration::from_millis(400)
+						});
+						state.tab_dbl = Some((now, i));
 						if on_close {
 							state.tab_close_arm = Some(i);
+						} else if again && !on_close {
+							state.begin_tab_edit(i);
 						} else {
+							if state.tab_edit.as_ref().is_some_and(|e| e.tab != i) {
+								state.commit_tab_edit();
+							}
 							if state.tabs.active != i {
 								state.tabs.active = i;
 								state.freeze_catchup();
@@ -5705,6 +5938,58 @@ impl ApplicationHandler<UserEvent> for App {
 							if let Some(row) = hit {
 								state.menu_activate(row, &self.proxy);
 							}
+						}
+						_ => {}
+					}
+					state.dirty = true;
+					return;
+				}
+				// A tab rename takes every key while it is up: the tab strip is the
+				// only thing on screen accepting typing, so nothing reaches the shell.
+				if state.tab_edit.is_some() {
+					let ctrl = state.mods.control_key();
+					let shift = state.mods.shift_key();
+					match &key.logical_key {
+						// Tab commits too - there is nowhere for it to move to.
+						Key::Named(NamedKey::Enter | NamedKey::Tab) => state.commit_tab_edit(),
+						Key::Named(NamedKey::Escape) => state.cancel_tab_edit(),
+						Key::Named(NamedKey::Backspace) => {
+							state.edit_tab(|edit| edit.erase(true));
+						}
+						Key::Named(NamedKey::Delete) => {
+							state.edit_tab(|edit| edit.erase(false));
+						}
+						Key::Named(NamedKey::ArrowLeft) => {
+							state.edit_tab(|edit| edit.move_caret(Caret::Left, shift));
+						}
+						Key::Named(NamedKey::ArrowRight) => {
+							state.edit_tab(|edit| edit.move_caret(Caret::Right, shift));
+						}
+						Key::Named(NamedKey::Home) => {
+							state.edit_tab(|edit| edit.move_caret(Caret::Home, shift));
+						}
+						Key::Named(NamedKey::End) => {
+							state.edit_tab(|edit| edit.move_caret(Caret::End, shift));
+						}
+						Key::Named(NamedKey::Space) if !ctrl => {
+							state.edit_tab(|edit| edit.insert(" "));
+						}
+						Key::Character(typed) if ctrl && typed.eq_ignore_ascii_case("a") => {
+							state.edit_tab(|edit| {
+								edit.anchor = 0;
+								edit.caret = edit.text.len();
+							});
+						}
+						Key::Character(typed) if ctrl && typed.eq_ignore_ascii_case("v") => {
+							if let Some(text) = state.clipboard.get_clipboard() {
+								// one line: a tab is one line high
+								let flat = text.replace(['\n', '\r', '\t'], " ");
+								state.edit_tab(move |edit| edit.insert(&flat));
+							}
+						}
+						Key::Character(typed) if !ctrl && !state.mods.alt_key() => {
+							let typed = typed.to_string();
+							state.edit_tab(move |edit| edit.insert(&typed));
 						}
 						_ => {}
 					}
@@ -6274,13 +6559,51 @@ impl State {
 #[cfg(test)]
 mod tests {
 	use super::{
-		ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, accel_at, accel_clash,
-		copybox_fit, copybox_place, focus_ring, key_is_typed, menu_metrics, mia, msub, mta,
-		pace_frame, tab_close_box, tab_command_line, tab_title_w,
+		Caret, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit, accel_at,
+		accel_clash, copybox_fit, copybox_place, focus_ring, key_is_typed, menu_metrics, mia, msub,
+		mta, pace_frame, tab_close_box, tab_command_line, tab_title_w,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
 	use winit::event::ElementState;
+
+	// A tab title is renamed by byte offset over text that need not be ASCII, so
+	// every move and every erase has to land on a character boundary or the
+	// string operations panic.
+	#[test]
+	fn renaming_a_tab_stays_on_character_boundaries() {
+		let mut edit = TabEdit {
+			tab: 0,
+			text: "naïve".to_string(),
+			caret: 0,
+			anchor: 0,
+		};
+		// past the two-byte i-with-diaeresis and back
+		for _ in 0..3 {
+			edit.move_caret(Caret::Right, false);
+		}
+		assert_eq!(edit.caret, 4);
+		edit.move_caret(Caret::Left, false);
+		assert_eq!(edit.caret, 2);
+
+		// a selection dragged with Shift, then typed over
+		edit.move_caret(Caret::End, true);
+		assert_eq!(edit.range(), (2, 6));
+		edit.insert("p");
+		assert_eq!(edit.text, "nap");
+		assert_eq!(edit.caret, 3);
+
+		// backspace over the whole thing leaves it empty rather than underflowing
+		for _ in 0..5 {
+			edit.erase(true);
+		}
+		assert_eq!(edit.text, "");
+		assert_eq!(edit.caret, 0);
+
+		// delete at the end has nothing to take
+		edit.erase(false);
+		assert_eq!(edit.text, "");
+	}
 
 	// The chrome shares a coordinate space with the terminal grid, so nothing
 	// A narrow window used to draw "Copy on:" straight over "Panes" and "Help" -
