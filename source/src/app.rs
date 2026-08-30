@@ -602,7 +602,7 @@ fn fold_shells(found: &[crate::shells::Found]) {
 // running something the user did not pick.
 fn shell_argv(index: usize) -> Option<Vec<String>> {
 	let command = config::settings().shells.get(index)?.command.clone();
-	crate::cli::shell_split(&command).ok()
+	config::command_argv(&command)
 }
 
 // A popup's own DIP measurements at one scale factor: the padding above the

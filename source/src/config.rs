@@ -508,7 +508,7 @@ pub fn default_shell_argv() -> Option<Vec<String>> {
 		.iter()
 		.find(|entry| entry.active)
 		.map(|entry| entry.command.clone())?;
-	crate::cli::shell_split(&shell).ok()
+	command_argv(&shell)
 }
 
 // Where the FIRST pane of a freshly launched window starts, or None to leave it
@@ -587,7 +587,7 @@ fn resolve_dir(raw: &str, label: &str) -> Option<std::path::PathBuf> {
 	if wanted.is_empty() {
 		return None;
 	}
-	let dir = std::path::PathBuf::from(expand_path(wanted));
+	let dir = std::path::PathBuf::from(expand_vars(wanted));
 	if dir.is_dir() {
 		return Some(dir);
 	}
@@ -597,15 +597,24 @@ fn resolve_dir(raw: &str, label: &str) -> Option<std::path::PathBuf> {
 	None
 }
 
-// Substitute environment variables written in either platform's spelling, plus a
-// leading `~`. Both spellings everywhere on purpose: a config file gets carried
-// between machines, and a `$HOME` that silently stayed a literal directory name
-// on Windows would be a very quiet way to fail. An unset name expands to
-// nothing, the way a shell does it.
-pub fn expand_path(text: &str) -> String {
+// Substitute environment variables written in any of the three spellings a
+// person is likely to reach for - `$NAME` and `${NAME}` from bash, `%NAME%`
+// from cmd, `$env:NAME` and `${env:NAME}` from PowerShell - plus a leading `~`.
+// All of them on every platform on purpose: this is text SilkTerm reads, not
+// something a shell ever sees, so which shell the person likes should not
+// decide whether their config works. An unset name expands to nothing, the way
+// a shell does it.
+pub fn expand_vars(text: &str) -> String {
 	let text = match text.strip_prefix('~') {
+		// With no home to put there, leave the `~` standing rather than turning
+		// `~/pics` into an absolute `/pics` that means something else entirely.
 		Some(rest) if rest.is_empty() || rest.starts_with(['/', '\\']) => {
-			format!("{}{rest}", home_string())
+			let home = home_string();
+			if home.is_empty() {
+				text.to_string()
+			} else {
+				format!("{home}{rest}")
+			}
 		}
 		_ => text.to_string(),
 	};
@@ -630,7 +639,10 @@ pub fn expand_path(text: &str) -> String {
 				}
 			}
 		} else {
-			let bare = &tail[1..];
+			// PowerShell writes `$env:NAME`, where the colon belongs to the
+			// spelling and not to the name. Stripped before the scan below,
+			// which stops at the colon and would expand `$env` instead.
+			let bare = strip_env_prefix(&tail[1..]);
 			let end = bare
 				.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
 				.unwrap_or(bare.len());
@@ -641,18 +653,60 @@ pub fn expand_path(text: &str) -> String {
 			}
 			(&bare[..end], &bare[end..])
 		};
-		if let Some(value) = std::env::var_os(name).filter(|v| !v.is_empty()) {
-			out.push_str(&value.to_string_lossy());
-		} else if name.eq_ignore_ascii_case("HOME") || name.eq_ignore_ascii_case("USERPROFILE") {
-			// The one pair worth answering ourselves: native Windows sets no
-			// HOME, and $HOME is what the shipped default says on unix - so a
-			// config carried either way still names a real directory.
-			out.push_str(&home_string());
-		}
+		out.push_str(&lookup(strip_env_prefix(name)).unwrap_or_default());
 		rest = after;
 	}
 	out.push_str(rest);
 	out
+}
+
+// `env:` off the front of a name, in whatever case it was written.
+fn strip_env_prefix(name: &str) -> &str {
+	if name.len() >= 4 && name[..4].eq_ignore_ascii_case("env:") {
+		&name[4..]
+	} else {
+		name
+	}
+}
+
+// One variable's value, answering the few names that mean the same thing under
+// a different spelling on the other platform. Native Windows sets no HOME and
+// unix sets no USERPROFILE, so a config written on either box would otherwise
+// go quiet on the other. Only names with an honest one-to-one counterpart are
+// listed - guessing at the rest would be worse than an empty expansion the
+// user can see.
+fn lookup(name: &str) -> Option<String> {
+	const ALIASES: &[&[&str]] = &[
+		&["HOME", "USERPROFILE"],
+		&["USER", "USERNAME"],
+		&["TMPDIR", "TEMP", "TMP"],
+	];
+	let read = |n: &str| {
+		std::env::var_os(n)
+			.filter(|v| !v.is_empty())
+			.map(|v| v.to_string_lossy().into_owned())
+	};
+	if let Some(value) = read(name) {
+		return Some(value);
+	}
+	let group = ALIASES
+		.iter()
+		.find(|group| group.iter().any(|alt| alt.eq_ignore_ascii_case(name)))?;
+	group.iter().find_map(|alt| read(alt)).or_else(|| {
+		// Home is the one we can still answer with nothing in the environment.
+		group[0]
+			.eq_ignore_ascii_case("HOME")
+			.then(home_string)
+			.filter(|home| !home.is_empty())
+	})
+}
+
+// Split a command from the config into argv and expand each word. Splitting
+// first is what keeps `%ProgramFiles%\PowerShell\7\pwsh.exe` one argument once
+// the space in "Program Files" turns up.
+pub fn command_argv(command: &str) -> Option<Vec<String>> {
+	let argv = crate::cli::shell_split(command).ok()?;
+	Some(argv.iter().map(|word| expand_vars(word)).collect())
 }
 
 // The home directory as text, empty when the environment names none. Same
@@ -2041,29 +2095,13 @@ pub fn effective_font_size() -> f32 {
 
 // Resolve the background image: an explicit path (absolute, or a filename
 // relative to the config dir), else auto-detect backgrounds/background.{png,jpg,jpeg}
-// under the config dir.
-// `~` and `~/...` expand to $HOME (USERPROFILE on Windows). A config is text a
-// person edits by hand, and that is how they write a home-relative path. `~user`
-// is left literal - there is nothing to resolve it against.
-fn expand_tilde(value: &str) -> PathBuf {
-	let rest = match value.strip_prefix('~') {
-		Some("") => "",
-		Some(rest) if rest.starts_with('/') || rest.starts_with('\\') => &rest[1..],
-		_ => return PathBuf::from(value),
-	};
-	std::env::var_os("HOME")
-		.or_else(|| std::env::var_os("USERPROFILE"))
-		.filter(|home| !home.is_empty())
-		.map_or_else(
-			|| PathBuf::from(value),
-			|home| PathBuf::from(home).join(rest),
-		)
-}
-
+// under the config dir. The value is text a person edits by hand, so it goes
+// through the same expander the startup directory does - `~`, and any of the
+// three spellings of an environment variable.
 pub fn resolve_wallpaper(explicit: Option<String>) -> Option<PathBuf> {
 	let dir = config_dir()?;
 	if let Some(given) = explicit.filter(|value| !value.trim().is_empty()) {
-		let path = expand_tilde(given.trim());
+		let path = PathBuf::from(expand_vars(given.trim()));
 		// Handed back unchecked: the loader opens it on its own thread and says so
 		// if it can't, which keeps a wallpaper the user explicitly named from
 		// costing a stat here - it may be the very mount that answers slowly.
@@ -2101,7 +2139,7 @@ pub fn resolve_wallpaper(explicit: Option<String>) -> Option<PathBuf> {
 // still just leaves rotation off.
 pub fn resolve_wallpaper_folder(explicit: Option<String>) -> Option<PathBuf> {
 	let given = explicit.filter(|value| !value.trim().is_empty())?;
-	let path = expand_tilde(given.trim());
+	let path = PathBuf::from(expand_vars(given.trim()));
 	if path.is_absolute() {
 		return Some(path);
 	}
@@ -3278,7 +3316,7 @@ fn default_config() -> &'static str {
 }
 
 // How a person on this platform spells "my home directory" in a path. Also what
-// `expand_path` understands, along with the other platform's spelling and `~`:
+// `expand_vars` understands, along with the other platform's spelling and `~`:
 // a config that is carried between machines should not stop working.
 #[cfg(windows)]
 pub const HOME_TOKEN: &str = "%USERPROFILE%";
@@ -3300,6 +3338,11 @@ const DEFAULT_CONFIG_TEMPLATE: &str = r##"# SilkTerm configuration file.
 ## Your values and your own comments are kept. A save may tidy the layout but
 ## never rewrites what you wrote, and a bad line is skipped on its own. On
 ## launch SilkTerm adds settings new to this version and nothing else.
+##
+## Anywhere a path or a program is named, `~` and environment variables are
+## understood, in any of the three spellings: $NAME and ${NAME}, %NAME%, and
+## $env:NAME. All of them work on every platform, and $HOME and %USERPROFILE%
+## mean the same thing, so a config carried between machines keeps working.
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Background and transparency
@@ -3641,9 +3684,8 @@ shell:
 	## Where a shell starts when nothing else has said. A --directory wins over
 	## this, and so does the pane a new tab or split was opened from, and so does
 	## the shell SilkTerm was launched from. That leaves launching from the
-	## desktop or a menu, which is what this is for. `~`, $HOME, %USERPROFILE%
-	## and any other environment variable are understood. A directory that does
-	## not exist is reported and ignored.
+	## desktop or a menu, which is what this is for. A directory that does not
+	## exist is reported and ignored.
 	# startup_directory: "{HOME}"  ## Default
 
 	## Add a small block to each PowerShell profile so it reports where it is,
@@ -4105,17 +4147,60 @@ mod tests {
 	fn a_home_token_expands_however_it_is_spelled() {
 		let home = super::home_string();
 		assert!(!home.is_empty(), "this box names no home directory");
-		for spelling in ["~", "$HOME", "${HOME}", "%USERPROFILE%", "%userprofile%"] {
-			assert_eq!(expand_path(spelling), home, "{spelling} did not expand");
+		for spelling in [
+			"~",
+			"$HOME",
+			"${HOME}",
+			"%USERPROFILE%",
+			"%userprofile%",
+			"$env:HOME",
+			"$env:USERPROFILE",
+			"${env:HOME}",
+			"$ENV:home",
+		] {
+			assert_eq!(expand_vars(spelling), home, "{spelling} did not expand");
 		}
-		assert_eq!(expand_path("~/work"), format!("{home}/work"));
+		assert_eq!(expand_vars("~/work"), format!("{home}/work"));
 		// a name that is not a variable is left exactly as it stands
-		assert_eq!(expand_path("/srv/~backup"), "/srv/~backup", "~ mid-path");
-		assert_eq!(expand_path("100%"), "100%", "a lone percent");
-		assert_eq!(expand_path("50%% off"), "50%% off", "an empty name");
-		assert_eq!(expand_path("cost $ 5"), "cost $ 5", "a lone dollar");
+		assert_eq!(expand_vars("/srv/~backup"), "/srv/~backup", "~ mid-path");
+		assert_eq!(expand_vars("100%"), "100%", "a lone percent");
+		assert_eq!(expand_vars("50%% off"), "50%% off", "an empty name");
+		assert_eq!(expand_vars("cost $ 5"), "cost $ 5", "a lone dollar");
 		// and an unset one expands to nothing, the way a shell does it
-		assert_eq!(expand_path("$SILKTERM_NO_SUCH_VAR/x"), "/x");
+		assert_eq!(expand_vars("$SILKTERM_NO_SUCH_VAR/x"), "/x");
+	}
+
+	// The other pairs that mean one thing under two spellings. Only the one the
+	// running platform sets is checked against a value; the point is that the
+	// other spelling answers too rather than expanding to nothing.
+	#[test]
+	fn the_other_platforms_spelling_of_a_name_still_answers() {
+		for (ours, theirs) in [("USER", "USERNAME"), ("TMPDIR", "TEMP")] {
+			let Some(value) = std::env::var_os(ours)
+				.or_else(|| std::env::var_os(theirs))
+				.filter(|v| !v.is_empty())
+			else {
+				continue; // neither is set here; nothing to compare against
+			};
+			let value = value.to_string_lossy().into_owned();
+			assert_eq!(expand_vars(&format!("${ours}")), value);
+			assert_eq!(expand_vars(&format!("%{theirs}%")), value);
+		}
+	}
+
+	// A command from the config is split before it is expanded, so a variable
+	// holding a path with a space in it stays one argument.
+	#[test]
+	fn a_config_command_expands_word_by_word() {
+		let home = super::home_string();
+		assert_eq!(
+			command_argv("$HOME/bin/sh --norc").unwrap(),
+			[format!("{home}/bin/sh"), "--norc".to_string()]
+		);
+		assert_eq!(
+			command_argv(r#""%USERPROFILE%\my app\sh" -l"#).unwrap(),
+			[format!(r"{home}\my app\sh"), "-l".to_string()]
+		);
 	}
 
 	// A directory named on the command line is checked before anything spawns, so
@@ -4347,16 +4432,14 @@ mod tests {
 	// to expand. `~user` has nothing to resolve against and stays literal.
 	#[test]
 	fn tilde_expands_to_home_but_only_for_this_user() {
-		// Resolve home the same way expand_tilde does - Windows has no HOME, only USERPROFILE.
-		let home = std::env::var_os("HOME")
-			.or_else(|| std::env::var_os("USERPROFILE"))
-			.expect("HOME or USERPROFILE");
-		assert_eq!(expand_tilde("~/pics"), PathBuf::from(&home).join("pics"));
-		assert_eq!(expand_tilde("~"), PathBuf::from(&home));
+		let home = super::home_string();
+		assert!(!home.is_empty(), "this box names no home directory");
+		assert_eq!(expand_vars("~/pics"), format!("{home}/pics"));
+		assert_eq!(expand_vars("~"), home);
 		for literal in ["~someone/pics", "/abs/pics", "rel/pics", "wallpaper/"] {
 			assert_eq!(
-				expand_tilde(literal),
-				PathBuf::from(literal),
+				expand_vars(literal),
+				literal,
 				"{literal} should stay literal"
 			);
 		}

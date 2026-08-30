@@ -33,6 +33,7 @@
 	- [Environment](#environment)
 	- [Startup and slow external resources](#startup-and-slow-external-resources)
 	- [Configuration format](#configuration-format)
+	- [Variables in a setting (2026-08-30)](#variables-in-a-setting-2026-08-30)
 	- [Command-line options](#command-line-options)
 - [Delivery (CI/CD, branches, releases)](#delivery-cicd-branches-releases)
 
@@ -420,6 +421,18 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - The deciding property is forgiveness. A malformed line yields a diagnostic and is skipped, so one bad value costs only its own setting. Strict TOML could instead fail the whole document and sink every setting to its default. Forgiveness let two workarounds be deleted outright: a retry loop that blanked offending lines and reparsed, and a rewrite pass for leading-dot floats, which are valid here.
 
 - Values are typed by the reader, not the file, so there is nothing to get wrong in the syntax and a value is stored back exactly as written.
+
+### Variables in a setting (2026-08-30)
+
+- A setting that names a path or a program is text SilkTerm reads. No shell ever sees it, so nothing else would expand a variable written there.
+
+- Among the options, it was decided that all three spellings are accepted on every platform: `$NAME` and `${NAME}`, `%NAME%`, and `$env:NAME`. Which shell a person prefers should not decide whether their config works, and a config file gets carried between machines.
+
+- A few names mean the same thing under a different spelling, and those are paired: HOME with USERPROFILE, USER with USERNAME, TMPDIR with TEMP and TMP. Native Windows sets no HOME and unix sets no USERPROFILE, so without the pairing a config written on one box goes quiet on the other.
+
+- Names without an honest counterpart are not guessed at. An unpaired name that is unset expands to nothing, the way a shell does it, which the user can see. A wrong guess would be worse.
+
+- A command is split into arguments before its words are expanded. That keeps a variable holding something like `C:\Program Files\...` as one argument.
 
 ### Command-line options
 

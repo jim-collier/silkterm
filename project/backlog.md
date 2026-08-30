@@ -56,11 +56,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
-- 🔘 Pre-interpret the most common bash environment variables for shells that do not understand them. (In settings and config file.)
-	- Same for the common PowerShell variables.
-	- Same for the common Windows variables.
-	- Opened: 20260826-123553
-
 - 🔘 Lighten text that is too dark to read against the scrim and a dark background, and darken it in the opposite case.
 	- Comments in git's nano commit editor are the example that keeps coming up. Can't read at all on a dark background.
 	- Flipping the scrim colour for just that text would be better still, eventually.
@@ -1398,6 +1393,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Pre-interpret the most common bash environment variables for shells that do not understand them. (In settings and config file.)
+	- Same for the common PowerShell variables.
+	- Same for the common Windows variables.
+	- A path or a program named anywhere in settings or the config file now understands `~` plus all three spellings of a variable: `$NAME` and `${NAME}`, `%NAME%`, and `$env:NAME`. All of them work on every platform, since this is text SilkTerm reads rather than anything a shell sees.
+	- `$HOME` and `%USERPROFILE%` mean the same thing, and so do `$USER` and `%USERNAME%`, and `$TMPDIR` with `%TEMP%`. Only names with an honest counterpart are paired; the rest expand to nothing, visibly, rather than to a guess.
+	- Reaches the startup directory and `--directory` as before, and now the wallpaper image, the rotation folder, the link opener, and every shell command in the list. A command is split into arguments first, so a variable holding a path with a space in it stays one argument.
+	- A `~` with no home directory to put there is left standing rather than turned into an absolute path meaning something else.
+	- Opened: 20260826-123553
+	- Closed: 20260830-133718
 
 - ✅ All edit text boxes need more padding between outlines and text. And better vertically-centered text.
 	- Fields are their own height now instead of borrowing the color chip's, so the text has clear space above and below it as well as either side. Checkboxes and radio buttons stay the size they were.
