@@ -70,8 +70,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
-- 🔘 Clearing text from tab, should reset it to default behavior - as if it had never been edited.
-
 - ✅ Lighten text that is too dark to read against the scrim and a dark background, and darken it in the opposite case.
 	- "Minimum contrast %" on the Text tab, default 45. Text closer than that to its own cell background is moved away from it, keeping its hue, so a program that writes near-black on a dark terminal is still readable.
 	- Measured against the cell's background colour rather than per-pixel. See design.md for why, and for the choice of Oklab over a WCAG ratio.
@@ -1415,6 +1413,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Clearing text from tab, should reset it to default behavior - as if it had never been edited.
+	- Emptying the rename box now drops the custom title, so the tab goes back to naming its own shell and directory. A title of nothing but spaces counts as empty.
+	- Closed: 20260830-163000
 
 - ✅ Figure out a way to measure the delay between a keypress, and the matching pixel response.
 	- Running natively on a few-year-old laptop feels sluggish; need an objective measure to measure and attack.
