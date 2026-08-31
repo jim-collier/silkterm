@@ -537,6 +537,20 @@ rows:
 		indent: 1
 		setting: colors.scrollbar_trough
 
+	Minimap:
+		label: Minimap
+		kind: toggle
+		setting: scroll.minimap.enabled
+		help: "A miniature of the whole scroll buffer beside the text. It takes the room it uses, so the grid loses columns."
+
+	MinimapWidth:
+		label: Width px
+		kind: slider
+		range: 24, 400
+		whole: true
+		indent: 1
+		setting: scroll.minimap.width
+
 	## -------------------------------------------------------------------- Themes
 
 	Themes:
@@ -806,7 +820,10 @@ gates:
 
 	ScrollbarThickness: Scrollbar
 	ScrollbarAutoHide: Scrollbar
-	ColScrollbarThumb: Scrollbar
-	ColScrollbarTrough: Scrollbar
+
+	MinimapWidth: Minimap
+
+	## The two scrollbar colors are deliberately ungated: the minimap's marker and
+	## its own bar take them too, so they still do something with the scrollbar off.
 
 	LinkOpenCommand: Hyperlinks

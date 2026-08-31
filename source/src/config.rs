@@ -225,6 +225,8 @@ pub struct Settings {
 	pub scrollbar: bool,          // draw a scrollbar over each pane's right edge
 	pub scrollbar_thickness: f32, // scrollbar width in logical px
 	pub scrollbar_auto_hide: bool, // fade the scrollbar out while idle at the bottom
+	pub minimap: bool,            // miniature of the whole buffer in its own column
+	pub minimap_width: f32,       // the preview's width in logical px (the bar adds its own)
 	pub margin: f32,              // logical px between content and pane edge
 	pub opacity: f32,             // background opacity 0..1 (1 = fully opaque)
 	pub transparent_background: bool, // per-pixel bg transparency (text stays opaque): GL surface on X11, composited DX12 on Windows
@@ -354,6 +356,8 @@ impl Default for Settings {
 			scrollbar: true,
 			scrollbar_thickness: 16.0,
 			scrollbar_auto_hide: true,
+			minimap: false,
+			minimap_width: 100.0,
 			margin: 8.0,
 			opacity: 0.95,
 			transparent_background: false,
@@ -1031,6 +1035,12 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.scrollbar_auto_hide != orig.scrollbar_auto_hide {
 		doc.put_bool("scroll.scrollbar.auto_hide", s.scrollbar_auto_hide);
 	}
+	if s.minimap != orig.minimap {
+		doc.put_bool("scroll.minimap.enabled", s.minimap);
+	}
+	if s.minimap_width != orig.minimap_width {
+		doc.put_float("scroll.minimap.width", r(s.minimap_width));
+	}
 	if s.margin != orig.margin {
 		doc.put_float("window.margin", r(s.margin));
 	}
@@ -1297,6 +1307,8 @@ struct RawConfig {
 	scrollbar: Option<bool>,
 	scrollbar_thickness: Option<f32>,
 	scrollbar_auto_hide: Option<bool>,
+	minimap: Option<bool>,
+	minimap_width: Option<f32>,
 	margin: Option<f32>,
 	opacity: Option<f32>,
 	transparent_background: Option<bool>,
@@ -1519,6 +1531,8 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		scrollbar: r.b("scroll.scrollbar.enabled"),
 		scrollbar_thickness: r.f("scroll.scrollbar.thickness"),
 		scrollbar_auto_hide: r.b("scroll.scrollbar.auto_hide"),
+		minimap: r.b("scroll.minimap.enabled"),
+		minimap_width: r.f("scroll.minimap.width"),
 		margin: r.f("window.margin"),
 		opacity: r.f("transparency.opacity"),
 		transparent_background: r.b("transparency.enabled"),
@@ -1871,6 +1885,12 @@ fn resolve(raw: RawConfig) -> Settings {
 			.unwrap_or(d.scrollbar_thickness)
 			.clamp(4.0, 64.0),
 		scrollbar_auto_hide: raw.scrollbar_auto_hide.unwrap_or(d.scrollbar_auto_hide),
+		minimap: raw.minimap.unwrap_or(d.minimap),
+		// the column has to be wide enough to read and narrow enough to spare
+		minimap_width: raw
+			.minimap_width
+			.unwrap_or(d.minimap_width)
+			.clamp(24.0, 400.0),
 		margin: raw.margin.unwrap_or(d.margin).max(0.0),
 		opacity: raw.opacity.unwrap_or(d.opacity).clamp(0.0, 1.0),
 		transparent_background: raw
@@ -3618,6 +3638,15 @@ scroll:
 		# enabled: true  ## Default
 		# thickness: 16.0  ## Default
 		# auto_hide: true  ## Default
+
+	## A miniature of the whole scroll buffer, in its own column at the right of
+	## the pane. Unlike the scrollbar it takes the room it uses, so turning it on
+	## costs the grid columns. Drag the lit band to scroll, click elsewhere in the
+	## column to jump there. Width is the preview in pixels; the slim bar down its
+	## far edge adds its own.
+	minimap:
+		# enabled: false  ## Default
+		# width: 100.0  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Theme and colors

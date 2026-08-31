@@ -19,7 +19,7 @@
 	- [Smooth-Scroll](#smooth-scroll)
 	- [Output easing new text](#output-easing-new-text)
 	- [Smooth-scroll inside full-screen apps](#smooth-scroll-inside-full-screen-apps)
-	- [Minimap (2026-08-30, design only)](#minimap-2026-08-30-design-only)
+	- [Minimap](#minimap)
 	- [Text readability scrim](#text-readability-scrim)
 	- [Minimum contrast (2026-08-30)](#minimum-contrast-2026-08-30)
 	- [Font fallback stack](#font-fallback-stack)
@@ -217,55 +217,65 @@ What makes this hard:
 
 It is switchable (`smooth_scroll_apps`, on by default). The strip retains roughly a screenful of scrolled-off rows, so even a fast wheel burst stays filled. The ease's lag ramp bounds how far the content trails reality.
 
-### Minimap (2026-08-30, design only)
+### Minimap
 
-An optional sidebar that shows the whole scroll buffer in miniature, in the spirit of the Sublime Text / VS Code minimap. Off by default. The design is settled here; nothing is built yet.
+An optional sidebar showing the whole scroll buffer in miniature, in the spirit of the Sublime Text / VS Code minimap. Off by default.
 
 Where it sits:
 
 - Per pane, not per window. Scrollback belongs to a pane, so in a split each pane carries its own map.
 
-- The map owns a real column inside the pane's rect - it never overlays the text. Turning it on costs terminal columns, and the PTY resizes like any other layout change.
+- The map owns a real column inside the pane's rect - it never overlays the text. Turning it on costs terminal columns, and the PTY resizes like any other layout change. A pane too narrow to spare the room gets no column at all; the column may never take more than half a pane.
 
 - Left to right: terminal text (with the regular scrollbar still overlaying its right edge, unchanged), then the preview, then a slim always-visible scrollbar at the far edge. Two scrollbars on purpose. The inner one is the terminal's, and its position says so. Editors keep one bar at the far right; this is the deliberate departure.
 
+- The configured width is the preview's. The far-edge bar adds a fixed 8 DIP of its own, so changing the width does not change how grabbable the bar is.
+
 The mapping, which is the load-bearing decision:
 
-- The whole buffer - history plus screen - always maps linearly onto the column, top-anchored, oldest first. The editors slide their minimap once the document outgrows it; this one never does. The highlight over the preview and the far-edge thumb have to be the same object at the same pixels, and only a linear map keeps that true at every depth.
+- The whole buffer - history plus screen - always maps linearly onto the column, top-anchored, oldest first. The editors slide their minimap once the document outgrows it; this one never does. The marker over the preview and the far-edge thumb have to be the same object at the same pixels, and only a linear map keeps that true at every depth.
 
 - With a short buffer, lines draw at a capped height (about 2 px at 1x) and the preview just does not reach the bottom of the column yet.
 
 - With a deep buffer, lines go sub-pixel and blend down, so the map compresses instead of scrolling. At the default 10,000-line scrollback a line is a fraction of a pixel; colored regions still read as bands, which is most of the point.
 
+- The marker carries a floor on its height so a deep buffer still leaves something to grab. The thumb takes the same span, never its own.
+
 What a line looks like:
 
 - Strokes, not glyphs. Per cell: a run of the cell's fg color where there is ink, over the cell's bg where it differs from the default. Hues survive, so errors, prompts and diffs stay findable from across the room.
 
+- Across a line, coverage adds up, so a short or indented line reads as one. Down the column, where a pixel row can cover dozens of buffer lines, the strongest ink wins instead of the average - averaging would fade a lone red line into its neighbours, which is exactly the line worth finding.
+
 Interaction:
 
-- The highlight drags like a thumb and rides the scroll target, so it tracks the pointer exactly.
+- The marker drags like a thumb and rides the scroll target, so it tracks the pointer exactly.
 
-- A click outside the highlight centers the view on the clicked spot, eased.
+- A click elsewhere in the column centers the view there, eased the same way a scrollbar drag settles.
 
-- The wheel over the column scrolls the buffer, same as over the text.
+- The wheel over the column scrolls the buffer, same as over the text - including under an app that is tracking the mouse, since there is no cell under the pointer to report.
 
 Alt screen:
 
-- The column stays, so the PTY is not resized every time an app flips screens. The preview shows the screen itself, with no highlight and no thumb - there is nothing to scroll.
+- The column stays, so the PTY is not resized every time an app flips screens. The preview shows the screen itself, with no marker and no thumb - there is nothing to scroll.
 
 Cost when off:
 
-- Truly off: no column, no cache, no per-frame work. The whole feature hangs off one config check.
+- Truly off: no column, no cache, no per-frame work. The whole feature hangs off one config check, and the cache is freed the moment the column goes away.
 
 Settings and chrome:
 
-- A "Minimap" toggle and a width slider on the Movement tab, under the scrollbar cluster, plus a View-menu toggle. The highlight and the far-edge thumb reuse the scrollbar colors.
+- A "Minimap" toggle and a width slider on the Movement tab, under the scrollbar cluster, plus a View-menu item. The marker and the far-edge thumb reuse the scrollbar colors, which is why those two color rows are not gated on the scrollbar being on.
 
-How it is built (for the implementation pass):
+How it is built:
 
-- A new `minimap.rs` owns the line cache, the raster, the mapping and the hit tests. `pane.rs` carves the rect and routes events. Drawing is one textured quad per pane (same shape as the background-image renderer) plus overlay quads for the highlight and thumb.
+- `minimap.rs` owns the line cache, the raster, the mapping and the hit tests. `pane.rs` carves the rect and routes events. Drawing is one textured quad per pane plus overlay quads for the marker and thumb.
 
-- Each line rasterizes once into a fixed-width pixel row when it enters history, since history lines never change; the live screen rows re-raster when they do. `clear` and a resize reflow drop the cache. The on-screen image is composed at most once per redraw, only when content moved, and uploads as a small texture the size of the column - so texture size limits and the GL context's VRAM-loss re-upload both stay non-issues.
+- Each line rasterizes once into a fixed-width pixel row when it enters history, since history lines never change; the live screen rows re-raster when they do. A screen swap, a resize and a width change drop the cache. Sitting scrolled back with a full scrollback is the one case where nothing reports how many lines were pushed, so a changed newest-history line is taken as the sign the cache has fallen behind, and it rebuilds whole at a bounded rate.
+
+- The composed image uploads as a texture the size of the column, so texture size limits and the GL context's VRAM-loss re-upload both stay non-issues.
+
+- Under a flood every pixel of the map moves on every line, so a recompose is throttled rather than run per frame. A compose the throttle defers schedules a timed wake, not an animation flag - marking the window animating would bring it straight back, find the throttle still closed, and spin at the frame rate.
 
 - Memory is about 5 MB per pane at the default scrollback and a 120 px column, freed while the map is off.
 

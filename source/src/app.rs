@@ -408,6 +408,7 @@ enum MenuAction {
 	ToggleFrame,
 	ToggleMenuBar,
 	ToggleSingleTab,
+	ToggleMinimap,
 	ToggleBare,
 	ReloadConfig,
 	Settings,
@@ -441,6 +442,9 @@ impl MenuAction {
 			}
 			MenuAction::ToggleSingleTab => {
 				"Hide the tab strip while there is only one tab, and show it again on the second."
+			}
+			MenuAction::ToggleMinimap => {
+				"Show a miniature of the whole scroll buffer beside the text. It takes the room it uses."
 			}
 			MenuAction::ToggleBare => {
 				"Drop the title bar, menu bar and tab strip together. Choosing it again puts back whatever was on."
@@ -1273,6 +1277,7 @@ struct State {
 	gfx: Gfx,
 	text: TextCtx,
 	rects: RectRenderer,
+	minimap: crate::minimap::MapRenderer,
 	// posts worker results (wallpaper) back into this event loop
 	proxy: EventLoopProxy<UserEvent>,
 	wallpaper_img: Option<ImageRenderer>,
@@ -1292,6 +1297,7 @@ struct State {
 	resizing: Option<Vec<bool>>, // split-tree path of the divider being dragged
 	dragging_pane: Option<PaneId>, // pane being drag-reordered (Shift+drag)
 	bar_dragging: Option<PaneId>, // pane whose scrollbar thumb is being dragged
+	map_dragging: Option<PaneId>, // pane whose minimap marker is being dragged
 	// A Ctrl+press landed on a hyperlink: the release over the same link opens it,
 	// a release anywhere else drops it (drag off to cancel, like the tab close
 	// button). The URL is captured at press time - output can scroll it away in
@@ -1919,6 +1925,7 @@ impl State {
 	// appears underneath one.
 	fn note_tab_hover(&mut self, x: f32, y: f32) {
 		let busy = self.bar_dragging.is_some()
+			|| self.map_dragging.is_some()
 			|| self.dragging_pane.is_some()
 			|| self.tab_edit.is_some()
 			|| self.menu.is_some()
@@ -2543,6 +2550,14 @@ impl State {
 					MenuAction::ToggleFrame,
 				),
 				mta('M', self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
+				// 'M' and 'i' are both spoken for on this menu (Menu bar, Increase
+				// font size), so the accelerator falls to the n
+				mta(
+					'n',
+					config::settings().minimap,
+					"Minimap",
+					MenuAction::ToggleMinimap,
+				),
 				mta(
 					's',
 					config::settings().hide_single_tab,
@@ -2763,6 +2778,14 @@ impl State {
 				self.relayout_all();
 			}
 			MenuAction::ToggleBare => self.toggle_bare(),
+			MenuAction::ToggleMinimap => {
+				let orig = (*config::settings()).clone();
+				let mut new = orig.clone();
+				new.minimap = !new.minimap;
+				let _ = config::persist(&orig, &new);
+				config::update(new);
+				self.relayout_all();
+			}
 			MenuAction::ToggleSingleTab => {
 				let orig = (*config::settings()).clone();
 				let mut new = orig.clone();
@@ -3292,6 +3315,11 @@ impl State {
 		}
 		if rebuild {
 			self.rebuild_text(config::display_scale(self.window.scale_factor()));
+		} else if config::settings().minimap != orig.minimap
+			|| config::settings().minimap_width != orig.minimap_width
+		{
+			// the column takes real columns from the grid, so this is a layout change
+			self.relayout_all();
 		}
 		if bg {
 			self.request_wallpaper(false);
@@ -3411,8 +3439,8 @@ impl State {
 			tops.insert(*id, draw.top);
 			slides.insert(*id, draw.slide.clone());
 			under.push(RectInstance {
-				pos: [rect.x, rect.y],
-				size: [rect.w, rect.h],
+				pos: [pane.full.x, pane.full.y],
+				size: [pane.full.w, pane.full.h],
 				color: pane_bg,
 				..Default::default()
 			});
@@ -3449,13 +3477,16 @@ impl State {
 				let active = p.bar_drag.is_some() || p.bar_hover;
 				instances.extend(scrollbar_insts(&bar, p.bar_fade(), active));
 			}
+			if let Some(g) = p.minimap(&self.text, &cfg) {
+				instances.extend(minimap_insts(&g, p.map_drag.is_some()));
+			}
 		}
 		// Focus ring only distinguishes panes when there's more than one; with a
 		// single pane it's just an unwanted border line around the whole content
 		// (the user wants background all the way to the edge), so skip it.
 		if self.tabs.cur().panes.len() > 1 {
 			if let Some(p) = self.tabs.cur().panes.get(&self.tabs.cur().focused) {
-				instances.extend(focus_ring(p.rect, self.text.scale));
+				instances.extend(focus_ring(p.full, self.text.scale));
 			}
 		}
 		// drop-target tint while drag-reordering a pane
@@ -3466,8 +3497,8 @@ impl State {
 						let mut color = config::srgb_f32(config::DROP_TARGET);
 						color[3] = 0.30;
 						instances.push(RectInstance {
-							pos: [p.rect.x, p.rect.y],
-							size: [p.rect.w, p.rect.h],
+							pos: [p.full.x, p.full.y],
+							size: [p.full.w, p.full.h],
 							color,
 							..Default::default()
 						});
@@ -3476,6 +3507,21 @@ impl State {
 			}
 		}
 		let ring_end = instances.len() as u32;
+
+		// Column images: one texture per pane, uploaded only when the compose
+		// behind them moved. Direct field access - `tabs.cur()` would borrow the
+		// whole of self and the renderer needs it mutably.
+		self.minimap.begin_frame();
+		if cfg.minimap {
+			let mm = &mut self.minimap;
+			let (device, queue) = (&self.gfx.device, &self.gfx.queue);
+			let res = (self.gfx.config.width as f32, self.gfx.config.height as f32);
+			for (id, p) in &self.tabs.list[self.tabs.active].panes {
+				if let Some(g) = p.minimap(&self.text, &cfg) {
+					mm.prepare(device, queue, *id, g.preview, res, p.map_cache());
+				}
+			}
+		}
 
 		// cursor quads also feed the scrim's cursor-coverage texture (its own tex,
 		// so cursor_scrim/cursor_outline gate it independently); the cursor still
@@ -4538,6 +4584,13 @@ impl State {
 				self.rects.draw(&mut pass, *start..*end);
 			}
 			pass.set_scissor_rect(0, 0, sw, sh);
+			// minimap previews over the pane fill and the wallpaper, under the
+			// marker and thumb (which ride with the scrollbars, after the text)
+			if cfg.minimap {
+				for id in self.tabs.cur().panes.keys() {
+					self.minimap.draw(&mut pass, *id);
+				}
+			}
 			// menu/tab-bar quads before the text so their titles draw on top
 			if let Some((start, end)) = menubar_range {
 				self.rects.draw(&mut pass, start..end);
@@ -4654,6 +4707,7 @@ impl State {
 			let _ = self.text.render_overlay(&mut pass);
 		}
 
+		self.minimap.end_frame();
 		crate::perf::since(&crate::perf::ENCODE_NS, encode);
 		let submit = crate::perf::mark();
 		self.gfx.queue.submit(Some(encoder.finish()));
@@ -4754,6 +4808,48 @@ fn bar_inst(r: Rect, color: [u8; 3], alpha: f32) -> RectInstance {
 		color: c,
 		params: [2.0, r.w.min(r.h) * 0.5],
 	}
+}
+
+// The minimap's own quads: the trough down the far edge, the viewport marker
+// across the preview, and the thumb sitting in the trough at the same y. The
+// marker and the thumb are deliberately one span - see design.md.
+fn minimap_insts(g: &crate::minimap::Geom, active: bool) -> Vec<RectInstance> {
+	let cfg = config::settings();
+	let mut out = vec![bar_inst(
+		g.bar,
+		cfg.scrollbar_trough,
+		config::SCROLLBAR_TROUGH_A,
+	)];
+	if let Some(handle) = g.handle {
+		let alpha = if active {
+			config::SCROLLBAR_ACTIVE_A
+		} else {
+			config::SCROLLBAR_IDLE_A
+		};
+		// the band over the preview is a wash, not a lid: it marks where you are
+		// without hiding what is under it
+		out.push(RectInstance {
+			pos: [handle.x, handle.y],
+			size: [g.preview.w, handle.h],
+			color: {
+				let mut c = config::srgb_f32(cfg.scrollbar_thumb);
+				c[3] = alpha * 0.28;
+				c
+			},
+			..Default::default()
+		});
+		out.push(bar_inst(
+			Rect {
+				x: g.bar.x,
+				y: handle.y,
+				w: g.bar.w,
+				h: handle.h,
+			},
+			cfg.scrollbar_thumb,
+			alpha,
+		));
+	}
+	out
 }
 
 // The scrollbar's quads for one pane: a faint track with the handle on it. The
@@ -5241,6 +5337,7 @@ impl ApplicationHandler<UserEvent> for App {
 		let scale = config::display_scale(window.scale_factor());
 		let mut text = TextCtx::new(&gfx.device, &gfx.queue, gfx.format, scale);
 		let rects = RectRenderer::new(&gfx.device, gfx.format);
+		let minimap = crate::minimap::MapRenderer::new(&gfx.device, gfx.format);
 		let scrim =
 			crate::scrim::Scrim::new(&gfx.device, gfx.format, gfx.config.width, gfx.config.height);
 
@@ -5316,6 +5413,7 @@ impl ApplicationHandler<UserEvent> for App {
 			gfx,
 			text,
 			rects,
+			minimap,
 			proxy: self.proxy.clone(),
 			// filled in when the worker answers; the window is not held up for it
 			wallpaper_img: None,
@@ -5332,6 +5430,7 @@ impl ApplicationHandler<UserEvent> for App {
 			resizing: None,
 			dragging_pane: None,
 			bar_dragging: None,
+			map_dragging: None,
 			link_arm: None,
 			menu_link: None,
 			cursor_icon: CursorIcon::Default,
@@ -5589,6 +5688,14 @@ impl ApplicationHandler<UserEvent> for App {
 					state.dirty = true;
 					return;
 				}
+				if let Some(id) = state.map_dragging {
+					let cfg = config::settings();
+					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
+						p.map_drag_to(y, &state.text, &cfg);
+					}
+					state.dirty = true;
+					return;
+				}
 				// mouse-tracking app wants motion/drag reports; when it does, skip our
 				// local hover/selection handling for this move. The report is
 				// PTY-bound: nothing local changed, so no redraw - marking dirty here
@@ -5757,6 +5864,27 @@ impl ApplicationHandler<UserEvent> for App {
 						state.dirty = true;
 						return;
 					}
+					// The minimap column owns its presses the same way: drag the
+					// marker, or press anywhere else in the column to go there.
+					let hit = state.tabs.cur().pane_at(x, y).and_then(|id| {
+						let p = state.tabs.cur().panes.get(&id)?;
+						let g = p.minimap(&state.text, &cfg)?;
+						Some((id, crate::minimap::hit(&g, x, y)?))
+					});
+					if let Some((id, hit)) = hit {
+						state.focus_at(x, y);
+						if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
+							match hit {
+								crate::minimap::Hit::Handle => p.map_grab(y, &state.text, &cfg),
+								crate::minimap::Hit::Track => p.map_jump(y, &state.text, &cfg),
+							}
+						}
+						if hit == crate::minimap::Hit::Handle {
+							state.map_dragging = Some(id);
+						}
+						state.dirty = true;
+						return;
+					}
 				}
 				// mouse-tracking app owns the pointer: report the press, skip local
 				// selection/paste/menu (Shift bypasses to the local action). An open
@@ -5917,6 +6045,14 @@ impl ApplicationHandler<UserEvent> for App {
 						open_link(&url);
 					}
 				}
+				if let Some(id) = state.map_dragging.take() {
+					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
+						p.map_drag = None;
+						p.poke_scrollbar();
+					}
+					state.dirty = true;
+					return;
+				}
 				// end a thumb drag; the hold keeps the bar up for a moment afterwards
 				if let Some(id) = state.bar_dragging.take() {
 					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
@@ -6021,19 +6157,22 @@ impl ApplicationHandler<UserEvent> for App {
 						),
 					};
 					if let Some(p) = state.tabs.cur().panes.get(&id) {
-						if input::wants_mouse(p.mode) {
-							if let Some((col, row)) = p.screen_cell_at(x, y, &state.text) {
-								let btn = if up {
-									input::MouseBtn::WheelUp
-								} else {
-									input::MouseBtn::WheelDown
-								};
-								for _ in 0..notches.min(8) {
-									if let Some(seq) = input::mouse_report(
-										p.mode, btn, true, false, col, row, state.mods,
-									) {
-										p.term.write(seq);
-									}
+						// No cell under the pointer means it is over the minimap
+						// column, not the text - fall through and scroll the buffer.
+						if let Some((col, row)) = input::wants_mouse(p.mode)
+							.then(|| p.screen_cell_at(x, y, &state.text))
+							.flatten()
+						{
+							let btn = if up {
+								input::MouseBtn::WheelUp
+							} else {
+								input::MouseBtn::WheelDown
+							};
+							for _ in 0..notches.min(8) {
+								if let Some(seq) = input::mouse_report(
+									p.mode, btn, true, false, col, row, state.mods,
+								) {
+									p.term.write(seq);
 								}
 							}
 							state.dirty = true;
@@ -6564,6 +6703,14 @@ impl ApplicationHandler<UserEvent> for App {
 			if let Some(wake) = pane.cursor_wake {
 				if wake_now >= wake {
 					pane.cursor_wake = None; // consumed - or an occluded window would spin on it
+					state.dirty = true;
+				} else {
+					cursor_wake = Some(cursor_wake.map_or(wake, |w| w.min(wake)));
+				}
+			}
+			// a minimap compose the throttle deferred: due now, or wake for it
+			if let Some(wake) = pane.map_wake() {
+				if wake_now >= wake {
 					state.dirty = true;
 				} else {
 					cursor_wake = Some(cursor_wake.map_or(wake, |w| w.min(wake)));

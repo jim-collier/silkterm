@@ -2520,6 +2520,7 @@ impl SettingsDialog {
 			}
 			Key::WheelLines => settings.wheel_lines,
 			Key::ScrollbarThickness => settings.scrollbar_thickness,
+			Key::MinimapWidth => settings.minimap_width,
 			Key::Columns => settings.columns as f32,
 			Key::Rows => settings.rows as f32,
 			_ => 0.0,
@@ -2569,6 +2570,7 @@ impl SettingsDialog {
 			}
 			Key::WheelLines => settings.wheel_lines = value,
 			Key::ScrollbarThickness => settings.scrollbar_thickness = value,
+			Key::MinimapWidth => settings.minimap_width = value,
 			Key::Columns => settings.columns = value.round().max(1.0) as usize,
 			Key::Rows => settings.rows = value.round().max(1.0) as usize,
 			_ => {}
@@ -2650,6 +2652,7 @@ impl SettingsDialog {
 			Key::SmoothScroll => self.edited.scroll_smooth,
 			Key::Scrollbar => self.edited.scrollbar,
 			Key::ScrollbarAutoHide => self.edited.scrollbar_auto_hide,
+			Key::Minimap => self.edited.minimap,
 			_ => false,
 		}
 	}
@@ -2675,6 +2678,7 @@ impl SettingsDialog {
 			Key::SmoothScroll => self.edited.scroll_smooth = on,
 			Key::Scrollbar => self.edited.scrollbar = on,
 			Key::ScrollbarAutoHide => self.edited.scrollbar_auto_hide = on,
+			Key::Minimap => self.edited.minimap = on,
 			_ => {}
 		}
 	}
@@ -2889,6 +2893,7 @@ impl SettingsDialog {
 			Key::SmoothScroll => edited.scroll_smooth == defaults.scroll_smooth,
 			Key::Scrollbar => edited.scrollbar == defaults.scrollbar,
 			Key::ScrollbarAutoHide => edited.scrollbar_auto_hide == defaults.scrollbar_auto_hide,
+			Key::Minimap => edited.minimap == defaults.minimap,
 			Key::BgFit => edited.wallpaper_default_fit == defaults.wallpaper_default_fit,
 			Key::BgEnabled => edited.wallpaper_enabled == defaults.wallpaper_enabled,
 			Key::BgRotate => edited.wallpaper_rotate_enabled == defaults.wallpaper_rotate_enabled,
@@ -2962,6 +2967,7 @@ impl SettingsDialog {
 			}
 			Key::WheelLines => defaults.wheel_lines,
 			Key::ScrollbarThickness => defaults.scrollbar_thickness,
+			Key::MinimapWidth => defaults.minimap_width,
 			Key::Columns => defaults.columns as f32,
 			Key::Rows => defaults.rows as f32,
 			_ => 0.0,
@@ -2989,6 +2995,7 @@ impl SettingsDialog {
 			| Key::BgHonorXmpLook
 			| Key::Scrollbar
 			| Key::ScrollbarAutoHide
+			| Key::Minimap
 			| Key::BgContrastMask => {
 				let default_val = match key {
 					Key::Transparency => self.defaults.transparent_background,
@@ -3010,6 +3017,7 @@ impl SettingsDialog {
 					Key::SmoothScroll => self.defaults.scroll_smooth,
 					Key::Scrollbar => self.defaults.scrollbar,
 					Key::ScrollbarAutoHide => self.defaults.scrollbar_auto_hide,
+					Key::Minimap => self.defaults.minimap,
 					_ => self.defaults.remember_size,
 				};
 				self.set_toggle(key, default_val);

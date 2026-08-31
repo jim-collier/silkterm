@@ -108,6 +108,10 @@ Fit and Anchor stored inside a wallpaper image file as XMP metadata, so an image
 
 Opacity and Blur stored inside a wallpaper image file. When SilkTerm is set to honor them, they replace the two sliders for that image, so a tagged pack looks the way it was tuned to look.
 
+## Minimap
+
+A column beside the text showing the whole scrollback in miniature, as colored strokes rather than readable characters. The lit band marks what is on screen; drag it to scroll, or click elsewhere in the column to go there. It takes the space it uses, so switching it on costs the terminal columns.
+
 ## Minimum contrast
 
 A floor on how close text may come to the background it sits on. Text below the floor is lightened on a dark background and darkened on a light one. Text set to exactly the background color is left hidden, since that is how a program hides text on purpose.

@@ -21,6 +21,7 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::config;
 use crate::gfx::RectInstance;
+use crate::minimap::{self, Minimap};
 use crate::palette;
 use crate::scroll::Scroll;
 use crate::term::{PaneId, TermInstance, UserEvent};
@@ -868,7 +869,10 @@ pub struct Pane {
 	// Recycles the per-row Strings the build's attr-run assembler fills each
 	// rebuilt frame (set_text copies out of them, so fresh ones were pure churn).
 	rows_scratch: Vec<(String, AttrsList)>,
+	// `rect` is the text area; `full` is everything the layout gave this pane,
+	// which is wider by the minimap column when one is showing.
 	pub rect: Rect,
+	pub full: Rect,
 	pub title: String,
 	pub read_only: bool, // accept no PTY input/paste; selection + copy still work
 	// --keep-open: hold this pane after its shell exits instead of closing it.
@@ -963,6 +967,10 @@ pub struct Pane {
 	pub bar_hover: bool,
 	pub bar_drag: Option<f32>,
 	pub bar_animating: bool,
+	// Minimap column: the rasterized buffer and the image composed from it, plus
+	// the grab offset inside the viewport marker while it is being dragged.
+	map: Minimap,
+	pub map_drag: Option<f32>,
 	// Hyperlink hover: the pointer in window px (None = not over this pane), the
 	// link it landed on, and a request to re-scan. The scan needs the grid, so it
 	// runs in build() where the term lock is already held - on the frame the
@@ -1149,6 +1157,37 @@ impl Pane {
 		};
 		if advanced > 0 && follow && !cut {
 			self.scroll.nudge_output(advanced as f32, lines as f32);
+		}
+
+		// Minimap: fold this build's grid into the column's cache. Switched off it
+		// is one bool, and the cache is freed at relayout. A pure cursor frame
+		// changes nothing it shows, so it is skipped there.
+		if settings.minimap
+			&& (force_rebuild || !self.text_built || advanced > 0 || self.map.pending())
+		{
+			if let Some(g) = minimap::geom(
+				self.full,
+				margin,
+				ctx.scale,
+				&settings,
+				history + lines,
+				lines,
+				self.scroll.visual_lines(),
+				alt,
+			) {
+				self.map.update(
+					guard.grid(),
+					guard.colors(),
+					&settings,
+					g.preview.w.round() as usize,
+					g.preview.h.round() as usize,
+					ctx.scale,
+					lines,
+					cols,
+					advanced,
+					cut,
+				);
+			}
 		}
 
 		// Alt-screen app-scroll easing: a full-screen app owns its screen and scrolls
@@ -1428,7 +1467,12 @@ impl Pane {
 		// bell change). Reuse the cached buffer + glyphs + bg from the last full
 		// build and recompute only the cursor - skips set_rich_text + shaping, the
 		// expensive part, so a blinking cursor doesn't re-shape text every frame.
-		if !force_rebuild && self.text_built {
+		//
+		// `delta` has to be nil for that to hold: the caller decides `force_rebuild`
+		// from `scroll.animating()`, which is already false on the frame an ease
+		// LANDS, and if that last step crossed a line the grid has just moved under
+		// a buffer nobody re-shaped - text drawn a row off its own backgrounds.
+		if !force_rebuild && self.text_built && delta == 0 {
 			drop(guard);
 			let cursor = self.cursor_quad(
 				cursor_pt,
@@ -2100,6 +2144,71 @@ impl Pane {
 		let (_, _, _, rows) = content_dims(self.rect, ctx);
 		let page = (rows as f32 - 1.0).max(1.0);
 		self.scroll.wheel(if up { page } else { -page });
+		self.poke_scrollbar();
+	}
+
+	// The minimap's pieces for this frame, or None when the column is off. The
+	// marker rides `target` while dragged so it tracks the pointer exactly, and
+	// `visual` otherwise so it moves with the content it describes - the same
+	// rule the scrollbar follows.
+	pub fn minimap(&self, ctx: &TextCtx, cfg: &config::Settings) -> Option<minimap::Geom> {
+		let rows = self.term.lines;
+		let pos = if self.map_drag.is_some() {
+			self.scroll.target_lines()
+		} else {
+			self.scroll.visual_lines()
+		};
+		minimap::geom(
+			self.full,
+			ctx.margin,
+			ctx.scale,
+			cfg,
+			self.scroll.max_lines() as usize + rows,
+			rows,
+			pos,
+			self.mode.contains(TermMode::ALT_SCREEN),
+		)
+	}
+
+	// The rasterized buffer and the image composed from it, for the renderer.
+	pub fn map_cache(&self) -> &Minimap {
+		&self.map
+	}
+
+	// When a compose the throttle deferred comes due.
+	pub fn map_wake(&self) -> Option<std::time::Instant> {
+		self.map.wake()
+	}
+
+	// Start a marker drag, remembering where inside it the grab landed.
+	pub fn map_grab(&mut self, y: f32, ctx: &TextCtx, cfg: &config::Settings) {
+		if let Some(handle) = self.minimap(ctx, cfg).and_then(|g| g.handle) {
+			self.map_drag = Some(y - handle.y);
+			self.poke_scrollbar();
+		}
+	}
+
+	pub fn map_drag_to(&mut self, y: f32, ctx: &TextCtx, cfg: &config::Settings) {
+		let Some(grab) = self.map_drag else { return };
+		let Some(g) = self.minimap(ctx, cfg) else {
+			return;
+		};
+		let rows = self.term.lines;
+		let total = self.scroll.max_lines() as usize + rows;
+		self.scroll
+			.scroll_to(minimap::drag_to(&g, total, rows, y - grab, ctx.scale));
+		self.poke_scrollbar();
+	}
+
+	// A press outside the marker: center the view there, eased rather than cut.
+	pub fn map_jump(&mut self, y: f32, ctx: &TextCtx, cfg: &config::Settings) {
+		let Some(g) = self.minimap(ctx, cfg) else {
+			return;
+		};
+		let rows = self.term.lines;
+		let total = self.scroll.max_lines() as usize + rows;
+		self.scroll
+			.scroll_to(minimap::center_on(&g, total, rows, y, ctx.scale));
 		self.poke_scrollbar();
 	}
 
@@ -2997,9 +3106,15 @@ impl PaneManager {
 	pub fn relayout(&mut self, ctx: &mut TextCtx, area: Rect) {
 		let mut out = Vec::new();
 		layout(&self.root, area, ctx.scale, &mut out);
+		let cfg = config::settings();
 		for (id, rect) in out {
 			if let Some(pane) = self.panes.get_mut(&id) {
-				pane.rect = rect;
+				pane.full = rect;
+				pane.rect = minimap::text_rect(rect, &cfg, ctx.scale);
+				if !cfg.minimap {
+					pane.map.clear();
+				}
+				let rect = pane.rect;
 				let (cw, ch, cols, lines) = content_dims(rect, ctx);
 				pane.term
 					.resize(cols, lines, ctx.cell_w as u16, ctx.cell_h as u16);
@@ -3026,7 +3141,7 @@ impl PaneManager {
 	pub fn pane_at(&self, x: f32, y: f32) -> Option<PaneId> {
 		self.panes
 			.iter()
-			.find(|(_, p)| p.rect.contains(x, y))
+			.find(|(_, p)| p.full.contains(x, y))
 			.map(|(id, _)| *id)
 	}
 
@@ -3099,7 +3214,8 @@ fn spawn_pane(
 	// It stays None only when nothing is switched on at all, where the engine
 	// picks its own default and there is genuinely nothing to report.
 	let command = command.or_else(config::default_shell_argv);
-	let (cw, ch, cols, lines) = content_dims(rect, ctx);
+	let text = minimap::text_rect(rect, &config::settings(), ctx.scale);
+	let (cw, ch, cols, lines) = content_dims(text, ctx);
 	let term = TermInstance::spawn(
 		id,
 		cols,
@@ -3125,7 +3241,8 @@ fn spawn_pane(
 		last_cells: Vec::new(),
 		cells_scratch: Vec::new(),
 		rows_scratch: Vec::new(),
-		rect,
+		rect: text,
+		full: rect,
 		title: String::new(), // what the running program asked the window be called
 		read_only: false,
 		keep_open: false,
@@ -3171,6 +3288,8 @@ fn spawn_pane(
 		bar_hover: false,
 		bar_drag: None,
 		bar_animating: false,
+		map: Minimap::default(),
+		map_drag: None,
 		hover_px: None,
 		link_probe: false,
 		link_hover: None,
