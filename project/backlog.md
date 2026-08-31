@@ -1412,12 +1412,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260628-083740
 	- Closed: 20260830-172000
 
+- ✅ Give PowerShell the same git-aware prompt bash gets.
+	- Ported rather than shared - none of the bash version survives a translation, since PowerShell builds its prompt in a function instead of expanding a template.
+	- It lives in the shell integration block, not in a script beside the config the way the bash one does. A prompt is drawn after every command, and a script would mean starting a process each time, which is not cheap on Windows.
+	- Same rule as before: only a prompt that is still the stock one is replaced. `X9PS1_STANDARD=1` puts a plain prompt back for a session.
+	- Costs one `git` call inside a working tree and none outside one. The check and cross fall back to `y` and `n` on a console that is not on the UTF-8 code page, which Windows PowerShell 5.1 usually is not.
+	- Not seen on Windows yet, and 5.1 will not load a profile at all while its execution policy blocks scripts - which is the state that box is in.
+	- Opened: 20260830-170541
+	- Closed: 20260830-170541
+
 - ✅ Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell.
 	- Baked into the executable, and handed to a bash pane as `PROMPT_COMMAND` in its environment. Nothing is written into anyone's `.bashrc`, and there is nothing to uninstall.
 	- Because rc files run after that, a prompt of your own always wins. So this reaches people who have not set one, and is invisible to everybody else.
 	- Only bash panes, and only ones SilkTerm started. `X9PS1_STANDARD=1` puts the plain prompt back for a session.
 	- The switch is "Git-aware bash prompt" on the Shell tab, beside the PowerShell one. The script is written beside the config and kept current there.
-	- A PowerShell equivalent could follow, and is not started.
+	- A PowerShell equivalent followed on the same day - see the item above.
 	- Opened: 20260826-123553
 	- Closed: 20260830-163500
 
@@ -1644,6 +1653,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- It is drawn in the terminal font rather than the interface one - the column is made of spaces, and spaces align nothing in a proportional face. It is the only piece of chrome that is.
 		- A value with a space or a quote in it is quoted so its edges are unambiguous, picking the quote the value does not already contain: a Windows command line full of double quotes reads inside single ones. The clock reading and the "no directory reported" note stay bare, since quoting them would say they were data.
 	- PowerShell's prompt now shows which PowerShell it is (`[PS 7.6] C:\some\path\>`), on 5.1 and 7 and on every OS 7 runs on - but only when the prompt is still the stock one, so oh-my-posh, starship and a hand-written prompt are untouched.
+		- Superseded 20260830: that prompt is git-aware now and reads like the bash one. The stock-prompt rule is unchanged.
 	- Opened: n/a
 	- Closed: 20260821-104329
 
