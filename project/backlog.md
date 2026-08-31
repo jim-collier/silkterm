@@ -70,11 +70,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
-- 🔘 Windows installer.
-	- Offer "available to all users", or "this user only", or whatever the typical wording is.
-	- Add a SilkTerm folder to the start menu.
-	- Under it, one shortcut per discovered shell (but with silkterm icon), named "SilkTerm - <shell name>", starting in %USERPROFILE%.
-	- Plus a plain SilkTerm shortcut with no shell argument, also starting in %USERPROFILE%.
+- 🔬 Windows installer.
+	- ✅ Offer "available to all users", or "this user only", or whatever the typical wording is.
+		- A standard install-mode page between Welcome and the directory picker. The choice decides the install directory, which registry hive the uninstall entry goes in, and whether the start menu folder is machine-wide or per-user.
+		- Either flavor of an older install is removed first, so installing all-users over a per-user copy no longer leaves two entries in Add/Remove.
+	- ✅ Add a SilkTerm folder to the start menu.
+	- ✅ Under it, one shortcut per discovered shell (but with silkterm icon), named "SilkTerm - <shell name>", starting in %USERPROFILE%.
+		- The installer looks for each shell on PATH and writes a shortcut only for the ones it finds. Same names and same order the Tabs menu uses. The icon comes free, since every shortcut targets silkterm.exe.
+		- The working directory is stored as the unexpanded `%USERPROFILE%`, so an all-users install does not bake the installing account's home directory into everyone's shortcuts.
+	- ✅ Plus a plain SilkTerm shortcut with no shell argument, also starting in %USERPROFILE%.
+	- 🔬 Nothing has been run on Windows. The template compiles, which covers the syntax but not the install-mode page, the shortcut working directories, or the upgrade-over path.
 	- Opened: 20260826-123553
 
 - 🛠️ Dogfood: a build made on one box should reach the others, and the launcher should always run the newest one it can find.
@@ -799,7 +804,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ Paste sent the clipboard bytes unchanged, which breaks a multi-line paste on Windows and leaves bracketed paste open to injection:
 	- Description: two separate faults in the same place. (1) With no bracketed paste, an application cannot tell a paste from typing, so a line break has to arrive as the Enter key delivers one - a lone CR. We sent whatever the clipboard held, and a Windows clipboard is CRLF, so every row also carried an LF and left the shell sitting on a continuation line. That is the ordinary case on Windows, not an edge one. (2) Inside a bracketed paste, an ESC in the text closes the bracket early - the application is watching for `ESC[201~` - and everything after it is then read as keystrokes rather than as data, so pasted content can run a command nobody typed.
-	- Fixed: one helper decides what actually goes on the wire. Unbracketed, every flavour of line break reduces to a single CR; bracketed, the text passes through as the application asked for it except that ESC is dropped.
+	- Fixed: one helper decides what actually goes on the wire. Unbracketed, every flavor of line break reduces to a single CR; bracketed, the text passes through as the application asked for it except that ESC is dropped.
 	- Steps to reproduce: paste several lines into a shell that has not enabled bracketed paste. Before the fix each line was followed by a continuation prompt.
 	- Confirmed on screen, before and after, driving PowerShell 7.6 through a pasted five-line block: the old build ran the first line and then left a continuation prompt after every one of the rest, with the LAST line never running at all; the new build runs each in turn and leaves the final line sitting on the prompt awaiting Enter, which is what it should do when the clipboard has no trailing newline. cmd.exe was correct before and is unchanged.
 	- Opened: n/a

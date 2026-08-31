@@ -6,8 +6,6 @@
 Unicode true
 SetCompressor /SOLID lzma
 
-!include "MUI2.nsh"
-
 !define APPNAME   "SilkTerm"
 !define EXENAME   "silkterm.exe"
 !define COMPANY   "Jim Collier"
@@ -15,13 +13,25 @@ SetCompressor /SOLID lzma
 !define ARCH      "@ARCH@"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
 
+; All users or just this one. MultiUser owns the execution level, $INSTDIR and
+; SHCTX, so every registry write and every shortcut below follows the choice.
+!define MULTIUSER_EXECUTIONLEVEL Highest
+!define MULTIUSER_MUI
+!define MULTIUSER_INSTALLMODE_COMMANDLINE
+!define MULTIUSER_USE_PROGRAMFILES64
+!define MULTIUSER_INSTALLMODE_INSTDIR "${APPNAME}"
+!define MULTIUSER_INSTALLMODE_INSTDIR_REGISTRY_KEY "Software\${APPNAME}"
+!define MULTIUSER_INSTALLMODE_INSTDIR_REGISTRY_VALUENAME "InstallDir"
+
+!include "MultiUser.nsh"
+!include "MUI2.nsh"
+!include "LogicLib.nsh"
+
 Name "${APPNAME} ${VERSION}"
 OutFile "@OUTFILE@"
-InstallDir "$PROGRAMFILES64\${APPNAME}"
-InstallDirRegKey HKLM "Software\${APPNAME}" "InstallDir"
-RequestExecutionLevel admin
 
 !insertmacro MUI_PAGE_WELCOME
+!insertmacro MULTIUSER_PAGE_INSTALLMODE
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -29,41 +39,81 @@ RequestExecutionLevel admin
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
-; Remove any prior install before laying down the new one (silent, keep dir).
 Function .onInit
-	ReadRegStr $0 HKLM "${UNINSTKEY}" "QuietUninstallString"
-	StrCmp $0 "" done
-	ReadRegStr $1 HKLM "${UNINSTKEY}" "InstallLocation"
-	ExecWait '$0 _?=$1'
-	Delete "$1\uninstall.exe"
-done:
+	!insertmacro MULTIUSER_INIT
 FunctionEnd
 
+Function un.onInit
+	!insertmacro MULTIUSER_UNINIT
+FunctionEnd
+
+; Both hives, because a machine can hold an all-users install and a per-user one
+; at once, and installing the other flavor would otherwise leave two entries.
+!macro DropOldInstall root
+	ReadRegStr $0 ${root} "${UNINSTKEY}" "QuietUninstallString"
+	${If} $0 != ""
+		ReadRegStr $1 ${root} "${UNINSTKEY}" "InstallLocation"
+		ExecWait '$0 _?=$1'
+		Delete "$1\uninstall.exe"
+	${EndIf}
+!macroend
+
+; One start-menu entry per shell that is actually here.
+!macro ShellLink exe title args
+	SearchPath $0 "${exe}"
+	${If} $0 != ""
+		CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME} - ${title}.lnk" \
+			"$INSTDIR\${EXENAME}" '--shell "${args}"'
+	${EndIf}
+!macroend
+
 Section "Install"
+	!insertmacro DropOldInstall HKLM
+	!insertmacro DropOldInstall HKCU
+
 	SetOutPath "$INSTDIR"
 	File "@SRCEXE@"
-	WriteRegStr HKLM "Software\${APPNAME}" "InstallDir" "$INSTDIR"
+	WriteRegStr SHCTX "Software\${APPNAME}" "InstallDir" "$INSTDIR"
 
+	; $OUTDIR is what a shortcut records as its working directory. Set (not
+	; SetOutPath'd) to an unexpanded %USERPROFILE% so an all-users install does
+	; not bake the installing account's home into everyone's shortcuts.
 	CreateDirectory "$SMPROGRAMS\${APPNAME}"
+	StrCpy $OUTDIR "%USERPROFILE%"
 	CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\${EXENAME}"
 
+	; Same order the Tabs menu offers them in, and the same names.
+	!insertmacro ShellLink "pwsh.exe"    "PowerShell 7"         "pwsh -NoLogo"
+	!insertmacro ShellLink "nu.exe"      "Nushell"              "nu"
+	!insertmacro ShellLink "elvish.exe"  "Elvish"               "elvish"
+	!insertmacro ShellLink "xonsh.exe"   "Xonsh"                "xonsh"
+	!insertmacro ShellLink "ysh.exe"     "YSH"                  "ysh"
+	!insertmacro ShellLink "osh.exe"     "OSH"                  "osh"
+	!insertmacro ShellLink "murex.exe"   "Murex"                "murex"
+	!insertmacro ShellLink "pycmd.exe"   "PyCmd"                "pycmd"
+	!insertmacro ShellLink "python.exe"  "Python 3"             "python"
+	!insertmacro ShellLink "node.exe"    "Node.js"              "node"
+	!insertmacro ShellLink "cmd.exe"     "Windows Cmd"          "cmd"
+	!insertmacro ShellLink "powershell.exe" "Windows PowerShell 5" "powershell -NoLogo"
+
+	SetOutPath "$INSTDIR"
 	WriteUninstaller "$INSTDIR\uninstall.exe"
-	WriteRegStr   HKLM "${UNINSTKEY}" "DisplayName"       "${APPNAME}"
-	WriteRegStr   HKLM "${UNINSTKEY}" "DisplayVersion"    "${VERSION}"
-	WriteRegStr   HKLM "${UNINSTKEY}" "Publisher"         "${COMPANY}"
-	WriteRegStr   HKLM "${UNINSTKEY}" "InstallLocation"   "$INSTDIR"
-	WriteRegStr   HKLM "${UNINSTKEY}" "UninstallString"   '"$INSTDIR\uninstall.exe"'
-	WriteRegStr   HKLM "${UNINSTKEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
-	WriteRegDWORD HKLM "${UNINSTKEY}" "NoModify" 1
-	WriteRegDWORD HKLM "${UNINSTKEY}" "NoRepair" 1
+	WriteRegStr   SHCTX "${UNINSTKEY}" "DisplayName"       "${APPNAME}"
+	WriteRegStr   SHCTX "${UNINSTKEY}" "DisplayVersion"    "${VERSION}"
+	WriteRegStr   SHCTX "${UNINSTKEY}" "Publisher"         "${COMPANY}"
+	WriteRegStr   SHCTX "${UNINSTKEY}" "InstallLocation"   "$INSTDIR"
+	WriteRegStr   SHCTX "${UNINSTKEY}" "DisplayIcon"       '"$INSTDIR\${EXENAME}"'
+	WriteRegStr   SHCTX "${UNINSTKEY}" "UninstallString"   '"$INSTDIR\uninstall.exe"'
+	WriteRegStr   SHCTX "${UNINSTKEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
+	WriteRegDWORD SHCTX "${UNINSTKEY}" "NoModify" 1
+	WriteRegDWORD SHCTX "${UNINSTKEY}" "NoRepair" 1
 SectionEnd
 
 Section "Uninstall"
 	Delete "$INSTDIR\${EXENAME}"
 	Delete "$INSTDIR\uninstall.exe"
-	Delete "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk"
-	RMDir  "$SMPROGRAMS\${APPNAME}"
+	RMDir /r "$SMPROGRAMS\${APPNAME}"
 	RMDir  "$INSTDIR"
-	DeleteRegKey HKLM "${UNINSTKEY}"
-	DeleteRegKey HKLM "Software\${APPNAME}"
+	DeleteRegKey SHCTX "${UNINSTKEY}"
+	DeleteRegKey SHCTX "Software\${APPNAME}"
 SectionEnd
