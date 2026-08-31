@@ -19,6 +19,7 @@
 	- [Smooth-Scroll](#smooth-scroll)
 	- [Output easing new text](#output-easing-new-text)
 	- [Smooth-scroll inside full-screen apps](#smooth-scroll-inside-full-screen-apps)
+	- [Minimap (2026-08-30, design only)](#minimap-2026-08-30-design-only)
 	- [Text readability scrim](#text-readability-scrim)
 	- [Minimum contrast (2026-08-30)](#minimum-contrast-2026-08-30)
 	- [Font fallback stack](#font-fallback-stack)
@@ -48,6 +49,7 @@
 GUI terminal emulator for Debian/X11/Compiz with pixel-by-pixel smooth scrolling, both:
 
 - Animated easing on output (new text appears).
+
 - Smooth scrollback navigation with wheel.
 
 No existing Linux terminal does animated smooth-scroll on output. (Verified: WezTerm, kitty, foot, Alacritty, GNOME Terminal, Konsole all snap to cell rows.)
@@ -215,6 +217,58 @@ What makes this hard:
 
 It is switchable (`smooth_scroll_apps`, on by default). The strip retains roughly a screenful of scrolled-off rows, so even a fast wheel burst stays filled. The ease's lag ramp bounds how far the content trails reality.
 
+### Minimap (2026-08-30, design only)
+
+An optional sidebar that shows the whole scroll buffer in miniature, in the spirit of the Sublime Text / VS Code minimap. Off by default. The design is settled here; nothing is built yet.
+
+Where it sits:
+
+- Per pane, not per window. Scrollback belongs to a pane, so in a split each pane carries its own map.
+
+- The map owns a real column inside the pane's rect - it never overlays the text. Turning it on costs terminal columns, and the PTY resizes like any other layout change.
+
+- Left to right: terminal text (with the regular scrollbar still overlaying its right edge, unchanged), then the preview, then a slim always-visible scrollbar at the far edge. Two scrollbars on purpose. The inner one is the terminal's, and its position says so. Editors keep one bar at the far right; this is the deliberate departure.
+
+The mapping, which is the load-bearing decision:
+
+- The whole buffer - history plus screen - always maps linearly onto the column, top-anchored, oldest first. The editors slide their minimap once the document outgrows it; this one never does. The highlight over the preview and the far-edge thumb have to be the same object at the same pixels, and only a linear map keeps that true at every depth.
+
+- With a short buffer, lines draw at a capped height (about 2 px at 1x) and the preview just does not reach the bottom of the column yet.
+
+- With a deep buffer, lines go sub-pixel and blend down, so the map compresses instead of scrolling. At the default 10,000-line scrollback a line is a fraction of a pixel; colored regions still read as bands, which is most of the point.
+
+What a line looks like:
+
+- Strokes, not glyphs. Per cell: a run of the cell's fg color where there is ink, over the cell's bg where it differs from the default. Hues survive, so errors, prompts and diffs stay findable from across the room.
+
+Interaction:
+
+- The highlight drags like a thumb and rides the scroll target, so it tracks the pointer exactly.
+
+- A click outside the highlight centers the view on the clicked spot, eased.
+
+- The wheel over the column scrolls the buffer, same as over the text.
+
+Alt screen:
+
+- The column stays, so the PTY is not resized every time an app flips screens. The preview shows the screen itself, with no highlight and no thumb - there is nothing to scroll.
+
+Cost when off:
+
+- Truly off: no column, no cache, no per-frame work. The whole feature hangs off one config check.
+
+Settings and chrome:
+
+- A "Minimap" toggle and a width slider on the Movement tab, under the scrollbar cluster, plus a View-menu toggle. The highlight and the far-edge thumb reuse the scrollbar colors.
+
+How it is built (for the implementation pass):
+
+- A new `minimap.rs` owns the line cache, the raster, the mapping and the hit tests. `pane.rs` carves the rect and routes events. Drawing is one textured quad per pane (same shape as the background-image renderer) plus overlay quads for the highlight and thumb.
+
+- Each line rasterizes once into a fixed-width pixel row when it enters history, since history lines never change; the live screen rows re-raster when they do. `clear` and a resize reflow drop the cache. The on-screen image is composed at most once per redraw, only when content moved, and uploads as a small texture the size of the column - so texture size limits and the GL context's VRAM-loss re-upload both stay non-issues.
+
+- Memory is about 5 MB per pane at the default scrollback and a 120 px column, freed while the map is off.
+
 ### Text readability scrim
 
 A bg-colored backing behind glyphs so text stays legible over a busy background image or a near-transparent terminal. The scene's text is rendered to a coverage texture, turned into a halo, and composited under the crisp text, colored per-pixel so each glyph's backing takes its own cell's bg color. The cursor is a separate coverage texture so it can join the halo and the outline as independent toggles.
@@ -252,9 +306,13 @@ One monospace family is pinned for every weight, because the shaper picks the be
 Which family that is comes from a single search order, the same on every platform:
 
 - the OS monospace family, when "use system font" is on
+
 - then the configured `font_family`, a comma-separated stack
+
 - then the OS monospace family, when "use system font" is off
+
 - then a built-in stack, which is also what a fresh config is written with
+
 - then, only if none of the above is installed, whatever the generic monospace name resolves to
 
 The setting only reorders that list; it never truncates it. An earlier version dropped `font_family` entirely while following the OS font. The same build and the same config then resolved differently depending on the platform, and a configured stack could be silently ignored. Every list is now always walked. A family that is not installed simply falls through to the next one, and the configured stack still has effect as a fallback.
@@ -497,7 +555,9 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - On Windows a release build owns no console of its own, so printing has to join the one that launched it. This happens only on the paths that print and exit; a terminal window that held a console would die with the shell that started it.
 
 - The contract on saving is that a user's comments and blank-line grouping survive. Layout may be tidied, meaning indentation and quotes that are not needed, but a value is never rewritten. The shipped template is deliberately spelled the way a save would spell it, so the first save is a no-op rather than a reflow of the file we just wrote.
+
 - A save writes through a temp file and a rename, never in place, so a crash mid-save cannot leave a truncated config. If loading had to drop a line it could not place, the save is refused rather than quietly deleting it. One changed setting is not worth a line someone wrote.
+
 - The template's sections follow the Settings dialog's tabs, in the same order, so a person who has learned one has learned the other. That order reaches a new file only. An existing config keeps whatever order it has, since the machinery that adds new settings places them but never moves what is already there.
 
 - The file is organized as nested blocks, tab-indented, mirroring how the settings relate: `wallpaper` holds its children, with `rotate` and `contrast_mask` nested inside it. A setting can also be written as a single dotted line (`wallpaper.opacity: 0.1`) and reads identically. The block form is just the canonical spelling.
@@ -523,15 +583,25 @@ The built-in stack is last for a reason. The generic monospace query below it is
 Guiding constraint: GitHub is dumb git hosting plus optional release storage, nothing more. No hosted CI, no Actions, as few third-party tools as possible; the whole pipeline runs locally (`cicd/cicd.bash`).
 
 - Merge gate: `cicd.bash --gate` (fmt check, clippy with warnings as errors, tests) runs as the `pre-push` hook for pushes to main or dev. This is the local stand-in for a hosted CI workflow; feature-branch pushes are not gated.
+
 - Version-bump guard: the same `pre-push` hook blocks a push to main unless its `source/Cargo.toml` version is a strict increase over the version already on main, by full semver precedence including prerelease ordering. So a release merge can't ship the same-or-lower version. It also requires the README Release badge to match that version, the same check `release.bash` makes, just earlier. It skips on the first main push and on branch deletes, and is overridable with `--no-verify` / `SKIP_GATE=1`.
+
 - Branch flow: feature branches merge `--no-ff` into `dev` (the integration target). `main` is release-only: merging dev into main cuts a release.
+
 - Releases: `cicd/utility/release.bash` tags the merge `v<version>` and can push the tag and attach the artifacts to a GitHub Release as plain uploads. The version comes from `source/Cargo.toml` alone. The tag is read from it and the build stamps from it, so they can never disagree. Version and README badge get bumped on dev before the release merge; nothing is ever committed directly on main.
+
 - Build matrix (buildable from this Linux x86_64 box): Linux x86_64 (native) and, via `cargo-zigbuild` + `zig`, Linux ARM64, Windows x86_64 (mingw), Windows ARM64. macOS and BSD are deferred, since cross-building them needs an Apple SDK (osxcross, license-gated) or a FreeBSD sysroot, neither present here. The debug build is what the tests and profiler run against, and the optimized release builds feed packaging and dogfooding. ARM64 targets are on by default, since zig cross-builds aren't emulated and so are not much slower, and they drop out with `--no-arm`.
+
 - Windows x86_64 toolchain for releases: the gnu (mingw) build is the canonical shipped Windows x86_64 binary, and the msvc build is deliberately left out of the Linux-cut release. The gnu build cross-builds from this Linux box in the same run as everything else, and is self-contained. msvc can only be built on Windows, since it needs `link.exe`, so folding it in would mean a Windows->Linux binary hand-off. Since the msvc build was made crt-static it no longer offers end users anything gnu doesn't. Its remaining edges, PDB/WinDbg debugging and a standard ABI, are dev-side only. `cicd-win.ps1` still builds msvc on Windows for local dogfooding and debugging. Two things would reopen this: Authenticode code-signing, whose natural home is Windows and would pull Windows-installer finalization onto that box; or evidence that mingw binaries trip antivirus reputation heuristics enough to matter. `makensis` itself is host-agnostic, so building the Windows installers on Linux is a non-issue independent of this choice.
+
 - Packaging (pipeline stage 6, when `--quick` is not passed): built from the stage-5 release binaries, never rebuilt. Linux -> `.deb` (cargo-deb) and `.rpm` (cargo-generate-rpm) per arch, driven by `[package.metadata.deb]` / `[package.metadata.generate-rpm]` in `source/Cargo.toml`. Windows -> one self-contained NSIS installer `.exe` per arch (`cicd/packaging/windows/installer.nsi.in` + `makensis`). It upgrades an existing install in place by running the old uninstaller first, and needs no bundled runtime because the binary links only system DLLs. RPM versions can't contain `-`, so `1.0.0-beta1` is emitted as `1.0.0~beta1`. AppImage/Flatpak and the deferred macOS `.dmg` / BSD packages are future work.
+
 - Artifact naming (stable; download links depend on it): `<exe>-<version>-<os-arch>[.exe]` for binaries, `<exe>-<version>-<os-arch>.{deb,rpm}` and `<exe>-<version>-<os-arch>-setup.exe` for packages, plus `<exe>-<version>-sha256sums.txt` (covers binaries and packages), all collected into `cicd/artifacts/release/`.
+
 - Pinning: `rust-toolchain.toml` pins rustc/clippy/rustfmt and the cross targets. The cargo-installed helpers (cargo-deny, cargo-zigbuild, cargo-deb, cargo-generate-rpm) and makensis are pinned in `cicd/config.bash` (`TOOL_PINS`) with a non-gating drift warning. Dependency freshness is a periodic local `cargo update` pass, and cargo-deny advisories flag anything urgent in every run.
+
 - README badges: static shields only (release, license, minimum Rust). No CI badge, since there is no hosted workflow to point one at.
+
 - Wallpaper gallery on GitHub Pages: `docs/` is served from main, and holds one self-contained page - a thumbnail grid whose tiles open the wallpaper full size in place, with prev/next paging, a filter box and per-image provenance. A README cannot do this: GitHub renders no scripting and strips image maps, so a single contact sheet has no clickable tiles and there is no way to page through anything. It stretches the guiding constraint above and does so knowingly - Pages here is branch-served static files with no Actions workflow, GitHub builds nothing, and if it were switched off tomorrow the only casualty would be one README link. The page carries thumbnails only (about 1.4 MiB) and fetches each full image from the pack already in the repository, so the 60 MiB of wallpapers is never stored twice. Both it and the README contact sheet come out of `cicd/utility/wallpaper-gallery.bash`, which is deliberately one entry point: two rendered artifacts from one pack go stale together or not at all.
 
 ### A tab can be named by hand, and the window title follows the tab (2026-08-30)
@@ -539,15 +609,21 @@ Guiding constraint: GitHub is dumb git hosting plus optional release storage, no
 Double-clicking a tab renames it in place. The strip has always drawn what the shell is doing, which is right most of the time and wrong when several tabs are running the same thing in the same tree.
 
 - The edit starts with what the tab already says, all of it selected, so typing replaces it and any other key edits it. Enter or Tab keeps the change, Escape drops it, and a click anywhere else keeps it. Selection, Home and End, and paste all work; a pasted newline becomes a space, since a tab is one line high.
+
 - Committing a title that matches what the tab would have said on its own puts it back to naming the shell. That is the way out of a hand-typed title, and it needs no extra control.
+
 - A title left empty is kept, so a tab can be deliberately blank. The tab shrinks to its close box and is still selectable.
+
 - Titles need not be unique. Two tabs called the same thing is a thing people do on purpose.
+
 - The rename is keyed by the tab's position, so opening or closing a tab ends it - committed on an open, dropped on a close.
 
 The window title is now assembled in one place, and always starts with the application name. A dogfood build says which one it is, since the pool holds several and they are otherwise indistinguishable in the taskbar.
 
 - After the name comes, in order: a title typed on the tab, else the title the running program asked for, else what the tab says about the shell. So a program that renames the window (an editor, a build tool) reaches the title bar without touching the tab, and a hand-typed tab title outranks it.
+
 - A tab deliberately blanked lets the program's title through, and with neither the title is just the application name. That is the one case where blank means "defer" rather than "show nothing".
+
 - A `--title` given on the command line is still the whole answer, verbatim. It is an explicit request for exactly that string.
 
 ### Tabs report what they are running, and where (2026-08-21)
@@ -555,9 +631,13 @@ The window title is now assembled in one place, and always starts with the appli
 A tab used to say the application's own name on Windows and the shell's process name on unix. It now reports the shell by its FRIENDLY name - the one the Shells list carries, which is the name the user gave it - followed by what that shell is doing: the command in the foreground, or the last one it ran, or, having run nothing, the directory it is in.
 
 - The shell a pane runs is resolved once, when the pane is spawned. Leaving it as "whatever the default shell is" let the answer change under a running pane, since the background scan fills the list seconds after launch and the Shells tab reorders it - so a pane could be labelled with a shell it was not running.
+
 - The path is shortened the way PyCmd's prompt does it: directories above the current one drop to their initials, and only if that is still too wide does an ellipsis eat the middle. Two things survive every step, because they are what distinguish a location from a command - the anchor it starts from and the separator it ends with. Windows keeps its drive letter and gets no `~`, since neither shell there prints one.
+
 - Tab width is two percentages of the window rather than a fixed cap, so the extra text has room on a wide display while a lone tab still reads as a tab. See the entry below for what those two now mean.
+
 - When the tabs stop fitting, the strip shows a page at a time rather than shrinking them to nothing. The wheel over the tab bar turns the page, and switching tabs brings the new one onto it.
+
 - A hover tip carries what the tab cannot: the shell's name, the command line behind it, whatever is running now, the whole path, and how long the tab has been open. It reads as a table - one `key: value` per line, every value starting in the same column - which is why it is the one piece of chrome drawn in the TERMINAL font rather than the interface one: the column is made of spaces, and spaces align nothing in a proportional face. A value carrying a space or a quote is quoted, so its edges are never in doubt; the quote picked is the one the value does not already contain, the same habit the config file has, so a Windows command line reads inside single quotes instead of fighting its own double ones. What is derived rather than quoted - the clock reading, and the note that no directory was reported - stays bare, since quoting those would say they were data.
 
 ### A tab is as wide as its own label needs (2026-08-23)
@@ -565,10 +645,15 @@ A tab used to say the application's own name on Windows and the shell's process 
 Tabs used to divide the bar evenly between a minimum and a maximum percentage of the window, so every tab was the same width whether it had anything to say or not. They now size themselves.
 
 - The first percentage is the REGULAR width: what a tab is when nothing is pushing on it. It is a target, not a share - three tabs on a wide bar sit at it and leave the rest of the bar empty, rather than a couple of them stretching across the window.
+
 - A tab whose label wants more room grows past it, up to the maximum. A crowded bar pushes every tab back below it. Everyone reaches the regular width before anyone grows past it, so a long path can never cost another tab its ordinary size, and under crowding each tab gives up the same fraction rather than the last few being starved.
+
 - Defaults are 10% regular and 100% maximum. The old pair (8% and 26%) made sense when the bar was divided evenly; a maximum now only says how far one tab may grow when it has the room, which is worth allowing in full for a window holding a single tab.
+
 - The floor a tab may not shrink past is its own shortest label - a short form of the shell's name and nothing else. Tabs past that point become a page.
+
 - What a tab says now gives way in a fixed order, rather than only the path shortening: the shell's name shortens first, then the running command's name is truncated, then the path abbreviates, then the command goes, then the path, and what is left is the shortest form of the shell's name. The path is shown alongside the command now, where before a tab running something said only what it was running.
+
 - Short shell names are hand-picked for the shells we ship ("Windows Cmd" reads "Cmd", "PowerShell 7" reads "PS 7") and derived for anything renamed, since nothing mechanical arrives at "Cmd" from "Windows Cmd". A derived name keeps its distribution rather than its family ("WSL2; Ubuntu" reads "Ubuntu") and marks a variant with a star, so "Zsh" and "Zsh*" at least say that one of them is not the ordinary one.
 
 ### PowerShell gets the same prompt bash does (2026-08-21, reworked 2026-08-30)
