@@ -2516,9 +2516,17 @@ impl State {
 				mt(copy_output, "Copy on output", MenuAction::ToggleCopyOutput),
 			],
 			2 => vec![
-				mia('I', "Increase font size (Ctrl +)", MenuAction::FontBigger),
-				mia('D', "Decrease font size (Ctrl -)", MenuAction::FontSmaller),
-				mia('e', "Reset font size (Ctrl 0)", MenuAction::FontReset),
+				mia(
+					'I',
+					"Increase font size (Ctrl+Plus)",
+					MenuAction::FontBigger,
+				),
+				mia(
+					'D',
+					"Decrease font size (Ctrl+Minus)",
+					MenuAction::FontSmaller,
+				),
+				mia('e', "Reset font size (Ctrl+0)", MenuAction::FontReset),
 				Entry::Sep,
 				mta('R', read_only, "Read-only", MenuAction::ToggleReadOnly),
 				Entry::Sep,

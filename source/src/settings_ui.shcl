@@ -561,7 +561,7 @@ rows:
 	ThemeActions:
 		label: ""
 		kind: buttons
-		options: "Save", "Save as...", "Rename", "Delete"
+		options: "Save", "Save as…", "Rename…", "Delete"
 		help: "Save keeps the colors below under this theme's name. Only a saved theme can be renamed or deleted."
 
 	Colors:
