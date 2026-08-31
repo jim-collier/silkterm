@@ -55,7 +55,7 @@ The part in brackets only appears inside a git working tree, and the two marks a
 
 When the brackets are there the typing moves to a second line behind an arrow, since the first line is long by then. Outside a repository the prompt is one line and ends in the usual `>`.
 
-The same prompt appears on Windows PowerShell 5.1 (`[PS 5.1] ...`) and on PowerShell 7 wherever it runs, macOS and Linux included. The check and cross need a console on the UTF-8 code page; on the OEM code page that 5.1 usually starts with, plain `y` and `n` stand in for them.
+The same prompt appears on Windows PowerShell 5.1 (`[PS 5.1] ...`) and on PowerShell 7 wherever it runs, macOS and Linux included. The block puts the console on the UTF-8 code page, so a branch name with a non-ASCII character in it reads correctly.
 
 It costs one `git` call per prompt, and none at all outside a working tree - the search for a `.git` folder is done in the shell.
 
@@ -90,16 +90,14 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	# changes while the session runs, and the prompt is drawn after every command.
 	$global:__SilkTermHasGit = [bool](Get-Command git -CommandType Application -ErrorAction SilentlyContinue)
 	$global:__SilkTermRemotes = @{}
-	# Glyphs need a console that can carry them. Windows PowerShell 5.1 usually
-	# starts on an OEM code page, where these would arrive as question marks, so
-	# there is a plain fallback. They are written as code points rather than as
-	# characters because 5.1 reads a file with no byte-order mark as ANSI.
-	if ([Console]::OutputEncoding.CodePage -eq 65001) {
-		$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2714; No = [string][char]0x2718; Arrow = [char]::ConvertFromUtf32(0x1F846) }
-	}
-	else {
-		$global:__SilkTermGlyphs = @{ Yes = 'y'; No = 'n'; Arrow = '>' }
-	}
+	# The console goes to UTF-8 so that a branch name with a non-ASCII character
+	# in it decodes, and so nothing downstream has to guess. The prompt itself
+	# is written as wide characters and reaches the screen either way.
+	try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false } catch { }
+	# Code points rather than literal glyphs, because 5.1 reads a file with no
+	# byte-order mark as ANSI. The arrow is a plain one rather than the bash
+	# prompt's U+1F846, which almost no font covers.
+	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2714; No = [string][char]0x2718; Arrow = [string][char]0x2192 }
 	# Root gets a different decorator, the way a unix prompt does.
 	$global:__SilkTermAdmin = $false
 	try {

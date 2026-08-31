@@ -1426,8 +1426,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Ported rather than shared - none of the bash version survives a translation, since PowerShell builds its prompt in a function instead of expanding a template.
 	- It lives in the shell integration block, not in a script beside the config the way the bash one does. A prompt is drawn after every command, and a script would mean starting a process each time, which is not cheap on Windows.
 	- Same rule as before: only a prompt that is still the stock one is replaced. `X9PS1_STANDARD=1` puts a plain prompt back for a session.
-	- Costs one `git` call inside a working tree and none outside one. The check and cross fall back to `y` and `n` on a console that is not on the UTF-8 code page, which Windows PowerShell 5.1 usually is not.
-	- Not seen on Windows yet, and 5.1 will not load a profile at all while its execution policy blocks scripts - which is the state that box is in.
+	- Costs one `git` call inside a working tree and none outside one. The console is put on UTF-8 at load so that git's own output decodes.
+	- Seen on Windows under both 5.1 and 7. Note 5.1 will not load a profile at all while its execution policy blocks scripts, which is the state that box is in.
 	- Opened: n/a
 	- Closed: 20260830-170541
 

@@ -22,16 +22,14 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	# changes while the session runs, and the prompt is drawn after every command.
 	$global:__SilkTermHasGit = [bool](Get-Command git -CommandType Application -ErrorAction SilentlyContinue)
 	$global:__SilkTermRemotes = @{}
-	# Glyphs need a console that can carry them. Windows PowerShell 5.1 usually
-	# starts on an OEM code page, where these would arrive as question marks, so
-	# there is a plain fallback. They are written as code points rather than as
-	# characters because 5.1 reads a file with no byte-order mark as ANSI.
-	if ([Console]::OutputEncoding.CodePage -eq 65001) {
-		$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2714; No = [string][char]0x2718; Arrow = [char]::ConvertFromUtf32(0x1F846) }
-	}
-	else {
-		$global:__SilkTermGlyphs = @{ Yes = 'y'; No = 'n'; Arrow = '>' }
-	}
+	# The console goes to UTF-8 so that a branch name with a non-ASCII character
+	# in it decodes, and so nothing downstream has to guess. The prompt itself
+	# is written as wide characters and reaches the screen either way.
+	try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false } catch { }
+	# Code points rather than literal glyphs, because 5.1 reads a file with no
+	# byte-order mark as ANSI. The arrow is a plain one rather than the bash
+	# prompt's U+1F846, which almost no font covers.
+	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2714; No = [string][char]0x2718; Arrow = [string][char]0x2192 }
 	# Root gets a different decorator, the way a unix prompt does.
 	$global:__SilkTermAdmin = $false
 	try {
