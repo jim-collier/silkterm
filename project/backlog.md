@@ -121,20 +121,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Note: deferred, needs multi-window.
 	- Opened: 20260703-091342
 
-- 🔘 Begin a detailed UI/UX '[repo]/project/uiux-style-guide.md'
-	1. Reverse engineer using existing work (mostly menus and settings dailog).
-	2. Refine the guide to be self-consistent and for a more user-friendly UI/UX.
-	3. Apply the updates across the project (mostly menus and settings dailog).
-	- Opened: 20260719-085918
-
-- 🔘 Begin a '[repo]/glossary.md' and link to it in README.md:
-	- Defines unusual, technical, and/or highly specific English word terms used in the settings dialog, backlog, design.md, etc.
-	- Even in source code that are referred to or hinted at - frequently not rarely - as English words.
-	- Limit to concrete concepts that are unique to this project, not highly technical, and/or may be unfamiliar to, say, high-school reading level users.
-	- Targeted toward end users, as well as junior developers brand-new to the projecs.
-	- Limit the number of definitions to something like the top 20 to 50 terms most useful to define, in terms of uniqueness and approximate frequency. (E.g. "Scrim", "Contrast mask", and parts of the application UI, UX, settings, or features that are given specific names so that we know what's being referred to. Etc.)
-	- Opened: 20260719-085918
-
 - 🔘 At startup, offer to copy the wallpaper pack from the repo to the local wallpaper directory.
 	- The README now carries a one-liner for it (Wallpaper pack section), so this item is only about the in-app offer.
 	- Show it once, on a first run with no config file and no wallpaper directory. Window title "First-time setup". Buttons bottom right: "Download background images now" and "Close".
@@ -1395,6 +1381,28 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Begin a detailed UI/UX '[repo]/project/uiux-style-guide.md'
+	- ✅ Reverse engineer using existing work (mostly menus and settings dialog).
+		- Written from what is built: wording and capitalization, menu structure and accelerators, the Settings dialog's tabs, groups, sub-groups and rows, button and prompt conventions, flyover help, the DIP measurement rules, the ten color roles, and keyboard behavior.
+	- ✅ Refine the guide to be self-consistent and for a more user-friendly UI/UX.
+		- Contradictions were settled in the guide rather than left as two habits. It keeps a short list of places the built interface still differs, so the gap is visible instead of forgotten.
+	- ✅ Apply the updates across the project (mostly menus and settings dialog).
+		- "Save as..." and "Rename" on the Themes tab now end in a real ellipsis, the way Settings and About already did.
+		- The three font-size items on the View menu read "Ctrl+Plus", "Ctrl+Minus" and "Ctrl+0", so every shortcut in every menu is spelled one way. Both were looked at on screen.
+		- Two differences are deliberate and stay listed rather than fixed: the capital S in "Paste Selection", which is what its accelerator has to land on, and "Copy on select" sitting on the Cursor tab, which was asked for and is pinned by a test.
+	- Opened: 20260719-085918
+	- Closed: 20260830-204500
+
+- ✅ Begin a '[repo]/glossary.md' and link to it in README.md:
+	- Defines unusual, technical, and/or highly specific English word terms used in the settings dialog, backlog, design.md, etc.
+	- Even in source code that are referred to or hinted at - frequently not rarely - as English words.
+	- Limit to concrete concepts that are unique to this project, not highly technical, and/or may be unfamiliar to, say, high-school reading level users.
+	- Targeted toward end users, as well as junior developers brand-new to the projecs.
+	- Limit the number of definitions to something like the top 20 to 50 terms most useful to define, in terms of uniqueness and approximate frequency. (E.g. "Scrim", "Contrast mask", and parts of the application UI, UX, settings, or features that are given specific names so that we know what's being referred to. Etc.)
+	- Done: about forty terms, alphabetical, one short paragraph each. Terminal jargon that every terminal shares is left out unless SilkTerm gives it a particular meaning. Linked from the Configuration and Contributing sections of the README.
+	- Opened: 20260719-085918
+	- Closed: 20260830-204500
 
 - ✅ Setting dialog (part 2):
 	- ✅ Flyover help text when mousing over elements. (Make this a reusable feature.)
