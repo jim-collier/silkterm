@@ -2,7 +2,8 @@
 // Copyright © 2026 Jim Collier
 
 //! What gets set up in the shells this terminal starts: a directory-reporting
-//! block in PowerShell profiles, and a git-aware prompt offered to bash.
+//! block in PowerShell profiles, and a git-aware prompt for both PowerShell and
+//! bash.
 //!
 //! The PowerShell half:
 //!
@@ -36,6 +37,10 @@
 //! - It runs on the shell-scan thread, well after the window is up, because it
 //!   asks PowerShell itself where its profile is - which means starting one.
 //!
+//! The block also carries the prompt, rather than pointing at a script written
+//! beside the config the way the bash half does. A prompt is drawn after every
+//! command, and on Windows starting a process that often is not free.
+//!
 //! The bash half is a much smaller thing, and deliberately so. bash picks up
 //! `PROMPT_COMMAND` from its environment, and an rc file that sets one of its
 //! own runs afterwards and wins - so a pane is OFFERED a prompt rather than
@@ -51,6 +56,10 @@ use crate::shells::Found;
 // The block, and the marker that says it is already there. Compiled in so the
 // binary is the one source of it - `shell-integration.md` documents the same
 // text for anyone adding it by hand, and a test holds the two together.
+//
+// It is written out as plain UTF-8 with no byte-order mark, and Windows
+// PowerShell 5.1 reads such a file as ANSI - so the block itself has to stay
+// ASCII, and the glyphs its prompt draws are spelled as code points.
 pub const SNIPPET: &str = include_str!("shell_integration.ps1");
 // Named rather than spelled at each use: this module compares and rewrites
 // line endings constantly, and an escape is easy to get subtly wrong.
@@ -578,6 +587,25 @@ mod tests {
 			refreshed_block(&format!("{MARKER}\nhalf a block\n"), LF),
 			None
 		);
+	}
+
+	// A profile with no byte-order mark is read as ANSI by Windows PowerShell
+	// 5.1, so a single accented character or box-drawing glyph in here arrives
+	// mangled on the one version that cannot be told otherwise.
+	#[test]
+	fn the_block_is_plain_ascii() {
+		let stray: String = SNIPPET.chars().filter(|c| !c.is_ascii()).collect();
+		assert!(stray.is_empty(), "non-ascii in the block: {stray}");
+	}
+
+	// The prompt is part of the block rather than a script beside it, and both
+	// halves of the version split have to reach it.
+	#[test]
+	fn the_block_carries_the_prompt() {
+		assert!(SNIPPET.contains("function global:__SilkTermPrompt"));
+		assert!(SNIPPET.contains("git status --porcelain=v2 --branch"));
+		// the 6+ hook branch, and the 5.1 wrap
+		assert_eq!(SNIPPET.matches("__SilkTermPrompt }").count(), 2);
 	}
 
 	// The block people are told to paste in by hand has to be the block that

@@ -405,6 +405,8 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - x9ps1-git is a separate MIT project of the same author. The in-repo copy is a vendored copy of its `bin/x9ps1-git`, and will go stale on its own if nobody looks - the version it carries is in its own header.
 
+- PowerShell gets the same prompt, ported rather than shared, and delivered the other way. See below for why the two halves cannot use one mechanism.
+
 ### One tip system, four places that draw it (2026-08-30)
 
 - Flyover help comes up in four places: a Settings row, a link in the About box, a tab in the strip, and a menu item. Two renderers and two fonts are involved, so the drawing was never going to be shared.
@@ -569,8 +571,18 @@ Tabs used to divide the bar evenly between a minimum and a maximum percentage of
 - What a tab says now gives way in a fixed order, rather than only the path shortening: the shell's name shortens first, then the running command's name is truncated, then the path abbreviates, then the command goes, then the path, and what is left is the shortest form of the shell's name. The path is shown alongside the command now, where before a tab running something said only what it was running.
 - Short shell names are hand-picked for the shells we ship ("Windows Cmd" reads "Cmd", "PowerShell 7" reads "PS 7") and derived for anything renamed, since nothing mechanical arrives at "Cmd" from "Windows Cmd". A derived name keeps its distribution rather than its family ("WSL2; Ubuntu" reads "Ubuntu") and marks a variant with a star, so "Zsh" and "Zsh*" at least say that one of them is not the ordinary one.
 
-### PowerShell's prompt says which PowerShell it is (2026-08-21)
+### PowerShell gets the same prompt bash does (2026-08-21, reworked 2026-08-30)
 
-The integration block now sets a prompt reading `[PS 7.6] C:\some\path\>` - two PowerShells look alike at a prompt, and the version is the thing you want to know. It is set only where the prompt is still the one PowerShell ships, identified by the help link its own definition carries; anything anybody else installed is left alone.
+The integration block sets a prompt, but only where the prompt is still the one PowerShell ships, identified by the help link its own definition carries. Anything anybody else installed is left alone.
+
+It began as a prompt that named the version, because two PowerShells look alike at a prompt. It now reads the same as the bash prompt described above: version, time, user, host, path, and in a git working tree the remote, the branch, and two marks for committed and level with the upstream. A PowerShell pane and a bash pane should look like the same terminal.
+
+Two decisions came out of the port.
+
+- It lives in the block rather than in a script beside the config, which is where the bash prompt lives. A prompt is drawn after every command, and a script would mean a process per prompt - cheap on unix, not on Windows. The block is already kept up to date in place, so it carries updates just as well as a file would.
+
+- The block stays plain ASCII, and the check, cross and arrow are written as code points. A file with no byte-order mark is read as ANSI by Windows PowerShell 5.1, which would mangle a literal glyph on the one version that cannot be told otherwise. The glyphs are also swapped for `y` and `n` when the console is not on the UTF-8 code page, which 5.1 usually is not.
+
+Cost was the other thing the port had to answer, since three `git` calls per prompt is invisible on unix and not on Windows. The search for the working tree is done in the shell rather than by asking git, so a directory outside a repository costs no process at all, and inside one a single `git status --porcelain=v2 --branch` answers branch, clean and upstream together. The remote URL is read once per repository and remembered.
 
 The block is also kept up to date in place from then on, between its two markers. It gains things over time, and an install that only ever appended would leave everyone who already had it on the first version forever. That edit is safe only because the region is delimited by markers we wrote - which is exactly the signal the stored shell list lacks, and why that list may still only ever be added to.
