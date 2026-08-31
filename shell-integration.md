@@ -1,8 +1,14 @@
+<!-- markdownlint-disable MD007 -- Indent count -->
+<!-- markdownlint-disable MD010 -- No hard tabs -->
+<!-- markdownlint-disable MD033 -- No inline html -->
+<!-- markdownlint-disable MD055 -- Table pipe style [Expected: leading_and_trailing; Actual: leading_only; Missing trailing pipe] -->
+<!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
+
 # Shell integration
 
 SilkTerm opens a new tab, split or window in the directory the current pane is in. To do that it has to know where that pane's shell is, and for most shells it can simply ask the operating system - it reads the shell process's own working directory, and nothing needs setting up.
 
-Some shells never tell the operating system where they are. PowerShell is the one almost everybody meets: `Set-Location` moves PowerShell's own idea of where it is and leaves the process itself in the directory it was launched in, so there is nothing to read. The same applies to any session where the shell you are typing at is not the process SilkTerm started - an `ssh` session, a container, a REPL that keeps its own location.
+Some shells never tell the operating system where they are. PowerShell is an example. `Set-Location` moves PowerShell's own idea of where it is and leaves the process itself in the directory it was launched in, so there is nothing to read. The same applies to any session where the shell you are typing at is not the process SilkTerm started - an `ssh` session, a container, a REPL that keeps its own location.
 
 The fix is the same one every terminal uses: have the shell say where it is, in a short escape sequence. SilkTerm listens for two spellings and takes either.
 
@@ -13,14 +19,18 @@ What the shell reports wins over what the operating system can see. A reported d
 
 ## PowerShell: SilkTerm does this for you
 
-A few seconds after launch, SilkTerm looks for the PowerShells you have installed and adds the block below to each one's profile. You do not have to do anything, and it happens once.
+A few seconds after launch, SilkTerm looks for the PowerShells you have installed and adds the block below to each one's profile. You don't have to do anything, and it happens once.
 
 What it will not do:
 
 - **Touch a profile that already reports.** Its own marker, or any other OSC 7 / OSC 9;9 already in the file - a Windows Terminal setup, oh-my-posh, anything - means somebody has this in hand, and the file is left exactly as it is.
+
 - **Rewrite what is there.** The block is appended, after a copy of the profile is saved beside it as `Microsoft.PowerShell_profile.ps1.silkterm-backup`. Everything above and below the two markers stays exactly as you wrote it.
+
 - **Put it back.** Deleting the block is how you switch it off. Nothing restores it.
+
 - **Replace a prompt you chose.** If your prompt is still the one PowerShell ships, the block swaps in a git-aware one (below). If it is anything else, including oh-my-posh, starship or a `prompt` function of your own, it is left alone: on PowerShell 6+ the prompt is not touched at all, and on Windows PowerShell 5.1, which has no other hook, yours is wrapped rather than replaced.
+
 - **Write a file the shell would refuse to read.** If PowerShell's execution policy blocks script files, the block would only turn every launch into a red execution-policy error, so the profile is left alone and a line says which shell and why. Windows PowerShell 5.1 is commonly in that state; `Get-ExecutionPolicy` shows it, and `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` is the usual fix - your call to make, not SilkTerm's.
 
 One thing it *will* do: keep the block itself up to date. It gains things over time - the git-aware prompt is one - and only the text between the two markers is ever rewritten. If you want to change what the block does, copy it out below the markers and edit that copy, or your edits will be replaced on a later launch.
@@ -254,8 +264,11 @@ A separate thing, and the only other setup SilkTerm does for a shell. A bash pan
 It is an offer, not an install:
 
 - Nothing is written into `.bashrc` or any other file of yours. The prompt is handed to the pane as `PROMPT_COMMAND` in its environment.
+
 - Your rc files run afterwards, so a prompt of your own simply wins. If you already set `PROMPT_COMMAND` - directly, or through starship, oh-my-posh or `/etc/profile.d/vte.sh` - you will never see this one.
+
 - It reaches bash panes only, and only ones SilkTerm started. A shell you `ssh` into, or a `sudo -i`, keeps whatever prompt it has.
+
 - `X9PS1_STANDARD=1` in a pane puts the ordinary Debian-style prompt back for that session.
 
 Clear "Git-aware bash prompt" on the Shell tab of Settings, or set `shell.bash_prompt: false` in the config, to switch it off. The script itself is written beside the config as `x9ps1-git`, and is a copy of [x9ps1-git](https://github.com/jim-collier/x9ps1-git) (MIT) - usable on its own from a `PATH` directory if you want it in every terminal rather than this one.

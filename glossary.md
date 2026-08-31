@@ -1,3 +1,9 @@
+<!-- markdownlint-disable MD007 -- Indent count -->
+<!-- markdownlint-disable MD010 -- No hard tabs -->
+<!-- markdownlint-disable MD033 -- No inline html -->
+<!-- markdownlint-disable MD055 -- Table pipe style [Expected: leading_and_trailing; Actual: leading_only; Missing trailing pipe] -->
+<!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
+
 # Glossary
 
 Words SilkTerm uses in its settings, its menus, and its own documentation that are either specific to this program or easy to misread. Written for someone using SilkTerm, and for a developer who has just opened the source for the first time.
@@ -31,6 +37,8 @@ One character position in the terminal grid. The grid is a fixed number of cells
 ## Contrast mask
 
 A wallpaper treatment that quietens the image only where it would fight the text, leaving the rest of it alone. Its three settings are Size (how large an area each point is judged against), Strength (how far it may push the image down) and Automask mix.
+
+The term itself comes from the early days of photography, and involves applying a blurred and inverted image as a luminosity mask, to reduce contrast.
 
 ## Copy on output
 

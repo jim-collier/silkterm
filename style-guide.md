@@ -4,7 +4,6 @@ The canonical style reference for SilkTerm. It covers prose, comments, naming, R
 
 ## Contents
 
-- [Prose and documentation](#prose-and-documentation)
 - [Comments](#comments)
 - [File headers and licensing](#file-headers-and-licensing)
 - [Naming](#naming)
@@ -12,27 +11,11 @@ The canonical style reference for SilkTerm. It covers prose, comments, naming, R
 - [Formatting](#formatting)
 - [Commit messages](#commit-messages)
 
-## Prose and documentation
-
-This applies to the README, design docs, backlog, this guide, and any other Markdown in the tree.
-
-- Write for a reader in a hurry. Short sentences. One idea each.
-- Avoid run-on sentences that chain several ideas with dashes, semicolons, and parentheticals. Split them, or break them into nested bullets.
-- Prefer nested bullet points over dense paragraphs when laying out several related points.
-- Go easy on emphasis. Reserve bold, italics, and ALL-CAPS for the rare word that genuinely needs the weight.
-- Skip flowery adjectives and adverbs. State what the thing does.
-- ASCII only. Use `->` not an arrow glyph, `-` not an em or en dash. The one exception is `©` in copyright lines.
-- Never hard-wrap. Treat a Markdown file like a word processor that wraps on its own: one paragraph or one bullet is one physical line. Use newlines, tabs, and spaces only for real structure - paragraph breaks, bullets, nesting, code blocks.
-- Indent with tabs.
-- Filenames are lowercase, except `README.md`.
-
 ## Comments
 
-- Terse and plain. Explain *why*, not *what* - the code already says what.
-- No narration that restates the next line, and no banner dividers or decorative flowerboxing.
-- ASCII only, same as prose above. Do not use Unicode in a comment unless you are documenting something that is itself about Unicode.
-- Follow the surrounding file: match its comment density, its section-header style, and its idioms rather than introducing a new house style mid-file.
-- Where a language has a well-established comment idiom (Rust doc comments, for example), that idiom overrides these preferences.
+- Explain *why*, not *what*.
+- No narration that restates the next line.
+- No decorative flowerboxing.
 
 ## File headers and licensing
 
@@ -49,9 +32,9 @@ This applies to the README, design docs, backlog, this guide, and any other Mark
 ## Naming
 
 - Use meaningful, searchable names. It should be easy to read and to search-and-replace `upperBound`; a bare `ub` is not.
-- Do not overcorrect. A name does not need to be long or globally unique - it needs to be clear and easy to locate. Short conventional names are fine where they read cleanly.
-- Single-letter loop counters and iterators (`for i in ...`) are fine when that is the idiomatic choice for the language.
-- Follow the language's canonical case and word-order conventions (snake_case in Rust, and so on).
+	- But a name doesn't need to be long or globally unique - it needs to be clear and easy to locate. Short conventional names are fine where they read cleanly.
+- Single-letter loop counters and iterators (`for i in ...`) are fine when that is the idiomatic choice.
+- Follow the language's canonical case and word-order conventions (snake_case in Rust).
 
 ## Rust
 
@@ -65,7 +48,7 @@ Edition 2024. The guiding aim is code that is consistent within and across files
 
 ### Ownership and borrowing
 
-- Borrow first. Do not reach for `.clone()` to satisfy the borrow checker - restructure, borrow, or take a reference instead.
+- Borrow first. Do not use `.clone()` to satisfy the borrow checker - restructure, borrow, or take a reference instead.
 - If a clone is genuinely needed, add a comment saying why.
 - Avoid gratuitous `Rc<RefCell<...>>`.
 - Prefer `&str` over `String` and slices over `Vec` in arguments. Return owned types.
@@ -106,6 +89,5 @@ Edition 2024. The guiding aim is code that is consistent within and across files
 
 ## Commit messages
 
-- Keep them brief and high-level - a short summary of what changed, the way you would jot it in a hurry.
+- Keep them brief and high-level - a short summary of what changed.
 - Put real detail in the issue, the pull request, or the code, not in a long enumerated commit body.
-- No attribution trailers.
