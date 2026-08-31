@@ -53,7 +53,7 @@ The part in brackets only appears inside a git working tree, and the two marks a
 - The first says everything is committed. A modified file or an untracked one turns it red.
 - The second says the branch is level with its upstream - nothing to push, nothing to pull. A branch with no upstream at all counts as not level.
 
-When the brackets are there the typing moves to a second line behind an arrow, since the first line is long by then. Outside a repository the prompt is one line and ends in the usual `>`.
+When the brackets are there the typing moves to a second line, since the first line is long by then. Outside a repository the prompt is one line. Either way it ends in the usual `>`.
 
 The same prompt appears on Windows PowerShell 5.1 (`[PS 5.1] ...`) and on PowerShell 7 wherever it runs, macOS and Linux included. The block puts the console on the UTF-8 code page, so a branch name with a non-ASCII character in it reads correctly.
 
@@ -95,9 +95,8 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	# is written as wide characters and reaches the screen either way.
 	try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false } catch { }
 	# Code points rather than literal glyphs, because 5.1 reads a file with no
-	# byte-order mark as ANSI. The arrow is a plain one rather than the bash
-	# prompt's U+1F846, which almost no font covers.
-	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2714; No = [string][char]0x2718; Arrow = [string][char]0x2192 }
+	# byte-order mark as ANSI.
+	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2714; No = [string][char]0x2718 }
 	# Root gets a different decorator, the way a unix prompt does.
 	$global:__SilkTermAdmin = $false
 	try {
@@ -209,10 +208,12 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 			# Two marks: everything committed, and level with the upstream.
 			$out += (& $mark $git.Clean) + (& $mark $git.Synced)
 			$out += ' ' + (__SilkTermPaint '2;37' ']')
-			# The line gets long in a repository, so the typing starts on its own.
-			$out += "`n" + (__SilkTermPaint '1;32' $global:__SilkTermGlyphs.Arrow)
+			# The first line is long in a repository, so the typing starts on its own.
+			$out += "`n"
+			$sep = ''
 		}
-		$out + ' ' + (__SilkTermPaint '2;37' $dec) + ' '
+		else { $sep = ' ' }
+		$out + $sep + (__SilkTermPaint '2;37' $dec) + ' '
 	}
 	if ($null -ne $ExecutionContext.SessionState.InvokeCommand.PSObject.Properties['LocationChangedAction']) {
 		# PowerShell 6+ can be told about the location itself, which leaves the

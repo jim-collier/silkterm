@@ -27,9 +27,8 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	# is written as wide characters and reaches the screen either way.
 	try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false } catch { }
 	# Code points rather than literal glyphs, because 5.1 reads a file with no
-	# byte-order mark as ANSI. The arrow is a plain one rather than the bash
-	# prompt's U+1F846, which almost no font covers.
-	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2714; No = [string][char]0x2718; Arrow = [string][char]0x2192 }
+	# byte-order mark as ANSI.
+	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2714; No = [string][char]0x2718 }
 	# Root gets a different decorator, the way a unix prompt does.
 	$global:__SilkTermAdmin = $false
 	try {
@@ -141,10 +140,12 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 			# Two marks: everything committed, and level with the upstream.
 			$out += (& $mark $git.Clean) + (& $mark $git.Synced)
 			$out += ' ' + (__SilkTermPaint '2;37' ']')
-			# The line gets long in a repository, so the typing starts on its own.
-			$out += "`n" + (__SilkTermPaint '1;32' $global:__SilkTermGlyphs.Arrow)
+			# The first line is long in a repository, so the typing starts on its own.
+			$out += "`n"
+			$sep = ''
 		}
-		$out + ' ' + (__SilkTermPaint '2;37' $dec) + ' '
+		else { $sep = ' ' }
+		$out + $sep + (__SilkTermPaint '2;37' $dec) + ' '
 	}
 	if ($null -ne $ExecutionContext.SessionState.InvokeCommand.PSObject.Properties['LocationChangedAction']) {
 		# PowerShell 6+ can be told about the location itself, which leaves the
