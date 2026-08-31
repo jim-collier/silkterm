@@ -61,7 +61,7 @@ keys![
 	Shells, StartupDirectory, ShellIntegration, BashPrompt, CopyOnSelect, Hyperlinks, LinkOpenCommand,
 	SmoothScroll, ScrollEaseIn, ScrollRampUp, SingleScreenTau, ScrollRampDown,
 	ScrollEaseOut, WheelLines,
-	Scrollbar, ScrollbarThickness, ScrollbarAutoHide,
+	Scrollbar, ScrollbarThickness, ScrollbarAutoHide, Minimap, MinimapWidth,
 	ColScrollbarThumb, ColScrollbarTrough, ColBg, ColFg, ColCursor,
 	ColHighlight, ColFocus, ColGutter,
 	ColMenuBg, ColMenuFg, ColDialogBg, ColDialogFg,

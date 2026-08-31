@@ -24,6 +24,7 @@ mod gfx;
 mod input;
 mod integration;
 mod links;
+mod minimap;
 mod palette;
 mod pane;
 mod perf;

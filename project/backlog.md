@@ -97,7 +97,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- 🔬 Still to run: the b23-down case, from a box where b23 is over the network rather than local (Linux and Windows both), so the bounded wait is what gets exercised.
 	- Opened: 20260823-131929
 
-- 🛠️ "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
+- ✅ "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
 	- Looks and behaves not too differently than some modern text editors.
 	- When disabled, has no effect on performance - truly skipped code paths.
 	- It has it's own area within the render area, it doesn't sit on top of it.
@@ -107,7 +107,9 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- If the previously implemented "regular" scrollbar is *also* enabled, that scrollbar sits between the terimal area on the left, and the preview area on the right.
 			- This is a departure from other implementations, that only have one scrollbar on the far right that behaves the same way whether there is a preview area or not. But I want to visually indicate that the *terminal* scrollbar, is for the *terminal*, not the preview.
 	- Disabled by default.
-	- Design pass done, recorded in design.md: per-pane column, whole buffer mapped linearly so the highlight and the far-edge thumb stay one object, strokes rather than glyphs, settings on the Movement tab. Code not started.
+	- Built. Per pane, in a real column that costs the grid its width. The whole buffer maps linearly onto it and never slides, which is what keeps the marker over the preview and the far-edge thumb the same object at the same pixels.
+		- Lines draw as colored strokes, not glyphs. A blend of many lines keeps the strongest ink rather than the average, so one red line among fifty still reads.
+		- Settings are a toggle and a width on the Movement tab, plus a View-menu item. Off by default, and off means no column, no cache and no per-frame work.
 	- Opened: 20260802-094409
 
 - 🛠️ Tab interface:
