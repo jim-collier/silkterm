@@ -22,16 +22,13 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	# changes while the session runs, and the prompt is drawn after every command.
 	$global:__SilkTermHasGit = [bool](Get-Command git -CommandType Application -ErrorAction SilentlyContinue)
 	$global:__SilkTermRemotes = @{}
-	# Glyphs need a console that can carry them. Windows PowerShell 5.1 usually
-	# starts on an OEM code page, where these would arrive as question marks, so
-	# there is a plain fallback. They are written as code points rather than as
-	# characters because 5.1 reads a file with no byte-order mark as ANSI.
-	if ([Console]::OutputEncoding.CodePage -eq 65001) {
-		$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2714; No = [string][char]0x2718; Arrow = [char]::ConvertFromUtf32(0x1F846) }
-	}
-	else {
-		$global:__SilkTermGlyphs = @{ Yes = 'y'; No = 'n'; Arrow = '>' }
-	}
+	# The console goes to UTF-8 so that a branch name with a non-ASCII character
+	# in it decodes, and so nothing downstream has to guess. The prompt itself
+	# is written as wide characters and reaches the screen either way.
+	try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false } catch { }
+	# Code points rather than literal glyphs, because 5.1 reads a file with no
+	# byte-order mark as ANSI.
+	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2714; No = [string][char]0x2718 }
 	# Root gets a different decorator, the way a unix prompt does.
 	$global:__SilkTermAdmin = $false
 	try {
@@ -143,10 +140,12 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 			# Two marks: everything committed, and level with the upstream.
 			$out += (& $mark $git.Clean) + (& $mark $git.Synced)
 			$out += ' ' + (__SilkTermPaint '2;37' ']')
-			# The line gets long in a repository, so the typing starts on its own.
-			$out += "`n" + (__SilkTermPaint '1;32' $global:__SilkTermGlyphs.Arrow)
+			# The first line is long in a repository, so the typing starts on its own.
+			$out += "`n"
+			$sep = ''
 		}
-		$out + ' ' + (__SilkTermPaint '2;37' $dec) + ' '
+		else { $sep = ' ' }
+		$out + $sep + (__SilkTermPaint '2;37' $dec) + ' '
 	}
 	if ($null -ne $ExecutionContext.SessionState.InvokeCommand.PSObject.Properties['LocationChangedAction']) {
 		# PowerShell 6+ can be told about the location itself, which leaves the

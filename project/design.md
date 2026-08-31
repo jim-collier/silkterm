@@ -676,7 +676,9 @@ Two decisions came out of the port.
 
 - It lives in the block rather than in a script beside the config, which is where the bash prompt lives. A prompt is drawn after every command, and a script would mean a process per prompt - cheap on unix, not on Windows. The block is already kept up to date in place, so it carries updates just as well as a file would.
 
-- The block stays plain ASCII, and the check, cross and arrow are written as code points. A file with no byte-order mark is read as ANSI by Windows PowerShell 5.1, which would mangle a literal glyph on the one version that cannot be told otherwise. The glyphs are also swapped for `y` and `n` when the console is not on the UTF-8 code page, which 5.1 usually is not.
+- The block stays plain ASCII, and the check, cross and arrow are written as code points. A file with no byte-order mark is read as ANSI by Windows PowerShell 5.1, which would mangle a literal glyph on the one version that cannot be told otherwise.
+- The console is put on UTF-8 at load. That is not what lets the prompt draw its glyphs, since PowerShell writes the prompt as wide characters and the code page has no say in it. What it buys is the decoding of output from `git` itself, where a branch name outside ASCII would otherwise arrive wrong.
+- The second line is bare where the bash prompt puts an arrow. The `>` already says where the typing goes, and the arrow the bash version uses is a code point few fonts carry.
 
 Cost was the other thing the port had to answer, since three `git` calls per prompt is invisible on unix and not on Windows. The search for the working tree is done in the shell rather than by asking git, so a directory outside a repository costs no process at all, and inside one a single `git status --porcelain=v2 --branch` answers branch, clean and upstream together. The remote URL is read once per repository and remembered.
 
