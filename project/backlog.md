@@ -70,14 +70,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
-- ✅ Lighten text that is too dark to read against the scrim and a dark background, and darken it in the opposite case.
-	- "Minimum contrast %" on the Text tab, default 45. Text closer than that to its own cell background is moved away from it, keeping its hue, so a program that writes near-black on a dark terminal is still readable.
-	- Measured against the cell's background colour rather than per-pixel. See design.md for why, and for the choice of Oklab over a WCAG ratio.
-	- Text set to exactly the background colour stays hidden, since that is deliberate.
-	- The nano case has not been reproduced on the Linux box - its comments come out cyan here. Worth confirming where it actually shows, in case the colour is coming from somewhere this does not reach.
-	- Flipping the scrim colour for just that text would be better still, eventually. Still open, and a shader answer rather than this one.
-	- Opened: 20260826-123553
-
 - 🔘 Windows installer.
 	- Offer "available to all users", or "this user only", or whatever the typical wording is.
 	- Add a SilkTerm folder to the start menu.
@@ -109,6 +101,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- The scrollbar to the right of it, acts on the scroll-buffer, and is synced pixel-perfect with the highlight area over the preview. In other words, the preview and the scrollbar are essentially one and the same.
 		- If the previously implemented "regular" scrollbar is *also* enabled, that scrollbar sits between the terimal area on the left, and the preview area on the right.
 			- This is a departure from other implementations, that only have one scrollbar on the far right that behaves the same way whether there is a preview area or not. But I want to visually indicate that the *terminal* scrollbar, is for the *terminal*, not the preview.
+	- Disabled by default.
 	- Opened: 20260802-094409
 
 - 🛠️ Tab interface:
@@ -199,7 +192,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
 	- Opened: 20260804-134813
 
-- 🔘 Testing:
+- 🛠️ Testing:
 	- ✅ Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
 		- Done at 16pt against the usual 13. The menu bar, a dropdown, and all seven Settings tabs were looked at. Everything sizes off the interface font and stays put: titles and the copy cluster keep their margin, dropdowns fit their content, rows center, and the Shell grid holds its columns. The panel simply gets wider, which is what it should do.
 		- Fixed on the way: the panel's scrollbar sat one pixel from the Shell tab's last column, which read as touching it. It hugs the panel edge now, so there is clear space either side.
@@ -391,7 +384,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 				- ✅ A grip at the left of each line reorders it by dragging. This supersedes the four move icons this item first asked for ("Move to top", "Move up", "Move down", "Move to bottom"), which are gone; reordering is mouse-only now.
 				- ✅ "Remove" sits between "Command" and "Last seen" rather than at the end of the line, so it is harder to press by accident, and its X is red. It still asks first, the way the theme delete does.
 				- ✅ Below the grid, a "Default startup directory" section. It ships as the literal `$HOME` / `%USERPROFILE%`, understands `~` and either platform's variable spellings, and is the lowest of three precedences - a new tab, pane or window inherits from the pane it came from, and a SilkTerm launched from a shell keeps that shell's directory.
-				- An "Add" button below the grid, for a shell the scan cannot find. It lands a new line and puts the caret straight in its command field.
+				- An "Add" button below the grid, for a shell the scan cannot find. It adds a new line and puts the caret straight in its command field.
 				- The first switched-on shell in the list is the default for new windows, tabs and panes. The old `shell.default` setting is retired: a config that had one has that entry moved to the top of the list, once, and the line removed.
 				- Done: the whole tab. The grip and the remove mark are drawn in the shader rather than set as glyphs - no interface font can be relied on to carry either one.
 			- Behavior
@@ -563,7 +556,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Fixed both ways. A frozen window draws nothing from either path now, and the reveal cuts every pane rather than only the flagged ones - a pane that really did sit still is snapping something already at rest. That also covers freezing part-way through an ease, where nothing is pending at all and the leftover motion used to replay on the way back.
 	- Verified on three shapes: minimized across a long burst, minimized part-way through an ease, and a hidden tab. Each lands at the bottom with no motion.
 	- Note that a window merely covered by another one is not frozen, at least not under the window manager here, so it keeps drawing and eases as usual. Only minimize, occlusion where it is reported, and hidden tabs freeze.
-	- Opened: 20260830-120333
+	- Opened: n/a
 	- Closed: 20260830-120333
 
 - ✅ Linux (and probably also Windows): Many duplicate shells get populated.
@@ -573,7 +566,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Fixed: a list that already held duplicates is collapsed on the next scan, keeping the first of each set with its title, its place and its flags. Until now a scan could only add, so an existing config would have kept its duplicates forever.
 	- Directories that appear on PATH under more than one name are now searched once.
 	- Verified on Linux: a list of nineteen entries came back as eleven, one per installed shell, with the login shell still leading. Not yet checked on Windows.
-	- Opened: 20260829
+	- Opened: n/a
 	- Closed: 20260829
 
 - ✅ Windows: the transparency setting does nothing.
@@ -706,7 +699,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - ✅ The Windows launcher hung when the build it copies from over the network wasn't answering.
 	- A host that resolves but is off left a single check of the remote path sitting for 21 seconds before it gave up, and the copy that follows had no limit at all. From a shortcut, that reads as nothing happening.
 	- Each network step now has its own limit, well under the one the operating system would eventually apply: the host is probed first (a couple of seconds settles a host that is simply off), then the check, then the copy - which gets the most room, since a slow link is not the same thing as a dead one. Everything local is untouched.
-	- A copy now lands under a temporary name and is renamed once complete, so one that is given up on - or that a dropped link kills - can't leave a half-written build behind for a later run to launch. Any leftover is swept.
+	- A copy is now written under a temporary name and renamed once complete, so one that is given up on - or that a dropped link kills - can't leave a half-written build behind for a later run to launch. Any leftover is swept.
 	- Opened: n/a
 	- Closed: 20260806-162538
 
@@ -714,7 +707,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Everywhere else in the dialog a control that cannot act is grayed and its flyover says why, while the control itself still shows its value. These two were grayed AND forced to read off - the only rows in the dialog whose displayed state was not the stored one.
 	- That put an unchecked box beside a revert arrow reporting the row as already at its default, when the default is on. The two disagreed about the same setting.
 	- They now show what is stored, both ways, and graying alone carries the message. The field they override stays editable exactly as before, since that follows the effective state rather than the switch.
-	- Surfaced as a failing check on Windows: it reads every row back through the dialog, so on the one platform where the masking bites it could not see the value it had just saved. That row is genuinely covered there now, where before it could not be checked at all.
+	- Showed up as a failing check on Windows: it reads every row back through the dialog, so on the one platform where the masking bites it could not see the value it had just saved. That row is genuinely covered there now, where before it could not be checked at all.
 	- Opened: n/a
 	- Closed: 20260806-161419
 
@@ -926,6 +919,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Cause: likely a window-style or attribute issue - VirtuaWin doesn't recognize or manage the window.
 		- Fix: on Windows, only request a transparent (no-redirection-bitmap/layered) window when Transparency is actually on - that layered style is what virtual-desktop managers skip, and the native surface gives no alpha when off anyway. Not yet confirmed with VirtuaWin.
 	- Opened: 20260721-130036
+	- Closed: 20260722-123343
 
 - ✅ New Linux and Windows judder bug:
 	- If the cursor is at the bottom of the screen, the first line of output (even just hitting "enter" to a new prompt line) causes everything above, to momentarily bounce *down* one line (the wrong direction), then back up.
@@ -1001,7 +995,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260715-163532
 
-- ✅ Settings dialog changes not remembered after relaunch (surfaced as "Scrim falloff not saving"). The change showed live in the running app, then reverted on the next launch.
+- ✅ Settings dialog changes not remembered after relaunch (reported as "Scrim falloff not saving"). The change showed live in the running app, then reverted on the next launch.
 	- Cause: `persist` (and `revert_keys`) parsed config.toml with strict TOML, while the loader tolerates a bare-decimal float (`.1` with no leading zero). Any such value in the file made every save bail early and silently write nothing - so no dialog change stuck. Not falloff-specific.
 	- Fixed: both now read through the same lenient pass the loader uses, so a save no longer aborts on a file the app reads fine. A malformed float is normalized in place on the next save.
 	- Opened: n/a
@@ -1418,7 +1412,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Same rule as before: only a prompt that is still the stock one is replaced. `X9PS1_STANDARD=1` puts a plain prompt back for a session.
 	- Costs one `git` call inside a working tree and none outside one. The check and cross fall back to `y` and `n` on a console that is not on the UTF-8 code page, which Windows PowerShell 5.1 usually is not.
 	- Not seen on Windows yet, and 5.1 will not load a profile at all while its execution policy blocks scripts - which is the state that box is in.
-	- Opened: 20260830-170541
+	- Opened: n/a
 	- Closed: 20260830-170541
 
 - ✅ Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell.
@@ -1432,7 +1426,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ Clearing text from tab, should reset it to default behavior - as if it had never been edited.
 	- Emptying the rename box now drops the custom title, so the tab goes back to naming its own shell and directory. A title of nothing but spaces counts as empty.
+	- Opened: n/a
 	- Closed: 20260830-163000
+
+- ✅ Lighten text that is too dark to read against the scrim and a dark background, and darken it in the opposite case.
+	- "Minimum contrast %" on the Text tab, default 45. Text closer than that to its own cell background is moved away from it, keeping its hue, so a program that writes near-black on a dark terminal is still readable.
+	- Measured against the cell's background color rather than per-pixel. See design.md for why, and for the choice of Oklab over a WCAG ratio.
+	- Text set to exactly the background color stays hidden, since that is deliberate.
+	- Note: the nano case has not been reproduced on the Linux box, where its comments come out cyan. Worth confirming where it actually shows, in case the color is coming from somewhere this does not reach.
+	- Opened: 20260826-123553
+	- Closed: 20260830-154024
 
 - ✅ Figure out a way to measure the delay between a keypress, and the matching pixel response.
 	- Running natively on a few-year-old laptop feels sluggish; need an objective measure to measure and attack.
@@ -1447,7 +1450,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Same for the common PowerShell variables.
 	- Same for the common Windows variables.
 	- A path or a program named anywhere in settings or the config file now understands `~` plus all three spellings of a variable: `$NAME` and `${NAME}`, `%NAME%`, and `$env:NAME`. All of them work on every platform, since this is text SilkTerm reads rather than anything a shell sees.
-	- `$HOME` and `%USERPROFILE%` mean the same thing, and so do `$USER` and `%USERNAME%`, and `$TMPDIR` with `%TEMP%`. Only names with an honest counterpart are paired; the rest expand to nothing, visibly, rather than to a guess.
+	- `$HOME` and `%USERPROFILE%` mean the same thing, and so do `$USER` and `%USERNAME%`, and `$TMPDIR` with `%TEMP%`. Only names with a real counterpart are paired; the rest expand to nothing, visibly, rather than to a guess.
 	- Reaches the startup directory and `--directory` as before, and now the wallpaper image, the rotation folder, the link opener, and every shell command in the list. A command is split into arguments first, so a variable holding a path with a space in it stays one argument.
 	- A `~` with no home directory to put there is left standing rather than turned into an absolute path meaning something else.
 	- Opened: 20260826-123553
@@ -1458,13 +1461,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- The color chip beside a hex field grew to match the field, so the pair reads as one control.
 	- Dialog text now centers on the text itself rather than on its line box, which is what left it riding high. The main window's chrome already worked this way.
 	- Controls center in the row they are actually in, rather than in the row floor - at a large interface font the two are far apart and everything sat high.
-	- Opened: 20260830-160000
+	- Opened: n/a
 	- Closed: 20260830-160000
 
 - ✅ Tab text editing mode should look more like a regular text edit box control.
 	- Renaming a tab now draws a real field inside the tab: a recessed well with an outline in the focus color, the text inset from the outline, and the selection and caret confined to the box.
 	- The close button stays outside it, and the text does not move when an edit starts or ends.
-	- Opened: 20260830-160000
+	- Opened: n/a
 	- Closed: 20260830-160000
 
 - ✅ Double-click a tab title to change it.
@@ -1474,7 +1477,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Titles do not have to be unique.
 	- Typing back the name the tab would have had on its own puts it back to naming the shell, which is the way out of a hand-typed title.
 	- Opening or closing a tab ends an edit in progress, since the edit is keyed by the tab's position.
-	- Opened: 20260830-143000
+	- Opened: n/a
 	- Closed: 20260830-143000
 
 - ✅ Window title.
@@ -1482,7 +1485,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- After that comes, in order: a title typed on the tab, else the title the running program set, else what the tab says about the shell. So a program that renames the window reaches the title bar without touching the tab, and a typed tab title outranks it.
 	- A tab deliberately blanked lets the program's title through; with neither, the title is just the application name.
 	- A `--title` on the command line is still the whole answer, verbatim.
-	- Opened: 20260830-143000
+	- Opened: n/a
 	- Closed: 20260830-143000
 
 - ✅ These values in Settings should be expressed in % (in labels), and displayed as integers.
@@ -1505,7 +1508,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ Checkboxes to dis/enable shells should be square (and vertically centered in row), not rectagular
 	- Done: the Active box in the Shell tab was as tall as the fields beside it. It is square now, the same size as every other checkbox, and centered on its line.
-	- Opened: 20260829
+	- Opened: n/a
 	- Closed: 20260829
 
 - ✅ Pick up the newer SHCL, which carries some fixes needed. Take it from github source.
@@ -1558,6 +1561,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Context menu: a visible separator between the tab operations and the pane operations.
 	- Note: the three items above were added 20260826, done 20260828.
 	- Opened: 20260719-085918
+	- Closed: 20260828
 
 - ✅ General configuration:
 	- Done: the default-shell behavior, the named shell list, its grid editor in the Shell tab, and the Tab and Pane menu rows that draw from it.
@@ -1577,7 +1581,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260628-083740
 	- Closed: 20260829
 
-- 🛠️ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
+- ✅ New tabs and panes should inherit its initial path (and shell) from the one that was previously active.
 	- Done: a new tab or split starts in the source pane's current directory and runs the same shell it was launched with. Same for a new window (Ctrl+Shift+N), and the same shell inheritance applies to all three.
 	- ✅ Windows: reading the source shell's current directory works now. Windows has no /proc and no API that reports another process's directory, so it is read out of the shell's own process memory - the place SetCurrentDirectory keeps it - and checked for still being a directory before it is used.
 		- Verified in the running app: a pane whose shell moved to another directory reports the new one, and reports nothing once the shell has exited (callers then fall back, as before).
@@ -1944,7 +1948,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260802-094409
 
 - ✅ Epic 1n6fydv: Reduce CPU and GPU resource usage
-	- All six tiers landed (3.2 was assessed and deferred as not worth it). End state: an idle focused window costs a fraction of a percent once the cursor parks; unfocused, minimized, and hidden surfaces cost nothing.
+	- All six tiers are done (3.2 was assessed and deferred as not worth it). End state: an idle focused window costs a fraction of a percent once the cursor parks; unfocused, minimized, and hidden surfaces cost nothing.
 	- Supersedes the old "get idle CPU usage way down" item.
 	- Where it started: one idle window with nothing running costs roughly a tenth of a CPU core and a fifth of a mid-range GPU. A pulsing cursor keeps a 30fps loop alive, and every one of those frames rebuilds the entire scene - two full text-shaping passes plus the whole scrim pipeline - just to move one small rectangle.
 	- Tier 1 - stop doing the work. Biggest win, smallest change.
@@ -2018,7 +2022,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Averages many runs per class and reports the spread, so a result carries its own confidence.
 	- Keeps a history per terminal name and version under the user's data directory, newest five builds of each, and refreshes the results table in the README.
 	- `--quick` gives a thirty-second version; a full run is about two minutes.
-	- Measures throughput under flood - how fast a terminal swallows output and keeps up - not glyph drawing rate. Only a screenful is ever visible, so most of a stream is consumed and scrolled past without being drawn. That is the shape of the "why does it bog down when something dumps a lot of text" question.
+	- Measures throughput under flood - how fast a terminal swallows output and keeps up - not glyph drawing rate. Only a screenful is ever visible, so most of a stream is consumed and scrolled past without being drawn. That is what the "why does it bog down when something dumps a lot of text" question is really asking.
 	- At 160x42: SilkTerm 75.1, xfce4-terminal 58.5, XTerm 24.5 million cells/s. SilkTerm leads every width class except plain ASCII, where xfce4-terminal is about a tenth faster.
 	- Install size and memory are measured too, by a second rig at a smaller fixed grid, with the graphics driver split out so the table measures the terminal rather than the stack every accelerated program shares.
 	- Opened: n/a
@@ -2056,7 +2060,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		~~~
 
 	- ✅ Use flowerboxing to divide sections, similar to how Settings dialog is divided (the future version, defined in "Refactor settings dialog" below):
-		- The bullet-rule style is in; section names still follow the current dialog until the dialog refactor lands.
+		- The bullet-rule style is in; section names still follow the current dialog until the dialog refactor is done.
 
 		~~~shcl
 
@@ -2419,7 +2423,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Merging dev to main cuts a release locally: tag the merge, run the packages stage, and optionally push the tag + attach artifacts to a GitHub Release as plain uploads (no Actions).
 		- Version source is `Cargo.toml` alone: the tag is read from it and the build stamps from it, so they can never disagree.
 		- Document the flow where branch conventions live, so day-to-day work knows the merge-back target changed.
-		- Done: `dev` branch created and pushed; flow documented in design.md "Delivery"; `cicd/utility/release.bash` cuts the tag from `Cargo.toml` and can push + attach artifacts via `gh` (packages stage folds in when it lands).
+		- Done: `dev` branch created and pushed; flow documented in design.md "Delivery"; `cicd/utility/release.bash` cuts the tag from `Cargo.toml` and can push + attach artifacts via `gh` (packages stage folds in once that exists).
 	- ✅ Release packaging polish
 		- Keep the hand-rolled packages stage (it already covers .deb/.rpm/NSIS across four targets, which cargo-dist does not) - no new packaging tool.
 		- Add a sha256 checksums file next to the artifacts, and fold the release version into artifact names in one stable scheme, decided before the first tagged release so download links never have to change.
@@ -2734,7 +2738,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - ✅ Added `cicd/utility/gui-headless.bash`, a helper for running the terminal in an isolated GUI environment.
 	- ✅ Update all tests, scripts, and profiling to run in that environment. (20260701)
 		- Done: the profiler stage runs the app on the private display, so no window pops on the live session. It skips if the display, python3, or the workload are missing. Unit tests need no display anyway.
-	- Opened: 20260707-061552
+	- Opened: n/a
+	- Closed: 20260707-061552
 
 - ✅ Cursor:
 	- ✅ After the related cursor bug fix above, set default cursor_size_horizontal to 25.
@@ -3240,6 +3245,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Future and/or deferred
 
+- ✋ Flip the scrim color under text that had to be lifted for contrast.
+	- Better than moving the text color, but it is a shader answer rather than the per-cell one already built. See the contrast item under Done.
+	- Opened: 20260830-201602
+
 - ✋ Terminal throughput benchmark: the Windows speed rows.
 	- Deferred, and the machine was never the problem. Measured twice on deliberately different hardware: a laptop, then Windows in a VM on the reference host with a discrete card passed through, which is the setup the table's own notes promised would fix it. Neither pass produced anything publishable. Figures and reasoning are in `utility/include/ancillary-notes.fods`, under three `VM` sheets beside the original ones.
 	- There is no correction factor to find. The terminals that run on both platforms disagree about the host-to-guest ratio by more than a factor of two, so one multiplier cannot serve the table. That is measured now, not inferred from everything clustering the way it did on the laptop.
@@ -3314,7 +3323,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - 🚫 CTRL+right arrow should move to the beginning of the next word, not the end of the current. (CTRL+left arrow works as expected.)
 	- And delimit on spaces (only?).
-	- Closed: After research, not a terminal-side fix. Ctrl+Right already sends the standard `\x1b[1;5C`; whether the cursor lands on the end of the word or the start of the next is decided by the running line editor (bash/readline `forward-word` = word end; zsh = next word start), so the asymmetry with Ctrl+Left is inherent to readline, identical across terminals. Changing the emitted sequence would break the standard every app expects. Achievable per-user via a readline binding, or later via the deferred key-remap system.
+	- Resolution: after research, not a terminal-side fix. Ctrl+Right already sends the standard `\x1b[1;5C`; whether the cursor lands on the end of the word or the start of the next is decided by the running line editor (bash/readline `forward-word` = word end; zsh = next word start), so the asymmetry with Ctrl+Left is inherent to readline, identical across terminals. Changing the emitted sequence would break the standard every app expects. Achievable per-user via a readline binding, or later via the deferred key-remap system.
 	- Opened: 20260708-191010
 	- Closed: 20260709-115247
 
@@ -3329,7 +3338,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- No. Results of the spike (branch `spike/egui-dialog`): egui 0.35 rides our exact wgpu 29 + winit 0.30 (no downgrade, shares our graphics stack) and integrated easily.
 		- Drawbacks to egui: it adds ~32% to the release binary for what is secondary chrome, against the minimal-binary-size priority. Hand-rolling also keeps one unified color/theme + native-OS-font system across the terminal and the chrome. egui would need a separate egui-`Visuals` theme kept in sync, plus its own bundled fonts).
 		- Decision: Chrome stays hand-rolled.
-	- Opened: 20260724-080316
+	- Opened: 20260628-083740
+	- Closed: 20260703-091342
 
 - 🚫 Allow toggling from default "Insert" mode, to "Overwrite".
 	- 🚫 Change cursor in default "Insert" mode, to a thinner bar than the block cursor (but thicker than, say, "|").
