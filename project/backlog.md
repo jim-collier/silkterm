@@ -234,7 +234,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ Output sometimes hops down a line and eases back up. Seen when rar finishes a file's in-place percent line and moves on to the next one.
 	- Cause: the scrollback depth was measured twice, once per PTY wakeup and once between frames, each against its own baseline. When a frame reached the grid before that read cycle's wakeup was handled, the same new line was counted at both, and the second count nudged the view down a line with nothing to scroll. A burst hides the extra line inside its backlog; a settled view under a slow progress line shows it whole.
-	- Fix: one baseline. Each frame samples the depth the same way the wakeup does, so whichever gets there first banks the growth and the other finds nothing left.
+	- Fixed: one baseline. Each frame samples the depth the same way the wakeup does, so whichever gets there first banks the growth and the other finds nothing left.
 	- Opened: n/a
 	- Closed: 20260827-105239
 
@@ -246,7 +246,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Delay this to see if other fixes, fix this.
 		- Result: Other fixes have not fixed this.
 	- Cause: the smooth offset is kept in two parts. The grid is scrolled by a whole number of lines and the renderer draws the fraction left over. The output ease was allowed to run up to sixteen lines past the end of the scrollback. The alt screen has no scrollback at all, so when nano took over mid-ease the whole part sat pinned at zero while the fraction kept counting down through the leftover backlog, wrapping through a full cell once per line. Every wrap drew as a whole-cell hop. That is also why it looked random: it needs output still easing at the moment nano starts, which a long push before `git commit` gives reliably and a quiet prompt never does.
-	- Fix: the view can no longer sit past the grid. Entering the alt screen lands the ease on the spot, which is the cut a screen swap wants anyway, and a shallow scrollback caps how far a fresh terminal's first output eases. Both halves of the residual one-line scroll on alt-screen enter and exit go with it.
+	- Fixed: the view can no longer sit past the grid. Entering the alt screen lands the ease on the spot, which is the cut a screen swap wants anyway, and a shallow scrollback caps how far a fresh terminal's first output eases. Both halves of the residual one-line scroll on alt-screen enter and exit go with it.
 	- The scroll harness has a fifth scene for it: a burst still easing when an alt screen takes over must sit still there.
 	- 🔬 Test exhaustively
 	- Opened: 20260709-115247
@@ -409,7 +409,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ Bug: Editing a line at any point on the prompt, that has one or more emojis in it, results in apparently random left-right shifting of other characters, at apparently random points unrelated to the cursor position. (But probably not really "random".) The actual content that moves doesn't actually change in the buffer, but it looks like it does and makes it visually unreliable and confusing.
 	- Not random: it happened on exactly the rows holding one of a small set of characters. A terminal gives a double-width character two columns. A monospace font is free to carry that same character at its ordinary single-column width, and the default font does so for 53 of them - several common emoji among them, plus fullwidth punctuation. The row was laid out from the font, so one of those characters consumed one column where the grid had allotted two, and everything after it on that row drew a column to the left of where its own background, the cursor and any separately-drawn character still sat. Editing moved such a character around the line, so the misalignment appeared to wander.
-	- Fix: a character now rides the shared row layout only when the font's own width for it agrees with the number of columns the terminal gave it. Anything that disagrees is drawn on its own, fitted to its real box - the same path characters missing from the font already took.
+	- Fixed: a character now rides the shared row layout only when the font's own width for it agrees with the number of columns the terminal gave it. Anything that disagrees is drawn on its own, fitted to its real box - the same path characters missing from the font already took.
 	- Side effect, and an improvement: those emoji now render in color rather than as small monochrome outlines, since they reach the color path for the first time. Single-width symbols (arrows, checkmarks, stars, box drawing) are unaffected and stay monochrome, which is what a terminal wants.
 	- ✅ A trailing marker after such an emoji used to sit exactly one column left of the same marker on an all-text row, and now lines up. CJK, box drawing, fullwidth Latin and single-width symbols are unchanged.
 	- Opened: 20260802-002500
@@ -452,7 +452,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - ✅ Graphical emoji render as monochrome outlines instead of color.
 	- Not a regression. No build renders these in color: the text stack has only ever read the older color-glyph table format (COLR v0), and every current color emoji font ships the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
 	- Other terminals show the same fonts in color because their text rasterizer reads COLRv1.
-	- Fix: color glyphs are now painted directly - the paint graph is walked and rendered through a small 2D back end (transforms, clip and layer stacks, solid/linear/radial/sweep fills, Porter-Duff and blend compositing), then handed to the renderer's color atlas as a per-cell image fitted to the cell box. Chars with no color glyph are untouched and still take the monochrome fallback path.
+	- Fixed: color glyphs are now painted directly - the paint graph is walked and rendered through a small 2D back end (transforms, clip and layer stacks, solid/linear/radial/sweep fills, Porter-Duff and blend compositing), then handed to the renderer's color atlas as a per-cell image fitted to the cell box. Chars with no color glyph are untouched and still take the monochrome fallback path.
 	- `color_emoji` (default true) turns it off, which restores the monochrome outlines.
 	- Opened: n/a
 	- Closed: 20260727-014507
@@ -544,24 +544,24 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- It seems like every update to the update bar at the bottom, causes about a screen's worth of text to back-up a "page" (text moves down), then immediately smooth-scroll back "up", so that the bottom (update bar) is visible again. While the "Nano Bounce Bug" is just a slightly annoying but tolerable inconveience, this one is a breaking issue.
 	- But only if the text filling the terminal is from flatpak. If it's from other programs and flatpak only adds a few lines, there's no problem.
 	- Cause: once a pane's scrollback is full, how far the view is behind can no longer be read from scrollback growth, so it is inferred by matching this frame's rows against the last frame's. That match demanded that nearly the whole retained region line up exactly - at most three rows off. flatpak keeps a multi-row live progress area pinned at the bottom and rewrites all of it every tick, so an ordinary one-line advance always left more than three rows differing, no shift matched, and the inference fell through to its last-resort guess: assume the screen turned over completely and report the maximum catch-up distance. Every line of output therefore kicked the view up the full backlog cap and eased it back down. That also explains why it only showed when flatpak's own output filled the screen - a few flatpak lines among other text leave the progress area too small to break the tolerance.
-	- Fix: the inference now scores every candidate shift by how much of the retained region it explains and takes the best one, instead of insisting nearly all of it lines up. The true shift always explains the most, and a coincidental match further down has less overlap to win with, so the real one-line advance is reported even while a large live region churns. The guard that a static or blank field must not read as a scroll is unchanged, and a genuine full-screen turnover still reports the catch-up distance. Same tolerance the alt-screen detector has used all along - a live progress area is a static band in all but name.
+	- Fixed: the inference now scores every candidate shift by how much of the retained region it explains and takes the best one, instead of insisting nearly all of it lines up. The true shift always explains the most, and a coincidental match further down has less overlap to win with, so the real one-line advance is reported even while a large live region churns. The guard that a static or blank field must not read as a scroll is unchanged, and a genuine full-screen turnover still reports the catch-up distance. Same tolerance the alt-screen detector has used all along - a live progress area is a static band in all but name.
 	- Opened: 20260723-135701
 	- Closed: 20260723-141732
 
 - ✅ Copy on output is still copying the prompt that appears after command output.
 	- Cause: the multi-line-prompt strip matched prompt rows by exact content, so any prompt row with dynamic content (cwd, git branch, clock, right-aligned segments) never matched between commands and its rows stayed in the copy.
-	- Fix: prompt rows are now matched by structure - runs of letters/digits and of spaces collapse before hashing, so content can change while the punctuation/box-drawing layout still has to match exactly.
+	- Fixed: prompt rows are now matched by structure - runs of letters/digits and of spaces collapse before hashing, so content can change while the punctuation/box-drawing layout still has to match exactly.
 	- Opened: 20260722-100516
 	- Closed: 20260722-194629
 
 - ✅ Severe - VT bug: When the linux console swithes to text mode (e.g. user presses CTRL+ALT+F1), then back to graphical X11 (e.g. user presses CTRL+ALT+F7), all SilkTerm windows are mostly black. Only the tabs and blinking cursor or visible, plus some light RGB noise at the top of the terminal render area.
 	- New SilkTerm windows opened after that are OK. But new tabs open on a previously open window, have the same problem.
 	- Cause: the VT switch wipes the contents of uploaded GPU textures (glyph atlas = all text, wallpaper) while the GL context survives, so per-frame shapes (tabs, cursor) still draw. New windows re-upload from scratch; new tabs share the wiped atlas.
-	- Fix: a small known-pattern sentinel texture is re-read every couple of seconds (plus immediately on window focus); if the pattern is gone, the atlas, chrome, and wallpaper are rebuilt automatically. Recovers within a few seconds of returning, sooner on click.
+	- Fixed: a small known-pattern sentinel texture is re-read every couple of seconds (plus immediately on window focus); if the pattern is gone, the atlas, chrome, and wallpaper are rebuilt automatically. Recovers within a few seconds of returning, sooner on click.
 	- Not yet confirmed: needs a real VT switch end to end.
 	- ✅ Problem persists
 		- Cause: the round-1 sentinel was a small copy-only texture. The NVIDIA driver keeps a system-memory backup of textures like that and restores them after the purge, while the big sampled textures (atlas, wallpaper) are lost for good - so the probe read its pattern back fine and never saw the loss. (Matches NV_robustness_video_memory_purge: only resources exclusively in video memory are lost; the driver hides the purge for the rest.)
-	- Fix: two probe witnesses now - an atlas-sized sampled upload, plus one seeded only by a GPU-side copy so no system-memory backup can exist for it; a purge can't be hidden from that one. Probes also fire the moment the window becomes visible again, not just on focus.
+	- Fixed: two probe witnesses now - an atlas-sized sampled upload, plus one seeded only by a GPU-side copy so no system-memory backup can exist for it; a purge can't be hidden from that one. Probes also fire the moment the window becomes visible again, not just on focus.
 	- Diagnostic: `touch ~/silk_vramdbg.on` (works live, no relaunch), then VT-switch; probe results append to `~/silk_vramdbg.txt`. Remove the marker file to stop logging.
 	- Round 2: still black, and both witnesses came back intact across the switch. The common thread: the synthetic sentinels are never drawn by any frame, so the driver keeps them somewhere restorable; the textures that actually die (atlas, wallpaper) are the ones sampled every frame, resident hot in video memory.
 	- Round 3: probe the real casualty instead of a proxy. A center block of the wallpaper texture's own uploaded pixels is kept and read back on the probe tick - that texture is sampled every frame and demonstrably gets wiped (the on-screen noise). A mismatch triggers the same full rebuild. The sentinels stay as a fallback for the no-wallpaper case. If the wallpaper block STILL reads intact while the screen is black, texture contents were never lost at all and the problem is context-level - the log discriminates that too.
@@ -575,18 +575,18 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Bold font uses a proportional font, which skews space-based alignment output. (E.g. that muffer uses on startup screen.)
 		- This happens on a different Windows host, not this one. But the problem seems to be, need a more reliable font fallback, if either normal or bold is using a proportional font.
 		- Font is auto/unset there; regular is fine, only bold falls proportional. So the pinned mono family isn't guaranteeing a mono *bold* face.
-		- Fix: terminal bold now requests the boldest weight the pinned mono family actually ships (like chrome already did), so it can't escape into a proportional bold fallback. Not yet confirmed on the affected host.
+		- Fixed: terminal bold now requests the boldest weight the pinned mono family actually ships (like chrome already did), so it can't escape into a proportional bold fallback. Not yet confirmed on the affected host.
 		- Second half: with the font auto/unset, Windows picked the mono family by a font-db lottery (it has no system monospace setting), which could land on a family with no bold at all - then "boldest available" = regular and bold renders flat. The fallback-stack item below fixes the pick.
 	- ✅ Font fallback: one cross-platform stack (Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New) is now the font_family default and the resolver's last resort everywhere. Windows always resolves through it ("use system font" is inert there - no OS monospace setting exists), so the family always carries a real bold face.
 		- The Settings "Use system font" checkbox is disabled and grayed on Windows, with a flyover explaining why. Font family/size stay editable there regardless of the config value.
 		- Superseded by the per-platform divergence fix in Bugs: the order is now one list everywhere and the graying keys on what the OS actually reports, so only the family half is inert on Windows - the size half is live there.
 	- ✅ Scrolling in muffer, and `less`, is juddery. Up-and-down motion, while making progress in the intended direction.
 		- Reproduces on this host, and with plain scrolled output too - not just full-screen apps - so it's the frame/output pacing, not the alt-screen slide detector alone.
-		- Fix: on Windows, one queued present frame instead of two, so the per-frame dt stays steady (two let the CPU race ahead then stall, jittering the ease). Best guess; not yet confirmed on this host.
+		- Fixed: on Windows, one queued present frame instead of two, so the per-frame dt stays steady (two let the CPU race ahead then stall, jittering the ease). Best guess; not yet confirmed on this host.
 		- The "plain scrolled output too" part is very likely the judder bug above (stale-snapshot re-slide - plain output grows scrollback on Windows too), now fixed. The pacing change may matter less than thought.
 	- ✅ The whole window stays in place when VirtuaWin switches virtual workspaces.
 		- Cause: likely a window-style or attribute issue - VirtuaWin doesn't recognize or manage the window.
-		- Fix: on Windows, only request a transparent (no-redirection-bitmap/layered) window when Transparency is actually on - that layered style is what virtual-desktop managers skip, and the native surface gives no alpha when off anyway. Not yet confirmed with VirtuaWin.
+		- Fixed: on Windows, only request a transparent (no-redirection-bitmap/layered) window when Transparency is actually on - that layered style is what virtual-desktop managers skip, and the native surface gives no alpha when off anyway. Not yet confirmed with VirtuaWin.
 	- Opened: 20260721-130036
 	- Closed: 20260722-123343
 
@@ -596,33 +596,39 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- It seems to go: "everything move one line down (smoothly), then two lines up (smoothly)". The net result is very juddery output.
 	- Mouse scrolling seem unaffected. It's smooth.
 	- Cause: the normal-screen repaint-slide detector (added for ConPTY smooth scroll, default-on) only refreshed its frame snapshot on frames it could slide on. A plain output line lands in a scrollback-growth frame - animated by the output ease - which skipped the refresh, so the prompt redraw one frame later diffed against pre-scroll rows, read the already-eased scroll as a fresh repaint shift, and slid it a second time on top of the ease: down one, up two. A burst (ls) re-slid the whole accumulated shift at once, worse. Wheel scrollback never enters that path, so it stayed smooth.
-	- Fix: the snapshot refreshes on every content frame; only true repaint frames (no scrollback growth) may read the diff as a scroll. Pager slides are unaffected.
+	- Fixed: the snapshot refreshes on every content frame; only true repaint frames (no scrollback growth) may read the diff as a scroll. Pager slides are unaffected.
 	- Opened: 20260722-100516
 	- Closed: 20260722-105522
 
 - ✅ Windows: doesn't respond to DPI scaling changes.
 	- The app only read the scale factor once, at startup, so moving the window to a differently-scaled monitor (or changing the Windows scaling slider) left the fonts/chrome at the old scale.
 	- Note: not a compiler thing - DPI awareness is a runtime/manifest property, identical between the mingw-gnu and msvc builds. The gnu exe carries no manifest overriding it, and winit already enables per-monitor-v2 awareness at startup.
-	- Fix: added a scale-factor-changed handler that re-scales the text context (cell metrics, chrome, pane buffers) for the new factor and relayouts; the window's follow-up resize reconfigures the surface. Shares the same rebuild path as a Settings font change.
+	- Fixed: added a scale-factor-changed handler that re-scales the text context (cell metrics, chrome, pane buffers) for the new factor and relayouts; the window's follow-up resize reconfigures the surface. Shares the same rebuild path as a Settings font change.
 	- ✅ This Windows box is actually at 125% (an earlier "100%" reading was a DPI-unaware shell being fed a virtualized 96 DPI). At 125% the cell width is ~11.3px and the row pitch ~23px, both exactly 1.25x their 100% values, with sharp anti-aliasing rather than an upscaled 100% render. So the app reads and applies the scale correctly.
 	- Opened: 20260714-205419
 	- Closed: 20260724-080316
 
 - ✅ Windows: no smooth-scrolling in full-screen / scroll-region apps (muffer, nano), though it works on the Linux build.
 	- Scope: plain directory listings and mouse-wheel scrollback do scroll smoothly on Windows; only apps that keep a fixed UI with a scrolling sub-region (muffer's bottom input box, nano's top/bottom bars) failed.
-	- Cause: ConPTY re-emits a scroll-region app's scrolling as an in-place repaint, so scrollback never grows: for nano (alt screen) `history` is 0 and the rows still translate cleanly (the signed clean-translate detector reports healthy shifts of 2-14 rows); for muffer (normal screen) `history` is frozen at 1 and `grew` is 0 every frame, so output-easing can never fire and there is no scrollback to ease through - yet the rows translate 1-2 at a time and the signed detector catches them. On a Unix PTY these scrolls arrive as real grid-scrolls, which is why Linux was fine.
-	- Fix: the app-scroll slide (fixed-UI + scrolling-region, no scrollback, synthesized reveal strip) is exactly the right mechanism but was gated to the alt screen only. Extended it to also engage on the normal screen when following with no scrollback growth (`repaint_scroll` in `pane.rs build`); the render side already consumes `app_off` regardless of screen. Plain output (grew>0) still uses output-easing; a static in-place redraw yields no clean shift so it stays put (no bounce). One `smooth_scroll_apps` setting now covers alt-screen apps (nano/vim/less) and normal-screen repaint apps (muffer on ConPTY).
+	- Cause: the Windows console re-sends a scroll-region app's scrolling as a repaint in place, so the scrollback never grows.
+		- On the alt screen there is no scrollback anyway, and the rows still translate cleanly, which the detector sees.
+		- On the normal screen the depth is frozen and nothing ever reads as growth, so the output ease can never fire and there is no scrollback to ease through. The rows do still translate, a line or two at a time, and the detector catches those.
+		- On a Unix terminal these arrive as real grid scrolls, which is why Linux was fine.
+	- Fixed: the slide already built for full-screen apps was exactly the right mechanism, but it only ran on the alt screen. It now also runs on the normal screen when the view is following and the scrollback is not growing. The render side never cared which screen it was.
+		- Plain output still uses the ordinary output ease, and a static redraw in place yields no clean shift, so it stays put and does not bounce.
+		- One setting, `smooth_scroll_apps`, now covers both the alt-screen apps and the normal-screen repainting ones.
 	- Made default-on: `smooth_scroll_apps` now defaults `true` (was false), so nano and muffer both slide out of the box; explicit `= false` still opts out.
 	- Opened: n/a
 	- Closed: 20260719-191037
 
 - ✅ Config file rewriting is proving problematic.
 	- For example, when user makes a "non-standard" change (e.g. some extra comments), they get removed in the background, and the editor notices the file changed.
-	- Fix: Only *write* to the file when A) Settings updated, or B) New options are added to the program. And in either case, first try to make sure nothing else has the file open for editing. If something else has it open:
+	- Fixed: Only *write* to the file when A) Settings updated, or B) New options are added to the program. And in either case, first try to make sure nothing else has the file open for editing. If something else has it open:
 		- If in settings, warn and don't close settings. (Force user to cancel, or abort other editing first.)
 		- If writing new or changed program config settings, abort the write attempt, and output a non-alarming FYI to stderr.
 	- Done: dropped the launch-time reorder/comment-refresh pass entirely.
-	- Done: before any write (launch-time migrate/backfill, remembered-size auto-save, and Settings save), a best-effort check sees whether another program has the file open (Linux, via /proc). If so: launch-time writes skip with a non-alarming stderr FYI; the Settings dialog leaves itself open on OK instead of closing over an unsaved change (the values still apply live for the session).
+	- Done: before any write - the migrate and backfill at launch, the remembered-size auto-save, and a Settings save - a check looks for another program holding the file open. It is best effort, and Linux only.
+		- If something does hold it, a launch-time write is skipped with a plain note, and the Settings dialog stays open on OK rather than closing over an unsaved change. The values still apply for the session either way.
 	- Follow-up: make the "config is open elsewhere, not saved" signal visible IN the Settings dialog (a small banner), not just a stderr FYI + the dialog staying open.
 	- Note: the open-elsewhere check only catches editors that hold the file descriptor open; an editor that opens/closes per save won't trip it, but in that case a write is harmless (backfill only appends).
 	- Opened: 20260712-102914
@@ -630,19 +636,19 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ Windows: dialogs pop up in one spot then jump to another - visually jarring.
 	- Cause: an owned popup gets no automatic placement on Windows, so it was created (and shown) at the screen origin, then moved to center over the terminal - the move was visible as a jump.
-	- Fix: create the dialog hidden, center it, draw one frame at the final position, then reveal it. It now simply appears centered. Matches the map-last approach already used on Linux.
+	- Fixed: create the dialog hidden, center it, draw one frame at the final position, then reveal it. It now simply appears centered. Matches the map-last approach already used on Linux.
 	- Opened: n/a
 	- Closed: 20260719-094013
 
 - ✅ Windows: the main window first appears at a default size with a blank white background, then changes to its remembered size and the rendered terminal.
 	- Cause: the window was born visible at the default size before the remembered size and the first frame were ready, so the intermediate size and the unpainted (white) client were briefly on screen.
-	- Fix: create the window hidden, resize it to the remembered size, and reveal it only after the first frame is on screen - so it just appears at the right size, already rendered, like the Linux version.
+	- Fixed: create the window hidden, resize it to the remembered size, and reveal it only after the first frame is on screen - so it just appears at the right size, already rendered, like the Linux version.
 	- Opened: n/a
 	- Closed: 20260719-094013
 
 - ✅ Windows: the Settings dialog opens *inside* the terminal window instead of as a separate modal dialog - clipped to the terminal, so at higher DPI (dialog bigger than the terminal) some settings are unreachable.
 	- Cause: on Windows the dialog was created as an embedded child window of the terminal (the cross-platform "tie to parent" call means child-of, not owned-by, there). A child window is clipped to its parent's client area and never gets its own keyboard activation.
-	- Fix: create it as an owned top-level window instead - floats above the terminal, sized independently, off the taskbar, closes with it. Also now opens centered over the terminal (Windows gives owned windows no automatic placement).
+	- Fixed: create it as an owned top-level window instead - floats above the terminal, sized independently, off the taskbar, closes with it. Also now opens centered over the terminal (Windows gives owned windows no automatic placement).
 	- Opened: n/a
 	- Closed: 20260716-170528
 
@@ -654,13 +660,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ Windows: clipboard copy reported not working (any method - Ctrl+Shift+C, right-click Copy, copy-on-highlight, the built-in copy-on-select), across panes; works in other terminals.
 	- Cause: the low-level clipboard write is fine on Windows. The failure was in the copy *gating*, not the clipboard: the auto-copy feature silently turned itself off constantly (it cleared on any tab/pane focus change, enabling it in one pane cleared every other pane, and it broadcast "off" to other windows), so from a multi-pane / multi-window session copy-on-highlight looked permanently broken.
-	- Fix: reworked as the feature refinement below (never auto-disables; per-active-pane). If a manual copy (Ctrl+Shift+C / right-click) still fails on a specific machine after this, it points to the environment (an RDP client-side clipboard sync or a third-party clipboard manager) rather than the app - needs the paste-target details to chase further.
+	- Fixed: reworked as the refinement below, which never disables itself and works per active pane.
+		- If a manual copy still fails on a particular machine after this, that points at the environment rather than the program - a remote session syncing the clipboard, or a clipboard manager. Chasing it further needs to know what the paste target was.
 	- Opened: n/a
 	- Closed: 20260715-204452
 
 - ✅ Windows: text scrim wider per-line than the text behind it, starting wherever bold appears (not seen on Linux).
 	- Cause: the "blur bold at regular weight" option shapes a parallel de-bolded buffer for the scrim halo. Both it and the display buffer ask for a fixed cell pitch, but some fonts (Windows default faces) ignore that request and shape at their natural advance, where bold and regular differ - so the scrim (regular) and the text (bold) drift apart along the line.
-	- Fix: only de-bold the scrim when a bold run actually shapes to the same pitch as regular for the loaded font; otherwise draw the scrim from the display buffer (perfectly aligned, at the cost of a slightly heavier bold halo).
+	- Fixed: only de-bold the scrim when a bold run actually shapes to the same pitch as regular for the loaded font; otherwise draw the scrim from the display buffer (perfectly aligned, at the cost of a slightly heavier bold halo).
 	- Opened: n/a
 	- Closed: 20260715-163532
 
@@ -846,7 +853,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ Mouse-scroll doesn't work in Muffer (running inside SilkTerm).
 	- Cause: SilkTerm implemented no mouse reporting at all - clicks, motion, and wheel were only handled locally, never encoded to the PTY. So when an app turns on mouse tracking (DECSET 1000/1002/1003, e.g. Muffer enabling it to receive wheel events), it got nothing and its scroll did nothing; the wheel just drove SilkTerm's own scrollback.
-	- Done: added standard mouse reporting (`input::mouse_report`, SGR 1006 + legacy X10). When the focused pane has tracking on, wheel reports as button 64/65, and clicks/release/drag/motion report too; Shift is the local-action override (select/paste/menu/scrollback still work). Wheel sends one notch-event per line (capped), de-duped motion per cell.
+	- Done: standard mouse reporting, in the modern form and the legacy one. When the focused pane has tracking on, the wheel, clicks, releases, drags and motion all report to the program. Holding Shift overrides that and keeps the local actions - select, paste, the menu and the scrollback.
+	- The wheel sends one event per line, capped, and repeated motion within a cell is not reported twice.
 	- Opened: n/a
 	- Closed: 20260703-140632
 
@@ -862,7 +870,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. (20260630)
 		- Fixed: the bar and tab height scale with the menu font. Descenders were sitting tight against the button bottom, so the vertical padding was bumped up a couple of pixels to clear them.
 	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. For example my system proportional font is a Serif font, not sans serif. (20260629)
-		- Cause: chrome used generic `Family::SansSerif`. fontdb's generic-sans default is "Arial"; when that's absent (typical on Linux) the query falls through to whatever matches - here the GNOME *document* font, which is a serif (GentiumAlt). (fontconfig's actual sans-serif on this box is Noto Sans.)
+		- Cause: the chrome asked for a generic sans family rather than a named one. The font database answers that with Arial, and where Arial is absent, which is usual on Linux, the query falls through to whatever matches - here the desktop's document font, which is a serif.
 		- Fix (first pass): pin a concrete sans family, mirroring the mono pin - resolved the OS sans-serif (`fc-match sans-serif`), else a curated list, validated against the db. Got "Noto Sans" - still a sans, which missed the point below.
 			- ✅ Not fixed: Still using system *sans serif*, rather than just system font generally. (Which on my system is a *serif* font.)
 				- Fixed: chrome now follows the desktop interface font - family, size, weight, slant, serif or not. It's read natively per platform, and the whole chrome sizes from the real rendered text, so a large or wide font grows the chrome instead of truncating.
@@ -883,14 +891,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260630-185819
 
 - ✅ High severity: Typing "exit" in tab, closes the whole application. It should only close that tab. Doesn't do that for panes, only tabs. Closing a tab via menu only closes that one tab. (20260629; real cause found + fixed 20260630)
-	- Cause: the shell-exit handler (`UserEvent::Exit(id)` in app.rs) just called `tabs.cur_mut().close(id)` and quit the app whenever that returned true. So the last pane of a tab killed the whole app when other tabs existed; worse, a background tab's shell exiting ran `close(id)` on the *active* tab (which doesn't own that pane) -> returns true -> app quit. The Close-Pane menu had the right pane->tab->window cascade; the exit path didn't.
-	- Fix: `UserEvent::Exit` now finds the pane's owning tab (`position(|pm| pm.panes.contains_key(&id))`) and applies the same cascade - >1 pane in that tab closes the pane; else >1 tab closes that tab (`close_tab_at(idx)`, generalized from `close_tab`); else (last pane of last tab) exits. Handles background-tab exits and keeps `active` pointing at the same tab.
+	- Cause: the shell-exit handler closed the pane against whichever tab was active and quit the program whenever that came back saying nothing was left. So the last pane of a tab took the whole program down while other tabs were open, and a background tab's shell exiting asked the active tab to close a pane it did not own, which reported the same thing and quit. The Close Pane menu item had the right pane, then tab, then window cascade; the exit path did not.
+	- Fixed: the exit path finds the tab the pane actually belongs to and runs the same cascade. More than one pane in that tab closes the pane, otherwise more than one tab closes that tab, otherwise the program exits. A background tab's exit is handled, and the focused tab stays focused.
 	- Note (20260630): the app survives the tab's shell exiting in all three cases - active-tab exit, background-tab exit, and typing `exit` interactively in the active tab of a two-tab window. If it still happens, the running build predates the fix; rebuild or reinstall.
 		- ✅ Still not fixed. With three tabs open, for example:
 			- Type "exit" in the anything but the last tab, it closes all tabs except one. Sometimes, the program becomes unresponsive then and has to be killed.
 			- Type "exit" in the last tab, it closes the program.
 			- With four tabs open, and type "exit" from the third, closes the first two tabs (and not the third).
-		- ✅ Actual cause (20260630): pane ids collided across tabs. Each tab is a separate PaneManager that assigned ids from its own counter (first pane always id 1), so the shell-exit event (carries only the id) resolved to the wrong tab - the first one with that id - and closed it; dropping that tab's term fired another Exit -> cascade (closed all but one, sometimes hung), exactly as reported. The earlier fix (find the owning tab + cascade) was right in shape but the id lookup was ambiguous. Fix: `alloc_pane_id()` - one global counter, so every pane is unique everywhere.
+		- ✅ Actual cause (20260630): pane numbers collided across tabs. Each tab counted its own panes from one, so a shell-exit event, which carries only the number, resolved to the wrong tab - the first one holding that number - and closed it. Dropping that tab's terminal fired another exit, and the cascade closed all but one tab and sometimes hung, exactly as reported.
+			- The earlier fix, finding the owning tab and cascading, was the right shape but the lookup itself was ambiguous.
+			- Fixed: one counter for the whole program, so every pane number is unique everywhere.
 	- Opened: 20260629-110720
 	- Closed: 20260629-214404
 
@@ -910,113 +920,120 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260629-230748
 
 - ✅ Critical: Smooth-scrolling apparently just quits after using the terminal for a while. It seems to quit, if output is too fast for a while, but that could be a red-herring. Maybe it's just after any particular amount of general use.
-	- Cause: output-easing was triggered off scrollback *growth* (`grid.history_size()` rising). That growth flatlines once the scrollback buffer fills (default 10k lines) - old lines drop off the top as fast as new ones arrive - so after enough output the growth reads 0 every frame and `nudge_output` never fires again. Smooth output scroll dies "after a while", and sooner under fast output (which fills the 10k buffer faster). Manual scrollback (wheel) was unaffected, which is why it looked like only the smooth *output* scroll quit.
-	- Fix (`pane.rs`): keep growth as the primary signal (unchanged pre-cap, so the existing feel is untouched), and at the cap fall back to inferring the viewport advance from row fingerprints - how far last frame's on-screen rows reappear shifted up this frame (`scroll_shift`). An in-place bottom-row redraw (e.g. apt's status line, no newline) shifts nothing, so it still doesn't nudge (no bounce); a full-screen burst reports the backlog cap so the ease ramps to full catch-up.
+	- Cause: output easing was triggered by the scrollback getting deeper. That stops once the scrollback is full, since old lines then drop off the top as fast as new ones arrive, so the depth reads as unchanged every frame and the ease never fires again.
+		- Smooth output scrolling therefore died after a while, and sooner under fast output, which fills the buffer quicker. Scrolling back by hand was unaffected, which is why it looked as though only the output side had quit.
+	- Fixed: scrollback growth stays the main signal, so the feel below the cap is untouched. At the cap it falls back to working out how far the view moved by matching this frame's rows against the last one's. A bottom row redrawn in place, such as a progress line with no newline, shifts nothing and so still triggers no motion. A full-screen burst reports the whole backlog and the ease ramps up to catch it.
 	- Note: smooth-scroll feel past the cap is best judged in normal use.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Mouse wheel doesn't scroll back through the `stdout`/`stderr` buffer. It should do so, smoothly, and in proportion to how fast the mouse wheel is moved. But currently it moves the command history back. (20260626-104542)
-	- Cause: `TermMode::ALTERNATE_SCROLL` (DECSET 1007) is default-on in alacritty_terminal, but the wheel handler used `ALT_SCREEN || ALTERNATE_SCROLL` as the cursor-key trigger - so on the *primary* screen the always-on flag made the wheel emit cursor-up/down (shell history recall) instead of scrolling scrollback.
-	- Fix: gate the cursor-key path on `ALT_SCREEN` (now requires alt screen AND alternate-scroll AND no mouse mode). The primary screen always routes to the smooth scrollback (`Scroll::wheel`, already proportional to notches via `wheel_lines` + easing). Alt-screen apps (less/nano/vim) keep their cursor-key wheel. `app.rs` MouseWheel arm.
+	- Cause: alternate-scroll mode is on by default in the terminal engine, and the wheel handler treated either that flag or the alt screen as reason to send cursor keys. On the normal screen the always-on flag therefore turned the wheel into up and down arrows, which recalls shell history instead of scrolling the buffer.
+	- Fixed: cursor keys now need the alt screen as well as alternate-scroll, and no mouse mode. The normal screen always goes to the smooth scrollback, which was already proportional to the notches turned. Alt-screen programs such as `less`, `nano` and `vim` keep their cursor-key wheel.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Severe bug: Trying to open the settings dialog crashes the program. (20260625-150526)
 	- Cause: on X11 the main window holds a GL context, and the pop-out dialog created a second graphics instance that also tried to init GL, which panicked because a GL context was already current. It only showed with a transparent (GL) main window, so a default-config main masked it.
-	- Fix: dialogs now create their `Gfx` via `Gfx::with_backends(window, Backends::PRIMARY)` (Vulkan/Metal/DX12, no GL) - opaque dialogs don't need GL, and avoiding it sidesteps the EGL conflict.
+	- Fixed: a dialog builds its graphics on the platform's own modern backend rather than GL. An opaque dialog does not need GL, and staying off it avoids the clash.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Mouse text selection, and double-click selection, quit working. (20260625-161509)
-	- Cause: It was actually the selection highlight being invisible (input + copy-to-PRIMARY worked): the GL offscreen was `Rgba8UnormSrgb`, so the blit's `textureSample` decoded sRGB->linear, cancelling the blit's `lin2srgb`, and wgpu's GL backend doesn't sRGB-encode the offscreen write either - so all rect/text colors passed through as raw linear and rendered too dark (text ~64% looked "ok"; the dark `SELECTION_BG` (51,68,102)->(8,15,34) went invisible). Fix: make the GL offscreen plain `Rgba8Unorm` so shaders store their linear output raw and the blit's `lin2srgb` does the one true encode - uniformly for rects, glyphon text, and the bg image. This also completes the earlier transparency sRGB fix.
+	- Cause: selection was working, and so was the copy - it was the highlight that could not be seen. The offscreen buffer was marked as already color-encoded, so the final copy to the screen decoded it and then encoded it again, cancelling itself out. Every rect and every glyph came through too dark. Text at around two thirds brightness still looked passable, but the dark selection background fell to almost black and disappeared.
+	- Fixed: the offscreen buffer is left un-encoded, so the shaders store raw values and the copy to the screen does the one encode, the same way for rects, text and the wallpaper alike. This also finishes an earlier fix in the same area.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Smooth scrolling is broken. (20260623-194551)
 	- Cause: the fix for the apt "bug". That fix made output easing snap whenever new lines arrived closer than 0.12s apart, to stop apt's status bar bouncing. But a command's output arrives from the PTY in one sub-millisecond burst, so essentially all multi-line output (the core demo) snapped instead of easing - smooth scroll gone. Any burst threshold above a frame breaks the feature.
-	- Fix: Reverted the burst-snap entirely (`Scroll::nudge_output` back to always easing while following; dropped `output_age` / `OUTPUT_BURST_GAP_S`).
+	- Fixed: the burst-snap was reverted entirely, so output always eases while the view is following the bottom.
 	- Note: smooth output scrolling is restored. The apt status-line bounce is reopened below as its own item; it needs a non-destructive approach.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ "Close pane" menu items don't work.
-	- Cause: The action itself works with multiple panes. The dead case was the last pane: `MenuAction::Close` was gated on `panes.len() > 1`, so on a single pane (the startup state, where you'd first try it) it silently did nothing.
-	- Fix: Now Close Pane on the last pane closes the tab (if >1 tab), else the window.
+	- Cause: the action worked with more than one pane. The dead case was the last one: the menu item was gated on there being a pane to fall back to, so on a single pane, which is what a fresh window has and where anyone would first try it, nothing happened.
+	- Fixed: Now Close Pane on the last pane closes the tab (if >1 tab), else the window.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Text background colors, and the block cursor, appear to be aligned a line below where they should be.
 	- Cause: a regression from the menu bar. Cell backgrounds, the cursor, and the bars are positioned in full-window pixels, but the resolution was being fed the shorter content-area height, so every quad was pushed down relative to the text.
-	- Fix: Pass the full window size (`gfx.config.width/height`) to both `set_resolution` calls.
+	- Fixed: Pass the full window size (`gfx.config.width/height`) to both `set_resolution` calls.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ The text and UI elements in the settings dialog are misaligned. But before fixing it, make sure we're not going with egui.
 	- Cause: the dialog vertically centered text with a baked-in 18px text height, so on fonts whose line height differs the labels/values didn't line up with their controls (and it used the mono font).
-	- Fix (folded into the Settings enhancement): `SettingsDialog::texts(line_h)` now centers every label / value / hex field / button against the actual rendered line height (the app passes `cell_h`), and the app draws them with the proportional `sans_attrs()`.
+	- Fixed, as part of the Settings work: every label, value, hex field and button centers against the real rendered line height, and they are drawn in the proportional interface font.
 	- Note: not going with egui.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ If the window isn't just the right hight, the last line of text is invisible. Not as in, below the visible line - but actually invisible. If you type, you can see that output happens, it's just not visible. Once it scrolls up even a single line though, it becomes visible. Adjust the hieght of the window just a tad, it "fixes" the problem. But at the default dimensions, the problem is apparent.
-	- Cause: `Pane::build` lays out lines+1 rows into the pane's text buffer (the screen-row -1 overscan row above the viewport, plus rows 0..lines-1), so the bottom row sits at `y = lines*cell_h`. The buffer was sized to the content height (`lines*cell_h`), so when the window height made content an exact multiple of `cell_h` - which the default 152x48 does - that row landed right at the buffer's height limit and cosmic-text dropped it from layout (the cell bg/cursor quads use a separate renderer, so they still showed - hence "type and output happens but is invisible"). Scrolling/resizing shifted it back into range, "fixing" it.
-	- Fix: size the pane buffer to `content_h + 2*cell_h` (overscan slack) in `spawn_pane`/`relayout`; `TextArea` bounds still clip drawing to the pane.
+	- Cause: a pane lays out one row more than it shows, the extra one sitting just above the viewport, which puts the bottom row exactly at the height the text buffer was given. When the window height made the content an exact multiple of the cell height, which the default size does, that row sat on the limit and the text layout dropped it. Cell backgrounds and the cursor are drawn by a different renderer, so they still showed, which is why typing appeared to do nothing while the cursor moved. Scrolling or resizing shifted it back into range and appeared to fix it.
+	- Fixed: the pane's text buffer is given a couple of rows of slack beyond the content height, while the drawing is still clipped to the pane itself.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ There are weird spacing issues with the cursor. It appears too far after text. There are also weird text background color interactions with `ble`, which I suspect is caused by the spacing issue.
-	- Cause (re-fixed): the earlier two-part fix below was incomplete because `cell_w` was rounded (measured pitch ~10.5px -> 11). Everything grid-positioned (cursor, cell bg, per-cell glyphs) is placed at `col*cell_w`, so a `cell_w` that's bigger than the text's actual advance drifts them right of the text, and the drift accumulates per column. The cursor sat further past the text the longer the line, and fallback glyphs landed on top of the next cell at higher columns (`set_monospace_width` doesn't snap here. Cosmic-text only snaps when the font's `monospace_em_width()` is `Some`, which system fonts often aren't, so text renders at its natural advance).
-	- Fix: the cell width now measures the real rendered pitch and is not rounded, so it matches the text and residual drift is sub-pixel. Per-cell fallback glyphs are fit to their cell box, scaled and centered so an over-wide fallback can't spill onto its neighbor.
-	- (Earlier partial fix, superseded by the above) 1) `set_monospace_width(cell_w)` in `TextCtx::new_buffer`; 2) pulling glyphs the primary mono face lacks out of the main buffer and drawing them per-cell. The extraction [2] is still in place; [1] is kept but is largely inert for system fonts.
+	- Cause, on the re-fix: the earlier two-part fix was incomplete because the cell width was rounded, so it was a fraction of a pixel wider than the text's real advance. Everything placed on the grid - the cursor, cell backgrounds, fallback glyphs - is positioned by multiplying that width by the column, so the error accumulates across the line. The cursor sat further past the text the longer the line got, and a fallback glyph landed on top of the next cell at high columns.
+		- The text stack only snaps to a fixed advance when the font declares one, which a system font often does not, so text renders at its natural advance and the two disagree.
+	- Fixed: the cell width now measures the real rendered pitch and is not rounded, so it matches the text and residual drift is sub-pixel. Per-cell fallback glyphs are fit to their cell box, scaled and centered so an over-wide fallback can't spill onto its neighbor.
+	- Superseded: an earlier partial fix pinned the monospace advance on the text buffer, and pulled glyphs the main face lacks out of it to draw them one cell at a time. The extraction is still in place; the pinned advance is kept but does little for a system font.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Opacity should only affect the text rendering area, the actual terminal. Instead, it is also affecting the entire window including window decorations.
 	- Cause: the early build leaned on whole-window opacity, which by definition dims the decorations and text too. What's actually wanted is per-pixel surface alpha, and wgpu can't drive that on X11 directly (its Vulkan swapchain forces an opaque surface; its GL backend won't bind the ARGB visual).
-	- Fix: Done - solved via the glutin + wgpu-hal GL-interop path (see "True transparency" below). Opacity now affects only the terminal background; text, decorations, and chrome stay opaque. The old whole-window opacity route was removed.
+	- Fixed: through the transparent GL path described under "True transparency" below. Opacity now affects only the terminal background; text, decorations and chrome stay opaque. The old whole-window opacity route was removed.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Config file values don't work without a leading 0.
 	- Cause: `.25` is invalid TOML, so the whole file failed to parse and every value reverted to default (hence "all values").
-	- Fix: `config::lenient_floats` rewrites a bare-decimal value after `=` (`.25` -> `0.25`, `-.5` -> `-0.5`) before parsing.
+	- Fixed: a value written without its leading zero is filled in before parsing, so `.25` reads as `0.25` and `-.5` as `-0.5`.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ The font size is still smaller than the system monospace size.
 	- Causes:
 		1. `config.toml` pinned `font_size = 15.0` (from an older template), overriding the new follow-the-system default.
-			- Fix: Commented it out so detection applies.
-		2. "Use system monospace" had only meant cosmic-text's generic `Family::Monospace`, not the OS-configured family, so even at matching point size the glyphs looked smaller/different.
-			- Fix: Now `sysfont::monospace()` also returns the configured family (Pango/`defaults` parse, style+size stripped) and `resolve_mono_family` pins it when it's actually installed (validated against the font db), else falls back to generic monospace.
+			- Fixed: Commented it out so detection applies.
+		2. "Use system monospace" had only ever meant the text stack's generic monospace, not the family the OS is actually set to, so even at a matching point size the glyphs looked different.
+			- Fixed: the system-font lookup returns the configured family name as well as the size, and that family is pinned when it is actually installed. Otherwise it falls back to generic monospace.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Text sometimes renders in a different font (e.g. when running `source x9ps1-git; export X9PS1_STANDARD=1`). It seems that some color control codes causes the font change.
-	- Cause: the prompt sets bold (`ESC[01;..m`), and cosmic-text's generic `Family::Monospace` resolves the best face per query, so a bold run landed in a different family than the regular run.
-	- Fix: resolve the concrete monospace family name once at startup (`text::resolve_mono_family`) and pin `Family::Name` for every weight, so bold/italic stay in it.
+	- Cause: the prompt asks for bold, and a generic monospace request is answered face by face, so the bold run came back in a different family from the regular one.
+	- Fixed: the monospace family name is resolved once at startup and pinned for every weight, so bold and italic stay in it.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Text size is smaller than system default monospace.
-	- Fix: Default font size now follows the OS's monospace/fixed-pitch size instead of a fixed 15px, via per-platform detection in `src/sysfont.rs`: Linux `gsettings` -> `fc-match`; macOS `defaults read -g NSFixedPitchFontSize`; Windows `SystemParametersInfo` message-font (windows-sys FFI). Points->px at 96 DPI. `font_size` in the config is commented out by default (follow system); set it to pin a size. Falls back to 17px when detection fails.
+	- Fixed: the default font size follows the OS's own fixed-pitch size rather than a hard-coded one, read natively on each platform and converted from points. `font_size` is commented out in a fresh config, meaning follow the system; setting it pins a size. There is a fallback for when nothing can be read.
 	- Note: the macOS path is unconfirmed (no mac target).
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Native keybindings for `less` don't work.
-	- Fix: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
+	- Fixed: `less` enables application-cursor-keys mode (DECCKM); arrow / Home / End are now encoded as `ESC O x` instead of `ESC [ x` when that mode is active. The mouse wheel also now drives full-screen apps: when the alternate screen / alternate-scroll mode is active it sends cursor-key presses instead of moving the (nonexistent) scrollback.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Installer script(s):
-	- Done: `install.bash` (bash >= 3.2; Linux/WSL) and `install.ps1` (PowerShell 7+; Windows + Linux) at the repo root. Both resolve the latest release from GitHub (stable = latest full release, dev = newest pre-release; stable falls back to dev with a note while only betas exist), download the binary, verify sha256 against the release checksums file, and install per the location tables below - user or system target, launcher/shortcut included, PATH handled on Windows. Plan-then-confirm, idempotent (an already-current install is a no-op), checksum mismatch refuses to install. README got the "Installing / Direct" section with the one-liners and locations.
+	- Done: `install.bash` for bash, and `install.ps1` for PowerShell, both at the repo root and both able to install on more than one platform.
+		- Each resolves the latest release from GitHub, downloads the binary, checks it against the release checksums file, and installs to the locations in the tables below - user or system, with the launcher or shortcut, and PATH handled on Windows.
+		- Stable means the newest full release and dev means the newest pre-release. While only betas exist, stable falls back to dev and says so.
+		- Both plan first and then ask. Running one again over a current install does nothing, and a checksum that does not match refuses to install.
+		- The README gained an "Installing / Direct" section with the one-line commands and the locations.
 	- Note: macOS/BSD aren't offered (no published builds) - the scripts say so and point at building from source.
 	- Done (20260806): both rewritten to be reusable across projects - everything project-specific is one settings block at the top, and the asset name is built from a pattern. `--arch` is gone (the CPU is detected), `--version` added, and the checksums file is fetched first so an unpublished platform reports what the release *does* carry, and an already-current install finishes without downloading the binary.
 	- Done (20260806): `install.bash` now targets bash 3.2 (the macOS system bash), and `install.ps1` runs on Windows PowerShell 5.1 as well as 7+, on any platform PowerShell supports.
 	- Why the extra care on failures: an installer is the first thing a new user runs, so a raw stack trace is the worst possible first impression. Permission denied, an unreachable github, a rate-limited API, a missing platform build and "the app is still running" each get their own message saying what to do next.
-	- Windows-only steps now confirmed on a Windows host: Start Menu shortcut, elevated system install, and the PATH edit - which writes through the registry rather than `SetEnvironmentVariable`, since that rewrites a `REG_EXPAND_SZ` PATH as plain `REG_SZ` and silently kills every `%VAR%` already in it.
+	- Verified on a Windows host: the Start Menu shortcut, an elevated system install, and the PATH edit. That edit writes through the registry rather than the environment API, because the API rewrites an expandable PATH as a plain one and silently kills every `%VAR%` already in it.
 	- Done (20260807): fixed for the `irm ... | iex` form the README advertises. That runs the script inside the caller's own shell, so three things behaved differently there - a failure closed their window, the script-block form could not resolve its own variables, and strict mode was left switched on in their session afterwards. The retired `-Arch` option also rejected its own default under that form, which is how it surfaced.
 	- Done (20260807): both scripts and the README section published to `main`, so the advertised one-liners work ahead of the next release.
 
@@ -1617,13 +1634,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Verified in the running app: a pane whose shell moved to another directory reports the new one, and reports nothing once the shell has exited (callers then fall back, as before).
 	- ✅ Shell integration, so a shell that keeps its own idea of where it is can say so. Both spellings are read: OSC 7 (the `file://` URL the unix shells emit) and OSC 9;9 (the ConEmu spelling Windows Terminal documents, so a PowerShell profile already set up for that terminal works here unchanged).
 		- What the shell reports beats what the OS can see, since a shell reporting is answering the question directly while the OS only ever sees where the process sits. A report that no longer names a directory here is dropped and the OS answer stands - which is also what rejects a directory reported from the far side of an ssh, along with an OSC 7 URL naming another machine.
-		- No fork was needed after all. The feared cost was a second fork of `vte` (which handles neither sequence), but the PTY itself is what gets wrapped: `EventedPty` is a public trait and the event loop is generic over it, so the tap sits in front of the real PTY and scans what it reads. The bytes reach the parser exactly as they arrived.
+		- No fork was needed after all. The feared cost was a second fork of the VT parser, which handles neither sequence, but it is the terminal itself that gets wrapped: the engine is generic over it, so the tap sits in front and scans what it reads. The bytes reach the parser exactly as they arrived.
 		- Costs 47ms per 32 MiB of output on this box (714 MB/s, measured over a stream carrying colour and title sequences), against a Windows delivery ceiling of about 1.45s for the same 32 MiB. Nothing but the two sequences is ever collected, so a clipboard write carrying a whole paste is skipped rather than buffered.
 		- The snippets live in `shell-integration.md`, linked from the README: PowerShell, bash, zsh, fish, and the two cases that need nothing (cmd.exe, and fish, which already emits it).
 	- ✅ The PowerShells are offered with `-NoLogo`, so a new tab opens on a prompt rather than a copyright banner. A flag that only changes how a shell looks is deliberately left out of what makes it that shell, or the next scan would land a second PowerShell beside every stored one.
 	- ✅ A "Windows PowerShell 5 (relaxed)" entry is offered, switched OFF, carrying `-ExecutionPolicy RemoteSigned` - the 5.1 that ships with Windows refuses to run script files, so it loads no profile and cannot report where it is. Per-session only; nothing is written anywhere, and it arrives off because it is a security setting rather than a default.
 	- ✅ The PowerShell block is installed for you, a few seconds after launch, into each PowerShell profile that reports nothing.
-		- It appends after saving a copy beside the profile, never rewrites; a marker makes a second launch a no-op; deleting the block switches it off for good; the prompt is wrapped rather than replaced (and on PowerShell 6+ not touched at all, which leaves oh-my-posh and starship alone).
+		- It appends, after saving a copy of the profile beside it, and never rewrites what is there. A marker makes a second launch do nothing, and deleting the block switches it off for good.
+		- The prompt is wrapped rather than replaced, and on PowerShell 6 and later it is not touched at all, which leaves oh-my-posh and starship alone.
 		- A shell whose execution policy would refuse to load the profile is left alone with a line saying which and why - found the hard way on this box, where writing a profile for Windows PowerShell 5.1 turned every launch into a red execution-policy error.
 		- `shell.integration` (Settings > Shell > "PowerShell profiles") switches it off before it runs.
 	- Opened: 20260722-100516
@@ -1878,7 +1896,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ Huge quality-of-life improvement: Re-thought-throug, rationalized scroll-on-output settings refactor (20260802-03):
 	- In hindsight this was a big enough design challenge to warrant a design document.
-	- Done (20260802). The chase speed now traverses the named segments exactly as described: Ease-in (linear lift from rest, its own duration), Ramp-up (doubling per its period toward whichever top applies, re-entered through a second Ease-in when the single-screen cap lifts), Single-screen speed / unbounded, Ramp-down (a braking curve traced backwards from Ease-out, applied continuously - which is also the at-speed reserve), Ease-out (lands at zero). Of the curve models, went with straight/exponential segments adjusted by time (option 2a); the unbounded ramp accelerates exponentially until it keeps up, as the spec allowed.
+	- Done: the chase speed runs through the named segments exactly as described.
+		- Ease-in is a linear lift from rest over its own duration. Ramp-up doubles per period toward whichever top applies, and is re-entered through a second ease-in when the single-screen cap lifts.
+		- Then the single-screen speed, or the unbounded one. Ramp-down is a braking curve traced backwards from ease-out and applied continuously, which is also what holds the reserve at speed. Ease-out finishes at zero.
+		- Of the curve models on offer, the straight and exponential segments adjusted by time were chosen. The unbounded ramp accelerates exponentially until it keeps up, which the specification allowed.
 	- "Initial scroll speed" is gone (it fed four mechanisms at once and fought the rest); its config key is removed from existing files. Ease-in is now a duration (`scroll.ease_in_ms`), replacing the old fraction. Wheel/scrollback navigation keeps a fixed internal ease, unchanged feel.
 	- ✅ Slider direction (20260803): Ease-in and Ease-out ran opposite to the other three (higher = slower). Flipped so all five sliders read higher = faster. Stored config values unchanged (milliseconds); Ease-out's default now reads 50 on the dialog scale instead of 51.
 	- ✅ New speed defaults (20260803): the five now default to 50 / 75 / 75 / 75 / 40 in watch order - a much harder ramp-up, roughly double the single-screen top speed, a quicker wind-down, and a gentler landing. Ease-in is unchanged in feel.
@@ -2020,7 +2041,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Tier 4 - the pane froze under heavy output. Found while checking whether the lock contention above was worth acting on.
 		- ✅ 4.1 A pane could stop redrawing for seconds during a flood of output. Not a speed problem - the frames were being drawn, they just kept showing the same stale picture.
 			- Cause: to avoid stalling the display we only ever *tried* for the terminal and gave up immediately if the reader had it. But the reader holds it across a whole read cycle and grabs it again the instant it lets go, so that polite try could lose forever. On a large `cat`, 98% of frames showed a stale picture, the worst run lasting 2.1 seconds.
-			- Fix: still try first, but after two frames in a row of getting nowhere, wait properly. Waiting takes a numbered ticket, which lands us at the end of the current read cycle and makes the reader queue behind us - so the wait is bounded (under 5ms) where the polite try was not.
+			- Fixed: still try first, but after two frames in a row of getting nowhere, wait properly. Waiting takes a numbered ticket, which lands us at the end of the current read cycle and makes the reader queue behind us - so the wait is bounded (under 5ms) where the polite try was not.
 			- Worst stale run 2083ms -> 52ms, at an unchanged frame rate. Idle and ordinary output cost are unchanged - this only engages when something is actually contending.
 	- Tier 5 - cursor animation: pause is the only mode, and it really stops now.
 		- ✅ 5.1 Removed the 'cursor_animation_input' option. Behavior is always "pause".
@@ -2052,7 +2073,9 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260731-111951
 
 - ✅ Take advantage of shcl's hierarchical capabilities, by nesting the config sections, rather than using 'parent_child: value' TOML style. Keep using empty lines for clarity. Comments for nested settings can follow the nesting. For example, rather than a bunch of 'wallpaper_*' settings, 'wallpaper' gets nested children. Tabs for nesting. You can erase and my own personal config for recreation at next post-compile start.
-	- Done: the whole config is nested blocks now - font, window, transparency, wallpaper (with rotate and contrast_mask children), text (with scrim), cursor (with size), selection, shell, scroll, colors. Tabs for nesting, blank lines kept, comments indented with their settings. Each setting carries a title line, a description, and a range line where one applies, with a "## Default" marker on the commented default lines; sections divide with the bullet-rule style.
+	- Done: the whole config is nested blocks now - font, window, transparency, wallpaper with its rotation and contrast-mask children, text with its scrim, cursor with its size, then selection, shell, scroll and colors.
+		- Tabs for nesting, blank lines kept, and comments indented with the setting they belong to.
+		- Each setting carries a title line, a description, and a range line where one applies. A commented default line is marked as the default, and sections are divided the usual way.
 	- An old flat-style config converts in one launch: the file moves aside to config.shcl.bak and a fresh nested file is written with every active value carried to its new place, so settings survive. A setting can also still be written as a single dotted line ('wallpaper.opacity: 0.1') and reads the same.
 	- Saving keeps the nested layout intact: comments keep their indentation and the blank-line grouping survives a settings save.
 	- A fresh file matches the shipped template byte for byte, and a relaunch never rewrites it.
@@ -2326,8 +2349,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Config file setting names and comments
 	- Program arguments
 	- (Defer settings dialog, that's in a separate enhancement.)
-	- Done: config keys `background_*` (image-specific) -> `wallpaper_*` (bare `background_image` -> `wallpaper`); the Settings fields, `RawConfig`, `persist`, and the default-config template + comments follow.
-		- Existing configs migrate in place via `CONFIG_RENAMES`, keeping values, comments, and commented state.
+	- Done: the image-specific `background_*` settings are `wallpaper_*` now, with the bare `background_image` becoming `wallpaper`. The dialog fields, the config reader and writer, and the shipped template and its comments all follow.
+		- An existing config is migrated in place, keeping its values, its comments, and whether each line was commented out.
 		- Left the non-image ones alone: `transparent_background`/`_blur` (window see-through) and the `[colors]` `background`/`menu_background`/`dialog_background`.
 		- Internal image helpers renamed too (`load_wallpaper`, `resolve_wallpaper`, `resolve_wallpaper_folder`, `wallpaper_changed`; the decoded-pixels local stays distinct as `wallpaper_img`).
 		- CLI adds `--wallpaper-file/-stretch/-zoom/-opacity` with the old `--background-image*` kept as aliases; runtime `--wallpaper` and window `--background-opacity` (see-through, not the image) unchanged.
@@ -2370,13 +2393,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260701-112859
 
 - ✅ New setting: Background image contrast mask - flatten the image's contrast so it stops competing with text.
-	- Done: applies uniformly across the whole image, baked at load in linear light. A main on/off (default on) plus three 0..1 knobs (default 0.5 each): `size` = the flatten scale, the localMean radius (1.0 = half the longest pixel dimension, so the image collapses toward one tone; small = only fine detail flattens); `strength` = how far each pixel is pulled toward that local mean; `auto` = blends the manual knobs with values derived from the image's own busyness (1.0 = full auto, 0.0 = manual only, 0.5 = average). Config keys `background_contrast_mask` / `_size` / `_strength` / `_auto`; a Settings toggle + three sliders (sliders gray out while the mask is off).
+	- Done: it applies evenly across the whole image, worked out once at load. A main switch, on by default, plus three knobs, each defaulting to the middle.
+		- Size is the scale it flattens at. At the top of the range the image collapses toward one tone; small values flatten only fine detail.
+		- Strength is how far each pixel is pulled toward the local average around it.
+		- Auto blends the two manual knobs with values derived from how busy the image itself is. All the way up is fully automatic, all the way down is manual only.
+		- There is a Settings toggle and three sliders, and the sliders gray out while the mask is off.
 	- Note: the mask lowers image contrast while overall brightness stays put - a flatten toward the mean, not a darkening.
 	- Opened: n/a
 	- Closed: 20260714-104924
 
 - ✅ Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
-	- Done: full selection model in every editable field (text / hex color / numeric), cross-platform. Mouse: click places the caret, drag selects, Shift+click extends, double-click selects the word, triple-click selects all. Keyboard: Shift+arrows/Home/End extend, Ctrl+Left/Right jump by words, Ctrl+A select all, Ctrl+C/X/V copy/cut/paste (also Ctrl+Insert / Shift+Insert / Shift+Delete), Ctrl+Backspace/Delete delete by word. Typing or pasting replaces the selection; paste runs through each field's own validation (hex digits only in color fields, digits/single dot in numeric). Opening a field via keyboard selects its whole value so typing replaces it; the selection draws highlighted behind the text.
+	- Done: a full selection model in every editable field - text, hex color and numeric - on every platform.
+		- Mouse: a click places the caret, a drag selects, Shift and a click extends, a double-click takes the word, a triple-click takes the lot.
+		- Keyboard: Shift with the arrows or Home and End extends, Ctrl with Left and Right jumps by words, Ctrl+A selects all, and copy, cut and paste work under both the Ctrl letters and the older Insert and Delete combinations. Ctrl with Backspace or Delete removes a word.
+		- Typing or pasting replaces the selection, and a paste goes through each field's own validation, so a color field takes hex digits only and a numeric field digits and one dot.
+		- Opening a field from the keyboard selects its whole value, so typing replaces it, and the selection draws highlighted behind the text.
 	- ✅ In-field right-click menu (Cut/Copy/Paste) - the hotkeys and mouse selection cover everything functionally; add if wanted.
 		- Done: right-click in any editable field pops Cut / Copy / Paste / Delete / Select all (also the Menu key or Shift+F10, opening at the caret). Items gray out when inapplicable (no selection, empty clipboard); Up/Down + Enter drive it from the keyboard, Esc or a click elsewhere dismisses.
 	- Opened: 20260703-100322
@@ -2391,12 +2422,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Done: the single Linux binary renders the full UI on Wayland via the native wgpu path - menu chrome, scrolling text, background image + blur + text scrim all correct. No separate build: winit selects X11 or Wayland at runtime, and both display libraries are loaded on demand, so a future Wayland-only system needs no X11.
 	- Test harness: the scroll regression harness gained a `--wayland` pass that runs the same deterministic scenes under a headless `cage` kiosk (software compositor + software Vulkan). All four scenes (less/vim/nano/muffer) slide identically to X11. cicd runs both passes when `SCROLL_HARNESS_WAYLAND=1`; the Wayland pass self-skips where `cage` is absent.
 	- Wayland transparency (2026-07-18): the native-alpha path works - a translucent terminal background over the compositor with text, chrome and cursor staying opaque, same as X11.
-	- Wayland dialog stacking (2026-07-18): a pop-out dialog opens as its own toplevel, renders fully, floats above the terminal, and the app-side modality holds; the compositor floats it from the fixed-size hint (the X11 WM hints correctly no-op). Dialog keyboard input on Wayland is not yet confirmed and needs a real Wayland desktop; no defect was found in the dialog code and X11 is unaffected.
+	- Note (2026-07-18), on dialog stacking under Wayland: a pop-out dialog opens as its own window, renders fully, floats above the terminal, and stays modal. The compositor floats it because it says it is a fixed size; the X11 hints correctly do nothing there.
+		- Keyboard input to a dialog under Wayland is unconfirmed and needs a real Wayland desktop to check. Nothing was found wrong in the dialog code, and X11 is unaffected.
 	- Opened: n/a
 	- Closed: 20260718-120039
 
 - ✅ Smooth cursor movement should speed up, if it falls too far behind where it actually is.
-	- Done: the horizontal slide's time-constant now shrinks with the gap, so the cursor accelerates the farther it trails its real column (a fast burst / paste catches up instead of dragging across the line), while a single-cell move keeps the gentle slide. A hard cap also keeps it from ever sitting more than a handful of cells behind. Internal tunables (`CURSOR_CATCHUP` / `CURSOR_MAX_LAG`).
+	- Done: the slide speeds up the farther the cursor trails its real column, so a paste or a fast burst catches up instead of dragging across the line, while a single-cell move keeps the gentle slide. A cap also stops it ever sitting more than a few cells behind. Both are source constants rather than settings.
 	- Opened: 20260703-211333
 	- Closed: 20260713-144013
 
@@ -2493,12 +2525,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Order for Scrim function: SDF, DT, Dilate, Gaussian (default SDF).
 	- ✅ Order for Scrim falloff: Exponential, Gaussian, Log, S-curve, Linear (default Gaussian).
 		- Note: the default falloff changed from S-curve to Gaussian per this item (supersedes the earlier "default to S-curve").
-	- ✅ Bug "Function selection not saving state": the apply path swaps the live settings (`RwLock<Arc<Settings>>`) and the diff writer persists `text_scrim_function`, so a picked function both takes effect live and is written to `config.toml` on Apply/OK.
+	- ✅ Bug "Function selection not saving state": Apply swaps the live settings and writes the chosen function to the config, so it both takes effect at once and survives a relaunch.
 	- Opened: n/a
 	- Closed: 20260709-131224
 
 - ✅ Improve the text scrim
-	- Done: added a "Scrim function" choice (Dilate / SDF / DT / Gaussian [ugly]) and expanded "Scrim falloff" to five curves (S-curve / Gaussian / Linear / Logarithmic / Exponential), both in `config.toml` (`text_scrim_function`, `text_scrim_ramp`) and as Settings radios. The three non-Gaussian functions share one cheap separable Euclidean/Chebyshev distance transform (bounded to the halo radius, two passes, no jump-flood), so corners stay full instead of receding. Default is now SDF (round, full corners); Gaussian is kept as the labeled-ugly baseline. Falloff and function are orthogonal (shape vs fade).
+	- Done: a "Scrim function" choice with four options, and "Scrim falloff" expanded to five curves - S-curve, Gaussian, linear, logarithmic and exponential. Both are config settings and both are radio rows in Settings.
+		- Three of the four functions share one cheap two-pass distance calculation, bounded to the halo radius, so corners stay full instead of receding. The default is the one that gives a round halo with full corners; the Gaussian is kept as a baseline and labeled as the ugly one.
+		- The function decides the shape and the falloff decides the fade, so the two are independent.
 	- Standard Gaussian Blur function is a poor fit for the text scrim, as a legibility aid. Here's why:
 	- **What's wrong**: To illustrate conceptually: If you apply a background scrim to a solid square using gaussian blur, as the blur radius increases, the total blur shape looks more and more "round". This means that - effectively - the blur behind the square, doesn't look even at the corners. It looks "too strong" along the middle of the sides of the square, and "pulled-in" at the corners. The corners look naked. Basically it looks like a square sitting on top of a separate round fuzzy thing - rather than something evenly integrated with the square. (Which describes the cursor in block mode perfectly, and also why the scrim behind some clusters of letters looks "clumpy".)
 	- **What would be better**: Ideally, the blur would also be square-ish - extending evenly from every angle, from every point along the edge of the square. (With corners rounding off with increasing blur radius, but never actually pulling in below the corners.) In other words, if you measured the density fall-off of the blur starting from the corner and moving outwart diagonally, it should fall-off at about the same rate, as if you measured it from the middle of an edge and moved out perpendicularly.
@@ -2518,18 +2552,19 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- README.md
 	- design.md
 	- Open bugs and issues in backlog.md, but not any below the "Done" section - need those for historical reference.
-	- Done: config keys `text_glow*`/`cursor_glow` -> `text_scrim*`/`cursor_scrim` (value-preserving migration keeps existing configs); module/struct/idents `glow` -> `scrim`; Settings labels/enums; README, design.md; open backlog items; `03-glow.png` -> `03-scrim.png`. `text_outline` (a sibling, not the scrim) kept its name. (20260708)
+	- Done: the `text_glow` and `cursor_glow` settings are `text_scrim` and `cursor_scrim` now, and an existing config is migrated without losing its values. The source, the Settings labels, the README, the design doc, the open backlog items and the screenshot filename all follow.
+		- `text_outline` is a sibling of the scrim rather than part of it, so it kept its name.
 	- Opened: n/a
 	- Closed: 20260708-163910
 
 - ✅ Options to include the cursor in the text scrim, and outline. Default scrim to off, outline to on.
-	- Done: split the cursor coverage into its own texture, separate from the text, so `cursor_scrim` (halo) and `cursor_outline` (border) are independent. Two config keys + Settings toggles ("Cursor in scrim", "Cursor in outline"). Defaults: scrim off, outline on. (20260708)
+	- Done: the cursor's coverage is kept apart from the text's, so its halo and its border are independent of each other. Two settings, with rows in the dialog reading "Cursor in scrim" and "Cursor in outline". The scrim is off by default and the outline on.
 	- Opened: 20260708-191010
 	- Closed: 20260708-193014
 
 - ✅ Donations model:
 	- ✅ "Support SilkTerm!" button in Help|About, with flyover text of URL it's going to open in a web page.
-		- Done: a filled button under the About text opens `DONATE_URL`. Hovering it shows the full destination URL, and the dialog is widened so it isn't clipped.
+		- Done: a filled button under the About text opens the donation page. Hovering it shows the full destination address, and the dialog is wide enough not to clip it.
 	- ✅ `## Support Silkterm` section in README.md
 	- ✅ `DONATE.md`
 	- ✅ `.github/FUNDING.yml`
@@ -2641,7 +2676,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Done: at 2x the title, tabs, labels, sliders, fields, checkboxes and buttons all scale cleanly.
 	- Reproduced: the Settings radio labels collided at 2x.
 	- Cause: the radio spacing was a fixed pixel value while the text grew with the font.
-	- Fix: radio spacing now scales with the font, and the panel widens so every option fits.
+	- Fixed: radio spacing now scales with the font, and the panel widens so every option fits.
 	- Opened: 20260702-170007
 	- Closed: 20260702-180240
 
@@ -2657,9 +2692,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260703-091342
 
 - ✅ Menu bar: follows the system font, sizes to it, and goes neutral gray.
-	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. - Fixed under bug #1n45bca: chrome pins a concrete sans family (`resolve_sans_family` / `sysfont::sans_serif`) instead of generic `Family::SansSerif`, which had been falling through to the serif document font.
+	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect.
+		- Fixed under bug #1n45bca: the chrome pins a named sans family rather than asking for a generic one, which had been falling through to the desktop's serif document font.
 	- ✅ Auto-adjust height based on menu font size.
-		- Done (`app.rs`): the `MENU_BAR_H`/`TAB_BAR_H` consts are gone; bar heights now come from `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (`text.cell_h`) + a small `MENU_BAR_VPAD`/`TAB_BAR_VPAD`, and the title text is centered in the scaled bar. So a larger font grows the bars instead of clipping. All ~13 const usages (layout, render, hit-testing, the resumed-time initial size) were switched. At the default font it's ~1px taller than before (27/29 vs 26/28) - imperceptible.
+		- Done: the fixed bar heights are gone. Each bar is now the menu font's line height plus a little padding, with the title centered in it, so a larger font grows the bar instead of clipping it. At the default font the bars are a pixel taller than before.
 	- ✅ Make menu gray, with white text. (For both light and dark themes.)
 		- The menu / tab-bar / context-menu chrome consts (`MENU_*`, `TAB_*`) are now neutral grays with near-white text, fixed across modes (per #166 default).
 	- Opened: n/a
@@ -2826,33 +2862,35 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260703-092145
 
 - ✅ Bell/warning:
-	- Gently and smoothly brighten all text, like the modern Windows Terminal does. - on BEL the text brightens toward white then fades back (~0.8s); text only (bg/cursor unchanged). Tunable `BELL_BRIGHTEN` if you want it stronger. Detail in the private dev notes.
+	- Gently and smoothly brighten all text, like the modern Windows Terminal does.
+		- Done: on a bell the text brightens toward white and fades back over about eight tenths of a second. Backgrounds and the cursor are untouched. The strength is a source constant.
 	- Opened: n/a
 	- Closed: 20260629-230245
 
 - ✅ "Reload config" should re-read the background image too. In case user changed the image and kept it the same name. (20260626-102603)
 	- Cause: `apply_new_settings` reloaded the image only when `bg_image_changed` (path/opacity/fit/blur differ). A same-name file swap leaves the path string identical, so it skipped the reload.
-	- Fix: `apply_new_settings` takes a `force_bg` flag; `reload_config` passes `true` so Reload Config always re-reads the image file (the dialog Apply path still reloads only on a real change). `app.rs`.
+	- Fixed: Reload Config always re-reads the image file, while the dialog's Apply still reloads it only when the setting actually changed.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ About dialog:
 	- Include the version, build, copyright, and license.
-	- Done (`dialog.rs` `layout_about`): added a copyright line and a `License: <SPDX>` line (`env!("CARGO_PKG_LICENSE")` -> GPL-2.0-or-later) under the version, and a `Build: <arch> / <os> (debug|release)` line in the Info section (`std::env::consts` + `cfg!(debug_assertions)`, so it names which cross-built target the binary is). The About window is content-sized, so it grows to fit. Builds clean.
+	- Done: a copyright line and a license line under the version, plus a build line in the Info section naming the architecture, the OS, and whether it is a debug or release build - so a cross-built binary says which target it is. The About window sizes to its content, so it grows to fit.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Menu, second round: keyboard navigation, and accelerators shown on Alt.
 	- ✅ When a menu is open, keyboard arrow should work on them, not on the active terminal pane.
-		- Fix: An open menu (context menu or menu-bar dropdown) now captures navigation keys: Up/Down move a highlighted item (`ContextMenu::step`, wraps, skips separators, reuses the `hover` field/render), Enter activates it, Esc closes, Left/Right cycle between menu-bar dropdowns.
+		- Fixed: an open menu, whether from the bar or a right-click, takes the navigation keys. Up and Down move the highlight, wrapping and skipping separators, Enter activates, Escape closes, and Left and Right move between the bar's dropdowns.
 	- ✅ When 'Alt' Pressed, keyboard accelerators should become visible on the menu (traditionally with underscores). - Open dropdowns underline each item's first letter and a letter-press activates the first item starting with it. Alt+F/E/V/T/P/H open the bar menus. And now the bar titles themselves underline their accelerator letter while Alt is held.
-		- ✅ Show the underline on the bar titles on Alt-hold (a redraw-on-Alt + char-measure pass). - Done (`app.rs` render): while `self.mods.alt_key()` and no dropdown is open, an underline rect is drawn under each top-level title's first letter (measured via `measure_text`, like the dropdown items); `ModifiersChanged` now sets `dirty` so it appears/disappears live on Alt press/release.
+		- ✅ Show the underline on the bar titles while Alt is held.
+			- Done: with Alt down and no dropdown open, an underline is drawn under each top-level title's first letter, measured the same way the dropdown items are. It appears and disappears as Alt is pressed and released.
 	- Note: the cross-platform widget-toolkit question is settled - the chrome stays hand-rolled, egui having been declined after a real trial. So the Alt underline on a bar title is an ordinary task.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Change license from MIT to "GNU General Public License v2.0 or later", SPDX "GPL-2.0-or-later", reference https://spdx.org/licenses/GPL-2.0-or-later.html.
-	- Status: Done. `license.md` now holds the canonical, verbatim GPL-2.0 text from gnu.org, in a markdown fenced block. `Cargo.toml`, `license = "GPL-2.0-or-later"`. README badge -> GPL v2+ and the license blurb updated; every `.rs` file (src + examples, 18) carries an `// SPDX-License-Identifier: GPL-2.0-or-later` + copyright header. The only remaining "MIT" string is in the README's commented-out badge palette, left intact.
+	- Done: `license.md` now holds the canonical, verbatim GPL-2.0 text from gnu.org, in a markdown fenced block. `Cargo.toml`, `license = "GPL-2.0-or-later"`. README badge -> GPL v2+ and the license blurb updated; every `.rs` file (src + examples, 18) carries an `// SPDX-License-Identifier: GPL-2.0-or-later` + copyright header. The only remaining "MIT" string is in the README's commented-out badge palette, left intact.
 	- The reason it was MIT before, was due to the misunderstanding that derived works have to also be MIT. But that's not the case, MIT allows relicensing derived works.
 	- GNU General Public License v2.0 or later offers more protections, while being compatible with the Linux kernel and Darwin.
 		- Also, some included libraries are Apache, which is compatible with GPLv3 (and therefore GPLv2+), but not bare GPLv2.
@@ -2860,7 +2898,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260629-214404
 
 - ✅ Smooth-scroll enhancement: (20260626-100721)
-	- Status: Done. `scroll_tau_ms` is now the initial (slow, smooth) speed; under output bursts the visual backlog accumulates (capped at 16 lines) and the ease dynamically ramps faster (down to 8ms tau) to keep up, then eases back to the slow speed once output stops. The speed change is itself smoothed (ramps up over ~90ms, back down over ~450ms) so it never jumps; the ramp only applies while following the bottom (wheel/scrollback keeps the plain ease). Settings control renamed "Initial scroll speed" (shown 1..100, higher=faster; stored as tau).
+	- Done: the scroll speed setting is the starting, slow, smooth speed now.
+		- Under a burst the backlog of lines waiting to be shown builds up, capped, and the ease speeds up to keep pace, then settles back to the slow speed once output stops.
+		- The speed change is itself smoothed, quicker on the way up than on the way down, so it never jumps. It only applies while the view is following the bottom; the wheel and the scrollback keep the plain ease.
+		- The dialog row is "Initial scroll speed", shown as one to a hundred with higher meaning faster.
 	- The fundamental challenge with smooth-scroll (and why it was abandoned it the late 80s), is that if the scroll is too smooth, then fast output will get backlogged in the buffer, and risk overflowing that buffer.
 	- Solution:
 		- By default, use a slower, smoother scroll. (E.g. for the case of the user typing one command at a time and sporadically scrolling lines up infrequently.)
@@ -2876,17 +2917,19 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260629-214404
 
 - ✅ Config file: Separate different grouped setting comments and settings (which are good to keep together), by an empty newline. Keep individual settings and comments together though. (20260625)
-	- The `DEFAULT_CONFIG` template is now grouped consistently (each setting with its own comment; `line_height_scale` no longer rides the font-size group. The three background-image keys split into their own comment groups. `backfill_config` is group-aware: `setting_groups` tags whether each template setting starts a new group (preceded by a blank/table), so a re-inserted key carries its comment block and different groups are blank-separated, while same-group keys (e.g. columns+rows, the scroll-feel keys) stay together. A boundary double-blank is de-duped. Note: only affects freshly-written or newly-backfilled keys - an existing file's already-present bare keys aren't reformatted (regenerate for the clean layout).
+	- Done: the shipped template is grouped consistently, each setting with its own comment, and settings that had been riding another group's comment are split into their own.
+		- Backfill knows about the groups now. A key put back carries its comment block with it, different groups stay separated by a blank line, and keys that belong together, such as columns and rows, stay together.
+		- Note: this only reaches freshly written or newly backfilled keys. Bare keys already in a file are not reformatted; regenerating the file is what gets the clean layout.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ When double-clicking to select text, if the rule about quotes and brackets is in effect, and there are nothing but spaces in between selectable text and the matching quotes or brackets - then don't include the spaces in the selection. For example: " Now is the time. " - exclude the spaces between the symbols and the open and close quotes, in the selection. (20260625)
-	- Status: Done. `pair_inside` now trims runs of spaces directly against the delimiters (interior spaces kept): `" Now is the time. "` selects `Now is the time.`, `[  hi  ]` selects `hi`. All-spaces inside falls back to the full inside span.
+	- Done: `pair_inside` now trims runs of spaces directly against the delimiters (interior spaces kept): `" Now is the time. "` selects `Now is the time.`, `[  hi  ]` selects `hi`. All-spaces inside falls back to the full inside span.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Optimize compiled binaries to balance executable size and speed (slight nod to size), without the risk of triggering antivirus.
-	- Status: Done. `[profile.release]`: `lto = "fat"` (whole-program inlining - smaller and usually faster than thin), `panic = "abort"` (drops unwinding tables - sizable shrink, fine for a GUI app), kept `codegen-units = 1` + `strip = true`, and opt-level stays 3 so renderer/PTY hot paths aren't slowed (the size improvement comes from the free wins, not from `opt-level=s/z`). Deliberately no UPX/packer - packers routinely trip AV heuristics. - Result: the Linux binary is ~13% smaller, with no runtime-speed tradeoff.
+	- Done: `[profile.release]`: `lto = "fat"` (whole-program inlining - smaller and usually faster than thin), `panic = "abort"` (drops unwinding tables - sizable shrink, fine for a GUI app), kept `codegen-units = 1` + `strip = true`, and opt-level stays 3 so renderer/PTY hot paths aren't slowed (the size improvement comes from the free wins, not from `opt-level=s/z`). Deliberately no UPX/packer - packers routinely trip AV heuristics. - Result: the Linux binary is ~13% smaller, with no runtime-speed tradeoff.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -2920,7 +2963,9 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260629-214404
 
 - ✅ Text readability glow:
-	- ✅ When enabled, this setting adds some blurry background color, behind each glyph. In Photoshop, it's called "Outer Glow". - Done via `src/glow.rs` (`Glow`): the scene's text is rendered to a texture, blurred with a 2-pass separable Gaussian (`text_glow_radius` sigma), then composited (tinted the bg color, `srgb_f32(bg)`) under the crisp text. Ping-pong f16 textures; intensity boost (`GLOW_INTENSITY=6`) so the blurred coverage is solid near glyphs. Gated `config.text_glow` (default off -> render path unchanged). Light text on a light background is unreadable without it and clearly readable with it. Implements exactly the suggested approach (render-bg-color -> blur -> crisp on top), using the glyph alpha as the glow mask so no separate glow-colored buffers are needed.
+	- ✅ When enabled, this setting adds some blurry background color, behind each glyph. In Photoshop, it's called "Outer Glow".
+		- Done, exactly the way it was suggested: the text is drawn to a texture, blurred in two passes, tinted the background color, and composited under the crisp text. The glyph coverage is its own mask, so nothing extra has to be drawn.
+		- Off by default, which leaves the render path as it was. Light text on a light background is unreadable without it and clearly readable with it.
 	- One possible way to do this - and there may be other, better ways:
 		- Render the text exactly as normal, except in the background color. (As if background were 100% opaque.) On a fully transparent temporary canvas (at least conceptually - not necessarily literally).
 		- Blur that rendered text with a gaussian blur, according to the specified blur radius in settings.
@@ -2931,28 +2976,30 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Even if the background is 100% opaque but the background image is very light (like the terminal text color), the text will still be readable - for the same reason.
 	- ✅ Expose config value in settings dialog:
 		- ✅ Blur radius: Boolean to enable, slider + number field to adjust.
-			- "Text glow" toggle + "Glow radius" slider in Settings -> Appearance; the radius is grayed out/inert when the toggle is off (same `disabled()` mechanism as the Opacity slider). (Editable numeric field is part of the deferred dialog-part-2 work.)
-		- ✅ Softness/intensity control. Maybe "Softness" as the name. - New `text_glow_softness` (0..1, default 0.4) + a "Softness" slider in Settings (grayed when Text glow is off). Maps to the glow's coverage boost: 0 = hard/solid/strong halo (x10), 1 = soft/faint (x1). Softness 0.1 gives a bold dark halo, 0.9 a gentle faint glow. (If the high=softer direction reads backwards, it's a one-line flip.)
+			- A "Text glow" toggle and a "Glow radius" slider on the Appearance tab. The radius grays out and does nothing while the toggle is off, the same way the Opacity slider does.
+		- ✅ Softness or intensity control. Maybe "Softness" as the name.
+			- Done: a softness setting and a matching slider, grayed out while the glow is off. Low values give a bold dark halo, high values a gentle faint one.
 	- ✅ Visual bug: When background glow is applied to characters that have a per-character(s)-box different background, and the foreground color is similar to the global background for that character(s), then the character is a blurry mess. (E.g. the global background is dark, but some characters are rendered one-off with dark text and light background, then it's not readable.)
 		- ✅ The solution is, if a character has a different background color than global, use that one-off background color as the glow color for that character. - Done: the glow is now colored by a per-pixel "bgcolor" texture (cleared to the global bg, with the per-cell bg rects drawn over it) instead of a single global tint; the composite multiplies the blurred glyph coverage by that local color. So a glyph on a colored cell gets a halo matching its own cell bg (harmless), while global-bg cells keep their readability halo.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Config file: When reading a value from the config file, if the entry doesn't exist, insert the setting into the file using hard-coded defaults, in an approprite section. (While not overwriting other existing values, comments, space formatting, etc.) Make this a reusable feature.
-	- Status: Done. `config::backfill_config` (run in `load` after the file exists) inserts any setting the `DEFAULT_CONFIG` template defines that the user's file lacks, using the template's own line - so follow-system keys (font_size, font_family, background_*) stay commented (behavior unchanged) and active keys get their default value. Top-level keys go before the first table; `[colors]` keys under that header. Existing values/comments/formatting are preserved (insert-only). Reusable helpers: `setting_lines`/`line_table`/`line_setting_key`.
+	- Done: on load, any setting the shipped template defines and the file lacks is inserted using the template's own line. A key meant to follow the system stays commented out, and an active key gets its default value.
+		- Keys land in the right section, and nothing already in the file is touched - values, comments and formatting all survive, since this only ever inserts.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ When double-clicking to select stuff backwards and forwards to defined delimiters: Ignore delimiters if inside a consistent pair of single or double quotes, or paired (), [], <>, or {}. In those cases, select everything inside those (but not including).
-	- Implied: `Pane::pair_span` + pure `pair_inside`/`distinct_pair`/`same_char_pair` (pane.rs). On a double-click the app first checks `pair_inside`; if the click is inside a matched pair it selects the contents (a `Simple` range), else falls back to the normal `Semantic` word select. Single-line only (multi-line pairs not handled).
+	- Done: a double-click first asks whether the click sits inside a matched pair. If it does, the contents are selected; otherwise it falls back to the normal word select. One line only - a pair spanning lines is not handled.
 	- ✅ But if the double-click happened outside such consisten parings, then ignore that logic (and the selection might include such characters depending on defined delimiters).
 		- Falls back to `Semantic`.
 	- ✅ The order of pair inclusion precedence: ``, "", '', {}, (), [], <>.
 		- Done: the first enclosing pair in that order wins, so inside () selects the () contents even when [] is nested within.
 	- ✅ List of delimiters should also be read from config file.
-		- Status: Done. `word_separators` (config) feeds alacritty's `semantic_escape_chars`; backfilled if missing.
+		- Done: `word_separators` (config) feeds alacritty's `semantic_escape_chars`; backfilled if missing.
 	- ✅ The list of selection inclusion pairs should be read from the config file.
-		- Status: Done. new `selection_pairs` config key (default `` `` "" '' {} () [] <> ``), parsed by `config::selection_pairs()`; backfilled (commented) if missing. Not in the Settings dialog.
+		- Done: a `selection_pairs` setting, defaulting to the usual quote and bracket pairs. It is backfilled into an existing config, commented out, and is not in the Settings dialog.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -2971,36 +3018,37 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - ✅ True transparency:
 	- Bug (fixed): Adjusting the transparency affects only the overall terminal background (including image which already has it's own correctly functioning opacity).
 	- Transparency should not affect the Window decorations, menu, focus, or - critically - terminal text.
-	- Status: Done. Opt-in `transparent_background = true`; `opacity` is the background alpha; text, decorations, and the menu/tab bars stay opaque. Default (`false`) path unchanged (native wgpu).
-	- How: wgpu can't get per-pixel alpha on X11 by itself (its Vulkan swapchain forces an opaque surface; its GL backend won't bind the 32-bit ARGB visual). So on X11 we create the window + a transparent GL context with glutin and run wgpu on top of it via hal interop (`Gfx::new_gl_transparent`), render the scene to an offscreen texture, then blit that into the GL framebuffer. Off X11 (e.g. Wayland) the plain wgpu surface already does premultiplied alpha. `Gfx` is a two-backend enum (native wgpu / GL). No wgpu downgrade, no renderer rewrite.
+	- Done: it is opt-in through `transparent_background`, with `opacity` deciding how see-through the background is. Text, decorations and the menu and tab bars stay opaque. With it off, the render path is exactly what it was.
+	- How: the graphics library cannot get per-pixel alpha on X11 by itself - its modern path forces an opaque surface, and its GL path will not bind the visual that carries an alpha channel. So on X11 the window and a transparent GL context are created directly, the library runs on top of that, the scene renders to an offscreen texture, and that is copied into the GL framebuffer. Off X11, on Wayland for instance, the ordinary surface already carries alpha. Nothing was downgraded and the renderer was not rewritten.
 	- Note: the hard part was that on NVIDIA/Linux glyphon renders no text on a GL context below 4.2, because drawing into a texture view silently no-ops there (that is how glyphon builds its atlas). Fix: request a GL 4.6 context, falling back as low as 3.3.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Make both the main menu, and the right-click menu appearances more traditional:
-	- ✅ Use the system proportional font, rather than monospace font. - New `text::sans_attrs()` (cosmic-text `Family::SansSerif` -> the system default proportional font); the menu bar titles, dropdowns, and the right-click menu all use it.
+	- ✅ Use the system proportional font, rather than monospace font.
+		- Done: the menu bar titles, the dropdowns and the right-click menu all draw in the system's proportional font.
 	- 🚫 Use the system menu background and text color if reasonably feasible in a cross-platform way.
-		- Canceled. There's no clean cross-platform API (Windows has `GetSysColor(COLOR_MENU/COLOR_MENUTEXT)`, but Linux/GTK needs CSS-theme parsing and macOS needs `NSColor`/objc). Kept the existing tasteful dark menu palette.
+		- Canceled. There is no clean cross-platform way to ask. Windows has a call for it, Linux would mean parsing the desktop's own theme stylesheets, and macOS needs its native toolkit. The existing dark menu palette stays.
 	- ✅ No indented items.
-		- Done: All labels start at a common x after a fixed checkmark gutter (`MENU_GUTTER`); a `✓` is drawn in the gutter for active toggles, so checkable and plain items align.
+		- Done: every label starts at the same place, after a fixed gutter for the checkmark. An active toggle draws its mark in that gutter, so checkable and plain items line up.
 	- ✅ Group items logically, and use faint horizontal lines and extra space to separate the logical groupings, as has been standard for menus since early Macintosh and Windows.
-		- Done: Menu entries are now `Entry::Item`/`Entry::Sep`; separators render as a faint 1px line (`MENU_SEP`) with row spacing (`MENU_SEP_H`). Right-click groups: clipboard | read-only | tab/split/close | window toggles | config/settings.
+		- Done: a menu entry is either an item or a separator, and a separator draws as a faint hairline with a little room around it. The right-click menu groups: clipboard, read-only, tab and split and close, the window toggles, then config and settings.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Format the "Help|About" widget better.
 	- ✅ Use system proportional font.
-		- Done. `text::sans_attrs()`, one buffer per line.
+		- Done: the system proportional font, one text buffer per line.
 	- ✅ Add space between sections.
-		- Done. `open_about` lays lines out with a section gap (`MENU_SEP_H`) before Info, the link, and the hint.
+		- Done: a section gap before the Info block, the link, and the hint.
 	- ✅ Put system info under an "Info" heading.
 		- Done. "Info" heading with Renderer / Backend / Acceleration indented under it.
 	- ✅ In addition to GPU info, note if using GPU acelleration or not.
 		- Done. "Acceleration:" line from `adapter_info.device_type`: Hardware (discrete/integrated/virtual GPU) vs Software (CPU).
 	- ✅ Add clickable github URL.
-		- Done. Repo URL (from `CARGO_PKG_REPOSITORY`) drawn in the link color + underline; click within its rect runs `open_url` (xdg-open / open / start).
+		- Done: the repository address is drawn in the link color and underlined, and clicking it opens the platform's browser.
 	- ✅ Separate modal window rather than an embedded widget.
-		- Done. About is now a real pop-out OS window sized to its content (`src/dialog.rs` `DialogWin::new_about`), via the new multi-window foundation (`App.dialog`, event-dispatch by `WindowId`, rendered in `about_to_wait`. Window creation signaled from `State` since it needs the event loop). Esc / window-close dismisses it. The repo link is clickable. The old in-surface overlay path is superseded; its dead code has now been removed (branch `rmoverlay`).
+		- Done: About is a real pop-out OS window sized to its content, built on the new multi-window foundation. Escape or the close box dismisses it, and the repository link is clickable. The old drawn-in-the-terminal version is gone.
 	- 🚫 Use the system window background and text color if reasonably feasible in a cross-platform way.
 		- Canceled. Same as the menus: no clean cross-platform API. Kept the dark palette.
 	- Opened: 20260628-083740
@@ -3008,20 +3056,23 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ Settings dialog: system font, background image, and system-default font and size.
 	- ✅ Use the system proportional font.
-		- Done. Dialog text now uses `text::sans_attrs()`, centered against the real line height (also fixed the misalignment bug above).
+		- Done: dialog text draws in the system proportional font, centered against the real line height. That also fixed the misalignment bug above.
 	- ✅ Allow selection of terminal background image (or none).
-		- Done. A "Background image" text field (Kind::Text): type/paste a path; empty shows "(none)" and clears it. Live-edited (`reparse_edit` -> `background_image`), persisted by `config::persist` (sets the key, or removes it for none). Apply reloads the image. No native file picker in this stack, so a path field.
+		- Done: a "Background image" text field. Type or paste a path; leaving it empty shows "(none)" and clears the image. Apply reloads it. There is no native file picker available here, so it is a path field.
 	- ✅ Allow setting font and size to "System default".
-		- Done. A single "Use system font" checkbox (Kind::Toggle): when on it clears `font_family` and adopts the detected size live, and Apply removes `font_family`/`font_size` from config (`config::remove_keys`) so launches follow the OS; dragging the Font size slider turns it back off (explicit).
+		- Done: a single "Use system font" checkbox. Turning it on adopts the detected family and size straight away, and Apply drops both from the config so later launches follow the OS. Dragging the Font size slider turns it back off.
 	- ✅ Make settings dialog a separate modal window rather than an embedded widget.
-		- Done. Settings is now a pop-out OS window (`DialogWin::new_settings`, `Content::Settings(SettingsDialog)`), content-sized (~540x800) and non-resizable, so the whole dialog is visible regardless of the main window size (the requirement). Full interaction in-window: sliders (drag/click), text/hex fields (type), color swatches, Cancel/Apply/OK + Esc. Apply/OK live-apply to the main window via `App::apply_dialog_settings` -> `State::apply_settings_values` (config persist + rebuild). (The old in-surface overlay paths have now been removed in a dedicated cleanup, branch `rmoverlay`: `open_about_overlay`/`open_settings_overlay`/`apply_settings`/`handle_dlg_action`, the `AboutBox`/`AboutLine` structs, the `about`/`settings_dlg` fields, and all their render/event branches; ~278 lines. The live pop-out path and menu overlay are untouched.)
+		- Done: Settings is a pop-out OS window, sized to its content and not resizable, so the whole dialog is visible whatever size the main window is - which was the requirement.
+			- Everything works in the window: sliders by drag or click, text and hex fields, color swatches, and Cancel, Apply and OK plus Escape. Apply and OK reach the main window straight away and write the config.
+			- The old versions drawn inside the terminal surface were removed in a cleanup of their own. The menu overlay is untouched.
 	- 🚫 Use the system window background and text color, if feasible in a cross-platform way.
 		- Canceled. No portable API; same as the menus/About.
 	- Opened: n/a
 	- Closed: 20260719-085918
 
 - ✅ Allow common menu accelerators (e.g. Alt+F for File menu).
-	- Done: Alt+F/E/V/T/P/H open the matching top-level menu (first-letter match against `MENU_BAR`), when the menu bar is shown. note: this deliberately shadows the shell's Meta+<those letters> (e.g. Meta-f word-forward) - the standard menu-bar tradeoff (GNOME Terminal does the same).
+	- Done: Alt plus a menu's first letter opens that menu, when the menu bar is shown.
+		- Note: this deliberately shadows the shell's own Meta shortcuts on those letters. It is the usual menu-bar tradeoff, and GNOME Terminal does the same.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -3032,13 +3083,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 			- It seems to hinge on how long the command takes to execute. If the code is doing some kind of frequent sampling to get the program name, and if that could impact performance, then let's get rid of the " [last: <program>]" requirement and just show "shell". Otherwise if there is a more reliable alternate method to always know the last program that was run, that doesn't hurt performance (e.g. by requiring a watcher loop), let's try that.
 	- Just the executable name for both, not the full command-line
 	- Implemented:
-		- Done: `TermInstance` captures the PTY master fd + shell pid at spawn (before the event loop takes the pty). `tab_title()` reads the foreground process group via `libc::tcgetpgrp(master_fd)` and its `/proc/<pid>/comm` (executable basename), comparing to the cached shell name: a different program -> "`<shell> [<program>]`" (and remembers it); only the shell -> "`<shell> [last: <program>]`" or just "`<shell>`". Polled when the tab bar is built (renders happen on output). Unix only (`#[cfg(unix)]`); other platforms fall back to the app name. New direct dep `libc` (unix).
+		- Done: a pane keeps hold of its terminal and its shell's process id at spawn, and the tab title asks which program is in the foreground. A program other than the shell reads "shell [program]", and is remembered, so once it exits the tab reads "shell [last: program]", or just the shell name if none has run.
+		- The check runs when the tab bar is built. Unix only at this point; elsewhere the tab falls back to the application name.
 		- Note: tab titles also use the proportional font now.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ No hotkeys for pane management except. Minimal hotkeys overall, except for window, tab, menu, and clipboard managent.
-	- Done. Removed the pane hotkeys: Ctrl+Shift+R/D (split V/H), Ctrl+Shift+W (close pane), Ctrl+Shift+Tab (cycle focus). Pane management is menu-only now (Panes menu / right-click; focus by clicking). `cycle_focus` deleted. Remaining hotkeys are window (F11), tab (Ctrl+Shift+T new, Ctrl+PageUp/Down change, +Shift move), menu (Alt accelerators, Menu key, Ctrl+,), clipboard (Ctrl+Shift+C/V).
+	- Done: the pane hotkeys are gone - split, close pane, and cycle focus. Pane management is the Panes menu and the right-click menu now, and focus follows a click.
+		- What is left: fullscreen on the window, the tab keys for new, change and move, the menu keys, and the clipboard pair.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -3048,17 +3101,18 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260629-214404
 
 - ✅ Menu keyboard key should activate right-click menu on active pane.
-	- Done. The Menu/Apps key (`NamedKey::ContextMenu`) opens the context menu anchored near the focused pane's top-left.
+	- Done: the Menu key opens the context menu, anchored near the top left of the focused pane.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Group Settings items into logical sections.
-	- Done. Added section headers (`Kind::Header`, bold + a faint rule): Appearance / Font / Window / Scrolling / Colors. `row_y`/height now sum per-row heights (headers are taller).
+	- Done: section headers, bold with a faint rule under them - Appearance, Font, Window, Scrolling, Colors. Row positions are summed per row now, since a header is taller than a setting.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Need a way to specify the font in the Settings dialog.
-	- Done. "Font family" text field (empty = "(system default)"). Applies live: `MONO_FAMILY` changed from a write-once `OnceLock` to a re-settable `RwLock<Option<&'static str>>` (`pin_mono_family` re-resolves on each `TextCtx` rebuild and leaks the name for the `'static` `Attrs`), so the dialog's font family / "Use system font" take effect on Apply, not just restart. Persisted by `config::persist`. Also fixed: the spacebar is `Named(Space)` (not a Character), so font names / paths with spaces now type correctly into dialog fields.
+	- Done: a "Font family" text field, empty meaning the system default. The pinned family is re-resolved whenever the text context is rebuilt, so the field and the "Use system font" checkbox take effect on Apply rather than on the next launch.
+		- Fixed on the way: the spacebar arrives as a named key rather than a character, so a font name or path with spaces in it now types correctly into a dialog field.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -3068,7 +3122,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260629-214404
 
 - ✅ Make "Settings" title on dialog more prominent. (Bigger bolder font. Same with "About" dialog - but give it a title first.)
-	- Done. `TextItem`/`AboutLine` gained `bold` + `scale`; the app applies `Weight::BOLD` and `TextArea.scale`. The "Settings" title is bold + 1.4x; the About box now leads with a bold + 1.5x "About SilkTerm" title (it had no real title before).
+	- Done: a dialog line can be bold and can carry its own scale. The "Settings" title is bold and half again the body size, and the About box leads with a bold title of its own, which it did not have before.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -3083,11 +3137,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Paste selection; PRIMARY -> pane
 	- ✅ Read-only (accept no input or interruption, but mouse selection and copy still work; toggle with checkmark)
 	- ✅ New tab
-		- Done. Right-click "New Tab" (`MenuAction::NewTab` -> `App::new_tab`); same as Ctrl+T.
+		- Done: "New Tab" on the right-click menu, the same action as the hotkey.
 	- ✅ Split vertical (already exists)
 	- ✅ Split horizontal (already exists)
 	- ✅ Hide menu (toggle with checkmark)
-		- Done. View -> "Menu bar" (✓) and the right-click menu both toggle `menu_bar` (`MenuAction::ToggleMenuBar`); hidden = content to the top edge, re-show from the right-click menu.
+		- Done: View > "Menu bar" and the right-click menu both toggle it. Hidden, the content runs to the top edge, and the right-click menu brings it back.
 	- ✅ Hide window frame (toggle with checkmark)
 		- Done. `window.set_decorations`; frame extents go 39px -> 0. Also the route to content-only transparency (bug 1).
 	- 🚫 Hide scrollbar (toggle with checkmark)
@@ -3095,22 +3149,25 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Fullscreen (toggle with checkmark)
 		- Done. `window.set_fullscreen(Borderless)` + F11. Compiz on this box doesn't honor the request (environment, like the F11 grab); it works on a compliant WM.
 	- ✅ Settings
-		- Done. Right-click "Settings..." opens the Settings dialog (`MenuAction::Settings`). Also Ctrl+,. Plus "Reload Config" to apply hand-edits.
+		- Done: "Settings..." on the right-click menu opens the dialog, as does Ctrl+Comma. "Reload Config" beside it applies edits made to the file by hand.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Some way to auto-apply settings after editing config file, without watching it. Maybe an internal command.
-	- Done. Right-click menu -> "Reload Config" re-reads `config.toml` from disk and live-applies it (`config::reload_from_disk` + the shared `App::apply_new_settings`, the same rebuild path the Settings dialog uses: re-creates `TextCtx` + relayout on metric changes, reloads the bg image, re-sets window opacity). No file watcher; the file is the source so nothing is persisted back.
+	- Done: "Reload Config" on the right-click menu re-reads the config from disk and applies it live, through the same rebuild path the Settings dialog uses. There is no file watcher, and since the file is the source, nothing is written back.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Change default columns = 160. Default margin = 8.
-	- Done: `Settings::default()` and the `DEFAULT_CONFIG` template now use `columns = 160`, `margin = 8.0`. Existing config files keep their own values (defaults only seed fresh configs).
+	- Done: the defaults and the shipped template both carry the new values. An existing config keeps its own, since a default only ever seeds a fresh file.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ A window menu with typical menus items and actions (File, Edit, View, Tabs, Help)
-	- Done. Menu bar across the top (`MENU_BAR_H`, shown by default; `area()` insets the pane area below it, stacked above the tab bar). Click a top-level title to open its dropdown; hovering another title with one open switches to it; click the title again or click away / Esc to dismiss. Dropdowns reuse the existing `ContextMenu` widget (`bar_menu_items(idx)` builds each; `open_bar_menu`). Contents: File (New/Close Tab, Close Pane, Reload Config, Settings..., Quit), Edit (Copy/Paste/Paste Selection, Read-only ✓), View (Split V/H, Fullscreen ✓, Hide window frame ✓, Menu bar ✓), Tabs (New/Next/Previous/Close Tab), Help (About...). Help->About opens the About dialog (originally a centered overlay, since reworked into a pop-out window - see the Help/About item). New `MenuAction`s: CloseTab, NextTab, PrevTab, ToggleMenuBar, About, Quit. Initial window height adds `MENU_BAR_H` so the default row count still fits.
+	- Done: a menu bar across the top, shown by default, with the pane area inset below it and above the tab bar. Clicking a title opens its dropdown, hovering another title while one is open switches to it, and clicking the title again, clicking away or pressing Escape dismisses it. The dropdowns reuse the context-menu widget.
+		- Contents: File (new and close tab, close pane, reload config, settings, quit), Edit (copy, paste, paste selection, read-only), View (split vertical and horizontal, fullscreen, hide window frame, menu bar), Tabs (new, next, previous, close), Help (about).
+		- Help > About opens the About dialog. It started as a box drawn over the terminal and was later reworked into a pop-out window - see the Help and About item.
+		- The initial window height grows by the bar's height, so the default row count still fits.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -3131,28 +3188,28 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260629-214404
 
 - ✅ Double-clicking selects a word up to user-tweakable delimiters (sane defaults; full paths stay whole).
-	- Done. Double-click (<400ms, same cell) starts an alacritty `SelectionType::Semantic`. New `word_separators` config sets the delimiters; default = alacritty's (keeps /.-_~ as word chars).
+	- Done: a double-click, meaning two clicks in the same cell within the usual interval, selects a word. A `word_separators` setting names the delimiters, and the default keeps the characters that hold a path together.
 	- Refined: dropped ':' from the default delimiters, so a Windows drive path (`C:\...`) selects whole (was splitting off the drive); URLs and namespaced idents come along too. Override by adding ':' back to `word_separators`.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Settings GUI dialog with organized main tunables, with primary buttons: Cancel, Apply, OK. Default=OK.
-	- Done: `src/settings_ui.rs` - a modal overlay (second pass, like the context menu) opened via Ctrl+, or right-click "Settings...".
+	- Done: a modal drawn over the terminal, in its own pass the way the context menu is, opened with Ctrl+Comma or from the right-click menu.
 		- Sliders for opacity, bg-image opacity, font size, line height, margin, scroll-tau and wheel-lines, plus a swatch and hex field for the 4 colors.
 		- Cancel / Apply / OK (Enter = OK, Esc = Cancel).
-		- Live-apply: opacity re-sets window opacity, colors re-render, font and metrics rebuild the TextCtx and relayout; persisted in place via toml_edit (only changed keys, comments preserved, floats rounded).
-		- Foundation: `config::settings()` is now a swappable `Arc<Settings>` (`config::update` / `config::persist`).
+		- Live apply: opacity re-sets the window opacity, colors re-render, and a font or metric change rebuilds the text context and relays out. The config is written in place, changed keys only, comments kept.
+		- Foundation: the live settings can be swapped as a whole at run time, which is what lets a dialog apply without a restart.
 		- Not yet exposed (the field table is trivially extensible): font_family, scrollback, alt/output scroll lines, background_fit, columns/rows, word_separators.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ If hardware acceleration is not available, use software rendering. Also need a way to tell which the application is using. Maybe in "help/about".
-	- Done: `Gfx::new` requests a GPU adapter, then retries with `force_fallback_adapter` (a CPU/software adapter) if that fails. The renderer (name / backend / device-type) is logged at startup, and the Help/About dialog shows it (Renderer / Backend / Acceleration) from `adapter_info`.
+	- Done: startup asks for a GPU and falls back to a software renderer if there is none. Which one came back is logged at startup, and Help > About names the renderer, the backend, and whether it is accelerated.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Make it easy to change the program name, in project and code files
-	- Display name centralized in `APP_NAME` (`src/config.rs`); `utility/rename.bash NewName` rewrites the name + lowercase id across Cargo.toml, sources, and docs in one shot. Not a runtime/user setting.
+	- Done: the display name lives in one place, and `utility/rename.bash NewName` rewrites the name and its lowercase form across the build file, the sources and the docs in one go. It is not a runtime setting.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -3162,7 +3219,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260629-214404
 
 - ✅ Use system monospace font by default
-	- Default font is the OS-configured monospace family (e.g. Monaspace Argon from GNOME settings) when it's installed, else cosmic-text's generic `Family::Monospace`. `font_family` in the config overrides it by name.
+	- Done: the default font is the monospace family the OS is set to, when that family is installed, and generic monospace otherwise. `font_family` in the config overrides it by name.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -3177,17 +3234,19 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260629-214404
 
 - ✅ Some unicode glyphs don't render, most likely due to inadequate font coverage rather than a bug. Need fallback fonts just for glyphs that don't render, similar to how other terminals and text editors work. Don't need to expose fallback fonts as tunables (other terminals and text editors don't).
-	- Solution: Switched pane text shaping from `Shaping::Basic` to `Shaping::Advanced`, which does per-glyph font fallback (CJK, emoji, math symbols, RTL) instead of rendering tofu, while keeping monospace alignment via cosmic-text's monospace-fallback path. Uses installed system fonts; no tunable. This was basic because an earlier cosmic-text 0.18 hung on real output here; 0.18.2's fallback loop is bounded and was stress-tested. Glyphs with no font on the system (e.g. powerline/nerd PUA with no nerd font installed) still fall back to whatever claims them - the user installs the relevant font, as with any terminal.
+	- Solution: pane text is shaped with per-glyph font fallback rather than the plain path, so CJK, emoji, math symbols and right-to-left scripts draw instead of coming out as empty boxes, while the monospace alignment holds. It uses whatever fonts are installed and has no setting.
+		- The plain path had been chosen because an earlier version of the text library hung on real output here. The version now in use has a bounded fallback loop and was stress-tested.
+		- A glyph no installed font claims still falls back to whatever does claim it. Installing the relevant font is the answer, as it is in any terminal.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Ability to select text by partial lines, with left mouse button.
-	- Solution: Left-press maps the pixel to a grid `Point`+`Side` (`Pane::point_at`) and starts an alacritty `Selection::Simple`; drag extends it; release copies `selection_to_string()` to the X11 PRIMARY selection. Selected cells are highlighted (`config::SELECTION_BG`) via `SelectionRange::contains`. A click with no drag clears the selection.
+	- Solution: a left press turns the pixel into a grid position and starts a selection, a drag extends it, and the release copies the text to the primary selection. Selected cells are highlighted. A click with no drag clears the selection.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Ability to select text with in a grid-aligned rectangle, with CTRL+left mouse button.
-	- Solution:  Same path with `SelectionType::Block` when Ctrl is held at press.
+	- Solution: the same path as an ordinary selection, in block mode, when Ctrl is held at the press.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -3197,12 +3256,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260629-214404
 
 - ✅ Use mouse to resize panes by grabbing on to separater line.
-	- Solution: Each `Split` already carried a `ratio`; `divider_at` hit-tests the gap strip (+/-`DIVIDER_GRAB_PX`) and returns the split-tree path, `drag_divider` walks that path and sets the ratio from the cursor (clamped 0.05-0.95) then relayouts. Left-press on a divider starts a resize instead of a selection; hovering one shows a `ColResize`/`RowResize` cursor.
+	- Solution: every split already carried a ratio, so the work was hit-testing the gap between panes, with a few pixels of grab room either side, and setting that ratio from the cursor as it drags. It is clamped so neither side can be squeezed away. A left press on a divider starts a resize rather than a selection, and hovering one shows the resize pointer.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
 - ✅ Ability to re-order panes with drag-n-drop mouse (possibly "grabbing" via shift-primary mouse button - and drop targets highlight themselves under mouse).
-	- Solution: Shift+left-press grabs the pane under the cursor (Grabbing cursor); the pane currently under the cursor is tinted as the drop target (`config::DROP_TARGET`, alpha 0.3); releasing swaps the two leaves in the split-tree (`swap_panes` -> `swap_leaves` + relayout).
+	- Solution: Shift and a left press grab the pane under the cursor, and the pointer changes to say so. The pane currently under the cursor is tinted as the drop target, and releasing swaps the two.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -3212,7 +3271,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260629-214404
 
 - ✅ Ability to set an image as background, with adjustable visibility from 0-100%. That also works with transparency.
-	- Solution: `src/bgimage.rs` ImageRenderer: a full-window textured quad drawn over the pane fill, under cells/text (premultiplied, composes with window opacity). `background_image` (absolute or filename relative to the config dir), or auto-detect background.{png,jpg,jpeg} in the config dir. `background_opacity` (visibility) and `background_fit`. `image` crate decodes png/jpeg.
+	- Solution: the image is drawn across the whole window, over the pane fill and under the text, and composes with the window opacity. `background_image` takes an absolute path or a filename beside the config, and failing that a `background.png` or `.jpg` beside the config is picked up on its own. `background_opacity` and `background_fit` control how it looks.
 	- ✅ Render options: Stretch-to-fit, Zoom-to-fit.
 		- Done. `background_fit` = "stretch" | "zoom"; default zoom/cover.
 	- Opened: 20260628-083740
