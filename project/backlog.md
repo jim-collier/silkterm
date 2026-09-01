@@ -482,7 +482,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260801-212731
 	- Closed: 20260801-213032
 
-- ✅ Harsh visual bug:
+- ✅ Repeating a command scrolled its output down out from under the prompt above it.
 	- Description: New output from repeated commands that doesn't need to scroll (e.g. hasn't reached the bottom), scrolls "down" out of an imaginary line just below the previous prompt, and settles where it should be. It might actually be a pleasing effect if that was the UX design, but it's not. It feels jarring and unexpected, in spite of being kind of cool. Once such repeated commands do reach the bottom, then everything scrolls up as expected.
 	- Fixed: the smooth-slide detector read the repeated listing as a downward scroll - the second copy matched the first one's rows shifted down, and the blank space below matched itself, so brand-new output got animated as if it had moved. A row now only counts as scrolled if the content also left its old position; a re-printed copy no longer qualifies, so fresh output materializes in place. Real scrolling (full screens, pagers, editors) is unaffected.
 	- Expected behavior: If output hasn't reached the bottom of the terminal yet, new lines of output should materialize as normal.
@@ -590,7 +590,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260721-130036
 	- Closed: 20260722-123343
 
-- ✅ New Linux and Windows judder bug:
+- ✅ One line of output made the whole screen drop a line and come back up two.
 	- If the cursor is at the bottom of the screen, the first line of output (even just hitting "enter" to a new prompt line) causes everything above, to momentarily bounce *down* one line (the wrong direction), then back up.
 	- When scrolling down a long list in 'ls', each scroll event (or at least down arrow) results first in the screen contents bouncing *down*, then up.
 	- It seems to go: "everything move one line down (smoothly), then two lines up (smoothly)". The net result is very juddery output.
@@ -860,11 +860,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
 	- ✅ Tab font doesn't have enough space on the bottom. Tab height should adapt to tab font size. (20260630)
-		- Done: the bar and tab height scale with the menu font. Descenders were sitting tight against the button bottom, so the vertical padding was bumped up a couple px to clear them.
-	- Opened: 20260629-103857
-	- Closed: 20260630-184012
-
-- ✅ Menu bar and tab fonts: (#1n45bca, 20260629-103822)
+		- Fixed: the bar and tab height scale with the menu font. Descenders were sitting tight against the button bottom, so the vertical padding was bumped up a couple of pixels to clear them.
 	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. For example my system proportional font is a Serif font, not sans serif. (20260629)
 		- Cause: chrome used generic `Family::SansSerif`. fontdb's generic-sans default is "Arial"; when that's absent (typical on Linux) the query falls through to whatever matches - here the GNOME *document* font, which is a serif (GentiumAlt). (fontconfig's actual sans-serif on this box is Noto Sans.)
 		- Fix (first pass): pin a concrete sans family, mirroring the mono pin - resolved the OS sans-serif (`fc-match sans-serif`), else a curated list, validated against the db. Got "Noto Sans" - still a sans, which missed the point below.
@@ -877,7 +873,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 			- Cause: cosmic-text only uses the requested family when a face matches the requested weight exactly, and GentiumAlt ships no Bold face. So asking for bold silently ejected the family and a bold sans rendered instead - which is why bold and size took but the family didn't.
 			- Fixed: pin the font db's canonical family spelling and snap the requested weight and slant to a face the family actually has, so family wins over weight. A shaping test guards it.
 			- Note: the menu bar and Settings render the serif family at its closest weight; cosmic-text does not synthesize bold.
-	- Opened: n/a
+	- Opened: 20260629-103857
 	- Closed: 20260701-122853
 
 - ✅ Outer glow should only apply to terminal text - not tab titles or the menu bar.
@@ -898,7 +894,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260629-110720
 	- Closed: 20260629-214404
 
-- ✅ Cursor:
+- ✅ Cursor: slides as you type, and fades instead of blinking.
 	- ✅ Smooth-scroll (when moving to the right).
 		- Done: the cursor slides to its target column as you type, snapping on a newline. Idles at 0% CPU.
 	- ✅ Blink at the same rate, but "phase" between of and on, not just on or off.
@@ -906,7 +902,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260629-230245
 
-- ✅ Setting dialog:
+- ✅ Settings dialog: a second Apply in the same session did nothing.
 	- ✅ Setting Bg image fit to "Zoom", then Apply works. But back to "Stretch", then Apply, doesn't.
 		- Cause: the dialog's baseline was captured when it opened and never refreshed, so a second Apply diffed against the open-time snapshot and re-selecting the original value read as no change.
 		- Fixed: reset the baseline after each Apply. This fixes every setting, not just fit.
@@ -1098,7 +1094,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260719-085918
 	- Closed: 20260830-204500
 
-- ✅ Setting dialog (part 2):
+- ✅ Settings dialog, second round.
 	- ✅ Flyover help text when mousing over elements. (Make this a reusable feature.)
 		- Done: the Settings dialog has it. Thirty rows carry their own help line, a grayed-out control explains why it is grayed instead, and the text wraps to the panel.
 		- Done: the tab bar has one too (shell name, command, full path, elapsed time).
@@ -1106,10 +1102,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Done: the reusable part. How long the pointer has to rest, how the text is broken to fit, and where the box goes are written once and read by all four places a tip comes up. Each still draws in its own font, which is the part that should differ.
 		- Rows that say what they do get no tip. A tip on every row is noise a reader learns to skip past.
 	- ✅ Size: A boolean setting to "Remember last size".
-		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
-		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
+		- Done: a stored size plus a dialog toggle. On launch it uses the remembered columns and rows, and the pair updates on every manual window resize. Startup and programmatic resizes are skipped so they cannot clobber it.
+		- Overrides an explicit numeric size, and grays out the Columns and Rows fields while it is on.
+		- The remembered values live in the config file only, never in the dialog, so the toggle can be turned off and the previous numeric size comes back. They track the last manual resize whether the toggle is on or not.
 			- ✅ "Remembered" values always active, never commented out. But only valid if 'remember_size' is true.
 				- Done: a new config file carries the pair as live lines. An existing file already has them from the first resize.
+	- ✅ All values, including slider numbers, should also have directly editable fields (that are part of the tab order).
+		- Done: each slider has a numeric field that can be clicked or typed into, with the value clamped to the slider's range. The field joins the Tab order along with the rest of the dialog.
+	- ✅ Should be able to use tab key to cycle among settings, and dialog buttons, in a loop.
+		- Done: the Tab ring runs the active tab's controls and then the three footer buttons, and wraps, in both directions. Shift+Tab and the arrow keys do the same. A focused button shows the accent ring and fires on Space or Enter.
+	- ✅ A radio button for background image, to stretch or zoom.
+		- Done: a reusable radio control, with an indicator box per option and click to pick. The row is bound to the image fit setting, Stretch is the default, and the choice persists and re-fits the image on Apply.
+	- ✅ "Default shell": A command line to launch by default for new windows, tabs, and panes, if nothing else specified. Leave blank to use system default.
+		- Superseded: the shells list names the default now - its first switched-on entry, which the Shell tab lets you drag to the top. The separate setting and its text field are gone, and a config that had one has that entry moved to the top once, then the line removed. An initial population is led by the shell the user logs in with, so the default is right without their saying anything.
+	- ✅ A little more vertical space between the section headings, and the corresponding horizontal line.
+		- Done: a taller heading row, with the heading text at the top and the rule near the bottom. The two used to overlap.
 	- Opened: 20260628-083740
 	- Closed: 20260830-172000
 
@@ -1362,11 +1369,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260830-143000
 
 - ✅ Window title.
+	- Earlier rounds, each superseded by the one below it: the title was just the application name, with the window icon taken from the logo image for the task switcher; then it became the application name plus the current tab's title, with a `--title` on the command line winning outright.
 	- It always starts with the application name, and a dogfood build says which build it is - the pool holds several and they look alike in the taskbar.
 	- After that comes, in order: a title typed on the tab, else the title the running program set, else what the tab says about the shell. So a program that renames the window reaches the title bar without touching the tab, and a typed tab title outranks it.
 	- A tab deliberately blanked lets the program's title through; with neither, the title is just the application name.
 	- A `--title` on the command line is still the whole answer, verbatim.
-	- Opened: n/a
+	- Opened: 20260628-083740
 	- Closed: 20260830-143000
 
 - ✅ Command-line options:
@@ -1564,13 +1572,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260824-123142
 	- Closed: 20260828
 
-- ✅ Config file:
+- ✅ Config file: reorganized to follow the Settings dialog.
 	- ✅ Reorganize the whole thing more logically, similar to how the Settings dialog is organized.
 		- Done under the SHCL pickup above: a new file follows the dialog's tab order. An existing file keeps its own order.
 	- Opened: 20260719-085918
 	- Closed: 20260828
 
-- ✅ Menu enhancements:
+- ✅ Menu enhancements: shells in the Tabs and Panes menus, sentence case, and a separator.
 	- ✅ "Tabs/New tab with shell ... ->" (below "New tab"), opens sub-menu, with list of shells by Title, as configured by default and/or edited by user in Settings dialog, "Shells" tab.
 		- Done: the row sits under "New Tab" in the Tabs menu and in the right-click menu, and opens a flyout listing every active shell by title. It draws from the stored list, which the background scan above fills in - so it did not have to wait for the Settings "Shells" tab after all; that tab is now only the editor for a list that already exists.
 		- The row is absent entirely while there is no shell to put under it, rather than opening an empty flyout.
@@ -2073,7 +2081,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260802-005013
 
-- ✅ Config file:
+- ✅ Config file: moved from TOML to SHCL.
 	- ✅ Use sister project "SHCL" for config language and structure, rather than TOML. (When shcl v1.0.0 stable is released.)
 		- Done: the config is now `config.shcl`, read and written by the `shcl` crate (v1.0.0). `toml`, `toml_edit` and `serde` are gone, which took ~158KB off the release binary - SHCL has no dependencies of its own.
 		- Its parser is forgiving, so a malformed line now costs only its own setting instead of sinking the file. That removed the hand-rolled retry loop and the bare-decimal float rewrite: `.1` is simply valid, and is stored back exactly as written.
@@ -2110,9 +2118,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260802-094409
 
-- ✅ Hotkeys to increase/decrease font size feature:
-	- Done: Ctrl+= / Ctrl+- step the session zoom; Ctrl+0 resets to the configured (or system) size. View menu has Increase/Decrease/Reset items.
-	- Opened: 20260724-080316
+- ✅ Hotkeys to increase and decrease font size.
+	- Behavior: per pane, inherited when a pane is split or a new tab opens from a resized one, and not kept across launches.
+	- Ctrl+Minus reduces the size; Ctrl+Plus and Ctrl+Equals increase it. The View menu carries the same three actions and lists their keys.
+	- Done: each press steps the size by a pixel, on top of the system size as well as a configured one, and Ctrl+0 goes back to the configured or system size.
+	- ✋ Per-pane scoping is deferred: all panes in a window share one set of text metrics, so a per-pane size needs the same per-pane renderer the per-pane style options need.
+	- Opened: 20260722-100516
 	- Closed: 20260724-085317
 
 - ✅ README screenshots are no longer generated.
@@ -2180,7 +2191,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260731-150308
 
-- ✅ New defaults:
+- ✅ New defaults: block cursor, and wallpaper rotation on by default.
 	- ✅ Block cursor, without disturbing the existing cursor animation defaults.
 		- Done: the cursor is now full-cell, height and width both 100%. Animation is untouched - it still pulses and slides exactly as before.
 	- ✅ Rotate wallpapers at each launch when the default folder has images in it.
@@ -2221,25 +2232,22 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260724-080316
 
 - ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
-	- ✅ Add Windows support. It was inert there: a Windows console has no foreground process group, so the terminal always believed the shell was at its prompt and the capture fired about a tenth of a second into every command - copying a fragment, or far more often nothing at all.
-		- Windows says the same thing a different way: while a command runs it is a live child process of the shell, and it is gone by the time the prompt comes back. Asking that costs a walk of the process table (~6ms), so the answer is kept until the terminal next stirs instead of being taken per frame - about one look per command.
-		- Known limit: a PowerShell background job (`Start-Job`) reads as a command still running, so nothing copies until it ends. Windows offers no way to tell a background child from a foreground one.
-	- ✅ Fixed on the way, and it applies to every platform: two commands in a row that each printed a single word taught the multi-line-prompt detector that the line above the prompt was part of the prompt, and the copy then lost its last line - usually the whole of it. A line now has to carry more shape than one bare word before it counts as prompt.
+	- Done: a per-pane toggle. When on, the focused pane's output copies to the clipboard as each command finishes.
+	- Done: an always-visible "Copy output" checkbox on the menu bar, plus a toggle in the right-click and Edit menus.
+	- Note: only the focused pane of the focused window ever copies, so a background window cannot leak output.
+	- Note: the text is plain printable Unicode, with color and control codes removed. A command with no output leaves the clipboard alone.
+	- ✅ Add Windows support. It was inert there: a Windows console has no foreground process group, so the terminal always believed the shell was at its prompt and nothing ever copied.
+		- Windows says the same thing a different way: while a command runs it is a live child process of the shell, and it is gone by the time the prompt comes back.
+		- Known limit: a PowerShell background job reads as a command still running, so nothing copies until it ends. Windows offers no way to tell a background child from a foreground one.
+	- ✅ Fixed on the way, and it applies to every platform: two commands in a row that each printed a single word taught the multi-line-prompt detector that the line above the prompt was part of the prompt, and the copy then lost its last line, usually the whole of it. A line now has to carry more shape than one bare word before it counts as prompt.
+	- ✅ Refinement: the two triggers, "Copy on select" and "Copy on output", never disable themselves any more and are independent, so both can be on at once. This reverses the earlier "exclusive to one pane or one window" behavior.
+		- A new pane inherits its tab's setting. A new tab or window starts off, and nothing is remembered between runs.
+		- The flags can be left on across many panes, tabs and windows, but only the focused pane of the active tab in the focused window actually copies. When a window loses focus its checkbox and label dim to show the feature is inert, and it comes back on refocus.
+	- ✅ Follow-up: a pending capture is canceled when its window, tab or pane stops being the active one, instead of firing the moment focus returns.
+		- Otherwise output that finished while you were elsewhere would reach the clipboard on the way back, over whatever was copied in between. Only a command started after returning copies.
+		- The same cancel applies when the checkbox is turned off mid-command. Turning it back on later could previously copy several old commands' worth of output.
 	- Opened: 20260702-170007
-	- Closed: 20260702-194709
-
-- ✅ Setting dialog (part 2):
-	- ✅ All values, including slider numbers, should also have directly editable fields (that are part of the tab order).
-		- Done: each slider has a numeric field you can click or type into, with the value clamped to the slider's range.
-		- Note: the field joins the Tab order along with the rest of the dialog.
-	- Opened: 20260629-230245
-	- Closed: 20260701-074240
-
-- ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
-	- ✅ Refinement: the two auto-copy triggers ("Copy on select" / "Copy on output") never disable themselves any more, and are now independent (both can be on at once). Reversed the earlier "exclusive to one pane / one window" behavior. A new pane inherits its tab's setting; a new tab or window starts off (nothing is remembered/persisted). It stays a per-active-pane behavior: the flags can be left on across many panes/tabs/windows, but only the focused pane of the active tab in the focused window actually copies. When a window loses focus its checkbox + label dim to show the feature is currently inert (it re-activates on refocus). Dropped the cross-instance "turn yours off" broadcast.
-	- ✅ Follow-up: a copy-on-output capture pending when the window/tab/pane loses its active status is now canceled, instead of firing the moment focus returns. Otherwise output that finished while you were elsewhere would land on the clipboard on alt-tab-back, clobbering whatever you copied in between. Only a command launched after returning copies. Same cancel when the checkbox is turned off mid-command (re-enabling later could previously copy several old commands' worth of output).
-	- Opened: n/a
-	- Closed: 20260703-100322
+	- Closed: 20260724-080316
 
 - ✅ Ctrl+Shift+N: New window on same directory.
 	- Done: opens a new window (own process) starting in the focused pane's current directory.
@@ -2267,7 +2275,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260703-222413
 	- Closed: 20260707-035640
 
-- ✅ Menu enhancements:
+- ✅ Menu enhancements: unique accelerators, and items removed, added and renamed.
 	- ✅ All keyboard acellerators within a menu must be unique. (Winner goes to the most important and/or frequently used.)
 		- Done: each menu item now carries its own accelerator letter (underlined; can sit mid-label, e.g. the S of "Selection"), unique per menu. Low-priority items and ones that already have a hotkey go without one.
 	- ✅ Remove:
@@ -2288,15 +2296,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260722-100516
 	- Closed: 20260722-201222
 
-- ✅ Hotkeys to increase/decrease font size
-	- Behavior: Per pane, inherited when split, or new tab with a focused resized pane, but not persisted across launches.
-	- HotKeys (and view menu items that list the hotkeys):
-		- Ctrl+'-' reduces font size.
-		- Ctrl+'+' and Ctrl+'=' increases font size.
-	- Done: Ctrl+-/+/= step the size a pixel per press (session-only, never persisted; works on top of the system size too), with matching View menu items.
-	- ✋ Per-pane scoping deferred: all panes in a window share one set of text metrics, so a per-pane size needs the same per-pane renderer the per-pane CLI style options are waiting on. Currently window-wide.
-	- Opened: 20260722-100516
-	- Closed: 20260722-195638
 
 - ✅ Font size should be able to be increased, even when using system font.
 	- May need to refactor "Use system font [ ]" in settings to:
@@ -2316,7 +2315,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260722-134448
 
-- ✅ Wallpaper:
+- ✅ Wallpaper: change the default image baked into the executable.
 	- ✅ Change the default background baked into the executable: '[repo]/filesystem/home/.config/silkterm/backgrounds/background45.jpg'
 	- Done: baked byte-identical (recompressing only saved ~50KB at a quality cost, not worth it). Binary grows ~294KB (the new image is 403KB vs the old 109KB). Renders correctly through the default blur/opacity pipeline.
 	- Opened: 20260722-114434
@@ -2343,10 +2342,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260720-070458
 
 - ✅ Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
+	- Done: a folder setting that stands in for the single-image setting while it is set, a switch between filename order and random (which never repeats the image already up), and an interval in seconds, where zero means pick one at startup and leave it.
+	- A live swap goes through the same path a wallpaper change already used, so it re-blurs and applies without a relaunch. A missing or empty folder just leaves the feature off.
+	- Correction: the scan was offering formats the loader could not decode. It now matches what actually loads, which is png and jpeg.
 	- ✅ Skip startup rotation, if a wallpaper was specified on the command line.
 		- Done: a wallpaper given on the command line (--background-image, including an explicit clear) is kept on screen at launch instead of being overwritten by the rotation's startup pick. The folder is still scanned and the timer still armed, so scheduled rotation proceeds once the interval elapses (order mode's first tick lands on the folder's natural first image).
 	- Opened: 20260703-100322
-	- Closed: 20260713-145308
+	- Closed: 20260720-070458
 
 - ✅ Bake a default background into the executable, in case user has none.
 	- background53.jpg
@@ -2355,7 +2357,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260719-085918
 	- Closed: 20260720-071134
 
-- ✅ Settings dialog:
+- ✅ Settings dialog: select-all on entering a field, and arrow keys stepping a number.
 	- ✅ When entering a text field, select all text by default.
 		- Done: keyboard entry (Space/Enter/first typed char) already selected all; now a fresh single mouse-click into a field also selects all on release. A click that turns into a drag keeps the dragged range instead, and clicking again inside a field you're already editing still repositions the caret.
 	- ✅ For numeric fields:
@@ -2372,12 +2374,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Note: the mask lowers image contrast while overall brightness stays put - a flatten toward the mean, not a darkening.
 	- Opened: n/a
 	- Closed: 20260714-104924
-
-- ✅ Option to rotate background images from a folder; in order, or randomly. At startup, or on a timer.
-	- Done: three config keys - `background_folder` (a folder, absolute or relative to the config dir; overrides `background_image` while set), `background_rotate_random` (filename order vs. random, never repeating the current image), and `background_rotate_interval_s` (seconds between swaps; 0 = pick one at startup only). Images are the formats the loader already decodes (png/jpg/webp/bmp/gif/tiff). Live swap reuses the existing wallpaper path, so it re-blurs and applies without a relaunch; a missing/empty folder just leaves the feature off.
-	- Correction: the loader never decoded webp/bmp/gif/tiff - only png and jpeg. The wider list was the bug fixed above; the scan now matches what actually loads.
-	- Opened: n/a
-	- Closed: 20260720-070458
 
 - ✅ Text fields in Settings dialog need to support standard editing functions. (Right-click, editing hotkeys, etc.)
 	- Done: full selection model in every editable field (text / hex color / numeric), cross-platform. Mouse: click places the caret, drag selects, Shift+click extends, double-click selects the word, triple-click selects all. Keyboard: Shift+arrows/Home/End extend, Ctrl+Left/Right jump by words, Ctrl+A select all, Ctrl+C/X/V copy/cut/paste (also Ctrl+Insert / Shift+Insert / Shift+Delete), Ctrl+Backspace/Delete delete by word. Typing or pasting replaces the selection; paste runs through each field's own validation (hex digits only in color fields, digits/single dot in numeric). Opening a field via keyboard selects its whole value so typing replaces it; the selection draws highlighted behind the text.
@@ -2404,7 +2400,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260703-211333
 	- Closed: 20260713-144013
 
-- ✅ Settings dialog:
+- ✅ Settings dialog: real tabs across the top, and the redundant heading dropped.
 	- ✅ Remove "Settings" heading text, it's redundant with the window title.
 		- Done: dropped the prominent in-dialog title (and its band); the tab bar now sits at the top. The OS window title still reads "Settings".
 	- ✅ Change the buttons at the top for different pages, to tabs.
@@ -2420,7 +2416,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260706-065828
 	- Closed: 20260713-142351
 
-- ✅ Copy on...
+- ✅ Copy on select and copy on output, as two checkboxes on the menu bar.
 	- ✅ Update "[ ] Copy on output", to offer two options:
 		- ✅ "Copy on   [ ] select   [ ] output"
 			- Only one or the other
@@ -2477,7 +2473,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260711-141534
 
-- ✅ Settings dialog:
+- ✅ Settings dialog: the focus ring hugs one control, and the tab order follows it.
 	- ✅ Focus control:
 		- ✅ When an item is focused, there shouldn't be a focus box the same size for every row, around the entire group of controls. The focus box should only go around the control being focused.
 			- Done: the keyboard-focus ring now hugs just the focused control (checkbox / dropdown / text field / swatch+hex / whole radio group / slider) a couple px out, instead of spanning the row.
@@ -2585,16 +2581,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260702-170007
 	- Closed: 20260702-195717
 
-- ✅ Option to copy all output (`stderr` and `stdout`) to desktop clipboard automatically. (For security reasons this may need to be an always-visible checkbox on the right-side of the main menu, as well as accessible from the right-click menu.)
-	- Done: a per-pane toggle. When on, the focused pane's output copies to the clipboard as each command finishes.
-	- Note: only the focused pane of the focused window ever copies, so a background window can't leak output.
-	- Note: the text is plain printable Unicode, with color and control codes removed. A command with no output leaves the clipboard alone.
-	- Done: an always-visible "Copy output" checkbox on the menu bar, plus a toggle in the right-click and Edit menus.
-	- Note: Unix only.
-	- Opened: n/a
-	- Closed: 20260724-080316
-
-- ✅ Config:
+- ✅ Config: scrim and outline renamed, with new defaults.
 	- ✅ "Glow border" -> "Text outline" (change description and config name). Change default value to 2.0.
 		- Done: renamed the config key and the dialog label, and set the default to 2.0.
 		- Note: existing configs migrate to the new key without losing their value.
@@ -2628,7 +2615,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260703-071620
 
-- ✅ Buttons:
+- ✅ Buttons: centered captions, and click feedback.
 	- ✅ Center text.
 		- Done: the Cancel/Apply/OK captions are centered in the button. They were left-aligned before.
 	- ✅ Provide click feedback.
@@ -2642,20 +2629,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260702-161125
 	- Closed: 20260702-175110
 
-- ✅ Menu bar: (issue #t6thx, 20260626-132615)
+- ✅ Menu bar: menu and dialog colors are adjustable, and part of each theme.
 	- ✅ Menu and Dialog background and text color user-adjustable, even per-theme. It's just that all themes by default should use the same menu colors.
 		- Done: menu and dialog colors are part of each theme now, sharing the same neutral defaults across all themes.
 		- Done: config keys let you override the menu and dialog colors.
 		- Note: menu hover, border and separator shades follow the menu color automatically.
 	- Opened: 20260628-083740
 	- Closed: 20260702-173844
-
-- ✅ Window title:
-	- ✅ Updated requirement: Window title: Either use top-level `--title=`, or fallback to default, which is "SilkTerm - XYZ"; where 'XYZ' is the title of the current tab.
-		- Done: a `--title` wins as-is. Otherwise the title is "SilkTerm - <current tab>".
-		- Note: it tracks the focused tab's running program live.
-	- Opened: 20260702-170007
-	- Closed: 20260702-172113
 
 - ✅ Automated testing: Test with HiDPI (simulated if necessary) to make sure menu text, tab title, Settings, and About still render OK.
 	- Done: at 2x the title, tabs, labels, sliders, fields, checkboxes and buttons all scale cleanly.
@@ -2664,20 +2644,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Fix: radio spacing now scales with the font, and the panel widens so every option fits.
 	- Opened: 20260702-170007
 	- Closed: 20260702-180240
-
-- ✅ Setting dialog (part 2):
-	- ✅ A radio button for background image, to stretch or zoom. - New `Kind::Radio(&[..])` in the settings dialog (reusable N-option control: indicator box per option, fills the selected, click-to-pick); a "Bg image fit" row bound to `background_fit` (Stretch/Zoom). Stretch is selected by default; `background_fit` persists and re-fits the image on Apply.
-	- ✅ "Default shell": A command line to launch by default for new windows, tabs, and panes, if nothing else specified. Leave blank to use system default. - New "Shell" section in Settings with a "Default shell" text field bound to the existing `default_shell` config (empty shows "(system default)"; argv-split applies to new tabs/panes).
-		- Superseded: the shells list names the default now - its first switched-on entry, which the Shell tab lets you drag to the top. The separate setting and its text field are gone, and a config that had one has that entry moved to the top once, then the line removed. An initial population is led by the shell the user logs in with, so the default is right without their saying anything.
-	- ✅ Size: A boolean setting to "Remember last size".
-		- Done: remember_size config plus a dialog toggle. On launch it uses the remembered columns and rows. The pair updates on every manual window resize; startup and programmatic resizes are skipped so they don't clobber it. Columns and Rows gray out when on.
-		- Overrides explicit numeric size.
-		- Explicit numeric size fields disabled and grayed out.
-		- "Remembered" values stored separately in config, so that user can uncheck the boolean and revert to previous numericly defined size. These "remembered" values are not exposed in the settings dialog, only exist in config file. Always update to last manual window resize, whether boolean is yes or no.
-	- ✅ Should be able to use tab key to cycle among settings (and dialog buttons - in a loop). (20260702, branch kbdbtn) - the Tab ring now runs the active tab's focusable controls THEN the three footer buttons (Cancel/Apply/OK) and wraps, both directions (Shift+Tab / Up-Down too). A focused button shows the accent ring and is fired by Space or Enter. Built on the dlgkeys focus model (`Focus::Row | Focus::Button`).
-	- ✅ A little more vertical space between the section headings, and the corresponding horizontal line. - Taller heading row (`HEADER_H` 34->42); the heading text is top-aligned and the rule sits near the bottom, leaving a clear ~7px gap (was overlapping).
-	- Opened: 20260701-122853
-	- Closed: 20260702-170007
 
 - ✅ Tab interface: tabs within one window.
 	- Each tab owns its own set of panes. The tab bar shows once there is more than one tab, a click switches, and the pane area shrinks to make room for the bar.
@@ -2690,7 +2656,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260628-083740
 	- Closed: 20260703-091342
 
-- ✅ Menu bar: (issue #t6thx, 20260626-132615)
+- ✅ Menu bar: follows the system font, sizes to it, and goes neutral gray.
 	- ✅ Currently using "system sans serif", but if system proportional font is serif, the menu font is incorrect. - Fixed under bug #1n45bca: chrome pins a concrete sans family (`resolve_sans_family` / `sysfont::sans_serif`) instead of generic `Family::SansSerif`, which had been falling through to the serif document font.
 	- ✅ Auto-adjust height based on menu font size.
 		- Done (`app.rs`): the `MENU_BAR_H`/`TAB_BAR_H` consts are gone; bar heights now come from `menu_bar_h()`/`tab_bar_h()` = the menu font's line height (`text.cell_h`) + a small `MENU_BAR_VPAD`/`TAB_BAR_VPAD`, and the title text is centered in the scaled bar. So a larger font grows the bars instead of clipping. All ~13 const usages (layout, render, hit-testing, the resumed-time initial size) were switched. At the default font it's ~1px taller than before (27/29 vs 26/28) - imperceptible.
@@ -2711,7 +2677,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260701-074240
 	- Closed: 20260702-134432
 
-- ✅ Settings dialog:
+- ✅ Settings dialog: modal, scrollable, and fully keyboard-driven.
 	- Done: all sub-items complete (last was full keyboard control).
 	- ✅ Should be "modal" and connected to terminal window. (20260702, branch dlgmodal)
 		- Done: the dialog is tied to the terminal window - X11 gets a transient-for hint, and Windows and macOS use the window-manager parent relationship. The window manager keeps it above the terminal and groups them. While a dialog is open the main window swallows keyboard, wheel, and IME input, and clicking it re-focuses the dialog. Applies to About too.
@@ -2742,11 +2708,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Note: It might be best to defer some of these, until after (and if) native window controls are implimented.
 	- Opened: n/a
 	- Closed: 20260703-092145
-
-- ✅ Window title: Just "SilkTerm", plus the icon in assets/logo.png (for display in alt+tab).
-	- Done: `update_title` now sets the window title to just `APP_NAME` (per-program info stays in the tab titles). The window icon is loaded from `assets/logo.png` (`include_bytes!`, decoded + downscaled to 64x64 via the `image` crate) in `load_icon` and set with `with_window_icon`.
-	- Opened: 20260628-083740
-	- Closed: 20260629-214404
 
 - ✅ The cursor [used to] render *behind* outer glow, which sometimes obscures the cursor. As noted in another issue below, the cursor itself should also have an outer glow, if not too computationally expensive with an animated cursor. In that case, the cursor shadow should merge with the text outer glow. And either way, the cursor should appear *above* any outer glow.
 	- ✅ Cursor now renders above the glow. (20260701)
@@ -2782,14 +2743,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260707-061552
 
-- ✅ Cursor:
+- ✅ Cursor: new defaults for size and animation.
 	- ✅ After the related cursor bug fix above, set default cursor_size_horizontal to 25.
 		- Done: with cursor_size_vertical at 100, this gives a 25%-width bar.
 	- ✅ Default cursor_animation = "pulse_vertical"
 	- Opened: n/a
 	- Closed: 20260701-123735
 
-- ✅ Settings dialog:
+- ✅ Settings dialog: Alt shortcuts on the buttons, and the font settings.
 	- ✅ Alt+hotkeys for "Apply" and "OK", that underline when holding alt. (20260701)
 		- Done: while Alt is held, Cancel/Apply/OK underline their first letter and Alt+C/A/O trigger them.
 	- Font settings:
@@ -2801,7 +2762,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260709-211640
 
-- ✅ Cursor settings: (20260701, decisions #1-3)
+- ✅ Cursor settings: size as two percentages, plus an animation style.
 	- ✅ size_vertical =  ## 1 to 100%, from left-to-right
 		- Done: cursor_size_vertical is the cursor width % from the left, replacing cursor_shape. Bar 15, block and underline 100.
 	- ✅ size_horizontal =  ## 1 to 100%, from bottom-up
@@ -2881,12 +2842,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
-- ✅ Menu (part 2):
+- ✅ Menu, second round: keyboard navigation, and accelerators shown on Alt.
 	- ✅ When a menu is open, keyboard arrow should work on them, not on the active terminal pane.
 		- Fix: An open menu (context menu or menu-bar dropdown) now captures navigation keys: Up/Down move a highlighted item (`ContextMenu::step`, wraps, skips separators, reuses the `hover` field/render), Enter activates it, Esc closes, Left/Right cycle between menu-bar dropdowns.
 	- ✅ When 'Alt' Pressed, keyboard accelerators should become visible on the menu (traditionally with underscores). - Open dropdowns underline each item's first letter and a letter-press activates the first item starting with it. Alt+F/E/V/T/P/H open the bar menus. And now the bar titles themselves underline their accelerator letter while Alt is held.
 		- ✅ Show the underline on the bar titles on Alt-hold (a redraw-on-Alt + char-measure pass). - Done (`app.rs` render): while `self.mods.alt_key()` and no dropdown is open, an underline rect is drawn under each top-level title's first letter (measured via `measure_text`, like the dropdown items); `ModifiersChanged` now sets `dirty` so it appears/disappears live on Alt press/release.
-	- Note: the cross-platform-windowing-widget question (the `🚫` note under "Setting dialog (part 2)") is now decided - chrome stays hand-rolled (egui declined after a real spike). So the bar-title Alt underline is just a normal hand-rolled task.
+	- Note: the cross-platform widget-toolkit question is settled - the chrome stays hand-rolled, egui having been declined after a real trial. So the Alt underline on a bar title is an ordinary task.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -3045,7 +3006,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
-- ✅ Settings dialog:
+- ✅ Settings dialog: system font, background image, and system-default font and size.
 	- ✅ Use the system proportional font.
 		- Done. Dialog text now uses `text::sans_attrs()`, centered against the real line height (also fixed the misalignment bug above).
 	- ✅ Allow selection of terminal background image (or none).
