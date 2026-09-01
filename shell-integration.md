@@ -42,7 +42,7 @@ To switch the whole thing off before it ever runs, set `shell.integration: false
 Once the block is in place, a stock prompt reads:
 
 ```text
-[PS 7.6] 09:41:22 you@yourbox:~/projects/silkterm [ github.com:you/silkterm.git:dev ✔✘ ]
+[PS 7.6] 09:41:22 you@yourbox:~/projects/silkterm [ github.com:you/silkterm.git:dev ✓✘ ]
 >
 ```
 
@@ -96,7 +96,7 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false } catch { }
 	# Code points rather than literal glyphs, because 5.1 reads a file with no
 	# byte-order mark as ANSI.
-	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2714; No = [string][char]0x2718 }
+	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2713; No = [string][char]0x2718 }
 	# Root gets a different decorator, the way a unix prompt does.
 	$global:__SilkTermAdmin = $false
 	try {
