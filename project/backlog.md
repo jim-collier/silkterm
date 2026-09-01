@@ -47,28 +47,32 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Two cases that need separating before anything is changed, because only the second is clearly broken:
 		- The first pane of a launch inherits the folder the launcher was sitting in, which wsl.exe is supposed to translate on its own. If that is the failing case, the question is what it does instead.
 		- A new tab or split from a WSL pane inherits what the shell last reported, which is a posix path. That cannot be a Windows working directory at all. Fits the garbled `/tmp/...` prompt seen once after splitting a WSL pane.
-	- Likely fix is to pass the directory to wsl.exe with `--cd` rather than relying on inheritance, since that takes a Windows path and a posix one alike. Check first that it is accepted by a wsl.exe old enough to matter.
+	- Probable fix: pass the directory to wsl.exe with `--cd` rather than relying on inheritance, since that takes a Windows path and a posix one alike. Check first that it is accepted by a wsl.exe old enough to matter.
 	- Opened: 20260830-140000
 
-- 🔬 Startup directory and tab closing.
-	- Done: the startup directory follows the calling directory, so "Open in terminal" from a file manager starts in that folder. The setting still applies where the inherited directory was a launcher's default - home, a filesystem root, or beside the executable - so the two coexist and the setting stays.
-	- Done: closing the last tab closes the window.
-	- Open: closing a second tab crashes the program. Not reproducible on Linux - twelve tabs closed in a row, by hotkey and by the close box, wide window and narrow. Not on Windows either when tabs close because their shell exits, in any order. Nor with Ctrl+Shift+W twice, nor by clicking the close boxes, middle tab first or end tab first, with the pointer left over the strip. So the removal itself is fine; the steps matter. Which key or click, how many tabs and panes were open, and was anything running in the tab?
-		- Ruled out since: the tab strip's paging math cannot run off the end of the list, and every tab lookup outside `close_tab_at` itself is a checked one. So it is not a stale tab index left behind by the removal.
+- 🛠️ Closing a second tab crashes the program.
+	- Not reproduced yet, on either box. Twelve tabs closed in a row on Linux, by hotkey and by the close box, in a wide window and a narrow one. Not on Windows either when tabs close because their shell exits, in any order, nor with Ctrl+Shift+W twice, nor by clicking the close boxes middle tab first or end tab first with the pointer left over the strip.
+	- So the removal itself is fine and the steps matter. Which key or click, how many tabs and panes were open, and was anything running in the tab?
+	- Ruled out: a stale tab index left behind by the removal. The tab strip's paging cannot run off the end of the list, and every tab lookup outside the close path is a checked one.
+	- Note: the startup directory and last-tab halves of the original report are done, under Done - Bugs.
 	- Opened: 20260826-123553
 
 - 🔬 Double-clicking a Windows path leaves off the drive letter.
-	- A double-click now looks for a shape it can name before it falls back to the word rules: a URL or file URI, a drive path, a UNC path, an absolute posix path, a `~/` path. What it recognizes it takes whole, so brackets inside a wiki URL and spaces inside a folder name no longer cut it short, and a trailing `:120:5` line number is left behind.
-	- A space is crossed only when a path separator turns up within the next forty characters, which is what separates "Program Files\app.exe" from a path followed by a sentence.
-	- The drive letter itself does not reproduce on Linux - the shipped word separators already keep `:`, and a double-click on `C:\Users\jim\notes.txt` selects it whole. Likely a config that still carries the older separator list, which the "start over" item below would also clear. Worth re-checking on Windows against a fresh config.
+	- Does not reproduce on Linux. The shipped word separators already keep `:`, and a double-click on `C:\Users\jim\notes.txt` selects it whole.
+	- Probable cause: a config still carrying the older separator list, which the "start over" item would also clear.
+	- Note: re-check on Windows against a fresh config. The rest of the double-click work is done, under Done - Bugs.
 	- Opened: 20260826-123553
 
 - 🔬 Does not work very well under tmux.
 	- Needs a symptom before anything can be fixed. What was checked on Linux and looks right: a session starts and draws, the status bar stays pinned at the bottom while copy mode pages, the position counter tracks, colors and the box drawing are correct.
-	- One likely candidate, if the complaint is about the wheel: with tmux's own mouse support off, a wheel over the pane is turned into cursor keys, which is what a full-screen app wants but which recalls shell history at a bare prompt. That is the standing behavior for any full-screen app and `set -g mouse on` changes it, so it may be a documentation answer rather than a fix.
+	- One candidate, if the complaint is about the wheel: with tmux's own mouse support off, a wheel over the pane is turned into cursor keys. That is what a full-screen app wants, but it recalls shell history at a bare prompt. It is the standing behavior for any full-screen app and `set -g mouse on` changes it, so this may be a documentation answer rather than a fix.
 	- Opened: 20260826-123553
 
 ### New features and enhancements
+
+- 🔘 Reconcile the interface with `uiux-style-guide.md`, or the guide with the interface where the guide is the thing that is wrong.
+	- The guide already ends with a list of places the built interface differs from it. Start there.
+	- Opened: 20260831-185312
 
 - 🔬 Windows installer.
 	- ✅ Offer "available to all users", or "this user only", or whatever the typical wording is.
@@ -82,47 +86,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- 🔬 Nothing has been run on Windows. The template compiles, which covers the syntax but not the install-mode page, the shortcut working directories, or the upgrade-over path.
 	- Opened: 20260826-123553
 
-- 🛠️ Dogfood: a build made on one box should reach the others, and the launcher should always run the newest one it can find.
-	- ✅ The dogfood destinations are written down per platform and per direction, in the pipeline config rather than in anyone's head. macOS destinations are recorded but inert, since nothing builds for it yet.
-	- ✅ The Linux pipeline installs its Windows cross-build beside its own binary, so the Windows box picks up a Linux-made build without anyone copying it by hand.
-	- ✅ Both launchers work the same way now: check this clone's release build, b23 over the network, and the dogfood location, take whichever is newer than what is already held, then run the newest. Each step says what it did, on screen and in a log beside the pool.
-	- ✅ A copy should be named for the build's own date rather than the date it was copied, so the same build arriving two ways is only held once.
-		- 🔘 The date alone did not deliver this, need to fix. The rotating install dated its copy from when the pipeline run started, about eight minutes off the build, and a synced copy can be restamped on the way through Dropbox. Three copies of one binary, three dates. So the launchers kept re-taking a build they already held, and which one looked newest came down to who wrote last.
-		- ✅ The rotating install now dates and names its copy from the build. Both launchers compare the bytes when a source looks newer, and a match just takes the newer date, so a build is held once whatever the dates say. Neither launcher will prune the newest copy any more, however old it is - a quiet week used to empty the pool and drop the launch to a fallback terminal.
-		- ✅ The case that needed a build date inside the binary is closed. Every build now carries a build number, so two dogfood builds of one release are no longer indistinguishable - ask the binary rather than trusting a file date. The launcher still ranks copies by date, which is right for choosing what to run; the number is what settles which build a report is actually about.
-	- ✅ The bash launcher used to just run whatever it found, in place. It has the same sources, the same pruning and the same reporting as the Windows one now.
-	- 🛠️ Both launchers have now been run on their own box. Still open: the network source when b23 is down.
-		- Done on Linux with b23 reachable: it copies in a newer build, declines one it already holds, and runs the newest. A copy that is old but still running is left alone when the pool is pruned; an idle one of the same age goes.
-		- ✅ Both launchers are deployed to the synced dirs, from a Linux box. The bash one goes to two dirs, not one - the linux and wsl trees mirror each other exactly, so writing only one would split them.
-		- 🔬 Still to run: the b23-down case, from a box where b23 is over the network rather than local (Linux and Windows both), so the bounded wait is what gets exercised.
+- 🔬 Dogfood: the launcher when the network build host is down.
+	- Both launchers have been run on their own box with the host reachable. What is left is the unreachable case, from a box where that source is over the network rather than local, on Linux and on Windows, so the bounded wait is what gets exercised.
+	- Note: the rest of this item is done, under Done - New features and enhancements.
 	- Opened: 20260823-131929
-
-- ✅ "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
-	- Looks and behaves not too differently than some modern text editors.
-	- When disabled, has no effect on performance - truly skipped code paths.
-	- It has it's own area within the render area, it doesn't sit on top of it.
-	- When enabled:
-		- The visible section is highlighted and is smoothly draggable, scrollable (when mouse is over it).
-		- The scrollbar to the right of it, acts on the scroll-buffer, and is synced pixel-perfect with the highlight area over the preview. In other words, the preview and the scrollbar are essentially one and the same.
-		- If the previously implemented "regular" scrollbar is *also* enabled, that scrollbar sits between the terimal area on the left, and the preview area on the right.
-			- This is a departure from other implementations, that only have one scrollbar on the far right that behaves the same way whether there is a preview area or not. But I want to visually indicate that the *terminal* scrollbar, is for the *terminal*, not the preview.
-	- Disabled by default.
-	- Built. Per pane, in a real column that costs the grid its width. The whole buffer maps linearly onto it and never slides, which is what keeps the marker over the preview and the far-edge thumb the same object at the same pixels.
-		- Lines draw as colored strokes, not glyphs. A blend of many lines keeps the strongest ink rather than the average, so one red line among fifty still reads.
-		- Settings are a toggle and a width on the Movement tab, plus a View-menu item. Off by default, and off means no column, no cache and no per-frame work.
-	- Opened: 20260802-094409
-
-- 🛠️ Tab interface:
-	- Done: single-window core. Each tab owns a PaneManager; the tab bar shows once there's more than one tab, click to switch, and the pane area shrinks to make room for the bar.
-	- Note: detach and dock are deferred - they need multi-window.
-	- ✅ Close tab (CTRL+Shift+w, CTRL+F4)
-		- Done: both shortcuts close the current tab, matching the menu.
-		- Note: keeps at least one tab open. Shift on W leaves plain Ctrl+W for the shell.
-	- 🔘 Detach tab to new window with mouse
-		- Note: deferred, needs multi-window.
-	- 🔘 Dock tab to different existing window with mouse
-		- Note: deferred, needs multi-window.
-	- Opened: 20260703-091342
 
 - 🔘 At startup, offer to copy the wallpaper pack from the repo to the local wallpaper directory.
 	- The README now carries a one-liner for it (Wallpaper pack section), so this item is only about the in-app offer.
@@ -187,14 +154,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260804-134813
 
 - 🛠️ Testing:
-	- ✅ Also try menus and dialogs with 125% larger font than current - independent of existing HiDPI tests.
-		- Done at 16pt against the usual 13. The menu bar, a dropdown, and all seven Settings tabs were looked at. Everything sizes off the interface font and stays put: titles and the copy cluster keep their margin, dropdowns fit their content, rows center, and the Shell grid holds its columns. The panel simply gets wider, which is what it should do.
-		- Fixed on the way: the panel's scrollbar sat one pixel from the Shell tab's last column, which read as touching it. It hugs the panel edge now, so there is clear space either side.
-		- Also fixed: Blur px, Scrim radius px and Outline px read 10.00, 5.00 and 1.00 beside whole percentages. All three step in whole pixels now, the way Scrollbar width px already did. Line height keeps its decimals, which it needs.
-		- Checked and left alone: "Copy on select" looks out of place at the bottom of the Cursor tab, but that is where it was asked for, and a test pins it there.
-	- 🛠️ Do full regression testing (and try to keep the tests updated as new features and bugs are added), and against library code as well.
-		- Done: scrolling is covered by library tests encoding the per-app matrix (less/vim slide, nano/muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and fuzz/security below.
-	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so that we can find and patch critical bugs there too.
+	- 🛠️ Do full regression testing, keeping the tests current as features and bugs come in, and against library code as well.
+		- Done: scrolling is covered by library tests encoding the per-app matrix (less and vim slide, nano and muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and the fuzz and security work below.
+	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so critical bugs there can be found and patched as well.
+	- Note: the 125% interface font check is done, under Done - New features and enhancements.
 	- Opened: 20260703-100322
 
 - 🔘 Add silkterm to a Windows package manager (e.g. winget or choco).
@@ -203,333 +166,31 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - 🔘 Ability to change hotkeys, and/or assign new ones dynamically. Including a "capture" dialog.
 	- Opened: 20260703-100322
 
-- 🛠️ Themes:
-	- Note: Any work done in the previous Settings dialog improvements work, override potential contradictions here.
-	- Done (part 1): theme foundation and terminal palette. A Palette (bg/fg/cursor/focus + 16 ANSI) times a Theme (a dark+light pair); the theme and theme_mode config keys pick the active palette, and the [colors] keys still override per-color. Three built-ins: SilkTerm, Matrix, Retro Amber, each dark and light.
-		- Note: Matrix is green on black, including green-toned ANSI; SilkTerm light is dark on light.
-	- Done (part 2): chrome/dialog theming plus System mode. Settings and About adapt to dark/light; the menu and tab chrome stay a fixed neutral gray. System mode follows the OS at startup and on theme-change, falling back to dark where the OS reports no preference (e.g. X11).
-		- Note: still open - config-defined [themes.*], the Settings theme dropdown and its own tab, clearing per-color overrides on re-select, per-theme menu color (#166), more themes (Pastel, Solarized).
-	- 🛠️ Provide a set of about 3 or 4 themes, each that support "Dark" or "Light" mode (or "System").
-		- Done: three built-ins with dark and light.
-		- Note: System (OS-follow) and a 4th theme are still pending.
-		- Dark mode means the background is dark, text light - both for the terminal, and dialogs.
-			- But dialogs have a different color than terminal background. E.g. the existing dark gray for Dark mode, light gray for Light mode.
-		- Light mode means light background, dark text.
-		- "System" means whatever mode the system is using.
-		- Theme definitions should be put in the default config file.
-		- Selecting a theme overrides custom color settings, but those can then be individually tweaked as overrides (until a theme is chosen again and tweaks overwritten).
-		- Themes and colors should probably go on their own settings tab.
-		- User can add themes in the config file. Theme dropdown in Settings UI pulls from those updates.
-		- Example themes:
-			- Matrix (bright green on black). Light mode: dark green on light gray.
-			- Retro amber (Orange on black). Light mode: dark orange on light gray.
-			- Pastel (a pleasing light pastel color, on dark gray background that has a subtle tint of complementary pastel).
+- 🛠️ Themes: what is still open.
+	- 🔘 A fourth built-in theme. Pastel is the idea: a pleasing light pastel on a dark gray background carrying a subtle tint of the complementary color. Solarized is the other candidate.
+	- 🔘 Per-theme menu and chrome color. The menu and tab chrome stay a fixed neutral gray whatever theme is chosen.
+	- Note: the rest of the theme work is done, under Done - New features and enhancements.
 	- Opened: 20260628-083740
 
-- 🛠️ Refactor settings dialog
-	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory.
-	- The color picker and wallpaper sub-group randomization are the only remaining items.
-	- ✅ Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
-		- Done: thirty rows carry their own help line, and a control that is grayed out still explains why instead - that question is the more urgent one. The text wraps to the panel, so a longer sentence or a bigger interface font cannot push it off the edge, and it flips above a control when there is no room beneath.
-		- ✅ Including the some of the main buttons:
-			- "Apply": "Apply changes now, without closing Settings."
-			- "OK": "Apply changes and close Settings."
-			- Cancel got one too, for symmetry: "Discard every change and close Settings."
-	- ✅ Tabs:
-		- ✅ Make buttons shaped more like tabs at the top of the dialog.
-			- ✅ Takes up less vertical space.
-			- ✅ Closer to the top but not touching.
-		- ✅ The tabs should sit on a darker (in dark mode) colored background, and directly on top of a line that separates that background (as a new named themable element), from the rest of the dialog below (like most tabbed interfaces).
-		- ✅ No "title" section for each tab, that mirrors the tab name. Just remove it.
-			- The heading stays in the declarations, because a heading is also what assigns the rows under it to a tab - it simply takes no space and draws nothing.
-		- ✅ The currently selected tab should be a lighter gray, rather than "selected" color.
-		- ✅ Tabs navigable via CTRL+[PgUp|PgDn], and CTRL+[Tab|Shift+Tab].
-			- These already worked, and the plain keys still reach the terminal rather than being stolen.
-		- Between the shorter strip and the dropped heading the dialog is 58px shorter.
-	- ✅ Express all slider values that range from 0.0 to 1.0, as an integer % from 0% to 100%. (But store as original decimal value in config though.)
-		- Six sliders read 0-100 in whole steps now; the file still holds the decimal. Reverting one lands exactly on its own default rather than a hair off it, and a percent field takes no decimal point.
-	- Found and fixed on the way: both scrollbar colors had rows in the dialog but were never written to the file, so an edit lasted only until the next launch. Every row now writes what it edits.
-	- 🛠️ Tabs and grouping (settings content and tab reorg):
-		- ✅ "Groups" are organized, titled sections within a dialog tab page. Differentiated by a title, and with adequate spacing between groups so that they are visually separate.
-			- ✅ Retuned: more space between one section and the next, and less between a heading and the rule under it, so a heading reads as belonging to what follows it rather than floating between the two.
-		- ✅ There is now the concept of "Sub-groups" within groups, distinguished through indentation of the leading text labels (but not the controls themselves).
-			- A sub-group is not declared anywhere. It is a row followed by rows at a greater indent, so the leader and its members cannot disagree about who belongs to what. Only labels move; every control keeps its column.
-			- ✅ Sub-groups (and their style) can exist without Groups.
-			- ✅ Unlike a Group, a Sub-group begins with an actual control. (Its text label is not indented, while everything below it in the sub-group is.)
-		- ✅ Tab: "Background"
-			- Sub-group: "Transparency" checkbox
-				- "Opacity" (%)
-				- "Blur-behind"
-			- Sub-group: Wallpaper [ ]  (new boolean to turn wallpaper on or off)
-				- "File or folder" (formerly "Background image") text box.
-				- "Fit" checkboxes
-				- "Randomize" checkbox
-					- [ ] New window
-					- [ ] New tab
-					- [ ] New pane (defer to when this is technically possible)
-					- [ ] Interval
-						- Slider 1 second to 1 week
-				- "Visibility" (%; formerly "Bg image opacity", also change config setting name)
-				- "Blur" (formerly "Bg image blur"; %)
-				- Minimum contrast %
-					- (At 0% background image visibility - not useful but establishes the floor.)
-					- Default 50%
-				- Maximum contrast %
-					- (At 100% background image visibility.)
-					- Default 50%.
-				- Minimum saturation %
-					- (At 0% background image visibility - not useful but establishes the floor.)
-					- Default 50%
-				- Maximum saturation %
-					- (At 100% background image visibility.)
-					- Default 50%.
-			- Sub-group: "Contrast mask" checkbox
-				- "Size" (Formerly "Mask size". 0% to 100%)
-				- "Strength" (Formerly "Mask strength". 0% to 100%)
-				- "Automask mix" (Formerly "Mask auto". 0% to 100%)
-			- Three sub-groups as listed. Renames done: Background image -> File or folder, Bg image opacity -> Visibility, Bg image blur -> Blur, Mask size/strength/auto -> Size/Strength/Automask mix.
-			- 🔘 Deferred, each needing engine work rather than dialog work: the Randomize sub-group (new window / new tab / new pane / interval), and the four min/max contrast and saturation percentages. Rotation itself is still the existing "Rotate folder" switch.
-		- ✅ Tab: "Text"
-			- Group "Font"
-				- Use system font    [ ] Face   [ ] Size
-					- Disabled on Windows.
-				- Family
-					- Default to: "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
-						- On all platforms.
-						- Update my existing user config to match.
-				- Size
-				- Line height
-			- Group "Text readability"
-				- Sub-group: "Text scrim" checkbox
-					- "Scrim radius" (existing range and values)
-					- "Softness" (0% to 100%)
-					- "Outline px" (formerly "Text outline"; existing range and values)
-					- Function
-					- Falloff
-			- ✅ Done as specified, with Strength first under the switch (it is the knob the others hang off). The shipped font stack already read exactly as listed, so nothing changed there.
-		- ✅ Tab: "Cursor"
-			- "Blink rate" slider
-			- "Shape"
-			- "Animation"
-			- "Animation pauses on ..."
-				- [ ] Loss of window focus
-				- [ ] Loss of pane activity
-				- [ ] Input inactivity
-				- "Inactivity timer" 100 ms to 1m
-			- "Visibility"    [ ] Scrim   [ ] Outline
-			- Blink rate, Height, Width, Animation and the Scrim/Outline pair (now "Visibility"), plus Inactivity timer as a sub-group under Animation. All were config-only settings before; none is new.
-			- 🔘 Deferred: the three "Animation pauses on" checkboxes. Loss of window focus and loss of pane activity are source constants today, so exposing them means wiring, not a row.
-		- ✅ Tab: "Movement" (formerly "Scrolling")
-			- Sub-groups:
-				- Scrolling
-				- Cursor
-			- Done as two sub-groups: Smooth scrolling (the five feel sliders) and Scrollbar (width, hide-when-idle, and its two colors). There is no Cursor sub-group - cursor movement has no settings behind it, only source constants.
-		- 🛠️ Tab: "Themes"
-			- ✅ Group: "Themes"
-				- ✅ "Theme" (drop-down of selectable themes).
-				- ✅ Buttons aligned underneath theme dropdown box, arranged in one horizontal row:
-					- [Save]  [Save as ...]  [Rename]  [Delete]
-					- Behavior:
-						- ✅ [Save] is only enabled, if the user has unsaved changes to current theme. Even across sessions.
-						- ✅ [Save as ...] pops up a small dialog with the text "Enter a new theme name", and below that, an empty textbox. buttons at bottom-right "Cancel|OK" (OK default)
-						- ✅ [Rename] pops up a small dialog to edit existing name (all text selected by default), with buttons "Cancel|OK" (OK default).
-						- ✅ [Delete] pops up a confirmation Cancel|OK dialog (defaul Yes), and 'Really delete theme "<them name>"?'
-					- Nothing records "unsaved changes" separately - a color that disagrees with the theme is the record, and it lives in the config file, so the answer is the same after a restart.
-					- A saved theme is written whole (both variants, the ANSI set included) under its own name, so it stands on its own and can be handed to someone else. Saving folds the per-color tweaks into it and drops them as overrides.
-					- A saved theme may take a built-in's name and stand in for it; deleting it puts the built-in back. Only a saved theme can be renamed or deleted.
-				- A "Mode" row was added beside it (Dark / Light / System). It was a config-only setting, and a theme picker with no way to pick the variant invites the question.
-			- ✅ Group: "Colors" Update dynamically with theme selection and can be user-overridden and persisted, even if the named them that was tweaked, isn't saved.)
-				- Picking a theme takes on its colors wholesale. Keeping the previous theme's tweaks on top would make the picker look broken on every color that had been edited, and those tweaks belonged to the theme being left behind.
-				- Controls
-					- ✅ Sub-group: "Terminal background" (formerly labeled "Background")
-						- "Foreground"
-						- "Cursor"
-					- ✅ Sub-group: "Dialog and menu background"
-						- ✅ "Gutter" (a new color defining small areas with no interactive elements, e.g. behind the top tabs).
-						- ✅ "Highlights" (formerly "Focus ring"; same color but with expanded meaning as noted above)
-						- ✅ "Focus" (a new color category that used to be part of "Focus ring", but now applies only to focused element)
-						- Done: all three are themable and live on the Colors tab. The sub-group headings above wait on the grouping work; the rows are in place.
-						- ✅ Both sub-groups are in place now. The dialog and menu backgrounds and their two text colors picked up rows at the same time - they were themable but not editable, and half a family on screen invites the question.
-				- Behavior changes
-					- When a hex field textbox gets focus, don't remove the existing value. Just highlight all, as now standard for textboxes.
-					- Make the colored boxes clickable. That pops up a color selection dialog.
-						- Standard photoshop-like dialog:
-							- A colored box on left representing saturation and brightness of a certain color.
-							- Immediately to the right of that, a thinner strip with a vertical slider control, to select the color from a rainbow covering the RGB rainbow.
-							- To the right of that, text boxes:
-								- Red %
-								- Green %
-								- Blue %
-								- Brightness %
-								- Saturation %
-								- Hex value
-							- At bottom right, buttons: "Cancel|OK" (default "OK")
-		- ✅ Tab: "Window":
-			- Sub-group: "Remember last size" checkbox
-				- Columns
-				- Rows
-			- Margin px
-		- ✅ Tab: "Shell"
-			- UI:
-				- A grid, one line per stored shell, every field edited in place: "Name", "Command", "Last seen", "Active"
-					- Reconciled with what was asked for later, which supersedes the original spelling of this item: the columns are the four above, "Last seen" is new (a date, read-only, written by the scan), the edit popup is gone in favour of editing in the row, and "Comment" is no longer a column - the scan still writes it and it shows as the row's flyover tip.
-					- "Active" is a checkbox. When it is on, the shell's name appears under "Tabs/New tab with shell ... ->".
-					- The command is required: emptying the field leaves the stored one standing, and an entry that never got one is dropped rather than saved.
-				- ✅ A grip at the left of each line reorders it by dragging. This supersedes the four move icons this item first asked for ("Move to top", "Move up", "Move down", "Move to bottom"), which are gone; reordering is mouse-only now.
-				- ✅ "Remove" sits between "Command" and "Last seen" rather than at the end of the line, so it is harder to press by accident, and its X is red. It still asks first, the way the theme delete does.
-				- ✅ Below the grid, a "Default startup directory" section. It ships as the literal `$HOME` / `%USERPROFILE%`, understands `~` and either platform's variable spellings, and is the lowest of three precedences - a new tab, pane or window inherits from the pane it came from, and a SilkTerm launched from a shell keeps that shell's directory.
-				- An "Add" button below the grid, for a shell the scan cannot find. It adds a new line and puts the caret straight in its command field.
-				- The first switched-on shell in the list is the default for new windows, tabs and panes. The old `shell.default` setting is retired: a config that had one has that entry moved to the top of the list, once, and the line removed.
-				- Done: the whole tab. The grip and the remove mark are drawn in the shader rather than set as glyphs - no interface font can be relied on to carry either one.
-			- Behavior
-				- At startup - first, the terminal renders. Then launches a background process to search for [initial shells|changes to shell availability].
-					- If a shell exe name already exists in the list of shells, ignore it.
-					- Search for all the common shells for a given platform.
-						- For Linux:
-							- User's default shell goes at the top.
-								- If "Bash", add a second option below that, "bash --norc".
-								- Ditto if such a flag is available for user default shells that aren't bash.
-							- Include search for more obscure third-party shells like YSH, NuShell, Fish, etc.
-							- Include "Powershell 7", if installed.
-							- Include programming shells like "Python 3".
-							- If bash is
-						- For Windows:
-							- Include if exists: "Powershell 7", PyCmd, "Legacy Powershell 5", "Legacy CMD.exe", NuShell, etc.
-							- Also include shells found in WSL1 and WSL2
-								- Without launching them for shell discovery, if possible. (Research.)
-									- May be doable with WSL1, disk image is regular files - but with wonky permissions we may not have enough perms in user mode for.
-									- Probably not doable for WSL2, as the disk image is a .vhx or whatever - a virtual disk image. Would require launching the entire VM - super impractical, costly, and suprising (even a security risk for the user).
-								- Most likely this is not reasonable. So then just add "shell" items for the whole installed WSL1 or 2 distros themselves, without specifying a shell - discoverable without launching anything.
-									- The user can edit the shell item to add flags for specific shells, if they want.
-								- Will require special logic for Windows, to add the commands to launch named WSL1 or 2 distros
-				- If a new shell exe is found that doesn't already exist in the stored list, add it. (User can disable it later.)
-				- If an existing already defined shell exe name isn't found by explicit path, or in the environment path variable, disable it (don't delete it).
-			- ✅ All of the behavior above is built and running - see the auto-detect item under "New features and enhancements".
+- 🛠️ Settings dialog: what is still open.
+	- 🔘 A color picker. The colored boxes on the Colors tab should be clickable, and open a picker of the familiar sort:
+		- A square on the left carrying saturation and brightness.
+		- A narrow rainbow strip beside it, with a vertical slider for hue.
+		- Text boxes to the right: Red %, Green %, Blue %, Brightness %, Saturation %, and a hex value.
+		- Buttons at the bottom right: "Cancel|OK", with OK the default.
+	- 🔘 A hex field should select its contents when it takes focus rather than emptying itself, which is what a text box normally does.
+	- 🔘 The wallpaper "Randomize" sub-group: new window, new tab, new pane, and an interval from one second to a week. Needs engine work rather than dialog work. Rotation is still the existing "Rotate folder" switch.
+	- 🔘 The four wallpaper minimum and maximum contrast and saturation percentages. Engine work for the same reason.
+	- 🔘 The three "Animation pauses on" checkboxes on the Cursor tab: loss of window focus, loss of pane activity, input inactivity. The first two are source constants today, so exposing them is more than adding a row.
+	- Note: the rest of the dialog rework is done, under Done - New features and enhancements.
 	- Opened: 20260719-085918
 
-- 🛠️ Command-line options:
-	- Done (part 1, the options engine):
-		- Full parser: create/select model, cascading style, shell-word-split.
-		- --help / --version / --syntax, and --config for an alternate file.
-		- Window options: columns, rows, pixel-width, pixel-height, background-opacity, hide-windowframe, hide-menu, fullscreen, title. A window option after a tab/pane marker errors.
-		- Layout: --new-tab/--tab=/--new-pane/--pane=/--splits with direction and --size, building real tabs and panes (targeted splits into arbitrary trees, smart default direction, percent or cell sizes).
-		- Per-pane --shell (argv-exec; cascades pane, split-source, tab, window, then config default_shell; interactive splits inherit).
-		- Per-pane --directory (alias --dir), on the same cascade, deciding where that shell starts.
-		- Config command_line applied when launched with no args. Any real CLI argument overrides it entirely.
-		- Tab --title override, shown in the tab bar.
-		- Window-level visual style: font, size, colors, and the background image with its stretch/zoom/opacity fold into the live settings at startup.
-			- Note: per-pane scope is still deferred. It needs a per-pane renderer the single-TextCtx architecture lacks, so these flags apply to the whole window but don't yet vary per pane (hence 🛠️).
-		- Done: --keep-open holds a pane open after its shell exits, saying how it ended and waiting for a key.
-		- Note: still open - per-pane --title (reserved, none displayed yet), and finer field-level negotiation (today any CLI arg ignores the config command line wholesale).
-	- General notes:
-		- Command-line options override any config setting, but only while that window is alive.
-		- As suggested in the main enhancement bulletpoint above, a command line can also be specified in the config file (and exposed in "Settings").
-			- If the user launches the program also with command-line options:
-				- Window-level options specified on the command-line at launch, override same command-line options stored in the config. (In other words, window-level options are "negotiated" between user-specified and config.)
-				- If a single hierarchical option is specified by the user on the command-line at launch time, all hierarchical options from the config file are ignored.
-	- 🛠️ General format (unless we already inherited one):
-		- Done: both `--option value` and `--option=value` are taken, and a bool takes true/t/yes/y/1 or false/f/no/n/0. Short forms exist only for `-h` and `-v` so far.
-		- `--option[=| ]value` | `-o value`
-		- `--unary-flag` | `--unary-flag[=| ]\(true|t|yes|y|Y|1|false|f|no|n|N|0\)` | `-u` | ...etc.
-		- In other words, even unary flags can be treated as options, and important options have single unique "short" versions.
-	- ✅ `--config[=| ]"alternate config file location"`
-		- Done. Settings saves to the alternate while it is in force. The per-window notes below wait on multi-window, which does not exist yet.
-		- When active per-session, settings dialog should save to defined alternate.
-		- All launches without this flag should default to existing config.
-		- Configs are per-window, not per-tab.
-		- Multiple windows can all have different configs specified and active. When a tab is undocked and moved to a different existing window, it automatically changes to that Window's config.
-	- Window-level options (all options only apply to a single window per launch):
-		- General:
-			- Specifying window-level options after any tab/pane marker (`--new-tab`, `--tab`, `--new-pane`, `--pane`) should exit with an error.
-		- ✅ `--columns[=| ]<n>`
-			- Primary way to specify window width
-		- ✅ `--rows[=| ]<n>`
-			- Primary way to specify window height
-		- ✅ `--pixel-width[=| ]<n>`
-			- Alternate way to specify window width
-		- ✅ `--pixel-height[=| ]<n>`
-			- Alternate way to specify window height
-		- ✅ `--background-opacity[=| ]<n>`
-		- ✅ `--hide-windowframe[[=| ]bool]`
-		- ✅ `--hide-menu[[=| ]bool]`
-		- ✅ `--fullscreen[[=| ]bool]`
-		- ✅ `--help` | `-h`
-			- Shows program name, version and build# in its header, and lists the options. Copyright and license live in `--about` rather than being repeated here.
-		- ✅ `--syntax`
-			- Similar to `--help` but just list options and meaning.
-		- ✅ `--version`
-			- Shows program name, version, and build#. One flush line, so a script can still read the version as the second field.
-	- Hierarchical options:
-		- General notes:
-			- There is always an implicit first tab and first pane, each addressable by ID "0" or "main"; a window can never have zero tabs, nor a tab zero panes.
-			- Create vs. select: `--new-tab` / `--new-pane` create a new tab/pane; `--tab=<id>` / `--pane=<id>` select an existing one. ID is required on a select - there is no naked `--tab` / `--pane`. Whatever was just created or selected becomes the "current" tab/pane, and subsequent options (and `--new-pane`s) apply to it until the next create/select.
-			- Selecting an ID that doesn't exist is an error.
-			- All options are logically under a single implicit 'window' (it can't be specified; it just means all options apply to one window).
-			- Inheritance (most-specific wins): a pane's effective value = explicit on that pane, else inherited from the pane it splits (recursively up that chain), else its tab, else the window. A tab's = explicit on the tab, else the window. Flow: window -> tab -> [pane it splits, recursively] -> pane. Handles, title, and size are non-inheritable; direction inherits along the split chain, and the style options below inherit down the whole flow.
-			- Order matters: options apply to the current tab/pane at the point they appear. You may re-select an earlier entity (e.g. `--tab=0`) later in the same command line to add panes to it or change its settings.
-		- ✅ `--new-tab[[=| ]<handle>]`
-			- Create a new tab and make it current. Optional handle names it (unique within the window) for later `--tab=<handle>`. The implicit first tab (ID "0"/"main") always exists, so N `--new-tab`s => N+1 tabs.
-		- ✅ `--tab[=| ]<id>`
-			- Select an existing tab (ID "0"/"main" or a handle) and make it current - to add panes or change its settings. ID required; selecting a nonexistent tab errors.
-		- ✅ `--new-pane[[=| ]<handle>]`
-			- Create a new pane (splitting `--splits`, default = the current pane) and make it current. Optional handle names it (unique within the tab) for later `--pane=<handle>` / `--splits=<handle>`. The implicit first pane (ID "0"/"main") always exists and is never created by `--new-pane`.
-		- ✅ `--pane[=| ]<id>`
-			- Select an existing pane (ID "0"/"main" or a handle, within the current tab) and make it current. ID required; selecting a nonexistent pane errors.
-		- ✅ `--title[=| ]<"Display title">`
-			- Before any tab/pane marker: replaces the default window title. After a tab marker (`--new-tab`/`--tab`): replaces that tab's calculated title. After a pane marker: ignored (reserved for a possible future per-pane use; not an error).
-			- Display only; not a handle, not inheritable.
-		- ✅ `--splits[=| ]<pane id to split>` (alias `--splits-pane`)
-			- Only valid with `--new-pane`; error otherwise.
-			- Optional. Default = the current pane in the current tab (resets to "0"/"main" after every tab create/select). Splitting the implicit first pane is fine - that's the first split.
-		- ✅ `--down` | `--up` | `--right` | `--left` `[[=| ]bool]`
-			- Where the new pane goes relative to the pane it splits: `--down`/`--up` stack it below/above; `--right`/`--left` place it to the right/left.
-			- Only valid with `--new-pane`; error otherwise.
-			- Inheritable along the split chain: a later pane that splits this one reuses this direction unless it sets its own (handy for stacking a run of panes the same way).
-		- ✅ Default direction when a `--new-pane` gives none and has nothing to inherit: "right" or "down", whichever has more space. ("Save layout" always emits an explicit direction rather than relying on this.)
-		- ✅ `--size[=| ]<(n columns or rows | n%) of the split (parent) space in the split direction>`
-			- Defaults to 50%.
-				- Exception: a run of same-direction splits with no explicit size redistributes those adjacent undefined-size panes to ~equal in that direction.
-			- Only valid with `--new-pane`; error otherwise. Not inheritable.
-		- ✅ `--shell[=| ]"command"`
-			- Can contain escaped single and/or double quotes, as logically required by whatever quotes are used around the whole command.
-			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- ✅ `--directory[=| ]"path"` (alias `--dir`)
-			- Where the shell starts. Beats every other source: an inherited directory, the directory SilkTerm was launched from, and the `shell.startup_directory` setting.
-			- `~` and either platform's variable spellings are understood, and are expanded at spawn time rather than at parse - so a directory written into the config's own command line means the same thing there.
-			- A path that is not a directory is reported once, naming the flag, and that scope falls back to what it would have used without it.
-			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- ✅ `--keep-open[=| ]bool`
-			- Keep pane|tab|window open after shell command exits, showing exit value.
-			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-			- Done: the pane stays where it is, adds a line saying how the shell ended, hides the cursor and takes no more typing. Any key that would have gone to the shell closes it, and the pane, tab and window then close in the usual order.
-			- A pane that is not the focused one waits until it is clicked, since a keystroke goes where the focus is.
-			- Closed: 20260830-110900
-		- 🛠️ `--font-name[=| ]"string"`
-			- Note: window-level applied, per-pane deferred.
-			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--font-size[=| ]<n>`
-			- Note: window-level applied, per-pane deferred.
-			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-color[=| ]<hex>`
-			- Note: window-level applied, per-pane deferred.
-			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--foreground-color[=| ]<hex>`
-			- Note: window-level applied, per-pane deferred.
-			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-image[=| ]"path"`
-			- Note: window-level applied, per-pane deferred.
-			- No value = no background image.
-			- Option not included = fall back to config value.
-			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-image-stretch[[=| ]bool]`
-			- Note: window-level applied, per-pane deferred.
-			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-image-zoom[[=| ]bool]`
-			- Note: window-level applied, per-pane deferred.
-			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
-		- 🛠️ `--background-image-opacity[=| ]<n>`
-			- Note: window-level applied, per-pane deferred.
-			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+- 🛠️ Command-line options: what is still open.
+	- 🔘 Per-pane scope for the style options. `--font-name`, `--font-size`, `--background-color`, `--foreground-color`, `--background-image` and its stretch, zoom and opacity all apply to the whole window today. Varying them per pane needs a per-pane renderer the single text context does not have.
+	- 🔘 Per-pane `--title`. Accepted and reserved, but nothing displays it yet.
+	- 🔘 Short forms. Only `-h` and `-v` have one so far.
+	- 🔘 Finer negotiation with the config's own command line. Any real argument today ignores the stored one wholesale, rather than settling window-level options field by field.
+	- Note: the rest of the option set is done, under Done - New features and enhancements.
 	- Opened: 20260628-083740
 
 - 🔘 Additional "File" menu option: "Save entire current layout to config".
@@ -622,6 +283,20 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260818-183416
 	- Closed: 20260826-184319
 
+- ✅ The startup directory ignored where SilkTerm was called from, and closing the last tab left the window standing.
+	- Fixed: the startup directory follows the calling directory, so "Open in terminal" from a file manager starts in that folder. The setting still applies where the inherited directory was a launcher's default - home, a filesystem root, or beside the executable - so the two coexist and the setting stays.
+	- Fixed: closing the last tab closes the window.
+	- Note: a crash on closing a second tab came in on the same report and is still open under Bugs.
+	- Opened: 20260826-123553
+	- Closed: 20260826-183724
+
+- ✅ A double-click cut paths and URLs short at the first bracket or space.
+	- Fixed: a double-click looks for a shape it can name before it falls back to the word rules - a URL or file URI, a drive path, a UNC path, an absolute posix path, a `~/` path. What it recognizes it takes whole, so brackets inside a wiki URL and spaces inside a folder name no longer cut it short, and a trailing `:120:5` line number is left behind.
+	- A space is crossed only when a path separator turns up within the next forty characters, which is what separates "Program Files\app.exe" from a path followed by a sentence.
+	- Note: the missing drive letter came in on the same report and is still open under Bugs.
+	- Opened: 20260826-123553
+	- Closed: 20260826-183724
+
 - ✅ Windows PowerShell 5.1 started with "Cannot load PSReadline module. Console is running without PSReadline." and no line editing.
 	- A terminal hands its shell whatever environment it was launched with. That is right for anything the user set themselves, and wrong for the bookkeeping a shell keeps for its own use: PowerShell 7 puts its own module directories on the search path that every version of PowerShell shares, so a Windows PowerShell 5.1 pane opened anywhere below one found PowerShell 7's copy of PSReadLine ahead of its own, and was not allowed to load it.
 	- Not ours in origin - the same thing happens to a plain command prompt launched from PowerShell 7, with no terminal in the picture - but a pane should start the way it would from the desktop, and the terminal is the only place that can settle it once for every shell it opens.
@@ -676,7 +351,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - ✅ Windows: try a bundled newer ConPTY to see if it fixes the freeze above.
 	- It does not. Verified with the real binary and the console host checked rather than assumed, so a clean result could not be mistaken for the library never loading.
 	- Free to try: the pty backend already prefers a `conpty.dll` sitting beside the executable and falls back to the system one, so bundling is two files and no code change. The redistributable is published and carries a matching console host.
-	- Worth keeping anyway as a possibility for later, but it is not this fix, so nothing was shipped.
+	- Worth keeping anyway as a possibility for later, but it is not this fix, so it was left alone.
 	- Found on the way: the bundled console asks the terminal what it is at startup and waits for the answer. A terminal slow to reply pays several seconds before any output appears - worth knowing if it is ever adopted.
 	- Opened: n/a
 	- Closed: 20260816-103257
@@ -1385,6 +1060,22 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 #### Done - New features and enhancements
 
+- ✅ "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
+	- Looks and behaves not too differently than some modern text editors.
+	- When disabled, has no effect on performance - truly skipped code paths.
+	- It has it's own area within the render area, it doesn't sit on top of it.
+	- When enabled:
+		- The visible section is highlighted and is smoothly draggable, scrollable (when mouse is over it).
+		- The scrollbar to the right of it, acts on the scroll-buffer, and is synced pixel-perfect with the highlight area over the preview. In other words, the preview and the scrollbar are essentially one and the same.
+		- If the previously implemented "regular" scrollbar is *also* enabled, that scrollbar sits between the terimal area on the left, and the preview area on the right.
+			- This is a departure from other implementations, that only have one scrollbar on the far right that behaves the same way whether there is a preview area or not. But I want to visually indicate that the *terminal* scrollbar, is for the *terminal*, not the preview.
+	- Disabled by default.
+	- Built. Per pane, in a real column that costs the grid its width. The whole buffer maps linearly onto it and never slides, which is what keeps the marker over the preview and the far-edge thumb the same object at the same pixels.
+		- Lines draw as colored strokes, not glyphs. A blend of many lines keeps the strongest ink rather than the average, so one red line among fifty still reads.
+		- Settings are a toggle and a width on the Movement tab, plus a View-menu item. Off by default, and off means no column, no cache and no per-frame work.
+	- Opened: 20260802-094409
+	- Closed: 20260831-075726
+
 - ✅ Begin a detailed UI/UX '[repo]/project/uiux-style-guide.md'
 	- ✅ Reverse engineer using existing work (mostly menus and settings dialog).
 		- Written from what is built: wording and capitalization, menu structure and accelerators, the Settings dialog's tabs, groups, sub-groups and rows, button and prompt conventions, flyover help, the DIP measurement rules, the ten color roles, and keyboard behavior.
@@ -1431,6 +1122,172 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260830-170541
 
+- ✅ Refactor settings dialog
+	- Note: This was designed well before some features have come and gone, so may not be exactly up-to-date, and/or may be slightly contradictory.
+	- ✅ Add a flyover help text system, giving a brief explanation of what non-obvious controls do.
+		- Done: thirty rows carry their own help line, and a control that is grayed out still explains why instead - that question is the more urgent one. The text wraps to the panel, so a longer sentence or a bigger interface font cannot push it off the edge, and it flips above a control when there is no room beneath.
+		- ✅ Including the some of the main buttons:
+			- "Apply": "Apply changes now, without closing Settings."
+			- "OK": "Apply changes and close Settings."
+			- Cancel got one too, for symmetry: "Discard every change and close Settings."
+	- ✅ Tabs:
+		- ✅ Make buttons shaped more like tabs at the top of the dialog.
+			- ✅ Takes up less vertical space.
+			- ✅ Closer to the top but not touching.
+		- ✅ The tabs should sit on a darker (in dark mode) colored background, and directly on top of a line that separates that background (as a new named themable element), from the rest of the dialog below (like most tabbed interfaces).
+		- ✅ No "title" section for each tab, that mirrors the tab name. Just remove it.
+			- The heading stays in the declarations, because a heading is also what assigns the rows under it to a tab - it simply takes no space and draws nothing.
+		- ✅ The currently selected tab should be a lighter gray, rather than "selected" color.
+		- ✅ Tabs navigable via CTRL+[PgUp|PgDn], and CTRL+[Tab|Shift+Tab].
+			- These already worked, and the plain keys still reach the terminal rather than being stolen.
+		- Between the shorter strip and the dropped heading the dialog is 58px shorter.
+	- ✅ Express all slider values that range from 0.0 to 1.0, as an integer % from 0% to 100%. (But store as original decimal value in config though.)
+		- Six sliders read 0-100 in whole steps now; the file still holds the decimal. Reverting one lands exactly on its own default rather than a hair off it, and a percent field takes no decimal point.
+	- Found and fixed on the way: both scrollbar colors had rows in the dialog but were never written to the file, so an edit lasted only until the next launch. Every row now writes what it edits.
+	- ✅ Tabs and grouping (settings content and tab reorg):
+		- ✅ "Groups" are organized, titled sections within a dialog tab page. Differentiated by a title, and with adequate spacing between groups so that they are visually separate.
+			- ✅ Retuned: more space between one section and the next, and less between a heading and the rule under it, so a heading reads as belonging to what follows it rather than floating between the two.
+		- ✅ There is now the concept of "Sub-groups" within groups, distinguished through indentation of the leading text labels (but not the controls themselves).
+			- A sub-group is not declared anywhere. It is a row followed by rows at a greater indent, so the leader and its members cannot disagree about who belongs to what. Only labels move; every control keeps its column.
+			- ✅ Sub-groups (and their style) can exist without Groups.
+			- ✅ Unlike a Group, a Sub-group begins with an actual control. (Its text label is not indented, while everything below it in the sub-group is.)
+		- ✅ Tab: "Background"
+			- Sub-group: "Transparency" checkbox
+				- "Opacity" (%)
+				- "Blur-behind"
+			- Sub-group: Wallpaper [ ]  (new boolean to turn wallpaper on or off)
+				- "File or folder" (formerly "Background image") text box.
+				- "Fit" checkboxes
+				- "Randomize" checkbox
+					- [ ] New window
+					- [ ] New tab
+					- [ ] New pane (defer to when this is technically possible)
+					- [ ] Interval
+						- Slider 1 second to 1 week
+				- "Visibility" (%; formerly "Bg image opacity", also change config setting name)
+				- "Blur" (formerly "Bg image blur"; %)
+				- Minimum contrast %
+					- (At 0% background image visibility - not useful but establishes the floor.)
+					- Default 50%
+				- Maximum contrast %
+					- (At 100% background image visibility.)
+					- Default 50%.
+				- Minimum saturation %
+					- (At 0% background image visibility - not useful but establishes the floor.)
+					- Default 50%
+				- Maximum saturation %
+					- (At 100% background image visibility.)
+					- Default 50%.
+			- Sub-group: "Contrast mask" checkbox
+				- "Size" (Formerly "Mask size". 0% to 100%)
+				- "Strength" (Formerly "Mask strength". 0% to 100%)
+				- "Automask mix" (Formerly "Mask auto". 0% to 100%)
+			- Three sub-groups as listed. Renames done: Background image -> File or folder, Bg image opacity -> Visibility, Bg image blur -> Blur, Mask size/strength/auto -> Size/Strength/Automask mix.
+		- ✅ Tab: "Text"
+			- Group "Font"
+				- Use system font    [ ] Face   [ ] Size
+					- Disabled on Windows.
+				- Family
+					- Default to: "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
+						- On all platforms.
+						- Update my existing user config to match.
+				- Size
+				- Line height
+			- Group "Text readability"
+				- Sub-group: "Text scrim" checkbox
+					- "Scrim radius" (existing range and values)
+					- "Softness" (0% to 100%)
+					- "Outline px" (formerly "Text outline"; existing range and values)
+					- Function
+					- Falloff
+			- ✅ Done as specified, with Strength first under the switch (it is the knob the others hang off). The shipped font stack already read exactly as listed, so nothing changed there.
+		- ✅ Tab: "Cursor"
+			- "Blink rate" slider
+			- "Shape"
+			- "Animation"
+			- "Animation pauses on ..."
+				- [ ] Loss of window focus
+				- [ ] Loss of pane activity
+				- [ ] Input inactivity
+				- "Inactivity timer" 100 ms to 1m
+			- "Visibility"    [ ] Scrim   [ ] Outline
+			- Blink rate, Height, Width, Animation and the Scrim/Outline pair (now "Visibility"), plus Inactivity timer as a sub-group under Animation. All were config-only settings before; none is new.
+		- ✅ Tab: "Movement" (formerly "Scrolling")
+			- Sub-groups:
+				- Scrolling
+				- Cursor
+			- Done as two sub-groups: Smooth scrolling (the five feel sliders) and Scrollbar (width, hide-when-idle, and its two colors). There is no Cursor sub-group - cursor movement has no settings behind it, only source constants.
+		- ✅ Tab: "Themes"
+			- ✅ Group: "Themes"
+				- ✅ "Theme" (drop-down of selectable themes).
+				- ✅ Buttons aligned underneath theme dropdown box, arranged in one horizontal row:
+					- [Save]  [Save as ...]  [Rename]  [Delete]
+					- Behavior:
+						- ✅ [Save] is only enabled, if the user has unsaved changes to current theme. Even across sessions.
+						- ✅ [Save as ...] pops up a small dialog with the text "Enter a new theme name", and below that, an empty textbox. buttons at bottom-right "Cancel|OK" (OK default)
+						- ✅ [Rename] pops up a small dialog to edit existing name (all text selected by default), with buttons "Cancel|OK" (OK default).
+						- ✅ [Delete] pops up a confirmation Cancel|OK dialog (defaul Yes), and 'Really delete theme "<them name>"?'
+					- Nothing records "unsaved changes" separately - a color that disagrees with the theme is the record, and it lives in the config file, so the answer is the same after a restart.
+					- A saved theme is written whole (both variants, the ANSI set included) under its own name, so it stands on its own and can be handed to someone else. Saving folds the per-color tweaks into it and drops them as overrides.
+					- A saved theme may take a built-in's name and stand in for it; deleting it puts the built-in back. Only a saved theme can be renamed or deleted.
+				- A "Mode" row was added beside it (Dark / Light / System). It was a config-only setting, and a theme picker with no way to pick the variant invites the question.
+			- ✅ Group: "Colors" Update dynamically with theme selection and can be user-overridden and persisted, even if the named them that was tweaked, isn't saved.)
+				- Picking a theme takes on its colors wholesale. Keeping the previous theme's tweaks on top would make the picker look broken on every color that had been edited, and those tweaks belonged to the theme being left behind.
+				- Controls
+					- ✅ Sub-group: "Terminal background" (formerly labeled "Background")
+						- "Foreground"
+						- "Cursor"
+					- ✅ Sub-group: "Dialog and menu background"
+						- ✅ "Gutter" (a new color defining small areas with no interactive elements, e.g. behind the top tabs).
+						- ✅ "Highlights" (formerly "Focus ring"; same color but with expanded meaning as noted above)
+						- ✅ "Focus" (a new color category that used to be part of "Focus ring", but now applies only to focused element)
+						- Done: all three are themable and live on the Colors tab. The sub-group headings above wait on the grouping work; the rows are in place.
+						- ✅ Both sub-groups are in place now. The dialog and menu backgrounds and their two text colors picked up rows at the same time - they were themable but not editable, and half a family on screen invites the question.
+		- ✅ Tab: "Window":
+			- Sub-group: "Remember last size" checkbox
+				- Columns
+				- Rows
+			- Margin px
+		- ✅ Tab: "Shell"
+			- UI:
+				- A grid, one line per stored shell, every field edited in place: "Name", "Command", "Last seen", "Active"
+					- Reconciled with what was asked for later, which supersedes the original spelling of this item: the columns are the four above, "Last seen" is new (a date, read-only, written by the scan), the edit popup is gone in favour of editing in the row, and "Comment" is no longer a column - the scan still writes it and it shows as the row's flyover tip.
+					- "Active" is a checkbox. When it is on, the shell's name appears under "Tabs/New tab with shell ... ->".
+					- The command is required: emptying the field leaves the stored one standing, and an entry that never got one is dropped rather than saved.
+				- ✅ A grip at the left of each line reorders it by dragging. This supersedes the four move icons this item first asked for ("Move to top", "Move up", "Move down", "Move to bottom"), which are gone; reordering is mouse-only now.
+				- ✅ "Remove" sits between "Command" and "Last seen" rather than at the end of the line, so it is harder to press by accident, and its X is red. It still asks first, the way the theme delete does.
+				- ✅ Below the grid, a "Default startup directory" section. It ships as the literal `$HOME` / `%USERPROFILE%`, understands `~` and either platform's variable spellings, and is the lowest of three precedences - a new tab, pane or window inherits from the pane it came from, and a SilkTerm launched from a shell keeps that shell's directory.
+				- An "Add" button below the grid, for a shell the scan cannot find. It adds a new line and puts the caret straight in its command field.
+				- The first switched-on shell in the list is the default for new windows, tabs and panes. The old `shell.default` setting is retired: a config that had one has that entry moved to the top of the list, once, and the line removed.
+				- Done: the whole tab. The grip and the remove mark are drawn in the shader rather than set as glyphs - no interface font can be relied on to carry either one.
+			- Behavior
+				- At startup - first, the terminal renders. Then launches a background process to search for [initial shells|changes to shell availability].
+					- If a shell exe name already exists in the list of shells, ignore it.
+					- Search for all the common shells for a given platform.
+						- For Linux:
+							- User's default shell goes at the top.
+								- If "Bash", add a second option below that, "bash --norc".
+								- Ditto if such a flag is available for user default shells that aren't bash.
+							- Include search for more obscure third-party shells like YSH, NuShell, Fish, etc.
+							- Include "Powershell 7", if installed.
+							- Include programming shells like "Python 3".
+							- If bash is
+						- For Windows:
+							- Include if exists: "Powershell 7", PyCmd, "Legacy Powershell 5", "Legacy CMD.exe", NuShell, etc.
+							- Also include shells found in WSL1 and WSL2
+								- Without launching them for shell discovery, if possible. (Research.)
+									- May be doable with WSL1, disk image is regular files - but with wonky permissions we may not have enough perms in user mode for.
+									- Probably not doable for WSL2, as the disk image is a .vhx or whatever - a virtual disk image. Would require launching the entire VM - super impractical, costly, and suprising (even a security risk for the user).
+								- Most likely this is not reasonable. So then just add "shell" items for the whole installed WSL1 or 2 distros themselves, without specifying a shell - discoverable without launching anything.
+									- The user can edit the shell item to add flags for specific shells, if they want.
+								- Will require special logic for Windows, to add the commands to launch named WSL1 or 2 distros
+				- If a new shell exe is found that doesn't already exist in the stored list, add it. (User can disable it later.)
+				- If an existing already defined shell exe name isn't found by explicit path, or in the environment path variable, disable it (don't delete it).
+			- ✅ All of the behavior above is built and running - see the auto-detect item under "New features and enhancements".
+	- Note: a color picker, the wallpaper randomize sub-group, and a few other rows are still open under New features and enhancements.
+	- Opened: 20260719-085918
+	- Closed: 20260830-164632
+
 - ✅ Ship `x9ps1-git` for bash, with a setting on by default that optionally injects it into any running bash shell.
 	- Baked into the executable, and handed to a bash pane as `PROMPT_COMMAND` in its environment. Nothing is written into anyone's `.bashrc`, and there is nothing to uninstall.
 	- Because rc files run after that, a prompt of your own always wins. So this reaches people who have not set one, and is invisible to everybody else.
@@ -1461,6 +1318,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Already showed one thing. Typing marks the window dirty so the cursor can respond, and the shell's reply then lands while that frame is still being drawn - which puts a whole frame of the wait in the middle leg rather than the last. On a slow renderer that doubles the total. Worth a look when the render path is next opened up.
 	- Opened: 20260826-123553
 	- Closed: 20260830-152000
+
+- ✅ Try menus and dialogs at a 125% larger interface font, independent of the HiDPI tests.
+	- Verified at 16pt against the usual 13. The menu bar, a dropdown, and all seven Settings tabs were looked at. Everything sizes off the interface font and stays put: titles and the copy cluster keep their margin, dropdowns fit their content, rows center, and the Shell grid holds its columns. The panel simply gets wider, which is what it should do.
+	- Fixed on the way: the panel's scrollbar sat one pixel from the Shell tab's last column, which read as touching it. It hugs the panel edge now, so there is clear space either side.
+	- Fixed: Blur px, Scrim radius px and Outline px read 10.00, 5.00 and 1.00 beside whole percentages. All three step in whole pixels now, the way Scrollbar width px already did. Line height keeps its decimals, which it needs.
+	- Checked and left alone: "Copy on select" looks out of place at the bottom of the Cursor tab, but that is where it was asked for, and a test pins it there.
+	- Opened: 20260703-100322
+	- Closed: 20260830-151809
 
 - ✅ Pre-interpret the most common bash environment variables for shells that do not understand them. (In settings and config file.)
 	- Same for the common PowerShell variables.
@@ -1504,6 +1369,132 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260830-143000
 
+- ✅ Command-line options:
+	- Done (part 1, the options engine):
+		- Full parser: create/select model, cascading style, shell-word-split.
+		- --help / --version / --syntax, and --config for an alternate file.
+		- Window options: columns, rows, pixel-width, pixel-height, background-opacity, hide-windowframe, hide-menu, fullscreen, title. A window option after a tab/pane marker errors.
+		- Layout: --new-tab/--tab=/--new-pane/--pane=/--splits with direction and --size, building real tabs and panes (targeted splits into arbitrary trees, smart default direction, percent or cell sizes).
+		- Per-pane --shell (argv-exec; cascades pane, split-source, tab, window, then config default_shell; interactive splits inherit).
+		- Per-pane --directory (alias --dir), on the same cascade, deciding where that shell starts.
+		- Config command_line applied when launched with no args. Any real CLI argument overrides it entirely.
+		- Tab --title override, shown in the tab bar.
+		- Window-level visual style: font, size, colors, and the background image with its stretch/zoom/opacity fold into the live settings at startup.
+			- Note: these apply to the whole window. Varying them per pane is still open, under New features and enhancements.
+		- Done: --keep-open holds a pane open after its shell exits, saying how it ended and waiting for a key.
+	- General notes:
+		- Command-line options override any config setting, but only while that window is alive.
+		- As suggested in the main enhancement bulletpoint above, a command line can also be specified in the config file (and exposed in "Settings").
+			- If the user launches the program also with command-line options:
+				- Window-level options specified on the command-line at launch, override same command-line options stored in the config. (In other words, window-level options are "negotiated" between user-specified and config.)
+				- If a single hierarchical option is specified by the user on the command-line at launch time, all hierarchical options from the config file are ignored.
+	- ✅ General format (unless we already inherited one):
+		- Done: both `--option value` and `--option=value` are taken, and a bool takes true/t/yes/y/1 or false/f/no/n/0. Short forms exist only for `-h` and `-v` so far.
+		- `--option[=| ]value` | `-o value`
+		- `--unary-flag` | `--unary-flag[=| ]\(true|t|yes|y|Y|1|false|f|no|n|N|0\)` | `-u` | ...etc.
+		- In other words, even unary flags can be treated as options, and important options have single unique "short" versions.
+	- ✅ `--config[=| ]"alternate config file location"`
+		- Done. Settings saves to the alternate while it is in force. The per-window notes below wait on multi-window, which does not exist yet.
+		- When active per-session, settings dialog should save to defined alternate.
+		- All launches without this flag should default to existing config.
+		- Configs are per-window, not per-tab.
+		- Multiple windows can all have different configs specified and active. When a tab is undocked and moved to a different existing window, it automatically changes to that Window's config.
+	- Window-level options (all options only apply to a single window per launch):
+		- General:
+			- Specifying window-level options after any tab/pane marker (`--new-tab`, `--tab`, `--new-pane`, `--pane`) should exit with an error.
+		- ✅ `--columns[=| ]<n>`
+			- Primary way to specify window width
+		- ✅ `--rows[=| ]<n>`
+			- Primary way to specify window height
+		- ✅ `--pixel-width[=| ]<n>`
+			- Alternate way to specify window width
+		- ✅ `--pixel-height[=| ]<n>`
+			- Alternate way to specify window height
+		- ✅ `--background-opacity[=| ]<n>`
+		- ✅ `--hide-windowframe[[=| ]bool]`
+		- ✅ `--hide-menu[[=| ]bool]`
+		- ✅ `--fullscreen[[=| ]bool]`
+		- ✅ `--help` | `-h`
+			- Shows program name, version and build# in its header, and lists the options. Copyright and license live in `--about` rather than being repeated here.
+		- ✅ `--syntax`
+			- Similar to `--help` but just list options and meaning.
+		- ✅ `--version`
+			- Shows program name, version, and build#. One flush line, so a script can still read the version as the second field.
+	- Hierarchical options:
+		- General notes:
+			- There is always an implicit first tab and first pane, each addressable by ID "0" or "main"; a window can never have zero tabs, nor a tab zero panes.
+			- Create vs. select: `--new-tab` / `--new-pane` create a new tab/pane; `--tab=<id>` / `--pane=<id>` select an existing one. ID is required on a select - there is no naked `--tab` / `--pane`. Whatever was just created or selected becomes the "current" tab/pane, and subsequent options (and `--new-pane`s) apply to it until the next create/select.
+			- Selecting an ID that doesn't exist is an error.
+			- All options are logically under a single implicit 'window' (it can't be specified; it just means all options apply to one window).
+			- Inheritance (most-specific wins): a pane's effective value = explicit on that pane, else inherited from the pane it splits (recursively up that chain), else its tab, else the window. A tab's = explicit on the tab, else the window. Flow: window -> tab -> [pane it splits, recursively] -> pane. Handles, title, and size are non-inheritable; direction inherits along the split chain, and the style options below inherit down the whole flow.
+			- Order matters: options apply to the current tab/pane at the point they appear. You may re-select an earlier entity (e.g. `--tab=0`) later in the same command line to add panes to it or change its settings.
+		- ✅ `--new-tab[[=| ]<handle>]`
+			- Create a new tab and make it current. Optional handle names it (unique within the window) for later `--tab=<handle>`. The implicit first tab (ID "0"/"main") always exists, so N `--new-tab`s => N+1 tabs.
+		- ✅ `--tab[=| ]<id>`
+			- Select an existing tab (ID "0"/"main" or a handle) and make it current - to add panes or change its settings. ID required; selecting a nonexistent tab errors.
+		- ✅ `--new-pane[[=| ]<handle>]`
+			- Create a new pane (splitting `--splits`, default = the current pane) and make it current. Optional handle names it (unique within the tab) for later `--pane=<handle>` / `--splits=<handle>`. The implicit first pane (ID "0"/"main") always exists and is never created by `--new-pane`.
+		- ✅ `--pane[=| ]<id>`
+			- Select an existing pane (ID "0"/"main" or a handle, within the current tab) and make it current. ID required; selecting a nonexistent pane errors.
+		- ✅ `--title[=| ]<"Display title">`
+			- Before any tab/pane marker: replaces the default window title. After a tab marker (`--new-tab`/`--tab`): replaces that tab's calculated title. After a pane marker: ignored (reserved for a possible future per-pane use; not an error).
+			- Display only; not a handle, not inheritable.
+		- ✅ `--splits[=| ]<pane id to split>` (alias `--splits-pane`)
+			- Only valid with `--new-pane`; error otherwise.
+			- Optional. Default = the current pane in the current tab (resets to "0"/"main" after every tab create/select). Splitting the implicit first pane is fine - that's the first split.
+		- ✅ `--down` | `--up` | `--right` | `--left` `[[=| ]bool]`
+			- Where the new pane goes relative to the pane it splits: `--down`/`--up` stack it below/above; `--right`/`--left` place it to the right/left.
+			- Only valid with `--new-pane`; error otherwise.
+			- Inheritable along the split chain: a later pane that splits this one reuses this direction unless it sets its own (handy for stacking a run of panes the same way).
+		- ✅ Default direction when a `--new-pane` gives none and has nothing to inherit: "right" or "down", whichever has more space. ("Save layout" always emits an explicit direction rather than relying on this.)
+		- ✅ `--size[=| ]<(n columns or rows | n%) of the split (parent) space in the split direction>`
+			- Defaults to 50%.
+				- Exception: a run of same-direction splits with no explicit size redistributes those adjacent undefined-size panes to ~equal in that direction.
+			- Only valid with `--new-pane`; error otherwise. Not inheritable.
+		- ✅ `--shell[=| ]"command"`
+			- Can contain escaped single and/or double quotes, as logically required by whatever quotes are used around the whole command.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+		- ✅ `--directory[=| ]"path"` (alias `--dir`)
+			- Where the shell starts. Beats every other source: an inherited directory, the directory SilkTerm was launched from, and the `shell.startup_directory` setting.
+			- `~` and either platform's variable spellings are understood, and are expanded at spawn time rather than at parse - so a directory written into the config's own command line means the same thing there.
+			- A path that is not a directory is reported once, naming the flag, and that scope falls back to what it would have used without it.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+		- ✅ `--keep-open[=| ]bool`
+			- Keep pane|tab|window open after shell command exits, showing exit value.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+			- Done: the pane stays where it is, adds a line saying how the shell ended, hides the cursor and takes no more typing. Any key that would have gone to the shell closes it, and the pane, tab and window then close in the usual order.
+			- A pane that is not the focused one waits until it is clicked, since a keystroke goes where the focus is.
+		- ✅ `--font-name[=| ]"string"`
+			- Note: window-level applied, per-pane deferred.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+		- ✅ `--font-size[=| ]<n>`
+			- Note: window-level applied, per-pane deferred.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+		- ✅ `--background-color[=| ]<hex>`
+			- Note: window-level applied, per-pane deferred.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+		- ✅ `--foreground-color[=| ]<hex>`
+			- Note: window-level applied, per-pane deferred.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+		- ✅ `--background-image[=| ]"path"`
+			- Note: window-level applied, per-pane deferred.
+			- No value = no background image.
+			- Option not included = fall back to config value.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+		- ✅ `--background-image-stretch[[=| ]bool]`
+			- Note: window-level applied, per-pane deferred.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+		- ✅ `--background-image-zoom[[=| ]bool]`
+			- Note: window-level applied, per-pane deferred.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+		- ✅ `--background-image-opacity[=| ]<n>`
+			- Note: window-level applied, per-pane deferred.
+			- Inheritable unless overridden (for panes, to any pane declaring this pane as its `--splits`).
+	- Note: per-pane scope and a few smaller pieces are still open under New features and enhancements.
+	- Opened: 20260628-083740
+	- Closed: 20260830-110900
+
+
 - ✅ These values in Settings should be expressed in % (in labels), and displayed as integers.
 	- Done: transparency opacity, wallpaper visibility, the three contrast mask sliders, text scrim strength and softness, cursor height and width, and the five smooth-scrolling sliders all carry a % on the label. Every one of them already ran in whole steps, so nothing needed rounding.
 	- The five scrolling sliders are a relative 1 to 100 scale rather than a percentage of any measured thing, so the % there reads as percent of the fastest setting.
@@ -1521,6 +1512,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Now "Update PowerShell profiles", which says what the switch does rather than naming what it touches.
 	- Opened: n/a
 	- Closed: 20260830-105645
+
+- ✅ Dogfood: a build made on one box should reach the others, and the launcher should always run the newest one it can find.
+	- ✅ The dogfood destinations are written down per platform and per direction, in the pipeline config rather than in anyone's head. macOS destinations are recorded but inert, since nothing builds for it yet.
+	- ✅ The Linux pipeline installs its Windows cross-build beside its own binary, so the Windows box picks up a Linux-made build without anyone copying it by hand.
+	- ✅ Both launchers work the same way now: check this clone's release build, the network host, and the dogfood location, take whichever is newer than what is already held, then run the newest. Each step says what it did, on screen and in a log beside the pool.
+	- ✅ A copy is named for the build's own date rather than the date it was copied, so the same build arriving two ways is only held once.
+		- Cause: the rotating install dated its copy from when the pipeline run started, about eight minutes off the build, and a synced copy can be restamped on the way through Dropbox. Three copies of one binary, three dates. So the launchers kept re-taking a build they already held, and which one looked newest came down to who wrote last.
+		- Fixed: the rotating install dates and names its copy from the build. Both launchers compare the bytes when a source looks newer, and a match just takes the newer date, so a build is held once whatever the dates say. Neither launcher will prune the newest copy any more, however old it is - a quiet week used to empty the pool and drop the launch to a fallback terminal.
+		- Fixed: every build carries a build number now, so two dogfood builds of one release are no longer indistinguishable. The launcher still ranks copies by date, which is right for choosing what to run; the number is what settles which build a report is actually about.
+	- ✅ The bash launcher used to just run whatever it found, in place. It has the same sources, the same pruning and the same reporting as the Windows one now.
+	- ✅ Both launchers have been run on their own box. Verified on Linux with the network host reachable: it copies in a newer build, declines one it already holds, and runs the newest. A copy that is old but still running is left alone when the pool is pruned; an idle one of the same age goes.
+	- ✅ Both launchers are deployed to the synced dirs, from a Linux box. The bash one goes to two dirs, not one - the linux and wsl trees mirror each other exactly, so writing only one would split them.
+	- Note: the host-unreachable case is still to run, and stays open under New features and enhancements.
+	- Opened: 20260823-131929
+	- Closed: 20260829-082751
 
 - ✅ Checkboxes to dis/enable shells should be square (and vertically centered in row), not rectagular
 	- Done: the Active box in the Shell tab was as tall as the fields beside it. It is square now, the same size as every other checkbox, and centered on its line.
@@ -1744,6 +1750,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Still true on Windows, and unavoidable: the shell doesn't wait for a windowed program, so the prompt comes back before the text does.
 	- Opened: n/a
 	- Closed: 20260813-180243
+
+- ✅ Themes: a set of themes, each with a dark and a light variant, plus a system mode.
+	- Note: anything settled later in the Settings dialog work overrides contradictions here.
+	- ✅ Theme foundation and terminal palette. A palette (background, foreground, cursor, focus, and the sixteen ANSI colors) times a theme, which is a dark and light pair. The theme and mode settings pick the active palette, and the individual color settings still override per color.
+	- ✅ Three built-ins, each dark and light: SilkTerm, Matrix, Retro Amber.
+		- Matrix is green on black, ANSI included. Retro Amber is orange on black. Both light variants are dark text on light gray.
+		- SilkTerm light is dark on light.
+	- ✅ Dark mode means a dark background and light text, for the terminal and for dialogs alike, with the dialog background a different shade from the terminal's. Light mode is the reverse. System follows whatever the desktop is set to.
+		- System mode reads the OS at startup and on a theme change, and falls back to dark where the OS reports no preference, which is what X11 does.
+	- ✅ Chrome and dialog theming. Settings and About follow dark and light.
+	- ✅ The Themes tab, with the theme dropdown and the save, rename and delete buttons. Picking a theme takes on its colors wholesale, so per-color tweaks belonging to the theme being left behind are dropped.
+	- ✅ A theme can be added or edited in the config file, and the dropdown picks it up. A saved theme is written whole under its own name, so it stands on its own and can be handed to someone else.
+	- Note: a fourth theme and a per-theme menu color are still open under New features and enhancements.
+	- Opened: 20260628-083740
+	- Closed: 20260805-012227
 
 - ✅ Dialogs and menus:
 	- ✅ Themes should have two highlight colors:
@@ -2047,7 +2068,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - ✅ Wallpaper attribution catalogued.
 	- ✅ Every image in the collection was evaluated and recorded in `wallpaper-attribution.md`, with a source and a confidence for each.
 	- ✅ For ambiguous files, attempts were made to backtrack from the copy on hand to an original source.
-	- ✅ Reverse image lookups mostly surface reposts, and many of the earliest hits are now dead links - so some rows record the best source still reachable rather than the original.
+	- ✅ Reverse image lookups mostly turn up reposts, and many of the earliest hits are now dead links - so some rows record the best source still reachable rather than the original.
 	- ✅ A small number of images were removed from the collection over questionable legal status.
 	- Opened: n/a
 	- Closed: 20260802-005013
@@ -2658,10 +2679,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260701-122853
 	- Closed: 20260702-170007
 
-- ✅ Tab interface: single-window core done (`Tabs` in app.rs: each tab owns a `PaneManager`; tab bar shown with >1 tab, click to switch; pane area reduced by the bar). Detach/dock deferred (need multi-window).
-	- ✅ New tab (CTRL+Shift+T by default)
-	- ✅ Change tab (CTRL+page up, down)
-	- ✅ Move tab order (Shift+CTRL+Page up, down)
+- ✅ Tab interface: tabs within one window.
+	- Each tab owns its own set of panes. The tab bar shows once there is more than one tab, a click switches, and the pane area shrinks to make room for the bar.
+	- ✅ New tab (Ctrl+Shift+T by default).
+	- ✅ Change tab (Ctrl+PgUp, Ctrl+PgDn).
+	- ✅ Move tab order (Ctrl+Shift+PgUp, Ctrl+Shift+PgDn).
+	- ✅ Close tab (Ctrl+Shift+W, Ctrl+F4).
+		- Both shortcuts close the current tab, matching the menu. At least one tab always stays open, and putting Shift on W leaves plain Ctrl+W for the shell.
+	- Note: detach and dock need multi-window, and are deferred.
 	- Opened: 20260628-083740
 	- Closed: 20260703-091342
 
@@ -3260,6 +3285,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260628-083740
 
 ### Future and/or deferred
+
+- ✋ Detach a tab into a new window, and dock a tab into an existing window, both with the mouse.
+	- Needs multi-window, which does not exist yet. The rest of the tab interface is done.
+	- Opened: 20260703-091342
 
 - ✋ Flip the scrim color under text that had to be lifted for contrast.
 	- Better than moving the text color, but it is a shader answer rather than the per-cell one already built. See the contrast item under Done.
