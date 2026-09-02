@@ -956,11 +956,11 @@ struct UnicodeString {
 
 #[cfg(test)]
 mod tests {
+	#[cfg(unix)]
+	use super::status_text;
 	use super::{
 		SHELL_PRIVATE_ENV, WakeGate, env_fixups, expand_refs, is_command_child, parse_env_block,
 	};
-	#[cfg(unix)]
-	use super::status_text;
 
 	// The --keep-open line reads this out to the user, so it has to say the same
 	// thing on every platform.

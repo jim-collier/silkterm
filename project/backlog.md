@@ -56,9 +56,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
-- Auto-disable the minimap when in a TUI that has no buffer that can be reached via minimap.
+- 🔘 The '✘' an '✓' on the git prompt look weird in powershell. Look too skinny, and not vertically aligned with each other. They look perfect on the *linux* Bash version. (The Windows git bash looks a little off in different ways.)
+
+- 🔘 Auto-disable the minimap when in a TUI that has no buffer that can be reached via minimap.
 	- Auto-reenable when TUI exited.
-	- Not all TUIs require this. `less`, for example, has a reachable buffer via minimap. Claude Code full-screen TUI doesn't.
+	- Not all TUIs require this. `less`, for example, has a scrollable buffer evantually reachable via minimap. Claude Code full-screen TUI doesn't, it is always just a rectangle at the top of the minimap.
+
+- 🔘 Need to autodetect slow environments. Then if necessary:
+	- Speed up ease-in, ease-out, and single-screen speed if the environment is slow.
+	- Also consider cheaper rendering. (e.g. a quality setting mentioned elsewhere, set to lower).
 
 - 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
 	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.

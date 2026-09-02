@@ -125,7 +125,8 @@ fn remote_len(text: &[char], at: usize) -> Option<usize> {
 		return None;
 	}
 	// a separator with something after it - a host and a bare name is not a target
-	if !text.get(i).is_some_and(|&c| is_sep(c)) || !text.get(i + 1).is_some_and(|&c| is_path_char(c))
+	if !text.get(i).is_some_and(|&c| is_sep(c))
+		|| !text.get(i + 1).is_some_and(|&c| is_path_char(c))
 	{
 		return None;
 	}
@@ -399,7 +400,11 @@ mod tests {
 			Some("github.com:jim-collier/silkterm.git:dev")
 		);
 		assert_eq!(
-			at("origin git@github.com:jim-collier/silkterm.git (fetch)", "silkterm").as_deref(),
+			at(
+				"origin git@github.com:jim-collier/silkterm.git (fetch)",
+				"silkterm"
+			)
+			.as_deref(),
 			Some("git@github.com:jim-collier/silkterm.git")
 		);
 		assert_eq!(
