@@ -33,14 +33,17 @@
 ##		- Prepends a build-tagged title so a dogfood window is visually distinct. It
 ##		  precedes the passed args, so a caller can still override it. (Picking a
 ##		  wallpaper here is disabled - the terminal rotates its own.)
-##		- With '--admin', runs the WHOLE launcher elevated (self-elevates via a UAC
-##		  prompt), so copying a fresh build into the target dir - and the launched
-##		  terminal - both run with admin rights. A shortcut click then behaves like
-##		  running from an elevated shell, instead of silently launching a stale build
-##		  because the medium-integrity click couldn't write the target dir.
+##		- Runs the WHOLE launcher elevated (self-elevates via a UAC prompt), so
+##		  copying a fresh build into the target dir - and the launched terminal -
+##		  both run with admin rights. A shortcut click behaves like running from an
+##		  elevated shell, instead of silently launching a stale build because the
+##		  medium-integrity click couldn't write the target dir. It also gives the
+##		  terminal SeCreateSymbolicLinkPrivilege, which a filtered token drops.
+##		  '--no-admin' opts out.
 ##		- Reports a failure or a skipped build copy in a dialog when launched from a
 ##		  shortcut (or with '--gui'), since a click's console just flashes shut.
-##		  '--admin'/'--gui' are consumed here; all other args forward to the terminal.
+##		  '--admin'/'--no-admin'/'--gui' are consumed here; all other args forward
+##		  to the terminal.
 ##		- If no dogfood build is held and no source is reachable, falls back in
 ##		  order to: silkterm.exe on PATH, Windows Terminal, PyCmd, then cmd.exe.
 ##		- Edit fMain() to launch a different terminal instead.
@@ -100,9 +103,10 @@ $TagSynced    = "dfsync"    ## names its source, not the build - see the header
 
 $ExeName = "silkterm.exe"
 
-## Launch elevated (as administrator). Off by default; the '--admin' arg (consumed
-## at the entry point below, never forwarded) flips it on. RunAs pops a UAC consent
-## unless the calling session is already elevated.
+## Launch elevated (as administrator). On by default; the '--no-admin' arg (consumed
+## at the entry point below, never forwarded) turns it off. RunAs pops a UAC consent
+## unless the calling session is already elevated. Set from the flag at the entry
+## point, so this initial value is not the default - $wantAdmin is.
 $RunAsAdmin = $false
 
 ## Fallback terminals, tried in order when no dogfood build is held and no source
@@ -839,24 +843,27 @@ $script:RunWarnings = @()
 $script:NetProbed = @{}
 
 ## Consume our own flags; forward everything else to the terminal.
-##   --admin  run the WHOLE launcher elevated (self-elevates below) - copy, log and
-##            the launched terminal all get admin rights.
-##   --gui    force the end-of-run / failure dialog on (auto-on for a shortcut click).
-$wantAdmin = $false
+##   --no-admin  run without elevating. Elevation is on by default: the whole
+##               launcher self-elevates below, so the copy, the log and the launched
+##               terminal all get admin rights. '--admin' is still accepted and is
+##               now a no-op.
+##   --gui       force the end-of-run / failure dialog on (auto-on for a shortcut click).
+$wantAdmin = $true
 $forceGui  = $false
 $passArgs  = @()
 foreach ($arg in $args) {
 	switch -Regex ($arg) {
-		'^--admin$' { $wantAdmin = $true; continue }
-		'^--gui$'   { $forceGui  = $true; continue }
-		default     { $passArgs += $arg }
+		'^--admin$'    { $wantAdmin = $true;  continue }
+		'^--no-admin$' { $wantAdmin = $false; continue }
+		'^--gui$'      { $forceGui  = $true;  continue }
+		default        { $passArgs += $arg }
 	}
 }
 
 $script:GuiFeedback = $forceGui -or (fLaunchedFromShortcut)
 
-## Self-elevate: with '--admin' but not already elevated, relaunch the whole script
-## elevated and hand off. Everything then runs high-integrity, so it no longer
+## Self-elevate: unless '--no-admin', and not already elevated, relaunch the whole
+## script elevated and hand off. Everything then runs high-integrity, so it no longer
 ## matters whether the target dir grants a normal user write - the real fix for
 ## "a shortcut click launches a stale build". The relaunch carries the original args
 ## plus '--gui' (its parent is the UAC broker, not Explorer, so it can't re-detect
@@ -894,6 +901,9 @@ if ($script:GuiFeedback -and $script:RunWarnings.Count) {
 
 
 ##	History:
+##		- 2026-09-01: Elevate by default; '--no-admin' opts out. A filtered token
+##		  has no SeCreateSymbolicLinkPrivilege, so an unelevated shell can't make a
+##		  symlink at all.
 ##		- 2026-08-24: Tell builds apart by their bytes, not their mtime - copies of
 ##		  one build disagreed on it, so the same binary kept getting copied in again
 ##		  under a second tag. A match keeps its own tag and takes the newer stamp.
