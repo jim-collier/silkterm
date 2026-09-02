@@ -50,29 +50,36 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Probable fix: pass the directory to wsl.exe with `--cd` rather than relying on inheritance, since that takes a Windows path and a posix one alike. Check first that it is accepted by a wsl.exe old enough to matter.
 	- Opened: 20260830-140000
 
-- 🛠️ Closing a second tab crashes the program.
-	- Not reproduced yet, on either box. Twelve tabs closed in a row on Linux, by hotkey and by the close box, in a wide window and a narrow one. Not on Windows either when tabs close because their shell exits, in any order, nor with Ctrl+Shift+W twice, nor by clicking the close boxes middle tab first or end tab first with the pointer left over the strip.
-	- So the removal itself is fine and the steps matter. Which key or click, how many tabs and panes were open, and was anything running in the tab?
-	- Ruled out: a stale tab index left behind by the removal. The tab strip's paging cannot run off the end of the list, and every tab lookup outside the close path is a checked one.
-	- Note: the startup directory and last-tab halves of the original report are done, under Done - Bugs.
-	- Opened: 20260826-123553
-
-- 🔬 Double-clicking a Windows path leaves off the drive letter.
-	- Does not reproduce on Linux. The shipped word separators already keep `:`, and a double-click on `C:\Users\jim\notes.txt` selects it whole.
-	- Probable cause: a config still carrying the older separator list, which the "start over" item would also clear.
-	- Note: re-check on Windows against a fresh config. The rest of the double-click work is done, under Done - Bugs.
-	- Opened: 20260826-123553
-
 - 🔬 Does not work very well under tmux.
-	- Needs a symptom before anything can be fixed. What was checked on Linux and looks right: a session starts and draws, the status bar stays pinned at the bottom while copy mode pages, the position counter tracks, colors and the box drawing are correct.
-	- One candidate, if the complaint is about the wheel: with tmux's own mouse support off, a wheel over the pane is turned into cursor keys. That is what a full-screen app wants, but it recalls shell history at a bare prompt. It is the standing behavior for any full-screen app and `set -g mouse on` changes it, so this may be a documentation answer rather than a fix.
+	- One candidate: tmux's own mouse support off, a wheel over the pane is turned into cursor keys. That is what a full-screen app wants, but it recalls shell history at a bare prompt. It is the standing behavior for any full-screen app and `set -g mouse on` changes it, so this may be a documentation answer rather than a fix.
 	- Opened: 20260826-123553
 
 ### New features and enhancements
 
-- 🔘 Reconcile the interface with `uiux-style-guide.md`, or the guide with the interface where the guide is the thing that is wrong.
-	- The guide already ends with a list of places the built interface differs from it. Start there.
-	- Opened: 20260831-185312
+- Auto-disable the minimap when in a TUI that has no buffer that can be reached via minimap.
+	- Auto-reenable when TUI exited.
+	- Not all TUIs require this. `less`, for example, has a reachable buffer via minimap. Claude Code full-screen TUI doesn't.
+
+- 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
+	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
+		- Ideally as packaged plug-ins (think shader kits or something that be traded online and dropped into a directory for auto-discovery).
+		- Reasonably easy for others to write new effect plugins that can be dropped-in, discovered at silkterm startup, loaded, and avaiable as an option.
+		- Security model. Some plugins may need access to screen contents, others may not. If access to contents, make sure it can't do anything else - e.g. write to the filesystem, network, etc. Also, no reading from the filesystem, network, sockets - anything - except own config file.
+	- 🔘 Effect 1: When a "copy on output" or "copy on select" happens, make the relevant checkbox and label gently burst with a glow and tiny fine sparkles for about a second - as if a fairy just blinged it with a magic wand in a movie.
+		- Needs to be subtle and non-annoying over long-run, but definitely noticeable.
+		- Tunable in config.
+		- If it doesn't work well on non-GPU acellerated platforms, just some kind of noticeable blink. But still need visual feedback.
+			- Need to decide what kind of feedback if not practical on non-GPU.
+	- 🔘 Effect 2: When a command or program returns to the prompt, give a burst of visual feedback, with a strength linearly proportional to the amount of time it took.
+		- With an upper limit of course - say, an hour, config-tunable.
+		- Config-tunable selection of predefined burst effects.
+		- Default (and so far only): A glowing bright gold pulse that the cursor gives off upon landing back at the shell prompt, as if a yellow sun that shed an outer layer of blasma in a burst.
+	- Opened: 20260714-091630
+
+- 🔘 Option: Dynamic theme based on wallpaper
+	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
+	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
+	- Opened: 20260804-134813
 
 - 🔬 Windows installer.
 	- ✅ Offer "available to all users", or "this user only", or whatever the typical wording is.
@@ -124,22 +131,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- 🔘 Need a config file name and a default value for the resulting strength of this calculation.
 	- Opened: 20260703-100322
 
-- 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
-	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
-		- Ideally as packaged plug-ins (think shader kits or something that be traded online and dropped into a directory for auto-discovery).
-		- Reasonably easy for others to write new effect plugins that can be dropped-in, discovered at silkterm startup, loaded, and avaiable as an option.
-		- Security model. Some plugins may need access to screen contents, others may not. If access to contents, make sure it can't do anything else - e.g. write to the filesystem, network, etc. Also, no reading from the filesystem, network, sockets - anything - except own config file.
-	- 🔘 Effect 1: When a "copy on output" or "copy on select" happens, make the relevant checkbox and label gently burst with a glow and tiny fine sparkles for about a second - as if a fairy just blinged it with a magic wand in a movie.
-		- Needs to be subtle and non-annoying over long-run, but definitely noticeable.
-		- Tunable in config.
-		- If it doesn't work well on non-GPU acellerated platforms, just some kind of noticeable blink. But still need visual feedback.
-			- Need to decide what kind of feedback if not practical on non-GPU.
-	- 🔘 Effect 2: When a command or program returns to the prompt, give a burst of visual feedback, with a strength linearly proportional to the amount of time it took.
-		- With an upper limit of course - say, an hour, config-tunable.
-		- Config-tunable selection of predefined burst effects.
-		- Default (and so far only): A glowing bright gold pulse that the cursor gives off upon landing back at the shell prompt, as if a yellow sun that shed an outer layer of blasma in a burst.
-	- Opened: 20260714-091630
-
 - 🔘 (Originally filed as bug but is really a refinement): At high blur radius and low softness, the blur has boxy artifacts.
 	- Cause: the scrim is a separable blur with a truncated kernel. The hard cutoff leaves a faint edge that low softness amplifies into a visible square, and the linear and s-curve falloffs are not true Gaussians, so their support reads as a diamond or box rather than a circle. The fix is a look-versus-performance tradeoff (wider extent, more taps, or a windowed kernel) that wants eyeballing. Deferred to a visual pass.
 	- 🔘 New feature: Adjustable blur quality in settings:
@@ -147,11 +138,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Medium (default): The current quality.
 		- Low: Trash quality, only looks OK at small blur radii. For VMs or remote sessions with punishing graphics. (In fact maybe this should be auto-detected...)
 	- Opened: 20260724-080316
-
-- 🔘 Option: Dynamic theme based on wallpaper
-	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
-	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
-	- Opened: 20260804-134813
 
 - 🛠️ Testing:
 	- 🛠️ Do full regression testing, keeping the tests current as features and bugs come in, and against library code as well.
@@ -186,7 +172,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260719-085918
 
 - 🛠️ Command-line options: what is still open.
-	- 🔘 Per-pane scope for the style options. `--font-name`, `--font-size`, `--background-color`, `--foreground-color`, `--background-image` and its stretch, zoom and opacity all apply to the whole window today. Varying them per pane needs a per-pane renderer the single text context does not have.
+	- 🔘 Per-pane scope for the style options. `--font-name`, `--font-size`, `--background-color`, `--foreground-color`, `--wallpaper` and its stretch, zoom and opacity all apply to the whole window today. Varying them per pane needs a per-pane renderer the single text context does not have.
 	- 🔘 Per-pane `--title`. Accepted and reserved, but nothing displays it yet.
 	- 🔘 Short forms. Only `-h` and `-v` have one so far.
 	- 🔘 Finer negotiation with the config's own command line. Any real argument today ignores the stored one wholesale, rather than settling window-level options field by field.
@@ -195,13 +181,27 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - 🔘 Additional "File" menu option: "Save entire current layout to config".
 	- Including window, tab, shell, and pane layout and configurations - everything.
-	- Possibly to make this easier, store non-default per-tab and per-pane configurations as a "command line" in the config, that each override all other config settings.
-	- Emits the create/select form: `--new-tab` / `--new-pane` (with explicit `--splits`, direction, and non-default `--size`) for structure, plus `--tab=<id>` / `--pane=<id>` for per-entity overrides. Always writes explicit directions and sizes (never the "more space" default) so a saved layout reproduces regardless of window size.
+	- One possibly to make this easier, store non-default per-tab and per-pane configurations as a "command line" in the config, that each override all other config settings. E.g.:
+		- Emits the create/select form: `--new-tab` / `--new-pane` (with explicit `--splits`, direction, and non-default `--size`) for structure, plus `--tab=<id>` / `--pane=<id>` for per-entity overrides. Always writes explicit directions and sizes (never the "more space" default) so a saved layout reproduces regardless of window size.
+	- Alternately, lean on shcl hierarchical format for nested configurations.
 	- Opened: 20260628-083740
 
 ### Done
 
 #### Done - Bugs
+
+- ✅ Double-clicking a Windows path leaves off the drive letter.
+	- Does not reproduce on Linux. The shipped word separators already keep `:`, and a double-click on `C:\Users\jim\notes.txt` selects it whole.
+	- Probable cause: a config still carrying the older separator list, which the "start over" item would also clear.
+	- Note: re-check on Windows against a fresh config. The rest of the double-click work is done, under Done - Bugs.
+	- Opened: 20260826-123553
+
+- ✅ Closing a second tab crashes the program.
+	- Not reproduced yet, on either box. Twelve tabs closed in a row on Linux, by hotkey and by the close box, in a wide window and a narrow one. Not on Windows either when tabs close because their shell exits, in any order, nor with Ctrl+Shift+W twice, nor by clicking the close boxes middle tab first or end tab first with the pointer left over the strip.
+	- So the removal itself is fine and the steps matter. Which key or click, how many tabs and panes were open, and was anything running in the tab?
+	- Ruled out: a stale tab index left behind by the removal. The tab strip's paging cannot run off the end of the list, and every tab lookup outside the close path is a checked one.
+	- Note: the startup directory and last-tab halves of the original report are done, under Done - Bugs.
+	- Opened: 20260826-123553
 
 - ✅ A window or tab that was out of view smooth-scrolled its backlog in when it came back.
 	- Nothing had actually just happened, so animating it read as live output rather than as catching up on stale content. It should land in one cut, flash and all.
@@ -1072,6 +1072,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Double-clicking on "github.com:jim-collier/silkterm.git:dev ✘✓" (e.g. x9ps1-prompt), should not include things like " ✘✓" at the end.
+	- Cause: the prompt puts the remote inside brackets beside its status marks, and a double-click inside a matched pair takes everything between the brackets. That rule is wanted elsewhere, so it was left alone.
+	- Fixed: a git remote is a shape now, the way a path or a URL already is, and a shape outranks the pair rule. `git@github.com:owner/repo.git` and the userless spelling a prompt shows both select whole, and so does an scp target like `jim@host.local:/srv/data/a.txt`.
+	- The branch a prompt writes after the remote (`repo.git:dev`) is part of the run, so a click on it selects the same field rather than falling back to the brackets. That is the one place a remote parts company with a filename, where `.git` would end the name and a `:120:5` after it would be a line number.
+	- A host needs two labels and an alphabetic last one, and the first path segment has to carry a letter, so `build:release/x` and `notes.txt:12/34` stay ordinary text.
+	- Opened: 20260901-183000
+	- Closed: 20260901-184335
 
 - ✅ "Minimap" feature: Option to show a full-terminal sidebar, that gives an approximation of what the entire scroll buffer looks like.
 	- Looks and behaves not too differently than some modern text editors.

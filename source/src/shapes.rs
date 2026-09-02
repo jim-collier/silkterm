@@ -58,27 +58,39 @@ fn boundary_before(text: &[char], start: usize) -> bool {
 	}
 }
 
-// Does a path start exactly at `at`? Returns how many chars the prefix takes.
-fn anchor_len(text: &[char], at: usize) -> Option<usize> {
+// How a shape starts, and whether a file extension is allowed to end it.
+struct Anchor {
+	prefix: usize,
+	ext_ends: bool,
+}
+
+// Does a path start exactly at `at`?
+fn anchor(text: &[char], at: usize) -> Option<Anchor> {
 	if !boundary_before(text, at) {
 		return None;
 	}
+	let path = |prefix| {
+		Some(Anchor {
+			prefix,
+			ext_ends: true,
+		})
+	};
 	let c = *text.get(at)?;
 	// C:\ or C:/
 	if c.is_ascii_alphabetic()
 		&& text.get(at + 1) == Some(&':')
 		&& text.get(at + 2).is_some_and(|&c| is_sep(c))
 	{
-		return Some(3);
+		return path(3);
 	}
 	// \\server\share
 	if c == '\\' && text.get(at + 1) == Some(&'\\') && text.get(at + 2).is_some_and(|&c| !is_sep(c))
 	{
-		return Some(2);
+		return path(2);
 	}
 	// ~/ and ~\
 	if c == '~' && text.get(at + 1).is_some_and(|&c| is_sep(c)) {
-		return Some(2);
+		return path(2);
 	}
 	// /usr/... - a lone slash is not a path, so the next char has to carry one
 	if c == '/'
@@ -86,31 +98,100 @@ fn anchor_len(text: &[char], at: usize) -> Option<usize> {
 			.get(at + 1)
 			.is_some_and(|&c| is_path_char(c) && !is_sep(c))
 	{
-		return Some(1);
+		return path(1);
 	}
-	None
+	// git@github.com:owner/repo.git, and the userless spelling a git prompt shows.
+	// The `.git` does NOT end it: a prompt writes the branch after it as
+	// `repo.git:dev`, and that whole field is the thing being clicked on.
+	remote_len(text, at).map(|prefix| Anchor {
+		prefix,
+		ext_ends: false,
+	})
+}
+
+// How much of an scp target starting at `at` is prefix - through the colon that
+// separates the host from the path. None when this is not one.
+fn remote_len(text: &[char], at: usize) -> Option<usize> {
+	let host = at + user_len(text, at).unwrap_or(0);
+	let colon = host_end(text, host)?;
+	// The first segment has to be absent or carry a letter, or `notes.txt:12/34`
+	// reads as a remote.
+	let mut i = colon + 1;
+	while text.get(i).is_some_and(|&c| is_path_char(c) && !is_sep(c)) {
+		i += 1;
+	}
+	let segment = &text[colon + 1..i];
+	if !segment.is_empty() && !segment.iter().any(char::is_ascii_alphabetic) {
+		return None;
+	}
+	// a separator with something after it - a host and a bare name is not a target
+	if !text.get(i).is_some_and(|&c| is_sep(c)) || !text.get(i + 1).is_some_and(|&c| is_path_char(c))
+	{
+		return None;
+	}
+	Some(colon + 1 - at)
+}
+
+// Length of a `user@` prefix at `at`, if there is one.
+fn user_len(text: &[char], at: usize) -> Option<usize> {
+	let mut i = at;
+	while text
+		.get(i)
+		.is_some_and(|&c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+	{
+		i += 1;
+	}
+	(i > at && text.get(i) == Some(&'@')).then_some(i + 1 - at)
+}
+
+// Where a dotted hostname starting at `at` meets its colon. Two labels at least,
+// and an alphabetic last one, so `e.g.:` and a bare `host:` are not hostnames.
+fn host_end(text: &[char], at: usize) -> Option<usize> {
+	let mut i = at;
+	let mut labels = 0;
+	loop {
+		let start = i;
+		while text
+			.get(i)
+			.is_some_and(|&c| c.is_ascii_alphanumeric() || c == '-')
+		{
+			i += 1;
+		}
+		if i == start {
+			return None;
+		}
+		labels += 1;
+		if text.get(i) == Some(&'.') {
+			i += 1;
+			continue;
+		}
+		let tld = i - start >= 2 && text[start..i].iter().all(char::is_ascii_alphabetic);
+		return (labels >= 2 && tld && text.get(i) == Some(&':')).then_some(i);
+	}
 }
 
 // The nearest path start at or before `hit` whose span still reaches `hit`.
 fn path_span(text: &[char], hit: usize) -> Option<(usize, usize)> {
 	(0..=hit).rev().find_map(|start| {
-		let prefix = anchor_len(text, start)?;
-		let end = path_end(text, start, prefix);
-		(end > hit && end > start + prefix).then_some((start, end))
+		let anchor = anchor(text, start)?;
+		let end = path_end(text, start, &anchor);
+		(end > hit && end > start + anchor.prefix).then_some((start, end))
 	})
 }
 
 // Where the path starting at `start` ends. Runs of path characters, plus any
 // space a folder name turns out to have in it, stopping at the file extension
 // once there is one.
-fn path_end(text: &[char], start: usize, prefix: usize) -> usize {
-	let mut end = start + prefix;
+fn path_end(text: &[char], start: usize, anchor: &Anchor) -> usize {
+	let mut end = start + anchor.prefix;
 	loop {
 		while text.get(end).is_some_and(|&c| is_path_char(c)) {
 			end += 1;
 		}
 		// A `:` after the extension is a line number, not part of the name.
-		if let Some(cut) = ends_at_extension(&text[start..end]) {
+		if anchor.ext_ends
+			&& let Some(cut) = ends_at_extension(&text[start..end])
+		{
 			return start + cut;
 		}
 		if text.get(end) != Some(&' ') || !separator_within_reach(text, end + 1) {
@@ -301,6 +382,38 @@ mod tests {
 			at("(/home/u/notes.md), yes", "notes").as_deref(),
 			Some("/home/u/notes.md")
 		);
+	}
+
+	// A git prompt puts the remote in brackets beside its status marks, and the
+	// pair rule would otherwise hand back the marks with it.
+	#[test]
+	fn a_git_remote_is_a_shape() {
+		assert_eq!(
+			at("[ github.com:jim-collier/silkterm.git:dev X ]", "collier").as_deref(),
+			Some("github.com:jim-collier/silkterm.git:dev")
+		);
+		// clicking the branch has to give the same run, or it falls through to the
+		// pair rule and comes back with the status marks
+		assert_eq!(
+			at("[ github.com:jim-collier/silkterm.git:dev X ]", "dev").as_deref(),
+			Some("github.com:jim-collier/silkterm.git:dev")
+		);
+		assert_eq!(
+			at("origin git@github.com:jim-collier/silkterm.git (fetch)", "silkterm").as_deref(),
+			Some("git@github.com:jim-collier/silkterm.git")
+		);
+		assert_eq!(
+			at("scp jim@nas.local:/srv/data/a.txt .", "srv").as_deref(),
+			Some("jim@nas.local:/srv/data/a.txt")
+		);
+	}
+
+	#[test]
+	fn a_colon_after_a_word_is_not_a_remote() {
+		assert_eq!(at("see notes.txt:12/34 there", "notes"), None);
+		assert_eq!(at("build:release/x here", "release"), None);
+		assert_eq!(at("e.g.:foo/bar", "foo"), None);
+		assert_eq!(at("host.com:noslash here", "noslash"), None);
 	}
 
 	#[test]

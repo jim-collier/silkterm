@@ -349,6 +349,10 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - The shapes are URLs and file URIs, drive paths (`C:\...`), UNC paths, absolute posix paths, and `~/` paths. Each has to start at an anchor a reader would recognize, with only whitespace, a quote or an opening bracket in front of it. Among the options considered, that was preferred over "anything that is not obviously a word", which reads `and/or` as a path.
 
+- Git remotes and scp targets are shapes as well, in the `[user@]host:path` form. This one was added because a git prompt writes the remote inside brackets beside its status marks, and the matched-pair rule then handed back the marks along with it. Narrowing the pair rule was considered and rejected, since selecting a quoted phrase whole is wanted and was asked for separately. A host needs a dot and an alphabetic ending, and the path needs a separator and a letter in its first segment, which is what keeps `build:release/x` and `notes.txt:12/34` out.
+
+- A remote is the one shape a file extension does not end. A prompt writes the branch after the repository as `repo.git:dev`, and that whole field is what a reader sees as one thing, so stopping at `.git` would leave the branch as a dead patch that selects the brackets instead.
+
 - Where a path ends is two heuristics, both picked for what they refuse. A space is crossed only when a path separator turns up soon after, so a folder name with spaces stays whole while a path followed by a sentence does not swallow it. And the run stops at a file extension, which is what leaves a `:120:5` line number behind.
 
 - A trailing full stop, comma or bracket comes off the same way it does for a link. The two share the trimming idea but not the code, since a path may hold characters a URL may not.
