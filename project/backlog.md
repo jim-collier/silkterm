@@ -42,24 +42,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔬 A WSL pane does not start in the current directory.
-	- Seen doing "Open terminal here" on Windows. Nothing hands wsl.exe a directory today - a distribution is stored as `wsl.exe -d <name>`, and the pane starts wherever the spawned process inherited from.
-	- Two cases that need separating before anything is changed, because only the second is clearly broken:
-		- The first pane of a launch inherits the folder the launcher was sitting in, which wsl.exe is supposed to translate on its own. If that is the failing case, the question is what it does instead.
-		- A new tab or split from a WSL pane inherits what the shell last reported, which is a posix path. That cannot be a Windows working directory at all. Fits the garbled `/tmp/...` prompt seen once after splitting a WSL pane.
-	- Fixed: the directory is handed to wsl.exe with `--cd`, inserted ahead of its own arguments since options have to come first. It takes a Windows path or a posix one, so whichever spelling the source pane reported goes straight through. An entry that already carries a `--cd` of its own is left alone.
-	- Fixed: a directory a shell reported is only used as a Windows working directory when it is spelled as one. The first case turned out not to be broken, since wsl.exe translates a directory it inherits on its own. The second was, and worse than expected: /tmp, /mnt and /opt all resolve against the current drive, so a posix path from a WSL pane passed the existing "does it exist" check and was taken as a directory on C:, which is the garbled prompt in the report.
-	- An explicitly chosen startup directory is made absolute before it is checked, so a drive-less spelling still resolves rather than being dropped by the new rule.
-	- 🔬 Not driven end to end: a new tab opened from a live WSL pane. The first-pane case was, and `--cd` was checked against wsl.exe 2.7.11 in both spellings.
-	- Test result: Opening a new tab with WSL1 or WSL2 does NOT preserve the path.
-		- However, the startup script behavior
-	- Opened: 20260830-140000
-	- Closed: 20260903-014500
-
 - 🔘 Does not work very well under tmux.
 	- Steps to reproduce:
 		- `ls -lA ~/` does not smooth scroll. It produces near-instant output.
-		- rar out
+		- rar output sometimes appears to "freeze" the bottom few lines, while the lines above scroll normally.
+		- Other typical bash batch output (e.g. from cicd) looks more or less OK. Not exactly the same as without tmux, but acceptable.
 	- One candidate: tmux's own mouse support off, a wheel over the pane is turned into cursor keys. That is what a full-screen app wants, but it recalls shell history at a bare prompt. It is the standing behavior for any full-screen app and `set -g mouse on` changes it, so this may be a documentation answer rather than a fix.
 		- Testing: Could be part of the problem, but definitely not all of it.
 	- Opened: 20260826-123553
@@ -78,11 +65,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - 🔬 Auto-disable the minimap when in a TUI that has no buffer that can be reached via minimap.
 	- Auto-reenable when TUI exited.
 	- Not all TUIs require this. `less`, for example, has a scrollable buffer evantually reachable via minimap. Claude Code full-screen TUI doesn't, it is always just a rectangle at the top of the minimap.
-	- Done, with a list. The column steps aside whenever a full-screen program is running and the text takes its width back, except for programs named in the new `scroll.minimap.keep_for` setting. It defaults to less, tmux and screen.
+	- Done, with a list. The column steps aside whenever a full-screen program is running and the text takes its width back, except for programs named in the new `scroll.minimap.tui_process_whitelist` setting. It defaults to less, tmux and screen.
 	- The distinction the item asks for cannot be made mechanically: a pager runs on its own screen too, and there is no scroll buffer behind that screen for the map to reach, so the map is a rectangle at the top in either case. The list is how the exceptions get named instead.
 	- Losing the column changes the pane's text width, so this is a relayout rather than a drawing choice - one on the way in and one on the way out, both where the program repaints anyway.
 	- Names match with or without a directory and with or without .exe, so one list works on both platforms.
-	- 🔬 Seen on Windows with a real pager: on the list the column stays, off it the column goes and the text fills the pane. Not seen on Linux, and tmux and screen have not been tried.
+	- Names that a process rewrites for itself match on the program: tmux reports itself as `tmux: client`, which never matched the list until the part after the colon was dropped. The tab reads `tmux` now too.
+	- 🔬 Seen on Windows with a real pager, and on Linux with tmux: on the list the column stays, off it the column goes and the text fills the pane. screen has not been tried.
 	- Opened: n/a
 	- Closed: 20260903-110000
 
@@ -232,6 +220,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ A WSL pane does not start in the current directory.
+	- Seen doing "Open terminal here" on Windows. Nothing hands wsl.exe a directory today - a distribution is stored as `wsl.exe -d <name>`, and the pane starts wherever the spawned process inherited from.
+	- Two cases that need separating before anything is changed, because only the second is clearly broken:
+		- The first pane of a launch inherits the folder the launcher was sitting in, which wsl.exe is supposed to translate on its own. If that is the failing case, the question is what it does instead.
+		- A new tab or split from a WSL pane inherits what the shell last reported, which is a posix path. That cannot be a Windows working directory at all. Fits the garbled `/tmp/...` prompt seen once after splitting a WSL pane.
+	- Fixed: the directory is handed to wsl.exe with `--cd`, inserted ahead of its own arguments since options have to come first. It takes a Windows path or a posix one, so whichever spelling the source pane reported goes straight through. An entry that already carries a `--cd` of its own is left alone.
+	- Fixed: a directory a shell reported is only used as a Windows working directory when it is spelled as one. The first case turned out not to be broken, since wsl.exe translates a directory it inherits on its own. The second was, and worse than expected: /tmp, /mnt and /opt all resolve against the current drive, so a posix path from a WSL pane passed the existing "does it exist" check and was taken as a directory on C:, which is the garbled prompt in the report.
+	- An explicitly chosen startup directory is made absolute before it is checked, so a drive-less spelling still resolves rather than being dropped by the new rule.
+	- Test result: Opening a new tab with WSL1 or WSL2 did not preserve the path.
+		- However, this was apparently the result of outdated x9bashrc3 scripts, which overrode cwd no matter what. Updating those seems to have "fixed" it (wasn't a silkterm bug).
+		- Still testing 20260903-125208.
+		- ✅ Passes.
+	- Opened: 20260830-140000
+	- Closed: 20260903-014500
 
 - ✅ Double-clicking a Windows path leaves off the drive letter.
 	- Does not reproduce on Linux. The shipped word separators already keep `:`, and a double-click on `C:\Users\jim\notes.txt` selects it whole.

@@ -735,12 +735,21 @@ fn parse_env_block(block: &[u16]) -> std::collections::HashMap<String, String> {
 #[cfg(unix)]
 fn proc_comm(pid: u32) -> Option<String> {
 	let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
-	let comm = comm.trim();
+	let comm = program_name(comm.trim());
 	if comm.is_empty() {
 		None
 	} else {
 		Some(comm.to_string())
 	}
+}
+
+// A process that renames itself writes "name: what it is doing" - tmux's client
+// reports "tmux: client", sshd reports "sshd: user@pts/0". The program is the
+// part before the colon, and that is what a tab should say and what the
+// minimap's list is matched against.
+#[cfg(unix)]
+fn program_name(comm: &str) -> &str {
+	comm.split_once(':').map_or(comm, |(name, _)| name).trim()
 }
 
 // Does a process-table row belong to a command this shell launched? Windows
@@ -1005,15 +1014,26 @@ fn wsl_cd(argv: &[String], dir: &std::path::Path) -> Option<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-	#[cfg(unix)]
-	use super::status_text;
 	use super::{
 		SHELL_PRIVATE_ENV, WakeGate, env_fixups, expand_refs, is_command_child, parse_env_block,
 		usable_cwd, wsl_cd,
 	};
+	#[cfg(unix)]
+	use super::{program_name, status_text};
 
 	fn argv(words: &str) -> Vec<String> {
 		words.split(' ').map(str::to_string).collect()
+	}
+
+	// tmux renames its client, so /proc/pid/comm reads "tmux: client" and a plain
+	// name comparison never matched it.
+	#[cfg(unix)]
+	#[test]
+	fn a_renamed_process_still_reports_its_program() {
+		assert_eq!(program_name("tmux: client"), "tmux");
+		assert_eq!(program_name("sshd: jim@pts/3"), "sshd");
+		assert_eq!(program_name("less"), "less");
+		assert_eq!(program_name(""), "");
 	}
 
 	#[test]

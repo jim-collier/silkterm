@@ -78,7 +78,7 @@ pub fn wanted(cfg: &config::Settings, alt_screen: bool, program: Option<&str>) -
 		return false;
 	};
 	let running = trim_exe(program);
-	cfg.minimap_keep
+	cfg.minimap_tui_whitelist
 		.split_whitespace()
 		.any(|name| trim_exe(name).eq_ignore_ascii_case(running))
 }
@@ -917,7 +917,7 @@ mod tests {
 	#[test]
 	fn a_full_screen_program_takes_the_column_unless_it_is_named() {
 		let mut s = cfg(true, 100.0);
-		s.minimap_keep = "less tmux screen".to_string();
+		s.minimap_tui_whitelist = "less tmux screen".to_string();
 		// nothing full-screen is running, so it does not matter what is
 		assert!(wanted(&s, false, None));
 		assert!(wanted(&s, false, Some("vim")));
@@ -931,7 +931,7 @@ mod tests {
 		// either spelling of the same program, on either platform
 		assert!(wanted(&s, true, Some("LESS.EXE")));
 		assert!(wanted(&s, true, Some("/usr/bin/less")));
-		s.minimap_keep = r"C:	ools\less.exe".to_string();
+		s.minimap_tui_whitelist = r"C:	ools\less.exe".to_string();
 		assert!(wanted(&s, true, Some("less")));
 	}
 
