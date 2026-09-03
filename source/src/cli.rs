@@ -674,7 +674,7 @@ pub fn padded(body: &str) -> String {
 pub fn about(info: Option<&wgpu::AdapterInfo>) -> String {
 	let mut lines = vec![
 		format!("About {}", config::APP_NAME),
-		format!("version {}", env!("CARGO_PKG_VERSION")),
+		format!("Version {}", env!("CARGO_PKG_VERSION")),
 		"Copyright © 2026 Jim Collier".to_string(),
 		format!("License: {}", env!("CARGO_PKG_LICENSE")),
 		String::new(),

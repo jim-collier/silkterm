@@ -66,6 +66,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Speed up ease-in, ease-out, and single-screen speed if the environment is slow.
 	- Also consider cheaper rendering. (e.g. a quality setting mentioned elsewhere, set to lower).
 
+- 🔘 Minimap: Unless a line of text is rendering below 1px, don't show multiple lines as a solid block of color.
+	- And even then (at <1px per full-hieght text line), dim the line of pixels for better approximations.
+	- VSCodium, for example, does a much better job of approximating what lots of text way too small to read, looks like "from a distance".
+
 - 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
 	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
 		- Ideally as packaged plug-ins (think shader kits or something that be traded online and dropped into a directory for auto-discovery).
@@ -1114,6 +1118,23 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Two differences are deliberate and stay listed rather than fixed: the capital S in "Paste Selection", which is what its accelerator has to land on, and "Copy on select" sitting on the Cursor tab, which was asked for and is pinned by a test.
 	- Opened: 20260719-085918
 	- Closed: 20260830-204500
+
+- ✅ Second pass over the UI/UX style guide, reconciling it against what is built.
+	- Where the interface was inconsistent, the interface changed.
+		- Every View menu toggle now names the thing and is checked while that thing is on. "Hide window frame" and "Hide single tab" became "Window frame" and "Tab strip", so a column of checkmarks reads one way. A test pins it.
+		- The right-click menu keeps one window-chrome row, Menu bar, since with the bar hidden nothing else brings it back. Fullscreen, Window frame and Bare window come off it, and Close pane gets the separator the Panes menu already had.
+		- The two "no system font to follow" flyovers are sentences now. The theme Save as and Rename prompts word their instruction the same way. "Highlights" is "Highlight", matching the glossary. The About box says "Version", not "version".
+	- Where the guide was wrong or thin, the guide changed.
+		- The colon ban only ever applied to a label in its own column, so the About box, the tab flyover and the menu bar's copy lead-in are no longer breaking a rule they never should have been under.
+		- Twelve editable colors, not ten. The scrollbar's handle and track are listed and marked as sitting outside the theme.
+		- Row kinds gained buttons and shells, which were already in the dialog. The revert rule says which rows have no value to revert.
+		- One rule said every measurement converts at the boundary, which is only true of the Settings dialog. The main window and the About box convert per use, and both regimes are written down.
+		- Flyover help is one to three sentences, and the tab strip's fact table is called out as the one that is not prose at all.
+		- The keyboard section lists the shortcuts that exist rather than a sample, and no longer claims every mouse action has a keyboard twin. Dragging and in-place renaming do not.
+		- The menu bar's auto-copy checkboxes were missing from the guide entirely.
+	- Known deviations rewritten. Paste Selection and Copy on select still stand; three new ones recorded, including "Gaussian [ugly]", which was asked for.
+	- Opened: 20260902-171500
+	- Closed: 20260902-173100
 
 - ✅ Begin a '[repo]/glossary.md' and link to it in README.md:
 	- Defines unusual, technical, and/or highly specific English word terms used in the settings dialog, backlog, design.md, etc.

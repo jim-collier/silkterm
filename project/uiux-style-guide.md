@@ -2,7 +2,7 @@
 
 How SilkTerm's own interface is meant to look and behave. It covers the menu bar, the right-click menu, the Settings dialog, the About box, and the chrome around the panes. It says nothing about the terminal grid itself, which is the program's output rather than its interface.
 
-This was written by reading what is already built, then tidying the rules until they stop contradicting each other. Where the code and this file disagree, the file is the intent - see [Known deviations](#known-deviations) for the ones that are known and still open.
+This was written by reading what is already built, then tidying the rules until they stop contradicting each other. Where the code and this file disagree, the file is the intent. See [Known deviations](#known-deviations) for the ones that are known and still open.
 
 For prose, comments, naming and Rust conventions, see [`style-guide.md`](../style-guide.md). That guide governs what gets written about the program; this one governs what the program shows.
 
@@ -30,24 +30,26 @@ For prose, comments, naming and Rust conventions, see [`style-guide.md`](../styl
 ## Words
 
 - Sentence case everywhere. Menu titles, menu items, tab names, headings, labels, buttons. Only proper nouns and product names keep their capitals ("PowerShell 7", "Nushell", "SilkTerm").
-- No trailing colons on labels. The layout already separates a label from its control.
-- No terminating punctuation on a label or a button caption.
-- Flyover help is one or two complete sentences, each ending in a period.
+- No trailing colon on a label that stands in its own column, because the layout already separates it from its control. A colon is right where a label and its value share one line: the About box's `Renderer: ...`, the tab flyover's table, the menu bar's `Copy on:` lead-in.
+- No terminating punctuation on a label or a button caption. The About box's `Support SilkTerm!` is the one exception, and it is deliberate: an ask for money reads badly flattened into a filing label.
 - An item that opens a further dialog ends in a single ellipsis character, no space before it: `Settings…`, `About…`, `Save as…`. An item that only asks for confirmation does not.
 - Units go on the end of the label, separated by a space, with no brackets: `Opacity %`, `Blur px`, `Blink rate ms`. The value beside the control carries the number alone.
 - Keyboard shortcuts shown in a menu go in parentheses at the end of the item, spelled with `+` between every part and no spaces: `Copy (Ctrl+Shift+C)`, `Fullscreen (F11)`.
-- Say what a thing is, not what the code calls it. "File or folder", not "Path". "Visibility", not "Alpha".
-- Avoid jargon that only a developer would recognize. Where a term is unavoidable and specific to SilkTerm, define it in [`glossary.md`](../glossary.md).
+- Say what a thing is, not what the code calls it. "File or folder", not "Path". "Visibility", not "Alpha". "Handle" and "Track", not "Thumb" and "Trough".
+- Avoid jargon that only a developer would recognize. Two exceptions:
+	- A term specific to SilkTerm that has no plainer name. Define it in [`glossary.md`](../glossary.md).
+	- An option that picks a named technique, where the name is the only honest label for it. The scrim's `Distance field` and `Half-normal` are of this kind. These go in the glossary too.
 
 ## Menus
 
 - Two menus draw from the same entry list and the same renderer: the menu bar's dropdowns, and the right-click menu over a pane.
 - The menu bar is File, Edit, View, Tabs, Panes, Help. A new action goes in the menu whose noun it acts on.
-- The right-click menu is the pane's own menu. It repeats the actions that are worth reaching without travelling to the bar, and it may add items that only make sense at the pointer - the two link actions appear only when the click landed on a link.
+- The right side of the menu bar carries the focused pane's two auto-copy checkboxes, so their state is visible without opening anything. It is the only thing on the bar that is not a menu. When the window narrows it sheds its lead-in, then its words, then itself, rather than overlapping the titles.
+- The right-click menu is the pane's own menu. It is a selection from the bar, not a copy of it: the actions worth reaching without travelling, plus items that only make sense at the pointer, such as the two link actions that appear only when the click landed on a link. It carries one window-chrome row, Menu bar, because with the bar hidden nothing else can bring it back.
 - Order within a menu: the most-used action first, related actions adjacent, destructive actions last in their group.
 - A separator groups; it does not decorate. Every separator must have a reason a reader could name.
-- A toggle draws a check mark when it is on. It never changes its caption to describe the other state.
-- A submenu is for one homogeneous list that would otherwise swamp its parent - the installed shells are the only case today. It opens beside its parent row, never over it.
+- A toggle names the thing itself and draws a check mark while that thing is on. `Window frame`, not `Hide window frame`. Checked always means present or active, so a column of checkmarks reads one way down. A caption never changes to describe the other state.
+- A submenu is for one homogeneous list that would otherwise swamp its parent. The installed shells are the only case today. It opens beside its parent row, never over it.
 - Accelerator letters are unique within one menu, and the first match wins, so a letter spent early is spent. A row that cannot get a distinct letter goes without one rather than stealing one.
 - Nothing in a menu is disabled and left visible unless its absence would be more confusing than its being gray.
 
@@ -71,12 +73,12 @@ The dialog is declared in `settings_ui.shcl`, which is the file to edit when add
 ### Rows
 
 - One row edits one setting, and its label names that setting in plain words.
-- Row kinds are: heading, toggle, slider, color, text, radio, dropdown, and pair. A new kind needs a reason no existing kind covers.
+- Row kinds are: heading, toggle, slider, color, text, radio, dropdown, pair, buttons, and shells. The last two are one-offs. A `buttons` row holds no value and acts on the row above it; `shells` is the Shell tab's grid, one declared row that draws a line per stored shell. A new kind needs a reason no existing kind covers.
 - A slider carries a number field beside it, and the field is the way to enter an exact value.
 - A fraction stored as 0..1 is shown as a whole percent. The file keeps the decimal.
-- Every row that can be edited has a revert control at the right edge, which puts the shipped default back.
-- A row that is grayed out says why in its flyover help, rather than repeating what it would do.
+- Every row that holds a value has a revert control at the right edge, which puts the shipped default back. A heading, a `buttons` row and the shells grid hold no single value, so none of them carries one.
 - Every row must actually write what it edits. A row whose setting is never persisted is worse than no row, because the change appears to take and then vanishes at the next launch.
+- Why a row is grayed out beats what it does, so a row grayed by the machine says so in its flyover in place of its usual text. A row grayed by another setting says nothing extra, because the switch that did it is the row above.
 
 ## Buttons and prompts
 
@@ -84,21 +86,29 @@ The dialog is declared in `settings_ui.shcl`, which is the file to edit when add
 - Cancel discards every change. Apply commits without closing. OK commits and closes.
 - A button caption is a verb or a standard word, never a sentence.
 - A prompt asking for text is a small box with one line of instruction, an entry field with its existing value selected, and Cancel and OK at the bottom right.
+- The instruction is an imperative naming what to type, with no terminating period: `Enter a name for the new theme`. Two prompts doing the same job word it the same way.
 - A confirmation names what is about to happen and quotes the thing by name: `Really delete theme "Matrix"?`
 - OK is the default in every prompt, including a confirmation to delete. Nothing SilkTerm deletes is unrecoverable enough to justify making the reader reach for the other button every time.
 - A red mark is only for removal. Nothing else in the interface is red.
 
 ## Flyover help
 
+There are four of them: a Settings row, a menu item, a link or button in the About box, and a tab in the strip. They share the rest delay, the wrapping and the placement rules, and nothing else. Each is drawn by its own caller, in its own font.
+
 - One rest delay for every tip in the program. A menu that answered faster than the tab strip would read as a different kind of thing.
 - Only controls whose label does not already say what they do get a tip. About a third of rows is the right proportion; if most rows need one, the labels are wrong.
+- A tip that explains a control is prose: one to three complete sentences, each ending in a period. Two is usually enough, and a third has to answer the obvious follow-on question rather than pad.
+- The tab strip's tip is the exception, and it is not prose at all. It reports facts about a tab as an aligned `Key: value` table, in the terminal font, because spaces align nothing in a proportional one.
 - Text wraps to the panel, so a longer sentence or a larger interface font cannot push it off an edge.
 - Placement depends on what is being described. A tip for a row goes under the control and flips above it near the bottom edge. A tip for a menu row goes beside the popup, because a box under the row would cover the rows being chosen between.
 - A tip never carries an action, a link, or anything the pointer has to reach.
 
 ## Layout and measurement
 
-- Every measurement is in DIP, a CSS pixel at 1/96 inch, and is multiplied by the display's scale factor only at the boundary. Nothing inside the layout is scaled twice.
+- Every measurement is in DIP, a CSS pixel at 1/96 inch, multiplied by the display's scale factor on its way to the screen. Nothing is scaled twice.
+- Where that conversion happens differs by surface, and both are right for what they are.
+	- The Settings dialog solves its whole layout in DIP and converts once at the boundary. It has a real layout pass, and a stray conversion inside it would be scaled again on the way out.
+	- The main window's chrome and the About box convert each constant where it is used. Neither has a layout pass to convert at the end of, and inventing a second coordinate space for a handful of numbers would cost more than it saved.
 - Measurements are floors, not fixed sizes. Content that needs more room gets it: a wide label pushes the panel wider, a taller interface font makes rows taller. A number set too small loses to the content; one set too large gives a roomier dialog. Neither can break the layout.
 - Chrome sizes off the interface font, not off a constant. Changing the desktop font size must move everything together.
 - Text is centered on its visible ink box, not on its line box. Curated single-line labels center on ascender-to-baseline; anything that may carry descenders, such as a path, centers on ascent plus descent.
@@ -107,14 +117,26 @@ The dialog is declared in `settings_ui.shcl`, which is the file to edit when add
 
 ## Color roles
 
-Themes ship as a dark and light pair. Ten colors are editable, and each has one job.
+Twelve colors are editable, and each has one job. Ten of them belong to the theme and ship as a dark and light pair; the scrollbar's two do not, and stay neutral whatever the theme.
 
-- `background`, `foreground`, `cursor`: the terminal grid.
-- `highlight`: marks several things at once - the live pane's ring, slider handles, revert icons, the default button. It stays calm because it is everywhere.
-- `focus`: marks the one element the keyboard is on. More vivid than `highlight`, and well away from it in hue.
-- `menu_background`, `menu_foreground`: the menu bar and its dropdowns.
+Terminal:
+
+- `background`, `foreground`, `cursor`.
+
+Chrome:
+
 - `dialog_background`, `dialog_foreground`: the pop-out dialogs.
+- `menu_background`, `menu_foreground`: the menu bar and its dropdowns.
 - `gutter`: chrome that holds no interactive element, such as the strip the dialog's tabs sit on. Recessed against the panel in both modes.
+
+Attention:
+
+- `highlight`: marks several things at once, including the live pane's ring, slider handles, revert icons and the default button. It stays calm because it is everywhere.
+- `focus`: marks the one element the keyboard is on. More vivid than `highlight`, and well away from it in hue.
+
+Scrollbar, outside the theme:
+
+- `scrollbar_thumb`, `scrollbar_trough`: shown in the dialog as Handle and Track, on the Movement tab beside the settings they belong to rather than with the palette. The minimap's marker and its own bar take them too, so they still do something with the scrollbar switched off.
 
 Rules that go with them:
 
@@ -125,9 +147,16 @@ Rules that go with them:
 ## Keyboard
 
 - The shell gets the keystroke unless the interface has a specific claim on it. When in doubt, it goes to the shell.
-- Program shortcuts take Ctrl+Shift where the plain Ctrl form belongs to the shell: Ctrl+Shift+C, Ctrl+Shift+V, Ctrl+Shift+T, Ctrl+Shift+W.
+- Program shortcuts take Ctrl+Shift where the plain Ctrl form belongs to the shell. Plain Ctrl is used only where nothing sensible would want it.
+	- Ctrl+Shift+C copy, Ctrl+Shift+V paste.
+	- Ctrl+Shift+T new tab, Ctrl+Shift+W or Ctrl+F4 close tab, Ctrl+Shift+N new window.
+	- Ctrl+PageUp and Ctrl+PageDown walk the tabs; add Shift to carry the tab with you.
+	- Ctrl+Plus, Ctrl+Minus and Ctrl+0 size the font for this session.
+	- Ctrl+, opens Settings. F11 is fullscreen.
+- Alt plus a menu title's first letter opens that menu. The Menu key opens the right-click menu on the focused pane.
+- In an open menu, arrows move, Right enters a submenu, Left leaves one or steps to the next dropdown, Enter picks, Escape closes, and a letter picks the row carrying it.
 - Inside a dialog, Tab and Shift+Tab move focus, Ctrl+Tab and Ctrl+PgUp/PgDn change tab, Enter is OK and Escape is Cancel.
-- Every action reachable by mouse is reachable by keyboard. The reverse does not have to hold.
+- Every action reachable by mouse should be reachable by keyboard, and the reverse does not have to hold. Direct manipulation is the standing exception: dragging a divider, reordering a tab or a shell, dragging the minimap marker, and renaming a tab in place have no keyboard equivalent today.
 - A key that reaches a dialog never also reaches the terminal underneath.
 
 ## Known deviations
@@ -136,3 +165,6 @@ Things the built interface does differently from the rules above. Each is a smal
 
 - `Paste Selection` keeps a capital S so that the accelerator has a letter to land on. Documented as an exception, but a better fix would free a letter elsewhere.
 - `Copy on select` sits at the bottom of the Cursor tab, which is not where its subject is. It was asked for there and a test pins it, so it stays until that changes.
+- The right-click menu no longer offers Fullscreen, Window frame or Bare window, so with the menu bar hidden they are reachable only by F11 or by putting the bar back. Acceptable while Menu bar stays on that menu, but worth another look if the bar is ever hidden by default.
+- `Gaussian [ugly]` says out loud that it is the worse option, which no other control does. It is the baseline the other three scrim functions are compared against, and the label was asked for.
+- The About box pads its `Key: value` lines with extra spaces, which line nothing up in a proportional font. Cosmetic, and shared with the text `--about` prints.
