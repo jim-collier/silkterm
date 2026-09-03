@@ -981,9 +981,13 @@ fn usable_cwd(dir: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
 // can go straight through. Options have to come before the command, hence the
 // insert rather than a push. None where there is nothing to do.
 fn wsl_cd(argv: &[String], dir: &std::path::Path) -> Option<Vec<String>> {
-	let prog = std::path::Path::new(argv.first()?)
-		.file_name()?
-		.to_string_lossy()
+	// split on both separators: a Windows path reaches this on any platform, and
+	// Path would hand back the whole string for one on unix
+	let first = argv.first()?;
+	let prog = first
+		.rsplit(['/', '\\'])
+		.next()
+		.unwrap_or(first)
 		.to_ascii_lowercase();
 	if prog != "wsl.exe" && prog != "wsl" {
 		return None;
