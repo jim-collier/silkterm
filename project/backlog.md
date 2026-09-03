@@ -77,9 +77,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Speed up ease-in, ease-out, and single-screen speed if the environment is slow.
 	- Also consider cheaper rendering. (e.g. a quality setting mentioned elsewhere, set to lower).
 
-- 🔘 Minimap: Unless a line of text is rendering below 1px, don't show multiple lines as a solid block of color.
+- 🔬 Minimap: Unless a line of text is rendering below 1px, don't show multiple lines as a solid block of color.
 	- And even then (at <1px per full-hieght text line), dim the line of pixels for better approximations.
 	- VSCodium, for example, does a much better job of approximating what lots of text way too small to read, looks like "from a distance".
+	- Fixed both halves. A line no longer paints its whole height once it draws more than a pixel tall, so the gap above and below separates it from the next one instead of the two fusing. Below a pixel there is no room for a gap and the line is taken whole, ramped between the two so the map does not change brightness as a buffer grows past that point.
+	- And a pixel row is now as bright as the ink that actually landed in it, so a mostly blank stretch reads dimmer than a solid page. A single inked line among many is held above a floor so it stays findable, and color still comes only from the lines that have ink, so a lone red line keeps its color.
+	- Measured on a scene of 4,000 lines: the column used to be lit edge to edge with no gaps anywhere, and is a fifth dimmer now. At a couple of hundred lines each line reads as its own bar.
+	- Opened: 20260902-000000
+	- Closed: 20260903-045000
 
 - 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
 	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
