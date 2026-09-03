@@ -53,6 +53,18 @@ FunctionEnd
 Function un.onInit
 	SetRegView 64
 	!insertmacro MULTIUSER_UNINIT
+	; An uninstaller that runs elevated is taken for an all-users one, so a
+	; per-user install left its registry entry and its start menu folder
+	; behind while deleting the files. Whichever hive names THIS directory is
+	; the one that installed it, and the context decides both $SMPROGRAMS and
+	; SHCTX below.
+	ReadRegStr $0 HKCU "Software\${APPNAME}" "InstallDir"
+	ReadRegStr $1 HKLM "Software\${APPNAME}" "InstallDir"
+	${If} $0 == $INSTDIR
+		SetShellVarContext current
+	${ElseIf} $1 == $INSTDIR
+		SetShellVarContext all
+	${EndIf}
 FunctionEnd
 
 ; Both hives, because a machine can hold an all-users install and a per-user one

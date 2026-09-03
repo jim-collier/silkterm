@@ -993,6 +993,10 @@ pub struct Pane {
 	// read it lock-free (at worst one frame stale) instead of taking the term
 	// lock the PTY reader may hold across a whole read cycle.
 	pub mode: TermMode,
+	// Is the minimap column showing? A full-screen program can take it (see
+	// minimap::wanted), and that changes the text width, so it is layout state
+	// rather than something the draw decides.
+	pub map_on: bool,
 	// This pane's PTY produced output since the last successful build. Set by
 	// the Wakeup(id) event, cleared in build() once the term lock is acquired
 	// (a busy-term frame keeps it, so the rebuild retries next frame). Scopes
@@ -1176,6 +1180,7 @@ impl Pane {
 				lines,
 				self.scroll.visual_lines(),
 				alt,
+				self.map_on,
 			) {
 				self.map.update(
 					guard.grid(),
@@ -2172,6 +2177,7 @@ impl Pane {
 			rows,
 			pos,
 			self.mode.contains(TermMode::ALT_SCREEN),
+			self.map_on,
 		)
 	}
 
@@ -3108,6 +3114,28 @@ impl PaneManager {
 		}
 	}
 
+	// The minimap column comes and goes with what is running, and losing it gives
+	// the text its columns back - so it is a relayout, not a draw-time choice.
+	// Answers whether any pane changed its mind, which is the caller's cue to do
+	// one. Both probes behind it are cheap: the mode is already cached from the
+	// last build, and the program lookup is throttled inside `task`.
+	pub fn sync_minimap(&mut self, cfg: &config::Settings) -> bool {
+		let mut moved = false;
+		for pane in self.panes.values_mut() {
+			let alt = pane.mode.contains(TermMode::ALT_SCREEN);
+			let running = match pane.term.task() {
+				crate::term::Task::Running(name) => Some(name),
+				_ => None,
+			};
+			let want = minimap::wanted(cfg, alt, running.as_deref());
+			if want != pane.map_on {
+				pane.map_on = want;
+				moved = true;
+			}
+		}
+		moved
+	}
+
 	pub fn relayout(&mut self, ctx: &mut TextCtx, area: Rect) {
 		let mut out = Vec::new();
 		layout(&self.root, area, ctx.scale, &mut out);
@@ -3115,7 +3143,7 @@ impl PaneManager {
 		for (id, rect) in out {
 			if let Some(pane) = self.panes.get_mut(&id) {
 				pane.full = rect;
-				pane.rect = minimap::text_rect(rect, &cfg, ctx.scale);
+				pane.rect = minimap::text_rect(rect, &cfg, ctx.scale, pane.map_on);
 				if !cfg.minimap {
 					pane.map.clear();
 				}
@@ -3219,7 +3247,7 @@ fn spawn_pane(
 	// It stays None only when nothing is switched on at all, where the engine
 	// picks its own default and there is genuinely nothing to report.
 	let command = command.or_else(config::default_shell_argv);
-	let text = minimap::text_rect(rect, &config::settings(), ctx.scale);
+	let text = minimap::text_rect(rect, &config::settings(), ctx.scale, true);
 	let (cw, ch, cols, lines) = content_dims(text, ctx);
 	let term = TermInstance::spawn(
 		id,
@@ -3302,6 +3330,7 @@ fn spawn_pane(
 		text_built: false,
 		shape_rev: 0,
 		mode: TermMode::empty(),
+		map_on: true,
 		content_dirty: true,
 		copy_select: config::settings().copy_on_select,
 		copy_output: false,

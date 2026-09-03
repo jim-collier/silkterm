@@ -64,10 +64,38 @@ pub struct Geom {
 	pub handle: Option<Rect>,
 }
 
-// Total width of the column (preview plus bar), 0 when the minimap is off or
-// the pane is too narrow to give up the room.
-pub fn column_w(cfg: &config::Settings, pane_w: f32, scale: f32) -> f32 {
-	if !cfg.minimap {
+// Should this pane show the column at all? A full-screen program draws on the
+// alt screen, which has no scroll buffer behind it, so the map would be a
+// rectangle at the top and the room is better spent on text. Some programs do
+// their own scrolling in a way the map can still follow, and the setting names
+// those. A program with nothing to compare against (Windows cannot always say
+// what is running) is treated as not listed.
+pub fn wanted(cfg: &config::Settings, alt_screen: bool, program: Option<&str>) -> bool {
+	if !alt_screen {
+		return true;
+	}
+	let Some(program) = program else {
+		return false;
+	};
+	let running = trim_exe(program);
+	cfg.minimap_keep
+		.split_whitespace()
+		.any(|name| trim_exe(name).eq_ignore_ascii_case(running))
+}
+
+// The name to compare on: no directory, and no .exe, so one list works on both
+// platforms and a user who writes either spelling is understood.
+fn trim_exe(name: &str) -> &str {
+	let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+	base.strip_suffix(".exe")
+		.or_else(|| base.strip_suffix(".EXE"))
+		.unwrap_or(base)
+}
+
+// Total width of the column (preview plus bar), 0 when the minimap is off, the
+// pane is too narrow to give up the room, or a full-screen program has it.
+pub fn column_w(cfg: &config::Settings, pane_w: f32, scale: f32, wanted: bool) -> f32 {
+	if !cfg.minimap || !wanted {
 		return 0.0;
 	}
 	let bar = config::dip(BAR_W, scale);
@@ -77,9 +105,9 @@ pub fn column_w(cfg: &config::Settings, pane_w: f32, scale: f32) -> f32 {
 }
 
 // The part of a pane's area the terminal text gets.
-pub fn text_rect(full: Rect, cfg: &config::Settings, scale: f32) -> Rect {
+pub fn text_rect(full: Rect, cfg: &config::Settings, scale: f32, wanted: bool) -> Rect {
 	Rect {
-		w: (full.w - column_w(cfg, full.w, scale)).max(0.0),
+		w: (full.w - column_w(cfg, full.w, scale, wanted)).max(0.0),
 		..full
 	}
 }
@@ -117,7 +145,8 @@ fn span_to_pos(track_h: f32, total: usize, rows: usize, y: f32, scale: f32) -> f
 }
 
 // The column's geometry for a pane. `pos` rides the eased scroll position;
-// `alt` drops the marker.
+// `alt` drops the marker, and `on` is whether the pane is showing the column
+// at all (see `wanted`).
 pub fn geom(
 	full: Rect,
 	margin: f32,
@@ -127,8 +156,9 @@ pub fn geom(
 	rows: usize,
 	pos: f32,
 	alt: bool,
+	on: bool,
 ) -> Option<Geom> {
-	let w = column_w(cfg, full.w, scale);
+	let w = column_w(cfg, full.w, scale, on);
 	let h = (full.h - 2.0 * margin).max(0.0);
 	if w <= 0.0 || h <= 0.0 {
 		return None;
@@ -882,6 +912,29 @@ mod tests {
 		}
 	}
 
+	// A full-screen program draws on its own screen, which has no scroll buffer,
+	// so the column steps aside - unless the program is one that was named.
+	#[test]
+	fn a_full_screen_program_takes_the_column_unless_it_is_named() {
+		let mut s = cfg(true, 100.0);
+		s.minimap_keep = "less tmux screen".to_string();
+		// nothing full-screen is running, so it does not matter what is
+		assert!(wanted(&s, false, None));
+		assert!(wanted(&s, false, Some("vim")));
+		// on the alt screen only the named ones keep it
+		assert!(wanted(&s, true, Some("less")));
+		assert!(wanted(&s, true, Some("tmux")));
+		assert!(!wanted(&s, true, Some("vim")));
+		assert!(!wanted(&s, true, Some("nano")));
+		// a program nobody can name is not one that was named
+		assert!(!wanted(&s, true, None));
+		// either spelling of the same program, on either platform
+		assert!(wanted(&s, true, Some("LESS.EXE")));
+		assert!(wanted(&s, true, Some("/usr/bin/less")));
+		s.minimap_keep = r"C:	ools\less.exe".to_string();
+		assert!(wanted(&s, true, Some("less")));
+	}
+
 	#[test]
 	fn off_costs_the_pane_nothing() {
 		let full = Rect {
@@ -890,30 +943,30 @@ mod tests {
 			w: 800.0,
 			h: 600.0,
 		};
-		let text = text_rect(full, &cfg(false, 100.0), 1.0);
+		let text = text_rect(full, &cfg(false, 100.0), 1.0, true);
 		assert_eq!(text.w, full.w);
-		assert_eq!(column_w(&cfg(false, 100.0), full.w, 1.0), 0.0);
+		assert_eq!(column_w(&cfg(false, 100.0), full.w, 1.0, true), 0.0);
 	}
 
 	#[test]
 	fn the_column_takes_its_width_plus_the_bar() {
 		let s = cfg(true, 100.0);
-		assert_eq!(column_w(&s, 800.0, 1.0), 108.0);
+		assert_eq!(column_w(&s, 800.0, 1.0, true), 108.0);
 		let full = Rect {
 			x: 10.0,
 			y: 20.0,
 			w: 800.0,
 			h: 600.0,
 		};
-		assert_eq!(text_rect(full, &s, 1.0).w, 692.0);
+		assert_eq!(text_rect(full, &s, 1.0, true).w, 692.0);
 	}
 
 	#[test]
 	fn a_narrow_pane_gives_up_the_column() {
 		// half a pane is the most the column may take, and below two bar widths
 		// there is nothing worth showing
-		assert_eq!(column_w(&cfg(true, 100.0), 20.0, 1.0), 0.0);
-		assert_eq!(column_w(&cfg(true, 100.0), 120.0, 1.0), 60.0);
+		assert_eq!(column_w(&cfg(true, 100.0), 20.0, 1.0, true), 0.0);
+		assert_eq!(column_w(&cfg(true, 100.0), 120.0, 1.0, true), 60.0);
 	}
 
 	#[test]
