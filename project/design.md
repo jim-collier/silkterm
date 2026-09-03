@@ -251,6 +251,10 @@ What a line looks like:
 
 - A line does not fill its own height. Once a line draws more than a pixel tall, the gap above and below is what stops a page of text reading as one block; below a pixel there is no room for a gap and the line is taken whole, with the two ramped between so the map does not change brightness as a growing buffer crosses that point.
 
+- The column steps aside while a full-screen program runs, and the text gets its width back. Such a program draws on its own screen, which has no scroll buffer behind it, so the map would show a rectangle at the top of an otherwise empty column.
+
+- Which programs are the exception is a setting rather than a rule, because there is no way to tell from the outside whether a full-screen program is one the map could usefully follow. It ships naming a pager and the two multiplexers.
+
 Interaction:
 
 - The marker drags like a thumb and rides the scroll target, so it tracks the pointer exactly.

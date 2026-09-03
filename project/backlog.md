@@ -69,9 +69,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260903-031500
 
-- 🔘 Auto-disable the minimap when in a TUI that has no buffer that can be reached via minimap.
+- 🔬 Auto-disable the minimap when in a TUI that has no buffer that can be reached via minimap.
 	- Auto-reenable when TUI exited.
 	- Not all TUIs require this. `less`, for example, has a scrollable buffer evantually reachable via minimap. Claude Code full-screen TUI doesn't, it is always just a rectangle at the top of the minimap.
+	- Done, with a list. The column steps aside whenever a full-screen program is running and the text takes its width back, except for programs named in the new `scroll.minimap.keep_for` setting. It defaults to less, tmux and screen.
+	- The distinction the item asks for cannot be made mechanically: a pager runs on its own screen too, and there is no scroll buffer behind that screen for the map to reach, so the map is a rectangle at the top in either case. The list is how the exceptions get named instead.
+	- Losing the column changes the pane's text width, so this is a relayout rather than a drawing choice - one on the way in and one on the way out, both where the program repaints anyway.
+	- Names match with or without a directory and with or without .exe, so one list works on both platforms.
+	- 🔬 Seen on Windows with a real pager: on the list the column stays, off it the column goes and the text fills the pane. Not seen on Linux, and tmux and screen have not been tried.
+	- Opened: n/a
+	- Closed: 20260903-110000
 
 - 🔘 Need to autodetect slow environments. Then if necessary:
 	- Speed up ease-in, ease-out, and single-screen speed if the environment is slow.

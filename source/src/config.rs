@@ -227,6 +227,7 @@ pub struct Settings {
 	pub scrollbar_auto_hide: bool, // fade the scrollbar out while idle at the bottom
 	pub minimap: bool,            // miniature of the whole buffer in its own column
 	pub minimap_width: f32,       // the preview's width in logical px (the bar adds its own)
+	pub minimap_keep: String,     // programs that keep the column on their own screen
 	pub margin: f32,              // logical px between content and pane edge
 	pub opacity: f32,             // background opacity 0..1 (1 = fully opaque)
 	pub transparent_background: bool, // per-pixel bg transparency (text stays opaque): GL surface on X11, composited DX12 on Windows
@@ -358,6 +359,7 @@ impl Default for Settings {
 			scrollbar_auto_hide: true,
 			minimap: false,
 			minimap_width: 100.0,
+			minimap_keep: "less tmux screen".to_string(),
 			margin: 8.0,
 			opacity: 0.95,
 			transparent_background: false,
@@ -1043,6 +1045,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.minimap_width != orig.minimap_width {
 		doc.put_float("scroll.minimap.width", r(s.minimap_width));
 	}
+	if s.minimap_keep != orig.minimap_keep {
+		doc.put_string("scroll.minimap.keep_for", &s.minimap_keep);
+	}
 	if s.margin != orig.margin {
 		doc.put_float("window.margin", r(s.margin));
 	}
@@ -1311,6 +1316,7 @@ struct RawConfig {
 	scrollbar_auto_hide: Option<bool>,
 	minimap: Option<bool>,
 	minimap_width: Option<f32>,
+	minimap_keep: Option<String>,
 	margin: Option<f32>,
 	opacity: Option<f32>,
 	transparent_background: Option<bool>,
@@ -1535,6 +1541,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		scrollbar_auto_hide: r.b("scroll.scrollbar.auto_hide"),
 		minimap: r.b("scroll.minimap.enabled"),
 		minimap_width: r.f("scroll.minimap.width"),
+		minimap_keep: r.s("scroll.minimap.keep_for"),
 		margin: r.f("window.margin"),
 		opacity: r.f("transparency.opacity"),
 		transparent_background: r.b("transparency.enabled"),
@@ -1893,6 +1900,7 @@ fn resolve(raw: RawConfig) -> Settings {
 			.minimap_width
 			.unwrap_or(d.minimap_width)
 			.clamp(24.0, 400.0),
+		minimap_keep: raw.minimap_keep.unwrap_or(d.minimap_keep),
 		margin: raw.margin.unwrap_or(d.margin).max(0.0),
 		opacity: raw.opacity.unwrap_or(d.opacity).clamp(0.0, 1.0),
 		transparent_background: raw
@@ -3649,6 +3657,10 @@ scroll:
 	minimap:
 		# enabled: false  ## Default
 		# width: 100.0  ## Default
+		## A full-screen program draws on its own screen, which has no scroll buffer
+		## for the map to show, so the column steps aside while one runs and the text
+		## takes the room back. Programs named here keep it. Separate them with spaces.
+		# keep_for: "less tmux screen"  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Theme and colors

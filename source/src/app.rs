@@ -3369,6 +3369,12 @@ impl State {
 		self.last_frame = now;
 		let cfg = config::settings(); // one snapshot per frame, not per use/pane
 
+		// A full-screen program takes the minimap column and gives its width back to
+		// the text, so the answer has to be settled before anything is laid out.
+		if self.tabs.cur_mut().sync_minimap(&cfg) {
+			self.relayout_all();
+		}
+
 		// Regaining the window, switching tab, or moving pane focus pokes the
 		// focused pane: its cursor animation resumes immediately, from the top of
 		// the cycle - no resume delay, that one is for input.
