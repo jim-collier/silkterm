@@ -595,7 +595,9 @@ fn resolve_dir(raw: &str, label: &str) -> Option<std::path::PathBuf> {
 	if wanted.is_empty() {
 		return None;
 	}
+	// Absolute before the check, so a drive-less spelling on Windows resolves
 	let dir = std::path::PathBuf::from(expand_vars(wanted));
+	let dir = std::path::absolute(&dir).unwrap_or(dir);
 	if dir.is_dir() {
 		return Some(dir);
 	}

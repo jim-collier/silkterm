@@ -42,13 +42,17 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 A WSL pane does not start in the current directory.
+- 🔬 A WSL pane does not start in the current directory.
 	- Seen doing "Open terminal here" on Windows. Nothing hands wsl.exe a directory today - a distribution is stored as `wsl.exe -d <name>`, and the pane starts wherever the spawned process inherited from.
 	- Two cases that need separating before anything is changed, because only the second is clearly broken:
 		- The first pane of a launch inherits the folder the launcher was sitting in, which wsl.exe is supposed to translate on its own. If that is the failing case, the question is what it does instead.
 		- A new tab or split from a WSL pane inherits what the shell last reported, which is a posix path. That cannot be a Windows working directory at all. Fits the garbled `/tmp/...` prompt seen once after splitting a WSL pane.
-	- Probable fix: pass the directory to wsl.exe with `--cd` rather than relying on inheritance, since that takes a Windows path and a posix one alike. Check first that it is accepted by a wsl.exe old enough to matter.
+	- Fixed: the directory is handed to wsl.exe with `--cd`, inserted ahead of its own arguments since options have to come first. It takes a Windows path or a posix one, so whichever spelling the source pane reported goes straight through. An entry that already carries a `--cd` of its own is left alone.
+	- Fixed: a directory a shell reported is only used as a Windows working directory when it is spelled as one. The first case turned out not to be broken, since wsl.exe translates a directory it inherits on its own. The second was, and worse than expected: /tmp, /mnt and /opt all resolve against the current drive, so a posix path from a WSL pane passed the existing "does it exist" check and was taken as a directory on C:, which is the garbled prompt in the report.
+	- An explicitly chosen startup directory is made absolute before it is checked, so a drive-less spelling still resolves rather than being dropped by the new rule.
+	- 🔬 Not driven end to end: a new tab opened from a live WSL pane. The first-pane case was, and `--cd` was checked against wsl.exe 2.7.11 in both spellings.
 	- Opened: 20260830-140000
+	- Closed: 20260903-014500
 
 - 🔬 Does not work very well under tmux.
 	- One candidate: tmux's own mouse support off, a wheel over the pane is turned into cursor keys. That is what a full-screen app wants, but it recalls shell history at a bare prompt. It is the standing behavior for any full-screen app and `set -g mouse on` changes it, so this may be a documentation answer rather than a fix.
