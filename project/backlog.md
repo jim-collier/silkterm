@@ -116,7 +116,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- The installer looks for each shell on PATH and writes a shortcut only for the ones it finds. Same names and same order the Tabs menu uses. The icon comes free, since every shortcut targets silkterm.exe.
 		- The working directory is stored as the unexpanded `%USERPROFILE%`, so an all-users install does not bake the installing account's home directory into everyone's shortcuts.
 	- ✅ Plus a plain SilkTerm shortcut with no shell argument, also starting in %USERPROFILE%.
-	- 🔬 Nothing has been run on Windows. The template compiles, which covers the syntax but not the install-mode page, the shortcut working directories, or the upgrade-over path.
+	- 🔬 Driven on Windows for the first time, in a sandbox, and it found a real defect. An all-users install put the binary and the machine start menu folder in the right places but left no uninstall entry anywhere a 64-bit reader looks, so it would not have appeared in Add/Remove Programs and an upgrade over it could not have found it. Cause: NSIS builds a 32-bit installer, and a 32-bit process writing HKLM\Software lands in WOW6432Node. HKCU\Software is not redirected, which is why the per-user half worked and only that half.
+		- Fixed by pinning the 64-bit view before MultiUser reads the install directory back, and in the uninstaller. The old install sweep now also looks in the 32-bit view, so a copy installed by an earlier build is still found and cleared.
+		- Also seen and correct: one shortcut per shell actually present, named and ordered as intended, each with an unexpanded %USERPROFILE% working directory, and the installed binary reports its own version.
+		- 🔬 Still to run: the fix itself, the uninstall, and the interactive install-mode page. The sandbox on the build box wedged partway through and clearing it needs administrator rights.
 	- Opened: 20260826-123553
 
 - 🔬 Dogfood: the launcher when the network build host is down.
