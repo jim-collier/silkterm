@@ -245,7 +245,11 @@ What a line looks like:
 
 - Strokes, not glyphs. Per cell: a run of the cell's fg color where there is ink, over the cell's bg where it differs from the default. Hues survive, so errors, prompts and diffs stay findable from across the room.
 
-- Across a line, coverage adds up, so a short or indented line reads as one. Down the column, where a pixel row can cover dozens of buffer lines, the strongest ink wins instead of the average - averaging would fade a lone red line into its neighbours, which is exactly the line worth finding.
+- Across a line, coverage adds up, so a short or indented line reads as one. Down the column, color is averaged over only the lines that have ink, so a lone red line among blanks keeps its color rather than fading into them.
+
+- How bright a pixel row gets is how much ink actually landed in it, so a mostly blank stretch reads dimmer than a solid page. That is what makes density legible from a distance. One inked line among many would otherwise almost vanish, so a pixel never falls below a set share of the strongest line in it.
+
+- A line does not fill its own height. Once a line draws more than a pixel tall, the gap above and below is what stops a page of text reading as one block; below a pixel there is no room for a gap and the line is taken whole, with the two ramped between so the map does not change brightness as a growing buffer crosses that point.
 
 Interaction:
 

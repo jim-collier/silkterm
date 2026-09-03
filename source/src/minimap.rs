@@ -30,6 +30,17 @@ const MAX_LINE_PX: f32 = 2.0;
 // What a non-blank cell contributes to its pixel. Below 1 so a run of text
 // reads as a bar rather than a slab.
 const INK: f32 = 0.85;
+// A text line does not fill its own height, and once a line draws more than a
+// pixel tall the gap above and below is what keeps a page of text from reading
+// as one block. This is the ink's share of the line at the tallest a line ever
+// draws; below a pixel there is no room for a gap and the line is taken whole.
+const BAND: f32 = 0.5;
+// How far down the line the ink starts, at that same tallest.
+const BAND_TOP: f32 = 0.1;
+// A pixel row's ink is what actually landed in it, so mostly blank lines read
+// dimmer than a solid page. One line among many still has to be findable, so
+// it never falls below this share of its own strength.
+const LONE: f32 = 0.45;
 // Preview opacity. The column sits over the pane background (and the wallpaper
 // through it), so the miniature stays a hint rather than a second screen.
 const PREVIEW_A: f32 = 0.72;
@@ -426,9 +437,17 @@ impl Minimap {
 		self.rows.push_back(out);
 	}
 
-	// Squash the cached rows into the column image. Vertically the strongest
-	// ink wins rather than the average: at ten thousand lines a pixel row covers
-	// dozens of them, and averaging would wash every one of them out.
+	// Where a line's ink sits inside the `lh` pixels the line occupies, as
+	// (offset, height). Ramped between whole-line and BAND so the map does not
+	// change brightness as a growing buffer crosses a pixel per line.
+	fn band(lh: f32) -> (f32, f32) {
+		let t = (lh - 1.0).clamp(0.0, 1.0);
+		(lh * BAND_TOP * t, lh * (1.0 - t * (1.0 - BAND)))
+	}
+
+	// Squash the cached rows into the column image. Colour is the average of the
+	// lines that actually have ink, so a lone red line is not washed out by its
+	// blank neighbours; how bright the pixel gets is how much ink landed in it.
 	fn compose(&mut self, img_h: usize, scale: f32) {
 		let width = self.width;
 		let total = self.rows.len();
@@ -445,6 +464,10 @@ impl Minimap {
 			return;
 		}
 		let used = (lh * total as f32).ceil().min(img_h as f32) as usize;
+		// The band takes ink out of the line; putting it back concentrated keeps
+		// a solid page as bright as it was, with the gap between lines showing.
+		let (band_top, band_h) = Self::band(lh);
+		let gain = if band_h > 0.0 { lh / band_h } else { 0.0 };
 		for py in 0..used {
 			let acc = &mut self.acc;
 			acc.reset(width);
@@ -453,9 +476,10 @@ impl Minimap {
 			let first = ((y0 / lh).floor() as usize).min(total.saturating_sub(1));
 			let last = ((y1 / lh).ceil() as usize).clamp(first + 1, total);
 			for i in first..last {
-				let lo = (i as f32 * lh).max(y0);
-				let hi = ((i + 1) as f32 * lh).min(y1);
-				let cover = (hi - lo).max(0.0);
+				let top = i as f32 * lh + band_top;
+				let lo = top.max(y0);
+				let hi = (top + band_h).min(y1);
+				let cover = (hi - lo).max(0.0) * gain;
 				if cover <= 0.0 {
 					continue;
 				}
@@ -484,7 +508,8 @@ impl Minimap {
 				self.img[base + px * 4] = (acc.rgb[px * 3] / w).round() as u8;
 				self.img[base + px * 4 + 1] = (acc.rgb[px * 3 + 1] / w).round() as u8;
 				self.img[base + px * 4 + 2] = (acc.rgb[px * 3 + 2] / w).round() as u8;
-				self.img[base + px * 4 + 3] = (acc.alpha[px] * 255.0).round() as u8;
+				let a = w.min(1.0).max(acc.alpha[px] * LONE);
+				self.img[base + px * 4 + 3] = (a * 255.0).round() as u8;
 			}
 		}
 	}
@@ -936,8 +961,11 @@ mod tests {
 		map.seed(width, rows);
 		map.compose(200, 1.0);
 		assert_eq!(map.pixel(0, 80), [200, 0, 0, 255]);
-		assert_eq!(map.pixel(0, 81), [200, 0, 0, 255]);
 		assert_eq!(map.pixel(0, 78), [0, 200, 0, 255]);
+		// a line two pixels tall keeps its ink in the first of them, so a page of
+		// them reads as lines rather than one block
+		assert!(map.pixel(0, 81)[3] < 180, "{:?}", map.pixel(0, 81));
+		assert_eq!(map.pixel(0, 81)[0..3], [200, 0, 0]);
 		// past the ink the row is clear, so the wallpaper shows through
 		assert_eq!(map.pixel(6, 80)[3], 0);
 	}
@@ -950,20 +978,55 @@ mod tests {
 		map.seed(width, rows);
 		map.compose(400, 1.0);
 		// 50 lines capped at 2px each fill 100px of 400
-		assert_eq!(map.pixel(0, 99)[3], 255);
+		assert_eq!(map.pixel(0, 98)[3], 255);
+		assert!(map.pixel(0, 99)[3] > 0);
 		assert_eq!(map.pixel(0, 120)[3], 0);
 	}
 
 	#[test]
 	fn one_inked_line_among_many_still_shows() {
 		// 5,000 lines into 500px: 10 lines to a pixel row, and the single red one
-		// must not average away to nothing
+		// must keep its color and stay findable, dimmer than a solid page
 		let width = 4;
 		let mut rows: Vec<Row> = (0..5000).map(|_| vec![0u8; width * 4]).collect();
 		rows[2500] = row(width, 4, [200, 0, 0]);
 		let mut map = Minimap::default();
 		map.seed(width, rows);
 		map.compose(500, 1.0);
-		assert_eq!(map.pixel(0, 250), [200, 0, 0, 255]);
+		let lone = map.pixel(0, 250);
+		assert_eq!(lone[0..3], [200, 0, 0]);
+		assert!(lone[3] > 80 && lone[3] < 200, "{lone:?}");
+	}
+
+	// What the map is for is reading density from a distance, so a stretch of
+	// mostly blank lines has to look different from a solid page.
+	#[test]
+	fn a_sparse_stretch_reads_dimmer_than_a_full_one() {
+		let width = 4;
+		let solid: Vec<Row> = (0..5000).map(|_| row(width, 4, [0, 200, 0])).collect();
+		let mut sparse: Vec<Row> = (0..5000).map(|_| vec![0u8; width * 4]).collect();
+		for i in (0..5000).step_by(4) {
+			sparse[i] = row(width, 4, [0, 200, 0]);
+		}
+		let alpha = |rows: Vec<Row>| {
+			let mut map = Minimap::default();
+			map.seed(width, rows);
+			map.compose(500, 1.0);
+			map.pixel(0, 250)[3]
+		};
+		let (full, thin) = (alpha(solid), alpha(sparse));
+		assert_eq!(full, 255);
+		assert!(thin < full - 40, "solid {full}, sparse {thin}");
+		assert!(thin > 0);
+	}
+
+	// Below a pixel a line has no room for a gap, so it is taken whole and a
+	// full page is as bright as it ever was.
+	#[test]
+	fn a_line_under_a_pixel_keeps_its_whole_height() {
+		assert_eq!(Minimap::band(0.4), (0.0, 0.4));
+		assert_eq!(Minimap::band(1.0), (0.0, 1.0));
+		let (top, h) = Minimap::band(2.0);
+		assert!(top > 0.0 && h < 2.0 * 0.75);
 	}
 }
