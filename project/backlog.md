@@ -51,11 +51,17 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Fixed: a directory a shell reported is only used as a Windows working directory when it is spelled as one. The first case turned out not to be broken, since wsl.exe translates a directory it inherits on its own. The second was, and worse than expected: /tmp, /mnt and /opt all resolve against the current drive, so a posix path from a WSL pane passed the existing "does it exist" check and was taken as a directory on C:, which is the garbled prompt in the report.
 	- An explicitly chosen startup directory is made absolute before it is checked, so a drive-less spelling still resolves rather than being dropped by the new rule.
 	- 🔬 Not driven end to end: a new tab opened from a live WSL pane. The first-pane case was, and `--cd` was checked against wsl.exe 2.7.11 in both spellings.
+	- Test result: Opening a new tab with WSL1 or WSL2 does NOT preserve the path.
+		- However, the startup script behavior
 	- Opened: 20260830-140000
 	- Closed: 20260903-014500
 
-- 🔬 Does not work very well under tmux.
+- 🔘 Does not work very well under tmux.
+	- Steps to reproduce:
+		- `ls -lA ~/` does not smooth scroll. It produces near-instant output.
+		- rar out
 	- One candidate: tmux's own mouse support off, a wheel over the pane is turned into cursor keys. That is what a full-screen app wants, but it recalls shell history at a bare prompt. It is the standing behavior for any full-screen app and `set -g mouse on` changes it, so this may be a documentation answer rather than a fix.
+		- Testing: Could be part of the problem, but definitely not all of it.
 	- Opened: 20260826-123553
 
 ### New features and enhancements
