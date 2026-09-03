@@ -1916,8 +1916,12 @@ impl SettingsDialog {
 	fn disabled_tip(key: Key) -> Option<&'static str> {
 		let os = crate::sysfont::monospace();
 		match key {
-			Key::SystemFont if os.family.is_none() => Some("No system monospace font to follow"),
-			Key::SystemFontSize if os.size_pt.is_none() => Some("No system font size to follow"),
+			Key::SystemFont if os.family.is_none() => {
+				Some("The desktop reports no monospace font to follow.")
+			}
+			Key::SystemFontSize if os.size_pt.is_none() => {
+				Some("The desktop reports no font size to follow.")
+			}
 			_ => None,
 		}
 	}
@@ -2292,9 +2296,12 @@ impl SettingsDialog {
 			}
 			ThemeBtn::SaveAs | ThemeBtn::Rename => {
 				let (title, seed) = if which == ThemeBtn::SaveAs {
-					("Enter a new theme name".to_string(), String::new())
+					("Enter a name for the new theme".to_string(), String::new())
 				} else {
-					("Rename theme".to_string(), self.edited.theme.clone())
+					(
+						"Enter a new name for this theme".to_string(),
+						self.edited.theme.clone(),
+					)
 				};
 				// a rename opens on the existing name, selected, the way a rename
 				// field does everywhere else
@@ -6198,7 +6205,7 @@ mod tests {
 			// help text, and only over the row
 			assert_eq!(
 				d.hover_tip(bx.x + 2.0, bx.y + 2.0).map(|(tip, _)| tip),
-				Some("No system monospace font to follow")
+				Some("The desktop reports no monospace font to follow.")
 			);
 			assert!(d.hover_tip(bx.x + 2.0, bx.y - 200.0).is_none());
 			// the family field stays editable, since it is what actually resolves
@@ -6208,7 +6215,7 @@ mod tests {
 			// live, so the row explains what it does rather than why it cannot
 			assert_ne!(
 				d.hover_tip(bx.x + 2.0, bx.y + 2.0).map(|(tip, _)| tip),
-				Some("No system monospace font to follow")
+				Some("The desktop reports no monospace font to follow.")
 			);
 			// following the OS grays the field it overrides
 			d.edited.use_system_font = true;

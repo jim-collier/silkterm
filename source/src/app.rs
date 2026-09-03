@@ -435,13 +435,13 @@ impl MenuAction {
 				"Ignore anything typed at this pane, so a long job cannot be interrupted by accident."
 			}
 			MenuAction::ToggleFrame => {
-				"Drop the title bar and border. The window manager's own buttons go with them."
+				"The title bar and border. Turning it off takes the window manager's own buttons with it."
 			}
 			MenuAction::ToggleMenuBar => {
-				"Hide the menu bar. Right-clicking a pane still reaches the same items."
+				"The menu bar. Right-clicking a pane still reaches the same items with it off."
 			}
 			MenuAction::ToggleSingleTab => {
-				"Hide the tab strip while there is only one tab, and show it again on the second."
+				"The tab strip. Off keeps it hidden until there is a second tab."
 			}
 			MenuAction::ToggleMinimap => {
 				"Show a miniature of the whole scroll buffer beside the text. It takes the room it uses."
@@ -605,6 +605,60 @@ fn shell_submenu(accel: Option<char>, label: &str, action: fn(usize) -> MenuActi
 	} else {
 		vec![msub(accel, label, items)]
 	}
+}
+
+// What the View menu needs to know to draw its checkmarks. Every field reads
+// the same way: true means the thing is on, and its row is checked.
+#[derive(Clone, Copy)]
+struct ViewState {
+	read_only: bool,
+	fullscreen: bool,
+	window_frame: bool,
+	menu_bar: bool,
+	tab_strip: bool,
+	minimap: bool,
+	bare: bool,
+}
+
+// The View menu, apart from the window it is asking about - so the labels, the
+// order and the accelerators can be held to the style guide by test.
+fn view_menu_items(on: ViewState) -> Vec<Entry> {
+	vec![
+		mia(
+			'I',
+			"Increase font size (Ctrl+Plus)",
+			MenuAction::FontBigger,
+		),
+		mia(
+			'D',
+			"Decrease font size (Ctrl+Minus)",
+			MenuAction::FontSmaller,
+		),
+		mia('e', "Reset font size (Ctrl+0)", MenuAction::FontReset),
+		Entry::Sep,
+		mta('R', on.read_only, "Read-only", MenuAction::ToggleReadOnly),
+		Entry::Sep,
+		mta(
+			'F',
+			on.fullscreen,
+			"Fullscreen (F11)",
+			MenuAction::ToggleFullscreen,
+		),
+		// every toggle below names the thing itself and is checked while it is
+		// showing, so the checkmarks all read one way down the column
+		mta(
+			'W',
+			on.window_frame,
+			"Window frame",
+			MenuAction::ToggleFrame,
+		),
+		mta('M', on.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
+		mta('T', on.tab_strip, "Tab strip", MenuAction::ToggleSingleTab),
+		// 'M' and 'i' are both spoken for on this menu (Menu bar, Increase font
+		// size), so the accelerator falls to the n
+		mta('n', on.minimap, "Minimap", MenuAction::ToggleMinimap),
+		mta('B', on.bare, "Bare window", MenuAction::ToggleBare),
+	]
 }
 
 // The three shell rows: a new tab, and a split either way.
@@ -2228,9 +2282,9 @@ impl State {
 			]);
 		}
 		// no accelerator on the shell rows: this menu already spends every letter
-		// their labels offer - 'w' on "Hide window frame", 'H' on "Split
-		// horizontal", 'S' on "Paste Selection" - and a duplicate would make the
-		// older item unreachable, since the first match wins
+		// their labels offer - 'S' on "Paste Selection", 'H' on "Split
+		// horizontal", 'N' on "New tab" - and a duplicate would make the older
+		// item unreachable, since the first match wins
 		entries.extend([
 			mia('C', "Copy (Ctrl+Shift+C)", MenuAction::Copy),
 			mia('P', "Paste (Ctrl+Shift+V)", MenuAction::Paste),
@@ -2250,22 +2304,12 @@ impl State {
 		]);
 		entries.extend(split_shells());
 		entries.extend([
-			mi("Close pane", MenuAction::Close),
 			Entry::Sep,
-			mta(
-				'F',
-				self.window.fullscreen().is_some(),
-				"Fullscreen (F11)",
-				MenuAction::ToggleFullscreen,
-			),
-			mta(
-				'w',
-				!self.decorated,
-				"Hide window frame",
-				MenuAction::ToggleFrame,
-			),
+			mi("Close pane", MenuAction::Close),
+			// The one window-chrome row worth repeating here: with the bar hidden
+			// this menu is the only way back to it. The rest live on View.
+			Entry::Sep,
 			mta('M', self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
-			mta('B', self.bare, "Bare window", MenuAction::ToggleBare),
 			Entry::Sep,
 			mi("Reload config", MenuAction::ReloadConfig),
 			mi("Settings\u{2026} (Ctrl+,)", MenuAction::Settings),
@@ -2522,50 +2566,15 @@ impl State {
 				mt(copy_select, "Copy on select", MenuAction::ToggleCopySelect),
 				mt(copy_output, "Copy on output", MenuAction::ToggleCopyOutput),
 			],
-			2 => vec![
-				mia(
-					'I',
-					"Increase font size (Ctrl+Plus)",
-					MenuAction::FontBigger,
-				),
-				mia(
-					'D',
-					"Decrease font size (Ctrl+Minus)",
-					MenuAction::FontSmaller,
-				),
-				mia('e', "Reset font size (Ctrl+0)", MenuAction::FontReset),
-				Entry::Sep,
-				mta('R', read_only, "Read-only", MenuAction::ToggleReadOnly),
-				Entry::Sep,
-				mta(
-					'F',
-					self.window.fullscreen().is_some(),
-					"Fullscreen (F11)",
-					MenuAction::ToggleFullscreen,
-				),
-				mta(
-					'w',
-					!self.decorated,
-					"Hide window frame",
-					MenuAction::ToggleFrame,
-				),
-				mta('M', self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
-				// 'M' and 'i' are both spoken for on this menu (Menu bar, Increase
-				// font size), so the accelerator falls to the n
-				mta(
-					'n',
-					config::settings().minimap,
-					"Minimap",
-					MenuAction::ToggleMinimap,
-				),
-				mta(
-					's',
-					config::settings().hide_single_tab,
-					"Hide single tab",
-					MenuAction::ToggleSingleTab,
-				),
-				mta('B', self.bare, "Bare window", MenuAction::ToggleBare),
-			],
+			2 => view_menu_items(ViewState {
+				read_only,
+				fullscreen: self.window.fullscreen().is_some(),
+				window_frame: self.decorated,
+				menu_bar: self.menu_bar,
+				tab_strip: !config::settings().hide_single_tab,
+				minimap: config::settings().minimap,
+				bare: self.bare,
+			}),
 			3 => {
 				let mut items = vec![mia('N', "New tab (Ctrl+Shift+T)", MenuAction::NewTab)];
 				items.extend(new_tab_shells(Some('S')));
@@ -6950,9 +6959,10 @@ impl State {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Caret, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit, accel_at,
-		accel_clash, copybox_fit, copybox_place, focus_ring, key_is_typed, menu_metrics, mia, msub,
-		mta, pace_frame, tab_close_box, tab_command_line, tab_title_w, typed_title,
+		Caret, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit, ViewState,
+		accel_at, accel_clash, copybox_fit, copybox_place, focus_ring, key_is_typed, menu_metrics,
+		mia, msub, mta, pace_frame, tab_close_box, tab_command_line, tab_title_w, typed_title,
+		view_menu_items,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
@@ -7168,11 +7178,11 @@ mod tests {
 		let rows = vec![
 			mia('C', "Copy", MenuAction::Copy),
 			msub(Some('S'), "New tab with shell", vec![]),
-			mta('w', false, "Hide window frame", MenuAction::ToggleFrame),
+			mta('W', false, "Window frame", MenuAction::ToggleFrame),
 		];
 		assert_eq!(accel_clash(&rows), None);
-		// 'w' again, which is what the right-click menu would have done had the
-		// submenu row spelled its accelerator the way the Tabs menu's does
+		// 'w' again, which is what the View menu would have done had the submenu
+		// row spelled its accelerator the way the Tabs menu's does
 		let mut clashing = rows;
 		clashing.insert(1, msub(Some('w'), "New tab with shell", vec![]));
 		assert_eq!(accel_clash(&clashing), Some('w'));
@@ -7345,12 +7355,60 @@ mod tests {
 		);
 	}
 
+	// The style guide asks every View toggle to name the thing and be checked
+	// while that thing is on, so a reader can take the whole column one way. A
+	// "Hide ..." caption checked when the thing is GONE reads backwards next to
+	// its neighbours, which is what this stops coming back.
+	#[test]
+	fn every_view_toggle_is_checked_while_its_subject_is_on() {
+		let all_on = ViewState {
+			read_only: true,
+			fullscreen: true,
+			window_frame: true,
+			menu_bar: true,
+			tab_strip: true,
+			minimap: true,
+			bare: true,
+		};
+		for entry in view_menu_items(all_on) {
+			if let Entry::Item {
+				label,
+				check: Some(on),
+				..
+			} = &entry
+			{
+				assert!(
+					on,
+					"{label} is a toggle that draws unchecked with everything on"
+				);
+				assert!(
+					!label.starts_with("Hide "),
+					"{label} names the absence of a thing rather than the thing"
+				);
+			}
+		}
+	}
+
+	#[test]
+	fn the_view_menu_spends_no_accelerator_twice() {
+		let off = ViewState {
+			read_only: false,
+			fullscreen: false,
+			window_frame: false,
+			menu_bar: false,
+			tab_strip: false,
+			minimap: false,
+			bare: false,
+		};
+		assert_eq!(accel_clash(&view_menu_items(off)), None);
+	}
+
 	#[test]
 	fn accel_prefers_exact_case_then_falls_back() {
 		// 'S' must land on "Selection", not the 's' in "Paste"
 		assert_eq!(accel_at("Paste Selection", 'S'), Some(6));
-		// no capital 's' -> case-insensitive fallback finds "single"
-		assert_eq!(accel_at("Hide single tab", 's'), Some(5));
+		// no capital 'O' -> case-insensitive fallback finds "only"
+		assert_eq!(accel_at("Read-only", 'O'), Some(5));
 		assert_eq!(accel_at("Quit", 'x'), None);
 	}
 }

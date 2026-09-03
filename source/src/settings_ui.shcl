@@ -132,7 +132,8 @@ icons:
 ## right, so the run reads as belonging to it. Only labels move; every control
 ## keeps its column. A row back at the shallower depth ends the sub-group.
 ##
-## kind:      heading | toggle | slider | color | text | radio | dropdown | pair
+## kind:      heading | toggle | slider | color | text | radio | dropdown |
+##            pair | buttons | shells
 ## label:     what the row is called on screen
 ## setting:   the config.shcl path the revert arrow comments out
 ## range:     slider low, high
@@ -631,7 +632,7 @@ rows:
 		help: "Chrome that holds no control, such as the strip these tabs sit on."
 
 	ColHighlight:
-		label: Highlights
+		label: Highlight
 		kind: color
 		indent: 1
 		setting: colors.highlight

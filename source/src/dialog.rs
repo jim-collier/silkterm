@@ -1208,7 +1208,7 @@ fn layout_about(
 	#[rustfmt::skip]
 	let content: Vec<(String, [u8; 3], f32, f32, bool, f32)> = vec![
 		(format!("About {}", config::APP_NAME), menu_fg, 0.0, 0.0, true, 1.5),
-		(format!("version {}", env!("CARGO_PKG_VERSION")), menu_dim, 0.0, loose, false, 1.0),
+		(format!("Version {}", env!("CARGO_PKG_VERSION")), menu_dim, 0.0, loose, false, 1.0),
 		("Copyright © 2026 Jim Collier".into(), menu_dim, 0.0, 0.0, false, 1.0),
 		(format!("License: {}", env!("CARGO_PKG_LICENSE")), menu_dim, 0.0, 0.0, false, 1.0),
 		("Info".into(), menu_fg, 0.0, gap, true, 1.0),
