@@ -39,23 +39,35 @@ OutFile "@OUTFILE@"
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
+; A 64-bit app, but NSIS builds a 32-bit installer, and a 32-bit process
+; writing HKLM\Software lands in WOW6432Node where nothing 64-bit looks -
+; so an all-users install left no entry in Add/Remove Programs at all.
+; HKCU\Software is not redirected, which is why only that half worked.
+; Before MULTIUSER_INIT: it reads the install directory back out of the
+; registry itself.
 Function .onInit
+	SetRegView 64
 	!insertmacro MULTIUSER_INIT
 FunctionEnd
 
 Function un.onInit
+	SetRegView 64
 	!insertmacro MULTIUSER_UNINIT
 FunctionEnd
 
 ; Both hives, because a machine can hold an all-users install and a per-user one
 ; at once, and installing the other flavor would otherwise leave two entries.
-!macro DropOldInstall root
+; The view is a parameter so a copy installed before it was pinned, whose keys
+; are under WOW6432Node, is still found and cleared.
+!macro DropOldInstall root view
+	SetRegView ${view}
 	ReadRegStr $0 ${root} "${UNINSTKEY}" "QuietUninstallString"
 	${If} $0 != ""
 		ReadRegStr $1 ${root} "${UNINSTKEY}" "InstallLocation"
 		ExecWait '$0 _?=$1'
 		Delete "$1\uninstall.exe"
 	${EndIf}
+	SetRegView 64
 !macroend
 
 ; One start-menu entry per shell that is actually here.
@@ -68,8 +80,9 @@ FunctionEnd
 !macroend
 
 Section "Install"
-	!insertmacro DropOldInstall HKLM
-	!insertmacro DropOldInstall HKCU
+	!insertmacro DropOldInstall HKLM 64
+	!insertmacro DropOldInstall HKCU 64
+	!insertmacro DropOldInstall HKLM 32
 
 	SetOutPath "$INSTDIR"
 	File "@SRCEXE@"
