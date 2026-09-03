@@ -60,7 +60,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
-- 🔘 The '✘' an '✓' on the git prompt look weird in powershell. Look too skinny, and not vertically aligned with each other. They look perfect on the *linux* Bash version. (The Windows git bash looks a little off in different ways.)
+- 🔬 The '✘' an '✓' on the git prompt look weird in powershell. Look too skinny, and not vertically aligned with each other. They look perfect on the *linux* Bash version. (The Windows git bash looks a little off in different ways.)
+	- Two causes, both fixed. The pair was mismatched by design: a light check beside a heavy cross. It is the light pair now, so the two are the same weight.
+	- The other half was alignment. A character the terminal font does not carry is drawn by a fallback face, which was placed on that face's own baseline rather than the one the text beside it sits on. It is shifted onto the text baseline now, which moves every fallback glyph, not just these two.
+	- A third thing came out of it and is fixed with them. A character Unicode presents as text was being painted by an emoji face whenever one happened to carry it, which drew it in the font's own colors and ignored the color the cell was set in. The heavy check mark came out purple; so did the multiplication cross and the ballot boxes, and the copyright and registered signs were at risk of it. Real emoji are unaffected.
+	- Not fixed, and it cannot be from here: the two marks still come from different fonts when the terminal font carries one and not the other, so their weights can differ a little. Which fonts are involved depends on the machine.
+	- The bash prompt is left alone. It is vendored from its own repository and reads correctly on Linux, and on Windows it benefits from the emoji fix anyway.
+	- Opened: n/a
+	- Closed: 20260903-031500
 
 - 🔘 Auto-disable the minimap when in a TUI that has no buffer that can be reached via minimap.
 	- Auto-reenable when TUI exited.
