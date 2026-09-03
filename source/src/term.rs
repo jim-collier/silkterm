@@ -252,11 +252,16 @@ impl TermInstance {
 
 		// a CLI/menu-supplied command runs as argv[0] + args; else the default shell
 		let mut opts = tty::Options::default();
-		if let Some((prog, args)) = command.as_ref().and_then(|c| c.split_first()) {
+		let with_cd = match (command.as_deref(), cwd.as_deref()) {
+			(Some(argv), Some(dir)) => wsl_cd(argv, dir),
+			_ => None,
+		};
+		let argv = with_cd.as_deref().or(command.as_deref());
+		if let Some((prog, args)) = argv.and_then(<[String]>::split_first) {
 			opts.shell = Some(tty::Shell::new(prog.clone(), args.to_vec()));
 		}
 		// start in an inherited directory (new tab/split follows the source pane)
-		opts.working_directory = cwd;
+		opts.working_directory = usable_cwd(cwd);
 		opts.env
 			.extend(crate::integration::pane_env(command.as_deref()));
 		let pty = tty::new(&opts, win, id)?;
@@ -954,13 +959,100 @@ struct UnicodeString {
 	buffer: u64,
 }
 
+// A directory a shell reported is not always usable as the next shell's
+// working directory. A pane inside a WSL distribution reports a posix path,
+// which Windows either rejects or - worse - resolves against the current
+// drive, which is how a new tab came up in a garbled /tmp.
+fn usable_cwd(dir: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
+	let dir = dir?;
+	if cfg!(windows)
+		&& !matches!(
+			dir.components().next(),
+			Some(std::path::Component::Prefix(_))
+		) {
+		return None;
+	}
+	Some(dir)
+}
+
+// wsl.exe launches the shell inside the distribution, which does not inherit
+// the Windows working directory. --cd is how it is told, and it takes a
+// Windows path or a posix one, so whichever spelling the source pane reported
+// can go straight through. Options have to come before the command, hence the
+// insert rather than a push. None where there is nothing to do.
+fn wsl_cd(argv: &[String], dir: &std::path::Path) -> Option<Vec<String>> {
+	let prog = std::path::Path::new(argv.first()?)
+		.file_name()?
+		.to_string_lossy()
+		.to_ascii_lowercase();
+	if prog != "wsl.exe" && prog != "wsl" {
+		return None;
+	}
+	if argv.iter().any(|a| a.eq_ignore_ascii_case("--cd")) {
+		return None;
+	}
+	let mut out = argv.to_vec();
+	out.splice(
+		1..1,
+		["--cd".to_string(), dir.to_string_lossy().into_owned()],
+	);
+	Some(out)
+}
+
 #[cfg(test)]
 mod tests {
 	#[cfg(unix)]
 	use super::status_text;
 	use super::{
 		SHELL_PRIVATE_ENV, WakeGate, env_fixups, expand_refs, is_command_child, parse_env_block,
+		usable_cwd, wsl_cd,
 	};
+
+	fn argv(words: &str) -> Vec<String> {
+		words.split(' ').map(str::to_string).collect()
+	}
+
+	#[test]
+	fn wsl_is_handed_the_directory_ahead_of_its_own_command() {
+		let dir = std::path::Path::new("/home/jim");
+		assert_eq!(
+			wsl_cd(&argv("wsl.exe -d DebianWSL2"), dir).unwrap(),
+			argv("wsl.exe --cd /home/jim -d DebianWSL2")
+		);
+		// options must precede the command, so the insert goes at the front
+		assert_eq!(
+			wsl_cd(&argv("wsl.exe bash -l"), dir).unwrap(),
+			argv("wsl.exe --cd /home/jim bash -l")
+		);
+		assert_eq!(
+			wsl_cd(&argv(r"C:\Windows\System32\WSL.EXE"), dir).unwrap(),
+			argv(r"C:\Windows\System32\WSL.EXE --cd /home/jim")
+		);
+	}
+
+	#[test]
+	fn nothing_else_gets_a_cd_argument() {
+		let dir = std::path::Path::new("/home/jim");
+		assert!(wsl_cd(&argv("pwsh.exe -NoLogo"), dir).is_none());
+		assert!(wsl_cd(&argv("wslconfig.exe"), dir).is_none());
+		assert!(wsl_cd(&[], dir).is_none());
+		// a directory of its own already there is left alone
+		assert!(wsl_cd(&argv("wsl.exe --cd ~ -d DebianWSL2"), dir).is_none());
+	}
+
+	#[test]
+	fn a_posix_path_is_no_working_directory_for_windows() {
+		let keep = |s: &str| usable_cwd(Some(std::path::PathBuf::from(s))).is_some();
+		assert!(usable_cwd(None).is_none());
+		if cfg!(windows) {
+			assert!(!keep("/home/jim"));
+			assert!(!keep("/tmp"));
+			assert!(keep(r"C:\Users\jim"));
+			assert!(keep(r"\\host\share"));
+		} else {
+			assert!(keep("/home/jim"));
+		}
+	}
 
 	// The --keep-open line reads this out to the user, so it has to say the same
 	// thing on every platform.

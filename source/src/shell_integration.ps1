@@ -27,8 +27,9 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	# is written as wide characters and reaches the screen either way.
 	try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false } catch { }
 	# Code points rather than literal glyphs, because 5.1 reads a file with no
-	# byte-order mark as ANSI.
-	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2713; No = [string][char]0x2718 }
+	# byte-order mark as ANSI. The light pair: a light check beside the HEAVY cross
+	# read as two different weights, which is what they are.
+	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2713; No = [string][char]0x2717 }
 	# Root gets a different decorator, the way a unix prompt does.
 	$global:__SilkTermAdmin = $false
 	try {

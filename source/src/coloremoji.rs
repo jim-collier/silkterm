@@ -79,6 +79,31 @@ pub struct ColorGlyphs {
 	frame: u64,
 }
 
+// Should this char be PAINTED, or set in the terminal font? An emoji face
+// covers far more than it ought to be used for - the heavy check mark and the
+// copyright sign are both in Noto Color Emoji - and painting one loses the
+// ANSI color it was set in, which is how a green check in a git prompt came
+// out purple. Unicode answers with Emoji_Presentation, and the answer is No
+// for nearly everything below U+1F000, so the exceptions are listed. Above
+// that it is Yes for nearly everything, and the handful of No's up there are
+// pictures rather than text, so they are left to the font.
+pub fn wants_color(ch: char) -> bool {
+	#[rustfmt::skip]
+	const PAINTED: &[(u32, u32)] = &[
+		(0x231A, 0x231B), (0x23E9, 0x23EC), (0x23F0, 0x23F0), (0x23F3, 0x23F3),
+		(0x25FD, 0x25FE), (0x2614, 0x2615), (0x2648, 0x2653), (0x267F, 0x267F),
+		(0x2693, 0x2693), (0x26A1, 0x26A1), (0x26AA, 0x26AB), (0x26BD, 0x26BE),
+		(0x26C4, 0x26C5), (0x26CE, 0x26CE), (0x26D4, 0x26D4), (0x26EA, 0x26EA),
+		(0x26F2, 0x26F3), (0x26F5, 0x26F5), (0x26FA, 0x26FA), (0x26FD, 0x26FD),
+		(0x2705, 0x2705), (0x270A, 0x270B), (0x2728, 0x2728), (0x274C, 0x274C),
+		(0x274E, 0x274E), (0x2753, 0x2755), (0x2757, 0x2757), (0x2795, 0x2797),
+		(0x27B0, 0x27B0), (0x27BF, 0x27BF), (0x2B1B, 0x2B1C), (0x2B50, 0x2B50),
+		(0x2B55, 0x2B55),
+	];
+	let c = ch as u32;
+	c >= 0x1_F000 || PAINTED.iter().any(|&(lo, hi)| (lo..=hi).contains(&c))
+}
+
 impl ColorGlyphs {
 	pub fn new() -> Self {
 		Self {
@@ -93,6 +118,9 @@ impl ColorGlyphs {
 	// Does `ch` have a color glyph, and how big is it in design units? None for
 	// the overwhelming majority of chars, so the miss is cached too.
 	pub fn metrics(&mut self, db: &fontdb::Database, ch: char) -> Option<ColorMetrics> {
+		if !wants_color(ch) {
+			return None;
+		}
 		if let Some(hit) = self.lookup.get(&ch) {
 			let hit = (*hit)?;
 			return Some(ColorMetrics {
@@ -223,6 +251,30 @@ impl ColorGlyphs {
 
 // Faces carrying a COLR table. fontdb memory-maps its sources, so this touches
 // little more than each file's table directory.
+// Families that can draw `ch` with no color in it, monospaced ones first.
+// cosmic-text picks a fallback face on its own and will take an emoji face for
+// a character Unicode presents as text, which then paints in the font's own
+// colors and ignores the color the cell was set in.
+pub fn text_families(db: &fontdb::Database, ch: char) -> Vec<String> {
+	let mut found: Vec<(bool, String)> = db
+		.faces()
+		.filter_map(|info| {
+			let plain = db.with_face_data(info.id, |data, index| {
+				FontRef::from_index(data, index).is_ok_and(|font| {
+					font.charmap()
+						.map(ch)
+						.is_some_and(|gid| font.color_glyphs().get(gid).is_none())
+				})
+			})?;
+			let name = info.families.first()?.0.clone();
+			plain.then_some((info.monospaced, name))
+		})
+		.collect();
+	found.sort_by_key(|(mono, _)| !mono);
+	found.dedup_by(|a, b| a.1 == b.1);
+	found.into_iter().map(|(_, name)| name).collect()
+}
+
 fn color_faces(db: &fontdb::Database) -> Vec<fontdb::ID> {
 	db.faces()
 		.filter(|info| {
@@ -928,6 +980,30 @@ fn soft_light(cb: f32, cs: f32) -> f32 {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// A prompt's check mark went to the emoji face and came out purple, ignoring
+	// the color it was set in. These are the ones that must stay text.
+	#[test]
+	fn a_dingbat_is_not_an_emoji() {
+		for ch in [
+			'\u{2714}', '\u{2718}', '\u{2713}', '\u{2717}', '\u{00a9}', '\u{00ae}', '\u{2122}',
+		] {
+			assert!(
+				!wants_color(ch),
+				"{ch:?} should be set in the terminal font"
+			);
+		}
+		for ch in [
+			'\u{2705}',
+			'\u{274c}',
+			'\u{2728}',
+			'\u{2b50}',
+			'\u{1f600}',
+			'\u{1f1fa}',
+		] {
+			assert!(wants_color(ch), "{ch:?} should be painted");
+		}
+	}
 
 	fn stamped(cg: &mut ColorGlyphs, count: u16, frame: u64) {
 		for i in 0..count {

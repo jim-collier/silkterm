@@ -836,6 +836,8 @@ struct FallbackGlyph {
 	buf: Buffer,
 	ink_w: f32,
 	ink_off: f32,
+	// what to add to y so it sits on the terminal font's baseline, not its own
+	base_dy: f32,
 }
 
 // The hyperlink under the pointer: the URL, and the grid span it occupies so the
@@ -1872,11 +1874,12 @@ impl Pane {
 					attrs.style = Style::Italic;
 				}
 				let mut buf = ctx.new_plain_buffer();
-				let (ink_w, ink_off) = ctx.fill_glyph(&mut buf, ch, &attrs);
+				let (ink_w, ink_off, base_dy) = ctx.fill_glyph(&mut buf, ch, &attrs);
 				FallbackGlyph {
 					buf,
 					ink_w,
 					ink_off,
+					base_dy,
 				}
 			});
 			// Fit the ink inside its cell box (cells * cell_w wide), only ever
@@ -1890,7 +1893,9 @@ impl Pane {
 				1.0
 			};
 			let x = cell_x + (target - glyph.ink_w * scale) / 2.0 - glyph.ink_off * scale;
-			let y = row_y + cell_h * (1.0 - scale) / 2.0;
+			// plus the shift that puts a fallback face's glyph on the same baseline
+			// as the text beside it
+			let y = row_y + cell_h * (1.0 - scale) / 2.0 + glyph.base_dy * scale;
 			self.glyphs
 				.push((key, x, y, GColor::rgb(color[0], color[1], color[2]), scale));
 		}

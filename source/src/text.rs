@@ -6,8 +6,8 @@ use std::sync::RwLock;
 
 use glyphon::cosmic_text::fontdb;
 use glyphon::{
-	Attrs, Buffer, Cache, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache, TextArea,
-	TextAtlas, TextRenderer, Viewport, Wrap,
+	Attrs, Buffer, Cache, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache,
+	SwashContent, TextArea, TextAtlas, TextRenderer, Viewport, Wrap,
 };
 
 use crate::coloremoji::{ColorGlyphs, ColorMetrics};
@@ -394,6 +394,8 @@ pub struct TextCtx {
 	// COLRv1 color glyphs, which swash can't rasterize (see coloremoji.rs). Panes
 	// route an emoji cell here instead of to a monochrome fallback face.
 	color_glyphs: ColorGlyphs,
+	// Per-char monochrome fallback family, misses cached too (see text_family).
+	text_families: HashMap<char, Option<&'static str>>,
 	// Measured chrome-text widths. Keyed by text only: every chrome measurement
 	// uses the base UI attrs (color varies, which doesn't affect width), and the
 	// font is fixed for this TextCtx's life. Measuring shapes a throwaway buffer,
@@ -498,6 +500,7 @@ impl TextCtx {
 			mono_face,
 			cover_cache: HashMap::new(),
 			color_glyphs: ColorGlyphs::new(),
+			text_families: HashMap::new(),
 			ui_measure_cache: HashMap::new(),
 		}
 	}
@@ -585,9 +588,15 @@ impl TextCtx {
 	// from the text-area origin. The caller fits this to the cell box - using
 	// the ink box, not the advance, because these fallback symbols routinely
 	// paint wider than they advance and would otherwise overlap the next cell.
-	pub fn fill_glyph(&mut self, buf: &mut Buffer, ch: char, attrs: &Attrs) -> (f32, f32) {
+	pub fn fill_glyph(&mut self, buf: &mut Buffer, ch: char, attrs: &Attrs) -> (f32, f32, f32) {
+		// Where the terminal font puts the baseline in this line box. A fallback
+		// face has its own ascent, so its glyph sits a pixel or two off the text
+		// beside it - which is what made a check mark and a cross from two faces
+		// read as misaligned. Shaping an 'x' first is the cheap way to ask, and it
+		// is paid once per distinct glyph (the caller caches the buffer).
+		let want = self.shape_ink(buf, 'x', attrs).map(|ink| ink.baseline);
 		if let Some(ink) = self.shape_ink(buf, ch, attrs) {
-			return ink;
+			return self.unpaint(buf, ch, attrs, ink, want);
 		}
 		// The face the pinned family fell back to rasterizes nothing - a color
 		// emoji font (Noto Color Emoji here) hands swash a strike it can't scale, so
@@ -595,11 +604,64 @@ impl TextCtx {
 		// monospace chain, which lands on a face that does raster.
 		let mut generic = attrs.clone();
 		generic.family = Family::Monospace;
-		self.shape_ink(buf, ch, &generic)
-			.unwrap_or((self.cell_w, 0.0))
+		match self.shape_ink(buf, ch, &generic) {
+			Some(ink) => self.unpaint(buf, ch, &generic, ink, want),
+			None => (self.cell_w, 0.0, 0.0),
+		}
 	}
 
-	fn shape_ink(&mut self, buf: &mut Buffer, ch: char, attrs: &Attrs) -> Option<(f32, f32)> {
+	// A character Unicode presents as text must not come back painted: an emoji
+	// face draws it in the font's own colors and ignores the color the cell was
+	// set in, which is how a green check mark in a git prompt came out purple.
+	// Reshape against a face that has no color glyph for it, and keep what the
+	// first attempt gave if there is no such face.
+	fn unpaint(
+		&mut self,
+		buf: &mut Buffer,
+		ch: char,
+		attrs: &Attrs,
+		ink: Ink,
+		want: Option<f32>,
+	) -> (f32, f32, f32) {
+		let placed = |ink: &Ink| {
+			(
+				ink.width,
+				ink.left,
+				want.map_or(0.0, |base| base - ink.baseline),
+			)
+		};
+		if !ink.painted || crate::coloremoji::wants_color(ch) {
+			return placed(&ink);
+		}
+		if let Some(name) = self.text_family(ch) {
+			let mut plain = attrs.clone();
+			plain.family = Family::Name(name);
+			if let Some(retry) = self.shape_ink(buf, ch, &plain)
+				&& !retry.painted
+			{
+				return placed(&retry);
+			}
+			// the retry left its own glyph in the buffer, so put the first one back
+			self.shape_ink(buf, ch, attrs);
+		}
+		placed(&ink)
+	}
+
+	// First family that can draw `ch` without color. Leaked because `Attrs` wants
+	// a 'static name, and bounded by the handful of such chars ever seen.
+	fn text_family(&mut self, ch: char) -> Option<&'static str> {
+		if let Some(hit) = self.text_families.get(&ch) {
+			return *hit;
+		}
+		let found = crate::coloremoji::text_families(self.font_system.db(), ch)
+			.into_iter()
+			.next()
+			.map(|name| &*Box::leak(name.into_boxed_str()));
+		self.text_families.insert(ch, found);
+		found
+	}
+
+	fn shape_ink(&mut self, buf: &mut Buffer, ch: char, attrs: &Attrs) -> Option<Ink> {
 		shaped_ink(&mut self.font_system, &mut self.swash_cache, buf, ch, attrs)
 	}
 
@@ -859,13 +921,25 @@ fn bold_matches_cell(fs: &mut FontSystem, metrics: Metrics, cell_w: f32) -> bool
 // Shape `ch` into `buf` and measure its rasterized ink as `(width_px, left_px)`.
 // None when the face draws nothing - no glyph for it, or a glyph that rasterizes
 // empty (which is what a color-bitmap emoji face does through swash here).
+// A shaped fallback glyph: how wide its ink is, where that ink starts, and
+// whether the face drew it in its own colors.
+#[derive(Clone, Copy)]
+struct Ink {
+	width: f32,
+	left: f32,
+	painted: bool,
+	// where the FACE put the baseline in the line box, which is not where the
+	// terminal font puts it - see fill_glyph
+	baseline: f32,
+}
+
 fn shaped_ink(
 	fs: &mut FontSystem,
 	swash: &mut SwashCache,
 	buf: &mut Buffer,
 	ch: char,
 	attrs: &Attrs,
-) -> Option<(f32, f32)> {
+) -> Option<Ink> {
 	let mut utf8_buf = [0u8; 4];
 	buf.set_text(
 		fs,
@@ -875,19 +949,19 @@ fn shaped_ink(
 		None,
 	);
 	buf.shape_until_scroll(fs, false);
-	let phys = buf
-		.layout_runs()
-		.next()
-		.and_then(|run| run.glyphs.first())
-		.map(|glyph| glyph.physical((0.0, 0.0), 1.0))?;
+	let run = buf.layout_runs().next()?;
+	let baseline = run.line_y;
+	let phys = run.glyphs.first()?.physical((0.0, 0.0), 1.0);
 	let image = swash.get_image(fs, phys.cache_key).as_ref()?;
 	if image.placement.width == 0 || image.placement.height == 0 {
 		return None;
 	}
-	Some((
-		image.placement.width as f32,
-		phys.x as f32 + image.placement.left as f32,
-	))
+	Some(Ink {
+		width: image.placement.width as f32,
+		left: phys.x as f32 + image.placement.left as f32,
+		painted: image.content == SwashContent::Color,
+		baseline,
+	})
 }
 
 #[cfg(test)]
