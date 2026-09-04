@@ -83,6 +83,7 @@ The dialog is declared in `settings_ui.shcl`, which is the file to edit when add
 ## Buttons and prompts
 
 - Footer buttons sit at the bottom right, in the order Cancel, Apply, OK, left to right. OK is the default and is marked as such.
+- The footer stands well clear of the rows above it: about twice the gap between two ordinary rows. It is the one place a stray click is expensive, so it must not read as another row.
 - Cancel discards every change. Apply commits without closing. OK commits and closes.
 - A button caption is a verb or a standard word, never a sentence.
 - A prompt asking for text is a small box with one line of instruction, an entry field with its existing value selected, and Cancel and OK at the bottom right.

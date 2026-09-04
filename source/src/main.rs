@@ -142,6 +142,10 @@ fn main() -> anyhow::Result<()> {
 		return Ok(());
 	}
 
+	// Read what the machine is on a worker: the profile needs it, nothing before
+	// the first frame does, and a /proc read has no business on that path.
+	profile::probe_machine();
+
 	if let Some(path) = &cli.config {
 		config::set_config_override(path.clone());
 	}
