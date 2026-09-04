@@ -18,7 +18,7 @@
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
 ## Left to right along the top. Every heading below names one of these.
-tabs: "Background", "Text", "Cursor", "Movement", "Themes", "Window", "Shell"
+tabs: "Performance", "Background", "Text", "Cursor", "Movement", "Themes", "Window", "Shell"
 
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Layout
@@ -147,6 +147,30 @@ icons:
 ## help:      flyover text, for a control whose label does not explain it
 
 rows:
+
+	## --------------------------------------------------------------- Performance
+
+	## One setting that governs rows on four other tabs. Those rows show the
+	## profile's values and take no input while it is anything but Custom, and
+	## their flyover says so.
+	Performance:
+		kind: heading
+		label: Performance
+		tab: Performance
+
+	PerfAuto:
+		label: Choose automatically
+		kind: toggle
+		setting: performance.automatic
+		help: "Pick the profile for this machine, and step it down when the display cannot keep up with a scroll. It never steps back up until the graphics hardware changes."
+
+	PerfProfile:
+		label: Profile
+		kind: dropdown
+		options: "Custom", "Max silk", "High", "Low", "Standard terminal"
+		indent: 1
+		setting: performance.profile
+		help: "What the look is allowed to cost. Max silk is every effect at its shipped setting. High is quicker scrolling and a cheaper text halo. Low also drops the wallpaper, the halo and the cursor animation. Standard terminal has no smooth scrolling at all. Custom uses your own values on the other tabs."
 
 	## ---------------------------------------------------------------- Background
 
@@ -783,6 +807,8 @@ rows:
 ## the machine, so it is answered in code.
 
 gates:
+
+	PerfProfile: !PerfAuto
 
 	Opacity: Transparency
 	BackdropBlur: Transparency

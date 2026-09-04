@@ -116,6 +116,10 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/silk-scroll.XXXXXX")"
 cfg="${work}/config.shcl"
 cat >"$cfg" <<-'SHCL'
 	## Throwaway config for the scroll harness - not a user config.
+	## No performance profile: the settings below are the scene, and a step
+	## down on a software renderer would turn smooth scrolling off mid-run.
+	performance.automatic: false
+	performance.profile: custom
 	scroll.smooth_apps: true
 	transparency.enabled: false
 	text.scrim.enabled: false

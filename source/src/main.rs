@@ -28,6 +28,7 @@ mod minimap;
 mod palette;
 mod pane;
 mod perf;
+mod profile;
 mod scrim;
 mod scroll;
 mod settings_ui;

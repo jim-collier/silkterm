@@ -899,7 +899,7 @@ mod tests {
 	fn smooth_off_lands_every_scroll_instantly() {
 		let _g = pin();
 		// the master switch: no eased wheel, no output lag, no app slide
-		config::update(config::Settings {
+		with(config::Settings {
 			scroll_smooth: false,
 			..config::Settings::default()
 		});
@@ -1006,7 +1006,9 @@ mod tests {
 	// exists because two speed sliders shipped as no-ops, and a knob that reads
 	// as inert is worse than no knob. Each test drives the two extremes of one
 	// setting and asserts they diverge.
-	fn with(cfg: config::Settings) {
+	fn with(mut cfg: config::Settings) {
+		// the feel is read off the live settings, where a profile would mask it
+		cfg.performance_profile = "custom".to_string();
 		config::update(cfg);
 	}
 

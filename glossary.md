@@ -108,6 +108,10 @@ Fit and Anchor stored inside a wallpaper image file as XMP metadata, so an image
 
 Opacity and Blur stored inside a wallpaper image file. When SilkTerm is set to honor them, they replace the two sliders for that image, so a tagged pack looks the way it was tuned to look.
 
+## Max silk
+
+The performance profile with every effect at its shipped setting: smooth scrolling at the default feel, the wallpaper, the scrim, the cursor animation. The other profiles take things away from it. See *performance profile*.
+
 ## Minimap
 
 A column beside the text showing the whole scrollback in miniature, as colored strokes rather than readable characters. The lit band marks what is on screen; drag it to scroll, or click elsewhere in the column to go there. It takes the space it uses, so switching it on costs the terminal columns.
@@ -127,6 +131,10 @@ One shell running in one rectangle of the window. A tab starts with one pane and
 ## Palette
 
 The set of colors a theme defines: the terminal background, foreground and cursor, the two attention colors, the chrome colors, and the sixteen standard ANSI colors.
+
+## Performance profile
+
+One setting on the Performance tab that decides how much the look may cost. Custom uses your own values. Max silk, High, Low and Standard terminal each set the scrolling feel, the scrim, the cursor animation and the wallpaper for you, and the rows they set are grayed on their own tabs while one is chosen. Your own values stay in the file underneath, so Custom puts them back. With "Choose automatically" on, a new graphics adapter starts at Max silk, or Low under software rendering, and the profile steps down one level whenever the display cannot keep up with a scroll.
 
 ## PTY
 

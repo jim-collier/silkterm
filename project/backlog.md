@@ -78,9 +78,25 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260903-110000
 
-- 🔘 Need to autodetect slow environments. Then if necessary:
+- 🔬 Need to autodetect slow environments. Then if necessary:
 	- Speed up ease-in, ease-out, and single-screen speed if the environment is slow.
 	- Also consider cheaper rendering. (e.g. a quality setting mentioned elsewhere, set to lower).
+	- Enhancement: four profiles in a dropdown, plus Custom.
+		- Max silk: the current defaults for everything.
+		- High: the scroll tweaks above, and faster scrim rendering.
+		- Low: no cursor animation (but still smooth), text outline but no scrim, no wallpaper, faster rendering yet.
+		- Standard terminal: no smooth scroll, no wallpaper, no smooth cursor or animation, no text scrim or outline.
+	- Default to Max silk on a GPU that can handle it. Lower it depending on measured performance, and only change it when measured performance or the hardware changes significantly.
+	- Anything but Custom disables the relevant controls and changes their displayed values, without altering the underlying config values, so changing back to Custom restores them.
+	- Where it goes was a best guess: a Performance tab, first in the dialog, holding a "Choose automatically" switch and the Profile dropdown under it. The dropdown is grayed while automatic is on.
+	- Automatic starts a new machine at Max silk, or Low under software rendering, and steps down one profile whenever a scroll ease misses more than a third of its frames. It never steps back up on the same hardware. A hand pick with automatic off stays put.
+	- The config keeps the choice in a `performance:` block at the top of the file, with the graphics adapter it was last picked for.
+	- Not done here: the cheaper blur quality, which is its own item below.
+	- Done. The profile is applied on top of the stored settings when they go live, and the user's values stay in the file, so Custom puts everything back. The dialog grays the rows a profile sets, shows the profile's values, dims their revert arrows, and the flyover says which tab to go to.
+	- Seen on Linux under software rendering: a fresh config came up Low, stepped down to Standard terminal during one burst of output, and a pick of Max silk in the dialog put the wallpaper on screen while the file kept the wallpaper switched off underneath.
+	- 🔬 Not yet seen: Windows, a real GPU, and a display that is not 60 Hz.
+	- Opened: n/a
+	- Closed: 20260903-213000
 
 - 🔬 Minimap: Unless a line of text is rendering below 1px, don't show multiple lines as a solid block of color.
 	- And even then (at <1px per full-hieght text line), dim the line of pixels for better approximations.

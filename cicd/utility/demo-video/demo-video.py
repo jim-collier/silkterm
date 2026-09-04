@@ -668,6 +668,8 @@ def write_config(home, profile):
 	# out-of-the-box look (and can never drift from it)
 	shutil.copy2(REPO / "source/assets/default-background.jpg", wpdir / "default.jpg")
 	(cfgdir / "config.shcl").write_text('''font.use_system_family: true
+performance.automatic: false
+performance.profile: custom
 font.line_height_scale: 1.22
 window.margin: 8.0
 window.remember_size: false
