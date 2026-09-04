@@ -361,10 +361,15 @@ impl Scroll {
 		let before = self.visual;
 		self.visual += (self.mid - self.visual) * attack;
 		if let Some(speed) = limit {
-			// the chase is a speed LIMIT on the ease, not a motor: the ease's own
-			// arrival dynamics (decel, stop band, detent) take over once the gap is
-			// small enough that the unclamped ease is the slower of the two
-			self.visual = self.visual.max(before - speed * dt_s);
+			// While a burst is in flight the chase IS the motion, not a cap on the
+			// navigation ease. Its segments already end where the stop band begins,
+			// so nothing is left for the cascade to finish. Capping instead handed
+			// any advance short enough that NAV_TAU_MS was the slower of the two -
+			// a returning prompt, a line or two - to a fixed 230ms decay that no
+			// setting reaches: it crawled to a near-stop and then visibly unstuck
+			// when the stop band took over.
+			self.visual = (before - speed * dt_s).max(self.target);
+			self.mid = self.mid.min(self.visual);
 		}
 		if self.sweep && self.visual - self.target < CHASE_GROW_MIN {
 			self.sweep = false; // caught up: output easing owns the view again
@@ -421,7 +426,8 @@ impl Scroll {
 			self.app_mid -= self.app_mid * smoothing;
 			let mut lag = before + (self.app_mid - before) * attack;
 			if let Some(speed) = limit {
-				lag = lag.max(before - speed * dt_s);
+				lag = (before - speed * dt_s).max(0.0);
+				self.app_mid = self.app_mid.min(lag);
 			}
 			if before < STOP_BAND {
 				lag = lag.min((before - stop_min_lps * dt_s).max(0.0));
@@ -1241,6 +1247,61 @@ mod tests {
 		assert!(s.frac().abs() < 1e-6);
 		s.advance(0.016);
 		assert!(!s.animating() && s.frac().abs() < 1e-6);
+	}
+
+	// A prompt coming back after a command is a two-line advance, and it used to
+	// be the one motion no setting could reach: the chase only CAPPED the
+	// navigation ease, so any advance the fixed 230ms cascade was slower than
+	// got the cascade instead - a crawl to a near-stop, then a visible restart
+	// when the stop band took over. Both halves are asserted here.
+	#[test]
+	fn a_short_advance_is_one_motion_and_the_settings_reach_it() {
+		let _g = pin();
+		let steps = |cfg: config::Settings| {
+			with(cfg);
+			let mut s = Scroll::new();
+			s.set_max(1000.0);
+			s.nudge_output(2.0, 45.0);
+			let mut out = vec![];
+			let mut last = s.visual;
+			for _ in 0..600 {
+				s.advance(1.0 / 60.0);
+				out.push(last - s.visual);
+				last = s.visual;
+				if !s.animating() {
+					break;
+				}
+			}
+			out
+		};
+		let brisk = steps(config::Settings::default());
+		// speed rises to a peak and then only falls: no stall-and-restart
+		let peak = brisk
+			.iter()
+			.enumerate()
+			.max_by(|a, b| a.1.total_cmp(b.1))
+			.map(|(i, _)| i)
+			.unwrap();
+		for w in brisk[peak..].windows(2) {
+			assert!(
+				w[1] <= w[0] + 1e-4,
+				"speed picked back up after slowing: {brisk:?}"
+			);
+		}
+		let slack = steps(config::Settings {
+			scroll_ease_in_ms: 600.0,
+			scroll_ramp_up_ms: 600.0,
+			scroll_ramp_down_ms: 600.0,
+			scroll_ease_out_ms: 600.0,
+			..config::Settings::default()
+		});
+		with(config::Settings::default()); // other modules read this same store
+		assert!(
+			slack.len() > brisk.len() * 2,
+			"the feel settings must govern a two-line advance: {} frames brisk vs {} slack",
+			brisk.len(),
+			slack.len()
+		);
 	}
 
 	// Same rule at the other end: a shallow history caps the ease floor, so the
