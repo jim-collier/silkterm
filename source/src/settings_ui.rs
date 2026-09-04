@@ -213,7 +213,7 @@ const GOVERNED: &[Key] = &[
 	Key::BgContrastMask,
 ];
 const LOCKED_TIP: &str =
-	"Set by the performance profile. Choose Custom on the Performance tab to change it.";
+	"Set by the performance profile. Choose Custom on the Silk tab to change it.";
 
 // What holds keyboard focus: one control within a row, or a footer button (index
 // into `buttons()`: 0 = Cancel, 1 = Apply, 2 = OK). `Row(i, part)` names a row and
@@ -5640,12 +5640,12 @@ mod tests {
 		// a member of a locked switch is grayed by the shown value, not the stored one
 		assert!(!d.disabled(Key::BgImage), "the wallpaper is on under Max");
 		// and the flyover says why, in place of the row's own help
-		d.tab = 4; // Movement
 		let i = d
 			.specs
 			.iter()
 			.position(|s| s.key == Key::ScrollEaseIn)
 			.unwrap();
+		d.tab = d.specs[i].tab;
 		let ctl = d.checkbox(i);
 		let tip = d
 			.hover_tip_dip(ctl.x + 1.0, ctl.y + 1.0)
@@ -6246,19 +6246,26 @@ mod tests {
 	fn keyboard_focus_walks_controls_then_buttons() {
 		use super::Focus;
 		let mut d = mk_dialog(2000.0);
-		d.tab = 4; // Movement: the smooth-scroll master toggle, then two sliders
+		let master = d
+			.specs
+			.iter()
+			.position(|s| s.key == super::Key::SmoothScroll)
+			.unwrap();
+		d.tab = d.specs[master].tab;
 		let f = d.focusables();
-		assert!(f.len() >= 3, "scrolling tab has focusable rows");
+		let at = f.iter().position(|&i| i == master).unwrap();
 		d.set_mods(false, false, false);
-		d.key_tab(); // from nothing -> the master toggle (a single stop)
+		d.key_tab(); // from nothing -> the first control on the tab
 		assert_eq!(d.focus, Some(Focus::Row(f[0], 0)));
-		// each slider is two focus stops (track, then numeric field)
+		// the smooth-scroll master toggle is a single stop; each slider under it
+		// is two (track, then numeric field)
+		d.focus = Some(Focus::Row(f[at], 0));
 		d.key_tab();
-		assert_eq!(d.focus, Some(Focus::Row(f[1], 0)));
+		assert_eq!(d.focus, Some(Focus::Row(f[at + 1], 0)));
 		d.key_tab();
-		assert_eq!(d.focus, Some(Focus::Row(f[1], 1)));
+		assert_eq!(d.focus, Some(Focus::Row(f[at + 1], 1)));
 		d.key_tab();
-		assert_eq!(d.focus, Some(Focus::Row(f[2], 0)));
+		assert_eq!(d.focus, Some(Focus::Row(f[at + 2], 0)));
 		// after the LAST control the ring visits the three footer buttons
 		let last = *f.last().unwrap();
 		d.focus = Some(super::Focus::Row(last, d.parts_of(last) - 1));

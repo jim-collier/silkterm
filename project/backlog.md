@@ -78,6 +78,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: n/a
 	- Closed: 20260903-110000
 
+- 🔬 Settings dialog: gather the performance-related sections onto one "Silk" tab.
+	- The tab holds Performance, Text readability and Scrolling, in that order. The old Performance tab is gone.
+	- Text readability came off the Text tab, which now holds only the font. The scrolling feel came off the Movement tab, which now holds the wheel, the scrollbar and the minimap. Both of those tabs are sparse as a result.
+	- The section heading is "Scrolling" rather than "Smooth scrolling", because the master toggle directly under it is already called that.
+	- The two scrollbar colors moved to the Themes tab, at the end of the palette. They are still not part of a theme, and their row says so.
+	- Provisional. Easy to put back if it reads worse in use.
+	- Opened: 20260904-082000
+	- Closed: 20260904-090000
+
 - 🔬 Need to autodetect slow environments. Then if necessary:
 	- Speed up ease-in, ease-out, and single-screen speed if the environment is slow.
 	- Also consider cheaper rendering. (e.g. a quality setting mentioned elsewhere, set to lower).
@@ -88,7 +97,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Standard terminal: no smooth scroll, no wallpaper, no smooth cursor or animation, no text scrim or outline.
 	- Default to Max silk on a GPU that can handle it. Lower it depending on measured performance, and only change it when measured performance or the hardware changes significantly.
 	- Anything but Custom disables the relevant controls and changes their displayed values, without altering the underlying config values, so changing back to Custom restores them.
-	- Where it goes was a best guess: a Performance tab, first in the dialog, holding a "Choose automatically" switch and the Profile dropdown under it. The dropdown is grayed while automatic is on.
+	- Where it goes was a best guess. It leads the Silk tab, first in the dialog, holding a "Choose automatically" switch and the Profile dropdown under it. The dropdown is grayed while automatic is on.
 	- Automatic starts a new machine at Max silk, or Low under software rendering, and steps down one profile whenever a scroll ease misses more than a third of its frames. It never steps back up on the same hardware. A hand pick with automatic off stays put.
 	- The config keeps the choice in a `performance:` block at the top of the file, with the graphics adapter it was last picked for.
 	- Not done here: the cheaper blur quality, which is its own item below.
