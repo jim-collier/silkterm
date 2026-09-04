@@ -2686,6 +2686,7 @@ impl SettingsDialog {
 			// the default is on. `gate_ok` still asks the EFFECTIVE state, so the
 			// family field it overrides stays editable.
 			Key::PerfAuto => s.performance_automatic,
+			Key::PerfCheckHardware => s.performance_check_hardware,
 			Key::SystemFont => s.use_system_font,
 			Key::SystemFontSize => s.use_system_font_size,
 			Key::Transparency => s.transparent_background,
@@ -2713,6 +2714,7 @@ impl SettingsDialog {
 	fn set_toggle(&mut self, key: Key, on: bool) {
 		match key {
 			Key::PerfAuto => self.edited.performance_automatic = on,
+			Key::PerfCheckHardware => self.edited.performance_check_hardware = on,
 			Key::SystemFont => self.edited.use_system_font = on,
 			Key::SystemFontSize => self.edited.use_system_font_size = on,
 			Key::Transparency => self.edited.transparent_background = on,
@@ -2971,6 +2973,9 @@ impl SettingsDialog {
 			Key::ScrimFunction => edited.text_scrim_function == defaults.text_scrim_function,
 			Key::CursorAnimation => edited.cursor_animation == defaults.cursor_animation,
 			Key::PerfAuto => edited.performance_automatic == defaults.performance_automatic,
+			Key::PerfCheckHardware => {
+				edited.performance_check_hardware == defaults.performance_check_hardware
+			}
 			Key::PerfProfile => edited.performance_profile == defaults.performance_profile,
 			Key::BgImage => edited.wallpaper == defaults.wallpaper,
 			Key::FontFamily => edited.font_family == defaults.font_family,
@@ -3068,9 +3073,11 @@ impl SettingsDialog {
 			| Key::Minimap
 			| Key::SmoothScroll
 			| Key::PerfAuto
+			| Key::PerfCheckHardware
 			| Key::BgContrastMask => {
 				let default_val = match key {
 					Key::PerfAuto => self.defaults.performance_automatic,
+					Key::PerfCheckHardware => self.defaults.performance_check_hardware,
 					Key::Transparency => self.defaults.transparent_background,
 					Key::BackdropBlur => self.defaults.transparent_background_blur,
 					Key::TextScrim => self.defaults.text_scrim,

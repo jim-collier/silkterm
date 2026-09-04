@@ -312,7 +312,8 @@ pub struct Settings {
 	// `profile_shadow`, which is how Custom puts them back.
 	pub performance_automatic: bool, // pick the profile for this machine, and step it down when the display cannot keep up
 	pub performance_profile: String, // "custom" | "max" | "high" | "low" | "standard"
-	pub rated_hardware: String,      // the adapter the profile was last picked for ("" = never)
+	pub performance_check_hardware: bool, // re-rate when the machine underneath changes
+	pub rated_hardware: String,      // hardware id the profile was last picked for ("" = never)
 	pub profile_shadow: Option<Box<crate::profile::Shadow>>,
 	// Themes saved from the Settings dialog, whole, in file order. They resolve
 	// ahead of the built-ins, so one may carry a built-in's name.
@@ -448,6 +449,7 @@ impl Default for Settings {
 			theme_mode: "dark".to_string(),
 			performance_automatic: true,
 			performance_profile: "max".to_string(),
+			performance_check_hardware: true,
 			rated_hardware: String::new(),
 			profile_shadow: None,
 			user_themes: Vec::new(),
@@ -1007,6 +1009,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.performance_profile != orig.performance_profile {
 		doc.put_string("performance.profile", s.performance_profile.as_str());
 	}
+	if s.performance_check_hardware != orig.performance_check_hardware {
+		doc.put_bool("performance.check_hardware", s.performance_check_hardware);
+	}
 	if s.rated_hardware != orig.rated_hardware {
 		doc.put_string("performance.rated_hardware", s.rated_hardware.as_str());
 	}
@@ -1413,6 +1418,7 @@ struct RawConfig {
 	hyperlink_open_command: Option<String>,
 	performance_automatic: Option<bool>,
 	performance_profile: Option<String>,
+	performance_check_hardware: Option<bool>,
 	rated_hardware: Option<String>,
 	colors: RawColors,
 	user_themes: Vec<crate::theme::UserTheme>,
@@ -1605,6 +1611,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		theme_mode: r.s("theme_mode"),
 		performance_automatic: r.b("performance.automatic"),
 		performance_profile: r.s("performance.profile"),
+		performance_check_hardware: r.b("performance.check_hardware"),
 		rated_hardware: r.s("performance.rated_hardware"),
 		text_scrim: r.b("text.scrim.enabled"),
 		text_scrim_radius: r.f("text.scrim.radius"),
@@ -2112,6 +2119,9 @@ fn resolve(raw: RawConfig) -> Settings {
 		)
 		.key()
 		.to_string(),
+		performance_check_hardware: raw
+			.performance_check_hardware
+			.unwrap_or(d.performance_check_hardware),
 		rated_hardware: raw.rated_hardware.unwrap_or_default(),
 		profile_shadow: None,
 		user_themes: raw.user_themes,
@@ -3469,8 +3479,14 @@ performance:
 	## is the one that reads them.
 	# profile: "max"  ## Default
 
-	## The graphics adapter the profile was last picked for. Written by the
-	## program; a different adapter means a fresh pick.
+	## Look for a change of machine at each launch: a different processor,
+	## graphics adapter or amount of memory, or a screen that is now remote.
+	## A change re-rates the profile, which is a few seconds of measuring
+	## behind a banner. Off, the profile stays where it is until you move it.
+	# check_hardware: true  ## Default
+
+	## A fingerprint of the hardware the profile was last picked for. Written by
+	## the program; anything else means a fresh pick.
 	# rated_hardware: ""  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••

@@ -1011,6 +1011,10 @@ const SHELL_SCAN_DELAY: Duration = Duration::from_secs(3);
 // life of the window - leaving the Tabs menu with no shells in it. This is the
 // backstop, measured from the reveal.
 const SHELL_SCAN_MAX_WAIT: Duration = Duration::from_secs(20);
+// The performance benchmark waits for the wallpaper too: it is one of the
+// things being timed, and starting before it is on screen would rate a lighter
+// window than the one that ends up in front of the person.
+const BENCH_DELAY: Duration = Duration::from_millis(600);
 const VRAM_CHECK_IVL: Duration = Duration::from_secs(2); // GL sentinel probe tick (VT-switch texture loss)
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
 // Chrome geometry, all DIP (see config::dip).
@@ -1020,6 +1024,8 @@ const TAB_TIP_PAD: f32 = 8.0; // inside the tip box, DIP
 const MENU_TIP_PAD: f32 = 6.0; // inside a menu row's tip box, DIP
 const MENU_TIP_GAP: f32 = 6.0; // between the popup's edge and the tip beside it, DIP
 const MENU_TIP_MAX_W: f32 = 320.0; // widest a menu tip's text gets before it wraps, DIP
+const BENCH_BANNER_PAD: f32 = 22.0; // inside the benchmark banner's box, DIP
+const BENCH_SCRIM_ALPHA: f32 = 0.55; // how far the window dims under the banner
 const TAB_TIP_GAP: f32 = 4.0; // between the tab bar and the tip below it, DIP
 const TAB_CLOSE_W: f32 = 26.0; // right-edge close-button region per tab (title clips before it)
 const TAB_CLOSE_M: f32 = 6.0; // balanced top/right/bottom margin around the close button box
@@ -1099,14 +1105,27 @@ fn refresh_hz(window: &Window) -> f32 {
 		.map_or(60.0, |mhz| mhz as f32 / 1000.0)
 }
 
-// With the profile on automatic, a graphics adapter the config has not seen
-// gets a fresh pick, and the pick is written down against that adapter so the
-// next launch on it leaves the profile where the rating left it.
-fn rate_hardware(info: &wgpu::AdapterInfo) {
+// With the profile on automatic, hardware the config has not seen gets a fresh
+// pick, written down against that hardware so the next launch on it leaves the
+// profile where the rating left it. Answers the id a benchmark should write
+// when it finishes, or None where there is nothing to time - a remote screen or
+// a software renderer, both of which are decided here and written now.
+fn rate_hardware(info: &wgpu::AdapterInfo) -> Option<String> {
 	let live = config::settings();
-	let hardware = crate::profile::fingerprint(info);
+	let hardware = crate::profile::hardware_id(info);
 	if !live.performance_automatic || live.rated_hardware == hardware {
-		return;
+		return None;
+	}
+	// A machine already rated once is only re-rated when asked for; the first
+	// rating has to happen either way, or there is no profile at all.
+	if !live.performance_check_hardware && !live.rated_hardware.is_empty() {
+		return None;
+	}
+	if crate::profile::worth_measuring(info) {
+		// Nothing is written yet. The id goes down with the measured answer, so a
+		// window closed mid-run is measured again next launch instead of leaving
+		// the heaviest rung recorded as this machine's rating.
+		return Some(hardware);
 	}
 	let orig = (*live).clone();
 	let mut new = orig.clone();
@@ -1114,6 +1133,7 @@ fn rate_hardware(info: &wgpu::AdapterInfo) {
 	new.performance_profile = crate::profile::first_pick(info).key().to_string();
 	let _ = config::persist(&orig, &new);
 	config::update(new);
+	None
 }
 
 // Next frame on a FIXED schedule, not `now + interval` - the latter adds each
@@ -1392,6 +1412,13 @@ struct State {
 	// before it counts as a miss (profile.rs)
 	rating: crate::profile::Rating,
 	frame_budget_ms: f32,
+	// The startup benchmark: a run in flight, and when one is due. While a run
+	// is in flight the window renders flat out, takes no input, and wears the
+	// banner (see bench_layout).
+	bench: Option<crate::profile::Bench>,
+	bench_at: Option<Instant>,
+	// Set while a run is owed or in flight; written down with the answer.
+	bench_id: Option<String>,
 	dirty: bool,
 	bell_flash: f32,    // visual-bell brightness, set to 1.0 on BEL, decays to 0
 	size_tracked: bool, // false until the first frame, so startup/programmatic resizes don't overwrite remembered_size
@@ -2131,6 +2158,41 @@ impl State {
 			.into_iter()
 			.enumerate()
 			.map(|(i, line)| (x + pad, y + pad + line_h * i as f32, line))
+			.collect();
+		Some((Rect { x, y, w, h }, placed))
+	}
+
+	// The benchmark's banner: one box in the middle of the window, over a dimmed
+	// screen. It is what makes the run modal - the window behind it keeps drawing
+	// (that is the thing being timed, and it is worth seeing) but takes no input
+	// until the run is over.
+	fn bench_layout(&mut self) -> Option<(Rect, Vec<(f32, f32, String)>)> {
+		self.bench.as_ref()?;
+		let lines = ["Testing performance", "This takes a few seconds."];
+		let attrs = crate::text::ui_attrs();
+		let pad = self.text.dip(BENCH_BANNER_PAD);
+		let line_h = self.text.ui_line_h;
+		let text_w = lines.iter().fold(0.0f32, |widest, line| {
+			widest.max(self.text.measure_ui_text(line, &attrs))
+		});
+		let w = text_w + 2.0 * pad;
+		let h = line_h * lines.len() as f32 + 2.0 * pad;
+		let (win_w, win_h) = (self.gfx.config.width as f32, self.gfx.config.height as f32);
+		let (x, y) = (
+			((win_w - w) / 2.0).max(0.0).round(),
+			((win_h - h) / 2.0).max(0.0).round(),
+		);
+		let placed = lines
+			.iter()
+			.enumerate()
+			.map(|(i, line)| {
+				let left = x + (w - self.text.measure_ui_text(line, &attrs)) / 2.0;
+				(
+					left.round(),
+					y + pad + line_h * i as f32,
+					(*line).to_string(),
+				)
+			})
 			.collect();
 		Some((Rect { x, y, w, h }, placed))
 	}
@@ -3374,6 +3436,37 @@ impl State {
 		self.dirty = true;
 	}
 
+	// Put a rung's settings live for the length of the benchmark. Nothing is
+	// written: the run is a measurement and only its answer reaches the file.
+	fn set_live_profile(&mut self, profile: crate::profile::Profile) {
+		let before = config::settings();
+		let mut next = (*before).clone();
+		crate::profile::unapply(&mut next);
+		next.performance_profile = profile.key().to_string();
+		self.apply_new_settings(&before, next, false);
+	}
+
+	// The benchmark landed on a rung. Write it down against the hardware it was
+	// measured on, and give the window back.
+	fn finish_bench(&mut self, pick: crate::profile::Profile) {
+		self.bench = None;
+		self.rating.reset();
+		eprintln!(
+			"{}: performance profile measured for this hardware: {}",
+			config::APP_NAME,
+			pick.label()
+		);
+		let orig = (*config::settings()).clone();
+		let mut new = orig.clone();
+		crate::profile::unapply(&mut new);
+		new.performance_profile = pick.key().to_string();
+		if let Some(id) = self.bench_id.take() {
+			new.rated_hardware = id;
+		}
+		let _ = config::persist(&orig, &new);
+		self.apply_new_settings(&orig, new, false);
+	}
+
 	// The display missed its budget over a whole window of eased frames: with
 	// the profile on automatic, take one step down the ladder and write it down.
 	fn step_down_profile(&mut self) {
@@ -3935,27 +4028,43 @@ impl State {
 		// and where they sit differ.
 		let tip_layout = self.tab_tip_layout();
 		let menu_tip = self.menu_tip_layout();
+		let bench_banner = self.bench_layout();
 		let border = self.text.dip(CHROME_HAIRLINE);
-		let tip_range = (tip_layout.is_some() || menu_tip.is_some()).then(|| {
-			let start = instances.len() as u32;
-			for (box_rect, _) in tip_layout.iter().chain(menu_tip.iter()) {
-				instances.push(rect_inst(
-					box_rect.x - border,
-					box_rect.y - border,
-					box_rect.w + 2.0 * border,
-					box_rect.h + 2.0 * border,
-					config::menu_border(),
-				));
-				instances.push(rect_inst(
-					box_rect.x,
-					box_rect.y,
-					box_rect.w,
-					box_rect.h,
-					config::menu_bg(),
-				));
-			}
-			(start, instances.len() as u32)
-		});
+		let tip_range = (tip_layout.is_some() || menu_tip.is_some() || bench_banner.is_some())
+			.then(|| {
+				let start = instances.len() as u32;
+				// the banner dims the whole window first, which is the visible half of
+				// "this window is busy"
+				if bench_banner.is_some() {
+					instances.push(RectInstance {
+						pos: [0.0, 0.0],
+						size: [self.gfx.config.width as f32, self.gfx.config.height as f32],
+						color: [0.0, 0.0, 0.0, BENCH_SCRIM_ALPHA],
+						..Default::default()
+					});
+				}
+				for (box_rect, _) in tip_layout
+					.iter()
+					.chain(menu_tip.iter())
+					.chain(bench_banner.iter())
+				{
+					instances.push(rect_inst(
+						box_rect.x - border,
+						box_rect.y - border,
+						box_rect.w + 2.0 * border,
+						box_rect.h + 2.0 * border,
+						config::menu_border(),
+					));
+					instances.push(rect_inst(
+						box_rect.x,
+						box_rect.y,
+						box_rect.w,
+						box_rect.h,
+						config::menu_bg(),
+					));
+				}
+				(start, instances.len() as u32)
+			});
 		let overlay_range = match (menu_range, tip_range) {
 			(Some((start, _)), Some((_, end))) | (Some((start, end)), None) => Some((start, end)),
 			(None, other) => other,
@@ -4351,14 +4460,22 @@ impl State {
 		// geometry/labels/color. Only skip alongside text_same - the end-of-frame
 		// atlas trim (which runs when !text_same) drops glyphs the retained overlay
 		// vertex buffers still reference, so a trim frame must re-prepare.
-		if self.menu.is_some() || tip_layout.is_some() || menu_tip.is_some() {
+		if self.menu.is_some()
+			|| tip_layout.is_some()
+			|| menu_tip.is_some()
+			|| bench_banner.is_some()
+		{
 			let overlay_sig = {
 				use std::hash::{Hash, Hasher};
 				let mut h = std::collections::hash_map::DefaultHasher::new();
 				self.gfx.config.width.hash(&mut h);
 				self.gfx.config.height.hash(&mut h);
 				self.chrome_rev.hash(&mut h); // covers a menu color change
-				for (_, placed) in tip_layout.iter().chain(menu_tip.iter()) {
+				for (_, placed) in tip_layout
+					.iter()
+					.chain(menu_tip.iter())
+					.chain(bench_banner.iter())
+				{
 					for (left, top, line) in placed {
 						left.to_bits().hash(&mut h);
 						top.to_bits().hash(&mut h);
@@ -4409,9 +4526,9 @@ impl State {
 						specs.push((*left, *top, buf));
 					}
 				}
-				// a menu row's tip shapes in the interface font, like the rows it is
-				// explaining
-				if let Some((box_rect, placed)) = &menu_tip {
+				// a menu row's tip and the benchmark banner shape in the interface
+				// font, like the rows and the chrome they sit among
+				for (box_rect, placed) in menu_tip.iter().chain(bench_banner.iter()) {
 					for (left, top, line) in placed {
 						let mut buf = self.text.new_ui_buffer(box_rect.w, self.text.ui_line_h);
 						buf.set_text(
@@ -4802,6 +4919,9 @@ impl State {
 				self.window.set_visible(true);
 				self.shell_scan_at = Some(Instant::now() + SHELL_SCAN_DELAY);
 				self.shell_scan_cap = Some(Instant::now() + SHELL_SCAN_MAX_WAIT);
+				if self.bench_id.is_some() {
+					self.bench_at = Some(Instant::now() + BENCH_DELAY);
+				}
 			}
 		}
 		// This frame carried whatever the wallpaper worker answered, so the scan's
@@ -4815,6 +4935,9 @@ impl State {
 			if self.shell_scan_at.is_some() {
 				let due = Instant::now() + SHELL_SCAN_DELAY;
 				self.shell_scan_at = Some(self.shell_scan_cap.map_or(due, |cap| due.min(cap)));
+			}
+			if self.bench_at.is_some() {
+				self.bench_at = Some(Instant::now() + BENCH_DELAY);
 			}
 		}
 		if env_flag("SILK_DUMP") {
@@ -5395,8 +5518,9 @@ impl ApplicationHandler<UserEvent> for App {
 		// System theme mode: seed the OS dark/light bit before the first frame so a
 		// system-mode theme resolves to the right palette immediately (no flash).
 		config::reapply_for_os(!matches!(window.theme(), Some(winit::window::Theme::Light)));
-		// New graphics hardware starts the performance profile over.
-		rate_hardware(&gfx.adapter_info);
+		// New hardware starts the performance profile over, and answers with the id
+		// to write down if the pick is worth measuring rather than assuming.
+		let bench_id = rate_hardware(&gfx.adapter_info);
 		// Window-level CLI style (--font-name/-size, colors, bg image/fit/opacity)
 		// overrides the loaded settings before text + bg image are built. Applied
 		// after the theme/OS palette settles so it isn't clobbered. Per-pane style
@@ -5516,6 +5640,9 @@ impl ApplicationHandler<UserEvent> for App {
 			last_frame: Instant::now(),
 			rating: crate::profile::Rating::new(),
 			frame_budget_ms,
+			bench: None,
+			bench_at: None,
+			bench_id,
 			dirty: true,
 			bell_flash: 0.0,
 			size_tracked: false,
@@ -5678,6 +5805,19 @@ impl ApplicationHandler<UserEvent> for App {
 		let Some(state) = self.state.as_mut() else {
 			return;
 		};
+		// The startup benchmark owns the window while it runs: anything typed or
+		// clicked would change what is being timed. Closing the window still works.
+		if state.bench.is_some()
+			&& matches!(
+				event,
+				WindowEvent::KeyboardInput { .. }
+					| WindowEvent::MouseInput { .. }
+					| WindowEvent::MouseWheel { .. }
+					| WindowEvent::CursorMoved { .. }
+					| WindowEvent::Ime(_)
+			) {
+			return;
+		}
 		match event {
 			WindowEvent::CloseRequested => event_loop.exit(),
 
@@ -6871,6 +7011,24 @@ impl ApplicationHandler<UserEvent> for App {
 			state.dirty = true;
 		}
 		let reveal_wake = (!state.revealed).then_some(state.reveal_deadline);
+		// The startup benchmark: due, so start it on the heaviest rung. A pinned
+		// frame rate would time itself rather than the machine, so it cancels the
+		// run outright (the first pick stands).
+		if state.bench_at.is_some_and(|at| Instant::now() >= at) {
+			state.bench_at = None;
+			if max_fps().is_none() {
+				state.bench = Some(crate::profile::Bench::new());
+				let rung = state
+					.bench
+					.as_ref()
+					.map_or(crate::profile::Profile::Max, crate::profile::Bench::profile);
+				state.set_live_profile(rung);
+			}
+		}
+		// A run renders flat out: the periods between frames ARE the measurement.
+		if state.bench.is_some() {
+			state.dirty = true;
+		}
 		// Fully hidden window: don't build a frame nobody can see. PTY reading
 		// never stops, so the grid keeps up and the reveal is one catch-up frame.
 		let hidden = state.freeze_sync();
@@ -6886,7 +7044,17 @@ impl ApplicationHandler<UserEvent> for App {
 			let animating = crate::perf::timed(&crate::perf::RENDER_NS, || state.render(force));
 			// how the ease is paced tells whether the display keeps up; a pinned
 			// rate paces itself and says nothing about the hardware
-			if scroll_anim && max_fps().is_none() {
+			if state.bench.is_some() {
+				// a run is timing the rungs itself; the step-down would be reading
+				// the same frames and moving the profile out from under it
+				state.rating.pause();
+				let budget = state.frame_budget_ms;
+				match state.bench.as_mut().map(|b| b.note(Instant::now(), budget)) {
+					Some(crate::profile::Step::Rung(next)) => state.set_live_profile(next),
+					Some(crate::profile::Step::Done(pick)) => state.finish_bench(pick),
+					_ => {}
+				}
+			} else if scroll_anim && max_fps().is_none() {
 				state.rating.note(Instant::now());
 				if state.rating.verdict(state.frame_budget_ms) == Some(true) {
 					state.step_down_profile();
@@ -6899,7 +7067,9 @@ impl ApplicationHandler<UserEvent> for App {
 			// or the last wakeup of a burst could leave a stale frame up
 			let retry = state.tabs.cur().panes.values().any(|p| p.content_dirty);
 			let pace = max_fps().map(|fps| Duration::from_secs_f64(1.0 / fps));
-			if animating && (scroll_anim || bell_anim) {
+			if state.bench.is_some() {
+				ControlFlow::Poll
+			} else if animating && (scroll_anim || bell_anim) {
 				// scroll (the flagship smooth feature) and the bell flash render
 				// at full rate; fresh content needs no Poll - each PTY read
 				// batch arrives as its own Wakeup
