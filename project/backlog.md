@@ -42,6 +42,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- ✅ A prompt coming back after a command slides in oddly: it slows almost to a stop partway, then unsticks and finishes.
+	- Cause: the output chase was only a speed CAP on the plain navigation ease, so any advance short enough that the ease was the slower of the two got the ease instead. That ease decays on a fixed 230ms constant no setting reaches, and it hands over to the sharpened stop inside the last fraction of a line - which is where the speed picks back up. A returning prompt is one or two lines, so it hit this every time.
+	- Fixed: while a burst is in flight the chase drives the view rather than capping it. Its segments already end exactly where the stop band begins, so the handover is continuous, and the five feel settings now govern a two-line advance the same way they govern a long one. Measured here, a prompt arrives in about a third of a second instead of half a second, with no stall in the middle. Long bursts are unchanged.
+	- Not a regression from the tmux work: a build from before it shows the same stall, slightly longer.
+	- Opened: 20260904-160838
+	- Closed: 20260904-160838
+
 - ✅ Does not work very well under tmux.
 	- Steps to reproduce:
 		- `ls -lA ~/` does not smooth scroll. It produces near-instant output.
