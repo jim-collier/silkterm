@@ -74,36 +74,91 @@ const NAV_TAU_MS: f32 = 230.0;
 // few pixels sweep in instead of crawling. Above the band the ease-out is
 // untouched.
 const STOP_BAND: f32 = 0.4;
-// Alt-screen app-scroll easing: a full-screen app (less, vim, muffer, ...) owns
-// its screen and scrolls by repainting whole lines. `app_off` is a transient
-// visual offset (in lines, signed: + shifts content down) set the moment such a
-// repaint is detected, then eased to 0 so the new frame slides into place. The
-// revealed strip is filled from the retained previous frame (see pane.rs), so the
-// cap is the detector's max per-step shift, not a bg-fill budget. Kept in step
-// with pane.rs APP_SCROLL_MAX; wheel notches in a mouse-tracking app repaint a
-// bigger jump than line-by-line output, so the window has to be generous or the
-// wheel just hard-cuts.
-const APP_OFF_CAP: f32 = 24.0;
-// Alt-scroll lag control: below APP_LAG_SOFT lines the slide eases at the smooth
-// configured tau; from there to APP_LAG_HARD the ease ramps toward MIN_APP_TAU so
-// a fast burst can't lag far enough to open a blank reveal strip (one retained
-// frame fills only ~one line back).
-const APP_LAG_SOFT: f32 = 1.2;
-const APP_LAG_HARD: f32 = 4.0;
-const MIN_APP_TAU_MS: f32 = 22.0;
+// Alt-screen app-scroll easing: a full-screen app (less, vim, tmux, ...) owns
+// its screen and scrolls a region of it in place. `app_off` is a transient
+// visual offset (in lines, signed: + shifts content down) grown by each scroll
+// step, then eased to 0 with the output chase's own curve so the frame slides
+// into place. The rows the scroll pushed off the region fill the gap (the strip
+// in pane.rs), so the offset may never exceed what that strip holds: the caller
+// passes the cover, and SLIDE_ROWS is the most either side keeps.
+pub const SLIDE_ROWS: usize = 128;
+
+// The output chase's speed state. One drives the scrollback view and one the
+// alt-screen slide, so an app's region scroll eases with the same curve as
+// plain output and the five feel sliders shape both.
+#[derive(Clone, Copy)]
+struct Chase {
+	speed: f32,     // catch-up speed, lines/s (the segment the curve is in falls out of it)
+	knee: f32,      // speed where the current Ease-in segment hands off to Ramp-up
+	burst: f32,     // lines this burst has advanced (resets once settled at rest)
+	overflow: bool, // burst topped a screenful: its first line is off - uncapped
+}
+
+impl Chase {
+	const REST: Chase = Chase {
+		speed: 0.0,
+		knee: KNEE_LPS,
+		burst: 0.0,
+		overflow: false,
+	};
+
+	// `grown` more lines arrived; `view_rows` is the height they scroll in.
+	fn nudge(&mut self, grown: f32, view_rows: f32) {
+		if self.burst <= 0.0 {
+			// fresh burst: the curve starts at Y=0 - Ease-in owns the first moments
+			self.speed = 0.0;
+			self.knee = KNEE_LPS;
+		}
+		self.burst += grown;
+		if view_rows > 0.0 && self.burst >= view_rows && !self.overflow {
+			self.overflow = true;
+			// the cap lifts: Ease-in runs once more from the speed it found
+			// itself at (same slope, same delta), then Ramp-up resumes
+			self.knee = self.speed + KNEE_LPS;
+		}
+	}
+
+	// One frame of the chase, one segment at a time: advance the curve and answer
+	// the speed the view may close at, given the `backlog` still to cover. Ease-in
+	// lifts the speed linearly to the knee; Ramp-up doubles it toward the current
+	// cap; the braking curve ("Ramp-down", traced backwards from "Ease-out") caps
+	// it the whole way at what can still be wound down within the remaining
+	// backlog - which both holds the reserve behind a live burst and owns the
+	// deceleration once output ceases.
+	fn limit(&mut self, backlog: f32, dt_s: f32, cfg: &config::Settings) -> f32 {
+		if self.speed < self.knee {
+			let ease_in_s = cfg.scroll_ease_in_ms.max(1.0) / 1000.0;
+			self.speed = (self.speed + KNEE_LPS * dt_s / ease_in_s).min(self.knee);
+		} else {
+			let double_s = cfg.scroll_ramp_up_ms.max(1.0) / 1000.0;
+			self.speed *= (dt_s / double_s).exp2();
+		}
+		if !self.overflow {
+			let onscreen_v = 1000.0 / cfg.scroll_single_screen_tau_ms.max(1.0);
+			self.speed = self.speed.min(onscreen_v);
+		}
+		// braking: halving per "Ramp-down" from here must land on the ease-out
+		// handoff (the STOP_BAND edge, at its closing speed) with no backlog left
+		let v_land = STOP_BAND * 1000.0 / cfg.scroll_ease_out_ms.max(1.0);
+		let brake_tau_s = cfg.scroll_ramp_down_ms.max(1.0) / 1000.0 / std::f32::consts::LN_2;
+		self.speed = self
+			.speed
+			.min(v_land + (backlog - STOP_BAND).max(0.0) / brake_tau_s);
+		self.speed
+	}
+}
 
 pub struct Scroll {
 	target: f32,
 	visual: f32,
 	mid: f32, // cascade stage between target and visual: gives the ease its ease-in
 	max: f32,
-	chase: f32, // output catch-up speed, lines/s (the segment the curve is in falls out of it)
-	knee: f32,  // speed where the current Ease-in segment hands off to Ramp-up
-	app_off: f32, // alt-screen slide offset, eased toward 0 (see APP_OFF_CAP)
-	burst: f32, // lines this output burst has advanced (resets once settled at rest)
-	overflow: bool, // burst topped a screenful: its first line is off - uncapped chase
-	sweep: bool, // user jumped back to the bottom: full ease speed until caught up
-	wheel_dir: f32, // sign of the last wheel motion, so the detent lands ahead of it
+	chase: Chase,     // the output chase: how fast the view may close on the target
+	app_off: f32,     // alt-screen slide offset, eased toward 0 (see SLIDE_ROWS)
+	app_mid: f32,     // the slide's cascade stage, as `mid` is to `visual`
+	app_chase: Chase, // the slide's own chase, so an app's scroll eases like output
+	sweep: bool,      // user jumped back to the bottom: full ease speed until caught up
+	wheel_dir: f32,   // sign of the last wheel motion, so the detent lands ahead of it
 }
 
 impl Scroll {
@@ -113,22 +168,40 @@ impl Scroll {
 			visual: 0.0,
 			mid: 0.0,
 			max: 0.0,
-			chase: 0.0,
-			knee: KNEE_LPS,
+			chase: Chase::REST,
 			app_off: 0.0,
-			burst: 0.0,
-			overflow: false,
+			app_mid: 0.0,
+			app_chase: Chase::REST,
 			sweep: false,
 			wheel_dir: 0.0,
 		}
 	}
 
-	// An alt-screen app repainted shifted by `lines` (signed). Sets (not stacks)
-	// the slide offset: the retained previous frame is exactly one repaint back, so
-	// each detected step is its own slide - a fast run just replaces the offset each
-	// frame (content lags ~one step, then settles), always fillable from that frame.
-	pub fn app_scroll(&mut self, lines: f32) {
-		self.app_off = lines.clamp(-APP_OFF_CAP, APP_OFF_CAP);
+	// An app's region scrolled `shift` lines (signed, + = content moved up). The
+	// slide grows by it, so the content on screen stays continuous across the
+	// step, and eases home from there the way `nudge_output` does - same floor,
+	// same cascade. `cover` is how many rows the strip can fill, which bounds the
+	// offset (a gap past it would show background); `view_rows` is the region's
+	// height, for the chase's screenful test. A step the other way starts a fresh
+	// slide - its strip flips sides too.
+	pub fn app_scroll(&mut self, shift: f32, cover: f32, view_rows: f32) {
+		if shift == 0.0 {
+			return;
+		}
+		if self.app_off != 0.0 && (self.app_off < 0.0) != (shift < 0.0) {
+			self.cancel_app_scroll();
+		}
+		let cfg = config::settings();
+		if !cfg.scroll_smooth {
+			return;
+		}
+		let floor = cfg.output_ease_lines.clamp(0.0, MAX_BACKLOG);
+		let cover = cover.clamp(0.0, SLIDE_ROWS as f32);
+		let before = self.app_off.abs();
+		let lag = (before + shift.abs()).max(floor).min(cover);
+		self.app_mid = (self.app_mid + (lag - before)).clamp(0.0, lag);
+		self.app_chase.nudge(shift.abs(), view_rows);
+		self.app_off = shift.signum() * lag;
 	}
 
 	// Hard-cut any in-flight alt-screen slide. An alt-screen enter/exit is an
@@ -136,6 +209,8 @@ impl Scroll {
 	// would drag the wrong screen's content.
 	pub fn cancel_app_scroll(&mut self) {
 		self.app_off = 0.0;
+		self.app_mid = 0.0;
+		self.app_chase = Chase::REST;
 	}
 
 	// Freeze catch-up (hidden tab shown, minimized window restored): land at rest
@@ -144,11 +219,8 @@ impl Scroll {
 	pub fn snap(&mut self) {
 		self.visual = self.target;
 		self.mid = self.target;
-		self.chase = 0.0;
-		self.knee = KNEE_LPS;
-		self.app_off = 0.0;
-		self.burst = 0.0;
-		self.overflow = false;
+		self.chase = Chase::REST;
+		self.cancel_app_scroll();
 		self.sweep = false;
 	}
 
@@ -232,18 +304,7 @@ impl Scroll {
 			if !cfg.scroll_smooth {
 				return; // master off: the grid already sits at the bottom, no lag to ease
 			}
-			if self.burst <= 0.0 {
-				// fresh burst: the curve starts at Y=0 - Ease-in owns the first moments
-				self.chase = 0.0;
-				self.knee = KNEE_LPS;
-			}
-			self.burst += grown;
-			if view_rows > 0.0 && self.burst >= view_rows && !self.overflow {
-				self.overflow = true;
-				// the cap lifts: Ease-in runs once more from the speed it found
-				// itself at (same slope, same delta), then Ramp-up resumes
-				self.knee = self.chase + KNEE_LPS;
-			}
+			self.chase.nudge(grown, view_rows);
 			// the floor is capped by the history there is to ease through: a
 			// fresh terminal or one just cleared has no room past the grid
 			let floor = cfg.output_ease_lines.clamp(0.0, MAX_BACKLOG);
@@ -281,35 +342,13 @@ impl Scroll {
 			self.snap();
 			return;
 		}
-		// The output chase, one segment at a time. Ease-in lifts the speed
-		// linearly to the knee; Ramp-up doubles it toward the current cap; the
-		// braking curve ("Ramp-down", traced backwards from "Ease-out") caps it
-		// the whole way at what can still be wound down within the remaining
-		// backlog - which both holds the reserve behind a live burst and owns
-		// the deceleration once output ceases.
-		let chasing = self.burst > 0.0 && self.following() && !self.sweep;
-		if chasing {
-			if self.chase < self.knee {
-				let ease_in_s = cfg.scroll_ease_in_ms.max(1.0) / 1000.0;
-				self.chase = (self.chase + KNEE_LPS * dt_s / ease_in_s).min(self.knee);
-			} else {
-				let double_s = cfg.scroll_ramp_up_ms.max(1.0) / 1000.0;
-				self.chase *= (dt_s / double_s).exp2();
-			}
-			if !self.overflow {
-				let onscreen_v = 1000.0 / cfg.scroll_single_screen_tau_ms.max(1.0);
-				self.chase = self.chase.min(onscreen_v);
-			}
-			// braking: halving per "Ramp-down" from here must land on the
-			// ease-out handoff (the STOP_BAND edge, at its closing speed) with
-			// no backlog left over
-			let v_land = STOP_BAND * 1000.0 / cfg.scroll_ease_out_ms.max(1.0);
-			let brake_tau_s = cfg.scroll_ramp_down_ms.max(1.0) / 1000.0 / std::f32::consts::LN_2;
+		// The output chase (see Chase): a speed the view may not close faster than
+		// while output is still ahead of it.
+		let chasing = self.chase.burst > 0.0 && self.following() && !self.sweep;
+		let limit = chasing.then(|| {
 			let backlog = (self.visual - self.target).max(0.0);
-			self.chase = self
-				.chase
-				.min(v_land + (backlog - STOP_BAND).max(0.0) / brake_tau_s);
-		}
+			self.chase.limit(backlog, dt_s, &cfg)
+		});
 
 		// Two-stage ease: `mid` chases the target at NAV_TAU_MS and `visual`
 		// chases `mid` over the ease-in attack, so motion builds from rest
@@ -321,11 +360,11 @@ impl Scroll {
 		let attack = 1.0 - (-dt_s * 1000.0 / attack_tau).exp();
 		let before = self.visual;
 		self.visual += (self.mid - self.visual) * attack;
-		if chasing {
+		if let Some(speed) = limit {
 			// the chase is a speed LIMIT on the ease, not a motor: the ease's own
 			// arrival dynamics (decel, stop band, detent) take over once the gap is
 			// small enough that the unclamped ease is the slower of the two
-			self.visual = self.visual.max(before - self.chase * dt_s);
+			self.visual = self.visual.max(before - speed * dt_s);
 		}
 		if self.sweep && self.visual - self.target < CHASE_GROW_MIN {
 			self.sweep = false; // caught up: output easing owns the view again
@@ -362,11 +401,8 @@ impl Scroll {
 				self.target = detent;
 				self.visual = detent;
 				self.mid = detent;
-				self.chase = 0.0;
-				self.knee = KNEE_LPS;
 				// at rest the burst is over; the next output starts a fresh one
-				self.burst = 0.0;
-				self.overflow = false;
+				self.chase = Chase::REST;
 				self.sweep = false;
 				self.wheel_dir = 0.0;
 			} else {
@@ -374,22 +410,29 @@ impl Scroll {
 			}
 		}
 
-		// Ease the alt-screen slide offset back to rest. The reveal strip is filled
-		// from ONE retained frame (one step back), so the offset must not lag more
-		// than ~a line or the strip under-fills (shows background). Ease at the smooth
-		// configured speed while the lag is small (gentle scroll stays buttery), but
-		// ramp the ease faster as the lag grows past a line, so a fast burst can't
-		// glide far behind and open a blank band. The rate change is smooth (a shorter
-		// tau, not a snap), so the motion never jumps.
+		// Ease the alt-screen slide home: the cascade and the chase above, run
+		// against a target of 0, so an app's region scroll reads exactly like
+		// plain output does.
 		if self.app_off != 0.0 {
-			let lag = self.app_off.abs();
-			let lag_ramp = ((lag - APP_LAG_SOFT) / (APP_LAG_HARD - APP_LAG_SOFT)).clamp(0.0, 1.0);
-			let app_tau = (NAV_TAU_MS + (MIN_APP_TAU_MS - NAV_TAU_MS) * lag_ramp).max(1.0);
-			let app_smoothing = 1.0 - (-dt_s * 1000.0 / app_tau).exp();
-			self.app_off -= self.app_off * app_smoothing;
-			if self.app_off.abs() < config::SETTLE_EPS {
-				self.app_off = 0.0;
+			let sign = self.app_off.signum();
+			let before = self.app_off.abs();
+			let limit =
+				(self.app_chase.burst > 0.0).then(|| self.app_chase.limit(before, dt_s, &cfg));
+			self.app_mid -= self.app_mid * smoothing;
+			let mut lag = before + (self.app_mid - before) * attack;
+			if let Some(speed) = limit {
+				lag = lag.max(before - speed * dt_s);
 			}
+			if before < STOP_BAND {
+				lag = lag.min((before - stop_min_lps * dt_s).max(0.0));
+				self.app_mid = self.app_mid.min(lag);
+			}
+			if lag < config::SETTLE_EPS {
+				lag = 0.0;
+				self.app_mid = 0.0;
+				self.app_chase = Chase::REST;
+			}
+			self.app_off = sign * lag;
 		}
 	}
 
@@ -616,47 +659,96 @@ mod tests {
 	}
 
 	#[test]
-	fn app_scroll_sets_caps_and_eases_to_rest() {
+	fn app_scroll_grows_within_the_cover_and_eases_to_rest() {
 		let _g = pin();
 		let mut s = Scroll::new();
-		s.app_scroll(3.0);
+		s.app_scroll(3.0, 10.0, 40.0);
 		assert_eq!(s.app_offset(), 3.0);
 		assert!(s.animating());
-		// sets (does not stack) the per-step offset; over the cap is clamped
-		s.app_scroll(3.0);
-		assert_eq!(s.app_offset(), 3.0);
-		s.app_scroll(99.0);
-		assert_eq!(s.app_offset(), APP_OFF_CAP);
-		// negative direction too
-		let mut b = Scroll::new();
-		b.app_scroll(-2.0);
-		assert_eq!(b.app_offset(), -2.0);
-		// eases back to 0 and stops animating (following the bottom, no output)
+		// steps stack, so the content on screen stays continuous; the strip's
+		// cover is the ceiling
+		s.app_scroll(3.0, 10.0, 40.0);
+		assert_eq!(s.app_offset(), 6.0);
+		s.app_scroll(99.0, 10.0, 40.0);
+		assert_eq!(s.app_offset(), 10.0);
+		// a step the other way starts over on that side
+		s.app_scroll(-2.0, 10.0, 40.0);
+		assert_eq!(s.app_offset(), -2.0);
+		// eases back to 0 and stops animating
 		for _ in 0..2000 {
-			b.advance(0.016);
+			s.advance(0.016);
 		}
-		assert_eq!(b.app_offset(), 0.0);
-		assert!(!b.animating());
+		assert_eq!(s.app_offset(), 0.0);
+		assert!(!s.animating());
 	}
 
 	#[test]
-	fn app_off_lag_ramp_bounds_a_fast_burst() {
+	fn app_slide_keeps_up_with_a_fast_app() {
 		let _g = pin();
-		// The caller accumulates the slide offset (app_off += step) for smooth content;
-		// the ease ramps faster as the lag grows so a fast burst can't glide far behind
-		// and open a blank reveal strip. Simulate a fast continuous scroll and check the
-		// lag stays bounded well under the hard cap.
+		// A line every other frame for a while: the chase must ramp to the app's
+		// rate (the lag stays well inside the strip) and, once it stops, wind the
+		// slide down without a bounce.
 		let mut s = Scroll::new();
 		let mut max_lag = 0.0f32;
 		for _ in 0..80 {
-			s.app_scroll(s.app_offset() + 1.0); // one detected line-step
-			max_lag = max_lag.max(s.app_offset().abs());
+			s.app_scroll(1.0, SLIDE_ROWS as f32, 40.0);
 			s.advance(0.016);
 			s.advance(0.016);
 			max_lag = max_lag.max(s.app_offset().abs());
 		}
-		assert!(max_lag < APP_LAG_HARD + 3.0, "lag {max_lag} ran away");
-		assert!(max_lag < APP_OFF_CAP, "lag {max_lag} hit the hard cap");
+		assert!(max_lag < SLIDE_ROWS as f32 / 2.0, "lag {max_lag} ran away");
+		let mut prev = s.app_offset();
+		let mut frames = 0;
+		while s.app_offset() != 0.0 {
+			s.advance(0.016);
+			assert!(
+				s.app_offset() <= prev + 1e-4,
+				"offset grew {prev} -> {}",
+				s.app_offset()
+			);
+			prev = s.app_offset();
+			frames += 1;
+			assert!(frames < 240, "slide never landed ({prev} left after 4s)");
+		}
+	}
+
+	#[test]
+	fn app_slide_and_output_chase_run_the_same_curve() {
+		let _g = pin();
+		// The whole point of the slide's own chase: an app scrolling its region
+		// by N lines eases exactly like N lines of plain output. Same burst into
+		// both channels, same frames, same trajectory.
+		let mut view = Scroll::new();
+		view.set_max(400.0);
+		let mut slide = Scroll::new();
+		for step in [3.0, 1.0, 40.0, 2.0] {
+			view.nudge_output(step, 40.0);
+			slide.app_scroll(step, SLIDE_ROWS as f32, 40.0);
+			for _ in 0..5 {
+				view.advance(0.016);
+				slide.advance(0.016);
+				let gap = (view.visual_lines() - slide.app_offset()).abs();
+				assert!(
+					gap < 1e-3,
+					"channels diverged: view {} slide {}",
+					view.visual_lines(),
+					slide.app_offset()
+				);
+			}
+		}
+		for _ in 0..600 {
+			view.advance(0.016);
+			slide.advance(0.016);
+			let gap = (view.visual_lines() - slide.app_offset()).abs();
+			assert!(
+				gap < 1e-3,
+				"channels diverged: view {} slide {}",
+				view.visual_lines(),
+				slide.app_offset()
+			);
+		}
+		assert_eq!(slide.app_offset(), 0.0);
+		assert_eq!(view.visual_lines(), 0.0);
 	}
 
 	#[test]
@@ -756,7 +848,7 @@ mod tests {
 		// offset magnitude only shrinks and never flips sign (a sign flip = the content
 		// bounces back the other way). Guards the alt-screen slide feel.
 		let mut s = Scroll::new();
-		s.app_scroll(4.0);
+		s.app_scroll(4.0, SLIDE_ROWS as f32, 40.0);
 		let mut prev = s.app_offset();
 		for _ in 0..3000 {
 			s.advance(0.016);
@@ -776,7 +868,7 @@ mod tests {
 		let _g = pin();
 		// an alt-screen enter/exit must drop any in-flight slide at once (no ease)
 		let mut s = Scroll::new();
-		s.app_scroll(7.0);
+		s.app_scroll(7.0, SLIDE_ROWS as f32, 40.0);
 		assert!(s.animating());
 		s.cancel_app_scroll();
 		assert_eq!(s.app_offset(), 0.0);
@@ -790,7 +882,7 @@ mod tests {
 		let mut s = Scroll::new();
 		s.set_max(50.0);
 		s.nudge_output(12.0, 40.0);
-		s.app_scroll(4.0);
+		s.app_scroll(4.0, SLIDE_ROWS as f32, 40.0);
 		assert!(s.animating());
 		s.snap();
 		assert!(!s.animating());
@@ -823,7 +915,7 @@ mod tests {
 		s.nudge_output(10.0, 40.0); // output produces no visual lag at all
 		assert_eq!(s.desired_offset(), 0);
 		assert!(s.frac().abs() < 1e-6);
-		s.app_scroll(3.0); // a slide request is dropped on the next frame
+		s.app_scroll(3.0, SLIDE_ROWS as f32, 40.0); // a slide request is dropped
 		s.advance(0.016);
 		assert_eq!(s.app_offset(), 0.0);
 		assert!(!s.animating());

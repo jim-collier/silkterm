@@ -12,6 +12,7 @@
 ##		each app is supposed to have:
 ##		   less / vim   - no static top band: the smooth slide engages, monotone (no bounce)
 ##		   nano / muffer - static title bar held still, the region under it slides
+##		   tmux         - a real scroll region (DECSTBM + linefeeds) slides off the engine's count
 ##		   altenter     - a burst still easing when an alt screen takes over lands at rest
 ##		Plain shell-output easing is covered by the library tests (cargo test); the
 ##		"jumping / re-listing / bottom-up" symptoms map to those monotonicity checks.
@@ -199,9 +200,9 @@ stop_silk(){
 
 pass=0; fail=0; miss=0; spawned_pid=0
 
-## Run one deterministic scene and judge its trace. shape|mode|expect_st.
+## Run one deterministic scene and judge its trace. shape|mode|expect_st|[expect_sb].
 run_scene(){
-	local label="$1" shape="$2" mode="$3" est="$4"
+	local label="$1" shape="$2" mode="$3" est="$4" esb="${5:--1}"
 	local trace="${work}/${label}.trace"
 	spawn_silk "/bin/dash ${meDir}/scenes/scene.bash ${shape}" "${work}/${label}.log" "$trace"
 	local pid=$spawned_pid
@@ -225,7 +226,7 @@ run_scene(){
 
 	((verbose)) && fEcho_Clean "  ${label}: $(grep -c SCROLLDBG "$trace" 2>/dev/null || echo 0) trace frames"
 	local rc=0
-	python3 "${meDir}/analyze.py" --mode "$mode" --expect-st "$est" --label "$label" <"$trace" \
+	python3 "${meDir}/analyze.py" --mode "$mode" --expect-st "$est" --expect-sb "$esb" --label "$label" <"$trace" \
 		| sed 's/^/  /' || rc=$?
 	case "$rc" in
 		0) pass=$((pass + 1)) ;;
@@ -239,6 +240,9 @@ run_scene less   less   slide 0
 run_scene vim    vim    slide 0
 run_scene nano   nano   slide 1
 run_scene muffer muffer slide 2
+## A real region scroll (tmux, less): the engine's own record drives the slide, and
+## the one row outside the region is the only band.
+run_scene tmux   tmux   slide 0 1
 ## A burst still easing when the alt screen takes over (git commit opening nano):
 ## no scrollback behind it, so the view must land at rest - frac 0 on every frame.
 run_scene altenter altenter still -1

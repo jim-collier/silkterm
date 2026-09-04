@@ -40,6 +40,7 @@ deterministic. `analyze.py` reads it and checks:
 | vim    | none top, 2 bottom        | slide, monotone (0 bounces) |
 | nano   | 1 top (title), 2 bottom   | slide, monotone (0 bounces) |
 | muffer | 2 top (header), 1 bottom  | slide, monotone (0 bounces) |
+| tmux   | region above 1 status row, real linefeeds | slide off the engine's scroll count, sb 1, monotone |
 | altenter | nano shape, entered mid-ease | still: frac 0 on every alt frame |
 
 `altenter` is a different check: 400 lines of plain output, a short gap so the ease is mid-flight, then the alt screen. The alt grid has no scrollback, so the view has to land at rest the moment it swaps in; a leftover ease renders as the fraction wrapping through a whole cell once per line of backlog, which is the nano wobble. One frame is enough, since a still screen only builds when something changes.
@@ -50,10 +51,13 @@ out of the region), so the fill is exact and nothing repositions. If the toggle 
 ever turned back off, change the nano/muffer scenes from `slide` back to `hardcut` in
 `run.bash`.
 
-Plain shell-output scrolling (`ls -lA`, a command finishing on the last line, a fast
-burst) is covered by the library tests in `cargo test` (`pane.rs`/`scroll.rs`): the
-"page re-lists / jumps around / scrolls bottom-up" symptoms map to the
-`scroll_shift` advance-correctness and the easing-monotonicity checks there.
+The repaint scenes exercise the fingerprint detector; the `tmux` scene exercises the
+other path, where the engine records the scroll itself (count, region, and the rows
+that left) and nothing is inferred. Plain shell-output scrolling (`ls -lA`, a command
+finishing on the last line, a fast burst) is covered by the library tests in
+`cargo test` (`pane.rs`/`scroll.rs`): the advance comes from scrollback growth, or
+from that same engine count once the scrollback is full, and the easing-monotonicity
+checks there guard the rest.
 
 ## Exit codes
 

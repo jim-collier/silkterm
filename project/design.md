@@ -185,15 +185,17 @@ A single "Smooth scrolling" master switch (`scroll.smooth`) turns all scroll ani
 
 ### Smooth-scroll inside full-screen apps
 
-Scrollback and output easing (above) both have an easy signal: the wheel turns, or the buffer grows, and we ease a fractional offset. Full-screen ("alt-screen") apps - less, vim, nano, muffer - are the hard case, and no other terminal animates them. They do not scroll a buffer. They own the screen and repaint whole lines in place. When such an app scrolls, the terminal just sees the entire grid change. The same text is suddenly a row or two higher or lower. Nothing tells us a scroll happened, by how much, or which rows were meant to hold still. So the whole feature is reverse-engineered from two successive grid snapshots.
+Scrollback and output easing (above) both have an easy signal: the wheel turns, or the buffer grows, and we ease a fractional offset. Full-screen ("alt-screen") apps - less, vim, nano, tmux - are the hard case, and no other terminal animates them. They own the screen. Most scroll a region of it with the terminal's own scroll commands (a linefeed at the bottom of a DECSTBM region, `CSI n S`), and the terminal throws the outgoing rows away because the alt screen keeps no scrollback. Some repaint whole lines in place instead, and then the grid just changes under us. Two mechanisms cover the two kinds, and the exact one is asked first.
 
-- **Detect the scroll.** Every frame we fingerprint each visible row (a hash of its characters) and compare to last frame's fingerprints. `scroll_shift_signed` finds the vertical shift, up to 24 lines in either direction, that lines up the most rows. It also requires a minimum number of rows to have really moved. An in-place status-line redraw lines up positionally but did not move, so it cannot false-trigger a slide.
+- **The engine keeps a ledger (2026-09-03).** Our alacritty fork records every region scroll as it happens: which rows moved, by how many lines, and a copy of the rows the scroll pushed out. Each frame the pane reads it and clears it. That is the whole answer for anything that scrolls the terminal. The count is exact and uncapped, so a burst that replaces the screen between two frames is still one known number; the region says which rows hold still; and the outgoing rows are real content rather than a guess. This is what lets tmux ease at all, since it runs on the alt screen where the old approach had nothing to measure. The same count also carries plain output once the scrollback is full and its depth stops growing.
 
-- **Detect the fixed furniture.** Real TUIs pin a title bar at the top (nano, muffer) and/or a status/input line at the bottom (less, vim). We count the unchanged rows at each end; only the middle region is allowed to slide, the bands hold still. Handling both bands is what makes nano and muffer work where an earlier top-anchored detector only handled less.
+- **Fingerprints where the engine recorded nothing.** An app that repaints its lines with cursor addressing, or ConPTY on Windows re-emitting a scroll as a repaint, leaves no ledger entry. For those, every frame fingerprints each visible row (a hash of its characters) and `scroll_shift_signed` looks for the vertical shift, up to 24 lines either way, that lines up the most rows, requiring enough of them to have really moved. An in-place status-line redraw lines up positionally but did not move, so it cannot false-trigger a slide. The bands it holds still are measured the same way, as the unchanged rows at each end.
 
-- **Ease it into place.** The grid is already at the post-scroll position, so to animate we push the new content back by the detected shift and ease that offset to zero. The frame slides into place instead of snapping.
+- **Ease it into place with the output chase.** The grid is already at the post-scroll position, so to animate we push the content back by the shift and ease that offset to zero. The offset runs the same curve and the same five sliders as plain output. An app scrolling its region by N lines looks exactly like N lines printed at a prompt, and a unit test holds the two channels to one trajectory.
 
-- **Fill the gap with the scrolled-off rows.** The scrolled-off lines are gone from the grid (the app overwrote them), so the gap the slide reveals cannot be redrawn from the model. Each frame the styled rows are snapshotted, and the moment a step is detected, the rows it pushed out of the region are moved into a small retained strip. The strip draws welded to the sliding content's edge and rides the same eased offset. So the gap is always exactly filled with real outgoing content, complete with its own cell backgrounds and readability scrim, and nothing ever moves relative to anything else. An earlier design retained the whole previous shaped frame instead. Its fill could trail the ease by a few lines and it repositioned at every re-capture, which read as a pulsing shadow under a title bar, and that is why title-bar apps were temporarily gated to hard-cut.
+- **Fill the gap with the scrolled-off rows.** The gap the slide reveals cannot be redrawn from the model. The rows the ledger kept, or on the fingerprint path the rows snapshotted styled a frame earlier, go into a retained strip. The strip draws welded to the sliding content's edge and rides the same eased offset, so the gap is always exactly filled with real outgoing content, complete with its own cell backgrounds and readability scrim. The offset can never open more gap than the strip holds. About three screens are kept, so a long burst eases through its tail. An earlier design retained the whole previous shaped frame instead; its fill could trail the ease and it repositioned at every re-capture, which read as a pulsing shadow under a title bar.
+
+- **One row is pinned by reading, not by the region.** A pager like less scrolls the whole screen and rewrites its prompt on the bottom row afterwards. That row reads the same after the scroll as before, so it is held still even though the region says it moved. The same text ends up in the same place either way, so nothing is lost. A blank row never qualifies: tmux scrolls first and draws the freed row a moment later, and a frame built in between would otherwise pin that row and make its new line pop in while the rest slides.
 
 A sliding frame therefore composites as four parts:
 
@@ -207,15 +209,19 @@ A sliding frame therefore composites as four parts:
 
 What makes this hard:
 
-- There is no scroll event to hook, and `alacritty_terminal` does not expose the app's scroll region (DECSTBM). So "a scroll happened, by N lines, with these fixed bands" is inferred heuristically, and it must reject false positives: an in-place redraw must not bounce, the apt-status-bar hazard.
+- The stock engine has no scroll event and does not expose the app's scroll region. The ledger is our own addition to the fork. Without it, "a scroll happened, by N lines, with these fixed bands" is inferred, and the inference must reject false positives: an in-place redraw must not bounce, the apt-status-bar hazard.
 
-- The off-screen content is unrecoverable. It has to be captured styled a frame before it vanishes, then tiled pixel-accurately against the current frame.
+- The off-screen content is unrecoverable from the grid. The ledger copies each row on its way out, which costs a row copy per scrolled line on a screen without scrollback. The fingerprint path still has to capture it styled a frame ahead.
+
+- tmux draws lazily. On a burst it scrolls the outer terminal by the grid's whole advance and only then redraws, so the rows that leave are whatever it had drawn before, sometimes blank. Every terminal's scrollback gets the same stale rows. The strip is faithful to what tmux sent, not to what its pane holds.
+
+- tmux can only scroll a pane that spans the full width. Side-by-side panes are repainted, so they fall to the fingerprint path and mostly hard-cut.
 
 - The fixed bands mean three regions have to tile with no gap and no overlap.
 
 - All of it is sub-line and per-frame, riding the same fractional renderer and scrim pass, under a redraw loop that cannot trust X11/Compiz redraw requests.
 
-It is switchable (`smooth_scroll_apps`, on by default). The strip retains roughly a screenful of scrolled-off rows, so even a fast wheel burst stays filled. The ease's lag ramp bounds how far the content trails reality.
+It is switchable (`smooth_scroll_apps`, on by default).
 
 ### Minimap
 

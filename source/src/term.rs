@@ -237,11 +237,10 @@ impl TermInstance {
 			screen_lines: lines,
 		};
 		let event_proxy = EventProxy::new(id, proxy);
-		let term = Arc::new(FairMutex::new(Term::new(
-			config,
-			&dims,
-			event_proxy.clone(),
-		)));
+		let mut engine = Term::new(config, &dims, event_proxy.clone());
+		// the rows a region scroll pushes off, for the slide's reveal strip
+		engine.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+		let term = Arc::new(FairMutex::new(engine));
 
 		let win = WindowSize {
 			num_cols: cols as u16,
