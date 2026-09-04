@@ -42,6 +42,19 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- ✅ Automatic performance detection is not sensitive enough. A remote session to an older laptop with integrated graphics, over wifi, was rated "Max silk", which feels sluggish.
+	- Cause: the first pick read the adapter's own description and nothing else, so anything not flatly a software renderer started at the top. An integrated chip is not a slow one, and a remote screen is not a slow one either - it is a screen the graphics card never reaches. The step-down meant to catch it times the frames this machine draws, which over a remote session are not the frames anybody sees.
+	- Fixed. A remote session goes straight to the lowest profile without measuring, and an adapter with no card behind it to the second lowest. Everything else is measured: the window comes up whole, then a banner takes it for a few seconds while three profiles are timed in turn and the first that holds the display's refresh rate is kept. The window keeps drawing underneath, dimmed, and takes no input while the run is on.
+	- The profile is written down against a hash of the processor, the graphics adapter, the amount of memory and whether the screen is remote, so a different machine - or the same one seen locally after a remote session - is rated again. "Check for hardware change" at the bottom of the Silk tab switches that off.
+	- Departed from the request in two places, both deliberate. A remote session is taken as the answer on its own rather than only when the adapter also reads as software: over a remote session the reported adapter can be the real card, which is how this was rated Max silk in the first place. And the dialog label is shorter than the wording asked for, because the widest label on any tab sets the panel's width and the full sentence made the whole dialog a quarter wider.
+	- Opened: 20260904-163124
+	- Closed: 20260904-163124
+
+- ✅ Not enough space above the buttons at the bottom of the Settings dialog. About double is wanted.
+	- Fixed: the footer gap went from 14 to 28. It reaches every tab, the dialog having one footer. The rule is in the interface style guide now.
+	- Opened: 20260904-163124
+	- Closed: 20260904-163124
+
 - ✅ A prompt coming back after a command slides in oddly: it slows almost to a stop partway, then unsticks and finishes.
 	- Cause: the output chase was only a speed CAP on the plain navigation ease, so any advance short enough that the ease was the slower of the two got the ease instead. That ease decays on a fixed 230ms constant no setting reaches, and it hands over to the sharpened stop inside the last fraction of a line - which is where the speed picks back up. A returning prompt is one or two lines, so it hit this every time.
 	- Fixed: while a burst is in flight the chase drives the view rather than capping it. Its segments already end exactly where the stop band begins, so the handover is continuous, and the five feel settings now govern a two-line advance the same way they govern a long one. Measured here, a prompt arrives in about a third of a second instead of half a second, with no stall in the middle. Long bursts are unchanged.

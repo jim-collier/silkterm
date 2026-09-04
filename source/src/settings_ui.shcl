@@ -35,7 +35,7 @@ layout:
 	width: 540                 ## floor; the widest label, button row or tab strip wins
 	pad: 18                    ## margin inside all four panel edges
 	tabs_gap: 10               ## tab strip -> first row
-	buttons_gap: 14            ## last row -> footer buttons
+	buttons_gap: 28            ## last row -> footer buttons
 
 	## Rows
 	row_height: 32             ## floor for an ordinary row
@@ -304,6 +304,15 @@ rows:
 		indent: 1
 		setting: scroll.ease_out_ms
 		help: "How crisply the view lands on the final line."
+
+	## Sits at the bottom of the tab rather than with Performance at the top. The
+	## label stays short because the widest one on any tab sets the panel's width,
+	## and the flyover carries what it leaves out.
+	PerfCheckHardware:
+		label: Check for hardware change
+		kind: toggle
+		setting: performance.check_hardware
+		help: "Notice a different processor, graphics adapter or amount of memory, or a screen that has become remote, and rate the machine again. Rating is a few seconds of measuring behind a banner. Only used while the profile above is chosen automatically."
 
 	## ---------------------------------------------------------------- Background
 
