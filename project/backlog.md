@@ -42,14 +42,18 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 Does not work very well under tmux.
+- ✅ Does not work very well under tmux.
 	- Steps to reproduce:
 		- `ls -lA ~/` does not smooth scroll. It produces near-instant output.
 		- rar output sometimes appears to "freeze" the bottom few lines, while the lines above scroll normally.
 		- Other typical bash batch output (e.g. from cicd) looks more or less OK. Not exactly the same as without tmux, but acceptable.
 	- One candidate: tmux's own mouse support off, a wheel over the pane is turned into cursor keys. That is what a full-screen app wants, but it recalls shell history at a bare prompt. It is the standing behavior for any full-screen app and `set -g mouse on` changes it, so this may be a documentation answer rather than a fix.
-		- Testing: Could be part of the problem, but definitely not all of it.
+		- Testing: Could be part of the problem, but definitely not all of it. It was not the cause of any of the three symptoms.
+	- Cause: tmux runs on the alt screen, where there is no scrollback to measure, so the only thing that could ease was a guess made by comparing two frames. A burst that replaced the whole screen matched nothing, and a slow stream lost about a third of its lines. The frozen bottom rows were that guess taking an unchanged content row for pinned chrome.
+	- Fixed: the engine now records every region scroll as it happens (how many lines, which rows, and the rows that left), and the slide eases off that record with the same curve plain output uses. The rows outside tmux's scroll region are the only band, so its status line is the one row held still. A burst eases through its tail as one exact step, and a slow stream reports every line. Plain output past a full scrollback takes the same count now, in place of the old guess.
+	- Two limits remain. tmux scrolls the outer terminal first and draws afterwards, so on a burst into a fresh pane the first rows to leave are blank, and every terminal's scrollback gets those same rows. And tmux repaints rather than scrolls a pane that is not full width, so side-by-side panes still cut.
 	- Opened: 20260826-123553
+	- Closed: 20260903-182122
 
 ### New features and enhancements
 

@@ -43,6 +43,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", required=True, choices=["slide", "hardcut", "still"])
     ap.add_argument("--expect-st", type=int, default=-1)
+    ap.add_argument("--expect-sb", type=int, default=-1)
     ap.add_argument("--label", default="scene")
     ap.add_argument("--eps", type=float, default=0.02)
     a = ap.parse_args()
@@ -103,6 +104,11 @@ def main() -> int:
         bad = [f for f in engaged if f["st"] != a.expect_st]
         if bad:
             out("FAIL", f"expected st={a.expect_st} while sliding but saw st={bad[0]['st']}")
+            return 1
+    if a.expect_sb >= 0:
+        bad = [f for f in engaged if f["sb"] != a.expect_sb]
+        if bad:
+            out("FAIL", f"expected sb={a.expect_sb} while sliding but saw sb={bad[0]['sb']}")
             return 1
 
     # bounce: pos = app_off - cumulative shift; check it never reverses direction

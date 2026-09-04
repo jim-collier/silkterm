@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use alacritty_terminal::grid::{Dimensions, Grid, Scroll as GridScroll};
+use alacritty_terminal::grid::{Dimensions, Grid, Row, Scroll as GridScroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::Term;
@@ -69,7 +69,7 @@ const FREEZE_UNFOCUSED_BLINK: bool = true;
 const BELL_BRIGHTEN: f32 = 0.6; // max lerp of text toward white at the bell flash peak
 
 // Alt-screen app-scroll tunables.
-const APP_SCROLL_MAX: usize = 24; // max per-step shift the slide detector accepts (in step with scroll::APP_OFF_CAP)
+const APP_SCROLL_MAX: usize = 24; // max per-step shift the fingerprint slide detector will believe
 // Whether the smooth slide engages for full-screen apps that keep a static TOP
 // band (title bar: nano, muffer). Was off while the reveal strip was filled from
 // a single retained frame: the strip could under-fill by the ease lag and its
@@ -119,26 +119,32 @@ struct StripCell {
 	wide: u8,
 }
 
-// Scrolled-off strip: the rows an alt-screen app's scroll pushed out of its
-// region, retained styled and in visual order (top to bottom) so the slide can
-// draw them in the gap it reveals. The strip is welded to the content edge and
-// grows by exactly each step's shift while app_off grows by the same amount, so
-// the gap is always exactly filled - no under-fill, no re-capture jump, and no
-// furniture bleed (only region rows are ever captured). `dir`: +1 = strip above
-// the content (content moved up), -1 = below.
+// Scrolled-off strip: the rows a scroll pushed out of an app's region, retained
+// styled and in visual order (top to bottom) so the slide can draw them in the
+// gap it reveals. The strip is welded to the content edge and grows by exactly
+// each step's shift while app_off grows by the same amount, so the gap is always
+// exactly filled - no under-fill, no re-capture jump, and no furniture bleed
+// (only region rows are ever captured). `dir`: +1 = strip above the content
+// (content moved up), -1 = below. `region` is the screen rows (top, one past
+// the bottom) the rows came from; a step from another region starts over.
+// `shaped` is the run of rows currently in strip_buf (see shape_strip).
 struct OffStrip {
 	rows: std::collections::VecDeque<Vec<StripCell>>,
 	dir: i8,
+	region: (usize, usize),
+	shaped: std::ops::Range<usize>,
 }
 
 impl OffStrip {
-	// app_off can't lag past scroll::APP_OFF_CAP, so older rows are invisible
-	const CAP: usize = APP_SCROLL_MAX + 2;
+	// the most a slide can lag, so older rows are invisible
+	const CAP: usize = crate::scroll::SLIDE_ROWS;
 
 	fn new() -> Self {
 		Self {
 			rows: std::collections::VecDeque::new(),
 			dir: 0,
+			region: (0, 0),
+			shaped: 0..0,
 		}
 	}
 
@@ -149,14 +155,16 @@ impl OffStrip {
 	fn clear(&mut self) {
 		self.rows.clear();
 		self.dir = 0;
+		self.shaped = 0..0;
 	}
 
-	// Append the rows a step pushed off the region (`chunk` in visual order). A
-	// direction flip discards the old strip - it belongs on the other side.
-	fn push_step(&mut self, dir: i8, chunk: Vec<Vec<StripCell>>) {
-		if self.dir != dir {
+	// Append the rows a step pushed off `region` (`chunk` in visual order). A
+	// direction flip or another region discards the old strip.
+	fn push_step(&mut self, dir: i8, region: (usize, usize), chunk: Vec<Vec<StripCell>>) {
+		if self.dir != dir || self.region != region {
 			self.clear();
 			self.dir = dir;
+			self.region = region;
 		}
 		if dir > 0 {
 			// content moved up: rows left off the top of the region, the newest
@@ -174,6 +182,17 @@ impl OffStrip {
 			while self.rows.len() > Self::CAP {
 				self.rows.pop_back();
 			}
+		}
+	}
+
+	// The rows a slide of `app_off` lines can show: those nearest the content,
+	// one more than the offset covers so the part-row at the far edge is drawn.
+	fn visible(&self, app_off: f32) -> std::ops::Range<usize> {
+		let want = (app_off.abs().ceil() as usize + 1).min(self.rows.len());
+		if app_off > 0.0 {
+			self.rows.len() - want..self.rows.len()
+		} else {
+			0..want
 		}
 	}
 }
@@ -246,54 +265,82 @@ fn snapshot_rows(
 		if let Some((colors, settings, out)) = &mut styled {
 			let out_row = &mut out[i as usize];
 			out_row.clear();
-			out_row.reserve(cols);
-			for c in 0..cols {
-				let cell = &row[Column(c)];
-				let flags = cell.flags;
-				if flags.contains(Flags::WIDE_CHAR_SPACER) {
-					out_row.push(StripCell {
-						c: ' ',
-						fg: [0; 3],
-						bg: None,
-						bold: false,
-						italic: false,
-						wide: 0,
-					});
-					continue;
-				}
-				let mut fg = palette::resolve(cell.fg, colors, settings);
-				let mut cell_bg = palette::resolve(cell.bg, colors, settings);
-				if flags.contains(Flags::INVERSE) {
-					std::mem::swap(&mut fg, &mut cell_bg);
-				}
-				if flags.contains(Flags::HIDDEN) {
-					fg = cell_bg;
-				}
-				if flags.contains(Flags::DIM) {
-					fg = [
-						fg[0] / 2 + fg[0] / 4,
-						fg[1] / 2 + fg[1] / 4,
-						fg[2] / 2 + fg[2] / 4,
-					];
-				}
-				fg = readable.get(fg, cell_bg, settings.text_min_contrast);
-				out_row.push(StripCell {
-					c: cell.c,
-					fg,
-					bg: (cell_bg != settings.bg).then_some(cell_bg),
-					bold: flags.contains(Flags::BOLD)
-						|| (settings.embolden_inverse && flags.contains(Flags::INVERSE)),
-					italic: flags.contains(Flags::ITALIC),
-					wide: if flags.contains(Flags::WIDE_CHAR) {
-						2
-					} else {
-						1
-					},
-				});
-			}
+			out_row.extend(
+				(0..cols).map(|c| strip_cell(&row[Column(c)], colors, settings, &mut readable)),
+			);
 		}
 	}
 	rows
+}
+
+// One styled cell for the strip. Colors resolve the way build()'s cell loop
+// does, minus the transient bell flash and selection, which don't belong in a
+// retained row.
+fn strip_cell(
+	cell: &Cell,
+	colors: &Colors,
+	settings: &config::Settings,
+	readable: &mut palette::Readable,
+) -> StripCell {
+	let flags = cell.flags;
+	if flags.contains(Flags::WIDE_CHAR_SPACER) {
+		return StripCell {
+			c: ' ',
+			fg: [0; 3],
+			bg: None,
+			bold: false,
+			italic: false,
+			wide: 0,
+		};
+	}
+	let mut fg = palette::resolve(cell.fg, colors, settings);
+	let mut cell_bg = palette::resolve(cell.bg, colors, settings);
+	if flags.contains(Flags::INVERSE) {
+		std::mem::swap(&mut fg, &mut cell_bg);
+	}
+	if flags.contains(Flags::HIDDEN) {
+		fg = cell_bg;
+	}
+	if flags.contains(Flags::DIM) {
+		fg = [
+			fg[0] / 2 + fg[0] / 4,
+			fg[1] / 2 + fg[1] / 4,
+			fg[2] / 2 + fg[2] / 4,
+		];
+	}
+	fg = readable.get(fg, cell_bg, settings.text_min_contrast);
+	StripCell {
+		c: cell.c,
+		fg,
+		bg: (cell_bg != settings.bg).then_some(cell_bg),
+		bold: flags.contains(Flags::BOLD)
+			|| (settings.embolden_inverse && flags.contains(Flags::INVERSE)),
+		italic: flags.contains(Flags::ITALIC),
+		wide: if flags.contains(Flags::WIDE_CHAR) {
+			2
+		} else {
+			1
+		},
+	}
+}
+
+// The engine's record of the rows a scroll pushed off its region, styled for
+// the strip. A row of another width (a resize in between) is left out.
+fn strip_rows(
+	rows: &std::collections::VecDeque<Row<Cell>>,
+	cols: usize,
+	colors: &Colors,
+	settings: &config::Settings,
+) -> Vec<Vec<StripCell>> {
+	let mut readable = palette::Readable::default();
+	rows.iter()
+		.filter(|row| row.len() == cols)
+		.map(|row| {
+			(0..cols)
+				.map(|c| strip_cell(&row[Column(c)], colors, settings, &mut readable))
+				.collect()
+		})
+		.collect()
 }
 
 // Whether to draw a cursor at all, and as what. DECTCEM (CSI ?25 l/h) lives in
@@ -818,6 +865,10 @@ pub struct PaneDraw {
 #[derive(Clone)]
 pub struct Slide {
 	pub strip_top: f32,
+	// the strip rows on screen this frame (see OffStrip::visible), and where the
+	// first of them draws
+	pub strip_rows: std::ops::Range<usize>,
+	pub strip_text_top: f32,
 	pub top_split_y: f32,
 	pub split_y: f32,
 	pub region_clip_t: f32,
@@ -893,14 +944,8 @@ pub struct Pane {
 	// `note_history` and the growth step in build().
 	wake_pushed: usize,
 	wake_hist: usize,
-	// Fingerprint of the row just above the viewport - the line that most recently
-	// scrolled off. Once the scrollback is capped history_size() is pinned, so it
-	// can no longer say whether anything scrolled; this still can. None while
-	// scrolled back (the row means something else there), which reads as "unknown".
-	last_offscreen: Option<u64>,
-	// On-screen row fingerprints from the last build, used to detect a scrolled
-	// viewport once the scrollback buffer is full (output easing) and to detect an
-	// alt-screen app's repaint-scroll (app-scroll easing). See build().
+	// On-screen row fingerprints from the last build, used to detect an app's
+	// repaint-scroll where the engine recorded none (app-scroll easing). See build().
 	last_rows: Vec<u64>,
 	// Rows of static bottom band (status/input line) that must NOT slide during the
 	// current alt-screen app-scroll ease. Captured when a scroll is detected.
@@ -1098,13 +1143,10 @@ impl Pane {
 		// Output easing: nudge the smooth offset when the viewport advanced while
 		// following the bottom. Pre-cap, scrollback growth IS the line-advance
 		// count (and an in-place status line that uses no newline doesn't grow it,
-		// so it doesn't bounce). But once the scrollback buffer fills, history_size
+		// so it doesn't bounce). Once the scrollback buffer fills, history_size
 		// flatlines - old lines drop off the top as fast as new ones arrive - so
-		// growth reads 0 even though the screen still scrolls. That silently killed
-		// smooth output scroll "after a while" (sooner under fast output, which
-		// fills the buffer faster). At the cap, fall back to inferring the advance
-		// from how far last frame's on-screen rows reappear shifted up this frame;
-		// an in-place bottom-row change shifts nothing, so it still won't nudge.
+		// growth reads 0 even though the screen still scrolls; the engine's own
+		// count (`scrolled`, below) carries the advance from there.
 		// The depth is sampled per PTY wakeup (`note_history`) and again here,
 		// both against the ONE baseline. A build that reaches the grid before
 		// that cycle's wakeup is handled banks the growth itself, and the wakeup
@@ -1116,11 +1158,22 @@ impl Pane {
 		let grew = std::mem::take(&mut self.wake_pushed) + pushed_since(history, self.wake_hist);
 		self.wake_hist = history;
 		self.scroll.set_max(history as f32);
+		// What the engine recorded scrolling since the last build: the region that
+		// moved, by how much, and the rows that left it. Exact and uncapped, so the
+		// alt screen (no scrollback to measure) eases off it, and so does a scroll
+		// region on either screen. Read here, cleared below whichever way this
+		// frame goes.
+		let (region, scrolled) = {
+			let ledger = guard.scroll_ledger();
+			let clamp = |line: Line| (line.0.max(0) as usize).min(lines);
+			let r = ledger.region();
+			(clamp(r.start)..clamp(r.end), ledger.lines())
+		};
 		if cut {
 			// hard-cut the screen swap (or freeze catch-up): drop any in-flight
 			// slide and rebaseline the row fingerprints (and the styled snapshot
-			// the strip captures from) to the NEW screen, so neither the
-			// output-scroll probe nor the app-scroll probe diffs across the gap.
+			// the strip captures from) to the NEW screen, so the app-scroll probe
+			// can't diff across the gap.
 			self.scroll.cancel_app_scroll();
 			self.strip.clear();
 			self.last_rows = if settings.smooth_apps() {
@@ -1138,26 +1191,11 @@ impl Pane {
 			};
 		}
 		let follow = self.scroll.following();
-		let full = settings.scrollback > 0 && history >= settings.scrollback;
-		// Did anything actually scroll off into history since last frame? At the cap
-		// the line count is pinned, so only the CONTENT above the viewport can tell.
-		// A full-screen app that repaints in place (top) never pushes a line up, so
-		// this stays put - which is what stops its refresh reading as a turnover.
-		let offscreen = if follow && history > 0 {
-			let row = &guard.grid()[Line(-1)];
-			Some(fnv_row((0..cols).map(|c| row[Column(c)].c)))
-		} else {
-			None // scrolled back: that row isn't the scroll-off point, so don't judge
-		};
-		let scrolled_off = matches!((offscreen, self.last_offscreen), (Some(a), Some(b)) if a != b);
-		self.last_offscreen = offscreen;
+		let whole_screen = region == (0..lines);
 		let advanced = if grew > 0 {
 			grew
-		} else if follow && full {
-			let rows = snapshot_rows(guard.grid(), lines, cols, None);
-			let inferred_advance = scroll_shift(&rows, &self.last_rows, scrolled_off);
-			self.last_rows = rows;
-			inferred_advance
+		} else if follow && !alt && whole_screen && scrolled > 0 {
+			scrolled as usize // at the cap: the count, no growth to read it from
 		} else {
 			0
 		};
@@ -1197,33 +1235,37 @@ impl Pane {
 			}
 		}
 
-		// Alt-screen app-scroll easing: a full-screen app owns its screen and scrolls
-		// by repainting whole lines. Detect a clean vertical translate between this
-		// repaint and the last (same row-fingerprints as the output-scroll probe) and
-		// nudge a slide offset so the frame eases into place instead of snapping. The
-		// revealed gap fills from the scrolled-off strip: the styled rows each step
-		// pushes out of the region, captured from the previous frame's snapshot.
-		// Only clean line-scrolls (up to APP_SCROLL_MAX rows) match - in-place redraws
-		// and big page-jumps don't, so they hard-cut. Opt-in (experimental).
+		// App-scroll easing: a full-screen app owns its screen and scrolls a region
+		// of it in place, with no scrollback behind it to ease through. The engine's
+		// record says exactly what moved (`ledger_step`): the region is the band
+		// split, the rows that left it are the strip that fills the revealed gap,
+		// and the slide offset grows by the count so the frame eases into place
+		// instead of snapping. Where the engine recorded nothing - an app that
+		// repaints its lines rather than scrolling them, or ConPTY re-emitting a
+		// normal-screen TUI's region-scroll as an in-place repaint - a clean
+		// vertical translate between this repaint and the last is inferred from
+		// the row fingerprints instead (`scroll_shift_signed`, up to APP_SCROLL_MAX
+		// rows; in-place redraws and big page-jumps don't match, so they hard-cut).
 		// Skipped on pure cursor-animation frames (the fast path below): a shift can
 		// only appear when the grid content changed, and that always forces a full
-		// build - so the styled snapshot isn't paid per blink frame.
+		// build - so the styled snapshot isn't paid per blink frame. The snapshot
+		// refreshes on EVERY content frame, grew>0 frames included: those animate
+		// via the output ease, and a stale snapshot would make the next repaint
+		// frame diff across that eased scroll and slide it AGAIN - a spurious extra
+		// down-then-up on every output line (the shell redraws its prompt right
+		// after the scroll).
 		let mut shift_dbg = 0i32;
-		// The slide handles a full-screen repaint - a fixed UI with a scrolling region,
-		// no scrollback growth. On the alt screen that's nano/vim/less. On Windows, ConPTY
-		// re-emits a normal-screen TUI's region-scroll (output scrolling above a fixed input
-		// line) as an in-place repaint: history never grows (so output-easing can't fire, and
-		// there's no scrollback to ease through) but the rows still translate cleanly. Detect
-		// that - following, no scrollback growth, buffer not full - and slide it the same way.
-		// grew>0 (plain output) still uses output-easing; a static in-place redraw yields no
-		// clean shift, so it stays put (no bounce).
-		// The snapshot refreshes on EVERY content frame of a screen the detector can run
-		// on, not just slide frames: a grew>0 frame is already animated by the output ease
-		// above, and if it left the snapshot stale the next repaint frame would diff across
-		// that eased scroll and slide it AGAIN - a spurious extra down-then-up on every
-		// output line (the shell redraws its prompt right after the scroll).
-		let (snap_frame, slide_frame) = app_scroll_frames(alt, follow, grew, full);
-		if settings.smooth_apps() && snap_frame && !cut && (force_rebuild || !self.text_built) {
+		let step = ledger_step(alt, follow, grew, whole_screen, scrolled);
+		let chunk = step.map(|_| {
+			strip_rows(
+				guard.scroll_ledger().rows(),
+				cols,
+				guard.colors(),
+				&settings,
+			)
+		});
+		guard.scroll_ledger_mut().clear();
+		if settings.smooth_apps() && !cut && (force_rebuild || !self.text_built) {
 			let mut cur_cells = std::mem::take(&mut self.cells_scratch);
 			let rows = snapshot_rows(
 				guard.grid(),
@@ -1231,48 +1273,97 @@ impl Pane {
 				cols,
 				Some((guard.colors(), &settings, &mut cur_cells)),
 			);
-			let shift = if slide_frame {
-				scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX)
-			} else {
-				0
-			};
-			shift_dbg = shift;
-			if shift != 0 {
-				// Freeze the band sizes on the gesture's first step (a clean
-				// settled-vs-scrolled diff); re-measuring per step fluctuates by a row
-				// whenever a blank/matching line abuts a band. Held while the slide eases.
-				if !gesture_active {
-					let (st, sb) = slide_bands(&rows, &self.last_rows, shift);
-					self.slide_static = sb;
-					self.slide_static_top = st;
-				}
-				if SLIDE_TOP_BAND_APPS || self.slide_static_top == 0 {
-					// ACCUMULATE the visual offset so the CURRENT content stays continuous
-					// across overlapping steps: screen row = grid_row + app_off, the grid
-					// already advanced by shift, so app_off must GROW by shift to hold a
-					// line fixed for that instant. The strip grows by the same rows the
-					// step pushed off the region (from the frame-old snapshot; a stale or
-					// resized snapshot just skips the fill for this one step), so the gap
-					// the accumulated offset opens is always exactly covered.
-					self.slide_sh = shift as f32;
-					if self.last_cells.len() == lines
-						&& self.last_cells.first().is_none_or(|r| r.len() == cols)
-					{
-						let range =
-							vanished_range(shift, self.slide_static_top, self.slide_static, lines);
-						// move the rows out, don't clone: last_cells is replaced wholesale
-						// below, and snapshot_rows recycles emptied slots next capture
-						let chunk: Vec<Vec<StripCell>> = self.last_cells[range]
-							.iter_mut()
-							.map(std::mem::take)
-							.collect();
-						if !chunk.is_empty() {
-							self.strip.push_step(shift.signum() as i8, chunk);
-							self.strip_dirty = true;
+			if let Some(step) = step {
+				shift_dbg = step;
+				// The bands are the region's edges, except that a row at the edge away
+				// from the strip which reads the same as last frame is held still: a
+				// pager's prompt, redrawn after every scroll with no region of its own
+				// (less). Visually lossless either way - the same text ends up in the
+				// same place - and frozen for the gesture, like the inferred bands, so
+				// a row that matches by chance can't un-pin mid-ease. A blank row is
+				// never it: a build can fall between an app's scroll and its draw of
+				// the freed row (tmux flushes exactly that way), and pinning the row
+				// then makes its new line pop in while the rest slides.
+				if !gesture_active || self.strip.region != (region.start, region.end) {
+					let blank = fnv_row(std::iter::repeat_n(' ', cols));
+					let same = |i: usize| {
+						self.last_rows.len() == lines
+							&& rows[i] == self.last_rows[i]
+							&& rows[i] != blank
+					};
+					let (mut top, mut bottom) = (region.start, region.end);
+					if step > 0 {
+						while bottom > top + 1 && same(bottom - 1) {
+							bottom -= 1;
+						}
+					} else {
+						while top + 1 < bottom && same(top) {
+							top += 1;
 						}
 					}
-					self.scroll
-						.app_scroll(self.scroll.app_offset() + shift as f32);
+					self.slide_static_top = top;
+					self.slide_static = lines - bottom;
+				}
+				self.slide_sh = step as f32;
+				let chunk = chunk.unwrap_or_default();
+				if !chunk.is_empty() {
+					self.strip
+						.push_step(step.signum() as i8, (region.start, region.end), chunk);
+					self.strip_dirty = true;
+				}
+				// the offset may not open a gap the strip cannot fill
+				let cover = self.strip.len() as f32;
+				let region_rows = (region.end - region.start) as f32;
+				self.scroll.app_scroll(step as f32, cover, region_rows);
+			} else {
+				let shift = if fingerprint_frame(alt, follow, grew, scrolled) {
+					scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX)
+				} else {
+					0
+				};
+				shift_dbg = shift;
+				if shift != 0 {
+					// Freeze the band sizes on the gesture's first step (a clean
+					// settled-vs-scrolled diff); re-measuring per step fluctuates by a row
+					// whenever a blank/matching line abuts a band. Held while the slide eases.
+					if !gesture_active {
+						let (st, sb) = slide_bands(&rows, &self.last_rows, shift);
+						self.slide_static = sb;
+						self.slide_static_top = st;
+					}
+					if SLIDE_TOP_BAND_APPS || self.slide_static_top == 0 {
+						// ACCUMULATE the visual offset so the CURRENT content stays continuous
+						// across overlapping steps: screen row = grid_row + app_off, the grid
+						// already advanced by shift, so app_off must GROW by shift to hold a
+						// line fixed for that instant. The strip grows by the same rows the
+						// step pushed off the region (from the frame-old snapshot; a stale or
+						// resized snapshot just skips the fill for this one step), so the gap
+						// the accumulated offset opens is always exactly covered.
+						self.slide_sh = shift as f32;
+						if self.last_cells.len() == lines
+							&& self.last_cells.first().is_none_or(|r| r.len() == cols)
+						{
+							let range = vanished_range(
+								shift,
+								self.slide_static_top,
+								self.slide_static,
+								lines,
+							);
+							// move the rows out, don't clone: last_cells is replaced wholesale
+							// below, and snapshot_rows recycles emptied slots next capture
+							let chunk: Vec<Vec<StripCell>> = self.last_cells[range]
+								.iter_mut()
+								.map(std::mem::take)
+								.collect();
+							if !chunk.is_empty() {
+								let region = (self.slide_static_top, lines - self.slide_static);
+								self.strip.push_step(shift.signum() as i8, region, chunk);
+								self.strip_dirty = true;
+							}
+						}
+						self.scroll
+							.app_scroll(shift as f32, OffStrip::CAP as f32, lines as f32);
+					}
 				}
 			}
 			self.last_rows = rows;
@@ -1373,8 +1464,12 @@ impl Pane {
 			let content_bot_y = self.rect.y + margin + (split_row as f32 + voff) * cell_h;
 			let (region_clip_t, region_clip_b) =
 				weld_region_clip(top_split_y, split_y, content_top_y, content_bot_y);
+			let strip_rows = self.strip.visible(app_off);
+			let strip_text_top = strip_top + strip_rows.start as f32 * cell_h;
 			Some(Slide {
 				strip_top,
+				strip_rows,
+				strip_text_top,
 				top_split_y,
 				split_y,
 				region_clip_t,
@@ -1384,11 +1479,6 @@ impl Pane {
 				has_top_band: static_top > 0,
 			})
 		};
-		// gesture over: the revealed gap is gone, drop the strip
-		if slide.is_none() && self.strip.len() > 0 {
-			self.strip.clear();
-		}
-
 		// Hyperlink under the pointer. The scan wants the grid, which is locked
 		// right here - so it runs on the frame the pointer changed cell, and on
 		// every frame that re-shapes text (output slides the span out from under a
@@ -1789,17 +1879,21 @@ impl Pane {
 		self.buffer.shape_until_scroll(&mut ctx.font_system, false);
 		self.rows_scratch = rows_out; // keep the row Strings for the next frame
 
-		// Re-shape the scrolled-off strip when its rows changed this frame. Cheap:
-		// the strip is at most OffStrip::CAP short rows, and only steps dirty it.
-		if self.strip_dirty {
-			self.strip_dirty = false;
-			self.shape_strip(ctx, &settings);
+		// Re-shape the scrolled-off strip when the rows on screen changed: new rows
+		// pushed, or the ease moved the window (see OffStrip::visible). A screenful
+		// at most, like the main buffer.
+		if let Some(sl) = &slide {
+			if self.strip_dirty || self.strip.shaped != sl.strip_rows {
+				self.strip_dirty = false;
+				self.shape_strip(ctx, &settings, sl.strip_rows.clone());
+			}
 		}
 		// Strip cells with their own background (inverse video, colored bg) keep it
 		// while revealed: emit their rects at the strip's slide position, clamped to
 		// the region clip like the sliding content's rects above.
 		if let (Some(sl), Some((clip_t, clip_b))) = (&slide, region_rect_clip) {
-			for (j, row) in self.strip.rows.iter().enumerate() {
+			for j in sl.strip_rows.clone() {
+				let row = &self.strip.rows[j];
 				let y = sl.strip_top + j as f32 * cell_h;
 				let (rect_top, rect_bot) = (y.max(clip_t), (y + cell_h).min(clip_b));
 				if rect_bot <= rect_top {
@@ -2521,22 +2615,27 @@ impl Pane {
 	// scrim pass too - the strip is always scrim-safe, unlike the old retained
 	// frame whose own-bg furniture had to be guarded out.
 	pub fn strip_text_area<'a>(&'a self, slide: &Slide, margin: f32) -> Option<TextArea<'a>> {
-		if self.strip.len() == 0 {
+		if self.strip.shaped.is_empty() {
 			return None;
 		}
-		let mut area = self.buf_area(&self.strip_buf, slide.strip_top, margin);
+		let mut area = self.buf_area(&self.strip_buf, slide.strip_text_top, margin);
 		area.bounds.top = area.bounds.top.max(slide.top_split_y as i32);
 		area.bounds.bottom = area.bounds.bottom.min(slide.split_y as i32);
 		Some(area)
 	}
 
-	// Re-shape the scrolled-off strip buffer from its captured rows. Same span
-	// rules as build()'s main loop: runs merged by (color, bold, italic),
+	// Re-shape the scrolled-off strip buffer from the captured rows in `window`.
+	// Same span rules as build()'s main loop: runs merged by (color, bold, italic),
 	// newlines embedded into non-empty runs, never empty/standalone spans (they
 	// make set_rich_text loop forever). Glyphs the primary mono face lacks stay
 	// space placeholders - the strip is transient reveal content, not worth a
 	// per-cell fallback pool.
-	fn shape_strip(&mut self, ctx: &mut TextCtx, settings: &config::Settings) {
+	fn shape_strip(
+		&mut self,
+		ctx: &mut TextCtx,
+		settings: &config::Settings,
+		window: std::ops::Range<usize>,
+	) {
 		fn flush(spans: &mut Vec<(String, Attrs)>, run: &mut String, style: ([u8; 3], bool, bool)) {
 			if run.is_empty() {
 				return;
@@ -2551,13 +2650,14 @@ impl Pane {
 			}
 			spans.push((std::mem::take(run), attrs));
 		}
-		if self.strip.len() == 0 {
+		self.strip.shaped = window.clone();
+		if window.is_empty() {
 			return;
 		}
-		let mut spans: Vec<(String, Attrs)> = Vec::with_capacity(self.strip.len() + 1);
+		let mut spans: Vec<(String, Attrs)> = Vec::with_capacity(window.len() + 1);
 		let mut run = String::new();
 		let mut run_style = (settings.fg, false, false);
-		for (j, row) in self.strip.rows.iter().enumerate() {
+		for (j, row) in self.strip.rows.range(window.clone()).enumerate() {
 			if j != 0 {
 				run.push('\n');
 			}
@@ -2583,7 +2683,7 @@ impl Pane {
 		ctx.resize_buffer(
 			&mut self.strip_buf,
 			self.rect.w.max(1.0),
-			(self.strip.len() as f32 + 1.0) * ctx.cell_h,
+			(window.len() as f32 + 1.0) * ctx.cell_h,
 		);
 		let span_refs = spans.iter().map(|(s, a)| (s.as_str(), a.clone()));
 		self.strip_buf.set_rich_text(
@@ -3291,7 +3391,6 @@ fn spawn_pane(
 		lock_misses: 0,
 		wake_pushed: 0,
 		wake_hist: 0,
-		last_offscreen: None,
 		last_rows: Vec::new(),
 		slide_static: 0,
 		slide_static_top: 0,
@@ -3867,29 +3966,34 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32, scale: 
 	*manual = true; // dragged: stop auto even-distribution for this run
 }
 
-// Which frames take part in the app-scroll slide bookkeeping, per frame state.
-// `snap`: refresh the styled row snapshot. This must cover every content frame
-// of a screen the detector can later run on - grew>0 frames included, even
-// though they animate via the output ease instead. Skipping them (the original
-// normal-screen gate) left the snapshot stale across the eased scroll, so the
-// shell's prompt redraw one frame later diffed against pre-scroll rows, read
-// the whole scroll as a fresh repaint-shift, and slid it a second time: the
-// "down one line, then up two" output judder. A full normal-screen buffer
-// never slides (the full-branch above keeps its own fingerprints), so it
-// skips the styled snapshot cost. `slide`: this frame may interpret the diff
-// as a scroll - the alt screen always, the normal screen only on a repaint
-// frame (following, no growth, not full - the ConPTY case).
-fn app_scroll_frames(alt: bool, follow: bool, grew: usize, full: bool) -> (bool, bool) {
-	let repaint_scroll = !alt && follow && grew == 0 && !full;
-	(alt || !full, alt || repaint_scroll)
+// What the engine's scroll record means for this frame's slide: the signed
+// step, or None when the output ease owns the motion (the scrollback grew, or a
+// whole-screen scroll at its cap while following) or nothing on screen can show
+// it (a region scroll while scrolled back).
+fn ledger_step(
+	alt: bool,
+	follow: bool,
+	grew: usize,
+	whole_screen: bool,
+	scrolled: i32,
+) -> Option<i32> {
+	if scrolled == 0 || grew > 0 {
+		return None;
+	}
+	(alt || (follow && !whole_screen)).then_some(scrolled)
 }
 
-// Lines the on-screen content scrolled up between frames, inferred from row
-// fingerprints when scrollback growth can't tell us (the buffer is full). It's
-// the smallest shift k where this frame's top (rows-k) lines equal last frame's
-// bottom (rows-k) lines.
-// Signed sibling of scroll_shift for alt-screen app-scroll easing: detect a clean
-// vertical translate between two frames, in either direction, up to `max` lines.
+// Whether this frame may read the row diff as a scroll (`scroll_shift_signed`).
+// Only where the engine recorded none - a recorded scroll is exact and handled
+// first - and then the alt screen always, the normal screen only on a repaint
+// frame: following, no scrollback growth (the ConPTY case, where a TUI's
+// region-scroll above a fixed input line arrives as an in-place repaint).
+fn fingerprint_frame(alt: bool, follow: bool, grew: usize, scrolled: i32) -> bool {
+	scrolled == 0 && (alt || (follow && grew == 0))
+}
+
+// Detect a clean vertical translate between two frames for the app-scroll
+// slide, in either direction, up to `max` lines.
 // +k = scrolled forward (content moved up k rows), -k = scrolled back (down k).
 // Real full-screen apps keep static chrome bands - a status/input line at the
 // BOTTOM (less, vim) and often a title bar at the TOP (nano, muffer) - so the
@@ -3914,8 +4018,8 @@ fn app_scroll_frames(alt: bool, follow: bool, grew: usize, full: bool) -> (bool,
 // live status/spinner rows fit inside the third). Otherwise 0 (in-place redraw,
 // content change, or a jump bigger than `max`) and the caller hard-cuts. 64-bit
 // row fingerprints make a coincidental non-translation match vanishingly
-// unlikely, so no contiguity check is needed. It never guesses a full turnover
-// the way scroll_shift does - easing a non-scroll looks wrong.
+// unlikely, so no contiguity check is needed. It never guesses a full turnover -
+// easing a non-scroll looks wrong.
 const MOVED_MIN: usize = 3; // a real scroll must move at least this many rows
 fn scroll_shift_signed(cur: &[u64], last: &[u64], max: usize) -> i32 {
 	let n = cur.len();
@@ -4050,83 +4154,18 @@ fn slide_bands(cur: &[u64], last: &[u64], shift: i32) -> (usize, usize) {
 	if st + sb >= n { (0, 0) } else { (st, sb) }
 }
 
-fn scroll_shift(cur: &[u64], last: &[u64], scrolled_off: bool) -> usize {
-	let n = cur.len();
-	if n == 0 || last.len() != n {
-		return 0;
-	}
-	// Pick the forward shift k (content moved up k rows) that best explains the
-	// frame: count rows that translate cleanly (cur[i] == last[i+k]) and that
-	// actually moved (cur[i] != last[i]), and take the k covering the most of the
-	// overlap. Scoring by best explanation is what keeps this honest - the true
-	// shift always covers the most overlap, and a coincidental match at a larger k
-	// has less overlap to win with. Requiring instead that NEARLY ALL of the
-	// overlap translate broke on any program holding a live region: apt, dnf and
-	// flatpak rewrite a multi-row progress area every tick, so an ordinary
-	// one-line advance under one left too many rows off, fell through to the
-	// turnover guess below, and reported the backlog cap - kicking the view up a
-	// screenful and easing it back on every single line of output.
-	let changed = cur.iter().zip(last).filter(|(a, b)| a != b).count();
-	let (mut best, mut best_score) = (0usize, 0usize);
-	for k in 1..n {
-		let overlap = n - k;
-		let (mut matched, mut moved) = (0usize, 0usize);
-		for i in 0..overlap {
-			if cur[i] == last[i + k] {
-				matched += 1;
-				// moved = changed at the new position AND vacated the old one,
-				// like the signed sibling - a copy left in place is not a move
-				if cur[i] != last[i] && cur[i + k] != last[i + k] {
-					moved += 1;
-				}
-			}
-		}
-		// A solid block must translate, enough of it must genuinely have moved -
-		// a static or blank field matches positionally but never scrolled (easing
-		// that was the apt/status-line bounce; same tolerance as the signed sibling,
-		// a live progress area is a static band in all but name) - and the shift
-		// must explain most of the frame's change (the signed sibling's relayout
-		// gate: an option list swapping in a taller description only pushes the
-		// short footer below it, which is a redraw to hard-cut, not a scroll).
-		let need = (overlap / 4).max(MOVED_MIN).min(overlap);
-		let real = moved >= MOVED_MIN.min(overlap);
-		let explains = moved * 3 >= changed.saturating_sub(k) * 2;
-		if matched >= need && real && explains && matched > best_score {
-			best_score = matched;
-			best = k;
-		}
-	}
-	if best > 0 {
-		return best;
-	}
-	// No clean vertical shift matched. Either nothing scrolled - an in-place
-	// change, e.g. a status line redrawn with no newline (don't nudge: that was
-	// the apt-bounce hazard) - or the screen turned over completely in one fast
-	// burst, where reporting the backlog cap ramps the ease to full catch-up.
-	// A changed top line alone can't tell those apart: a whole-screen app that
-	// repaints in place keeps a live clock up there (top), so it read as a
-	// turnover every refresh and kicked the view up a screenful each time.
-	// Requiring that a line genuinely scrolled off settles it - a repaint in
-	// place pushes nothing into history, a real burst pushes plenty.
-	if !scrolled_off || cur[0] == last[0] {
-		0
-	} else {
-		crate::scroll::MAX_BACKLOG as usize
-	}
-}
-
 #[cfg(test)]
 mod tests {
 	use super::{
 		APP_SCROLL_MAX, BAR_MIN_THUMB, CURSOR_MAX_LAG, Dir, LinkHit, Node, OffStrip,
-		PROMPT_SKEL_MIN, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell, app_scroll_frames,
-		bar_applies_to, bar_pos_to_lines, bar_thumb_span, bell_brighten, capture_grid_text,
-		capture_start, child_areas, cursor_cycle, cursor_slide_step, distinct_pair, divider_at,
-		equalize_dir_run, fnv_row, fnv_row_skel, glide_to_full, layout, link_at,
+		PROMPT_SKEL_MIN, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell, bar_applies_to,
+		bar_pos_to_lines, bar_thumb_span, bell_brighten, capture_grid_text, capture_start,
+		child_areas, cursor_cycle, cursor_slide_step, distinct_pair, divider_at, equalize_dir_run,
+		fingerprint_frame, fnv_row, fnv_row_skel, glide_to_full, layout, ledger_step, link_at,
 		logical_line_bounds, move_is_input, pair_inside, paste_payload, prompt_strip, pushed_since,
-		render_char, resume_delay, same_char_pair, scroll_shift, scroll_shift_signed,
-		shown_cursor_shape, slide_bands, snapshot_rows, static_bands, translate_span,
-		vanished_range, weld_region_clip,
+		render_char, resume_delay, same_char_pair, scroll_shift_signed, shown_cursor_shape,
+		slide_bands, snapshot_rows, static_bands, strip_rows, translate_span, vanished_range,
+		weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
@@ -5022,50 +5061,31 @@ mod tests {
 		assert_eq!(r[s..=e].iter().collect::<String>(), "a [b] c");
 	}
 
-	// scroll_shift: row fingerprints are arbitrary u64s; a shift up by k means the
-	// new top (n-k) rows equal the old bottom (n-k) rows.
-	const CAP: usize = crate::scroll::MAX_BACKLOG as usize;
-
 	#[test]
-	fn shift_none_when_unchanged() {
-		let f = [10, 20, 30, 40, 50];
-		assert_eq!(scroll_shift(&f, &f, true), 0);
+	fn ledger_step_follows_the_engine_not_a_guess() {
+		// alt screen: every recorded scroll slides, whatever its size - a burst
+		// that replaced the whole screen between frames included
+		assert_eq!(ledger_step(true, true, 0, true, 183), Some(183));
+		assert_eq!(ledger_step(true, true, 0, false, -3), Some(-3));
+		// nothing recorded: an in-place repaint (top, a progress bar) never slides
+		assert_eq!(ledger_step(true, true, 0, false, 0), None);
+		// normal screen: scrollback growth is the output ease's
+		assert_eq!(ledger_step(false, true, 4, true, 4), None);
+		// at the cap the whole-screen count is the output ease's too
+		assert_eq!(ledger_step(false, true, 0, true, 2), None);
+		// a region scroll (a status line pinned below) slides while following,
+		// and nothing shows it while scrolled back
+		assert_eq!(ledger_step(false, true, 0, false, 1), Some(1));
+		assert_eq!(ledger_step(false, false, 0, false, 1), None);
 	}
 
 	#[test]
-	fn shift_in_place_bottom_change_does_not_count() {
-		// only the last row changed (an in-place status line) - no scroll
-		let last = [10, 20, 30, 40, 50];
-		let cur = [10, 20, 30, 40, 99];
-		assert_eq!(scroll_shift(&cur, &last, true), 0);
-	}
-
-	#[test]
-	fn shift_by_one() {
-		let last = [10, 20, 30, 40, 50];
-		let cur = [20, 30, 40, 50, 60]; // scrolled up one, new line 60 at bottom
-		assert_eq!(scroll_shift(&cur, &last, true), 1);
-	}
-
-	#[test]
-	fn shift_by_three() {
-		let last = [10, 20, 30, 40, 50];
-		let cur = [40, 50, 60, 70, 80];
-		assert_eq!(scroll_shift(&cur, &last, true), 3);
-	}
-
-	#[test]
-	fn shift_full_turnover_reports_cap() {
-		// no overlap at all (a fast burst replaced the whole screen)
-		let last = [10, 20, 30, 40, 50];
-		let cur = [60, 70, 80, 90, 100];
-		assert_eq!(scroll_shift(&cur, &last, true), CAP);
-	}
-
-	#[test]
-	fn shift_empty_or_mismatched_is_zero() {
-		assert_eq!(scroll_shift(&[], &[], true), 0);
-		assert_eq!(scroll_shift(&[1, 2, 3], &[1, 2], true), 0);
+	fn fingerprint_runs_only_where_the_engine_recorded_nothing() {
+		assert!(fingerprint_frame(true, true, 0, 0));
+		assert!(!fingerprint_frame(true, true, 0, 5));
+		assert!(fingerprint_frame(false, true, 0, 0)); // the ConPTY repaint
+		assert!(!fingerprint_frame(false, true, 3, 0));
+		assert!(!fingerprint_frame(false, false, 0, 0));
 	}
 
 	#[test]
@@ -5161,17 +5181,6 @@ mod tests {
 		// scroll - the pane must hard-cut, not glide the list around.
 		assert_eq!(scroll_shift_signed(&big, &small, APP_SCROLL_MAX), 0);
 		assert_eq!(scroll_shift_signed(&small, &big, APP_SCROLL_MAX), 0);
-	}
-
-	#[test]
-	fn list_relayout_at_full_scrollback_is_not_an_advance() {
-		// same shape on a full buffer: the advance inference must not read the
-		// footer sliding back up as a one-line scroll (that nudge is a bounce).
-		let (small, big) = list_relayout_frames();
-		assert_eq!(scroll_shift(&small, &big, false), 0);
-		// even mid-output (a line really did scroll off around the redraw), the
-		// static conversation keeps the turnover guess quiet too
-		assert_eq!(scroll_shift(&small, &big, true), 0);
 	}
 
 	#[test]
@@ -5446,18 +5455,38 @@ mod tests {
 	}
 
 	#[test]
-	fn app_scroll_frame_gate_matrix() {
-		// (snap, slide) per frame state: alt always does both; a normal repaint
-		// frame (following, no growth, not full - the ConPTY case) does both; a
-		// grew frame snapshots but must NOT slide (the output ease owns it); a
-		// scrolled-back frame keeps the snapshot current without sliding; a full
-		// normal-screen buffer does neither (the full-branch owns its fingerprints).
-		assert_eq!(app_scroll_frames(true, true, 0, false), (true, true));
-		assert_eq!(app_scroll_frames(true, false, 3, false), (true, true));
-		assert_eq!(app_scroll_frames(false, true, 0, false), (true, true));
-		assert_eq!(app_scroll_frames(false, true, 1, false), (true, false));
-		assert_eq!(app_scroll_frames(false, false, 0, false), (true, false));
-		assert_eq!(app_scroll_frames(false, true, 0, true), (false, false));
+	fn strip_rows_style_the_rows_the_engine_kept() {
+		// alt screen, no scrollback: the rows a scroll pushes off come back styled
+		// for the strip, in screen order, in the color they were drawn in
+		let (cols, lines) = (8usize, 4usize);
+		let mut term = term_fed(cols, lines, 1000, "");
+		term.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+		feed(
+			&mut term,
+			"\x1b[?1049h\x1b[31mred\x1b[0m\r\nnext\r\nthird\r\nlast",
+		);
+		feed(&mut term, "\r\n\r\n");
+		assert_eq!(term.scroll_ledger().lines(), 2);
+		let settings = config::Settings::default();
+		let rows = strip_rows(term.scroll_ledger().rows(), cols, term.colors(), &settings);
+		let text: Vec<String> = rows
+			.iter()
+			.map(|r| {
+				r.iter()
+					.map(|c| c.c)
+					.collect::<String>()
+					.trim_end()
+					.to_string()
+			})
+			.collect();
+		assert_eq!(text, ["red", "next"]);
+		assert_ne!(rows[0][0].fg, rows[1][0].fg);
+		// a resize forgets them: nothing of another width may reach the strip
+		term.resize(crate::term::TermDimensions {
+			columns: cols + 1,
+			screen_lines: lines,
+		});
+		assert!(strip_rows(term.scroll_ledger().rows(), cols, term.colors(), &settings).is_empty());
 	}
 
 	#[test]
@@ -5479,7 +5508,7 @@ mod tests {
 		let stale = snapshot_rows(term.grid(), lines, cols, None);
 		// grew frame: a new output line scrolls the screen; snapshot, don't slide
 		feed(&mut term, "output line abcdef\r\n");
-		assert_eq!(app_scroll_frames(false, true, 1, false), (true, false));
+		assert!(!fingerprint_frame(false, true, 1, 0));
 		let fresh = snapshot_rows(term.grid(), lines, cols, None);
 		// slide frame: the prompt redraw, in place
 		feed(&mut term, "$ ");
@@ -5549,144 +5578,47 @@ mod tests {
 		// up-scroll: each step's rows leave off the region's top, newest nearest the
 		// content = at the strip's bottom
 		let mut s = OffStrip::new();
-		s.push_step(1, vec![strip_row('a'), strip_row('b')]);
-		s.push_step(1, vec![strip_row('c')]);
+		s.push_step(1, (0, 10), vec![strip_row('a'), strip_row('b')]);
+		s.push_step(1, (0, 10), vec![strip_row('c')]);
 		assert_eq!(strip_tags(&s), "abc");
+		// a slide shows the rows nearest the content, plus one for the part-row
+		assert_eq!(s.visible(1.0), 1..3);
+		assert_eq!(s.visible(0.4), 1..3);
+		assert_eq!(s.visible(50.0), 0..3);
 		// down-scroll: rows leave off the bottom, newest at the strip's top,
 		// each chunk keeping its internal order
 		let mut d = OffStrip::new();
-		d.push_step(-1, vec![strip_row('y'), strip_row('z')]);
-		d.push_step(-1, vec![strip_row('w'), strip_row('x')]);
+		d.push_step(-1, (0, 10), vec![strip_row('y'), strip_row('z')]);
+		d.push_step(-1, (0, 10), vec![strip_row('w'), strip_row('x')]);
 		assert_eq!(strip_tags(&d), "wxyz");
+		assert_eq!(d.visible(-1.2), 0..3);
 	}
 
 	#[test]
 	fn off_strip_direction_flip_discards_and_cap_trims_oldest() {
 		let mut s = OffStrip::new();
-		s.push_step(1, vec![strip_row('a'), strip_row('b')]);
+		s.push_step(1, (0, 10), vec![strip_row('a'), strip_row('b')]);
 		// flipping direction discards the old strip (it belongs on the other side)
-		s.push_step(-1, vec![strip_row('c')]);
+		s.push_step(-1, (0, 10), vec![strip_row('c')]);
 		assert_eq!(strip_tags(&s), "c");
 		assert_eq!(s.dir, -1);
+		// so does a step from another region
+		s.push_step(-1, (1, 9), vec![strip_row('d')]);
+		assert_eq!(strip_tags(&s), "d");
 		// the cap trims the rows farthest from the content (oldest)
 		let mut long = OffStrip::new();
 		for i in 0..(OffStrip::CAP + 3) {
-			long.push_step(1, vec![strip_row(char::from(b'a' + (i % 26) as u8))]);
+			long.push_step(
+				1,
+				(0, 10),
+				vec![strip_row(char::from(b'a' + (i % 26) as u8))],
+			);
 		}
 		assert_eq!(long.len(), OffStrip::CAP);
 		// the newest row (nearest the content, strip bottom) survives
 		assert_eq!(
 			long.rows.back().unwrap()[0].c,
 			char::from(b'a' + ((OffStrip::CAP + 2) % 26) as u8)
-		);
-	}
-
-	// ---- Normal-output (non-alt-screen) scroll scenarios ----------------------
-	// Plain shell output eases via scroll_shift (unsigned) + nudge_output. The bugs to
-	// guard against: the page "re-listing" itself or "jumping around" (over-reporting
-	// a small advance as a full turnover) and not scrolling at all on an in-place
-	// bottom redraw (which would bounce). The desired behavior for a finishing
-	// command is just adding new lines at the bottom.
-
-	#[test]
-	fn ls_output_adds_lines_at_bottom() {
-		// `ls -lA` finishes and the prompt returns: the viewport advanced by exactly
-		// the lines printed, not a re-list. One new line at the bottom -> advance 1.
-		let last = [10u64, 20, 30, 40, 50, 60];
-		let cur = [20u64, 30, 40, 50, 60, 70];
-		assert_eq!(scroll_shift(&cur, &last, true), 1);
-		// a short multi-line result advances by exactly that many lines (no re-list)
-		let cur3 = [40u64, 50, 60, 70, 80, 90];
-		assert_eq!(scroll_shift(&cur3, &last, true), 3);
-	}
-
-	#[test]
-	fn command_on_last_line_in_place_does_not_scroll() {
-		// running a command whose prompt sits on the last row and only the bottom row
-		// changes in place (no newline yet) must not be read as a scroll - nudging here
-		// was the old apt/status-line bounce.
-		let last = [10u64, 20, 30, 40, 50, 60];
-		let cur = [10u64, 20, 30, 40, 50, 99]; // only the last row changed
-		assert_eq!(scroll_shift(&cur, &last, true), 0);
-	}
-
-	#[test]
-	fn small_advance_with_off_cells_is_not_ballooned_to_cap() {
-		// The bounce bug: a small real advance whose retained region isn't a
-		// pixel-clean translate (a redrawn prompt/spinner mid-screen, or a
-		// multi-frame gap). Strict full-row equality failed and reported the cap,
-		// snapping the view up a screenful. A couple of off cells must still read
-		// as the true small advance.
-		let last = [10u64, 20, 30, 40, 50, 60, 70, 80];
-		// scrolled up 2, but one retained row (was 50) got rewritten to 555
-		let cur = [30u64, 40, 555, 60, 70, 80, 90, 100];
-		assert_eq!(scroll_shift(&cur, &last, true), 2);
-		// and it must NOT read as the full backlog cap
-		assert_ne!(
-			scroll_shift(&cur, &last, true),
-			crate::scroll::MAX_BACKLOG as usize
-		);
-	}
-
-	#[test]
-	fn live_progress_area_reports_the_real_advance_not_the_cap() {
-		// flatpak/apt/dnf keep a multi-row live progress area at the bottom and
-		// rewrite all of it every tick. A one-line advance under that redraw leaves
-		// most of the retained region translating cleanly, but not nearly all of it -
-		// which fell through to the turnover guess and reported the backlog cap, so
-		// each output line kicked the view up a screenful and eased it back.
-		let n = 30usize;
-		let live = 6usize; // rows the progress area rewrites each tick
-		let last: Vec<u64> = (1..=n as u64).collect();
-		let mut cur: Vec<u64> = (2..=n as u64 + 1).collect(); // advanced one line
-		for (offset, row) in cur[n - live..].iter_mut().enumerate() {
-			*row = 900 + offset as u64; // the progress area, freshly redrawn
-		}
-		assert_eq!(scroll_shift(&cur, &last, true), 1);
-	}
-
-	#[test]
-	fn static_blank_field_does_not_read_as_a_scroll() {
-		// a screen padded with blank rows that did not scroll: positions match at
-		// every k (blank == blank) but nothing moved - must report 0, not nudge.
-		let last = [0u64, 0, 0, 0, 0, 0];
-		let cur = [0u64, 0, 0, 0, 0, 0];
-		assert_eq!(scroll_shift(&cur, &last, true), 0);
-		// blank top, static content below, still no scroll
-		let last2 = [0u64, 0, 0, 11, 22, 33];
-		let cur2 = [0u64, 0, 0, 11, 22, 33];
-		assert_eq!(scroll_shift(&cur2, &last2, true), 0);
-	}
-
-	#[test]
-	fn in_place_full_screen_repaint_is_not_a_turnover() {
-		// `top` repaints its whole screen every refresh without scrolling: nearly
-		// every row changes (cpu figures, re-sorted process list) so no shift
-		// matches, and row 0 is a live clock so it always differs. That looked
-		// exactly like a full-screen burst and reported the backlog cap, kicking
-		// the view up a screenful and easing it back once per refresh. Nothing
-		// scrolled off, so it must report no advance.
-		let last = [10u64, 20, 30, 40, 50, 60];
-		let cur = [11u64, 21, 31, 41, 51, 61]; // whole screen rewritten in place
-		assert_eq!(scroll_shift(&cur, &last, false), 0);
-		// the identical frames still read as a burst when a line really did scroll
-		// off, so genuine fast output is unaffected
-		assert_eq!(
-			scroll_shift(&cur, &last, true),
-			crate::scroll::MAX_BACKLOG as usize
-		);
-	}
-
-	#[test]
-	fn fast_burst_reports_full_backlog_not_a_reversal() {
-		// a fast burst (e.g. `seq 100000`) turns the whole screen over in one frame:
-		// report the backlog cap so the ease ramps to catch up, still moving the
-		// content one way (down as new lines arrive) - never a jump back up.
-		let last = [10u64, 20, 30, 40, 50, 60];
-		let cur = [70u64, 80, 90, 100, 110, 120]; // no overlap
-		assert_eq!(
-			scroll_shift(&cur, &last, true),
-			crate::scroll::MAX_BACKLOG as usize
 		);
 	}
 
