@@ -236,11 +236,255 @@ pub fn fingerprint(info: &wgpu::AdapterInfo) -> String {
 	)
 }
 
-// Where a machine starts before anything has been measured.
+// The names a driver gives itself when there is no card behind it. wgpu reports
+// most of these as DeviceType::Cpu already; the ones that do not are the remote
+// and virtual display drivers, which is exactly where the pick was going wrong.
+const SOFTWARE_ADAPTERS: &[&str] = &[
+	"llvmpipe",
+	"softpipe",
+	"swrast",
+	"lavapipe",
+	"basic render",
+	"remote display",
+	"microsoft remote",
+];
+
+// Is there a real graphics processor behind this adapter?
+pub fn software_adapter(info: &wgpu::AdapterInfo) -> bool {
+	if info.device_type == wgpu::DeviceType::Cpu {
+		return true;
+	}
+	let name = info.name.to_ascii_lowercase();
+	SOFTWARE_ADAPTERS.iter().any(|s| name.contains(s))
+}
+
+// Is the screen this window draws to somewhere else? Every frame is then encoded
+// and shipped over a network, so what the graphics card can do says nothing about
+// what the person sees, and timing it would only ever flatter the machine. The
+// answer is part of the hardware id, so sitting down at the console after a
+// remote session is a fresh pick rather than the remote one left behind.
+pub fn remote_session() -> bool {
+	#[cfg(windows)]
+	{
+		// SM_REMOTESESSION. The environment check is the backstop for a session
+		// the metric misses, a service-hosted one in particular.
+		const SM_REMOTESESSION: i32 = 0x1000;
+		let metric = unsafe {
+			windows_sys::Win32::UI::WindowsAndMessaging::GetSystemMetrics(SM_REMOTESESSION)
+		};
+		metric != 0
+			|| std::env::var("SESSIONNAME")
+				.is_ok_and(|name| name.to_ascii_uppercase().starts_with("RDP-"))
+	}
+	#[cfg(not(windows))]
+	{
+		// A VNC or xrdp server says so in the environment it starts the session
+		// with. A forwarded X display names a host before the colon, where a local
+		// one is bare or says unix/localhost.
+		["VNCDESKTOP", "XRDP_SESSION", "RFB_PORT"]
+			.iter()
+			.any(|key| std::env::var_os(key).is_some())
+			|| std::env::var("DISPLAY").is_ok_and(|d| forwarded_display(&d))
+	}
+}
+
+// Does this DISPLAY name a host other than this machine? ":0" and "unix:0" are
+// local; "somebox:0" and "1.2.3.4:0" are not.
+#[cfg(not(windows))]
+fn forwarded_display(display: &str) -> bool {
+	let host = display.split(':').next().unwrap_or("");
+	!matches!(host, "" | "unix" | "localhost" | "127.0.0.1" | "::1")
+}
+
+// The parts of the id that need no graphics adapter, read once on a worker so
+// the first frame never waits on a file read. Started from main.
+static MACHINE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn probe_machine() {
+	std::thread::spawn(|| {
+		let _ = MACHINE.set(machine_parts());
+	});
+}
+
+fn machine_parts() -> String {
+	format!("{}|{}|{}", cpu_name(), memory_gib(), remote_session())
+}
+
+// Everything the pick depends on, as one short id: the processor, the graphics
+// adapter, how much memory there is, and whether the screen is remote. Change
+// any of them and the machine has to be rated again. Hashed rather than spelled
+// out, so the config carries no description of the box it is on.
+pub fn hardware_id(info: &wgpu::AdapterInfo) -> String {
+	// the worker starts with the process and answers in microseconds; reading it
+	// here rather than waiting is the cheaper way to handle "not yet"
+	let machine = MACHINE.get().cloned().unwrap_or_else(machine_parts);
+	let parts = format!("{machine}|{}", fingerprint(info));
+	let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+	for byte in parts.as_bytes() {
+		hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3);
+	}
+	format!("{hash:016x}")
+}
+
+// The processor's own name where the OS offers one, plus how many cores are
+// usable. The count alone would miss a swap between two chips of one size, and
+// the name alone misses a core count the OS was told to restrict.
+fn cpu_name() -> String {
+	let threads = std::thread::available_parallelism().map_or(0, std::num::NonZero::get);
+	#[cfg(windows)]
+	let model = std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_default();
+	#[cfg(not(windows))]
+	let model = std::fs::read_to_string("/proc/cpuinfo")
+		.ok()
+		.and_then(|text| {
+			text.lines()
+				.find(|line| line.starts_with("model name"))
+				.and_then(|line| line.split_once(':'))
+				.map(|(_, value)| value.trim().to_string())
+		})
+		.unwrap_or_default();
+	format!("{model}/{threads}")
+}
+
+// Installed memory in whole GiB. Rounded, so the few MiB a driver or a firmware
+// update reserves does not read as new hardware.
+fn memory_gib() -> u64 {
+	#[cfg(windows)]
+	{
+		use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+		let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+		status.dwLength = u32::try_from(std::mem::size_of::<MEMORYSTATUSEX>()).unwrap_or(0);
+		if unsafe { GlobalMemoryStatusEx(&raw mut status) } != 0 {
+			return status.ullTotalPhys / (1 << 30);
+		}
+		0
+	}
+	#[cfg(not(windows))]
+	{
+		let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+		let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+		if pages > 0 && page > 0 {
+			(pages as u64).saturating_mul(page as u64) / (1 << 30)
+		} else {
+			0
+		}
+	}
+}
+
+// Where a machine starts before anything is measured, and where it stays when
+// there is nothing worth measuring. A remote screen goes straight to the bottom:
+// every frame is encoded and shipped, so the effects cost the same and none of
+// them arrive intact.
+fn pick_for(remote: bool, software: bool) -> Profile {
+	match (remote, software) {
+		(true, _) => Profile::Standard,
+		(false, true) => Profile::Low,
+		(false, false) => Profile::Max,
+	}
+}
+
 pub fn first_pick(info: &wgpu::AdapterInfo) -> Profile {
-	match info.device_type {
-		wgpu::DeviceType::Cpu => Profile::Low,
-		_ => Profile::Max,
+	pick_for(remote_session(), software_adapter(info))
+}
+
+// Is there anything to time here, or is the first pick already the answer?
+// SILK_BENCH=1 forces a run: the banner and the ladder walk are otherwise only
+// reachable by putting a different graphics card in the machine.
+pub fn worth_measuring(info: &wgpu::AdapterInfo) -> bool {
+	std::env::var_os("SILK_BENCH").is_some() || (!remote_session() && !software_adapter(info))
+}
+
+// A short measured run over the ladder, in place of guessing from the adapter's
+// name. Each rung gets a moment of full-rate frames with its own settings live,
+// and the first whose median frame period fits the display's budget is the
+// answer. Standard is never timed: if Low cannot hold the rate, nothing below
+// it is in question.
+const BENCH_WARMUP: usize = 3; // frames discarded while a rung's settings settle
+const BENCH_FRAMES: usize = 40; // frames measured per rung...
+const BENCH_RUNG_MS: f32 = 800.0; // ...or this long, whichever comes first
+const BENCH_MIN_FRAMES: usize = 5; // never judge a rung on fewer than this
+// How far past the budget a rung has to run before the rest of the ladder is
+// pointless. The profiles change the per-pixel work by around half; a machine
+// several times over is not going to be rescued by any of them, and timing the
+// two below it is a few seconds spent on a foregone answer. That case is also
+// the slowest to measure, which is exactly the wrong place to be thorough.
+const BENCH_HOPELESS: f32 = 4.0;
+
+// What the caller does with the frame it just measured.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Step {
+	Measuring,
+	Rung(Profile), // this rung missed: put the next one live and keep going
+	Done(Profile), // the answer
+}
+
+pub struct Bench {
+	rungs: &'static [Profile],
+	at: usize,
+	seen: usize,
+	periods: Vec<f32>,
+	last: Option<Instant>,
+	rung_start: Option<Instant>,
+}
+
+impl Bench {
+	const LADDER: &'static [Profile] = &[Profile::Max, Profile::High, Profile::Low];
+
+	pub fn new() -> Bench {
+		Bench {
+			rungs: Bench::LADDER,
+			at: 0,
+			seen: 0,
+			periods: Vec::with_capacity(BENCH_FRAMES),
+			last: None,
+			rung_start: None,
+		}
+	}
+
+	// The profile whose settings must be live while this rung is measured.
+	pub fn profile(&self) -> Profile {
+		self.rungs
+			.get(self.at)
+			.copied()
+			.unwrap_or(Profile::Standard)
+	}
+
+	// A frame went out; answer what to do next.
+	pub fn note(&mut self, now: Instant, budget_ms: f32) -> Step {
+		self.seen += 1;
+		if self.seen <= BENCH_WARMUP {
+			self.last = Some(now);
+			self.rung_start = Some(now);
+			return Step::Measuring;
+		}
+		if let Some(last) = self.last {
+			self.periods.push((now - last).as_secs_f32() * 1000.0);
+		}
+		self.last = Some(now);
+		let elapsed = self
+			.rung_start
+			.map_or(0.0, |start| (now - start).as_secs_f32() * 1000.0);
+		let enough = self.periods.len() >= BENCH_FRAMES
+			|| (elapsed >= BENCH_RUNG_MS && self.periods.len() >= BENCH_MIN_FRAMES);
+		if !enough {
+			return Step::Measuring;
+		}
+		let period = median(&mut self.periods);
+		if period <= budget_ms {
+			return Step::Done(self.profile());
+		}
+		if period > budget_ms * BENCH_HOPELESS {
+			return Step::Done(Profile::Standard);
+		}
+		self.at += 1;
+		self.periods.clear();
+		self.seen = 0;
+		self.last = None;
+		self.rung_start = None;
+		match self.rungs.get(self.at) {
+			Some(next) => Step::Rung(*next),
+			None => Step::Done(Profile::Standard),
+		}
 	}
 }
 
@@ -307,9 +551,109 @@ fn median(values: &mut [f32]) -> f32 {
 
 #[cfg(test)]
 mod tests {
-	use super::{Profile, Rating, WINDOW, apply, budget_ms, unapply};
+	use super::{
+		Bench, Profile, Rating, Step, WINDOW, apply, budget_ms, pick_for, software_adapter, unapply,
+	};
 	use crate::config::Settings;
 	use std::time::{Duration, Instant};
+
+	fn adapter(name: &str, device_type: wgpu::DeviceType) -> wgpu::AdapterInfo {
+		wgpu::AdapterInfo {
+			name: name.to_string(),
+			vendor: 0,
+			device: 0,
+			device_type,
+			device_pci_bus_id: String::new(),
+			driver: String::new(),
+			driver_info: String::new(),
+			backend: wgpu::Backend::Gl,
+			subgroup_min_size: 0,
+			subgroup_max_size: 0,
+			transient_saves_memory: false,
+		}
+	}
+
+	#[test]
+	fn a_remote_screen_or_a_missing_card_is_picked_for_rather_than_timed() {
+		assert_eq!(pick_for(false, false), Profile::Max);
+		assert_eq!(pick_for(false, true), Profile::Low);
+		assert_eq!(pick_for(true, false), Profile::Standard, "remote goes flat");
+		assert_eq!(pick_for(true, true), Profile::Standard);
+		// wgpu labels most software renderers Cpu, but the remote and virtual
+		// display drivers arrive as something else and have to be named
+		assert!(software_adapter(&adapter(
+			"Anything At All",
+			wgpu::DeviceType::Cpu
+		)));
+		assert!(software_adapter(&adapter(
+			"llvmpipe (LLVM 19.1.7, 256 bits)",
+			wgpu::DeviceType::Other
+		)));
+		assert!(software_adapter(&adapter(
+			"Microsoft Basic Render Driver",
+			wgpu::DeviceType::VirtualGpu
+		)));
+		assert!(!software_adapter(&adapter(
+			"NVIDIA GeForce RTX 3060 Ti",
+			wgpu::DeviceType::DiscreteGpu
+		)));
+		assert!(!software_adapter(&adapter(
+			"Intel(R) UHD Graphics",
+			wgpu::DeviceType::IntegratedGpu
+		)));
+	}
+
+	#[cfg(not(windows))]
+	#[test]
+	fn a_display_naming_another_host_is_a_remote_screen() {
+		use super::forwarded_display;
+		for local in [":0", ":98.0", "unix:0", "localhost:10.0"] {
+			assert!(!forwarded_display(local), "{local} is this machine");
+		}
+		for away in ["b29w:0", "192.168.1.9:0.0"] {
+			assert!(forwarded_display(away), "{away} is somewhere else");
+		}
+	}
+
+	// Frames at `period` ms until the run answers, so a whole run can be walked
+	// without a clock.
+	fn run_bench(period: f32, budget_ms: f32) -> (Profile, Vec<Profile>) {
+		let mut bench = Bench::new();
+		let mut now = Instant::now();
+		let mut rungs = vec![bench.profile()];
+		for _ in 0..4000 {
+			now += Duration::from_micros((period * 1000.0) as u64);
+			match bench.note(now, budget_ms) {
+				Step::Measuring => {}
+				Step::Rung(next) => rungs.push(next),
+				Step::Done(pick) => return (pick, rungs),
+			}
+		}
+		panic!("the run never answered");
+	}
+
+	#[test]
+	fn the_run_stops_at_the_first_rung_that_holds_the_rate() {
+		let budget = budget_ms(60.0);
+		// comfortably inside the budget: the heaviest rung stands, and nothing
+		// below it is ever put live
+		let (pick, rungs) = run_bench(16.0, budget);
+		assert_eq!(pick, Profile::Max);
+		assert_eq!(rungs, vec![Profile::Max]);
+		// a little over: the ladder is walked and Standard is what is left
+		let (pick, rungs) = run_bench(budget * 1.2, budget);
+		assert_eq!(pick, Profile::Standard);
+		assert_eq!(
+			rungs,
+			vec![Profile::Max, Profile::High, Profile::Low],
+			"each rung has to go live before it is judged"
+		);
+		// far over: nothing on the ladder can help, so the rest is not timed -
+		// which is the case that would otherwise take longest
+		let (pick, rungs) = run_bench(budget * 6.0, budget);
+		assert_eq!(pick, Profile::Standard);
+		assert_eq!(rungs, vec![Profile::Max]);
+	}
 
 	fn tuned() -> Settings {
 		Settings {
