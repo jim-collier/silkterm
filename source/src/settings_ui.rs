@@ -25,7 +25,9 @@
 use crate::config::{self, Settings};
 use crate::gfx::RectInstance;
 use crate::pane::Rect;
+use crate::profile::Profile;
 use crate::ui_spec::{self, Key, Kind, Layout, Spec, ui};
+use std::borrow::Cow;
 
 // The declared geometry, all of it in DIP (see the units note above).
 fn lay() -> &'static Layout {
@@ -189,6 +191,29 @@ const RAMP_DOWN_MAX: f32 = 4500.0;
 // Tail duration: 13ms is an abrupt landing, 1.3s a long float-in.
 const EASE_OUT_MIN: f32 = 13.0;
 const EASE_OUT_MAX: f32 = 1300.0;
+
+// The rows a performance profile sets - one list, so the dialog's graying and
+// profile.rs's field list cannot drift apart without a test noticing.
+const GOVERNED: &[Key] = &[
+	Key::SmoothScroll,
+	Key::ScrollEaseIn,
+	Key::ScrollRampUp,
+	Key::SingleScreenTau,
+	Key::ScrollRampDown,
+	Key::ScrollEaseOut,
+	Key::CursorAnimation,
+	Key::TextScrim,
+	Key::ScrimRadius,
+	Key::ScrimStrength,
+	Key::ScrimSoftness,
+	Key::ScrimFunction,
+	Key::Outline,
+	Key::BgEnabled,
+	Key::BgBlur,
+	Key::BgContrastMask,
+];
+const LOCKED_TIP: &str =
+	"Set by the performance profile. Choose Custom on the Performance tab to change it.";
 
 // What holds keyboard focus: one control within a row, or a footer button (index
 // into `buttons()`: 0 = Cancel, 1 = Apply, 2 = OK). `Row(i, part)` names a row and
@@ -825,7 +850,9 @@ impl SettingsDialog {
 			w,
 			h,
 		};
-		let settings = (*config::settings()).clone();
+		// the user's own values: the live copy wears the performance profile
+		let mut settings = (*config::settings()).clone();
+		crate::profile::unapply(&mut settings);
 		Self {
 			orig: settings.clone(),
 			edited: settings,
@@ -1953,6 +1980,7 @@ impl SettingsDialog {
 			let grayed = self.disabled(self.specs[i].key);
 			let tip = match Self::disabled_tip(self.specs[i].key).filter(|_| grayed) {
 				Some(why) => why,
+				None if self.locked(self.specs[i].key) => LOCKED_TIP,
 				None if !self.specs[i].help.is_empty() => self.specs[i].help,
 				None => continue,
 			};
@@ -2066,6 +2094,10 @@ impl SettingsDialog {
 	// Is this row at its config default? (drives the revert icon). A Dual row is
 	// "default" only when both its keys are.
 	fn row_is_default(&self, i: usize) -> bool {
+		// a locked row has nothing to revert: the profile, not the user, set it
+		if self.locked(self.specs[i].key) {
+			return true;
+		}
 		match self.specs[i].kind {
 			Kind::Dual { keys, .. } => keys.iter().all(|&k| self.is_default(k)),
 			_ => self.is_default(self.specs[i].key),
@@ -2488,8 +2520,21 @@ impl SettingsDialog {
 		self.adopt_theme();
 	}
 
+	// What the rows display. `edited` is the user's own values; while a profile
+	// is chosen the governed rows show the profile's instead, and only the
+	// display - Apply still writes `edited`, so Custom finds everything intact.
+	fn shown(&self) -> Cow<'_, Settings> {
+		if crate::profile::current(&self.edited) == Profile::Custom {
+			Cow::Borrowed(&self.edited)
+		} else {
+			let mut settings = self.edited.clone();
+			crate::profile::apply(&mut settings);
+			Cow::Owned(settings)
+		}
+	}
 	fn get_f32(&self, key: Key) -> f32 {
-		let settings = &self.edited;
+		let shown = self.shown();
+		let settings = &*shown;
 		match key {
 			Key::Opacity => to_percent(settings.opacity),
 			Key::BgOpacity => to_percent(settings.wallpaper_opacity),
@@ -2631,6 +2676,7 @@ impl SettingsDialog {
 		}
 	}
 	fn get_toggle(&self, key: Key) -> bool {
+		let s = self.shown();
 		match key {
 			// These two read what is STORED, like every other row. Where the desktop
 			// names no font to follow they are grayed and the flyover says why -
@@ -2639,32 +2685,34 @@ impl SettingsDialog {
 			// beside a dimmed revert arrow, claiming unchecked was the default when
 			// the default is on. `gate_ok` still asks the EFFECTIVE state, so the
 			// family field it overrides stays editable.
-			Key::SystemFont => self.edited.use_system_font,
-			Key::SystemFontSize => self.edited.use_system_font_size,
-			Key::Transparency => self.edited.transparent_background,
-			Key::BackdropBlur => self.edited.transparent_background_blur,
-			Key::TextScrim => self.edited.text_scrim,
-			Key::CursorScrim => self.edited.cursor_scrim,
-			Key::CursorOutline => self.edited.cursor_outline,
-			Key::RememberSize => self.edited.remember_size,
-			Key::CopyOnSelect => self.edited.copy_on_select,
-			Key::ShellIntegration => self.edited.shell_integration,
-			Key::BashPrompt => self.edited.bash_prompt,
-			Key::Hyperlinks => self.edited.hyperlinks,
-			Key::BgContrastMask => self.edited.wallpaper_contrast_mask,
-			Key::BgEnabled => self.edited.wallpaper_enabled,
-			Key::BgRotate => self.edited.wallpaper_rotate_enabled,
-			Key::BgHonorXmp => self.edited.wallpaper_honor_xmp,
-			Key::BgHonorXmpLook => self.edited.wallpaper_honor_xmp_look,
-			Key::SmoothScroll => self.edited.scroll_smooth,
-			Key::Scrollbar => self.edited.scrollbar,
-			Key::ScrollbarAutoHide => self.edited.scrollbar_auto_hide,
-			Key::Minimap => self.edited.minimap,
+			Key::PerfAuto => s.performance_automatic,
+			Key::SystemFont => s.use_system_font,
+			Key::SystemFontSize => s.use_system_font_size,
+			Key::Transparency => s.transparent_background,
+			Key::BackdropBlur => s.transparent_background_blur,
+			Key::TextScrim => s.text_scrim,
+			Key::CursorScrim => s.cursor_scrim,
+			Key::CursorOutline => s.cursor_outline,
+			Key::RememberSize => s.remember_size,
+			Key::CopyOnSelect => s.copy_on_select,
+			Key::ShellIntegration => s.shell_integration,
+			Key::BashPrompt => s.bash_prompt,
+			Key::Hyperlinks => s.hyperlinks,
+			Key::BgContrastMask => s.wallpaper_contrast_mask,
+			Key::BgEnabled => s.wallpaper_enabled,
+			Key::BgRotate => s.wallpaper_rotate_enabled,
+			Key::BgHonorXmp => s.wallpaper_honor_xmp,
+			Key::BgHonorXmpLook => s.wallpaper_honor_xmp_look,
+			Key::SmoothScroll => s.scroll_smooth,
+			Key::Scrollbar => s.scrollbar,
+			Key::ScrollbarAutoHide => s.scrollbar_auto_hide,
+			Key::Minimap => s.minimap,
 			_ => false,
 		}
 	}
 	fn set_toggle(&mut self, key: Key, on: bool) {
 		match key {
+			Key::PerfAuto => self.edited.performance_automatic = on,
 			Key::SystemFont => self.edited.use_system_font = on,
 			Key::SystemFontSize => self.edited.use_system_font_size = on,
 			Key::Transparency => self.edited.transparent_background = on,
@@ -2690,38 +2738,40 @@ impl SettingsDialog {
 		}
 	}
 	fn get_radio(&self, key: Key) -> usize {
+		let s = self.shown();
 		match key {
-			Key::BgFit => match self.edited.wallpaper_default_fit {
+			Key::PerfProfile => crate::profile::current(&s).index(),
+			Key::BgFit => match s.wallpaper_default_fit {
 				config::Fit::Zoom => 1,
 				config::Fit::Stretch => 0,
 			},
 			// display order: SDF, DT, Dilate, Gaussian
-			Key::ScrimFunction => match self.edited.text_scrim_function.as_str() {
+			Key::ScrimFunction => match s.text_scrim_function.as_str() {
 				"dt" => 1,
 				"dilate" => 2,
 				"gaussian" => 3,
 				_ => 0, // sdf
 			},
 			// display order: Exponential, Half-normal, Log, Sigmoid, Linear
-			Key::ScrimRamp => match self.edited.text_scrim_ramp.as_str() {
+			Key::ScrimRamp => match s.text_scrim_ramp.as_str() {
 				"half_normal" => 1,
 				"log" => 2,
 				"sigmoid" => 3,
 				"linear" => 4,
 				_ => 0, // exp
 			},
-			Key::CursorAnimation => match self.edited.cursor_animation.as_str() {
+			Key::CursorAnimation => match s.cursor_animation.as_str() {
 				"phase" => 1,
 				"pulse_horizontal" => 3,
 				"pulse_both" => 4,
 				"none" => 0,
 				_ => 2, // pulse_vertical
 			},
-			Key::Theme => crate::theme::all_names(&self.edited.user_themes)
+			Key::Theme => crate::theme::all_names(&s.user_themes)
 				.iter()
-				.position(|n| n.eq_ignore_ascii_case(self.edited.theme.trim()))
+				.position(|n| n.eq_ignore_ascii_case(s.theme.trim()))
 				.unwrap_or(0),
-			Key::ThemeMode => match self.edited.theme_mode.as_str() {
+			Key::ThemeMode => match s.theme_mode.as_str() {
 				"light" => 1,
 				"system" => 2,
 				_ => 0, // dark
@@ -2731,6 +2781,9 @@ impl SettingsDialog {
 	}
 	fn set_radio(&mut self, key: Key, idx: usize) {
 		match key {
+			Key::PerfProfile => {
+				self.edited.performance_profile = Profile::from_index(idx).key().to_string();
+			}
 			Key::BgFit => {
 				self.edited.wallpaper_default_fit = if idx == 1 {
 					config::Fit::Zoom
@@ -2795,6 +2848,12 @@ impl SettingsDialog {
 		!ui().needs_of(key).iter().all(|need| self.gate_ok(need))
 			// nothing for a system-font toggle to follow (the tip says so)
 			|| Self::disabled_tip(key).is_some()
+			|| self.locked(key)
+	}
+	// A row the chosen performance profile sets. It shows the profile's value
+	// and takes no input until the profile is Custom again.
+	fn locked(&self, key: Key) -> bool {
+		crate::profile::current(&self.edited) != Profile::Custom && GOVERNED.contains(&key)
 	}
 	// Is one declared prerequisite satisfied? A slider counts while it sits above
 	// zero, everything else while it is switched on - except the two system-font
@@ -2909,6 +2968,10 @@ impl SettingsDialog {
 				edited.wallpaper_honor_xmp_look == defaults.wallpaper_honor_xmp_look
 			}
 			Key::ScrimRamp => edited.text_scrim_ramp == defaults.text_scrim_ramp,
+			Key::ScrimFunction => edited.text_scrim_function == defaults.text_scrim_function,
+			Key::CursorAnimation => edited.cursor_animation == defaults.cursor_animation,
+			Key::PerfAuto => edited.performance_automatic == defaults.performance_automatic,
+			Key::PerfProfile => edited.performance_profile == defaults.performance_profile,
 			Key::BgImage => edited.wallpaper == defaults.wallpaper,
 			Key::FontFamily => edited.font_family == defaults.font_family,
 			Key::LinkOpenCommand => {
@@ -3003,8 +3066,11 @@ impl SettingsDialog {
 			| Key::Scrollbar
 			| Key::ScrollbarAutoHide
 			| Key::Minimap
+			| Key::SmoothScroll
+			| Key::PerfAuto
 			| Key::BgContrastMask => {
 				let default_val = match key {
+					Key::PerfAuto => self.defaults.performance_automatic,
 					Key::Transparency => self.defaults.transparent_background,
 					Key::BackdropBlur => self.defaults.transparent_background_blur,
 					Key::TextScrim => self.defaults.text_scrim,
@@ -3031,6 +3097,15 @@ impl SettingsDialog {
 			}
 			Key::BgFit => self.edited.wallpaper_default_fit = self.defaults.wallpaper_default_fit,
 			Key::ScrimRamp => self.edited.text_scrim_ramp = self.defaults.text_scrim_ramp.clone(),
+			Key::ScrimFunction => {
+				self.edited.text_scrim_function = self.defaults.text_scrim_function.clone();
+			}
+			Key::CursorAnimation => {
+				self.edited.cursor_animation = self.defaults.cursor_animation.clone();
+			}
+			Key::PerfProfile => {
+				self.edited.performance_profile = self.defaults.performance_profile.clone();
+			}
 			Key::BgImage => {
 				self.edited.wallpaper = self.defaults.wallpaper.clone();
 				self.edited.wallpaper_raw = self.defaults.wallpaper_raw.clone();
@@ -5235,7 +5310,7 @@ mod tests {
 	// Everything a real dialog is handed arrives in physical pixels, so a scale
 	// of 2 means twice the line height, label width, tab widths and height cap.
 	fn mk_dialog_at(max_h: f32, scale: f32) -> SettingsDialog {
-		SettingsDialog::new(
+		let mut d = SettingsDialog::new(
 			0.0,
 			0.0,
 			18.0 * scale,
@@ -5245,7 +5320,12 @@ mod tests {
 			vec![90.0 * scale; tab_titles().len()],
 			max_h * scale,
 			scale,
-		)
+		);
+		// the rows a profile governs answer with its values while one is chosen;
+		// the tests below drive the rows themselves, so they start from Custom
+		d.orig.performance_profile = "custom".to_string();
+		d.edited.performance_profile = "custom".to_string();
+		d
 	}
 
 	// A tab's title is drawn `tab_pad / 2` inside its own box, and the box is only
@@ -5313,6 +5393,7 @@ mod tests {
 		assert!(d.thumb().is_none());
 		// tight cap: window clamps, the (tallest) appearance tab overflows
 		let mut d = mk_dialog(400.0);
+		d.tab = 1; // Background
 		assert!(d.size().1 <= 400.0);
 		assert!(d.max_scroll() > 0.0);
 		assert!(d.thumb().is_some());
@@ -5474,7 +5555,12 @@ mod tests {
 		let _ = std::fs::write(&path, "");
 		config::set_config_override(path.clone());
 		config::reload_from_disk(); // lets backfill lay the template down once
-		let pristine = std::fs::read_to_string(&path).unwrap();
+		// the governed rows show a profile's values until it is Custom, so the
+		// file the rows are read back from says so
+		let pristine = std::fs::read_to_string(&path)
+			.unwrap()
+			.replace("# profile: \"max\"  ## Default", "profile: \"custom\"");
+		assert!(pristine.contains("profile: \"custom\""));
 
 		let mut d = mk_dialog(4000.0);
 		let mut checked = 0;
@@ -5515,6 +5601,71 @@ mod tests {
 		}
 		assert!(checked > 40, "only {checked} rows checked");
 		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// While a profile is chosen, every row it governs shows the profile's value
+	// and takes no input, and the user's own value waits underneath. Custom is
+	// the one profile that governs nothing.
+	#[test]
+	fn a_profile_shows_its_values_and_locks_its_rows() {
+		use super::{GOVERNED, LOCKED_TIP};
+		let mut d = mk_dialog(4000.0);
+		d.edited.scroll_ease_in_ms = 300.0;
+		d.edited.wallpaper_enabled = false;
+		d.edited.margin = 7.0;
+		let own = d.get_f32(Key::ScrollEaseIn);
+		assert!(!d.disabled(Key::ScrollEaseIn));
+
+		d.set_radio(Key::PerfProfile, super::Profile::Max.index());
+		assert_eq!(
+			d.get_f32(Key::ScrollEaseIn),
+			d.default_f32(Key::ScrollEaseIn)
+		);
+		assert!(
+			d.get_toggle(Key::BgEnabled),
+			"Max shows the shipped default"
+		);
+		assert_eq!(
+			d.get_f32(Key::Margin),
+			7.0,
+			"an ungoverned row is untouched"
+		);
+		for key in GOVERNED {
+			assert!(d.disabled(*key), "{key:?} should be locked");
+		}
+		assert!(!d.disabled(Key::Margin));
+		let outline = d.specs.iter().position(|s| s.key == Key::Outline).unwrap();
+		d.edited.text_outline = 3.0;
+		assert!(d.row_is_default(outline), "a locked row offers no revert");
+		// a member of a locked switch is grayed by the shown value, not the stored one
+		assert!(!d.disabled(Key::BgImage), "the wallpaper is on under Max");
+		// and the flyover says why, in place of the row's own help
+		d.tab = 4; // Movement
+		let i = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::ScrollEaseIn)
+			.unwrap();
+		let ctl = d.checkbox(i);
+		let tip = d
+			.hover_tip_dip(ctl.x + 1.0, ctl.y + 1.0)
+			.map(|(text, _)| text);
+		assert_eq!(tip, Some(LOCKED_TIP));
+
+		d.set_radio(Key::PerfProfile, super::Profile::Custom.index());
+		assert_eq!(
+			d.get_f32(Key::ScrollEaseIn),
+			own,
+			"Custom puts the value back"
+		);
+		assert!(!d.get_toggle(Key::BgEnabled));
+		assert!(!d.disabled(Key::ScrollEaseIn));
+		assert!(d.disabled(Key::BgImage), "the wallpaper is off again");
+		// the dropdown itself follows the automatic switch
+		d.set_toggle(Key::PerfAuto, true);
+		assert!(d.disabled(Key::PerfProfile));
+		d.set_toggle(Key::PerfAuto, false);
+		assert!(!d.disabled(Key::PerfProfile));
 	}
 
 	// A 0..1 fraction reads as a whole percent and is stored as the decimal. The
@@ -6095,7 +6246,7 @@ mod tests {
 	fn keyboard_focus_walks_controls_then_buttons() {
 		use super::Focus;
 		let mut d = mk_dialog(2000.0);
-		d.tab = 3; // Movement: the smooth-scroll master toggle, then two sliders
+		d.tab = 4; // Movement: the smooth-scroll master toggle, then two sliders
 		let f = d.focusables();
 		assert!(f.len() >= 3, "scrolling tab has focusable rows");
 		d.set_mods(false, false, false);
@@ -6265,8 +6416,10 @@ mod tests {
 	// dialog, twice the pixels, and a pointer still lands on the same control.
 	#[test]
 	fn the_scale_factor_only_multiplies_the_layout() {
-		let base = mk_dialog(4000.0);
-		let hidpi = mk_dialog_at(4000.0, 2.0);
+		let mut base = mk_dialog(4000.0);
+		let mut hidpi = mk_dialog_at(4000.0, 2.0);
+		base.tab = 1; // Background, where the Transparency checkbox is
+		hidpi.tab = 1;
 		let ((bw, bh), (hw, hh)) = (base.size(), hidpi.size());
 		assert!(
 			(hw - bw * 2.0).abs() < 0.01 && (hh - bh * 2.0).abs() < 0.01,
@@ -6464,7 +6617,7 @@ mod tests {
 	#[test]
 	fn keyboard_skips_headers_and_disabled() {
 		let mut d = mk_dialog(2000.0);
-		d.tab = 0; // Appearance
+		d.tab = 1; // Background
 		// with transparency + scrim off, the opacity/blur/scrim rows are disabled
 		d.edited.transparent_background = false;
 		d.edited.text_scrim = false;
@@ -6477,7 +6630,7 @@ mod tests {
 	#[test]
 	fn space_toggles_focused_boolean() {
 		let mut d = mk_dialog(2000.0);
-		d.tab = 0;
+		d.tab = 1;
 		d.key_tab(); // first focusable = Transparency (a toggle)
 		let before = d.edited.transparent_background;
 		d.key_space();
@@ -6489,7 +6642,7 @@ mod tests {
 		use super::Key;
 		let mut d = mk_dialog(2000.0);
 		// slider: focus the scroll-speed slider, nudge it both ways
-		d.tab = 4;
+		d.tab = 5;
 		d.key_tab();
 		let base = d.get_f32(Key::SingleScreenTau);
 		d.key_horizontal(-1);

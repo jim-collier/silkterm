@@ -78,7 +78,7 @@ The dialog is declared in `settings_ui.shcl`, which is the file to edit when add
 - A fraction stored as 0..1 is shown as a whole percent. The file keeps the decimal.
 - Every row that holds a value has a revert control at the right edge, which puts the shipped default back. A heading, a `buttons` row and the shells grid hold no single value, so none of them carries one.
 - Every row must actually write what it edits. A row whose setting is never persisted is worse than no row, because the change appears to take and then vanishes at the next launch.
-- Why a row is grayed out beats what it does, so a row grayed by the machine says so in its flyover in place of its usual text. A row grayed by another setting says nothing extra, because the switch that did it is the row above.
+- Why a row is grayed out beats what it does, so a row grayed by the machine says so in its flyover in place of its usual text. A row grayed by another setting says nothing extra, because the switch that did it is the row above. A row set by the performance profile is the exception and says so, because the switch that did it is on another tab.
 
 ## Buttons and prompts
 
@@ -168,3 +168,4 @@ Things the built interface does differently from the rules above. Each is a smal
 - The right-click menu no longer offers Fullscreen, Window frame or Bare window, so with the menu bar hidden they are reachable only by F11 or by putting the bar back. Acceptable while Menu bar stays on that menu, but worth another look if the bar is ever hidden by default.
 - `Gaussian [ugly]` says out loud that it is the worse option, which no other control does. It is the baseline the other three scrim functions are compared against, and the label was asked for.
 - The About box pads its `Key: value` lines with extra spaces, which line nothing up in a proportional font. Cosmetic, and shared with the text `--about` prints.
+- The Performance tab makes eight, one past the ceiling above. It holds one setting that governs rows on four other tabs, and was put first so it is seen before them. Where it should really live is still open.

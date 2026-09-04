@@ -307,6 +307,13 @@ pub struct Settings {
 	pub ansi: [[u8; 3]; 16], // 16-color ANSI palette, resolved from the active theme
 	pub theme: String,       // active theme name (see theme.rs)
 	pub theme_mode: String,  // "dark" | "light" | "system"
+	// The performance profile (profile.rs): what the look may cost. While one
+	// is live the fields it governs hold ITS values and the user's own sit in
+	// `profile_shadow`, which is how Custom puts them back.
+	pub performance_automatic: bool, // pick the profile for this machine, and step it down when the display cannot keep up
+	pub performance_profile: String, // "custom" | "max" | "high" | "low" | "standard"
+	pub rated_hardware: String,      // the adapter the profile was last picked for ("" = never)
+	pub profile_shadow: Option<Box<crate::profile::Shadow>>,
 	// Themes saved from the Settings dialog, whole, in file order. They resolve
 	// ahead of the built-ins, so one may carry a built-in's name.
 	pub user_themes: Vec<crate::theme::UserTheme>,
@@ -439,6 +446,10 @@ impl Default for Settings {
 			ansi: crate::theme::resolve("SilkTerm", "dark", true).ansi,
 			theme: "SilkTerm".to_string(),
 			theme_mode: "dark".to_string(),
+			performance_automatic: true,
+			performance_profile: "max".to_string(),
+			rated_hardware: String::new(),
+			profile_shadow: None,
 			user_themes: Vec::new(),
 			shells: Vec::new(),
 		}
@@ -447,7 +458,11 @@ impl Default for Settings {
 
 fn store() -> &'static RwLock<Arc<Settings>> {
 	static S: OnceLock<RwLock<Arc<Settings>>> = OnceLock::new();
-	S.get_or_init(|| RwLock::new(Arc::new(load())))
+	S.get_or_init(|| {
+		let mut settings = load();
+		crate::profile::apply(&mut settings);
+		RwLock::new(Arc::new(settings))
+	})
 }
 
 // Current settings snapshot. Cheap to call (an Arc clone); the settings dialog
@@ -775,8 +790,11 @@ pub fn selection_pairs() -> Vec<(char, char)> {
 		.collect()
 }
 
-// Replace the live settings (used by the settings dialog's Apply/OK).
-pub fn update(new: Settings) {
+// Replace the live settings (used by the settings dialog's Apply/OK). The
+// performance profile goes on here, so what `settings()` answers is what is
+// drawn, and `persist` takes it back off before anything reaches the file.
+pub fn update(mut new: Settings) {
+	crate::profile::apply(&mut new);
 	*store().write().unwrap() = Arc::new(new);
 }
 
@@ -968,6 +986,12 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	let Some(mut doc) = read_doc(&path) else {
 		return true;
 	};
+	// Both sides diff as the user's own values. A live copy carries a profile's
+	// values over them, and those must never reach the file.
+	let mut own = (orig.clone(), s.clone());
+	crate::profile::unapply(&mut own.0);
+	crate::profile::unapply(&mut own.1);
+	let (orig, s) = (&own.0, &own.1);
 	// round f32 -> a clean decimal so persisted floats aren't 0.2000000029...
 	let r = |v: f32| (v as f64 * 1000.0).round() / 1000.0;
 
@@ -976,6 +1000,15 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	}
 	if s.theme_mode != orig.theme_mode {
 		doc.put_string("theme_mode", s.theme_mode.as_str());
+	}
+	if s.performance_automatic != orig.performance_automatic {
+		doc.put_bool("performance.automatic", s.performance_automatic);
+	}
+	if s.performance_profile != orig.performance_profile {
+		doc.put_string("performance.profile", s.performance_profile.as_str());
+	}
+	if s.rated_hardware != orig.rated_hardware {
+		doc.put_string("performance.rated_hardware", s.rated_hardware.as_str());
 	}
 	write_user_themes(&mut doc, &orig.user_themes, &s.user_themes);
 	write_shells(&mut doc, &orig.shells, &s.shells);
@@ -1378,6 +1411,9 @@ struct RawConfig {
 	bash_prompt: Option<bool>,
 	hyperlinks: Option<bool>,
 	hyperlink_open_command: Option<String>,
+	performance_automatic: Option<bool>,
+	performance_profile: Option<String>,
+	rated_hardware: Option<String>,
 	colors: RawColors,
 	user_themes: Vec<crate::theme::UserTheme>,
 	shells: Vec<crate::shells::ShellEntry>,
@@ -1567,6 +1603,9 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		wallpaper_contrast_mask_auto: r.f("wallpaper.contrast_mask.auto"),
 		theme: r.s("theme"),
 		theme_mode: r.s("theme_mode"),
+		performance_automatic: r.b("performance.automatic"),
+		performance_profile: r.s("performance.profile"),
+		rated_hardware: r.s("performance.rated_hardware"),
 		text_scrim: r.b("text.scrim.enabled"),
 		text_scrim_radius: r.f("text.scrim.radius"),
 		text_scrim_softness: r.f("text.scrim.softness"),
@@ -2065,6 +2104,16 @@ fn resolve(raw: RawConfig) -> Settings {
 		ansi: pal.ansi,
 		theme: theme_name,
 		theme_mode,
+		performance_automatic: raw.performance_automatic.unwrap_or(d.performance_automatic),
+		performance_profile: crate::profile::Profile::parse(
+			raw.performance_profile
+				.as_deref()
+				.unwrap_or(&d.performance_profile),
+		)
+		.key()
+		.to_string(),
+		rated_hardware: raw.rated_hardware.unwrap_or_default(),
+		profile_shadow: None,
 		user_themes: raw.user_themes,
 		shells: raw.shells,
 	}
@@ -3401,6 +3450,30 @@ const DEFAULT_CONFIG_TEMPLATE: &str = r##"# SilkTerm configuration file.
 ## mean the same thing, so a config carried between machines keeps working.
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+## Performance
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+
+performance:
+
+	## Pick the profile below for this machine: "max" on a graphics card, "low"
+	## under software rendering, then a step down whenever the display cannot
+	## keep up with a scroll. It never steps back up until the hardware changes.
+	## Off, the profile is yours to set and stays where you put it.
+	# automatic: true  ## Default
+
+	## What the look is allowed to cost. "max" is every effect at its shipped
+	## setting. "high" is quicker scrolling and a cheaper text halo. "low" also
+	## drops the wallpaper, the halo and the cursor animation. "standard" is a
+	## plain terminal with no smooth scrolling at all. Each one sets the settings
+	## it governs and leaves your own values in this file untouched, so "custom"
+	## is the one that reads them.
+	# profile: "max"  ## Default
+
+	## The graphics adapter the profile was last picked for. Written by the
+	## program; a different adapter means a fresh pick.
+	# rated_hardware: ""  ## Default
+
+## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Background and transparency
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
@@ -3983,6 +4056,44 @@ mod tests {
 	// bailed on `.1`, and silently dropped every dialog change (relaunch reverted).
 	// `.1` is simply a valid float now, and the writer never rewrites a scalar, so
 	// the value is also left exactly as the user typed it.
+	// A profile's values ride on top of the live settings, and a write that
+	// starts from a live copy (the minimap toggle, the remembered size) must
+	// not carry them into the file - or Custom would have nothing to put back.
+	#[test]
+	fn the_file_keeps_the_users_values_under_a_profile() {
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_cfgprof_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let path = dir.join("config.shcl");
+		std::fs::write(
+			&path,
+			"scroll:\n\tease_in_ms: 300.0\nperformance:\n\tprofile: \"low\"\n",
+		)
+		.unwrap();
+		set_config_override(path.clone());
+
+		let stored = load();
+		assert_eq!(stored.performance_profile, "low");
+		assert_eq!(
+			stored.scroll_ease_in_ms, 300.0,
+			"the file is read as written"
+		);
+		let mut live = stored.clone();
+		crate::profile::apply(&mut live);
+		assert!(!live.wallpaper_enabled, "Low drops the wallpaper");
+		assert_ne!(live.scroll_ease_in_ms, 300.0);
+
+		let mut new = live.clone();
+		new.minimap = !new.minimap;
+		assert!(persist(&live, &new));
+		let back = load();
+		assert_eq!(back.minimap, new.minimap, "the change itself is written");
+		assert_eq!(back.scroll_ease_in_ms, 300.0, "the profile's value was not");
+		assert!(back.wallpaper_enabled, "nor its wallpaper switch");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
 	#[test]
 	fn persist_survives_bare_decimal_float() {
 		// Memoize settings() BEFORE installing the override: a test on another

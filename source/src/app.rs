@@ -1089,6 +1089,33 @@ fn max_fps() -> Option<f64> {
 	})
 }
 
+// The display's refresh rate, which is what a scroll ease is paced against.
+// Unknown reads as 60: the common case, and a wrong guess only moves the
+// budget a little.
+fn refresh_hz(window: &Window) -> f32 {
+	window
+		.current_monitor()
+		.and_then(|m| m.refresh_rate_millihertz())
+		.map_or(60.0, |mhz| mhz as f32 / 1000.0)
+}
+
+// With the profile on automatic, a graphics adapter the config has not seen
+// gets a fresh pick, and the pick is written down against that adapter so the
+// next launch on it leaves the profile where the rating left it.
+fn rate_hardware(info: &wgpu::AdapterInfo) {
+	let live = config::settings();
+	let hardware = crate::profile::fingerprint(info);
+	if !live.performance_automatic || live.rated_hardware == hardware {
+		return;
+	}
+	let orig = (*live).clone();
+	let mut new = orig.clone();
+	new.rated_hardware = hardware;
+	new.performance_profile = crate::profile::first_pick(info).key().to_string();
+	let _ = config::persist(&orig, &new);
+	config::update(new);
+}
+
 // Next frame on a FIXED schedule, not `now + interval` - the latter adds each
 // frame's own render time to the period and runs slow. Falling behind resyncs
 // rather than trying to catch up in a burst.
@@ -1361,6 +1388,10 @@ struct State {
 	cursor_icon: CursorIcon,
 	clipboard: Clipboard,
 	last_frame: Instant,
+	// how a scroll ease is being paced, and the period a frame may not exceed
+	// before it counts as a miss (profile.rs)
+	rating: crate::profile::Rating,
+	frame_budget_ms: f32,
 	dirty: bool,
 	bell_flash: f32,    // visual-bell brightness, set to 1.0 on BEL, decays to 0
 	size_tracked: bool, // false until the first frame, so startup/programmatic resizes don't overwrite remembered_size
@@ -3286,10 +3317,7 @@ impl State {
 		edited: config::Settings,
 		force_bg: bool,
 	) {
-		let rebuild = crate::settings_ui::needs_text_rebuild(orig, &edited);
-		let bg = force_bg || crate::settings_ui::wallpaper_changed(orig, &edited);
 		let resize = edited.columns != orig.columns || edited.rows != orig.rows;
-		let blur_changed = edited.transparent_background_blur != orig.transparent_background_blur;
 		// copy_on_select changed -> apply to every existing pane too, so the
 		// dialog toggle takes effect now, not only for panes spawned later
 		if edited.copy_on_select != orig.copy_on_select {
@@ -3299,7 +3327,19 @@ impl State {
 				}
 			}
 		}
+		// What changed is judged on the LIVE values, before and after: a
+		// performance profile sets the wallpaper and the halo on top of the
+		// stored settings, so the dialog's own diff can be empty while the
+		// picture changes completely.
+		let before = config::settings();
 		config::update(edited);
+		let after = config::settings();
+		let rebuild = crate::settings_ui::needs_text_rebuild(&before, &after);
+		let bg = force_bg || crate::settings_ui::wallpaper_changed(&before, &after);
+		let blur_changed = after.transparent_background_blur != before.transparent_background_blur;
+		if after.performance_profile != before.performance_profile {
+			self.rating.reset();
+		}
 
 		// Backdrop-blur hint toggled -> set/clear the compositor property live.
 		if blur_changed {
@@ -3324,9 +3364,7 @@ impl State {
 		}
 		if rebuild {
 			self.rebuild_text(config::display_scale(self.window.scale_factor()));
-		} else if config::settings().minimap != orig.minimap
-			|| config::settings().minimap_width != orig.minimap_width
-		{
+		} else if after.minimap != before.minimap || after.minimap_width != before.minimap_width {
 			// the column takes real columns from the grid, so this is a layout change
 			self.relayout_all();
 		}
@@ -3334,6 +3372,28 @@ impl State {
 			self.request_wallpaper(false);
 		}
 		self.dirty = true;
+	}
+
+	// The display missed its budget over a whole window of eased frames: with
+	// the profile on automatic, take one step down the ladder and write it down.
+	fn step_down_profile(&mut self) {
+		let live = config::settings();
+		let Some(lower) = crate::profile::current(&live).lower() else {
+			return;
+		};
+		if !live.performance_automatic {
+			return;
+		}
+		eprintln!(
+			"{}: the display is not keeping up; performance profile stepped down to {}",
+			config::APP_NAME,
+			lower.label()
+		);
+		let orig = (*live).clone();
+		let mut new = orig.clone();
+		new.performance_profile = lower.key().to_string();
+		let _ = config::persist(&orig, &new);
+		self.apply_new_settings(&orig, new, false);
 	}
 
 	// GPU texture contents were lost (VT switch / suspend; see the Sentinel note
@@ -5335,6 +5395,8 @@ impl ApplicationHandler<UserEvent> for App {
 		// System theme mode: seed the OS dark/light bit before the first frame so a
 		// system-mode theme resolves to the right palette immediately (no flash).
 		config::reapply_for_os(!matches!(window.theme(), Some(winit::window::Theme::Light)));
+		// New graphics hardware starts the performance profile over.
+		rate_hardware(&gfx.adapter_info);
 		// Window-level CLI style (--font-name/-size, colors, bg image/fit/opacity)
 		// overrides the loaded settings before text + bg image are built. Applied
 		// after the theme/OS palette settles so it isn't clobbered. Per-pane style
@@ -5422,6 +5484,7 @@ impl ApplicationHandler<UserEvent> for App {
 			h: (gfx.config.height as f32 - top).max(1.0),
 		};
 		let list = build_layout(&self.cli, &mut text, &self.proxy, area);
+		let frame_budget_ms = crate::profile::budget_ms(refresh_hz(&window));
 
 		self.state = Some(State {
 			window,
@@ -5451,6 +5514,8 @@ impl ApplicationHandler<UserEvent> for App {
 			cursor_icon: CursorIcon::Default,
 			clipboard: Clipboard::new(),
 			last_frame: Instant::now(),
+			rating: crate::profile::Rating::new(),
+			frame_budget_ms,
 			dirty: true,
 			bell_flash: 0.0,
 			size_tracked: false,
@@ -6819,6 +6884,16 @@ impl ApplicationHandler<UserEvent> for App {
 			state.dirty = false;
 			crate::perf::bump(&crate::perf::FRAMES);
 			let animating = crate::perf::timed(&crate::perf::RENDER_NS, || state.render(force));
+			// how the ease is paced tells whether the display keeps up; a pinned
+			// rate paces itself and says nothing about the hardware
+			if scroll_anim && max_fps().is_none() {
+				state.rating.note(Instant::now());
+				if state.rating.verdict(state.frame_budget_ms) == Some(true) {
+					state.step_down_profile();
+				}
+			} else {
+				state.rating.pause();
+			}
 			// a pane whose term was locked kept its content_dirty (rebuild was
 			// skipped) - retry shortly instead of waiting for the next event,
 			// or the last wakeup of a burst could leave a stale frame up

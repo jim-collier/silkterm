@@ -22,6 +22,7 @@
 	- [Minimap](#minimap)
 	- [Text readability scrim](#text-readability-scrim)
 	- [Minimum contrast (2026-08-30)](#minimum-contrast-2026-08-30)
+	- [Performance profiles (2026-09-03)](#performance-profiles-2026-09-03)
 	- [Font fallback stack](#font-fallback-stack)
 	- [Hyperlinks](#hyperlinks)
 	- [What a double-click grabs (2026-08-26)](#what-a-double-click-grabs-2026-08-26)
@@ -322,6 +323,17 @@ Lightness is measured in Oklab rather than as a WCAG ratio. That ratio's constan
 The default floor is 45%, which puts previously invisible text at roughly 2.8:1 against a black background. Lower settings measure out as doing nothing visible at all. Two things are deliberately exempt. Text set to exactly its background color is left hidden, since that is how the hidden attribute works and how a program conceals a password. And ANSI black on a dark background is not exempt, even though it is invisible by definition - a program using it as a foreground has made the mistake this setting is for.
 
 Every built-in theme's own foreground clears the floor on its own, which is checked at build time. A theme whose body text needed lifting would mean the floor was repainting the thing it is measured against.
+
+### Performance profiles (2026-09-03)
+
+One setting decides how much the look may cost, so a slow machine is a choice on one tab rather than a dozen switches on four.
+
+- Five profiles, in the order they cost: Custom, Max silk, High, Low, Standard terminal. Max silk is every effect at its shipped setting. High shortens the ease-in, ease-out and single-screen stretches of a scroll and gives the text halo a cheaper shape with a shorter reach. Low also drops the wallpaper, the halo and the cursor animation, keeping the outline and smooth scrolling. Standard terminal is a plain terminal: no smooth scrolling, no wallpaper, no halo, no outline, no animation.
+- A profile sits on top of the stored settings rather than in them. The file and the dialog keep the user's own values. When settings go live the profile overwrites the fields it governs and keeps the originals beside them, and every write path puts them back before anything reaches the file. Choosing Custom is a profile that governs nothing, so it restores everything.
+- In the dialog the governed rows show the profile's values and are grayed, and their flyover says which tab to go to. This is display only. Apply writes the user's values underneath.
+- It lives on its own tab, first in the dialog, because it governs rows on four others and should be seen before them. That makes eight tabs, one past the guide's ceiling, and was a guess to be revisited.
+- Automatic is the default. A graphics adapter the config has not seen starts at Max silk, or at Low under software rendering, and the adapter is written down so the next launch on it leaves the profile alone. From there the display is watched: a scroll ease paces one frame per refresh when the machine keeps up, and when the median frame over a window of eased frames runs half again past the refresh period, the profile steps down one rung and is written down. It never steps back up on the same hardware, because a lighter profile renders less, so a fast run under it says nothing about the heavier one. A hand pick with automatic off stays put.
+- Blur quality is not part of a profile yet. The backlog item for it stands on its own, and a profile could drive it later.
 
 ### Font fallback stack
 
