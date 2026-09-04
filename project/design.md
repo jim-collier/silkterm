@@ -280,7 +280,7 @@ Cost when off:
 
 Settings and chrome:
 
-- A "Minimap" toggle and a width slider on the Movement tab, under the scrollbar cluster, plus a View-menu item. The marker and the far-edge thumb reuse the scrollbar colors, which is why those two color rows are not gated on the scrollbar being on.
+- A "Minimap" toggle and a width slider on the Movement tab, under the scrollbar cluster, plus a View-menu item. The marker and the far-edge thumb reuse the scrollbar colors, which is why those two color rows sit with the palette rather than under the scrollbar switch.
 
 How it is built:
 
@@ -331,7 +331,7 @@ One setting decides how much the look may cost, so a slow machine is a choice on
 - Five profiles, in the order they cost: Custom, Max silk, High, Low, Standard terminal. Max silk is every effect at its shipped setting. High shortens the ease-in, ease-out and single-screen stretches of a scroll and gives the text halo a cheaper shape with a shorter reach. Low also drops the wallpaper, the halo and the cursor animation, keeping the outline and smooth scrolling. Standard terminal is a plain terminal: no smooth scrolling, no wallpaper, no halo, no outline, no animation.
 - A profile sits on top of the stored settings rather than in them. The file and the dialog keep the user's own values. When settings go live the profile overwrites the fields it governs and keeps the originals beside them, and every write path puts them back before anything reaches the file. Choosing Custom is a profile that governs nothing, so it restores everything.
 - In the dialog the governed rows show the profile's values and are grayed, and their flyover says which tab to go to. This is display only. Apply writes the user's values underneath.
-- It lives on its own tab, first in the dialog, because it governs rows on four others and should be seen before them. That makes eight tabs, one past the guide's ceiling, and was a guess to be revisited.
+- It leads the Silk tab, first in the dialog, with text readability and the scrolling feel under it. Those are the two sections it governs most of, so the switch and its effects are on one screen. Wallpaper and cursor rows stay on their own tabs and are grayed there. That still makes eight tabs, one past the guide's ceiling.
 - Automatic is the default. A graphics adapter the config has not seen starts at Max silk, or at Low under software rendering, and the adapter is written down so the next launch on it leaves the profile alone. From there the display is watched: a scroll ease paces one frame per refresh when the machine keeps up, and when the median frame over a window of eased frames runs half again past the refresh period, the profile steps down one rung and is written down. It never steps back up on the same hardware, because a lighter profile renders less, so a fast run under it says nothing about the heavier one. A hand pick with automatic off stays put.
 - Blur quality is not part of a profile yet. The backlog item for it stands on its own, and a profile could drive it later.
 

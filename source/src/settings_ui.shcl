@@ -18,7 +18,7 @@
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
 ## Left to right along the top. Every heading below names one of these.
-tabs: "Performance", "Background", "Text", "Cursor", "Movement", "Themes", "Window", "Shell"
+tabs: "Silk", "Background", "Text", "Cursor", "Movement", "Themes", "Window", "Shell"
 
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Layout
@@ -148,15 +148,15 @@ icons:
 
 rows:
 
-	## --------------------------------------------------------------- Performance
+	## ---------------------------------------------------------------------- Silk
 
-	## One setting that governs rows on four other tabs. Those rows show the
-	## profile's values and take no input while it is anything but Custom, and
-	## their flyover says so.
+	## One setting that governs the two sections below plus rows on the
+	## Background and Cursor tabs. Those rows show the profile's values and take
+	## no input while it is anything but Custom, and their flyover says so.
 	Performance:
 		kind: heading
 		label: Performance
-		tab: Performance
+		tab: Silk
 
 	PerfAuto:
 		label: Choose automatically
@@ -170,7 +170,140 @@ rows:
 		options: "Custom", "Max silk", "High", "Low", "Standard terminal"
 		indent: 1
 		setting: performance.profile
-		help: "What the look is allowed to cost. Max silk is every effect at its shipped setting. High is quicker scrolling and a cheaper text halo. Low also drops the wallpaper, the halo and the cursor animation. Standard terminal has no smooth scrolling at all. Custom uses your own values on the other tabs."
+		help: "What the look is allowed to cost. Max silk is every effect at its shipped setting. High is quicker scrolling and a cheaper text halo. Low also drops the wallpaper, the halo and the cursor animation. Standard terminal has no smooth scrolling at all. Custom uses your own values."
+
+	TextReadability:
+		kind: heading
+		label: Text readability
+		tab: Silk
+
+	TextScrim:
+		label: Text scrim
+		kind: toggle
+		setting: text.scrim.enabled
+		help: "A soft halo behind the glyphs, so text stays readable over a busy wallpaper."
+
+	ScrimStrength:
+		## percent, where each 20% is one doubling of the finished halo's opacity
+		label: Strength %
+		kind: slider
+		range: 0, 100
+		whole: true
+		indent: 1
+		setting: text.scrim.strength
+		help: "How solid the halo gets. High values close the gaps between glyphs into a plate."
+
+	ScrimRadius:
+		label: Scrim radius px
+		kind: slider
+		range: 0, 20
+		whole: true
+		indent: 1
+		setting: text.scrim.radius
+		help: "How far the halo reaches out from the ink."
+
+	ScrimSoftness:
+		label: Softness %
+		kind: slider
+		range: 0, 100
+		whole: true
+		indent: 1
+		setting: text.scrim.softness
+		help: "How gradually the halo fades out toward its edge."
+
+	Outline:
+		label: Outline px
+		kind: slider
+		range: 0, 4
+		whole: true
+		indent: 1
+		setting: text.outline
+		help: "A crisp outline drawn hard against the glyphs, on top of the halo."
+
+	ScrimFunction:
+		label: Function
+		kind: dropdown
+		options: "Distance field", "Distance transform", "Dilate + feather", "Gaussian [ugly]"
+		indent: 1
+		setting: text.scrim.function
+		help: "How the halo's shape is computed from the glyphs."
+
+	ScrimRamp:
+		label: Falloff
+		kind: dropdown
+		options: "Exponential", "Half-normal", "Logarithmic", "Sigmoid", "Linear"
+		indent: 1
+		setting: text.scrim.ramp
+		help: "The curve the halo fades along."
+
+	MinContrast:
+		## percent of the lightness range, not a WCAG ratio - see palette::readable
+		label: Minimum contrast %
+		kind: slider
+		range: 0, 60
+		whole: true
+		setting: text.min_contrast
+		help: "Lighten text too dark to read on a dark background, and darken it on a light one. Text set to exactly the background color stays hidden. 0 leaves every color alone."
+
+	Scrolling:
+		kind: heading
+		label: Scrolling
+		tab: Silk
+
+	SmoothScroll:
+		label: Smooth scrolling
+		kind: toggle
+		setting: scroll.smooth
+		help: "Ease the view instead of jumping a whole line at a time. Off makes every setting below inert."
+
+	## The five below are ordered as one output burst unfolds: it leaves rest,
+	## accelerates, tops out, winds down, lands. All five read the same way -
+	## higher is faster.
+
+	ScrollEaseIn:
+		label: Ease-in %
+		kind: slider
+		range: 1, 100
+		whole: true
+		indent: 1
+		setting: scroll.ease_in_ms
+		help: "How sharply the view leaves a standstill when output starts."
+
+	ScrollRampUp:
+		label: Ramp-up %
+		kind: slider
+		range: 1, 100
+		whole: true
+		indent: 1
+		setting: scroll.ramp_up_ms
+		help: "How quickly the view picks up speed once it is moving."
+
+	SingleScreenTau:
+		label: Single-screen speed %
+		kind: slider
+		range: 1, 100
+		whole: true
+		indent: 1
+		setting: scroll.single_screen_tau_ms
+		help: "Top speed while the output still fits on one screen."
+
+	ScrollRampDown:
+		label: Ramp-down %
+		kind: slider
+		range: 1, 100
+		whole: true
+		indent: 1
+		setting: scroll.ramp_down_ms
+		help: "How hard the view brakes as the output runs out."
+
+	ScrollEaseOut:
+		label: Ease-out %
+		kind: slider
+		range: 1, 100
+		whole: true
+		indent: 1
+		setting: scroll.ease_out_ms
+		help: "How crisply the view lands on the final line."
 
 	## ---------------------------------------------------------------- Background
 
@@ -326,79 +459,6 @@ rows:
 		setting: font.line_height_scale
 		help: "Space between lines, as a multiple of the font's own."
 
-	TextReadability:
-		kind: heading
-		label: Text readability
-		tab: Text
-
-	TextScrim:
-		label: Text scrim
-		kind: toggle
-		setting: text.scrim.enabled
-		help: "A soft halo behind the glyphs, so text stays readable over a busy wallpaper."
-
-	ScrimStrength:
-		## percent, where each 20% is one doubling of the finished halo's opacity
-		label: Strength %
-		kind: slider
-		range: 0, 100
-		whole: true
-		indent: 1
-		setting: text.scrim.strength
-		help: "How solid the halo gets. High values close the gaps between glyphs into a plate."
-
-	ScrimRadius:
-		label: Scrim radius px
-		kind: slider
-		range: 0, 20
-		whole: true
-		indent: 1
-		setting: text.scrim.radius
-		help: "How far the halo reaches out from the ink."
-
-	ScrimSoftness:
-		label: Softness %
-		kind: slider
-		range: 0, 100
-		whole: true
-		indent: 1
-		setting: text.scrim.softness
-		help: "How gradually the halo fades out toward its edge."
-
-	Outline:
-		label: Outline px
-		kind: slider
-		range: 0, 4
-		whole: true
-		indent: 1
-		setting: text.outline
-		help: "A crisp outline drawn hard against the glyphs, on top of the halo."
-
-	ScrimFunction:
-		label: Function
-		kind: dropdown
-		options: "Distance field", "Distance transform", "Dilate + feather", "Gaussian [ugly]"
-		indent: 1
-		setting: text.scrim.function
-		help: "How the halo's shape is computed from the glyphs."
-
-	ScrimRamp:
-		label: Falloff
-		kind: dropdown
-		options: "Exponential", "Half-normal", "Logarithmic", "Sigmoid", "Linear"
-		indent: 1
-		setting: text.scrim.ramp
-		help: "The curve the halo fades along."
-
-	MinContrast:
-		## percent of the lightness range, not a WCAG ratio - see palette::readable
-		label: Minimum contrast %
-		kind: slider
-		range: 0, 60
-		whole: true
-		setting: text.min_contrast
-		help: "Lighten text too dark to read on a dark background, and darken it on a light one. Text set to exactly the background color stays hidden. 0 leaves every color alone."
-
 	## -------------------------------------------------------------------- Cursor
 
 	Cursor:
@@ -467,61 +527,6 @@ rows:
 		label: Movement
 		tab: Movement
 
-	SmoothScroll:
-		label: Smooth scrolling
-		kind: toggle
-		setting: scroll.smooth
-		help: "Ease the view instead of jumping a whole line at a time. Off makes every setting below inert."
-
-	## The five below are ordered as one output burst unfolds: it leaves rest,
-	## accelerates, tops out, winds down, lands. All five read the same way -
-	## higher is faster.
-
-	ScrollEaseIn:
-		label: Ease-in %
-		kind: slider
-		range: 1, 100
-		whole: true
-		indent: 1
-		setting: scroll.ease_in_ms
-		help: "How sharply the view leaves a standstill when output starts."
-
-	ScrollRampUp:
-		label: Ramp-up %
-		kind: slider
-		range: 1, 100
-		whole: true
-		indent: 1
-		setting: scroll.ramp_up_ms
-		help: "How quickly the view picks up speed once it is moving."
-
-	SingleScreenTau:
-		label: Single-screen speed %
-		kind: slider
-		range: 1, 100
-		whole: true
-		indent: 1
-		setting: scroll.single_screen_tau_ms
-		help: "Top speed while the output still fits on one screen."
-
-	ScrollRampDown:
-		label: Ramp-down %
-		kind: slider
-		range: 1, 100
-		whole: true
-		indent: 1
-		setting: scroll.ramp_down_ms
-		help: "How hard the view brakes as the output runs out."
-
-	ScrollEaseOut:
-		label: Ease-out %
-		kind: slider
-		range: 1, 100
-		whole: true
-		indent: 1
-		setting: scroll.ease_out_ms
-		help: "How crisply the view lands on the final line."
-
 	WheelLines:
 		label: Wheel lines
 		kind: slider
@@ -549,18 +554,6 @@ rows:
 		indent: 1
 		setting: scroll.scrollbar.auto_hide
 		help: "Fade the scrollbar out while the view sits still at the bottom."
-
-	ColScrollbarThumb:
-		label: Handle
-		kind: color
-		indent: 1
-		setting: colors.scrollbar_thumb
-
-	ColScrollbarTrough:
-		label: Track
-		kind: color
-		indent: 1
-		setting: colors.scrollbar_trough
 
 	Minimap:
 		label: Minimap
@@ -668,6 +661,18 @@ rows:
 		indent: 1
 		setting: colors.focus
 		help: "Marks only the one control the keyboard is on."
+
+	ColScrollbarThumb:
+		label: Scrollbar handle
+		kind: color
+		setting: colors.scrollbar_thumb
+		help: "The scrollbar and the minimap marker. These two stay neutral whatever the theme, so a saved theme does not carry them."
+
+	ColScrollbarTrough:
+		label: Track
+		kind: color
+		indent: 1
+		setting: colors.scrollbar_trough
 
 	## -------------------------------------------------------------------- Window
 

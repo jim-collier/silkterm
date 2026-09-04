@@ -134,7 +134,7 @@ The set of colors a theme defines: the terminal background, foreground and curso
 
 ## Performance profile
 
-One setting on the Performance tab that decides how much the look may cost. Custom uses your own values. Max silk, High, Low and Standard terminal each set the scrolling feel, the scrim, the cursor animation and the wallpaper for you, and the rows they set are grayed on their own tabs while one is chosen. Your own values stay in the file underneath, so Custom puts them back. With "Choose automatically" on, a new graphics adapter starts at Max silk, or Low under software rendering, and the profile steps down one level whenever the display cannot keep up with a scroll.
+One setting on the Silk tab that decides how much the look may cost. Custom uses your own values. Max silk, High, Low and Standard terminal each set the scrolling feel, the scrim, the cursor animation and the wallpaper for you, and the rows they set are grayed while one is chosen. Your own values stay in the file underneath, so Custom puts them back. With "Choose automatically" on, a new graphics adapter starts at Max silk, or Low under software rendering, and the profile steps down one level whenever the display cannot keep up with a scroll.
 
 ## PTY
 
