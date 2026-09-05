@@ -42,7 +42,18 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 When switching virtual desktops (on regular non-VM GPU-acellerated Linux), Silkterm sometimes won't repaint. Not always. Hard to reproduce. Sometimes it will partially repaint in blocks, sometime not at all. There's some chance it was a problem with my XFCE window compositor, which I reset. (But no other windows had the problem, and all silkterm windows did.)
+- 🔘 When switching virtual desktops (on regular non-VM GPU-acellerated Linux), Silkterm sometimes won't repaint. Not always. Hard to reproduce. Sometimes it will partially repaint in blocks, sometime not at all. There's some chance it was a problem with my XFCE window compositor, which I reset. (But no other windows had the problem, and all silkterm windows did.) It might also have been due to a stuck UnrealEngine process holding 3.7 GB of RAM. Either way, this is certainly not a regression. If a real bug, it's new.
+
+- 🔘 A prompt coming back after a command slides in oddly: it slows almost to a stop partway, then unsticks and finishes.
+	- 20260905-124927: It's still present, or at least still manifests under a specific scenario:
+		- When the two-line x9ps1-git prompt is in effect (e.g. cwd is a github repo).
+	- Cause: the output chase was only a speed CAP on the plain navigation ease, so any advance short enough that the ease was the slower of the two got the ease instead. That ease decays on a fixed 230ms constant no setting reaches, and it hands over to the sharpened stop inside the last fraction of a line - which is where the speed picks back up. A returning prompt is one or two lines, so it hit this every time.
+	- Fixed: while a burst is in flight the chase drives the view rather than capping it. Its segments already end exactly where the stop band begins, so the handover is continuous, and the five feel settings now govern a two-line advance the same way they govern a long one. Measured here, a prompt arrives in about a third of a second instead of half a second, with no stall in the middle. Long bursts are unchanged.
+	- Not a regression from the tmux work: a build from before it shows the same stall, slightly longer.
+	- Opened: 20260904-160838
+	- Closed: 20260904-160838
+	- Opened: 20260905-124907
+	- Closed:
 
 - 🔬 Settings refuses to open after a few times.
 	- Cause: the dialogs' shared GPU context is built once on a worker thread and kept, but asking for it took the stored state unconditionally and only put it back while the worker was still running. So the second ask dropped the built context and every ask after that got nothing. Each open then built a whole instance, adapter and device of its own, and those pile up until the driver refuses to allocate another swapchain.
@@ -85,13 +96,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Fixed: the footer gap went from 14 to 28. It reaches every tab, the dialog having one footer. The rule is in the interface style guide now.
 	- Opened: 20260904-163124
 	- Closed: 20260904-163124
-
-- ✅ A prompt coming back after a command slides in oddly: it slows almost to a stop partway, then unsticks and finishes.
-	- Cause: the output chase was only a speed CAP on the plain navigation ease, so any advance short enough that the ease was the slower of the two got the ease instead. That ease decays on a fixed 230ms constant no setting reaches, and it hands over to the sharpened stop inside the last fraction of a line - which is where the speed picks back up. A returning prompt is one or two lines, so it hit this every time.
-	- Fixed: while a burst is in flight the chase drives the view rather than capping it. Its segments already end exactly where the stop band begins, so the handover is continuous, and the five feel settings now govern a two-line advance the same way they govern a long one. Measured here, a prompt arrives in about a third of a second instead of half a second, with no stall in the middle. Long bursts are unchanged.
-	- Not a regression from the tmux work: a build from before it shows the same stall, slightly longer.
-	- Opened: 20260904-160838
-	- Closed: 20260904-160838
 
 - ✅ Does not work very well under tmux.
 	- Steps to reproduce:
