@@ -1129,6 +1129,18 @@ fn remote_override_at_launch() {
 	config::update(live);
 }
 
+// A rotation folder with nothing picked from it has to be read, or the request
+// answers with no picture at all: a configured folder owns the wallpaper and
+// suppresses the built-in stand-in, so there is nothing left to show. A
+// command-line wallpaper is exempt, since it keeps rotation out of the session.
+fn needs_folder_read(
+	locked: bool,
+	showing: Option<&std::path::Path>,
+	folder: Option<&std::path::PathBuf>,
+) -> bool {
+	!locked && showing.is_none() && folder.is_some()
+}
+
 // With the profile on automatic, hardware the config has not seen gets a fresh
 // pick, written down against that hardware so the next launch on it leaves the
 // profile where the rating left it. Answers the id a benchmark should write
@@ -3285,6 +3297,13 @@ impl State {
 	// folder, the image and its tags can all live on a share that answers slowly,
 	// which is precisely why none of it runs on this thread.
 	fn request_wallpaper(&mut self, scan: bool) {
+		let settings = config::settings();
+		let scan = scan
+			|| needs_folder_read(
+				self.wp_locked,
+				self.wp_current.as_deref(),
+				settings.rotation_folder(),
+			);
 		// retires anything already in flight - a result landing after a newer
 		// request (a rotation tick overtaken by a settings change) is dropped
 		self.wp_seq = self.wp_seq.wrapping_add(1);
@@ -3292,7 +3311,7 @@ impl State {
 			&self.proxy,
 			crate::wallpaper::Request {
 				seq: self.wp_seq,
-				settings: config::settings(),
+				settings,
 				scan,
 				current: self.wp_current.clone(),
 			},
@@ -3478,7 +3497,10 @@ impl State {
 			self.relayout_all();
 		}
 		if bg {
-			self.request_wallpaper(false);
+			// Turning the wallpaper or its rotation back on: the folder has to be
+			// re-read, since the pick and its timer went with it on the way off.
+			let resumed = after.rotation_folder().is_some() && before.rotation_folder().is_none();
+			self.request_wallpaper(resumed);
 		}
 		self.dirty = true;
 	}
@@ -7264,12 +7286,27 @@ mod tests {
 	use super::{
 		Caret, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit, ViewState,
 		accel_at, accel_clash, copybox_fit, copybox_place, focus_ring, key_is_typed, menu_metrics,
-		mia, msub, mta, pace_frame, tab_close_box, tab_command_line, tab_title_w, typed_title,
-		view_menu_items,
+		mia, msub, mta, needs_folder_read, pace_frame, tab_close_box, tab_command_line,
+		tab_title_w, typed_title, view_menu_items,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
 	use winit::event::ElementState;
+
+	// Switching the wallpaper off and on again drops the rotation pick, and a
+	// request that does not re-read the folder then answers with nothing at all:
+	// the folder suppresses the built-in, and there is no pick to fall back on.
+	#[test]
+	fn a_rotation_folder_with_nothing_showing_is_read_again() {
+		let pick = std::path::PathBuf::from("/w/a.jpg");
+		let folder = std::path::PathBuf::from("/w");
+		assert!(needs_folder_read(false, None, Some(&folder)));
+		// something from the folder is already up, or there is no folder at all
+		assert!(!needs_folder_read(false, Some(&pick), Some(&folder)));
+		assert!(!needs_folder_read(false, None, None));
+		// a command-line wallpaper owns the session, rotation stays out of it
+		assert!(!needs_folder_read(true, None, Some(&folder)));
+	}
 
 	// Clearing the box is how a renamed tab goes back to naming itself, so a
 	// blank title must not be stored as one.
