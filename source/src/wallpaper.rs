@@ -180,7 +180,8 @@ fn index_of(images: &[PathBuf], name: &str) -> Option<usize> {
 
 // Decode the wallpaper and apply everything that is fixed at load time (blur,
 // contrast mask, the image's own layout tags). `folder_active` suppresses the
-// built-in stand-in, which belongs to rotation when rotation has images.
+// built-in stand-in where no path was given at all, since rotation is about to
+// supply one; a path that fails to open still falls back to it.
 fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Option<Prepared> {
 	let mut source = None;
 	let mut img = match path {
@@ -195,12 +196,13 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 					config::APP_NAME,
 					path.display()
 				);
-				builtin(settings, folder_active)?
+				// A file that won't open supplies nothing, folder or not.
+				builtin(settings)?
 			}
 		},
 		// No image or rotation folder configured: fall back to the embedded default
 		// so a fresh install still looks the part. Opt out with wallpaper_fallback_builtin.
-		None => builtin(settings, folder_active)?,
+		None => (!folder_active).then(|| builtin(settings)).flatten()?,
 	};
 	// The image's own tags: layout, and the two look values. Read straight from
 	// the file the pixels came from - the embedded default wallpaper has no
@@ -269,8 +271,9 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 	})
 }
 
-fn builtin(settings: &Settings, folder_active: bool) -> Option<image::RgbaImage> {
-	(settings.wallpaper_fallback_builtin && !folder_active)
+fn builtin(settings: &Settings) -> Option<image::RgbaImage> {
+	settings
+		.wallpaper_fallback_builtin
 		.then(|| image::load_from_memory(DEFAULT_BACKGROUND).ok())
 		.flatten()
 		.map(|img| img.to_rgba8())
@@ -447,11 +450,11 @@ mod tests {
 		let missing = std::env::temp_dir().join("silkterm_no_such_wallpaper.png");
 		let _ = std::fs::remove_file(&missing);
 		assert!(prepare(&s, Some(&missing), false).is_some());
-		// ... unless the user opted out, or a rotation folder is supplying images
+		// a rotation folder doesn't change that: the picked file supplies nothing
+		assert!(prepare(&s, Some(&missing), true).is_some());
+		// ... unless the user opted out
 		s.wallpaper_fallback_builtin = false;
 		assert!(prepare(&s, Some(&missing), false).is_none());
-		s.wallpaper_fallback_builtin = true;
-		assert!(prepare(&s, Some(&missing), true).is_none());
 	}
 
 	// An empty rotation folder reports no rotation, and the built-in fills in -
