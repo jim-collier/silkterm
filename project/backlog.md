@@ -42,6 +42,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔬 Text outline setting doesn't seem to work, when text scrim is 0 px.
+	- It should work independently.
+	- It should also be presented independently below Text scrim, in settings. As it's own one-line unindented subgroup, not a new section.
+	- "Minimum contrast" setting should not be presented as its own subgroup, but rather the last indented item under the "Text scrim" subgroup.
+	- Cause: the outline is drawn by the scrim pass, and the whole pass was switched off with the halo. The dialog grayed the row under the scrim switch for the same reason.
+	- Fixed. The pass runs for either, and only the halo's blur is skipped when the scrim is off. The row is ungated and sits on its own after the scrim's members; Minimum contrast is the last of those, indented, though it is not grayed with the scrim since it works on the text itself.
+	- Opened: 20260905-094509
+	- Closed: 20260905-094509
+
+- 🔬 Current control highlight, and slider control, overlap at extreme edges on the slider.
+	- Fix: Either widen the highlight so they don't overlap, or narrow the displayed range of the sliders (without changing the value range they represent). Or both.
+	- Fixed by widening. The focus box now covers the handle's overhang at either end, so the ring sits two pixels clear of it there and is still clear of the value field.
+	- Opened: 20260905-094509
+	- Closed: 20260905-094509
+
 - ✅ Automatic performance detection is not sensitive enough. A remote session to an older laptop with integrated graphics, over wifi, was rated "Max silk", which feels sluggish.
 	- Cause: the first pick read the adapter's own description and nothing else, so anything not flatly a software renderer started at the top. An integrated chip is not a slow one, and a remote screen is not a slow one either - it is a screen the graphics card never reaches. The step-down meant to catch it times the frames this machine draws, which over a remote session are not the frames anybody sees.
 	- Fixed. A remote session goes straight to the lowest profile without measuring, and an adapter with no card behind it to the second lowest. Everything else is measured: the window comes up whole, then a banner takes it for a few seconds while three profiles are timed in turn and the first that holds the display's refresh rate is kept. The window keeps drawing underneath, dimmed, and takes no input while the run is on.
@@ -76,6 +91,22 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260903-182122
 
 ### New features and enhancements
+
+- 🔬 Remote display detection: a "Remote (temporary)" performance profile.
+	- If remote mode detected (e.g. RDP, VNC, etc.), temporarily override to it. For now it is the same as "Standard terminal".
+	- At next run, returns to previous settings (unless still in remote session).
+	- A menu item under "Bare window" (with a separator), "Temporary remote display mode", checked and unchecked automatically, and by hand.
+	- Done. The override is a flag beside the live settings and never reaches the file, so the stored profile is what the next launch comes back to. It shows in the Profile dropdown as well, with the flyover saying it lasts the session, and picking it there raises the same flag. A remote session is no longer rated at all, and the remote flag is out of the hardware hash since nothing is written for it any more.
+	- Opened: 20260905-094509
+	- Closed: 20260905-094509
+
+- 🔬 Performance settings.
+	- Changes to "Low": wallpaper enabled, disable scrim, 2px outline.
+	- Move "Check for hardware change" to the last item under "Performance", unindented.
+	- Add a new indented checkmark below that, "Check again next program run", that gets cleared after checking next program run.
+	- Done. Both check rows are grayed while the profile is not chosen automatically, since neither does anything then. The one-shot check clears itself as the launch starts the rating, not when the rating answers, so a window closed mid-run has still spent it. The new row reads "Check again next run", shorter than asked, because the full wording was the widest label on any tab and widened the whole dialog; the flyover says the rest.
+	- Opened: 20260905-094509
+	- Closed: 20260905-094509
 
 - 🔬 The '✘' an '✓' on the git prompt look weird in powershell. Look too skinny, and not vertically aligned with each other. They look perfect on the *linux* Bash version. (The Windows git bash looks a little off in different ways.)
 	- Two causes, both fixed. The pair was mismatched by design: a light check beside a heavy cross. It is the light pair now, so the two are the same weight.
