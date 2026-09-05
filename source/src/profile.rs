@@ -27,16 +27,20 @@ pub enum Profile {
 	High,
 	Low,
 	Standard,
+	// Standard's values, chosen for a remote screen and never written down:
+	// it lives in `Settings::remote_override`, not in `performance_profile`
+	Remote,
 }
 
 impl Profile {
 	// dialog order, which is also the order they cost in
-	pub const ALL: [Profile; 5] = [
+	pub const ALL: [Profile; 6] = [
 		Profile::Custom,
 		Profile::Max,
 		Profile::High,
 		Profile::Low,
 		Profile::Standard,
+		Profile::Remote,
 	];
 
 	// the spelling the config file uses
@@ -47,6 +51,7 @@ impl Profile {
 			Profile::High => "high",
 			Profile::Low => "low",
 			Profile::Standard => "standard",
+			Profile::Remote => "remote",
 		}
 	}
 
@@ -57,6 +62,7 @@ impl Profile {
 			Profile::High => "High",
 			Profile::Low => "Low",
 			Profile::Standard => "Standard terminal",
+			Profile::Remote => "Remote (temporary)",
 		}
 	}
 
@@ -84,7 +90,7 @@ impl Profile {
 			Profile::Max => Some(Profile::High),
 			Profile::High => Some(Profile::Low),
 			Profile::Low => Some(Profile::Standard),
-			Profile::Standard | Profile::Custom => None,
+			Profile::Standard | Profile::Remote | Profile::Custom => None,
 		}
 	}
 }
@@ -169,7 +175,7 @@ pub fn unapply(s: &mut Settings) {
 // unwound first, so a changed profile field is honored rather than stacked.
 pub fn apply(s: &mut Settings) {
 	unapply(s);
-	let profile = Profile::parse(&s.performance_profile);
+	let profile = current(s);
 	if profile == Profile::Custom {
 		return;
 	}
@@ -178,8 +184,13 @@ pub fn apply(s: &mut Settings) {
 	s.profile_shadow = Some(Box::new(shadow));
 }
 
+// The profile in force: the remote override while it is on, else the stored one.
 pub fn current(s: &Settings) -> Profile {
-	Profile::parse(&s.performance_profile)
+	if s.remote_override {
+		Profile::Remote
+	} else {
+		Profile::parse(&s.performance_profile)
+	}
 }
 
 // What each profile sets. Every profile starts from the shipped defaults, so
@@ -191,18 +202,15 @@ fn values(profile: Profile, s: &mut Settings) {
 	match profile {
 		Profile::Custom | Profile::Max => {}
 		Profile::High => quicker(s),
+		// the wallpaper is decoded once and costs nothing per frame, so Low keeps
+		// it and drops the halo, which is paid on every frame
 		Profile::Low => {
 			quicker(s);
 			s.cursor_animation = "none".to_string();
-			// the outline is drawn by the scrim pass, so the halo stays on and
-			// shrinks to the one pixel the outline covers
-			s.text_scrim_radius = 1.0;
-			s.text_scrim_strength = 0.0;
-			s.wallpaper_enabled = false;
-			s.wallpaper_blur = 0.0;
-			s.wallpaper_contrast_mask = false;
+			s.text_scrim = false;
+			s.text_outline = 2.0;
 		}
-		Profile::Standard => {
+		Profile::Standard | Profile::Remote => {
 			s.scroll_smooth = false;
 			s.smooth_scroll_apps = false;
 			s.cursor_animation = "none".to_string();
@@ -260,9 +268,9 @@ pub fn software_adapter(info: &wgpu::AdapterInfo) -> bool {
 
 // Is the screen this window draws to somewhere else? Every frame is then encoded
 // and shipped over a network, so what the graphics card can do says nothing about
-// what the person sees, and timing it would only ever flatter the machine. The
-// answer is part of the hardware id, so sitting down at the console after a
-// remote session is a fresh pick rather than the remote one left behind.
+// what the person sees, and timing it would only ever flatter the machine. A
+// remote session takes the Remote profile for as long as it lasts and writes
+// nothing down, so the console keeps the rating it had.
 pub fn remote_session() -> bool {
 	#[cfg(windows)]
 	{
@@ -307,13 +315,13 @@ pub fn probe_machine() {
 }
 
 fn machine_parts() -> String {
-	format!("{}|{}|{}", cpu_name(), memory_gib(), remote_session())
+	format!("{}|{}", cpu_name(), memory_gib())
 }
 
 // Everything the pick depends on, as one short id: the processor, the graphics
-// adapter, how much memory there is, and whether the screen is remote. Change
-// any of them and the machine has to be rated again. Hashed rather than spelled
-// out, so the config carries no description of the box it is on.
+// adapter and how much memory there is. Change any of them and the machine has
+// to be rated again. Hashed rather than spelled out, so the config carries no
+// description of the box it is on.
 pub fn hardware_id(info: &wgpu::AdapterInfo) -> String {
 	// the worker starts with the process and answers in microseconds; reading it
 	// here rather than waiting is the cheaper way to handle "not yet"
@@ -372,26 +380,21 @@ fn memory_gib() -> u64 {
 }
 
 // Where a machine starts before anything is measured, and where it stays when
-// there is nothing worth measuring. A remote screen goes straight to the bottom:
-// every frame is encoded and shipped, so the effects cost the same and none of
-// them arrive intact.
-fn pick_for(remote: bool, software: bool) -> Profile {
-	match (remote, software) {
-		(true, _) => Profile::Standard,
-		(false, true) => Profile::Low,
-		(false, false) => Profile::Max,
-	}
-}
-
+// there is nothing worth measuring: an adapter with no card behind it is not
+// going to hold any rung above Low.
 pub fn first_pick(info: &wgpu::AdapterInfo) -> Profile {
-	pick_for(remote_session(), software_adapter(info))
+	if software_adapter(info) {
+		Profile::Low
+	} else {
+		Profile::Max
+	}
 }
 
 // Is there anything to time here, or is the first pick already the answer?
 // SILK_BENCH=1 forces a run: the banner and the ladder walk are otherwise only
 // reachable by putting a different graphics card in the machine.
 pub fn worth_measuring(info: &wgpu::AdapterInfo) -> bool {
-	std::env::var_os("SILK_BENCH").is_some() || (!remote_session() && !software_adapter(info))
+	std::env::var_os("SILK_BENCH").is_some() || !software_adapter(info)
 }
 
 // A short measured run over the ladder, in place of guessing from the adapter's
@@ -552,7 +555,8 @@ fn median(values: &mut [f32]) -> f32 {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Bench, Profile, Rating, Step, WINDOW, apply, budget_ms, pick_for, software_adapter, unapply,
+		Bench, Profile, Rating, Step, WINDOW, apply, budget_ms, first_pick, software_adapter,
+		unapply,
 	};
 	use crate::config::Settings;
 	use std::time::{Duration, Instant};
@@ -574,11 +578,11 @@ mod tests {
 	}
 
 	#[test]
-	fn a_remote_screen_or_a_missing_card_is_picked_for_rather_than_timed() {
-		assert_eq!(pick_for(false, false), Profile::Max);
-		assert_eq!(pick_for(false, true), Profile::Low);
-		assert_eq!(pick_for(true, false), Profile::Standard, "remote goes flat");
-		assert_eq!(pick_for(true, true), Profile::Standard);
+	fn a_missing_card_is_picked_for_rather_than_timed() {
+		let card = adapter("NVIDIA GeForce RTX 3060 Ti", wgpu::DeviceType::DiscreteGpu);
+		let none = adapter("llvmpipe (LLVM 19.1.7, 256 bits)", wgpu::DeviceType::Cpu);
+		assert_eq!(first_pick(&card), Profile::Max);
+		assert_eq!(first_pick(&none), Profile::Low);
 		// wgpu labels most software renderers Cpu, but the remote and virtual
 		// display drivers arrive as something else and have to be named
 		assert!(software_adapter(&adapter(
@@ -703,7 +707,7 @@ mod tests {
 	fn each_profile_costs_less_than_the_one_above() {
 		let mut s = Settings::default();
 		let mut radius = f32::MAX;
-		for profile in [Profile::Max, Profile::High, Profile::Low] {
+		for profile in [Profile::Max, Profile::High] {
 			s.performance_profile = profile.key().to_string();
 			apply(&mut s);
 			assert!(s.scroll_smooth);
@@ -711,21 +715,48 @@ mod tests {
 			assert!(s.text_scrim_radius <= radius);
 			radius = s.text_scrim_radius;
 		}
-		assert_eq!(s.cursor_animation, "none");
-		assert!(!s.wallpaper_enabled);
-		assert!(s.text_outline > 0.0, "Low keeps the outline");
-		s.performance_profile = "standard".to_string();
+		s.performance_profile = "low".to_string();
 		apply(&mut s);
+		assert!(s.scroll_smooth);
+		assert_eq!(s.cursor_animation, "none");
+		assert!(s.wallpaper_enabled, "Low keeps the wallpaper");
+		assert!(!s.text_scrim, "Low drops the halo");
+		assert_eq!(s.text_outline, 2.0, "and leans on the outline");
+		for flat in ["standard", "remote"] {
+			s.performance_profile = flat.to_string();
+			apply(&mut s);
+			assert!(!s.scroll_smooth);
+			assert!(!s.smooth_scroll_apps);
+			assert!(!s.text_scrim);
+			assert_eq!(s.text_outline, 0.0);
+		}
+	}
+
+	// The override is a profile that is never in the file: it sits over whatever
+	// the stored one says and lifts off without touching it.
+	#[test]
+	fn the_remote_override_sits_over_the_stored_profile() {
+		let mut s = tuned();
+		s.performance_profile = "max".to_string();
+		s.remote_override = true;
+		apply(&mut s);
+		assert_eq!(super::current(&s), Profile::Remote);
 		assert!(!s.scroll_smooth);
-		assert!(!s.smooth_scroll_apps);
-		assert!(!s.text_scrim);
-		assert_eq!(s.text_outline, 0.0);
+		assert_eq!(
+			s.performance_profile, "max",
+			"the stored profile is untouched"
+		);
+		s.remote_override = false;
+		apply(&mut s);
+		assert_eq!(super::current(&s), Profile::Max);
+		assert!(s.scroll_smooth);
 	}
 
 	#[test]
 	fn the_ladder_ends_at_standard_and_custom_is_off_it() {
 		assert_eq!(Profile::Max.lower(), Some(Profile::High));
 		assert_eq!(Profile::Standard.lower(), None);
+		assert_eq!(Profile::Remote.lower(), None);
 		assert_eq!(Profile::Custom.lower(), None);
 		assert_eq!(Profile::parse("LOW"), Profile::Low);
 		assert_eq!(

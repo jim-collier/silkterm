@@ -48,9 +48,9 @@ struct CompU {
 	ramp: f32,      // falloff curve (distance path transfer)
 	radius: f32,    // distance path: halo extent in px (normalizes the distance)
 	strength: f32,  // doublings of the finished halo alpha, 0..10 (0 = as built)
-	// scalar pad: the WGSL struct rounds up to its 8-byte alignment (40), so
-	// without this the Rust side would be 36 and the binding would undershoot.
-	_pad: f32,
+	// 0 = outline only: the blur did not run, so the halo texture is stale.
+	// (Also what rounds the struct up to the WGSL side's 8-byte alignment.)
+	halo: f32,
 }
 
 pub struct Scrim {
@@ -420,6 +420,7 @@ impl Scrim {
 		ramp: f32,
 		radius: f32,
 		strength: f32,
+		halo: f32,
 	) {
 		queue.write_buffer(
 			&self.comp_u,
@@ -433,7 +434,7 @@ impl Scrim {
 				ramp,
 				radius,
 				strength,
-				_pad: 0.0,
+				halo,
 			}),
 		);
 	}
@@ -821,7 +822,7 @@ fn fs_dist_b(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(best, 0.0, 0.0, 1.0);
 }
 
-struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32, cursor: f32, function: f32, ramp: f32, radius: f32, strength: f32, _p0: f32 };
+struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32, cursor: f32, function: f32, ramp: f32, radius: f32, strength: f32, halo: f32 };
 @group(0) @binding(0) var<uniform> cu: CompU;
 @group(0) @binding(1) var gtex: texture_2d<f32>;   // scrim: blurred coverage (.a) or distance (.r)
 @group(0) @binding(2) var gsamp: sampler;
@@ -862,7 +863,7 @@ fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {
     // than merely brighter - the core saturates first and the solid part grows
     // outward along the falloff, so the plate thickens instead of the edge moving.
     // (No double quotes anywhere in here - the whole shader is one raw literal.)
-    ga = clamp(ga * exp2(cu.strength), 0.0, 1.0);
+    ga = clamp(ga * exp2(cu.strength), 0.0, 1.0) * cu.halo;
     let rgb = textureSample(bgtex, gsamp, in.uv).rgb;
     let texel = 1.0 / cu.resolution;
     let r = max(cu.border_px, 0.0001);
