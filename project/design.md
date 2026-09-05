@@ -623,6 +623,8 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - Some defaults are better inferred from the config directory than stated in the file. A folder of wallpapers sitting in the expected place is taken as wanting them rotated, without a setting to turn it on and without writing anything back. The inference yields to anything explicit: a wallpaper named in the config, or one given on the command line for a single run.
 
+- With the wallpaper switched on, something is always shown. The shipped image stands in whenever nothing else supplies one: no image named, an empty rotation folder, a file that will not open. A folder that does hold images owns the picture instead, so the stand-in only appears once the folder has been read and found wanting. Which means any request that could leave the window bare has to read the folder first, rather than assume the last pick is still in hand.
+
 - A wallpaper image can carry its own layout and look in its XMP metadata, under a `wallpaper` namespace named for what the tags describe rather than for this program, so any tool can write them. `Fit` and `Anchor` are absolute, since how an image should be cropped is a property of the image. `Opacity` and `Blur` are absolute too, in the same units as the two settings, and replace them for that image. The shipped pack carries the program defaults on every image, so the two sliders only reach untagged images until the switch is turned off; that trade was accepted so an image's look means the same thing everywhere. Each pair has its own switch in Settings, on by default, and a missing or unreadable tag always falls back to the setting rather than failing the image.
 
 ## Delivery (CI/CD, branches, releases)

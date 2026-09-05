@@ -181,7 +181,7 @@ rows:
 		help: "Notice a different processor, graphics adapter or amount of memory, and rate the machine again. Rating is a few seconds of measuring behind a banner. Only used while the profile above is chosen automatically."
 
 	PerfCheckNext:
-		label: Check again next run
+		label: Re-test next run
 		kind: toggle
 		indent: 1
 		setting: performance.check_next_run
