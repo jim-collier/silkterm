@@ -1025,8 +1025,16 @@ const SHELL_SCAN_DELAY: Duration = Duration::from_secs(3);
 const SHELL_SCAN_MAX_WAIT: Duration = Duration::from_secs(20);
 // The performance benchmark waits for the wallpaper too: it is one of the
 // things being timed, and starting before it is on screen would rate a lighter
-// window than the one that ends up in front of the person.
+// window than the one that ends up in front of the person. The backstop is for
+// an image on a share that never answers.
 const BENCH_DELAY: Duration = Duration::from_millis(600);
+const BENCH_MAX_WAIT: Duration = Duration::from_secs(10);
+// The banner goes up as soon as a run is due, so the wait for the wallpaper
+// happens behind it rather than in front of a window that then stops taking
+// input. And it stays up this long at least: a run that answers on the first
+// rung is over in under a second, which is not enough time to notice a box has
+// appeared, let alone read it.
+const BENCH_BANNER_MIN: Duration = Duration::from_secs(4);
 const VRAM_CHECK_IVL: Duration = Duration::from_secs(2); // GL sentinel probe tick (VT-switch texture loss)
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
 // Chrome geometry, all DIP (see config::dip).
@@ -1461,10 +1469,13 @@ struct State {
 	rating: crate::profile::Rating,
 	frame_budget_ms: f32,
 	// The startup benchmark: a run in flight, and when one is due. While a run
-	// is in flight the window renders flat out, takes no input, and wears the
-	// banner (see bench_layout).
+	// is in flight the window renders flat out. bench_banner is when the banner
+	// went up, which is earlier than either - it covers the wait as well as the
+	// run, and the window takes no input for as long as it is up (bench_layout).
 	bench: Option<crate::profile::Bench>,
 	bench_at: Option<Instant>,
+	bench_cap: Option<Instant>,
+	bench_banner: Option<Instant>,
 	// Set while a run is owed or in flight; written down with the answer.
 	bench_id: Option<String>,
 	dirty: bool,
@@ -2213,9 +2224,9 @@ impl State {
 	// The benchmark's banner: one box in the middle of the window, over a dimmed
 	// screen. It is what makes the run modal - the window behind it keeps drawing
 	// (that is the thing being timed, and it is worth seeing) but takes no input
-	// until the run is over.
+	// while it is up.
 	fn bench_layout(&mut self) -> Option<(Rect, Vec<(f32, f32, String)>)> {
-		self.bench.as_ref()?;
+		self.bench_banner.as_ref()?;
 		let lines = ["Testing performance", "This takes a few seconds."];
 		let attrs = crate::text::ui_attrs();
 		let pad = self.text.dip(BENCH_BANNER_PAD);
@@ -4994,6 +5005,8 @@ impl State {
 				self.shell_scan_cap = Some(Instant::now() + SHELL_SCAN_MAX_WAIT);
 				if self.bench_id.is_some() {
 					self.bench_at = Some(Instant::now() + BENCH_DELAY);
+					self.bench_cap = Some(Instant::now() + BENCH_MAX_WAIT);
+					self.bench_banner = Some(Instant::now());
 				}
 			}
 		}
@@ -5010,7 +5023,8 @@ impl State {
 				self.shell_scan_at = Some(self.shell_scan_cap.map_or(due, |cap| due.min(cap)));
 			}
 			if self.bench_at.is_some() {
-				self.bench_at = Some(Instant::now() + BENCH_DELAY);
+				let due = Instant::now() + BENCH_DELAY;
+				self.bench_at = Some(self.bench_cap.map_or(due, |cap| due.min(cap)));
 			}
 		}
 		if env_flag("SILK_DUMP") {
@@ -5716,6 +5730,8 @@ impl ApplicationHandler<UserEvent> for App {
 			frame_budget_ms,
 			bench: None,
 			bench_at: None,
+			bench_cap: None,
+			bench_banner: None,
 			bench_id,
 			dirty: true,
 			bell_flash: 0.0,
@@ -5879,9 +5895,9 @@ impl ApplicationHandler<UserEvent> for App {
 		let Some(state) = self.state.as_mut() else {
 			return;
 		};
-		// The startup benchmark owns the window while it runs: anything typed or
-		// clicked would change what is being timed. Closing the window still works.
-		if state.bench.is_some()
+		// The startup benchmark owns the window while its banner is up: anything
+		// typed or clicked would change what is being timed. Closing still works.
+		if state.bench_banner.is_some()
 			&& matches!(
 				event,
 				WindowEvent::KeyboardInput { .. }
@@ -7085,11 +7101,15 @@ impl ApplicationHandler<UserEvent> for App {
 			state.dirty = true;
 		}
 		let reveal_wake = (!state.revealed).then_some(state.reveal_deadline);
-		// The startup benchmark: due, so start it on the heaviest rung. A pinned
-		// frame rate would time itself rather than the machine, so it cancels the
-		// run outright (the first pick stands).
-		if state.bench_at.is_some_and(|at| Instant::now() >= at) {
+		// The startup benchmark: due, so start it on the heaviest rung. It waits
+		// for the wallpaper whatever the delay says, since the wallpaper is part
+		// of what is being timed. A pinned frame rate would time itself rather
+		// than the machine, so it cancels the run outright (the first pick stands).
+		let bench_blocked =
+			!state.wp_shown && state.bench_cap.is_some_and(|cap| Instant::now() < cap);
+		if state.bench_at.is_some_and(|at| Instant::now() >= at) && !bench_blocked {
 			state.bench_at = None;
+			state.bench_cap = None;
 			if max_fps().is_none() {
 				state.bench = Some(crate::profile::Bench::new());
 				let rung = state
@@ -7097,10 +7117,24 @@ impl ApplicationHandler<UserEvent> for App {
 					.as_ref()
 					.map_or(crate::profile::Profile::Max, crate::profile::Bench::profile);
 				state.set_live_profile(rung);
+			} else {
+				// nothing will be measured, so the banner has nothing to cover
+				state.bench_banner = None;
+				state.dirty = true;
 			}
 		}
 		// A run renders flat out: the periods between frames ARE the measurement.
 		if state.bench.is_some() {
+			state.dirty = true;
+		}
+		// The banner comes down once the run is over and it has been up long
+		// enough to read.
+		let bench_banner_wake = state
+			.bench_banner
+			.filter(|_| state.bench.is_none() && state.bench_at.is_none())
+			.map(|up| up + BENCH_BANNER_MIN);
+		if bench_banner_wake.is_some_and(|wake| Instant::now() >= wake) {
+			state.bench_banner = None;
 			state.dirty = true;
 		}
 		// Fully hidden window: don't build a frame nobody can see. PTY reading
@@ -7217,6 +7251,17 @@ impl ApplicationHandler<UserEvent> for App {
 		// one current - the pointer sitting still generates no events of its own,
 		// so nothing else would bring the window back
 		let flow = match (flow, state.tip_wake()) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
+		// wake when the benchmark comes due, and again when its banner may come
+		// down - an idle window generates nothing of its own to bring it back
+		let bench_wake = match (state.bench_at, state.bench_cap) {
+			(Some(_), Some(cap)) if bench_blocked => Some(cap),
+			(at, _) => at,
+		};
+		let flow = match (flow, bench_wake.or(bench_banner_wake)) {
 			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
