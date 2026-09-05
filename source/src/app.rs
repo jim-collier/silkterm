@@ -410,6 +410,7 @@ enum MenuAction {
 	ToggleSingleTab,
 	ToggleMinimap,
 	ToggleBare,
+	ToggleRemote,
 	ReloadConfig,
 	Settings,
 	About,
@@ -448,6 +449,9 @@ impl MenuAction {
 			}
 			MenuAction::ToggleBare => {
 				"Drop the title bar, menu bar and tab strip together. Choosing it again puts back whatever was on."
+			}
+			MenuAction::ToggleRemote => {
+				"Run as a plain terminal while the screen is somewhere else, since no effect survives the trip. Set for you when a remote session is noticed, and forgotten at the next launch."
 			}
 			MenuAction::ReloadConfig => {
 				"Re-read the config file. Anything edited by hand since launch takes effect now."
@@ -618,6 +622,7 @@ struct ViewState {
 	tab_strip: bool,
 	minimap: bool,
 	bare: bool,
+	remote: bool,
 }
 
 // The View menu, apart from the window it is asking about - so the labels, the
@@ -658,6 +663,13 @@ fn view_menu_items(on: ViewState) -> Vec<Entry> {
 		// size), so the accelerator falls to the n
 		mta('n', on.minimap, "Minimap", MenuAction::ToggleMinimap),
 		mta('B', on.bare, "Bare window", MenuAction::ToggleBare),
+		Entry::Sep,
+		mta(
+			'p',
+			on.remote,
+			"Temporary remote display mode",
+			MenuAction::ToggleRemote,
+		),
 	]
 }
 
@@ -1105,22 +1117,46 @@ fn refresh_hz(window: &Window) -> f32 {
 		.map_or(60.0, |mhz| mhz as f32 / 1000.0)
 }
 
+// A remote screen wears the Remote profile for the session. Nothing is written
+// and nothing is rated: the console keeps the profile it had, and the override
+// lifts at the next launch unless that one is remote too.
+fn remote_override_at_launch() {
+	if !crate::profile::remote_session() {
+		return;
+	}
+	let mut live = (*config::settings()).clone();
+	live.remote_override = true;
+	config::update(live);
+}
+
 // With the profile on automatic, hardware the config has not seen gets a fresh
 // pick, written down against that hardware so the next launch on it leaves the
 // profile where the rating left it. Answers the id a benchmark should write
-// when it finishes, or None where there is nothing to time - a remote screen or
-// a software renderer, both of which are decided here and written now.
+// when it finishes, or None where there is nothing to time - a software
+// renderer is decided here and written now, and a remote screen is left alone.
 fn rate_hardware(info: &wgpu::AdapterInfo) -> Option<String> {
 	let live = config::settings();
+	if !live.performance_automatic || live.remote_override {
+		return None;
+	}
 	let hardware = crate::profile::hardware_id(info);
-	if !live.performance_automatic || live.rated_hardware == hardware {
+	// The one-shot check counts as new hardware, and clears itself here rather
+	// than with the answer: a window closed mid-run has still had its run.
+	let asked = live.performance_check_next_run;
+	if asked {
+		let mut new = (*live).clone();
+		new.performance_check_next_run = false;
+		let _ = config::persist(&live, &new);
+		config::update(new);
+	} else if live.rated_hardware == hardware {
 		return None;
 	}
 	// A machine already rated once is only re-rated when asked for; the first
 	// rating has to happen either way, or there is no profile at all.
-	if !live.performance_check_hardware && !live.rated_hardware.is_empty() {
+	if !asked && !live.performance_check_hardware && !live.rated_hardware.is_empty() {
 		return None;
 	}
+	let live = config::settings();
 	if crate::profile::worth_measuring(info) {
 		// Nothing is written yet. The id goes down with the measured answer, so a
 		// window closed mid-run is measured again next launch instead of leaving
@@ -2667,6 +2703,7 @@ impl State {
 				tab_strip: !config::settings().hide_single_tab,
 				minimap: config::settings().minimap,
 				bare: self.bare,
+				remote: config::settings().remote_override,
 			}),
 			3 => {
 				let mut items = vec![mia('N', "New tab (Ctrl+Shift+T)", MenuAction::NewTab)];
@@ -2880,6 +2917,7 @@ impl State {
 				self.relayout_all();
 			}
 			MenuAction::ToggleBare => self.toggle_bare(),
+			MenuAction::ToggleRemote => self.toggle_remote(),
 			MenuAction::ToggleMinimap => {
 				let orig = (*config::settings()).clone();
 				let mut new = orig.clone();
@@ -3162,6 +3200,15 @@ impl State {
 		self.relayout_all();
 	}
 
+	// The Remote profile on or off by hand. Live only: nothing about it reaches
+	// the file, so the next launch decides for itself.
+	fn toggle_remote(&mut self) {
+		let before = config::settings();
+		let mut next = (*before).clone();
+		next.remote_override = !next.remote_override;
+		self.apply_new_settings(&before, next, false);
+	}
+
 	fn toggle_fullscreen(&self) {
 		let fullscreen = match self.window.fullscreen() {
 			Some(_) => None,
@@ -3399,7 +3446,7 @@ impl State {
 		let rebuild = crate::settings_ui::needs_text_rebuild(&before, &after);
 		let bg = force_bg || crate::settings_ui::wallpaper_changed(&before, &after);
 		let blur_changed = after.transparent_background_blur != before.transparent_background_blur;
-		if after.performance_profile != before.performance_profile {
+		if crate::profile::current(&after) != crate::profile::current(&before) {
 			self.rating.reset();
 		}
 
@@ -3566,8 +3613,11 @@ impl State {
 		let mut slides: HashMap<u64, Option<crate::pane::Slide>> = HashMap::new();
 		let mut animating = bell > 0.0;
 		// text-scrim color map needs each cell's bg (so a glyph's halo takes its
-		// own cell color, not always the global) - collect them while building
-		let scrim_on = cfg.text_scrim && cfg.text_scrim_radius > 0.0;
+		// own cell color, not always the global) - collect them while building.
+		// The outline shares the scrim's source and composite, so the pass runs
+		// for either; only the blur is the halo's alone.
+		let halo_on = cfg.text_scrim && cfg.text_scrim_radius > 0.0;
+		let scrim_on = halo_on || cfg.text_outline > 0.0;
 		let mut scrim_cells: Vec<RectInstance> = Vec::new();
 
 		self.text.color_frame();
@@ -4708,7 +4758,7 @@ impl State {
 				});
 				self.scrim.draw_cursors(&mut pass);
 			}
-			if !blur_cached {
+			if halo_on && !blur_cached {
 				self.scrim.blur(
 					&self.gfx.queue,
 					&mut encoder,
@@ -4804,6 +4854,7 @@ impl State {
 					scrim_ramp,
 					scrim_ext,
 					scrim_strength,
+					if halo_on { 1.0 } else { 0.0 },
 				);
 				// The scrim is a full-frame blur - each glyph's halo spreads ~scrim_ext
 				// px every direction. Composite it PER-PANE, clipped per-side: an edge that
@@ -5520,6 +5571,7 @@ impl ApplicationHandler<UserEvent> for App {
 		config::reapply_for_os(!matches!(window.theme(), Some(winit::window::Theme::Light)));
 		// New hardware starts the performance profile over, and answers with the id
 		// to write down if the pick is worth measuring rather than assuming.
+		remote_override_at_launch();
 		let bench_id = rate_hardware(&gfx.adapter_info);
 		// Window-level CLI style (--font-name/-size, colors, bg image/fit/opacity)
 		// overrides the loaded settings before text + bg image are built. Applied
@@ -7620,6 +7672,7 @@ mod tests {
 			tab_strip: true,
 			minimap: true,
 			bare: true,
+			remote: true,
 		};
 		for entry in view_menu_items(all_on) {
 			if let Entry::Item {
@@ -7650,6 +7703,7 @@ mod tests {
 			tab_strip: false,
 			minimap: false,
 			bare: false,
+			remote: false,
 		};
 		assert_eq!(accel_clash(&view_menu_items(off)), None);
 	}
