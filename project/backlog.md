@@ -42,6 +42,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔘 When switching virtual desktops, Silkterm can be very slow to repaint. Not always. Hard to reproduce.
+
 - 🔬 Wallpaper vanishes instead of falling back, and a profile round trip does not bring it back.
 	- With the wallpaper on and no image named, the built-in shows at launch but disappears on the first settings change that touches the wallpaper.
 	- Setting the performance profile to "Standard terminal" and back to "Max silk" leaves the window with no wallpaper at all.
