@@ -167,10 +167,25 @@ rows:
 	PerfProfile:
 		label: Profile
 		kind: dropdown
-		options: "Custom", "Max silk", "High", "Low", "Standard terminal"
+		options: "Custom", "Max silk", "High", "Low", "Standard terminal", "Remote (temporary)"
 		indent: 1
 		setting: performance.profile
-		help: "What the look is allowed to cost. Max silk is every effect at its shipped setting. High is quicker scrolling and a cheaper text halo. Low also drops the wallpaper, the halo and the cursor animation. Standard terminal has no smooth scrolling at all. Custom uses your own values."
+		help: "What the look is allowed to cost. Max silk is every effect at its shipped setting. High is quicker scrolling and a cheaper text halo. Low also drops the halo and the cursor animation, keeping the wallpaper and a two-pixel outline. Standard terminal has no smooth scrolling at all. Custom uses your own values. Remote (temporary) is Standard terminal for a remote screen, and lasts only for this session."
+
+	## The label stays short because the widest one on any tab sets the panel's
+	## width, and the flyover carries what it leaves out.
+	PerfCheckHardware:
+		label: Check for hardware change
+		kind: toggle
+		setting: performance.check_hardware
+		help: "Notice a different processor, graphics adapter or amount of memory, and rate the machine again. Rating is a few seconds of measuring behind a banner. Only used while the profile above is chosen automatically."
+
+	PerfCheckNext:
+		label: Check again next run
+		kind: toggle
+		indent: 1
+		setting: performance.check_next_run
+		help: "Rate the machine again at the next launch, whether or not it changed. Clears itself once that launch has done it."
 
 	TextReadability:
 		kind: heading
@@ -211,15 +226,6 @@ rows:
 		setting: text.scrim.softness
 		help: "How gradually the halo fades out toward its edge."
 
-	Outline:
-		label: Outline px
-		kind: slider
-		range: 0, 4
-		whole: true
-		indent: 1
-		setting: text.outline
-		help: "A crisp outline drawn hard against the glyphs, on top of the halo."
-
 	ScrimFunction:
 		label: Function
 		kind: dropdown
@@ -242,8 +248,18 @@ rows:
 		kind: slider
 		range: 0, 60
 		whole: true
+		indent: 1
 		setting: text.min_contrast
 		help: "Lighten text too dark to read on a dark background, and darken it on a light one. Text set to exactly the background color stays hidden. 0 leaves every color alone."
+
+	## Its own one-row group under the scrim: it works with the halo or without it.
+	Outline:
+		label: Outline px
+		kind: slider
+		range: 0, 4
+		whole: true
+		setting: text.outline
+		help: "A crisp outline drawn hard against the glyphs. Works on its own or on top of the halo."
 
 	Scrolling:
 		kind: heading
@@ -304,15 +320,6 @@ rows:
 		indent: 1
 		setting: scroll.ease_out_ms
 		help: "How crisply the view lands on the final line."
-
-	## Sits at the bottom of the tab rather than with Performance at the top. The
-	## label stays short because the widest one on any tab sets the panel's width,
-	## and the flyover carries what it leaves out.
-	PerfCheckHardware:
-		label: Check for hardware change
-		kind: toggle
-		setting: performance.check_hardware
-		help: "Notice a different processor, graphics adapter or amount of memory, or a screen that has become remote, and rate the machine again. Rating is a few seconds of measuring behind a banner. Only used while the profile above is chosen automatically."
 
 	## ---------------------------------------------------------------- Background
 
@@ -823,6 +830,8 @@ rows:
 gates:
 
 	PerfProfile: !PerfAuto
+	PerfCheckHardware: PerfAuto
+	PerfCheckNext: PerfAuto
 
 	Opacity: Transparency
 	BackdropBlur: Transparency
@@ -841,11 +850,12 @@ gates:
 	ScrimStrength: TextScrim
 	ScrimRadius: TextScrim
 	ScrimSoftness: TextScrim
-	Outline: TextScrim
 	ScrimFunction: TextScrim
 	ScrimRamp: TextScrim
+	## MinContrast sits under the scrim but is not gated by it: the lift is
+	## applied to the text itself, halo or no halo.
 	CursorScrim: TextScrim
-	CursorOutline: TextScrim, Outline    ## an outline to join, before it can join one
+	CursorOutline: Outline    ## an outline to join, before it can join one
 
 	FontFamily: !SystemFont
 	FontSize: !SystemFontSize

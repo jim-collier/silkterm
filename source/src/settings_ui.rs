@@ -215,6 +215,9 @@ const GOVERNED: &[Key] = &[
 const LOCKED_TIP: &str =
 	"Set by the performance profile. Choose Custom on the Silk tab to change it.";
 
+// A slider's handle, centered on the value, so it overhangs the track's ends.
+const SLIDER_HANDLE_W: f32 = 10.0;
+
 // What holds keyboard focus: one control within a row, or a footer button (index
 // into `buttons()`: 0 = Cancel, 1 = Apply, 2 = OK). `Row(i, part)` names a row and
 // which of its focusable sub-controls (part 0 for a plain control; sliders and the
@@ -2023,11 +2026,12 @@ impl SettingsDialog {
 		match self.specs[i].kind {
 			Kind::Slider { .. } => {
 				if p == 0 {
+					// the handle overhangs the track by half its width at either end
 					let t = self.track(i);
 					Rect {
-						x: t.x,
+						x: t.x - SLIDER_HANDLE_W / 2.0,
 						y: t.y - 7.0,
-						w: t.w,
+						w: t.w + SLIDER_HANDLE_W,
 						h: t.h + 14.0,
 					}
 				} else {
@@ -2687,6 +2691,7 @@ impl SettingsDialog {
 			// family field it overrides stays editable.
 			Key::PerfAuto => s.performance_automatic,
 			Key::PerfCheckHardware => s.performance_check_hardware,
+			Key::PerfCheckNext => s.performance_check_next_run,
 			Key::SystemFont => s.use_system_font,
 			Key::SystemFontSize => s.use_system_font_size,
 			Key::Transparency => s.transparent_background,
@@ -2715,6 +2720,7 @@ impl SettingsDialog {
 		match key {
 			Key::PerfAuto => self.edited.performance_automatic = on,
 			Key::PerfCheckHardware => self.edited.performance_check_hardware = on,
+			Key::PerfCheckNext => self.edited.performance_check_next_run = on,
 			Key::SystemFont => self.edited.use_system_font = on,
 			Key::SystemFontSize => self.edited.use_system_font_size = on,
 			Key::Transparency => self.edited.transparent_background = on,
@@ -2783,9 +2789,15 @@ impl SettingsDialog {
 	}
 	fn set_radio(&mut self, key: Key, idx: usize) {
 		match key {
-			Key::PerfProfile => {
-				self.edited.performance_profile = Profile::from_index(idx).key().to_string();
-			}
+			// Remote is never stored: picking it raises the session override and
+			// leaves the stored profile for the next launch to come back to
+			Key::PerfProfile => match Profile::from_index(idx) {
+				Profile::Remote => self.edited.remote_override = true,
+				profile => {
+					self.edited.remote_override = false;
+					self.edited.performance_profile = profile.key().to_string();
+				}
+			},
 			Key::BgFit => {
 				self.edited.wallpaper_default_fit = if idx == 1 {
 					config::Fit::Zoom
@@ -2976,7 +2988,13 @@ impl SettingsDialog {
 			Key::PerfCheckHardware => {
 				edited.performance_check_hardware == defaults.performance_check_hardware
 			}
-			Key::PerfProfile => edited.performance_profile == defaults.performance_profile,
+			Key::PerfCheckNext => {
+				edited.performance_check_next_run == defaults.performance_check_next_run
+			}
+			Key::PerfProfile => {
+				edited.performance_profile == defaults.performance_profile
+					&& !edited.remote_override
+			}
 			Key::BgImage => edited.wallpaper == defaults.wallpaper,
 			Key::FontFamily => edited.font_family == defaults.font_family,
 			Key::LinkOpenCommand => {
@@ -3074,10 +3092,12 @@ impl SettingsDialog {
 			| Key::SmoothScroll
 			| Key::PerfAuto
 			| Key::PerfCheckHardware
+			| Key::PerfCheckNext
 			| Key::BgContrastMask => {
 				let default_val = match key {
 					Key::PerfAuto => self.defaults.performance_automatic,
 					Key::PerfCheckHardware => self.defaults.performance_check_hardware,
+					Key::PerfCheckNext => self.defaults.performance_check_next_run,
 					Key::Transparency => self.defaults.transparent_background,
 					Key::BackdropBlur => self.defaults.transparent_background_blur,
 					Key::TextScrim => self.defaults.text_scrim,
@@ -3112,6 +3132,7 @@ impl SettingsDialog {
 			}
 			Key::PerfProfile => {
 				self.edited.performance_profile = self.defaults.performance_profile.clone();
+				self.edited.remote_override = false;
 			}
 			Key::BgImage => {
 				self.edited.wallpaper = self.defaults.wallpaper.clone();
@@ -4328,12 +4349,12 @@ impl SettingsDialog {
 					out.push(q(track.x, track.y, track.w, track.h, dlg().track));
 					let value = self.get_f32(self.specs[i].key);
 					let frac = ((value - min) / (max - min)).clamp(0.0, 1.0);
-					let handle_x = track.x + frac * track.w - 5.0;
+					let handle_x = track.x + frac * track.w - SLIDER_HANDLE_W / 2.0;
 					let _ = int;
 					out.push(q(
 						handle_x,
 						track.y - 6.0,
-						10.0,
+						SLIDER_HANDLE_W,
 						track.h + 12.0,
 						if off {
 							dlg().panel_border
@@ -7524,5 +7545,96 @@ mod tests {
 		);
 
 		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// The outline is drawn by the scrim pass but is not the halo: it takes input
+	// with the scrim off, and the cursor may join it either way.
+	#[test]
+	fn the_outline_stands_without_the_scrim() {
+		let mut d = mk_dialog(4000.0);
+		d.edited.text_scrim = false;
+		d.edited.text_outline = 2.0;
+		assert!(!d.disabled(Key::Outline));
+		assert!(
+			d.disabled(Key::ScrimRadius),
+			"the halo's own rows still gray"
+		);
+		let i = d
+			.specs
+			.iter()
+			.position(
+				|s| matches!(s.kind, super::Kind::Dual { keys, .. } if keys[0] == Key::CursorScrim),
+			)
+			.unwrap();
+		assert!(d.part_disabled(i, 0) && !d.part_disabled(i, 1));
+		// and it sits on its own, unindented, after the scrim's members
+		let outline = d.specs.iter().position(|s| s.key == Key::Outline).unwrap();
+		let contrast = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::MinContrast)
+			.unwrap();
+		assert_eq!(d.specs[outline].indent, 0);
+		assert_eq!(d.specs[contrast].indent, 1);
+		assert_eq!(
+			contrast + 1,
+			outline,
+			"contrast closes the scrim group, the outline follows"
+		);
+	}
+
+	// Remote is a profile the file never holds: picking it raises the session
+	// override over the stored profile, and any other pick lowers it again.
+	#[test]
+	fn picking_remote_never_reaches_the_stored_profile() {
+		let mut d = mk_dialog(4000.0);
+		d.edited.performance_profile = "high".to_string();
+		d.set_radio(Key::PerfProfile, super::Profile::Remote.index());
+		assert!(d.edited.remote_override);
+		assert_eq!(d.edited.performance_profile, "high");
+		assert_eq!(
+			d.get_radio(Key::PerfProfile),
+			super::Profile::Remote.index()
+		);
+		assert!(
+			d.disabled(Key::SmoothScroll),
+			"Remote governs like Standard"
+		);
+		d.set_radio(Key::PerfProfile, super::Profile::Low.index());
+		assert!(!d.edited.remote_override);
+		assert_eq!(d.edited.performance_profile, "low");
+		// the revert arrow drops the override too
+		d.set_radio(Key::PerfProfile, super::Profile::Remote.index());
+		let row = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::PerfProfile)
+			.unwrap();
+		assert!(!d.row_is_default(row));
+		d.row_revert(row);
+		assert!(!d.edited.remote_override);
+		assert!(d.row_is_default(row));
+	}
+
+	// The handle overhangs the track at either end, so a ring drawn around the
+	// track alone crossed it there.
+	#[test]
+	fn the_slider_focus_ring_clears_the_handle_at_both_ends() {
+		let d = mk_dialog(4000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| matches!(s.kind, super::Kind::Slider { .. }))
+			.unwrap();
+		let track = d.track(i);
+		// the tight box; the drawn ring sits 2 px outside it
+		let tight = d.focus_ctl_rect(i, 0);
+		let half = super::SLIDER_HANDLE_W / 2.0;
+		assert!(tight.x <= track.x - half, "left end");
+		assert!(tight.x + tight.w >= track.x + track.w + half, "right end");
+		assert!(
+			tight.x + tight.w + 2.0 < d.valbox(i).x,
+			"and clear of the value field"
+		);
 	}
 }
