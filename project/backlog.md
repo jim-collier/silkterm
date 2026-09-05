@@ -42,6 +42,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔬 Wallpaper vanishes instead of falling back, and a profile round trip does not bring it back.
+	- With the wallpaper on and no image named, the built-in shows at launch but disappears on the first settings change that touches the wallpaper.
+	- Setting the performance profile to "Standard terminal" and back to "Max silk" leaves the window with no wallpaper at all.
+	- Cause: both are the same thing. A rotation folder is configured (or found by convention), so the built-in is suppressed - the folder is meant to supply the picture. But only a request that reads the folder picks one, and a settings change does not read it. Switching the wallpaper off drops the pick, so switching it back on had nothing to show and nothing to fall back on.
+	- Fixed. A request reads the folder whenever there is one and nothing has been picked from it, so an empty folder falls back to the built-in and turning the wallpaper back on picks again. Rotation timing resumes with it, which it did not before. Separately, an image that will not open now falls back to the built-in even inside a rotation folder, since a file that cannot be read supplies nothing.
+	- Opened: 20260905-113000
+	- Closed: 20260905-113000
+
 - 🔬 Text outline setting doesn't seem to work, when text scrim is 0 px.
 	- It should work independently.
 	- It should also be presented independently below Text scrim, in settings. As it's own one-line unindented subgroup, not a new section.
@@ -92,6 +100,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
+- 🔬 Settings: rename "Check again next run" to "Re-test next run".
+	- Done. Label only; nothing else moved.
+	- Opened: 20260905-113000
+	- Closed: 20260905-113000
+
 - 🔬 Remote display detection: a "Remote (temporary)" performance profile.
 	- If remote mode detected (e.g. RDP, VNC, etc.), temporarily override to it. For now it is the same as "Standard terminal".
 	- At next run, returns to previous settings (unless still in remote session).
@@ -104,7 +117,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Changes to "Low": wallpaper enabled, disable scrim, 2px outline.
 	- Move "Check for hardware change" to the last item under "Performance", unindented.
 	- Add a new indented checkmark below that, "Check again next program run", that gets cleared after checking next program run.
-	- Done. Both check rows are grayed while the profile is not chosen automatically, since neither does anything then. The one-shot check clears itself as the launch starts the rating, not when the rating answers, so a window closed mid-run has still spent it. The new row reads "Check again next run", shorter than asked, because the full wording was the widest label on any tab and widened the whole dialog; the flyover says the rest.
+	- Done. Both check rows are grayed while the profile is not chosen automatically, since neither does anything then. The one-shot check clears itself as the launch starts the rating, not when the rating answers, so a window closed mid-run has still spent it. The new row is shorter than asked, because the full wording was the widest label on any tab and widened the whole dialog; the flyover says the rest.
 	- Opened: 20260905-094509
 	- Closed: 20260905-094509
 
@@ -119,7 +132,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - 🔬 Auto-disable the minimap when in a TUI that has no buffer that can be reached via minimap.
 	- Auto-reenable when TUI exited.
-	- Not all TUIs require this. `less`, for example, has a scrollable buffer evantually reachable via minimap. Claude Code full-screen TUI doesn't, it is always just a rectangle at the top of the minimap.
+	- Not all TUIs require this. `less`, for example, has a scrollable buffer evantually reachable via minimap. A full-screen editor doesn't, it is always just a rectangle at the top of the minimap.
 	- Done, with a list. The column steps aside whenever a full-screen program is running and the text takes its width back, except for programs named in the new `scroll.minimap.tui_process_whitelist` setting. It defaults to less, tmux and screen.
 	- The distinction the item asks for cannot be made mechanically: a pager runs on its own screen too, and there is no scroll buffer behind that screen for the map to reach, so the map is a rectangle at the top in either case. The list is how the exceptions get named instead.
 	- Losing the column changes the pane's text width, so this is a relayout rather than a drawing choice - one on the way in and one on the way out, both where the program repaints anyway.
