@@ -42,7 +42,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 When switching virtual desktops, Silkterm can be very slow to repaint. Not always. Hard to reproduce.
+- 🔘 When switching virtual desktops (on regular non-VM GPU-acellerated Linux), Silkterm sometimes won't repaint. Not always. Hard to reproduce. Sometimes it will partially repaint in blocks, sometime not at all. There's some chance it was a problem with my XFCE window compositor, which I reset. (But no other windows had the problem, and all silkterm windows did.)
+
+- 🔬 Settings refuses to open after a few times.
+	- Cause: the dialogs' shared GPU context is built once on a worker thread and kept, but asking for it took the stored state unconditionally and only put it back while the worker was still running. So the second ask dropped the built context and every ask after that got nothing. Each open then built a whole instance, adapter and device of its own, and those pile up until the driver refuses to allocate another swapchain.
+	- Fixed. The state is put back whatever it was, so one context serves every dialog for the life of the process. Opens after the first are also back to the speed the warm-up was meant to buy.
+	- Opened: 20260905-190000
+	- Closed: 20260905-190000
 
 - 🔬 Wallpaper vanishes instead of falling back, and a profile round trip does not bring it back.
 	- With the wallpaper on and no image named, the built-in shows at launch but disappears on the first settings change that touches the wallpaper.

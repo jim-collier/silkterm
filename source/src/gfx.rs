@@ -1001,16 +1001,32 @@ impl DialogGpu {
 // rather than an empty `Ready`: a box with no usable adapter fails every time, so
 // without it `start` would spawn another worker on the next event-loop pass and
 // keep paying a full adapter probe (and printing) for the life of the process.
+// Generic over the context only so the state machine can be exercised without a
+// GPU; the one real instantiation is DialogGpu.
 #[derive(Debug)]
-enum Warm {
+enum Warm<T> {
 	Idle,
-	Building(std::thread::JoinHandle<Option<DialogGpu>>),
-	Ready(DialogGpu),
+	Building(std::thread::JoinHandle<Option<T>>),
+	Ready(T),
 	Failed,
 }
 
+impl<T> Warm<T> {
+	// Join the worker if there is one, and hand back a state either way. Written
+	// as a by-value transition so the caller cannot take the state and forget to
+	// put it back - doing that dropped an already-built context and left every
+	// later dialog on the cold path.
+	fn settled(self) -> Self {
+		match self {
+			// a panicked worker reads as a failure, same as a returned None
+			Self::Building(job) => job.join().ok().flatten().map_or(Self::Failed, Self::Ready),
+			other => other,
+		}
+	}
+}
+
 #[derive(Debug)]
-pub struct GpuWarm(Warm);
+pub struct GpuWarm(Warm<DialogGpu>);
 
 impl GpuWarm {
 	pub const fn idle() -> Self {
@@ -1042,10 +1058,7 @@ impl GpuWarm {
 	// never cost more than building one here would have, since the work is
 	// already under way - and normally it finished seconds ago.
 	pub fn get(&mut self) -> Option<DialogGpu> {
-		if let Warm::Building(job) = std::mem::replace(&mut self.0, Warm::Failed) {
-			// a panicked worker reads as a failure, same as a returned None
-			self.0 = job.join().ok().flatten().map_or(Warm::Failed, Warm::Ready);
-		}
+		self.0 = std::mem::replace(&mut self.0, Warm::Failed).settled();
 		match &self.0 {
 			Warm::Ready(gpu) => Some(gpu.clone()),
 			_ => None,
@@ -1487,6 +1500,30 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// A built context has to survive being asked for. It didn't once: the state
+	// was taken unconditionally to join the worker and only put back on the
+	// Building arm, so the second dialog open dropped the context and every open
+	// after that paid for a cold one.
+	#[test]
+	fn a_settled_context_survives_being_settled_again() {
+		let mut w = Warm::Building(std::thread::spawn(|| Some(7)));
+		for _ in 0..3 {
+			w = w.settled();
+			assert!(matches!(w, Warm::Ready(7)));
+		}
+	}
+
+	// A worker that came back empty stays Failed rather than falling back to
+	// Idle, which would let `start` spawn another probe on the next pass.
+	#[test]
+	fn a_failed_warm_up_stays_failed() {
+		let mut w = Warm::Building(std::thread::spawn(|| Option::<u32>::None));
+		for _ in 0..3 {
+			w = w.settled();
+			assert!(matches!(w, Warm::Failed));
+		}
+	}
 
 	// The sentinel only detects loss if its pattern can't be mistaken for
 	// trashed VRAM: right size, deterministic, and not a trivial fill.
