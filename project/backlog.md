@@ -53,7 +53,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - 🔬 Current control highlight, and slider control, overlap at extreme edges on the slider.
 	- Fix: Either widen the highlight so they don't overlap, or narrow the displayed range of the sliders (without changing the value range they represent). Or both.
-	- Fixed by widening. The focus box now covers the handle's overhang at either end, so the ring sits two pixels clear of it there and is still clear of the value field.
+	- Fixed by widening. The focus box now covers the handle's overhang at either end, so the ring sits two DIP clear of it there and is still clear of the value field.
 	- Opened: 20260905-094509
 	- Closed: 20260905-094509
 
