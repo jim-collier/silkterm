@@ -1170,6 +1170,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 #### Done - New features and enhancements
 
+- ✅ The config file carries the SHCL format footer.
+	- Done. It sits at the bottom, naming the format and pointing at the spec and its license, in the file's own '##' comment style. A config written before it existed gets it on the next launch, and it is moved back to the bottom if a new section is added under it. A footer that has been reworded is left as it stands.
+	- Opened: 20260906-100000
+	- Closed: 20260906-100000
+
 - ✅ Config file comment diet, second pass.
 	- Done. The template comments are down to about a third of their weight. Most settings now carry one short line or none at all, and the ones that were explaining how something works say what it does instead. Nothing moved, so an existing config is untouched; the shorter text only shows in a file written from scratch.
 	- Opened: 20260906-090000
