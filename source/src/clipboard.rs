@@ -32,7 +32,8 @@ impl Clipboard {
 	pub fn set_primary(&mut self, text: String) {
 		#[cfg(target_os = "linux")]
 		if let Some(ctx) = self.primary.as_mut() {
-			let _ = ctx.set_contents(text);
+			let len = text.len();
+			trace("primary", len, ctx.set_contents(text));
 			return;
 		}
 		self.set_clipboard(text);
@@ -49,7 +50,8 @@ impl Clipboard {
 
 	pub fn set_clipboard(&mut self, text: String) {
 		if let Some(ctx) = self.clipboard.as_mut() {
-			let _ = ctx.set_contents(text);
+			let len = text.len();
+			trace("clipboard", len, ctx.set_contents(text));
 		}
 	}
 
@@ -59,5 +61,19 @@ impl Clipboard {
 			.get_contents()
 			.ok()
 			.filter(|s| !s.is_empty())
+	}
+}
+
+// SILK_KEYDBG: one line per store, with the result the provider reports. On
+// X11 a store can be accepted and still lose to a clipboard manager that takes
+// the selection straight back, so what happened at THIS end is worth having in
+// the trace before blaming the key that asked for it.
+fn trace(which: &str, len: usize, result: Result<(), Box<dyn std::error::Error + Send + Sync>>) {
+	if !crate::app::env_flag("SILK_KEYDBG") {
+		return;
+	}
+	match result {
+		Ok(()) => eprintln!("[clip] {which} <- {len} bytes"),
+		Err(err) => eprintln!("[clip] {which} FAILED: {err}"),
 	}
 }
