@@ -128,6 +128,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
+- 🔘 Minimap: Make text lines even MORE text-like. Still looks to blobbish and not like text viewed from a distance. Needs fewer output pixels per input line, and possibly more anti-aliasing.
+
 - 🔘 Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
 
 - 🔬 Settings: rename "Check again next run" to "Re-test next run".
