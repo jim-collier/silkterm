@@ -42,13 +42,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 When switching virtual desktops (on regular non-VM GPU-acellerated Linux), Silkterm sometimes won't repaint. Not always. Hard to reproduce. Sometimes it will partially repaint in blocks, sometime not at all. There's some chance it was a problem with my XFCE window compositor, which I reset. (But no other windows had the problem, and all silkterm windows did.) It might also have been due to a stuck UnrealEngine process holding 3.7 GB of RAM. Either way, this is certainly not a regression. If a real bug, it's new.
+- 🛠️ CTRL+shift+C is not working consistently, nor is auto-copy selected text. (Nor Claude's auto-copy.) Right-click then copy, does works when CTRL+shift+C doesn't. This is a regression.
+	- Opened: 20260905-175000
+	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
+	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
+	- Not reproduced so far: plain use, a key replayed through another program's grab, and a program repainting its own lines all copy correctly.
+	- To find the rest, run with `SILK_KEYDBG=1`. It prints each key with the focus flag and modifiers, every focus change, and every clipboard write with its result, so a failed copy shows which stage dropped it.
+	- Still suspect: the gate that drops keys while the window reads as unfocused (from the bare-arrow fix, never run on this desktop), and CopyQ taking the clipboard back right after a copy.
 
-- 🔘 A prompt coming back after a command slides in oddly: it slows almost to a stop partway, then unsticks and finishes.
+- 🔘 A prompt coming back after a command slides in oddly:
+	- When the screen is not full, and a command finishes, the new command prompt appears to slide down, from under the stationary contents above it. (As if sliding out from "behind" the content above.)
+	- It is more pronounced with two-line prompts (e.g. from x9ps1-git), but the same thing happens even on one-line prompts.
 	- 20260905-124927: It's still present, or at least still manifests under a specific scenario:
 		- When the two-line x9ps1-git prompt is in effect (e.g. cwd is a github repo).
-	- Cause: the output chase was only a speed CAP on the plain navigation ease, so any advance short enough that the ease was the slower of the two got the ease instead. That ease decays on a fixed 230ms constant no setting reaches, and it hands over to the sharpened stop inside the last fraction of a line - which is where the speed picks back up. A returning prompt is one or two lines, so it hit this every time.
-	- Fixed: while a burst is in flight the chase drives the view rather than capping it. Its segments already end exactly where the stop band begins, so the handover is continuous, and the five feel settings now govern a two-line advance the same way they govern a long one. Measured here, a prompt arrives in about a third of a second instead of half a second, with no stall in the middle. Long bursts are unchanged.
+	- First diagnosed cause (probably incorrect): the output chase was only a speed CAP on the plain navigation ease, so any advance short enough that the ease was the slower of the two got the ease instead. That ease decays on a fixed 230ms constant no setting reaches, and it hands over to the sharpened stop inside the last fraction of a line - which is where the speed picks back up. A returning prompt is one or two lines, so it hit this every time.
+	- First fix (didn't work): while a burst is in flight the chase drives the view rather than capping it. Its segments already end exactly where the stop band begins, so the handover is continuous, and the five feel settings now govern a two-line advance the same way they govern a long one. Measured here, a prompt arrives in about a third of a second instead of half a second, with no stall in the middle. Long bursts are unchanged.
 	- Not a regression from the tmux work: a build from before it shows the same stall, slightly longer.
 	- Opened: 20260904-160838
 	- Closed: 20260904-160838
@@ -110,7 +118,17 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260826-123553
 	- Closed: 20260903-182122
 
+- ✋ When switching virtual desktops (on regular non-VM GPU-acellerated Linux), Silkterm sometimes won't repaint.
+	- It's hard to reproduce. Sometimes it will partially repaint in blocks, sometime not at all.
+	- Notes:
+		- There's some chance it was a problem with my XFCE window compositor, which I reset. (But no other windows had the problem, and all silkterm windows did.)
+		- It might also have been due to a stuck UnrealEngine process holding 3.7 GB of RAM.
+		- If it's a real bug, it's new, not a regression.
+	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
+
 ### New features and enhancements
+
+- 🔘 Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
 
 - 🔬 Settings: rename "Check again next run" to "Re-test next run".
 	- Done. Label only; nothing else moved.
@@ -288,13 +306,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - 🔘 Ability to change hotkeys, and/or assign new ones dynamically. Including a "capture" dialog.
 	- Opened: 20260703-100322
 
-- 🛠️ Themes: what is still open.
+- 🛠️ Themes:
 	- 🔘 A fourth built-in theme. Pastel is the idea: a pleasing light pastel on a dark gray background carrying a subtle tint of the complementary color. Solarized is the other candidate.
 	- 🔘 Per-theme menu and chrome color. The menu and tab chrome stay a fixed neutral gray whatever theme is chosen.
 	- Note: the rest of the theme work is done, under Done - New features and enhancements.
 	- Opened: 20260628-083740
 
-- 🛠️ Settings dialog: what is still open.
+- 🛠️ Settings dialog:
 	- 🔘 A color picker. The colored boxes on the Colors tab should be clickable, and open a picker of the familiar sort:
 		- A square on the left carrying saturation and brightness.
 		- A narrow rainbow strip beside it, with a vertical slider for hue.
@@ -307,7 +325,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Note: the rest of the dialog rework is done, under Done - New features and enhancements.
 	- Opened: 20260719-085918
 
-- 🛠️ Command-line options: what is still open.
+- 🔘 Release the GPU device after a long idle (e.g. 60 minutes).
+	- Drop the wgpu device and everything uploaded on it once the window has been idle long enough, and rebuild it when needed again. This is to lower total GPU memory footprint, esp. with multiple terminals open (e.g. for days).
+	- Idle = unfocused plus no PTY output, not `State::hidden()`. Occlusion is not reported by every WM, so `hidden()` only means minimized on the reference box. `TermInstance::note_activity` is the freshness signal.
+	- Deadline goes in the `about_to_wait` wake chain as one more `Option<Instant>` arm, beside `wp_next` and `vram_next`.
+	- Rebuild triggers on `Focused(true)` / `Occluded(false)` / pointer entering, which is where the GL `vram_next` probe already fires `recover_gpu`. Both render entry points need it, the way `freeze_sync` is reached from both.
+	- Vetoed while a dialog is open (main window holds the GL/EGL context), and while a rating run is in flight.
+	- First step is measuring the rebuild through the existing `recover_gpu` path. Extrapolating from the cold dialog context gives ~300-500ms, unmeasured.
+	- Need to figure out whether the X11 transparent path can survive a teardown at all - the ARGB visual belongs to the window, so it may be native-backend only.
+	- Opened: 20260905-181131.
+	- Setting:
+		- On "Window" tab.
+		- Enable/disable checkbox. (Disabled by default.)
+		- Idle minutes (default 60).
+
+- 🛠️ Command-line options:
 	- 🔘 Per-pane scope for the style options. `--font-name`, `--font-size`, `--background-color`, `--foreground-color`, `--wallpaper` and its stretch, zoom and opacity all apply to the whole window today. Varying them per pane needs a per-pane renderer the single text context does not have.
 	- 🔘 Per-pane `--title`. Accepted and reserved, but nothing displays it yet.
 	- 🔘 Short forms. Only `-h` and `-v` have one so far.

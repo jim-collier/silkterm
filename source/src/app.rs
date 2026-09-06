@@ -1080,7 +1080,7 @@ fn key_is_typed(state: ElementState, is_synthetic: bool) -> bool {
 // SILK_DUMP / SILK_DLGDBG / SILK_KEYDBG are consulted per frame / per event;
 // read the env once (var_os takes the env lock and scans environ every call).
 // Same pattern as pane.rs scroll_dbg.
-fn env_flag(name: &str) -> bool {
+pub(crate) fn env_flag(name: &str) -> bool {
 	use std::sync::OnceLock;
 	static DUMP: OnceLock<bool> = OnceLock::new();
 	static DLGDBG: OnceLock<bool> = OnceLock::new();
@@ -5932,12 +5932,18 @@ impl ApplicationHandler<UserEvent> for App {
 
 			WindowEvent::ModifiersChanged(mods) => {
 				state.mods = mods.state();
+				if env_flag("SILK_KEYDBG") {
+					eprintln!("[mods] {:?}", mods.state());
+				}
 				// Alt toggles the menu-bar accelerator underlines, so redraw.
 				state.dirty = true;
 			}
 
 			// Window focus gates copy-output: a background window never copies.
 			WindowEvent::Focused(focused) => {
+				if env_flag("SILK_KEYDBG") {
+					eprintln!("[focus] {focused}");
+				}
 				state.focused = focused;
 				if !focused {
 					state.commit_tab_edit(); // a rename does not outlive the window's focus
@@ -6411,18 +6417,18 @@ impl ApplicationHandler<UserEvent> for App {
 					});
 					match text {
 						Some(sel_text) => {
-							// copy-on-select: a finished selection also lands on
-							// the desktop clipboard when the pane opted in
-							// copy-on-select fires only for the focused pane of the
-							// active tab in a focused window (only that pane copies)
-							if state.focused
-								&& id == state.tabs.cur().focused
-								&& state
-									.tabs
-									.cur()
-									.panes
-									.get(&id)
-									.is_some_and(|p| p.copy_select)
+							// copy-on-select: a finished selection also goes to the
+							// desktop clipboard when the pane opted in. The drag
+							// itself is the proof this window is the one in use, so
+							// the window-focus flag has no say here - it can lag
+							// the WM, and a copy that silently misses is worse than
+							// one from a window that was just clicked in.
+							if state
+								.tabs
+								.cur()
+								.panes
+								.get(&id)
+								.is_some_and(|p| p.copy_select)
 							{
 								state.clipboard.set_clipboard(sel_text.clone());
 							}
