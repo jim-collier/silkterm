@@ -64,61 +64,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260905-124907
 	- Closed:
 
-- 🔬 Settings refuses to open after a few times.
-	- Cause: the dialogs' shared GPU context is built once on a worker thread and kept, but asking for it took the stored state unconditionally and only put it back while the worker was still running. So the second ask dropped the built context and every ask after that got nothing. Each open then built a whole instance, adapter and device of its own, and those pile up until the driver refuses to allocate another swapchain.
-	- Fixed. The state is put back whatever it was, so one context serves every dialog for the life of the process. Opens after the first are also back to the speed the warm-up was meant to buy.
-	- Opened: 20260905-190000
-	- Closed: 20260905-190000
-
-- 🔬 Wallpaper vanishes instead of falling back, and a profile round trip does not bring it back.
-	- With the wallpaper on and no image named, the built-in shows at launch but disappears on the first settings change that touches the wallpaper.
-	- Setting the performance profile to "Standard terminal" and back to "Max silk" leaves the window with no wallpaper at all.
-	- Cause: both are the same thing. A rotation folder is configured (or found by convention), so the built-in is suppressed - the folder is meant to supply the picture. But only a request that reads the folder picks one, and a settings change does not read it. Switching the wallpaper off drops the pick, so switching it back on had nothing to show and nothing to fall back on.
-	- Fixed. A request reads the folder whenever there is one and nothing has been picked from it, so an empty folder falls back to the built-in and turning the wallpaper back on picks again. Rotation timing resumes with it, which it did not before. Separately, an image that will not open now falls back to the built-in even inside a rotation folder, since a file that cannot be read supplies nothing.
-	- Opened: 20260905-113000
-	- Closed: 20260905-113000
-
-- 🔬 Text outline setting doesn't seem to work, when text scrim is 0 px.
-	- It should work independently.
-	- It should also be presented independently below Text scrim, in settings. As it's own one-line unindented subgroup, not a new section.
-	- "Minimum contrast" setting should not be presented as its own subgroup, but rather the last indented item under the "Text scrim" subgroup.
-	- Cause: the outline is drawn by the scrim pass, and the whole pass was switched off with the halo. The dialog grayed the row under the scrim switch for the same reason.
-	- Fixed. The pass runs for either, and only the halo's blur is skipped when the scrim is off. The row is ungated and sits on its own after the scrim's members; Minimum contrast is the last of those, indented, though it is not grayed with the scrim since it works on the text itself.
-	- Opened: 20260905-094509
-	- Closed: 20260905-094509
-
-- 🔬 Current control highlight, and slider control, overlap at extreme edges on the slider.
-	- Fix: Either widen the highlight so they don't overlap, or narrow the displayed range of the sliders (without changing the value range they represent). Or both.
-	- Fixed by widening. The focus box now covers the handle's overhang at either end, so the ring sits two DIP clear of it there and is still clear of the value field.
-	- Opened: 20260905-094509
-	- Closed: 20260905-094509
-
-- ✅ Automatic performance detection is not sensitive enough. A remote session to an older laptop with integrated graphics, over wifi, was rated "Max silk", which feels sluggish.
-	- Cause: the first pick read the adapter's own description and nothing else, so anything not flatly a software renderer started at the top. An integrated chip is not a slow one, and a remote screen is not a slow one either - it is a screen the graphics card never reaches. The step-down meant to catch it times the frames this machine draws, which over a remote session are not the frames anybody sees.
-	- Fixed. A remote session goes straight to the lowest profile without measuring, and an adapter with no card behind it to the second lowest. Everything else is measured: the window comes up whole, then a banner takes it for a few seconds while three profiles are timed in turn and the first that holds the display's refresh rate is kept. The window keeps drawing underneath, dimmed, and takes no input while the run is on.
-	- The profile is written down against a hash of the processor, the graphics adapter, the amount of memory and whether the screen is remote, so a different machine - or the same one seen locally after a remote session - is rated again. "Check for hardware change" at the bottom of the Silk tab switches that off.
-	- Departed from the request in two places, both deliberate. A remote session is taken as the answer on its own rather than only when the adapter also reads as software: over a remote session the reported adapter can be the real card, which is how this was rated Max silk in the first place. And the dialog label is shorter than the wording asked for, because the widest label on any tab sets the panel's width and the full sentence made the whole dialog a quarter wider.
-	- Opened: 20260904-163124
-	- Closed: 20260904-163124
-
-- ✅ Not enough space above the buttons at the bottom of the Settings dialog. About double is wanted.
-	- Fixed: the footer gap went from 14 to 28. It reaches every tab, the dialog having one footer. The rule is in the interface style guide now.
-	- Opened: 20260904-163124
-	- Closed: 20260904-163124
-
-- ✅ Does not work very well under tmux.
-	- Steps to reproduce:
-		- `ls -lA ~/` does not smooth scroll. It produces near-instant output.
-		- rar output sometimes appears to "freeze" the bottom few lines, while the lines above scroll normally.
-		- Other typical bash batch output (e.g. from cicd) looks more or less OK. Not exactly the same as without tmux, but acceptable.
-	- One candidate: tmux's own mouse support off, a wheel over the pane is turned into cursor keys. That is what a full-screen app wants, but it recalls shell history at a bare prompt. It is the standing behavior for any full-screen app and `set -g mouse on` changes it, so this may be a documentation answer rather than a fix.
-		- Testing: Could be part of the problem, but definitely not all of it. It was not the cause of any of the three symptoms.
-	- Cause: tmux runs on the alt screen, where there is no scrollback to measure, so the only thing that could ease was a guess made by comparing two frames. A burst that replaced the whole screen matched nothing, and a slow stream lost about a third of its lines. The frozen bottom rows were that guess taking an unchanged content row for pinned chrome.
-	- Fixed: the engine now records every region scroll as it happens (how many lines, which rows, and the rows that left), and the slide eases off that record with the same curve plain output uses. The rows outside tmux's scroll region are the only band, so its status line is the one row held still. A burst eases through its tail as one exact step, and a slow stream reports every line. Plain output past a full scrollback takes the same count now, in place of the old guess.
-	- Two limits remain. tmux scrolls the outer terminal first and draws afterwards, so on a burst into a fresh pane the first rows to leave are blank, and every terminal's scrollback gets those same rows. And tmux repaints rather than scrolls a pane that is not full width, so side-by-side panes still cut.
-	- Opened: 20260826-123553
-	- Closed: 20260903-182122
-
 - ✋ When switching virtual desktops (on regular non-VM GPU-acellerated Linux), Silkterm sometimes won't repaint.
 	- It's hard to reproduce. Sometimes it will partially repaint in blocks, sometime not at all.
 	- Notes:
@@ -132,86 +77,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - 🔘 Minimap: Make text lines even MORE text-like. Still looks to blobbish and not like text viewed from a distance. Needs fewer output pixels per input line, and possibly more anti-aliasing.
 
 - 🔘 Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
-
-- 🔬 Settings: rename "Check again next run" to "Re-test next run".
-	- Done. Label only; nothing else moved.
-	- Opened: 20260905-113000
-	- Closed: 20260905-113000
-
-- 🔬 Remote display detection: a "Remote (temporary)" performance profile.
-	- If remote mode detected (e.g. RDP, VNC, etc.), temporarily override to it. For now it is the same as "Standard terminal".
-	- At next run, returns to previous settings (unless still in remote session).
-	- A menu item under "Bare window" (with a separator), "Temporary remote display mode", checked and unchecked automatically, and by hand.
-	- Done. The override is a flag beside the live settings and never reaches the file, so the stored profile is what the next launch comes back to. It shows in the Profile dropdown as well, with the flyover saying it lasts the session, and picking it there raises the same flag. A remote session is no longer rated at all, and the remote flag is out of the hardware hash since nothing is written for it any more.
-	- Opened: 20260905-094509
-	- Closed: 20260905-094509
-
-- 🔬 Performance settings.
-	- Changes to "Low": wallpaper enabled, disable scrim, 2px outline.
-	- Move "Check for hardware change" to the last item under "Performance", unindented.
-	- Add a new indented checkmark below that, "Check again next program run", that gets cleared after checking next program run.
-	- Done. Both check rows are grayed while the profile is not chosen automatically, since neither does anything then. The one-shot check clears itself as the launch starts the rating, not when the rating answers, so a window closed mid-run has still spent it. The new row is shorter than asked, because the full wording was the widest label on any tab and widened the whole dialog; the flyover says the rest.
-	- Opened: 20260905-094509
-	- Closed: 20260905-094509
-
-- 🔬 The '✘' an '✓' on the git prompt look weird in powershell. Look too skinny, and not vertically aligned with each other. They look perfect on the *linux* Bash version. (The Windows git bash looks a little off in different ways.)
-	- Two causes, both fixed. The pair was mismatched by design: a light check beside a heavy cross. It is the light pair now, so the two are the same weight.
-	- The other half was alignment. A character the terminal font does not carry is drawn by a fallback face, which was placed on that face's own baseline rather than the one the text beside it sits on. It is shifted onto the text baseline now, which moves every fallback glyph, not just these two.
-	- A third thing came out of it and is fixed with them. A character Unicode presents as text was being painted by an emoji face whenever one happened to carry it, which drew it in the font's own colors and ignored the color the cell was set in. The heavy check mark came out purple; so did the multiplication cross and the ballot boxes, and the copyright and registered signs were at risk of it. Real emoji are unaffected.
-	- Not fixed, and it cannot be from here: the two marks still come from different fonts when the terminal font carries one and not the other, so their weights can differ a little. Which fonts are involved depends on the machine.
-	- The bash prompt is left alone. It is vendored from its own repository and reads correctly on Linux, and on Windows it benefits from the emoji fix anyway.
-	- Opened: n/a
-	- Closed: 20260903-031500
-
-- 🔬 Auto-disable the minimap when in a TUI that has no buffer that can be reached via minimap.
-	- Auto-reenable when TUI exited.
-	- Not all TUIs require this. `less`, for example, has a scrollable buffer evantually reachable via minimap. A full-screen editor doesn't, it is always just a rectangle at the top of the minimap.
-	- Done, with a list. The column steps aside whenever a full-screen program is running and the text takes its width back, except for programs named in the new `scroll.minimap.tui_process_whitelist` setting. It defaults to less, tmux and screen.
-	- The distinction the item asks for cannot be made mechanically: a pager runs on its own screen too, and there is no scroll buffer behind that screen for the map to reach, so the map is a rectangle at the top in either case. The list is how the exceptions get named instead.
-	- Losing the column changes the pane's text width, so this is a relayout rather than a drawing choice - one on the way in and one on the way out, both where the program repaints anyway.
-	- Names match with or without a directory and with or without .exe, so one list works on both platforms.
-	- Names that a process rewrites for itself match on the program: tmux reports itself as `tmux: client`, which never matched the list until the part after the colon was dropped. The tab reads `tmux` now too.
-	- 🔬 Seen on Windows with a real pager, and on Linux with tmux: on the list the column stays, off it the column goes and the text fills the pane. screen has not been tried.
-	- Opened: n/a
-	- Closed: 20260903-110000
-
-- 🔬 Settings dialog: gather the performance-related sections onto one "Silk" tab.
-	- The tab holds Performance, Text readability and Scrolling, in that order. The old Performance tab is gone.
-	- Text readability came off the Text tab, which now holds only the font. The scrolling feel came off the Movement tab, which now holds the wheel, the scrollbar and the minimap. Both of those tabs are sparse as a result.
-	- The section heading is "Scrolling" rather than "Smooth scrolling", because the master toggle directly under it is already called that.
-	- The two scrollbar colors moved to the Themes tab, at the end of the palette. They are still not part of a theme, and their row says so.
-	- Provisional. Easy to put back if it reads worse in use.
-	- Opened: 20260904-082000
-	- Closed: 20260904-090000
-
-- 🔬 Need to autodetect slow environments. Then if necessary:
-	- Speed up ease-in, ease-out, and single-screen speed if the environment is slow.
-	- Also consider cheaper rendering. (e.g. a quality setting mentioned elsewhere, set to lower).
-	- Enhancement: four profiles in a dropdown, plus Custom.
-		- Max silk: the current defaults for everything.
-		- High: the scroll tweaks above, and faster scrim rendering.
-		- Low: no cursor animation (but still smooth), text outline but no scrim, no wallpaper, faster rendering yet.
-		- Standard terminal: no smooth scroll, no wallpaper, no smooth cursor or animation, no text scrim or outline.
-	- Default to Max silk on a GPU that can handle it. Lower it depending on measured performance, and only change it when measured performance or the hardware changes significantly.
-	- Anything but Custom disables the relevant controls and changes their displayed values, without altering the underlying config values, so changing back to Custom restores them.
-	- Where it goes was a best guess. It leads the Silk tab, first in the dialog, holding a "Choose automatically" switch and the Profile dropdown under it. The dropdown is grayed while automatic is on.
-	- Automatic starts a new machine at Max silk, or Low under software rendering, and steps down one profile whenever a scroll ease misses more than a third of its frames. It never steps back up on the same hardware. A hand pick with automatic off stays put.
-	- The config keeps the choice in a `performance:` block at the top of the file, with the graphics adapter it was last picked for.
-	- Not done here: the cheaper blur quality, which is its own item below.
-	- Done. The profile is applied on top of the stored settings when they go live, and the user's values stay in the file, so Custom puts everything back. The dialog grays the rows a profile sets, shows the profile's values, dims their revert arrows, and the flyover says which tab to go to.
-	- Seen on Linux under software rendering: a fresh config came up Low, stepped down to Standard terminal during one burst of output, and a pick of Max silk in the dialog put the wallpaper on screen while the file kept the wallpaper switched off underneath.
-	- 🔬 Not yet seen: Windows, a real GPU, and a display that is not 60 Hz.
-	- Opened: n/a
-	- Closed: 20260903-213000
-
-- 🔬 Minimap: Unless a line of text is rendering below 1px, don't show multiple lines as a solid block of color.
-	- And even then (at <1px per full-hieght text line), dim the line of pixels for better approximations.
-	- VSCodium, for example, does a much better job of approximating what lots of text way too small to read, looks like "from a distance".
-	- Fixed both halves. A line no longer paints its whole height once it draws more than a pixel tall, so the gap above and below separates it from the next one instead of the two fusing. Below a pixel there is no room for a gap and the line is taken whole, ramped between the two so the map does not change brightness as a buffer grows past that point.
-	- And a pixel row is now as bright as the ink that actually landed in it, so a mostly blank stretch reads dimmer than a solid page. A single inked line among many is held above a floor so it stays findable, and color still comes only from the lines that have ink, so a lone red line keeps its color.
-	- Measured on a scene of 4,000 lines: the column used to be lit edge to edge with no gaps anywhere, and is a fifth dimmer now. At a couple of hundred lines each line reads as its own bar.
-	- Opened: 20260902-000000
-	- Closed: 20260903-045000
 
 - 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
 	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
@@ -234,23 +99,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
 	- Opened: 20260804-134813
 
-- 🔬 Windows installer.
-	- ✅ Offer "available to all users", or "this user only", or whatever the typical wording is.
-		- A standard install-mode page between Welcome and the directory picker. The choice decides the install directory, which registry hive the uninstall entry goes in, and whether the start menu folder is machine-wide or per-user.
-		- Either flavor of an older install is removed first, so installing all-users over a per-user copy no longer leaves two entries in Add/Remove.
-	- ✅ Add a SilkTerm folder to the start menu.
-	- ✅ Under it, one shortcut per discovered shell (but with silkterm icon), named "SilkTerm - <shell name>", starting in %USERPROFILE%.
-		- The installer looks for each shell on PATH and writes a shortcut only for the ones it finds. Same names and same order the Tabs menu uses. The icon comes free, since every shortcut targets silkterm.exe.
-		- The working directory is stored as the unexpanded `%USERPROFILE%`, so an all-users install does not bake the installing account's home directory into everyone's shortcuts.
-	- ✅ Plus a plain SilkTerm shortcut with no shell argument, also starting in %USERPROFILE%.
-	- 🔬 Driven on Windows for the first time, in a sandbox, and it found two real defects. An all-users install left no uninstall entry anywhere a 64-bit reader looks, so it would not have appeared in Add/Remove Programs and an upgrade over it could not have found it. Cause: NSIS builds a 32-bit installer, and a 32-bit process writing HKLM\Software lands in WOW6432Node. HKCU\Software is not redirected, which is why the per-user half worked and only that half.
-		- Fixed by pinning the 64-bit view before MultiUser reads the install directory back, and in the uninstaller. The old install sweep now also looks in the 32-bit view, so a copy left by an earlier build is still found and cleared.
-		- A second defect came out of the same run: an uninstaller that runs elevated was taken for an all-users one, so a per-user install had its files deleted but left its registry entry and its start menu folder behind. The uninstaller now takes its context from whichever hive names the directory it is sitting in.
-		- Verified after both fixes: all-users and per-user each install and uninstall completely, installing one flavor over the other leaves a single copy, and installing twice in a row does too. One shortcut per shell actually present, named and ordered as intended, each with an unexpanded %USERPROFILE% working directory.
-		- 🔬 Still to run: the interactive install-mode page, which a silent install skips.
-	- Opened: 20260826-123553
-
-- 🔬 Dogfood: the launcher when the network build host is down.
+- 🔘 Dogfood: the launcher when the network build host is down.
 	- Both launchers have been run on their own box with the host reachable. What is left is the unreachable case, from a box where that source is over the network rather than local, on Linux and on Windows, so the bounded wait is what gets exercised.
 	- Note: the rest of this item is done, under Done - New features and enhancements.
 	- Opened: 20260823-131929
@@ -361,6 +210,61 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 #### Done - Bugs
 
+- ✅ Settings refuses to open after a few times.
+	- Cause: the dialogs' shared GPU context is built once on a worker thread and kept, but asking for it took the stored state unconditionally and only put it back while the worker was still running. So the second ask dropped the built context and every ask after that got nothing. Each open then built a whole instance, adapter and device of its own, and those pile up until the driver refuses to allocate another swapchain.
+	- Fixed. The state is put back whatever it was, so one context serves every dialog for the life of the process. Opens after the first are also back to the speed the warm-up was meant to buy.
+	- Opened: 20260905-190000
+	- Closed: 20260905-190000
+
+- ✅ Wallpaper vanishes instead of falling back, and a profile round trip does not bring it back.
+	- With the wallpaper on and no image named, the built-in shows at launch but disappears on the first settings change that touches the wallpaper.
+	- Setting the performance profile to "Standard terminal" and back to "Max silk" leaves the window with no wallpaper at all.
+	- Cause: both are the same thing. A rotation folder is configured (or found by convention), so the built-in is suppressed - the folder is meant to supply the picture. But only a request that reads the folder picks one, and a settings change does not read it. Switching the wallpaper off drops the pick, so switching it back on had nothing to show and nothing to fall back on.
+	- Fixed. A request reads the folder whenever there is one and nothing has been picked from it, so an empty folder falls back to the built-in and turning the wallpaper back on picks again. Rotation timing resumes with it, which it did not before. Separately, an image that will not open now falls back to the built-in even inside a rotation folder, since a file that cannot be read supplies nothing.
+	- Opened: 20260905-113000
+	- Closed: 20260905-113000
+
+- ✅ Text outline setting doesn't seem to work, when text scrim is 0 px.
+	- It should work independently.
+	- It should also be presented independently below Text scrim, in settings. As it's own one-line unindented subgroup, not a new section.
+	- "Minimum contrast" setting should not be presented as its own subgroup, but rather the last indented item under the "Text scrim" subgroup.
+	- Cause: the outline is drawn by the scrim pass, and the whole pass was switched off with the halo. The dialog grayed the row under the scrim switch for the same reason.
+	- Fixed. The pass runs for either, and only the halo's blur is skipped when the scrim is off. The row is ungated and sits on its own after the scrim's members; Minimum contrast is the last of those, indented, though it is not grayed with the scrim since it works on the text itself.
+	- Opened: 20260905-094509
+	- Closed: 20260905-094509
+
+- ✅ Current control highlight, and slider control, overlap at extreme edges on the slider.
+	- Fix: Either widen the highlight so they don't overlap, or narrow the displayed range of the sliders (without changing the value range they represent). Or both.
+	- Fixed by widening. The focus box now covers the handle's overhang at either end, so the ring sits two DIP clear of it there and is still clear of the value field.
+	- Opened: 20260905-094509
+	- Closed: 20260905-094509
+
+- ✅ Automatic performance detection is not sensitive enough. A remote session to an older laptop with integrated graphics, over wifi, was rated "Max silk", which feels sluggish.
+	- Cause: the first pick read the adapter's own description and nothing else, so anything not flatly a software renderer started at the top. An integrated chip is not a slow one, and a remote screen is not a slow one either - it is a screen the graphics card never reaches. The step-down meant to catch it times the frames this machine draws, which over a remote session are not the frames anybody sees.
+	- Fixed. A remote session goes straight to the lowest profile without measuring, and an adapter with no card behind it to the second lowest. Everything else is measured: the window comes up whole, then a banner takes it for a few seconds while three profiles are timed in turn and the first that holds the display's refresh rate is kept. The window keeps drawing underneath, dimmed, and takes no input while the run is on.
+	- The profile is written down against a hash of the processor, the graphics adapter, the amount of memory and whether the screen is remote, so a different machine - or the same one seen locally after a remote session - is rated again. "Check for hardware change" at the bottom of the Silk tab switches that off.
+	- Departed from the request in two places, both deliberate. A remote session is taken as the answer on its own rather than only when the adapter also reads as software: over a remote session the reported adapter can be the real card, which is how this was rated Max silk in the first place. And the dialog label is shorter than the wording asked for, because the widest label on any tab sets the panel's width and the full sentence made the whole dialog a quarter wider.
+	- Opened: 20260904-163124
+	- Closed: 20260904-163124
+
+- ✅ Not enough space above the buttons at the bottom of the Settings dialog. About double is wanted.
+	- Fixed: the footer gap went from 14 to 28. It reaches every tab, the dialog having one footer. The rule is in the interface style guide now.
+	- Opened: 20260904-163124
+	- Closed: 20260904-163124
+
+- ✅ Does not work very well under tmux.
+	- Steps to reproduce:
+		- `ls -lA ~/` does not smooth scroll. It produces near-instant output.
+		- rar output sometimes appears to "freeze" the bottom few lines, while the lines above scroll normally.
+		- Other typical bash batch output (e.g. from cicd) looks more or less OK. Not exactly the same as without tmux, but acceptable.
+	- One candidate: tmux's own mouse support off, a wheel over the pane is turned into cursor keys. That is what a full-screen app wants, but it recalls shell history at a bare prompt. It is the standing behavior for any full-screen app and `set -g mouse on` changes it, so this may be a documentation answer rather than a fix.
+		- Testing: Could be part of the problem, but definitely not all of it. It was not the cause of any of the three symptoms.
+	- Cause: tmux runs on the alt screen, where there is no scrollback to measure, so the only thing that could ease was a guess made by comparing two frames. A burst that replaced the whole screen matched nothing, and a slow stream lost about a third of its lines. The frozen bottom rows were that guess taking an unchanged content row for pinned chrome.
+	- Fixed: the engine now records every region scroll as it happens (how many lines, which rows, and the rows that left), and the slide eases off that record with the same curve plain output uses. The rows outside tmux's scroll region are the only band, so its status line is the one row held still. A burst eases through its tail as one exact step, and a slow stream reports every line. Plain output past a full scrollback takes the same count now, in place of the old guess.
+	- Two limits remain. tmux scrolls the outer terminal first and draws afterwards, so on a burst into a fresh pane the first rows to leave are blank, and every terminal's scrollback gets those same rows. And tmux repaints rather than scrolls a pane that is not full width, so side-by-side panes still cut.
+	- Opened: 20260826-123553
+	- Closed: 20260903-182122
+
 - ✅ A WSL pane does not start in the current directory.
 	- Seen doing "Open terminal here" on Windows. Nothing hands wsl.exe a directory today - a distribution is stored as `wsl.exe -d <name>`, and the pane starts wherever the spawned process inherited from.
 	- Two cases that need separating before anything is changed, because only the second is clearly broken:
@@ -434,7 +338,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Cause: the smooth offset is kept in two parts. The grid is scrolled by a whole number of lines and the renderer draws the fraction left over. The output ease was allowed to run up to sixteen lines past the end of the scrollback. The alt screen has no scrollback at all, so when nano took over mid-ease the whole part sat pinned at zero while the fraction kept counting down through the leftover backlog, wrapping through a full cell once per line. Every wrap drew as a whole-cell hop. That is also why it looked random: it needs output still easing at the moment nano starts, which a long push before `git commit` gives reliably and a quiet prompt never does.
 	- Fixed: the view can no longer sit past the grid. Entering the alt screen lands the ease on the spot, which is the cut a screen swap wants anyway, and a shallow scrollback caps how far a fresh terminal's first output eases. Both halves of the residual one-line scroll on alt-screen enter and exit go with it.
 	- The scroll harness has a fifth scene for it: a burst still easing when an alt screen takes over must sit still there.
-	- 🔬 Test exhaustively
 	- Opened: 20260709-115247
 	- Closed: 20260827-073521
 
@@ -1259,6 +1162,103 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 #### Done - New features and enhancements
 
+- ✅ Settings: rename "Check again next run" to "Re-test next run".
+	- Done. Label only; nothing else moved.
+	- Opened: 20260905-113000
+	- Closed: 20260905-113000
+
+- ✅ Remote display detection: a "Remote (temporary)" performance profile.
+	- If remote mode detected (e.g. RDP, VNC, etc.), temporarily override to it. For now it is the same as "Standard terminal".
+	- At next run, returns to previous settings (unless still in remote session).
+	- A menu item under "Bare window" (with a separator), "Temporary remote display mode", checked and unchecked automatically, and by hand.
+	- Done. The override is a flag beside the live settings and never reaches the file, so the stored profile is what the next launch comes back to. It shows in the Profile dropdown as well, with the flyover saying it lasts the session, and picking it there raises the same flag. A remote session is no longer rated at all, and the remote flag is out of the hardware hash since nothing is written for it any more.
+	- Opened: 20260905-094509
+	- Closed: 20260905-094509
+
+- ✅ Performance settings.
+	- Changes to "Low": wallpaper enabled, disable scrim, 2px outline.
+	- Move "Check for hardware change" to the last item under "Performance", unindented.
+	- Add a new indented checkmark below that, "Check again next program run", that gets cleared after checking next program run.
+	- Done. Both check rows are grayed while the profile is not chosen automatically, since neither does anything then. The one-shot check clears itself as the launch starts the rating, not when the rating answers, so a window closed mid-run has still spent it. The new row is shorter than asked, because the full wording was the widest label on any tab and widened the whole dialog; the flyover says the rest.
+	- Opened: 20260905-094509
+	- Closed: 20260905-094509
+
+- ✅ Settings dialog: gather the performance-related sections onto one "Silk" tab.
+	- The tab holds Performance, Text readability and Scrolling, in that order. The old Performance tab is gone.
+	- Text readability came off the Text tab, which now holds only the font. The scrolling feel came off the Movement tab, which now holds the wheel, the scrollbar and the minimap. Both of those tabs are sparse as a result.
+	- The section heading is "Scrolling" rather than "Smooth scrolling", because the master toggle directly under it is already called that.
+	- The two scrollbar colors moved to the Themes tab, at the end of the palette. They are still not part of a theme, and their row says so.
+	- Provisional. Easy to put back if it reads worse in use.
+	- Opened: 20260904-082000
+	- Closed: 20260904-090000
+
+- ✅ Need to autodetect slow environments. Then if necessary:
+	- Speed up ease-in, ease-out, and single-screen speed if the environment is slow.
+	- Also consider cheaper rendering. (e.g. a quality setting mentioned elsewhere, set to lower).
+	- Enhancement: four profiles in a dropdown, plus Custom.
+		- Max silk: the current defaults for everything.
+		- High: the scroll tweaks above, and faster scrim rendering.
+		- Low: no cursor animation (but still smooth), text outline but no scrim, no wallpaper, faster rendering yet.
+		- Standard terminal: no smooth scroll, no wallpaper, no smooth cursor or animation, no text scrim or outline.
+	- Default to Max silk on a GPU that can handle it. Lower it depending on measured performance, and only change it when measured performance or the hardware changes significantly.
+	- Anything but Custom disables the relevant controls and changes their displayed values, without altering the underlying config values, so changing back to Custom restores them.
+	- Where it goes was a best guess. It leads the Silk tab, first in the dialog, holding a "Choose automatically" switch and the Profile dropdown under it. The dropdown is grayed while automatic is on.
+	- Automatic starts a new machine at Max silk, or Low under software rendering, and steps down one profile whenever a scroll ease misses more than a third of its frames. It never steps back up on the same hardware. A hand pick with automatic off stays put.
+	- The config keeps the choice in a `performance:` block at the top of the file, with the graphics adapter it was last picked for.
+	- Not done here: the cheaper blur quality, which is its own item below.
+	- Done. The profile is applied on top of the stored settings when they go live, and the user's values stay in the file, so Custom puts everything back. The dialog grays the rows a profile sets, shows the profile's values, dims their revert arrows, and the flyover says which tab to go to.
+	- Seen on Linux under software rendering: a fresh config came up Low, stepped down to Standard terminal during one burst of output, and a pick of Max silk in the dialog put the wallpaper on screen while the file kept the wallpaper switched off underneath.
+	- Not yet seen: Windows, a real GPU, and a display that is not 60 Hz.
+	- Opened: n/a
+	- Closed: 20260903-213000
+
+- ✅ Auto-disable the minimap when in a TUI that has no buffer that can be reached via minimap.
+	- Auto-reenable when TUI exited.
+	- Not all TUIs require this. `less`, for example, has a scrollable buffer evantually reachable via minimap. A full-screen editor doesn't, it is always just a rectangle at the top of the minimap.
+	- Done, with a list. The column steps aside whenever a full-screen program is running and the text takes its width back, except for programs named in the new `scroll.minimap.tui_process_whitelist` setting. It defaults to less, tmux and screen.
+	- The distinction the item asks for cannot be made mechanically: a pager runs on its own screen too, and there is no scroll buffer behind that screen for the map to reach, so the map is a rectangle at the top in either case. The list is how the exceptions get named instead.
+	- Losing the column changes the pane's text width, so this is a relayout rather than a drawing choice - one on the way in and one on the way out, both where the program repaints anyway.
+	- Names match with or without a directory and with or without .exe, so one list works on both platforms.
+	- Names that a process rewrites for itself match on the program: tmux reports itself as `tmux: client`, which never matched the list until the part after the colon was dropped. The tab reads `tmux` now too.
+	- Seen on Windows with a real pager, and on Linux with tmux: on the list the column stays, off it the column goes and the text fills the pane. screen has not been tried.
+	- Opened: n/a
+	- Closed: 20260903-110000
+
+- ✅ Windows installer.
+	- ✅ Offer "available to all users", or "this user only", or whatever the typical wording is.
+		- A standard install-mode page between Welcome and the directory picker. The choice decides the install directory, which registry hive the uninstall entry goes in, and whether the start menu folder is machine-wide or per-user.
+		- Either flavor of an older install is removed first, so installing all-users over a per-user copy no longer leaves two entries in Add/Remove.
+	- ✅ Add a SilkTerm folder to the start menu.
+	- ✅ Under it, one shortcut per discovered shell (but with silkterm icon), named "SilkTerm - <shell name>", starting in %USERPROFILE%.
+		- The installer looks for each shell on PATH and writes a shortcut only for the ones it finds. Same names and same order the Tabs menu uses. The icon comes free, since every shortcut targets silkterm.exe.
+		- The working directory is stored as the unexpanded `%USERPROFILE%`, so an all-users install does not bake the installing account's home directory into everyone's shortcuts.
+	- ✅ Plus a plain SilkTerm shortcut with no shell argument, also starting in %USERPROFILE%.
+	- ✅ Driven on Windows for the first time, in a sandbox, and it found two real defects. An all-users install left no uninstall entry anywhere a 64-bit reader looks, so it would not have appeared in Add/Remove Programs and an upgrade over it could not have found it. Cause: NSIS builds a 32-bit installer, and a 32-bit process writing HKLM\Software lands in WOW6432Node. HKCU\Software is not redirected, which is why the per-user half worked and only that half.
+		- Fixed by pinning the 64-bit view before MultiUser reads the install directory back, and in the uninstaller. The old install sweep now also looks in the 32-bit view, so a copy left by an earlier build is still found and cleared.
+		- A second defect came out of the same run: an uninstaller that runs elevated was taken for an all-users one, so a per-user install had its files deleted but left its registry entry and its start menu folder behind. The uninstaller now takes its context from whichever hive names the directory it is sitting in.
+		- Verified after both fixes: all-users and per-user each install and uninstall completely, installing one flavor over the other leaves a single copy, and installing twice in a row does too. One shortcut per shell actually present, named and ordered as intended, each with an unexpanded %USERPROFILE% working directory.
+		- Still to run: the interactive install-mode page, which a silent install skips.
+	- Opened: 20260826-123553
+	- Closed: 20260903-105213
+
+- ✅ Minimap: Unless a line of text is rendering below 1px, don't show multiple lines as a solid block of color.
+	- And even then (at <1px per full-hieght text line), dim the line of pixels for better approximations.
+	- VSCodium, for example, does a much better job of approximating what lots of text way too small to read, looks like "from a distance".
+	- Fixed both halves. A line no longer paints its whole height once it draws more than a pixel tall, so the gap above and below separates it from the next one instead of the two fusing. Below a pixel there is no room for a gap and the line is taken whole, ramped between the two so the map does not change brightness as a buffer grows past that point.
+	- And a pixel row is now as bright as the ink that actually landed in it, so a mostly blank stretch reads dimmer than a solid page. A single inked line among many is held above a floor so it stays findable, and color still comes only from the lines that have ink, so a lone red line keeps its color.
+	- Measured on a scene of 4,000 lines: the column used to be lit edge to edge with no gaps anywhere, and is a fifth dimmer now. At a couple of hundred lines each line reads as its own bar.
+	- Opened: 20260902-000000
+	- Closed: 20260903-045000
+
+- ✅ The '✘' an '✓' on the git prompt look weird in powershell. Look too skinny, and not vertically aligned with each other. They look perfect on the *linux* Bash version. (The Windows git bash looks a little off in different ways.)
+	- Two causes, both fixed. The pair was mismatched by design: a light check beside a heavy cross. It is the light pair now, so the two are the same weight.
+	- The other half was alignment. A character the terminal font does not carry is drawn by a fallback face, which was placed on that face's own baseline rather than the one the text beside it sits on. It is shifted onto the text baseline now, which moves every fallback glyph, not just these two.
+	- A third thing came out of it and is fixed with them. A character Unicode presents as text was being painted by an emoji face whenever one happened to carry it, which drew it in the font's own colors and ignored the color the cell was set in. The heavy check mark came out purple; so did the multiplication cross and the ballot boxes, and the copyright and registered signs were at risk of it. Real emoji are unaffected.
+	- Not fixed, and it cannot be from here: the two marks still come from different fonts when the terminal font carries one and not the other, so their weights can differ a little. Which fonts are involved depends on the machine.
+	- The bash prompt is left alone. It is vendored from its own repository and reads correctly on Linux, and on Windows it benefits from the emoji fix anyway.
+	- Opened: n/a
+	- Closed: 20260903-031500
+
 - ✅ Double-clicking on "github.com:jim-collier/silkterm.git:dev ✘✓" (e.g. x9ps1-prompt), should not include things like " ✘✓" at the end.
 	- Cause: the prompt puts the remote inside brackets beside its status marks, and a double-click inside a matched pair takes everything between the brackets. That rule is wanted elsewhere, so it was left alone.
 	- Fixed: a git remote is a shape now, the way a path or a URL already is, and a shape outranks the pair rule. `git@github.com:owner/repo.git` and the userless spelling a prompt shows both select whole, and so does an scp target like `jim@host.local:/srv/data/a.txt`.
@@ -1729,7 +1729,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Note: per-pane scope and a few smaller pieces are still open under New features and enhancements.
 	- Opened: 20260628-083740
 	- Closed: 20260830-110900
-
 
 - ✅ These values in Settings should be expressed in % (in labels), and displayed as integers.
 	- Done: transparency opacity, wallpaper visibility, the three contrast mask sliders, text scrim strength and softness, cursor height and width, and the five smooth-scrolling sliders all carry a % on the label. Every one of them already ran in whole steps, so nothing needed rounding.
@@ -2529,7 +2528,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Remote SSH hosts can't be covered from this side: ssh forwards TERM as-is, and the remote's terminfo database isn't visible to the terminal. Remote fix is installing the alacritty terminfo there, or overriding TERM in the remote shell rc. A config key to force `xterm-256color` locally could be added later if wanted.
 	- Opened: 20260722-100516
 	- Closed: 20260722-201222
-
 
 - ✅ Font size should be able to be increased, even when using system font.
 	- May need to refactor "Use system font [ ]" in settings to:
