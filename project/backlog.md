@@ -49,6 +49,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Not reproduced so far: plain use, a key replayed through another program's grab, and a program repainting its own lines all copy correctly.
 	- To find the rest, run with `SILK_KEYDBG=1`. It prints each key with the focus flag and modifiers, every focus change, and every clipboard write with its result, so a failed copy shows which stage dropped it.
 	- Still suspect: the gate that drops keys while the window reads as unfocused (from the bare-arrow fix, never run on this desktop), and CopyQ taking the clipboard back right after a copy.
+	- 20260905-184500: With the change in, copy-on-select and the hotkey have both worked so far. Leaving open until it has held for a while, since it was intermittent.
 
 - 🔘 A prompt coming back after a command slides in oddly:
 	- When the screen is not full, and a command finishes, the new command prompt appears to slide down, from under the stationary contents above it. (As if sliding out from "behind" the content above.)
