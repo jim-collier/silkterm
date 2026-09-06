@@ -3456,8 +3456,6 @@ pub const HOME_TOKEN: &str = "$HOME";
 
 const DEFAULT_CONFIG_TEMPLATE: &str = r##"# SilkTerm configuration file.
 #
-# Format is SHCL: https://github.com/jim-collier/shcl
-#
 ## Delete this file to start over. A '## ' line is a note; a '# ' before a key
 ## means that setting is off and showing its default. Uncomment it to change
 ## it. Paths take `~`, $NAME, ${NAME}, %NAME% and $env:NAME, on any platform.
@@ -3767,6 +3765,14 @@ shell:
 
 	## Selected text goes straight to the clipboard. Also on the menu bar.
 	# copy_on_select: false  ## Default
+
+#
+# This config file format is SHCL.
+# "Simple Hierarchical Config Language"
+#    Home     https://github.com/jim-collier/shcl
+#    Syntax   https://github.com/jim-collier/shcl/blob/main/project/spec.md
+#    Legal    SHCL is Copyright © 2026 Jim Collier. License: MIT. No warranty.
+#
 "##;
 
 #[cfg(test)]
@@ -4151,11 +4157,13 @@ mod tests {
 	// settings use a single '# '.
 	#[test]
 	fn default_config_comment_style() {
-		// The file header (the format blurb, down to the first '##' line) is
-		// verbatim prose in single-'#' form and is exempt from the convention.
-		let body = default_config()
-			.find("\n##")
-			.map_or(default_config(), |i| &default_config()[i..]);
+		// The header and shcl's own footer banner are verbatim prose in
+		// single-'#' form, and both sit outside the convention.
+		let text = default_config();
+		let body = text.find("\n##").map_or(text, |i| &text[i..]);
+		let body = body
+			.find("\n#\n# This config file format is SHCL.")
+			.map_or(body, |i| &body[..i]);
 		for line in body.lines() {
 			let t = line.trim_start();
 			if !t.starts_with('#') {

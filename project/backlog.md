@@ -42,21 +42,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- ✅ A prompt coming back after a command slides in oddly:
-	- When the screen is not full, and a command finishes, the new command prompt appears to slide down, from under the stationary contents above it. (As if sliding down from "behind" content above with a hard horizontal edge.)
-	- It is more pronounced with two-line prompts (e.g. from x9ps1-git), but the same thing happens even on one-line prompts.
-	- 20260905-124927: It's still present, or at least still manifests under a specific scenario:
-		- When the two-line x9ps1-git prompt is in effect (e.g. cwd is a github repo).
-	- First diagnosed cause (probably incorrect): the output chase was only a speed CAP on the plain navigation ease, so any advance short enough that the ease was the slower of the two got the ease instead. That ease decays on a fixed 230ms constant no setting reaches, and it hands over to the sharpened stop inside the last fraction of a line - which is where the speed picks back up. A returning prompt is one or two lines, so it hit this every time.
-	- First fix (didn't work): while a burst is in flight the chase drives the view rather than capping it. Its segments already end exactly where the stop band begins, so the handover is continuous, and the five feel settings now govern a two-line advance the same way they govern a long one. Measured here, a prompt arrives in about a third of a second instead of half a second, with no stall in the middle. Long bursts are unchanged.
-	- Not a regression from the tmux work: a build from before it shows the same stall, slightly longer.
-	- Real cause: ble.sh makes room for its prompt with insert-line and delete-line on the blank rows under the cursor. Since the scroll ledger went in, the engine reports that as a region scroll. On a screen that is not full nothing else moves, so the prompt drawn right after was eased down inside that region, with the rows above held still. Before the ledger, the row diff never read it as a scroll, which is why it started with the tmux work.
-	- Fixed: a recorded scroll is eased only when something visible moved, a row with text on screen before it or one that left. The same redraw on a full screen with a full scrollback also lost the count of lines that went into history, so the view jumped and then slid; that count is now kept on its own through the redraw.
-	- Opened: 20260904-160838
-	- Closed: 20260904-160838
-	- Opened: 20260905-124907
-	- Closed: 20260905-194044
-
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text. (Nor Claude's auto-copy.) Right-click then copy, does works when CTRL+shift+C doesn't. This is a regression.
 	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
 	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
@@ -75,6 +60,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
 
 ### New features and enhancements
+
+- 🔘 Settings | Silk: Allow "Profile" to be selected even when "Choose automatically" is enabled.
+	- If user changes it, deselect "Choose automatically".
+	- Exception: If user chooses "Remote (temporary)", don't change state of "Choose automatically".
 
 - 🔘 Minimap: Make text lines even MORE text-like. Still looks to blobbish and not like text viewed from a distance. Needs fewer output pixels per input line, and possibly more anti-aliasing.
 
@@ -213,6 +202,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ A prompt coming back after a command slides in oddly:
+	- When the screen is not full, and a command finishes, the new command prompt appears to slide down, from under the stationary contents above it. (As if sliding down from "behind" content above with a hard horizontal edge.)
+	- It is more pronounced with two-line prompts (e.g. from x9ps1-git), but the same thing happens even on one-line prompts.
+	- 20260905-124927: It's still present, or at least still manifests under a specific scenario:
+		- When the two-line x9ps1-git prompt is in effect (e.g. cwd is a github repo).
+	- First diagnosed cause (probably incorrect): the output chase was only a speed CAP on the plain navigation ease, so any advance short enough that the ease was the slower of the two got the ease instead. That ease decays on a fixed 230ms constant no setting reaches, and it hands over to the sharpened stop inside the last fraction of a line - which is where the speed picks back up. A returning prompt is one or two lines, so it hit this every time.
+	- First fix (didn't work): while a burst is in flight the chase drives the view rather than capping it. Its segments already end exactly where the stop band begins, so the handover is continuous, and the five feel settings now govern a two-line advance the same way they govern a long one. Measured here, a prompt arrives in about a third of a second instead of half a second, with no stall in the middle. Long bursts are unchanged.
+	- Not a regression from the tmux work: a build from before it shows the same stall, slightly longer.
+	- Real cause: ble.sh makes room for its prompt with insert-line and delete-line on the blank rows under the cursor. Since the scroll ledger went in, the engine reports that as a region scroll. On a screen that is not full nothing else moves, so the prompt drawn right after was eased down inside that region, with the rows above held still. Before the ledger, the row diff never read it as a scroll, which is why it started with the tmux work.
+	- Fixed: a recorded scroll is eased only when something visible moved, a row with text on screen before it or one that left. The same redraw on a full screen with a full scrollback also lost the count of lines that went into history, so the view jumped and then slid; that count is now kept on its own through the redraw.
+	- Opened: 20260904-160838
+	- Closed: 20260904-160838
+	- Opened: 20260905-124907
+	- Closed: 20260905-194044
 
 - ✅ Settings refuses to open after a few times.
 	- Cause: the dialogs' shared GPU context is built once on a worker thread and kept, but asking for it took the stored state unconditionally and only put it back while the worker was still running. So the second ask dropped the built context and every ask after that got nothing. Each open then built a whole instance, adapter and device of its own, and those pile up until the driver refuses to allocate another swapchain.
