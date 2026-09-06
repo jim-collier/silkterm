@@ -42,27 +42,29 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🛠️ CTRL+shift+C is not working consistently, nor is auto-copy selected text. (Nor Claude's auto-copy.) Right-click then copy, does works when CTRL+shift+C doesn't. This is a regression.
-	- Opened: 20260905-175000
-	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
-	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
-	- Not reproduced so far: plain use, a key replayed through another program's grab, and a program repainting its own lines all copy correctly.
-	- To find the rest, run with `SILK_KEYDBG=1`. It prints each key with the focus flag and modifiers, every focus change, and every clipboard write with its result, so a failed copy shows which stage dropped it.
-	- Still suspect: the gate that drops keys while the window reads as unfocused (from the bare-arrow fix, never run on this desktop), and CopyQ taking the clipboard back right after a copy.
-	- 20260905-184500: With the change in, copy-on-select and the hotkey have both worked so far. Leaving open until it has held for a while, since it was intermittent.
-
-- 🔘 A prompt coming back after a command slides in oddly:
-	- When the screen is not full, and a command finishes, the new command prompt appears to slide down, from under the stationary contents above it. (As if sliding out from "behind" the content above.)
+- ✅ A prompt coming back after a command slides in oddly:
+	- When the screen is not full, and a command finishes, the new command prompt appears to slide down, from under the stationary contents above it. (As if sliding down from "behind" content above with a hard horizontal edge.)
 	- It is more pronounced with two-line prompts (e.g. from x9ps1-git), but the same thing happens even on one-line prompts.
 	- 20260905-124927: It's still present, or at least still manifests under a specific scenario:
 		- When the two-line x9ps1-git prompt is in effect (e.g. cwd is a github repo).
 	- First diagnosed cause (probably incorrect): the output chase was only a speed CAP on the plain navigation ease, so any advance short enough that the ease was the slower of the two got the ease instead. That ease decays on a fixed 230ms constant no setting reaches, and it hands over to the sharpened stop inside the last fraction of a line - which is where the speed picks back up. A returning prompt is one or two lines, so it hit this every time.
 	- First fix (didn't work): while a burst is in flight the chase drives the view rather than capping it. Its segments already end exactly where the stop band begins, so the handover is continuous, and the five feel settings now govern a two-line advance the same way they govern a long one. Measured here, a prompt arrives in about a third of a second instead of half a second, with no stall in the middle. Long bursts are unchanged.
 	- Not a regression from the tmux work: a build from before it shows the same stall, slightly longer.
+	- Real cause: ble.sh makes room for its prompt with insert-line and delete-line on the blank rows under the cursor. Since the scroll ledger went in, the engine reports that as a region scroll. On a screen that is not full nothing else moves, so the prompt drawn right after was eased down inside that region, with the rows above held still. Before the ledger, the row diff never read it as a scroll, which is why it started with the tmux work.
+	- Fixed: a recorded scroll is eased only when something visible moved, a row with text on screen before it or one that left. The same redraw on a full screen with a full scrollback also lost the count of lines that went into history, so the view jumped and then slid; that count is now kept on its own through the redraw.
 	- Opened: 20260904-160838
 	- Closed: 20260904-160838
 	- Opened: 20260905-124907
-	- Closed:
+	- Closed: 20260905-194044
+
+- ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text. (Nor Claude's auto-copy.) Right-click then copy, does works when CTRL+shift+C doesn't. This is a regression.
+	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
+	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
+	- Not reproduced so far: plain use, a key replayed through another program's grab, and a program repainting its own lines all copy correctly.
+	- To find the rest, run with `SILK_KEYDBG=1`. It prints each key with the focus flag and modifiers, every focus change, and every clipboard write with its result, so a failed copy shows which stage dropped it.
+	- Still suspect: the gate that drops keys while the window reads as unfocused (from the bare-arrow fix, never run on this desktop), and CopyQ taking the clipboard back right after a copy.
+	- ✋ 20260905-184500: With the change in, copy-on-select and the hotkey have both worked so far. Leaving open until it has held for a while, since it was intermittent.
+	- Opened: 20260905-175000
 
 - ✋ When switching virtual desktops (on regular non-VM GPU-acellerated Linux), Silkterm sometimes won't repaint.
 	- It's hard to reproduce. Sometimes it will partially repaint in blocks, sometime not at all.
@@ -77,6 +79,20 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - 🔘 Minimap: Make text lines even MORE text-like. Still looks to blobbish and not like text viewed from a distance. Needs fewer output pixels per input line, and possibly more anti-aliasing.
 
 - 🔘 Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
+
+- 🔘 Themes:
+	- 🔘 A fourth built-in theme. Pastel is the idea: a pleasing light pastel on a dark gray background carrying a subtle tint of the complementary color. Solarized is the other candidate.
+	- Opened: 20260628-083740
+
+- 🔘 Settings dialog:
+	- 🔘 A color picker. The colored boxes on the Colors tab should be clickable, and open a picker of the familiar sort:
+		- A square on the left carrying saturation and brightness.
+		- A narrow rainbow strip beside it, with a vertical slider for hue.
+		- Text boxes to the right: Red %, Green %, Blue %, Brightness %, Saturation %, and a hex value.
+		- Buttons at the bottom right: "Cancel|OK", with OK the default.
+	- 🔘 A hex field should select its contents when it takes focus rather than emptying itself, which is what a text box normally does.
+
+- NOTE: Stop here to work on releasing RC1.
 
 - 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
 	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
@@ -137,7 +153,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- 🔘 Need a config file name and a default value for the resulting strength of this calculation.
 	- Opened: 20260703-100322
 
-- 🔘 (Originally filed as bug but is really a refinement): At high blur radius and low softness, the blur has boxy artifacts.
+- 🔘 (Originally filed as bug but is really a refinement): At high text scrim blur radius and low softness, the blur has boxy artifacts.
 	- Cause: the scrim is a separable blur with a truncated kernel. The hard cutoff leaves a faint edge that low softness amplifies into a visible square, and the linear and s-curve falloffs are not true Gaussians, so their support reads as a diamond or box rather than a circle. The fix is a look-versus-performance tradeoff (wider extent, more taps, or a windowed kernel) that wants eyeballing. Deferred to a visual pass.
 	- 🔘 New feature: Adjustable blur quality in settings:
 		- High: Very high quality, may require a higher-end GPU, no visible artifacts at all.
@@ -158,19 +174,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - 🔘 Ability to change hotkeys, and/or assign new ones dynamically. Including a "capture" dialog.
 	- Opened: 20260703-100322
 
-- 🛠️ Themes:
-	- 🔘 A fourth built-in theme. Pastel is the idea: a pleasing light pastel on a dark gray background carrying a subtle tint of the complementary color. Solarized is the other candidate.
-	- 🔘 Per-theme menu and chrome color. The menu and tab chrome stay a fixed neutral gray whatever theme is chosen.
-	- Note: the rest of the theme work is done, under Done - New features and enhancements.
-	- Opened: 20260628-083740
-
 - 🛠️ Settings dialog:
-	- 🔘 A color picker. The colored boxes on the Colors tab should be clickable, and open a picker of the familiar sort:
-		- A square on the left carrying saturation and brightness.
-		- A narrow rainbow strip beside it, with a vertical slider for hue.
-		- Text boxes to the right: Red %, Green %, Blue %, Brightness %, Saturation %, and a hex value.
-		- Buttons at the bottom right: "Cancel|OK", with OK the default.
-	- 🔘 A hex field should select its contents when it takes focus rather than emptying itself, which is what a text box normally does.
 	- 🔘 The wallpaper "Randomize" sub-group: new window, new tab, new pane, and an interval from one second to a week. Needs engine work rather than dialog work. Rotation is still the existing "Rotate folder" switch.
 	- 🔘 The four wallpaper minimum and maximum contrast and saturation percentages. Engine work for the same reason.
 	- 🔘 The three "Animation pauses on" checkboxes on the Cursor tab: loss of window focus, loss of pane activity, input inactivity. The first two are source constants today, so exposing them is more than adding a row.

@@ -1163,11 +1163,15 @@ impl Pane {
 		// alt screen (no scrollback to measure) eases off it, and so does a scroll
 		// region on either screen. Read here, cleared below whichever way this
 		// frame goes.
-		let (region, scrolled) = {
+		let (region, scrolled, pushed) = {
 			let ledger = guard.scroll_ledger();
 			let clamp = |line: Line| (line.0.max(0) as usize).min(lines);
 			let r = ledger.region();
-			(clamp(r.start)..clamp(r.end), ledger.lines())
+			(
+				clamp(r.start)..clamp(r.end),
+				ledger.lines(),
+				ledger.pushed(),
+			)
 		};
 		if cut {
 			// hard-cut the screen swap (or freeze catch-up): drop any in-flight
@@ -1192,13 +1196,7 @@ impl Pane {
 		}
 		let follow = self.scroll.following();
 		let whole_screen = region == (0..lines);
-		let advanced = if grew > 0 {
-			grew
-		} else if follow && !alt && whole_screen && scrolled > 0 {
-			scrolled as usize // at the cap: the count, no growth to read it from
-		} else {
-			0
-		};
+		let advanced = output_advance(alt, follow, grew, pushed);
 		if advanced > 0 && follow && !cut {
 			self.scroll.nudge_output(advanced as f32, lines as f32);
 		}
@@ -1255,7 +1253,7 @@ impl Pane {
 		// down-then-up on every output line (the shell redraws its prompt right
 		// after the scroll).
 		let mut shift_dbg = 0i32;
-		let step = ledger_step(alt, follow, grew, whole_screen, scrolled);
+		let step = ledger_step(alt, follow, advanced, whole_screen, scrolled);
 		let chunk = step.map(|_| {
 			strip_rows(
 				guard.scroll_ledger().rows(),
@@ -1265,6 +1263,14 @@ impl Pane {
 			)
 		});
 		guard.scroll_ledger_mut().clear();
+		let step = step.filter(|&step| {
+			slide_is_visible(
+				step,
+				&region,
+				&self.last_cells,
+				chunk.as_deref().unwrap_or_default(),
+			)
+		});
 		if settings.smooth_apps() && !cut && (force_rebuild || !self.text_built) {
 			let mut cur_cells = std::mem::take(&mut self.cells_scratch);
 			let rows = snapshot_rows(
@@ -1387,11 +1393,11 @@ impl Pane {
 		// check per frame. The per-frame (sh, app_off, slide_sh, st, sb) sequence is
 		// the deterministic proof that the slide eases smoothly (app_off monotonic, no
 		// bounce) without needing to eyeball a render - see the headless bounce harness.
-		if scroll_dbg() && settings.smooth_apps() && alt {
+		if scroll_dbg() && settings.smooth_apps() && (alt || app_off != 0.0 || shift_dbg != 0) {
 			let frame = DBG_FRAME.fetch_add(1, Ordering::Relaxed);
 			eprintln!(
-				"SCROLLDBG f={frame} pane={} sh={shift_dbg} app_off={app_off:.4} slide_sh={:.4} st={} sb={} frac={frac:.4}",
-				self.id, self.slide_sh, self.slide_static_top, self.slide_static,
+				"SCROLLDBG f={frame} pane={} sh={shift_dbg} app_off={app_off:.4} slide_sh={:.4} st={} sb={} frac={frac:.4} alt={}",
+				self.id, self.slide_sh, self.slide_static_top, self.slide_static, alt as u8,
 			);
 		}
 		// Region-aware slide: only the middle scroll region shifts by voff; a static
@@ -3966,21 +3972,58 @@ fn set_ratio(node: &mut Node, area: Rect, path: &[bool], x: f32, y: f32, scale: 
 	*manual = true; // dragged: stop auto even-distribution for this run
 }
 
+// Lines the output ease has to cover this frame: the scrollback's growth, or
+// with the scrollback full, the engine's own count of whole-screen scrolls.
+fn output_advance(alt: bool, follow: bool, grew: usize, pushed: usize) -> usize {
+	if follow && !alt {
+		grew.max(pushed)
+	} else {
+		grew
+	}
+}
+
 // What the engine's scroll record means for this frame's slide: the signed
-// step, or None when the output ease owns the motion (the scrollback grew, or a
-// whole-screen scroll at its cap while following) or nothing on screen can show
-// it (a region scroll while scrolled back).
+// step, or None when the output ease owns the motion (`advanced` > 0) or
+// nothing on screen can show it (a region scroll while scrolled back).
 fn ledger_step(
 	alt: bool,
 	follow: bool,
-	grew: usize,
+	advanced: usize,
 	whole_screen: bool,
 	scrolled: i32,
 ) -> Option<i32> {
-	if scrolled == 0 || grew > 0 {
+	if scrolled == 0 || advanced > 0 {
 		return None;
 	}
 	(alt || (follow && !whole_screen)).then_some(scrolled)
+}
+
+// A recorded scroll is only worth easing when something visible moved: a row
+// with ink on screen before it (`last`, the previous frame's styled rows), or
+// one that left (`chunk`). ble.sh makes room for its prompt with insert- and
+// delete-line on the blank rows under the cursor; the engine records that as a
+// region scroll, and sliding it drags the prompt drawn right after down from
+// behind the rows above. A turnover past the region's height is a scroll
+// whatever was there (a burst into a fresh tmux pane), and a snapshot of
+// another shape cannot say.
+fn slide_is_visible(
+	step: i32,
+	region: &std::ops::Range<usize>,
+	last: &[Vec<StripCell>],
+	chunk: &[Vec<StripCell>],
+) -> bool {
+	let height = region.end.saturating_sub(region.start);
+	let moved = step.unsigned_abs() as usize;
+	if moved > height || last.len() < region.end {
+		return true;
+	}
+	let ink = |row: &Vec<StripCell>| row.iter().any(|c| c.c != ' ' || c.bg.is_some());
+	let sources = if step > 0 {
+		region.start + moved..region.end
+	} else {
+		region.start..region.end - moved
+	};
+	chunk.iter().any(ink) || last[sources].iter().any(ink)
 }
 
 // Whether this frame may read the row diff as a scroll (`scroll_shift_signed`).
@@ -4162,10 +4205,10 @@ mod tests {
 		bar_pos_to_lines, bar_thumb_span, bell_brighten, capture_grid_text, capture_start,
 		child_areas, cursor_cycle, cursor_slide_step, distinct_pair, divider_at, equalize_dir_run,
 		fingerprint_frame, fnv_row, fnv_row_skel, glide_to_full, layout, ledger_step, link_at,
-		logical_line_bounds, move_is_input, pair_inside, paste_payload, prompt_strip, pushed_since,
-		render_char, resume_delay, same_char_pair, scroll_shift_signed, shown_cursor_shape,
-		slide_bands, snapshot_rows, static_bands, strip_rows, translate_span, vanished_range,
-		weld_region_clip,
+		logical_line_bounds, move_is_input, output_advance, pair_inside, paste_payload,
+		prompt_strip, pushed_since, render_char, resume_delay, same_char_pair, scroll_shift_signed,
+		shown_cursor_shape, slide_bands, slide_is_visible, snapshot_rows, static_bands, strip_rows,
+		translate_span, vanished_range, weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
@@ -5487,6 +5530,110 @@ mod tests {
 			screen_lines: lines,
 		});
 		assert!(strip_rows(term.scroll_ledger().rows(), cols, term.colors(), &settings).is_empty());
+	}
+
+	fn cells(text: &str, cols: usize) -> Vec<StripCell> {
+		(0..cols)
+			.map(|i| StripCell {
+				c: text.chars().nth(i).unwrap_or(' '),
+				fg: [200; 3],
+				bg: None,
+				bold: false,
+				italic: false,
+				wide: 1,
+			})
+			.collect()
+	}
+
+	#[test]
+	fn a_scroll_of_blank_rows_is_not_slid() {
+		// ble.sh, after a command: two linefeeds, then insert- and delete-line on
+		// the blank rows under the cursor to make room for the prompt. The engine
+		// records the last of those as a region scroll of three; nothing visible
+		// moved, so there is nothing to ease - and easing it slid the prompt drawn
+		// right after down from behind the rows above.
+		let (cols, lines) = (10usize, 8usize);
+		let mut term = term_fed(cols, lines, 1000, "one\r\ntwo\r\n$ cmd\r\nout\r\n");
+		term.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+		let settings = config::Settings::default();
+		let mut last = Vec::new();
+		snapshot_rows(
+			term.grid(),
+			lines,
+			cols,
+			Some((term.colors(), &settings, &mut last)),
+		);
+		feed(
+			&mut term,
+			"\r\n\r\n\x1b[1A\x1b[2L\x1b[2K\x1b[1A\x1b[2K\x1b[3M\x1b[3L\x1b[2Kline one\r\n$ ",
+		);
+		let ledger = term.scroll_ledger();
+		assert_eq!(ledger.lines(), -3);
+		let region = ledger.region().start.0 as usize..ledger.region().end.0 as usize;
+		assert_eq!(region, 4..8);
+		assert_eq!(
+			ledger.pushed(),
+			0,
+			"the screen was not full: nothing left it"
+		);
+		let chunk = strip_rows(ledger.rows(), cols, term.colors(), &settings);
+		assert!(!slide_is_visible(-3, &region, &last, &chunk));
+		assert_eq!(
+			ledger_step(false, true, 0, false, -3),
+			Some(-3),
+			"the record alone would slide"
+		);
+
+		// the same shape over rows that hold text is a real scroll, either way round
+		let mut inked = last.clone();
+		inked[4] = cells("stale", cols);
+		assert!(slide_is_visible(-3, &region, &inked, &chunk));
+		assert!(slide_is_visible(3, &(1..8), &inked, &chunk));
+		assert!(
+			!slide_is_visible(3, &(4..8), &last, &chunk),
+			"up: sources are the rows below"
+		);
+		// so is one whose rows that left carried ink
+		assert!(slide_is_visible(-3, &region, &last, &[cells("gone", cols)]));
+		// a background counts as ink
+		let mut bg = last.clone();
+		bg[4][0].bg = Some([1, 2, 3]);
+		assert!(slide_is_visible(-3, &region, &bg, &chunk));
+		// a turnover past the region is a scroll whatever was there, one to the
+		// exact height is not (insert-line clamps to the rows it has)
+		assert!(slide_is_visible(5, &region, &last, &chunk));
+		assert!(!slide_is_visible(4, &region, &last, &chunk));
+		// no snapshot to read: slide, as before
+		assert!(slide_is_visible(-3, &region, &[], &chunk));
+	}
+
+	#[test]
+	fn the_output_ease_keeps_its_count_through_a_prompt_redraw() {
+		// With the scrollback full the growth reads 0 and the whole-screen count
+		// is the only record of what left; a prompt's region churn after it used
+		// to start the ledger over and lose it.
+		assert_eq!(output_advance(false, true, 0, 2), 2);
+		assert_eq!(output_advance(false, true, 3, 3), 3);
+		assert_eq!(
+			output_advance(false, true, 1, 2),
+			2,
+			"the cap fills mid-gap"
+		);
+		assert_eq!(
+			output_advance(false, false, 0, 2),
+			0,
+			"scrolled back: nothing to chase"
+		);
+		assert_eq!(
+			output_advance(true, true, 0, 2),
+			0,
+			"alt screen: the slide's, not the ease's"
+		);
+		assert_eq!(
+			ledger_step(false, true, 2, false, -3),
+			None,
+			"the ease owns the frame"
+		);
 	}
 
 	#[test]
