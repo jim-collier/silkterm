@@ -3537,9 +3537,8 @@ pub const HOME_TOKEN: &str = "$HOME";
 
 const DEFAULT_CONFIG_TEMPLATE: &str = r##"# SilkTerm configuration file.
 #
-## Delete this file to start over. A '## ' line is a note; a '# ' before a key
-## means that setting is off and showing its default. Uncomment it to change
-## it. Paths take `~`, $NAME, ${NAME}, %NAME% and $env:NAME, on any platform.
+## Delete this file to start over. A '# ' before a key means that setting is
+## off, showing its default. Uncomment to change. Paths take ~, $NAME, %NAME%.
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Performance
@@ -3547,18 +3546,13 @@ const DEFAULT_CONFIG_TEMPLATE: &str = r##"# SilkTerm configuration file.
 
 performance:
 
-	## Rate the machine, then step down if it cannot keep up.
 	# automatic: true  ## Default
 
 	## "max", "high", "low", "standard" (plain terminal), "custom" (this file).
 	# profile: "max"  ## Default
 
 	# check_hardware: true  ## Default
-
-	## Re-rate once at the next launch. Clears itself.
 	# check_next_run: false  ## Default
-
-	## Written by SilkTerm. Leave it alone.
 	# rated_hardware: ""  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -3567,21 +3561,15 @@ performance:
 
 transparency:
 
-	## The background only. Never the text, frame or menus.
 	# enabled: true  ## Default
-
 	opacity: 0.95
 
-	## Frosted glass, if the compositor does it (KWin, picom-with-blur).
 	# blur_behind: true  ## Default
 
 wallpaper:
 
 	# enabled: true  ## Default
-
-	## Absolute path, or a filename in wallpaper/.
 	# image: "wallpaper.png"  ## Default
-
 	# fallback_builtin: true  ## Default
 
 	## Cycle a folder, overriding image above. Interval 0 means launch only.
@@ -3591,22 +3579,16 @@ wallpaper:
 		# interval_s: 0.0  ## Default
 		# random: true  ## Default
 
-	## How much image shows through the background color.
 	# opacity: 0.10  ## Default
 
 	## "stretch" fills the window, "zoom" keeps the aspect and crops.
 	# default_fit: "stretch"  ## Default
 
-	## Let an image pick its own fit and crop anchor from its metadata.
+	## Let an image override these from its own metadata.
 	# honor_xmp: true  ## Default
-
-	## Sigma in pixels, 0 to 100.
 	# blur: 10.0  ## Default
-
-	## Same for opacity and blur. The shipped wallpapers all carry tags.
 	# honor_xmp_look: true  ## Default
 
-	## Flatten the wallpaper's contrast so it stops fighting the text.
 	contrast_mask:
 		# enabled: true  ## Default
 		# size: 0.5  ## Default
@@ -3619,17 +3601,12 @@ wallpaper:
 
 font:
 
-	## Puts the OS monospace font first in the list below. Not on Windows.
 	use_system_family: true
-
 	# use_system_size: true  ## Default
 
-	## First one installed wins.
 	family: "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New"
 
 	# size: 17.0  ## Default
-
-	## A multiple of the font's own height. 1.0 is tight.
 	line_height_scale: 1.22
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -3638,33 +3615,24 @@ font:
 
 text:
 
-	## A soft halo of background color behind each glyph, so text survives a
-	## busy wallpaper.
+	## A soft halo of background color behind each glyph.
 	scrim:
 		# enabled: true  ## Default
-		## 0 to 100. Every 20 doubles the opacity; 100 is a solid plate.
 		# strength: 15  ## Default
 		# radius: 5.0  ## Default
-		## 0.0 hard, 1.0 soft.
 		# softness: 0.5  ## Default
 		## Shape: "sdf" (round), "dt", "dilate" (square), "gaussian".
 		# function: "sdf"  ## Default
 		## Falloff: "exp", "half_normal", "log", "sigmoid", "linear".
 		# ramp: "exp"  ## Default
-		## Blur bold text at regular weight, so its halo matches the rest.
 		# regular_weight: true  ## Default
 
-	## Pixels, 0.0 to 8.0.
 	# outline: 1.0  ## Default
 
-	## Lift text that sits too close to the color behind it. Text set to
-	## exactly its own background is left hidden. 0.0 is off.
+	## Lift text that sits too close to the color behind it. 0.0 is off.
 	# min_contrast: 0.45  ## Default
 
-	## Off draws emoji as monochrome outlines.
 	# color_emoji: true  ## Default
-
-	## Bold reverse-video text, so it reads as strongly as the rest.
 	# embolden_inverse: true  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -3681,15 +3649,9 @@ cursor:
 	## "none", "phase", "pulse_vertical", "pulse_horizontal", "pulse_both".
 	# animation: "pulse_vertical"  ## Default
 
-	## Seconds of quiet before the animation picks up again.
 	# animation_resume_s: 1  ## Default
-
-	## Stop animating after this long idle. 0 never stops.
 	# animation_idle_stop_s: 60  ## Default
-
 	# blink_rate_ms: 500  ## Default
-
-	## Join the text halo, and the text outline.
 	# scrim: false  ## Default
 	# outline: true  ## Default
 
@@ -3699,10 +3661,7 @@ cursor:
 
 selection:
 
-	## What ends a double-clicked word. The default keeps paths and URLs whole.
 	# word_separators: ",|\"' ()[]{}<>"  ## Default
-
-	## Double-clicking inside one of these grabs what it holds.
 	# pairs: "`` \"\" '' {} () [] <>"  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -3711,62 +3670,42 @@ selection:
 
 scroll:
 
-	## Lines of history per pane.
 	scrollback: 10000
-
-	## Master switch. Off, every speed below does nothing.
 	# smooth: true  ## Default
 
-	## Five stretches of one burst of output, in the order they happen.
-
-	## Building speed from rest. Wheel scrolling uses it too.
+	## Five stretches of one burst of output, in order. Milliseconds.
 	ease_in_ms: 82.0
-
-	## Catch-up speed doubles every this long. Lower ramps harder.
 	ramp_up_ms: 96.0
-
-	## Top speed while the burst's own first line is still on screen, per line.
 	single_screen_tau_ms: 32.0
-
-	## Once output stops, speed halves every this long.
 	ramp_down_ms: 144.0
-
-	## Settling onto the last line, so the tail sweeps in.
 	ease_out_ms: 212.0
 
-	## Lines per wheel notch, and the same inside a full-screen app.
 	wheel_lines: 3.0
 	alt_scroll_lines: 3.0
-
-	## How far new output slides in before easing to rest.
 	output_ease_lines: 1.0
 
-	## Ease apps that repaint instead of scrolling: less, vim, nano, tmux.
+	## Ease apps that repaint instead of scrolling.
 	# smooth_apps: true  ## Default
 
-	## Floats over the text, so turning it on never costs a column.
 	scrollbar:
 		# enabled: true  ## Default
 		# thickness: 16.0  ## Default
 		# auto_hide: true  ## Default
 
-	## The scroll buffer in miniature. Unlike the scrollbar it costs columns.
+	## Unlike the scrollbar, the minimap costs text columns.
 	minimap:
 		# enabled: false  ## Default
 		# width: 100.0  ## Default
-		## Programs that keep the column even though they own the screen.
 		# tui_process_whitelist: "less tmux screen"  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Theme and colors
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## A built-in theme (SilkTerm, Matrix, Retro Amber) or a themes.* entry.
 theme: SilkTerm
 theme_mode: dark
 
-## On top of the theme. The chrome colors are not part of any theme; highlight
-## is the live pane and the default button, focus is what the keyboard is on.
+## The chrome colors are not part of any theme.
 colors:
 	# background: "#000000"  ## Default
 	# foreground: "#88eecc"  ## Default
@@ -3787,10 +3726,8 @@ colors:
 
 window:
 
-	## Pixels between the text and the pane edge.
 	margin: 8.0
 
-	## Starting size in cells, used when remember_size is off.
 	columns: 160
 	rows: 48
 
@@ -3800,8 +3737,7 @@ window:
 
 	# hide_single_tab: false  ## Default
 
-	## Percent of the window. Tabs grow and shrink between these two, and what
-	## no longer fits becomes a page the wheel turns.
+	## Percent of the window.
 	# tab_regular_width_pct: 10.0  ## Default
 	# tab_max_width_pct: 100.0  ## Default
 
@@ -3811,40 +3747,31 @@ window:
 
 hyperlinks:
 
-	## Underline the URL under the pointer; Ctrl+click opens it. Only http,
-	## https, ftp, ftps, sftp, ssh, file and mailto are recognized.
+	## Only http, https, ftp, ftps, sftp, ssh, file and mailto are recognized.
 	# enabled: true  ## Default
 
-	## The URL is added as the last argument. Commented, the desktop does it.
 	# open_command: "firefox --new-tab"  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Shell
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## New windows, tabs and panes run the first switched-on entry in the shells.*
-## blocks below, found by a look around a few seconds after launch. The
-## Settings dialog's Shells tab sets the order, and --shell still wins.
+## Written by a scan after launch. The first switched-on entry is what runs.
 
 shell:
 
-	## Used when SilkTerm is launched with no arguments, and overridden by real
-	## ones. Takes the same window/tab/pane options as the command line.
+	## Same options as the command line, which overrides it.
 	# command_line: "--new-pane --right --size 35%"  ## Default
 
-	## Where a shell starts when nothing better is known. --directory, the pane
-	## a tab or split came from, and the launching shell all win over it.
+	## Used only when nothing better is known: not from a shell, tab or split.
 	# startup_directory: "{HOME}"  ## Default
 
-	## Add a small block to each PowerShell profile so it can report where it
-	## is, and a new tab or pane opens there. Delete the block to opt out.
+	## Adds a block to each PowerShell profile so it can report where it is.
 	# integration: true  ## Default
 
-	## Offer bash a git-aware prompt. A .bashrc that sets its own still wins,
-	## and no rc file is written to.
+	## Offer bash a git-aware prompt. A .bashrc of your own still wins.
 	# bash_prompt: true  ## Default
 
-	## Selected text goes straight to the clipboard. Also on the menu bar.
 	# copy_on_select: false  ## Default
 
 ##
@@ -4979,8 +4906,8 @@ mod tests {
 		);
 		// a group the file has never seen still arrives whole, comments and all
 		assert!(
-			out.contains("## Absolute path, or a filename in wallpaper/.")
-				&& out.contains("# image: \"wallpaper.png\"  ## Default"),
+			out.contains("## \"stretch\" fills the window, \"zoom\" keeps the aspect and crops.")
+				&& out.contains("# default_fit: \"stretch\"  ## Default"),
 			"new group needs its comments:\n{out}"
 		);
 		// and a wholly-missing top-level section arrives as a block
