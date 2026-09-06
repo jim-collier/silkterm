@@ -1479,6 +1479,7 @@ fn load() -> Settings {
 	adopt_default_shell(&path);
 	migrate_config(&path);
 	backfill_config(&path);
+	refresh_shcl_banner(&path);
 	let raw = match std::fs::read_to_string(&path) {
 		// The writes above defer when the file looks open elsewhere, so parse the
 		// migrated text rather than what is on disk: a renamed key must never be
@@ -3118,6 +3119,86 @@ fn backfill_config(path: &std::path::Path) {
 	}
 }
 
+// shcl's own footer, in this file's '##' comment style. Kept last: backfill
+// appends a wholly-new section at the end of the file, which would otherwise
+// leave the footer stranded in the middle.
+const SHCL_BANNER: &str = "\
+##
+## This config file format is SHCL.
+## \"Simple Hierarchical Config Language\"
+##    Home     https://github.com/jim-collier/shcl
+##    Syntax   https://github.com/jim-collier/shcl/blob/main/project/spec.md
+##    Legal    SHCL is Copyright © 2026 Jim Collier. License: MIT. No warranty.
+##
+";
+
+// The single-'#' spelling it shipped with before the '##' convention won.
+const SHCL_BANNER_OLD: &str = "\
+#
+# This config file format is SHCL.
+# \"Simple Hierarchical Config Language\"
+#    Home     https://github.com/jim-collier/shcl
+#    Syntax   https://github.com/jim-collier/shcl/blob/main/project/spec.md
+#    Legal    SHCL is Copyright © 2026 Jim Collier. License: MIT. No warranty.
+#
+";
+
+// Enough of it to recognize one somebody has rewritten.
+const SHCL_BANNER_MARK: &str = "This config file format is SHCL.";
+
+// Put the footer back on a config that predates it, and move it under anything
+// backfill appended below it. A footer that has been edited is left alone -
+// re-imposing our own wording over someone's would be the rude half of this.
+fn with_shcl_banner(text: &str) -> Option<String> {
+	let mut lines: Vec<&str> = text.lines().collect();
+	for spelling in [SHCL_BANNER, SHCL_BANNER_OLD] {
+		let run: Vec<&str> = spelling.trim_end_matches('\n').lines().collect();
+		while let Some(at) = run_at(&lines, &run) {
+			lines.drain(at..at + run.len());
+		}
+	}
+	if lines.iter().any(|l| l.contains(SHCL_BANNER_MARK)) {
+		return None;
+	}
+	while lines.last().is_some_and(|l| l.trim().is_empty()) {
+		lines.pop();
+	}
+	if !lines.is_empty() {
+		lines.push("");
+	}
+	lines.extend(SHCL_BANNER.trim_end_matches('\n').lines());
+	let mut out = lines.join("\n");
+	out.push('\n');
+	(out != text).then_some(out)
+}
+
+// First index where `run` appears in `lines`.
+fn run_at(lines: &[&str], run: &[&str]) -> Option<usize> {
+	if run.is_empty() || lines.len() < run.len() {
+		return None;
+	}
+	(0..=lines.len() - run.len()).find(|&i| lines[i..i + run.len()] == *run)
+}
+
+fn refresh_shcl_banner(path: &std::path::Path) {
+	let Ok(text) = std::fs::read_to_string(path) else {
+		return;
+	};
+	let Some(out) = with_shcl_banner(&text) else {
+		return;
+	};
+	if config_open_elsewhere(path) {
+		note_config_busy(path);
+		return;
+	}
+	if let Err(e) = std::fs::write(path, out) {
+		eprintln!(
+			"{APP_NAME}: could not update config {}: {e}",
+			path.display()
+		);
+	}
+}
+
 // Path -> line index for the current file lines.
 fn paths_at(lines: &[String]) -> std::collections::HashMap<String, usize> {
 	let text = lines.join("\n");
@@ -3766,13 +3847,13 @@ shell:
 	## Selected text goes straight to the clipboard. Also on the menu bar.
 	# copy_on_select: false  ## Default
 
-#
-# This config file format is SHCL.
-# "Simple Hierarchical Config Language"
-#    Home     https://github.com/jim-collier/shcl
-#    Syntax   https://github.com/jim-collier/shcl/blob/main/project/spec.md
-#    Legal    SHCL is Copyright © 2026 Jim Collier. License: MIT. No warranty.
-#
+##
+## This config file format is SHCL.
+## "Simple Hierarchical Config Language"
+##    Home     https://github.com/jim-collier/shcl
+##    Syntax   https://github.com/jim-collier/shcl/blob/main/project/spec.md
+##    Legal    SHCL is Copyright © 2026 Jim Collier. License: MIT. No warranty.
+##
 "##;
 
 #[cfg(test)]
@@ -4153,17 +4234,53 @@ mod tests {
 		);
 	}
 
+	// The template is where the footer actually reaches a new file; the const is
+	// what puts it back on an old one. Nothing else keeps the two in step.
+	#[test]
+	fn the_template_ends_with_the_banner() {
+		assert!(default_config().ends_with(SHCL_BANNER));
+		assert!(
+			with_shcl_banner(default_config()).is_none(),
+			"the shipped template should need no footer work"
+		);
+	}
+
+	#[test]
+	fn the_banner_is_retrofitted_and_kept_last() {
+		let plain = "font:\n\tsize: 13.0\n";
+		let added = with_shcl_banner(plain).expect("a config without one gets it");
+		assert!(added.starts_with(plain) && added.ends_with(SHCL_BANNER));
+		assert_eq!(added, plain.to_string() + "\n" + SHCL_BANNER);
+		assert!(with_shcl_banner(&added).is_none(), "not idempotent");
+
+		// the single-'#' spelling is replaced, not duplicated
+		let old = format!("font:\n\tsize: 13.0\n\n{SHCL_BANNER_OLD}");
+		let fixed = with_shcl_banner(&old).expect("the old spelling is refreshed");
+		assert_eq!(fixed, added);
+		assert_eq!(fixed.matches(SHCL_BANNER_MARK).count(), 1);
+
+		// backfill appends under it; it goes back to the bottom
+		let stranded = format!("{added}\nwindow:\n\tmargin: 8.0\n");
+		let moved = with_shcl_banner(&stranded).expect("a stranded footer moves");
+		assert!(moved.ends_with(SHCL_BANNER));
+		assert!(moved.contains("\tmargin: 8.0\n"));
+		assert_eq!(moved.matches(SHCL_BANNER_MARK).count(), 1);
+	}
+
+	// Someone who rewrote the footer gets to keep their wording.
+	#[test]
+	fn an_edited_banner_is_left_alone() {
+		let mine = "font:\n\tsize: 13.0\n\n## This config file format is SHCL. Go read the spec.\n";
+		assert!(with_shcl_banner(mine).is_none());
+	}
+
 	// #136 convention: explanatory comments use '## '; commented-out (disabled)
 	// settings use a single '# '.
 	#[test]
 	fn default_config_comment_style() {
-		// The header and shcl's own footer banner are verbatim prose in
-		// single-'#' form, and both sit outside the convention.
+		// The file header is verbatim prose in single-'#' form and is exempt.
 		let text = default_config();
 		let body = text.find("\n##").map_or(text, |i| &text[i..]);
-		let body = body
-			.find("\n#\n# This config file format is SHCL.")
-			.map_or(body, |i| &body[..i]);
 		for line in body.lines() {
 			let t = line.trim_start();
 			if !t.starts_with('#') {
