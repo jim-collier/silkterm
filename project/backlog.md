@@ -1166,6 +1166,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 #### Done - New features and enhancements
 
+- ✅ Config file comment diet, second pass.
+	- Done. The template comments are down to about a third of their weight. Most settings now carry one short line or none at all, and the ones that were explaining how something works say what it does instead. Nothing moved, so an existing config is untouched; the shorter text only shows in a file written from scratch.
+	- Opened: 20260906-090000
+	- Closed: 20260906-090000
+
 - ✅ Settings: rename "Check again next run" to "Re-test next run".
 	- Done. Label only; nothing else moved.
 	- Opened: 20260905-113000
