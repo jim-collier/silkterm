@@ -56,6 +56,8 @@ fEcho(){ if [[ -n "$*" ]]; then fEcho_Clean "[ $* ]"; else fEcho_Clean ""; fi; }
 _letterbox="••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••"
 fSection(){ fEcho_Clean; fEcho_Clean "${_letterbox}"; fEcho "$*"; }
 fDie(){ { fEcho_Clean; fEcho "FAILED: $*"; } >&2; exit 1; }
+##  shellcheck source=cicd/tests/scroll/verdict.bash
+source "${meDir}/verdict.bash"
 trap 'rc=$?; [[ $rc -ne 0 && $rc -ne 1 ]] && printf "\n[ scroll harness ABORTED (exit %s) at line %s: %s ]\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; exit $rc' ERR
 
 ## Options.
@@ -129,7 +131,9 @@ cat >"$cfg" <<-'SHCL'
 	cursor.animation: none
 SHCL
 
-run_dir="/tmp/cicd-gui-headless-${USER}"
+## ${USER} is unset in a cron or ssh context, which `set -u` turns into a
+## "scroll regression" that is nothing of the sort.
+run_dir="/tmp/cicd-gui-headless-${USER:-$(id -un)}"
 auth="${run_dir}/Xauthority-${display#:}"
 
 ## Bring up the private display (with a WM - winit needs one on bare Xvfb to get
@@ -286,16 +290,9 @@ fi
 
 fSection "Summary"
 fEcho_Clean "pass ${pass}   fail ${fail}   skip ${miss}"
-if ((fail)); then
-	fEcho "FAILED: ${fail} scroll regression(s) measured"
-	exit 1
-fi
-if ((miss)) && ((strict)); then
-	fEcho "FAILED: ${miss} scenario(s) skipped under --strict"
-	exit 1
-fi
-fEcho "OK: no scroll regressions"
-exit 0
+verdict="$(fScrollVerdict "${pass}" "${fail}" "${miss}" "${strict}")"; rc=$?
+fEcho "${verdict}"
+exit "${rc}"
 
 
 ##	History:

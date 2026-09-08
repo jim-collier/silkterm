@@ -46,7 +46,9 @@ set -euo pipefail
 display="${CICD_HEADLESS_DISPLAY:-${RPD_HEADLESS_DISPLAY:-:99}}"
 size="${CICD_HEADLESS_SIZE:-${RPD_HEADLESS_SIZE:-1920x1080x24}}"
 num="${display#:}"
-run_dir="/tmp/cicd-gui-headless-${USER}"
+## ${USER} is unset in a cron or ssh context, and `set -u` then reports this
+## as "headless display failed to start".
+run_dir="/tmp/cicd-gui-headless-${USER:-$(id -un)}"
 mkdir -p "$run_dir"
 
 ## Run something on our private display. Clearing the Wayland vars matters as much
