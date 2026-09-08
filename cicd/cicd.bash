@@ -468,6 +468,12 @@ fi
 ## Headless scroll regression harness (slow; skipped under --quick). It skips itself
 ## on an environment miss (no Xvfb/binary) and exits non-zero only on a measured
 ## regression - which aborts here.
+## The harness's own exit code, which once printed OK after running no scenes.
+if [[ -x "${root}/cicd/tests/scroll/verdict-test.bash" ]]; then
+	fEcho_Clean "scroll harness verdict ..."
+	"${root}/cicd/tests/scroll/verdict-test.bash" >/dev/null || fDie "scroll harness verdict test failed"
+	fEcho "OK: scroll harness verdict"
+fi
 if ((! quick)) && [[ -n "${SCROLL_HARNESS+x}" ]] && ((${#SCROLL_HARNESS[@]})); then
 	fEcho_Clean "scroll regression harness (headless, X11) ..."
 	if "${root}/${SCROLL_HARNESS[0]}" "${SCROLL_HARNESS[@]:1}"; then
