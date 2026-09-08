@@ -892,7 +892,11 @@ struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32, cursor: f3
 // outline (the blurred halo is already masked at its source). The cursor coverage
 // joins the outline source only when cu.cursor is 1.
 fn border_tap(uv: vec2<f32>) -> f32 {
-    let cov = max(textureSample(ttex, gsamp, uv).a, cu.cursor * textureSample(ccur, gsamp, uv).a);
+    // the cursor's own coverage is only wanted when the cursor outline is on
+    var cov = textureSample(ttex, gsamp, uv).a;
+    if (cu.cursor > 0.5) {
+        cov = max(cov, textureSample(ccur, gsamp, uv).a);
+    }
     return cov * (1.0 - textureSample(bgtex, gsamp, uv).a);
 }
 @fragment
@@ -919,18 +923,24 @@ fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {
     ga = clamp(ga * exp2(cu.strength), 0.0, 1.0) * cu.halo;
     let rgb = textureSample(bgtex, gsamp, in.uv).rgb;
     let texel = 1.0 / cu.resolution;
-    let r = max(cu.border_px, 0.0001);
-    let dg = r * 0.7071; // diagonal taps at the same radius -> round outline
-    var m = 0.0;
-    m = max(m, border_tap(in.uv + vec2<f32>( r, 0.0) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>(-r, 0.0) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>(0.0,  r) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>(0.0, -r) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>( dg,  dg) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>( dg, -dg) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>(-dg,  dg) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>(-dg, -dg) * texel));
-    let border = clamp(m, 0.0, 1.0) * step(0.001, cu.border_px);
+    // Eight taps, three samples each. They were run on every pixel of every frame
+    // and multiplied by zero at the end; cu.border_px is uniform, so skipping
+    // them is a uniform branch.
+    var border = 0.0;
+    if (cu.border_px > 0.001) {
+        let r = max(cu.border_px, 0.0001);
+        let dg = r * 0.7071; // diagonal taps at the same radius -> round outline
+        var m = 0.0;
+        m = max(m, border_tap(in.uv + vec2<f32>( r, 0.0) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>(-r, 0.0) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>(0.0,  r) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>(0.0, -r) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>( dg,  dg) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>( dg, -dg) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>(-dg,  dg) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>(-dg, -dg) * texel));
+        border = clamp(m, 0.0, 1.0);
+    }
     let a = max(ga, border);
     return vec4<f32>(rgb * a, a);
 }
@@ -949,6 +959,29 @@ mod tests {
 	// The scrim used to build its five full-screen textures whether or not it drew
 	// anything, and it falls hardest on the machines the Low and Standard profiles
 	// exist for.
+	// The outline's eight taps are three texture samples each, on every pixel of
+	// every frame, and the result was multiplied by zero when the outline was off.
+	#[test]
+	fn the_outline_taps_only_run_when_there_is_an_outline() {
+		let comp = WGSL
+			.split("fn fs_comp")
+			.nth(1)
+			.expect("the composite shader");
+		let guard = comp.find("if (cu.border_px > 0.001)").expect("no guard");
+		let first_tap = comp.find("border_tap(").expect("no taps");
+		assert!(guard < first_tap, "the taps run before the guard");
+		// and the cursor coverage is only sampled when the cursor outline is on
+		let tap = WGSL
+			.split("fn border_tap")
+			.nth(1)
+			.expect("the tap function");
+		assert!(
+			tap.find("if (cu.cursor > 0.5)")
+				.is_some_and(|at| at < tap.find("textureSample(ccur").expect("the cursor sample")),
+			"the cursor texture is sampled with the cursor outline off"
+		);
+	}
+
 	// Past the tap window the distance saturates while the composite kept dividing
 	// by the extent it was given, so every pixel came out at full halo - a flat
 	// plate of background color over every pane. The slider cannot reach it; the
