@@ -1520,10 +1520,103 @@ fn load() -> Settings {
 		// migrated text rather than what is on disk: a renamed key must never be
 		// read under its old spelling, which matters most where a rename hands an
 		// old name to a new setting (colors.focus).
-		Ok(text) => read_raw(&migrate_config_text(&text).unwrap_or(text), &path),
+		Ok(text) => {
+			let text = migrate_config_text(&text).unwrap_or(text);
+			for line in config_complaints(&text) {
+				eprintln!("{APP_NAME}: {}: {line}", path.display());
+			}
+			read_raw(&text, &path)
+		}
 		Err(_) => RawConfig::default(),
 	};
 	resolve(raw)
+}
+
+// What is wrong with a config file that nothing else says out loud. All three
+// were silent, and the first of them permanently stops the program saving.
+//
+// Subtrees the user fills in themselves (their shells, their themes) are not
+// checked for unknown keys - only the settings the program ships.
+fn config_complaints(text: &str) -> Vec<String> {
+	let doc = shcl::Document::parse(text);
+	let mut out = Vec::new();
+
+	let lost = doc.lost_count();
+	if lost > 0 {
+		let lines: Vec<usize> = doc
+			.diagnostics()
+			.iter()
+			.filter(|d| matches!(d.severity, shcl::Severity::Error))
+			.map(|d| d.line)
+			.collect();
+		out.push(format!(
+			"{lost} line(s) could not be read{} - settings cannot be saved until that is fixed",
+			line_list(&lines)
+		));
+	}
+
+	// A key written twice resolves to neither spelling, so the setting is there
+	// in the file, plainly set, and doing nothing.
+	let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+	let mut active: Vec<(String, usize)> = Vec::new();
+	for w in walk_settings(text) {
+		// a block header carries no value of its own
+		if let WalkLine::Setting {
+			index,
+			path,
+			active: true,
+			header: false,
+			..
+		} = w
+		{
+			active.push((path, index + 1));
+		}
+	}
+	for (path, _) in &active {
+		*seen.entry(path.as_str()).or_insert(0) += 1;
+	}
+	let mut twice: Vec<&str> = seen
+		.iter()
+		.filter(|(_, n)| **n > 1)
+		.map(|(p, _)| *p)
+		.collect();
+	twice.sort_unstable();
+	for path in twice {
+		let at: Vec<usize> = active
+			.iter()
+			.filter(|(p, _)| p == path)
+			.map(|(_, line)| *line)
+			.collect();
+		out.push(format!(
+			"`{path}` is set more than once{} - neither value is used",
+			line_list(&at)
+		));
+	}
+
+	// A key nothing reads is almost always a typo, and it looks exactly like a
+	// setting that is not working.
+	let known: std::collections::HashSet<String> = setting_lines(default_config())
+		.into_iter()
+		.map(|(path, _)| path)
+		.collect();
+	let mut unread: Vec<(String, usize)> = active
+		.iter()
+		.filter(|(path, _)| {
+			!known.contains(path)
+				&& !path.starts_with("shells.")
+				&& !path.starts_with("user_themes.")
+		})
+		.cloned()
+		.collect();
+	unread.sort_unstable();
+	unread.dedup_by(|a, b| a.0 == b.0);
+	for (path, line) in unread {
+		out.push(format!(
+			"nothing reads `{path}`{} - check the spelling",
+			line_list(&[line])
+		));
+	}
+	out
 }
 
 // Typed reads off a parsed document, warning about (and then ignoring) any single
@@ -4535,6 +4628,40 @@ mod tests {
 		assert!(
 			read("scroll.scrollback", huge).scrollback <= limits::SCROLLBACK.1,
 			"an unbounded scrollback grows until the process is killed"
+		);
+	}
+
+	// All three of these were silent, and the file looks perfectly fine while the
+	// setting does nothing. The first one also stops every future save.
+	#[test]
+	fn a_config_says_what_is_wrong_with_it() {
+		// a key set twice
+		let twice =
+			config_complaints("font:\n\tfamily: \"One\"\n\tsize: 13.0\n\tfamily: \"Two\"\n");
+		assert_eq!(twice.len(), 1, "{twice:?}");
+		assert!(twice[0].contains("font.family"), "{twice:?}");
+		assert!(twice[0].contains("lines 2, 4"), "{twice:?}");
+
+		// a key nothing reads
+		let typo = config_complaints("font:\n\tfamly: \"One\"\n");
+		assert_eq!(typo.len(), 1, "{typo:?}");
+		assert!(typo[0].contains("font.famly"), "{typo:?}");
+
+		// a line the parser had to drop, which also disables saving
+		let lost = config_complaints("font:\n\tsize: 13.0\n   family: \"One\"\n");
+		assert!(
+			lost.iter().any(|m| m.contains("cannot be saved")),
+			"{lost:?}"
+		);
+
+		// the shipped template says nothing, and neither does a config full of
+		// the user's own shells and themes
+		assert!(config_complaints(default_config()).is_empty());
+		let mine = "shells:\n\tmine:\n\t\ttitle: Mine\n\t\tcommand: /bin/sh\nuser_themes:\n\tone:\n\t\tname: One\n";
+		assert!(
+			config_complaints(mine).is_empty(),
+			"{:?}",
+			config_complaints(mine)
 		);
 	}
 
