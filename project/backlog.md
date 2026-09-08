@@ -42,6 +42,36 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔘 Code review 20260908. Twenty-five defects, full-codebase pass. Detail per item is in `details.md` under the matching number.
+	- Four of them destroy or lose something, and those come first. Items 1 through 13 are worth fixing before the next release; 14 through 25 are real but survivable.
+	- 🔘 1. Wallpaper rotation never re-arms its timer, so every pass through the event loop starts another decode thread. Measured on the rig: 5,636 threads and 11 cores in 75 seconds, memory still climbing, no recovery. Only reachable with a rotation interval above zero, which is why nobody has hit it.
+	- 🔘 2. Settings, Themes, "Save as...", then one click in the name box, crashes the program. The click puts a sentinel row index into the keyboard focus, and the next frame reads the row list with it. Typing in the box without clicking is safe, which is why the existing test misses it.
+	- 🔘 3. A PowerShell profile that is not valid UTF-8 is replaced whole by the integration block, with no backup. UTF-16 is what PowerShell 5.1 writes by default, so this is an ordinary profile rather than a broken one. The refresh path also rewrites the whole file with no backup and no atomic rename.
+	- 🔘 4. Two config values abort the program at launch. A six-byte color containing a multi-byte character, and a variable name whose fifth byte falls inside a character. Both happen before the window exists, so the file that causes it cannot be fixed from the terminal it kills.
+	- 🔘 5. A save that failed reports success. The dialog closes as if it wrote. One space-indented line in the config makes every later save refuse, permanently, and on Windows nothing is printed to say so.
+	- 🔘 6. Window size, margin, line height and scrollback have floors but no ceilings. A value in the low thousands aborts at launch on a GPU limit; a large scrollback grows until the process is killed. Same class as the 20260707 `output_ease_lines` item, which was fixed in place instead of by an audit.
+	- 🔘 7. Rewriting a setting deletes the comments above it. Eight of the 75 dialog settings destroy template documentation when reverted. The shells list does it on its own, on the first launch of each day, and can change which shell a new tab gets.
+	- 🔘 8. Read-only panes still take the wheel. On the alt screen a notch sends arrow keys to the child, which is what the menu tip says it withholds.
+	- 🔘 9. Copy-on-output busy-waits for the whole life of a command that prints nothing, holding a core.
+	- 🔘 10. Clearing the font Family field is not written to the config, so it comes back next launch.
+	- 🔘 11. The dogfood launcher deletes an installed release build. Both put a file at the same path, and the launcher removes whatever is there before making its symlink.
+	- 🔘 12. The scroll ledger's line counter has no bound when nothing drains it. A background tab under sustained output overflows it in a couple of minutes.
+	- 🔘 13. Two glyph caches can be read after they are cleared. A font-size change during heavy output reaches one of them; the color-emoji sweep can reach the other.
+	- 🔘 14. Grayed color, text and radio rows still take a left click and still change the setting. The right-click path checks correctly, so the two disagree.
+	- 🔘 15. The tab strip resolves every stored shell through the filesystem, and stats the reported directory, once per tab per frame. Either one freezes the window if the path is on a mount that has stopped answering.
+	- 🔘 16. Terminal query replies are dropped. Programs asking for the background color or the text area size wait out their timeout on every start and then guess.
+	- 🔘 17. Ctrl+Space sends a space instead of NUL, so set-mark does not work in emacs, readline or tmux.
+	- 🔘 18. The scroll harness prints OK and exits zero when it ran no scenes. This is the beta3 behavior already recorded and it is still unfixed; the flag that would catch it is never passed.
+	- 🔘 19. The publish script runs `eval` on an environment variable, in the script that then commits and pushes.
+	- 🔘 20. Installer and rig hygiene: a predictable scratch directory in `/tmp` that the PowerShell installer will adopt if it already exists, a token passed on a command line where `ps` shows it, a world-readable auth cookie for the headless display, and a checksum fetched from the same place as the artifact it covers with nothing signed.
+	- 🔘 21. The release script verifies artifacts against their own checksums and never against the commit being tagged, so a stale build can be published under a new tag with everything reporting green.
+	- 🔘 22. Deleting the shell integration block does not switch it off. The next launch puts it back. Four places state the opposite, including the block's own first line.
+	- 🔘 23. The scrim allocates five full-screen textures whether or not it draws anything, and a size change made from Settings resizes the renderer but not the scrim.
+	- 🔘 24. Above scrim radius 20 the falloff stops reaching zero, which flattens every pane to a plate of background color. The slider cannot reach it; the config file can.
+	- 🔘 25. Windows link opening does not escape `%`, so a URL printed by a remote host can be expanded before it is sent, and an expanded value containing `&` starts a second command. Needs the Windows box to confirm.
+	- Not defects, recorded so they are not re-found: the fork's `scroll_down_relative` clamps correctly and only `scroll_up_relative` can record a count past its region; the pedantic clippy set's 818 warnings are almost entirely `mul_add`, float comparison in tests, and `const fn`.
+	- Opened: 20260908-041002
+
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
 	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
 	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
@@ -60,6 +90,17 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
 
 ### New features and enhancements
+
+- 🔘 Code review 20260908, the enhancement half. Kept short on purpose - the defect list from the same pass is long, and the count only visibly comes down while the wishlist is frozen.
+	- 🔘 Sign the releases. A detached signature over the checksum file, with the key pinned in both installers, is the only thing that turns the existing check from transport integrity into provenance.
+	- 🔘 One clamp table beside `resolve`, giving every numeric setting a floor and a ceiling, plus a finite test in the reader. shcl reads `1e400` as infinity and reports it good. This is what closes defect 6 for the whole table instead of one setting at a time.
+	- 🔘 Say something once at load about config lines that were dropped, keys set twice, and keys nothing reads. All three are silent today, and the first of them permanently disables saving.
+	- 🔘 Fifty-five of the 77 dialog rows carry flyover help. The interface guide asks for about a third, and says that if most rows need one the labels are wrong. Either the labels or the guide should move.
+	- 🔘 The shells grid's Name and Command fields have no right-click menu, while every other field in the dialog does. The Menu key works there, so the two input paths disagree.
+	- 🔘 Cap the wallpaper before it is decoded and blurred. The intermediate is sixteen bytes a pixel and nothing downscales, so an ordinary large photo needs gigabytes, and an image wider than the GPU's texture limit aborts.
+	- 🔘 The scrim composite takes 24 texture samples per pixel per frame for the outline even when the outline is off, and samples the cursor pass when the cursor scrim is off. Both are one guard each.
+	- 🔘 Route the launch-time config rewrites through the atomic save the settings path already uses. Three of them truncate the file first, so a crash or a full disk during one leaves nothing.
+	- Opened: 20260908-041002
 
 - 🔘 Run the interface checks on Windows from here as well.
 	- The runner covers everything that needs no window. A screenshot or a click needs an interactive session, and a Windows client allows only one of those at a time, so an unattended session and somebody using the machine cannot share a box.
