@@ -1176,6 +1176,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260906-100000
 
 - ✅ Config file comments: give the scrim settings a description, and let the rest sound less like a form.
+	- Third pass: every comment reworded again as a plain statement of what the setting does, with no figures of speech. The colors comment was also wrong and now says the block overrides the theme.
 	- Done. Scrim function and falloff now say what each option looks like rather than only naming it. About a dozen other lines were reworded from flat statements into something a person would write. An existing config is untouched, as always.
 	- Opened: 20260907-090000
 	- Closed: 20260907-090000
