@@ -2999,6 +2999,16 @@ impl Pane {
 			.filter(|s| !s.is_empty())
 	}
 
+	// Anything the user's own hands sent - typing, a mouse report, the wheel
+	// driving an app's cursor keys. Read-only withholds all of it. A reply the
+	// terminal owes the program is not this, and goes straight to `term.write`.
+	pub fn write_input<B: Into<Vec<u8>>>(&self, bytes: B) {
+		if self.read_only {
+			return;
+		}
+		self.term.write(bytes);
+	}
+
 	// Write pasted text to the PTY (wrapped in bracketed paste when the app
 	// enabled it, and put through paste_payload either way). No-op when the
 	// pane is read-only.

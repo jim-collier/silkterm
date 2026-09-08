@@ -1886,7 +1886,7 @@ impl State {
 				return false;
 			};
 			if let Some(seq) = input::mouse_report(p.mode, btn, true, false, col, row, self.mods) {
-				p.term.write(seq);
+				p.write_input(seq);
 			}
 			self.mouse_btn = Some(btn);
 			self.mouse_cell = Some((col, row));
@@ -1903,7 +1903,7 @@ impl State {
 						if let Some(seq) =
 							input::mouse_report(p.mode, btn, false, false, col, row, self.mods)
 						{
-							p.term.write(seq);
+							p.write_input(seq);
 						}
 					}
 				}
@@ -1944,7 +1944,7 @@ impl State {
 			}
 			let btn = held.unwrap_or(input::MouseBtn::None);
 			if let Some(seq) = input::mouse_report(p.mode, btn, true, true, col, row, self.mods) {
-				p.term.write(seq);
+				p.write_input(seq);
 			}
 			(col, row)
 		};
@@ -5839,6 +5839,9 @@ impl ApplicationHandler<UserEvent> for App {
 				});
 			}
 			UserEvent::PtyWrite(id, bytes) => {
+				// a reply the terminal owes the program (cursor position, device
+				// attributes), not something the user sent - so read-only does not
+				// withhold it, and this is the one direct write left in this file
 				if let Some(p) = state.tabs.find_pane(id) {
 					p.term.write(bytes);
 				}
@@ -6498,7 +6501,7 @@ impl ApplicationHandler<UserEvent> for App {
 								if let Some(seq) = input::mouse_report(
 									p.mode, btn, true, false, col, row, state.mods,
 								) {
-									p.term.write(seq);
+									p.write_input(seq);
 								}
 							}
 							state.dirty = true;
@@ -6539,7 +6542,7 @@ impl ApplicationHandler<UserEvent> for App {
 							for _ in 0..n {
 								bytes.extend_from_slice(&seq);
 							}
-							p.term.write(bytes);
+							p.write_input(bytes);
 						}
 					} else {
 						p.scroll.wheel(lines);
@@ -6831,7 +6834,7 @@ impl ApplicationHandler<UserEvent> for App {
 					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&focused) {
 						if !p.read_only {
 							p.scroll.jump_bottom();
-							p.term.write(bytes);
+							p.write_input(bytes);
 							crate::perf::typed(key_at, focused);
 							p.note_typed();
 							if is_enter && p.copy_output {
@@ -7367,6 +7370,33 @@ mod tests {
 		assert!(!needs_folder_read(false, None, None));
 		// a command-line wallpaper owns the session, rotation stays out of it
 		assert!(!needs_folder_read(true, None, Some(&folder)));
+	}
+
+	// Read-only means the pane takes nothing the user's hands sent. Typing and
+	// paste were on that list; the mouse reports and the wheel's alt-screen
+	// cursor keys were not, so one notch sent arrow keys to the job the pane said
+	// it was protecting. Everything user-driven goes through `write_input` now,
+	// and the only direct write left is the reply the terminal owes the program.
+	#[test]
+	fn a_read_only_pane_takes_nothing_the_user_sent() {
+		let body = include_str!("app.rs")
+			.split("\nmod tests {")
+			.next()
+			.expect("the file above its own tests");
+		let direct: Vec<&str> = body
+			.lines()
+			.filter(|l| l.contains("term.write("))
+			.map(str::trim)
+			.collect();
+		assert_eq!(
+			direct.len(),
+			1,
+			"these bypass the read-only gate: {direct:?}"
+		);
+		assert!(
+			body.matches("write_input(").count() >= 5,
+			"the mouse and wheel writes go through the gate"
+		);
 	}
 
 	// A tick that leaves the timer where it was fires again on the next pass, and
