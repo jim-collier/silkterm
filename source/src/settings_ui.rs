@@ -5678,6 +5678,49 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
+	// The rule for a tip is not a quota, it is whether the tip says anything the
+	// label does not. A dialog of rendering settings carries one on most of its
+	// rows because a name cannot say what a falloff curve does to the picture; a
+	// tip that only reworded its label would be the thing to delete.
+	#[test]
+	fn no_flyover_merely_restates_its_label() {
+		let d = mk_dialog(4000.0);
+		let mut with_help = 0;
+		for spec in d.specs {
+			if spec.help.is_empty() {
+				continue;
+			}
+			with_help += 1;
+			let label = spec.label.trim().trim_end_matches(['%', 's']).trim();
+			let help = spec.help.trim();
+			assert!(
+				help.ends_with('.'),
+				"{:?}: a tip is prose and ends in a period",
+				spec.label
+			);
+			// a row with no label of its own (the shells grid, a button strip) has
+			// nothing to restate
+			if label.is_empty() {
+				continue;
+			}
+			let bare = |t: &str| {
+				t.trim()
+					.trim_end_matches('.')
+					.to_ascii_lowercase()
+					.replace(['%', '"'], "")
+					.split_whitespace()
+					.collect::<Vec<_>>()
+					.join(" ")
+			};
+			assert!(
+				bare(help) != bare(label),
+				"{:?}: the tip is the label again",
+				spec.label
+			);
+		}
+		assert!(with_help > 10, "only {with_help} rows carry a tip");
+	}
+
 	// The shells grid is one spec row carrying two editable fields per entry, and
 	// the right-click handler walked spec rows - so those two were the only fields
 	// in the dialog with no menu, while the Menu key worked on them.

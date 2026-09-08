@@ -97,7 +97,7 @@ The dialog is declared in `settings_ui.shcl`, which is the file to edit when add
 There are four of them: a Settings row, a menu item, a link or button in the About box, and a tab in the strip. They share the rest delay, the wrapping and the placement rules, and nothing else. Each is drawn by its own caller, in its own font.
 
 - One rest delay for every tip in the program. A menu that answered faster than the tab strip would read as a different kind of thing.
-- Only controls whose label does not already say what they do get a tip. About a third of rows is the right proportion; if most rows need one, the labels are wrong.
+- Only controls whose label does not already say what they do get a tip. The test is the tip itself: if it restates the label in other words, delete it and fix the label. A dialog of rendering settings will legitimately carry one on most of its rows, because a name cannot say what a falloff curve or an easing time does to the picture.
 - A tip that explains a control is prose: one to three complete sentences, each ending in a period. Two is usually enough, and a third has to answer the obvious follow-on question rather than pad.
 - The tab strip's tip is the exception, and it is not prose at all. It reports facts about a tab as an aligned `Key: value` table, in the terminal font, because spaces align nothing in a proportional one.
 - Text wraps to the panel, so a longer sentence or a larger interface font cannot push it off an edge.
