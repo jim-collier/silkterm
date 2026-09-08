@@ -2,6 +2,7 @@ $ErrorActionPreference = "Continue"
 . "$PSScriptRoot\_env.ps1"
 
 "host        = $env:COMPUTERNAME"
+"account     = " + [Security.Principal.WindowsIdentity]::GetCurrent().Name
 "windows     = " + [System.Environment]::OSVersion.Version.ToString()
 "cores       = $env:NUMBER_OF_PROCESSORS"
 $c = Get-CimInstance Win32_ComputerSystem
@@ -9,7 +10,8 @@ $c = Get-CimInstance Win32_ComputerSystem
 foreach ($g in Get-CimInstance Win32_VideoController) {
 	"gpu         = $($g.Name) [$($g.Status)] drv $($g.DriverVersion)"
 }
-"sandbox     = " + (Get-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM).State
+$sb = (Get-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -EA SilentlyContinue).State
+"sandbox     = " + $(if ($sb) { $sb } else { "unknown (needs admin)" })
 foreach ($t in "git","cargo","rustc","pwsh","makensis") {
 	$cmd = Get-Command $t -ErrorAction SilentlyContinue
 	if ($cmd) { "tool $t".PadRight(12) + "= " + $cmd.Source } else { "tool $t".PadRight(12) + "= absent" }
