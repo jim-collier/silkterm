@@ -1149,6 +1149,14 @@ fn needs_folder_read(
 	!locked && showing.is_none() && folder.is_some()
 }
 
+// Where the rotation timer goes when a tick fires. It has to move off `now`
+// here rather than waiting for the worker's answer: the answer is dropped
+// unless it is still the newest request, and a timer left in the past fires
+// again on the very next pass, so each pass started another decode thread.
+fn rotation_next(now: Instant, live: bool, interval_s: f32) -> Option<Instant> {
+	(live && interval_s > 0.0).then(|| now + Duration::from_secs_f32(interval_s))
+}
+
 // With the profile on automatic, hardware the config has not seen gets a fresh
 // pick, written down against that hardware so the next launch on it leaves the
 // profile where the rating left it. Answers the id a benchmark should write
@@ -3343,8 +3351,10 @@ impl State {
 	fn advance_wallpaper(&mut self) {
 		// locked, switched off since the timer was armed, or one image (or none):
 		// nothing to rotate to, so drop the timer
-		if self.wp_locked || self.wp_count < 2 || config::settings().rotation_folder().is_none() {
-			self.wp_next = None;
+		let settings = config::settings();
+		let live = !self.wp_locked && self.wp_count >= 2 && settings.rotation_folder().is_some();
+		self.wp_next = rotation_next(Instant::now(), live, settings.wallpaper_rotate_interval_s);
+		if !live {
 			return;
 		}
 		self.request_wallpaper(true);
@@ -7337,8 +7347,8 @@ mod tests {
 	use super::{
 		Caret, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit, ViewState,
 		accel_at, accel_clash, copybox_fit, copybox_place, focus_ring, key_is_typed, menu_metrics,
-		mia, msub, mta, needs_folder_read, pace_frame, tab_close_box, tab_command_line,
-		tab_title_w, typed_title, view_menu_items,
+		mia, msub, mta, needs_folder_read, pace_frame, rotation_next, tab_close_box,
+		tab_command_line, tab_title_w, typed_title, view_menu_items,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
@@ -7357,6 +7367,18 @@ mod tests {
 		assert!(!needs_folder_read(false, None, None));
 		// a command-line wallpaper owns the session, rotation stays out of it
 		assert!(!needs_folder_read(true, None, Some(&folder)));
+	}
+
+	// A tick that leaves the timer where it was fires again on the next pass, and
+	// each of those starts another decode thread.
+	#[test]
+	fn a_rotation_tick_moves_the_timer_off_now() {
+		let now = Instant::now();
+		let next = rotation_next(now, true, 2.0).expect("a live rotation keeps its timer");
+		assert!(next > now);
+		// nothing to rotate to, or rotation switched off: no timer at all
+		assert!(rotation_next(now, false, 2.0).is_none());
+		assert!(rotation_next(now, true, 0.0).is_none());
 	}
 
 	// Clearing the box is how a renamed tab goes back to naming itself, so a
