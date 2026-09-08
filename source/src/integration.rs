@@ -578,6 +578,7 @@ mod tests {
 		let dir = std::env::temp_dir().join(format!("silkterm_int16_{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("temp dir");
+		let record = dir.join("shell-integration.installed");
 		let profile = dir.join("Microsoft.PowerShell_profile.ps1");
 		// "Set-Alias ll Get-ChildItem" as UTF-16LE with a byte-order mark
 		let mut bytes = vec![0xff, 0xfe];
@@ -586,7 +587,7 @@ mod tests {
 		}
 		std::fs::write(&profile, &bytes).expect("write profile");
 
-		super::install_into(&profile);
+		super::install_into_with(&profile, Some(&record));
 
 		assert_eq!(
 			std::fs::read(&profile).expect("read profile"),
@@ -645,12 +646,15 @@ mod tests {
 	fn a_profile_is_backed_up_once_and_added_to_once() {
 		let dir = std::env::temp_dir().join("silkterm-integration-test");
 		let _ = std::fs::remove_dir_all(&dir);
+		// its own record, never the live one: install_into would write into the
+		// user's data directory
+		let record = dir.join("shell-integration.installed");
 		std::fs::create_dir_all(&dir).expect("temp dir");
 		let profile = dir.join("Microsoft.PowerShell_profile.ps1");
 		let before = "Set-Alias ll Get-ChildItem\n";
 		std::fs::write(&profile, before).expect("write profile");
 
-		super::install_into(&profile);
+		super::install_into_with(&profile, Some(&record));
 		let after = std::fs::read_to_string(&profile).expect("read profile");
 		assert!(after.starts_with(before), "what was there survived");
 		assert!(after.contains(MARKER), "the block went in");
@@ -663,7 +667,7 @@ mod tests {
 
 		// a second launch is a no-op, and cannot overwrite the copy either
 		std::fs::write(&profile, format!("{after}# a line the user added\n")).unwrap();
-		super::install_into(&profile);
+		super::install_into_with(&profile, Some(&record));
 		let twice = std::fs::read_to_string(&profile).expect("read profile");
 		assert_eq!(twice.matches(MARKER).count(), 1, "a second block went in");
 		assert!(
@@ -678,7 +682,7 @@ mod tests {
 
 		// and a profile that never existed is created with just the block
 		let fresh = dir.join("fresh").join("Microsoft.PowerShell_profile.ps1");
-		super::install_into(&fresh);
+		super::install_into_with(&fresh, Some(&record));
 		assert!(
 			std::fs::read_to_string(&fresh).unwrap().contains(MARKER),
 			"a missing profile was not created"
