@@ -1211,7 +1211,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Three scenarios so far: the window comes up and takes what is typed, the Settings dialog opens and changes tabs and closes, and the performance ladder rates the machine and is believed on the next launch.
 	- ✅ The performance ladder has now rated real hardware for the first time. A discrete card at 3440x1440 answers the top rung.
 	- The premise in the original note was wrong, and it is what had blocked this. A second session is not needed at all: the work goes to the session already logged on. What blocked every earlier attempt was that a job arriving over the network has no desktop to draw on, which looks exactly like a permissions problem and is not one.
-	- Left: the laptop locks its screen when the remote viewer disconnects, and a locked session hands back black pictures and swallows typing. Its scenarios skip until that is turned off.
+	- ✅ Both boxes run the scenarios as the unprivileged test account, on their real adapters. A session that has locked itself is authenticated again by one remote connection and put back on the console; there is a script for the two steps.
+	- Left: sessions lock themselves after a while, so that step is routine rather than one-off.
 	- Opened: 20260908-020000
 	- Closed: 20260908-124500
 
