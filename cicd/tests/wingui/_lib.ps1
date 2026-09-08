@@ -122,9 +122,10 @@ function fShot($h, $name) {
 		$g.ReleaseHdc($dc)
 		$how = "printwindow"
 	}
+	##	Two boxes pull into one directory, so the name has to say which box.
 	if ($script:shotDir) {
 		New-Item -ItemType Directory -Force -Path $script:shotDir | Out-Null
-		$bmp.Save((Join-Path $script:shotDir "$name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+		$bmp.Save((Join-Path $script:shotDir "$env:COMPUTERNAME-$name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
 	}
 	$bmp | Add-Member -NotePropertyName How -NotePropertyValue $how -PassThru
 }

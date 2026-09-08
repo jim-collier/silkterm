@@ -497,6 +497,17 @@ if [[ -x "${root}/cicd/tests/scroll/verdict-test.bash" ]]; then
 	"${root}/cicd/tests/scroll/verdict-test.bash" >/dev/null || fDie "scroll harness verdict test failed"
 	fEcho "OK: scroll harness verdict"
 fi
+## Graphical scenarios on the Windows boxes. Neither box is build hardware, so an
+## unreachable or locked one is reported and stepped over; a scenario that actually
+## ran and failed aborts.
+if ((! quick)) && [[ -n "${WINGUI_HARNESS+x}" ]] && ((${#WINGUI_HARNESS[@]})) && [[ -x "${root}/${WINGUI_HARNESS[0]}" ]]; then
+	fEcho_Clean "windows gui scenarios ..."
+	if "${root}/${WINGUI_HARNESS[0]}" "${WINGUI_HARNESS[@]:1}"; then
+		fEcho "OK: windows gui scenarios"
+	else
+		fDie "a windows gui scenario failed"
+	fi
+fi
 if ((! quick)) && [[ -n "${SCROLL_HARNESS+x}" ]] && ((${#SCROLL_HARNESS[@]})); then
 	fEcho_Clean "scroll regression harness (headless, X11) ..."
 	if "${root}/${SCROLL_HARNESS[0]}" "${SCROLL_HARNESS[@]:1}"; then

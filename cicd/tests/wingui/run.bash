@@ -43,18 +43,20 @@ tar czf "${bundle}" -C "${meDir}" --exclude=run.bash .
 trap 'rm -f "${bundle}" "${launcher}"' EXIT
 
 fRun() {
-	local scenario="$1"
+	local scenario="$1" fresh="$2"
 	launcher="$(mktemp --suffix=.ps1)"
 	{
 		printf '$ErrorActionPreference = "Stop"\n'
 		printf '. "$PSScriptRoot\\_env.ps1"\n'
 		printf '$scenario = "%s"\n' "${scenario}"
+		printf '$fresh = %s\n' "${fresh}"
 		printf '$dir = "C:\\ProgramData\\silkrig"\n'
 		printf '$b64 = @"\n%s\n"@\n' "$(base64 -w120 "${bundle}")"
 		cat <<'PS'
 $work = Join-Path $dir "wingui"
 $out  = Join-Path $dir "out"
-Remove-Item $work, $out -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+if ($fresh) { Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force -Path $work, $out | Out-Null
 $tgz = Join-Path $dir "wingui.tgz"
 [IO.File]::WriteAllBytes($tgz, [Convert]::FromBase64String(($b64 -replace '\s', '')))
@@ -72,7 +74,11 @@ $me   = "$env:COMPUTERNAME\$env:USERNAME"
 $arg  = "-NoProfile -STA -ExecutionPolicy Bypass -File `"$work\_run.ps1`" -Scenario $scenario -Exe `"$exe`" -OutDir `"$out`""
 $act  = New-ScheduledTaskAction -Execute $pwsh -Argument $arg
 $pri  = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive
+##	Always clear the last answer first. A result file left by the scenario before
+##	this one is indistinguishable from this one finishing instantly, and the poll
+##	below would take it, print it, and unregister the task mid-run.
 $res  = Join-Path $out "result.txt"
+Remove-Item $res -Force -ErrorAction SilentlyContinue
 try {
 	Register-ScheduledTask -TaskName $name -Action $act -Principal $pri -Force | Out-Null
 	Start-ScheduledTask -TaskName $name
@@ -82,7 +88,9 @@ try {
 	Get-Process -Name silkterm -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 if (-not (Test-Path $res)) { "VERDICT fail the session never answered"; exit 1 }
-Get-Content $res
+$said = (Get-Content $res | Where-Object { $_ -like "SCENARIO *" }) -replace '^SCENARIO ', ''
+if ($said -ne $scenario) { "VERDICT fail the answer is from '$said', not '$scenario'"; exit 1 }
+Get-Content $res | Where-Object { $_ -notlike "SCENARIO *" }
 Get-ChildItem (Join-Path $out "shots") -Filter *.png -ErrorAction SilentlyContinue |
 	ForEach-Object { "  shot $($_.Name) $($_.Length)" }
 if ((Get-Content $res -TotalCount 1) -like "VERDICT fail*") { exit 1 }
@@ -91,10 +99,11 @@ PS
 	"${winRemote}" "${host[@]}" --optional run "${launcher}" 2>&1
 }
 
-failed=0
+failed=0; first=1
 for scenario in "${scenarios[@]}"; do
 	echo "== wingui: ${scenario}"
-	if ! fRun "${scenario}" | sed 's/^/  /'; then failed=1; fi
+	if ! fRun "${scenario}" "$( ((first)) && echo '$true' || echo '$false' )" | sed 's/^/  /'; then failed=1; fi
+	first=0
 done
 
 ##	Shots are the whole point of a graphical test, so bring them home.
