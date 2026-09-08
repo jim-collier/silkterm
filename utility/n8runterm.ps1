@@ -613,7 +613,21 @@ function fWriteStartMenuLink {
 	try {
 		fEnsureDir $dir
 		$shell = New-Object -ComObject WScript.Shell
-		$link  = $shell.CreateShortcut($path)
+
+		## Adopt an entry that already points at the wrapper, wherever it was filed -
+		## these menus get organised by hand, and writing our own name beside one the
+		## user already put in a folder of terminals just leaves two of everything.
+		## Quick Launch is deliberately not searched: a taskbar pin is not a menu entry.
+		foreach ($root in (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu"),
+		                  (Join-Path $env:ProgramData "Microsoft\Windows\Start Menu")) {
+			if (-not (Test-Path -LiteralPath $root)) { continue }
+			$hit = Get-ChildItem -LiteralPath $root -Recurse -Force -Filter *.lnk -EA SilentlyContinue |
+				Where-Object { $shell.CreateShortcut($_.FullName).TargetPath -eq $Wrapper } |
+				Select-Object -First 1
+			if ($hit) { $path = $hit.FullName; break }
+		}
+
+		$link = $shell.CreateShortcut($path)
 		if ($link.TargetPath -eq $Wrapper -and $link.IconLocation -eq "$LatestLink,0") { return }
 		$link.TargetPath       = $Wrapper
 		$link.IconLocation     = "$LatestLink,0"
@@ -888,6 +902,8 @@ if ($script:GuiFeedback -and $script:RunWarnings.Count) {
 
 
 ##	History:
+##		- 2026-09-08: Refresh a menu entry that already points at the wrapper
+##		  wherever it was filed, rather than always adding one of our own.
 ##		- 2026-09-08: Name the Dropbox spelling beside 'synced' for both the build
 ##		  source and the wrapper - on Windows the junction reads empty. Added
 ##		  '--install-only'.
