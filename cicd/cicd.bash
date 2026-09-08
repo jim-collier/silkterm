@@ -28,7 +28,7 @@
 ##	   4. profiler (flamegraph SVG; non-gating artifact - see failure policy)
 ##	   5. release build (native + cross targets; optimized, for packaging + dogfood)
 ##	   6. packages (.deb/.rpm per Linux arch; NSIS installer .exe per Windows arch)
-##	   7. dogfood (install the release builds locally)
+##	   7. dogfood (install each build to the synced app dir for its platform)
 ##	   8. backup + publish to git (runs from repo root)
 ##	- Syntax:
 ##	  cicd/cicd.bash [options]
@@ -44,7 +44,7 @@
 ##	                       what a Windows box's own pipeline delegates here
 ##	   --no-package        skip the packages stage (.deb/.rpm/installer)
 ##	   --no-profile        skip the profiler stage
-##	   --no-dogfood        skip installing the release builds locally
+##	   --no-dogfood        skip the dogfood install
 ##	   --no-publish        skip the git backup + publish stage
 ##	   --no-sync           skip the remote sync check (stage 0)
 ##	   --demo              re-record the demo video (off by default)
@@ -102,7 +102,7 @@ while (($#)); do case "$1" in
 	--no-windows)             no_windows=1; shift ;;            ## drop the Windows cross targets
 	--no-package)             PACKAGE_ENABLE=0; shift ;;
 	--no-profile)             PROFILE_ENABLE=0; shift ;;
-	--no-dogfood)             DOGFOOD_FIXED_DESTS=(); DOGFOOD_ROTATING_DESTS=(); DOGFOOD_CROSS_DESTS=(); shift ;;
+	--no-dogfood)             DOGFOOD_DESTS=(); shift ;;
 	--no-publish)             GIT_PUBLISH=(); shift ;;
 	--no-sync)                sync=0; shift ;;
 	--demo)                   DEMO_ENABLE=1; shift ;;
@@ -152,36 +152,47 @@ fEcho_Force(){ fEcho_ResetBlankCounter; fEcho "$*"; }
 _letterbox="••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••"
 fSection(){ fEcho_Clean; fEcho_Clean "${_letterbox}"; fEcho "$*"; }
 fDie(){ { fEcho_Force "FAILED: $*"; } >&2; exit 1; }
-## True if a running process is executing the given binary (its own exe, not a
-## substring match), so an in-use dogfood copy isn't pruned. Checks /proc/*/exe.
-in_use(){
-	local -r bin="$(realpath -e "$1" 2>/dev/null || true)"
-	[[ -n "$bin" ]] || return 1
-	local exe
-	for e in /proc/[0-9]*/exe; do
-		exe="$(realpath -e "$e" 2>/dev/null || true)"
-		[[ "$exe" == "$bin" ]] && return 0
-	done
-	return 1
-}
 ## Tag for a build copy: '<toolchain: gnu|msvc><built on: l|m|b|w><target: l|m|b|w><arch: i|a>'.
-## The rotating copy is always the NATIVE release, so built-on and target are this host.
-## Prints nothing on an unrecognised host - no tag beats a wrong one.
+## Built-on is this host; the target and arch come from the os-arch label the build
+## was made under, so a cross-build is tagged for where it will RUN. Prints nothing
+## for anything unrecognised - no tag beats a wrong one.
 build_tag(){
-	local os arch
+	local -r osarch="${1:-}"
+	local here target arch
 	case "$(uname -s)" in
-		Linux)                os=l ;;
-		Darwin)               os=m ;;
-		*BSD|DragonFly)       os=b ;;
-		MINGW*|MSYS*|CYGWIN*) os=w ;;
+		Linux)                here=l ;;
+		Darwin)               here=m ;;
+		*BSD|DragonFly)       here=b ;;
+		MINGW*|MSYS*|CYGWIN*) here=w ;;
 		*)                    return 0 ;;
 	esac
-	case "$(uname -m)" in
-		x86_64|amd64)  arch=i ;;
-		aarch64|arm64) arch=a ;;
-		*)             return 0 ;;
+	case "${osarch%%-*}" in
+		linux)   target=l ;;
+		macos)   target=m ;;
+		windows) target=w ;;
+		*)       return 0 ;;
 	esac
-	printf 'gnu%s%s%s' "$os" "$os" "$arch"
+	case "${osarch#*-}" in
+		x86_64)  arch=i ;;
+		arm64)   arch=a ;;
+		*)       return 0 ;;
+	esac
+	printf 'gnu%s%s%s' "$here" "$target" "$arch"
+}
+## First writable dir out of a '|'-separated candidate list, or nothing. Reports
+## only - the preflight calls it too, and a plan that is never confirmed must not
+## have left directories behind.
+dogfood_dest(){
+	local dir
+	local -a dirs=()
+	IFS='|' read -r -a dirs <<< "${1:-}"
+	for dir in "${dirs[@]}"; do
+		if [[ -d "$dir" && -w "$dir" ]]; then
+			printf '%s' "$dir"
+			return 0
+		fi
+	done
+	return 0
 }
 ## Where this run is happening, for the plan header: the skips differ per host, so
 ## say which one it is up front. WSL is told from its kernel string; the Windows
@@ -285,11 +296,6 @@ fi
 ## Preflight: show the plan with resolved paths, then confirm.
 abs_script="${root}/${PROFILE_WORKLOAD_SCRIPT}"
 profile_dir="$(cd "${root}" && mkdir -p "${PROFILE_OUT_DIR}" 2>/dev/null; cd "${PROFILE_OUT_DIR}" 2>/dev/null && pwd || echo "${root}/${PROFILE_OUT_DIR}")"
-fixed_dest=""; for d in "${DOGFOOD_FIXED_DESTS[@]:-}"; do [[ -d "$d" && -w "$d" ]] && { fixed_dest="$d"; break; }; done
-rot_dest="";   for d in "${DOGFOOD_ROTATING_DESTS[@]:-}"; do [[ -d "$d" && -w "$d" ]] && { rot_dest="$d"; break; }; done
-rot_target="${rot_dest:-${DOGFOOD_ROTATING_DESTS[0]:-}}"  # created in stage 6 if it doesn't exist yet
-: "${DOGFOOD_TAG:=$(build_tag)}"                          # config.bash may pin it; empty = untagged
-df_pattern="${DOGFOOD_PREFIX:-}_<build date>${DOGFOOD_TAG:+_${DOGFOOD_TAG}}"
 
 fEcho_Clean
 fEcho_Clean "${APP_NAME} local CI/CD"
@@ -326,25 +332,16 @@ if ((PACKAGE_ENABLE)) && ((! quick)); then
 else
 	fEcho_Clean "Packages ............: $( ((quick)) && echo '(skipped --quick)' || echo '(disabled)')"
 fi
-if ((${#DOGFOOD_FIXED_DESTS[@]})); then
-	if [[ -n "$fixed_dest" ]]; then fEcho_Clean "Dogfood, fixed name .: overwrite ${fixed_dest}/${EXE_NAME}"
-	else fEcho_Clean "Dogfood, fixed name .: <none of: ${DOGFOOD_FIXED_DESTS[*]} exists - will skip>"; fi
-else
-	fEcho_Clean "Dogfood, fixed name .: (disabled)"
-fi
-if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
-	fEcho_Clean "Dogfood, rotating ...: ${rot_target}/${df_pattern}  (dated copy; prunes idle ones)"
-else
-	fEcho_Clean "Dogfood, rotating ...: (disabled)"
-fi
-if ((${#DOGFOOD_CROSS_DESTS[@]})); then
-	fEcho_Clean "Dogfood, cross ......:"
-	for xd in "${DOGFOOD_CROSS_DESTS[@]}"; do
-		xrest="${xd#*|}"; xname="${xrest%%|*}"; xdest="${xrest#*|}"
-		fEcho_Clean "    - ${xd%%|*} -> ${xdest}/${xname}$( [[ -d "$xdest" ]] || echo '  <dest missing - will skip>' )"
+if ((${#DOGFOOD_DESTS[@]})); then
+	fEcho_Clean "Dogfood .............: install to the synced app dir per target"
+	for xd in "${DOGFOOD_DESTS[@]}"; do
+		xosarch="${xd%%|*}"; xrest="${xd#*|}"; xname="${xrest%%|*}"
+		xdest="$(dogfood_dest "${xrest#*|}")"
+		if [[ -n "$xdest" ]]; then fEcho_Clean "    - ${xosarch} -> ${xdest}/${xname}"
+		else fEcho_Clean "    - ${xosarch} -> <none of: ${xrest#*|} writable - will skip>"; fi
 	done
 else
-	fEcho_Clean "Dogfood, cross ......: (disabled)"
+	fEcho_Clean "Dogfood .............: (disabled)"
 fi
 if ((${#GIT_PUBLISH[@]} == 0)); then
 	fEcho_Clean "Publish (last) ......: (disabled)"
@@ -655,72 +652,53 @@ else
 	build_packages
 fi
 
-## Stage 7: dogfood. Two independent installs (fixed overwrite + rotating dated copy).
-fSection "7/8  Dogfood (install release builds locally)"
+## Stage 7: dogfood. Install each build under a fixed name in the synced app dir
+## for the platform it targets; the 'runterm' launcher on each box takes it from
+## there and keeps its own rotated versions folder.
+fSection "7/8  Dogfood (install release builds to the synced app dirs)"
 df_did=0
 
-## 7a. Fixed name: overwrite EXE_NAME (the stable path you launch by hand).
-if ((${#DOGFOOD_FIXED_DESTS[@]})); then
-	if [[ -n "$fixed_dest" ]]; then
-		## -p: the launchers date a build by its mtime, so the copy has to keep it.
-		cp -pf "${RELEASE_NATIVE_BIN}" "${fixed_dest}/${EXE_NAME}"
-		fEcho "OK: installed (fixed) -> ${fixed_dest}/${EXE_NAME}"
-		df_did=1
-	else
-		fEcho "WARNING: no fixed dogfood dest exists (${DOGFOOD_FIXED_DESTS[*]}); skipping"
-	fi
-fi
+for xd in "${DOGFOOD_DESTS[@]:-}"; do
+	xosarch="${xd%%|*}"; xrest="${xd#*|}"; xname="${xrest%%|*}"; xdirs="${xrest#*|}"
 
-## 7b. Rotating name: dated copy so builds coexist; prune older ones not running.
-if ((${#DOGFOOD_ROTATING_DESTS[@]})) && [[ -n "${DOGFOOD_PREFIX:-}" ]]; then
-	[[ -z "$rot_dest" && -n "$rot_target" ]] && mkdir -p "$rot_target" 2>/dev/null && rot_dest="$rot_target"
-	if [[ -n "$rot_dest" && -w "$rot_dest" ]]; then
-		## The launchers treat the stamp in the name as the build's identity, and
-		## compare it against a source binary's mtime. Using this run's start time
-		## instead put the two ~8 minutes apart, which read as a newer build and got
-		## the same binary copied in again on the next launch. -p keeps them equal.
-		df_stamp="$(date -r "${RELEASE_NATIVE_BIN}" +%Y%m%d-%H%M%S)"
-		df_name="${DOGFOOD_PREFIX:-}_${df_stamp}${DOGFOOD_TAG:+_${DOGFOOD_TAG}}"
-		cp -pf "${RELEASE_NATIVE_BIN}" "${rot_dest}/${df_name}"
-		chmod +x "${rot_dest}/${df_name}"
-		fEcho "OK: installed (rotating) -> ${rot_dest}/${df_name}"
-		pruned=0
-		for old in "${rot_dest}/${DOGFOOD_PREFIX}_"*; do
-			[[ -e "$old" ]] || continue                  # no-match glob (nullglob is off)
-			[[ "$(basename "$old")" == "$df_name" ]] && continue
-			if in_use "$old"; then
-				fEcho_Clean "kept (running): $(basename "$old")"
-			else
-				rm -f "$old" && pruned=$((pruned + 1))
-			fi
-		done
-		if ((pruned)); then fEcho_Clean "pruned ${pruned} old copy(ies) not in use"; fi
-		df_did=1
-	else
-		fEcho "WARNING: no rotating dogfood dest writable (${DOGFOOD_ROTATING_DESTS[*]}); skipping"
-	fi
-fi
-
-## 7c. Cross-built binaries under a fixed name, for the box that can't build them
-## itself to pick up over Dropbox. Only targets actually built this run are copied.
-if ((${#DOGFOOD_CROSS_DESTS[@]})); then
-	for xd in "${DOGFOOD_CROSS_DESTS[@]}"; do
-		xosarch="${xd%%|*}"; xrest="${xd#*|}"; xname="${xrest%%|*}"; xdest="${xrest#*|}"
-		xsrc=""
-		for pair in "${built_arts[@]}"; do
-			[[ "${pair%%|*}" == "$xosarch" ]] && { xsrc="${pair#*|}"; break; }
-		done
-		if [[ -z "$xsrc" ]]; then
-			fEcho_Clean "no ${xosarch} build this run; cross dogfood skipped"
-		elif [[ -d "$xdest" && -w "$xdest" ]]; then
-			cp -pf "$xsrc" "${xdest}/${xname}"
-			fEcho "OK: installed (cross ${xosarch}) -> ${xdest}/${xname}"
-			df_did=1
-		else
-			fEcho "WARNING: cross dogfood dest not writable (${xdest}); skipping ${xosarch}"
-		fi
+	xsrc=""
+	for pair in "${built_arts[@]}"; do
+		[[ "${pair%%|*}" == "$xosarch" ]] && { xsrc="${pair#*|}"; break; }
 	done
-fi
+	if [[ -z "$xsrc" ]]; then
+		fEcho_Clean "no ${xosarch} build this run; dogfood skipped"
+		continue
+	fi
+
+	## Make the first candidate when none is there yet, so a fresh box needs no
+	## setup step of its own.
+	xdest="$(dogfood_dest "$xdirs")"
+	if [[ -z "$xdest" ]]; then
+		mkdir -p "${xdirs%%|*}" 2>/dev/null || true
+		xdest="$(dogfood_dest "$xdirs")"
+	fi
+	if [[ -z "$xdest" ]]; then
+		fEcho "WARNING: no dogfood dest writable for ${xosarch} (${xdirs//|/, }); skipping"
+		continue
+	fi
+
+	## -p: the launcher dates a build by its mtime, so the copy has to keep it.
+	cp -pf "$xsrc" "${xdest}/${xname}"
+	chmod +x "${xdest}/${xname}"
+
+	## A cross-build says nothing about the box that later reads it, so the tag
+	## rides along in a sidecar rather than being guessed at the far end.
+	xtag="${DOGFOOD_TAG-$(build_tag "$xosarch")}"
+	if [[ -n "$xtag" ]]; then printf '%s\n' "$xtag" > "${xdest}/${xname}.tag"
+	else rm -f "${xdest}/${xname}.tag"; fi
+
+	if [[ -n "${DOGFOOD_ICON:-}" && -f "${root}/${DOGFOOD_ICON}" ]]; then
+		cp -f "${root}/${DOGFOOD_ICON}" "${xdest}/${EXE_NAME}.png"
+	fi
+
+	fEcho "OK: installed (${xosarch}${xtag:+, ${xtag}}) -> ${xdest}/${xname}"
+	df_did=1
+done
 
 if ((! df_did)); then fEcho_Clean "dogfood disabled"; fi
 
