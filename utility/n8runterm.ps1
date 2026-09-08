@@ -57,10 +57,22 @@ $HomeDir = if ($env:HOME) { $env:HOME } else { $env:USERPROFILE }
 ## Where a build comes from: the synced app dir cicd installs into. One entry per
 ## platform today, kept as a list so a second location is a one-line change. First
 ## one that exists wins.
+## First one that exists wins. 'synced' is a junction to Dropbox, and on Windows
+## it reads as an EMPTY directory - Dropbox's filter driver does not populate
+## through it - so the real spelling has to be listed as well.
 $SourceDirs = switch ($Platform) {
-	"windows" { @( (Join-Path $HomeDir "synced\0-0\common\exec\app\mswin") ) }
-	"macos"   { @( (Join-Path $HomeDir "synced/0-0/common/exec/app/macos") ) }
-	default   { @( (Join-Path $HomeDir "synced/0-0/common/exec/app/linux") ) }
+	"windows" { @(
+		(Join-Path $HomeDir "synced\0-0\common\exec\app\mswin")
+		(Join-Path $HomeDir "Dropbox\0-0\common\exec\app\mswin")
+	) }
+	"macos"   { @(
+		(Join-Path $HomeDir "synced/0-0/common/exec/app/macos")
+		(Join-Path $HomeDir "Dropbox/0-0/common/exec/app/macos")
+	) }
+	default   { @(
+		(Join-Path $HomeDir "synced/0-0/common/exec/app/linux")
+		(Join-Path $HomeDir "Dropbox/0-0/common/exec/app/linux")
+	) }
 }
 
 ## Where copies live and what the symlink is called. Deliberately NOT under the
@@ -127,9 +139,14 @@ $FallbackTerminals = switch ($Platform) {
 $WrapperCandidates = switch ($Platform) {
 	"windows" { @(
 		(Join-Path $HomeDir "synced\0-0\common\exec\util\mswin\cli\by-self\cmd\runterm.cmd")
+		(Join-Path $HomeDir "Dropbox\0-0\common\exec\util\mswin\cli\by-self\cmd\runterm.cmd")
 		"C:\opt\0-0\common\exec\synced\util\mswin\cli\by-self\cmd\runterm.cmd"
+		"C:\0-0\common\exec\synced\util\mswin\cli\by-self\cmd\runterm.cmd"
 	) }
-	"macos"   { @( (Join-Path $HomeDir "synced/0-0/common/exec/util/macos/bash/runterm") ) }
+	"macos"   { @(
+		(Join-Path $HomeDir "synced/0-0/common/exec/util/macos/bash/runterm")
+		(Join-Path $HomeDir "Dropbox/0-0/common/exec/util/macos/bash/runterm")
+	) }
 	default   { @(
 		"/usr/local/bin/x9/sh/runterm"
 		"/opt/0-0/common/exec/synced_local-copies/util/linux/bash/runterm"
@@ -146,7 +163,7 @@ $RunAsAdmin = $false
 
 ## Entry point: what this launcher runs. Edit this to launch a different terminal.
 function fMain {
-	param([string[]]$PassArgs)
+	param([string[]]$PassArgs, [switch]$InstallOnly)
 
 	fEnsureDir $InstallRoot
 	fEnsureDir $VersionsDir
@@ -166,12 +183,12 @@ function fMain {
 		fUpdateShortcut
 		## The launchers return the Process so a test harness can stop that exact
 		## instance by PID; nothing here wants it printed.
-		fLaunchSilkTerm -Exe $newest.File.FullName -PassArgs $PassArgs | Out-Null
+		if (-not $InstallOnly) { fLaunchSilkTerm -Exe $newest.File.FullName -PassArgs $PassArgs | Out-Null }
 		return
 	}
 
 	fWarn "no dogfood build held and no source reachable; trying fallbacks"
-	fLaunchFallbackTerminal -PassArgs $PassArgs | Out-Null
+	if (-not $InstallOnly) { fLaunchFallbackTerminal -PassArgs $PassArgs | Out-Null }
 }
 
 
@@ -818,14 +835,19 @@ $script:RunWarnings = @()
 ##   --no-admin  run without elevating (Windows only; elsewhere there is nothing
 ##               to elevate and the flag is accepted and ignored).
 ##   --gui       force the failure dialog on; auto-on for a shortcut click.
-$wantAdmin = $true
-$forceGui  = $false
-$passArgs  = @()
+##   --install-only  copy, rotate and refresh the menu entry, then stop without
+##               opening a terminal. For an unattended run, and for any session
+##               with no desktop to put a window on.
+$wantAdmin   = $true
+$forceGui    = $false
+$installOnly = $false
+$passArgs    = @()
 foreach ($arg in $args) {
 	switch -Regex ($arg) {
-		'^--admin$'    { $wantAdmin = $true;  continue }
-		'^--no-admin$' { $wantAdmin = $false; continue }
-		'^--gui$'      { $forceGui  = $true;  continue }
+		'^--admin$'        { $wantAdmin   = $true;  continue }
+		'^--no-admin$'     { $wantAdmin   = $false; continue }
+		'^--gui$'          { $forceGui    = $true;  continue }
+		'^--install-only$' { $installOnly = $true;  continue }
 		default        { $passArgs += $arg }
 	}
 }
@@ -857,7 +879,7 @@ if ($Platform -eq "windows" -and $wantAdmin -and -not (fIsElevated)) {
 
 if ($Platform -eq "windows" -and $wantAdmin) { $RunAsAdmin = $true }
 
-fMain -PassArgs $passArgs
+fMain -PassArgs $passArgs -InstallOnly:$installOnly
 
 if ($script:GuiFeedback -and $script:RunWarnings.Count) {
 	fGuiShow -Icon Warning -Title "SilkTerm dogfood" -Msg (
@@ -866,6 +888,9 @@ if ($script:GuiFeedback -and $script:RunWarnings.Count) {
 
 
 ##	History:
+##		- 2026-09-08: Name the Dropbox spelling beside 'synced' for both the build
+##		  source and the wrapper - on Windows the junction reads empty. Added
+##		  '--install-only'.
 ##		- 2026-09-08: Runs directly on Linux and macOS - shebang first, no BOM,
 ##		  LF endings. Stopped a held-build rename printing its path.
 ##		- 2026-09-07: One cross-platform implementation, replacing the Windows-only
