@@ -201,6 +201,8 @@ pub struct TermInstance {
 	shell_started: u64,
 	#[cfg(windows)]
 	child_probe: std::cell::RefCell<Option<Option<String>>>,
+	#[allow(clippy::type_complexity)]
+	cwd_cache: std::cell::RefCell<Option<(std::time::Instant, Option<std::path::PathBuf>)>>,
 }
 
 impl TermInstance {
@@ -312,6 +314,7 @@ impl TermInstance {
 			shell_started: process_start_time(shell_pid).unwrap_or(0),
 			#[cfg(windows)]
 			child_probe: std::cell::RefCell::new(None),
+			cwd_cache: std::cell::RefCell::new(None),
 		})
 	}
 
@@ -377,10 +380,24 @@ impl TermInstance {
 	// a directory (a stale one, or a path on the far side of an ssh) is dropped
 	// rather than trusted, and the OS answer stands instead.
 	pub fn cwd(&self) -> Option<std::path::PathBuf> {
-		self.reported_cwd
+		// Throttled the way `task()` beside it is, and for the same reason: the
+		// tab strip asks once per tab per frame, and both halves of the answer
+		// touch the filesystem - a stat, plus a /proc read and another stat. On a
+		// mount that has stopped answering, each of those stalls the render.
+		const PROBE_IVL: std::time::Duration = std::time::Duration::from_millis(250);
+		let now = std::time::Instant::now();
+		if let Some((at, dir)) = self.cwd_cache.borrow().as_ref() {
+			if now.duration_since(*at) < PROBE_IVL {
+				return dir.clone();
+			}
+		}
+		let dir = self
+			.reported_cwd
 			.get()
 			.filter(|dir| dir.is_dir())
-			.or_else(|| self.os_cwd())
+			.or_else(|| self.os_cwd());
+		*self.cwd_cache.borrow_mut() = Some((now, dir.clone()));
+		dir
 	}
 
 	// Where the OS says the shell process itself is. A deleted dir reads back
