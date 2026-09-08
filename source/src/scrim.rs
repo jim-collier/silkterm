@@ -106,6 +106,16 @@ pub struct Scrim {
 	enabled: bool,
 }
 
+// The widest halo the distance passes can measure. They tap at most DIST_MAX
+// pixels, and the composite divides by the extent it is given - so an extent past
+// this made every pixel of every pane come out at full halo, a flat plate of
+// background color. Both halves read the same number now.
+pub const EXT_MAX: f32 = 40.0;
+
+pub fn clamp_ext(ext: f32) -> f32 {
+	ext.clamp(0.0, EXT_MAX)
+}
+
 // How big the texture set should be. One pixel when neither the scrim nor the
 // outline draws: at full screen this is three Rgba16Float textures plus two
 // more, which is hundreds of megabytes of VRAM for a feature doing nothing.
@@ -928,7 +938,7 @@ fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {
 
 #[cfg(test)]
 mod tests {
-	use super::alloc_size;
+	use super::{EXT_MAX, WGSL, alloc_size, clamp_ext};
 
 	// Bytes the set costs: three Rgba16Float (8 per pixel), the coverage texture
 	// and the bgcolor map (4 each).
@@ -939,6 +949,25 @@ mod tests {
 	// The scrim used to build its five full-screen textures whether or not it drew
 	// anything, and it falls hardest on the machines the Low and Standard profiles
 	// exist for.
+	// Past the tap window the distance saturates while the composite kept dividing
+	// by the extent it was given, so every pixel came out at full halo - a flat
+	// plate of background color over every pane. The slider cannot reach it; the
+	// config file can.
+	#[test]
+	fn a_halo_wider_than_the_taps_is_held_to_them() {
+		// the shader owns the tap window; this is the other half of that number
+		assert!(
+			WGSL.contains(&format!("const DIST_MAX: i32 = {};", EXT_MAX as i32)),
+			"EXT_MAX and the shader's tap window have drifted apart"
+		);
+		// the shipped default, doubled: unchanged
+		assert!((clamp_ext(5.0 * 2.0) - 10.0).abs() < f32::EPSILON);
+		// the slider's own ceiling, doubled: exactly the tap window
+		assert!((clamp_ext(20.0 * 2.0) - EXT_MAX).abs() < f32::EPSILON);
+		// and what the config file allows past it
+		assert!((clamp_ext(50.0 * 2.0) - EXT_MAX).abs() < f32::EPSILON);
+	}
+
 	#[test]
 	fn nothing_drawing_costs_no_memory() {
 		let uhd = (3840, 2160);
