@@ -100,9 +100,9 @@ function fLower() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
 function fGet() {
 	local url="$1" out="$2"
 	if [ "${dlTool}" = "curl" ]; then
-		curl -fsSL -o "${out}" "${url}"
+		curl -fsSL "${httpsOnly_curl[@]}" -o "${out}" "${url}"
 	else
-		wget -qO "${out}" "${url}"
+		wget -qO "${out}" "${httpsOnly_wget[@]}" "${url}"
 	fi
 }
 
@@ -163,6 +163,38 @@ function fGetShown() {
 	else
 		wget -q "${httpsOnly_wget[@]}" --show-progress -O "${out}" "${url}"
 	fi
+}
+
+##	The release signing key, as one allowed_signers line. Empty until a key is
+##	generated (see cicd/config.bash), and then the checksums file is only trusted
+##	when it carries a good signature by this key - which is what turns the check
+##	below from "the download was not corrupted" into "this came from the author".
+releaseSignPubkey=""
+releaseSignIdentity="releases@silkterm"
+releaseSignNamespace="silkterm-release"
+
+##	Verify the checksums file against the pinned key. Everything else is covered
+##	by the checksums, so this one signature covers the whole release.
+function fVerifySignature() {
+	local dir="$1" sums="$2" tag="$3"
+	if [ -z "${releaseSignPubkey}" ]; then
+		echo "Note: this release is not signed; the download is checked against its checksums only."
+		return 0
+	fi
+	command -v ssh-keygen >/dev/null 2>&1 \
+		|| fFail "ssh-keygen not found, and this release is signed" \
+			"Install OpenSSH (openssh-client) and re-run."
+	fGet "${dlBase}/${tag}/${sums}.sig" "${dir}/${sums}.sig" \
+		|| fFail "release ${tag} carries no signature (${sums}.sig)" \
+			"This installer only accepts signed releases." \
+			"Release page: https://github.com/${ownerRepo}/releases/tag/${tag}"
+	printf '%s %s\n' "${releaseSignIdentity}" "${releaseSignPubkey}" > "${dir}/allowed_signers"
+	ssh-keygen -Y verify -f "${dir}/allowed_signers" -I "${releaseSignIdentity}" \
+		-n "${releaseSignNamespace}" -s "${dir}/${sums}.sig" < "${dir}/${sums}" >/dev/null 2>&1 \
+		|| fFail "the release signature does not verify - NOT installing" \
+			"The checksums file was not signed by the release key." \
+			"Do not use this download; report it."
+	echo "Signature OK."
 }
 
 function fSha256() {
@@ -325,6 +357,8 @@ function fMain() {
 		|| fFail "release ${tag} has no checksums file (${sums})" \
 			"Nothing can be verified without it, so nothing will be installed." \
 			"Release page: https://github.com/${ownerRepo}/releases/tag/${tag}"
+
+	fVerifySignature "${tmpDir}" "${sums}" "${tag}"
 
 	local wantSha
 	wantSha="$(awk -v want="${asset}" '{ name = $2; sub(/^\*/, "", name); if (name == want) { print $1; exit } }' "${tmpDir}/${sums}")"

@@ -43,7 +43,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Bugs
 
 - 🔘 Code review 20260908. Twenty-five defects, full-codebase pass. Detail per item is in `details.md` under the matching number.
-	- Four of them destroy or lose something, and those come first. Items 1 through 13 are worth fixing before the next release; 14 through 25 are real but survivable.
 	- 🔘 1. Wallpaper rotation never re-arms its timer, so every pass through the event loop starts another decode thread. Measured on the rig: 5,636 threads and 11 cores in 75 seconds, memory still climbing, no recovery. Only reachable with a rotation interval above zero, which is why nobody has hit it.
 	- 🔘 2. Settings, Themes, "Save as...", then one click in the name box, crashes the program. The click puts a sentinel row index into the keyboard focus, and the next frame reads the row list with it. Typing in the box without clicking is safe, which is why the existing test misses it.
 	- 🔘 3. A PowerShell profile that is not valid UTF-8 is replaced whole by the integration block, with no backup. UTF-16 is what PowerShell 5.1 writes by default, so this is an ordinary profile rather than a broken one. The refresh path also rewrites the whole file with no backup and no atomic rename.

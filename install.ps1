@@ -93,6 +93,63 @@ if ($PSVersionTable.PSVersion.Major -lt 5) {
 ##	Output helpers
 
 ##	fFail <message> [hint ...] - one error line, then any hints, then abort.
+##	The release signing key, as one allowed_signers line. Empty until a key is
+##	generated (see cicd/config.bash), and then the checksums file is only trusted
+##	when it carries a good signature by this key - which is what turns the check
+##	below from "the download was not corrupted" into "this came from the author".
+$ReleaseSignPubkey    = ''
+$ReleaseSignIdentity  = 'releases@silkterm'
+$ReleaseSignNamespace = 'silkterm-release'
+
+##	Verify the checksums file against the pinned key. Everything else is covered
+##	by the checksums, so this one signature covers the whole release. ssh-keygen
+##	ships with Windows 10 1803 and later.
+function fVerifySignature {
+	param(
+		[Parameter(Mandatory)][string]$Dir,
+		[Parameter(Mandatory)][string]$Sums,
+		[Parameter(Mandatory)][string]$Tag
+	)
+
+	if (-not $ReleaseSignPubkey) {
+		Write-Host 'Note: this release is not signed; the download is checked against its checksums only.'
+		return
+	}
+	$sshKeygen = Get-Command ssh-keygen -ErrorAction SilentlyContinue
+	if (-not $sshKeygen) {
+		fFail 'ssh-keygen not found, and this release is signed' @(
+			'Add the OpenSSH client (Settings > Apps > Optional features) and re-run.'
+		)
+	}
+	$sigPath = Join-Path $Dir "$Sums.sig"
+	try { Invoke-WebRequest -Uri "$dlBase/$Tag/$Sums.sig" -OutFile $sigPath @webArgs }
+	catch {
+		fFail "release $Tag carries no signature ($Sums.sig)" @(
+			'This installer only accepts signed releases.',
+			"Release page: https://github.com/$ownerRepo/releases/tag/$Tag"
+		)
+	}
+	$signers = Join-Path $Dir 'allowed_signers'
+	Set-Content -LiteralPath $signers -Value "$ReleaseSignIdentity $ReleaseSignPubkey" -Encoding ascii
+	$sumsPath = Join-Path $Dir $Sums
+	##	The message goes in on stdin as the file's own bytes. A pipeline would put
+	##	it through PowerShell's text encoding first, and every argument is quoted
+	##	here because Start-Process joins an array without quoting anything.
+	$args = '-Y verify -f "{0}" -I {1} -n {2} -s "{3}"' -f `
+		$signers, $ReleaseSignIdentity, $ReleaseSignNamespace, $sigPath
+	$out = Join-Path $Dir 'verify.out'
+	$err = Join-Path $Dir 'verify.err'
+	$proc = Start-Process -FilePath $sshKeygen.Source -ArgumentList $args -NoNewWindow -Wait -PassThru `
+		-RedirectStandardInput $sumsPath -RedirectStandardOutput $out -RedirectStandardError $err
+	if ($proc.ExitCode -ne 0) {
+		fFail 'the release signature does not verify - NOT installing' @(
+			'The checksums file was not signed by the release key.',
+			'Do not use this download; report it.'
+		)
+	}
+	Write-Host 'Signature OK.'
+}
+
 function fFail {
 	param([string]$Message, [string[]]$Hints = @())
 	Write-Host ''
@@ -301,6 +358,8 @@ function fMain {
 				"Release page: https://github.com/$ownerRepo/releases/tag/$tag"
 			)
 		}
+
+		fVerifySignature -Dir $tmpDir -Sums $sums -Tag $tag
 
 		$wantSha = $null
 		$published = @()

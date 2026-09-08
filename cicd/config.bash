@@ -200,6 +200,19 @@ DOGFOOD_ICON="source/assets/logo.png"
 ## every dest to one value, empty to drop the sidecar.
 # DOGFOOD_TAG="gnulli"
 
+## Signing the release. A checksum file fetched from the same place as the
+## artifact it covers proves the download was not corrupted in transit, which TLS
+## already gave; a signature is what says the release came from here.
+##
+## The private key never goes in the repo. To set one up once:
+##   ssh-keygen -t ed25519 -C releases@silkterm -f ~/.ssh/silkterm-release
+## then put the CONTENTS of ~/.ssh/silkterm-release.pub into RELEASE_SIGN_PUBKEY
+## in install.bash and install.ps1, and point this at the private half. Empty
+## means the release goes out unsigned, and release.bash says so.
+RELEASE_SIGN_KEY="${SILKTERM_RELEASE_KEY:-}"
+RELEASE_SIGN_IDENTITY="releases@silkterm"
+RELEASE_SIGN_NAMESPACE="silkterm-release"
+
 ## Stage 7: backup + publish to git (runs from repo root).
 GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 

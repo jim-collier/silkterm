@@ -51,6 +51,45 @@ echo more >> file.txt
 fWriteBuiltFrom art
 fCheck "a build from a dirty tree is refused" fNot
 
+## Signing. The checksums file says the download was not corrupted; the signature
+## is what says it came from here. Driven with a throwaway key, using the exact
+## commands release.bash and both installers use.
+if command -v ssh-keygen >/dev/null 2>&1; then
+	keyDir="${work}/key"
+	mkdir -p "${keyDir}"
+	ssh-keygen -q -t ed25519 -N "" -C releases@silkterm -f "${keyDir}/id" </dev/null
+	identity="releases@silkterm"
+	namespace="silkterm-release"
+	printf 'checksum line\n' > "${work}/sums.txt"
+	ssh-keygen -Y sign -f "${keyDir}/id" -n "${namespace}" "${work}/sums.txt" >/dev/null 2>&1
+	printf '%s %s\n' "${identity}" "$(cat "${keyDir}/id.pub")" > "${work}/allowed_signers"
+
+	fVerify(){
+		ssh-keygen -Y verify -f "${work}/allowed_signers" -I "${identity}" \
+			-n "${namespace}" -s "${work}/sums.txt.sig" < "${1}" >/dev/null 2>&1
+	}
+	fCheck "a signed checksums file verifies" fVerify "${work}/sums.txt"
+
+	printf 'checksum line tampered\n' > "${work}/tampered.txt"
+	if fVerify "${work}/tampered.txt"; then
+		echo "  FAIL a tampered checksums file verified"; failures=$((failures + 1))
+	else
+		echo "  ok   a tampered one does not"
+	fi
+
+	## and a signature by a different key is not the release key's
+	ssh-keygen -q -t ed25519 -N "" -C other -f "${keyDir}/other" </dev/null
+	rm -f "${work}/sums.txt.sig"   ## or ssh-keygen stops to ask about overwriting
+	ssh-keygen -Y sign -f "${keyDir}/other" -n "${namespace}" "${work}/sums.txt" >/dev/null 2>&1
+	if fVerify "${work}/sums.txt"; then
+		echo "  FAIL another key's signature was accepted"; failures=$((failures + 1))
+	else
+		echo "  ok   another key's signature is refused"
+	fi
+else
+	echo "  skip signing (no ssh-keygen)"
+fi
+
 if ((failures)); then echo "${failures} failed"; exit 1; fi
 echo "all passed"
 
