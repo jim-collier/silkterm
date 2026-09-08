@@ -381,6 +381,51 @@ pub fn command_line(argv: &[String]) -> String {
 // the reason that rule exists at all: the pane may have been launched with a
 // bare `pwsh` where the list carries the full path to the same file.
 pub fn friendly(command: &str, stored: &[ShellEntry]) -> String {
+	// Answering costs a PATH search and two canonicalize calls per stored entry,
+	// and the tab strip asks once per tab per frame - tens of thousands of
+	// syscalls a second on a window with a few tabs. The answer only moves when
+	// the stored list does, so it is kept against the list's own content.
+	let stamp = list_stamp(stored);
+	let mut memo = FRIENDLY_MEMO
+		.lock()
+		.unwrap_or_else(std::sync::PoisonError::into_inner);
+	match memo.as_mut() {
+		Some((seen, map)) if *seen == stamp => {
+			if let Some(hit) = map.get(command) {
+				return hit.clone();
+			}
+		}
+		_ => *memo = Some((stamp, std::collections::HashMap::new())),
+	}
+	let answer = friendly_uncached(command, stored);
+	if let Some((_, map)) = memo.as_mut() {
+		if map.len() >= FRIENDLY_MEMO_MAX {
+			map.clear();
+		}
+		map.insert(command.to_string(), answer.clone());
+	}
+	answer
+}
+
+// Command line -> title, memoized by `friendly`. Big enough for any plausible
+// number of panes; a session that somehow outgrows it starts the map over.
+const FRIENDLY_MEMO_MAX: usize = 256;
+static FRIENDLY_MEMO: std::sync::Mutex<Option<(u64, std::collections::HashMap<String, String>)>> =
+	std::sync::Mutex::new(None);
+
+// What the stored list looks like, for the memo to notice a change. Only the
+// two fields `friendly` reads matter.
+fn list_stamp(stored: &[ShellEntry]) -> u64 {
+	use std::hash::{Hash, Hasher};
+	let mut h = std::collections::hash_map::DefaultHasher::new();
+	for entry in stored {
+		entry.command.hash(&mut h);
+		entry.title.hash(&mut h);
+	}
+	h.finish()
+}
+
+fn friendly_uncached(command: &str, stored: &[ShellEntry]) -> String {
 	if let Some(entry) = stored
 		.iter()
 		.find(|entry| same_command(&entry.command, command))
@@ -476,7 +521,12 @@ fn base_name(prog: &str) -> String {
 // Where `prog` would run from, or None if it is not installed. A name with a
 // separator in it is taken literally (that is the user saying where); a bare
 // name is looked up on PATH, honouring PATHEXT on Windows.
+// Counts every PATH search, so a test can hold the frame path to a number
+// rather than to a stopwatch.
+pub static PATH_SEARCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn which(prog: &str) -> Option<PathBuf> {
+	PATH_SEARCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 	if prog.contains('/') || (cfg!(windows) && prog.contains('\\')) {
 		let path = Path::new(prog);
 		return path.is_file().then(|| path.to_path_buf());
@@ -1046,6 +1096,45 @@ mod tests {
 	// sorting alphabetically - is a visible change and not an implementation
 	// detail. Elvish carries a LATER table position than YSH on purpose: inside an
 	// alphabetical group the title decides and the table position must not leak in.
+	// The tab strip asks this once per tab per frame, and each answer used to walk
+	// the stored list resolving every entry through the filesystem. A numeric gate
+	// rather than a stopwatch: repeats cost no searches at all.
+	#[test]
+	fn a_tab_label_does_not_search_the_path_every_frame() {
+		use std::sync::atomic::Ordering;
+		let stored: Vec<ShellEntry> = ["bash", "zsh", "fish", "pwsh", "dash", "sh"]
+			.iter()
+			.map(|name| ShellEntry {
+				slug: (*name).to_string(),
+				title: (*name).to_string(),
+				command: format!("/usr/bin/{name}"),
+				active: true,
+				comment: String::new(),
+				last_seen: String::new(),
+			})
+			.collect();
+
+		let before = super::PATH_SEARCHES.load(Ordering::Relaxed);
+		let first = friendly("/bin/bash", &stored);
+		let after_one = super::PATH_SEARCHES.load(Ordering::Relaxed);
+		for _ in 0..200 {
+			assert_eq!(friendly("/bin/bash", &stored), first);
+		}
+		let after_many = super::PATH_SEARCHES.load(Ordering::Relaxed);
+		assert_eq!(
+			after_many,
+			after_one,
+			"200 more frames cost {} more path searches",
+			after_many - after_one
+		);
+		assert!(after_one > before, "the first answer does the work");
+
+		// and a changed list is a different answer, not a stale one
+		let mut renamed = stored.clone();
+		renamed[0].title = "My bash".to_string();
+		assert_eq!(friendly("/bin/bash", &renamed), "My bash");
+	}
+
 	#[test]
 	fn the_offered_order_groups_first_and_sorts_inside_a_group() {
 		let titles = ordered(vec![
