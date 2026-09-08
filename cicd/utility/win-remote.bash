@@ -14,11 +14,11 @@
 ##		Several platform bugs only exist on Windows and cannot be reproduced on this
 ##		box at all, so the alternative is doing it by hand on the other machine.
 ##	Syntax:
-##		win-remote.bash [--host <name>] [--as <user>] hosts
-##		win-remote.bash [--host <name>] [--as <user>] sync
-##		win-remote.bash [--host <name>] [--as <user>] job <name> [args...]
-##		win-remote.bash [--host <name>] [--as <user>] run <file.ps1> [args...]
-##		win-remote.bash [--host <name>] [--as <user>] fetch <remote-rel-path> <local-dir>
+##		win-remote.bash [--host <name>] [--as <user>] [--optional] hosts
+##		win-remote.bash [--host <name>] [--as <user>] [--optional] sync
+##		win-remote.bash [--host <name>] [--as <user>] [--optional] job <name> [args...]
+##		win-remote.bash [--host <name>] [--as <user>] [--optional] run <file.ps1> [args...]
+##		win-remote.bash [--host <name>] [--as <user>] [--optional] fetch <remote-rel-path> <local-dir>
 ##	Notes:
 ##		Hosts are read from $WINRIG_CONF (default ~/.config/silkterm/winrig.conf),
 ##		one per line as '<name> <addr>[,<addr>...]'. First address that answers wins,
@@ -26,6 +26,10 @@
 ##		file lives outside the repo on purpose - machine names are not project data.
 ##		A host that is down is skipped with a warning. Exit is 1 only if every
 ##		selected host was unreachable, or if a job failed on a host that was up.
+##		--optional drops the first of those, so nothing reachable is a skip rather
+##		than a failure. Every cicd caller passes it: the boxes are somebody's desk
+##		and a laptop, so one being off is the normal case, not a broken build. A job
+##		that actually ran and failed still fails, with or without it.
 ##		Jobs run against a clone the remote keeps at origin/dev; it is reset, not
 ##		merged, so local edits there are discarded. Uncommitted work here does not
 ##		reach it - push first.
@@ -64,14 +68,22 @@ fFail() { echo "win-remote: $1" >&2; exit "${2:-1}"; }
 declare -a hostNames=() hostAddrs=()
 
 fLoadConf() {
-	[[ -r "$conf" ]] || fFail "no host config at ${conf}
+	##	The config lives outside the repo, so having none is the ordinary state on
+	##	any box but the one it was written on - a cicd caller skips rather than dies.
+	if [[ ! -r "$conf" ]]; then
+		((optional)) && { fWarn "no host config at ${conf}, skipped"; exit 0; }
+		fFail "no host config at ${conf}
   Create it with one line per box:  <name> <addr>[,<addr>...]" 2
+	fi
 	local name addrs
 	while read -r name addrs _; do
 		[[ -z "$name" || "${name:0:1}" == "#" ]] && continue
 		hostNames+=("$name"); hostAddrs+=("${addrs:-$name}")
 	done < "$conf"
-	((${#hostNames[@]})) || fFail "no hosts listed in ${conf}" 2
+	if ((! ${#hostNames[@]})); then
+		((optional)) && { fWarn "no hosts listed in ${conf}, skipped"; exit 0; }
+		fFail "no hosts listed in ${conf}" 2
+	fi
 }
 
 ##	First address that answers. Empty means the box is down or moved.
@@ -151,7 +163,11 @@ fOverHosts() {
 		echo "== ${hostNames[$i]} (${addr})"
 		if ! "$fn" "$addr"; then bad=$((bad + 1)); fWarn "${hostNames[$i]}: failed"; fi
 	done
-	((up)) || fFail "no host reachable"
+	if ((! up)); then
+		((optional)) || fFail "no host reachable"
+		fWarn "no host reachable, skipped"
+		return 0
+	fi
 	((bad == 0))
 }
 
@@ -159,10 +175,11 @@ runScript=""
 declare -a runArgs=()
 fDoRun() { fRunScript "$1" "$runScript" "${runArgs[@]}"; }
 
-only=""
+only=""; optional=0
 while (($#)); do case "$1" in
 	--host)    only="${2:-}"; shift 2 ;;
 	--as)      sshUser="${2:-}"; shift 2 ;;
+	--optional) optional=1; shift ;;
 	-h|--help) grep -E '^##' "$0" | sed 's/^##\t\?//'; exit 0 ;;
 	*) break ;;
 esac; done
@@ -205,7 +222,7 @@ case "$cmd" in
 		fOverHosts fGet || exit 1
 		;;
 	*)
-		echo "usage: win-remote.bash [--host <name>] {hosts|sync|job <name> [args]|run <file.ps1> [args]|fetch <rel> <dir>}" >&2
+		echo "usage: win-remote.bash [--host <name>] [--as <user>] [--optional] {hosts|sync|job <name> [args]|run <file.ps1> [args]|fetch <rel> <dir>}" >&2
 		exit 2
 		;;
 esac
@@ -213,3 +230,4 @@ esac
 
 ##	Script history:
 ##		- 20260908: Created.
+##		- 20260908: --optional, so an unreachable box is a skip.
