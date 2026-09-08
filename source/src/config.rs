@@ -698,10 +698,11 @@ pub fn expand_vars(text: &str) -> String {
 
 // `env:` off the front of a name, in whatever case it was written.
 fn strip_env_prefix(name: &str) -> &str {
-	if name.len() >= 4 && name[..4].eq_ignore_ascii_case("env:") {
-		&name[4..]
-	} else {
-		name
+	// get_ rather than a slice: a name whose fourth byte falls inside a character
+	// used to abort here
+	match name.get(..4) {
+		Some(head) if head.eq_ignore_ascii_case("env:") => &name[4..],
+		_ => name,
 	}
 }
 
@@ -2148,7 +2149,9 @@ fn resolve(raw: RawConfig) -> Settings {
 
 pub fn parse_hex(s: &str) -> Option<[u8; 3]> {
 	let s = s.trim().trim_start_matches('#');
-	if s.len() != 6 {
+	// six BYTES is not six digits: a value carrying a multi-byte character is the
+	// right length and splits mid-character, which used to abort at launch
+	if s.len() != 6 || !s.is_ascii() {
 		return None;
 	}
 	Some([
@@ -3806,6 +3809,23 @@ shell:
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// Both of these used to abort before the window existed, which left the file
+	// that caused it unfixable from the terminal it killed.
+	#[test]
+	fn a_config_value_cannot_abort_the_launch_on_a_byte_slice() {
+		// six bytes, three characters
+		assert_eq!(parse_hex("\u{20ac}abc"), None);
+		assert_eq!(parse_hex("#\u{20ac}abc"), None);
+		// still reads the ordinary ones
+		assert_eq!(parse_hex("#ff8000"), Some([255, 128, 0]));
+		assert_eq!(parse_hex("00ff00"), Some([0, 255, 0]));
+
+		// a variable name whose fourth byte falls inside a character
+		assert_eq!(strip_env_prefix("ab\u{20ac}cd"), "ab\u{20ac}cd");
+		assert_eq!(strip_env_prefix("env:HOME"), "HOME");
+		assert_eq!(strip_env_prefix("HOME"), "HOME");
+	}
 
 	// The case that keeps coming up is a file manager's "Open in terminal": no
 	// tty, but a directory that was very much chosen. Only the three directories
