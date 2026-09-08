@@ -161,6 +161,23 @@ function fDiff($a, $b, $step = 3) {
 	if ($seen -eq 0) { 0.0 } else { [math]::Round($moved / $seen, 4) }
 }
 
+##	One value out of a written config, and whether the file actually says it. A
+##	setting left at its shipped default stays commented in the template, so a
+##	scenario that cannot tell those apart reads an empty answer and calls it a bug.
+function fSetting($path, $dotted) {
+	if (-not (Test-Path $path)) { return @{ value = $null; source = "no file" } }
+	$block, $leaf = $dotted -split '\.', 2
+	$in = $false
+	$fallback = $null
+	foreach ($line in (Get-Content $path)) {
+		if ($line -match '^[^\s#]') { $in = ($line -match "^${block}\s*:"); continue }
+		if (-not $in) { continue }
+		if ($line -match "^\s+${leaf}\s*:\s*(.*?)\s*$") { return @{ value = $Matches[1].Trim('"'); source = "set" } }
+		if ($line -match "^\s+#\s*${leaf}\s*:\s*(.*?)\s*(##.*)?$") { $fallback = $Matches[1].Trim().Trim('"') }
+	}
+	if ($null -ne $fallback) { @{ value = $fallback; source = "default" } } else { @{ value = $null; source = "absent" } }
+}
+
 function fStop($p) {
 	if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
 }
