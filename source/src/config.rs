@@ -930,6 +930,16 @@ fn fence_run(line: &str) -> Option<(char, usize)> {
 // Answers whether it wrote. A refusal has to reach the caller: the dialog closes
 // on a save, and three failures used to present as a clean one - shcl refusing a
 // lossy round trip, an unreadable file, an unwritable one.
+// Write beside the file and rename over it. Every launch-time rewrite goes
+// through here: `fs::write` truncates first, so a crash or a full disk during
+// one leaves nothing at all where the config was. The dialog's own save already
+// works this way (shcl does it).
+fn write_config_text(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+	let tmp = path.with_extension("shcl.new");
+	std::fs::write(&tmp, text)?;
+	std::fs::rename(&tmp, path)
+}
+
 #[must_use]
 fn write_doc(path: &std::path::Path, doc: &shcl::Document) -> bool {
 	if let Err(e) = doc.save_file(&path.to_string_lossy()) {
@@ -1486,7 +1496,7 @@ fn load() -> Settings {
 		if let Some(dir) = path.parent() {
 			let _ = std::fs::create_dir_all(dir);
 		}
-		if let Err(e) = std::fs::write(&path, default_config()) {
+		if let Err(e) = write_config_text(&path, default_config()) {
 			eprintln!(
 				"{APP_NAME}: could not create config {}: {e}",
 				path.display()
@@ -2806,7 +2816,7 @@ fn convert_legacy_config(path: &std::path::Path) {
 	}
 	let mut joined = out.join("\n");
 	joined.push('\n');
-	if let Err(e) = std::fs::write(path, joined) {
+	if let Err(e) = write_config_text(path, &joined) {
 		eprintln!(
 			"{APP_NAME}: could not convert config {}: {e}",
 			path.display()
@@ -2832,7 +2842,7 @@ fn migrate_config(path: &std::path::Path) {
 			note_config_busy(path);
 			return;
 		}
-		if let Err(e) = std::fs::write(path, out) {
+		if let Err(e) = write_config_text(path, &out) {
 			eprintln!(
 				"{APP_NAME}: could not migrate config {}: {e}",
 				path.display()
@@ -3083,7 +3093,7 @@ pub fn revert_keys(keys: &[&str]) {
 	let Some(out) = reverted_text(&text, keys) else {
 		return;
 	};
-	if let Err(e) = std::fs::write(&path, out) {
+	if let Err(e) = write_config_text(&path, &out) {
 		eprintln!(
 			"{APP_NAME}: could not update config {}: {e}",
 			path.display()
@@ -3111,7 +3121,7 @@ pub fn disable_keys(keys: &[&str]) {
 	let Some(out) = disabled_text(&text, keys) else {
 		return;
 	};
-	if let Err(e) = std::fs::write(&path, out) {
+	if let Err(e) = write_config_text(&path, &out) {
 		eprintln!(
 			"{APP_NAME}: could not update config {}: {e}",
 			path.display()
@@ -3276,7 +3286,7 @@ fn backfill_config(path: &std::path::Path) {
 			note_config_busy(path);
 			return;
 		}
-		if let Err(e) = std::fs::write(path, out) {
+		if let Err(e) = write_config_text(path, &out) {
 			eprintln!(
 				"{APP_NAME}: could not update config {}: {e}",
 				path.display()
@@ -3357,7 +3367,7 @@ fn refresh_shcl_banner(path: &std::path::Path) {
 		note_config_busy(path);
 		return;
 	}
-	if let Err(e) = std::fs::write(path, out) {
+	if let Err(e) = write_config_text(path, &out) {
 		eprintln!(
 			"{APP_NAME}: could not update config {}: {e}",
 			path.display()
@@ -4248,6 +4258,40 @@ mod tests {
 		assert_eq!(back.minimap, new.minimap, "the change itself is written");
 		assert_eq!(back.scroll_ease_in_ms, 300.0, "the profile's value was not");
 		assert!(back.wallpaper_enabled, "nor its wallpaper switch");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// Every launch-time rewrite used to truncate the file before writing it, so a
+	// crash or a full disk during one left nothing where the config was.
+	#[test]
+	fn a_launch_time_rewrite_never_truncates_the_config() {
+		let dir = std::env::temp_dir().join(format!("silkterm_cfgatomic_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).expect("temp dir");
+		let path = dir.join("config.shcl");
+		std::fs::write(&path, "font.size: 12.0\n").expect("write");
+
+		write_config_text(&path, "font.size: 13.0\n").expect("rewrite");
+		assert_eq!(std::fs::read_to_string(&path).unwrap(), "font.size: 13.0\n");
+		assert!(
+			!dir.join("config.shcl.new").exists(),
+			"no half-written file left beside it"
+		);
+
+		// nothing in the module writes the config any other way
+		let body = include_str!("config.rs")
+			.split("\nmod tests {")
+			.next()
+			.expect("the file above its own tests");
+		let raw: Vec<&str> = body
+			.lines()
+			.filter(|l| l.contains("fs::write(") && l.contains("path"))
+			.map(str::trim)
+			.collect();
+		assert!(
+			raw.is_empty(),
+			"these truncate the config before writing it: {raw:?}"
+		);
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
