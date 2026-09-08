@@ -153,12 +153,16 @@ fMain(){
 	## newest of each set is named '_latest', which is deliberately not listed.
 	local gfsRole=""
 	for gfsRole in first frequent hour day week month year; do baseCmdArgs+=("-x*_????????-??????_${gfsRole}.*"); done
-	## Project-specific excludes from the caller (space-joined -x'...' patterns), for
-	## big regenerable trees only this project knows about. Set by its cicd config.
+	## Project-specific excludes from the caller, for big regenerable trees only
+	## this project knows about. Set by its cicd config: one rar pattern per line,
+	## no '-x' prefix and no shell quoting. It used to be one space-joined string
+	## split with eval, which ran whatever the caller's environment held inside the
+	## script that then commits and pushes.
 	if [[ -n "${GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES:-}" ]]; then
-		local -a extraExcludes=()
-		eval "extraExcludes=( ${GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES} )"
-		((${#extraExcludes[@]})) && baseCmdArgs+=("${extraExcludes[@]}")
+		local excludePattern=""
+		while IFS= read -r excludePattern; do
+			[[ -n "${excludePattern}" ]]  &&  baseCmdArgs+=("-x${excludePattern}")
+		done <<<"${GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES}"
 	fi
 	local -a cmd_Rar=(rar "${baseCmdArgs[@]}" "${filePath_Rar}" "../.")
 	local -r cmd_Rar_display="rar ${baseCmdArgs[*]}  '${filePath_Rar}'  '../.'"

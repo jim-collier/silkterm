@@ -468,6 +468,12 @@ fi
 ## Headless scroll regression harness (slow; skipped under --quick). It skips itself
 ## on an environment miss (no Xvfb/binary) and exits non-zero only on a measured
 ## regression - which aborts here.
+## The publish script commits and pushes, so nothing may reach a shell inside it.
+if [[ -x "${root}/cicd/tests/publish/run.bash" ]]; then
+	fEcho_Clean "publish script safety ..."
+	"${root}/cicd/tests/publish/run.bash" >/dev/null || fDie "publish script safety test failed"
+	fEcho "OK: publish script safety"
+fi
 ## The harness's own exit code, which once printed OK after running no scenes.
 if [[ -x "${root}/cicd/tests/scroll/verdict-test.bash" ]]; then
 	fEcho_Clean "scroll harness verdict ..."
