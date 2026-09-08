@@ -26,9 +26,13 @@
 //!   is only safe because the region is delimited by our own two markers and
 //!   was written by us - which is exactly the signal a stored shell entry
 //!   lacks, and why THAT list may only ever be added to.
-//! - Deleting the block is how it is switched off; nothing puts it back, since
-//!   the block is gone and no marker is left to match. `shell.integration`
-//!   switches the whole thing off before it starts.
+//! - Deleting the block is how it is switched off. A note beside the config
+//!   records which profiles were written to, so a profile that carried the block
+//!   and no longer does is left alone - without it the next launch simply put the
+//!   block back, since the marker went with it. `shell.integration` switches the
+//!   whole thing off before it starts.
+//! - A profile that does not decode as UTF-8 is left alone: 5.1 writes UTF-16 by
+//!   default, and appending to a file we cannot read replaces it.
 //! - A shell that would refuse to load the profile is left alone. Measured on
 //!   this box: Windows PowerShell 5.1 sits at a policy that blocks script
 //!   files, so a profile written for it turned every launch into a red
@@ -292,7 +296,53 @@ fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
 	std::fs::rename(&tmp, path)
 }
 
+// Profiles we have written to before, one path per line, kept beside the config.
+//
+// Deleting the block is documented as how to switch this off, and without a note
+// of our own it was not: with the block gone there is no marker and no reporting
+// sequence, so the next launch put it straight back. A profile on this list that
+// no longer carries the block was emptied on purpose.
+fn installed_record() -> Option<PathBuf> {
+	Some(config::data_dir()?.join("shell-integration.installed"))
+}
+
+fn already_installed(record: Option<&Path>, profile: &Path) -> bool {
+	let Some(record) = record else {
+		return false;
+	};
+	let Ok(text) = std::fs::read_to_string(record) else {
+		return false;
+	};
+	let want = profile.to_string_lossy();
+	text.lines().any(|line| line.trim() == want)
+}
+
+fn note_installed(record: Option<&Path>, profile: &Path) {
+	let Some(record) = record else {
+		return;
+	};
+	if already_installed(Some(record), profile) {
+		return;
+	}
+	if let Some(parent) = record.parent() {
+		let _ = std::fs::create_dir_all(parent);
+	}
+	let line = format!("{}\n", profile.display());
+	let opened = std::fs::OpenOptions::new()
+		.create(true)
+		.append(true)
+		.open(record);
+	if let Ok(mut file) = opened {
+		use std::io::Write;
+		let _ = file.write_all(line.as_bytes());
+	}
+}
+
 fn install_into(profile: &Path) {
+	install_into_with(profile, installed_record().as_deref());
+}
+
+fn install_into_with(profile: &Path, record: Option<&Path>) {
 	let existing = match read_profile(profile) {
 		Ok(text) => text.unwrap_or_default(),
 		Err(why) => {
@@ -327,6 +377,10 @@ fn install_into(profile: &Path) {
 	if already_reports(&existing) {
 		return;
 	}
+	// put there once and taken out since: that is how this is switched off
+	if already_installed(record, profile) {
+		return;
+	}
 	if !backup_once(profile, &existing) {
 		return;
 	}
@@ -337,11 +391,14 @@ fn install_into(profile: &Path) {
 		}
 	}
 	match write_atomic(profile, &with_block(&existing, newline)) {
-		Ok(()) => eprintln!(
-			"{}: added shell integration to {} - new tabs and panes will open where the shell is (see shell-integration.md)",
-			config::APP_NAME,
-			profile.display()
-		),
+		Ok(()) => {
+			note_installed(record, profile);
+			eprintln!(
+				"{}: added shell integration to {} - new tabs and panes will open where the shell is (see shell-integration.md)",
+				config::APP_NAME,
+				profile.display()
+			);
+		}
 		Err(e) => eprintln!(
 			"{}: could not write {}: {e}",
 			config::APP_NAME,
@@ -540,6 +597,44 @@ mod tests {
 			!dir.join("Microsoft.PowerShell_profile.ps1.silkterm-new")
 				.exists(),
 			"no half-written file left beside it"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// Deleting the block is documented as how to switch this off, in four places
+	// including the block's own first line. It was not: with the block gone there
+	// was no marker to match and the next launch put it straight back.
+	#[test]
+	fn a_deleted_block_stays_deleted() {
+		let dir = std::env::temp_dir().join(format!("silkterm_intoff_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).expect("temp dir");
+		let profile = dir.join("Microsoft.PowerShell_profile.ps1");
+		let record = dir.join("shell-integration.installed");
+		std::fs::write(&profile, "Set-Alias ll Get-ChildItem\n").expect("write profile");
+
+		super::install_into_with(&profile, Some(&record));
+		assert!(
+			std::fs::read_to_string(&profile).unwrap().contains(MARKER),
+			"the block went in"
+		);
+
+		// the user takes it out again
+		std::fs::write(&profile, "Set-Alias ll Get-ChildItem\n").expect("write profile");
+		super::install_into_with(&profile, Some(&record));
+		assert_eq!(
+			std::fs::read_to_string(&profile).unwrap(),
+			"Set-Alias ll Get-ChildItem\n",
+			"and stays out"
+		);
+
+		// a profile we have never touched still gets it
+		let other = dir.join("other_profile.ps1");
+		std::fs::write(&other, "# theirs\n").expect("write profile");
+		super::install_into_with(&other, Some(&record));
+		assert!(
+			std::fs::read_to_string(&other).unwrap().contains(MARKER),
+			"a profile we have not written to before is not affected"
 		);
 		let _ = std::fs::remove_dir_all(&dir);
 	}
