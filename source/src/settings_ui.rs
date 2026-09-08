@@ -2494,7 +2494,7 @@ impl SettingsDialog {
 				if let Some(prompt) = self.prompt.as_mut() {
 					prompt.focus = PromptFocus::Field;
 				}
-				self.field_click(PROMPT_ROW, (PROMPT_ROW, 0), field, x, measure);
+				self.field_click(PROMPT_ROW, None, field, x, measure);
 			}
 		}
 	}
@@ -3315,7 +3315,7 @@ impl SettingsDialog {
 					// click the numeric field -> edit the value, caret at the click
 					let val_box = self.valbox(i);
 					if val_box.contains(x, y) {
-						self.field_click(i, (i, 1), val_box, x, measure);
+						self.field_click(i, Some((i, 1)), val_box, x, measure);
 						return Action::None;
 					}
 					let track = self.track(i);
@@ -3339,14 +3339,14 @@ impl SettingsDialog {
 					}
 					let hex_box = self.hexbox(i);
 					if hex_box.contains(x, y) {
-						self.field_click(i, (i, 0), hex_box, x, measure);
+						self.field_click(i, Some((i, 0)), hex_box, x, measure);
 						return Action::None;
 					}
 				}
 				Kind::Text => {
 					let text_box = self.textbox(i);
 					if text_box.contains(x, y) {
-						self.field_click(i, (i, 0), text_box, x, measure);
+						self.field_click(i, Some((i, 0)), text_box, x, measure);
 						return Action::None;
 					}
 				}
@@ -3458,12 +3458,12 @@ impl SettingsDialog {
 				ShellStop::Entry(k, ShellPart::Name) => {
 					let field = self.shell_name_box(i, k);
 					let row = shell_field_row(k, false);
-					self.field_click(row, (i, part), field, x, measure);
+					self.field_click(row, Some((i, part)), field, x, measure);
 				}
 				ShellStop::Entry(k, ShellPart::Command) => {
 					let field = self.shell_cmd_box(i, k);
 					let row = shell_field_row(k, true);
-					self.field_click(row, (i, part), field, x, measure);
+					self.field_click(row, Some((i, part)), field, x, measure);
 				}
 				ShellStop::Entry(k, ShellPart::Active) => {
 					self.focus = Some(Focus::Row(i, part));
@@ -3514,7 +3514,9 @@ impl SettingsDialog {
 	fn field_click(
 		&mut self,
 		row: usize,
-		focus: (usize, u16),
+		// None for the prompt box, which is not a row and must never reach the
+		// focus ring: the ring indexes `specs` with whatever it is given.
+		focus: Option<(usize, u16)>,
 		field: Rect,
 		x: f32,
 		measure: &mut impl FnMut(&str) -> f32,
@@ -3526,7 +3528,9 @@ impl SettingsDialog {
 		}
 		self.select_all_on_up = false;
 		let (shift, streak) = (self.shift, self.click_streak);
-		self.focus = Some(Focus::Row(focus.0, focus.1));
+		if let Some((r, p)) = focus {
+			self.focus = Some(Focus::Row(r, p));
+		}
 		let Some(edit) = &mut self.edit else { return };
 		let cur = caret_from_click(
 			&edit.buf,
@@ -7407,6 +7411,27 @@ mod tests {
 				"no edit opened on a panel row"
 			);
 		}
+	}
+
+	// The prompt is not a row. Clicking its field used to put the prompt's own
+	// sentinel index into the focus ring, and the next frame read the row list
+	// with it.
+	#[test]
+	fn clicking_the_prompt_field_leaves_the_focus_ring_on_a_real_row() {
+		let mut m = |s: &str| s.chars().count() as f32;
+		let mut d = on_theme("Matrix");
+		let row = d.specs.iter().position(|s| s.key == Key::ColFg).unwrap();
+		d.focus = Some(super::Focus::Row(row, 0));
+		d.theme_action(super::ThemeBtn::SaveAs);
+		let field = d.prompt_field_rect().expect("the box has a name field");
+		d.prompt_mouse_down(field.x + 4.0, field.y + field.h / 2.0, &mut m);
+
+		if let Some(super::Focus::Row(r, _)) = d.focus {
+			assert!(r < d.specs.len(), "focus row {r} is not a row");
+		}
+		// the frame that used to abort
+		let _ = d.rects_dip(d.line_h, &mut m);
+		assert!(d.prompt.is_some(), "the box is still up");
 	}
 
 	// Renaming moves the name and the selection together; the slug behind it does
