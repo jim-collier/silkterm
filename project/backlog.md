@@ -42,6 +42,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔘 Settings dialog: on a 1080p screen at 150% the buttons sit under the taskbar.
+	- Measured on Windows: the dialog comes up 831x1063 while the usable screen is 1920x1008, so the bottom 55 pixels are behind the taskbar - and that is exactly where Cancel, Apply and OK are. There is no way to press OK.
+	- Something already clamps the height, because 1063 is under the 1200 the declared size would give at that scale. It looks like it clamps to the display rather than to the part of it a window can use.
+	- A graphical scenario now measures this, so a full pipeline run fails on that machine until it is fixed.
+	- Opened: 20260908-145000
+
 - 🔘 Windows: keystrokes injected as characters rather than keys are ignored.
 	- Windows lets a program send a character directly instead of a key press, and it arrives tagged as a packet rather than as a key. Nothing types that way by hand, but the touch keyboard does for some characters, and so do text expanders and some accessibility tools.
 	- An ordinary window in the same session, sent the same text the same way, receives it. The terminal receives nothing at all. Sending real key presses works fine, which is what hid this.

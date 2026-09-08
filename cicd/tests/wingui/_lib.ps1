@@ -21,6 +21,7 @@ Add-Type -Namespace Silk -Name Win -MemberDefinition @'
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
 [DllImport("user32.dll")] public static extern IntPtr GetFocus();
+[DllImport("user32.dll")] public static extern bool SystemParametersInfoW(uint a, uint b, out RECT r, uint c);
 [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
 public struct RECT { public int Left, Top, Right, Bottom; }
 '@
@@ -375,6 +376,14 @@ function fSetting($path, $dotted) {
 		if ($line -match "^\s+#\s*${leaf}\s*:\s*(.*?)\s*(##.*)?$") { $fallback = $Matches[1].Trim().Trim('"') }
 	}
 	if ($null -ne $fallback) { @{ value = $fallback; source = "default" } } else { @{ value = $null; source = "absent" } }
+}
+
+##	The usable part of the screen: what is left once the taskbar has had its share.
+##	A window may be smaller than the display and still not fit.
+function fWorkArea {
+	$r = New-Object Silk.Win+RECT
+	if (-not [Silk.Win]::SystemParametersInfoW(0x0030, 0, [ref]$r, 0)) { return $null }
+	@{ x = $r.Left; y = $r.Top; w = $r.Right - $r.Left; h = $r.Bottom - $r.Top }
 }
 
 function fStop($p) {
