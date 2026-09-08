@@ -1846,19 +1846,27 @@ fn write_shells(
 	}
 }
 
-// One entry's whole subtree, dropped and rewritten so a field that no longer has
-// a value cannot survive under a key that stopped setting it.
+// One entry's fields, set where they already are. Dropping the subtree first
+// would be simpler, but it takes the entry's comments with it and puts it back
+// at the end of the block - and the scan stamps `last_seen` daily, so the first
+// launch of each day rewrote every entry it saw. The file's order names the
+// default shell, so a relocated entry can change which shell a new tab gets.
+// The two optional fields are removed rather than left behind when they empty.
 fn write_shell(doc: &mut shcl::Document, entry: &crate::shells::ShellEntry) {
 	let at = format!("shells.{}", entry.slug);
-	doc.remove(&at);
 	doc.put_string(&format!("{at}.title"), &entry.title);
 	doc.put_string(&format!("{at}.command"), &entry.command);
 	doc.put_bool(&format!("{at}.active"), entry.active);
-	if !entry.comment.is_empty() {
+	if entry.comment.is_empty() {
+		let _ = doc.remove(&format!("{at}.comment"));
+	} else {
 		doc.put_string(&format!("{at}.comment"), &entry.comment);
 	}
-	if let Some(when) = parse_iso_date(&entry.last_seen) {
-		doc.put_datetime(&format!("{at}.last_seen"), &when);
+	match parse_iso_date(&entry.last_seen) {
+		Some(when) => doc.put_datetime(&format!("{at}.last_seen"), &when),
+		None => {
+			doc.remove(&format!("{at}.last_seen"));
+		}
 	}
 }
 
@@ -3050,15 +3058,63 @@ pub fn revert_keys(keys: &[&str]) {
 		note_config_busy(&path);
 		return;
 	}
-	let Some(mut doc) = read_doc(&path) else {
+	let Ok(text) = std::fs::read_to_string(&path) else {
 		return;
 	};
-	// A dotted key ("colors.foreground") is already a path, nested or not.
-	for full_key in keys {
-		doc.remove(full_key);
+	let Some(out) = reverted_text(&text, keys) else {
+		return;
+	};
+	if let Err(e) = std::fs::write(&path, out) {
+		eprintln!(
+			"{APP_NAME}: could not update config {}: {e}",
+			path.display()
+		);
+		return;
 	}
-	let _ = write_doc(&path, &doc);
 	backfill_config(&path);
+}
+
+// The file with each named setting put back the way the template ships it.
+//
+// This is a line edit rather than a document one on purpose. Removing the node
+// takes its leading comments with it, and backfill then puts the setting back as
+// a bare line - so reverting a scrim setting used to destroy seven lines of
+// documentation, and a note the user wrote above their own value went the same
+// way. Answers None when nothing needs writing.
+fn reverted_text(text: &str, keys: &[&str]) -> Option<String> {
+	let template: std::collections::HashMap<String, String> =
+		setting_lines(default_config()).into_iter().collect();
+	let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+	let at = paths_at(&lines);
+	let mut changed = false;
+	for full_key in keys {
+		let Some(&i) = at.get(*full_key) else {
+			continue;
+		};
+		// keep the file's own indentation; only the line itself is the template's
+		let indent: String = lines[i]
+			.chars()
+			.take_while(|c| *c == '\t' || *c == ' ')
+			.collect();
+		let replacement = match template.get(*full_key) {
+			Some(line) => format!("{indent}{}", line.trim_start()),
+			// nothing ships it, so commenting it out is the whole revert
+			None if lines[i].trim_start().starts_with('#') => continue,
+			None => format!("{indent}# {}", lines[i].trim_start()),
+		};
+		if lines[i] != replacement {
+			lines[i] = replacement;
+			changed = true;
+		}
+	}
+	if !changed {
+		return None;
+	}
+	let mut out = lines.join("\n");
+	if text.ends_with('\n') {
+		out.push('\n');
+	}
+	Some(out)
 }
 
 // Insert any settings the shipped template defines that `path` lacks,
@@ -3986,6 +4042,34 @@ mod tests {
 		doc
 	}
 
+	// The scan stamps the date daily, so this fires on its own on the first launch
+	// of each day. It used to drop the entry's subtree and put it back at the end
+	// of the block, which loses its comments and moves it - and the first entry in
+	// the file is the default shell.
+	#[test]
+	fn a_daily_stamp_leaves_a_shell_where_it_is() {
+		let text = "shells:\n\n\t## the one I use\n\tbash:\n\t\ttitle: \"bash\"\n\t\tcommand: \"/bin/bash\"\n\t\tactive: true\n\n\tzsh:\n\t\ttitle: \"zsh\"\n\t\tcommand: \"/bin/zsh\"\n\t\tactive: true\n";
+		let mut doc = shcl::Document::parse(text);
+		let stored = read_shells(&doc);
+		assert_eq!(stored.len(), 2);
+		let mut now = stored.clone();
+		now[0].last_seen = "2026-09-08".to_string();
+
+		write_shells(&mut doc, &stored, &now);
+
+		assert_eq!(
+			doc.children("shells"),
+			vec!["bash", "zsh"],
+			"the default shell is the first entry, so it may not move"
+		);
+		let out = doc.to_canonical();
+		assert!(
+			out.contains("## the one I use"),
+			"its comment survives: {out:?}"
+		);
+		assert!(out.contains("2026-09-08"), "the stamp went in: {out:?}");
+	}
+
 	// File order IS the list's order - it decides what the menu offers first and
 	// therefore which shell is the default - and a reorder changes no entry, so
 	// the per-entry write path would have written nothing at all and lost it.
@@ -4209,6 +4293,34 @@ mod tests {
 			Settings::default().margin,
 			"the unusable one falls back to its default"
 		);
+	}
+
+	// Reverting used to remove the node, and shcl takes a node's leading comments
+	// with it - so a scrim setting destroyed seven lines of documentation, and a
+	// note written above a value went the same way.
+	#[test]
+	fn reverting_a_setting_keeps_the_comments_above_it() {
+		let text = "text:\n\n\t## A blurred patch of background color behind each letter, so text stays\n\t## readable over a wallpaper.\n\tscrim:\n\t\t## mine: I like it stronger\n\t\tstrength: 40\n";
+		let out = reverted_text(text, &["text.scrim.strength"]).expect("something to write");
+		assert!(
+			out.contains("## A blurred patch of background color"),
+			"the template's comments survive: {out:?}"
+		);
+		assert!(
+			out.contains("## mine: I like it stronger"),
+			"and so does a note written by hand: {out:?}"
+		);
+		assert!(
+			!out.contains("strength: 40"),
+			"the value itself is gone: {out:?}"
+		);
+		// back to how the template ships it, at the file's own indentation
+		assert!(
+			out.contains("\t\t# strength: 15  ## Default"),
+			"the template line went back: {out:?}"
+		);
+		// and a second revert of the same key has nothing left to do
+		assert!(reverted_text(&out, &["text.scrim.strength"]).is_none());
 	}
 
 	// Every numeric setting, at both extremes, in one place. Floors were there
