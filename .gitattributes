@@ -11,10 +11,12 @@
 cicd/utility/n8git_backup-and-publish   text eol=lf
 utility/git-hooks/pre-commit            text eol=lf
 utility/git-hooks/pre-push              text eol=lf
+utility/runterm                         text eol=lf
 
 # PowerShell is the mirror case: CRLF is the form it ships in, so pin that rather
 # than leave it to whoever checks it out.
 *.ps1           text eol=crlf
+*.cmd           text eol=crlf
 
 # Rust sources and .shcl documents are deliberately left alone. They build and test
 # the same either way, and settings_ui.shcl is compiled in with include_str!, so

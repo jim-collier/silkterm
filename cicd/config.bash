@@ -169,34 +169,31 @@ LINT_LOG_DIR="cicd/artifacts/lint"      # relative to repo root; created if miss
 ## ~30 - first + newest-per-hour/day/week/month/year + last 10. Tune with the
 ## GFS_KEEP_* env vars (GFS_KEEP_FREQUENT, GFS_KEEP_DAILY, ...) if needed.
 
-## Stage 6: dogfood the native release two ways. Empty either list to skip it.
-## Fixed: overwrite EXE_NAME in the first existing dir here (the stable path you run).
-DOGFOOD_FIXED_DESTS=(
-	"${HOME}/synced/0-0/common/exec/util/linux/bin"
-	"${HOME}/.local/bin"
-)
-## Rotating: also drop a dated copy "<DOGFOOD_PREFIX>_<YYYYmmDD-HHMMSS>_<tag>" here
-## (created if missing), so builds coexist under unique paths - an automated test
-## killing one can't hit an unrelated version - pruning older copies that aren't
-## running. Launch the newest via utility/n8runterm.bash. Set DOGFOOD_PREFIX empty to
-## disable the rotating copy.
-DOGFOOD_ROTATING_DESTS=(
-	"${HOME}/.local/bin"
-)
-DOGFOOD_PREFIX="slktrmdf"
-## Also install cross-built binaries under a fixed name, so a box that can't build
-## for its own platform still gets a current one over Dropbox. One line per dest:
-## "<os-arch>|<name at dest>|<dest dir>", where os-arch names a CROSS_TARGETS row.
-## A dest that doesn't exist warn-skips; a target not built this run is skipped
-## quietly. The copy keeps its mtime, which is the build date n8runterm reads.
-DOGFOOD_CROSS_DESTS=(
-	"windows-x86_64|SilkTerm.exe|${HOME}/synced/0-0/common/exec/util/mswin/gui/by-self/win64"
+## Stage 7: dogfood. Every build this run made is installed under a fixed name in
+## the synced app dir for the platform it TARGETS, so a box that cannot build for
+## itself still gets a current binary over Dropbox. Nothing here keeps a pool of
+## dated copies any more - the 'runterm' launcher on each box does that, in its own
+## rotated versions folder.
+## One line per flavor: "<os-arch>|<name at dest>|<dir>[|<dir>...]", where os-arch
+## names a CROSS_TARGETS row or RELEASE_NATIVE_OSARCH. The first writable dir wins;
+## none writable warn-skips, and a target not built this run is skipped quietly.
+## The copy keeps its mtime, which is the build date the launcher reads.
+DOGFOOD_DESTS=(
+	"linux-x86_64|${EXE_NAME}|${HOME}/synced/0-0/common/exec/app/linux"
+	"windows-x86_64|${EXE_NAME}.exe|${HOME}/synced/0-0/common/exec/app/mswin"
+	## ARM64 builds are released but not dogfooded: an app dir is per-OS, so only
+	## one binary can hold the name, and both boxes here are x86_64.
 	## macOS is deferred (no Mac, no SDK). Dest recorded for when there is one:
-	#"macos-arm64|SilkTerm|${HOME}/synced/0-0/common/exec/util/macos/bin"
+	#"macos-arm64|${EXE_NAME}|${HOME}/synced/0-0/common/exec/app/macos"
 )
+## Dropped beside each installed binary. The icon is what a .desktop entry points
+## at, by way of the launcher's symlink dir. Empty either to skip it.
+DOGFOOD_ICON="source/assets/logo.png"
 ## Which build a copy holds: "<toolchain: gnu|msvc><built on: l|m|b|w><target: l|m|b|w><arch: i|a>"
-## - so a pool of copies from several hosts stays readable (n8runterm.ps1 keeps three
-## on Windows). Left unset it's derived from this host; set it to pin, empty to drop.
+## - so a pool of copies from several hosts stays readable. It goes in a "<name>.tag"
+## sidecar, because a cross-build says nothing about the box that later reads it.
+## Left unset it is derived per dest from this host plus the target; set it to pin
+## every dest to one value, empty to drop the sidecar.
 # DOGFOOD_TAG="gnulli"
 
 ## Stage 7: backup + publish to git (runs from repo root).
