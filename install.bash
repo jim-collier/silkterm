@@ -108,19 +108,49 @@ function fGet() {
 
 ##	fApi <url> - same, to stdout, carrying the optional token. Only the API is
 ##	rate-limited per IP; release downloads are not, so they stay anonymous.
-function fApi() {
-	local url="$1"
-	if [ "${dlTool}" = "curl" ]; then
-		if [ -n "${apiToken}" ]; then
-			curl -fsSL -H "Authorization: Bearer ${apiToken}" "${url}"
+##	Https on the first request and on every redirect after it. Without this a
+##	redirect can walk the download down to plain http, which is where the
+##	checksum stops meaning anything.
+httpsOnly_curl=(--proto '=https' --proto-redir '=https')
+httpsOnly_wget=(--https-only)
+
+##	The token goes in a file rather than on the command line, where 'ps' shows it
+##	to every account on the box. Written 0600 inside a directory only we can read,
+##	and removed on exit.
+authDir=""
+authFile=""
+function fAuthFile() {
+	[ -n "${apiToken}" ] || return 1
+	if [ -z "${authFile}" ]; then
+		authDir="$(mktemp -d 2>/dev/null)" || return 1
+		chmod 700 "${authDir}" 2>/dev/null
+		authFile="${authDir}/auth"
+		##	The two tools read their own config format, and only curl's takes
+		##	quotes - wget's rc keeps everything after the '=' verbatim.
+		if [ "${dlTool}" = "curl" ]; then
+			( umask 077; printf 'header = "Authorization: Bearer %s"\n' "${apiToken}" >"${authFile}" )
 		else
-			curl -fsSL "${url}"
+			( umask 077; printf 'header = Authorization: Bearer %s\n' "${apiToken}" >"${authFile}" )
+		fi
+	fi
+	printf '%s' "${authFile}"
+}
+
+function fApi() {
+	local url="$1" auth=""
+	auth="$(fAuthFile 2>/dev/null)" || auth=""
+	if [ "${dlTool}" = "curl" ]; then
+		if [ -n "${auth}" ]; then
+			curl -fsSL "${httpsOnly_curl[@]}" --config "${auth}" "${url}"
+		else
+			curl -fsSL "${httpsOnly_curl[@]}" "${url}"
 		fi
 	else
-		if [ -n "${apiToken}" ]; then
-			wget -qO- --header="Authorization: Bearer ${apiToken}" "${url}"
+		##	wget takes no header file, but it reads one out of a config file.
+		if [ -n "${auth}" ]; then
+			WGETRC="${auth}" wget -qO- "${httpsOnly_wget[@]}" "${url}"
 		else
-			wget -qO- "${url}"
+			wget -qO- "${httpsOnly_wget[@]}" "${url}"
 		fi
 	fi
 }
@@ -129,9 +159,9 @@ function fApi() {
 function fGetShown() {
 	local url="$1" out="$2"
 	if [ "${dlTool}" = "curl" ]; then
-		curl -fSL --progress-bar -o "${out}" "${url}"
+		curl -fSL "${httpsOnly_curl[@]}" --progress-bar -o "${out}" "${url}"
 	else
-		wget -q --show-progress -O "${out}" "${url}"
+		wget -q "${httpsOnly_wget[@]}" --show-progress -O "${out}" "${url}"
 	fi
 }
 
@@ -163,7 +193,10 @@ function fCanWrite() {
 ##	returned, so a local would be out of scope by then (and `set -u` turns that
 ##	into a failed exit status on an otherwise perfect install).
 tmpDir=""
-function fCleanup() { [ -z "${tmpDir}" ] || rm -rf "${tmpDir}"; }
+function fCleanup() {
+	[ -z "${tmpDir}" ]  || rm -rf "${tmpDir}"
+	[ -z "${authDir}" ] || rm -rf "${authDir}"
+}
 
 ##	0 = yes, 1 = no, 2 = could not ask at all.
 ##	The terminal comes FIRST because the `curl ... | bash` form leaves the script

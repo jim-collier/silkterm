@@ -285,8 +285,13 @@ function fMain {
 	##	Pull the checksums first: it is small, it says which platforms this
 	##	release actually carries, and its hash lets an already-current install
 	##	finish without downloading the binary at all.
-	$tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "$exeName-install-$PID"
-	New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
+	##	A predictable name under a shared temp directory is somebody else's to
+	##	create first, and '-Force' would then adopt it - or the symlink they put
+	##	there. Random name, and no '-Force', so an existing path is an error.
+	$tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) `
+		("$exeName-install-" + [System.IO.Path]::GetRandomFileName())
+	try { New-Item -ItemType Directory -Path $tmpDir -ErrorAction Stop | Out-Null }
+	catch { fFail "could not create a temporary directory ($tmpDir)" @($_.Exception.Message) }
 	try {
 		$sumsPath = Join-Path $tmpDir $sums
 		try { Invoke-WebRequest -Uri "$dlBase/$tag/$sums" -OutFile $sumsPath @webArgs }
