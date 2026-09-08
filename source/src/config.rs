@@ -990,6 +990,18 @@ fn unwritable(doc: &shcl::Document, path: &str, applied: bool) {
 // false (writing nothing) if the file looks open in another program, so the
 // caller can hold off - e.g. the Settings dialog stays open instead of
 // clobbering an in-flight edit.
+// Settings the user cleared back to "not set". These write nothing - there is no
+// value to write - so without naming them here the old line stays in the file
+// and the setting comes back next launch. One long today; anything optional
+// added to the dialog belongs on it.
+fn cleared_keys(orig: &Settings, s: &Settings) -> Vec<&'static str> {
+	let mut out = Vec::new();
+	if s.font_family.is_none() && orig.font_family.is_some() {
+		out.push("font.family");
+	}
+	out
+}
+
 #[must_use]
 pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	let Some(path) = config_path() else {
@@ -1307,7 +1319,14 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 		orig.scrollbar_trough,
 	);
 
-	write_doc(&path, &doc)
+	let cleared = cleared_keys(orig, s);
+	let wrote = write_doc(&path, &doc);
+	if wrote && !cleared.is_empty() {
+		// commented out rather than reverted: the box was cleared, and "not set"
+		// is not the same as the value the template ships
+		disable_keys(&cleared);
+	}
+	wrote
 }
 
 pub fn format_hex(c: [u8; 3]) -> String {
@@ -3074,33 +3093,56 @@ pub fn revert_keys(keys: &[&str]) {
 	backfill_config(&path);
 }
 
-// The file with each named setting put back the way the template ships it.
+// Comment the named settings out, so each is as good as absent. Used for a
+// setting the user cleared: there is no value to write, and leaving the old line
+// alone brought it back next launch.
+pub fn disable_keys(keys: &[&str]) {
+	if keys.is_empty() {
+		return;
+	}
+	let Some(path) = config_path() else { return };
+	if config_open_elsewhere(&path) {
+		note_config_busy(&path);
+		return;
+	}
+	let Ok(text) = std::fs::read_to_string(&path) else {
+		return;
+	};
+	let Some(out) = disabled_text(&text, keys) else {
+		return;
+	};
+	if let Err(e) = std::fs::write(&path, out) {
+		eprintln!(
+			"{APP_NAME}: could not update config {}: {e}",
+			path.display()
+		);
+	}
+}
+
+// Rewrite the named settings' own lines, leaving everything above them alone.
 //
-// This is a line edit rather than a document one on purpose. Removing the node
-// takes its leading comments with it, and backfill then puts the setting back as
-// a bare line - so reverting a scrim setting used to destroy seven lines of
-// documentation, and a note the user wrote above their own value went the same
-// way. Answers None when nothing needs writing.
-fn reverted_text(text: &str, keys: &[&str]) -> Option<String> {
-	let template: std::collections::HashMap<String, String> =
-		setting_lines(default_config()).into_iter().collect();
+// A line edit rather than a document one on purpose: removing the node takes its
+// leading comments with it, so reverting a scrim setting used to destroy seven
+// lines of documentation, and a note written above a value went the same way.
+// `line_for` is given the key, the file's own indentation and the current line,
+// and answers the replacement or None to leave it. Answers None when nothing
+// needs writing.
+fn edit_setting_lines(
+	text: &str,
+	keys: &[&str],
+	line_for: impl Fn(&str, &str, &str) -> Option<String>,
+) -> Option<String> {
 	let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
 	let at = paths_at(&lines);
 	let mut changed = false;
-	for full_key in keys {
-		let Some(&i) = at.get(*full_key) else {
-			continue;
-		};
-		// keep the file's own indentation; only the line itself is the template's
+	for key in keys {
+		let Some(&i) = at.get(*key) else { continue };
 		let indent: String = lines[i]
 			.chars()
 			.take_while(|c| *c == '\t' || *c == ' ')
 			.collect();
-		let replacement = match template.get(*full_key) {
-			Some(line) => format!("{indent}{}", line.trim_start()),
-			// nothing ships it, so commenting it out is the whole revert
-			None if lines[i].trim_start().starts_with('#') => continue,
-			None => format!("{indent}# {}", lines[i].trim_start()),
+		let Some(replacement) = line_for(key, &indent, &lines[i]) else {
+			continue;
 		};
 		if lines[i] != replacement {
 			lines[i] = replacement;
@@ -3115,6 +3157,30 @@ fn reverted_text(text: &str, keys: &[&str]) -> Option<String> {
 		out.push('\n');
 	}
 	Some(out)
+}
+
+// One setting's line commented out, so the setting is as good as absent.
+fn commented(indent: &str, line: &str) -> Option<String> {
+	let body = line.trim_start();
+	(!body.starts_with('#')).then(|| format!("{indent}# {body}"))
+}
+
+// The file with each named setting put back the way the template ships it.
+fn reverted_text(text: &str, keys: &[&str]) -> Option<String> {
+	let template: std::collections::HashMap<String, String> =
+		setting_lines(default_config()).into_iter().collect();
+	edit_setting_lines(text, keys, |key, indent, line| match template.get(key) {
+		Some(shipped) => Some(format!("{indent}{}", shipped.trim_start())),
+		// nothing ships it, so commenting it out is the whole revert
+		None => commented(indent, line),
+	})
+}
+
+// The file with each named setting commented out. This is what a cleared box
+// means - "not set" - which is not the same as the template's default, and the
+// template ships some of these with a value.
+fn disabled_text(text: &str, keys: &[&str]) -> Option<String> {
+	edit_setting_lines(text, keys, |_, indent, line| commented(indent, line))
 }
 
 // Insert any settings the shipped template defines that `path` lacks,
@@ -4241,6 +4307,20 @@ mod tests {
 			"scalar should be left verbatim: {saved:?}"
 		);
 		assert_eq!(load().wallpaper_opacity, 0.1);
+
+		// clearing the Family box has to take the line out: writing nothing left
+		// it there and the font came back next launch
+		let before = load();
+		let mut named = before.clone();
+		named.font_family = Some("Iosevka".to_string());
+		assert!(persist(&before, &named));
+		assert_eq!(load().font_family.as_deref(), Some("Iosevka"));
+
+		let before = load();
+		let mut cleared = before.clone();
+		cleared.font_family = None;
+		assert!(persist(&before, &cleared));
+		assert_eq!(load().font_family, None, "cleared, and it stays cleared");
 	}
 
 	// The /proc-based busy check: a child process holding the file open is seen as
@@ -4293,6 +4373,20 @@ mod tests {
 			Settings::default().margin,
 			"the unusable one falls back to its default"
 		);
+	}
+
+	// Clearing the Family box wrote nothing at all, so the old line survived and
+	// the font came back next launch.
+	#[test]
+	fn clearing_the_font_family_takes_the_old_line_out() {
+		let mut set = Settings::default();
+		set.font_family = Some("Iosevka".to_string());
+		let mut none = set.clone();
+		none.font_family = None;
+		assert_eq!(cleared_keys(&set, &none), vec!["font.family"]);
+		// setting one, or leaving it alone, is an ordinary write
+		assert!(cleared_keys(&none, &set).is_empty());
+		assert!(cleared_keys(&set, &set).is_empty());
 	}
 
 	// Reverting used to remove the node, and shcl takes a node's leading comments
