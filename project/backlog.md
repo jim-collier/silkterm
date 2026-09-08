@@ -61,6 +61,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
+- 🔘 Run the interface checks on Windows from here as well.
+	- The runner covers everything that needs no window. A screenshot or a click needs an interactive session, and a Windows client allows only one of those at a time, so an unattended session and somebody using the machine cannot share a box.
+	- Two machines makes that workable, since whichever one is idle can take the job. Needs a way to ask which that is.
+	- The two also bracket the hardware range the performance profiles choose between, which has so far only ever been rated on software rendering.
+	- Opened: 20260908-020000
+
 - 🔘 Settings | Silk: Allow "Profile" to be selected even when "Choose automatically" is enabled.
 	- If user changes it, deselect "Choose automatically".
 	- Exception: If user chooses "Remote (temporary)", don't change state of "Choose automatically".
@@ -1165,6 +1171,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Run builds and tests on the Windows machines from here.
+	- Several defects only exist on Windows and cannot be reproduced on the development box at all, so checking one meant doing it by hand on the other machine.
+	- A runner under `cicd/utility/` sends a job over ssh to one or both Windows boxes and prints what comes back. Jobs are small scripts in their own folder beside it, so adding one is a new file rather than an edit to the runner.
+	- Each box keeps its own clone, reset to `origin/dev` before a job runs. Uncommitted work here does not reach it, so push first.
+	- A box that is switched off, or that has moved between wired and wireless, is skipped with a warning. Only an unreachable set, or a job that ran and failed, is an error.
+	- Machine names sit in a config file outside the repo, the same way no script stores an account name.
+	- The unit tests and clippy both pass against the native Windows toolchain, which the cross-build here does not exercise.
+	- Opened: 20260908-010000
+	- Closed: 20260908-020000
 
 - ✅ One dogfood launcher for all three platforms, installed from the synced app dir.
 	- The Windows-only PowerShell launcher and the separate bash one were two implementations of the same thing and had drifted. There is one `n8runterm.ps1` now, with thin `runterm` wrappers per platform that find it and hand it the arguments.
