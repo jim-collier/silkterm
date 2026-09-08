@@ -191,6 +191,10 @@ fn encode_key(
 					vec![b'\t']
 				}
 				NamedKey::Escape => vec![0x1b],
+				// winit reports the spacebar as a named key on every platform, so
+				// this is where Ctrl+Space has to become NUL - set-mark in emacs,
+				// readline and tmux all rely on it.
+				NamedKey::Space if ctrl => vec![0],
 				NamedKey::Space => vec![b' '],
 				NamedKey::ArrowUp => cursor_seq(b'A', app_cursor),
 				NamedKey::ArrowDown => cursor_seq(b'B', app_cursor),
@@ -217,7 +221,7 @@ fn encode_key(
 				let lower = c.to_ascii_lowercase();
 				let code = match lower {
 					'a'..='z' => (lower as u8 - b'a') + 1,
-					'@' | ' ' => 0,
+					'@' => 0,
 					'[' => 0x1b,
 					'\\' => 0x1c,
 					']' => 0x1d,
@@ -361,6 +365,21 @@ mod tests {
 		// SGR flag alone (no click/drag/motion) is not tracking
 		assert!(
 			mouse_report(TermMode::SGR_MOUSE, MouseBtn::Left, true, false, 0, 0, NONE).is_none()
+		);
+	}
+
+	// winit calls the spacebar a named key, so Ctrl+Space never reached the
+	// control-code path and sent a plain space. Emacs and readline set-mark, and
+	// tmux begin-selection, all want NUL.
+	#[test]
+	fn ctrl_space_is_nul() {
+		let ctrl = ModifiersState::CONTROL;
+		assert_eq!(enc(NamedKey::Space, ctrl, false).unwrap(), [0x00]);
+		assert_eq!(enc(NamedKey::Space, NONE, false).unwrap(), b" ");
+		// Ctrl+Alt+Space still takes the alt prefix
+		assert_eq!(
+			enc(NamedKey::Space, ctrl | ModifiersState::ALT, false).unwrap(),
+			[0x1b, 0x00]
 		);
 	}
 

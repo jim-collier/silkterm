@@ -42,36 +42,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 Code review 20260908. Twenty-five defects, full-codebase pass. Detail per item is in `details.md` under the matching number.
-	- Four of them destroy or lose something, and those come first. Items 1 through 13 are worth fixing before the next release; 14 through 25 are real but survivable.
-	- 🔘 1. Wallpaper rotation never re-arms its timer, so every pass through the event loop starts another decode thread. Measured on the rig: 5,636 threads and 11 cores in 75 seconds, memory still climbing, no recovery. Only reachable with a rotation interval above zero, which is why nobody has hit it.
-	- 🔘 2. Settings, Themes, "Save as...", then one click in the name box, crashes the program. The click puts a sentinel row index into the keyboard focus, and the next frame reads the row list with it. Typing in the box without clicking is safe, which is why the existing test misses it.
-	- 🔘 3. A PowerShell profile that is not valid UTF-8 is replaced whole by the integration block, with no backup. UTF-16 is what PowerShell 5.1 writes by default, so this is an ordinary profile rather than a broken one. The refresh path also rewrites the whole file with no backup and no atomic rename.
-	- 🔘 4. Two config values abort the program at launch. A six-byte color containing a multi-byte character, and a variable name whose fifth byte falls inside a character. Both happen before the window exists, so the file that causes it cannot be fixed from the terminal it kills.
-	- 🔘 5. A save that failed reports success. The dialog closes as if it wrote. One space-indented line in the config makes every later save refuse, permanently, and on Windows nothing is printed to say so.
-	- 🔘 6. Window size, margin, line height and scrollback have floors but no ceilings. A value in the low thousands aborts at launch on a GPU limit; a large scrollback grows until the process is killed. Same class as the 20260707 `output_ease_lines` item, which was fixed in place instead of by an audit.
-	- 🔘 7. Rewriting a setting deletes the comments above it. Eight of the 75 dialog settings destroy template documentation when reverted. The shells list does it on its own, on the first launch of each day, and can change which shell a new tab gets.
-	- 🔘 8. Read-only panes still take the wheel. On the alt screen a notch sends arrow keys to the child, which is what the menu tip says it withholds.
-	- 🔘 9. Copy-on-output busy-waits for the whole life of a command that prints nothing, holding a core.
-	- 🔘 10. Clearing the font Family field is not written to the config, so it comes back next launch.
-	- 🔘 11. The dogfood launcher deletes an installed release build. Both put a file at the same path, and the launcher removes whatever is there before making its symlink.
-	- 🔘 12. The scroll ledger's line counter has no bound when nothing drains it. A background tab under sustained output overflows it in a couple of minutes.
-	- 🔘 13. Two glyph caches can be read after they are cleared. A font-size change during heavy output reaches one of them; the color-emoji sweep can reach the other.
-	- 🔘 14. Grayed color, text and radio rows still take a left click and still change the setting. The right-click path checks correctly, so the two disagree.
-	- 🔘 15. The tab strip resolves every stored shell through the filesystem, and stats the reported directory, once per tab per frame. Either one freezes the window if the path is on a mount that has stopped answering.
-	- 🔘 16. Terminal query replies are dropped. Programs asking for the background color or the text area size wait out their timeout on every start and then guess.
-	- 🔘 17. Ctrl+Space sends a space instead of NUL, so set-mark does not work in emacs, readline or tmux.
-	- 🔘 18. The scroll harness prints OK and exits zero when it ran no scenes. This is the beta3 behavior already recorded and it is still unfixed; the flag that would catch it is never passed.
-	- 🔘 19. The publish script runs `eval` on an environment variable, in the script that then commits and pushes.
-	- 🔘 20. Installer and rig hygiene: a predictable scratch directory in `/tmp` that the PowerShell installer will adopt if it already exists, a token passed on a command line where `ps` shows it, a world-readable auth cookie for the headless display, and a checksum fetched from the same place as the artifact it covers with nothing signed.
-	- 🔘 21. The release script verifies artifacts against their own checksums and never against the commit being tagged, so a stale build can be published under a new tag with everything reporting green.
-	- 🔘 22. Deleting the shell integration block does not switch it off. The next launch puts it back. Four places state the opposite, including the block's own first line.
-	- 🔘 23. The scrim allocates five full-screen textures whether or not it draws anything, and a size change made from Settings resizes the renderer but not the scrim.
-	- 🔘 24. Above scrim radius 20 the falloff stops reaching zero, which flattens every pane to a plate of background color. The slider cannot reach it; the config file can.
-	- 🔘 25. Windows link opening does not escape `%`, so a URL printed by a remote host can be expanded before it is sent, and an expanded value containing `&` starts a second command. Needs the Windows box to confirm.
-	- Not defects, recorded so they are not re-found: the fork's `scroll_down_relative` clamps correctly and only `scroll_up_relative` can record a count past its region; the pedantic clippy set's 818 warnings are almost entirely `mul_add`, float comparison in tests, and `const fn`.
-	- Opened: 20260908-041002
-
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
 	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
 	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
@@ -90,17 +60,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
 
 ### New features and enhancements
-
-- 🔘 Code review 20260908, the enhancement half. Kept short on purpose - the defect list from the same pass is long, and the count only visibly comes down while the wishlist is frozen.
-	- 🔘 Sign the releases. A detached signature over the checksum file, with the key pinned in both installers, is the only thing that turns the existing check from transport integrity into provenance.
-	- 🔘 One clamp table beside `resolve`, giving every numeric setting a floor and a ceiling, plus a finite test in the reader. shcl reads `1e400` as infinity and reports it good. This is what closes defect 6 for the whole table instead of one setting at a time.
-	- 🔘 Say something once at load about config lines that were dropped, keys set twice, and keys nothing reads. All three are silent today, and the first of them permanently disables saving.
-	- 🔘 Fifty-five of the 77 dialog rows carry flyover help. The interface guide asks for about a third, and says that if most rows need one the labels are wrong. Either the labels or the guide should move.
-	- 🔘 The shells grid's Name and Command fields have no right-click menu, while every other field in the dialog does. The Menu key works there, so the two input paths disagree.
-	- 🔘 Cap the wallpaper before it is decoded and blurred. The intermediate is sixteen bytes a pixel and nothing downscales, so an ordinary large photo needs gigabytes, and an image wider than the GPU's texture limit aborts.
-	- 🔘 The scrim composite takes 24 texture samples per pixel per frame for the outline even when the outline is off, and samples the cursor pass when the cursor scrim is off. Both are one guard each.
-	- 🔘 Route the launch-time config rewrites through the atomic save the settings path already uses. Three of them truncate the file first, so a crash or a full disk during one leaves nothing.
-	- Opened: 20260908-041002
 
 - 🔘 Run the interface checks on Windows from here as well.
 	- The runner covers everything that needs no window. A screenshot or a click needs an interactive session, and a Windows client allows only one of those at a time, so an unattended session and somebody using the machine cannot share a box.
@@ -245,6 +204,38 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ Code review 20260908. Twenty-five defects, full-codebase pass. Each is fixed and each left a test behind that fails without the fix.
+	- ✅ 1. Wallpaper rotation spawned a decode thread on every pass through the event loop and never recovered. The timer moves off the current moment when a tick fires, rather than waiting for an answer that could never be current.
+	- ✅ 2. Settings, Themes, "Save as...", then a click in the name box, aborted the program. The prompt box is not a row, and it can no longer put itself into the row list's keyboard focus.
+	- ✅ 3. A PowerShell profile that is not valid UTF-8 was replaced whole with no backup. Such a profile is left alone now, the backup covers the update path as well, and both writes rename into place instead of truncating.
+	- ✅ 4. Two config values aborted the program before the window existed - a six-byte color holding a multi-byte character, and a variable name split mid-character. Both are read as text rather than sliced as bytes.
+	- ✅ 5. A save that failed reported success and the dialog closed as if it had written. The result reaches the caller now.
+	- ✅ 6. Window size, margin, line height and scrollback had floors and no ceilings, so a value in the low thousands aborted at launch and a large scrollback grew until the process was killed. Every numeric setting has both ends now, in one table, and a value that is not a number falls back to the default.
+	- ✅ 7. Rewriting a setting destroyed the comments above it, and the shell list did it on its own on the first launch of each day. Both edit the line in place and leave everything above it alone.
+	- ✅ 8. A read-only pane took the wheel, which on the alt screen sent arrow keys to the child. Everything the user's hands send goes through one gate; only a reply the terminal owes the program bypasses it.
+	- ✅ 9. Copy-on-output held a core for the life of any command that printed nothing. A poll that finds the shell busy asks again later instead of straight away.
+	- ✅ 10. Clearing the font Family field wrote nothing, so the old value came back next launch. A cleared setting is commented out.
+	- ✅ 11. The dogfood launcher deleted a release build installed at the same path. It replaces only its own symlink or a copy of one of its own builds, and says so when it leaves something alone.
+	- ✅ 12. The scroll ledger's counters had no bound with nobody draining them, which a background tab under sustained output reached in minutes. Both saturate.
+	- ✅ 13. Two glyph caches could be read after being cleared. The pair is emptied together, and neither lookup can abort.
+	- ✅ 14. Grayed color, text and radio rows still took a left click and still changed the setting. The check sits in front of the press handler now rather than inside each arm, and a grayed text row reads as grayed.
+	- ✅ 15. The tab strip resolved every stored shell through the filesystem and stat'd the reported directory, once per tab per frame. Both are throttled to the rate the tab's other facts already use, and the shell name is kept until the list changes.
+	- ✅ 16. Programs asking for the background color or the text area size got nothing and waited out their timeout. Both are answered.
+	- ✅ 17. Ctrl+Space sent a space instead of NUL, so set-mark did nothing in emacs, readline or tmux.
+	- ✅ 18. The scroll harness printed OK and exited zero when it had run no scenes. Nothing measured is a failure now, whatever the flags say.
+	- ✅ 19. The publish script evaluated one of its own environment variables as shell, in the script that then commits and pushes. The exclude list is one pattern per line and nothing is evaluated.
+	- ✅ 20. Installer and rig hygiene: the Windows installer no longer adopts a temp directory somebody else made, the token stays off the command line where `ps` shows it, both downloads refuse a redirect to plain http, and the headless rig refuses a run directory it does not own and keeps its display key private.
+	- ✅ 21. The release could publish a stale build under a new tag with everything reporting green. The artifacts now say which source they were built from, and a release refuses to go out unless that matches.
+	- ✅ 22. Deleting the shell integration block did not switch it off - the next launch put it back, which four places said it would not. A note beside the config records which profiles were written to.
+	- ✅ 23. The scrim built five full-screen textures whether or not it drew anything, hundreds of megabytes on a large display for a feature doing nothing. It allocates when something asks for it. A grid size set from Settings also resizes it now, which it did not.
+	- ✅ 24. Past a scrim radius of 20 the halo stopped falling off and flattened every pane to a plate of background color. The slider could not reach it; the config file could.
+	- ✅ 25. The Windows link opener passed the URL through a shell whose parser expands percent variables before any escaping, so a URL printed by a remote host could carry a second command in. Nothing goes through a shell now.
+	- Not defects, recorded so they are not re-found: the fork's `scroll_down_relative` clamps correctly and only `scroll_up_relative` can record a count past its region; the pedantic clippy set's 818 warnings are almost entirely `mul_add`, float comparison in tests, and `const fn`.
+	- Note: the launcher fix reaches the copies outside the repo only when they are redeployed.
+	- Note: everything on Windows is still unrun. The link opener, the profile writes and the console paths were all changed by reading.
+	- Opened: 20260908-041002
+	- Closed: 20260908-071500
 
 - ✅ A prompt coming back after a command slides in oddly:
 	- When the screen is not full, and a command finishes, the new command prompt appears to slide down, from under the stationary contents above it. (As if sliding down from "behind" content above with a hard horizontal edge.)
@@ -1212,6 +1203,18 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Code review 20260908, the enhancement half.
+	- ✅ Releases are signed. One signature over the checksums file covers every artifact; both installers refuse a release whose signature does not verify against the key pinned in them. Inert until a key is generated - the commands are in the pipeline config, and until then a release says out loud that it is unsigned.
+	- ✅ One table gives every numeric setting a floor and a ceiling, and a value that is not a number falls back to its default. This is what closed defect 6 for the whole table.
+	- ✅ A config file now says what is wrong with it: lines that could not be read (which also stop it saving), a key set twice, and a key nothing reads. All three were silent.
+	- ✅ Flyover help is not a quota. The rule is whether the tip says anything the label does not, and a dialog of rendering settings will carry one on most of its rows. The interface guide says that now, and a test holds every tip to it.
+	- ✅ The shells grid's Name and Command fields take a right-click menu, like every other field in the dialog.
+	- ✅ A wallpaper is cut down to a size worth drawing before it is decoded and blurred. Measured on a 45 megapixel photo: a little over two gigabytes down to under one, and an image past the graphics card's limit no longer aborts.
+	- ✅ The scrim's outline taps and its cursor sample only run when there is an outline and a cursor scrim to draw.
+	- ✅ Every launch-time config rewrite renames into place instead of truncating the file first.
+	- Opened: 20260908-041002
+	- Closed: 20260908-071500
 
 - ✅ The dogfood launcher is installed on the Windows machines, and the menu items point at it.
 	- Nothing on Windows had ever run it. The menu and taskbar entries still called the retired Windows-only launcher, and took their icon from a fixed-name build, both of which the move to a single launcher had already removed. So every one of them was dead.

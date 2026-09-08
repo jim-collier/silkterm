@@ -178,6 +178,23 @@ fn index_of(images: &[PathBuf], name: &str) -> Option<usize> {
 		.position(|path| path.file_name().is_some_and(|f| f == name))
 }
 
+// The longest edge a wallpaper is kept at. Past a 4K display's own width there
+// is nothing left to see, and every common GPU takes a texture this size.
+const MAX_EDGE: u32 = 4096;
+
+// The size to scale down to, or None when it already fits. Proportions kept, and
+// never scaled up.
+fn fit_within(w: u32, h: u32, max: u32) -> Option<(u32, u32)> {
+	if w == 0 || h == 0 || (w <= max && h <= max) {
+		return None;
+	}
+	let scale = f64::from(max) / f64::from(w.max(h));
+	Some((
+		((f64::from(w) * scale).round() as u32).max(1),
+		((f64::from(h) * scale).round() as u32).max(1),
+	))
+}
+
 // Decode the wallpaper and apply everything that is fixed at load time (blur,
 // contrast mask, the image's own layout tags). `folder_active` suppresses the
 // built-in stand-in where no path was given at all, since rotation is about to
@@ -204,6 +221,14 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 		// so a fresh install still looks the part. Opt out with wallpaper_fallback_builtin.
 		None => (!folder_active).then(|| builtin(settings)).flatten()?,
 	};
+	// A wallpaper is only ever drawn at window size, and the linear intermediate
+	// below is sixteen bytes a pixel with nothing between the file and it - so an
+	// ordinary large photo wanted gigabytes, and an image wider than the GPU's
+	// texture limit aborted the upload outright. Blurring gets much cheaper too,
+	// and the blur reads truer: its radius is now relative to what is on screen.
+	if let Some((w, h)) = fit_within(img.width(), img.height(), MAX_EDGE) {
+		img = image::imageops::resize(&img, w, h, image::imageops::FilterType::Triangle);
+	}
 	// The image's own tags: layout, and the two look values. Read straight from
 	// the file the pixels came from - the embedded default wallpaper has no
 	// path, and keeps the configured values.
@@ -366,6 +391,33 @@ mod tests {
 			wallpaper_contrast_mask: false,
 			..Settings::default()
 		}
+	}
+
+	// Nothing sat between the file and a linear f32 buffer at sixteen bytes a
+	// pixel, so an ordinary large photo wanted gigabytes and an image past the
+	// GPU's texture limit aborted the upload.
+	#[test]
+	fn a_large_wallpaper_is_cut_down_before_any_of_the_work() {
+		use super::{MAX_EDGE, fit_within};
+		// a 60 megapixel camera file, and what it used to cost as f32 rgba
+		let (w, h) = (9504, 6336);
+		// and the blur holds a second copy of it
+		assert!(
+			u64::from(w) * u64::from(h) * 16 > 900 << 20,
+			"most of a gigabyte, twice"
+		);
+		let (nw, nh) = fit_within(w, h, MAX_EDGE).expect("cut down");
+		assert_eq!(nw, MAX_EDGE);
+		assert!(u64::from(nw) * u64::from(nh) * 16 < 200 << 20, "{nw}x{nh}");
+		// proportions kept
+		assert!((f64::from(nw) / f64::from(nh) - f64::from(w) / f64::from(h)).abs() < 0.001);
+
+		// a tall image is measured on its own long edge
+		assert_eq!(fit_within(1000, 8000, MAX_EDGE), Some((512, 4096)));
+		// and anything that already fits is left exactly as it is
+		assert_eq!(fit_within(3840, 2160, MAX_EDGE), None);
+		assert_eq!(fit_within(MAX_EDGE, MAX_EDGE, MAX_EDGE), None);
+		assert_eq!(fit_within(0, 0, MAX_EDGE), None);
 	}
 
 	#[test]

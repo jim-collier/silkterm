@@ -95,6 +95,10 @@ DENY_CMD=(cargo deny check)
 ## but a measured scroll regression aborts. Empty () to disable.
 SCROLL_HARNESS=(cicd/tests/scroll/run.bash)
 
+## Stage 3: what the dogfood launcher does to files it did not create. Needs pwsh;
+## skipped with a warning where it is missing. Empty () to disable.
+LAUNCHER_HARNESS=(cicd/tests/launcher/run.ps1)
+
 ## Also run the harness a second time under a headless Wayland compositor (cage), to
 ## prove the Wayland backend renders + scrolls the same as X11. Self-skips (non-fatal)
 ## where cage is not installed. 0/unset to disable.
@@ -196,6 +200,19 @@ DOGFOOD_ICON="source/assets/logo.png"
 ## every dest to one value, empty to drop the sidecar.
 # DOGFOOD_TAG="gnulli"
 
+## Signing the release. A checksum file fetched from the same place as the
+## artifact it covers proves the download was not corrupted in transit, which TLS
+## already gave; a signature is what says the release came from here.
+##
+## The private key never goes in the repo. To set one up once:
+##   ssh-keygen -t ed25519 -C releases@silkterm -f ~/.ssh/silkterm-release
+## then put the CONTENTS of ~/.ssh/silkterm-release.pub into RELEASE_SIGN_PUBKEY
+## in install.bash and install.ps1, and point this at the private half. Empty
+## means the release goes out unsigned, and release.bash says so.
+RELEASE_SIGN_KEY="${SILKTERM_RELEASE_KEY:-}"
+RELEASE_SIGN_IDENTITY="releases@silkterm"
+RELEASE_SIGN_NAMESPACE="silkterm-release"
+
 ## Stage 7: backup + publish to git (runs from repo root).
 GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 
@@ -205,9 +222,15 @@ GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 ## the wine staging tree holds a wineprefix whose dosdevices map Z: to '/' (plus
 ## raw /dev nodes), so a backup that walks in climbs out of the repo and into the
 ## whole filesystem. Exclude the dir as well as its contents, or rar still
-## descends to test each entry. Quoted so eval hands rar the glob, not a match.
-## private/source is bulk working material that never ships, same treatment.
-export GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES="-x'*/cicd/artifacts' -x'*/cicd/artifacts/*' -x'*/private/source' -x'*/private/source/*'"
+## descends to test each entry. private/source is bulk working material that
+## never ships, same treatment.
+##
+## One rar pattern per line, no '-x' prefix and no shell quoting: the publish
+## script adds the flag and passes each line through as one argument.
+export GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES='*/cicd/artifacts
+*/cicd/artifacts/*
+*/private/source
+*/private/source/*'
 
 ## Set a non-empty commit message to publish hands-off (suppresses the script's
 ## prompt and supplies the message so `git commit` won't open an editor). Left

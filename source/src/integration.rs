@@ -26,9 +26,13 @@
 //!   is only safe because the region is delimited by our own two markers and
 //!   was written by us - which is exactly the signal a stored shell entry
 //!   lacks, and why THAT list may only ever be added to.
-//! - Deleting the block is how it is switched off; nothing puts it back, since
-//!   the block is gone and no marker is left to match. `shell.integration`
-//!   switches the whole thing off before it starts.
+//! - Deleting the block is how it is switched off. A note beside the config
+//!   records which profiles were written to, so a profile that carried the block
+//!   and no longer does is left alone - without it the next launch simply put the
+//!   block back, since the marker went with it. `shell.integration` switches the
+//!   whole thing off before it starts.
+//! - A profile that does not decode as UTF-8 is left alone: 5.1 writes UTF-16 by
+//!   default, and appending to a file we cannot read replaces it.
 //! - A shell that would refuse to load the profile is left alone. Measured on
 //!   this box: Windows PowerShell 5.1 sits at a policy that blocks script
 //!   files, so a profile written for it turned every launch into a red
@@ -245,15 +249,117 @@ pub fn refreshed_block(profile: &str, newline: &str) -> Option<String> {
 	Some(format!("{}{block}{}", &profile[..start], &profile[end..]))
 }
 
+// What is in a profile now, ready to be edited. `Ok(None)` is "nothing there
+// yet". An error means the file is not ours to touch: a profile that does not
+// decode as UTF-8 used to arrive here as an empty string, and appending to that
+// replaced the whole file. Windows PowerShell 5.1 writes UTF-16 by default, so
+// that is an ordinary profile rather than a broken one.
+fn read_profile(profile: &Path) -> Result<Option<String>, String> {
+	match std::fs::read(profile) {
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+		Err(e) => Err(format!("could not read {}: {e}", profile.display())),
+		Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| {
+			format!(
+				"{} is not UTF-8 - left it alone, add the block by hand (see shell-integration.md)",
+				profile.display()
+			)
+		}),
+	}
+}
+
+// Keep what is there under a name that says where it came from, and never over a
+// backup already made - that one is the copy worth keeping.
+fn backup_once(profile: &Path, existing: &str) -> bool {
+	if existing.trim().is_empty() {
+		return true;
+	}
+	let backup = profile.with_extension("ps1.silkterm-backup");
+	if backup.exists() {
+		return true;
+	}
+	if let Err(e) = std::fs::copy(profile, &backup) {
+		eprintln!(
+			"{}: could not back up {}: {e} - left it alone",
+			config::APP_NAME,
+			profile.display()
+		);
+		return false;
+	}
+	true
+}
+
+// Beside the file, then rename over it: an interrupted write cannot leave a
+// profile half-replaced.
+fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+	let tmp = path.with_extension("ps1.silkterm-new");
+	std::fs::write(&tmp, text)?;
+	std::fs::rename(&tmp, path)
+}
+
+// Profiles we have written to before, one path per line, kept beside the config.
+//
+// Deleting the block is documented as how to switch this off, and without a note
+// of our own it was not: with the block gone there is no marker and no reporting
+// sequence, so the next launch put it straight back. A profile on this list that
+// no longer carries the block was emptied on purpose.
+fn installed_record() -> Option<PathBuf> {
+	Some(config::data_dir()?.join("shell-integration.installed"))
+}
+
+fn already_installed(record: Option<&Path>, profile: &Path) -> bool {
+	let Some(record) = record else {
+		return false;
+	};
+	let Ok(text) = std::fs::read_to_string(record) else {
+		return false;
+	};
+	let want = profile.to_string_lossy();
+	text.lines().any(|line| line.trim() == want)
+}
+
+fn note_installed(record: Option<&Path>, profile: &Path) {
+	let Some(record) = record else {
+		return;
+	};
+	if already_installed(Some(record), profile) {
+		return;
+	}
+	if let Some(parent) = record.parent() {
+		let _ = std::fs::create_dir_all(parent);
+	}
+	let line = format!("{}\n", profile.display());
+	let opened = std::fs::OpenOptions::new()
+		.create(true)
+		.append(true)
+		.open(record);
+	if let Ok(mut file) = opened {
+		use std::io::Write;
+		let _ = file.write_all(line.as_bytes());
+	}
+}
+
 fn install_into(profile: &Path) {
-	let existing = std::fs::read_to_string(profile).unwrap_or_default();
+	install_into_with(profile, installed_record().as_deref());
+}
+
+fn install_into_with(profile: &Path, record: Option<&Path>) {
+	let existing = match read_profile(profile) {
+		Ok(text) => text.unwrap_or_default(),
+		Err(why) => {
+			eprintln!("{}: {why}", config::APP_NAME);
+			return;
+		}
+	};
 	// a profile is read by the platform's own shell, so it gets the platform's
 	// line ending rather than whatever the compiled-in copy carries
 	let newline = if cfg!(windows) { CRLF } else { LF };
 	// already ours: the only thing left to do is bring it up to date
 	if existing.contains(MARKER) {
 		if let Some(updated) = refreshed_block(&existing, newline) {
-			match std::fs::write(profile, updated) {
+			if !backup_once(profile, &existing) {
+				return;
+			}
+			match write_atomic(profile, &updated) {
 				Ok(()) => eprintln!(
 					"{}: updated the shell integration block in {}",
 					config::APP_NAME,
@@ -271,20 +377,12 @@ fn install_into(profile: &Path) {
 	if already_reports(&existing) {
 		return;
 	}
-	// keep what is there, under a name that says where it came from - and never
-	// over a backup already made, which would be the one thing worth keeping
-	if !existing.trim().is_empty() {
-		let backup = profile.with_extension("ps1.silkterm-backup");
-		if !backup.exists() {
-			if let Err(e) = std::fs::copy(profile, &backup) {
-				eprintln!(
-					"{}: could not back up {}: {e} - left it alone",
-					config::APP_NAME,
-					profile.display()
-				);
-				return;
-			}
-		}
+	// put there once and taken out since: that is how this is switched off
+	if already_installed(record, profile) {
+		return;
+	}
+	if !backup_once(profile, &existing) {
+		return;
 	}
 	if let Some(parent) = profile.parent() {
 		if let Err(e) = std::fs::create_dir_all(parent) {
@@ -292,12 +390,15 @@ fn install_into(profile: &Path) {
 			return;
 		}
 	}
-	match std::fs::write(profile, with_block(&existing, newline)) {
-		Ok(()) => eprintln!(
-			"{}: added shell integration to {} - new tabs and panes will open where the shell is (see shell-integration.md)",
-			config::APP_NAME,
-			profile.display()
-		),
+	match write_atomic(profile, &with_block(&existing, newline)) {
+		Ok(()) => {
+			note_installed(record, profile);
+			eprintln!(
+				"{}: added shell integration to {} - new tabs and panes will open where the shell is (see shell-integration.md)",
+				config::APP_NAME,
+				profile.display()
+			);
+		}
 		Err(e) => eprintln!(
 			"{}: could not write {}: {e}",
 			config::APP_NAME,
@@ -469,18 +570,91 @@ mod tests {
 		assert_eq!(with_block("   \n", "\n"), SNIPPET.replace("\r\n", "\n"));
 	}
 
+	// PowerShell 5.1 writes UTF-16 by default, so a profile that does not decode
+	// as UTF-8 is an ordinary one. It used to read back as an empty string, which
+	// skipped the backup and replaced the file with the block alone.
+	#[test]
+	fn a_profile_that_is_not_utf8_is_left_alone() {
+		let dir = std::env::temp_dir().join(format!("silkterm_int16_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).expect("temp dir");
+		let record = dir.join("shell-integration.installed");
+		let profile = dir.join("Microsoft.PowerShell_profile.ps1");
+		// "Set-Alias ll Get-ChildItem" as UTF-16LE with a byte-order mark
+		let mut bytes = vec![0xff, 0xfe];
+		for unit in "Set-Alias ll Get-ChildItem\r\n".encode_utf16() {
+			bytes.extend_from_slice(&unit.to_le_bytes());
+		}
+		std::fs::write(&profile, &bytes).expect("write profile");
+
+		super::install_into_with(&profile, Some(&record));
+
+		assert_eq!(
+			std::fs::read(&profile).expect("read profile"),
+			bytes,
+			"the profile is untouched"
+		);
+		assert!(
+			!dir.join("Microsoft.PowerShell_profile.ps1.silkterm-new")
+				.exists(),
+			"no half-written file left beside it"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// Deleting the block is documented as how to switch this off, in four places
+	// including the block's own first line. It was not: with the block gone there
+	// was no marker to match and the next launch put it straight back.
+	#[test]
+	fn a_deleted_block_stays_deleted() {
+		let dir = std::env::temp_dir().join(format!("silkterm_intoff_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).expect("temp dir");
+		let profile = dir.join("Microsoft.PowerShell_profile.ps1");
+		let record = dir.join("shell-integration.installed");
+		std::fs::write(&profile, "Set-Alias ll Get-ChildItem\n").expect("write profile");
+
+		super::install_into_with(&profile, Some(&record));
+		assert!(
+			std::fs::read_to_string(&profile).unwrap().contains(MARKER),
+			"the block went in"
+		);
+
+		// the user takes it out again
+		std::fs::write(&profile, "Set-Alias ll Get-ChildItem\n").expect("write profile");
+		super::install_into_with(&profile, Some(&record));
+		assert_eq!(
+			std::fs::read_to_string(&profile).unwrap(),
+			"Set-Alias ll Get-ChildItem\n",
+			"and stays out"
+		);
+
+		// a profile we have never touched still gets it
+		let other = dir.join("other_profile.ps1");
+		std::fs::write(&other, "# theirs\n").expect("write profile");
+		super::install_into_with(&other, Some(&record));
+		assert!(
+			std::fs::read_to_string(&other).unwrap().contains(MARKER),
+			"a profile we have not written to before is not affected"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
 	// The whole of what a launch does to a file that is not ours: keep a copy,
 	// follow what is there, and never do it twice.
 	#[test]
 	fn a_profile_is_backed_up_once_and_added_to_once() {
 		let dir = std::env::temp_dir().join("silkterm-integration-test");
 		let _ = std::fs::remove_dir_all(&dir);
+		// its own record, never the live one: install_into would write into the
+		// user's data directory
+		let record = dir.join("shell-integration.installed");
 		std::fs::create_dir_all(&dir).expect("temp dir");
 		let profile = dir.join("Microsoft.PowerShell_profile.ps1");
 		let before = "Set-Alias ll Get-ChildItem\n";
 		std::fs::write(&profile, before).expect("write profile");
 
-		super::install_into(&profile);
+		super::install_into_with(&profile, Some(&record));
 		let after = std::fs::read_to_string(&profile).expect("read profile");
 		assert!(after.starts_with(before), "what was there survived");
 		assert!(after.contains(MARKER), "the block went in");
@@ -493,7 +667,7 @@ mod tests {
 
 		// a second launch is a no-op, and cannot overwrite the copy either
 		std::fs::write(&profile, format!("{after}# a line the user added\n")).unwrap();
-		super::install_into(&profile);
+		super::install_into_with(&profile, Some(&record));
 		let twice = std::fs::read_to_string(&profile).expect("read profile");
 		assert_eq!(twice.matches(MARKER).count(), 1, "a second block went in");
 		assert!(
@@ -508,7 +682,7 @@ mod tests {
 
 		// and a profile that never existed is created with just the block
 		let fresh = dir.join("fresh").join("Microsoft.PowerShell_profile.ps1");
-		super::install_into(&fresh);
+		super::install_into_with(&fresh, Some(&record));
 		assert!(
 			std::fs::read_to_string(&fresh).unwrap().contains(MARKER),
 			"a missing profile was not created"

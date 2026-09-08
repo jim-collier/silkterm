@@ -237,15 +237,28 @@ impl ColorGlyphs {
 		self.rasters.retain(|_, (stamp, _)| *stamp > cutoff);
 	}
 
-	// glyphon's rasterize callback: a pure lookup (see `warm`). A miss just drops
-	// the glyph for this frame rather than stalling prepare on a paint.
+	// glyphon's rasterize callback: a pure lookup (see `warm`).
+	//
+	// A miss answers with transparent pixels rather than None. glyphon
+	// re-rasterizes every entry it holds when its atlas grows, and a glyph that
+	// stops answering aborts it - the same crash a wholesale clear caused. The
+	// sweep can still drop a key glyphon is holding, so the answer has to be
+	// pixels; the glyph simply is not drawn.
 	pub fn raster(&self, req: RasterizeCustomGlyphRequest) -> Option<RasterizedCustomGlyph> {
-		self.rasters
+		if req.width == 0 || req.height == 0 {
+			return None;
+		}
+		let data = self
+			.rasters
 			.get(&(req.id, req.width, req.height))
-			.map(|(_, data)| RasterizedCustomGlyph {
-				data: data.clone(),
-				content_type: ContentType::Color,
-			})
+			.map_or_else(
+				|| vec![0u8; req.width as usize * req.height as usize * 4],
+				|(_, data)| data.clone(),
+			);
+		Some(RasterizedCustomGlyph {
+			data,
+			content_type: ContentType::Color,
+		})
 	}
 }
 
@@ -1024,6 +1037,24 @@ mod tests {
 		stamped(&mut cg, want, now);
 		cg.sweep();
 		assert_eq!(cg.rasters.len(), want as usize);
+	}
+
+	// The sweep can drop a key glyphon is still holding, and glyphon aborts on a
+	// glyph that stops answering. So a miss answers with pixels nobody can see.
+	#[test]
+	fn a_missing_raster_answers_with_transparent_pixels() {
+		let cg = ColorGlyphs::new();
+		let req = RasterizeCustomGlyphRequest {
+			id: 7,
+			width: 4,
+			height: 3,
+			x_bin: glyphon::cosmic_text::SubpixelBin::Zero,
+			y_bin: glyphon::cosmic_text::SubpixelBin::Zero,
+			scale: 1.0,
+		};
+		let got = cg.raster(req).expect("a miss still answers");
+		assert_eq!(got.data.len(), 4 * 3 * 4);
+		assert!(got.data.iter().all(|b| *b == 0), "and nothing shows");
 	}
 
 	// The cache must still shed genuinely dead entries, or a long session at a

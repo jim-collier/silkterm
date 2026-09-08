@@ -1149,6 +1149,14 @@ fn needs_folder_read(
 	!locked && showing.is_none() && folder.is_some()
 }
 
+// Where the rotation timer goes when a tick fires. It has to move off `now`
+// here rather than waiting for the worker's answer: the answer is dropped
+// unless it is still the newest request, and a timer left in the past fires
+// again on the very next pass, so each pass started another decode thread.
+fn rotation_next(now: Instant, live: bool, interval_s: f32) -> Option<Instant> {
+	(live && interval_s > 0.0).then(|| now + Duration::from_secs_f32(interval_s))
+}
+
 // With the profile on automatic, hardware the config has not seen gets a fresh
 // pick, written down against that hardware so the next launch on it leaves the
 // profile where the rating left it. Answers the id a benchmark should write
@@ -1878,7 +1886,7 @@ impl State {
 				return false;
 			};
 			if let Some(seq) = input::mouse_report(p.mode, btn, true, false, col, row, self.mods) {
-				p.term.write(seq);
+				p.write_input(seq);
 			}
 			self.mouse_btn = Some(btn);
 			self.mouse_cell = Some((col, row));
@@ -1895,7 +1903,7 @@ impl State {
 						if let Some(seq) =
 							input::mouse_report(p.mode, btn, false, false, col, row, self.mods)
 						{
-							p.term.write(seq);
+							p.write_input(seq);
 						}
 					}
 				}
@@ -1936,7 +1944,7 @@ impl State {
 			}
 			let btn = held.unwrap_or(input::MouseBtn::None);
 			if let Some(seq) = input::mouse_report(p.mode, btn, true, true, col, row, self.mods) {
-				p.term.write(seq);
+				p.write_input(seq);
 			}
 			(col, row)
 		};
@@ -3343,8 +3351,10 @@ impl State {
 	fn advance_wallpaper(&mut self) {
 		// locked, switched off since the timer was armed, or one image (or none):
 		// nothing to rotate to, so drop the timer
-		if self.wp_locked || self.wp_count < 2 || config::settings().rotation_folder().is_none() {
-			self.wp_next = None;
+		let settings = config::settings();
+		let live = !self.wp_locked && self.wp_count >= 2 && settings.rotation_folder().is_some();
+		self.wp_next = rotation_next(Instant::now(), live, settings.wallpaper_rotate_interval_s);
+		if !live {
 			return;
 		}
 		self.request_wallpaper(true);
@@ -3497,8 +3507,14 @@ impl State {
 					+ self.menubar_h())
 				.ceil() as u32,
 			);
+			// A size the window can honor straight away answers here and sends no
+			// `Resized`, so this is the only chance to move everything the window
+			// event moves - the scrim included, which was left at the old size.
 			if let Some(applied) = self.window.request_inner_size(want) {
 				self.gfx.resize(applied.width, applied.height);
+				self.scrim
+					.resize(&self.gfx.device, applied.width, applied.height);
+				self.invalidate_prepared();
 			}
 		}
 		if rebuild {
@@ -3651,6 +3667,11 @@ impl State {
 		// for either; only the blur is the halo's alone.
 		let halo_on = cfg.text_scrim && cfg.text_scrim_radius > 0.0;
 		let scrim_on = halo_on || cfg.text_outline > 0.0;
+		// With both off nothing here draws, and its five full-screen textures have
+		// no business being allocated. Turning either on grows them back.
+		if self.scrim.set_enabled(&self.gfx.device, scrim_on) {
+			self.invalidate_prepared();
+		}
 		let mut scrim_cells: Vec<RectInstance> = Vec::new();
 
 		self.text.color_frame();
@@ -4727,7 +4748,7 @@ impl State {
 		};
 		// distance paths measure the halo extent in px; keep it a touch wider than
 		// the (sigma-based) gaussian look so switching functions doesn't shrink it.
-		let scrim_ext = cfg.text_scrim_radius * 2.0;
+		let scrim_ext = crate::scrim::clamp_ext(cfg.text_scrim_radius * 2.0);
 		// The halo is built from the text alone - the cursor lives in its own
 		// coverage texture and only joins at the blur (cursor_scrim) or the
 		// composite (cursor_outline). So when the text is unchanged the color map,
@@ -5829,6 +5850,9 @@ impl ApplicationHandler<UserEvent> for App {
 				});
 			}
 			UserEvent::PtyWrite(id, bytes) => {
+				// a reply the terminal owes the program (cursor position, device
+				// attributes), not something the user sent - so read-only does not
+				// withhold it, and this is the one direct write left in this file
 				if let Some(p) = state.tabs.find_pane(id) {
 					p.term.write(bytes);
 				}
@@ -6488,7 +6512,7 @@ impl ApplicationHandler<UserEvent> for App {
 								if let Some(seq) = input::mouse_report(
 									p.mode, btn, true, false, col, row, state.mods,
 								) {
-									p.term.write(seq);
+									p.write_input(seq);
 								}
 							}
 							state.dirty = true;
@@ -6529,7 +6553,7 @@ impl ApplicationHandler<UserEvent> for App {
 							for _ in 0..n {
 								bytes.extend_from_slice(&seq);
 							}
-							p.term.write(bytes);
+							p.write_input(bytes);
 						}
 					} else {
 						p.scroll.wheel(lines);
@@ -6821,7 +6845,7 @@ impl ApplicationHandler<UserEvent> for App {
 					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&focused) {
 						if !p.read_only {
 							p.scroll.jump_bottom();
-							p.term.write(bytes);
+							p.write_input(bytes);
 							crate::perf::typed(key_at, focused);
 							p.note_typed();
 							if is_enter && p.copy_output {
@@ -7337,8 +7361,8 @@ mod tests {
 	use super::{
 		Caret, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit, ViewState,
 		accel_at, accel_clash, copybox_fit, copybox_place, focus_ring, key_is_typed, menu_metrics,
-		mia, msub, mta, needs_folder_read, pace_frame, tab_close_box, tab_command_line,
-		tab_title_w, typed_title, view_menu_items,
+		mia, msub, mta, needs_folder_read, pace_frame, rotation_next, tab_close_box,
+		tab_command_line, tab_title_w, typed_title, view_menu_items,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
@@ -7357,6 +7381,45 @@ mod tests {
 		assert!(!needs_folder_read(false, None, None));
 		// a command-line wallpaper owns the session, rotation stays out of it
 		assert!(!needs_folder_read(true, None, Some(&folder)));
+	}
+
+	// Read-only means the pane takes nothing the user's hands sent. Typing and
+	// paste were on that list; the mouse reports and the wheel's alt-screen
+	// cursor keys were not, so one notch sent arrow keys to the job the pane said
+	// it was protecting. Everything user-driven goes through `write_input` now,
+	// and the only direct write left is the reply the terminal owes the program.
+	#[test]
+	fn a_read_only_pane_takes_nothing_the_user_sent() {
+		let body = include_str!("app.rs")
+			.split("\nmod tests {")
+			.next()
+			.expect("the file above its own tests");
+		let direct: Vec<&str> = body
+			.lines()
+			.filter(|l| l.contains("term.write("))
+			.map(str::trim)
+			.collect();
+		assert_eq!(
+			direct.len(),
+			1,
+			"these bypass the read-only gate: {direct:?}"
+		);
+		assert!(
+			body.matches("write_input(").count() >= 5,
+			"the mouse and wheel writes go through the gate"
+		);
+	}
+
+	// A tick that leaves the timer where it was fires again on the next pass, and
+	// each of those starts another decode thread.
+	#[test]
+	fn a_rotation_tick_moves_the_timer_off_now() {
+		let now = Instant::now();
+		let next = rotation_next(now, true, 2.0).expect("a live rotation keeps its timer");
+		assert!(next > now);
+		// nothing to rotate to, or rotation switched off: no timer at all
+		assert!(rotation_next(now, false, 2.0).is_none());
+		assert!(rotation_next(now, true, 0.0).is_none());
 	}
 
 	// Clearing the box is how a renamed tab goes back to naming itself, so a
