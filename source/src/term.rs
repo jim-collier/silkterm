@@ -180,12 +180,15 @@ impl EventListener for EventProxy {
 			// asking for the background color or the text area size waiting out
 			// its timeout on every start and then guessing.
 			ref query @ (Event::ColorRequest(..) | Event::TextAreaSizeRequest(..)) => {
-				let size = self.size.lock().map(|held| *held).unwrap_or(WindowSize {
-					num_cols: 0,
-					num_lines: 0,
-					cell_width: 0,
-					cell_height: 0,
-				});
+				let size = self.size.lock().map_or(
+					WindowSize {
+						num_cols: 0,
+						num_lines: 0,
+						cell_width: 0,
+						cell_height: 0,
+					},
+					|held| *held,
+				);
 				match query_reply(query, size) {
 					Some(bytes) => self.proxy.send_event(UserEvent::PtyWrite(self.id, bytes)),
 					None => Ok(()),
@@ -1117,6 +1120,7 @@ mod tests {
 	// named slots and the whole palette answer now; anything else does not.
 	#[test]
 	fn a_color_query_gets_an_answer() {
+		use alacritty_terminal::event::{Event, WindowSize};
 		use alacritty_terminal::vte::ansi::NamedColor;
 		let s = crate::config::settings();
 		for (index, want) in [
@@ -1135,8 +1139,6 @@ mod tests {
 		assert!(requested_color(9999).is_none(), "and nothing else does");
 
 		// and the whole reply, as the listener assembles it
-		use alacritty_terminal::event::Event;
-		use alacritty_terminal::event::WindowSize;
 		let size = WindowSize {
 			num_cols: 80,
 			num_lines: 24,

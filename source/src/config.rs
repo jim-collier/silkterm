@@ -4379,8 +4379,10 @@ mod tests {
 	// the font came back next launch.
 	#[test]
 	fn clearing_the_font_family_takes_the_old_line_out() {
-		let mut set = Settings::default();
-		set.font_family = Some("Iosevka".to_string());
+		let set = Settings {
+			font_family: Some("Iosevka".to_string()),
+			..Default::default()
+		};
 		let mut none = set.clone();
 		none.font_family = None;
 		assert_eq!(cleared_keys(&set, &none), vec!["font.family"]);
