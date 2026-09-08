@@ -12,6 +12,8 @@ Add-Type -Namespace Silk -Name Win -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr h);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool GetUserObjectInformation(IntPtr h, int i, System.Text.StringBuilder p, int n, out uint need);
 [DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);
+[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+[DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, IntPtr e);
 public struct RECT { public int Left, Top, Right, Bottom; }
 '@
 
@@ -29,6 +31,15 @@ public static class SilkEnum {
 	[DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
 	[DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out R r);
 	struct R { public int L, T, Rt, B; }
+	public static IntPtr[] All(uint want) {
+		var found = new List<IntPtr>();
+		EnumWindows((h, _) => {
+			uint pid; GetWindowThreadProcessId(h, out pid);
+			if (pid == want && IsWindowVisible(h)) found.Add(h);
+			return true;
+		}, IntPtr.Zero);
+		return found.ToArray();
+	}
 	public static IntPtr Largest(uint want) {
 		IntPtr best = IntPtr.Zero; long area = 0;
 		EnumWindows((h, _) => {
@@ -71,6 +82,16 @@ function fSessionUsable {
 	$got -and $sb.ToString() -eq "Default"
 }
 
+##	A config to start from. Rating the hardware swallows input for several seconds
+##	after launch, so anything that types has to switch it off or wait it out - and
+##	waiting it out makes the scenario slow and its timing a guess. Only the ladder
+##	scenario wants the rating.
+function fFreshConfig($path, $extra = @()) {
+	Remove-Item $path -ErrorAction SilentlyContinue
+	$body = @("performance:", "`tautomatic: false", "`tprofile: `"custom`"") + $extra
+	Set-Content -Path $path -Value $body -Encoding UTF8
+}
+
 function fStartSilk($exe, $silkArgs, $envVars) {
 	foreach ($k in $envVars.Keys) { [Environment]::SetEnvironmentVariable($k, $envVars[$k]) }
 	$p = Start-Process $exe -ArgumentList $silkArgs -PassThru
@@ -91,10 +112,37 @@ function fWaitWindow($p, $seconds = 30) {
 	[IntPtr]::Zero
 }
 
+##	A window the process owns that is not the one already known - the dialog is a
+##	second window in the same process, so it cannot be found by pid alone.
+function fWaitOther($p, $known, $seconds = 20) {
+	for ($i = 0; $i -lt ($seconds * 4); $i++) {
+		foreach ($h in [SilkEnum]::All([uint32]$p.Id)) {
+			if ($h -eq $known) { continue }
+			$r = fRect $h
+			if ($r.w -gt 200 -and $r.h -gt 200) { return $h }
+		}
+		Start-Sleep -Milliseconds 250
+	}
+	[IntPtr]::Zero
+}
+
 function fFocus($h) {
 	[void][Silk.Win]::SetForegroundWindow($h)
 	Start-Sleep -Milliseconds 350
 	[Silk.Win]::GetForegroundWindow() -eq $h
+}
+
+##	Clicking moves the real pointer, because there is only one. Fine on a machine
+##	nobody is sitting at, which is the only kind this runs on.
+function fClick($x, $y, $double = $false) {
+	[void][Silk.Win]::SetCursorPos([int]$x, [int]$y)
+	Start-Sleep -Milliseconds 120
+	foreach ($n in 1..$(if ($double) { 2 } else { 1 })) {
+		[Silk.Win]::mouse_event(0x0002, 0, 0, 0, [IntPtr]::Zero)
+		[Silk.Win]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)
+		Start-Sleep -Milliseconds 60
+	}
+	Start-Sleep -Milliseconds 350
 }
 
 function fType($text) { [System.Windows.Forms.SendKeys]::SendWait($text); Start-Sleep -Milliseconds 250 }
