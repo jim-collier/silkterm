@@ -3507,8 +3507,14 @@ impl State {
 					+ self.menubar_h())
 				.ceil() as u32,
 			);
+			// A size the window can honor straight away answers here and sends no
+			// `Resized`, so this is the only chance to move everything the window
+			// event moves - the scrim included, which was left at the old size.
 			if let Some(applied) = self.window.request_inner_size(want) {
 				self.gfx.resize(applied.width, applied.height);
+				self.scrim
+					.resize(&self.gfx.device, applied.width, applied.height);
+				self.invalidate_prepared();
 			}
 		}
 		if rebuild {
@@ -3661,6 +3667,11 @@ impl State {
 		// for either; only the blur is the halo's alone.
 		let halo_on = cfg.text_scrim && cfg.text_scrim_radius > 0.0;
 		let scrim_on = halo_on || cfg.text_outline > 0.0;
+		// With both off nothing here draws, and its five full-screen textures have
+		// no business being allocated. Turning either on grows them back.
+		if self.scrim.set_enabled(&self.gfx.device, scrim_on) {
+			self.invalidate_prepared();
+		}
 		let mut scrim_cells: Vec<RectInstance> = Vec::new();
 
 		self.text.color_frame();

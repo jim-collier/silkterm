@@ -95,8 +95,22 @@ pub struct Scrim {
 	// command buffer runs - same rule as the blur uniforms above).
 	cursor_rects: RectRenderer,
 	cursor_count: u32,
+	// what is allocated, and what the surface actually is. With the scrim and the
+	// outline both off nothing here draws, so the five full-screen textures are
+	// allocated at one pixel instead - around 330 MB of VRAM at 3840x2160, and it
+	// falls hardest on the machines the Low and Standard profiles exist for.
 	w: u32,
 	h: u32,
+	surf_w: u32,
+	surf_h: u32,
+	enabled: bool,
+}
+
+// How big the texture set should be. One pixel when neither the scrim nor the
+// outline draws: at full screen this is three Rgba16Float textures plus two
+// more, which is hundreds of megabytes of VRAM for a feature doing nothing.
+fn alloc_size(enabled: bool, surface: (u32, u32)) -> (u32, u32) {
+	if enabled { surface } else { (1, 1) }
 }
 
 impl Scrim {
@@ -159,9 +173,10 @@ impl Scrim {
 		});
 		let comp_pipe = pipeline_blend(device, &shader, "fs_comp", target, &comp_bgl, "scrim comp");
 
-		let (tex_t, tex_a, tex_b, view_t, view_a, view_b) = make_textures(device, w, h);
-		let (tex_cur, view_cur) = cover_tex(device, w, h);
-		let bgcolor = bgcolor_tex(device, w, h);
+		// nothing is drawn until something asks for it (see `set_enabled`)
+		let (tex_t, tex_a, tex_b, view_t, view_a, view_b) = make_textures(device, 1, 1);
+		let (tex_cur, view_cur) = cover_tex(device, 1, 1);
+		let bgcolor = bgcolor_tex(device, 1, 1);
 		let bgcolor_view = bgcolor.create_view(&Default::default());
 		let bg_rects = RectRenderer::new(device, FMT);
 		let cursor_rects = RectRenderer::new(device, FMT);
@@ -207,15 +222,43 @@ impl Scrim {
 			bg_rects,
 			cursor_rects,
 			cursor_count: 0,
-			w,
-			h,
+			w: 1,
+			h: 1,
+			surf_w: w,
+			surf_h: h,
+			enabled: false,
 		}
 	}
 
-	pub fn resize(&mut self, device: &wgpu::Device, w: u32, h: u32) {
+	// Answers whether anything was reallocated, which is the caller's cue that
+	// this frame's prepared set is stale.
+	pub fn set_enabled(&mut self, device: &wgpu::Device, on: bool) -> bool {
+		if on == self.enabled {
+			return false;
+		}
+		self.enabled = on;
+		self.reallocate(device)
+	}
+
+	fn reallocate(&mut self, device: &wgpu::Device) -> bool {
+		let (w, h) = alloc_size(self.enabled, (self.surf_w, self.surf_h));
 		if w == 0 || h == 0 || (w == self.w && h == self.h) {
+			return false;
+		}
+		self.rebuild(device, w, h);
+		true
+	}
+
+	pub fn resize(&mut self, device: &wgpu::Device, w: u32, h: u32) {
+		if w == 0 || h == 0 {
 			return;
 		}
+		self.surf_w = w;
+		self.surf_h = h;
+		self.reallocate(device);
+	}
+
+	fn rebuild(&mut self, device: &wgpu::Device, w: u32, h: u32) {
 		let (tex_t, tex_a, tex_b, view_t, view_a, view_b) = make_textures(device, w, h);
 		self.tex_t = tex_t;
 		self.tex_a = tex_a;
@@ -882,3 +925,28 @@ fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(rgb * a, a);
 }
 ";
+
+#[cfg(test)]
+mod tests {
+	use super::alloc_size;
+
+	// Bytes the set costs: three Rgba16Float (8 per pixel), the coverage texture
+	// and the bgcolor map (4 each).
+	fn bytes((w, h): (u32, u32)) -> u64 {
+		u64::from(w) * u64::from(h) * (8 * 3 + 4 * 2)
+	}
+
+	// The scrim used to build its five full-screen textures whether or not it drew
+	// anything, and it falls hardest on the machines the Low and Standard profiles
+	// exist for.
+	#[test]
+	fn nothing_drawing_costs_no_memory() {
+		let uhd = (3840, 2160);
+		assert_eq!(alloc_size(true, uhd), uhd);
+		assert!(bytes(alloc_size(true, uhd)) > 200 << 20, "the real cost");
+		assert!(
+			bytes(alloc_size(false, uhd)) < 1 << 10,
+			"switched off it should cost nothing"
+		);
+	}
+}
