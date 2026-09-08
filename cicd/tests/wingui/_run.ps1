@@ -32,7 +32,12 @@ try {
 	if (-not (Test-Path $script)) { throw "no such scenario: $Scenario" }
 	. $script
 
-	$verdict = if ($script:failures -eq 0) { "pass" } else { "fail" }
+	##	A scenario that asserted nothing must not read as a pass. The scroll harness
+	##	printed OK for a while after it quietly stopped running any scene, and this
+	##	is the same shape of hole.
+	$asserted = @($script:checks | Where-Object { $_ -match '^\s+(ok|FAIL) ' }).Count
+	if ($asserted -eq 0) { $reason = "the scenario made no checks"; $verdict = "fail" }
+	else { $verdict = if ($script:failures -eq 0) { "pass" } else { "fail" } }
 }
 catch [OperationCanceledException] { }
 catch {
@@ -42,5 +47,5 @@ catch {
 }
 finally {
 	Get-Process -Name silkterm -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-	@("VERDICT $verdict $reason") + $script:checks | Set-Content -Path $result -Encoding UTF8
+	@("SCENARIO $Scenario", "VERDICT $verdict $reason") + $script:checks | Set-Content -Path $result -Encoding UTF8
 }
