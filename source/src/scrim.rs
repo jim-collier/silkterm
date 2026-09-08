@@ -95,8 +95,32 @@ pub struct Scrim {
 	// command buffer runs - same rule as the blur uniforms above).
 	cursor_rects: RectRenderer,
 	cursor_count: u32,
+	// what is allocated, and what the surface actually is. With the scrim and the
+	// outline both off nothing here draws, so the five full-screen textures are
+	// allocated at one pixel instead - around 330 MB of VRAM at 3840x2160, and it
+	// falls hardest on the machines the Low and Standard profiles exist for.
 	w: u32,
 	h: u32,
+	surf_w: u32,
+	surf_h: u32,
+	enabled: bool,
+}
+
+// The widest halo the distance passes can measure. They tap at most DIST_MAX
+// pixels, and the composite divides by the extent it is given - so an extent past
+// this made every pixel of every pane come out at full halo, a flat plate of
+// background color. Both halves read the same number now.
+pub const EXT_MAX: f32 = 40.0;
+
+pub fn clamp_ext(ext: f32) -> f32 {
+	ext.clamp(0.0, EXT_MAX)
+}
+
+// How big the texture set should be. One pixel when neither the scrim nor the
+// outline draws: at full screen this is three Rgba16Float textures plus two
+// more, which is hundreds of megabytes of VRAM for a feature doing nothing.
+fn alloc_size(enabled: bool, surface: (u32, u32)) -> (u32, u32) {
+	if enabled { surface } else { (1, 1) }
 }
 
 impl Scrim {
@@ -159,9 +183,10 @@ impl Scrim {
 		});
 		let comp_pipe = pipeline_blend(device, &shader, "fs_comp", target, &comp_bgl, "scrim comp");
 
-		let (tex_t, tex_a, tex_b, view_t, view_a, view_b) = make_textures(device, w, h);
-		let (tex_cur, view_cur) = cover_tex(device, w, h);
-		let bgcolor = bgcolor_tex(device, w, h);
+		// nothing is drawn until something asks for it (see `set_enabled`)
+		let (tex_t, tex_a, tex_b, view_t, view_a, view_b) = make_textures(device, 1, 1);
+		let (tex_cur, view_cur) = cover_tex(device, 1, 1);
+		let bgcolor = bgcolor_tex(device, 1, 1);
 		let bgcolor_view = bgcolor.create_view(&Default::default());
 		let bg_rects = RectRenderer::new(device, FMT);
 		let cursor_rects = RectRenderer::new(device, FMT);
@@ -207,15 +232,43 @@ impl Scrim {
 			bg_rects,
 			cursor_rects,
 			cursor_count: 0,
-			w,
-			h,
+			w: 1,
+			h: 1,
+			surf_w: w,
+			surf_h: h,
+			enabled: false,
 		}
 	}
 
-	pub fn resize(&mut self, device: &wgpu::Device, w: u32, h: u32) {
+	// Answers whether anything was reallocated, which is the caller's cue that
+	// this frame's prepared set is stale.
+	pub fn set_enabled(&mut self, device: &wgpu::Device, on: bool) -> bool {
+		if on == self.enabled {
+			return false;
+		}
+		self.enabled = on;
+		self.reallocate(device)
+	}
+
+	fn reallocate(&mut self, device: &wgpu::Device) -> bool {
+		let (w, h) = alloc_size(self.enabled, (self.surf_w, self.surf_h));
 		if w == 0 || h == 0 || (w == self.w && h == self.h) {
+			return false;
+		}
+		self.rebuild(device, w, h);
+		true
+	}
+
+	pub fn resize(&mut self, device: &wgpu::Device, w: u32, h: u32) {
+		if w == 0 || h == 0 {
 			return;
 		}
+		self.surf_w = w;
+		self.surf_h = h;
+		self.reallocate(device);
+	}
+
+	fn rebuild(&mut self, device: &wgpu::Device, w: u32, h: u32) {
 		let (tex_t, tex_a, tex_b, view_t, view_a, view_b) = make_textures(device, w, h);
 		self.tex_t = tex_t;
 		self.tex_a = tex_a;
@@ -839,7 +892,11 @@ struct CompU { resolution: vec2<f32>, intensity: f32, border_px: f32, cursor: f3
 // outline (the blurred halo is already masked at its source). The cursor coverage
 // joins the outline source only when cu.cursor is 1.
 fn border_tap(uv: vec2<f32>) -> f32 {
-    let cov = max(textureSample(ttex, gsamp, uv).a, cu.cursor * textureSample(ccur, gsamp, uv).a);
+    // the cursor's own coverage is only wanted when the cursor outline is on
+    var cov = textureSample(ttex, gsamp, uv).a;
+    if (cu.cursor > 0.5) {
+        cov = max(cov, textureSample(ccur, gsamp, uv).a);
+    }
     return cov * (1.0 - textureSample(bgtex, gsamp, uv).a);
 }
 @fragment
@@ -866,19 +923,92 @@ fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {
     ga = clamp(ga * exp2(cu.strength), 0.0, 1.0) * cu.halo;
     let rgb = textureSample(bgtex, gsamp, in.uv).rgb;
     let texel = 1.0 / cu.resolution;
-    let r = max(cu.border_px, 0.0001);
-    let dg = r * 0.7071; // diagonal taps at the same radius -> round outline
-    var m = 0.0;
-    m = max(m, border_tap(in.uv + vec2<f32>( r, 0.0) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>(-r, 0.0) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>(0.0,  r) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>(0.0, -r) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>( dg,  dg) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>( dg, -dg) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>(-dg,  dg) * texel));
-    m = max(m, border_tap(in.uv + vec2<f32>(-dg, -dg) * texel));
-    let border = clamp(m, 0.0, 1.0) * step(0.001, cu.border_px);
+    // Eight taps, three samples each. They were run on every pixel of every frame
+    // and multiplied by zero at the end; cu.border_px is uniform, so skipping
+    // them is a uniform branch.
+    var border = 0.0;
+    if (cu.border_px > 0.001) {
+        let r = max(cu.border_px, 0.0001);
+        let dg = r * 0.7071; // diagonal taps at the same radius -> round outline
+        var m = 0.0;
+        m = max(m, border_tap(in.uv + vec2<f32>( r, 0.0) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>(-r, 0.0) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>(0.0,  r) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>(0.0, -r) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>( dg,  dg) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>( dg, -dg) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>(-dg,  dg) * texel));
+        m = max(m, border_tap(in.uv + vec2<f32>(-dg, -dg) * texel));
+        border = clamp(m, 0.0, 1.0);
+    }
     let a = max(ga, border);
     return vec4<f32>(rgb * a, a);
 }
 ";
+
+#[cfg(test)]
+mod tests {
+	use super::{EXT_MAX, WGSL, alloc_size, clamp_ext};
+
+	// Bytes the set costs: three Rgba16Float (8 per pixel), the coverage texture
+	// and the bgcolor map (4 each).
+	fn bytes((w, h): (u32, u32)) -> u64 {
+		u64::from(w) * u64::from(h) * (8 * 3 + 4 * 2)
+	}
+
+	// The scrim used to build its five full-screen textures whether or not it drew
+	// anything, and it falls hardest on the machines the Low and Standard profiles
+	// exist for.
+	// The outline's eight taps are three texture samples each, on every pixel of
+	// every frame, and the result was multiplied by zero when the outline was off.
+	#[test]
+	fn the_outline_taps_only_run_when_there_is_an_outline() {
+		let comp = WGSL
+			.split("fn fs_comp")
+			.nth(1)
+			.expect("the composite shader");
+		let guard = comp.find("if (cu.border_px > 0.001)").expect("no guard");
+		let first_tap = comp.find("border_tap(").expect("no taps");
+		assert!(guard < first_tap, "the taps run before the guard");
+		// and the cursor coverage is only sampled when the cursor outline is on
+		let tap = WGSL
+			.split("fn border_tap")
+			.nth(1)
+			.expect("the tap function");
+		assert!(
+			tap.find("if (cu.cursor > 0.5)")
+				.is_some_and(|at| at < tap.find("textureSample(ccur").expect("the cursor sample")),
+			"the cursor texture is sampled with the cursor outline off"
+		);
+	}
+
+	// Past the tap window the distance saturates while the composite kept dividing
+	// by the extent it was given, so every pixel came out at full halo - a flat
+	// plate of background color over every pane. The slider cannot reach it; the
+	// config file can.
+	#[test]
+	fn a_halo_wider_than_the_taps_is_held_to_them() {
+		// the shader owns the tap window; this is the other half of that number
+		assert!(
+			WGSL.contains(&format!("const DIST_MAX: i32 = {};", EXT_MAX as i32)),
+			"EXT_MAX and the shader's tap window have drifted apart"
+		);
+		// the shipped default, doubled: unchanged
+		assert!((clamp_ext(5.0 * 2.0) - 10.0).abs() < f32::EPSILON);
+		// the slider's own ceiling, doubled: exactly the tap window
+		assert!((clamp_ext(20.0 * 2.0) - EXT_MAX).abs() < f32::EPSILON);
+		// and what the config file allows past it
+		assert!((clamp_ext(50.0 * 2.0) - EXT_MAX).abs() < f32::EPSILON);
+	}
+
+	#[test]
+	fn nothing_drawing_costs_no_memory() {
+		let uhd = (3840, 2160);
+		assert_eq!(alloc_size(true, uhd), uhd);
+		assert!(bytes(alloc_size(true, uhd)) > 200 << 20, "the real cost");
+		assert!(
+			bytes(alloc_size(false, uhd)) < 1 << 10,
+			"switched off it should cost nothing"
+		);
+	}
+}

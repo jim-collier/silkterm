@@ -698,10 +698,11 @@ pub fn expand_vars(text: &str) -> String {
 
 // `env:` off the front of a name, in whatever case it was written.
 fn strip_env_prefix(name: &str) -> &str {
-	if name.len() >= 4 && name[..4].eq_ignore_ascii_case("env:") {
-		&name[4..]
-	} else {
-		name
+	// get_ rather than a slice: a name whose fourth byte falls inside a character
+	// used to abort here
+	match name.get(..4) {
+		Some(head) if head.eq_ignore_ascii_case("env:") => &name[4..],
+		_ => name,
 	}
 }
 
@@ -926,10 +927,26 @@ fn fence_run(line: &str) -> Option<(char, usize)> {
 // rename, so a crash mid-save cannot leave a truncated config, and it is
 // refused outright when the parse dropped lines the save would delete - the
 // user's own text is worth more than one changed setting.
-fn write_doc(path: &std::path::Path, doc: &shcl::Document) {
+// Answers whether it wrote. A refusal has to reach the caller: the dialog closes
+// on a save, and three failures used to present as a clean one - shcl refusing a
+// lossy round trip, an unreadable file, an unwritable one.
+// Write beside the file and rename over it. Every launch-time rewrite goes
+// through here: `fs::write` truncates first, so a crash or a full disk during
+// one leaves nothing at all where the config was. The dialog's own save already
+// works this way (shcl does it).
+fn write_config_text(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+	let tmp = path.with_extension("shcl.new");
+	std::fs::write(&tmp, text)?;
+	std::fs::rename(&tmp, path)
+}
+
+#[must_use]
+fn write_doc(path: &std::path::Path, doc: &shcl::Document) -> bool {
 	if let Err(e) = doc.save_file(&path.to_string_lossy()) {
 		eprintln!("{APP_NAME}: could not save config {}: {e}", path.display());
+		return false;
 	}
+	true
 }
 
 // A setter answers whether the write applied, and every path here is one of
@@ -983,6 +1000,18 @@ fn unwritable(doc: &shcl::Document, path: &str, applied: bool) {
 // false (writing nothing) if the file looks open in another program, so the
 // caller can hold off - e.g. the Settings dialog stays open instead of
 // clobbering an in-flight edit.
+// Settings the user cleared back to "not set". These write nothing - there is no
+// value to write - so without naming them here the old line stays in the file
+// and the setting comes back next launch. One long today; anything optional
+// added to the dialog belongs on it.
+fn cleared_keys(orig: &Settings, s: &Settings) -> Vec<&'static str> {
+	let mut out = Vec::new();
+	if s.font_family.is_none() && orig.font_family.is_some() {
+		out.push("font.family");
+	}
+	out
+}
+
 #[must_use]
 pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	let Some(path) = config_path() else {
@@ -1300,8 +1329,14 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 		orig.scrollbar_trough,
 	);
 
-	write_doc(&path, &doc);
-	true
+	let cleared = cleared_keys(orig, s);
+	let wrote = write_doc(&path, &doc);
+	if wrote && !cleared.is_empty() {
+		// commented out rather than reverted: the box was cleared, and "not set"
+		// is not the same as the value the template ships
+		disable_keys(&cleared);
+	}
+	wrote
 }
 
 pub fn format_hex(c: [u8; 3]) -> String {
@@ -1461,7 +1496,7 @@ fn load() -> Settings {
 		if let Some(dir) = path.parent() {
 			let _ = std::fs::create_dir_all(dir);
 		}
-		if let Err(e) = std::fs::write(&path, default_config()) {
+		if let Err(e) = write_config_text(&path, default_config()) {
 			eprintln!(
 				"{APP_NAME}: could not create config {}: {e}",
 				path.display()
@@ -1485,10 +1520,103 @@ fn load() -> Settings {
 		// migrated text rather than what is on disk: a renamed key must never be
 		// read under its old spelling, which matters most where a rename hands an
 		// old name to a new setting (colors.focus).
-		Ok(text) => read_raw(&migrate_config_text(&text).unwrap_or(text), &path),
+		Ok(text) => {
+			let text = migrate_config_text(&text).unwrap_or(text);
+			for line in config_complaints(&text) {
+				eprintln!("{APP_NAME}: {}: {line}", path.display());
+			}
+			read_raw(&text, &path)
+		}
 		Err(_) => RawConfig::default(),
 	};
 	resolve(raw)
+}
+
+// What is wrong with a config file that nothing else says out loud. All three
+// were silent, and the first of them permanently stops the program saving.
+//
+// Subtrees the user fills in themselves (their shells, their themes) are not
+// checked for unknown keys - only the settings the program ships.
+fn config_complaints(text: &str) -> Vec<String> {
+	let doc = shcl::Document::parse(text);
+	let mut out = Vec::new();
+
+	let lost = doc.lost_count();
+	if lost > 0 {
+		let lines: Vec<usize> = doc
+			.diagnostics()
+			.iter()
+			.filter(|d| matches!(d.severity, shcl::Severity::Error))
+			.map(|d| d.line)
+			.collect();
+		out.push(format!(
+			"{lost} line(s) could not be read{} - settings cannot be saved until that is fixed",
+			line_list(&lines)
+		));
+	}
+
+	// A key written twice resolves to neither spelling, so the setting is there
+	// in the file, plainly set, and doing nothing.
+	let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+	let mut active: Vec<(String, usize)> = Vec::new();
+	for w in walk_settings(text) {
+		// a block header carries no value of its own
+		if let WalkLine::Setting {
+			index,
+			path,
+			active: true,
+			header: false,
+			..
+		} = w
+		{
+			active.push((path, index + 1));
+		}
+	}
+	for (path, _) in &active {
+		*seen.entry(path.as_str()).or_insert(0) += 1;
+	}
+	let mut twice: Vec<&str> = seen
+		.iter()
+		.filter(|(_, n)| **n > 1)
+		.map(|(p, _)| *p)
+		.collect();
+	twice.sort_unstable();
+	for path in twice {
+		let at: Vec<usize> = active
+			.iter()
+			.filter(|(p, _)| p == path)
+			.map(|(_, line)| *line)
+			.collect();
+		out.push(format!(
+			"`{path}` is set more than once{} - neither value is used",
+			line_list(&at)
+		));
+	}
+
+	// A key nothing reads is almost always a typo, and it looks exactly like a
+	// setting that is not working.
+	let known: std::collections::HashSet<String> = setting_lines(default_config())
+		.into_iter()
+		.map(|(path, _)| path)
+		.collect();
+	let mut unread: Vec<(String, usize)> = active
+		.iter()
+		.filter(|(path, _)| {
+			!known.contains(path)
+				&& !path.starts_with("shells.")
+				&& !path.starts_with("user_themes.")
+		})
+		.cloned()
+		.collect();
+	unread.sort_unstable();
+	unread.dedup_by(|a, b| a.0 == b.0);
+	for (path, line) in unread {
+		out.push(format!(
+			"nothing reads `{path}`{} - check the spelling",
+			line_list(&[line])
+		));
+	}
+	out
 }
 
 // Typed reads off a parsed document, warning about (and then ignoring) any single
@@ -1840,19 +1968,27 @@ fn write_shells(
 	}
 }
 
-// One entry's whole subtree, dropped and rewritten so a field that no longer has
-// a value cannot survive under a key that stopped setting it.
+// One entry's fields, set where they already are. Dropping the subtree first
+// would be simpler, but it takes the entry's comments with it and puts it back
+// at the end of the block - and the scan stamps `last_seen` daily, so the first
+// launch of each day rewrote every entry it saw. The file's order names the
+// default shell, so a relocated entry can change which shell a new tab gets.
+// The two optional fields are removed rather than left behind when they empty.
 fn write_shell(doc: &mut shcl::Document, entry: &crate::shells::ShellEntry) {
 	let at = format!("shells.{}", entry.slug);
-	doc.remove(&at);
 	doc.put_string(&format!("{at}.title"), &entry.title);
 	doc.put_string(&format!("{at}.command"), &entry.command);
 	doc.put_bool(&format!("{at}.active"), entry.active);
-	if !entry.comment.is_empty() {
+	if entry.comment.is_empty() {
+		let _ = doc.remove(&format!("{at}.comment"));
+	} else {
 		doc.put_string(&format!("{at}.comment"), &entry.comment);
 	}
-	if let Some(when) = parse_iso_date(&entry.last_seen) {
-		doc.put_datetime(&format!("{at}.last_seen"), &when);
+	match parse_iso_date(&entry.last_seen) {
+		Some(when) => doc.put_datetime(&format!("{at}.last_seen"), &when),
+		None => {
+			doc.remove(&format!("{at}.last_seen"));
+		}
 	}
 }
 
@@ -1861,6 +1997,41 @@ fn write_shell(doc: &mut shcl::Document, entry: &crate::shells::ShellEntry) {
 fn parse_iso_date(text: &str) -> Option<shcl::ShclDateTime> {
 	let when = shcl::parse_datetime(text.trim())?;
 	when.date.is_some().then_some(when)
+}
+
+// Every numeric setting's range, and the two readers that enforce it. A floor on
+// its own was the 20260707 `output_ease_lines` defect; fixing that one in place
+// left the rest of the table with the same hole. A window in the low thousands
+// of columns asks for a texture past the GPU's limit and aborts at launch, and
+// an unbounded scrollback grows until the process is killed.
+//
+// Ceilings are generous - well past anything anyone would set on purpose, and
+// well short of what breaks. Both readers fall back to the default rather than
+// to an edge when the value is not a number at all: shcl reads `1e400` as
+// infinity and reports it good, and infinity survives a clamp.
+#[rustfmt::skip]
+mod limits {
+	pub const FONT_SIZE:          (f32, f32) = (4.0, 400.0);
+	pub const LINE_HEIGHT:        (f32, f32) = (0.5, 10.0);
+	pub const EASE_MS:            (f32, f32) = (1.0, 60_000.0);
+	pub const BLINK_MS:           (f32, f32) = (50.0, 60_000.0);
+	pub const WHEEL_LINES:        (f32, f32) = (0.0, 1_000.0);
+	pub const MARGIN:             (f32, f32) = (0.0, 1_000.0);
+	pub const ROTATE_S:           (f32, f32) = (0.0, 604_800.0);
+	pub const GRID:               (usize, usize) = (1, 1_000);
+	pub const SCROLLBACK:         (usize, usize) = (0, 1_000_000);
+}
+
+// A number from the file, held to its range.
+fn numf(raw: Option<f32>, default: f32, (lo, hi): (f32, f32)) -> f32 {
+	match raw {
+		Some(v) if v.is_finite() => v.clamp(lo, hi),
+		_ => default,
+	}
+}
+
+fn numi(raw: Option<usize>, default: usize, (lo, hi): (usize, usize)) -> usize {
+	raw.map_or(default, |v| v.clamp(lo, hi))
 }
 
 fn resolve(raw: RawConfig) -> Settings {
@@ -1912,35 +2083,37 @@ fn resolve(raw: RawConfig) -> Settings {
 			.use_system_font_size
 			.unwrap_or(use_system_font && raw.font_size.is_none()),
 		font_family: raw.font_family.filter(|s| !s.trim().is_empty()),
-		font_size: raw.font_size.unwrap_or_else(default_font_size).max(4.0),
-		line_height_scale: raw
-			.line_height_scale
-			.unwrap_or(d.line_height_scale)
-			.max(0.5),
-		scrollback: raw.scrollback.unwrap_or(d.scrollback),
+		font_size: numf(raw.font_size, default_font_size(), limits::FONT_SIZE),
+		line_height_scale: numf(
+			raw.line_height_scale,
+			d.line_height_scale,
+			limits::LINE_HEIGHT,
+		),
+		scrollback: numi(raw.scrollback, d.scrollback, limits::SCROLLBACK),
 		scroll_smooth: raw.scroll_smooth.unwrap_or(d.scroll_smooth),
-		scroll_ease_in_ms: raw
-			.scroll_ease_in_ms
-			.unwrap_or(d.scroll_ease_in_ms)
-			.max(1.0),
-		scroll_ramp_up_ms: raw
-			.scroll_ramp_up_ms
-			.unwrap_or(d.scroll_ramp_up_ms)
-			.max(1.0),
-		scroll_single_screen_tau_ms: raw
-			.scroll_single_screen_tau_ms
-			.unwrap_or(d.scroll_single_screen_tau_ms)
-			.max(1.0),
-		scroll_ramp_down_ms: raw
-			.scroll_ramp_down_ms
-			.unwrap_or(d.scroll_ramp_down_ms)
-			.max(1.0),
-		scroll_ease_out_ms: raw
-			.scroll_ease_out_ms
-			.unwrap_or(d.scroll_ease_out_ms)
-			.max(1.0),
-		wheel_lines: raw.wheel_lines.unwrap_or(d.wheel_lines),
-		alt_scroll_lines: raw.alt_scroll_lines.unwrap_or(d.alt_scroll_lines),
+		scroll_ease_in_ms: numf(raw.scroll_ease_in_ms, d.scroll_ease_in_ms, limits::EASE_MS),
+		scroll_ramp_up_ms: numf(raw.scroll_ramp_up_ms, d.scroll_ramp_up_ms, limits::EASE_MS),
+		scroll_single_screen_tau_ms: numf(
+			raw.scroll_single_screen_tau_ms,
+			d.scroll_single_screen_tau_ms,
+			limits::EASE_MS,
+		),
+		scroll_ramp_down_ms: numf(
+			raw.scroll_ramp_down_ms,
+			d.scroll_ramp_down_ms,
+			limits::EASE_MS,
+		),
+		scroll_ease_out_ms: numf(
+			raw.scroll_ease_out_ms,
+			d.scroll_ease_out_ms,
+			limits::EASE_MS,
+		),
+		wheel_lines: numf(raw.wheel_lines, d.wheel_lines, limits::WHEEL_LINES),
+		alt_scroll_lines: numf(
+			raw.alt_scroll_lines,
+			d.alt_scroll_lines,
+			limits::WHEEL_LINES,
+		),
 		// MUST clamp: scroll's backlog clamp uses this as its lower bound, and
 		// f32::clamp panics (aborts, in release) when min > max - an over-range
 		// value here killed the terminal on the first scrolling output.
@@ -1963,7 +2136,7 @@ fn resolve(raw: RawConfig) -> Settings {
 			.unwrap_or(d.minimap_width)
 			.clamp(24.0, 400.0),
 		minimap_tui_whitelist: raw.minimap_tui_whitelist.unwrap_or(d.minimap_tui_whitelist),
-		margin: raw.margin.unwrap_or(d.margin).max(0.0),
+		margin: numf(raw.margin, d.margin, limits::MARGIN),
 		opacity: raw.opacity.unwrap_or(d.opacity).clamp(0.0, 1.0),
 		transparent_background: raw
 			.transparent_background
@@ -1982,10 +2155,11 @@ fn resolve(raw: RawConfig) -> Settings {
 		wallpaper_rotate_random: raw
 			.wallpaper_rotate_random
 			.unwrap_or(d.wallpaper_rotate_random),
-		wallpaper_rotate_interval_s: raw
-			.wallpaper_rotate_interval_s
-			.unwrap_or(d.wallpaper_rotate_interval_s)
-			.max(0.0),
+		wallpaper_rotate_interval_s: numf(
+			raw.wallpaper_rotate_interval_s,
+			d.wallpaper_rotate_interval_s,
+			limits::ROTATE_S,
+		),
 		wallpaper_opacity: raw
 			.wallpaper_opacity
 			.unwrap_or(d.wallpaper_opacity)
@@ -2069,10 +2243,11 @@ fn resolve(raw: RawConfig) -> Settings {
 			.cursor_animation_idle_stop_s
 			.unwrap_or(d.cursor_animation_idle_stop_s)
 			.clamp(0.0, 86400.0),
-		cursor_blink_rate_ms: raw
-			.cursor_blink_rate_ms
-			.unwrap_or(d.cursor_blink_rate_ms)
-			.max(50.0),
+		cursor_blink_rate_ms: numf(
+			raw.cursor_blink_rate_ms,
+			d.cursor_blink_rate_ms,
+			limits::BLINK_MS,
+		),
 		wallpaper_default_fit: match raw.wallpaper_default_fit.as_deref() {
 			Some("zoom") => Fit::Zoom,
 			_ => Fit::Stretch,
@@ -2081,8 +2256,8 @@ fn resolve(raw: RawConfig) -> Settings {
 		wallpaper_honor_xmp_look: raw
 			.wallpaper_honor_xmp_look
 			.unwrap_or(d.wallpaper_honor_xmp_look),
-		columns: raw.columns.unwrap_or(d.columns).max(1),
-		rows: raw.rows.unwrap_or(d.rows).max(1),
+		columns: numi(raw.columns, d.columns, limits::GRID),
+		rows: numi(raw.rows, d.rows, limits::GRID),
 		remember_size: raw.remember_size.unwrap_or(d.remember_size),
 		hide_single_tab: raw.hide_single_tab.unwrap_or(d.hide_single_tab),
 		tab_regular_pct: raw
@@ -2093,11 +2268,8 @@ fn resolve(raw: RawConfig) -> Settings {
 		// maximum dragged below the regular width is stored as it was set rather
 		// than quietly rewritten under the user.
 		tab_max_pct: raw.tab_max_pct.unwrap_or(d.tab_max_pct).clamp(2.0, 100.0),
-		remembered_columns: raw
-			.remembered_columns
-			.unwrap_or(d.remembered_columns)
-			.max(1),
-		remembered_rows: raw.remembered_rows.unwrap_or(d.remembered_rows).max(1),
+		remembered_columns: numi(raw.remembered_columns, d.remembered_columns, limits::GRID),
+		remembered_rows: numi(raw.remembered_rows, d.remembered_rows, limits::GRID),
 		word_separators: raw.word_separators.unwrap_or(d.word_separators),
 		selection_pairs: raw.selection_pairs.unwrap_or(d.selection_pairs),
 		command_line: raw.command_line.unwrap_or(d.command_line),
@@ -2148,7 +2320,9 @@ fn resolve(raw: RawConfig) -> Settings {
 
 pub fn parse_hex(s: &str) -> Option<[u8; 3]> {
 	let s = s.trim().trim_start_matches('#');
-	if s.len() != 6 {
+	// six BYTES is not six digits: a value carrying a multi-byte character is the
+	// right length and splits mid-character, which used to abort at launch
+	if s.len() != 6 || !s.is_ascii() {
 		return None;
 	}
 	Some([
@@ -2735,7 +2909,7 @@ fn convert_legacy_config(path: &std::path::Path) {
 	}
 	let mut joined = out.join("\n");
 	joined.push('\n');
-	if let Err(e) = std::fs::write(path, joined) {
+	if let Err(e) = write_config_text(path, &joined) {
 		eprintln!(
 			"{APP_NAME}: could not convert config {}: {e}",
 			path.display()
@@ -2761,7 +2935,7 @@ fn migrate_config(path: &std::path::Path) {
 			note_config_busy(path);
 			return;
 		}
-		if let Err(e) = std::fs::write(path, out) {
+		if let Err(e) = write_config_text(path, &out) {
 			eprintln!(
 				"{APP_NAME}: could not migrate config {}: {e}",
 				path.display()
@@ -2955,7 +3129,7 @@ fn adopt_default_shell(path: &std::path::Path) {
 	let mut doc = doc;
 	write_shells(&mut doc, &stored, &moved);
 	doc.remove("shell.default");
-	write_doc(path, &doc);
+	let _ = write_doc(path, &doc);
 }
 
 // The list with `wanted` at the front. An entry already running that shell moves;
@@ -3006,15 +3180,110 @@ pub fn revert_keys(keys: &[&str]) {
 		note_config_busy(&path);
 		return;
 	}
-	let Some(mut doc) = read_doc(&path) else {
+	let Ok(text) = std::fs::read_to_string(&path) else {
 		return;
 	};
-	// A dotted key ("colors.foreground") is already a path, nested or not.
-	for full_key in keys {
-		doc.remove(full_key);
+	let Some(out) = reverted_text(&text, keys) else {
+		return;
+	};
+	if let Err(e) = write_config_text(&path, &out) {
+		eprintln!(
+			"{APP_NAME}: could not update config {}: {e}",
+			path.display()
+		);
+		return;
 	}
-	write_doc(&path, &doc);
 	backfill_config(&path);
+}
+
+// Comment the named settings out, so each is as good as absent. Used for a
+// setting the user cleared: there is no value to write, and leaving the old line
+// alone brought it back next launch.
+pub fn disable_keys(keys: &[&str]) {
+	if keys.is_empty() {
+		return;
+	}
+	let Some(path) = config_path() else { return };
+	if config_open_elsewhere(&path) {
+		note_config_busy(&path);
+		return;
+	}
+	let Ok(text) = std::fs::read_to_string(&path) else {
+		return;
+	};
+	let Some(out) = disabled_text(&text, keys) else {
+		return;
+	};
+	if let Err(e) = write_config_text(&path, &out) {
+		eprintln!(
+			"{APP_NAME}: could not update config {}: {e}",
+			path.display()
+		);
+	}
+}
+
+// Rewrite the named settings' own lines, leaving everything above them alone.
+//
+// A line edit rather than a document one on purpose: removing the node takes its
+// leading comments with it, so reverting a scrim setting used to destroy seven
+// lines of documentation, and a note written above a value went the same way.
+// `line_for` is given the key, the file's own indentation and the current line,
+// and answers the replacement or None to leave it. Answers None when nothing
+// needs writing.
+fn edit_setting_lines(
+	text: &str,
+	keys: &[&str],
+	line_for: impl Fn(&str, &str, &str) -> Option<String>,
+) -> Option<String> {
+	let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+	let at = paths_at(&lines);
+	let mut changed = false;
+	for key in keys {
+		let Some(&i) = at.get(*key) else { continue };
+		let indent: String = lines[i]
+			.chars()
+			.take_while(|c| *c == '\t' || *c == ' ')
+			.collect();
+		let Some(replacement) = line_for(key, &indent, &lines[i]) else {
+			continue;
+		};
+		if lines[i] != replacement {
+			lines[i] = replacement;
+			changed = true;
+		}
+	}
+	if !changed {
+		return None;
+	}
+	let mut out = lines.join("\n");
+	if text.ends_with('\n') {
+		out.push('\n');
+	}
+	Some(out)
+}
+
+// One setting's line commented out, so the setting is as good as absent.
+fn commented(indent: &str, line: &str) -> Option<String> {
+	let body = line.trim_start();
+	(!body.starts_with('#')).then(|| format!("{indent}# {body}"))
+}
+
+// The file with each named setting put back the way the template ships it.
+fn reverted_text(text: &str, keys: &[&str]) -> Option<String> {
+	let template: std::collections::HashMap<String, String> =
+		setting_lines(default_config()).into_iter().collect();
+	edit_setting_lines(text, keys, |key, indent, line| match template.get(key) {
+		Some(shipped) => Some(format!("{indent}{}", shipped.trim_start())),
+		// nothing ships it, so commenting it out is the whole revert
+		None => commented(indent, line),
+	})
+}
+
+// The file with each named setting commented out. This is what a cleared box
+// means - "not set" - which is not the same as the template's default, and the
+// template ships some of these with a value.
+fn disabled_text(text: &str, keys: &[&str]) -> Option<String> {
+	edit_setting_lines(text, keys, |_, indent, line| commented(indent, line))
 }
 
 // Insert any settings the shipped template defines that `path` lacks,
@@ -3110,7 +3379,7 @@ fn backfill_config(path: &std::path::Path) {
 			note_config_busy(path);
 			return;
 		}
-		if let Err(e) = std::fs::write(path, out) {
+		if let Err(e) = write_config_text(path, &out) {
 			eprintln!(
 				"{APP_NAME}: could not update config {}: {e}",
 				path.display()
@@ -3191,7 +3460,7 @@ fn refresh_shcl_banner(path: &std::path::Path) {
 		note_config_busy(path);
 		return;
 	}
-	if let Err(e) = std::fs::write(path, out) {
+	if let Err(e) = write_config_text(path, &out) {
 		eprintln!(
 			"{APP_NAME}: could not update config {}: {e}",
 			path.display()
@@ -3807,6 +4076,23 @@ shell:
 mod tests {
 	use super::*;
 
+	// Both of these used to abort before the window existed, which left the file
+	// that caused it unfixable from the terminal it killed.
+	#[test]
+	fn a_config_value_cannot_abort_the_launch_on_a_byte_slice() {
+		// six bytes, three characters
+		assert_eq!(parse_hex("\u{20ac}abc"), None);
+		assert_eq!(parse_hex("#\u{20ac}abc"), None);
+		// still reads the ordinary ones
+		assert_eq!(parse_hex("#ff8000"), Some([255, 128, 0]));
+		assert_eq!(parse_hex("00ff00"), Some([0, 255, 0]));
+
+		// a variable name whose fourth byte falls inside a character
+		assert_eq!(strip_env_prefix("ab\u{20ac}cd"), "ab\u{20ac}cd");
+		assert_eq!(strip_env_prefix("env:HOME"), "HOME");
+		assert_eq!(strip_env_prefix("HOME"), "HOME");
+	}
+
 	// The case that keeps coming up is a file manager's "Open in terminal": no
 	// tty, but a directory that was very much chosen. Only the three directories
 	// a launcher leaves us in by default may fall through to the setting.
@@ -3925,6 +4211,34 @@ mod tests {
 		doc
 	}
 
+	// The scan stamps the date daily, so this fires on its own on the first launch
+	// of each day. It used to drop the entry's subtree and put it back at the end
+	// of the block, which loses its comments and moves it - and the first entry in
+	// the file is the default shell.
+	#[test]
+	fn a_daily_stamp_leaves_a_shell_where_it_is() {
+		let text = "shells:\n\n\t## the one I use\n\tbash:\n\t\ttitle: \"bash\"\n\t\tcommand: \"/bin/bash\"\n\t\tactive: true\n\n\tzsh:\n\t\ttitle: \"zsh\"\n\t\tcommand: \"/bin/zsh\"\n\t\tactive: true\n";
+		let mut doc = shcl::Document::parse(text);
+		let stored = read_shells(&doc);
+		assert_eq!(stored.len(), 2);
+		let mut now = stored.clone();
+		now[0].last_seen = "2026-09-08".to_string();
+
+		write_shells(&mut doc, &stored, &now);
+
+		assert_eq!(
+			doc.children("shells"),
+			vec!["bash", "zsh"],
+			"the default shell is the first entry, so it may not move"
+		);
+		let out = doc.to_canonical();
+		assert!(
+			out.contains("## the one I use"),
+			"its comment survives: {out:?}"
+		);
+		assert!(out.contains("2026-09-08"), "the stamp went in: {out:?}");
+	}
+
 	// File order IS the list's order - it decides what the menu offers first and
 	// therefore which shell is the default - and a reorder changes no entry, so
 	// the per-entry write path would have written nothing at all and lost it.
@@ -4040,6 +4354,61 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
+	// Every launch-time rewrite used to truncate the file before writing it, so a
+	// crash or a full disk during one left nothing where the config was.
+	#[test]
+	fn a_launch_time_rewrite_never_truncates_the_config() {
+		let dir = std::env::temp_dir().join(format!("silkterm_cfgatomic_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).expect("temp dir");
+		let path = dir.join("config.shcl");
+		std::fs::write(&path, "font.size: 12.0\n").expect("write");
+
+		write_config_text(&path, "font.size: 13.0\n").expect("rewrite");
+		assert_eq!(std::fs::read_to_string(&path).unwrap(), "font.size: 13.0\n");
+		assert!(
+			!dir.join("config.shcl.new").exists(),
+			"no half-written file left beside it"
+		);
+
+		// nothing in the module writes the config any other way
+		let body = include_str!("config.rs")
+			.split("\nmod tests {")
+			.next()
+			.expect("the file above its own tests");
+		let raw: Vec<&str> = body
+			.lines()
+			.filter(|l| l.contains("fs::write(") && l.contains("path"))
+			.map(str::trim)
+			.collect();
+		assert!(
+			raw.is_empty(),
+			"these truncate the config before writing it: {raw:?}"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// A failed save used to present to the dialog as a clean one, so it closed as
+	// if it had written. shcl refusing a lossy round trip is the case that makes
+	// this permanent.
+	#[test]
+	fn a_save_that_failed_is_not_reported_as_a_save() {
+		let dir = std::env::temp_dir().join(format!("silkterm_cfgfail_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let doc = shcl::Document::parse("font.size: 12.0\n");
+		// a directory that is not there is the cheapest unwritable path
+		let missing = dir.join("no-such-dir").join("config.shcl");
+		assert!(
+			!write_doc(&missing, &doc),
+			"an unwritable path is not a save"
+		);
+		assert!(
+			write_doc(&dir.join("config.shcl"), &doc),
+			"and a real one is"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
 	#[test]
 	fn persist_survives_bare_decimal_float() {
 		// Memoize settings() BEFORE installing the override: a test on another
@@ -4075,6 +4444,20 @@ mod tests {
 			"scalar should be left verbatim: {saved:?}"
 		);
 		assert_eq!(load().wallpaper_opacity, 0.1);
+
+		// clearing the Family box has to take the line out: writing nothing left
+		// it there and the font came back next launch
+		let before = load();
+		let mut named = before.clone();
+		named.font_family = Some("Iosevka".to_string());
+		assert!(persist(&before, &named));
+		assert_eq!(load().font_family.as_deref(), Some("Iosevka"));
+
+		let before = load();
+		let mut cleared = before.clone();
+		cleared.font_family = None;
+		assert!(persist(&before, &cleared));
+		assert_eq!(load().font_family, None, "cleared, and it stays cleared");
 	}
 
 	// The /proc-based busy check: a child process holding the file open is seen as
@@ -4126,6 +4509,159 @@ mod tests {
 			s.margin,
 			Settings::default().margin,
 			"the unusable one falls back to its default"
+		);
+	}
+
+	// Clearing the Family box wrote nothing at all, so the old line survived and
+	// the font came back next launch.
+	#[test]
+	fn clearing_the_font_family_takes_the_old_line_out() {
+		let set = Settings {
+			font_family: Some("Iosevka".to_string()),
+			..Default::default()
+		};
+		let mut none = set.clone();
+		none.font_family = None;
+		assert_eq!(cleared_keys(&set, &none), vec!["font.family"]);
+		// setting one, or leaving it alone, is an ordinary write
+		assert!(cleared_keys(&none, &set).is_empty());
+		assert!(cleared_keys(&set, &set).is_empty());
+	}
+
+	// Reverting used to remove the node, and shcl takes a node's leading comments
+	// with it - so a scrim setting destroyed seven lines of documentation, and a
+	// note written above a value went the same way.
+	#[test]
+	fn reverting_a_setting_keeps_the_comments_above_it() {
+		let text = "text:\n\n\t## A blurred patch of background color behind each letter, so text stays\n\t## readable over a wallpaper.\n\tscrim:\n\t\t## mine: I like it stronger\n\t\tstrength: 40\n";
+		let out = reverted_text(text, &["text.scrim.strength"]).expect("something to write");
+		assert!(
+			out.contains("## A blurred patch of background color"),
+			"the template's comments survive: {out:?}"
+		);
+		assert!(
+			out.contains("## mine: I like it stronger"),
+			"and so does a note written by hand: {out:?}"
+		);
+		assert!(
+			!out.contains("strength: 40"),
+			"the value itself is gone: {out:?}"
+		);
+		// back to how the template ships it, at the file's own indentation
+		assert!(
+			out.contains("\t\t# strength: 15  ## Default"),
+			"the template line went back: {out:?}"
+		);
+		// and a second revert of the same key has nothing left to do
+		assert!(reverted_text(&out, &["text.scrim.strength"]).is_none());
+	}
+
+	// Every numeric setting, at both extremes, in one place. Floors were there
+	// already; ceilings were not, and a value in the low thousands aborted the
+	// launch on a texture limit while a large scrollback grew until the process
+	// was killed. `1e400` is here because shcl reads it as infinity and reports
+	// it good, and infinity survives a clamp.
+	#[test]
+	fn every_numeric_setting_has_a_floor_and_a_ceiling() {
+		let p = std::path::Path::new("test.shcl");
+		#[rustfmt::skip]
+		let keys: &[(&str, f32, f32)] = &[
+			("font.size",                        limits::FONT_SIZE.0,   limits::FONT_SIZE.1),
+			("font.line_height_scale",           limits::LINE_HEIGHT.0, limits::LINE_HEIGHT.1),
+			("scroll.wheel_lines",               limits::WHEEL_LINES.0, limits::WHEEL_LINES.1),
+			("scroll.alt_scroll_lines",          limits::WHEEL_LINES.0, limits::WHEEL_LINES.1),
+			("scroll.ease_in_ms",                limits::EASE_MS.0,     limits::EASE_MS.1),
+			("scroll.ramp_up_ms",                limits::EASE_MS.0,     limits::EASE_MS.1),
+			("scroll.single_screen_tau_ms",      limits::EASE_MS.0,     limits::EASE_MS.1),
+			("scroll.ramp_down_ms",              limits::EASE_MS.0,     limits::EASE_MS.1),
+			("scroll.ease_out_ms",               limits::EASE_MS.0,     limits::EASE_MS.1),
+			("window.margin",                    limits::MARGIN.0,      limits::MARGIN.1),
+			("cursor.blink_rate_ms",             limits::BLINK_MS.0,    limits::BLINK_MS.1),
+			("wallpaper.rotate.interval_s",      limits::ROTATE_S.0,    limits::ROTATE_S.1),
+		];
+		let read = |key: &str, value: &str| resolve(read_raw(&format!("{key}: {value}\n"), p));
+		let of = |s: &Settings, key: &str| -> f32 {
+			match key {
+				"font.size" => s.font_size,
+				"font.line_height_scale" => s.line_height_scale,
+				"scroll.wheel_lines" => s.wheel_lines,
+				"scroll.alt_scroll_lines" => s.alt_scroll_lines,
+				"scroll.ease_in_ms" => s.scroll_ease_in_ms,
+				"scroll.ramp_up_ms" => s.scroll_ramp_up_ms,
+				"scroll.single_screen_tau_ms" => s.scroll_single_screen_tau_ms,
+				"scroll.ramp_down_ms" => s.scroll_ramp_down_ms,
+				"scroll.ease_out_ms" => s.scroll_ease_out_ms,
+				"window.margin" => s.margin,
+				"cursor.blink_rate_ms" => s.cursor_blink_rate_ms,
+				"wallpaper.rotate.interval_s" => s.wallpaper_rotate_interval_s,
+				other => panic!("{other} is not in the reader"),
+			}
+		};
+		for &(key, lo, hi) in keys {
+			for value in ["1e30", "1e400", "-1e30", "-1e400", "0"] {
+				let got = of(&read(key, value), key);
+				assert!(got.is_finite(), "{key} at {value} resolved to {got}");
+				assert!(got >= lo && got <= hi, "{key} at {value} resolved to {got}");
+			}
+		}
+
+		// the two integer pairs, same shape
+		let huge = "99999999";
+		for key in [
+			"window.columns",
+			"window.rows",
+			"window.remembered_columns",
+			"window.remembered_rows",
+		] {
+			let s = read(key, huge);
+			let got = match key {
+				"window.columns" => s.columns,
+				"window.rows" => s.rows,
+				"window.remembered_columns" => s.remembered_columns,
+				_ => s.remembered_rows,
+			};
+			assert!(
+				(limits::GRID.0..=limits::GRID.1).contains(&got),
+				"{key} resolved to {got}"
+			);
+		}
+		assert!(
+			read("scroll.scrollback", huge).scrollback <= limits::SCROLLBACK.1,
+			"an unbounded scrollback grows until the process is killed"
+		);
+	}
+
+	// All three of these were silent, and the file looks perfectly fine while the
+	// setting does nothing. The first one also stops every future save.
+	#[test]
+	fn a_config_says_what_is_wrong_with_it() {
+		// a key set twice
+		let twice =
+			config_complaints("font:\n\tfamily: \"One\"\n\tsize: 13.0\n\tfamily: \"Two\"\n");
+		assert_eq!(twice.len(), 1, "{twice:?}");
+		assert!(twice[0].contains("font.family"), "{twice:?}");
+		assert!(twice[0].contains("lines 2, 4"), "{twice:?}");
+
+		// a key nothing reads
+		let typo = config_complaints("font:\n\tfamly: \"One\"\n");
+		assert_eq!(typo.len(), 1, "{typo:?}");
+		assert!(typo[0].contains("font.famly"), "{typo:?}");
+
+		// a line the parser had to drop, which also disables saving
+		let lost = config_complaints("font:\n\tsize: 13.0\n   family: \"One\"\n");
+		assert!(
+			lost.iter().any(|m| m.contains("cannot be saved")),
+			"{lost:?}"
+		);
+
+		// the shipped template says nothing, and neither does a config full of
+		// the user's own shells and themes
+		assert!(config_complaints(default_config()).is_empty());
+		let mine = "shells:\n\tmine:\n\t\ttitle: Mine\n\t\tcommand: /bin/sh\nuser_themes:\n\tone:\n\t\tname: One\n";
+		assert!(
+			config_complaints(mine).is_empty(),
+			"{:?}",
+			config_complaints(mine)
 		);
 	}
 
@@ -4884,7 +5420,7 @@ mod tests {
 			"the space-indented line is the one dropped"
 		);
 		doc.put_float("window.margin", 4.0);
-		write_doc(&path, &doc);
+		let _ = write_doc(&path, &doc);
 		assert_eq!(
 			std::fs::read_to_string(&path).unwrap(),
 			text,

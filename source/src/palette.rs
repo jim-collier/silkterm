@@ -26,7 +26,7 @@ fn indexed(i: u8, colors: &Colors, s: &Settings) -> [u8; 3] {
 	default_indexed(i, s)
 }
 
-fn default_indexed(i: u8, s: &Settings) -> [u8; 3] {
+pub fn default_indexed(i: u8, s: &Settings) -> [u8; 3] {
 	match i {
 		0..=15 => s.ansi[i as usize],
 		16..=231 => {

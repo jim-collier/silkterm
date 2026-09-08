@@ -247,8 +247,12 @@ retry_build(){
 write_sums(){
 	[[ -n "${art_dir:-}" && -d "${art_dir:-/nonexist}" ]] || return 0
 	( cd "${art_dir}"
-	  files=(); for x in "${EXE_NAME}-${ver}-"*; do [[ "$x" == "$sums" || ! -f "$x" ]] && continue; files+=("$x"); done
+	  ## the signature covers the sums file, so it can never be inside it
+	  files=(); for x in "${EXE_NAME}-${ver}-"*; do [[ "$x" == "$sums" || "$x" == *.sig || ! -f "$x" ]] && continue; files+=("$x"); done
 	  ((${#files[@]})) && sha256sum "${files[@]}" > "${sums}" )
+	##  shellcheck source=cicd/utility/built-from.bash
+	source "${root}/cicd/utility/built-from.bash"
+	fWriteBuiltFrom "${art_dir}"
 }
 trap 'rc=$?; printf "\n[ CICD ABORTED (exit %s) at line %s: %s ]\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; exit $rc' ERR
 
@@ -468,6 +472,31 @@ fi
 ## Headless scroll regression harness (slow; skipped under --quick). It skips itself
 ## on an environment miss (no Xvfb/binary) and exits non-zero only on a measured
 ## regression - which aborts here.
+## A release may only publish what was built from the source being tagged.
+if [[ -x "${root}/cicd/tests/release/run.bash" ]]; then
+	fEcho_Clean "release provenance ..."
+	"${root}/cicd/tests/release/run.bash" >/dev/null || fDie "release provenance test failed"
+	fEcho "OK: release provenance"
+fi
+## Installer and rig hygiene: no secret on a command line, no plain-http
+## redirect, no adopting somebody else's directory in a shared temp folder.
+if [[ -x "${root}/cicd/tests/install/run.bash" ]]; then
+	fEcho_Clean "installer hygiene ..."
+	"${root}/cicd/tests/install/run.bash" >/dev/null || fDie "installer hygiene test failed"
+	fEcho "OK: installer hygiene"
+fi
+## The publish script commits and pushes, so nothing may reach a shell inside it.
+if [[ -x "${root}/cicd/tests/publish/run.bash" ]]; then
+	fEcho_Clean "publish script safety ..."
+	"${root}/cicd/tests/publish/run.bash" >/dev/null || fDie "publish script safety test failed"
+	fEcho "OK: publish script safety"
+fi
+## The harness's own exit code, which once printed OK after running no scenes.
+if [[ -x "${root}/cicd/tests/scroll/verdict-test.bash" ]]; then
+	fEcho_Clean "scroll harness verdict ..."
+	"${root}/cicd/tests/scroll/verdict-test.bash" >/dev/null || fDie "scroll harness verdict test failed"
+	fEcho "OK: scroll harness verdict"
+fi
 if ((! quick)) && [[ -n "${SCROLL_HARNESS+x}" ]] && ((${#SCROLL_HARNESS[@]})); then
 	fEcho_Clean "scroll regression harness (headless, X11) ..."
 	if "${root}/${SCROLL_HARNESS[0]}" "${SCROLL_HARNESS[@]:1}"; then
@@ -485,6 +514,20 @@ if ((! quick)) && [[ -n "${SCROLL_HARNESS+x}" ]] && ((${#SCROLL_HARNESS[@]})); t
 	fi
 elif ((quick)); then
 	fEcho_Clean "scroll harness skipped (--quick)"
+fi
+## Dogfood launcher: it shares a path with the release installer, so what it does
+## to a file it did not create is worth a gate. Runs in a sandboxed HOME.
+if [[ -n "${LAUNCHER_HARNESS+x}" ]] && ((${#LAUNCHER_HARNESS[@]})); then
+	if command -v pwsh >/dev/null 2>&1; then
+		fEcho_Clean "dogfood launcher harness ..."
+		if pwsh -NoProfile -File "${root}/${LAUNCHER_HARNESS[0]}" "${LAUNCHER_HARNESS[@]:1}"; then
+			fEcho "OK: launcher harness"
+		else
+			fDie "dogfood launcher harness failed"
+		fi
+	else
+		fEcho "WARNING: launcher harness skipped: pwsh not found"
+	fi
 fi
 fEcho "OK: tests passed"
 

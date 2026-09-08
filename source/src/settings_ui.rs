@@ -2494,7 +2494,7 @@ impl SettingsDialog {
 				if let Some(prompt) = self.prompt.as_mut() {
 					prompt.focus = PromptFocus::Field;
 				}
-				self.field_click(PROMPT_ROW, (PROMPT_ROW, 0), field, x, measure);
+				self.field_click(PROMPT_ROW, None, field, x, measure);
 			}
 		}
 	}
@@ -3307,15 +3307,21 @@ impl SettingsDialog {
 				}
 				return Action::None;
 			}
+			// A grayed control takes no click. This used to sit inside each arm, and
+			// the color, text and radio arms were the three that never got it - so
+			// a control the dialog draws as inert still changed its setting. The
+			// two whose parts gray separately keep their own per-part check.
+			if !matches!(self.specs[i].kind, Kind::Buttons(_) | Kind::ShellList)
+				&& self.disabled(self.specs[i].key)
+			{
+				continue;
+			}
 			match self.specs[i].kind {
 				Kind::Slider { .. } => {
-					if self.disabled(self.specs[i].key) {
-						continue; // grayed-out slider ignores clicks
-					}
 					// click the numeric field -> edit the value, caret at the click
 					let val_box = self.valbox(i);
 					if val_box.contains(x, y) {
-						self.field_click(i, (i, 1), val_box, x, measure);
+						self.field_click(i, Some((i, 1)), val_box, x, measure);
 						return Action::None;
 					}
 					let track = self.track(i);
@@ -3339,22 +3345,19 @@ impl SettingsDialog {
 					}
 					let hex_box = self.hexbox(i);
 					if hex_box.contains(x, y) {
-						self.field_click(i, (i, 0), hex_box, x, measure);
+						self.field_click(i, Some((i, 0)), hex_box, x, measure);
 						return Action::None;
 					}
 				}
 				Kind::Text => {
 					let text_box = self.textbox(i);
 					if text_box.contains(x, y) {
-						self.field_click(i, (i, 0), text_box, x, measure);
+						self.field_click(i, Some((i, 0)), text_box, x, measure);
 						return Action::None;
 					}
 				}
 				Kind::Toggle => {
 					if self.checkbox(i).contains(x, y) {
-						if self.disabled(self.specs[i].key) {
-							continue; // grayed checkbox ignores clicks
-						}
 						let key = self.specs[i].key;
 						self.focus = Some(Focus::Row(i, 0));
 						self.set_toggle(key, !self.get_toggle(key));
@@ -3395,9 +3398,6 @@ impl SettingsDialog {
 					}
 				}
 				Kind::Dropdown(_) => {
-					if self.disabled(self.specs[i].key) {
-						continue;
-					}
 					if self.dd_box(i).contains(x, y) {
 						self.dd_open(i);
 						return Action::None;
@@ -3458,12 +3458,12 @@ impl SettingsDialog {
 				ShellStop::Entry(k, ShellPart::Name) => {
 					let field = self.shell_name_box(i, k);
 					let row = shell_field_row(k, false);
-					self.field_click(row, (i, part), field, x, measure);
+					self.field_click(row, Some((i, part)), field, x, measure);
 				}
 				ShellStop::Entry(k, ShellPart::Command) => {
 					let field = self.shell_cmd_box(i, k);
 					let row = shell_field_row(k, true);
-					self.field_click(row, (i, part), field, x, measure);
+					self.field_click(row, Some((i, part)), field, x, measure);
 				}
 				ShellStop::Entry(k, ShellPart::Active) => {
 					self.focus = Some(Focus::Row(i, part));
@@ -3514,7 +3514,9 @@ impl SettingsDialog {
 	fn field_click(
 		&mut self,
 		row: usize,
-		focus: (usize, u16),
+		// None for the prompt box, which is not a row and must never reach the
+		// focus ring: the ring indexes `specs` with whatever it is given.
+		focus: Option<(usize, u16)>,
 		field: Rect,
 		x: f32,
 		measure: &mut impl FnMut(&str) -> f32,
@@ -3526,7 +3528,9 @@ impl SettingsDialog {
 		}
 		self.select_all_on_up = false;
 		let (shift, streak) = (self.shift, self.click_streak);
-		self.focus = Some(Focus::Row(focus.0, focus.1));
+		if let Some((r, p)) = focus {
+			self.focus = Some(Focus::Row(r, p));
+		}
 		let Some(edit) = &mut self.edit else { return };
 		let cur = caret_from_click(
 			&edit.buf,
@@ -3639,6 +3643,22 @@ impl SettingsDialog {
 			if self.specs[i].tab != self.tab || Self::header_is_tab_title(&self.specs[i]) {
 				continue;
 			}
+			// The shells grid is one spec row holding two editable fields per
+			// entry, so the field under the pointer has to be found the way the
+			// press handler finds it. Without this the two fields were the only
+			// ones in the dialog with no right-click menu, while the Menu key
+			// worked on them.
+			if matches!(self.specs[i].kind, Kind::ShellList) {
+				if let Some((row, field, part)) = self.shell_field_at(i, x, y) {
+					if self.edit.as_ref().is_none_or(|e| e.row != row) {
+						self.commit_edit();
+						self.open_edit(row, false);
+					}
+					self.focus = Some(Focus::Row(i, part));
+					self.pop_field_menu(field, x, y, paste_ok, measure);
+				}
+				return;
+			}
 			let Some(field) = self.field_rect(i) else {
 				continue;
 			};
@@ -3659,6 +3679,26 @@ impl SettingsDialog {
 			return;
 		}
 	}
+	// Which of the shells grid's editable fields is under (x, y): its pseudo row,
+	// its box, and the tab stop it belongs to.
+	fn shell_field_at(&self, i: usize, x: f32, y: f32) -> Option<(usize, Rect, u16)> {
+		for part in 0..self.parts_of(i) {
+			if !self.shell_stop_rect(i, part).contains(x, y) {
+				continue;
+			}
+			return match shell_stop(part, self.edited.shells.len()) {
+				ShellStop::Entry(k, ShellPart::Name) => {
+					Some((shell_field_row(k, false), self.shell_name_box(i, k), part))
+				}
+				ShellStop::Entry(k, ShellPart::Command) => {
+					Some((shell_field_row(k, true), self.shell_cmd_box(i, k), part))
+				}
+				_ => None,
+			};
+		}
+		None
+	}
+
 	// Caret placement plus the menu itself, shared by the panel rows and the theme
 	// prompt's own field. A click inside an existing selection leaves it alone, so
 	// the menu can act on it (standard).
@@ -4852,8 +4892,15 @@ impl SettingsDialog {
 					} else {
 						"(none)"
 					};
-					let (txt, color) = if val.is_empty() {
-						(placeholder.to_string(), dlg().dim)
+					let (txt, color) = if val.is_empty() || self.disabled(self.specs[i].key) {
+						(
+							if val.is_empty() {
+								placeholder.to_string()
+							} else {
+								val
+							},
+							dlg().dim,
+						)
 					} else {
 						(val, dlg().text)
 					};
@@ -5326,9 +5373,9 @@ pub fn wallpaper_changed(old: &Settings, new: &Settings) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::{
-		EASE_IN_MAX, EASE_IN_MIN, EASE_OUT_MAX, EASE_OUT_MIN, Key, RAMP_DOWN_MAX, RAMP_DOWN_MIN,
-		RAMP_UP_MAX, RAMP_UP_MIN, SettingsDialog, TAU_MAX, TAU_MIN, falling_slider, lay,
-		speed_to_tau, tab_titles, tau_to_speed,
+		EASE_IN_MAX, EASE_IN_MIN, EASE_OUT_MAX, EASE_OUT_MIN, Key, Kind, RAMP_DOWN_MAX,
+		RAMP_DOWN_MIN, RAMP_UP_MAX, RAMP_UP_MIN, SettingsDialog, TAU_MAX, TAU_MIN, falling_slider,
+		lay, speed_to_tau, tab_titles, tau_to_speed,
 	};
 	use crate::config;
 
@@ -5629,6 +5676,148 @@ mod tests {
 		}
 		assert!(checked > 40, "only {checked} rows checked");
 		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// The rule for a tip is not a quota, it is whether the tip says anything the
+	// label does not. A dialog of rendering settings carries one on most of its
+	// rows because a name cannot say what a falloff curve does to the picture; a
+	// tip that only reworded its label would be the thing to delete.
+	#[test]
+	fn no_flyover_merely_restates_its_label() {
+		let d = mk_dialog(4000.0);
+		let mut with_help = 0;
+		for spec in d.specs {
+			if spec.help.is_empty() {
+				continue;
+			}
+			with_help += 1;
+			let label = spec.label.trim().trim_end_matches(['%', 's']).trim();
+			let help = spec.help.trim();
+			assert!(
+				help.ends_with('.'),
+				"{:?}: a tip is prose and ends in a period",
+				spec.label
+			);
+			// a row with no label of its own (the shells grid, a button strip) has
+			// nothing to restate
+			if label.is_empty() {
+				continue;
+			}
+			let bare = |t: &str| {
+				t.trim()
+					.trim_end_matches('.')
+					.to_ascii_lowercase()
+					.replace(['%', '"'], "")
+					.split_whitespace()
+					.collect::<Vec<_>>()
+					.join(" ")
+			};
+			assert!(
+				bare(help) != bare(label),
+				"{:?}: the tip is the label again",
+				spec.label
+			);
+		}
+		assert!(with_help > 10, "only {with_help} rows carry a tip");
+	}
+
+	// The shells grid is one spec row carrying two editable fields per entry, and
+	// the right-click handler walked spec rows - so those two were the only fields
+	// in the dialog with no menu, while the Menu key worked on them.
+	#[test]
+	fn the_shells_grid_fields_have_a_right_click_menu() {
+		let mut m = |s: &str| s.chars().count() as f32;
+		let mut d = mk_dialog(4000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| matches!(s.kind, Kind::ShellList))
+			.expect("the shells grid");
+		d.tab = d.specs[i].tab;
+		// its own entry: the live config decides what is in the list otherwise,
+		// and another test can be holding a config override while this runs
+		d.edited.shells = vec![crate::shells::ShellEntry {
+			slug: "bash".into(),
+			title: "Bash".into(),
+			command: "/bin/bash".into(),
+			active: true,
+			comment: String::new(),
+			last_seen: String::new(),
+		}];
+
+		for command in [false, true] {
+			let field = if command {
+				d.shell_cmd_box(i, 0)
+			} else {
+				d.shell_name_box(i, 0)
+			};
+			d.mouse_right_dip(field.x + 4.0, field.y + field.h / 2.0, true, &mut m);
+			assert!(
+				d.emenu.is_some(),
+				"no menu on the {} field",
+				if command { "command" } else { "name" }
+			);
+			assert_eq!(
+				d.edit.as_ref().map(|e| e.row),
+				Some(super::shell_field_row(0, command)),
+				"the menu acts on the field that was clicked"
+			);
+			d.emenu = None;
+		}
+
+		// and a click on the grid away from either field opens nothing
+		let row = d.shell_line_y(i, 0);
+		d.mouse_right_dip(d.rect.x + 1.0, row, true, &mut m);
+		assert!(d.emenu.is_none(), "a menu appeared off the fields");
+	}
+
+	// A control the dialog draws as inert must not act on a click. The check used
+	// to sit inside each arm of the press handler, and the color, text and radio
+	// arms never got it - so a grayed field still changed its setting, and the
+	// font Family field switched off "use the system font" as a side effect.
+	#[test]
+	fn a_grayed_control_takes_no_click() {
+		let mut m = |s: &str| s.chars().count() as f32;
+		let mut d = mk_dialog(4000.0);
+		// gate a spread of rows off: the wallpaper, the scrim, the system font
+		d.edited.wallpaper_enabled = false;
+		d.edited.text_scrim = false;
+		d.edited.use_system_font = true;
+		// what every row shows, which is as good a snapshot as the values
+		let snapshot = |d: &SettingsDialog| -> Vec<(String, usize, bool)> {
+			(0..d.specs.len())
+				.map(|i| {
+					(
+						d.edit_buf(i),
+						d.get_radio(d.specs[i].key),
+						d.get_toggle(d.specs[i].key),
+					)
+				})
+				.collect()
+		};
+		let before = snapshot(&d);
+
+		let mut clicked = 0;
+		for i in 0..d.specs.len() {
+			if matches!(d.specs[i].kind, Kind::Header(_)) || !d.disabled(d.specs[i].key) {
+				continue;
+			}
+			d.tab = d.specs[i].tab;
+			let r = d.focus_ctl_rect(i, 0);
+			d.mouse_down_dip(r.x + r.w / 2.0, r.y + r.h / 2.0, &mut m);
+			clicked += 1;
+			assert!(
+				d.edit.is_none(),
+				"{:?} opened an edit while grayed",
+				d.specs[i].key
+			);
+			assert!(
+				snapshot(&d) == before,
+				"{:?} changed a setting while grayed",
+				d.specs[i].key
+			);
+		}
+		assert!(clicked > 10, "only {clicked} grayed rows were reachable");
 	}
 
 	// While a profile is chosen, every row it governs shows the profile's value
@@ -7407,6 +7596,27 @@ mod tests {
 				"no edit opened on a panel row"
 			);
 		}
+	}
+
+	// The prompt is not a row. Clicking its field used to put the prompt's own
+	// sentinel index into the focus ring, and the next frame read the row list
+	// with it.
+	#[test]
+	fn clicking_the_prompt_field_leaves_the_focus_ring_on_a_real_row() {
+		let mut m = |s: &str| s.chars().count() as f32;
+		let mut d = on_theme("Matrix");
+		let row = d.specs.iter().position(|s| s.key == Key::ColFg).unwrap();
+		d.focus = Some(super::Focus::Row(row, 0));
+		d.theme_action(super::ThemeBtn::SaveAs);
+		let field = d.prompt_field_rect().expect("the box has a name field");
+		d.prompt_mouse_down(field.x + 4.0, field.y + field.h / 2.0, &mut m);
+
+		if let Some(super::Focus::Row(r, _)) = d.focus {
+			assert!(r < d.specs.len(), "focus row {r} is not a row");
+		}
+		// the frame that used to abort
+		let _ = d.rects_dip(d.line_h, &mut m);
+		assert!(d.prompt.is_some(), "the box is still up");
 	}
 
 	// Renaming moves the name and the selection together; the slug behind it does

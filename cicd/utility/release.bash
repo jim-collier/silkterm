@@ -59,6 +59,13 @@ art_dir="${RELEASE_ARTIFACT_DIR}"
 sums="${art_dir}/${EXE_NAME}-${ver}-sha256sums.txt"
 [[ -s "$sums" ]] || die "no ${sums} - run cicd/cicd.bash (full, not --quick) first"
 ( cd "${art_dir}" && sha256sum -c "${EXE_NAME}-${ver}-sha256sums.txt" >/dev/null ) || die "artifact checksums do not verify"
+## The sums only say the artifacts match each other. This says they match the
+## source being tagged - without it a pipeline run, more commits, then a merge
+## leaves a stale artifact directory that verifies cleanly and publishes the old
+## binaries under the new tag.
+##  shellcheck source=cicd/utility/built-from.bash
+source "$(dirname "${BASH_SOURCE[0]}")/built-from.bash"
+why="$(fCheckBuiltFrom "${art_dir}")" || die "${why}"
 
 ## The build number comes out of the artifact itself. Every target in a pipeline
 ## run shares one (cicd pins SILK_BUILD_MINUTES), so the native binary's answer is
@@ -72,6 +79,22 @@ if [[ -x "$native" ]]; then
 	build_id="$("$native" --version 2>/dev/null | sed -n 's/.*(build \(.*\))$/\1/p' || true)"
 fi
 [[ -n "$build_id" ]] || echo "note: could not read a build number from ${native##*/}; notes will omit it"
+
+## Sign the checksum file. Everything else is covered by it, so one signature
+## covers the whole release. Done before the tag so a signing failure costs
+## nothing.
+sig="${sums}.sig"
+rm -f "${sig}"
+if [[ -n "${RELEASE_SIGN_KEY:-}" ]]; then
+	[[ -r "${RELEASE_SIGN_KEY}" ]] || die "cannot read the signing key ${RELEASE_SIGN_KEY}"
+	command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen not found, and the release is set up to be signed"
+	ssh-keygen -Y sign -f "${RELEASE_SIGN_KEY}" -n "${RELEASE_SIGN_NAMESPACE}" "${sums}" >/dev/null \
+		|| die "signing ${sums##*/} failed"
+	[[ -s "${sig}" ]] || die "signing produced no ${sig##*/}"
+	echo "signed ${sums##*/}"
+else
+	echo "note: no signing key set (RELEASE_SIGN_KEY) - this release will be unsigned"
+fi
 
 echo ""
 echo "Release ${tag} from $(git rev-parse --short HEAD) on main${build_id:+, build ${build_id}}"

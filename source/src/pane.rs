@@ -405,6 +405,23 @@ fn bell_brighten(color: [u8; 3], t: f32) -> [u8; 3] {
 
 // FNV-1a over a row's chars: the fingerprint copy-output uses to re-find the
 // arm-time prompt row at capture time (same constants as build()'s inline rows).
+// How long to leave a running command alone before asking again whether it has
+// finished. Matches the throttle the tab-title work already uses; on unix each
+// ask costs a `tcgetpgrp`.
+const CAPTURE_RETRY: std::time::Duration = std::time::Duration::from_millis(250);
+
+// When the next poll is worth doing. Both halves matter: the settle window, and
+// a floor a busy poll pushes forward. Without the floor the deadline sat in the
+// past for the whole life of a command that printed nothing, and the event loop
+// woke on it every pass.
+fn next_capture_poll(
+	last_output: std::time::Instant,
+	settle: std::time::Duration,
+	retry_at: std::time::Instant,
+) -> std::time::Instant {
+	(last_output + settle).max(retry_at)
+}
+
 fn fnv_row(chars: impl Iterator<Item = char>) -> u64 {
 	let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
 	for c in chars {
@@ -1061,6 +1078,8 @@ pub struct Pane {
 	pub copy_select: bool,
 	pub copy_output: bool,
 	capture_armed: bool,
+	// floor under the next poll, pushed out by a poll that found the shell busy
+	capture_retry_at: std::time::Instant,
 	cmd_start: usize,
 	// Fingerprint of the arm-time prompt row. cmd_start is "history + row", an
 	// index whose origin MOVES once scrollback is at cap (each pushed line evicts
@@ -2719,14 +2738,16 @@ impl Pane {
 		};
 		self.glyphs
 			.iter()
-			.map(move |&(key, x, y, color, scale)| TextArea {
-				buffer: &self.glyph_cache[&key].buf,
-				left: x,
-				top: y,
-				scale,
-				bounds,
-				default_color: color,
-				custom_glyphs: &[],
+			.filter_map(move |&(key, x, y, color, scale)| {
+				Some(TextArea {
+					buffer: &self.glyph_cache.get(&key)?.buf,
+					left: x,
+					top: y,
+					scale,
+					bounds,
+					default_color: color,
+					custom_glyphs: &[],
+				})
 			})
 	}
 
@@ -2819,7 +2840,8 @@ impl Pane {
 	// While armed, the instant the settle timer would fire (so the loop can wake to
 	// check) - None when nothing is pending.
 	pub fn capture_deadline(&self, settle: std::time::Duration) -> Option<std::time::Instant> {
-		self.capture_armed.then(|| self.last_output + settle)
+		self.capture_armed
+			.then(|| next_capture_poll(self.last_output, settle, self.capture_retry_at))
 	}
 
 	// If armed and the terminal has settled (no output for `settle`) back at the
@@ -2831,9 +2853,16 @@ impl Pane {
 			return None;
 		}
 		if !self.term.at_shell_prompt() {
-			return None; // a foreground app is still running; wait for it to exit
+			// a foreground app is still running; ask again later rather than
+			// straight away - the deadline is otherwise in the past for the whole
+			// life of a command that prints nothing, and the loop spins on it
+			self.capture_retry_at = std::time::Instant::now() + CAPTURE_RETRY;
+			return None;
 		}
-		let guard = self.term.term.try_lock_unfair()?;
+		let Some(guard) = self.term.term.try_lock_unfair() else {
+			self.capture_retry_at = std::time::Instant::now() + CAPTURE_RETRY;
+			return None;
+		};
 		self.capture_armed = false;
 		let end = {
 			let grid = guard.grid();
@@ -2997,6 +3026,16 @@ impl Pane {
 			.lock_unfair()
 			.selection_to_string()
 			.filter(|s| !s.is_empty())
+	}
+
+	// Anything the user's own hands sent - typing, a mouse report, the wheel
+	// driving an app's cursor keys. Read-only withholds all of it. A reply the
+	// terminal owes the program is not this, and goes straight to `term.write`.
+	pub fn write_input<B: Into<Vec<u8>>>(&self, bytes: B) {
+		if self.read_only {
+			return;
+		}
+		self.term.write(bytes);
 	}
 
 	// Write pasted text to the PTY (wrapped in bracketed paste when the app
@@ -3215,6 +3254,9 @@ impl PaneManager {
 			pane.strip.clear(); // metrics changed; a mid-slide strip would misalign
 			pane.strip_dirty = false;
 			pane.glyph_cache.clear(); // cached glyphs are tied to the old font/metrics
+			// this frame's keys point into the cache just emptied, and `build` only
+			// clears them past its lock-miss early return
+			pane.glyphs.clear();
 			pane.scrim_buf = None; // ditto the de-bold scrim buffer
 			pane.text_built = false; // fresh empty buffer: force a full rebuild next frame
 		}
@@ -3442,6 +3484,7 @@ fn spawn_pane(
 		prompt_above: Vec::new(),
 		prompt_block: Vec::new(),
 		capture_armed: false,
+		capture_retry_at: std::time::Instant::now(),
 		cmd_start: 0,
 		cmd_anchor: None,
 		last_output: std::time::Instant::now(),
@@ -4205,10 +4248,10 @@ mod tests {
 		bar_pos_to_lines, bar_thumb_span, bell_brighten, capture_grid_text, capture_start,
 		child_areas, cursor_cycle, cursor_slide_step, distinct_pair, divider_at, equalize_dir_run,
 		fingerprint_frame, fnv_row, fnv_row_skel, glide_to_full, layout, ledger_step, link_at,
-		logical_line_bounds, move_is_input, output_advance, pair_inside, paste_payload,
-		prompt_strip, pushed_since, render_char, resume_delay, same_char_pair, scroll_shift_signed,
-		shown_cursor_shape, slide_bands, slide_is_visible, snapshot_rows, static_bands, strip_rows,
-		translate_span, vanished_range, weld_region_clip,
+		logical_line_bounds, move_is_input, next_capture_poll, output_advance, pair_inside,
+		paste_payload, prompt_strip, pushed_since, render_char, resume_delay, same_char_pair,
+		scroll_shift_signed, shown_cursor_shape, slide_bands, slide_is_visible, snapshot_rows,
+		static_bands, strip_rows, translate_span, vanished_range, weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
@@ -4224,6 +4267,39 @@ mod tests {
 
 	// A full-screen app has no scrollback of its own, so a bar there could only
 	// report a fiction. Same answer when there is simply nothing to scroll.
+	// Copy-on-output used to hold a core for the life of any command that printed
+	// nothing: the settle deadline stayed in the past, so the loop woke on it
+	// every pass and asked the shell again each time.
+	// `glyphs` holds this frame's keys into `glyph_cache`, and a font-size change
+	// while the reader holds the term lease empties the cache with the keys still
+	// in hand. Indexing there aborts the process; the draw skips instead.
+	#[test]
+	fn a_glyph_whose_raster_went_away_is_skipped_not_indexed() {
+		let body = include_str!("pane.rs")
+			.split("\nmod tests {")
+			.next()
+			.expect("the file above its own tests");
+		assert!(
+			!body.contains("glyph_cache[&"),
+			"indexing aborts on a key the clear took out"
+		);
+		assert!(body.contains("glyph_cache.get(&"), "the draw asks instead");
+	}
+
+	#[test]
+	fn a_command_that_prints_nothing_does_not_spin_the_loop() {
+		let settle = std::time::Duration::from_millis(300);
+		let now = std::time::Instant::now();
+		let long_ago = now
+			.checked_sub(std::time::Duration::from_secs(60))
+			.expect("a minute ago");
+		// nothing printed for a minute, and a poll just found the shell still busy
+		let next = next_capture_poll(long_ago, settle, now + super::CAPTURE_RETRY);
+		assert!(next > now, "the next poll is in the future");
+		// and once nothing has pushed it, the settle window is what decides
+		assert_eq!(next_capture_poll(now, settle, long_ago), now + settle);
+	}
+
 	#[test]
 	fn no_scrollbar_without_scrollback_or_on_the_alt_screen() {
 		let mut cfg = crate::config::Settings {
