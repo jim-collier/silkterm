@@ -1172,6 +1172,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 #### Done - New features and enhancements
 
+- ✅ The dogfood launcher is installed on the Windows machines, and the menu items point at it.
+	- Nothing on Windows had ever run it. The menu and taskbar entries still called the retired Windows-only launcher, and took their icon from a fixed-name build, both of which the move to a single launcher had already removed. So every one of them was dead.
+	- The launcher looked for its build under a path spelled through a junction, which on Windows reads as an empty directory. It names both spellings now and takes the first that exists, which is what that list was meant to do in the first place. The wrapper does the same.
+	- A new option installs and rotates without opening a terminal, for an unattended run or a session with no desktop to put a window on.
+	- Both machines hold the current build in a versions folder behind a symlink, with the icon beside it. Every menu and taskbar entry runs the wrapper, starts minimized, and takes its icon from the symlink, so none of them pins a build.
+	- Stray copies of the program and of the retired launcher went to the recycle bin.
+	- Opened: 20260908-023000
+	- Closed: 20260908-030500
+
 - ✅ Run builds and tests on the Windows machines from here.
 	- Several defects only exist on Windows and cannot be reproduced on the development box at all, so checking one meant doing it by hand on the other machine.
 	- A runner under `cicd/utility/` sends a job over ssh to one or both Windows boxes and prints what comes back. Jobs are small scripts in their own folder beside it, so adding one is a new file rather than an edit to the runner.
