@@ -927,10 +927,16 @@ fn fence_run(line: &str) -> Option<(char, usize)> {
 // rename, so a crash mid-save cannot leave a truncated config, and it is
 // refused outright when the parse dropped lines the save would delete - the
 // user's own text is worth more than one changed setting.
-fn write_doc(path: &std::path::Path, doc: &shcl::Document) {
+// Answers whether it wrote. A refusal has to reach the caller: the dialog closes
+// on a save, and three failures used to present as a clean one - shcl refusing a
+// lossy round trip, an unreadable file, an unwritable one.
+#[must_use]
+fn write_doc(path: &std::path::Path, doc: &shcl::Document) -> bool {
 	if let Err(e) = doc.save_file(&path.to_string_lossy()) {
 		eprintln!("{APP_NAME}: could not save config {}: {e}", path.display());
+		return false;
 	}
+	true
 }
 
 // A setter answers whether the write applied, and every path here is one of
@@ -1301,8 +1307,7 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 		orig.scrollbar_trough,
 	);
 
-	write_doc(&path, &doc);
-	true
+	write_doc(&path, &doc)
 }
 
 pub fn format_hex(c: [u8; 3]) -> String {
@@ -2958,7 +2963,7 @@ fn adopt_default_shell(path: &std::path::Path) {
 	let mut doc = doc;
 	write_shells(&mut doc, &stored, &moved);
 	doc.remove("shell.default");
-	write_doc(path, &doc);
+	let _ = write_doc(path, &doc);
 }
 
 // The list with `wanted` at the front. An entry already running that shell moves;
@@ -3016,7 +3021,7 @@ pub fn revert_keys(keys: &[&str]) {
 	for full_key in keys {
 		doc.remove(full_key);
 	}
-	write_doc(&path, &doc);
+	let _ = write_doc(&path, &doc);
 	backfill_config(&path);
 }
 
@@ -4060,6 +4065,27 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
+	// A failed save used to present to the dialog as a clean one, so it closed as
+	// if it had written. shcl refusing a lossy round trip is the case that makes
+	// this permanent.
+	#[test]
+	fn a_save_that_failed_is_not_reported_as_a_save() {
+		let dir = std::env::temp_dir().join(format!("silkterm_cfgfail_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let doc = shcl::Document::parse("font.size: 12.0\n");
+		// a directory that is not there is the cheapest unwritable path
+		let missing = dir.join("no-such-dir").join("config.shcl");
+		assert!(
+			!write_doc(&missing, &doc),
+			"an unwritable path is not a save"
+		);
+		assert!(
+			write_doc(&dir.join("config.shcl"), &doc),
+			"and a real one is"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
 	#[test]
 	fn persist_survives_bare_decimal_float() {
 		// Memoize settings() BEFORE installing the override: a test on another
@@ -4904,7 +4930,7 @@ mod tests {
 			"the space-indented line is the one dropped"
 		);
 		doc.put_float("window.margin", 4.0);
-		write_doc(&path, &doc);
+		let _ = write_doc(&path, &doc);
 		assert_eq!(
 			std::fs::read_to_string(&path).unwrap(),
 			text,
