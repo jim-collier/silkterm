@@ -1869,6 +1869,41 @@ fn parse_iso_date(text: &str) -> Option<shcl::ShclDateTime> {
 	when.date.is_some().then_some(when)
 }
 
+// Every numeric setting's range, and the two readers that enforce it. A floor on
+// its own was the 20260707 `output_ease_lines` defect; fixing that one in place
+// left the rest of the table with the same hole. A window in the low thousands
+// of columns asks for a texture past the GPU's limit and aborts at launch, and
+// an unbounded scrollback grows until the process is killed.
+//
+// Ceilings are generous - well past anything anyone would set on purpose, and
+// well short of what breaks. Both readers fall back to the default rather than
+// to an edge when the value is not a number at all: shcl reads `1e400` as
+// infinity and reports it good, and infinity survives a clamp.
+#[rustfmt::skip]
+mod limits {
+	pub const FONT_SIZE:          (f32, f32) = (4.0, 400.0);
+	pub const LINE_HEIGHT:        (f32, f32) = (0.5, 10.0);
+	pub const EASE_MS:            (f32, f32) = (1.0, 60_000.0);
+	pub const BLINK_MS:           (f32, f32) = (50.0, 60_000.0);
+	pub const WHEEL_LINES:        (f32, f32) = (0.0, 1_000.0);
+	pub const MARGIN:             (f32, f32) = (0.0, 1_000.0);
+	pub const ROTATE_S:           (f32, f32) = (0.0, 604_800.0);
+	pub const GRID:               (usize, usize) = (1, 1_000);
+	pub const SCROLLBACK:         (usize, usize) = (0, 1_000_000);
+}
+
+// A number from the file, held to its range.
+fn numf(raw: Option<f32>, default: f32, (lo, hi): (f32, f32)) -> f32 {
+	match raw {
+		Some(v) if v.is_finite() => v.clamp(lo, hi),
+		_ => default,
+	}
+}
+
+fn numi(raw: Option<usize>, default: usize, (lo, hi): (usize, usize)) -> usize {
+	raw.map_or(default, |v| v.clamp(lo, hi))
+}
+
 fn resolve(raw: RawConfig) -> Settings {
 	let d = Settings::default();
 	let theme_name = raw.theme.unwrap_or_else(|| d.theme.clone());
@@ -1918,35 +1953,37 @@ fn resolve(raw: RawConfig) -> Settings {
 			.use_system_font_size
 			.unwrap_or(use_system_font && raw.font_size.is_none()),
 		font_family: raw.font_family.filter(|s| !s.trim().is_empty()),
-		font_size: raw.font_size.unwrap_or_else(default_font_size).max(4.0),
-		line_height_scale: raw
-			.line_height_scale
-			.unwrap_or(d.line_height_scale)
-			.max(0.5),
-		scrollback: raw.scrollback.unwrap_or(d.scrollback),
+		font_size: numf(raw.font_size, default_font_size(), limits::FONT_SIZE),
+		line_height_scale: numf(
+			raw.line_height_scale,
+			d.line_height_scale,
+			limits::LINE_HEIGHT,
+		),
+		scrollback: numi(raw.scrollback, d.scrollback, limits::SCROLLBACK),
 		scroll_smooth: raw.scroll_smooth.unwrap_or(d.scroll_smooth),
-		scroll_ease_in_ms: raw
-			.scroll_ease_in_ms
-			.unwrap_or(d.scroll_ease_in_ms)
-			.max(1.0),
-		scroll_ramp_up_ms: raw
-			.scroll_ramp_up_ms
-			.unwrap_or(d.scroll_ramp_up_ms)
-			.max(1.0),
-		scroll_single_screen_tau_ms: raw
-			.scroll_single_screen_tau_ms
-			.unwrap_or(d.scroll_single_screen_tau_ms)
-			.max(1.0),
-		scroll_ramp_down_ms: raw
-			.scroll_ramp_down_ms
-			.unwrap_or(d.scroll_ramp_down_ms)
-			.max(1.0),
-		scroll_ease_out_ms: raw
-			.scroll_ease_out_ms
-			.unwrap_or(d.scroll_ease_out_ms)
-			.max(1.0),
-		wheel_lines: raw.wheel_lines.unwrap_or(d.wheel_lines),
-		alt_scroll_lines: raw.alt_scroll_lines.unwrap_or(d.alt_scroll_lines),
+		scroll_ease_in_ms: numf(raw.scroll_ease_in_ms, d.scroll_ease_in_ms, limits::EASE_MS),
+		scroll_ramp_up_ms: numf(raw.scroll_ramp_up_ms, d.scroll_ramp_up_ms, limits::EASE_MS),
+		scroll_single_screen_tau_ms: numf(
+			raw.scroll_single_screen_tau_ms,
+			d.scroll_single_screen_tau_ms,
+			limits::EASE_MS,
+		),
+		scroll_ramp_down_ms: numf(
+			raw.scroll_ramp_down_ms,
+			d.scroll_ramp_down_ms,
+			limits::EASE_MS,
+		),
+		scroll_ease_out_ms: numf(
+			raw.scroll_ease_out_ms,
+			d.scroll_ease_out_ms,
+			limits::EASE_MS,
+		),
+		wheel_lines: numf(raw.wheel_lines, d.wheel_lines, limits::WHEEL_LINES),
+		alt_scroll_lines: numf(
+			raw.alt_scroll_lines,
+			d.alt_scroll_lines,
+			limits::WHEEL_LINES,
+		),
 		// MUST clamp: scroll's backlog clamp uses this as its lower bound, and
 		// f32::clamp panics (aborts, in release) when min > max - an over-range
 		// value here killed the terminal on the first scrolling output.
@@ -1969,7 +2006,7 @@ fn resolve(raw: RawConfig) -> Settings {
 			.unwrap_or(d.minimap_width)
 			.clamp(24.0, 400.0),
 		minimap_tui_whitelist: raw.minimap_tui_whitelist.unwrap_or(d.minimap_tui_whitelist),
-		margin: raw.margin.unwrap_or(d.margin).max(0.0),
+		margin: numf(raw.margin, d.margin, limits::MARGIN),
 		opacity: raw.opacity.unwrap_or(d.opacity).clamp(0.0, 1.0),
 		transparent_background: raw
 			.transparent_background
@@ -1988,10 +2025,11 @@ fn resolve(raw: RawConfig) -> Settings {
 		wallpaper_rotate_random: raw
 			.wallpaper_rotate_random
 			.unwrap_or(d.wallpaper_rotate_random),
-		wallpaper_rotate_interval_s: raw
-			.wallpaper_rotate_interval_s
-			.unwrap_or(d.wallpaper_rotate_interval_s)
-			.max(0.0),
+		wallpaper_rotate_interval_s: numf(
+			raw.wallpaper_rotate_interval_s,
+			d.wallpaper_rotate_interval_s,
+			limits::ROTATE_S,
+		),
 		wallpaper_opacity: raw
 			.wallpaper_opacity
 			.unwrap_or(d.wallpaper_opacity)
@@ -2075,10 +2113,11 @@ fn resolve(raw: RawConfig) -> Settings {
 			.cursor_animation_idle_stop_s
 			.unwrap_or(d.cursor_animation_idle_stop_s)
 			.clamp(0.0, 86400.0),
-		cursor_blink_rate_ms: raw
-			.cursor_blink_rate_ms
-			.unwrap_or(d.cursor_blink_rate_ms)
-			.max(50.0),
+		cursor_blink_rate_ms: numf(
+			raw.cursor_blink_rate_ms,
+			d.cursor_blink_rate_ms,
+			limits::BLINK_MS,
+		),
 		wallpaper_default_fit: match raw.wallpaper_default_fit.as_deref() {
 			Some("zoom") => Fit::Zoom,
 			_ => Fit::Stretch,
@@ -2087,8 +2126,8 @@ fn resolve(raw: RawConfig) -> Settings {
 		wallpaper_honor_xmp_look: raw
 			.wallpaper_honor_xmp_look
 			.unwrap_or(d.wallpaper_honor_xmp_look),
-		columns: raw.columns.unwrap_or(d.columns).max(1),
-		rows: raw.rows.unwrap_or(d.rows).max(1),
+		columns: numi(raw.columns, d.columns, limits::GRID),
+		rows: numi(raw.rows, d.rows, limits::GRID),
 		remember_size: raw.remember_size.unwrap_or(d.remember_size),
 		hide_single_tab: raw.hide_single_tab.unwrap_or(d.hide_single_tab),
 		tab_regular_pct: raw
@@ -2099,11 +2138,8 @@ fn resolve(raw: RawConfig) -> Settings {
 		// maximum dragged below the regular width is stored as it was set rather
 		// than quietly rewritten under the user.
 		tab_max_pct: raw.tab_max_pct.unwrap_or(d.tab_max_pct).clamp(2.0, 100.0),
-		remembered_columns: raw
-			.remembered_columns
-			.unwrap_or(d.remembered_columns)
-			.max(1),
-		remembered_rows: raw.remembered_rows.unwrap_or(d.remembered_rows).max(1),
+		remembered_columns: numi(raw.remembered_columns, d.remembered_columns, limits::GRID),
+		remembered_rows: numi(raw.remembered_rows, d.remembered_rows, limits::GRID),
 		word_separators: raw.word_separators.unwrap_or(d.word_separators),
 		selection_pairs: raw.selection_pairs.unwrap_or(d.selection_pairs),
 		command_line: raw.command_line.unwrap_or(d.command_line),
@@ -4172,6 +4208,81 @@ mod tests {
 			s.margin,
 			Settings::default().margin,
 			"the unusable one falls back to its default"
+		);
+	}
+
+	// Every numeric setting, at both extremes, in one place. Floors were there
+	// already; ceilings were not, and a value in the low thousands aborted the
+	// launch on a texture limit while a large scrollback grew until the process
+	// was killed. `1e400` is here because shcl reads it as infinity and reports
+	// it good, and infinity survives a clamp.
+	#[test]
+	fn every_numeric_setting_has_a_floor_and_a_ceiling() {
+		let p = std::path::Path::new("test.shcl");
+		#[rustfmt::skip]
+		let keys: &[(&str, f32, f32)] = &[
+			("font.size",                        limits::FONT_SIZE.0,   limits::FONT_SIZE.1),
+			("font.line_height_scale",           limits::LINE_HEIGHT.0, limits::LINE_HEIGHT.1),
+			("scroll.wheel_lines",               limits::WHEEL_LINES.0, limits::WHEEL_LINES.1),
+			("scroll.alt_scroll_lines",          limits::WHEEL_LINES.0, limits::WHEEL_LINES.1),
+			("scroll.ease_in_ms",                limits::EASE_MS.0,     limits::EASE_MS.1),
+			("scroll.ramp_up_ms",                limits::EASE_MS.0,     limits::EASE_MS.1),
+			("scroll.single_screen_tau_ms",      limits::EASE_MS.0,     limits::EASE_MS.1),
+			("scroll.ramp_down_ms",              limits::EASE_MS.0,     limits::EASE_MS.1),
+			("scroll.ease_out_ms",               limits::EASE_MS.0,     limits::EASE_MS.1),
+			("window.margin",                    limits::MARGIN.0,      limits::MARGIN.1),
+			("cursor.blink_rate_ms",             limits::BLINK_MS.0,    limits::BLINK_MS.1),
+			("wallpaper.rotate.interval_s",      limits::ROTATE_S.0,    limits::ROTATE_S.1),
+		];
+		let read = |key: &str, value: &str| resolve(read_raw(&format!("{key}: {value}\n"), p));
+		let of = |s: &Settings, key: &str| -> f32 {
+			match key {
+				"font.size" => s.font_size,
+				"font.line_height_scale" => s.line_height_scale,
+				"scroll.wheel_lines" => s.wheel_lines,
+				"scroll.alt_scroll_lines" => s.alt_scroll_lines,
+				"scroll.ease_in_ms" => s.scroll_ease_in_ms,
+				"scroll.ramp_up_ms" => s.scroll_ramp_up_ms,
+				"scroll.single_screen_tau_ms" => s.scroll_single_screen_tau_ms,
+				"scroll.ramp_down_ms" => s.scroll_ramp_down_ms,
+				"scroll.ease_out_ms" => s.scroll_ease_out_ms,
+				"window.margin" => s.margin,
+				"cursor.blink_rate_ms" => s.cursor_blink_rate_ms,
+				"wallpaper.rotate.interval_s" => s.wallpaper_rotate_interval_s,
+				other => panic!("{other} is not in the reader"),
+			}
+		};
+		for &(key, lo, hi) in keys {
+			for value in ["1e30", "1e400", "-1e30", "-1e400", "0"] {
+				let got = of(&read(key, value), key);
+				assert!(got.is_finite(), "{key} at {value} resolved to {got}");
+				assert!(got >= lo && got <= hi, "{key} at {value} resolved to {got}");
+			}
+		}
+
+		// the two integer pairs, same shape
+		let huge = "99999999";
+		for key in [
+			"window.columns",
+			"window.rows",
+			"window.remembered_columns",
+			"window.remembered_rows",
+		] {
+			let s = read(key, huge);
+			let got = match key {
+				"window.columns" => s.columns,
+				"window.rows" => s.rows,
+				"window.remembered_columns" => s.remembered_columns,
+				_ => s.remembered_rows,
+			};
+			assert!(
+				(limits::GRID.0..=limits::GRID.1).contains(&got),
+				"{key} resolved to {got}"
+			);
+		}
+		assert!(
+			read("scroll.scrollback", huge).scrollback <= limits::SCROLLBACK.1,
+			"an unbounded scrollback grows until the process is killed"
 		);
 	}
 
