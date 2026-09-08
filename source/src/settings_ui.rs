@@ -3307,11 +3307,17 @@ impl SettingsDialog {
 				}
 				return Action::None;
 			}
+			// A grayed control takes no click. This used to sit inside each arm, and
+			// the color, text and radio arms were the three that never got it - so
+			// a control the dialog draws as inert still changed its setting. The
+			// two whose parts gray separately keep their own per-part check.
+			if !matches!(self.specs[i].kind, Kind::Buttons(_) | Kind::ShellList)
+				&& self.disabled(self.specs[i].key)
+			{
+				continue;
+			}
 			match self.specs[i].kind {
 				Kind::Slider { .. } => {
-					if self.disabled(self.specs[i].key) {
-						continue; // grayed-out slider ignores clicks
-					}
 					// click the numeric field -> edit the value, caret at the click
 					let val_box = self.valbox(i);
 					if val_box.contains(x, y) {
@@ -3352,9 +3358,6 @@ impl SettingsDialog {
 				}
 				Kind::Toggle => {
 					if self.checkbox(i).contains(x, y) {
-						if self.disabled(self.specs[i].key) {
-							continue; // grayed checkbox ignores clicks
-						}
 						let key = self.specs[i].key;
 						self.focus = Some(Focus::Row(i, 0));
 						self.set_toggle(key, !self.get_toggle(key));
@@ -3395,9 +3398,6 @@ impl SettingsDialog {
 					}
 				}
 				Kind::Dropdown(_) => {
-					if self.disabled(self.specs[i].key) {
-						continue;
-					}
 					if self.dd_box(i).contains(x, y) {
 						self.dd_open(i);
 						return Action::None;
@@ -4856,8 +4856,15 @@ impl SettingsDialog {
 					} else {
 						"(none)"
 					};
-					let (txt, color) = if val.is_empty() {
-						(placeholder.to_string(), dlg().dim)
+					let (txt, color) = if val.is_empty() || self.disabled(self.specs[i].key) {
+						(
+							if val.is_empty() {
+								placeholder.to_string()
+							} else {
+								val
+							},
+							dlg().dim,
+						)
 					} else {
 						(val, dlg().text)
 					};
@@ -5330,9 +5337,9 @@ pub fn wallpaper_changed(old: &Settings, new: &Settings) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::{
-		EASE_IN_MAX, EASE_IN_MIN, EASE_OUT_MAX, EASE_OUT_MIN, Key, RAMP_DOWN_MAX, RAMP_DOWN_MIN,
-		RAMP_UP_MAX, RAMP_UP_MIN, SettingsDialog, TAU_MAX, TAU_MIN, falling_slider, lay,
-		speed_to_tau, tab_titles, tau_to_speed,
+		EASE_IN_MAX, EASE_IN_MIN, EASE_OUT_MAX, EASE_OUT_MIN, Key, Kind, RAMP_DOWN_MAX,
+		RAMP_DOWN_MIN, RAMP_UP_MAX, RAMP_UP_MIN, SettingsDialog, TAU_MAX, TAU_MIN, falling_slider,
+		lay, speed_to_tau, tab_titles, tau_to_speed,
 	};
 	use crate::config;
 
@@ -5633,6 +5640,55 @@ mod tests {
 		}
 		assert!(checked > 40, "only {checked} rows checked");
 		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// A control the dialog draws as inert must not act on a click. The check used
+	// to sit inside each arm of the press handler, and the color, text and radio
+	// arms never got it - so a grayed field still changed its setting, and the
+	// font Family field switched off "use the system font" as a side effect.
+	#[test]
+	fn a_grayed_control_takes_no_click() {
+		let mut m = |s: &str| s.chars().count() as f32;
+		let mut d = mk_dialog(4000.0);
+		// gate a spread of rows off: the wallpaper, the scrim, the system font
+		d.edited.wallpaper_enabled = false;
+		d.edited.text_scrim = false;
+		d.edited.use_system_font = true;
+		// what every row shows, which is as good a snapshot as the values
+		let snapshot = |d: &SettingsDialog| -> Vec<(String, usize, bool)> {
+			(0..d.specs.len())
+				.map(|i| {
+					(
+						d.edit_buf(i),
+						d.get_radio(d.specs[i].key),
+						d.get_toggle(d.specs[i].key),
+					)
+				})
+				.collect()
+		};
+		let before = snapshot(&d);
+
+		let mut clicked = 0;
+		for i in 0..d.specs.len() {
+			if matches!(d.specs[i].kind, Kind::Header(_)) || !d.disabled(d.specs[i].key) {
+				continue;
+			}
+			d.tab = d.specs[i].tab;
+			let r = d.focus_ctl_rect(i, 0);
+			d.mouse_down_dip(r.x + r.w / 2.0, r.y + r.h / 2.0, &mut m);
+			clicked += 1;
+			assert!(
+				d.edit.is_none(),
+				"{:?} opened an edit while grayed",
+				d.specs[i].key
+			);
+			assert!(
+				snapshot(&d) == before,
+				"{:?} changed a setting while grayed",
+				d.specs[i].key
+			);
+		}
+		assert!(clicked > 10, "only {clicked} grayed rows were reachable");
 	}
 
 	// While a profile is chosen, every row it governs shows the profile's value
