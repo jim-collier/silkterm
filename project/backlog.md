@@ -104,10 +104,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
 	- Opened: 20260804-134813
 
-- 🔘 Dogfood: the launcher when the network build host is down.
-	- Both launchers have been run on their own box with the host reachable. What is left is the unreachable case, from a box where that source is over the network rather than local, on Linux and on Windows, so the bounded wait is what gets exercised.
-	- Note: the rest of this item is done, under Done - New features and enhancements.
-	- Opened: 20260823-131929
 
 - 🔘 At startup, offer to copy the wallpaper pack from the repo to the local wallpaper directory.
 	- The README now carries a one-liner for it (Wallpaper pack section), so this item is only about the in-app offer.
@@ -1169,6 +1165,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ One dogfood launcher for all three platforms, installed from the synced app dir.
+	- The Windows-only PowerShell launcher and the separate bash one were two implementations of the same thing and had drifted. There is one `n8runterm.ps1` now, with thin `runterm` wrappers per platform that find it and hand it the arguments.
+	- It reads one source: the synced app dir for its own platform. The network build host, the bounded waits and the reachability probe are all gone with it.
+	- Copies live in a versions folder behind a `silkterm` symlink, so a name on PATH and a menu entry both follow the current build without being rewritten.
+	- The folder GFS-rotates on every run: newest and oldest always, then the last few, then a widening spread of day, week, month and year. At most ten, at least five, and it stops at 1 GB in between. A copy that is running is never deleted.
+	- cicd installs each build under a fixed name in the app dir for the platform it targets, with the icon and a sidecar naming the build beside it. The old fixed-name and rotating dogfood destinations are gone.
+	- The menu entry runs the wrapper rather than the terminal, and takes its icon from beside the symlink, so neither pins a build.
+	- Opened: 20260907-224500
+	- Closed: 20260908-001500
 
 - ✅ The config file carries the SHCL format footer.
 	- Done. It sits at the bottom, naming the format and pointing at the spec and its license, in the file's own '##' comment style. A config written before it existed gets it on the next launch, and it is moved back to the bottom if a new section is added under it. A footer that has been reworded is left as it stands.
@@ -3603,6 +3609,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260707-022408
 
 ### Canceled
+
+- 🚫 Dogfood: the launcher when the network build host is down.
+	- Moot. The launcher reads only the synced app dir now, so there is no network source to be unreachable and no bounded wait to exercise. What the build host being down costs is a stale app dir, which is the same as any other day it did not run.
+	- Opened: 20260823-131929
+	- Closed: 20260908-001500
 
 - 🚫 Terminal throughput benchmark: MobaXterm and PuTTY rows.
 	- MobaXterm needs more than it is worth. Its local shell is Cygwin on a real pty and stty reports the grid, but no Windows program gets a tty through it. isatty is false both ways and the grid call fails, and its python3 is the Windows one on PATH, so there is nothing to fall back to. Both halves need a real terminal on stdin and stdout, so it would take a Cygwin python installed into the plugin environment first.
