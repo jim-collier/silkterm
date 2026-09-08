@@ -1,4 +1,6 @@
-﻿##	Purpose:
+#!/usr/bin/env pwsh
+
+##	Purpose:
 ##		- Launch the newest SilkTerm dogfood build, passing through any arguments.
 ##		  One implementation for Linux, Windows and macOS; the 'runterm' wrappers
 ##		  beside it just call this with pwsh.
@@ -213,8 +215,8 @@ function fCopyIfNewer {
 	## test above answers it next run without reading the whole binary.
 	$twin = fHeldMatching -SrcPath $src
 	if ($twin) {
-		fRenameHeld -Version $twin -Stamp $stamp -Tag $twin.Tag -Role $twin.Role `
-			-Why "same build as $($twin.Name)"
+		[void](fRenameHeld -Version $twin -Stamp $stamp -Tag $twin.Tag -Role $twin.Role `
+			-Why "same build as $($twin.Name)")
 		return
 	}
 
@@ -864,6 +866,8 @@ if ($script:GuiFeedback -and $script:RunWarnings.Count) {
 
 
 ##	History:
+##		- 2026-09-08: Runs directly on Linux and macOS - shebang first, no BOM,
+##		  LF endings. Stopped a held-build rename printing its path.
 ##		- 2026-09-07: One cross-platform implementation, replacing the Windows-only
 ##		  script and the separate bash launcher. Reads only the synced app dir, so
 ##		  the network source and its bounded waits are gone. Copies GFS-rotate in a

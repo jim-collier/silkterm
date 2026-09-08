@@ -18,6 +18,11 @@ utility/runterm                         text eol=lf
 *.ps1           text eol=crlf
 *.cmd           text eol=crlf
 
+# The launcher is the exception: it carries a shebang so it can be run
+# directly on Linux and macOS, and a CR would break that. pwsh 7 reads it
+# fine on Windows, and nothing runs it under PowerShell 5.1.
+utility/n8runterm.ps1                   text eol=lf
+
 # Rust sources and .shcl documents are deliberately left alone. They build and test
 # the same either way, and settings_ui.shcl is compiled in with include_str!, so
 # pinning it would change the bytes a Windows build embeds for no gain here.
