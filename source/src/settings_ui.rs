@@ -3650,7 +3650,7 @@ impl SettingsDialog {
 			// worked on them.
 			if matches!(self.specs[i].kind, Kind::ShellList) {
 				if let Some((row, field, part)) = self.shell_field_at(i, x, y) {
-					if !self.edit.as_ref().is_some_and(|e| e.row == row) {
+					if self.edit.as_ref().is_none_or(|e| e.row != row) {
 						self.commit_edit();
 						self.open_edit(row, false);
 					}
