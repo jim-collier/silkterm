@@ -109,7 +109,11 @@ if ($said -ne $scenario) { "VERDICT fail the answer is from '$said', not '$scena
 Get-Content $res | Where-Object { $_ -notlike "SCENARIO *" }
 Get-ChildItem (Join-Path $out "shots") -Filter *.png -ErrorAction SilentlyContinue |
 	ForEach-Object { "  shot $($_.Name) $($_.Length)" }
-if ((Get-Content $res -TotalCount 1) -like "VERDICT fail*") { exit 1 }
+##	Read the VERDICT line by name. It used to be the first line and is not any
+##	more, and taking line one instead quietly stopped every failure propagating.
+$line = (Get-Content $res | Where-Object { $_ -like "VERDICT *" } | Select-Object -First 1)
+if (-not $line) { "VERDICT fail no verdict line in the result"; exit 1 }
+if ($line -like "VERDICT fail*") { exit 1 }
 PS
 	} > "${launcher}"
 	"${winRemote}" "${host[@]}" --optional run "${launcher}" 2>&1
