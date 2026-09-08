@@ -42,7 +42,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text. (Nor Claude's auto-copy.) Right-click then copy, does works when CTRL+shift+C doesn't. This is a regression.
+- ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
 	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
 	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
 	- Not reproduced so far: plain use, a key replayed through another program's grab, and a program repainting its own lines all copy correctly.
