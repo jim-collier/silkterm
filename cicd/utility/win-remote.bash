@@ -19,6 +19,7 @@
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] job <name> [args...]
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] run <file.ps1> [args...]
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] fetch <remote-rel-path> <local-dir>
+##		win-remote.bash [--host <name>] [--as <user>] [--optional] pull <remote-abs-path> <local-dir>
 ##	Notes:
 ##		Hosts are read from $WINRIG_CONF (default ~/.config/silkterm/winrig.conf),
 ##		one per line as '<name> <addr>[,<addr>...]'. First address that answers wins,
@@ -221,8 +222,17 @@ case "$cmd" in
 		fGet() { scp -q "${sshOpts[@]}" "${sshUser}@${1}:${scpBase}/${rel}" "${dest}/"; }
 		fOverHosts fGet || exit 1
 		;;
+	pull)
+		##	Anything by absolute path, for output a job wrote outside the clone.
+		##	scp wants forward slashes even when the far side is Windows.
+		abs="${1:-}"; dest="${2:-}"
+		[[ -n "$abs" && -n "$dest" ]] || fFail "pull needs <remote-abs-path> <local-dir>" 2
+		mkdir -p "$dest"
+		fPull() { scp -qr "${sshOpts[@]}" "${sshUser}@${1}:${abs//\\//}" "${dest}/"; }
+		fOverHosts fPull || exit 1
+		;;
 	*)
-		echo "usage: win-remote.bash [--host <name>] [--as <user>] [--optional] {hosts|sync|job <name> [args]|run <file.ps1> [args]|fetch <rel> <dir>}" >&2
+		echo "usage: win-remote.bash [--host <name>] [--as <user>] [--optional] {hosts|sync|job <name> [args]|run <file.ps1> [args]|fetch <rel> <dir>|pull <abs> <dir>}" >&2
 		exit 2
 		;;
 esac
@@ -231,3 +241,4 @@ esac
 ##	Script history:
 ##		- 20260908: Created.
 ##		- 20260908: --optional, so an unreachable box is a skip.
+##		- 20260908: pull, for output written outside the clone.
