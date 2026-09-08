@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
 #  shellcheck disable=2016  ## 'Expressions don't expand in single quotes.' The PowerShell being generated needs literal '$'.
-#  shellcheck disable=2012  ## 'Use find instead of ls.' Plain names, listed for the operator.
 
 ##	- Purpose:
 ##		Run a graphical scenario against a real Windows desktop and bring back the
@@ -110,7 +109,7 @@ done
 if ((! keep)); then
 	mkdir -p "${shotDir}"
 	"${winRemote}" "${host[@]}" --optional pull 'C:\ProgramData\silkrig\out\shots' "${shotDir}" >/dev/null 2>&1 || true
-	ls -1 "${shotDir}" 2>/dev/null | sed 's/^/  shot /' || true
+	find "${shotDir}" -name '*.png' -printf '  shot %P\n' 2>/dev/null | sort || true
 fi
 
 ((failed == 0))
