@@ -13,7 +13,7 @@
 ##		                      toolchain is present (auto-detected, else warn-skip)
 ##		   5. packages       (NSIS installer .exe per built arch, if makensis found)
 ##		   6. linux half     (-Wsl: hand the Linux-only work to WSL2 - see below)
-##		   7. dogfood        (copy the best x86_64 build to <dogfood>\SilkTerm.exe)
+##		   7. dogfood        (copy the best x86_64 build to <dogfood>\silkterm.exe)
 ##		   8. publish        (stash -> pull -> add -> commit -> push, current branch)
 ##		- What Windows can't do (dropped vs cicd.bash): the profiler (pprof's
 ##		  SIGPROF sampler is Unix-only - the profiling feature can't even compile
@@ -29,8 +29,8 @@
 ##		  other's targets. Off by default - it roughly doubles a run.
 ##		- Dogfood pick: prefer the msvc build IF it's self-contained (statically
 ##		  linked, no VCRUNTIME140/MSVCP140 dependency); else the gnu build; else
-##		  whichever single build exists. The fixed SilkTerm.exe goes to the SYNCED
-##		  util dir; n8runterm.ps1 manages its own stamped pool in its LOCAL dir
+##		  whichever single build exists. The fixed silkterm.exe goes to the SYNCED
+##		  app dir; the runterm launcher keeps its own rotated pool locally
 ##		  (the two stay separate dirs on purpose).
 ##		- Syntax:
 ##		  pwsh cicd/cicd-win.ps1 [options]
@@ -150,12 +150,15 @@ $NsisTemplate = Join-Path $Root "cicd\packaging\windows\installer.nsi.in"
 ## Full-run transcript (gitignored, alongside the Linux lint logs' sibling).
 $LogDir = Join-Path $Root "cicd\artifacts\lint-win"
 
-## Dogfood: the fixed-name copy for hand-launching, into the SYNCED util dir so it
-## rides Dropbox and any box can grab it. Deliberately a SEPARATE dir from
-## n8runterm.ps1's LOCAL dir - n8runterm manages its own machine-local stamped
-## slktrmdf_* pool and launches from there; the two never share a folder.
-$DogfoodDir      = "C:\opt\0-0\common\exec\synced\util\mswin\gui\by-self\win64"
-$DogfoodFixedExe = "SilkTerm.exe"
+## Dogfood: the fixed-name copy, into the SYNCED app dir so it rides Dropbox and
+## any box can grab it. Deliberately a SEPARATE dir from the launcher's local
+## versions folder - runterm copies from here into that, and the two never share a
+## folder. Same layout the Linux pipeline's DOGFOOD_DESTS uses.
+$DogfoodDir      = Join-Path $env:USERPROFILE "synced\0-0\common\exec\app\mswin"
+$DogfoodFixedExe = "silkterm.exe"
+## Dropped beside it: the icon a shortcut points at, and a sidecar naming the build,
+## since a cross-build says nothing about the box that later reads it.
+$DogfoodIcon     = "source\assets\logo.png"
 
 ## Pinned helper-tool versions (the Windows-relevant subset of config.bash's
 ## TOOL_PINS). Warn (non-gating) when an installed tool has drifted, so a box
@@ -403,6 +406,13 @@ function fDogfood {
 	}
 	$dst = Join-Path $DogfoodDir $DogfoodFixedExe
 	Copy-Item -LiteralPath $pick.Exe -Destination $dst -Force
+	Set-Content -LiteralPath "$dst.tag" -Value "$($pick.Tk)wwi" -Encoding ascii
+
+	$icon = Join-Path $Root $DogfoodIcon
+	if (Test-Path -LiteralPath $icon) {
+		Copy-Item -LiteralPath $icon -Destination (Join-Path $DogfoodDir "silkterm.png") -Force
+	}
+
 	fEcho "OK: dogfood ($($pick.Tk); $why) -> $dst"
 }
 
