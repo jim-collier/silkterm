@@ -3548,7 +3548,8 @@ performance:
 
 	# automatic: true  ## Default
 
-	## "max", "high", "low", "standard" (plain terminal), "custom" (this file).
+	## How much eye candy. "max", "high", "low", "standard" (a plain terminal),
+	## or "custom", which means this file.
 	# profile: "max"  ## Default
 
 	# check_hardware: true  ## Default
@@ -3572,7 +3573,7 @@ wallpaper:
 	# image: "wallpaper.png"  ## Default
 	# fallback_builtin: true  ## Default
 
-	## Cycle a folder, overriding image above. Interval 0 means launch only.
+	## Cycle a folder instead of the image above. Interval 0 means once only.
 	rotate:
 		# enabled: true  ## Default
 		# folder: "wallpaper/"  ## Default
@@ -3581,10 +3582,10 @@ wallpaper:
 
 	# opacity: 0.10  ## Default
 
-	## "stretch" fills the window, "zoom" keeps the aspect and crops.
+	## "stretch" fills the window and squashes to fit. "zoom" crops instead.
 	# default_fit: "stretch"  ## Default
 
-	## Let an image override these from its own metadata.
+	## Let an image overrule these from its own metadata, if it carries any.
 	# honor_xmp: true  ## Default
 	# blur: 10.0  ## Default
 	# honor_xmp_look: true  ## Default
@@ -3615,21 +3616,25 @@ font:
 
 text:
 
-	## A soft halo of background color behind each glyph.
+	## A soft halo of background color so text reads over a busy wallpaper.
 	scrim:
 		# enabled: true  ## Default
 		# strength: 15  ## Default
 		# radius: 5.0  ## Default
 		# softness: 0.5  ## Default
-		## Shape: "sdf" (round), "dt", "dilate" (square), "gaussian".
+		## Halo shape. "sdf" glows round, "dt" is the same glow hardened into
+		## a solid plate, "dilate" is square. "gaussian" came first and still
+		## looks it.
 		# function: "sdf"  ## Default
-		## Falloff: "exp", "half_normal", "log", "sigmoid", "linear".
+		## How the halo fades out. "exp" holds close in then drops off fast,
+		## "log" drops off at once then lingers, "sigmoid" is soft at both
+		## ends, "half_normal" a bell, "linear" a straight ramp.
 		# ramp: "exp"  ## Default
 		# regular_weight: true  ## Default
 
 	# outline: 1.0  ## Default
 
-	## Lift text that sits too close to the color behind it. 0.0 is off.
+	## Rescue text that is nearly the color of whatever is behind it. 0 is off.
 	# min_contrast: 0.45  ## Default
 
 	# color_emoji: true  ## Default
@@ -3646,7 +3651,8 @@ cursor:
 		# height: 100  ## Default
 		# width: 100  ## Default
 
-	## "none", "phase", "pulse_vertical", "pulse_horizontal", "pulse_both".
+	## "none", "phase" (fade), "pulse_vertical", "pulse_horizontal",
+	## "pulse_both". They all give up after a while of no typing.
 	# animation: "pulse_vertical"  ## Default
 
 	# animation_resume_s: 1  ## Default
@@ -3673,7 +3679,7 @@ scroll:
 	scrollback: 10000
 	# smooth: true  ## Default
 
-	## Five stretches of one burst of output, in order. Milliseconds.
+	## One burst of output, in five stretches, start to finish. Milliseconds.
 	ease_in_ms: 82.0
 	ramp_up_ms: 96.0
 	single_screen_tau_ms: 32.0
@@ -3684,7 +3690,7 @@ scroll:
 	alt_scroll_lines: 3.0
 	output_ease_lines: 1.0
 
-	## Ease apps that repaint instead of scrolling.
+	## Smooth out apps that repaint the screen instead of scrolling it.
 	# smooth_apps: true  ## Default
 
 	scrollbar:
@@ -3692,7 +3698,7 @@ scroll:
 		# thickness: 16.0  ## Default
 		# auto_hide: true  ## Default
 
-	## Unlike the scrollbar, the minimap costs text columns.
+	## The minimap takes real text columns, which the scrollbar does not.
 	minimap:
 		# enabled: false  ## Default
 		# width: 100.0  ## Default
@@ -3705,7 +3711,7 @@ scroll:
 theme: SilkTerm
 theme_mode: dark
 
-## The chrome colors are not part of any theme.
+## Themes do not carry the chrome colors, so set those here.
 colors:
 	# background: "#000000"  ## Default
 	# foreground: "#88eecc"  ## Default
@@ -3737,7 +3743,7 @@ window:
 
 	# hide_single_tab: false  ## Default
 
-	## Percent of the window.
+	## Tab widths, as a percent of the window.
 	# tab_regular_width_pct: 10.0  ## Default
 	# tab_max_width_pct: 100.0  ## Default
 
@@ -3747,7 +3753,7 @@ window:
 
 hyperlinks:
 
-	## Only http, https, ftp, ftps, sftp, ssh, file and mailto are recognized.
+	## Only http, https, ftp, ftps, sftp, ssh, file and mailto. Nothing else.
 	# enabled: true  ## Default
 
 	# open_command: "firefox --new-tab"  ## Default
@@ -3756,17 +3762,17 @@ hyperlinks:
 ## Shell
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
-## Written by a scan after launch. The first switched-on entry is what runs.
+## A scan fills this in after launch. The first switched-on entry runs.
 
 shell:
 
-	## Same options as the command line, which overrides it.
+	## Same options as the command line. The command line wins.
 	# command_line: "--new-pane --right --size 35%"  ## Default
 
-	## Used only when nothing better is known: not from a shell, tab or split.
+	## Only when nothing better is known. A tab or split follows its parent.
 	# startup_directory: "{HOME}"  ## Default
 
-	## Adds a block to each PowerShell profile so it can report where it is.
+	## Edits each PowerShell profile so a shell can report where it is.
 	# integration: true  ## Default
 
 	## Offer bash a git-aware prompt. A .bashrc of your own still wins.
@@ -4904,10 +4910,17 @@ mod tests {
 			folder < straggler && straggler < random,
 			"template order among siblings not kept:\n{out}"
 		);
-		// a group the file has never seen still arrives whole, comments and all
+		// a group the file has never seen still arrives whole, comments and all.
+		// Anchored on the shape, not the wording: two comment passes have broken
+		// this by rewording the line it used to quote.
+		let fit = out
+			.find("\t# default_fit: \"stretch\"  ## Default")
+			.expect("new group backfilled");
 		assert!(
-			out.contains("## \"stretch\" fills the window, \"zoom\" keeps the aspect and crops.")
-				&& out.contains("# default_fit: \"stretch\"  ## Default"),
+			out[..fit]
+				.lines()
+				.next_back()
+				.is_some_and(|l| l.trim_start().starts_with("##")),
 			"new group needs its comments:\n{out}"
 		);
 		// and a wholly-missing top-level section arrives as a block
