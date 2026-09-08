@@ -95,6 +95,12 @@ DENY_CMD=(cargo deny check)
 ## but a measured scroll regression aborts. Empty () to disable.
 SCROLL_HARNESS=(cicd/tests/scroll/run.bash)
 
+## Stage 3: graphical scenarios against a real Windows desktop, over ssh. Slow, so
+## it is skipped under --quick. A box that is off, or whose session is locked, is a
+## skip and not a failure - both are somebody's machine rather than build hardware.
+## Empty () to disable. Extra scenario names may be listed after run.bash.
+WINGUI_HARNESS=(cicd/tests/wingui/run.bash smoke settingsdlg perfladder)
+
 ## Stage 3: what the dogfood launcher does to files it did not create. Needs pwsh;
 ## skipped with a warning where it is missing. Empty () to disable.
 LAUNCHER_HARNESS=(cicd/tests/launcher/run.ps1)
