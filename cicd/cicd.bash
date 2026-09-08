@@ -468,6 +468,13 @@ fi
 ## Headless scroll regression harness (slow; skipped under --quick). It skips itself
 ## on an environment miss (no Xvfb/binary) and exits non-zero only on a measured
 ## regression - which aborts here.
+## Installer and rig hygiene: no secret on a command line, no plain-http
+## redirect, no adopting somebody else's directory in a shared temp folder.
+if [[ -x "${root}/cicd/tests/install/run.bash" ]]; then
+	fEcho_Clean "installer hygiene ..."
+	"${root}/cicd/tests/install/run.bash" >/dev/null || fDie "installer hygiene test failed"
+	fEcho "OK: installer hygiene"
+fi
 ## The publish script commits and pushes, so nothing may reach a shell inside it.
 if [[ -x "${root}/cicd/tests/publish/run.bash" ]]; then
 	fEcho_Clean "publish script safety ..."

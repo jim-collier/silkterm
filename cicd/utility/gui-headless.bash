@@ -49,7 +49,15 @@ num="${display#:}"
 ## ${USER} is unset in a cron or ssh context, and `set -u` then reports this
 ## as "headless display failed to start".
 run_dir="/tmp/cicd-gui-headless-${USER:-$(id -un)}"
+## The name is predictable, so somebody else can get there first. Refuse anything
+## we do not own, and anything that is a link to somewhere else - the pid files
+## under here are read and acted on, and the auth cookie is a key to the display.
 mkdir -p "$run_dir"
+if [[ -L "$run_dir" || ! -d "$run_dir" || ! -O "$run_dir" ]]; then
+	echo "${run_dir} is not ours; refusing to use it" >&2
+	exit 1
+fi
+chmod 700 "$run_dir"
 
 ## Run something on our private display. Clearing the Wayland vars matters as much
 ## as setting DISPLAY: winit and GTK both prefer Wayland when they see it, so on a
@@ -68,7 +76,8 @@ start() {
 	if alive "$xvfb_pid"; then
 		echo "Xvfb already on $display (pid $(cat "$xvfb_pid"))"
 	else
-		: > "$auth"
+		## The cookie is a key to the display; the ambient umask left it readable.
+		(umask 077; : > "$auth")
 		Xvfb "$display" -screen 0 "$size" -nolisten tcp -auth "$auth" \
 			>"$run_dir/xvfb-${num}.log" 2>&1 &
 		echo $! > "$xvfb_pid"
