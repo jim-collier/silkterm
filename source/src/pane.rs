@@ -2738,14 +2738,16 @@ impl Pane {
 		};
 		self.glyphs
 			.iter()
-			.map(move |&(key, x, y, color, scale)| TextArea {
-				buffer: &self.glyph_cache[&key].buf,
-				left: x,
-				top: y,
-				scale,
-				bounds,
-				default_color: color,
-				custom_glyphs: &[],
+			.filter_map(move |&(key, x, y, color, scale)| {
+				Some(TextArea {
+					buffer: &self.glyph_cache.get(&key)?.buf,
+					left: x,
+					top: y,
+					scale,
+					bounds,
+					default_color: color,
+					custom_glyphs: &[],
+				})
 			})
 	}
 
@@ -3252,6 +3254,9 @@ impl PaneManager {
 			pane.strip.clear(); // metrics changed; a mid-slide strip would misalign
 			pane.strip_dirty = false;
 			pane.glyph_cache.clear(); // cached glyphs are tied to the old font/metrics
+			// this frame's keys point into the cache just emptied, and `build` only
+			// clears them past its lock-miss early return
+			pane.glyphs.clear();
 			pane.scrim_buf = None; // ditto the de-bold scrim buffer
 			pane.text_built = false; // fresh empty buffer: force a full rebuild next frame
 		}
@@ -4265,6 +4270,22 @@ mod tests {
 	// Copy-on-output used to hold a core for the life of any command that printed
 	// nothing: the settle deadline stayed in the past, so the loop woke on it
 	// every pass and asked the shell again each time.
+	// `glyphs` holds this frame's keys into `glyph_cache`, and a font-size change
+	// while the reader holds the term lease empties the cache with the keys still
+	// in hand. Indexing there aborts the process; the draw skips instead.
+	#[test]
+	fn a_glyph_whose_raster_went_away_is_skipped_not_indexed() {
+		let body = include_str!("pane.rs")
+			.split("\nmod tests {")
+			.next()
+			.expect("the file above its own tests");
+		assert!(
+			!body.contains("glyph_cache[&"),
+			"indexing aborts on a key the clear took out"
+		);
+		assert!(body.contains("glyph_cache.get(&"), "the draw asks instead");
+	}
+
 	#[test]
 	fn a_command_that_prints_nothing_does_not_spin_the_loop() {
 		let settle = std::time::Duration::from_millis(300);
