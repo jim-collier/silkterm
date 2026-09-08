@@ -3643,6 +3643,22 @@ impl SettingsDialog {
 			if self.specs[i].tab != self.tab || Self::header_is_tab_title(&self.specs[i]) {
 				continue;
 			}
+			// The shells grid is one spec row holding two editable fields per
+			// entry, so the field under the pointer has to be found the way the
+			// press handler finds it. Without this the two fields were the only
+			// ones in the dialog with no right-click menu, while the Menu key
+			// worked on them.
+			if matches!(self.specs[i].kind, Kind::ShellList) {
+				if let Some((row, field, part)) = self.shell_field_at(i, x, y) {
+					if !self.edit.as_ref().is_some_and(|e| e.row == row) {
+						self.commit_edit();
+						self.open_edit(row, false);
+					}
+					self.focus = Some(Focus::Row(i, part));
+					self.pop_field_menu(field, x, y, paste_ok, measure);
+				}
+				return;
+			}
 			let Some(field) = self.field_rect(i) else {
 				continue;
 			};
@@ -3663,6 +3679,26 @@ impl SettingsDialog {
 			return;
 		}
 	}
+	// Which of the shells grid's editable fields is under (x, y): its pseudo row,
+	// its box, and the tab stop it belongs to.
+	fn shell_field_at(&self, i: usize, x: f32, y: f32) -> Option<(usize, Rect, u16)> {
+		for part in 0..self.parts_of(i) {
+			if !self.shell_stop_rect(i, part).contains(x, y) {
+				continue;
+			}
+			return match shell_stop(part, self.edited.shells.len()) {
+				ShellStop::Entry(k, ShellPart::Name) => {
+					Some((shell_field_row(k, false), self.shell_name_box(i, k), part))
+				}
+				ShellStop::Entry(k, ShellPart::Command) => {
+					Some((shell_field_row(k, true), self.shell_cmd_box(i, k), part))
+				}
+				_ => None,
+			};
+		}
+		None
+	}
+
 	// Caret placement plus the menu itself, shared by the panel rows and the theme
 	// prompt's own field. A click inside an existing selection leaves it alone, so
 	// the menu can act on it (standard).
@@ -5640,6 +5676,56 @@ mod tests {
 		}
 		assert!(checked > 40, "only {checked} rows checked");
 		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// The shells grid is one spec row carrying two editable fields per entry, and
+	// the right-click handler walked spec rows - so those two were the only fields
+	// in the dialog with no menu, while the Menu key worked on them.
+	#[test]
+	fn the_shells_grid_fields_have_a_right_click_menu() {
+		let mut m = |s: &str| s.chars().count() as f32;
+		let mut d = mk_dialog(4000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| matches!(s.kind, Kind::ShellList))
+			.expect("the shells grid");
+		d.tab = d.specs[i].tab;
+		// its own entry: the live config decides what is in the list otherwise,
+		// and another test can be holding a config override while this runs
+		d.edited.shells = vec![crate::shells::ShellEntry {
+			slug: "bash".into(),
+			title: "Bash".into(),
+			command: "/bin/bash".into(),
+			active: true,
+			comment: String::new(),
+			last_seen: String::new(),
+		}];
+
+		for command in [false, true] {
+			let field = if command {
+				d.shell_cmd_box(i, 0)
+			} else {
+				d.shell_name_box(i, 0)
+			};
+			d.mouse_right_dip(field.x + 4.0, field.y + field.h / 2.0, true, &mut m);
+			assert!(
+				d.emenu.is_some(),
+				"no menu on the {} field",
+				if command { "command" } else { "name" }
+			);
+			assert_eq!(
+				d.edit.as_ref().map(|e| e.row),
+				Some(super::shell_field_row(0, command)),
+				"the menu acts on the field that was clicked"
+			);
+			d.emenu = None;
+		}
+
+		// and a click on the grid away from either field opens nothing
+		let row = d.shell_line_y(i, 0);
+		d.mouse_right_dip(d.rect.x + 1.0, row, true, &mut m);
+		assert!(d.emenu.is_none(), "a menu appeared off the fields");
 	}
 
 	// A control the dialog draws as inert must not act on a click. The check used
