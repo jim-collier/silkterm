@@ -14,11 +14,11 @@
 ##		Several platform bugs only exist on Windows and cannot be reproduced on this
 ##		box at all, so the alternative is doing it by hand on the other machine.
 ##	Syntax:
-##		win-remote.bash [--host <name>] hosts
-##		win-remote.bash [--host <name>] sync
-##		win-remote.bash [--host <name>] job <name> [args...]
-##		win-remote.bash [--host <name>] run <file.ps1> [args...]
-##		win-remote.bash [--host <name>] fetch <remote-rel-path> <local-dir>
+##		win-remote.bash [--host <name>] [--as <user>] hosts
+##		win-remote.bash [--host <name>] [--as <user>] sync
+##		win-remote.bash [--host <name>] [--as <user>] job <name> [args...]
+##		win-remote.bash [--host <name>] [--as <user>] run <file.ps1> [args...]
+##		win-remote.bash [--host <name>] [--as <user>] fetch <remote-rel-path> <local-dir>
 ##	Notes:
 ##		Hosts are read from $WINRIG_CONF (default ~/.config/silkterm/winrig.conf),
 ##		one per line as '<name> <addr>[,<addr>...]'. First address that answers wins,
@@ -29,6 +29,9 @@
 ##		Jobs run against a clone the remote keeps at origin/dev; it is reset, not
 ##		merged, so local edits there are discarded. Uncommitted work here does not
 ##		reach it - push first.
+##		--as picks the remote account. The default builds and tests, because the rust
+##		toolchain is a per-user rustup install under it. The unprivileged test account
+##		has no toolchain but a virgin profile, which is what to run a built binary as.
 ##	Exit: 0 ok, 1 job or connection failure, 2 usage / no config.
 ##	History: At bottom of script.
 
@@ -159,6 +162,7 @@ fDoRun() { fRunScript "$1" "$runScript" "${runArgs[@]}"; }
 only=""
 while (($#)); do case "$1" in
 	--host)    only="${2:-}"; shift 2 ;;
+	--as)      sshUser="${2:-}"; shift 2 ;;
 	-h|--help) grep -E '^##' "$0" | sed 's/^##\t\?//'; exit 0 ;;
 	*) break ;;
 esac; done
