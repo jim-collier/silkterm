@@ -42,6 +42,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔘 Windows: the title bar shows the shell's full executable path.
+	- Seen as `SilkTerm - C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe`. Windows PowerShell sets its console title to its own path, and that is taken as the title the program asked for, so it is faithful rather than wrong - but it reads badly and it is what a user sees first.
+	- The tab strip already shortens a path to fit. The window title does not.
+	- Opened: 20260908-125000
+
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
 	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
 	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
@@ -60,12 +65,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
 
 ### New features and enhancements
-
-- 🔘 Run the interface checks on Windows from here as well.
-	- The runner covers everything that needs no window. A screenshot or a click needs an interactive session, and a Windows client allows only one of those at a time, so an unattended session and somebody using the machine cannot share a box.
-	- Two machines makes that workable, since whichever one is idle can take the job. Needs a way to ask which that is.
-	- The two also bracket the hardware range the performance profiles choose between, which has so far only ever been rated on software rendering.
-	- Opened: 20260908-020000
 
 - 🔘 Settings | Silk: Allow "Profile" to be selected even when "Choose automatically" is enabled.
 	- If user changes it, deselect "Choose automatically".
@@ -86,6 +85,20 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Text boxes to the right: Red %, Green %, Blue %, Brightness %, Saturation %, and a hex value.
 		- Buttons at the bottom right: "Cancel|OK", with OK the default.
 	- 🔘 A hex field should select its contents when it takes focus rather than emptying itself, which is what a text box normally does.
+
+- 🔘 Release the GPU device after a long idle (e.g. 60 minutes).
+	- Drop the wgpu device and everything uploaded on it once the window has been idle long enough, and rebuild it when needed again. This is to lower total GPU memory footprint, esp. with multiple terminals open (e.g. for days).
+	- Idle = unfocused plus no PTY output, not `State::hidden()`. Occlusion is not reported by every WM, so `hidden()` only means minimized on the reference box. `TermInstance::note_activity` is the freshness signal.
+	- Deadline goes in the `about_to_wait` wake chain as one more `Option<Instant>` arm, beside `wp_next` and `vram_next`.
+	- Rebuild triggers on `Focused(true)` / `Occluded(false)` / pointer entering, which is where the GL `vram_next` probe already fires `recover_gpu`. Both render entry points need it, the way `freeze_sync` is reached from both.
+	- Vetoed while a dialog is open (main window holds the GL/EGL context), and while a rating run is in flight.
+	- First step is measuring the rebuild through the existing `recover_gpu` path. Extrapolating from the cold dialog context gives ~300-500ms, unmeasured.
+	- Need to figure out whether the X11 transparent path can survive a teardown at all - the ARGB visual belongs to the window, so it may be native-backend only.
+	- Opened: 20260905-181131.
+	- Setting:
+		- On "Window" tab.
+		- Enable/disable checkbox. (Disabled by default.)
+		- Idle minutes (default 60).
 
 - NOTE: Stop here to work on releasing RC1.
 
@@ -109,7 +122,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
 	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
 	- Opened: 20260804-134813
-
 
 - 🔘 At startup, offer to copy the wallpaper pack from the repo to the local wallpaper directory.
 	- The README now carries a one-liner for it (Wallpaper pack section), so this item is only about the in-app offer.
@@ -144,20 +156,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- 🔘 Need a config file name and a default value for the resulting strength of this calculation.
 	- Opened: 20260703-100322
 
-- 🔘 (Originally filed as bug but is really a refinement): At high text scrim blur radius and low softness, the blur has boxy artifacts.
+- 🔘 At high text scrim blur radius and low softness, the blur has boxy artifacts.
 	- Cause: the scrim is a separable blur with a truncated kernel. The hard cutoff leaves a faint edge that low softness amplifies into a visible square, and the linear and s-curve falloffs are not true Gaussians, so their support reads as a diamond or box rather than a circle. The fix is a look-versus-performance tradeoff (wider extent, more taps, or a windowed kernel) that wants eyeballing. Deferred to a visual pass.
 	- 🔘 New feature: Adjustable blur quality in settings:
 		- High: Very high quality, may require a higher-end GPU, no visible artifacts at all.
 		- Medium (default): The current quality.
 		- Low: Trash quality, only looks OK at small blur radii. For VMs or remote sessions with punishing graphics. (In fact maybe this should be auto-detected...)
 	- Opened: 20260724-080316
-
-- 🛠️ Testing:
-	- 🛠️ Do full regression testing, keeping the tests current as features and bugs come in, and against library code as well.
-		- Done: scrolling is covered by library tests encoding the per-app matrix (less and vim slide, nano and muffer hard-cut) plus normal-output invariants and easing monotonicity, and a harness that drives deterministic full-redraw scenes in the pipeline (skipped under `--quick`). Still to broaden: other features, and the fuzz and security work below.
-	- 🔘 Add fuzz and security testing suites. Not just for SilkTerm code, but against library code too, so critical bugs there can be found and patched as well.
-	- Note: the 125% interface font check is done, under Done - New features and enhancements.
-	- Opened: 20260703-100322
 
 - 🔘 Add silkterm to a Windows package manager (e.g. winget or choco).
 	- Opened: 20260816-103257
@@ -171,20 +176,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- 🔘 The three "Animation pauses on" checkboxes on the Cursor tab: loss of window focus, loss of pane activity, input inactivity. The first two are source constants today, so exposing them is more than adding a row.
 	- Note: the rest of the dialog rework is done, under Done - New features and enhancements.
 	- Opened: 20260719-085918
-
-- 🔘 Release the GPU device after a long idle (e.g. 60 minutes).
-	- Drop the wgpu device and everything uploaded on it once the window has been idle long enough, and rebuild it when needed again. This is to lower total GPU memory footprint, esp. with multiple terminals open (e.g. for days).
-	- Idle = unfocused plus no PTY output, not `State::hidden()`. Occlusion is not reported by every WM, so `hidden()` only means minimized on the reference box. `TermInstance::note_activity` is the freshness signal.
-	- Deadline goes in the `about_to_wait` wake chain as one more `Option<Instant>` arm, beside `wp_next` and `vram_next`.
-	- Rebuild triggers on `Focused(true)` / `Occluded(false)` / pointer entering, which is where the GL `vram_next` probe already fires `recover_gpu`. Both render entry points need it, the way `freeze_sync` is reached from both.
-	- Vetoed while a dialog is open (main window holds the GL/EGL context), and while a rating run is in flight.
-	- First step is measuring the rebuild through the existing `recover_gpu` path. Extrapolating from the cold dialog context gives ~300-500ms, unmeasured.
-	- Need to figure out whether the X11 transparent path can survive a teardown at all - the ARGB visual belongs to the window, so it may be native-backend only.
-	- Opened: 20260905-181131.
-	- Setting:
-		- On "Window" tab.
-		- Enable/disable checkbox. (Disabled by default.)
-		- Idle minutes (default 60).
 
 - 🛠️ Command-line options:
 	- 🔘 Per-pane scope for the style options. `--font-name`, `--font-size`, `--background-color`, `--foreground-color`, `--wallpaper` and its stretch, zoom and opacity all apply to the whole window today. Varying them per pane needs a per-pane renderer the single text context does not have.
@@ -1203,6 +1194,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Run the interface checks on Windows from here as well.
+	- ✅ Scenarios run against a real desktop and bring back a verdict and screenshots. Windows, capture and typing all work; a machine that is off, or whose session is locked, is reported and stepped over rather than failing the build.
+	- ✅ Three scenarios so far: the window comes up and takes what is typed, the Settings dialog opens and changes tabs and closes, and the performance ladder rates the machine and is believed on the next launch.
+	- ✅ The performance ladder has now rated real hardware for the first time. A discrete card at 3440x1440 answers the top rung.
+	- The premise in the original note was wrong, and it is what had blocked this. A second session is not needed at all: the work goes to the session already logged on. What blocked every earlier attempt was that a job arriving over the network has no desktop to draw on, which looks exactly like a permissions problem and is not one.
+	- Left: the laptop locks its screen when the remote viewer disconnects, and a locked session hands back black pictures and swallows typing. Its scenarios skip until that is turned off.
+	- Opened: 20260908-020000
+	- Closed: 20260908-124500
 
 - ✅ Code review 20260908, the enhancement half.
 	- ✅ Releases are signed. One signature over the checksums file covers every artifact; both installers refuse a release whose signature does not verify against the key pinned in them. Inert until a key is generated - the commands are in the pipeline config, and until then a release says out loud that it is unsigned.
