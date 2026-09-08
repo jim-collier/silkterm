@@ -42,6 +42,17 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔘 Settings dialog: on a 1080p screen at 150% the buttons sit under the taskbar.
+	- Measured on Windows: the dialog comes up 831x1063 while the usable screen is 1920x1008, so the bottom 55 pixels are behind the taskbar - and that is exactly where Cancel, Apply and OK are. There is no way to press OK.
+	- Something already clamps the height, because 1063 is under the 1200 the declared size would give at that scale. It looks like it clamps to the display rather than to the part of it a window can use.
+	- A graphical scenario now measures this, so a full pipeline run fails on that machine until it is fixed.
+	- Opened: 20260908-145000
+
+- 🔘 Windows: keystrokes injected as characters rather than keys are ignored.
+	- Windows lets a program send a character directly instead of a key press, and it arrives tagged as a packet rather than as a key. Nothing types that way by hand, but the touch keyboard does for some characters, and so do text expanders and some accessibility tools.
+	- An ordinary window in the same session, sent the same text the same way, receives it. The terminal receives nothing at all. Sending real key presses works fine, which is what hid this.
+	- Opened: 20260908-141500
+
 - 🔘 Windows: the title bar shows the shell's full executable path.
 	- Seen as `SilkTerm - C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe`. Windows PowerShell sets its console title to its own path, and that is taken as the title the program asked for, so it is faithful rather than wrong - but it reads badly and it is what a user sees first.
 	- The tab strip already shortens a path to fit. The window title does not.
@@ -1200,7 +1211,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Three scenarios so far: the window comes up and takes what is typed, the Settings dialog opens and changes tabs and closes, and the performance ladder rates the machine and is believed on the next launch.
 	- ✅ The performance ladder has now rated real hardware for the first time. A discrete card at 3440x1440 answers the top rung.
 	- The premise in the original note was wrong, and it is what had blocked this. A second session is not needed at all: the work goes to the session already logged on. What blocked every earlier attempt was that a job arriving over the network has no desktop to draw on, which looks exactly like a permissions problem and is not one.
-	- Left: the laptop locks its screen when the remote viewer disconnects, and a locked session hands back black pictures and swallows typing. Its scenarios skip until that is turned off.
+	- ✅ Both boxes run the scenarios as the unprivileged test account, on their real adapters. A session that has locked itself is authenticated again by one remote connection and put back on the console; there is a script for the two steps.
+	- Left: sessions lock themselves after a while, so that step is routine rather than one-off.
 	- Opened: 20260908-020000
 	- Closed: 20260908-124500
 

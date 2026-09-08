@@ -21,6 +21,10 @@ meDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${meDir}/../../.." && pwd)"
 winRemote="${root}/cicd/utility/win-remote.bash"
 shotDir="${root}/cicd/artifacts/wingui"
+##	These boxes are shared, so a run may not use a fixed folder or task name -
+##	two at once would read each other's answers and cancel each other's tasks.
+token="$(date +%Y%m%d-%H%M%S)-$$"
+remoteDir="C:\\ProgramData\\silkrig\\run-${token}"
 
 host=(); keep=0
 while (($#)); do case "$1" in
@@ -37,26 +41,27 @@ scenarios=("$@"); ((${#scenarios[@]})) || scenarios=(smoke)
 ##	pinned to origin/dev - otherwise every edit here would need a push before it
 ##	could be run once.
 bundle="$(mktemp --suffix=.tgz)"
-launcher=""
+launcher=""; sweep=""
 tar czf "${bundle}" -C "${meDir}" --exclude=run.bash .
-trap 'rm -f "${bundle}" "${launcher}"' EXIT
+trap 'rm -f "${bundle}" "${launcher}" "${sweep}"' EXIT
 
 fRun() {
-	local scenario="$1" fresh="$2"
+	local scenario="$1"
 	launcher="$(mktemp --suffix=.ps1)"
 	{
 		printf '$ErrorActionPreference = "Stop"\n'
 		printf '. "$PSScriptRoot\\_env.ps1"\n'
 		printf '$scenario = "%s"\n' "${scenario}"
-		printf '$fresh = %s\n' "${fresh}"
-		printf '$dir = "C:\\ProgramData\\silkrig"\n'
+		printf '$dir = "%s"\n' "${remoteDir}"
 		printf '$b64 = @"\n%s\n"@\n' "$(base64 -w120 "${bundle}")"
 		cat <<'PS'
 $work = Join-Path $dir "wingui"
 $out  = Join-Path $dir "out"
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
-if ($fresh) { Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force -Path $work, $out | Out-Null
+##	The scenario runs as the console user, who is usually not the account that made
+##	this directory - and ProgramData only lets a creator write its own files.
+icacls "C:\ProgramData\silkrig" /grant "*S-1-5-32-545:(OI)(CI)M" /T /Q 2>&1 | Out-Null
 $tgz = Join-Path $dir "wingui.tgz"
 [IO.File]::WriteAllBytes($tgz, [Convert]::FromBase64String(($b64 -replace '\s', '')))
 tar.exe -xzf $tgz -C $work
@@ -65,11 +70,22 @@ Remove-Item $tgz -Force
 $exe = Join-Path $RepoDir "target\release\silkterm.exe"
 if (-not (Test-Path $exe)) { $exe = Join-Path $RepoDir "source\target\release\silkterm.exe" }
 
-##	An interactive-token task is the one route into the console session that needs
-##	no stored password: it runs as whoever is logged on, with their desktop.
+##	Whoever holds the console is who the scenario has to run as - not whoever ssh
+##	logged in as, which may have been pushed off it.
+Add-Type -Namespace Con -Name W -MemberDefinition @"
+[DllImport("kernel32.dll")] public static extern uint WTSGetActiveConsoleSessionId();
+"@
+$consoleId = [Con.W]::WTSGetActiveConsoleSessionId()
+$who = $env:USERNAME
+foreach ($l in (quser 2>$null | Select-Object -Skip 1)) {
+	if ($l -match '^\s*>?(\S+)\s+.*?(\d+)\s+(Active|Disc)\b' -and [int]$Matches[2] -eq $consoleId) { $who = $Matches[1] }
+}
+
+##	An interactive-token task is the one route into that session that needs no
+##	stored password: it runs as that user, on their desktop.
 $pwsh = (Get-Command pwsh).Source
-$name = 'silkrig-gui'
-$me   = "$env:COMPUTERNAME\$env:USERNAME"
+$name = "silkrig-" + (Split-Path $dir -Leaf)
+$me   = "$env:COMPUTERNAME\$who"
 $arg  = "-NoProfile -STA -ExecutionPolicy Bypass -File `"$work\_run.ps1`" -Scenario $scenario -Exe `"$exe`" -OutDir `"$out`""
 $act  = New-ScheduledTaskAction -Execute $pwsh -Argument $arg
 $pri  = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive
@@ -80,6 +96,7 @@ $res  = Join-Path $out "result.txt"
 Remove-Item $res -Force -ErrorAction SilentlyContinue
 try {
 	Register-ScheduledTask -TaskName $name -Action $act -Principal $pri -Force | Out-Null
+	"running as $me in session $consoleId"
 	Start-ScheduledTask -TaskName $name
 	for ($i = 0; $i -lt 480; $i++) { if (Test-Path $res) { break }; Start-Sleep -Milliseconds 500 }
 } finally {
@@ -92,24 +109,32 @@ if ($said -ne $scenario) { "VERDICT fail the answer is from '$said', not '$scena
 Get-Content $res | Where-Object { $_ -notlike "SCENARIO *" }
 Get-ChildItem (Join-Path $out "shots") -Filter *.png -ErrorAction SilentlyContinue |
 	ForEach-Object { "  shot $($_.Name) $($_.Length)" }
-if ((Get-Content $res -TotalCount 1) -like "VERDICT fail*") { exit 1 }
+##	Read the VERDICT line by name. It used to be the first line and is not any
+##	more, and taking line one instead quietly stopped every failure propagating.
+$line = (Get-Content $res | Where-Object { $_ -like "VERDICT *" } | Select-Object -First 1)
+if (-not $line) { "VERDICT fail no verdict line in the result"; exit 1 }
+if ($line -like "VERDICT fail*") { exit 1 }
 PS
 	} > "${launcher}"
 	"${winRemote}" "${host[@]}" --optional run "${launcher}" 2>&1
 }
 
-failed=0; first=1
+failed=0
 for scenario in "${scenarios[@]}"; do
 	echo "== wingui: ${scenario}"
-	if ! fRun "${scenario}" "$( ((first)) && echo '$true' || echo '$false' )" | sed 's/^/  /'; then failed=1; fi
-	first=0
+	if ! fRun "${scenario}" | sed 's/^/  /'; then failed=1; fi
 done
 
 ##	Shots are the whole point of a graphical test, so bring them home.
 if ((! keep)); then
 	mkdir -p "${shotDir}"
-	"${winRemote}" "${host[@]}" --optional pull 'C:\ProgramData\silkrig\out\shots' "${shotDir}" >/dev/null 2>&1 || true
+	"${winRemote}" "${host[@]}" --optional pull "${remoteDir}\\out\\shots" "${shotDir}" >/dev/null 2>&1 || true
 	find "${shotDir}" -name '*.png' -printf '  shot %P\n' 2>/dev/null | sort || true
+	##	Take the run's folder away with it, so a shared box does not accumulate them.
+	sweep="$(mktemp --suffix=.ps1)"
+	printf 'Remove-Item -Recurse -Force "%s" -ErrorAction SilentlyContinue\n' "${remoteDir}" > "${sweep}"
+	"${winRemote}" "${host[@]}" --optional run "${sweep}" >/dev/null 2>&1 || true
+	rm -f "${sweep}"
 fi
 
 ((failed == 0))
