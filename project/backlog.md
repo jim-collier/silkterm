@@ -1175,6 +1175,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260906-100000
 	- Closed: 20260906-100000
 
+- ✅ Config file comments: give the scrim settings a description, and let the rest sound less like a form.
+	- Done. Scrim function and falloff now say what each option looks like rather than only naming it. About a dozen other lines were reworded from flat statements into something a person would write. An existing config is untouched, as always.
+	- Opened: 20260907-090000
+	- Closed: 20260907-090000
+
 - ✅ Config file comment diet, second pass.
 	- Done. The template comments are down to about an eighth of their weight, in two passes. What is left is only what a key name and its value cannot say: the value lists, a few precedence rules, and the handful of settings that write outside the config file. Nothing moved, so an existing config is untouched; the shorter text only shows in a file written from scratch.
 	- Opened: 20260906-090000
