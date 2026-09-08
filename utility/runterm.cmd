@@ -12,8 +12,11 @@ SETLOCAL
 ::		runs pwsh in the current window and lets the launcher put up its own
 ::		UAC prompt and continue minimized from there.
 ::		The .ps1 lives in the crossplatform util dir rather than beside this
-::		file, so the known locations are tried in order.
+::		file, so the known locations are tried in order. 'synced' is a junction
+::		to Dropbox that reads as an empty directory on Windows, so the real
+::		spelling is tried too.
 ::	History:
+::		- 20260908 JC: Look under Dropbox as well as 'synced'.
 ::		- 20260907 JC: Created.
 
 ::----------------------------------------------------------------------------
@@ -22,6 +25,7 @@ SETLOCAL
 	set "PSFILE="
 	call :FIND "%~dp0n8runterm.ps1"
 	call :FIND "%USERPROFILE%\synced\0-0\common\exec\util\0_crossplatform\n8runterm.ps1"
+	call :FIND "%USERPROFILE%\Dropbox\0-0\common\exec\util\0_crossplatform\n8runterm.ps1"
 	call :FIND "C:\opt\0-0\common\exec\synced\util\0_crossplatform\n8runterm.ps1"
 	call :FIND "C:\0-0\common\exec\synced\util\0_crossplatform\n8runterm.ps1"
 
