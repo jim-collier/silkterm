@@ -154,36 +154,46 @@ pub fn open(url: &str, open_command: &str) -> io::Result<()> {
 	Ok(())
 }
 
-#[cfg(target_os = "windows")]
-fn default_command(url: &str) -> Command {
-	use std::os::windows::process::CommandExt;
-	// cmd's own parser sees the command line before argument quoting means
-	// anything, so the metacharacters a query string carries have to be escaped
-	// for it. The empty "" is start's title argument - without it start takes the
-	// URL as the title and opens nothing.
-	let mut escaped = String::with_capacity(url.len() + 8);
-	for ch in url.chars() {
-		if matches!(ch, '&' | '|' | '^' | '<' | '>' | '(' | ')') {
-			escaped.push('^');
-		}
-		escaped.push(ch);
+// Which platform's opener to use. A parameter rather than a `cfg!` at the use
+// site so every arm can be checked from any box.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Host {
+	Windows,
+	MacOs,
+	Other,
+}
+
+fn this_host() -> Host {
+	if cfg!(target_os = "windows") {
+		Host::Windows
+	} else if cfg!(target_os = "macos") {
+		Host::MacOs
+	} else {
+		Host::Other
 	}
-	let mut cmd = Command::new("cmd");
-	cmd.args(["/C", "start", "\"\""]).raw_arg(&escaped);
-	cmd
 }
 
-#[cfg(target_os = "macos")]
-fn default_command(url: &str) -> Command {
-	let mut cmd = Command::new("open");
-	cmd.arg(url);
-	cmd
+// The program that hands a URL to the desktop, and the URL as one plain argument.
+//
+// Windows deliberately does not go through `cmd /C start`. cmd's parser sees the
+// whole command line before argument quoting means anything, and it expands
+// percent variables before it processes any escaping - so a URL printed by a
+// remote host could carry a variable in, and an expanded value holding `&` would
+// start a second command. Terminal output is untrusted, and there is no escape
+// that survives that order. explorer takes its arguments the ordinary way.
+fn opener_argv(host: Host, url: &str) -> (&'static str, String) {
+	let program = match host {
+		Host::Windows => "explorer.exe",
+		Host::MacOs => "open",
+		Host::Other => "xdg-open",
+	};
+	(program, url.to_string())
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn default_command(url: &str) -> Command {
-	let mut cmd = Command::new("xdg-open");
-	cmd.arg(url);
+	let (program, arg) = opener_argv(this_host(), url);
+	let mut cmd = Command::new(program);
+	cmd.arg(arg);
 	cmd
 }
 
@@ -193,6 +203,25 @@ mod tests {
 
 	fn chars(s: &str) -> Vec<char> {
 		s.chars().collect()
+	}
+
+	// Terminal output is untrusted, and the Windows opener used to go through cmd
+	// - whose parser reads the command line before argument quoting means
+	// anything, and expands percent variables before any escaping is processed.
+	// Nothing escapes a URL for that, so nothing tries: every platform hands the
+	// URL to its own opener as one plain argument.
+	#[test]
+	fn a_url_reaches_the_opener_exactly_as_it_was_printed() {
+		let nasty = "https://example.com/?a=%USERPROFILE%&b=x^y|z<>()\"'`$ q";
+		for host in [Host::Windows, Host::MacOs, Host::Other] {
+			let (program, arg) = opener_argv(host, nasty);
+			assert_eq!(arg, nasty, "{host:?} altered the url");
+			assert!(
+				!program.contains("cmd") && !program.contains("sh"),
+				"{host:?} opens through a shell ({program})"
+			);
+		}
+		assert_eq!(opener_argv(Host::Windows, nasty).0, "explorer.exe");
 	}
 
 	// Find the link covering the first char of `needle`.
