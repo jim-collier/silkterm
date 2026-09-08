@@ -245,15 +245,71 @@ pub fn refreshed_block(profile: &str, newline: &str) -> Option<String> {
 	Some(format!("{}{block}{}", &profile[..start], &profile[end..]))
 }
 
+// What is in a profile now, ready to be edited. `Ok(None)` is "nothing there
+// yet". An error means the file is not ours to touch: a profile that does not
+// decode as UTF-8 used to arrive here as an empty string, and appending to that
+// replaced the whole file. Windows PowerShell 5.1 writes UTF-16 by default, so
+// that is an ordinary profile rather than a broken one.
+fn read_profile(profile: &Path) -> Result<Option<String>, String> {
+	match std::fs::read(profile) {
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+		Err(e) => Err(format!("could not read {}: {e}", profile.display())),
+		Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| {
+			format!(
+				"{} is not UTF-8 - left it alone, add the block by hand (see shell-integration.md)",
+				profile.display()
+			)
+		}),
+	}
+}
+
+// Keep what is there under a name that says where it came from, and never over a
+// backup already made - that one is the copy worth keeping.
+fn backup_once(profile: &Path, existing: &str) -> bool {
+	if existing.trim().is_empty() {
+		return true;
+	}
+	let backup = profile.with_extension("ps1.silkterm-backup");
+	if backup.exists() {
+		return true;
+	}
+	if let Err(e) = std::fs::copy(profile, &backup) {
+		eprintln!(
+			"{}: could not back up {}: {e} - left it alone",
+			config::APP_NAME,
+			profile.display()
+		);
+		return false;
+	}
+	true
+}
+
+// Beside the file, then rename over it: an interrupted write cannot leave a
+// profile half-replaced.
+fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+	let tmp = path.with_extension("ps1.silkterm-new");
+	std::fs::write(&tmp, text)?;
+	std::fs::rename(&tmp, path)
+}
+
 fn install_into(profile: &Path) {
-	let existing = std::fs::read_to_string(profile).unwrap_or_default();
+	let existing = match read_profile(profile) {
+		Ok(text) => text.unwrap_or_default(),
+		Err(why) => {
+			eprintln!("{}: {why}", config::APP_NAME);
+			return;
+		}
+	};
 	// a profile is read by the platform's own shell, so it gets the platform's
 	// line ending rather than whatever the compiled-in copy carries
 	let newline = if cfg!(windows) { CRLF } else { LF };
 	// already ours: the only thing left to do is bring it up to date
 	if existing.contains(MARKER) {
 		if let Some(updated) = refreshed_block(&existing, newline) {
-			match std::fs::write(profile, updated) {
+			if !backup_once(profile, &existing) {
+				return;
+			}
+			match write_atomic(profile, &updated) {
 				Ok(()) => eprintln!(
 					"{}: updated the shell integration block in {}",
 					config::APP_NAME,
@@ -271,20 +327,8 @@ fn install_into(profile: &Path) {
 	if already_reports(&existing) {
 		return;
 	}
-	// keep what is there, under a name that says where it came from - and never
-	// over a backup already made, which would be the one thing worth keeping
-	if !existing.trim().is_empty() {
-		let backup = profile.with_extension("ps1.silkterm-backup");
-		if !backup.exists() {
-			if let Err(e) = std::fs::copy(profile, &backup) {
-				eprintln!(
-					"{}: could not back up {}: {e} - left it alone",
-					config::APP_NAME,
-					profile.display()
-				);
-				return;
-			}
-		}
+	if !backup_once(profile, &existing) {
+		return;
 	}
 	if let Some(parent) = profile.parent() {
 		if let Err(e) = std::fs::create_dir_all(parent) {
@@ -292,7 +336,7 @@ fn install_into(profile: &Path) {
 			return;
 		}
 	}
-	match std::fs::write(profile, with_block(&existing, newline)) {
+	match write_atomic(profile, &with_block(&existing, newline)) {
 		Ok(()) => eprintln!(
 			"{}: added shell integration to {} - new tabs and panes will open where the shell is (see shell-integration.md)",
 			config::APP_NAME,
@@ -467,6 +511,37 @@ mod tests {
 		assert!(joined.contains("Get-ChildItem\n\n# >>> SilkTerm"));
 		// and an empty profile is just the block
 		assert_eq!(with_block("   \n", "\n"), SNIPPET.replace("\r\n", "\n"));
+	}
+
+	// PowerShell 5.1 writes UTF-16 by default, so a profile that does not decode
+	// as UTF-8 is an ordinary one. It used to read back as an empty string, which
+	// skipped the backup and replaced the file with the block alone.
+	#[test]
+	fn a_profile_that_is_not_utf8_is_left_alone() {
+		let dir = std::env::temp_dir().join(format!("silkterm_int16_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).expect("temp dir");
+		let profile = dir.join("Microsoft.PowerShell_profile.ps1");
+		// "Set-Alias ll Get-ChildItem" as UTF-16LE with a byte-order mark
+		let mut bytes = vec![0xff, 0xfe];
+		for unit in "Set-Alias ll Get-ChildItem\r\n".encode_utf16() {
+			bytes.extend_from_slice(&unit.to_le_bytes());
+		}
+		std::fs::write(&profile, &bytes).expect("write profile");
+
+		super::install_into(&profile);
+
+		assert_eq!(
+			std::fs::read(&profile).expect("read profile"),
+			bytes,
+			"the profile is untouched"
+		);
+		assert!(
+			!dir.join("Microsoft.PowerShell_profile.ps1.silkterm-new")
+				.exists(),
+			"no half-written file left beside it"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 
 	// The whole of what a launch does to a file that is not ours: keep a copy,
