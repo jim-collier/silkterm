@@ -4748,7 +4748,7 @@ impl State {
 		};
 		// distance paths measure the halo extent in px; keep it a touch wider than
 		// the (sigma-based) gaussian look so switching functions doesn't shrink it.
-		let scrim_ext = cfg.text_scrim_radius * 2.0;
+		let scrim_ext = crate::scrim::clamp_ext(cfg.text_scrim_radius * 2.0);
 		// The halo is built from the text alone - the cursor lives in its own
 		// coverage texture and only joins at the blur (cursor_scrim) or the
 		// composite (cursor_outline). So when the text is unchanged the color map,
