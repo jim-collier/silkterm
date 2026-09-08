@@ -14,6 +14,15 @@ Add-Type -Namespace Silk -Name Win -MemberDefinition @'
 [DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);
 [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
 [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, IntPtr e);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+[DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+[DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
+[DllImport("user32.dll")] public static extern IntPtr GetFocus();
+[DllImport("user32.dll")] public static extern bool SystemParametersInfoW(uint a, uint b, out RECT r, uint c);
+[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
 public struct RECT { public int Left, Top, Right, Bottom; }
 '@
 
@@ -55,6 +64,63 @@ public static class SilkEnum {
 }
 '@
 
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class SilkKeys {
+	[StructLayout(LayoutKind.Sequential)] struct MOUSEINPUT { public int dx, dy; public uint data, flags, time; public IntPtr extra; }
+	[StructLayout(LayoutKind.Sequential)] struct KEYBDINPUT { public ushort vk, scan; public uint flags, time; public IntPtr extra; }
+	[StructLayout(LayoutKind.Explicit)] struct UNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
+	[StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public UNION u; }
+	[DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint n, INPUT[] p, int cb);
+	[DllImport("user32.dll")] public static extern short VkKeyScanW(char c);
+	const uint KEYUP = 0x0002, UNICODE = 0x0004;
+
+	static void Send(INPUT[] a) { SendInput((uint)a.Length, a, Marshal.SizeOf(typeof(INPUT))); }
+	static INPUT Vk(ushort vk, bool up) {
+		var i = new INPUT(); i.type = 1;
+		i.u.ki.vk = vk; i.u.ki.flags = up ? KEYUP : 0;
+		return i;
+	}
+	static INPUT Uni(char c, bool up) {
+		var i = new INPUT(); i.type = 1;
+		i.u.ki.scan = c; i.u.ki.flags = UNICODE | (up ? KEYUP : 0);
+		return i;
+	}
+	public static void Tap(ushort vk) { Send(new[] { Vk(vk, false), Vk(vk, true) }); }
+	public static void Chord(ushort[] mods, ushort vk) {
+		var a = new INPUT[mods.Length * 2 + 2];
+		int n = 0;
+		foreach (var m in mods) a[n++] = Vk(m, false);
+		a[n++] = Vk(vk, false); a[n++] = Vk(vk, true);
+		for (int j = mods.Length - 1; j >= 0; j--) a[n++] = Vk(mods[j], true);
+		Send(a);
+	}
+	// Unicode injection arrives as VK_PACKET, which not every window reads. Typing
+	// through the layout produces the same messages a keyboard does.
+	public static void Text(string s) {
+		foreach (char c in s) {
+			short m = VkKeyScanW(c);
+			if (m == -1) { Send(new[] { Uni(c, false), Uni(c, true) }); continue; }
+			ushort vk = (ushort)(m & 0xFF);
+			int st = (m >> 8) & 0xFF;
+			var a = new System.Collections.Generic.List<INPUT>();
+			if ((st & 1) != 0) a.Add(Vk(0x10, false));
+			if ((st & 2) != 0) a.Add(Vk(0x11, false));
+			if ((st & 4) != 0) a.Add(Vk(0x12, false));
+			a.Add(Vk(vk, false)); a.Add(Vk(vk, true));
+			if ((st & 4) != 0) a.Add(Vk(0x12, true));
+			if ((st & 2) != 0) a.Add(Vk(0x11, true));
+			if ((st & 1) != 0) a.Add(Vk(0x10, true));
+			Send(a.ToArray());
+		}
+	}
+	public static void TextUnicode(string s) {
+		foreach (char c in s) Send(new[] { Uni(c, false), Uni(c, true) });
+	}
+}
+'@
+
 $script:checks   = @()
 $script:failures = 0
 $script:shotDir  = $null
@@ -71,8 +137,20 @@ function fNote($text) { $script:checks += "  note $text" }
 ##	still runs windows and still answers PrintWindow, but screen grabs come back
 ##	black and injected input goes to the lock screen - so a scenario that needs
 ##	either must stop rather than quietly measure nothing.
+##	Two tests, because neither alone is right, and both obvious ones are wrong.
+##	The input desktop catches the old style of lock, which hands input to Winlogon.
+##	The modern lock screen does not - LockApp runs on the Default desktop like any
+##	other window, so a locked machine still answers "Default". But the presence of
+##	LockApp is not the test either: it lingers, suspended, long after an unlock.
+##	What separates the two is whether it is IN FRONT.
 function fSessionUsable {
-	if (Get-Process LogonUI -ErrorAction SilentlyContinue) { return $false }
+	$fg = [Silk.Win]::GetForegroundWindow()
+	if ($fg -ne [IntPtr]::Zero) {
+		$owner = 0
+		[void][Silk.Win]::GetWindowThreadProcessId($fg, [ref]$owner)
+		$name = (Get-Process -Id $owner -ErrorAction SilentlyContinue).ProcessName
+		if ($name -in @("LockApp", "LogonUI")) { return $false }
+	}
 	$d = [Silk.Win]::OpenInputDesktop(0, $false, 0x0100)
 	if ($d -eq [IntPtr]::Zero) { return $false }
 	$sb = New-Object System.Text.StringBuilder 256
@@ -126,10 +204,60 @@ function fWaitOther($p, $known, $seconds = 20) {
 	[IntPtr]::Zero
 }
 
+##	Windows only hands the foreground to a process that owns it already or that
+##	received the last input. On a session just reconnected to the console nobody
+##	owns either, so a bare SetForegroundWindow is refused - press a harmless key
+##	first, and borrow the current owner's input queue.
 function fFocus($h) {
-	[void][Silk.Win]::SetForegroundWindow($h)
-	Start-Sleep -Milliseconds 350
-	[Silk.Win]::GetForegroundWindow() -eq $h
+	for ($try = 0; $try -lt 4; $try++) {
+		##	Search and the Start menu take the foreground and hold it, and no amount
+		##	of asking gets it back while they are open. Escape closes them.
+		$fg = [Silk.Win]::GetForegroundWindow()
+		if ($fg -ne [IntPtr]::Zero -and -not (fForegroundIsOurs $h)) {
+			$owner = 0
+			[void][Silk.Win]::GetWindowThreadProcessId($fg, [ref]$owner)
+			$name = (Get-Process -Id $owner -ErrorAction SilentlyContinue).ProcessName
+			if ($name -in @("SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost")) {
+				[SilkKeys]::Tap([uint16]0x1B)        ## escape
+				Start-Sleep -Milliseconds 500
+			}
+		}
+		[void][Silk.Win]::ShowWindow($h, 9)          ## SW_RESTORE
+		[SilkKeys]::Tap([uint16]0x12)                ## a bare Alt: claims last input
+		$mine = [Silk.Win]::GetCurrentThreadId()
+		$theirs = [Silk.Win]::GetWindowThreadProcessId([Silk.Win]::GetForegroundWindow(), [IntPtr]::Zero)
+		if ($theirs -ne 0 -and $theirs -ne $mine) { [void][Silk.Win]::AttachThreadInput($mine, $theirs, $true) }
+		[void][Silk.Win]::BringWindowToTop($h)
+		[void][Silk.Win]::SetForegroundWindow($h)
+		if ($theirs -ne 0 -and $theirs -ne $mine) { [void][Silk.Win]::AttachThreadInput($mine, $theirs, $false) }
+		Start-Sleep -Milliseconds 400
+		##	Any window of ours in front counts. The app owns more than one, and the
+		##	handle Windows reports is not always the one we went looking for.
+		if (fForegroundIsOurs $h) { return $true }
+	}
+	$false
+}
+
+function fForegroundIsOurs($h) {
+	$fg = [Silk.Win]::GetForegroundWindow()
+	if ($fg -eq $h) { return $true }
+	if ($fg -eq [IntPtr]::Zero) { return $false }
+	$want = 0; $got = 0
+	[void][Silk.Win]::GetWindowThreadProcessId($h, [ref]$want)
+	[void][Silk.Win]::GetWindowThreadProcessId($fg, [ref]$got)
+	$want -ne 0 -and $want -eq $got
+}
+
+##	What actually has the foreground, for when it is not us.
+function fForeground {
+	$fg = [Silk.Win]::GetForegroundWindow()
+	if ($fg -eq [IntPtr]::Zero) { return "nothing has the foreground" }
+	$pid2 = 0
+	[void][Silk.Win]::GetWindowThreadProcessId($fg, [ref]$pid2)
+	$sb = New-Object System.Text.StringBuilder 256
+	[void][Silk.Win]::GetWindowTextW($fg, $sb, 256)
+	$name = (Get-Process -Id $pid2 -ErrorAction SilentlyContinue).ProcessName
+	"hwnd $fg pid $pid2 ($name) '$($sb.ToString())'"
 }
 
 ##	Clicking moves the real pointer, because there is only one. Fine on a machine
@@ -145,7 +273,30 @@ function fClick($x, $y, $double = $false) {
 	Start-Sleep -Milliseconds 350
 }
 
-function fType($text) { [System.Windows.Forms.SendKeys]::SendWait($text); Start-Sleep -Milliseconds 250 }
+$script:vks = @{
+	ctrl = 0x11; shift = 0x10; alt = 0x12
+	tab = 0x09; escape = 0x1B; enter = 0x0D; space = 0x20
+	f4 = 0x73; f11 = 0x7A
+}
+
+##	Literal text, as characters rather than keys, so it does not depend on layout.
+function fSend($text) { [SilkKeys]::Text($text); Start-Sleep -Milliseconds 250 }
+
+##	One chord, spelled "ctrl+shift+t" or "alt+f" or "escape". A single character is
+##	looked up through the keyboard layout so a comma is a comma wherever it lives.
+function fPress($combo) {
+	$parts = $combo.ToLower() -split '\+'
+	$key = $parts[-1]
+	$mods = @()
+	foreach ($m in $parts[0..([math]::Max(0, $parts.Count - 2))]) {
+		if ($m -ne $key -and $script:vks.ContainsKey($m)) { $mods += [uint16]$script:vks[$m] }
+	}
+	if ($parts.Count -eq 1) { $mods = @() }
+	$vk = if ($script:vks.ContainsKey($key)) { [uint16]$script:vks[$key] }
+	      else { [uint16]([SilkKeys]::VkKeyScanW([char]$key) -band 0xFF) }
+	if ($mods.Count) { [SilkKeys]::Chord([uint16[]]$mods, $vk) } else { [SilkKeys]::Tap($vk) }
+	Start-Sleep -Milliseconds 300
+}
 
 function fRect($h) {
 	$r = New-Object Silk.Win+RECT
@@ -225,6 +376,14 @@ function fSetting($path, $dotted) {
 		if ($line -match "^\s+#\s*${leaf}\s*:\s*(.*?)\s*(##.*)?$") { $fallback = $Matches[1].Trim().Trim('"') }
 	}
 	if ($null -ne $fallback) { @{ value = $fallback; source = "default" } } else { @{ value = $null; source = "absent" } }
+}
+
+##	The usable part of the screen: what is left once the taskbar has had its share.
+##	A window may be smaller than the display and still not fit.
+function fWorkArea {
+	$r = New-Object Silk.Win+RECT
+	if (-not [Silk.Win]::SystemParametersInfoW(0x0030, 0, [ref]$r, 0)) { return $null }
+	@{ x = $r.Left; y = $r.Top; w = $r.Right - $r.Left; h = $r.Bottom - $r.Top }
 }
 
 function fStop($p) {

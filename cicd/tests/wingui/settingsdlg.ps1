@@ -13,7 +13,7 @@ if (-not (fCheck "the terminal came up" ($h -ne [IntPtr]::Zero))) { fStop $p; re
 [void](fCheck "the terminal takes the foreground" (fFocus $h))
 Start-Sleep -Seconds 4
 
-fType "^,"
+fPress "ctrl+,"
 $d = fWaitOther $p $h 25
 if (-not (fCheck "ctrl+comma opens the dialog" ($d -ne [IntPtr]::Zero))) { [void](fShot $h "dlg-none"); fStop $p; return }
 
@@ -28,14 +28,24 @@ fNote "capture via $($first.How), ink $(fInk $first)"
 ##	so a clipped one shows up as a short window rather than a missing one.
 [void](fCheck "the dialog is not clipped to its parent" ($r.h -gt $r.w))
 
+##	It also has to fit where the user can reach it. The buttons are along the
+##	bottom, so a dialog taller than the usable screen puts OK under the taskbar.
+$area = fWorkArea
+if ($area) {
+	fNote "work area $($area.w)x$($area.h) at $($area.x),$($area.y)"
+	$fits = ($r.h -le $area.h) -and ($r.w -le $area.w) -and
+	        ($r.y -ge $area.y) -and (($r.y + $r.h) -le ($area.y + $area.h))
+	[void](fCheck "the dialog fits on the usable screen" $fits)
+}
+
 [void](fFocus $d)
-fType "^{TAB}"
+fPress "ctrl+tab"
 Start-Sleep -Seconds 1
 $second = fShot $d "dlg-tab-second"
 fNote "the panel changed across a tab by $(fDiff $first $second)"
 [void](fCheck "ctrl+tab moves to another tab" ((fDiff $first $second) -gt 0.02))
 
-fType "{ESC}"
+fPress "escape"
 Start-Sleep -Seconds 2
 [void](fCheck "escape closes the dialog" (-not ([SilkEnum]::All([uint32]$p.Id) -contains $d)))
 fStop $p
