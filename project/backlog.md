@@ -1178,6 +1178,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- A new option installs and rotates without opening a terminal, for an unattended run or a session with no desktop to put a window on.
 	- Both machines hold the current build in a versions folder behind a symlink, with the icon beside it. Every menu and taskbar entry runs the wrapper, starts minimized, and takes its icon from the symlink, so none of them pins a build.
 	- Stray copies of the program and of the retired launcher went to the recycle bin.
+	- The launcher used to add a menu entry of its own name every run, next to whichever one had already been filed by hand, so each machine had grown three or four that all did the same thing. It adopts an existing entry now, wherever it sits. Both are down to one, beside the other terminals, plus the taskbar item.
 	- Opened: 20260908-023000
 	- Closed: 20260908-030500
 
