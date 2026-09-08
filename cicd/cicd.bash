@@ -249,6 +249,9 @@ write_sums(){
 	( cd "${art_dir}"
 	  files=(); for x in "${EXE_NAME}-${ver}-"*; do [[ "$x" == "$sums" || ! -f "$x" ]] && continue; files+=("$x"); done
 	  ((${#files[@]})) && sha256sum "${files[@]}" > "${sums}" )
+	##  shellcheck source=cicd/utility/built-from.bash
+	source "${root}/cicd/utility/built-from.bash"
+	fWriteBuiltFrom "${art_dir}"
 }
 trap 'rc=$?; printf "\n[ CICD ABORTED (exit %s) at line %s: %s ]\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; exit $rc' ERR
 
@@ -468,6 +471,12 @@ fi
 ## Headless scroll regression harness (slow; skipped under --quick). It skips itself
 ## on an environment miss (no Xvfb/binary) and exits non-zero only on a measured
 ## regression - which aborts here.
+## A release may only publish what was built from the source being tagged.
+if [[ -x "${root}/cicd/tests/release/run.bash" ]]; then
+	fEcho_Clean "release provenance ..."
+	"${root}/cicd/tests/release/run.bash" >/dev/null || fDie "release provenance test failed"
+	fEcho "OK: release provenance"
+fi
 ## Installer and rig hygiene: no secret on a command line, no plain-http
 ## redirect, no adopting somebody else's directory in a shared temp folder.
 if [[ -x "${root}/cicd/tests/install/run.bash" ]]; then

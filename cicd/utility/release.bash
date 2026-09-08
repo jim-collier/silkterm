@@ -59,6 +59,13 @@ art_dir="${RELEASE_ARTIFACT_DIR}"
 sums="${art_dir}/${EXE_NAME}-${ver}-sha256sums.txt"
 [[ -s "$sums" ]] || die "no ${sums} - run cicd/cicd.bash (full, not --quick) first"
 ( cd "${art_dir}" && sha256sum -c "${EXE_NAME}-${ver}-sha256sums.txt" >/dev/null ) || die "artifact checksums do not verify"
+## The sums only say the artifacts match each other. This says they match the
+## source being tagged - without it a pipeline run, more commits, then a merge
+## leaves a stale artifact directory that verifies cleanly and publishes the old
+## binaries under the new tag.
+##  shellcheck source=cicd/utility/built-from.bash
+source "$(dirname "${BASH_SOURCE[0]}")/built-from.bash"
+why="$(fCheckBuiltFrom "${art_dir}")" || die "${why}"
 
 ## The build number comes out of the artifact itself. Every target in a pipeline
 ## run shares one (cicd pins SILK_BUILD_MINUTES), so the native binary's answer is
