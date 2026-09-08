@@ -95,6 +95,10 @@ DENY_CMD=(cargo deny check)
 ## but a measured scroll regression aborts. Empty () to disable.
 SCROLL_HARNESS=(cicd/tests/scroll/run.bash)
 
+## Stage 3: what the dogfood launcher does to files it did not create. Needs pwsh;
+## skipped with a warning where it is missing. Empty () to disable.
+LAUNCHER_HARNESS=(cicd/tests/launcher/run.ps1)
+
 ## Also run the harness a second time under a headless Wayland compositor (cage), to
 ## prove the Wayland backend renders + scrolls the same as X11. Self-skips (non-fatal)
 ## where cage is not installed. 0/unset to disable.

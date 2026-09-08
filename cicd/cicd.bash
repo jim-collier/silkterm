@@ -486,6 +486,20 @@ if ((! quick)) && [[ -n "${SCROLL_HARNESS+x}" ]] && ((${#SCROLL_HARNESS[@]})); t
 elif ((quick)); then
 	fEcho_Clean "scroll harness skipped (--quick)"
 fi
+## Dogfood launcher: it shares a path with the release installer, so what it does
+## to a file it did not create is worth a gate. Runs in a sandboxed HOME.
+if [[ -n "${LAUNCHER_HARNESS+x}" ]] && ((${#LAUNCHER_HARNESS[@]})); then
+	if command -v pwsh >/dev/null 2>&1; then
+		fEcho_Clean "dogfood launcher harness ..."
+		if pwsh -NoProfile -File "${root}/${LAUNCHER_HARNESS[0]}" "${LAUNCHER_HARNESS[@]:1}"; then
+			fEcho "OK: launcher harness"
+		else
+			fDie "dogfood launcher harness failed"
+		fi
+	else
+		fEcho "WARNING: launcher harness skipped: pwsh not found"
+	fi
+fi
 fEcho "OK: tests passed"
 
 ## Stage 4: profiler (non-gating artifact; failures classified below).

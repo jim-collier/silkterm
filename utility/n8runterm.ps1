@@ -498,11 +498,34 @@ function fRunningExePaths {
 ## .desktop Icon= both follow the current build without being rewritten. Windows
 ## needs a privilege for this that a filtered token lacks, which is most of why the
 ## launcher elevates; a copy stands in when the link is refused.
+## Is this file one of ours? A copy the symlink fallback made is byte-identical
+## to a build in the pool; anything else got here another way.
+function fIsPoolCopy {
+	param([Parameter(Mandatory)]$Item)
+
+	$same = @(Get-ChildItem -LiteralPath $VersionsDir -File -ErrorAction SilentlyContinue |
+		Where-Object { $_.Length -eq $Item.Length })
+	if ($same.Count -eq 0) { return $false }
+	$hash = (Get-FileHash -LiteralPath $Item.FullName -Algorithm SHA256).Hash
+	foreach ($f in $same) {
+		if ((Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash -eq $hash) { return $true }
+	}
+	return $false
+}
+
 function fUpdateLatestLink {
 	param([Parameter(Mandatory)][string]$Target)
 
 	$existing = Get-Item -LiteralPath $LatestLink -Force -ErrorAction SilentlyContinue
 	if ($existing -and $existing.LinkTarget -eq $Target) { return }
+
+	## A real file here is not necessarily ours: install.bash puts a release build
+	## at this exact path, and this used to delete it with no prompt and no backup.
+	## Only a symlink, or a copy of one of our own pool builds, may be replaced.
+	if ($existing -and -not $existing.LinkTarget -and -not (fIsPoolCopy $existing)) {
+		fWarn "$LatestLink was installed by something else - left it alone"
+		return
+	}
 
 	try {
 		if ($existing) { Remove-Item -LiteralPath $LatestLink -Force -ErrorAction Stop }
