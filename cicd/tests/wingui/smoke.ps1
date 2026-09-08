@@ -4,7 +4,7 @@
 if (-not (fSessionUsable)) { fSkip "console session is locked - nothing can be typed or grabbed" }
 
 $cfg = Join-Path $OutDir "smoke-config.shcl"
-Remove-Item $cfg -ErrorAction SilentlyContinue
+fFreshConfig $cfg
 
 $p = fStartSilk $Exe @("--config=$cfg", "--columns", "100", "--rows", "30") @{}
 $h = fWaitWindow $p 40
@@ -18,15 +18,22 @@ fNote "capture via $($idle.How), ink $(fInk $idle)"
 [void](fCheck "the window is a real size" ($r.w -gt 400 -and $r.h -gt 200))
 [void](fCheck "the window actually drew" ((fInk $idle) -gt 0.02))
 
-[void](fCheck "it takes the foreground" (fFocus $h))
+$got = fFocus $h
+fNote "foreground: $(fForeground)"
+[void](fCheck "it takes the foreground" $got)
 
-##	Type something the shell echoes, then look for the picture to have changed.
+##	Have the shell write a file rather than watching for the picture to change. A
+##	line of text moves a few tenths of a percent of the pixels, which is the same
+##	order as a blinking cursor - so a pixel diff cannot tell typing from noise.
+$proof = Join-Path $OutDir "typed.txt"
+Remove-Item $proof -ErrorAction SilentlyContinue
 $before = fShot $h "smoke-before"
-fType "echo silkrig-was-here{ENTER}"
-Start-Sleep -Seconds 2
+fSend "echo silkrig-was-here > $proof"
+fPress "enter"
+Start-Sleep -Seconds 3
 $after = fShot $h "smoke-after"
-$moved = fDiff $before $after
-fNote "picture moved $moved"
-[void](fCheck "typing reached the shell" ($moved -gt 0.005))
+fNote "picture moved $(fDiff $before $after)"
+$said = if (Test-Path $proof) { (Get-Content $proof -Raw) } else { "" }
+[void](fCheck "typing reached the shell and it ran the line" ($said -match "silkrig-was-here"))
 
 fStop $p
