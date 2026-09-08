@@ -15,7 +15,7 @@ The Windows box builds and dogfoods natively. Ship target is the **gnu** ABI (se
 
 ### PowerShell 7
 
-The Windows pipeline (`cicd/cicd-win.ps1`) and the dogfood launcher (`n8runterm.ps1`) require **PowerShell 7+** (`pwsh`), not Windows PowerShell 5.1.
+The Windows pipeline (`cicd/cicd-win.ps1`) and the dogfood launcher (`n8runterm.ps1`, run through the `runterm` wrappers) require **PowerShell 7+** (`pwsh`), not Windows PowerShell 5.1. The launcher is one PowerShell script on every platform now, so Linux and macOS need `pwsh` too.
 
 ```powershell
 choco install powershell-core
