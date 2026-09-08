@@ -9,6 +9,6 @@ $code = $LASTEXITCODE
 $sw.Stop()
 Pop-Location
 "build exit=$code in $([math]::Round($sw.Elapsed.TotalSeconds))s"
-$exe = Join-Path $RepoDir "source\target\release\silkterm.exe"
+$exe = Join-Path $RepoDir "target\release\silkterm.exe"
 if (Test-Path $exe) { "binary = $exe  " + (Get-Item $exe).Length + " bytes" }
 exit $code
