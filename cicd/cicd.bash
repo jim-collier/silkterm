@@ -247,7 +247,8 @@ retry_build(){
 write_sums(){
 	[[ -n "${art_dir:-}" && -d "${art_dir:-/nonexist}" ]] || return 0
 	( cd "${art_dir}"
-	  files=(); for x in "${EXE_NAME}-${ver}-"*; do [[ "$x" == "$sums" || ! -f "$x" ]] && continue; files+=("$x"); done
+	  ## the signature covers the sums file, so it can never be inside it
+	  files=(); for x in "${EXE_NAME}-${ver}-"*; do [[ "$x" == "$sums" || "$x" == *.sig || ! -f "$x" ]] && continue; files+=("$x"); done
 	  ((${#files[@]})) && sha256sum "${files[@]}" > "${sums}" )
 	##  shellcheck source=cicd/utility/built-from.bash
 	source "${root}/cicd/utility/built-from.bash"

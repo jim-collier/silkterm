@@ -80,6 +80,22 @@ if [[ -x "$native" ]]; then
 fi
 [[ -n "$build_id" ]] || echo "note: could not read a build number from ${native##*/}; notes will omit it"
 
+## Sign the checksum file. Everything else is covered by it, so one signature
+## covers the whole release. Done before the tag so a signing failure costs
+## nothing.
+sig="${sums}.sig"
+rm -f "${sig}"
+if [[ -n "${RELEASE_SIGN_KEY:-}" ]]; then
+	[[ -r "${RELEASE_SIGN_KEY}" ]] || die "cannot read the signing key ${RELEASE_SIGN_KEY}"
+	command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen not found, and the release is set up to be signed"
+	ssh-keygen -Y sign -f "${RELEASE_SIGN_KEY}" -n "${RELEASE_SIGN_NAMESPACE}" "${sums}" >/dev/null \
+		|| die "signing ${sums##*/} failed"
+	[[ -s "${sig}" ]] || die "signing produced no ${sig##*/}"
+	echo "signed ${sums##*/}"
+else
+	echo "note: no signing key set (RELEASE_SIGN_KEY) - this release will be unsigned"
+fi
+
 echo ""
 echo "Release ${tag} from $(git rev-parse --short HEAD) on main${build_id:+, build ${build_id}}"
 echo "Artifacts:"; ls -1 "${art_dir}/${EXE_NAME}-${ver}-"* | sed 's/^/  /'
