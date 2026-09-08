@@ -86,16 +86,59 @@ pub struct EventProxy {
 	id: PaneId,
 	proxy: EventLoopProxy<UserEvent>,
 	wake: Arc<WakeGate>,
+	// the pane's grid and cell size, for a program that asks (CSI 14 t and
+	// friends). Kept here because the answer is written on the PTY thread.
+	size: Arc<std::sync::Mutex<WindowSize>>,
 }
 
 impl EventProxy {
-	pub fn new(id: PaneId, proxy: EventLoopProxy<UserEvent>) -> Self {
+	pub fn new(id: PaneId, proxy: EventLoopProxy<UserEvent>, size: WindowSize) -> Self {
 		Self {
 			id,
 			proxy,
 			wake: Arc::new(WakeGate::default()),
+			size: Arc::new(std::sync::Mutex::new(size)),
 		}
 	}
+
+	fn note_size(&self, size: WindowSize) {
+		if let Ok(mut held) = self.size.lock() {
+			*held = size;
+		}
+	}
+}
+
+// The bytes a query event owes the program, or None where there is no answer.
+// The event carries its own formatter; all this supplies is the value.
+fn query_reply(event: &Event, size: WindowSize) -> Option<Vec<u8>> {
+	match event {
+		Event::ColorRequest(index, format) => {
+			requested_color(*index).map(|rgb| format(rgb).into_bytes())
+		}
+		Event::TextAreaSizeRequest(format) => Some(format(size).into_bytes()),
+		_ => None,
+	}
+}
+
+// The color a program is asking about, for OSC 4 / 10 / 11 / 12. Indices below
+// 256 are the palette; above that are the crate's named slots, of which we can
+// answer the three that matter. Answers from the settings rather than from the
+// term's own table, which this thread cannot reach - a program that set the
+// color itself with OSC therefore reads back the theme's, which is wrong only
+// in the rare case where it set one and then asked.
+fn requested_color(index: usize) -> Option<alacritty_terminal::vte::ansi::Rgb> {
+	use alacritty_terminal::vte::ansi::NamedColor;
+	let s = crate::config::settings();
+	let [r, g, b] = match u8::try_from(index) {
+		Ok(i) => crate::palette::default_indexed(i, &s),
+		Err(_) => match index {
+			i if i == NamedColor::Foreground as usize => s.fg,
+			i if i == NamedColor::Background as usize => s.bg,
+			i if i == NamedColor::Cursor as usize => s.cursor,
+			_ => return None,
+		},
+	};
+	Some(alacritty_terminal::vte::ansi::Rgb { r, g, b })
 }
 
 // How a shell's exit reads on screen. Platform Display spellings vary
@@ -133,6 +176,21 @@ impl EventListener for EventProxy {
 				.proxy
 				.send_event(UserEvent::PtyWrite(self.id, text.into_bytes())),
 			Event::Bell => self.proxy.send_event(UserEvent::Bell),
+			// Replies the terminal owes the program. Dropping these left anything
+			// asking for the background color or the text area size waiting out
+			// its timeout on every start and then guessing.
+			ref query @ (Event::ColorRequest(..) | Event::TextAreaSizeRequest(..)) => {
+				let size = self.size.lock().map(|held| *held).unwrap_or(WindowSize {
+					num_cols: 0,
+					num_lines: 0,
+					cell_width: 0,
+					cell_height: 0,
+				});
+				match query_reply(query, size) {
+					Some(bytes) => self.proxy.send_event(UserEvent::PtyWrite(self.id, bytes)),
+					None => Ok(()),
+				}
+			}
 			// MouseCursorDirty and any other events: nothing to forward
 			_ => Ok(()),
 		};
@@ -238,7 +296,16 @@ impl TermInstance {
 			columns: cols,
 			screen_lines: lines,
 		};
-		let event_proxy = EventProxy::new(id, proxy);
+		let event_proxy = EventProxy::new(
+			id,
+			proxy,
+			WindowSize {
+				num_cols: cols as u16,
+				num_lines: lines as u16,
+				cell_width: cell_w,
+				cell_height: cell_h,
+			},
+		);
 		let mut engine = Term::new(config, &dims, event_proxy.clone());
 		// the rows a region scroll pushes off, for the slide's reveal strip
 		engine.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
@@ -520,6 +587,7 @@ impl TermInstance {
 			cell_width: cell_w,
 			cell_height: cell_h,
 		};
+		self.notifier.note_size(win);
 		let _ = self.sender.send(Msg::Resize(win));
 	}
 }
@@ -1032,7 +1100,7 @@ fn wsl_cd(argv: &[String], dir: &std::path::Path) -> Option<Vec<String>> {
 mod tests {
 	use super::{
 		SHELL_PRIVATE_ENV, WakeGate, env_fixups, expand_refs, is_command_child, parse_env_block,
-		usable_cwd, wsl_cd,
+		query_reply, requested_color, usable_cwd, wsl_cd,
 	};
 	#[cfg(unix)]
 	use super::{program_name, status_text};
@@ -1044,6 +1112,61 @@ mod tests {
 	// tmux renames its client, so /proc/pid/comm reads "tmux: client" and a plain
 	// name comparison never matched it.
 	#[cfg(unix)]
+	// A program that asks what color the background is (neovim, delta, termbg on
+	// every start) used to get nothing back and wait out its timeout. The three
+	// named slots and the whole palette answer now; anything else does not.
+	#[test]
+	fn a_color_query_gets_an_answer() {
+		use alacritty_terminal::vte::ansi::NamedColor;
+		let s = crate::config::settings();
+		for (index, want) in [
+			(NamedColor::Foreground as usize, s.fg),
+			(NamedColor::Background as usize, s.bg),
+			(NamedColor::Cursor as usize, s.cursor),
+		] {
+			let got = requested_color(index).expect("a named slot answers");
+			assert_eq!([got.r, got.g, got.b], want);
+		}
+		for index in [0usize, 1, 15, 128, 255] {
+			let got = requested_color(index).expect("the palette answers");
+			let want = crate::palette::default_indexed(index as u8, &s);
+			assert_eq!([got.r, got.g, got.b], want, "index {index}");
+		}
+		assert!(requested_color(9999).is_none(), "and nothing else does");
+
+		// and the whole reply, as the listener assembles it
+		use alacritty_terminal::event::Event;
+		use alacritty_terminal::event::WindowSize;
+		let size = WindowSize {
+			num_cols: 80,
+			num_lines: 24,
+			cell_width: 9,
+			cell_height: 18,
+		};
+		let bg = Event::ColorRequest(
+			NamedColor::Background as usize,
+			std::sync::Arc::new(|rgb: alacritty_terminal::vte::ansi::Rgb| {
+				format!("\x1b]11;rgb:{:04x}/{:04x}/{:04x}\x07", rgb.r, rgb.g, rgb.b)
+			}),
+		);
+		let reply = query_reply(&bg, size).expect("a background query is answered");
+		assert!(reply.starts_with(b"\x1b]11;rgb:"), "{reply:?}");
+
+		let area = Event::TextAreaSizeRequest(std::sync::Arc::new(|w: WindowSize| {
+			format!(
+				"\x1b[4;{};{}t",
+				w.num_lines * w.cell_height,
+				w.num_cols * w.cell_width
+			)
+		}));
+		assert_eq!(
+			query_reply(&area, size).as_deref(),
+			Some(b"\x1b[4;432;720t".as_slice())
+		);
+
+		assert!(query_reply(&Event::Bell, size).is_none());
+	}
+
 	#[test]
 	fn a_renamed_process_still_reports_its_program() {
 		assert_eq!(program_name("tmux: client"), "tmux");
