@@ -42,6 +42,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔘 Windows: keystrokes injected as characters rather than keys are ignored.
+	- Windows lets a program send a character directly instead of a key press, and it arrives tagged as a packet rather than as a key. Nothing types that way by hand, but the touch keyboard does for some characters, and so do text expanders and some accessibility tools.
+	- An ordinary window in the same session, sent the same text the same way, receives it. The terminal receives nothing at all. Sending real key presses works fine, which is what hid this.
+	- Opened: 20260908-141500
+
 - 🔘 Windows: the title bar shows the shell's full executable path.
 	- Seen as `SilkTerm - C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe`. Windows PowerShell sets its console title to its own path, and that is taken as the title the program asked for, so it is faithful rather than wrong - but it reads badly and it is what a user sees first.
 	- The tab strip already shortens a path to fit. The window title does not.

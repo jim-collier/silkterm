@@ -13,7 +13,7 @@ if (-not (fCheck "the terminal came up" ($h -ne [IntPtr]::Zero))) { fStop $p; re
 [void](fCheck "the terminal takes the foreground" (fFocus $h))
 Start-Sleep -Seconds 4
 
-fType "^,"
+fPress "ctrl+,"
 $d = fWaitOther $p $h 25
 if (-not (fCheck "ctrl+comma opens the dialog" ($d -ne [IntPtr]::Zero))) { [void](fShot $h "dlg-none"); fStop $p; return }
 
@@ -29,13 +29,13 @@ fNote "capture via $($first.How), ink $(fInk $first)"
 [void](fCheck "the dialog is not clipped to its parent" ($r.h -gt $r.w))
 
 [void](fFocus $d)
-fType "^{TAB}"
+fPress "ctrl+tab"
 Start-Sleep -Seconds 1
 $second = fShot $d "dlg-tab-second"
 fNote "the panel changed across a tab by $(fDiff $first $second)"
 [void](fCheck "ctrl+tab moves to another tab" ((fDiff $first $second) -gt 0.02))
 
-fType "{ESC}"
+fPress "escape"
 Start-Sleep -Seconds 2
 [void](fCheck "escape closes the dialog" (-not ([SilkEnum]::All([uint32]$p.Id) -contains $d)))
 fStop $p
