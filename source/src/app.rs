@@ -2401,19 +2401,13 @@ impl State {
 			.unwrap_or_else(|| config::APP_NAME.to_string())
 	}
 
-	// What the window title says after the app name. A title typed on the tab
-	// wins; blanking that one on purpose lets the running program's own title
-	// through, and with neither the tab's computed label stands in.
+	// What the window title says after the app name - see tabtitle::window_suffix
+	// for the order the three sources come in.
 	fn title_suffix(&mut self) -> Option<String> {
 		let typed = self.tabs.cur().title_override.clone();
-		if let Some(typed) = typed {
-			if !typed.trim().is_empty() {
-				return Some(typed);
-			}
-			return self.program_title();
-		}
-		self.program_title()
-			.or_else(|| Some(self.active_tab_title()))
+		let program = self.program_title();
+		let tab = self.active_tab_title();
+		crate::tabtitle::window_suffix(typed.as_deref(), program.as_deref(), &tab)
 	}
 
 	// The title the focused pane's program asked for, if it asked for one.
