@@ -2406,8 +2406,9 @@ impl State {
 	fn title_suffix(&mut self) -> Option<String> {
 		let typed = self.tabs.cur().title_override.clone();
 		let program = self.program_title();
-		let tab = self.active_tab_title();
-		crate::tabtitle::window_suffix(typed.as_deref(), program.as_deref(), &tab)
+		crate::tabtitle::window_suffix(typed.as_deref(), program.as_deref(), || {
+			self.active_tab_title()
+		})
 	}
 
 	// The title the focused pane's program asked for, if it asked for one.
@@ -2423,7 +2424,11 @@ impl State {
 	// set_title only fires when the string actually changed (avoids WM flicker).
 	fn update_title(&mut self) {
 		let custom = self.win_title.clone();
-		let suffix = custom.is_none().then(|| self.title_suffix()).flatten();
+		// A --title is the whole answer, so nothing else is worked out.
+		let suffix = match custom {
+			Some(_) => None,
+			None => self.title_suffix(),
+		};
 		let title = crate::tabtitle::window_title(
 			custom.as_deref(),
 			&config::title_prefix(),

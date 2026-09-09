@@ -206,10 +206,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - ✅ Windows: the title bar shows the shell's full executable path.
 	- Seen as `SilkTerm - C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe`. That arrives as the title the running program asked for, so the terminal was reporting it faithfully - but it reads badly and it is the first thing a user sees.
-	- Fixed: a title that is only the name or path of a program is passed over, and the tab's own label shows instead.
-	- A Windows console names a new window after the program it starts, so a shell that sets no title of its own arrives carrying its own image path. Confirmed for cmd and for pwsh on both test machines. An elevated console puts "Administrator: " in front of whatever it was given, and that is read past.
-	- A console that names the program and then the command it is running keeps the command. That half says something.
-	- Seen on all four shapes: the reported title, the elevated form, a running command, and an ordinary title that has to survive untouched.
+	- Fixed: a title that is only the name or path of a program is passed over, so the tab's own label answers instead.
+	- A Windows console names a new window after the program it starts, so a shell that sets no title of its own arrives carrying its own image path. Confirmed for cmd and for pwsh on both test machines.
+	- A console that names the program and then the command it is running keeps the command. The name has to be a full path for that, so vim's "build.bat - VIM" is left alone.
+	- Seen on Linux against a live pane fed each shape: the reported title, a running command, and an ordinary title that has to survive untouched.
+	- Unrun: Windows, where the titles actually come from. An elevated pane is also unchecked - an elevated console labels its own window "Administrator: ...", and whether that reaches the terminal is unknown, so nothing was built for it.
 	- Opened: 20260908-125000
 	- Closed: 20260909-104500
 

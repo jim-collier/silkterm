@@ -677,9 +677,13 @@ The window title is now assembled in one place, and always starts with the appli
 
 - After the name comes, in order: a title typed on the tab, else the title the running program asked for, else what the tab says about the shell. So a program that renames the window (an editor, a build tool) reaches the title bar without touching the tab, and a hand-typed tab title outranks it.
 
-- A title that is only the name or path of a program is passed over, and the tab's own label shows instead. A Windows console names a new window after the program it starts, so a shell that sets no title of its own arrives carrying its own image path; an elevated console puts "Administrator: " in front of that. Both were measured on two machines. A console that names the program and then the command it is running keeps the command, since that half says something.
+- A title that is only the name or path of a program is passed over, so the next source down answers - normally the tab's own label. A Windows console names a new window after the program it starts, so a shell that sets no title of its own arrives carrying its own image path. Measured for cmd and for pwsh on two machines.
 
-- A tab carrying a blank title lets the program's title through, and with neither the title is just the application name. That is the one case where blank means "defer" rather than "show nothing".
+- A console that names the program and then the command it is running keeps the command, since that half says something. The name has to be a full path for that to apply, which is what a console writes; a bare name on the left would eat the file in vim's "build.bat - VIM".
+
+- The extensions that count are `.exe`, `.bat` and `.cmd`. Not `.com`: far more titles end in a hostname or a directory than in one of the three DOS-era programs that still use it.
+
+- A tab carrying a blank title lets the program's title through, and with neither the title is just the application name - blank means "defer", not "show nothing". A blank typed into the rename box goes back to automatic naming instead, so a blank tab title comes from an empty `--title` on the command line.
 
 - A `--title` given on the command line is still the whole answer, verbatim. It is an explicit request for exactly that string.
 
