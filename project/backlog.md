@@ -42,11 +42,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 Windows: keystrokes injected as characters rather than keys are ignored.
-	- Windows lets a program send a character directly instead of a key press, and it arrives tagged as a packet rather than as a key. Nothing types that way by hand, but the touch keyboard does for some characters, and so do text expanders and some accessibility tools.
-	- An ordinary window in the same session, sent the same text the same way, receives it. The terminal receives nothing at all. Sending real key presses works fine, which is what hid this.
-	- Opened: 20260908-141500
-
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
 	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
 	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
@@ -208,6 +203,17 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ Windows: keystrokes injected as characters rather than keys are ignored.
+	- Windows lets a program send a character directly instead of a key press, and it arrives tagged as a packet rather than as a key. Nothing types that way by hand, but the touch keyboard does for some characters, and so do text expanders and some accessibility tools.
+	- An ordinary window in the same session, sent the same text the same way, receives it. The terminal receives nothing at all. Sending real key presses works fine, which is what hid this.
+	- Cause: such a character arrives as a key the layout cannot name, carrying only the text it stands for, and everything that reads a key event reads which key it was. So it reached nothing - not the shell, not a hotkey, not a menu, not the Settings dialog's fields.
+	- Fixed: the key is filled in from the text where the event arrives, once, so every reader of it sees the character. A key the layout did name is left alone.
+	- Seen on both Windows machines with the fix in, and on one of them before and after: an injected line reached nothing on the old build and runs on the new one, an accented character and a CJK character both arrive, and ordinary typing is unaffected.
+	- Two things came out of verifying it and are fixed with it. The unit suite had not compiled on Windows since a stray attribute left one test ungated, and two lint findings sat in code this machine never compiles. Both are now caught here: the lints run a second time for the Windows target, which takes under a minute and needs no Windows machine.
+	- The remote job runner can put a machine on a named branch, so a fix gets tried on Windows before it is merged rather than after.
+	- Opened: 20260908-141500
+	- Closed: 20260909-171500
 
 - ✅ Windows: the title bar shows the shell's full executable path.
 	- Seen as `SilkTerm - C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe`. That arrives as the title the running program asked for, so the terminal was reporting it faithfully - but it reads badly and it is the first thing a user sees.
