@@ -1112,9 +1112,6 @@ mod tests {
 		words.split(' ').map(str::to_string).collect()
 	}
 
-	// tmux renames its client, so /proc/pid/comm reads "tmux: client" and a plain
-	// name comparison never matched it.
-	#[cfg(unix)]
 	// A program that asks what color the background is (neovim, delta, termbg on
 	// every start) used to get nothing back and wait out its timeout. The three
 	// named slots and the whole palette answer now; anything else does not.
@@ -1169,6 +1166,9 @@ mod tests {
 		assert!(query_reply(&Event::Bell, size).is_none());
 	}
 
+	// tmux renames its client, so /proc/pid/comm reads "tmux: client" and a plain
+	// name comparison never matched it.
+	#[cfg(unix)]
 	#[test]
 	fn a_renamed_process_still_reports_its_program() {
 		assert_eq!(program_name("tmux: client"), "tmux");
