@@ -23,7 +23,7 @@ The canonical style reference for SilkTerm. It covers prose, comments, naming, R
 
 	```rust
 	// SPDX-License-Identifier: GPL-2.0-or-later
-	// Copyright © 2026 Jim Collier
+	// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 	```
 
 - The project itself is licensed GPL-2.0-or-later.

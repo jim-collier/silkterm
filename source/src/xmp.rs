@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! Per-image tags, read out of the wallpaper file's own XMP packet:
 //! `wallpaper:Fit` (stretch|zoom) and `wallpaper:Anchor` ("50%, 50%") for layout,

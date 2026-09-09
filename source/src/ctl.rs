@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! Control socket: each running instance listens on a per-process Unix socket
 //! and exports its path to child shells via `SILKTERM_SOCKET`, so `silkterm

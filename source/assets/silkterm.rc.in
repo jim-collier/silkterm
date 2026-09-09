@@ -24,7 +24,7 @@ BEGIN
 			VALUE "FileDescription", "@DESC@"
 			VALUE "FileVersion", "@VER_STR@"
 			VALUE "InternalName", "silkterm"
-			VALUE "LegalCopyright", "© 2026 Jim Collier - GPL-2.0-or-later"
+			VALUE "LegalCopyright", "© 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ] - GPL-2.0-or-later"
 			VALUE "OriginalFilename", "silkterm.exe"
 			VALUE "ProductName", "SilkTerm"
 			VALUE "ProductVersion", "@VER_STR@"

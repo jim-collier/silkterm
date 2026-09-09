@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 #![cfg_attr(
 	all(target_os = "windows", not(debug_assertions)),

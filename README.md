@@ -434,7 +434,7 @@ It also carries a copy of [x9ps1-git](https://github.com/jim-collier/x9ps1-git),
 
 SilkTerm's license is specifically compatible with Alacritty's:
 
-> Copyright © 2026 Jim Collier (CryptogID: ѳ6ᴚ℈𐀘𐇦ɛ𐊁¥Mﾏb϶Δ𐌞)<br />
+> Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]<br />
 > Licensed under the [GNU General Public License v2.0 or later](https://spdx.org/licenses/GPL-2.0-or-later.html)<br /> SPDX-License-Identifier: `GPL-2.0-or-later` <br />
 > No warranty.<br />
 > SilkTerm™ is a [trademark](trademark.md) of Jim Collier.

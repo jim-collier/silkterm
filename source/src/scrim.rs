@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! Text readability scrim: a background-colored halo behind glyphs so text stays
 //! legible over a light/busy background image or a near-transparent terminal. The

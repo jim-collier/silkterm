@@ -430,6 +430,6 @@ What AI was *not* used for:
 
 ---
 
-Copyright © 2026 Jim Collier
+Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 > *This document is licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Copy it, change it, use it in a commercial project. Attribution required, and say if you changed it. None of this is not legal advice, and any software this sits next to is licensed separately.*
