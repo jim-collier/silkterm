@@ -117,7 +117,7 @@ There are four of them: a Settings row, a menu item, a link or button in the Abo
 - A focused boxed control draws exactly one outline.
 - A pixel-valued setting steps in whole pixels. Only line height keeps decimals.
 - The dialog opens at the size its tallest tab wants, or at what the screen leaves, whichever is smaller. The screen's share is the work area, which is what a window can occupy once the taskbar and any docks have taken theirs, less the frame the window manager puts around it. A monitor's full height is not that, and using it is how the footer buttons end up behind a taskbar.
-- It can be resized, and the size is not remembered. A fresh dialog opens at the default size again, and a resize that passes within a few pixels of that size settles on it.
+- It can be resized. A resize that passes within a few pixels of the default size settles on it, and the size it is left at is used again for the rest of the session. Nothing about it is written to the config: a new run opens at the default size again.
 - Too short and the rows scroll; too narrow and they scroll sideways. The tab strip and the footer buttons stay out of the vertical scroll, so there is always a way out of the dialog and always a way to another tab.
 - Controls in the middle of a row are variable width and take whatever the window's width leaves them. What is fixed is what lines up: labels and the left edge of every control align on the left, and the revert control, a slider's number field and a text control's own right edge align on the right.
 

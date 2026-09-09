@@ -221,6 +221,20 @@ const SLIDER_HANDLE_W: f32 = 10.0;
 // Clear space between the two halves of a row that carries two controls, DIP.
 const PAIR_GAP: f32 = 12.0;
 
+// `r` cut down to what falls inside `to`. Zero width when nothing does.
+fn clip_rect(r: Rect, to: Rect) -> Rect {
+	let x0 = r.x.max(to.x);
+	let x1 = (r.x + r.w).min(to.x + to.w);
+	let y0 = r.y.max(to.y);
+	let y1 = (r.y + r.h).min(to.y + to.h);
+	Rect {
+		x: x0,
+		y: y0,
+		w: (x1 - x0).max(0.0),
+		h: (y1 - y0).max(0.0),
+	}
+}
+
 // What holds keyboard focus: one control within a row, or a footer button (index
 // into `buttons()`: 0 = Cancel, 1 = Apply, 2 = OK). `Row(i, part)` names a row and
 // which of its focusable sub-controls (part 0 for a plain control; sliders and the
@@ -732,19 +746,32 @@ impl SettingsDialog {
 			.filter(move |(_, spec)| spec.tab == tab && !Self::header_is_tab_title(spec))
 	}
 
+	// The rows after `i` on the same tab, in order. Scanned forward from `i`
+	// rather than filtered from the top: row_y calls this per row, and the walk
+	// down a tab would otherwise be quadratic in the whole declaration.
+	fn after(specs: &[Spec], i: usize, tab: usize) -> impl Iterator<Item = (usize, &Spec)> {
+		specs
+			.iter()
+			.enumerate()
+			.skip(i + 1)
+			.filter(move |(_, spec)| spec.tab == tab && !Self::header_is_tab_title(spec))
+	}
 	// The next row DOWN from `i`, skipping anything that shares `i`'s own line.
 	fn next_row(specs: &[Spec], i: usize, tab: usize) -> Option<&Spec> {
-		Self::visible(specs, tab)
-			.find(|(j, spec)| *j > i && !spec.beside)
+		Self::after(specs, i, tab)
+			.find(|(_, spec)| !spec.beside)
 			.map(|(_, spec)| spec)
 	}
-	// True when the row after `i` is drawn beside it rather than under it, so the
-	// two share one line. The second of the pair carries the line's height, which
-	// is what keeps `row_y` returning the same y for both.
+	// The row drawn beside `i`, when there is one. The second of the pair carries
+	// the line's height, which is what keeps `row_y` returning the same y for both.
+	fn paired_with(specs: &[Spec], i: usize, tab: usize) -> Option<usize> {
+		Self::after(specs, i, tab)
+			.next()
+			.filter(|(_, next)| next.beside)
+			.map(|(j, _)| j)
+	}
 	fn pairs_down(specs: &[Spec], i: usize, tab: usize) -> bool {
-		Self::visible(specs, tab)
-			.find(|(j, _)| *j > i)
-			.is_some_and(|(_, next)| next.beside)
+		Self::paired_with(specs, i, tab).is_some()
 	}
 	// A row leads a sub-group when the row drawn under it is indented further.
 	// Read off the indentation rather than declared a second time, so the two
@@ -857,8 +884,8 @@ impl SettingsDialog {
 			.windows(2)
 			.filter(|w| {
 				w[1].beside
-					&& matches!(w[0].kind, Kind::Dropdown(_))
-					&& matches!(w[1].kind, Kind::Dropdown(_))
+					&& (matches!(w[0].kind, Kind::Dropdown(_))
+						|| matches!(w[1].kind, Kind::Dropdown(_)))
 			})
 			.map(|_| lay().dropdown_pair_width * font_scale * 2.0 + PAIR_GAP)
 			.chain(
@@ -1089,8 +1116,28 @@ impl SettingsDialog {
 			h: Self::gutter_h_for(self.line_h),
 		}
 	}
+	// Where a tab sits, and where the whole strip does. The strip has an offset of
+	// its own rather than riding the rows' sideways scroll: a tab panned off the
+	// window could not be clicked at all, and the tabs are how you leave a tab
+	// that will not fit. It moves only far enough to keep the current one in view.
+	fn tabs_w(&self) -> f32 {
+		lay().pad * 2.0
+			+ self.tab_ws.iter().sum::<f32>()
+			+ lay().tab_gap * self.tab_ws.len().saturating_sub(1) as f32
+	}
+	fn tab_scroll(&self) -> f32 {
+		let over = (self.tabs_w() - self.rect.w).max(0.0);
+		if over <= 0.0 || self.tab >= self.tab_ws.len() {
+			return 0.0;
+		}
+		let right = lay().pad
+			+ self.tab_ws[..=self.tab].iter().sum::<f32>()
+			+ lay().tab_gap * self.tab as f32
+			+ lay().pad;
+		(right - self.rect.w).clamp(0.0, over)
+	}
 	fn tab_rect(&self, k: usize) -> Rect {
-		let x = self.content_x()
+		let x = self.rect.x - self.tab_scroll()
 			+ lay().pad
 			+ self.tab_ws[..k].iter().sum::<f32>()
 			+ lay().tab_gap * k as f32;
@@ -1099,6 +1146,15 @@ impl SettingsDialog {
 			y: self.tab_bar_y(),
 			w: self.tab_ws[k],
 			h: self.tab_h(),
+		}
+	}
+	// The strip's own clip: the gutter, less the panel's border on either side.
+	fn tab_strip(&self) -> Rect {
+		let gut = self.gutter_rect();
+		Rect {
+			x: gut.x + 1.0,
+			w: (gut.w - 2.0).max(0.0),
+			..gut
 		}
 	}
 	fn rows_y0(&self) -> f32 {
@@ -1115,8 +1171,22 @@ impl SettingsDialog {
 			x: self.rect.x,
 			y: y0,
 			w: self.rect.w,
-			h: (self.rect.y + self.rect.h - lay().pad - self.btn_h() - lay().buttons_gap - y0)
+			h: (self.rect.y + self.rect.h
+				- lay().pad - self.btn_h()
+				- lay().buttons_gap
+				- self.hbar_h()
+				- y0)
 				.max(0.0),
+		}
+	}
+	// The strip the sideways bar takes off the bottom of the rows, when there is
+	// one. It goes above the footer's clear space rather than in it: that space is
+	// what keeps a stray click off Cancel and OK.
+	fn hbar_h(&self) -> f32 {
+		if self.max_hscroll() > 0.0 {
+			lay().scrollbar_width + lay().scrollbar_inset * 2.0
+		} else {
+			0.0
 		}
 	}
 	fn content_h(&self) -> f32 {
@@ -1169,8 +1239,6 @@ impl SettingsDialog {
 			self.ctl_right_full()
 		}
 	}
-	// The horizontal bar sits in the clear space between the last row and the
-	// footer buttons, so showing it costs the rows nothing.
 	fn hthumb(&self) -> Option<Rect> {
 		let scroll_max = self.max_hscroll();
 		if scroll_max <= 0.0 {
@@ -1188,7 +1256,7 @@ impl SettingsDialog {
 		let vp = self.viewport();
 		Rect {
 			x: vp.x + lay().pad,
-			y: vp.y + vp.h + (lay().buttons_gap - lay().scrollbar_width) / 2.0,
+			y: vp.y + vp.h + lay().scrollbar_inset,
 			w: (vp.w - lay().pad * 2.0).max(1.0),
 			h: lay().scrollbar_width,
 		}
@@ -1220,7 +1288,13 @@ impl SettingsDialog {
 		self.rect.h = self.to_dip(h_px).max(1.0);
 		self.scroll = self.scroll.clamp(0.0, self.max_scroll());
 		self.hscroll = self.hscroll.clamp(0.0, self.max_hscroll());
+		// every gesture in flight was aimed at rects that have just moved
 		self.open = None;
+		self.drag = None;
+		self.drag_thumb = None;
+		self.drag_hthumb = None;
+		self.edit_drag = None;
+		self.shell_drag = None;
 		self.dismiss_menu();
 	}
 	pub fn view(&self) -> View {
@@ -1437,6 +1511,7 @@ impl SettingsDialog {
 			(self.tab + n - 1) % n
 		};
 		self.scroll = 0.0;
+		self.hscroll = 0.0;
 		self.drag = None;
 		self.focus = self.first_focus();
 	}
@@ -2301,12 +2376,14 @@ impl SettingsDialog {
 	}
 	// Is this row at its config default? (drives the revert icon). A Dual row is
 	// "default" only when both its keys are.
+	// A locked setting has nothing to revert - the profile, not the user, set it -
+	// so it is skipped rather than answering for the row. Skipping it matters on a
+	// shared line, where one half can be governed and the other not.
 	fn row_is_default(&self, i: usize) -> bool {
-		// a locked row has nothing to revert: the profile, not the user, set it
-		if self.locked(self.specs[i].key) {
-			return true;
-		}
-		self.row_keys(i).iter().all(|&k| self.is_default(k))
+		self.row_keys(i)
+			.iter()
+			.filter(|&&k| !self.locked(k))
+			.all(|&k| self.is_default(k))
 	}
 	// A row of push-buttons has no value, and the shells grid is a list rather
 	// than a setting - neither has a default to go back to. A row drawn beside
@@ -2322,21 +2399,21 @@ impl SettingsDialog {
 	// Every setting one revert arrow answers for: the row's own, both halves of a
 	// Dual, and whatever is drawn beside it.
 	fn row_keys(&self, i: usize) -> Vec<Key> {
-		let mut keys = match self.specs[i].kind {
+		let own = |i: usize| match self.specs[i].kind {
 			Kind::Dual { keys, .. } => keys.to_vec(),
 			_ => vec![self.specs[i].key],
 		};
-		if Self::pairs_down(self.specs, i, self.tab) {
-			if let Some((j, _)) = Self::visible(self.specs, self.tab).find(|(j, _)| *j > i) {
-				keys.push(self.specs[j].key);
-			}
+		let mut keys = own(i);
+		if let Some(j) = Self::paired_with(self.specs, i, self.tab) {
+			keys.extend(own(j));
 		}
 		keys
 	}
-	// Revert a whole row to defaults - every key the row's own arrow covers.
+	// Revert a whole row to defaults - every key the row's own arrow covers, less
+	// the ones a profile is holding.
 	fn row_revert(&mut self, i: usize) {
 		for k in self.row_keys(i) {
-			if !self.is_default(k) {
+			if !self.locked(k) && !self.is_default(k) {
 				self.revert(k);
 			}
 		}
@@ -3484,6 +3561,7 @@ impl SettingsDialog {
 				if k != self.tab {
 					self.tab = k;
 					self.scroll = 0.0;
+					self.hscroll = 0.0;
 					self.drag = None;
 					self.focus = None; // mouse mode; Tab re-establishes focus
 				}
@@ -3504,13 +3582,13 @@ impl SettingsDialog {
 				return Action::None;
 			}
 		}
-		// the sideways bar, the same two gestures. Its grab band is the whole gap
+		// the sideways bar, the same two gestures. Its grab band is the whole strip
 		// it sits in, so an 8 DIP bar is not an 8 DIP target.
 		if let Some(thumb) = self.hthumb() {
 			let track = self.htrack();
 			let band = Rect {
-				y: track.y - (lay().buttons_gap - track.h) / 2.0,
-				h: lay().buttons_gap,
+				y: track.y - lay().scrollbar_inset,
+				h: self.hbar_h(),
 				..track
 			};
 			if band.contains(x, y) {
@@ -4603,8 +4681,12 @@ impl SettingsDialog {
 		let gut = self.gutter_rect();
 		fixed.push(q(gut.x, gut.y, gut.w, gut.h, dlg().gutter));
 		fixed.push(q(gut.x, gut.y + gut.h, gut.w, 1.0, dlg().panel_border));
+		let strip = self.tab_strip();
 		for k in 0..self.tab_ws.len() {
-			let r = self.tab_rect(k);
+			let r = clip_rect(self.tab_rect(k), strip);
+			if r.w <= 0.0 {
+				continue; // scrolled right out of the strip
+			}
 			let active = k == self.tab;
 			fixed.push(q(
 				r.x,
@@ -5030,10 +5112,12 @@ impl SettingsDialog {
 		};
 		let row_text_y = |y: f32, h: f32| y + (h - line_h) / 2.0;
 		// tab titles - the current one reads at full strength, the rest step back
+		let strip = self.tab_strip();
 		for (k, title) in tab_titles().iter().enumerate() {
 			let r = self.tab_rect(k);
 			out.push(TextItem {
 				color: if k == self.tab { dlg().text } else { dlg().dim },
+				clip: Some(strip),
 				..mk(
 					(*title).into(),
 					r.x + lay().tab_pad / 2.0,
@@ -5750,17 +5834,17 @@ mod tests {
 		d.set_size(wide - 200.0, d.size().1);
 		assert!((d.max_hscroll() - 200.0).abs() < 0.01);
 		assert!(d.hthumb().is_some());
-		assert_eq!(
-			d.viewport().h,
-			rows_before,
-			"the sideways bar takes no rows"
-		);
 		let bar = d.htrack();
 		let vp = d.viewport();
+		assert_eq!(
+			vp.h,
+			rows_before - d.hbar_h(),
+			"the bar takes its strip off the rows"
+		);
 		assert!(bar.y >= vp.y + vp.h, "the bar sits below the rows");
 		assert!(
-			bar.y + bar.h <= d.buttons()[0].1.y,
-			"and above the footer buttons"
+			bar.y + bar.h + super::lay().buttons_gap <= d.buttons()[0].1.y + 0.01,
+			"and the footer keeps its whole clear space below it"
 		);
 
 		// the revert column starts off the right-hand edge and scrolling reaches it
@@ -5841,6 +5925,62 @@ mod tests {
 			}
 		}
 		assert!(pairs >= 2, "expected paired rows, saw {pairs}");
+	}
+
+	// A pair shares one revert arrow, so a profile holding the FIRST half must not
+	// silence the arrow for the second - which is not governed and can still be
+	// off its default with no other way back.
+	#[test]
+	fn a_locked_half_does_not_silence_its_partner_s_revert() {
+		let mut d = mk_dialog(4000.0);
+		let lead = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::ScrimFunction)
+			.expect("the scrim function row");
+		d.tab = d.specs[lead].tab;
+		let follow = SettingsDialog::paired_with(d.specs, lead, d.tab).expect("a row beside it");
+		d.set_radio(Key::PerfProfile, super::Profile::Max.index());
+		assert!(d.locked(Key::ScrimFunction), "the first half is governed");
+		assert!(!d.locked(d.specs[follow].key), "the second half is not");
+
+		// take the ungoverned half off its default
+		let ramp = d.specs[follow].key;
+		let was = d.get_radio(ramp);
+		d.set_radio(ramp, usize::from(was == 0));
+		assert!(!d.is_default(ramp));
+
+		assert!(d.has_revert(lead) && !d.has_revert(follow));
+		assert!(
+			!d.row_is_default(lead),
+			"the line's one arrow has something to undo"
+		);
+		d.row_revert(lead);
+		assert!(d.is_default(ramp), "and it undid it");
+	}
+
+	// The tab strip is chrome. It travels only far enough to keep the current tab
+	// in view, and never with the rows' sideways scroll - a tab panned off the
+	// window edge could not be clicked, which is how you leave a tab that will
+	// not fit.
+	#[test]
+	fn the_tab_strip_keeps_the_current_tab_in_the_window() {
+		let mut d = mk_dialog(4000.0);
+		d.set_size(d.size().0 - 300.0, d.size().1);
+		assert!(d.max_hscroll() > 0.0);
+		for tab in 0..tab_titles().len() {
+			d.tab = tab;
+			for hscroll in [0.0, d.max_hscroll() / 2.0, d.max_hscroll()] {
+				d.hscroll = hscroll;
+				let r = d.tab_rect(tab);
+				assert!(
+					r.x >= d.rect.x - 0.01 && r.x + r.w <= d.rect.x + d.rect.w + 0.01,
+					"tab {tab} at hscroll {hscroll} runs from {} to {}",
+					r.x,
+					r.x + r.w
+				);
+			}
+		}
 	}
 
 	// A pair is worth having only if it is shorter than the two rows it replaces.

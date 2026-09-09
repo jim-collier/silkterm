@@ -290,7 +290,18 @@ impl App {
 			let dlg = dialog.window.outer_size();
 			let mut x = pos.x + (win.width as i32 - dlg.width as i32) / 2;
 			let mut y = pos.y + (win.height as i32 - dlg.height as i32) / 2;
-			if let Some((ax, ay, aw, ah)) = crate::dialog::work_area(&dialog.window) {
+			// the terminal's monitor, not the dialog's: the dialog has not been
+			// placed yet, so its own answer is for wherever the origin is
+			let screen = {
+				use winit::raw_window_handle::HasWindowHandle;
+				state
+					.window
+					.window_handle()
+					.ok()
+					.map(|h| h.as_raw())
+					.and_then(crate::dialog::work_area_of)
+			};
+			if let Some((ax, ay, aw, ah)) = screen {
 				x = x.clamp(ax, (ax + aw - dlg.width as i32).max(ax));
 				y = y.clamp(ay, (ay + ah - dlg.height as i32).max(ay));
 			}
