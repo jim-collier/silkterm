@@ -85,11 +85,13 @@ TEST_CMD=(cargo test)
 LINT_PROBE=(env "PATH=${HOME}/.cargo/bin:${PATH}" cargo clippy --version)
 LINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" "CARGO_TARGET_DIR=${TARGET_DIR}/lint" cargo clippy --workspace --all-targets -- -D warnings)
 
-## Stage 3 (after lints): compile the TESTS for Windows, which the cross-builds do
-## not - they build the binary only. A cfg-gated item used by an ungated test then
-## breaks the suite on Windows and nothing here notices; that happened, and it took
-## a Windows box to find. Empty () to disable.
-XCHECK_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" "CARGO_TARGET_DIR=${TARGET_DIR}/lint" cargo check --workspace --all-targets --target x86_64-pc-windows-gnu)
+## Stage 3 (after lints): the same lints again for Windows. The cross-builds build
+## the binary only, and the lints above run for this box, so Windows-only code is
+## seen by neither - a cfg-gated item used by an ungated test broke the suite there
+## and two lint findings sat in code this box never compiles. Both took a Windows
+## box to find, and both are answered from here in under a minute. Empty () to
+## disable.
+XLINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" "CARGO_TARGET_DIR=${TARGET_DIR}/lint" cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings)
 
 ## Stage 3 (after lints): dependency police (licenses/advisories/duplicates,
 ## policy in deny.toml). Non-gating for now; tighten once the report is tuned.

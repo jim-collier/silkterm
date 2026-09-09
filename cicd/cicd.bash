@@ -460,9 +460,9 @@ if [[ -n "${LINT_CMD+x}" ]] && ((${#LINT_CMD[@]})); then
 		fEcho "WARNING: lints skipped: ${LINT_PROBE[*]} failed (component not installed?)"
 	fi
 fi
-if [[ -n "${XCHECK_CMD+x}" ]] && ((${#XCHECK_CMD[@]})); then
-	"${XCHECK_CMD[@]}" || fDie "the tests do not compile for windows"
-	fEcho "OK: tests compile for windows"
+if [[ -n "${XLINT_CMD+x}" ]] && ((${#XLINT_CMD[@]})) && "${LINT_PROBE[@]}" >/dev/null 2>&1; then
+	"${XLINT_CMD[@]}" || fDie "windows lints failed"
+	fEcho "OK: windows lints clean"
 fi
 if [[ -n "${DENY_CMD+x}" ]] && ((${#DENY_CMD[@]})); then
 	if "${DENY_PROBE[@]}" >/dev/null 2>&1; then
