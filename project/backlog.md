@@ -47,11 +47,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- An ordinary window in the same session, sent the same text the same way, receives it. The terminal receives nothing at all. Sending real key presses works fine, which is what hid this.
 	- Opened: 20260908-141500
 
-- 🔘 Windows: the title bar shows the shell's full executable path.
-	- Seen as `SilkTerm - C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe`. Windows PowerShell sets its console title to its own path, and that is taken as the title the program asked for, so it is faithful rather than wrong - but it reads badly and it is what a user sees first.
-	- The tab strip already shortens a path to fit. The window title does not.
-	- Opened: 20260908-125000
-
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
 	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
 	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
@@ -208,6 +203,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ Windows: the title bar shows the shell's full executable path.
+	- Seen as `SilkTerm - C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe`. That arrives as the title the running program asked for, so the terminal was reporting it faithfully - but it reads badly and it is the first thing a user sees.
+	- Fixed: a title that is only the name or path of a program is passed over, so the tab's own label answers instead.
+	- A Windows console names a new window after the program it starts, so a shell that sets no title of its own arrives carrying its own image path. Confirmed for cmd and for pwsh on both test machines.
+	- A console that names the program and then the command it is running keeps the command. The name has to be a full path for that, so vim's "build.bat - VIM" is left alone.
+	- Seen on Linux against a live pane fed each shape: the reported title, a running command, and an ordinary title that has to survive untouched.
+	- Unrun: Windows, where the titles actually come from. An elevated pane is also unchecked - an elevated console labels its own window "Administrator: ...", and whether that reaches the terminal is unknown, so nothing was built for it.
+	- Opened: 20260908-125000
+	- Closed: 20260909-104500
 
 - ✅ Settings dialog: on a 1080p screen at 150% the buttons sit under the taskbar.
 	- Measured on Windows: the dialog came up 831x1063 while the usable screen is 1920x1008, so the bottom 55 pixels were behind the taskbar - and that is exactly where Cancel, Apply and OK are. There was no way to press OK.

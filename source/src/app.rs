@@ -2401,19 +2401,14 @@ impl State {
 			.unwrap_or_else(|| config::APP_NAME.to_string())
 	}
 
-	// What the window title says after the app name. A title typed on the tab
-	// wins; blanking that one on purpose lets the running program's own title
-	// through, and with neither the tab's computed label stands in.
+	// What the window title says after the app name - see tabtitle::window_suffix
+	// for the order the three sources come in.
 	fn title_suffix(&mut self) -> Option<String> {
 		let typed = self.tabs.cur().title_override.clone();
-		if let Some(typed) = typed {
-			if !typed.trim().is_empty() {
-				return Some(typed);
-			}
-			return self.program_title();
-		}
-		self.program_title()
-			.or_else(|| Some(self.active_tab_title()))
+		let program = self.program_title();
+		crate::tabtitle::window_suffix(typed.as_deref(), program.as_deref(), || {
+			self.active_tab_title()
+		})
 	}
 
 	// The title the focused pane's program asked for, if it asked for one.
@@ -2428,15 +2423,17 @@ impl State {
 	// active tab has to say. Called on tab/focus change and each rendered frame;
 	// set_title only fires when the string actually changed (avoids WM flicker).
 	fn update_title(&mut self) {
-		let title = if let Some(custom_title) = &self.win_title {
-			custom_title.clone()
-		} else {
-			let prefix = config::title_prefix();
-			match self.title_suffix() {
-				Some(suffix) => format!("{prefix} - {suffix}"),
-				None => prefix,
-			}
+		let custom = self.win_title.clone();
+		// A --title is the whole answer, so nothing else is worked out.
+		let suffix = match custom {
+			Some(_) => None,
+			None => self.title_suffix(),
 		};
+		let title = crate::tabtitle::window_title(
+			custom.as_deref(),
+			&config::title_prefix(),
+			suffix.as_deref(),
+		);
 		if title != self.last_win_title {
 			self.window.set_title(&title);
 			self.last_win_title = title;
