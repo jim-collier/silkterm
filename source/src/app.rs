@@ -195,6 +195,7 @@ impl App {
 				is_synthetic,
 				..
 			} if key_is_typed(key_event.state, is_synthetic) => {
+				let key_event = input::name_typed(key_event);
 				if let Some(d) = &mut self.dialog {
 					match &key_event.logical_key {
 						Key::Named(NamedKey::Escape) => act = d.key_escape(),
@@ -6618,6 +6619,9 @@ impl ApplicationHandler<UserEvent> for App {
 				if !key_is_typed(key.state, is_synthetic) {
 					return;
 				}
+				// A character handed to the window instead of typed at it arrives
+				// with no key named; fill the key in so the rest of this reads it.
+				let key = input::name_typed(key);
 				// see IGNORE_KEYS_WHILE_UNFOCUSED
 				if IGNORE_KEYS_WHILE_UNFOCUSED && !state.focused {
 					return;

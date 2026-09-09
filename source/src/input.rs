@@ -3,7 +3,7 @@
 
 use alacritty_terminal::term::TermMode;
 use winit::event::KeyEvent;
-use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::keyboard::{Key, ModifiersState, NamedKey, SmolStr};
 
 // A mouse event to report to the PTY. Wheel notches ride buttons 64/65; `None`
 // is the "no button" code (3) used for bare motion and the X10 release.
@@ -103,6 +103,30 @@ pub fn cursor_seq(letter: u8, app_cursor: bool) -> Vec<u8> {
 // we don't forward (modifiers alone, unhandled named keys, etc.).
 pub fn encode(ev: &KeyEvent, mods: ModifiersState, app_cursor: bool) -> Option<Vec<u8>> {
 	encode_key(&ev.logical_key, ev.text.as_deref(), mods, app_cursor)
+}
+
+// Windows lets a program hand a window a character instead of a key press, and
+// it arrives as a key the layout cannot name carrying only the text it stands
+// for. The touch keyboard sends characters its layout has no key for that way,
+// and so do text expanders and some accessibility tools. Nothing else produces
+// an unnamed key with text on it, so the text is what was typed.
+fn typed_key(key: &Key, text: Option<&str>) -> Option<Key> {
+	match (key, text) {
+		(Key::Unidentified(_), Some(text)) if !text.is_empty() => {
+			Some(Key::Character(SmolStr::new(text)))
+		}
+		_ => None,
+	}
+}
+
+// Name a key the platform could not, so every reader of the event sees the
+// character rather than nothing. Both window event handlers call this before
+// they look at a key.
+pub fn name_typed(mut ev: KeyEvent) -> KeyEvent {
+	if let Some(key) = typed_key(&ev.logical_key, ev.text.as_deref()) {
+		ev.logical_key = key;
+	}
+	ev
 }
 
 // The tilde-form CSI number for a key, if it has one (`ESC [ <n> ~`).
@@ -241,6 +265,8 @@ fn encode_key(
 
 #[cfg(test)]
 mod tests {
+	use winit::keyboard::NativeKey;
+
 	use super::*;
 
 	const NONE: ModifiersState = ModifiersState::empty();
@@ -381,6 +407,45 @@ mod tests {
 			enc(NamedKey::Space, ctrl | ModifiersState::ALT, false).unwrap(),
 			[0x1b, 0x00]
 		);
+	}
+
+	// A character handed to the window instead of typed at it arrives as a key
+	// the layout cannot name. It used to reach nothing at all.
+	#[test]
+	fn an_unnamed_key_is_read_as_its_text() {
+		let injected = Key::Unidentified(NativeKey::Windows(0xe7));
+		assert_eq!(
+			typed_key(&injected, Some("e")),
+			Some(Key::Character("e".into()))
+		);
+		// what the shell would then get
+		assert_eq!(
+			encode_key(&Key::Character("e".into()), Some("e"), NONE, false).unwrap(),
+			b"e".to_vec()
+		);
+		// a character no keyboard layout here has a key for
+		assert_eq!(
+			typed_key(&injected, Some("\u{e9}")),
+			Some(Key::Character("\u{e9}".into()))
+		);
+	}
+
+	#[test]
+	fn a_key_that_carries_no_text_stays_unnamed() {
+		let injected = Key::Unidentified(NativeKey::Windows(0xe7));
+		assert_eq!(typed_key(&injected, None), None);
+		assert_eq!(typed_key(&injected, Some("")), None);
+	}
+
+	// Only an unnamed key is filled in from its text. A named key already says
+	// what it is, and its text is a representation of that rather than typing -
+	// Enter carries "\r", and reading it as a character would lose the key.
+	#[test]
+	fn a_key_the_layout_named_is_left_alone() {
+		assert_eq!(typed_key(&Key::Named(NamedKey::Enter), Some("\r")), None);
+		assert_eq!(typed_key(&Key::Named(NamedKey::Tab), Some("\t")), None);
+		assert_eq!(typed_key(&Key::Character("a".into()), Some("a")), None);
+		assert_eq!(typed_key(&Key::Dead(Some('\u{301}')), Some("a")), None);
 	}
 
 	#[test]
