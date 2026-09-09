@@ -42,32 +42,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 Settings dialog: on a 1080p screen at 150% the buttons sit under the taskbar.
-	- Measured on Windows: the dialog comes up 831x1063 while the usable screen is 1920x1008, so the bottom 55 pixels are behind the taskbar - and that is exactly where Cancel, Apply and OK are. There is no way to press OK.
-	- Something already clamps the height, because 1063 is under the 1200 the declared size would give at that scale. It looks like it clamps to the display rather than to the part of it a window can use.
-	- A graphical scenario now measures this, so a full pipeline run fails on that machine until it is fixed.
-	- Opened: 20260908-145000
-- Fix:
-	- Move "Re-test next run" horizontally to the right of "Check for hardware change".
-	- Put text scrim function and falloff dropoffs side-by-side horizontally. (With the label reading "Function, Falloff"
-	- Shrink the dialog vertically to fit the new max length, with existing spacing style guidelines observed.
-	- If it still doesn't fit at 150% (or any other resolution or DPI), show the dialog with as much as will fit (including window decorations and reserved space for task bars etc.), and add a vertical scrollbar in the non-reserved space.
-	- Tabs and padding below them, as well as the buttons and the padding above them, are "reserved" aren't part of vertical scrolling, and are always visible.
-	- Also, allow the dialog to be resized by the user with the mouse.
-		- By default, always open both dimensions: min([as much an needed for largest tab], [as much as screen can fit]).
-			- Retain user resize for the duration of the session (even after the "active tab reset" timer), but don't persist it anywhere.
-		- Vertical resize:
-			- Add or remove vertical scrollbars, per-tab, in non-reserved space, as needed or not needed.
-		- Horizontal resize:
-			- Wider than default: Stretch the controls in between lables and numeric slider input values, so that numeric slider input values and reset icons remain on the right-hand side, with the same padding/margin to dialog's right side.
-			- Narrower than default: Add a horizontal scrollbar above the bottom buttons (and their padding above).
-		- If the dialog has enough room on the display at the default size, "magnetically snap" to that size when resizing moves through it (but allow resize to continue as mouse moves far enough through it). Use typical and unsurprising "magnetic snap" heuristics.
-	- A related styleguide change for both the .md and a change to the Settings dialog:
-		- At any dialog width, make all "middle controls" variable width. Specifically:
-			- Fixed positions aligned left (form  left-to-right): labels, and the left side of controls.
-			- Fixed positions aligned right: (from right-to-left): Reset button, ([right-edge of fixed-width slider value numbers, right-edge of slider control] | [right edge of variable-width text controls such as text boxes, dropdowns])
-			- Variable-width in between: e.g. sliders, text boxes, dropdowns.
-
 - 🔘 Windows: keystrokes injected as characters rather than keys are ignored.
 	- Windows lets a program send a character directly instead of a key press, and it arrives tagged as a packet rather than as a key. Nothing types that way by hand, but the touch keyboard does for some characters, and so do text expanders and some accessibility tools.
 	- An ordinary window in the same session, sent the same text the same way, receives it. The terminal receives nothing at all. Sending real key presses works fine, which is what hid this.
@@ -96,6 +70,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
 
 ### New features and enhancements
+
+- 🔘 Settings dialog: it does not follow a change of display scale.
+	- Nothing handles a scale-factor change for a dialog window, so its scale is whatever it was when the dialog opened. Dragging it to a monitor at a different scale leaves every measurement in it wrong until it is closed and reopened.
+	- It has always been like this. The dialog can be dragged and resized now, which makes it easier to reach.
+	- The size kept for the rest of the session is stored in pixels rather than in the scale-free unit, so reopening on a monitor at another scale is the wrong size for the same reason.
+	- Opened: 20260909-101500
 
 - 🔘 Settings | Silk: Allow "Profile" to be selected even when "Choose automatically" is enabled.
 	- If user changes it, deselect "Choose automatically".
@@ -228,6 +208,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ Settings dialog: on a 1080p screen at 150% the buttons sit under the taskbar.
+	- Measured on Windows: the dialog came up 831x1063 while the usable screen is 1920x1008, so the bottom 55 pixels were behind the taskbar - and that is exactly where Cancel, Apply and OK are. There was no way to press OK.
+	- Cause: the height was clamped to the monitor rather than to the part of it a window can occupy. It reads the work area now, on Windows and on X11, and takes the window frame off that. A dialog centered over a tall terminal is also pulled back onto the work area rather than only off the screen origin.
+	- Two rows were paired to buy back the height: the hardware check and its one-shot re-test share a line, and the scrim function and falloff dropdowns sit side by side under one label. That is a general mechanism - a row declared `beside` shares the line above it and takes the right half of the control column.
+	- The dialog resizes now. Narrower than it wants and the rows scroll sideways on a bar above the footer; shorter and they scroll as before. The tab strip and the buttons stay out of the vertical scroll. A resize passing within a few pixels of the natural size settles on it. The size is kept for the session and written nowhere.
+	- Controls in the middle of a row are variable width: sliders, text fields and dropdowns take whatever the width leaves, while the number field and the revert arrow keep their distance from the right edge. The style guide says so now.
+	- A review round on top of the fix caught six more, all closed with it. A performance profile holding the first half of a shared line silenced the one revert arrow for the second half, which the profile does not govern and which had no other way back. The tab strip was riding the sideways scroll and could pan off the window edge; it has an offset of its own now and only moves to keep the current tab in view. The snap could pull the window back to a size the screen cannot hold, and it ignored the answer a platform gives when it resizes on the spot. The work area was read off the dialog's own monitor rather than the terminal's, which on a second monitor is the wrong screen. And on X11 the work area covers every monitor at once, so it is now a cap rather than an answer.
+	- Opened: 20260908-145000
+	- Closed: 20260909-093000
 
 - ✅ Code review 20260908. Twenty-five defects, full-codebase pass. Each is fixed and each left a test behind that fails without the fix.
 	- ✅ 1. Wallpaper rotation spawned a decode thread on every pass through the event loop and never recovered. The timer moves off the current moment when a tick fires, rather than waiting for an answer that could never be current.
