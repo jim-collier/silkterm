@@ -58,6 +58,7 @@ layout:
 	radio_pitch: 96            ## per radio option: box + label + gap
 	dual_pitch: 118            ## per checkbox + label pair on a two-part row
 	dropdown_width: 208        ## collapsed dropdown box (fits its longest option)
+	dropdown_pair_width: 150   ## floor for each half of a two-dropdown row
 	dropdown_item_pad: 8       ## popup row grows to the UI line height plus this
 	dropdown_item_min: 24
 	base_line_height: 19       ## the UI line height the four pitches above were drawn for
@@ -139,6 +140,9 @@ icons:
 ## range:     slider low, high
 ## whole:     slider steps in whole numbers
 ## indent:    sub-group depth of the label (default 0)
+## beside:    draw this row on the line above rather than under it. The two
+##            split the control column; the row above keeps the label, and its
+##            label has to name both halves.
 ## options:   the choices, in order, for radio / dropdown / pair
 ## parts:     the two settings a `pair` row carries, one per option
 ## key:       only when the row's name cannot be the setting's - because a
@@ -183,7 +187,7 @@ rows:
 	PerfCheckNext:
 		label: Re-test next run
 		kind: toggle
-		indent: 1
+		beside: true
 		setting: performance.check_next_run
 		help: "Rate the machine again at the next launch, whether or not it changed. Clears itself once that launch has done it."
 
@@ -226,8 +230,10 @@ rows:
 		setting: text.scrim.softness
 		help: "How gradually the halo fades out toward its edge."
 
+	## The two together describe one curve, so they share a line. The label names
+	## both; each box says which of them it is by what it holds.
 	ScrimFunction:
-		label: Function
+		label: Function, falloff
 		kind: dropdown
 		options: "Distance field", "Distance transform", "Dilate + feather", "Gaussian [ugly]"
 		indent: 1
@@ -235,10 +241,10 @@ rows:
 		help: "How the halo's shape is computed from the glyphs."
 
 	ScrimRamp:
-		label: Falloff
+		label: ""
 		kind: dropdown
 		options: "Exponential", "Half-normal", "Logarithmic", "Sigmoid", "Linear"
-		indent: 1
+		beside: true
 		setting: text.scrim.ramp
 		help: "The curve the halo fades along."
 
