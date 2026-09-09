@@ -460,6 +460,10 @@ if [[ -n "${LINT_CMD+x}" ]] && ((${#LINT_CMD[@]})); then
 		fEcho "WARNING: lints skipped: ${LINT_PROBE[*]} failed (component not installed?)"
 	fi
 fi
+if [[ -n "${XLINT_CMD+x}" ]] && ((${#XLINT_CMD[@]})) && "${LINT_PROBE[@]}" >/dev/null 2>&1; then
+	"${XLINT_CMD[@]}" || fDie "windows lints failed"
+	fEcho "OK: windows lints clean"
+fi
 if [[ -n "${DENY_CMD+x}" ]] && ((${#DENY_CMD[@]})); then
 	if "${DENY_PROBE[@]}" >/dev/null 2>&1; then
 		## Advisory-only for now: report license/advisory/duplicate findings

@@ -83,7 +83,7 @@ fn privilege_word() -> Option<&'static str> {
 	// close, and GetTokenInformation is given the size of the buffer it fills.
 	unsafe {
 		let mut token = std::ptr::null_mut();
-		if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+		if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) == 0 {
 			return None;
 		}
 		let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
@@ -93,7 +93,7 @@ fn privilege_word() -> Option<&'static str> {
 			TokenElevation,
 			(&raw mut elevation).cast(),
 			size_of::<TOKEN_ELEVATION>() as u32,
-			&mut wrote,
+			&raw mut wrote,
 		);
 		CloseHandle(token);
 		(read != 0 && elevation.TokenIsElevated != 0).then_some("Administrator")

@@ -279,8 +279,13 @@ $script:vks = @{
 	f4 = 0x73; f11 = 0x7A
 }
 
-##	Literal text, as characters rather than keys, so it does not depend on layout.
+##	Literal text, typed through the keyboard layout the way a keyboard does.
 function fSend($text) { [SilkKeys]::Text($text); Start-Sleep -Milliseconds 250 }
+
+##	The other way a character reaches a window: handed over whole instead of
+##	typed. The touch keyboard, text expanders and some accessibility tools all
+##	send the characters their layout has no key for this way.
+function fSendChars($text) { [SilkKeys]::TextUnicode($text); Start-Sleep -Milliseconds 400 }
 
 ##	One chord, spelled "ctrl+shift+t" or "alt+f" or "escape". A single character is
 ##	looked up through the keyboard layout so a comma is a comma wherever it lives.
