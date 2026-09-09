@@ -26,7 +26,10 @@ $said = if (Test-Path $proof) { Get-Content $proof -Raw } else { "" }
 [void](fCheck "an injected character reaches the shell" ($said -match "silkrig-packet"))
 
 ##	The case the touch keyboard is actually for: a character the layout has no key
-##	for, so nothing but an injection could have produced it.
+##	for, so nothing but an injection could have produced it. The check is loose and
+##	the note carries what was really written: a shell that redirects in the console
+##	code page mangles the accent on its way to the file, which says nothing about
+##	what the terminal received.
 $accent = Join-Path $OutDir "injected-accent.txt"
 Remove-Item $accent -ErrorAction SilentlyContinue
 fSendChars ([string]::Concat("echo caf", [char]0x00E9, "-", [char]0x4E2D, " > ", $accent))
