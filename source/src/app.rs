@@ -2406,9 +2406,12 @@ impl State {
 	fn title_suffix(&mut self) -> Option<String> {
 		let typed = self.tabs.cur().title_override.clone();
 		let program = self.program_title();
-		crate::tabtitle::window_suffix(typed.as_deref(), program.as_deref(), || {
-			self.active_tab_title()
-		})
+		crate::tabtitle::window_suffix(
+			config::rights(),
+			typed.as_deref(),
+			program.as_deref(),
+			|| self.active_tab_title(),
+		)
 	}
 
 	// The title the focused pane's program asked for, if it asked for one.
@@ -2430,6 +2433,7 @@ impl State {
 			None => self.title_suffix(),
 		};
 		let title = crate::tabtitle::window_title(
+			config::rights(),
 			custom.as_deref(),
 			&config::title_prefix(),
 			suffix.as_deref(),
@@ -5589,7 +5593,12 @@ impl ApplicationHandler<UserEvent> for App {
 		let want_transparent =
 			!cfg!(windows) || config::settings().transparent_background || win_opacity.is_some();
 		let attrs = Window::default_attributes()
-			.with_title(win_title.clone().unwrap_or_else(config::title_prefix))
+			.with_title(crate::tabtitle::window_title(
+				config::rights(),
+				win_title.as_deref(),
+				&config::title_prefix(),
+				None,
+			))
 			.with_window_icon(load_icon())
 			.with_decorations(decorated)
 			.with_transparent(want_transparent)

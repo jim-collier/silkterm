@@ -47,6 +47,64 @@ pub fn title_prefix() -> String {
 	}
 }
 
+// A terminal running with administrator or root rights says so in its window
+// title. Windows already spells this "Administrator: " on the title bar of its
+// own consoles, so that word is kept there, and a console sending a title while
+// elevated writes it in front of that too - which is the half to take back off.
+// SilkTerm never changes its own credentials, so both are answered once.
+pub fn rights() -> crate::tabtitle::Rights {
+	crate::tabtitle::Rights {
+		say: privilege_label(),
+		decorated: cfg!(windows),
+	}
+}
+
+fn privilege_label() -> Option<&'static str> {
+	static LABEL: OnceLock<Option<&'static str>> = OnceLock::new();
+	*LABEL.get_or_init(privilege_word)
+}
+
+#[cfg(unix)]
+fn privilege_word() -> Option<&'static str> {
+	// SAFETY: geteuid takes no arguments, reads the calling process and cannot fail.
+	(unsafe { libc::geteuid() } == 0).then_some("Root")
+}
+
+// Elevation is a property of the token, not of the account: an administrator
+// running unelevated has the group but not the rights, and answers false here.
+#[cfg(windows)]
+fn privilege_word() -> Option<&'static str> {
+	use windows_sys::Win32::Foundation::CloseHandle;
+	use windows_sys::Win32::Security::{
+		GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
+	};
+	use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+	// SAFETY: the token handle is only used between a successful open and its
+	// close, and GetTokenInformation is given the size of the buffer it fills.
+	unsafe {
+		let mut token = std::ptr::null_mut();
+		if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+			return None;
+		}
+		let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+		let mut wrote = 0u32;
+		let read = GetTokenInformation(
+			token,
+			TokenElevation,
+			(&raw mut elevation).cast(),
+			size_of::<TOKEN_ELEVATION>() as u32,
+			&mut wrote,
+		);
+		CloseHandle(token);
+		(read != 0 && elevation.TokenIsElevated != 0).then_some("Administrator")
+	}
+}
+
+#[cfg(not(any(unix, windows)))]
+fn privilege_word() -> Option<&'static str> {
+	None
+}
+
 // Which of the cross builds this binary is - otherwise indistinguishable at a
 // glance. Shared by the About dialog and `--about` so the two can't drift.
 pub fn build_target() -> String {
@@ -4075,6 +4133,19 @@ shell:
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// A Windows console writes the terminal's rights into the titles it sends
+	// while elevated, and that copy is taken back off. Nothing on unix writes
+	// one, so taking anything off there could only lose somebody's own text.
+	// The one seam between the rights this process holds and the title that says
+	// so. Without it the whole thing can be cut with nothing to notice. It only
+	// bites when the suite is run holding those rights, which on unix needs no
+	// privilege at all: `unshare -Ur cargo test`.
+	#[test]
+	fn the_title_reports_the_rights_this_process_holds() {
+		assert_eq!(rights().say, privilege_word());
+		assert_eq!(rights().decorated, cfg!(windows));
+	}
 
 	// Both of these used to abort before the window existed, which left the file
 	// that caused it unfixable from the terminal it killed.

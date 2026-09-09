@@ -200,13 +200,44 @@ pub fn task_forms(task: Option<Task>) -> Vec<String> {
 	forms
 }
 
+/// What the terminal's own rights mean for its title.
+#[derive(Clone, Copy, Default)]
+pub struct Rights {
+	/// The word the window title starts with, while the terminal holds them.
+	pub say: Option<&'static str>,
+	/// Whether a console here writes that same word into the first title it
+	/// sends. Windows does; nothing on unix decorates a title.
+	pub decorated: bool,
+}
+
+impl Rights {
+	/// The word a console has already written into a title, so it is not said
+	/// twice. Kept derived rather than stored: a word to take off that nothing
+	/// would put back could only destroy somebody's own text.
+	fn console_marker(self) -> Option<&'static str> {
+		self.say.filter(|_| self.decorated)
+	}
+}
+
 /// What a title set by the running program is worth showing, if anything.
 ///
 /// A Windows console names a new window after the program it starts, so a shell
 /// that sets no title of its own arrives carrying its own image path - measured
 /// for cmd and for pwsh on two machines. That says less than the tab's own
 /// label, so it is passed over.
-fn program_says(title: &str) -> Option<&str> {
+fn program_says<'a>(title: &'a str, marker: Option<&str>) -> Option<&'a str> {
+	let mut title = title.trim_start();
+	// While elevated, a Windows console writes its own rights in front of the
+	// first title it sends, which is the one naming the program it started -
+	// measured over a pseudoconsole on two machines. Both halves say nothing, so
+	// the rights come off here and the name is dropped below. Only the exact word
+	// about to be put back is taken off, so a title that merely reads like one
+	// survives. See design.md for what that leaves on a non-English Windows.
+	if let Some(word) = marker {
+		if let Some(rest) = title.strip_prefix(word).and_then(|r| r.strip_prefix(": ")) {
+			title = rest;
+		}
+	}
 	let title = title.trim();
 	if title.is_empty() {
 		return None;
@@ -259,14 +290,16 @@ fn is_absolute(path: &str) -> bool {
 /// through, and with neither the tab's own label stands in.
 ///
 /// A typed title is shown as typed - the tab shows it that way too - while a
-/// program's is trimmed, since nobody chose its spacing. `tab` is only asked
-/// for when it is needed, since working it out is not free.
+/// program's is trimmed, since nobody chose its spacing, and has any marker a
+/// console wrote into it taken off. `tab` is only asked for when it is needed,
+/// since working it out is not free.
 pub fn window_suffix(
+	rights: Rights,
 	typed: Option<&str>,
 	program: Option<&str>,
 	tab: impl FnOnce() -> String,
 ) -> Option<String> {
-	let program = program.and_then(program_says);
+	let program = program.and_then(|title| program_says(title, rights.console_marker()));
 	if let Some(typed) = typed {
 		if !typed.trim().is_empty() {
 			return Some(typed.to_string());
@@ -277,12 +310,30 @@ pub fn window_suffix(
 }
 
 /// The whole window title. A `--title` given on the command line is the answer
-/// verbatim, since it is a request for exactly that string.
-pub fn window_title(custom: Option<&str>, prefix: &str, suffix: Option<&str>) -> String {
-	match (custom, suffix) {
+/// apart from the rights, since it is a request for exactly that string.
+///
+/// The rights the terminal is running with come first and no flag turns them
+/// off, since the absence of the word has to mean something.
+pub fn window_title(
+	rights: Rights,
+	custom: Option<&str>,
+	prefix: &str,
+	suffix: Option<&str>,
+) -> String {
+	let said = match (custom, suffix) {
 		(Some(custom), _) => custom.to_string(),
 		(None, Some(suffix)) => format!("{prefix} - {suffix}"),
 		(None, None) => prefix.to_string(),
+	};
+	let Some(word) = rights.say else {
+		return said;
+	};
+	match said.as_str() {
+		// Nothing to say, so no dangling colon in front of it either.
+		said if said.trim().is_empty() => word.to_string(),
+		// A title typed by hand can already start with the word.
+		said if said.strip_prefix(word).is_some_and(|r| r.starts_with(": ")) => said.to_string(),
+		said => format!("{word}: {said}"),
 	}
 }
 
@@ -702,10 +753,16 @@ pub fn elapsed(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Demand, Style, Task, clamp_page, elapsed, label_forms, page_for, path_forms, program_says,
-		shell_forms, slot_at_x, slot_x, tabs_that_fit, task_forms, tip_lines, tip_value, widths,
-		window_suffix, window_title,
+		Demand, Rights, Style, Task, clamp_page, elapsed, label_forms, page_for, path_forms,
+		program_says, shell_forms, slot_at_x, slot_x, tabs_that_fit, task_forms, tip_lines,
+		tip_value, widths, window_suffix, window_title,
 	};
+
+	// Most of what follows is the same question either way, so it is asked with
+	// nothing to take off the front.
+	fn says(title: &str) -> Option<&str> {
+		program_says(title, None)
+	}
 
 	// The tip is a table, so a value carries quotes only where its own edges are
 	// in doubt. Quoting everything would put them round every friendly shell name
@@ -1123,26 +1180,23 @@ mod tests {
 	#[test]
 	fn a_console_title_that_only_names_a_program_is_dropped() {
 		assert_eq!(
-			program_says("C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+			says("C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
 			None
 		);
 		// A path with a space in it is still a path.
-		assert_eq!(
-			program_says("C:\\Program Files\\PowerShell\\7\\pwsh.exe"),
-			None
-		);
-		assert_eq!(program_says("powershell.exe"), None);
-		assert_eq!(program_says("  CMD.EXE  "), None);
-		assert_eq!(program_says("\\\\my server\\share\\tools\\run.bat"), None);
+		assert_eq!(says("C:\\Program Files\\PowerShell\\7\\pwsh.exe"), None);
+		assert_eq!(says("powershell.exe"), None);
+		assert_eq!(says("  CMD.EXE  "), None);
+		assert_eq!(says("\\\\my server\\share\\tools\\run.bat"), None);
 		// A lower-case drive spelled with forward slashes is the same path.
-		assert_eq!(program_says("c:/windows/system32/cmd.exe"), None);
-		assert_eq!(program_says(""), None);
-		assert_eq!(program_says("   "), None);
+		assert_eq!(says("c:/windows/system32/cmd.exe"), None);
+		assert_eq!(says(""), None);
+		assert_eq!(says("   "), None);
 	}
 
 	#[test]
 	fn a_title_that_says_something_survives() {
-		let kept = |title| assert_eq!(program_says(title), Some(title));
+		let kept = |title| assert_eq!(says(title), Some(title));
 		kept("jim@box: ~/src/silkterm");
 		kept("C:\\Users\\jim\\src");
 		kept("Building foo.exe");
@@ -1151,14 +1205,14 @@ mod tests {
 		// A file name is only the answer when nothing is wrapped around it.
 		kept("Running tools\\build.bat");
 		kept("C:\\dev\\my build.cmd");
-		assert_eq!(program_says(" vim foo.rs "), Some("vim foo.rs"));
+		assert_eq!(says(" vim foo.rs "), Some("vim foo.rs"));
 	}
 
 	#[test]
 	fn a_hostname_or_a_directory_is_not_a_program() {
 		// `.com` is a top-level domain far more often than it is a program, and
 		// this tree is itself under a directory ending in one.
-		let kept = |title| assert_eq!(program_says(title), Some(title));
+		let kept = |title| assert_eq!(says(title), Some(title));
 		kept("jim@web01.example.com");
 		kept("~/src/github.com");
 		kept("C:\\www\\example.com");
@@ -1167,29 +1221,29 @@ mod tests {
 	#[test]
 	fn a_console_that_names_the_command_it_is_running_keeps_the_command() {
 		assert_eq!(
-			program_says("C:\\WINDOWS\\system32\\cmd.exe - ping 8.8.8.8"),
+			says("C:\\WINDOWS\\system32\\cmd.exe - ping 8.8.8.8"),
 			Some("ping 8.8.8.8")
 		);
 		// Spacing around the dash is the console's, not anybody's choice.
 		assert_eq!(
-			program_says("C:\\WINDOWS\\system32\\cmd.exe  -  build.bat "),
+			says("C:\\WINDOWS\\system32\\cmd.exe  -  build.bat "),
 			Some("build.bat")
 		);
 		// A command given as a full path is shown as one. It is still what is
 		// running, which is the thing the title is for.
 		assert_eq!(
-			program_says("C:\\WINDOWS\\system32\\cmd.exe - C:\\tools\\build.exe"),
+			says("C:\\WINDOWS\\system32\\cmd.exe - C:\\tools\\build.exe"),
 			Some("C:\\tools\\build.exe")
 		);
 		// Not a program on the left, so both halves stand.
-		assert_eq!(program_says("foo - bar"), Some("foo - bar"));
+		assert_eq!(says("foo - bar"), Some("foo - bar"));
 	}
 
 	#[test]
 	fn an_editor_naming_the_file_it_has_open_keeps_the_file() {
 		// vim's default title is "<file> - VIM", and a bare file name on the left
 		// must not be read as the program.
-		let kept = |title| assert_eq!(program_says(title), Some(title));
+		let kept = |title| assert_eq!(says(title), Some(title));
 		kept("build.bat - VIM");
 		kept("setup.exe - NVIM");
 		kept("run.cmd (~/src) - VIM");
@@ -1200,28 +1254,32 @@ mod tests {
 		// Only a Windows console writes one of these, but the test does not have to
 		// know that. A posix path names no extension, so nothing there matches in
 		// the first place.
-		assert_eq!(program_says("/home/jim/games/setup.exe"), None);
-		assert_eq!(program_says("/home/jim/my games/setup.exe"), None);
-		assert_eq!(program_says("/usr/bin/bash"), Some("/usr/bin/bash"));
+		assert_eq!(says("/home/jim/games/setup.exe"), None);
+		assert_eq!(says("/home/jim/my games/setup.exe"), None);
+		assert_eq!(says("/usr/bin/bash"), Some("/usr/bin/bash"));
 		assert_eq!(
-			program_says("/opt/powershell/7/pwsh"),
+			says("/opt/powershell/7/pwsh"),
 			Some("/opt/powershell/7/pwsh")
 		);
 	}
 
 	#[test]
 	fn an_extension_has_to_be_the_whole_of_the_last_part() {
-		assert_eq!(program_says("foo."), Some("foo."));
-		assert_eq!(program_says("a.EXE."), Some("a.EXE."));
-		assert_eq!(program_says(".exe"), None);
+		assert_eq!(says("foo."), Some("foo."));
+		assert_eq!(says("a.EXE."), Some("a.EXE."));
+		assert_eq!(says(".exe"), None);
 		// Multi-byte before the dot, to pin the slice against a char boundary.
-		assert_eq!(program_says("caf\u{e9}.exe"), None);
-		assert_eq!(program_says("caf\u{e9}"), Some("caf\u{e9}"));
+		assert_eq!(says("caf\u{e9}.exe"), None);
+		assert_eq!(says("caf\u{e9}"), Some("caf\u{e9}"));
 	}
 
 	#[test]
 	fn the_window_title_takes_the_typed_name_then_the_program_then_the_tab() {
-		let suffix = |typed, program| window_suffix(typed, program, || "Bash - ~/src".to_string());
+		let suffix = |typed, program| {
+			window_suffix(Rights::default(), typed, program, || {
+				"Bash - ~/src".to_string()
+			})
+		};
 		assert_eq!(
 			suffix(Some("build"), Some("vim foo.rs")).as_deref(),
 			Some("build")
@@ -1246,7 +1304,7 @@ mod tests {
 	fn the_tab_label_is_only_worked_out_when_it_is_needed() {
 		let asked = std::cell::Cell::new(0);
 		let suffix = |typed, program: Option<&str>| {
-			window_suffix(typed, program, || {
+			window_suffix(Rights::default(), typed, program, || {
 				asked.set(asked.get() + 1);
 				"Bash - ~/src".to_string()
 			})
@@ -1262,23 +1320,38 @@ mod tests {
 	#[test]
 	fn a_program_naming_only_itself_falls_through_to_the_tab() {
 		let exe = Some("C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-		let suffix =
-			|typed, program| window_suffix(typed, program, || "Windows PowerShell".to_string());
+		let suffix = |typed, program| {
+			window_suffix(Rights::default(), typed, program, || {
+				"Windows PowerShell".to_string()
+			})
+		};
 		assert_eq!(suffix(None, exe).as_deref(), Some("Windows PowerShell"));
 		assert_eq!(suffix(Some(""), exe), None);
 	}
 
 	#[test]
 	fn a_title_on_the_command_line_is_the_whole_answer() {
-		assert_eq!(window_title(Some("mine"), "SilkTerm", Some("Bash")), "mine");
-		// Even against nothing to say, and even when it is empty.
-		assert_eq!(window_title(Some("mine"), "SilkTerm", None), "mine");
-		assert_eq!(window_title(Some(""), "SilkTerm", Some("Bash")), "");
 		assert_eq!(
-			window_title(None, "SilkTerm", Some("Bash")),
+			window_title(Rights::default(), Some("mine"), "SilkTerm", Some("Bash")),
+			"mine"
+		);
+		// Even against nothing to say, and even when it is empty.
+		assert_eq!(
+			window_title(Rights::default(), Some("mine"), "SilkTerm", None),
+			"mine"
+		);
+		assert_eq!(
+			window_title(Rights::default(), Some(""), "SilkTerm", Some("Bash")),
+			""
+		);
+		assert_eq!(
+			window_title(Rights::default(), None, "SilkTerm", Some("Bash")),
 			"SilkTerm - Bash"
 		);
-		assert_eq!(window_title(None, "SilkTerm", None), "SilkTerm");
+		assert_eq!(
+			window_title(Rights::default(), None, "SilkTerm", None),
+			"SilkTerm"
+		);
 	}
 
 	#[test]
@@ -1289,8 +1362,159 @@ mod tests {
 			"C:\\WINDOWS\\system32\\cmd.exe - ",
 			"   ",
 			"x.exe - \t ",
+			"Administrator: ",
+			"Administrator: C:\\WINDOWS\\system32\\cmd.exe - ",
 		] {
-			assert!(program_says(title).is_none_or(|said| !said.trim().is_empty()));
+			for strip in [None, Some("Administrator")] {
+				let said = program_says(title, strip);
+				assert!(said.is_none_or(|said| !said.trim().is_empty()), "{title:?}");
+			}
 		}
+	}
+
+	// No console writes the separator with nothing after it, so such a title is
+	// not taken apart. Recorded because the rule above only asks whether the
+	// answer is blank, and this is what it is instead.
+	#[test]
+	fn a_title_ending_on_the_separator_is_shown_whole() {
+		assert_eq!(
+			says("C:\\WINDOWS\\system32\\cmd.exe - "),
+			Some("C:\\WINDOWS\\system32\\cmd.exe -")
+		);
+		assert_eq!(
+			program_says(
+				"Administrator: C:\\WINDOWS\\system32\\cmd.exe - ",
+				Some("Administrator")
+			),
+			Some("C:\\WINDOWS\\system32\\cmd.exe -")
+		);
+	}
+
+	// Measured on both Windows machines: an elevated console puts its own rights
+	// in front of every title it sends over a pseudoconsole, so the marker arrives
+	// glued to the path the program-name rule was written to drop.
+	#[test]
+	fn an_elevated_console_marker_is_not_repeated() {
+		let elevated = |title| program_says(title, Some("Administrator"));
+		assert_eq!(
+			elevated(
+				"Administrator: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+			),
+			None
+		);
+		assert_eq!(elevated("Administrator: vim foo.rs"), Some("vim foo.rs"));
+		assert_eq!(
+			elevated("Administrator: C:\\WINDOWS\\system32\\cmd.exe - ping 8.8.8.8"),
+			Some("ping 8.8.8.8")
+		);
+		assert_eq!(elevated("Administrator: "), None);
+		// A path with a space in it takes the other half of the program-name test.
+		assert_eq!(
+			elevated("Administrator: C:\\Program Files\\PowerShell\\7\\pwsh.exe"),
+			None
+		);
+	}
+
+	// The word is matched exactly, and only where a console would have written
+	// it. Anything else is somebody's real title.
+	#[test]
+	fn a_marker_the_console_did_not_write_survives() {
+		let elevated = |title| program_says(title, Some("Administrator"));
+		assert_eq!(
+			elevated("Administrator:Backup"),
+			Some("Administrator:Backup")
+		);
+		assert_eq!(elevated("Administrator"), Some("Administrator"));
+		assert_eq!(
+			elevated("ADMINISTRATOR: vim foo.rs"),
+			Some("ADMINISTRATOR: vim foo.rs")
+		);
+		// A console that speaks another language writes another word, so the
+		// title is shown as it arrived. See design.md.
+		assert_eq!(
+			elevated("Administrador: C:\\Windows\\System32\\cmd.exe"),
+			Some("Administrador: C:\\Windows\\System32\\cmd.exe")
+		);
+	}
+
+	// Nothing on unix writes a marker into a title, so running as root must not
+	// start taking one off - there would be nothing to remove but real text.
+	#[test]
+	fn root_alone_does_not_strip_anything() {
+		let rights = Rights {
+			say: Some("Root"),
+			decorated: false,
+		};
+		assert_eq!(
+			window_suffix(rights, None, Some("Root: kernel notes"), || "Bash"
+				.to_string()),
+			Some("Root: kernel notes".to_string())
+		);
+	}
+
+	// Only the word that is about to be put back is taken off. Anything else is
+	// somebody's real title and has to survive.
+	#[test]
+	fn a_marker_that_was_never_added_is_left_alone() {
+		assert_eq!(
+			program_says("Administrator: setup.log", Some("Root")),
+			Some("Administrator: setup.log")
+		);
+		assert_eq!(
+			program_says("Root: notes", Some("Administrator")),
+			Some("Root: notes")
+		);
+		assert_eq!(
+			program_says("Administrators: three of them", Some("Administrator")),
+			Some("Administrators: three of them")
+		);
+	}
+
+	// A word to take off that nothing would put back could only lose text, so the
+	// two are one answer rather than two fields to keep in step.
+	#[test]
+	fn only_a_decorated_console_leaves_a_word_to_take_off() {
+		let marker = |say, decorated| Rights { say, decorated }.console_marker();
+		assert_eq!(marker(Some("Root"), false), None);
+		assert_eq!(marker(Some("Administrator"), true), Some("Administrator"));
+		// Nothing to say, so nothing to take off either.
+		assert_eq!(marker(None, true), None);
+	}
+
+	#[test]
+	fn a_privileged_window_says_so_before_anything_else() {
+		let root = Rights {
+			say: Some("Root"),
+			decorated: false,
+		};
+		assert_eq!(
+			window_title(root, None, "SilkTerm", Some("Bash")),
+			"Root: SilkTerm - Bash"
+		);
+		assert_eq!(
+			window_title(
+				Rights {
+					say: Some("Administrator"),
+					decorated: true
+				},
+				None,
+				"SilkTerm",
+				None
+			),
+			"Administrator: SilkTerm"
+		);
+		// A --title is otherwise the whole answer, but it does not get to drop this.
+		assert_eq!(
+			window_title(root, Some("deploy"), "SilkTerm", Some("Bash")),
+			"Root: deploy"
+		);
+		// A title that already starts with the word is not given a second one,
+		// and an empty one is not given a dangling colon either.
+		assert_eq!(
+			window_title(root, Some("Root: deploy"), "SilkTerm", None),
+			"Root: deploy"
+		);
+		assert_eq!(window_title(root, Some(""), "SilkTerm", None), "Root");
+		assert_eq!(window_title(root, Some("   "), "SilkTerm", None), "Root");
 	}
 }

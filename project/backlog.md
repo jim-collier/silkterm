@@ -66,6 +66,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
+- 🔘 Windows: an elevated console in another language still shows a shell's image path in the title.
+	- An elevated console writes the terminal's rights in front of the first title it sends, the one naming the program it started. That word is taken back off, but only where it is the same word the title bar is about to show. A machine speaking another language writes another word, which is not recognized, so the word hides the program name behind it and the whole image path is shown until the shell sets a title of its own.
+	- The word cannot be matched in every language. Closing this properly means matching the title against the path of the program the pane is actually running, which would also cover the plain case without knowing any words.
+	- Opened: 20260909-143000
+
 - 🔘 Settings dialog: it does not follow a change of display scale.
 	- Nothing handles a scale-factor change for a dialog window, so its scale is whatever it was when the dialog opened. Dragging it to a monitor at a different scale leaves every measurement in it wrong until it is closed and reopened.
 	- It has always been like this. The dialog can be dragged and resized now, which makes it easier to reach.
@@ -1222,6 +1227,17 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ A terminal running with administrator or root rights says so in its window title.
+	- ✅ The title starts with "Administrator: " on Windows and "Root: " elsewhere. Windows spells its own elevated console title bars that way, so that word is kept rather than invented.
+	- ✅ No flag turns it off, `--title` included, since the absence of the word has to mean something. It goes on the window title only, not on tab titles.
+	- ✅ An elevated Windows console writes the same word in front of the first title it sends, measured over a pseudoconsole on both machines, so that copy is taken back off. Without it the word hides the program name behind it and the whole path is shown. A title the program sets afterwards is not decorated, so the word cannot arrive twice from a console.
+	- The rights are the terminal's own. A pane that elevates itself afterwards is not covered.
+	- Left: a console speaking another language writes another word, which is not recognized. Filed as its own item.
+	- Seen at a real effective user id of zero: the marker on a plain title, on a program title that falls back to the tab label, and on a title given on the command line. A title that already starts with the word is not given a second one.
+	- Unrun: Windows, where the check itself was confirmed against the operating system's own answer on both machines but the title has not been looked at.
+	- Opened: 20260909-140000
+	- Closed: 20260909-153000
 
 - ✅ Run the interface checks on Windows from here as well.
 	- ✅ Scenarios run against a real desktop and bring back a verdict and screenshots. Windows, capture and typing all work; a machine that is off, or whose session is locked, is reported and stepped over rather than failing the build.
