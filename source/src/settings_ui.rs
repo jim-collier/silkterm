@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! Modal settings dialog: sliders for numeric tunables, swatch + hex field for
 //! colors, toggles, few-option radios, dropdown list boxes for longer enums, and

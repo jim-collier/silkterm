@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! Command-line parsing -> a window/tab/pane layout plan. See
 //! project/design.md "Command-line options". Startup-only (not a hot path).
@@ -675,7 +675,7 @@ pub fn about(info: Option<&wgpu::AdapterInfo>) -> String {
 	let mut lines = vec![
 		format!("About {}", config::APP_NAME),
 		format!("Version {}", env!("CARGO_PKG_VERSION")),
-		"Copyright © 2026 Jim Collier".to_string(),
+		"Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]".to_string(),
 		format!("License: {}", env!("CARGO_PKG_LICENSE")),
 		String::new(),
 		"Info".to_string(),

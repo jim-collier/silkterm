@@ -38,7 +38,7 @@
 
 ##	Copyright and license:
 ##		x9ps1-git v1.0.1 build 1n3g16s,
-##		Copyright © 2011-2026 Jim Collier (ID: 1cv◂‡Vᛦ)
+##		Copyright © 2011-2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 ##		Licensed under The MIT License (MIT). Full text at:
 ##			https://mit-license.org/
 ##		SPDX-License-Identifier: MIT

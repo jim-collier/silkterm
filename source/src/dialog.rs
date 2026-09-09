@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 // Pop-out dialog windows (About / Settings) as real child OS windows, so a
 // dialog larger than the main window is still fully visible (the in-surface
@@ -1311,7 +1311,7 @@ fn layout_about(
 	let content: Vec<(String, [u8; 3], f32, f32, bool, f32)> = vec![
 		(format!("About {}", config::APP_NAME), menu_fg, 0.0, 0.0, true, 1.5),
 		(format!("Version {}", env!("CARGO_PKG_VERSION")), menu_dim, 0.0, loose, false, 1.0),
-		("Copyright © 2026 Jim Collier".into(), menu_dim, 0.0, 0.0, false, 1.0),
+		("Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]".into(), menu_dim, 0.0, 0.0, false, 1.0),
 		(format!("License: {}", env!("CARGO_PKG_LICENSE")), menu_dim, 0.0, 0.0, false, 1.0),
 		("Info".into(), menu_fg, 0.0, gap, true, 1.0),
 		(format!("Build:  {}  {build}", config::BUILD_ID), menu_dim, indent, tight, false, 1.0),

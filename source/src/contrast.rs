@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! Background-image "contrast mask": flatten the image's contrast toward a local
 //! mean so it stops competing with terminal text. Applied uniformly across the

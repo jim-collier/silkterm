@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! Thin wrapper over copypasta for the regular CLIPBOARD plus, on Linux/X11,
 //! the PRIMARY selection (middle-click paste). The contexts are held for the

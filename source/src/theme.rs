@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! Color themes: each theme is a (dark, light) pair of `Palette`s. The active
 //! theme name + mode (Dark / Light / System) resolve to one `Palette` - the

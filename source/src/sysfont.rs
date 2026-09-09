@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! Best-effort detection of the OS's default monospace/fixed-pitch font (family
 //! and point size). Each platform uses its native mechanism; everything is
