@@ -110,6 +110,11 @@ pub struct Spec {
 	// sub-group is therefore not declared anywhere - it is the leader's own
 	// depth plus everything deeper that follows.
 	pub indent: u8,
+	// Drawn on the same line as the row above rather than under it. The pair
+	// splits the control column in half; the row above keeps the label column and
+	// its label has to name both halves. This row's own label, if it has one,
+	// follows its control the way a checkbox's does.
+	pub beside: bool,
 }
 
 // One setting a control has to wait on, resolved from the file's gate lines.
@@ -144,6 +149,7 @@ pub struct Layout {
 	pub radio_pitch: f32,
 	pub dual_pitch: f32,
 	pub dropdown_width: f32,
+	pub dropdown_pair_width: f32,
 	pub dropdown_item_pad: f32,
 	pub dropdown_item_min: f32,
 	pub base_line_height: f32,
@@ -282,6 +288,7 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 		radio_pitch: float("layout.radio_pitch", &mut problems),
 		dual_pitch: float("layout.dual_pitch", &mut problems),
 		dropdown_width: float("layout.dropdown_width", &mut problems),
+		dropdown_pair_width: float("layout.dropdown_pair_width", &mut problems),
 		dropdown_item_pad: float("layout.dropdown_item_pad", &mut problems),
 		dropdown_item_min: float("layout.dropdown_item_min", &mut problems),
 		base_line_height: float("layout.base_line_height", &mut problems),
@@ -447,6 +454,15 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 				_ => problems.push(format!("rows.{name}: needs exactly one setting path")),
 			}
 		}
+		let beside = doc.get_bool(&at("beside")).unwrap_or(false);
+		// It has to have something to sit beside, and a pair of pairs would have
+		// nowhere to put the second one.
+		if beside
+			&& !specs.last().is_some_and(|prev| {
+				prev.tab == tab && !prev.beside && !matches!(prev.kind, Kind::Header(_))
+			}) {
+			problems.push(format!("rows.{name}: beside needs a plain row above it"));
+		}
 		specs.push(Spec {
 			label: keep(label),
 			key,
@@ -454,6 +470,7 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 			tab,
 			help: doc.get_string(&at("help")).map_or("", keep),
 			indent: doc.get_int(&at("indent")).unwrap_or(0).clamp(0, 4) as u8,
+			beside,
 		});
 	}
 
@@ -583,6 +600,7 @@ mod tests {
 			("row_height", lay.row_height),
 			("label_width", lay.label_width),
 			("slider_width", lay.slider_width),
+			("dropdown_pair_width", lay.dropdown_pair_width),
 			("swatch", lay.swatch),
 			("button_height", lay.button_height),
 			("base_line_height", lay.base_line_height),

@@ -256,11 +256,11 @@ impl App {
 			}
 			WindowEvent::MouseWheel { delta, .. } => {
 				if let Some(d) = &mut self.dialog {
-					let dy = match delta {
-						MouseScrollDelta::LineDelta(_, y) => y * 40.0,
-						MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+					let (dx, dy) = match delta {
+						MouseScrollDelta::LineDelta(x, y) => (x * 40.0, y * 40.0),
+						MouseScrollDelta::PixelDelta(pos) => (pos.x as f32, pos.y as f32),
 					};
-					d.wheel(dy);
+					d.wheel(dx, dy);
 					self.dialog_dirty = true;
 				}
 			}
@@ -272,7 +272,9 @@ impl App {
 	}
 
 	// Windows: an owned popup gets no automatic placement (it lands at the
-	// screen origin), so center a fresh dialog over the terminal window.
+	// screen origin), so center a fresh dialog over the terminal window - then
+	// pull it back onto the part of the screen a window can reach, or a tall
+	// dialog centered on a tall terminal puts its own buttons under the taskbar.
 	// Linux WMs place transients themselves.
 	#[cfg(target_os = "windows")]
 	fn center_dialog(&self) {
@@ -282,8 +284,12 @@ impl App {
 		if let Ok(pos) = state.window.outer_position() {
 			let win = state.window.outer_size();
 			let dlg = dialog.window.outer_size();
-			let x = pos.x + (win.width as i32 - dlg.width as i32) / 2;
-			let y = pos.y + (win.height as i32 - dlg.height as i32) / 2;
+			let mut x = pos.x + (win.width as i32 - dlg.width as i32) / 2;
+			let mut y = pos.y + (win.height as i32 - dlg.height as i32) / 2;
+			if let Some((ax, ay, aw, ah)) = crate::dialog::work_area(&dialog.window) {
+				x = x.clamp(ax, (ax + aw - dlg.width as i32).max(ax));
+				y = y.clamp(ay, (ay + ah - dlg.height as i32).max(ay));
+			}
 			dialog
 				.window
 				.set_outer_position(winit::dpi::PhysicalPosition::new(x.max(0), y.max(0)));

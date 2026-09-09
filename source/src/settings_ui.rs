@@ -218,6 +218,9 @@ const LOCKED_TIP: &str =
 // A slider's handle, centered on the value, so it overhangs the track's ends.
 const SLIDER_HANDLE_W: f32 = 10.0;
 
+// Clear space between the two halves of a row that carries two controls, DIP.
+const PAIR_GAP: f32 = 12.0;
+
 // What holds keyboard focus: one control within a row, or a footer button (index
 // into `buttons()`: 0 = Cancel, 1 = Apply, 2 = OK). `Row(i, part)` names a row and
 // which of its focusable sub-controls (part 0 for a plain control; sliders and the
@@ -619,11 +622,17 @@ pub struct SettingsDialog {
 	defaults: Settings,          // config defaults, for the revert-to-default buttons
 	reverted: Vec<&'static str>, // config keys reverted this session -> comment out on Apply
 	rect: Rect,
+	// What the content wants, DIP. The window can be shorter or narrower than
+	// this (a small screen, or the user dragging it in), and then the rows region
+	// scrolls; wider, and the stretchy controls take up the slack.
+	natural: (f32, f32),
 	specs: &'static [Spec],
 	tab: usize,                        // active tab
 	tab_ws: Vec<f32>,                  // measured tab-button widths (UI font)
 	scroll: f32,                       // rows-region scroll offset (0 when everything fits)
+	hscroll: f32,                      // sideways offset, when the window is narrower than `natural`
 	drag_thumb: Option<f32>,           // scrollbar-thumb drag: grab offset within the thumb
+	drag_hthumb: Option<f32>,          // the same for the horizontal bar
 	drag: Option<usize>,               // slider row being dragged
 	shell_drag: Option<ShellDrag>,     // shells line being dragged by its grip
 	pressed: Option<usize>,            // footer button held down (fires on release; drawn pressed)
@@ -682,6 +691,15 @@ impl SettingsDialog {
 	fn line_row_h(&self) -> f32 {
 		lay().row_height.max(self.line_h + lay().row_pad)
 	}
+	// How tall row `i` LOOKS. A row drawn beside another shares that row's line,
+	// so it stands a line tall even though it advances the walk by nothing.
+	fn row_screen_h(&self, i: usize) -> f32 {
+		if self.specs[i].beside {
+			self.line_row_h()
+		} else {
+			self.row_h(&self.specs[i].kind)
+		}
+	}
 	// One line of the grid - the same height as an ordinary settings row, so the
 	// fields in it match every other field in the dialog.
 	fn shell_line_h(&self) -> f32 {
@@ -714,13 +732,27 @@ impl SettingsDialog {
 			.filter(move |(_, spec)| spec.tab == tab && !Self::header_is_tab_title(spec))
 	}
 
+	// The next row DOWN from `i`, skipping anything that shares `i`'s own line.
+	fn next_row(specs: &[Spec], i: usize, tab: usize) -> Option<&Spec> {
+		Self::visible(specs, tab)
+			.find(|(j, spec)| *j > i && !spec.beside)
+			.map(|(_, spec)| spec)
+	}
+	// True when the row after `i` is drawn beside it rather than under it, so the
+	// two share one line. The second of the pair carries the line's height, which
+	// is what keeps `row_y` returning the same y for both.
+	fn pairs_down(specs: &[Spec], i: usize, tab: usize) -> bool {
+		Self::visible(specs, tab)
+			.find(|(j, _)| *j > i)
+			.is_some_and(|(_, next)| next.beside)
+	}
 	// A row leads a sub-group when the row drawn under it is indented further.
 	// Read off the indentation rather than declared a second time, so the two
 	// cannot disagree.
 	fn leads_subgroup(specs: &[Spec], i: usize, tab: usize) -> bool {
-		Self::visible(specs, tab)
-			.find(|(j, _)| *j > i)
-			.is_some_and(|(_, next)| next.indent > specs[i].indent)
+		// half a line leads nothing, and its own indent means nothing either
+		!specs[i].beside
+			&& Self::next_row(specs, i, tab).is_some_and(|next| next.indent > specs[i].indent)
 	}
 
 	// Clear space above a drawn row: a group heading is set off from the section
@@ -728,6 +760,9 @@ impl SettingsDialog {
 	// applies at the top of a section, where the separation is already there.
 	fn gap_above(specs: &[Spec], i: usize, tab: usize, prev: Option<&Spec>) -> f32 {
 		let Some(prev) = prev else { return 0.0 };
+		if specs[i].beside {
+			return 0.0; // mid-line: there is nothing above it
+		}
 		if matches!(specs[i].kind, Kind::Header(_)) {
 			return lay().header_gap;
 		}
@@ -744,16 +779,25 @@ impl SettingsDialog {
 		let mut prev: Option<&Spec> = None;
 		for (i, spec) in Self::visible(specs, tab) {
 			h += Self::gap_above(specs, i, tab, prev);
-			h += Self::row_h_for(&spec.kind, line_h, shells);
+			h += Self::row_advance(specs, i, tab, line_h, shells);
 			prev = Some(spec);
 		}
 		h
 	}
+	// What a row adds to the walk down a tab. A row with another drawn beside it
+	// adds nothing; the one beside it adds the line they share.
+	fn row_advance(specs: &[Spec], i: usize, tab: usize, line_h: f32, shells: usize) -> f32 {
+		if Self::pairs_down(specs, i, tab) {
+			0.0
+		} else {
+			Self::row_h_for(&specs[i].kind, line_h, shells)
+		}
+	}
 
 	// `line_h` is the chrome (UI font) line height; `label_w`/`btn_w`/`tab_ws`
 	// are the measured widths in that font (see chrome_widths) so nothing
-	// truncates. `max_h` caps the window height (short screens / huge fonts);
-	// a tab that doesn't fit scrolls instead of clipping the buttons.
+	// truncates. `max_w`/`max_h` cap the window to what the screen can show; a
+	// tab that doesn't fit scrolls instead of clipping the buttons.
 	// `scale` is the window's DIP -> physical factor; every other argument arrives
 	// in physical pixels and is converted on the way in (see the module note on
 	// the DIP boundary).
@@ -765,6 +809,7 @@ impl SettingsDialog {
 		btn_w: f32,
 		row_btn_w: f32,
 		tab_ws: Vec<f32>,
+		max_w: f32,
 		max_h: f32,
 		scale: f32,
 	) -> Self {
@@ -774,7 +819,7 @@ impl SettingsDialog {
 			1.0
 		};
 		let (screen_w, screen_h) = (screen_w / scale, screen_h / scale);
-		let (line_h, max_h) = (line_h / scale, max_h / scale);
+		let (line_h, max_w, max_h) = (line_h / scale, max_w / scale, max_h / scale);
 		let (label_w, btn_w, row_btn_w) = (label_w / scale, btn_w / scale, row_btn_w / scale);
 		let tab_ws: Vec<f32> = tab_ws.into_iter().map(|w| w / scale).collect();
 		let specs: &'static [Spec] = &ui().specs;
@@ -786,11 +831,10 @@ impl SettingsDialog {
 		let tallest = (0..tab_titles().len())
 			.map(|t| Self::tab_content_h(specs, t, line_h, shells))
 			.fold(0.0f32, f32::max);
-		let h = (Self::gutter_h_for(line_h)
+		let natural_h = Self::gutter_h_for(line_h)
 			+ 1.0 + lay().tabs_gap
 			+ tallest + lay().buttons_gap
-			+ btn_h + lay().pad)
-			.min(max_h.max(300.0));
+			+ btn_h + lay().pad;
 		let tabs_w = lay().pad * 2.0
 			+ tab_ws.iter().sum::<f32>()
 			+ lay().tab_gap * tab_ws.len().saturating_sub(1) as f32;
@@ -807,13 +851,25 @@ impl SettingsDialog {
 			.unwrap_or(0) as f32;
 		let radio_w =
 			lay().pad + label_w + max_radio_opts * lay().radio_pitch * font_scale + lay().pad;
-		// a dropdown's collapsed box (+ revert column) must fit too
-		let has_dropdown = specs.iter().any(|s| matches!(s.kind, Kind::Dropdown(_)));
-		let dd_w = if has_dropdown {
-			lay().pad
-				+ label_w + lay().dropdown_width * font_scale
-				+ 6.0 + lay().revert_width
-				+ lay().pad
+		// a dropdown's collapsed box (+ revert column) must fit too, and a row
+		// carrying two of them needs the column twice over
+		let dd_ctl = specs
+			.windows(2)
+			.filter(|w| {
+				w[1].beside
+					&& matches!(w[0].kind, Kind::Dropdown(_))
+					&& matches!(w[1].kind, Kind::Dropdown(_))
+			})
+			.map(|_| lay().dropdown_pair_width * font_scale * 2.0 + PAIR_GAP)
+			.chain(
+				specs
+					.iter()
+					.filter(|s| matches!(s.kind, Kind::Dropdown(_)) && !s.beside)
+					.map(|_| lay().dropdown_width * font_scale),
+			)
+			.fold(0.0f32, f32::max);
+		let dd_w = if dd_ctl > 0.0 {
+			lay().pad + label_w + dd_ctl + 6.0 + lay().revert_width + lay().pad
 		} else {
 			0.0
 		};
@@ -847,6 +903,13 @@ impl SettingsDialog {
 			.max(dd_w)
 			.max(btns_w)
 			.max(grid_w);
+		// Natural size first, then what the screen leaves room for. Below the
+		// natural size the rows region scrolls in that direction; above it the
+		// stretchy controls spread out.
+		let natural = (w, natural_h);
+		let (min_w, min_h) = Self::min_size_dip(line_h, btn_w);
+		let w = w.min(max_w.max(min_w));
+		let h = natural_h.min(max_h.max(min_h));
 		let rect = Rect {
 			x: ((screen_w - w) / 2.0).max(0.0),
 			y: ((screen_h - h) / 2.0).max(0.0),
@@ -862,11 +925,14 @@ impl SettingsDialog {
 			defaults: Settings::default(),
 			reverted: Vec::new(),
 			rect,
+			natural,
 			specs,
 			tab: 0,
 			tab_ws,
 			scroll: 0.0,
+			hscroll: 0.0,
 			drag_thumb: None,
+			drag_hthumb: None,
 			drag: None,
 			shell_drag: None,
 			pressed: None,
@@ -1024,7 +1090,7 @@ impl SettingsDialog {
 		}
 	}
 	fn tab_rect(&self, k: usize) -> Rect {
-		let x = self.rect.x
+		let x = self.content_x()
 			+ lay().pad
 			+ self.tab_ws[..k].iter().sum::<f32>()
 			+ lay().tab_gap * k as f32;
@@ -1059,13 +1125,103 @@ impl SettingsDialog {
 	fn max_scroll(&self) -> f32 {
 		(self.content_h() - self.viewport().h).max(0.0)
 	}
-	pub fn wheel(&mut self, dy_px: f32) {
+
+	// The smallest useful window: the three footer buttons have to fit across it,
+	// and a couple of rows have to be left above them to be worth scrolling.
+	fn min_size_dip(line_h: f32, btn_w: f32) -> (f32, f32) {
+		let l = lay();
+		let row = l.row_height.max(line_h + l.row_pad);
+		(
+			l.pad * 2.0 + btn_w.max(l.button_width) * 3.0 + l.button_gap * 2.0,
+			Self::gutter_h_for(line_h)
+				+ 1.0 + l.tabs_gap
+				+ row * 2.0 + l.buttons_gap
+				+ l.button_height.max(line_h + l.row_pad)
+				+ l.pad,
+		)
+	}
+	// Rows are laid out at the natural width or the window's, whichever is
+	// larger: a narrower window scrolls sideways rather than truncating, a wider
+	// one hands the slack to the stretchy controls.
+	fn layout_w(&self) -> f32 {
+		self.rect.w.max(self.natural.0)
+	}
+	// Left edge of the laid-out content, which is the panel's own left edge until
+	// the window is too narrow to hold it.
+	fn content_x(&self) -> f32 {
+		self.rect.x - self.hscroll
+	}
+	fn max_hscroll(&self) -> f32 {
+		(self.natural.0 - self.rect.w).max(0.0)
+	}
+	// Right edge every stretchy control ends on: the revert column's left side.
+	// Fixed, so a value field and a revert arrow line up down the whole tab
+	// whatever the window's width.
+	fn ctl_right_full(&self) -> f32 {
+		self.content_x() + self.layout_w() - lay().pad - lay().revert_width - 6.0
+	}
+	// The same, for one row: the first of a pair stops at the halfway mark.
+	fn ctl_right(&self, i: usize) -> f32 {
+		if Self::pairs_down(self.specs, i, self.tab) {
+			let left = self.content_x() + lay().pad + self.label_w;
+			left + self.pair_split(left) - PAIR_GAP / 2.0
+		} else {
+			self.ctl_right_full()
+		}
+	}
+	// The horizontal bar sits in the clear space between the last row and the
+	// footer buttons, so showing it costs the rows nothing.
+	fn hthumb(&self) -> Option<Rect> {
+		let scroll_max = self.max_hscroll();
+		if scroll_max <= 0.0 {
+			return None;
+		}
+		let track = self.htrack();
+		let thumb_w = (track.w * self.rect.w / self.layout_w()).max(lay().scrollbar_thumb_min);
+		Some(Rect {
+			x: track.x + (self.hscroll / scroll_max) * (track.w - thumb_w).max(0.0),
+			w: thumb_w,
+			..track
+		})
+	}
+	fn htrack(&self) -> Rect {
+		let vp = self.viewport();
+		Rect {
+			x: vp.x + lay().pad,
+			y: vp.y + vp.h + (lay().buttons_gap - lay().scrollbar_width) / 2.0,
+			w: (vp.w - lay().pad * 2.0).max(1.0),
+			h: lay().scrollbar_width,
+		}
+	}
+	pub fn wheel(&mut self, dx_px: f32, dy_px: f32) {
 		if self.prompt.is_some() {
 			return; // nothing behind the prompt box may move under it
 		}
 		self.dismiss_menu();
-		let dy = self.to_dip(dy_px);
+		let (dx, dy) = (self.to_dip(dx_px), self.to_dip(dy_px));
 		self.scroll = (self.scroll - dy).clamp(0.0, self.max_scroll());
+		self.hscroll = (self.hscroll - dx).clamp(0.0, self.max_hscroll());
+	}
+
+	// The size the content wants, and the smallest the window may be, both in
+	// physical pixels - the window's own limits and the resize snap read them.
+	pub fn natural_size(&self) -> (f32, f32) {
+		(self.to_px(self.natural.0), self.to_px(self.natural.1))
+	}
+	pub fn min_size(&self) -> (f32, f32) {
+		let (w, h) = Self::min_size_dip(self.line_h, self.btn_w);
+		(self.to_px(w), self.to_px(h))
+	}
+	// The window was resized. Everything is laid out from `rect`, so this is all
+	// of it - except that a smaller window can leave either scroll offset past
+	// its new limit, and a popup placed against the old edges is stale.
+	pub fn set_size(&mut self, w_px: f32, h_px: f32) {
+		self.rect.w = self.to_dip(w_px).max(1.0);
+		self.rect.h = self.to_dip(h_px).max(1.0);
+		self.scroll = self.scroll.clamp(0.0, self.max_scroll());
+		self.hscroll = self.hscroll.clamp(0.0, self.max_hscroll());
+		self.open = None;
+		self.dismiss_menu();
 	}
 	pub fn view(&self) -> View {
 		View {
@@ -1248,7 +1404,7 @@ impl SettingsDialog {
 			(r.y - 4.0, r.y + r.h + 4.0)
 		} else {
 			let top = self.row_y(i);
-			(top, top + self.row_h(&self.specs[i].kind))
+			(top, top + self.row_screen_h(i))
 		};
 		if top < vp.y {
 			self.scroll -= vp.y - top; // row above viewport -> scroll it down into view
@@ -1256,6 +1412,16 @@ impl SettingsDialog {
 			self.scroll += bottom - (vp.y + vp.h); // row below -> scroll up
 		}
 		self.scroll = self.scroll.clamp(0.0, self.max_scroll());
+		// and sideways, for a window too narrow to hold the whole row
+		if self.max_hscroll() > 0.0 {
+			let ctl = self.focus_ctl_rect(i, part);
+			if ctl.x < vp.x {
+				self.hscroll -= vp.x - ctl.x;
+			} else if ctl.x + ctl.w > vp.x + vp.w {
+				self.hscroll += ctl.x + ctl.w - (vp.x + vp.w);
+			}
+			self.hscroll = self.hscroll.clamp(0.0, self.max_hscroll());
+		}
 	}
 	// Ctrl+Tab / Ctrl+Shift+Tab: cycle the active tab, focusing its first control.
 	fn tab_switch(&mut self, forward: bool) {
@@ -1574,7 +1740,13 @@ impl SettingsDialog {
 			if j == i {
 				return y;
 			}
-			y += self.row_h(&spec.kind);
+			y += Self::row_advance(
+				self.specs,
+				j,
+				self.tab,
+				self.line_h,
+				self.edited.shells.len(),
+			);
 			prev = Some(spec);
 		}
 		y
@@ -1620,8 +1792,8 @@ impl SettingsDialog {
 	// it is deliberately kept off the right-hand edge the pointer travels down.
 	fn shell_cols(&self) -> ShellCols {
 		let l = lay();
-		let left = self.rect.x + l.pad;
-		let right = self.rect.x + self.rect.w - l.pad;
+		let left = self.content_x() + l.pad;
+		let right = self.content_x() + self.layout_w() - l.pad;
 		let active = right - l.shell_active_width;
 		let seen = active - l.shell_col_gap - l.shell_seen_width;
 		let remove = seen - l.shell_col_gap - self.shell_button_w();
@@ -1756,20 +1928,37 @@ impl SettingsDialog {
 
 	// Left edge of a row's label: its own sub-group depth in from the panel pad.
 	fn label_x(&self, i: usize) -> f32 {
-		self.rect.x + lay().pad + f32::from(self.specs[i].indent) * lay().indent
+		if self.specs[i].beside {
+			// half a line has no label column: the label follows its control, the
+			// way a checkbox's always has
+			return self.control_x(i) + lay().swatch + 6.0;
+		}
+		self.content_x() + lay().pad + f32::from(self.specs[i].indent) * lay().indent
 	}
-	fn control_x(&self) -> f32 {
-		self.rect.x + lay().pad + self.label_w
+	// Where row `i`'s controls start. A pair splits the control column down the
+	// middle, so the second of the two starts halfway across.
+	fn control_x(&self, i: usize) -> f32 {
+		let left = self.content_x() + lay().pad + self.label_w;
+		if self.specs[i].beside {
+			left + (self.pair_split(left) + PAIR_GAP / 2.0)
+		} else {
+			left
+		}
+	}
+	// Half the control column, measured from its left edge.
+	fn pair_split(&self, left: f32) -> f32 {
+		((self.ctl_right_full() - left) / 2.0).max(0.0)
 	}
 	// Top of a control `h` tall, centered in row `i`'s line.
 	fn centered_in_row(&self, i: usize, h: f32) -> f32 {
 		self.row_y(i) + (self.line_row_h() - h) / 2.0
 	}
 	fn track(&self, i: usize) -> Rect {
+		let x = self.control_x(i);
 		Rect {
-			x: self.control_x(),
+			x,
 			y: self.centered_in_row(i, 6.0),
-			w: lay().slider_width,
+			w: (self.ctl_right(i) - lay().value_width - 14.0 - x).max(lay().slider_width / 4.0),
 			h: 6.0,
 		}
 	}
@@ -1778,7 +1967,7 @@ impl SettingsDialog {
 	fn swatch(&self, i: usize) -> Rect {
 		let h = self.field_h();
 		Rect {
-			x: self.control_x(),
+			x: self.control_x(i),
 			y: self.centered_in_row(i, h),
 			w: h,
 			h,
@@ -1786,10 +1975,11 @@ impl SettingsDialog {
 	}
 	fn hexbox(&self, i: usize) -> Rect {
 		let h = self.field_h();
+		let x = self.control_x(i) + h + 8.0;
 		Rect {
-			x: self.control_x() + h + 8.0,
+			x,
 			y: self.centered_in_row(i, h),
-			w: lay().hex_width,
+			w: (self.ctl_right(i) - x).max(lay().hex_width),
 			h,
 		}
 	}
@@ -1797,7 +1987,7 @@ impl SettingsDialog {
 	fn valbox(&self, i: usize) -> Rect {
 		let h = self.field_h();
 		Rect {
-			x: self.control_x() + lay().slider_width + 14.0,
+			x: self.ctl_right(i) - lay().value_width,
 			y: self.centered_in_row(i, h),
 			w: lay().value_width,
 			h,
@@ -1805,19 +1995,19 @@ impl SettingsDialog {
 	}
 	// wide editable field (background-image path), control_x -> the revert column
 	fn textbox(&self, i: usize) -> Rect {
-		let x = self.control_x();
+		let x = self.control_x(i);
 		let h = self.field_h();
 		Rect {
 			x,
 			y: self.centered_in_row(i, h),
-			w: self.rect.x + self.rect.w - lay().pad - lay().revert_width - 6.0 - x,
+			w: (self.ctl_right(i) - x).max(lay().value_width),
 			h,
 		}
 	}
 	// right-edge revert-to-default icon for row `i`
 	fn revert_box(&self, i: usize) -> Rect {
 		Rect {
-			x: self.rect.x + self.rect.w - lay().pad - lay().revert_width,
+			x: self.content_x() + self.layout_w() - lay().pad - lay().revert_width,
 			y: self.centered_in_row(i, lay().swatch),
 			w: lay().revert_width,
 			h: lay().swatch,
@@ -1825,7 +2015,7 @@ impl SettingsDialog {
 	}
 	fn checkbox(&self, i: usize) -> Rect {
 		Rect {
-			x: self.control_x(),
+			x: self.control_x(i),
 			y: self.centered_in_row(i, lay().swatch),
 			w: lay().swatch,
 			h: lay().swatch,
@@ -1837,7 +2027,7 @@ impl SettingsDialog {
 	// checkbox `p` (0/1) on a Dual row; its label sits just to the right
 	fn dual_box(&self, i: usize, p: u16) -> Rect {
 		Rect {
-			x: self.control_x() + p as f32 * self.dual_pitch(),
+			x: self.control_x(i) + p as f32 * self.dual_pitch(),
 			y: self.centered_in_row(i, lay().swatch),
 			w: lay().swatch,
 			h: lay().swatch,
@@ -1858,7 +2048,7 @@ impl SettingsDialog {
 	fn radio_box(&self, i: usize, k: usize) -> Rect {
 		let size = self.radio_box_sz();
 		Rect {
-			x: self.control_x() + k as f32 * self.radio_pitch(),
+			x: self.control_x(i) + k as f32 * self.radio_pitch(),
 			y: self.centered_in_row(i, size),
 			w: size,
 			h: size,
@@ -1868,10 +2058,17 @@ impl SettingsDialog {
 	// + a down-arrow; clicking it opens the popup list.
 	fn dd_box(&self, i: usize) -> Rect {
 		let h = self.field_h();
+		let x = self.control_x(i);
+		let shares_a_line = self.specs[i].beside || Self::pairs_down(self.specs, i, self.tab);
+		let floor = if shares_a_line {
+			lay().dropdown_pair_width
+		} else {
+			lay().dropdown_width
+		};
 		Rect {
-			x: self.control_x(),
+			x,
 			y: self.centered_in_row(i, h),
-			w: lay().dropdown_width * self.ui_scale(),
+			w: (self.ctl_right(i) - x).max(floor * self.ui_scale()),
 			h,
 		}
 	}
@@ -1994,17 +2191,24 @@ impl SettingsDialog {
 			let ctl = self.checkbox(i);
 			let hit = if matches!(self.specs[i].kind, Kind::ShellList) {
 				Rect {
-					x: self.rect.x + lay().pad,
+					x: self.content_x() + lay().pad,
 					y: self.shell_head_y(i),
-					w: self.rect.w - lay().pad * 2.0,
+					w: self.layout_w() - lay().pad * 2.0,
 					h: self.line_h,
+				}
+			} else if self.specs[i].beside {
+				Rect {
+					x: self.control_x(i),
+					y: self.row_y(i),
+					w: (self.ctl_right(i) - self.control_x(i)).max(ctl.w),
+					h: self.row_screen_h(i),
 				}
 			} else {
 				Rect {
-					x: self.rect.x + lay().pad,
+					x: self.content_x() + lay().pad,
 					y: self.row_y(i),
-					w: ctl.x + ctl.w - (self.rect.x + lay().pad),
-					h: self.row_h(&self.specs[i].kind),
+					w: ctl.x + ctl.w - (self.content_x() + lay().pad),
+					h: self.row_screen_h(i),
 				}
 			};
 			if hit.contains(mx, my) {
@@ -2102,30 +2306,39 @@ impl SettingsDialog {
 		if self.locked(self.specs[i].key) {
 			return true;
 		}
-		match self.specs[i].kind {
-			Kind::Dual { keys, .. } => keys.iter().all(|&k| self.is_default(k)),
-			_ => self.is_default(self.specs[i].key),
-		}
+		self.row_keys(i).iter().all(|&k| self.is_default(k))
 	}
 	// A row of push-buttons has no value, and the shells grid is a list rather
-	// than a setting - neither has a default to go back to.
+	// than a setting - neither has a default to go back to. A row drawn beside
+	// another has none of its own either: the one revert arrow at the end of the
+	// line stands for both halves.
 	fn has_revert(&self, i: usize) -> bool {
-		!matches!(
-			self.specs[i].kind,
-			Kind::Header(_) | Kind::Buttons(_) | Kind::ShellList
-		)
+		!self.specs[i].beside
+			&& !matches!(
+				self.specs[i].kind,
+				Kind::Header(_) | Kind::Buttons(_) | Kind::ShellList
+			)
 	}
-	// Revert a whole row to defaults (both keys for a Dual row).
-	fn row_revert(&mut self, i: usize) {
-		match self.specs[i].kind {
-			Kind::Dual { keys, .. } => {
-				for k in keys {
-					if !self.is_default(k) {
-						self.revert(k);
-					}
-				}
+	// Every setting one revert arrow answers for: the row's own, both halves of a
+	// Dual, and whatever is drawn beside it.
+	fn row_keys(&self, i: usize) -> Vec<Key> {
+		let mut keys = match self.specs[i].kind {
+			Kind::Dual { keys, .. } => keys.to_vec(),
+			_ => vec![self.specs[i].key],
+		};
+		if Self::pairs_down(self.specs, i, self.tab) {
+			if let Some((j, _)) = Self::visible(self.specs, self.tab).find(|(j, _)| *j > i) {
+				keys.push(self.specs[j].key);
 			}
-			_ => self.revert(self.specs[i].key),
+		}
+		keys
+	}
+	// Revert a whole row to defaults - every key the row's own arrow covers.
+	fn row_revert(&mut self, i: usize) {
+		for k in self.row_keys(i) {
+			if !self.is_default(k) {
+				self.revert(k);
+			}
 		}
 	}
 	// Cancel, Apply, OK rects (right-aligned)
@@ -2154,8 +2367,8 @@ impl SettingsDialog {
 	fn row_btn_rect(&self, i: usize, part: u16) -> Rect {
 		let h = self.btn_h();
 		Rect {
-			x: self.control_x() + f32::from(part) * (self.row_btn_w + lay().button_gap),
-			y: self.row_y(i) + (self.row_h(&self.specs[i].kind) - h) / 2.0,
+			x: self.control_x(i) + f32::from(part) * (self.row_btn_w + lay().button_gap),
+			y: self.row_y(i) + (self.row_screen_h(i) - h) / 2.0,
 			w: self.row_btn_w,
 			h,
 		}
@@ -3291,6 +3504,28 @@ impl SettingsDialog {
 				return Action::None;
 			}
 		}
+		// the sideways bar, the same two gestures. Its grab band is the whole gap
+		// it sits in, so an 8 DIP bar is not an 8 DIP target.
+		if let Some(thumb) = self.hthumb() {
+			let track = self.htrack();
+			let band = Rect {
+				y: track.y - (lay().buttons_gap - track.h) / 2.0,
+				h: lay().buttons_gap,
+				..track
+			};
+			if band.contains(x, y) {
+				let grab = if x >= thumb.x && x <= thumb.x + thumb.w {
+					x - thumb.x
+				} else {
+					let frac = ((x - track.x - thumb.w / 2.0) / (track.w - thumb.w).max(1.0))
+						.clamp(0.0, 1.0);
+					self.hscroll = frac * self.max_hscroll();
+					thumb.w / 2.0
+				};
+				self.drag_hthumb = Some(grab);
+				return Action::None;
+			}
+		}
 		// rows: only within the (possibly scrolled) viewport, only the active tab
 		let vp = self.viewport();
 		if y < vp.y || y > vp.y + vp.h {
@@ -3864,6 +4099,13 @@ impl SettingsDialog {
 			self.scroll = frac * self.max_scroll();
 			return;
 		}
+		if let Some(grab) = self.drag_hthumb {
+			let track = self.htrack();
+			let thumb_w = self.hthumb().map_or(lay().scrollbar_thumb_min, |t| t.w);
+			let frac = ((x - grab - track.x) / (track.w - thumb_w).max(1.0)).clamp(0.0, 1.0);
+			self.hscroll = frac * self.max_hscroll();
+			return;
+		}
 		if self.drag.is_some() {
 			self.drag_to(x);
 		}
@@ -3878,6 +4120,7 @@ impl SettingsDialog {
 		}
 		self.drag = None;
 		self.drag_thumb = None;
+		self.drag_hthumb = None;
 		self.edit_drag = None;
 		// an empty drag-selection collapses back to a plain caret
 		if let Some(edit) = &mut self.edit {
@@ -4377,6 +4620,12 @@ impl SettingsDialog {
 			fixed.push(q(thumb.x, vp.y, thumb.w, vp.h, dlg().track));
 			fixed.push(q(thumb.x, thumb.y, thumb.w, thumb.h, dlg().handle));
 		}
+		// and the sideways one, in the clear space above the footer buttons
+		if let Some(thumb) = self.hthumb() {
+			let track = self.htrack();
+			fixed.push(q(track.x, track.y, track.w, track.h, dlg().track));
+			fixed.push(q(thumb.x, thumb.y, thumb.w, thumb.h, dlg().handle));
+		}
 
 		for i in 0..self.specs.len() {
 			if self.specs[i].tab != self.tab || Self::header_is_tab_title(&self.specs[i]) {
@@ -4599,11 +4848,11 @@ impl SettingsDialog {
 					// faint rule near the bottom of the (tall) heading row, leaving a
 					// clear gap below the heading text above it
 					let y = self.row_y(i) + self.row_h(&Kind::Header("")) - 8.0;
-					let x = self.rect.x + lay().pad;
+					let x = self.content_x() + lay().pad;
 					out.push(q(
 						x,
 						y,
-						self.rect.w - lay().pad * 2.0,
+						self.layout_w() - lay().pad * 2.0,
 						1.0,
 						dlg().panel_border,
 					));
@@ -4817,17 +5066,20 @@ impl SettingsDialog {
 				out.push(TextItem {
 					bold: true,
 					clip: Some(vp),
-					..mk(section.into(), self.rect.x + lay().pad, hy)
+					..mk(section.into(), self.content_x() + lay().pad, hy)
 				});
 				continue;
 			}
 			let off = self.disabled(self.specs[i].key);
 			let label_color = if off { dlg().dim } else { dlg().text };
-			out.push(TextItem {
-				color: label_color,
-				clip: Some(vp),
-				..mk(self.specs[i].label.into(), self.label_x(i), ty)
-			});
+			// a half-line whose control says what it is carries no label at all
+			if !self.specs[i].label.is_empty() {
+				out.push(TextItem {
+					color: label_color,
+					clip: Some(vp),
+					..mk(self.specs[i].label.into(), self.label_x(i), ty)
+				});
+			}
 			// revert-to-default icon: bright + clickable when off-default, dim when at it
 			if self.has_revert(i) {
 				let revert_rect = self.revert_box(i);
@@ -5393,6 +5645,7 @@ mod tests {
 			80.0 * scale,
 			90.0 * scale,
 			vec![90.0 * scale; tab_titles().len()],
+			f32::MAX,
 			max_h * scale,
 			scale,
 		);
@@ -5474,13 +5727,140 @@ mod tests {
 		assert!(d.thumb().is_some());
 		// wheel scrolls rows up and clamps at both ends
 		let y_first = d.row_y(1);
-		d.wheel(-120.0);
+		d.wheel(0.0, -120.0);
 		assert!(d.scroll > 0.0 && d.scroll <= d.max_scroll());
 		assert!(d.row_y(1) < y_first);
-		d.wheel(1e9);
+		d.wheel(0.0, 1e9);
 		assert_eq!(d.scroll, 0.0);
-		d.wheel(-1e9);
+		d.wheel(0.0, -1e9);
 		assert_eq!(d.scroll, d.max_scroll());
+	}
+
+	// Too narrow, and the rows keep their natural width and slide sideways under
+	// the window instead of being cut down to fit it. The bar that does it lives
+	// in the clear space above the footer, so showing it costs the rows nothing.
+	#[test]
+	fn a_narrow_window_scrolls_sideways_rather_than_truncating() {
+		let mut d = mk_dialog(2000.0);
+		let wide = d.size().0;
+		assert_eq!(d.max_hscroll(), 0.0);
+		assert!(d.hthumb().is_none());
+		let rows_before = d.viewport().h;
+
+		d.set_size(wide - 200.0, d.size().1);
+		assert!((d.max_hscroll() - 200.0).abs() < 0.01);
+		assert!(d.hthumb().is_some());
+		assert_eq!(
+			d.viewport().h,
+			rows_before,
+			"the sideways bar takes no rows"
+		);
+		let bar = d.htrack();
+		let vp = d.viewport();
+		assert!(bar.y >= vp.y + vp.h, "the bar sits below the rows");
+		assert!(
+			bar.y + bar.h <= d.buttons()[0].1.y,
+			"and above the footer buttons"
+		);
+
+		// the revert column starts off the right-hand edge and scrolling reaches it
+		let row = SettingsDialog::visible(d.specs, d.tab)
+			.find(|(i, _)| d.has_revert(*i))
+			.map(|(i, _)| i)
+			.expect("a tab with something to revert");
+		assert!(d.revert_box(row).x + d.revert_box(row).w > d.rect.x + d.rect.w);
+		d.wheel(-1e9, 0.0);
+		assert_eq!(d.hscroll, d.max_hscroll());
+		assert!(d.revert_box(row).x + d.revert_box(row).w <= d.rect.x + d.rect.w + 0.01);
+		// and back
+		d.wheel(1e9, 0.0);
+		assert_eq!(d.hscroll, 0.0);
+	}
+
+	// Clear space between a control's right edge and the panel's.
+	fn right_gap(d: &SettingsDialog, r: super::Rect) -> f32 {
+		d.rect.x + d.rect.w - (r.x + r.w)
+	}
+
+	// Widening hands the extra room to the control in the middle of the row. The
+	// value field and the revert arrow keep their distance from the right edge,
+	// so both stay in one column whatever the window is doing.
+	#[test]
+	fn widening_stretches_the_control_and_not_its_value_field() {
+		let mut d = mk_dialog(2000.0);
+		let row = SettingsDialog::visible(d.specs, 0)
+			.find(|(_, s)| matches!(s.kind, Kind::Slider { .. }))
+			.map(|(i, _)| i)
+			.expect("a slider on the first tab");
+		let narrow = (d.track(row).w, d.valbox(row), d.revert_box(row));
+		let (val_gap, rev_gap) = (right_gap(&d, narrow.1), right_gap(&d, narrow.2));
+
+		d.set_size(d.size().0 + 300.0, d.size().1);
+		assert!(
+			d.track(row).w > narrow.0 + 299.0,
+			"the slider took the whole 300"
+		);
+		assert!((right_gap(&d, d.valbox(row)) - val_gap).abs() < 0.01);
+		assert!((right_gap(&d, d.revert_box(row)) - rev_gap).abs() < 0.01);
+		assert!(
+			d.valbox(row).w == narrow.1.w,
+			"the value field is fixed width"
+		);
+	}
+
+	// A row declared `beside` shares the line above it: same y, and the two split
+	// the control column without touching. The pair costs one line, not two.
+	#[test]
+	fn a_paired_row_shares_the_line_above_it() {
+		let d = mk_dialog(4000.0);
+		let mut pairs = 0;
+		for tab in 0..tab_titles().len() {
+			let rows: Vec<usize> = SettingsDialog::visible(d.specs, tab)
+				.map(|(i, _)| i)
+				.collect();
+			for w in rows.windows(2) {
+				let (lead, follow) = (w[0], w[1]);
+				if !d.specs[follow].beside {
+					continue;
+				}
+				pairs += 1;
+				let mut d = mk_dialog(4000.0);
+				d.tab = tab;
+				assert_eq!(d.row_y(lead), d.row_y(follow), "one line, not two");
+				assert!(
+					d.ctl_right(lead) <= d.control_x(follow),
+					"the two halves do not overlap"
+				);
+				assert!(
+					d.control_x(follow) < d.ctl_right(follow),
+					"the second half has room to draw in"
+				);
+				// one revert arrow answers for both settings
+				assert!(d.has_revert(lead) && !d.has_revert(follow));
+				assert!(d.row_keys(lead).contains(&d.specs[follow].key));
+			}
+		}
+		assert!(pairs >= 2, "expected paired rows, saw {pairs}");
+	}
+
+	// A pair is worth having only if it is shorter than the two rows it replaces.
+	#[test]
+	fn pairing_rows_makes_the_tab_shorter() {
+		let d = mk_dialog(4000.0);
+		let shells = d.edited.shells.len();
+		for tab in 0..tab_titles().len() {
+			let paired = SettingsDialog::visible(d.specs, tab).any(|(_, s)| s.beside);
+			if !paired {
+				continue;
+			}
+			let unpaired: f32 = SettingsDialog::visible(d.specs, tab)
+				.map(|(_, s)| SettingsDialog::row_h_for(&s.kind, d.line_h, shells))
+				.sum();
+			let actual: f32 = SettingsDialog::visible(d.specs, tab)
+				.map(|(i, _)| SettingsDialog::row_advance(d.specs, i, tab, d.line_h, shells))
+				.sum();
+			assert!(actual < unpaired, "tab {tab} saved nothing by pairing");
+		}
 	}
 
 	// The strip is chrome: shorter than a footer button, dropped clear of the
@@ -5512,6 +5892,10 @@ mod tests {
 				.map(|(i, _)| i)
 				.collect();
 			for &i in &rows {
+				// a row drawn beside another has no label column of its own
+				if d.specs[i].beside {
+					continue;
+				}
 				let indent = f32::from(d.specs[i].indent);
 				seen_indented |= indent > 0.0;
 				assert!(
@@ -5523,13 +5907,14 @@ mod tests {
 					"a label never steps left of the panel pad"
 				);
 				// every control on the tab starts in the same column
-				assert!((d.control_x() - (d.rect.x + super::lay().pad + d.label_w)).abs() < 0.01);
+				assert!((d.control_x(i) - (d.rect.x + super::lay().pad + d.label_w)).abs() < 0.01);
 				assert!(
-					d.label_x(i) + super::lay().indent <= d.control_x(),
+					d.label_x(i) + super::lay().indent <= d.control_x(i),
 					"the label column still clears the deepest indent"
 				);
 			}
 			// a member is never deeper than one step below its leader
+			let rows: Vec<usize> = rows.into_iter().filter(|&i| !d.specs[i].beside).collect();
 			for pair in rows.windows(2) {
 				let (prev, next) = (d.specs[pair[0]].indent, d.specs[pair[1]].indent);
 				assert!(next <= prev + 1, "sub-group depth jumps more than one step");
@@ -6437,7 +6822,7 @@ mod tests {
 				h(*a).total_cmp(&h(*b))
 			})
 			.expect("at least one tab");
-		d.wheel(-1e9);
+		d.wheel(0.0, -1e9);
 		let view = d.view();
 		assert!(view.scroll > 0.0);
 		let mut same = mk_dialog(400.0);
@@ -6613,6 +6998,7 @@ mod tests {
 			160.0,
 			180.0,
 			vec![180.0; tab_titles().len()],
+			f32::MAX,
 			4000.0,
 			1.0,
 		);
