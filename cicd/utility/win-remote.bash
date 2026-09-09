@@ -15,7 +15,7 @@
 ##		box at all, so the alternative is doing it by hand on the other machine.
 ##	Syntax:
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] hosts
-##		win-remote.bash [--host <name>] [--as <user>] [--optional] sync
+##		win-remote.bash [--host <name>] [--optional] [--ref <ref>] sync
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] job <name> [args...]
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] run <file.ps1> [args...]
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] fetch <remote-rel-path> <local-dir>
@@ -33,7 +33,9 @@
 ##		that actually ran and failed still fails, with or without it.
 ##		Jobs run against a clone the remote keeps at origin/dev; it is reset, not
 ##		merged, so local edits there are discarded. Uncommitted work here does not
-##		reach it - push first.
+##		reach it - push first. --ref names a different branch, which is how a fix
+##		gets tried on Windows before it is merged; the next plain sync puts the
+##		clone back on dev.
 ##		--as picks the remote account. The default builds and tests, because the rust
 ##		toolchain is a per-user rustup install under it. The unprivileged test account
 ##		has no toolchain but a virgin profile, which is what to run a built binary as.
@@ -128,12 +130,15 @@ fRunScript() {
 	ssh "${sshOpts[@]}" "${sshUser}@${addr}" "pwsh -NoProfile -ExecutionPolicy Bypass -File \"${winJobs}\\${base}\" ${quoted[*]}"
 }
 
-##	Bring the remote clone to origin/dev. Reset rather than pull: the clone is a
-##	scratch checkout, and a half-merged tree there is worse than a discarded edit.
+##	Bring the remote clone to a branch on origin. Reset rather than pull: the clone
+##	is a scratch checkout, and a half-merged tree there is worse than a discarded
+##	edit.
 fSync() {
 	local addr="$1" tmp
 	tmp="$(mktemp --suffix=.ps1)"
-	cat > "$tmp" <<'PS'
+	{
+		printf '$ref = "%s"\n' "${syncRef}"
+		cat <<'PS'
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\_env.ps1"
 if (-not (Test-Path (Join-Path $RepoDir ".git"))) {
@@ -141,10 +146,11 @@ if (-not (Test-Path (Join-Path $RepoDir ".git"))) {
 	git clone --branch dev https://github.com/jim-collier/silkterm.git $RepoDir 2>&1 | Out-Null
 }
 git -C $RepoDir fetch --prune origin 2>&1 | Out-Null
-git -C $RepoDir reset --hard origin/dev 2>&1 | Out-Null
+git -C $RepoDir reset --hard "origin/$ref" 2>&1 | Out-Null
 git -C $RepoDir clean -fdx -e target 2>&1 | Out-Null
 "at " + (git -C $RepoDir rev-parse --short HEAD) + " " + (git -C $RepoDir log -1 --format=%s)
 PS
+	} > "$tmp"
 	fRunScript "$addr" "$tmp"
 	rm -f "$tmp"
 }
@@ -176,10 +182,11 @@ runScript=""
 declare -a runArgs=()
 fDoRun() { fRunScript "$1" "$runScript" "${runArgs[@]}"; }
 
-only=""; optional=0
+only=""; optional=0; syncRef="dev"
 while (($#)); do case "$1" in
 	--host)    only="${2:-}"; shift 2 ;;
 	--as)      sshUser="${2:-}"; shift 2 ;;
+	--ref)     syncRef="${2:-}"; shift 2 ;;
 	--optional) optional=1; shift ;;
 	-h|--help) grep -E '^##' "$0" | sed 's/^##\t\?//'; exit 0 ;;
 	*) break ;;
@@ -232,7 +239,7 @@ case "$cmd" in
 		fOverHosts fPull || exit 1
 		;;
 	*)
-		echo "usage: win-remote.bash [--host <name>] [--as <user>] [--optional] {hosts|sync|job <name> [args]|run <file.ps1> [args]|fetch <rel> <dir>|pull <abs> <dir>}" >&2
+		echo "usage: win-remote.bash [--host <name>] [--as <user>] [--ref <ref>] [--optional] {hosts|sync|job <name> [args]|run <file.ps1> [args]|fetch <rel> <dir>|pull <abs> <dir>}" >&2
 		exit 2
 		;;
 esac
@@ -242,3 +249,4 @@ esac
 ##		- 20260908: Created.
 ##		- 20260908: --optional, so an unreachable box is a skip.
 ##		- 20260908: pull, for output written outside the clone.
+##		- 20260909: --ref, to try a branch on Windows before merging it.
