@@ -210,11 +210,14 @@ impl DialogWin {
 	}
 
 	// `resume` is the view a recently closed Settings window was left on (see
-	// App::settings_view); None opens at the top of the first tab.
+	// App::settings_view); None opens at the top of the first tab. `sized` is a
+	// size the user dragged it to earlier this session, which outlives the view
+	// and is never written anywhere.
 	pub fn new_settings(
 		el: &ActiveEventLoop,
 		parent: Option<RawWindowHandle>,
 		resume: Option<View>,
+		sized: Option<(u32, u32)>,
 		warm: Option<&crate::gfx::DialogGpu>,
 	) -> anyhow::Result<Self> {
 		// provisional window first: sizing needs a TextCtx to measure labels in
@@ -251,7 +254,16 @@ impl DialogWin {
 			min_w.ceil() as u32,
 			min_h.ceil() as u32,
 		)));
-		let (w, h) = dialog.size();
+		// The size the user last dragged it to wins over the natural one, but it
+		// still has to fit the screen this window came up on.
+		let (w, h) = match sized {
+			Some((sw, sh)) => (
+				(sw as f32).clamp(min_w, max_w.max(min_w)),
+				(sh as f32).clamp(min_h, max_h.max(min_h)),
+			),
+			None => dialog.size(),
+		};
+		dialog.set_size(w, h);
 		let requested_size = winit::dpi::PhysicalSize::new(w.ceil() as u32, h.ceil() as u32);
 		if let Some(applied) = window.request_inner_size(requested_size) {
 			gfx.resize(applied.width, applied.height);
@@ -299,6 +311,18 @@ impl DialogWin {
 	pub fn settings_view(&self) -> Option<View> {
 		match &self.content {
 			Content::Settings(dialog) => Some(dialog.view()),
+			Content::About { .. } => None,
+		}
+	}
+
+	// The size it is sitting at, physical pixels. Kept for the rest of the
+	// session so a reopen comes back the size it was dragged to.
+	pub fn settings_size(&self) -> Option<(u32, u32)> {
+		match &self.content {
+			Content::Settings(_) => {
+				let size = self.window.inner_size();
+				Some((size.width, size.height))
+			}
 			Content::About { .. } => None,
 		}
 	}

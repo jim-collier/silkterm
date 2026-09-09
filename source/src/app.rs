@@ -51,6 +51,9 @@ pub struct App {
 	dialog_dirty: bool,
 	// where the Settings dialog was when it last closed, and when that was
 	settings_view: Option<(Instant, crate::settings_ui::View)>,
+	// and the size it was dragged to, which outlives the view above and lasts
+	// the whole session. Deliberately never written to the config.
+	settings_size: Option<(u32, u32)>,
 	// after the dialog is focused, re-assert "keep the terminal under me" a few
 	// times: the WM's own activation (raising the dialog) can land just after our
 	// first restack and re-bury the terminal, so a couple of delayed retries
@@ -80,6 +83,7 @@ impl App {
 			dialog: None,
 			dialog_dirty: false,
 			settings_view: None,
+			settings_size: None,
 			raise_reassert: 0,
 			raise_next: Instant::now(),
 			vt_watch: false,
@@ -325,6 +329,10 @@ impl App {
 			.and_then(super::dialog::DialogWin::settings_view)
 		{
 			self.settings_view = Some((Instant::now(), view));
+			self.settings_size = self
+				.dialog
+				.as_ref()
+				.and_then(super::dialog::DialogWin::settings_size);
 		}
 		self.dialog = None;
 	}
@@ -6983,8 +6991,14 @@ impl ApplicationHandler<UserEvent> for App {
 				.take()
 				.filter(|(closed, _)| closed.elapsed() <= SETTINGS_RESUME)
 				.map(|(_, view)| view);
-			match crate::dialog::DialogWin::new_settings(event_loop, parent, resume, warm.as_ref())
-			{
+			let sized = self.settings_size;
+			match crate::dialog::DialogWin::new_settings(
+				event_loop,
+				parent,
+				resume,
+				sized,
+				warm.as_ref(),
+			) {
 				Ok(d) => {
 					self.dialog = Some(d);
 					self.center_dialog();
