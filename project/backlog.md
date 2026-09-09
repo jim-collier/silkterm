@@ -47,6 +47,26 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Something already clamps the height, because 1063 is under the 1200 the declared size would give at that scale. It looks like it clamps to the display rather than to the part of it a window can use.
 	- A graphical scenario now measures this, so a full pipeline run fails on that machine until it is fixed.
 	- Opened: 20260908-145000
+- Fix:
+	- Move "Re-test next run" horizontally to the right of "Check for hardware change".
+	- Put text scrim function and falloff dropoffs side-by-side horizontally. (With the label reading "Function, Falloff"
+	- Shrink the dialog vertically to fit the new max length, with existing spacing style guidelines observed.
+	- If it still doesn't fit at 150% (or any other resolution or DPI), show the dialog with as much as will fit (including window decorations and reserved space for task bars etc.), and add a vertical scrollbar in the non-reserved space.
+	- Tabs and padding below them, as well as the buttons and the padding above them, are "reserved" aren't part of vertical scrolling, and are always visible.
+	- Also, allow the dialog to be resized by the user with the mouse.
+		- By default, always open both dimensions: min([as much an needed for largest tab], [as much as screen can fit]).
+			- Retain user resize for the duration of the session (even after the "active tab reset" timer), but don't persist it anywhere.
+		- Vertical resize:
+			- Add or remove vertical scrollbars, per-tab, in non-reserved space, as needed or not needed.
+		- Horizontal resize:
+			- Wider than default: Stretch the controls in between lables and numeric slider input values, so that numeric slider input values and reset icons remain on the right-hand side, with the same padding/margin to dialog's right side.
+			- Narrower than default: Add a horizontal scrollbar above the bottom buttons (and their padding above).
+		- If the dialog has enough room on the display at the default size, "magnetically snap" to that size when resizing moves through it (but allow resize to continue as mouse moves far enough through it). Use typical and unsurprising "magnetic snap" heuristics.
+	- A related styleguide change for both the .md and a change to the Settings dialog:
+		- At any dialog width, make all "middle controls" variable width. Specifically:
+			- Fixed positions aligned left (form  left-to-right): labels, and the left side of controls.
+			- Fixed positions aligned right: (from right-to-left): Reset button, ([right-edge of fixed-width slider value numbers, right-edge of slider control] | [right edge of variable-width text controls such as text boxes, dropdowns])
+			- Variable-width in between: e.g. sliders, text boxes, dropdowns.
 
 - 🔘 Windows: keystrokes injected as characters rather than keys are ignored.
 	- Windows lets a program send a character directly instead of a key press, and it arrives tagged as a packet rather than as a key. Nothing types that way by hand, but the touch keyboard does for some characters, and so do text expanders and some accessibility tools.
