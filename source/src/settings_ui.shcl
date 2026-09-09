@@ -233,7 +233,7 @@ rows:
 	## The two together describe one curve, so they share a line. The label names
 	## both; each box says which of them it is by what it holds.
 	ScrimFunction:
-		label: Function, Falloff
+		label: Function, falloff
 		kind: dropdown
 		options: "Distance field", "Distance transform", "Dilate + feather", "Gaussian [ugly]"
 		indent: 1

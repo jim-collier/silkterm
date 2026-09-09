@@ -71,6 +71,9 @@ pub struct DialogWin {
 	parent: Option<RawWindowHandle>,
 	// a resize snap has been asked for and not yet seen: see snap_to_natural
 	snapped: bool,
+	// what the screen leaves this window, physical pixels. The snap may not pull
+	// it back past this. Unbounded for About, which cannot be resized.
+	caps: (f32, f32),
 }
 
 impl DialogWin {
@@ -206,6 +209,7 @@ impl DialogWin {
 			anim_wake: None,
 			parent,
 			snapped: false,
+			caps: (f32::MAX, f32::MAX),
 		})
 	}
 
@@ -232,7 +236,7 @@ impl DialogWin {
 		// ~1010 DIP tall. A tab that doesn't fit scrolls instead of pushing the
 		// footer buttons off the bottom. SettingsDialog divides these by the scale
 		// factor on the way in, so every figure here is physical.
-		let (max_w, max_h) = Self::settings_caps(&window, scale);
+		let (max_w, max_h) = Self::settings_caps(&window, parent, scale);
 		// laid out at the origin
 		let mut dialog = SettingsDialog::new(
 			0.0,
@@ -283,6 +287,7 @@ impl DialogWin {
 			anim_wake: None,
 			parent,
 			snapped: false,
+			caps: (max_w, max_h),
 		})
 	}
 
@@ -611,7 +616,18 @@ impl DialogWin {
 		}
 		let snap = DLG_SNAP * config::display_scale(self.window.scale_factor());
 		let (nat_w, nat_h) = dialog.natural_size();
-		let (want_w, want_h) = (snap_to(w, nat_w, snap), snap_to(h, nat_h, snap));
+		// Only toward a size the screen can hold. Snapping back to one it cannot is
+		// how the footer buttons end up behind the taskbar again.
+		let want_w = if nat_w <= self.caps.0 {
+			snap_to(w, nat_w, snap)
+		} else {
+			w
+		};
+		let want_h = if nat_h <= self.caps.1 {
+			snap_to(h, nat_h, snap)
+		} else {
+			h
+		};
 		if (want_w - w).abs() < 0.5 && (want_h - h).abs() < 0.5 {
 			self.snapped = false;
 			return;
@@ -620,15 +636,27 @@ impl DialogWin {
 			return;
 		}
 		self.snapped = true;
-		let _ = self
-			.window
-			.request_inner_size(winit::dpi::PhysicalSize::new(want_w as u32, want_h as u32));
+		let size = winit::dpi::PhysicalSize::new(want_w as u32, want_h as u32);
+		// A platform that resizes synchronously answers here and sends no Resized,
+		// so the surface and the layout have to be told from this side.
+		if let Some(applied) = self.window.request_inner_size(size) {
+			self.gfx.resize(applied.width, applied.height);
+			if let Content::Settings(dialog) = &mut self.content {
+				dialog.set_size(applied.width as f32, applied.height as f32);
+			}
+		}
 	}
 
 	// How big the Settings window may be: the part of the screen it can occupy,
 	// less the frame the WM puts round it, and no taller than DLG_MAX_H.
-	fn settings_caps(window: &Window, scale: f32) -> (f32, f32) {
-		let work = work_area(window).map(|(_, _, w, h)| (w as f32, h as f32));
+	// The parent names the monitor. A dialog created hidden has never been placed,
+	// so asking which monitor IT is on answers for wherever the origin happens to
+	// be - the primary, not the screen the terminal is on.
+	fn settings_caps(window: &Window, parent: Option<RawWindowHandle>, scale: f32) -> (f32, f32) {
+		let work = parent
+			.and_then(work_area_of)
+			.or_else(|| work_area(window))
+			.map(|(_, _, w, h)| (w as f32, h as f32));
 		let monitor = window
 			.current_monitor()
 			.map(|m| (m.size().width as f32, m.size().height as f32));
@@ -1381,15 +1409,15 @@ fn layout_about(
 // The part of the screen a window can actually occupy: the monitor minus the
 // taskbar/panels/docks. winit has no API for it, so each platform is asked in
 // its own way and anything else falls back to the whole monitor. Physical
-// pixels, screen coordinates.
+// pixels, screen coordinates. Takes a handle rather than a window because the
+// window that WANTS the answer is often not the one to ask - see settings_caps.
 #[cfg(target_os = "windows")]
-pub fn work_area(window: &Window) -> Option<(i32, i32, i32, i32)> {
+pub fn work_area_of(handle: RawWindowHandle) -> Option<(i32, i32, i32, i32)> {
 	use windows_sys::Win32::Graphics::Gdi::{
 		GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
 	};
-	use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-	let RawWindowHandle::Win32(h) = window.window_handle().ok()?.as_raw() else {
+	let RawWindowHandle::Win32(h) = handle else {
 		return None;
 	};
 	unsafe {
@@ -1410,14 +1438,14 @@ pub fn work_area(window: &Window) -> Option<(i32, i32, i32, i32)> {
 // X11 publishes it as _NET_WORKAREA on the root window - four CARDINALs per
 // virtual desktop, so the current desktop picks the entry. It covers the whole
 // virtual screen rather than one monitor, which is as much as the protocol
-// offers. Wayland has no equivalent and returns None.
+// offers, so `usable_screen` treats it as a cap rather than an answer. Wayland
+// has no equivalent and returns None.
 #[cfg(target_os = "linux")]
-pub fn work_area(window: &Window) -> Option<(i32, i32, i32, i32)> {
-	use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+pub fn work_area_of(handle: RawWindowHandle) -> Option<(i32, i32, i32, i32)> {
 	use x11rb::connection::Connection;
 	use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
 
-	match window.window_handle().ok()?.as_raw() {
+	match handle {
 		RawWindowHandle::Xlib(_) | RawWindowHandle::Xcb(_) => {}
 		_ => return None,
 	}
@@ -1432,9 +1460,10 @@ pub fn work_area(window: &Window) -> Option<(i32, i32, i32, i32)> {
 			.ok()?;
 		Some(reply.value32()?.collect())
 	};
-	let desktop = read(b"_NET_CURRENT_DESKTOP", 1)?
-		.first()
-		.copied()
+	// A window manager that publishes the work area but not the current desktop
+	// still has a usable first entry; don't throw the answer away over it.
+	let desktop = read(b"_NET_CURRENT_DESKTOP", 1)
+		.and_then(|v| v.first().copied())
 		.unwrap_or(0) as usize;
 	let areas = read(b"_NET_WORKAREA", 256)?;
 	let quad = areas
@@ -1450,15 +1479,25 @@ pub fn work_area(window: &Window) -> Option<(i32, i32, i32, i32)> {
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-pub fn work_area(_window: &Window) -> Option<(i32, i32, i32, i32)> {
+pub fn work_area_of(_handle: RawWindowHandle) -> Option<(i32, i32, i32, i32)> {
 	None
 }
 
-// The screen a dialog may use. The work area is what a window can actually
-// occupy, so it wins wherever the platform will name it; the monitor is the
-// fallback and still counts whatever the taskbar has taken.
+pub fn work_area(window: &Window) -> Option<(i32, i32, i32, i32)> {
+	use winit::raw_window_handle::HasWindowHandle;
+	work_area_of(window.window_handle().ok()?.as_raw())
+}
+
+// The screen a dialog may use. The work area is what a window can occupy once
+// the taskbar has had its share, but on X11 it covers every monitor at once, so
+// it is a cap rather than an answer: the smaller of the two is what one window
+// gets. The monitor alone still counts whatever the taskbar has taken.
 fn usable_screen(work: Option<(f32, f32)>, monitor: Option<(f32, f32)>) -> (f32, f32) {
-	work.or(monitor).unwrap_or((f32::MAX, f32::MAX))
+	match (work, monitor) {
+		(Some(work), Some(monitor)) => (work.0.min(monitor.0), work.1.min(monitor.1)),
+		(Some(only), None) | (None, Some(only)) => only,
+		(None, None) => (f32::MAX, f32::MAX),
+	}
 }
 
 // The size caps, given what the screen leaves and what the frame costs. Split

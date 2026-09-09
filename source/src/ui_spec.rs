@@ -455,13 +455,32 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 			}
 		}
 		let beside = doc.get_bool(&at("beside")).unwrap_or(false);
-		// It has to have something to sit beside, and a pair of pairs would have
-		// nowhere to put the second one.
-		if beside
-			&& !specs.last().is_some_and(|prev| {
-				prev.tab == tab && !prev.beside && !matches!(prev.kind, Kind::Header(_))
-			}) {
-			problems.push(format!("rows.{name}: beside needs a plain row above it"));
+		// A shared line needs an ordinary row above it to share, and both halves
+		// have to be things that fit on one line. A row whose height is not a
+		// constant (the grid) or that holds no value (a heading) is not.
+		let one_line = |kind: &Kind| {
+			!matches!(
+				kind,
+				Kind::Header(_) | Kind::ShellList | Kind::Buttons(_) | Kind::Radio(_)
+			)
+		};
+		if beside {
+			if !specs
+				.last()
+				.is_some_and(|prev| prev.tab == tab && !prev.beside && one_line(&prev.kind))
+			{
+				problems.push(format!("rows.{name}: beside needs a plain row above it"));
+			}
+			if !one_line(&kind) {
+				problems.push(format!("rows.{name}: this kind cannot share a line"));
+			}
+			// its label, if any, is drawn where a checkbox puts one - to the right
+			// of the control - so anything else would draw over its own control
+			if !label.is_empty() && !matches!(kind, Kind::Toggle) {
+				problems.push(format!(
+					"rows.{name}: only a toggle beside another may carry a label"
+				));
+			}
 		}
 		specs.push(Spec {
 			label: keep(label),

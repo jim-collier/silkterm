@@ -71,6 +71,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
+- 🔘 Settings dialog: it does not follow a change of display scale.
+	- Nothing handles a scale-factor change for a dialog window, so its scale is whatever it was when the dialog opened. Dragging it to a monitor at a different scale leaves every measurement in it wrong until it is closed and reopened.
+	- It has always been like this. The dialog can be dragged and resized now, which makes it easier to reach.
+	- The size kept for the rest of the session is stored in pixels rather than in the scale-free unit, so reopening on a monitor at another scale is the wrong size for the same reason.
+	- Opened: 20260909-101500
+
 - 🔘 Settings | Silk: Allow "Profile" to be selected even when "Choose automatically" is enabled.
 	- If user changes it, deselect "Choose automatically".
 	- Exception: If user chooses "Remote (temporary)", don't change state of "Choose automatically".
@@ -209,6 +215,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Two rows were paired to buy back the height: the hardware check and its one-shot re-test share a line, and the scrim function and falloff dropdowns sit side by side under one label. That is a general mechanism - a row declared `beside` shares the line above it and takes the right half of the control column.
 	- The dialog resizes now. Narrower than it wants and the rows scroll sideways on a bar above the footer; shorter and they scroll as before. The tab strip and the buttons stay out of the vertical scroll. A resize passing within a few pixels of the natural size settles on it. The size is kept for the session and written nowhere.
 	- Controls in the middle of a row are variable width: sliders, text fields and dropdowns take whatever the width leaves, while the number field and the revert arrow keep their distance from the right edge. The style guide says so now.
+	- A review round on top of the fix caught six more, all closed with it. A performance profile holding the first half of a shared line silenced the one revert arrow for the second half, which the profile does not govern and which had no other way back. The tab strip was riding the sideways scroll and could pan off the window edge; it has an offset of its own now and only moves to keep the current tab in view. The snap could pull the window back to a size the screen cannot hold, and it ignored the answer a platform gives when it resizes on the spot. The work area was read off the dialog's own monitor rather than the terminal's, which on a second monitor is the wrong screen. And on X11 the work area covers every monitor at once, so it is now a cap rather than an answer.
 	- Opened: 20260908-145000
 	- Closed: 20260909-093000
 
