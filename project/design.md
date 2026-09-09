@@ -679,6 +679,8 @@ The window title is now assembled in one place, and always starts with the appli
 
 - After the name comes, in order: a title typed on the tab, else the title the running program asked for, else what the tab says about the shell. So a program that renames the window (an editor, a build tool) reaches the title bar without touching the tab, and a hand-typed tab title outranks it.
 
+- A title that is only the name or path of a program is passed over. Windows PowerShell sets its console title to its own executable path, and the console host does the same for anything started by path, so on Windows that is the ordinary state rather than an odd case. It says less than the tab's own label, which is what shows instead. A title that names a program and then what it is running, which is cmd's habit, is kept - the second half of that is worth reading.
+
 - A tab deliberately blanked lets the program's title through, and with neither the title is just the application name. That is the one case where blank means "defer" rather than "show nothing".
 
 - A `--title` given on the command line is still the whole answer, verbatim. It is an explicit request for exactly that string.
