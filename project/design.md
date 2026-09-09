@@ -685,7 +685,25 @@ The window title is now assembled in one place, and always starts with the appli
 
 - A tab carrying a blank title lets the program's title through, and with neither the title is just the application name - blank means "defer", not "show nothing". A blank typed into the rename box goes back to automatic naming instead, so a blank tab title comes from an empty `--title` on the command line.
 
-- A `--title` given on the command line is still the whole answer, verbatim. It is an explicit request for exactly that string.
+- A `--title` given on the command line is the whole answer, verbatim. It is an explicit request for exactly that string. The one thing it cannot drop is the rights below.
+
+### A terminal running with administrator or root rights says so (2026-09-09)
+
+The window title starts with "Administrator: " on Windows and "Root: " elsewhere. Windows already spells its own elevated console title bars that way, so that word is kept rather than invented.
+
+- No flag turns it off, `--title` included. The absence of the word has to mean something, and a marker a flag can remove means nothing.
+
+- It goes on the window title only. Tab titles are left alone, and so are the Settings and About windows: neither is a taskbar entry of its own, and the terminal window they belong to already says it.
+
+- The rights are the terminal process's own, read once on the way to the first window. A pane that elevates itself afterwards, `sudo -s` for instance, is not covered - the title would be claiming something about the wrong process. On unix the test is the effective user id, so a setuid binary reports the rights it actually holds rather than the account that started it.
+
+- An elevated Windows console writes the same word in front of the first title it sends, which was measured over a pseudoconsole on two machines. That is the title naming the program the console started, so both halves say nothing: the word comes off, and the program name is then dropped by the rule above. Without that step the word hides the name and the whole path is shown, which is the original complaint with rights on top.
+
+- A title the program sets afterwards is not decorated - measured in the same run, where a title set to "build" arrived as "build". So the word cannot arrive twice from a console. It can still be typed twice, and a title already starting with it is not given another.
+
+- Only the exact word about to be put back is removed, and only on Windows. Nothing on unix decorates a title, so taking anything off there could only destroy somebody's own text - which means a program running as root that titles itself "Root: something" will show the word twice, and that is the right answer, because the second one is its own.
+
+- A console speaking another language writes another word, and that one is not recognized. Such a title is shown as it arrived, so on a non-English Windows an elevated pane can still show its shell's image path until the shell sets a title of its own. Closing that properly means matching the title against the path of the program the pane is actually running, rather than against a word.
 
 ### Tabs report what they are running, and where (2026-08-21)
 
