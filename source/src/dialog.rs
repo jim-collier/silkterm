@@ -69,6 +69,8 @@ pub struct DialogWin {
 	// the terminal window this dialog belongs to, so we can restack it beneath
 	// us when we're activated (see raise_parent).
 	parent: Option<RawWindowHandle>,
+	// a resize snap has been asked for and not yet seen: see snap_to_natural
+	snapped: bool,
 }
 
 impl DialogWin {
@@ -100,6 +102,7 @@ impl DialogWin {
 		title: String,
 		w: f32,
 		h: f32,
+		resizable: bool,
 		parent: Option<RawWindowHandle>,
 		warm: Option<&crate::gfx::DialogGpu>,
 	) -> anyhow::Result<(Arc<Window>, Gfx, TextCtx, RectRenderer)> {
@@ -107,7 +110,7 @@ impl DialogWin {
 		let mut attrs = Window::default_attributes()
 			.with_title(title)
 			.with_window_icon(crate::app::load_icon())
-			.with_resizable(false)
+			.with_resizable(resizable)
 			.with_inner_size(winit::dpi::PhysicalSize::new(
 				w.ceil().max(1.0) as u32,
 				h.ceil().max(1.0) as u32,
@@ -179,6 +182,7 @@ impl DialogWin {
 			format!("About {}", config::APP_NAME),
 			560.0,
 			360.0,
+			false,
 			parent,
 			warm,
 		)?;
@@ -201,6 +205,7 @@ impl DialogWin {
 			last_frame: std::time::Instant::now(),
 			anim_wake: None,
 			parent,
+			snapped: false,
 		})
 	}
 
@@ -215,21 +220,16 @@ impl DialogWin {
 		// provisional window first: sizing needs a TextCtx to measure labels in
 		// the real UI font (same pattern as About)
 		let (window, mut gfx, mut text, rects) =
-			Self::make(el, "Settings".into(), 560.0, 800.0, parent, warm)?;
+			Self::make(el, "Settings".into(), 560.0, 800.0, true, parent, warm)?;
 		let scale = config::display_scale(window.scale_factor());
 		let (label_w, btn_w, row_btn_w, tab_ws) =
 			crate::settings_ui::chrome_widths(&mut text, scale);
-		// Cap the window height to the monitor (minus decorations headroom) and to
-		// ~1010 DIP total; a tab that doesn't fit scrolls instead of clipping
-		// buttons. SettingsDialog divides this by the scale factor on the way in,
-		// so both figures are physical: the monitor already is, the two DIP ones
-		// convert here.
-		let max_h = window
-			.current_monitor()
-			.map_or(f32::MAX, |monitor| {
-				monitor.size().height as f32 - DLG_DECOR_HEADROOM * scale
-			})
-			.min(DLG_MAX_H * scale);
+		// Cap the window to the part of the screen it can actually occupy - the
+		// monitor minus the taskbar, minus the frame the WM puts round it - and to
+		// ~1010 DIP tall. A tab that doesn't fit scrolls instead of pushing the
+		// footer buttons off the bottom. SettingsDialog divides these by the scale
+		// factor on the way in, so every figure here is physical.
+		let (max_w, max_h) = Self::settings_caps(&window, scale);
 		// laid out at the origin
 		let mut dialog = SettingsDialog::new(
 			0.0,
@@ -239,16 +239,23 @@ impl DialogWin {
 			btn_w,
 			row_btn_w,
 			tab_ws,
+			max_w,
 			max_h,
 			scale,
 		);
 		if let Some(view) = resume {
 			dialog.restore(view);
 		}
+		let (min_w, min_h) = dialog.min_size();
+		window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(
+			min_w.ceil() as u32,
+			min_h.ceil() as u32,
+		)));
 		let (w, h) = dialog.size();
 		let requested_size = winit::dpi::PhysicalSize::new(w.ceil() as u32, h.ceil() as u32);
 		if let Some(applied) = window.request_inner_size(requested_size) {
 			gfx.resize(applied.width, applied.height);
+			dialog.set_size(applied.width as f32, applied.height as f32);
 		}
 		// mapped last, at the final size, with the transient hints already in place
 		#[cfg(target_os = "linux")]
@@ -263,6 +270,7 @@ impl DialogWin {
 			last_frame: std::time::Instant::now(),
 			anim_wake: None,
 			parent,
+			snapped: false,
 		})
 	}
 
@@ -394,9 +402,9 @@ impl DialogWin {
 	}
 
 	// wheel scroll for an overflowing settings tab (positive dy = scroll up)
-	pub fn wheel(&mut self, dy_px: f32) {
+	pub fn wheel(&mut self, dx_px: f32, dy_px: f32) {
 		if let Content::Settings(dialog) = &mut self.content {
-			dialog.wheel(dy_px);
+			dialog.wheel(dx_px, dy_px);
 		}
 	}
 
@@ -559,7 +567,48 @@ impl DialogWin {
 
 	pub fn resize(&mut self, w: u32, h: u32) {
 		self.gfx.resize(w, h);
+		if let Content::Settings(dialog) = &mut self.content {
+			dialog.set_size(w as f32, h as f32);
+			self.snap_to_natural(w as f32, h as f32);
+		}
 		self.window.request_redraw();
+	}
+
+	// Magnetic snap: within a few DIP of the size the content wants, the window
+	// settles exactly on it; drag further and it lets go. `snapped` is the guard
+	// against a window manager that declines the request - without it, declining
+	// once would mean asking again on every event.
+	fn snap_to_natural(&mut self, w: f32, h: f32) {
+		let Content::Settings(dialog) = &self.content else {
+			return;
+		};
+		if self.window.is_maximized() {
+			return;
+		}
+		let snap = DLG_SNAP * config::display_scale(self.window.scale_factor());
+		let (nat_w, nat_h) = dialog.natural_size();
+		let (want_w, want_h) = (snap_to(w, nat_w, snap), snap_to(h, nat_h, snap));
+		if (want_w - w).abs() < 0.5 && (want_h - h).abs() < 0.5 {
+			self.snapped = false;
+			return;
+		}
+		if self.snapped {
+			return;
+		}
+		self.snapped = true;
+		let _ = self
+			.window
+			.request_inner_size(winit::dpi::PhysicalSize::new(want_w as u32, want_h as u32));
+	}
+
+	// How big the Settings window may be: the part of the screen it can occupy,
+	// less the frame the WM puts round it, and no taller than DLG_MAX_H.
+	fn settings_caps(window: &Window, scale: f32) -> (f32, f32) {
+		let work = work_area(window).map(|(_, _, w, h)| (w as f32, h as f32));
+		let monitor = window
+			.current_monitor()
+			.map(|m| (m.size().width as f32, m.size().height as f32));
+		caps_from(usable_screen(work, monitor), decor_extra(window), scale)
 	}
 
 	pub fn render(&mut self) {
@@ -1170,6 +1219,7 @@ fn map_action(action: Action) -> Option<DialogAction> {
 // Settings-window height caps, DIP (see config::dip).
 const DLG_MAX_H: f32 = 1010.0;
 const DLG_DECOR_HEADROOM: f32 = 38.0; // room left for the WM's own title bar
+const DLG_SNAP: f32 = 12.0; // how close a resize gets before it settles on the natural size
 
 // About-panel geometry, DIP (see config::dip).
 const ABOUT_PAD: f32 = 20.0; // panel inset around the whole content column
@@ -1302,4 +1352,180 @@ fn layout_about(
 	// leave room below the button for the URL flyover to appear on hover
 	let box_h = y + pad + line_h + text.dip(ABOUT_TIP_ROOM);
 	(lines, links, (box_w, box_h))
+}
+
+// The part of the screen a window can actually occupy: the monitor minus the
+// taskbar/panels/docks. winit has no API for it, so each platform is asked in
+// its own way and anything else falls back to the whole monitor. Physical
+// pixels, screen coordinates.
+#[cfg(target_os = "windows")]
+pub fn work_area(window: &Window) -> Option<(i32, i32, i32, i32)> {
+	use windows_sys::Win32::Graphics::Gdi::{
+		GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+	};
+	use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+	let RawWindowHandle::Win32(h) = window.window_handle().ok()?.as_raw() else {
+		return None;
+	};
+	unsafe {
+		let monitor = MonitorFromWindow(h.hwnd.get() as *mut _, MONITOR_DEFAULTTONEAREST);
+		if monitor.is_null() {
+			return None;
+		}
+		let mut info: MONITORINFO = core::mem::zeroed();
+		info.cbSize = core::mem::size_of::<MONITORINFO>() as u32;
+		if GetMonitorInfoW(monitor, core::ptr::addr_of_mut!(info)) == 0 {
+			return None;
+		}
+		let r = info.rcWork;
+		Some((r.left, r.top, r.right - r.left, r.bottom - r.top))
+	}
+}
+
+// X11 publishes it as _NET_WORKAREA on the root window - four CARDINALs per
+// virtual desktop, so the current desktop picks the entry. It covers the whole
+// virtual screen rather than one monitor, which is as much as the protocol
+// offers. Wayland has no equivalent and returns None.
+#[cfg(target_os = "linux")]
+pub fn work_area(window: &Window) -> Option<(i32, i32, i32, i32)> {
+	use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+	use x11rb::connection::Connection;
+	use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
+
+	match window.window_handle().ok()?.as_raw() {
+		RawWindowHandle::Xlib(_) | RawWindowHandle::Xcb(_) => {}
+		_ => return None,
+	}
+	let (conn, screen) = x11rb::connect(None).ok()?;
+	let root = conn.setup().roots.get(screen)?.root;
+	let read = |name: &[u8], len: u32| -> Option<Vec<u32>> {
+		let atom = conn.intern_atom(true, name).ok()?.reply().ok()?.atom;
+		let reply = conn
+			.get_property(false, root, atom, AtomEnum::CARDINAL, 0, len)
+			.ok()?
+			.reply()
+			.ok()?;
+		Some(reply.value32()?.collect())
+	};
+	let desktop = read(b"_NET_CURRENT_DESKTOP", 1)?
+		.first()
+		.copied()
+		.unwrap_or(0) as usize;
+	let areas = read(b"_NET_WORKAREA", 256)?;
+	let quad = areas
+		.chunks_exact(4)
+		.nth(desktop)
+		.or_else(|| areas.chunks_exact(4).next())?;
+	Some((
+		quad[0] as i32,
+		quad[1] as i32,
+		quad[2] as i32,
+		quad[3] as i32,
+	))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+pub fn work_area(_window: &Window) -> Option<(i32, i32, i32, i32)> {
+	None
+}
+
+// The screen a dialog may use. The work area is what a window can actually
+// occupy, so it wins wherever the platform will name it; the monitor is the
+// fallback and still counts whatever the taskbar has taken.
+fn usable_screen(work: Option<(f32, f32)>, monitor: Option<(f32, f32)>) -> (f32, f32) {
+	work.or(monitor).unwrap_or((f32::MAX, f32::MAX))
+}
+
+// The size caps, given what the screen leaves and what the frame costs. Split
+// out from the window so the arithmetic can be tested without one.
+fn caps_from(screen: (f32, f32), decor: (f32, f32), scale: f32) -> (f32, f32) {
+	// The frame can only be measured once there is one, and X11 adds it at map
+	// time - after the first measurement. Hence the DIP allowance to fall back on.
+	let decor_h = if decor.1 > 0.0 {
+		decor.1
+	} else {
+		DLG_DECOR_HEADROOM * scale
+	};
+	(
+		(screen.0 - decor.0).max(1.0),
+		(screen.1 - decor_h).min(DLG_MAX_H * scale).max(1.0),
+	)
+}
+
+// Magnetic snap: a size within `snap` of the one the content wants settles
+// exactly on it, and anything further away is left alone.
+fn snap_to(have: f32, want: f32, snap: f32) -> f32 {
+	if (have - want).abs() <= snap {
+		want.round()
+	} else {
+		have
+	}
+}
+
+// What the window manager's own frame adds around the client area. Zero before
+// the window is mapped (X11 has no frame yet), which is what the DIP fallback
+// beside every caller is for.
+fn decor_extra(window: &Window) -> (f32, f32) {
+	let (outer, inner) = (window.outer_size(), window.inner_size());
+	(
+		(outer.width as f32 - inner.width as f32).max(0.0),
+		(outer.height as f32 - inner.height as f32).max(0.0),
+	)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{DLG_DECOR_HEADROOM, DLG_MAX_H, DLG_SNAP, caps_from, snap_to, usable_screen};
+
+	// The defect this was written for: a 1080p screen at 150% with a taskbar
+	// leaves 1008 usable, and the dialog was being sized against the full 1080 -
+	// so its footer buttons sat behind the taskbar with no way to reach OK.
+	#[test]
+	fn the_height_cap_comes_off_the_usable_screen_not_the_monitor() {
+		let scale = 1.5;
+		let frame = 45.0; // a measured Windows title bar at 150%
+		let screen = usable_screen(Some((1920.0, 1008.0)), Some((1920.0, 1080.0)));
+		assert_eq!(screen, (1920.0, 1008.0), "the taskbar's share is not ours");
+		let (_, usable) = caps_from(screen, (6.0, frame), scale);
+		assert!(
+			usable + frame <= 1008.0,
+			"a window of {usable} plus its {frame} frame does not fit 1008"
+		);
+		// and the whole monitor would have been too tall by more than the frame
+		let (_, whole) = caps_from((1920.0, 1080.0), (6.0, frame), scale);
+		assert!(whole > usable);
+	}
+
+	// Before the window is mapped there is no frame to measure, so the allowance
+	// stands in for one - and it is a DIP figure, so it grows with the scale.
+	#[test]
+	fn an_unmapped_window_falls_back_to_the_dip_allowance() {
+		for scale in [1.0, 1.5, 2.0] {
+			let (_, h) = caps_from((1920.0, 1000.0), (0.0, 0.0), scale);
+			assert_eq!(
+				h,
+				(1000.0 - DLG_DECOR_HEADROOM * scale).min(DLG_MAX_H * scale)
+			);
+		}
+	}
+
+	#[test]
+	fn a_screen_that_answers_nothing_still_yields_a_usable_cap() {
+		let (w, h) = caps_from(usable_screen(None, None), (0.0, 0.0), 1.0);
+		assert!(w > 0.0 && h > 0.0 && h <= DLG_MAX_H);
+		// no work area published: the monitor is all there is to go on
+		assert_eq!(usable_screen(None, Some((800.0, 600.0))), (800.0, 600.0));
+	}
+
+	#[test]
+	fn a_resize_settles_on_the_natural_size_and_lets_go_past_the_snap() {
+		let want = 648.0;
+		assert_eq!(snap_to(want - DLG_SNAP + 1.0, want, DLG_SNAP), want);
+		assert_eq!(snap_to(want + DLG_SNAP - 1.0, want, DLG_SNAP), want);
+		let far = want + DLG_SNAP + 1.0;
+		assert_eq!(snap_to(far, want, DLG_SNAP), far);
+		// already there: the snap is a no-op, which is what stops it looping
+		assert_eq!(snap_to(want, want, DLG_SNAP), want);
+	}
 }
