@@ -117,6 +117,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Buttons at the bottom right: "Cancel|OK", with OK the default.
 	- 🔘 A hex field should select its contents when it takes focus rather than emptying itself, which is what a text box normally does.
 
+- 🔘 Allow programs to change the tab title.
+
 - 🔘 Release the GPU device after a long idle (e.g. 60 minutes).
 	- Drop the wgpu device and everything uploaded on it once the window has been idle long enough, and rebuild it when needed again. This is to lower total GPU memory footprint, esp. with multiple terminals open (e.g. for days).
 	- Idle = unfocused plus no PTY output, not `State::hidden()`. Occlusion is not reported by every WM, so `hidden()` only means minimized on the reference box. `TermInstance::note_activity` is the freshness signal.
