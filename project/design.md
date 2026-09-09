@@ -667,9 +667,7 @@ Double-clicking a tab renames it in place. The strip has always drawn what the s
 
 - The edit starts with what the tab already says, all of it selected, so typing replaces it and any other key edits it. Enter or Tab keeps the change, Escape drops it, and a click anywhere else keeps it. Selection, Home and End, and paste all work; a pasted newline becomes a space, since a tab is one line high.
 
-- Committing a title that matches what the tab would have said on its own puts it back to naming the shell. That is the way out of a hand-typed title, and it needs no extra control.
-
-- A title left empty is kept, so a tab can be deliberately blank. The tab shrinks to its close box and is still selectable.
+- Committing a blank title, or one that matches what the tab would have said on its own, puts it back to naming the shell. Those are the two ways out of a hand-typed title, and neither needs a control of its own.
 
 - Titles need not be unique. Two tabs called the same thing is a thing people do on purpose.
 
@@ -679,9 +677,9 @@ The window title is now assembled in one place, and always starts with the appli
 
 - After the name comes, in order: a title typed on the tab, else the title the running program asked for, else what the tab says about the shell. So a program that renames the window (an editor, a build tool) reaches the title bar without touching the tab, and a hand-typed tab title outranks it.
 
-- A title that is only the name or path of a program is passed over. Windows PowerShell sets its console title to its own executable path, and the console host does the same for anything started by path, so on Windows that is the ordinary state rather than an odd case. It says less than the tab's own label, which is what shows instead. A title that names a program and then what it is running, which is cmd's habit, is kept - the second half of that is worth reading.
+- A title that is only the name or path of a program is passed over, and the tab's own label shows instead. A Windows console names a new window after the program it starts, so a shell that sets no title of its own arrives carrying its own image path; an elevated console puts "Administrator: " in front of that. Both were measured on two machines. A console that names the program and then the command it is running keeps the command, since that half says something.
 
-- A tab deliberately blanked lets the program's title through, and with neither the title is just the application name. That is the one case where blank means "defer" rather than "show nothing".
+- A tab carrying a blank title lets the program's title through, and with neither the title is just the application name. That is the one case where blank means "defer" rather than "show nothing".
 
 - A `--title` given on the command line is still the whole answer, verbatim. It is an explicit request for exactly that string.
 

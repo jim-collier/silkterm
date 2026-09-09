@@ -2422,15 +2422,13 @@ impl State {
 	// active tab has to say. Called on tab/focus change and each rendered frame;
 	// set_title only fires when the string actually changed (avoids WM flicker).
 	fn update_title(&mut self) {
-		let title = if let Some(custom_title) = &self.win_title {
-			custom_title.clone()
-		} else {
-			let prefix = config::title_prefix();
-			match self.title_suffix() {
-				Some(suffix) => format!("{prefix} - {suffix}"),
-				None => prefix,
-			}
-		};
+		let custom = self.win_title.clone();
+		let suffix = custom.is_none().then(|| self.title_suffix()).flatten();
+		let title = crate::tabtitle::window_title(
+			custom.as_deref(),
+			&config::title_prefix(),
+			suffix.as_deref(),
+		);
 		if title != self.last_win_title {
 			self.window.set_title(&title);
 			self.last_win_title = title;

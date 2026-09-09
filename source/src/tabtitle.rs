@@ -23,8 +23,8 @@
 //! `cfg!` - which is the only reason the Windows forms and the posix ones are
 //! both covered by tests from whichever box happens to be running them.
 //!
-//! `window_suffix` is here for the same reason: the window title is built from
-//! what the tab and the running program have to say.
+//! The window title is decided here too (`window_suffix`), because it is built
+//! from the same parts and falls back to the tab's own label.
 
 // Three dots rather than U+2026: a tab is drawn in the desktop interface font,
 // and not every one of those carries the single-glyph ellipsis.
@@ -200,27 +200,53 @@ pub fn task_forms(task: Option<Task>) -> Vec<String> {
 	forms
 }
 
-/// Whether a title a program set is nothing but the name of a program.
-/// Windows PowerShell sets its console title to its own executable path, and
-/// the console host does the same for anything started by path, so on Windows
-/// this is the ordinary state rather than an odd case. It says less than the
-/// tab's own label already does, so the window title passes over it.
-pub fn is_program_name(title: &str) -> bool {
+/// What a title the running program set is worth showing, if anything.
+///
+/// A Windows console names a new window after the program it started, so a
+/// shell that sets no title of its own arrives carrying its own image path -
+/// measured for cmd and for pwsh on two machines. That says less than the tab's
+/// own label, so it is passed over.
+pub fn program_says(title: &str) -> Option<&str> {
 	let title = title.trim();
+	if title.is_empty() {
+		return None;
+	}
+	// An elevated console puts "Administrator: " in front of the title it was
+	// given. Read past that to decide, but keep it when there is anything left to
+	// show - which console this is matters.
+	let bare = match title.split_once(": ") {
+		Some((_, rest)) if is_absolute(rest.trim()) => rest.trim(),
+		_ => title,
+	};
+	// A console that names the program and then the command it is running: the
+	// command is the half worth seeing.
+	if let Some((head, rest)) = bare.split_once(" - ") {
+		if is_program_name(head) {
+			let rest = rest.trim();
+			return (!rest.is_empty()).then_some(rest);
+		}
+	}
+	(!is_program_name(bare)).then_some(title)
+}
+
+// Nothing but the name of a program, or a path to one. Only a Windows console
+// writes such a title, but the test is the same everywhere - an executable
+// extension is the only handle there is, and a posix path does not carry one.
+fn is_program_name(title: &str) -> bool {
 	let Some(dot) = title.rfind('.') else {
 		return false;
 	};
-	let ext = &title[dot + 1..];
-	if !["exe", "com", "bat", "cmd"]
+	// Not `.com`: far more titles end in a hostname or a directory than in one of
+	// the three DOS leftovers that still carry it.
+	if !["exe", "bat", "cmd"]
 		.iter()
-		.any(|known| ext.eq_ignore_ascii_case(known))
+		.any(|known| title[dot + 1..].eq_ignore_ascii_case(known))
 	{
 		return false;
 	}
-	// A bare name, or a path to one - and nothing appended. cmd writes its own
-	// path followed by the command it is running, which is worth reading, so a
-	// last component carrying a space is left alone.
-	let last = title.rsplit(['\\', '/']).next().unwrap_or(title);
+	// Anything spaced out beyond the file name itself is a sentence that happens
+	// to end in one.
+	let last = &title[title.rfind(['\\', '/']).map_or(0, |at| at + 1)..];
 	!last.contains(char::is_whitespace)
 		&& (is_absolute(title) || !title.contains(char::is_whitespace))
 }
@@ -235,10 +261,11 @@ fn is_absolute(path: &str) -> bool {
 /// What the window title says after the application name. A title typed on the
 /// tab wins; blanking that one on purpose lets the running program's own title
 /// through, and with neither the tab's own label stands in.
+///
+/// A typed title is shown as typed - the tab shows it that way too - while a
+/// program's is trimmed, since nobody chose its spacing.
 pub fn window_suffix(typed: Option<&str>, program: Option<&str>, tab: &str) -> Option<String> {
-	let program = program
-		.map(str::trim)
-		.filter(|t| !t.is_empty() && !is_program_name(t));
+	let program = program.and_then(program_says);
 	if let Some(typed) = typed {
 		if !typed.trim().is_empty() {
 			return Some(typed.to_string());
@@ -248,6 +275,16 @@ pub fn window_suffix(typed: Option<&str>, program: Option<&str>, tab: &str) -> O
 	program
 		.map(str::to_string)
 		.or_else(|| Some(tab.to_string()))
+}
+
+/// The whole window title. A `--title` given on the command line is the answer
+/// verbatim, since it is a request for exactly that string.
+pub fn window_title(custom: Option<&str>, prefix: &str, suffix: Option<&str>) -> String {
+	match (custom, suffix) {
+		(Some(custom), _) => custom.to_string(),
+		(None, Some(suffix)) => format!("{prefix} - {suffix}"),
+		(None, None) => prefix.to_string(),
+	}
 }
 
 /// The tab's text, longest form first. The caller measures each against the
@@ -666,9 +703,9 @@ pub fn elapsed(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Demand, Style, Task, clamp_page, elapsed, is_program_name, label_forms, page_for,
-		path_forms, shell_forms, slot_at_x, slot_x, tabs_that_fit, task_forms, tip_lines,
-		tip_value, widths, window_suffix,
+		Demand, Style, Task, clamp_page, elapsed, label_forms, page_for, path_forms, program_says,
+		shell_forms, slot_at_x, slot_x, tabs_that_fit, task_forms, tip_lines, tip_value, widths,
+		window_suffix, window_title,
 	};
 
 	// The tip is a table, so a value carries quotes only where its own edges are
@@ -1085,36 +1122,95 @@ mod tests {
 	}
 
 	#[test]
-	fn a_console_title_that_only_names_a_program_is_not_a_title() {
-		// What Windows PowerShell puts there, which is the whole reason for this.
-		assert!(is_program_name(
-			"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-		));
+	fn a_console_title_that_only_names_a_program_is_dropped() {
+		let says = |title| program_says(title);
+		assert_eq!(
+			says("C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+			None
+		);
 		// A path with a space in it is still a path.
-		assert!(is_program_name(
-			"C:\\Program Files\\PowerShell\\7\\pwsh.exe"
-		));
-		assert!(is_program_name("powershell.exe"));
-		assert!(is_program_name("  CMD.EXE  "));
-		assert!(is_program_name("\\\\server\\share\\tools\\run.bat"));
-		assert!(is_program_name("/opt/microsoft/powershell/7/pwsh.com"));
+		assert_eq!(says("C:\\Program Files\\PowerShell\\7\\pwsh.exe"), None);
+		assert_eq!(says("powershell.exe"), None);
+		assert_eq!(says("  CMD.EXE  "), None);
+		assert_eq!(says("\\\\server\\share\\tools\\run.bat"), None);
+		// What an elevated console shows, which is every title in such a session.
+		assert_eq!(says("Administrator: C:\\WINDOWS\\System32\\cmd.exe"), None);
+		assert_eq!(says(""), None);
+		assert_eq!(says("   "), None);
 	}
 
 	#[test]
 	fn a_title_that_says_something_survives() {
-		assert!(!is_program_name("jim@box: ~/src/silkterm"));
-		assert!(!is_program_name("C:\\Users\\jim\\src"));
-		assert!(!is_program_name("~/src/silkterm"));
-		// Ends in an executable name, but it is a sentence about one.
-		assert!(!is_program_name("vim: src\\build.bat"));
-		assert!(!is_program_name("Building foo.exe"));
-		// cmd names itself and then what it is running - the second half is the
-		// part worth reading.
-		assert!(!is_program_name(
-			"C:\\WINDOWS\\system32\\cmd.exe - build.bat"
-		));
-		assert!(!is_program_name("nano"));
-		assert!(!is_program_name(""));
+		let says = |title| program_says(title);
+		assert_eq!(
+			says("jim@box: ~/src/silkterm"),
+			Some("jim@box: ~/src/silkterm")
+		);
+		assert_eq!(says("C:\\Users\\jim\\src"), Some("C:\\Users\\jim\\src"));
+		assert_eq!(says(" vim foo.rs "), Some("vim foo.rs"));
+		assert_eq!(says("Building foo.exe"), Some("Building foo.exe"));
+		// A file name is only the answer when nothing is wrapped around it.
+		assert_eq!(
+			says("Running tools\\build.bat"),
+			Some("Running tools\\build.bat")
+		);
+		assert_eq!(says("C:\\dev\\my build.cmd"), Some("C:\\dev\\my build.cmd"));
+		assert_eq!(says("nano"), Some("nano"));
+		// An elevated console that was given a real title keeps the prefix - which
+		// console this is matters.
+		assert_eq!(
+			says("Administrator: C:\\Users\\jim\\src"),
+			Some("Administrator: C:\\Users\\jim\\src")
+		);
+	}
+
+	#[test]
+	fn a_hostname_or_a_directory_is_not_a_program() {
+		// `.com` is a top-level domain far more often than it is a program, and
+		// this tree is itself under a directory ending in one.
+		let says = |title| program_says(title);
+		assert_eq!(says("jim@web01.example.com"), Some("jim@web01.example.com"));
+		assert_eq!(says("~/src/github.com"), Some("~/src/github.com"));
+		assert_eq!(says("C:\\www\\example.com"), Some("C:\\www\\example.com"));
+	}
+
+	#[test]
+	fn a_console_that_names_the_command_it_is_running_keeps_the_command() {
+		let says = |title| program_says(title);
+		assert_eq!(
+			says("C:\\WINDOWS\\system32\\cmd.exe - ping 8.8.8.8"),
+			Some("ping 8.8.8.8")
+		);
+		assert_eq!(
+			says("C:\\WINDOWS\\system32\\cmd.exe - build.bat"),
+			Some("build.bat")
+		);
+		// Not a program on the left, so both halves stand.
+		assert_eq!(says("foo - bar"), Some("foo - bar"));
+	}
+
+	#[test]
+	fn either_spelling_of_a_program_path_reads_the_same() {
+		// Only a Windows console writes one of these, but the test does not have to
+		// know that. A posix path names no extension, so nothing there matches in
+		// the first place.
+		assert_eq!(program_says("/home/jim/games/setup.exe"), None);
+		assert_eq!(program_says("/usr/bin/bash"), Some("/usr/bin/bash"));
+		assert_eq!(
+			program_says("/opt/powershell/7/pwsh"),
+			Some("/opt/powershell/7/pwsh")
+		);
+	}
+
+	#[test]
+	fn an_extension_has_to_be_the_whole_of_the_last_part() {
+		let says = |title| program_says(title);
+		assert_eq!(says("foo."), Some("foo."));
+		assert_eq!(says("a.EXE."), Some("a.EXE."));
+		assert_eq!(says(".exe"), None);
+		// Multi-byte before the dot, to pin the slice against a char boundary.
+		assert_eq!(says("caf\u{e9}.exe"), None);
+		assert_eq!(says("caf\u{e9}"), Some("caf\u{e9}"));
 	}
 
 	#[test]
@@ -1136,15 +1232,28 @@ mod tests {
 			Some("vim foo.rs")
 		);
 		assert_eq!(suffix(Some(""), None), None);
+		// A typed title is shown as typed; a program's is trimmed.
+		assert_eq!(suffix(Some(" build "), None).as_deref(), Some(" build "));
 	}
 
 	#[test]
 	fn a_program_naming_only_itself_falls_through_to_the_tab() {
 		let exe = Some("C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+		let suffix = |typed, program| window_suffix(typed, program, "Windows PowerShell");
+		assert_eq!(suffix(None, exe).as_deref(), Some("Windows PowerShell"));
+		assert_eq!(suffix(Some(""), exe), None);
+	}
+
+	#[test]
+	fn a_title_on_the_command_line_is_the_whole_answer() {
+		assert_eq!(window_title(Some("mine"), "SilkTerm", Some("Bash")), "mine");
+		// Even against nothing to say, and even when it is empty.
+		assert_eq!(window_title(Some("mine"), "SilkTerm", None), "mine");
+		assert_eq!(window_title(Some(""), "SilkTerm", Some("Bash")), "");
 		assert_eq!(
-			window_suffix(None, exe, "Windows PowerShell").as_deref(),
-			Some("Windows PowerShell")
+			window_title(None, "SilkTerm", Some("Bash")),
+			"SilkTerm - Bash"
 		);
-		assert_eq!(window_suffix(Some(""), exe, "Windows PowerShell"), None);
+		assert_eq!(window_title(None, "SilkTerm", None), "SilkTerm");
 	}
 }
