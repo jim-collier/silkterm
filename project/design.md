@@ -536,6 +536,16 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - The notice is re-armed BEFORE the window acts on it, so a read cycle landing mid-handling posts a fresh one rather than being dropped. That ordering is the whole safety argument, and it is what a unit test pins.
 
+### A character handed to the window is typing (2026-09-09)
+
+- Windows lets a program give a window a character outright instead of pressing a key for it. The touch keyboard does this for characters the layout has no key for, and so do text expanders and some accessibility tools. It arrives as a key the layout cannot name, carrying only the text it stands for.
+
+- Every reader of a key event looks at which key it was, so an unnamed one reached nothing at all - typed text, hotkeys, menu accelerators, the Settings dialog's fields and the tab rename box alike. The key is filled in from the text once, where the event arrives, rather than in each of those places.
+
+- Nothing else produces an unnamed key that carries text, so there is no second meaning to weigh. A key the layout did name is left alone: its text is a representation of the key rather than typing, and Enter carrying a carriage return is the case that would go wrong.
+
+- Modifiers still apply, so an injected `c` while Control is held sends the control code, the same as typing it would. Windows composes the character without consulting the layout or the modifiers, so an argument exists for ignoring them here - but a character behaving differently from the same character typed is the worse surprise, and nobody has reported the other way round.
+
 ### Environment
 
 - Target: Debian. The primary dev/reference environment is X11 (Compiz), but one Linux binary runs native on both X11 and Wayland. winit selects the backend at runtime, and X11/Wayland/GL are all loaded on demand. Windows and macOS are targets too, all with x86_64 and ARM64 variants.

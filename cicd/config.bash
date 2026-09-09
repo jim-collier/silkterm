@@ -85,6 +85,14 @@ TEST_CMD=(cargo test)
 LINT_PROBE=(env "PATH=${HOME}/.cargo/bin:${PATH}" cargo clippy --version)
 LINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" "CARGO_TARGET_DIR=${TARGET_DIR}/lint" cargo clippy --workspace --all-targets -- -D warnings)
 
+## Stage 3 (after lints): the same lints again for Windows. The cross-builds build
+## the binary only, and the lints above run for this box, so Windows-only code is
+## seen by neither - a cfg-gated item used by an ungated test broke the suite there
+## and two lint findings sat in code this box never compiles. Both took a Windows
+## box to find, and both are answered from here in under a minute. Empty () to
+## disable.
+XLINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" "CARGO_TARGET_DIR=${TARGET_DIR}/lint" cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings)
+
 ## Stage 3 (after lints): dependency police (licenses/advisories/duplicates,
 ## policy in deny.toml). Non-gating for now; tighten once the report is tuned.
 DENY_PROBE=(cargo deny --version)
@@ -99,7 +107,7 @@ SCROLL_HARNESS=(cicd/tests/scroll/run.bash)
 ## it is skipped under --quick. A box that is off, or whose session is locked, is a
 ## skip and not a failure - both are somebody's machine rather than build hardware.
 ## Empty () to disable. Extra scenario names may be listed after run.bash.
-WINGUI_HARNESS=(cicd/tests/wingui/run.bash smoke settingsdlg perfladder)
+WINGUI_HARNESS=(cicd/tests/wingui/run.bash smoke injchar settingsdlg perfladder)
 
 ## Stage 3: what the dogfood launcher does to files it did not create. Needs pwsh;
 ## skipped with a warning where it is missing. Empty () to disable.
