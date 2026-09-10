@@ -27,7 +27,8 @@
 ##	   3. regression tests + lints + fuzz soak (clippy gating, cargo-deny advisory,
 ##	      scroll harness)
 ##	   4. profiler (flamegraph SVG; non-gating artifact - see failure policy)
-##	   5. release build (native + cross targets; optimized, for packaging + dogfood)
+##	   5. release build (native + cross targets; optimized, for packaging + dogfood),
+##	      then a check that every Windows binary carries its icon and version block
 ##	   6. packages (.deb/.rpm per Linux arch; NSIS installer .exe per Windows arch)
 ##	   7. dogfood (install each build to the synced app dir for its platform)
 ##	   8. backup + publish to git (runs from repo root)
@@ -641,6 +642,22 @@ if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
 		fEcho "OK: ${local_label}: ${art} ($(du -h "${art}" | cut -f1))"
 		built_arts+=("${osarch}|${art}")
 	done
+fi
+
+## A Windows binary with no icon and no version block links fine and reports
+## nothing, so it has to be looked for. The aarch64 exe shipped that way for a
+## while: embed-resource found no compiler for the arch and answered "not
+## attempted", which reads as success.
+res_check="${here}/utility/pe-resources.py"
+if [[ -f "${res_check}" ]]; then
+	win_arts=()
+	for pair in "${built_arts[@]}"; do
+		[[ "${pair#*|}" == *.exe ]] && win_arts+=("${pair#*|}")
+	done
+	if ((${#win_arts[@]})); then
+		python3 "${res_check}" "${win_arts[@]}" || fDie "a windows binary is missing its icon or version info"
+		fEcho "OK: windows resources present in ${#win_arts[@]} binary(s)"
+	fi
 fi
 
 ## Collect the built binaries under versioned names + a sha256 checksums file,

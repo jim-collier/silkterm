@@ -1,7 +1,7 @@
 // Windows resources: app icon + version info (Explorer > Properties > Details).
 // @tokens@ are filled in by build.rs from Cargo metadata (same idea as the NSIS
 // installer.nsi.in template), so the version never drifts from Cargo.toml.
-// Compiled by embed-resource for both msvc (rc.exe) and gnu (windres).
+// Compiled by rc.exe for msvc targets and by windres for gnu ones.
 #pragma code_page(65001)
 
 // id 1 = the icon the shell uses for the exe
