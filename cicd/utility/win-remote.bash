@@ -188,6 +188,11 @@ fDoRun() { fRunScript "$1" "$runScript" "${runArgs[@]}"; }
 ##	whatever was there last is how a fix looks verified when it was never built.
 fNoRef() { [[ -z "${refGiven}" ]] || fFail "--ref belongs to sync - sync with it first, then run this" 2 ;}
 
+##	Options are only read before the command, so 'sync --ref <branch>' parsed the
+##	ref as nothing and synced dev - the same trap fNoRef exists for. A command
+##	that takes no arguments says so rather than dropping them.
+fNoArgs() { local what="$1"; shift; (($# == 0)) || fFail "${what} takes no arguments, and options go before the command (got: $*)" 2 ;}
+
 only=""; optional=0; syncRef="dev"; refGiven=""
 while (($#)); do case "$1" in
 	--host)    only="${2:-}"; shift 2 ;;
@@ -205,6 +210,7 @@ fLoadConf
 case "$cmd" in
 	hosts)
 		fNoRef
+		fNoArgs "hosts" "$@"
 		for i in $(fSelected); do
 			if addr="$(fLiveAddr "${hostAddrs[$i]}")"
 				then printf '%-8s up    %s\n' "${hostNames[$i]}" "${addr}"
@@ -213,6 +219,7 @@ case "$cmd" in
 		done
 		;;
 	sync)
+		fNoArgs "sync" "$@"
 		fOverHosts fSync || exit 1
 		;;
 	job)
@@ -262,3 +269,4 @@ esac
 ##		- 20260908: pull, for output written outside the clone.
 ##		- 20260909: --ref, to try a branch on Windows before merging it.
 ##		- 20260909: --ref on anything but sync is refused rather than ignored.
+##		- 20260910: an option written after the command is refused, not dropped.

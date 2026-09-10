@@ -225,6 +225,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Also fixed at the class: the pipeline reads the resource directory out of every Windows binary it built and fails if the icon or the version block is absent. A resource that silently stops being embedded is not a link error and shows up nowhere else.
 	- Both Windows binaries now carry the icon and version resources, and the copyright marker reads back intact from each. Forcing the compiler to fail was checked both ways: the warning appears and the pipeline check rejects the build.
 	- Not verified on ARM64 Windows hardware, since there is none here.
+	- One thing came out of verifying it and is fixed with it. The Windows runner only reads its options before the command, so asking it to sync a branch with the option written afterwards synced the default branch instead and said nothing. Arguments a command does not take are now refused.
 	- Opened: 20260910-075500
 	- Closed: 20260910-093000
 
