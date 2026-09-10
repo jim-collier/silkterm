@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
+
 // A small deterministic fuzzer, shared by the targets that live beside the code
 // they hammer (search for `mod fuzz` inside a module's tests).
 //
