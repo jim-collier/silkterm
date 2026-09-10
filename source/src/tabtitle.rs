@@ -219,6 +219,28 @@ impl Rights {
 	}
 }
 
+/// A title a program asked for, as plain text.
+///
+/// The desktop draws a window title in places that treat it as text and nothing
+/// else: a task bar, a window list, an alt-tab switcher. The engine hands the
+/// string over as the program spelled it, control characters included, so they
+/// come off here - at the one place a program's title arrives - rather than at
+/// each of the several places it is later shown.
+///
+/// Only the characters that are not text: the C0 controls, delete, and the C1
+/// range that a stray high byte decodes into. A right-to-left override survives,
+/// which does let a title read back to front; that is the same reordering any
+/// file name can ask for, and refusing it here would also refuse the joiners
+/// that hold an emoji together.
+pub fn plain(title: &str) -> String {
+	title
+		.chars()
+		.filter(|&c| !c.is_control() && !('\u{80}'..='\u{9f}').contains(&c))
+		.collect::<String>()
+		.trim()
+		.to_string()
+}
+
 /// What a title set by the running program is worth showing, if anything.
 ///
 /// A Windows console names a new window after the program it starts, so a shell
@@ -753,7 +775,7 @@ pub fn elapsed(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Demand, Rights, Style, Task, clamp_page, elapsed, label_forms, page_for, path_forms,
+		Demand, Rights, Style, Task, clamp_page, elapsed, label_forms, page_for, path_forms, plain,
 		program_says, shell_forms, slot_at_x, slot_x, tabs_that_fit, task_forms, tip_lines,
 		tip_value, widths, window_suffix, window_title,
 	};
@@ -1516,5 +1538,98 @@ mod tests {
 		);
 		assert_eq!(window_title(root, Some(""), "SilkTerm", None), "Root");
 		assert_eq!(window_title(root, Some("   "), "SilkTerm", None), "Root");
+	}
+
+	// A title is drawn by the desktop as text, so a program must not be able to
+	// put anything else in one. This is the concrete case; the fuzz target below
+	// is what says there is no other spelling of it.
+	#[test]
+	fn a_title_arrives_as_plain_text() {
+		assert_eq!(plain("build \u{1b}[2J\u{7f}ok"), "build [2Jok");
+		assert_eq!(plain("\u{0}\u{9b}0m x"), "0m x");
+		assert_eq!(plain("  spaced  "), "spaced");
+		assert_eq!(plain("\u{1}\u{2}\u{3}"), "");
+		// Ordinary text, emoji and CJK are left exactly as they came.
+		assert_eq!(
+			plain("~/src \u{1f600} \u{4e2d}"),
+			"~/src \u{1f600} \u{4e2d}"
+		);
+	}
+
+	// A window title is the one piece of a program's output that leaves the
+	// terminal: the desktop puts it on a task bar, a window list and an alt-tab
+	// switcher, all of which draw it as text they trust. So whatever a program
+	// asks for has to come out as plain text, and the tab label beside it too.
+	mod fuzz {
+		use super::super::{Rights, Style, Task, label_forms, plain, window_suffix, window_title};
+		use crate::fuzz;
+
+		fn nasty(rng: &mut fuzz::Rng) -> Vec<u8> {
+			#[rustfmt::skip]
+			const PIECES: [&str; 16] = [
+				"\u{0}", "\u{7}", "\u{8}", "\u{1b}", "\u{1b}[2J", "\u{7f}",
+				"\u{9b}", "\u{85}", "\n", "\r", "\t", " - ", "C:\\x.exe",
+				"Administrator", ": ", "\u{202e}",
+			];
+			let mut out = String::new();
+			for _ in 0..rng.below(16) {
+				if rng.chance(3) {
+					out.push_str(&fuzz::text(rng));
+				} else {
+					out.push_str(rng.pick(&PIECES));
+				}
+			}
+			out.into_bytes()
+		}
+
+		fn tame(text: &str) -> bool {
+			!text
+				.chars()
+				.any(|c| c.is_control() || ('\u{80}'..='\u{9f}').contains(&c))
+		}
+
+		fn check(case: &[u8]) {
+			let said = plain(&String::from_utf8_lossy(case));
+			assert!(tame(&said), "a program's title came through as {said:?}");
+			for rights in [
+				Rights {
+					say: None,
+					decorated: false,
+				},
+				Rights {
+					say: Some("Administrator"),
+					decorated: true,
+				},
+				Rights {
+					say: Some("Root"),
+					decorated: false,
+				},
+			] {
+				let suffix = window_suffix(rights, None, Some(&said), || "bash".into());
+				let title = window_title(rights, None, "SilkTerm", suffix.as_deref());
+				assert!(tame(&title), "the window title came out {title:?}");
+			}
+			for form in label_forms(
+				&said,
+				Some(Task::Running(&said)),
+				Some(&said),
+				Some("/home/u"),
+				Style::Posix,
+			) {
+				assert!(tame(&form), "a tab label came out {form:?}");
+			}
+		}
+
+		#[test]
+		fn a_program_cannot_put_control_characters_in_the_window_title() {
+			let corpus = fuzz::corpus("title");
+			for case in &corpus {
+				check(case);
+			}
+			fuzz::soak("title", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				check(&fuzz::input(&mut rng, &corpus, nasty));
+			});
+		}
 	}
 }

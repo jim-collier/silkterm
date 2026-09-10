@@ -5891,7 +5891,8 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 			UserEvent::Title(id, title) => {
 				if let Some(p) = state.tabs.find_pane_mut(id) {
-					p.title = title;
+					// The one place a program's own title arrives.
+					p.title = crate::tabtitle::plain(&title);
 				}
 				if id == state.tabs.cur().focused {
 					state.update_title();

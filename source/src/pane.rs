@@ -5957,4 +5957,88 @@ mod tests {
 		assert!(b[0] > c[0] && b[1] > c[1] && b[2] > c[2]); // peak flash brightens
 		assert!(b.iter().zip(&c).all(|(&n, &o)| n >= o)); // never darkens
 	}
+
+	// A paste is the one thing a person hands the shell without reading it byte by
+	// byte, and the shell cannot tell a pasted byte from a typed one. Bracketing
+	// is what draws the line, so the payload must not be able to step over it.
+	mod fuzz {
+		use super::super::{pair_inside, paste_payload, same_char_pair};
+		use crate::fuzz;
+
+		fn clipboard(rng: &mut fuzz::Rng) -> Vec<u8> {
+			#[rustfmt::skip]
+			const PIECES: [&str; 14] = [
+				"\u{1b}", "\u{1b}[201~", "\u{1b}[200~", "\r\n", "\n", "\r",
+				"rm -rf ~", "safe", " ", "\u{0}", "\u{7f}", "(", ")", "\"",
+			];
+			let mut out = String::new();
+			for _ in 0..rng.below(20) {
+				if rng.chance(4) {
+					out.push_str(&fuzz::text(rng));
+				} else {
+					out.push_str(rng.pick(&PIECES));
+				}
+			}
+			out.into_bytes()
+		}
+
+		#[test]
+		fn a_paste_can_never_step_outside_its_brackets() {
+			let corpus = fuzz::corpus("paste");
+			let check = |case: &[u8]| {
+				let text = String::from_utf8_lossy(case);
+				// Bracketed: an ESC would end the bracket early and everything
+				// after it would be read as keystrokes.
+				assert!(
+					!paste_payload(&text, true).contains('\u{1b}'),
+					"an ESC survived into a bracketed paste"
+				);
+				// Unbracketed: the application cannot tell the paste from typing,
+				// so a line break has to be the one the Enter key sends.
+				assert!(
+					!paste_payload(&text, false).contains('\n'),
+					"an LF survived into an unbracketed paste"
+				);
+			};
+			for case in &corpus {
+				check(case);
+			}
+			fuzz::soak("paste", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				check(&fuzz::input(&mut rng, &corpus, clipboard));
+			});
+		}
+
+		// A double-click asks about pairs before it falls back to words, and the
+		// span it comes back with indexes straight into the row.
+		#[test]
+		fn a_selected_pair_stays_inside_its_row() {
+			const PAIRS: [(char, char); 5] =
+				[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('\'', '\'')];
+			let corpus = fuzz::corpus("pairs");
+			fuzz::soak("pairs", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				let case = fuzz::input(&mut rng, &corpus, clipboard);
+				let row: Vec<char> = String::from_utf8_lossy(&case).chars().collect();
+				for col in 0..row.len() {
+					if let Some((a, b)) = pair_inside(&row, col, &PAIRS) {
+						assert!(
+							a <= b && b < row.len(),
+							"{a}..{b} outside a row of {}",
+							row.len()
+						);
+					}
+					for &(open, _) in &PAIRS {
+						if let Some((a, b)) = same_char_pair(&row, col, open) {
+							assert!(
+								a <= b && b < row.len(),
+								"{a}..{b} outside a row of {}",
+								row.len()
+							);
+						}
+					}
+				}
+			});
+		}
+	}
 }

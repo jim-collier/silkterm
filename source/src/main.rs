@@ -20,6 +20,10 @@ mod contrast;
 mod ctl;
 mod cwd;
 mod dialog;
+// Adversarial input generators, shared by the fuzz targets that sit beside the
+// code they hammer. Test-only, so nothing of it reaches a shipped binary.
+#[cfg(test)]
+mod fuzz;
 mod gfx;
 mod input;
 mod integration;
