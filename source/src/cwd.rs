@@ -300,7 +300,17 @@ fn from_url(url: &str, local_host: &str) -> Option<PathBuf> {
 // A URL path to a native one. On Windows that means dropping the separator that
 // precedes a drive letter (`/C:/x`) and turning the rest around.
 fn as_path(text: &str) -> Option<PathBuf> {
-	if text.is_empty() {
+	// An OSC payload is untrusted text, and this is the funnel both spellings pass
+	// through. A control character is turned away here because a reported
+	// directory is shown as well as used: it names the tab and reaches the window
+	// title, where the desktop draws it as text. A directory really called that is
+	// possible on unix and vanishingly rare, and refusing one only means the new
+	// pane starts where the old one did.
+	//
+	// Whether the path is absolute is NOT asked here. A pane on Windows can report
+	// a posix path, and wsl.exe wants exactly that spelling; usable_cwd is the one
+	// gate on what becomes a working directory.
+	if text.is_empty() || text.chars().any(char::is_control) {
 		return None;
 	}
 	#[cfg(windows)]
@@ -508,5 +518,72 @@ mod tests {
 			directory("9;9;\"C:\\Users\\u\"", "box"),
 			Some(PathBuf::from(r"C:\Users\u"))
 		);
+	}
+
+	// A reported directory names the tab and reaches the window title, so it has
+	// to be text. Percent-decoding is how a control character gets in: the shell
+	// need not have printed one for the payload to decode into one.
+	#[test]
+	fn a_reported_directory_carrying_a_control_character_is_refused() {
+		assert_eq!(directory("9;9;/srv/lo\u{0}g", "box"), None);
+		assert_eq!(directory("7;file:///srv/lo%00g", "box"), None);
+		assert_eq!(directory("7;file:///srv/two%0Alines", "box"), None);
+		assert_eq!(directory("7;file:///srv/tab%09bed", "box"), None);
+		// and the ordinary case still arrives
+		assert_eq!(directory("9;9;/srv/log", "box"), Some(native("/srv/log")));
+	}
+
+	// Where a shell says it is decides where the next pane starts, and the shell
+	// is not the only thing that can print an OSC 7. So the payload is untrusted
+	// text that turns into a path, and the parse has to hold up on anything.
+	mod fuzz {
+		use super::super::directory;
+		use crate::fuzz;
+
+		#[rustfmt::skip]
+		const PIECES: [&str; 22] = [
+			"7;", "9;9;", "file://", "//", "/", "localhost", "box", "elsewhere",
+			"%20", "%2f", "%00", "%", "%zz", "%c3", "%c3%a9", "C:", ":", "\"",
+			"..", "\u{0}", "srv", "\u{4e2d}",
+		];
+
+		#[test]
+		fn any_reported_directory_parses_into_a_usable_path() {
+			let corpus = fuzz::corpus("cwd");
+			let check = |case: &[u8]| {
+				let payload = String::from_utf8_lossy(case);
+				for host in ["box", "", "localhost"] {
+					let Some(dir) = directory(&payload, host) else {
+						continue;
+					};
+					let text = dir.to_string_lossy();
+					assert!(!text.is_empty(), "{payload:?} gave an empty path");
+					// A control character reaches the tab label and the window
+					// title, so it may not come out of here.
+					assert!(
+						!text.chars().any(char::is_control),
+						"{payload:?} gave {text:?}"
+					);
+				}
+			};
+			for case in &corpus {
+				check(case);
+			}
+			fuzz::soak("cwd", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				let case = fuzz::input(&mut rng, &corpus, |rng| {
+					let mut out = String::new();
+					for _ in 0..=rng.below(14) {
+						if rng.chance(5) {
+							out.push_str(&fuzz::text(rng));
+						} else {
+							out.push_str(rng.pick(&PIECES));
+						}
+					}
+					out.into_bytes()
+				});
+				check(&case);
+			});
+		}
 	}
 }

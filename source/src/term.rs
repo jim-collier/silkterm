@@ -1060,15 +1060,13 @@ struct UnicodeString {
 // which Windows either rejects or - worse - resolves against the current
 // drive, which is how a new tab came up in a garbled /tmp.
 fn usable_cwd(dir: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
-	let dir = dir?;
-	if cfg!(windows)
-		&& !matches!(
-			dir.components().next(),
-			Some(std::path::Component::Prefix(_))
-		) {
-		return None;
-	}
-	Some(dir)
+	// Every source of a pane's directory funnels through here: the reported one,
+	// the one on the command line, the one in the config. A relative path is not
+	// a directory anyone chose - it resolves against wherever SilkTerm itself was
+	// started, which is nowhere the person can see. A posix path on Windows is the
+	// other half of the same rule; that one arrives from a WSL pane reporting
+	// where it is, and it names a real directory in the wrong filesystem.
+	dir.filter(|dir| dir.is_absolute())
 }
 
 // wsl.exe launches the shell inside the distribution, which does not inherit
@@ -1206,7 +1204,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_posix_path_is_no_working_directory_for_windows() {
+	fn a_pane_only_ever_starts_in_an_absolute_directory() {
 		let keep = |s: &str| usable_cwd(Some(std::path::PathBuf::from(s))).is_some();
 		assert!(usable_cwd(None).is_none());
 		if cfg!(windows) {
@@ -1214,9 +1212,17 @@ mod tests {
 			assert!(!keep("/tmp"));
 			assert!(keep(r"C:\Users\jim"));
 			assert!(keep(r"\\host\share"));
+			// Drive-relative: which directory this is depends on per-drive state
+			// nothing here can see.
+			assert!(!keep("C:jim"));
 		} else {
 			assert!(keep("/home/jim"));
 		}
+		// Relative, on any platform. A shell can report one, and it would open a
+		// pane in whatever sits under SilkTerm's own directory.
+		assert!(!keep("relative/path"));
+		assert!(!keep(""));
+		assert!(!keep("."));
 	}
 
 	// The --keep-open line reads this out to the user, so it has to say the same
@@ -1458,5 +1464,127 @@ mod tests {
 		assert!(fixups.iter().all(|(_, value)| value.is_none()));
 		// and the one nobody asked about is untouched
 		assert!(!fixups.iter().any(|(name, _)| name == "PATH"));
+	}
+
+	// Whatever a program prints, the terminal must not end up typing for it.
+	//
+	// Everything a pane shows arrives from the other end of a pty, and some of it
+	// comes from further away than that: a file, a remote host, a build log. The
+	// terminal answers a few of the questions such a stream can ask, and those
+	// answers go back down the pty as if the user had typed them - so an answer
+	// that could carry a newline, or the program's own text, would let the program
+	// run a command nobody typed. That is the oldest hole in terminal emulators
+	// and it is the one thing worth hammering hardest.
+	mod fuzz {
+		use alacritty_terminal::event::{Event, EventListener, WindowSize};
+		use alacritty_terminal::grid::Dimensions;
+		use alacritty_terminal::term::{Config, Term};
+		use alacritty_terminal::vte::ansi::Processor;
+		use std::sync::{Arc, Mutex};
+
+		use crate::fuzz;
+		use crate::term::{TermDimensions, query_reply};
+
+		const COLS: usize = 20;
+		const LINES: usize = 8;
+		const HISTORY: usize = 200;
+		// Planted in every title, icon name and clipboard the stream sets. Nothing
+		// the generator emits can produce it by chance.
+		const MARKER: &str = "kQ7marker7Qk";
+
+		// Stands in for the real listener, and forwards exactly what it forwards:
+		// the engine's own replies, plus the two queries we answer ourselves.
+		// Everything else - the clipboard included - is dropped on the floor.
+		#[derive(Clone, Default)]
+		struct Replies(Arc<Mutex<Vec<u8>>>);
+
+		impl EventListener for Replies {
+			fn send_event(&self, event: Event) {
+				let size = WindowSize {
+					num_cols: COLS as u16,
+					num_lines: LINES as u16,
+					cell_width: 8,
+					cell_height: 16,
+				};
+				let bytes = match event {
+					Event::PtyWrite(text) => text.into_bytes(),
+
+					ref query @ (Event::ColorRequest(..) | Event::TextAreaSizeRequest(..)) => {
+						query_reply(query, size).unwrap_or_default()
+					}
+					_ => return,
+				};
+				self.0.lock().expect("reply lock").extend_from_slice(&bytes);
+			}
+		}
+
+		fn drive(stream: &[u8]) {
+			let replies = Replies::default();
+			let config = Config {
+				scrolling_history: HISTORY,
+				..Config::default()
+			};
+			let dims = TermDimensions {
+				columns: COLS,
+				screen_lines: LINES,
+			};
+			let mut term = Term::new(config, &dims, replies.clone());
+			term.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+			let mut parser = Processor::<alacritty_terminal::vte::ansi::StdSyncHandler>::default();
+
+			parser.advance(&mut term, format!("\x1b]0;{MARKER}\x07").as_bytes());
+			parser.advance(&mut term, format!("\x1b]1;{MARKER}\x07").as_bytes());
+			parser.advance(&mut term, format!("\x1b]52;c;{MARKER}\x07").as_bytes());
+			parser.advance(&mut term, stream);
+			parser.advance(&mut term, fuzz::VT_PROBES);
+
+			let said = replies.0.lock().expect("reply lock").clone();
+			let shown = String::from_utf8_lossy(&said);
+			// A reply the program can steer is a command the user never typed.
+			assert!(
+				!shown.contains(MARKER),
+				"a reply carried the program's own text: {shown:?}"
+			);
+			// And a reply that can carry a line ending submits itself.
+			assert!(
+				!said.iter().any(|&b| matches!(b, b'\n' | b'\r' | 0)),
+				"a reply carried a line ending: {shown:?}"
+			);
+			// Nothing we answer is long. An unbounded one would be a way to flood
+			// the shell's input as well as a way to hide something in it.
+			assert!(said.len() < 4096, "a reply ran to {} bytes", said.len());
+
+			let grid = term.grid();
+			let cursor = grid.cursor.point;
+			assert!(
+				cursor.line.0 >= 0 && (cursor.line.0 as usize) < LINES,
+				"cursor left the screen: {cursor:?}"
+			);
+			assert!(cursor.column.0 < COLS, "cursor left the screen: {cursor:?}");
+			assert!(
+				grid.display_offset() <= grid.history_size(),
+				"the view sits past the scrollback"
+			);
+			// The scrollback is what a burst of output is allowed to cost. Without
+			// a ceiling on it a program prints until the process is killed.
+			assert!(
+				grid.history_size() <= HISTORY,
+				"scrollback grew to {} past its {HISTORY} limit",
+				grid.history_size()
+			);
+		}
+
+		#[test]
+		fn a_program_cannot_make_the_terminal_type() {
+			let corpus = fuzz::corpus("vt");
+			for case in &corpus {
+				drive(case);
+			}
+			fuzz::soak("vt", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				let stream = fuzz::input(&mut rng, &corpus, fuzz::vt_stream);
+				drive(&stream);
+			});
+		}
 	}
 }

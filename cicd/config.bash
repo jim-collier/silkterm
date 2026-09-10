@@ -93,6 +93,13 @@ LINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" "CARGO_TARGET_DIR=${TARGET_DIR}/
 ## disable.
 XLINT_CMD=(env "PATH=${HOME}/.cargo/bin:${PATH}" "CARGO_TARGET_DIR=${TARGET_DIR}/lint" cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings)
 
+## Stage 3 (after tests): the fuzz soak. The targets are ordinary tests, so the
+## run above already exercised them at a fraction of a second each; this gives
+## every one a real budget. Seconds PER TARGET, and they run in parallel, so the
+## wall time is roughly this plus the build. 0 disables; --quick sets it to 0.
+FUZZ_SECS=20
+FUZZ_CMD=(cargo test fuzz::)
+
 ## Stage 3 (after lints): dependency police (licenses/advisories/duplicates,
 ## policy in deny.toml). Non-gating for now; tighten once the report is tuned.
 DENY_PROBE=(cargo deny --version)
