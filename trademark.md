@@ -12,7 +12,7 @@ That said, asking is free - and we'd prefer to say yes. Forks that credibly carr
 
 ## 1. Marks covered
 
-"SilkTerm", the SilkTerm logo, and any stylized variants (the "Marks") are trademarks of Jim Collier (CryptogID: ѳ6ᴚ℈𐀘𐇦ɛ𐊁¥Mﾏb϶Δ𐌞). We claim these Marks under common law and use them in commerce as SilkTerm™.
+"SilkTerm", the SilkTerm logo, and any stylized variants (the "Marks") are trademarks of Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]. We claim these Marks under common law and use them in commerce as SilkTerm™.
 
 ## 2. Relationship to the software license
 

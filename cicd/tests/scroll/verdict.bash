@@ -5,7 +5,7 @@
 ##		display. Sourced by run.bash; sourcing defines the function and nothing else.
 ##	- History: At bottom of file.
 
-##	Copyright © 2026 Jim Collier (CryptogID: XଌฅრX۳ᛟԃლፀƅꓩหδლც)
+##	Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 ##	SPDX-License-Identifier: GPL-2.0-or-later
 
 ## fScrollVerdict <pass> <fail> <miss> <strict>

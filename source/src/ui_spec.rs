@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! The Settings dialog's declarations, read from `settings_ui.shcl` (compiled
 //! in). The file owns what the dialog IS - rows, order, sections, tabs, the

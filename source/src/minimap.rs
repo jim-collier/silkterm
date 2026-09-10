@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! Minimap: the whole scroll buffer in miniature, in its own column beside the
 //! text. The buffer always maps linearly onto the column and never slides, so

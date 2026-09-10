@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -3455,7 +3455,7 @@ const SHCL_BANNER: &str = "\
 ## \"Simple Hierarchical Config Language\"
 ##    Home     https://github.com/jim-collier/shcl
 ##    Syntax   https://github.com/jim-collier/shcl/blob/main/project/spec.md
-##    Legal    SHCL is Copyright © 2026 Jim Collier. License: MIT. No warranty.
+##    Legal    SHCL is Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]. License: MIT. No warranty.
 ##
 ";
 
@@ -3466,7 +3466,7 @@ const SHCL_BANNER_OLD: &str = "\
 # \"Simple Hierarchical Config Language\"
 #    Home     https://github.com/jim-collier/shcl
 #    Syntax   https://github.com/jim-collier/shcl/blob/main/project/spec.md
-#    Legal    SHCL is Copyright © 2026 Jim Collier. License: MIT. No warranty.
+#    Legal    SHCL is Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]. License: MIT. No warranty.
 #
 ";
 
@@ -4126,7 +4126,7 @@ shell:
 ## "Simple Hierarchical Config Language"
 ##    Home     https://github.com/jim-collier/shcl
 ##    Syntax   https://github.com/jim-collier/shcl/blob/main/project/spec.md
-##    Legal    SHCL is Copyright © 2026 Jim Collier. License: MIT. No warranty.
+##    Legal    SHCL is Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]. License: MIT. No warranty.
 ##
 "##;
 
