@@ -305,4 +305,112 @@ mod tests {
 		assert_eq!(at(line, "ftp"), Some("ftp://two.example".into()));
 		assert_eq!(at(line, " c"), None);
 	}
+
+	// A hostile scheme is the whole reason detection is allowlisted, so it gets a
+	// directed test as well as the fuzz below. These are the ones that turn a
+	// printed line into code: two of them run script in a browser, one runs it in
+	// the Windows shell, and the rest reach a handler no terminal should offer.
+	#[test]
+	fn a_hostile_scheme_never_becomes_a_link() {
+		#[rustfmt::skip]
+		let schemes = [
+			"javascript", "JavaScript", "data", "vbscript", "jar", "about",
+			"chrome", "view-source", "ms-msdt", "search-ms", "shell", "res",
+			"blob", "filesystem", "intent", "smb",
+			// An allowlisted scheme with something hidden inside it. A zero-width
+			// character reads as nothing on screen and as a different scheme here.
+			"htt\u{200b}ps", "ht\u{feff}tps", "http\u{ad}s",
+		];
+		for scheme in schemes {
+			for body in ["//example.com/x", ":alert(1)", "//x"] {
+				let line = format!("{scheme}:{body}");
+				let text: Vec<char> = line.chars().collect();
+				for hit in 0..text.len() {
+					assert!(
+						find_at(&text, hit).is_none(),
+						"{line:?} was offered as a link at char {hit}"
+					);
+				}
+			}
+		}
+	}
+
+	// A printed line is untrusted text, and the only thing standing between it and
+	// a process launch is the scan below. So the scan gets hammered: whatever it
+	// hands back must be a whole allowlisted URL, taken verbatim out of the row,
+	// and made of nothing but the characters a URL may carry.
+	mod fuzz {
+		use super::super::{SCHEMES, find_at, is_url_char};
+		use crate::fuzz;
+
+		// Rows built from the pieces that sit around a link in real output: the
+		// schemes themselves, near-misses, the delimiters that end one, and the
+		// brackets and punctuation the tail trimmer has to reason about.
+		#[rustfmt::skip]
+		const PIECES: [&str; 30] = [
+			"http", "https", "HTTPS", "ftp", "ftps", "sftp", "ssh", "file",
+			"mailto", "javascript", "data", "httpss", "xhttp", ":", "//", "/",
+			"://", ".", ",", ";", "?", "!", ")", "(", "[", "]", " ", "a1",
+			"example.com", "\u{4e2d}",
+		];
+
+		fn row(rng: &mut fuzz::Rng) -> Vec<u8> {
+			let mut out = String::new();
+			for _ in 0..rng.below(24) {
+				if rng.chance(6) {
+					out.push_str(&fuzz::text(rng));
+				} else {
+					out.push_str(rng.pick(&PIECES));
+				}
+			}
+			out.into_bytes()
+		}
+
+		fn check(line: &[u8]) {
+			let text: Vec<char> = String::from_utf8_lossy(line).chars().collect();
+			for hit in 0..text.len() {
+				let Some((start, end, url)) = find_at(&text, hit) else {
+					continue;
+				};
+				assert!(start < end && end <= text.len(), "range {start}..{end}");
+				assert!(
+					(start..end).contains(&hit),
+					"{hit} is outside {start}..{end}"
+				);
+				assert_eq!(
+					url,
+					text[start..end].iter().collect::<String>(),
+					"the url is not what was on the row"
+				);
+				let lower = url.to_ascii_lowercase();
+				assert!(
+					SCHEMES.iter().any(|&(scheme, slashes)| {
+						let want = if slashes {
+							format!("{scheme}://")
+						} else {
+							format!("{scheme}:")
+						};
+						lower.starts_with(&want) && lower.len() > want.len()
+					}),
+					"{url:?} is not an allowlisted scheme"
+				);
+				assert!(
+					url.chars().skip_while(|&c| c != ':').all(is_url_char),
+					"{url:?} carries a character a url may not"
+				);
+			}
+		}
+
+		#[test]
+		fn only_an_allowlisted_url_is_ever_offered_to_the_opener() {
+			let corpus = fuzz::corpus("links");
+			for case in &corpus {
+				check(case);
+			}
+			fuzz::soak("links", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				check(&fuzz::input(&mut rng, &corpus, row));
+			});
+		}
+	}
 }

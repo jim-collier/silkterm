@@ -24,7 +24,8 @@
 ##	   0. remote sync (fetch; fast-forward if safely behind; abort if diverged)
 ##	   1. format (cargo fmt)
 ##	   2. debug build (this is what the tests + profiler run against)
-##	   3. regression tests + lints (clippy gating, cargo-deny advisory, scroll harness)
+##	   3. regression tests + lints + fuzz soak (clippy gating, cargo-deny advisory,
+##	      scroll harness)
 ##	   4. profiler (flamegraph SVG; non-gating artifact - see failure policy)
 ##	   5. release build (native + cross targets; optimized, for packaging + dogfood)
 ##	   6. packages (.deb/.rpm per Linux arch; NSIS installer .exe per Windows arch)
@@ -43,6 +44,7 @@
 ##	   --no-windows        skip the Windows cross targets (Linux artifacts only) -
 ##	                       what a Windows box's own pipeline delegates here
 ##	   --no-package        skip the packages stage (.deb/.rpm/installer)
+##	   --no-fuzz           skip the fuzz soak (the short one in the test run still runs)
 ##	   --no-profile        skip the profiler stage
 ##	   --no-dogfood        skip the dogfood install
 ##	   --no-publish        skip the git backup + publish stage
@@ -106,7 +108,8 @@ while (($#)); do case "$1" in
 	--no-publish)             GIT_PUBLISH=(); shift ;;
 	--no-sync)                sync=0; shift ;;
 	--demo)                   DEMO_ENABLE=1; shift ;;
-	--quick)                  quick=1; BUILD_CROSS=0; PROFILE_ENABLE=0; PACKAGE_ENABLE=0; shift ;;   ## skip the slow stages
+	--quick)                  quick=1; BUILD_CROSS=0; PROFILE_ENABLE=0; PACKAGE_ENABLE=0; FUZZ_SECS=0; shift ;;   ## skip the slow stages
+	--no-fuzz)                FUZZ_SECS=0; shift ;;
 	--message=*|--msg=*|-m=*) cli_message="${1#*=}"; shift ;;
 	-m|--message|--msg)       cli_message="${2-}"; shift; (($#)) && shift ;;
 	-h|--help)                sed -n '/^##	- Purpose:/,/^##	History:/p' "${BASH_SOURCE[0]}" | sed '$d; s/^##	\{0,1\}//'; exit 0 ;;
@@ -310,6 +313,11 @@ fEcho_Clean "Remote sync .........: $( ((sync)) && echo 'fetch + fast-forward ch
 fEcho_Clean "Format ..............: ${FMT_CMD[*]:-(skipped)}"
 fEcho_Clean "Debug build .........: ${DEBUG_BUILD_CMD[*]}"
 fEcho_Clean "Tests ...............: ${TEST_CMD[*]}"
+if ((${FUZZ_SECS:-0} > 0)) && ((${#FUZZ_CMD[@]})); then
+	fEcho_Clean "Fuzz ................: ${FUZZ_CMD[*]} at ${FUZZ_SECS}s per target"
+else
+	fEcho_Clean "Fuzz ................: (skipped)"
+fi
 if ((PROFILE_ENABLE)); then
 	fEcho_Clean "Profiler ............: ${PROFILE_SECS}s run -> flamegraph SVG (on headless ${RPD_HEADLESS_DISPLAY:-:98})"
 	fEcho_Clean "  output dir ........: ${profile_dir}"
@@ -463,6 +471,14 @@ fi
 if [[ -n "${XLINT_CMD+x}" ]] && ((${#XLINT_CMD[@]})) && "${LINT_PROBE[@]}" >/dev/null 2>&1; then
 	"${XLINT_CMD[@]}" || fDie "windows lints failed"
 	fEcho "OK: windows lints clean"
+fi
+## The fuzz soak. Same targets the test run just went through, given a real
+## budget each. Gating: a case that breaks an invariant reports the seed that
+## reproduces it.
+if [[ -n "${FUZZ_CMD+x}" ]] && ((${#FUZZ_CMD[@]})) && ((${FUZZ_SECS:-0} > 0)); then
+	fEcho "Fuzzing, ${FUZZ_SECS}s per target ..."
+	env "SILK_FUZZ_SECS=${FUZZ_SECS}" "${FUZZ_CMD[@]}" || fDie "fuzz found something"
+	fEcho "OK: fuzz clean"
 fi
 if [[ -n "${DENY_CMD+x}" ]] && ((${#DENY_CMD[@]})); then
 	if "${DENY_PROBE[@]}" >/dev/null 2>&1; then

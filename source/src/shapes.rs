@@ -426,4 +426,49 @@ mod tests {
 		let text: Vec<char> = "/etc/hosts".chars().collect();
 		assert_eq!(span_at(&text, 99), None);
 	}
+
+	// The span comes straight back as indexes into the row it was given, and the
+	// row is whatever a program printed. A span that runs past the end of it
+	// would be read out of bounds by the caller.
+	mod fuzz {
+		use super::super::span_at;
+		use crate::fuzz;
+
+		#[rustfmt::skip]
+		const PIECES: [&str; 24] = [
+			"/home/u", "C:\\Users", "\\\\srv\\share", "http://x.example", "1.2.3.4",
+			"a@b.example", "12:34:56", "2026-09-09", "0x1f", "#ff8800", "1e9",
+			"github.com:jim/x.git:dev", "..", ".", "/", "\\", ":", "-", "_",
+			" ", "(", ")", "\u{4e2d}", "\u{1f600}",
+		];
+
+		#[test]
+		fn a_shape_span_never_runs_past_the_row_it_was_found_in() {
+			let corpus = fuzz::corpus("shapes");
+			fuzz::soak("shapes", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				let case = fuzz::input(&mut rng, &corpus, |rng| {
+					let mut line = String::new();
+					for _ in 0..rng.below(20) {
+						if rng.chance(5) {
+							line.push_str(&fuzz::text(rng));
+						} else {
+							line.push_str(rng.pick(&PIECES));
+						}
+					}
+					line.into_bytes()
+				});
+				let row: Vec<char> = String::from_utf8_lossy(&case).chars().collect();
+				for hit in 0..row.len() {
+					// The end is exclusive here, where the pair rule beside it in
+					// pane.rs answers inclusive. The caller takes end - 1.
+					let Some((a, b)) = span_at(&row, hit) else {
+						continue;
+					};
+					assert!((a..b).contains(&hit), "{hit} is outside {a}..{b}");
+					assert!(b <= row.len(), "{a}..{b} runs past a row of {}", row.len());
+				}
+			});
+		}
+	}
 }
