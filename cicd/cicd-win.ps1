@@ -1,4 +1,4 @@
-##	Purpose:
+﻿##	Purpose:
 ##		- Windows-native CI/CD pipeline for SilkTerm. A PowerShell port of the
 ##		  Linux cicd.bash, doing as much of the same work as Windows allows -
 ##		  including the parts cicd.bash farms out to helper scripts (the git
