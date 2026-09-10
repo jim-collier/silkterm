@@ -343,4 +343,21 @@ mod tests {
 	fn a_missing_corpus_directory_is_empty_rather_than_an_error() {
 		assert!(corpus("no-such-target").is_empty());
 	}
+
+	// The path to the corpus is built from the manifest directory, so a tree laid
+	// out differently - or a platform that spells the separator the other way -
+	// would find nothing and every target would still pass.
+	#[test]
+	fn the_corpus_is_where_the_targets_look_for_it() {
+		for target in [
+			"vt", "config", "links", "title", "cwd", "paste", "shapes", "pairs",
+		] {
+			let cases = corpus(target);
+			assert!(!cases.is_empty(), "no corpus found for '{target}'");
+			assert!(
+				cases.iter().all(|case| !case.is_empty()),
+				"an empty file in the '{target}' corpus"
+			);
+		}
+	}
 }
