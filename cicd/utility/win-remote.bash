@@ -35,7 +35,9 @@
 ##		merged, so local edits there are discarded. Uncommitted work here does not
 ##		reach it - push first. --ref names a different branch, which is how a fix
 ##		gets tried on Windows before it is merged; the next plain sync puts the
-##		clone back on dev.
+##		clone back on dev. It belongs to sync alone - a job runs against whatever
+##		the clone was last synced to, so sync with it first and then run the job.
+##		Passing it to anything else is refused rather than ignored.
 ##		--as picks the remote account. The default builds and tests, because the rust
 ##		toolchain is a per-user rustup install under it. The unprivileged test account
 ##		has no toolchain but a virgin profile, which is what to run a built binary as.
@@ -182,11 +184,15 @@ runScript=""
 declare -a runArgs=()
 fDoRun() { fRunScript "$1" "$runScript" "${runArgs[@]}"; }
 
-only=""; optional=0; syncRef="dev"
+##	--ref only reaches the clone through sync. A job silently running against
+##	whatever was there last is how a fix looks verified when it was never built.
+fNoRef() { [[ -z "${refGiven}" ]] || fFail "--ref belongs to sync - sync with it first, then run this" 2 ;}
+
+only=""; optional=0; syncRef="dev"; refGiven=""
 while (($#)); do case "$1" in
 	--host)    only="${2:-}"; shift 2 ;;
 	--as)      sshUser="${2:-}"; shift 2 ;;
-	--ref)     syncRef="${2:-}"; shift 2 ;;
+	--ref)     syncRef="${2:-}"; refGiven=1; shift 2 ;;
 	--optional) optional=1; shift ;;
 	-h|--help) grep -E '^##' "$0" | sed 's/^##\t\?//'; exit 0 ;;
 	*) break ;;
@@ -198,6 +204,7 @@ fLoadConf
 
 case "$cmd" in
 	hosts)
+		fNoRef
 		for i in $(fSelected); do
 			if addr="$(fLiveAddr "${hostAddrs[$i]}")"
 				then printf '%-8s up    %s\n' "${hostNames[$i]}" "${addr}"
@@ -209,6 +216,7 @@ case "$cmd" in
 		fOverHosts fSync || exit 1
 		;;
 	job)
+		fNoRef
 		name="${1:-}"; shift || true
 		[[ -n "$name" ]] || fFail "job needs a name" 2
 		runScript="${jobsDir}/${name}.ps1"
@@ -217,12 +225,14 @@ case "$cmd" in
 		fOverHosts fDoRun || exit 1
 		;;
 	run)
+		fNoRef
 		runScript="${1:-}"; shift || true
 		[[ -r "${runScript:-}" ]] || fFail "no such script: ${runScript:-<none>}" 2
 		runArgs=("$@")
 		fOverHosts fDoRun || exit 1
 		;;
 	fetch)
+		fNoRef
 		rel="${1:-}"; dest="${2:-}"
 		[[ -n "$rel" && -n "$dest" ]] || fFail "fetch needs <remote-rel-path> <local-dir>" 2
 		mkdir -p "$dest"
@@ -230,6 +240,7 @@ case "$cmd" in
 		fOverHosts fGet || exit 1
 		;;
 	pull)
+		fNoRef
 		##	Anything by absolute path, for output a job wrote outside the clone.
 		##	scp wants forward slashes even when the far side is Windows.
 		abs="${1:-}"; dest="${2:-}"
@@ -250,3 +261,4 @@ esac
 ##		- 20260908: --optional, so an unreachable box is a skip.
 ##		- 20260908: pull, for output written outside the clone.
 ##		- 20260909: --ref, to try a branch on Windows before merging it.
+##		- 20260909: --ref on anything but sync is refused rather than ignored.
