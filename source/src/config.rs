@@ -5633,4 +5633,160 @@ mod tests {
 			);
 		}
 	}
+
+	// The config file is the one thing here a person edits by hand, so it arrives
+	// however they left it: half-typed, pasted with the wrong indentation, a key
+	// written twice, a value from a config the format used to have. None of that
+	// may take the program down, and saving a file the program itself wrote must
+	// not change it a second time.
+	mod fuzz {
+		use super::super::{
+			config_complaints, default_config, disabled_text, migrate_config_text, read_raw,
+			resolve, reverted_text, setting_groups, setting_lines, walk_settings, with_shcl_banner,
+		};
+		use crate::fuzz;
+
+		// The keys the shipped template actually carries, read out of it rather
+		// than listed here, so a new setting joins the fuzz on its own. The file
+		// is nested, so these are the leaf names and the block headers.
+		static KEYS: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+			default_config()
+				.lines()
+				.filter_map(|line| {
+					let bare = line.trim_start().trim_start_matches("# ");
+					let key = bare.split(':').next()?.trim();
+					let ok = !key.is_empty()
+						&& key
+							.chars()
+							.all(|c| c.is_ascii_lowercase() || c == '_' || c == '.');
+					ok.then(|| key.to_string())
+				})
+				.collect()
+		});
+
+		// Values that have broken a reader before, plus the shapes a hand-edited
+		// file grows: an unclosed quote, a stray tab, a number too big for any
+		// width, a list where a scalar belongs.
+		#[rustfmt::skip]
+		const VALUES: [&str; 22] = [
+			"", " ", "0", "-1", "1e400", "-1e400", "nan", "inf", "99999999999999",
+			"true", "TRUE", "yes", "\"", "\"unclosed", "[1, 2", "{", "#", "null",
+			"0x10", "1_000", "\t", "a: b",
+		];
+
+		// A file, not a line: indentation that changes mid-block, a key written
+		// twice with children under the second, a comment where a value belongs.
+		fn config(rng: &mut fuzz::Rng) -> Vec<u8> {
+			use std::fmt::Write;
+			let keys = &*KEYS;
+			// Pin the wallpaper so resolving a case does not go looking around the
+			// filesystem for one. The parse half sees the wallpaper keys anyway.
+			let mut out = String::from("wallpaper:\n\timage: \"/nonexistent/silkfuzz\"\n");
+			for _ in 0..=rng.below(24) {
+				match rng.below(10) {
+					0 => out.push_str("## a comment\n"),
+					1 => out.push('\n'),
+					2 => {
+						out.push_str(&fuzz::text(rng));
+						out.push('\n');
+					}
+					3 => {
+						// A block header, then children under it - sometimes under
+						// one that was already written above.
+						let _ = writeln!(out, "{}:", rng.pick(keys));
+						for _ in 0..=rng.below(3) {
+							// Mixed indentation on purpose: a pasted block arrives
+							// with spaces where the rest of the file has tabs.
+							let indent = if rng.chance(3) { "    " } else { "\t" };
+							let _ =
+								writeln!(out, "{indent}{}: {}", rng.pick(keys), rng.pick(&VALUES));
+						}
+					}
+					_ => {
+						let lead = if rng.chance(5) { "\t" } else { "" };
+						let _ = writeln!(out, "{lead}{}: {}", rng.pick(keys), rng.pick(&VALUES));
+					}
+				}
+			}
+			out.into_bytes()
+		}
+
+		fn check(case: &[u8]) {
+			let text = String::from_utf8_lossy(case).into_owned();
+			let path = std::path::Path::new("fuzz.shcl");
+
+			// Every pure reader over the file's text, in one place: if one of them
+			// can be made to panic, the program dies before it draws anything.
+			let _ = walk_settings(&text);
+			let _ = config_complaints(&text);
+			let _ = setting_lines(&text);
+			let _ = setting_groups(&text);
+			let _ = migrate_config_text(&text);
+			let _ = with_shcl_banner(&text);
+			let _ = reverted_text(&text, &["font.size", "window.rows"]);
+			let _ = disabled_text(&text, &["font.size", "window.rows"]);
+			let _ = resolve(read_raw(&text, path));
+
+			// Saving is writing the canonical form of what was read. Doing that
+			// twice must give the same file, or every save walks the config away
+			// from what the person typed.
+			let once = shcl::Document::parse(&text).to_canonical();
+			let twice = shcl::Document::parse(&once).to_canonical();
+			assert_eq!(twice, once, "a second save changed the file");
+		}
+
+		// A generator that quietly stops generating passes forever. This is what
+		// says the template is still being read.
+		#[test]
+		fn the_generator_still_finds_the_settings_it_draws_from() {
+			assert!(
+				KEYS.len() > 60,
+				"only {} keys came out of the template",
+				KEYS.len()
+			);
+			for want in ["size", "scrollback", "opacity", "wallpaper", "performance"] {
+				assert!(
+					KEYS.iter().any(|k| k == want),
+					"no '{want}' in the template"
+				);
+			}
+			let mut rng = fuzz::Rng::new(0);
+			let case = String::from_utf8(config(&mut rng)).expect("utf-8");
+			assert!(case.len() > 60, "the generator produced {case:?}");
+		}
+
+		#[test]
+		fn no_config_file_can_take_the_program_down() {
+			let corpus = fuzz::corpus("config");
+			for case in &corpus {
+				check(case);
+			}
+			fuzz::soak("config", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				check(&fuzz::input(&mut rng, &corpus, config));
+			});
+		}
+
+		// Free-form bytes, with no config shape imposed at all. The generator
+		// above never emits a lone `:` at depth four or a value that is only a
+		// byte-order mark, and the parser has to hold up under those too.
+		#[test]
+		fn arbitrary_bytes_parse_without_panicking() {
+			let corpus = fuzz::corpus("config-bytes");
+			for case in &corpus {
+				let _ = walk_settings(&String::from_utf8_lossy(case));
+			}
+			fuzz::soak("config-bytes", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				let case = fuzz::input(&mut rng, &corpus, |rng| {
+					(0..rng.below(400)).map(|_| rng.byte()).collect()
+				});
+				let text = String::from_utf8_lossy(&case);
+				let _ = walk_settings(&text);
+				let _ = config_complaints(&text);
+				let _ = migrate_config_text(&text);
+				let _ = shcl::Document::parse(&text).to_canonical();
+			});
+		}
+	}
 }

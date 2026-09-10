@@ -315,4 +315,71 @@ mod tests {
 			assert_eq!(parse_blur(junk), None, "{junk} should not parse");
 		}
 	}
+
+	// A wallpaper is somebody else's file, and a rotation folder is a folder of
+	// them. The chunk walk below reads lengths out of the file and uses them to
+	// size a read, so a corrupt or hostile image must not be able to take the
+	// wallpaper worker down with it - which in a release build takes the process.
+	mod fuzz {
+		use super::super::{Tags, read};
+		use crate::fuzz;
+
+		// PNG and JPEG openings, so a case gets past the magic check and into the
+		// chunk walk rather than being turned away at the first byte.
+		const PNG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+		const JPEG: [u8; 2] = [0xff, 0xd8];
+
+		fn image(rng: &mut fuzz::Rng) -> Vec<u8> {
+			let mut out = Vec::new();
+			match rng.below(4) {
+				0 => out.extend_from_slice(&JPEG),
+				1..=2 => out.extend_from_slice(&PNG),
+				_ => {}
+			}
+			for _ in 0..=rng.below(20) {
+				match rng.below(5) {
+					// A chunk header: four bytes of length, four of type. A length
+					// that lies about what follows is the case worth reaching.
+					0..=2 => {
+						let len = *rng.pick(&[0u32, 1, 8, 0xffff, 0x7fff_ffff, 0xffff_ffff]);
+						out.extend_from_slice(&len.to_be_bytes());
+						out.extend_from_slice(rng.pick(&[&b"iTXt"[..], b"zTXt", b"IDAT", b"IEND"]));
+					}
+					3 => out.extend_from_slice(b"XML:com.adobe.xmp\0"),
+					_ => out.extend_from_slice(fuzz::text(rng).as_bytes()),
+				}
+			}
+			out
+		}
+
+		fn check(case: &[u8], path: &std::path::Path) {
+			std::fs::write(path, case).expect("write the case");
+			let tags: Tags = read(path);
+			// Whatever comes out has to be a number the renderer can use.
+			if let Some(opacity) = tags.opacity {
+				assert!(opacity.is_finite(), "opacity {opacity}");
+			}
+			if let Some(blur) = tags.blur {
+				assert!(blur.is_finite(), "blur {blur}");
+			}
+			if let Some(anchor) = tags.anchor {
+				assert!(anchor.iter().all(|v| v.is_finite()), "anchor {anchor:?}");
+			}
+		}
+
+		#[test]
+		fn a_corrupt_image_cannot_take_the_wallpaper_worker_down() {
+			let path =
+				std::env::temp_dir().join(format!("silkfuzz-xmp-{}.bin", std::process::id()));
+			let corpus = fuzz::corpus("xmp");
+			for case in &corpus {
+				check(case, &path);
+			}
+			fuzz::soak("xmp", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				check(&fuzz::input(&mut rng, &corpus, image), &path);
+			});
+			let _ = std::fs::remove_file(&path);
+		}
+	}
 }
