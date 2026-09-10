@@ -5,8 +5,8 @@
 // from Cargo.toml), then compiled by embed-resource - which finds the resource
 // compiler via the cc crate (rc.exe for msvc, windres for gnu/gnullvm), the same
 // way rustc finds the linker, so it works natively and cross from Linux. It
-// no-ops on non-windows targets. Non-fatal: if the compiler is missing or can't
-// target this arch (e.g. aarch64 windres), warn and build on iconless.
+// no-ops on non-windows targets. Non-fatal: if no resource compiler can be found
+// for the target, warn and build on iconless.
 use std::{env, fs, path::Path};
 
 // The build number generator, shared with the crate so the number baked in here
@@ -59,22 +59,21 @@ fn main() {
 	let rc_path = Path::new(&out).join("silkterm.rc");
 	fs::write(&rc_path, rc).unwrap();
 
-	// embed-resource picks its compiler from the build HOST toolchain, not the
-	// cargo target: on an msvc host it always runs rc.exe, whose .res mingw's ld
-	// can't link. So cross-building a gnu target from an msvc host, drive windres
-	// ourselves for a real COFF object. Every other path (Linux cross, gnu host)
-	// already uses windres via embed-resource, so leave it be.
-	let host = env::var("HOST").unwrap_or_default();
-	let gnu_target = target.ends_with("-windows-gnu") || target.ends_with("-windows-gnullvm");
-	if gnu_target && host.ends_with("-windows-msvc") {
-		if let Err(err) = windres_compile(&out, &rc_path) {
+	// The compiler is chosen for the TARGET. embed-resource chooses off the build
+	// host instead, and that went wrong twice: an msvc host runs rc.exe even for a
+	// gnu target, whose .res mingw's ld can't link; and for aarch64 it found no
+	// compiler at all and answered "not attempted", which manifest_optional() reads
+	// as success - so the ARM64 exe carried no icon and no version strings and
+	// nothing said so. msvc still goes through embed-resource, which knows how to
+	// find rc.exe.
+	if target.ends_with("-windows-msvc") {
+		let result = embed_resource::compile(&rc_path, embed_resource::NONE);
+		if let Err(err) = result.manifest_required() {
 			println!("cargo:warning=windows resources not embedded: {err}");
 		}
 		return;
 	}
-
-	let result = embed_resource::compile(&rc_path, embed_resource::NONE);
-	if let Err(err) = result.manifest_optional() {
+	if let Err(err) = windres_compile(&out, &rc_path) {
 		println!("cargo:warning=windows resources not embedded: {err}");
 	}
 }
@@ -114,35 +113,97 @@ fn unix_now() -> u64 {
 		.map_or(0, |since| since.as_secs())
 }
 
-// Compile the .rc to a COFF object with mingw windres and hand it to the linker.
-// Non-fatal by contract (see the caller): a windres miss - not on PATH, or no PE
-// support for the arch (aarch64) - just warns and the exe builds iconless.
+// Compile the .rc to a COFF object and hand it to the linker. Non-fatal by
+// contract (see the caller): if nothing on the box can compile a resource for
+// this architecture, warn and let the exe build iconless.
 fn windres_compile(out: &str, rc_path: &Path) -> Result<(), String> {
-	let bfd = match env::var("CARGO_CFG_TARGET_ARCH")
-		.unwrap_or_default()
-		.as_str()
-	{
-		"x86_64" => "pe-x86-64",
-		"aarch64" => "pe-aarch64-little",
-		"x86" => "pe-i386",
-		other => return Err(format!("no windres bfd target for arch {other}")),
-	};
+	let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
 	let obj = Path::new(out).join("silkterm-res.o");
-	// -c 65001: the .rc is UTF-8 (the © in the copyright string). -O coff: a
-	// linkable object, not a raw .res.
-	let ok = std::process::Command::new("windres")
-		.args(["-c", "65001", "-O", "coff", "--target", bfd, "-I"])
-		.arg(out)
-		.arg("-i")
-		.arg(rc_path)
-		.arg("-o")
-		.arg(&obj)
-		.status()
-		.map_err(|err| format!("windres not runnable: {err}"))?
-		.success();
-	if !ok {
-		return Err("windres failed to compile the resource".into());
+	let mut tried: Vec<String> = Vec::new();
+	for (prog, name) in windres_candidates(&arch) {
+		// -c 65001: the .rc is UTF-8 (the © in the copyright string). -O coff: a
+		// linkable object, not a raw .res.
+		let run = std::process::Command::new(&prog)
+			.args(["-c", "65001", "-O", "coff", "--target", name, "-I"])
+			.arg(out)
+			.arg("-i")
+			.arg(rc_path)
+			.arg("-o")
+			.arg(&obj)
+			.output();
+		match run {
+			Ok(done) if done.status.success() => {
+				println!("cargo:rustc-link-arg-bins={}", obj.display());
+				return Ok(());
+			}
+			Ok(done) => {
+				let said = String::from_utf8_lossy(&done.stderr);
+				let said = said.lines().next().unwrap_or("failed").trim().to_string();
+				tried.push(format!("{prog}: {said}"));
+			}
+			Err(err) => tried.push(format!("{prog}: {err}")),
+		}
 	}
-	println!("cargo:rustc-link-arg-bins={}", obj.display());
-	Ok(())
+	if tried.is_empty() {
+		return Err(format!("no windres target name known for arch {arch}"));
+	}
+	Err(format!(
+		"no resource compiler worked for {arch}: {}",
+		tried.join("; ")
+	))
+}
+
+// What to try, best first. A binutils windres only speaks the architecture it
+// was built for, so the triple-prefixed one comes first; llvm-windres does every
+// architecture but wants a plain arch name rather than a bfd one. SILK_WINDRES
+// names one outright, for a toolchain spelled some other way.
+fn windres_candidates(arch: &str) -> Vec<(String, &'static str)> {
+	println!("cargo:rerun-if-env-changed=SILK_WINDRES");
+	let (bfd, plain, triple) = match arch {
+		"x86_64" => ("pe-x86-64", "x86_64", "x86_64-w64-mingw32"),
+		"aarch64" => ("pe-aarch64-little", "aarch64", "aarch64-w64-mingw32"),
+		"x86" => ("pe-i386", "i386", "i686-w64-mingw32"),
+		_ => return Vec::new(),
+	};
+	let named = env::var("SILK_WINDRES").unwrap_or_default();
+	let named = named.trim();
+	if !named.is_empty() {
+		// Taken at its word about which spelling it wants.
+		let name = if named.contains("llvm") { plain } else { bfd };
+		return vec![(named.to_string(), name)];
+	}
+	let mut out = vec![
+		(format!("{triple}-windres"), bfd),
+		("windres".to_string(), bfd),
+	];
+	// Debian ships llvm-windres under a version suffix and nothing else, so there
+	// is no plain name to call and the versions have to be found on PATH.
+	let mut llvm: Vec<(u32, String)> = Vec::new();
+	for dir in env::split_paths(&env::var_os("PATH").unwrap_or_default()) {
+		let Ok(entries) = fs::read_dir(&dir) else {
+			continue;
+		};
+		for entry in entries.flatten() {
+			let file = entry.file_name().to_string_lossy().into_owned();
+			let stem = file.strip_suffix(".exe").unwrap_or(&file);
+			let Some(tail) = stem.strip_prefix("llvm-windres") else {
+				continue;
+			};
+			let version = if tail.is_empty() {
+				u32::MAX
+			} else {
+				match tail.strip_prefix('-').and_then(|v| v.parse::<u32>().ok()) {
+					Some(version) => version,
+					None => continue,
+				}
+			};
+			let name = stem.to_string();
+			if !llvm.iter().any(|(_, have)| *have == name) {
+				llvm.push((version, name));
+			}
+		}
+	}
+	llvm.sort_by_key(|found| std::cmp::Reverse(found.0));
+	out.extend(llvm.into_iter().map(|(_, name)| (name, plain)));
+	out
 }
