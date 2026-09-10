@@ -1254,7 +1254,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- What the security half asserts is written up in design.md: the terminal must not type on a program's behalf, a link must carry a scheme from the list, a paste must not step outside its brackets, a title is text and nothing else, and a reported directory is not automatically a directory.
 	- Three defects came out of building it, each fixed and each left with a plain unit test as well: a program could put control characters into the window title, a reported directory could too, and a relative reported directory would have started a pane wherever the terminal itself was started.
 	- Two things deliberately left. A right-to-left override in a title survives, since refusing it would also refuse the joiners that hold an emoji together, and any file name can ask for the same reordering. And a program setting the clipboard is a privacy question rather than an injection one, so it is recorded rather than tested.
-	- Unrun: Windows, though the whole thing is platform-independent and the cross-target lints compile it.
+	- Run on both Windows machines as well as here, and a test holds the corpus path to being findable - a tree laid out differently would find nothing and every target would still pass.
 	- Opened: 20260909-180000
 	- Closed: 20260909-213000
 
