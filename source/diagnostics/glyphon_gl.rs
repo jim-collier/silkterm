@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 // Isolation test (no window): does glyphon render text on a NATIVE wgpu GL device
 // (no glutin/external context, no surface)? Renders to an offscreen texture and

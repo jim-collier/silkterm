@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Copyright © 2026 Jim Collier
+// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! What gets set up in the shells this terminal starts: a directory-reporting
 //! block in PowerShell profiles, and a git-aware prompt for both PowerShell and
