@@ -20,6 +20,7 @@
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] run <file.ps1> [args...]
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] fetch <remote-rel-path> <local-dir>
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] pull <remote-abs-path> <local-dir>
+##		win-remote.bash [--host <name>] [--optional] hold <command> [args...]
 ##	Notes:
 ##		Hosts are read from $WINRIG_CONF (default ~/.config/silkterm/winrig.conf),
 ##		one per line as '<name> <addr>[,<addr>...]'. First address that answers wins,
@@ -41,7 +42,14 @@
 ##		--as picks the remote account. The default builds and tests, because the rust
 ##		toolchain is a per-user rustup install under it. The unprivileged test account
 ##		has no toolchain but a virgin profile, which is what to run a built binary as.
-##	Exit: 0 ok, 1 job or connection failure, 2 usage / no config.
+##		Other sessions on this machine may share the boxes. A line '@lock <command>' in
+##		the host config names a host lock, and then everything but hosts waits for the
+##		selected boxes through it, unless the caller already holds them. A lock that is
+##		missing, cannot run, or does not know a box is passed over. WINRIG_LOCK_WAIT
+##		caps the wait in seconds.
+##		hold runs a local command with the boxes held, for a caller that makes several
+##		calls in a row and cannot have another session get in between them.
+##	Exit: 0 ok, 1 job or connection failure, 2 usage / no config, 3 the lock's wait ran out.
 ##	History: At bottom of script.
 
 ##	Copyright (c) 2026 Bubbles
@@ -51,6 +59,7 @@
 
 
 set -Eeuo pipefail
+origArgs=("$@")
 
 meDir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 jobsDir="${meDir}/win-jobs"
@@ -71,6 +80,7 @@ fWarn() { echo "win-remote: $*" >&2; }
 fFail() { echo "win-remote: $1" >&2; exit "${2:-1}"; }
 
 declare -a hostNames=() hostAddrs=()
+lockCmd=""
 
 fLoadConf() {
 	##	The config lives outside the repo, so having none is the ordinary state on
@@ -83,6 +93,7 @@ fLoadConf() {
 	local name addrs
 	while read -r name addrs _; do
 		[[ -z "$name" || "${name:0:1}" == "#" ]] && continue
+		[[ "$name" == "@lock" ]] && { lockCmd="${addrs}"; continue; }
 		hostNames+=("$name"); hostAddrs+=("${addrs:-$name}")
 	done < "$conf"
 	if ((! ${#hostNames[@]})); then
@@ -180,6 +191,30 @@ fOverHosts() {
 	((bad == 0))
 }
 
+##	Run this same command again under the host lock's wrap, unless the caller
+##	already holds the boxes. The lock only exists on one machine and knows only
+##	the boxes beside it, so anywhere else this goes ahead without it.
+fHoldBoxes() {
+	local lock="${lockCmd}" known i rc=0
+	[[ -n "$lock" ]] && command -v "$lock" >/dev/null || return 0
+	known=" $("$lock" hosts 2>/dev/null || true) "
+	local -a names=()
+	for i in $(fSelected); do
+		[[ "${known}" == *" ${hostNames[$i]} "* ]] && names+=("${hostNames[$i]}")
+	done
+	((${#names[@]})) || return 0
+	"$lock" check "${names[@]}" >/dev/null 2>&1 || rc=$?
+	case "$rc" in
+		0) return 0 ;;
+		1) ;;
+		*) fWarn "host lock unusable here (exit ${rc}), going ahead without it"; return 0 ;;
+	esac
+	##	Already re-run under wrap for these boxes and still not held. Stop rather than loop.
+	[[ "${WINRIG_LOCKED:-}" != "${names[*]}" ]] || fFail "the host lock does not show ${names[*]} as held, even under wrap" 2
+	export WINRIG_LOCKED="${names[*]}"
+	exec "$lock" wrap "${names[@]}" --why "silkterm win-remote ${cmd}" ${WINRIG_LOCK_WAIT:+--wait "${WINRIG_LOCK_WAIT}"} -- "$0" "${origArgs[@]}"
+}
+
 runScript=""
 declare -a runArgs=()
 fDoRun() { fRunScript "$1" "$runScript" "${runArgs[@]}"; }
@@ -220,6 +255,7 @@ case "$cmd" in
 		;;
 	sync)
 		fNoArgs "sync" "$@"
+		fHoldBoxes
 		fOverHosts fSync || exit 1
 		;;
 	job)
@@ -229,6 +265,7 @@ case "$cmd" in
 		runScript="${jobsDir}/${name}.ps1"
 		[[ -r "$runScript" ]] || fFail "no such job: ${name} (looked in ${jobsDir})" 2
 		runArgs=("$@")
+		fHoldBoxes
 		fOverHosts fDoRun || exit 1
 		;;
 	run)
@@ -236,6 +273,7 @@ case "$cmd" in
 		runScript="${1:-}"; shift || true
 		[[ -r "${runScript:-}" ]] || fFail "no such script: ${runScript:-<none>}" 2
 		runArgs=("$@")
+		fHoldBoxes
 		fOverHosts fDoRun || exit 1
 		;;
 	fetch)
@@ -244,6 +282,7 @@ case "$cmd" in
 		[[ -n "$rel" && -n "$dest" ]] || fFail "fetch needs <remote-rel-path> <local-dir>" 2
 		mkdir -p "$dest"
 		fGet() { scp -q "${sshOpts[@]}" "${sshUser}@${1}:${scpBase}/${rel}" "${dest}/"; }
+		fHoldBoxes
 		fOverHosts fGet || exit 1
 		;;
 	pull)
@@ -254,10 +293,18 @@ case "$cmd" in
 		[[ -n "$abs" && -n "$dest" ]] || fFail "pull needs <remote-abs-path> <local-dir>" 2
 		mkdir -p "$dest"
 		fPull() { scp -qr "${sshOpts[@]}" "${sshUser}@${1}:${abs//\\//}" "${dest}/"; }
+		fHoldBoxes
 		fOverHosts fPull || exit 1
 		;;
+	hold)
+		fNoRef
+		(($#)) || fFail "hold needs a command" 2
+		fHoldBoxes
+		export WINRIG_HELD=1
+		exec "$@"
+		;;
 	*)
-		echo "usage: win-remote.bash [--host <name>] [--as <user>] [--ref <ref>] [--optional] {hosts|sync|job <name> [args]|run <file.ps1> [args]|fetch <rel> <dir>|pull <abs> <dir>}" >&2
+		echo "usage: win-remote.bash [--host <name>] [--as <user>] [--ref <ref>] [--optional] {hosts|sync|job <name> [args]|run <file.ps1> [args]|fetch <rel> <dir>|pull <abs> <dir>|hold <command> [args]}" >&2
 		exit 2
 		;;
 esac
@@ -270,3 +317,4 @@ esac
 ##		- 20260909: --ref, to try a branch on Windows before merging it.
 ##		- 20260909: --ref on anything but sync is refused rather than ignored.
 ##		- 20260910: an option written after the command is refused, not dropped.
+##		- 20260910: waits for the host lock, and hold.

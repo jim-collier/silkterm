@@ -24,6 +24,7 @@ set -euo pipefail
 meDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 winRemote="${meDir}/win-remote.bash"
 
+origArgs=("$@")
 only=""; account="wintest"; display="${WINUNLOCK_DISPLAY:-:98}"
 while (($#)); do case "$1" in
 	--host)    only="${2:-}"; shift 2 ;;
@@ -37,6 +38,8 @@ esac; done
 ##	server on top of it.
 [[ "${display}" == ":99" ]] && { echo "win-unlock: ${display} is in use by a real session" >&2; exit 2; }
 command -v sdl-freerdp >/dev/null || { echo "win-unlock: no sdl-freerdp, skipped"; exit 0; }
+##	The RDP logon and the console move both change the box's sessions, so hold it for both.
+[[ -n "${WINRIG_HELD:-}" ]] || exec "${winRemote}" ${only:+--host "${only}"} --optional hold "$0" "${origArgs[@]}"
 
 declare -a rows=()
 mapfile -t rows < <("${winRemote}" ${only:+--host "${only}"} hosts 2>/dev/null | awk '$2 == "up" { print $1" "$3 }')
@@ -70,3 +73,4 @@ done
 
 ##	Script history:
 ##		- 20260908: Created.
+##		- 20260910: holds the box across the RDP logon and the console move.

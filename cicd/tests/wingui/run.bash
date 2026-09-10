@@ -26,6 +26,7 @@ shotDir="${root}/cicd/artifacts/wingui"
 token="$(date +%Y%m%d-%H%M%S)-$$"
 remoteDir="C:\\ProgramData\\silkrig\\run-${token}"
 
+origArgs=("$@")
 host=(); keep=0
 while (($#)); do case "$1" in
 	--host) host=(--host "${2:-}"); shift 2 ;;
@@ -36,6 +37,9 @@ esac; done
 scenarios=("$@"); ((${#scenarios[@]})) || scenarios=(smoke)
 
 [[ -x "${winRemote}" ]] || { echo "wingui: no win-remote.bash, skipped"; exit 0; }
+##	Keep the boxes for the whole run, or another session can get in between a
+##	scenario and fetching its shots.
+[[ -n "${WINRIG_HELD:-}" ]] || exec "${winRemote}" "${host[@]}" --optional hold "$0" "${origArgs[@]}"
 
 ##	The harness ships itself rather than coming from the remote clone, which is
 ##	pinned to origin/dev - otherwise every edit here would need a push before it
@@ -141,3 +145,4 @@ fi
 
 ##	Script history:
 ##		- 20260908: Created.
+##		- 20260910: holds the boxes for the whole run.
