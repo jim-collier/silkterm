@@ -42,6 +42,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔘 Wallpaper disappears from the background.
+	- Test case 20260910-071431: On many of (several) open silkterms that were open overnight (some for days), the wallpaper disappeared to a black background, IIRC when "enter" was pressed. (But for some others - possibly different dogfood versions - the wallpaper hasn't disappeared.)
+
+- 🔘 The ARM64 Windows binary carries no icon and no version information, and says nothing about it.
+	- Measured in the built executable: the x86_64 one holds the whole version block and the copyright marker intact, and the ARM64 one holds no version resource at all - not the strings, not the icon. So on that architecture Explorer shows a generic icon and the Properties tab is blank, and the installer picks the same generic icon up.
+	- It is silent, which is the worse half. The resource step is deliberately non-fatal for an architecture the resource compiler cannot target, and it is meant to say so, but nothing is printed on either build. Whatever it reports, it reports success.
+	- Not new, and not caused by the copyright change - that only edited a string inside the resource. Whether it can be fixed at all depends on the resource compiler reachable from here for that architecture; if it cannot, the step should at least say so once per build rather than nothing.
+	- Opened: 20260910-075500
+
 - 🔘 Performance test happens at every startup.
 
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
