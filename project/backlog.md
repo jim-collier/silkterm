@@ -43,7 +43,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Bugs
 
 - 🔘 Wallpaper disappears from the background.
-	- Test case 20260910-071431: On many of (several) open silkterms that were open overnight (some for days), the wallpaper disappeared to a black background, IIRC when "enter" was pressed. (But for some others - possibly different dogfood versions - the wallpaper hasn't disappeared.)
+	- Test case 20260910-071431: On many of (several) open silkterms that were open overnight (some for days), the wallpaper disappeared to a black background, IIRC when "enter" was pressed.
+	- Wallpapers disappeared on 2 instances that had been running for ~14 hours.
+	- Did NOT disappear on 3 instances of the same version, that had been running for 2 days.
+	- Did NOT disappear on 1 instances of the same version, that had been running for ~19 hours.
 
 - 🔘 Performance test happens at every startup.
 
