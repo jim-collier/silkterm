@@ -12,6 +12,7 @@
 <!-- TOC -->
 
 - [Goal](#goal)
+
 - [Architecture](#architecture)
 	- [Language / Stack Decision](#language--stack-decision)
 	- [Logical code organization](#logical-code-organization)
@@ -331,15 +332,25 @@ Every built-in theme's own foreground clears the floor on its own, which is chec
 One setting decides how much the look may cost, so a slow machine is a choice on one tab rather than a dozen switches on four.
 
 - Five profiles, in the order they cost: Custom, Max silk, High, Low, Standard terminal. Max silk is every effect at its shipped setting. High shortens the ease-in, ease-out and single-screen stretches of a scroll and gives the text halo a cheaper shape with a shorter reach. Low also drops the halo and the cursor animation, and leans on a two-pixel outline instead; it keeps the wallpaper, which is decoded once and costs nothing per frame, and smooth scrolling. Standard terminal is a plain terminal: no smooth scrolling, no wallpaper, no halo, no outline, no animation.
+
 - A sixth, Remote (temporary), is Standard terminal under another name and is never written to the file. It is put on for a remote screen at launch and taken off again at the next launch unless that one is remote too. It can also be switched by hand, from the Profile dropdown or from "Temporary remote display mode" on the View menu, and either way it lasts the session. The stored profile waits underneath it.
+
 - A profile sits on top of the stored settings rather than in them. The file and the dialog keep the user's own values. When settings go live the profile overwrites the fields it governs and keeps the originals beside them, and every write path puts them back before anything reaches the file. Choosing Custom is a profile that governs nothing, so it restores everything.
+
 - In the dialog the governed rows show the profile's values and are grayed, and their flyover says which tab to go to. This is display only. Apply writes the user's values underneath.
+
 - It leads the Silk tab, first in the dialog, with text readability and the scrolling feel under it. Those are the two sections it governs most of, so the switch and its effects are on one screen. Wallpaper and cursor rows stay on their own tabs and are grayed there. That still makes eight tabs, one past the guide's ceiling.
+
 - Automatic is the default, and the first pick is measured rather than guessed. Naming the adapter was not enough: an integrated chip is not a slow one, so it started at Max silk and stayed there.
+
 - What the machine is gets hashed - the processor and its usable core count, the graphics adapter, and installed memory to the nearest GiB - and that hash is what the profile is written down against. The parts that need no adapter are read on a worker at launch, since nothing before the first frame wants them. A different hash is a different machine and gets rated again; the same hash leaves the profile where it was left. "Check for hardware change" under Performance switches the check off for a machine already rated, and "Check again next program run" under it asks for one more rating regardless, then clears itself once that launch has started one.
+
 - A remote screen is not rated and nothing is written for it. Every frame is encoded and shipped over a network, so the graphics card says nothing about what the person sees, and a benchmark on it would only flatter the machine; the session runs under the Remote profile instead and the console's rating stays as it was. An adapter with no card behind it goes to Low, untimed, decided before anything renders.
+
 - Anything else is timed. The window comes up whole, the wallpaper lands, and then a banner takes the window while three rungs are measured in turn: Max silk, High, Low, each put live and given up to about a second of full-rate frames. The first whose median frame period fits the display's refresh budget is the answer. The window keeps drawing underneath the banner, dimmed, because what is being timed is worth seeing; it takes no input, because a keystroke would change the measurement. Standard terminal is never timed - it is what is left when Low misses. A rung several times past the budget ends the run outright, since no profile below it changes the per-pixel work by that much, and that is also the case that would otherwise take longest to measure.
+
 - The display is still watched afterwards: when the median frame over a window of eased frames runs half again past the refresh period, the profile steps down one rung and is written down. It never steps back up on the same hardware, because a lighter profile renders less, so a fast run under it says nothing about the heavier one. A hand pick with automatic off stays put.
+
 - Blur quality is not part of a profile yet. The backlog item for it stands on its own, and a profile could drive it later.
 
 ### Font fallback stack
@@ -545,6 +556,46 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - Nothing else produces an unnamed key that carries text, so there is no second meaning to weigh. A key the layout did name is left alone: its text is a representation of the key rather than typing, and Enter carrying a carriage return is the case that would go wrong.
 
 - Modifiers still apply, so an injected `c` while Control is held sends the control code, the same as typing it would. Windows composes the character without consulting the layout or the modifiers, so an argument exists for ignoring them here - but a character behaving differently from the same character typed is the worse surprise, and nobody has reported the other way round.
+
+### What untrusted input may not do (2026-09-09)
+
+Almost everything a terminal handles came from somewhere else. Bytes arriving from a pane's program may have travelled a long way first - a log file, a build server, a remote host over ssh - and the program printing them need not be the one that wrote them. So the rule is that nothing a pane shows may change what the terminal does, and four surfaces get held to it explicitly.
+
+- The terminal must not type on a program's behalf. A few sequences ask the terminal a question, and the answer goes back down the pty where the shell reads it as if it had been typed. An answer that could carry a line ending would submit itself, and one that could carry the program's own text would let the program choose the command. So every reply is a fixed shape built from a number, and the terminal answers no question whose answer would be somebody else's text. There is no way to read back a window title, and a request to read the clipboard is ignored rather than answered.
+
+	- Pinned by `a_program_cannot_make_the_terminal_type` in `term.rs`, which drives a real terminal through generated escape sequences and then asks it every question it knows how to ask.
+
+- A link must carry a scheme from the list, or it is not a link. That is what stops `javascript:` and its relatives from reaching the desktop's handler, and it is why detection is by scheme rather than by shape. The URL then goes to the platform's own opener as one plain argument, never through a shell.
+
+	- Pinned by `a_hostile_scheme_never_becomes_a_link` and `a_url_reaches_the_opener_exactly_as_it_was_printed` in `links.rs`.
+
+- A paste must not be able to step outside its brackets. When the application has asked for bracketed paste, an escape character in the payload would end the bracket early and everything after it would arrive as keystrokes - which is how a paste runs a command nobody typed. Escapes are removed. Unbracketed, the application cannot tell a pasted byte from a typed one, so a line break has to be the single carriage return the Enter key sends.
+
+	- Pinned by `a_bracketed_paste_cannot_be_closed_from_inside` and the fuzz target beside it in `pane.rs`.
+
+- A window title is text and nothing else. The desktop draws it on a task bar, in a window list and in an alt-tab switcher, all of which treat it as plain text. Control characters are removed where the title arrives, once, rather than at each of the places it is later shown. A right-to-left override survives, which does let a title read back to front - that is the same reordering any file name can ask for, and refusing it would also refuse the joiners that hold an emoji together.
+
+	- Pinned by `a_title_arrives_as_plain_text` in `tabtitle.rs`.
+
+- A reported directory is not automatically a directory. A shell says where it is with an escape sequence, and the answer both names the tab and decides where the next pane starts. A payload carrying a control character is refused, since it would reach the tab strip and the title. Whether the path is absolute is asked separately, at the one gate on what becomes a working directory - a relative path resolves against wherever the terminal itself was started, somewhere nobody can see, and a posix path on Windows names a real directory in the wrong filesystem.
+
+	- Pinned by `a_reported_directory_carrying_a_control_character_is_refused` in `cwd.rs` and `a_pane_only_ever_starts_in_an_absolute_directory` in `term.rs`.
+
+### The fuzzer (2026-09-09)
+
+Ten targets, each sitting beside the code it hammers in a `mod fuzz` inside that module's tests. They are ordinary tests, so a plain `cargo test` runs every one at a fraction of a second, and the pipeline sets a budget per target for a real soak. The engine is `source/src/fuzz.rs`; the corpus and its notes are under `cicd/tests/fuzz-corpus/`.
+
+- Generated by grammar, not guided by coverage. Every surface here is grammar-shaped - escape sequences, config lines, URLs, image chunk headers - and a generator that knows the grammar reaches deep states in a few hundred cases where bit flips need millions. Coverage-guided fuzzing would also mean a nightly toolchain and sanitizers, so it would run on one platform out of four and not in the ordinary test run at all.
+
+- Bit flips run as well, over a small corpus of realistic inputs. A well-formed generator never emits a truncated multi-byte character or a chunk header that lies about its own length, and those are where a parser's edges are.
+
+- One seed is the whole reproduction recipe. Every case is a pure function of a u64, and a failure reports the seed to re-run it with. Seeds run in order from zero, so a longer budget only ever adds cases - nothing a short run covered is dropped by a long one.
+
+- Library code is in scope, which is most of the point. The escape-sequence target drives a real terminal from the engine crate, so it fuzzes the parser and the grid model rather than only our own code around them; the config target goes through the config-format crate the same way.
+
+- What a target asserts is a property, not an expected output. A parser that returns nothing is a fine answer; a parser that returns a span running past the end of the row it was given is not. That is what makes a random case worth generating at all.
+
+Three defects came out of building it, all fixed with it: a program could put control characters into the window title, a reported directory could too, and a reported directory that was relative would have started a pane somewhere nobody chose. Each also has a plain unit test, which is the cheaper place to keep it.
 
 ### Environment
 
@@ -756,7 +807,9 @@ Two decisions came out of the port.
 - It lives in the block rather than in a script beside the config, which is where the bash prompt lives. A prompt is drawn after every command, and a script would mean a process per prompt - cheap on unix, not on Windows. The block is already kept up to date in place, so it carries updates just as well as a file would.
 
 - The block stays plain ASCII, and the check, cross and arrow are written as code points. A file with no byte-order mark is read as ANSI by Windows PowerShell 5.1, which would mangle a literal glyph on the one version that cannot be told otherwise.
+
 - The console is put on UTF-8 at load. That is not what lets the prompt draw its glyphs, since PowerShell writes the prompt as wide characters and the code page has no say in it. What it buys is the decoding of output from `git` itself, where a branch name outside ASCII would otherwise arrive wrong.
+
 - The second line is bare where the bash prompt puts an arrow. The `>` already says where the typing goes, and the arrow the bash version uses is a code point few fonts carry.
 
 - The check is U+2713 rather than the U+2714 the bash prompt uses. U+2714 has an emoji presentation, so it is drawn by a color font in its own color and ignores the reverse-video the mark is set in. U+2713 is not an emoji code point at all, so it takes the color the way the cross beside it does.
