@@ -45,12 +45,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - 🔘 Wallpaper disappears from the background.
 	- Test case 20260910-071431: On many of (several) open silkterms that were open overnight (some for days), the wallpaper disappeared to a black background, IIRC when "enter" was pressed. (But for some others - possibly different dogfood versions - the wallpaper hasn't disappeared.)
 
-- 🔘 The ARM64 Windows binary carries no icon and no version information, and says nothing about it.
-	- Measured in the built executable: the x86_64 one holds the whole version block and the copyright marker intact, and the ARM64 one holds no version resource at all - not the strings, not the icon. So on that architecture Explorer shows a generic icon and the Properties tab is blank, and the installer picks the same generic icon up.
-	- It is silent, which is the worse half. The resource step is deliberately non-fatal for an architecture the resource compiler cannot target, and it is meant to say so, but nothing is printed on either build. Whatever it reports, it reports success.
-	- Not new, and not caused by the copyright change - that only edited a string inside the resource. Whether it can be fixed at all depends on the resource compiler reachable from here for that architecture; if it cannot, the step should at least say so once per build rather than nothing.
-	- Opened: 20260910-075500
-
 - 🔘 Performance test happens at every startup.
 
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
@@ -222,6 +216,17 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ The ARM64 Windows binary carries no icon and no version information, and says nothing about it.
+	- Measured in the built executable: the x86_64 one held the whole version block and the copyright marker intact, and the ARM64 one held no version resource at all - not the strings, not the icon. So on that architecture Explorer showed a generic icon, the Properties tab was blank, and the installer picked up the same generic icon.
+	- Silence was the worse half. The step is deliberately non-fatal when nothing can compile a resource for the architecture, and it is meant to say so, but neither build printed anything.
+	- Cause, and it is two things. The resource compiler was being chosen off the build machine rather than off the target, so for ARM64 nothing was found; and "found nothing" was reported as "not attempted", which the caller read as success.
+	- Fixed: the compiler is chosen for the target now, from a short list tried best first, and the one on this machine that can do every architecture is found even though it is only installed under a version suffix. `SILK_WINDRES` names one outright for a toolchain spelled some other way. A miss now warns.
+	- Also fixed at the class: the pipeline reads the resource directory out of every Windows binary it built and fails if the icon or the version block is absent. A resource that silently stops being embedded is not a link error and shows up nowhere else.
+	- Both Windows binaries now carry the icon and version resources, and the copyright marker reads back intact from each. Forcing the compiler to fail was checked both ways: the warning appears and the pipeline check rejects the build.
+	- Not verified on ARM64 Windows hardware, since there is none here.
+	- Opened: 20260910-075500
+	- Closed: 20260910-093000
 
 - ✅ Windows: keystrokes injected as characters rather than keys are ignored.
 	- Windows lets a program send a character directly instead of a key press, and it arrives tagged as a packet rather than as a key. Nothing types that way by hand, but the touch keyboard does for some characters, and so do text expanders and some accessibility tools.
