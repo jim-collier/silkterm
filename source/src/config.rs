@@ -3565,11 +3565,13 @@ pub fn keep_rating(lines: &RatingLines) -> Kept {
 // differently. A rating key this write does not touch counts as another setting,
 // since a new `profile:` line can pull a deeper `check_next_run:` under itself.
 // The block that holds a written key is left out while it has no value of its
-// own, because a write into a file with no such block creates it.
+// own, because a write into a file with no such block creates it. Quoting is
+// left out: a canonical save adds or drops quotes, and no read sees the flag
+// (`a_save_that_requotes_a_value_changes_no_read`).
 fn settings_besides(
 	doc: &shcl::Document,
 	written: &[String],
-) -> Vec<(String, Vec<String>, shcl::Status, bool)> {
+) -> Vec<(String, Vec<String>, shcl::Status)> {
 	doc.paths()
 		.into_iter()
 		.filter(|path| {
@@ -3586,7 +3588,7 @@ fn settings_besides(
 		.map(|path| {
 			let read = doc.read_string(&path);
 			let instances = doc.instances(&path);
-			(path, instances, read.status, read.quoted)
+			(path, instances, read.status)
 		})
 		.collect()
 }
@@ -5481,6 +5483,156 @@ mod tests {
 		}
 	}
 
+	// A canonical save quotes a bare value holding a space or a colon, and takes
+	// the quotes off one that reads as a number, bool or date. The rating check
+	// leaves quoting out because of this: nothing a load asks for sees the flag.
+	#[test]
+	fn a_save_that_requotes_a_value_changes_no_read() {
+		const PATH: &str = "blk.k";
+		let values = [
+			"Cascadia Mono",
+			r"C:\Users\x",
+			"a: b",
+			r#""unclosed"#,
+			"it's fine",
+			"12:30",
+			"2026-09-10T10:00:00",
+			"2026-09-10 10:00",
+			r"1\,000",
+			r#""5""#,
+			"'5'",
+			r#""true""#,
+			r#""yes""#,
+			r#""on""#,
+			r#""off""#,
+			r#""FALSE""#,
+			r#""0x10""#,
+			r#""1e5""#,
+			r#""08""#,
+			r#""-0""#,
+			r#""+5""#,
+			r#""0.5""#,
+			r#"".25""#,
+			r#""1""#,
+			r#""2026-09-10""#,
+			r#""1,000""#,
+			r#""1,000.5""#,
+			r"'1\,000'",
+			r#""a, b""#,
+			"a, b",
+			r#""a,b", c"#,
+			r"x\",
+			r#""@null""#,
+		];
+		let reads = |doc: &shcl::Document| {
+			(
+				doc.get_string(PATH),
+				doc.instances(PATH),
+				doc.count(PATH),
+				doc.read_string(PATH).status,
+				doc.get_int(PATH),
+				doc.get_float(PATH).map(f64::to_bits),
+				doc.get_bool(PATH),
+				doc.get_datetime(PATH),
+				doc.get_string_array(PATH),
+				doc.lost_count(),
+			)
+		};
+		let (mut added, mut dropped) = (false, false);
+		for value in values {
+			let before = shcl::Document::parse(&format!("blk:\n\tk: {value}\n"));
+			let after = shcl::Document::parse(&before.to_canonical());
+			assert_eq!(reads(&after), reads(&before), "{value}");
+			let (was, is) = (
+				before.read_string(PATH).quoted,
+				after.read_string(PATH).quoted,
+			);
+			added |= !was && is;
+			dropped |= was && !is;
+		}
+		assert!(
+			added,
+			"a save quotes none of these now, so the rating check's handling of quoting needs another look"
+		);
+		assert!(
+			dropped,
+			"a save unquotes none of these now, so the rating check's handling of quoting needs another look"
+		);
+	}
+
+	// With no performance block the rating gets the save's text, which requotes
+	// values nobody changed, and no load reads the difference. Each file is
+	// written again just before the rating, since a load adds the block and the
+	// line writer would then never reach the save's text.
+	#[test]
+	fn a_rating_is_kept_where_a_save_only_requotes() {
+		const ID: &str = "0123456789abcdef";
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir =
+			std::env::temp_dir().join(format!("silkterm_ratingrequote_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		set_config_override(path.clone());
+		let lines = RatingLines {
+			profile: Some("high"),
+			rated_hardware: Some(ID),
+			check_next_run: None,
+		};
+		let files: [(&str, &str, fn(&Settings) -> String); 4] = [
+			(
+				"a bare font name with a space",
+				"performance.automatic: true\nfont:\n\tfamily: Cascadia Mono\n",
+				|s| format!("{:?}", s.font_family),
+			),
+			(
+				"a bare Windows folder",
+				"performance.automatic: true\nshell:\n\tstartup_directory: C:\\Users\\x\n",
+				|s| s.startup_directory.clone(),
+			),
+			(
+				"a bare font name, nothing else in the file",
+				"font:\n\tfamily: Cascadia Mono\n",
+				|s| format!("{:?}", s.font_family),
+			),
+			(
+				"a quoted number",
+				"performance.automatic: true\nwindow:\n\tmargin: \"5\"\n",
+				|s| s.margin.to_string(),
+			),
+		];
+		for (what, text, other) in files {
+			let mut saved = shcl::Document::parse(text);
+			assert!(saved.set_string("performance.profile", "high"), "{what}");
+			assert!(saved.set_string("performance.rated_hardware", ID), "{what}");
+			assert_eq!(
+				with_rating_lines(text, &lines).as_deref(),
+				Ok(saved.to_canonical().as_str()),
+				"{what}"
+			);
+
+			std::fs::write(&path, text).unwrap();
+			let loaded = other(&reload_from_disk());
+			assert_ne!(
+				loaded,
+				other(&Settings::default()),
+				"{what}: the value is the default, so the case proves nothing"
+			);
+			std::fs::write(&path, text).unwrap();
+			assert_eq!(keep_rating(&lines), Kept::Written, "{what}");
+			let reloaded = reload_from_disk();
+			assert_eq!(reloaded.rated_hardware, ID, "{what}");
+			assert_eq!(reloaded.performance_profile, "high", "{what}");
+			assert_eq!(
+				other(&reloaded),
+				loaded,
+				"{what}: the other value loads as before"
+			);
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
 	// A line the parse cannot place made every save refuse, and the rating is a
 	// save, so the test ran at every launch. The rating goes in beside it now; the
 	// dialog's refusal to rewrite such a file stays.
@@ -7004,12 +7156,8 @@ mod tests {
 									Err(shcl::Status::Empty | shcl::Status::NotFound)
 								))
 						})
-						// Quoting counts: a canonical save can quote `a: b` or a stray
-						// `"`, and a quoted value reads differently downstream.
-						.map(|path| {
-							let quoted = doc.read_string(path).quoted;
-							(path.clone(), doc.get_string(path), doc.count(path), quoted)
-						})
+						// quoting is left out, since a save requotes values and no read sees it
+						.map(|path| (path.clone(), doc.get_string(path), doc.count(path)))
 						.collect::<Vec<_>>()
 				};
 				(read(a), read(b))
