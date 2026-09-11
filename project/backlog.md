@@ -42,6 +42,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔘 Converting an old flat settings file loses its `wallpaper:` image, and the next save from Settings can drop more wallpaper settings.
+	- The image path is written onto the `wallpaper:` section line instead of `image:`, so no wallpaper loads. The path is still in the `.bak` file.
+	- The next save then drops values the conversion kept, such as the opacity and the fit. A file that used `background_image:` converts correctly.
+	- Opened: 20260911-064028
+
+- 🔘 A setting indented under a commented-out heading can load at one launch and be ignored at the next.
+	- In a short file, adding the missing settings puts lines above it, and it then reads as part of the setting above. A launch that finds the file open in another program skips that step and still reads it.
+	- Seen with `rows:` and with a renamed tab width under `window:`.
+	- Opened: 20260911-064028
+
+- 🔘 A save from Settings moves the lines of a commented-out section under the setting above it.
+	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
+	- This is how shcl 2.0.0 writes a file, and shcl's current code does the same.
+	- Opened: 20260911-064028
+
 - 🔘 A performance test can still run at every launch on a settings file with no Performance section.
 	- It happens when another value in the file is typed without quotes and holds a space or a colon, such as a font name or a Windows folder. The rating is not saved, and the banner says the Performance section could not be updated.
 	- A normal launch adds the section first, so this needs the file to have been busy while SilkTerm started.
