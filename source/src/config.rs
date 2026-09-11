@@ -933,13 +933,20 @@ enum WalkLine {
 }
 
 // Walk a config text line by line, resolving each setting line's full path from
-// the enclosing active (or commented) block headers. Indentation is compared by
+// the enclosing block headers: active ones for an active line, active or
+// commented for a commented one. Indentation is compared by
 // leading-whitespace length, matching how the template is written (tabs); a
 // line's own key may itself be dotted, which simply extends the path.
 fn walk_settings(text: &str) -> Vec<WalkLine> {
 	let mut out = Vec::new();
-	// (indent, name) of each enclosing block header
+	// (indent, name) of each enclosing block header, commented ones included
 	let mut stack: Vec<(usize, String)> = Vec::new();
+	// The same, active headers only. shcl gives a comment line no depth, and a
+	// save writes a comment at the depth of the setting below it, so an active
+	// path taken from a comment changed at the first save. Commented lines still
+	// take commented headers, which is how a commented-out block names its
+	// children.
+	let mut open: Vec<(usize, String)> = Vec::new();
 	let mut fence: Option<(char, usize)> = None;
 	for (index, line) in text.lines().enumerate() {
 		if let Some((ch, len)) = fence {
@@ -969,7 +976,13 @@ fn walk_settings(text: &str) -> Vec<WalkLine> {
 		while stack.last().is_some_and(|(col, _)| indent <= *col) {
 			stack.pop();
 		}
-		let path = stack
+		if active {
+			while open.last().is_some_and(|(col, _)| indent <= *col) {
+				open.pop();
+			}
+		}
+		let parents = if active { &open } else { &stack };
+		let path = parents
 			.iter()
 			.map(|(_, name)| name.as_str())
 			.chain(std::iter::once(key))
@@ -981,6 +994,9 @@ fn walk_settings(text: &str) -> Vec<WalkLine> {
 		});
 		if header {
 			stack.push((indent, key.to_string()));
+			if active {
+				open.push((indent, key.to_string()));
+			}
 		}
 		out.push(WalkLine::Setting {
 			index,
@@ -6586,6 +6602,63 @@ mod tests {
 		assert!(migrate_config_text(&format!("font:\n\t# family: \"{stale}\"\n")).is_none());
 		// a top-level dotted spelling refreshes too
 		assert!(migrate_config_text(&format!("font.family: \"{stale}\"\n")).is_some());
+	}
+
+	// An active line's path is the one shcl reads, whatever comments sit above it.
+	// A save moves a comment to the depth of the setting below it, so a path taken
+	// from the comment changed at the first save.
+	#[test]
+	fn an_active_line_takes_no_path_from_a_comment() {
+		let setting = |text: &str, at: usize| {
+			walk_settings(text)
+				.into_iter()
+				.find_map(|w| match w {
+					WalkLine::Setting {
+						index,
+						path,
+						active,
+						..
+					} if index == at => Some((path, active)),
+					_ => None,
+				})
+				.unwrap_or_else(|| panic!("no setting on line {at} of {text:?}"))
+		};
+		// a commented-out block still names its children
+		for text in [
+			"wallpaper:\n\t# rotate:\n\t\t# enabled: true\n",
+			"wallpaper:\r\n\t# rotate:\r\n\t\t# enabled: true\r\n",
+		] {
+			assert_eq!(
+				setting(text, 2),
+				("wallpaper.rotate.enabled".to_string(), false),
+				"{text:?}"
+			);
+		}
+		let cases = [
+			(
+				"colors:\n\t# x:\n\t\tfocus: \"#112233\"\n",
+				2,
+				"colors.focus",
+			),
+			(
+				"colors:\n\tbackground: \"#000000\"\n# see: below\n\tfocus: \"#112233\"\n",
+				3,
+				"colors.focus",
+			),
+			("# old:\n\tfont_family: \"x\"\n", 1, "font_family"),
+		];
+		for (lf, at, want) in cases {
+			for text in [lf.to_string(), lf.replace('\n', "\r\n")] {
+				let (path, active) = setting(&text, at);
+				assert!(active, "{text:?}");
+				assert_eq!(path, want, "{text:?}");
+				assert!(
+					shcl::Document::parse(&text).lines(want).contains(&(at + 1)),
+					"shcl reads line {} of {text:?} as {want}",
+					at + 1
+				);
+			}
+		}
 	}
 
 	// A commented line still echoing an outgoing default is brought up to the
