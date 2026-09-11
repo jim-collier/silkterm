@@ -13,9 +13,10 @@
 //!
 //! The rating watches how a scroll ease is paced. A display that keeps its
 //! refresh rate paces one frame per refresh; one that cannot stretches every
-//! frame, and a run of stretched frames steps the profile down. It never steps
-//! up on the same hardware: a lighter profile renders less, so a fast-looking
-//! run under it says nothing about the heavier one.
+//! frame, and a run of stretched frames steps the profile down, no further than
+//! Low and only for the session. It never steps back up within one: a lighter
+//! profile renders less, so a fast-looking run under it says nothing about the
+//! heavier one.
 
 use crate::config::Settings;
 use std::time::Instant;
@@ -91,6 +92,17 @@ impl Profile {
 			Profile::High => Some(Profile::Low),
 			Profile::Low => Some(Profile::Standard),
 			Profile::Standard | Profile::Remote | Profile::Custom => None,
+		}
+	}
+
+	// Where the display watch may step to. It stops at Low: Low keeps the
+	// wallpaper, which costs nothing per frame, and Standard turns off the eased
+	// frames the watch measures, so a step there could never be checked again.
+	pub fn watched_lower(self) -> Option<Profile> {
+		match self {
+			Profile::Max => Some(Profile::High),
+			Profile::High => Some(Profile::Low),
+			Profile::Low | Profile::Standard | Profile::Remote | Profile::Custom => None,
 		}
 	}
 }
@@ -184,12 +196,25 @@ pub fn apply(s: &mut Settings) {
 	s.profile_shadow = Some(Box::new(shadow));
 }
 
-// The profile in force: the remote override while it is on, else the stored one.
+// The profile in force: the remote override while it is on, then a step the
+// display watch took this session, then the stored one. A step only ever makes
+// a ladder rung cheaper, and only while automatic is on - it is the automatic
+// choice's own correction, so a hand pick or Custom is never overridden by it.
 pub fn current(s: &Settings) -> Profile {
 	if s.remote_override {
-		Profile::Remote
-	} else {
-		Profile::parse(&s.performance_profile)
+		return Profile::Remote;
+	}
+	let stored = Profile::parse(&s.performance_profile);
+	match s.stepped_profile {
+		Some(step)
+			if s.performance_automatic
+				&& matches!(stored, Profile::Max | Profile::High | Profile::Low)
+				&& matches!(step, Profile::High | Profile::Low | Profile::Standard)
+				&& step.index() > stored.index() =>
+		{
+			step
+		}
+		_ => stored,
 	}
 }
 
@@ -776,6 +801,60 @@ mod tests {
 		apply(&mut s);
 		assert_eq!(super::current(&s), Profile::Max);
 		assert!(s.scroll_smooth);
+	}
+
+	// The display watch's step is session state over the stored rung: it never
+	// makes a profile heavier, and a hand-set or Custom profile is left alone.
+	#[test]
+	fn a_session_step_sits_over_the_stored_profile() {
+		let at = |stored: &str, step: Profile| {
+			let mut s = tuned();
+			s.performance_profile = stored.to_string();
+			s.stepped_profile = Some(step);
+			s
+		};
+		let mut s = at("max", Profile::Low);
+		assert_eq!(super::current(&s), Profile::Low);
+		apply(&mut s);
+		assert!(s.wallpaper_enabled, "Low keeps the wallpaper");
+		assert_eq!(
+			s.performance_profile, "max",
+			"the stored profile is untouched"
+		);
+		assert_eq!(
+			super::current(&at("low", Profile::High)),
+			Profile::Low,
+			"never heavier"
+		);
+		assert_eq!(super::current(&at("custom", Profile::Low)), Profile::Custom);
+		assert_eq!(
+			super::current(&at("standard", Profile::Low)),
+			Profile::Standard
+		);
+		let mut remote = at("max", Profile::Low);
+		remote.remote_override = true;
+		assert_eq!(super::current(&remote), Profile::Remote);
+		let mut by_hand = at("max", Profile::Low);
+		by_hand.performance_automatic = false;
+		assert_eq!(
+			super::current(&by_hand),
+			Profile::Max,
+			"a hand pick is not the watch's to change"
+		);
+	}
+
+	#[test]
+	fn watched_lower_stops_at_low() {
+		assert_eq!(Profile::Max.watched_lower(), Some(Profile::High));
+		assert_eq!(Profile::High.watched_lower(), Some(Profile::Low));
+		for p in [
+			Profile::Low,
+			Profile::Standard,
+			Profile::Custom,
+			Profile::Remote,
+		] {
+			assert_eq!(p.watched_lower(), None, "{p:?}");
+		}
 	}
 
 	#[test]

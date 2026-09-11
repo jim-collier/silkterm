@@ -378,6 +378,10 @@ pub struct Settings {
 	// written: it is set for a remote screen (or by hand from the View menu) and
 	// lasts the session.
 	pub remote_override: bool,
+	// Where the display watch stepped the profile down to, for this session only.
+	// Never written: one stall used to become every later launch's profile, with
+	// no way back while automatic was on. Cleared by a hand pick or a measured one.
+	pub stepped_profile: Option<crate::profile::Profile>,
 	// Themes saved from the Settings dialog, whole, in file order. They resolve
 	// ahead of the built-ins, so one may carry a built-in's name.
 	pub user_themes: Vec<crate::theme::UserTheme>,
@@ -517,6 +521,7 @@ impl Default for Settings {
 			rated_hardware: String::new(),
 			profile_shadow: None,
 			remote_override: false,
+			stepped_profile: None,
 			user_themes: Vec::new(),
 			shells: Vec::new(),
 		}
@@ -871,6 +876,15 @@ pub fn update(mut new: Settings) {
 // store - pair with `update` plus whatever rebuild the change needs.
 pub fn reload_from_disk() -> Settings {
 	load()
+}
+
+// The live state a reload has to carry across: what is never in the file and
+// lasts the session. A reload re-reads the file, and the file never held these,
+// so taking the fresh copy as-is would lift a remote screen's profile or the
+// display watch's step on a menu command.
+pub fn keep_session(live: &Settings, reloaded: &mut Settings) {
+	reloaded.remote_override = live.remote_override;
+	reloaded.stepped_profile = live.stepped_profile;
 }
 
 // Read the config as an editable document. The parser is forgiving (a bad line
@@ -2371,6 +2385,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		rated_hardware: raw.rated_hardware.unwrap_or_default(),
 		profile_shadow: None,
 		remote_override: false,
+		stepped_profile: None,
 		user_themes: raw.user_themes,
 		shells: raw.shells,
 	}
@@ -4423,6 +4438,74 @@ mod tests {
 		assert_eq!(back.scroll_ease_in_ms, 300.0, "the profile's value was not");
 		assert!(back.wallpaper_enabled, "nor its wallpaper switch");
 		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// A step the display watch took lasts the session. Written down, one stall
+	// became every later launch's profile, with no way back while automatic was
+	// on - that took a desktop to Standard terminal and its wallpaper with it.
+	#[test]
+	fn a_session_step_down_never_reaches_the_file() {
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_cfgstep_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		std::fs::write(
+			&path,
+			"performance:\n\tautomatic: true\n\tprofile: \"max\"\n",
+		)
+		.unwrap();
+		set_config_override(path.clone());
+
+		let mut live = load();
+		crate::profile::apply(&mut live);
+		let before = std::fs::read_to_string(&path).unwrap();
+		let mut stepped = live.clone();
+		stepped.stepped_profile = Some(crate::profile::Profile::Low);
+		crate::profile::apply(&mut stepped);
+		assert!(!stepped.text_scrim, "the step is in force live");
+		assert!(persist(&live, &stepped));
+		assert_eq!(
+			std::fs::read_to_string(&path).unwrap(),
+			before,
+			"nothing about the step is written"
+		);
+
+		let mut changed = stepped.clone();
+		changed.minimap = !changed.minimap;
+		assert!(persist(&stepped, &changed));
+		let after = std::fs::read_to_string(&path).unwrap();
+		let new_lines: Vec<&str> = after.lines().filter(|l| !before.contains(l)).collect();
+		assert!(!new_lines.is_empty(), "the unrelated change is written");
+		assert!(
+			new_lines.iter().all(|l| !l.contains("profile")),
+			"and nothing about the profile: {new_lines:?}"
+		);
+		let back = load();
+		assert_eq!(back.minimap, changed.minimap);
+		assert_eq!(back.performance_profile, "max");
+		assert!(back.stepped_profile.is_none());
+		assert!(back.wallpaper_enabled && back.text_scrim);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// "Reload config" re-reads the file, which never holds the session's own
+	// state, so a reload must not lift a remote profile or a watch step.
+	#[test]
+	fn a_reload_keeps_what_the_file_never_held() {
+		let live = Settings {
+			remote_override: true,
+			stepped_profile: Some(crate::profile::Profile::High),
+			..Settings::default()
+		};
+		let mut reloaded = Settings::default();
+		keep_session(&live, &mut reloaded);
+		assert!(reloaded.remote_override);
+		assert_eq!(
+			reloaded.stepped_profile,
+			Some(crate::profile::Profile::High)
+		);
 	}
 
 	// Every launch-time rewrite used to truncate the file before writing it, so a
