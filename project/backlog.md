@@ -49,6 +49,19 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Not seen yet. Skipping the save when frames stall would make a truly slow machine test at every launch, so it needs its own design.
 	- Opened: 20260910-215844
 
+- 🔘 A write made while SilkTerm starts can put a plain copy in place of a linked settings file.
+	- Adding new settings or renaming old ones replaces a linked `config.shcl` with a copy, so later edits to the linked file are ignored. A private file's permissions are reset too.
+	- The same write follows a stray `config.shcl.new` link, so a settings file kept in a shared folder can overwrite another file.
+	- Opened: 20260910-230211
+
+- 🔘 A short settings file can get one section's commented defaults filed under another.
+	- Seen on a hand-written file: the Performance defaults were written under Transparency, and the next launch added them again where they belong.
+	- Opened: 20260910-230211
+
+- 🔘 On Windows, nothing says that a settings file with an unreadable line can no longer be saved.
+	- Shells found at launch are then never kept, and menu switches and the window size go through the same save. The only report goes to a console that a Windows build does not show.
+	- Opened: 20260910-230211
+
 - 🔘 A wallpaper set with `silkterm --wallpaper` does not last the session.
 	- With a rotation folder, Reload config after it turns the background black until restart. A reload without the `--wallpaper` step keeps the picture.
 	- An Apply from a Settings dialog opened before the `--wallpaper` puts the earlier wallpaper back.
