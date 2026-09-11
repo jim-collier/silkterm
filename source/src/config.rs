@@ -3553,10 +3553,36 @@ pub fn keep_rating(lines: &RatingLines) -> Kept {
 	}
 }
 
+// How every setting reads, in file order, leaving out the keys being written
+// and anything under them. A new line can move which line a parse drops without
+// changing how many it drops, so the count alone would let another setting load
+// differently. A rating key this write does not touch counts as another setting,
+// since a new `profile:` line can pull a deeper `check_next_run:` under itself.
+fn settings_besides(
+	doc: &shcl::Document,
+	written: &[String],
+) -> Vec<(String, Vec<String>, shcl::Status, bool)> {
+	doc.paths()
+		.into_iter()
+		.filter(|path| {
+			!written.iter().any(|key| {
+				path.strip_prefix(key.as_str())
+					.is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+			})
+		})
+		.map(|path| {
+			let read = doc.read_string(&path);
+			let instances = doc.instances(&path);
+			(path, instances, read.status, read.quoted)
+		})
+		.collect()
+}
+
 // The file's text with the rating's values in it, or why not. Pure, so every
 // placement rule is testable without a file. The result is parsed back before
-// it is offered: it may lose no more than the input already had, and each key
-// has to read as exactly what was asked.
+// it is offered: it may lose no more than the input already had, every other
+// setting has to read as it did, and each key has to read as exactly what was
+// asked.
 fn with_rating_lines(text: &str, lines: &RatingLines) -> Result<String, Kept> {
 	let wanted = [
 		("profile", lines.profile.map(RatingValue::Word)),
@@ -3577,8 +3603,16 @@ fn with_rating_lines(text: &str, lines: &RatingLines) -> Result<String, Kept> {
 	}
 	let mut joined = out.join("\n");
 	joined.push('\n');
+	let written: Vec<String> = wanted
+		.iter()
+		.filter(|(_, value)| value.is_some())
+		.map(|(leaf, _)| format!("performance.{leaf}"))
+		.collect();
+	let before = shcl::Document::parse(text);
 	let after = shcl::Document::parse(&joined);
-	if after.lost_count() > shcl::Document::parse(text).lost_count() {
+	if after.lost_count() > before.lost_count()
+		|| settings_besides(&after, &written) != settings_besides(&before, &written)
+	{
 		return Err(Kept::Unreadable);
 	}
 	let reads_back = wanted.iter().all(|(leaf, value)| {
@@ -5106,6 +5140,56 @@ mod tests {
 		}
 	}
 
+	// A line placed in a block that already drops one can change which line the
+	// parse drops. The count stays the same, and another setting loads differently.
+	#[test]
+	fn a_rating_changes_no_other_setting() {
+		let text = "performance:\n    # rated_hardware: \"\"  ## Default\n\tautomatic: false\n    check_hardware: false\n";
+		let before = shcl::Document::parse(text);
+		assert_eq!(before.lost_count(), 1);
+		assert_eq!(before.get_bool("performance.automatic"), Ok(false));
+		assert_eq!(
+			before.get_bool("performance.check_hardware"),
+			Err(shcl::Status::NotFound)
+		);
+		let lines = RatingLines {
+			rated_hardware: Some("0123456789abcdef"),
+			..RatingLines::default()
+		};
+		if let Ok(out) = with_rating_lines(text, &lines) {
+			let after = shcl::Document::parse(&out);
+			assert_eq!(
+				after.get_bool("performance.automatic"),
+				Ok(false),
+				"automatic loads as before:\n{out}"
+			);
+			assert_eq!(
+				after.get_bool("performance.check_hardware"),
+				Err(shcl::Status::NotFound),
+				"check_hardware loads as before:\n{out}"
+			);
+		}
+
+		// A rating key this write leaves alone is another setting too: a new
+		// `profile:` line above a deeper `check_next_run:` takes it in as a child.
+		let text = "performance:\n\t# check_hardware: \"\"  ## Default\n\t\tcheck_next_run: true\n";
+		assert_eq!(
+			shcl::Document::parse(text).get_bool("performance.check_next_run"),
+			Ok(true)
+		);
+		let lines = RatingLines {
+			profile: Some("high"),
+			..RatingLines::default()
+		};
+		if let Ok(out) = with_rating_lines(text, &lines) {
+			assert_eq!(
+				shcl::Document::parse(&out).get_bool("performance.check_next_run"),
+				Ok(true),
+				"check_next_run loads as before:\n{out}"
+			);
+		}
+	}
+
 	// A line the parse cannot place made every save refuse, and the rating is a
 	// save, so the test ran at every launch. The rating goes in beside it now; the
 	// dialog's refusal to rewrite such a file stays.
@@ -6360,8 +6444,9 @@ mod tests {
 	// not change it a second time.
 	mod fuzz {
 		use super::super::{
-			config_complaints, default_config, disabled_text, migrate_config_text, read_raw,
-			resolve, reverted_text, setting_groups, setting_lines, walk_settings, with_shcl_banner,
+			RatingLines, config_complaints, default_config, disabled_text, migrate_config_text,
+			read_raw, resolve, reverted_text, setting_groups, setting_lines, walk_settings,
+			with_rating_lines, with_shcl_banner,
 		};
 		use crate::fuzz;
 
@@ -6505,6 +6590,159 @@ mod tests {
 				let _ = config_complaints(&text);
 				let _ = migrate_config_text(&text);
 				let _ = shcl::Document::parse(&text).to_canonical();
+			});
+		}
+
+		// Children for a performance block the way hand edits leave them: mixed
+		// depths, the rating's own keys commented, bare, dotted or with children
+		// under them, and values with a comment or a list in them.
+		fn rating_children(rng: &mut fuzz::Rng) -> String {
+			use std::fmt::Write;
+			const INDENTS: [&str; 5] = ["\t", "\t", "    ", "\t\t", "  "];
+			#[rustfmt::skip]
+			const LEAVES: [&str; 6] = [
+				"automatic", "profile", "rated_hardware", "check_next_run", "check_hardware", "other",
+			];
+			#[rustfmt::skip]
+			const VALUES: [&str; 9] = [
+				"true", "false", "high", "\"max\"", "0000000000000000", "\"\"", "[1, 2]",
+				"x  ## note", "\"a # b\"",
+			];
+			let mut out = String::new();
+			for _ in 0..=rng.below(6) {
+				let indent = rng.pick(&INDENTS);
+				let leaf = rng.pick(&LEAVES);
+				let _ = match rng.below(8) {
+					0 | 1 => writeln!(out, "{indent}# {leaf}: \"\"  ## Default"),
+					2 => writeln!(out, "{indent}{leaf}:"),
+					3 => writeln!(out, "{indent}{leaf}:\n{indent}\t- a"),
+					4 => writeln!(out),
+					5 => writeln!(out, "performance.{leaf}: {}", rng.pick(&VALUES)),
+					_ => writeln!(out, "{indent}{leaf}: {}", rng.pick(&VALUES)),
+				};
+			}
+			out
+		}
+
+		// Somewhere a rating has to go: the template with lines typed into its own
+		// performance block, or a hand-written file with one or two blocks spliced in.
+		fn rating_case(rng: &mut fuzz::Rng) -> Vec<u8> {
+			#[rustfmt::skip]
+			const HEADERS: [&str; 4] = [
+				"performance:", "performance:  ## note", "  performance:", "performance: 5",
+			];
+			let mut lines: Vec<String> = if rng.chance(3) {
+				default_config().lines().map(str::to_string).collect()
+			} else {
+				String::from_utf8_lossy(&config(rng))
+					.lines()
+					.map(str::to_string)
+					.collect()
+			};
+			for _ in 0..=rng.below(2) {
+				let header = lines.iter().position(|line| line == "performance:");
+				let (at, piece) = match header {
+					Some(h) if rng.chance(2) => {
+						let at = h + 1 + rng.below((lines.len() - h).min(40));
+						(at, rating_children(rng))
+					}
+					_ => {
+						let at = rng.below(lines.len() + 1);
+						let head = rng.pick(&HEADERS).to_string();
+						(at, format!("{head}\n{}", rating_children(rng)))
+					}
+				};
+				for (n, line) in piece.lines().enumerate() {
+					lines.insert(at + n, line.to_string());
+				}
+			}
+			let mut out = lines.join("\n");
+			out.push('\n');
+			out.into_bytes()
+		}
+
+		// A rating writes its own lines and nothing else, so whatever a file holds,
+		// an answer it accepts reads each value back, loses no more lines, and loads
+		// every setting it did not write as before. The last is read here path by
+		// path over both parses, apart from the writer's own check, though both ask
+		// shcl. Canonical text is no measure of what loads: it keeps a line shcl
+		// skipped, drops one it lost, and moves a stray line with the setting after
+		// it.
+		fn rating_check(case: &[u8], rng: &mut fuzz::Rng) {
+			const PROFILES: [&str; 4] = ["max", "high", "low", "standard"];
+			const IDS: [&str; 3] = ["0123456789abcdef", "1234567890123456", "ffffffffffffffff"];
+			let text = String::from_utf8_lossy(case).into_owned();
+			let lines = RatingLines {
+				profile: (!rng.chance(4)).then(|| *rng.pick(&PROFILES)),
+				rated_hardware: (!rng.chance(4)).then(|| *rng.pick(&IDS)),
+				check_next_run: rng.chance(3).then(|| rng.chance(2)),
+			};
+			let Ok(out) = with_rating_lines(&text, &lines) else {
+				return;
+			};
+			let (before, after) = (shcl::Document::parse(&text), shcl::Document::parse(&out));
+			let shown = format!("before:\n{text}\nafter:\n{out}");
+			assert!(
+				after.lost_count() <= before.lost_count(),
+				"a line was lost\n{shown}"
+			);
+			for (key, word) in [
+				("performance.profile", lines.profile),
+				("performance.rated_hardware", lines.rated_hardware),
+			] {
+				if let Some(word) = word {
+					assert_eq!(after.get_string(key).as_deref(), Ok(word), "{key}\n{shown}");
+				}
+			}
+			if let Some(flag) = lines.check_next_run {
+				assert_eq!(
+					after.get_bool("performance.check_next_run"),
+					Ok(flag),
+					"check_next_run\n{shown}"
+				);
+			}
+			let written: Vec<&str> = [
+				("performance.profile", lines.profile.is_some()),
+				("performance.rated_hardware", lines.rated_hardware.is_some()),
+				("performance.check_next_run", lines.check_next_run.is_some()),
+			]
+			.into_iter()
+			.filter_map(|(key, on)| on.then_some(key))
+			.collect();
+			let mut paths = before.paths();
+			for path in after.paths() {
+				if !paths.contains(&path) {
+					paths.push(path);
+				}
+			}
+			paths.retain(|path| {
+				!written
+					.iter()
+					.any(|key| path == key || path.starts_with(&format!("{key}.")))
+			});
+			let reads = |doc: &shcl::Document| {
+				paths
+					.iter()
+					.map(|path| (path.clone(), doc.get_string(path), doc.count(path)))
+					.collect::<Vec<_>>()
+			};
+			assert_eq!(
+				reads(&after),
+				reads(&before),
+				"another setting loads differently\n{shown}"
+			);
+		}
+
+		#[test]
+		fn a_rating_changes_nothing_else_in_any_file() {
+			let corpus = fuzz::corpus("config");
+			for case in &corpus {
+				rating_check(case, &mut fuzz::Rng::new(0));
+			}
+			fuzz::soak("config-rating", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				let case = fuzz::input(&mut rng, &corpus, rating_case);
+				rating_check(&case, &mut rng);
 			});
 		}
 	}
