@@ -8,6 +8,8 @@
 ##   nano   - one static title bar on top, two static help rows at the bottom
 ##   muffer - two static header rows on top, one static footer row
 ##   tmux   - a scroll region above one status row, scrolled with real linefeeds
+##   chrome - a transcript on the normal screen with a live block redrawn under it,
+##            one new transcript line per step (muffer's shape)
 ## The repaint shapes use explicit cursor positioning (CUP) and never a newline, so
 ## nothing scrolls the real grid - only the drawn content shifts, exactly the way
 ## curses/nano repaint. The tmux shape is the other kind: it sets DECSTBM and lets
@@ -17,6 +19,22 @@
 shape="${1:-less}"
 settle="${SILK_SCENE_SETTLE:-13}"   ## seconds to idle past the GL pipeline warmup
 step="${SILK_SCENE_STEP:-0.15}"     ## seconds between repaints (one line/step)
+
+if [ "$shape" = chrome ]; then
+	i=0
+	while [ "$i" -lt 80 ]; do
+		printf '  history %04d\n' "$i"
+		i=$((i + 1))
+	done
+	printf '+------------------+\n| working 0        |\n+------------------+\n'
+	sleep "$settle"
+	n=0
+	while :; do
+		printf '\033[3A\r\033[J  transcript %06d the quick brown fox\n+------------------+\n| working %-8d |\n+------------------+\n' "$n" "$n"
+		n=$((n + 1))
+		sleep "$step"
+	done
+fi
 
 printf '\033[?1049h\033[2J'                       ## enter alt screen, clear
 trap 'printf "\033[?1049l"' EXIT INT TERM         ## restore on the way out

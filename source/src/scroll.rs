@@ -333,6 +333,11 @@ impl Scroll {
 		whole.clamp(0.0, self.max)
 	}
 
+	// The output ease is chasing new lines, as opposed to resting or a user sweep.
+	pub fn chasing_output(&self) -> bool {
+		self.chase.burst > 0.0 && self.following() && !self.sweep
+	}
+
 	pub fn advance(&mut self, dt_s: f32) {
 		// one settings() snapshot per call - this runs per pane per frame
 		let cfg = config::settings();
@@ -344,7 +349,7 @@ impl Scroll {
 		}
 		// The output chase (see Chase): a speed the view may not close faster than
 		// while output is still ahead of it.
-		let chasing = self.chase.burst > 0.0 && self.following() && !self.sweep;
+		let chasing = self.chasing_output();
 		let limit = chasing.then(|| {
 			let backlog = (self.visual - self.target).max(0.0);
 			self.chase.limit(backlog, dt_s, &cfg)
@@ -476,6 +481,23 @@ mod tests {
 
 	fn ease_lines() -> f32 {
 		config::settings().output_ease_lines.max(0.0)
+	}
+
+	#[test]
+	fn chasing_output_is_the_output_ease_only() {
+		let _g = pin();
+		let mut s = Scroll::new();
+		s.set_max(100.0);
+		assert!(!s.chasing_output());
+		s.nudge_output(3.0, 24.0);
+		assert!(s.chasing_output());
+		for _ in 0..2000 {
+			s.advance(0.016);
+		}
+		assert!(!s.chasing_output(), "landed");
+		s.nudge_output(3.0, 24.0);
+		s.wheel(-1.0); // the user drives it back down: a sweep, not the chase
+		assert!(!s.chasing_output());
 	}
 
 	#[test]

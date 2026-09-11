@@ -970,6 +970,9 @@ pub struct Pane {
 	// Rows of static TOP band (title bar - nano, muffer) that must NOT slide, the
 	// mirror of slide_static. The scrolling region is between the two bands.
 	slide_static_top: usize,
+	// Rows at the bottom a program redrew in place while the output ease chases
+	// new lines above them, drawn still (`output_band`). 0 = none.
+	out_band: usize,
 	// Last detected step's shift (signed lines). Only feeds the SILK_SCROLLDBG
 	// trace now - the strip is positioned by app_off alone - but the harness
 	// regex reads the field, so it stays.
@@ -1216,8 +1219,13 @@ impl Pane {
 		let follow = self.scroll.following();
 		let whole_screen = region == (0..lines);
 		let advanced = output_advance(alt, follow, grew, pushed);
+		// read before the nudge: a band is measured fresh when the ease was at rest
+		let was_chasing = self.scroll.chasing_output();
 		if advanced > 0 && follow && !cut {
 			self.scroll.nudge_output(advanced as f32, lines as f32);
+		}
+		if cut || alt || !self.scroll.chasing_output() {
+			self.out_band = 0;
 		}
 
 		// Minimap: fold this build's grid into the column's cache. Switched off it
@@ -1290,15 +1298,19 @@ impl Pane {
 				chunk.as_deref().unwrap_or_default(),
 			)
 		});
-		if settings.smooth_apps() && !cut && (force_rebuild || !self.text_built) {
+		// The fingerprints also feed the output band, which belongs to the output
+		// ease and so works with app easing off. The styled cells stay app-only.
+		let apps = settings.smooth_apps();
+		if (apps || (settings.scroll_smooth && !alt)) && !cut && (force_rebuild || !self.text_built)
+		{
 			let mut cur_cells = std::mem::take(&mut self.cells_scratch);
 			let rows = snapshot_rows(
 				guard.grid(),
 				lines,
 				cols,
-				Some((guard.colors(), &settings, &mut cur_cells)),
+				apps.then_some((guard.colors(), &settings, &mut cur_cells)),
 			);
-			if let Some(step) = step {
+			if let (true, Some(step)) = (apps, step) {
 				shift_dbg = step;
 				// The bands are the region's edges, except that a row at the edge away
 				// from the strip which reads the same as last frame is held still: a
@@ -1340,7 +1352,7 @@ impl Pane {
 				let cover = self.strip.len() as f32;
 				let region_rows = (region.end - region.start) as f32;
 				self.scroll.app_scroll(step as f32, cover, region_rows);
-			} else {
+			} else if apps {
 				let shift = if fingerprint_frame(alt, follow, grew, scrolled) {
 					scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX)
 				} else {
@@ -1391,8 +1403,23 @@ impl Pane {
 					}
 				}
 			}
+			if advanced > 0 && follow && !alt && settings.scroll_smooth {
+				// rows outside a recorded scroll region stayed put by definition
+				let hint = if scrolled > 0 && region.start == 0 && region.end < lines {
+					lines - region.end
+				} else {
+					0
+				};
+				let blank = fnv_row(std::iter::repeat_n(' ', cols));
+				let measured = output_band(&rows, &self.last_rows, advanced, hint, blank);
+				self.out_band = adopt_band(self.out_band, measured, was_chasing);
+			}
 			self.last_rows = rows;
-			self.cells_scratch = std::mem::replace(&mut self.last_cells, cur_cells);
+			if apps {
+				self.cells_scratch = std::mem::replace(&mut self.last_cells, cur_cells);
+			} else {
+				self.cells_scratch = cur_cells;
+			}
 		}
 
 		// snap the integer grid offset to the floor of the smooth position
@@ -1408,14 +1435,23 @@ impl Pane {
 		// is 0 on the alt screen); + shifts content down, revealing bg at the top.
 		let app_off = self.scroll.app_offset();
 		let voff = frac + app_off;
+		// an app slide keeps its own bands and wins over the output band
+		let ob = if app_off == 0.0 {
+			self.out_band.min(lines / 2)
+		} else {
+			0
+		};
 		// Dev trace for the alt-screen slide (SILK_SCROLLDBG). Off = one cached bool
 		// check per frame. The per-frame (sh, app_off, slide_sh, st, sb) sequence is
 		// the deterministic proof that the slide eases smoothly (app_off monotonic, no
 		// bounce) without needing to eyeball a render - see the headless bounce harness.
-		if scroll_dbg() && settings.smooth_apps() && (alt || app_off != 0.0 || shift_dbg != 0) {
+		if scroll_dbg()
+			&& ((settings.smooth_apps() && (alt || app_off != 0.0 || shift_dbg != 0))
+				|| (!alt && frac > 0.0))
+		{
 			let frame = DBG_FRAME.fetch_add(1, Ordering::Relaxed);
 			eprintln!(
-				"SCROLLDBG f={frame} pane={} sh={shift_dbg} app_off={app_off:.4} slide_sh={:.4} st={} sb={} frac={frac:.4} alt={}",
+				"SCROLLDBG f={frame} pane={} sh={shift_dbg} app_off={app_off:.4} slide_sh={:.4} st={} sb={} frac={frac:.4} alt={} ob={ob}",
 				self.id, self.slide_sh, self.slide_static_top, self.slide_static, alt as u8,
 			);
 		}
@@ -1425,7 +1461,7 @@ impl Pane {
 		// `top_split_row` is the first row of the scroll region (just below the title).
 		// No bands (or no active slide) => whole pane at voff.
 		let static_rows = if app_off == 0.0 {
-			0
+			ob
 		} else {
 			self.slide_static.min(lines)
 		};
@@ -1436,11 +1472,14 @@ impl Pane {
 		};
 		let split_row = (lines - static_rows) as i32;
 		let top_split_row = static_top as i32;
+		// An app slide redraws its bands at the fractional offset. The output band
+		// is the live bottom of the grid, which is where it already belongs.
+		let band_off = if app_off == 0.0 { 0.0 } else { frac };
 		let voff_of = |screen_row: i32| {
 			if (static_top > 0 && screen_row < top_split_row)
 				|| (static_rows > 0 && screen_row >= split_row)
 			{
-				frac
+				band_off
 			} else {
 				voff
 			}
@@ -1462,8 +1501,24 @@ impl Pane {
 		// edge and rides the same eased offset, so it never moves relative to the
 		// content: its last row ends exactly at the region's first row (up-scroll),
 		// or its first row starts one past the region's last (down-scroll).
-		let slide = if app_off == 0.0 {
+		let slide = if app_off == 0.0 && ob == 0 {
 			None
+		} else if app_off == 0.0 {
+			// The output band: no strip, and the eased text keeps the overscan row
+			// that fills the top, so only the band's own edge clips it.
+			let split_y = self.rect.y + margin + split_row as f32 * cell_h;
+			Some(Slide {
+				strip_top: 0.0,
+				strip_rows: 0..0,
+				strip_text_top: 0.0,
+				top_split_y: f32::MIN,
+				split_y,
+				region_clip_t: f32::MIN,
+				region_clip_b: split_y,
+				band_top: self.rect.y + margin - cell_h,
+				has_band: true,
+				has_top_band: false,
+			})
 		} else {
 			// split_y bounds the scroll region below; top_split_y bounds it above (a
 			// static top band sits above it; f32::MIN = no band, so the clip is open).
@@ -1542,8 +1597,16 @@ impl Pane {
 			let gap = (cell_h * 0.10).round();
 			let color = config::srgb_f32(link.fg);
 			for grid_line in link.start.line.0..=link.end.line.0 {
-				let screen_row = grid_line + display_offset;
-				if screen_row < 0 || screen_row >= lines as i32 {
+				let screen_row = if ob > 0 && grid_line >= split_row {
+					grid_line
+				} else {
+					grid_line + display_offset
+				};
+				// a scrolled-view line that lands under the band is hidden by it
+				if screen_row < 0
+					|| screen_row >= lines as i32
+					|| (ob > 0 && grid_line < split_row && screen_row >= split_row)
+				{
 					continue;
 				}
 				let first_col = if grid_line == link.start.line.0 {
@@ -1640,6 +1703,8 @@ impl Pane {
 			(
 				if sl.has_top_band {
 					sl.top_split_y
+				} else if app_off == 0.0 {
+					self.rect.y // the output band keeps the overscan row
 				} else {
 					self.rect.y + margin
 				},
@@ -1711,7 +1776,7 @@ impl Pane {
 		}
 
 		for screen_row in -1..(lines as i32) {
-			let grid_line = screen_row - display_offset; // grid line for this screen row
+			let grid_line = band_row_line(screen_row, display_offset, split_row, ob);
 			// off the top/bottom of real content: blank row (still emitted, so the
 			// row count always matches the buffer's line count)
 			if grid_line < -hist || grid_line > (lines as i32 - 1) {
@@ -1908,7 +1973,8 @@ impl Pane {
 		// pushed, or the ease moved the window (see OffStrip::visible). A screenful
 		// at most, like the main buffer.
 		if let Some(sl) = &slide {
-			if self.strip_dirty || self.strip.shaped != sl.strip_rows {
+			if !sl.strip_rows.is_empty() && (self.strip_dirty || self.strip.shaped != sl.strip_rows)
+			{
 				self.strip_dirty = false;
 				self.shape_strip(ctx, &settings, sl.strip_rows.clone());
 			}
@@ -2640,7 +2706,7 @@ impl Pane {
 	// scrim pass too - the strip is always scrim-safe, unlike the old retained
 	// frame whose own-bg furniture had to be guarded out.
 	pub fn strip_text_area<'a>(&'a self, slide: &Slide, margin: f32) -> Option<TextArea<'a>> {
-		if self.strip.shaped.is_empty() {
+		if slide.strip_rows.is_empty() || self.strip.shaped.is_empty() {
 			return None;
 		}
 		let mut area = self.buf_area(&self.strip_buf, slide.strip_text_top, margin);
@@ -3313,6 +3379,7 @@ impl PaneManager {
 				// a reflow can shrink history with nothing scrolled, which would
 				// otherwise read as a scrollback clear
 				pane.rebaseline_history();
+				pane.out_band = 0;
 				pane.strip_dirty = false;
 				pane.last_cells.clear();
 			}
@@ -3442,6 +3509,7 @@ fn spawn_pane(
 		last_rows: Vec::new(),
 		slide_static: 0,
 		slide_static_top: 0,
+		out_band: 0,
 		slide_sh: 0.0,
 		last_alt: false,
 		pending_cut: false,
@@ -4240,18 +4308,64 @@ fn slide_bands(cur: &[u64], last: &[u64], shift: i32) -> (usize, usize) {
 	if st + sb >= n { (0, 0) } else { (st, sb) }
 }
 
+// Rows at the bottom a program redrew in place while `k` lines scrolled into
+// history above them: a progress line, apt's status bar, a live block under a
+// transcript. The output ease would drop them a row and slide them back. Rows
+// under the step's span neither moved nor are new, but that alone would also hold
+// the last chunk of plain output still, so one of them must be ink that stayed
+// put. `region_hint` is the rows below a recorded scroll region, exact on its own.
+fn output_band(cur: &[u64], last: &[u64], k: usize, region_hint: usize, blank: u64) -> usize {
+	let n = cur.len();
+	if k == 0 || k >= n || last.len() != n {
+		return 0;
+	}
+	let content = match translate_span(cur, last, k as i32) {
+		Some((_, bot)) => {
+			let band = n - 1 - bot;
+			let anchored = (n - band..n).any(|i| cur[i] != blank && cur[i] == last[i]);
+			if anchored { band } else { 0 }
+		}
+		None => 0,
+	};
+	let band = region_hint.max(content);
+	if band >= n / 2 { 0 } else { band }
+}
+
+// Unlike an app slide's bands (G8), the output band is re-measured every step but
+// only grows while the ease runs. Continuous output keeps one ease going, so a
+// band frozen at its first step stays 0 for the whole run when that step caught a
+// half-drawn frame, and shrinking would drop a held row back into the eased text.
+fn adopt_band(current: usize, measured: usize, easing: bool) -> usize {
+	if easing {
+		current.max(measured)
+	} else {
+		measured
+	}
+}
+
+// Grid line drawn at `screen_row`. The output band shows the live bottom of the
+// grid, which the scrolled view does not reach while the ease runs.
+fn band_row_line(screen_row: i32, display_offset: i32, split_row: i32, ob: usize) -> i32 {
+	if ob > 0 && screen_row >= split_row {
+		screen_row
+	} else {
+		screen_row - display_offset
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::{
 		APP_SCROLL_MAX, BAR_MIN_THUMB, CURSOR_MAX_LAG, Dir, LinkHit, Node, OffStrip,
-		PROMPT_SKEL_MIN, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell, bar_applies_to,
-		bar_pos_to_lines, bar_thumb_span, bell_brighten, capture_grid_text, capture_start,
-		child_areas, cursor_cycle, cursor_slide_step, distinct_pair, divider_at, equalize_dir_run,
-		fingerprint_frame, fnv_row, fnv_row_skel, glide_to_full, layout, ledger_step, link_at,
-		logical_line_bounds, move_is_input, next_capture_poll, output_advance, pair_inside,
-		paste_payload, prompt_strip, pushed_since, render_char, resume_delay, same_char_pair,
-		scroll_shift_signed, shown_cursor_shape, slide_bands, slide_is_visible, snapshot_rows,
-		static_bands, strip_rows, translate_span, vanished_range, weld_region_clip,
+		PROMPT_SKEL_MIN, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell, adopt_band,
+		band_row_line, bar_applies_to, bar_pos_to_lines, bar_thumb_span, bell_brighten,
+		capture_grid_text, capture_start, child_areas, cursor_cycle, cursor_slide_step,
+		distinct_pair, divider_at, equalize_dir_run, fingerprint_frame, fnv_row, fnv_row_skel,
+		glide_to_full, layout, ledger_step, link_at, logical_line_bounds, move_is_input,
+		next_capture_poll, output_advance, output_band, pair_inside, paste_payload, prompt_strip,
+		pushed_since, render_char, resume_delay, same_char_pair, scroll_shift_signed,
+		shown_cursor_shape, slide_bands, slide_is_visible, snapshot_rows, static_bands, strip_rows,
+		translate_span, vanished_range, weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
@@ -5619,6 +5733,167 @@ mod tests {
 				wide: 1,
 			})
 			.collect()
+	}
+
+	fn band_rows(term: &Term<VoidListener>, lines: usize, cols: usize) -> Vec<u64> {
+		snapshot_rows(term.grid(), lines, cols, None)
+	}
+	fn blank_row(cols: usize) -> u64 {
+		fnv_row(std::iter::repeat_n(' ', cols))
+	}
+
+	#[test]
+	fn a_progress_line_redrawn_under_new_output_is_held_still() {
+		let (cols, lines) = (30usize, 8usize);
+		let mut s = (0..20)
+			.map(|i| format!("   Compiling c{i}\r\n"))
+			.collect::<Vec<_>>()
+			.concat();
+		s.push_str("    Building [=>   ] 0/9");
+		let mut term = term_fed(cols, lines, 1000, &s);
+		let last = band_rows(&term, lines, cols);
+		let h0 = term.grid().history_size();
+		feed(
+			&mut term,
+			"\r\x1b[K   Compiling b\r\n    Building [=>   ] 0/9",
+		);
+		let k = term.grid().history_size() - h0;
+		assert_eq!(k, 1);
+		let cur = band_rows(&term, lines, cols);
+		assert_eq!(output_band(&cur, &last, k, 0, blank_row(cols)), 1);
+
+		// the bar's text changed on the same tick: nothing anchors it (a known limit)
+		let mut term = term_fed(cols, lines, 1000, &s);
+		let last = band_rows(&term, lines, cols);
+		feed(
+			&mut term,
+			"\r\x1b[K   Compiling b\r\n    Building [==>  ] 1/9",
+		);
+		let cur = band_rows(&term, lines, cols);
+		assert_eq!(output_band(&cur, &last, 1, 0, blank_row(cols)), 0);
+	}
+
+	#[test]
+	fn a_live_block_under_a_transcript_is_held_still() {
+		let (cols, lines) = (24usize, 12usize);
+		let block = |n: usize| format!("+--------+\r\n| work {n} |\r\n+--------+\r\n");
+		let mut s = (0..30)
+			.map(|i| format!("t{i:02}\r\n"))
+			.collect::<Vec<_>>()
+			.concat();
+		s.push_str(&block(1));
+		let mut term = term_fed(cols, lines, 1000, &s);
+		let last = band_rows(&term, lines, cols);
+		let h0 = term.grid().history_size();
+		feed(&mut term, &format!("\x1b[3A\r\x1b[Jt30\r\n{}", block(2)));
+		let k = term.grid().history_size() - h0;
+		assert_eq!(k, 1);
+		let cur = band_rows(&term, lines, cols);
+		// three block rows and the blank cursor row under them, anchored by a border
+		assert_eq!(output_band(&cur, &last, k, 0, blank_row(cols)), 4);
+	}
+
+	#[test]
+	fn a_prompt_that_scrolls_up_is_not_held() {
+		let (cols, lines) = (20usize, 8usize);
+		let s = (0..20)
+			.map(|i| format!("out {i}\r\n"))
+			.collect::<Vec<_>>()
+			.concat();
+		for prompt in ["$ ", "user@host\r\n$ "] {
+			let mut term = term_fed(cols, lines, 1000, &format!("{s}{prompt}"));
+			let last = band_rows(&term, lines, cols);
+			let h0 = term.grid().history_size();
+			feed(&mut term, &format!("\r\n{prompt}"));
+			let k = term.grid().history_size() - h0;
+			assert!(k > 0);
+			let cur = band_rows(&term, lines, cols);
+			assert_eq!(
+				output_band(&cur, &last, k, 0, blank_row(cols)),
+				0,
+				"{prompt:?}"
+			);
+		}
+	}
+
+	#[test]
+	fn a_line_finished_across_two_reads_is_not_held() {
+		let (cols, lines) = (20usize, 8usize);
+		let mut s = (0..20)
+			.map(|i| format!("out {i}\r\n"))
+			.collect::<Vec<_>>()
+			.concat();
+		s.push_str("123");
+		let mut term = term_fed(cols, lines, 1000, &s);
+		let last = band_rows(&term, lines, cols);
+		let h0 = term.grid().history_size();
+		feed(&mut term, "4\r\n1235\r\n12");
+		let k = term.grid().history_size() - h0;
+		assert_eq!(k, 2);
+		let cur = band_rows(&term, lines, cols);
+		assert_eq!(output_band(&cur, &last, k, 0, blank_row(cols)), 0);
+	}
+
+	#[test]
+	fn output_band_never_holds_plain_output() {
+		let blank = 0u64;
+		let last: Vec<u64> = (1..=8).collect();
+		let cur: Vec<u64> = (3..=10).collect();
+		assert_eq!(output_band(&cur, &last, 2, 0, blank), 0, "plain output");
+		assert_eq!(output_band(&[7; 8], &[7; 8], 2, 0, blank), 0, "yes");
+		assert_eq!(output_band(&cur, &last, 8, 0, blank), 0, "k >= n");
+		assert_eq!(output_band(&cur, &last, 0, 3, blank), 0, "k == 0");
+		assert_eq!(output_band(&cur[..7], &last, 2, 0, blank), 0, "lengths");
+		// half the screen or more is not a status line
+		let last = [1, 2, 3, 4, 50, 60, 70, 80];
+		let cur = [2, 3, 4, 9, 50, 60, 70, 80];
+		assert_eq!(output_band(&cur, &last, 1, 0, blank), 0);
+		// blank rows alone anchor nothing
+		let last = [1, 2, 3, 4, 5, 6, 0, 0];
+		let cur = [2, 3, 4, 5, 6, 9, 0, 0];
+		assert_eq!(output_band(&cur, &last, 1, 0, blank), 0);
+	}
+
+	#[test]
+	fn a_status_bar_below_the_scroll_region_is_held_still() {
+		// apt: a region over all but the last row, its bar redrawn on that row
+		let (cols, lines) = (20usize, 8usize);
+		let mut term = term_fed(cols, lines, 1000, "\x1b[8;1Hbar 1/9\x1b[1;7r\x1b[7;1H");
+		term.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+		for i in 0..10 {
+			feed(&mut term, &format!("\r\nline {i}"));
+		}
+		term.scroll_ledger_mut().clear();
+		let last = band_rows(&term, lines, cols);
+		let h0 = term.grid().history_size();
+		feed(&mut term, "\r\nline x\x1b7\x1b[8;1H\x1b[Kbar 2/9\x1b8");
+		let k = term.grid().history_size() - h0;
+		assert_eq!(k, 1, "the region's top row went to history");
+		let ledger = term.scroll_ledger();
+		let (start, end) = (
+			ledger.region().start.0.max(0) as usize,
+			(ledger.region().end.0.max(0) as usize).min(lines),
+		);
+		assert!(ledger.lines() > 0 && start == 0 && end < lines);
+		let cur = band_rows(&term, lines, cols);
+		assert_eq!(output_band(&cur, &last, k, lines - end, blank_row(cols)), 1);
+	}
+
+	#[test]
+	fn the_output_band_grows_while_easing_and_is_taken_fresh_at_rest() {
+		assert_eq!(adopt_band(0, 3, false), 3);
+		assert_eq!(adopt_band(4, 1, false), 1, "at rest the measurement stands");
+		assert_eq!(adopt_band(1, 4, true), 4);
+		assert_eq!(adopt_band(4, 0, true), 4, "never shrinks mid-ease");
+	}
+
+	#[test]
+	fn band_rows_draw_the_live_grid_and_the_rest_the_scrolled_view() {
+		assert_eq!(band_row_line(3, 2, 6, 2), 1);
+		assert_eq!(band_row_line(6, 2, 6, 2), 6);
+		assert_eq!(band_row_line(7, 2, 6, 2), 7);
+		assert_eq!(band_row_line(-1, 2, 6, 2), -3);
+		assert_eq!(band_row_line(7, 2, 6, 0), 5, "no band");
 	}
 
 	#[test]
