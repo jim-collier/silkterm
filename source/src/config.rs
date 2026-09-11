@@ -5519,7 +5519,8 @@ mod tests {
 		let publish = "shcl::write_file_atomic";
 		assert_eq!(body.matches(publish).count(), 1, "{publish} is named once");
 		let start = body.find("fn write_config_atomic(").expect("the writer");
-		let end = start + body[start..].find("\n}\n").expect("its end");
+		// "\n}" alone: a Windows checkout can end the line with "\r\n"
+		let end = start + body[start..].find("\n}").expect("its end");
 		assert!(
 			body[start..end].contains(publish),
 			"{publish} is called from write_config_atomic"
