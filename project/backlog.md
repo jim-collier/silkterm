@@ -47,8 +47,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Wallpapers disappeared on 2 instances that had been running for ~14 hours.
 	- Did NOT disappear on 3 instances of the same version, that had been running for 2 days.
 	- Did NOT disappear on 1 instances of the same version, that had been running for ~19 hours.
+	- New launches have no wallpaper. This may be a regression of the same bug that has been logged once or twice before.
 
 - 🔘 Performance test happens at every startup.
+
+- 🔘 Smooth scrolling bug (seems to be another regression to pre-alacritty work): smooth-scrolling often involve quite noticable sharp horizontal "seams", where it seems like vertical portions of the screen don't scroll at the same rate. (And/or start at different times, or something.)
+
+- 🔘 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
+	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even Claude Code's autocopy doesn't work.)
+	- CTRL+shift+C on selected text doesn't work.
+	- Right-click and choose "Copy", DOES work.
 
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
 	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
