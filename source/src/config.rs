@@ -3844,19 +3844,29 @@ fn loaded_text(text: &str) -> std::borrow::Cow<'_, str> {
 }
 
 // What the next launch parses: the text its rewrites leave, in the launch's own
-// order. The rating check compares through this. Each step reads how the one
-// before it wrote a line (the conversion copies a font list's quotes, and the
-// renames then look at them), so leaving one out lets a rating write change what
-// another setting loads a launch later. Backfill is left out on purpose: it only
+// order. The rating check compares through this, because a step can read how a
+// line is written as well as what it says. Two did: the font list refresh looked
+// at the quote character, which the conversion before it copies, and the renames
+// took a commented heading for a parent. A save changes both, so a rating write
+// moved another setting a launch later. Neither reads layout now, and this is
+// what catches the next step that does. Backfill is left out on purpose: it only
 // adds lines the program owns, and it runs whether or not a rating was written.
 // A step added to `load` belongs here too.
+type LaunchStep = fn(&str) -> Option<String>;
+
+const LAUNCH_STEPS: [LaunchStep; 4] = [
+	wallpaper_heading_repaired,
+	converted_config_text,
+	adopted_shell_text,
+	migrate_config_text,
+];
+
+#[cfg(test)]
 fn next_launch_text(text: &str) -> std::borrow::Cow<'_, str> {
-	let steps: [fn(&str) -> Option<String>; 4] = [
-		wallpaper_heading_repaired,
-		converted_config_text,
-		adopted_shell_text,
-		migrate_config_text,
-	];
+	rewritten_by(text, &LAUNCH_STEPS)
+}
+
+fn rewritten_by<'a>(text: &'a str, steps: &[LaunchStep]) -> std::borrow::Cow<'a, str> {
 	let mut out: Option<String> = None;
 	for step in steps {
 		if let Some(next) = step(out.as_deref().unwrap_or(text)) {
@@ -4103,7 +4113,39 @@ fn backfill_config(path: &std::path::Path) {
 	let Ok(text) = std::fs::read_to_string(path) else {
 		return;
 	};
+	let out = match backfilled_text(&text) {
+		Ok(Some(out)) => out,
+		Ok(None) => return,
+		Err(setting) => {
+			eprintln!(
+				"{APP_NAME}: {}: adding the missing settings would stop {setting} being read, so none were added",
+				path.display()
+			);
+			return;
+		}
+	};
+	if config_open_elsewhere(path) {
+		note_config_busy(path);
+		return;
+	}
+	if let Err(e) = write_config_atomic(path, &out) {
+		eprintln!(
+			"{APP_NAME}: could not update config {}: {e}",
+			path.display()
+		);
+	}
+}
+
+// The backfill as text: None where the file lacks nothing. Err names a setting
+// whose value would stop loading, in which case nothing may be written.
+fn backfilled_text(text: &str) -> Result<Option<String>, String> {
 	let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+	// where each line came from, None for one added here
+	let mut origin: Vec<Option<usize>> = (0..lines.len()).map(Some).collect();
+	let mut insert = |lines: &mut Vec<String>, at: usize, line: String| {
+		lines.insert(at, line);
+		origin.insert(at, None);
+	};
 
 	let mut groups: Vec<Vec<(String, Vec<String>)>> = Vec::new();
 	for (p, block, new_group) in setting_groups(default_config()) {
@@ -4131,21 +4173,25 @@ fn backfill_config(path: &std::path::Path) {
 			match anchor_for(&group[0].0, &order, &at, &lines, true) {
 				Anchor::Before(index) => {
 					// separate from the next group's comment block below
-					lines.insert(index, String::new());
+					insert(&mut lines, index, String::new());
 					for (offset, line) in block.into_iter().enumerate() {
-						lines.insert(index + offset, line);
+						insert(&mut lines, index + offset, line);
 					}
 				}
 				Anchor::After(index) => {
-					let mut insert = vec![String::new()];
-					insert.extend(block);
-					for (offset, line) in insert.into_iter().enumerate() {
-						lines.insert(index + 1 + offset, line);
+					let mut added = vec![String::new()];
+					added.extend(block);
+					for (offset, line) in added.into_iter().enumerate() {
+						insert(&mut lines, index + 1 + offset, line);
 					}
 				}
 				Anchor::Append => {
-					lines.push(String::new());
-					lines.extend(block);
+					let end = lines.len();
+					insert(&mut lines, end, String::new());
+					for line in block {
+						let end = lines.len();
+						insert(&mut lines, end, line);
+					}
 				}
 			}
 			changed = true;
@@ -4161,31 +4207,112 @@ fn backfill_config(path: &std::path::Path) {
 			}
 			let Some(line) = block.last() else { continue };
 			match anchor_for(p, &order, &at, &lines, false) {
-				Anchor::Before(index) => lines.insert(index, line.clone()),
-				Anchor::After(index) => lines.insert(index + 1, line.clone()),
-				Anchor::Append => lines.push(line.clone()),
+				Anchor::Before(index) => insert(&mut lines, index, line.clone()),
+				Anchor::After(index) => insert(&mut lines, index + 1, line.clone()),
+				Anchor::Append => {
+					let end = lines.len();
+					insert(&mut lines, end, line.clone());
+				}
 			}
 			changed = true;
 		}
 	}
 	if !changed {
-		return;
+		return Ok(None);
 	}
+	unbury(text, &mut lines, &origin)?;
 
 	let mut out = lines.join("\n");
 	out.push('\n');
-	if out != text {
-		if config_open_elsewhere(path) {
-			note_config_busy(path);
-			return;
+	Ok((out != text).then_some(out))
+}
+
+// A line indented deeper than its block needs still reads as that block's, until
+// an active line is added above it. Then it reads as part of that line and its
+// value stops loading, with nothing said. A short hand-written file is where it
+// happens: `rows:` two tabs in under `window:`, and the template's own active
+// lines arriving above it. Such a line is moved out to the depth its block
+// gives, which a save would do anyway. Err names a setting that still reads
+// differently after that.
+fn unbury(text: &str, lines: &mut [String], origin: &[Option<usize>]) -> Result<(), String> {
+	let before = shcl::Document::parse(text);
+	let source: Vec<&str> = text.lines().collect();
+	let walked = walk_settings(text);
+	let settings: Vec<(usize, &str)> = walked
+		.iter()
+		.filter_map(|w| match w {
+			WalkLine::Setting {
+				index,
+				path,
+				active: true,
+				header: false,
+			} => Some((*index, path.as_str())),
+			_ => None,
+		})
+		.collect();
+	let reads = |doc: &shcl::Document, path: &str| {
+		let read = doc.read_string(path);
+		(read.value, read.status)
+	};
+	// What shcl reads is the measure, and it can differ from the walk on a file
+	// that is part junk. A setting the walk cannot point at is not moved.
+	let loaded: Vec<String> = before
+		.paths()
+		.into_iter()
+		.filter(|path| before.get_string(path).is_ok())
+		.collect();
+	// each pass moves one line, and a line is never moved twice
+	for _ in 0..=settings.len() {
+		let mut joined = lines.join("\n");
+		joined.push('\n');
+		let after = shcl::Document::parse(&joined);
+		let Some(path) = loaded
+			.iter()
+			.find(|path| reads(&before, path) != reads(&after, path))
+		else {
+			// A line that held no value can still go from read to unreadable, and
+			// one unreadable line makes every later save refuse.
+			return if after.lost_count() > before.lost_count() {
+				Err("a line".to_string())
+			} else {
+				Ok(())
+			};
+		};
+		let Some((index, path)) = settings.iter().find(|(_, p)| p == path).copied() else {
+			return Err(format!("`{path}`"));
+		};
+		let key = line_setting_key(source[index]).unwrap_or(path);
+		let block = path
+			.strip_suffix(key)
+			.map_or("", |rest| rest.trim_end_matches('.'));
+		let indent = if block.is_empty() {
+			String::new()
+		} else {
+			let header = walked.iter().rev().find_map(|w| match w {
+				WalkLine::Setting {
+					index: at,
+					path: p,
+					active: true,
+					header: true,
+				} if *at < index && p == block => Some(*at),
+				_ => None,
+			});
+			let Some(header) = header else {
+				return Err(format!("`{path}`"));
+			};
+			let line = source[header];
+			format!("{}\t", &line[..line.len() - line.trim_start().len()])
+		};
+		let Some(now) = origin.iter().position(|from| *from == Some(index)) else {
+			return Err(format!("`{path}`"));
+		};
+		let moved = format!("{indent}{}", lines[now].trim_start());
+		if moved == lines[now] {
+			return Err(format!("`{path}`"));
 		}
-		if let Err(e) = write_config_atomic(path, &out) {
-			eprintln!(
-				"{APP_NAME}: could not update config {}: {e}",
-				path.display()
-			);
-		}
+		lines[now] = moved;
 	}
+	Err("a setting".to_string())
 }
 
 // What became of a rating's lines.
@@ -4296,6 +4423,17 @@ fn settings_besides(
 // what the dialog's save would write, since that save kept a rating in any such
 // file. Either result is parsed back before it is offered.
 fn with_rating_lines(text: &str, lines: &RatingLines) -> Result<String, Kept> {
+	with_rating_lines_through(text, lines, &LAUNCH_STEPS)
+}
+
+// The launch's rewrites are a parameter so a test can hand in one that reads
+// how a line is written. None of the real ones does any more, and the check
+// still has to catch the next one that does.
+fn with_rating_lines_through(
+	text: &str,
+	lines: &RatingLines,
+	steps: &[LaunchStep],
+) -> Result<String, Kept> {
 	let wanted = [
 		("profile", lines.profile.map(RatingValue::Word)),
 		(
@@ -4308,7 +4446,7 @@ fn with_rating_lines(text: &str, lines: &RatingLines) -> Result<String, Kept> {
 		),
 	];
 	let before = shcl::Document::parse(text);
-	let migrated = migrated_parse(text);
+	let migrated = migrated_parse(text, steps);
 	let loaded = migrated.as_ref().unwrap_or(&before);
 	// A file that reads clean is never said to have a line that cannot be read.
 	let refused = if before.lost_count() == 0 {
@@ -4325,13 +4463,13 @@ fn with_rating_lines(text: &str, lines: &RatingLines) -> Result<String, Kept> {
 		spelled.push((leaf, spelling));
 	}
 	if let Some(out) = placed_rating_lines(text, &spelled)
-		&& reads_as_asked(&before, loaded, &out, &wanted)
+		&& reads_as_asked(&before, loaded, &out, &wanted, steps)
 	{
 		return Ok(out);
 	}
 	if before.lost_count() == 0
 		&& let Some(out) = saved_rating(&before, &wanted)
-		&& reads_as_asked(&before, loaded, &out, &wanted)
+		&& reads_as_asked(&before, loaded, &out, &wanted, steps)
 	{
 		return Ok(out);
 	}
@@ -4370,8 +4508,8 @@ fn saved_rating(before: &shcl::Document, wanted: &[(&str, Option<RatingValue>)])
 
 // The parse a launch makes of this text, or None where the launch's rewrites
 // leave the text alone and the caller's own parse of it serves.
-fn migrated_parse(text: &str) -> Option<shcl::Document> {
-	match next_launch_text(text) {
+fn migrated_parse(text: &str, steps: &[LaunchStep]) -> Option<shcl::Document> {
+	match rewritten_by(text, steps) {
 		std::borrow::Cow::Owned(text) => Some(shcl::Document::parse(&text)),
 		std::borrow::Cow::Borrowed(_) => None,
 	}
@@ -4389,9 +4527,10 @@ fn reads_as_asked(
 	loaded: &shcl::Document,
 	out: &str,
 	wanted: &[(&str, Option<RatingValue>)],
+	steps: &[LaunchStep],
 ) -> bool {
 	let raw_after = shcl::Document::parse(out);
-	let migrated = migrated_parse(out);
+	let migrated = migrated_parse(out, steps);
 	let after = migrated.as_ref().unwrap_or(&raw_after);
 	let written: Vec<String> = wanted
 		.iter()
@@ -7182,11 +7321,81 @@ mod tests {
 		);
 	}
 
+	// The check compares what the next launch loads, through that launch's own
+	// rewrites. Here one of them reads the quote character, as the font list
+	// refresh once did: a value in single quotes is replaced. The only text that
+	// keeps a rating in this file is a save's, which spells the value in double
+	// quotes, so the step stops firing and the value loads differently. That write
+	// has to be refused, and with no such step it goes through.
+	// A setting typed two tabs in under its block loads, until the launch adds the
+	// template's own active lines above it. It then read as part of one of those
+	// and was ignored from the next launch on, with nothing said.
+	#[test]
+	fn backfill_keeps_a_setting_that_is_indented_too_deep() {
+		let files = [
+			("window.rows", "window:\n\t# x:\n\t\trows: 31\n"),
+			("window.rows", "window:\n\t\trows: 31\n"),
+			(
+				"window.tab_regular_width_pct",
+				"window:\n\t# x:\n\t\ttab_regular_width_pct: 12\n",
+			),
+			(
+				"wallpaper.rotate.interval_s",
+				"wallpaper:\n\trotate:\n\t\t\t\tinterval_s: 40\n",
+			),
+		];
+		for (path, text) in files {
+			let wanted = shcl::Document::parse(text).get_string(path);
+			assert!(wanted.is_ok(), "{path} loads to begin with");
+			let out = backfilled_text(text)
+				.unwrap_or_else(|lost| panic!("{path}: gave up over {lost}"))
+				.expect("a short file lacks settings");
+			assert_eq!(
+				shcl::Document::parse(&out).get_string(path),
+				wanted,
+				"{path} still loads:\n{out}"
+			);
+			assert_eq!(
+				backfilled_text(&out),
+				Ok(None),
+				"{path}: settles in one pass"
+			);
+		}
+	}
+
+	#[test]
+	fn a_rating_is_refused_where_a_launch_step_reads_the_layout() {
+		fn reads_quotes(text: &str) -> Option<String> {
+			text.contains("'Old Mono'")
+				.then(|| text.replace("'Old Mono'", "\"New Mono\""))
+		}
+		let lines = RatingLines {
+			profile: Some("high"),
+			rated_hardware: Some("0123456789abcdef"),
+			check_next_run: None,
+		};
+		let text = "font:\n\tfamily: 'Old Mono'\n";
+		let plain = with_rating_lines_through(text, &lines, &[]).expect("no step, so it is kept");
+		assert!(
+			plain.contains("\"Old Mono\""),
+			"the save respells the value:\n{plain}"
+		);
+		assert_eq!(
+			with_rating_lines_through(text, &lines, &[reads_quotes]),
+			Err(Kept::Unplaced),
+			"the next launch would load another font"
+		);
+		// a file with somewhere to put the lines is written line by line, the value
+		// keeps its quotes, and the step fires on both sides
+		let blocked = format!("{text}performance:\n\tautomatic: true\n");
+		let out = with_rating_lines_through(&blocked, &lines, &[reads_quotes]).expect("kept");
+		assert!(out.contains("'Old Mono'"), "{out}");
+	}
+
 	// Each file is loaded, put back as it was (the state a launch leaves when it
 	// finds the file open elsewhere), rated, and loaded again. Either the rating
 	// went in and `other` loads as before, or nothing was written and it goes in a
-	// launch later. The last step shows the case has teeth: a plain save of the
-	// same rating does move `other`.
+	// launch later.
 	fn rating_leaves_other_loads_alone(
 		tag: &str,
 		files: Vec<(&str, String, fn(&Settings) -> String)>,
@@ -7231,14 +7440,20 @@ mod tests {
 				);
 			}
 
+			// Each case ended by showing that a plain save of the same rating did
+			// move `other`. The launch steps read no quotes or indents since
+			// 2026-09-18, so a save moves none of them and that guard could only
+			// fail. `a_rating_is_refused_where_a_launch_step_reads_the_layout` holds
+			// the check to account instead, with a step of its own.
+			//   assert_ne!(other(&reload_from_disk()), loaded, "... proves nothing");
 			let mut saved = shcl::Document::parse(&text);
 			assert!(saved.set_string("performance.profile", "high"), "{what}");
 			assert!(saved.set_string("performance.rated_hardware", ID), "{what}");
 			std::fs::write(&path, saved.to_canonical()).unwrap();
-			assert_ne!(
+			assert_eq!(
 				other(&reload_from_disk()),
 				loaded,
-				"{what}: a save no longer moves this value, so the case proves nothing"
+				"{what}: a save of the same rating loads it as before too"
 			);
 		}
 		let _ = std::fs::remove_dir_all(&dir);
@@ -9120,6 +9335,143 @@ mod tests {
 		}
 	}
 
+	// A Settings save may tidy quotes and indentation, and the launch after it
+	// must load every value as the launch before it did.
+	#[test]
+	fn a_settings_save_moves_no_value_at_the_next_launch() {
+		type Reader = fn(&Settings) -> String;
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_savemoves_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		set_config_override(path.clone());
+
+		let stale = SUPERSEDED_FONT_STACKS[0];
+		let template: Vec<String> = default_config().lines().map(str::to_string).collect();
+		let line_of = |path: &str, active: bool| {
+			walk_settings(default_config())
+				.into_iter()
+				.find_map(|w| match w {
+					WalkLine::Setting {
+						index,
+						path: p,
+						active: a,
+						..
+					} if p == path && a == active => Some(index),
+					_ => None,
+				})
+				.unwrap_or_else(|| panic!("no {path} (active {active}) in the template"))
+		};
+		let respell = |lines: &mut Vec<String>, path: &str, value: &str| {
+			let at = line_of(path, true);
+			let line = &lines[at];
+			let indent = &line[..line.len() - line.trim_start().len()];
+			let key = line_setting_key(line).unwrap();
+			lines[at] = format!("{indent}{key}: {value}");
+		};
+		let joined = |lines: &[String]| lines.join("\n") + "\n";
+
+		let mut nested = template.clone();
+		respell(&mut nested, "font.family", &format!("'{stale}'"));
+		respell(&mut nested, "font.use_system_family", "false");
+
+		let font: Reader = |s| format!("{:?}", s.font_family);
+		#[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+		let mut cases: Vec<(&str, String, Reader, bool)> = vec![
+			(
+				"an old default font list in single quotes",
+				joined(&nested),
+				font,
+				false,
+			),
+			(
+				"a pre-nesting file with that list",
+				format!("font_family: '{stale}'\nuse_system_font: false\n"),
+				font,
+				false,
+			),
+		];
+		// the rename reach needs a launch whose writes deferred, and only Linux
+		// can tell that the file is held
+		#[cfg(target_os = "linux")]
+		{
+			let focus = line_of("colors.focus", false);
+			let highlight = line_of("colors.highlight", false);
+			let colors = line_of("colors", true);
+			let mut lines: Vec<String> = template
+				.iter()
+				.enumerate()
+				.filter(|(at, _)| *at != focus && *at != highlight)
+				.map(|(_, line)| line.clone())
+				.collect();
+			let header = lines
+				.iter()
+				.position(|line| *line == template[colors])
+				.unwrap();
+			lines.insert(header + 1, "\t# x:".to_string());
+			lines.insert(header + 2, "\t\tfocus: \"#112233\"".to_string());
+			cases.push((
+				"a renamed colour under a commented heading",
+				joined(&lines),
+				|s| format!("{:?} {:?}", s.focus, s.highlight),
+				true,
+			));
+		}
+
+		// every case runs before the verdict, so a failure names all that moved
+		let mut moved: Vec<String> = Vec::new();
+		for (what, text, reader, held) in cases {
+			let canonical = shcl::Document::parse(&text).to_canonical();
+			let respelled = if held {
+				text.contains("\n\t# x:\n\t\tfocus") && !canonical.contains("\n\t# x:\n\t\tfocus")
+			} else {
+				text.contains(&format!("'{stale}'")) && canonical.contains(&format!("\"{stale}\""))
+			};
+			assert!(
+				respelled,
+				"{what}: a save no longer respells this line, so the case proves nothing"
+			);
+
+			std::fs::write(&path, &text).unwrap();
+			let launched = if held {
+				let hold = std::fs::File::open(&path).unwrap();
+				let mut child = std::process::Command::new("sleep")
+					.arg("30")
+					.stdin(std::process::Stdio::from(hold))
+					.spawn()
+					.unwrap();
+				let seen = (0..100).any(|_| {
+					std::thread::sleep(std::time::Duration::from_millis(20));
+					config_open_elsewhere(&path)
+				});
+				let launched = reload_from_disk();
+				let _ = child.kill();
+				let _ = child.wait();
+				assert!(seen, "{what}: the holder never showed up");
+				launched
+			} else {
+				reload_from_disk()
+			};
+			let before = reader(&launched);
+
+			let mut edited = launched.clone();
+			edited.font_size += 1.0;
+			assert!(persist(&launched, &edited), "{what}: the save was refused");
+			let after = reader(&reload_from_disk());
+			if after != before {
+				moved.push(format!("{what}: {before} -> {after}"));
+			}
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+		assert!(
+			moved.is_empty(),
+			"loads as it did before the save:\n{}",
+			moved.join("\n")
+		);
+	}
+
 	// A commented line still echoing an outgoing default is brought up to the
 	// template's current one; an active line, or one the user annotated, is theirs.
 	// Every entry refreshes, including a second one for a path whose default has
@@ -9395,12 +9747,274 @@ mod tests {
 	// not change it a second time.
 	mod fuzz {
 		use super::super::{
-			CONFIG_REMOVED, CONFIG_RENAMES, RatingLines, SUPERSEDED_FONT_STACKS, config_complaints,
-			default_config, disabled_text, migrate_config_text, next_launch_text, read_raw,
+			CONFIG_REMOVED, CONFIG_RENAMES, LEGACY_KEYS, RatingLines, SUPERSEDED_FONT_STACKS,
+			adopt_default_shell, config_complaints, convert_legacy_config, default_config,
+			disabled_text, line_setting_key, migrate_config_text, next_launch_text, read_raw,
 			resolve, reverted_text, setting_groups, setting_lines, walk_settings,
 			with_rating_lines, with_shcl_banner,
 		};
 		use crate::fuzz;
+
+		// The settings a save case is built from: every renamed and removed path,
+		// the font list, and one ordinary setting beside the renames in each of
+		// their blocks. Read from the tables, so a new rename joins on its own.
+		static SAVE_PATHS: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+			let mut out: Vec<String> = CONFIG_RENAMES
+				.iter()
+				.flat_map(|(old, new)| [*old, *new])
+				.chain(CONFIG_REMOVED.iter().copied())
+				.chain(["font.family"])
+				.map(str::to_string)
+				.collect();
+			let template: Vec<String> = setting_lines(default_config())
+				.into_iter()
+				.map(|(path, _)| path)
+				.collect();
+			for block in ["colors.", "window.", "scroll.", "shell."] {
+				if let Some(other) = template
+					.iter()
+					.find(|p| p.starts_with(block) && !out.contains(p))
+				{
+					out.push(other.clone());
+				}
+			}
+			out
+		});
+
+		// A comment line above a setting, at any depth, in the shapes that have
+		// moved a value: a heading, a setting-like note, plain words, and a
+		// commented rename target.
+		fn save_comment(rng: &mut fuzz::Rng) -> String {
+			const INDENTS: [&str; 5] = ["", "\t", "\t\t", "\t\t\t", "    "];
+			let indent = rng.pick(&INDENTS);
+			let body = match rng.below(4) {
+				0 => "# x:".to_string(),
+				1 => "# see: below".to_string(),
+				2 => "# just words".to_string(),
+				_ => {
+					let (_, new) = rng.pick(CONFIG_RENAMES);
+					let leaf = new.rsplit('.').next().unwrap_or(new);
+					format!("# {leaf}: \"#aabbcc\"")
+				}
+			};
+			format!("{indent}{body}\n")
+		}
+
+		fn save_value(rng: &mut fuzz::Rng, path: &str) -> String {
+			let leaf = path.rsplit('.').next().unwrap_or(path);
+			match leaf {
+				"family" => {
+					let stale = SUPERSEDED_FONT_STACKS[0];
+					// single quotes most: the save respells them
+					match rng.below(6) {
+						0..=2 => format!("'{stale}'"),
+						3 => format!("\"{stale}\""),
+						4 => stale.to_string(),
+						_ => "\"Iosevka\"".to_string(),
+					}
+				}
+				"default" => "pwsh".to_string(),
+				"startup_directory" => "C:\\Users\\x".to_string(),
+				_ if path.starts_with("colors.") => "\"#112233\"".to_string(),
+				_ => (5 + rng.below(300)).to_string(),
+			}
+		}
+
+		// A file a Settings save could be asked to keep: blocks of renamed, removed
+		// and ordinary settings with comments above them at any depth, and now and
+		// then the pre-nesting font list. A leaf is never deeper than its siblings,
+		// since shcl reads such a line as a child of the setting above it.
+		fn save_case(rng: &mut fuzz::Rng) -> String {
+			use std::fmt::Write;
+			let paths = &*SAVE_PATHS;
+			let mut out = String::new();
+			// Rarer than the rest, with the shell block below: converting a file or
+			// moving the default shell scans every process, and is most of a case's
+			// time.
+			if rng.chance(16) {
+				let _ = writeln!(out, "font_family: '{}'", SUPERSEDED_FONT_STACKS[0]);
+				if rng.chance(2) {
+					out.push_str("use_system_font: false\n");
+				}
+			}
+			for _ in 0..=rng.below(3) {
+				let mut path = rng.pick(paths);
+				if path.starts_with("shell.") && rng.chance(2) {
+					path = rng.pick(paths);
+				}
+				let (parent, _) = path.rsplit_once('.').unwrap_or(("", path));
+				let heads: Vec<&str> = parent.split('.').collect();
+				for (depth, head) in heads.iter().enumerate() {
+					let _ = writeln!(out, "{}{head}:", "\t".repeat(depth));
+				}
+				let siblings: Vec<&String> = paths
+					.iter()
+					.filter(|p| p.rsplit_once('.').is_some_and(|(up, _)| up == parent))
+					.collect();
+				let indent = "\t".repeat(heads.len());
+				for _ in 0..=rng.below(4) {
+					let leaf_path = *rng.pick(&siblings);
+					if rng.chance(2) {
+						out.push_str(&save_comment(rng));
+					}
+					let leaf = leaf_path.rsplit('.').next().unwrap_or(leaf_path);
+					let value = save_value(rng, leaf_path);
+					let _ = writeln!(out, "{indent}{leaf}: {value}");
+				}
+				if rng.chance(3) {
+					out.push_str(&save_comment(rng));
+				}
+			}
+			out
+		}
+
+		// What the next launch parses: the conversion and the default-shell move
+		// when the file needs them, then the renames, removals and refreshes.
+		fn next_load(text: &str) -> shcl::Document {
+			use std::sync::atomic::{AtomicU64, Ordering};
+			static CASE: AtomicU64 = AtomicU64::new(0);
+			let flat = text.lines().any(|line| {
+				!line.trim_start().starts_with('#')
+					&& line_setting_key(line)
+						.is_some_and(|key| LEGACY_KEYS.iter().any(|(old, _)| *old == key))
+			});
+			let shell = shcl::Document::parse(text)
+				.get_string("shell.default")
+				.is_ok();
+			let text = if flat || shell {
+				let dir = std::env::temp_dir().join(format!(
+					"silkterm_savefuzz_{}_{}",
+					std::process::id(),
+					CASE.fetch_add(1, Ordering::Relaxed)
+				));
+				let _ = std::fs::remove_dir_all(&dir);
+				std::fs::create_dir_all(&dir).unwrap();
+				let path = dir.join("config.shcl");
+				std::fs::write(&path, text).unwrap();
+				convert_legacy_config(&path);
+				adopt_default_shell(&path);
+				let out = std::fs::read_to_string(&path).unwrap();
+				let _ = std::fs::remove_dir_all(&dir);
+				out
+			} else {
+				text.to_string()
+			};
+			shcl::Document::parse(&migrate_config_text(&text).unwrap_or(text))
+		}
+
+		// A save tidies quotes and indentation, and the launch after it loads every
+		// setting the save did not write as the launch before it would have. Cases
+		// come from the generator only: a mutated file reaches a line indented under
+		// a key that holds a value, which shcl and the walk read differently, and
+		// this does not change that.
+		fn save_check(case: &[u8]) {
+			let text = String::from_utf8_lossy(case).into_owned();
+			let raw = shcl::Document::parse(&text);
+			if raw.lost_count() > 0 {
+				return;
+			}
+			let mut doc = raw.clone();
+			if !doc.set_float("font.size", 15.5) {
+				return;
+			}
+			let saved = doc.to_canonical();
+			let raw_saved = shcl::Document::parse(&saved);
+			let (then, now) = (next_load(&text), next_load(&saved));
+			// a path none of the four holds reads the same everywhere
+			let mut paths: Vec<String> = Vec::new();
+			for doc in [&raw, &raw_saved, &then, &now] {
+				for path in doc.paths() {
+					if !paths.contains(&path) {
+						paths.push(path);
+					}
+				}
+			}
+			for path in paths {
+				if path == "font" || path == "font.size" {
+					continue;
+				}
+				let read = |doc: &shcl::Document| (doc.get_string(&path), doc.count(&path));
+				if read(&raw) != read(&raw_saved) {
+					continue;
+				}
+				assert_eq!(
+					read(&then),
+					read(&now),
+					"{path} loads differently at the next launch after a save\nfile:\n{text}\nsaved:\n{saved}"
+				);
+			}
+		}
+
+		#[test]
+		fn a_settings_save_moves_no_value_at_the_next_launch() {
+			let corpus = fuzz::corpus("config");
+			for case in &corpus {
+				save_check(case);
+			}
+			fuzz::soak("config-save", |seed| {
+				let case = save_case(&mut fuzz::Rng::new(seed));
+				// taken from the seed rather than the generator, so no other case moves
+				let case = if seed % 4 == 3 {
+					case.replace('\n', "\r\n")
+				} else {
+					case
+				};
+				save_check(case.as_bytes());
+			});
+		}
+
+		// A generator that stops making the shapes that moved a value passes
+		// forever, so each is looked for by name.
+		#[test]
+		fn the_save_generator_reaches_every_shape() {
+			let indent = |line: &str| line.len() - line.trim_start().len();
+			let comment = |line: &str| line.trim_start().starts_with('#');
+			let (mut flat, mut quoted, mut under, mut above) = (false, false, false, false);
+			// Read through shcl and the raw text, never the walk, so the check does
+			// not lean on the code it gates.
+			for seed in 0..200 {
+				let text = save_case(&mut fuzz::Rng::new(seed));
+				let doc = shcl::Document::parse(&text);
+				let lines: Vec<&str> = text.lines().collect();
+				quoted |= text.contains(&format!("'{}'", SUPERSEDED_FONT_STACKS[0]));
+				flat |= LEGACY_KEYS.iter().any(|(old, _)| doc.count(old) > 0);
+				// an active old name below a commented heading that is shallower
+				// than it, with no active line between them that closes the block
+				for (old, _) in CONFIG_RENAMES {
+					for at in doc.lines(old).into_iter().filter(|n| *n > 0) {
+						let line = lines[at - 1];
+						for up in lines[..at - 1].iter().rev() {
+							if indent(up) >= indent(line) {
+								continue;
+							}
+							if !comment(up) {
+								break;
+							}
+							if up.trim_end().ends_with(':') {
+								under = true;
+							}
+						}
+					}
+				}
+				// a commented new name shallower than the setting below it
+				for pair in lines.windows(2) {
+					let key = line_setting_key(pair[0]).unwrap_or_default();
+					if comment(pair[0])
+						&& CONFIG_RENAMES
+							.iter()
+							.any(|(_, new)| new.rsplit('.').next() == Some(key))
+						&& !comment(pair[1])
+						&& indent(pair[1]) > indent(pair[0])
+					{
+						above = true;
+					}
+				}
+			}
+			assert!(flat, "no active pre-nesting setting");
+			assert!(quoted, "no old font list in single quotes");
+			assert!(under, "no old name under a commented heading");
+			assert!(above, "no commented new name above a deeper setting");
+		}
 
 		// The keys the shipped template actually carries, read out of it rather
 		// than listed here, so a new setting joins the fuzz on its own. The file
@@ -9644,6 +10258,47 @@ mod tests {
 					None,
 					"converted twice\nfile:\n{text}"
 				);
+			});
+		}
+
+		// Backfill only adds lines, so whatever a file holds, every value that
+		// loaded before it loads the same after, or nothing is written. Settings
+		// are re-indented at random here, since a line indented deeper than its
+		// block needs is what an added line can take over.
+		#[test]
+		fn backfill_changes_nothing_that_loaded() {
+			use super::super::backfilled_text;
+			fuzz::soak("config-backfill", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				let text = String::from_utf8_lossy(&config(&mut rng)).into_owned();
+				let text: String = text
+					.lines()
+					.map(|line| {
+						if rng.chance(6) && line.starts_with('\t') && !line.trim().is_empty() {
+							format!("\t{line}\n")
+						} else {
+							format!("{line}\n")
+						}
+					})
+					.collect();
+				let Ok(Some(out)) = backfilled_text(&text) else {
+					return;
+				};
+				let before = shcl::Document::parse(&text);
+				let after = shcl::Document::parse(&out);
+				assert!(
+					after.lost_count() <= before.lost_count(),
+					"a line was lost\nbefore:\n{text}\nafter:\n{out}"
+				);
+				for path in before.paths() {
+					if before.get_string(&path).is_ok() {
+						assert_eq!(
+							after.get_string(&path),
+							before.get_string(&path),
+							"{path}\nbefore:\n{text}\nafter:\n{out}"
+						);
+					}
+				}
 			});
 		}
 
