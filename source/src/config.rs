@@ -2586,6 +2586,62 @@ fn backup_aside(path: &std::path::Path) -> Option<PathBuf> {
 	}
 }
 
+// Copy a config to the first free `.bak` name, for a rewrite that leaves the
+// file where it is. `create_new` skips a name held by anything, a dangling link
+// included, so nothing is written through a link left there. The body is the
+// text the caller read, so the backup is exactly what was rewritten.
+fn backup_copy(path: &std::path::Path, body: &[u8]) -> Option<PathBuf> {
+	use std::io::Write;
+	let name = path.file_name()?.to_string_lossy().into_owned();
+	let perms = std::fs::metadata(path).ok()?.permissions();
+	for n in 1u32..=BACKUPS_MAX {
+		let backup = match n {
+			1 => path.with_file_name(format!("{name}.bak")),
+			_ => path.with_file_name(format!("{name}.bak{n}")),
+		};
+		let mut file = match std::fs::OpenOptions::new()
+			.write(true)
+			.create_new(true)
+			.open(&backup)
+		{
+			Ok(file) => file,
+			Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+			Err(e) => {
+				eprintln!("{APP_NAME}: could not back up {}: {e}", path.display());
+				return None;
+			}
+		};
+		// private before it holds anything
+		let written = copy_mode(&backup, perms)
+			.and_then(|()| file.write_all(body))
+			.and_then(|()| file.sync_all());
+		if let Err(e) = written {
+			eprintln!("{APP_NAME}: could not back up {}: {e}", path.display());
+			let _ = std::fs::remove_file(&backup);
+			return None;
+		}
+		return Some(backup);
+	}
+	eprintln!(
+		"{APP_NAME}: {BACKUPS_MAX} config backups already in {}; clear some out first",
+		path.display()
+	);
+	None
+}
+
+#[cfg(unix)]
+fn copy_mode(to: &std::path::Path, perms: std::fs::Permissions) -> std::io::Result<()> {
+	std::fs::set_permissions(to, perms)
+}
+
+// Elsewhere the mode is only a read-only flag. It adds no privacy (a new file
+// takes its folder's ACLs), and it would stop a failed conversion removing the
+// backup it just made.
+#[cfg(not(unix))]
+fn copy_mode(_to: &std::path::Path, _perms: std::fs::Permissions) -> std::io::Result<()> {
+	Ok(())
+}
+
 // Move the config aside so the next load writes a fresh one from the template.
 // The old file is kept, not deleted. Returns where it went, or None if there
 // was nothing to move.
@@ -3000,11 +3056,12 @@ fn repair_wallpaper_heading(path: &std::path::Path) {
 
 // One-time conversion of a pre-nesting config: the flat `wallpaper_*`-style
 // namespace became nested blocks, and rewriting that in place would shred the
-// old file's comments and grouping. Instead the old file is moved aside to a
-// `.bak` and a fresh template is written with every ACTIVE old value carried
+// old file's comments and grouping. Instead the old file is copied to a `.bak`
+// and a fresh template is written over it, with every ACTIVE old value carried
 // over to its new path - settings survive, and the file's documentation is
 // current instead of half-old. Unknown `themes.*` subtrees (user data for a
-// future feature) are carried verbatim in dotted form.
+// future feature) are carried verbatim in dotted form. The rewrite keeps a
+// linked file linked and a private one private.
 fn convert_legacy_config(path: &std::path::Path) {
 	let Ok(text) = std::fs::read_to_string(path) else {
 		return;
@@ -3016,10 +3073,13 @@ fn convert_legacy_config(path: &std::path::Path) {
 		note_config_busy(path);
 		return;
 	}
-	let Some(backup) = backup_aside(path) else {
+	let Some(backup) = backup_copy(path, text.as_bytes()) else {
 		return;
 	};
-	if let Err(e) = write_config_text(path, &joined) {
+	if let Err(e) = write_config_atomic(path, &joined) {
+		// the file is as it was, and a file that stays unwritable would otherwise
+		// gain a backup at every launch
+		let _ = std::fs::remove_file(&backup);
 		eprintln!(
 			"{APP_NAME}: could not convert config {}: {e}",
 			path.display()
@@ -6807,6 +6867,100 @@ mod tests {
 		] {
 			assert_eq!(wallpaper_heading_repaired(&text), None, "{text}");
 		}
+	}
+
+	// The conversion rewrites the settings file where it is: a link stays a link
+	// to the same file, a private file stays private, its backup is as private,
+	// and a link sitting at a backup name is never written through.
+	#[cfg(unix)]
+	#[test]
+	fn a_conversion_keeps_a_linked_private_settings_file() {
+		use std::os::unix::fs::PermissionsExt;
+		let dir = std::env::temp_dir().join(format!("silkterm_convlink_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let real = dir.join("real.shcl");
+		let flat = "font_size: 13\n";
+		std::fs::write(&real, flat).unwrap();
+		std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+		let link = dir.join("config.shcl");
+		std::os::unix::fs::symlink(&real, &link).unwrap();
+		let victim = dir.join("victim.txt");
+		std::fs::write(&victim, "untouched\n").unwrap();
+		std::os::unix::fs::symlink(&victim, dir.join("config.shcl.bak")).unwrap();
+
+		convert_legacy_config(&link);
+
+		assert!(
+			std::fs::symlink_metadata(&link)
+				.unwrap()
+				.file_type()
+				.is_symlink(),
+			"still a link"
+		);
+		assert_eq!(std::fs::read_link(&link).unwrap(), real);
+		assert!(
+			std::fs::read_to_string(&real)
+				.unwrap()
+				.contains("\tsize: 13"),
+			"the linked file is converted"
+		);
+		assert_eq!(
+			std::fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+			0o600
+		);
+		assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched\n");
+		let bak = dir.join("config.shcl.bak2");
+		assert!(
+			std::fs::symlink_metadata(&bak)
+				.unwrap()
+				.file_type()
+				.is_file(),
+			"the backup is a plain file"
+		);
+		assert_eq!(std::fs::read_to_string(&bak).unwrap(), flat);
+		assert_eq!(
+			std::fs::metadata(&bak).unwrap().permissions().mode() & 0o777,
+			0o600
+		);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// A conversion that cannot write leaves the file as it was and keeps no
+	// backup of it, or a file that stays unwritable gains one at every launch.
+	#[cfg(unix)]
+	#[test]
+	fn a_conversion_that_cannot_write_keeps_no_backup() {
+		use std::os::unix::fs::PermissionsExt;
+		let dir = std::env::temp_dir().join(format!("silkterm_convfail_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		let locked = dir.join("locked");
+		std::fs::create_dir_all(&locked).unwrap();
+		let real = locked.join("real.shcl");
+		let flat = "font_size: 13\n";
+		std::fs::write(&real, flat).unwrap();
+		std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+		let unlock = || {
+			let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755));
+			let _ = std::fs::remove_dir_all(&dir);
+		};
+		// a run with the rights to write there anyway has nothing to test
+		if std::fs::write(locked.join("probe"), "").is_ok() {
+			unlock();
+			return;
+		}
+		let link = dir.join("config.shcl");
+		std::os::unix::fs::symlink(&real, &link).unwrap();
+
+		convert_legacy_config(&link);
+
+		let still_link = std::fs::symlink_metadata(&link).is_ok_and(|m| m.file_type().is_symlink());
+		let text = std::fs::read_to_string(&real).unwrap_or_default();
+		let backup = std::fs::symlink_metadata(dir.join("config.shcl.bak")).is_ok();
+		unlock();
+		assert!(still_link, "the settings file is still a link");
+		assert_eq!(text, flat, "the file is as it was");
+		assert!(!backup, "no backup of a file that was not converted");
 	}
 
 	// A hand-edited config is where a home-relative path gets typed, so `~` has
