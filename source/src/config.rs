@@ -2593,6 +2593,7 @@ fn backup_aside(path: &std::path::Path) -> Option<PathBuf> {
 fn backup_copy(path: &std::path::Path, body: &[u8]) -> Option<PathBuf> {
 	use std::io::Write;
 	let name = path.file_name()?.to_string_lossy().into_owned();
+	#[cfg(unix)]
 	let perms = std::fs::metadata(path).ok()?.permissions();
 	for n in 1u32..=BACKUPS_MAX {
 		let backup = match n {
@@ -2611,11 +2612,14 @@ fn backup_copy(path: &std::path::Path, body: &[u8]) -> Option<PathBuf> {
 				return None;
 			}
 		};
-		// private before it holds anything
-		let written = copy_mode(&backup, perms)
-			.and_then(|()| file.write_all(body))
-			.and_then(|()| file.sync_all());
-		if let Err(e) = written {
+		// Private before it holds anything. Elsewhere the mode is only a read-only
+		// flag: it adds no privacy (a new file takes its folder's ACLs), and it
+		// would stop a failed conversion removing the backup it just made.
+		#[cfg(unix)]
+		let written = std::fs::set_permissions(&backup, perms).and_then(|()| file.write_all(body));
+		#[cfg(not(unix))]
+		let written = file.write_all(body);
+		if let Err(e) = written.and_then(|()| file.sync_all()) {
 			eprintln!("{APP_NAME}: could not back up {}: {e}", path.display());
 			let _ = std::fs::remove_file(&backup);
 			return None;
@@ -2627,19 +2631,6 @@ fn backup_copy(path: &std::path::Path, body: &[u8]) -> Option<PathBuf> {
 		path.display()
 	);
 	None
-}
-
-#[cfg(unix)]
-fn copy_mode(to: &std::path::Path, perms: std::fs::Permissions) -> std::io::Result<()> {
-	std::fs::set_permissions(to, perms)
-}
-
-// Elsewhere the mode is only a read-only flag. It adds no privacy (a new file
-// takes its folder's ACLs), and it would stop a failed conversion removing the
-// backup it just made.
-#[cfg(not(unix))]
-fn copy_mode(_to: &std::path::Path, _perms: std::fs::Permissions) -> std::io::Result<()> {
-	Ok(())
 }
 
 // Move the config aside so the next load writes a fresh one from the template.
@@ -3022,7 +3013,10 @@ fn wallpaper_heading_repaired(text: &str) -> Option<String> {
 		}
 		out.push_str("wallpaper:\n");
 		if !named {
-			out.push_str(&format!("{indent}image: {value}\n"));
+			out.push_str(indent);
+			out.push_str("image: ");
+			out.push_str(value);
+			out.push('\n');
 		}
 	}
 	Some(out)
@@ -7547,6 +7541,7 @@ mod tests {
 		fn a_flat_file_carries_every_value_to_its_path() {
 			use super::super::{CONFIG_REMOVED, LEGACY_KEYS, converted_config_text};
 			use super::active_headings;
+			use std::fmt::Write;
 			let template = active_headings(default_config());
 			fuzz::soak("config-flat", |seed| {
 				let mut rng = fuzz::Rng::new(seed);
@@ -7566,13 +7561,13 @@ mod tests {
 				for i in 0..=rng.below(8) {
 					let rank = rng.below(LEGACY_KEYS.len());
 					let value = format!("v{seed}x{i}");
-					text.push_str(&format!("{}: {value}\n", LEGACY_KEYS[rank].0));
+					let _ = writeln!(text, "{}: {value}", LEGACY_KEYS[rank].0);
 					expect(rank, &value);
 				}
 				if rng.chance(3) {
 					let (_, head) = rng.pick(&template);
 					let value = format!("y{seed}");
-					text.push_str(&format!("{head}: {value}\n"));
+					let _ = writeln!(text, "{head}: {value}");
 					// a block name that is also an old flat name carries like one
 					if let Some(rank) = LEGACY_KEYS.iter().position(|(old, _)| old == head) {
 						expect(rank, &value);
