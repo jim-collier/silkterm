@@ -3480,6 +3480,244 @@ fn backfill_config(path: &std::path::Path) {
 	}
 }
 
+// What became of a rating's lines.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Kept {
+	// the file holds every value asked for, including when it already did
+	Written,
+	// another process holds the file (Linux); nothing written
+	Busy,
+	// the lines could not be placed or did not read back; nothing written
+	Unreadable,
+	// no settings path, or the read or the rename failed: the reason
+	Unwritable(String),
+}
+
+// The only lines a rating writes. The keys are fixed here, so no caller can
+// hand the writer a path.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RatingLines<'a> {
+	pub profile: Option<&'a str>,        // Profile::key() of a measured rung
+	pub rated_hardware: Option<&'a str>, // profile::hardware_id()
+	pub check_next_run: Option<bool>,
+}
+
+#[derive(Clone, Copy)]
+enum RatingValue<'a> {
+	Word(&'a str),
+	Flag(bool),
+}
+
+// Write a finished rating into the settings file line by line, the way migrate
+// and backfill write at launch. `persist` refuses a file the parse dropped a
+// line from, which is right for the user's own values, but a rating that never
+// lands is a test at every launch with nothing on screen to say why. These are
+// lines the program owns, so every other byte stays as it was.
+#[must_use]
+pub fn keep_rating(lines: &RatingLines) -> Kept {
+	let Some(path) = config_path() else {
+		return Kept::Unwritable("no settings file location".to_string());
+	};
+	let text = match std::fs::read_to_string(&path) {
+		Ok(text) => text,
+		Err(e) => return Kept::Unwritable(format!("could not read {}: {e}", path.display())),
+	};
+	let out = match with_rating_lines(&text, lines) {
+		Ok(out) => out,
+		Err(kept) => return kept,
+	};
+	if out == text {
+		return Kept::Written;
+	}
+	if config_open_elsewhere(&path) {
+		note_config_busy(&path);
+		return Kept::Busy;
+	}
+	match write_config_text(&path, &out) {
+		Ok(()) => Kept::Written,
+		Err(e) => Kept::Unwritable(format!("could not write {}: {e}", path.display())),
+	}
+}
+
+// The file's text with the rating's values in it, or why not. Pure, so every
+// placement rule is testable without a file. The result is parsed back before
+// it is offered: it may lose no more than the input already had, and each key
+// has to read as exactly what was asked.
+fn with_rating_lines(text: &str, lines: &RatingLines) -> Result<String, Kept> {
+	let wanted = [
+		("profile", lines.profile.map(RatingValue::Word)),
+		(
+			"rated_hardware",
+			lines.rated_hardware.map(RatingValue::Word),
+		),
+		(
+			"check_next_run",
+			lines.check_next_run.map(RatingValue::Flag),
+		),
+	];
+	let mut out: Vec<String> = text.lines().map(str::to_string).collect();
+	for (leaf, value) in wanted {
+		let Some(value) = value else { continue };
+		let spelled = rating_spelling(leaf, value).ok_or(Kept::Unreadable)?;
+		place_rating_line(&mut out, leaf, &spelled)?;
+	}
+	let mut joined = out.join("\n");
+	joined.push('\n');
+	let after = shcl::Document::parse(&joined);
+	if after.lost_count() > shcl::Document::parse(text).lost_count() {
+		return Err(Kept::Unreadable);
+	}
+	let reads_back = wanted.iter().all(|(leaf, value)| {
+		let path = format!("performance.{leaf}");
+		match value {
+			None => true,
+			Some(RatingValue::Word(word)) => after.get_string(&path).is_ok_and(|got| got == *word),
+			Some(RatingValue::Flag(flag)) => after.get_bool(&path) == Ok(*flag),
+		}
+	});
+	if !reads_back {
+		return Err(Kept::Unreadable);
+	}
+	Ok(joined)
+}
+
+// The value as a canonical save spells it, taken from shcl rather than written
+// by hand, so a rating line never differs from what the dialog's save would
+// leave (G68, G69). A word is program-made; the guard only stops a later caller
+// from putting a quote or a line break into the file.
+fn rating_spelling(leaf: &str, value: RatingValue) -> Option<String> {
+	let path = format!("performance.{leaf}");
+	let mut doc = shcl::Document::new();
+	let applied = match value {
+		RatingValue::Word(word) => {
+			let plain = (1..=32).contains(&word.len())
+				&& word
+					.bytes()
+					.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+			plain && doc.set_string(&path, word)
+		}
+		RatingValue::Flag(flag) => doc.set_bool(&path, flag),
+	};
+	if !applied {
+		return None;
+	}
+	doc.to_canonical().lines().find_map(|line| {
+		let key = line_setting_key(line)?;
+		if key.rsplit('.').next() != Some(leaf) {
+			return None;
+		}
+		line_setting_value(line).map(str::to_string)
+	})
+}
+
+// One value into the lines: over the key's active line, else after its
+// commented default inside the `performance:` block, else first in that block.
+fn place_rating_line(lines: &mut Vec<String>, leaf: &str, spelled: &str) -> Result<(), Kept> {
+	let path = format!("performance.{leaf}");
+	let walk = walk_settings(&lines.join("\n"));
+	let active: Vec<usize> = walk
+		.iter()
+		.filter_map(|w| match w {
+			WalkLine::Setting {
+				index,
+				path: p,
+				active: true,
+				header: false,
+			} if *p == path => Some(*index),
+			_ => None,
+		})
+		.collect();
+	if let Some((&first, later)) = active.split_first() {
+		lines[first] = with_setting_value(&lines[first], spelled);
+		// Only the program writes this key, and two of it read as the default,
+		// which is itself a test at every launch.
+		for &index in later.iter().rev() {
+			lines.remove(index);
+		}
+		return Ok(());
+	}
+	let headers: Vec<usize> = walk
+		.iter()
+		.filter_map(|w| match w {
+			WalkLine::Setting {
+				index,
+				path: p,
+				active: true,
+				header: true,
+			} if p == "performance" => Some(*index),
+			_ => None,
+		})
+		.collect();
+	let &[header] = headers.as_slice() else {
+		return Err(Kept::Unreadable);
+	};
+	let indent = |line: &str| line[..line.len() - line.trim_start().len()].to_string();
+	let depth = |line: &str| line.len() - line.trim_start().len();
+	// the block runs until the next setting line at or left of its header
+	let inside: Vec<usize> = walk
+		.iter()
+		.filter_map(|w| match w {
+			WalkLine::Setting { index, .. } if *index > header => Some(*index),
+			_ => None,
+		})
+		.take_while(|&index| depth(&lines[index]) > depth(&lines[header]))
+		.collect();
+	let commented = walk.iter().find_map(|w| match w {
+		WalkLine::Setting {
+			index,
+			path: p,
+			active: false,
+			..
+		} if *p == path && inside.contains(index) => Some(*index),
+		_ => None,
+	});
+	let (at, lead) = match commented {
+		Some(index) => (index + 1, indent(&lines[index])),
+		None => (
+			header + 1,
+			inside.first().map_or_else(
+				|| format!("{}\t", indent(&lines[header])),
+				|&index| indent(&lines[index]),
+			),
+		),
+	};
+	lines.insert(at, format!("{lead}{leaf}: {spelled}"));
+	Ok(())
+}
+
+// An active setting line with a new value: the indent, key and colon kept, and
+// any comment the old value carried kept after it, two spaces out as canonical
+// writes one.
+fn with_setting_value(line: &str, spelled: &str) -> String {
+	let Some((head, rest)) = line.split_once(':') else {
+		return line.to_string();
+	};
+	match trailing_comment(rest) {
+		Some(comment) => format!("{head}: {spelled}  {comment}"),
+		None => format!("{head}: {spelled}"),
+	}
+}
+
+// Where a comment starts after a value: a '#' after whitespace, outside quotes.
+fn trailing_comment(rest: &str) -> Option<&str> {
+	let mut quoted = false;
+	let mut escaped = false;
+	let mut after_space = true;
+	for (at, ch) in rest.char_indices() {
+		if escaped {
+			escaped = false;
+		} else if ch == '\\' && quoted {
+			escaped = true;
+		} else if ch == '"' {
+			quoted = !quoted;
+		} else if ch == '#' && !quoted && after_space {
+			return Some(&rest[at..]);
+		}
+		after_space = ch.is_whitespace();
+	}
+	None
+}
+
 // shcl's own footer, in this file's '##' comment style. Kept last: backfill
 // appends a wholly-new section at the end of the file, which would otherwise
 // leave the footer stranded in the middle.
@@ -3650,6 +3888,16 @@ static CONFIG_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 // file - and they live in different modules, so the guard has to live here.
 #[cfg(test)]
 pub fn test_config_lock() -> std::sync::MutexGuard<'static, ()> {
+	static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+	LOCK.lock()
+		.unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+// Serializes the tests that put settings into the live store, which is
+// process-global as well. A test that installs a rated profile would otherwise
+// change the scroll feel under a scroll test running beside it.
+#[cfg(test)]
+pub fn test_store_lock() -> std::sync::MutexGuard<'static, ()> {
 	static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 	LOCK.lock()
 		.unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -4725,6 +4973,215 @@ mod tests {
 		let _ = child.wait();
 		let _ = std::fs::remove_file(&path);
 		assert!(seen, "a process holding the file open should read as busy");
+	}
+
+	// Where a rating's lines go, and that nothing else in the file moves.
+	#[test]
+	fn rating_lines_replace_insert_and_collapse() {
+		const ID: &str = "0123456789abcdef";
+		let id_only = RatingLines {
+			rated_hardware: Some(ID),
+			..RatingLines::default()
+		};
+		let cases = [
+			(
+				"an active line is replaced in place, its indent kept",
+				"theme_mode: dark\nperformance:\n    automatic: true\n    rated_hardware: 0000000000000000\n    profile: high\n\nwindow:\n\tmargin: 4\n",
+				"theme_mode: dark\nperformance:\n    automatic: true\n    rated_hardware: 0123456789abcdef\n    profile: high\n\nwindow:\n\tmargin: 4\n",
+			),
+			(
+				"a trailing note is kept",
+				"performance:\n\trated_hardware: 0000000000000000  ## note\n",
+				"performance:\n\trated_hardware: 0123456789abcdef  ## note\n",
+			),
+			(
+				"only the commented default: directly after it",
+				"performance:\n\n\t# automatic: true  ## Default\n\t# rated_hardware: \"\"  ## Default\n\t# profile: \"max\"  ## Default\n\n## next\n",
+				"performance:\n\n\t# automatic: true  ## Default\n\t# rated_hardware: \"\"  ## Default\n\trated_hardware: 0123456789abcdef\n\t# profile: \"max\"  ## Default\n\n## next\n",
+			),
+			(
+				"only the header: first in the block, at its children's depth",
+				"performance:\n\tautomatic: true\n",
+				"performance:\n\trated_hardware: 0123456789abcdef\n\tautomatic: true\n",
+			),
+			(
+				"a header with no child: one tab deeper",
+				"performance:\nwindow:\n\tmargin: 4\n",
+				"performance:\n\trated_hardware: 0123456789abcdef\nwindow:\n\tmargin: 4\n",
+			),
+			(
+				"two active lines: one is left, holding the new value",
+				"performance:\n\trated_hardware: 0000000000000000\n\tautomatic: true\n\trated_hardware: 1111111111111111\n",
+				"performance:\n\trated_hardware: 0123456789abcdef\n\tautomatic: true\n",
+			),
+		];
+		for (what, text, want) in cases {
+			assert_eq!(
+				with_rating_lines(text, &id_only).as_deref(),
+				Ok(want),
+				"{what}"
+			);
+		}
+
+		let both = RatingLines {
+			profile: Some("high"),
+			check_next_run: Some(false),
+			..RatingLines::default()
+		};
+		assert_eq!(
+			with_rating_lines(
+				"performance:\n\t# profile: \"max\"  ## Default\n\t# check_next_run: false  ## Default\n\tcheck_next_run: true\n",
+				&both
+			)
+			.as_deref(),
+			Ok(
+				"performance:\n\t# profile: \"max\"  ## Default\n\tprofile: high\n\t# check_next_run: false  ## Default\n\tcheck_next_run: false\n"
+			),
+			"a word and a flag together"
+		);
+
+		for (what, text) in [
+			("no performance header", "window:\n\tmargin: 4\n"),
+			(
+				"two performance headers",
+				"performance:\n\tautomatic: true\nperformance:\n\tprofile: high\n",
+			),
+		] {
+			assert_eq!(
+				with_rating_lines(text, &id_only),
+				Err(Kept::Unreadable),
+				"{what}"
+			);
+		}
+		let clean = "performance:\n\trated_hardware: 0000000000000000\n";
+		for word in [
+			"a\"b",
+			"a b",
+			"Max",
+			"",
+			"a\nb",
+			"0123456789abcdef0123456789abcdef0",
+		] {
+			let lines = RatingLines {
+				rated_hardware: Some(word),
+				..RatingLines::default()
+			};
+			assert_eq!(
+				with_rating_lines(clean, &lines),
+				Err(Kept::Unreadable),
+				"{word:?} is not a program-made word"
+			);
+		}
+	}
+
+	// The template is a save fixed point (G69), and a rating written into it must
+	// not be the thing that makes the next save rewrite it. An all-digit id is the
+	// spelling most likely to come out differently.
+	#[test]
+	fn a_rating_leaves_a_canonical_file_canonical() {
+		for id in ["0123456789abcdef", "1234567890123456"] {
+			let lines = RatingLines {
+				profile: Some("max"),
+				rated_hardware: Some(id),
+				check_next_run: Some(false),
+			};
+			let out = with_rating_lines(default_config(), &lines)
+				.unwrap_or_else(|kept| panic!("id {id}: {kept:?}"));
+			assert_ne!(out, default_config(), "id {id}: the values are in it");
+			assert_eq!(shcl::Document::parse(&out).to_canonical(), out, "id {id}");
+		}
+	}
+
+	// A line the parse cannot place made every save refuse, and the rating is a
+	// save, so the test ran at every launch. The rating goes in beside it now; the
+	// dialog's refusal to rewrite such a file stays.
+	#[test]
+	fn a_rating_is_kept_beside_an_unreadable_line() {
+		const ID: &str = "0123456789abcdef";
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_ratinglost_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		let text = "window:\n\topacity: 1.0\n    margin: 4\n\nperformance:\n\t# profile: \"max\"  ## Default\n\t# rated_hardware: \"\"  ## Default\n";
+		assert_eq!(
+			shcl::Document::parse(text).lost_count(),
+			1,
+			"the space-indented line is the one the parse drops"
+		);
+		std::fs::write(&path, text).unwrap();
+		set_config_override(path.clone());
+
+		let lines = RatingLines {
+			profile: Some("high"),
+			rated_hardware: Some(ID),
+			check_next_run: None,
+		};
+		assert_eq!(keep_rating(&lines), Kept::Written);
+		assert_eq!(
+			std::fs::read_to_string(&path).unwrap(),
+			"window:\n\topacity: 1.0\n    margin: 4\n\nperformance:\n\t# profile: \"max\"  ## Default\n\tprofile: high\n\t# rated_hardware: \"\"  ## Default\n\trated_hardware: 0123456789abcdef\n",
+			"the unreadable line and its neighbours are as they were"
+		);
+		let reloaded = reload_from_disk();
+		assert_eq!(reloaded.rated_hardware, ID);
+		assert_eq!(reloaded.performance_profile, "high");
+
+		let before = std::fs::read_to_string(&path).unwrap();
+		let mut next = reloaded.clone();
+		next.rated_hardware = "fedcba9876543210".to_string();
+		assert!(
+			!persist(&reloaded, &next),
+			"the dialog's save still refuses a file that lost a line"
+		);
+		assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// Every launch-time write defers to a holder, and so does a rating, which then
+	// has to say so rather than report a write.
+	#[cfg(target_os = "linux")]
+	#[test]
+	fn a_held_settings_file_keeps_no_rating() {
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_ratingheld_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		let text = "performance:\n\trated_hardware: 0000000000000000\n";
+		std::fs::write(&path, text).unwrap();
+		set_config_override(path.clone());
+		let lines = RatingLines {
+			rated_hardware: Some("0123456789abcdef"),
+			..RatingLines::default()
+		};
+
+		let hold = std::fs::File::open(&path).unwrap();
+		let mut child = std::process::Command::new("sleep")
+			.arg("30")
+			.stdin(std::process::Stdio::from(hold))
+			.spawn()
+			.unwrap();
+		let seen = (0..50).any(|_| {
+			std::thread::sleep(std::time::Duration::from_millis(20));
+			config_open_elsewhere(&path)
+		});
+		let held = keep_rating(&lines);
+		let bytes = std::fs::read_to_string(&path).unwrap();
+		let _ = child.kill();
+		let _ = child.wait();
+		assert!(seen, "the holder never showed up");
+		assert_eq!(held, Kept::Busy);
+		assert_eq!(bytes, text, "nothing is written while it is held");
+
+		assert_eq!(keep_rating(&lines), Kept::Written);
+		assert_eq!(
+			std::fs::read_to_string(&path).unwrap(),
+			"performance:\n\trated_hardware: 0123456789abcdef\n"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 
 	// One unusable line must cost only its own setting, never the whole file. This

@@ -47,8 +47,16 @@ $stamp = (Get-Item $cfg).LastWriteTime
 $p2 = fStartSilk $Exe @("--config=$cfg", "--columns", "110", "--rows", "32") @{}
 $h2 = fWaitWindow $p2 40
 [void](fCheck "it comes up again on the stored rating" ($h2 -ne [IntPtr]::Zero))
+##	A re-rating that finds the same hardware writes the same id, so the id alone
+##	passes while the banner shows at every launch. Measured against the first
+##	launch's own banner, so no fixed threshold.
+Start-Sleep -Seconds 2
+$early2 = fShot $h2 "perf-second-early"
 Start-Sleep -Seconds 8
-[void](fShot $h2 "perf-second-launch")
+$settled2 = fShot $h2 "perf-second-settled"
+$moved2 = fDiff $early2 $settled2
+fNote "second launch early frame differs from settled by $moved2"
+[void](fCheck "the second launch showed no banner" ($moved2 -lt ($moved / 3)))
 [void](fCheck "the second launch did not re-rate" ((fSetting $cfg "performance.rated_hardware").value -eq $rated.value))
 fNote "config rewritten on second launch: $((Get-Item $cfg).LastWriteTime -ne $stamp)"
 fStop $p2
