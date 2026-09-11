@@ -99,11 +99,7 @@ impl Profile {
 	// wallpaper, which costs nothing per frame, and Standard turns off the eased
 	// frames the watch measures, so a step there could never be checked again.
 	pub fn watched_lower(self) -> Option<Profile> {
-		match self {
-			Profile::Max => Some(Profile::High),
-			Profile::High => Some(Profile::Low),
-			Profile::Low | Profile::Standard | Profile::Remote | Profile::Custom => None,
-		}
+		self.lower().filter(|next| *next != Profile::Standard)
 	}
 }
 
@@ -942,7 +938,7 @@ mod tests {
 		let mut t = Instant::now();
 		r.note(t, budget);
 		for _ in 0..200 {
-			t += Duration::from_millis(1000);
+			t += Duration::from_secs(1);
 			r.note(t, budget);
 			assert_ne!(r.verdict(budget), Some(true), "a stall is not a miss");
 		}
