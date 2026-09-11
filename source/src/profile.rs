@@ -406,12 +406,14 @@ const BENCH_WARMUP: usize = 3; // frames discarded while a rung's settings settl
 const BENCH_FRAMES: usize = 40; // frames measured per rung...
 const BENCH_RUNG_MS: f32 = 800.0; // ...or this long, whichever comes first
 const BENCH_MIN_FRAMES: usize = 5; // never judge a rung on fewer than this
-// How far past the budget a rung has to run before the rest of the ladder is
-// pointless. The profiles change the per-pixel work by around half; a machine
-// several times over is not going to be rescued by any of them, and timing the
-// two below it is a few seconds spent on a foregone answer. That case is also
-// the slowest to measure, which is exactly the wrong place to be thorough.
-const BENCH_HOPELESS: f32 = 4.0;
+// How far past the budget a frame has to run before the profile cannot be what
+// is pacing it. The profiles change the per-pixel work by around half, so a
+// period several times over says something else is holding the display, and no
+// step down would rescue it. One constant for both users on purpose: the bench
+// stops timing the ladder there (the case that would take longest to measure,
+// for a foregone answer), and the watch refuses to count such a frame at all -
+// a monitor asleep under the NVIDIA driver paces a GL client at 1 fps.
+pub const STALL_FACTOR: f32 = 4.0;
 
 // What the caller does with the frame it just measured.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -476,7 +478,7 @@ impl Bench {
 		if period <= budget_ms {
 			return Step::Done(self.profile());
 		}
-		if period > budget_ms * BENCH_HOPELESS {
+		if period > budget_ms * STALL_FACTOR {
 			return Step::Done(Profile::Standard);
 		}
 		self.at += 1;
@@ -501,9 +503,17 @@ pub fn budget_ms(refresh_hz: f32) -> f32 {
 	1000.0 / refresh_hz.max(1.0) * 1.5
 }
 
+// A verdict has to come from one sitting. Frames eased this long after the last
+// counted one start a new window rather than finishing a half-full one left
+// from hours ago.
+const STALE_S: f32 = 30.0;
+
 pub struct Rating {
 	periods: Vec<f32>,
 	last: Option<Instant>,
+	// the last frame counted, kept across a pause so the gap to the next one
+	// can be judged stale
+	noted: Option<Instant>,
 }
 
 impl Rating {
@@ -511,16 +521,31 @@ impl Rating {
 		Rating {
 			periods: Vec::with_capacity(WINDOW),
 			last: None,
+			noted: None,
 		}
 	}
 
 	// A frame just went out while an ease was running. Only the gap to the
-	// previous such frame is a period; the first after a pause is a start.
-	pub fn note(&mut self, now: Instant) {
+	// previous such frame is a period; the first after a pause is a start. A gap
+	// past the stall ceiling is not a slow frame, and the frames either side of
+	// it were paced under the same condition, so the window goes with it.
+	pub fn note(&mut self, now: Instant, budget_ms: f32) {
+		if self
+			.noted
+			.is_some_and(|at| now.saturating_duration_since(at).as_secs_f32() > STALE_S)
+		{
+			self.periods.clear();
+		}
 		if let Some(last) = self.last {
-			self.periods.push((now - last).as_secs_f32() * 1000.0);
+			let period = now.saturating_duration_since(last).as_secs_f32() * 1000.0;
+			if period > budget_ms * STALL_FACTOR {
+				self.periods.clear();
+			} else {
+				self.periods.push(period);
+			}
 		}
 		self.last = Some(now);
+		self.noted = Some(now);
 	}
 
 	// The ease stopped, so the next frame's gap means nothing.
@@ -533,6 +558,7 @@ impl Rating {
 	pub fn reset(&mut self) {
 		self.periods.clear();
 		self.last = None;
+		self.noted = None;
 	}
 
 	// Once a window is full: did the display miss its budget? Empties the
@@ -775,7 +801,7 @@ mod tests {
 		let mut r = Rating::new();
 		let mut t = Instant::now();
 		for _ in 0..=WINDOW {
-			r.note(t);
+			r.note(t, budget);
 			t += Duration::from_millis(16);
 		}
 		assert_eq!(r.verdict(budget), Some(false));
@@ -784,9 +810,63 @@ mod tests {
 		r.pause();
 		t += Duration::from_secs(5);
 		for _ in 0..=WINDOW {
-			r.note(t);
+			r.note(t, budget);
 			t += Duration::from_millis(30);
 		}
 		assert_eq!(r.verdict(budget), Some(true));
+	}
+
+	// `count` more frames after `t`, each `step` ms after the one before.
+	fn periods(r: &mut Rating, t: &mut Instant, count: usize, step: u64, budget: f32) {
+		for _ in 0..count {
+			*t += Duration::from_millis(step);
+			r.note(*t, budget);
+		}
+	}
+
+	// A monitor asleep under the NVIDIA driver paces a GL client at 1 fps. That
+	// is forty times a 60 Hz budget, and it stepped a desktop down to Standard
+	// overnight.
+	#[test]
+	fn a_capped_display_is_not_a_slow_one() {
+		let budget = budget_ms(60.0);
+		let mut r = Rating::new();
+		let mut t = Instant::now();
+		r.note(t, budget);
+		for _ in 0..200 {
+			t += Duration::from_millis(1000);
+			r.note(t, budget);
+			assert_ne!(r.verdict(budget), Some(true), "a stall is not a miss");
+		}
+	}
+
+	#[test]
+	fn a_stall_throws_away_the_window_around_it() {
+		let budget = budget_ms(60.0);
+		let mut r = Rating::new();
+		let mut t = Instant::now();
+		r.note(t, budget);
+		periods(&mut r, &mut t, WINDOW - 1, 30, budget);
+		periods(&mut r, &mut t, 1, 1000, budget);
+		periods(&mut r, &mut t, 1, 30, budget);
+		assert_eq!(r.verdict(budget), None, "the frames before it went too");
+		periods(&mut r, &mut t, WINDOW, 30, budget);
+		assert_eq!(r.verdict(budget), Some(true), "a slow display still is");
+	}
+
+	#[test]
+	fn a_window_does_not_span_a_long_pause() {
+		let budget = budget_ms(60.0);
+		for (gap, full) in [(31, false), (10, true)] {
+			let mut r = Rating::new();
+			let mut t = Instant::now();
+			r.note(t, budget);
+			periods(&mut r, &mut t, WINDOW - 1, 30, budget);
+			r.pause();
+			periods(&mut r, &mut t, 1, gap * 1000, budget);
+			periods(&mut r, &mut t, 1, 30, budget);
+			let want = full.then_some(true);
+			assert_eq!(r.verdict(budget), want, "{gap} s between eases");
+		}
 	}
 }
