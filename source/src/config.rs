@@ -6880,6 +6880,65 @@ mod tests {
 		}
 	}
 
+	// A launch that finds the settings file open in another program leaves it as it
+	// is, and the next launch that does not repairs it.
+	#[cfg(target_os = "linux")]
+	#[test]
+	fn a_busy_launch_defers_the_wallpaper_repair() {
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_wpbusy_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		let damaged = misplaced_image(default_config());
+		std::fs::write(&path, &damaged).unwrap();
+		set_config_override(path.clone());
+		let baks = || {
+			std::fs::read_dir(&dir)
+				.unwrap()
+				.flatten()
+				.filter(|e| e.file_name().to_string_lossy().contains(".bak"))
+				.count()
+		};
+
+		// a child with the file as its stdin holds it open until it exits
+		let hold = std::fs::File::open(&path).unwrap();
+		let mut child = std::process::Command::new("sleep")
+			.arg("30")
+			.stdin(std::process::Stdio::from(hold))
+			.spawn()
+			.unwrap();
+		let seen = (0..50).any(|_| {
+			if config_open_elsewhere(&path) {
+				return true;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(20));
+			false
+		});
+		let busy = seen.then(|| (load().wallpaper_raw, std::fs::read_to_string(&path)));
+		let _ = child.kill();
+		let _ = child.wait();
+
+		let (image, text) = busy.expect("the holder was never seen");
+		assert_eq!(image, "", "a busy launch loads no image");
+		assert_eq!(
+			text.unwrap(),
+			damaged,
+			"a busy launch leaves the file alone"
+		);
+		assert_eq!(baks(), 0, "a busy launch takes no backup");
+		assert_eq!(
+			load().wallpaper_raw,
+			"/home/x/Pictures/a.png",
+			"the next launch repairs it"
+		);
+		let doc = shcl::Document::parse(&std::fs::read_to_string(&path).unwrap());
+		assert_eq!(doc.count("wallpaper.image"), 1, "one image line");
+		assert_eq!(baks(), 0, "the repair takes no backup");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
 	// The conversion rewrites the settings file where it is: a link stays a link
 	// to the same file, a private file stays private, its backup is as private,
 	// and a link sitting at a backup name is never written through.
