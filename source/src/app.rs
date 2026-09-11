@@ -1175,6 +1175,26 @@ fn needs_folder_read(
 	!locked && showing.is_none() && folder.is_some()
 }
 
+// What the performance watch does with a pass of the event loop.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RatingStep {
+	Note,
+	Pause,
+}
+
+// A frame is evidence about the hardware only when this window's own eased
+// rendering paced it. A benchmark is timing the same frames itself, a pinned
+// rate paces itself, and a window without focus is one nobody is watching, so
+// it gets no say in the profile.
+#[allow(clippy::fn_params_excessive_bools)] // four independent gates, all sixteen cases tested
+fn rating_step(bench: bool, scroll_anim: bool, pinned_fps: bool, focused: bool) -> RatingStep {
+	if !bench && scroll_anim && !pinned_fps && focused {
+		RatingStep::Note
+	} else {
+		RatingStep::Pause
+	}
+}
+
 // Where the rotation timer goes when a tick fires. It has to move off `now`
 // here rather than waiting for the worker's answer: the answer is dropped
 // unless it is still the newest request, and a timer left in the past fires
@@ -1224,6 +1244,34 @@ fn rate_hardware(info: &wgpu::AdapterInfo) -> Option<String> {
 	let _ = config::persist(&orig, &new);
 	config::update(new);
 	None
+}
+
+// The user's own settings with a measured profile stored in them: a benchmark
+// rung while it is timed, or the answer once the run ends. A measurement replaces
+// any step the display watch took, and a step left in place would sit over the
+// rung and time the wrong one.
+fn with_measured_profile(
+	live: &config::Settings,
+	profile: crate::profile::Profile,
+) -> config::Settings {
+	let mut next = live.clone();
+	crate::profile::unapply(&mut next);
+	next.performance_profile = profile.key().to_string();
+	next.stepped_profile = None;
+	next
+}
+
+// The live settings with the display watch's next step in force, or None when
+// automatic is off or the watch has no rung left. Only the session field moves:
+// a step written to the file became every later launch's profile.
+fn watch_step_down(live: &config::Settings) -> Option<config::Settings> {
+	if !live.performance_automatic {
+		return None;
+	}
+	let lower = crate::profile::current(live).watched_lower()?;
+	let mut next = live.clone();
+	next.stepped_profile = Some(lower);
+	Some(next)
 }
 
 // Next frame on a FIXED schedule, not `now + interval` - the latter adds each
@@ -3303,10 +3351,14 @@ impl State {
 		// An entry with no command names nothing to run, so it is dropped here
 		// rather than written - that is the whole of the grid's "Command is
 		// required" rule at the point the list leaves the dialog.
+		let live = config::settings();
 		let mut orig = orig.clone();
 		let mut edited = edited;
-		orig.shells.clone_from(&config::settings().shells);
+		orig.shells.clone_from(&live.shells);
 		edited.shells.retain(|e| !e.command.trim().is_empty());
+		// Remote and a watch step are live state the dialog only copied when it
+		// opened, so a change to either since then must survive the Apply.
+		config::keep_session_on_apply(&live, &orig, &mut edited);
 		// use_system_font is a persisted setting that only reorders font_family at
 		// resolve time, so nothing special to strip - persist the diff as usual.
 		let wrote = config::persist(&orig, &edited);
@@ -3319,7 +3371,8 @@ impl State {
 	// so nothing is persisted back.
 	fn reload_config(&mut self) {
 		let orig = config::settings().as_ref().clone();
-		let edited = config::reload_from_disk();
+		let mut edited = config::reload_from_disk();
+		config::keep_session(&orig, &mut edited);
 		// Force the background image to re-read even when its path is unchanged:
 		// the user may have swapped the file contents under the same name (#167).
 		self.apply_new_settings(&orig, edited, true);
@@ -3563,9 +3616,7 @@ impl State {
 	// written: the run is a measurement and only its answer reaches the file.
 	fn set_live_profile(&mut self, profile: crate::profile::Profile) {
 		let before = config::settings();
-		let mut next = (*before).clone();
-		crate::profile::unapply(&mut next);
-		next.performance_profile = profile.key().to_string();
+		let next = with_measured_profile(&before, profile);
 		self.apply_new_settings(&before, next, false);
 	}
 
@@ -3580,9 +3631,7 @@ impl State {
 			pick.label()
 		);
 		let orig = (*config::settings()).clone();
-		let mut new = orig.clone();
-		crate::profile::unapply(&mut new);
-		new.performance_profile = pick.key().to_string();
+		let mut new = with_measured_profile(&orig, pick);
 		if let Some(id) = self.bench_id.take() {
 			new.rated_hardware = id;
 		}
@@ -3591,25 +3640,20 @@ impl State {
 	}
 
 	// The display missed its budget over a whole window of eased frames: with
-	// the profile on automatic, take one step down the ladder and write it down.
+	// the profile on automatic, take one step down for the rest of the session.
+	// Nothing is written, so the next launch starts from the rated profile.
 	fn step_down_profile(&mut self) {
 		let live = config::settings();
-		let Some(lower) = crate::profile::current(&live).lower() else {
+		let Some(next) = watch_step_down(&live) else {
 			return;
 		};
-		if !live.performance_automatic {
-			return;
-		}
 		eprintln!(
-			"{}: the display is not keeping up; performance profile stepped down to {}",
+			"{}: the display is not keeping up; performance profile stepped down to {} until {} restarts",
 			config::APP_NAME,
-			lower.label()
+			crate::profile::current(&next).label(),
+			config::APP_NAME
 		);
-		let orig = (*live).clone();
-		let mut new = orig.clone();
-		new.performance_profile = lower.key().to_string();
-		let _ = config::persist(&orig, &new);
-		self.apply_new_settings(&orig, new, false);
+		self.apply_new_settings(&live, next, false);
 	}
 
 	// GPU texture contents were lost (VT switch / suspend; see the Sentinel note
@@ -7212,7 +7256,10 @@ impl ApplicationHandler<UserEvent> for App {
 		// Fully hidden window: don't build a frame nobody can see. PTY reading
 		// never stops, so the grid keeps up and the reveal is one catch-up frame.
 		let hidden = state.freeze_sync();
+		// A pass that draws nothing pauses the watch too, or the next ease's first
+		// period would be the whole idle gap before it.
 		let flow = if hidden {
+			state.rating.pause();
 			ControlFlow::Wait
 		} else if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
 			// UI/chrome changes and the bell force ALL panes to re-shape; fresh
@@ -7222,25 +7269,32 @@ impl ApplicationHandler<UserEvent> for App {
 			state.dirty = false;
 			crate::perf::bump(&crate::perf::FRAMES);
 			let animating = crate::perf::timed(&crate::perf::RENDER_NS, || state.render(force));
-			// how the ease is paced tells whether the display keeps up; a pinned
-			// rate paces itself and says nothing about the hardware
+			// how the ease is paced tells whether the display keeps up
+			let step = rating_step(
+				state.bench.is_some(),
+				scroll_anim,
+				max_fps().is_some(),
+				state.focused,
+			);
 			if state.bench.is_some() {
 				// a run is timing the rungs itself; the step-down would be reading
 				// the same frames and moving the profile out from under it
-				state.rating.pause();
 				let budget = state.frame_budget_ms;
 				match state.bench.as_mut().map(|b| b.note(Instant::now(), budget)) {
 					Some(crate::profile::Step::Rung(next)) => state.set_live_profile(next),
 					Some(crate::profile::Step::Done(pick)) => state.finish_bench(pick),
 					_ => {}
 				}
-			} else if scroll_anim && max_fps().is_none() {
-				state.rating.note(Instant::now());
-				if state.rating.verdict(state.frame_budget_ms) == Some(true) {
-					state.step_down_profile();
+			}
+			match step {
+				RatingStep::Note => {
+					let budget = state.frame_budget_ms;
+					state.rating.note(Instant::now(), budget);
+					if state.rating.verdict(budget) == Some(true) {
+						state.step_down_profile();
+					}
 				}
-			} else {
-				state.rating.pause();
+				RatingStep::Pause => state.rating.pause(),
 			}
 			// a pane whose term was locked kept its content_dirty (rebuild was
 			// skipped) - retry shortly instead of waiting for the next event,
@@ -7272,6 +7326,7 @@ impl ApplicationHandler<UserEvent> for App {
 				ControlFlow::Wait
 			}
 		} else {
+			state.rating.pause();
 			ControlFlow::Wait
 		};
 		// Debounced remember-size: persist once the size has held; while one is
@@ -7403,12 +7458,110 @@ mod tests {
 	use super::{
 		Caret, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit, ViewState,
 		accel_at, accel_clash, copybox_fit, copybox_place, focus_ring, key_is_typed, menu_metrics,
-		mia, msub, mta, needs_folder_read, pace_frame, rotation_next, tab_close_box,
+		mia, msub, mta, needs_folder_read, pace_frame, rating_step, rotation_next, tab_close_box,
 		tab_command_line, tab_title_w, typed_title, view_menu_items,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
 	use winit::event::ElementState;
+
+	// Only a focused window's own eased frame is evidence; every other pass
+	// pauses the watch, so an idle gap is never read as a period.
+	#[test]
+	fn only_a_focused_eased_unpinned_frame_is_counted() {
+		use super::RatingStep;
+		let mut notes = 0;
+		for bits in 0..16u8 {
+			let (bench, scroll, pinned, focused) =
+				(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
+			let step = rating_step(bench, scroll, pinned, focused);
+			if (bench, scroll, pinned, focused) == (false, true, false, true) {
+				assert_eq!(step, RatingStep::Note);
+				notes += 1;
+			} else {
+				assert_eq!(
+					step,
+					RatingStep::Pause,
+					"bench {bench} scroll {scroll} pinned {pinned} focused {focused}"
+				);
+			}
+		}
+		assert_eq!(notes, 1);
+	}
+
+	// A bench rung and the bench's answer are both measured, so a step the
+	// display watch took goes, and the stored profile is the user's own values.
+	#[test]
+	fn a_measured_profile_replaces_a_session_step() {
+		use crate::profile::Profile;
+		let mut live = config::Settings {
+			performance_profile: "max".to_string(),
+			stepped_profile: Some(Profile::Low),
+			..config::Settings::default()
+		};
+		crate::profile::apply(&mut live);
+		assert_eq!(crate::profile::current(&live), Profile::Low);
+		let next = super::with_measured_profile(&live, Profile::High);
+		assert_eq!(next.stepped_profile, None);
+		assert_eq!(next.performance_profile, "high");
+		assert!(next.profile_shadow.is_none(), "the user's own values");
+		assert_eq!(crate::profile::current(&next), Profile::High);
+	}
+
+	// The watch's step is session state. Stored in the profile or written out,
+	// one stall became every later launch's profile and took the wallpaper.
+	#[test]
+	fn a_watch_step_never_reaches_the_stored_profile_or_the_file() {
+		use crate::profile::Profile;
+		let _guard = config::test_config_lock();
+		let _ = config::settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_appstep_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		config::set_config_override(path.clone());
+		let cases = [
+			(true, "max", Some(Profile::High)),
+			(true, "high", Some(Profile::Low)),
+			(true, "low", None),
+			(true, "standard", None),
+			(true, "custom", None),
+			(false, "max", None),
+		];
+		for (automatic, stored, want) in cases {
+			std::fs::write(
+				&path,
+				format!("performance:\n\tautomatic: {automatic}\n\tprofile: \"{stored}\"\n"),
+			)
+			.unwrap();
+			let mut live = config::reload_from_disk();
+			crate::profile::apply(&mut live);
+			let before = std::fs::read_to_string(&path).unwrap();
+			let next = super::watch_step_down(&live);
+			assert_eq!(
+				std::fs::read_to_string(&path).unwrap(),
+				before,
+				"automatic {automatic}, stored {stored}: taking the step writes nothing"
+			);
+			assert_eq!(
+				next.as_ref().and_then(|n| n.stepped_profile),
+				want,
+				"automatic {automatic}, stored {stored}"
+			);
+			let Some(next) = next else {
+				continue;
+			};
+			assert_eq!(next.performance_profile, stored, "the stored profile stays");
+			assert_eq!(Some(crate::profile::current(&next)), want);
+			assert!(config::persist(&live, &next));
+			assert_eq!(
+				std::fs::read_to_string(&path).unwrap(),
+				before,
+				"stored {stored}: nor does saving the settings it is in"
+			);
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
 
 	// Switching the wallpaper off and on again drops the rotation pick, and a
 	// request that does not re-read the folder then answers with nothing at all:

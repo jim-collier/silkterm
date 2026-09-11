@@ -166,7 +166,7 @@ rows:
 		label: Choose automatically
 		kind: toggle
 		setting: performance.automatic
-		help: "Pick the profile for this machine, and step it down when the display cannot keep up with a scroll. It never steps back up until the graphics hardware changes."
+		help: "Pick the profile for this machine, and step it down when the display cannot keep up with a scroll. A step goes no lower than Low and lasts until SilkTerm restarts."
 
 	PerfProfile:
 		label: Profile

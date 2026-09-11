@@ -13,9 +13,10 @@
 //!
 //! The rating watches how a scroll ease is paced. A display that keeps its
 //! refresh rate paces one frame per refresh; one that cannot stretches every
-//! frame, and a run of stretched frames steps the profile down. It never steps
-//! up on the same hardware: a lighter profile renders less, so a fast-looking
-//! run under it says nothing about the heavier one.
+//! frame, and a run of stretched frames steps the profile down, no further than
+//! Low and only for the session. It never steps back up within one: a lighter
+//! profile renders less, so a fast-looking run under it says nothing about the
+//! heavier one.
 
 use crate::config::Settings;
 use std::time::Instant;
@@ -92,6 +93,13 @@ impl Profile {
 			Profile::Low => Some(Profile::Standard),
 			Profile::Standard | Profile::Remote | Profile::Custom => None,
 		}
+	}
+
+	// Where the display watch may step to. It stops at Low: Low keeps the
+	// wallpaper, which costs nothing per frame, and Standard turns off the eased
+	// frames the watch measures, so a step there could never be checked again.
+	pub fn watched_lower(self) -> Option<Profile> {
+		self.lower().filter(|next| *next != Profile::Standard)
 	}
 }
 
@@ -184,12 +192,25 @@ pub fn apply(s: &mut Settings) {
 	s.profile_shadow = Some(Box::new(shadow));
 }
 
-// The profile in force: the remote override while it is on, else the stored one.
+// The profile in force: the remote override while it is on, then a step the
+// display watch took this session, then the stored one. A step only ever makes
+// a ladder rung cheaper, and only while automatic is on - it is the automatic
+// choice's own correction, so a hand pick or Custom is never overridden by it.
 pub fn current(s: &Settings) -> Profile {
 	if s.remote_override {
-		Profile::Remote
-	} else {
-		Profile::parse(&s.performance_profile)
+		return Profile::Remote;
+	}
+	let stored = Profile::parse(&s.performance_profile);
+	match s.stepped_profile {
+		Some(step)
+			if s.performance_automatic
+				&& matches!(stored, Profile::Max | Profile::High | Profile::Low)
+				&& matches!(step, Profile::High | Profile::Low | Profile::Standard)
+				&& step.index() > stored.index() =>
+		{
+			step
+		}
+		_ => stored,
 	}
 }
 
@@ -318,6 +339,11 @@ fn machine_parts() -> String {
 	format!("{}|{}", cpu_name(), memory_gib())
 }
 
+// What a written rating means. Hashed into the id, so a change here re-rates
+// every machine once. 2: a step-down is no longer written, and a profile
+// written by one before could not be told apart from a measured answer.
+const RATING_VERSION: u32 = 2;
+
 // Everything the pick depends on, as one short id: the processor, the graphics
 // adapter and how much memory there is. Change any of them and the machine has
 // to be rated again. Hashed rather than spelled out, so the config carries no
@@ -326,7 +352,7 @@ pub fn hardware_id(info: &wgpu::AdapterInfo) -> String {
 	// the worker starts with the process and answers in microseconds; reading it
 	// here rather than waiting is the cheaper way to handle "not yet"
 	let machine = MACHINE.get().cloned().unwrap_or_else(machine_parts);
-	let parts = format!("{machine}|{}", fingerprint(info));
+	let parts = format!("r{RATING_VERSION}|{machine}|{}", fingerprint(info));
 	let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
 	for byte in parts.as_bytes() {
 		hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3);
@@ -406,12 +432,14 @@ const BENCH_WARMUP: usize = 3; // frames discarded while a rung's settings settl
 const BENCH_FRAMES: usize = 40; // frames measured per rung...
 const BENCH_RUNG_MS: f32 = 800.0; // ...or this long, whichever comes first
 const BENCH_MIN_FRAMES: usize = 5; // never judge a rung on fewer than this
-// How far past the budget a rung has to run before the rest of the ladder is
-// pointless. The profiles change the per-pixel work by around half; a machine
-// several times over is not going to be rescued by any of them, and timing the
-// two below it is a few seconds spent on a foregone answer. That case is also
-// the slowest to measure, which is exactly the wrong place to be thorough.
-const BENCH_HOPELESS: f32 = 4.0;
+// How far past the budget a frame has to run before the profile cannot be what
+// is pacing it. The profiles change the per-pixel work by around half, so a
+// period several times over says something else is holding the display, and no
+// step down would rescue it. One constant for both users on purpose: the bench
+// stops timing the ladder there (the case that would take longest to measure,
+// for a foregone answer), and the watch refuses to count such a frame at all -
+// a monitor asleep under the NVIDIA driver paces a GL client at 1 fps.
+pub const STALL_FACTOR: f32 = 4.0;
 
 // What the caller does with the frame it just measured.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -476,7 +504,7 @@ impl Bench {
 		if period <= budget_ms {
 			return Step::Done(self.profile());
 		}
-		if period > budget_ms * BENCH_HOPELESS {
+		if period > budget_ms * STALL_FACTOR {
 			return Step::Done(Profile::Standard);
 		}
 		self.at += 1;
@@ -501,9 +529,17 @@ pub fn budget_ms(refresh_hz: f32) -> f32 {
 	1000.0 / refresh_hz.max(1.0) * 1.5
 }
 
+// A verdict has to come from one sitting. Frames eased this long after the last
+// counted one start a new window rather than finishing a half-full one left
+// from hours ago.
+const STALE_S: f32 = 30.0;
+
 pub struct Rating {
 	periods: Vec<f32>,
 	last: Option<Instant>,
+	// the last frame counted, kept across a pause so the gap to the next one
+	// can be judged stale
+	noted: Option<Instant>,
 }
 
 impl Rating {
@@ -511,16 +547,31 @@ impl Rating {
 		Rating {
 			periods: Vec::with_capacity(WINDOW),
 			last: None,
+			noted: None,
 		}
 	}
 
 	// A frame just went out while an ease was running. Only the gap to the
-	// previous such frame is a period; the first after a pause is a start.
-	pub fn note(&mut self, now: Instant) {
+	// previous such frame is a period; the first after a pause is a start. A gap
+	// past the stall ceiling is not a slow frame, and the frames either side of
+	// it were paced under the same condition, so the window goes with it.
+	pub fn note(&mut self, now: Instant, budget_ms: f32) {
+		if self
+			.noted
+			.is_some_and(|at| now.saturating_duration_since(at).as_secs_f32() > STALE_S)
+		{
+			self.periods.clear();
+		}
 		if let Some(last) = self.last {
-			self.periods.push((now - last).as_secs_f32() * 1000.0);
+			let period = now.saturating_duration_since(last).as_secs_f32() * 1000.0;
+			if period > budget_ms * STALL_FACTOR {
+				self.periods.clear();
+			} else {
+				self.periods.push(period);
+			}
 		}
 		self.last = Some(now);
+		self.noted = Some(now);
 	}
 
 	// The ease stopped, so the next frame's gap means nothing.
@@ -533,6 +584,7 @@ impl Rating {
 	pub fn reset(&mut self) {
 		self.periods.clear();
 		self.last = None;
+		self.noted = None;
 	}
 
 	// Once a window is full: did the display miss its budget? Empties the
@@ -752,6 +804,84 @@ mod tests {
 		assert!(s.scroll_smooth);
 	}
 
+	// The display watch's step is session state over the stored rung: it never
+	// makes a profile heavier, and a hand-set or Custom profile is left alone.
+	#[test]
+	fn a_session_step_sits_over_the_stored_profile() {
+		let at = |stored: &str, step: Profile| {
+			let mut s = tuned();
+			s.performance_profile = stored.to_string();
+			s.stepped_profile = Some(step);
+			s
+		};
+		let mut s = at("max", Profile::Low);
+		assert_eq!(super::current(&s), Profile::Low);
+		apply(&mut s);
+		assert!(s.wallpaper_enabled, "Low keeps the wallpaper");
+		assert_eq!(
+			s.performance_profile, "max",
+			"the stored profile is untouched"
+		);
+		assert_eq!(
+			super::current(&at("low", Profile::High)),
+			Profile::Low,
+			"never heavier"
+		);
+		assert_eq!(super::current(&at("custom", Profile::Low)), Profile::Custom);
+		assert_eq!(
+			super::current(&at("standard", Profile::Low)),
+			Profile::Standard
+		);
+		let mut remote = at("max", Profile::Low);
+		remote.remote_override = true;
+		assert_eq!(super::current(&remote), Profile::Remote);
+		let mut by_hand = at("max", Profile::Low);
+		by_hand.performance_automatic = false;
+		assert_eq!(
+			super::current(&by_hand),
+			Profile::Max,
+			"a hand pick is not the watch's to change"
+		);
+	}
+
+	// A rating written before the version was part of the id reads as another
+	// machine's, once, so a profile an older build's step-down wrote is measured
+	// again rather than kept.
+	#[test]
+	fn a_rating_from_before_the_version_is_stale() {
+		let card = adapter("NVIDIA GeForce RTX 3060 Ti", wgpu::DeviceType::DiscreteGpu);
+		let machine = super::MACHINE
+			.get()
+			.cloned()
+			.unwrap_or_else(super::machine_parts);
+		let unversioned = format!("{machine}|{}", super::fingerprint(&card));
+		let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+		for byte in unversioned.as_bytes() {
+			hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3);
+		}
+		let id = super::hardware_id(&card);
+		assert_ne!(id, format!("{hash:016x}"), "an old id no longer matches");
+		assert_eq!(
+			super::hardware_id(&card),
+			id,
+			"and the new one is stable, so the rating happens once"
+		);
+	}
+
+	#[test]
+	fn watched_lower_stops_at_low() {
+		assert_eq!(Profile::Max.watched_lower(), Some(Profile::High));
+		assert_eq!(Profile::High.watched_lower(), Some(Profile::Low));
+		for p in [
+			Profile::Low,
+			Profile::Standard,
+			Profile::Custom,
+			Profile::Remote,
+		] {
+			assert_eq!(p.watched_lower(), None, "{p:?}");
+		}
+	}
+
 	#[test]
 	fn the_ladder_ends_at_standard_and_custom_is_off_it() {
 		assert_eq!(Profile::Max.lower(), Some(Profile::High));
@@ -775,7 +905,7 @@ mod tests {
 		let mut r = Rating::new();
 		let mut t = Instant::now();
 		for _ in 0..=WINDOW {
-			r.note(t);
+			r.note(t, budget);
 			t += Duration::from_millis(16);
 		}
 		assert_eq!(r.verdict(budget), Some(false));
@@ -784,9 +914,63 @@ mod tests {
 		r.pause();
 		t += Duration::from_secs(5);
 		for _ in 0..=WINDOW {
-			r.note(t);
+			r.note(t, budget);
 			t += Duration::from_millis(30);
 		}
 		assert_eq!(r.verdict(budget), Some(true));
+	}
+
+	// `count` more frames after `t`, each `step` ms after the one before.
+	fn periods(r: &mut Rating, t: &mut Instant, count: usize, step: u64, budget: f32) {
+		for _ in 0..count {
+			*t += Duration::from_millis(step);
+			r.note(*t, budget);
+		}
+	}
+
+	// A monitor asleep under the NVIDIA driver paces a GL client at 1 fps. That
+	// is forty times a 60 Hz budget, and it stepped a desktop down to Standard
+	// overnight.
+	#[test]
+	fn a_capped_display_is_not_a_slow_one() {
+		let budget = budget_ms(60.0);
+		let mut r = Rating::new();
+		let mut t = Instant::now();
+		r.note(t, budget);
+		for _ in 0..200 {
+			t += Duration::from_secs(1);
+			r.note(t, budget);
+			assert_ne!(r.verdict(budget), Some(true), "a stall is not a miss");
+		}
+	}
+
+	#[test]
+	fn a_stall_throws_away_the_window_around_it() {
+		let budget = budget_ms(60.0);
+		let mut r = Rating::new();
+		let mut t = Instant::now();
+		r.note(t, budget);
+		periods(&mut r, &mut t, WINDOW - 1, 30, budget);
+		periods(&mut r, &mut t, 1, 1000, budget);
+		periods(&mut r, &mut t, 1, 30, budget);
+		assert_eq!(r.verdict(budget), None, "the frames before it went too");
+		periods(&mut r, &mut t, WINDOW, 30, budget);
+		assert_eq!(r.verdict(budget), Some(true), "a slow display still is");
+	}
+
+	#[test]
+	fn a_window_does_not_span_a_long_pause() {
+		let budget = budget_ms(60.0);
+		for (gap, full) in [(31, false), (10, true)] {
+			let mut r = Rating::new();
+			let mut t = Instant::now();
+			r.note(t, budget);
+			periods(&mut r, &mut t, WINDOW - 1, 30, budget);
+			r.pause();
+			periods(&mut r, &mut t, 1, gap * 1000, budget);
+			periods(&mut r, &mut t, 1, 30, budget);
+			let want = full.then_some(true);
+			assert_eq!(r.verdict(budget), want, "{gap} s between eases");
+		}
 	}
 }

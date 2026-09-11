@@ -42,14 +42,17 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 Wallpaper disappears from the background.
-	- Test case 20260910-071431: On many of (several) open silkterms that were open overnight (some for days), the wallpaper disappeared to a black background, IIRC when "enter" was pressed.
-	- Wallpapers disappeared on 2 instances that had been running for ~14 hours.
-	- Did NOT disappear on 3 instances of the same version, that had been running for 2 days.
-	- Did NOT disappear on 1 instances of the same version, that had been running for ~19 hours.
-	- New launches have no wallpaper. This may be a regression of the same bug that has been logged once or twice before.
-
 - 🔘 Performance test happens at every startup.
+
+- 🔘 A wallpaper set with `silkterm --wallpaper` does not last the session.
+	- With a rotation folder, Reload config after it turns the background black until restart. A reload without the `--wallpaper` step keeps the picture.
+	- An Apply from a Settings dialog opened before the `--wallpaper` puts the earlier wallpaper back.
+	- Older than the fix for "Wallpaper disappears from the background", and not its cause.
+	- Opened: 20260910-213600
+
+- 🔘 Settings Apply: no test covers picking Remote in the dialog while a performance step taken since it opened is in force.
+	- The code handles it. Taking that handling out fails no test.
+	- Opened: 20260910-213600
 
 - 🔘 Smooth scrolling bug (seems to be another regression to pre-alacritty work): smooth-scrolling often involve quite noticable sharp horizontal "seams", where it seems like vertical portions of the screen don't scroll at the same rate. (And/or start at different times, or something.)
 
@@ -227,6 +230,19 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ Wallpaper disappears from the background.
+	- Test case 20260910-071431: On many of (several) open silkterms that were open overnight (some for days), the wallpaper disappeared to a black background, IIRC when "enter" was pressed.
+	- Wallpapers disappeared on 2 instances that had been running for ~14 hours.
+	- Did NOT disappear on 3 instances of the same version, that had been running for 2 days.
+	- Did NOT disappear on 1 instances of the same version, that had been running for ~19 hours.
+	- New launches have no wallpaper. This may be a regression of the same bug that has been logged once or twice before.
+	- Not a regression of the earlier wallpaper fixes. The cause was the automatic performance watch.
+	- With the monitor asleep, the display driver slows a window to one frame a second. The watch took that for a slow machine and stepped down until it reached Standard terminal, which has no wallpaper. Each step was saved, so new windows started there too.
+	- Fixed: a step down now lasts only until SilkTerm restarts, and never goes below Low, which keeps the wallpaper. Only frames drawn while the window has focus count, and long stalls do not count at all.
+	- Automatic ratings are taken once more after updating, which undoes a step that was already saved.
+	- Opened: 20260910-071431
+	- Closed: 20260910-214107
 
 - ✅ The ARM64 Windows binary carries no icon and no version information, and says nothing about it.
 	- Measured in the built executable: the x86_64 one held the whole version block and the copyright marker intact, and the ARM64 one held no version resource at all - not the strings, not the icon. So on that architecture Explorer showed a generic icon, the Properties tab was blank, and the installer picked up the same generic icon.
