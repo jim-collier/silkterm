@@ -1214,21 +1214,20 @@ fn rate_hardware(info: &wgpu::AdapterInfo) -> Option<String> {
 		return None;
 	}
 	let hardware = crate::profile::hardware_id(info);
-	// The one-shot check counts as new hardware, and clears itself here rather
-	// than with the answer: a window closed mid-run has still had its run.
-	let asked = live.performance_check_next_run;
-	if asked {
-		let mut new = (*live).clone();
-		new.performance_check_next_run = false;
-		let _ = config::persist(&live, &new);
-		config::update(new);
-	} else if live.rated_hardware == hardware {
+	if !rating_due(&live, &hardware) {
 		return None;
 	}
-	// A machine already rated once is only re-rated when asked for; the first
-	// rating has to happen either way, or there is no profile at all.
-	if !asked && !live.performance_check_hardware && !live.rated_hardware.is_empty() {
-		return None;
+	// The one-shot check counts as new hardware, and clears itself here rather
+	// than with the answer: a window closed mid-run has still had its run.
+	if live.performance_check_next_run {
+		let kept = config::keep_rating(&config::RatingLines {
+			check_next_run: Some(false),
+			..config::RatingLines::default()
+		});
+		note_rating_not_kept(&kept);
+		let mut new = (*live).clone();
+		new.performance_check_next_run = false;
+		config::update(new);
 	}
 	let live = config::settings();
 	if crate::profile::worth_measuring(info) {
@@ -1237,13 +1236,93 @@ fn rate_hardware(info: &wgpu::AdapterInfo) -> Option<String> {
 		// the heaviest rung recorded as this machine's rating.
 		return Some(hardware);
 	}
-	let orig = (*live).clone();
-	let mut new = orig.clone();
+	let pick = crate::profile::first_pick(info);
+	// no banner on this path, and redoing it next launch costs nothing
+	let kept = config::keep_rating(&config::RatingLines {
+		profile: Some(pick.key()),
+		rated_hardware: Some(&hardware),
+		check_next_run: None,
+	});
+	note_rating_not_kept(&kept);
+	let mut new = (*live).clone();
 	new.rated_hardware = hardware;
-	new.performance_profile = crate::profile::first_pick(info).key().to_string();
-	let _ = config::persist(&orig, &new);
+	new.performance_profile = pick.key().to_string();
 	config::update(new);
 	None
+}
+
+// Whether this launch owes a rating. A machine already rated once is only
+// re-rated when asked for; the first rating has to happen either way, or there
+// is no profile at all.
+fn rating_due(live: &config::Settings, hardware: &str) -> bool {
+	if !live.performance_automatic || live.remote_override {
+		return false;
+	}
+	if live.performance_check_next_run {
+		return true;
+	}
+	if live.rated_hardware == hardware {
+		return false;
+	}
+	live.performance_check_hardware || live.rated_hardware.is_empty()
+}
+
+// A measured answer into the settings file. Its own function so a test can run
+// the same write the banner's run does.
+fn keep_measured(pick: crate::profile::Profile, id: Option<&str>) -> config::Kept {
+	config::keep_rating(&config::RatingLines {
+		profile: Some(pick.key()),
+		rated_hardware: id,
+		check_next_run: None,
+	})
+}
+
+// Every rating write reports a failure, since a rating that is not kept is a
+// test again at the next launch, and a Windows release build shows no stderr
+// (G37) - which is why the banner says it too.
+fn note_rating_not_kept(kept: &config::Kept) {
+	let reason = match kept {
+		config::Kept::Written => return,
+		config::Kept::Busy => "the settings file is open in another program",
+		config::Kept::Unreadable => "the settings file has a line that cannot be read",
+		config::Kept::Unplaced => {
+			"the performance section of the settings file could not be updated"
+		}
+		config::Kept::Unwritable(why) => why.as_str(),
+	};
+	eprintln!(
+		"{}: performance rating not saved ({reason}); the test runs again at the next launch",
+		config::APP_NAME
+	);
+}
+
+// What the benchmark's banner says: that a run is on, or, for its last few
+// seconds, why its answer could not be kept.
+fn bench_banner_lines(kept: Option<&config::Kept>) -> &'static [&'static str] {
+	const AGAIN: &str = "The test runs again at the next launch.";
+	match kept {
+		None | Some(config::Kept::Written) => &["Testing performance", "This takes a few seconds."],
+		Some(config::Kept::Busy) => &[
+			"Could not save the result",
+			"The settings file is open in another program.",
+			AGAIN,
+		],
+		Some(config::Kept::Unreadable) => &[
+			"Could not save the result",
+			"The settings file has a line that cannot be read.",
+			AGAIN,
+		],
+		Some(config::Kept::Unplaced) => &[
+			"Could not save the result",
+			"The performance section of the settings file could not be updated.",
+			AGAIN,
+		],
+		Some(config::Kept::Unwritable(_)) => &[
+			"Could not save the result",
+			"The settings file cannot be written.",
+			AGAIN,
+		],
+	}
 }
 
 // The user's own settings with a measured profile stored in them: a benchmark
@@ -1560,6 +1639,8 @@ struct State {
 	bench_banner: Option<Instant>,
 	// Set while a run is owed or in flight; written down with the answer.
 	bench_id: Option<String>,
+	// Why the answer was not kept, while the banner says so.
+	bench_kept: Option<config::Kept>,
 	dirty: bool,
 	bell_flash: f32,    // visual-bell brightness, set to 1.0 on BEL, decays to 0
 	size_tracked: bool, // false until the first frame, so startup/programmatic resizes don't overwrite remembered_size
@@ -2309,7 +2390,7 @@ impl State {
 	// while it is up.
 	fn bench_layout(&mut self) -> Option<(Rect, Vec<(f32, f32, String)>)> {
 		self.bench_banner.as_ref()?;
-		let lines = ["Testing performance", "This takes a few seconds."];
+		let lines = bench_banner_lines(self.bench_kept.as_ref());
 		let attrs = crate::text::ui_attrs();
 		let pad = self.text.dip(BENCH_BANNER_PAD);
 		let line_h = self.text.ui_line_h;
@@ -3632,10 +3713,21 @@ impl State {
 		);
 		let orig = (*config::settings()).clone();
 		let mut new = with_measured_profile(&orig, pick);
-		if let Some(id) = self.bench_id.take() {
+		let id = self.bench_id.take();
+		let kept = keep_measured(pick, id.as_deref());
+		if let Some(id) = id {
 			new.rated_hardware = id;
 		}
-		let _ = config::persist(&orig, &new);
+		if kept == config::Kept::Written {
+			self.bench_kept = None;
+		} else {
+			// The banner stays up long enough to read why, from now, since this is
+			// the one place a person learns the test will run again.
+			note_rating_not_kept(&kept);
+			self.bench_kept = Some(kept);
+			self.bench_banner = Some(Instant::now());
+			self.dirty = true;
+		}
 		self.apply_new_settings(&orig, new, false);
 	}
 
@@ -5830,6 +5922,7 @@ impl ApplicationHandler<UserEvent> for App {
 			bench_cap: None,
 			bench_banner: None,
 			bench_id,
+			bench_kept: None,
 			dirty: true,
 			bell_flash: 0.0,
 			size_tracked: false,
@@ -7251,6 +7344,7 @@ impl ApplicationHandler<UserEvent> for App {
 			.map(|up| up + BENCH_BANNER_MIN);
 		if bench_banner_wake.is_some_and(|wake| Instant::now() >= wake) {
 			state.bench_banner = None;
+			state.bench_kept = None;
 			state.dirty = true;
 		}
 		// Fully hidden window: don't build a frame nobody can see. PTY reading
@@ -7561,6 +7655,215 @@ mod tests {
 			);
 		}
 		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	fn adapter(name: &str, device_type: wgpu::DeviceType) -> wgpu::AdapterInfo {
+		wgpu::AdapterInfo {
+			name: name.to_string(),
+			vendor: 0,
+			device: 0,
+			device_type,
+			device_pci_bus_id: String::new(),
+			driver: String::new(),
+			driver_info: String::new(),
+			backend: wgpu::Backend::Gl,
+			subgroup_min_size: 0,
+			subgroup_max_size: 0,
+			transient_saves_memory: false,
+		}
+	}
+
+	// Which launches owe a rating. Pulled out of the launch path when every write
+	// in it changed, so the decision itself provably did not.
+	#[test]
+	fn rating_due_matches_the_launch_rules() {
+		let hardware = "0123456789abcdef";
+		let base = config::Settings {
+			performance_automatic: true,
+			performance_check_hardware: true,
+			performance_check_next_run: false,
+			rated_hardware: "fedcba9876543210".to_string(),
+			remote_override: false,
+			..config::Settings::default()
+		};
+		let matching = config::Settings {
+			rated_hardware: hardware.to_string(),
+			..base.clone()
+		};
+		let cases = [
+			(
+				"automatic off",
+				config::Settings {
+					performance_automatic: false,
+					..base.clone()
+				},
+				false,
+			),
+			(
+				"a remote screen",
+				config::Settings {
+					remote_override: true,
+					..base.clone()
+				},
+				false,
+			),
+			(
+				"asked for, even on the same hardware",
+				config::Settings {
+					performance_check_next_run: true,
+					..matching.clone()
+				},
+				true,
+			),
+			("the same hardware", matching.clone(), false),
+			("other hardware, checked", base.clone(), true),
+			(
+				"other hardware, not checked",
+				config::Settings {
+					performance_check_hardware: false,
+					..base.clone()
+				},
+				false,
+			),
+			(
+				"never rated, not checked",
+				config::Settings {
+					performance_check_hardware: false,
+					rated_hardware: String::new(),
+					..base.clone()
+				},
+				true,
+			),
+		];
+		for (what, live, due) in cases {
+			assert_eq!(super::rating_due(&live, hardware), due, "{what}");
+		}
+	}
+
+	// A rating that did not reach the file was a test at every launch. Each file
+	// here is one that used to lose it or read it back as nothing: a clean one, one
+	// with a line the parse cannot place, and one with the key twice.
+	#[test]
+	fn a_rating_survives_to_the_next_launch_whatever_else_the_file_holds() {
+		use crate::profile::Profile;
+		let _guard = config::test_config_lock();
+		let saved = config::settings();
+		let _store = config::test_store_lock();
+		let dir = std::env::temp_dir().join(format!("silkterm_ratingkept_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		config::set_config_override(path.clone());
+		let card = adapter("NVIDIA GeForce RTX 3060 Ti", wgpu::DeviceType::DiscreteGpu);
+		let soft = adapter("llvmpipe (LLVM 19.1.7, 256 bits)", wgpu::DeviceType::Cpu);
+		// what a launch does before it rates: read the file and put it live
+		let install = || config::update(config::reload_from_disk());
+		let read = || std::fs::read_to_string(&path).unwrap();
+		let files = [
+			(
+				"clean",
+				"performance:\n\t# rated_hardware: \"\"  ## Default\n",
+			),
+			(
+				"an unreadable line",
+				"window:\n\topacity: 1.0\n    margin: 4\n\nperformance:\n\t# rated_hardware: \"\"  ## Default\n",
+			),
+			(
+				"the key twice",
+				"performance:\n\trated_hardware: 0000000000000000\n\trated_hardware: 0000000000000000\n",
+			),
+		];
+		for (name, file) in files {
+			std::fs::write(&path, file).unwrap();
+			install();
+			let id = super::rate_hardware(&card)
+				.unwrap_or_else(|| panic!("{name}: a card with no rating on file is measured"));
+			assert_eq!(
+				super::keep_measured(Profile::High, Some(&id)),
+				config::Kept::Written,
+				"{name}"
+			);
+			install();
+			assert_eq!(
+				super::rate_hardware(&card),
+				None,
+				"{name}: the next launch keeps the card's rating"
+			);
+
+			std::fs::write(&path, file).unwrap();
+			install();
+			match super::rate_hardware(&soft) {
+				Some(id) if crate::profile::worth_measuring(&soft) => assert_eq!(
+					super::keep_measured(Profile::Low, Some(&id)),
+					config::Kept::Written,
+					"{name}"
+				),
+				answer => assert_eq!(
+					answer, None,
+					"{name}: a software adapter is decided at launch"
+				),
+			}
+			install();
+			let stored = config::reload_from_disk();
+			assert_eq!(stored.performance_profile, "low", "{name}");
+			assert_eq!(
+				stored.rated_hardware,
+				crate::profile::hardware_id(&soft),
+				"{name}"
+			);
+			let before = read();
+			assert_eq!(
+				super::rate_hardware(&soft),
+				None,
+				"{name}: the next launch keeps the software adapter's rating"
+			);
+			assert_eq!(read(), before, "{name}: and writes nothing");
+			if name == "an unreadable line" {
+				assert!(
+					before.contains("\n    margin: 4\n"),
+					"the unreadable line is still there:\n{before}"
+				);
+			}
+		}
+		config::update((*saved).clone());
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// A failed save used to leave the banner saying the test was running and then
+	// run it again next launch. It says why now, for the seconds it stays up.
+	#[test]
+	fn the_banner_says_why_a_rating_was_not_kept() {
+		const AGAIN: &str = "The test runs again at the next launch.";
+		let running = ["Testing performance", "This takes a few seconds."];
+		assert_eq!(super::bench_banner_lines(None), running);
+		assert_eq!(
+			super::bench_banner_lines(Some(&config::Kept::Written)),
+			running
+		);
+		for (kept, why) in [
+			(
+				config::Kept::Busy,
+				"The settings file is open in another program.",
+			),
+			(
+				config::Kept::Unreadable,
+				"The settings file has a line that cannot be read.",
+			),
+			(
+				config::Kept::Unplaced,
+				"The performance section of the settings file could not be updated.",
+			),
+			(
+				config::Kept::Unwritable("could not write x: denied".to_string()),
+				"The settings file cannot be written.",
+			),
+		] {
+			assert_eq!(
+				super::bench_banner_lines(Some(&kept)),
+				["Could not save the result", why, AGAIN],
+				"{kept:?}"
+			);
+		}
 	}
 
 	// Switching the wallpaper off and on again drops the rotation pick, and a
