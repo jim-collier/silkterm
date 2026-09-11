@@ -1063,7 +1063,8 @@ fn write_config_atomic_with(
 
 // Writes the text where the file was, only while nothing is at that name. The
 // ordinary failure leaves the old file there and returns at once, and a name
-// taken meanwhile, a link included, is never written through.
+// taken meanwhile, a link included, is never written through. A name only
+// waiting for its delete to finish counts as empty.
 fn restore_config(
 	before: Option<(PathBuf, std::fs::Permissions)>,
 	text: &str,
@@ -1078,8 +1079,7 @@ fn restore_config(
 	let _ = perms;
 	let mut last = String::new();
 	for _ in 0..RESTORE_ATTEMPTS {
-		// not exists(): it follows a link, and a dangling one answers false
-		if std::fs::symlink_metadata(&real).is_ok() {
+		if name_taken(&real) {
 			return Err(err);
 		}
 		std::thread::sleep(RESTORE_PAUSE);
@@ -1122,6 +1122,95 @@ fn restore_config(
 		"{err}; the file it replaced is gone, and writing {} directly failed: {last}",
 		real.display()
 	))
+}
+
+// Something is at the name, unless it is only waiting for its delete to finish.
+// Not exists(): it follows a link, and a dangling one answers false.
+fn name_taken(real: &std::path::Path) -> bool {
+	std::fs::symlink_metadata(real).is_ok() && !delete_pending(real)
+}
+
+#[cfg(not(windows))]
+fn delete_pending(_: &std::path::Path) -> bool {
+	false
+}
+
+// A name whose delete waits on another program's handle is still listed and
+// still answers symlink_metadata, but nothing can open it. Only the NT status
+// tells that apart from a file this process may not open. Takes the \\?\ form
+// canonicalize gives; anything else answers false, as does any status but
+// the pending one.
+#[cfg(windows)]
+fn delete_pending(real: &std::path::Path) -> bool {
+	use std::os::windows::ffi::OsStrExt;
+	use windows_sys::Wdk::Foundation::{NtClose, OBJECT_ATTRIBUTES};
+	use windows_sys::Wdk::Storage::FileSystem::{
+		FILE_OPEN_FOR_BACKUP_INTENT, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+		NtOpenFile,
+	};
+	use windows_sys::Win32::Foundation::{HANDLE, STATUS_DELETE_PENDING, UNICODE_STRING};
+	use windows_sys::Win32::Storage::FileSystem::{
+		FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, SYNCHRONIZE,
+	};
+	use windows_sys::Win32::System::IO::{IO_STATUS_BLOCK, IO_STATUS_BLOCK_0};
+
+	// Win32_System_Kernel, not enabled for one constant
+	const OBJ_CASE_INSENSITIVE: u32 = 0x40;
+	const WIN32_PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+	const NT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];
+
+	let mut units: Vec<u16> = real.as_os_str().encode_wide().collect();
+	let Some(prefix) = units.get_mut(..4) else {
+		return false;
+	};
+	if *prefix != WIN32_PREFIX {
+		return false;
+	}
+	prefix.copy_from_slice(&NT_PREFIX);
+	// Length counts bytes and needs no terminator
+	let Ok(bytes) = u16::try_from(units.len() * 2) else {
+		return false;
+	};
+	let Ok(attributes_size) = u32::try_from(size_of::<OBJECT_ATTRIBUTES>()) else {
+		return false;
+	};
+	let name = UNICODE_STRING {
+		Length: bytes,
+		MaximumLength: bytes,
+		Buffer: units.as_mut_ptr(),
+	};
+	let attributes = OBJECT_ATTRIBUTES {
+		Length: attributes_size,
+		RootDirectory: std::ptr::null_mut(),
+		ObjectName: &raw const name,
+		Attributes: OBJ_CASE_INSENSITIVE,
+		SecurityDescriptor: std::ptr::null(),
+		SecurityQualityOfService: std::ptr::null(),
+	};
+	let mut io_status = IO_STATUS_BLOCK {
+		Anonymous: IO_STATUS_BLOCK_0 { Status: 0 },
+		Information: 0,
+	};
+	let mut handle: HANDLE = std::ptr::null_mut();
+	// Attributes only and full sharing never conflict with another program's
+	// handle. The reparse flag judges a link at the name, never its target.
+	// SAFETY: plain FFI on locals that outlive the call. The name's buffer holds
+	// exactly `Length` bytes, and `attributes` points at `name`.
+	let status = unsafe {
+		NtOpenFile(
+			&raw mut handle,
+			SYNCHRONIZE | FILE_READ_ATTRIBUTES,
+			&raw const attributes,
+			&raw mut io_status,
+			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			FILE_OPEN_REPARSE_POINT | FILE_OPEN_FOR_BACKUP_INTENT | FILE_SYNCHRONOUS_IO_NONALERT,
+		)
+	};
+	if status >= 0 {
+		// SAFETY: a successful open returned this handle, and nothing else holds it
+		unsafe { NtClose(handle) };
+	}
+	status == STATUS_DELETE_PENDING
 }
 
 // The same gate and text as shcl's own save, through the writer above, which
@@ -5503,6 +5592,208 @@ mod tests {
 			"five tries, a tenth of a second apart: {elapsed:?}"
 		);
 		assert!(!left, "nothing at the name");
+	}
+
+	// Leaves the name waiting for its delete while a reader holds the file, and
+	// lets the reader go after `hold`. A plain delete frees the name at once
+	// where the volume deletes POSIX-style, so this closes a delete-on-close
+	// handle instead.
+	#[cfg(windows)]
+	fn delete_while_held(real: &std::path::Path, hold: std::time::Duration) {
+		use std::os::windows::fs::OpenOptionsExt;
+		use windows_sys::Win32::Storage::FileSystem::{
+			DELETE, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+		};
+		let share_all = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+		let holder = std::fs::OpenOptions::new()
+			.read(true)
+			.share_mode(share_all)
+			.open(real)
+			.unwrap();
+		let deleter = std::fs::OpenOptions::new()
+			.access_mode(DELETE)
+			.share_mode(share_all)
+			.custom_flags(FILE_FLAG_DELETE_ON_CLOSE)
+			.open(real)
+			.unwrap();
+		drop(deleter);
+		let listed = std::fs::symlink_metadata(real).is_ok();
+		let refused = match std::fs::OpenOptions::new()
+			.write(true)
+			.create_new(true)
+			.open(real)
+		{
+			Ok(file) => {
+				drop(file);
+				let _ = std::fs::remove_file(real);
+				false
+			}
+			Err(e) => e.kind() == std::io::ErrorKind::PermissionDenied,
+		};
+		// a pass for the wrong reason is worse than a failure
+		assert!(
+			listed && refused,
+			"the name was freed at once, so this cannot see a pending delete"
+		);
+		std::thread::spawn(move || {
+			std::thread::sleep(hold);
+			drop(holder);
+		});
+	}
+
+	// so the cleanup never meets a name still being deleted
+	#[cfg(windows)]
+	fn wait_until_gone(path: &std::path::Path) {
+		let started = std::time::Instant::now();
+		while std::fs::symlink_metadata(path).is_ok()
+			&& started.elapsed() < std::time::Duration::from_secs(3)
+		{
+			std::thread::sleep(std::time::Duration::from_millis(10));
+		}
+	}
+
+	// Error 5 alone cannot tell a pending delete from a file this process may not
+	// open, so every look-alike is checked beside the real one.
+	#[cfg(windows)]
+	#[test]
+	fn only_a_delete_in_progress_reads_as_pending() {
+		use std::os::windows::fs::OpenOptionsExt;
+		let dir = std::fs::canonicalize(restore_test_dir("pendcheck")).unwrap();
+
+		let missing = delete_pending(&dir.join("missing.shcl"));
+
+		let plain_path = dir.join("plain.shcl");
+		std::fs::write(&plain_path, "a").unwrap();
+		let plain = delete_pending(&plain_path);
+
+		let readonly_path = dir.join("readonly.shcl");
+		std::fs::write(&readonly_path, "a").unwrap();
+		let mut perms = std::fs::metadata(&readonly_path).unwrap().permissions();
+		perms.set_readonly(true);
+		std::fs::set_permissions(&readonly_path, perms.clone()).unwrap();
+		let readonly = delete_pending(&readonly_path);
+		// only the read-only flag on Windows, cleared so the cleanup can remove it
+		#[allow(clippy::permissions_set_readonly_false)]
+		perms.set_readonly(false);
+		let _ = std::fs::set_permissions(&readonly_path, perms);
+
+		let held_path = dir.join("held.shcl");
+		std::fs::write(&held_path, "a").unwrap();
+		let held_file = std::fs::OpenOptions::new()
+			.read(true)
+			.share_mode(0)
+			.open(&held_path)
+			.unwrap();
+		let held = delete_pending(&held_path);
+		drop(held_file);
+
+		let folder_path = dir.join("folder");
+		std::fs::create_dir(&folder_path).unwrap();
+		let folder = delete_pending(&folder_path);
+
+		let pending_path = dir.join("config.shcl");
+		std::fs::write(&pending_path, "a").unwrap();
+		delete_while_held(&pending_path, std::time::Duration::from_millis(300));
+		let pending = delete_pending(&pending_path);
+		wait_until_gone(&pending_path);
+		let freed = delete_pending(&pending_path);
+		let gone = std::fs::symlink_metadata(&pending_path).is_err();
+
+		let _ = std::fs::remove_dir_all(&dir);
+		assert_eq!(
+			[
+				("missing", missing),
+				("plain", plain),
+				("read-only", readonly),
+				("held without sharing", held),
+				("folder", folder),
+				("pending", pending),
+				("freed", freed),
+			],
+			[
+				("missing", false),
+				("plain", false),
+				("read-only", false),
+				("held without sharing", false),
+				("folder", false),
+				("pending", true),
+				("freed", false),
+			]
+		);
+		assert!(gone, "the name is gone once the reader lets go");
+	}
+
+	// A replace that fails can leave the old name waiting on a scanner's handle.
+	// The restore waits that out within its bound and writes the text there.
+	#[cfg(windows)]
+	#[test]
+	fn a_restore_waits_for_a_name_still_being_deleted() {
+		let pending: RestorePublish = |file, _| {
+			delete_while_held(
+				&std::fs::canonicalize(file).unwrap(),
+				std::time::Duration::from_millis(250),
+			);
+			Err(format!(
+				"{file}: The replacement file could not be renamed. (os error 1176)"
+			))
+		};
+		let dir = restore_test_dir("pendwait");
+		let path = dir.join("config.shcl");
+		std::fs::write(&path, "font:\n\tsize: 12\n").unwrap();
+		let new = "font:\n\tsize: 13\n";
+
+		let started = std::time::Instant::now();
+		let result = write_config_atomic_with(&path, new, pending);
+		let elapsed = started.elapsed();
+
+		let text = std::fs::read_to_string(&path).ok();
+		let names = names_in_dir(&dir);
+		let _ = std::fs::remove_dir_all(&dir);
+		assert_eq!(result, Ok(()), "the write is reported as done");
+		assert_eq!(text.as_deref(), Some(new), "the new text is at the name");
+		assert_eq!(names, ["config.shcl"], "nothing beside it");
+		assert!(
+			elapsed < std::time::Duration::from_secs(2),
+			"within the restore's bound: {elapsed:?}"
+		);
+	}
+
+	// A name still pending when the tries run out gets the give-up error, and
+	// nothing is written at it or beside it.
+	#[cfg(windows)]
+	#[test]
+	fn a_restore_gives_up_on_a_delete_that_stays_pending() {
+		let pending: RestorePublish = |file, _| {
+			delete_while_held(
+				&std::fs::canonicalize(file).unwrap(),
+				std::time::Duration::from_millis(1500),
+			);
+			Err(format!(
+				"{file}: The replacement file could not be renamed. (os error 1176)"
+			))
+		};
+		let dir = restore_test_dir("pendstay");
+		let path = dir.join("config.shcl");
+		std::fs::write(&path, "font:\n\tsize: 12\n").unwrap();
+
+		let started = std::time::Instant::now();
+		let result = write_config_atomic_with(&path, "font:\n\tsize: 13\n", pending);
+		let elapsed = started.elapsed();
+
+		wait_until_gone(&path);
+		let names = names_in_dir(&dir);
+		let _ = std::fs::remove_dir_all(&dir);
+		let err = result.expect_err("a restore that could not write is not a save");
+		assert!(
+			err.contains("could not be renamed. (os error 1176)") && err.contains("is gone"),
+			"names the replace's error and that the file is gone: {err}"
+		);
+		assert!(
+			elapsed >= std::time::Duration::from_millis(400)
+				&& elapsed < std::time::Duration::from_millis(1400),
+			"five tries, a tenth of a second apart: {elapsed:?}"
+		);
+		assert!(names.is_empty(), "nothing written: {names:?}");
 	}
 
 	// shcl's own save has no seam and no restore, so every settings write goes
