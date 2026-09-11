@@ -1038,15 +1038,107 @@ fn write_config_text(path: &std::path::Path, text: &str) -> std::io::Result<()> 
 // which keeps the file's ACLs. A path that is not UTF-8 is refused rather than
 // converted lossily, which could name a different file.
 fn write_config_atomic(path: &std::path::Path, text: &str) -> Result<(), String> {
+	write_config_atomic_with(path, text, shcl::write_file_atomic)
+}
+
+// Windows' replace can fail after the old file is gone (1176, 1177), and shcl
+// then deletes its temp copy too, so the text is written at the empty name
+// rather than lost. The publish is a parameter so a test can fail it that way.
+fn write_config_atomic_with(
+	path: &std::path::Path,
+	text: &str,
+	publish: fn(&str, &str) -> Result<(), String>,
+) -> Result<(), String> {
 	let Some(file) = path.to_str() else {
 		return Err(format!("{} is not a UTF-8 path", path.display()));
 	};
-	shcl::write_file_atomic(file, text)
+	// Resolved before the write: once the replace has taken a linked file, the
+	// link dangles and no longer resolves.
+	let before = std::fs::canonicalize(path).ok().and_then(|real| {
+		let perms = std::fs::metadata(&real).ok()?.permissions();
+		Some((real, perms))
+	});
+	publish(file, text).or_else(|e| restore_config(before, text, e))
 }
 
+// Writes the text where the file was, only while nothing is at that name. The
+// ordinary failure leaves the old file there and returns at once, and a name
+// taken meanwhile, a link included, is never written through.
+fn restore_config(
+	before: Option<(PathBuf, std::fs::Permissions)>,
+	text: &str,
+	err: String,
+) -> Result<(), String> {
+	use std::io::Write;
+	let Some((real, perms)) = before else {
+		return Err(err);
+	};
+	// elsewhere the mode is only a read-only flag, which adds no privacy
+	#[cfg(not(unix))]
+	let _ = perms;
+	let mut last = String::new();
+	for _ in 0..RESTORE_ATTEMPTS {
+		// not exists(): it follows a link, and a dangling one answers false
+		if std::fs::symlink_metadata(&real).is_ok() {
+			return Err(err);
+		}
+		std::thread::sleep(RESTORE_PAUSE);
+		let mut opts = std::fs::OpenOptions::new();
+		opts.write(true).create_new(true);
+		#[cfg(unix)]
+		std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+		let mut file = match opts.open(&real) {
+			Ok(file) => file,
+			Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Err(err),
+			Err(e) => {
+				last = e.to_string();
+				continue;
+			}
+		};
+		// cloned because a later attempt sets it again
+		#[cfg(unix)]
+		let written = file
+			.set_permissions(perms.clone())
+			.and_then(|()| file.write_all(text.as_bytes()));
+		#[cfg(not(unix))]
+		let written = file.write_all(text.as_bytes());
+		match written.and_then(|()| file.sync_all()) {
+			Ok(()) => {
+				eprintln!(
+					"{APP_NAME}: {err}; the settings file was gone after that, so {} was written directly",
+					real.display()
+				);
+				return Ok(());
+			}
+			Err(e) => {
+				drop(file);
+				// the file this attempt created, not one that was there before
+				let _ = std::fs::remove_file(&real);
+				last = e.to_string();
+			}
+		}
+	}
+	Err(format!(
+		"{err}; the file it replaced is gone, and writing {} directly failed: {last}",
+		real.display()
+	))
+}
+
+// The same gate and text as shcl's own save, through the writer above, which
+// can put the file back when a replace took it.
 #[must_use]
 fn write_doc(path: &std::path::Path, doc: &shcl::Document) -> bool {
-	if let Err(e) = doc.save_file(&path.to_string_lossy()) {
+	let lost = doc.lost_count();
+	let written = if lost > 0 {
+		Err(shcl::SaveError::Refused {
+			path: path.display().to_string(),
+			lost,
+		}
+		.to_string())
+	} else {
+		write_config_atomic(path, &doc.to_canonical())
+	};
+	if let Err(e) = written {
 		eprintln!("{APP_NAME}: could not save config {}: {e}", path.display());
 		return false;
 	}
@@ -2560,6 +2652,11 @@ pub fn resolve_wallpaper_folder(explicit: Option<String>) -> Option<PathBuf> {
 // script looping on --reset-config stops piling up files instead of forever.
 const BACKUPS_MAX: u32 = 99;
 
+// Chromium's retry for the same antivirus and indexer locks. A restore runs
+// only when a replace took the file, so the wait costs nothing otherwise.
+const RESTORE_ATTEMPTS: u32 = 5;
+const RESTORE_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
+
 // Move a config aside to the first free `.bak` name - so doing it twice never
 // overwrites the copy from the first time. Returns where it went.
 fn backup_aside(path: &std::path::Path) -> Option<PathBuf> {
@@ -3089,7 +3186,8 @@ fn convert_legacy_config_with(
 	if let Err(e) = write(path, &joined) {
 		// A file that stays unwritable would gain a backup at every launch, so one
 		// that reads back whole needs none. Anything else keeps it: ReplaceFile can
-		// fail after the file it replaces is gone, leaving the backup the only copy.
+		// fail after the file it replaces is gone and writing it again fails,
+		// leaving the backup the only copy.
 		if std::fs::read(path).is_ok_and(|now| now == text.as_bytes()) {
 			let _ = std::fs::remove_file(&backup);
 			eprintln!(
@@ -5203,6 +5301,230 @@ mod tests {
 			"and a real one is"
 		);
 		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// Stands in for shcl's publish, which on Windows can take the old file off its
+	// name and then fail (1176, 1177).
+	type RestorePublish = fn(&str, &str) -> Result<(), String>;
+
+	fn restore_test_dir(what: &str) -> std::path::PathBuf {
+		let dir = std::env::temp_dir().join(format!("silkterm_{what}_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		dir
+	}
+
+	fn names_in_dir(dir: &std::path::Path) -> Vec<String> {
+		let mut names: Vec<String> = std::fs::read_dir(dir)
+			.unwrap()
+			.map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+			.collect();
+		names.sort();
+		names
+	}
+
+	// shcl deletes its temp copy after a replace that took the old file fails, so
+	// the settings are written at the empty name instead of lost, keeping the
+	// file's mode and leaving nothing beside it.
+	#[test]
+	fn a_write_that_took_the_file_writes_it_again() {
+		let took: RestorePublish = |file, _| {
+			std::fs::remove_file(std::fs::canonicalize(file).unwrap()).unwrap();
+			Err(format!(
+				"{file}: The replacement file could not be renamed. (os error 1176)"
+			))
+		};
+		let dir = restore_test_dir("restore");
+		let path = dir.join("config.shcl");
+		std::fs::write(&path, "font:\n\tsize: 12\n").unwrap();
+		#[cfg(unix)]
+		{
+			use std::os::unix::fs::PermissionsExt;
+			std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+		}
+		let new = "font:\n\tsize: 13\n";
+
+		let result = write_config_atomic_with(&path, new, took);
+
+		let text = std::fs::read_to_string(&path).ok();
+		let names = names_in_dir(&dir);
+		#[cfg(unix)]
+		let mode = std::fs::metadata(&path)
+			.ok()
+			.map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o777);
+		let _ = std::fs::remove_dir_all(&dir);
+		assert_eq!(result, Ok(()), "the write is reported as done");
+		assert_eq!(text.as_deref(), Some(new), "the new text is at the name");
+		assert_eq!(names, ["config.shcl"], "no temp file and no backup");
+		#[cfg(unix)]
+		assert_eq!(mode, Some(0o640), "the file keeps its mode");
+	}
+
+	// The real file is found before the write, since a link to a file the replace
+	// took no longer resolves. The link stays and the real file keeps its mode.
+	#[cfg(unix)]
+	#[test]
+	fn a_restore_keeps_a_linked_private_settings_file() {
+		use std::os::unix::fs::PermissionsExt;
+		let took: RestorePublish = |file, _| {
+			std::fs::remove_file(std::fs::canonicalize(file).unwrap()).unwrap();
+			Err("replaced file gone".to_string())
+		};
+		let dir = restore_test_dir("restorelink");
+		let real = dir.join("real.shcl");
+		std::fs::write(&real, "font:\n\tsize: 12\n").unwrap();
+		std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+		let link = dir.join("config.shcl");
+		std::os::unix::fs::symlink(&real, &link).unwrap();
+		let new = "font:\n\tsize: 13\n";
+
+		let result = write_config_atomic_with(&link, new, took);
+
+		let still_link = std::fs::symlink_metadata(&link).is_ok_and(|m| m.file_type().is_symlink());
+		let target = std::fs::read_link(&link).ok();
+		let text = std::fs::read_to_string(&real).ok();
+		let mode = std::fs::metadata(&real)
+			.ok()
+			.map(|m| m.permissions().mode() & 0o777);
+		let names = names_in_dir(&dir);
+		let _ = std::fs::remove_dir_all(&dir);
+		assert_eq!(result, Ok(()), "the write is reported as done");
+		assert!(still_link, "still a link");
+		assert_eq!(target, Some(real), "to the same file");
+		assert_eq!(
+			text.as_deref(),
+			Some(new),
+			"the real file holds the new text"
+		);
+		assert_eq!(mode, Some(0o600), "and stays private");
+		assert_eq!(names, ["config.shcl", "real.shcl"], "nothing beside them");
+	}
+
+	// The ordinary failure (read-only, held open) leaves the old file in place, so
+	// nothing is written over it and nothing waits.
+	#[test]
+	fn a_failed_write_that_left_the_file_changes_nothing() {
+		let refuse: RestorePublish = |_, _| Err("refused".to_string());
+		let dir = restore_test_dir("restorekeep");
+		let path = dir.join("config.shcl");
+		let old = "font:\n\tsize: 12\n";
+		std::fs::write(&path, old).unwrap();
+
+		let started = std::time::Instant::now();
+		let result = write_config_atomic_with(&path, "font:\n\tsize: 13\n", refuse);
+		let elapsed = started.elapsed();
+
+		let bytes = std::fs::read(&path).ok();
+		let _ = std::fs::remove_dir_all(&dir);
+		assert_eq!(
+			result,
+			Err("refused".to_string()),
+			"the publish's own error"
+		);
+		assert_eq!(bytes.as_deref(), Some(old.as_bytes()), "the file as it was");
+		assert!(
+			elapsed < std::time::Duration::from_millis(50),
+			"no pause when the file is still there: {elapsed:?}"
+		);
+	}
+
+	// Something can take the empty name before the restore does. A link left
+	// there is never written through, even one whose target does not exist.
+	#[cfg(unix)]
+	#[test]
+	fn a_restore_never_writes_through_a_name_taken_meanwhile() {
+		let planted: RestorePublish = |file, _| {
+			std::fs::remove_file(file).unwrap();
+			let victim = std::path::Path::new(file).with_file_name("victim");
+			std::os::unix::fs::symlink(victim, file).unwrap();
+			Err("replaced file gone".to_string())
+		};
+		let dir = restore_test_dir("restoreplant");
+		let path = dir.join("config.shcl");
+		std::fs::write(&path, "font:\n\tsize: 12\n").unwrap();
+
+		let result = write_config_atomic_with(&path, "font:\n\tsize: 13\n", planted);
+
+		let victim = std::fs::symlink_metadata(dir.join("victim")).is_ok();
+		let link = std::fs::read_link(&path).ok();
+		let _ = std::fs::remove_dir_all(&dir);
+		assert_eq!(
+			result,
+			Err("replaced file gone".to_string()),
+			"the publish's own error"
+		);
+		assert!(!victim, "nothing written through the link");
+		assert_eq!(link, Some(dir.join("victim")), "the link left as it was");
+	}
+
+	// A restore that cannot write stops within its bound and says the file is gone,
+	// rather than retrying forever or reporting the replace's error alone.
+	#[cfg(unix)]
+	#[test]
+	fn a_restore_that_cannot_write_gives_up_and_says_so() {
+		use std::os::unix::fs::PermissionsExt;
+		let locked: RestorePublish = |file, _| {
+			let path = std::path::Path::new(file);
+			std::fs::remove_file(path).unwrap();
+			let folder = path.parent().unwrap();
+			std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o500)).unwrap();
+			Err("replaced file gone".to_string())
+		};
+		let dir = restore_test_dir("restorefail");
+		let unlock = || {
+			let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+		};
+		// a run with the rights to write there anyway has nothing to test
+		std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+		let writable = std::fs::File::create(dir.join("probe")).is_ok();
+		unlock();
+		if writable {
+			let _ = std::fs::remove_dir_all(&dir);
+			return;
+		}
+		let path = dir.join("config.shcl");
+		std::fs::write(&path, "font:\n\tsize: 12\n").unwrap();
+
+		let started = std::time::Instant::now();
+		let result = write_config_atomic_with(&path, "font:\n\tsize: 13\n", locked);
+		let elapsed = started.elapsed();
+
+		unlock();
+		let left = std::fs::symlink_metadata(&path).is_ok();
+		let _ = std::fs::remove_dir_all(&dir);
+		let err = result.expect_err("a restore that could not write is not a save");
+		assert!(
+			err.contains("replaced file gone") && err.contains("is gone"),
+			"names the replace's error and that the file is gone: {err}"
+		);
+		assert!(
+			elapsed >= std::time::Duration::from_millis(400)
+				&& elapsed < std::time::Duration::from_secs(2),
+			"five tries, a tenth of a second apart: {elapsed:?}"
+		);
+		assert!(!left, "nothing at the name");
+	}
+
+	// shcl's own save has no seam and no restore, so every settings write goes
+	// through write_config_atomic instead.
+	#[test]
+	fn every_settings_write_goes_through_the_restore() {
+		let body = include_str!("config.rs")
+			.split("\nmod tests {")
+			.next()
+			.expect("the file above its own tests");
+		for call in [".save_file(", "save_file_lossy("] {
+			assert!(!body.contains(call), "{call} skips the restore");
+		}
+		let publish = "shcl::write_file_atomic";
+		assert_eq!(body.matches(publish).count(), 1, "{publish} is named once");
+		let start = body.find("fn write_config_atomic(").expect("the writer");
+		// "\n}" alone: a Windows checkout can end the line with "\r\n"
+		let end = start + body[start..].find("\n}").expect("its end");
+		assert!(
+			body[start..end].contains(publish),
+			"{publish} is called from write_config_atomic"
+		);
 	}
 
 	#[test]

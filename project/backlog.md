@@ -42,11 +42,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 On Windows, a settings save that fails in one rare way can leave no settings file at all.
-	- The fault is in shcl's save. When Windows has already removed the old file but cannot put the new one in its place, shcl tries once more, and if that fails too it deletes the new copy as well.
-	- A save from Settings, the performance rating and two of the rewrites at launch all save this way. Converting an old flat file keeps a backup through it.
-	- Not seen yet. It follows from shcl's code and the Windows documentation, and shcl's current code does the same.
-	- Opened: 20260911-091446
+- 🔘 On Windows, putting back a lost settings file can stop too early while another program still holds the old file open.
+	- A deleted file keeps its name in the folder until every program lets go of it. Putting the settings file back takes that name for a file already there and stops at once. A moment later nothing is there.
+	- Came with the fix for "a settings save that fails in one rare way can leave no settings file at all". The early stop happens on Windows, but no failed save has been seen to leave a file in that state.
+	- Opened: 20260911-101729
 
 - 🔘 A setting indented under a commented-out heading can load at one launch and be ignored at the next.
 	- In a short file, adding the missing settings puts lines above it, and it then reads as part of the setting above. A launch that finds the file open in another program skips that step and still reads it.
@@ -277,6 +276,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ On Windows, a settings save that fails in one rare way can leave no settings file at all.
+	- The fault is in shcl's save. When Windows has already removed the old file but cannot put the new one in its place, shcl tries once more, and if that fails too it deletes the new copy as well.
+	- A save from Settings, the performance rating and two of the rewrites at launch all save this way. Converting an old flat file keeps a backup through it.
+	- Not seen yet. It follows from shcl's code and the Windows documentation, and shcl's current code does the same.
+	- The same happens with a second Windows error of this kind, which another program's settings file is known to have lost this way.
+	- Fixed: when a failed save leaves nothing where the settings file was, the new settings are written there directly, without following a link elsewhere or overwriting a file that came back. Every save above gets this.
+	- The Windows failure itself has not been caused on purpose, so that half is unconfirmed on Windows.
+	- Opened: 20260911-091446
+	- Closed: 20260911-102118
 
 - ✅ Converting an old flat settings file loses its `wallpaper:` image, and the next save from Settings can drop more wallpaper settings.
 	- The image path is written onto the `wallpaper:` section line instead of `image:`, so no wallpaper loads. The path is still in the `.bak` file.
