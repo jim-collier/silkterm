@@ -5454,6 +5454,61 @@ mod tests {
 		}
 	}
 
+	// Deleting a later line for the key moves what sat under it up into the block,
+	// and at an indent the block does not use the parse drops it. It was under a
+	// written key before and is not read at all after, so no setting reads
+	// differently, and only the lost-line count stops a file the next Settings
+	// save refuses whole.
+	#[test]
+	fn a_rating_loses_no_line_the_file_did_not_already_lose() {
+		const ID: &str = "0123456789abcdef";
+		let lines = RatingLines {
+			rated_hardware: Some(ID),
+			..RatingLines::default()
+		};
+		let spelled = [(
+			"rated_hardware",
+			rating_spelling("rated_hardware", RatingValue::Word(ID)).expect("a plain id"),
+		)];
+		let written = ["performance.rated_hardware".to_string()];
+		let block = "performance:\n\trated_hardware: 0000000000000000\nperformance.rated_hardware: 1111111111111111\n    check_hardware: true\n";
+		let lost = "window:\n\topacity: 1.0\n    margin: 4\n";
+		for (what, text, had) in [
+			("a file that reads clean", block.to_string(), 0),
+			(
+				"a file that already lost a line",
+				format!("{block}{lost}"),
+				1,
+			),
+		] {
+			let before = shcl::Document::parse(&text);
+			assert_eq!(before.lost_count(), had, "{what}");
+			let placed =
+				placed_rating_lines(&text, &spelled).expect("a performance block to place into");
+			assert!(
+				migrate_config_text(&text).is_none() && migrate_config_text(&placed).is_none(),
+				"{what}: a launch parses both texts as they are"
+			);
+			let placed = shcl::Document::parse(&placed);
+			assert!(
+				placed.lost_count() > had
+					&& placed.get_string("performance.rated_hardware").as_deref() == Ok(ID),
+				"{what}: placement no longer drops check_hardware, so the case proves nothing"
+			);
+			assert_eq!(
+				settings_besides(&placed, &written),
+				settings_besides(&before, &written),
+				"{what}: the comparison refuses this text as well, so the case proves nothing"
+			);
+			if let Ok(out) = with_rating_lines(&text, &lines) {
+				assert!(
+					shcl::Document::parse(&out).lost_count() <= had,
+					"{what}: a line was lost, and the next Settings save refuses the file:\n{out}"
+				);
+			}
+		}
+	}
+
 	// The dialog's save was how a rating was written before, so the files it kept
 	// one in are the floor: the rating writer keeps one in each of them too.
 	#[test]
