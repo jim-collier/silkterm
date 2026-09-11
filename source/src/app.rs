@@ -1245,6 +1245,21 @@ fn rate_hardware(info: &wgpu::AdapterInfo) -> Option<String> {
 	None
 }
 
+// The user's own settings with a measured profile stored in them: a benchmark
+// rung while it is timed, or the answer once it lands. A measurement replaces
+// any step the display watch took, and a step left in place would sit over the
+// rung and time the wrong one.
+fn with_measured_profile(
+	live: &config::Settings,
+	profile: crate::profile::Profile,
+) -> config::Settings {
+	let mut next = live.clone();
+	crate::profile::unapply(&mut next);
+	next.performance_profile = profile.key().to_string();
+	next.stepped_profile = None;
+	next
+}
+
 // Next frame on a FIXED schedule, not `now + interval` - the latter adds each
 // frame's own render time to the period and runs slow. Falling behind resyncs
 // rather than trying to catch up in a burst.
@@ -3338,7 +3353,8 @@ impl State {
 	// so nothing is persisted back.
 	fn reload_config(&mut self) {
 		let orig = config::settings().as_ref().clone();
-		let edited = config::reload_from_disk();
+		let mut edited = config::reload_from_disk();
+		config::keep_session(&orig, &mut edited);
 		// Force the background image to re-read even when its path is unchanged:
 		// the user may have swapped the file contents under the same name (#167).
 		self.apply_new_settings(&orig, edited, true);
@@ -3582,9 +3598,7 @@ impl State {
 	// written: the run is a measurement and only its answer reaches the file.
 	fn set_live_profile(&mut self, profile: crate::profile::Profile) {
 		let before = config::settings();
-		let mut next = (*before).clone();
-		crate::profile::unapply(&mut next);
-		next.performance_profile = profile.key().to_string();
+		let next = with_measured_profile(&before, profile);
 		self.apply_new_settings(&before, next, false);
 	}
 
@@ -3599,9 +3613,7 @@ impl State {
 			pick.label()
 		);
 		let orig = (*config::settings()).clone();
-		let mut new = orig.clone();
-		crate::profile::unapply(&mut new);
-		new.performance_profile = pick.key().to_string();
+		let mut new = with_measured_profile(&orig, pick);
 		if let Some(id) = self.bench_id.take() {
 			new.rated_hardware = id;
 		}
@@ -3610,24 +3622,25 @@ impl State {
 	}
 
 	// The display missed its budget over a whole window of eased frames: with
-	// the profile on automatic, take one step down the ladder and write it down.
+	// the profile on automatic, take one step down for the rest of the session.
+	// Nothing is written, so the next launch starts from the rated profile.
 	fn step_down_profile(&mut self) {
 		let live = config::settings();
-		let Some(lower) = crate::profile::current(&live).lower() else {
-			return;
-		};
 		if !live.performance_automatic {
 			return;
 		}
+		let Some(lower) = crate::profile::current(&live).watched_lower() else {
+			return;
+		};
 		eprintln!(
-			"{}: the display is not keeping up; performance profile stepped down to {}",
+			"{}: the display is not keeping up; performance profile stepped down to {} until {} restarts",
 			config::APP_NAME,
-			lower.label()
+			lower.label(),
+			config::APP_NAME
 		);
 		let orig = (*live).clone();
 		let mut new = orig.clone();
-		new.performance_profile = lower.key().to_string();
-		let _ = config::persist(&orig, &new);
+		new.stepped_profile = Some(lower);
 		self.apply_new_settings(&orig, new, false);
 	}
 
@@ -7462,6 +7475,25 @@ mod tests {
 			}
 		}
 		assert_eq!(notes, 1);
+	}
+
+	// A bench rung and the bench's answer are both measured, so a step the
+	// display watch took goes, and the stored profile is the user's own values.
+	#[test]
+	fn a_measured_profile_replaces_a_session_step() {
+		use crate::profile::Profile;
+		let mut live = config::Settings {
+			performance_profile: "max".to_string(),
+			stepped_profile: Some(Profile::Low),
+			..config::Settings::default()
+		};
+		crate::profile::apply(&mut live);
+		assert_eq!(crate::profile::current(&live), Profile::Low);
+		let next = super::with_measured_profile(&live, Profile::High);
+		assert_eq!(next.stepped_profile, None);
+		assert_eq!(next.performance_profile, "high");
+		assert!(next.profile_shadow.is_none(), "the user's own values");
+		assert_eq!(crate::profile::current(&next), Profile::High);
 	}
 
 	// Switching the wallpaper off and on again drops the rotation pick, and a

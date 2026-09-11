@@ -3008,7 +3008,14 @@ impl SettingsDialog {
 	}
 	fn set_toggle(&mut self, key: Key, on: bool) {
 		match key {
-			Key::PerfAuto => self.edited.performance_automatic = on,
+			Key::PerfAuto => {
+				// the step belongs to the automatic choice, so it goes when that does
+				// and does not carry over into one freshly switched on
+				if self.edited.performance_automatic != on {
+					self.edited.stepped_profile = None;
+				}
+				self.edited.performance_automatic = on;
+			}
 			Key::PerfCheckHardware => self.edited.performance_check_hardware = on,
 			Key::PerfCheckNext => self.edited.performance_check_next_run = on,
 			Key::SystemFont => self.edited.use_system_font = on,
@@ -3080,14 +3087,18 @@ impl SettingsDialog {
 	fn set_radio(&mut self, key: Key, idx: usize) {
 		match key {
 			// Remote is never stored: picking it raises the session override and
-			// leaves the stored profile for the next launch to come back to
-			Key::PerfProfile => match Profile::from_index(idx) {
-				Profile::Remote => self.edited.remote_override = true,
-				profile => {
-					self.edited.remote_override = false;
-					self.edited.performance_profile = profile.key().to_string();
+			// leaves the stored profile for the next launch to come back to. Any
+			// pick by hand also lifts a step the display watch took.
+			Key::PerfProfile => {
+				self.edited.stepped_profile = None;
+				match Profile::from_index(idx) {
+					Profile::Remote => self.edited.remote_override = true,
+					profile => {
+						self.edited.remote_override = false;
+						self.edited.performance_profile = profile.key().to_string();
+					}
 				}
-			},
+			}
 			Key::BgFit => {
 				self.edited.wallpaper_default_fit = if idx == 1 {
 					config::Fit::Zoom
@@ -3284,6 +3295,7 @@ impl SettingsDialog {
 			Key::PerfProfile => {
 				edited.performance_profile == defaults.performance_profile
 					&& !edited.remote_override
+					&& edited.stepped_profile.is_none()
 			}
 			Key::BgImage => edited.wallpaper == defaults.wallpaper,
 			Key::FontFamily => edited.font_family == defaults.font_family,
@@ -3423,6 +3435,7 @@ impl SettingsDialog {
 			Key::PerfProfile => {
 				self.edited.performance_profile = self.defaults.performance_profile.clone();
 				self.edited.remote_override = false;
+				self.edited.stepped_profile = None;
 			}
 			Key::BgImage => {
 				self.edited.wallpaper = self.defaults.wallpaper.clone();
@@ -8350,6 +8363,62 @@ mod tests {
 		d.row_revert(row);
 		assert!(!d.edited.remote_override);
 		assert!(d.row_is_default(row));
+	}
+
+	// A step the display watch took shows in the dropdown and reads as a change,
+	// so the arrow offers the way back. A hand pick lifts it, and picking the
+	// profile the file already holds writes nothing.
+	#[test]
+	fn a_session_step_shows_and_a_hand_pick_lifts_it() {
+		let _guard = config::test_config_lock();
+		let _ = config::settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_uistep_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		std::fs::write(
+			&path,
+			"performance:\n\tautomatic: true\n\tprofile: \"max\"\n",
+		)
+		.unwrap();
+		config::set_config_override(path.clone());
+		let mut stored = config::reload_from_disk();
+		stored.stepped_profile = Some(super::Profile::Low);
+		let before = std::fs::read_to_string(&path).unwrap();
+
+		let mut d = mk_dialog(4000.0);
+		d.orig = stored.clone();
+		d.edited = stored;
+		let row = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::PerfProfile)
+			.unwrap();
+		assert_eq!(d.get_radio(Key::PerfProfile), super::Profile::Low.index());
+		assert!(!d.row_is_default(row), "the arrow offers the way back");
+
+		d.set_radio(Key::PerfProfile, super::Profile::Max.index());
+		assert!(d.edited.stepped_profile.is_none());
+		assert_eq!(d.get_radio(Key::PerfProfile), super::Profile::Max.index());
+		assert!(d.row_is_default(row));
+		assert!(config::persist(&d.orig, &d.edited));
+		assert_eq!(
+			std::fs::read_to_string(&path).unwrap(),
+			before,
+			"the stored profile did not change, so no line is written"
+		);
+
+		d.edited.stepped_profile = Some(super::Profile::Low);
+		d.row_revert(row);
+		assert!(d.edited.stepped_profile.is_none(), "a revert lifts it");
+
+		d.edited.stepped_profile = Some(super::Profile::Low);
+		d.set_toggle(Key::PerfAuto, false);
+		assert!(
+			d.edited.stepped_profile.is_none(),
+			"and so does switching automatic off"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 
 	// The handle overhangs the track at either end, so a ring drawn around the
