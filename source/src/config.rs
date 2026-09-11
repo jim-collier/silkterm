@@ -1625,7 +1625,7 @@ fn load() -> Settings {
 		// read under its old spelling, which matters most where a rename hands an
 		// old name to a new setting (colors.focus).
 		Ok(text) => {
-			let text = migrate_config_text(&text).unwrap_or(text);
+			let text = loaded_text(&text);
 			for line in config_complaints(&text) {
 				eprintln!("{APP_NAME}: {}: {line}", path.display());
 			}
@@ -3207,6 +3207,12 @@ fn migrate_config_text(text: &str) -> Option<String> {
 	})
 }
 
+// What a launch parses. The rating check reads through this as well, so what it
+// compares and what loads cannot drift apart.
+fn loaded_text(text: &str) -> std::borrow::Cow<'_, str> {
+	migrate_config_text(text).map_or(std::borrow::Cow::Borrowed(text), std::borrow::Cow::Owned)
+}
+
 // One-time: `shell.default` used to name the default shell on its own. The list
 // names it now - its first active entry - so the two could disagree, and the
 // stored value is the user's own statement of which one they meant. Move the
@@ -3565,9 +3571,11 @@ pub fn keep_rating(lines: &RatingLines) -> Kept {
 // differently. A rating key this write does not touch counts as another setting,
 // since a new `profile:` line can pull a deeper `check_next_run:` under itself.
 // The block that holds a written key is left out while it has no value of its
-// own, because a write into a file with no such block creates it. Quoting is
-// left out: a canonical save adds or drops quotes, and no read sees the flag
-// (`a_save_that_requotes_a_value_changes_no_read`).
+// own, because a write into a file with no such block creates it. The quoted
+// flag is left out, since a save adds or drops quotes and no read sees the flag
+// (`a_save_that_requotes_a_value_changes_no_read`). What a quote character or an
+// indent does to the launch's migration is compared by the caller, on the
+// migrated text.
 fn settings_besides(
 	doc: &shcl::Document,
 	written: &[String],
@@ -3611,6 +3619,8 @@ fn with_rating_lines(text: &str, lines: &RatingLines) -> Result<String, Kept> {
 		),
 	];
 	let before = shcl::Document::parse(text);
+	let migrated = migrated_parse(text);
+	let loaded = migrated.as_ref().unwrap_or(&before);
 	// A file that reads clean is never said to have a line that cannot be read.
 	let refused = if before.lost_count() == 0 {
 		Kept::Unplaced
@@ -3626,13 +3636,13 @@ fn with_rating_lines(text: &str, lines: &RatingLines) -> Result<String, Kept> {
 		spelled.push((leaf, spelling));
 	}
 	if let Some(out) = placed_rating_lines(text, &spelled)
-		&& reads_as_asked(&before, &out, &wanted)
+		&& reads_as_asked(&before, loaded, &out, &wanted)
 	{
 		return Ok(out);
 	}
 	if before.lost_count() == 0
 		&& let Some(out) = saved_rating(&before, &wanted)
-		&& reads_as_asked(&before, &out, &wanted)
+		&& reads_as_asked(&before, loaded, &out, &wanted)
 	{
 		return Ok(out);
 	}
@@ -3669,22 +3679,38 @@ fn saved_rating(before: &shcl::Document, wanted: &[(&str, Option<RatingValue>)])
 	Some(doc.to_canonical())
 }
 
+// The parse a launch makes of this text, or None where the migration leaves the
+// text alone and the caller's own parse of it serves.
+fn migrated_parse(text: &str) -> Option<shcl::Document> {
+	match loaded_text(text) {
+		std::borrow::Cow::Owned(text) => Some(shcl::Document::parse(&text)),
+		std::borrow::Cow::Borrowed(_) => None,
+	}
+}
+
 // Whether a result is fit to write: it loses no more than the input already
-// had, every setting it does not write reads as it did, and each key reads as
-// exactly what was asked.
+// had, every setting it does not write loads as it did, and each key reads as
+// exactly what was asked. Lost lines are counted on the bytes (`before` and
+// `out`). Settings are compared as a launch parses them (`loaded` and the
+// migrated `out`), because the launch's renames and refreshes read how a line
+// is written - the quotes around a font stack, the indent of a commented
+// header - and a save changes both.
 fn reads_as_asked(
 	before: &shcl::Document,
+	loaded: &shcl::Document,
 	out: &str,
 	wanted: &[(&str, Option<RatingValue>)],
 ) -> bool {
-	let after = shcl::Document::parse(out);
+	let raw_after = shcl::Document::parse(out);
+	let migrated = migrated_parse(out);
+	let after = migrated.as_ref().unwrap_or(&raw_after);
 	let written: Vec<String> = wanted
 		.iter()
 		.filter(|(_, value)| value.is_some())
 		.map(|(leaf, _)| format!("performance.{leaf}"))
 		.collect();
-	after.lost_count() <= before.lost_count()
-		&& settings_besides(&after, &written) == settings_besides(before, &written)
+	raw_after.lost_count() <= before.lost_count()
+		&& settings_besides(after, &written) == settings_besides(loaded, &written)
 		&& wanted.iter().all(|(leaf, value)| {
 			let path = format!("performance.{leaf}");
 			match value {
@@ -5485,7 +5511,8 @@ mod tests {
 
 	// A canonical save quotes a bare value holding a space or a colon, and takes
 	// the quotes off one that reads as a number, bool or date. The rating check
-	// leaves quoting out because of this: nothing a load asks for sees the flag.
+	// leaves the quoted flag out because of this. The quote character itself is
+	// read by the launch's migration, and the check compares migrated text for that.
 	#[test]
 	fn a_save_that_requotes_a_value_changes_no_read() {
 		const PATH: &str = "blk.k";
@@ -5628,6 +5655,95 @@ mod tests {
 				other(&reloaded),
 				loaded,
 				"{what}: the other value loads as before"
+			);
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// A launch parses migrated text, and the migration reads how a line is
+	// written: only a double-quoted old font list is refreshed, and a commented
+	// heading deeper than its block becomes the parent of the setting under it.
+	// The save's text moves both without changing a value. Each file is written
+	// again before the rating, as a launch that found it busy leaves it.
+	#[test]
+	fn a_rating_changes_nothing_the_next_launch_migrates() {
+		const ID: &str = "0123456789abcdef";
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir =
+			std::env::temp_dir().join(format!("silkterm_ratingmigrate_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		set_config_override(path.clone());
+		let lines = RatingLines {
+			profile: Some("high"),
+			rated_hardware: Some(ID),
+			check_next_run: None,
+		};
+		let stack = format!(
+			"performance.automatic: true\nfont:\n\tuse_system_family: false\n\tfamily: '{}'\n",
+			SUPERSEDED_FONT_STACKS[0]
+		);
+		let files: [(&str, String, fn(&Settings) -> String); 4] = [
+			(
+				"an old default font list in single quotes",
+				stack.clone(),
+				|s| format!("{:?}", s.font_family),
+			),
+			(
+				"the same beside a bare Windows folder",
+				format!("{stack}shell:\n\tstartup_directory: C:\\Users\\x\n"),
+				|s| format!("{:?}", s.font_family),
+			),
+			(
+				"a renamed colour under a commented heading",
+				"performance.automatic: true\ncolors:\n\t# x:\n\t\tfocus: \"#112233\"\n"
+					.to_string(),
+				|s| format!("{:?} {:?}", s.focus, s.highlight),
+			),
+			(
+				"a renamed tab width under a commented heading",
+				"performance.automatic: true\nwindow:\n\t# x:\n\t\ttab_min_width_pct: 12\n"
+					.to_string(),
+				|s| s.tab_regular_pct.to_string(),
+			),
+		];
+		for (what, text, other) in files {
+			std::fs::write(&path, &text).unwrap();
+			let loaded = other(&reload_from_disk());
+			std::fs::write(&path, &text).unwrap();
+			let kept = keep_rating(&lines);
+			let disk = std::fs::read_to_string(&path).unwrap();
+			if kept == Kept::Written {
+				assert_eq!(
+					other(&reload_from_disk()),
+					loaded,
+					"{what}: loads as before"
+				);
+			} else {
+				assert_eq!(kept, Kept::Unplaced, "{what}");
+				assert_eq!(disk, text, "{what}: nothing written");
+				// a launch that is not busy migrates the file, and the rating goes in then
+				let _ = reload_from_disk();
+				assert_eq!(keep_rating(&lines), Kept::Written, "{what}: next launch");
+				let reloaded = reload_from_disk();
+				assert_eq!(reloaded.rated_hardware, ID, "{what}");
+				assert_eq!(
+					other(&reloaded),
+					loaded,
+					"{what}: loads as before after the next launch"
+				);
+			}
+
+			let mut saved = shcl::Document::parse(&text);
+			assert!(saved.set_string("performance.profile", "high"), "{what}");
+			assert!(saved.set_string("performance.rated_hardware", ID), "{what}");
+			std::fs::write(&path, saved.to_canonical()).unwrap();
+			assert_ne!(
+				other(&reload_from_disk()),
+				loaded,
+				"{what}: a save no longer moves this value, so the case proves nothing"
 			);
 		}
 		let _ = std::fs::remove_dir_all(&dir);
@@ -6887,9 +7003,10 @@ mod tests {
 	// not change it a second time.
 	mod fuzz {
 		use super::super::{
-			RatingLines, config_complaints, default_config, disabled_text, migrate_config_text,
-			read_raw, resolve, reverted_text, setting_groups, setting_lines, walk_settings,
-			with_rating_lines, with_shcl_banner,
+			CONFIG_REMOVED, CONFIG_RENAMES, RatingLines, SUPERSEDED_FONT_STACKS, config_complaints,
+			default_config, disabled_text, loaded_text, migrate_config_text, read_raw, resolve,
+			reverted_text, setting_groups, setting_lines, walk_settings, with_rating_lines,
+			with_shcl_banner,
 		};
 		use crate::fuzz;
 
@@ -7000,6 +7117,14 @@ mod tests {
 			let mut rng = fuzz::Rng::new(0);
 			let case = String::from_utf8(config(&mut rng)).expect("utf-8");
 			assert!(case.len() > 60, "the generator produced {case:?}");
+			assert!(
+				!CONFIG_RENAMES.is_empty(),
+				"no renames left, and the migrated shapes pick from them"
+			);
+			assert!(
+				!SUPERSEDED_FONT_STACKS.is_empty(),
+				"no superseded font lists left, and the migrated shapes pick from them"
+			);
 		}
 
 		#[test]
@@ -7082,7 +7207,8 @@ mod tests {
 					.map(str::to_string)
 					.collect()
 			};
-			for _ in 0..=rng.below(2) {
+			let pieces = if rng.chance(3) { 0 } else { 1 + rng.below(2) };
+			for _ in 0..pieces {
 				let header = lines.iter().position(|line| line == "performance:");
 				let (at, piece) = match header {
 					Some(h) if rng.chance(2) => {
@@ -7099,14 +7225,38 @@ mod tests {
 					lines.insert(at + n, line.to_string());
 				}
 			}
+			if !rng.chance(2) {
+				let at = rng.below(lines.len() + 1);
+				for (n, line) in migrated_shape(rng).lines().enumerate() {
+					lines.insert(at + n, line.to_string());
+				}
+			}
 			let mut out = lines.join("\n");
 			out.push('\n');
 			out.into_bytes()
 		}
 
+		// Lines the launch's migration reads by how they are written as well as by
+		// value, taken from its own tables so a new rename or stack joins on its own.
+		fn migrated_shape(rng: &mut fuzz::Rng) -> String {
+			let old = if rng.chance(4) {
+				*rng.pick(CONFIG_REMOVED)
+			} else {
+				rng.pick(CONFIG_RENAMES).0
+			};
+			let (block, leaf) = old.rsplit_once('.').unwrap_or(("", old));
+			match rng.below(4) {
+				0 => format!("font:\n\tfamily: '{}'\n", rng.pick(SUPERSEDED_FONT_STACKS)),
+				1 => format!("{block}:\n\t# x:\n\t\t{leaf}: 12\n"),
+				2 => format!("{block}:\n\t\t# x:\n\t{leaf}: 12\n"),
+				_ => format!("{block}:\n    # x:\n\t{leaf}: 12\n"),
+			}
+		}
+
 		// A rating writes its own lines and nothing else, so whatever a file holds,
 		// an answer it accepts reads each value back, loses no more lines, and loads
-		// every setting it did not write as before. The last is read here path by
+		// every setting it did not write as before, as a launch reads the file after
+		// its renames and refreshes. The last is read here path by
 		// path over both parses, apart from the writer's own check, though both ask
 		// shcl. Canonical text is no measure of what loads: it keeps a line shcl
 		// skipped, drops one it lost, and moves a stray line with the setting after
@@ -7156,13 +7306,21 @@ mod tests {
 									Err(shcl::Status::Empty | shcl::Status::NotFound)
 								))
 						})
-						// quoting is left out, since a save requotes values and no read sees it
+						// the quoted flag is left out, since no read sees it; a quote or
+						// indent the migration reads shows in the migrated parse
 						.map(|path| (path.clone(), doc.get_string(path), doc.count(path)))
 						.collect::<Vec<_>>()
 				};
 				(read(a), read(b))
 			};
+			// the parse a launch makes, where its migration changes the text
+			let migrated = |t: &str| match loaded_text(t) {
+				std::borrow::Cow::Owned(t) => Some(shcl::Document::parse(&t)),
+				std::borrow::Cow::Borrowed(_) => None,
+			};
 			let before = shcl::Document::parse(&text);
+			let before_migrated = migrated(&text);
+			let before_loads = before_migrated.as_ref().unwrap_or(&before);
 			let answer = with_rating_lines(&text, &lines);
 
 			if before.lost_count() == 0 {
@@ -7182,7 +7340,9 @@ mod tests {
 					&& lines
 						.check_next_run
 						.is_none_or(|flag| saved.set_bool("performance.check_next_run", flag));
-				let saved = shcl::Document::parse(&saved.to_canonical());
+				let saved_text = saved.to_canonical();
+				let saved = shcl::Document::parse(&saved_text);
+				let saved_migrated = migrated(&saved_text);
 				let kept_by_save =
 					set && saved.lost_count() == 0
 						&& lines.profile.is_none_or(|word| {
@@ -7192,7 +7352,8 @@ mod tests {
 					}) && lines.check_next_run.is_none_or(|flag| {
 						saved.get_bool("performance.check_next_run") == Ok(flag)
 					}) && {
-						let (then, now) = reads(&before, &saved);
+						let (then, now) =
+							reads(before_loads, saved_migrated.as_ref().unwrap_or(&saved));
 						then == now
 					};
 				if kept_by_save {
@@ -7207,6 +7368,7 @@ mod tests {
 				return;
 			};
 			let after = shcl::Document::parse(&out);
+			let after_migrated = migrated(&out);
 			let shown = format!("before:\n{text}\nafter:\n{out}");
 			assert!(
 				after.lost_count() <= before.lost_count(),
@@ -7227,7 +7389,7 @@ mod tests {
 					"check_next_run\n{shown}"
 				);
 			}
-			let (then, now) = reads(&before, &after);
+			let (then, now) = reads(before_loads, after_migrated.as_ref().unwrap_or(&after));
 			assert_eq!(now, then, "another setting loads differently\n{shown}");
 		}
 
