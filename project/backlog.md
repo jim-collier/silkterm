@@ -44,6 +44,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - 🔘 Performance test happens at every startup.
 
+- 🔘 A performance test run while the monitor is asleep can save a rating that is too low.
+	- The display then shows one frame a second, so the first profile reads as hopeless and Standard terminal is saved, with no wallpaper from then on.
+	- Not seen yet. Skipping the save when frames stall would make a truly slow machine test at every launch, so it needs its own design.
+	- Opened: 20260910-215844
+
 - 🔘 A wallpaper set with `silkterm --wallpaper` does not last the session.
 	- With a rotation folder, Reload config after it turns the background black until restart. A reload without the `--wallpaper` step keeps the picture.
 	- An Apply from a Settings dialog opened before the `--wallpaper` puts the earlier wallpaper back.
