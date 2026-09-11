@@ -42,12 +42,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 Smooth scrolling bug (seems to be another regression to pre-alacritty work): smooth-scrolling often involve quite noticable sharp horizontal "seams", where it seems like vertical portions of the screen don't scroll at the same rate. (And/or start at different times, or something.)
-	- Two kinds of seam found so far. Which one is the one seen still needs confirming, with the program and pane layout that shows it.
-	- While output eases in, lines a program redraws at the bottom (a progress bar, apt's status line, a live block under a transcript) drop a row and slide back up, while the text above only slides up. Same as the apt progress bar item closed 20260724, which was never really fixed.
-	- With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Side-by-side panes are not affected.
-	- Neither is new: both show on builds from before the scroll ledger.
-	- It could also be tearing from the desktop compositor. Worth trying `xfconf-query -c xfwm4 -p /general/vblank_mode -s glx`, and `-s auto` to undo.
+- 🔘 With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Each time the other pane scrolls, the slide in progress jumps the rest of the way.
+	- Side-by-side panes are not affected.
+	- Split from the smooth scrolling seams item. It shows on builds from before the scroll ledger too.
+	- Opened: 20260911-113647
 
 - 🔘 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even Claude Code's autocopy doesn't work.)
@@ -283,6 +281,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ Smooth scrolling bug (seems to be another regression to pre-alacritty work): smooth-scrolling often involve quite noticable sharp horizontal "seams", where it seems like vertical portions of the screen don't scroll at the same rate. (And/or start at different times, or something.)
+	- Most noticeable in muffer, in a single pane, with transparency off. Not the desktop compositor.
+	- Cause: while new output eased in, lines a program redraws in place at the bottom (the input block, a progress bar, apt's status line) moved with the whole pane. They dropped a row with each new line and slid back up, while the text above only slid up.
+	- Fixed: those lines now hold still, and new lines ease in above them. Rows below a program's own scroll region, like apt's status line, are held too.
+	- Not a new regression. The apt progress bar item closed 20260724 was the same thing, and never really fixed.
+	- Two stacked tmux panes printing at once is a different seam, filed on its own.
+	- Opened: n/a
+	- Closed: 20260911-130415
 
 - ✅ On Windows, putting back a lost settings file can stop too early while another program still holds the old file open.
 	- A deleted file keeps its name in the folder until every program lets go of it. Putting the settings file back takes that name for a file already there and stops at once. A moment later nothing is there.
