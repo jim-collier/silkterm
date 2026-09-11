@@ -47,13 +47,24 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Split from the smooth scrolling seams item. It shows on builds from before the scroll ledger too.
 	- Opened: 20260911-113647
 
-- 🔘 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
-	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even Claude Code's autocopy doesn't work.)
-	- CTRL+shift+C on selected text doesn't work.
-	- Right-click and choose "Copy", DOES work.
-
 - 🔘 Scrolling back in muffer with the mouse wheel made its "1 new message" indicator smear and bounce - the same shape as #t78br, "The Notorious 'Bouncing Shadow' nano bug".
 	- This old bug has returned - ever since the alacritty work.
+	- Opened: n/a.
+
+- 🔘 nano:
+	- Holding the cursor down to scroll down in a long document (which makes text move up) works well. But,
+	- Holding the cursor up to scroll up in a long document (which makes text move down), is jumpy. Seems to jump ~2 lines at a time.
+	- Opened: 20260911-124508.
+
+- 🔘 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
+	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
+	- CTRL+shift+C on selected text doesn't work.
+	- Right-click and choose "Copy", DOES work.
+	- Note: There's some chance this is a bug in muffer (whether or not autocopy is enabled), and possibly not silkterm's.
+		- With muffer autocopy disabled, I can't get XFCE terminal to copy the selection. Even the Copy menu is grayed out, seemingly indicating it doesn't notice that anything selected.
+		- With muffer autocopy enabled, it doesn't always work.
+		- It seems the longer the muffer session, the less likely it is to work.
+	- Opened: 20260909.
 
 - 🔘 The scroll test's full-screen-entry check tests nothing: it runs the less scene instead of its own script.
 	- So the guard against the nano wobble passes whatever the code does.
