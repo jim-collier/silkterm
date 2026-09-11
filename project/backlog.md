@@ -42,13 +42,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔘 Nothing in a normal test run fails when the rating writer's check for unreadable lines is removed.
+	- Only a longer randomized test catches it. Without that check, a file that reads clean can be given a line the next Settings save refuses.
+	- Opened: 20260911-032544
+
 - 🔘 A performance test can still run at every launch on a settings file with no Performance section.
 	- It happens when another value in the file is typed without quotes and holds a space or a colon, such as a font name or a Windows folder. The rating is not saved, and the banner says the Performance section could not be updated.
 	- A normal launch adds the section first, so this needs the file to have been busy while SilkTerm started.
-	- Opened: 20260911-001526
-
-- 🔘 Two tests of the performance rating writer no longer fail when the rule they guard is removed.
-	- One passes with its check taken out, and only a longer randomized test still catches that. The other passes with the rule for a hand-cleared value taken out.
 	- Opened: 20260911-001526
 
 - 🔘 A save from Settings adds or removes quotes on values nobody changed.
@@ -265,6 +265,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ Two tests of the performance rating writer no longer fail when the rule they guard is removed.
+	- One passes with its check taken out, and only a longer randomized test still catches that. The other passes with the rule for a hand-cleared value taken out.
+	- Fixed: each test now has a case that only its own rule can pass, and both fail in an ordinary test run when that rule is taken out.
+	- The first uses a file where writing the rating moves a later line up, which turns another setting on unless the check refuses it.
+	- The second uses a file with an unreadable line, so the fallback save cannot quietly give the same answer.
+	- Opened: 20260911-001526
+	- Closed: 20260911-032912
 
 - ✅ Performance test happens at every startup.
 	- The rating is remembered only in the settings file, and a failed save of it went unnoticed, so the next launch tested again.
