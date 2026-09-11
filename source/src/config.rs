@@ -6939,6 +6939,51 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
+	// The repair rewrites the settings file at launch, so a linked file stays
+	// linked to the same file, and a private one stays private.
+	#[cfg(unix)]
+	#[test]
+	fn a_repair_keeps_a_linked_private_settings_file() {
+		use std::os::unix::fs::PermissionsExt;
+		let dir = std::env::temp_dir().join(format!("silkterm_wplink_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let real = dir.join("real.shcl");
+		let damaged = misplaced_image(default_config());
+		std::fs::write(&real, &damaged).unwrap();
+		std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+		let link = dir.join("config.shcl");
+		std::os::unix::fs::symlink(&real, &link).unwrap();
+
+		repair_wallpaper_heading(&link);
+
+		assert!(
+			std::fs::symlink_metadata(&link)
+				.unwrap()
+				.file_type()
+				.is_symlink(),
+			"still a link"
+		);
+		assert_eq!(std::fs::read_link(&link).unwrap(), real);
+		assert_eq!(
+			std::fs::read_to_string(&real).unwrap(),
+			wallpaper_heading_repaired(&damaged).unwrap(),
+			"the linked file is repaired"
+		);
+		assert_eq!(
+			std::fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+			0o600,
+			"the file stays private"
+		);
+		let names: Vec<String> = std::fs::read_dir(&dir)
+			.unwrap()
+			.flatten()
+			.map(|e| e.file_name().to_string_lossy().into_owned())
+			.collect();
+		assert_eq!(names.len(), 2, "no backup and no temp file: {names:?}");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
 	// The conversion rewrites the settings file where it is: a link stays a link
 	// to the same file, a private file stays private, its backup is as private,
 	// and a link sitting at a backup name is never written through.
