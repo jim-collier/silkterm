@@ -3057,6 +3057,14 @@ fn repair_wallpaper_heading(path: &std::path::Path) {
 // future feature) are carried verbatim in dotted form. The rewrite keeps a
 // linked file linked and a private one private.
 fn convert_legacy_config(path: &std::path::Path) {
+	convert_legacy_config_with(path, write_config_atomic);
+}
+
+// The writer is a parameter so a test can fail it the ways the real one can.
+fn convert_legacy_config_with(
+	path: &std::path::Path,
+	write: fn(&std::path::Path, &str) -> Result<(), String>,
+) {
 	let Ok(text) = std::fs::read_to_string(path) else {
 		return;
 	};
@@ -3070,14 +3078,23 @@ fn convert_legacy_config(path: &std::path::Path) {
 	let Some(backup) = backup_copy(path, text.as_bytes()) else {
 		return;
 	};
-	if let Err(e) = write_config_atomic(path, &joined) {
-		// the file is as it was, and a file that stays unwritable would otherwise
-		// gain a backup at every launch
-		let _ = std::fs::remove_file(&backup);
-		eprintln!(
-			"{APP_NAME}: could not convert config {}: {e}",
-			path.display()
-		);
+	if let Err(e) = write(path, &joined) {
+		// A file that stays unwritable would gain a backup at every launch, so one
+		// that reads back whole needs none. Anything else keeps it: ReplaceFile can
+		// fail after the file it replaces is gone, leaving the backup the only copy.
+		if std::fs::read(path).is_ok_and(|now| now == text.as_bytes()) {
+			let _ = std::fs::remove_file(&backup);
+			eprintln!(
+				"{APP_NAME}: could not convert config {}: {e}",
+				path.display()
+			);
+		} else {
+			eprintln!(
+				"{APP_NAME}: could not convert config {}: {e}; the old file is kept at {}",
+				path.display(),
+				backup.display()
+			);
+		}
 		return;
 	}
 	eprintln!(
@@ -6955,6 +6972,52 @@ mod tests {
 		assert!(still_link, "the settings file is still a link");
 		assert_eq!(text, flat, "the file is as it was");
 		assert!(!backup, "no backup of a file that was not converted");
+	}
+
+	// A failed write is not proof the file is as it was. ReplaceFile can fail after
+	// the file it replaces is gone, and then the backup is the only copy left. So a
+	// failed conversion drops its backup only when the file reads back whole.
+	#[test]
+	fn a_failed_conversion_keeps_the_backup_unless_the_file_is_whole() {
+		type Write = fn(&std::path::Path, &str) -> Result<(), String>;
+		let refuse: Write = |_, _| Err("refused".to_string());
+		let remove: Write = |path, _| {
+			std::fs::remove_file(path).map_err(|e| e.to_string())?;
+			Err("replaced file gone".to_string())
+		};
+		let cut: Write = |path, _| {
+			std::fs::write(path, "font_").map_err(|e| e.to_string())?;
+			Err("cut short".to_string())
+		};
+		let dir = std::env::temp_dir().join(format!("silkterm_convkeep_{}", std::process::id()));
+		let flat = "font_size: 13\n";
+		// (what, writer, the settings file after, the backup kept)
+		for (what, write, file, kept) in [
+			("the file as it was", refuse, Some(flat), false),
+			("the file gone", remove, None, true),
+			("the file changed", cut, Some("font_"), true),
+		] {
+			let _ = std::fs::remove_dir_all(&dir);
+			std::fs::create_dir_all(&dir).unwrap();
+			let path = dir.join("config.shcl");
+			std::fs::write(&path, flat).unwrap();
+
+			convert_legacy_config_with(&path, write);
+
+			assert_eq!(
+				std::fs::read_to_string(&path).ok().as_deref(),
+				file,
+				"{what}: the settings file"
+			);
+			assert_eq!(
+				std::fs::read_to_string(dir.join("config.shcl.bak"))
+					.ok()
+					.as_deref(),
+				kept.then_some(flat),
+				"{what}: the backup"
+			);
+		}
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 
 	// A hand-edited config is where a home-relative path gets typed, so `~` has
