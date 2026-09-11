@@ -149,6 +149,16 @@ Same mechanism: when new output pushes content up, animate `visual_offset` from 
 
 The view never sits past the grid. The whole part of the offset is what the grid is scrolled by and the fraction is drawn, so an offset beyond the scrollback would pin the whole part while the fraction kept wrapping, one whole-cell hop per line. That was the nano wobble: a burst still easing when the alt screen (no scrollback) took over. The offset is clamped to the scrollback instead, which lands the ease the instant a screen swaps and caps how far a fresh terminal's first output eases.
 
+Lines a program redraws in place at the bottom hold still while output eases. A progress line, apt's status bar, or a live input block under a transcript did not move in the grid, but the ease shifted the whole pane, so they dropped a row with every new line and slid back up. That showed as a sharp horizontal seam at the top edge of those lines.
+
+- The held rows are the ones below the rows a step actually moved, and one of them must be text that reads the same as before. Without that, the last chunk of plain output and a prompt coming back after a command would hold still too.
+
+- Rows below a program's own scroll region are held on the engine's record alone, whatever they say.
+
+- The band only grows while one ease runs. Steady output keeps a single ease going, so a band measured once could miss a block caught half drawn, and a band that shrank would drop a held row back into the moving text.
+
+- A single progress line whose text changes on the same tick a new line arrives still drops for that step. Matching rows loosely enough to catch it also held half-written output lines. A click on a held row while the ease runs maps to the moving view for that moment.
+
 A surface that could not be seen does not ease at all. A minimized or occluded window, and a tab that is not the shown one, build no frames while they are out of view, so whatever arrived meanwhile is a gap rather than motion. Easing that gap in would say the wrong thing twice: it animates content that is already old, and it reads as output arriving right now. Coming back on screen is one instant cut instead, and the flash that produces is the point - it marks the update as catching up rather than happening.
 
 Catch-up speed is modeled as one curve on a time/speed graph, and each setting is a named segment of it. The curve starts and ends at zero. Each segment hands exactly one thing to the next: the point where it ended. In order:
