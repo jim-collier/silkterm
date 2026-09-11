@@ -674,7 +674,7 @@ Three defects came out of building it, all fixed with it: a program could put co
 
 - The contract on saving is that a user's comments and blank-line grouping survive. Layout may be tidied, meaning indentation and quotes that are not needed, but a value is never rewritten. The shipped template is deliberately spelled the way a save would spell it, so the first save is a no-op rather than a reflow of the file we just wrote.
 
-- A save writes through a temp file and a rename, never in place, so a crash mid-save cannot leave a truncated config. If loading had to drop a line it could not place, the save is refused rather than quietly deleting it. One changed setting is not worth a line someone wrote.
+- A save writes through a temp file and a rename, never in place, so a crash mid-save cannot leave a truncated config. If Windows takes the old file off its name and then cannot put the new one there, the new settings are written at the name directly, rather than leaving no file. If loading had to drop a line it could not place, the save is refused rather than quietly deleting it. One changed setting is not worth a line someone wrote.
 
 - The template's sections follow the Settings dialog's tabs, in the same order, so a person who has learned one has learned the other. That order reaches a new file only. An existing config keeps whatever order it has, since the machinery that adds new settings places them but never moves what is already there.
 
