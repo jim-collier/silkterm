@@ -47,6 +47,18 @@ try {
 
 Start-Sleep -Seconds 3
 "after:"; fSessions | ForEach-Object { "  $($_.User) id=$($_.Id) $($_.State)" }
-$locked = Get-Process -Name LockApp, LogonUI -ErrorAction SilentlyContinue |
-	Where-Object { $_.SessionId -eq $want.Id }
-if ($locked) { "note: a lock screen is still running in session $($want.Id); connect once over RDP if scenarios skip" }
+
+##	A lock screen process says nothing either way - LockApp stays around, suspended,
+##	both after an unlock and while locked with the display asleep. The session's own
+##	flags are the answer: offset 16 of WTSSessionInfoEx, 0 locked, 1 unlocked.
+Add-Type -Namespace Con -Name Wts -MemberDefinition @"
+[DllImport("wtsapi32.dll")] public static extern bool WTSQuerySessionInformationW(IntPtr srv, int id, int cls, out IntPtr buf, out int bytes);
+[DllImport("wtsapi32.dll")] public static extern void WTSFreeMemory(IntPtr p);
+"@
+$buf = [IntPtr]::Zero; $n = 0
+if ([Con.Wts]::WTSQuerySessionInformationW([IntPtr]::Zero, $want.Id, 25, [ref]$buf, [ref]$n)) {
+	$flags = [Runtime.InteropServices.Marshal]::ReadInt32($buf, 16)
+	[Con.Wts]::WTSFreeMemory($buf)
+	if ($flags -eq 0) { "session $($want.Id) is still locked; connect once over RDP, or scenarios will skip"; exit 1 }
+	if ($flags -eq 1) { "session $($want.Id) is unlocked" }
+}
