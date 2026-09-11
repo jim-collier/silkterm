@@ -42,7 +42,19 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 Performance test happens at every startup.
+- 🔘 A performance test can still run at every launch on a settings file with no Performance section.
+	- It happens when another value in the file is typed without quotes and holds a space or a colon, such as a font name or a Windows folder. The rating is not saved, and the banner says the Performance section could not be updated.
+	- A normal launch adds the section first, so this needs the file to have been busy while SilkTerm started.
+	- Opened: 20260911-001526
+
+- 🔘 Two tests of the performance rating writer no longer fail when the rule they guard is removed.
+	- One passes with its check taken out, and only a longer randomized test still catches that. The other passes with the rule for a hand-cleared value taken out.
+	- Opened: 20260911-001526
+
+- 🔘 A save from Settings adds or removes quotes on values nobody changed.
+	- `family: Cascadia Mono` comes back as `family: "Cascadia Mono"`, and a quoted `"5"` comes back bare. Every value still reads the same.
+	- This is how shcl writes a file, not SilkTerm code. SilkTerm has to leave quoting out of any check that compares a file before and after a write.
+	- Opened: 20260911-001526
 
 - 🔘 A performance test run while the monitor is asleep can save a rating that is too low.
 	- The display then shows one frame a second, so the first profile reads as hopeless and Standard terminal is saved, with no wallpaper from then on.
@@ -248,6 +260,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ Performance test happens at every startup.
+	- The rating is remembered only in the settings file, and a failed save of it went unnoticed, so the next launch tested again.
+	- Two things stopped the save. A line in the file that cannot be read makes every save refuse, and a file held open by another program is skipped.
+	- Fixed: the rating is written into its own lines and nothing else is touched, so a file with a bad line still keeps it. A linked or private settings file stays that way. The write is refused if any other setting would read differently.
+	- When the rating still cannot be kept, the banner says why before it goes away.
+	- Switching between a build from before this change and one after still tests each time, since the rating version changed.
+	- Opened: n/a
+	- Closed: 20260911-002318
 
 - ✅ Wallpaper disappears from the background.
 	- Test case 20260910-071431: On many of (several) open silkterms that were open overnight (some for days), the wallpaper disappeared to a black background, IIRC when "enter" was pressed.
