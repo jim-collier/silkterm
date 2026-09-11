@@ -3115,13 +3115,21 @@ fn note_config_busy(path: &std::path::Path) {
 }
 
 // Bring a font_family line still carrying a superseded default stack up to the
-// current one. Only a bare, exactly-matching quoted value migrates, so an edited
-// stack - or one trailing a comment - is left exactly as the user wrote it.
+// current one. The value is matched as it reads, in either quote, because a save
+// swaps one quote for the other. An edited stack, or one with a note on the
+// line, is left exactly as the user wrote it.
 fn refresh_font_stack(line: &str) -> Option<String> {
 	let (head, value) = line.split_once(':')?;
-	let inner = value.trim().strip_prefix('"')?.strip_suffix('"')?;
-	SUPERSEDED_FONT_STACKS
-		.contains(&inner)
+	let value = value.trim();
+	if strip_trailing_comment(value) != value {
+		return None;
+	}
+	let doc = shcl::Document::parse(&format!("v: {value}\n"));
+	if doc.lost_count() > 0 {
+		return None;
+	}
+	doc.get_string("v")
+		.is_ok_and(|read| SUPERSEDED_FONT_STACKS.contains(&read.as_str()))
 		.then(|| format!("{head}: \"{DEFAULT_FONT_STACK}\""))
 }
 
@@ -6602,6 +6610,21 @@ mod tests {
 		assert!(migrate_config_text(&format!("font:\n\t# family: \"{stale}\"\n")).is_none());
 		// a top-level dotted spelling refreshes too
 		assert!(migrate_config_text(&format!("font.family: \"{stale}\"\n")).is_some());
+		// a save swaps single quotes for double, so either reads as the old default
+		let out = migrate_config_text(&format!("font:\n\tfamily: '{stale}'\n"))
+			.expect("a single-quoted stale default should be refreshed");
+		assert!(
+			out.contains(&format!("\tfamily: \"{DEFAULT_FONT_STACK}\"")),
+			"{out:?}"
+		);
+		assert!(migrate_config_text(&format!("font.family: '{stale}'\n")).is_some());
+		let crlf = migrate_config_text(&format!("font:\r\n\tfamily: '{stale}'\r\n"))
+			.expect("a single-quoted stale default with CRLF endings should be refreshed");
+		assert!(crlf.contains(DEFAULT_FONT_STACK), "{crlf:?}");
+		// a note on the line keeps it the user's
+		assert!(migrate_config_text(&format!("font:\n\tfamily: '{stale}'  # mine\n")).is_none());
+		// shcl reads a bare comma list as another string, so it never matches
+		assert!(migrate_config_text(&format!("font:\n\tfamily: {stale}\n")).is_none());
 	}
 
 	// An active line's path is the one shcl reads, whatever comments sit above it.
