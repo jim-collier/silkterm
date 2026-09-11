@@ -343,6 +343,11 @@ fn machine_parts() -> String {
 	format!("{}|{}", cpu_name(), memory_gib())
 }
 
+// What a written rating means. Hashed into the id, so a change here re-rates
+// every machine once. 2: a step-down is no longer written, and a profile
+// written by one before could not be told apart from a measured answer.
+const RATING_VERSION: u32 = 2;
+
 // Everything the pick depends on, as one short id: the processor, the graphics
 // adapter and how much memory there is. Change any of them and the machine has
 // to be rated again. Hashed rather than spelled out, so the config carries no
@@ -351,7 +356,7 @@ pub fn hardware_id(info: &wgpu::AdapterInfo) -> String {
 	// the worker starts with the process and answers in microseconds; reading it
 	// here rather than waiting is the cheaper way to handle "not yet"
 	let machine = MACHINE.get().cloned().unwrap_or_else(machine_parts);
-	let parts = format!("{machine}|{}", fingerprint(info));
+	let parts = format!("r{RATING_VERSION}|{machine}|{}", fingerprint(info));
 	let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
 	for byte in parts.as_bytes() {
 		hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3);
@@ -840,6 +845,30 @@ mod tests {
 			super::current(&by_hand),
 			Profile::Max,
 			"a hand pick is not the watch's to change"
+		);
+	}
+
+	// A rating written before the version was part of the id reads as another
+	// machine's, once, so a profile an older build's step-down wrote is measured
+	// again rather than kept.
+	#[test]
+	fn a_rating_from_before_the_version_is_stale() {
+		let card = adapter("NVIDIA GeForce RTX 3060 Ti", wgpu::DeviceType::DiscreteGpu);
+		let machine = super::MACHINE
+			.get()
+			.cloned()
+			.unwrap_or_else(super::machine_parts);
+		let unversioned = format!("{machine}|{}", super::fingerprint(&card));
+		let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+		for byte in unversioned.as_bytes() {
+			hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3);
+		}
+		let id = super::hardware_id(&card);
+		assert_ne!(id, format!("{hash:016x}"), "an old id no longer matches");
+		assert_eq!(
+			super::hardware_id(&card),
+			id,
+			"and the new one is stable, so the rating happens once"
 		);
 	}
 
