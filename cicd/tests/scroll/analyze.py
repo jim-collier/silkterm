@@ -12,6 +12,9 @@ supposed to hold:
   --mode hardcut  : the app has a static top band (nano/muffer) so the slide is
                     deliberately disabled - the shift is still detected but app_off
                     must stay 0 across every frame (a plain page redraw).
+  --mode pinned   : output easing on the normal screen under a live block redrawn
+                    in place (muffer's shape). The block must be held still:
+                    most easing frames carry ob == --expect-sb, and none more.
   --mode still    : the alt screen took over while plain output was still easing.
                     There is no scrollback behind it, so the view must land at rest
                     on the spot: frac stays 0 on every frame. A leftover ease shows
@@ -36,12 +39,13 @@ import sys
 TRACE = re.compile(
     r"SCROLLDBG f=(\d+) pane=(\d+) sh=(-?\d+) app_off=(-?[\d.]+) "
     r"slide_sh=(-?[\d.]+) st=(\d+) sb=(\d+) frac=([\d.]+)"
+    r"(?: alt=(\d))?(?: ob=(\d+))?"
 )
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", required=True, choices=["slide", "hardcut", "still"])
+    ap.add_argument("--mode", required=True, choices=["slide", "hardcut", "still", "pinned"])
     ap.add_argument("--expect-st", type=int, default=-1)
     ap.add_argument("--expect-sb", type=int, default=-1)
     ap.add_argument("--label", default="scene")
@@ -59,13 +63,33 @@ def main() -> int:
                     "st": int(m.group(6)),
                     "sb": int(m.group(7)),
                     "frac": float(m.group(8)),
+                    "alt": int(m.group(9)) if m.group(9) is not None else 1,
+                    "ob": int(m.group(10) or 0),
                 }
             )
 
     def out(tag, msg):
         print(f"[ {tag} {a.label}: {msg} ]")
 
+    if a.mode == "pinned":
+        easing = [f for f in frames if f["alt"] == 0 and f["frac"] > a.eps]
+        if len(easing) < 10:
+            out("SKIP", f"only {len(easing)} easing frames (GL warmup / timing?)")
+            return 2
+        over = [f for f in easing if f["ob"] > a.expect_sb]
+        if over:
+            out("FAIL", f"band wider than the block on {len(over)} frame(s) "
+                       f"(ob={over[0]['ob']}, block {a.expect_sb}): output was held")
+            return 1
+        held = sum(1 for f in easing if f["ob"] == a.expect_sb)
+        if held * 5 < len(easing) * 4:
+            out("FAIL", f"block held on only {held} of {len(easing)} easing frames")
+            return 1
+        out("PASS", f"block held still on {held} of {len(easing)} easing frames")
+        return 0
+
     if a.mode == "still":
+        frames = [f for f in frames if f["alt"] == 1]
         if not frames:
             out("SKIP", "no trace frames (GL warmup / timing?)")
             return 2
