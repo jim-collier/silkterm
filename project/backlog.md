@@ -56,6 +56,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- This is how shcl writes a file, not SilkTerm code. SilkTerm has to leave quoting out of any check that compares a file before and after a write.
 	- Opened: 20260911-001526
 
+- 🔘 A save from Settings can change a setting nobody touched, from the next launch on.
+	- A font list that is still an old default but written in single quotes becomes the current default. A renamed setting under a commented-out heading can get renamed after all.
+	- A save tidies quotes and indents, and the renames at launch look at both.
+	- Opened: 20260911-012838
+
 - 🔘 A performance test run while the monitor is asleep can save a rating that is too low.
 	- The display then shows one frame a second, so the first profile reads as hopeless and Standard terminal is saved, with no wallpaper from then on.
 	- Not seen yet. Skipping the save when frames stall would make a truly slow machine test at every launch, so it needs its own design.
