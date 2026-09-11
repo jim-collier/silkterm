@@ -460,18 +460,16 @@ impl Scroll {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use std::sync::{Mutex, MutexGuard};
+	use std::sync::MutexGuard;
 
 	// The settings store initializes from the LIVE user config, not the shipped
 	// defaults - a box whose config carries tuned scroll speeds would otherwise
 	// steer every assertion here (it did: a fast tau made the whole module fail).
 	// Each test pins the defaults first; the guard serializes the module so a
-	// test that pins something else cannot race the rest.
-	static PIN: Mutex<()> = Mutex::new(());
+	// test that pins something else cannot race the rest. It is the store's
+	// shared lock, because tests elsewhere put a rated profile live too.
 	fn pin() -> MutexGuard<'static, ()> {
-		let guard = PIN
-			.lock()
-			.unwrap_or_else(std::sync::PoisonError::into_inner);
+		let guard = config::test_store_lock();
 		config::update(config::Settings::default());
 		guard
 	}
