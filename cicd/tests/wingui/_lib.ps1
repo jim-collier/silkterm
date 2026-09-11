@@ -23,6 +23,8 @@ Add-Type -Namespace Silk -Name Win -MemberDefinition @'
 [DllImport("user32.dll")] public static extern IntPtr GetFocus();
 [DllImport("user32.dll")] public static extern bool SystemParametersInfoW(uint a, uint b, out RECT r, uint c);
 [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+[DllImport("wtsapi32.dll")] public static extern bool WTSQuerySessionInformationW(IntPtr srv, int id, int cls, out IntPtr buf, out int bytes);
+[DllImport("wtsapi32.dll")] public static extern void WTSFreeMemory(IntPtr p);
 public struct RECT { public int Left, Top, Right, Bottom; }
 '@
 
@@ -137,13 +139,13 @@ function fNote($text) { $script:checks += "  note $text" }
 ##	still runs windows and still answers PrintWindow, but screen grabs come back
 ##	black and injected input goes to the lock screen - so a scenario that needs
 ##	either must stop rather than quietly measure nothing.
-##	Two tests, because neither alone is right, and both obvious ones are wrong.
-##	The input desktop catches the old style of lock, which hands input to Winlogon.
-##	The modern lock screen does not - LockApp runs on the Default desktop like any
-##	other window, so a locked machine still answers "Default". But the presence of
-##	LockApp is not the test either: it lingers, suspended, long after an unlock.
-##	What separates the two is whether it is IN FRONT.
+##	Windows keeps the answer itself, so ask for it first. Reading it off the lock
+##	screen went wrong: once the display sleeps, a locked session has nothing in
+##	front and LockApp sits suspended, which is also how it lingers after an unlock.
+##	The other two tests stay for a build that does not report the state. The
+##	desktop name catches the old style of lock, which hands input to Winlogon.
 function fSessionUsable {
+	if ((fLockState) -eq "locked") { return $false }
 	$fg = [Silk.Win]::GetForegroundWindow()
 	if ($fg -ne [IntPtr]::Zero) {
 		$owner = 0
@@ -158,6 +160,19 @@ function fSessionUsable {
 	$got = [Silk.Win]::GetUserObjectInformation($d, 2, $sb, 256, [ref]$n)
 	[void][Silk.Win]::CloseDesktop($d)
 	$got -and $sb.ToString() -eq "Default"
+}
+
+##	WTSSessionInfoEx for this session. The level-1 record starts at offset 8, and
+##	SessionFlags is its third field: 0 locked, 1 unlocked.
+function fLockState {
+	$id = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+	$buf = [IntPtr]::Zero; $n = 0
+	if (-not [Silk.Win]::WTSQuerySessionInformationW([IntPtr]::Zero, $id, 25, [ref]$buf, [ref]$n)) { return "unknown" }
+	$level = [Runtime.InteropServices.Marshal]::ReadInt32($buf, 0)
+	$flags = [Runtime.InteropServices.Marshal]::ReadInt32($buf, 16)
+	[Silk.Win]::WTSFreeMemory($buf)
+	if ($level -ne 1) { return "unknown" }
+	switch ($flags) { 0 { "locked" } 1 { "unlocked" } default { "unknown" } }
 }
 
 ##	A config to start from. Rating the hardware swallows input for several seconds
