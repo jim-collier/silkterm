@@ -1247,7 +1247,7 @@ fn rate_hardware(info: &wgpu::AdapterInfo) -> Option<String> {
 }
 
 // The user's own settings with a measured profile stored in them: a benchmark
-// rung while it is timed, or the answer once it lands. A measurement replaces
+// rung while it is timed, or the answer once the run ends. A measurement replaces
 // any step the display watch took, and a step left in place would sit over the
 // rung and time the wrong one.
 fn with_measured_profile(
