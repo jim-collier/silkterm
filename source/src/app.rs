@@ -1186,6 +1186,7 @@ enum RatingStep {
 // rendering paced it. A benchmark is timing the same frames itself, a pinned
 // rate paces itself, and a window without focus is one nobody is watching, so
 // it gets no say in the profile.
+#[allow(clippy::fn_params_excessive_bools)] // four independent gates, all sixteen cases tested
 fn rating_step(bench: bool, scroll_anim: bool, pinned_fps: bool, focused: bool) -> RatingStep {
 	if !bench && scroll_anim && !pinned_fps && focused {
 		RatingStep::Note
