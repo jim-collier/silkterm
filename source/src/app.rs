@@ -1261,6 +1261,19 @@ fn with_measured_profile(
 	next
 }
 
+// The live settings with the display watch's next step in force, or None when
+// automatic is off or the watch has no rung left. Only the session field moves:
+// a step written to the file became every later launch's profile.
+fn watch_step_down(live: &config::Settings) -> Option<config::Settings> {
+	if !live.performance_automatic {
+		return None;
+	}
+	let lower = crate::profile::current(live).watched_lower()?;
+	let mut next = live.clone();
+	next.stepped_profile = Some(lower);
+	Some(next)
+}
+
 // Next frame on a FIXED schedule, not `now + interval` - the latter adds each
 // frame's own render time to the period and runs slow. Falling behind resyncs
 // rather than trying to catch up in a burst.
@@ -3627,22 +3640,16 @@ impl State {
 	// Nothing is written, so the next launch starts from the rated profile.
 	fn step_down_profile(&mut self) {
 		let live = config::settings();
-		if !live.performance_automatic {
-			return;
-		}
-		let Some(lower) = crate::profile::current(&live).watched_lower() else {
+		let Some(next) = watch_step_down(&live) else {
 			return;
 		};
 		eprintln!(
 			"{}: the display is not keeping up; performance profile stepped down to {} until {} restarts",
 			config::APP_NAME,
-			lower.label(),
+			crate::profile::current(&next).label(),
 			config::APP_NAME
 		);
-		let orig = (*live).clone();
-		let mut new = orig.clone();
-		new.stepped_profile = Some(lower);
-		self.apply_new_settings(&orig, new, false);
+		self.apply_new_settings(&live, next, false);
 	}
 
 	// GPU texture contents were lost (VT switch / suspend; see the Sentinel note
@@ -7495,6 +7502,61 @@ mod tests {
 		assert_eq!(next.performance_profile, "high");
 		assert!(next.profile_shadow.is_none(), "the user's own values");
 		assert_eq!(crate::profile::current(&next), Profile::High);
+	}
+
+	// The watch's step is session state. Stored in the profile or written out,
+	// one stall became every later launch's profile and took the wallpaper.
+	#[test]
+	fn a_watch_step_never_reaches_the_stored_profile_or_the_file() {
+		use crate::profile::Profile;
+		let _guard = config::test_config_lock();
+		let _ = config::settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_appstep_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		config::set_config_override(path.clone());
+		let cases = [
+			(true, "max", Some(Profile::High)),
+			(true, "high", Some(Profile::Low)),
+			(true, "low", None),
+			(true, "standard", None),
+			(true, "custom", None),
+			(false, "max", None),
+		];
+		for (automatic, stored, want) in cases {
+			std::fs::write(
+				&path,
+				format!("performance:\n\tautomatic: {automatic}\n\tprofile: \"{stored}\"\n"),
+			)
+			.unwrap();
+			let mut live = config::reload_from_disk();
+			crate::profile::apply(&mut live);
+			let before = std::fs::read_to_string(&path).unwrap();
+			let next = super::watch_step_down(&live);
+			assert_eq!(
+				std::fs::read_to_string(&path).unwrap(),
+				before,
+				"automatic {automatic}, stored {stored}: taking the step writes nothing"
+			);
+			assert_eq!(
+				next.as_ref().and_then(|n| n.stepped_profile),
+				want,
+				"automatic {automatic}, stored {stored}"
+			);
+			let Some(next) = next else {
+				continue;
+			};
+			assert_eq!(next.performance_profile, stored, "the stored profile stays");
+			assert_eq!(Some(crate::profile::current(&next)), want);
+			assert!(config::persist(&live, &next));
+			assert_eq!(
+				std::fs::read_to_string(&path).unwrap(),
+				before,
+				"stored {stored}: nor does saving the settings it is in"
+			);
+		}
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 
 	// Switching the wallpaper off and on again drops the rotation pick, and a
