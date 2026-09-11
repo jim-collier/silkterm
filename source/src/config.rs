@@ -3169,13 +3169,28 @@ fn migrate_config_text(text: &str) -> Option<String> {
 	let lines: Vec<&str> = text.lines().collect();
 	// full path per line index, for the lines that are settings
 	let mut path_of: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+	let mut active_old_name = false;
 	for w in walk_settings(text) {
-		if let WalkLine::Setting { index, path, .. } = w {
+		if let WalkLine::Setting {
+			index,
+			path,
+			active,
+			..
+		} = w
+		{
+			active_old_name |= active && CONFIG_RENAMES.iter().any(|(old, _)| *old == path);
 			path_of.insert(index, path);
 		}
 	}
-	// rename targets already present (active or commented): don't create a dup
-	let have: std::collections::HashSet<&str> = path_of.values().map(String::as_str).collect();
+	// Rename targets already present (active or commented): don't create a dup.
+	// Only an active old name moves a value, so only then is the answer taken
+	// from the saved form; the template's commented `# focus:` pays nothing.
+	let raw_paths = || path_of.values().cloned().collect();
+	let have: std::collections::HashSet<String> = if active_old_name {
+		saved_paths(text).unwrap_or_else(raw_paths)
+	} else {
+		raw_paths()
+	};
 
 	let mut changed = false;
 	let mut out: Vec<String> = Vec::new();
@@ -3229,6 +3244,27 @@ fn migrate_config_text(text: &str) -> Option<String> {
 		joined.push('\n');
 		joined
 	})
+}
+
+// Every setting path, active and commented, in the text a save would write. A
+// save writes a commented line at the depth of the setting below it, so a
+// commented new name can move into the old name's block, and a rename that a
+// save turns on or off moved a value at the next launch. A file that lost a
+// line cannot be saved, so it has no saved form to agree with.
+fn saved_paths(text: &str) -> Option<std::collections::HashSet<String>> {
+	let doc = shcl::Document::parse(text);
+	if doc.lost_count() > 0 {
+		return None;
+	}
+	Some(
+		walk_settings(&doc.to_canonical())
+			.into_iter()
+			.filter_map(|w| match w {
+				WalkLine::Setting { path, .. } => Some(path),
+				_ => None,
+			})
+			.collect(),
+	)
 }
 
 // One-time: `shell.default` used to name the default shell on its own. The list
@@ -6679,6 +6715,45 @@ mod tests {
 					shcl::Document::parse(&text).lines(want).contains(&(at + 1)),
 					"shcl reads line {} of {text:?} as {want}",
 					at + 1
+				);
+			}
+		}
+	}
+
+	// Whether a rename's new name is already present is judged where a save puts
+	// a commented line, or the first save turns the rename on or off.
+	#[test]
+	fn a_commented_new_name_counts_where_a_save_puts_it() {
+		let saved = |t: &str| shcl::Document::parse(t).to_canonical();
+		let load = |t: &str| {
+			shcl::Document::parse(&migrate_config_text(t).unwrap_or_else(|| t.to_string()))
+		};
+		let blocked =
+			"colors:\n\tfocus: \"#112233\"\n# highlight: \"#aabbcc\"\n\tbackground: \"#000000\"\n";
+		let free = "colors:\n\tbackground: \"#000000\"\n\tfocus: \"#112233\"\n";
+		for ending in ["\n", "\r\n"] {
+			let blocked = blocked.replace('\n', ending);
+			assert!(
+				saved(&blocked).contains("\t# highlight:"),
+				"a save no longer moves this comment, so the case proves nothing"
+			);
+			let (raw, after) = (load(&blocked), load(&saved(&blocked)));
+			for path in ["colors.focus", "colors.highlight"] {
+				assert_eq!(
+					raw.get_string(path),
+					after.get_string(path),
+					"{path} loads the same before and after a save ({ending:?})"
+				);
+			}
+			assert_eq!(raw.get_string("colors.focus").as_deref(), Ok("#112233"));
+
+			// nothing blocks the rename here, so it still fires
+			let free = free.replace('\n', ending);
+			for doc in [load(&free), load(&saved(&free))] {
+				assert_eq!(
+					doc.get_string("colors.highlight").as_deref(),
+					Ok("#112233"),
+					"{ending:?}"
 				);
 			}
 		}
