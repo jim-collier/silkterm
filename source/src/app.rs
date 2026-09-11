@@ -1175,6 +1175,25 @@ fn needs_folder_read(
 	!locked && showing.is_none() && folder.is_some()
 }
 
+// What the performance watch does with a pass of the event loop.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RatingStep {
+	Note,
+	Pause,
+}
+
+// A frame is evidence about the hardware only when this window's own eased
+// rendering paced it. A benchmark is timing the same frames itself, a pinned
+// rate paces itself, and a window without focus is one nobody is watching, so
+// it gets no say in the profile.
+fn rating_step(bench: bool, scroll_anim: bool, pinned_fps: bool, focused: bool) -> RatingStep {
+	if !bench && scroll_anim && !pinned_fps && focused {
+		RatingStep::Note
+	} else {
+		RatingStep::Pause
+	}
+}
+
 // Where the rotation timer goes when a tick fires. It has to move off `now`
 // here rather than waiting for the worker's answer: the answer is dropped
 // unless it is still the newest request, and a timer left in the past fires
@@ -7212,7 +7231,10 @@ impl ApplicationHandler<UserEvent> for App {
 		// Fully hidden window: don't build a frame nobody can see. PTY reading
 		// never stops, so the grid keeps up and the reveal is one catch-up frame.
 		let hidden = state.freeze_sync();
+		// A pass that draws nothing pauses the watch too, or the next ease's first
+		// period would be the whole idle gap before it.
 		let flow = if hidden {
+			state.rating.pause();
 			ControlFlow::Wait
 		} else if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
 			// UI/chrome changes and the bell force ALL panes to re-shape; fresh
@@ -7222,25 +7244,32 @@ impl ApplicationHandler<UserEvent> for App {
 			state.dirty = false;
 			crate::perf::bump(&crate::perf::FRAMES);
 			let animating = crate::perf::timed(&crate::perf::RENDER_NS, || state.render(force));
-			// how the ease is paced tells whether the display keeps up; a pinned
-			// rate paces itself and says nothing about the hardware
+			// how the ease is paced tells whether the display keeps up
+			let step = rating_step(
+				state.bench.is_some(),
+				scroll_anim,
+				max_fps().is_some(),
+				state.focused,
+			);
 			if state.bench.is_some() {
 				// a run is timing the rungs itself; the step-down would be reading
 				// the same frames and moving the profile out from under it
-				state.rating.pause();
 				let budget = state.frame_budget_ms;
 				match state.bench.as_mut().map(|b| b.note(Instant::now(), budget)) {
 					Some(crate::profile::Step::Rung(next)) => state.set_live_profile(next),
 					Some(crate::profile::Step::Done(pick)) => state.finish_bench(pick),
 					_ => {}
 				}
-			} else if scroll_anim && max_fps().is_none() {
-				state.rating.note(Instant::now());
-				if state.rating.verdict(state.frame_budget_ms) == Some(true) {
-					state.step_down_profile();
+			}
+			match step {
+				RatingStep::Note => {
+					let budget = state.frame_budget_ms;
+					state.rating.note(Instant::now(), budget);
+					if state.rating.verdict(budget) == Some(true) {
+						state.step_down_profile();
+					}
 				}
-			} else {
-				state.rating.pause();
+				RatingStep::Pause => state.rating.pause(),
 			}
 			// a pane whose term was locked kept its content_dirty (rebuild was
 			// skipped) - retry shortly instead of waiting for the next event,
@@ -7272,6 +7301,7 @@ impl ApplicationHandler<UserEvent> for App {
 				ControlFlow::Wait
 			}
 		} else {
+			state.rating.pause();
 			ControlFlow::Wait
 		};
 		// Debounced remember-size: persist once the size has held; while one is
@@ -7403,12 +7433,36 @@ mod tests {
 	use super::{
 		Caret, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit, ViewState,
 		accel_at, accel_clash, copybox_fit, copybox_place, focus_ring, key_is_typed, menu_metrics,
-		mia, msub, mta, needs_folder_read, pace_frame, rotation_next, tab_close_box,
+		mia, msub, mta, needs_folder_read, pace_frame, rating_step, rotation_next, tab_close_box,
 		tab_command_line, tab_title_w, typed_title, view_menu_items,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
 	use winit::event::ElementState;
+
+	// Only a focused window's own eased frame is evidence; every other pass
+	// pauses the watch, so an idle gap is never read as a period.
+	#[test]
+	fn only_a_focused_eased_unpinned_frame_is_counted() {
+		use super::RatingStep;
+		let mut notes = 0;
+		for bits in 0..16u8 {
+			let (bench, scroll, pinned, focused) =
+				(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
+			let step = rating_step(bench, scroll, pinned, focused);
+			if (bench, scroll, pinned, focused) == (false, true, false, true) {
+				assert_eq!(step, RatingStep::Note);
+				notes += 1;
+			} else {
+				assert_eq!(
+					step,
+					RatingStep::Pause,
+					"bench {bench} scroll {scroll} pinned {pinned} focused {focused}"
+				);
+			}
+		}
+		assert_eq!(notes, 1);
+	}
 
 	// Switching the wallpaper off and on again drops the rotation pick, and a
 	// request that does not re-read the folder then answers with nothing at all:
