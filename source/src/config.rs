@@ -1031,6 +1031,19 @@ fn write_config_text(path: &std::path::Path, text: &str) -> std::io::Result<()> 
 	std::fs::rename(&tmp, path)
 }
 
+// The same rename into place, with what the dialog's save already had: a linked
+// settings file is written through its link rather than replaced by a copy, the
+// file keeps its mode, and the temp file is created exclusively, so a link left
+// at its name is never written through. On Windows the publish is ReplaceFile,
+// which keeps the file's ACLs. A path that is not UTF-8 is refused rather than
+// converted lossily, which could name a different file.
+fn write_config_atomic(path: &std::path::Path, text: &str) -> Result<(), String> {
+	let Some(file) = path.to_str() else {
+		return Err(format!("{} is not a UTF-8 path", path.display()));
+	};
+	shcl::write_file_atomic(file, text)
+}
+
 #[must_use]
 fn write_doc(path: &std::path::Path, doc: &shcl::Document) -> bool {
 	if let Err(e) = doc.save_file(&path.to_string_lossy()) {
@@ -3533,9 +3546,10 @@ pub fn keep_rating(lines: &RatingLines) -> Kept {
 		note_config_busy(&path);
 		return Kept::Busy;
 	}
-	match write_config_text(&path, &out) {
+	match write_config_atomic(&path, &out) {
 		Ok(()) => Kept::Written,
-		Err(e) => Kept::Unwritable(format!("could not write {}: {e}", path.display())),
+		// the reason already names the file
+		Err(e) => Kept::Unwritable(format!("could not write {e}")),
 	}
 }
 
@@ -5177,6 +5191,91 @@ mod tests {
 		assert_eq!(bytes, text, "nothing is written while it is held");
 
 		assert_eq!(keep_rating(&lines), Kept::Written);
+		assert_eq!(
+			std::fs::read_to_string(&path).unwrap(),
+			"performance:\n\trated_hardware: 0123456789abcdef\n"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// A rename publishes a new file, so a rating written that way replaced a linked
+	// settings file with a plain copy and reset a private one's mode. The dialog's
+	// save never did either.
+	#[cfg(unix)]
+	#[test]
+	fn a_rating_keeps_a_linked_private_settings_file() {
+		use std::os::unix::fs::PermissionsExt;
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_ratinglink_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let real = dir.join("real.shcl");
+		std::fs::write(&real, "performance:\n\trated_hardware: 0000000000000000\n").unwrap();
+		std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+		let link = dir.join("config.shcl");
+		std::os::unix::fs::symlink(&real, &link).unwrap();
+		set_config_override(link.clone());
+
+		let lines = RatingLines {
+			rated_hardware: Some("0123456789abcdef"),
+			..RatingLines::default()
+		};
+		assert_eq!(keep_rating(&lines), Kept::Written);
+		let meta = std::fs::symlink_metadata(&link).unwrap();
+		assert!(
+			meta.file_type().is_symlink(),
+			"the settings file is still a link"
+		);
+		assert_eq!(std::fs::read_link(&link).unwrap(), real);
+		assert_eq!(
+			std::fs::read_to_string(&real).unwrap(),
+			"performance:\n\trated_hardware: 0123456789abcdef\n",
+			"the linked file holds the rating"
+		);
+		let mode = std::fs::metadata(&real).unwrap().permissions().mode() & 0o777;
+		assert_eq!(mode, 0o600, "the file stays private");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// The temp file's name is predictable, so something already sitting there must
+	// never be written through: a link to another file would get the settings text.
+	#[cfg(unix)]
+	#[test]
+	fn a_rating_writes_through_no_link_left_at_a_temp_name() {
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_ratingplant_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		std::fs::write(&path, "performance:\n\trated_hardware: 0000000000000000\n").unwrap();
+		let victim = dir.join("victim.txt");
+		std::fs::write(&victim, "untouched\n").unwrap();
+		// the name the rating used to write, and the first one shcl's writer tries
+		for name in [
+			"config.shcl.new".to_string(),
+			format!(".config.shcl.tmp{}.0", std::process::id()),
+		] {
+			std::os::unix::fs::symlink(&victim, dir.join(name)).unwrap();
+		}
+		set_config_override(path.clone());
+
+		let lines = RatingLines {
+			rated_hardware: Some("0123456789abcdef"),
+			..RatingLines::default()
+		};
+		assert_eq!(keep_rating(&lines), Kept::Written);
+		assert_eq!(
+			std::fs::read_to_string(&victim).unwrap(),
+			"untouched\n",
+			"a link at a temp name is not written through"
+		);
+		let meta = std::fs::symlink_metadata(&path).unwrap();
+		assert!(
+			meta.file_type().is_file(),
+			"the settings file is a plain file"
+		);
 		assert_eq!(
 			std::fs::read_to_string(&path).unwrap(),
 			"performance:\n\trated_hardware: 0123456789abcdef\n"
