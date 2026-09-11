@@ -42,6 +42,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
+- 🔘 Smooth scrolling bug (seems to be another regression to pre-alacritty work): smooth-scrolling often involve quite noticable sharp horizontal "seams", where it seems like vertical portions of the screen don't scroll at the same rate. (And/or start at different times, or something.)
+	- Two kinds of seam found so far. Which one is the one seen still needs confirming, with the program and pane layout that shows it.
+	- While output eases in, lines a program redraws at the bottom (a progress bar, apt's status line, a live block under a transcript) drop a row and slide back up, while the text above only slides up. Same as the apt progress bar item closed 20260724, which was never really fixed.
+	- With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Side-by-side panes are not affected.
+	- Neither is new: both show on builds from before the scroll ledger.
+	- It could also be tearing from the desktop compositor. Worth trying `xfconf-query -c xfwm4 -p /general/vblank_mode -s glx`, and `-s auto` to undo.
+
+- 🔘 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
+	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even Claude Code's autocopy doesn't work.)
+	- CTRL+shift+C on selected text doesn't work.
+	- Right-click and choose "Copy", DOES work.
+
+- 🔘 Scrolling back in muffer with the mouse wheel made its "1 new message" indicator smear and bounce - the same shape as #t78br, "The Notorious 'Bouncing Shadow' nano bug".
+	- This old bug has returned - ever since the alacritty work.
+
 - 🔘 The scroll test's full-screen-entry check tests nothing: it runs the less scene instead of its own script.
 	- So the guard against the nano wobble passes whatever the code does.
 	- Opened: 20260911-113647
@@ -98,18 +113,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - 🔘 Settings Apply: no test covers picking Remote in the dialog while a performance step taken since it opened is in force.
 	- The code handles it. Taking that handling out fails no test.
 	- Opened: 20260910-213600
-
-- 🔘 Smooth scrolling bug (seems to be another regression to pre-alacritty work): smooth-scrolling often involve quite noticable sharp horizontal "seams", where it seems like vertical portions of the screen don't scroll at the same rate. (And/or start at different times, or something.)
-	- Two kinds of seam found so far. Which one is the one seen still needs confirming, with the program and pane layout that shows it.
-	- While output eases in, lines a program redraws at the bottom (a progress bar, apt's status line, a live block under a transcript) drop a row and slide back up, while the text above only slides up. Same as the apt progress bar item closed 20260724, which was never really fixed.
-	- With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Side-by-side panes are not affected.
-	- Neither is new: both show on builds from before the scroll ledger.
-	- It could also be tearing from the desktop compositor. Worth trying `xfconf-query -c xfwm4 -p /general/vblank_mode -s glx`, and `-s auto` to undo.
-
-- 🔘 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
-	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even Claude Code's autocopy doesn't work.)
-	- CTRL+shift+C on selected text doesn't work.
-	- Right-click and choose "Copy", DOES work.
 
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
 	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
