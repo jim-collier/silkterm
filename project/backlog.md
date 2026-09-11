@@ -45,6 +45,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - 🔘 Converting an old flat settings file loses its `wallpaper:` image, and the next save from Settings can drop more wallpaper settings.
 	- The image path is written onto the `wallpaper:` section line instead of `image:`, so no wallpaper loads. The path is still in the `.bak` file.
 	- The next save then drops values the conversion kept, such as the opacity and the fit. A file that used `background_image:` converts correctly.
+	- Fixed on `flatwall`: the image converts to `image:`, and a file an earlier build already converted gets it back at the next launch, in place and with no new backup.
+	- That build also converted the file again at every launch, and settings it dropped on those launches are not recovered. They are still in the `.bak` files.
 	- Opened: 20260911-064028
 
 - 🔘 A setting indented under a commented-out heading can load at one launch and be ignored at the next.
