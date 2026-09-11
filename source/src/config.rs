@@ -1613,7 +1613,10 @@ fn load() -> Settings {
 	// updated config stays current without clobbering the user's existing
 	// values. These are the only launch-time writes, and each runs only when
 	// the program's own option set changed. The in-place writes defer (with an
-	// FYI) if the file looks open in another program.
+	// FYI) if the file looks open in another program. A heading an earlier
+	// conversion left holding the wallpaper image is put right before that, or
+	// the file reads as pre-nesting and converts again.
+	repair_wallpaper_heading(&path);
 	convert_legacy_config(&path);
 	adopt_default_shell(&path);
 	migrate_config(&path);
@@ -2583,6 +2586,53 @@ fn backup_aside(path: &std::path::Path) -> Option<PathBuf> {
 	}
 }
 
+// Copy a config to the first free `.bak` name, for a rewrite that leaves the
+// file where it is. `create_new` skips a name held by anything, a dangling link
+// included, so nothing is written through a link left there. The body is the
+// text the caller read, so the backup is exactly what was rewritten.
+fn backup_copy(path: &std::path::Path, body: &[u8]) -> Option<PathBuf> {
+	use std::io::Write;
+	let name = path.file_name()?.to_string_lossy().into_owned();
+	#[cfg(unix)]
+	let perms = std::fs::metadata(path).ok()?.permissions();
+	for n in 1u32..=BACKUPS_MAX {
+		let backup = match n {
+			1 => path.with_file_name(format!("{name}.bak")),
+			_ => path.with_file_name(format!("{name}.bak{n}")),
+		};
+		let mut file = match std::fs::OpenOptions::new()
+			.write(true)
+			.create_new(true)
+			.open(&backup)
+		{
+			Ok(file) => file,
+			Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+			Err(e) => {
+				eprintln!("{APP_NAME}: could not back up {}: {e}", path.display());
+				return None;
+			}
+		};
+		// Private before it holds anything. Elsewhere the mode is only a read-only
+		// flag: it adds no privacy (a new file takes its folder's ACLs), and it
+		// would stop a failed conversion removing the backup it just made.
+		#[cfg(unix)]
+		let written = std::fs::set_permissions(&backup, perms).and_then(|()| file.write_all(body));
+		#[cfg(not(unix))]
+		let written = file.write_all(body);
+		if let Err(e) = written.and_then(|()| file.sync_all()) {
+			eprintln!("{APP_NAME}: could not back up {}: {e}", path.display());
+			let _ = std::fs::remove_file(&backup);
+			return None;
+		}
+		return Some(backup);
+	}
+	eprintln!(
+		"{APP_NAME}: {BACKUPS_MAX} config backups already in {}; clear some out first",
+		path.display()
+	);
+	None
+}
+
 // Move the config aside so the next load writes a fresh one from the template.
 // The old file is kept, not deleted. Returns where it went, or None if there
 // was nothing to move.
@@ -2900,19 +2950,171 @@ fn activate_line(lines: &mut [String], path: &str, value: &str) -> bool {
 	false
 }
 
-// One-time conversion of a pre-nesting config: the flat `wallpaper_*`-style
-// namespace became nested blocks, and rewriting that in place would shred the
-// old file's comments and grouping. Instead the old file is moved aside to a
-// `.bak` and a fresh template is written with every ACTIVE old value carried
-// over to its new path - settings survive, and the file's documentation is
-// current instead of half-old. Unknown `themes.*` subtrees (user data for a
-// future feature) are carried verbatim in dotted form.
-fn convert_legacy_config(path: &std::path::Path) {
+// A column-0 `wallpaper:` line holding a value. No shipped setting reads one.
+fn valued_wallpaper_line(line: &str) -> bool {
+	line.starts_with("wallpaper")
+		&& line_setting_key(line) == Some("wallpaper")
+		&& line_setting_value(line).is_some_and(|v| !strip_trailing_comment(v).trim().is_empty())
+}
+
+// An earlier build converted a flat `wallpaper: <image>` onto the template's
+// `wallpaper:` heading. shcl still reads the block under it, so only the image
+// was lost, but the line kept the file reading as flat and every launch
+// converted it again. The value moves to `image:`, or is dropped when the file
+// names an image already. No other line changes, but line endings come back LF.
+fn wallpaper_heading_repaired(text: &str) -> Option<String> {
+	// every launch comes through here, and almost no file has such a line
+	if !text.lines().any(valued_wallpaper_line) {
+		return None;
+	}
+	let lines: Vec<&str> = text.lines().collect();
+	// the walk leaves out lines inside a fenced value, which are text
+	let valued: Vec<usize> = walk_settings(text)
+		.into_iter()
+		.filter_map(|w| match w {
+			WalkLine::Setting {
+				index,
+				active: true,
+				..
+			} if valued_wallpaper_line(lines[index]) => Some(index),
+			_ => None,
+		})
+		.collect();
+	// two of them cannot be told apart
+	let [at] = valued[..] else {
+		return None;
+	};
+	// What follows must be the template's block. A flat file's next setting sits
+	// at column 0, or is an old flat name indented by hand, and the conversion
+	// reads that correctly. Comments give no depth.
+	let child = lines[at + 1..].iter().find(|line| {
+		let trimmed = line.trim_start();
+		!trimmed.is_empty() && !trimmed.starts_with('#')
+	})?;
+	let indent = &child[..child.len() - child.trim_start().len()];
+	if indent.is_empty() {
+		return None;
+	}
+	let child_path = format!("wallpaper.{}", line_setting_key(child)?);
+	let in_template = walk_settings(default_config())
+		.iter()
+		.any(|w| matches!(w, WalkLine::Setting { path, .. } if *path == child_path));
+	if !in_template {
+		return None;
+	}
+	let value = line_setting_value(lines[at])?;
+	let named = shcl::Document::parse(text).count("wallpaper.image") > 0;
+	let mut out = String::with_capacity(text.len() + indent.len() + 8);
+	for (index, line) in lines.iter().enumerate() {
+		if index != at {
+			out.push_str(line);
+			out.push('\n');
+			continue;
+		}
+		out.push_str("wallpaper:\n");
+		if !named {
+			out.push_str(indent);
+			out.push_str("image: ");
+			out.push_str(value);
+			out.push('\n');
+		}
+	}
+	Some(out)
+}
+
+// In place and with no backup: an install this damaged converted the file at
+// every launch, and has used up most of the backup names doing it.
+fn repair_wallpaper_heading(path: &std::path::Path) {
 	let Ok(text) = std::fs::read_to_string(path) else {
 		return;
 	};
+	let Some(out) = wallpaper_heading_repaired(&text) else {
+		return;
+	};
+	if config_open_elsewhere(path) {
+		note_config_busy(path);
+		return;
+	}
+	if let Err(e) = write_config_atomic(path, &out) {
+		eprintln!(
+			"{APP_NAME}: could not repair config {}: {e}",
+			path.display()
+		);
+		return;
+	}
+	// the image line is added only when the file named no image already
+	if out.lines().count() > text.lines().count() {
+		eprintln!(
+			"{APP_NAME}: moved the wallpaper image in {} from the `wallpaper:` line to `image:`",
+			path.display()
+		);
+	} else {
+		eprintln!(
+			"{APP_NAME}: cleared the `wallpaper:` line in {}; the file already names an image under `image:`",
+			path.display()
+		);
+	}
+}
+
+// One-time conversion of a pre-nesting config: the flat `wallpaper_*`-style
+// namespace became nested blocks, and rewriting that in place would shred the
+// old file's comments and grouping. Instead the old file is copied to a `.bak`
+// and a fresh template is written over it, with every ACTIVE old value carried
+// over to its new path - settings survive, and the file's documentation is
+// current instead of half-old. Unknown `themes.*` subtrees (user data for a
+// future feature) are carried verbatim in dotted form. The rewrite keeps a
+// linked file linked and a private one private.
+fn convert_legacy_config(path: &std::path::Path) {
+	convert_legacy_config_with(path, write_config_atomic);
+}
+
+// The writer is a parameter so a test can fail it the ways the real one can.
+fn convert_legacy_config_with(
+	path: &std::path::Path,
+	write: fn(&std::path::Path, &str) -> Result<(), String>,
+) {
+	let Ok(text) = std::fs::read_to_string(path) else {
+		return;
+	};
+	let Some(joined) = converted_config_text(&text) else {
+		return;
+	};
+	if config_open_elsewhere(path) {
+		note_config_busy(path);
+		return;
+	}
+	let Some(backup) = backup_copy(path, text.as_bytes()) else {
+		return;
+	};
+	if let Err(e) = write(path, &joined) {
+		// A file that stays unwritable would gain a backup at every launch, so one
+		// that reads back whole needs none. Anything else keeps it: ReplaceFile can
+		// fail after the file it replaces is gone, leaving the backup the only copy.
+		if std::fs::read(path).is_ok_and(|now| now == text.as_bytes()) {
+			let _ = std::fs::remove_file(&backup);
+			eprintln!(
+				"{APP_NAME}: could not convert config {}: {e}",
+				path.display()
+			);
+		} else {
+			eprintln!(
+				"{APP_NAME}: could not convert config {}: {e}; the old file is kept at {}",
+				path.display(),
+				backup.display()
+			);
+		}
+		return;
+	}
+	eprintln!(
+		"{APP_NAME}: config converted to the new nested layout; the old file is kept at {}",
+		backup.display()
+	);
+}
+
+// The conversion as text: None for a file that is not pre-nesting.
+fn converted_config_text(text: &str) -> Option<String> {
 	let lines: Vec<&str> = text.lines().collect();
-	let walked = walk_settings(&text);
+	let walked = walk_settings(text);
 	// Only an ACTIVE flat key marks a file as legacy: any real old config has
 	// several (the template shipped with them), while a comment that merely
 	// spells an old name - e.g. one a relayouted save left at column 0 - must
@@ -2922,15 +3124,24 @@ fn convert_legacy_config(path: &std::path::Path) {
 			if !p.contains('.') && LEGACY_KEYS.iter().any(|(old, _)| old == p))
 	});
 	if !legacy {
-		return;
+		return None;
 	}
 
 	// active values: current-format paths carry as themselves (a mixed file
 	// loses nothing), old spellings map through the table, best (lowest table
 	// index) spelling winning per new path
-	let known_new: std::collections::HashSet<String> = setting_lines(default_config())
+	// Settings only, never a block heading: a flat `wallpaper:` held the image,
+	// and matched as a current path it was written onto the `wallpaper:` heading.
+	let known_new: std::collections::HashSet<String> = walk_settings(default_config())
 		.into_iter()
-		.map(|(p, _)| p)
+		.filter_map(|w| match w {
+			WalkLine::Setting {
+				path,
+				header: false,
+				..
+			} => Some(path),
+			_ => None,
+		})
 		.collect();
 	let mut carry: std::collections::HashMap<String, (usize, String)> =
 		std::collections::HashMap::new();
@@ -2993,13 +3204,6 @@ fn convert_legacy_config(path: &std::path::Path) {
 			.or_insert((usize::MAX, "false".to_string()));
 	}
 
-	if config_open_elsewhere(path) {
-		note_config_busy(path);
-		return;
-	}
-	let Some(backup) = backup_aside(path) else {
-		return;
-	};
 	let mut out: Vec<String> = default_config().lines().map(str::to_string).collect();
 	for (new_path, (_, value)) in &carry {
 		if !activate_line(&mut out, new_path, value) {
@@ -3014,17 +3218,7 @@ fn convert_legacy_config(path: &std::path::Path) {
 	}
 	let mut joined = out.join("\n");
 	joined.push('\n');
-	if let Err(e) = write_config_text(path, &joined) {
-		eprintln!(
-			"{APP_NAME}: could not convert config {}: {e}",
-			path.display()
-		);
-		return;
-	}
-	eprintln!(
-		"{APP_NAME}: config converted to the new nested layout; the old file is kept at {}",
-		backup.display()
-	);
+	Some(joined)
 }
 
 // Migrate an existing config in place across program updates: rename keys whose
@@ -6435,6 +6629,509 @@ mod tests {
 		let _ = std::fs::remove_file(&path);
 	}
 
+	// A flat `wallpaper:` held the image. It reaches `wallpaper.image`, never the
+	// block heading, whatever order the carried values are placed in, and a save
+	// from Settings then loads every carried value the same.
+	#[test]
+	fn a_flat_wallpaper_converts_to_the_image_and_survives_a_save() {
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_flatwp_{}", std::process::id()));
+		let flat = "wallpaper: /home/x/Pictures/a.png\nbackground_opacity: 0.5\nwallpaper_fit: zoom\nwallpaper_blur: 3\nbackground_contrast_mask_auto: 0.8\nfont_size: 13\n";
+		// the carried values are placed in hash order, so one round proves little
+		for round in 0..16 {
+			let text = if round % 2 == 1 {
+				flat.replace('\n', "\r\n")
+			} else {
+				flat.to_string()
+			};
+			let _ = std::fs::remove_dir_all(&dir);
+			std::fs::create_dir_all(&dir).unwrap();
+			let path = dir.join("config.shcl");
+			std::fs::write(&path, &text).unwrap();
+			set_config_override(path.clone());
+			let check = |s: &Settings, when: &str| {
+				assert_eq!(
+					s.wallpaper_raw, "/home/x/Pictures/a.png",
+					"{when}, round {round}: the image"
+				);
+				assert_eq!(s.wallpaper_opacity, 0.5, "{when}, round {round}: opacity");
+				assert!(
+					matches!(s.wallpaper_default_fit, Fit::Zoom),
+					"{when}, round {round}: fit"
+				);
+				assert_eq!(s.wallpaper_blur, 3.0, "{when}, round {round}: blur");
+				assert_eq!(
+					s.wallpaper_contrast_mask_auto, 0.8,
+					"{when}, round {round}: contrast mask"
+				);
+			};
+			let launched = load();
+			check(&launched, "first launch");
+			let mut edited = launched.clone();
+			edited.font_size += 1.0;
+			assert!(persist(&launched, &edited));
+			check(&load(), "after a save");
+			let baks = std::fs::read_dir(&dir)
+				.unwrap()
+				.flatten()
+				.filter(|e| e.file_name().to_string_lossy().contains(".bak"))
+				.count();
+			assert_eq!(baks, 1, "round {round}: converted once");
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	fn active_headings(text: &str) -> Vec<(usize, String)> {
+		walk_settings(text)
+			.into_iter()
+			.filter_map(|w| match w {
+				WalkLine::Setting {
+					index,
+					path,
+					header: true,
+					active: true,
+				} => Some((index, path)),
+				_ => None,
+			})
+			.collect()
+	}
+
+	// Every block name, not only `wallpaper`: an old flat line named like a block
+	// is either carried to a setting or dropped, and the block keeps its heading.
+	#[test]
+	fn a_flat_key_named_like_a_block_never_lands_on_its_heading() {
+		let dir = std::env::temp_dir().join(format!("silkterm_flathead_{}", std::process::id()));
+		let heads = active_headings(default_config());
+		assert!(heads.iter().any(|(_, p)| p == "wallpaper"));
+		for (_, head) in heads.iter().filter(|(_, p)| !p.contains('.')) {
+			let _ = std::fs::remove_dir_all(&dir);
+			std::fs::create_dir_all(&dir).unwrap();
+			let path = dir.join("config.shcl");
+			std::fs::write(&path, format!("{head}: x\nfont_size: 13\n")).unwrap();
+			convert_legacy_config(&path);
+			let out = std::fs::read_to_string(&path).unwrap();
+			assert!(
+				out.contains("\tsize: 13"),
+				"`{head}: x` was not converted:\n{out}"
+			);
+			assert_eq!(
+				active_headings(&out),
+				heads,
+				"`{head}: x` changed a block heading:\n{out}"
+			);
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	fn misplaced_image(text: &str) -> String {
+		let out = text.replacen("\nwallpaper:\n", "\nwallpaper: /home/x/Pictures/a.png\n", 1);
+		assert_ne!(out, text, "the template has no plain wallpaper heading");
+		out + "wallpaper.default_fit: zoom\n"
+	}
+
+	// A file an earlier conversion left with the image on the `wallpaper:` heading
+	// gets it back under `image:`, in place. No backup is taken, so a folder that
+	// already holds every backup name is repaired too, and the next launch neither
+	// converts the file nor changes it again.
+	#[test]
+	fn an_image_left_on_the_wallpaper_heading_moves_to_image() {
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_wphead_{}", std::process::id()));
+		let damaged = misplaced_image(default_config());
+		let saved = {
+			let mut doc = shcl::Document::parse(&damaged);
+			assert!(doc.set_float("font.size", 15.5));
+			doc.to_canonical()
+		};
+		let (a, b) = ("/home/x/Pictures/a.png", "/home/x/Pictures/b.png");
+		// (what, file, image, every backup name taken, missing settings added first)
+		let cases = [
+			("as converted", damaged.clone(), a, false, false),
+			("after a save", saved, a, false, false),
+			("with CRLF", damaged.replace('\n', "\r\n"), a, false, false),
+			(
+				"an image named since",
+				format!("{damaged}wallpaper.image: {b}\n"),
+				b,
+				false,
+				false,
+			),
+			("every backup name taken", damaged.clone(), a, true, false),
+			("as that launch left it", damaged.clone(), a, false, true),
+		];
+		for (what, text, image, full, backfilled) in cases {
+			let _ = std::fs::remove_dir_all(&dir);
+			std::fs::create_dir_all(&dir).unwrap();
+			let path = dir.join("config.shcl");
+			std::fs::write(&path, &text).unwrap();
+			if full {
+				for n in 1..=BACKUPS_MAX {
+					let name = if n == 1 {
+						"config.shcl.bak".to_string()
+					} else {
+						format!("config.shcl.bak{n}")
+					};
+					std::fs::write(dir.join(name), "old\n").unwrap();
+				}
+			}
+			if backfilled {
+				// the launch that converted it added the settings it then misread
+				backfill_config(&path);
+				assert_ne!(
+					std::fs::read_to_string(&path).unwrap(),
+					text,
+					"{what}: nothing was added, so the case proves nothing"
+				);
+			}
+			set_config_override(path.clone());
+			let s = load();
+			assert_eq!(s.wallpaper_raw, image, "{what}: the image");
+			assert!(
+				matches!(s.wallpaper_default_fit, Fit::Zoom),
+				"{what}: the rest of the block"
+			);
+			let once = std::fs::read_to_string(&path).unwrap();
+			let doc = shcl::Document::parse(&once);
+			assert!(
+				doc.get_string("wallpaper").is_err() && doc.count("wallpaper") == 1,
+				"{what}: a heading again:\n{once}"
+			);
+			assert_eq!(doc.count("wallpaper.image"), 1, "{what}: one image line");
+			let baks = std::fs::read_dir(&dir)
+				.unwrap()
+				.flatten()
+				.filter(|e| e.file_name().to_string_lossy().contains(".bak"))
+				.count();
+			assert_eq!(
+				baks,
+				if full { BACKUPS_MAX as usize } else { 0 },
+				"{what}: nothing converted"
+			);
+			assert_eq!(load().wallpaper_raw, image, "{what}: next launch");
+			assert_eq!(
+				std::fs::read_to_string(&path).unwrap(),
+				once,
+				"{what}: settled"
+			);
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// The repair rewrites a settings file at launch, so every shape that is not
+	// the one an earlier conversion wrote is left alone.
+	#[test]
+	fn only_a_heading_holding_a_value_is_repaired() {
+		let damaged = misplaced_image(default_config());
+		let want = default_config().replacen(
+			"\nwallpaper:\n",
+			"\nwallpaper:\n\timage: /home/x/Pictures/a.png\n",
+			1,
+		) + "wallpaper.default_fit: zoom\n";
+		assert_eq!(
+			wallpaper_heading_repaired(&damaged).as_deref(),
+			Some(want.as_str()),
+			"one line cleared, one added, nothing else"
+		);
+		assert_eq!(wallpaper_heading_repaired(&want), None, "settled");
+		assert_eq!(
+			wallpaper_heading_repaired(&damaged.replace('\n', "\r\n")).as_deref(),
+			Some(want.as_str()),
+			"CRLF"
+		);
+		let fence = "notes: ```\nwallpaper: /p/b.png\n\trotate:\n```\n";
+		assert_eq!(
+			wallpaper_heading_repaired(&format!("{damaged}{fence}")),
+			Some(format!("{want}{fence}")),
+			"a fenced value's text is kept"
+		);
+		for (text, out) in [
+			(
+				"wallpaper: /p/a.png\n\trotate:\n\t\tenabled: true\n",
+				"wallpaper:\n\timage: /p/a.png\n\trotate:\n\t\tenabled: true\n",
+			),
+			(
+				"wallpaper: /p/a.png  # mine\n\n\t# enabled: true\n\t\tcontrast_mask:\n",
+				"wallpaper:\n\t\timage: /p/a.png  # mine\n\n\t# enabled: true\n\t\tcontrast_mask:\n",
+			),
+		] {
+			assert_eq!(
+				wallpaper_heading_repaired(text).as_deref(),
+				Some(out),
+				"{text}"
+			);
+		}
+		for text in [
+			"wallpaper: /p/a.png\nwallpaper_opacity: 0.4\n".to_string(),
+			"wallpaper: /p/a.png\n".to_string(),
+			"# wallpaper: /p/a.png\n\trotate:\n".to_string(),
+			"wallpaper:\n\trotate:\n\t\tenabled: true\n".to_string(),
+			"wallpaper: /p/a.png\n# note\n\n\t# rotate:\nfont_size: 13\n".to_string(),
+			"\twallpaper: /p/a.png\n\t\trotate:\n".to_string(),
+			format!("{damaged}wallpaper: /p/b.png\n\topacity: 0.4\n"),
+			// an old flat name indented by hand is the conversion's to read
+			"wallpaper: /p/a.png\n\twallpaper_opacity: 0.4\nfont_size: 13\n".to_string(),
+			"wallpaper: /p/a.png\n\twallpaper_opacity: 0.4\n".to_string(),
+			// the old flat `opacity` is also a name inside the block
+			"wallpaper: /p/a.png\nopacity: 0.4\n".to_string(),
+			"wallpaper: /p/a.png\nrotate:\n\tenabled: true\n".to_string(),
+			"wallpaper: /p/a.png\n\t* /p/b.png\n".to_string(),
+			"notes: ```\nwallpaper: /p/a.png\n\trotate:\n```\n".to_string(),
+			"wallpaper: ```\n\trotate:\n```\n".to_string(),
+			"wallpaper:  ## mine\n\trotate:\n".to_string(),
+			"wallpaper:\r\n\trotate:\r\n\t\tenabled: true\r\n".to_string(),
+			"wallpaper: /p/a.png\r\nfont_size: 13\r\n".to_string(),
+			default_config().to_string(),
+		] {
+			assert_eq!(wallpaper_heading_repaired(&text), None, "{text}");
+		}
+	}
+
+	// A launch that finds the settings file open in another program leaves it as it
+	// is, and the next launch that does not repairs it.
+	#[cfg(target_os = "linux")]
+	#[test]
+	fn a_busy_launch_defers_the_wallpaper_repair() {
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_wpbusy_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		let damaged = misplaced_image(default_config());
+		std::fs::write(&path, &damaged).unwrap();
+		set_config_override(path.clone());
+		let baks = || {
+			std::fs::read_dir(&dir)
+				.unwrap()
+				.flatten()
+				.filter(|e| e.file_name().to_string_lossy().contains(".bak"))
+				.count()
+		};
+
+		// a child with the file as its stdin holds it open until it exits
+		let hold = std::fs::File::open(&path).unwrap();
+		let mut child = std::process::Command::new("sleep")
+			.arg("30")
+			.stdin(std::process::Stdio::from(hold))
+			.spawn()
+			.unwrap();
+		let seen = (0..50).any(|_| {
+			if config_open_elsewhere(&path) {
+				return true;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(20));
+			false
+		});
+		let busy = seen.then(|| (load().wallpaper_raw, std::fs::read_to_string(&path)));
+		let _ = child.kill();
+		let _ = child.wait();
+
+		let (image, text) = busy.expect("the holder was never seen");
+		assert_eq!(image, "", "a busy launch loads no image");
+		assert_eq!(
+			text.unwrap(),
+			damaged,
+			"a busy launch leaves the file alone"
+		);
+		assert_eq!(baks(), 0, "a busy launch takes no backup");
+		assert_eq!(
+			load().wallpaper_raw,
+			"/home/x/Pictures/a.png",
+			"the next launch repairs it"
+		);
+		let doc = shcl::Document::parse(&std::fs::read_to_string(&path).unwrap());
+		assert_eq!(doc.count("wallpaper.image"), 1, "one image line");
+		assert_eq!(baks(), 0, "the repair takes no backup");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// The repair rewrites the settings file at launch, so a linked file stays
+	// linked to the same file, and a private one stays private.
+	#[cfg(unix)]
+	#[test]
+	fn a_repair_keeps_a_linked_private_settings_file() {
+		use std::os::unix::fs::PermissionsExt;
+		let dir = std::env::temp_dir().join(format!("silkterm_wplink_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let real = dir.join("real.shcl");
+		let damaged = misplaced_image(default_config());
+		std::fs::write(&real, &damaged).unwrap();
+		std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+		let link = dir.join("config.shcl");
+		std::os::unix::fs::symlink(&real, &link).unwrap();
+
+		repair_wallpaper_heading(&link);
+
+		assert!(
+			std::fs::symlink_metadata(&link)
+				.unwrap()
+				.file_type()
+				.is_symlink(),
+			"still a link"
+		);
+		assert_eq!(std::fs::read_link(&link).unwrap(), real);
+		assert_eq!(
+			std::fs::read_to_string(&real).unwrap(),
+			wallpaper_heading_repaired(&damaged).unwrap(),
+			"the linked file is repaired"
+		);
+		assert_eq!(
+			std::fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+			0o600,
+			"the file stays private"
+		);
+		let names: Vec<String> = std::fs::read_dir(&dir)
+			.unwrap()
+			.flatten()
+			.map(|e| e.file_name().to_string_lossy().into_owned())
+			.collect();
+		assert_eq!(names.len(), 2, "no backup and no temp file: {names:?}");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// The conversion rewrites the settings file where it is: a link stays a link
+	// to the same file, a private file stays private, its backup is as private,
+	// and a link sitting at a backup name is never written through.
+	#[cfg(unix)]
+	#[test]
+	fn a_conversion_keeps_a_linked_private_settings_file() {
+		use std::os::unix::fs::PermissionsExt;
+		let dir = std::env::temp_dir().join(format!("silkterm_convlink_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let real = dir.join("real.shcl");
+		let flat = "font_size: 13\n";
+		std::fs::write(&real, flat).unwrap();
+		std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+		let link = dir.join("config.shcl");
+		std::os::unix::fs::symlink(&real, &link).unwrap();
+		let victim = dir.join("victim.txt");
+		std::fs::write(&victim, "untouched\n").unwrap();
+		std::os::unix::fs::symlink(&victim, dir.join("config.shcl.bak")).unwrap();
+
+		convert_legacy_config(&link);
+
+		assert!(
+			std::fs::symlink_metadata(&link)
+				.unwrap()
+				.file_type()
+				.is_symlink(),
+			"still a link"
+		);
+		assert_eq!(std::fs::read_link(&link).unwrap(), real);
+		assert!(
+			std::fs::read_to_string(&real)
+				.unwrap()
+				.contains("\tsize: 13"),
+			"the linked file is converted"
+		);
+		assert_eq!(
+			std::fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+			0o600
+		);
+		assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched\n");
+		let bak = dir.join("config.shcl.bak2");
+		assert!(
+			std::fs::symlink_metadata(&bak)
+				.unwrap()
+				.file_type()
+				.is_file(),
+			"the backup is a plain file"
+		);
+		assert_eq!(std::fs::read_to_string(&bak).unwrap(), flat);
+		assert_eq!(
+			std::fs::metadata(&bak).unwrap().permissions().mode() & 0o777,
+			0o600
+		);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// A conversion that cannot write leaves the file as it was and keeps no
+	// backup of it, or a file that stays unwritable gains one at every launch.
+	#[cfg(unix)]
+	#[test]
+	fn a_conversion_that_cannot_write_keeps_no_backup() {
+		use std::os::unix::fs::PermissionsExt;
+		let dir = std::env::temp_dir().join(format!("silkterm_convfail_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		let locked = dir.join("locked");
+		std::fs::create_dir_all(&locked).unwrap();
+		let real = locked.join("real.shcl");
+		let flat = "font_size: 13\n";
+		std::fs::write(&real, flat).unwrap();
+		std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+		let unlock = || {
+			let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755));
+			let _ = std::fs::remove_dir_all(&dir);
+		};
+		// a run with the rights to write there anyway has nothing to test
+		if std::fs::write(locked.join("probe"), "").is_ok() {
+			unlock();
+			return;
+		}
+		let link = dir.join("config.shcl");
+		std::os::unix::fs::symlink(&real, &link).unwrap();
+
+		convert_legacy_config(&link);
+
+		let still_link = std::fs::symlink_metadata(&link).is_ok_and(|m| m.file_type().is_symlink());
+		let text = std::fs::read_to_string(&real).unwrap_or_default();
+		let backup = std::fs::symlink_metadata(dir.join("config.shcl.bak")).is_ok();
+		unlock();
+		assert!(still_link, "the settings file is still a link");
+		assert_eq!(text, flat, "the file is as it was");
+		assert!(!backup, "no backup of a file that was not converted");
+	}
+
+	// A failed write is not proof the file is as it was. ReplaceFile can fail after
+	// the file it replaces is gone, and then the backup is the only copy left. So a
+	// failed conversion drops its backup only when the file reads back whole.
+	#[test]
+	fn a_failed_conversion_keeps_the_backup_unless_the_file_is_whole() {
+		type Write = fn(&std::path::Path, &str) -> Result<(), String>;
+		let refuse: Write = |_, _| Err("refused".to_string());
+		let remove: Write = |path, _| {
+			std::fs::remove_file(path).map_err(|e| e.to_string())?;
+			Err("replaced file gone".to_string())
+		};
+		let cut: Write = |path, _| {
+			std::fs::write(path, "font_").map_err(|e| e.to_string())?;
+			Err("cut short".to_string())
+		};
+		let dir = std::env::temp_dir().join(format!("silkterm_convkeep_{}", std::process::id()));
+		let flat = "font_size: 13\n";
+		// (what, writer, the settings file after, the backup kept)
+		for (what, write, file, kept) in [
+			("the file as it was", refuse, Some(flat), false),
+			("the file gone", remove, None, true),
+			("the file changed", cut, Some("font_"), true),
+		] {
+			let _ = std::fs::remove_dir_all(&dir);
+			std::fs::create_dir_all(&dir).unwrap();
+			let path = dir.join("config.shcl");
+			std::fs::write(&path, flat).unwrap();
+
+			convert_legacy_config_with(&path, write);
+
+			assert_eq!(
+				std::fs::read_to_string(&path).ok().as_deref(),
+				file,
+				"{what}: the settings file"
+			);
+			assert_eq!(
+				std::fs::read_to_string(dir.join("config.shcl.bak"))
+					.ok()
+					.as_deref(),
+				kept.then_some(flat),
+				"{what}: the backup"
+			);
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
 	// A hand-edited config is where a home-relative path gets typed, so `~` has
 	// to expand. `~user` has nothing to resolve against and stays literal.
 	#[test]
@@ -7009,6 +7706,215 @@ mod tests {
 				let _ = config_complaints(&text);
 				let _ = migrate_config_text(&text);
 				let _ = shcl::Document::parse(&text).to_canonical();
+			});
+		}
+
+		// A flat file of old names, the newest spelling winning, converts with each
+		// value readable at its new path, every block heading still a heading, and
+		// no second conversion.
+		#[test]
+		fn a_flat_file_carries_every_value_to_its_path() {
+			use super::super::{CONFIG_REMOVED, LEGACY_KEYS, converted_config_text};
+			use super::active_headings;
+			use std::fmt::Write;
+			let template = active_headings(default_config());
+			fuzz::soak("config-flat", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				let mut text = String::new();
+				let mut want: std::collections::HashMap<&str, (usize, String)> =
+					std::collections::HashMap::new();
+				let mut expect = |rank: usize, value: &str| {
+					let new = LEGACY_KEYS[rank].1;
+					if CONFIG_REMOVED.contains(&new) {
+						return;
+					}
+					let slot = want.entry(new).or_insert((rank, value.to_string()));
+					if rank < slot.0 {
+						*slot = (rank, value.to_string());
+					}
+				};
+				for i in 0..=rng.below(8) {
+					let rank = rng.below(LEGACY_KEYS.len());
+					let value = format!("v{seed}x{i}");
+					let _ = writeln!(text, "{}: {value}", LEGACY_KEYS[rank].0);
+					expect(rank, &value);
+				}
+				if rng.chance(3) {
+					let (_, head) = rng.pick(&template);
+					let value = format!("y{seed}");
+					let _ = writeln!(text, "{head}: {value}");
+					// a block name that is also an old flat name carries like one
+					if let Some(rank) = LEGACY_KEYS.iter().position(|(old, _)| old == head) {
+						expect(rank, &value);
+					}
+				}
+				let text = if seed % 4 == 3 {
+					text.replace('\n', "\r\n")
+				} else {
+					text
+				};
+				let out = converted_config_text(&text).expect("a flat file converts");
+				let doc = shcl::Document::parse(&out);
+				assert_eq!(doc.lost_count(), 0, "file:\n{text}\nconverted:\n{out}");
+				for (new, (_, value)) in &want {
+					assert_eq!(
+						doc.get_string(new).ok().as_deref(),
+						Some(value.as_str()),
+						"{new}\nfile:\n{text}\nconverted:\n{out}"
+					);
+				}
+				assert_eq!(
+					active_headings(&out),
+					template,
+					"a heading moved\nfile:\n{text}\nconverted:\n{out}"
+				);
+				assert_eq!(
+					converted_config_text(&out),
+					None,
+					"converted twice\nfile:\n{text}"
+				);
+			});
+		}
+
+		// The launch-time repair of a wallpaper heading, over the shapes around it:
+		// it settles in one pass, touches only the heading and the line it adds, and
+		// every other setting loads as before.
+		#[test]
+		fn a_wallpaper_repair_changes_nothing_else() {
+			use super::super::{valued_wallpaper_line, wallpaper_heading_repaired};
+			const IMAGES: [&str; 5] = [
+				"/p/a.png",
+				"\"C:\\Users\\x\\a b.png\"",
+				"/p/a.png  # mine",
+				"''",
+				"'/p/#1.png'",
+			];
+			fuzz::soak("config-repair", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				let mut text = default_config().to_string();
+				// valued `wallpaper:` lines above a block the template has
+				let mut valued = 0;
+				if !rng.chance(5) {
+					let image = rng.pick(&IMAGES);
+					text = text.replacen("\nwallpaper:\n", &format!("\nwallpaper: {image}\n"), 1);
+					valued += 1;
+				}
+				// shapes the repair must work through
+				if rng.chance(3) {
+					text.push_str("wallpaper.image: /p/b.png\n");
+				}
+				if rng.chance(3) {
+					text.push_str("font_size: 13\n");
+				}
+				if rng.chance(3) {
+					text.push_str("notes: ```\nwallpaper: /p/c.png\n\trotate:\n```\n");
+				}
+				if rng.chance(4) {
+					text = shcl::Document::parse(&text).to_canonical();
+				}
+				// shapes that rule it out
+				let mut ruled_out = false;
+				if rng.chance(6) {
+					let flat = if rng.chance(2) {
+						"wallpaper: /p/d.png\n\twallpaper_opacity: 0.4\n"
+					} else {
+						"wallpaper: /p/d.png\nopacity: 0.4\n"
+					};
+					text.insert_str(0, flat);
+					ruled_out = true;
+				}
+				if rng.chance(6) {
+					text.push_str("wallpaper: /p/e.png\n\topacity: 0.4\n");
+					valued += 1;
+				}
+				// any shape at all, so no expectation either way
+				let mut unknown = false;
+				if rng.chance(4) {
+					text.push_str(&String::from_utf8_lossy(&config(&mut rng)));
+					unknown = true;
+				}
+				if seed % 4 == 3 {
+					text = text.replace('\n', "\r\n");
+				}
+				let Some(out) = wallpaper_heading_repaired(&text) else {
+					assert!(
+						valued != 1 || ruled_out || unknown,
+						"a damaged heading was not repaired\nfile:\n{text}"
+					);
+					return;
+				};
+				assert!(
+					unknown || (valued == 1 && !ruled_out),
+					"repaired a file with {valued} valued headings:\n{text}"
+				);
+				assert_eq!(
+					wallpaper_heading_repaired(&out),
+					None,
+					"not settled\nfile:\n{text}\nrepaired:\n{out}"
+				);
+
+				// line endings may change (a repair writes LF), line contents may not
+				let old: Vec<&str> = text.lines().map(|l| l.trim_end_matches('\r')).collect();
+				let new: Vec<&str> = out.lines().map(|l| l.trim_end_matches('\r')).collect();
+				let at = old
+					.iter()
+					.zip(&new)
+					.position(|(a, b)| a != b)
+					.expect("the heading line changes");
+				assert!(
+					valued_wallpaper_line(old[at]) && new[at] == "wallpaper:",
+					"line {at} changed\nfile:\n{text}\nrepaired:\n{out}"
+				);
+				let added = new.len().checked_sub(old.len()).expect("no line removed");
+				assert!(added <= 1, "{added} lines added\nfile:\n{text}");
+				if added == 1 {
+					assert!(
+						new[at + 1].trim_start().starts_with("image: "),
+						"added {:?}",
+						new[at + 1]
+					);
+				}
+				assert_eq!(
+					old[at + 1..],
+					new[at + 1 + added..],
+					"another line changed\nfile:\n{text}\nrepaired:\n{out}"
+				);
+
+				let before = shcl::Document::parse(&text);
+				let after = shcl::Document::parse(&out);
+				let mut paths = before.paths();
+				paths.extend(after.paths());
+				// A heading in two `wallpaper:` blocks reads as written twice until the
+				// repair empties the first block and shcl folds the two. An empty value
+				// loads as the default either way, so only a value is compared.
+				let folded = |p: &str| {
+					matches!(after.get_string(p), Err(shcl::Status::Empty))
+						&& matches!(
+							before.get_string(p),
+							Err(shcl::Status::Empty | shcl::Status::Multiple)
+						)
+				};
+				for path in paths
+					.iter()
+					.filter(|p| *p != "wallpaper" && *p != "wallpaper.image" && !folded(p))
+				{
+					assert_eq!(
+						format!("{:?} {}", before.get_string(path), before.count(path)),
+						format!("{:?} {}", after.get_string(path), after.count(path)),
+						"{path} loads differently\nfile:\n{text}\nrepaired:\n{out}"
+					);
+				}
+				// the file may hold a second `wallpaper` block, so read the line alone
+				let image = if before.count("wallpaper.image") > 0 {
+					before.get_string("wallpaper.image")
+				} else {
+					shcl::Document::parse(old[at]).get_string("wallpaper")
+				};
+				assert_eq!(
+					after.get_string("wallpaper.image"),
+					image,
+					"the image\nfile:\n{text}\nrepaired:\n{out}"
+				);
 			});
 		}
 
