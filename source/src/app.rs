@@ -1285,6 +1285,9 @@ fn note_rating_not_kept(kept: &config::Kept) {
 		config::Kept::Written => return,
 		config::Kept::Busy => "the settings file is open in another program",
 		config::Kept::Unreadable => "the settings file has a line that cannot be read",
+		config::Kept::Unplaced => {
+			"the performance section of the settings file could not be updated"
+		}
 		config::Kept::Unwritable(why) => why.as_str(),
 	};
 	eprintln!(
@@ -1307,6 +1310,11 @@ fn bench_banner_lines(kept: Option<&config::Kept>) -> &'static [&'static str] {
 		Some(config::Kept::Unreadable) => &[
 			"Could not save the result",
 			"The settings file has a line that cannot be read.",
+			AGAIN,
+		],
+		Some(config::Kept::Unplaced) => &[
+			"Could not save the result",
+			"The performance section of the settings file could not be updated.",
 			AGAIN,
 		],
 		Some(config::Kept::Unwritable(_)) => &[
@@ -7840,6 +7848,10 @@ mod tests {
 			(
 				config::Kept::Unreadable,
 				"The settings file has a line that cannot be read.",
+			),
+			(
+				config::Kept::Unplaced,
+				"The performance section of the settings file could not be updated.",
 			),
 			(
 				config::Kept::Unwritable("could not write x: denied".to_string()),

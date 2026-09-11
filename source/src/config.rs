@@ -3500,8 +3500,12 @@ pub enum Kept {
 	Written,
 	// another process holds the file (Linux); nothing written
 	Busy,
-	// the lines could not be placed or did not read back; nothing written
+	// the file has a line the parse drops, and the values could not go in beside
+	// it; nothing written
 	Unreadable,
+	// the file reads clean, but the values could not go in so that they read back
+	// and every other setting reads as it did; nothing written
+	Unplaced,
 	// no settings path, or the read or the rename failed: the reason
 	Unwritable(String),
 }
@@ -3525,7 +3529,9 @@ enum RatingValue<'a> {
 // and backfill write at launch. `persist` refuses a file the parse dropped a
 // line from, which is right for the user's own values, but a rating that never
 // lands is a test at every launch with nothing on screen to say why. These are
-// lines the program owns, so every other byte stays as it was.
+// lines the program owns, so every other byte stays as it was, except on a file
+// that reads clean and still has nowhere to put them, which gets what the
+// dialog's save would write.
 #[must_use]
 pub fn keep_rating(lines: &RatingLines) -> Kept {
 	let Some(path) = config_path() else {
@@ -3558,6 +3564,8 @@ pub fn keep_rating(lines: &RatingLines) -> Kept {
 // changing how many it drops, so the count alone would let another setting load
 // differently. A rating key this write does not touch counts as another setting,
 // since a new `profile:` line can pull a deeper `check_next_run:` under itself.
+// The block that holds a written key is left out while it has no value of its
+// own, because a write into a file with no such block creates it.
 fn settings_besides(
 	doc: &shcl::Document,
 	written: &[String],
@@ -3566,8 +3574,13 @@ fn settings_besides(
 		.into_iter()
 		.filter(|path| {
 			!written.iter().any(|key| {
-				path.strip_prefix(key.as_str())
-					.is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+				let under = path
+					.strip_prefix(key.as_str())
+					.is_some_and(|rest| rest.is_empty() || rest.starts_with('.'));
+				let holds = key
+					.strip_prefix(path.as_str())
+					.is_some_and(|rest| rest.starts_with('.'));
+				under || (holds && doc.read_string(path).status == shcl::Status::Empty)
 			})
 		})
 		.map(|path| {
@@ -3579,10 +3592,10 @@ fn settings_besides(
 }
 
 // The file's text with the rating's values in it, or why not. Pure, so every
-// placement rule is testable without a file. The result is parsed back before
-// it is offered: it may lose no more than the input already had, every other
-// setting has to read as it did, and each key has to read as exactly what was
-// asked.
+// placement rule is testable without a file. Line by line first, so every other
+// byte stays as it was. Where that fails on a file that reads clean, the text is
+// what the dialog's save would write, since that save kept a rating in any such
+// file. Either result is parsed back before it is offered.
 fn with_rating_lines(text: &str, lines: &RatingLines) -> Result<String, Kept> {
 	let wanted = [
 		("profile", lines.profile.map(RatingValue::Word)),
@@ -3595,38 +3608,91 @@ fn with_rating_lines(text: &str, lines: &RatingLines) -> Result<String, Kept> {
 			lines.check_next_run.map(RatingValue::Flag),
 		),
 	];
-	let mut out: Vec<String> = text.lines().map(str::to_string).collect();
+	let before = shcl::Document::parse(text);
+	// A file that reads clean is never said to have a line that cannot be read.
+	let refused = if before.lost_count() == 0 {
+		Kept::Unplaced
+	} else {
+		Kept::Unreadable
+	};
+	let mut spelled = Vec::new();
 	for (leaf, value) in wanted {
 		let Some(value) = value else { continue };
-		let spelled = rating_spelling(leaf, value).ok_or(Kept::Unreadable)?;
-		place_rating_line(&mut out, leaf, &spelled)?;
+		let Some(spelling) = rating_spelling(leaf, value) else {
+			return Err(refused);
+		};
+		spelled.push((leaf, spelling));
+	}
+	if let Some(out) = placed_rating_lines(text, &spelled)
+		&& reads_as_asked(&before, &out, &wanted)
+	{
+		return Ok(out);
+	}
+	if before.lost_count() == 0
+		&& let Some(out) = saved_rating(&before, &wanted)
+		&& reads_as_asked(&before, &out, &wanted)
+	{
+		return Ok(out);
+	}
+	Err(refused)
+}
+
+// The lines with each value put in place, joined the way backfill joins them.
+fn placed_rating_lines(text: &str, spelled: &[(&str, String)]) -> Option<String> {
+	let mut out: Vec<String> = text.lines().map(str::to_string).collect();
+	for (leaf, spelling) in spelled {
+		place_rating_line(&mut out, leaf, spelling)?;
 	}
 	let mut joined = out.join("\n");
 	joined.push('\n');
+	Some(joined)
+}
+
+// What the dialog's save leaves: shcl's own setters over the parse, then its
+// canonical text. Only for a file that lost nothing, since the canonical text of
+// any other deletes the line it lost.
+fn saved_rating(before: &shcl::Document, wanted: &[(&str, Option<RatingValue>)]) -> Option<String> {
+	let mut doc = before.clone();
+	for (leaf, value) in wanted {
+		let path = format!("performance.{leaf}");
+		let applied = match value {
+			None => true,
+			Some(RatingValue::Word(word)) => doc.set_string(&path, word),
+			Some(RatingValue::Flag(flag)) => doc.set_bool(&path, *flag),
+		};
+		if !applied {
+			return None;
+		}
+	}
+	Some(doc.to_canonical())
+}
+
+// Whether a result is fit to write: it loses no more than the input already
+// had, every setting it does not write reads as it did, and each key reads as
+// exactly what was asked.
+fn reads_as_asked(
+	before: &shcl::Document,
+	out: &str,
+	wanted: &[(&str, Option<RatingValue>)],
+) -> bool {
+	let after = shcl::Document::parse(out);
 	let written: Vec<String> = wanted
 		.iter()
 		.filter(|(_, value)| value.is_some())
 		.map(|(leaf, _)| format!("performance.{leaf}"))
 		.collect();
-	let before = shcl::Document::parse(text);
-	let after = shcl::Document::parse(&joined);
-	if after.lost_count() > before.lost_count()
-		|| settings_besides(&after, &written) != settings_besides(&before, &written)
-	{
-		return Err(Kept::Unreadable);
-	}
-	let reads_back = wanted.iter().all(|(leaf, value)| {
-		let path = format!("performance.{leaf}");
-		match value {
-			None => true,
-			Some(RatingValue::Word(word)) => after.get_string(&path).is_ok_and(|got| got == *word),
-			Some(RatingValue::Flag(flag)) => after.get_bool(&path) == Ok(*flag),
-		}
-	});
-	if !reads_back {
-		return Err(Kept::Unreadable);
-	}
-	Ok(joined)
+	after.lost_count() <= before.lost_count()
+		&& settings_besides(&after, &written) == settings_besides(before, &written)
+		&& wanted.iter().all(|(leaf, value)| {
+			let path = format!("performance.{leaf}");
+			match value {
+				None => true,
+				Some(RatingValue::Word(word)) => {
+					after.get_string(&path).is_ok_and(|got| got == *word)
+				}
+				Some(RatingValue::Flag(flag)) => after.get_bool(&path) == Ok(*flag),
+			}
+		})
 }
 
 // The value as a canonical save spells it, taken from shcl rather than written
@@ -3660,77 +3726,83 @@ fn rating_spelling(leaf: &str, value: RatingValue) -> Option<String> {
 
 // One value into the lines: over the key's active line, else after its
 // commented default inside the `performance:` block, else first in that block.
-fn place_rating_line(lines: &mut Vec<String>, leaf: &str, spelled: &str) -> Result<(), Kept> {
+// None when there is no block to put it in.
+fn place_rating_line(lines: &mut Vec<String>, leaf: &str, spelled: &str) -> Option<()> {
 	let path = format!("performance.{leaf}");
 	let walk = walk_settings(&lines.join("\n"));
-	let active: Vec<usize> = walk
+	let depth = |line: &str| line.len() - line.trim_start().len();
+	// (index, path, header) of every active setting line
+	let active: Vec<(usize, &str, bool)> = walk
 		.iter()
 		.filter_map(|w| match w {
 			WalkLine::Setting {
 				index,
-				path: p,
+				path,
 				active: true,
-				header: false,
-			} if *p == path => Some(*index),
+				header,
+			} => Some((*index, path.as_str(), *header)),
 			_ => None,
 		})
 		.collect();
-	if let Some((&first, later)) = active.split_first() {
+	let has_child = |at: usize| {
+		active
+			.iter()
+			.find(|(index, ..)| *index > at)
+			.is_some_and(|(index, ..)| depth(&lines[*index]) > depth(&lines[at]))
+	};
+	// A value cleared by hand leaves `rated_hardware:`, which the walk takes for
+	// a header. With nothing under it, it is still the key's own line.
+	let own: Vec<usize> = active
+		.iter()
+		.filter(|(index, p, header)| *p == path && (!header || !has_child(*index)))
+		.map(|(index, ..)| *index)
+		.collect();
+	if let Some((&first, later)) = own.split_first() {
 		lines[first] = with_setting_value(&lines[first], spelled);
 		// Only the program writes this key, and two of it read as the default,
 		// which is itself a test at every launch.
 		for &index in later.iter().rev() {
 			lines.remove(index);
 		}
-		return Ok(());
+		return Some(());
 	}
-	let headers: Vec<usize> = walk
+	// A block written twice reads as one, so the first takes the line.
+	let header = active
 		.iter()
-		.filter_map(|w| match w {
-			WalkLine::Setting {
-				index,
-				path: p,
-				active: true,
-				header: true,
-			} if p == "performance" => Some(*index),
-			_ => None,
-		})
-		.collect();
-	let &[header] = headers.as_slice() else {
-		return Err(Kept::Unreadable);
-	};
-	let indent = |line: &str| line[..line.len() - line.trim_start().len()].to_string();
-	let depth = |line: &str| line.len() - line.trim_start().len();
-	// the block runs until the next setting line at or left of its header
-	let inside: Vec<usize> = walk
+		.find(|(_, p, header)| *header && *p == "performance")
+		.map(|(index, ..)| *index)?;
+	// The block runs to the next active line at or left of its header; comments
+	// do not end it. shcl sets the block's depth from its first active line and
+	// ignores comments, so that line's indent is the one a new line must match.
+	let end = active
 		.iter()
-		.filter_map(|w| match w {
-			WalkLine::Setting { index, .. } if *index > header => Some(*index),
-			_ => None,
-		})
-		.take_while(|&index| depth(&lines[index]) > depth(&lines[header]))
-		.collect();
+		.map(|(index, ..)| *index)
+		.find(|&index| index > header && depth(&lines[index]) <= depth(&lines[header]))
+		.unwrap_or(lines.len());
+	let first_child = active
+		.iter()
+		.map(|(index, ..)| *index)
+		.find(|&index| index > header && index < end);
 	let commented = walk.iter().find_map(|w| match w {
 		WalkLine::Setting {
 			index,
 			path: p,
 			active: false,
 			..
-		} if *p == path && inside.contains(index) => Some(*index),
+		} if *p == path && index > &header && *index < end => Some(*index),
 		_ => None,
 	});
-	let (at, lead) = match commented {
-		Some(index) => (index + 1, indent(&lines[index])),
-		None => (
-			header + 1,
-			inside.first().map_or_else(
-				|| format!("{}\t", indent(&lines[header])),
-				|&index| indent(&lines[index]),
-			),
-		),
+	let indent = |line: &str| line[..depth(line)].to_string();
+	let lead = match (first_child, commented) {
+		(Some(child), _) => indent(&lines[child]),
+		(None, Some(comment)) if depth(&lines[comment]) > depth(&lines[header]) => {
+			indent(&lines[comment])
+		}
+		_ => format!("{}\t", indent(&lines[header])),
 	};
+	let at = commented.map_or(header + 1, |index| index + 1);
 	lines.insert(at, format!("{lead}{leaf}: {spelled}"));
-	Ok(())
+	Some(())
 }
 
 // An active setting line with a new value: the indent, key and colon kept, and
@@ -5088,20 +5160,33 @@ mod tests {
 			"a word and a flag together"
 		);
 
-		for (what, text) in [
-			("no performance header", "window:\n\tmargin: 4\n"),
-			(
-				"two performance headers",
+		// A block written twice reads as one, so the first takes the line.
+		assert_eq!(
+			with_rating_lines(
 				"performance:\n\tautomatic: true\nperformance:\n\tprofile: high\n",
+				&id_only
+			)
+			.as_deref(),
+			Ok(
+				"performance:\n\trated_hardware: 0123456789abcdef\n\tautomatic: true\nperformance:\n\tprofile: high\n"
 			),
-		] {
-			assert_eq!(
-				with_rating_lines(text, &id_only),
-				Err(Kept::Unreadable),
-				"{what}"
-			);
-		}
+			"two performance headers"
+		);
+		// With no block to put a line in, a file that reads clean gets what the
+		// dialog's save would write.
+		let bare = "window:\n\tmargin: 4\n";
+		let mut saved = shcl::Document::parse(bare);
+		assert!(saved.set_string("performance.rated_hardware", ID));
+		assert_eq!(
+			with_rating_lines(bare, &id_only).as_deref(),
+			Ok(saved.to_canonical().as_str()),
+			"no performance header"
+		);
+		// A word no rating writes is refused, and the reason is true of the file:
+		// it reads clean, or it has a line the parse drops.
 		let clean = "performance:\n\trated_hardware: 0000000000000000\n";
+		let lossy = "performance:\n\trated_hardware: 0000000000000000\n    automatic: true\n";
+		assert_eq!(shcl::Document::parse(lossy).lost_count(), 1);
 		for word in [
 			"a\"b",
 			"a b",
@@ -5116,8 +5201,13 @@ mod tests {
 			};
 			assert_eq!(
 				with_rating_lines(clean, &lines),
-				Err(Kept::Unreadable),
+				Err(Kept::Unplaced),
 				"{word:?} is not a program-made word"
+			);
+			assert_eq!(
+				with_rating_lines(lossy, &lines),
+				Err(Kept::Unreadable),
+				"{word:?}, beside a line that cannot be read"
 			);
 		}
 	}
@@ -5186,6 +5276,207 @@ mod tests {
 				shcl::Document::parse(&out).get_bool("performance.check_next_run"),
 				Ok(true),
 				"check_next_run loads as before:\n{out}"
+			);
+		}
+	}
+
+	// The template in shapes that read clean but that a rating's line did not go
+	// into: a line typed in a spaces editor, a value cleared by hand, a comment
+	// indented deeper than the block.
+	fn clean_rating_shapes() -> Vec<(&'static str, String)> {
+		let template = default_config();
+		let default_line = "\t# rated_hardware: \"\"  ## Default\n";
+		let shapes = [
+			(
+				"a line typed with spaces first in the block",
+				template.replacen(
+					"\nperformance:\n",
+					"\nperformance:\n    automatic: true\n",
+					1,
+				),
+			),
+			(
+				"a line typed with spaces after the commented defaults",
+				template.replacen(
+					default_line,
+					&format!("{default_line}    check_hardware: true\n"),
+					1,
+				),
+			),
+			(
+				"rated_hardware cleared by hand",
+				template.replacen(default_line, "\trated_hardware:\n", 1),
+			),
+			(
+				"the commented default deeper than the block",
+				template.replacen(
+					default_line,
+					"\t\t# rated_hardware: \"\"  ## Default\n\tautomatic: true\n",
+					1,
+				),
+			),
+		];
+		for (what, text) in &shapes {
+			assert_ne!(
+				text, template,
+				"{what}: the template no longer has that line"
+			);
+			assert_eq!(
+				shcl::Document::parse(text).lost_count(),
+				0,
+				"{what}: reads clean"
+			);
+		}
+		shapes.into()
+	}
+
+	// Each of these kept a rating through the dialog's save, and the line writer
+	// answered that it had a line that could not be read, so the test ran at
+	// every launch.
+	#[test]
+	fn a_rating_reaches_a_clean_file_wherever_its_lines_sit() {
+		const ID: &str = "0123456789abcdef";
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_ratingclean_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		set_config_override(path.clone());
+		let lines = RatingLines {
+			profile: Some("high"),
+			rated_hardware: Some(ID),
+			check_next_run: None,
+		};
+		for (what, text) in clean_rating_shapes() {
+			std::fs::write(&path, &text).unwrap();
+			let _ = reload_from_disk();
+			assert_eq!(keep_rating(&lines), Kept::Written, "{what}");
+			let reloaded = reload_from_disk();
+			assert_eq!(reloaded.rated_hardware, ID, "{what}");
+			assert_eq!(reloaded.performance_profile, "high", "{what}");
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// On those files the lines go in one by one: every line already there stays,
+	// byte for byte and in order, apart from the cleared value that gets one.
+	#[test]
+	fn a_rating_in_a_clean_file_moves_no_other_line() {
+		let lines = RatingLines {
+			profile: Some("high"),
+			rated_hardware: Some("0123456789abcdef"),
+			check_next_run: None,
+		};
+		for (what, text) in clean_rating_shapes() {
+			let out =
+				with_rating_lines(&text, &lines).unwrap_or_else(|kept| panic!("{what}: {kept:?}"));
+			let mut rest = out.lines();
+			for line in text.lines().filter(|line| line.trim() != "rated_hardware:") {
+				assert!(
+					rest.any(|kept| kept == line),
+					"{what}: {line:?} is not where it was"
+				);
+			}
+		}
+	}
+
+	// The dialog's save was how a rating was written before, so the files it kept
+	// one in are the floor: the rating writer keeps one in each of them too.
+	#[test]
+	fn a_rating_is_kept_wherever_the_dialogs_save_kept_it() {
+		const ID: &str = "0123456789abcdef";
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir =
+			std::env::temp_dir().join(format!("silkterm_ratingparity_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		set_config_override(path.clone());
+		let lines = RatingLines {
+			profile: Some("high"),
+			rated_hardware: Some(ID),
+			check_next_run: None,
+		};
+		let holds = || {
+			let s = reload_from_disk();
+			s.rated_hardware == ID && s.performance_profile == "high"
+		};
+		let mut files = vec![("the template", default_config().to_string())];
+		files.extend(clean_rating_shapes());
+		for (what, text) in files {
+			std::fs::write(&path, &text).unwrap();
+			let orig = reload_from_disk();
+			let mut new = orig.clone();
+			new.rated_hardware = ID.to_string();
+			new.performance_profile = "high".to_string();
+			let saved = persist(&orig, &new) && holds();
+
+			std::fs::write(&path, &text).unwrap();
+			let _ = reload_from_disk();
+			let kept = keep_rating(&lines);
+			let written = kept == Kept::Written && holds();
+			assert!(
+				!saved || written,
+				"{what}: the save keeps a rating here, and the rating writer answers {kept:?}"
+			);
+			assert!(
+				saved,
+				"{what}: the save keeps no rating here, so the case proves nothing"
+			);
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// "A line that cannot be read" is said only of a file that has one. A clean
+	// file the writer still cannot place gets a reason that is true of it.
+	#[test]
+	fn a_clean_file_is_never_called_unreadable() {
+		let id_only = RatingLines {
+			rated_hardware: Some("0123456789abcdef"),
+			..RatingLines::default()
+		};
+		let mut cases: Vec<(&str, String, RatingLines)> = vec![
+			(
+				"no performance block",
+				"window:\n\tmargin: 4\n".to_string(),
+				id_only,
+			),
+			(
+				"a dotted performance setting only",
+				"performance.automatic: true\n".to_string(),
+				id_only,
+			),
+			(
+				"two performance blocks",
+				"performance:\n\tautomatic: true\nperformance:\n\tprofile: high\n".to_string(),
+				id_only,
+			),
+			(
+				"a word the program would not write",
+				"performance:\n\trated_hardware: 0000000000000000\n".to_string(),
+				RatingLines {
+					rated_hardware: Some("Max"),
+					..RatingLines::default()
+				},
+			),
+		];
+		cases.extend(
+			clean_rating_shapes()
+				.into_iter()
+				.map(|(what, text)| (what, text, id_only)),
+		);
+		for (what, text, lines) in cases {
+			assert_eq!(
+				shcl::Document::parse(&text).lost_count(),
+				0,
+				"{what}: reads clean"
+			);
+			assert_ne!(
+				with_rating_lines(&text, &lines),
+				Err(Kept::Unreadable),
+				"{what}"
 			);
 		}
 	}
@@ -6667,7 +6958,8 @@ mod tests {
 		// path over both parses, apart from the writer's own check, though both ask
 		// shcl. Canonical text is no measure of what loads: it keeps a line shcl
 		// skipped, drops one it lost, and moves a stray line with the setting after
-		// it.
+		// it. A file that reads clean is never called unreadable, and wherever
+		// shcl's own setters would keep the rating, the writer keeps it too.
 		fn rating_check(case: &[u8], rng: &mut fuzz::Rng) {
 			const PROFILES: [&str; 4] = ["max", "high", "low", "standard"];
 			const IDS: [&str; 3] = ["0123456789abcdef", "1234567890123456", "ffffffffffffffff"];
@@ -6677,10 +6969,96 @@ mod tests {
 				rated_hardware: (!rng.chance(4)).then(|| *rng.pick(&IDS)),
 				check_next_run: rng.chance(3).then(|| rng.chance(2)),
 			};
-			let Ok(out) = with_rating_lines(&text, &lines) else {
+			let written: Vec<&str> = [
+				("performance.profile", lines.profile.is_some()),
+				("performance.rated_hardware", lines.rated_hardware.is_some()),
+				("performance.check_next_run", lines.check_next_run.is_some()),
+			]
+			.into_iter()
+			.filter_map(|(key, on)| on.then_some(key))
+			.collect();
+			// Each setting the rating does not write, as it reads in two parses.
+			let reads = |a: &shcl::Document, b: &shcl::Document| {
+				let mut paths = a.paths();
+				for path in b.paths() {
+					if !paths.contains(&path) {
+						paths.push(path);
+					}
+				}
+				paths.retain(|path| {
+					!written
+						.iter()
+						.any(|key| path == key || path.starts_with(&format!("{key}.")))
+				});
+				let read = |doc: &shcl::Document| {
+					paths
+						.iter()
+						// a block the write may have created, with no value of its own
+						.filter(|path| {
+							let holds = written
+								.iter()
+								.any(|key| key.starts_with(&format!("{path}.")));
+							!(holds
+								&& matches!(
+									doc.get_string(path),
+									Err(shcl::Status::Empty | shcl::Status::NotFound)
+								))
+						})
+						// Quoting counts: a canonical save can quote `a: b` or a stray
+						// `"`, and a quoted value reads differently downstream.
+						.map(|path| {
+							let quoted = doc.read_string(path).quoted;
+							(path.clone(), doc.get_string(path), doc.count(path), quoted)
+						})
+						.collect::<Vec<_>>()
+				};
+				(read(a), read(b))
+			};
+			let before = shcl::Document::parse(&text);
+			let answer = with_rating_lines(&text, &lines);
+
+			if before.lost_count() == 0 {
+				assert_ne!(
+					answer,
+					Err(super::super::Kept::Unreadable),
+					"a file that reads clean is called unreadable\nbefore:\n{text}"
+				);
+				// what the dialog's save would leave: shcl's setters, then canonical text
+				let mut saved = before.clone();
+				let set = lines
+					.profile
+					.is_none_or(|word| saved.set_string("performance.profile", word))
+					&& lines
+						.rated_hardware
+						.is_none_or(|word| saved.set_string("performance.rated_hardware", word))
+					&& lines
+						.check_next_run
+						.is_none_or(|flag| saved.set_bool("performance.check_next_run", flag));
+				let saved = shcl::Document::parse(&saved.to_canonical());
+				let kept_by_save =
+					set && saved.lost_count() == 0
+						&& lines.profile.is_none_or(|word| {
+							saved.get_string("performance.profile").as_deref() == Ok(word)
+						}) && lines.rated_hardware.is_none_or(|word| {
+						saved.get_string("performance.rated_hardware").as_deref() == Ok(word)
+					}) && lines.check_next_run.is_none_or(|flag| {
+						saved.get_bool("performance.check_next_run") == Ok(flag)
+					}) && {
+						let (then, now) = reads(&before, &saved);
+						then == now
+					};
+				if kept_by_save {
+					assert!(
+						answer.is_ok(),
+						"the save keeps this rating and the writer answers {answer:?}\nbefore:\n{text}"
+					);
+				}
+			}
+
+			let Ok(out) = answer else {
 				return;
 			};
-			let (before, after) = (shcl::Document::parse(&text), shcl::Document::parse(&out));
+			let after = shcl::Document::parse(&out);
 			let shown = format!("before:\n{text}\nafter:\n{out}");
 			assert!(
 				after.lost_count() <= before.lost_count(),
@@ -6701,36 +7079,8 @@ mod tests {
 					"check_next_run\n{shown}"
 				);
 			}
-			let written: Vec<&str> = [
-				("performance.profile", lines.profile.is_some()),
-				("performance.rated_hardware", lines.rated_hardware.is_some()),
-				("performance.check_next_run", lines.check_next_run.is_some()),
-			]
-			.into_iter()
-			.filter_map(|(key, on)| on.then_some(key))
-			.collect();
-			let mut paths = before.paths();
-			for path in after.paths() {
-				if !paths.contains(&path) {
-					paths.push(path);
-				}
-			}
-			paths.retain(|path| {
-				!written
-					.iter()
-					.any(|key| path == key || path.starts_with(&format!("{key}.")))
-			});
-			let reads = |doc: &shcl::Document| {
-				paths
-					.iter()
-					.map(|path| (path.clone(), doc.get_string(path), doc.count(path)))
-					.collect::<Vec<_>>()
-			};
-			assert_eq!(
-				reads(&after),
-				reads(&before),
-				"another setting loads differently\n{shown}"
-			);
+			let (then, now) = reads(&before, &after);
+			assert_eq!(now, then, "another setting loads differently\n{shown}");
 		}
 
 		#[test]
