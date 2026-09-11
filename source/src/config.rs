@@ -5278,6 +5278,42 @@ mod tests {
 				"check_next_run loads as before:\n{out}"
 			);
 		}
+
+		// Every later line for the key is deleted, and what sat under one moves up to
+		// the line above. Here that is "Re-test next run", which this write does not
+		// touch. Placement alone loses no line and reads the profile back, so the
+		// comparison is the only thing that refuses it.
+		let text =
+			"performance:\n\tprofile: max\nperformance.profile: low\n\tcheck_next_run: true\n";
+		assert!(
+			migrate_config_text(text).is_none(),
+			"a launch parses this text as it is"
+		);
+		let before = shcl::Document::parse(text);
+		assert_eq!(
+			before.get_bool("performance.check_next_run"),
+			Err(shcl::Status::NotFound)
+		);
+		let placed = placed_rating_lines(text, &[("profile", "high".to_string())])
+			.expect("a performance block to place into");
+		let placed = shcl::Document::parse(&placed);
+		assert!(
+			placed.lost_count() <= before.lost_count()
+				&& placed.get_string("performance.profile").as_deref() == Ok("high")
+				&& placed.get_bool("performance.check_next_run") == Ok(true),
+			"placement no longer moves check_next_run, so the case proves nothing"
+		);
+		let lines = RatingLines {
+			profile: Some("high"),
+			..RatingLines::default()
+		};
+		if let Ok(out) = with_rating_lines(text, &lines) {
+			assert_eq!(
+				shcl::Document::parse(&out).get_bool("performance.check_next_run"),
+				Err(shcl::Status::NotFound),
+				"check_next_run loads as before:\n{out}"
+			);
+		}
 	}
 
 	// The template in shapes that read clean but that a rating's line did not go
@@ -5378,6 +5414,43 @@ mod tests {
 					"{what}: {line:?} is not where it was"
 				);
 			}
+		}
+	}
+
+	// A value cleared by hand leaves `rated_hardware:` with nothing under it, and
+	// that line takes the rating. Beside a line the parse drops there is no save's
+	// text to fall back on, so a second line for the key leaves the rating unread
+	// and the test runs at every launch.
+	#[test]
+	fn a_value_cleared_by_hand_takes_the_rating_on_its_own_line() {
+		let lines = RatingLines {
+			rated_hardware: Some("0123456789abcdef"),
+			..RatingLines::default()
+		};
+		let lost = "window:\n\topacity: 1.0\n    margin: 4\n";
+		for (what, block, want) in [
+			(
+				"first in the block",
+				"performance:\n\trated_hardware:\n\tautomatic: true\n",
+				"performance:\n\trated_hardware: 0123456789abcdef\n\tautomatic: true\n",
+			),
+			(
+				"last in the block",
+				"performance:\n\tautomatic: true\n\trated_hardware:\n",
+				"performance:\n\tautomatic: true\n\trated_hardware: 0123456789abcdef\n",
+			),
+		] {
+			let text = format!("{block}{lost}");
+			assert_eq!(
+				shcl::Document::parse(&text).lost_count(),
+				1,
+				"{what}: the space-indented line is the one the parse drops"
+			);
+			assert_eq!(
+				with_rating_lines(&text, &lines),
+				Ok(format!("{want}{lost}")),
+				"{what}"
+			);
 		}
 	}
 
