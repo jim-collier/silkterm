@@ -2911,8 +2911,33 @@ fn convert_legacy_config(path: &std::path::Path) {
 	let Ok(text) = std::fs::read_to_string(path) else {
 		return;
 	};
+	let Some(joined) = converted_config_text(&text) else {
+		return;
+	};
+	if config_open_elsewhere(path) {
+		note_config_busy(path);
+		return;
+	}
+	let Some(backup) = backup_aside(path) else {
+		return;
+	};
+	if let Err(e) = write_config_text(path, &joined) {
+		eprintln!(
+			"{APP_NAME}: could not convert config {}: {e}",
+			path.display()
+		);
+		return;
+	}
+	eprintln!(
+		"{APP_NAME}: config converted to the new nested layout; the old file is kept at {}",
+		backup.display()
+	);
+}
+
+// The conversion as text: None for a file that is not pre-nesting.
+fn converted_config_text(text: &str) -> Option<String> {
 	let lines: Vec<&str> = text.lines().collect();
-	let walked = walk_settings(&text);
+	let walked = walk_settings(text);
 	// Only an ACTIVE flat key marks a file as legacy: any real old config has
 	// several (the template shipped with them), while a comment that merely
 	// spells an old name - e.g. one a relayouted save left at column 0 - must
@@ -2922,15 +2947,24 @@ fn convert_legacy_config(path: &std::path::Path) {
 			if !p.contains('.') && LEGACY_KEYS.iter().any(|(old, _)| old == p))
 	});
 	if !legacy {
-		return;
+		return None;
 	}
 
 	// active values: current-format paths carry as themselves (a mixed file
 	// loses nothing), old spellings map through the table, best (lowest table
 	// index) spelling winning per new path
-	let known_new: std::collections::HashSet<String> = setting_lines(default_config())
+	// Settings only, never a block heading: a flat `wallpaper:` held the image,
+	// and matched as a current path it was written onto the `wallpaper:` heading.
+	let known_new: std::collections::HashSet<String> = walk_settings(default_config())
 		.into_iter()
-		.map(|(p, _)| p)
+		.filter_map(|w| match w {
+			WalkLine::Setting {
+				path,
+				header: false,
+				..
+			} => Some(path),
+			_ => None,
+		})
 		.collect();
 	let mut carry: std::collections::HashMap<String, (usize, String)> =
 		std::collections::HashMap::new();
@@ -2993,13 +3027,6 @@ fn convert_legacy_config(path: &std::path::Path) {
 			.or_insert((usize::MAX, "false".to_string()));
 	}
 
-	if config_open_elsewhere(path) {
-		note_config_busy(path);
-		return;
-	}
-	let Some(backup) = backup_aside(path) else {
-		return;
-	};
 	let mut out: Vec<String> = default_config().lines().map(str::to_string).collect();
 	for (new_path, (_, value)) in &carry {
 		if !activate_line(&mut out, new_path, value) {
@@ -3014,17 +3041,7 @@ fn convert_legacy_config(path: &std::path::Path) {
 	}
 	let mut joined = out.join("\n");
 	joined.push('\n');
-	if let Err(e) = write_config_text(path, &joined) {
-		eprintln!(
-			"{APP_NAME}: could not convert config {}: {e}",
-			path.display()
-		);
-		return;
-	}
-	eprintln!(
-		"{APP_NAME}: config converted to the new nested layout; the old file is kept at {}",
-		backup.display()
-	);
+	Some(joined)
 }
 
 // Migrate an existing config in place across program updates: rename keys whose
@@ -6435,6 +6452,101 @@ mod tests {
 		let _ = std::fs::remove_file(&path);
 	}
 
+	// A flat `wallpaper:` held the image. It reaches `wallpaper.image`, never the
+	// block heading, whatever order the carried values are placed in, and a save
+	// from Settings then loads every carried value the same.
+	#[test]
+	fn a_flat_wallpaper_converts_to_the_image_and_survives_a_save() {
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_flatwp_{}", std::process::id()));
+		let flat = "wallpaper: /home/x/Pictures/a.png\nbackground_opacity: 0.5\nwallpaper_fit: zoom\nwallpaper_blur: 3\nbackground_contrast_mask_auto: 0.8\nfont_size: 13\n";
+		// the carried values are placed in hash order, so one round proves little
+		for round in 0..16 {
+			let text = if round % 2 == 1 {
+				flat.replace('\n', "\r\n")
+			} else {
+				flat.to_string()
+			};
+			let _ = std::fs::remove_dir_all(&dir);
+			std::fs::create_dir_all(&dir).unwrap();
+			let path = dir.join("config.shcl");
+			std::fs::write(&path, &text).unwrap();
+			set_config_override(path.clone());
+			let check = |s: &Settings, when: &str| {
+				assert_eq!(
+					s.wallpaper_raw, "/home/x/Pictures/a.png",
+					"{when}, round {round}: the image"
+				);
+				assert_eq!(s.wallpaper_opacity, 0.5, "{when}, round {round}: opacity");
+				assert!(
+					matches!(s.wallpaper_default_fit, Fit::Zoom),
+					"{when}, round {round}: fit"
+				);
+				assert_eq!(s.wallpaper_blur, 3.0, "{when}, round {round}: blur");
+				assert_eq!(
+					s.wallpaper_contrast_mask_auto, 0.8,
+					"{when}, round {round}: contrast mask"
+				);
+			};
+			let launched = load();
+			check(&launched, "first launch");
+			let mut edited = launched.clone();
+			edited.font_size += 1.0;
+			assert!(persist(&launched, &edited));
+			check(&load(), "after a save");
+			let baks = std::fs::read_dir(&dir)
+				.unwrap()
+				.flatten()
+				.filter(|e| e.file_name().to_string_lossy().contains(".bak"))
+				.count();
+			assert_eq!(baks, 1, "round {round}: converted once");
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	fn active_headings(text: &str) -> Vec<(usize, String)> {
+		walk_settings(text)
+			.into_iter()
+			.filter_map(|w| match w {
+				WalkLine::Setting {
+					index,
+					path,
+					header: true,
+					active: true,
+				} => Some((index, path)),
+				_ => None,
+			})
+			.collect()
+	}
+
+	// Every block name, not only `wallpaper`: an old flat line named like a block
+	// is either carried to a setting or dropped, and the block keeps its heading.
+	#[test]
+	fn a_flat_key_named_like_a_block_never_lands_on_its_heading() {
+		let dir = std::env::temp_dir().join(format!("silkterm_flathead_{}", std::process::id()));
+		let heads = active_headings(default_config());
+		assert!(heads.iter().any(|(_, p)| p == "wallpaper"));
+		for (_, head) in heads.iter().filter(|(_, p)| !p.contains('.')) {
+			let _ = std::fs::remove_dir_all(&dir);
+			std::fs::create_dir_all(&dir).unwrap();
+			let path = dir.join("config.shcl");
+			std::fs::write(&path, format!("{head}: x\nfont_size: 13\n")).unwrap();
+			convert_legacy_config(&path);
+			let out = std::fs::read_to_string(&path).unwrap();
+			assert!(
+				out.contains("\tsize: 13"),
+				"`{head}: x` was not converted:\n{out}"
+			);
+			assert_eq!(
+				active_headings(&out),
+				heads,
+				"`{head}: x` changed a block heading:\n{out}"
+			);
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
 	// A hand-edited config is where a home-relative path gets typed, so `~` has
 	// to expand. `~user` has nothing to resolve against and stays literal.
 	#[test]
@@ -7009,6 +7121,72 @@ mod tests {
 				let _ = config_complaints(&text);
 				let _ = migrate_config_text(&text);
 				let _ = shcl::Document::parse(&text).to_canonical();
+			});
+		}
+
+		// A flat file of old names, the newest spelling winning, converts with each
+		// value readable at its new path, every block heading still a heading, and
+		// no second conversion.
+		#[test]
+		fn a_flat_file_carries_every_value_to_its_path() {
+			use super::super::{CONFIG_REMOVED, LEGACY_KEYS, converted_config_text};
+			use super::active_headings;
+			let template = active_headings(default_config());
+			fuzz::soak("config-flat", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				let mut text = String::new();
+				let mut want: std::collections::HashMap<&str, (usize, String)> =
+					std::collections::HashMap::new();
+				let mut expect = |rank: usize, value: &str| {
+					let new = LEGACY_KEYS[rank].1;
+					if CONFIG_REMOVED.contains(&new) {
+						return;
+					}
+					let slot = want.entry(new).or_insert((rank, value.to_string()));
+					if rank < slot.0 {
+						*slot = (rank, value.to_string());
+					}
+				};
+				for i in 0..=rng.below(8) {
+					let rank = rng.below(LEGACY_KEYS.len());
+					let value = format!("v{seed}x{i}");
+					text.push_str(&format!("{}: {value}\n", LEGACY_KEYS[rank].0));
+					expect(rank, &value);
+				}
+				if rng.chance(3) {
+					let (_, head) = rng.pick(&template);
+					let value = format!("y{seed}");
+					text.push_str(&format!("{head}: {value}\n"));
+					// a block name that is also an old flat name carries like one
+					if let Some(rank) = LEGACY_KEYS.iter().position(|(old, _)| old == head) {
+						expect(rank, &value);
+					}
+				}
+				let text = if seed % 4 == 3 {
+					text.replace('\n', "\r\n")
+				} else {
+					text
+				};
+				let out = converted_config_text(&text).expect("a flat file converts");
+				let doc = shcl::Document::parse(&out);
+				assert_eq!(doc.lost_count(), 0, "file:\n{text}\nconverted:\n{out}");
+				for (new, (_, value)) in &want {
+					assert_eq!(
+						doc.get_string(new).ok().as_deref(),
+						Some(value.as_str()),
+						"{new}\nfile:\n{text}\nconverted:\n{out}"
+					);
+				}
+				assert_eq!(
+					active_headings(&out),
+					template,
+					"a heading moved\nfile:\n{text}\nconverted:\n{out}"
+				);
+				assert_eq!(
+					converted_config_text(&out),
+					None,
+					"converted twice\nfile:\n{text}"
+				);
 			});
 		}
 
