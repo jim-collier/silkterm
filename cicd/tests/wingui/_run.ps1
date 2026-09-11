@@ -22,7 +22,7 @@ try {
 	$script:shotDir = Join-Path $OutDir "shots"
 
 	fNote ("session " + [System.Diagnostics.Process]::GetCurrentProcess().SessionId + " as " + (whoami))
-	fNote ("desktop usable: " + (fSessionUsable))
+	fNote ("desktop usable: " + (fSessionUsable) + "  session " + (fLockState))
 	fNote ("screen " + [Silk.Win]::GetSystemMetrics(0) + "x" + [Silk.Win]::GetSystemMetrics(1) +
 	       "  remote-session " + [Silk.Win]::GetSystemMetrics(0x1000))
 
