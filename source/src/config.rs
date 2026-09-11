@@ -2960,8 +2960,8 @@ fn valued_wallpaper_line(line: &str) -> bool {
 // An earlier build converted a flat `wallpaper: <image>` onto the template's
 // `wallpaper:` heading. shcl still reads the block under it, so only the image
 // was lost, but the line kept the file reading as flat and every launch
-// converted it again. The value moves to `image:` unless the file names an
-// image already, and no other line changes.
+// converted it again. The value moves to `image:`, or is dropped when the file
+// names an image already. No other line changes, but line endings come back LF.
 fn wallpaper_heading_repaired(text: &str) -> Option<String> {
 	// every launch comes through here, and almost no file has such a line
 	if !text.lines().any(valued_wallpaper_line) {
@@ -3042,10 +3042,18 @@ fn repair_wallpaper_heading(path: &std::path::Path) {
 		);
 		return;
 	}
-	eprintln!(
-		"{APP_NAME}: moved the wallpaper image in {} from the `wallpaper:` line to `image:`",
-		path.display()
-	);
+	// the image line is added only when the file named no image already
+	if out.lines().count() > text.lines().count() {
+		eprintln!(
+			"{APP_NAME}: moved the wallpaper image in {} from the `wallpaper:` line to `image:`",
+			path.display()
+		);
+	} else {
+		eprintln!(
+			"{APP_NAME}: cleared the `wallpaper:` line in {}; the file already names an image under `image:`",
+			path.display()
+		);
+	}
 }
 
 // One-time conversion of a pre-nesting config: the flat `wallpaper_*`-style
