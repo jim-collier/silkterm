@@ -48,8 +48,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260911-001526
 
 - 🔘 A save from Settings adds or removes quotes on values nobody changed.
-	- `family: Cascadia Mono` comes back as `family: "Cascadia Mono"`, and a quoted `"5"` comes back bare. Every value still reads the same.
-	- This is how shcl writes a file, not SilkTerm code. SilkTerm has to leave quoting out of any check that compares a file before and after a write.
+	- `family: Cascadia Mono` comes back as `family: "Cascadia Mono"`, a quoted `"5"` comes back bare, and `'text'` can come back as `"text"`. shcl reads every value the same, but a launch can still load one differently, as the item below says.
+	- This is how shcl writes a file, and shcl's spec says so. The one SilkTerm check that should ignore it is the performance rating's, and that fix waits with the item above.
 	- Opened: 20260911-001526
 
 - 🔘 A save from Settings can change a setting nobody touched, from the next launch on.
