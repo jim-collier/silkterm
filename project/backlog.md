@@ -46,6 +46,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- The fault is in shcl's save. When Windows has already removed the old file but cannot put the new one in its place, shcl tries once more, and if that fails too it deletes the new copy as well.
 	- A save from Settings, the performance rating and two of the rewrites at launch all save this way. Converting an old flat file keeps a backup through it.
 	- Not seen yet. It follows from shcl's code and the Windows documentation, and shcl's current code does the same.
+	- Fixed: when a failed save leaves nothing where the settings file was, the new settings are written there directly. Every save above gets this. The Windows failure itself could not be caused on purpose, so that part is untested.
 	- Opened: 20260911-091446
 
 - 🔘 A setting indented under a commented-out heading can load at one launch and be ignored at the next.
