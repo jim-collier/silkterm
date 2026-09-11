@@ -688,6 +688,8 @@ Three defects came out of building it, all fixed with it: a program could put co
 
 - When the flat naming gave way to nested blocks, an old config converts wholesale rather than being rewritten in place. The old file is kept alongside as a backup, a fresh current-format file is written, and every value the user had set carries over to its new place. Rewriting flat lines into blocks would have shredded the old file's comments. This way settings survive and the file's documentation is current.
 
+- A file an earlier build converted with its image written onto the `wallpaper:` heading is repaired where it is at launch. The value moves to `image:`, unless the file already names an image there, which is the later choice and is kept while the heading's value is dropped. No other line changes, but the file is written back with LF line endings, as a conversion writes it. It is not converted again, because that needs a backup name, and that build had used most of them converting the same file at every launch. Values that build dropped are not read back from the backups, since a backup is older than anything saved after it.
+
 - A config carries the commented default lines it was first given, so when a default changes those lines start describing the old behavior. Such a line is refreshed to the current default. The file may be corrected about what the program does on its own, but never about a value that was set by hand. A line the user activated, or annotated, is therefore left alone.
 
 - Starting over is a rename rather than a delete. `--reset-config` moves the file aside and lets the next launch write a fresh one, so the previous settings stay recoverable.
