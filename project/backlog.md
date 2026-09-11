@@ -42,10 +42,9 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 On Windows, putting back a lost settings file can stop too early while another program still holds the old file open.
-	- A deleted file keeps its name in the folder until every program lets go of it. Putting the settings file back takes that name for a file already there and stops at once. A moment later nothing is there.
-	- Came with the fix for "a settings save that fails in one rare way can leave no settings file at all". The early stop happens on Windows, but no failed save has been seen to leave a file in that state.
-	- Opened: 20260911-101729
+- 🔘 The scroll test's full-screen-entry check tests nothing: it runs the less scene instead of its own script.
+	- So the guard against the nano wobble passes whatever the code does.
+	- Opened: 20260911-113647
 
 - 🔘 A setting indented under a commented-out heading can load at one launch and be ignored at the next.
 	- In a short file, adding the missing settings puts lines above it, and it then reads as part of the setting above. A launch that finds the file open in another program skips that step and still reads it.
@@ -101,6 +100,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260910-213600
 
 - 🔘 Smooth scrolling bug (seems to be another regression to pre-alacritty work): smooth-scrolling often involve quite noticable sharp horizontal "seams", where it seems like vertical portions of the screen don't scroll at the same rate. (And/or start at different times, or something.)
+	- Two kinds of seam found so far. Which one is the one seen still needs confirming, with the program and pane layout that shows it.
+	- While output eases in, lines a program redraws at the bottom (a progress bar, apt's status line, a live block under a transcript) drop a row and slide back up, while the text above only slides up. Same as the apt progress bar item closed 20260724, which was never really fixed.
+	- With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Side-by-side panes are not affected.
+	- Neither is new: both show on builds from before the scroll ledger.
+	- It could also be tearing from the desktop compositor. Worth trying `xfconf-query -c xfwm4 -p /general/vblank_mode -s glx`, and `-s auto` to undo.
 
 - 🔘 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even Claude Code's autocopy doesn't work.)
@@ -276,6 +280,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ On Windows, putting back a lost settings file can stop too early while another program still holds the old file open.
+	- A deleted file keeps its name in the folder until every program lets go of it. Putting the settings file back takes that name for a file already there and stops at once. A moment later nothing is there.
+	- Fixed: a name whose delete is still pending no longer counts as a file already there, so putting the file back waits for it within the same short limit.
+	- Current Windows 10 and 11 on NTFS free the name at once, so this matters for older builds, FAT or exFAT drives and network shares, none of which were confirmed.
+	- Opened: 20260911-101729
+	- Closed: 20260911-114403
 
 - ✅ On Windows, a settings save that fails in one rare way can leave no settings file at all.
 	- The fault is in shcl's save. When Windows has already removed the old file but cannot put the new one in its place, shcl tries once more, and if that fails too it deletes the new copy as well.
