@@ -42,10 +42,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 Nothing in a normal test run fails when the rating writer's check for unreadable lines is removed.
-	- Only a longer randomized test catches it. Without that check, a file that reads clean can be given a line the next Settings save refuses.
-	- Opened: 20260911-032544
-
 - 🔘 A performance test can still run at every launch on a settings file with no Performance section.
 	- It happens when another value in the file is typed without quotes and holds a space or a colon, such as a font name or a Windows folder. The rating is not saved, and the banner says the Performance section could not be updated.
 	- A normal launch adds the section first, so this needs the file to have been busy while SilkTerm started.
@@ -265,6 +261,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ Nothing in a normal test run fails when the rating writer's check for unreadable lines is removed.
+	- Only a longer randomized test catches it. Without that check, a file that reads clean can be given a line the next Settings save refuses.
+	- Fixed: a test now fails in an ordinary run when that check is taken out, both for a file that reads clean and for one that already has an unreadable line.
+	- Opened: 20260911-032544
+	- Closed: 20260911-041253
 
 - ✅ Two tests of the performance rating writer no longer fail when the rule they guard is removed.
 	- One passes with its check taken out, and only a longer randomized test still catches that. The other passes with the rule for a hand-cleared value taken out.
