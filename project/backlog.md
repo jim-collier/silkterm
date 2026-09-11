@@ -42,12 +42,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 Converting an old flat settings file loses its `wallpaper:` image, and the next save from Settings can drop more wallpaper settings.
-	- The image path is written onto the `wallpaper:` section line instead of `image:`, so no wallpaper loads. The path is still in the `.bak` file.
-	- The next save then drops values the conversion kept, such as the opacity and the fit. A file that used `background_image:` converts correctly.
-	- Fixed on `flatwall`: the image converts to `image:`, and a file an earlier build already converted gets it back at the next launch, in place and with no new backup.
-	- That build also converted the file again at every launch, and settings it dropped on those launches are not recovered. They are still in the `.bak` files.
-	- Opened: 20260911-064028
+- 🔘 On Windows, a settings save that fails in one rare way can leave no settings file at all.
+	- The fault is in shcl's save. When Windows has already removed the old file but cannot put the new one in its place, shcl tries once more, and if that fails too it deletes the new copy as well.
+	- A save from Settings, the performance rating and two of the rewrites at launch all save this way. Converting an old flat file keeps a backup through it.
+	- Not seen yet. It follows from shcl's code and the Windows documentation, and shcl's current code does the same.
+	- Opened: 20260911-091446
 
 - 🔘 A setting indented under a commented-out heading can load at one launch and be ignored at the next.
 	- In a short file, adding the missing settings puts lines above it, and it then reads as part of the setting above. A launch that finds the file open in another program skips that step and still reads it.
@@ -278,6 +277,16 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ Converting an old flat settings file loses its `wallpaper:` image, and the next save from Settings can drop more wallpaper settings.
+	- The image path is written onto the `wallpaper:` section line instead of `image:`, so no wallpaper loads. The path is still in the `.bak` file.
+	- The next save then drops values the conversion kept, such as the opacity and the fit. A file that used `background_image:` converts correctly.
+	- One cause for both: the conversion treated section names as settings, so a flat `wallpaper:` value went onto the section line.
+	- Fixed: the image converts to `image:`. A file an earlier build already converted gets its image back at the next launch, in place and with no new backup.
+	- That earlier build also converted the file again at every launch. Settings it dropped on those launches are not recovered, and are still in the `.bak` files.
+	- The conversion now keeps a linked or private settings file as it was, and if its write fails it keeps the backup unless the file is still whole.
+	- Opened: 20260911-064028
+	- Closed: 20260911-091808
 
 - ✅ Nothing in a normal test run fails when the rating writer's check for unreadable lines is removed.
 	- Only a longer randomized test catches it. Without that check, a file that reads clean can be given a line the next Settings save refuses.
