@@ -3351,10 +3351,14 @@ impl State {
 		// An entry with no command names nothing to run, so it is dropped here
 		// rather than written - that is the whole of the grid's "Command is
 		// required" rule at the point the list leaves the dialog.
+		let live = config::settings();
 		let mut orig = orig.clone();
 		let mut edited = edited;
-		orig.shells.clone_from(&config::settings().shells);
+		orig.shells.clone_from(&live.shells);
 		edited.shells.retain(|e| !e.command.trim().is_empty());
+		// Remote and a watch step are live state the dialog only copied when it
+		// opened, so a change to either since then must survive the Apply.
+		config::keep_session_on_apply(&live, &orig, &mut edited);
 		// use_system_font is a persisted setting that only reorders font_family at
 		// resolve time, so nothing special to strip - persist the diff as usual.
 		let wrote = config::persist(&orig, &edited);

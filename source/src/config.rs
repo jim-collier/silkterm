@@ -887,6 +887,25 @@ pub fn keep_session(live: &Settings, reloaded: &mut Settings) {
 	reloaded.stepped_profile = live.stepped_profile;
 }
 
+// The same for an Apply from the Settings dialog, whose copy is as old as the
+// dialog: a remote switch or a watch step taken since it opened stays, unless
+// the dialog made the choice itself. A pick or the automatic switch can leave
+// the session field exactly as the dialog opened with it, so the choice is read
+// from what those write too.
+pub fn keep_session_on_apply(live: &Settings, opened: &Settings, edited: &mut Settings) {
+	let picked = edited.performance_profile != opened.performance_profile
+		|| edited.remote_override != opened.remote_override;
+	if !picked {
+		edited.remote_override = live.remote_override;
+	}
+	if !picked
+		&& edited.performance_automatic == opened.performance_automatic
+		&& edited.stepped_profile == opened.stepped_profile
+	{
+		edited.stepped_profile = live.stepped_profile;
+	}
+}
+
 // Read the config as an editable document. The parser is forgiving (a bad line
 // becomes a diagnostic, not a failed load), so unlike the old strict TOML path
 // this cannot bail on a file the loader reads fine and silently save nothing.
@@ -4506,6 +4525,67 @@ mod tests {
 			reloaded.stepped_profile,
 			Some(crate::profile::Profile::High)
 		);
+	}
+
+	// An Apply from a dialog opened earlier keeps a remote switch or a watch step
+	// taken since, and the dialog's own pick, revert or automatic switch still
+	// lifts them.
+	#[test]
+	fn an_apply_keeps_the_session_state_the_dialog_did_not_touch() {
+		use crate::profile::Profile;
+		let apply = |live: &Settings, opened: &Settings, edited: &Settings| {
+			let mut out = edited.clone();
+			keep_session_on_apply(live, opened, &mut out);
+			(out.stepped_profile, out.remote_override)
+		};
+		let base = Settings {
+			performance_automatic: true,
+			performance_profile: "max".to_string(),
+			..Settings::default()
+		};
+		let stepped = Settings {
+			stepped_profile: Some(Profile::Low),
+			..base.clone()
+		};
+		let remote = Settings {
+			remote_override: true,
+			..base.clone()
+		};
+		let other_row = Settings {
+			minimap: !base.minimap,
+			..base.clone()
+		};
+		let picked = Settings {
+			performance_profile: "high".to_string(),
+			..base.clone()
+		};
+		let manual = Settings {
+			performance_automatic: false,
+			..base.clone()
+		};
+
+		// taken after the dialog opened: an Apply of an unrelated row keeps it
+		assert_eq!(apply(&stepped, &base, &base), (Some(Profile::Low), false));
+		assert_eq!(
+			apply(&stepped, &base, &other_row),
+			(Some(Profile::Low), false)
+		);
+		assert_eq!(apply(&remote, &base, &base), (None, true));
+		assert_eq!(apply(&remote, &base, &other_row), (None, true));
+		// switched off since: it stays off
+		assert_eq!(apply(&base, &remote, &remote), (None, false));
+		assert_eq!(apply(&base, &stepped, &stepped), (None, false));
+		// the dialog lifted what it opened with (a pick, a revert, the switch)
+		assert_eq!(apply(&stepped, &stepped, &base), (None, false));
+		assert_eq!(apply(&remote, &remote, &base), (None, false));
+		// a pick or the automatic switch over a step the dialog never saw
+		assert_eq!(apply(&stepped, &base, &picked), (None, false));
+		assert_eq!(apply(&stepped, &base, &manual), (None, false));
+		// a pick lowers a Remote the dialog never saw; the switch does not
+		assert_eq!(apply(&remote, &base, &picked), (None, false));
+		assert_eq!(apply(&remote, &base, &manual), (None, true));
+		// Remote picked in the dialog
+		assert_eq!(apply(&base, &base, &remote), (None, true));
 	}
 
 	// Every launch-time rewrite used to truncate the file before writing it, so a
