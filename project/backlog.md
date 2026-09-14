@@ -164,6 +164,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Code review 20260914 item 26 (F58, should-fix): `--wallpaper-file` or `--wallpaper` with no value shows the built-in picture, or nothing when there is a rotation folder, where the help says none.
 	- Code review 20260914 item 27 (F59, should-fix): A build whose binary changed outside the source folder, such as after a dependency update, keeps the previous build number.
 	- Code review 20260914 item 28 (F60, should-fix): A window that is killed, or whose first shell cannot start, leaves its control socket file behind.
+	- Code review 20260914 item 31 (F63, blocking): Adding the shell integration block replaces a linked PowerShell profile with a plain copy, makes a private profile readable by others, and can write through a stray link beside it.
+	- Code review 20260914 item 32 (F64, blocking): The shell integration block breaks a directory-change hook already set in PowerShell, so every directory change prints an error, and a profile that loads the block twice breaks the prompt.
+	- Code review 20260914 item 33 (F65, should-fix): The git-aware bash prompt replaces a prompt set in `.bashrc`, where it should give way to it.
+	- Code review 20260914 item 34 (F66, should-fix): Deleting the shell integration block does not keep it out when an earlier build added it or a later one updated it.
+	- Code review 20260914 item 35 (F67, should-fix): A host color added inside the shell integration block, as its own comment suggests, is deleted at the next launch.
+	- Code review 20260914 item 36 (F68, should-fix): On Windows, a PowerShell profile path with a character outside ASCII is misread, so the block goes into a new file PowerShell never loads.
+	- Code review 20260914 item 37 (F69, should-fix): After a program that reports its directory exits, new tabs and splits start in its last directory instead of where the pane's shell is.
 	- Opened: 20260914-124200
 
 - 🔘 Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
