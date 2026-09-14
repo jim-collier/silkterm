@@ -153,10 +153,29 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Code review 20260914 item 14 (F46, should-fix): Flyover help in the Settings and About windows appears at once, without the rest the tabs and menus wait for.
 	- Code review 20260914 item 15 (F47, should-fix): The Settings flyover's padding and border do not grow with the display scale.
 	- Code review 20260914 item 16 (F48, should-fix): Renaming a saved theme to its own name, or changing only its capitals, is refused as a name already taken.
+	- Code review 20260914 item 18 (F50, blocking): A menu left open after its pane's shell ended can close a different tab, or the whole window, with its programs still running.
+	- Code review 20260914 item 19 (F51, blocking): A window taller or wider than the graphics card can draw crashes at launch, and `window.rows: 1000` in the settings file is enough on some machines.
+	- Code review 20260914 item 20 (F52, blocking): `--font-size nan` or `--wallpaper-opacity nan` replaces that setting in the settings file, so the saved value is lost.
+	- Code review 20260914 item 21 (F53, should-fix): A launch with `--fullscreen` stores the screen size as the size to open at next time.
+	- Code review 20260914 item 22 (F54, should-fix): A window asked for 24 rows gives the shell 22 while the tab strip shows for a single tab.
+	- Code review 20260914 item 23 (F55, should-fix): Ctrl+Shift+N opens the new window on the default settings file, and not always in the current pane's folder.
+	- Code review 20260914 item 24 (F56, should-fix): `silkterm --wallpaper` reports success and shows nothing while the wallpaper is switched off.
+	- Code review 20260914 item 25 (F57, should-fix): Reload config drops the font and colors given on the command line at launch.
+	- Code review 20260914 item 26 (F58, should-fix): `--wallpaper-file` or `--wallpaper` with no value shows the built-in picture, or nothing when there is a rotation folder, where the help says none.
+	- Code review 20260914 item 27 (F59, should-fix): A build whose binary changed outside the source folder, such as after a dependency update, keeps the previous build number.
+	- Code review 20260914 item 28 (F60, should-fix): A window that is killed, or whose first shell cannot start, leaves its control socket file behind.
 	- Opened: 20260914-124200
 
 - 🔘 Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
 	- The forwarded display counts as local, so the Remote profile is not used. Code review 20260914 item 9 (F41).
+	- Opened: 20260914-124200
+
+- 🔘 On Windows, `silkterm --wallpaper` and `silkterm --reload-settings` print nothing when they fail, not even that Windows does not support them.
+	- The message goes nowhere, since a Windows build has no console of its own. Code review 20260914 item 29 (F61).
+	- Opened: 20260914-124200
+
+- 🔘 After a window moves to a monitor with a lower refresh rate, the performance profile can step down while the display is keeping up.
+	- The frame budget is taken from the monitor at launch and never updated. Code review 20260914 item 30 (F62).
 	- Opened: 20260914-124200
 
 ### New features and enhancements
