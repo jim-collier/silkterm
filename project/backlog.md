@@ -187,6 +187,9 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Code review 20260914 item 55 (F87, should-fix): The dogfood launcher changes arguments that hold quotes, and drops empty ones, on the way to the terminal.
 	- Code review 20260914 item 56 (F88, should-fix): The dogfood launcher reads the whole build again at every launch instead of trusting its date.
 	- Code review 20260914 item 57 (F89, should-fix): `utility/rename.bash` leaves a tree whose Windows build fails.
+	- Code review 20260914 item 60 (F92, blocking): The fix for the Windows freeze on a long run of output has no test, so an engine update could lose it without anything failing.
+	- Code review 20260914 item 61 (F93, should-fix): Once the scrollback is full, output above a pinned status line, such as apt's progress bar, stops easing.
+	- Code review 20260914 item 62 (F94, should-fix): The terminal engine handles output in full-screen programs such as tmux about a third slower, because it copies every row that scrolls away.
 	- Opened: 20260914-124200
 
 - 🔘 Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
