@@ -171,6 +171,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Code review 20260914 item 35 (F67, should-fix): A host color added inside the shell integration block, as its own comment suggests, is deleted at the next launch.
 	- Code review 20260914 item 36 (F68, should-fix): On Windows, a PowerShell profile path with a character outside ASCII is misread, so the block goes into a new file PowerShell never loads.
 	- Code review 20260914 item 37 (F69, should-fix): After a program that reports its directory exits, new tabs and splits start in its last directory instead of where the pane's shell is.
+	- Code review 20260914 item 40 (F72, blocking): A wallpaper blur of a tiny fraction such as `1e-40`, in the settings file or in an image's own tags, makes SilkTerm quit with every shell in it.
+	- Code review 20260914 item 41 (F73, blocking): A small wallpaper file with very large dimensions takes gigabytes of memory while it loads, enough to crash SilkTerm on a machine with less to spare.
+	- Code review 20260914 item 42 (F74, should-fix): With a rotation interval shorter than an image takes to prepare, the wallpaper never changes and the abandoned loads keep running, several gigabytes at once.
+	- Code review 20260914 item 43 (F75, should-fix): In the dark Matrix and Retro Amber themes the character under the cursor is barely readable, because the cursor is the text's own color.
+	- Code review 20260914 item 44 (F76, should-fix): On Xfce, the menus and "Use system font" can follow GNOME's font settings instead of the desktop's own.
 	- Opened: 20260914-124200
 
 - 🔘 Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
