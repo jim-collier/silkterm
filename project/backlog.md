@@ -138,6 +138,21 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- If it's a real bug, it's new, not a regression.
 	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
 
+- 🔘 Code review 20260914 round 1 (review 20260914-124200).
+	- Code review 20260914 item 1 (F33, blocking): A settings file with one old-style setting at the left margin is converted wholesale, and its shell list is lost.
+	- Code review 20260914 item 2 (F34, blocking): The retired `shell.default` is deleted without moving that shell to the top of the list when the file also has a line that cannot be read.
+	- Code review 20260914 item 3 (F35, should-fix): Several commented `## Default` lines in a new settings file name values that are not the defaults, among them transparency and blur behind.
+	- Code review 20260914 item 4 (F36, should-fix): A saved theme makes every launch report its settings as unread typos.
+	- Code review 20260914 item 5 (F37, should-fix): A `$` or `%` in a shell's arguments is expanded as a variable, so `cmd /k prompt $P$G` loses its prompt.
+	- Code review 20260914 item 6 (F38, should-fix): A color override in the settings file is dropped for the session when the system switches between dark and light.
+	- Code review 20260914 item 7 (F39, should-fix): The wallpaper metadata fuzz test never reaches the metadata it is meant to check.
+	- Code review 20260914 item 8 (F40, should-fix): On Windows, the shell scan can offer Python 3 when only the Microsoft Store shortcut is there.
+	- Opened: 20260914-124200
+
+- 🔘 Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
+	- The forwarded display counts as local, so the Remote profile is not used. Code review 20260914 item 9 (F41).
+	- Opened: 20260914-124200
+
 ### New features and enhancements
 
 - 🔘 Remove the double-scrollbar with the minimap.
@@ -286,6 +301,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Emits the create/select form: `--new-tab` / `--new-pane` (with explicit `--splits`, direction, and non-default `--size`) for structure, plus `--tab=<id>` / `--pane=<id>` for per-entity overrides. Always writes explicit directions and sizes (never the "more space" default) so a saved layout reproduces regardless of window size.
 	- Alternately, lean on shcl hierarchical format for nested configurations.
 	- Opened: 20260628-083740
+
+- 🔘 Say when a color typed into the settings file is read as empty because it was not quoted.
+	- `background: #112233` reads as nothing, since `#` starts a comment, and the theme's color is used with no message.
+	- Opened: 20260914-124200
 
 ### Done
 
