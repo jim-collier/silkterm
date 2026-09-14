@@ -176,6 +176,17 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Code review 20260914 item 42 (F74, should-fix): With a rotation interval shorter than an image takes to prepare, the wallpaper never changes and the abandoned loads keep running, several gigabytes at once.
 	- Code review 20260914 item 43 (F75, should-fix): In the dark Matrix and Retro Amber themes the character under the cursor is barely readable, because the cursor is the text's own color.
 	- Code review 20260914 item 44 (F76, should-fix): On Xfce, the menus and "Use system font" can follow GNOME's font settings instead of the desktop's own.
+	- Code review 20260914 item 47 (F79, blocking): With the release signing key filled in, the PowerShell installer refuses every correctly signed release.
+	- Code review 20260914 item 48 (F80, blocking): The pre-commit hook commits every change in a partly staged Rust file, the unstaged ones included.
+	- Code review 20260914 item 49 (F81, blocking): A commit made while the pipeline builds lets a release publish binaries that were not built from the tagged source.
+	- Code review 20260914 item 50 (F82, should-fix): The bash installer leaves a GitHub token behind in a temporary file.
+	- Code review 20260914 item 51 (F83, should-fix): The pre-push gate tests the working tree, not the commits being pushed.
+	- Code review 20260914 item 52 (F84, should-fix): A release can be cut from a partial set of artifacts, such as the one a `--quick` run leaves.
+	- Code review 20260914 item 53 (F85, should-fix): With an absolute `CARGO_TARGET_DIR`, the pipeline makes no Windows installer and the Windows pipeline cannot find its builds.
+	- Code review 20260914 item 54 (F86, should-fix): The menu launcher both one-line installers write does not start when the install path holds a space.
+	- Code review 20260914 item 55 (F87, should-fix): The dogfood launcher changes arguments that hold quotes, and drops empty ones, on the way to the terminal.
+	- Code review 20260914 item 56 (F88, should-fix): The dogfood launcher reads the whole build again at every launch instead of trusting its date.
+	- Code review 20260914 item 57 (F89, should-fix): `utility/rename.bash` leaves a tree whose Windows build fails.
 	- Opened: 20260914-124200
 
 - 🔘 Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
@@ -188,6 +199,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - 🔘 After a window moves to a monitor with a lower refresh rate, the performance profile can step down while the display is keeping up.
 	- The frame budget is taken from the monitor at launch and never updated. Code review 20260914 item 30 (F62).
+	- Opened: 20260914-124200
+
+- 🔘 After the PowerShell installer adds SilkTerm to PATH on Windows, a new console opened from the Start menu does not find it until you sign out.
+	- The PATH is written to the registry without telling Windows it changed. Code review 20260914 item 58 (F90).
 	- Opened: 20260914-124200
 
 ### New features and enhancements
