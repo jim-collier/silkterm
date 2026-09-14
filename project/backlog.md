@@ -29,23 +29,16 @@ In each section, items are listed approximately from newest to oldest. Each item
 
 Use a clipboard or macro manager to make inserting these emojis easier. This "database" will eventually be moved to a git-synced nano-git-db.
 
-| Icon | Status
-| :--: | :--
-| 🔘   | Not started
-| 🛠️   | Started, and/or partially complete
-| 🔬   | Testing not started or finished
-| ✋   | Defer
-| ✅   | Complete
-| 🚫   | Canceled
+- 🔘 Not started
+- 🛠️ Started, and/or partially complete
+- 🔬 Testing not started or finished
+- ✋ Defer
+- ✅ Complete
+- 🚫 Canceled
 
 ## Backlog
 
 ### Bugs
-
-- 🔘 With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Each time the other pane scrolls, the slide in progress jumps the rest of the way.
-	- Side-by-side panes are not affected.
-	- Split from the smooth scrolling seams item. It shows on builds from before the scroll ledger too.
-	- Opened: 20260911-113647
 
 - 🔘 Scrolling back in muffer with the mouse wheel made its "1 new message" indicator smear and bounce - the same shape as #t78br, "The Notorious 'Bouncing Shadow' nano bug".
 	- This old bug has returned - ever since the alacritty work.
@@ -55,6 +48,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Holding the cursor down to scroll down in a long document (which makes text move up) works well. But,
 	- Holding the cursor up to scroll up in a long document (which makes text move down), is jumpy. Seems to jump ~2 lines at a time.
 	- Opened: 20260911-124508.
+
+- 🔘 With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Each time the other pane scrolls, the slide in progress jumps the rest of the way.
+	- Side-by-side panes are not affected.
+	- Split from the smooth scrolling seams item. It shows on builds from before the scroll ledger too.
+	- Opened: 20260911-113647
 
 - 🔘 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
