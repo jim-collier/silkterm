@@ -15,7 +15,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, Fullscreen, Window, WindowId};
 
-use alacritty_terminal::term::TermMode;
+use alacritty_terminal::term::{ClipboardType, TermMode};
 use glyphon::{Buffer, Color as GColor, Shaping, TextArea, TextBounds};
 
 use crate::bgimage::{ImageRenderer, WpProbe};
@@ -6022,6 +6022,21 @@ impl ApplicationHandler<UserEvent> for App {
 				}
 				if id == state.tabs.cur().focused {
 					state.update_title();
+				}
+			}
+			UserEvent::ClipboardStore(id, kind, text) => {
+				// Only the pane in use may set it, so a background pane printing a
+				// hostile file cannot swap what the next paste holds.
+				if id == state.tabs.cur().focused {
+					match kind {
+						ClipboardType::Clipboard => state.clipboard.set_clipboard(text),
+						// set_primary falls back to the real clipboard where there is
+						// no primary, which a store never asked for
+						ClipboardType::Selection if cfg!(target_os = "linux") => {
+							state.clipboard.set_primary(text);
+						}
+						ClipboardType::Selection => {}
+					}
 				}
 			}
 			UserEvent::ChildExit(id, status) => {

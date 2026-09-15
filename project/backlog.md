@@ -59,7 +59,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Split from the smooth scrolling seams item. It shows on builds from before the scroll ledger too.
 	- Opened: 20260911-113647
 
-- 🛠️ The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
+- 🔬 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
 	- CTRL+shift+C on selected text doesn't work.
 	- Right-click and choose "Copy", DOES work.
@@ -73,7 +73,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- Copy on select only runs after a drag SilkTerm saw itself. A program that tracks the mouse, like muffer, takes the drag.
 		- muffer's own auto-copy asks the terminal to set the clipboard with an escape sequence, and SilkTerm has never acted on that request.
 	- Changed: Ctrl+Shift+C copies even while the focus flag reads false. It types nothing, so it cannot be the bare arrow that gate stops.
-	- Still open: acting on a program's request to set the clipboard needs a decision first, since output from anywhere could then replace what is on the clipboard.
+	- Changed: a program can now set the clipboard, and on Linux the primary selection, from the pane in use. Other panes and tabs are ignored. That is the route muffer's auto-copy takes.
+	- Copy on select still only follows a drag SilkTerm sees. An app that takes the mouse copies for itself now instead.
 	- Opened: 20260909.
 
 - 🔘 The scroll test's full-screen-entry check tests nothing: it runs the less scene instead of its own script.
@@ -255,6 +256,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 - 🔘 After the PowerShell installer adds SilkTerm to PATH on Windows, a new console opened from the Start menu does not find it until you sign out.
 	- The PATH is written to the registry without telling Windows it changed. Code review 20260914 item 58 (F90).
 	- Opened: 20260914-124200
+
+- 🔘 A config written as single dotted lines grows on every launch, with settings added under the wrong sections.
+	- From nine lines such as `window.columns: 100`, one launch put the scroll settings under `performance` and `margin` under the wallpaper's `rotate` block.
+	- The next launch added them again in the right places, so the file keeps growing.
+	- Opened: 20260915
 
 ### New features and enhancements
 
