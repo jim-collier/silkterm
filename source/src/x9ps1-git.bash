@@ -46,6 +46,16 @@
 ##	History at bottom of script (maintained here in addition to source control)
 
 
+## Text from git goes into PS1, which bash expands at every prompt. A branch named '$(cmd)' is legal, and would run.
+## Root sees a '$' in a name as '#', since '\$' is the prompt's own uid escape; that is display only.
+function fPromptSafe() {
+	local val="${1//[[:cntrl:]]/}"
+	val="${val//\\/\\\\}"
+	val="${val//\$/\\\$}"
+	val="${val//\`/\\\`}"
+	printf '%s' "${val}"
+}
+
 function fMain() {
 
 	## Early exit if user overrides with "standard prompt" environment variable
@@ -187,14 +197,14 @@ function fMain() {
 		if [[ -n "${gitRepo}" ]]; then
 
 			## Encoded repo
-			local -r encodedPartial_Repo="${colorRepo}${gitRepo}${colorRESET}"
+			local -r encodedPartial_Repo="${colorRepo}$(fPromptSafe "${gitRepo}")${colorRESET}"
 
 			## Git branch
 			local -r gitBranch="$(git branch 2>/dev/null | grep -i "*" | grep -iPo "[^\*\ ]+" || true)"
 			if [[ -n "${gitBranch}" ]]; then
 
 				## Encoded branch
-				local -r encodedPartial_Branch="${colorBranch}${gitBranch}${colorRESET}"
+				local -r encodedPartial_Branch="${colorBranch}$(fPromptSafe "${gitBranch}")${colorRESET}"
 
 				## Git status
 				local -r gitStatus="$(git status 2>/dev/null || true)"
@@ -300,3 +310,4 @@ set +eE
 ##		- 20260621 JC:
 ##			- Chanced license from GPLv3 to MIT.
 ##			- Added X9PS1_STANDARD flag.
+##		- 20260915 JC: Branch and remote names are escaped before going into PS1. A name holding $(...) or backticks ran as a command at every prompt.

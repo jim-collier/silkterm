@@ -530,6 +530,80 @@ mod tests {
 		assert!(BASH_PROMPT.contains("fMain"));
 	}
 
+	// Anyone who publishes a repository picks its branch names, and bash expands
+	// the prompt text at every prompt. A branch named `$(cmd)` ran cmd in any
+	// bash pane opened in a clone.
+	#[cfg(unix)]
+	#[test]
+	fn a_branch_name_is_shown_and_never_run_by_the_prompt() {
+		use std::process::Command;
+		let dir = std::env::temp_dir().join(format!("silkterm_x9ps1_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		let repo = dir.join("repo");
+		std::fs::create_dir_all(&repo).expect("temp dir");
+		let script = dir.join(super::BASH_PROMPT_FILE);
+		std::fs::write(&script, BASH_PROMPT).expect("write script");
+
+		let branch = "$(touch${IFS}PWNED1)`touch${IFS}PWNED2`${HOME}";
+		let remote = "https://example.com/$(touch PWNED3)/`touch PWNED4`/a\\b.git";
+		let run = |program: &str, args: &[&str]| {
+			let out = Command::new(program)
+				.args(args)
+				.current_dir(&repo)
+				.env("GIT_CONFIG_GLOBAL", "/dev/null")
+				.env("GIT_CONFIG_NOSYSTEM", "1")
+				.env_remove("GIT_DIR")
+				.env_remove("GIT_WORK_TREE")
+				.env_remove("GIT_INDEX_FILE")
+				.env_remove("X9PS1_STANDARD")
+				.output()
+				.unwrap_or_else(|e| panic!("run {program}: {e}"));
+			assert!(out.status.success(), "{program} {args:?}: {out:?}");
+			String::from_utf8_lossy(&out.stdout).into_owned()
+		};
+		run("git", &["init", "-q", "-b", branch]);
+		let identity = ["-c", "user.name=test", "-c", "user.email=test@example.com"];
+		run(
+			"git",
+			&[
+				&identity[..],
+				&["commit", "-q", "--allow-empty", "-m", "test"],
+			]
+			.concat(),
+		);
+		run("git", &["config", "remote.origin.url", remote]);
+
+		// What the pane's PROMPT_COMMAND does, then the expansion bash does to show it
+		let shown = run(
+			"bash",
+			&[
+				"--noprofile",
+				"--norc",
+				"-c",
+				r#"PS1=$("$BASH" "$1") && printf '%s' "${PS1@P}""#,
+				"bash",
+				&script.to_string_lossy(),
+			],
+		);
+		let ran: Vec<_> = std::fs::read_dir(&repo)
+			.expect("read repo")
+			.filter_map(Result::ok)
+			.map(|entry| entry.file_name().to_string_lossy().into_owned())
+			.filter(|name| name.starts_with("PWNED"))
+			.collect();
+		let _ = std::fs::remove_dir_all(&dir);
+
+		assert!(ran.is_empty(), "the prompt ran commands: {ran:?}");
+		assert!(
+			shown.contains(branch),
+			"branch not shown as text: {shown:?}"
+		);
+		assert!(
+			shown.contains(remote),
+			"remote not shown as text: {shown:?}"
+		);
+	}
+
 	fn found(title: &str, command: &str) -> Found {
 		Found::new(title, command.to_string(), "")
 	}
