@@ -490,9 +490,6 @@ if [[ -n "${DENY_CMD+x}" ]] && ((${#DENY_CMD[@]})); then
 		fEcho "WARNING: deps check skipped: ${DENY_PROBE[*]} failed (cargo install cargo-deny)"
 	fi
 fi
-## Headless scroll regression harness (slow; skipped under --quick). It skips itself
-## on an environment miss (no Xvfb/binary) and exits non-zero only on a measured
-## regression - which aborts here.
 ## A release may only publish what was built from the source being tagged.
 if [[ -x "${root}/cicd/tests/release/run.bash" ]]; then
 	fEcho_Clean "release provenance ..."
@@ -529,20 +526,25 @@ if ((! quick)) && [[ -n "${WINGUI_HARNESS+x}" ]] && ((${#WINGUI_HARNESS[@]})) &&
 		fDie "a windows gui scenario failed"
 	fi
 fi
+## Headless scroll regression harness (slow; skipped under --quick). A measured
+## regression aborts here. Exit 3 means it could not run at all (no Xvfb, cage or
+## binary), which is a skip for that arm and never an OK.
 if ((! quick)) && [[ -n "${SCROLL_HARNESS+x}" ]] && ((${#SCROLL_HARNESS[@]})); then
 	fEcho_Clean "scroll regression harness (headless, X11) ..."
-	if "${root}/${SCROLL_HARNESS[0]}" "${SCROLL_HARNESS[@]:1}"; then
-		fEcho "OK: scroll harness (X11)"
-	else
-		fDie "scroll regression harness reported a regression (X11)"
-	fi
+	scrollRc=0; "${root}/${SCROLL_HARNESS[0]}" "${SCROLL_HARNESS[@]:1}" || scrollRc=$?
+	case "${scrollRc}" in
+		0) fEcho "OK: scroll harness (X11)" ;;
+		3) fEcho "WARNING: scroll harness (X11) skipped, nothing was measured" ;;
+		*) fDie "scroll regression harness reported a regression (X11)" ;;
+	esac
 	if [[ "${SCROLL_HARNESS_WAYLAND:-0}" == 1 ]]; then
 		fEcho_Clean "scroll regression harness (headless, Wayland) ..."
-		if "${root}/${SCROLL_HARNESS[0]}" "${SCROLL_HARNESS[@]:1}" --wayland; then
-			fEcho "OK: scroll harness (Wayland)"
-		else
-			fDie "scroll regression harness reported a regression (Wayland)"
-		fi
+		scrollRc=0; "${root}/${SCROLL_HARNESS[0]}" "${SCROLL_HARNESS[@]:1}" --wayland || scrollRc=$?
+		case "${scrollRc}" in
+			0) fEcho "OK: scroll harness (Wayland)" ;;
+			3) fEcho "WARNING: scroll harness (Wayland) skipped, nothing was measured" ;;
+			*) fDie "scroll regression harness reported a regression (Wayland)" ;;
+		esac
 	fi
 elif ((quick)); then
 	fEcho_Clean "scroll harness skipped (--quick)"
