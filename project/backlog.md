@@ -249,11 +249,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### New features and enhancements
 
-- 🔘 Windows: an elevated console in another language still shows a shell's image path in the title.
-	- An elevated console writes the terminal's rights in front of the first title it sends, the one naming the program it started. That word is taken back off, but only where it is the same word the title bar is about to show. A machine speaking another language writes another word, which is not recognized, so the word hides the program name behind it and the whole image path is shown until the shell sets a title of its own.
-	- The word cannot be matched in every language. Closing this properly means matching the title against the path of the program the pane is actually running, which would also cover the plain case without knowing any words.
-	- Opened: 20260909-143000
-
 - 🔘 Docs: `README.md` and `style-guide.md` run consecutive top-level bullets with no blank line between them.
 	- Every other `.md` in the project is clean. The style guide is the worse of the two, and it also still wants the markdownlint-disable block and a table of contents that `glossary.md` needs as well.
 	- Opened: 20260909-212000
@@ -1555,6 +1550,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Windows: an elevated console in another language still shows a shell's image path in the title.
+	- An elevated console writes the terminal's rights in front of the first title it sends, the one naming the program it started. That word is taken back off, but only where it is the same word the title bar is about to show. A machine speaking another language writes another word, which is not recognized, so the word hides the program name behind it and the whole image path is shown until the shell sets a title of its own.
+	- The word cannot be matched in every language. Closing this properly means matching the title against the path of the program the pane is actually running, which would also cover the plain case without knowing any words.
+	- Done: a word in front of a Windows path to the pane's own program comes off, whatever the language. Only the file name is compared. A word holding a path separator, or in front of another program, stays.
+	- Not run on a Windows box in another language.
+	- Opened: 20260909-143000
+	- Closed: 20260915-154444
 
 - ✅ Remove the double-scrollbar with the minimap.
 	- That was my flawed reasoning. Turns out, they are both the same size - so, redundant.

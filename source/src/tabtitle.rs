@@ -254,7 +254,7 @@ fn program_says<'a>(title: &'a str, marker: Option<&str>) -> Option<&'a str> {
 	// measured over a pseudoconsole on two machines. Both halves say nothing, so
 	// the rights come off here and the name is dropped below. Only the exact word
 	// about to be put back is taken off, so a title that merely reads like one
-	// survives. See design.md for what that leaves on a non-English Windows.
+	// survives. A console in another language is caught by `foreign_marker_off`.
 	if let Some(word) = marker {
 		if let Some(rest) = title.strip_prefix(word).and_then(|r| r.strip_prefix(": ")) {
 			title = rest;
@@ -282,15 +282,7 @@ fn program_says<'a>(title: &'a str, marker: Option<&str>) -> Option<&'a str> {
 // writes such a title, but the test is the same everywhere: an executable
 // extension is the only handle there is, and a posix path does not carry one.
 fn is_program_name(title: &str) -> bool {
-	let Some(dot) = title.rfind('.') else {
-		return false;
-	};
-	// `.com` is left out. Far more titles end in a hostname or a directory than
-	// in one of the three DOS-era programs that still use that extension.
-	if !["exe", "bat", "cmd"]
-		.iter()
-		.any(|known| title[dot + 1..].eq_ignore_ascii_case(known))
-	{
+	if program_ext(title).is_none() {
 		return false;
 	}
 	// A file name with a space in it could be anything, and so could a sentence
@@ -298,6 +290,46 @@ fn is_program_name(title: &str) -> bool {
 	let last = &title[title.rfind(['\\', '/']).map_or(0, |at| at + 1)..];
 	!last.contains(char::is_whitespace)
 		&& (is_absolute(title) || !title.contains(char::is_whitespace))
+}
+
+// Where the extension's dot is, if the name ends in one a program runs from.
+// `.com` is left out. Far more titles end in a hostname or a directory than in
+// one of the three DOS-era programs that still use that extension.
+fn program_ext(name: &str) -> Option<usize> {
+	let dot = name.rfind('.')?;
+	["exe", "bat", "cmd"]
+		.iter()
+		.any(|known| name[dot + 1..].eq_ignore_ascii_case(known))
+		.then_some(dot)
+}
+
+// A program's file name without its extension, so the bare `pwsh` a pane was
+// started with matches the `C:\...\pwsh.exe` a console writes.
+fn program_stem(path: &str) -> &str {
+	let name = &path[path.rfind(['\\', '/']).map_or(0, |at| at + 1)..];
+	program_ext(name).map_or(name, |dot| &name[..dot])
+}
+
+// An elevated console in another language writes another word in front of the
+// program it started, so the word cannot be matched. What follows it can: the
+// path of the program this pane was started with. Only the file name counts,
+// since a console spells the folders its own way (`C:\WINDOWS\system32`).
+fn foreign_marker_off<'a>(title: &'a str, launched: &str) -> &'a str {
+	let Some(at) = title
+		.char_indices()
+		.skip(1)
+		.map(|(at, _)| at)
+		.find(|&at| is_absolute(&title[at..]) && !title[at..].starts_with('/'))
+	else {
+		return title;
+	};
+	let (word, rest) = title.split_at(at);
+	let head = rest.split_once(" - ").map_or(rest, |(head, _)| head).trim();
+	let named = !word.trim().is_empty()
+		&& !word.contains(['\\', '/'])
+		&& is_program_name(head)
+		&& program_stem(head).to_lowercase() == program_stem(launched).to_lowercase();
+	if named { rest } else { title }
 }
 
 // Rooted the way either platform spells it: a drive, a UNC share, or `/`.
@@ -313,15 +345,24 @@ fn is_absolute(path: &str) -> bool {
 ///
 /// A typed title is shown as typed - the tab shows it that way too - while a
 /// program's is trimmed, since nobody chose its spacing, and has any marker a
-/// console wrote into it taken off. `tab` is only asked for when it is needed,
-/// since working it out is not free.
+/// console wrote into it taken off. `launched` is the program the pane was
+/// started with, which is how that marker is known in any language. `tab` is
+/// only asked for when it is needed, since working it out is not free.
 pub fn window_suffix(
 	rights: Rights,
 	typed: Option<&str>,
 	program: Option<&str>,
+	launched: Option<&str>,
 	tab: impl FnOnce() -> String,
 ) -> Option<String> {
-	let program = program.and_then(|title| program_says(title, rights.console_marker()));
+	let marker = rights.console_marker();
+	let program = program.and_then(|title| {
+		let title = match (marker, launched) {
+			(Some(_), Some(launched)) => foreign_marker_off(title, launched),
+			_ => title,
+		};
+		program_says(title, marker)
+	});
 	if let Some(typed) = typed {
 		if !typed.trim().is_empty() {
 			return Some(typed.to_string());
@@ -1298,7 +1339,7 @@ mod tests {
 	#[test]
 	fn the_window_title_takes_the_typed_name_then_the_program_then_the_tab() {
 		let suffix = |typed, program| {
-			window_suffix(Rights::default(), typed, program, || {
+			window_suffix(Rights::default(), typed, program, None, || {
 				"Bash - ~/src".to_string()
 			})
 		};
@@ -1326,7 +1367,7 @@ mod tests {
 	fn the_tab_label_is_only_worked_out_when_it_is_needed() {
 		let asked = std::cell::Cell::new(0);
 		let suffix = |typed, program: Option<&str>| {
-			window_suffix(Rights::default(), typed, program, || {
+			window_suffix(Rights::default(), typed, program, None, || {
 				asked.set(asked.get() + 1);
 				"Bash - ~/src".to_string()
 			})
@@ -1343,12 +1384,90 @@ mod tests {
 	fn a_program_naming_only_itself_falls_through_to_the_tab() {
 		let exe = Some("C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
 		let suffix = |typed, program| {
-			window_suffix(Rights::default(), typed, program, || {
+			window_suffix(Rights::default(), typed, program, None, || {
 				"Windows PowerShell".to_string()
 			})
 		};
 		assert_eq!(suffix(None, exe).as_deref(), Some("Windows PowerShell"));
 		assert_eq!(suffix(Some(""), exe), None);
+	}
+
+	// A console in another language writes another word in front of the first
+	// title, and the word alone cannot be told from a real one. The path after it
+	// names the program the pane was started with, and that can be matched.
+	#[test]
+	fn a_foreign_elevated_marker_goes_with_the_program_it_names() {
+		let admin = Rights {
+			say: Some("Administrator"),
+			decorated: true,
+		};
+		let suffix = |program, launched| {
+			window_suffix(admin, None, Some(program), launched, || "Cmd".to_string())
+		};
+		for title in [
+			"Administrador: C:\\Windows\\System32\\cmd.exe",
+			"Administrateur : C:\\WINDOWS\\system32\\cmd.exe",
+			"\u{7ba1}\u{7406}\u{8005}: C:\\Windows\\System32\\cmd.exe",
+			"Administrator: C:\\WINDOWS\\system32\\cmd.exe",
+		] {
+			for launched in ["cmd", "CMD.EXE", "C:\\Windows\\System32\\cmd.exe"] {
+				assert_eq!(
+					suffix(title, Some(launched)).as_deref(),
+					Some("Cmd"),
+					"{title:?} from {launched:?}"
+				);
+			}
+		}
+		assert_eq!(
+			suffix(
+				"Administrador: C:\\Windows\\System32\\cmd.exe - ping 8.8.8.8",
+				Some("cmd")
+			)
+			.as_deref(),
+			Some("ping 8.8.8.8")
+		);
+		assert_eq!(
+			suffix(
+				"Administrador: C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+				Some("pwsh")
+			)
+			.as_deref(),
+			Some("Cmd")
+		);
+	}
+
+	// Only the program this pane was started with counts, and only where a console
+	// decorates a title at all. Anything else is somebody's real title.
+	#[test]
+	fn a_word_in_front_of_another_program_survives() {
+		let title = "Administrador: C:\\Windows\\System32\\cmd.exe";
+		let admin = Rights {
+			say: Some("Administrator"),
+			decorated: true,
+		};
+		let root = Rights {
+			say: Some("Root"),
+			decorated: false,
+		};
+		for (rights, launched) in [
+			(admin, Some("pwsh")),
+			(admin, Some("cmd.com")),
+			(admin, None),
+			(root, Some("cmd")),
+			(Rights::default(), Some("cmd")),
+		] {
+			assert_eq!(
+				window_suffix(rights, None, Some(title), launched, || "Cmd".into()).as_deref(),
+				Some(title),
+				"{launched:?}"
+			);
+		}
+		// A word holding a path of its own is not a console's.
+		let copied = "copy a/b C:\\Windows\\System32\\cmd.exe";
+		assert_eq!(
+			window_suffix(admin, None, Some(copied), Some("cmd"), || "Cmd".into()).as_deref(),
+			Some(copied)
+		);
 	}
 
 	#[test]
@@ -1451,8 +1570,8 @@ mod tests {
 			elevated("ADMINISTRATOR: vim foo.rs"),
 			Some("ADMINISTRATOR: vim foo.rs")
 		);
-		// A console that speaks another language writes another word, so the
-		// title is shown as it arrived. See design.md.
+		// A console that speaks another language writes another word, which is
+		// not known here. `window_suffix` finds it by the program after it.
 		assert_eq!(
 			elevated("Administrador: C:\\Windows\\System32\\cmd.exe"),
 			Some("Administrador: C:\\Windows\\System32\\cmd.exe")
@@ -1468,7 +1587,7 @@ mod tests {
 			decorated: false,
 		};
 		assert_eq!(
-			window_suffix(rights, None, Some("Root: kernel notes"), || "Bash"
+			window_suffix(rights, None, Some("Root: kernel notes"), None, || "Bash"
 				.to_string()),
 			Some("Root: kernel notes".to_string())
 		);
@@ -1605,7 +1724,7 @@ mod tests {
 					decorated: false,
 				},
 			] {
-				let suffix = window_suffix(rights, None, Some(&said), || "bash".into());
+				let suffix = window_suffix(rights, None, Some(&said), Some("x"), || "bash".into());
 				let title = window_title(rights, None, "SilkTerm", suffix.as_deref());
 				assert!(tame(&title), "the window title came out {title:?}");
 			}

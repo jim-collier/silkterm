@@ -1102,6 +1102,11 @@ pub struct Pane {
 }
 
 impl Pane {
+	// The program this pane was started with, so a title naming it can be known.
+	pub fn launched(&self) -> Option<&str> {
+		self.command.as_deref()?.first().map(String::as_str)
+	}
+
 	pub fn build(
 		&mut self,
 		ctx: &mut TextCtx,
