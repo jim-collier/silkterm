@@ -882,9 +882,35 @@ pub fn reload_from_disk() -> Settings {
 // lasts the session. A reload re-reads the file, and the file never held these,
 // so taking the fresh copy as-is would lift a remote screen's profile or the
 // display watch's step on a menu command.
-pub fn keep_session(live: &Settings, reloaded: &mut Settings) {
+pub fn keep_session(live: &Settings, reloaded: &mut Settings, wallpaper_locked: bool) {
 	reloaded.remote_override = live.remote_override;
 	reloaded.stepped_profile = live.stepped_profile;
+	if wallpaper_locked {
+		take_wallpaper(live, reloaded);
+	}
+}
+
+// A wallpaper given on the command line lasts the session (`wp_locked` in
+// app.rs). An Apply keeps it unless the dialog picked another, and both copies
+// take it, so the save writes nothing about it.
+pub fn keep_wallpaper_on_apply(
+	live: &Settings,
+	wallpaper_locked: bool,
+	opened: &mut Settings,
+	edited: &mut Settings,
+) {
+	if wallpaper_locked
+		&& edited.wallpaper_raw == opened.wallpaper_raw
+		&& edited.wallpaper == opened.wallpaper
+	{
+		take_wallpaper(live, opened);
+		take_wallpaper(live, edited);
+	}
+}
+
+fn take_wallpaper(live: &Settings, s: &mut Settings) {
+	s.wallpaper_raw.clone_from(&live.wallpaper_raw);
+	s.wallpaper.clone_from(&live.wallpaper);
 }
 
 // The same for an Apply from the Settings dialog, whose copy is as old as the
@@ -5260,7 +5286,7 @@ mod tests {
 			..Settings::default()
 		};
 		let mut reloaded = Settings::default();
-		keep_session(&live, &mut reloaded);
+		keep_session(&live, &mut reloaded, false);
 		assert!(reloaded.remote_override);
 		assert_eq!(
 			reloaded.stepped_profile,
@@ -5327,6 +5353,52 @@ mod tests {
 		assert_eq!(apply(&remote, &base, &manual), (None, true));
 		// Remote picked in the dialog
 		assert_eq!(apply(&base, &base, &remote), (None, true));
+		// and over a step taken since the dialog opened, which the pick lifts
+		assert_eq!(apply(&stepped, &base, &remote), (None, true));
+	}
+
+	// A wallpaper given on the command line lasts the session: a reload keeps it
+	// over the file, and an Apply keeps it unless the dialog picked another.
+	#[test]
+	fn a_command_line_wallpaper_outlasts_a_reload_and_an_apply() {
+		let with = |raw: &str| Settings {
+			wallpaper_raw: raw.to_string(),
+			wallpaper: (!raw.is_empty()).then(|| std::path::PathBuf::from(raw)),
+			..Settings::default()
+		};
+		let live = with("/cli.png");
+		let mut reloaded = with("/file.png");
+		keep_session(&live, &mut reloaded, true);
+		assert_eq!(reloaded.wallpaper, live.wallpaper);
+		let mut reloaded = with("/file.png");
+		keep_session(&live, &mut reloaded, false);
+		assert_eq!(
+			reloaded.wallpaper_raw, "/file.png",
+			"no lock, the file wins"
+		);
+		// an explicit clear on the command line is kept too
+		let mut reloaded = with("/file.png");
+		keep_session(&with(""), &mut reloaded, true);
+		assert!(reloaded.wallpaper.is_none() && reloaded.wallpaper_raw.is_empty());
+
+		// a dialog opened before the lock, applied without touching the wallpaper
+		let (mut opened, mut edited) = (with("/old.png"), with("/old.png"));
+		keep_wallpaper_on_apply(&live, true, &mut opened, &mut edited);
+		assert_eq!(edited.wallpaper, live.wallpaper);
+		assert_eq!(
+			(&opened.wallpaper_raw, &opened.wallpaper),
+			(&edited.wallpaper_raw, &edited.wallpaper),
+			"both sides match, so the save writes nothing about it"
+		);
+		// the dialog picked one itself
+		let (mut opened, mut edited) = (with("/old.png"), with("/picked.png"));
+		keep_wallpaper_on_apply(&live, true, &mut opened, &mut edited);
+		assert_eq!(edited.wallpaper_raw, "/picked.png");
+		assert_eq!(opened.wallpaper_raw, "/old.png");
+		// no lock
+		let (mut opened, mut edited) = (with("/old.png"), with("/old.png"));
+		keep_wallpaper_on_apply(&live, false, &mut opened, &mut edited);
+		assert_eq!(edited.wallpaper_raw, "/old.png");
 	}
 
 	// Every launch-time rewrite used to truncate the file before writing it, so a

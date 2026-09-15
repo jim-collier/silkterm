@@ -3448,6 +3448,7 @@ impl State {
 		// Remote and a watch step are live state the dialog only copied when it
 		// opened, so a change to either since then must survive the Apply.
 		config::keep_session_on_apply(&live, &orig, &mut edited);
+		config::keep_wallpaper_on_apply(&live, self.wp_locked, &mut orig, &mut edited);
 		// use_system_font is a persisted setting that only reorders font_family at
 		// resolve time, so nothing special to strip - persist the diff as usual.
 		let wrote = config::persist(&orig, &edited);
@@ -3461,7 +3462,7 @@ impl State {
 	fn reload_config(&mut self) {
 		let orig = config::settings().as_ref().clone();
 		let mut edited = config::reload_from_disk();
-		config::keep_session(&orig, &mut edited);
+		config::keep_session(&orig, &mut edited, self.wp_locked);
 		// Force the background image to re-read even when its path is unchanged:
 		// the user may have swapped the file contents under the same name (#167).
 		self.apply_new_settings(&orig, edited, true);
