@@ -309,7 +309,7 @@ pub fn remote_session() -> bool {
 	{
 		// A VNC or xrdp server says so in the environment it starts the session
 		// with. A forwarded X display names a host before the colon, where a local
-		// one is bare or says unix/localhost.
+		// one is bare or says unix.
 		["VNCDESKTOP", "XRDP_SESSION", "RFB_PORT"]
 			.iter()
 			.any(|key| std::env::var_os(key).is_some())
@@ -317,12 +317,15 @@ pub fn remote_session() -> bool {
 	}
 }
 
-// Does this DISPLAY name a host other than this machine? ":0" and "unix:0" are
-// local; "somebox:0" and "1.2.3.4:0" are not.
+// Does this DISPLAY reach its screen over a network? ":0" and "unix:0" are
+// local; "somebox:0" is not, and neither is "localhost:10.0", which is what
+// ssh -X sets. X servers stopped listening on TCP by default years ago, so a
+// display on localhost is a tunnel, and one that is not still never draws on
+// this machine's card directly.
 #[cfg(not(windows))]
 fn forwarded_display(display: &str) -> bool {
 	let host = display.split(':').next().unwrap_or("");
-	!matches!(host, "" | "unix" | "localhost" | "127.0.0.1" | "::1")
+	!matches!(host, "" | "unix")
 }
 
 // The parts of the id that need no graphics adapter, read once on a worker so
@@ -663,10 +666,16 @@ mod tests {
 	#[test]
 	fn a_display_naming_another_host_is_a_remote_screen() {
 		use super::forwarded_display;
-		for local in [":0", ":98.0", "unix:0", "localhost:10.0"] {
+		for local in [":0", ":98.0", "unix:0"] {
 			assert!(!forwarded_display(local), "{local} is this machine");
 		}
-		for away in ["b29w:0", "192.168.1.9:0.0"] {
+		// ssh -X points DISPLAY at a port on localhost
+		for away in [
+			"b29w:0",
+			"192.168.1.9:0.0",
+			"localhost:10.0",
+			"127.0.0.1:10.0",
+		] {
 			assert!(forwarded_display(away), "{away} is somewhere else");
 		}
 	}
