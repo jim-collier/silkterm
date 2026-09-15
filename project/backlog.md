@@ -210,6 +210,19 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Code review 20260914 item 81 (F113, should-fix): Each demo recording leaves background daemons running after it ends.
 	- Code review 20260914 item 82 (F114, should-fix): The demo recorder fails at start when `USER` is not set.
 	- Code review 20260914 item 83 (F115, should-fix): The demo recorder uses a binary under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
+	- Code review 20260914 item 85 (F117, blocking): A release can go out with binaries built from a source file that was never added to git, so the tagged source differs from what was built.
+	- Code review 20260914 item 86 (F118, should-fix): The scroll regression check counts a full-screen app slide that never starts as skipped, so the pipeline still passes.
+	- Code review 20260914 item 87 (F119, should-fix): The scroll regression check for the nano wobble never runs its own scene, so it passes whether the wobble is fixed or not.
+	- Code review 20260914 item 88 (F120, should-fix): When the scroll regression check cannot run at all, the pipeline prints OK for it.
+	- Code review 20260914 item 89 (F121, should-fix): The Windows interface checks test whichever build was last made on the test box, not the change being checked.
+	- Code review 20260914 item 90 (F122, should-fix): The Windows interface checks close every SilkTerm on the test box, not only the one they started.
+	- Code review 20260914 item 91 (F123, should-fix): A quick, scaled or wrong-size benchmark run rewrites the README speed table, though the tools say such runs never reach it.
+	- Code review 20260914 item 92 (F124, should-fix): The speed benchmark runs SilkTerm and the other terminals on the measuring user's own settings, and changes that user's settings file and PowerShell profile.
+	- Code review 20260914 item 93 (F125, should-fix): The size benchmark measures the "SilkTerm +candy" row with its effects turned down.
+	- Code review 20260914 item 94 (F126, should-fix): The benchmark rigs and the wine launcher look for SilkTerm under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
+	- Code review 20260914 item 95 (F127, should-fix): README note 9 says every showdown figure came from a GPU rig, but the size and memory columns did not.
+	- Code review 20260914 item 96 (F128, should-fix): The publish and installer tests still pass when the exclude list handling or the temp folder step they guard is changed.
+	- Code review 20260914 item 97 (F129, should-fix): README gives a wrong wallpaper count, a wrong size ratio against the Alacritty core, and an unreleased version for SilkTerm in the showdown table.
 	- Opened: 20260914-124200
 
 - 🔘 Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
@@ -379,6 +392,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 - 🔘 Say when a color typed into the settings file is read as empty because it was not quoted.
 	- `background: #112233` reads as nothing, since `#` starts a comment, and the theme's color is used with no message.
+	- Opened: 20260914-124200
+
+- 🔘 Let the showdown tools measure again every row the README table carries.
+	- The size figures for GNOME Terminal, WezTerm, Tabby and Hyper, and Tabby's speed figure, have no rig entry that can take them again.
+	- Opened: 20260914-124200
+
+- 🔘 Check the README's install and build version claims in the pipeline.
+	- The Rust 1.89 badge, bash 3.2 for `install.bash` and PowerShell 5.1 for `install.ps1` hold today, and nothing builds or runs with those versions.
 	- Opened: 20260914-124200
 
 ### Done
