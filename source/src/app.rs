@@ -2544,10 +2544,17 @@ impl State {
 	fn title_suffix(&mut self) -> Option<String> {
 		let typed = self.tabs.cur().title_override.clone();
 		let program = self.program_title();
+		let pm = self.tabs.cur();
+		let launched = pm
+			.panes
+			.get(&pm.focused)
+			.and_then(|pane| pane.launched())
+			.map(str::to_string);
 		crate::tabtitle::window_suffix(
 			config::rights(),
 			typed.as_deref(),
 			program.as_deref(),
+			launched.as_deref(),
 			|| self.active_tab_title(),
 		)
 	}

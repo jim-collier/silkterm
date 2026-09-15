@@ -792,7 +792,7 @@ The window title starts with "Administrator: " on Windows and "Root: " elsewhere
 
 - Only the exact word about to be put back is removed, and only on Windows. Nothing on unix decorates a title, so taking anything off there could only destroy somebody's own text - which means a program running as root that titles itself "Root: something" will show the word twice, and that is the right answer, because the second one is its own.
 
-- A console speaking another language writes another word, and that one is not recognized. Such a title is shown as it arrived, so on a non-English Windows an elevated pane can still show its shell's image path until the shell sets a title of its own. Closing that properly means matching the title against the path of the program the pane is actually running, rather than against a word.
+- A console speaking another language writes another word, and no list of words could cover them all. So the title is also matched against the program the pane was started with. When a Windows path to that program follows a word, the word comes off in any language. Only the file name is compared, because a console spells the folders its own way. A word that holds a path separator, or one in front of some other program, is left alone.
 
 ### Tabs report what they are running, and where (2026-08-21)
 
