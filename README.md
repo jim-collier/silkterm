@@ -182,7 +182,7 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **Clickable links**. Hover a URL to underline it, Ctrl+click to open it, or use the right-click menu. Only known-safe schemes are ever treated as links, and an app that has taken over the mouse keeps it.
 
-- **Copy on select, and copy on output**. Both optional, both per-pane. Copy-on-output grabs what a command printed without the prompt around it.
+- **Copy on select, and copy on output**. Both optional, both per-pane. Copy-on-output grabs what a command printed without the prompt around it. A program in the pane you're using can set the clipboard too, the way tmux and editors over ssh do.
 
 - **Overlay scrollbar**. Thick enough to grab, fades out when you're at the bottom, and takes no columns away from the text.
 

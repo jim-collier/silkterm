@@ -7,7 +7,7 @@ use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{Config, Term};
+use alacritty_terminal::term::{ClipboardType, Config, Osc52, Term};
 use alacritty_terminal::tty;
 use winit::event_loop::EventLoopProxy;
 
@@ -18,6 +18,8 @@ pub enum UserEvent {
 	// new output in this pane's terminal (render only what changed)
 	Wakeup(PaneId),
 	Title(PaneId, String),
+	// a program asked to set the clipboard or the primary selection (OSC 52)
+	ClipboardStore(PaneId, ClipboardType, String),
 	// terminal replies (cursor position report, device attributes, ...) that
 	// must be written back to the PTY
 	PtyWrite(PaneId, Vec<u8>),
@@ -108,6 +110,10 @@ impl EventProxy {
 	}
 }
 
+// A bigger OSC 52 store is dropped whole. A clipped one would paste something the
+// program never sent, and the parser sets no limit of its own.
+const CLIPBOARD_STORE_MAX: usize = 1 << 20;
+
 // The bytes a query event owes the program, or None where there is no answer.
 // The event carries its own formatter; all this supplies is the value.
 fn query_reply(event: &Event, size: WindowSize) -> Option<Vec<u8>> {
@@ -139,6 +145,17 @@ fn requested_color(index: usize) -> Option<alacritty_terminal::vte::ansi::Rgb> {
 		},
 	};
 	Some(alacritty_terminal::vte::ansi::Rgb { r, g, b })
+}
+
+fn engine_config() -> Config {
+	let s = crate::config::settings();
+	Config {
+		scrolling_history: s.scrollback,
+		semantic_escape_chars: s.word_separators.clone(),
+		// stores only: a read would answer the program with somebody else's text
+		osc52: Osc52::OnlyCopy,
+		..Config::default()
+	}
 }
 
 // How a shell's exit reads on screen. Platform Display spellings vary
@@ -176,6 +193,11 @@ impl EventListener for EventProxy {
 				.proxy
 				.send_event(UserEvent::PtyWrite(self.id, text.into_bytes())),
 			Event::Bell => self.proxy.send_event(UserEvent::Bell),
+			// Which pane may set the clipboard is the window's call, since only it
+			// knows which one is in use.
+			Event::ClipboardStore(kind, text) if text.len() <= CLIPBOARD_STORE_MAX => self
+				.proxy
+				.send_event(UserEvent::ClipboardStore(self.id, kind, text)),
 			// Replies the terminal owes the program. Dropping these left anything
 			// asking for the background color or the text area size waiting out
 			// its timeout on every start and then guessing.
@@ -289,12 +311,7 @@ impl TermInstance {
 		let cols = cols.max(1);
 		let lines = lines.max(1);
 
-		let mut config = Config::default();
-		config.scrolling_history = crate::config::settings().scrollback;
-		config
-			.semantic_escape_chars
-			.clone_from(&crate::config::settings().word_separators);
-
+		let config = engine_config();
 		let dims = TermDimensions {
 			columns: cols,
 			screen_lines: lines,
@@ -1105,6 +1122,48 @@ mod tests {
 	};
 	#[cfg(unix)]
 	use super::{program_name, status_text};
+
+	// tmux, editors over ssh and muffer's auto-copy all set the clipboard with
+	// OSC 52, and whether the engine passes a store on is its config's call. A
+	// default that moved would quietly break copying again, or start answering
+	// reads.
+	#[test]
+	fn a_program_can_set_the_clipboard_but_never_read_it() {
+		use alacritty_terminal::event::{Event, EventListener};
+		use alacritty_terminal::term::Term;
+		use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+		use std::sync::{Arc, Mutex};
+
+		#[derive(Clone, Default)]
+		struct Seen(Arc<Mutex<Vec<String>>>);
+		impl EventListener for Seen {
+			fn send_event(&self, event: Event) {
+				let line = match event {
+					Event::ClipboardStore(kind, text) => format!("{kind:?} {text}"),
+					Event::ClipboardLoad(kind, _) => format!("load {kind:?}"),
+					_ => return,
+				};
+				self.0.lock().expect("seen lock").push(line);
+			}
+		}
+
+		let seen = Seen::default();
+		let dims = super::TermDimensions {
+			columns: 20,
+			screen_lines: 4,
+		};
+		let mut term = Term::new(super::engine_config(), &dims, seen.clone());
+		let mut parser = Processor::<StdSyncHandler>::default();
+		// "hello" to the clipboard, then the primary selection, then a read
+		parser.advance(
+			&mut term,
+			b"\x1b]52;c;aGVsbG8=\x07\x1b]52;p;aGVsbG8=\x07\x1b]52;c;?\x07",
+		);
+		assert_eq!(
+			*seen.0.lock().expect("seen lock"),
+			["Clipboard hello", "Selection hello"]
+		);
+	}
 
 	fn argv(words: &str) -> Vec<String> {
 		words.split(' ').map(str::to_string).collect()

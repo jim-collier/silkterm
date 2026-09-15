@@ -581,7 +581,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 ### What untrusted input may not do (2026-09-09)
 
-Almost everything a terminal handles came from somewhere else. Bytes arriving from a pane's program may have travelled a long way first - a log file, a build server, a remote host over ssh - and the program printing them need not be the one that wrote them. So the rule is that nothing a pane shows may change what the terminal does, and four surfaces get held to it explicitly.
+Almost everything a terminal handles came from somewhere else. Bytes arriving from a pane's program may have travelled a long way first - a log file, a build server, a remote host over ssh - and the program printing them need not be the one that wrote them. So the rule is that nothing a pane shows may change what the terminal does, and these surfaces get held to it explicitly.
 
 - The terminal must not type on a program's behalf. A few sequences ask the terminal a question, and the answer goes back down the pty where the shell reads it as if it had been typed. An answer that could carry a line ending would submit itself, and one that could carry the program's own text would let the program choose the command. So every reply is a fixed shape built from a number, and the terminal answers no question whose answer would be somebody else's text. There is no way to read back a window title, and a request to read the clipboard is ignored rather than answered.
 
@@ -602,6 +602,10 @@ Almost everything a terminal handles came from somewhere else. Bytes arriving fr
 - A reported directory is not automatically a directory. A shell says where it is with an escape sequence, and the answer both names the tab and decides where the next pane starts. A payload carrying a control character is refused, since it would reach the tab strip and the title. Whether the path is absolute is asked separately, at the one gate on what becomes a working directory - a relative path resolves against wherever the terminal itself was started, somewhere nobody can see, and a posix path on Windows names a real directory in the wrong filesystem.
 
 	- Pinned by `a_reported_directory_carrying_a_control_character_is_refused` in `cwd.rs` and `a_pane_only_ever_starts_in_an_absolute_directory` in `term.rs`.
+
+- A program may set the clipboard, but only from the pane in use (2026-09-15). This is the one place output changes something outside the pane, and it is allowed because tmux, editors over ssh and muffer's auto-copy all copy this way. A pane in the background or in another tab is ignored, so a log scrolling past in one cannot swap out what the next paste holds. A store over a megabyte is dropped whole rather than clipped. Reading the clipboard is still refused, and text a program put there goes through the paste rule above on its way back.
+
+	- Pinned by `a_program_can_set_the_clipboard_but_never_read_it` in `term.rs`.
 
 ### The fuzzer (2026-09-09)
 
