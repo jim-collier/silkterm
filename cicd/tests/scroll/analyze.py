@@ -20,11 +20,14 @@ supposed to hold:
                     on the spot: frac stays 0 on every frame. A leftover ease shows
                     up as the fraction wrapping through a whole cell once per line
                     (the nano wobble). One frame is enough - a still screen builds
-                    only when something changes.
+                    only when something changes. The output must be seen easing
+                    before the swap, or there was nothing to land and the check
+                    tested nothing.
 
 Exit codes: 0 pass, 1 real regression (a genuine violation with data), 2 skip
 (not enough trace / the scene never scrolled - an environment/timing miss, not a
-code regression). The runner treats 2 as non-fatal unless --strict.
+code regression). The runner treats 2 as non-fatal unless --strict. A slide scene
+that scrolled but never slid is a regression, not a skip.
 
 The bounce metric reconstructs a reference line's screen position as
 `app_off - cumulative_shift`: while easing, app_off shrinks with the grid held, so
@@ -89,10 +92,15 @@ def main() -> int:
         return 0
 
     if a.mode == "still":
-        frames = [f for f in frames if f["alt"] == 1]
-        if not frames:
+        swap = next((i for i, f in enumerate(frames) if f["alt"] == 1), None)
+        if swap is None:
             out("SKIP", "no trace frames (GL warmup / timing?)")
             return 2
+        # the trace only prints a normal-screen frame that carries a fraction
+        if not any(f["alt"] == 0 and f["frac"] > a.eps for f in frames[:swap]):
+            out("FAIL", "no output was easing when the alt screen took over, so nothing was tested")
+            return 1
+        frames = [f for f in frames if f["alt"] == 1]
         moving = [f for f in frames if f["frac"] > a.eps]
         if moving:
             worst = max(f["frac"] for f in moving)
@@ -122,8 +130,8 @@ def main() -> int:
 
     # slide mode
     if not engaged:
-        out("SKIP", "slide never engaged (app_off stayed 0) - GL/timing miss")
-        return 2
+        out("FAIL", f"scrolled but never slid (app_off stayed 0 across {len(frames)} frames)")
+        return 1
     if a.expect_st >= 0:
         bad = [f for f in engaged if f["st"] != a.expect_st]
         if bad:

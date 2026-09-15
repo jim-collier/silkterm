@@ -77,10 +77,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Copy on select still only follows a drag SilkTerm sees. An app that takes the mouse copies for itself now instead.
 	- Opened: 20260909.
 
-- 🔘 The scroll test's full-screen-entry check tests nothing: it runs the less scene instead of its own script.
-	- So the guard against the nano wobble passes whatever the code does.
-	- Opened: 20260911-113647
-
 - 🔘 A setting indented under a commented-out heading can load at one launch and be ignored at the next.
 	- In a short file, adding the missing settings puts lines above it, and it then reads as part of the setting above. A launch that finds the file open in another program skips that step and still reads it.
 	- Seen with `rows:` and with a renamed tab width under `window:`.
@@ -226,9 +222,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Code review 20260914 item 82 (F114, should-fix): The demo recorder fails at start when `USER` is not set.
 	- Code review 20260914 item 83 (F115, should-fix): The demo recorder uses a binary under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
 	- Code review 20260914 item 85 (F117, blocking): A release can go out with binaries built from a source file that was never added to git, so the tagged source differs from what was built.
-	- Code review 20260914 item 86 (F118, should-fix): The scroll regression check counts a full-screen app slide that never starts as skipped, so the pipeline still passes.
-	- Code review 20260914 item 87 (F119, should-fix): The scroll regression check for the nano wobble never runs its own scene, so it passes whether the wobble is fixed or not.
-	- Code review 20260914 item 88 (F120, should-fix): When the scroll regression check cannot run at all, the pipeline prints OK for it.
+	- ✅ Code review 20260914 item 86 (F118, should-fix): The scroll regression check counts a full-screen app slide that never starts as skipped, so the pipeline still passes.
+		- A scene that scrolled and never slid fails now.
+	- ✅ Code review 20260914 item 87 (F119, should-fix): The scroll regression check for the nano wobble never runs its own scene, so it passes whether the wobble is fixed or not.
+		- It runs its own scene, and fails when no output was easing at the swap.
+	- ✅ Code review 20260914 item 88 (F120, should-fix): When the scroll regression check cannot run at all, the pipeline prints OK for it.
+		- A run that cannot start exits 3, and the pipeline says skipped for that display system.
 	- Code review 20260914 item 89 (F121, should-fix): The Windows interface checks test whichever build was last made on the test box, not the change being checked.
 	- Code review 20260914 item 90 (F122, should-fix): The Windows interface checks close every SilkTerm on the test box, not only the one they started.
 	- Code review 20260914 item 91 (F123, should-fix): A quick, scaled or wrong-size benchmark run rewrites the README speed table, though the tools say such runs never reach it.
@@ -257,9 +256,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- The PATH is written to the registry without telling Windows it changed. Code review 20260914 item 58 (F90).
 	- Opened: 20260914-124200
 
-- 🔘 A config written as single dotted lines grows on every launch, with settings added under the wrong sections.
+- ✋ A config written as single dotted lines grows on every launch, with settings added under the wrong sections.
 	- From nine lines such as `window.columns: 100`, one launch put the scroll settings under `performance` and `margin` under the wallpaper's `rotate` block.
 	- The next launch added them again in the right places, so the file keeps growing.
+	- ✋ The next shcl release may fix this. Check again once it is out.
 	- Opened: 20260915
 
 ### New features and enhancements
@@ -422,6 +422,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ The scroll test's full-screen-entry check tests nothing: it runs the less scene instead of its own script.
+	- So the guard against the nano wobble passes whatever the code does.
+	- Changed: a scene with a script of its own runs that script. The check also fails when no output was easing as the alt screen took over, since then there was nothing to test.
+	- A build with the nano wobble fix taken out fails it now. Same fix as code review 20260914 item 87.
+	- Opened: 20260911-113647
 
 - ✅ Smooth scrolling bug (seems to be another regression to pre-alacritty work): smooth-scrolling often involve quite noticable sharp horizontal "seams", where it seems like vertical portions of the screen don't scroll at the same rate. (And/or start at different times, or something.)
 	- Most noticeable in muffer, in a single pane, with transparency off. Not the desktop compositor.

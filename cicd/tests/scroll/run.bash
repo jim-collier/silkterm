@@ -34,7 +34,8 @@
 ##		   --strict        treat environment skips as failures
 ##		   -v, --verbose   show per-scene frame counts
 ##		   -h, --help
-##	- Exit: 0 all pass/skip, 1 a real regression was measured.
+##	- Exit: 0 all pass (a skipped scene beside passes is still 0), 1 a regression
+##		was measured, 3 nothing ran (no binary, python3, display or cage).
 ##	- Notes: uses cicd/utility/gui-headless.bash (:98, never :0). Kills only the
 ##		binary it launched (PID + /proc/PID/exe path checked), never by name.
 ##	History: At bottom of script.
@@ -60,7 +61,8 @@ fSection(){ fEcho_Clean; fEcho_Clean "${_letterbox}"; fEcho "$*"; }
 fDie(){ { fEcho_Clean; fEcho "FAILED: $*"; } >&2; exit 1; }
 ##  shellcheck source=cicd/tests/scroll/verdict.bash
 source "${meDir}/verdict.bash"
-trap 'rc=$?; [[ $rc -ne 0 && $rc -ne 1 ]] && printf "\n[ scroll harness ABORTED (exit %s) at line %s: %s ]\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; exit $rc' ERR
+## 3 means "nothing ran" to cicd, so an abort that happens to exit 3 must not say so
+trap 'rc=$?; [[ $rc -ne 0 && $rc -ne 1 ]] && printf "\n[ scroll harness ABORTED (exit %s) at line %s: %s ]\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; [[ $rc -eq 3 ]] && rc=1; exit $rc' ERR
 
 ## Options.
 bin=""; display="${CICD_HEADLESS_DISPLAY:-${RPD_HEADLESS_DISPLAY:-:98}}"
@@ -94,7 +96,8 @@ if [[ -z "$bin" ]]; then
 	done
 fi
 
-## Environment preconditions -> skip (non-fatal) unless --strict.
+## Environment preconditions -> skip (non-fatal) unless --strict. A skip exits 3,
+## not 0, so cicd cannot print OK for a run that measured nothing.
 skip=""
 [[ -n "$bin" && -x "$bin" ]] || skip="no SilkTerm binary (build it first, or pass --bin)"
 [[ -z "$skip" ]] && ! command -v python3 >/dev/null 2>&1 && skip="python3 not found"
@@ -106,7 +109,7 @@ else
 fi
 if [[ -n "$skip" ]]; then
 	((strict)) && fDie "scroll harness: ${skip}"
-	fEcho "WARNING: skipped: ${skip}"; exit 0
+	fEcho "WARNING: skipped: ${skip}"; exit 3
 fi
 fEcho_Clean "binary ....: ${bin}"
 if ((wayland)); then
@@ -146,7 +149,7 @@ if ! ((wayland)) && "$headless" status 2>/dev/null | grep -q 'no Xvfb'; then
 	if "$headless" start --wm >/dev/null 2>&1; then started_headless=1
 	else
 		((strict)) && fDie "headless display failed to start"
-		fEcho "WARNING: skipped: headless display failed to start"; exit 0
+		fEcho "WARNING: skipped: headless display failed to start"; exit 3
 	fi
 fi
 
@@ -214,7 +217,10 @@ pass=0; fail=0; miss=0; spawned_pid=0
 run_scene(){
 	local label="$1" shape="$2" mode="$3" est="$4" esb="${5:--1}"
 	local trace="${work}/${label}.trace"
-	spawn_silk "/bin/dash ${meDir}/scenes/scene.bash ${shape}" "${work}/${label}.log" "$trace"
+	## a scene with a script of its own runs that; scene.bash has no case for it
+	local script="${meDir}/scenes/${shape}.bash"
+	[[ -f "$script" ]] || script="${meDir}/scenes/scene.bash"
+	spawn_silk "/bin/dash ${script} ${shape}" "${work}/${label}.log" "$trace"
 	local pid=$spawned_pid
 
 	## GL warmup under llvmpipe swings widely with machine load (cicd runs this while
@@ -223,12 +229,20 @@ run_scene(){
 	## actually producing frames, then stop; bounded by a generous ceiling so a truly
 	## dead binary still exits. The scene self-scrolls forever, so more wall time just
 	## means more frames - never a hang.
-	local want=60 ceiling=$((settle + capture + 60)) frames=0
+	local want=60 ceiling=$((settle + capture + 60)) frames=0 done_at=0
 	SECONDS=0
 	while ((SECONDS < ceiling)); do
 		kill -0 "$pid" 2>/dev/null || break
-		frames=$(grep -c SCROLLDBG "$trace" 2>/dev/null || true); frames=${frames:-0}
-		((frames >= want)) && break
+		if [[ "$mode" == still ]]; then
+			## A still screen builds only when something changes, so it may never
+			## reach the frame count. Stop a few seconds after the swap instead,
+			## which is past any leftover ease.
+			((done_at == 0)) && grep -q 'alt=1' "$trace" 2>/dev/null && done_at=$((SECONDS + 3))
+			((done_at && SECONDS >= done_at)) && break
+		else
+			frames=$(grep -c SCROLLDBG "$trace" 2>/dev/null || true); frames=${frames:-0}
+			((frames >= want)) && break
+		fi
 		sleep 0.5
 	done
 	stop_silk "$pid"
