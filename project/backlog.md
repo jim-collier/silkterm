@@ -198,6 +198,18 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Code review 20260914 item 69 (F101, should-fix): Closing a pane whose program ignores the hang-up signal freezes the whole window until that program ends.
 	- Code review 20260914 item 70 (F102, should-fix): On Windows each pane leaks a couple of process handles that are never freed while SilkTerm runs.
 	- Code review 20260914 item 71 (F103, should-fix): A program can force unbounded memory by setting a huge window title and pushing it onto the title stack.
+	- Code review 20260914 item 72 (F104, blocking): Opening a bash pane in a cloned repository can run a command hidden in its branch name, through the git-aware prompt.
+	- Code review 20260914 item 73 (F105, blocking): Recording the demo can replace the desktop's own window manager theme, title font and button layout.
+	- Code review 20260914 item 74 (F106, should-fix): When the publish step cannot reach the remote, uncommitted work is left in a git stash with no word of where it went.
+	- Code review 20260914 item 75 (F107, should-fix): The startup lint and profiler checks can mark a pipeline run as seen while it is still being written, so its later warnings are never shown.
+	- Code review 20260914 item 76 (F108, should-fix): `cicd/utility/gui-headless.bash` can report a display it did not start, and can stop a display or process that another run started.
+	- Code review 20260914 item 77 (F109, should-fix): A blank publish message at the pipeline prompt commits an automatic message instead of opening the editor the prompt promises.
+	- Code review 20260914 item 78 (F110, should-fix): The publish script changes quote marks in a `--message`, and does nothing at all when the message contains `-v` or `-h`.
+	- Code review 20260914 item 79 (F111, should-fix): The wallpaper gallery and the README contact sheet still show nine wallpapers that were removed from the pack.
+	- Code review 20260914 item 80 (F112, should-fix): The git-aware bash prompt shows nothing in a repository without an `origin` remote, and never shows how far ahead or behind a branch is.
+	- Code review 20260914 item 81 (F113, should-fix): Each demo recording leaves background daemons running after it ends.
+	- Code review 20260914 item 82 (F114, should-fix): The demo recorder fails at start when `USER` is not set.
+	- Code review 20260914 item 83 (F115, should-fix): The demo recorder uses a binary under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
 	- Opened: 20260914-124200
 
 - 🔘 Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
