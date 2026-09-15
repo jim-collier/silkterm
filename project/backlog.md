@@ -190,6 +190,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Code review 20260914 item 60 (F92, blocking): The fix for the Windows freeze on a long run of output has no test, so an engine update could lose it without anything failing.
 	- Code review 20260914 item 61 (F93, should-fix): Once the scrollback is full, output above a pinned status line, such as apt's progress bar, stops easing.
 	- Code review 20260914 item 62 (F94, should-fix): The terminal engine handles output in full-screen programs such as tmux about a third slower, because it copies every row that scrolls away.
+	- Code review 20260914 item 64 (F96, blocking): A one-column pane crashes on a wide character such as CJK or an emoji, and narrowing a window past one column with wide text on screen runs the memory away and hangs.
+	- Code review 20260914 item 65 (F97, blocking): A program printing a long run of combining marks grows SilkTerm's memory without limit, since they pile onto one cell that the scrollback cap never trims.
+	- Code review 20260914 item 66 (F98, blocking): On Windows a shell whose path holds a space can be tricked into running a different program, and an inherited directory with a space reaches the shell split in two.
+	- Code review 20260914 item 67 (F99, should-fix): On Linux a program that closes its terminal but keeps running spins a core at 100% until it exits.
+	- Code review 20260914 item 68 (F100, should-fix): Double-clicking an unmatched bracket scans the whole scrollback under the terminal lock, so it hitches on a large history.
+	- Code review 20260914 item 69 (F101, should-fix): Closing a pane whose program ignores the hang-up signal freezes the whole window until that program ends.
+	- Code review 20260914 item 70 (F102, should-fix): On Windows each pane leaks a couple of process handles that are never freed while SilkTerm runs.
+	- Code review 20260914 item 71 (F103, should-fix): A program can force unbounded memory by setting a huge window title and pushing it onto the title stack.
 	- Opened: 20260914-124200
 
 - 🔘 Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
