@@ -3486,9 +3486,25 @@ impl SettingsDialog {
 			}
 		}
 	}
-	// Config keys reverted since the last Apply (cleared by taking them).
+	// Config keys reverted since the last Apply (cleared by taking them). A row set
+	// away from its default again after the revert keeps the new value, so only
+	// the rows still at their default go back to the template's line.
 	pub fn take_reverted(&mut self) -> Vec<&'static str> {
-		std::mem::take(&mut self.reverted)
+		let mut reverted = std::mem::take(&mut self.reverted);
+		let keys: Vec<Key> = self
+			.specs
+			.iter()
+			.flat_map(|spec| match spec.kind {
+				Kind::Dual { keys, .. } => keys.to_vec(),
+				_ => vec![spec.key],
+			})
+			.collect();
+		reverted.retain(|cfg_key| {
+			keys.iter()
+				.find(|&&key| ui().settings_of(key).contains(cfg_key))
+				.is_none_or(|&key| self.is_default(key))
+		});
+		reverted
 	}
 
 	fn fmt_val(&self, key: Key, int: bool) -> String {
@@ -6213,6 +6229,79 @@ mod tests {
 			}
 		}
 		assert!(checked > 40, "only {checked} rows checked");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// A revert queues the row's line to go back to the template's default at
+	// Apply. A change made to the same row after that has to win, where it used to
+	// be written and then commented straight back out, and so gone at relaunch.
+	#[test]
+	fn a_row_changed_after_its_revert_keeps_the_change() {
+		let _guard = config::test_config_lock();
+		let _ = config::settings(); // memoize before the override goes in
+		let dir = std::env::temp_dir().join(format!("silkterm_revert_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let path = dir.join("config.shcl");
+		let _ = std::fs::write(&path, "");
+		config::set_config_override(path.clone());
+		config::reload_from_disk();
+		let pristine = std::fs::read_to_string(&path)
+			.unwrap()
+			.replace("# profile: \"max\"  ## Default", "profile: \"custom\"");
+		assert!(pristine.contains("profile: \"custom\""));
+
+		let mut d = mk_dialog(4000.0);
+		let mut checked = 0;
+		for i in 0..d.specs.len() {
+			let keys: Vec<Key> = match d.specs[i].kind {
+				super::Kind::Header(_) | super::Kind::Buttons(_) | super::Kind::ShellList => {
+					vec![]
+				}
+				super::Kind::Dual { keys, .. } => keys.to_vec(),
+				_ => vec![d.specs[i].key],
+			};
+			for key in keys {
+				let _ = std::fs::write(&path, &pristine);
+				let base = config::reload_from_disk();
+				d.orig = base.clone();
+				d.edited = base.clone();
+				d.reverted.clear();
+				d.revert(key);
+				let reverted = row_value(&d, i, key);
+				nudge(&mut d, i, key);
+				let want = row_value(&d, i, key);
+				assert_ne!(reverted, want, "{} did not budge", d.specs[i].label);
+				// the order apply_dialog_settings runs them in
+				assert!(config::persist(&base, &d.edited), "{}", d.specs[i].label);
+				config::revert_keys(&d.take_reverted());
+				let mut back = mk_dialog(4000.0);
+				back.edited = config::reload_from_disk();
+				assert_eq!(
+					row_value(&back, i, key),
+					want,
+					"{} went back to its default on relaunch",
+					d.specs[i].label
+				);
+				checked += 1;
+			}
+		}
+		assert!(checked > 40, "only {checked} rows checked");
+
+		// A row reverted and left at its default still goes back to the default.
+		let _ = std::fs::write(&path, &pristine);
+		let base = config::reload_from_disk();
+		let mut moved = base.clone();
+		moved.margin = d.defaults.margin + 3.0;
+		assert!(config::persist(&base, &moved));
+		let base = config::reload_from_disk();
+		assert_eq!(base.margin, d.defaults.margin + 3.0);
+		d.orig = base.clone();
+		d.edited = base.clone();
+		d.reverted.clear();
+		d.revert(Key::Margin);
+		assert!(config::persist(&base, &d.edited));
+		config::revert_keys(&d.take_reverted());
+		assert_eq!(config::reload_from_disk().margin, d.defaults.margin);
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 

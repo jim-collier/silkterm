@@ -144,7 +144,8 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Code review 20260914 item 7 (F39, should-fix): The wallpaper metadata fuzz test never reaches the metadata it is meant to check.
 		- It builds readable packets with bad values now, and fails if none of them read. A small tagged PNG and JPEG seed it.
 	- Code review 20260914 item 8 (F40, should-fix): On Windows, the shell scan can offer Python 3 when only the Microsoft Store shortcut is there.
-	- Code review 20260914 item 11 (F43, blocking): A setting reverted to its default and then changed again before Apply is saved as the default, so the change is gone at the next launch.
+	- ✅ Code review 20260914 item 11 (F43, blocking): A setting reverted to its default and then changed again before Apply is saved as the default, so the change is gone at the next launch.
+		- Apply puts back the default line only for rows still at their default. Checked for every row in Settings.
 	- Code review 20260914 item 12 (F44, should-fix): A program's own name, or the name of the folder it runs in, can put control characters into the window title and the tab.
 	- Code review 20260914 item 13 (F45, should-fix): On Windows, the Size checkbox beside "Use system font" in Settings does not respond to a click.
 	- Code review 20260914 item 14 (F46, should-fix): Flyover help in the Settings and About windows appears at once, without the rest the tabs and menus wait for.
