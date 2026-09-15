@@ -554,31 +554,39 @@ pub fn is_dark() -> bool {
 
 // On an OS dark/light change (System mode only): recompute the theme palette and
 // swap it in (no file write). Returns true if anything changed (caller redraws).
-// NOTE: re-derives from the theme, so a one-off colors override is dropped on an
-// OS flip; overrides re-apply on the next full config load.
 pub fn reapply_for_os(dark: bool) -> bool {
 	let prev = OS_DARK.swap(dark, Ordering::Relaxed);
 	let current = settings();
 	if prev == dark || current.theme_mode != "system" {
 		return false;
 	}
-	let pal = crate::theme::resolve_in(
-		&current.user_themes,
-		&current.theme,
-		&current.theme_mode,
-		dark,
-	);
+	let palette = |dark| {
+		crate::theme::resolve_in(
+			&current.user_themes,
+			&current.theme,
+			&current.theme_mode,
+			dark,
+		)
+	};
+	let (was, pal) = (palette(prev), palette(dark));
+	// A color that is not the theme's own is an override, from the file, the
+	// command line or the dialog, so it stays put.
+	let follow = |live: &mut [u8; 3], was: [u8; 3], now: [u8; 3]| {
+		if *live == was {
+			*live = now;
+		}
+	};
 	let mut new = (*current).clone();
-	new.bg = pal.bg;
-	new.fg = pal.fg;
-	new.cursor = pal.cursor;
-	new.highlight = pal.highlight;
-	new.focus = pal.focus;
-	new.menu_bg = pal.menu_bg;
-	new.menu_fg = pal.menu_fg;
-	new.dialog_bg = pal.dialog_bg;
-	new.dialog_fg = pal.dialog_fg;
-	new.gutter = pal.gutter;
+	follow(&mut new.bg, was.bg, pal.bg);
+	follow(&mut new.fg, was.fg, pal.fg);
+	follow(&mut new.cursor, was.cursor, pal.cursor);
+	follow(&mut new.highlight, was.highlight, pal.highlight);
+	follow(&mut new.focus, was.focus, pal.focus);
+	follow(&mut new.menu_bg, was.menu_bg, pal.menu_bg);
+	follow(&mut new.menu_fg, was.menu_fg, pal.menu_fg);
+	follow(&mut new.dialog_bg, was.dialog_bg, pal.dialog_bg);
+	follow(&mut new.dialog_fg, was.dialog_fg, pal.dialog_fg);
+	follow(&mut new.gutter, was.gutter, pal.gutter);
 	new.ansi = pal.ansi;
 	update(new);
 	true
@@ -1908,9 +1916,7 @@ fn config_complaints(text: &str) -> Vec<String> {
 	let mut unread: Vec<(String, usize)> = active
 		.iter()
 		.filter(|(path, _)| {
-			!known.contains(path)
-				&& !path.starts_with("shells.")
-				&& !path.starts_with("user_themes.")
+			!known.contains(path) && !path.starts_with("shells.") && !path.starts_with("themes.")
 		})
 		.cloned()
 		.collect();
@@ -6962,12 +6968,70 @@ mod tests {
 		// the shipped template says nothing, and neither does a config full of
 		// the user's own shells and themes
 		assert!(config_complaints(default_config()).is_empty());
-		let mine = "shells:\n\tmine:\n\t\ttitle: Mine\n\t\tcommand: /bin/sh\nuser_themes:\n\tone:\n\t\tname: One\n";
+		let mine = "shells:\n\tmine:\n\t\ttitle: Mine\n\t\tcommand: /bin/sh\nthemes:\n\tone:\n\t\tname: One\n";
 		assert!(
 			config_complaints(mine).is_empty(),
 			"{:?}",
 			config_complaints(mine)
 		);
+	}
+
+	// Saved themes are written and read under `themes.`, so a file holding one has
+	// nothing in it to complain about. A real typo beside it still gets a line.
+	#[test]
+	fn a_saved_theme_is_not_taken_for_a_typo() {
+		let pal = crate::theme::resolve_in(&[], "SilkTerm", "dark", true);
+		let theme = crate::theme::UserTheme {
+			slug: "mine".to_string(),
+			name: "Mine".to_string(),
+			dark: pal,
+			light: pal,
+		};
+		let mut doc = shcl::Document::parse(default_config());
+		write_user_themes(&mut doc, &[], &[theme]);
+		let text = doc.to_canonical();
+		assert_eq!(read_user_themes(&shcl::Document::parse(&text)).len(), 1);
+		assert!(
+			config_complaints(&text).is_empty(),
+			"{:?}",
+			config_complaints(&text)
+		);
+		let typo = format!("{text}\ntheme_mdoe: dark\n");
+		assert!(
+			config_complaints(&typo)
+				.iter()
+				.any(|m| m.contains("theme_mdoe")),
+			"{:?}",
+			config_complaints(&typo)
+		);
+	}
+
+	// A color that is not the theme's own is an override, wherever it came from,
+	// and the system switching between dark and light must not take it away.
+	#[test]
+	fn a_color_override_survives_the_system_switching_modes() {
+		let _store = test_store_lock();
+		let before = settings();
+		let was_dark = OS_DARK.load(Ordering::Relaxed);
+		OS_DARK.store(true, Ordering::Relaxed);
+		let mut s = resolve(read_raw(
+			"theme_mode: system\ncolors.background: \"#123456\"\n",
+			std::path::Path::new("test.shcl"),
+		));
+		// one from the command line, which the file never holds
+		s.fg = [1, 2, 3];
+		update(s);
+		for dark in [false, true, false] {
+			assert!(reapply_for_os(dark));
+			let live = settings();
+			let pal = crate::theme::resolve_in(&live.user_themes, &live.theme, "system", dark);
+			assert_eq!(live.bg, [0x12, 0x34, 0x56], "dark {dark}");
+			assert_eq!(live.fg, [1, 2, 3], "dark {dark}");
+			assert_eq!(live.dialog_bg, pal.dialog_bg, "dark {dark}");
+			assert_eq!(live.ansi, pal.ansi, "dark {dark}");
+		}
+		OS_DARK.store(was_dark, Ordering::Relaxed);
+		update((*before).clone());
 	}
 
 	// A key written twice cannot resolve to one value, so the default takes
