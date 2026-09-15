@@ -1341,8 +1341,34 @@ impl Pane {
 					self.slide_static_top = top;
 					self.slide_static = lines - bottom;
 				}
+				// An overlay repainted over the strip-side edge is held as well. It may
+				// grow mid-gesture, since a build can land between the scroll and the
+				// repaint.
+				let over = repainted_edge(&rows, &self.last_rows, &region, step);
+				let held = if step > 0 {
+					self.slide_static_top = self.slide_static_top.max(region.start + over);
+					self.slide_static_top > region.start
+				} else {
+					self.slide_static = self.slide_static.max(lines - region.end + over);
+					lines - self.slide_static < region.end
+				};
 				self.slide_sh = step as f32;
-				let chunk = chunk.unwrap_or_default();
+				// The recorded rows hold the overlay's old row, which would draw it a
+				// second time in the reveal, so a held edge takes last frame's cells.
+				let chunk = if !held {
+					chunk.unwrap_or_default()
+				} else if self.last_cells.len() == lines
+					&& self.last_cells.first().is_none_or(|r| r.len() == cols)
+				{
+					let range =
+						vanished_range(step, self.slide_static_top, self.slide_static, lines);
+					self.last_cells[range]
+						.iter_mut()
+						.map(std::mem::take)
+						.collect()
+				} else {
+					Vec::new()
+				};
 				if !chunk.is_empty() {
 					self.strip
 						.push_step(step.signum() as i8, (region.start, region.end), chunk);
@@ -2231,16 +2257,17 @@ impl Pane {
 	}
 
 	// Track and thumb in absolute window px, or None when there's nothing to show.
-	// The bar hugs the pane's right edge (overlay, so it costs the grid no columns)
-	// and runs the height of the content area.
+	// The bar hugs the pane's far right edge, past the minimap when there is one
+	// (overlay, so it costs the grid no columns), and runs the height of the
+	// content area.
 	pub fn scrollbar(&self, ctx: &TextCtx, cfg: &config::Settings) -> Option<Bar> {
 		if !self.bar_applies(cfg) || self.bar_alpha <= 0.0 {
 			return None;
 		}
 		let (_, _, _, rows) = content_dims(self.rect, ctx);
-		let thickness = ctx.dip(cfg.scrollbar_thickness).min(self.rect.w);
+		let thickness = ctx.dip(cfg.scrollbar_thickness).min(self.full.w);
 		let track = Rect {
-			x: self.rect.x + self.rect.w - thickness,
+			x: self.full.x + self.full.w - thickness,
 			y: self.rect.y + ctx.margin,
 			w: thickness,
 			h: (self.rect.h - 2.0 * ctx.margin).max(0.0),
@@ -2296,10 +2323,10 @@ impl Pane {
 		if !self.bar_applies(cfg) {
 			return false;
 		}
-		let thickness = ctx.dip(cfg.scrollbar_thickness).min(self.rect.w);
+		let thickness = ctx.dip(cfg.scrollbar_thickness).min(self.full.w);
 		let slop = ctx.dip(BAR_HOVER_SLOP);
 		let strip = Rect {
-			x: self.rect.x + self.rect.w - thickness - slop,
+			x: self.full.x + self.full.w - thickness - slop,
 			y: self.rect.y,
 			w: thickness + slop,
 			h: self.rect.h,
@@ -4137,6 +4164,34 @@ fn slide_is_visible(
 	chunk.iter().any(ink) || last[sources].iter().any(ink)
 }
 
+// Rows at the strip-side edge of a recorded region scroll that the scroll does
+// not account for: an overlay the app repaints over the region's edge after
+// moving it, like muffer's "1 new message" pill (the ledger path's side of
+// `slide_bands`). Counted from the edge, and only when the row past them did
+// move as recorded, so a frame repainted wholesale holds nothing.
+fn repainted_edge(cur: &[u64], last: &[u64], region: &std::ops::Range<usize>, step: i32) -> usize {
+	let n = cur.len();
+	let k = step.unsigned_abs() as usize;
+	let height = region.end.saturating_sub(region.start);
+	if last.len() != n || region.end > n || k == 0 || k >= height {
+		return 0;
+	}
+	let cap = height / 4;
+	for over in 0..=cap {
+		let moved = if step > 0 {
+			let i = region.start + over;
+			i + k < region.end && cur[i] == last[i + k]
+		} else {
+			let i = region.end - 1 - over;
+			i >= region.start + k && cur[i] == last[i - k]
+		};
+		if moved {
+			return over;
+		}
+	}
+	0
+}
+
 // Whether this frame may read the row diff as a scroll (`scroll_shift_signed`).
 // Only where the engine recorded none - a recorded scroll is exact and handled
 // first - and then the alt screen always, the normal screen only on a repaint
@@ -4363,9 +4418,9 @@ mod tests {
 		distinct_pair, divider_at, equalize_dir_run, fingerprint_frame, fnv_row, fnv_row_skel,
 		glide_to_full, layout, ledger_step, link_at, logical_line_bounds, move_is_input,
 		next_capture_poll, output_advance, output_band, pair_inside, paste_payload, prompt_strip,
-		pushed_since, render_char, resume_delay, same_char_pair, scroll_shift_signed,
-		shown_cursor_shape, slide_bands, slide_is_visible, snapshot_rows, static_bands, strip_rows,
-		translate_span, vanished_range, weld_region_clip,
+		pushed_since, render_char, repainted_edge, resume_delay, same_char_pair,
+		scroll_shift_signed, shown_cursor_shape, slide_bands, slide_is_visible, snapshot_rows,
+		static_bands, strip_rows, translate_span, vanished_range, weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
@@ -5599,6 +5654,38 @@ mod tests {
 				assert_eq!((st, sb), (top, bot), "top={top} bot={bot} shift={shift}");
 			}
 		}
+	}
+
+	#[test]
+	fn a_recorded_scroll_holds_an_overlay_repainted_at_its_strip_edge() {
+		// the same pill, with the engine's record saying rows 0..25 scrolled: the rows
+		// under the region are held by the region alone, the pill row by this
+		let (cur, last) = muffer_pill_frames(700, 701);
+		assert_eq!(repainted_edge(&cur, &last, &(0..25), -1), 1);
+		// a clean scroll moved the edge row too
+		let (mut cur, last) = muffer_pill_frames(700, 701);
+		cur[24] = last[23];
+		assert_eq!(repainted_edge(&cur, &last, &(0..25), -1), 0);
+	}
+
+	#[test]
+	fn an_overlay_over_the_top_edge_is_held_scrolling_forward() {
+		let last: Vec<u64> = (0..24).map(|i| 100 + i).collect();
+		let mut cur = last.clone();
+		cur[1..19].copy_from_slice(&last[3..21]);
+		cur[19] = 7;
+		cur[20] = 8;
+		cur[1] = 555;
+		assert_eq!(repainted_edge(&cur, &last, &(1..21), 2), 1);
+	}
+
+	#[test]
+	fn a_frame_repainted_wholesale_holds_nothing() {
+		let last: Vec<u64> = (0..30).map(|i| 100 + i).collect();
+		let cur: Vec<u64> = (0..30).map(|i| 5000 + i).collect();
+		assert_eq!(repainted_edge(&cur, &last, &(0..25), -1), 0);
+		assert_eq!(repainted_edge(&cur, &last, &(0..25), 3), 0);
+		assert_eq!(repainted_edge(&last, &last, &(0..25), 25), 0);
 	}
 
 	// ---- App-scroll scenario matrix -------------------------------------------

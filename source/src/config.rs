@@ -284,7 +284,7 @@ pub struct Settings {
 	pub scrollbar_thickness: f32, // scrollbar width in logical px
 	pub scrollbar_auto_hide: bool, // fade the scrollbar out while idle at the bottom
 	pub minimap: bool,            // miniature of the whole buffer in its own column
-	pub minimap_width: f32,       // the preview's width in logical px (the bar adds its own)
+	pub minimap_width: f32,       // the column's width in logical px
 	pub minimap_tui_whitelist: String, // programs that keep the column on their own screen
 	pub margin: f32,              // logical px between content and pane edge
 	pub opacity: f32,             // background opacity 0..1 (1 = fully opaque)

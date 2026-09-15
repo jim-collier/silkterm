@@ -211,6 +211,8 @@ Scrollback and output easing (above) both have an easy signal: the wheel turns, 
 
 - **One row is pinned by reading, not by the region.** A pager like less scrolls the whole screen and rewrites its prompt on the bottom row afterwards. That row reads the same after the scroll as before, so it is held still even though the region says it moved. The same text ends up in the same place either way, so nothing is lost. A blank row never qualifies: tmux scrolls first and draws the freed row a moment later, and a frame built in between would otherwise pin that row and make its new line pop in while the rest slides.
 
+- The edge the strip fills from holds a row the recorded scroll does not account for. muffer repaints its "1 new message" pill over the last row of its transcript after each scroll. That row slid with the text while its old copy rode in the strip, so the pill showed twice. Such rows are counted from the edge, up to a quarter of the region, and only when the row past them moved as recorded, so a frame repainted wholesale holds nothing. The strip then takes its rows from the frame before. The held edge may grow during a slide, since a frame can be built between the scroll and the repaint.
+
 A sliding frame therefore composites as four parts:
 
 - The scrolled-off strip, filling the revealed gap.
@@ -247,13 +249,13 @@ Where it sits:
 
 - The map owns a real column inside the pane's rect - it never overlays the text. Turning it on costs terminal columns, and the PTY resizes like any other layout change. A pane too narrow to spare the room gets no column at all; the column may never take more than half a pane.
 
-- Left to right: terminal text (with the regular scrollbar still overlaying its right edge, unchanged), then the preview, then a slim always-visible scrollbar at the far edge. Two scrollbars on purpose. The inner one is the terminal's, and its position says so. Editors keep one bar at the far right; this is the deliberate departure.
+- Left to right: terminal text, then the preview. The regular scrollbar sits at the pane's far right edge, over the edge of the preview, the same overlay it is without a map. An earlier design kept a second, always-visible bar beside the preview. The two showed the same thing, so that one was removed.
 
-- The configured width is the preview's. The far-edge bar adds a fixed 8 DIP of its own, so changing the width does not change how grabbable the bar is.
+- The configured width is the whole column's.
 
 The mapping, which is the load-bearing decision:
 
-- The whole buffer - history plus screen - always maps linearly onto the column, top-anchored, oldest first. The editors slide their minimap once the document outgrows it; this one never does. The marker over the preview and the far-edge thumb have to be the same object at the same pixels, and only a linear map keeps that true at every depth.
+- The whole buffer - history plus screen - always maps linearly onto the column, top-anchored, oldest first. The editors slide their minimap once the document outgrows it; this one never does.
 
 - With a short buffer, lines draw at a capped height (about 2 px at 1x) and the preview just does not reach the bottom of the column yet.
 
@@ -293,7 +295,7 @@ Cost when off:
 
 Settings and chrome:
 
-- A "Minimap" toggle and a width slider on the Movement tab, under the scrollbar cluster, plus a View-menu item. The marker and the far-edge thumb reuse the scrollbar colors, which is why those two color rows sit with the palette rather than under the scrollbar switch.
+- A "Minimap" toggle and a width slider on the Movement tab, under the scrollbar cluster, plus a View-menu item. The marker reuses the scrollbar's thumb color, which is why the scrollbar color rows sit with the palette rather than under the scrollbar switch.
 
 How it is built:
 
