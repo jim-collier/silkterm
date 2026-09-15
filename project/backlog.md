@@ -136,9 +136,11 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✅ Code review 20260914 item 2 (F34, blocking): The retired `shell.default` is deleted without moving that shell to the top of the list when the file also has a line that cannot be read.
 		- It stays in the file until the move to the top of the list can be saved.
 	- Code review 20260914 item 3 (F35, should-fix): Several commented `## Default` lines in a new settings file name values that are not the defaults, among them transparency and blur behind.
-	- Code review 20260914 item 4 (F36, should-fix): A saved theme makes every launch report its settings as unread typos.
+	- ✅ Code review 20260914 item 4 (F36, should-fix): A saved theme makes every launch report its settings as unread typos.
+		- Saved themes are skipped under the name they are really stored under. The check's own test had used the wrong name, which is why it passed, and now uses the right one.
 	- Code review 20260914 item 5 (F37, should-fix): A `$` or `%` in a shell's arguments is expanded as a variable, so `cmd /k prompt $P$G` loses its prompt.
-	- Code review 20260914 item 6 (F38, should-fix): A color override in the settings file is dropped for the session when the system switches between dark and light.
+	- ✅ Code review 20260914 item 6 (F38, should-fix): A color override in the settings file is dropped for the session when the system switches between dark and light.
+		- A color that is not the theme's own stays when the system switches. That covers one from the command line or from Settings too, not only the file.
 	- Code review 20260914 item 7 (F39, should-fix): The wallpaper metadata fuzz test never reaches the metadata it is meant to check.
 	- Code review 20260914 item 8 (F40, should-fix): On Windows, the shell scan can offer Python 3 when only the Microsoft Store shortcut is there.
 	- Code review 20260914 item 11 (F43, blocking): A setting reverted to its default and then changed again before Apply is saved as the default, so the change is gone at the next launch.
