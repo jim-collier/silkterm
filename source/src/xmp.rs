@@ -323,13 +323,50 @@ mod tests {
 	mod fuzz {
 		use super::super::{Tags, read};
 		use crate::fuzz;
+		use std::fmt::Write as _;
 
 		// PNG and JPEG openings, so a case gets past the magic check and into the
 		// chunk walk rather than being turned away at the first byte.
 		const PNG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 		const JPEG: [u8; 2] = [0xff, 0xd8];
 
+		// A packet laid out the way a writer lays one out, holding values no writer
+		// would. Nothing else a generator makes gets as far as the value parsers.
+		fn tagged(rng: &mut fuzz::Rng) -> Vec<u8> {
+			#[rustfmt::skip]
+			const VALUES: [&str; 16] = [
+				"nan", "NaN%", "-nan px", "inf", "-infinity", "1e40", "1e-40", "-0",
+				"", " ", "%", "10px", "25%", "stretch", "50%, nan%", "nan, 50",
+			];
+			let mut packet = String::from("<rdf:Description");
+			let mut elements = String::new();
+			for _ in 0..=rng.below(4) {
+				let name = rng.pick(&["Fit", "Anchor", "Opacity", "Blur"]);
+				let value = if rng.chance(4) {
+					fuzz::text(rng)
+				} else if rng.chance(3) {
+					format!("{}, {}", rng.pick(&VALUES), rng.pick(&VALUES))
+				} else {
+					(*rng.pick(&VALUES)).to_string()
+				};
+				if rng.chance(2) {
+					write!(elements, "<wallpaper:{name}>{value}</wallpaper:{name}>").unwrap();
+				} else {
+					write!(packet, " wallpaper:{name}=\"{value}\"").unwrap();
+				}
+			}
+			write!(packet, ">{elements}</rdf:Description>").unwrap();
+			if rng.chance(2) {
+				super::png_file(&packet)
+			} else {
+				super::jpeg_file(&packet)
+			}
+		}
+
 		fn image(rng: &mut fuzz::Rng) -> Vec<u8> {
+			if rng.chance(3) {
+				return tagged(rng);
+			}
 			let mut out = Vec::new();
 			match rng.below(4) {
 				0 => out.extend_from_slice(&JPEG),
@@ -352,9 +389,9 @@ mod tests {
 			out
 		}
 
-		fn check(case: &[u8], path: &std::path::Path) {
+		fn check(case: &[u8], path: &std::path::Path) -> Tags {
 			std::fs::write(path, case).expect("write the case");
-			let tags: Tags = read(path);
+			let tags = read(path);
 			// Whatever comes out has to be a number the renderer can use.
 			if let Some(opacity) = tags.opacity {
 				assert!(opacity.is_finite(), "opacity {opacity}");
@@ -365,6 +402,7 @@ mod tests {
 			if let Some(anchor) = tags.anchor {
 				assert!(anchor.iter().all(|v| v.is_finite()), "anchor {anchor:?}");
 			}
+			tags
 		}
 
 		#[test]
@@ -375,6 +413,11 @@ mod tests {
 			for case in &corpus {
 				check(case, &path);
 			}
+			// A generator whose packets never read asserts nothing, and still passes.
+			let read_some = (0..64)
+				.filter(|&seed| check(&tagged(&mut fuzz::Rng::new(seed)), &path) != Tags::default())
+				.count();
+			assert!(read_some > 0, "no generated packet read as tags");
 			fuzz::soak("xmp", |seed| {
 				let mut rng = fuzz::Rng::new(seed);
 				check(&fuzz::input(&mut rng, &corpus, image), &path);
