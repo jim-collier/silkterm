@@ -40,17 +40,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔬 Scrolling back in muffer with the mouse wheel made its "1 new message" indicator smear and bounce - the same shape as #t78br, "The Notorious 'Bouncing Shadow' nano bug".
-	- This old bug has returned - ever since the alacritty work.
-	- Cause: the 20260803 fix only covered programs that redraw their lines. Since the terminal started recording scrolls, a program that scrolls a region gets that region's edges as its fixed rows. An indicator painted over the region's last row then slid with the text, and its old copy rode in the gap below.
-	- Changed: a row at that edge which the scroll does not account for is held still, and the gap fills from the rows that really left. The other full-screen programs checked are unchanged.
-	- Waiting on a look in muffer itself. Closed once that shows it gone, since this one has been closed before.
-	- Opened: n/a.
-
 - ✋ nano:
 	- Holding the cursor down to scroll down in a long document (which makes text move up) works well. But,
 	- Holding the cursor up to scroll up in a long document (which makes text move down), is jumpy. Seems to jump ~2 lines at a time.
+		- 20260915-150037: Still jumpy.
 	- Not reproduced on the Linux box. nano scrolls one row per key the same way in both directions, with or without soft wrap, and holding either arrow moves the text at the same even rate.
+	- 20260915: Checked again on the Linux box at its own key repeat rate (45 a second), in plain and highlighted files, and with nano's scroll sent as a redraw the way Windows sends it. Both directions move the same on every path.
+	- Which machine it shows on matters. On Windows, and over some ssh or WSL setups, the terminal sees a redraw rather than a scroll.
 	- Waiting on details from the machine it shows on: run `SILK_SCROLLDBG=1 silkterm 2> scroll.log`, hold the up arrow in nano for a few seconds, and keep the log. The nanorc in use and the key repeat rate would help too.
 	- Opened: 20260911-124508.
 
@@ -107,23 +103,15 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Not seen yet. Skipping the save when frames stall would make a truly slow machine test at every launch, so it needs its own design.
 	- Opened: 20260910-215844
 
-- 🔘 A short settings file can get one section's commented defaults filed under another.
+- ✋ A short settings file can get one section's commented defaults filed under another.
 	- Seen on a hand-written file: the Performance defaults were written under Transparency, and the next launch added them again where they belong.
+	- Same cause as the dotted-line config item below. The launch step that adds missing settings picks their place from a file with too few lines to go on. That step is SilkTerm's own, so a new shcl release is unlikely to fix either one.
+	- ✋ Held with that item.
 	- Opened: 20260910-230211
 
 - 🔘 On Windows, nothing says that a settings file with an unreadable line can no longer be saved.
 	- Shells found at launch are then never kept, and menu switches and the window size go through the same save. The only report goes to a console that a Windows build does not show.
 	- Opened: 20260910-230211
-
-- 🔘 A wallpaper set with `silkterm --wallpaper` does not last the session.
-	- With a rotation folder, Reload config after it turns the background black until restart. A reload without the `--wallpaper` step keeps the picture.
-	- An Apply from a Settings dialog opened before the `--wallpaper` puts the earlier wallpaper back.
-	- Older than the fix for "Wallpaper disappears from the background", and not its cause.
-	- Opened: 20260910-213600
-
-- 🔘 Settings Apply: no test covers picking Remote in the dialog while a performance step taken since it opened is in force.
-	- The code handles it. Taking that handling out fails no test.
-	- Opened: 20260910-213600
 
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
 	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
@@ -143,8 +131,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
 
 - 🔘 Code review 20260914 round 1 (review 20260914-124200).
-	- Code review 20260914 item 1 (F33, blocking): A settings file with one old-style setting at the left margin is converted wholesale, and its shell list is lost.
-	- Code review 20260914 item 2 (F34, blocking): The retired `shell.default` is deleted without moving that shell to the top of the list when the file also has a line that cannot be read.
+	- ✅ Code review 20260914 item 1 (F33, blocking): A settings file with one old-style setting at the left margin is converted wholesale, and its shell list is lost.
+		- The shell list carries whole and in order when a file converts.
+	- ✅ Code review 20260914 item 2 (F34, blocking): The retired `shell.default` is deleted without moving that shell to the top of the list when the file also has a line that cannot be read.
+		- It stays in the file until the move to the top of the list can be saved.
 	- Code review 20260914 item 3 (F35, should-fix): Several commented `## Default` lines in a new settings file name values that are not the defaults, among them transparency and blur behind.
 	- Code review 20260914 item 4 (F36, should-fix): A saved theme makes every launch report its settings as unread typos.
 	- Code review 20260914 item 5 (F37, should-fix): A `$` or `%` in a shell's arguments is expanded as a variable, so `cmd /k prompt $P$G` loses its prompt.
@@ -417,6 +407,28 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 ### Done
 
 #### Done - Bugs
+
+- ✅ A wallpaper set with `silkterm --wallpaper` does not last the session.
+	- With a rotation folder, Reload config after it turns the background black until restart. A reload without the `--wallpaper` step keeps the picture.
+	- An Apply from a Settings dialog opened before the `--wallpaper` puts the earlier wallpaper back.
+	- Older than the fix for "Wallpaper disappears from the background", and not its cause.
+	- Changed: a wallpaper given on the command line, at launch or later, holds until SilkTerm closes. Reload config keeps it, and so does an Apply that did not pick another wallpaper. Nothing about it is saved.
+	- Opened: 20260910-213600
+	- Closed: 20260915-151845
+
+- ✅ Settings Apply: no test covers picking Remote in the dialog while a performance step taken since it opened is in force.
+	- The code handles it. Taking that handling out fails no test.
+	- Changed: a test covers it now, and fails without that handling.
+	- Opened: 20260910-213600
+	- Closed: 20260915-151845
+
+- ✅ Scrolling back in muffer with the mouse wheel made its "1 new message" indicator smear and bounce - the same shape as #t78br, "The Notorious 'Bouncing Shadow' nano bug".
+	- This old bug has returned - ever since the alacritty work.
+	- Cause: the 20260803 fix only covered programs that redraw their lines. Since the terminal started recording scrolls, a program that scrolls a region gets that region's edges as its fixed rows. An indicator painted over the region's last row then slid with the text, and its old copy rode in the gap below.
+	- Changed: a row at that edge which the scroll does not account for is held still, and the gap fills from the rows that really left. The other full-screen programs checked are unchanged.
+	- Tested OK.
+	- Opened: n/a.
+	- Closed: 20260915-145824
 
 - ✅ A write made while SilkTerm starts can put a plain copy in place of a linked settings file.
 	- Adding new settings or renaming old ones replaces a linked `config.shcl` with a copy, so later edits to the linked file are ignored. A private file's permissions are reset too.
