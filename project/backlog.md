@@ -131,8 +131,10 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
 
 - 🔘 Code review 20260914 round 1 (review 20260914-124200).
-	- Code review 20260914 item 1 (F33, blocking): A settings file with one old-style setting at the left margin is converted wholesale, and its shell list is lost.
-	- Code review 20260914 item 2 (F34, blocking): The retired `shell.default` is deleted without moving that shell to the top of the list when the file also has a line that cannot be read.
+	- ✅ Code review 20260914 item 1 (F33, blocking): A settings file with one old-style setting at the left margin is converted wholesale, and its shell list is lost.
+		- The shell list carries whole and in order when a file converts.
+	- ✅ Code review 20260914 item 2 (F34, blocking): The retired `shell.default` is deleted without moving that shell to the top of the list when the file also has a line that cannot be read.
+		- It stays in the file until the move to the top of the list can be saved.
 	- Code review 20260914 item 3 (F35, should-fix): Several commented `## Default` lines in a new settings file name values that are not the defaults, among them transparency and blur behind.
 	- Code review 20260914 item 4 (F36, should-fix): A saved theme makes every launch report its settings as unread typos.
 	- Code review 20260914 item 5 (F37, should-fix): A `$` or `%` in a shell's arguments is expanded as a variable, so `cmd /k prompt $P$G` loses its prompt.
