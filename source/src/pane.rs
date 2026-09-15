@@ -4543,6 +4543,26 @@ mod tests {
 		);
 	}
 
+	// Combining marks all go on the one cell before them, and nothing that trims
+	// the scrollback ever trims a cell. The 0.26.0 engine kept every one, so a
+	// program printing them in a loop grew the terminal until it was killed.
+	#[test]
+	fn combining_marks_on_one_cell_are_capped() {
+		let flood = format!("a{}", "\u{301}".repeat(10_000));
+		let term = term_fed(10, 2, 0, &flood);
+		let kept = term.grid()[Line(0)][Column(0)]
+			.zerowidth()
+			.map_or(0, <[char]>::len);
+		assert!(kept <= 16, "one cell kept {kept} combining marks");
+
+		let accented = term_fed(10, 2, 0, "e\u{301}");
+		assert_eq!(
+			accented.grid()[Line(0)][Column(0)].zerowidth(),
+			Some(&['\u{301}'][..]),
+			"an ordinary accent is kept"
+		);
+	}
+
 	// A small live Term fed via the real parser, for the copy-output tests.
 	fn term_fed(cols: usize, lines: usize, scrollback: usize, input: &str) -> Term<VoidListener> {
 		let cfg = TermConfig {
