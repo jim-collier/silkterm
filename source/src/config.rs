@@ -1021,17 +1021,9 @@ fn fence_run(line: &str) -> Option<(char, usize)> {
 // Answers whether it wrote. A refusal has to reach the caller: the dialog closes
 // on a save, and three failures used to present as a clean one - shcl refusing a
 // lossy round trip, an unreadable file, an unwritable one.
-// Write beside the file and rename over it. Every launch-time rewrite goes
-// through here: `fs::write` truncates first, so a crash or a full disk during
-// one leaves nothing at all where the config was. The dialog's own save already
-// works this way (shcl does it).
-fn write_config_text(path: &std::path::Path, text: &str) -> std::io::Result<()> {
-	let tmp = path.with_extension("shcl.new");
-	std::fs::write(&tmp, text)?;
-	std::fs::rename(&tmp, path)
-}
-
-// The same rename into place, with what the dialog's save already had: a linked
+// Every write of the settings file goes through here, launch-time rewrites too.
+// It writes beside the file and renames over it: `fs::write` truncates first, so
+// a crash or a full disk during one leaves nothing where the config was. A linked
 // settings file is written through its link rather than replaced by a copy, the
 // file keeps its mode, and the temp file is created exclusively, so a link left
 // at its name is never written through. On Windows the publish is ReplaceFile,
@@ -1781,7 +1773,7 @@ fn load() -> Settings {
 		if let Some(dir) = path.parent() {
 			let _ = std::fs::create_dir_all(dir);
 		}
-		if let Err(e) = write_config_text(&path, default_config()) {
+		if let Err(e) = write_config_atomic(&path, default_config()) {
 			eprintln!(
 				"{APP_NAME}: could not create config {}: {e}",
 				path.display()
@@ -3421,7 +3413,7 @@ fn migrate_config(path: &std::path::Path) {
 			note_config_busy(path);
 			return;
 		}
-		if let Err(e) = write_config_text(path, &out) {
+		if let Err(e) = write_config_atomic(path, &out) {
 			eprintln!(
 				"{APP_NAME}: could not migrate config {}: {e}",
 				path.display()
@@ -3672,7 +3664,7 @@ pub fn revert_keys(keys: &[&str]) {
 	let Some(out) = reverted_text(&text, keys) else {
 		return;
 	};
-	if let Err(e) = write_config_text(&path, &out) {
+	if let Err(e) = write_config_atomic(&path, &out) {
 		eprintln!(
 			"{APP_NAME}: could not update config {}: {e}",
 			path.display()
@@ -3700,7 +3692,7 @@ pub fn disable_keys(keys: &[&str]) {
 	let Some(out) = disabled_text(&text, keys) else {
 		return;
 	};
-	if let Err(e) = write_config_text(&path, &out) {
+	if let Err(e) = write_config_atomic(&path, &out) {
 		eprintln!(
 			"{APP_NAME}: could not update config {}: {e}",
 			path.display()
@@ -3865,7 +3857,7 @@ fn backfill_config(path: &std::path::Path) {
 			note_config_busy(path);
 			return;
 		}
-		if let Err(e) = write_config_text(path, &out) {
+		if let Err(e) = write_config_atomic(path, &out) {
 			eprintln!(
 				"{APP_NAME}: could not update config {}: {e}",
 				path.display()
@@ -4291,7 +4283,7 @@ fn refresh_shcl_banner(path: &std::path::Path) {
 		note_config_busy(path);
 		return;
 	}
-	if let Err(e) = write_config_text(path, &out) {
+	if let Err(e) = write_config_atomic(path, &out) {
 		eprintln!(
 			"{APP_NAME}: could not update config {}: {e}",
 			path.display()
@@ -5347,7 +5339,7 @@ mod tests {
 		let path = dir.join("config.shcl");
 		std::fs::write(&path, "font.size: 12.0\n").expect("write");
 
-		write_config_text(&path, "font.size: 13.0\n").expect("rewrite");
+		write_config_atomic(&path, "font.size: 13.0\n").expect("rewrite");
 		assert_eq!(std::fs::read_to_string(&path).unwrap(), "font.size: 13.0\n");
 		assert!(
 			!dir.join("config.shcl.new").exists(),
@@ -6545,6 +6537,74 @@ mod tests {
 		);
 		let mode = std::fs::metadata(&real).unwrap().permissions().mode() & 0o777;
 		assert_eq!(mode, 0o600, "the file stays private");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// Adding missing settings at launch had the same faults the rating write had,
+	// and so did the template write and the renames beside it.
+	#[cfg(unix)]
+	#[test]
+	fn a_launch_rewrite_keeps_a_linked_private_settings_file() {
+		use std::os::unix::fs::PermissionsExt;
+		let dir = std::env::temp_dir().join(format!("silkterm_launchlink_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let real = dir.join("real.shcl");
+		std::fs::write(&real, "font:\n\tsize: 12\n").unwrap();
+		std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+		let link = dir.join("config.shcl");
+		std::os::unix::fs::symlink(&real, &link).unwrap();
+
+		backfill_config(&link);
+		let meta = std::fs::symlink_metadata(&link).unwrap();
+		assert!(
+			meta.file_type().is_symlink(),
+			"the settings file is still a link"
+		);
+		let text = std::fs::read_to_string(&real).unwrap();
+		assert!(
+			text.contains("\tsize: 12") && text.lines().count() > 2,
+			"the linked file got the missing settings: {text}"
+		);
+		let mode = std::fs::metadata(&real).unwrap().permissions().mode() & 0o777;
+		assert_eq!(mode, 0o600, "the file stays private");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn a_launch_rewrite_writes_through_no_link_left_at_a_temp_name() {
+		let dir = std::env::temp_dir().join(format!("silkterm_launchplant_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		std::fs::write(&path, "font:\n\tsize: 12\n").unwrap();
+		let victim = dir.join("victim.txt");
+		std::fs::write(&victim, "untouched\n").unwrap();
+		// the name launch rewrites used to write, and the first one shcl's writer tries
+		for name in [
+			"config.shcl.new".to_string(),
+			format!(".config.shcl.tmp{}.0", std::process::id()),
+		] {
+			std::os::unix::fs::symlink(&victim, dir.join(name)).unwrap();
+		}
+
+		backfill_config(&path);
+		assert_eq!(
+			std::fs::read_to_string(&victim).unwrap(),
+			"untouched\n",
+			"a link at a temp name is not written through"
+		);
+		let meta = std::fs::symlink_metadata(&path).unwrap();
+		assert!(
+			meta.file_type().is_file(),
+			"the settings file is a plain file"
+		);
+		let text = std::fs::read_to_string(&path).unwrap();
+		assert!(
+			text.contains("\tsize: 12") && text.lines().count() > 2,
+			"the missing settings were added: {text}"
+		);
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
