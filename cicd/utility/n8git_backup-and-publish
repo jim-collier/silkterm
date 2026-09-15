@@ -224,6 +224,14 @@ fMain(){
 		fi
 	fi
 
+	## A stash left by a run that stopped between its stash and its pop holds
+	## uncommitted work. Publishing past it prints "Done." with the work still
+	## stashed, and the next stash buries it deeper.
+	if grep -qE ': auto-stash$' <<< "$(git stash list)"; then
+		fThrowError "an 'auto-stash' from an earlier run is still in 'git stash list'. Pop or drop it, then re-run. Nothing was committed or pushed."
+		return 1
+	fi
+
 	## Variables for git actions
 	local -i didStash=0
 	local -i preCount
@@ -243,8 +251,17 @@ fMain(){
 	if git rev-parse --abbrev-ref @{u} >/dev/null 2>&1; then
 		fEcho; fEcho "git pull --ff-only ..."
 		## ff-only per the house rule: a divergent upstream stops here loudly
-		## instead of auto-merging behind the publish.
-		git pull --ff-only
+		## instead of auto-merging behind the publish. A failed pull puts the
+		## stash back first: left there, the next run finds a clean tree and
+		## publishes without the work.
+		if ! git pull --ff-only; then
+			if ((didStash)) && ! git stash pop; then
+				fThrowError "git pull --ff-only failed, and putting the stashed work back conflicted. Resolve it, then 'git stash drop'. Nothing was committed or pushed."
+				return 1
+			fi
+			fThrowError "git pull --ff-only failed. The working tree is as it was. Nothing was committed or pushed."
+			return 1
+		fi
 	fi
 
 	## Stash pop. A conflict here leaves the tree with markers and keeps the
@@ -587,3 +604,6 @@ fMain  "${@}"
 ##			  rather than blocking on the editor.
 ##			- A stray positional argument now throws instead of being ignored.
 ##			- Missing include/gfs-rotate.bash warns instead of aborting.
+##		- 20260915:
+##			- A failed pull puts the stashed work back before stopping, and a run
+##			  refuses to start while an earlier run's 'auto-stash' is still stashed.

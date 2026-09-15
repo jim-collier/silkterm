@@ -73,12 +73,27 @@ _gfs_ts(){
 	printf '%s %s\n' "${epoch}" "${canon}"
 }
 
+## Set variable $1 to the count in environment variable $2, or to default $3.
+## The count reaches arithmetic, where bash runs a command substitution hidden
+## in an array subscript, so anything but plain digits gets the default.
+_gfs_count(){
+	local val="${!2:-}"
+	if [[ -z "$val" ]]; then
+		val="$3"
+	elif [[ ! "$val" =~ ^(0|[1-9][0-9]{0,8})$ ]]; then
+		printf '  rotate: %s is not a count; using %s\n' "$2" "$3" >&2
+		val="$3"
+	fi
+	printf -v "$1" '%s' "$val"
+}
+
 gfs_rotate(){
 	local dir="$1" prefix="$2" ext="$3"
 	local now="${GFS_NOW:-$(date +%s)}"
-	local kFreq="${GFS_KEEP_FREQUENT:-10}" kHour="${GFS_KEEP_HOURLY:-4}" \
-	      kDay="${GFS_KEEP_DAILY:-5}" kWeek="${GFS_KEEP_WEEKLY:-4}" \
-	      kMonth="${GFS_KEEP_MONTHLY:-4}" kYear="${GFS_KEEP_YEARLY:-2}"
+	local kFreq kHour kDay kWeek kMonth kYear
+	_gfs_count kFreq  GFS_KEEP_FREQUENT 10; _gfs_count kHour GFS_KEEP_HOURLY 4
+	_gfs_count kDay   GFS_KEEP_DAILY    5;  _gfs_count kWeek GFS_KEEP_WEEKLY 4
+	_gfs_count kMonth GFS_KEEP_MONTHLY  4;  _gfs_count kYear GFS_KEEP_YEARLY 2
 
 	## Glob with nullglob so no match yields an empty list; restore the caller's setting.
 	local _ng=0; shopt -q nullglob && _ng=1
@@ -165,3 +180,5 @@ declare -i isSourced_t6wq5=0; [[ "${BASH_SOURCE[0]}" == "${0}" ]] || isSourced_t
 ##	History:
 ##		- 2026-06-05: Created.
 ##		- 2026-07-25: Harmonized every copy of this file to one identical file.
+##		- 2026-09-15: A GFS_KEEP_* value that is not a plain count gets its
+##		  default. It reached arithmetic, which could run a command.
