@@ -1095,6 +1095,14 @@ const MENU_ACCEL_DROP: f32 = 3.0; // accelerator underline's rise off the item's
 // us an arrow with nothing held, which would encode as a bare arrow.
 const IGNORE_KEYS_WHILE_UNFOCUSED: bool = true;
 
+// Ctrl+Shift+C, read off the held modifiers. A grab's pass-through arrives with
+// them zeroed, so it never matches.
+fn is_copy_chord(mods: ModifiersState, key: &Key) -> bool {
+	mods.control_key()
+		&& mods.shift_key()
+		&& matches!(key, Key::Character(typed) if typed.eq_ignore_ascii_case("c"))
+}
+
 // Winit replays every key already held down whenever focus changes, flagged
 // `is_synthetic`, so an app can track what is physically pressed. That is
 // state, not typing - and on X11 the replay lands BEFORE winit re-queries the
@@ -5279,46 +5287,27 @@ fn bar_inst(r: Rect, color: [u8; 3], alpha: f32) -> RectInstance {
 	}
 }
 
-// The minimap's own quads: the trough down the far edge, the viewport marker
-// across the preview, and the thumb sitting in the trough at the same y. The
-// marker and the thumb are deliberately one span - see design.md.
-fn minimap_insts(g: &crate::minimap::Geom, active: bool) -> Vec<RectInstance> {
+// The minimap's viewport marker. The pane's own scrollbar sits at the far edge,
+// over the preview, so the column draws no bar of its own.
+fn minimap_insts(g: &crate::minimap::Geom, active: bool) -> Option<RectInstance> {
 	let cfg = config::settings();
-	let mut out = vec![bar_inst(
-		g.bar,
-		cfg.scrollbar_trough,
-		config::SCROLLBAR_TROUGH_A,
-	)];
-	if let Some(handle) = g.handle {
-		let alpha = if active {
-			config::SCROLLBAR_ACTIVE_A
-		} else {
-			config::SCROLLBAR_IDLE_A
-		};
-		// the band over the preview is a wash, not a lid: it marks where you are
-		// without hiding what is under it
-		out.push(RectInstance {
-			pos: [handle.x, handle.y],
-			size: [g.preview.w, handle.h],
-			color: {
-				let mut c = config::srgb_f32(cfg.scrollbar_thumb);
-				c[3] = alpha * 0.28;
-				c
-			},
-			..Default::default()
-		});
-		out.push(bar_inst(
-			Rect {
-				x: g.bar.x,
-				y: handle.y,
-				w: g.bar.w,
-				h: handle.h,
-			},
-			cfg.scrollbar_thumb,
-			alpha,
-		));
-	}
-	out
+	let handle = g.handle?;
+	let alpha = if active {
+		config::SCROLLBAR_ACTIVE_A
+	} else {
+		config::SCROLLBAR_IDLE_A
+	};
+	// a wash, not a lid: it marks where you are without hiding what is under it
+	Some(RectInstance {
+		pos: [handle.x, handle.y],
+		size: [g.preview.w, handle.h],
+		color: {
+			let mut c = config::srgb_f32(cfg.scrollbar_thumb);
+			c[3] = alpha * 0.28;
+			c
+		},
+		..Default::default()
+	})
 }
 
 // The scrollbar's quads for one pane: a faint track with the handle on it. The
@@ -6760,8 +6749,13 @@ impl ApplicationHandler<UserEvent> for App {
 				// A character handed to the window instead of typed at it arrives
 				// with no key named; fill the key in so the rest of this reads it.
 				let key = input::name_typed(key);
-				// see IGNORE_KEYS_WHILE_UNFOCUSED
+				// see IGNORE_KEYS_WHILE_UNFOCUSED. A copy types nothing, so it cannot be
+				// the bare arrow that gate is for, and a flag lagging the WM must not
+				// eat it while right-click Copy works.
 				if IGNORE_KEYS_WHILE_UNFOCUSED && !state.focused {
+					if state.menu.is_none() && is_copy_chord(state.mods, &key.logical_key) {
+						state.copy_selection();
+					}
 					return;
 				}
 				// An open menu (context menu / menu-bar dropdown) captures the
@@ -7512,6 +7506,19 @@ impl ApplicationHandler<UserEvent> for App {
 }
 
 impl State {
+	fn copy_selection(&mut self) {
+		let focused = self.tabs.cur().focused;
+		if let Some(text) = self
+			.tabs
+			.cur()
+			.panes
+			.get(&focused)
+			.and_then(super::pane::Pane::selection_text)
+		{
+			self.clipboard.set_clipboard(text);
+		}
+	}
+
 	// Ctrl+Shift chords for pane management. Returns true if consumed.
 	// Only clipboard hotkeys live here now: pane management (split/close/cycle)
 	// is menu-only by design - see the keyboard handler and design.md.
@@ -7522,16 +7529,8 @@ impl State {
 		let focused = self.tabs.cur().focused;
 		match &key.logical_key {
 			// Ctrl+Shift+C / Ctrl+Shift+V: clipboard copy / paste
-			Key::Character(typed) if typed.eq_ignore_ascii_case("c") => {
-				if let Some(text) = self
-					.tabs
-					.cur()
-					.panes
-					.get(&focused)
-					.and_then(super::pane::Pane::selection_text)
-				{
-					self.clipboard.set_clipboard(text);
-				}
+			k if is_copy_chord(self.mods, k) => {
+				self.copy_selection();
 				true
 			}
 			Key::Character(typed) if typed.eq_ignore_ascii_case("v") => {
@@ -7551,9 +7550,9 @@ impl State {
 mod tests {
 	use super::{
 		Caret, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit, ViewState,
-		accel_at, accel_clash, copybox_fit, copybox_place, focus_ring, key_is_typed, menu_metrics,
-		mia, msub, mta, needs_folder_read, pace_frame, rating_step, rotation_next, tab_close_box,
-		tab_command_line, tab_title_w, typed_title, view_menu_items,
+		accel_at, accel_clash, copybox_fit, copybox_place, focus_ring, is_copy_chord, key_is_typed,
+		menu_metrics, mia, msub, mta, needs_folder_read, pace_frame, rating_step, rotation_next,
+		tab_close_box, tab_command_line, tab_title_w, typed_title, view_menu_items,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
@@ -8277,6 +8276,26 @@ mod tests {
 		assert!(!key_is_typed(ElementState::Pressed, true));
 		assert!(!key_is_typed(ElementState::Released, false));
 		assert!(!key_is_typed(ElementState::Released, true));
+	}
+
+	// The copy chord skips the unfocused-key gate, so it must never match what
+	// that gate is for: a key passed through a WM grab with the modifiers zeroed.
+	#[test]
+	fn only_a_held_ctrl_shift_c_is_the_copy_chord() {
+		use winit::keyboard::{Key, ModifiersState, NamedKey};
+		let both = ModifiersState::CONTROL | ModifiersState::SHIFT;
+		assert!(is_copy_chord(both, &Key::Character("c".into())));
+		assert!(is_copy_chord(both, &Key::Character("C".into())));
+		assert!(!is_copy_chord(
+			ModifiersState::empty(),
+			&Key::Character("c".into())
+		));
+		assert!(!is_copy_chord(
+			ModifiersState::CONTROL,
+			&Key::Character("c".into())
+		));
+		assert!(!is_copy_chord(both, &Key::Character("v".into())));
+		assert!(!is_copy_chord(both, &Key::Named(NamedKey::ArrowUp)));
 	}
 
 	// The demo capture samples on a fixed clock, so a pinned rate that drifts is

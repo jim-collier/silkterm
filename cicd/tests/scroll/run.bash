@@ -13,6 +13,7 @@
 ##		   less / vim   - no static top band: the smooth slide engages, monotone (no bounce)
 ##		   nano / muffer - static title bar held still, the region under it slides
 ##		   tmux         - a real scroll region (DECSTBM + linefeeds) slides off the engine's count
+##		   pill         - a pill repainted over a recorded region's edge is held still
 ##		   altenter     - a burst still easing when an alt screen takes over lands at rest
 ##		   chrome       - output easing under a live block redrawn in place holds the block still
 ##		Plain shell-output easing is covered by the library tests (cargo test); the
@@ -252,6 +253,9 @@ run_scene muffer muffer slide 2
 ## A real region scroll (tmux, less): the engine's own record drives the slide, and
 ## the one row outside the region is the only band.
 run_scene tmux   tmux   slide 0 1
+## A pill repainted over the last row of a recorded region (muffer scrolling
+## back): held with the two rows under the region.
+run_scene pill   pill   slide 2 3
 ## A burst still easing when the alt screen takes over (git commit opening nano):
 ## no scrollback behind it, so the view must land at rest - frac 0 on every frame.
 run_scene altenter altenter still -1

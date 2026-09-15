@@ -40,13 +40,18 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 
 ### Bugs
 
-- 🔘 Scrolling back in muffer with the mouse wheel made its "1 new message" indicator smear and bounce - the same shape as #t78br, "The Notorious 'Bouncing Shadow' nano bug".
+- 🔬 Scrolling back in muffer with the mouse wheel made its "1 new message" indicator smear and bounce - the same shape as #t78br, "The Notorious 'Bouncing Shadow' nano bug".
 	- This old bug has returned - ever since the alacritty work.
+	- Cause: the 20260803 fix only covered programs that redraw their lines. Since the terminal started recording scrolls, a program that scrolls a region gets that region's edges as its fixed rows. An indicator painted over the region's last row then slid with the text, and its old copy rode in the gap below.
+	- Changed: a row at that edge which the scroll does not account for is held still, and the gap fills from the rows that really left. The other full-screen programs checked are unchanged.
+	- Waiting on a look in muffer itself. Closed once that shows it gone, since this one has been closed before.
 	- Opened: n/a.
 
-- 🔘 nano:
+- ✋ nano:
 	- Holding the cursor down to scroll down in a long document (which makes text move up) works well. But,
 	- Holding the cursor up to scroll up in a long document (which makes text move down), is jumpy. Seems to jump ~2 lines at a time.
+	- Not reproduced on the Linux box. nano scrolls one row per key the same way in both directions, with or without soft wrap, and holding either arrow moves the text at the same even rate.
+	- Waiting on details from the machine it shows on: run `SILK_SCROLLDBG=1 silkterm 2> scroll.log`, hold the up arrow in nano for a few seconds, and keep the log. The nanorc in use and the key repeat rate would help too.
 	- Opened: 20260911-124508.
 
 - 🔘 With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Each time the other pane scrolls, the slide in progress jumps the rest of the way.
@@ -54,7 +59,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Split from the smooth scrolling seams item. It shows on builds from before the scroll ledger too.
 	- Opened: 20260911-113647
 
-- 🔘 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
+- 🛠️ The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
 	- CTRL+shift+C on selected text doesn't work.
 	- Right-click and choose "Copy", DOES work.
@@ -62,6 +67,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 		- With muffer autocopy disabled, I can't get XFCE terminal to copy the selection. Even the Copy menu is grayed out, seemingly indicating it doesn't notice that anything selected.
 		- With muffer autocopy enabled, it doesn't always work.
 		- It seems the longer the muffer session, the less likely it is to work.
+	- Why it keeps coming back: there are four ways to copy, each with its own gate, and every fix so far reached only one of them.
+		- Right-click Copy has no gate, which is why it works.
+		- Ctrl+Shift+C was dropped whenever the window-focus flag read false. That gate came in with the bare arrow fix.
+		- Copy on select only runs after a drag SilkTerm saw itself. A program that tracks the mouse, like muffer, takes the drag.
+		- muffer's own auto-copy asks the terminal to set the clipboard with an escape sequence, and SilkTerm has never acted on that request.
+	- Changed: Ctrl+Shift+C copies even while the focus flag reads false. It types nothing, so it cannot be the bare arrow that gate stops.
+	- Still open: acting on a program's request to set the clipboard needs a decision first, since output from anywhere could then replace what is on the clipboard.
 	- Opened: 20260909.
 
 - 🔘 The scroll test's full-screen-entry check tests nothing: it runs the less scene instead of its own script.
@@ -245,10 +257,6 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Opened: 20260914-124200
 
 ### New features and enhancements
-
-- 🔘 Remove the double-scrollbar with the minimap.
-	- That was my flawed reasoning. Turns out, they are both the same size - so, redundant.
-	- There should be just one scrollbar - the regular main scrollbar, to the right (not left) of the minimap.
 
 - 🔘 Windows: an elevated console in another language still shows a shell's image path in the title.
 	- An elevated console writes the terminal's rights in front of the first title it sends, the one naming the program it started. That word is taken back off, but only where it is the same word the title bar is about to show. A machine speaking another language writes another word, which is not recognized, so the word hides the program name behind it and the whole image path is shown until the shell sets a title of its own.
@@ -1522,6 +1530,14 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Remove the double-scrollbar with the minimap.
+	- That was my flawed reasoning. Turns out, they are both the same size - so, redundant.
+	- There should be just one scrollbar - the regular main scrollbar, to the right (not left) of the minimap.
+	- Done: the minimap's own bar is gone, and the regular scrollbar sits at the far right edge, over the edge of the map. The width setting is now the whole column's.
+	- On a short scrollback the map's marker and the scrollbar thumb sit at different heights, because the map does not stretch to fill its column.
+	- Opened: n/a
+	- Closed: 20260915-122637
 
 - ✅ Adversarial fuzz and security testing, over library code as well as our own, in the pipeline.
 	- ✅ Ten targets, each sitting beside the code it hammers: the escape-sequence stream, the config file twice (as a config and as arbitrary bytes), hyperlink detection, the shape a double-click grabs, matched pairs, a paste payload, a window title, a reported directory, and a wallpaper's own tags.

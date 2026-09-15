@@ -2,9 +2,8 @@
 // Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
 //! Minimap: the whole scroll buffer in miniature, in its own column beside the
-//! text. The buffer always maps linearly onto the column and never slides, so
-//! the highlight over the preview and the thumb in the far-edge bar are one
-//! object at the same pixels. See design.md for why that matters.
+//! text. The buffer always maps linearly onto the column and never slides. See
+//! design.md.
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -19,8 +18,8 @@ use crate::config;
 use crate::palette;
 use crate::pane::Rect;
 
-// The slim always-visible scrollbar at the far edge, in DIP.
-pub const BAR_W: f32 = 8.0;
+// Narrowest column worth taking from the text, in DIP.
+const MIN_W: f32 = 16.0;
 // Shortest the viewport handle may draw, so a deep buffer still leaves
 // something to grab.
 const MIN_HANDLE: f32 = 14.0;
@@ -60,7 +59,6 @@ type Row = Vec<u8>;
 #[derive(Clone, Copy, Debug)]
 pub struct Geom {
 	pub preview: Rect,
-	pub bar: Rect,
 	pub handle: Option<Rect>,
 }
 
@@ -92,16 +90,18 @@ fn trim_exe(name: &str) -> &str {
 		.unwrap_or(base)
 }
 
-// Total width of the column (preview plus bar), 0 when the minimap is off, the
-// pane is too narrow to give up the room, or a full-screen program has it.
+// Width of the column, 0 when the minimap is off, the pane is too narrow to
+// give up the room, or a full-screen program has it.
 pub fn column_w(cfg: &config::Settings, pane_w: f32, scale: f32, wanted: bool) -> f32 {
 	if !cfg.minimap || !wanted {
 		return 0.0;
 	}
-	let bar = config::dip(BAR_W, scale);
-	let want = config::dip(cfg.minimap_width, scale) + bar;
-	let w = want.min((pane_w * 0.5).floor());
-	if w < bar * 2.0 { 0.0 } else { w }
+	let w = config::dip(cfg.minimap_width, scale).min((pane_w * 0.5).floor());
+	if w < config::dip(MIN_W, scale) {
+		0.0
+	} else {
+		w
+	}
 }
 
 // The part of a pane's area the terminal text gets.
@@ -163,17 +163,10 @@ pub fn geom(
 	if w <= 0.0 || h <= 0.0 {
 		return None;
 	}
-	let bar_w = config::dip(BAR_W, scale);
 	let preview = Rect {
 		x: full.x + full.w - w,
 		y: full.y + margin,
-		w: w - bar_w,
-		h,
-	};
-	let bar = Rect {
-		x: preview.x + preview.w,
-		y: preview.y,
-		w: bar_w,
+		w,
 		h,
 	};
 	let handle = (!alt && total > rows).then(|| {
@@ -185,11 +178,7 @@ pub fn geom(
 			h: hh,
 		}
 	});
-	Some(Geom {
-		preview,
-		bar,
-		handle,
-	})
+	Some(Geom { preview, handle })
 }
 
 // Where a press in the column landed.
@@ -201,13 +190,7 @@ pub enum Hit {
 
 // Where a press at (x, y) landed, if it landed on the column at all.
 pub fn hit(g: &Geom, x: f32, y: f32) -> Option<Hit> {
-	let col = Rect {
-		x: g.preview.x,
-		y: g.preview.y,
-		w: g.preview.w + g.bar.w,
-		h: g.preview.h,
-	};
-	if !col.contains(x, y) {
+	if !g.preview.contains(x, y) {
 		return None;
 	}
 	let handle = g.handle?;
@@ -949,22 +932,22 @@ mod tests {
 	}
 
 	#[test]
-	fn the_column_takes_its_width_plus_the_bar() {
+	fn the_column_takes_its_width_and_no_more() {
 		let s = cfg(true, 100.0);
-		assert_eq!(column_w(&s, 800.0, 1.0, true), 108.0);
+		assert_eq!(column_w(&s, 800.0, 1.0, true), 100.0);
 		let full = Rect {
 			x: 10.0,
 			y: 20.0,
 			w: 800.0,
 			h: 600.0,
 		};
-		assert_eq!(text_rect(full, &s, 1.0, true).w, 692.0);
+		assert_eq!(text_rect(full, &s, 1.0, true).w, 700.0);
 	}
 
 	#[test]
 	fn a_narrow_pane_gives_up_the_column() {
-		// half a pane is the most the column may take, and below two bar widths
-		// there is nothing worth showing
+		// half a pane is the most the column may take, and below the narrowest
+		// column there is nothing worth showing
 		assert_eq!(column_w(&cfg(true, 100.0), 20.0, 1.0, true), 0.0);
 		assert_eq!(column_w(&cfg(true, 100.0), 120.0, 1.0, true), 60.0);
 	}

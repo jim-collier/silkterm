@@ -8,6 +8,7 @@
 ##   nano   - one static title bar on top, two static help rows at the bottom
 ##   muffer - two static header rows on top, one static footer row
 ##   tmux   - a scroll region above one status row, scrolled with real linefeeds
+##   pill   - a region scrolled back with CSI T, a pill repainted over its last row
 ##   chrome - a transcript on the normal screen with a live block redrawn under it,
 ##            one new transcript line per step (muffer's shape)
 ## The repaint shapes use explicit cursor positioning (CUP) and never a newline, so
@@ -51,6 +52,32 @@ if [ "$shape" = tmux ]; then
 	while :; do
 		printf '  line %06d  the quick brown fox jumps\n' "$n"
 		n=$((n + 1))
+		sleep "$step"
+	done
+fi
+
+if [ "$shape" = pill ]; then
+	sz=$(stty size 2>/dev/null) || sz=""
+	rows=${sz% *}
+	case "$rows" in ''|*[!0-9]*) rows=30 ;; esac
+	[ "$rows" -ge 10 ] || rows=30
+	last=$((rows - 2))
+	printf '\033[1;1H\033[7m  header one  \033[0m\033[K\033[2;1H\033[7m  header two  \033[0m\033[K'
+	r=3
+	while [ "$r" -le "$last" ]; do
+		printf '\033[%d;1H  line %06d  the quick brown fox jumps\033[K' "$r" "$((1000 + r))"
+		r=$((r + 1))
+	done
+	printf '\033[%d;1H> input line\033[K' "$rows"
+	## a real screen has settled before the first wheel notch; with nothing to
+	## compare the first step against, no edge is held
+	sleep 1
+	n=1003
+	while :; do
+		n=$((n - 1))
+		## one write per step, so a build cannot land between the scroll and the pill
+		printf '\033[3;%dr\033[3;1H\033[T\033[r\033[3;1H  line %06d  the quick brown fox jumps\033[K\033[%d;1H  line %06d  the quick\033[7m 1 new message \033[0m\033[K\033[%d;3H' \
+			"$last" "$n" "$last" "$((n + last - 3))" "$rows"
 		sleep "$step"
 	done
 fi
