@@ -185,15 +185,20 @@ pub fn install(found: &[Found]) {
 // console flashing over the terminal a few seconds after launch would be a
 // mystery to anyone who saw it.
 fn ask_shell(program: &str) -> Option<(PathBuf, String)> {
+	query_shell(program, PROFILE_QUERY)
+}
+
+// Both facts in one launch: where the profile is, and whether this shell would
+// even run it. A piped answer is written in the console's code page, IBM437 on
+// an English Windows, so a path outside ASCII came back with U+FFFD in it and
+// the block went into a new file no shell reads. The path comes back as the hex
+// of its UTF-8 bytes instead, which no code page can change.
+const PROFILE_QUERY: &str =
+	"[BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($PROFILE)); Get-ExecutionPolicy";
+
+fn query_shell(program: &str, query: &str) -> Option<(PathBuf, String)> {
 	let mut command = std::process::Command::new(program);
-	// both facts in one launch: where the profile is, and whether this shell
-	// would even run it
-	command.args([
-		"-NoProfile",
-		"-NonInteractive",
-		"-Command",
-		"$PROFILE; Get-ExecutionPolicy",
-	]);
+	command.args(["-NoProfile", "-NonInteractive", "-Command", query]);
 	#[cfg(windows)]
 	{
 		use std::os::windows::process::CommandExt;
@@ -207,14 +212,28 @@ fn ask_shell(program: &str) -> Option<(PathBuf, String)> {
 	// stdout. Reading only the status would turn that into silence, which is
 	// how this first went wrong.
 	let output = command.output().ok()?;
-	let answer = String::from_utf8_lossy(&output.stdout);
+	parse_answer(&String::from_utf8_lossy(&output.stdout))
+}
+
+// Anything that is not the hex this asked for writes nothing, since a guess at
+// a path is how a profile nobody loads gets created.
+fn parse_answer(answer: &str) -> Option<(PathBuf, String)> {
 	let mut lines = answer
 		.lines()
 		.map(str::trim)
 		.filter(|line| !line.is_empty());
-	let path = lines.next()?.to_string();
+	let bytes = lines
+		.next()?
+		.split('-')
+		.map(|pair| {
+			(pair.len() == 2)
+				.then(|| u8::from_str_radix(pair, 16).ok())
+				.flatten()
+		})
+		.collect::<Option<Vec<u8>>>()?;
+	let path = String::from_utf8(bytes).ok()?;
 	let policy = lines.next().unwrap_or_default().to_string();
-	(!path.is_empty()).then(|| (PathBuf::from(path), policy))
+	Some((PathBuf::from(path), policy))
 }
 
 // Would this shell actually load a profile it found? A block written into a
@@ -535,6 +554,56 @@ mod tests {
 		assert!(!is_bash("sh"));
 		assert!(!is_bash("zsh"));
 		assert!(!is_bash("wsl.exe"));
+	}
+
+	// Windows answers in the console's code page, so a path is only believed as
+	// the hex the query asks for. An empty profile gives an empty first line, and
+	// the policy that then comes first is not hex.
+	#[test]
+	fn a_profile_path_is_read_from_its_hex_and_nothing_else() {
+		let jose =
+			"C:\\Users\\Jos\u{e9}\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1";
+		let hex = jose
+			.bytes()
+			.map(|byte| format!("{byte:02X}"))
+			.collect::<Vec<_>>()
+			.join("-");
+		let (path, policy) = super::parse_answer(&format!("{hex}\r\nRemoteSigned\r\n")).unwrap();
+		assert_eq!(path, std::path::PathBuf::from(jose));
+		assert_eq!(policy, "RemoteSigned");
+		// what the old query got back on vm925w: the path itself, in IBM437
+		let mangled = String::from_utf8_lossy(b"C:\\Users\\Jos\x82\\Documents\r\nRemoteSigned\r\n");
+		assert_eq!(super::parse_answer(&mangled), None);
+		assert_eq!(super::parse_answer("\r\nRemoteSigned\r\n"), None);
+		assert_eq!(
+			super::parse_answer("C3-28\r\nRemoteSigned\r\n"),
+			None,
+			"not UTF-8"
+		);
+		assert_eq!(super::parse_answer(""), None);
+	}
+
+	// The same through each real PowerShell installed. On Windows this is the
+	// case that failed, in both 5.1 and 7; elsewhere it checks the query parses.
+	#[test]
+	fn a_powershell_names_a_profile_outside_ascii() {
+		let query = super::PROFILE_QUERY.replace(
+			"$PROFILE",
+			"('C:\\Users\\Jos' + [char]0xE9 + '\\Documents\\profile.ps1')",
+		);
+		let want = std::path::PathBuf::from("C:\\Users\\Jos\u{e9}\\Documents\\profile.ps1");
+		for program in ["pwsh", "powershell.exe"] {
+			let runs = std::process::Command::new(program)
+				.args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
+				.output()
+				.is_ok_and(|out| out.status.success());
+			if !runs {
+				eprintln!("no {program} here, skipped");
+				continue;
+			}
+			let (path, _) = super::query_shell(program, &query).expect("an answer");
+			assert_eq!(path, want, "{program}");
+		}
 	}
 
 	// It replaces a PS1 set in .bashrc, and Debian's own files set one, so it is
