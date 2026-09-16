@@ -371,6 +371,9 @@ impl TermInstance {
 			.map_or(0, std::num::NonZeroU32::get);
 		let notifier = event_proxy.clone();
 		// the tap goes between the PTY and the parser; the bytes are untouched
+		#[cfg(unix)]
+		let reported_cwd = crate::cwd::Reported::for_tty(master_fd);
+		#[cfg(not(unix))]
 		let reported_cwd = crate::cwd::Reported::default();
 		let pty = crate::cwd::TappedPty::new(pty, reported_cwd.clone());
 		let event_loop = EventLoop::new(term.clone(), event_proxy, pty, false, false)?;
@@ -465,7 +468,8 @@ impl TermInstance {
 	// while the OS can only see where the process itself sits - which for
 	// PowerShell is the launch directory forever. A report that no longer names
 	// a directory (a stale one, or a path on the far side of an ssh) is dropped
-	// rather than trusted, and the OS answer stands instead.
+	// rather than trusted, and the OS answer stands instead. So is a report from
+	// a program that has since exited, on unix, where that can be told.
 	pub fn cwd(&self) -> Option<std::path::PathBuf> {
 		// Throttled the way `task()` beside it is, and for the same reason: the
 		// tab strip asks once per tab per frame, and both halves of the answer
@@ -480,7 +484,7 @@ impl TermInstance {
 		}
 		let dir = self
 			.reported_cwd
-			.get()
+			.live()
 			.filter(|dir| dir.is_dir())
 			.or_else(|| self.os_cwd());
 		*self.cwd_cache.borrow_mut() = Some((now, dir.clone()));

@@ -109,9 +109,10 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	}
 	catch { }
 	# A machine you are logged into by mistake should look wrong immediately, so
-	# the host name is colored per machine. Add your own; anything not listed
-	# gets the default.
-	$global:__SilkTermHostColor = switch ([Environment]::MachineName.ToLowerInvariant()) {
+	# the host name is colored per machine. For your own, set $SilkTermHostColor
+	# ABOVE this block, such as $SilkTermHostColor = '1;33'. A line added here is
+	# replaced on a later launch.
+	$global:__SilkTermHostColor = if ($global:SilkTermHostColor) { $global:SilkTermHostColor } else { switch ([Environment]::MachineName.ToLowerInvariant()) {
 		'b12' { '1;32' }
 		'b15' { '1;34' }
 		'b16' { '1;31' }
@@ -121,7 +122,7 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 		'xub2004a' { '1;32' }
 		't2nsn' { '1;35' }
 		default { '1;37' }
-	}
+	} }
 
 	function global:__SilkTermPaint {
 		param([string]$Code, [string]$Text)
@@ -219,18 +220,28 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	if ($null -ne $ExecutionContext.SessionState.InvokeCommand.PSObject.Properties['LocationChangedAction']) {
 		# PowerShell 6+ can be told about the location itself, which leaves the
 		# prompt alone - oh-my-posh, starship and a hand-written prompt all keep
-		# working, and anything already using this hook is called first.
-		$global:__SilkTermPrevLocation = $ExecutionContext.SessionState.InvokeCommand.LocationChangedAction
+		# working, and anything already using this hook is called first. A second
+		# load, such as `. $PROFILE` again, finds its own handler there and keeps
+		# the one from before it, or every change would report twice.
+		$__SilkTermHook = $ExecutionContext.SessionState.InvokeCommand.LocationChangedAction
+		if (-not ($__SilkTermHook -and [object]::ReferenceEquals($__SilkTermHook, $global:__SilkTermOwnHook))) {
+			$global:__SilkTermPrevLocation = $__SilkTermHook
+		}
+		# The hook holds a delegate, which & cannot call.
 		$ExecutionContext.SessionState.InvokeCommand.LocationChangedAction = {
-			if ($global:__SilkTermPrevLocation) { & $global:__SilkTermPrevLocation @args }
+			if ($global:__SilkTermPrevLocation) { $global:__SilkTermPrevLocation.Invoke($args[0], $args[1]) }
 			__SilkTermReportDir
 		}
+		$global:__SilkTermOwnHook = $ExecutionContext.SessionState.InvokeCommand.LocationChangedAction
 		if ($__SilkTermStock) { function global:prompt { __SilkTermPrompt } }
 	}
 	else {
 		# Windows PowerShell 5.1 has no such hook, so wrap whatever prompt is in
-		# place rather than replacing it.
-		$global:__SilkTermPrevPrompt = if ($__SilkTermStock) { $null } else { $function:prompt }
+		# place rather than replacing it. A second load finds its own wrapper in
+		# place, and wrapping that calls itself until the stack runs out.
+		if (-not ($function:prompt -and $function:prompt.ToString() -match '__SilkTermPrevPrompt')) {
+			$global:__SilkTermPrevPrompt = if ($__SilkTermStock) { $null } else { $function:prompt }
+		}
 		function global:prompt {
 			__SilkTermReportDir
 			if ($global:__SilkTermPrevPrompt) { & $global:__SilkTermPrevPrompt }
@@ -259,19 +270,19 @@ Paths with characters that need escaping in a URL are supposed to be percent-enc
 
 ### A git-aware bash prompt
 
-A separate thing, and the only other setup SilkTerm does for a shell. A bash pane is offered a prompt that shows the branch you are on, whether the working tree is clean, and how far ahead or behind its tracking branch it is - updated after every command, and out of the way in a directory that is not a git project.
+A separate thing, and the only other setup SilkTerm does for a shell. It is off until "Use git-aware Bash prompt" is checked on the Shell tab of Settings, or `shell.bash_prompt: true` is set in the config. Then a bash pane gets a prompt that shows the branch you are on, whether the working tree is clean, and how far ahead or behind its tracking branch it is - updated after every command, and out of the way in a directory that is not a git project.
 
-It is an offer, not an install:
+It is not an install:
 
 - Nothing is written into `.bashrc` or any other file of yours. The prompt is handed to the pane as `PROMPT_COMMAND` in its environment.
 
-- Your rc files run afterwards, so a prompt of your own simply wins. If you already set `PROMPT_COMMAND` - directly, or through starship, oh-my-posh or `/etc/profile.d/vte.sh` - you will never see this one.
+- It sets `PS1` before every prompt, so it replaces a `PS1` set in `.bashrc`. If you set `PROMPT_COMMAND` yourself - directly, or through starship, oh-my-posh or `/etc/profile.d/vte.sh` - yours runs instead, and you will not see this one.
 
 - It reaches bash panes only, and only ones SilkTerm started. A shell you `ssh` into, or a `sudo -i`, keeps whatever prompt it has.
 
 - `X9PS1_STANDARD=1` in a pane puts the ordinary Debian-style prompt back for that session.
 
-Clear "Git-aware bash prompt" on the Shell tab of Settings, or set `shell.bash_prompt: false` in the config, to switch it off. The script itself is written beside the config as `x9ps1-git`, and is a copy of [x9ps1-git](https://github.com/jim-collier/x9ps1-git) (MIT) - usable on its own from a `PATH` directory if you want it in every terminal rather than this one.
+Clear the checkbox again, or set `shell.bash_prompt: false`, to switch it off. The script itself is written beside the config as `x9ps1-git`, and is a copy of [x9ps1-git](https://github.com/jim-collier/x9ps1-git) (MIT) - usable on its own from a `PATH` directory if you want it in every terminal rather than this one.
 
 ## zsh
 

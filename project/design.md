@@ -533,9 +533,13 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 ### A prompt is offered to bash, never installed (2026-08-30)
 
-- SilkTerm ships x9ps1-git, a git-aware bash prompt, and hands it to the bash panes it starts. It shows the branch, whether the tree is clean, and how far ahead or behind its tracking branch it is. It is on by default.
+- SilkTerm ships x9ps1-git, a git-aware bash prompt, and hands it to the bash panes it starts. It shows the branch, whether the tree is clean, and how far ahead or behind its tracking branch it is. It was on by default until 2026-09-16, and is off now.
 
-- Among the ways to deliver it, it was decided to set `PROMPT_COMMAND` in the pane's environment. bash picks that up as a shell variable, and the user's own rc files run afterwards - so anyone who already has a prompt keeps it without knowing this exists, and anyone who does not gets a better one. Nothing is written into anyone's `.bashrc`, there is nothing to uninstall, and it cannot follow the user into a shell SilkTerm did not start.
+- Among the ways to deliver it, it was decided to set `PROMPT_COMMAND` in the pane's environment. bash picks that up as a shell variable, and the user's own rc files run afterwards. Nothing is written into anyone's `.bashrc`, there is nothing to uninstall, and it cannot follow the user into a shell SilkTerm did not start.
+
+- It was meant to give way to a prompt set in `.bashrc`, and never did. `PROMPT_COMMAND` sets `PS1` before every prompt, so it replaces one from the rc files. Only a `PROMPT_COMMAND` of the user's own wins.
+	- Yielding to any `PS1` was decided against. Debian's `/etc/bash.bashrc` and its default `.bashrc` both set one, so the prompt would never show there.
+	- Instead, when it is on it always wins, and it is off by default. The Settings row names it and says where it comes from, so turning it on is a choice made knowing it replaces the rc's prompt.
 
 - The alternative considered was the PowerShell approach: append a block to the rc file. That was rejected here because the PowerShell case has no other option - PowerShell cannot report its directory any other way - while bash has one that touches nothing. A prompt is also a matter of taste in a way a directory report is not, so the reversible answer wins.
 

@@ -45,12 +45,13 @@
 //! beside the config the way the bash half does. A prompt is drawn after every
 //! command, and on Windows starting a process that often is not free.
 //!
-//! The bash half is a much smaller thing, and deliberately so. bash picks up
-//! `PROMPT_COMMAND` from its environment, and an rc file that sets one of its
-//! own runs afterwards and wins - so a pane is OFFERED a prompt rather than
-//! given one, and anybody who already has a prompt keeps it without knowing
-//! this exists. Nothing is written into anyone's rc file, and switching it off
-//! is a setting rather than an uninstall.
+//! The bash half is a much smaller thing, and deliberately so. It is off by
+//! default. When on, bash picks up `PROMPT_COMMAND` from its environment, and
+//! that sets PS1 before every prompt, so it replaces a PS1 from the rc files -
+//! which Debian's own files set, so yielding to one would mean never showing.
+//! An rc file that sets a `PROMPT_COMMAND` of its own still wins. Nothing is
+//! written into anyone's rc file, and switching it off is a setting rather
+//! than an uninstall.
 
 use std::path::{Path, PathBuf};
 
@@ -184,15 +185,20 @@ pub fn install(found: &[Found]) {
 // console flashing over the terminal a few seconds after launch would be a
 // mystery to anyone who saw it.
 fn ask_shell(program: &str) -> Option<(PathBuf, String)> {
+	query_shell(program, PROFILE_QUERY)
+}
+
+// Both facts in one launch: where the profile is, and whether this shell would
+// even run it. A piped answer is written in the console's code page, IBM437 on
+// an English Windows, so a path outside ASCII came back with U+FFFD in it and
+// the block went into a new file no shell reads. The path comes back as the hex
+// of its UTF-8 bytes instead, which no code page can change.
+const PROFILE_QUERY: &str =
+	"[BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($PROFILE)); Get-ExecutionPolicy";
+
+fn query_shell(program: &str, query: &str) -> Option<(PathBuf, String)> {
 	let mut command = std::process::Command::new(program);
-	// both facts in one launch: where the profile is, and whether this shell
-	// would even run it
-	command.args([
-		"-NoProfile",
-		"-NonInteractive",
-		"-Command",
-		"$PROFILE; Get-ExecutionPolicy",
-	]);
+	command.args(["-NoProfile", "-NonInteractive", "-Command", query]);
 	#[cfg(windows)]
 	{
 		use std::os::windows::process::CommandExt;
@@ -206,14 +212,28 @@ fn ask_shell(program: &str) -> Option<(PathBuf, String)> {
 	// stdout. Reading only the status would turn that into silence, which is
 	// how this first went wrong.
 	let output = command.output().ok()?;
-	let answer = String::from_utf8_lossy(&output.stdout);
+	parse_answer(&String::from_utf8_lossy(&output.stdout))
+}
+
+// Anything that is not the hex this asked for writes nothing, since a guess at
+// a path is how a profile nobody loads gets created.
+fn parse_answer(answer: &str) -> Option<(PathBuf, String)> {
 	let mut lines = answer
 		.lines()
 		.map(str::trim)
 		.filter(|line| !line.is_empty());
-	let path = lines.next()?.to_string();
+	let bytes = lines
+		.next()?
+		.split('-')
+		.map(|pair| {
+			(pair.len() == 2)
+				.then(|| u8::from_str_radix(pair, 16).ok())
+				.flatten()
+		})
+		.collect::<Option<Vec<u8>>>()?;
+	let path = String::from_utf8(bytes).ok()?;
 	let policy = lines.next().unwrap_or_default().to_string();
-	(!path.is_empty()).then(|| (PathBuf::from(path), policy))
+	Some((PathBuf::from(path), policy))
 }
 
 // Would this shell actually load a profile it found? A block written into a
@@ -268,32 +288,57 @@ fn read_profile(profile: &Path) -> Result<Option<String>, String> {
 }
 
 // Keep what is there under a name that says where it came from, and never over a
-// backup already made - that one is the copy worth keeping.
+// backup already made - that one is the copy worth keeping. Only a plain file
+// counts as that copy. A link at the name, dangling or not, is not followed: a
+// profile often holds tokens, and the copy gets the profile's own mode.
 fn backup_once(profile: &Path, existing: &str) -> bool {
+	use std::io::Write;
 	if existing.trim().is_empty() {
 		return true;
 	}
 	let backup = profile.with_extension("ps1.silkterm-backup");
-	if backup.exists() {
-		return true;
-	}
-	if let Err(e) = std::fs::copy(profile, &backup) {
+	let refuse = |why: String| {
 		eprintln!(
-			"{}: could not back up {}: {e} - left it alone",
+			"{}: could not back up {}: {why} - left it alone",
 			config::APP_NAME,
 			profile.display()
 		);
-		return false;
+		false
+	};
+	match std::fs::symlink_metadata(&backup) {
+		Ok(meta) if meta.is_file() => return true,
+		Ok(_) => return refuse(format!("{} is not a plain file", backup.display())),
+		Err(_) => {}
+	}
+	let mut opts = std::fs::OpenOptions::new();
+	opts.write(true).create_new(true);
+	#[cfg(unix)]
+	std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+	let mut file = match opts.open(&backup) {
+		Ok(file) => file,
+		Err(e) => return refuse(e.to_string()),
+	};
+	#[cfg(unix)]
+	if let Ok(meta) = std::fs::metadata(profile) {
+		let _ = file.set_permissions(meta.permissions());
+	}
+	if let Err(e) = file.write_all(existing.as_bytes()) {
+		drop(file);
+		let _ = std::fs::remove_file(&backup);
+		return refuse(e.to_string());
 	}
 	true
 }
 
-// Beside the file, then rename over it: an interrupted write cannot leave a
-// profile half-replaced.
-fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
-	let tmp = path.with_extension("ps1.silkterm-new");
-	std::fs::write(&tmp, text)?;
-	std::fs::rename(&tmp, path)
+// The settings file's writer: an interrupted write cannot leave a profile
+// half-replaced, a linked profile is written through its link, the mode is kept,
+// and no link at a temp name is written through. A read-only profile is somebody
+// saying no, so it is refused rather than replaced.
+fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
+	if std::fs::metadata(path).is_ok_and(|meta| meta.permissions().readonly()) {
+		return Err("it is read-only".to_string());
+	}
+	config::write_config_atomic(path, text)
 }
 
 // Profiles we have written to before, one path per line, kept beside the config.
@@ -355,6 +400,9 @@ fn install_into_with(profile: &Path, record: Option<&Path>) {
 	let newline = if cfg!(windows) { CRLF } else { LF };
 	// already ours: the only thing left to do is bring it up to date
 	if existing.contains(MARKER) {
+		// An earlier build may have put it there without noting it, and a deleted
+		// block with no note comes straight back.
+		note_installed(record, profile);
 		if let Some(updated) = refreshed_block(&existing, newline) {
 			if !backup_once(profile, &existing) {
 				return;
@@ -508,6 +556,63 @@ mod tests {
 		assert!(!is_bash("wsl.exe"));
 	}
 
+	// Windows answers in the console's code page, so a path is only believed as
+	// the hex the query asks for. An empty profile gives an empty first line, and
+	// the policy that then comes first is not hex.
+	#[test]
+	fn a_profile_path_is_read_from_its_hex_and_nothing_else() {
+		let jose =
+			"C:\\Users\\Jos\u{e9}\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1";
+		let hex = jose
+			.bytes()
+			.map(|byte| format!("{byte:02X}"))
+			.collect::<Vec<_>>()
+			.join("-");
+		let (path, policy) = super::parse_answer(&format!("{hex}\r\nRemoteSigned\r\n")).unwrap();
+		assert_eq!(path, std::path::PathBuf::from(jose));
+		assert_eq!(policy, "RemoteSigned");
+		// what the old query got back on vm925w: the path itself, in IBM437
+		let mangled = String::from_utf8_lossy(b"C:\\Users\\Jos\x82\\Documents\r\nRemoteSigned\r\n");
+		assert_eq!(super::parse_answer(&mangled), None);
+		assert_eq!(super::parse_answer("\r\nRemoteSigned\r\n"), None);
+		assert_eq!(
+			super::parse_answer("C3-28\r\nRemoteSigned\r\n"),
+			None,
+			"not UTF-8"
+		);
+		assert_eq!(super::parse_answer(""), None);
+	}
+
+	// The same through each real PowerShell installed. On Windows this is the
+	// case that failed, in both 5.1 and 7; elsewhere it checks the query parses.
+	#[test]
+	fn a_powershell_names_a_profile_outside_ascii() {
+		let query = super::PROFILE_QUERY.replace(
+			"$PROFILE",
+			"('C:\\Users\\Jos' + [char]0xE9 + '\\Documents\\profile.ps1')",
+		);
+		let want = std::path::PathBuf::from("C:\\Users\\Jos\u{e9}\\Documents\\profile.ps1");
+		for program in ["pwsh", "powershell.exe"] {
+			let runs = std::process::Command::new(program)
+				.args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
+				.output()
+				.is_ok_and(|out| out.status.success());
+			if !runs {
+				eprintln!("no {program} here, skipped");
+				continue;
+			}
+			let (path, _) = super::query_shell(program, &query).expect("an answer");
+			assert_eq!(path, want, "{program}");
+		}
+	}
+
+	// It replaces a PS1 set in .bashrc, and Debian's own files set one, so it is
+	// on only for somebody who asked for it.
+	#[test]
+	fn the_bash_prompt_is_off_until_asked_for() {
+		assert!(!crate::config::Settings::default().bash_prompt);
+	}
+
 	// The value is handed to bash as a command string, so a Windows path has to
 	// arrive as something bash reads rather than as a run of escapes.
 	#[test]
@@ -602,6 +707,178 @@ mod tests {
 			shown.contains(remote),
 			"remote not shown as text: {shown:?}"
 		);
+	}
+
+	// A profile is a script run at every shell start, and it often holds tokens.
+	// The write used to replace a linked profile with a copy at the umask's mode,
+	// and wrote through a link left at its temp or backup name.
+	#[cfg(unix)]
+	#[test]
+	fn a_profile_write_keeps_its_link_and_mode_and_follows_no_planted_link() {
+		use std::os::unix::fs::{PermissionsExt, symlink};
+		let dir = std::env::temp_dir().join(format!("silkterm_intlink_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		let record = dir.join("shell-integration.installed");
+		let name = "Microsoft.PowerShell_profile.ps1";
+		let before = "Set-Alias ll Get-ChildItem\n";
+		let mode =
+			|path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+		let make = |sub: &str, perms: u32| {
+			let path = dir.join(sub).join(name);
+			std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+			std::fs::write(&path, before).unwrap();
+			std::fs::set_permissions(&path, std::fs::Permissions::from_mode(perms)).unwrap();
+			path
+		};
+
+		// linked, and private
+		let real = make("dotfiles", 0o600);
+		let linked = dir.join("linked").join(name);
+		std::fs::create_dir_all(linked.parent().unwrap()).unwrap();
+		symlink(&real, &linked).unwrap();
+		super::install_into_with(&linked, Some(&record));
+		assert!(
+			std::fs::symlink_metadata(&linked).unwrap().is_symlink(),
+			"the link was replaced by a copy"
+		);
+		assert!(
+			std::fs::read_to_string(&real).unwrap().contains(MARKER),
+			"the linked file did not get the block"
+		);
+		assert_eq!(mode(&real), 0o600, "the profile's mode changed");
+		let backup = linked.with_extension("ps1.silkterm-backup");
+		assert_eq!(mode(&backup), 0o600, "the backup is readable by others");
+
+		// read-only means no
+		let locked = make("locked", 0o400);
+		super::install_into_with(&locked, Some(&record));
+		assert_eq!(std::fs::read_to_string(&locked).unwrap(), before);
+		assert_eq!(mode(&locked), 0o400);
+
+		// a link at the old temp name
+		let victim = dir.join("victim");
+		std::fs::write(&victim, "victim\n").unwrap();
+		let planted = make("planted", 0o644);
+		symlink(&victim, planted.with_extension("ps1.silkterm-new")).unwrap();
+		super::install_into_with(&planted, Some(&record));
+		assert_eq!(std::fs::read_to_string(&victim).unwrap(), "victim\n");
+		assert!(!std::fs::symlink_metadata(&planted).unwrap().is_symlink());
+		assert!(std::fs::read_to_string(&planted).unwrap().contains(MARKER));
+
+		// a dangling link at the backup name
+		let nowhere = dir.join("nowhere");
+		let dangling = make("dangling", 0o644);
+		symlink(&nowhere, dangling.with_extension("ps1.silkterm-backup")).unwrap();
+		super::install_into_with(&dangling, Some(&record));
+		assert!(!nowhere.exists(), "the backup went through a link");
+		assert_eq!(
+			std::fs::read_to_string(&dangling).unwrap(),
+			before,
+			"a profile that could not be backed up was written anyway"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// Builds before the record existed, beta3 included, put the block in without
+	// noting it. Deleting such a block put it straight back at the next launch.
+	#[test]
+	fn a_block_already_there_is_noted_so_deleting_it_sticks() {
+		let dir = std::env::temp_dir().join(format!("silkterm_intnote_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).expect("temp dir");
+		let own = "Set-Alias ll Get-ChildItem\n";
+		let current = with_block(own, LF);
+		let stale = format!("{own}\n{MARKER}\nWrite-Host 'an older block'\n{END_MARKER}\n");
+		for (label, text) in [("current", current), ("stale", stale)] {
+			let profile = dir.join(format!("{label}.ps1"));
+			let record = dir.join(format!("{label}.installed"));
+			std::fs::write(&profile, text).unwrap();
+			super::install_into_with(&profile, Some(&record));
+			std::fs::write(&profile, own).unwrap();
+			super::install_into_with(&profile, Some(&record));
+			assert_eq!(
+				std::fs::read_to_string(&profile).unwrap(),
+				own,
+				"a {label} block came back after it was deleted"
+			);
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// The block's own comment used to invite a host color added inside the
+	// markers, which the next refresh deleted with no copy kept.
+	#[test]
+	fn a_host_color_is_set_where_a_refresh_leaves_it() {
+		assert!(!SNIPPET.contains("Add your own"));
+		assert!(SNIPPET.contains("$global:SilkTermHostColor"));
+		let mine = "$SilkTermHostColor = '1;33'\n";
+		let stale = format!("{mine}\n{MARKER}\nWrite-Host 'an older block'\n{END_MARKER}\n");
+		let updated = refreshed_block(&stale, LF).expect("a stale block");
+		assert!(updated.starts_with(mine));
+	}
+
+	// Runs the block the way a profile does, where a PowerShell is installed. The
+	// hook holds a delegate that `&` cannot call, so an earlier handler broke every
+	// directory change, and a second load wrapped its own wrapper. Both arms are
+	// run: the 5.1 one by forcing the test that picks it.
+	#[test]
+	fn the_block_keeps_an_earlier_hook_and_survives_loading_twice() {
+		let Some(pwsh) = ["pwsh", "pwsh.exe"].into_iter().find(|program| {
+			std::process::Command::new(program)
+				.args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
+				.output()
+				.is_ok_and(|out| out.status.success())
+		}) else {
+			eprintln!("no pwsh here, skipped");
+			return;
+		};
+		let dir = std::env::temp_dir().join(format!("silkterm_intps_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).expect("temp dir");
+		// output is piped here, which the block reads as not a terminal
+		let block = SNIPPET.replace("-not [Console]::IsOutputRedirected", "$true");
+		let hook = "if ($null -ne $ExecutionContext.SessionState.InvokeCommand.PSObject.Properties['LocationChangedAction'])";
+		assert!(block.contains(hook));
+		let target = std::env::temp_dir();
+		let target = target.to_string_lossy();
+		for (arm, text) in [
+			("hook", block.clone()),
+			("wrap", block.replace(hook, "if ($false)")),
+		] {
+			let path = dir.join(format!("{arm}.ps1"));
+			std::fs::write(&path, text).unwrap();
+			let quoted = path.to_string_lossy().replace('\'', "''");
+			let script = format!(
+				"$ErrorActionPreference = 'Continue'
+$ExecutionContext.SessionState.InvokeCommand.LocationChangedAction = {{ Write-Host 'mine' }}
+$SilkTermHostColor = '1;33'
+. '{quoted}'
+. '{quoted}'
+Write-Host 'LOADED'
+Set-Location -LiteralPath '{}'
+$null = prompt
+Write-Host \"COLOR=$global:__SilkTermHostColor\"",
+				target.replace('\'', "''")
+			);
+			let out = std::process::Command::new(pwsh)
+				.args(["-NoProfile", "-NonInteractive", "-Command", &script])
+				.output()
+				.expect("run pwsh");
+			let stdout = String::from_utf8_lossy(&out.stdout);
+			let stderr = String::from_utf8_lossy(&out.stderr);
+			assert!(stderr.trim().is_empty(), "{arm}: {stderr}");
+			let after = stdout.split("LOADED").nth(1).expect("the block loaded");
+			let reports = after.matches("]9;9;").count();
+			if arm == "hook" {
+				assert_eq!(after.matches("mine").count(), 1, "{arm}: {stdout}");
+				// the change, and nothing from a prompt the hook leaves alone
+				assert_eq!(reports, 1, "{arm}: {stdout}");
+			} else {
+				assert_eq!(reports, 1, "{arm}: {stdout}");
+			}
+			assert!(after.contains("COLOR=1;33"), "{arm}: {stdout}");
+		}
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 
 	fn found(title: &str, command: &str) -> Found {

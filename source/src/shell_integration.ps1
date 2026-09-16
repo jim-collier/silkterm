@@ -41,9 +41,10 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	}
 	catch { }
 	# A machine you are logged into by mistake should look wrong immediately, so
-	# the host name is colored per machine. Add your own; anything not listed
-	# gets the default.
-	$global:__SilkTermHostColor = switch ([Environment]::MachineName.ToLowerInvariant()) {
+	# the host name is colored per machine. For your own, set $SilkTermHostColor
+	# ABOVE this block, such as $SilkTermHostColor = '1;33'. A line added here is
+	# replaced on a later launch.
+	$global:__SilkTermHostColor = if ($global:SilkTermHostColor) { $global:SilkTermHostColor } else { switch ([Environment]::MachineName.ToLowerInvariant()) {
 		'b12' { '1;32' }
 		'b15' { '1;34' }
 		'b16' { '1;31' }
@@ -53,7 +54,7 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 		'xub2004a' { '1;32' }
 		't2nsn' { '1;35' }
 		default { '1;37' }
-	}
+	} }
 
 	function global:__SilkTermPaint {
 		param([string]$Code, [string]$Text)
@@ -151,18 +152,28 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	if ($null -ne $ExecutionContext.SessionState.InvokeCommand.PSObject.Properties['LocationChangedAction']) {
 		# PowerShell 6+ can be told about the location itself, which leaves the
 		# prompt alone - oh-my-posh, starship and a hand-written prompt all keep
-		# working, and anything already using this hook is called first.
-		$global:__SilkTermPrevLocation = $ExecutionContext.SessionState.InvokeCommand.LocationChangedAction
+		# working, and anything already using this hook is called first. A second
+		# load, such as `. $PROFILE` again, finds its own handler there and keeps
+		# the one from before it, or every change would report twice.
+		$__SilkTermHook = $ExecutionContext.SessionState.InvokeCommand.LocationChangedAction
+		if (-not ($__SilkTermHook -and [object]::ReferenceEquals($__SilkTermHook, $global:__SilkTermOwnHook))) {
+			$global:__SilkTermPrevLocation = $__SilkTermHook
+		}
+		# The hook holds a delegate, which & cannot call.
 		$ExecutionContext.SessionState.InvokeCommand.LocationChangedAction = {
-			if ($global:__SilkTermPrevLocation) { & $global:__SilkTermPrevLocation @args }
+			if ($global:__SilkTermPrevLocation) { $global:__SilkTermPrevLocation.Invoke($args[0], $args[1]) }
 			__SilkTermReportDir
 		}
+		$global:__SilkTermOwnHook = $ExecutionContext.SessionState.InvokeCommand.LocationChangedAction
 		if ($__SilkTermStock) { function global:prompt { __SilkTermPrompt } }
 	}
 	else {
 		# Windows PowerShell 5.1 has no such hook, so wrap whatever prompt is in
-		# place rather than replacing it.
-		$global:__SilkTermPrevPrompt = if ($__SilkTermStock) { $null } else { $function:prompt }
+		# place rather than replacing it. A second load finds its own wrapper in
+		# place, and wrapping that calls itself until the stack runs out.
+		if (-not ($function:prompt -and $function:prompt.ToString() -match '__SilkTermPrevPrompt')) {
+			$global:__SilkTermPrevPrompt = if ($__SilkTermStock) { $null } else { $function:prompt }
+		}
 		function global:prompt {
 			__SilkTermReportDir
 			if ($global:__SilkTermPrevPrompt) { & $global:__SilkTermPrevPrompt }
