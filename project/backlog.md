@@ -250,7 +250,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 35 (F67, should-fix): A host color added inside the shell integration block, as its own comment suggests, is deleted at the next launch.
 		- The comment now says to set `$SilkTermHostColor` above the block, where a refresh leaves it, and the block reads that first.
 		- Pinned by `a_host_color_is_set_where_a_refresh_leaves_it` and the PowerShell run above.
-	- Code review 20260914 item 36 (F68, should-fix): On Windows, a PowerShell profile path with a character outside ASCII is misread, so the block goes into a new file PowerShell never loads.
+	- ✅ Code review 20260914 item 36 (F68, should-fix): On Windows, a PowerShell profile path with a character outside ASCII is misread, so the block goes into a new file PowerShell never loads.
+		- PowerShell now sends the profile path as hex of its UTF-8 bytes, which no code page changes. An answer that is not that hex writes nothing.
+		- Pinned by `a_profile_path_is_read_from_its_hex_and_nothing_else` and `a_powershell_names_a_profile_outside_ascii`, which asks each PowerShell installed. Passes on b29w.
 	- ✅ Code review 20260914 item 37 (F69, should-fix): After a program that reports its directory exits, new tabs and splits start in its last directory instead of where the pane's shell is.
 		- A reported directory is kept with the process group that sent it, and dropped once that group is gone. Unix only, since Windows has no foreground group to ask.
 		- Pinned by `a_report_is_dropped_once_the_program_that_sent_it_exits`.
@@ -329,6 +331,10 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - 🔘 After the PowerShell installer adds SilkTerm to PATH on Windows, a new console opened from the Start menu does not find it until you sign out.
 	- The PATH is written to the registry without telling Windows it changed. Code review 20260914 item 58 (F90).
 	- Opened: 20260914-124200
+
+- 🔘 The new-window test fails on Windows.
+	- `a_new_window_keeps_the_settings_file_and_the_panes_directory` expects `--config /x/alt.shcl`, and Windows makes that path absolute as `C:\x\alt.shcl`. The test's expectation is wrong there, not the new window.
+	- Opened: 20260916
 
 - ✋ A config written as single dotted lines grows on every launch, with settings added under the wrong sections.
 	- From nine lines such as `window.columns: 100`, one launch put the scroll settings under `performance` and `margin` under the wallpaper's `rotate` block.
