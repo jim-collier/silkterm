@@ -797,7 +797,7 @@ rows:
 		label: Directory
 		kind: text
 		setting: shell.startup_directory
-		help: "Where a shell starts when nothing else has said. Understands ~ and environment variables ($HOME, %USERPROFILE%). Overridden by --directory on the command line, by an inherited directory, and by the directory SilkTerm was launched from."
+		help: "Where a shell starts when nothing else has said. Understands ~ and environment variables. Overridden by --directory on the command line, by an inherited directory, and by the directory SilkTerm was launched from."
 
 	## The two things SilkTerm sets up in a shell it starts. PowerShell is the
 	## one shell that cannot be asked where it is - it keeps its location to
