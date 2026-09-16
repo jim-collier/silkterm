@@ -4,11 +4,64 @@
 <!-- markdownlint-disable MD055 -- Table pipe style [Expected: leading_and_trailing; Actual: leading_only; Missing trailing pipe] -->
 <!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
 
+<!-- TOC ignore:true -->
 # Glossary
 
 Words SilkTerm uses in its settings, its menus, and its own documentation that are either specific to this program or easy to misread. Written for someone using SilkTerm, and for a developer who has just opened the source for the first time.
 
 Terminal jargon that any terminal shares is left out unless SilkTerm gives it a particular meaning.
+
+<!-- TOC ignore:true -->
+## Table of contents
+<!-- TOC -->
+
+- [Alt screen](#alt-screen)
+- [Anchor](#anchor)
+- [Automask mix](#automask-mix)
+- [Bare window](#bare-window)
+- [Build number](#build-number)
+- [Cell](#cell)
+- [Contrast mask](#contrast-mask)
+- [Copy on output](#copy-on-output)
+- [Copy on select](#copy-on-select)
+- [DIP](#dip)
+- [Dogfood build](#dogfood-build)
+- [Ease-in, ramp-up, ramp-down, ease-out](#ease-in-ramp-up-ramp-down-ease-out)
+- [Falloff](#falloff)
+- [Fit](#fit)
+- [Flyover help](#flyover-help)
+- [Focus](#focus)
+- [Function](#function)
+- [Glyph](#glyph)
+- [Group](#group)
+- [Gutter](#gutter)
+- [Highlight](#highlight)
+- [Keep open](#keep-open)
+- [Layout tags](#layout-tags)
+- [Look tags](#look-tags)
+- [Max silk](#max-silk)
+- [Minimap](#minimap)
+- [Minimum contrast](#minimum-contrast)
+- [Output easing](#output-easing)
+- [Pane](#pane)
+- [Palette](#palette)
+- [Performance profile](#performance-profile)
+- [PTY](#pty)
+- [Read-only](#read-only)
+- [Revert](#revert)
+- [Scrim](#scrim)
+- [Scrollback](#scrollback)
+- [Shell integration](#shell-integration)
+- [Single-screen speed](#single-screen-speed)
+- [Softness](#softness)
+- [Sub-group](#sub-group)
+- [Tab strip](#tab-strip)
+- [Text outline](#text-outline)
+- [Theme and mode](#theme-and-mode)
+- [Wallpaper](#wallpaper)
+- [Wheel lines](#wheel-lines)
+
+<!-- /TOC -->
 
 ## Alt screen
 

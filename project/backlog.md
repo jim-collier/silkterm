@@ -290,10 +290,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 Docs: `README.md` and `style-guide.md` run consecutive top-level bullets with no blank line between them.
-	- Every other `.md` in the project is clean. The style guide is the worse of the two, and it also still wants the markdownlint-disable block and a table of contents that `glossary.md` needs as well.
-	- Opened: 20260909-212000
-
 - 🔘 Settings dialog: it does not follow a change of display scale.
 	- Nothing handles a scale-factor change for a dialog window, so its scale is whatever it was when the dialog opened. Dragging it to a monitor at a different scale leaves every measurement in it wrong until it is closed and reopened.
 	- It has always been like this. The dialog can be dragged and resized now, which makes it easier to reach.
@@ -1600,6 +1596,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Docs: `README.md` and `style-guide.md` run consecutive top-level bullets with no blank line between them.
+	- Every other `.md` in the project is clean. The style guide is the worse of the two, and it also still wants the markdownlint-disable block and a table of contents that `glossary.md` needs as well.
+	- Fixed: 29 bullet pairs opened up, 25 in the style guide and 4 in the README. TOC blocks stay tight, as the style says.
+	- Fixed: the style guide has its disable block and a table of contents, and the glossary has one as well. Both TOCs are generated from the headings, so the glossary's 45 entries cannot drift.
+	- Note: the style guide's block names three rules rather than the five the other docs carry, because those three are all its content breaks. Line length is left complaining everywhere, since nothing here hard-wraps.
+	- Left alone: the bold lines used as headings under "Support SilkTerm", and the prose wording the check flags. Neither one is spacing.
+	- Opened: 20260909-212000
+	- Closed: 20260916-122130
 
 - ✅ Windows: an elevated console in another language still shows a shell's image path in the title.
 	- An elevated console writes the terminal's rights in front of the first title it sends, the one naming the program it started. That word is taken back off, but only where it is the same word the title bar is about to show. A machine speaking another language writes another word, which is not recognized, so the word hides the program name behind it and the whole image path is shown until the shell sets a title of its own.
