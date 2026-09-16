@@ -45,7 +45,7 @@ For prose, comments, naming and Rust conventions, see [`style-guide.md`](../styl
 - Two menus draw from the same entry list and the same renderer: the menu bar's dropdowns, and the right-click menu over a pane.
 - The menu bar is File, Edit, View, Tabs, Panes, Help. A new action goes in the menu whose noun it acts on.
 - The right side of the menu bar carries the focused pane's two auto-copy checkboxes, so their state is visible without opening anything. It is the only thing on the bar that is not a menu. When the window narrows it sheds its lead-in, then its words, then itself, rather than overlapping the titles.
-- The right-click menu is the pane's own menu. It is a selection from the bar, not a copy of it: the actions worth reaching without travelling, plus items that only make sense at the pointer, such as the two link actions that appear only when the click landed on a link. It carries one window-chrome row, Menu bar, because with the bar hidden nothing else can bring it back.
+- The right-click menu is the pane's own menu. It is a selection from the bar, not a copy of it: the actions worth reaching without travelling, plus items that only make sense at the pointer, such as the two link actions that appear only when the click was on a link. It carries one window-chrome row, Menu bar, because with the bar hidden nothing else can bring it back.
 - Order within a menu: the most-used action first, related actions adjacent, destructive actions last in their group.
 - A separator groups; it does not decorate. Every separator must have a reason a reader could name.
 - A toggle names the thing itself and draws a check mark while that thing is on. `Window frame`, not `Hide window frame`. Checked always means present or active, so a column of checkmarks reads one way down. A caption never changes to describe the other state.
@@ -169,7 +169,7 @@ Rules that go with them:
 
 Things the built interface does differently from the rules above. Each is a small work item rather than a design question.
 
-- `Paste Selection` keeps a capital S so that the accelerator has a letter to land on. Documented as an exception, but a better fix would free a letter elsewhere.
+- `Paste Selection` keeps a capital S so that the accelerator has a letter to take. Documented as an exception, but a better fix would free a letter elsewhere.
 - `Copy on select` sits at the bottom of the Cursor tab, which is not where its subject is. It was asked for there and a test pins it, so it stays until that changes.
 - The right-click menu no longer offers Fullscreen, Window frame or Bare window, so with the menu bar hidden they are reachable only by F11 or by putting the bar back. Acceptable while Menu bar stays on that menu, but worth another look if the bar is ever hidden by default.
 - `Gaussian [ugly]` says out loud that it is the worse option, which no other control does. It is the baseline the other three scrim functions are compared against, and the label was asked for.

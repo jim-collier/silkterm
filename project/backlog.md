@@ -347,7 +347,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- 🔘 Effect 2: When a command or program returns to the prompt, give a burst of visual feedback, with a strength linearly proportional to the amount of time it took.
 		- With an upper limit of course - say, an hour, config-tunable.
 		- Config-tunable selection of predefined burst effects.
-		- Default (and so far only): A glowing bright gold pulse that the cursor gives off upon landing back at the shell prompt, as if a yellow sun that shed an outer layer of blasma in a burst.
+		- Default (and so far only): A glowing bright gold pulse that the cursor gives off upon arriving back at the shell prompt, as if a yellow sun that shed an outer layer of blasma in a burst.
 	- Opened: 20260714-091630
 
 - 🔘 Option: Dynamic theme based on wallpaper
@@ -729,12 +729,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Opened: 20260826-123553
 
 - ✅ A window or tab that was out of view smooth-scrolled its backlog in when it came back.
-	- Nothing had actually just happened, so animating it read as live output rather than as catching up on stale content. It should land in one cut, flash and all.
+	- Nothing had actually just happened, so animating it read as live output rather than as catching up on stale content. It should arrive in one cut, flash and all.
 	- A minimized or occluded window and a hidden tab already build no frames, and coming back was already meant to be one instant cut. Two things defeated that.
 	- The window manager's own redraw was drawn regardless. An expose arriving while the window sat iconified built exactly one frame, and that frame took the whole buffered backlog - 358 lines in the test - as something to scroll through. No further frames flowed, so the view was left that far behind with the motion still owed.
 	- The catch-up then skipped every pane, because it only cut panes still flagged as owing a rebuild, and that one stray frame had cleared the flag. So the reveal cut nothing and the backlog eased in on screen.
 	- Fixed both ways. A frozen window draws nothing from either path now, and the reveal cuts every pane rather than only the flagged ones - a pane that really did sit still is snapping something already at rest. That also covers freezing part-way through an ease, where nothing is pending at all and the leftover motion used to replay on the way back.
-	- Verified on three shapes: minimized across a long burst, minimized part-way through an ease, and a hidden tab. Each lands at the bottom with no motion.
+	- Verified on three shapes: minimized across a long burst, minimized part-way through an ease, and a hidden tab. Each arrives at the bottom with no motion.
 	- Note that a window merely covered by another one is not frozen, at least not under the window manager here, so it keeps drawing and eases as usual. Only minimize, occlusion where it is reported, and hidden tabs freeze.
 	- Opened: n/a
 	- Closed: 20260830-120333
@@ -771,7 +771,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Delay this to see if other fixes, fix this.
 		- Result: Other fixes have not fixed this.
 	- Cause: the smooth offset is kept in two parts. The grid is scrolled by a whole number of lines and the renderer draws the fraction left over. The output ease was allowed to run up to sixteen lines past the end of the scrollback. The alt screen has no scrollback at all, so when nano took over mid-ease the whole part sat pinned at zero while the fraction kept counting down through the leftover backlog, wrapping through a full cell once per line. Every wrap drew as a whole-cell hop. That is also why it looked random: it needs output still easing at the moment nano starts, which a long push before `git commit` gives reliably and a quiet prompt never does.
-	- Fixed: the view can no longer sit past the grid. Entering the alt screen lands the ease on the spot, which is the cut a screen swap wants anyway, and a shallow scrollback caps how far a fresh terminal's first output eases. Both halves of the residual one-line scroll on alt-screen enter and exit go with it.
+	- Fixed: the view can no longer sit past the grid. Entering the alt screen stops the ease on the spot, which is the cut a screen swap wants anyway, and a shallow scrollback caps how far a fresh terminal's first output eases. Both halves of the residual one-line scroll on alt-screen enter and exit go with it.
 	- The scroll harness has a fifth scene for it: a burst still easing when an alt screen takes over must sit still there.
 	- Opened: 20260709-115247
 	- Closed: 20260827-073521
@@ -782,7 +782,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Both symptoms are fixed. Residual: a very slight one-line smooth scroll-up still happens on enter and exit - livable, deferred (see the deferred item below).
 	- Mostly fixed. Entering and exiting still result in a one-line smooth scroll. Tolerable, but worth fixing someday.
 		- This has its own bug entry.
-	- The last of it went with the nano wobble fix: the ease lands the moment the screen swaps, in both directions.
+	- The last of it went with the nano wobble fix: the ease stops the moment the screen swaps, in both directions.
 	- Opened: 20260706-065828
 	- Closed: 20260827-073521
 
@@ -791,7 +791,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Opened: 20260706-101054
 	- Closed: 20260827-073521
 
-- ✅ A wheel gesture can land by moving backwards about one line.
+- ✅ A wheel gesture can end up moving backwards about one line.
 	- Confirmed in the code: the rest position was rounded to the NEAREST whole line, so a gesture ending nine tenths past a boundary went all the way forward and then hopped back onto the one behind. Under a line of travel, but a visible reversal against the gesture.
 	- A wheel now rests on the line AHEAD of where it stopped, in the direction it was already going. A scrollbar drag or a track click has no direction of its own and still rounds to nearest, which is what direct manipulation wants.
 	- Opened: 20260813-091542
@@ -847,19 +847,19 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - ✅ Windows: output throughput is about a seventh of Linux, and a ninth of Windows Terminal on the same machine.
 	- Measured 2026-08-18 on the VM at the shootout's own 160x42 grid: 12.4 MB/s of plain ASCII, against 86.9 for the same build on Linux, while Windows Terminal on that same VM reads 112.4.
 	- Answered the same day, and none of it is ours. A stand-in consumer that reads the bytes and throws them away - no parser, no grid, nothing drawn, not even an event loop - runs the real benchmark at 12.33 MB/s where the terminal itself gets 12.44, and every other width class agrees within a percent too. The limit is ConPTY and we are already sitting on it.
-	- Nothing on our side of the pipe moves it. Microsoft's own newer console host, every pseudoconsole mode flag including passthrough, and pipe buffers from the default up to 16 MB all land inside the run-to-run noise; the newer host is slightly slower.
+	- Nothing on our side of the pipe moves it. Microsoft's own newer console host, every pseudoconsole mode flag including passthrough, and pipe buffers from the default up to 16 MB all sit inside the run-to-run noise; the newer host is slightly slower.
 	- So there is nothing to fix in the terminal engine, and the idea of forking it for this is dropped. The freeze fix stays pinned for its own reasons.
 	- Fell out of it: the benchmark's barrier is answered by the console host on Windows, not by the terminal, so a Windows figure times the whole chain and can never be read as one terminal's speed. Both the tool and the rig notes say so now, and the earlier claim to the contrary is corrected in the spreadsheet.
 	- Reopened and re-measured on 2026-08-18 once a barrier-free instrument put the real end-to-end gap at about 2x rather than 10x. Four consumers of the same 32 MiB of output, on the same box: bytes read and thrown away 1.45s, one thread reading and parsing 1.94s, the shipped engine plumbing with no window at all 2.45s, the terminal itself the same 2.5s plus its scroll ease settling. Windows Terminal is around 1.3s, which is the console host's own ceiling - so it is not beating us by being a better terminal, it is sitting on the ceiling while we are at about 60% of it.
 	- What is left to gain is therefore about a second per 32 MiB, and none of it is in the drawing: parsing is half a second of that, and the rest is the engine's Windows pipe plumbing, which delivers about 17 MB/s where a plain blocking read of the same pipe gets 22. Two obvious levers were tried and neither moved it - folding the engine's internal notifications, and waiting for the pipe to accumulate before reading it. Reading and parsing on one thread beats the shipped two-thread arrangement by half a second, which is the direction worth exploring if this is ever picked up again, and it would mean a real fork.
-	- Also settled: the console host's delivery ceiling is fixed. Pipe buffers from the default to 16 MB, read sizes from 64 KB to 1 MB, and Microsoft's redistributable host beside the executable all land within noise.
+	- Also settled: the console host's delivery ceiling is fixed. Pipe buffers from the default to 16 MB, read sizes from 64 KB to 1 MB, and Microsoft's redistributable host beside the executable all sit within noise.
 	- Opened: 20260818-054058
 	- Closed: 20260818-062827
 
 - ✅ Windows: a long run of output freezes the window for good.
 	- Not slow, stopped. Both ends sit idle with the writer blocked in a write that never returns, and the window burns no CPU at all while stalled - a circular wait, not a slow consumer.
 	- Reachable by ordinary use - anyone who cats a large file, or runs a build with a lot of output, can hang the window and have to kill it.
-	- Corrected: ASCII is not exempt. It was thought to be, but it stalls too, just later and at a point that moves between runs. Non-ASCII merely arrives sooner and lands on the same byte every time.
+	- Corrected: ASCII is not exempt. It was thought to be, but it stalls too, just later and at a point that moves between runs. Non-ASCII merely arrives sooner and stalls on the same byte every time.
 	- It is back-pressure, not content: a quarter-megabyte payload finishes, two megabytes stalls, and the stall point is identical whether the window is in front or behind.
 	- Not the console: a newer bundled ConPTY still stalls (see below), and a minimal test host driving the same system ConPTY never stalls at all, even with a deliberately slowed reader.
 	- Diagnosed: it is in the terminal engine we depend on, not in our code: a build with no renderer, no window and no drawing at all - just the engine's own pty and event loop - stalls at the identical byte. So nothing in SilkTerm is involved.
@@ -905,7 +905,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260806-161419
 
 - ✅ The demo recording had stopped reflecting the app, in three ways at once - UAT.
-	- The recording pinned a halo and an outline that no build had used for weeks, so it advertised a look that had been replaced. Those values are no longer pinned; the recording now takes whatever ships, and the scroll feel already worked that way.
+	- The recording pinned a halo and an outline that no build had used for weeks, so it advertised a look that had been replaced. Those values are no longer pinned; the recording now takes whatever exists, and the scroll feel already worked that way.
 	- Every settings change made during a scene had quietly stopped happening. The scenes rewrite a setting and reload, matching the line by name - but the app rewrites that file into nested sections the first time it saves, so the name stopped matching anything partway through the run. The cursor never changed shape and the split-screen scene never stilled its cursors. Lines are now found by their full setting path, and a change that finds no line stops the recording instead of passing silently.
 	- The wallpaper was on screen from the first frame, so the scene that introduces it changed nothing. Rotation adopts a wallpaper folder sitting beside the configuration on its own, and the folder holding that very image is one. Rotation is now off for the recording, which still leaves the scene free to name the file outright.
 	- Recorded again at 50 frames a second: 63 seconds, 8.0 MiB.
@@ -942,7 +942,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - ✅ A pipeline run aborted at the release stage and reported an application problem, when the compiler had crashed twice in a row.
 	- Same fault as the profiler-stage abort further down, which was already covered by a single rebuild. It has now crashed on two consecutive attempts, so the one retry ran out and the run was blamed on the application again.
 	- The identical source then built clean on the next attempt, and twice more after that, with nothing changed in between.
-	- The crash never lands in the same place: three different parts of the compiler's optimizer so far, three different kinds of memory fault, always part way through the whole-program stage. Since the input is byte-identical across a failure and the success that follows it, no part of the source can be responsible.
+	- The crash never happens in the same place: three different parts of the compiler's optimizer so far, three different kinds of memory fault, always part way through the whole-program stage. Since the input is byte-identical across a failure and the success that follows it, no part of the source can be responsible.
 	- Whole-program builds may now be attempted three times before the pipeline gives up, and the count is a per-project setting. A genuine compile error still fails every attempt and aborts, and surfaces within seconds, since the earlier debug stage has already compiled everything.
 	- Builds now also ask the compiler for a larger working stack. That is the compiler's own suggestion when it faults this way, and it reserves address space only, so it costs nothing and changes no output. It is a guess at the cause rather than a demonstrated fix, which is why the retries stand on their own.
 	- Repeated faults at different points on identical input mean something varies between runs, which is either a latent defect in the optimizer or marginal hardware.
@@ -974,7 +974,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260802-145725
 
 - ✅ Graphical emoji render as monochrome outlines instead of color.
-	- Not a regression. No build renders these in color: the text stack has only ever read the older color-glyph table format (COLR v0), and every current color emoji font ships the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
+	- Not a regression. No build renders these in color: the text stack has only ever read the older color-glyph table format (COLR v0), and every current color emoji font installs the newer one (COLRv1) alone. Such a glyph came back as an empty image, so an emoji cell drew blank; a later change made a blank cell retry through the generic monospace chain, which is where the monochrome outlines came from. That took the cells from empty to legible, and is why the symptom looks new.
 	- Other terminals show the same fonts in color because their text rasterizer reads COLRv1.
 	- Fixed: color glyphs are now painted directly - the paint graph is walked and rendered through a small 2D back end (transforms, clip and layer stacks, solid/linear/radial/sweep fills, Porter-Duff and blend compositing), then handed to the renderer's color atlas as a per-cell image fitted to the cell box. Chars with no color glyph are untouched and still take the monochrome fallback path.
 	- `color_emoji` (default true) turns it off, which restores the monochrome outlines.
@@ -1051,9 +1051,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - ✅ When splitting panes, there is "visual garbage" in the pixels immediately surrounding the split lines.
 	- It seems like one pixel above, below, or on (for horizontal split), or one pixel to the left, right, or on for vertical splits.
 	- Two causes, both fixed. First: the text scrim (readability halo) was a full-frame blur clipped only to the whole terminal area, so an edge glyph's halo spilled across the divider into the inter-pane margins; each pane's scrim is now clipped per-side (content edge at internal dividers, pane edge at the window border, so the outer margin keeps its halo).
-	- Second (the persistent sliver): a pixel-delta wheel (touchpad, hi-res wheel) accumulates fractional scroll amounts, and the ease settled wherever the target landed - a pane could rest between lines forever. Every row then rendered shifted by a sub-cell fraction and the top scanlines of the first clipped row peeked out at the pane's content bottom, right against the divider - on any scrolled pane, focused or not. The scroll now glides to the nearest whole line at rest.
+	- Second (the persistent sliver): a pixel-delta wheel (touchpad, hi-res wheel) accumulates fractional scroll amounts, and the ease settled wherever the target ended up - a pane could rest between lines forever. Every row then rendered shifted by a sub-cell fraction and the top scanlines of the first clipped row peeked out at the pane's content bottom, right against the divider - on any scrolled pane, focused or not. The scroll now glides to the nearest whole line at rest.
 	- Also: per-cell fallback glyphs clipped to the pane rect instead of the content rect, so an edge row's glyph could paint into the margin; now clipped like all other text.
-	- Third cause (the one that survived the first two fixes): with transparency off, the 1px divider gap was still see-through - the frame cleared fully transparent whenever the see-through-capable backend was in use, regardless of the setting, and only the wallpaper's low opacity landed on the gap pixels. The window always has an alpha channel on X11, so the compositor blended the desktop through the divider slits: whatever was behind the window showed as bright speckles along the split lines. Only a live compositor shows it, since it is the desktop blending through. The clear is now opaque unless transparency is actually enabled; with it on, the gap still shows the desktop as intended.
+	- Third cause (the one that survived the first two fixes): with transparency off, the 1px divider gap was still see-through - the frame cleared fully transparent whenever the see-through-capable backend was in use, regardless of the setting, and only the wallpaper's low opacity reached the gap pixels. The window always has an alpha channel on X11, so the compositor blended the desktop through the divider slits: whatever was behind the window showed as bright speckles along the split lines. Only a live compositor shows it, since it is the desktop blending through. The clear is now opaque unless transparency is actually enabled; with it on, the gap still shows the desktop as intended.
 	- Opened: 20260724-080316
 	- Closed: 20260724-131129
 
@@ -1099,8 +1099,8 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Bold font uses a proportional font, which skews space-based alignment output. (E.g. that muffer uses on startup screen.)
 		- This happens on a different Windows host, not this one. But the problem seems to be, need a more reliable font fallback, if either normal or bold is using a proportional font.
 		- Font is auto/unset there; regular is fine, only bold falls proportional. So the pinned mono family isn't guaranteeing a mono *bold* face.
-		- Fixed: terminal bold now requests the boldest weight the pinned mono family actually ships (like chrome already did), so it can't escape into a proportional bold fallback. Not yet confirmed on the affected host.
-		- Second half: with the font auto/unset, Windows picked the mono family by a font-db lottery (it has no system monospace setting), which could land on a family with no bold at all - then "boldest available" = regular and bold renders flat. The fallback-stack item below fixes the pick.
+		- Fixed: terminal bold now requests the boldest weight the pinned mono family actually includes (like chrome already did), so it can't escape into a proportional bold fallback. Not yet confirmed on the affected host.
+		- Second half: with the font auto/unset, Windows picked the mono family by a font-db lottery (it has no system monospace setting), which could pick a family with no bold at all - then "boldest available" = regular and bold renders flat. The fallback-stack item below fixes the pick.
 	- ✅ Font fallback: one cross-platform stack (Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New) is now the font_family default and the resolver's last resort everywhere. Windows always resolves through it ("use system font" is inert there - no OS monospace setting exists), so the family always carries a real bold face.
 		- The Settings "Use system font" checkbox is disabled and grayed on Windows, with a flyover explaining why. Font family/size stay editable there regardless of the config value.
 		- Superseded by the per-platform divergence fix in Bugs: the order is now one list everywhere and the graying keys on what the OS actually reports, so only the family half is inert on Windows - the size half is live there.
@@ -1119,7 +1119,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- When scrolling down a long list in 'ls', each scroll event (or at least down arrow) results first in the screen contents bouncing *down*, then up.
 	- It seems to go: "everything move one line down (smoothly), then two lines up (smoothly)". The net result is very juddery output.
 	- Mouse scrolling seem unaffected. It's smooth.
-	- Cause: the normal-screen repaint-slide detector (added for ConPTY smooth scroll, default-on) only refreshed its frame snapshot on frames it could slide on. A plain output line lands in a scrollback-growth frame - animated by the output ease - which skipped the refresh, so the prompt redraw one frame later diffed against pre-scroll rows, read the already-eased scroll as a fresh repaint shift, and slid it a second time on top of the ease: down one, up two. A burst (ls) re-slid the whole accumulated shift at once, worse. Wheel scrollback never enters that path, so it stayed smooth.
+	- Cause: the normal-screen repaint-slide detector (added for ConPTY smooth scroll, default-on) only refreshed its frame snapshot on frames it could slide on. A plain output line arrives in a scrollback-growth frame - animated by the output ease - which skipped the refresh, so the prompt redraw one frame later diffed against pre-scroll rows, read the already-eased scroll as a fresh repaint shift, and slid it a second time on top of the ease: down one, up two. A burst (ls) re-slid the whole accumulated shift at once, worse. Wheel scrollback never enters that path, so it stayed smooth.
 	- Fixed: the snapshot refreshes on every content frame; only true repaint frames (no scrollback growth) may read the diff as a scroll. Pager slides are unaffected.
 	- Opened: 20260722-100516
 	- Closed: 20260722-105522
@@ -1177,8 +1177,8 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260716-170528
 
 - ✅ Windows: can't type in the Settings dialog's text fields.
-	- Same root cause as the embedded-dialog bug above: a child window never receives keyboard focus, so no key events reached the dialog at all. Fixed by the owned-window change: the dialog takes focus and keys land in it.
-	- Note: typed text lands in the fields on the current build. If it still fails on a given machine, the running copy predates the fix - refresh or rebuild the installed binary.
+	- Same root cause as the embedded-dialog bug above: a child window never receives keyboard focus, so no key events reached the dialog at all. Fixed by the owned-window change: the dialog takes focus and keys reach it.
+	- Note: typed text reaches the fields on the current build. If it still fails on a given machine, the running copy predates the fix - refresh or rebuild the installed binary.
 	- Opened: n/a
 	- Closed: 20260716-170528
 
@@ -1298,7 +1298,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Observe:
 			- The same thing that happened to 'TIMMYS TEXT SHADOW' previously, happens in the reverse vertical direction now only involving the inverse text in 'BILLY THE BOTTOM AREA'. It visually bounces UP into 'THE EDIT AREA'.
 			- At the same time and synchronized with, visually identical copies of the normal text in 'BILLY THE BOTTOM AREA' also bounce up into 'THE EDIT AREA'. Together they seem to exhibit the same movement behavior as 'TIMMYS TEXT SHADOW', except flipped vertically.
-	- Cause: the sliding draw is the whole frame translated by the eased offset, clipped only at the band boundaries - so the top bar's row translated down (and the bottom area's rows translated up) landed inside the scroll-region clip and rendered as translated text copies riding the ease. Text and its glow only (cell backgrounds are placed per row), which is why it reads as a text shadow at the top and as text copies at the bottom. (20260708)
+	- Cause: the sliding draw is the whole frame translated by the eased offset, clipped only at the band boundaries - so the top bar's row translated down (and the bottom area's rows translated up) fell inside the scroll-region clip and rendered as translated text copies riding the ease. Text and its glow only (cell backgrounds are placed per row), which is why it reads as a text shadow at the top and as text copies at the bottom. (20260708)
 	- Fixed: the region clip now welds to the shifted content's own edge; the strip fills the gap on the far side of the weld, and translated band rows can no longer enter. (20260708)
 	- Opened: n/a
 	- Closed: 20260708-163910
@@ -1402,7 +1402,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- ✅ Menu bar height adjusts based on menu font.
 			- Done: the bar heights equal the menu font's line height plus padding, so a larger menu font grows the bars.
 		- ✅ Still sans-serif after the 20260701 fix (reported: bold + bigger took, family didn't).
-			- Cause: cosmic-text only uses the requested family when a face matches the requested weight exactly, and GentiumAlt ships no Bold face. So asking for bold silently ejected the family and a bold sans rendered instead - which is why bold and size took but the family didn't.
+			- Cause: cosmic-text only uses the requested family when a face matches the requested weight exactly, and GentiumAlt includes no Bold face. So asking for bold silently ejected the family and a bold sans rendered instead - which is why bold and size took but the family didn't.
 			- Fixed: pin the font db's canonical family spelling and snap the requested weight and slant to a face the family actually has, so family wins over weight. A shaping test guards it.
 			- Note: the menu bar and Settings render the serif family at its closest weight; cosmic-text does not synthesize bold.
 	- Opened: 20260629-103857
@@ -1502,7 +1502,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260629-214404
 
 - ✅ There are weird spacing issues with the cursor. It appears too far after text. There are also weird text background color interactions with `ble`, which I suspect is caused by the spacing issue.
-	- Cause, on the re-fix: the earlier two-part fix was incomplete because the cell width was rounded, so it was a fraction of a pixel wider than the text's real advance. Everything placed on the grid - the cursor, cell backgrounds, fallback glyphs - is positioned by multiplying that width by the column, so the error accumulates across the line. The cursor sat further past the text the longer the line got, and a fallback glyph landed on top of the next cell at high columns.
+	- Cause, on the re-fix: the earlier two-part fix was incomplete because the cell width was rounded, so it was a fraction of a pixel wider than the text's real advance. Everything placed on the grid - the cursor, cell backgrounds, fallback glyphs - is positioned by multiplying that width by the column, so the error accumulates across the line. The cursor sat further past the text the longer the line got, and a fallback glyph sat on top of the next cell at high columns.
 		- The text stack only snaps to a fixed advance when the font declares one, which a system font often does not, so text renders at its natural advance and the two disagree.
 	- Fixed: the cell width now measures the real rendered pitch and is not rounded, so it matches the text and residual drift is sub-pixel. Per-cell fallback glyphs are fit to their cell box, scaled and centered so an over-wide fallback can't spill onto its neighbor.
 	- Superseded: an earlier partial fix pinned the monospace advance on the text buffer, and pulled glyphs the main face lacks out of it to draw them one cell at a time. The extraction is still in place; the pinned advance is kept but does little for a system font.
@@ -1786,7 +1786,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- The installer looks for each shell on PATH and writes a shortcut only for the ones it finds. Same names and same order the Tabs menu uses. The icon comes free, since every shortcut targets silkterm.exe.
 		- The working directory is stored as the unexpanded `%USERPROFILE%`, so an all-users install does not bake the installing account's home directory into everyone's shortcuts.
 	- ✅ Plus a plain SilkTerm shortcut with no shell argument, also starting in %USERPROFILE%.
-	- ✅ Driven on Windows for the first time, in a sandbox, and it found two real defects. An all-users install left no uninstall entry anywhere a 64-bit reader looks, so it would not have appeared in Add/Remove Programs and an upgrade over it could not have found it. Cause: NSIS builds a 32-bit installer, and a 32-bit process writing HKLM\Software lands in WOW6432Node. HKCU\Software is not redirected, which is why the per-user half worked and only that half.
+	- ✅ Driven on Windows for the first time, in a sandbox, and it found two real defects. An all-users install left no uninstall entry anywhere a 64-bit reader looks, so it would not have appeared in Add/Remove Programs and an upgrade over it could not have found it. Cause: NSIS builds a 32-bit installer, and a 32-bit process writing HKLM\Software goes in WOW6432Node. HKCU\Software is not redirected, which is why the per-user half worked and only that half.
 		- Fixed by pinning the 64-bit view before MultiUser reads the install directory back, and in the uninstaller. The old install sweep now also looks in the 32-bit view, so a copy left by an earlier build is still found and cleared.
 		- A second defect came out of the same run: an uninstaller that runs elevated was taken for an all-users one, so a per-user install had its files deleted but left its registry entry and its start menu folder behind. The uninstaller now takes its context from whichever hive names the directory it is sitting in.
 		- Verified after both fixes: all-users and per-user each install and uninstall completely, installing one flavor over the other leaves a single copy, and installing twice in a row does too. One shortcut per shell actually present, named and ordered as intended, each with an unexpanded %USERPROFILE% working directory.
@@ -1798,7 +1798,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- And even then (at <1px per full-hieght text line), dim the line of pixels for better approximations.
 	- VSCodium, for example, does a much better job of approximating what lots of text way too small to read, looks like "from a distance".
 	- Fixed both halves. A line no longer paints its whole height once it draws more than a pixel tall, so the gap above and below separates it from the next one instead of the two fusing. Below a pixel there is no room for a gap and the line is taken whole, ramped between the two so the map does not change brightness as a buffer grows past that point.
-	- And a pixel row is now as bright as the ink that actually landed in it, so a mostly blank stretch reads dimmer than a solid page. A single inked line among many is held above a floor so it stays findable, and color still comes only from the lines that have ink, so a lone red line keeps its color.
+	- And a pixel row is now as bright as the ink that actually fell in it, so a mostly blank stretch reads dimmer than a solid page. A single inked line among many is held above a floor so it stays findable, and color still comes only from the lines that have ink, so a lone red line keeps its color.
 	- Measured on a scene of 4,000 lines: the column used to be lit edge to edge with no gaps anywhere, and is a fifth dimmer now. At a couple of hundred lines each line reads as its own bar.
 	- Opened: 20260902-000000
 	- Closed: 20260903-045000
@@ -1844,7 +1844,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Apply the updates across the project (mostly menus and settings dialog).
 		- "Save as..." and "Rename" on the Themes tab now end in a real ellipsis, the way Settings and About already did.
 		- The three font-size items on the View menu read "Ctrl+Plus", "Ctrl+Minus" and "Ctrl+0", so every shortcut in every menu is spelled one way. Both were looked at on screen.
-		- Two differences are deliberate and stay listed rather than fixed: the capital S in "Paste Selection", which is what its accelerator has to land on, and "Copy on select" sitting on the Cursor tab, which was asked for and is pinned by a test.
+		- Two differences are deliberate and stay listed rather than fixed: the capital S in "Paste Selection", which is what its accelerator has to take, and "Copy on select" sitting on the Cursor tab, which was asked for and is pinned by a test.
 	- Opened: 20260719-085918
 	- Closed: 20260830-204500
 
@@ -1930,7 +1930,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 			- These already worked, and the plain keys still reach the terminal rather than being stolen.
 		- Between the shorter strip and the dropped heading the dialog is 58px shorter.
 	- ✅ Express all slider values that range from 0.0 to 1.0, as an integer % from 0% to 100%. (But store as original decimal value in config though.)
-		- Six sliders read 0-100 in whole steps now; the file still holds the decimal. Reverting one lands exactly on its own default rather than a hair off it, and a percent field takes no decimal point.
+		- Six sliders read 0-100 in whole steps now; the file still holds the decimal. Reverting one goes exactly on its own default rather than a hair off it, and a percent field takes no decimal point.
 	- Found and fixed on the way: both scrollbar colors had rows in the dialog but were never written to the file, so an edit lasted only until the next launch. Every row now writes what it edits.
 	- ✅ Tabs and grouping (settings content and tab reorg):
 		- ✅ "Groups" are organized, titled sections within a dialog tab page. Differentiated by a title, and with adequate spacing between groups so that they are visually separate.
@@ -2044,7 +2044,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 					- The command is required: emptying the field leaves the stored one standing, and an entry that never got one is dropped rather than saved.
 				- ✅ A grip at the left of each line reorders it by dragging. This supersedes the four move icons this item first asked for ("Move to top", "Move up", "Move down", "Move to bottom"), which are gone; reordering is mouse-only now.
 				- ✅ "Remove" sits between "Command" and "Last seen" rather than at the end of the line, so it is harder to press by accident, and its X is red. It still asks first, the way the theme delete does.
-				- ✅ Below the grid, a "Default startup directory" section. It ships as the literal `$HOME` / `%USERPROFILE%`, understands `~` and either platform's variable spellings, and is the lowest of three precedences - a new tab, pane or window inherits from the pane it came from, and a SilkTerm launched from a shell keeps that shell's directory.
+				- ✅ Below the grid, a "Default startup directory" section. It's the literal `$HOME` / `%USERPROFILE%`, understands `~` and either platform's variable spellings, and is the lowest of three precedences - a new tab, pane or window inherits from the pane it came from, and a SilkTerm launched from a shell keeps that shell's directory.
 				- An "Add" button below the grid, for a shell the scan cannot find. It adds a new line and puts the caret straight in its command field.
 				- The first switched-on shell in the list is the default for new windows, tabs and panes. The old `shell.default` setting is retired: a config that had one has that entry moved to the top of the list, once, and the line removed.
 				- Done: the whole tab. The grip and the remove mark are drawn in the shader rather than set as glyphs - no interface font can be relied on to carry either one.
@@ -2103,7 +2103,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- `SILK_LATENCY=1` times every keystroke and says where the wait went, in three parts: getting the key to the shell, the shell answering, and putting that answer on screen. One line per keystroke while it runs, then a median, a p95 and a worst case at the end. Off by default and it costs an ordinary run nothing.
 	- Only the first and third parts are this program's. Splitting them is the point - a single total cannot say whether to attack the renderer or something else.
 	- What it cannot see is everything after the frame is handed over: the compositor and the display itself. So a figure is a floor rather than the whole wait, and it belongs at a settled prompt, since output nobody typed for is indistinguishable from an echo.
-	- Already showed one thing. Typing marks the window dirty so the cursor can respond, and the shell's reply then lands while that frame is still being drawn - which puts a whole frame of the wait in the middle leg rather than the last. On a slow renderer that doubles the total. Worth a look when the render path is next opened up.
+	- Already showed one thing. Typing marks the window dirty so the cursor can respond, and the shell's reply then arrives while that frame is still being drawn - which puts a whole frame of the wait in the middle leg rather than the last. On a slow renderer that doubles the total. Worth a look when the render path is next opened up.
 	- Opened: 20260826-123553
 	- Closed: 20260830-152000
 
@@ -2401,8 +2401,8 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- No fork was needed after all. The feared cost was a second fork of the VT parser, which handles neither sequence, but it is the terminal itself that gets wrapped: the engine is generic over it, so the tap sits in front and scans what it reads. The bytes reach the parser exactly as they arrived.
 		- Costs 47ms per 32 MiB of output on this box (714 MB/s, measured over a stream carrying colour and title sequences), against a Windows delivery ceiling of about 1.45s for the same 32 MiB. Nothing but the two sequences is ever collected, so a clipboard write carrying a whole paste is skipped rather than buffered.
 		- The snippets live in `shell-integration.md`, linked from the README: PowerShell, bash, zsh, fish, and the two cases that need nothing (cmd.exe, and fish, which already emits it).
-	- ✅ The PowerShells are offered with `-NoLogo`, so a new tab opens on a prompt rather than a copyright banner. A flag that only changes how a shell looks is deliberately left out of what makes it that shell, or the next scan would land a second PowerShell beside every stored one.
-	- ✅ A "Windows PowerShell 5 (relaxed)" entry is offered, switched OFF, carrying `-ExecutionPolicy RemoteSigned` - the 5.1 that ships with Windows refuses to run script files, so it loads no profile and cannot report where it is. Per-session only; nothing is written anywhere, and it arrives off because it is a security setting rather than a default.
+	- ✅ The PowerShells are offered with `-NoLogo`, so a new tab opens on a prompt rather than a copyright banner. A flag that only changes how a shell looks is deliberately left out of what makes it that shell, or the next scan would add a second PowerShell beside every stored one.
+	- ✅ A "Windows PowerShell 5 (relaxed)" entry is offered, switched OFF, carrying `-ExecutionPolicy RemoteSigned` - the 5.1 that installs with Windows refuses to run script files, so it loads no profile and cannot report where it is. Per-session only; nothing is written anywhere, and it arrives off because it is a security setting rather than a default.
 	- ✅ The PowerShell block is installed for you, a few seconds after launch, into each PowerShell profile that reports nothing.
 		- It appends, after saving a copy of the profile beside it, and never rewrites what is there. A marker makes a second launch do nothing, and deleting the block switches it off for good.
 		- The prompt is wrapped rather than replaced, and on PowerShell 6 and later it is not touched at all, which leaves oh-my-posh and starship alone.
@@ -2428,7 +2428,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ The gif was sampled at 50fps from a source that paints 60, so one source frame in six was dropped and every fifth stored frame carried two frames of travel. Measured on the shipped gif that is an exact doubling, on a strict period, at every speed and in both directions - a regular hitch that no amount of scroll tuning could have removed, and it is worst right after a clear, where a command dumps its output fastest.
 	- ✅ Fixed at the source rather than by slowing the gif down: the app's own frame rate is now pinned to the rate the recording samples at, so the two cannot disagree. The 60 was the recording machine's refresh rate arriving through vblank, which also means the same script on a differently-timed display would have beaten against both the gif and the video, with nothing to show for it in the script. The gif stays at 50fps, which is the smoothest a gif can be.
 	- ✅ The demo now has a plain-language script, `cicd/utility/demo-video/script.txt`: formats, the set, every scene in order, the typed lines, and why each beat is the length it is. It is meant to be edited directly, and it is kept in step with any change asked for in conversation.
-	- ✅ The compile scene is paced in five movements rather than at random, so the speed leaves rest, ramps, tops out, brakes and lands. Output arriving at one rate only ever shows one point on that curve; the long silence in the middle is what makes the wind-down visible, since the view is still travelling when the output stops.
+	- ✅ The compile scene is paced in five movements rather than at random, so the speed leaves rest, ramps, tops out, brakes and comes to rest. Output arriving at one rate only ever shows one point on that curve; the long silence in the middle is what makes the wind-down visible, since the view is still travelling when the output stops.
 	- ✅ The second pane split is horizontal. Two vertical splits left the prompt very nearly filling a third-width pane, readline redisplayed it on a fresh line, and each pane then eased that line in a beat after the split - staggered, on an otherwise empty screen, which read as glitching.
 	- ✅ Rendered, both formats, and the steps in a scroll do come out even: across every scrolling stretch in the new gif there is not one stalled frame, so each capture tick carries fresh movement. The step sizes ramp and brake the way the script asks (one run goes 14,12,12,12,10,10,8,8,6,6,6,6,6,4,4,4,2,2,2,2). Measured the same way, the old gif behaves the same, so the pin holds rather than the new render flattering itself. Gif is 6.3 MiB against a 12 MiB budget; the video is 1920x1080@60 hevc with stereo audio, 72s, 2.1 MiB.
 	- ✅ A second box can render the demo now. It no longer needs the Linux machine, and it never needed VirtualGL: WSL2 reaches the GPU through Mesa's d3d12 driver, so a Windows box with WSL2 can do this too. Three things had to be fixed to get a faithful render off a fresh machine, and two of them were latent bugs rather than WSL quirks.
@@ -2521,7 +2521,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Three display bugs that blocked any Wayland-session host, WSL2 included. Setting DISPLAY does not move the app onto a private Xvfb, because winit prefers Wayland whenever it sees one, so the window opened on the real desktop and whatever was waiting for it waited forever. Fixed in the recorder, in `gui-headless.bash` and in the profiler stage.
 	- ✅ Windows plus WSL2 is built. `-Wsl` on the Windows pipeline runs the Linux one (`cicd.bash --no-windows`) inside WSL2, so one box produces the whole matrix. Off by default, since it roughly doubles a run; the plan header says when WSL2 is present but unused.
 		- It builds the same working tree over `/mnt` rather than a second checkout, so there is nothing to keep in sync. Reading the source over 9p was measured first and costs almost nothing: 1m26s for a debug build against 1m35s fully native.
-		- `CARGO_TARGET_DIR` has to point somewhere native, and that is correctness rather than speed. Left alone, the Linux build lands in the same `target/` the Windows build just used, and the two evict each other every run.
+		- `CARGO_TARGET_DIR` has to point somewhere native, and that is correctness rather than speed. Left alone, the Linux build goes in the same `target/` the Windows build just used, and the two evict each other every run.
 		- Four stages assumed `target/` by name and quietly looked in the wrong place once it moved. They read one `TARGET_DIR` now. The scroll harness was the dangerous one, since it reports through its pass count: a missed binary reads as a clean run that tested nothing.
 		- Neither half repeats the other's targets. Windows builds what only Windows can, msvc above all; WSL builds the rest. `--no-windows` draws the line, mirroring how `--no-arm` already worked.
 		- The two pipelines already wrote to separate artifact directories, so a combined run leaves both sets intact with no change needed.
@@ -2565,7 +2565,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- ✅ Second highlight color should be a different, complimentary color that is also more vivid and saturated. That's for the current focus.
 			- Every theme sets its own, and the two are always far enough apart that they cannot read as the same signal.
 		- ✅ When text fields have focus highlight, there should only be one visible outline (rather than two - the highlight and the textbox outline).
-			- The ring lands on the field's own outline and the field stands its border down. The old build drew two rules with a gap of panel between them; there is now a single rule.
+			- The ring goes on the field's own outline and the field stands its border down. The old build drew two rules with a gap of panel between them; there is now a single rule.
 		- ✅ The "OK" button should be the only one with the dimmer first highlight. The others buttons should have a gray outline like the "tabs".
 	- Note: an existing config's `colors.focus` carries over to `colors.highlight` on the next launch, and the freed name now holds the new focus color.
 	- UAT.
@@ -2586,8 +2586,8 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260804-155242
 
 - ✅ Config language moved to SHCL 1.2.
-	- The last layout quirk the config writer worked around is fixed at the source, so the repair pass is gone entirely - what the language writes is now what lands on disk, comments, blank lines, indentation and order included.
-	- The shipped template, a real config, a config with settings turned on, and a deliberately awkward one each come back exactly as they went in, where before they came back with 14 to 178 lines re-laid out. Saving a change still touches only the lines that changed, and a setting turned on for the first time lands inside its section at the right depth.
+	- The last layout quirk the config writer worked around is fixed at the source, so the repair pass is gone entirely - what the language writes is now what goes on disk, comments, blank lines, indentation and order included.
+	- The shipped template, a real config, a config with settings turned on, and a deliberately awkward one each come back exactly as they went in, where before they came back with 14 to 178 lines re-laid out. Saving a change still touches only the lines that changed, and a setting turned on for the first time goes inside its section at the right depth.
 	- A setting written twice is now reported instead of quietly doing nothing. The language will not guess which one was meant, so the built-in default is what takes effect; the message names both lines.
 	- 🔘 UAT
 	- Opened: n/a
@@ -2613,9 +2613,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Opened: n/a
 	- Closed: 20260804-112336
 
-- ✅ Scrim strength ships at 20 rather than 30.
+- ✅ Scrim strength defaults to 20 rather than 30.
 	- One doubling of the halo's opacity instead of one and a half - a lighter backing, still clearly there.
-	- Reaches an existing config file only where its line is still the shipped commented one, and a file carrying either of the two earlier values lands on this one.
+	- Reaches an existing config file only where its line is still the shipped commented one, and a file carrying either of the two earlier values moves to this one.
 	- A fresh file writes 20, a file still holding the old shipped line is brought forward, and a value written or annotated there is left as it stands.
 	- Opened: n/a
 	- Closed: 20260804-103003
@@ -2623,23 +2623,23 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - ✅ Scrim strength: moved to the top of the group, given half the range, and turned on by default.
 	- "Strength" now sits directly under the Text scrim switch, above Radius and Softness - it is the first thing to reach for once the scrim is on.
 	- The scale is halved: the top of the slider is what 50 used to be, so each 20% is a doubling and 100% is five of them. The extreme end was never usable, and the whole slider is now spent on the part that is.
-	- Default 30, which on the new scale is exactly what 15 was on the old one - a visible backing hugging each glyph rather than a halo that has to be found and switched on. Superseded by the entry above: it ships at 20 now.
+	- Default 30, which on the new scale is exactly what 15 was on the old one - a visible backing hugging each glyph rather than a halo that has to be found and switched on. Superseded by the entry above: it defaults to 20 now.
 	- Default falloff curve is now Exponential, replacing Half-normal.
-	- Both changed defaults reach an existing config file only where its line is still the shipped commented one; a value written or edited there is left alone. A file that has been through both curve changes lands on the current one either way.
+	- Both changed defaults reach an existing config file only where its line is still the shipped commented one; a value written or edited there is left alone. A file that has been through both curve changes ends on the current one either way.
 	- Opened: n/a
 	- Closed: 20260804-100117
 
 - ✅ Scrim functions: two falloff curves renamed, and a "Strength" adjustment added.
 	- The falloff curves "S-curve" and "Gaussian" are now "Sigmoid" and "Half-normal", named for the curve each draws. The old names are still accepted in the config file, so an existing one keeps the curve it asked for.
 	- New "Strength", below Radius and Softness: how much bolder to make the finished halo, as a percent. Each 10% doubles its opacity, so 100% is ten doublings; 0 leaves the halo exactly as built, which is the default and matches how it has always looked.
-		- Superseded by the entry above: the row moved to the top of the group, each 20% is now a doubling, and it ships at 30 rather than 0.
+		- Superseded by the entry above: the row moved to the top of the group, each 20% is now a doubling, and it defaults to 30 rather than 0.
 	- Because the doubled value is capped, the halo's dense middle fills in first and the solid part spreads outward, so a faint halo thickens into a plate that still stops where the radius says it does.
 	- The half-normal curve was left standing at about 1% of its opacity at the outer edge, where the other four reach zero. Invisible on its own, but Strength multiplied it into a wash over the whole pane, so it is now brought to zero like the rest - a change of less than one shade of 255 at any strength setting.
 	- Opened: n/a
 	- Closed: 20260804-091512
 
 - ✅ Reopening Settings within a minute of closing it resumes where you were.
-	- Done (20260804). Closing Settings remembers the tab and scroll position it was left on; reopening within a minute lands back there. After that it opens at the top of the first tab as before.
+	- Done (20260804). Closing Settings remembers the tab and scroll position it was left on; reopening within a minute comes back there. After that it opens at the top of the first tab as before.
 	- Applies to every way of closing it - Cancel, OK, Esc, and the window's own close button.
 	- Only the view is remembered. Values still come from the current settings, and edits abandoned with Cancel stay abandoned.
 	- A remembered position is clamped to what the reopened window can actually show, so a font or screen change between the two can't leave it scrolled past the end.
@@ -2666,7 +2666,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Of the curve models on offer, the straight and exponential segments adjusted by time were chosen. The unbounded ramp accelerates exponentially until it keeps up, which the specification allowed.
 	- "Initial scroll speed" is gone (it fed four mechanisms at once and fought the rest); its config key is removed from existing files. Ease-in is now a duration (`scroll.ease_in_ms`), replacing the old fraction. Wheel/scrollback navigation keeps a fixed internal ease, unchanged feel.
 	- ✅ Slider direction (20260803): Ease-in and Ease-out ran opposite to the other three (higher = slower). Flipped so all five sliders read higher = faster. Stored config values unchanged (milliseconds); Ease-out's default now reads 50 on the dialog scale instead of 51.
-	- ✅ New speed defaults (20260803): the five now default to 50 / 75 / 75 / 75 / 40 in watch order - a much harder ramp-up, roughly double the single-screen top speed, a quicker wind-down, and a gentler landing. Ease-in is unchanged in feel.
+	- ✅ New speed defaults (20260803): the five now default to 50 / 75 / 75 / 75 / 40 in watch order - a much harder ramp-up, roughly double the single-screen top speed, a quicker wind-down, and a gentler stop. Ease-in is unchanged in feel.
 		- An existing config carries these five as its own values, so it keeps the old ones until those lines are edited or the config is reset. Only a new config picks the new defaults up.
 	- The design (what should - in hindsight - have been its own design doc):
 		- General description:
@@ -2748,7 +2748,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260804-084202
 
 - ✅ A single boolean option to disable/enable smooth scrolling, without changing other settings (but disabling their controls).
-	- New "Smooth scrolling" switch at the top of the Scrolling tab (config: `scroll.smooth`, default on). Off = wheel, output and full-screen-app scrolling all land instantly, and the two speed sliders gray out. Wheel lines, scrollbar and the rest stay active since they apply either way.
+	- New "Smooth scrolling" switch at the top of the Scrolling tab (config: `scroll.smooth`, default on). Off = wheel, output and full-screen-app scrolling all jump instantly, and the two speed sliders gray out. Wheel lines, scrollbar and the rest stay active since they apply either way.
 	- Opened: n/a
 	- Closed: 20260802-123859
 
@@ -2805,7 +2805,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Tier 4 - the pane froze under heavy output. Found while checking whether the lock contention above was worth acting on.
 		- ✅ 4.1 A pane could stop redrawing for seconds during a flood of output. Not a speed problem - the frames were being drawn, they just kept showing the same stale picture.
 			- Cause: to avoid stalling the display we only ever *tried* for the terminal and gave up immediately if the reader had it. But the reader holds it across a whole read cycle and grabs it again the instant it lets go, so that polite try could lose forever. On a large `cat`, 98% of frames showed a stale picture, the worst run lasting 2.1 seconds.
-			- Fixed: still try first, but after two frames in a row of getting nowhere, wait properly. Waiting takes a numbered ticket, which lands us at the end of the current read cycle and makes the reader queue behind us - so the wait is bounded (under 5ms) where the polite try was not.
+			- Fixed: still try first, but after two frames in a row of getting nowhere, wait properly. Waiting takes a numbered ticket, which puts us at the end of the current read cycle and makes the reader queue behind us - so the wait is bounded (under 5ms) where the polite try was not.
 			- Worst stale run 2083ms -> 52ms, at an unchanged frame rate. Idle and ordinary output cost are unchanged - this only engages when something is actually contending.
 	- Tier 5 - cursor animation: pause is the only mode, and it really stops now.
 		- ✅ 5.1 Removed the 'cursor_animation_input' option. Behavior is always "pause".
@@ -2823,7 +2823,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- ✅ 6.1 Freeze rendering (never PTY reading) of minimized windows and hidden tabs. Catch up instantly on switch.
 			- Minimized: no frames at all. With busy output: ~83% of a core visible, ~0% minimized, full rate again on restore.
 			- Hidden tabs were already frozen by design; the missing half was the catch-up.
-			- Unfreeze hard-cuts (rebaselines the scroll detectors), never eases - or the bounce class comes back. A switch into a tab that took 2000 lines while hidden lands at the bottom with no motion.
+			- Unfreeze hard-cuts (rebaselines the scroll detectors), never eases - or the bounce class comes back. A switch into a tab that took 2000 lines while hidden arrives at the bottom with no motion.
 		- ✅ 6.2 Pause cursor blinking in every pane except the focused pane of the active window.
 			- Same largest-point pause/resume rules as Tier 5, through the same machinery.
 			- Idle pulse is ~6% of a core focused, ~0% unfocused; it resumes after the usual delay on refocus.
@@ -2966,7 +2966,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - ✅ The cursor animation pause is for typing, not for a command's output.
 	- ✅ Output holds the cursor still only while it is actually writing. The moment it stops - the prompt coming back - the animation picks up again, with none of the delay that follows typing.
 	- ✅ Typing is unchanged: the cursor still settles for the configured second after the last keystroke.
-		- Told apart by timing: a cursor move that lands right after a keystroke is that keystroke's echo, anything later is the program's own doing. Pressing Enter no longer keeps a whole build's worth of output classed as "you typing".
+		- Told apart by timing: a cursor move that comes right after a keystroke is that keystroke's echo, anything later is the program's own doing. Pressing Enter no longer keeps a whole build's worth of output classed as "you typing".
 	- Opened: n/a
 	- Closed: 20260731-163808
 
@@ -3132,7 +3132,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- A live swap goes through the same path a wallpaper change already used, so it re-blurs and applies without a relaunch. A missing or empty folder just leaves the feature off.
 	- Correction: the scan was offering formats the loader could not decode. It now matches what actually loads, which is png and jpeg.
 	- ✅ Skip startup rotation, if a wallpaper was specified on the command line.
-		- Done: a wallpaper given on the command line (--background-image, including an explicit clear) is kept on screen at launch instead of being overwritten by the rotation's startup pick. The folder is still scanned and the timer still armed, so scheduled rotation proceeds once the interval elapses (order mode's first tick lands on the folder's natural first image).
+		- Done: a wallpaper given on the command line (--background-image, including an explicit clear) is kept on screen at launch instead of being overwritten by the rotation's startup pick. The folder is still scanned and the timer still armed, so scheduled rotation proceeds once the interval elapses (order mode's first tick falls on the folder's natural first image).
 	- Opened: 20260703-100322
 	- Closed: 20260720-070458
 
@@ -3177,7 +3177,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260717-065536
 
 - ✅ Settings dialog: text fields longer than the box must scroll with the cursor, like standard GUI textboxes everywhere (arrows, Home/End, typing, selecting, deleting, mouse drag past the edges).
-	- Done: each field keeps a horizontal view offset that follows the caret. Moving or typing toward an edge scrolls preemptively so a few characters stay visible ahead of travel; a little padding past end-of-text keeps the cursor clearly visible there; dragging a selection past either edge auto-scrolls and keeps selecting. Clicks land on the right character through the scrolled view. The scroll and the caret both ease smoothly, and the caret blinks with a soft fade instead of a hard on/off.
+	- Done: each field keeps a horizontal view offset that follows the caret. Moving or typing toward an edge scrolls preemptively so a few characters stay visible ahead of travel; a little padding past end-of-text keeps the cursor clearly visible there; dragging a selection past either edge auto-scrolls and keeps selecting. Clicks hit the right character through the scrolled view. The scroll and the caret both ease smoothly, and the caret blinks with a soft fade instead of a hard on/off.
 	- Opened: n/a
 	- Closed: 20260717-103900
 
@@ -3749,7 +3749,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 - ✅ Config file: When reading a value from the config file, if the entry doesn't exist, insert the setting into the file using hard-coded defaults, in an approprite section. (While not overwriting other existing values, comments, space formatting, etc.) Make this a reusable feature.
 	- Done: on load, any setting the shipped template defines and the file lacks is inserted using the template's own line. A key meant to follow the system stays commented out, and an active key gets its default value.
-		- Keys land in the right section, and nothing already in the file is touched - values, comments and formatting all survive, since this only ever inserts.
+		- Keys go in the right section, and nothing already in the file is touched - values, comments and formatting all survive, since this only ever inserts.
 	- Opened: 20260628-083740
 	- Closed: 20260629-214404
 
@@ -4084,7 +4084,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- The fast terminals are not limited by themselves, and this is measured rather than inferred. A consumer that reads the stream and discards it produces the same figure as a real terminal, on every width class. Every Windows terminal near that number is simply at the console host's ceiling, which is also why ours reads the same with all the eye candy on as with it all off.
 	- The barrier is answered by the console host rather than by the terminal, so a Windows row would not mean what the column heading says even if the rest were solved.
 	- Alacritty cannot be run at all. It deadlocks partway through, which is its own bug.
-	- Retry only if the console host stops being the limit. The deadlock fix reaching upstream would let Alacritty be measured, but it would land on the same ceiling as everything else.
+	- Retry only if the console host stops being the limit. The deadlock fix reaching upstream would let Alacritty be measured, but it would hit the same ceiling as everything else.
 	- Opened: 20260802-094409
 
 - ✋ The publish stage stays unrun under WSL2. It commits and pushes the working tree, and writes a backup archive to a synced path that does not exist there.
@@ -4156,7 +4156,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 - 🚫 CTRL+right arrow should move to the beginning of the next word, not the end of the current. (CTRL+left arrow works as expected.)
 	- And delimit on spaces (only?).
-	- Resolution: after research, not a terminal-side fix. Ctrl+Right already sends the standard `\x1b[1;5C`; whether the cursor lands on the end of the word or the start of the next is decided by the running line editor (bash/readline `forward-word` = word end; zsh = next word start), so the asymmetry with Ctrl+Left is inherent to readline, identical across terminals. Changing the emitted sequence would break the standard every app expects. Achievable per-user via a readline binding, or later via the deferred key-remap system.
+	- Resolution: after research, not a terminal-side fix. Ctrl+Right already sends the standard `\x1b[1;5C`; whether the cursor stops on the end of the word or the start of the next is decided by the running line editor (bash/readline `forward-word` = word end; zsh = next word start), so the asymmetry with Ctrl+Left is inherent to readline, identical across terminals. Changing the emitted sequence would break the standard every app expects. Achievable per-user via a readline binding, or later via the deferred key-remap system.
 	- Opened: 20260708-191010
 	- Closed: 20260709-115247
 

@@ -12,7 +12,7 @@
 // None of it may sit between launch and the first frame. A PATH scan stats every
 // directory on the user's PATH - any of which can be a mount that answers slowly
 // or never - and the Windows side reads the registry as well. So the window
-// starts with whatever the config already holds, and a scan lands later as
+// starts with whatever the config already holds, and a scan arrives later as
 // UserEvent::ShellsReady. Same shape as the wallpaper pipeline, deliberately:
 // a thread per request, and the result is folded in on the winit thread.
 //
@@ -178,7 +178,7 @@ pub fn spawn(proxy: &EventLoopProxy<UserEvent>) {
 // Fold a scan's findings into the stored list, in place and conservatively.
 //
 // The stored order is kept whole (it is the menu's order, and the future Shells
-// tab lets the user set it); anything new lands at the end. `active` only ever
+// tab lets the user set it); anything new goes at the end. `active` only ever
 // falls: an entry whose program cannot be found is switched off rather than
 // deleted, so a shell that is merely uninstalled keeps its title, its flags and
 // its place. It is NOT switched back on if the program returns - a scan cannot
@@ -258,7 +258,7 @@ pub fn today() -> String {
 // era arithmetic makes the 400-year leap cycle exact, so there is no table and
 // no special case for February.
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
-	let shifted = days + 719_468; // re-base on 0000-03-01, so leap day lands last
+	let shifted = days + 719_468; // re-base on 0000-03-01, so leap day falls last
 	let era = shifted.div_euclid(146_097); // 400 years
 	let day_of_era = shifted.rem_euclid(146_097);
 	let year_of_era =
@@ -287,7 +287,7 @@ struct Ident {
 // commands differing only by one of these are the same shell. Everything else
 // stays part of the identity - that is what keeps a `--norc` twin a separate
 // entry from the shell it twins. Without this, adding `-NoLogo` to the table
-// would land a second PowerShell beside every stored one on the next scan,
+// would add a second PowerShell beside every stored one on the next scan,
 // which is the exact duplicate-entry mess this list already had once.
 const COSMETIC_FLAGS: &[&str] = &["-nologo"];
 
@@ -713,7 +713,7 @@ const KNOWN: &[(&str, &str, &str, Group)] = &[
 // PowerShells print a copyright banner (and 7 an occasional update notice)
 // before their first prompt, which is noise in a terminal that opens a new tab
 // per thought. Nothing here may change how a shell BEHAVES - every such flag
-// belongs in COSMETIC_FLAGS too, or the next scan lands a duplicate.
+// belongs in COSMETIC_FLAGS too, or the next scan adds a duplicate.
 fn launch(command: &str, program: &str) -> String {
 	let base = base_name(program);
 	let base = base.strip_suffix(".exe").unwrap_or(&base);
@@ -909,7 +909,7 @@ fn platform_extras() -> Vec<Found> {
 	}
 	// PyCmd ships as a zip that is extracted wherever the user likes, so it is
 	// normally nowhere near PATH - the table above finds it only for someone who
-	// put it there deliberately. Program Files is where it usually lands.
+	// put it there deliberately. Program Files is where it usually sits.
 	let pycmd = program_files()
 		.iter()
 		.map(|base| base.join(r"PyCmd\PyCmd.exe"))
@@ -1294,7 +1294,7 @@ mod tests {
 		assert_eq!(out.len(), 1, "the bare name resolves to the stored path");
 	}
 
-	// Adding a banner flag to the table must not land a SECOND PowerShell beside
+	// Adding a banner flag to the table must not add a SECOND PowerShell beside
 	// everyone's stored one, so a flag that changes only how a shell looks is
 	// left out of what makes it that shell. The stored command is not rewritten
 	// either - a scan never touches one - so an existing entry keeps its banner
@@ -1458,7 +1458,7 @@ mod tests {
 	}
 
 	// A shell that was uninstalled and put back must re-arm the entry it belongs
-	// to rather than landing beside it as a second copy - which is what a strict
+	// to rather than sitting beside it as a second copy - which is what a strict
 	// path match would do, since the disabled entry resolves nowhere.
 	#[test]
 	fn a_reinstalled_shell_rejoins_its_own_disabled_entry() {

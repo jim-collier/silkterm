@@ -15,7 +15,7 @@ use crate::config;
 
 // Concrete family name behind `Family::Monospace`, re-resolved on each TextCtx
 // build (so the Settings font field / "Use system font" apply live). cosmic-text
-// picks the best face *per query*, so a BOLD run can land in a different family
+// picks the best face *per query*, so a BOLD run can end up in a different family
 // than the regular run; pinning one name keeps every weight in it. `Attrs` needs
 // a 'static name, so the resolved string is leaked (rare - only on a font change).
 static MONO_FAMILY: RwLock<Option<&'static str>> = RwLock::new(None);
@@ -517,7 +517,7 @@ impl TextCtx {
 	// can carry a double-width char (emoji, fullwidth punctuation) at its
 	// ordinary single advance, and then one glyph eats one column of layout
 	// where the grid gave it two - every later glyph
-	// on the row lands a cell left of the grid position its background, cursor
+	// on the row sits a cell left of the grid position its background, cursor
 	// and any per-cell glyph still use. Demanding the advance match the grid
 	// sends those to the per-cell path, which fits them to their real box.
 	pub fn covered_at(&mut self, ch: char, cells: u8) -> bool {
@@ -601,7 +601,7 @@ impl TextCtx {
 		// The face the pinned family fell back to rasterizes nothing - a color
 		// emoji font (Noto Color Emoji here) hands swash a strike it can't scale, so
 		// every emoji came out as a blank cell. Reshape through the generic
-		// monospace chain, which lands on a face that does raster.
+		// monospace chain, which picks a face that does raster.
 		let mut generic = attrs.clone();
 		generic.family = Family::Monospace;
 		match self.shape_ink(buf, ch, &generic) {
@@ -1042,7 +1042,7 @@ mod tests {
 	}
 
 	// Chrome must pin a concrete face, never fall back to generic
-	// `Family::SansSerif` (which lands on a serif when fontdb's "Arial" default
+	// `Family::SansSerif` (which picks a serif when fontdb's "Arial" default
 	// is absent). Only needs a FontSystem (no GPU), so it runs with no display.
 	// A chrome line placed by ui_visible_center_top must sit with its visible
 	// (ascender-top..baseline) box centered in the bar, for any bar height and

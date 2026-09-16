@@ -91,7 +91,7 @@ pub struct Scrim {
 	bg_rects: RectRenderer,
 	// cursor quads drawn into tex_cur (its own coverage texture). Separate renderer:
 	// bg_rects' instance buffer is uploaded for the bgcolor map in the SAME encoder,
-	// and a second upload would clobber the first (queue writes all land before the
+	// and a second upload would clobber the first (queue writes all arrive before the
 	// command buffer runs - same rule as the blur uniforms above).
 	cursor_rects: RectRenderer,
 	cursor_count: u32,

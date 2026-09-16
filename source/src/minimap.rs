@@ -36,7 +36,7 @@ const INK: f32 = 0.85;
 const BAND: f32 = 0.5;
 // How far down the line the ink starts, at that same tallest.
 const BAND_TOP: f32 = 0.1;
-// A pixel row's ink is what actually landed in it, so mostly blank lines read
+// A pixel row's ink is what actually fell in it, so mostly blank lines read
 // dimmer than a solid page. One line among many still has to be findable, so
 // it never falls below this share of its own strength.
 const LONE: f32 = 0.45;
@@ -181,14 +181,14 @@ pub fn geom(
 	Some(Geom { preview, handle })
 }
 
-// Where a press in the column landed.
+// Where a press in the column fell.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Hit {
 	Handle,
 	Track,
 }
 
-// Where a press at (x, y) landed, if it landed on the column at all.
+// Where a press at (x, y) fell, if it hit the column at all.
 pub fn hit(g: &Geom, x: f32, y: f32) -> Option<Hit> {
 	if !g.preview.contains(x, y) {
 		return None;
@@ -460,7 +460,7 @@ impl Minimap {
 
 	// Squash the cached rows into the column image. Colour is the average of the
 	// lines that actually have ink, so a lone red line is not washed out by its
-	// blank neighbours; how bright the pixel gets is how much ink landed in it.
+	// blank neighbours; how bright the pixel gets is how much ink fell in it.
 	fn compose(&mut self, img_h: usize, scale: f32) {
 		let width = self.width;
 		let total = self.rows.len();

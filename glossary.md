@@ -111,7 +111,7 @@ A copy of a release build that SilkTerm's own developer runs day to day, install
 
 ## Ease-in, ramp-up, ramp-down, ease-out
 
-The four shape controls for smooth scrolling, in the order one burst of output unfolds: the view leaves a standstill, picks up speed, brakes as the output runs out, and lands on the final line. All four read the same direction, higher being faster or crisper.
+The four shape controls for smooth scrolling, in the order one burst of output unfolds: the view leaves a standstill, picks up speed, brakes as the output runs out, and settles on the final line. All four read the same direction, higher being faster or crisper.
 
 ## Falloff
 

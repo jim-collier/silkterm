@@ -16,12 +16,12 @@ supposed to hold:
                     in place (muffer's shape). The block must be held still:
                     most easing frames carry ob == --expect-sb, and none more.
   --mode still    : the alt screen took over while plain output was still easing.
-                    There is no scrollback behind it, so the view must land at rest
+                    There is no scrollback behind it, so the view must be at rest
                     on the spot: frac stays 0 on every frame. A leftover ease shows
                     up as the fraction wrapping through a whole cell once per line
                     (the nano wobble). One frame is enough - a still screen builds
                     only when something changes. The output must be seen easing
-                    before the swap, or there was nothing to land and the check
+                    before the swap, or there was nothing to stop and the check
                     tested nothing.
 
 Exit codes: 0 pass, 1 real regression (a genuine violation with data), 2 skip

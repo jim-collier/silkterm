@@ -201,7 +201,7 @@ if ((doPage)); then
 	##	Jekyll would process the site otherwise; there is nothing here for it to do.
 	: > "${docs}/.nojekyll"
 
-	##	The site root redirects, so whatever else lands under Pages later can have it.
+	##	The site root redirects, so whatever else goes under Pages later can have it.
 	{
 		echo '<!doctype html>'
 		echo '<meta charset="utf-8">'

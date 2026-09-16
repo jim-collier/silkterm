@@ -125,7 +125,7 @@ icons:
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
 ## In screen order. A row's NAME is the setting it edits, spelled as the code
-## spells it; `kind: heading` starts a GROUP and says which tab it lands on,
+## spells it; `kind: heading` starts a GROUP and says which tab it goes on,
 ## and every row after it belongs to that group.
 ##
 ## A SUB-GROUP is not declared. It is a row followed by rows at a greater
@@ -279,7 +279,7 @@ rows:
 		help: "Ease the view instead of jumping a whole line at a time. Off makes every setting below inert."
 
 	## The five below are ordered as one output burst unfolds: it leaves rest,
-	## accelerates, tops out, winds down, lands. All five read the same way -
+	## accelerates, tops out, winds down, stops. All five read the same way -
 	## higher is faster.
 
 	ScrollEaseIn:
@@ -325,7 +325,7 @@ rows:
 		whole: true
 		indent: 1
 		setting: scroll.ease_out_ms
-		help: "How crisply the view lands on the final line."
+		help: "How crisply the view settles on the final line."
 
 	## ---------------------------------------------------------------- Background
 

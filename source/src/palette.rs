@@ -131,7 +131,7 @@ fn from_oklab(lightness: f32, a: f32, b: f32) -> [u8; 3] {
 	let l = (lightness + 0.396_337_78 * a + 0.215_803_76 * b).powi(3);
 	let m = (lightness - 0.105_561_346 * a - 0.063_854_17 * b).powi(3);
 	let s = (lightness - 0.089_484_18 * a - 1.291_485_5 * b).powi(3);
-	// Out-of-gamut lands here whenever a saturated color is pushed toward an end;
+	// Out-of-gamut ends here whenever a saturated color is pushed toward an end;
 	// from_linear_u8 clamps, which costs a little saturation and no hue.
 	[
 		crate::config::from_linear_u8(4.076_741_7 * l - 3.307_711_6 * m + 0.230_969_94 * s),

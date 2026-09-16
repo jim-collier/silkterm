@@ -160,7 +160,7 @@ VERSION_MANIFEST="source/Cargo.toml"            # the single version source
 ## contained NSIS installer .exe per arch (makensis), which upgrades an existing
 ## install in place. macOS (.dmg) and BSD are deferred: this box has no Apple SDK
 ## / FreeBSD sysroot to cross-build their binaries. ARM64 packages follow the same
-## --no-arm gate as the ARM release builds. Packages land in RELEASE_ARTIFACT_DIR
+## --no-arm gate as the ARM release builds. Packages go in RELEASE_ARTIFACT_DIR
 ## and fold into the sha256sums. Set PACKAGE_ENABLE=0 (or --no-package) to skip.
 PACKAGE_ENABLE=1
 NSIS_TEMPLATE="cicd/packaging/windows/installer.nsi.in"
@@ -183,7 +183,7 @@ PROFILE_STRICT=0                        # 1 = any profiler failure aborts the pi
 ## Demo video re-record (cicd/utility/demo-video/demo-video.py). Off by default -
 ## only worth re-recording after major visual/feature changes; flip to 1 or pass
 ## --demo for one run. Also skipped under --quick. Video GFS-rotates into
-## ../private/demo-video/; the README highlight gif lands in assets/demo.gif.
+## ../private/demo-video/; the README highlight gif goes in assets/demo.gif.
 DEMO_ENABLE=0
 
 ## Full run output is tee'd here (gitignored) so warnings from any stage can be

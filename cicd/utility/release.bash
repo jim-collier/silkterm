@@ -39,7 +39,7 @@ esac; done
 die(){ echo "FAILED: $*" >&2; exit 1; }
 
 ## 1. Preconditions: releases only cut from a clean main, with the version
-## already bumped on dev (so no commit ever lands directly on main here).
+## already bumped on dev (so no commit ever goes directly onto main here).
 branch="$(git rev-parse --abbrev-ref HEAD)"
 [[ "$branch" == "main" ]] || die "not on main (on ${branch}); merge dev --no-ff into main first"
 git diff --quiet && git diff --cached --quiet || die "working tree not clean"

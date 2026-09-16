@@ -200,7 +200,7 @@ impl OffStrip {
 // Lines that entered the scrollback between two depth samples. A DROP can only
 // mean the buffer was cleared (`clear`'s E3), and everything left in it arrived
 // after that, so the whole of it is new; anything else is ordinary growth. The
-// count alone can't distinguish a clear-and-refill that lands on the same depth,
+// count alone can't distinguish a clear-and-refill that ends on the same depth,
 // which is why this is sampled per PTY read cycle rather than per frame.
 fn pushed_since(history: usize, baseline: usize) -> usize {
 	if history < baseline {
@@ -630,7 +630,7 @@ fn cursor_cycle(anim: &str, blink_rate_ms: f32) -> (f32, f32) {
 }
 
 // Was a cursor move the echo of user input, or the program's own output? The
-// echo of a keystroke lands within a frame or two of the write; anything later
+// echo of a keystroke arrives within a frame or two of the write; anything later
 // belongs to whatever is running.
 fn move_is_input(typed_at: Option<std::time::Instant>, now: std::time::Instant) -> bool {
 	typed_at.is_some_and(|at| now.saturating_duration_since(at).as_secs_f32() < TYPED_ECHO_S)
@@ -776,7 +776,7 @@ const BAR_MIN_THUMB: f32 = 1.6;
 // the configured thickness it widens.
 const BAR_HOVER_SLOP: f32 = 6.0;
 
-// Where a press landed on the scrollbar.
+// Where a press hit the scrollbar.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BarHit {
 	// on the handle: `f32` is the grab offset from the thumb's top edge
@@ -875,7 +875,7 @@ pub struct PaneDraw {
 // The region clip is WELDED to the shifted content's extent, not just the band
 // boundaries: the current-frame draw is the whole buffer translated by voff, so
 // band rows ride into the region during a slide - the title's glyphs (and their
-// scrim) land voff below the real title, the status rows land voff above theirs
+// scrim) sit voff below the real title, the status rows sit voff above theirs
 // - rendering as ghost copies that bounce with the ease. Clipping at the
 // content edge cuts them off; the strip owns the gap on the other side of the
 // weld.
@@ -982,7 +982,7 @@ pub struct Pane {
 	last_alt: bool,
 	// Set by hard_cut() when this pane comes back from a freeze (hidden tab,
 	// minimized window): the next build treats the gap like an alt-screen swap -
-	// rebaseline the scroll detectors, suppress the nudge, land instantly.
+	// rebaseline the scroll detectors, suppress the nudge, jump instantly.
 	pending_cut: bool,
 	// Fallback glyphs (not in the primary mono font) pulled out of `buffer` and
 	// drawn one-per-cell so their font advance can't shift the row. `glyph_cache`
@@ -1039,7 +1039,7 @@ pub struct Pane {
 	map: Minimap,
 	pub map_drag: Option<f32>,
 	// Hyperlink hover: the pointer in window px (None = not over this pane), the
-	// link it landed on, and a request to re-scan. The scan needs the grid, so it
+	// link it hit, and a request to re-scan. The scan needs the grid, so it
 	// runs in build() where the term lock is already held - on the frame the
 	// pointer changed cell, and on any frame that re-shaped text (output moves the
 	// span out from under a pointer that never moved).
@@ -1115,7 +1115,7 @@ impl Pane {
 		force_rebuild: bool,
 		active: bool, // the focused pane of the focused window (cursor animates only there)
 	) {
-		// Result lands in self.last_draw (read via draw()) - returning it by value
+		// Result goes in self.last_draw (read via draw()) - returning it by value
 		// cloned the whole bg-quad Vec per pane per frame.
 		let cell_w = ctx.cell_w;
 		let cell_h = ctx.cell_h;
@@ -1154,7 +1154,7 @@ impl Pane {
 		// in. `gesture_active` (an alt-scroll slide already easing) freezes the band
 		// sizes across a continuous scroll - see the app-scroll block. The output
 		// ease itself needs no cutting here: the alt grid has no scrollback, so the
-		// set_max(0) below lands it (see Scroll::set_max for the wobble that came
+		// set_max(0) below stops it (see Scroll::set_max for the wobble that came
 		// from letting it run on).
 		let alt = self.mode.contains(TermMode::ALT_SCREEN);
 		// a freeze catch-up (pending_cut) is the same shape as the screen swap:
@@ -1347,7 +1347,7 @@ impl Pane {
 					self.slide_static = lines - bottom;
 				}
 				// An overlay repainted over the strip-side edge is held as well. It may
-				// grow mid-gesture, since a build can land between the scroll and the
+				// grow mid-gesture, since a build can fall between the scroll and the
 				// repaint.
 				let over = repainted_edge(&rows, &self.last_rows, &region, step);
 				let held = if step > 0 {
@@ -1633,7 +1633,7 @@ impl Pane {
 				} else {
 					grid_line + display_offset
 				};
-				// a scrolled-view line that lands under the band is hidden by it
+				// a scrolled-view line that sits under the band is hidden by it
 				if screen_row < 0
 					|| screen_row >= lines as i32
 					|| (ob > 0 && grid_line < split_row && screen_row >= split_row)
@@ -1788,7 +1788,7 @@ impl Pane {
 		}
 		// End the current row and start a fresh one. Run state (color/bold/italic)
 		// deliberately carries over: `run` is empty here, so an unchanged attribute
-		// at the start of the next row just keeps appending. Rows land in recycled
+		// at the start of the next row just keeps appending. Rows go in recycled
 		// scratch slots so their String capacity survives across frames.
 		macro_rules! flush_row {
 			() => {
@@ -2154,7 +2154,7 @@ impl Pane {
 		}
 	}
 
-	// A re-scan is pending, so the frame it lands on must actually be drawn.
+	// A re-scan is pending, so the frame it falls on must actually be drawn.
 	pub fn link_probing(&self) -> bool {
 		self.link_probe
 	}
@@ -2305,7 +2305,7 @@ impl Pane {
 		})
 	}
 
-	// Would a press at (x, y) land on the bar, and where? None when the bar is
+	// Would a press at (x, y) hit the bar, and where? None when the bar is
 	// faded out, so clicks fall through to selection exactly when it's invisible.
 	pub fn bar_hit(&self, x: f32, y: f32, ctx: &TextCtx, cfg: &config::Settings) -> Option<BarHit> {
 		let bar = self.scrollbar(ctx, cfg)?;
@@ -2408,7 +2408,7 @@ impl Pane {
 		self.map.wake()
 	}
 
-	// Start a marker drag, remembering where inside it the grab landed.
+	// Start a marker drag, remembering where inside it the grab was.
 	pub fn map_grab(&mut self, y: f32, ctx: &TextCtx, cfg: &config::Settings) {
 		if let Some(handle) = self.minimap(ctx, cfg).and_then(|g| g.handle) {
 			self.map_drag = Some(y - handle.y);
@@ -2441,7 +2441,7 @@ impl Pane {
 	}
 
 	// Coming back from a freeze (hidden tab shown, minimized window restored):
-	// everything that happened meanwhile lands as one instant cut. Snap any
+	// everything that happened meanwhile arrives as one instant cut. Snap any
 	// leftover motion now and flag the next build to rebaseline its scroll
 	// detectors instead of easing across the gap - that ease is the bounce class.
 	pub fn hard_cut(&mut self) {
@@ -2454,7 +2454,7 @@ impl Pane {
 	// reads zero across a clear-and-refill that pushed a whole screenful past -
 	// repeating `clear; ls -lA ~/` eased the first time and snapped every time
 	// after, because the identical listing refilled the buffer to the identical
-	// depth. A build never sees the dip (the clear and the output land in one
+	// depth. A build never sees the dip (the clear and the output arrive in one
 	// parse cycle), but a wakeup does, so accumulate here instead: a DROP can only
 	// mean the scrollback was cleared, and everything left in it arrived after
 	// that, so the whole of it is new. `try_lock_unfair` and give up on a miss -
@@ -3594,7 +3594,7 @@ fn spawn_pane(
 // Where the captured output starts, as a capture-time absolute line index.
 // `cmd_start` was recorded at arm time in "history + row" coordinates, but that
 // origin moves once the scrollback is at cap: each pushed line evicts the
-// oldest, shifting every absolute index down, so the stale index lands past the
+// oldest, shifting every absolute index down, so the stale index falls past the
 // start and the copy silently drops the first lines of the output. Re-find the
 // arm-time prompt row by its content hash instead, scanning back from the end
 // (the nearest match is the arm-time prompt unless the output itself repeats
@@ -4721,7 +4721,7 @@ mod tests {
 			),
 			"the grab zone must widen with the gap it catches"
 		);
-		// and one that lands well clear of it does not
+		// and one that falls well clear of it does not
 		path.clear();
 		assert!(
 			divider_at(&root, area, seam - reach * 3.0, 100.0, 2.0, &mut path).is_none(),
@@ -4767,7 +4767,7 @@ mod tests {
 		// 0.7 -> wrap -> 0.5 is 0.8 of a period at 0.01/step (float slack of one)
 		assert!((79..=81).contains(&steps), "steps = {steps}");
 		assert!(((t / period).fract() - 0.5).abs() < 1e-6);
-		// phase mode: full_phase 0.0 - arrival lands on a whole-period multiple
+		// phase mode: full_phase 0.0 - arrival falls on a whole-period multiple
 		let (p, arrived) = glide_to_full(0.95, 0.1, period, 0.0);
 		assert!(arrived);
 		assert!((p / period).fract().abs() < 1e-6 || ((p / period).fract() - 1.0).abs() < 1e-6);
@@ -5448,7 +5448,7 @@ mod tests {
 		// listing re-prints the first one's rows lower down while the originals
 		// stay put. That's a COPY, not a translate - the blank field below
 		// supplies enough positional matches to clear `need`, and the repeated
-		// rows land on formerly-blank targets, so the old moved test passed and
+		// rows fall on formerly-blank targets, so the old moved test passed and
 		// the brand-new output slid down out from under the prompt. The vacated
 		// half of the moved test rejects it: the sources never left.
 		const B: u64 = 77; // blank row fingerprint (identical for every blank row)
@@ -5541,7 +5541,7 @@ mod tests {
 			baseline = depth;
 		}
 		assert_eq!(pushed, 10, "20 - 10, however many samples were dropped");
-		// and a truncation inside the gap still lands in full
+		// and a truncation inside the gap still arrives in full
 		let mut pushed = 0usize;
 		pushed += pushed_since(30, 20); // grew
 		pushed += pushed_since(8, 30); // cleared, refilled to 8
@@ -6101,8 +6101,8 @@ mod tests {
 
 	#[test]
 	fn output_frame_refreshes_snapshot_so_repaint_probe_cannot_reslide() {
-		// One shell "enter", as frames: the scroll lands in a grew=1 frame (animated
-		// by the output ease), the prompt redraw lands one frame later with grew=0 -
+		// One shell "enter", as frames: the scroll arrives in a grew=1 frame (animated
+		// by the output ease), the prompt redraw arrives one frame later with grew=0 -
 		// a slide frame. A snapshot left stale across the grew frame makes that
 		// slide frame read the eased scroll as a fresh 1-line repaint shift and
 		// slide it a second time - the "down one line, then up two" output judder.
@@ -6289,7 +6289,7 @@ mod tests {
 
 	// A URL that runs past the right edge is ONE logical line, so the scan has to
 	// span the wrap - otherwise hovering the tail half finds a fragment, or
-	// nothing, depending on where the break landed.
+	// nothing, depending on where the break fell.
 	#[test]
 	fn a_wrapped_url_is_found_whole_from_either_half() {
 		let cols = 20;

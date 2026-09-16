@@ -14,7 +14,7 @@
 ##		   nano / muffer - static title bar held still, the region under it slides
 ##		   tmux         - a real scroll region (DECSTBM + linefeeds) slides off the engine's count
 ##		   pill         - a pill repainted over a recorded region's edge is held still
-##		   altenter     - a burst still easing when an alt screen takes over lands at rest
+##		   altenter     - a burst still easing when an alt screen takes over comes to rest
 ##		   chrome       - output easing under a live block redrawn in place holds the block still
 ##		Plain shell-output easing is covered by the library tests (cargo test); the
 ##		"jumping / re-listing / bottom-up" symptoms map to those monotonicity checks.
@@ -271,7 +271,7 @@ run_scene tmux   tmux   slide 0 1
 ## back): held with the two rows under the region.
 run_scene pill   pill   slide 2 3
 ## A burst still easing when the alt screen takes over (git commit opening nano):
-## no scrollback behind it, so the view must land at rest - frac 0 on every frame.
+## no scrollback behind it, so the view must be at rest - frac 0 on every frame.
 run_scene altenter altenter still -1
 ## muffer's shape: new transcript lines ease in above a block it redraws in
 ## place, which must hold still (three block rows plus the blank cursor row).

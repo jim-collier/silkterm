@@ -35,8 +35,8 @@ use crate::config;
 //              a braking distance behind the live bottom (the reserve), so the
 //              moment output ceases the speed rides this curve down instead of
 //              stopping dead. Traced backwards from Ease-out: it ends exactly
-//              where the landing begins.
-//   Ease-out   the landing: the last STOP_BAND of a line closes at the speed
+//              where the stop begins.
+//   Ease-out   the stop: the last STOP_BAND of a line closes at the speed
 //              that covers the band in `scroll_ease_out_ms`, never past the
 //              target. Y ends at 0 by construction.
 //
@@ -137,7 +137,7 @@ impl Chase {
 			let onscreen_v = 1000.0 / cfg.scroll_single_screen_tau_ms.max(1.0);
 			self.speed = self.speed.min(onscreen_v);
 		}
-		// braking: halving per "Ramp-down" from here must land on the ease-out
+		// braking: halving per "Ramp-down" from here must meet the ease-out
 		// handoff (the STOP_BAND edge, at its closing speed) with no backlog left
 		let v_land = STOP_BAND * 1000.0 / cfg.scroll_ease_out_ms.max(1.0);
 		let brake_tau_s = cfg.scroll_ramp_down_ms.max(1.0) / 1000.0 / std::f32::consts::LN_2;
@@ -158,7 +158,7 @@ pub struct Scroll {
 	app_mid: f32,     // the slide's cascade stage, as `mid` is to `visual`
 	app_chase: Chase, // the slide's own chase, so an app's scroll eases like output
 	sweep: bool,      // user jumped back to the bottom: full ease speed until caught up
-	wheel_dir: f32,   // sign of the last wheel motion, so the detent lands ahead of it
+	wheel_dir: f32,   // sign of the last wheel motion, so the detent sits ahead of it
 }
 
 impl Scroll {
@@ -213,7 +213,7 @@ impl Scroll {
 		self.app_chase = Chase::REST;
 	}
 
-	// Freeze catch-up (hidden tab shown, minimized window restored): land at rest
+	// Freeze catch-up (hidden tab shown, minimized window restored): be at rest
 	// instantly. Anything left easing was invisible while frozen, and the pending
 	// backlog must not ease in - that is the bounce class.
 	pub fn snap(&mut self) {
@@ -235,7 +235,7 @@ impl Scroll {
 	// whole part pinned while the fraction keeps cycling - and every wrap of it
 	// is a whole-cell hop. That was nano's wobble: a burst still easing when the
 	// alt screen (no scrollback, so max 0) took over hopped once per line of the
-	// leftover backlog. Clamping here also lands the ease the instant the screen
+	// leftover backlog. Clamping here also stops the ease the instant the screen
 	// swaps, which is the cut an alt-screen entry wants anyway.
 	pub fn set_max(&mut self, history_lines: f32) {
 		self.max = history_lines.max(0.0);
@@ -253,7 +253,7 @@ impl Scroll {
 			self.wheel_dir = lines.signum();
 		}
 		self.target = (self.target + lines).clamp(0.0, self.max);
-		// a wheel that lands back on the bottom is still the user driving: the
+		// a wheel that comes back to the bottom is still the user driving: the
 		// remaining gap sweeps at full ease speed, not the output chase
 		self.sweep = true;
 	}
@@ -321,7 +321,7 @@ impl Scroll {
 	// answer and it is wrong at the end of a gesture: a scroll that stops nine
 	// tenths of a line past a boundary would go all the way forward and then hop
 	// back, which reads as a glitch even though the distance is under a line. So a
-	// wheel lands on the line AHEAD of where it stopped, in the direction it was
+	// wheel goes to the line AHEAD of where it stopped, in the direction it was
 	// already going. A thumb drag or a track click has no direction of its own and
 	// still rounds to nearest.
 	fn detent(&self) -> f32 {
@@ -342,7 +342,7 @@ impl Scroll {
 		// one settings() snapshot per call - this runs per pane per frame
 		let cfg = config::settings();
 		if !cfg.scroll_smooth {
-			// master off: every scroll lands instantly, on a whole line
+			// master off: every scroll happens instantly, on a whole line
 			self.target = self.target.round().clamp(0.0, self.max);
 			self.snap();
 			return;
@@ -545,7 +545,7 @@ mod tests {
 		assert!(!s.animating());
 		assert_eq!(s.desired_offset(), 3);
 		assert!(s.frac().abs() < 1e-6, "frac {} at rest", s.frac());
-		// accumulating many small fractional notches also lands on a line
+		// accumulating many small fractional notches also ends on a line
 		let mut t = Scroll::new();
 		t.set_max(100.0);
 		for _ in 0..7 {
@@ -1002,7 +1002,7 @@ mod tests {
 	#[test]
 	fn the_tail_sweeps_in_instead_of_crawling() {
 		let _g = pin();
-		// Once within STOP_BAND of the target the remainder must land in well
+		// Once within STOP_BAND of the target the remainder must fall in well
 		// under half a second - the sharpened stop. The bare exponential took
 		// over a second to close the same distance at the default tau.
 		let mut s = Scroll::new();
@@ -1159,7 +1159,7 @@ mod tests {
 		// The reserve: while output pours in at a steady rate, the braking cap
 		// keeps the view a wind-down's distance behind the bottom - so the
 		// moment output ceases, the speed rides the ramp-down curve to the
-		// landing instead of falling off a cliff. Reach the steady state
+		// stop instead of falling off a cliff. Reach the steady state
 		// first, then stop feeding and watch the descent.
 		let mut s = Scroll::new();
 		s.set_max(50_000.0);
@@ -1250,7 +1250,7 @@ mod tests {
 	}
 
 	// A burst still easing when an alt-screen app takes over: the alt grid has no
-	// scrollback, so there is nothing to ease through. The view must land at rest
+	// scrollback, so there is nothing to ease through. The view must be at rest
 	// on the spot - left past the grid, its fraction wrapped through a whole cell
 	// once per line of leftover backlog (the nano wobble).
 	#[test]

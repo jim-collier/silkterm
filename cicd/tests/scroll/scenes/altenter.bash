@@ -2,7 +2,7 @@
 
 ## A burst of plain output that is still easing when a full-screen app takes over.
 ## Models `git commit` opening nano right after a long push: the alt screen has no
-## scrollback, so the view must land at rest the moment it swaps in. The gap is
+## scrollback, so the view must be at rest the moment it swaps in. The gap is
 ## what puts the ease mid-flight - without it the burst and the swap arrive in one
 ## read cycle and nothing eases at all. The nano-shaped paint that follows is held
 ## still, so every alt-screen frame should carry a zero fraction.

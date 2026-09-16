@@ -140,7 +140,7 @@ $Targets = @(
 	[pscustomobject]@{ Arch="arm64";  Tk="gnullvm"; Triple="aarch64-pc-windows-gnullvm"; OsArch="windows-arm64-gnullvm";  Builder="zigbuild"; Arm=$true  }
 )
 
-## Collected release binaries + checksums land here (its own dir so the Linux
+## Collected release binaries + checksums go here (its own dir so the Linux
 ## pipeline's cicd/artifacts/release wipe can't nuke Windows artifacts, or v.v.).
 $ReleaseArtifactDir = Join-Path $Root "cicd\artifacts\release-win"
 
@@ -564,7 +564,7 @@ function fLintAdvisory {
 ## It builds THIS working tree over /mnt rather than a second checkout, so there
 ## is nothing to keep in sync. Reading the source over 9p was measured and costs
 ## nothing. CARGO_TARGET_DIR is the part that matters: left alone, the Linux build
-## would land in the same target\ the Windows build just used, and the two would
+## would go in the same target\ the Windows build just used, and the two would
 ## evict each other's artifacts on every run. It has to point somewhere native.
 
 ## WSL2 distribution names, the default one first. WSL_UTF8 stops `wsl --list`

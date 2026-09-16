@@ -147,7 +147,7 @@ The ease curve is deliberately asymmetric. A single exponential lerp starts at p
 
 Same mechanism: when new output pushes content up, animate `visual_offset` from +1 line back to 0 over the easing window instead of snapping. Treat output-scroll as an animated target like wheel-scroll.
 
-The view never sits past the grid. The whole part of the offset is what the grid is scrolled by and the fraction is drawn, so an offset beyond the scrollback would pin the whole part while the fraction kept wrapping, one whole-cell hop per line. That was the nano wobble: a burst still easing when the alt screen (no scrollback) took over. The offset is clamped to the scrollback instead, which lands the ease the instant a screen swaps and caps how far a fresh terminal's first output eases.
+The view never sits past the grid. The whole part of the offset is what the grid is scrolled by and the fraction is drawn, so an offset beyond the scrollback would pin the whole part while the fraction kept wrapping, one whole-cell hop per line. That was the nano wobble: a burst still easing when the alt screen (no scrollback) took over. The offset is clamped to the scrollback instead, which stops the ease the instant a screen swaps and caps how far a fresh terminal's first output eases.
 
 Lines a program redraws in place at the bottom hold still while output eases. A progress line, apt's status bar, or a live input block under a transcript did not move in the grid, but the ease shifted the whole pane, so they dropped a row with every new line and slid back up. That showed as a sharp horizontal seam at the top edge of those lines.
 
@@ -173,9 +173,9 @@ Catch-up speed is modeled as one curve on a time/speed graph, and each setting i
 
 The segments are straight lines and exponentials adjusted by time, rather than one smooth sigmoid-family curve per segment. That is the shape language audio and video production use, it is cheap to compute, and each knob stays a plain duration.
 
-Winding down is the same curve traced backwards. Ramp-down is a braking curve computed from Ease-out's landing point: at any moment the speed may not exceed what could still be wound down, halving per the Ramp-down period, within the lines left to render. Applied continuously, that one rule is both the reserve and the deceleration. At speed, the view deliberately trails the live output by a braking distance. The moment output ceases, the speed rides the curve down and hands off to Ease-out exactly at the landing band. An earlier design only relaxed the speed during a lull, which in practice never fired. The ramp-down knob read as inert, and stops from speed were cliffs.
+Winding down is the same curve traced backwards. Ramp-down is a braking curve computed from where Ease-out comes to rest: at any moment the speed may not exceed what could still be wound down, halving per the Ramp-down period, within the lines left to render. Applied continuously, that one rule is both the reserve and the deceleration. At speed, the view deliberately trails the live output by a braking distance. The moment output ceases, the speed rides the curve down and hands off to Ease-out exactly at the stopping band. An earlier design only relaxed the speed during a lull, which in practice never fired. The ramp-down knob read as inert, and stops from speed were cliffs.
 
-While a burst is in flight the chase drives the view outright. It used to be a speed CAP on the plain navigation ease, which only bit while the ease was the faster of the two - so a short advance got the navigation ease instead, decaying on a fixed constant none of the five settings reach, and then visibly picked back up when the sharpened stop took over. A prompt returning after a command is one or two lines, so it stalled every time. The chase already ends exactly where the landing band begins, which means it needs nothing handed to it and nothing left over.
+While a burst is in flight the chase drives the view outright. It used to be a speed CAP on the plain navigation ease, which only bit while the ease was the faster of the two - so a short advance got the navigation ease instead, decaying on a fixed constant none of the five settings reach, and then visibly picked back up when the sharpened stop took over. A prompt returning after a command is one or two lines, so it stalled every time. The chase already ends exactly where the stopping band begins, which means it needs nothing handed to it and nothing left over.
 
 The backlog is deliberately not capped in lines. An earlier design capped it at 16 and drove speed from backlog depth. Any real burst filled the cap in about a tenth of a second, after which the view rode the raw output rate and the speed settings had no perceivable effect. The ramps bound the lag in time instead: about one ramp-down period at a steady rate. That is what makes the slow start physically possible. User navigation is exempt from the chase. Wheel and scrollbar keep a plain fixed ease, and a jump back to the bottom sweeps home at full ease speed.
 
@@ -189,7 +189,7 @@ The five settings that shape all of this are presented in the order they are wat
 
 - Ramp-down: how gradually it winds down.
 
-- Ease-out: how gently it lands.
+- Ease-out: how gently it comes to rest.
 
 A sixth, the initial scroll speed, was removed. It fed four separate mechanisms at once, which made every slider appear to influence every other, and the curve's own Ease-in now owns leaving rest.
 
@@ -269,7 +269,7 @@ What a line looks like:
 
 - Across a line, coverage adds up, so a short or indented line reads as one. Down the column, color is averaged over only the lines that have ink, so a lone red line among blanks keeps its color rather than fading into them.
 
-- How bright a pixel row gets is how much ink actually landed in it, so a mostly blank stretch reads dimmer than a solid page. That is what makes density legible from a distance. One inked line among many would otherwise almost vanish, so a pixel never falls below a set share of the strongest line in it.
+- How bright a pixel row gets is how much ink actually fell in it, so a mostly blank stretch reads dimmer than a solid page. That is what makes density legible from a distance. One inked line among many would otherwise almost vanish, so a pixel never falls below a set share of the strongest line in it.
 
 - A line does not fill its own height. Once a line draws more than a pixel tall, the gap above and below is what stops a page of text reading as one block; below a pixel there is no room for a gap and the line is taken whole, with the two ramped between so the map does not change brightness as a growing buffer crosses that point.
 
@@ -364,7 +364,7 @@ One setting decides how much the look may cost, so a slow machine is a choice on
 
 - A remote screen is not rated and nothing is written for it. Every frame is encoded and shipped over a network, so the graphics card says nothing about what the person sees, and a benchmark on it would only flatter the machine; the session runs under the Remote profile instead and the console's rating stays as it was. An adapter with no card behind it goes to Low, untimed, decided before anything renders.
 
-- Anything else is timed. The window comes up whole, the wallpaper lands, and then a banner takes the window while three rungs are measured in turn: Max silk, High, Low, each put live and given up to about a second of full-rate frames. The first whose median frame period fits the display's refresh budget is the answer. The window keeps drawing underneath the banner, dimmed, because what is being timed is worth seeing; it takes no input, because a keystroke would change the measurement. Standard terminal is never timed - it is what is left when Low misses. A rung several times past the budget ends the run outright, since no profile below it changes the per-pixel work by that much, and that is also the case that would otherwise take longest to measure.
+- Anything else is timed. The window comes up whole, the wallpaper appears, and then a banner takes the window while three rungs are measured in turn: Max silk, High, Low, each put live and given up to about a second of full-rate frames. The first whose median frame period fits the display's refresh budget is the answer. The window keeps drawing underneath the banner, dimmed, because what is being timed is worth seeing; it takes no input, because a keystroke would change the measurement. Standard terminal is never timed - it is what is left when Low misses. A rung several times past the budget ends the run outright, since no profile below it changes the per-pixel work by that much, and that is also the case that would otherwise take longest to measure.
 
 - The display is still watched afterwards. When the median frame over a window of eased frames runs half again past the refresh period, the profile steps down one rung until SilkTerm restarts. Nothing is written, and the next launch starts from the rated profile again. The watch stops at Low. Low keeps the wallpaper, which costs nothing per frame, and Standard terminal turns off the eased frames being measured, so a step there could never be checked again. Only a window with focus is counted. A frame several times past the budget is not counted at all, because a monitor asleep under the NVIDIA driver paces a GL client at 1 fps, and an idle gap is not a frame either. Eases more than 30 seconds apart start a new window, so a verdict comes from one sitting. It never steps back up within a session, because a lighter profile renders less, so a fast run under it says nothing about the heavier one. A hand pick or a measured rating lifts the step, and a hand pick with automatic off stays put.
 	- This reverses the earlier rule that the step was written down. A written step made one window's misreading every later window's setting, with no way back while automatic was on. It took a 60 Hz desktop with a discrete card down to Standard terminal overnight, and the wallpaper with it.
@@ -377,7 +377,7 @@ One setting decides how much the look may cost, so a slow machine is a choice on
 
 ### Font fallback stack
 
-One monospace family is pinned for every weight, because the shaper picks the best face per query and would otherwise let a bold run land in a different family than the regular run beside it.
+One monospace family is pinned for every weight, because the shaper picks the best face per query and would otherwise let a bold run end up in a different family than the regular run beside it.
 
 Which family that is comes from a single search order, the same on every platform:
 
@@ -435,7 +435,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - **A measurement TAKEN in real pixels must convert the constant beside it, not the other way about.** Text is measured against the font, which is real pixels by nature; the clear space that goes around it is written in DIP. Adding the two as they stand and dividing the sum at the dialog's boundary shrinks the constant by the scale factor - so at 2x a tab's title had half the clear space its own box allowed for and sat flush against the right edge, and above that it ran past it. Every such site converts the constant where it is used, exactly as the main window's chrome does. There is one rule for it, so the four places that size the dialog's columns cannot drift apart.
 
-- Conversion rounds to whole pixels. A rule or a hairline that landed between two of them would come out soft, and the one-pixel gap between panes is the extreme case: on a screen scaled below 1x, rounding alone would take it to nothing, so a measurement asked to be visible never rounds away.
+- Conversion rounds to whole pixels. A rule or a hairline that fell between two of them would come out soft, and the one-pixel gap between panes is the extreme case: on a screen scaled below 1x, rounding alone would take it to nothing, so a measurement asked to be visible never rounds away.
 
 - A raw-pixel measurement is invisible at 1x and only thins out as the scale factor rises, which makes this the kind of mistake nobody sees on the machine they wrote it on. So the scale factor can be overridden from the environment (`SILK_SCALE`), and a high-DPI layout can be looked at on an ordinary display. Off X11 there is no other way to ask for one.
 
@@ -445,7 +445,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - The dialog's own accents follow the theme. They used to be a fixed blue while the theme's attention color was something else entirely, so the panel could not agree with the terminal it belonged to. The pressed-button fill is that color mixed back toward the panel, which is what makes a pressed button read as pressed rather than as the focused one.
 
-- A focused field shows one outline, not two. The ring lands exactly on the box's own outline and the box stands its border down. Where the ring genuinely spans more than one control, such as a color chip and its hex field, it stays a little outside instead, and only the field's border gives way.
+- A focused field shows one outline, not two. The ring sits exactly on the box's own outline and the box stands its border down. Where the ring genuinely spans more than one control, such as a color chip and its hex field, it stays a little outside instead, and only the field's border gives way.
 
 - Tabs sit on a recessed **Gutter** strip and stand on the rule that closes it off, the way tabbed interfaces generally read. The current tab is a lighter gray rather than an accent: "you are here" is not the same job as "look at this". Above the rows there is no heading repeating the tab's own name, since the strip has said it already.
 
@@ -457,7 +457,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - Only labels move. Every control keeps the one column it shares with every other row, because a settings list is scanned down that column and a control that wandered with its label would break it. A sub-group is therefore free of any bookkeeping. It is read off the indentation rather than declared a second time, so the leader and its members cannot disagree about who belongs to what.
 
-- A fraction stored as a decimal is shown as a whole percent. Nobody thinks in 0.35, and the file is a different audience from the dialog. The decimal is what the renderer wants and what a hand-edited config should keep. The two directions are exact inverses, so reverting one lands on its own default rather than a hair off it.
+- A fraction stored as a decimal is shown as a whole percent. Nobody thinks in 0.35, and the file is a different audience from the dialog. The decimal is what the renderer wants and what a hand-edited config should keep. The two directions are exact inverses, so reverting one gives back its own default rather than a hair off it.
 
 - The tabs follow what a person is looking at rather than what the code calls it: Background, Text, Cursor, Movement, Themes, Window. Settings that describe one subject sit together even when they are implemented in different places. The cursor's shape, its animation and whether it joins the text halo are all "cursor" to the person changing them.
 
@@ -489,7 +489,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - **What a scan may do to the list is deliberately lopsided.** It may add a shell it found, and it may switch off one whose program has gone - keeping the entry, its title, its flags and its place, since a shell that is merely uninstalled is not a shell the user stopped wanting. It may never switch one back on, and never rewrite a command line. A scan cannot tell a program that came back from a switch somebody turned off on purpose, and the cost of guessing wrong runs one way: quietly re-enabling something the user disabled is worse than leaving them one tick to undo.
 
-- Two shells count as one entry when they run the same program with the same arguments. Which program that is has to be resolved rather than compared as text, because the same shell is written several ways (`bash`, `/bin/bash`) and, on Windows, three environments ship a program called `bash` and they are not the same shell. Where a stored entry resolves nowhere at all, a bare name match is enough - that is what lets a reinstall re-arm the disabled entry it belongs to instead of landing beside it as a second copy.
+- Two shells count as one entry when they run the same program with the same arguments. Which program that is has to be resolved rather than compared as text, because the same shell is written several ways (`bash`, `/bin/bash`) and, on Windows, three environments ship a program called `bash` and they are not the same shell. Where a stored entry resolves nowhere at all, a bare name match is enough - that is what lets a reinstall re-arm the disabled entry it belongs to instead of sitting beside it as a second copy.
 
 - **The order a fresh list arrives in is stated outright, in one place, rather than falling out of the sequence the looking happens to run in.** Each find is put in a group and the whole set is sorted once at the end. On unix the user's own login shell leads - nothing may sort above it, since the top of the list is what "default shell" means - then the modern cross-platform shells, the language REPLs, and the rest of the POSIX family. Windows has no user shell, so it is stated instead: PowerShell 7, the modern shells, the WSL distributions, the three POSIX-environment bashes, PyCmd, the language REPLs, Windows Cmd, and last the two Windows PowerShell 5 entries - the ones you reach for when something needs them rather than the one you open a terminal to get. Groups that hold shells of equal standing sort alphabetically inside themselves; groups that hold one shell built several ways keep a curated order, which is why MSYS2's full bash is offered above the mini one Git ships.
 
@@ -497,7 +497,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - WSL distributions are read from the registry, never by asking `wsl.exe`. A WSL2 distribution lives in a virtual disk, and listing what is installed must not be the thing that boots a virtual machine - that would be slow, surprising, and arguably a security problem for the user. Each distribution is offered whole, running its own default shell; anyone who wants a particular shell inside one edits the entry to say so. Its generation is part of its name (`WSL2; Ubuntu`), because that is the whole difference between two rows that would otherwise read identically, and the WSL2 ones are offered above the WSL1 ones. Both are offered where both exist: a WSL1 distribution is installed and usable, and hiding one because a newer-generation one sits beside it is not a call a scan gets to make. The generation is a bit in the distribution's registry flags - the `Version` value beside it is the registration format's version and reads 2 for a WSL1 distribution just as happily.
 
-- **The Shell tab is the one place allowed to write the list, and a scan landing while it is open is folded into it rather than fought with.** Everywhere else the dialog carries the live list through untouched on Apply: a dialog that opened before a scan landed would otherwise write back the empty list it copied then, emptying the menu for the rest of the session while the file on disk still had every shell in it. The tab needs to write it, so instead the scan is folded into BOTH of the dialog's copies - the edited one, so the user sees what turned up, and the baseline, so the fold does not read as an edit they made. Because a scan only ever appends and switches off, folding it into work already done cannot undo any of it.
+- **The Shell tab is the one place allowed to write the list, and a scan that arrives while it is open is folded into it rather than fought with.** Everywhere else the dialog carries the live list through untouched on Apply: a dialog that opened before a scan arrived would otherwise write back the empty list it copied then, emptying the menu for the rest of the session while the file on disk still had every shell in it. The tab needs to write it, so instead the scan is folded into BOTH of the dialog's copies - the edited one, so the user sees what turned up, and the baseline, so the fold does not read as an edit they made. Because a scan only ever appends and switches off, folding it into work already done cannot undo any of it.
 
 - The grid edits every field in the row rather than through a popup: it costs fewer clicks and reuses the field machinery the dialog already has. Four columns are fixed-width and the command takes whatever width is left, since it is the one value that is routinely too long to read at a glance. "Last seen" is read-only - it is the program's own note about the entry, and it is what makes a switched-off shell explicable. The command is required, which is enforced in the two places it can be broken: emptying the field leaves the stored command standing, and an entry that never got one is dropped on the way out of the dialog rather than written as a shell that names nothing to run.
 
@@ -567,7 +567,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - Measured on the Windows box, the folding costs nothing and saves a great deal: throughput is unchanged (11.8 against 11.7 MB/s over four alternating pairs) while the process burns a third less CPU and the window thread less than half - the 2.5 seconds that used to go into the operating system's message queue was more than parsing and drawing put together.
 
-- The notice is re-armed BEFORE the window acts on it, so a read cycle landing mid-handling posts a fresh one rather than being dropped. That ordering is the whole safety argument, and it is what a unit test pins.
+- The notice is re-armed BEFORE the window acts on it, so a read cycle that arrives mid-handling posts a fresh one rather than being dropped. That ordering is the whole safety argument, and it is what a unit test pins.
 
 ### A character handed to the window is typing (2026-09-09)
 
@@ -644,7 +644,7 @@ Three defects came out of building it, all fixed with it: a program could put co
 
 - The config file itself is a deliberate exception. Window size, font metrics and theme all come from it, and the window is held hidden until it can open at its final size. Reading it later would only trade a small local read for a visible resize flash.
 
-- The same shape is intended for shell discovery when that lands: draw first, scan for installed shells afterwards, fold in what was found.
+- The same shape is intended for shell discovery when that arrives: draw first, scan for installed shells afterwards, fold in what was found.
 
 ### Configuration format
 

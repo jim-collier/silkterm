@@ -111,7 +111,7 @@ def section(text):
 
 def die(text):
 	echo_clean()
-	sys.stdout.flush()                             ## or the reason lands above its own output
+	sys.stdout.flush()                             ## or the reason appears above its own output
 	print("[ FAILED: %s ]" % text, file=sys.stderr)
 	sys.exit(1)
 
