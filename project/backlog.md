@@ -171,11 +171,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 4 (F36, should-fix): A saved theme makes every launch report its settings as unread typos.
 		- Saved themes are skipped under the name they are really stored under. The check's own test had used the wrong name, which is why it passed, and now uses the right one.
 	- ✅ Code review 20260914 item 5 (F37, should-fix): A `$` or `%` in a shell's arguments is expanded as a variable, so `cmd /k prompt $P$G` loses its prompt.
-		- Decided: read only this platform's own spelling, rather than expanding the program word alone. Reading both platforms' spellings was the part that kept finding new ways to be wrong.
-		- Fixed: `expand_vars` takes `%NAME%` on Windows, `$NAME` and `${NAME}` elsewhere. `$env:` is gone as a spelling, and names are no longer paired across platforms. `~` is unchanged.
-		- Fixed: `shell.startup_directory` defaults to `~`, so a config carried between machines still finds home. The two old spellings refresh from `SUPERSEDED_DEFAULTS`.
-		- Pinned by: `a_variable_expands_in_this_platforms_spelling_only` and `a_name_is_never_translated_to_the_other_platforms`.
-		- Note: the same-platform case is still open, as its own item under Bugs.
+		- Decided: expand the program name only, and go on reading every spelling in a setting. A command's arguments belong to the program being started.
+		- Fixed: `command_argv` splits the command first, expands the first word, and hands every argument to the program as written.
+		- Fixed: `shell.startup_directory` defaults to the home variable in the platform's own spelling. Either spelling is read on either platform, so a config carried between machines still finds home.
+		- Pinned by: `a_config_command_expands_the_program_and_nothing_after_it`.
+		- Note: reading only the local platform's spelling was tried first and dropped the same day. It fixed the cross-platform cases, left the same-platform ones, and cost a config that could be carried.
 	- ✅ Code review 20260914 item 6 (F38, should-fix): A color override in the settings file is dropped for the session when the system switches between dark and light.
 		- A color that is not the theme's own stays when the system switches. That covers one from the command line or from Settings too, not only the file.
 	- ✅ Code review 20260914 item 7 (F39, should-fix): The wallpaper metadata fuzz test never reaches the metadata it is meant to check.
@@ -2115,7 +2115,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Same for the common Windows variables.
 	- A path or a program named anywhere in settings or the config file now understands `~` plus all three spellings of a variable: `$NAME` and `${NAME}`, `%NAME%`, and `$env:NAME`. All of them work on every platform, since this is text SilkTerm reads rather than anything a shell sees.
 	- `$HOME` and `%USERPROFILE%` mean the same thing, and so do `$USER` and `%USERNAME%`, and `$TMPDIR` with `%TEMP%`. Only names with a real counterpart are paired; the rest expand to nothing, visibly, rather than to a guess.
-	- Note: narrowed 20260916 by F37, but only for a command. Its arguments are handed to the program as written now, and just the program name is expanded. A setting that names a path still reads all three spellings on either platform, as below. The startup directory defaults to `~` rather than to a variable.
+	- Note: narrowed 20260916 by F37, but only for a command. Its arguments are handed to the program as written now, and just the program name is expanded. A setting that names a path still reads all three spellings on either platform, as below. The startup directory defaults to the home variable in the platform's own spelling.
 	- Reaches the startup directory and `--directory` as before, and now the wallpaper image, the rotation folder, the link opener, and every shell command in the list. A command is split into arguments first, so a variable holding a path with a space in it stays one argument.
 	- A `~` with no home directory to put there is left standing rather than turned into an absolute path meaning something else.
 	- Opened: 20260826-123553
