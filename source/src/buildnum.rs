@@ -12,6 +12,19 @@
 // copied out of a bug report can be read back as a digit or as another letter.
 const CROCKFORD_LOWER: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
 
+// What a binary is built from besides the compiler, relative to this crate. A
+// change to any of them makes a new binary, so it has to make a new number. Only
+// `src` was watched at first, so a dependency update or a new logo kept the old
+// number on a different binary.
+const BUILD_INPUTS: &[&str] = &[
+	"src",
+	"assets",
+	"Cargo.toml",
+	"../Cargo.toml", // the workspace, which owns the profiles and the patches
+	"../Cargo.lock",
+	"../shell-integration.md",
+];
+
 // 2000-01-01T00:00:00Z, as unix time.
 const EPOCH_2000_UNIX: u64 = 946_684_800;
 
@@ -118,5 +131,57 @@ mod tests {
 		let year_2060 = EPOCH_2000_UNIX + 60 * 365 * 86_400;
 		assert_eq!(build_number_at(year_2026).len(), 5);
 		assert_eq!(build_number_at(year_2060).len(), 5);
+	}
+
+	// Every file the code pulls in with include_bytes! or include_str! sits under
+	// one of the inputs, and so do the lock file and both manifests.
+	#[test]
+	fn the_build_inputs_cover_every_included_file_and_the_lock() {
+		let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+		let real = |path: &std::path::Path| {
+			path.canonicalize()
+				.unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+		};
+		let inputs: Vec<std::path::PathBuf> = BUILD_INPUTS
+			.iter()
+			.map(|input| real(&crate_dir.join(input)))
+			.collect();
+		let covered = |file: &std::path::Path| inputs.iter().any(|input| file.starts_with(input));
+		for needed in ["Cargo.toml", "../Cargo.toml", "../Cargo.lock"] {
+			assert!(
+				covered(&real(&crate_dir.join(needed))),
+				"{needed} is not watched"
+			);
+		}
+		let mut dirs = vec![crate_dir.join("src")];
+		let mut seen = 0;
+		while let Some(dir) = dirs.pop() {
+			for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+				let path = entry.path();
+				if path.is_dir() {
+					dirs.push(path);
+					continue;
+				}
+				if path.extension().is_none_or(|ext| ext != "rs") {
+					continue;
+				}
+				let text = std::fs::read_to_string(&path).unwrap();
+				for macro_name in ["include_bytes!(\"", "include_str!(\""] {
+					for (at, _) in text.match_indices(macro_name) {
+						let rest = &text[at + macro_name.len()..];
+						let Some(end) = rest.find('"') else { continue };
+						let included = real(&path.parent().unwrap().join(&rest[..end]));
+						assert!(
+							covered(&included),
+							"{} includes {}, which no build input covers",
+							path.display(),
+							included.display()
+						);
+						seen += 1;
+					}
+				}
+			}
+		}
+		assert!(seen > 0, "found no includes at all, so the scan is broken");
 	}
 }

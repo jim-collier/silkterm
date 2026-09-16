@@ -216,12 +216,24 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- A fullscreen or maximized window is not a size to come back to, so neither is written down. A resize by hand still is, and design.md names the decision.
 	- ✅ Code review 20260914 item 22 (F54, should-fix): A window asked for 24 rows gives the shell 22 while the tab strip shows for a single tab.
 		- The strip counts against the window's height everywhere a row count becomes pixels: at launch, on a Settings Apply, and where the live size is written down.
-	- Code review 20260914 item 23 (F55, should-fix): Ctrl+Shift+N opens the new window on the default settings file, and not always in the current pane's folder.
-	- Code review 20260914 item 24 (F56, should-fix): `silkterm --wallpaper` reports success and shows nothing while the wallpaper is switched off.
-	- Code review 20260914 item 25 (F57, should-fix): Reload config drops the font and colors given on the command line at launch.
-	- Code review 20260914 item 26 (F58, should-fix): `--wallpaper-file` or `--wallpaper` with no value shows the built-in picture, or nothing when there is a rotation folder, where the help says none.
-	- Code review 20260914 item 27 (F59, should-fix): A build whose binary changed outside the source folder, such as after a dependency update, keeps the previous build number.
-	- Code review 20260914 item 28 (F60, should-fix): A window that is killed, or whose first shell cannot start, leaves its control socket file behind.
+	- ✅ Code review 20260914 item 23 (F55, should-fix): Ctrl+Shift+N opens the new window on the default settings file, and not always in the current pane's folder.
+		- A new window gets the settings file its parent was started with, and starts in the pane's folder even when that is home or a root.
+		- Pinned by `a_new_window_keeps_the_settings_file_and_the_panes_directory`.
+	- ✅ Code review 20260914 item 24 (F56, should-fix): `silkterm --wallpaper` reports success and shows nothing while the wallpaper is switched off.
+		- Naming a wallpaper turns it on for the session, the same for both flags. A performance profile that turns it off still wins for both, and design.md says so.
+		- Pinned by `naming_a_wallpaper_turns_it_on_unless_the_profile_says_off`.
+	- ✅ Code review 20260914 item 25 (F57, should-fix): Reload config drops the font and colors given on the command line at launch.
+		- A reload puts the launch options back on over the file. A wallpaper set while running still beats the one given at launch.
+		- Pinned by `a_reload_keeps_the_launch_options_over_the_file`.
+	- ✅ Code review 20260914 item 26 (F58, should-fix): `--wallpaper-file` or `--wallpaper` with no value shows the built-in picture, or nothing when there is a rotation folder, where the help says none.
+		- Decided: a bare flag means no picture, as `--help` and the Done entry already said. design.md names it as the one exception to the built-in standing in.
+		- Pinned by `a_cleared_wallpaper_shows_nothing_with_or_without_a_folder`.
+	- ✅ Code review 20260914 item 27 (F59, should-fix): A build whose binary changed outside the source folder, such as after a dependency update, keeps the previous build number.
+		- The build number is worked out again when the lock file, either manifest or an included file outside `src` changes.
+		- Pinned by `the_build_inputs_cover_every_included_file_and_the_lock`, which fails on any included file nothing watches.
+	- ✅ Code review 20260914 item 28 (F60, should-fix): A window that is killed, or whose first shell cannot start, leaves its control socket file behind.
+		- The file is removed on an exit call, SIGTERM, SIGHUP and a panic. A SIGKILL still leaves it, and the next window with that process id clears it.
+		- Pinned by `the_socket_file_goes_away_however_the_process_ends`, which ends a child process each of those ways.
 	- Code review 20260914 item 31 (F63, blocking): Adding the shell integration block replaces a linked PowerShell profile with a plain copy, makes a private profile readable by others, and can write through a stray link beside it.
 	- Code review 20260914 item 32 (F64, blocking): The shell integration block breaks a directory-change hook already set in PowerShell, so every directory change prints an error, and a profile that loads the block twice breaks the prompt.
 	- Code review 20260914 item 33 (F65, should-fix): The git-aware bash prompt replaces a prompt set in `.bashrc`, where it should give way to it.

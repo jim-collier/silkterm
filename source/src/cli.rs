@@ -611,11 +611,7 @@ pub fn fold_window_style(settings: &mut config::Settings, style: &Style) {
 		settings.fg = color;
 	}
 	if let Some(img) = &style.wallpaper_img {
-		settings.wallpaper_raw = img.clone().unwrap_or_default();
-		settings.wallpaper = img.as_ref().map(PathBuf::from);
-		// naming one is a deliberate choice for this run; don't let a config that
-		// has wallpaper switched off swallow it
-		settings.wallpaper_enabled |= img.is_some();
+		config::name_wallpaper(settings, img.as_ref().map(PathBuf::from));
 	}
 	if let Some(fit) = style.wallpaper_default_fit {
 		settings.wallpaper_default_fit = fit;

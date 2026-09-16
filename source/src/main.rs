@@ -82,6 +82,7 @@ fn main() -> anyhow::Result<()> {
 	// a shell of its own (see term.rs SHELL_PRIVATE_ENV). Here because an
 	// environment write needs the process still single-threaded.
 	term::sanitize_shell_env();
+	config::take_handed_down_dir();
 
 	let mut cli = match cli::parse(std::env::args().skip(1)) {
 		Ok(parsed) => parsed,

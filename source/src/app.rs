@@ -1744,7 +1744,10 @@ struct State {
 	wp_current: Option<PathBuf>, // image showing now, so order mode advances from it
 	wp_next: Option<Instant>, // when to rotate next (None = no timer / startup-only)
 	wp_locked: bool, // a command-line wallpaper owns this session; don't rotate
-	wp_seq: u64,     // request stamp; a worker result with an older one is stale
+	// The window options the command line gave at launch, folded in again after a
+	// reload so a reread file does not drop them.
+	cli_style: crate::cli::Style,
+	wp_seq: u64, // request stamp; a worker result with an older one is stale
 	// A worker has answered - with an image, or with the news that there is none.
 	wp_answered: bool,
 	// ...and a frame has been drawn since, so whatever it said is ON SCREEN. This
@@ -3293,10 +3296,8 @@ impl State {
 				return;
 			}
 		};
-		let mut cmd = std::process::Command::new(exe);
-		if let Some(dir) = cwd {
-			cmd.current_dir(dir);
-		}
+		let config = config::config_override();
+		let mut cmd = new_window_command(&exe, cwd.as_deref(), config.as_deref());
 		match cmd.spawn() {
 			Ok(mut child) => {
 				std::thread::spawn(move || {
@@ -3533,8 +3534,12 @@ impl State {
 	// so nothing is persisted back.
 	fn reload_config(&mut self) {
 		let orig = config::settings().as_ref().clone();
-		let mut edited = config::reload_from_disk();
-		config::keep_session(&orig, &mut edited, self.wp_locked);
+		let edited = settings_after_reload(
+			&orig,
+			config::reload_from_disk(),
+			&self.cli_style,
+			self.wp_locked,
+		);
 		// Force the background image to re-read even when its path is unchanged:
 		// the user may have swapped the file contents under the same name (#167).
 		self.apply_new_settings(&orig, edited, true);
@@ -3545,11 +3550,7 @@ impl State {
 	fn set_wallpaper(&mut self, image: Option<std::path::PathBuf>) {
 		let orig = config::settings().as_ref().clone();
 		let mut edited = orig.clone();
-		edited.wallpaper_raw = image
-			.as_ref()
-			.map(|path| path.to_string_lossy().into_owned())
-			.unwrap_or_default();
-		edited.wallpaper = image;
+		config::name_wallpaper(&mut edited, image);
 		self.apply_new_settings(&orig, edited, true);
 	}
 
@@ -3565,6 +3566,8 @@ impl State {
 				self.wp_current.as_deref(),
 				settings.rotation_folder(),
 			);
+		// a lock that names nothing is a bare flag asking for no picture
+		let cleared = self.wp_locked && settings.wallpaper.is_none();
 		// retires anything already in flight - a result arriving after a newer
 		// request (a rotation tick overtaken by a settings change) is dropped
 		self.wp_seq = self.wp_seq.wrapping_add(1);
@@ -3575,6 +3578,7 @@ impl State {
 				settings,
 				scan,
 				current: self.wp_current.clone(),
+				cleared,
 			},
 		);
 	}
@@ -5724,6 +5728,42 @@ fn build_layout(
 	out
 }
 
+// A reload rereads the file, and the file never held what the command line gave
+// at launch, so that goes back on first. The session's own state goes on after,
+// which lets a wallpaper set through the socket since launch beat the one the
+// launch named.
+fn settings_after_reload(
+	live: &config::Settings,
+	mut from_disk: config::Settings,
+	launch: &crate::cli::Style,
+	wallpaper_locked: bool,
+) -> config::Settings {
+	crate::cli::fold_window_style(&mut from_disk, launch);
+	config::keep_session(live, &mut from_disk, wallpaper_locked);
+	from_disk
+}
+
+// What Ctrl+Shift+N starts. The settings file comes along, made absolute since
+// the child runs somewhere else, and so does the pane's directory, flagged so
+// the child keeps it even when it is home or a root (config::startup_dir).
+// Passing `--config` alone leaves the file's own command_line in charge, as it
+// is for any launch that names only a file.
+fn new_window_command(
+	exe: &std::path::Path,
+	cwd: Option<&std::path::Path>,
+	config: Option<&std::path::Path>,
+) -> std::process::Command {
+	let mut cmd = std::process::Command::new(exe);
+	if let Some(file) = config {
+		cmd.arg("--config")
+			.arg(std::path::absolute(file).unwrap_or_else(|_| file.to_path_buf()));
+	}
+	if let Some(dir) = cwd {
+		cmd.current_dir(dir).env(config::ENV_DIR_HANDED_DOWN, "1");
+	}
+	cmd
+}
+
 // Default split direction when none is given: split along the longer axis so the
 // new pane goes where there's more room.
 fn default_dir(pm: &PaneManager, target: PaneId) -> crate::cli::Dir4 {
@@ -6082,6 +6122,7 @@ impl ApplicationHandler<UserEvent> for App {
 			wp_current: None,
 			wp_next: None,
 			wp_locked: false,
+			cli_style: self.cli.win.style.clone(),
 			wp_seq: 0,
 			wp_answered: false,
 			wp_shown: false,
@@ -7693,8 +7734,9 @@ mod tests {
 		Caret, CloseScope, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit,
 		ViewState, accel_at, accel_clash, close_scope, copybox_fit, copybox_place, fit_px,
 		focus_ring, is_copy_chord, key_is_typed, menu_metrics, mia, msub, mta, needs_folder_read,
-		pace_frame, rating_step, remember_resize, rotation_next, tab_close_box, tab_command_line,
-		tab_title_w, typed_title, view_menu_items, window_px,
+		new_window_command, pace_frame, rating_step, remember_resize, rotation_next,
+		settings_after_reload, tab_close_box, tab_command_line, tab_title_w, typed_title,
+		view_menu_items, window_px,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
@@ -8573,5 +8615,82 @@ mod tests {
 		// no capital 'O' -> case-insensitive fallback finds "only"
 		assert_eq!(accel_at("Read-only", 'O'), Some(5));
 		assert_eq!(accel_at("Quit", 'x'), None);
+	}
+
+	// Ctrl+Shift+N used to start the program with nothing but a working
+	// directory, so a window opened with --config got the default file, and a
+	// pane sitting in home looked like a desktop launch and took the setting.
+	#[test]
+	fn a_new_window_keeps_the_settings_file_and_the_panes_directory() {
+		let exe = std::path::Path::new("/opt/silkterm/silkterm");
+		let home = config::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
+		let args = |cmd: &std::process::Command| -> Vec<String> {
+			cmd.get_args()
+				.map(|a| a.to_string_lossy().into_owned())
+				.collect()
+		};
+		let handed_down = |cmd: &std::process::Command| {
+			cmd.get_envs()
+				.any(|(name, value)| name == config::ENV_DIR_HANDED_DOWN && value.is_some())
+		};
+
+		let cmd = new_window_command(exe, Some(&home), Some(std::path::Path::new("/x/alt.shcl")));
+		assert_eq!(args(&cmd), ["--config", "/x/alt.shcl"]);
+		assert_eq!(cmd.get_current_dir(), Some(home.as_path()));
+		assert!(
+			handed_down(&cmd),
+			"home has to be kept, not read as a launcher's"
+		);
+
+		// a relative --config is made absolute, since the child starts elsewhere
+		let cmd = new_window_command(exe, Some(&home), Some(std::path::Path::new("alt.shcl")));
+		assert!(std::path::Path::new(&args(&cmd)[1]).is_absolute());
+
+		// no --config at launch, none passed on, so the default file is used
+		let cmd = new_window_command(exe, Some(&home), None);
+		assert!(args(&cmd).is_empty());
+
+		// no known directory: nothing is handed down, and the setting decides
+		let cmd = new_window_command(exe, None, None);
+		assert_eq!(cmd.get_current_dir(), None);
+		assert!(!handed_down(&cmd));
+	}
+
+	// Reload config dropped the font and colors given on the command line, while
+	// a value the command line did not name has to come from the file.
+	#[test]
+	fn a_reload_keeps_the_launch_options_over_the_file() {
+		let launch = crate::cli::Style {
+			font_size: Some(21.0),
+			bg_color: Some([0xff, 0, 0]),
+			wallpaper_img: Some(Some("/launch.png".into())),
+			..crate::cli::Style::default()
+		};
+		// the socket changed the wallpaper since launch
+		let mut live = config::Settings::default();
+		config::name_wallpaper(&mut live, Some("/socket.png".into()));
+		let from_disk = config::Settings {
+			font_size: 9.0,
+			bg: [0, 0, 0],
+			fg: [1, 2, 3],
+			wallpaper_enabled: false,
+			..config::Settings::default()
+		};
+		let reloaded = settings_after_reload(&live, from_disk, &launch, true);
+		assert_eq!(reloaded.font_size, 21.0);
+		assert_eq!(reloaded.bg, [0xff, 0, 0]);
+		assert_eq!(
+			reloaded.fg,
+			[1, 2, 3],
+			"not on the command line, so the file's"
+		);
+		assert_eq!(
+			reloaded.wallpaper.as_deref(),
+			Some(std::path::Path::new("/socket.png"))
+		);
+		assert!(
+			reloaded.wallpaper_enabled,
+			"a named wallpaper stays switched on"
+		);
 	}
 }

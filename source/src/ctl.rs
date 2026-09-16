@@ -17,7 +17,8 @@ use crate::term::UserEvent;
 #[cfg_attr(not(unix), allow(dead_code))] // ctl is Unix-only (AF_UNIX)
 pub const ENV_SOCK: &str = "SILKTERM_SOCKET";
 
-// Holds the socket path so the file goes away with the process.
+// Holds the socket path so the file goes away with the process. The drop only
+// covers a clean return from main, so `remove_on_any_exit` covers the rest.
 #[cfg(unix)]
 pub struct CtlServer {
 	path: PathBuf,
@@ -50,6 +51,7 @@ pub fn serve(proxy: EventLoopProxy<UserEvent>) -> Option<CtlServer> {
 			return None;
 		}
 	};
+	remove_on_any_exit(&path);
 	// Sound here: no PTY or render thread exists yet (set_var is unsafe under
 	// edition 2024 because of concurrent readers).
 	unsafe { std::env::set_var(ENV_SOCK, &path) };
@@ -75,6 +77,62 @@ pub fn serve(proxy: EventLoopProxy<UserEvent>) -> Option<CtlServer> {
 		}
 	});
 	Some(CtlServer { path })
+}
+
+// The path as C text, leaked, so a signal handler can reach it with nothing but
+// an atomic load.
+#[cfg(unix)]
+static SOCK_C_PATH: std::sync::atomic::AtomicPtr<libc::c_char> =
+	std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+#[cfg(unix)]
+extern "C" fn unlink_socket() {
+	let path = SOCK_C_PATH.load(std::sync::atomic::Ordering::Relaxed);
+	if !path.is_null() {
+		// SAFETY: a NUL-terminated string leaked for the life of the process.
+		// unlink is async-signal-safe.
+		unsafe { libc::unlink(path) };
+	}
+}
+
+#[cfg(unix)]
+extern "C" fn unlink_and_die(signal: libc::c_int) {
+	unlink_socket();
+	// SAFETY: signal and raise are async-signal-safe. The default action then
+	// ends the process the way the signal would have with no handler.
+	unsafe {
+		libc::signal(signal, libc::SIG_DFL);
+		libc::raise(signal);
+	}
+}
+
+// A window that ended any other way than a clean return left its socket file:
+// `process::exit` when the first shell or the window could not start, SIGTERM or
+// SIGHUP, and a panic, which a release build turns into an abort. exit() runs
+// atexit handlers, an abort runs only the panic hook, and a signal runs neither.
+#[cfg(unix)]
+fn remove_on_any_exit(path: &std::path::Path) {
+	use std::os::unix::ffi::OsStrExt;
+	let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+		return;
+	};
+	let old = SOCK_C_PATH.swap(c_path.into_raw(), std::sync::atomic::Ordering::Relaxed);
+	if !old.is_null() {
+		return; // already hooked; the handlers read the new path
+	}
+	let handler = unlink_and_die as extern "C" fn(libc::c_int) as libc::sighandler_t;
+	// SAFETY: plain libc registration calls, made before any other thread exists.
+	unsafe {
+		libc::atexit(unlink_socket);
+		for signal in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
+			libc::signal(signal, handler);
+		}
+	}
+	let previous = std::panic::take_hook();
+	std::panic::set_hook(Box::new(move |info| {
+		unlink_socket();
+		previous(info);
+	}));
 }
 
 #[cfg(not(unix))]
@@ -147,5 +205,70 @@ mod tests {
 		));
 		assert!(parse("bogus").is_err());
 		assert!(parse("").is_err());
+	}
+
+	// Each way out a window can take, driven in a child copy of this test binary
+	// (`socket_exit_child` below), which binds a socket and then leaves.
+	#[cfg(unix)]
+	#[test]
+	fn the_socket_file_goes_away_however_the_process_ends() {
+		use std::os::unix::process::ExitStatusExt;
+		let exe = std::env::current_exe().unwrap();
+		let dir = std::env::temp_dir().join(format!("silkterm_ctl_exit_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		for how in ["exit", "sigterm", "sighup", "abort"] {
+			let path = dir.join(format!("{how}.sock"));
+			let status = std::process::Command::new(&exe)
+				.args(["--exact", "ctl::tests::socket_exit_child", "--nocapture"])
+				.env("SILK_CTL_EXIT", how)
+				.env("SILK_CTL_PATH", &path)
+				.stdout(std::process::Stdio::null())
+				.stderr(std::process::Stdio::null())
+				.status()
+				.unwrap();
+			match how {
+				"sigterm" => assert_eq!(status.signal(), Some(libc::SIGTERM)),
+				"sighup" => assert_eq!(status.signal(), Some(libc::SIGHUP)),
+				"abort" => assert_eq!(status.signal(), Some(libc::SIGABRT)),
+				_ => assert_eq!(status.code(), Some(2)),
+			}
+			assert!(!path.exists(), "{how} left {}", path.display());
+		}
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn socket_exit_child() {
+		let (Some(how), Some(path)) = (
+			std::env::var_os("SILK_CTL_EXIT"),
+			std::env::var_os("SILK_CTL_PATH"),
+		) else {
+			return; // only does anything when the test above starts it
+		};
+		let path = PathBuf::from(path);
+		let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+		remove_on_any_exit(&path);
+		assert!(path.exists());
+		match how.to_str() {
+			Some("exit") => std::process::exit(2),
+			Some("sigterm") => unsafe {
+				libc::raise(libc::SIGTERM);
+			},
+			Some("sighup") => unsafe {
+				libc::raise(libc::SIGHUP);
+			},
+			// a panic that cannot unwind aborts, as every panic does in a release
+			// build, and nothing but the panic hook runs
+			Some("abort") => no_unwind(),
+			_ => {}
+		}
+		unreachable!();
+	}
+
+	#[cfg(unix)]
+	extern "C" fn no_unwind() {
+		panic!("abort on purpose");
 	}
 }
