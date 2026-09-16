@@ -12,12 +12,24 @@
 
 use std::time::{Duration, Instant};
 
+use crate::config;
 use crate::pane::Rect;
 
 // How long the pointer rests on something before its tip comes up. One value
 // for every tip in the program - a menu that answered faster than the tab strip
 // would read as a different kind of thing.
 pub const DELAY: Duration = Duration::from_millis(600);
+
+// The box itself, DIP (see config::dip). One set for every tip the two dialogs
+// draw: a box that sat closer to its control in one window than in the other
+// would read as a different kind of thing, the same argument as the delay.
+pub const PAD_X: f32 = 8.0;
+pub const PAD_Y: f32 = 4.0;
+pub const DROP: f32 = 8.0; // offset below the control it describes
+pub const EDGE: f32 = 4.0; // closest it may sit to a window edge
+pub const BORDER: f32 = 1.0;
+const WRAP_MARGIN: f32 = 8.0; // window width kept clear of a wrapped tip
+const MIN_WRAP: f32 = 40.0; // a wrap budget never narrower than this
 
 // Greedy word wrap, measured in whatever font the caller draws in. A single
 // word wider than the budget still gets its own line rather than being split -
@@ -64,6 +76,66 @@ pub fn place(anchor: Rect, size: (f32, f32), win: (f32, f32), gap: f32, edge: f3
 	(x, y)
 }
 
+// Everything a caller needs to draw one tip, in physical pixels: the rule round
+// the box, the box itself, and where its first line of text starts. Lines after
+// the first step down by the caller's own line height.
+pub struct Placed {
+	pub border: Rect,
+	pub fill: Rect,
+	pub text_x: f32,
+	pub text_y: f32,
+}
+
+// Lay a tip out. `text_w` is the widest line and `line_h` the line height, both
+// already measured in the font the caller draws in, so both arrive physical.
+// Every number the box brings itself is a DIP converted once here, which is what
+// makes a tip at twice the scale the 1x tip doubled.
+pub fn lay_out(
+	anchor: Rect,
+	lines: usize,
+	text_w: f32,
+	line_h: f32,
+	win: (f32, f32),
+	scale: f32,
+) -> Placed {
+	let pad_x = config::dip(PAD_X, scale);
+	let pad_y = config::dip(PAD_Y, scale);
+	let border = config::dip(BORDER, scale);
+	let box_w = text_w + pad_x * 2.0;
+	let box_h = line_h * lines.max(1) as f32 + pad_y * 2.0;
+	let (x, y) = place(
+		anchor,
+		(box_w, box_h),
+		win,
+		config::dip(DROP, scale),
+		config::dip(EDGE, scale),
+	);
+	Placed {
+		border: Rect {
+			x: x - border,
+			y: y - border,
+			w: box_w + border * 2.0,
+			h: box_h + border * 2.0,
+		},
+		fill: Rect {
+			x,
+			y,
+			w: box_w,
+			h: box_h,
+		},
+		text_x: x + pad_x,
+		text_y: y + pad_y,
+	}
+}
+
+// How wide a tip's text may run before it wraps: the window, less a margin and
+// the box's own padding. A tip wraps rather than being clamped to the window
+// edge, so neither a longer sentence nor a larger interface font runs off it.
+pub fn wrap_budget(win_w: f32, scale: f32) -> f32 {
+	(win_w - config::dip(WRAP_MARGIN, scale) - config::dip(PAD_X, scale) * 2.0)
+		.max(config::dip(MIN_WRAP, scale))
+}
+
 // Where a tip goes when it must not cover what it describes: clear of the
 // anchor's right edge, flipped to its left when there is no room there, and top
 // aligned with it. A menu tip needs this - a box centered under the row would
@@ -85,9 +157,16 @@ pub fn beside(anchor: Rect, size: (f32, f32), win: (f32, f32), gap: f32, edge: f
 // What the pointer is resting on, and since when. `T` names the thing in
 // whatever terms the caller thinks in - a tab index, a menu row - so the timing
 // rule is written once and the identity stays the caller's business.
-#[derive(Default)]
 pub struct Dwell<T> {
 	over: Option<(T, Instant)>,
+}
+
+// By hand rather than derived: the derive would want `T: Default` too, and what
+// a caller points at - a rect, a tab index - has no default worth naming.
+impl<T> Default for Dwell<T> {
+	fn default() -> Self {
+		Self { over: None }
+	}
 }
 
 impl<T: Copy + PartialEq> Dwell<T> {
@@ -128,7 +207,7 @@ impl<T: Copy + PartialEq> Dwell<T> {
 
 #[cfg(test)]
 mod tests {
-	use super::{Dwell, beside, place, wrap};
+	use super::{Dwell, beside, lay_out, place, wrap, wrap_budget};
 	use crate::pane::Rect;
 
 	fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -187,6 +266,53 @@ mod tests {
 		assert_eq!(left, 4.0);
 		let (right, _) = place(rect(390.0, 10.0, 10.0, 10.0), (80.0, 30.0), win, 8.0, 4.0);
 		assert_eq!(right, 316.0);
+	}
+
+	// Every measurement the box brings itself is a DIP converted once, so the same
+	// tip on a 2x display is the 1x one doubled. A number left in raw pixels shows
+	// up here as a box that grew by less than its text did.
+	#[test]
+	fn a_tip_at_twice_the_scale_is_the_1x_tip_doubled() {
+		let one = lay_out(
+			rect(100.0, 60.0, 80.0, 24.0),
+			2,
+			150.0,
+			18.0,
+			(600.0, 400.0),
+			1.0,
+		);
+		let two = lay_out(
+			rect(200.0, 120.0, 160.0, 48.0),
+			2,
+			300.0,
+			36.0,
+			(1200.0, 800.0),
+			2.0,
+		);
+		assert_eq!(
+			(two.fill.x, two.fill.y),
+			(one.fill.x * 2.0, one.fill.y * 2.0)
+		);
+		assert_eq!(
+			(two.fill.w, two.fill.h),
+			(one.fill.w * 2.0, one.fill.h * 2.0)
+		);
+		assert_eq!(
+			(two.border.w, two.border.h),
+			(one.border.w * 2.0, one.border.h * 2.0)
+		);
+		assert_eq!(
+			two.fill.x - two.border.x,
+			(one.fill.x - one.border.x) * 2.0,
+			"the rule stayed 1 pixel"
+		);
+		assert_eq!(
+			two.text_x - two.fill.x,
+			(one.text_x - one.fill.x) * 2.0,
+			"the padding stayed its 1x size"
+		);
+		assert_eq!(two.text_y - two.fill.y, (one.text_y - one.fill.y) * 2.0);
+		assert_eq!(wrap_budget(1200.0, 2.0), wrap_budget(600.0, 1.0) * 2.0);
 	}
 
 	// A menu tip stands clear of the menu, and swaps to the other side rather

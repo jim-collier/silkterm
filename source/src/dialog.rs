@@ -66,6 +66,9 @@ pub struct DialogWin {
 	// the wake cadence the app loop should keep while something animates
 	last_frame: std::time::Instant,
 	anim_wake: Option<u64>,
+	// what the pointer is resting on, and since when: flyover help waits the same
+	// DELAY here as it does in the tab strip and the menus
+	tip: crate::tip::Dwell<Rect>,
 	// the terminal window this dialog belongs to, so we can restack it beneath
 	// us when we're activated (see raise_parent).
 	parent: Option<RawWindowHandle>,
@@ -207,6 +210,7 @@ impl DialogWin {
 			mouse: (0.0, 0.0),
 			last_frame: std::time::Instant::now(),
 			anim_wake: None,
+			tip: crate::tip::Dwell::default(),
 			parent,
 			snapped: false,
 			caps: (f32::MAX, f32::MAX),
@@ -285,6 +289,7 @@ impl DialogWin {
 			mouse: (0.0, 0.0),
 			last_frame: std::time::Instant::now(),
 			anim_wake: None,
+			tip: crate::tip::Dwell::default(),
 			parent,
 			snapped: false,
 			caps: (max_w, max_h),
@@ -676,6 +681,23 @@ impl DialogWin {
 		} else {
 			None
 		};
+		// Flyover help waits for the pointer to rest, the same as the tab strip and
+		// the menus do. A dialog that answered the moment the pointer crossed a
+		// control would read as a different kind of tip.
+		let (mx, my) = self.mouse;
+		let over = match &self.content {
+			Content::About { links, .. } => links
+				.iter()
+				.find(|link| link.tooltip.is_some() && link.rect.contains(mx, my))
+				.map(|link| link.rect),
+			Content::Settings(dialog) => dialog.hover_tip(mx, my).map(|(_, anchor)| anchor),
+		};
+		let (tip_anchor, tip_wake) = tip_gate(&mut self.tip, over, now);
+		// a resting pointer gets its tip with no further input, so the wake the
+		// dwell asks for joins whatever the field edit wanted
+		if let Some(ms) = tip_wake {
+			self.anim_wake = Some(self.anim_wake.map_or(ms, |have| have.min(ms)));
+		}
 		let Some(frame) = self.gfx.begin_frame() else {
 			return;
 		};
@@ -750,40 +772,30 @@ impl DialogWin {
 				// box under it (the Support label hides its URL; this reveals it).
 				if let Some((tip, anchor)) = links
 					.iter()
-					.find(|link| link.rect.contains(mx, my))
+					.find(|link| tip_anchor == Some(link.rect))
 					.and_then(|link| link.tooltip.as_ref().map(|tip| (tip, link.rect)))
 				{
 					let attrs = ui_attrs();
 					let line_h = self.text.ui_line_h;
 					let tip_w = self.text.measure_ui_text(tip, &attrs);
-					let pad_x = self.text.dip(ABOUT_TIP_PAD_X);
-					let pad_y = self.text.dip(ABOUT_TIP_PAD_Y);
-					let edge = self.text.dip(ABOUT_TIP_EDGE);
-					let b = self.text.dip(ABOUT_BORDER);
-					let box_w = tip_w + pad_x * 2.0;
-					let box_h = line_h + pad_y * 2.0;
-					let (bx, by) = crate::tip::place(
+					let at = crate::tip::lay_out(
 						anchor,
-						(box_w, box_h),
+						1,
+						tip_w,
+						line_h,
 						(w as f32, h as f32),
-						self.text.dip(ABOUT_TIP_DROP),
-						edge,
+						self.text.scale,
 					);
-					rect_inst.push(q(
-						bx - b,
-						by - b,
-						box_w + 2.0 * b,
-						box_h + 2.0 * b,
-						border_col,
-					));
-					rect_inst.push(q(bx, by, box_w, box_h, crate::settings_ui::dialog_btn()));
+					let (b, f) = (at.border, at.fill);
+					rect_inst.push(q(b.x, b.y, b.w, b.h, border_col));
+					rect_inst.push(q(f.x, f.y, f.w, f.h, crate::settings_ui::dialog_btn()));
 					let dim = crate::settings_ui::dialog_dim();
 					let mut a = ui_attrs();
 					a.color_opt = Some(GColor::rgb(dim[0], dim[1], dim[2]));
 					let mut buf = self.text.new_ui_buffer(w as f32, line_h);
 					buf.set_text(&mut self.text.font_system, tip, &a, Shaping::Advanced, None);
 					buf.shape_until_scroll(&mut self.text.font_system, false);
-					bufs.push((bx + pad_x, by + pad_y, 1.0, dim, None, buf));
+					bufs.push((at.text_x, at.text_y, 1.0, dim, None, buf));
 				}
 				rect_split = rect_inst.len();
 			}
@@ -869,7 +881,10 @@ impl DialogWin {
 				// to outrun the panel would otherwise be clamped to the edge and run
 				// off it, and the panel's width is not ours to grow.
 				let (mx, my) = self.mouse;
-				if let Some((tip, anchor)) = dialog.hover_tip(mx, my) {
+				if let Some((tip, anchor)) = dialog
+					.hover_tip(mx, my)
+					.filter(|(_, anchor)| tip_anchor == Some(*anchor))
+				{
 					let border_col = crate::settings_ui::dialog_border();
 					let q = |x: f32, y: f32, bw: f32, bh: f32, color: [u8; 3]| RectInstance {
 						pos: [x, y],
@@ -878,21 +893,26 @@ impl DialogWin {
 						..Default::default()
 					};
 					let attrs = ui_attrs();
-					let (pad_x, pad_y) = (8.0, 4.0);
-					let avail = (w as f32 - 8.0 - pad_x * 2.0).max(40.0);
+					let scale = self.text.scale;
+					let avail = crate::tip::wrap_budget(w as f32, scale);
 					let lines =
 						crate::tip::wrap(tip, avail, |s| self.text.measure_ui_text(s, &attrs));
 					let tip_w = lines
 						.iter()
 						.map(|l| self.text.measure_ui_text(l, &attrs))
 						.fold(0.0f32, f32::max);
-					let box_w = tip_w + pad_x * 2.0;
-					let box_h = line_h * lines.len() as f32 + pad_y * 2.0;
-					let (bx, by) =
-						crate::tip::place(anchor, (box_w, box_h), (w as f32, h as f32), 8.0, 4.0);
+					let at = crate::tip::lay_out(
+						anchor,
+						lines.len(),
+						tip_w,
+						line_h,
+						(w as f32, h as f32),
+						scale,
+					);
+					let (b, f) = (at.border, at.fill);
 					let start = overlay_range.map_or(rect_inst.len() as u32, |(s, _)| s);
-					rect_inst.push(q(bx - 1.0, by - 1.0, box_w + 2.0, box_h + 2.0, border_col));
-					rect_inst.push(q(bx, by, box_w, box_h, crate::settings_ui::dialog_btn()));
+					rect_inst.push(q(b.x, b.y, b.w, b.h, border_col));
+					rect_inst.push(q(f.x, f.y, f.w, f.h, crate::settings_ui::dialog_btn()));
 					overlay_range = Some((start, rect_inst.len() as u32));
 					let dim = crate::settings_ui::dialog_dim();
 					let mut a = ui_attrs();
@@ -907,8 +927,8 @@ impl DialogWin {
 							None,
 						);
 						buf.shape_until_scroll(&mut self.text.font_system, false);
-						let ty = by + pad_y + line_h * n as f32;
-						ov_bufs.push((bx + pad_x, ty, 1.0, dim, None, buf));
+						let ty = at.text_y + line_h * n as f32;
+						ov_bufs.push((at.text_x, ty, 1.0, dim, None, buf));
 					}
 				}
 			}
@@ -1281,11 +1301,9 @@ const ABOUT_LOOSE_GAP: f32 = 4.0; // title to the version line
 const ABOUT_BTN_PAD_X: f32 = 16.0;
 const ABOUT_BTN_PAD_Y: f32 = 8.0;
 const ABOUT_TIP_ROOM: f32 = 14.0; // headroom kept below the button for its flyover
-const ABOUT_BORDER: f32 = 1.0; // 1px rule around the button and the flyover box
-const ABOUT_TIP_PAD_X: f32 = 8.0;
-const ABOUT_TIP_PAD_Y: f32 = 4.0;
-const ABOUT_TIP_DROP: f32 = 8.0; // flyover's offset below the control it describes
-const ABOUT_TIP_EDGE: f32 = 4.0; // closest the flyover may sit to a window edge
+const ABOUT_BORDER: f32 = 1.0; // 1px rule around the Support button
+// The flyover box's own measurements are shared with the Settings dialog's, in
+// tip.rs - both windows draw the same box.
 
 // Build the About content laid out at the window origin; returns
 // (lines, clickable links, (width, height)) in physical px.
@@ -1537,9 +1555,60 @@ fn decor_extra(window: &Window) -> (f32, f32) {
 	)
 }
 
+// What a dialog draws a tip for this frame, and when the loop has to come back
+// to raise one. Split out of `render` because the drawing needs a surface and
+// the decision does not.
+fn tip_gate(
+	dwell: &mut crate::tip::Dwell<Rect>,
+	over: Option<Rect>,
+	now: std::time::Instant,
+) -> (Option<Rect>, Option<u64>) {
+	dwell.point_at(over);
+	let wake = dwell
+		.wake()
+		.map(|due| due.saturating_duration_since(now).as_millis() as u64);
+	(dwell.ripe(), wake)
+}
+
 #[cfg(test)]
 mod tests {
-	use super::{DLG_DECOR_HEADROOM, DLG_MAX_H, DLG_SNAP, caps_from, snap_to, usable_screen};
+	use std::time::Instant;
+
+	use super::{
+		DLG_DECOR_HEADROOM, DLG_MAX_H, DLG_SNAP, Rect, caps_from, snap_to, tip_gate, usable_screen,
+	};
+
+	// A tip in a dialog waits for the pointer to rest, the way one in the tab
+	// strip or a menu does. Drawing it needs a GPU, so what is pinned here is the
+	// decision render asks for: whether there is a tip to draw, and when to come
+	// back for one.
+	#[test]
+	fn a_dialog_tip_waits_for_the_pointer_to_rest() {
+		let mut dwell = crate::tip::Dwell::default();
+		let ok = Rect {
+			x: 10.0,
+			y: 20.0,
+			w: 60.0,
+			h: 24.0,
+		};
+		let (drawn, wake) = tip_gate(&mut dwell, Some(ok), Instant::now());
+		assert_eq!(drawn, None, "the tip came up before the pointer had rested");
+		assert!(wake.is_some(), "nothing would wake the loop to raise it");
+		std::thread::sleep(crate::tip::DELAY);
+		let (drawn, wake) = tip_gate(&mut dwell, Some(ok), Instant::now());
+		assert_eq!(drawn, Some(ok), "a rested pointer got no tip");
+		assert_eq!(wake, None, "a tip already up still asked for a wake-up");
+		// crossing to another control starts the wait again
+		let cancel = Rect {
+			x: 80.0,
+			y: 20.0,
+			w: 60.0,
+			h: 24.0,
+		};
+		assert_eq!(tip_gate(&mut dwell, Some(cancel), Instant::now()).0, None);
+		// and leaving them all puts the tip away
+		assert_eq!(tip_gate(&mut dwell, None, Instant::now()).0, None);
+	}
 
 	// The defect this was written for: a 1080p screen at 150% with a taskbar
 	// leaves 1008 usable, and the dialog was being sized against the full 1080 -

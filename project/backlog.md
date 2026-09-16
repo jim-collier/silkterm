@@ -192,8 +192,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 13 (F45, should-fix): On Windows, the Size checkbox beside "Use system font" in Settings does not respond to a click.
 		- A pair row is gated one part at a time now, not on the row's key, which is only its first part. A grayed part still takes no click.
 		- The dialog reads the desktop's font report once when it opens and keeps it, rather than asking at each use. That report is the only thing that grays this row, so holding it is what lets the case be tested from a machine whose desktop does name a font.
-	- Code review 20260914 item 14 (F46, should-fix): Flyover help in the Settings and About windows appears at once, without the rest the tabs and menus wait for.
-	- Code review 20260914 item 15 (F47, should-fix): The Settings flyover's padding and border do not grow with the display scale.
+	- ✅ Code review 20260914 item 14 (F46, should-fix): Flyover help in the Settings and About windows appears at once, without the rest the tabs and menus wait for.
+		- Both windows wait the same as the tab strip and the menus do, and crossing to another control starts the wait over.
+		- A pointer left resting still gets its tip, with no further input: the dialog asks the loop to come back for it, the way a field edit part-way through its animation already does.
+		- Pinned by `a_dialog_tip_waits_for_the_pointer_to_rest`, which covers the decision the drawing asks for. Drawing itself needs a graphics device, so that half stays uncovered.
+	- ✅ Code review 20260914 item 15 (F47, should-fix): The Settings flyover's padding and border do not grow with the display scale.
+		- The padding, the gap, the edge, the rule and the wrap margin are all DIP now, converted once. A tip at twice the scale is the 1x tip doubled.
+		- Both windows lay their tip out through one function in `tip.rs`, so neither can drift from the other again. The box was the last thing about a tip the two did not share.
+		- Pinned by `a_tip_at_twice_the_scale_is_the_1x_tip_doubled`.
 	- ✅ Code review 20260914 item 16 (F48, should-fix): Renaming a saved theme to its own name, or changing only its capitals, is refused as a name already taken.
 		- A theme is no longer in its own way. Renaming to the same name closes the box and changes nothing, and a change of case alone goes through, which was the only way to make one.
 		- Another saved theme's name is still refused, so two themes cannot merge into one.
