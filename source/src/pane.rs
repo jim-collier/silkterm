@@ -734,7 +734,7 @@ fn logical_line_bounds(line: i32, top: i32, bot: i32, wrapped: impl Fn(i32) -> b
 	(start, end)
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
 	pub x: f32,
 	pub y: f32,
