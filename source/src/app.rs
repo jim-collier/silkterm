@@ -755,6 +755,30 @@ fn menu_metrics(scale: f32) -> (f32, f32) {
 	)
 }
 
+// What Close pane closes, in the cascade the menu and a dead shell both follow.
+// `present` is whether the pane the menu was opened for is still there: a menu
+// left standing after its pane went must not reach another tab's panes, which is
+// how one could take the whole window down with live shells in it.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum CloseScope {
+	Pane,
+	Tab,
+	Window,
+	Nothing,
+}
+
+fn close_scope(present: bool, panes_in_tab: usize, tabs: usize) -> CloseScope {
+	if !present {
+		CloseScope::Nothing
+	} else if panes_in_tab > 1 {
+		CloseScope::Pane
+	} else if tabs > 1 {
+		CloseScope::Tab
+	} else {
+		CloseScope::Window
+	}
+}
+
 // right-click context menu / menu-bar dropdown over a pane
 struct ContextMenu {
 	x: f32,
@@ -1885,15 +1909,22 @@ impl State {
 		!self.bare && (self.tabs.len() > 1 || !config::settings().hide_single_tab)
 	}
 
-	fn area(&self) -> Rect {
-		// Panes sit below the menu bar (always when shown) and the tab bar
-		// (when visible), stacked in that order.
-		let bar = self.menubar_h()
+	// Everything above the panes: the menu bar when shown, then the tab strip when
+	// visible. A row count asks for the cells below this, so the launch sizing and
+	// save_window_size both have to account for it.
+	fn chrome_h(&self) -> f32 {
+		self.menubar_h()
 			+ if self.tab_bar_visible() {
 				self.tab_bar_h()
 			} else {
 				0.0
-			};
+			}
+	}
+
+	fn area(&self) -> Rect {
+		// Panes sit below the menu bar (always when shown) and the tab bar
+		// (when visible), stacked in that order.
+		let bar = self.chrome_h();
 		Rect {
 			x: 0.0,
 			y: bar,
@@ -3093,14 +3124,23 @@ impl State {
 				}
 			}
 			MenuAction::Close => {
-				if self.tabs.cur().panes.len() > 1 {
-					self.tabs.cur_mut().close(&mut self.text, target, area);
-				} else if self.tabs.len() > 1 {
-					// last pane in this tab -> close the tab
-					self.close_tab();
-				} else {
-					// last pane of the last tab -> close the window
-					self.quit = true;
+				let scope = {
+					let cur = self.tabs.cur();
+					close_scope(
+						cur.panes.contains_key(&target),
+						cur.panes.len(),
+						self.tabs.len(),
+					)
+				};
+				match scope {
+					CloseScope::Pane => {
+						self.tabs.cur_mut().close(&mut self.text, target, area);
+					}
+					// last pane in this tab -> the tab; last pane of the last tab
+					// -> the window
+					CloseScope::Tab => self.close_tab(),
+					CloseScope::Window => self.quit = true,
+					CloseScope::Nothing => {}
 				}
 			}
 			MenuAction::NewTab => self.new_tab(proxy),
@@ -3160,14 +3200,18 @@ impl State {
 	fn save_window_size(&mut self, w: u32, h: u32) {
 		// skip the creation/programmatic resizes that fire before the first frame,
 		// so they don't clobber the remembered size with the launch size
-		if !self.size_tracked {
+		if !remember_resize(
+			self.size_tracked,
+			self.window.fullscreen().is_some(),
+			self.window.is_maximized(),
+		) {
 			return;
 		}
 		let px_to_cells = |px: f32, cell: f32, chrome: f32| {
 			(((px - 2.0 * self.text.margin - chrome) / cell).floor() as i64).max(1) as usize
 		};
 		let cols = px_to_cells(w as f32, self.text.cell_w, 0.0);
-		let rows = px_to_cells(h as f32, self.text.cell_h, self.menubar_h());
+		let rows = px_to_cells(h as f32, self.text.cell_h, self.chrome_h());
 		// debounce: an interactive drag fires many Resized events; writing
 		// config.shcl on each would be dozens of file writes/sec. Persist in
 		// flush_window_size once the size has held (or on exit).
@@ -3280,14 +3324,35 @@ impl State {
 		else {
 			return;
 		};
-		if self.tabs.list[tab_idx].panes.len() > 1 {
-			self.tabs.list[tab_idx].close(&mut self.text, id, area);
-		} else if self.tabs.len() > 1 {
-			self.close_tab_at(tab_idx);
-		} else {
-			self.quit = true;
+		match close_scope(true, self.tabs.list[tab_idx].panes.len(), self.tabs.len()) {
+			CloseScope::Pane => {
+				self.tabs.list[tab_idx].close(&mut self.text, id, area);
+			}
+			CloseScope::Tab => self.close_tab_at(tab_idx),
+			CloseScope::Window => self.quit = true,
+			CloseScope::Nothing => {}
 		}
+		self.forget_dead_menu();
 		self.dirty = true;
+	}
+
+	// A popup acts on the pane it was opened for. A shell ending closes that pane,
+	// and can take its tab with it, so the popup goes too rather than standing
+	// open over a pane that is not there.
+	fn forget_dead_menu(&mut self) {
+		let Some(menu) = &self.menu else {
+			return;
+		};
+		let target = menu.target;
+		if !self
+			.tabs
+			.list
+			.iter()
+			.any(|pm| pm.panes.contains_key(&target))
+		{
+			self.menu = None;
+			self.bar_open = None;
+		}
 	}
 
 	// --keep-open: the shell is gone but the pane stays, saying how it ended and
@@ -3677,13 +3742,16 @@ impl State {
 		// window dimensions changed in Settings -> resize to the new cell grid
 		if resize {
 			let settings = config::settings();
-			let want = winit::dpi::PhysicalSize::new(
-				(settings.columns as f32 * self.text.cell_w + 2.0 * self.text.margin).ceil() as u32,
-				(settings.rows as f32 * self.text.cell_h
-					+ 2.0 * self.text.margin
-					+ self.menubar_h())
-				.ceil() as u32,
+			let (w, h) = window_px(
+				settings.columns,
+				settings.rows,
+				self.text.cell_w,
+				self.text.cell_h,
+				self.text.margin,
+				self.chrome_h(),
 			);
+			let (w, h) = fit_px(w, h, self.gfx.device.limits().max_texture_dimension_2d);
+			let want = winit::dpi::PhysicalSize::new(w, h);
 			// A size the window can honor straight away answers here and sends no
 			// `Resized`, so this is the only chance to move everything the window
 			// event moves - the scrim included, which was left at the old size.
@@ -5438,6 +5506,43 @@ fn set_blur_behind(window: &Window, enable: bool) {
 #[cfg(not(target_os = "linux"))]
 fn set_blur_behind(_window: &Window, _enable: bool) {}
 
+// wgpu's guaranteed floor for max_texture_dimension_2d. The window is born
+// before the device exists, so a birth size is held to the floor, and the
+// grid-derived resize after it to what the device actually reports.
+const SAFE_MAX_DIM: u32 = 8192;
+
+// The window a grid asks for: the cells, the margins either side, and the chrome
+// above them. `chrome` counts the menu bar and the tab strip where they show, or
+// the shell gets fewer rows than were asked for.
+fn window_px(
+	cols: usize,
+	rows: usize,
+	cell_w: f32,
+	cell_h: f32,
+	margin: f32,
+	chrome: f32,
+) -> (u32, u32) {
+	(
+		(cols as f32 * cell_w + 2.0 * margin).ceil() as u32,
+		(rows as f32 * cell_h + 2.0 * margin + chrome).ceil() as u32,
+	)
+}
+
+// A window may be no bigger than the largest texture the device will make: the
+// GL path renders the scene into an offscreen texture at the window's size, and
+// wgpu treats a refusal as fatal. So a count out of the config or the command
+// line is held here, or it ends the launch in create_texture.
+fn fit_px(w: u32, h: u32, max_dim: u32) -> (u32, u32) {
+	(w.clamp(1, max_dim), h.clamp(1, max_dim))
+}
+
+// Is this resize the size to launch at next time? Only once a frame has been
+// drawn - before that it is the launch size arriving back - and never a
+// fullscreen or maximized one, which is not a window to come back to.
+fn remember_resize(size_tracked: bool, fullscreen: bool, maximized: bool) -> bool {
+	size_tracked && !fullscreen && !maximized
+}
+
 // The window/taskbar icon, decoded from the bundled logo (downscaled so the
 // _NET_WM_ICON payload stays small). The logo is wider than it is tall and every
 // place an icon is shown reserves a square, so it is stretched to fill one
@@ -5713,8 +5818,13 @@ impl ApplicationHandler<UserEvent> for App {
 		// When both pixel dims are given, the window must be BORN at that size, not
 		// resized into it: some EGL presents (VirtualGL's, for one) latch the surface
 		// size at creation and never see later resizes, leaving a stale-offset blit.
+		// Held to the floor every device meets, since the real limit is not known
+		// until one exists; the grid-derived resize below uses that limit.
 		let initial_size: winit::dpi::Size = match (cli_win.pixel_width, cli_win.pixel_height) {
-			(Some(w), Some(h)) => winit::dpi::PhysicalSize::new(w, h).into(),
+			(Some(w), Some(h)) => {
+				let (w, h) = fit_px(w, h, SAFE_MAX_DIM);
+				winit::dpi::PhysicalSize::new(w, h).into()
+			}
 			_ => winit::dpi::LogicalSize::new(1000.0, 640.0).into(),
 		};
 		// On Windows, requesting transparency forces a no-redirection-bitmap
@@ -5841,14 +5951,32 @@ impl ApplicationHandler<UserEvent> for App {
 		} else {
 			0.0
 		};
-		let want = winit::dpi::PhysicalSize::new(
-			cli_win
-				.pixel_width
-				.unwrap_or_else(|| (cols as f32 * text.cell_w + 2.0 * text.margin).ceil() as u32),
-			cli_win.pixel_height.unwrap_or_else(|| {
-				(rows as f32 * text.cell_h + 2.0 * text.margin + menu_bar_h).ceil() as u32
-			}),
+		let n_tabs = if self.cli.hierarchical {
+			self.cli.tabs.len().max(1)
+		} else {
+			1
+		};
+		// The strip shows for more than one tab, and for a single one unless the
+		// user opts out - State::tab_bar_visible's rule.
+		let tab_bar_h = if n_tabs > 1 || !settings.hide_single_tab {
+			text.ui_line_h + text.dip(TAB_BAR_VPAD)
+		} else {
+			0.0
+		};
+		let (grid_w, grid_h) = window_px(
+			cols,
+			rows,
+			text.cell_w,
+			text.cell_h,
+			text.margin,
+			menu_bar_h + tab_bar_h,
 		);
+		let (want_w, want_h) = fit_px(
+			cli_win.pixel_width.unwrap_or(grid_w),
+			cli_win.pixel_height.unwrap_or(grid_h),
+			gfx.device.limits().max_texture_dimension_2d,
+		);
+		let want = winit::dpi::PhysicalSize::new(want_w, want_h);
 		let mut scrim = scrim;
 		// If the resize applies synchronously (Windows), the first frame is already at
 		// the final size - reveal on it. Otherwise (async X11/Wayland) wait for the
@@ -5862,19 +5990,9 @@ impl ApplicationHandler<UserEvent> for App {
 			Some(want)
 		};
 
-		// initial content area, inset by the menu bar (when shown) and the tab
-		// bar (when the CLI makes >1 tab), so panes start correctly sized.
-		let n_tabs = if self.cli.hierarchical {
-			self.cli.tabs.len().max(1)
-		} else {
-			1
-		};
-		let top = menu_bar_h
-			+ if n_tabs > 1 {
-				text.ui_line_h + text.dip(TAB_BAR_VPAD)
-			} else {
-				0.0
-			};
+		// initial content area, inset by the menu bar and the tab strip where each
+		// shows, so panes start correctly sized.
+		let top = menu_bar_h + tab_bar_h;
 		let area = Rect {
 			x: 0.0,
 			y: top,
@@ -7572,14 +7690,63 @@ impl State {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Caret, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit, ViewState,
-		accel_at, accel_clash, copybox_fit, copybox_place, focus_ring, is_copy_chord, key_is_typed,
-		menu_metrics, mia, msub, mta, needs_folder_read, pace_frame, rating_step, rotation_next,
-		tab_close_box, tab_command_line, tab_title_w, typed_title, view_menu_items,
+		Caret, CloseScope, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit,
+		ViewState, accel_at, accel_clash, close_scope, copybox_fit, copybox_place, fit_px,
+		focus_ring, is_copy_chord, key_is_typed, menu_metrics, mia, msub, mta, needs_folder_read,
+		pace_frame, rating_step, remember_resize, rotation_next, tab_close_box, tab_command_line,
+		tab_title_w, typed_title, view_menu_items, window_px,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
 	use winit::event::ElementState;
+
+	// A menu outlives the pane it was opened for when that pane's shell ends, and
+	// the tab can go with it. Close pane then found no such pane in the current tab
+	// and fell through to closing the tab, or the window, with another tab's shells
+	// still running.
+	#[test]
+	fn close_pane_on_a_pane_that_is_gone_closes_nothing() {
+		assert_eq!(close_scope(false, 1, 1), CloseScope::Nothing);
+		assert_eq!(close_scope(false, 2, 3), CloseScope::Nothing);
+		// a live pane still cascades: the pane, then its tab, then the window
+		assert_eq!(close_scope(true, 2, 1), CloseScope::Pane);
+		assert_eq!(close_scope(true, 1, 2), CloseScope::Tab);
+		assert_eq!(close_scope(true, 1, 1), CloseScope::Window);
+	}
+
+	// `window.rows: 1000` in the config, or --rows 1000, asked for a window taller
+	// than the device's largest texture. The GL path's offscreen is made at the
+	// window's size, and wgpu treats the refusal as fatal, so the launch died.
+	#[test]
+	fn a_window_is_never_bigger_than_the_device_allows() {
+		let (w, h) = window_px(1000, 1000, 8.0, 17.0, 4.0, 30.0);
+		assert_eq!((w, h), (8008, 17038));
+		assert_eq!(fit_px(w, h, 16384), (8008, 16384));
+		assert_eq!(fit_px(0, 0, 16384), (1, 1));
+	}
+
+	// A requested row count is the shell's rows, so the tab strip counts against
+	// the window's height while it shows. Left out of the sum, a window asked for
+	// 24 rows gave its shell 22.
+	#[test]
+	fn the_tab_strip_counts_against_a_requested_row_count() {
+		let shown = window_px(80, 24, 8.0, 17.0, 4.0, 20.0 + 24.0);
+		let hidden = window_px(80, 24, 8.0, 17.0, 4.0, 20.0);
+		assert_eq!(shown.0, hidden.0);
+		assert_eq!(shown.1 - hidden.1, 24);
+	}
+
+	// --fullscreen asks for fullscreen before the first frame, and the window
+	// manager's resize arrives after it, so a one-off fullscreen launch stored the
+	// whole screen as the size to open at next time.
+	#[test]
+	fn a_fullscreen_or_maximized_size_is_not_remembered() {
+		assert!(remember_resize(true, false, false));
+		assert!(!remember_resize(true, true, false));
+		assert!(!remember_resize(true, false, true));
+		// nothing before the first frame, as before
+		assert!(!remember_resize(false, false, false));
+	}
 
 	// Only a focused window's own eased frame is evidence; every other pass
 	// pauses the watch, so an idle gap is never read as a period.

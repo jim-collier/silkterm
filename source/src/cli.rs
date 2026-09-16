@@ -264,22 +264,49 @@ fn parse_hex(flag: &str, v: &str) -> Result<[u8; 3], String> {
 }
 
 fn parse_f32(flag: &str, v: &str) -> Result<f32, String> {
-	v.parse().map_err(|_| format!("{flag}: not a number: {v}"))
+	match v.parse::<f32>() {
+		Ok(n) if n.is_finite() => Ok(n),
+		// nan and inf parse fine and then survive every clamp. One that reaches a
+		// setting is written over the user's own value at the session's first save,
+		// because a NaN compares unequal to the value it replaced.
+		Ok(_) => Err(format!("{flag}: not a finite number: {v}")),
+		Err(_) => Err(format!("{flag}: not a number: {v}")),
+	}
 }
+
+// A number standing for a setting is held to that setting's own range, the way
+// the config file's is. The command line has no business asking for a value the
+// file could not hold.
+fn parse_f32_in(flag: &str, v: &str, (lo, hi): (f32, f32)) -> Result<f32, String> {
+	Ok(parse_f32(flag, v)?.clamp(lo, hi))
+}
+
+// The command line is held to the same grid ceiling the config file is. A grid
+// no graphics card can draw used to end the launch in create_texture.
+fn grid_cells(v: usize) -> usize {
+	v.clamp(config::limits::GRID.0, config::limits::GRID.1)
+}
+
+// Both opacities are a fraction of full.
+const OPACITY: (f32, f32) = (0.0, 1.0);
+
+// Both panes of a split have to stay usable, so a share is held well inside 0
+// and 100, and a cell count to at least one column or row.
+const SPLIT_PCT: (f32, f32) = (5.0, 95.0);
 
 fn parse_size(v: &str) -> Result<Size, String> {
 	if let Some(percent) = v.strip_suffix('%') {
-		Ok(Size::Percent(
-			percent
-				.trim()
-				.parse()
-				.map_err(|_| format!("--size: bad percent: {v}"))?,
-		))
+		Ok(Size::Percent(parse_f32_in(
+			"--size",
+			percent.trim(),
+			SPLIT_PCT,
+		)?))
 	} else {
 		Ok(Size::Cells(
 			v.trim()
-				.parse()
-				.map_err(|_| format!("--size: bad cell count: {v}"))?,
+				.parse::<u32>()
+				.map_err(|_| format!("--size: bad cell count: {v}"))?
+				.max(1),
 		))
 	}
 }
@@ -419,14 +446,16 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 			}
 			match name {
 				"columns" => {
-					cli.win.columns = Some(
+					cli.win.columns = Some(grid_cells(
 						a.value(name, inline)?
 							.parse()
 							.map_err(|_| "bad --columns")?,
-					);
+					));
 				}
 				"rows" => {
-					cli.win.rows = Some(a.value(name, inline)?.parse().map_err(|_| "bad --rows")?);
+					cli.win.rows = Some(grid_cells(
+						a.value(name, inline)?.parse().map_err(|_| "bad --rows")?,
+					));
 				}
 				"pixel-width" => {
 					cli.win.pixel_width = Some(
@@ -443,7 +472,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 					);
 				}
 				"background-opacity" => {
-					cli.win.opacity = Some(parse_f32(name, &a.value(name, inline)?)?);
+					cli.win.opacity = Some(parse_f32_in(name, &a.value(name, inline)?, OPACITY)?);
 				}
 				"hide-windowframe" => cli.win.hide_frame = Some(a.bool_value(name, inline)?),
 				"hide-menu" => cli.win.hide_menu = Some(a.bool_value(name, inline)?),
@@ -514,7 +543,13 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 			"directory" | "dir" => style.directory = Some(a.value(name, inline)?),
 			"keep-open" => style.keep_open = Some(a.bool_value(name, inline)?),
 			"font-name" => style.font_name = Some(a.value(name, inline)?),
-			"font-size" => style.font_size = Some(parse_f32(name, &a.value(name, inline)?)?),
+			"font-size" => {
+				style.font_size = Some(parse_f32_in(
+					name,
+					&a.value(name, inline)?,
+					config::limits::FONT_SIZE,
+				)?);
+			}
 			"background-color" => style.bg_color = Some(parse_hex(name, &a.value(name, inline)?)?),
 			"foreground-color" => style.fg_color = Some(parse_hex(name, &a.value(name, inline)?)?),
 			// --background-image* are kept as aliases for the --wallpaper* names.
@@ -534,7 +569,8 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
 				}
 			}
 			"wallpaper-opacity" | "background-image-opacity" => {
-				style.wallpaper_opacity = Some(parse_f32(name, &a.value(name, inline)?)?);
+				style.wallpaper_opacity =
+					Some(parse_f32_in(name, &a.value(name, inline)?, OPACITY)?);
 			}
 			_ => return Err(format!("unknown option: --{name}")),
 		}
@@ -1078,5 +1114,44 @@ mod tests {
 		let before = (s.font_size, s.bg, s.fg);
 		fold_window_style(&mut s, &c.win.style);
 		assert_eq!((s.font_size, s.bg, s.fg), before);
+	}
+
+	// nan parsed fine and went into the live settings. The session's first save
+	// then compared it against the value it stood for, found the two unequal - a
+	// NaN is unequal to itself - and wrote NaN over the user's own value.
+	#[test]
+	fn a_non_finite_number_is_refused() {
+		let bad = |s: &str| parse(s.split_whitespace().map(String::from)).is_err();
+		assert!(bad("--font-size nan"));
+		assert!(bad("--font-size inf"));
+		assert!(bad("--wallpaper-opacity nan"));
+		assert!(bad("--background-opacity -inf"));
+		assert!(bad("--new-pane --size=nan%"));
+		assert!(!bad("--font-size 20"));
+	}
+
+	// Every number stands for a setting, so it is held to that setting's range:
+	// the command line may not ask for a value the config file could not hold.
+	#[test]
+	fn a_number_is_held_to_its_settings_range() {
+		assert_eq!(p("--font-size 4000").win.style.font_size, Some(400.0));
+		assert_eq!(p("--font-size 0.5").win.style.font_size, Some(4.0));
+		assert_eq!(
+			p("--wallpaper-opacity 5").win.style.wallpaper_opacity,
+			Some(1.0)
+		);
+		assert_eq!(p("--background-opacity -1").win.opacity, Some(0.0));
+		// a grid no graphics card can draw ended the launch in create_texture
+		assert_eq!(p("--rows 100000 --columns 100000").win.rows, Some(1_000));
+		assert_eq!(p("--columns 0").win.columns, Some(1));
+		// both panes of a split stay usable
+		assert_eq!(
+			p("--new-pane --size=0%").tabs[0].panes[1].size,
+			Some(Size::Percent(5.0))
+		);
+		assert_eq!(
+			p("--new-pane --size=0").tabs[0].panes[1].size,
+			Some(Size::Cells(1))
+		);
 	}
 }
