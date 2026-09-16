@@ -102,6 +102,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Changed: Ctrl+Shift+C copies even while the focus flag reads false. It types nothing, so it cannot be the bare arrow that gate stops.
 	- Changed: a program can now set the clipboard, and on Linux the primary selection, from the pane in use. Other panes and tabs are ignored. That is the route muffer's auto-copy takes.
 	- Copy on select still only follows a drag SilkTerm sees. An app that takes the mouse copies for itself now instead.
+	- Interesting note: In muffer at least, if text is highlighted, then in another application text is copied and pasted, then you go back to muffer in silkterm to re-copy the still-selected text to clipboard: No mechanism will do it, not even the menu. You have to re-select the text, then it will work.
 	- Opened: 20260909.
 
 - 🔘 A setting indented under a commented-out heading can load at one launch and be ignored at the next.
@@ -123,13 +124,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- `family: Cascadia Mono` comes back as `family: "Cascadia Mono"`, a quoted `"5"` comes back bare, and `'text'` can come back as `"text"`. shcl reads every value the same, but a launch can still load one differently, as the item below says.
 	- This is how shcl writes a file, and shcl's spec says so. The one SilkTerm check that should ignore it is the performance rating's, and that fix waits with the item above.
 	- Opened: 20260911-001526
-
-- 🔘 A variable in a shell's own arguments is still expanded when it is spelled the way this platform spells it.
-	- Reproduced: `bash -c 'echo $FOO'` on Linux, or `cmd /k echo %PATH%` on Windows, reaches the program with that word already replaced. Quoting does not protect it, and there is no way to write a literal `$` or `%`.
-	- Cause: `command_argv` expands every word of a command, not only the program.
-	- Note: the cross-platform half was fixed with F37 on 20260916, which covered the three commands that review filed. This is the remainder.
-	- Decided: nothing yet. It needs a rule for which words expand at all - the program word only, or an escape for a literal.
-	- Opened: 20260916
 
 - 🔘 A save from Settings can change a setting nobody touched, from the next launch on.
 	- A font list that is still an old default but written in single quotes becomes the current default. A renamed setting under a commented-out heading can get renamed after all.
@@ -449,6 +443,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ A variable in a shell's own arguments is still expanded when it is spelled the way this platform spells it.
+	- Reproduced: `bash -c 'echo $FOO'` on Linux, or `cmd /k echo %PATH%` on Windows, reached the program with that word already replaced. Quoting did not protect it, and there was no way to write a literal `$` or `%`.
+	- Cause: `command_argv` expanded every word of a command, not only the program.
+	- Decided: the program name is expanded, because nothing else would - SilkTerm starts it directly. Every argument after it reaches the program as written, on either platform.
+	- Fixed: `command_argv` expands the first word and leaves the rest alone.
+	- Note: this also undoes the narrowing it was split from the same day. A setting that names a path reads all three spellings on both platforms again, which is what a config file carried between machines needs. See the Done feature "Pre-interpret the most common bash environment variables".
+	- Opened: 20260916
+	- Closed: 20260916
 
 - ✅ A wallpaper set with `silkterm --wallpaper` does not last the session.
 	- With a rotation folder, Reload config after it turns the background black until restart. A reload without the `--wallpaper` step keeps the picture.
@@ -2112,7 +2115,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Same for the common Windows variables.
 	- A path or a program named anywhere in settings or the config file now understands `~` plus all three spellings of a variable: `$NAME` and `${NAME}`, `%NAME%`, and `$env:NAME`. All of them work on every platform, since this is text SilkTerm reads rather than anything a shell sees.
 	- `$HOME` and `%USERPROFILE%` mean the same thing, and so do `$USER` and `%USERNAME%`, and `$TMPDIR` with `%TEMP%`. Only names with a real counterpart are paired; the rest expand to nothing, visibly, rather than to a guess.
-	- Note: narrowed 20260916 by F37. Only this platform's own spelling is read, and names are no longer paired across platforms, because the same text carries a program's own arguments. `~` is unaffected, and the startup directory now defaults to it.
+	- Note: narrowed 20260916 by F37, but only for a command. Its arguments are handed to the program as written now, and just the program name is expanded. A setting that names a path still reads all three spellings on either platform, as below. The startup directory defaults to `~` rather than to a variable.
 	- Reaches the startup directory and `--directory` as before, and now the wallpaper image, the rotation folder, the link opener, and every shell command in the list. A command is split into arguments first, so a variable holding a path with a space in it stays one argument.
 	- A `~` with no home directory to put there is left standing rather than turned into an absolute path meaning something else.
 	- Opened: 20260826-123553

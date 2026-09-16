@@ -658,17 +658,18 @@ Three defects came out of building it, all fixed with it: a program could put co
 
 - A setting that names a path or a program is text SilkTerm reads. No shell ever sees it, so nothing else would expand a variable written there.
 
-- Only this platform's own spelling is expanded: `%NAME%` on Windows, `$NAME` and `${NAME}` elsewhere. A leading `~` works on both, since it is a path convention rather than a variable.
+- Three spellings are read, all of them on every platform: `$NAME` and `${NAME}` from bash, `%NAME%` from cmd, `$env:NAME` and `${env:NAME}` from PowerShell. A leading `~` works too. Which shell somebody prefers should not decide whether their config file works, and a file carried between machines keeps working.
 
-- Every spelling was read on every platform until 20260916, so that a config carried between machines kept working. That was dropped, because the same text also carries arguments meant for the program being started. `cmd /k prompt $P$G` sets a cmd prompt and lost it, and `pwsh -Command "$Host.UI..."` lost `$Host`. A `$` on Windows, or a `%` in a unix path, is far more often literal than a variable, and the list of collisions was only going to grow.
+- A few names that mean one thing under two spellings are paired: HOME with USERPROFILE, USER with USERNAME, TMPDIR with TEMP and TMP. Only names with a real counterpart are listed, since a guess would be worse than an empty expansion that can be seen.
 
-- Names are not translated between platforms either. HOME was paired with USERPROFILE, USER with USERNAME, and TMPDIR with TEMP and TMP. Those pairings went at the same time and for the same reason.
+- An unset name expands to nothing, the way a shell does it.
 
-- What a carried config still needs is the home directory, so `shell.startup_directory` now defaults to `~` rather than to a variable. Its default used to be the platform's own spelling.
+- A command is the exception. It is split into arguments first, then only the program name is expanded; every argument after it goes through exactly as written.
+	- The program name is expanded because nothing else would. SilkTerm starts it directly, so there is no shell in between to read a `%ProgramFiles%`. Splitting first also keeps a variable holding `C:\Program Files\...` as one argument.
+	- The arguments are not expanded because the program itself reads them, and they already mean something to it. `cmd /k prompt $P$G` sets a cmd prompt, `bash -c 'echo $FOO'` wants bash's own `$FOO`, and a `%` in a unix path is a percent sign. Substituting any of those hands the program a word nobody typed, with no way to write a literal.
+	- Every word was expanded until 20260916, which is what broke those three. Reading only the local platform's spelling was tried first and dropped the same day: it fixed the cross-platform collisions, left the local ones, and cost a carried config for nothing.
 
-- An unset name expands to nothing, the way a shell does it, which the user can see. A wrong guess would be worse.
-
-- A command is split into arguments before its words are expanded. That keeps a variable holding something like `C:\Program Files\...` as one argument.
+- `shell.startup_directory` defaults to `~` rather than to a variable. It used to be `$HOME` or `%USERPROFILE%`, whichever matched the platform the file was written on.
 
 ### Command-line options
 
