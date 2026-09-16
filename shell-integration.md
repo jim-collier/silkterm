@@ -270,19 +270,19 @@ Paths with characters that need escaping in a URL are supposed to be percent-enc
 
 ### A git-aware bash prompt
 
-A separate thing, and the only other setup SilkTerm does for a shell. A bash pane is offered a prompt that shows the branch you are on, whether the working tree is clean, and how far ahead or behind its tracking branch it is - updated after every command, and out of the way in a directory that is not a git project.
+A separate thing, and the only other setup SilkTerm does for a shell. It is off until "Use git-aware Bash prompt" is checked on the Shell tab of Settings, or `shell.bash_prompt: true` is set in the config. Then a bash pane gets a prompt that shows the branch you are on, whether the working tree is clean, and how far ahead or behind its tracking branch it is - updated after every command, and out of the way in a directory that is not a git project.
 
-It is an offer, not an install:
+It is not an install:
 
 - Nothing is written into `.bashrc` or any other file of yours. The prompt is handed to the pane as `PROMPT_COMMAND` in its environment.
 
-- Your rc files run afterwards, so a prompt of your own simply wins. If you already set `PROMPT_COMMAND` - directly, or through starship, oh-my-posh or `/etc/profile.d/vte.sh` - you will never see this one.
+- It sets `PS1` before every prompt, so it replaces a `PS1` set in `.bashrc`. If you set `PROMPT_COMMAND` yourself - directly, or through starship, oh-my-posh or `/etc/profile.d/vte.sh` - yours runs instead, and you will not see this one.
 
 - It reaches bash panes only, and only ones SilkTerm started. A shell you `ssh` into, or a `sudo -i`, keeps whatever prompt it has.
 
 - `X9PS1_STANDARD=1` in a pane puts the ordinary Debian-style prompt back for that session.
 
-Clear "Git-aware bash prompt" on the Shell tab of Settings, or set `shell.bash_prompt: false` in the config, to switch it off. The script itself is written beside the config as `x9ps1-git`, and is a copy of [x9ps1-git](https://github.com/jim-collier/x9ps1-git) (MIT) - usable on its own from a `PATH` directory if you want it in every terminal rather than this one.
+Clear the checkbox again, or set `shell.bash_prompt: false`, to switch it off. The script itself is written beside the config as `x9ps1-git`, and is a copy of [x9ps1-git](https://github.com/jim-collier/x9ps1-git) (MIT) - usable on its own from a `PATH` directory if you want it in every terminal rather than this one.
 
 ## zsh
 

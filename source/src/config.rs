@@ -343,7 +343,7 @@ pub struct Settings {
 	pub startup_directory: String, // where a shell starts when nothing else said (see startup_dir)
 	pub copy_on_select: bool,    // panes start with copy-on-select enabled
 	pub shell_integration: bool, // put the directory-reporting block in PowerShell profiles
-	pub bash_prompt: bool,       // offer bash the git-aware prompt (see integration.rs)
+	pub bash_prompt: bool,       // give bash panes the x9ps1-git prompt (see integration.rs)
 	pub hyperlinks: bool,        // underline URLs in output on hover; Ctrl+click opens them
 	pub hyperlink_open_command: String, // opener for a clicked link (empty = the desktop's own)
 	pub bg: [u8; 3],
@@ -498,7 +498,7 @@ impl Default for Settings {
 			startup_directory: HOME_TOKEN.to_string(),
 			copy_on_select: false,
 			shell_integration: true,
-			bash_prompt: true,
+			bash_prompt: false,
 			hyperlinks: true,
 			hyperlink_open_command: String::new(),
 			bg: [0x00, 0x00, 0x00],
@@ -3118,6 +3118,9 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 		"shell.command_line",
 		"\"--new-pane --right --size 35%\"  ## Default",
 	),
+	// on by default until it was clear that it replaces a PS1 set in .bashrc,
+	// which Debian's own files do
+	("shell.bash_prompt", "true  ## Default"),
 ];
 
 // The whole pre-nesting flat namespace, old key -> new nested path. Primary
@@ -5047,9 +5050,9 @@ shell:
 	## start in the pane's current directory.
 	# integration: true  ## Default
 
-	## Give bash a prompt that shows git status. A prompt set in .bashrc
-	## overrides it.
-	# bash_prompt: true  ## Default
+	## Give bash panes the x9ps1-git prompt, which shows git status. It
+	## replaces a prompt set in .bashrc.
+	# bash_prompt: false  ## Default
 
 	# copy_on_select: false  ## Default
 

@@ -241,7 +241,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 32 (F64, blocking): The shell integration block breaks a directory-change hook already set in PowerShell, so every directory change prints an error, and a profile that loads the block twice breaks the prompt.
 		- An earlier hook is called the way PowerShell holds it, and a second load keeps the handler or prompt from before the first.
 		- Pinned by `the_block_keeps_an_earlier_hook_and_survives_loading_twice`, which runs the block through PowerShell on both the 7 and 5.1 paths.
-	- Code review 20260914 item 33 (F65, should-fix): The git-aware bash prompt replaces a prompt set in `.bashrc`, where it should give way to it.
+	- ✅ Code review 20260914 item 33 (F65, should-fix): The git-aware bash prompt replaces a prompt set in `.bashrc`, where it should give way to it.
+		- Decided: the prompt keeps replacing a `.bashrc` prompt, since Debian's own files set one. It is off by default now, and the Settings row reads "Use git-aware Bash prompt", with help naming x9ps1-git.
+		- The docs that said the rc file wins are corrected. Pinned by `the_bash_prompt_is_off_until_asked_for`.
 	- ✅ Code review 20260914 item 34 (F66, should-fix): Deleting the shell integration block does not keep it out when an earlier build added it or a later one updated it.
 		- A block found already in a profile is noted, so deleting it sticks.
 		- Pinned by `a_block_already_there_is_noted_so_deleting_it_sticks`.

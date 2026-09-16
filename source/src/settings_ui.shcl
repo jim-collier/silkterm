@@ -816,10 +816,10 @@ rows:
 		help: "Add a directory-reporting block to each PowerShell profile, so a new tab, pane or window opens where that shell is. Other shells need nothing. A profile that already reports is left alone, and deleting the block switches it off for good."
 
 	BashPrompt:
-		label: "Git-aware bash prompt"
+		label: "Use git-aware Bash prompt"
 		kind: toggle
 		setting: shell.bash_prompt
-		help: "Offer bash a prompt that shows the branch and status of the git project you are in. It is only an offer - a .bashrc with a prompt of its own wins, and nothing is written into any file."
+		help: "Give each new bash pane the x9ps1-git prompt, which shows the branch and status of the git project you are in. It replaces a prompt set in .bashrc, and nothing is written into any file."
 
 ## •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Graying

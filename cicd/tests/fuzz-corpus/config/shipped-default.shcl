@@ -251,9 +251,9 @@ shell:
 	## start in the pane's current directory.
 	# integration: true  ## Default
 
-	## Give bash a prompt that shows git status. A prompt set in .bashrc
-	## overrides it.
-	# bash_prompt: true  ## Default
+	## Give bash panes the x9ps1-git prompt, which shows git status. It
+	## replaces a prompt set in .bashrc.
+	# bash_prompt: false  ## Default
 
 	# copy_on_select: false  ## Default
 

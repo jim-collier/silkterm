@@ -45,12 +45,13 @@
 //! beside the config the way the bash half does. A prompt is drawn after every
 //! command, and on Windows starting a process that often is not free.
 //!
-//! The bash half is a much smaller thing, and deliberately so. bash picks up
-//! `PROMPT_COMMAND` from its environment, and an rc file that sets one of its
-//! own runs afterwards and wins - so a pane is OFFERED a prompt rather than
-//! given one, and anybody who already has a prompt keeps it without knowing
-//! this exists. Nothing is written into anyone's rc file, and switching it off
-//! is a setting rather than an uninstall.
+//! The bash half is a much smaller thing, and deliberately so. It is off by
+//! default. When on, bash picks up `PROMPT_COMMAND` from its environment, and
+//! that sets PS1 before every prompt, so it replaces a PS1 from the rc files -
+//! which Debian's own files set, so yielding to one would mean never showing.
+//! An rc file that sets a `PROMPT_COMMAND` of its own still wins. Nothing is
+//! written into anyone's rc file, and switching it off is a setting rather
+//! than an uninstall.
 
 use std::path::{Path, PathBuf};
 
@@ -534,6 +535,13 @@ mod tests {
 		assert!(!is_bash("sh"));
 		assert!(!is_bash("zsh"));
 		assert!(!is_bash("wsl.exe"));
+	}
+
+	// It replaces a PS1 set in .bashrc, and Debian's own files set one, so it is
+	// on only for somebody who asked for it.
+	#[test]
+	fn the_bash_prompt_is_off_until_asked_for() {
+		assert!(!crate::config::Settings::default().bash_prompt);
 	}
 
 	// The value is handed to bash as a command string, so a Windows path has to
