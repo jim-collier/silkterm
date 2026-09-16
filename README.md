@@ -114,6 +114,7 @@ The smooth-scrolling output concept was completely abandoned in the 80s and 90s,
 Video examples of early smooth-scroll displays:
 
 - [DEC VT100 - VT420](https://www.youtube.com/watch?v=tSJfzrSA0ec)
+
 - [Wyse WY*nn*](https://www.youtube.com/watch?v=8q6YPAzH02s)
 
 SilkTerm's smooth-scrolling output is a joy to work with, you really have to try it to "get" it. And the faster your monitor display Hz, the more gorgeous it feels.
@@ -416,6 +417,7 @@ Even a few dollars a month is meaningful. Or just buy me a coffee.
 **Indirect support**
 
 - Star the repo.
+
 - File good bug reports and feature requests.
 
 **Get the word out**
@@ -423,7 +425,9 @@ Even a few dollars a month is meaningful. Or just buy me a coffee.
 Tell other terminal nerds on various socials how this has changed your life!
 
 - [r/commandline](https://www.reddit.com/r/commandline/)
+
 - [Hacker News](https://news.ycombinator.com/)
+
 - [r/unixporn](https://www.reddit.com/r/unixporn/)
 
 ## Legal stuff
