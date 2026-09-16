@@ -662,6 +662,11 @@ pub struct SettingsDialog {
 	pending: usize,       // highlighted option in the open popup (commits on Enter/click)
 	emenu: Option<EMenu>, // open field context menu (right-click / Menu key)
 	mouse: (f32, f32),    // last cursor pos (drag edge-autoscroll replays it)
+	// What the desktop says its monospace font is, read once when the dialog
+	// opens. Held rather than asked for at each use so a test can say what the
+	// desktop reports: that answer is the only thing that grays the system-font
+	// row, and a box whose desktop does name a font could not reach the case.
+	os_font: crate::sysfont::Monospace,
 	focus: Option<Focus>, // keyboard-focused control/button (None = mouse-only)
 	alt: bool,            // Alt held: underline button accelerators (Cancel/Apply/OK)
 	shift: bool,          // Shift held (Shift+Tab walks focus backwards)
@@ -974,6 +979,7 @@ impl SettingsDialog {
 			pending: 0,
 			emenu: None,
 			mouse: (0.0, 0.0),
+			os_font: crate::sysfont::monospace().clone(),
 			focus: None,
 			alt: false,
 			shift: false,
@@ -2215,8 +2221,8 @@ impl SettingsDialog {
 	// setting - explains why it is inert. Only the system-font toggles today,
 	// and only when the OS reports no such setting to follow: Windows has a
 	// system font size but no monospace family, a bare desktop may have neither.
-	fn disabled_tip(key: Key) -> Option<&'static str> {
-		let os = crate::sysfont::monospace();
+	fn disabled_tip(&self, key: Key) -> Option<&'static str> {
+		let os = &self.os_font;
 		match key {
 			Key::SystemFont if os.family.is_none() => {
 				Some("The desktop reports no monospace font to follow.")
@@ -2253,7 +2259,7 @@ impl SettingsDialog {
 				continue;
 			}
 			let grayed = self.disabled(self.specs[i].key);
-			let tip = match Self::disabled_tip(self.specs[i].key).filter(|_| grayed) {
+			let tip = match self.disabled_tip(self.specs[i].key).filter(|_| grayed) {
 				Some(why) => why,
 				None if self.locked(self.specs[i].key) => LOCKED_TIP,
 				None if !self.specs[i].help.is_empty() => self.specs[i].help,
@@ -2596,11 +2602,18 @@ impl SettingsDialog {
 		if name.is_empty() {
 			return Some("Enter a name.".into());
 		}
+		// A theme is not in its own way. Rename opens on the theme's current name,
+		// so OK with nothing changed has to go through, and so does a change of
+		// case alone - which is the only way to make one.
+		let mine = (which == ThemeBtn::Rename)
+			.then(|| self.user_theme_index())
+			.flatten();
 		let clashes = self
 			.edited
 			.user_themes
 			.iter()
-			.any(|t| t.name.eq_ignore_ascii_case(name));
+			.enumerate()
+			.any(|(k, t)| Some(k) != mine && t.name.eq_ignore_ascii_case(name));
 		// Save as over a saved theme's name replaces it, which is a fair reading of
 		// the button; a rename onto another theme's name would merge two into one.
 		if which == ThemeBtn::Rename && clashes {
@@ -3162,7 +3175,7 @@ impl SettingsDialog {
 	fn disabled(&self, key: Key) -> bool {
 		!ui().needs_of(key).iter().all(|need| self.gate_ok(need))
 			// nothing for a system-font toggle to follow (the tip says so)
-			|| Self::disabled_tip(key).is_some()
+			|| self.disabled_tip(key).is_some()
 			|| self.locked(key)
 	}
 	// A row the chosen performance profile sets. It shows the profile's value
@@ -3652,9 +3665,13 @@ impl SettingsDialog {
 			// A grayed control takes no click. This used to sit inside each arm, and
 			// the color, text and radio arms were the three that never got it - so
 			// a control the dialog draws as inert still changed its setting. The
-			// two whose parts gray separately keep their own per-part check.
-			if !matches!(self.specs[i].kind, Kind::Buttons(_) | Kind::ShellList)
-				&& self.disabled(self.specs[i].key)
+			// three whose parts gray separately keep their own per-part check. A
+			// pair row's key is only its FIRST part, so gating the whole row on
+			// that key took the click away from a live second part.
+			if !matches!(
+				self.specs[i].kind,
+				Kind::Buttons(_) | Kind::ShellList | Kind::Dual { .. }
+			) && self.disabled(self.specs[i].key)
 			{
 				continue;
 			}
@@ -8249,6 +8266,73 @@ mod tests {
 
 	// Renaming moves the name and the selection together; the slug behind it does
 	// not move, so the config subtree stays where it is.
+	#[test]
+	fn a_theme_can_be_renamed_to_its_own_name_or_a_different_case() {
+		let mut d = on_theme("Matrix");
+		d.save_theme_as("Mine");
+		// Rename opens on the theme's own name, so OK with nothing changed used
+		// to answer "that name is taken" and keep the box up.
+		assert!(d.name_problem(super::ThemeBtn::Rename, "Mine").is_none());
+		assert!(d.name_problem(super::ThemeBtn::Rename, "MINE").is_none());
+
+		let slug = d.edited.user_themes[0].slug.clone();
+		d.rename_theme("MINE");
+		assert_eq!(d.edited.theme, "MINE");
+		assert_eq!(d.edited.user_themes[0].slug, slug, "still the same theme");
+
+		// another saved theme's name is still refused
+		d.save_theme_as("Other");
+		assert!(d.name_problem(super::ThemeBtn::Rename, "mine").is_some());
+	}
+
+	// A pair row's key is only its FIRST part, so gating the whole row on that
+	// key took the click away from a live second part. Windows always reports a
+	// size and no monospace family, so there it was every user; here the report
+	// has to be said out loud, or a desktop that does name a font never reaches
+	// the case.
+	#[test]
+	fn a_live_half_of_a_pair_row_takes_a_click_while_the_other_half_is_grayed() {
+		use super::Key;
+		let mut m = |s: &str| s.chars().count() as f32;
+		let mut d = mk_dialog(4000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| matches!(s.key, Key::SystemFont))
+			.unwrap();
+		d.tab = d.specs[i].tab;
+		// the desktop names a size to follow but no family: Face grays, Size does not
+		d.os_font = crate::sysfont::Monospace {
+			family: None,
+			size_pt: Some(9.0),
+		};
+		assert!(d.disabled(Key::SystemFont), "Face should be grayed");
+		assert!(!d.disabled(Key::SystemFontSize), "Size should be live");
+
+		let was = d.get_toggle(Key::SystemFontSize);
+		let size_box = d.dual_box(i, 1);
+		d.mouse_down_dip(
+			size_box.x + size_box.w / 2.0,
+			size_box.y + size_box.h / 2.0,
+			&mut m,
+		);
+		assert_eq!(
+			d.get_toggle(Key::SystemFontSize),
+			!was,
+			"Size took no click"
+		);
+
+		// and the grayed half still takes none
+		let face = d.get_toggle(Key::SystemFont);
+		let face_box = d.dual_box(i, 0);
+		d.mouse_down_dip(
+			face_box.x + face_box.w / 2.0,
+			face_box.y + face_box.h / 2.0,
+			&mut m,
+		);
+		assert_eq!(d.get_toggle(Key::SystemFont), face, "a grayed half acted");
+	}
+
 	#[test]
 	fn a_rename_moves_the_name_and_the_selection() {
 		let mut d = on_theme("Matrix");
