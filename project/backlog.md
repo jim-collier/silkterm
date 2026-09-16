@@ -189,10 +189,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 12 (F44, should-fix): A program's own name, or the name of the folder it runs in, can put control characters into the window title and the tab.
 		- A tab label is held to the rule a window title is now. The shell name, the running program and the directory are all cleaned where they go in, so the shortened forms are measured against what is actually drawn.
 		- The title fuzz target feeds those three raw text rather than text a title parser had already cleaned, which is what let this through.
-	- Code review 20260914 item 13 (F45, should-fix): On Windows, the Size checkbox beside "Use system font" in Settings does not respond to a click.
+	- ✅ Code review 20260914 item 13 (F45, should-fix): On Windows, the Size checkbox beside "Use system font" in Settings does not respond to a click.
+		- A pair row is gated one part at a time now, not on the row's key, which is only its first part. A grayed part still takes no click.
+		- The dialog reads the desktop's font report once when it opens and keeps it, rather than asking at each use. That report is the only thing that grays this row, so holding it is what lets the case be tested from a machine whose desktop does name a font.
 	- Code review 20260914 item 14 (F46, should-fix): Flyover help in the Settings and About windows appears at once, without the rest the tabs and menus wait for.
 	- Code review 20260914 item 15 (F47, should-fix): The Settings flyover's padding and border do not grow with the display scale.
-	- Code review 20260914 item 16 (F48, should-fix): Renaming a saved theme to its own name, or changing only its capitals, is refused as a name already taken.
+	- ✅ Code review 20260914 item 16 (F48, should-fix): Renaming a saved theme to its own name, or changing only its capitals, is refused as a name already taken.
+		- A theme is no longer in its own way. Renaming to the same name closes the box and changes nothing, and a change of case alone goes through, which was the only way to make one.
+		- Another saved theme's name is still refused, so two themes cannot merge into one.
 	- Code review 20260914 item 18 (F50, blocking): A menu left open after its pane's shell ended can close a different tab, or the whole window, with its programs still running.
 	- Code review 20260914 item 19 (F51, blocking): A window taller or wider than the graphics card can draw crashes at launch, and `window.rows: 1000` in the settings file is enough on some machines.
 	- Code review 20260914 item 20 (F52, blocking): `--font-size nan` or `--wallpaper-opacity nan` replaces that setting in the settings file, so the saved value is lost.
