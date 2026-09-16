@@ -25,16 +25,47 @@
 
 ## Conventions
 
-In each section, items are listed approximately from newest to oldest. Each item ends with an `Opened:` bullet, and a `Closed:` bullet once it is done or canceled, both stamped `YYYYmmDD-HHMMSS`. `Opened: n/a` means the item was written down and closed in the same pass, and/or just couldn't be easily figured out from notes and backlog without dates.
+In each section, items are listed approximately from newest to oldest. Inside Done and Canceled, loose items come first and code-review rounds after, each run newest first.
 
-Use a clipboard or macro manager to make inserting these emojis easier. This "database" will eventually be moved to a git-synced nano-git-db.
+Statii:
 
 - 🔘 Not started
+
 - 🛠️ Started, and/or partially complete
+
 - 🔬 Testing not started or finished
+
 - ✋ Defer
+
 - ✅ Complete
+
 - 🚫 Canceled
+
+To make using these icons easier if desired, add them to a clipboard or key macro manager. (This format is "temporary" anyway [albeit for a while now], until we switch over to nano-git-db for the minor stuff, and GitHub Issues for the bigger stuff.)
+
+Sub-bullets under an item lead with what they are, so an item can be read by skimming the prefixes.
+
+- `Reproduced:` what was actually seen
+
+- `Cause:` why
+
+- `Decided:` a call that had to be made before code
+
+- `Fixed:` what changed
+
+- `Pinned by:` what now fails if it comes back
+
+- `Left alone:` what was looked at and deliberately not touched
+
+- `Measured:` a number
+
+- `Note:` anything else.
+
+A fix said to be in all four bindings has to name the function for each. "In all four" on its own can't be checked by anyone reading later.
+
+Each item should include the date it was opened and closed. If the open date is unknown, it says "n/a". A deferred item keeps only its opened date.
+
+Issues opened by automated code reviews should be grouped under a main bullet with YYYYmmDD, and each one should get programmer review for validity and accuracy.
 
 ## Backlog
 
@@ -93,6 +124,13 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- This is how shcl writes a file, and shcl's spec says so. The one SilkTerm check that should ignore it is the performance rating's, and that fix waits with the item above.
 	- Opened: 20260911-001526
 
+- 🔘 A variable in a shell's own arguments is still expanded when it is spelled the way this platform spells it.
+	- Reproduced: `bash -c 'echo $FOO'` on Linux, or `cmd /k echo %PATH%` on Windows, reaches the program with that word already replaced. Quoting does not protect it, and there is no way to write a literal `$` or `%`.
+	- Cause: `command_argv` expands every word of a command, not only the program.
+	- Note: the cross-platform half was fixed with F37 on 20260916, which covered the three commands that review filed. This is the remainder.
+	- Decided: nothing yet. It needs a rule for which words expand at all - the program word only, or an escape for a literal.
+	- Opened: 20260916
+
 - 🔘 A save from Settings can change a setting nobody touched, from the next launch on.
 	- A font list that is still an old default but written in single quotes becomes the current default. A renamed setting under a commented-out heading can get renamed after all.
 	- A save tidies quotes and indents, and the renames at launch look at both.
@@ -138,7 +176,12 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Code review 20260914 item 3 (F35, should-fix): Several commented `## Default` lines in a new settings file name values that are not the defaults, among them transparency and blur behind.
 	- ✅ Code review 20260914 item 4 (F36, should-fix): A saved theme makes every launch report its settings as unread typos.
 		- Saved themes are skipped under the name they are really stored under. The check's own test had used the wrong name, which is why it passed, and now uses the right one.
-	- Code review 20260914 item 5 (F37, should-fix): A `$` or `%` in a shell's arguments is expanded as a variable, so `cmd /k prompt $P$G` loses its prompt.
+	- ✅ Code review 20260914 item 5 (F37, should-fix): A `$` or `%` in a shell's arguments is expanded as a variable, so `cmd /k prompt $P$G` loses its prompt.
+		- Decided: read only this platform's own spelling, rather than expanding the program word alone. Reading both platforms' spellings was the part that kept finding new ways to be wrong.
+		- Fixed: `expand_vars` takes `%NAME%` on Windows, `$NAME` and `${NAME}` elsewhere. `$env:` is gone as a spelling, and names are no longer paired across platforms. `~` is unchanged.
+		- Fixed: `shell.startup_directory` defaults to `~`, so a config carried between machines still finds home. The two old spellings refresh from `SUPERSEDED_DEFAULTS`.
+		- Pinned by: `a_variable_expands_in_this_platforms_spelling_only` and `a_name_is_never_translated_to_the_other_platforms`.
+		- Note: the same-platform case is still open, as its own item under Bugs.
 	- ✅ Code review 20260914 item 6 (F38, should-fix): A color override in the settings file is dropped for the session when the system switches between dark and light.
 		- A color that is not the theme's own stays when the system switches. That covers one from the command line or from Settings too, not only the file.
 	- ✅ Code review 20260914 item 7 (F39, should-fix): The wallpaper metadata fuzz test never reaches the metadata it is meant to check.
@@ -2069,6 +2112,7 @@ Use a clipboard or macro manager to make inserting these emojis easier. This "da
 	- Same for the common Windows variables.
 	- A path or a program named anywhere in settings or the config file now understands `~` plus all three spellings of a variable: `$NAME` and `${NAME}`, `%NAME%`, and `$env:NAME`. All of them work on every platform, since this is text SilkTerm reads rather than anything a shell sees.
 	- `$HOME` and `%USERPROFILE%` mean the same thing, and so do `$USER` and `%USERNAME%`, and `$TMPDIR` with `%TEMP%`. Only names with a real counterpart are paired; the rest expand to nothing, visibly, rather than to a guess.
+	- Note: narrowed 20260916 by F37. Only this platform's own spelling is read, and names are no longer paired across platforms, because the same text carries a program's own arguments. `~` is unaffected, and the startup directory now defaults to it.
 	- Reaches the startup directory and `--directory` as before, and now the wallpaper image, the rotation folder, the link opener, and every shell command in the list. A command is split into arguments first, so a variable holding a path with a space in it stays one argument.
 	- A `~` with no home directory to put there is left standing rather than turned into an absolute path meaning something else.
 	- Opened: 20260826-123553

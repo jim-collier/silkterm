@@ -658,11 +658,15 @@ Three defects came out of building it, all fixed with it: a program could put co
 
 - A setting that names a path or a program is text SilkTerm reads. No shell ever sees it, so nothing else would expand a variable written there.
 
-- Among the options, it was decided that all three spellings are accepted on every platform: `$NAME` and `${NAME}`, `%NAME%`, and `$env:NAME`. Which shell a person prefers should not decide whether their config works, and a config file gets carried between machines.
+- Only this platform's own spelling is expanded: `%NAME%` on Windows, `$NAME` and `${NAME}` elsewhere. A leading `~` works on both, since it is a path convention rather than a variable.
 
-- A few names mean the same thing under a different spelling, and those are paired: HOME with USERPROFILE, USER with USERNAME, TMPDIR with TEMP and TMP. Native Windows sets no HOME and unix sets no USERPROFILE, so without the pairing a config written on one box goes quiet on the other.
+- Every spelling was read on every platform until 20260916, so that a config carried between machines kept working. That was dropped, because the same text also carries arguments meant for the program being started. `cmd /k prompt $P$G` sets a cmd prompt and lost it, and `pwsh -Command "$Host.UI..."` lost `$Host`. A `$` on Windows, or a `%` in a unix path, is far more often literal than a variable, and the list of collisions was only going to grow.
 
-- Names without an honest counterpart are not guessed at. An unpaired name that is unset expands to nothing, the way a shell does it, which the user can see. A wrong guess would be worse.
+- Names are not translated between platforms either. HOME was paired with USERPROFILE, USER with USERNAME, and TMPDIR with TEMP and TMP. Those pairings went at the same time and for the same reason.
+
+- What a carried config still needs is the home directory, so `shell.startup_directory` now defaults to `~` rather than to a variable. Its default used to be the platform's own spelling.
+
+- An unset name expands to nothing, the way a shell does it, which the user can see. A wrong guess would be worse.
 
 - A command is split into arguments before its words are expanded. That keeps a variable holding something like `C:\Program Files\...` as one argument.
 
