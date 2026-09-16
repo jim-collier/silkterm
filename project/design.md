@@ -654,6 +654,10 @@ Three defects came out of building it, all fixed with it: a program could put co
 
 - Values are typed by the reader, not the file, so there is nothing to get wrong in the syntax and a value is stored back exactly as written.
 
+- With `remember_size` on, the size written down is an ordinary window's. A fullscreen or maximized window is not a size to come back to, so neither is remembered: unfullscreening would otherwise leave every later launch opening at the size of the screen. The window's own columns and rows stay as they were, and a resize by hand still replaces them.
+
+- A number given on the command line is held to the range of the setting it stands for, the same range the file's copy of that setting is held to. A count of rows or columns is also held to what the graphics device can draw, since the window is a texture and a refusal there ends the launch rather than the setting.
+
 ### Variables in a setting (2026-08-30)
 
 - A setting that names a path or a program is text SilkTerm reads. No shell ever sees it, so nothing else would expand a variable written there.

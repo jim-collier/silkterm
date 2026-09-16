@@ -203,11 +203,19 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 16 (F48, should-fix): Renaming a saved theme to its own name, or changing only its capitals, is refused as a name already taken.
 		- A theme is no longer in its own way. Renaming to the same name closes the box and changes nothing, and a change of case alone goes through, which was the only way to make one.
 		- Another saved theme's name is still refused, so two themes cannot merge into one.
-	- Code review 20260914 item 18 (F50, blocking): A menu left open after its pane's shell ended can close a different tab, or the whole window, with its programs still running.
-	- Code review 20260914 item 19 (F51, blocking): A window taller or wider than the graphics card can draw crashes at launch, and `window.rows: 1000` in the settings file is enough on some machines.
-	- Code review 20260914 item 20 (F52, blocking): `--font-size nan` or `--wallpaper-opacity nan` replaces that setting in the settings file, so the saved value is lost.
-	- Code review 20260914 item 21 (F53, should-fix): A launch with `--fullscreen` stores the screen size as the size to open at next time.
-	- Code review 20260914 item 22 (F54, should-fix): A window asked for 24 rows gives the shell 22 while the tab strip shows for a single tab.
+	- ✅ Code review 20260914 item 18 (F50, blocking): A menu left open after its pane's shell ended can close a different tab, or the whole window, with its programs still running.
+		- Close pane acts only on the pane the menu was opened for. With that pane gone it does nothing, and the menu closes with the pane rather than standing open over it.
+		- The cascade of pane, then its tab, then the window is one function now, read by both the menu and a shell that ended.
+	- ✅ Code review 20260914 item 19 (F51, blocking): A window taller or wider than the graphics card can draw crashes at launch, and `window.rows: 1000` in the settings file is enough on some machines.
+		- The window is held to the largest texture the device will make, since the scene is drawn into one at the window's size.
+		- `--rows` and `--columns` are held to the ceiling the config file's own are, so the two agree. The Settings ranges still fit well inside it.
+	- ✅ Code review 20260914 item 20 (F52, blocking): `--font-size nan` or `--wallpaper-opacity nan` replaces that setting in the settings file, so the saved value is lost.
+		- A number on the command line that is not finite is refused with a message. Every other one is held to the range of the setting it stands for, the file's range.
+		- A save no longer reads the same nan on both sides as a change, which is what wrote it over the value in the file.
+	- ✅ Code review 20260914 item 21 (F53, should-fix): A launch with `--fullscreen` stores the screen size as the size to open at next time.
+		- A fullscreen or maximized window is not a size to come back to, so neither is written down. A resize by hand still is, and design.md names the decision.
+	- ✅ Code review 20260914 item 22 (F54, should-fix): A window asked for 24 rows gives the shell 22 while the tab strip shows for a single tab.
+		- The strip counts against the window's height everywhere a row count becomes pixels: at launch, on a Settings Apply, and where the live size is written down.
 	- Code review 20260914 item 23 (F55, should-fix): Ctrl+Shift+N opens the new window on the default settings file, and not always in the current pane's folder.
 	- Code review 20260914 item 24 (F56, should-fix): `silkterm --wallpaper` reports success and shows nothing while the wallpaper is switched off.
 	- Code review 20260914 item 25 (F57, should-fix): Reload config drops the font and colors given on the command line at launch.

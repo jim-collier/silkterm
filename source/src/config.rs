@@ -1339,6 +1339,14 @@ fn cleared_keys(orig: &Settings, s: &Settings) -> Vec<&'static str> {
 }
 
 #[must_use]
+// NaN is never equal to itself, so a plain `!=` reads a NaN on both sides as a
+// change and writes it over the value in the file. Every float setting is
+// compared through this. A NaN only ever arrived from the command line, which
+// refuses one now, but the comparison is where the damage was done.
+fn same_f32(a: f32, b: f32) -> bool {
+	a == b || (a.is_nan() && b.is_nan())
+}
+
 pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	let Some(path) = config_path() else {
 		return true;
@@ -1394,10 +1402,10 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 			doc.put_string("font.family", f);
 		}
 	}
-	if s.font_size != orig.font_size {
+	if !same_f32(s.font_size, orig.font_size) {
 		doc.put_float("font.size", r(s.font_size));
 	}
-	if s.line_height_scale != orig.line_height_scale {
+	if !same_f32(s.line_height_scale, orig.line_height_scale) {
 		doc.put_float("font.line_height_scale", r(s.line_height_scale));
 	}
 	if s.scrollback != orig.scrollback {
@@ -1406,37 +1414,40 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.scroll_smooth != orig.scroll_smooth {
 		doc.put_bool("scroll.smooth", s.scroll_smooth);
 	}
-	if s.scroll_ease_in_ms != orig.scroll_ease_in_ms {
+	if !same_f32(s.scroll_ease_in_ms, orig.scroll_ease_in_ms) {
 		doc.put_float("scroll.ease_in_ms", r(s.scroll_ease_in_ms));
 	}
-	if s.scroll_ramp_up_ms != orig.scroll_ramp_up_ms {
+	if !same_f32(s.scroll_ramp_up_ms, orig.scroll_ramp_up_ms) {
 		doc.put_float("scroll.ramp_up_ms", r(s.scroll_ramp_up_ms));
 	}
-	if s.scroll_single_screen_tau_ms != orig.scroll_single_screen_tau_ms {
+	if !same_f32(
+		s.scroll_single_screen_tau_ms,
+		orig.scroll_single_screen_tau_ms,
+	) {
 		doc.put_float(
 			"scroll.single_screen_tau_ms",
 			r(s.scroll_single_screen_tau_ms),
 		);
 	}
-	if s.scroll_ramp_down_ms != orig.scroll_ramp_down_ms {
+	if !same_f32(s.scroll_ramp_down_ms, orig.scroll_ramp_down_ms) {
 		doc.put_float("scroll.ramp_down_ms", r(s.scroll_ramp_down_ms));
 	}
-	if s.scroll_ease_out_ms != orig.scroll_ease_out_ms {
+	if !same_f32(s.scroll_ease_out_ms, orig.scroll_ease_out_ms) {
 		doc.put_float("scroll.ease_out_ms", r(s.scroll_ease_out_ms));
 	}
-	if s.wheel_lines != orig.wheel_lines {
+	if !same_f32(s.wheel_lines, orig.wheel_lines) {
 		doc.put_float("scroll.wheel_lines", r(s.wheel_lines));
 	}
-	if s.alt_scroll_lines != orig.alt_scroll_lines {
+	if !same_f32(s.alt_scroll_lines, orig.alt_scroll_lines) {
 		doc.put_float("scroll.alt_scroll_lines", r(s.alt_scroll_lines));
 	}
-	if s.output_ease_lines != orig.output_ease_lines {
+	if !same_f32(s.output_ease_lines, orig.output_ease_lines) {
 		doc.put_float("scroll.output_ease_lines", r(s.output_ease_lines));
 	}
 	if s.scrollbar != orig.scrollbar {
 		doc.put_bool("scroll.scrollbar.enabled", s.scrollbar);
 	}
-	if s.scrollbar_thickness != orig.scrollbar_thickness {
+	if !same_f32(s.scrollbar_thickness, orig.scrollbar_thickness) {
 		doc.put_float("scroll.scrollbar.thickness", r(s.scrollbar_thickness));
 	}
 	if s.scrollbar_auto_hide != orig.scrollbar_auto_hide {
@@ -1445,7 +1456,7 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.minimap != orig.minimap {
 		doc.put_bool("scroll.minimap.enabled", s.minimap);
 	}
-	if s.minimap_width != orig.minimap_width {
+	if !same_f32(s.minimap_width, orig.minimap_width) {
 		doc.put_float("scroll.minimap.width", r(s.minimap_width));
 	}
 	if s.minimap_tui_whitelist != orig.minimap_tui_whitelist {
@@ -1454,10 +1465,10 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 			&s.minimap_tui_whitelist,
 		);
 	}
-	if s.margin != orig.margin {
+	if !same_f32(s.margin, orig.margin) {
 		doc.put_float("window.margin", r(s.margin));
 	}
-	if s.opacity != orig.opacity {
+	if !same_f32(s.opacity, orig.opacity) {
 		doc.put_float("transparency.opacity", r(s.opacity));
 	}
 	if s.transparent_background != orig.transparent_background {
@@ -1466,7 +1477,7 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.transparent_background_blur != orig.transparent_background_blur {
 		doc.put_bool("transparency.blur_behind", s.transparent_background_blur);
 	}
-	if s.wallpaper_opacity != orig.wallpaper_opacity {
+	if !same_f32(s.wallpaper_opacity, orig.wallpaper_opacity) {
 		doc.put_float("wallpaper.opacity", r(s.wallpaper_opacity));
 	}
 	if s.wallpaper_enabled != orig.wallpaper_enabled {
@@ -1490,25 +1501,34 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.wallpaper_honor_xmp_look != orig.wallpaper_honor_xmp_look {
 		doc.put_bool("wallpaper.honor_xmp_look", s.wallpaper_honor_xmp_look);
 	}
-	if s.wallpaper_blur != orig.wallpaper_blur {
+	if !same_f32(s.wallpaper_blur, orig.wallpaper_blur) {
 		doc.put_float("wallpaper.blur", r(s.wallpaper_blur));
 	}
 	if s.wallpaper_contrast_mask != orig.wallpaper_contrast_mask {
 		doc.put_bool("wallpaper.contrast_mask.enabled", s.wallpaper_contrast_mask);
 	}
-	if s.wallpaper_contrast_mask_size != orig.wallpaper_contrast_mask_size {
+	if !same_f32(
+		s.wallpaper_contrast_mask_size,
+		orig.wallpaper_contrast_mask_size,
+	) {
 		doc.put_float(
 			"wallpaper.contrast_mask.size",
 			r(s.wallpaper_contrast_mask_size),
 		);
 	}
-	if s.wallpaper_contrast_mask_strength != orig.wallpaper_contrast_mask_strength {
+	if !same_f32(
+		s.wallpaper_contrast_mask_strength,
+		orig.wallpaper_contrast_mask_strength,
+	) {
 		doc.put_float(
 			"wallpaper.contrast_mask.strength",
 			r(s.wallpaper_contrast_mask_strength),
 		);
 	}
-	if s.wallpaper_contrast_mask_auto != orig.wallpaper_contrast_mask_auto {
+	if !same_f32(
+		s.wallpaper_contrast_mask_auto,
+		orig.wallpaper_contrast_mask_auto,
+	) {
 		doc.put_float(
 			"wallpaper.contrast_mask.auto",
 			r(s.wallpaper_contrast_mask_auto),
@@ -1517,16 +1537,16 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.text_scrim != orig.text_scrim {
 		doc.put_bool("text.scrim.enabled", s.text_scrim);
 	}
-	if s.text_scrim_radius != orig.text_scrim_radius {
+	if !same_f32(s.text_scrim_radius, orig.text_scrim_radius) {
 		doc.put_float("text.scrim.radius", r(s.text_scrim_radius));
 	}
-	if s.text_scrim_softness != orig.text_scrim_softness {
+	if !same_f32(s.text_scrim_softness, orig.text_scrim_softness) {
 		doc.put_float("text.scrim.softness", r(s.text_scrim_softness));
 	}
-	if s.text_scrim_strength != orig.text_scrim_strength {
+	if !same_f32(s.text_scrim_strength, orig.text_scrim_strength) {
 		doc.put_float("text.scrim.strength", r(s.text_scrim_strength));
 	}
-	if s.text_outline != orig.text_outline {
+	if !same_f32(s.text_outline, orig.text_outline) {
 		doc.put_float("text.outline", r(s.text_outline));
 	}
 	if s.text_scrim_ramp != orig.text_scrim_ramp {
@@ -1538,7 +1558,7 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.text_scrim_regular_weight != orig.text_scrim_regular_weight {
 		doc.put_bool("text.scrim.regular_weight", s.text_scrim_regular_weight);
 	}
-	if s.text_min_contrast != orig.text_min_contrast {
+	if !same_f32(s.text_min_contrast, orig.text_min_contrast) {
 		doc.put_float("text.min_contrast", r(s.text_min_contrast));
 	}
 	if s.color_emoji != orig.color_emoji {
@@ -1553,19 +1573,19 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.cursor_outline != orig.cursor_outline {
 		doc.put_bool("cursor.outline", s.cursor_outline);
 	}
-	if s.cursor_size_height != orig.cursor_size_height {
+	if !same_f32(s.cursor_size_height, orig.cursor_size_height) {
 		doc.put_float("cursor.size.height", r(s.cursor_size_height));
 	}
-	if s.cursor_size_width != orig.cursor_size_width {
+	if !same_f32(s.cursor_size_width, orig.cursor_size_width) {
 		doc.put_float("cursor.size.width", r(s.cursor_size_width));
 	}
 	if s.cursor_animation != orig.cursor_animation {
 		doc.put_string("cursor.animation", &s.cursor_animation);
 	}
-	if s.cursor_animation_resume_s != orig.cursor_animation_resume_s {
+	if !same_f32(s.cursor_animation_resume_s, orig.cursor_animation_resume_s) {
 		doc.put_float("cursor.animation_resume_s", r(s.cursor_animation_resume_s));
 	}
-	if s.cursor_blink_rate_ms != orig.cursor_blink_rate_ms {
+	if !same_f32(s.cursor_blink_rate_ms, orig.cursor_blink_rate_ms) {
 		doc.put_float("cursor.blink_rate_ms", r(s.cursor_blink_rate_ms));
 	}
 	if s.columns != orig.columns {
@@ -1580,10 +1600,10 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.hide_single_tab != orig.hide_single_tab {
 		doc.put_bool("window.hide_single_tab", s.hide_single_tab);
 	}
-	if s.tab_regular_pct != orig.tab_regular_pct {
+	if !same_f32(s.tab_regular_pct, orig.tab_regular_pct) {
 		doc.put_float("window.tab_regular_width_pct", r(s.tab_regular_pct));
 	}
-	if s.tab_max_pct != orig.tab_max_pct {
+	if !same_f32(s.tab_max_pct, orig.tab_max_pct) {
 		doc.put_float("window.tab_max_width_pct", r(s.tab_max_pct));
 	}
 	if s.remembered_columns != orig.remembered_columns {
@@ -2337,7 +2357,7 @@ fn parse_iso_date(text: &str) -> Option<shcl::ShclDateTime> {
 // to an edge when the value is not a number at all: shcl reads `1e400` as
 // infinity and reports it good, and infinity survives a clamp.
 #[rustfmt::skip]
-mod limits {
+pub(crate) mod limits {
 	pub const FONT_SIZE:          (f32, f32) = (4.0, 400.0);
 	pub const LINE_HEIGHT:        (f32, f32) = (0.5, 10.0);
 	pub const EASE_MS:            (f32, f32) = (1.0, 60_000.0);
@@ -6001,6 +6021,40 @@ mod tests {
 			body[start..end].contains(publish),
 			"{publish} is called from write_config_atomic"
 		);
+	}
+
+	#[test]
+	fn persist_writes_nothing_for_a_nan_on_both_sides() {
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_cfgnan_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let path = dir.join("config.shcl");
+		std::fs::write(&path, "font.use_system_size: false\nfont.size: 17\n").unwrap();
+		set_config_override(path.clone());
+
+		let orig = load();
+		assert_eq!(orig.font_size, 17.0);
+		// What --font-size nan folded into the live settings, standing on both
+		// sides of the diff: it is the run's own value, not a change to save.
+		let mut live = orig.clone();
+		live.font_size = f32::NAN;
+		let same = live.clone();
+		assert!(persist(&live, &same));
+		let saved = std::fs::read_to_string(&path).unwrap();
+		assert!(
+			saved.contains("size: 17"),
+			"NaN written over the user's size: {saved:?}"
+		);
+		assert!(!saved.to_lowercase().contains("nan"), "{saved:?}");
+		assert_eq!(load().font_size, 17.0);
+
+		// and a real change still reaches the file
+		let mut edited = live.clone();
+		edited.font_size = 22.0;
+		assert!(persist(&live, &edited));
+		assert_eq!(load().font_size, 22.0);
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 
 	#[test]
