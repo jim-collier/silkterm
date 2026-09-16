@@ -3034,10 +3034,11 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// be low enough that a couple of them did not swallow the window
 	("window.tab_max_width_pct", "26.0  ## Default"),
 	("window.tab_regular_width_pct", "8.0  ## Default"),
-	// the startup directory named the home variable, one spelling per platform,
-	// before `~` replaced both
-	("shell.startup_directory", "\"$HOME\"  ## Default"),
-	("shell.startup_directory", "\"%USERPROFILE%\"  ## Default"),
+	// `~` was the default for part of a day, between two runs at the variable.
+	// The other platform's spelling is not listed: it is that platform's current
+	// default rather than an outgoing one, and listing it would rewrite the line
+	// every time a config crossed between machines.
+	("shell.startup_directory", "\"~\"  ## Default"),
 ];
 
 // The whole pre-nesting flat namespace, old key -> new nested path. Primary
@@ -4703,10 +4704,13 @@ fn default_config() -> &'static str {
 	DEFAULT_CONFIG_TEXT.as_str()
 }
 
-// How a shipped default names the home directory. `~` rather than a variable,
-// because it is the one spelling that is short, means the same thing on both
-// platforms, and needs nothing set in the environment to work.
-pub const HOME_TOKEN: &str = "~";
+// How a shipped default names the home directory: the variable somebody on this
+// platform would type. A config written here still works if it is carried
+// elsewhere, since both names are read on both platforms.
+#[cfg(windows)]
+pub const HOME_TOKEN: &str = "%USERPROFILE%";
+#[cfg(not(windows))]
+pub const HOME_TOKEN: &str = "$HOME";
 
 const DEFAULT_CONFIG_TEMPLATE: &str = r##"# SilkTerm configuration file.
 #
@@ -7265,6 +7269,28 @@ mod tests {
 		assert_eq!(expand_vars("cost $ 5"), "cost $ 5", "a lone dollar");
 		// and an unset one expands to nothing, the way a shell does it
 		assert_eq!(expand_vars("$SILKTERM_NO_SUCH_VAR/x"), "/x");
+	}
+
+	// The shipped default is the home variable spelled the way somebody on this
+	// platform would type it, and the template's commented line has to say the
+	// same thing or the first save rewrites the file we just wrote (G69, G72).
+	#[test]
+	fn the_shipped_startup_directory_is_this_platforms_home_variable() {
+		let home = super::home_string();
+		assert!(!home.is_empty(), "this box names no home directory");
+		let want = if cfg!(windows) {
+			"%USERPROFILE%"
+		} else {
+			"$HOME"
+		};
+		assert_eq!(HOME_TOKEN, want);
+		assert_eq!(expand_vars(HOME_TOKEN), home, "left standing as a literal");
+		assert_eq!(Settings::default().startup_directory, HOME_TOKEN);
+		let line = format!("startup_directory: \"{HOME_TOKEN}\"  ## Default");
+		assert!(
+			default_config().contains(&line),
+			"template says something else"
+		);
 	}
 
 	// The other pairs that mean one thing under two spellings. Only the one the
