@@ -257,8 +257,10 @@ pub enum Fit {
 	Stretch, // fill exactly, ignore aspect
 }
 
-// Resolved, validated settings used throughout the app.
-#[derive(Clone)]
+// Resolved, validated settings used throughout the app. PartialEq is for the
+// template test, which loads the shipped config twice and compares the whole
+// result; anything less would miss whichever field a bad `## Default` moved.
+#[derive(Clone, PartialEq)]
 pub struct Settings {
 	pub use_system_font: bool, // true = OS monospace FAMILY, overriding font_family
 	pub use_system_font_size: bool, // true = OS monospace SIZE, overriding font_size
@@ -3039,6 +3041,25 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// default rather than an outgoing one, and listing it would rewrite the line
 	// every time a config crossed between machines.
 	("shell.startup_directory", "\"~\"  ## Default"),
+	// Seven lines named an example rather than the default they were marked
+	// with, so uncommenting one changed what loaded. The values below are the
+	// examples they used to carry.
+	("transparency.enabled", "true  ## Default"),
+	("transparency.blur_behind", "true  ## Default"),
+	("wallpaper.image", "\"wallpaper.png\"  ## Default"),
+	("wallpaper.rotate.folder", "\"wallpaper/\"  ## Default"),
+	(
+		"selection.word_separators",
+		"\",|\\\"' ()[]{}<>\"  ## Default",
+	),
+	(
+		"hyperlinks.open_command",
+		"\"firefox --new-tab\"  ## Default",
+	),
+	(
+		"shell.command_line",
+		"\"--new-pane --right --size 35%\"  ## Default",
+	),
 ];
 
 // The whole pre-nesting flat namespace, old key -> new nested path. Primary
@@ -4740,22 +4761,24 @@ performance:
 
 transparency:
 
-	# enabled: true  ## Default
+	# enabled: false  ## Default
 	opacity: 0.95
 
-	# blur_behind: true  ## Default
+	# blur_behind: false  ## Default
 
 wallpaper:
 
 	# enabled: true  ## Default
-	# image: "wallpaper.png"  ## Default
+	## A single image, instead of the folder below. Empty uses the folder.
+	# image: ""  ## Default
 	# fallback_builtin: true  ## Default
 
 	## Use a folder of images instead of the single image above. Interval 0
 	## picks one at launch and keeps it.
 	rotate:
 		# enabled: true  ## Default
-		# folder: "wallpaper/"  ## Default
+		## Empty looks for a wallpaper, wallpapers or backgrounds folder.
+		# folder: ""  ## Default
 		# interval_s: 0.0  ## Default
 		# random: true  ## Default
 
@@ -4850,7 +4873,7 @@ cursor:
 
 selection:
 
-	# word_separators: ",|\"' ()[]{}<>"  ## Default
+	# word_separators: ",│`|\"' ()[]{}<>\t"  ## Default
 	# pairs: "`` \"\" '' {} () [] <>"  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -4942,7 +4965,8 @@ hyperlinks:
 	## Recognized: http, https, ftp, ftps, sftp, ssh, file and mailto links.
 	# enabled: true  ## Default
 
-	# open_command: "firefox --new-tab"  ## Default
+	## Empty uses the desktop's own opener. Example: "firefox --new-tab"
+	# open_command: ""  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Shell
@@ -4954,8 +4978,8 @@ hyperlinks:
 shell:
 
 	## Applied at every launch. Same syntax as the real command line, which
-	## overrides these.
-	# command_line: "--new-pane --right --size 35%"  ## Default
+	## overrides these. Example: "--new-pane --right --size 35%"
+	# command_line: ""  ## Default
 
 	## Used when launched from a menu or shortcut, not from a shell. A new tab
 	## or split starts in the same directory as the pane it came from.
@@ -7101,6 +7125,64 @@ mod tests {
 			doc.to_canonical(),
 			default_config(),
 			"a save would rewrite the shipped template"
+		);
+	}
+
+	// The template's own header says a line starting with '# ' is a setting at
+	// its default, so removing the '# ' must change nothing. Seven lines named
+	// an example instead, and uncommenting any of them quietly changed what
+	// loaded. This reads the template, so a line added later is checked too.
+	#[test]
+	fn every_commented_default_line_loads_as_the_default() {
+		// resolve() hunts for a wallpaper folder under the config and data dirs,
+		// so a test that points those elsewhere mid-loop would move the answer
+		// between the two loads being compared.
+		let _guard = super::test_config_lock();
+		let path = std::path::Path::new("test.shcl");
+		let base = resolve(read_raw(default_config(), path));
+		let lines: Vec<&str> = default_config().lines().collect();
+		let mut checked = 0;
+		for w in walk_settings(default_config()) {
+			let WalkLine::Setting {
+				index,
+				path: key,
+				active,
+				header,
+			} = w
+			else {
+				continue;
+			};
+			if active || header || !lines[index].contains("## Default") {
+				continue;
+			}
+			// font.size is the one line that cannot say it. A config older than
+			// the family/size split named a size to mean "not the system one",
+			// so resolve() still reads the key's presence that way.
+			if key == "font.size" {
+				continue;
+			}
+			let bare = {
+				let indent = lines[index].len() - lines[index].trim_start().len();
+				let rest = lines[index]
+					.trim_start()
+					.trim_start_matches('#')
+					.trim_start();
+				format!("{}{rest}", &lines[index][..indent])
+			};
+			let mut edited = lines.clone();
+			edited[index] = &bare;
+			let text = edited.join("\n") + "\n";
+			assert!(
+				resolve(read_raw(&text, path)) == base,
+				"uncommenting `{}` changes what loads",
+				lines[index].trim()
+			);
+			checked += 1;
+		}
+		// the walk finding nothing would pass the loop in silence
+		assert!(
+			checked > 50,
+			"only {checked} commented defaults were checked"
 		);
 	}
 
