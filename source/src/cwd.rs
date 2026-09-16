@@ -66,8 +66,9 @@ impl Reported {
 		}
 	}
 
-	// The directory as last reported, or None where no shell has said anything.
-	// Not checked here: the caller decides how much it trusts an old answer.
+	// The directory as last reported, or None where no shell has said anything,
+	// whoever said it. The scan tests want that; the window wants `live`.
+	#[cfg(test)]
 	pub fn get(&self) -> Option<PathBuf> {
 		Some(self.slot.lock().ok()?.as_ref()?.0.clone())
 	}
