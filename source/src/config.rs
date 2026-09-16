@@ -1107,7 +1107,8 @@ fn fence_run(line: &str) -> Option<(char, usize)> {
 // Answers whether it wrote. A refusal has to reach the caller: the dialog closes
 // on a save, and three failures used to present as a clean one - shcl refusing a
 // lossy round trip, an unreadable file, an unwritable one.
-// Every write of the settings file goes through here, launch-time rewrites too.
+// Every write of the settings file goes through here, launch-time rewrites too,
+// and so does a PowerShell profile write.
 // It writes beside the file and renames over it: `fs::write` truncates first, so
 // a crash or a full disk during one leaves nothing where the config was. A linked
 // settings file is written through its link rather than replaced by a copy, the
@@ -1115,7 +1116,7 @@ fn fence_run(line: &str) -> Option<(char, usize)> {
 // at its name is never written through. On Windows the publish is ReplaceFile,
 // which keeps the file's ACLs. A path that is not UTF-8 is refused rather than
 // converted lossily, which could name a different file.
-fn write_config_atomic(path: &std::path::Path, text: &str) -> Result<(), String> {
+pub(crate) fn write_config_atomic(path: &std::path::Path, text: &str) -> Result<(), String> {
 	write_config_atomic_with(path, text, shcl::write_file_atomic)
 }
 
@@ -1183,7 +1184,7 @@ fn restore_config(
 		match written.and_then(|()| file.sync_all()) {
 			Ok(()) => {
 				eprintln!(
-					"{APP_NAME}: {err}; the settings file was gone after that, so {} was written directly",
+					"{APP_NAME}: {err}; the file was gone after that, so {} was written directly",
 					real.display()
 				);
 				return Ok(());

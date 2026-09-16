@@ -44,21 +44,72 @@ const BEL: u8 = 0x07;
 // and read by the window thread, so it is behind a lock - one taken only when a
 // prompt reports and when a new tab/pane/window opens, never per byte and never
 // per frame.
+//
+// On unix it also keeps who said it: the terminal's foreground process group
+// when the report arrived. A zsh started from dash reports, then exits, and dash
+// reports nothing - so the answer has to go with the program that gave it.
 #[derive(Clone, Default)]
-pub struct Reported(Arc<Mutex<Option<PathBuf>>>);
+pub struct Reported {
+	slot: Arc<Mutex<Option<(PathBuf, Option<u32>)>>>,
+	#[cfg(unix)]
+	tty: Option<std::os::unix::io::RawFd>,
+}
 
 impl Reported {
+	// Reads the speaker from this PTY master. The fd stays valid for as long as
+	// the loop that feeds the tap owns the PTY.
+	#[cfg(unix)]
+	pub fn for_tty(tty: std::os::unix::io::RawFd) -> Self {
+		Self {
+			tty: Some(tty),
+			..Self::default()
+		}
+	}
+
 	// The directory as last reported, or None where no shell has said anything.
 	// Not checked here: the caller decides how much it trusts an old answer.
 	pub fn get(&self) -> Option<PathBuf> {
-		self.0.lock().ok()?.clone()
+		Some(self.slot.lock().ok()?.as_ref()?.0.clone())
+	}
+
+	// The last report, while the program that sent it is still running.
+	pub fn live(&self) -> Option<PathBuf> {
+		let (dir, speaker) = self.slot.lock().ok()?.clone()?;
+		speaker.is_none_or(still_running).then_some(dir)
 	}
 
 	fn set(&self, dir: PathBuf) {
-		if let Ok(mut slot) = self.0.lock() {
-			*slot = Some(dir);
+		#[cfg(unix)]
+		let speaker = self
+			.tty
+			.map(|fd| unsafe { libc::tcgetpgrp(fd) })
+			.filter(|pgid| *pgid > 0)
+			.map(|pgid| pgid as u32);
+		#[cfg(not(unix))]
+		let speaker = None;
+		self.set_from(dir, speaker);
+	}
+
+	fn set_from(&self, dir: PathBuf, speaker: Option<u32>) {
+		if let Ok(mut slot) = self.slot.lock() {
+			*slot = Some((dir, speaker));
 		}
 	}
+}
+
+// A group leader's pid is the group id. EPERM still means someone is there.
+#[cfg(unix)]
+fn still_running(pid: u32) -> bool {
+	let Ok(pid) = libc::pid_t::try_from(pid) else {
+		return false;
+	};
+	let answer = unsafe { libc::kill(pid, 0) };
+	answer == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn still_running(_: u32) -> bool {
+	true
 }
 
 // The PTY, with its read side scanned on the way past. Everything else is
@@ -402,6 +453,28 @@ mod tests {
 		return PathBuf::from(text.replace('/', "\\"));
 		#[cfg(not(windows))]
 		PathBuf::from(text)
+	}
+
+	// A zsh started from dash reports, exits, and leaves dash, which says
+	// nothing. The next tab started in zsh's last directory.
+	#[cfg(unix)]
+	#[test]
+	fn a_report_is_dropped_once_the_program_that_sent_it_exits() {
+		let mut child = std::process::Command::new("sleep")
+			.arg("30")
+			.spawn()
+			.expect("start sleep");
+		let reported = Reported::default();
+		reported.set_from(native("/srv"), Some(child.id()));
+		assert_eq!(reported.live(), Some(native("/srv")), "while it runs");
+		child.kill().expect("kill");
+		child.wait().expect("reap");
+		assert_eq!(reported.live(), None, "after it exits");
+		assert_eq!(reported.get(), Some(native("/srv")), "still what was said");
+
+		// a speaker nobody could name stays trusted
+		reported.set_from(native("/usr"), None);
+		assert_eq!(reported.live(), Some(native("/usr")));
 	}
 
 	fn feed(chunks: &[&[u8]]) -> Option<PathBuf> {
