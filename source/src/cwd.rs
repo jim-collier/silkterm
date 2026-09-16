@@ -18,7 +18,7 @@
 //! here unchanged - which is the whole reason for reading two.
 //!
 //! The listening is done by wrapping the PTY rather than by forking the VT
-//! parser: `vte` handles neither sequence (OSC 7 lands in its `unhandled`
+//! parser: `vte` handles neither sequence (OSC 7 goes to its `unhandled`
 //! arm), but `EventedPty` is a public trait and `EventLoop` is generic over
 //! it, so `TappedPty` sits in front of the real one and scans what it reads.
 //! Nothing else about the stream changes - the bytes go on to the parser

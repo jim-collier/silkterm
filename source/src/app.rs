@@ -55,7 +55,7 @@ pub struct App {
 	// the whole session. Deliberately never written to the config.
 	settings_size: Option<(u32, u32)>,
 	// after the dialog is focused, re-assert "keep the terminal under me" a few
-	// times: the WM's own activation (raising the dialog) can land just after our
+	// times: the WM's own activation (raising the dialog) can come just after our
 	// first restack and re-bury the terminal, so a couple of delayed retries
 	// settle it (see handle_dialog_event / about_to_wait).
 	raise_reassert: u8,
@@ -276,7 +276,7 @@ impl App {
 		}
 	}
 
-	// Windows: an owned popup gets no automatic placement (it lands at the
+	// Windows: an owned popup gets no automatic placement (it appears at the
 	// screen origin), so center a fresh dialog over the terminal window - then
 	// pull it back onto the part of the screen a window can reach, or a tall
 	// dialog centered on a tall terminal puts its own buttons under the taskbar.
@@ -358,7 +358,7 @@ impl App {
 				self.apply_dialog_settings();
 			}
 			DA::ApplyAndClose => {
-				// Only close on OK if the save actually landed; if the file looked
+				// Only close on OK if the save actually worked; if the file looked
 				// open elsewhere the change applied live but wasn't written, so we
 				// keep the dialog up (the FYI went to stderr).
 				if self.apply_dialog_settings() {
@@ -717,7 +717,7 @@ fn split_shells() -> Vec<Entry> {
 // the fold into the stored list happens here, on the winit thread, against the
 // list as it stands right now - so a scan cannot carry a snapshot that went
 // stale while it ran. Nothing on screen changes (menus are built when they
-// open), so this only has to land the list in the live settings and in the file.
+// open), so this only has to put the list in the live settings and in the file.
 // A scan that found nothing new compares equal and writes nothing at all; if the
 // config looks open in another program the write is skipped and the list still
 // applies for this session.
@@ -813,7 +813,7 @@ impl ContextMenu {
 				.map(|entry| self.entry_h(entry))
 				.sum::<f32>()
 	}
-	// Anywhere on the popup, separators and padding included - a click that lands
+	// Anywhere on the popup, separators and padding included - a click that falls
 	// on the menu belongs to the menu, whatever chrome it happens to cover.
 	fn hit(&self, mx: f32, my: f32) -> bool {
 		mx >= self.x && mx < self.x + self.w && my >= self.y && my < self.y + self.height()
@@ -1105,7 +1105,7 @@ fn is_copy_chord(mods: ModifiersState, key: &Key) -> bool {
 
 // Winit replays every key already held down whenever focus changes, flagged
 // `is_synthetic`, so an app can track what is physically pressed. That is
-// state, not typing - and on X11 the replay lands BEFORE winit re-queries the
+// state, not typing - and on X11 the replay arrives BEFORE winit re-queries the
 // modifiers, so a held Ctrl+Alt+Arrow comes back through it as a bare arrow.
 fn key_is_typed(state: ElementState, is_synthetic: bool) -> bool {
 	state == ElementState::Pressed && !is_synthetic
@@ -1132,7 +1132,7 @@ pub(crate) fn env_flag(name: &str) -> bool {
 // path keeps swap interval 1 and a scroll ease keeps rendering on Poll.
 //
 // It exists for the demo recorder, which samples the X screen at a fixed rate.
-// Whatever paces the app has to divide that rate evenly or frames land off the
+// Whatever paces the app has to divide that rate evenly or frames fall off the
 // sampling grid on a strict period - a source of 60 into a capture of 50 drops
 // one frame in six, so every fifth stored frame carries two frames of travel,
 // and a regular hitch like that is exactly what reads as the picture jumping.
@@ -1624,7 +1624,7 @@ struct State {
 	dragging_pane: Option<PaneId>, // pane being drag-reordered (Shift+drag)
 	bar_dragging: Option<PaneId>, // pane whose scrollbar thumb is being dragged
 	map_dragging: Option<PaneId>, // pane whose minimap marker is being dragged
-	// A Ctrl+press landed on a hyperlink: the release over the same link opens it,
+	// A Ctrl+press hit a hyperlink: the release over the same link opens it,
 	// a release anywhere else drops it (drag off to cancel, like the tab close
 	// button). The URL is captured at press time - output can scroll it away in
 	// between - and `menu_link` is the same for the right-click menu's two items.
@@ -1835,7 +1835,7 @@ impl State {
 
 	// Where tab `i` sits on the bar and how wide it is, or None when it is on
 	// another page. Drawing and both hit tests read this one answer, or a click
-	// lands on a different tab than the one under the pointer.
+	// sits on a different tab than the one under the pointer.
 	fn tab_box(&mut self, i: usize) -> Option<(f32, f32)> {
 		let layout = self.tab_layout();
 		Some((layout.x(i)?, layout.w(i)?))
@@ -2121,7 +2121,7 @@ impl State {
 	// focused, trigger on) - anything else disarms it, so output that finished
 	// while the user was elsewhere never copies late on refocus; only a command
 	// launched after returning does. Runs every event-loop pass, and every way
-	// eligibility can break is itself an event, so the disarm always lands before
+	// eligibility can break is itself an event, so the disarm always comes before
 	// a refocus could re-poll.
 	fn poll_output_copy(&mut self) {
 		let keep = self.focused.then(|| self.tabs.cur().focused);
@@ -3371,7 +3371,7 @@ impl State {
 
 	// A frozen surface coming back on screen: hidden tabs never build, and a
 	// minimized/occluded window builds nothing - so the reveal is one dirty
-	// catch-up frame, hard-cut so the gap lands instantly instead of easing in
+	// catch-up frame, hard-cut so the gap closes instantly instead of easing in
 	// (that ease is the bounce class, and it also reads as output arriving now).
 	// Every pane is cut, not just the ones flagged dirty: the flag is cleared by
 	// whichever build got there first, so it answers "is a rebuild owed", not
@@ -3439,7 +3439,7 @@ impl State {
 	) -> bool {
 		// The Shells tab edits the list now, so this is the one path allowed to
 		// write it - and it is the dialog's copy that wins. The baseline is the
-		// LIVE list rather than the dialog's own `orig`: a scan that landed while
+		// LIVE list rather than the dialog's own `orig`: a scan that arrived while
 		// the dialog was open has already been folded into both of its copies
 		// (Dialog::fold_shells), so the two agree, and taking the live one is what
 		// keeps them honest if they ever do not.
@@ -3500,7 +3500,7 @@ impl State {
 				self.wp_current.as_deref(),
 				settings.rotation_folder(),
 			);
-		// retires anything already in flight - a result landing after a newer
+		// retires anything already in flight - a result arriving after a newer
 		// request (a rotation tick overtaken by a settings change) is dropped
 		self.wp_seq = self.wp_seq.wrapping_add(1);
 		crate::wallpaper::spawn(
@@ -3717,7 +3717,7 @@ impl State {
 		self.apply_new_settings(&before, next, false);
 	}
 
-	// The benchmark landed on a rung. Write it down against the hardware it was
+	// The benchmark settled on a rung. Write it down against the hardware it was
 	// measured on, and give the window back.
 	fn finish_bench(&mut self, pick: crate::profile::Profile) {
 		self.bench = None;
@@ -4257,7 +4257,7 @@ impl State {
 					}
 				}
 				// the arrow marking a row that opens a submenu, drawn rather than set
-				// in text: a font's own metrics decide where a glyph lands, and there
+				// in text: a font's own metrics decide where a glyph sits, and there
 				// is no arrow every interface font carries (same reason as the tab
 				// close mark)
 				for (i, entry) in menu.entries.iter().enumerate() {
@@ -4305,7 +4305,7 @@ impl State {
 			None
 		};
 
-		// A tip's box, in the same overlay pass as the menus so it lands over
+		// A tip's box, in the same overlay pass as the menus so it sits over
 		// everything - including a pane's own text, which it sits on top of. The
 		// tab strip's and a menu row's are the same two quads; only what they say
 		// and where they sit differ.
@@ -5620,7 +5620,7 @@ fn build_layout(
 }
 
 // Default split direction when none is given: split along the longer axis so the
-// new pane lands where there's more room.
+// new pane goes where there's more room.
 fn default_dir(pm: &PaneManager, target: PaneId) -> crate::cli::Dir4 {
 	let rect = pm.panes.get(&target).map(|p| p.rect);
 	match rect {
@@ -6067,7 +6067,7 @@ impl ApplicationHandler<UserEvent> for App {
 			UserEvent::ReloadSettings => state.reload_config(),
 			UserEvent::VtSwitched => {
 				// Return to our console (the watcher signals only returns).
-				// Rebuild unconditionally: focus may land on another window or
+				// Rebuild unconditionally: focus may move to another window or
 				// nowhere, and an unfocused window must heal too.
 				vramdbg("vt return -> recover_gpu");
 				state.recover_gpu();
@@ -7100,7 +7100,7 @@ impl ApplicationHandler<UserEvent> for App {
 
 		// Look for installed shells, once, a little after the window is genuinely
 		// on screen. A PATH scan stats every directory the user has on it and the
-		// Windows side reads the registry, so it runs on its own thread and lands
+		// Windows side reads the registry, so it runs on its own thread and comes
 		// back as UserEvent::ShellsReady.
 		if let Some(state) = self.state.as_mut() {
 			if state.shell_scan_at.is_some_and(|at| Instant::now() >= at) {
@@ -7956,7 +7956,7 @@ mod tests {
 	}
 
 	// A tab title is renamed by byte offset over text that need not be ASCII, so
-	// every move and every erase has to land on a character boundary or the
+	// every move and every erase has to fall on a character boundary or the
 	// string operations panic.
 	#[test]
 	fn renaming_a_tab_stays_on_character_boundaries() {
@@ -8186,7 +8186,7 @@ mod tests {
 			None,
 			"a separator still is not"
 		);
-		// down from the first row lands on it, and carries on past it
+		// down from the first row reaches it, and carries on past it
 		assert_eq!(menu.step(Some(0), 1), Some(1));
 		assert_eq!(menu.step(Some(1), 1), Some(3), "the separator is skipped");
 		assert_eq!(menu.step(Some(3), -1), Some(1));
@@ -8401,7 +8401,7 @@ mod tests {
 
 	#[test]
 	fn accel_prefers_exact_case_then_falls_back() {
-		// 'S' must land on "Selection", not the 's' in "Paste"
+		// 'S' must pick "Selection", not the 's' in "Paste"
 		assert_eq!(accel_at("Paste Selection", 'S'), Some(6));
 		// no capital 'O' -> case-insensitive fallback finds "only"
 		assert_eq!(accel_at("Read-only", 'O'), Some(5));

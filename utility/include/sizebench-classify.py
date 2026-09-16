@@ -750,7 +750,7 @@ def pe_imports(path):
 	lets the closure logic be checked on the machine that has no Windows on it.
 
 	A managed assembly returns nothing, because the runtime resolves its references instead
-	of the loader. That costs the closure some edges, so a .NET library only ever lands in
+	of the loader. That costs the closure some edges, so a .NET library only ever ends in
 	the app's column - which is the safe direction: it can leave a driver-side library
 	billed to the terminal, never the reverse.
 	"""
@@ -900,7 +900,7 @@ def find_terminal(be):
 		#	Windows 11 answers this query with the console PROGRAM, not the host, so the
 		#	host has to be found beside it: a child where the system attached one, a parent
 		#	where it was launched explicitly. Only adjacent - walking further up leaves the
-		#	session entirely and lands on whatever started it.
+		#	session entirely and ends up on whatever started it.
 		for near in [be.parent_of(owner)] + be.children_of(owner):
 			if near > 1 and stem_of(be.exe_of(near)) in CONSOLE_HOSTS:
 				owner = near

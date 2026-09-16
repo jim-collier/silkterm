@@ -195,7 +195,7 @@ const FALLBACK_FONT_SIZE: f32 = 17.0;
 // neither the configured family nor the OS monospace resolves. Windows always
 // goes through it (no OS monospace setting exists there), so every entry must
 // carry a real bold face - the bare Family::Monospace db query this replaces
-// could land on a family without one, silently ejecting bold runs to an
+// could pick a family without one, silently ejecting bold runs to an
 // arbitrary (often proportional) fallback.
 pub const DEFAULT_FONT_STACK: &str = "Monaspace Argon, Fira Code, JetBrains Mono, Cascadia Mono, Consolas, Ubuntu Mono, SF Mono, Menlo, Courier New";
 
@@ -266,16 +266,16 @@ pub struct Settings {
 	pub font_size: f32,
 	pub line_height_scale: f32,
 	pub scrollback: usize,
-	pub scroll_smooth: bool, // master switch: false = every scroll (wheel, output, app slide) lands instantly
+	pub scroll_smooth: bool, // master switch: false = every scroll (wheel, output, app slide) happens instantly
 	// The five knobs below are the named segments of the output-scroll speed
 	// curve, in the order one burst traverses them: leave rest, accelerate,
-	// top out, wind down, land. Each hands its end point to the next and has
+	// top out, wind down, stop. Each hands its end point to the next and has
 	// no other influence on it (scroll.rs holds the model).
 	pub scroll_ease_in_ms: f32, // how long the lift from rest to the ramp handoff takes
 	pub scroll_ramp_up_ms: f32, // catch-up speed doubles this often while output stays ahead
 	pub scroll_single_screen_tau_ms: f32, // burst speed ceiling while the burst is still wholly on screen
-	pub scroll_ramp_down_ms: f32, // catch-up speed halves this often winding down to the landing
-	pub scroll_ease_out_ms: f32,  // how long the last STOP_BAND of a line takes to land
+	pub scroll_ramp_down_ms: f32,         // catch-up speed halves this often winding down to the stop
+	pub scroll_ease_out_ms: f32,          // how long the last STOP_BAND of a line takes to stop
 	pub wheel_lines: f32,
 	pub alt_scroll_lines: f32,
 	pub output_ease_lines: f32,
@@ -424,7 +424,7 @@ impl Default for Settings {
 			scroll_ramp_up_ms: 96.0, // ~ "Ramp-up" 75 (catch-up speed doubles ~10x a second)
 			scroll_single_screen_tau_ms: 32.0, // ~ "Single-screen speed" 75 (on-screen burst ceiling: ~31 lines/s)
 			scroll_ramp_down_ms: 144.0, // ~ "Ramp-down" 75 (catch-up winds down by halving ~7x a second)
-			scroll_ease_out_ms: 212.0,  // ~ "Ease-out" 40 (the tail lands in ~a fifth of a second)
+			scroll_ease_out_ms: 212.0,  // ~ "Ease-out" 40 (the tail finishes in ~a fifth of a second)
 			wheel_lines: 3.0,
 			alt_scroll_lines: 3.0,
 			output_ease_lines: 1.0,
@@ -638,7 +638,7 @@ pub fn startup_dir() -> Option<std::path::PathBuf> {
 // launched us was sitting somewhere on purpose, and so is a file manager's
 // "Open in terminal", which hands us the folder being looked at without giving
 // us a terminal. What is left - a desktop icon, a Start-menu entry, a shortcut -
-// lands in the home directory, at a filesystem root, or beside the executable,
+// starts in the home directory, at a filesystem root, or beside the executable,
 // and none of those say anything about where the user wants to be.
 fn inherited_dir_is_a_choice() -> bool {
 	if launched_from_shell() {
@@ -3977,7 +3977,7 @@ enum RatingValue<'a> {
 // Write a finished rating into the settings file line by line, the way migrate
 // and backfill write at launch. `persist` refuses a file the parse dropped a
 // line from, which is right for the user's own values, but a rating that never
-// lands is a test at every launch with nothing on screen to say why. These are
+// sticks is a test at every launch with nothing on screen to say why. These are
 // lines the program owns, so every other byte stays as it was, except on a file
 // that reads clean and still has nowhere to put them, which gets what the
 // dialog's save would write.
@@ -4388,7 +4388,7 @@ enum Anchor {
 // Where a missing template path belongs in the file: before the next present
 // template sibling (same parent), after the last present earlier sibling's
 // subtree, after the parent block header, or appended at the end. Whole-group
-// inserts back up over the next sibling's comment block so the new group lands
+// inserts back up over the next sibling's comment block so the new group sits
 // above it rather than splitting the comments from their setting.
 fn anchor_for(
 	p: &str,
@@ -4415,7 +4415,7 @@ fn anchor_for(
 		if let Some(next) = next {
 			let mut index = at[*next];
 			if whole_group {
-				// land above the sibling's own comment block, not inside it
+				// sit above the sibling's own comment block, not inside it
 				while index > 0 && lines[index - 1].trim_start().starts_with('#') {
 					index -= 1;
 				}
@@ -7479,7 +7479,7 @@ mod tests {
 		assert_eq!(s.menu_fg, crate::theme::MENU_FG_DEF);
 	}
 
-	// A pre-nesting config converts wholesale: every ACTIVE value lands at its
+	// A pre-nesting config converts wholesale: every ACTIVE value ends at its
 	// new nested path (oldest alias spellings included), obsolete keys drop,
 	// themes.* user data survives, and the original file is kept as a .bak.
 	// When both an old alias and its newer flat spelling are present, the newer
@@ -8218,7 +8218,7 @@ mod tests {
 		assert_eq!(s.focus, [0x12, 0x34, 0x56]);
 
 		// a stale line carrying the pre-theme default still refreshes, under the
-		// path it lands on rather than the one it was written under
+		// path it ends on rather than the one it was written under
 		let stale = migrate_config_text("colors:\n\t# focus: \"#5580c8\"  ## Default\n")
 			.expect("should refresh");
 		assert!(
@@ -8342,7 +8342,7 @@ mod tests {
 		assert_eq!(got, want);
 	}
 
-	// A dialog save on a fresh nested config: the new active value lands inside
+	// A dialog save on a fresh nested config: the new active value goes inside
 	// its block, and everything else in the file is left exactly as it stands.
 	// The whole-file diff is the strong form of that - a save may only ever add
 	// the lines it was asked to add - and the spot checks below say WHICH shapes
@@ -8416,7 +8416,7 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	// A new key added to a group the file already has PART of must land beside
+	// A new key added to a group the file already has PART of must go beside
 	// its siblings INSIDE their block, at the right depth, NOT be appended with
 	// a second copy of the group's comment block - that paragraph is already in
 	// the file, attached to the siblings.
@@ -8476,7 +8476,7 @@ mod tests {
 	}
 
 	// The real on-disk load pipeline (convert -> migrate -> backfill) on a
-	// pre-nesting config: values land at their nested paths, the original file
+	// pre-nesting config: values end at their nested paths, the original file
 	// is kept as .bak, missing keys arrive, and the chain is stable.
 	#[test]
 	fn pipeline_convert_migrate_backfill_on_disk() {

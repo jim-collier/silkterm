@@ -336,7 +336,7 @@ fn latency_report() {
 mod tests {
 	use super::percentiles;
 
-	// One sample is the whole distribution, and 95% of one still has to land on
+	// One sample is the whole distribution, and 95% of one still has to fall on
 	// it rather than one past the end.
 	#[test]
 	fn percentiles_never_step_past_the_last_sample() {

@@ -797,7 +797,7 @@ if ((! df_did)); then fEcho_Clean "dogfood disabled"; fi
 
 ## Re-record the demo video (off by default, skipped under --quick, never
 ## aborts). The video GFS-rotates into
-## ../private/demo-video/; the README highlight gif lands in assets/demo.gif.
+## ../private/demo-video/; the README highlight gif goes in assets/demo.gif.
 demo_hook="${root}/cicd/utility/demo-video/demo-video.py"
 if ((! ${DEMO_ENABLE:-0})); then
 	fEcho_Clean "demo video disabled"

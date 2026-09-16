@@ -28,7 +28,7 @@
 ##		recolored slate blue-gray) so it reads as chrome against both the black
 ##		band and the terminal's own colors.
 ##		Settings changes shown mid-run (the cursor ones) go through the app's
-##		control socket, so they land live with nothing typed on camera.
+##		control socket, so they arrive live with nothing typed on camera.
 ##		Both profiles start opaque on a plain black background (no image); the
 ##		closing scenes bring the built-in wallpaper in via the app's --wallpaper.
 ##		Screens are cleared between scenes except where the next command is meant
@@ -98,7 +98,7 @@ FOLEY_LAG  = 0.03                             # foley sits this far after the ke
 # The faux window fills the frame below the narration band: a black border shows
 # around it, and BAND px of bare root above it carry the captions. FRAME_* are the
 # decoration extents (left,right,titlebar,bottom in px) - the client is sized so
-# the outer frame lands BORDER px inside the left/right/bottom edges and BAND px
+# the outer frame sits BORDER px inside the left/right/bottom edges and BAND px
 # below the top.
 BORDER   = 8
 FRAME_L, FRAME_R, FRAME_T, FRAME_B = 2, 2, 32, 2
@@ -354,7 +354,7 @@ class Rec:
 		gray_flag = ("\\[$(test -f \"$HOME/.silk-gray\" && "
 			"printf '\\033[38;5;245m')\\]")
 		# pin the app's animation rate to the rate we grab at, so every capture
-		# tick lands on exactly one painted frame (see PROFILES). Off outside the
+		# tick falls on exactly one painted frame (see PROFILES). Off outside the
 		# recorder, where vblank does the pacing.
 		e.update(SILK_MAX_FPS=str(self.cap_fps),
 			SHELL="/bin/bash", HOME=str(self.home),
@@ -450,7 +450,7 @@ KEY_CODES = {"SPACE": 57, "ENTER": 28, "BACKSPACE": 14, "TAB": 15,
 
 def key_sound(ch):
 	c = _SHIFTED.get(ch, ch.lower())
-	return f"key:{_SCAN.get(c, 30)}"          # unknown lands on 'a'
+	return f"key:{_SCAN.get(c, 30)}"          # unknown falls back to 'a'
 
 def keysym_sound(keysym):
 	if len(keysym) == 1:
@@ -610,7 +610,7 @@ class Mouse:
 ##	Banner bookkeeping
 
 class Banner:
-	# every caption lands in the band above the window, so there is no position to
+	# every caption sits in the band above the window, so there is no position to
 	# choose any more - only the text and the span it covers
 	def __init__(self, rec, text):
 		self.rec, self.text = rec, text
@@ -824,13 +824,13 @@ printf '  🤔 🍰 🎉 😀   ┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅�
 
 	# build.sh: cargo-flavoured output, paced in movements rather than at random.
 	# The scroll speed is not a constant - it leaves rest gently, doubles while the
-	# backlog grows, tops out, then rides a braking curve down into a slow landing.
+	# backlog grows, tops out, then rides a braking curve down to a slow stop.
 	# Output that arrives at one rate only ever shows one point on that curve, so
 	# the earlier version (a line every so often, with a quarter chance of a pause)
 	# never left the gentle end and the whole middle of the curve went unseen. The
 	# pacing below walks the curve end to end, and the long silence at movement 4
 	# is what makes the wind-down visible at all: the view is still travelling when
-	# the output stops, and has to brake and land on its own.
+	# the output stops, and has to brake and stop on its own.
 	crates = [
 		"proc-macro2", "quote", "syn", "unicode-ident", "libc", "bitflags",
 		"smallvec", "log", "cfg-if", "once_cell", "memchr", "either",
@@ -849,7 +849,7 @@ printf '  🤔 🍰 🎉 😀   ┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅�
 	lines.append('printf "   ${g}Compiling${r} pulsar workspace\\n"')
 	feed = iter(crates)
 
-	# 1 - well apart: each line eases and lands before the next arrives, so this is
+	# 1 - well apart: each line eases and stops before the next arrives, so this is
 	#     the gentle end of the curve on its own, one line at a time
 	for _ in range(5):
 		comp(next(feed))
@@ -864,7 +864,7 @@ printf '  🤔 🍰 🎉 😀   ┌─┬─┐ ╔═╦═╗ ▁▂▃▄▅�
 	for c in feed:
 		comp(c)
 	# 4 - silence, and this is the point of the whole scene: nothing more arrives,
-	#     so the view has to brake down the ramp and land by itself, in view
+	#     so the view has to brake down the ramp and stop by itself, in view
 	lines.append("sleep 1.3")
 	# 5 - coda: a couple of slow lines, which start gently again from rest
 	lines += [
@@ -1052,7 +1052,7 @@ def seg_cursor(r, t, m):
 
 def seg_wallpaper(r, t, m):
 	# the image is the app's own baked-in default, copied into the fake config
-	# dir - so this lands on exactly the out-of-the-box look, live, no restart
+	# dir - so this gives exactly the out-of-the-box look, live, no restart
 	with Banner(r, "The built-in wallpaper, live"):
 		t.cmd("silkterm --wallpaper ~/.config/silkterm/wallpapers/default.jpg",
 			settle=3.4)
@@ -1368,7 +1368,7 @@ def encode_gif(rec, work, out_gif, video_end_e):
 # which a cut-down highlight could never show), and 12 MiB is the stated ceiling
 # for it. Scrolling is what sets the size - measured per second of finished gif
 # at 50fps: a dense full-width scroll runs ~1.6 MiB/s, the build scene ~0.4, a
-# near-static scene ~0.03. So if a render lands over, the levers in order are the
+# near-static scene ~0.03. So if a render comes out over, the levers in order are the
 # LENGTH of the wheel scene, the width of the rows in motion, and only then
 # GIF_LOSSY. Dropping to 25fps halves it outright and is the last resort - the
 # smoothness is the thing being demonstrated.
@@ -1515,7 +1515,7 @@ if __name__ == "__main__":
 ##		- 20260713: the faux window fills the view - only a 4px black border
 ##		  around it (was a 3%/5% dark margin); square-cornered dark decoration
 ##		  (Material-Black-Pistachio theme); the client is sized + the frame nudged
-##		  so the outer decoration lands 4px inside each edge.
+##		  so the outer decoration sits 4px inside each edge.
 ##		- 20260713: hold the final frame 3s then a 2s black screen at the end
 ##		  (tpad at encode; full-length outputs only, not the looping highlight gif).
 ##		- 20260713: per-key sound bank (mechvibes EG Oreo, one slice per

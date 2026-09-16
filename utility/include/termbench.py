@@ -23,7 +23,7 @@
 ##		after parsing everything queued before it. Caveat worth knowing: that is
 ##		a parser barrier. Terminals that render on another thread can still have
 ##		frames in flight when they answer. Reps run back to back with no gap, so
-##		deferred work lands inside the next rep and comes out in the average, but
+##		deferred work falls inside the next rep and comes out in the average, but
 ##		a single rep can flatter an asynchronous renderer.
 ##
 ##		ON WINDOWS THE BARRIER IS ANSWERED BY THE CONSOLE HOST, NOT THE TERMINAL.
@@ -202,7 +202,7 @@ class Scene:
 # Sized individually, not by one shared scale, so that a single rep of each
 # costs about the same wall time: emoji run roughly twenty times slower per
 # byte than ASCII, so equal payloads would spend the whole run on emoji. The
-# figures come from measuring xfce4-terminal and land a full run near two
+# figures come from measuring xfce4-terminal and put a full run near two
 # minutes there; --scale moves all of them together.
 SCENES = [
 	Scene("ascii", "1-byte", 4, 100),
@@ -1033,7 +1033,7 @@ def readme_table(existing, rows):
 		cells[at] = "**%.1f**" % (row["score"] / 1000.0)
 
 	# A terminal measured for the first time joins the scored block rather than
-	# landing under the unscored tail, where the ranking below could not reach it.
+	# sitting under the unscored tail, where the ranking below could not reach it.
 	scored = [i for i, cells in enumerate(data) if _score_of(cells, at) is not None]
 	cut = max(scored) + 1 if scored else len(data)
 	data[cut:cut] = fresh

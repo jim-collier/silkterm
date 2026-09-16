@@ -21,7 +21,7 @@
 
 ## The binary is 10+ MiB. Isn't that huge for a terminal?
 
-Short version: SilkTerm is a self-contained program, with everything it needs *statically linked* inside it. It can't be compared against a thin launcher that leans on 10+ MiB of shared libraries that are *dynamically linked at runtime*. Count what actually has to be present for each one to run, and SilkTerm lands in the same ballpark - often smaller.
+Short version: SilkTerm is a self-contained program, with everything it needs *statically linked* inside it. It can't be compared against a thin launcher that leans on 10+ MiB of shared libraries that are *dynamically linked at runtime*. Count what actually has to be present for each one to run, and SilkTerm comes out in the same ballpark - often smaller.
 
 ### Static vs dynamic linking
 

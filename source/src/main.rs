@@ -57,7 +57,7 @@ use crate::term::UserEvent;
 //
 // A Windows release build is GUI-subsystem (see the attribute at the top of this
 // file), so the loader gives it no console and a plain println! from a CLI-only
-// flag lands NOWHERE - measured: run from a real console, the output simply never
+// flag goes NOWHERE - measured: run from a real console, the output simply never
 // appears, while the same command through a pipe works, which is what makes this
 // so easy to miss. Joining the parent's console fixes it.
 //

@@ -1471,7 +1471,7 @@ fn vs(@builtin(vertex_index) i: u32) -> VsOut {
 @group(0) @binding(0) var t: texture_2d<f32>;
 @group(0) @binding(1) var s: sampler;
 // linear -> sRGB. The GL default framebuffer (fbo 0) is NOT sRGB-capable here, so
-// wgpu won't encode on write; without this every pixel lands ~half-bright (opaque
+// wgpu won't encode on write; without this every pixel comes out ~half-bright (opaque
 // text then reads as "faded/transparent"). Encode manually and write to a non-sRGB
 // target so there's no double conversion. rgb is premultiplied; encode per-channel.
 fn lin2srgb(c: vec3<f32>) -> vec3<f32> {

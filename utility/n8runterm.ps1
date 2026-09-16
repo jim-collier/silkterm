@@ -7,7 +7,7 @@
 ##		- One source per platform: the synced app dir that cicd installs into. A
 ##		  build made on any box arrives there over Dropbox, so there is no network
 ##		  path to wait on and nothing to probe.
-##		- Copies land in a versions folder next to a '<program>' symlink pointing at
+##		- Copies go in a versions folder next to a '<program>' symlink pointing at
 ##		  the newest, so a plain 'silkterm' on PATH (and a .desktop Icon=) always
 ##		  reaches the current build without being rewritten.
 ##		- Copies are named '<prefix>_<YYYYMMDD-HHMMSS>_<tag>_<role>', where the stamp

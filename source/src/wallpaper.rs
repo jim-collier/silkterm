@@ -38,7 +38,7 @@ pub struct Request {
 	// step); false just loads whatever `settings.wallpaper` names.
 	pub scan: bool,
 	// The image showing now. Order-mode rotation advances from it (by name, so a
-	// re-scan that moved things around still lands in the right place), and a
+	// re-scan that moved things around still ends in the right place), and a
 	// non-scanning request keeps it when the settings name none - otherwise
 	// re-reading the config while rotating would blank the wallpaper until the
 	// next tick, since a rotated pick is live-only and never written to the file.
@@ -75,7 +75,7 @@ pub struct Loaded {
 // A thread per request rather than one long-lived worker, deliberately: a
 // request that hangs on a dead mount blocks its own thread forever, and a shared
 // worker would leave every later request queued behind it. The stale result is
-// harmless when it finally lands - the sequence stamp retires it.
+// harmless when it finally arrives - the sequence stamp retires it.
 pub fn spawn(proxy: &EventLoopProxy<UserEvent>, request: Request) {
 	let proxy = proxy.clone();
 	let spawned = std::thread::Builder::new()
@@ -494,7 +494,7 @@ mod tests {
 	}
 
 	// The path is no longer stat'd before the worker sees it (that check used to
-	// run on the startup thread), so an unreadable one must land on the built-in
+	// run on the startup thread), so an unreadable one must end on the built-in
 	// rather than on nothing.
 	#[test]
 	fn an_unreadable_image_still_lands_on_the_builtin() {

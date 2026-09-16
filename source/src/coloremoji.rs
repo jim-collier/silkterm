@@ -5,7 +5,7 @@
 //!
 //! swash - the rasterizer cosmic-text drives - only reads COLR **v0**, and every
 //! current color emoji font ships v1 only. Those glyphs come back as an empty
-//! image, so the fallback path lands on a monochrome face instead. skrifa (already
+//! image, so the fallback path picks a monochrome face instead. skrifa (already
 //! in the tree, under swash) walks the v1 paint graph; this module is the 2D back
 //! end it paints into - transform/clip/layer stacks over zeno's coverage
 //! rasterizer - producing straight-alpha sRGB RGBA, which glyphon uploads to its
@@ -225,7 +225,7 @@ impl ColorGlyphs {
 	}
 
 	// Drop only what has aged out. Clearing wholesale is what made a screenful
-	// of distinct emoji abort: the sweep landed mid-frame, between glyphon
+	// of distinct emoji abort: the sweep fell mid-frame, between glyphon
 	// rasterizing a glyph and asking for it again. If everything is still
 	// pinned the cache simply grows - bounded by what fits on screen, which is
 	// a great deal cheaper than a crash.
@@ -926,7 +926,7 @@ fn pd_factors(mode: CompositeMode, sa: f32, ba: f32) -> Option<(f32, f32)> {
 		M::Xor => (1.0 - ba, 1.0 - sa),
 		M::Plus => (1.0, 1.0),
 		// HSL modes need all three channels at once; they're vanishingly rare in
-		// real fonts, so they land on the ordinary over.
+		// real fonts, so they use the ordinary over.
 		M::HslHue | M::HslSaturation | M::HslColor | M::HslLuminosity | M::Unknown => {
 			(1.0, 1.0 - sa)
 		}
@@ -1155,7 +1155,7 @@ mod tests {
 		assert!((sample(&ramp, 1.25, Extend::Reflect)[0] - 0.75).abs() < 0.02);
 	}
 
-	// A radial gradient's point must land on a circle with a non-negative radius,
+	// A radial gradient's point must sit on a circle with a non-negative radius,
 	// picking the LARGEST such t; points with no such circle stay transparent.
 	#[test]
 	fn conical_picks_the_largest_valid_circle() {

@@ -126,7 +126,7 @@ fn box_mean(src: &[[f32; 3]], w: usize, h: usize, r: usize) -> Vec<[f32; 3]> {
 }
 
 // Flatten the image's contrast in place. `img` is linear-light RGBA f32; alpha
-// is left untouched. No-op when the effective strength or size lands at zero.
+// is left untouched. No-op when the effective strength or size comes out at zero.
 pub fn apply(img: &mut Linear, size: f32, strength: f32, auto: f32) {
 	let (w, h) = (img.width() as usize, img.height() as usize);
 	if w == 0 || h == 0 {

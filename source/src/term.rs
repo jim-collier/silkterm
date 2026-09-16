@@ -63,7 +63,7 @@ const COALESCE_WAKEUPS: bool = true;
 // Nothing is lost by folding them. The notice carries no payload: whenever the
 // window gets round to one it reads the grid as it stands, so a queue of twenty
 // identical notices produced twenty identical reads. `handled` is cleared BEFORE
-// the window acts on it, so a cycle that lands mid-handling posts a fresh notice
+// the window acts on it, so a cycle that arrives mid-handling posts a fresh notice
 // rather than being dropped.
 #[derive(Default)]
 pub struct WakeGate {
@@ -1297,7 +1297,7 @@ mod tests {
 	}
 
 	// Folding the notices may never LOSE one: the window clears the gate before
-	// it looks at the grid, so a read cycle that lands mid-handling posts again.
+	// it looks at the grid, so a read cycle that arrives mid-handling posts again.
 	#[test]
 	fn one_notice_stands_until_the_window_takes_it() {
 		let gate = WakeGate::default();

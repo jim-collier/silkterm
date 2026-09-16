@@ -659,7 +659,7 @@ pub fn widths(total: f32, demands: &[Demand], regular_pct: f32, max_pct: f32) ->
 }
 
 // Hand out `spare` toward `upto`, in proportion to what each tab still asks
-// for - so when there is not enough to go round, every tab lands the same
+// for - so when there is not enough to go round, every tab gets the same
 // fraction of the way there rather than the first few taking it all.
 fn spread(alloc: &mut [f32], upto: &[f32], spare: &mut f32) {
 	if *spare <= 0.0 {
@@ -739,7 +739,7 @@ pub fn slot_x(widths: &[f32], slot: usize) -> f32 {
 
 /// Which slot on the page a pointer at `x` is over - the exact inverse of
 /// `slot_x`, and the only thing a hit test may use. Drawing and hit-testing
-/// reading two different answers is how a click lands on a tab other than the
+/// reading two different answers is how a click hits a tab other than the
 /// one under the pointer.
 pub fn slot_at_x(widths: &[f32], x: f32) -> Option<usize> {
 	if x < 0.0 {

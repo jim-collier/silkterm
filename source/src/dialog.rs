@@ -144,7 +144,7 @@ impl DialogWin {
 		// property write is read too late by Compiz et al - that's why re-selecting
 		// the dialog raised it alone and left the parent buried. The caller shows the
 		// window after the final resize (see new_about / new_settings).
-		// Windows: an owned popup gets no auto-placement and lands at the screen
+		// Windows: an owned popup gets no auto-placement and appears at the screen
 		// origin, so it must be created hidden, centered over the terminal, drawn
 		// once, then revealed by the caller - otherwise it flashes at (0,0) then
 		// jumps to center.
@@ -303,7 +303,7 @@ impl DialogWin {
 		}
 	}
 
-	// A background shell scan landed while this dialog was open. Fold it into the
+	// A background shell scan arrived while this dialog was open. Fold it into the
 	// settings BOTH copies hold: the edited one so the user sees what turned up,
 	// and the baseline so the fold does not read as an edit they made.
 	pub fn fold_shells(&mut self, found: &[crate::shells::Found]) {

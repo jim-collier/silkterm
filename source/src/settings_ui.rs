@@ -141,7 +141,7 @@ pub fn dialog_border() -> [u8; 3] {
 // linear map wastes most of the travel on values that look identical (the old
 // 300ms floor was why the slow end read as a no-op - barely below the 230ms
 // default). Each range spans two decades around the value its segment was
-// first tuned to, so a default landing anywhere in it still leaves room to
+// first tuned to, so a default anywhere in it still leaves room to
 // move either way.
 fn log_pos(v: f32, min: f32, max: f32) -> f32 {
 	(v.clamp(min, max) / min).ln() / (max / min).ln()
@@ -188,7 +188,7 @@ const RAMP_UP_MAX: f32 = 3000.0;
 // Wind-down halving period, the same two-decade span as the ramp up.
 const RAMP_DOWN_MIN: f32 = 45.0;
 const RAMP_DOWN_MAX: f32 = 4500.0;
-// Tail duration: 13ms is an abrupt landing, 1.3s a long float-in.
+// Tail duration: 13ms is an abrupt stop, 1.3s a long float-in.
 const EASE_OUT_MIN: f32 = 13.0;
 const EASE_OUT_MAX: f32 = 1300.0;
 
@@ -246,7 +246,7 @@ enum Focus {
 }
 
 // Where the user was looking when the dialog closed, so reopening it shortly
-// after lands on the same tab and scroll position instead of the top of
+// after opens on the same tab and scroll position instead of the top of
 // Appearance. Only the view - edits are discarded on close as before.
 #[derive(Clone, Copy)]
 pub struct View {
@@ -309,7 +309,7 @@ impl EditState {
 		}
 		Some((anchor.min(self.cur), anchor.max(self.cur)))
 	}
-	// remove the selected span (caret lands at its start); true if anything went
+	// remove the selected span (caret ends at its start); true if anything went
 	fn remove_selection(&mut self) -> bool {
 		let Some((a, b)) = self.sel_range() else {
 			self.sel = None;
@@ -591,7 +591,7 @@ struct ShellDrag {
 	grab_dy: f32,
 }
 
-// Where a part index lands in the grid: an entry's control, or the Add button
+// Where a part index sits in the grid: an entry's control, or the Add button
 // past the end.
 enum ShellStop {
 	Entry(usize, ShellPart),
@@ -1788,7 +1788,7 @@ impl SettingsDialog {
 	// After an Apply, make the applied values the new baseline so a later Apply
 	// compares against the live state, not the stale open-time snapshot (otherwise
 	// re-selecting the original value reads as "no change" and isn't applied).
-	// A scan landed while this dialog was open. Both copies move, so a user who
+	// A scan arrived while this dialog was open. Both copies move, so a user who
 	// has changed nothing still has nothing changed - the same reasoning that
 	// keeps the list out of an ordinary Apply diff. Anything they have already
 	// done to the list (a rename, a reorder, a removal) is what the merge folds
@@ -2353,7 +2353,7 @@ impl SettingsDialog {
 			Kind::Header(_) => self.track(i), // unreachable (headers aren't focusable)
 		}
 	}
-	// Does the keyboard ring land exactly on a control's own outline? For a boxed
+	// Does the keyboard ring sit exactly on a control's own outline? For a boxed
 	// control it does, and then the box must not draw its border as well - a
 	// field ringed twice reads as two outlines for one control. A color row is
 	// the near miss: its ring spans the chip AND the hex field, so it stays a
@@ -2509,7 +2509,7 @@ impl SettingsDialog {
 	fn adopt_theme(&mut self) {
 		let pal = self.theme_palette();
 		for i in 0..crate::theme::PALETTE_KEYS.len() {
-			// default_col resolves through theme_palette, so this lands on pal.get(i)
+			// default_col resolves through theme_palette, so this ends on pal.get(i)
 			self.revert(Self::palette_key(i));
 		}
 		self.edited.ansi = pal.ansi;
@@ -3770,7 +3770,7 @@ impl SettingsDialog {
 		Action::None
 	}
 
-	// A click somewhere in the grid. Returns whether it landed on something.
+	// A click somewhere in the grid. Returns whether it hit something.
 	// The move and remove buttons arm on press and fire on release, the same way
 	// the footer and the theme buttons do, so a press that drifts off cancels.
 	fn shell_mouse_down(
@@ -3957,7 +3957,7 @@ impl SettingsDialog {
 		self.emenu = None;
 	}
 	// Right-click in an editable field: open (or keep) the edit, place the caret
-	// at the click unless it lands inside the selection (standard), pop the menu.
+	// at the click unless it falls inside the selection (standard), pop the menu.
 	fn mouse_right_dip(
 		&mut self,
 		x: f32,
@@ -4307,7 +4307,7 @@ impl SettingsDialog {
 			return false;
 		};
 		let sel_len = edit.sel_range().map_or(0, |(a, b)| b - a);
-		// where the char would land once any selection is gone
+		// where the char would go once any selection is gone
 		let landing = edit.sel_range().map_or(edit.cur, |(a, _)| a);
 		// a theme name, a shell's title or its command line: any ordinary
 		// character, within a sane length (a command may be a long path)
@@ -4939,7 +4939,7 @@ impl SettingsDialog {
 				}
 				// A pressed button fills with the highlight, the same click feedback
 				// the footer gives. Its outline is left to the focus ring below,
-				// which lands exactly on this box rather than outside it.
+				// which sits exactly on this box rather than outside it.
 				Kind::Buttons(captions) => {
 					for p in 0..captions.len() as u16 {
 						let r = self.row_btn_rect(i, p);
@@ -5028,7 +5028,7 @@ impl SettingsDialog {
 	// five icon buttons, and the Add button. The arrows are shader-drawn (mode 3
 	// with a quarter-turn) for the same reason the tab close mark is - no
 	// interface font can be relied on to carry one, and a glyph's own metrics
-	// decide where it lands.
+	// decide where it goes.
 	fn shell_rects(
 		&self,
 		i: usize,
@@ -5797,7 +5797,7 @@ mod tests {
 	#[test]
 	fn tabs_partition_all_specs() {
 		let d = mk_dialog(2000.0);
-		// every spec lands on a valid tab and no tab is empty
+		// every spec sits on a valid tab and no tab is empty
 		assert!(d.specs.iter().all(|s| s.tab < tab_titles().len()));
 		for t in 0..tab_titles().len() {
 			assert!(d.specs.iter().any(|s| s.tab == t), "tab {t} has no rows");
@@ -6513,7 +6513,7 @@ mod tests {
 	}
 
 	// A 0..1 fraction reads as a whole percent and is stored as the decimal. The
-	// two directions have to be exact inverses: a revert that landed a hair off
+	// two directions have to be exact inverses: a revert that came a hair off
 	// its own default would leave the arrow lit with nothing to undo.
 	#[test]
 	fn a_fraction_reads_as_a_whole_percent_and_stores_as_a_decimal() {
@@ -6768,7 +6768,7 @@ mod tests {
 	}
 
 	// Dragged the other way, and off the top: the first line is as far as it
-	// goes. The arithmetic is in f32 and lands on a usize, so this is the test
+	// goes. The arithmetic is in f32 and ends on a usize, so this is the test
 	// that says the saturating cast is being RELIED on rather than tolerated.
 	#[test]
 	fn a_line_dragged_off_the_top_lands_on_the_first() {
@@ -6804,7 +6804,7 @@ mod tests {
 		assert_eq!(d.edited.shells[0].command, "/bin/sh0", "and only that one");
 	}
 
-	// A name edit lands on the entry it was opened for, not on the row index -
+	// A name edit applies to the entry it was opened for, not on the row index -
 	// the two are different numbers here, which is the whole point of the
 	// pseudo-row scheme.
 	#[test]
@@ -6818,7 +6818,7 @@ mod tests {
 		assert_eq!(d.edited.shells[1].title, "Shell 1");
 	}
 
-	// Add lands an entry with no command and puts the caret straight in it - the
+	// Add creates an entry with no command and puts the caret straight in it - the
 	// one field that has to be filled before the entry means anything.
 	#[test]
 	fn adding_a_shell_opens_the_field_it_needs() {
@@ -7033,7 +7033,7 @@ mod tests {
 		assert!(said.contains(&"Shell 0"), "and the other line is untouched");
 	}
 
-	// A scan landing while the dialog is open moves BOTH copies, so it does not
+	// A scan that arrives while the dialog is open moves BOTH copies, so it does not
 	// read as an edit the user made - and it folds into what they have already
 	// done rather than replacing it.
 	#[test]
@@ -7265,7 +7265,7 @@ mod tests {
 	}
 
 	// The layout is DIP, so a doubled scale factor may only multiply it: same
-	// dialog, twice the pixels, and a pointer still lands on the same control.
+	// dialog, twice the pixels, and a pointer still hits the same control.
 	#[test]
 	fn the_scale_factor_only_multiplies_the_layout() {
 		let mut base = mk_dialog(4000.0);
@@ -7359,8 +7359,8 @@ mod tests {
 
 	#[test]
 	fn the_scrolling_feel_sliders_read_where_their_defaults_claim() {
-		// Every one of these is documented in the config template as landing on a
-		// particular number, and each stored default was picked to land there. A
+		// Every one of these is documented in the config template as coming out at a
+		// particular number, and each stored default was picked to match. A
 		// range or a default edited without its comment would drift silently.
 		let d = config::Settings::default();
 		assert_eq!(tau_to_speed(d.scroll_single_screen_tau_ms), 75.0);
@@ -7780,7 +7780,7 @@ mod tests {
 		assert_eq!(d.edit.as_ref().unwrap().cur, 8);
 		d.backspace(); // Ctrl+Backspace eats "bar." ... no - the word left of caret
 		assert_eq!(d.edit.as_ref().unwrap().buf, "foo png");
-		// Ctrl never types (shortcut chars must not land in the buffer)
+		// Ctrl never types (shortcut chars must not reach the buffer)
 		d.char_input('c');
 		assert_eq!(d.edit.as_ref().unwrap().buf, "foo png");
 		// Ctrl+Shift+Right extends by a word
@@ -7948,7 +7948,7 @@ mod tests {
 		assert!(view > 0.0);
 		let field = d.textbox(i);
 		let y = field.y + field.h / 2.0;
-		// a click 10px into the box lands on the char 10px past the scrolled-off part
+		// a click 10px into the box hits the char 10px past the scrolled-off part
 		d.last_click = None;
 		d.mouse_down(field.x + lay().field_pad + 10.0, y, &mut m);
 		let cur = d.edit.as_ref().unwrap().cur;
@@ -8113,7 +8113,7 @@ mod tests {
 		assert!(d.part_disabled(row, 0), "Save grays out once it has saved");
 		d.focus_move(true);
 		assert_eq!(d.focus, Some(super::Focus::Row(row, 1)));
-		// and backwards off the same gap lands on the row above, not the last button
+		// and backwards off the same gap goes to the row above, not the last button
 		d.focus = Some(super::Focus::Row(row, 0));
 		d.focus_move(false);
 		assert!(matches!(d.focus, Some(super::Focus::Row(i, _)) if i < row));
@@ -8348,7 +8348,7 @@ mod tests {
 		let back = config::reload_from_disk();
 		let saved = crate::theme::find_user(&back.user_themes, "Saved One").expect("on disk");
 		assert_eq!(
-			// which variant an edit lands in follows the mode, so name it: a mode
+			// which variant an edit goes in follows the mode, so name it: a mode
 			// arriving out of somebody else's config file is what this last went
 			// wrong as, and the colors alone do not say that
 			saved.dark.fg,

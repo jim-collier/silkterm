@@ -5,7 +5,7 @@
 ##	- Purpose:
 ##		Run a graphical scenario against a real Windows desktop and bring back the
 ##		verdict and the screenshots. Nothing here can be done from an ssh session
-##		on its own: that lands in session 0, which has no desktop, so the scenario
+##		on its own: that opens in session 0, which has no desktop, so the scenario
 ##		is handed to an interactive scheduled task in the console session instead.
 ##	- Syntax:
 ##		run.bash [--host <name>] [--keep] [<scenario> ...]

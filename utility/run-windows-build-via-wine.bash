@@ -13,7 +13,7 @@
 ##		- No docker. The Windows build links only system DLLs, so unlike the sister
 ##		  nemo-anywhere launcher there is no GTK runtime to stage out of a container -
 ##		  only fonts and a private wineprefix, both handled here.
-##		- Everything lands in cicd/artifacts/win-run/ (gitignored): the wineprefix, a
+##		- Everything goes in cicd/artifacts/win-run/ (gitignored): the wineprefix, a
 ##		  copy of the exe, its own config.shcl, and the run log. The real ~/.wine and
 ##		  ~/.config/silkterm are never touched, so a Windows-side config rewrite cannot
 ##		  disturb the Linux build's settings.
