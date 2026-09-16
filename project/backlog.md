@@ -167,7 +167,10 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- The shell list carries whole and in order when a file converts.
 	- ✅ Code review 20260914 item 2 (F34, blocking): The retired `shell.default` is deleted without moving that shell to the top of the list when the file also has a line that cannot be read.
 		- It stays in the file until the move to the top of the list can be saved.
-	- Code review 20260914 item 3 (F35, should-fix): Several commented `## Default` lines in a new settings file name values that are not the defaults, among them transparency and blur behind.
+	- ✅ Code review 20260914 item 3 (F35, should-fix): Several commented `## Default` lines in a new settings file name values that are not the defaults, among them transparency and blur behind.
+		- All seven name the real default now, so removing the `# ` changes nothing. Where the old text was a useful example it moved into the comment above the line.
+		- An existing config gets its commented lines refreshed, the way any other changed default is.
+		- Pinned by `every_commented_default_line_loads_as_the_default`, which uncomments each one in turn and compares the whole load. It reads the template, so a line added later is checked on its own.
 	- ✅ Code review 20260914 item 4 (F36, should-fix): A saved theme makes every launch report its settings as unread typos.
 		- Saved themes are skipped under the name they are really stored under. The check's own test had used the wrong name, which is why it passed, and now uses the right one.
 	- ✅ Code review 20260914 item 5 (F37, should-fix): A `$` or `%` in a shell's arguments is expanded as a variable, so `cmd /k prompt $P$G` loses its prompt.
