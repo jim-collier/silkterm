@@ -234,13 +234,24 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 28 (F60, should-fix): A window that is killed, or whose first shell cannot start, leaves its control socket file behind.
 		- The file is removed on an exit call, SIGTERM, SIGHUP and a panic. A SIGKILL still leaves it, and the next window with that process id clears it.
 		- Pinned by `the_socket_file_goes_away_however_the_process_ends`, which ends a child process each of those ways.
-	- Code review 20260914 item 31 (F63, blocking): Adding the shell integration block replaces a linked PowerShell profile with a plain copy, makes a private profile readable by others, and can write through a stray link beside it.
-	- Code review 20260914 item 32 (F64, blocking): The shell integration block breaks a directory-change hook already set in PowerShell, so every directory change prints an error, and a profile that loads the block twice breaks the prompt.
+	- ✅ Code review 20260914 item 31 (F63, blocking): Adding the shell integration block replaces a linked PowerShell profile with a plain copy, makes a private profile readable by others, and can write through a stray link beside it.
+		- The profile goes through the same writer as the settings file, so a link and the file's mode are kept, and no link at a temp name is written through. A read-only profile is left alone.
+		- The backup is made fresh at the profile's own mode and never through a link.
+		- Pinned by `a_profile_write_keeps_its_link_and_mode_and_follows_no_planted_link`.
+	- ✅ Code review 20260914 item 32 (F64, blocking): The shell integration block breaks a directory-change hook already set in PowerShell, so every directory change prints an error, and a profile that loads the block twice breaks the prompt.
+		- An earlier hook is called the way PowerShell holds it, and a second load keeps the handler or prompt from before the first.
+		- Pinned by `the_block_keeps_an_earlier_hook_and_survives_loading_twice`, which runs the block through PowerShell on both the 7 and 5.1 paths.
 	- Code review 20260914 item 33 (F65, should-fix): The git-aware bash prompt replaces a prompt set in `.bashrc`, where it should give way to it.
-	- Code review 20260914 item 34 (F66, should-fix): Deleting the shell integration block does not keep it out when an earlier build added it or a later one updated it.
-	- Code review 20260914 item 35 (F67, should-fix): A host color added inside the shell integration block, as its own comment suggests, is deleted at the next launch.
+	- ✅ Code review 20260914 item 34 (F66, should-fix): Deleting the shell integration block does not keep it out when an earlier build added it or a later one updated it.
+		- A block found already in a profile is noted, so deleting it sticks.
+		- Pinned by `a_block_already_there_is_noted_so_deleting_it_sticks`.
+	- ✅ Code review 20260914 item 35 (F67, should-fix): A host color added inside the shell integration block, as its own comment suggests, is deleted at the next launch.
+		- The comment now says to set `$SilkTermHostColor` above the block, where a refresh leaves it, and the block reads that first.
+		- Pinned by `a_host_color_is_set_where_a_refresh_leaves_it` and the PowerShell run above.
 	- Code review 20260914 item 36 (F68, should-fix): On Windows, a PowerShell profile path with a character outside ASCII is misread, so the block goes into a new file PowerShell never loads.
-	- Code review 20260914 item 37 (F69, should-fix): After a program that reports its directory exits, new tabs and splits start in its last directory instead of where the pane's shell is.
+	- ✅ Code review 20260914 item 37 (F69, should-fix): After a program that reports its directory exits, new tabs and splits start in its last directory instead of where the pane's shell is.
+		- A reported directory is kept with the process group that sent it, and dropped once that group is gone. Unix only, since Windows has no foreground group to ask.
+		- Pinned by `a_report_is_dropped_once_the_program_that_sent_it_exits`.
 	- Code review 20260914 item 40 (F72, blocking): A wallpaper blur of a tiny fraction such as `1e-40`, in the settings file or in an image's own tags, makes SilkTerm quit with every shell in it.
 	- Code review 20260914 item 41 (F73, blocking): A small wallpaper file with very large dimensions takes gigabytes of memory while it loads, enough to crash SilkTerm on a machine with less to spare.
 	- Code review 20260914 item 42 (F74, should-fix): With a rotation interval shorter than an image takes to prepare, the wallpaper never changes and the abandoned loads keep running, several gigabytes at once.
