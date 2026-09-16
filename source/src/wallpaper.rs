@@ -43,6 +43,10 @@ pub struct Request {
 	// re-reading the config while rotating would blank the wallpaper until the
 	// next tick, since a rotated pick is live-only and never written to the file.
 	pub current: Option<PathBuf>,
+	// A bare `--wallpaper` or `--wallpaper-file` asked for no picture, and gets
+	// none. Without this the built-in stood in, or a rotation folder left the
+	// window bare, so one flag meant two things depending on a folder.
+	pub cleared: bool,
 }
 
 // Image pixels ready for upload, with the layout the file's own tags asked for.
@@ -117,8 +121,7 @@ fn run(request: &Request) -> Loaded {
 	} else {
 		settings.rotation_folder().is_some()
 	};
-	let image = settings
-		.wallpaper_enabled
+	let image = (settings.wallpaper_enabled && !request.cleared)
 		.then(|| prepare(settings, path.as_deref(), folder_active))
 		.flatten();
 	Loaded {
@@ -379,9 +382,11 @@ fn shuffle_pick(len: usize, recent: &[usize], entropy: u64) -> usize {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Prepared, WP_AVOID_MAX, list_folder_images, next_wallpaper_index, prepare, shuffle_pick,
+		Prepared, Request, WP_AVOID_MAX, list_folder_images, next_wallpaper_index, prepare, run,
+		shuffle_pick,
 	};
 	use crate::config::{Fit, Settings};
+	use std::sync::Arc;
 
 	// The blur and the contrast mask are the slow half and neither is under test
 	// here; skipping them keeps these fast.
@@ -539,5 +544,36 @@ mod tests {
 		};
 		assert_eq!(fit, Fit::Zoom);
 		assert_eq!(anchor, [0.5, 0.5]);
+	}
+
+	// A bare flag means no picture, whether or not a rotation folder is there.
+	// Without the folder this used to show the built-in.
+	#[test]
+	fn a_cleared_wallpaper_shows_nothing_with_or_without_a_folder() {
+		let dir = std::env::temp_dir().join(format!("silkterm_wp_cleared_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		for folder in [None, Some(dir.clone())] {
+			let settings = Settings {
+				wallpaper_enabled: true,
+				wallpaper: None,
+				wallpaper_folder: folder.clone(),
+				wallpaper_rotate_enabled: true,
+				..flat_settings()
+			};
+			let request = |cleared| Request {
+				seq: 1,
+				settings: Arc::new(settings.clone()),
+				scan: false,
+				current: None,
+				cleared,
+			};
+			assert!(run(&request(true)).image.is_none(), "folder {folder:?}");
+			if folder.is_none() {
+				// the control: the same request, not cleared, shows the built-in
+				assert!(run(&request(false)).image.is_some());
+			}
+		}
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 }

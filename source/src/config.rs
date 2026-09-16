@@ -643,7 +643,7 @@ pub fn startup_dir() -> Option<std::path::PathBuf> {
 // starts in the home directory, at a filesystem root, or beside the executable,
 // and none of those say anything about where the user wants to be.
 fn inherited_dir_is_a_choice() -> bool {
-	if launched_from_shell() {
+	if DIR_HANDED_DOWN.load(Ordering::Relaxed) || launched_from_shell() {
 		return true;
 	}
 	let exe_dir = std::env::current_exe()
@@ -676,6 +676,28 @@ fn dir_is_a_choice(
 		.into_iter()
 		.flatten()
 		.any(|dir| real(dir) == cwd)
+}
+
+// A window opened from another one's pane is started in that pane's directory,
+// which can be home or a root as easily as anywhere. Nothing in the directory
+// itself says so, and a launcher leaves us in the same places, so the parent
+// says it out loud. Read and dropped once at the top of main, so no shell of
+// ours passes it on to a SilkTerm it starts.
+pub const ENV_DIR_HANDED_DOWN: &str = "SILKTERM_DIR_HANDED_DOWN";
+static DIR_HANDED_DOWN: AtomicBool = AtomicBool::new(false);
+
+pub fn take_handed_down_dir() {
+	if std::env::var_os(ENV_DIR_HANDED_DOWN).is_some() {
+		// SAFETY: called from main before any thread exists, like
+		// term::sanitize_shell_env.
+		unsafe { std::env::remove_var(ENV_DIR_HANDED_DOWN) };
+		DIR_HANDED_DOWN.store(true, Ordering::Relaxed);
+	}
+}
+
+// The file `--config` named, if one did. A new window is given the same one.
+pub fn config_override() -> Option<PathBuf> {
+	CONFIG_OVERRIDE.get().cloned()
 }
 
 // Where a shell named on the command line starts (`--directory`). Sits ABOVE
@@ -910,7 +932,22 @@ pub fn keep_session(live: &Settings, reloaded: &mut Settings, wallpaper_locked: 
 	reloaded.stepped_profile = live.stepped_profile;
 	if wallpaper_locked {
 		take_wallpaper(live, reloaded);
+		reloaded.wallpaper_enabled |= reloaded.wallpaper.is_some();
 	}
+}
+
+// A wallpaper named for the session, at launch (`--wallpaper-file`) or while
+// running (`--wallpaper`). Naming one is a deliberate choice for the run, so a
+// file with the wallpaper switched off does not swallow it. Both go through
+// `update` afterwards, so a performance profile that turns the wallpaper off
+// still wins for either one.
+pub fn name_wallpaper(s: &mut Settings, image: Option<PathBuf>) {
+	s.wallpaper_raw = image
+		.as_ref()
+		.map(|path| path.to_string_lossy().into_owned())
+		.unwrap_or_default();
+	s.wallpaper_enabled |= image.is_some();
+	s.wallpaper = image;
 }
 
 // A wallpaper given on the command line lasts the session (`wp_locked` in
@@ -5498,6 +5535,31 @@ mod tests {
 		assert_eq!(apply(&stepped, &base, &remote), (None, true));
 	}
 
+	// `silkterm --wallpaper PATH` set the image and left the switch off, so it
+	// said ok and showed nothing. Naming one turns the switch on, the way
+	// `--wallpaper-file` does at launch, and a profile that turns the wallpaper
+	// off still wins for both.
+	#[test]
+	fn naming_a_wallpaper_turns_it_on_unless_the_profile_says_off() {
+		let off = Settings {
+			wallpaper_enabled: false,
+			performance_profile: "custom".into(),
+			..Settings::default()
+		};
+		let mut named = off.clone();
+		name_wallpaper(&mut named, Some("/x.png".into()));
+		assert!(named.wallpaper_enabled);
+		assert_eq!(named.wallpaper_raw, "/x.png");
+		// a clear names nothing and leaves the switch alone
+		let mut cleared = off.clone();
+		name_wallpaper(&mut cleared, None);
+		assert!(!cleared.wallpaper_enabled && cleared.wallpaper_raw.is_empty());
+		let mut remote = named.clone();
+		remote.remote_override = true;
+		crate::profile::apply(&mut remote);
+		assert!(!remote.wallpaper_enabled, "the Remote profile keeps it off");
+	}
+
 	// A wallpaper given on the command line lasts the session: a reload keeps it
 	// over the file, and an Apply keeps it unless the dialog picked another.
 	#[test]
@@ -5517,6 +5579,15 @@ mod tests {
 			reloaded.wallpaper_raw, "/file.png",
 			"no lock, the file wins"
 		);
+		// a file with the wallpaper off does not hide one the session named
+		let mut named = Settings::default();
+		name_wallpaper(&mut named, Some("/cli.png".into()));
+		let mut reloaded = Settings {
+			wallpaper_enabled: false,
+			..with("/file.png")
+		};
+		keep_session(&named, &mut reloaded, true);
+		assert!(reloaded.wallpaper_enabled);
 		// an explicit clear on the command line is kept too
 		let mut reloaded = with("/file.png");
 		keep_session(&with(""), &mut reloaded, true);

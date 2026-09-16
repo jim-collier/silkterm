@@ -79,15 +79,19 @@ fn main() {
 }
 
 // A version alone can't tell two builds apart - every dogfood build of a release
-// shares it - so bake in a number that can. Watching src/ is what keeps it honest:
-// without it cargo would only re-run this script when the icon or the .rc changed,
-// and the number would sit frozen at whatever it was the first time. Unchanged
-// sources produce the same binary and keep the same number, which is the point.
+// shares it - so bake in a number that can. Watching what goes into the binary is
+// what keeps it honest: without it cargo would only re-run this script when the
+// icon or the .rc changed, and the number would sit frozen at whatever it was the
+// first time. Unchanged inputs produce the same binary and keep the same number,
+// which is the point. The list is BUILD_INPUTS in buildnum.rs, where a test keeps
+// it covering every file the code includes.
 //
 // SILK_BUILD_MINUTES pins the value. cicd sets it once per run so all four target
 // builds report one build instead of one per link, minutes apart.
 fn emit_build_number() {
-	println!("cargo:rerun-if-changed=src");
+	for input in BUILD_INPUTS {
+		println!("cargo:rerun-if-changed={input}");
+	}
 	println!("cargo:rerun-if-env-changed=SILK_BUILD_MINUTES");
 
 	let pinned = env::var("SILK_BUILD_MINUTES").unwrap_or_default();
