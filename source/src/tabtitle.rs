@@ -410,11 +410,33 @@ pub fn label_forms(
 	home: Option<&str>,
 	style: Style,
 ) -> Vec<String> {
-	let shells = shell_forms(friendly);
+	// Every part of a label is a program's own text: a process can rename itself
+	// and a directory name arrives in an archive or a checkout. None of it has
+	// been through `plain` on the way here, and a label is drawn by the tab
+	// strip and stands in for the window title, so it is held to the same rule a
+	// title is. Cleaned on the way in rather than on the way out, so the rungs
+	// below are measured against what will actually be drawn.
+	let friendly = plain(friendly);
+	let (running, task_name) = match task {
+		Some(Task::Running(name)) => (true, Some(plain(name))),
+		Some(Task::Last(name)) => (false, Some(plain(name))),
+		None => (false, None),
+	};
+	let task = task_name.as_deref().map(|name| {
+		if running {
+			Task::Running(name)
+		} else {
+			Task::Last(name)
+		}
+	});
+	let cwd = cwd.map(plain);
+	let home = home.map(plain);
+	let shells = shell_forms(&friendly);
 	let tasks = task_forms(task);
 	let paths = cwd
+		.as_deref()
 		.filter(|dir| !dir.trim().is_empty())
-		.map(|dir| path_forms(dir, home, style))
+		.map(|dir| path_forms(dir, home.as_deref(), style))
 		.unwrap_or_default();
 	let full_name = shells.first().map_or("", String::as_str);
 	// The last form is always the shortest; the middle rung only exists when
@@ -1675,6 +1697,44 @@ mod tests {
 		);
 	}
 
+	// A program's title is not the only untrusted text on a tab. Any program can
+	// rename itself, and a directory name arrives in an archive or a checkout,
+	// so the name and the path reach the label and the window title as they are.
+	#[test]
+	fn a_program_name_or_a_directory_cannot_put_control_characters_in_a_label() {
+		let forms = label_forms(
+			"Bash",
+			Some(Task::Running("py\u{1b}[2Jx")),
+			Some("/tmp/a\u{1b}[31mb"),
+			Some("/home/u"),
+			Style::Posix,
+		);
+		assert!(!forms.is_empty());
+		for form in &forms {
+			assert!(
+				!form.chars().any(char::is_control),
+				"a tab label came out {form:?}"
+			);
+		}
+		// the text still arrives, only without the escape
+		assert!(
+			forms.iter().any(|f| f.contains("py[2Jx")),
+			"the program name is gone: {forms:?}"
+		);
+
+		// and the window title, which falls back to that same label
+		let rights = Rights {
+			say: None,
+			decorated: false,
+		};
+		let suffix = window_suffix(rights, None, None, None, || forms[0].clone());
+		let title = window_title(rights, None, "SilkTerm", suffix.as_deref());
+		assert!(
+			!title.chars().any(char::is_control),
+			"the window title came out {title:?}"
+		);
+	}
+
 	// A window title is the one piece of a program's output that leaves the
 	// terminal: the desktop puts it on a task bar, a window list and an alt-tab
 	// switcher, all of which draw it as text they trust. So whatever a program
@@ -1708,7 +1768,8 @@ mod tests {
 		}
 
 		fn check(case: &[u8]) {
-			let said = plain(&String::from_utf8_lossy(case));
+			let raw = String::from_utf8_lossy(case);
+			let said = plain(&raw);
 			assert!(tame(&said), "a program's title came through as {said:?}");
 			for rights in [
 				Rights {
@@ -1728,10 +1789,12 @@ mod tests {
 				let title = window_title(rights, None, "SilkTerm", suffix.as_deref());
 				assert!(tame(&title), "the window title came out {title:?}");
 			}
+			// Raw, not `said`: a shell name, a program's own name and a
+			// directory all reach a label without passing a title parser.
 			for form in label_forms(
-				&said,
-				Some(Task::Running(&said)),
-				Some(&said),
+				&raw,
+				Some(Task::Running(&raw)),
+				Some(&raw),
 				Some("/home/u"),
 				Style::Posix,
 			) {
