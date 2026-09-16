@@ -332,6 +332,10 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- The PATH is written to the registry without telling Windows it changed. Code review 20260914 item 58 (F90).
 	- Opened: 20260914-124200
 
+- 🔘 The scroll harness prints a frame count of `0` twice when a trace has none, and its real-app check compares that doubled text as a number.
+	- `grep -c` prints 0 and exits 1 on no match, so `|| echo 0` adds a second one. Only the verbose line and the best-effort smoke read it.
+	- Opened: 20260916
+
 - 🔘 The new-window test fails on Windows.
 	- `a_new_window_keeps_the_settings_file_and_the_panes_directory` expects `--config /x/alt.shcl`, and Windows makes that path absolute as `C:\x\alt.shcl`. The test's expectation is wrong there, not the new window.
 	- Opened: 20260916

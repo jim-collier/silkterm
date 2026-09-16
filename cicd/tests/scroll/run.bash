@@ -81,6 +81,10 @@ while (($#)); do case "$1" in
 	-h|--help)  sed -n '/^##	- Purpose:/,/^##	History:/p' "${BASH_SOURCE[0]}" | sed '$d; s/^##	\{0,1\}//'; exit 0 ;;
 	*) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
 esac; done
+## gui-headless.bash reads its display from here and defaults to :99 without it.
+## cicd only exported this from the profiler stage, so a run that reached here
+## without that started Xvfb on :99, ran SilkTerm on :98, and every scene skipped.
+export CICD_HEADLESS_DISPLAY="$display"
 
 fSection "SilkTerm scroll regression (headless)"
 
