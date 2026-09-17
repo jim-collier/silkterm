@@ -376,12 +376,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- First step is measuring the rebuild through the existing `recover_gpu` path. Extrapolating from the cold dialog context gives ~300-500ms, unmeasured.
 	- Need to figure out whether the X11 transparent path can survive a teardown at all - the ARGB visual belongs to the window, so it may be native-backend only.
 		- If not, may need to disable the feature when transparency is enabled in the program, with flyover text explaining why.
+	- Also figure out a way to reduce CPU and memory usage, when this happens
 	- Opened: 20260905-181131.
-	- Settings:
-		- On "Window" tab.
-		- Enable/disable checkbox. (Disabled by default.)
+	- Settings (in "Window" tab):
+		- "Temporarily free resources when idle" checkbox. (Disabled by default.)
 		- Idle minutes when definitely hidden (default 30).
-		- Idle minutes otherwise (default 240
+		- Idle minutes otherwise (default 240).
+
+- 🔘 Tab flyover help text: Make a different color than the tabs. Maybe slightly lighter background and sublty different, complimentary shade, and a different font color. Maybe flyover help needs its own theme colors.
 
 - 🔘 Themes:
 	- 🔘 A fourth built-in theme. Pastel is the idea: a pleasing light pastel on a dark gray background carrying a subtle tint of the complementary color. Solarized is the other candidate.
