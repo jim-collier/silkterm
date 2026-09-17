@@ -260,12 +260,16 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- The hook formats the staged content and writes that back to the index, so a file with half its changes staged commits half. The working copy is formatted too, but only where it has nothing unstaged to lose.
 		- The staged copy is formatted outside the tree, so the hook names `rustfmt.toml` rather than leaving rustfmt to hunt for it.
 		- Pinned by: `cicd/tests/hooks/run.bash`, which drives both hooks in a scratch repository and runs in the pipeline.
-	- Code review 20260914 item 49 (F81, blocking): A commit made while the pipeline builds lets a release publish binaries that were not built from the tagged source.
+	- ✅ Code review 20260914 item 49 (F81, blocking): A commit made while the pipeline builds lets a release publish binaries that were not built from the tagged source.
+		- The note is written from the source read before the first build, not from the tree as it stands when the note is written. A tree that moved, or was dirty at either end, is refused and says which.
+		- A long run cross-builds after the native build, so one release could hold a binary from each side of the commit.
 	- Code review 20260914 item 50 (F82, should-fix): The bash installer leaves a GitHub token behind in a temporary file.
 	- ✅ Code review 20260914 item 51 (F83, should-fix): The pre-push gate tests the working tree, not the commits being pushed.
 		- The gate runs in a throwaway worktree checked out at the commit being pushed, so an uncommitted fix can no longer carry a push to main. Cargo writes where it always does, so only this crate is rebuilt there.
 		- Pinned by: the same hooks test, with a stub in place of the pipeline - what is being checked is which source the gate is handed, not what it does with it.
-	- Code review 20260914 item 52 (F84, should-fix): A release can be cut from a partial set of artifacts, such as the one a `--quick` run leaves.
+	- ✅ Code review 20260914 item 52 (F84, should-fix): A release can be cut from a partial set of artifacts, such as the one a `--quick` run leaves.
+		- The note lists the artifact files the configuration builds, whatever the run actually did, and the release refuses a set missing any of them by name.
+		- Checked against the published beta3: the ten names the configuration gives are exactly what that release carries.
 	- Code review 20260914 item 53 (F85, should-fix): With an absolute `CARGO_TARGET_DIR`, the pipeline makes no Windows installer and the Windows pipeline cannot find its builds.
 	- Code review 20260914 item 54 (F86, should-fix): The menu launcher both one-line installers write does not start when the install path holds a space.
 	- Code review 20260914 item 55 (F87, should-fix): The dogfood launcher changes arguments that hold quotes, and drops empty ones, on the way to the terminal.
@@ -296,7 +300,8 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Code review 20260914 item 81 (F113, should-fix): Each demo recording leaves background daemons running after it ends.
 	- Code review 20260914 item 82 (F114, should-fix): The demo recorder fails at start when `USER` is not set.
 	- Code review 20260914 item 83 (F115, should-fix): The demo recorder uses a binary under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
-	- Code review 20260914 item 85 (F117, blocking): A release can go out with binaries built from a source file that was never added to git, so the tagged source differs from what was built.
+	- ✅ Code review 20260914 item 85 (F117, blocking): A release can go out with binaries built from a source file that was never added to git, so the tagged source differs from what was built.
+		- An untracked file that is not ignored counts as dirty now, and the release names the files. An ignored one still leaves the tree clean.
 	- ✅ Code review 20260914 item 86 (F118, should-fix): The scroll regression check counts a full-screen app slide that never starts as skipped, so the pipeline still passes.
 		- A scene that scrolled and never slid fails now.
 	- ✅ Code review 20260914 item 87 (F119, should-fix): The scroll regression check for the nano wobble never runs its own scene, so it passes whether the wobble is fixed or not.
