@@ -71,21 +71,17 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🔘 nano:
+- 🛠️ nano:
 	- Holding the cursor down to scroll down in a long document (which makes text move up) works well. But,
 	- Holding the cursor up to scroll up in a long document (which makes text move down), is jumpy. Seems to jump ~2 lines at a time.
 		- 20260915-150037: Still jumpy.
 		- 20260917-055036: Still jumpy.
-	- Not reproduced on the Linux box. nano scrolls one row per key the same way in both directions, with or without soft wrap, and holding either arrow moves the text at the same even rate.
-	- 20260915: Checked again on the Linux box at its own key repeat rate (45 a second), in plain and highlighted files, and with nano's scroll sent as a redraw the way Windows sends it. Both directions move the same on every path.
-	- Which machine it shows on matters. On Windows, and over some ssh or WSL setups, the terminal sees a redraw rather than a scroll.
-	- Waiting on details from the machine it shows on: run `SILK_SCROLLDBG=1 silkterm 2> scroll.log`, hold the up arrow in nano for a few seconds, and keep the log. The nanorc in use and the key repeat rate would help too.
+	- Cause, read off the 20260917 trace: the slide is thrown away and restarted about every other step. Scrolling down, 1 of 77 steps was capped at a single line and the slide ran out to 15.9 lines. Scrolling up, 37 of 79 were capped and it never got past 6.4. A cap lands the view three or four lines forward in one frame, which is the jump.
+	- Why it caps: the reveal strip is dropped whenever the recorded scroll region is not the one it was built for, and the offset is then held to what a single step can fill. nano uses a different region for each direction - rows 2 to 46 scrolling down, 2 to 45 scrolling up, confirmed from its own bytes - and during an up run the recorded region alternates between the two.
+	- Both earlier attempts to reproduce it here missed for the same reason: this box renders nano fast enough to see one step per frame, where the headless rig under software GL swallows five to seven, so the rig never catches two regions in a row and its slide runs clean.
+	- What is still open: which two regions actually alternate, and whether it is nano emitting both or the engine ledger restarting on a region it picked up mid-batch. The trace prints `rgn` and `strip` now, so one more capture answers it: `SILK_SCROLLDBG=1 silkterm 2> scroll.log`, hold the up arrow in nano for a few seconds.
+	- The fix after that is a judgment about when a region change should invalidate a slide in flight, which is the same question the deferred stacked-tmux item answers with a ledger per region. Worth taking the two together.
 	- Opened: 20260911-124508.
-
-- 🔘 With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Each time the other pane scrolls, the slide in progress jumps the rest of the way.
-	- Side-by-side panes are not affected.
-	- Split from the smooth scrolling seams item. It shows on builds from before the scroll ledger too.
-	- Opened: 20260911-113647
 
 - 🔬 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
@@ -4173,6 +4169,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260628-083740
 
 ### Future and/or deferred
+
+- ✋ With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Each time the other pane scrolls, the slide in progress jumps the rest of the way.
+	- Side-by-side panes are not affected.
+	- Split from the smooth scrolling seams item. It shows on builds from before the scroll ledger too.
+	- The fix is section 5 of `private/panoplia/20260911-113647_scroll-seams.md`: a ledger per region in the engine fork, and one slide per region. That is design work across the fork, the pane and the renderer, so it is deferred until it can be given a run of its own.
+	- Opened: 20260911-113647
 
 - ✋ Detach a tab into a new window, and dock a tab into an existing window, both with the mouse.
 	- Needs multi-window, which does not exist yet. The rest of the tab interface is done.

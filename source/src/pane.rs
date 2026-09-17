@@ -1485,14 +1485,24 @@ impl Pane {
 		// check per frame. The per-frame (sh, app_off, slide_sh, st, sb) sequence is
 		// the deterministic proof that the slide eases smoothly (app_off monotonic, no
 		// bounce) without needing to eyeball a render - see the headless bounce harness.
+		// `rgn` and `strip` are there because the two of them are what a truncated
+		// slide looks like: a region that differs from the strip's throws the strip
+		// away, and the offset is then capped to what one step can fill.
 		if scroll_dbg()
 			&& ((settings.smooth_apps() && (alt || app_off != 0.0 || shift_dbg != 0))
 				|| (!alt && frac > 0.0))
 		{
 			let frame = DBG_FRAME.fetch_add(1, Ordering::Relaxed);
 			eprintln!(
-				"SCROLLDBG f={frame} pane={} sh={shift_dbg} app_off={app_off:.4} slide_sh={:.4} st={} sb={} frac={frac:.4} alt={} ob={ob}",
-				self.id, self.slide_sh, self.slide_static_top, self.slide_static, alt as u8,
+				"SCROLLDBG f={frame} pane={} sh={shift_dbg} app_off={app_off:.4} slide_sh={:.4} st={} sb={} frac={frac:.4} alt={} ob={ob} rgn={}..{} strip={}",
+				self.id,
+				self.slide_sh,
+				self.slide_static_top,
+				self.slide_static,
+				alt as u8,
+				region.start,
+				region.end,
+				self.strip.len(),
 			);
 		}
 		// Region-aware slide: only the middle scroll region shifts by voff; a static
