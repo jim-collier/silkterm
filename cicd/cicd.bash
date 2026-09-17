@@ -72,6 +72,8 @@ root="$(cd "${here}/.." && pwd)"   # the git repo root (cicd/..)
 export PATH="${HOME}/.cargo/bin:${HOME}/.local/bin:${PATH}"       ## rustup toolchain (cross targets, edition 2024) + zig must beat system rust.
 source "${here}/config.bash"
 source "${here}/utility/include/gfs-rotate.bash"                  ## gfs_rotate() for the profiler artifacts
+##  shellcheck source=cicd/utility/built-from.bash
+source "${here}/utility/built-from.bash"                          ## the artifacts' provenance note
 declare -p FMT_CMD &>/dev/null || FMT_CMD=()                      ## tolerate a config without the fmt stage
 
 ## Cap compile/test parallelism to at most half the cores so a pipeline run
@@ -245,6 +247,36 @@ retry_build(){
 	done
 	fDie "${what} build failed ${tries}x - a real error, or the fat-LTO crash is no longer occasional"
 }
+## The artifact files this configuration is meant to produce, whatever this run
+## actually did. --quick, --no-cross and friends leave part of the set behind and a
+## package step that cannot find its tool only warns, so the note has to say what a
+## whole set looks like rather than list what happened to be there.
+release_expects(){
+	local -a want=("${EXE_NAME}-${ver}-${RELEASE_NATIVE_OSARCH}")
+	local -a osarchs=("${RELEASE_NATIVE_OSARCH}")
+	local t rest osarch art
+	if ((${#CROSS_TARGETS[@]})); then
+		for t in "${CROSS_TARGETS[@]}"; do
+			rest="${t#*|}"; osarch="${rest%%|*}"; rest="${rest#*|}"; art="${rest%%|*}"
+			if [[ "${art}" == *.exe ]]; then
+				want+=("${EXE_NAME}-${ver}-${osarch}.exe")
+			else
+				want+=("${EXE_NAME}-${ver}-${osarch}")
+			fi
+			osarchs+=("${osarch}")
+		done
+	fi
+	if ((PACKAGE_ENABLE)); then
+		for osarch in "${osarchs[@]}"; do
+			case "${osarch}" in
+				linux-*)   want+=("${EXE_NAME}-${ver}-${osarch}.deb" "${EXE_NAME}-${ver}-${osarch}.rpm") ;;
+				windows-*) want+=("${EXE_NAME}-${ver}-${osarch}-setup.exe") ;;
+			esac
+		done
+	fi
+	printf '%s\n' "${want[@]}"
+}
+
 ## (Re)write the sha256sums file over every artifact in the release dir except the
 ## sums file itself. Run after stage 5 (binaries) and again after stage 6 (packages),
 ## so the checksums cover the packages too. Uses the script-scope art_dir/ver/sums.
@@ -254,9 +286,9 @@ write_sums(){
 	  ## the signature covers the sums file, so it can never be inside it
 	  files=(); for x in "${EXE_NAME}-${ver}-"*; do [[ "$x" == "$sums" || "$x" == *.sig || ! -f "$x" ]] && continue; files+=("$x"); done
 	  ((${#files[@]})) && sha256sum "${files[@]}" > "${sums}" )
-	##  shellcheck source=cicd/utility/built-from.bash
-	source "${root}/cicd/utility/built-from.bash"
-	fWriteBuiltFrom "${art_dir}"
+	local -a expects=()
+	mapfile -t expects < <(release_expects)
+	fWriteBuiltFrom "${art_dir}" "${built_from_state:-}" "${expects[@]}"
 }
 trap 'rc=$?; printf "\n[ CICD ABORTED (exit %s) at line %s: %s ]\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; exit $rc' ERR
 
@@ -443,6 +475,13 @@ else
 		fDie "diverged from upstream (${ahead} ahead, ${behind} behind) - reconcile first, or rerun with --no-sync"
 	fi
 fi
+
+## The source everything from here on reads. Taken before the first build, because
+## the note has to name what the binaries hold: another session committing in this
+## tree during a build used to leave the note naming the new commit, clean, with the
+## native binary holding the source from before it and the cross binaries the source
+## after. Stage 0 is past, so its fast-forward is not mistaken for that.
+built_from_state="$(fSourceState)"
 
 ## Stage 1: format.
 fSection "1/8  Format"

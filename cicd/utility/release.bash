@@ -62,7 +62,9 @@ sums="${art_dir}/${EXE_NAME}-${ver}-sha256sums.txt"
 ## The sums only say the artifacts match each other. This says they match the
 ## source being tagged - without it a pipeline run, more commits, then a merge
 ## leaves a stale artifact directory that verifies cleanly and publishes the old
-## binaries under the new tag.
+## binaries under the new tag. It also says the set is whole, since a --quick or
+## --no-cross run leaves the native binary in there on its own and reads exactly
+## like a full one from here.
 ##  shellcheck source=cicd/utility/built-from.bash
 source "$(dirname "${BASH_SOURCE[0]}")/built-from.bash"
 why="$(fCheckBuiltFrom "${art_dir}")" || die "${why}"
