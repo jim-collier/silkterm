@@ -8,6 +8,8 @@ Two kinds of file belong here.
 
 - A case that once broke something. Save it under a name that says what it was, and it is replayed forever afterwards. A defect that also has a plain unit test does not need a file here as well; this is for the ones only the fuzzer can express.
 
+Everything here is read-only data. Nothing but the fuzz targets may open one of these files, and a seed that is a valid settings file is the easy way to forget that: `silkterm --config cicd/tests/fuzz-corpus/config/shipped-default.shcl` rewrites it the way a launch rewrites anyone's config, and the seed stops being the case it was saved as. Copy a seed somewhere else to look at it. The pipeline hashes this directory either side of the test stage, so a run that writes through one fails.
+
 The engine and the targets are described at the top of `source/src/fuzz.rs`. The targets themselves sit beside the code they hammer, in a `mod fuzz` inside that module's tests.
 
 To reproduce one case, take the seed from the failure and run that alone:

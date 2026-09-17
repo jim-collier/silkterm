@@ -460,6 +460,14 @@ fEcho "OK: debug build"
 
 ## Stage 3: regression tests.
 fSection "3/8  Regression tests"
+## The fuzz corpus is read-only data: every file in it is replayed on each run
+## and chewed on by the mutator. A run that writes one through changes what
+## later runs replay, and nothing else would say so - a seed just quietly stops
+## being the case it was saved as. Hashed before and after, so a fixture edited
+## by hand before the run is not mistaken for one the run made.
+fCorpusHashes(){ find "${root}/cicd/tests/fuzz-corpus" -type f -exec sha256sum {} + 2>/dev/null | sort; }
+corpusBefore=""
+if [[ -d "${root}/cicd/tests/fuzz-corpus" ]]; then corpusBefore="$(fCorpusHashes)"; fi
 "${TEST_CMD[@]}"
 if [[ -n "${LINT_CMD+x}" ]] && ((${#LINT_CMD[@]})); then
 	if "${LINT_PROBE[@]}" >/dev/null 2>&1; then
@@ -502,6 +510,12 @@ if [[ -x "${root}/cicd/tests/install/run.bash" ]]; then
 	fEcho_Clean "installer hygiene ..."
 	"${root}/cicd/tests/install/run.bash" >/dev/null || fDie "installer hygiene test failed"
 	fEcho "OK: installer hygiene"
+fi
+## The git hooks act on a commit or a push, where a mistake is awkward to undo.
+if [[ -x "${root}/cicd/tests/hooks/run.bash" ]]; then
+	fEcho_Clean "git hooks ..."
+	"${root}/cicd/tests/hooks/run.bash" >/dev/null || fDie "git hook test failed"
+	fEcho "OK: git hooks"
 fi
 ## The publish script commits and pushes, so nothing may reach a shell inside it.
 if [[ -x "${root}/cicd/tests/publish/run.bash" ]]; then
@@ -562,6 +576,9 @@ if [[ -n "${LAUNCHER_HARNESS+x}" ]] && ((${#LAUNCHER_HARNESS[@]})); then
 	else
 		fEcho "WARNING: launcher harness skipped: pwsh not found"
 	fi
+fi
+if [[ -n "${corpusBefore}" ]] && [[ "$(fCorpusHashes)" != "${corpusBefore}" ]]; then
+	fDie "a test run wrote through the fuzz corpus - see 'git status cicd/tests/fuzz-corpus'"
 fi
 fEcho "OK: tests passed"
 

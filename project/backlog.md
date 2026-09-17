@@ -131,10 +131,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- A save tidies quotes and indents, and the renames at launch look at both.
 	- Opened: 20260911-012838
 
-- 🔘 A test run can rewrite a fuzz corpus seed in place.
-	- After one full run, `cicd/tests/fuzz-corpus/config/shipped-default.shcl` had its shcl banner line refreshed to the current wording and nothing else changed. The next run left it alone. Which test writes through it was not found.
-	- Opened: 20260917-101707
-
 - 🔘 A performance test run while the monitor is asleep can save a rating that is too low.
 	- The display then shows one frame a second, so the first profile reads as hopeless and Standard terminal is saved, with no wallpaper from then on.
 	- Not seen yet. Skipping the save when frames stall would make a truly slow machine test at every launch, so it needs its own design.
@@ -276,10 +272,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- The desktop's own store is asked first, xfconf on Xfce and gsettings elsewhere, for both the interface font and the monospace one. Pinned by `the_desktop_decides_which_font_store_answers_first`. KDE, MATE and Cinnamon are still untested.
 	- ✅ Code review 20260914 item 47 (F79, blocking): With the release signing key filled in, the PowerShell installer refuses every correctly signed release.
 		- On Linux and macOS the checksums file's own bytes now go to ssh-keygen down a pipe. Windows keeps the file handle it already had, since its OpenSSH never sees the end of a pipe that was closed before it started up. The release test now runs each installer's own verify function against a throwaway key, install.ps1 through `verify-sign.ps1`, which the Windows pipeline runs as well. Seen passing on the Linux box and on vm925w under PowerShell 7 and 5.1.
-	- Code review 20260914 item 48 (F80, blocking): The pre-commit hook commits every change in a partly staged Rust file, the unstaged ones included.
+	- ✅ Code review 20260914 item 48 (F80, blocking): The pre-commit hook commits every change in a partly staged Rust file, the unstaged ones included.
+		- The hook formats the staged content and writes that back to the index, so a file with half its changes staged commits half. The working copy is formatted too, but only where it has nothing unstaged to lose.
+		- The staged copy is formatted outside the tree, so the hook names `rustfmt.toml` rather than leaving rustfmt to hunt for it.
+		- Pinned by: `cicd/tests/hooks/run.bash`, which drives both hooks in a scratch repository and runs in the pipeline.
 	- Code review 20260914 item 49 (F81, blocking): A commit made while the pipeline builds lets a release publish binaries that were not built from the tagged source.
 	- Code review 20260914 item 50 (F82, should-fix): The bash installer leaves a GitHub token behind in a temporary file.
-	- Code review 20260914 item 51 (F83, should-fix): The pre-push gate tests the working tree, not the commits being pushed.
+	- ✅ Code review 20260914 item 51 (F83, should-fix): The pre-push gate tests the working tree, not the commits being pushed.
+		- The gate runs in a throwaway worktree checked out at the commit being pushed, so an uncommitted fix can no longer carry a push to main. Cargo writes where it always does, so only this crate is rebuilt there.
+		- Pinned by: the same hooks test, with a stub in place of the pipeline - what is being checked is which source the gate is handed, not what it does with it.
 	- Code review 20260914 item 52 (F84, should-fix): A release can be cut from a partial set of artifacts, such as the one a `--quick` run leaves.
 	- Code review 20260914 item 53 (F85, should-fix): With an absolute `CARGO_TARGET_DIR`, the pipeline makes no Windows installer and the Windows pipeline cannot find its builds.
 	- Code review 20260914 item 54 (F86, should-fix): The menu launcher both one-line installers write does not start when the install path holds a space.
@@ -499,6 +500,24 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ Cursor blink doesn't seem to pause after in inactivity timeout. (Only on focus lost.)
+	- Reproduced: on the rig, a program that moved the cursor every 2.5s kept the animation running for as long as it ran, with nothing typed. A quiet pane stopped on time, which is why this only showed with something on screen doing its own thing.
+	- Cause: the stop was measured from the last time the cursor moved, not the last time the user did anything. A clock in a prompt, or any TUI on its own timer, resets that every few seconds. Focus loss parks by a different route, which is why that half worked.
+	- Fixed: the pane remembers when it was last worth animating for - input or a refocus - and the long stop reads that. The resume delay after typing still reads the cursor's own stillness, which is what it is for.
+	- Pinned by: `pause_state_long_idle_stops_although_a_program_keeps_moving_the_cursor`, watched failing on the old rule. The existing long-idle test now drives the input clock and fails on it too.
+	- Measured: with the fix, the same scene renders only the three frames each nudge's slide needs and parks at full size in between.
+	- Opened: 20260917
+	- Closed: 20260917-133000
+
+- ✅ A test run can rewrite a fuzz corpus seed in place.
+	- Reproduced: after one full run, `cicd/tests/fuzz-corpus/config/shipped-default.shcl` had its shcl banner line refreshed to the current wording and nothing else changed. The next run left it alone.
+	- Cause: not a test. Every write SilkTerm makes to a settings file goes through one function, and a trap in it fired for no corpus path across all 661 tests. Nothing in the pipeline names the file either. The only way to get that exact edit is to open the seed as a live settings file, which `--config` pointed at it does, and a launch refreshes the footer of any config it opens.
+	- Fixed: the readme says the corpus is read-only data, and why a seed that is a valid settings file is the easy one to forget.
+	- Pinned by: the pipeline hashes the corpus either side of the test stage and fails on a difference. Watched passing on an untouched corpus and firing on a seed written through.
+	- Left alone: the seed itself, which is already at the state a launch leaves behind, so the symptom cannot recur until the footer wording changes again.
+	- Opened: 20260917-101707
+	- Closed: 20260917-131500
 
 - ✅ A variable in a shell's own arguments is still expanded when it is spelled the way this platform spells it.
 	- Reproduced: `bash -c 'echo $FOO'` on Linux, or `cmd /k echo %PATH%` on Windows, reached the program with that word already replaced. Quoting did not protect it, and there was no way to write a literal `$` or `%`.
