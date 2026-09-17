@@ -437,7 +437,7 @@ impl Default for Settings {
 			scrollbar: true,
 			scrollbar_thickness: 16.0,
 			scrollbar_auto_hide: true,
-			minimap: false,
+			minimap: true,
 			minimap_width: 100.0,
 			minimap_tui_whitelist: "less tmux screen".to_string(),
 			margin: 8.0,
@@ -3133,6 +3133,9 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// default rather than an outgoing one, and listing it would rewrite the line
 	// every time a config crossed between machines.
 	("shell.startup_directory", "\"~\"  ## Default"),
+	// the minimap shipped off until the column stepped aside for full-screen
+	// programs on its own
+	("scroll.minimap.enabled", "false  ## Default"),
 	// Seven lines named an example rather than the default they were marked
 	// with, so uncommenting one changed what loaded. The values below are the
 	// examples they used to carry.
@@ -5003,7 +5006,7 @@ scroll:
 
 	## The minimap takes space away from the text. The scrollbar does not.
 	minimap:
-		# enabled: false  ## Default
+		# enabled: true  ## Default
 		# width: 100.0  ## Default
 		# tui_process_whitelist: "less tmux screen"  ## Default
 
