@@ -748,6 +748,9 @@ function fMain {
 	fSection "3  Tests"
 	fExec "tests" "cargo" @("test")
 	fEcho "OK: tests passed"
+	## install.ps1's signature check, with the OpenSSH that ships on Windows.
+	fExec "installer signing" (Join-Path $Root "cicd\tests\release\verify-sign.ps1")
+	fEcho "OK: installer signing"
 	fLintAdvisory
 
 	## Stage 4: release builds (x86_64 msvc + gnu always; ARM64 when ready).

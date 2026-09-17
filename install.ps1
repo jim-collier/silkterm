@@ -23,6 +23,8 @@
 ##	                 caller's own shell: no `exit` (it would close their window),
 ##	                 no $script: scope (absent in a script block), and StrictMode
 ##	                 plus the preference variables scoped to the run.
+##	  - 20260917 JC: The signature check feeds ssh-keygen the checksums file's own
+##	                 bytes on Linux and macOS, where Start-Process rewrote it.
 
 ##	Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 ##	Licensed under The MIT License (MIT). Full text at:
@@ -132,15 +134,38 @@ function fVerifySignature {
 	$signers = Join-Path $Dir 'allowed_signers'
 	Set-Content -LiteralPath $signers -Value "$ReleaseSignIdentity $ReleaseSignPubkey" -Encoding ascii
 	$sumsPath = Join-Path $Dir $Sums
-	##	The message goes in on stdin as the file's own bytes. A pipeline would put
-	##	it through PowerShell's text encoding first, and every argument is quoted
-	##	here because Start-Process joins an array without quoting anything.
-	$args = '-Y verify -f "{0}" -I {1} -n {2} -s "{3}"' -f `
+	##	The message goes in on stdin and has to be the file's own bytes, and how
+	##	that is done differs by platform. On Windows, Start-Process hands the file
+	##	itself to the child as its stdin, which is also the one way the Windows
+	##	OpenSSH reads a pipe reliably: written and closed before it has started
+	##	up, a pipe never reads as ended there. Elsewhere Start-Process copies the
+	##	file as text with a newline of its own on the end, so the bytes go down
+	##	a pipe by hand. Every argument is quoted because the string is passed
+	##	as-is, and 5.1 has no ArgumentList.
+	$verifyArgs = '-Y verify -f "{0}" -I {1} -n {2} -s "{3}"' -f `
 		$signers, $ReleaseSignIdentity, $ReleaseSignNamespace, $sigPath
-	$out = Join-Path $Dir 'verify.out'
-	$err = Join-Path $Dir 'verify.err'
-	$proc = Start-Process -FilePath $sshKeygen.Source -ArgumentList $args -NoNewWindow -Wait -PassThru `
-		-RedirectStandardInput $sumsPath -RedirectStandardOutput $out -RedirectStandardError $err
+	if ($onWindows) {
+		$out = Join-Path $Dir 'verify.out'
+		$err = Join-Path $Dir 'verify.err'
+		$proc = Start-Process -FilePath $sshKeygen.Source -ArgumentList $verifyArgs -NoNewWindow -Wait -PassThru `
+			-RedirectStandardInput $sumsPath -RedirectStandardOutput $out -RedirectStandardError $err
+	} else {
+		$psi = New-Object System.Diagnostics.ProcessStartInfo
+		$psi.FileName  = $sshKeygen.Source
+		$psi.Arguments = $verifyArgs
+		$psi.UseShellExecute        = $false
+		$psi.CreateNoWindow         = $true
+		$psi.RedirectStandardInput  = $true
+		$psi.RedirectStandardOutput = $true
+		$psi.RedirectStandardError  = $true
+		$proc = [System.Diagnostics.Process]::Start($psi)
+		$message = [System.IO.File]::ReadAllBytes($sumsPath)
+		$proc.StandardInput.BaseStream.Write($message, 0, $message.Length)
+		$proc.StandardInput.Close()
+		$null = $proc.StandardOutput.ReadToEnd()
+		$null = $proc.StandardError.ReadToEnd()
+		$proc.WaitForExit()
+	}
 	if ($proc.ExitCode -ne 0) {
 		fFail 'the release signature does not verify - NOT installing' @(
 			'The checksums file was not signed by the release key.',
