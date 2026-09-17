@@ -131,6 +131,10 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- A save tidies quotes and indents, and the renames at launch look at both.
 	- Opened: 20260911-012838
 
+- 🔘 A test run can rewrite a fuzz corpus seed in place.
+	- After one full run, `cicd/tests/fuzz-corpus/config/shipped-default.shcl` had its shcl banner line refreshed to the current wording and nothing else changed. The next run left it alone. Which test writes through it was not found.
+	- Opened: 20260917-101707
+
 - 🔘 A performance test run while the monitor is asleep can save a rating that is too low.
 	- The display then shows one frame a second, so the first profile reads as hopeless and Standard terminal is saved, with no wallpaper from then on.
 	- Not seen yet. Skipping the save when frames stall would make a truly slow machine test at every launch, so it needs its own design.
@@ -266,8 +270,10 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 42 (F74, should-fix): With a rotation interval shorter than an image takes to prepare, the wallpaper never changes and the abandoned loads keep running, several gigabytes at once.
 		- A tick that finds a request still working waits for it, and the result serves the tick. A superseded worker stops between stages instead of blurring a photo nobody will see.
 		- Pinned by `rotation_keeps_going_when_preparing_outlasts_the_interval` and `a_superseded_request_stops_before_its_next_stage`. Four 4096 by 4096 photos on a two-second interval now change every eight seconds with one worker at a time.
-	- Code review 20260914 item 43 (F75, should-fix): In the dark Matrix and Retro Amber themes the character under the cursor is barely readable, because the cursor is the text's own color.
-	- Code review 20260914 item 44 (F76, should-fix): On Xfce, the menus and "Use system font" can follow GNOME's font settings instead of the desktop's own.
+	- ✅ Code review 20260914 item 43 (F75, should-fix): In the dark Matrix and Retro Amber themes the character under the cursor is barely readable, because the cursor is the text's own color.
+		- Text on the cursor plate now clears the minimum contrast floor in every built-in theme and mode, pinned by `text_on_the_cursor_plate_clears_the_floor`. Both dark cursors are a darker shade of their own hue. The two light modes needed a darker foreground as well, since a paler one left no room for a cursor that both shows and carries the text. SilkTerm dark's cursor moved a shade for the same rule, and the outgoing default is superseded.
+	- ✅ Code review 20260914 item 44 (F76, should-fix): On Xfce, the menus and "Use system font" can follow GNOME's font settings instead of the desktop's own.
+		- The desktop's own store is asked first, xfconf on Xfce and gsettings elsewhere, for both the interface font and the monospace one. Pinned by `the_desktop_decides_which_font_store_answers_first`. KDE, MATE and Cinnamon are still untested.
 	- Code review 20260914 item 47 (F79, blocking): With the release signing key filled in, the PowerShell installer refuses every correctly signed release.
 	- Code review 20260914 item 48 (F80, blocking): The pre-commit hook commits every change in a partly staged Rust file, the unstaged ones included.
 	- Code review 20260914 item 49 (F81, blocking): A commit made while the pipeline builds lets a release publish binaries that were not built from the tagged source.

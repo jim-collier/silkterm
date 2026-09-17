@@ -120,15 +120,17 @@ pub struct Theme {
 #[rustfmt::skip]
 const SILK_DARK: Palette = Palette {
 	bg: [0x00, 0x00, 0x00],
-	// The cursor is an alpha plate drawn OVER the glyph, so it has to be dark
-	// enough to read text against - a cursor at the fg's own brightness sits at
-	// 1.1:1 and the two mush together. This is the fg's triadic partner dropped
-	// to the brightness where it reads equally against the text and against the
-	// black bg (3.9:1 either way). The highlight stays warm: it marks the pane,
-	// not the caret, so it wants its own identity rather than an echo of the
-	// cursor. Focus is its azure complement - the one thing the keyboard is on.
+	// The block cursor is a plate at pane::CURSOR_ALPHA under the glyph, and the
+	// glyph keeps its own color, so the plate is a second background the text
+	// has to clear the contrast floor on. A cursor at the fg's own brightness
+	// mushes the two together. This is the fg's triadic partner dropped to the
+	// brightness where the text on it clears the floor and it still shows
+	// against the black bg (3.3:1). Every theme's cursor is held to that by a
+	// test. The highlight stays warm: it marks the pane, not the caret, so it
+	// wants its own identity rather than an echo of the cursor. Focus is its
+	// azure complement - the one thing the keyboard is on.
 	fg: [0x88, 0xee, 0xcc],
-	cursor: [0x96, 0x49, 0xaf],
+	cursor: [0x8a, 0x3f, 0xa4],
 	highlight: [0xc8, 0xa0, 0x5a],
 	focus: [0x40, 0x86, 0xff],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
@@ -165,12 +167,15 @@ const SILK_LIGHT: Palette = Palette {
 };
 
 // Matrix: monochrome green. Dark = bright green on near-black; light = dark green
-// on a light gray.
+// on a light gray. Being monochrome, the cursor is the same hue as the text at
+// the brightness the text stays readable on (see SILK_DARK). In the light mode
+// that only works with a fg this dark: a paler one leaves no room between it
+// and the bg for a plate that both shows and carries the text.
 #[rustfmt::skip]
 const MATRIX_DARK: Palette = Palette {
 	bg: [0x00, 0x08, 0x02],
 	fg: [0x33, 0xff, 0x66],
-	cursor: [0x33, 0xff, 0x66],
+	cursor: [0x0a, 0x7a, 0x2a],
 	highlight: [0x1f, 0xaa, 0x44],
 	focus: [0xaa, 0xff, 0xcc],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
@@ -187,8 +192,8 @@ const MATRIX_DARK: Palette = Palette {
 #[rustfmt::skip]
 const MATRIX_LIGHT: Palette = Palette {
 	bg: [0xe9, 0xee, 0xe9],
-	fg: [0x0a, 0x55, 0x1f],
-	cursor: [0x0a, 0x66, 0x22],
+	fg: [0x07, 0x3d, 0x14],
+	cursor: [0x42, 0x92, 0x48],
 	highlight: [0x0a, 0x77, 0x2a],
 	focus: [0x0a, 0x8f, 0x9a],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
@@ -203,12 +208,12 @@ const MATRIX_LIGHT: Palette = Palette {
 };
 
 // Retro amber: monochrome amber/orange. Dark = amber on near-black; light = dark
-// amber on a warm light gray.
+// amber on a warm light gray. The cursors follow the same rule as Matrix's.
 #[rustfmt::skip]
 const AMBER_DARK: Palette = Palette {
 	bg: [0x10, 0x0a, 0x00],
 	fg: [0xff, 0xb0, 0x00],
-	cursor: [0xff, 0xb0, 0x00],
+	cursor: [0x7a, 0x3a, 0x00],
 	highlight: [0xcc, 0x80, 0x00],
 	focus: [0xff, 0x40, 0x20],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
@@ -225,8 +230,8 @@ const AMBER_DARK: Palette = Palette {
 #[rustfmt::skip]
 const AMBER_LIGHT: Palette = Palette {
 	bg: [0xf2, 0xee, 0xe6],
-	fg: [0x7a, 0x42, 0x00],
-	cursor: [0x8a, 0x4a, 0x00],
+	fg: [0x54, 0x2c, 0x00],
+	cursor: [0xbf, 0x7a, 0x40],
 	highlight: [0x9a, 0x52, 0x00],
 	focus: [0xc8, 0x10, 0x2e],
 	menu_bg: MENU_BG_DEF, menu_fg: MENU_FG_DEF,
@@ -369,6 +374,36 @@ mod tests {
 				t.dark.ansi[0],
 				"{name}: ansi black on a dark ground should be lifted"
 			);
+		}
+	}
+
+	// The block cursor is a plate at CURSOR_ALPHA under the glyph, and the glyph
+	// keeps its own color. So the plate is a second background the text has to
+	// clear the floor on, and a cursor at the fg's own brightness fails it. The
+	// plate is blended over the bg in linear light, as the sRGB surface does.
+	#[test]
+	fn text_on_the_cursor_plate_clears_the_floor() {
+		let floor = crate::config::Settings::default().text_min_contrast;
+		let alpha = crate::pane::CURSOR_ALPHA;
+		let blend = |cursor: [u8; 3], bg: [u8; 3]| {
+			let mix = |k: usize| {
+				let (c, b) = (
+					crate::config::to_linear(cursor[k]),
+					crate::config::to_linear(bg[k]),
+				);
+				crate::config::from_linear_u8(c * alpha + b * (1.0 - alpha))
+			};
+			[mix(0), mix(1), mix(2)]
+		};
+		for (name, t) in THEMES {
+			for (mode, pal) in [("dark", t.dark), ("light", t.light)] {
+				let plate = blend(pal.cursor, pal.bg);
+				assert_eq!(
+					crate::palette::readable(pal.fg, plate, floor),
+					pal.fg,
+					"{name} {mode}: text on the cursor would be repainted"
+				);
+			}
 		}
 	}
 
