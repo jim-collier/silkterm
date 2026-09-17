@@ -256,8 +256,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 37 (F69, should-fix): After a program that reports its directory exits, new tabs and splits start in its last directory instead of where the pane's shell is.
 		- A reported directory is kept with the process group that sent it, and dropped once that group is gone. Unix only, since Windows has no foreground group to ask.
 		- Pinned by `a_report_is_dropped_once_the_program_that_sent_it_exits`.
-	- Code review 20260914 item 40 (F72, blocking): A wallpaper blur of a tiny fraction such as `1e-40`, in the settings file or in an image's own tags, makes SilkTerm quit with every shell in it.
-	- Code review 20260914 item 41 (F73, blocking): A small wallpaper file with very large dimensions takes gigabytes of memory while it loads, enough to crash SilkTerm on a machine with less to spare.
+	- ✅ Code review 20260914 item 40 (F72, blocking): A wallpaper blur of a tiny fraction such as `1e-40`, in the settings file or in an image's own tags, makes SilkTerm quit with every shell in it.
+		- A blur too small to be a normal number is no blur, whether it comes from the file or a tag.
+		- Pinned by `a_subnormal_blur_is_no_blur`, which runs both through a real tagged PNG.
+	- ✅ Code review 20260914 item 41 (F73, blocking): A small wallpaper file with very large dimensions takes gigabytes of memory while it loads, enough to crash SilkTerm on a machine with less to spare.
+		- An image is cut to 4096 in its own pixel format, before the RGBA copy and with no float copy at full size. What is left is the decode, which the image library already holds to 512 MiB.
+		- Pinned by `a_huge_image_costs_its_decode_and_no_more`. An 8000 by 8000 grayscale file grew the process by 869 MiB before and 141 MiB after, and the test fails over 200.
 	- Code review 20260914 item 42 (F74, should-fix): With a rotation interval shorter than an image takes to prepare, the wallpaper never changes and the abandoned loads keep running, several gigabytes at once.
 	- Code review 20260914 item 43 (F75, should-fix): In the dark Matrix and Retro Amber themes the character under the cursor is barely readable, because the cursor is the text's own color.
 	- Code review 20260914 item 44 (F76, should-fix): On Xfce, the menus and "Use system font" can follow GNOME's font settings instead of the desktop's own.
