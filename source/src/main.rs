@@ -83,6 +83,7 @@ fn main() -> anyhow::Result<()> {
 	// environment write needs the process still single-threaded.
 	term::sanitize_shell_env();
 	config::take_handed_down_dir();
+	app::tune_heap();
 
 	let mut cli = match cli::parse(std::env::args().skip(1)) {
 		Ok(parsed) => parsed,

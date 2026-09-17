@@ -348,19 +348,10 @@ fn resolve_mono_family(fs: &FontSystem) -> Option<String> {
 pub struct TextCtx {
 	pub font_system: FontSystem,
 	pub swash_cache: SwashCache,
-	pub atlas: TextAtlas,
-	// The scrim renders into an Rgba16Float coverage texture, a different format
-	// than the surface, so its glyphon renderer needs its own same-format atlas.
-	scrim_atlas: TextAtlas,
-	pub viewport: Viewport,
-	// last resolution given to the viewport (skip the per-frame re-write)
-	viewport_size: (u32, u32),
-	pub renderer: TextRenderer,
-	// separate renderer for the context-menu overlay (second pass, on top)
-	pub overlay: TextRenderer,
-	// separate renderer for the scrim source pass: pane text only (no chrome), and
-	// panes may substitute a de-bolded buffer (text_scrim_regular_weight)
-	pub scrim: TextRenderer,
+	// The half that lives on the device. Absent while the window has let its
+	// GPU go (see app.rs, `release_gpu`); the metrics and the font system stay,
+	// since layout and input keep asking for them.
+	gpu: Option<TextGpu>,
 	// The display's scale factor this context was built at. Every chrome
 	// measurement in the main window is written in DIP and converted through
 	// `dip` at its use site, since chrome shares a coordinate space with the
@@ -405,6 +396,58 @@ pub struct TextCtx {
 	ui_measure_cache: HashMap<String, f32>,
 }
 
+// Everything of a TextCtx that is made on a wgpu device.
+struct TextGpu {
+	atlas: TextAtlas,
+	// The scrim renders into an Rgba16Float coverage texture, a different format
+	// than the surface, so its glyphon renderer needs its own same-format atlas.
+	scrim_atlas: TextAtlas,
+	viewport: Viewport,
+	// last resolution given to the viewport (skip the per-frame re-write)
+	viewport_size: (u32, u32),
+	renderer: TextRenderer,
+	// separate renderer for the context-menu overlay (second pass, on top)
+	overlay: TextRenderer,
+	// separate renderer for the scrim source pass: pane text only (no chrome), and
+	// panes may substitute a de-bolded buffer (text_scrim_regular_weight)
+	scrim: TextRenderer,
+}
+
+impl TextGpu {
+	fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+		let cache = Cache::new(device);
+		let mut atlas = TextAtlas::new(device, queue, &cache, format);
+		// The scrim text pass renders into a separate Rgba16Float coverage texture
+		// (crate::scrim::FMT), so its glyphon renderer must target THAT format. On the
+		// X11 GL path gfx.format is already Rgba16Float and a shared atlas happened to
+		// match; on the native path (Windows, Wayland) gfx.format is an sRGB surface
+		// format, so a shared atlas targets the wrong format - wgpu rejects it as
+		// "incompatible color attachments" on the first scrim frame. One Cache backs
+		// both atlases (it's built to serve multiple target formats).
+		let mut scrim_atlas = TextAtlas::new(device, queue, &cache, crate::scrim::FMT);
+		let viewport = Viewport::new(device, &cache);
+		let renderer =
+			TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
+		let overlay =
+			TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
+		let scrim = TextRenderer::new(
+			&mut scrim_atlas,
+			device,
+			wgpu::MultisampleState::default(),
+			None,
+		);
+		Self {
+			atlas,
+			scrim_atlas,
+			viewport,
+			viewport_size: (0, 0),
+			renderer,
+			overlay,
+			scrim,
+		}
+	}
+}
+
 // Round a glyph's advance to whole cells, `unit` being the face's own advance
 // for an ASCII cell. A face that reports nothing usable answers 1, so an
 // unmeasurable font behaves the way it always did.
@@ -422,6 +465,39 @@ impl TextCtx {
 		format: wgpu::TextureFormat,
 		scale: f32,
 	) -> Self {
+		let mut ctx = Self::new_cpu(scale);
+		ctx.attach_gpu(device, queue, format);
+		ctx
+	}
+
+	// The device half again, on a new device. The atlases start empty, so the
+	// next frame rasterizes what it shows.
+	pub fn attach_gpu(
+		&mut self,
+		device: &wgpu::Device,
+		queue: &wgpu::Queue,
+		format: wgpu::TextureFormat,
+	) {
+		self.gpu = Some(TextGpu::new(device, queue, format));
+	}
+
+	// Let the device half go, and with it the rasterized glyphs, which are only
+	// worth keeping while there is an atlas to put them in. Nothing may draw
+	// until `attach_gpu`.
+	pub fn detach_gpu(&mut self) {
+		self.gpu = None;
+		self.swash_cache = SwashCache::new();
+	}
+
+	fn gpu(&mut self) -> &mut TextGpu {
+		self.gpu
+			.as_mut()
+			.expect("text drawn while its GPU half is released")
+	}
+
+	// Fonts and metrics alone: everything the layout needs and nothing a device
+	// does.
+	pub fn new_cpu(scale: f32) -> Self {
 		let mut font_system = FontSystem::new();
 		pin_mono_family(&font_system);
 		pin_ui_family(&font_system);
@@ -456,38 +532,10 @@ impl TextCtx {
 			font_system.db().query(&query)
 		};
 
-		let cache = Cache::new(device);
-		let mut atlas = TextAtlas::new(device, queue, &cache, format);
-		// The scrim text pass renders into a separate Rgba16Float coverage texture
-		// (crate::scrim::FMT), so its glyphon renderer must target THAT format. On the
-		// X11 GL path gfx.format is already Rgba16Float and a shared atlas happened to
-		// match; on the native path (Windows, Wayland) gfx.format is an sRGB surface
-		// format, so a shared atlas targets the wrong format - wgpu rejects it as
-		// "incompatible color attachments" on the first scrim frame. One Cache backs
-		// both atlases (it's built to serve multiple target formats).
-		let mut scrim_atlas = TextAtlas::new(device, queue, &cache, crate::scrim::FMT);
-		let viewport = Viewport::new(device, &cache);
-		let renderer =
-			TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
-		let overlay =
-			TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
-		let scrim = TextRenderer::new(
-			&mut scrim_atlas,
-			device,
-			wgpu::MultisampleState::default(),
-			None,
-		);
-
 		Self {
 			font_system,
 			swash_cache: SwashCache::new(),
-			atlas,
-			scrim_atlas,
-			viewport,
-			viewport_size: (0, 0),
-			renderer,
-			overlay,
-			scrim,
+			gpu: None,
 			scale,
 			cell_w,
 			cell_h,
@@ -763,12 +811,13 @@ impl TextCtx {
 	}
 
 	pub fn update_viewport(&mut self, queue: &wgpu::Queue, w: u32, h: u32) {
+		let gpu = self.gpu();
 		// called per frame; only changes on resize
-		if self.viewport_size == (w, h) {
+		if gpu.viewport_size == (w, h) {
 			return;
 		}
-		self.viewport_size = (w, h);
-		self.viewport.update(
+		gpu.viewport_size = (w, h);
+		gpu.viewport.update(
 			queue,
 			Resolution {
 				width: w,
@@ -786,14 +835,19 @@ impl TextCtx {
 		// Destructured so the color-glyph lookup can borrow alongside the renderer
 		// and font system (disjoint fields of the same struct).
 		let Self {
-			renderer,
+			gpu,
 			font_system,
-			atlas,
-			viewport,
 			swash_cache,
 			color_glyphs,
 			..
 		} = self;
+		let TextGpu {
+			renderer,
+			atlas,
+			viewport,
+			..
+		} = gpu.as_mut()
+			.expect("text drawn while its GPU half is released");
 		renderer.prepare_with_custom(
 			device,
 			queue,
@@ -807,7 +861,11 @@ impl TextCtx {
 	}
 
 	pub fn render(&self, pass: &mut wgpu::RenderPass<'_>) -> Result<(), glyphon::RenderError> {
-		self.renderer.render(&self.atlas, &self.viewport, pass)
+		let gpu = self
+			.gpu
+			.as_ref()
+			.expect("text drawn while its GPU half is released");
+		gpu.renderer.render(&gpu.atlas, &gpu.viewport, pass)
 	}
 
 	pub fn prepare_overlay(
@@ -816,14 +874,23 @@ impl TextCtx {
 		queue: &wgpu::Queue,
 		areas: Vec<TextArea<'_>>,
 	) -> Result<(), glyphon::PrepareError> {
-		self.overlay.prepare(
+		let Self {
+			gpu,
+			font_system,
+			swash_cache,
+			..
+		} = self;
+		let gpu = gpu
+			.as_mut()
+			.expect("text drawn while its GPU half is released");
+		gpu.overlay.prepare(
 			device,
 			queue,
-			&mut self.font_system,
-			&mut self.atlas,
-			&self.viewport,
+			font_system,
+			&mut gpu.atlas,
+			&gpu.viewport,
 			areas,
-			&mut self.swash_cache,
+			swash_cache,
 		)
 	}
 
@@ -831,7 +898,11 @@ impl TextCtx {
 		&self,
 		pass: &mut wgpu::RenderPass<'_>,
 	) -> Result<(), glyphon::RenderError> {
-		self.overlay.render(&self.atlas, &self.viewport, pass)
+		let gpu = self
+			.gpu
+			.as_ref()
+			.expect("text drawn while its GPU half is released");
+		gpu.overlay.render(&gpu.atlas, &gpu.viewport, pass)
 	}
 
 	pub fn prepare_scrim(
@@ -841,14 +912,19 @@ impl TextCtx {
 		areas: Vec<TextArea<'_>>,
 	) -> Result<(), glyphon::PrepareError> {
 		let Self {
-			scrim,
+			gpu,
 			font_system,
-			scrim_atlas,
-			viewport,
 			swash_cache,
 			color_glyphs,
 			..
 		} = self;
+		let TextGpu {
+			scrim,
+			scrim_atlas,
+			viewport,
+			..
+		} = gpu.as_mut()
+			.expect("text drawn while its GPU half is released");
 		scrim.prepare_with_custom(
 			device,
 			queue,
@@ -865,12 +941,17 @@ impl TextCtx {
 		&self,
 		pass: &mut wgpu::RenderPass<'_>,
 	) -> Result<(), glyphon::RenderError> {
-		self.scrim.render(&self.scrim_atlas, &self.viewport, pass)
+		let gpu = self
+			.gpu
+			.as_ref()
+			.expect("text drawn while its GPU half is released");
+		gpu.scrim.render(&gpu.scrim_atlas, &gpu.viewport, pass)
 	}
 
 	pub fn trim_atlas(&mut self) {
-		self.atlas.trim();
-		self.scrim_atlas.trim();
+		let gpu = self.gpu();
+		gpu.atlas.trim();
+		gpu.scrim_atlas.trim();
 	}
 }
 

@@ -333,6 +333,9 @@ pub struct Settings {
 	pub rows: usize,
 	pub remember_size: bool, // launch at the last window size instead of columns/rows
 	pub hide_single_tab: bool, // hide the tab bar while only one tab is open
+	pub idle_release: bool,  // let the GPU device go after a long idle (app.rs, release_gpu)
+	pub idle_release_hidden_min: usize, // ...after this long minimized or covered
+	pub idle_release_min: usize, // ...or this long merely unfocused and quiet
 	pub tab_regular_pct: f32, // a tab's ordinary width, as a % of the window's width
 	pub tab_max_pct: f32,    // widest a tab may be, as a % of the window's width
 	pub remembered_columns: usize, // last actual window size (not shown in the dialog)
@@ -482,6 +485,9 @@ impl Default for Settings {
 			rows: 48,
 			remember_size: true,
 			hide_single_tab: false,
+			idle_release: false,
+			idle_release_hidden_min: 30,
+			idle_release_min: 240,
 			tab_regular_pct: 10.0,
 			tab_max_pct: 100.0,
 			remembered_columns: 160,
@@ -1638,6 +1644,18 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.hide_single_tab != orig.hide_single_tab {
 		doc.put_bool("window.hide_single_tab", s.hide_single_tab);
 	}
+	if s.idle_release != orig.idle_release {
+		doc.put_bool("window.idle_release", s.idle_release);
+	}
+	if s.idle_release_hidden_min != orig.idle_release_hidden_min {
+		doc.put_int(
+			"window.idle_release_hidden_min",
+			s.idle_release_hidden_min as i64,
+		);
+	}
+	if s.idle_release_min != orig.idle_release_min {
+		doc.put_int("window.idle_release_min", s.idle_release_min as i64);
+	}
 	if !same_f32(s.tab_regular_pct, orig.tab_regular_pct) {
 		doc.put_float("window.tab_regular_width_pct", r(s.tab_regular_pct));
 	}
@@ -1832,6 +1850,9 @@ struct RawConfig {
 	rows: Option<usize>,
 	remember_size: Option<bool>,
 	hide_single_tab: Option<bool>,
+	idle_release: Option<bool>,
+	idle_release_hidden_min: Option<usize>,
+	idle_release_min: Option<usize>,
 	tab_regular_pct: Option<f32>,
 	tab_max_pct: Option<f32>,
 	remembered_columns: Option<usize>,
@@ -2162,6 +2183,9 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		rows: r.u("window.rows"),
 		remember_size: r.b("window.remember_size"),
 		hide_single_tab: r.b("window.hide_single_tab"),
+		idle_release: r.b("window.idle_release"),
+		idle_release_hidden_min: r.u("window.idle_release_hidden_min"),
+		idle_release_min: r.u("window.idle_release_min"),
 		tab_regular_pct: r.f("window.tab_regular_width_pct"),
 		tab_max_pct: r.f("window.tab_max_width_pct"),
 		remembered_columns: r.u("window.remembered_columns"),
@@ -2404,6 +2428,7 @@ pub(crate) mod limits {
 	pub const MARGIN:             (f32, f32) = (0.0, 1_000.0);
 	pub const ROTATE_S:           (f32, f32) = (0.0, 604_800.0);
 	pub const GRID:               (usize, usize) = (1, 1_000);
+	pub const IDLE_MIN:           (usize, usize) = (1, 10_080); // a week
 	pub const SCROLLBACK:         (usize, usize) = (0, 1_000_000);
 }
 
@@ -2645,6 +2670,13 @@ fn resolve(raw: RawConfig) -> Settings {
 		rows: numi(raw.rows, d.rows, limits::GRID),
 		remember_size: raw.remember_size.unwrap_or(d.remember_size),
 		hide_single_tab: raw.hide_single_tab.unwrap_or(d.hide_single_tab),
+		idle_release: raw.idle_release.unwrap_or(d.idle_release),
+		idle_release_hidden_min: numi(
+			raw.idle_release_hidden_min,
+			d.idle_release_hidden_min,
+			limits::IDLE_MIN,
+		),
+		idle_release_min: numi(raw.idle_release_min, d.idle_release_min, limits::IDLE_MIN),
 		tab_regular_pct: raw
 			.tab_regular_pct
 			.unwrap_or(d.tab_regular_pct)
@@ -5013,6 +5045,14 @@ window:
 
 	# hide_single_tab: false  ## Default
 
+	## Let the graphics card's memory go after the window has sat unused, and
+	## take it back the moment the window is used again. The first wait is for
+	## a window that is minimized or covered, the second for one that is only
+	## unfocused with nothing printing.
+	# idle_release: false  ## Default
+	# idle_release_hidden_min: 30  ## Default
+	# idle_release_min: 240  ## Default
+
 	## Tab width as a percent of the window width.
 	# tab_regular_width_pct: 10.0  ## Default
 	# tab_max_width_pct: 100.0  ## Default
@@ -7094,6 +7134,8 @@ mod tests {
 			"window.rows",
 			"window.remembered_columns",
 			"window.remembered_rows",
+			"window.idle_release_hidden_min",
+			"window.idle_release_min",
 		] {
 			let s = read(key, huge);
 			let got = match key {
