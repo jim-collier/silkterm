@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+#  shellcheck disable=2001  ## 'See if you can use ${variable//search/replace} instead.' Complains about good uses of sed.
 
 ##	- Purpose:
 ##		utility/rename.bash renames the project. It used to rewrite only
@@ -40,7 +41,7 @@ done < <(
 		sed -n 's/.*rerun-if-changed=\([^"{]*\)".*/\1/p' "${clone}/source/build.rs"
 		tr '\n' ' ' < "${clone}/source/build.rs" \
 			| grep -oE 'Path::new\(&manifest\)[^;]*\.join\("[^"]*"' \
-			| sed 's/.*\.join("//'
+			| sed 's/.*\.join("//; s/"$//'
 		sed -n '/^const BUILD_INPUTS/,/\];/p' "${clone}/source/src/buildnum.rs" \
 			| grep -oE '"[^"]+"' | tr -d '"'
 	} | sort -u
@@ -66,12 +67,12 @@ fCheck "every include! still names a file that is there" test "${missing}" -eq 0
 left="$(cd "${clone}" && git grep -lI -e SilkTerm -e silkterm -- . \
 	':(exclude)Cargo.lock' ':(exclude)utility/rename.bash' || true)"
 fCheck "no tracked text file still carries the old name" test -z "${left}"
-[[ -z "${left}" ]] || printf '    %s\n' ${left}
+[[ -z "${left}" ]] || sed 's/^/    /' <<< "${left}"
 
 ##	The paths themselves. A file or directory named for the project is renamed.
 left="$(cd "${clone}" && git ls-files | grep -i silkterm || true)"
 fCheck "no tracked path still carries the old name" test -z "${left}"
-[[ -z "${left}" ]] || printf '    %s\n' ${left} | head -5
+[[ -z "${left}" ]] || sed 's/^/    /' <<< "${left}" | head -5
 
 if ((failures)); then echo "${failures} failed"; exit 1; fi
 echo "all passed"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+#  shellcheck disable=2034  ## 'variable appears unused.' The lifted function reads them, and shellcheck cannot see into an eval.
 
 ##	- Purpose:
 ##		CARGO_TARGET_DIR may be set, and may be absolute. A stage that assumes

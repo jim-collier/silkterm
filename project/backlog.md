@@ -71,6 +71,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
+- 🔘 The feature that is supposed to release the GPU after a timeout, doesn't seem to be doing anything. (Unless there's no visible side-effect when restoring?)
+
+- 🔘 After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
+	- On some other silkterm windows (but not all), text is visible, but the background is gray, not the theme's black. (Even after changing the theme.) Some silkterm windows seem fine.
+	- After a second switch to VT-1 and back, another silkterm window got a gray background, and invisible text.
+
 - 🔬 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
 	- CTRL+shift+C on selected text doesn't work.
@@ -263,18 +269,32 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 49 (F81, blocking): A commit made while the pipeline builds lets a release publish binaries that were not built from the tagged source.
 		- The note is written from the source read before the first build, not from the tree as it stands when the note is written. A tree that moved, or was dirty at either end, is refused and says which.
 		- A long run cross-builds after the native build, so one release could hold a binary from each side of the commit.
-	- Code review 20260914 item 50 (F82, should-fix): The bash installer leaves a GitHub token behind in a temporary file.
+	- ✅ Code review 20260914 item 50 (F82, should-fix): The bash installer leaves a GitHub token behind in a temporary file.
+		- The token file is made once, before the first API call, and removed on the way out however the run ends. It was being made inside a command substitution, so nothing it set reached the cleanup.
+		- Pinned by an installer run with a token, against a stand-in release, that looks in its own temp folder afterwards.
 	- ✅ Code review 20260914 item 51 (F83, should-fix): The pre-push gate tests the working tree, not the commits being pushed.
 		- The gate runs in a throwaway worktree checked out at the commit being pushed, so an uncommitted fix can no longer carry a push to main. Cargo writes where it always does, so only this crate is rebuilt there.
 		- Pinned by: the same hooks test, with a stub in place of the pipeline - what is being checked is which source the gate is handed, not what it does with it.
 	- ✅ Code review 20260914 item 52 (F84, should-fix): A release can be cut from a partial set of artifacts, such as the one a `--quick` run leaves.
 		- The note lists the artifact files the configuration builds, whatever the run actually did, and the release refuses a set missing any of them by name.
 		- Checked against the published beta3: the ten names the configuration gives are exactly what that release carries.
-	- Code review 20260914 item 53 (F85, should-fix): With an absolute `CARGO_TARGET_DIR`, the pipeline makes no Windows installer and the Windows pipeline cannot find its builds.
-	- Code review 20260914 item 54 (F86, should-fix): The menu launcher both one-line installers write does not start when the install path holds a space.
-	- Code review 20260914 item 55 (F87, should-fix): The dogfood launcher changes arguments that hold quotes, and drops empty ones, on the way to the terminal.
-	- Code review 20260914 item 56 (F88, should-fix): The dogfood launcher reads the whole build again at every launch instead of trusting its date.
-	- Code review 20260914 item 57 (F89, should-fix): `utility/rename.bash` leaves a tree whose Windows build fails.
+	- ✅ Code review 20260914 item 53 (F85, should-fix): With an absolute `CARGO_TARGET_DIR`, the pipeline makes no Windows installer and the Windows pipeline cannot find its builds.
+		- The packaging step takes the binary path as stage 5 recorded it, and only hangs it off the repository when it is relative. The Windows pipeline reads `CARGO_TARGET_DIR` by the same rule instead of spelling `target` itself.
+		- Pinned by a new packaging test that runs the installer step against the real template and makensis, once with each shape of target directory, and checks the Windows pipeline's own resolver.
+	- ✅ Code review 20260914 item 54 (F86, should-fix): The menu launcher both one-line installers write does not start when the install path holds a space.
+		- `Exec=` is quoted and escaped for both rule sets that read it. Both installers share one case list, so they cannot drift apart.
+		- Left alone: a path holding a `%`. The spec says to double it, GLib refuses an entry that does, and there is nothing else to write.
+		- Pinned by an install into a home holding a space, with the entry validated and launched.
+	- ✅ Code review 20260914 item 55 (F87, should-fix): The dogfood launcher changes arguments that hold quotes, and drops empty ones, on the way to the terminal.
+		- Arguments are joined the way the Windows command line is read back, which is also how .NET splits one elsewhere. The elevated relaunch uses the same join.
+		- Pinned by launching a stand-in build that records what it was handed, with the four arguments from the report.
+	- ✅ Code review 20260914 item 56 (F88, should-fix): The dogfood launcher reads the whole build again at every launch instead of trusting its date.
+		- The held stamp comes out of a file name, so the comparison is at whole seconds now. A source mtime carrying a fraction always read as newer.
+		- Pinned by two launches over a source whose mtime has a fraction.
+	- ✅ Code review 20260914 item 57 (F89, should-fix): `utility/rename.bash` leaves a tree whose Windows build fails.
+		- It rewrites every tracked text file that mentions either name, and renames the files and directories carrying the identifier, among them the resource template `build.rs` reads by name. Binaries and `Cargo.lock` are left alone.
+		- Checked once by hand: a renamed clone passes `cargo check --release --target x86_64-pc-windows-gnu`.
+		- Pinned by a test that renames a clone and looks for a path a build reads that is not there, and for the old name left anywhere.
 	- Code review 20260914 item 60 (F92, blocking): The fix for the Windows freeze on a long run of output has no test, so an engine update could lose it without anything failing.
 	- Code review 20260914 item 61 (F93, should-fix): Once the scrollback is full, output above a pinned status line, such as apt's progress bar, stops easing.
 	- Code review 20260914 item 62 (F94, should-fix): The terminal engine handles output in full-screen programs such as tmux about a third slower, because it copies every row that scrolls away.

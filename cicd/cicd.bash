@@ -550,6 +550,20 @@ if [[ -x "${root}/cicd/tests/install/run.bash" ]]; then
 	"${root}/cicd/tests/install/run.bash" >/dev/null || fDie "installer hygiene test failed"
 	fEcho "OK: installer hygiene"
 fi
+## The packaging step and the Windows pipeline both look for binaries stage 5
+## built, and CARGO_TARGET_DIR decides where those are.
+if [[ -x "${root}/cicd/tests/packaging/run.bash" ]]; then
+	fEcho_Clean "packaging paths ..."
+	"${root}/cicd/tests/packaging/run.bash" >/dev/null || fDie "packaging path test failed"
+	fEcho "OK: packaging paths"
+fi
+## Renaming the project has to leave a tree that still builds. Skipped under
+## --quick: it clones the repository.
+if ((! quick)) && [[ -x "${root}/cicd/tests/rename/run.bash" ]]; then
+	fEcho_Clean "project rename ..."
+	"${root}/cicd/tests/rename/run.bash" >/dev/null || fDie "project rename test failed"
+	fEcho "OK: project rename"
+fi
 ## The git hooks act on a commit or a push, where a mistake is awkward to undo.
 if [[ -x "${root}/cicd/tests/hooks/run.bash" ]]; then
 	fEcho_Clean "git hooks ..."
