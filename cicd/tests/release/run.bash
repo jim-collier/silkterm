@@ -22,11 +22,18 @@ work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 cd "${work}"
 git init -q .
-git -c user.name=t -c user.email=t@t commit -q --allow-empty -m first
+## The artifact directory is gitignored in the real tree, as it has to be now that
+## an untracked file counts against the build.
+printf 'art/\nignored/\n' > .gitignore
+git -c user.name=t -c user.email=t@t add .gitignore
+git -c user.name=t -c user.email=t@t commit -q -m first
 mkdir art
 
+fCommit(){ git -c user.name=t -c user.email=t@t commit -q "${@}"; }
 fNot(){ ! fCheckBuiltFrom art >/dev/null; }
 fYes(){ fCheckBuiltFrom art >/dev/null; }
+fWhy(){ fCheckBuiltFrom art 2>&1 || true; }
+fSays(){ [[ "$(fWhy)" == *"${1}"* ]]; }
 
 fCheck "no note at all is refused" fNot
 
@@ -36,20 +43,60 @@ fCheck "a note written here and now is accepted" fYes
 ## More commits, then the release is cut: the artifacts are now stale.
 echo change > file.txt
 git add file.txt
-git -c user.name=t -c user.email=t@t commit -q -m second
+fCommit -m second
 fCheck "a stale artifact directory is refused" fNot
 
 ## A merge keeps the tree, so a release cut from main after 'dev -> main --no-ff'
 ## still matches what the pipeline built on dev.
 fWriteBuiltFrom art
-git -c user.name=t -c user.email=t@t checkout -q -b rel
-git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "merge (same tree)"
+git checkout -q -b rel
+fCommit --allow-empty -m "merge (same tree)"
 fCheck "the same tree on another branch is accepted" fYes
 
 ## A dirty tree at build time says nothing about what was built.
 echo more >> file.txt
 fWriteBuiltFrom art
 fCheck "a build from a dirty tree is refused" fNot
+git checkout -q -- file.txt
+
+## A commit made in this tree while the builds run. The note used to be written
+## from the tree as it stood by then, so it named the new commit with a clean flag
+## while the binaries held the source from before it - and a run long enough to
+## cross-build can hold one of each.
+state="$(fSourceState)"
+echo "second session" > other.txt
+git add other.txt
+fCommit -m "another session, mid-build"
+fWriteBuiltFrom art "${state}"
+fCheck "a commit made while the builds ran is refused" fNot
+fCheck "and it says the source changed" fSays "the source changed"
+
+## An untracked source file builds here and is not in the tag, so the tagged source
+## may not even compile: a module whose 'mod' line is committed and whose file is
+## not is the shape that got through.
+fWriteBuiltFrom art
+fCheck "a clean tree is still accepted" fYes
+echo "fn extra() {}" > extra.rs
+fWriteBuiltFrom art
+fCheck "an untracked source file is refused" fNot
+fCheck "and the file is named" fSays "extra.rs"
+rm -f extra.rs
+
+## An ignored one is not source, so it says nothing about the build.
+mkdir -p ignored && echo scratch > ignored/thing
+fWriteBuiltFrom art
+fCheck "an ignored file leaves the tree clean" fYes
+
+## The set has to be whole. --quick and --no-cross leave the native binary alone in
+## there, and a package step that cannot find its tool only warns, so a release went
+## out with nothing for Windows to install and the checksums verified either way.
+fWriteBuiltFrom art "" app-linux app-windows.exe
+fCheck "an artifact set missing a target is refused" fNot
+fCheck "and the missing file is named" fSays "app-windows.exe"
+: > art/app-linux
+fCheck "a set still missing one is refused" fNot
+: > art/app-windows.exe
+fCheck "a whole set is accepted" fYes
 
 ## Signing. The checksums file says the download was not corrupted; the signature
 ## is what says it came from here. Driven with a throwaway key: signed the way
