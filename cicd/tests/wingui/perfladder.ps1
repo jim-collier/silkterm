@@ -14,9 +14,14 @@ fNote "remote session: $([Silk.Win]::GetSystemMetrics(0x1000))"
 $p = fStartSilk $Exe @("--config=$cfg", "--columns", "110", "--rows", "32") @{ SILK_BENCH = "1" }
 $h = fWaitWindow $p 40
 if (-not (fCheck "a window came up" ($h -ne [IntPtr]::Zero))) { fStop $p; return }
-[void](fFocus $h)
-
-Start-Sleep -Seconds 2
+##	The banner stays up four seconds at least, so the shot is taken two seconds
+##	after the window came up, however long focus took. A focus that fails burns
+##	nearly four seconds on its own, and a shot after that misses the banner.
+$up = Get-Date
+$got = fFocus $h
+fNote "focus $(if ($got) { 'taken' } else { 'refused' }) in $([int]((Get-Date) - $up).TotalMilliseconds)ms"
+$left = 2000 - ((Get-Date) - $up).TotalMilliseconds
+if ($left -gt 0) { Start-Sleep -Milliseconds $left }
 $during = fShot $h "perf-banner"
 Start-Sleep -Seconds 14
 $after = fShot $h "perf-settled"
