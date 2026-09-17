@@ -263,7 +263,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 41 (F73, blocking): A small wallpaper file with very large dimensions takes gigabytes of memory while it loads, enough to crash SilkTerm on a machine with less to spare.
 		- An image is cut to 4096 in its own pixel format, before the RGBA copy and with no float copy at full size. What is left is the decode, which the image library already holds to 512 MiB.
 		- Pinned by `a_huge_image_costs_its_decode_and_no_more`. An 8000 by 8000 grayscale file grew the process by 869 MiB before and 141 MiB after, and the test fails over 200.
-	- Code review 20260914 item 42 (F74, should-fix): With a rotation interval shorter than an image takes to prepare, the wallpaper never changes and the abandoned loads keep running, several gigabytes at once.
+	- ✅ Code review 20260914 item 42 (F74, should-fix): With a rotation interval shorter than an image takes to prepare, the wallpaper never changes and the abandoned loads keep running, several gigabytes at once.
+		- A tick that finds a request still working waits for it, and the result serves the tick. A superseded worker stops between stages instead of blurring a photo nobody will see.
+		- Pinned by `rotation_keeps_going_when_preparing_outlasts_the_interval` and `a_superseded_request_stops_before_its_next_stage`. Four 4096 by 4096 photos on a two-second interval now change every eight seconds with one worker at a time.
 	- Code review 20260914 item 43 (F75, should-fix): In the dark Matrix and Retro Amber themes the character under the cursor is barely readable, because the cursor is the text's own color.
 	- Code review 20260914 item 44 (F76, should-fix): On Xfce, the menus and "Use system font" can follow GNOME's font settings instead of the desktop's own.
 	- Code review 20260914 item 47 (F79, blocking): With the release signing key filled in, the PowerShell installer refuses every correctly signed release.
