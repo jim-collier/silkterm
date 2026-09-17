@@ -340,6 +340,8 @@ The default floor is 45%, which puts previously invisible text at roughly 2.8:1 
 
 Every built-in theme's own foreground clears the floor on its own, which is checked at build time. A theme whose body text needed lifting would mean the floor was repainting the thing it is measured against.
 
+The block cursor is a second background. It is drawn as a plate at 55% under the glyph, and the glyph keeps its own color, so the text on it has to clear the same floor against the plate as blended over the theme's background. That is checked for every built-in theme and mode the same way. A cursor at the text's own brightness fails it outright, which is what the monochrome themes shipped with. In a light theme the rule also sets how dark the text has to be: the plate sits between the text and the background, and a paler foreground leaves no room for one that both shows as a block and carries the text.
+
 ### Performance profiles (2026-09-03)
 
 One setting decides how much the look may cost, so a slow machine is a choice on one tab rather than a dozen switches on four.
@@ -395,6 +397,8 @@ Which family that is comes from a single search order, the same on every platfor
 The setting only reorders that list; it never truncates it. An earlier version dropped `font_family` entirely while following the OS font. The same build and the same config then resolved differently depending on the platform, and a configured stack could be silently ignored. Every list is now always walked. A family that is not installed simply falls through to the next one, and the configured stack still has effect as a fallback.
 
 Platforms differ only in what they report, not in the rules applied to it. Windows has a system font size but no monospace family, so following the family there is a no-op and resolution starts at `font_family` without a special case. A toggle with nothing behind it reads as inert, so the Settings checkbox grays out and says why. The same holds for a desktop with no font setting configured at all, which is why the check asks what was detected rather than which platform is running.
+
+On Linux the desktop's own settings store is asked first and the other one fills in: xfconf on Xfce, gsettings elsewhere. gsettings answers on any box with GNOME's schemas installed, an Xfce box included, and a key nobody set comes back as the schema default, so asking it first on Xfce gave Cantarell 11 and Monospace 11 whatever the desktop was set to.
 
 The built-in stack is last for a reason. The generic monospace query below it is effectively a lottery over installed fonts, and its winner may ship no bold face. That ejects bold runs into an arbitrary, often proportional, fallback whose advances can't be snapped to the cell grid. Every entry in the built-in stack carries a real bold face. When that stack changes, the outgoing value is recorded, so an existing config still carrying it verbatim is refreshed on the next launch. A stack the user edited is theirs and is left alone.
 

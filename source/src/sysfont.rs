@@ -70,16 +70,25 @@ mod platform {
 	use std::process::Command;
 
 	pub fn monospace() -> Monospace {
-		if let Some(desc) = gsettings_desc("monospace-font-name") {
-			let parsed = parse_pango(&desc);
-			if parsed.family.is_some() || parsed.size_pt.is_some() {
-				return Monospace {
-					family: parsed.family,
-					size_pt: parsed.size_pt,
-				};
-			}
+		monospace_from(
+			&desktop(),
+			|| gsettings_desc("monospace-font-name"),
+			|| xfconf_desc("/Gtk/MonospaceFontName"),
+		)
+	}
+
+	fn monospace_from(
+		desktop: &str,
+		gnome: impl FnOnce() -> Option<String>,
+		xfce: impl FnOnce() -> Option<String>,
+	) -> Monospace {
+		if let Some(parsed) = desktop_font(desktop, gnome, xfce) {
+			return Monospace {
+				family: parsed.family,
+				size_pt: parsed.size_pt,
+			};
 		}
-		// No GNOME settings: fontconfig gives a size, no specific family.
+		// No desktop setting: fontconfig gives a size, no specific family.
 		Monospace {
 			family: None,
 			size_pt: fontconfig_size(),
@@ -90,11 +99,53 @@ mod platform {
 	// gsettings; Xfce through xfconf. Either may be a serif - that's the point:
 	// chrome follows whatever the user picked, not a sans assumption.
 	pub fn interface() -> super::UiFont {
-		gsettings_desc("font-name")
-			.or_else(xfconf_ui_desc)
-			.map(|desc| parse_pango(&desc))
+		interface_from(
+			&desktop(),
+			|| gsettings_desc("font-name"),
+			|| xfconf_desc("/Gtk/FontName"),
+		)
+	}
+
+	fn interface_from(
+		desktop: &str,
+		gnome: impl FnOnce() -> Option<String>,
+		xfce: impl FnOnce() -> Option<String>,
+	) -> super::UiFont {
+		desktop_font(desktop, gnome, xfce).unwrap_or_default()
+	}
+
+	// The desktop's own store answers first. gsettings answers wherever GNOME's
+	// schemas are installed, an Xfce box included, and a key nobody set comes
+	// back as the schema default - so on Xfce it may only fill in for a missing
+	// xfconf answer, or the chrome follows Cantarell 11 whatever was picked.
+	fn desktop_font(
+		desktop: &str,
+		gnome: impl FnOnce() -> Option<String>,
+		xfce: impl FnOnce() -> Option<String>,
+	) -> Option<super::UiFont> {
+		let desc = if is_xfce(desktop) {
+			xfce().or_else(gnome)
+		} else {
+			gnome().or_else(xfce)
+		};
+		desc.map(|desc| parse_pango(&desc))
 			.filter(|parsed| parsed.family.is_some() || parsed.size_pt.is_some())
+	}
+
+	// XDG_CURRENT_DESKTOP is a colon list ("ubuntu:GNOME", "XFCE"); an older
+	// session may set only DESKTOP_SESSION ("xfce").
+	fn desktop() -> String {
+		std::env::var("XDG_CURRENT_DESKTOP")
+			.ok()
+			.filter(|d| !d.is_empty())
+			.or_else(|| std::env::var("DESKTOP_SESSION").ok())
 			.unwrap_or_default()
+	}
+
+	fn is_xfce(desktop: &str) -> bool {
+		desktop
+			.split(':')
+			.any(|part| part.eq_ignore_ascii_case("xfce"))
 	}
 
 	fn gsettings_desc(key: &str) -> Option<String> {
@@ -106,9 +157,9 @@ mod platform {
 		String::from_utf8(out.stdout).ok()
 	}
 
-	fn xfconf_ui_desc() -> Option<String> {
+	fn xfconf_desc(property: &str) -> Option<String> {
 		let out = Command::new("xfconf-query")
-			.args(["-c", "xsettings", "-p", "/Gtk/FontName"])
+			.args(["-c", "xsettings", "-p", property])
 			.output()
 			.ok()?;
 		out.status.success().then_some(())?;
@@ -202,6 +253,51 @@ mod platform {
 			"roman",
 		];
 		STYLES.iter().any(|style| style.eq_ignore_ascii_case(word))
+	}
+
+	#[cfg(test)]
+	mod tests {
+		use super::{interface_from, is_xfce, monospace_from};
+
+		// gsettings answers on an Xfce box too, with GNOME's defaults for keys
+		// nobody set, so the desktop decides which store is asked first.
+		#[test]
+		fn the_desktop_decides_which_font_store_answers_first() {
+			let gnome = || Some("'Cantarell 11'".to_string());
+			let xfce = || Some("GentiumAlt Bold 13".to_string());
+			let ui = interface_from("XFCE", gnome, xfce);
+			assert_eq!(
+				(ui.family.as_deref(), ui.size_pt, ui.bold),
+				(Some("GentiumAlt"), Some(13.0), true)
+			);
+			let ui = interface_from("ubuntu:GNOME", gnome, xfce);
+			assert_eq!(
+				(ui.family.as_deref(), ui.size_pt),
+				(Some("Cantarell"), Some(11.0))
+			);
+
+			let gnome = || Some("'Monospace 11'".to_string());
+			let xfce = || Some("Monaspace Argon 13".to_string());
+			let mono = monospace_from("XFCE", gnome, xfce);
+			assert_eq!(
+				(mono.family.as_deref(), mono.size_pt),
+				(Some("Monaspace Argon"), Some(13.0))
+			);
+			let mono = monospace_from("GNOME", gnome, xfce);
+			assert_eq!(
+				(mono.family.as_deref(), mono.size_pt),
+				(Some("Monospace"), Some(11.0))
+			);
+
+			// The other store still fills in when the desktop's own has nothing.
+			let ui = interface_from("XFCE", || Some("'Cantarell 11'".to_string()), || None);
+			assert_eq!(ui.family.as_deref(), Some("Cantarell"));
+			let mono = monospace_from("GNOME", || None, || Some("Monaspace Argon 13".to_string()));
+			assert_eq!(mono.family.as_deref(), Some("Monaspace Argon"));
+
+			assert!(is_xfce("xfce") && is_xfce("XFCE:GNOME"));
+			assert!(!is_xfce("X-Cinnamon") && !is_xfce(""));
+		}
 	}
 }
 

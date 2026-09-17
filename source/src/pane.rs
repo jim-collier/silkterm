@@ -50,7 +50,7 @@ const CURSOR_MOVE_TAU_MS: f32 = 55.0; // horizontal slide responsiveness (lower 
 // (per-cell factor); and it never trails more than CURSOR_MAX_LAG cells.
 const CURSOR_CATCHUP: f32 = 0.45; // tau divisor per cell of lag
 const CURSOR_MAX_LAG: f32 = 8.0; // hard cap on how far behind the slide may sit (cells)
-const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha
+pub(crate) const CURSOR_ALPHA: f32 = 0.55; // solid block-cursor alpha; theme.rs tests cursor colors against it
 // Escape hatch: true restores the old always-running animation (the removed
 // cursor_animation_input = "continuous"), bypassing the pause/park machinery.
 const CURSOR_ANIM_CONTINUOUS: bool = false;

@@ -509,7 +509,7 @@ impl Default for Settings {
 			hyperlink_open_command: String::new(),
 			bg: [0x00, 0x00, 0x00],
 			fg: [0x88, 0xee, 0xcc],
-			cursor: [0x96, 0x49, 0xaf],
+			cursor: [0x8a, 0x3f, 0xa4],
 			highlight: [0xc8, 0xa0, 0x5a],
 			focus: [0x40, 0x86, 0xff],
 			menu_bg: crate::theme::MENU_BG_DEF,
@@ -3119,6 +3119,8 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// read through
 	("colors.cursor", "\"#cc88ee\"  ## Default"),
 	("colors.cursor", "\"#eecc88\"  ## Default"),
+	// the first readable one sat a shade under the contrast floor on the plate
+	("colors.cursor", "\"#9649af\"  ## Default"),
 	// the pane ring was a cold blue, picked for the palette before this one (the
 	// key was `colors.focus` then, so a config carrying it arrives here renamed)
 	("colors.highlight", "\"#5580c8\"  ## Default"),
@@ -5017,7 +5019,7 @@ theme_mode: dark
 colors:
 	# background: "#000000"  ## Default
 	# foreground: "#88eecc"  ## Default
-	# cursor: "#9649af"  ## Default
+	# cursor: "#8a3fa4"  ## Default
 	# highlight: "#c8a05a"  ## Default
 	# focus: "#4086ff"  ## Default
 	# menu_background: "#36363b"  ## Default
