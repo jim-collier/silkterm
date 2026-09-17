@@ -396,8 +396,11 @@ utility/rename.bash NewName
 cargo build
 ```
 
-It rewrites `Cargo.toml`, the Rust sources, and the docs (review `git diff`
-afterwards); `cargo build` regenerates `Cargo.lock`.
+It rewrites every tracked text file that mentions either name - the sources, the
+docs, the pipeline, the packaging, the installers and the tests - and renames the
+files and directories carrying the lowercase identifier, among them the Windows
+resource template a build reads by name. Binaries are left alone. Review
+`git diff` and `git status` afterwards; `cargo build` regenerates `Cargo.lock`.
 -->
 
 ## Contributing

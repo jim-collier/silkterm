@@ -283,6 +283,17 @@ function fApi {
 	return Invoke-RestMethod -Uri $Url -Headers $headers @webArgs
 }
 
+##	Exec= is read twice: the desktop-entry string rules first, then the Exec
+##	quoting rules on top. So a backslash in the path ends up as four, a quote,
+##	backtick or '$' as two-plus-itself, and a literal '%' has to be doubled or it
+##	reads as a field code. The caller quotes the whole value, which a space needs.
+function fDesktopExec {
+	param([string]$Path)
+	$s = $Path -replace '([\\"`$])', '\$1'
+	$s = $s -replace '\\', '\\'
+	return ($s -replace '%', '%%')
+}
+
 
 function fMain {
 
@@ -546,7 +557,8 @@ function fMain {
 				New-Item -ItemType Directory -Force -Path $appDir | Out-Null
 				@(
 					'[Desktop Entry]', 'Type=Application', "Name=$appName",
-					"GenericName=$desktopGenericName", "Comment=$appComment", "Exec=$destFile",
+					"GenericName=$desktopGenericName", "Comment=$appComment",
+					('Exec="' + (fDesktopExec $destFile) + '"'),
 					"Icon=$desktopIcon", 'Terminal=false', "Categories=$desktopCategories",
 					"Keywords=$desktopKeywords", 'StartupNotify=true'
 				) | Set-Content -LiteralPath (Join-Path $appDir "$exeName.desktop")

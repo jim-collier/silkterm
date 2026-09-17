@@ -116,39 +116,39 @@ httpsOnly_wget=(--https-only)
 
 ##	The token goes in a file rather than on the command line, where 'ps' shows it
 ##	to every account on the box. Written 0600 inside a directory only we can read,
-##	and removed on exit.
+##	and removed by the EXIT trap.
+##
+##	Set up once, from fMain, before the first API call. fApi is always run in a
+##	command substitution, so anything it set would stay in that subshell - which
+##	is how this used to leave a folder of tokens behind per call.
 authDir=""
 authFile=""
-function fAuthFile() {
-	[ -n "${apiToken}" ] || return 1
-	if [ -z "${authFile}" ]; then
-		authDir="$(mktemp -d 2>/dev/null)" || return 1
-		chmod 700 "${authDir}" 2>/dev/null
-		authFile="${authDir}/auth"
-		##	The two tools read their own config format, and only curl's takes
-		##	quotes - wget's rc keeps everything after the '=' verbatim.
-		if [ "${dlTool}" = "curl" ]; then
-			( umask 077; printf 'header = "Authorization: Bearer %s"\n' "${apiToken}" >"${authFile}" )
-		else
-			( umask 077; printf 'header = Authorization: Bearer %s\n' "${apiToken}" >"${authFile}" )
-		fi
+function fAuthInit() {
+	[ -n "${apiToken}" ] || return 0
+	authDir="$(mktemp -d 2>/dev/null)" || return 1
+	chmod 700 "${authDir}" 2>/dev/null
+	authFile="${authDir}/auth"
+	##	The two tools read their own config format, and only curl's takes
+	##	quotes - wget's rc keeps everything after the '=' verbatim.
+	if [ "${dlTool}" = "curl" ]; then
+		( umask 077; printf 'header = "Authorization: Bearer %s"\n' "${apiToken}" >"${authFile}" )
+	else
+		( umask 077; printf 'header = Authorization: Bearer %s\n' "${apiToken}" >"${authFile}" )
 	fi
-	printf '%s' "${authFile}"
 }
 
 function fApi() {
-	local url="$1" auth=""
-	auth="$(fAuthFile 2>/dev/null)" || auth=""
+	local url="$1"
 	if [ "${dlTool}" = "curl" ]; then
-		if [ -n "${auth}" ]; then
-			curl -fsSL "${httpsOnly_curl[@]}" --config "${auth}" "${url}"
+		if [ -n "${authFile}" ]; then
+			curl -fsSL "${httpsOnly_curl[@]}" --config "${authFile}" "${url}"
 		else
 			curl -fsSL "${httpsOnly_curl[@]}" "${url}"
 		fi
 	else
 		##	wget takes no header file, but it reads one out of a config file.
-		if [ -n "${auth}" ]; then
-			WGETRC="${auth}" wget -qO- "${httpsOnly_wget[@]}" "${url}"
+		if [ -n "${authFile}" ]; then
+			WGETRC="${authFile}" wget -qO- "${httpsOnly_wget[@]}" "${url}"
 		else
 			wget -qO- "${httpsOnly_wget[@]}" "${url}"
 		fi
@@ -219,6 +219,14 @@ function fCanWrite() {
 		dir="$(dirname "${dir}")"
 	done
 	[ -w "${dir}" ]
+}
+
+##	Exec= is read twice: the desktop-entry string rules first, then the Exec
+##	quoting rules on top. So a backslash in the path ends up as four, a quote,
+##	backtick or '$' as two-plus-itself, and a literal '%' has to be doubled or it
+##	reads as a field code. The whole value is quoted, which is what a space needs.
+function fDesktopExec() {
+	printf '%s' "$1" | sed -e 's/[\\"`$]/\\&/g' -e 's/\\/\\\\/g' -e 's/%/%%/g'
 }
 
 ##	Scratch space. Global on purpose: the EXIT trap fires after fMain has
@@ -312,6 +320,12 @@ function fMain() {
 	##	An API token is optional, and only lifts the unauthenticated rate limit.
 	local apiToken="${GITHUB_TOKEN:-}"
 
+	##	From here on there is something to clean up. A signal is turned into an
+	##	ordinary exit so the EXIT trap gets its turn; bash skips it otherwise.
+	trap fCleanup EXIT
+	trap 'exit 130' HUP INT TERM
+	fAuthInit || fFail "could not create a temporary directory"
+
 	##	Resolve the release tag. "latest" deliberately EXCLUDES pre-releases, so
 	##	stable asks for it first and only then falls back to the newest of any
 	##	kind - which is also what makes a project with only betas installable.
@@ -352,7 +366,6 @@ function fMain() {
 	##	release actually carries, and its hash lets an already-current install
 	##	finish without downloading the binary at all.
 	tmpDir="$(mktemp -d 2>/dev/null)" || fFail "could not create a temporary directory"
-	trap fCleanup EXIT
 	fGet "${dlBase}/${tag}/${sums}" "${tmpDir}/${sums}" 2>/dev/null \
 		|| fFail "release ${tag} has no checksums file (${sums})" \
 			"Nothing can be verified without it, so nothing will be installed." \
@@ -471,7 +484,7 @@ function fMain() {
 			echo "Name=${appName}"
 			echo "GenericName=${desktopGenericName}"
 			echo "Comment=${appComment}"
-			echo "Exec=${destFile}"
+			echo "Exec=\"$(fDesktopExec "${destFile}")\""
 			echo "Icon=${desktopIcon}"
 			echo "Terminal=false"
 			echo "Categories=${desktopCategories}"

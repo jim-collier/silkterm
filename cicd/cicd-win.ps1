@@ -296,6 +296,16 @@ function fArmSkipReason {
 	return $null
 }
 
+## Where cargo actually puts a build. config.bash's rule: nothing may assume
+## 'target', or a stage builds and then looks for its binary where it was never
+## put. An absolute CARGO_TARGET_DIR is taken as it stands.
+function fTargetDir {
+	$td = $env:CARGO_TARGET_DIR
+	if (-not $td) { return (Join-Path $Root "target") }
+	if ([System.IO.Path]::IsPathRooted($td)) { return $td }
+	return (Join-Path $Root $td)
+}
+
 ## Build one release target. Returns a result object on success, or $null when an
 ## ARM target is skipped (x86_64 failures abort - house rule: always build both).
 function fBuildTarget {
@@ -309,7 +319,7 @@ function fBuildTarget {
 	}
 
 	fSection "4  Release build: $($Target.OsArch)"
-	$exe = Join-Path $Root "target\$($Target.Triple)\release\$ExeName.exe"
+	$exe = Join-Path (fTargetDir) "$($Target.Triple)\release\$ExeName.exe"
 
 	$cargoArgs = if ($Target.Builder -eq "zigbuild") {
 		@("zigbuild", "--release", "--target", $Target.Triple)

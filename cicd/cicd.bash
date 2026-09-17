@@ -550,6 +550,20 @@ if [[ -x "${root}/cicd/tests/install/run.bash" ]]; then
 	"${root}/cicd/tests/install/run.bash" >/dev/null || fDie "installer hygiene test failed"
 	fEcho "OK: installer hygiene"
 fi
+## The packaging step and the Windows pipeline both look for binaries stage 5
+## built, and CARGO_TARGET_DIR decides where those are.
+if [[ -x "${root}/cicd/tests/packaging/run.bash" ]]; then
+	fEcho_Clean "packaging paths ..."
+	"${root}/cicd/tests/packaging/run.bash" >/dev/null || fDie "packaging path test failed"
+	fEcho "OK: packaging paths"
+fi
+## Renaming the project has to leave a tree that still builds. Skipped under
+## --quick: it clones the repository.
+if ((! quick)) && [[ -x "${root}/cicd/tests/rename/run.bash" ]]; then
+	fEcho_Clean "project rename ..."
+	"${root}/cicd/tests/rename/run.bash" >/dev/null || fDie "project rename test failed"
+	fEcho "OK: project rename"
+fi
 ## The git hooks act on a commit or a push, where a mistake is awkward to undo.
 if [[ -x "${root}/cicd/tests/hooks/run.bash" ]]; then
 	fEcho_Clean "git hooks ..."
@@ -744,7 +758,7 @@ fi
 build_packages(){
 	((PACKAGE_ENABLE)) || { fEcho_Clean "packages disabled"; return 0; }
 	[[ -n "${art_dir:-}" ]] || { fEcho "WARNING: packages skipped (no RELEASE_ARTIFACT_DIR)"; return 0; }
-	local pair osarch bin triple out nsi rc made=0
+	local pair osarch bin srcexe triple out nsi rc made=0
 	local rpmver="${ver//-/\~}"   ## RPM versions forbid '-' (it splits version-release); 1.0.0-beta1 -> 1.0.0~beta1
 	for pair in "${built_arts[@]}"; do
 		osarch="${pair%%|*}"; bin="${pair#*|}"
@@ -781,8 +795,12 @@ build_packages(){
 			if command -v makensis >/dev/null 2>&1 && [[ -f "${root}/${NSIS_TEMPLATE}" ]]; then
 				out="${art_dir}/${EXE_NAME}-${ver}-${osarch}-setup.exe"
 				nsi="$(mktemp --suffix=.nsi)"
+				## An absolute CARGO_TARGET_DIR already gives an absolute path, and
+				## prefixing the repo root then names a file that was never there.
+				srcexe="${bin}"
+				[[ "$srcexe" = /* ]] || srcexe="${root}/${srcexe}"
 				sed -e "s|@VERSION@|${ver}|g" -e "s|@ARCH@|${osarch}|g" \
-					-e "s|@SRCEXE@|${root}/${bin}|g" -e "s|@OUTFILE@|${out}|g" \
+					-e "s|@SRCEXE@|${srcexe}|g" -e "s|@OUTFILE@|${out}|g" \
 					"${root}/${NSIS_TEMPLATE}" > "${nsi}"
 				rc=0; makensis -V2 "${nsi}" >/dev/null || rc=$?
 				rm -f "${nsi}"

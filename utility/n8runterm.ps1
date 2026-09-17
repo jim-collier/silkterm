@@ -222,7 +222,12 @@ function fCopyIfNewer {
 	$tag    = fBuildTag -SourceDir $dir
 	$newest = fNewestHeld
 
-	if ($newest -and $newest.Stamp -ge $item.LastWriteTime) {
+	## The held stamp comes out of a file name, so it carries whole seconds only.
+	## Compare at that precision: a source mtime with a fraction (cp -p from cargo's
+	## output has one) otherwise always reads as newer, and every launch falls
+	## through to hashing the whole binary to find the copy it already holds.
+	$srcWhole = $item.LastWriteTime.AddTicks(-($item.LastWriteTime.Ticks % [timespan]::TicksPerSecond))
+	if ($newest -and $newest.Stamp -ge $srcWhole) {
 		fNote "already current (held $($newest.Stamp.ToString($StampFormat)), source $stamp)"
 		return
 	}
@@ -602,7 +607,10 @@ function fWriteDesktopEntry {
 		"Name=SilkTerm (dogfood)"
 		"GenericName=Terminal"
 		"Comment=Smooth-scrolling GPU terminal with split panes"
-		"Exec=`"$Wrapper`""
+		## Exec= is read twice: the desktop-entry string rules first, then the Exec
+		## quoting rules on top, so a backslash ends up as four and a literal '%'
+		## has to be doubled or it reads as a field code.
+		('Exec="' + (($Wrapper -replace '([\\"`$])', '\$1' -replace '\\', '\\' -replace '%', '%%')) + '"')
 		"Icon=$IconPath"
 		"Terminal=false"
 		"StartupNotify=false"
@@ -718,6 +726,32 @@ function fFindOnPath {
 }
 
 
+## Join arguments into one command line the way CommandLineToArgvW reads it back,
+## which is also how .NET splits a command line on Linux and macOS. Start-Process
+## joins a list with spaces and escapes nothing, so wrapping a spaced argument in
+## quotes is not enough: an argument holding a quote gets cut in two, an empty one
+## vanishes, and a trailing backslash eats the closing quote.
+function fJoinArgs {
+	param([string[]]$ArgList)
+
+	$out = foreach ($a in $ArgList) {
+		if ($a -ne '' -and $a -notmatch '[\s"]') { $a; continue }
+		$q = '"'
+		$slashes = 0
+		foreach ($ch in $a.ToCharArray()) {
+			if ($ch -eq '\') { $slashes++; continue }
+			## A quote needs every backslash before it doubled, and itself escaped.
+			if ($ch -eq '"') { $q += ('\' * ($slashes * 2 + 1)) + '"' }
+			else             { $q += ('\' * $slashes) + $ch }
+			$slashes = 0
+		}
+		## Same for the closing quote we are about to add.
+		$q + ('\' * ($slashes * 2)) + '"'
+	}
+	return ($out -join ' ')
+}
+
+
 ## Launch a terminal in its own process, elevated when $RunAsAdmin. Returns the
 ## Process so a caller can stop this exact instance by PID - matching on a name or
 ## a pattern risks hitting a copy started somewhere else.
@@ -728,12 +762,7 @@ function fStartTerminal {
 	)
 
 	$sp = @{ FilePath = $Exe; PassThru = $true }
-	## Start-Process joins -ArgumentList with spaces and does NOT quote, so an arg
-	## whose value holds a space (the title, or a path under a spaced folder) would
-	## reach the target split in two.
-	if ($ArgList -and $ArgList.Count) {
-		$sp.ArgumentList = @($ArgList | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
-	}
+	if ($ArgList -and $ArgList.Count) { $sp.ArgumentList = (fJoinArgs $ArgList) }
 	if ($RunAsAdmin) { $sp.Verb = "RunAs" }
 
 	try {
@@ -899,8 +928,7 @@ $script:GuiFeedback = $forceGui -or (fLaunchedFromShortcut)
 ## still a terminal, with a dialog saying it may be stale.
 if ($Platform -eq "windows" -and $wantAdmin -and -not (fIsElevated)) {
 	$self = (Get-Process -Id $PID).Path
-	$fwd  = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath) + $args + "--gui"
-	$fwd  = @($fwd | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
+	$fwd  = fJoinArgs (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath) + $args + "--gui")
 	try {
 		Start-Process -FilePath $self -Verb RunAs -WindowStyle Minimized -ArgumentList $fwd -ErrorAction Stop | Out-Null
 		exit 0
