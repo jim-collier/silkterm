@@ -272,10 +272,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- The desktop's own store is asked first, xfconf on Xfce and gsettings elsewhere, for both the interface font and the monospace one. Pinned by `the_desktop_decides_which_font_store_answers_first`. KDE, MATE and Cinnamon are still untested.
 	- ✅ Code review 20260914 item 47 (F79, blocking): With the release signing key filled in, the PowerShell installer refuses every correctly signed release.
 		- On Linux and macOS the checksums file's own bytes now go to ssh-keygen down a pipe. Windows keeps the file handle it already had, since its OpenSSH never sees the end of a pipe that was closed before it started up. The release test now runs each installer's own verify function against a throwaway key, install.ps1 through `verify-sign.ps1`, which the Windows pipeline runs as well. Seen passing on the Linux box and on vm925w under PowerShell 7 and 5.1.
-	- Code review 20260914 item 48 (F80, blocking): The pre-commit hook commits every change in a partly staged Rust file, the unstaged ones included.
+	- ✅ Code review 20260914 item 48 (F80, blocking): The pre-commit hook commits every change in a partly staged Rust file, the unstaged ones included.
+		- The hook formats the staged content and writes that back to the index, so a file with half its changes staged commits half. The working copy is formatted too, but only where it has nothing unstaged to lose.
+		- The staged copy is formatted outside the tree, so the hook names `rustfmt.toml` rather than leaving rustfmt to hunt for it.
+		- Pinned by: `cicd/tests/hooks/run.bash`, which drives both hooks in a scratch repository and runs in the pipeline.
 	- Code review 20260914 item 49 (F81, blocking): A commit made while the pipeline builds lets a release publish binaries that were not built from the tagged source.
 	- Code review 20260914 item 50 (F82, should-fix): The bash installer leaves a GitHub token behind in a temporary file.
-	- Code review 20260914 item 51 (F83, should-fix): The pre-push gate tests the working tree, not the commits being pushed.
+	- ✅ Code review 20260914 item 51 (F83, should-fix): The pre-push gate tests the working tree, not the commits being pushed.
+		- The gate runs in a throwaway worktree checked out at the commit being pushed, so an uncommitted fix can no longer carry a push to main. Cargo writes where it always does, so only this crate is rebuilt there.
+		- Pinned by: the same hooks test, with a stub in place of the pipeline - what is being checked is which source the gate is handed, not what it does with it.
 	- Code review 20260914 item 52 (F84, should-fix): A release can be cut from a partial set of artifacts, such as the one a `--quick` run leaves.
 	- Code review 20260914 item 53 (F85, should-fix): With an absolute `CARGO_TARGET_DIR`, the pipeline makes no Windows installer and the Windows pipeline cannot find its builds.
 	- Code review 20260914 item 54 (F86, should-fix): The menu launcher both one-line installers write does not start when the install path holds a space.

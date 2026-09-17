@@ -764,7 +764,7 @@ Three defects came out of building it, all fixed with it: a program could put co
 
 Guiding constraint: GitHub is dumb git hosting plus optional release storage, nothing more. No hosted CI, no Actions, as few third-party tools as possible; the whole pipeline runs locally (`cicd/cicd.bash`).
 
-- Merge gate: `cicd.bash --gate` (fmt check, clippy with warnings as errors, tests) runs as the `pre-push` hook for pushes to main. This is the local stand-in for a hosted CI workflow. Pushes to dev and feature branches are not gated, since a branch is tested before it merges into dev.
+- Merge gate: `cicd.bash --gate` (fmt check, clippy with warnings as errors, tests) runs as the `pre-push` hook for pushes to main. This is the local stand-in for a hosted CI workflow. Pushes to dev and feature branches are not gated, since a branch is tested before it merges into dev. The gate reads the commit being pushed, from a throwaway worktree checked out at that commit, rather than the working tree: the two are routinely different here, and a fix still sitting uncommitted would otherwise carry the push. Cargo writes to the usual output directory, so only this crate is rebuilt there, not its dependencies.
 
 - Version-bump guard: the same `pre-push` hook blocks a push to main unless its `source/Cargo.toml` version is a strict increase over the version already on main, by full semver precedence including prerelease ordering. So a release merge can't ship the same-or-lower version. It also requires the README Release badge to match that version, the same check `release.bash` makes, just earlier. It skips on the first main push and on branch deletes, and is overridable with `--no-verify` / `SKIP_GATE=1`.
 

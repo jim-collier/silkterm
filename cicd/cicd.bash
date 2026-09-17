@@ -511,6 +511,12 @@ if [[ -x "${root}/cicd/tests/install/run.bash" ]]; then
 	"${root}/cicd/tests/install/run.bash" >/dev/null || fDie "installer hygiene test failed"
 	fEcho "OK: installer hygiene"
 fi
+## The git hooks act on a commit or a push, where a mistake is awkward to undo.
+if [[ -x "${root}/cicd/tests/hooks/run.bash" ]]; then
+	fEcho_Clean "git hooks ..."
+	"${root}/cicd/tests/hooks/run.bash" >/dev/null || fDie "git hook test failed"
+	fEcho "OK: git hooks"
+fi
 ## The publish script commits and pushes, so nothing may reach a shell inside it.
 if [[ -x "${root}/cicd/tests/publish/run.bash" ]]; then
 	fEcho_Clean "publish script safety ..."
