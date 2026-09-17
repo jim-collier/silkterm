@@ -1474,9 +1474,9 @@ impl SettingsDialog {
 	// any other dialog does it: typing replaces, arrows keep. The mouse paths open
 	// their own field, so this is only for focus arriving by key.
 	//
-	// A slider's number box is left shut on purpose. It is a spinbox, and Left /
-	// Right / Up / Down step its value - which an open field would take for caret
-	// movement. Space or a click still opens it.
+	// A slider's number box opens too, and its arrows then split the way a numeric
+	// field's do anywhere else: Up / Down keep stepping the value (key_vertical
+	// runs whether the field is open or not), Left / Right move the caret.
 	fn open_focused_field(&mut self) {
 		let Some(Focus::Row(i, part)) = self.focus else {
 			return;
@@ -1485,7 +1485,7 @@ impl SettingsDialog {
 			return;
 		}
 		match self.specs[i].kind {
-			Kind::Text | Kind::Color => self.open_edit(i, true),
+			Kind::Text | Kind::Color | Kind::Slider { .. } => self.open_edit(i, true),
 			Kind::ShellList => match shell_stop(part, self.edited.shells.len()) {
 				ShellStop::Entry(k, ShellPart::Name) => {
 					self.open_edit(shell_field_row(k, false), true);
@@ -8740,14 +8740,19 @@ mod tests {
 		d.key_tab();
 		assert!(d.edit.as_ref().is_none_or(|e| e.row != i));
 
-		// a slider's number box stays shut, or Left/Right would move a caret
-		// instead of stepping the value
+		// a slider's number box opens the same way, and Up/Down still step the
+		// value through it
 		let mut d = mk_dialog(2000.0);
 		let i = d
 			.specs
 			.iter()
 			.position(|s| matches!(s.kind, super::Kind::Slider { .. }) && !d.disabled(s.key))
 			.unwrap();
+		let key = d.specs[i].key;
+		let super::Kind::Slider { min, .. } = d.specs[i].kind else {
+			unreachable!()
+		};
+		d.set_f32(key, min); // so there is room to step up
 		d.tab = d.specs[i].tab;
 		d.focus = None;
 		for _ in 0..200 {
@@ -8757,7 +8762,15 @@ mod tests {
 			}
 		}
 		assert_eq!(d.focus, Some(Focus::Row(i, 0)), "never reached the slider");
-		assert!(d.edit.is_none());
+		let shown = d.selected_text().expect("number box opens selected");
+		let before = d.get_f32(key);
+		d.key_vertical(false); // Up
+		assert!(d.get_f32(key) > before, "Up did not step the value");
+		assert_ne!(
+			d.selected_text().as_deref(),
+			Some(shown.as_str()),
+			"the box still shows the old number"
+		);
 	}
 
 	// Esc from inside a field is the dialog's Cancel, not "shut the field".

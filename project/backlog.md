@@ -1689,8 +1689,8 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 - ✅ Enter in the Settings dialog is OK, and walking onto a text box selects its value.
 	- Enter used to close the open field and stop there, so OK took a second press. It now closes the field and fires OK, the way it does in any other dialog. A menu, a dropdown popup and the prompt box still take Enter for themselves.
-	- Tab or an arrow onto a text or color box opens it with the value selected, so typing replaces it. That already happened on a click, on Space, and on the first character typed; the field just sat shut and blank until then.
-	- Left alone: a slider's number box. Left, Right, Up and Down step its value, which an open field would take for caret movement. Space or a click still opens it.
+	- Tab or an arrow onto a text, color or number box opens it with the value selected, so typing replaces it. That already happened on a click, on Space, and on the first character typed; the field just sat shut and blank until then.
+	- A slider's number box was held back at first, on the grounds that its arrows step the value. Only Left and Right do that once the box is open - Up and Down go on stepping either way, which is how a number field behaves elsewhere - so it opens with the rest.
 	- Decided: Esc from inside a field is the dialog's Cancel now, in one press. Closing the field was all it used to do, and a typed value applies as it is typed, so there was nothing to take back - and with fields opening on the way past, Esc would have been eaten on every one.
 	- Pinned by: `enter_in_a_field_is_the_dialogs_ok`, `keyboard_focus_opens_a_text_field_with_the_value_selected` and `escape_from_inside_a_field_cancels_the_dialog`, all watched failing against the old behavior.
 	- Opened: 20260917

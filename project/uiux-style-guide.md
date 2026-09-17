@@ -162,7 +162,8 @@ Rules that go with them:
 - Alt plus a menu title's first letter opens that menu. The Menu key opens the right-click menu on the focused pane.
 - In an open menu, arrows move, Right enters a submenu, Left leaves one or steps to the next dropdown, Enter picks, Escape closes, and a letter picks the row carrying it.
 - Inside a dialog, Tab and Shift+Tab move focus, Ctrl+Tab and Ctrl+PgUp/PgDn change tab, Enter is OK and Escape is Cancel. That holds with a field open: Enter closes it and takes OK, Escape cancels. Neither takes a second press.
-- A text or color box opens with its value selected as soon as focus arrives, by key or by click, so typing replaces it. A slider's number box is the exception - it opens on Space or a click, because the arrows step its value.
+- A text, color or number box opens with its value selected as soon as focus arrives, by key or by click, so typing replaces it.
+- In a number box, Up and Down step the value by a hundredth of its range, or a tenth with Shift held, whether the box is open or merely focused. Left and Right move the caret while it is open, and step the value while it is not.
 - Every action reachable by mouse should be reachable by keyboard, and the reverse does not have to hold. Direct manipulation is the standing exception: dragging a divider, reordering a tab or a shell, dragging the minimap marker, and renaming a tab in place have no keyboard equivalent today.
 - A key that reaches a dialog never also reaches the terminal underneath.
 
