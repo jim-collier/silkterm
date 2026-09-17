@@ -350,7 +350,7 @@ To run everything a change has to pass before it can be pushed - format, lint, r
 cicd/cicd.bash [--quick]
 ```
 
-`--quick` skips the cross-builds and the slow stages. A fast subset of it - format check, lint, tests - also runs as a pre-push hook (`cicd/cicd.bash --gate`), so nothing reaches a shared branch unverified.
+`--quick` skips the cross-builds and the slow stages. A fast subset of it - format check, lint, tests - also runs as a pre-push hook (`cicd/cicd.bash --gate`), so nothing reaches main unverified.
 
 ### Configuration
 
